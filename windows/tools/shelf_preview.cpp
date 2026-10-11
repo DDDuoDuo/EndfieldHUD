@@ -123,13 +123,13 @@ std::wstring widen(std::string_view value){
     if(value.empty())return {};const auto count=MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,value.data(),int(value.size()),nullptr,0);if(count<=0)return {};
     std::wstring out(std::size_t(count),L'\0');if(MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,value.data(),int(value.size()),out.data(),count)!=count)return {};return out;
 }
-// A FILETIME (UTC ticks) as the HUD language's long date and time, in the
-// time zone rules of that date (SystemTimeToTzSpecificLocalTime).
-std::string dateText(std::int64_t ticks,core::Language language){
+// A FILETIME (UTC ticks) as the HUD language's long (or short) date and
+// time, in the time zone rules of that date (SystemTimeToTzSpecificLocalTime).
+std::string dateText(std::int64_t ticks,core::Language language,bool shortDate=false){
     const auto value=static_cast<std::uint64_t>(ticks);const FILETIME utc{DWORD(value&0xFFFFFFFFu),DWORD(value>>32)};SYSTEMTIME universal{},time{};
     if(ticks<=0||!FileTimeToSystemTime(&utc,&universal)||!SystemTimeToTzSpecificLocalTime(nullptr,&universal,&time))return {};
     std::array<wchar_t,128>date{},clock{};const auto*name=localeName(language);
-    if(!GetDateFormatEx(name,DATE_LONGDATE,&time,nullptr,date.data(),int(date.size()),nullptr)||!GetTimeFormatEx(name,TIME_NOSECONDS,&time,nullptr,clock.data(),int(clock.size())))return {};
+    if(!GetDateFormatEx(name,shortDate?DATE_SHORTDATE:DATE_LONGDATE,&time,nullptr,date.data(),int(date.size()),nullptr)||!GetTimeFormatEx(name,TIME_NOSECONDS,&time,nullptr,clock.data(),int(clock.size())))return {};
     return narrow(date.data())+" "+narrow(clock.data());
 }
 // FileShelfStrings for Windows: the source strings with the platform names
@@ -434,16 +434,20 @@ struct ShelfPreview::Impl {
     // ---- The properties card ----
     // The containing folder, shortened in the middle to the value column
     // (measured with the value's own font): "C:\Users\…\Project\Assets".
+    double valueWidth(const std::string&text){return raster.measureSourceText("shelf.properties.measure",mod::shelfPropertiesValueText(text,appearance.contentsScale),100000).width;}
     std::string location(const std::string&path){
         const auto slash=path.find_last_of('\\');auto folder=slash==std::string::npos?path:path.substr(0,slash);if(folder.size()==2&&folder[1]==':')folder+='\\';
-        const auto width=[&](const std::string&text){return raster.measureSourceText("shelf.properties.location",mod::shelfPropertiesValueText(text,appearance.contentsScale),100000).width;};
+        const auto width=[&](const std::string&text){return valueWidth(text);};
         if(folder.empty()||width(folder)<=mod::shelfPropertiesValueWidth)return folder;
         const auto root=gpu::shelfPathVolumeRoot(folder);const std::string prefix=root.empty()?std::string{}:root;
         // Code-point boundaries of the remainder; keep the longest tail that fits.
         std::vector<std::size_t>starts;for(std::size_t n=prefix.size();n<folder.size();++n)if((static_cast<unsigned char>(folder[n])&0xC0)!=0x80)starts.push_back(n);
         std::size_t low=0,high=starts.size();
         while(low<high){const auto mid=(low+high)/2;if(width(prefix+"…"+folder.substr(starts[mid]))<=mod::shelfPropertiesValueWidth)high=mid;else low=mid+1;}
-        return low<starts.size()?prefix+"…"+folder.substr(starts[low]):prefix+"…";
+        if(low>=starts.size())return prefix+"…";
+        // Whole trailing folders when the last one fits ("C:\…\Project\Assets").
+        auto tail=starts[low];if(const auto separator=folder.find('\\',tail);separator!=std::string::npos&&separator+1<folder.size())tail=separator;
+        return prefix+"…"+folder.substr(tail);
     }
     mod::ShelfPropertiesContent cardText(const Card&value){
         const auto*row=record(value.itemID);mod::ShelfPropertiesContent out;out.itemID=value.itemID;
@@ -460,7 +464,10 @@ struct ShelfPreview::Impl {
         add(ShelfText::propertyLocation,location(values?values->windowsPath:row->windowsPath));
         // Times arrive from the worker; "…" keeps the rows (and the card's
         // height) while they load, "—" when they could not be read.
-        const auto when=[&](ShelfText label,const std::optional<std::int64_t>&ticks){auto text=ticks?dateText(*ticks,language):std::string{};add(label,!text.empty()?text:std::string(values||value.failed?"—":"…"));};
+        // The long date, or the short one when the long one would not fit.
+        const auto when=[&](ShelfText label,const std::optional<std::int64_t>&ticks){auto text=ticks?dateText(*ticks,language):std::string{};
+            if(!text.empty()&&valueWidth(text)>mod::shelfPropertiesValueWidth)if(auto brief=dateText(*ticks,language,true);!brief.empty())text=std::move(brief);
+            add(label,!text.empty()?text:std::string(values||value.failed?"—":"…"));};
         when(ShelfText::propertyCreated,values?values->created:std::nullopt);when(ShelfText::propertyModified,values?values->modified:std::nullopt);
         if(values&&values->dimensions)add(ShelfText::propertyDimensions,gpu::shelfGroupedCount((*values->dimensions)[0])+" × "+gpu::shelfGroupedCount((*values->dimensions)[1]));
         if(values&&values->duration)add(ShelfText::propertyDuration,gpu::shelfDurationText(*values->duration));
