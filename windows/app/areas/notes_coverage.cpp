@@ -58,6 +58,11 @@ public:
             const auto size=static_cast<std::uint32_t>(workspace.editorDocument()->text().size());
             step.check(workspace.editorNavigationKey(VK_LEFT,true,false).changed&&workspace.editorDocument()->selection().range.start==size-4,"Ctrl+Left reaches the last word's start");
             step.check(workspace.editorNavigationKey(VK_RIGHT,true,false).changed&&workspace.editorDocument()->selection().range.start==size,"Ctrl+Right returns to the end");
+            // Home/End: the caret's visual line; Ctrl+Home/Ctrl+End: the document.
+            const auto caret=[&]{return workspace.editorDocument()->selection().range.start;};
+            step.check(workspace.editorNavigationKey(VK_HOME,false,false).changed&&caret()>0&&caret()<size,"Home reaches the start of the caret's visual line in the chunked field");
+            step.check(workspace.editorNavigationKey(VK_END,false,false).changed&&caret()==size,"End returns to that line's end");
+            step.check(workspace.editorNavigationKey(VK_HOME,true,false).changed&&caret()==0&&workspace.editorNavigationKey(VK_END,true,false).changed&&caret()==size,"Ctrl+Home and Ctrl+End reach the document start and end");
             const auto finished=workspace.finishEditing();
             step.check(finished.finished&&finished.saved&&state.note(longID)->text==text+"末尾 tail","The chunked field commits the complete edited note");
             // An Edit-menu paste (workspace draft edit; no system clipboard) that

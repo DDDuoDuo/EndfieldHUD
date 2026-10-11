@@ -67,6 +67,11 @@ private:
             tools::ProjectionPreviewOptions options;options.raster.pixelsPerPoint=2;options.raster.paddingPoints=1;options.language=core::Language::english;
             tools::ProjectionPreview projection(model,interaction,raster_,std::move(options));
             projection.resize(metrics);projection.setActive(true,clock_());projection.update(clock_());
+            // The live order of the RC that died opening Projection: the workspace
+            // already presented a later frame when a UI Automation invoke reads
+            // the (earlier) clock. Projection takes every such call at its latest
+            // time instead of failing.
+            const double later=clock_()+1;projection.update(later);
             fixture_=&projection;
             step.check(binding_.refresh(nullptr)&&binding_.count()==8,"The eight ProjectionToolbar buttons are listed");
             const auto find=[&](std::string_view id)->std::optional<std::size_t>{for(std::size_t n=0;n<binding_.count();++n)if(binding_.provider()->element(n)->id==id)return n;return std::nullopt;};
@@ -74,6 +79,7 @@ private:
             const auto invoke=[&](std::size_t index){ComPtr<IRawElementProviderFragment>fragment;if(FAILED(binding_.child(index,&fragment))||!fragment)return false;ComPtr<IInvokeProvider>button;return SUCCEEDED(fragment.As(&button))&&SUCCEEDED(button->Invoke());};
             step.check(invoke(*eraser)&&model.erasing(),"Invoking the eraser button toggles erasing as a click does");
             binding_.refresh(nullptr);const auto brush=find("projection.toolbar:brush");step.check(brush&&invoke(*brush)&&projection.menuOpen(),"Invoking brush thickness opens its menu");
+            step.check(projection.requiresFrames(clock_())&&projection.requiresFrames(later+.15)&&!projection.requiresFrames(later+.17),"An invoke with the earlier clock opens the menu at the latest time");
             binding_.refresh(nullptr);const auto plus=find("projection.menu:plus:0");const auto width=model.brushWidth();
             step.check(plus&&binding_.provider()->element(*plus)->label=="Brush thickness +","The menu lists its source plus button");
             step.check(invoke(*plus)&&model.brushWidth()==width+1&&projection.menuOpen(),"Its plus button widens the brush and keeps the menu");
