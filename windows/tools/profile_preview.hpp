@@ -10,6 +10,8 @@
 #include "native/profile_scene.hpp"
 #ifdef _WIN32
 namespace endfield::tools {
+// Modifier state of a key event; system is Alt or either Win key.
+struct ProfileKeyModifiers {bool shift{},control{},system{};};
 struct ProfilePreviewOptions {
     native::LayerRasterOptions raster;     // memoryImages resolves avatar/frame contents
     modules::ProfileAppearance appearance; // dark, render scale, HUD accent
@@ -65,7 +67,15 @@ public:
     bool capturesPointer()const noexcept;  // an open popover consumes every click
     bool pointerLocked()const noexcept;    // slider drag, editor or text selection holds the plane
     bool pointer(const app::PointerEvent&,double time);
+    // Source HUDPersonalProfileInteraction.keyDown commits, cancels, unwinds
+    // and nudges on unmodified keys only (command/control/option/shift). The
+    // first form is for the HUD window's key dispatch: it reads GetKeyState,
+    // which Win32 synchronizes with the key message being dispatched. Any
+    // other caller (tests, synthetic input) states the modifiers explicitly:
+    // off that dispatch a thread's GetKeyState follows the live keyboard of
+    // the interactive session.
     bool key(const app::KeyEvent&,double time);
+    bool key(const app::KeyEvent&,const ProfileKeyModifiers&,double time);
     bool filterKey(const app::NativeMessage&);
     bool message(const app::NativeMessage&,double time);
     void focus(bool,double time);

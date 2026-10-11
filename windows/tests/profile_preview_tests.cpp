@@ -33,15 +33,20 @@ void run(const std::filesystem::path&shader,const std::filesystem::path&resource
     const auto screen=[&](double x,double y){const auto p=plane.project({x,y});check(p.has_value(),"Projectable profile point");return *p;};
     const auto click=[&](double x,double y){const auto p=screen(x,y);preview.pointer({app::PointerKind::move,app::PointerButton::none,p.x,p.y,0},time);
         const bool used=preview.pointer({app::PointerKind::down,app::PointerButton::left,p.x,p.y,0},time);preview.pointer({app::PointerKind::up,app::PointerButton::left,p.x,p.y,0},time);paint();return used;};
-    const auto key=[&](std::uint32_t vk){return preview.key({app::KeyKind::down,vk},time);};
-    const auto type=[&](std::u16string_view text){for(const auto c:text)preview.key({app::KeyKind::character,c},time);};
+    // Synthetic keys state their modifiers: off the HUD's key-message dispatch
+    // GetKeyState follows the laptop's live keyboard (a held key would make an
+    // unmodified Return look modified).
+    const auto key=[&](std::uint32_t vk,tools::ProfileKeyModifiers modifiers={}){return preview.key({app::KeyKind::down,vk},modifiers,time);};
+    const auto type=[&](std::u16string_view text){for(const auto c:text)preview.key({app::KeyKind::character,c},tools::ProfileKeyModifiers{},time);};
     paint();paint(.5);
     check(!preview.entries().empty()&&preview.artwork().fields.surfaces.size()>40,"Profile page publishes its retained card");
     check(preview.nextWakeTime().has_value(),"Active page schedules the 30 s work refresh on the shared clock");
     // Identity popover, then the name editor.
     check(click(30,125)&&state.popover()==m::ProfilePopover::identity&&preview.capturesPointer(),"Menu opens the identity popover and captures input");
     check(click(60,153)&&preview.editing()&&preview.editingField()==m::ProfileField::name&&!state.popover(),"Edit name opens the projected field");
-    type(u"Zed\U0001F600");check(key(VK_RETURN)&&!preview.editing()&&state.profile().name=="Zed\U0001F600","Return commits the Character-bounded name");
+    type(u"Zed\U0001F600");
+    check(!key(VK_RETURN,{.control=true})&&preview.editingField()==m::ProfileField::name&&state.profile().name!="Zed\U0001F600","A modified Return leaves the name field open (source keyDown takes unmodified keys only)");
+    check(key(VK_RETURN)&&!preview.editing()&&state.profile().name=="Zed\U0001F600","Return commits the Character-bounded name");
     // A rejected tag keeps the field open; Escape cancels it.
     click(30,125);click(60,179);check(preview.editingField()==m::ProfileField::tag,"Edit # opens the tag field");
     type(u"a b");check(key(VK_RETURN)&&preview.editing()&&state.error().has_value()&&state.profile().tag=="0000","Invalid tag stays in a red field with the source message");
@@ -56,6 +61,8 @@ void run(const std::filesystem::path&shader,const std::filesystem::path&resource
     preview.pointer({app::PointerKind::move,app::PointerButton::left,end.x,end.y,0},time);paint();const auto commitsBefore=commits;
     preview.pointer({app::PointerKind::up,app::PointerButton::left,end.x,end.y,0},time);paint();
     check(!state.dragging()&&commits==commitsBefore+1&&std::abs(state.profile().backgroundWidth-654)<1,"Drag previews in memory and saves once on release");
+    const auto widthBeforeNudge=state.profile().backgroundWidth;
+    check(!key(VK_RIGHT,{.shift=true})&&state.profile().backgroundWidth==widthBeforeNudge,"A modified arrow does not nudge the slider");
     check(key(VK_RIGHT)&&state.profile().backgroundWidth==state.sliders().front().value,"Arrow keys nudge the selected slider");
     check(click(150,48)&&chosen.size()==1&&chosen.back()==m::ProfileImageKind::background,"Choose background asks the owner's picker");
     check(click(342,20)&&state.popover()==m::ProfilePopover::themeColor,"Card colour popover");

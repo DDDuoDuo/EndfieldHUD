@@ -232,8 +232,11 @@ bool ProfilePreview::pointer(const app::PointerEvent&e,double t){
     i->pressed=true;i->state.mouseDown(*q);if(!i->alive)return true;i->content();i->requests();if(i->alive)i->feedback();return true;
 }
 bool ProfilePreview::key(const app::KeyEvent&e,double t){
+    return key(e,ProfileKeyModifiers{GetKeyState(VK_SHIFT)<0,GetKeyState(VK_CONTROL)<0,e.alt||GetKeyState(VK_MENU)<0||GetKeyState(VK_LWIN)<0||GetKeyState(VK_RWIN)<0},t);
+}
+bool ProfilePreview::key(const app::KeyEvent&e,const ProfileKeyModifiers&modifiers,double t){
     auto i=impl_;i->advance(t);if(!i->input)return false;
-    const bool shift=GetKeyState(VK_SHIFT)<0,control=GetKeyState(VK_CONTROL)<0,system=e.alt||GetKeyState(VK_MENU)<0||GetKeyState(VK_LWIN)<0||GetKeyState(VK_RWIN)<0;
+    const bool shift=modifiers.shift,control=modifiers.control,system=modifiers.system;
     if(i->field){
         auto&f=*i->field;
         if(e.kind==app::KeyKind::character||e.kind==app::KeyKind::unicodeCharacter){
