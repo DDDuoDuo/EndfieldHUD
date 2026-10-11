@@ -52,9 +52,13 @@ struct NowPlayingCapabilities {
     bool volume{},lyrics{},activateApplication{};
     bool operator==(const NowPlayingCapabilities&)const=default;
 };
+// Where a session was found: a GSMTC media session, or the main window title
+// of a Win32 player that publishes none (native/now_playing_players.hpp).
+enum class NowPlayingSessionOrigin:std::uint8_t {mediaSession,playerWindow};
 struct NowPlayingSession {
     std::uint64_t token{}; // unique within one visible service activation
     std::string appUserModelID,displayName;
+    NowPlayingSessionOrigin origin{NowPlayingSessionOrigin::mediaSession};
     bool operator==(const NowPlayingSession&)const=default;
 };
 enum class NowPlayingCommandKind {playPause,previous,next,seek};

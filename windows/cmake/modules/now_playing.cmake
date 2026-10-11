@@ -8,7 +8,7 @@
 # (CMakeLists.txt: hud_shortcuts, hud_archive, ...), instead of linking
 # ICU::uc/ICU::i18n targets that do not exist.
 if(NOT TARGET hud_now_playing OR NOT TARGET hud_archive OR NOT (WIN32 OR (TARGET ICU::uc AND TARGET ICU::i18n)))
-  message(STATUS "Now Playing area: ICU not found; Now Playing lyric, web, volume, fixture and area targets are skipped")
+  message(STATUS "Now Playing area: ICU not found; Now Playing lyric, web, volume, fixture, acceptance, probe and area targets are skipped")
   return()
 endif()
 
@@ -103,18 +103,6 @@ if(WIN32)
   endif()
 endif()
 
-# User-run live acceptance probe (GSMTC, thumbnails, lyric sources, commands).
-# The registered test only checks that the default invocation is inert.
-if(WIN32)
-  add_executable(now_playing_probe tools/now_playing_probe.cpp)
-  target_compile_definitions(now_playing_probe PRIVATE UNICODE _UNICODE NOMINMAX)
-  target_link_libraries(now_playing_probe PRIVATE hud_now_playing_service hud_now_playing_image hud_now_playing_web hud_now_playing_lyrics hud_data)
-  if(BUILD_TESTING)
-    add_test(NAME now_playing_probe_inert COMMAND now_playing_probe)
-    set_tests_properties(now_playing_probe_inert PROPERTIES PASS_REGULAR_EXPRESSION "Run only on your own machine")
-  endif()
-endif()
-
 # Source diagnostic fixture player (OverlayController diagnostic mode) and the
 # synthetic per-app audio route behind the AudioRuntime members Now Playing uses.
 add_library(hud_now_playing_fixture native/now_playing_fixture.cpp)
@@ -137,19 +125,95 @@ if(BUILD_TESTING)
   endif()
 endif()
 
+# Window-title fallback for Win32 players that publish no SMTC session
+# (NetEase Cloud Music, QQ Music, Kugou; the Mac NowPlayingAccessibility
+# compatibility fallback) and the composite provider that puts it beside
+# GSMTC. Portable rules, provider and synthetic desktop; WinEvent hooks,
+# EnumWindows and WM_APPCOMMAND on Windows. Tests use synthetic windows only.
+add_library(hud_now_playing_players modules/now_playing_players.cpp native/now_playing_players.cpp)
+target_include_directories(hud_now_playing_players PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(hud_now_playing_players PUBLIC hud_now_playing_service hud_now_playing_lyrics PRIVATE hud_archive hud_data)
+if(WIN32)
+  target_compile_definitions(hud_now_playing_players PRIVATE UNICODE _UNICODE NOMINMAX)
+  target_link_libraries(hud_now_playing_players PRIVATE icu user32)
+else()
+  target_link_libraries(hud_now_playing_players PRIVATE ICU::uc ICU::i18n)
+endif()
+if(MSVC)
+  target_compile_options(hud_now_playing_players PRIVATE /W4 /permissive- /EHsc)
+endif()
+if(BUILD_TESTING)
+  # Source: python3 windows/tools/now_playing_players_reference.py
+  add_executable(now_playing_players_tests tests/now_playing_players_tests.cpp)
+  target_link_libraries(now_playing_players_tests PRIVATE hud_now_playing_players hud_now_playing_session hud_data)
+  if(WIN32)
+    target_compile_definitions(now_playing_players_tests PRIVATE UNICODE _UNICODE NOMINMAX)
+  endif()
+  add_test(NAME now_playing_players_contracts COMMAND now_playing_players_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/now-playing-players-source.json)
+endif()
+
+# Per-player live acceptance matrix (tools/now_playing_acceptance.hpp): the
+# probe drives the production NowPlayingSession and records, per GSMTC or
+# window-title player, what the HUD would present; reports merge across runs
+# and store no track metadata. Portable; the synthetic replays are what the
+# tests run.
+add_library(hud_now_playing_acceptance tools/now_playing_acceptance.cpp)
+target_include_directories(hud_now_playing_acceptance PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(hud_now_playing_acceptance PUBLIC hud_now_playing_session PRIVATE hud_now_playing_fixture hud_data)
+if(WIN32)
+  target_compile_definitions(hud_now_playing_acceptance PRIVATE UNICODE _UNICODE NOMINMAX)
+endif()
+if(MSVC)
+  target_compile_options(hud_now_playing_acceptance PRIVATE /W4 /permissive- /EHsc)
+endif()
+if(BUILD_TESTING)
+  add_executable(now_playing_acceptance_tests tests/now_playing_acceptance_tests.cpp)
+  target_link_libraries(now_playing_acceptance_tests PRIVATE hud_now_playing_acceptance hud_data)
+  if(WIN32)
+    target_compile_definitions(now_playing_acceptance_tests PRIVATE UNICODE _UNICODE NOMINMAX)
+  endif()
+  add_test(NAME now_playing_acceptance_contracts COMMAND now_playing_acceptance_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/now-playing-acceptance-replay.json
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/now-playing-acceptance-windows.json)
+  set_tests_properties(now_playing_acceptance_contracts PROPERTIES TIMEOUT 120)
+endif()
+
+# User-run live acceptance probe (GSMTC, covers, lyric sources, the per-app
+# volume route read-only, one explicit command) writing the matrix report.
+# Tests run only the inert default invocation and --replay of the synthetic
+# scenario in a private build directory (no media session, network or audio).
+if(WIN32)
+  add_executable(now_playing_probe tools/now_playing_probe.cpp)
+  target_compile_definitions(now_playing_probe PRIVATE UNICODE _UNICODE NOMINMAX)
+  target_link_libraries(now_playing_probe PRIVATE hud_now_playing_acceptance hud_now_playing_players hud_now_playing_service hud_now_playing_image hud_now_playing_web
+    hud_now_playing_lyrics hud_now_playing_volume hud_audio_runtime hud_localization hud_data)
+  if(MSVC)
+    target_compile_options(now_playing_probe PRIVATE /W4 /permissive- /EHsc)
+  endif()
+  if(BUILD_TESTING)
+    add_test(NAME now_playing_probe_inert COMMAND now_playing_probe)
+    set_tests_properties(now_playing_probe_inert PROPERTIES PASS_REGULAR_EXPRESSION "Run only on your own machine")
+    add_test(NAME now_playing_probe_matrix COMMAND ${CMAKE_COMMAND} "-DPROBE=$<TARGET_FILE:now_playing_probe>"
+      "-DSCENARIO=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/now-playing-acceptance-replay.json"
+      "-DWINDOWS_SCENARIO=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/now-playing-acceptance-windows.json"
+      "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/now_playing_probe_matrix" -P "${CMAKE_CURRENT_SOURCE_DIR}/tools/now_playing_probe_check.cmake")
+    set_tests_properties(now_playing_probe_matrix PROPERTIES TIMEOUT 300)
+  endif()
+endif()
+
 # Production module area (app/module_owner.hpp, "Adding a module area"):
 # EndfieldHUD.exe and the hidden owner coverage construct Now Playing through
-# endfield::areas::nowPlayingModule. Production: GSMTC, public lyric/cover
-# downloads, the shared AudioRuntime route and Event Log playbackAction.
-# Development previews and hidden coverage: the fixture player and the
-# synthetic per-app route only. app.cmake links this library into
+# endfield::areas::nowPlayingModule. Production: GSMTC with the window-title
+# fallback players, public lyric/cover downloads, the shared AudioRuntime
+# route and Event Log playbackAction. Development previews: the fixture player
+# and the synthetic per-app route only; hidden coverage adds a synthetic
+# desktop behind the same composite provider. app.cmake links this library into
 # EndfieldHUD.exe and watch_session_preview from the registration below.
 if(WIN32)
   add_library(hud_now_playing_area STATIC app/areas/now_playing_module.cpp)
   target_include_directories(hud_now_playing_area PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
   target_compile_definitions(hud_now_playing_area PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
   target_link_libraries(hud_now_playing_area PUBLIC hud_module_registry
-    PRIVATE hud_now_playing_preview hud_now_playing_fixture hud_now_playing_volume hud_now_playing_web hud_now_playing_accessibility
+    PRIVATE hud_now_playing_preview hud_now_playing_fixture hud_now_playing_players hud_now_playing_volume hud_now_playing_web hud_now_playing_accessibility
             hud_now_playing_automation hud_audio_runtime hud_event_log hud_utility user32 uiautomationcore oleaut32 ole32)
   if(MSVC)
     target_compile_options(hud_now_playing_area PRIVATE /W4 /permissive- /EHsc)

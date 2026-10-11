@@ -104,6 +104,7 @@ void run(){
             if(!slider)check(property(f.Get(),UIA_HelpTextPropertyId)==status,"Buttons carry the accessible status as help");
             auto type=raw(f.Get(),UIA_ControlTypePropertyId);check(type.vt==VT_I4&&type.lVal==(slider?UIA_SliderControlTypeId:UIA_ButtonControlTypeId),"Buttons and sliders keep their source roles");
             auto focusable=raw(f.Get(),UIA_IsKeyboardFocusablePropertyId);check(focusable.vt==VT_BOOL&&focusable.boolVal==VARIANT_FALSE,"Projected controls are not tab stops");
+            auto focused=raw(f.Get(),UIA_HasKeyboardFocusPropertyId);check(focused.vt==VT_BOOL&&focused.boolVal==VARIANT_FALSE,"Projected controls never report keyboard focus (HUD root GetFocus)");
         }
         check(property(find(tree,L"playPause").Get(),UIA_NamePropertyId)==L"Play"&&property(find(tree,L"seek").Get(),UIA_NamePropertyId)==L"Playback position","Source labels");
 

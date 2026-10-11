@@ -1,111 +1,278 @@
-// Live acceptance probe for the Windows Now Playing services. It is a console
-// tool for the USER to run on their own machine while a player of their choice
-// is playing; automated tests never run its live modes (they would read the
-// user's real media session and contact public lyric services).
+// Live acceptance probe for Now Playing. It is a console tool for the USER to
+// run on their own machine while a player of their choice is playing. It
+// drives the same Now Playing owner EndfieldHUD.exe uses (GSMTC sessions
+// beside the window-title fallback for Win32 players that publish none, cover
+// decode, lyric sources, per-app volume route, transport commands) and builds
+// a per-player acceptance matrix (tools/now_playing_acceptance.hpp).
+// Automated tests never run its live mode (it would read the user's real
+// media session and contact public lyric services); they run --replay over a
+// synthetic scenario and the inert default invocation.
 //
-//   now_playing_probe                      usage only; touches nothing
-//   now_playing_probe --live [--seconds N] GSMTC discovery, metadata, timeline,
-//                                          capabilities and thumbnail decode;
-//                                          prints every event-driven change
-//   now_playing_probe --live --lyrics      also the source lyric precedence
-//                                          (embedded, NetEase catalog, LRCLIB)
-//   now_playing_probe --live --command playPause|previous|next|seek=SECONDS
-//                                          sends exactly one explicit command
+//   now_playing_probe                       usage only; touches nothing
+//   now_playing_probe --live [--seconds N]  GSMTC and player-window discovery,
+//                                           metadata, timeline, capabilities,
+//                                           cover decode; prints every
+//                                           event-driven change
+//       [--lyrics]                          also the source lyric precedence
+//                                           (embedded, NetEase catalog, LRCLIB)
+//                                           and the NetEase catalog cover
+//       [--volume]                          also READ the playing app's per-app
+//                                           audio route (never changes a level)
+//       [--command playPause|previous|next|seek=SECONDS]
+//                                           sends exactly one explicit command
+//                                           to the first presented player
+//       [--report FILE.json]                merges this run into the matrix in
+//                                           FILE (created when missing)
+//       [--markdown FILE.md]                writes the (merged) matrix as Markdown
+//   now_playing_probe --show FILE.json [--markdown FILE.md]
+//                                           prints a stored matrix as Markdown
+//   now_playing_probe --replay SCENARIO.json [options above except --seconds]
+//                                           synthetic replay: no media session,
+//                                           network or audio device
 //
-// Output is JSON lines on stdout. Nothing is persisted; no player is launched.
+// Output is JSON lines on stdout, ending with {"event":"matrix",...}. Only the
+// files named by --report/--markdown are written; no player is launched.
+// Ctrl+C ends a live run early; its matrix and report are still written.
 #ifdef _WIN32
-#include "native/now_playing_service.hpp"
-#include "native/now_playing_image.hpp"
-#include "native/now_playing_web.hpp"
-#include "modules/now_playing_lyrics_sources.hpp"
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include "core/data/json.hpp"
+#include "core/localization.hpp"
+#include "native/audio_runtime.hpp"
+#include "native/now_playing_image.hpp"
+#include "native/now_playing_players.hpp"
+#include "native/now_playing_service.hpp"
+#include "native/now_playing_volume.hpp"
+#include "native/now_playing_web.hpp"
+#include "tools/now_playing_acceptance.hpp"
+#include <windows.h>
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
-#include <condition_variable>
-#include <cstdlib>
+#include <ctime>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
-#include <mutex>
+#include <iterator>
+#include <optional>
 #include <string>
 
-namespace n=endfield::native;namespace m=endfield::modules;using Json=ehud::data::Json;
+namespace n = endfield::native;
+namespace t = endfield::tools;
+namespace fs = std::filesystem;
+using Json = ehud::data::Json;
+
 namespace {
+// One auto-reset event the owner sleeps on together with its message queue:
+// the window-title fallback's WinEvent hooks are delivered to this thread's
+// message loop (they were installed here when the provider was created).
 struct Wake {
-    std::mutex mutex;std::condition_variable signal;bool pending{};
-    void post(){{std::lock_guard lock(mutex);pending=true;}signal.notify_one();}
-    void wait(double seconds){std::unique_lock lock(mutex);signal.wait_for(lock,std::chrono::duration<double>(std::max(0.,seconds)),[&]{return pending;});pending=false;}
-};
-const auto origin=std::chrono::steady_clock::now();
-double monotonic(){return std::chrono::duration<double>(std::chrono::steady_clock::now()-origin).count();}
-void emit(Json value){value["t"]=std::round(monotonic()*1000)/1000;std::cout<<value.encode()<<std::endl;}
-std::string failureName(n::NowPlayingServiceFailure f){
-    switch(f){case n::NowPlayingServiceFailure::none:return "none";case n::NowPlayingServiceFailure::unavailable:return "unavailable";case n::NowPlayingServiceFailure::accessDenied:return "accessDenied";
-    case n::NowPlayingServiceFailure::unsupported:return "unsupported";case n::NowPlayingServiceFailure::cancelled:return "cancelled";case n::NowPlayingServiceFailure::stale:return "stale";
-    case n::NowPlayingServiceFailure::capacity:return "capacity";case n::NowPlayingServiceFailure::timedOut:return "timedOut";}return "unknown";
-}
-Json optionalNumber(std::optional<double>v){return v?Json(*v):Json();}
-Json describe(const n::NowPlayingServiceSnapshot&s){
-    Json::Object out{{"event","snapshot"},{"fresh",s.fresh},{"busy",s.busy},{"failure",failureName(s.failure)},{"nativeError",static_cast<std::int64_t>(s.nativeError)},{"sessions",static_cast<std::int64_t>(s.media.sessions.size())}};
-    Json::Array ids;for(const auto&session:s.media.sessions)ids.push_back(session.appUserModelID);out["sessionIDs"]=std::move(ids);
-    if(s.media.session){out["selected"]=s.media.session->appUserModelID;out["source"]=std::string(m::nowPlayingSourceKey(m::nowPlayingSourceForAppUserModelID(s.media.session->appUserModelID)));}
-    if(const auto&t=s.media.track){out["track"]=Json::Object{{"title",t->title},{"artist",t->artist},{"album",t->album},{"duration",optionalNumber(t->duration)},{"position",optionalNumber(t->position)},
-        {"playing",t->isPlaying},{"supportsSeeking",t->supportsSeeking},{"timedLyrics",t->timedLyrics.has_value()}};}
-    const auto&c=s.media.capabilities;out["capabilities"]=Json::Object{{"play",c.play},{"pause",c.pause},{"toggle",c.toggle},{"previous",c.previous},{"next",c.next},{"seek",c.seek}};
-    if(s.media.timeline)out["playbackRate"]=s.media.timeline->rate;
-    out["thumbnailBytes"]=static_cast<std::int64_t>(s.media.artwork?s.media.artwork->size():0);
-    return Json(std::move(out));
-}
-int usage(){
-    std::cout<<"now_playing_probe --live [--seconds N] [--lyrics] [--command playPause|previous|next|seek=SECONDS]\n"
-               "Reads the current Windows media session (GSMTC) for live acceptance. Run only on your own machine.\n";
-    return 0;
-}
-}
-int wmain(int argc,wchar_t**argv){
-    bool live{},lyrics{};double seconds=15;std::optional<m::NowPlayingCommand>command;
-    for(int k=1;k<argc;++k){
-        const std::wstring arg=argv[k];
-        if(arg==L"--live")live=true;else if(arg==L"--lyrics")lyrics=true;
-        else if(arg==L"--seconds"&&k+1<argc)seconds=std::clamp(std::wcstod(argv[++k],nullptr),1.,600.);
-        else if(arg==L"--command"&&k+1<argc){const std::wstring value=argv[++k];
-            if(value==L"playPause")command=m::NowPlayingCommand{m::NowPlayingCommandKind::playPause};else if(value==L"previous")command=m::NowPlayingCommand{m::NowPlayingCommandKind::previous};
-            else if(value==L"next")command=m::NowPlayingCommand{m::NowPlayingCommandKind::next};
-            else if(value.rfind(L"seek=",0)==0)command=m::NowPlayingCommand{m::NowPlayingCommandKind::seek,std::wcstod(value.c_str()+5,nullptr)};
-            else return usage();}
-        else return usage();
+    HANDLE event{CreateEventW(nullptr, FALSE, FALSE, nullptr)};
+    void post() {
+        if (event) SetEvent(event);
     }
-    if(!live)return usage();
-    try{
-        Wake wake;endfield::app::UtilityExecutor utility([&]{wake.post();});
-        n::NativeNowPlayingService service(utility,n::windowsNowPlayingProvider(monotonic),[&]{wake.post();},monotonic);
-        std::shared_ptr<n::NowPlayingWeb>web;std::unique_ptr<m::NowPlayingLyricsSources>sources;
-        if(lyrics){web=std::make_shared<n::NowPlayingWeb>(n::windowsNowPlayingTransport(),[&]{wake.post();},monotonic);sources=std::make_unique<m::NowPlayingLyricsSources>(web->lyricsFetch(),true);}
-        std::uint64_t revision{};std::size_t thumbnail{};bool commandSent{};const double end=monotonic()+seconds;
-        std::shared_ptr<const m::NowPlayingLyrics>shownLyrics;std::optional<std::string>shownCover;
-        service.setActive(true);emit(Json::Object{{"event","activated"}});
-        while(monotonic()<end){
-            double until=end;if(const auto due=service.nextWakeTime())until=std::min(until,*due);if(web)if(const auto due=web->nextWakeTime())until=std::min(until,*due);
-            wake.wait(until-monotonic());utility.drain();service.drain();if(web)web->drain();
-            const auto&s=service.snapshot();
-            if(s.revision!=revision){revision=s.revision;emit(describe(s));
-                if(s.media.artwork&&s.media.artwork->data()&&std::hash<std::string_view>{}(std::string_view(reinterpret_cast<const char*>(s.media.artwork->data()),s.media.artwork->size()))!=thumbnail){
-                    thumbnail=std::hash<std::string_view>{}(std::string_view(reinterpret_cast<const char*>(s.media.artwork->data()),s.media.artwork->size()));
-                    const auto image=n::decodeNowPlayingImage(*s.media.artwork);
-                    emit(Json::Object{{"event","thumbnail"},{"decoded",bool(image.image)},{"width",image.image?static_cast<std::int64_t>(image.image->width):0},{"height",image.image?static_cast<std::int64_t>(image.image->height):0},{"nativeError",static_cast<std::int64_t>(image.nativeError)}});
-                }
-                if(s.commandCompleted)emit(Json::Object{{"event","commandCompleted"},{"token",static_cast<std::int64_t>(s.commandCompleted->request.token)},{"failure",failureName(s.commandCompleted->failure)}});
-                if(command&&!commandSent&&s.fresh&&s.media.track){commandSent=true;const bool accepted=service.perform(*command);emit(Json::Object{{"event","commandSent"},{"accepted",accepted}});}
-            }
-            if(sources){
-                std::optional<m::NowPlayingLyricsKey>key;if(s.fresh&&s.media.session&&s.media.track)key=m::NowPlayingLyricsKey::make(s.media.session->appUserModelID,*s.media.track);
-                sources->update(key,s.media.track);
-                const auto value=sources->lyrics();const auto cover=sources->catalogArtwork();
-                if(value!=shownLyrics||cover!=shownCover){shownLyrics=value;shownCover=cover;
-                    emit(Json::Object{{"event","lyrics"},{"lines",static_cast<std::int64_t>(value?value->lines().size():0)},{"embedded",bool(s.media.track&&s.media.track->timedLyrics)},
-                        {"catalogLoading",sources->catalogLoading()},{"catalogCover",cover?Json(*cover):Json()},{"requests",static_cast<std::int64_t>(web->stats().started)},{"failed",static_cast<std::int64_t>(web->stats().failed)}});}
-            }
+    void wait(double seconds) {
+        const double milliseconds = std::ceil(std::clamp(seconds, 0., 3600.) * 1000);
+        const DWORD count = event ? 1 : 0;
+        MsgWaitForMultipleObjectsEx(count, count ? &event : nullptr, static_cast<DWORD>(milliseconds), QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+        MSG message{};
+        for (unsigned dispatched = 0; dispatched < 256 && PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE); ++dispatched) {
+            TranslateMessage(&message);
+            DispatchMessageW(&message);
         }
-        if(sources)sources->hide();if(web)web->cancelAll();service.setActive(false);utility.shutdown();emit(Json::Object{{"event","stopped"}});return 0;
-    }catch(const std::exception&e){std::cerr<<"now_playing_probe failed: "<<e.what()<<'\n';return 1;}
+    }
+};
+const auto origin = std::chrono::steady_clock::now();
+double monotonic() { return std::chrono::duration<double>(std::chrono::steady_clock::now() - origin).count(); }
+// Ctrl+C / Ctrl+Break end a live run early; its matrix and report are still
+// written. The handler runs on a system thread, so the live wake it posts has
+// static storage and outlives every run.
+Wake interruptWake;
+std::atomic<bool> interrupted{};
+BOOL WINAPI interrupt(DWORD type) {
+    if (type != CTRL_C_EVENT && type != CTRL_BREAK_EVENT) return FALSE;
+    interrupted.store(true, std::memory_order_release);
+    interruptWake.post();
+    return TRUE;
+}
+struct InterruptScope {
+    bool installed{SetConsoleCtrlHandler(interrupt, TRUE) != FALSE};
+    ~InterruptScope() {
+        if (installed) SetConsoleCtrlHandler(interrupt, FALSE);
+    }
+};
+// Titles and identities are UTF-8 (NetEase, QQ Music and Kugou titles are
+// often Chinese): an attached console shows them as UTF-8 during the run and
+// gets its own code page back afterwards. Redirected output is UTF-8 anyway.
+struct ConsoleUtf8 {
+    UINT previous{};
+    ConsoleUtf8() {
+        DWORD mode{};
+        if (!GetConsoleMode(GetStdHandle(STD_OUTPUT_HANDLE), &mode)) return;
+        const UINT current = GetConsoleOutputCP();
+        if (current && current != CP_UTF8 && SetConsoleOutputCP(CP_UTF8)) previous = current;
+    }
+    ~ConsoleUtf8() {
+        if (previous) SetConsoleOutputCP(previous);
+    }
+    ConsoleUtf8(const ConsoleUtf8&) = delete;
+    ConsoleUtf8& operator=(const ConsoleUtf8&) = delete;
+};
+void print(const Json& value) { std::cout << value.encode() << std::endl; }
+std::string narrow(std::wstring_view value) {
+    if (value.empty()) return {};
+    const int size = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, value.data(), static_cast<int>(value.size()), nullptr, 0, nullptr, nullptr);
+    if (size <= 0) return {};
+    std::string out(static_cast<std::size_t>(size), '\0');
+    WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, value.data(), static_cast<int>(value.size()), out.data(), size, nullptr, nullptr);
+    return out;
+}
+std::string utcNow() {
+    const std::time_t now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+    std::tm utc{};
+    if (gmtime_s(&utc, &now)) return {};
+    char buffer[32]{};
+    return std::strftime(buffer, sizeof buffer, "%Y-%m-%dT%H:%M:%SZ", &utc) ? std::string(buffer) : std::string();
+}
+int usage(int code = 0) {
+    (code ? std::cerr : std::cout)
+        << "now_playing_probe --live [--seconds N] [--lyrics] [--volume] [--command playPause|previous|next|seek=SECONDS]\n"
+           "                  [--report FILE.json] [--markdown FILE.md]\n"
+           "now_playing_probe --show FILE.json [--markdown FILE.md]\n"
+           "now_playing_probe --replay SCENARIO.json [--lyrics] [--volume] [--command ...] [--report FILE.json] [--markdown FILE.md]\n"
+           "Reads the current Windows media sessions (GSMTC) and the window titles of NetEase Cloud Music, QQ Music and Kugou\n"
+           "(players that publish no media session) for the per-player acceptance matrix. Run only on your own machine.\n"
+           "--volume only reads the playing app's audio route; --command sends exactly one command to the first presented player.\n"
+           "Per player: start it and play, run --live --seconds 60 --lyrics --volume --report np.json --markdown np.md, and during the run\n"
+           "pause, resume and change track in the player; then run once more with --command next. Unseen players stay unverified.\n"
+           "Ctrl+C ends a live run early and still writes the report.\n";
+    return code;
+}
+
+struct Arguments {
+    bool live{}, lyrics{}, volume{};
+    double seconds{15};
+    std::optional<endfield::modules::NowPlayingCommand> command;
+    std::optional<fs::path> report, markdown, show, replay;
+};
+
+t::NowPlayingAcceptanceMatrix runLive(const Arguments& a, t::NowPlayingProbeOptions options) {
+    // One owner wake for the media session, downloads, decoded covers, the
+    // audio runtime and Ctrl+C; the loop sleeps until it or the next deadline.
+    Wake& wake = interruptWake;
+    t::NowPlayingProbeServices services;
+    // Exactly the HUD's provider: GSMTC beside the window-title players. The
+    // factory runs on this thread, which pumps messages in Wake::wait.
+    services.provider = n::windowsNowPlayingPlayers(monotonic);
+    if (a.lyrics) services.transport = n::windowsNowPlayingTransport();
+    services.decode = n::decodeNowPlayingImage;
+    services.clock = monotonic;
+    services.wake = [] { interruptWake.post(); };
+    services.emit = print;
+    // Read-only: the probe never dispatches a volume intent, so no route is
+    // written and no attenuation journal is needed.
+    std::unique_ptr<n::AudioRuntime> audio;
+    if (a.volume) {
+        audio = std::make_unique<n::AudioRuntime>(n::nativeAudioServiceOptions(std::nullopt), endfield::core::Language::english,
+            [] { interruptWake.post(); });
+        services.volume = n::nowPlayingAppVolume(*audio);
+    }
+    t::NowPlayingAcceptanceMatrix matrix;
+    {
+        const InterruptScope scope;
+        t::NowPlayingProbe probe(std::move(options), std::move(services));
+        const double begin = monotonic(), end = begin + a.seconds;
+        probe.start();
+        while (!interrupted.load(std::memory_order_acquire) && monotonic() < end) {
+            double until = end;
+            if (const auto due = probe.nextWakeTime()) until = std::min(until, *due);
+            wake.wait(until - monotonic());
+            if (audio && audio->drain().applications) probe.audioChanged();
+            probe.wake();
+            if (const auto due = probe.nextWakeTime(); due && *due <= monotonic()) probe.deadline();
+        }
+        if (interrupted.load(std::memory_order_acquire)) print(Json::Object{{"event", "interrupted"}, {"t", std::round(monotonic() * 1000) / 1000}});
+        matrix = probe.stop();
+        // The run record states how long the session was really observed.
+        if (!matrix.runs.empty()) matrix.runs.back().seconds = std::round((monotonic() - begin) * 10) / 10;
+    }
+    if (audio) audio->stop();
+    return matrix;
+}
+t::NowPlayingAcceptanceMatrix runReplay(const Arguments& a, t::NowPlayingProbeOptions options) {
+    std::error_code error;
+    const auto size = fs::file_size(*a.replay, error);
+    if (error || size > 4 * 1024 * 1024) throw std::runtime_error("The replay scenario is unreadable or too large");
+    std::ifstream in(*a.replay, std::ios::binary);
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    return t::nowPlayingReplay(Json::parse(text), std::move(options), n::decodeNowPlayingImage, print);
+}
+} // namespace
+
+int wmain(int argc, wchar_t** argv) {
+    Arguments a;
+    for (int k = 1; k < argc; ++k) {
+        const std::wstring arg = argv[k];
+        const bool value = k + 1 < argc;
+        if (arg == L"--live") a.live = true;
+        else if (arg == L"--lyrics") a.lyrics = true;
+        else if (arg == L"--volume") a.volume = true;
+        else if (arg == L"--seconds" && value) {
+            const wchar_t* text = argv[++k];
+            wchar_t* end{};
+            const double seconds = std::wcstod(text, &end);
+            if (end == text || *end || !std::isfinite(seconds) || seconds <= 0) return usage(2);
+            a.seconds = std::clamp(seconds, 1., 600.);
+        } else if (arg == L"--command" && value) {
+            a.command = t::nowPlayingProbeCommand(narrow(argv[++k]));
+            if (!a.command) return usage(2);
+        } else if (arg == L"--report" && value) a.report = fs::path(argv[++k]);
+        else if (arg == L"--markdown" && value) a.markdown = fs::path(argv[++k]);
+        else if (arg == L"--show" && value) a.show = fs::path(argv[++k]);
+        else if (arg == L"--replay" && value) a.replay = fs::path(argv[++k]);
+        else return usage(2);
+    }
+    const ConsoleUtf8 console;
+    try {
+        if (a.show) {
+            if (a.live || a.replay || a.report) return usage(2);
+            const auto stored = t::nowPlayingReadMatrix(*a.show);
+            if (!stored) {
+                std::cerr << "now_playing_probe: no report at that path\n";
+                return 2;
+            }
+            const auto text = t::nowPlayingMatrixMarkdown(*stored);
+            std::cout << text;
+            if (a.markdown) t::nowPlayingWriteReport(*a.markdown, text);
+            return 0;
+        }
+        if (a.live == a.replay.has_value()) return usage(a.live ? 2 : 0);
+        // A report path holding anything but a matrix is refused before any
+        // media session, network or audio is touched, and left unchanged.
+        std::optional<t::NowPlayingAcceptanceMatrix> stored;
+        if (a.report) stored = t::nowPlayingReadMatrix(*a.report);
+        t::NowPlayingProbeOptions options;
+        options.lyrics = a.lyrics;
+        options.volume = a.volume;
+        options.command = a.command;
+        options.seconds = a.seconds;
+        if (a.live) options.recorded = utcNow();
+        const auto run = a.live ? runLive(a, std::move(options)) : runReplay(a, std::move(options));
+        print(Json::Object{{"event", "matrix"}, {"report", t::nowPlayingMatrixJson(run)}});
+        if (a.report || a.markdown) {
+            const auto merged = t::nowPlayingMergeMatrix(stored.value_or(t::NowPlayingAcceptanceMatrix{}), run);
+            if (a.report) t::nowPlayingWriteReport(*a.report, t::nowPlayingMatrixJson(merged).encode() + "\n");
+            if (a.markdown) t::nowPlayingWriteReport(*a.markdown, t::nowPlayingMatrixMarkdown(merged));
+        }
+        return 0;
+    } catch (const std::invalid_argument& e) {
+        std::cerr << "now_playing_probe: " << e.what() << '\n';
+        return 2;
+    } catch (const std::exception& e) {
+        std::cerr << "now_playing_probe failed: " << e.what() << '\n';
+        return 1;
+    }
 }
 #endif

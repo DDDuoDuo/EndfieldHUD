@@ -1,0 +1,30 @@
+{
+  "format": "endfieldhud.nowPlaying.replay",
+  "version": 1,
+  "comment": "Synthetic window-title player for the now_playing_probe acceptance matrix: NetEase Cloud Music found by its main window title (it publishes no media session) beside a listed Spotify media session. The window-title provider supplies title and artist, an inferred playing/paused state and toggle/previous/next only. Every title, artist, route and URL answer is invented; no real window, media session, network request or audio device is involved.",
+  "commandFailure": "none",
+  "routes": [
+    {"id": "4200:1", "pid": 4200, "executable": "C:\\Replay\\NetEase\\cloudmusic.exe"}
+  ],
+  "responses": [
+    {"prefix": "https://music.163.com/api/cloudsearch/pc?s=Window%20One", "body": "{\"code\":200,\"result\":{\"songs\":[{\"id\":778,\"name\":\"Window One\",\"ar\":[{\"name\":\"Replay Artist\"}],\"al\":{\"name\":\"Replay Album\",\"picUrl\":\"http://p1.music.126.net/Window==/1.jpg\"},\"dt\":200000}]}}"},
+    {"prefix": "https://music.163.com/api/song/lyric?id=778&", "body": "{\"code\":200,\"lrc\":{\"lyric\":\"[00:01] Window\\n[00:12] Line\"}}"},
+    {"prefix": "https://music.163.com/api/cloudsearch/pc?s=Window%20Two", "body": "{\"code\":200,\"result\":{\"songs\":[{\"id\":779,\"name\":\"Window Two\",\"ar\":[{\"name\":\"Replay Artist\"}],\"al\":{\"name\":\"Replay Album\",\"picUrl\":\"http://p1.music.126.net/Window==/2.jpg\"},\"dt\":180000}]}}"},
+    {"prefix": "https://music.163.com/api/song/lyric?id=779&", "body": "{\"code\":200,\"lrc\":{\"lyric\":\"[00:01] Second\\n[00:12] Window\"}}"},
+    {"prefix": "https://p1.music.126.net/", "body": "@cover"}
+  ],
+  "steps": [
+    {"at": 1, "sessions": ["Spotify.exe", {"id": "C:\\Replay\\NetEase\\cloudmusic.exe", "origin": "playerWindow"}],
+     "current": "C:\\Replay\\NetEase\\cloudmusic.exe", "capabilities": ["toggle", "previous", "next"],
+     "track": {"title": "Window One", "artist": "Replay Artist", "playing": true, "supportsSeeking": false}},
+    {"at": 3, "sessions": ["Spotify.exe", {"id": "C:\\Replay\\NetEase\\cloudmusic.exe", "origin": "playerWindow"}],
+     "current": "C:\\Replay\\NetEase\\cloudmusic.exe", "capabilities": ["toggle", "previous", "next"],
+     "track": {"title": "Window One", "artist": "Replay Artist", "playing": false, "supportsSeeking": false}},
+    {"at": 5, "sessions": ["Spotify.exe", {"id": "C:\\Replay\\NetEase\\cloudmusic.exe", "origin": "playerWindow"}],
+     "current": "C:\\Replay\\NetEase\\cloudmusic.exe", "capabilities": ["toggle", "previous", "next"],
+     "track": {"title": "Window Two", "artist": "Replay Artist", "playing": true, "supportsSeeking": false}},
+    {"at": 7, "sessions": ["Spotify.exe", {"id": "C:\\Replay\\NetEase\\cloudmusic.exe", "origin": "playerWindow"}],
+     "current": "C:\\Replay\\NetEase\\cloudmusic.exe", "capabilities": ["toggle", "previous", "next"],
+     "track": {"title": "Window Two", "artist": "Replay Artist", "playing": true, "supportsSeeking": false}}
+  ]
+}

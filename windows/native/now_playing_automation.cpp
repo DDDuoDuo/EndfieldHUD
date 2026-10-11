@@ -94,7 +94,9 @@ public:
         case UIA_IsEnabledPropertyId:*out=flag(data.enabled);break;
         // The HUD routes its own keyboard input (Space, arrows, Escape);
         // projected controls are not tab stops, as in the source.
-        case UIA_IsKeyboardFocusablePropertyId:*out=flag(false);break;
+        // Never focused either: the HUD root's GetFocus walk (app/hud_automation)
+        // finds no Now Playing fragment, and nothing raises focus events.
+        case UIA_IsKeyboardFocusablePropertyId:case UIA_HasKeyboardFocusPropertyId:*out=flag(false);break;
         case UIA_IsOffscreenPropertyId:{const auto s=state.lock();*out=flag(!s||!s->screen(data.rect));break;}
         case UIA_FrameworkIdPropertyId:*out=text("EndfieldHUD");break;
         default:break;

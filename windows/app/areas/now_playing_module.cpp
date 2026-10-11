@@ -7,6 +7,7 @@
 #include "native/audio_runtime.hpp"
 #include "native/now_playing_automation.hpp"
 #include "native/now_playing_fixture.hpp"
+#include "native/now_playing_players.hpp"
 #include "native/now_playing_volume.hpp"
 #include "native/now_playing_web.hpp"
 #include "tools/now_playing_preview.hpp"
@@ -155,12 +156,20 @@ public:
         // reads it from WinRT threads (the production clock is the thread-safe
         // QueryPerformanceCounter clock). The coverage fixture reads a mirror
         // of the synthetic clock instead, so no worker races the harness.
+        // Production: GSMTC beside the window-title fallback for Win32 players
+        // that publish no media session (NetEase Cloud Music, QQ Music,
+        // Kugou); its WinEvent hooks run on this (UI) thread's message loop
+        // while Now Playing is presented. Hidden coverage composes the
+        // fixture player with a synthetic desktop the same way.
         gpu::NativeNowPlayingService::Factory provider;
-        if (mode_ == ApplicationAreaMode::production) provider = gpu::windowsNowPlayingProvider(c.clock);
+        if (mode_ == ApplicationAreaMode::production) provider = gpu::windowsNowPlayingPlayers(c.clock);
         else if (mode_ == ApplicationAreaMode::developmentPreview) provider = gpu::nowPlayingFixtureProvider(c.clock);
         else {
             fixtureClock_ = std::make_shared<std::atomic<double>>(c.clock());
-            provider = gpu::nowPlayingFixtureProvider([clock = fixtureClock_] { return clock->load(std::memory_order_acquire); });
+            const auto mirror = [clock = fixtureClock_] { return clock->load(std::memory_order_acquire); };
+            coverageWindows_ = std::make_shared<gpu::NowPlayingWindowFixture>();
+            provider = gpu::nowPlayingCompositeProvider(gpu::nowPlayingFixtureProvider(mirror),
+                gpu::nowPlayingWindowProvider([desktop = coverageWindows_] { return desktop; }, mirror));
         }
         // Each activation (selection of a visible Now Playing) creates one provider.
         provider = [inner = std::move(provider), starts = starts_] { ++*starts; return inner(); };
@@ -254,6 +263,11 @@ public:
         (void)deliver(t);
         return true;
     }
+    // Mac SystemHUDView.draggingUpdated offers no drag operation while Now
+    // Playing is selected (only the Shelf entry, App shortcuts, File Shelf,
+    // documents and Notes take files), so a file drag shows "no drop" here
+    // instead of the host's default copy feedback; drop() keeps refusing.
+    bool dropHover(std::span<const std::string>, std::optional<core::Point>, double) override { return false; }
     void focus(bool focused, double t) override { if (!focused) cancelInteraction(t); }
     void cancelInteraction(double t) override { observe(t); preview_->cancelInteraction(t); }
 
@@ -391,16 +405,16 @@ private:
         }
         step.check(false, "Synthetic Now Playing work settles within bounded deliveries");
     }
-    bool recorded(unsigned count, std::string_view action) const {
+    bool recorded(unsigned count, std::string_view action, std::string_view source = "system") const {
         const auto value = [&](std::string_view key) {
             const auto found = lastPlayback_.find(key);
             return found == lastPlayback_.end() ? std::string_view{} : std::string_view(found->second);
         };
-        return playbackEvents_ == count && lastPlayback_.size() == 2 && value("action") == action && value("source") == "system";
+        return playbackEvents_ == count && lastPlayback_.size() == 2 && value("action") == action && value("source") == source;
     }
     void presentedCoverage(app::ModuleCoverage& step) {
-        step.check(*step.module == core::Module::nowPlaying && fixtureClock_ && audioFixture_ && !web_,
-                   "Hidden coverage presents Now Playing with the fixture player, a synthetic audio route and no network");
+        step.check(*step.module == core::Module::nowPlaying && fixtureClock_ && audioFixture_ && coverageWindows_ && !web_,
+                   "Hidden coverage presents Now Playing with the fixture player, a synthetic audio route, a synthetic desktop and no network");
         double t = step.time;
         const auto present = [&](double seconds) { t += seconds; observe(t); step.present(t); };
         const auto& view = presentation();
@@ -431,6 +445,12 @@ private:
                    "UIA rectangles use the same projection as pointer input");
         const auto transparent = step.project({20, 200}, 440, 440);
         step.check(covers(*playPoint) && transparent && !covers(*transparent), "Only control faces claim the hit test over navigation");
+        {
+            // Paths are only compared, never opened.
+            const std::array<std::string, 1> dragged{"coverage-track.mp3"};
+            step.check(!dropHover(dragged, *playPoint, t) && !dropHover(dragged, std::nullopt, t) && !drop(dragged, *playPoint, t),
+                       "A file drag over Now Playing is refused, as the source offers no drag operation there");
+        }
         {
             const auto ax = preview_->accessibility(t);
             step.check(ax.status == "EndfieldHUD Fixture 1 \xc2\xb7 Local verification \xc2\xb7 Now Playing" && ax.buttons.size() == 5 &&
@@ -597,6 +617,7 @@ private:
                 moved.Reset();
                 step.check(automationRefresh(group->root()) && automationCount() == 6 && other->references() == 1, "Returning to the owner's group releases the other one");
             }
+            windowPlayerCoverage(step, t, present);
         }
 
         // Every cycle ends in the same presented state (bounded, repeatable caches).
@@ -604,6 +625,61 @@ private:
                    view.input().volume && std::abs(*view.input().volume - 1) < 1e-6 && !capturesPointer() && !pointerLocked() &&
                    (step.cycle == 0 || playbackEvents_ == eventsAfterFirstCycle_), "Now Playing returns to the same paused fixture state");
         if (step.cycle == 0) eventsAfterFirstCycle_ = playbackEvents_;
+    }
+    // The window-title fallback (a NetEase Cloud Music window that publishes
+    // no media session) through the production composite provider, on a
+    // synthetic desktop: title and artist from the window title, inferred
+    // playback, WM_APPCOMMAND transport and Event Log source netease, GSMTC
+    // precedence, and the fixture session again once the player is gone.
+    template <class Present>
+    void windowPlayerCoverage(app::ModuleCoverage& step, double& t, const Present& present) {
+        const auto& view = presentation();
+        const auto title = [&] { return view.input().track ? view.input().track->title : std::string(); };
+        const auto playing = [&] { return view.input().track && view.input().track->isPlaying; };
+        const auto origin = [&] {
+            const auto& session = service_->snapshot().media.session;
+            return session ? session->origin : modules::NowPlayingSessionOrigin::mediaSession;
+        };
+        const std::string player = "EndfieldHUD-Coverage\\cloudmusic.exe";
+        const auto desktop = [&](std::string caption, std::uintptr_t window = 0x5150) {
+            coverageWindows_->set({{window, 5150, player, "OrpheusBrowserHost", std::move(caption), true, false}});
+            coverageWindows_->notify();
+            settle(step);
+            present(.3);
+        };
+        const auto events = playbackEvents_;
+        const auto sent = coverageWindows_->commands().size();
+        step.check(coverageWindows_->watchers() == 1, "The presented provider follows the synthetic desktop's window events");
+        desktop("Coverage Song - Coverage Artist");
+        step.check(title() == "Coverage Song" && view.input().track->artist == "Coverage Artist" && view.input().track->album.empty() && playing() &&
+                       origin() == modules::NowPlayingSessionOrigin::playerWindow && service_->snapshot().media.sessions.size() == 2,
+                   "A NetEase window title is presented over the paused fixture session");
+        step.check(!view.input().track->position && !view.input().track->duration && !view.sliders(t)[0].enabled && !view.input().capabilities.seek &&
+                       !view.input().volumeAvailable && !view.input().lyrics && view.durationText() == "\xe2\x80\x94:\xe2\x80\x94",
+                   "No timeline, seek, lyrics offline or single audio route for the window-title player");
+        step.check(preview_->perform(NowPlayingAction::playPause, t), "Play/pause is enabled for the window-title player");
+        settle(step);
+        present(.3);
+        auto commands = coverageWindows_->commands();
+        step.check(commands.size() == sent + 1 && commands.back().window == 0x5150 && commands.back().pid == 5150 &&
+                       commands.back().kind == modules::NowPlayingCommandKind::playPause && !playing() && title() == "Coverage Song" &&
+                       recorded(events + 1, "playPause", "netease"), "Play/pause is posted to the player window, shown paused and logged with source netease");
+        desktop("\xe7\xbd\x91\xe6\x98\x93\xe4\xba\x91\xe9\x9f\xb3\xe4\xb9\x90");
+        step.check(title() == "Coverage Song" && !playing() && origin() == modules::NowPlayingSessionOrigin::playerWindow,
+                   "The idle caption keeps the paused track; it keeps the tie with the paused fixture");
+        desktop("Coverage Song 2 - Coverage Artist", 0x5151);
+        step.check(title() == "Coverage Song 2" && playing(), "A new title in another main window is the next track, playing");
+        step.check(preview_->perform(NowPlayingAction::next, t), "Next is enabled for the window-title player");
+        settle(step);
+        commands = coverageWindows_->commands();
+        step.check(commands.size() == sent + 2 && commands.back().window == 0x5151 && commands.back().kind == modules::NowPlayingCommandKind::next &&
+                       recorded(events + 2, "next", "netease"), "Next is posted to the current main window and logged with source netease");
+        coverageWindows_->set({});
+        coverageWindows_->notify();
+        settle(step);
+        present(.5);
+        step.check(title() == "EndfieldHUD Fixture 1" && origin() == modules::NowPlayingSessionOrigin::mediaSession && !playing() &&
+                       service_->snapshot().media.sessions.size() == 1, "When the player exits the fixture media session is presented again");
     }
     void idleCoverage(app::ModuleCoverage& step) {
         settle(step); // e.g. the withdrawn audio vote's publication
@@ -646,6 +722,7 @@ private:
     std::shared_ptr<Wake> wake_;
     std::shared_ptr<std::atomic<double>> fixtureClock_;
     std::shared_ptr<std::uint64_t> starts_ = std::make_shared<std::uint64_t>(0);
+    std::shared_ptr<gpu::NowPlayingWindowFixture> coverageWindows_; // hidden coverage only
     // Declaration order is destruction order in reverse: the preview first.
     std::unique_ptr<gpu::NativeNowPlayingService> service_;
     std::shared_ptr<gpu::NowPlayingWeb> web_;
