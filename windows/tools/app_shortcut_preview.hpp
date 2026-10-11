@@ -76,6 +76,11 @@ public:
     // editor's host-edit path with the typing normalization (UIA SetValue).
     bool acceptsInput()const noexcept;
     std::optional<core::Rect>clientRect(core::Rect canvas)const;
+    // HUDProjectedTextView.projectedCursor: true while the name field is open
+    // and the logical client point falls inside its projected rect (the test
+    // the pointer routing uses to reach the editor). No allocation, state
+    // change, OS or clock call (ModuleOwner::cursorAt).
+    bool textCursorAt(core::Point logicalClient)const noexcept;
     std::optional<std::string>fieldText()const;
     bool setFieldText(std::string_view,double);
     bool perform(const modules::ShortcutAction&,double);

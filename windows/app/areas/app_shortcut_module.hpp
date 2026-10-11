@@ -16,11 +16,17 @@
 // application starts only after the close finished (overlayConcealed); a
 // failure is shown in Add App, which reopens. Sleep, session end or quit
 // cancel a launch that has not started. No timer, thread or poll.
+// Windows-only: after its load and each committed save/remove the same
+// transaction owner reconciles the Mac import's Migration/relink.json rows of
+// app shortcuts (a relinked shortcut resolves its row, a removed one
+// dismisses it; modules/app_shortcut_relink.hpp).
 //
-// Production: real Windows inspection/launch (native/app_shortcut_service).
-// Hidden coverage: synthetic applications under the area's coverage root and a
-// counting launcher; the real dialog, the real lifecycle and installed
-// applications are never used.
+// Production: real Windows inspection/launch (native/app_shortcut_service),
+// .exe/.lnk icon resources and packaged logos (native/app_shortcut_icons).
+// Hidden coverage: synthetic applications under the area's coverage root, a
+// synthetic packaged logo fixture, the import's own ledger rows for the seeded
+// archive and a counting launcher; the real dialog, the real lifecycle and
+// installed applications are never used.
 #include "app/application.hpp"
 #include <memory>
 

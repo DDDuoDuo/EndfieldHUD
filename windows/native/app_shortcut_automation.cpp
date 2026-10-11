@@ -36,6 +36,7 @@ VARIANT flag(bool b) { VARIANT v; VariantInit(&v); v.vt = VT_BOOL; v.boolVal = b
 
 struct NativeAppShortcutAutomation::State {
     AppShortcutAutomationHost host; std::vector<ComPtr<AppShortcutAutomationElement>> order; AppShortcutAutomationStats statistics;
+    bool focused() const { return !host.focused || host.focused(); }
     std::optional<core::Rect> screen(core::Rect r) const {
         if (!host.toScreen) return std::nullopt;
         const auto out = host.toScreen(r);
@@ -90,7 +91,8 @@ public:
         case UIA_IsEnabledPropertyId: *out = flag(true); break;
         // The name field is the first responder while it exists; projected
         // buttons are not tab stops.
-        case UIA_IsKeyboardFocusablePropertyId: case UIA_HasKeyboardFocusPropertyId: *out = flag(edit()); break;
+        case UIA_IsKeyboardFocusablePropertyId: *out = flag(edit()); break;
+        case UIA_HasKeyboardFocusPropertyId: { const auto s = state.lock(); *out = flag(edit() && s && s->focused()); break; }
         case UIA_IsOffscreenPropertyId: { const auto s = state.lock(); *out = flag(!s || !s->screen(control.rect)); break; }
         case UIA_FrameworkIdPropertyId: *out = text("EndfieldHUD"); break;
         case UIA_ValueValuePropertyId: if (edit()) *out = text(control.value); break;
@@ -214,7 +216,13 @@ bool NativeAppShortcutAutomation::refresh() {
             for (const auto& n : next) if (n.Get() == old.Get()) { taken = true; break; }
             if (!taken) { e = old; break; }
         }
-        if (!e) { e.Attach(new AppShortcutAutomationElement(state_, std::move(c))); ++s.statistics.created; changed = true; }
+        if (!e) {
+            e.Attach(new AppShortcutAutomationElement(state_, std::move(c))); ++s.statistics.created; changed = true;
+            if (e->edit() && s.focused()) {
+                ++s.statistics.focusMoves;
+                if (listening) UiaRaiseAutomationEvent(static_cast<IRawElementProviderSimple*>(e.Get()), UIA_AutomationFocusChangedEventId);
+            }
+        }
         else {
             if (listening) {
                 auto* simple = static_cast<IRawElementProviderSimple*>(e.Get());

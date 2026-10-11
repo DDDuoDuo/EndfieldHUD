@@ -93,7 +93,7 @@ void run() {
         {"apps:a1:launch", "Open Alpha", "Application shortcuts", {12, 44, 306, 46}},
         {"apps:name:field", "Shortcut name", "Return applies the name. Save shortcut stores your changes.", {78, 77, 304, 27}, n::AppShortcutAutomationKind::edit, "Alpha"}};
     std::vector<std::string> invoked, texts;
-    bool projects = true, accept = true;
+    bool projects = true, accept = true, focused = true;
     {
         n::AppShortcutAutomationHost host;
         host.root = root;
@@ -102,6 +102,7 @@ void run() {
         host.toScreen = [&](c::Rect r) -> std::optional<c::Rect> { if (!projects) return std::nullopt; return c::Rect{100 + r.x * 2, 50 + r.y * 2, r.width * 2, r.height * 2}; };
         host.invoke = [&](std::string_view id) { invoked.emplace_back(id); return accept; };
         host.setText = [&](std::string_view id, std::string_view value) { texts.push_back(std::string(id) + "=" + std::string(value)); return accept; };
+        host.focused = [&] { return focused; };
         n::NativeAppShortcutAutomation tree(std::move(host));
         root->tree = &tree;
         check(root->count() == 2, "The tree holds its group root");
@@ -112,6 +113,13 @@ void run() {
               !boolean(choose.Get(), UIA_IsKeyboardFocusablePropertyId) && boolean(choose.Get(), UIA_IsEnabledPropertyId), "A button peer carries the action's label and the canvas status");
         check(integer(field.Get(), UIA_ControlTypePropertyId) == UIA_EditControlTypeId && boolean(field.Get(), UIA_IsKeyboardFocusablePropertyId) &&
               property(field.Get(), UIA_ValueValuePropertyId) == L"Alpha", "The name field is an edit peer with its text");
+        // beginEditing -> makeFirstResponder: the field that appeared while
+        // the HUD is focused holds keyboard focus; buttons never do.
+        check(boolean(field.Get(), UIA_HasKeyboardFocusPropertyId) && !boolean(choose.Get(), UIA_HasKeyboardFocusPropertyId) && tree.stats().focusMoves == 1,
+              "The name field that appears in the focused HUD takes keyboard focus");
+        focused = false;
+        check(!boolean(field.Get(), UIA_HasKeyboardFocusPropertyId) && boolean(field.Get(), UIA_IsKeyboardFocusablePropertyId), "Without HUD focus the field keeps no keyboard focus");
+        focused = true;
         UiaRect bounds{};
         check(SUCCEEDED(open->get_BoundingRectangle(&bounds)) && bounds.left == 124 && bounds.top == 138 && bounds.width == 612 && bounds.height == 92 &&
               !boolean(open.Get(), UIA_IsOffscreenPropertyId), "Bounds follow the projected canvas rect");
@@ -139,11 +147,21 @@ void run() {
               "A renamed peer keeps its identity");
         HRESULT gone{};auto stale = raw(field.Get(), UIA_NamePropertyId, &gone);VariantClear(&stale);
         check(gone == UIA_E_ELEMENTNOTAVAILABLE && value->SetValue(L"x") == UIA_E_ELEMENTNOTAVAILABLE, "A vanished peer is disconnected");
+        // A field opened while the HUD is not focused announces no focus move;
+        // the next one in the focused HUD does.
+        const n::AppShortcutAutomationControl reopened{"apps:name:field", "Shortcut name", "", {78, 77, 304, 27}, n::AppShortcutAutomationKind::edit, "Beta"};
+        focused = false;controls.push_back(reopened);
+        check(tree.refresh() && tree.size() == 3 && tree.stats().focusMoves == 1, "A field opened without HUD focus moves no focus");
+        controls.pop_back();check(tree.refresh() && tree.size() == 2, "The field closes");
+        focused = true;controls.push_back(reopened);
+        check(tree.refresh() && tree.stats().focusMoves == 2 && boolean(child(tree, 2).Get(), UIA_HasKeyboardFocusPropertyId), "A field reopened in the focused HUD takes focus again");
+        check(!tree.refresh() && tree.stats().focusMoves == 2, "An unchanged field moves focus once");
+        controls.pop_back();check(tree.refresh() && tree.size() == 2, "The reopened field closes");
         projects = false;
         check(boolean(open.Get(), UIA_IsOffscreenPropertyId) && SUCCEEDED(open->get_BoundingRectangle(&bounds)) && bounds.width == 0, "An unprojected canvas hides its peers");
         projects = true;
         tree.disconnect();
-        check(tree.size() == 0 && invoke->Invoke() == UIA_E_ELEMENTNOTAVAILABLE && tree.stats().disconnected == 3 && tree.stats().invokes == 2 && tree.stats().values == 1,
+        check(tree.size() == 0 && invoke->Invoke() == UIA_E_ELEMENTNOTAVAILABLE && tree.stats().disconnected == 5 && tree.stats().invokes == 2 && tree.stats().values == 1,
               "Disconnect releases every peer");
         root->tree = nullptr;
     }

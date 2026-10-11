@@ -21,13 +21,21 @@ struct AppShortcutTasks::Impl:std::enable_shared_from_this<Impl> {
     struct Worker {
         ShortcutRepository repository;ShortcutTextRules rules;
         native::NativeAppShortcutService service;ShortcutFile file;bool loaded{};
-        Worker(std::filesystem::path p,ShortcutTextRules r,native::AppShortcutOS os)
-            :repository(std::move(p),r),rules(std::move(r)),service(std::move(os)){}
+        std::filesystem::path relinkRoot;bool relinkListed{true};
+        Worker(std::filesystem::path p,ShortcutTextRules r,native::AppShortcutOS os,std::filesystem::path relink)
+            :repository(std::move(p),r),rules(std::move(r)),service(std::move(os)),relinkRoot(std::move(relink)){}
+        // Record first, ledger second (MacRelinkLedger): the committed file
+        // stands whatever happens to the ledger; the next load reconciles.
+        void relinks(ShortcutTaskResult&r)noexcept{
+            if(relinkRoot.empty()||!relinkListed)return;
+            try{const auto sync=syncShortcutRelinks(relinkRoot,file);relinkListed=sync.open>0;r.relink=sync;}
+            catch(...){r.relinkFailed=true;}
+        }
         void perform(const ShortcutTask&t,ShortcutTaskResult&r) {
             [[maybe_unused]] Apartment apartment;
             if(!loaded){file=repository.load();loaded=true;}
             switch(t.kind){
-            case ShortcutTaskKind::load:r.file=file;break;
+            case ShortcutTaskKind::load:r.file=file;relinks(r);break;
             case ShortcutTaskKind::inspect:r.candidate=service.inspect(*t.selection);break;
             case ShortcutTaskKind::edit:
                 // Imported Mac records remain editable on Windows. Saving their
@@ -41,11 +49,11 @@ struct AppShortcutTasks::Impl:std::enable_shared_from_this<Impl> {
                 saveShortcutDraft(next,selected,current,t.name,t.icon,t.editingID,t.newID,t.createdAt,rules,
                     [](const auto&a,const auto&b){return a["referencePlatform"]==ShortcutJson("windows")?
                         native::NativeAppShortcutService::sameTarget(a,b):a==b;});
-                repository.save(next);file=std::move(next);r.file=file;break;
+                repository.save(next);file=std::move(next);r.file=file;relinks(r);break;
             }
             case ShortcutTaskKind::remove:{
                 auto next=file;if(!removeShortcut(next,t.record->id))throw ShortcutError(ShortcutErrorCode::missing);
-                repository.save(next);file=std::move(next);r.file=file;break;
+                repository.save(next);file=std::move(next);r.file=file;relinks(r);break;
             }
             case ShortcutTaskKind::launch:r.launched=service.launch(*t.record,t.launchOwner);break;
             }
@@ -55,8 +63,8 @@ struct AppShortcutTasks::Impl:std::enable_shared_from_this<Impl> {
     app::UtilityExecutor::Route route;Completion completed;
     std::optional<ShortcutTask> pending;std::uint64_t running{},lastToken{};
     ShortcutTaskKind runningKind{};bool cancelled{};
-    Impl(app::UtilityExecutor&q,std::filesystem::path p,ShortcutTextRules r,native::AppShortcutOS os,Completion c)
-        :queue(q),worker(std::make_shared<Worker>(std::move(p),std::move(r),std::move(os))),route(q.makeRoute()),completed(std::move(c)){}
+    Impl(app::UtilityExecutor&q,std::filesystem::path p,ShortcutTextRules r,native::AppShortcutOS os,Completion c,std::filesystem::path relink)
+        :queue(q),worker(std::make_shared<Worker>(std::move(p),std::move(r),std::move(os),std::move(relink))),route(q.makeRoute()),completed(std::move(c)){}
     void pump(){
         if(!pending||running)return;
         auto task=std::make_shared<const ShortcutTask>(*pending);
@@ -71,9 +79,10 @@ struct AppShortcutTasks::Impl:std::enable_shared_from_this<Impl> {
         running=task->token;runningKind=task->kind;pending.reset();
     }
 };
-AppShortcutTasks::AppShortcutTasks(app::UtilityExecutor&q,std::filesystem::path p,ShortcutTextRules r,native::AppShortcutOS os,Completion c){
+AppShortcutTasks::AppShortcutTasks(app::UtilityExecutor&q,std::filesystem::path p,ShortcutTextRules r,native::AppShortcutOS os,Completion c,std::filesystem::path relink){
     if(!c)throw std::invalid_argument("Application tasks require an owner completion");
-    impl_=std::make_shared<Impl>(q,std::move(p),std::move(r),std::move(os),std::move(c));
+    if(!relink.empty()&&(!relink.is_absolute()||relink.lexically_normal()!=relink))throw std::invalid_argument("The relink ledger needs the explicit absolute app root");
+    impl_=std::make_shared<Impl>(q,std::move(p),std::move(r),std::move(os),std::move(c),std::move(relink));
 }
 AppShortcutTasks::~AppShortcutTasks(){if(impl_)impl_->queue.invalidate(impl_->route,false);}
 bool AppShortcutTasks::submit(ShortcutTask t){

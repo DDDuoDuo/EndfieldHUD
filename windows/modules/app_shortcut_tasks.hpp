@@ -1,5 +1,6 @@
 #pragma once
 #include "app/utility_executor.hpp"
+#include "modules/app_shortcut_relink.hpp"
 #include "native/app_shortcut_service.hpp"
 
 namespace endfield::modules {
@@ -20,17 +21,25 @@ struct ShortcutTaskResult {
     std::optional<native::AppShortcutLaunchReceipt> launched;
     std::optional<std::string> error;
     std::optional<ShortcutErrorCode> code; // set when the failure is a ShortcutError (localized by the owner)
+    // The Mac import ledger after this load/save/remove (record first, then
+    // ledger): none when no ledger work ran. A ledger failure never fails the
+    // committed file; the next load reconciles again.
+    std::optional<ShortcutRelinkSync> relink;
+    bool relinkFailed{};
 };
 // One borrowed FIFO owns repository and explicit OS transactions. submit keeps
 // at most one immutable request if that FIFO is full; retry only on a completion
 // event. Hiding may cancel reads/inspection, never an accepted write or launch.
 // The caller dispatches launch only after the HUD closes. Destruction suppresses
 // callbacks but lets already accepted work finish. Flush via the shared owner.
+// With a relink root (the app root holding Migration/relink.json) the same
+// worker reconciles the import ledger after the load and after each committed
+// save/remove, until no app shortcut row is listed (an import restarts the app).
 class AppShortcutTasks final {
 public:
     using Completion=std::function<void(ShortcutTaskResult)>;
     AppShortcutTasks(app::UtilityExecutor&,std::filesystem::path,ShortcutTextRules,
-                    native::AppShortcutOS,Completion);
+                    native::AppShortcutOS,Completion,std::filesystem::path relinkRoot={});
     ~AppShortcutTasks();
     AppShortcutTasks(const AppShortcutTasks&)=delete;
     AppShortcutTasks&operator=(const AppShortcutTasks&)=delete;

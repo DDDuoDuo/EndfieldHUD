@@ -41,15 +41,20 @@ struct AppShortcutAutomationControl {
 //              ClientToScreen); none hides it;
 //  invoke()    the click's action (AppShortcutCanvas.perform(actionID:));
 //  setText()   replaces the open name field's text through its editor (the
-//              same normalization as typing); false when it cannot.
+//              same normalization as typing); false when it cannot;
+//  focused()   whether the HUD holds keyboard focus (null: always), so the
+//              open name field - the first responder - has keyboard focus.
 struct AppShortcutAutomationHost {
     IRawElementProviderFragmentRoot*root{}; // the owner's group under the HUD root (borrowed, AddRef'd while held)
     std::function<std::vector<AppShortcutAutomationControl>()>controls;
     std::function<std::optional<core::Rect>(core::Rect canvas)>toScreen;
     std::function<bool(std::string_view id)>invoke;
     std::function<bool(std::string_view id,std::string_view text)>setText;
+    std::function<bool()>focused;
 };
-struct AppShortcutAutomationStats {std::uint64_t refreshes{},structureChanges{},created{},disconnected{},invokes{},values{};};
+// focusMoves counts name fields that appeared while focused (each raised
+// UIA_AutomationFocusChangedEventId when clients were listening).
+struct AppShortcutAutomationStats {std::uint64_t refreshes{},structureChanges{},created{},disconnected{},invokes{},values{},focusMoves{};};
 // The HUD window's root provider owns the tree: it lists child(i) among the
 // owner's group, routes ElementProviderFromPoint to fromPoint and raises
 // StructureChanged when refresh() returns true. Elements keep their COM
@@ -57,7 +62,10 @@ struct AppShortcutAutomationStats {std::uint64_t refreshes{},structureChanges{},
 // UIA_E_ELEMENTNOTAVAILABLE. Calls arrive on the UI thread
 // (ProviderOptions_UseComThreading). Refresh on content events only, never per
 // frame; it allocates only while rebuilding the list. Projected buttons are
-// not tab stops (the HUD routes its own keys, as on the Mac).
+// not tab stops (the HUD routes its own keys, as on the Mac). A name field
+// that appears while the HUD is focused takes keyboard focus
+// (beginEditing -> makeFirstResponder): its own fragment raises the focus
+// change, as the HUD root never raises one for an owner.
 class NativeAppShortcutAutomation final {
 public:
     explicit NativeAppShortcutAutomation(AppShortcutAutomationHost);

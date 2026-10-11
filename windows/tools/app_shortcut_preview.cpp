@@ -154,6 +154,10 @@ std::optional<core::Rect>AppShortcutPreview::clientRect(core::Rect r)const{
     }
     const double scale=i.metrics.scale;return core::Rect{x0/scale,y0/scale,(x1-x0)/scale,(y1-y0)/scale};
 }
+bool AppShortcutPreview::textCursorAt(core::Point p)const noexcept{
+    const auto&i=*impl_;if(!i.field||!i.input||i.panel()||!std::isfinite(p.x)||!std::isfinite(p.y))return false;
+    const auto q=i.local(p);return q&&m::shortcutNameRect.contains(*q);
+}
 std::optional<std::string>AppShortcutPreview::fieldText()const{const auto current=impl_->field;if(!current)return std::nullopt;return m::archiveUTF8(current->document.text());}
 bool AppShortcutPreview::setFieldText(std::string_view text,double t){
     auto i=impl_;i->clock(t);auto current=i->field;if(!i->input||!current||!current->editor||current->document.composition()||!ehud::data::Json::validUtf8(text))return false;

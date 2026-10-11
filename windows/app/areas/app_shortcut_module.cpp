@@ -4,6 +4,8 @@
 #include "app/utility_executor.hpp"
 #include "core/data/file_io.hpp"
 #include "core/localization.hpp"
+#include "core/migration/mac_import_native.hpp"
+#include "core/migration/mac_import_relink.hpp"
 #include "modules/app_shortcut_navigation.hpp"
 #include "modules/app_shortcut_presentation.hpp"
 #include "modules/app_shortcut_tasks.hpp"
@@ -39,6 +41,7 @@ namespace {
 namespace fs = std::filesystem;
 namespace m = modules;
 namespace g = native;
+namespace mig = ehud::migration;
 using app::ApplicationAreaMode;
 using Entries = std::span<const g::LayerCompositionEntry>;
 using J = m::ShortcutJson;
@@ -79,11 +82,6 @@ std::string lower(std::string value) { for (auto& c : value) if (c >= 'A' && c <
 std::string suffix(std::string_view path) { const auto dot = path.rfind('.'); return dot == path.npos ? std::string{} : lower(std::string(path.substr(dot))); }
 // A Windows application file the Add App canvas takes (Mac: one .app URL).
 bool applicationFile(std::string_view path) { const auto kind = suffix(path); return kind == ".exe" || kind == ".lnk"; }
-// Asks the shared dialog for its applications mode once the host's request
-// declares it (a dependent check, so this compiles before and after).
-template <class Request> void useApplicationsMode(Request& request) {
-    if constexpr (requires(Request& r) { r.applications = true; }) request.applications = true;
-}
 // A chosen application: an .exe/.lnk file, or a packaged application named
 // "shell:AppsFolder\<AUMID>" (the shared dialog's applications mode).
 std::optional<g::AppShortcutSelection> chosenApplication(std::string_view path) {
@@ -182,7 +180,7 @@ private:
 // installed application. Paths are owned synthetic names under the area's
 // coverage root; a stem starting with "Missing" is an unavailable target.
 struct SyntheticApplications {
-    std::atomic<unsigned> inspected{}, launched{}, icons{};
+    std::atomic<unsigned> inspected{}, launched{}, icons{}, logos{};
     std::atomic<bool> failLaunch{};
 };
 // The worker keeps its own reference: accepted work may outlive the owner.
@@ -211,9 +209,17 @@ g::AppShortcutOS syntheticOS(std::shared_ptr<SyntheticApplications> self) {
                 }};
 }
 
-// Hidden coverage: a deterministic opaque square per synthetic target.
-g::AppShortcutIconExtractor syntheticIcons(std::shared_ptr<SyntheticApplications> self) {
-    return [self](const g::AppShortcutSelection& s, unsigned size) -> std::optional<g::AppShortcutIconPixels> {
+// Hidden coverage: a deterministic opaque square per synthetic file target;
+// a synthetic packaged application's logo is the declared fixture
+// (tools/app_shortcut_logo_fixture.py) through the production decoder.
+g::AppShortcutIconExtractor syntheticIcons(std::shared_ptr<SyntheticApplications> self, std::vector<std::uint8_t> logo) {
+    auto packaged = g::windowsAppShortcutIconExtractor([self, logo = std::move(logo)](std::string_view id, unsigned) -> std::optional<std::vector<std::uint8_t>> {
+        ++self->logos;
+        if (!id.starts_with("Synthetic.") || logo.empty()) return std::nullopt; // never an installed application
+        return logo;
+    });
+    return [self, packaged = std::move(packaged)](const g::AppShortcutSelection& s, unsigned size) -> std::optional<g::AppShortcutIconPixels> {
+        if (s.kind == g::AppShortcutSelectionKind::packagedApp) return packaged(s, size);
         ++self->icons;
         std::uint32_t hash = 2166136261u;for (const unsigned char c : s.value) hash = (hash ^ c) * 16777619u;
         g::AppShortcutIconPixels out;out.width = out.height = size;out.straightRGBA.resize(std::size_t(size) * size * 4);
@@ -250,11 +256,17 @@ tools::ShortcutKeyModifiers keyboardModifiers(const app::KeyEvent& e) {
 
 constexpr std::string_view nameFieldID = "apps:name:field";
 
+// Hidden coverage: the seeded Mac archive, the import's ledger rows for it and
+// the synthetic packaged logo (a coverage restart of the store writes the
+// first two back; see Driver::restartStore).
+struct CoverageSeed { std::string archive, ledger; std::vector<std::uint8_t> logo; };
+
 class AppShortcutArea final : public app::ModuleOwner, public app::AppShortcutNavigation {
 public:
-    AppShortcutArea(const app::ApplicationModuleContext& c, fs::path assets, fs::path directory, std::shared_ptr<SyntheticApplications> synthetic)
+    AppShortcutArea(const app::ApplicationModuleContext& c, fs::path assets, fs::path directory, fs::path relinkRoot, std::shared_ptr<SyntheticApplications> synthetic, CoverageSeed seed)
         : host_(*c.host), window_(static_cast<HWND>(c.window)), utility_(*c.utility), mode_(c.mode), directory_(std::move(directory)),
-          coverageRoot_(c.coverageRoot), synthetic_(std::move(synthetic)), assets_(std::move(assets)), alive_(std::make_shared<bool>(true)) {
+          relinkRoot_(std::move(relinkRoot)), coverageRoot_(c.coverageRoot), synthetic_(std::move(synthetic)), seed_(std::move(seed)), assets_(std::move(assets)),
+          alive_(std::make_shared<bool>(true)) {
         need(window_ && IsWindow(window_), "the HUD window is required");
         textMessage_ = host_.registerMessage();
         const auto& a = host_.appearance();
@@ -265,14 +277,13 @@ public:
         if (synthetic_) {syntheticClipboard_ = std::make_shared<SyntheticClipboard>();clipboard_ = syntheticClipboard_;}
         else clipboard_ = g::systemNotesClipboard();
         options.clipboard = clipboard_;
-        extractor_ = synthetic_ ? syntheticIcons(synthetic_) : g::windowsAppShortcutIconExtractor();
+        extractor_ = synthetic_ ? syntheticIcons(synthetic_, seed_.logo) : g::windowsAppShortcutIconExtractor();
         iconRoute_ = utility_.makeRoute();
         auto* manager = static_cast<ITfThreadMgr*>(c.textManager);
         preview_ = std::make_unique<tools::AppShortcutPreview>(window_, c.rasterizer, assets_, manager,
             manager ? static_cast<TfClientId>(c.textClient) : TF_CLIENTID_NULL, std::move(options));
         if (c.metrics.pixelWidth && c.metrics.pixelHeight) preview_->resize(c.metrics);
-        tasks_ = std::make_unique<m::AppShortcutTasks>(utility_, directory_, g::nativeShortcutTextRules(),
-            synthetic_ ? syntheticOS(synthetic_) : g::windowsAppShortcutOS(), [this](m::ShortcutTaskResult r) { guarded("completion", [&] { completed(std::move(r)); }); });
+        tasks_ = makeTasks();
         host_.publish<app::AppShortcutNavigation>(app::appShortcutNavigationService, *this);
         // AppShortcutStore(directory:) at startup: the one initial load.
         loadPending_ = true;pump();
@@ -315,8 +326,16 @@ public:
     void update(const app::ModuleFrame& f) override {
         preview_->update(f.center, f.chrome, f.presentation, f.opacity, f.time);pump();
         if (preview_->state().revision() != iconStateRevision_) refreshIcons();
+        // The name field opens (beginEditing -> makeFirstResponder) or closes
+        // inside a frame: UI Automation re-lists on the next wake.
+        if (const bool field = preview_->editingName(); field != automationField_) {automationField_ = field;automationWake_ = true;}
     }
     bool requiresFrames(double t) const override { return preview_->requiresFrames(t); }
+    // One immediate wake on the shared timer after a frame changed the
+    // accessible controls (never a poll): deadline() reports changed artwork,
+    // which the host answers by re-listing UI Automation and presenting.
+    std::optional<double> nextWakeTime(double now) const override { return automationWake_ ? std::optional(now) : std::nullopt; }
+    bool deadline(double) override { return std::exchange(automationWake_, false); }
     void upload(g::Renderer& r) override { preview_->upload(r); }
     Entries entries(core::Module module) override { return module == core::Module::addApp ? preview_->entries() : Entries{}; }
     void collected(g::Renderer& r) override { preview_->collected(r); }
@@ -328,7 +347,7 @@ public:
     bool key(const app::KeyEvent& e, double t) override { return key(e, keyboardModifiers(e), t); }
     bool filterKey(const app::NativeMessage& m) override { return preview_->filterKey(m); }
     bool message(const app::NativeMessage& m, double t) override { return preview_->message(m, t); }
-    void focus(bool value, double t) override { preview_->focus(value, t); }
+    void focus(bool value, double t) override { focused_ = value;preview_->focus(value, t); }
     void cancelInteraction(double t) override { dropHovering_ = false;preview_->cancelInteraction(t); }
     bool finishEditing(double t) override { return preview_->finishEditing(true, t); }
     bool flush(double) override {
@@ -353,10 +372,8 @@ public:
     // beginExternalDrag / endExternalDrag): while exactly one application file
     // is dragged over the canvas it shows its drop target and locks input; a
     // leave, cancel or drop (point none) ends it. True when a drop there would
-    // be taken. This is the signature of the host's drag-over route
-    // (ModuleOwner::dropHover, requested from the host); until the host
-    // declares it, hidden coverage drives it directly.
-    bool dropHover(std::span<const std::string> paths, std::optional<core::Point> point, double t) {
+    // be taken (the host then offers the copy effect).
+    bool dropHover(std::span<const std::string> paths, std::optional<core::Point> point, double t) override {
         const bool accepts = point && paths.size() == 1 && applicationFile(paths.front()) && importable() && preview_->covers(*point);
         if (accepts != dropHovering_) {
             preview_->setExternalDrag(accepts, t);
@@ -364,6 +381,11 @@ public:
             host_.requestFrame();
         }
         return dropHovering_;
+    }
+    // HUDProjectedTextView.projectedCursor: the I-beam over the open name
+    // field's projected rect (the pointer routing's own test), nothing else.
+    std::optional<app::ModuleCursor> cursorAt(core::Point p) const override {
+        return overlayVisible_ && preview_->textCursorAt(p) ? std::optional(app::ModuleCursor::text) : std::nullopt;
     }
     // HUDAppShortcutInteraction.layoutAccessibility: one peer per canvas
     // action, and the open name field (created on the first client request).
@@ -387,7 +409,9 @@ public:
     bool hostEvent(const app::HostEvent& e, double t) override {
         using K = app::HostEvent::Kind;
         switch (e.kind) {
-        case K::utilityCompleted: tasks_->queueCapacityAvailable();pump();scheduleIcon();return false;
+        case K::utilityCompleted:
+            tasks_->queueCapacityAvailable();pump();scheduleIcon();
+            return std::exchange(contentChanged_, false); // completions ran in the drain: re-list UI Automation
         case K::overlayConcealed: concealed(t);return false;
         case K::suspended: case K::quitting: cancelPendingLaunch(t);return false; // forceCloseSystemOverlay / requestQuit
         default: return false;
@@ -430,6 +454,13 @@ private:
         }
     }
     double now() const { return host_.now(); }
+    // The one transaction owner over the repository, the inspector and (with
+    // a relink root) the Mac import ledger.
+    std::unique_ptr<m::AppShortcutTasks> makeTasks() {
+        return std::make_unique<m::AppShortcutTasks>(utility_, directory_, g::nativeShortcutTextRules(),
+            synthetic_ ? syntheticOS(synthetic_) : g::windowsAppShortcutOS(), [this](m::ShortcutTaskResult r) { guarded("completion", [&] { completed(std::move(r)); }); },
+            relinkRoot_);
+    }
 
     bool submit(m::ShortcutTask task, Purpose purpose, std::uint64_t generation = 0) {
         task.token = ++token_;const auto kind = task.kind;
@@ -488,17 +519,17 @@ private:
 
     // HUDAppShortcutInteraction.chooseApplication through the host's one
     // shared dialog (it owns the focus-loss exemption and the cancellation on
-    // a module switch or close): one existing file, no multiple selection,
-    // listed through the application filter (NSOpenPanel allowedContentTypes
-    // [.applicationBundle]); links are not dereferenced, so a chosen .lnk is
-    // saved as the shell link itself. Hidden coverage resolves it synthetically.
+    // a module switch or close) in its applications mode (NSOpenPanel
+    // allowedContentTypes [.applicationBundle] starting in /Applications):
+    // one application, starting in AppsFolder - an existing .exe/.lnk through
+    // the application filter, or a packaged application returned as
+    // "shell:AppsFolder\<AUMID>". Links are not dereferenced, so a chosen .lnk
+    // is saved as the shell link itself. Hidden coverage resolves it
+    // synthetically.
     static app::ApplicationFileRequest chooserRequest(core::Language l) {
         app::ApplicationFileRequest request{text(l, "Choose an application", "选择应用"), text(l, "Choose", "选择"), text(l, "Choose", "选择")};
-        request.singleFile = true;request.filterName = text(l, "Applications", "应用程序");request.filterSpec = "*.exe;*.lnk";
-        // The shared dialog's applications mode (requested from the host:
-        // start in AppsFolder and return a packaged application as
-        // "shell:AppsFolder\\<AUMID>") is used as soon as the request has it.
-        useApplicationsMode(request);
+        request.singleFile = true;request.applications = true;
+        request.filterName = text(l, "Applications", "应用程序");request.filterSpec = "*.exe;*.lnk";
         return request;
     }
     void choose(std::uint64_t generation) {
@@ -517,6 +548,9 @@ private:
         chooser_.reset();const auto t = now();
         if (result.cancelled) preview_->completeRequest(generation, {}, t);
         else if (result.failed) preview_->completeRequest(generation, text(language_, "File picker is unavailable", "文件选择器不可用"), t);
+        // An empty choice is an item the dialog could not name as an
+        // application (AppsFolder entries that are not packaged apps).
+        else if (result.paths.empty()) preview_->completeRequest(generation, invalidApplicationText(language_), t);
         else if (result.paths.size() != 1) preview_->completeRequest(generation, text(language_, "Choose one application to customize.", "请选择一个应用进行设置。"), t);
         else if (const auto selection = chosenApplication(result.paths.front()); !selection) preview_->completeRequest(generation, invalidApplicationText(language_), t);
         else {
@@ -634,6 +668,8 @@ private:
             const bool used = preview_->setFieldText(value, now());
             host_.requestFrame();return used;
         };
+        // The open name field is the first responder while the HUD has focus.
+        view.focused = [this] { return focused_; };
         return view;
     }
     // AppShortcutCanvas.accessibleActions (without the name action while its
@@ -695,9 +731,13 @@ private:
         for (auto n = first; n < end; ++n) if (items[n].iconPreset == "original") want(items[n].id, items[n].locator);
         for (const auto& item : items) if (item.iconPreset == "original") want(item.id, item.locator);
         for (const auto& w : wanted_) icons_[w.id].used = ++iconUse_;
-        // Removed shortcuts and the least recently shown beyond the bound.
+        // Removed shortcuts, shortcuts without a Windows target (an imported
+        // record restored by a store restart) and the least recently shown
+        // beyond the bound.
         std::erase_if(icons_, [&](const auto& entry) {
-            const bool removed = !entry.first.empty() && std::none_of(items.begin(), items.end(), [&](const auto& v) { return v.id == entry.first; });
+            if (entry.first.empty()) return false;
+            const auto item = std::find_if(items.begin(), items.end(), [&](const auto& v) { return v.id == entry.first; });
+            const bool removed = item == items.end() || !g::appShortcutIconSelection(item->locator);
             if (removed && entry.second.revision) images_->retire(iconKey(entry.first));
             return removed;
         });
@@ -770,7 +810,15 @@ private:
         if (observer_) observer_();
     }
     void completed(m::ShortcutTaskResult r) {
+        // The import ledger was updated on the worker after the committed
+        // file (Windows-only bookkeeping; nothing is shown for it).
+        if (r.relink) {++relinkSyncs_;lastRelink_ = *r.relink;}
+        if (r.relinkFailed) {
+            ++relinkFailures_;
+            if (!coverageMode()) OutputDebugStringA("EndfieldHUD app shortcuts: the Mac import relink list could not be updated\n");
+        }
         if (!inflight_ || inflight_->token != r.token) {pump();return;}
+        contentChanged_ = true;
         const auto f = *std::exchange(inflight_, std::nullopt);const auto t = now();
         const auto failure = [&](bool osWork) { return errorText(language_, r.code, osWork, r.error.value_or(std::string{})); };
         switch (f.purpose) {
@@ -820,8 +868,9 @@ private:
     HWND window_{};
     app::UtilityExecutor& utility_;
     ApplicationAreaMode mode_{};
-    fs::path directory_, coverageRoot_;
+    fs::path directory_, relinkRoot_, coverageRoot_;
     std::shared_ptr<SyntheticApplications> synthetic_;
+    CoverageSeed seed_; // hidden coverage only
     g::NativeAppShortcutAssets assets_;
     std::shared_ptr<bool> alive_;
     // Outlives the preview whose raster options borrow it; shared with the
@@ -850,8 +899,11 @@ private:
     std::optional<std::uint64_t> chooser_;
     std::optional<std::string> launchError_; // OverlayController.appLaunchError
     std::uint64_t token_{}, listRevision_{};
-    bool loadPending_{}, loadFailed_{}, overlayVisible_{}, pumping_{}, dropHovering_{};
+    bool loadPending_{}, loadFailed_{}, overlayVisible_{}, pumping_{}, dropHovering_{}, focused_{};
+    bool contentChanged_{}, automationField_{}, automationWake_{}; // UI Automation re-listing (hostEvent / deadline)
     unsigned coverageChooserRequests_{}, coverageCloseRequests_{}, coverageReopenRequests_{}, coverageSelectRequests_{}, launchesOpened_{};
+    unsigned relinkSyncs_{}, relinkFailures_{};
+    m::ShortcutRelinkSync lastRelink_;
 };
 
 // One combined module cycle of hidden coverage on the + Add App canvas. Every
@@ -1028,6 +1080,41 @@ struct AppShortcutArea::Driver {
         a.setOverlayVisible(true, t);frames(.4);
         step.check(state().active() && !a.launch_, "+ Add App is interactive again after the handoff");
     }
+    // Migration/relink.json as the import card reads it, and the rows the
+    // factory seeded: [0] the imported shortcut, [1] a shortcut the user had
+    // already removed, [2] a Reader row with the same record id.
+    std::vector<mig::MacRelinkItem> seededRows() const {
+        std::vector<mig::MacRelinkItem> rows;
+        const auto document = J::parse(a.seed_.ledger, mig::MacRelinkLedger::maximumBytes);
+        for (const auto& row : document["items"].array()) rows.push_back(mig::decodeRelinkItem(row));
+        step.check(rows.size() == 3, "The seeded import ledger has its three rows");
+        return rows;
+    }
+    void checkLedger(std::optional<std::string> relinked) {
+        const auto rows = seededRows();
+        const mig::MacRelinkLedger ledger(a.relinkRoot_);
+        const auto* imported = ledger.find(rows[0].id);const auto* removed = ledger.find(rows[1].id);const auto* book = ledger.find(rows[2].id);
+        step.check(imported && removed && book && ledger.items().size() == rows.size(), "Migration/relink.json keeps the import's rows");
+        step.check(removed->state == mig::RelinkState::dismissed && !removed->windowsPath, "The row of a shortcut the user removed is dismissed");
+        step.check(*book == rows[2], "A Reader row with the same record id is left to the Reader");
+        step.check(relinked ? imported->state == mig::RelinkState::resolved && imported->windowsPath == relinked
+                            : imported->state == mig::RelinkState::unresolved && !imported->windowsPath,
+                   relinked ? "The relinked shortcut's row names its Windows application" : "The imported shortcut's row stays listed until it is relinked");
+    }
+    // A coverage restart of the store (as when EndfieldHUD starts again): the
+    // seeded Mac archive and the import's ledger return on disk and a new
+    // transaction owner loads and reconciles them.
+    void restartStore() {
+        step.check(!working() && !a.preview_->busy() && !a.inflight_, "The store restarts idle");
+        a.tasks_.reset();
+        const auto file = a.directory_ / "shortcuts.json", ledger = a.relinkRoot_ / "Migration" / "relink.json";
+        ehud::data::detail::replaceFile(file, ehud::data::detail::readFile(file, m::shortcutMaximumBytes), a.seed_.archive, m::shortcutMaximumBytes);
+        ehud::data::detail::replaceFile(ledger, ehud::data::detail::readFile(ledger, mig::MacRelinkLedger::maximumBytes), a.seed_.ledger, mig::MacRelinkLedger::maximumBytes);
+        const auto syncs = a.relinkSyncs_;const auto revision = a.listRevision_;
+        a.tasks_ = a.makeTasks();a.loadPending_ = true;a.pump();settle();frames(.1);
+        step.check(a.listRevision_ == revision + 1 && a.relinkSyncs_ == syncs + 1 && a.lastRelink_ == m::ShortcutRelinkSync{0, 1, 1} && !a.relinkFailures_,
+                   "The restarted store loads once and reconciles the ledger");
+    }
     // A plain close and the next opening (no launch): a new HUD session.
     void reopenSession() {
         a.closing(t);t += .5;a.concealed(t);
@@ -1042,7 +1129,7 @@ void AppShortcutArea::coverage(app::ModuleCoverage& step) {
     if (!step.module) {
         // Per-cycle area step: nothing pending, the disk equals the shown
         // list and the navigation keeps saved apps between Power and Add App.
-        step.check(!tasks_->busy() && !launch_ && !chooser_ && !loadFailed_ && !preview_->busy(), "App shortcuts are idle between cycles");
+        step.check(!tasks_->busy() && !launch_ && !chooser_ && !loadFailed_ && !preview_->busy() && !relinkFailures_, "App shortcuts are idle between cycles");
         step.check(d.disk() == preview_->state().file(), "The data root still holds the shown list");
         d.checkNavigation();
         // A navigation launch of the imported record shows its relink error
@@ -1061,6 +1148,10 @@ void AppShortcutArea::coverage(app::ModuleCoverage& step) {
     const auto seeded = state.file();
     step.check(state.active() && !state.editing() && !state.error() && !preview_->entries().empty() && seeded.items.size() == 1 && !seeded.items[0].native() &&
                d.disk() == seeded, "+ Add App shows the seeded imported Mac shortcut from the data root");
+    // The load reconciled the import ledger on the repository worker: the
+    // removed shortcut's row is dismissed, the imported one stays listed.
+    step.check(relinkSyncs_ >= 1 && lastRelink_ == m::ShortcutRelinkSync{0, 1, 1} && !relinkFailures_, "The load reconciles Migration/relink.json once");
+    d.checkLedger(std::nullopt);
     d.checkNavigation();
     const auto applications = coverageRoot_ / "Applications";
     const auto launched = synthetic_->launched.load();
@@ -1096,9 +1187,22 @@ void AppShortcutArea::coverage(app::ModuleCoverage& step) {
 
     // 3b. A packaged application from the chooser's applications mode
     //     ("shell:AppsFolder\<AUMID>") opens its draft; a document does not.
+    const auto logos = synthetic_->logos.load();
     d.choose(std::string("shell:AppsFolder\\Synthetic.Packaged_8wekyb3d8bbwe!App"));
     step.check(state.editing() && state.candidate()->name == "Packaged Synthetic" && state.candidate()->locator["windowsTarget"]["kind"] == J("packagedApp") &&
                state.candidate()->locator["windowsTarget"]["appUserModelID"] == J("Synthetic.Packaged_8wekyb3d8bbwe!App"), "A chosen packaged application opens its draft");
+    {
+        // Its App icon is the package's logo (the synthetic fixture through
+        // the production decoder): the opaque glyph's exact colour at the centre.
+        d.settle();
+        const auto key = applicationKey(state.candidate()->locator);
+        const auto found = icons_.find(std::string{});
+        const auto image = d.icon("", key) ? images_->acquire(iconKey({}), found->second.revision) : nullptr;
+        const auto center = image ? (std::size_t(image->height() / 2) * image->width() + image->width() / 2) * 4 : 0;
+        step.check(image && synthetic_->logos == logos + 1 && image->width() == g::appShortcutIconPixels &&
+                   image->premultipliedBGRA()[center] == 90 && image->premultipliedBGRA()[center + 1] == 160 && image->premultipliedBGRA()[center + 2] == 40 && image->premultipliedBGRA()[center + 3] == 255,
+                   "The packaged draft shows its own logo from the package");
+    }
     d.click(188, 288);d.frames(.32);
     step.check(!state.editing(), "Cancel discards the packaged draft");
     {
@@ -1108,8 +1212,13 @@ void AppShortcutArea::coverage(app::ModuleCoverage& step) {
         chosen(*chooser_, {false, false, {Driver::utf8(applications / "Readme.txt")}});d.frame();
         step.check(!state.editing() && state.error() == invalidApplicationText(language_), "A chosen document asks for a Windows application");
         const auto request = chooserRequest(core::Language::english);
-        step.check(request.singleFile && request.filterSpec == "*.exe;*.lnk" && request.filterName == "Applications" && request.title == "Choose an application",
-                   "The chooser asks for one application file through the application filter");
+        step.check(request.applications && request.singleFile && request.filterSpec == "*.exe;*.lnk" && request.filterName == "Applications" && request.title == "Choose an application",
+                   "The chooser asks the shared dialog for one application (AppsFolder) through the application filter");
+        // An item the dialog cannot name as an application (an empty choice).
+        d.click(329, 16);
+        step.check(chooser_.has_value(), "+ Choose app requests the chooser once more");
+        chosen(*chooser_, {false, false, {}});d.frame();
+        step.check(!state.editing() && state.error() == invalidApplicationText(language_), "A choice that names no application asks for a Windows application");
     }
 
     // 4. A launch that fails after the close reports in + Add App and reopens it.
@@ -1207,6 +1316,14 @@ void AppShortcutArea::coverage(app::ModuleCoverage& step) {
     d.settle();d.frames(.32);
     step.check(state.editing() && state.candidate()->name == "Delta Synthetic" && !state.error() && preview_->editingName() && preview_->fieldText() == "Delta Synthetic",
                "A pasted application opens its draft with the selected name field");
+    {
+        // HUDProjectedTextView.projectedCursor: the I-beam over the open field only.
+        const auto field = step.project({230, 90}, 400, 334), beside = step.project({230, 190}, 400, 334);
+        step.check(field && beside && cursorAt(*field) == std::optional(app::ModuleCursor::text) && !cursorAt(*beside), "The open name field answers the I-beam, the canvas beside it does not");
+        // The field opened inside a frame: one immediate wake re-lists UIA.
+        step.check(nextWakeTime(d.t) == std::optional(d.t) && deadline(d.t) && !nextWakeTime(d.t) && !deadline(d.t), "The field opening wakes the host once to re-list UI Automation");
+        step.check(!contentChanged_, "Completions were reported through the utility broadcast");
+    }
     const auto writes = syntheticClipboard_->writes;
     step.check(preview_->key({app::KeyKind::down, 'C'}, Driver::control(), d.t) && syntheticClipboard_->writes == writes + 1 && syntheticClipboard_->value &&
                syntheticClipboard_->value->text == u"Delta Synthetic", "Ctrl+C copies the selected name");
@@ -1219,12 +1336,22 @@ void AppShortcutArea::coverage(app::ModuleCoverage& step) {
     {
         const auto field = d.peer(nameFieldID);
         Microsoft::WRL::ComPtr<IValueProvider> value;
+        // The open field is the first responder: it holds keyboard focus
+        // exactly while the HUD does.
+        Microsoft::WRL::ComPtr<IRawElementProviderSimple> simple;VARIANT has;VariantInit(&has);
+        step.check(SUCCEEDED(field.As(&simple)) && SUCCEEDED(simple->GetPropertyValue(UIA_HasKeyboardFocusPropertyId, &has)) && has.vt == VT_BOOL &&
+                   (has.boolVal == VARIANT_TRUE) == focused_, "The name field holds keyboard focus exactly while the HUD does");
         step.check(SUCCEEDED(field.As(&value)) && d.property(field, UIA_NamePropertyId) == d.wide("Shortcut name", "快捷方式名称") &&
                    d.property(field, UIA_HelpTextPropertyId) == d.wide("Return applies the name. Save shortcut stores your changes.", "回车应用名称，点击保存快捷方式以保存修改。"),
                    "The name field is a named edit peer");
         step.check(SUCCEEDED(value->SetValue(L"Delta Speech")) && preview_->fieldText() == "Delta Speech", "UIA SetValue replaces the name through its editor");
     }
     step.check(preview_->key({app::KeyKind::down, VK_RETURN}, false, d.t) && !preview_->editingName() && state.draftName() == "Delta Speech", "Return applies the edited name");
+    {
+        const auto field = step.project({230, 90}, 400, 334);
+        d.frame();
+        step.check(field && !cursorAt(*field) && deadline(d.t) && !nextWakeTime(d.t), "A closed name field shows the source cursor and re-lists UIA once");
+    }
     (void)automationRefresh(automationRoot_);
     {
         const auto cancel = d.peer("apps:cancel");
@@ -1291,6 +1418,36 @@ void AppShortcutArea::coverage(app::ModuleCoverage& step) {
     step.check(!icons_.contains(alpha.id) && !icons_.contains(beta.id) && icons_.size() <= maximumIcons, "Removed shortcuts release their icon images");
     d.checkNavigation();
     step.check(!planner_.shortcutID(alphaAction), "A removed app's action launches nothing");
+
+    // 12. Relink the imported Mac shortcut (Edit, + Choose app, Save): it
+    //     keeps its identity, name, icon preset, date and position and gains
+    //     the Windows target; Migration/relink.json resolves its row with
+    //     that application (record first, ledger second, on the worker).
+    {
+        const auto& imported = seeded.items[0];
+        d.click(337, Driver::row(0));d.settle();d.frames(.32);
+        step.check(state.editing() && state.editingID() == imported.id && !state.candidate()->locator.contains("referencePlatform"), "Edit opens the imported shortcut with its Mac locator");
+        const auto relinkedPath = applications / "Relinked.exe";
+        d.choose(relinkedPath);
+        step.check(state.editing() && state.editingID() == imported.id && state.candidate()->locator["referencePlatform"] == J("windows") && state.draftName() == imported.name &&
+                   state.draftIcon() == imported.iconPreset, "A chosen Windows application relinks the imported draft and keeps its name and icon");
+        const auto syncs = relinkSyncs_;
+        d.commit(320, 288, "Save shortcut commits the relink");
+        const auto target = Driver::utf8(relinkedPath);
+        const auto& relinked = d.record(imported.id);
+        step.check(d.index(imported.id) == 0 && relinked.native() && relinked.name == imported.name && relinked.iconPreset == imported.iconPreset &&
+                   relinked.createdAt == imported.createdAt && relinked.locator["windowsTarget"]["path"] == J(target), "The relinked shortcut keeps its identity and names its Windows application");
+        step.check(relinkSyncs_ == syncs + 1 && lastRelink_ == m::ShortcutRelinkSync{1, 0, 0} && !relinkFailures_, "Saving the relink resolves its ledger row on the repository worker");
+        d.checkLedger(target);
+        d.settle();
+        step.check(d.icon(imported.id, applicationKey(relinked.locator)) && d.navigationIcon(imported.id), "The relinked shortcut shows its application's icon in the navigation");
+        // A store restart returns the seeded Mac archive and ledger.
+        d.restartStore();
+        step.check(state.file() == seeded && d.disk() == seeded && !icons_.contains(imported.id) && !d.navigationIcon(imported.id) && !state.editing(),
+                   "The restarted store shows the imported Mac shortcut again without an application icon");
+        d.checkLedger(std::nullopt);
+        d.checkNavigation();
+    }
     d.frames(.2);
 }
 
@@ -1303,7 +1460,8 @@ std::unique_ptr<app::ModuleOwner> appShortcutModule(const app::ApplicationModule
     const auto assets = context.resource ? context.resource("appShortcut.assets") : fs::path{};
     if (assets.empty()) return nullptr;
     std::shared_ptr<SyntheticApplications> synthetic;
-    fs::path directory;
+    fs::path directory, relinkRoot;
+    CoverageSeed seed;
     if (context.mode == ApplicationAreaMode::hiddenCoverage) {
         // The area's NEW coverage root, seeded with the Mac oracle's accepted
         // archive (one imported record with an opaque bookmark).
@@ -1316,14 +1474,36 @@ std::unique_ptr<app::ModuleOwner> appShortcutModule(const app::ApplicationModule
         J archive;
         for (const auto& record : oracle["records"].array()) if (record["name"] == J("mac") && record["result"] == J("accepted")) archive = record["archive"];
         need(archive.isObject(), "the oracle holds the accepted Mac archive");
-        directory = context.coverageRoot / "AppShortcuts";
-        ehud::data::detail::replaceFile(directory / "shortcuts.json", std::nullopt, archive.encode(m::shortcutMaximumBytes), m::shortcutMaximumBytes);
+        relinkRoot = context.coverageRoot.lexically_normal();
+        directory = relinkRoot / "AppShortcuts";
+        seed.archive = archive.encode(m::shortcutMaximumBytes);
+        ehud::data::detail::replaceFile(directory / "shortcuts.json", std::nullopt, seed.archive, m::shortcutMaximumBytes);
+        // The import's own ledger rows for that archive (validateStagedShortcuts,
+        // as the offline import writes Migration/relink.json), one row whose
+        // shortcut the user already removed and one Reader row with the same
+        // record id, which only the Reader decides.
+        auto rows = mig::validateStagedShortcuts(directory, g::nativeShortcutTextRules());
+        need(rows.size() == 1, "the import lists the seeded Mac shortcut for relinking");
+        rows[0].id = ehud::data::makeUUID();
+        auto removed = rows[0];removed.id = ehud::data::makeUUID();removed.recordID = "abcdef00-0000-4000-8000-0000000000ff";removed.displayName = "Removed";
+        auto book = rows[0];book.id = ehud::data::makeUUID();book.store = std::string(mig::relinkReaderBook);book.kind = "book";
+        rows.push_back(std::move(removed));rows.push_back(std::move(book));
+        seed.ledger = mig::MacRelinkLedger::encode(rows);
+        ehud::data::detail::replaceFile(relinkRoot / "Migration" / "relink.json", std::nullopt, seed.ledger, mig::MacRelinkLedger::maximumBytes);
+        // A synthetic packaged application's logo (never an installed one).
+        const auto logo = context.fixture ? context.fixture("appShortcut.packagedLogo") : fs::path{};
+        need(!logo.empty(), "hidden coverage needs the synthetic packaged logo fixture");
+        const auto logoBytes = ehud::data::detail::readFile(logo, 64 * 1024);
+        need(logoBytes.has_value() && !logoBytes->empty(), "the synthetic packaged logo fixture is readable");
+        seed.logo.assign(logoBytes->begin(), logoBytes->end());
         synthetic = std::make_shared<SyntheticApplications>();
     } else {
-        // AppShortcutStore.applicationDirectory(): <app root>/AppShortcuts.
+        // AppShortcutStore.applicationDirectory(): <app root>/AppShortcuts;
+        // the import ledger is <app root>/Migration/relink.json.
         need(!context.dataRoot.empty() && context.dataRoot.is_absolute(), "an absolute data root is required");
-        directory = context.dataRoot / "AppShortcuts";
+        relinkRoot = context.dataRoot.lexically_normal();
+        directory = relinkRoot / "AppShortcuts";
     }
-    return std::make_unique<AppShortcutArea>(context, assets, std::move(directory), std::move(synthetic));
+    return std::make_unique<AppShortcutArea>(context, assets, std::move(directory), std::move(relinkRoot), std::move(synthetic), std::move(seed));
 }
 } // namespace endfield::areas
