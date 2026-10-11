@@ -42,7 +42,11 @@ h::CanvasStyle canvasStyle(const ModuleAppearance& a) {
     style.accent = {a.accent[0], a.accent[1], a.accent[2], 1};
     return style;
 }
-// HUDAccountInteraction / SystemHUDView handle unmodified keys only.
+// HUDAccountInteraction / SystemHUDView handle unmodified keys only. This is
+// the HUD window's key dispatch: Win32 synchronizes the thread's GetKeyState
+// with the key message being dispatched. Off that dispatch (hidden coverage's
+// synthetic keys) a thread's GetKeyState follows the live keyboard of the
+// interactive session, so those callers pass the modifier state explicitly.
 bool modified(const KeyEvent& e) {
     return e.alt || GetKeyState(VK_CONTROL) < 0 || GetKeyState(VK_SHIFT) < 0 || GetKeyState(VK_LWIN) < 0 || GetKeyState(VK_RWIN) < 0;
 }
@@ -246,7 +250,7 @@ public:
     bool capturesKeys() const override { return owner_->capturesKeys(); }
     bool pointer(const PointerEvent& e, double t) override { return owner_->pointer(e, t); }
     bool wheel(const WheelEvent& e, double t) override { return owner_->wheel(e, t); }
-    bool key(const KeyEvent& e, double t) override { return owner_->key(e, modified(e), t); }
+    bool key(const KeyEvent& e, double t) override { return key(e, modified(e), t); }
     bool message(const NativeMessage& m, double t) override {
         if (m.message == message_ && (!m.window || m.window == window_)) automationWake_ = false;
         return owner_->message(m, t);
@@ -351,6 +355,9 @@ private:
         if (world_) { automationWake_ = true; return; }
         automationWake_ = PostMessageW(static_cast<HWND>(window_), message_, 0, 0) != FALSE;
     }
+    // The module's key route with the modifier state supplied: key() above
+    // (the HUD dispatch) and hidden coverage's synthetic keys.
+    bool key(const KeyEvent& e, bool modifiersDown, double t) { return owner_->key(e, modifiersDown, t); }
 
     bool syncWorkMode(double t) {
         const auto* work = host_.workMode();
@@ -403,10 +410,12 @@ private:
             step.check(rect.has_value(), "The account control is available");
             return press(canvasPoint({rect->x + rect->width / 2, rect->y + rect->height / 2}));
         }
-        bool keyDown(std::uint32_t vk) {
+        // Synthetic keys carry their modifier state: never the live keyboard
+        // of the interactive session the coverage happens to run in.
+        bool keyDown(std::uint32_t vk, bool modifiers = false) {
             t += .05;
-            const bool handled = self.key({KeyKind::down, vk}, t);
-            (void)self.key({KeyKind::up, vk}, t);
+            const bool handled = self.key({KeyKind::down, vk}, modifiers, t);
+            (void)self.key({KeyKind::up, vk}, modifiers, t);
             frame();
             return handled;
         }
@@ -540,6 +549,8 @@ private:
                 step.check(automationCount() == 0, "Disconnecting removes every peer");
             }
             step.check(d.click("region") && d.canvas().menu() == h::AccountCanvasModel::Menu::region, "Region opens its shaped menu");
+            step.check(!d.keyDown(VK_ESCAPE, true) && d.canvas().menu() == h::AccountCanvasModel::Menu::region,
+                       "A modified Escape stays with host shortcuts and keeps the menu");
             step.check(d.keyDown(VK_ESCAPE) && !d.canvas().isPopoverOpen(), "Escape closes only the menu");
             step.check(d.click("header") && d.canvas().menu() == h::AccountCanvasModel::Menu::header && capturesPointer() && capturesKeys(),
                        "The header-mode menu captures input");
