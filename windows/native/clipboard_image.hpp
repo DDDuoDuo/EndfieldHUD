@@ -29,6 +29,11 @@ struct ClipboardImageResult {
 // Byte/header validation only; CRC and codec work run in the worker decoder.
 // No OS clipboard, files, COM, allocation or decoded pixel access here.
 bool validClipboardEncodedImage(const ClipboardEncodedImage&) noexcept;
+// A well-formed PNG IHDR or DIB header whose declared size is beyond the Mac
+// limits (100,000 px per side, 100 MP): ClipboardStore throws
+// imageDimensionsTooLarge from the header alone instead of trying another
+// format. TIFF sizes are known only to the decoder (ClipboardImageError::dimensions).
+bool clipboardEncodedImageTooLarge(const ClipboardEncodedImage&) noexcept;
 // Runs on an existing background worker. On Windows uses only Microsoft's WIC
 // PNG/TIFF/BMP codecs. On other platforms returns unavailable. Input/output are
 // independently owned; callbacks/controllers/windows are never passed to WIC.

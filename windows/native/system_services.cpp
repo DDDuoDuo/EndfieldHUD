@@ -7,6 +7,13 @@
 #include <limits>
 #include <stdexcept>
 #include <utility>
+#if defined(_WIN32)
+#include <icu.h>
+#define EHUD_CLIPBOARD_IDNA 1
+#elif defined(EHUD_CLIPBOARD_URL_ICU) // local portable verification against a system ICU
+#include <unicode/uidna.h>
+#define EHUD_CLIPBOARD_IDNA 1
+#endif
 
 namespace endfield::native {
 std::optional<float> audio_stereo_balance(float left,float right) noexcept {
@@ -121,26 +128,248 @@ std::size_t ClipboardHistory::utf8_bytes(std::u16string_view value) noexcept {
     }
     return result;
 }
-bool ClipboardHistory::url_text(std::u16string_view value) noexcept {
-    // Bounded heuristic, no URL parser, network request or shell activation.
-    if (value.empty() || value.size() > 2048 || !valid_utf16(value)) return false;
-    for (const auto unit : value) if (unit <= 0x20 || unit == 0x7f) return false;
-    const auto colon = value.find(u':');
-    if (colon == std::u16string_view::npos || colon == 0) return false;
-    const auto matches = [&](std::u16string_view scheme) {
-        if (colon != scheme.size()) return false;
-        for (std::size_t i=0; i<colon; ++i) {
-            auto unit=value[i]; if (unit >= u'A' && unit <= u'Z') unit += u'a'-u'A';
-            if (unit != scheme[i]) return false;
-        }
-        return true;
-    };
-    if (matches(u"http") || matches(u"https") || matches(u"ftp")) {
-        const auto start = colon + 3;
-        return colon + 3 < value.size() && value.substr(colon + 1, 2) == u"//" &&
-            value[start] != u'/' && value[start] != u'?' && value[start] != u'#';
+namespace {
+// --- ClipboardStore.parsedURL over macOS 14+ URL(string:) -------------------
+// Pure string work: no network request, shell activation or file access.
+bool url_space(char32_t c) noexcept { // Character.isWhitespace (Unicode White_Space)
+    return (c >= 9 && c <= 13) || c == 0x20 || c == 0x85 || c == 0xa0 || c == 0x1680 || (c >= 0x2000 && c <= 0x200a) ||
+        c == 0x2028 || c == 0x2029 || c == 0x202f || c == 0x205f || c == 0x3000;
+}
+// CharacterSet.whitespacesAndNewlines: the same set plus U+200B ZERO WIDTH
+// SPACE (CoreFoundation's whitespace set), so a leading or trailing ZWSP is
+// trimmed while an inner one is kept (and percent-encoded).
+bool url_trim(char32_t c) noexcept { return url_space(c) || c == 0x200b; }
+bool url_alpha(char32_t c) noexcept { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'); }
+bool url_digit(char32_t c) noexcept { return c >= '0' && c <= '9'; }
+bool url_hex(char32_t c) noexcept { return url_digit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'); }
+bool url_unreserved(char32_t c) noexcept { return url_alpha(c) || url_digit(c) || c == '-' || c == '.' || c == '_' || c == '~'; }
+bool url_sub_delim(char32_t c) noexcept {
+    switch (c) { case '!': case '$': case '&': case '\'': case '(': case ')': case '*': case '+': case ',': case ';': case '=': return true; default: return false; }
+}
+// Component character sets of the parser (RFC 3986). Anything else is
+// percent-encoded as UTF-8; '%' without two hex digits becomes "%25".
+enum class UrlPart { userinfo, path, query };
+bool url_allowed(char32_t c, UrlPart part) noexcept {
+    if (url_unreserved(c) || url_sub_delim(c) || c == ':') return true;
+    if (part == UrlPart::userinfo) return false;
+    if (c == '@' || c == '/') return true;
+    return part == UrlPart::query && c == '?'; // query, fragment and an opaque remainder
+}
+bool url_escape(std::u32string_view s, std::size_t at) noexcept { return at + 2 < s.size() && url_hex(s[at + 1]) && url_hex(s[at + 2]); }
+void url_append_ascii(std::u16string* out, std::u32string_view s) { if (out) for (const auto c : s) out->push_back(static_cast<char16_t>(c)); }
+void url_encode(std::u16string* out, std::u32string_view s, UrlPart part) {
+    if (!out) return;
+    constexpr char digits[] = "0123456789ABCDEF";
+    const auto byte = [&](unsigned value) { out->push_back(u'%'); out->push_back(static_cast<char16_t>(digits[value >> 4])); out->push_back(static_cast<char16_t>(digits[value & 15])); };
+    for (std::size_t i = 0; i < s.size(); ++i) {
+        const auto c = s[i];
+        if (c == '%') {
+            if (url_escape(s, i)) { url_append_ascii(out, s.substr(i, 3)); i += 2; }
+            else byte('%');
+        } else if (c < 0x80 && url_allowed(c, part)) out->push_back(static_cast<char16_t>(c));
+        else if (c < 0x80) byte(c);
+        else if (c < 0x800) { byte(0xc0 | (c >> 6)); byte(0x80 | (c & 63)); }
+        else if (c < 0x10000) { byte(0xe0 | (c >> 12)); byte(0x80 | ((c >> 6) & 63)); byte(0x80 | (c & 63)); }
+        else { byte(0xf0 | (c >> 18)); byte(0x80 | ((c >> 12) & 63)); byte(0x80 | ((c >> 6) & 63)); byte(0x80 | (c & 63)); }
     }
-    return (matches(u"mailto") || matches(u"tel") || matches(u"sms") || matches(u"file")) && colon+1 < value.size();
+}
+// URL.host / URL.path decoding: percent-decoded UTF-8; nullopt when the bytes
+// are not UTF-8 (Foundation then reports no host / an empty path).
+std::optional<std::size_t> url_decoded_length(std::u32string_view s) {
+    std::string bytes; bytes.reserve(s.size());
+    for (std::size_t i = 0; i < s.size(); ++i) {
+        const auto c = s[i];
+        const auto hex = [](char32_t h) { return static_cast<unsigned>(h <= '9' ? h - '0' : (h | 0x20) - 'a' + 10); };
+        if (c == '%' && url_escape(s, i)) { bytes.push_back(static_cast<char>(hex(s[i + 1]) * 16 + hex(s[i + 2]))); i += 2; }
+        else if (c < 0x80) bytes.push_back(static_cast<char>(c));
+        else if (c < 0x800) { bytes.push_back(static_cast<char>(0xc0 | (c >> 6))); bytes.push_back(static_cast<char>(0x80 | (c & 63))); }
+        else if (c < 0x10000) { bytes.push_back(static_cast<char>(0xe0 | (c >> 12))); bytes.push_back(static_cast<char>(0x80 | ((c >> 6) & 63))); bytes.push_back(static_cast<char>(0x80 | (c & 63))); }
+        else { bytes.push_back(static_cast<char>(0xf0 | (c >> 18))); bytes.push_back(static_cast<char>(0x80 | ((c >> 12) & 63))); bytes.push_back(static_cast<char>(0x80 | ((c >> 6) & 63))); bytes.push_back(static_cast<char>(0x80 | (c & 63))); }
+    }
+    std::size_t scalars{};
+    for (std::size_t i = 0; i < bytes.size(); ++scalars) {
+        const auto b = static_cast<unsigned char>(bytes[i]);
+        const std::size_t n = b < 0x80 ? 1 : (b & 0xe0) == 0xc0 ? 2 : (b & 0xf0) == 0xe0 ? 3 : (b & 0xf8) == 0xf0 ? 4 : 0;
+        if (!n || i + n > bytes.size()) return std::nullopt;
+        char32_t value = n == 1 ? b : n == 2 ? (b & 0x1f) : n == 3 ? (b & 0x0f) : (b & 0x07);
+        for (std::size_t k = 1; k < n; ++k) {
+            const auto t = static_cast<unsigned char>(bytes[i + k]);
+            if ((t & 0xc0) != 0x80) return std::nullopt;
+            value = (value << 6) | (t & 0x3f);
+        }
+        if ((n == 2 && value < 0x80) || (n == 3 && value < 0x800) || (n == 4 && (value < 0x10000 || value > 0x10ffff)) || (value >= 0xd800 && value <= 0xdfff)) return std::nullopt;
+        i += n;
+    }
+    return scalars;
+}
+#ifdef EHUD_CLIPBOARD_IDNA
+// URL(string:) host conversion: ICU UTS #46, nontransitional, CheckBidi and
+// CheckJoiners, hyphen checks, no STD3 rules; any reported error rejects.
+std::optional<std::u16string> url_idna(std::u16string_view host) {
+    static UIDNA* const idna = [] {
+        UErrorCode status = U_ZERO_ERROR;
+        UIDNA* value = uidna_openUTS46(UIDNA_CHECK_BIDI | UIDNA_CHECK_CONTEXTJ | UIDNA_NONTRANSITIONAL_TO_ASCII | UIDNA_NONTRANSITIONAL_TO_UNICODE, &status);
+        return U_SUCCESS(status) ? value : nullptr;
+    }();
+    if (!idna || host.size() > static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max() / 8)) return std::nullopt;
+    std::u16string out(host.size() * 2 + 16, u'\0');
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        UIDNAInfo info = UIDNA_INFO_INITIALIZER;
+        UErrorCode status = U_ZERO_ERROR;
+        const auto length = uidna_nameToASCII(idna, reinterpret_cast<const UChar*>(host.data()), static_cast<std::int32_t>(host.size()),
+            reinterpret_cast<UChar*>(out.data()), static_cast<std::int32_t>(out.size()), &info, &status);
+        if (status == U_BUFFER_OVERFLOW_ERROR && !attempt && length > 0) { out.assign(static_cast<std::size_t>(length), u'\0'); continue; }
+        if (U_FAILURE(status) || info.errors || length < 0) return std::nullopt;
+        out.resize(static_cast<std::size_t>(length));
+        return out;
+    }
+    return std::nullopt;
+}
+#else
+std::optional<std::u16string> url_idna(std::u16string_view) { return std::nullopt; } // no ICU: non-ASCII hosts stay unparsed
+#endif
+// The authority's host: an IP literal, a percent-checked reg-name, or a
+// non-ASCII name converted by IDNA. Returns false when URL(string:) fails;
+// `named` tells whether URL.host is a non-empty decodable name.
+bool url_host(std::u32string_view host, std::u16string* out, bool& named) {
+    named = false;
+    if (!host.empty() && host.front() == '[') {
+        if (host.size() < 2 || host.back() != ']') return false;
+        const auto literal = host.substr(1, host.size() - 2);
+        for (std::size_t i = 0; i < literal.size(); ++i) {
+            const auto c = literal[i];
+            if (c == '%') { if (!url_escape(literal, i)) return false; i += 2; continue; }
+            if (c >= 0x80 || !(url_unreserved(c) || url_sub_delim(c) || c == ':')) return false;
+        }
+        const auto decoded = url_decoded_length(literal);
+        named = decoded && *decoded;
+        url_append_ascii(out, host);
+        return true;
+    }
+    bool unicode{};
+    for (std::size_t i = 0; i < host.size(); ++i) {
+        const auto c = host[i];
+        if (c >= 0x80) { unicode = true; continue; }
+        if (c == '%') { if (!url_escape(host, i)) return false; i += 2; continue; }
+        if (!url_unreserved(c) && !url_sub_delim(c)) return false;
+    }
+    if (!unicode) {
+        const auto decoded = url_decoded_length(host);
+        named = decoded && *decoded;
+        url_append_ascii(out, host);
+        return true;
+    }
+    std::u16string utf16;
+    for (const auto c : host) {
+        if (c < 0x10000) utf16.push_back(static_cast<char16_t>(c));
+        else { utf16.push_back(static_cast<char16_t>(0xd800 + ((c - 0x10000) >> 10))); utf16.push_back(static_cast<char16_t>(0xdc00 + ((c - 0x10000) & 0x3ff))); }
+    }
+    auto ascii = url_idna(utf16);
+    if (!ascii) return false;
+    std::u32string converted(ascii->begin(), ascii->end());
+    const auto decoded = url_decoded_length(converted);
+    named = decoded && *decoded;
+    if (out) out->append(*ascii);
+    return true;
+}
+bool url_scheme_is(std::u32string_view scheme, std::string_view lower) noexcept {
+    if (scheme.size() != lower.size()) return false;
+    for (std::size_t i = 0; i < lower.size(); ++i) if (static_cast<char>(scheme[i] | 0x20) != lower[i]) return false;
+    return true;
+}
+// Writes absoluteString into `out` (when given) and returns whether the Mac
+// parsedURL(_:explicit:) returns a URL for `text`.
+bool url_parse(std::u16string_view text, bool explicit_type, std::u16string* out) {
+    if (!ClipboardHistory::valid_utf16(text)) return false;
+    std::u32string all; all.reserve(text.size());
+    for (std::size_t i = 0; i < text.size(); ++i) {
+        const auto unit = text[i];
+        if (unit >= 0xd800 && unit <= 0xdbff) { all.push_back(0x10000 + ((char32_t(unit) - 0xd800) << 10) + (char32_t(text[i + 1]) - 0xdc00)); ++i; }
+        else all.push_back(unit);
+    }
+    std::u32string_view candidate(all);
+    while (!candidate.empty() && url_trim(candidate.front())) candidate.remove_prefix(1);
+    while (!candidate.empty() && url_trim(candidate.back())) candidate.remove_suffix(1);
+    if (candidate.empty() || std::any_of(candidate.begin(), candidate.end(), url_space)) return false;
+    // scheme = ALPHA *( ALPHA / DIGIT / "+" / "-" / "." ) ":"
+    if (!url_alpha(candidate.front())) return false;
+    std::size_t colon = 1;
+    while (colon < candidate.size() && (url_alpha(candidate[colon]) || url_digit(candidate[colon]) || candidate[colon] == '+' || candidate[colon] == '-' || candidate[colon] == '.')) ++colon;
+    if (colon == candidate.size() || candidate[colon] != ':') return false;
+    const auto scheme = candidate.substr(0, colon);
+    auto rest = candidate.substr(colon + 1);
+    if (out) { out->clear(); url_append_ascii(out, candidate.substr(0, colon + 1)); }
+    bool named{}, hierarchical{};
+    std::u32string_view path;
+    if (rest.size() >= 2 && rest[0] == '/' && rest[1] == '/') {
+        hierarchical = true;
+        rest.remove_prefix(2);
+        const auto end = std::min(rest.size(), rest.find_first_of(U"/?#"));
+        auto hostport = rest.substr(0, end);
+        rest.remove_prefix(end);
+        if (out) out->append(u"//");
+        if (const auto at = hostport.rfind('@'); at != std::u32string_view::npos) {
+            url_encode(out, hostport.substr(0, at), UrlPart::userinfo);
+            if (out) out->push_back(u'@');
+            hostport.remove_prefix(at + 1);
+        }
+        std::u32string_view host = hostport, port;
+        bool hasPort{};
+        if (!hostport.empty() && hostport.front() == '[') {
+            const auto close = hostport.find(']');
+            if (close == std::u32string_view::npos) return false;
+            host = hostport.substr(0, close + 1);
+            const auto after = hostport.substr(close + 1);
+            if (!after.empty() && after.front() != ':') return false;
+            if (!after.empty()) { hasPort = true; port = after.substr(1); }
+        } else if (const auto separator = hostport.find(':'); separator != std::u32string_view::npos) {
+            host = hostport.substr(0, separator); hasPort = true; port = hostport.substr(separator + 1);
+        }
+        if (!url_host(host, out, named)) return false;
+        if (!std::all_of(port.begin(), port.end(), url_digit)) return false;
+        if (hasPort && out) { out->push_back(u':'); url_append_ascii(out, port); }
+    } else hierarchical = !rest.empty() && rest.front() == '/';
+    if (hierarchical) {
+        const auto end = std::min(rest.size(), rest.find_first_of(U"?#"));
+        path = rest.substr(0, end);
+        url_encode(out, path, UrlPart::path);
+        rest.remove_prefix(end);
+        if (!rest.empty() && rest.front() == '?') {
+            const auto stop = std::min(rest.size(), rest.find('#'));
+            if (out) out->push_back(u'?');
+            url_encode(out, rest.substr(1, stop - 1), UrlPart::query);
+            rest.remove_prefix(stop);
+        }
+        if (!rest.empty()) { // '#': the fragment; a later '#' is encoded
+            if (out) out->push_back(u'#');
+            url_encode(out, rest.substr(1), UrlPart::query);
+        }
+    } else url_encode(out, rest, UrlPart::query); // opaque: no fragment, every '#' is encoded
+    if (url_scheme_is(scheme, "http") || url_scheme_is(scheme, "https") || url_scheme_is(scheme, "ftp")) return named;
+    if (explicit_type) return true;
+    if (url_scheme_is(scheme, "mailto") || url_scheme_is(scheme, "tel") || url_scheme_is(scheme, "sms")) return candidate.size() > colon + 1;
+    if (url_scheme_is(scheme, "file")) { // URL.path: decoded, empty for an opaque URL
+        if (!hierarchical || path.empty()) return false;
+        const auto decoded = url_decoded_length(path);
+        return decoded && *decoded;
+    }
+    return false;
+}
+bool ascii_url(std::u16string_view url) noexcept {
+    if (url.empty() || !url_alpha(url.front())) return false;
+    for (const auto unit : url) if (unit <= 0x20 || unit >= 0x7f) return false;
+    const auto colon = url.find(u':');
+    return colon != std::u16string_view::npos && std::all_of(url.begin(), url.begin() + static_cast<std::ptrdiff_t>(colon),
+        [](char16_t c) { return url_alpha(c) || url_digit(c) || c == u'+' || c == u'-' || c == u'.'; });
+}
+}
+std::optional<std::u16string> ClipboardHistory::parsed_url(std::u16string_view text, bool explicit_type) {
+    std::u16string url;
+    if (!url_parse(text, explicit_type, &url)) return std::nullopt;
+    return url;
+}
+bool ClipboardHistory::url_text(std::u16string_view value) {
+    return !value.empty() && utf8_bytes(value) <= maximum_detected_url_bytes && url_parse(value, false, nullptr);
 }
 bool ClipboardHistory::valid_image_metadata(std::uint32_t width, std::uint32_t height,
     std::size_t encoded_bytes) noexcept {
@@ -220,13 +449,15 @@ std::span<const std::uint8_t> ClipboardPayload::image_bytes()const noexcept {
     return decodedImage&&decodedImage->encoded.bytes?std::span<const std::uint8_t>(*decodedImage->encoded.bytes):std::span<const std::uint8_t>(image);
 }
 bool ClipboardPayload::operator==(const ClipboardPayload&other)const {
-    return kind==other.kind&&text==other.text&&files==other.files&&image_format==other.image_format&&std::ranges::equal(image_bytes(),other.image_bytes());
+    // ClipboardPayload.matches: a link matches by URL and original string.
+    return kind==other.kind&&text==other.text&&url==other.url&&files==other.files&&image_format==other.image_format&&std::ranges::equal(image_bytes(),other.image_bytes());
 }
 std::size_t ClipboardHistory::payload_bytes(const ClipboardPayload& value) noexcept {
     if (value.kind == ClipboardKind::image) return value.image_bytes().size();
     // Charge actual retained UTF-16 bytes as well as the source's UTF-8 limit.
     if (value.kind == ClipboardKind::text || value.kind == ClipboardKind::url)
-        return value.text.size() > maximum_text_bytes ? maximum_retained_bytes + 1 : value.text.size() * sizeof(char16_t);
+        return value.text.size() > maximum_text_bytes || value.url.size() > maximum_url_units ? maximum_retained_bytes + 1 :
+            (value.text.size() + value.url.size()) * sizeof(char16_t);
     std::size_t total{};
     for (const auto& path : value.files) {
         if (path.size() > maximum_text_bytes || total > maximum_text_bytes * 2 - path.size() * 2) return maximum_retained_bytes + 1;
@@ -235,10 +466,15 @@ std::size_t ClipboardHistory::payload_bytes(const ClipboardPayload& value) noexc
     return total;
 }
 bool ClipboardHistory::valid(const ClipboardPayload& value) noexcept {
-    if (value.kind == ClipboardKind::text || value.kind == ClipboardKind::url)
-        return value.files.empty() && value.image.empty() && !value.decodedImage && !value.text.empty() &&
-            value.text.size() <= maximum_text_bytes && utf8_bytes(value.text) <= maximum_text_bytes &&
-            (value.kind != ClipboardKind::url || url_text(value.text));
+    if (value.kind == ClipboardKind::text || value.kind == ClipboardKind::url) {
+        if (!value.files.empty() || !value.image.empty() || value.decodedImage || value.text.empty() ||
+            value.text.size() > maximum_text_bytes || utf8_bytes(value.text) > maximum_text_bytes) return false;
+        if (value.kind == ClipboardKind::text) return value.url.empty();
+        // A link keeps its URL (any original string); a synthetic link without
+        // one must be a link by the string heuristic (ingest derives the URL).
+        if (!value.url.empty()) return value.url.size() <= maximum_url_units && ascii_url(value.url);
+        try { return url_text(value.text); } catch (...) { return false; }
+    }
     if (value.kind == ClipboardKind::files) {
         if (!value.text.empty() || !value.image.empty() || value.decodedImage || value.files.empty() || value.files.size() > maximum_files ||
             payload_bytes(value) > maximum_text_bytes * 2) return false;
@@ -249,16 +485,21 @@ bool ClipboardHistory::valid(const ClipboardPayload& value) noexcept {
             if (bytes > maximum_text_bytes || source_bytes > maximum_text_bytes - bytes) return false;
             source_bytes += bytes;
         }
-        return true;
+        return value.url.empty();
     }
-    if(value.kind!=ClipboardKind::image||!value.text.empty()||!value.files.empty()||!valid_image(value.image_format,value.image_bytes()))return false;
+    if(value.kind!=ClipboardKind::image||!value.text.empty()||!value.url.empty()||!value.files.empty()||!valid_image(value.image_format,value.image_bytes()))return false;
     if(value.decodedImage){const auto&t=*value.decodedImage;const auto expected=value.image_format==ClipboardImageFormat::png?ClipboardEncodedFormat::png:value.image_format==ClipboardImageFormat::tiff?ClipboardEncodedFormat::tiff:value.image_format==ClipboardImageFormat::dib_v5?ClipboardEncodedFormat::dibV5:ClipboardEncodedFormat::dib;
         return value.image.empty()&&t.encoded.format==expected&&valid_image_metadata(t.sourceWidth,t.sourceHeight,value.image_bytes().size())&&t.width&&t.height&&t.width<=96&&t.height<=96&&t.rgba.size()==std::size_t(t.width)*t.height*4;}
     return true;
 }
 ClipboardInsertResult ClipboardHistory::ingest(ClipboardPayload payload, bool excluded) {
     if (excluded) return ClipboardInsertResult::excluded;
-    if (!valid(payload)) return ClipboardInsertResult::invalid;
+    if (payload.kind == ClipboardKind::url && payload.url.empty() && utf8_bytes(payload.text) <= maximum_detected_url_bytes) {
+        // Synthetic link without its URL: ClipboardStore.read's string path.
+        if (auto url = parsed_url(payload.text, false)) payload.url = std::move(*url);
+        else return ClipboardInsertResult::invalid;
+    }
+    if (!valid(payload) || (payload.kind == ClipboardKind::url && payload.url.empty())) return ClipboardInsertResult::invalid;
     const auto existing = std::find_if(items_.begin(), items_.end(), [&](const auto& item) { return item.payload == payload; });
     if (existing != items_.end()) {
         if (existing == items_.begin()) return ClipboardInsertResult::duplicate;
@@ -318,6 +559,8 @@ struct ClipboardCapture::Impl : std::enable_shared_from_this<Impl> {
         if(result.nextImage<=next||result.nextImage>imageFormats.size()||result.payload.image_format!=imageFormats[result.nextImage-1]||result.payload.decodedImage){status(ClipboardCaptureState::invalid);return;}next=result.nextImage;
         const auto format=result.payload.image_format==ClipboardImageFormat::png?ClipboardEncodedFormat::png:result.payload.image_format==ClipboardImageFormat::tiff?ClipboardEncodedFormat::tiff:result.payload.image_format==ClipboardImageFormat::dib_v5?ClipboardEncodedFormat::dibV5:ClipboardEncodedFormat::dib;
         ClipboardEncodedImage encoded{format,std::make_shared<const std::vector<std::uint8_t>>(std::move(result.payload.image))};
+        // Mac imageDimensionsTooLarge from the header: reported, no fallback.
+        if(clipboardEncodedImageTooLarge(encoded)){status(ClipboardCaptureState::invalid,static_cast<std::int32_t>(0x80070216));return;}
         if(probe->request(expected,std::move(encoded))){status(ClipboardCaptureState::pending);return;}
         // Header rejection falls through to the next format under a NEW lease,
         // never using bytes from a changed clipboard or decoding on the UI thread.
@@ -401,36 +644,117 @@ public:
 private:
     std::atomic<ULONG> references_{1}; std::shared_ptr<NotificationRoute> route_;
 };
-struct ClipboardLease {
-    bool opened{};
-    explicit ClipboardLease(HWND owner) : opened(OpenClipboard(owner) != FALSE) {}
-    ~ClipboardLease() { if (opened) CloseClipboard(); }
-};
 struct ClipboardOwnerMarker {
     DWORD process{};
     UINT_PTR generation{};
 };
-struct LockedGlobal {
-    HGLOBAL memory{}; const void* data{}; std::size_t size{};
-    explicit LockedGlobal(HANDLE handle) : memory(static_cast<HGLOBAL>(handle)) {
-        if (memory) { size = GlobalSize(memory); if (size) data = GlobalLock(memory); }
+// The session's Windows clipboard (production). Views returned by data()
+// stay locked until close(); at most a fixed number per lease.
+class WindowsClipboard final : public ClipboardBackend {
+public:
+    UINT register_format(const wchar_t* name) override { return RegisterClipboardFormatW(name); }
+    bool listen(HWND owner) override { return AddClipboardFormatListener(owner) != FALSE; }
+    void unlisten(HWND owner) noexcept override { RemoveClipboardFormatListener(owner); }
+    DWORD sequence() override { return GetClipboardSequenceNumber(); }
+    HRESULT open(HWND owner) override {
+        if (opened_) return E_UNEXPECTED;
+        if (!OpenClipboard(owner)) return last_error();
+        opened_ = true; return S_OK;
     }
-    ~LockedGlobal() { if (data) GlobalUnlock(memory); }
+    void close() noexcept override {
+        for (std::size_t n = 0; n < locked_count_; ++n) GlobalUnlock(locked_[n]);
+        locked_count_ = 0;
+        if (opened_) { CloseClipboard(); opened_ = false; }
+    }
+    bool available(UINT format) override { return opened_ && format && IsClipboardFormatAvailable(format) != FALSE; }
+    ClipboardFormatData data(UINT format) override {
+        if (!opened_ || !format || locked_count_ == locked_.size()) return {};
+        const auto memory = static_cast<HGLOBAL>(GetClipboardData(format));
+        if (!memory) return {};
+        const auto size = GlobalSize(memory);
+        const void* bytes = size ? GlobalLock(memory) : nullptr;
+        if (!bytes) return {};
+        locked_[locked_count_++] = memory;
+        return {bytes, size};
+    }
+    ClipboardWriteResult write(HWND owner, std::span<const ClipboardFormatWrite> formats) override {
+        ClipboardWriteResult result;
+        struct Prepared { std::array<HGLOBAL, 8> memory{}; ~Prepared() { for (const auto m : memory) if (m) GlobalFree(m); } } prepared;
+        if (formats.size() > prepared.memory.size()) { result.prepared = false; result.status = E_INVALIDARG; return result; }
+        for (std::size_t n = 0; n < formats.size(); ++n) {
+            const auto& format = formats[n];
+            const auto memory = format.format ? GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, format.bytes.size()) : nullptr;
+            void* target = memory ? GlobalLock(memory) : nullptr;
+            if (target) { std::memcpy(target, format.bytes.data(), format.bytes.size()); GlobalUnlock(memory); prepared.memory[n] = memory; continue; }
+            if (memory) GlobalFree(memory);
+            if (format.required) { result.prepared = false; result.status = format.format ? E_OUTOFMEMORY : E_UNEXPECTED; return result; }
+        }
+        if (const auto status = open(owner); FAILED(status)) { result.status = status; return result; }
+        result.opened = true;
+        if (!EmptyClipboard()) result.status = last_error();
+        else for (std::size_t n = 0; n < formats.size(); ++n) {
+            if (!prepared.memory[n]) continue; // optional metadata that could not be prepared
+            if (SetClipboardData(formats[n].format, prepared.memory[n])) { prepared.memory[n] = nullptr; continue; } // the clipboard owns it
+            if (formats[n].required) { result.status = last_error(); EmptyClipboard(); break; } // no partial item (Mac writes one item or nothing)
+        }
+        result.sequence = GetClipboardSequenceNumber();
+        close();
+        return result;
+    }
+    ~WindowsClipboard() override { close(); }
+private:
+    std::array<HGLOBAL, 16> locked_{};
+    std::size_t locked_count_{};
+    bool opened_{};
 };
-struct OwnedGlobal {
-    HGLOBAL memory{};
-    explicit OwnedGlobal(std::size_t size) : memory(GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, size)) {}
-    ~OwnedGlobal() { if (memory) GlobalFree(memory); }
-    bool fill(const void* bytes, std::size_t size) {
-        if (!memory) return false;
-        void* target = GlobalLock(memory); if (!target) return false;
-        std::memcpy(target, bytes, size); GlobalUnlock(memory); return true;
+constexpr std::size_t maximum_clipboard_global = std::size_t{64} * 1024 * 1024;
+// Lone surrogates become U+FFFD, as the Swift String bridge of a pasteboard
+// string repairs them; the item is captured, not rejected.
+void repair_utf16(std::u16string& value) {
+    for (std::size_t i = 0; i < value.size(); ++i) {
+        const auto unit = value[i];
+        if (unit >= 0xd800 && unit <= 0xdbff && i + 1 < value.size() && value[i + 1] >= 0xdc00 && value[i + 1] <= 0xdfff) { ++i; continue; }
+        if (unit >= 0xd800 && unit <= 0xdfff) value[i] = 0xfffd;
     }
-    bool publish(UINT format) {
-        if (!memory || !SetClipboardData(format, memory)) return false;
-        memory = nullptr; return true;
+}
+// A NUL-terminated string of a clipboard format: S_OK with a non-empty
+// value; S_FALSE when absent or empty; ERROR_INVALID_DATA when malformed;
+// ERROR_FILE_TOO_LARGE beyond 64 MiB or `limit` UTF-16 units (not copied).
+HRESULT clipboard_string(ClipboardBackend& board, UINT format, bool wide, std::size_t limit, std::u16string& value) {
+    value.clear();
+    if (!format || !board.available(format)) return S_FALSE;
+    const auto data = board.data(format);
+    const std::size_t unit = wide ? 2 : 1;
+    if (!data.data || data.size < unit || data.size % unit) return HRESULT_FROM_WIN32(ERROR_INVALID_DATA);
+    if (data.size > maximum_clipboard_global) return HRESULT_FROM_WIN32(ERROR_FILE_TOO_LARGE);
+    if (wide) {
+        const auto* units = static_cast<const char16_t*>(data.data);
+        const auto end = std::find(units, units + data.size / 2, u'\0');
+        if (end == units + data.size / 2) return HRESULT_FROM_WIN32(ERROR_INVALID_DATA);
+        if (static_cast<std::size_t>(end - units) > limit) return HRESULT_FROM_WIN32(ERROR_FILE_TOO_LARGE);
+        value.assign(units, end);
+    } else {
+        const auto* bytes = static_cast<const char*>(data.data);
+        const auto end = std::find(bytes, bytes + data.size, '\0');
+        if (end == bytes + data.size) return HRESULT_FROM_WIN32(ERROR_INVALID_DATA);
+        const auto length = static_cast<int>(std::min<std::ptrdiff_t>(end - bytes, std::numeric_limits<int>::max()));
+        if (static_cast<std::size_t>(end - bytes) > limit) return HRESULT_FROM_WIN32(ERROR_FILE_TOO_LARGE);
+        if (length) {
+            const auto count = MultiByteToWideChar(CP_ACP, MB_ERR_INVALID_CHARS, bytes, length, nullptr, 0);
+            if (count <= 0) return HRESULT_FROM_WIN32(ERROR_INVALID_DATA);
+            std::wstring wide_value(static_cast<std::size_t>(count), L'\0');
+            if (MultiByteToWideChar(CP_ACP, MB_ERR_INVALID_CHARS, bytes, length, wide_value.data(), count) != count) return HRESULT_FROM_WIN32(ERROR_INVALID_DATA);
+            value.assign(reinterpret_cast<const char16_t*>(wide_value.data()), wide_value.size());
+        }
     }
-};
+    repair_utf16(value);
+    return value.empty() ? S_FALSE : S_OK;
+}
+std::vector<std::uint8_t> utf16_terminated(std::u16string_view value) {
+    std::vector<std::uint8_t> bytes((value.size() + 1) * sizeof(char16_t));
+    std::memcpy(bytes.data(), value.data(), value.size() * sizeof(char16_t));
+    return bytes;
+}
 std::wstring endpoint_id(IMMDevice* device) {
     LPWSTR value{};
     if (!device || FAILED(device->GetId(&value)) || !value) return {};
@@ -452,10 +776,51 @@ bool endpoint_headphones(IMMDevice*device){
     PROPVARIANT value;PropVariantInit(&value);const auto hr=properties->GetValue(PKEY_AudioEndpoint_FormFactor,&value);
     const bool result=SUCCEEDED(hr)&&value.vt==VT_UI4&&(value.ulVal==Headphones||value.ulVal==Headset);PropVariantClear(&value);return result;
 }
-std::u16string utf16(std::wstring_view value) {
-    static_assert(sizeof(wchar_t) == sizeof(char16_t));
-    return {reinterpret_cast<const char16_t*>(value.data()), value.size()};
 }
+
+std::shared_ptr<ClipboardBackend> windowsClipboardBackend() { return std::make_shared<WindowsClipboard>(); }
+
+HRESULT parse_clipboard_drop(ClipboardFormatData drop, std::vector<std::u16string>& files) {
+    files.clear();
+    const HRESULT invalid = HRESULT_FROM_WIN32(ERROR_INVALID_DATA), too_many = HRESULT_FROM_WIN32(ERROR_TOO_MANY_NAMES);
+    if (!drop.data || drop.size < sizeof(DROPFILES)) return invalid;
+    DROPFILES header{};
+    std::memcpy(&header, drop.data, sizeof(header));
+    if (header.pFiles < sizeof(DROPFILES) || header.pFiles >= drop.size) return invalid;
+    const auto* list = static_cast<const std::uint8_t*>(drop.data) + header.pFiles;
+    const std::size_t width = header.fWide ? 2 : 1, count = (drop.size - header.pFiles) / width;
+    const auto at = [&](std::size_t index) -> unsigned {
+        if (width == 1) return list[index];
+        char16_t unit{}; std::memcpy(&unit, list + index * 2, 2); return unit;
+    };
+    std::size_t source_bytes{};
+    for (std::size_t start = 0;;) {
+        std::size_t end = start;
+        while (end < count && at(end)) ++end;
+        if (end == count) return invalid; // the list must end with an empty string
+        if (end == start) break;
+        // Mac tooManyFiles: more files than the history keeps, or an
+        // aggregate path list beyond the text bound.
+        if (files.size() == ClipboardHistory::maximum_files) return too_many;
+        if (end - start > 32767) return HRESULT_FROM_WIN32(ERROR_BUFFER_OVERFLOW);
+        std::u16string path;
+        if (width == 2) { path.resize(end - start); std::memcpy(path.data(), list + start * 2, (end - start) * 2); }
+        else {
+            const auto* bytes = reinterpret_cast<const char*>(list + start);
+            const int length = static_cast<int>(end - start);
+            const auto units = MultiByteToWideChar(CP_ACP, MB_ERR_INVALID_CHARS, bytes, length, nullptr, 0);
+            if (units <= 0) return invalid;
+            std::wstring converted(static_cast<std::size_t>(units), L'\0');
+            if (MultiByteToWideChar(CP_ACP, MB_ERR_INVALID_CHARS, bytes, length, converted.data(), units) != units) return invalid;
+            path.assign(reinterpret_cast<const char16_t*>(converted.data()), converted.size());
+        }
+        const auto bytes = ClipboardHistory::utf8_bytes(path);
+        if (bytes > ClipboardHistory::maximum_text_bytes || source_bytes > ClipboardHistory::maximum_text_bytes - bytes) return too_many;
+        source_bytes += bytes;
+        files.push_back(std::move(path));
+        start = end + 1;
+    }
+    return files.empty() ? invalid : S_OK;
 }
 
 class SystemServices::Impl final {
@@ -479,8 +844,10 @@ public:
     std::unique_ptr<AudioSessionWorker>session_worker;
     std::wstring selected_endpoint;
     ClipboardSequence clipboard_sequence;
-    UINT owner_format{}, history_format{}, png_format{}, drop_effect_format{};
+    UINT owner_format{}, history_format{}, png_format{}, drop_effect_format{}, url_format{}, url_ansi_format{};
     std::vector<UINT> excluded_formats;
+    std::shared_ptr<ClipboardBackend> board; // the Windows clipboard, or a synthetic one (tests, coverage)
+    std::function<bool(PowerStatus&)> power_reader; // synthetic AC/battery readings (tests, coverage)
 
     bool owner_thread() const noexcept { return owner && thread == GetCurrentThreadId(); }
     void notify(ServiceChange change) {
@@ -505,8 +872,10 @@ public:
         clipboard_capture.reset(); // Cancel routes before the borrowed utility executor is released.
         stop_audio();
         if(session_worker){session_worker->stop();session_worker.reset();}
-        if (clipboard_registered && owner) RemoveClipboardFormatListener(owner);
+        if (clipboard_registered && owner && board) board->unlisten(owner);
         clipboard_registered = false;
+        if (board) board->close();
+        board.reset(); power_reader = {};
         if (ac_notification) UnregisterPowerSettingNotification(ac_notification);
         if (battery_notification) UnregisterPowerSettingNotification(battery_notification);
         ac_notification = nullptr; battery_notification = nullptr;
@@ -514,13 +883,18 @@ public:
         co_initialized = com_attempted = audio_active = false; com_status = E_PENDING;
         route.reset(); owner = nullptr; thread = 0; message = 0;
         clipboard.clear(false); battery = {}; audio = {}; selected_endpoint.clear(); excluded_formats.clear();
-        clipboard_sequence.begin(0); clipboard_error = E_PENDING;
+        owner_format = history_format = png_format = drop_effect_format = url_format = url_ansi_format = 0;
+        clipboard_sequence.begin(0); clipboard_error = E_PENDING; clipboard_suspended = clipboard_retry_available = false;
     }
     void refresh_battery() {
         if (!owner_thread()) return;
-        SYSTEM_POWER_STATUS native{}; BatterySnapshot next;
-        if (GetSystemPowerStatus(&native)) next = decode_power_status({native.ACLineStatus, native.BatteryFlag,
-            native.BatteryLifePercent, native.BatteryLifeTime, native.BatteryFullLifeTime});
+        PowerStatus raw; bool read{};
+        if (power_reader) { try { read = power_reader(raw); } catch (...) { read = false; } }
+        else if (SYSTEM_POWER_STATUS native{}; GetSystemPowerStatus(&native)) {
+            raw = {native.ACLineStatus, native.BatteryFlag, native.BatteryLifePercent, native.BatteryLifeTime, native.BatteryFullLifeTime}; read = true;
+        }
+        BatterySnapshot next;
+        if (read) next = decode_power_status(raw);
         if (next != battery) { battery = next; notify(ServiceChange::battery); }
     }
     HRESULT read_volume(AudioSnapshot& snapshot) {
@@ -630,51 +1004,39 @@ public:
         auto next=audio;next.application_supported=snapshot.supported;next.applications_paused=snapshot.paused||!audio_active;next.applications=std::move(snapshot.applications);next.application_error=snapshot.error;
         if(next!=audio){audio=std::move(next);notify(ServiceChange::audio);}
     }
-    bool excluded_clipboard() const {
-        for (const auto format : excluded_formats) if (format && IsClipboardFormatAvailable(format)) return true;
-        if (history_format && IsClipboardFormatAvailable(history_format)) {
-            LockedGlobal flag(GetClipboardData(history_format));
+    bool excluded_clipboard() {
+        auto& source = *board;
+        for (const auto format : excluded_formats) if (source.available(format)) return true;
+        if (source.available(history_format)) {
+            const auto flag = source.data(history_format);
             if (!flag.data || flag.size < sizeof(DWORD)) return true;
             DWORD include{}; std::memcpy(&include, flag.data, sizeof(include));
             if (!include) return true;
         }
-        if (owner_format && IsClipboardFormatAvailable(owner_format)) {
-            LockedGlobal marker(GetClipboardData(owner_format));
-            ClipboardOwnerMarker source{};
-            if (marker.data && marker.size >= sizeof(source)) {
-                std::memcpy(&source, marker.data, sizeof(source));
-                if (route && source.process == GetCurrentProcessId() && source.generation == route->token) return true;
+        if (source.available(owner_format)) {
+            const auto marker = source.data(owner_format);
+            ClipboardOwnerMarker origin{};
+            if (marker.data && marker.size >= sizeof(origin)) {
+                std::memcpy(&origin, marker.data, sizeof(origin));
+                if (route && origin.process == GetCurrentProcessId() && origin.generation == route->token) return true;
             }
         }
         return false;
     }
-    HRESULT read_clipboard(ClipboardPayload& payload, bool& found, unsigned firstImage=0, unsigned* nextImage=nullptr) const {
+    // ClipboardStore.read order: file URLs, images (PNG, TIFF, then the
+    // Windows DIB forms), the explicit URL type, then the string.
+    HRESULT read_clipboard(ClipboardPayload& payload, bool& found, unsigned firstImage=0, unsigned* nextImage=nullptr) {
         found = false;
-        if (firstImage==0 && IsClipboardFormatAvailable(CF_HDROP)) {
-            const auto handle = static_cast<HDROP>(GetClipboardData(CF_HDROP));
-            if (!handle) return last_error();
-            const UINT count = DragQueryFileW(handle, 0xffffffffu, nullptr, 0);
-            // Mac tooManyFiles for more files than the history keeps (or an
-            // aggregate path list beyond its bound); an empty drop is invalid.
-            if (!count) return HRESULT_FROM_WIN32(ERROR_INVALID_DATA);
-            if (count > ClipboardHistory::maximum_files) return HRESULT_FROM_WIN32(ERROR_TOO_MANY_NAMES);
-            payload.kind = ClipboardKind::files; std::size_t source_bytes{};
-            for (UINT index = 0; index < count; ++index) {
-                const UINT length = DragQueryFileW(handle, index, nullptr, 0);
-                if (!length || length > 32767) return HRESULT_FROM_WIN32(ERROR_BUFFER_OVERFLOW);
-                std::wstring file(std::size_t(length) + 1, L'\0');
-                if (DragQueryFileW(handle, index, file.data(), length + 1) != length) return HRESULT_FROM_WIN32(ERROR_INVALID_DATA);
-                file.resize(length); auto path = utf16(file);
-                const auto bytes = ClipboardHistory::utf8_bytes(path);
-                if (bytes > ClipboardHistory::maximum_text_bytes || source_bytes > ClipboardHistory::maximum_text_bytes - bytes) return HRESULT_FROM_WIN32(ERROR_TOO_MANY_NAMES);
-                source_bytes += bytes; payload.files.push_back(std::move(path));
-            }
-            found = true; return S_OK;
+        auto& source = *board;
+        if (firstImage == 0 && source.available(CF_HDROP)) {
+            const auto status = parse_clipboard_drop(source.data(CF_HDROP), payload.files);
+            if (FAILED(status)) { payload.files.clear(); return status; }
+            payload.kind = ClipboardKind::files; found = true; return S_OK;
         }
         const std::array<UINT,4> formats{png_format,CF_TIFF,CF_DIBV5,CF_DIB};
         for (unsigned index=firstImage;index<formats.size();++index) {
-            const auto format=formats[index];if(!format||!IsClipboardFormatAvailable(format))continue;
-            LockedGlobal image(GetClipboardData(format));
+            const auto format=formats[index];if(!source.available(format))continue;
+            const auto image=source.data(format);
             if(!image.data||!image.size)continue;
             if(image.size>ClipboardHistory::maximum_image_bytes)return HRESULT_FROM_WIN32(ERROR_BUFFER_OVERFLOW);
             // Only copy the immutable encoded bytes while holding the lease.
@@ -683,27 +1045,46 @@ public:
             payload.kind=ClipboardKind::image;payload.image_format=ClipboardCapture::imageFormats[index];
             payload.image.assign(bytes.begin(),bytes.end());if(nextImage)*nextImage=index+1;found=true;return S_OK;
         }
-        if (IsClipboardFormatAvailable(CF_UNICODETEXT)) {
-            LockedGlobal text(GetClipboardData(CF_UNICODETEXT));
-            if (!text.data || text.size < 2 || text.size % 2) return HRESULT_FROM_WIN32(ERROR_INVALID_DATA);
-            // Mac textTooLarge: a block beyond 64 MiB, or text whose UTF-8
-            // form exceeds the history bound; malformed data stays invalid.
-            if (text.size > std::size_t{64} * 1024 * 1024) return HRESULT_FROM_WIN32(ERROR_FILE_TOO_LARGE);
-            const auto units = std::span(static_cast<const char16_t*>(text.data), text.size / 2);
-            const auto end = std::find(units.begin(), units.end(), u'\0');
-            if (end == units.end()) return HRESULT_FROM_WIN32(ERROR_INVALID_DATA);
-            if (static_cast<std::size_t>(end - units.begin()) > ClipboardHistory::maximum_text_bytes) return HRESULT_FROM_WIN32(ERROR_FILE_TOO_LARGE);
-            payload.text.assign(units.begin(), end);
-            if (ClipboardHistory::utf8_bytes(payload.text) > ClipboardHistory::maximum_text_bytes) { payload.text.clear(); return HRESULT_FROM_WIN32(ERROR_FILE_TOO_LARGE); }
-            payload.kind = ClipboardHistory::url_text(payload.text) ? ClipboardKind::url : ClipboardKind::text;
-            found = true;
+        constexpr auto limit = ClipboardHistory::maximum_text_bytes;
+        const HRESULT too_large = HRESULT_FROM_WIN32(ERROR_FILE_TOO_LARGE);
+        // Explicit URL (Mac .URL): UniformResourceLocatorW, else the ANSI form.
+        // A link takes the string as its original text (Mac `?? explicit`).
+        std::u16string explicit_url;
+        HRESULT status = clipboard_string(source, url_format, true, limit, explicit_url);
+        if (status != S_OK && status != too_large) status = clipboard_string(source, url_ansi_format, false, limit, explicit_url);
+        // Over 1 MB the source reports textTooLarge after parsing; such a
+        // string is not parsed here (bounded work) and the type's claim is kept.
+        if (status == too_large) return too_large;
+        if (status == S_OK) {
+            if (auto url = ClipboardHistory::parsed_url(explicit_url, true)) {
+                std::u16string original;
+                const auto text = clipboard_string(source, CF_UNICODETEXT, true, limit, original);
+                if (text == too_large) return too_large;
+                if (text != S_OK) original = explicit_url;
+                if (ClipboardHistory::utf8_bytes(original) > limit || ClipboardHistory::utf8_bytes(explicit_url) > limit) return too_large;
+                if (url->size() > ClipboardHistory::maximum_url_units) return too_large;
+                payload.kind = ClipboardKind::url; payload.url = std::move(*url); payload.text = std::move(original);
+                found = true; return S_OK;
+            }
         }
+        // Mac textTooLarge: a block beyond 64 MiB, or text whose UTF-8 form
+        // exceeds the history bound; malformed data stays invalid.
+        status = clipboard_string(source, CF_UNICODETEXT, true, limit, payload.text);
+        if (status == S_FALSE) return S_OK;
+        if (FAILED(status)) { payload.text.clear(); return status; }
+        if (ClipboardHistory::utf8_bytes(payload.text) > limit) { payload.text.clear(); return too_large; }
+        payload.kind = ClipboardKind::text;
+        if (ClipboardHistory::utf8_bytes(payload.text) <= ClipboardHistory::maximum_detected_url_bytes) if (auto url = ClipboardHistory::parsed_url(payload.text, false)) {
+            payload.kind = ClipboardKind::url; payload.url = std::move(*url);
+        }
+        found = true;
         return S_OK;
     }
     ClipboardReadResult read_capture(std::uint32_t expected,unsigned firstImage){
         ClipboardReadResult result;result.sequence=expected;
-        ClipboardLease lease(owner);if(!lease.opened){result.state=ClipboardReadState::busy;result.nativeError=static_cast<std::int32_t>(last_error());return result;}
-        if(GetClipboardSequenceNumber()!=expected){result.state=ClipboardReadState::stale;return result;}
+        if(const auto opened=board->open(owner);FAILED(opened)){result.state=ClipboardReadState::busy;result.nativeError=static_cast<std::int32_t>(opened);return result;}
+        struct Lease{ClipboardBackend&source;~Lease(){source.close();}}lease{*board};
+        if(board->sequence()!=expected){result.state=ClipboardReadState::stale;return result;}
         if(excluded_clipboard())result.state=ClipboardReadState::excluded;
         else{bool found{};const auto hr=read_clipboard(result.payload,found,firstImage,&result.nextImage);result.nativeError=static_cast<std::int32_t>(hr);result.state=FAILED(hr)?ClipboardReadState::invalid:found?ClipboardReadState::payload:ClipboardReadState::empty;}
         // Acknowledgment occurs inside the lease, even while image acceptance is
@@ -718,7 +1099,8 @@ public:
     }
     HRESULT refresh_clipboard(bool allow_retry = true) {
         if(!owner_thread())return RPC_E_WRONG_THREAD;if(!clipboard_registered)return clipboard_error;
-        const DWORD sequence=GetClipboardSequenceNumber();if(!clipboard_sequence.should_capture(sequence))return S_FALSE;
+        if(clipboard_suspended)return S_FALSE; // ClipboardWatcher.checkForChanges guard
+        const DWORD sequence=board->sequence();if(!clipboard_sequence.should_capture(sequence))return S_FALSE;
         if(clipboard_capture){clipboard_retry_available=allow_retry;const auto state=clipboard_capture->begin(sequence);return state==ClipboardCaptureState::unchanged?S_FALSE:clipboard_error;}
         // Backward-compatible callers may omit a worker for text/files. Never
         // accept encoded images without successful asynchronous thumbnail decode.
@@ -733,83 +1115,95 @@ public:
         if (clipboard_error != status) { clipboard_error = status; notify(ServiceChange::clipboard); }
         return status;
     }
+    // ClipboardStore.copy(id:to:): one item, text as the string; a link as
+    // the URL type plus the original string; files; the original image bytes.
     HRESULT copy_clipboard_item(std::uint64_t id) {
         if (!owner_thread()) return RPC_E_WRONG_THREAD;
+        if (!board || !route) return E_UNEXPECTED;
         const auto* item = clipboard.find(id);
         if (!item) return HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
         const auto& payload = item->payload;
-        UINT format{}; std::vector<std::uint8_t> bytes;
-        if (payload.kind == ClipboardKind::text || payload.kind == ClipboardKind::url) {
-            format = CF_UNICODETEXT; bytes.resize((payload.text.size() + 1) * sizeof(char16_t));
-            std::memcpy(bytes.data(), payload.text.data(), payload.text.size() * sizeof(char16_t));
+        std::vector<std::uint8_t> primary, secondary;
+        std::array<ClipboardFormatWrite, 4> writes{};
+        std::size_t count{};
+        if (payload.kind == ClipboardKind::text) {
+            primary = utf16_terminated(payload.text);
+            writes[count++] = {CF_UNICODETEXT, primary};
+        } else if (payload.kind == ClipboardKind::url) {
+            if (!url_format || payload.url.empty()) return E_UNEXPECTED;
+            primary = utf16_terminated(payload.url); secondary = utf16_terminated(payload.text);
+            writes[count++] = {url_format, primary};
+            writes[count++] = {CF_UNICODETEXT, secondary};
         } else if (payload.kind == ClipboardKind::files) {
-            format = CF_HDROP; std::size_t units = 1;
+            std::size_t units = 1;
             for (const auto& path : payload.files) units += path.size() + 1;
-            bytes.resize(sizeof(DROPFILES) + units * sizeof(char16_t));
+            primary.resize(sizeof(DROPFILES) + units * sizeof(char16_t));
             DROPFILES drop{}; drop.pFiles = sizeof(DROPFILES); drop.fWide = TRUE;
-            std::memcpy(bytes.data(), &drop, sizeof(drop)); std::size_t offset = sizeof(drop);
+            std::memcpy(primary.data(), &drop, sizeof(drop)); std::size_t offset = sizeof(drop);
             for (const auto& path : payload.files) {
-                std::memcpy(bytes.data() + offset, path.data(), path.size() * sizeof(char16_t)); offset += (path.size() + 1) * sizeof(char16_t);
+                std::memcpy(primary.data() + offset, path.data(), path.size() * sizeof(char16_t)); offset += (path.size() + 1) * sizeof(char16_t);
             }
+            writes[count++] = {CF_HDROP, primary};
         } else {
-            format = payload.image_format == ClipboardImageFormat::dib_v5 ? CF_DIBV5 :
+            const UINT format = payload.image_format == ClipboardImageFormat::dib_v5 ? CF_DIBV5 :
                 payload.image_format == ClipboardImageFormat::dib ? CF_DIB : payload.image_format==ClipboardImageFormat::tiff?CF_TIFF:png_format;
+            if (!format) return E_UNEXPECTED;
+            writes[count++] = {format, payload.image_bytes()};
         }
-        if (!format) return E_UNEXPECTED;
-        const auto data = payload.kind == ClipboardKind::image ? payload.image_bytes() : std::span<const std::uint8_t>(bytes);
-        OwnedGlobal primary(data.size()), marker(sizeof(ClipboardOwnerMarker)), effect(sizeof(DWORD));
-        const DWORD copy_effect = DROPEFFECT_COPY;
+        // Optional metadata: the owner marker (no self-capture) and the copy
+        // drop effect for files. The content succeeds independently of them;
+        // the sequence check also suppresses our update if the marker fails.
         const ClipboardOwnerMarker owner_marker{GetCurrentProcessId(), route->token};
-        if (!primary.fill(data.data(), data.size()) || !marker.fill(&owner_marker, sizeof(owner_marker)) ||
-            (payload.kind == ClipboardKind::files && !effect.fill(&copy_effect, sizeof(copy_effect)))) return E_OUTOFMEMORY;
-        HRESULT status = S_OK;
-        {
-            ClipboardLease lease(owner);
-            if (!lease.opened) return set_clipboard_error(last_error());
-            if (!EmptyClipboard()) status = last_error();
-            else if (!primary.publish(format)) status = last_error();
-            else {
-                // The content succeeds independently of optional metadata. The
-                // sequence check also suppresses our update if marker publication fails.
-                if (owner_format) marker.publish(owner_format);
-                if (payload.kind == ClipboardKind::files && drop_effect_format) effect.publish(drop_effect_format);
-            }
-            clipboard_sequence.copied(GetClipboardSequenceNumber());
-            if(clipboard_capture)clipboard_capture->cancel();
-        }
-        return set_clipboard_error(status);
+        const DWORD copy_effect = DROPEFFECT_COPY;
+        if (owner_format) writes[count++] = {owner_format, std::span(reinterpret_cast<const std::uint8_t*>(&owner_marker), sizeof(owner_marker)), false};
+        if (payload.kind == ClipboardKind::files && drop_effect_format) writes[count++] = {drop_effect_format, std::span(reinterpret_cast<const std::uint8_t*>(&copy_effect), sizeof(copy_effect)), false};
+        const auto written = board->write(owner, std::span(writes.data(), count));
+        if (!written.prepared) return written.status; // nothing was touched
+        if (!written.opened) return set_clipboard_error(written.status);
+        clipboard_sequence.copied(written.sequence);
+        if (clipboard_capture) clipboard_capture->cancel();
+        return set_clipboard_error(written.status);
     }
 };
 
 SystemServices::SystemServices() : impl_(std::make_unique<Impl>()) {}
 SystemServices::~SystemServices() { stop(); }
-HRESULT SystemServices::start(HWND owner, UINT notification_message, Changed changed, bool audio_active, app::UtilityExecutor* clipboard_executor) {
+HRESULT SystemServices::start(HWND owner, UINT notification_message, Changed changed, bool audio_active, app::UtilityExecutor* clipboard_executor, SystemServicesOptions options) {
     if (!owner || !IsWindow(owner) || notification_message < WM_APP || notification_message > 0xbfff) return E_INVALIDARG;
     if (GetWindowThreadProcessId(owner, nullptr) != GetCurrentThreadId()) return RPC_E_WRONG_THREAD;
     if (impl_->owner && !impl_->owner_thread()) return RPC_E_WRONG_THREAD;
     impl_->stop();
     try {
         impl_->owner = owner; impl_->thread = GetCurrentThreadId(); impl_->message = notification_message; impl_->changed = std::move(changed);
+        impl_->board = options.clipboard ? std::move(options.clipboard) : windowsClipboardBackend();
+        impl_->power_reader = std::move(options.power);
         impl_->route = std::make_shared<NotificationRoute>(); impl_->route->owner = owner; impl_->route->message = notification_message;
         impl_->route->token = next_route.fetch_add(1, std::memory_order_relaxed);
-        impl_->owner_format = RegisterClipboardFormatW(L"EndfieldHUD.Windows.ClipboardOwner.v1");
-        impl_->history_format = RegisterClipboardFormatW(L"CanIncludeInClipboardHistory");
-        impl_->png_format = RegisterClipboardFormatW(L"PNG");
-        impl_->drop_effect_format = RegisterClipboardFormatW(L"Preferred DropEffect");
+        auto& board = *impl_->board;
+        impl_->owner_format = board.register_format(L"EndfieldHUD.Windows.ClipboardOwner.v1");
+        impl_->history_format = board.register_format(L"CanIncludeInClipboardHistory");
+        impl_->png_format = board.register_format(L"PNG");
+        impl_->drop_effect_format = board.register_format(L"Preferred DropEffect");
+        // CFSTR_INETURLW / CFSTR_INETURLA: the Windows URL clipboard types (Mac .URL).
+        impl_->url_format = board.register_format(L"UniformResourceLocatorW");
+        impl_->url_ansi_format = board.register_format(L"UniformResourceLocator");
         for (const auto* name : {L"ExcludeClipboardContentFromMonitorProcessing", L"Clipboard Viewer Ignore",
             L"org.nspasteboard.ConcealedType", L"org.nspasteboard.TransientType", L"org.nspasteboard.AutoGeneratedType",
             L"de.petermaurer.TransientPasteboardType", L"com.typeit4me.clipping"})
-            impl_->excluded_formats.push_back(RegisterClipboardFormatW(name));
+            impl_->excluded_formats.push_back(board.register_format(name));
         if(clipboard_executor){auto*state=impl_.get();impl_->clipboard_capture=std::make_unique<ClipboardCapture>(impl_->clipboard,*clipboard_executor,
-            [state](auto sequence,auto first){return state->read_capture(sequence,first);},[]{return GetClipboardSequenceNumber();},
+            [state](auto sequence,auto first){return state->read_capture(sequence,first);},[state]{return static_cast<std::uint32_t>(state->board->sequence());},
             [state](auto value,auto error){state->capture_changed(value,error);});}
-        impl_->clipboard_sequence.begin(GetClipboardSequenceNumber());
+        impl_->clipboard_sequence.begin(board.sequence());
         const bool privacy_formats_ready = impl_->history_format &&
             std::all_of(impl_->excluded_formats.begin(), impl_->excluded_formats.end(), [](const auto format) { return format != 0; });
-        impl_->clipboard_registered = privacy_formats_ready && AddClipboardFormatListener(owner) != FALSE;
+        impl_->clipboard_registered = privacy_formats_ready && board.listen(owner);
         impl_->clipboard_error = impl_->clipboard_registered ? S_OK : privacy_formats_ready ? last_error() : E_FAIL;
-        impl_->ac_notification = RegisterPowerSettingNotification(owner, &GUID_ACDC_POWER_SOURCE, DEVICE_NOTIFY_WINDOW_HANDLE);
-        impl_->battery_notification = RegisterPowerSettingNotification(owner, &GUID_BATTERY_PERCENTAGE_REMAINING, DEVICE_NOTIFY_WINDOW_HANDLE);
+        // A synthetic power source owns every reading: no OS registration.
+        if (!impl_->power_reader) {
+            impl_->ac_notification = RegisterPowerSettingNotification(owner, &GUID_ACDC_POWER_SOURCE, DEVICE_NOTIFY_WINDOW_HANDLE);
+            impl_->battery_notification = RegisterPowerSettingNotification(owner, &GUID_BATTERY_PERCENTAGE_REMAINING, DEVICE_NOTIFY_WINDOW_HANDLE);
+        }
         if (audio_active) impl_->set_audio_active(true);
         impl_->refresh_battery();
         return S_OK;
@@ -862,11 +1256,23 @@ void SystemServices::refresh_battery() { impl_->refresh_battery(); }
 void SystemServices::set_clipboard_suspended(bool suspended) {
     if (!impl_->owner_thread() || impl_->clipboard_suspended == suspended) return;
     impl_->clipboard_suspended = suspended;
-    if (suspended) { if (impl_->clipboard_capture) impl_->clipboard_capture->cancel(); return; }
+    if (suspended) {
+        impl_->clipboard_retry_available = false;
+        if (impl_->clipboard_capture) {
+            // A change acknowledged but not yet in history (an image still
+            // validating, or a busy fallback read) is read again on resume;
+            // the Mac capture is synchronous and never left half done.
+            const auto state = impl_->clipboard_capture->state();
+            if (state == ClipboardCaptureState::pending || state == ClipboardCaptureState::busy) impl_->clipboard_sequence.reopen();
+            impl_->clipboard_capture->cancel();
+        }
+        return;
+    }
     // One sequence-checked refresh: only the latest change made while
     // suspended is captured, once.
     (void)refresh_clipboard();
 }
+bool SystemServices::clipboard_suspended() const noexcept { return impl_->clipboard_suspended; }
 HRESULT SystemServices::refresh_clipboard() {
     try { return impl_->refresh_clipboard(); } catch (const std::bad_alloc&) { return E_OUTOFMEMORY; } catch (...) { return E_FAIL; }
 }

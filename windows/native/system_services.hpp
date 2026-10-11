@@ -34,6 +34,9 @@ enum class ClipboardKind { text, url, files, image };
 enum class ClipboardImageFormat { dib, dib_v5, png, tiff };
 struct ClipboardPayload {
     ClipboardKind kind{ClipboardKind::text};
+    // kind text: the string. kind url: the ORIGINAL string the link came from
+    // (Mac ClipboardPayload.url(_, original)): the row preview and the
+    // CF_UNICODETEXT copy-back.
     std::u16string text;
     std::vector<std::u16string> files;
     ClipboardImageFormat image_format{ClipboardImageFormat::dib};
@@ -41,6 +44,11 @@ struct ClipboardPayload {
     // Native capture shares original encoded bytes with its validated thumbnail.
     // Legacy value-owned synthetic callers can continue using image instead.
     std::shared_ptr<const ClipboardImageThumbnail> decodedImage;
+    // kind url only: the link itself (Mac url.absoluteString), ASCII, written
+    // back as UniformResourceLocatorW. Synthetic callers may leave it empty;
+    // ClipboardHistory::ingest then derives it from text exactly as the Mac
+    // string heuristic does.
+    std::u16string url;
     std::span<const std::uint8_t> image_bytes() const noexcept;
     bool operator==(const ClipboardPayload&) const;
 };
@@ -79,7 +87,22 @@ public:
     static std::size_t payload_bytes(const ClipboardPayload& payload) noexcept;
     static bool valid_utf16(std::u16string_view value) noexcept;
     static std::size_t utf8_bytes(std::u16string_view value) noexcept;
-    static bool url_text(std::u16string_view value) noexcept;
+    // ClipboardStore.read: a plain string is a link only up to 2048 UTF-8 bytes.
+    static constexpr std::size_t maximum_detected_url_bytes = 2048;
+    // A stored link (ASCII absoluteString) never exceeds 4x the text bound:
+    // percent-encoding triples a UTF-8 byte and IDNA labels stay below 4x.
+    static constexpr std::size_t maximum_url_units = 4 * maximum_text_bytes;
+    // ClipboardStore.parsedURL(_:explicit:) on macOS 14+ Foundation: trims
+    // whitespace and newlines, rejects inner whitespace, parses like
+    // URL(string:) (RFC 3986 with invalid characters percent-encoded and
+    // non-ASCII hosts converted by UTS #46 IDNA) and returns absoluteString.
+    // http/https/ftp need a host; explicit_type (the clipboard's URL type)
+    // accepts any scheme, a plain string only mailto/tel/sms with content and
+    // file with a path. Oracle: tools/clipboard_url_reference.sh. Without ICU
+    // (portable builds) a non-ASCII host is rejected.
+    static std::optional<std::u16string> parsed_url(std::u16string_view text, bool explicit_type);
+    // The plain-string classification: at most 2048 UTF-8 bytes and a link.
+    static bool url_text(std::u16string_view value);
     // Metadata preflight only: no allocation, decompression or pixel buffer.
     static bool valid_image_metadata(std::uint32_t width, std::uint32_t height,
         std::size_t encoded_bytes) noexcept;
@@ -184,6 +207,10 @@ public:
     bool should_capture(std::uint32_t sequence) const noexcept;
     void acknowledge(std::uint32_t sequence) noexcept { last_ = sequence; }
     void copied(std::uint32_t sequence) noexcept { last_ = own_ = sequence; }
+    // An acknowledged capture was interrupted before it reached history (an
+    // image still validating when capture was suspended): the next refresh may
+    // read the current clipboard again; the app's own copy stays excluded.
+    void reopen() noexcept { last_ = 0; }
 private:
     std::uint32_t last_{}, own_{};
 };
@@ -203,6 +230,51 @@ bool excludes_clipboard(const ClipboardExclusion& policy) noexcept;
 
 namespace endfield::native {
 
+// The clipboard SystemServices listens to, reads and writes. Production uses
+// the session's Windows clipboard (windowsClipboardBackend). Tests and hidden
+// coverage pass a synthetic clipboard (SystemServicesOptions::clipboard) so
+// the user's clipboard is never read, written or listened to. Every call runs
+// on the owner thread.
+struct ClipboardFormatData { const void* data{}; std::size_t size{}; };
+struct ClipboardFormatWrite { UINT format{}; std::span<const std::uint8_t> bytes; bool required{true}; };
+struct ClipboardWriteResult {
+    bool prepared{true}; // false: a required buffer could not be allocated (clipboard untouched)
+    bool opened{};       // false: another process holds the clipboard (status says why)
+    HRESULT status{S_OK};
+    DWORD sequence{};    // read inside the lease after the writes (opened only)
+};
+class ClipboardBackend {
+public:
+    virtual ~ClipboardBackend() = default;
+    virtual UINT register_format(const wchar_t* name) = 0; // RegisterClipboardFormatW; 0 on failure
+    virtual bool listen(HWND owner) = 0;                    // AddClipboardFormatListener
+    virtual void unlisten(HWND owner) noexcept = 0;
+    virtual DWORD sequence() = 0;                           // GetClipboardSequenceNumber
+    virtual HRESULT open(HWND owner) = 0;                   // OpenClipboard: S_OK or why not (busy)
+    virtual void close() noexcept = 0;                      // releases every data() view
+    virtual bool available(UINT format) = 0;                // inside open()
+    virtual ClipboardFormatData data(UINT format) = 0;      // inside open(); empty when absent
+    // Opens the clipboard, empties it and sets the formats in order, then
+    // reads the sequence and closes. A required format that cannot be set
+    // fails the write; optional ones (metadata) are best effort. Buffers are
+    // prepared before the lease is taken.
+    virtual ClipboardWriteResult write(HWND owner, std::span<const ClipboardFormatWrite> formats) = 0;
+};
+std::shared_ptr<ClipboardBackend> windowsClipboardBackend();
+// Seams for SystemServices::start. Production passes none.
+struct SystemServicesOptions {
+    std::shared_ptr<ClipboardBackend> clipboard;    // null: the Windows clipboard
+    // Synthetic AC/battery readings: replaces GetSystemPowerStatus and skips
+    // the OS power-setting registrations (WM_POWERBROADCAST still routes).
+    std::function<bool(PowerStatus&)> power;
+};
+// CF_HDROP payload (DROPFILES with a wide or ANSI double-NUL list). Returns
+// S_OK, HRESULT_FROM_WIN32(ERROR_TOO_MANY_NAMES) beyond ClipboardHistory's
+// file count or aggregate path bound (Mac tooManyFiles), ERROR_BUFFER_OVERFLOW
+// for a path beyond 32767 units, ERROR_INVALID_DATA for an empty or malformed
+// list. Pure; used by the reader and tests.
+HRESULT parse_clipboard_drop(ClipboardFormatData, std::vector<std::u16string>& files);
+
 // All public methods and destruction belong to the owner HWND's thread.
 // Call stop() before destroying its HWND. Changed callbacks must not stop or
 // restart this service reentrantly; queue that operation onto the owner instead.
@@ -221,7 +293,7 @@ public:
     // A valid start can have unavailable individual services; inspect snapshots
     // and clipboard_status rather than treating missing hardware as fake data.
     HRESULT start(HWND owner, UINT notification_message, Changed changed, bool audio_active = false,
-        app::UtilityExecutor* clipboard_executor = nullptr);
+        app::UtilityExecutor* clipboard_executor = nullptr, SystemServicesOptions options = {});
     // Call after draining the SAME borrowed executor. Image capture requires
     // it; without it text/files work but images are not accepted undecoded.
     bool clipboard_queue_capacity_available();
@@ -240,9 +312,12 @@ public:
     // the clipboard. If still busy, this explicit UI action may retry later.
     HRESULT refresh_clipboard();
     // ClipboardWatcher.setSuspended: while suspended (sleep, display off,
-    // session lock) clipboard notifications are ignored and a running capture
-    // is cancelled; resuming runs exactly one sequence-checked refresh.
+    // session lock) clipboard notifications and refreshes are ignored and a
+    // running capture is cancelled (an image still validating is read again
+    // later); resuming runs exactly one sequence-checked refresh, so only the
+    // latest change made while suspended is captured, once.
     void set_clipboard_suspended(bool suspended);
+    bool clipboard_suspended() const noexcept;
     HRESULT copy_clipboard_item(std::uint64_t id);
     bool erase_clipboard_item(std::uint64_t id);
     bool pin_clipboard_item(std::uint64_t id, bool pinned);

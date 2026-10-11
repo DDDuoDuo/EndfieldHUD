@@ -28,11 +28,11 @@ std::vector<std::uint8_t> dib(std::uint32_t width=2, std::uint32_t height=2, std
     return bytes;
 }
 std::vector<std::uint8_t> png() {
-    // Fixed, valid 1x1 RGBA PNG. Tests only invoke the structural validator,
-    // not a native decoder, clipboard, capture API, audio endpoint, or HWND.
+    // Fixed, valid 1x1 RGBA PNG (every chunk CRC is correct, so the real WIC
+    // thumbnail job of the synthetic-clipboard service run accepts it).
     constexpr std::array<std::uint8_t,68> fixture{
         137,80,78,71,13,10,26,10,0,0,0,13,73,72,68,82,0,0,0,1,0,0,0,1,8,6,0,0,0,31,21,196,137,
-        0,0,0,11,73,68,65,84,120,156,99,96,0,2,0,0,5,0,1,165,246,69,64,0,0,0,0,73,69,78,68,174,66,96,130};
+        0,0,0,11,73,68,65,84,120,156,99,96,0,2,0,0,5,0,1,122,94,171,63,0,0,0,0,73,69,78,68,174,66,96,130};
     return {fixture.begin(),fixture.end()};
 }
 std::vector<std::uint8_t> tiff(){std::vector<std::uint8_t>b(38);b[0]='I';b[1]='I';b[2]=42;b[4]=8;b[8]=2;b[10]=0;b[11]=1;b[12]=4;b[14]=1;b[18]=1;b[22]=1;b[23]=1;b[24]=4;b[26]=1;b[30]=1;return b;}
@@ -191,8 +191,180 @@ void stereo(){
     levels={.4f,.8f};writes.clear();unsigned reads{};access.read=[&](unsigned n,float&v){v=++reads==3?std::numeric_limits<float>::infinity():levels[n];return 0;};access.write=[&](unsigned n,float v){writes.push_back(n);levels[n]=v;return 0;};check(apply_audio_stereo_balance(.2f,access)<0&&levels==std::array{.4f,.8f}&&writes==std::vector<unsigned>{0,0},"Invalid native readback rolls back before writing the next channel");
     writes.clear();check(apply_audio_stereo_balance(2,access)<0&&writes.empty(),"Invalid balance rejects before touching injected hardware");
 }
+void interrupted_capture(){
+    // ClipboardSequence.reopen: an acknowledged change that never reached
+    // history is readable again, the app's own copy stays excluded.
+    ClipboardSequence sequence;sequence.begin(10);
+    check(sequence.should_capture(11),"A new change is eligible");sequence.acknowledge(11);
+    check(!sequence.should_capture(11),"An acknowledged change is not read twice");sequence.reopen();
+    check(sequence.should_capture(11)&&sequence.should_capture(12),"An interrupted capture is read again");
+    sequence.copied(13);sequence.reopen();check(!sequence.should_capture(13)&&sequence.should_capture(14),"Reopening never re-reads the app's own copy");
+    // Header-only dimension preflight (Mac imageDimensionsTooLarge).
+    auto large=png();big32(large,16,100001);ClipboardEncodedImage image{ClipboardEncodedFormat::png,std::make_shared<const std::vector<std::uint8_t>>(large)};
+    check(clipboardEncodedImageTooLarge(image),"A PNG header beyond 100,000 px is too large");
+    image.bytes=std::make_shared<const std::vector<std::uint8_t>>(png());check(!clipboardEncodedImageTooLarge(image),"A small PNG is not too large");
+    auto tall=dib(1,1,40);little32(tall,4,20000);little32(tall,8,static_cast<std::uint32_t>(-20000));image={ClipboardEncodedFormat::dib,std::make_shared<const std::vector<std::uint8_t>>(tall)};
+    check(clipboardEncodedImageTooLarge(image),"A top-down DIB of 400 MP is too large from its header");
+    big32(large,16,0);image={ClipboardEncodedFormat::png,std::make_shared<const std::vector<std::uint8_t>>(large)};check(!clipboardEncodedImageTooLarge(image),"A zero dimension is invalid, not too large");
+    // ClipboardCapture reports it without trying another format.
+    endfield::app::UtilityExecutor executor([]{});ClipboardHistory history;std::vector<unsigned>ranks;std::vector<std::pair<ClipboardCaptureState,std::int32_t>>states;unsigned decodes{};
+    ClipboardCapture capture(history,executor,[&](std::uint32_t expected,unsigned first){ranks.push_back(first);ClipboardReadResult r;r.sequence=expected;r.state=ClipboardReadState::payload;r.nextImage=first+1;r.payload.kind=ClipboardKind::image;r.payload.image_format=ClipboardCapture::imageFormats[first];auto bytes=png();big32(bytes,16,100001);r.payload.image=std::move(bytes);return r;},
+        []{return 5u;},[&](auto state,auto native){states.emplace_back(state,native);},[&](const auto&){++decodes;return ClipboardImageResult{};});
+    check(capture.begin(5)==ClipboardCaptureState::invalid&&ranks==std::vector<unsigned>{0}&&decodes==0&&!states.empty()&&states.back().second==static_cast<std::int32_t>(0x80070216u),
+        "An oversized PNG header reports ERROR_ARITHMETIC_OVERFLOW once, decodes nothing and tries no fallback");
 }
+}
+#ifdef _WIN32
+#include <map>
+#include <shlobj_core.h> // DROPFILES
+namespace {
+// Synthetic session clipboard: tests never read, write or listen to the
+// user's clipboard. Sequence numbers advance on every content change.
+struct SyntheticClipboard final : ClipboardBackend {
+    std::map<std::wstring,UINT>names;UINT next{0xc100};
+    std::map<UINT,std::vector<std::uint8_t>>content;DWORD current{500};
+    bool busy{},listening{},opened{};unsigned opens{},writes{};
+    std::vector<std::vector<UINT>>written;
+    UINT register_format(const wchar_t*name)override{const auto[it,inserted]=names.try_emplace(name,next);if(inserted)++next;return it->second;}
+    bool listen(HWND)override{listening=true;return true;}
+    void unlisten(HWND)noexcept override{listening=false;}
+    DWORD sequence()override{return current;}
+    HRESULT open(HWND)override{++opens;if(busy)return HRESULT_FROM_WIN32(ERROR_ACCESS_DENIED);if(opened)return E_UNEXPECTED;opened=true;return S_OK;}
+    void close()noexcept override{opened=false;}
+    bool available(UINT format)override{return opened&&format&&content.contains(format);}
+    ClipboardFormatData data(UINT format)override{const auto it=content.find(format);if(!opened||it==content.end()||it->second.empty())return {};return {it->second.data(),it->second.size()};}
+    ClipboardWriteResult write(HWND,std::span<const ClipboardFormatWrite>formats)override{ClipboardWriteResult r;if(busy){r.status=HRESULT_FROM_WIN32(ERROR_ACCESS_DENIED);return r;}
+        r.opened=true;content.clear();std::vector<UINT>list;for(const auto&f:formats){content[f.format].assign(f.bytes.begin(),f.bytes.end());list.push_back(f.format);}written.push_back(std::move(list));++writes;r.sequence=++current;return r;}
+    UINT id(const wchar_t*name)const{return names.at(name);}
+    // Another application copies these formats.
+    void copy(std::vector<std::pair<UINT,std::vector<std::uint8_t>>>formats){content.clear();for(auto&[format,bytes]:formats)content[format]=std::move(bytes);++current;}
+};
+std::vector<std::uint8_t> wide(std::u16string_view text){std::vector<std::uint8_t>b((text.size()+1)*2);std::memcpy(b.data(),text.data(),text.size()*2);return b;}
+std::vector<std::uint8_t> narrow(std::string_view text){std::vector<std::uint8_t>b(text.begin(),text.end());b.push_back(0);return b;}
+std::vector<std::uint8_t> drop(const std::vector<std::u16string>&files){std::size_t units=1;for(const auto&f:files)units+=f.size()+1;std::vector<std::uint8_t>b(sizeof(DROPFILES)+units*2);DROPFILES h{};h.pFiles=sizeof(DROPFILES);h.fWide=TRUE;std::memcpy(b.data(),&h,sizeof(h));std::size_t at=sizeof(h);for(const auto&f:files){std::memcpy(b.data()+at,f.data(),f.size()*2);at+=(f.size()+1)*2;}return b;}
+void drops(){
+    std::vector<std::u16string>files;
+    check(parse_clipboard_drop({},files)==HRESULT_FROM_WIN32(ERROR_INVALID_DATA),"No drop data is invalid");
+    auto bytes=drop({u"C:\\one.txt",u"\\\\server\\share\\two.png"});check(parse_clipboard_drop({bytes.data(),bytes.size()},files)==S_OK&&files==std::vector<std::u16string>{u"C:\\one.txt",u"\\\\server\\share\\two.png"},"A wide CF_HDROP list is read in order");
+    std::vector<std::uint8_t>ansi(sizeof(DROPFILES));DROPFILES h{};h.pFiles=sizeof(DROPFILES);std::memcpy(ansi.data(),&h,sizeof(h));for(const char c:std::string_view("C:\\a.txt\0C:\\b.txt\0\0",19))ansi.push_back(static_cast<std::uint8_t>(c));
+    check(parse_clipboard_drop({ansi.data(),ansi.size()},files)==S_OK&&files==std::vector<std::u16string>{u"C:\\a.txt",u"C:\\b.txt"},"An ANSI CF_HDROP list is converted");
+    bytes=drop({});check(parse_clipboard_drop({bytes.data(),bytes.size()},files)==HRESULT_FROM_WIN32(ERROR_INVALID_DATA)&&files.empty(),"An empty drop is invalid");
+    bytes=drop({u"C:\\x"});bytes.resize(bytes.size()-2);check(parse_clipboard_drop({bytes.data(),bytes.size()},files)==HRESULT_FROM_WIN32(ERROR_INVALID_DATA),"A list without its final terminator is invalid");
+    bytes=drop(std::vector<std::u16string>(513,u"C:\\f"));check(parse_clipboard_drop({bytes.data(),bytes.size()},files)==HRESULT_FROM_WIN32(ERROR_TOO_MANY_NAMES),"More than 512 files is Mac tooManyFiles");
+    bytes=drop(std::vector<std::u16string>(512,u"C:\\f"));check(parse_clipboard_drop({bytes.data(),bytes.size()},files)==S_OK&&files.size()==512,"512 files are accepted");
+    bytes=drop(std::vector<std::u16string>(40,u"C:\\"+std::u16string(30000,u'x')));check(parse_clipboard_drop({bytes.data(),bytes.size()},files)==HRESULT_FROM_WIN32(ERROR_TOO_MANY_NAMES),"An aggregate path list over 1 MB is Mac tooManyFiles");
+    bytes=drop({u"C:\\"+std::u16string(32768,u'x')});check(parse_clipboard_drop({bytes.data(),bytes.size()},files)==HRESULT_FROM_WIN32(ERROR_BUFFER_OVERFLOW),"A path over 32767 units overflows");
+    bytes=drop({u"C:\\x"});h.pFiles=static_cast<DWORD>(bytes.size());std::memcpy(bytes.data(),&h,sizeof(h));check(parse_clipboard_drop({bytes.data(),bytes.size()},files)==HRESULT_FROM_WIN32(ERROR_INVALID_DATA),"A list offset outside the block is invalid");
+}
+constexpr UINT notice=WM_APP+7;
+struct Harness {
+    SystemServices*services{};unsigned delivered{},timers{};
+    static LRESULT CALLBACK proc(HWND hwnd,UINT message,WPARAM w,LPARAM l){
+        auto*self=reinterpret_cast<Harness*>(GetWindowLongPtrW(hwnd,GWLP_USERDATA));
+        if(self&&message==WM_TIMER)++self->timers;
+        if(self&&self->services&&self->services->handle_message(message,w,l)){if(message==notice)++self->delivered;return 0;}
+        return DefWindowProcW(hwnd,message,w,l);
+    }
+    HWND hwnd{};ATOM atom{};
+    Harness(){WNDCLASSW c{};c.lpfnWndProc=proc;c.hInstance=GetModuleHandleW(nullptr);c.lpszClassName=L"EndfieldHUD.SystemServicesTests";atom=RegisterClassW(&c);
+        hwnd=CreateWindowExW(0,c.lpszClassName,L"",0,0,0,0,0,HWND_MESSAGE,nullptr,c.hInstance,nullptr);if(!hwnd)throw std::runtime_error("Message-only test window");SetWindowLongPtrW(hwnd,GWLP_USERDATA,reinterpret_cast<LONG_PTR>(this));}
+    ~Harness(){if(hwnd)DestroyWindow(hwnd);if(atom)UnregisterClassW(L"EndfieldHUD.SystemServicesTests",GetModuleHandleW(nullptr));}
+    unsigned queued()const{MSG m;unsigned n{};std::vector<MSG>held;while(PeekMessageW(&m,hwnd,notice,notice,PM_REMOVE)){++n;held.push_back(m);}for(const auto&x:held)PostMessageW(x.hwnd,x.message,x.wParam,x.lParam);return n;}
+    void pump(){MSG m;while(PeekMessageW(&m,hwnd,0,0,PM_REMOVE)){TranslateMessage(&m);DispatchMessageW(&m);}}
+};
+void services(){
+    Harness window;auto board=std::make_shared<SyntheticClipboard>();PowerStatus power{1,8,50,3600,7200};unsigned powerReads{},batteryChanges{},clipboardChanges{};
+    endfield::app::UtilityExecutor executor([]{});
+    SystemServices services;window.services=&services;
+    struct Detach{Harness&w;~Detach(){w.services=nullptr;}}detach{window}; // before the services are destroyed
+    SystemServicesOptions options;options.clipboard=board;options.power=[&](PowerStatus&out){++powerReads;out=power;return true;};
+    check(services.start(window.hwnd,notice,[&](ServiceChange change){(change==ServiceChange::battery?batteryChanges:clipboardChanges)++;},false,&executor,options)==S_OK,"Services start over the synthetic clipboard and power source");
+    check(board->listening&&powerReads==1&&batteryChanges==1&&services.battery().percent==50u&&services.battery().charging==true&&board->opens==0,"Start reads power once and nothing from the clipboard");
+    const auto url=board->id(L"UniformResourceLocatorW"),ansiURL=board->id(L"UniformResourceLocator"),pngFormat=board->id(L"PNG"),owner=board->id(L"EndfieldHUD.Windows.ClipboardOwner.v1");
+    const auto change=[&]{check(services.handle_message(WM_CLIPBOARDUPDATE,0,0),"Clipboard updates are recognized");window.pump();};
+    const auto drain=[&]{for(unsigned n=0;n<4;++n){executor.waitIdle();executor.drain();services.clipboard_queue_capacity_available();}window.pump();};
+    const auto front=[&]()->const ClipboardPayload&{check(!services.clipboard().items().empty(),"History has an item");return services.clipboard().items().front().payload;};
+
+    // WM_POWERBROADCAST storm: one posted notice and one read per batch, no timer.
+    board->copy({{CF_UNICODETEXT,wide(u"storm text")}});power.battery_percent=51;
+    for(unsigned n=0;n<10000;++n)check(services.handle_message(WM_POWERBROADCAST,n%3==0?PBT_POWERSETTINGCHANGE:n%3==1?PBT_APMPOWERSTATUSCHANGE:PBT_APMRESUMEAUTOMATIC,0),"Power broadcasts are recognized");
+    for(unsigned n=0;n<1000;++n)services.handle_message(WM_CLIPBOARDUPDATE,0,0);
+    check(window.queued()==1,"A storm of 11,000 power and clipboard messages posts one notice");
+    window.pump();
+    check(window.delivered==1&&powerReads==2&&batteryChanges==2&&services.battery().percent==51u,"The batch reads power once and reports one change");
+    check(board->opens==1&&services.clipboard().items().size()==1&&front().text==u"storm text","The batch reads the clipboard once");
+    for(unsigned n=0;n<1000;++n)services.handle_message(WM_POWERBROADCAST,PBT_APMSUSPEND,0);
+    window.pump();check(window.delivered==1&&powerReads==2,"Suspend broadcasts post nothing");
+    for(unsigned n=0;n<100;++n)services.handle_message(WM_POWERBROADCAST,PBT_POWERSETTINGCHANGE,0);window.pump();
+    check(window.delivered==2&&powerReads==3&&batteryChanges==2,"An unchanged reading after a later batch reports nothing");
+    check(MsgWaitForMultipleObjects(0,nullptr,FALSE,120,QS_ALLINPUT)==WAIT_TIMEOUT&&window.timers==0,"No timer or follow-up message exists after the batches");
+
+    // Suspension: changes are ignored, then the latest is captured once.
+    services.set_clipboard_suspended(true);const auto opens=board->opens;const auto size=services.clipboard().items().size();
+    for(const auto*text:{u"one",u"two",u"three"}){board->copy({{CF_UNICODETEXT,wide(text)}});change();}
+    check(services.clipboard_suspended()&&board->opens==opens&&services.clipboard().items().size()==size&&services.refresh_clipboard()==S_FALSE,"Nothing is read while suspended, explicit refreshes included");
+    services.set_clipboard_suspended(false);
+    check(board->opens==opens+1&&services.clipboard().items().size()==size+1&&front().text==u"three","Resuming captures only the latest change, once");
+    change();check(board->opens==opens+1,"The caught-up change is not read again");
+
+    // An image still validating when capture is suspended is read again on resume.
+    board->copy({{pngFormat,png()}});change();check(services.clipboard_status()==E_PENDING,"An image capture is validating");
+    services.set_clipboard_suspended(true);drain();
+    check(front().kind!=ClipboardKind::image,"The interrupted image never enters history while suspended");
+    services.set_clipboard_suspended(false);drain();
+    check(front().kind==ClipboardKind::image&&front().image_format==ClipboardImageFormat::png&&services.clipboard_status()==S_OK,"Resuming reads the interrupted image again");
+
+    // Explicit URL type (Mac .URL before .string) and link copy-back.
+    board->copy({{url,wide(u"https://例子.com/路径")},{CF_UNICODETEXT,wide(u"例子 link")}});change();
+    check(front().kind==ClipboardKind::url&&front().url==u"https://xn--fsqu00a.com/%E8%B7%AF%E5%BE%84"&&front().text==u"例子 link","UniformResourceLocatorW is the link, CF_UNICODETEXT its original string");
+    const auto linkID=services.clipboard().items().front().id;
+    board->copy({{url,wide(u"x-endfield:open")}});change();
+    check(front().kind==ClipboardKind::url&&front().url==u"x-endfield:open"&&front().text==u"x-endfield:open","An explicit URL of any scheme without a string is its own text");
+    board->copy({{url,wide(u"not a url")},{CF_UNICODETEXT,wide(u"https://example.com")}});change();
+    check(front().kind==ClipboardKind::url&&front().url==u"https://example.com"&&front().text==u"https://example.com","An unparsable URL type falls back to the string");
+    board->copy({{ansiURL,narrow("https://ansi.example/path")}});change();
+    check(front().kind==ClipboardKind::url&&front().url==u"https://ansi.example/path","The ANSI URL type is read when the wide one is absent");
+    board->copy({{CF_UNICODETEXT,wide(u"  https://example.com/a\n")}});change();
+    check(front().kind==ClipboardKind::url&&front().url==u"https://example.com/a"&&front().text==u"  https://example.com/a\n","A link string is trimmed for its URL and kept as typed");
+    board->copy({{CF_UNICODETEXT,wide(u"plain words")}});change();check(front().kind==ClipboardKind::text&&front().url.empty(),"Other strings stay text");
+    const auto textID=services.clipboard().items().front().id;
+    check(services.copy_clipboard_item(linkID)==S_OK&&board->written.back()==std::vector<UINT>{url,CF_UNICODETEXT,owner},"A link is written back as the URL type plus the string");
+    check(board->content[url]==wide(u"https://xn--fsqu00a.com/%E8%B7%AF%E5%BE%84")&&board->content[CF_UNICODETEXT]==wide(u"例子 link"),"The URL is absoluteString and the string is the original");
+    const auto afterCopy=board->opens;change();check(board->opens==afterCopy&&services.clipboard().items().front().id==textID,"The app's own copy-back is never captured");
+    check(services.copy_clipboard_item(textID)==S_OK&&board->written.back()==std::vector<UINT>{CF_UNICODETEXT,owner},"Text is written back as the string only");
+
+    // Distinct capture statuses (ClipboardStore.CaptureError).
+    const auto items=services.clipboard().items().size();
+    board->copy({{CF_UNICODETEXT,wide(std::u16string(ClipboardHistory::maximum_text_bytes+1,u'a'))}});change();
+    check(services.clipboard_status()==HRESULT_FROM_WIN32(ERROR_FILE_TOO_LARGE),"Text over 1 MB is textTooLarge");
+    board->copy({{CF_UNICODETEXT,wide(std::u16string(ClipboardHistory::maximum_text_bytes/2,u'中'))}});change();
+    check(services.clipboard_status()==HRESULT_FROM_WIN32(ERROR_FILE_TOO_LARGE),"Text over 1 MB of UTF-8 is textTooLarge");
+    board->copy({{url,wide(u"https://example.com/"+std::u16string(ClipboardHistory::maximum_text_bytes,u'a'))}});change();
+    check(services.clipboard_status()==HRESULT_FROM_WIN32(ERROR_FILE_TOO_LARGE),"A URL type over 1 MB is textTooLarge");
+    board->copy({{CF_HDROP,drop(std::vector<std::u16string>(513,u"C:\\f"))}});change();
+    check(services.clipboard_status()==HRESULT_FROM_WIN32(ERROR_TOO_MANY_NAMES),"More than 512 files is tooManyFiles");
+    auto huge=png();big32(huge,16,100001);board->copy({{pngFormat,huge}});change();
+    check(services.clipboard_status()==static_cast<HRESULT>(0x80070216),"A PNG beyond 100,000 px is imageDimensionsTooLarge");
+    board->copy({{pngFormat,std::vector<std::uint8_t>(ClipboardHistory::maximum_image_bytes+1,1)}});change();
+    check(services.clipboard_status()==HRESULT_FROM_WIN32(ERROR_BUFFER_OVERFLOW),"An image over 64 MB is imageTooLarge");
+    board->content.clear();
+    check(services.clipboard().items().size()==items,"Rejected captures never change history");
+    board->copy({{CF_UNICODETEXT,wide(u"secret")},{board->id(L"ExcludeClipboardContentFromMonitorProcessing"),{}}});change();
+    check(services.clipboard().items().size()==items&&front().text!=u"secret","Excluded content is never captured");
+    // A busy clipboard: one coalesced retry, then the explicit refresh.
+    board->busy=true;const auto busyOpens=board->opens;board->copy({{CF_UNICODETEXT,wide(u"after busy")}});change();window.pump();
+    check(board->opens==busyOpens+2&&services.clipboard_status()==HRESULT_FROM_WIN32(ERROR_ACCESS_DENIED),"A busy clipboard is retried once and reported");
+    window.pump();check(board->opens==busyOpens+2,"No further retry loop runs");
+    board->busy=false;check(services.refresh_clipboard()==S_OK&&front().text==u"after busy"&&services.clipboard_status()==S_OK,"An explicit refresh captures the released change");
+    services.stop();check(!board->listening&&!services.running(),"Stop removes the listener");
+}
+}
+#endif
 int main() {
-    try {battery();notification();clipboard();clipboard_image_limits();capture();stereo();std::cout<<checks<<" synthetic system-service checks passed\n";return 0;}
+    try {battery();notification();clipboard();clipboard_image_limits();capture();stereo();interrupted_capture();
+#ifdef _WIN32
+        drops();services();
+#endif
+        std::cout<<checks<<" synthetic system-service checks passed\n";return 0;}
     catch(const std::exception& error){std::cerr<<error.what()<<'\n';return 1;}
 }

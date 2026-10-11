@@ -9,12 +9,19 @@
 #include "native/event_log_owner.hpp"
 #include "native/event_log_time.hpp"
 #include "native/storage_files.hpp"
+#include "native/system_services.hpp"
+#include <algorithm>
 #include <array>
+#include <cstring>
 #include <filesystem>
+#include <initializer_list>
 #include <limits>
+#include <map>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
+#include <vector>
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -40,32 +47,143 @@ std::optional<gpu::ActivityIconPixels> syntheticIcon(const std::string& key, uns
     return out;
 }
 
+// --- Synthetic clipboard: the session clipboard is never read or written ---
+class CoverageClipboard final : public gpu::ClipboardBackend {
+public:
+    UINT register_format(const wchar_t* name) override {
+        const auto [it, inserted] = names_.try_emplace(name, next_);
+        if (inserted) ++next_;
+        return it->second;
+    }
+    bool listen(HWND) override { listening = true; return true; }
+    void unlisten(HWND) noexcept override { listening = false; }
+    DWORD sequence() override { return sequence_; }
+    HRESULT open(HWND) override { ++opens; if (opened_) return E_UNEXPECTED; opened_ = true; return S_OK; }
+    void close() noexcept override { opened_ = false; }
+    bool available(UINT format) override { return opened_ && format && content_.contains(format); }
+    gpu::ClipboardFormatData data(UINT format) override {
+        const auto it = content_.find(format);
+        if (!opened_ || it == content_.end() || it->second.empty()) return {};
+        return {it->second.data(), it->second.size()};
+    }
+    gpu::ClipboardWriteResult write(HWND, std::span<const gpu::ClipboardFormatWrite> formats) override {
+        gpu::ClipboardWriteResult result;
+        result.opened = true;
+        content_.clear();
+        written.clear();
+        for (const auto& format : formats) { content_[format.format].assign(format.bytes.begin(), format.bytes.end()); written.push_back(format.format); }
+        result.sequence = ++sequence_;
+        return result;
+    }
+    // Another application copies these formats.
+    void copy(std::initializer_list<std::pair<UINT, std::vector<std::uint8_t>>> formats) {
+        content_.clear();
+        for (const auto& [format, bytes] : formats) content_[format] = bytes;
+        ++sequence_;
+    }
+    UINT id(const wchar_t* name) const { return names_.at(name); }
+    const std::vector<std::uint8_t>& content(UINT format) const { static const std::vector<std::uint8_t> none; const auto it = content_.find(format); return it == content_.end() ? none : it->second; }
+    bool listening{};
+    unsigned opens{};
+    std::vector<UINT> written;
+private:
+    std::map<std::wstring, UINT> names_;
+    std::map<UINT, std::vector<std::uint8_t>> content_;
+    UINT next_{0xc200};
+    DWORD sequence_{9000};
+    bool opened_{};
+};
+std::vector<std::uint8_t> wide(std::u16string_view text) {
+    std::vector<std::uint8_t> bytes((text.size() + 1) * sizeof(char16_t));
+    std::memcpy(bytes.data(), text.data(), text.size() * sizeof(char16_t));
+    return bytes;
+}
+// A valid 1x1 RGBA PNG, validated by the real WIC thumbnail job.
+std::vector<std::uint8_t> pixel() {
+    constexpr std::array<std::uint8_t, 68> png{137,80,78,71,13,10,26,10,0,0,0,13,73,72,68,82,0,0,0,1,0,0,0,1,8,6,0,0,0,31,21,196,137,
+        0,0,0,11,73,68,65,84,120,156,99,96,0,2,0,0,5,0,1,122,94,171,63,0,0,0,0,73,69,78,68,174,66,96,130};
+    return {png.begin(), png.end()};
+}
+constexpr UINT serviceNotice = WM_APP + 0x31;
+constexpr wchar_t windowClass[] = L"EndfieldHUD.SystemProvidersCoverage";
+LRESULT CALLBACK serviceWindow(HWND hwnd, UINT message, WPARAM w, LPARAM l) {
+    auto* services = reinterpret_cast<gpu::SystemServices*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    if (services && services->handle_message(message, w, l)) return 0;
+    return DefWindowProcW(hwnd, message, w, l);
+}
+
+// Mac SystemEvent.detail vocabularies (Sources/SystemEventLog.swift) of the
+// records the host's action hooks write.
+bool listed(std::string_view value, std::initializer_list<std::string_view> names) { return std::find(names.begin(), names.end(), value) != names.end(); }
+bool hookKind(modules::EventKind kind) {
+    using K = modules::EventKind;
+    switch (kind) {
+    case K::noteAction: case K::readerAction: case K::archiveAction: case K::projectionAction:
+    case K::shelfAdded: case K::shelfRemoved: case K::shelfCleared: case K::clipboardCopied: return true;
+    default: return false;
+    }
+}
+bool hookRecord(const modules::SystemEvent& event) {
+    using K = modules::EventKind;
+    const auto only = [&](std::string_view key) -> const std::string* {
+        if (event.metadata.size() != 1) return nullptr;
+        const auto it = event.metadata.find(key);
+        return it == event.metadata.end() ? nullptr : &it->second;
+    };
+    const std::string* value{};
+    switch (event.kind) {
+    case K::noteAction:
+        return (value = only("action")) && listed(*value, {"createdText", "createdTODO", "createdMedia", "createdDrawing", "editedText", "formattedText",
+            "editedTODO", "drawingEdited", "deletedNote", "mediaPlayback"}) && !modules::eventDetail(event).empty();
+    case K::readerAction:
+        return (value = only("action")) && listed(*value, {"imported", "deleted", "bookmarked", "settings", "progress"}) && !modules::eventDetail(event).empty();
+    case K::archiveAction:
+        return (value = only("action")) && listed(*value, {"created", "edited", "deleted", "mediaAdded", "mediaRemoved", "categoryCreated",
+            "categoryChanged", "categoryDeleted"}) && !modules::eventDetail(event).empty();
+    case K::projectionAction:
+        return (value = only("action")) && listed(*value, {"drawingEdited", "erased", "brushChanged", "backgroundChanged", "mediaAdded", "mediaRemoved", "cleared"}) &&
+            !modules::eventDetail(event).empty();
+    case K::shelfAdded: case K::shelfRemoved:
+        return (value = only("filename")) && !value->empty();
+    case K::shelfCleared:
+        return (value = only("count")) && !value->empty() && std::all_of(value->begin(), value->end(), [](char c) { return c >= '0' && c <= '9'; });
+    case K::clipboardCopied:
+        return (value = only("kind")) && listed(*value, {"text", "url", "image", "files"});
+    default: return true;
+    }
+}
+
 class SystemProvidersCoverage final : public app::ModuleOwner {
 public:
     explicit SystemProvidersCoverage(const app::ApplicationModuleContext& c)
         : host_(*c.host), utility_(*c.utility), root_(c.coverageRoot), clock_(c.clock ? c.clock() : 0),
           events_(root_, gpu::EventLogOwnerCallbacks{[this] { return clock_; }, [this] { ++eventChanges_; }}),
           saves_(events_, utility_), icons_(utility_, syntheticIcon) {
-        gpu::ClipboardPayload link;
-        link.kind = gpu::ClipboardKind::url;
-        link.text = u"https://example.com/endfieldhud-coverage";
-        if (history_.ingest(std::move(link)) != gpu::ClipboardInsertResult::inserted) throw std::runtime_error("Synthetic clipboard history rejected its link");
-        linkID_ = history_.items().front().id;
-        gpu::ClipboardProviderSource source;
-        source.history = [this]() -> const gpu::ClipboardHistory& { return history_; };
-        source.copy = [this](std::uint64_t) { ++copies_; return true; }; // synthetic copy-back: the OS clipboard is never written
-        source.copied = [this](gpu::ClipboardKind kind) {
-            events_.record({ehud::data::makeUUID(), modules::EventKind::clipboardCopied, reference_, {{"kind", std::string(gpu::clipboardEventKind(kind))}}});
-        };
-        clipboard_.emplace(std::move(source));
+        // A private message-only window carries the services' coalesced notices.
+        WNDCLASSW type{};
+        type.lpfnWndProc = serviceWindow; type.hInstance = GetModuleHandleW(nullptr); type.lpszClassName = windowClass;
+        atom_ = RegisterClassW(&type);
+        window_ = CreateWindowExW(0, windowClass, L"", 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr, type.hInstance, nullptr);
+        if (!window_) { release(); throw std::runtime_error("System providers coverage window"); }
+        SetWindowLongPtrW(window_, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&services_));
+        gpu::SystemServicesOptions options;
+        options.clipboard = board_;
+        options.power = [this](gpu::PowerStatus& out) { ++powerReads_; out = power_; return true; };
+        if (FAILED(services_.start(window_, serviceNotice, [this](gpu::ServiceChange change) { if (change == gpu::ServiceChange::battery) ++batteryChanges_; }, false, &utility_, std::move(options)))) {
+            release(); throw std::runtime_error("System providers coverage services");
+        }
+        clipboard_.emplace(gpu::clipboardProviderSource(services_, [](std::int32_t status) { return gpu::clipboardStatusText(status, core::Language::english); },
+            [this](gpu::ClipboardKind kind) {
+                events_.record({ehud::data::makeUUID(), modules::EventKind::clipboardCopied, reference_, {{"kind", std::string(gpu::clipboardEventKind(kind))}}});
+            }));
     }
-    ~SystemProvidersCoverage() override { if (clipboard_) clipboard_->close(); }
+    ~SystemProvidersCoverage() override { release(); }
     SystemProvidersCoverage(const SystemProvidersCoverage&) = delete;
     SystemProvidersCoverage& operator=(const SystemProvidersCoverage&) = delete;
 
     std::string_view name() const noexcept override { return "systemProviders"; }
     bool hostEvent(const app::HostEvent& e, double) override {
-        if (e.kind == app::HostEvent::Kind::utilityCompleted) saves_.retry();
+        if (e.kind == app::HostEvent::Kind::utilityCompleted) { saves_.retry(); services_.clipboard_queue_capacity_available(); pump(); }
         return false;
     }
     void coverage(app::ModuleCoverage& step) override {
@@ -73,21 +191,8 @@ public:
         clock_ = step.time;
         const auto cycle = step.cycle;
         step.check(host_.mode() == app::ApplicationAreaMode::hiddenCoverage && host_.utility() == &utility_, "System providers run on the shared executor in hidden coverage");
-
-        // Clipboard copy-back -> Event Log clipboardCopied {kind}, persisted
-        // on the shared executor and read back by a second owner.
-        reference_ = 812000000. + cycle;
-        const auto actions = clipboard_->actions();
-        step.check(actions.copy(linkID_) && copies_ == cycle + 1, "Clipboard copy-back reaches its source once");
-        step.check(!actions.copy(linkID_ + 1000) && copies_ == cycle + 1, "An unknown clipboard item copies nothing");
-        saves_.capture(clock_, true);
-        step.drain();
-        const gpu::EventLogOwner reloaded(root_, gpu::EventLogOwnerCallbacks{[] { return 0.; }, {}});
-        const auto snapshot = reloaded.snapshot();
-        step.check(snapshot.events.size() == cycle + 1 && snapshot.events.front().kind == modules::EventKind::clipboardCopied &&
-                   snapshot.events.front().metadata == modules::EventMetadata{{"kind", "url"}} && !snapshot.status,
-                   "A copy records clipboardCopied {kind} only, saved through the shared executor");
-        step.check(fs::is_regular_file(root_ / "EventLog" / "events.json"), "The Event Log file lives in the area's own coverage root");
+        clipboard(step, cycle);
+        powerStorm(step);
 
         // EventLogCanvas timestamps: current Windows zone, MM-dd HH:mm:ss.
         const auto local = gpu::localEventLogTimestamp(reference_);
@@ -131,10 +236,98 @@ public:
         step.check(!gpu::clipboardStatusText(gpu::clipboard_status::pending, core::Language::english) &&
                    gpu::clipboardStatusText(gpu::clipboard_status::tooManyFiles, core::Language::english) == "This file selection is too large to cache.",
                    "Clipboard capture statuses use the source messages");
+
+        hostEventLog(step, cycle);
         ++steps_;
     }
 
 private:
+    void release() noexcept {
+        try { if (clipboard_) clipboard_->close(); } catch (...) {}
+        services_.stop();
+        if (window_) { SetWindowLongPtrW(window_, GWLP_USERDATA, 0); DestroyWindow(window_); window_ = nullptr; }
+        if (atom_) { UnregisterClassW(windowClass, GetModuleHandleW(nullptr)); atom_ = 0; }
+    }
+    // Delivers the private window's posted notices (never the HUD window's).
+    unsigned pump() {
+        unsigned notices{};
+        MSG message;
+        while (window_ && PeekMessageW(&message, window_, 0, 0, PM_REMOVE)) { notices += message.message == serviceNotice; DispatchMessageW(&message); }
+        return notices;
+    }
+    void changed() { services_.handle_message(WM_CLIPBOARDUPDATE, 0, 0); pump(); }
+    const gpu::ClipboardItem* front() const { const auto& items = services_.clipboard().items(); return items.empty() ? nullptr : &items.front(); }
+
+    void clipboard(app::ModuleCoverage& step, unsigned cycle) {
+        const auto url = board_->id(L"UniformResourceLocatorW"), owner = board_->id(L"EndfieldHUD.Windows.ClipboardOwner.v1"), png = board_->id(L"PNG");
+        // ClipboardStore.read: the explicit URL type is the link, the string its original text.
+        const std::u16string digit(1, static_cast<char16_t>(u'0' + cycle));
+        const auto original = u"Endfield 链接 " + digit;
+        board_->copy({{url, wide(u"https://例子.com/路径/" + digit)}, {CF_UNICODETEXT, wide(original)}});
+        changed();
+        const auto* link = front();
+        step.check(link && link->payload.kind == gpu::ClipboardKind::url && link->payload.url == u"https://xn--fsqu00a.com/%E8%B7%AF%E5%BE%84/" + digit &&
+                   link->payload.text == original, "An explicit URL type is captured as a link with its original string");
+        // ClipboardStore.copy through the Clipboard module's provider action.
+        const auto actions = clipboard_->actions();
+        reference_ = 812000000. + cycle;
+        step.check(link && actions.copy(link->id) && board_->written == std::vector<UINT>{url, CF_UNICODETEXT, owner} &&
+                   board_->content(url) == wide(u"https://xn--fsqu00a.com/%E8%B7%AF%E5%BE%84/" + digit) && board_->content(CF_UNICODETEXT) == wide(original),
+                   "A link is copied back as the URL type plus the original string");
+        const auto opens = board_->opens;
+        changed();
+        step.check(board_->opens == opens, "The provider's own copy-back is never captured");
+        step.check(!actions.copy(std::numeric_limits<std::uint64_t>::max()), "An unknown clipboard item copies nothing");
+        saves_.capture(clock_, true);
+        step.drain();
+        const gpu::EventLogOwner reloaded(root_, gpu::EventLogOwnerCallbacks{[] { return 0.; }, {}});
+        const auto snapshot = reloaded.snapshot();
+        step.check(snapshot.events.size() == cycle + 1 && snapshot.events.front().kind == modules::EventKind::clipboardCopied &&
+                   snapshot.events.front().metadata == modules::EventMetadata{{"kind", "url"}} && !snapshot.status,
+                   "A copy records clipboardCopied {kind} only, saved through the shared executor");
+        step.check(fs::is_regular_file(root_ / "EventLog" / "events.json"), "The Event Log file lives in the area's own coverage root");
+
+        // ClipboardWatcher.setSuspended: the latest change is caught up once.
+        services_.set_clipboard_suspended(true);
+        const auto suspendedOpens = board_->opens;
+        board_->copy({{CF_UNICODETEXT, wide(u"While locked 1")}}); changed();
+        board_->copy({{CF_UNICODETEXT, wide(u"While locked 2")}}); changed();
+        step.check(board_->opens == suspendedOpens, "Nothing is read while capture is suspended");
+        services_.set_clipboard_suspended(false);
+        step.check(board_->opens == suspendedOpens + 1 && front() && front()->payload.text == u"While locked 2", "Resuming captures only the latest change, once");
+
+        // An image validates on the shared executor before it enters history.
+        board_->copy({{png, pixel()}}); changed();
+        step.check(services_.clipboard_status() == static_cast<HRESULT>(gpu::clipboard_status::pending) && front() && front()->payload.kind != gpu::ClipboardKind::image,
+                   "An image waits for its thumbnail");
+        step.drain();
+        step.check(front() && front()->payload.kind == gpu::ClipboardKind::image && services_.clipboard_status() == S_OK, "The validated image enters history");
+        step.check(services_.clipboard().items().size() <= services_.clipboard().capacity(), "Clipboard history stays bounded");
+    }
+    void powerStorm(app::ModuleCoverage& step) {
+        const auto reads = powerReads_, changes = batteryChanges_;
+        power_.battery_percent = static_cast<std::uint8_t>(power_.battery_percent == 60 ? 61 : 60);
+        for (unsigned n = 0; n < 2000; ++n) services_.handle_message(WM_POWERBROADCAST, n % 2 ? PBT_POWERSETTINGCHANGE : PBT_APMPOWERSTATUSCHANGE, 0);
+        step.check(pump() == 1 && powerReads_ == reads + 1 && batteryChanges_ == changes + 1 && services_.battery().percent == power_.battery_percent,
+                   "A WM_POWERBROADCAST storm posts one notice and reads power once");
+    }
+    void hostEventLog(app::ModuleCoverage& step, unsigned cycle) {
+        auto* log = host_.find<gpu::EventLogOwner>(gpu::eventLogOwnerServiceKey);
+        if (!log) return; // published by the host (app/application.cpp constructAreas)
+        const auto snapshot = log->snapshot();
+        bool imported{}, bookmarked{}, created{};
+        for (const auto& event : snapshot.events) {
+            if (!hookKind(event.kind)) continue;
+            step.check(hookRecord(event), "Every host action hook records the Mac Event Log vocabulary");
+            const auto action = event.metadata.find("action");
+            if (action == event.metadata.end()) continue;
+            imported |= event.kind == modules::EventKind::readerAction && action->second == "imported";
+            bookmarked |= event.kind == modules::EventKind::readerAction && action->second == "bookmarked";
+            created |= event.kind == modules::EventKind::archiveAction && action->second == "created";
+        }
+        if (cycle == 2) step.check(imported && bookmarked && created, "The module cycles' Reader import and bookmark and Archive creation were recorded");
+    }
+
     app::ApplicationHost& host_;
     app::UtilityExecutor& utility_;
     fs::path root_;
@@ -142,10 +335,14 @@ private:
     gpu::EventLogOwner events_;
     app::EventLogSaveQueue saves_;
     gpu::ActivityIconProvider icons_;
-    gpu::ClipboardHistory history_{8};
+    std::shared_ptr<CoverageClipboard> board_ = std::make_shared<CoverageClipboard>();
+    gpu::PowerStatus power_{1, 8, 60, 3600, 7200};
+    unsigned powerReads_{}, batteryChanges_{};
+    gpu::SystemServices services_;
     std::optional<gpu::NativeClipboardProvider> clipboard_;
-    std::uint64_t linkID_{};
-    unsigned copies_{}, eventChanges_{}, steps_{};
+    HWND window_{};
+    ATOM atom_{};
+    unsigned eventChanges_{}, steps_{};
 };
 }
 

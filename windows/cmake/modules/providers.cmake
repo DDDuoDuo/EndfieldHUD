@@ -53,6 +53,32 @@ endif()
 # Storage: Explorer's name for an unlabelled startup volume uses shell32/ole32,
 # which hud_storage_files already links.
 
+# --- Clipboard: link parity (ClipboardStore.parsedURL) ------------------------
+# Non-ASCII hosts convert through ICU UTS #46 like macOS URL(string:): the
+# installed Windows ICU, or a found ICU in portable verification builds.
+if(TARGET hud_services)
+  if(WIN32)
+    target_link_libraries(hud_services PRIVATE icu)
+  elseif(ICU_FOUND)
+    target_compile_definitions(hud_services PRIVATE EHUD_CLIPBOARD_URL_ICU)
+    target_link_libraries(hud_services PRIVATE ICU::uc)
+  endif()
+  if(BUILD_TESTING AND (WIN32 OR ICU_FOUND))
+    # Source: tools/clipboard_url_reference.sh (Mac-only oracle export).
+    add_executable(clipboard_url_tests tests/clipboard_url_tests.cpp)
+    target_link_libraries(clipboard_url_tests PRIVATE hud_services hud_data)
+    if(MSVC)
+      target_compile_options(clipboard_url_tests PRIVATE /W4 /permissive- /EHsc)
+    endif()
+    add_test(NAME clipboard_url_contracts COMMAND clipboard_url_tests "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/clipboard_urls.json")
+  endif()
+endif()
+if(WIN32 AND TARGET system_services_tests)
+  # Message-only test window for the WM_POWERBROADCAST storm and the
+  # synthetic-clipboard service runs.
+  target_link_libraries(system_services_tests PRIVATE user32)
+endif()
+
 # --- Hidden coverage of the provider pieces ----------------------------------
 # Test-only module area (app/module_owner.hpp, "|coverage" scope): never linked
 # into EndfieldHUD.exe. It runs the new Clipboard/Event Log/Activity/Storage

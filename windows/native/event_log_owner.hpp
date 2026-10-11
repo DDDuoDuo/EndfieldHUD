@@ -2,8 +2,14 @@
 #include "core/data/event_log_store.hpp"
 #include <functional>
 #include <memory>
+#include <string_view>
 
 namespace endfield::native {
+// ApplicationHost directory key of the host's EventLogOwner (exact type
+// EventLogOwner) for module areas that read the Event Log, such as the
+// systemProviders hidden coverage that checks every host action hook's
+// recorded vocabulary. Readers take snapshot() only; the host records.
+inline constexpr std::string_view eventLogOwnerServiceKey = "eventLog.owner";
 struct EventLogOwnerCallbacks {
     // Same monotonic epoch as the root OverlayHost deadline. Invoked only for
     // record/clear, never snapshot, paint, hover or selection.

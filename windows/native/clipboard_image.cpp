@@ -29,6 +29,19 @@ bool validResult(const ClipboardImageResult&r,const ClipboardEncodedImage&input)
         ClipboardHistory::valid_image_metadata(t.sourceWidth,t.sourceHeight,input.bytes->size())&&t.width&&t.height&&t.width<=96&&t.height<=96&&t.rgba.size()==std::size_t(t.width)*t.height*4;
 }
 }
+bool clipboardEncodedImageTooLarge(const ClipboardEncodedImage&i)noexcept {
+    if(!i.bytes||i.bytes->empty()||i.bytes->size()>ClipboardHistory::maximum_image_bytes)return false;const Bytes b=*i.bytes;
+    const auto beyond=[](std::uint64_t width,std::uint64_t height){return width&&height&&(width>ClipboardHistory::maximum_image_dimension||height>ClipboardHistory::maximum_image_dimension||width*height>ClipboardHistory::maximum_image_pixels);};
+    if(i.format==ClipboardEncodedFormat::png){constexpr std::array<std::uint8_t,8>magic{137,80,78,71,13,10,26,10};
+        return b.size()>=24&&std::equal(magic.begin(),magic.end(),b.begin())&&be32(b,8)==13&&be32(b,12)==0x49484452u&&beyond(be32(b,16),be32(b,20));}
+    if(i.format!=ClipboardEncodedFormat::dib&&i.format!=ClipboardEncodedFormat::dibV5)return false;
+    if(b.size()<16)return false;const auto header=le32(b,0);
+    if(header==12)return false; // 16-bit core dimensions cannot exceed the limits
+    if(header!=40&&header!=52&&header!=56&&header!=108&&header!=124)return false;
+    const auto width=static_cast<std::int32_t>(le32(b,4)),height=static_cast<std::int32_t>(le32(b,8));
+    if(width<=0||height==0||height==std::numeric_limits<std::int32_t>::min())return false;
+    return beyond(std::uint64_t(width),std::uint64_t(height<0?-std::int64_t(height):height));
+}
 bool validClipboardEncodedImage(const ClipboardEncodedImage&i)noexcept {
     if(!i.bytes||i.bytes->empty()||i.bytes->size()>ClipboardHistory::maximum_image_bytes)return false;const Bytes b=*i.bytes;
     switch(i.format){
