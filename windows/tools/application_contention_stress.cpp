@@ -5,7 +5,9 @@
 // time (or when its stop file appears). Test tooling only; never shipped.
 //
 //   application_contention_stress --seconds 60 [--cpu-threads N] [--cpu-priority normal|above|highest]
-//       [--gpu-milliseconds 25] [--no-gpu] [--stop-file path] [--report out.json]
+//       [--gpu-milliseconds 25] [--gpu-draws 1] [--no-gpu] [--stop-file path] [--report out.json]
+// --gpu-draws splits each frame into that many full-screen passes of equal
+// share (a game issues many draws; the GPU preempts at draw boundaries).
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -48,7 +50,7 @@ struct Gpu {
     ComPtr<ID3D11Device> device; ComPtr<ID3D11DeviceContext> context;
     ComPtr<ID3D11RenderTargetView> target; ComPtr<ID3D11VertexShader> vs; ComPtr<ID3D11PixelShader> ps; ComPtr<ID3D11Buffer> constants;
     std::vector<ComPtr<ID3D11Query>> queries;
-    unsigned iterations{64};
+    unsigned iterations{64}, draws{1};
     Gpu() {
         const D3D_FEATURE_LEVEL level = D3D_FEATURE_LEVEL_11_0;
         checked(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0, &level, 1, D3D11_SDK_VERSION, &device, nullptr, &context), "Create stress device");
@@ -68,13 +70,13 @@ struct Gpu {
     void wait(ID3D11Query* query) { BOOL done = FALSE; while (context->GetData(query, &done, sizeof(done), 0) == S_FALSE) SwitchToThread(); }
     // One "game frame": a full-screen pass with the current iteration count.
     void frame(unsigned slot) {
-        const unsigned values[4]{iterations, 0, 0, 0};
+        const unsigned values[4]{std::max(1u, iterations / draws), 0, 0, 0};
         context->UpdateSubresource(constants.Get(), 0, nullptr, values, 0, 0);
         D3D11_VIEWPORT viewport{0, 0, 2560, 1440, 0, 1};
         context->RSSetViewports(1, &viewport); context->OMSetRenderTargets(1, target.GetAddressOf(), nullptr);
         context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST); context->IASetInputLayout(nullptr);
         context->VSSetShader(vs.Get(), nullptr, 0); context->PSSetShader(ps.Get(), nullptr, 0); context->PSSetConstantBuffers(0, 1, constants.GetAddressOf());
-        context->Draw(3, 0);
+        for (unsigned n = 0; n < draws; ++n) context->Draw(3, 0);
         context->End(queries[slot].Get()); context->Flush();
     }
 };
@@ -82,7 +84,7 @@ struct Gpu {
 
 int wmain(int argc, wchar_t** argv) {
     try {
-        double duration = 60, gpuTarget = 25; unsigned threads = std::thread::hardware_concurrency(); int priority = THREAD_PRIORITY_NORMAL; bool gpu = true;
+        double duration = 60, gpuTarget = 25; unsigned threads = std::thread::hardware_concurrency(), draws = 1; int priority = THREAD_PRIORITY_NORMAL; bool gpu = true;
         std::filesystem::path stop, report;
         for (int i = 1; i < argc; ++i) {
             const std::wstring arg = argv[i];
@@ -90,12 +92,13 @@ int wmain(int argc, wchar_t** argv) {
             else if (arg == L"--cpu-threads" && i + 1 < argc) threads = static_cast<unsigned>(std::stoul(argv[++i]));
             else if (arg == L"--cpu-priority" && i + 1 < argc) { const std::wstring p = argv[++i]; priority = p == L"above" ? THREAD_PRIORITY_ABOVE_NORMAL : p == L"highest" ? THREAD_PRIORITY_HIGHEST : THREAD_PRIORITY_NORMAL; }
             else if (arg == L"--gpu-milliseconds" && i + 1 < argc) gpuTarget = std::stod(argv[++i]);
+            else if (arg == L"--gpu-draws" && i + 1 < argc) draws = static_cast<unsigned>(std::stoul(argv[++i]));
             else if (arg == L"--no-gpu") gpu = false;
             else if (arg == L"--stop-file" && i + 1 < argc) stop = argv[++i];
             else if (arg == L"--report" && i + 1 < argc) report = argv[++i];
             else throw std::invalid_argument("Unknown argument");
         }
-        need(duration > 0 && duration <= 600 && threads <= 256 && gpuTarget > 0 && gpuTarget <= 200, "Bounded stress arguments");
+        need(duration > 0 && duration <= 600 && threads <= 256 && gpuTarget > 0 && gpuTarget <= 200 && draws >= 1 && draws <= 4096, "Bounded stress arguments");
         const auto start = Clock::now(), end = start + std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(duration));
         std::atomic<bool> running{true};
         std::atomic<std::uint64_t> work{};
@@ -109,7 +112,7 @@ int wmain(int argc, wchar_t** argv) {
         std::uint64_t frames{}; double frameSeconds{};
         const auto stopRequested = [&] { return Clock::now() >= end || (!stop.empty() && std::filesystem::exists(stop)); };
         if (gpu) {
-            Gpu device;
+            Gpu device; device.draws = draws;
             // Calibrate one frame to about the target time, then keep two in flight.
             for (unsigned attempt = 0; attempt < 12; ++attempt) {
                 const auto a = Clock::now(); device.frame(0); device.wait(device.queries[0].Get()); const double ms = seconds(a, Clock::now()) * 1000;
@@ -128,7 +131,7 @@ int wmain(int argc, wchar_t** argv) {
         if (!report.empty()) {
             std::ofstream out(report, std::ios::binary);
             out << "{\"seconds\":" << elapsed << ",\"cpuThreads\":" << threads << ",\"cpuPriority\":" << priority << ",\"gpu\":" << (gpu ? "true" : "false")
-                << ",\"gpuFrames\":" << frames << ",\"gpuFrameMilliseconds\":" << (frames ? frameSeconds * 1000 / frames : 0) << ",\"cpuWorkUnits\":" << work.load() << "}\n";
+                << ",\"gpuDrawsPerFrame\":" << draws << ",\"gpuFrames\":" << frames << ",\"gpuFrameMilliseconds\":" << (frames ? frameSeconds * 1000 / frames : 0) << ",\"cpuWorkUnits\":" << work.load() << "}\n";
         }
         std::printf("stress finished after %.1f s: %u CPU threads, %llu GPU frames\n", elapsed, threads, static_cast<unsigned long long>(frames));
         return 0;

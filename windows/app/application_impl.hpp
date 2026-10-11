@@ -234,6 +234,7 @@ struct Application::Impl {
         const ClientMetrics& metrics() const noexcept override;
         std::optional<core::Module> hoveredModule() const noexcept override;
         bool isolatedDataRoot() const noexcept override;
+        double contentScale() const noexcept override;
         native::Renderer& renderer() noexcept override;
         native::LayerRasterizer& rasterizer() noexcept override;
         UtilityExecutor* utility() noexcept override;

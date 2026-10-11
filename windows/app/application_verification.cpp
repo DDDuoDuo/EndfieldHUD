@@ -121,12 +121,13 @@ int Application::Impl::runContentionTrace(){
     const auto stats=[](std::vector<double> v){std::sort(v.begin(),v.end());double sum{};for(const auto x:v)sum+=x;
         const auto at=[&](double q){return v.empty()?0.:v[std::min(v.size()-1,static_cast<std::size_t>(q*double(v.size()-1)+.5))];};
         return Json::Object{{"samples",std::int64_t(v.size())},{"mean",v.empty()?0.:sum/double(v.size())},{"p50",at(.5)},{"p95",at(.95)},{"p99",at(.99)},{"max",v.empty()?0.:v.back()}};};
-    const auto phase=[&](const Series&x){return Json::Object{{"wakeLatenessMilliseconds",stats(x.late)},{"cpuFrameMilliseconds",stats(x.cpu)},{"gpuCompletionMilliseconds",stats(x.gpu)},{"tickToGpuDoneMilliseconds",stats(x.total)}};};
-    std::size_t over{};for(const auto&x:series)for(const auto v:x.total)over+=v>1000./60;
+    // A frame that finished after its 60 Hz tick (wake + CPU + GPU) is a dropped frame.
+    const auto phase=[&](const Series&x){std::int64_t over{};for(const auto v:x.total)over+=v>1000./60;
+        return Json::Object{{"wakeLatenessMilliseconds",stats(x.late)},{"cpuFrameMilliseconds",stats(x.cpu)},{"gpuCompletionMilliseconds",stats(x.gpu)},{"tickToGpuDoneMilliseconds",stats(x.total)},{"framesOverOneTick",over}};};
     const auto info=renderer.deviceInfo();
     Json report=Json::Object{{"scope","Hidden HUD frames paced at 60 Hz; wake lateness, CPU present() and GPU completion per frame; alternating 150-frame blocks"},
         {"device",info.name},{"logicalWidth",metrics.width},{"logicalHeight",metrics.height},{"scale",metrics.scale},
-        {"normalPriority",phase(series[0])},{"raisedPriority",phase(series[1])},{"raisedReport",raisedReport},{"framesOverOneTick",std::int64_t(over)}};
+        {"normalPriority",phase(series[0])},{"raisedPriority",phase(series[1])},{"raisedReport",raisedReport}};
     const std::size_t bound=4*1024*1024;ehud::data::detail::replaceFile(args.contentionTrace,std::nullopt,report.encode(),bound);
     std::cout<<"Wrote hidden contention trace\n";
     shutdownVisible();

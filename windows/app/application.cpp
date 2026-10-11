@@ -619,6 +619,7 @@ core::SystemOverlayPhase Application::Impl::AreaHost::overlayPhase()const noexce
 bool Application::Impl::AreaHost::overlayVisible()const noexcept{return impl_.session&&impl_.session->phase()!=core::VisibilityPhase::concealed;}
 bool Application::Impl::AreaHost::focused()const noexcept{return impl_.focused;}
 const ClientMetrics& Application::Impl::AreaHost::metrics()const noexcept{return impl_.metrics;}
+double Application::Impl::AreaHost::contentScale()const noexcept{return impl_.contentScale;}
 std::optional<core::Module> Application::Impl::AreaHost::hoveredModule()const noexcept{
     // HUDSourceWatchView hoverTarget: the hovered navigation button's action,
     // mapped to its source module target through the content catalog.
