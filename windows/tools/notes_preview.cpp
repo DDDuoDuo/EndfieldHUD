@@ -9,6 +9,7 @@
 #include "core/data/file_io.hpp"
 #include <algorithm>
 #include <atomic>
+#include <climits>
 #include <cmath>
 #include <iostream>
 #include <limits>
@@ -34,6 +35,16 @@ std::string windowsText(const WindowsText& t,core::Language l){switch(l){case co
 constexpr WindowsText paragraphCapacity{"A paragraph in this note is too long to edit. The note is unchanged and can still be viewed and scrolled.",
     "这条便笺中有一段文字过长，无法编辑。内容已保留，仍可查看和滚动。","這則便箋中有一段文字過長，無法編輯。內容已保留，仍可檢視和捲動。",
     "このメモには長すぎて編集できない段落があります。内容はそのまま保持され、表示とスクロールは引き続き可能です。","이 메모에 편집하기에 너무 긴 단락이 있습니다. 내용은 그대로 유지되며 계속 보고 스크롤할 수 있습니다."};
+// HUDNotesInteraction's field help ("Escape or Command-Return saves...") with
+// the Windows finish keys this owner implements (Escape, Ctrl+Enter).
+constexpr WindowsText editHelp{"Escape or Ctrl+Enter saves. Text notes support multiple lines.","按 Esc 或 Ctrl+Enter 保存。文字便笺支持多行。","按 Esc 或 Ctrl+Enter 儲存。文字便箋支援多行。",
+    "Esc または Ctrl+Enter で保存します。テキストメモは複数行に対応しています。","Esc 또는 Ctrl+Enter를 누르면 저장됩니다. 텍스트 메모는 여러 줄을 지원합니다."};
+// UTF-8 from an automation client (UIA ValuePattern) as UTF-16; none if invalid.
+std::optional<std::u16string> automationUTF16(std::string_view s){
+    if(s.empty())return std::u16string{};if(s.size()>static_cast<std::size_t>(INT_MAX))return std::nullopt;
+    const auto n=MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,s.data(),static_cast<int>(s.size()),nullptr,0);if(n<=0)return std::nullopt;
+    std::u16string out(static_cast<std::size_t>(n),u'\0');if(MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,s.data(),static_cast<int>(s.size()),reinterpret_cast<wchar_t*>(out.data()),n)!=n)return std::nullopt;return out;
+}
 // The Windows store's explicit record bound (NotesStore 10,000 records).
 constexpr WindowsText recordLimit{"Notes can hold at most 10,000 notes.","便笺最多可保存 10,000 条。","便箋最多可儲存 10,000 則。","メモは最大10,000件まで保存できます。","메모는 최대 10,000개까지 저장할 수 있습니다."};
 std::string sourceText(mod::NotesSourceText t,core::Language l){return core::localized(t.english,t.simplifiedChinese,l);}
@@ -83,7 +94,7 @@ struct NotesPreview::Impl {
     NotesPreviewPreferences preferences{style(),controlInput(mod::NotesControlsKind::center).strings};
     std::optional<NotesPreviewPreferences> pendingPreferences;
     bool hasPose{},moduleVisible{true},moduleInput{true},focused{},editorDrag{},controlsPressed{},confirmationVisible{};
-    float confirmationOpacity{};double currentTime{},confirmationStarted{};std::uint64_t outgoingGeneration{},uploadedRegistration{};
+    float confirmationOpacity{},menuOpacity{};double currentTime{},confirmationStarted{};std::uint64_t outgoingGeneration{},uploadedRegistration{};
     unsigned timeDepth{};
     // Win32 capture/focus and TSF can synchronously reenter this owner. Nested
     // Notes work shares the outer event instant; a resumed older callback is
@@ -133,6 +144,7 @@ struct NotesPreview::Impl {
         mediaMenu=std::make_unique<NotesMediaMenu>(raster,[this](NotesMediaAction action){mediaAction=std::move(action);need(PostMessageW(hwnd,NotesPreview::mediaActionMessage,mediaGeneration,0)!=FALSE,"Queue Notes media choice");});
         mediaMenu->setStrings(preferences.controls,preferences.dark);
         if(!formatRoot.empty())formatMenu=std::make_unique<NotesFormatMenu>(raster,formatRoot,[this](const core::notes::FormatChange&c){if(drawingFormatNote){if(c.kind!=core::notes::FormatKind::color)return false;workspace->setDrawingColor({c.color.red,c.color.green,c.color.blue,c.color.alpha});return true;}auto*e=workspace->editor();if(!e)return false;const auto result=e->applyFormat(c);if(result.handled)editSync();return result.handled;});
+        if(formatMenu)formatMenu->setStrings(preferences.controls);
         gpu::LayerRasterOptions ro;ro.pixelsPerPoint=2;ro.paddingPoints=1;ro.assetRoot=assets.assetRoot();
         controls.update(controlInput(mod::NotesControlsKind::center));controlScene=std::make_unique<gpu::NativeNotesControlsScene>(controls,raster,ro);controlScene->syncContent(assets.imagesFor(controls),1);
         confirmation.update(controlInput(mod::NotesControlsKind::deletion));confirmScene=std::make_unique<gpu::NativeNotesControlsScene>(confirmation,raster,ro);confirmScene->syncContent();confirmationGroup=std::make_unique<gpu::NativeLayerGroup>(confirmScene->scene(),"notes.confirmation",2);
@@ -228,6 +240,90 @@ struct NotesPreview::Impl {
         }if(settle)workspace->settleOutgoing(outgoingGeneration);
     }
     core::Point physical(const app::PointerEvent&e)const{return {e.x*metrics.scale,e.y*metrics.scale};}
+    // Retained menus follow the workspace on every frame. A menu opened by an
+    // event is placed at once on the last frame's pose, so input queued before
+    // the next frame (a fast second click, a burst) hits the menu where it is
+    // drawn instead of an unplaced menu that would treat it as an outside click.
+    void poseMenus(double t){
+        if(!hasPose)return;const auto camera=gpu::layerViewportProjection(metrics.pixelWidth,metrics.pixelHeight)*Matrix::scale(metrics.scale,metrics.scale);
+        if(formatMenu){if(drawingFormatNote)if(const auto*n=state->note(*drawingFormatNote))formatNoteRect={n->x,n->y,n->width,n->height};if(const auto id=workspace->editingNoteID())if(const auto*n=state->note(*id))formatNoteRect={n->x,n->y,n->width,n->height};
+            formatMenu->update(workspaceWorld,camera,metrics.pixelWidth,metrics.pixelHeight,state->workspaceBounds(),formatNoteRect,menuOpacity,t);}
+        if(mediaMenu)mediaMenu->update(surface->pose().contentWorld,workspaceWorld,camera,metrics.pixelWidth,metrics.pixelHeight,menuOpacity,t);
+    }
+    // Source NotesCanvas.perform("tool:..."), shared by toolbar clicks and
+    // accessibility activation.
+    bool toolAction(const std::string& action,double time){
+        for(std::size_t n=0;n<controls.actions().size();++n)if(controls.actions()[n].id==action)toolbarStarted[n]=preferences.reduceMotion?-1:time;
+        if(action=="tool:text"){const auto id=data::makeUUID();workspace->createText(id,data::foundationNow());if(const auto token=workspace->cardToken(id))track(*token,TrackKind::create,time);focusEditor();return true;}
+        if(action=="tool:todo"){const auto id=data::makeUUID();workspace->createChecklist(id,data::makeUUID(),data::foundationNow());if(const auto token=workspace->cardToken(id))track(*token,TrackKind::create,time);focusEditor();return true;}
+        if(action=="tool:image"){relinkNote.reset();if(finish()){const auto offset=double(state->notes().size()%7)*18;mediaMenu->openSource({metrics.width*.5-100+offset,metrics.height*.5-120+offset},time);poseMenus(time);}return true;}
+        if(action=="tool:drawing"){const auto id=data::makeUUID();workspace->createDrawing(id,data::foundationNow());if(const auto token=workspace->cardToken(id))track(*token,TrackKind::create,time);return true;}
+        return false;
+    }
+    // Source formatting buttons (NotesCanvas.perform "format..."): a text note
+    // opens its field first; a drawing's color button opens the brush color.
+    bool openFormat(const std::string& id,std::string_view verb,double time){
+        if(!formatMenu)return false;const auto*n=state->note(id);if(!n)return false;
+        if(n->kind==data::NoteKind::drawing){if(verb!="formatColor")return false;if(workspace->editor()&&!workspace->finishEditing().finished)return false;n=state->note(id);if(!n)return false;workspace->select(id);
+            drawingFormatNote=id;formatNoteRect={n->x,n->y,n->width,n->height};core::notes::TextStyle selected;const auto c=workspace->drawingColor();selected.color=core::notes::RGBA{c[0],c[1],c[2],c[3]};formatMenu->open("formatColor",selected,time);poseMenus(time);return true;}
+        if(n->kind!=data::NoteKind::text)return false;
+        if(workspace->editingNoteID()!=std::optional<std::string_view>(id)){if(mediaMenu)mediaMenu->close(time);formatMenu->close(time);if(workspace->editor()&&!workspace->finishEditing().finished)return false;
+            workspace->select(id);beginField(id);if(workspace->editingNoteID()!=std::optional<std::string_view>(id))return false;}
+        n=state->note(id);if(!n||!workspace->editor())return false;drawingFormatNote.reset();const auto selected=workspace->editor()->selectionStyle();if(!selected)return false;
+        formatNoteRect={n->x,n->y,n->width,n->height};formatMenu->open(verb,*selected,time);poseMenus(time);return true;
+    }
+    std::string editorAutomationID()const{const auto id=workspace->editingNoteID();if(!id)return {};std::string out="notes:editor:"+std::string(*id);if(const auto item=workspace->editingItemID())out+=":"+std::string(*item);return out;}
+    gpu::NativeNotesAutomationStrings automationStrings()const{const auto l=language();gpu::NativeNotesAutomationStrings s;
+        s.text=core::localized("Text","文字",l);s.checklist=core::localized("Checklist","待办",l);s.drawing=core::localized("Drawing","画画",l);s.media=core::localized("Image/Video","图片/视频",l);
+        s.playbackPosition=core::localized("Playback position","播放进度",l);s.editNote=core::localized("Edit text note","编辑文字便笺",l);s.editItem=core::localized("Edit checklist item","编辑待办事项",l);s.editHelp=windowsText(editHelp,l);return s;}
+    // HUDNotesInteraction's accessibility views (see NotesPreview::automationElements).
+    void automationElements(std::vector<gpu::NotesAutomationElement>&out)const{
+        if(!hasPose||!moduleInput)return;const auto l=language();
+        // Source toolbarActions labels (the painted titles may differ).
+        if(moduleVisible&&state->notesSelected()){const std::array<std::string,4> labels{core::localized("Text","文字",l),core::localized("TODO","待办",l),core::localized("Image/Video","图片/视频",l),core::localized("Drawing","画画",l)};
+            constexpr std::array<std::string_view,4> ids{"tool:text","tool:todo","tool:image","tool:drawing"};const auto project=[&](core::Point p){return controlsProjection.project(p);};
+            for(const auto&a:controls.actions())if(const auto b=gpu::notesAutomationBounds(a.rect,project)){gpu::NotesAutomationElement e;e.id=a.id;e.label=a.label;
+                for(std::size_t n=0;n<ids.size();++n)if(a.id==ids[n])e.label=labels[n];e.rect=*b;e.enabled=a.enabled;e.selected=a.selected;out.push_back(std::move(e));}}
+        workspace->automationElements(out,automationStrings());
+        // Source deletionActions: "note:<id>:cancelDelete" / "confirmDelete".
+        if(confirmationVisible)if(const auto&pending=state->pendingDeletion()){const auto project=[&](core::Point p){return confirmationProjection.project(p);};
+            for(const auto&a:confirmation.actions())if(const auto b=gpu::notesAutomationBounds(a.rect,project)){gpu::NotesAutomationElement e;e.id="note:"+*pending+":"+a.id;e.label=a.label;e.rect=*b;e.enabled=a.enabled;out.push_back(std::move(e));}}
+        if(formatMenu)formatMenu->automationElements(out,"notes.format:",{core::localized("Color wheel","颜色轮盘",l),core::localized("Use arrow keys to adjust hue and saturation.","使用方向键调整色相与饱和度。",l)});
+        if(mediaMenu)mediaMenu->automationElements(out,"notes.media:");
+    }
+    // Source HUDNotesInteraction.activateAction -> NotesCanvas.perform(actionID:)
+    // and NotesRetainedMenu.perform: the same owner paths as pointer input.
+    bool perform(std::string_view action,double time){
+        if(!hasPose||!moduleInput)return false;
+        if(action.starts_with("notes.format:"))return formatMenu&&formatMenu->perform(action.substr(13),time);
+        if(action.starts_with("notes.media:"))return mediaMenu&&mediaMenu->perform(action.substr(12),time);
+        if(action.starts_with("tool:")){if(!moduleVisible||!state->notesSelected())return false;const auto actions=controls.actions();
+            if(std::none_of(actions.begin(),actions.end(),[&](const auto&a){return a.id==action&&a.enabled;}))return false;return toolAction(std::string(action),time);}
+        if(!action.starts_with("note:"))return false;const auto rest=action.substr(5);const auto colon=rest.find(':');if(colon==std::string_view::npos)return false;
+        const std::string id(rest.substr(0,colon)),verb(rest.substr(colon+1));const auto*n=state->note(id);if(!n||!state->visible(id))return false;const auto kind=n->kind;
+        if(verb.starts_with("format"))return openFormat(id,verb,time);
+        // activateAction finishes the open field for every non-format action.
+        if(mediaMenu)mediaMenu->close(time);if(formatMenu)formatMenu->close(time);if(workspace->editor()&&!workspace->finishEditing().finished)return false;
+        if(verb=="cancelDelete"||verb=="confirmDelete"){if(state->pendingDeletion()!=std::optional<std::string>(id))return false;
+            if(verb=="cancelDelete")workspace->cancelDeletion();else if(const auto token=workspace->confirmDeletionRetainingArtwork(id))track(*token,TrackKind::remove,time);
+            confirmationVisible=false;lastConfirmationRect.reset();return true;}
+        workspace->select(id);
+        if(verb=="select")return true;
+        if(verb=="delete"){if(workspace->requestDeletion(id))confirmationStarted=time;return true;}
+        if(verb=="pin"){workspace->togglePin(id);if(state->visible(id))if(const auto token=workspace->cardToken(id))track(*token,TrackKind::mutation,time);return true;}
+        if(verb=="edit"){if(kind!=data::NoteKind::text)return false;beginField(id);return true;}
+        if(verb=="mediaPlayback")return workspace->toggleMedia(id,time);
+        if(verb=="relinkMedia"){if(!finish())return false;const auto*m=state->note(id);if(!m)return false;relinkNote=id;mediaMenu->openSource({m->x+m->width*.5-100,m->y+m->height*.5-60},time);poseMenus(time);return true;}
+        // Source grow/shrink: width and height +-20, then the source constraint.
+        if(verb=="grow"||verb=="shrink"){const auto card=state->card(id);if(!card)return false;const double step=verb=="grow"?20:-20;const core::Point start{card->rect.x+card->rect.width,card->rect.y+card->rect.height};
+            workspace->beginGesture(id,start,mod::NotesState::Gesture::resize);workspace->dragTo({start.x+step,start.y+step});workspace->endGesture();if(const auto token=workspace->cardToken(id))track(*token,TrackKind::mutation,time);return true;}
+        if(verb=="add"){if(kind!=data::NoteKind::todo)return false;if(workspace->addChecklistItem(id,data::makeUUID())){if(const auto token=workspace->cardToken(id))track(*token,TrackKind::mutation,time);focusEditor();}return true;}
+        if(verb.starts_with("editItem:")){beginField(id,std::string_view(verb).substr(9));return true;}
+        if(verb.starts_with("check:")||verb.starts_with("up:")||verb.starts_with("down:")||verb.starts_with("remove:")){
+            const auto c=verb.find(':');const auto change=verb.starts_with("check:")?mod::NotesState::ChecklistAction::toggle:verb.starts_with("up:")?mod::NotesState::ChecklistAction::up:verb.starts_with("down:")?mod::NotesState::ChecklistAction::down:mod::NotesState::ChecklistAction::remove;
+            if(workspace->mutateChecklistItem(id,std::string_view(verb).substr(c+1),change))if(const auto token=workspace->cardToken(id))track(*token,TrackKind::mutation,time);return true;}
+        return false;
+    }
     void clearHover(double time){workspace->updateDrawingHover({});if(hoveredNote){workspace->setFeedback(*hoveredNote,{},false,preferences.reduceMotion,time);hoveredNote.reset();}controlScene->setFeedback({},false,preferences.reduceMotion,time);confirmScene->setFeedback({},false,preferences.reduceMotion,time);}
     void editSync(){workspace->syncEditor();}
     bool beginField(std::string_view id,std::optional<std::string_view>item={}){
@@ -273,16 +369,16 @@ struct NotesPreview::Impl {
                 // Source double-click selects the word, triple-click the paragraph.
                 if(clicks>1){(clicks==2?workspace->selectEditorWord():workspace->selectEditorParagraph());editorDrag=false;editSync();}return true;}
             if(verb.starts_with("format")&&formatMenu&&workspace->editingNoteID()==std::optional<std::string_view>(id)){
-                drawingFormatNote.reset();if(const auto selected=workspace->editor()->selectionStyle()){const auto*n=state->note(id);formatNoteRect={n->x,n->y,n->width,n->height};formatMenu->open(verb,*selected,time);}return true;}
+                drawingFormatNote.reset();if(const auto selected=workspace->editor()->selectionStyle()){const auto*n=state->note(id);formatNoteRect={n->x,n->y,n->width,n->height};formatMenu->open(verb,*selected,time);poseMenus(time);}return true;}
             if(workspace->editor()){if(formatMenu)formatMenu->close(time);if(!workspace->finishEditing().finished)return true;}
             workspace->select(id);
             if(hit->kind==gpu::NativeNotesWorkspaceHit::Kind::resize)workspace->beginGesture(id,point,mod::NotesState::Gesture::resize);
             else if(workspace->beginMediaSeek(id,p,time)){}
             else if(workspace->beginDrawing(id,p)){}
-            else if(verb=="formatColor"&&formatMenu&&state->note(id)->kind==data::NoteKind::drawing){drawingFormatNote=id;const auto*n=state->note(id);formatNoteRect={n->x,n->y,n->width,n->height};core::notes::TextStyle selected;const auto c=workspace->drawingColor();selected.color=core::notes::RGBA{c[0],c[1],c[2],c[3]};formatMenu->open("formatColor",selected,time);}
+            else if(verb=="formatColor"&&formatMenu&&state->note(id)->kind==data::NoteKind::drawing){drawingFormatNote=id;const auto*n=state->note(id);formatNoteRect={n->x,n->y,n->width,n->height};core::notes::TextStyle selected;const auto c=workspace->drawingColor();selected.color=core::notes::RGBA{c[0],c[1],c[2],c[3]};formatMenu->open("formatColor",selected,time);poseMenus(time);}
             else if(verb=="pin"){workspace->togglePin(id);if(state->visible(id))if(const auto token=workspace->cardToken(id))track(*token,TrackKind::mutation,time);}
             else if(verb=="mediaPlayback"){workspace->toggleMedia(id,time);}
-            else if(verb=="relinkMedia"){if(finish()){const auto*n=state->note(id);relinkNote=id;mediaMenu->openSource({n->x+n->width*.5-100,n->y+n->height*.5-60},time);}}
+            else if(verb=="relinkMedia"){if(finish()){const auto*n=state->note(id);relinkNote=id;mediaMenu->openSource({n->x+n->width*.5-100,n->y+n->height*.5-60},time);poseMenus(time);}}
             else if(verb=="delete"){workspace->requestDeletion(id);confirmationStarted=time;}
             else if(verb=="add"){if(workspace->addChecklistItem(id,data::makeUUID())){if(const auto token=workspace->cardToken(id))track(*token,TrackKind::mutation,time);focusEditor();}}
             else if(verb.starts_with("editItem:")){beginField(id,std::string_view(verb).substr(9));}
@@ -298,12 +394,7 @@ struct NotesPreview::Impl {
         if(workspace->editor()&&!workspace->finishEditing().finished)return true;
         if(state->pendingDeletion()){workspace->cancelDeletion();confirmationVisible=false;return true;}
         if(moduleVisible&&moduleInput){const auto q=controlsProjection.unproject(p);if(const auto action=q?controls.actionAt(*q):std::nullopt){
-            controlScene->setFeedback(action,true,preferences.reduceMotion,time);controlsPressed=true;
-            for(std::size_t n=0;n<controls.actions().size();++n)if(controls.actions()[n].id==*action)toolbarStarted[n]=preferences.reduceMotion?-1:time;
-            if(*action=="tool:text"){const auto id=data::makeUUID();workspace->createText(id,data::foundationNow());if(const auto token=workspace->cardToken(id))track(*token,TrackKind::create,time);focusEditor();}
-            else if(*action=="tool:todo"){const auto id=data::makeUUID();workspace->createChecklist(id,data::makeUUID(),data::foundationNow());if(const auto token=workspace->cardToken(id))track(*token,TrackKind::create,time);focusEditor();}
-            else if(*action=="tool:image"){relinkNote.reset();if(finish()){const auto offset=double(state->notes().size()%7)*18;mediaMenu->openSource({metrics.width*.5-100+offset,metrics.height*.5-120+offset},time);}}
-            else if(*action=="tool:drawing"){const auto id=data::makeUUID();workspace->createDrawing(id,data::foundationNow());if(const auto token=workspace->cardToken(id))track(*token,TrackKind::create,time);}return true;
+            controlScene->setFeedback(action,true,preferences.reduceMotion,time);controlsPressed=true;toolAction(std::string(*action),time);return true;
         }}workspace->select({});return false;
     }
 };
@@ -316,12 +407,12 @@ bool NotesPreview::importMedia(std::span<const std::string>paths,core::Point poi
 bool NotesPreview::importMedia(data::ShelfFileAccess access,core::Point point,double t){auto&i=*impl_;const Impl::TimeScope event(i,t);if(!access.open()||access.metadata().isDirectory){i.setMediaError(i.mediaErrorText(mod::NotesMediaError::unavailable));return false;}
     auto lease=std::make_shared<data::ShelfFileAccess>(std::move(access));const std::array paths{lease->metadata().windowsPath};return i.beginImport(paths,point,std::move(lease));}
 
-void NotesPreview::presentShelfMedia(std::vector<mod::NotesShelfChoice>choices,core::Point point,double t){auto&i=*impl_;const Impl::TimeScope event(i,t);if(i.mediaActive&&i.moduleInput&&i.state->notesSelected()&&i.finish())i.mediaMenu->openShelf(std::move(choices),point,event.time);}
+void NotesPreview::presentShelfMedia(std::vector<mod::NotesShelfChoice>choices,core::Point point,double t){auto&i=*impl_;const Impl::TimeScope event(i,t);if(i.mediaActive&&i.moduleInput&&i.state->notesSelected()&&i.finish()){i.mediaMenu->openShelf(std::move(choices),point,event.time);i.poseMenus(event.time);}}
 bool NotesPreview::setMediaActive(bool active,double t,bool preserve){auto&i=*impl_;const Impl::TimeScope event(i,t);i.mediaActive=active;if(!active){i.cancelImport();i.mediaAction.reset();i.mediaMenu->close(event.time,true);}return i.workspace->setMediaActive(active,event.time,preserve);}
 std::optional<double>NotesPreview::nextWakeTime()const{return impl_->workspace->mediaNextWakeTime();}
 bool NotesPreview::deadline(double t){auto&i=*impl_;const Impl::TimeScope event(i,t);return i.workspace->sampleMedia(event.time);}
 bool NotesPreview::applyPreferences(NotesPreviewPreferences p,double t){auto&i=*impl_;const Impl::TimeScope event(i,t);localizeMedia(p.workspace,p.controls.language);if(i.samePreferences(p)&&i.workspace->fontRevision()==i.raster.fontRevision()){i.pendingPreferences.reset();return true;}if(!i.finish()){i.pendingPreferences=std::move(p);return false;}
-    i.workspace->setStyle(p.workspace);i.modules.setDark(p.dark);i.preferences=std::move(p);i.pendingPreferences.reset();i.mediaMenu->setStrings(i.preferences.controls,i.preferences.dark);
+    i.workspace->setStyle(p.workspace);i.modules.setDark(p.dark);i.preferences=std::move(p);i.pendingPreferences.reset();i.mediaMenu->setStrings(i.preferences.controls,i.preferences.dark);if(i.formatMenu)i.formatMenu->setStrings(i.preferences.controls);
     auto center=i.input(mod::NotesControlsKind::center);center.error=i.mediaError;center.systemOrange=i.preferences.dark?mod::NotesColor{1,159./255.,10./255.,1}:mod::NotesColor{1,149./255.,0,1};i.controls.update(center);i.controlScene->syncContent(i.assets.imagesFor(i.controls),1);i.confirmation.update(i.input(mod::NotesControlsKind::deletion));i.confirmScene->syncContent();i.groupUploaded=false;
     if(i.preferences.reduceMotion){for(const auto&track:i.tracks){if(track.kind==Impl::TrackKind::remove)i.workspace->settleDeletion(track.token);else{const std::array patch{gpu::NativeNotesCardMotion{track.token,{}}};i.workspace->setCardMotions(patch);}}i.tracks.clear();i.workspace->settleOutgoing(i.outgoingGeneration);i.toolbarStarted.fill(-1);const auto result=i.modules.settle(event.time);i.moduleSample=result.presentation;i.moduleInput=result.presentation.acceptsModuleInput;i.change(result.change,event.time);}return true;
 }
@@ -357,10 +448,7 @@ void NotesPreview::update(const Matrix&center,const core::source::DesktopChromeS
     if(rects){const auto r=(*rects)[0];const auto motion=i.preferences.reduceMotion?mod::NotesMotionSample{}:mod::notesDeletionMenuMotion(t-i.confirmationStarted);i.confirmWorld=i.workspaceWorld*Matrix::translation(r.x,r.y+motion.y);i.lastConfirmationRect=r;
         i.confirmScene->updatePose({},1,t);i.confirmationOpacity=opacity;i.confirmationProjection=core::Projection::viewport(camera*i.confirmWorld,i.metrics.pixelWidth,i.metrics.pixelHeight);
     }else{i.confirmScene->updatePose({},1,t);i.confirmationOpacity=0;}
-    if(i.formatMenu){if(i.drawingFormatNote)if(const auto*n=i.state->note(*i.drawingFormatNote))i.formatNoteRect={n->x,n->y,n->width,n->height};if(const auto id=i.workspace->editingNoteID())if(const auto*n=i.state->note(*id))i.formatNoteRect={n->x,n->y,n->width,n->height};
-        i.formatMenu->update(i.workspaceWorld,camera,i.metrics.pixelWidth,i.metrics.pixelHeight,i.state->workspaceBounds(),i.formatNoteRect,opacity,t);}
-    if(i.mediaMenu){const auto moduleWorld=i.surface->pose().contentWorld;i.mediaMenu->update(moduleWorld,i.workspaceWorld,camera,i.metrics.pixelWidth,i.metrics.pixelHeight,opacity,t);}
-    i.hasPose=true;
+    i.menuOpacity=opacity;i.hasPose=true;i.poseMenus(t);
 }
 bool NotesPreview::requiresFrames(double t)const{const auto&i=*impl_;t=i.queryTime(t);if((i.mediaMenu&&i.mediaMenu->requiresFrames(t))||(i.formatMenu&&i.formatMenu->requiresFrames(t))||i.modules.requiresFrames()||!i.tracks.empty()||i.workspace->requiresFrames(t)||i.controlScene->requiresFrames(t)||i.confirmScene->requiresFrames(t))return true;
     for(auto s:i.toolbarStarted)if(s>=0&&t-s<.18)return true;return !i.preferences.reduceMotion&&i.confirmationVisible&&t-i.confirmationStarted<.16;}
@@ -435,6 +523,24 @@ bool NotesPreview::key(const app::KeyEvent&e,double t,std::optional<NotesKeyModi
 }
 void NotesPreview::focus(bool f){impl_->focused=f;impl_->focusEditor();if(!f){impl_->editorDrag=false;if(!impl_->finish())impl_->pendingCancel=true;}}
 bool NotesPreview::finish(){return impl_->finish();}
+void NotesPreview::automationElements(std::vector<native::NotesAutomationElement>&out)const{impl_->automationElements(out);}
+bool NotesPreview::perform(std::string_view id,double t){auto&i=*impl_;const Impl::TimeScope event(i,t);return i.perform(id,event.time);}
+bool NotesPreview::setAutomationValue(std::string_view id,double value,double t){auto&i=*impl_;const Impl::TimeScope event(i,t);if(!i.hasPose||!i.moduleInput||!std::isfinite(value))return false;
+    if(id=="notes.format:wheel")return i.formatMenu&&i.formatMenu->setWheel(value,event.time);return i.workspace->seekMedia(id,value,event.time);}
+bool NotesPreview::setAutomationText(std::string_view id,std::string_view utf8,double t){auto&i=*impl_;const Impl::TimeScope event(i,t);if(!i.hasPose||!i.moduleInput||id.empty()||id!=i.editorAutomationID())return false;
+    auto*editor=i.workspace->editor();const auto*document=i.workspace->editorDocument();if(!editor||!document||document->composition())return false;auto value=automationUTF16(utf8);if(!value)return false;*value=gpu::notesClipboardDocumentText(*value);
+    const auto size=static_cast<std::uint32_t>(document->text().size());if(value->empty()&&!size)return true;
+    editor->setSelectionFromHost({{0,size},core::text::ActiveEnd::end,false});
+    const auto result=value->empty()?i.workspace->deleteEditorSelection():i.workspace->pasteIntoEditor({*value,std::nullopt});if(result.changed)i.editSync();return result.handled||result.changed;}
+std::unique_ptr<native::NativeNotesAutomation>NotesPreview::automation(IRawElementProviderFragmentRoot*group,std::function<double()>clock,std::function<void()>changed){
+    need(bool(clock),"Notes automation requires the owner clock");native::NotesAutomationHost h;h.root=group;h.origin=native::notesAutomationWindowOrigin(impl_->hwnd);
+    h.elements=[this](std::vector<native::NotesAutomationElement>&out){automationElements(out);};
+    const auto done=[changed](bool accepted){if(accepted&&changed)changed();return accepted;};
+    h.invoke=[this,clock,done](std::string_view id){return done(perform(id,clock()));};
+    h.setValue=[this,clock,done](std::string_view id,double value){return done(setAutomationValue(id,value,clock()));};
+    h.setText=[this,clock,done](std::string_view id,std::string_view text){return done(setAutomationText(id,text,clock()));};
+    return std::make_unique<native::NativeNotesAutomation>(std::move(h));
+}
 std::uint64_t NotesPreview::compositionRevision()const noexcept{return impl_->workspace->compositionRevision();}
 void NotesPreview::upload(native::Renderer&r){auto&i=*impl_;need(!i.mediaRenderer||i.mediaRenderer==&r,"Notes owner cannot replace its media renderer");i.mediaRenderer=&r;i.workspace->uploadMedia(r);if(i.mediaMenu)i.mediaMenu->upload(r);if(i.formatMenu)i.formatMenu->upload(r);const auto revision=i.registration.stats().geometryRevision;if(i.uploadedRegistration!=revision){i.registration.uploadGeometry(r);i.uploadedRegistration=revision;}if(!i.groupUploaded){i.confirmationGroup->uploadResources(r);i.groupUploaded=true;}else i.confirmationGroup->updateLocal(r);i.confirmationGroup->setPose(i.confirmWorld,i.confirmationOpacity);}
 std::span<const native::LayerCompositionEntry>NotesPreview::entries(){auto&i=*impl_;i.composed.clear();i.composed.push_back({&i.controlScene->scene(),i.registration.draws()});for(const auto&e:i.workspace->entries())i.composed.push_back(e);i.composed.push_back(i.confirmationGroup->entry());if(i.formatMenu)for(const auto&e:i.formatMenu->entries())i.composed.push_back(e);if(i.mediaMenu)for(const auto&e:i.mediaMenu->entries())i.composed.push_back(e);return i.composed;}

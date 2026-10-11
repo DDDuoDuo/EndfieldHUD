@@ -9,6 +9,7 @@
 #include "native/notes_video_playback.hpp"
 #include "native/media_request_broker.hpp"
 #include "native/notes_drawing_scene.hpp"
+#include "native/notes_automation.hpp"
 #include "modules/notes_motion.hpp"
 #include "modules/notes_checklist.hpp"
 #include <stdexcept>
@@ -91,6 +92,13 @@ struct NativeNotesCardMotion {
 };
 struct NativeNotesFinishResult {bool finished{},saved{};};
 enum class NativeNotesDrawingIssue {none,strokeLimit,drawingLimit};
+// Source NotesCanvas/HUDNotesInteraction accessibility captions the cards do
+// not paint (caller-localized): noteLabel titles, the seek slider and the
+// projected field's label and help.
+struct NativeNotesAutomationStrings {
+    std::string text{"Text"},checklist{"Checklist"},drawing{"Drawing"},media{"Image/Video"};
+    std::string playbackPosition{"Playback position"},editNote{"Edit text note"},editItem{"Edit checklist item"},editHelp;
+};
 // Attachment-free plain/rich Notes coordinator. It borrows ONE state, rasterizer, HWND and
 // optional already-activated TSF manager. It creates no window, service, clock,
 // publisher, persistence store, clipboard reader or global input hook.
@@ -241,6 +249,22 @@ public:
     // no text measurement, persistence, timer or full-document bitmap.
     bool scrollAt(core::Point physicalClientPoint,double physicalDeltaY);
     bool setFeedback(std::string_view noteID,std::optional<std::string_view> verb,bool pressed,bool reduceMotion,double time);
+    // UI Automation peers (native/notes_automation.hpp) appended to `out`:
+    // NotesCanvas.accessibleActions for every shown card in layer order
+    // (bottom first): "select" over the card labelled by the source noteLabel
+    // (kind title, then ": " and the first 64 characters of a text note), the
+    // card's own actions as painted (pin, delete, edit or checklist rows and
+    // add, playback or relink, formatting while editing, drawing colour) and
+    // grow/shrink on the selected card; then mediaSeekActions (one slider per
+    // shown video with a duration: seconds, id = the note id) and last the
+    // open field ("notes:editor:<note>[:<item>]", its draft as text; drafts
+    // past 65,536 UTF-16 units report that prefix). Rects are the physical
+    // client bounds of the projected controls. Content events only.
+    void automationElements(std::vector<NotesAutomationElement>& out,const NativeNotesAutomationStrings&)const;
+    // Source HUDNotesSeekSlider.setAccessibilityValue/increment: seek a shown
+    // video card to `seconds`, clamped into [0, duration]. False without one
+    // or while a pointer seek owns it.
+    bool seekMedia(std::string_view noteID,double seconds,double time);
     const modules::NotesCardPresentation* card(std::string_view)const noexcept;
     NativeNotesWorkspaceStats stats()const noexcept;
     NativeNotesTextMeasureStats measurementStats()const;

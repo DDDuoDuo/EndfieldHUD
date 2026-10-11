@@ -7,6 +7,7 @@
 #include "native/projection_ink.hpp"
 #include "native/projection_plane.hpp"
 #include "native/notes_controls_scene.hpp"
+#include "native/notes_automation.hpp"
 #include <functional>
 namespace endfield::tools {
 struct ProjectionPreviewAction {
@@ -69,6 +70,19 @@ public:
     // coordinates and uses the original content rect/aspect-fit convention.
     bool setMediaDraw(std::uint64_t,std::optional<native::DrawObject>,double);
     bool setMediaPlayback(std::uint64_t,bool playing,double seconds,std::optional<std::string>error,double);
+    // UI Automation (native/notes_automation.hpp) of the source
+    // ProjectionWorkspaceView group: the ProjectionToolbar buttons
+    // ("projection.toolbar:<item>"), each media card's ProjectionMediaAXButton
+    // pair ("projection.media:<id>:play" for moving media, labelled Play or
+    // Pause, and "projection.media:<id>:remove"), then the open menu's items
+    // ("projection.menu:<item>") with the color wheel ("projection.menu:wheel",
+    // the marker's x on the 166-point wheel). Physical client rectangles;
+    // nothing while inactive. Content events only (allocates).
+    void automationElements(std::vector<native::NotesAutomationElement>&)const;
+    // The source button actions (toolbar perform, NotesRetainedMenu.perform,
+    // the media node's onAction "play"/"remove"); false when unavailable.
+    bool perform(std::string_view id,double time);
+    bool setAutomationValue(std::string_view id,double value,double time); // color wheel
     void upload(native::Renderer&);
     std::span<const native::LayerCompositionEntry>entries();
     void collected(native::Renderer&);void release(native::Renderer&);

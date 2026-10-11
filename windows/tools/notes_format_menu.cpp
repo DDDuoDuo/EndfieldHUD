@@ -22,9 +22,9 @@ rich::RGBA wheelColor(core::Point p){const auto c=core::source::colorAtWheel(p);
 struct NotesFormatMenu::Impl {
     struct Menu {
         mod::NotesControls controls;mod::NotesControlsInput input;std::unique_ptr<gpu::NativeNotesControlsScene> scene;std::unique_ptr<gpu::NativeLayerGroup> group;
-        core::Projection projection;core::Matrix4 world;double started{},captured{1},alpha{},scrollRemainder{};float opacity{};bool closing{},dead{},uploaded{},dirty{true},wheelDrag{},pressed{};std::size_t focused{};
+        core::Projection projection;core::Matrix4 world;double started{},captured{1},alpha{},scrollRemainder{};float opacity{};bool closing{},dead{},uploaded{},dirty{true},wheelDrag{},pressed{},posed{};std::size_t focused{};
     };
-    gpu::LayerRasterizer&raster;std::filesystem::path root;Apply apply;std::vector<std::unique_ptr<Menu>>menus;std::vector<gpu::LayerCompositionEntry>entries;std::optional<gpu::NativeNotesControlsImage>wheel;
+    gpu::LayerRasterizer&raster;std::filesystem::path root;Apply apply;std::vector<std::unique_ptr<Menu>>menus;std::vector<gpu::LayerCompositionEntry>entries;std::optional<gpu::NativeNotesControlsImage>wheel;mod::NotesControlsStrings strings;
     Impl(gpu::LayerRasterizer&r,std::filesystem::path p,Apply callback):raster(r),root(std::move(p)),apply(std::move(callback)){need(bool(apply),"Notes format menu requires editor callback");menus.reserve(8);entries.reserve(8);}
     Menu*current()const{for(auto it=menus.rbegin();it!=menus.rend();++it)if(!(*it)->closing&&!(*it)->dead)return it->get();return nullptr;}
     void prepareWheel(){if(wheel)return;data::detail::validateRoot(root);constexpr std::string_view digest="244c34ad474b15c242f9bd62cbf195272cbf7b880acbeaf0021e237d6a22abd2";const auto file="raster/"+std::string(digest)+".png";const auto bytes=data::detail::readFile(root/file,128*1024);need(bytes&&core::packet::sha256({reinterpret_cast<const std::uint8_t*>(bytes->data()),bytes->size()})==digest,"Original Notes wheel asset missing or changed");
@@ -41,16 +41,17 @@ NotesFormatMenu::NotesFormatMenu(gpu::LayerRasterizer&r,std::filesystem::path ro
 NotesFormatMenu::~NotesFormatMenu()=default;
 bool NotesFormatMenu::open(std::string_view verb,const rich::TextStyle&s,double t){auto&i=*impl_;mod::NotesControlsKind kind;if(verb=="formatSize")kind=mod::NotesControlsKind::size;else if(verb=="formatFont")kind=mod::NotesControlsKind::font;else if(verb=="formatColor")kind=mod::NotesControlsKind::color;else if(verb=="formatSpecial")kind=mod::NotesControlsKind::special;else return false;
     if(kind==mod::NotesControlsKind::color)i.prepareWheel();
-    auto m=std::make_unique<Impl::Menu>();m->input.kind=kind;m->input.traits={s.bold,s.italic,s.underline,s.strikethrough};const auto c=s.color.value_or(rich::RGBA{1,1,1,1});m->input.currentColor={c.red,c.green,c.blue,c.alpha};m->input.colorWheelSelection=colorPoint(c);m->started=t;
+    auto m=std::make_unique<Impl::Menu>();m->input.kind=kind;m->input.strings=i.strings;m->input.traits={s.bold,s.italic,s.underline,s.strikethrough};const auto c=s.color.value_or(rich::RGBA{1,1,1,1});m->input.currentColor={c.red,c.green,c.blue,c.alpha};m->input.colorWheelSelection=colorPoint(c);m->started=t;
     if(kind==mod::NotesControlsKind::font){m->input.values=i.raster.installedFontFamilies();m->input.selectedValue=std::string(gpu::notesSelectedFontFamily(s,i.raster.defaultFontFamily()));}else if(kind==mod::NotesControlsKind::size){m->input.values=mod::NotesControls::sizeValues(s.fontSize);m->input.selectedValue=std::to_string(static_cast<int>(std::round(s.fontSize)));}m->input.firstRow=mod::NotesControls::initialFirstRow(m->input.values,m->input.selectedValue);
     m->controls.update(m->input);gpu::LayerRasterOptions options;options.pixelsPerPoint=2;options.paddingPoints=1;options.assetRoot=i.root;m->scene=std::make_unique<gpu::NativeNotesControlsScene>(m->controls,i.raster,options);m->scene->syncContent(kind==mod::NotesControlsKind::color?std::span(&*i.wheel,1):std::span<const gpu::NativeNotesControlsImage>{},1);m->scene->updatePose({},1,t);m->group=std::make_unique<gpu::NativeLayerGroup>(m->scene->scene(),"notes.format",2);
     i.close(t);i.menus.push_back(std::move(m));return true;
 }
+void NotesFormatMenu::setStrings(const mod::NotesControlsStrings&s){auto&i=*impl_;if(i.strings==s)return;i.strings=s;for(auto&m:i.menus)if(!m->dead&&!m->closing){m->input.strings=s;i.refresh(*m);}}
 void NotesFormatMenu::close(double t){impl_->close(t);}
 bool NotesFormatMenu::acceptsInput()const noexcept{return impl_->current()!=nullptr;}
 bool NotesFormatMenu::dragging()const noexcept{const auto*m=impl_->current();return m&&(m->wheelDrag||m->pressed);}
 void NotesFormatMenu::update(const core::Matrix4&w,const core::Matrix4&camera,unsigned width,unsigned height,core::Rect bounds,core::Rect note,float opacity,double t){for(auto&m:impl_->menus){if(m->dead)continue;const auto b=m->controls.bounds();const auto motion=mod::notesMenuMotion(!m->closing,t-m->started,m->captured);m->alpha=motion.opacity;if(m->closing&&!motion.active){m->dead=true;continue;}
-    const auto x=std::min(bounds.x+bounds.width-b.width,std::max(bounds.x,note.x)),y=std::min(bounds.y+bounds.height-b.height,std::max(bounds.y,note.y+note.height+4));m->world=w*core::Matrix4::translation(x,y+motion.y);m->opacity=opacity*static_cast<float>(motion.opacity);m->projection=core::Projection::viewport(camera*m->world,width,height);m->scene->updatePose({},1,t);}}
+    const auto x=std::min(bounds.x+bounds.width-b.width,std::max(bounds.x,note.x)),y=std::min(bounds.y+bounds.height-b.height,std::max(bounds.y,note.y+note.height+4));m->world=w*core::Matrix4::translation(x,y+motion.y);m->opacity=opacity*static_cast<float>(motion.opacity);m->projection=core::Projection::viewport(camera*m->world,width,height);m->posed=true;m->scene->updatePose({},1,t);}}
 bool NotesFormatMenu::contains(core::Point p)const{const auto*m=impl_->current();if(!m)return false;const auto q=m->projection.unproject(p);return q&&in(m->controls.bounds(),*q);}
 bool NotesFormatMenu::pointer(const app::PointerEvent&e,double scale,double t){auto&i=*impl_;auto*m=i.current();if(!m)return false;const auto q=m->projection.unproject({e.x*scale,e.y*scale});
     if(e.kind==app::PointerKind::captureLost||e.kind==app::PointerKind::leave){m->wheelDrag=m->pressed=false;m->scene->setFeedback({},false,false,t);return false;}
@@ -66,6 +67,16 @@ bool NotesFormatMenu::key(const app::KeyEvent&e,double t){auto*m=impl_->current(
         if(e.value==VK_LEFT)p.x-=4;else if(e.value==VK_RIGHT)p.x+=4;else if(e.value==VK_UP)p.y-=4;else p.y+=4;impl_->choose(*m,p);return true;
     }
     const auto actions=m->controls.actions();if(e.value==VK_DOWN||e.value==VK_RIGHT){m->focused=std::min(actions.size()-1,m->focused+1);return true;}if(e.value==VK_UP||e.value==VK_LEFT){if(m->focused)--m->focused;return true;}if(e.value==VK_RETURN||e.value==VK_SPACE)return impl_->perform(*m,actions[m->focused].id,t);return false;}
+void NotesFormatMenu::automationElements(std::vector<gpu::NotesAutomationElement>&out,std::string_view prefix,const AutomationStrings&strings)const{
+    const auto*m=impl_->current();if(!m||!m->posed)return;const auto project=[&](core::Point p){return m->projection.project(p);};
+    for(const auto&a:m->controls.actions())if(const auto bounds=gpu::notesAutomationBounds(a.rect,project)){gpu::NotesAutomationElement e;e.id=std::string(prefix)+a.id;e.label=a.label;e.rect=*bounds;e.enabled=a.enabled;e.selected=a.selected;out.push_back(std::move(e));}
+    if(m->input.kind==mod::NotesControlsKind::color)if(const auto bounds=gpu::notesAutomationBounds({8,8,166,166},project)){gpu::NotesAutomationElement e;e.id=std::string(prefix)+"wheel";e.label=strings.wheel;e.help=strings.wheelHelp;e.rect=*bounds;e.role=gpu::NotesAutomationRole::slider;
+        e.value=std::clamp(m->input.colorWheelSelection.x*166,0.,166.);e.minimum=0;e.maximum=166;e.smallChange=e.largeChange=4;out.push_back(std::move(e));}
+}
+bool NotesFormatMenu::perform(std::string_view item,double t){auto&i=*impl_;auto*m=i.current();if(!m)return false;const auto actions=m->controls.actions();
+    const auto found=std::find_if(actions.begin(),actions.end(),[&](const auto&a){return a.id==item;});if(found==actions.end()||!found->enabled)return false;const std::string id(item);return i.perform(*m,id,t);}
+bool NotesFormatMenu::setWheel(double x,double){auto&i=*impl_;auto*m=i.current();if(!m||m->input.kind!=mod::NotesControlsKind::color||!std::isfinite(x))return false;
+    i.choose(*m,{8+std::clamp(x,0.,166.),8+m->input.colorWheelSelection.y*166});return true;}
 bool NotesFormatMenu::requiresFrames(double t)const{for(const auto&m:impl_->menus)if(!m->dead&&(mod::notesMenuMotion(!m->closing,t-m->started,m->captured).active||m->scene->requiresFrames(t)))return true;return false;}
 void NotesFormatMenu::upload(gpu::Renderer&r){for(auto&m:impl_->menus)if(!m->dead){if(!m->uploaded||m->dirty){m->group->uploadResources(r);m->uploaded=true;m->dirty=false;}else m->group->updateLocal(r);m->group->setPose(m->world,m->opacity);}}
 std::span<const gpu::LayerCompositionEntry>NotesFormatMenu::entries(){auto&i=*impl_;i.entries.clear();for(auto&m:i.menus)if(!m->dead&&m->uploaded)i.entries.push_back(m->group->entry());return i.entries;}

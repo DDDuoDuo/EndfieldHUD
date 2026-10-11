@@ -32,7 +32,9 @@ if(WIN32)
   target_sources(hud_native PRIVATE native/notes_text_navigation.cpp)
   # Pasted images as source managed "<UUID>.png" copies under Notes/Images.
   target_sources(hud_native PRIVATE native/notes_managed_image.cpp)
-  target_link_libraries(hud_native PRIVATE hud_shelf_transfer shell32)
+  # UI Automation peers of the projected Notes/Archive/Projection controls.
+  target_sources(hud_native PRIVATE native/notes_automation.cpp)
+  target_link_libraries(hud_native PRIVATE hud_shelf_transfer shell32 uiautomationcore oleaut32)
 
   if(BUILD_TESTING)
     # Geometry, pixel and behaviour parity with the single-layout editor, TSF
@@ -56,6 +58,12 @@ if(WIN32)
     target_link_libraries(notes_clipboard_tests PRIVATE hud_native shlwapi windowscodecs ole32)
     add_test(NAME notes_clipboard_contracts COMMAND notes_clipboard_tests)
     list(APPEND EHUD_NOTES_TARGETS notes_clipboard_tests)
+    # UIA peers over synthetic control lists: patterns, identity, hit tests.
+    add_executable(notes_automation_tests tests/notes_automation_tests.cpp)
+    target_compile_definitions(notes_automation_tests PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
+    target_link_libraries(notes_automation_tests PRIVATE hud_native uiautomationcore oleaut32 ole32)
+    add_test(NAME notes_automation_contracts COMMAND notes_automation_tests)
+    list(APPEND EHUD_NOTES_TARGETS notes_automation_tests)
     add_executable(notes_text_navigation_tests tests/notes_text_navigation_tests.cpp)
     target_compile_definitions(notes_text_navigation_tests PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
     target_link_libraries(notes_text_navigation_tests PRIVATE hud_native)
@@ -95,13 +103,28 @@ if(WIN32)
   endif()
 endif()
 
-# Hidden coverage of the Notes long-document path inside the application
-# (app/areas/notes_coverage.hpp). Test-only area: watch_session_preview only.
-if(WIN32 AND BUILD_TESTING)
+# Projection's UI Automation group under the HUD root (production area; the
+# host publishes its workspace, app/areas/projection_automation.hpp).
+if(WIN32 AND TARGET hud_projection_preview)
+  add_library(hud_projection_automation_area STATIC app/areas/projection_automation.cpp)
+  target_include_directories(hud_projection_automation_area PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+  target_compile_definitions(hud_projection_automation_area PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
+  target_link_libraries(hud_projection_automation_area PUBLIC hud_module_registry hud_projection_preview PRIVATE uiautomationcore oleaut32 ole32)
+  list(APPEND EHUD_NOTES_TARGETS hud_projection_automation_area)
+  set_property(GLOBAL APPEND PROPERTY EHUD_APP_AREAS
+    "projection|hud_projection_automation_area|app/areas/projection_automation.hpp|endfield::notes::projectionAutomationArea")
+endif()
+
+# Hidden coverage of the Notes long-document path and the Notes owner's UI
+# Automation inside the application (app/areas/notes_coverage.hpp).
+# Test-only area: watch_session_preview only.
+if(WIN32 AND BUILD_TESTING AND TARGET hud_notes_preview)
   add_library(hud_notes_coverage_area STATIC app/areas/notes_coverage.cpp)
   target_include_directories(hud_notes_coverage_area PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-  target_compile_definitions(hud_notes_coverage_area PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
-  target_link_libraries(hud_notes_coverage_area PUBLIC hud_module_registry hud_native)
+  # The staged Notes controls package is verified against the same build pins.
+  target_compile_definitions(hud_notes_coverage_area PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX
+    EHUD_NOTES_CONTROLS_SHA="9d2fcf0eead9eeeab1be4fdbb0e940a0e1e3eedf840ab9e4c63499e40ae70c00" EHUD_NOTES_CONTROLS_COMMIT="ca04f142185c7de40acd8523bdb563195d90a1d1")
+  target_link_libraries(hud_notes_coverage_area PUBLIC hud_module_registry hud_native hud_notes_preview PRIVATE uiautomationcore oleaut32 ole32)
   list(APPEND EHUD_NOTES_TARGETS hud_notes_coverage_area)
   set_property(GLOBAL APPEND PROPERTY EHUD_APP_AREAS
     "notesLongDocument|hud_notes_coverage_area|app/areas/notes_coverage.hpp|endfield::notes::notesLongDocumentCoverage|coverage")

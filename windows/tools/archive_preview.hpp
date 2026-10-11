@@ -4,6 +4,7 @@
 #include "native/projected_editor.hpp"
 #include "native/notes_long_editor.hpp"
 #include "native/notes_clipboard.hpp"
+#include "native/notes_automation.hpp"
 #include "modules/notes_controls.hpp"
 #include "core/module_presentation.hpp"
 #include "core/source_desktop_chrome.hpp"
@@ -101,6 +102,23 @@ public:
     // generation-tagged import goes to the owner's media importer; nullopt
     // without a document or room, or while a menu or drag owns the pointer.
     std::optional<ArchiveMediaAction> dropMediaAction(double time);
+    // UI Automation (native/notes_automation.hpp): HUDArchiveInteraction.
+    // layoutAccessibility - every ArchiveCanvas action as a button (source
+    // action ids, labels from accessibleTitle), the gallery scroller
+    // ("archive:gallery": the scroll offset, steps of 122, hidden under a
+    // menu), the open document's projected fields and the category name
+    // ("archive:field:<title|date|body|category>", their text), and the open
+    // menu's items ("archive.menu:<item>") with its color wheel
+    // ("archive.menu:wheel"). Physical client rectangles; nothing while the
+    // owner accepts no input. Content events only (allocates).
+    void automationElements(std::vector<native::NotesAutomationElement>&)const;
+    // ArchiveActionButton.activate -> ArchiveCanvas.perform, or the open
+    // menu's item; false for an unknown or disabled id.
+    bool perform(std::string_view id,double time);
+    bool setAutomationValue(std::string_view id,double value,double time);  // gallery offset or color wheel
+    bool setAutomationText(std::string_view id,std::string_view utf8,double time); // replaces a field's text (one undo group)
+    std::unique_ptr<native::NativeNotesAutomation> automation(IRawElementProviderFragmentRoot* group,
+        std::function<double()> clock,std::function<void()> changed={});
 private:struct Impl;std::shared_ptr<Impl>impl_;
 };
 }

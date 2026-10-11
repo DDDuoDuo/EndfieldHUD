@@ -105,14 +105,18 @@ struct ArchivePreview::Impl {
  }
  void selectionFeedback(){if(auto*f=focusedEditor();f&&f->richDocument){const auto color=inkColor(f->richDocument->selectionStyle(),options.view.appearance.dark);if(options.view.formattingColor!=color){options.view.formattingColor=color;contentDirty=true;}}}
  // A paste that grows a short body past the single-layout field reopens its
- // draft in the chunked editor first (text, runs, selection, typing style,
- // scroll and focus kept); the undo history restarts with that paste.
+ // draft in the chunked editor first: the same document with a raised
+ // capacity, so text, runs, selection, typing style and the undo history
+ // continue (the paste undoes, then the edits before it); scroll and focus
+ // are kept.
  bool promoteBody(Field&f,std::size_t resulting){
   if(f.kind!=FieldKind::body||!f.richDocument||!f.editor||f.editor->chunked()||resulting<=options.editorCapacity||resulting>options.maximumBodyUnits||f.document().composition()||!fields||fields->values[2].get()!=&f)return false;
-  if(retiredViewportFields.size()>=3)return false;const auto selection=f.document().selection();
-  auto document=std::make_shared<rich::RichDocument>(std::u16string(f.document().text()),f.richDocument->richText(),options.maximumBodyUnits);document->setSelection(selection);if(selection.range.start==selection.range.end)document->restoreTypingStyle(f.richDocument->typingStyle());
-  std::unique_ptr<Field>next;try{next=std::make_unique<Field>(window,raster,f.kind,f.rect,m::archiveUTF8(f.document().text()),std::nullopt,rich::TextStyle{},options,document,nullptr,true);}catch(const gpu::NativeNotesLongParagraphError&){return false;}
-  if(manager&&FAILED(next->editor->connect(*manager,client)))return false;const auto oldScroll=f.editor->scrollOffset();const auto stopped=f.editor->stop();if(FAILED(stopped))return false;f.editor.reset();
+  if(retiredViewportFields.size()>=3)return false;
+  const auto previous=f.richDocument->maximumUnits();f.richDocument->setMaximumUnits(options.maximumBodyUnits);
+  std::unique_ptr<Field>next;try{next=std::make_unique<Field>(window,raster,f.kind,f.rect,m::archiveUTF8(f.document().text()),std::nullopt,rich::TextStyle{},options,f.richDocument,nullptr,true);}
+  catch(const gpu::NativeNotesLongParagraphError&){f.richDocument->setMaximumUnits(previous);return false;}catch(...){f.richDocument->setMaximumUnits(previous);throw;}
+  const auto restore=[&]{next.reset();f.richDocument->setMaximumUnits(previous);return false;};
+  if(manager&&FAILED(next->editor->connect(*manager,client)))return restore();const auto oldScroll=f.editor->scrollOffset();const auto stopped=f.editor->stop();if(FAILED(stopped))return restore();f.editor.reset();
   next->capturedRevision=0;next->forceCapture=true;next->editor->setScrollOffset(oldScroll);if(manager&&focusedField==std::optional<std::string>{"body"}&&focused)need(SUCCEEDED(next->editor->focus(true)),"Cannot restore Archive body focus");
   retiredViewportFields.push_back(std::move(fields->values[2]));fields->values[2]=std::move(next);contentDirty=true;++promotedBodies;return true;
  }
@@ -185,6 +189,51 @@ struct ArchivePreview::Impl {
  bool seekAt(Point point){if(!state.selected()||options.view.mediaIndex>=state.selected()->media.size())return false;const auto&reference=state.selected()->media[options.view.mediaIndex];if(reference["kind"]!=J("video")||reference["duration"].isNull())return false;const double seconds=reference["duration"].number()*std::clamp((point.x-24)/250,0.,1.);queueMedia(ArchiveMediaAction::Kind::seek,{},seconds);return true;}
  void poseMenu(Menu&v,bool current){if(!pose)return;const auto a=reduceMotion?1.:v.closing?1-std::clamp((time-v.start)/.16,0.,1.):std::clamp((time-v.start)/.16,0.,1.);const auto world=pose->contentWorld*Matrix::translation(v.origin.x,v.origin.y);v.scene.updatePose({world,pose->opacity*static_cast<float>(a),time,std::span(&pose->hostClip,1),pose->shutter});if(v.categoryField)poseField(*v.categoryField,pose->opacity*static_cast<float>(a),current);}
  void poseAll(){if(!pose)return;scene.updatePose({pose->contentWorld,pose->opacity,time,std::span(&pose->hostClip,1),pose->shutter});poseFields();if(menu)poseMenu(*menu,true);for(auto&v:retiredMenus)poseMenu(*v,false);}
+ // HUDArchiveInteraction.accessibleTitle and the NotesRetainedMenu labels.
+ std::string automationText(std::string_view english,std::string_view chinese)const{return core::localized(english,chinese,options.menuStrings.language);}
+ std::string automationTitle(const m::ArchiveAction&a)const{
+  static constexpr std::array<std::array<std::string_view,3>,15> titles{{{"retry","Retry","重试"},{"back","Return","返回"},{"new","New document","新建档案"},{"deleteCategory","Delete category","删除分类"},{"moveCategory","Move to category","移至分类"},
+   {"formatSize","Font size","字号"},{"formatFont","Font","字体"},{"formatColor","Color","颜色"},{"formatSpecial","Text style","特殊"},{"delete","Delete","删除"},{"addMedia","Add image/video","添加图片/视频"},
+   {"mediaPrevious","Previous","上一个"},{"mediaNext","Next","下一个"},{"mediaPlay","Play / Pause","播放 / 暂停"},{"removeMedia","Remove media","移除媒体"}}};
+  for(const auto&t:titles)if(a.id==t[0])return automationText(t[1],t[2]);return a.title;}
+ std::string menuTitle(const m::ArchiveAction&a)const{if(a.id=="close"&&a.title=="×")return automationText("Close","关闭");if(a.id=="create")return automationText("Create category","创建分类");return a.title;}
+ void automationElements(std::vector<gpu::NotesAutomationElement>&out)const{
+  if(!active||!input||!pose)return;const auto project=[&](Point p){return projection.project(p);};
+  for(const auto&a:scene.artwork().actions)if(const auto b=gpu::notesAutomationBounds(a.rect,project)){gpu::NotesAutomationElement e;e.id=a.id;e.label=automationTitle(a);e.rect=*b;e.enabled=a.enabled;e.selected=a.selected;out.push_back(std::move(e));}
+  // ArchiveGalleryScroller: hidden while a secondary menu is shown.
+  if(!menu&&state.galleryThumb())if(const auto b=gpu::notesAutomationBounds(m::ArchiveState::galleryScrollerRect(),project)){gpu::NotesAutomationElement e;e.id="archive:gallery";e.label=automationText("Documents","档案");e.rect=*b;e.role=gpu::NotesAutomationRole::slider;
+   e.maximum=std::max(0.,state.galleryMaximum());e.value=std::clamp(state.galleryScroll(),0.,e.maximum);e.minimum=0;e.smallChange=e.largeChange=122;out.push_back(std::move(e));}
+  // The projected text views: the open document's fields, then the category name.
+  const auto field=[&](Field&f,std::string label,const auto&map){if(const auto b=gpu::notesAutomationBounds(f.rect,map)){gpu::NotesAutomationElement e;e.id="archive:field:"+std::string(fieldName(f.kind));e.label=std::move(label);e.rect=*b;e.role=gpu::NotesAutomationRole::edit;
+   e.selected=focusedField==std::optional<std::string>(fieldName(f.kind));const auto value=f.document().text();auto n=std::min<std::size_t>(value.size(),65536);if(n<value.size()&&value[n-1]>=0xD800&&value[n-1]<=0xDBFF)--n;e.text=m::archiveUTF8(value.substr(0,n));out.push_back(std::move(e));}};
+  if(fields)for(const auto&f:fields->values)if(f&&f->editor)field(*f,f->kind==FieldKind::body?automationText("Content","内容"):f->kind==FieldKind::title?automationText("Title","标题"):automationText("Date","日期"),project);
+  if(menu){const Point o=menu->origin;const auto local=[&](Point p){return projection.project({p.x+o.x,p.y+o.y});};
+   for(const auto&a:menu->scene.artwork().actions)if(const auto b=gpu::notesAutomationBounds(a.rect,local)){gpu::NotesAutomationElement e;e.id="archive.menu:"+a.id;e.label=menuTitle(a);e.rect=*b;e.enabled=a.enabled;e.selected=a.selected;out.push_back(std::move(e));}
+   if(menu->controlInput&&menu->controlInput->kind==m::NotesControlsKind::color)if(const auto b=gpu::notesAutomationBounds({8,8,166,166},local)){gpu::NotesAutomationElement e;e.id="archive.menu:wheel";e.label=automationText("Color wheel","颜色轮盘");
+    e.help=automationText("Use arrow keys to adjust hue and saturation.","使用方向键调整色相与饱和度。");e.rect=*b;e.role=gpu::NotesAutomationRole::slider;e.value=std::clamp(menu->controlInput->colorWheelSelection.x*166,0.,166.);e.maximum=166;e.smallChange=e.largeChange=4;out.push_back(std::move(e));}
+   if(menu->categoryField)field(*menu->categoryField,automationText("Category name","分类名称"),project);}
+ }
+ bool automationPerform(std::string_view id){
+  if(!active||!input)return false;
+  const auto enabled=[](const std::vector<m::ArchiveAction>&actions,std::string_view item){return std::any_of(actions.begin(),actions.end(),[&](const auto&a){return a.id==item&&a.enabled;});};
+  if(id.starts_with("archive.menu:")){if(!menu)return false;const std::string item(id.substr(13));if(!enabled(menu->scene.artwork().actions,item))return false;return menuAction(item);}
+  const std::string action(id);if(!enabled(scene.artwork().actions,action))return false;return perform(action);
+ }
+ bool automationValue(std::string_view id,double value){
+  if(!active||!input||!std::isfinite(value))return false;
+  if(id=="archive:gallery"){if(menu||!state.galleryThumb())return false;state.setGalleryScroll(std::clamp(value,0.,std::max(0.,state.galleryMaximum())));contentDirty=true;return true;}
+  if(id=="archive.menu:wheel"){if(!menu||!menu->controlInput||menu->controlInput->kind!=m::NotesControlsKind::color)return false;return chooseWheel({8+std::clamp(value,0.,166.),8+menu->controlInput->colorWheelSelection.y*166});}
+  return false;
+ }
+ bool automationSetText(std::string_view id,std::string_view utf8){
+  if(!active||!input||!id.starts_with("archive:field:")||!J::validUtf8(std::string(utf8)))return false;const std::string name(id.substr(14));
+  auto*f=field(name);if(!f||!f->editor||f->document().composition())return false;if(!focusField(name))return false;f=field(name);if(!f||!f->editor)return false;
+  auto value=gpu::notesClipboardDocumentText(m::archiveUTF16(utf8));f->editor->syncContent();const auto size=static_cast<std::uint32_t>(f->document().text().size());
+  if(value.empty()&&!size)return true;f->editor->setSelectionFromHost({{0,size},text::ActiveEnd::end,false});
+  Field*target=f;if(!value.empty()&&promoteBody(*f,value.size()))target=fields->values[2].get();
+  const auto result=value.empty()?gpu::notesClipboardDeleteSelection(*target->editor,target->document()):gpu::notesClipboardPaste(*target->editor,target->document(),{std::move(value),std::nullopt},target->richDocument!=nullptr);
+  capture(*target);return result.handled||result.changed;
+ }
  bool changeActive(bool value){if(active==value)return true;if(!value&&!finish()){pendingDeactivate=true;input=false;return false;}pendingDeactivate=false;active=value;input=false;pressed=dragging=false;scrollGrab.reset();if(value){for(auto&f:retiredFields)f->retire=time;for(auto&v:retiredMenus)v->closeAt=time;state.activate();}else{closeMenu(false);retireCurrent(false);state.deactivate();++mediaGeneration;mediaAction.reset();}contentDirty=true;return true;}
 };
 
@@ -222,6 +271,19 @@ bool ArchivePreview::filterKey(const app::NativeMessage&m){auto i=impl_;auto*f=i
 bool ArchivePreview::message(const app::NativeMessage&m,double t){auto i=impl_;if(m.window!=i->window||m.message!=i->options.textMessage)return false;const Impl::Event event(*i,t);auto apply=[&](Impl::Field&f){if(f.generation!=m.wParam)return;f.editor->takeChanges(m.wParam);i->capture(f);f.editor->syncContent();i->selectionFeedback();};if(i->fields)for(auto&f:i->fields->values)if(f&&f->editor)apply(*f);if(i->menu&&i->menu->categoryField&&i->menu->categoryField->editor)apply(*i->menu->categoryField);if(i->pendingFocus){const auto desired=*i->pendingFocus;i->focusField(desired);}if(i->pendingDeactivate)i->changeActive(false);if(i->pendingAction){const auto action=*i->pendingAction;i->perform(action);}return true;}
 void ArchivePreview::focus(bool value,double t){auto i=impl_;const Impl::Event event(*i,t);i->focused=value;if(auto*f=i->focusedEditor();f&&i->manager){const auto hr=f->editor->focus(value);need(SUCCEEDED(hr)||hr==TS_E_NOLOCK,"Cannot update Archive field focus");}if(!value){i->dragging=i->pressed=false;i->scrollGrab.reset();}}
 void ArchivePreview::setClipboard(std::shared_ptr<gpu::NotesClipboard>clipboard){impl_->clipboard=std::move(clipboard);}
+void ArchivePreview::automationElements(std::vector<gpu::NotesAutomationElement>&out)const{impl_->automationElements(out);}
+bool ArchivePreview::perform(std::string_view id,double t){auto i=impl_;const Impl::Event event(*i,t);return i->automationPerform(id);}
+bool ArchivePreview::setAutomationValue(std::string_view id,double value,double t){auto i=impl_;const Impl::Event event(*i,t);return i->automationValue(id,value);}
+bool ArchivePreview::setAutomationText(std::string_view id,std::string_view utf8,double t){auto i=impl_;const Impl::Event event(*i,t);return i->automationSetText(id,utf8);}
+std::unique_ptr<gpu::NativeNotesAutomation>ArchivePreview::automation(IRawElementProviderFragmentRoot*group,std::function<double()>clock,std::function<void()>changed){
+ need(bool(clock),"Archive automation requires the owner clock");gpu::NotesAutomationHost h;h.root=group;h.origin=gpu::notesAutomationWindowOrigin(impl_->window);
+ h.elements=[this](std::vector<gpu::NotesAutomationElement>&out){automationElements(out);};
+ const auto done=[changed](bool accepted){if(accepted&&changed)changed();return accepted;};
+ h.invoke=[this,clock,done](std::string_view id){return done(perform(id,clock()));};
+ h.setValue=[this,clock,done](std::string_view id,double value){return done(setAutomationValue(id,value,clock()));};
+ h.setText=[this,clock,done](std::string_view id,std::string_view text){return done(setAutomationText(id,text,clock()));};
+ return std::make_unique<gpu::NativeNotesAutomation>(std::move(h));
+}
 std::optional<ArchiveMediaAction>ArchivePreview::dropMediaAction(double t){auto i=impl_;const Impl::Event event(*i,t);
  if(!i->active||!i->input||i->menu||pointerLocked()||!i->state.selected()||i->state.selected()->media.size()>=16)return std::nullopt;
  ++i->mediaGeneration;i->relink.reset();return ArchiveMediaAction{ArchiveMediaAction::Kind::chooseLocal,i->state.selected()->id,{},i->options.view.mediaIndex,16-i->state.selected()->media.size(),i->mediaGeneration,0};}

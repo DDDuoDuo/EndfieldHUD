@@ -3,6 +3,7 @@
 #include "core/notes_rich_text.hpp"
 #include "native/layer_group.hpp"
 #include "native/notes_controls_scene.hpp"
+#include "native/notes_automation.hpp"
 #include <functional>
 #ifdef _WIN32
 namespace endfield::tools {
@@ -15,6 +16,9 @@ public:
     NotesFormatMenu(native::LayerRasterizer&,std::filesystem::path assetRoot,Apply);
     ~NotesFormatMenu();
     bool open(std::string_view verb,const core::notes::TextStyle&,double time);
+    // Caller-localized source captions (close, trait names, current color):
+    // the menus' accessibility titles. Applies to open and later menus.
+    void setStrings(const modules::NotesControlsStrings&);
     void close(double time);
     bool acceptsInput()const noexcept;
     bool dragging()const noexcept;
@@ -26,6 +30,18 @@ public:
     bool wheel(const app::WheelEvent&,double scale,double time);
     bool key(const app::KeyEvent&,double time);
     bool requiresFrames(double time)const;
+    // UI Automation peers of the open menu (native/notes_automation.hpp):
+    // each NotesRetainedMenu item as a button "<prefix><item id>" labelled by
+    // its accessibility title (enabled/selected as painted) and, in the color
+    // menu, NotesColorWheelView as a slider "<prefix>wheel" whose value is the
+    // marker's x on the 166-point wheel in steps of 4 (the source increment
+    // and decrement). Physical client bounds; nothing before the first pose.
+    struct AutomationStrings {std::string wheel{"Color wheel"},wheelHelp{"Use arrow keys to adjust hue and saturation."};};
+    void automationElements(std::vector<native::NotesAutomationElement>&,std::string_view prefix,const AutomationStrings&)const;
+    // NotesRetainedMenu.perform(id) for an enabled item of the open menu.
+    bool perform(std::string_view item,double time);
+    // The color wheel at x (0...166) on the marker's current row.
+    bool setWheel(double x,double time);
     void upload(native::Renderer&);
     std::span<const native::LayerCompositionEntry> entries();
     void collected(native::Renderer&);

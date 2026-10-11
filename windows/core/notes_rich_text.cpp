@@ -172,6 +172,10 @@ std::u16string_view RichDocument::text()const noexcept{return impl_->value;}
 text::Selection RichDocument::selection()const noexcept{return impl_->selection;}
 std::uint64_t RichDocument::revision()const noexcept{return impl_->revision;}
 std::uint32_t RichDocument::maximumUnits()const noexcept{return impl_->maximum;}
+void RichDocument::setMaximumUnits(std::uint32_t limit){
+    auto&i=*impl_;need(!i.inputSelection&&!i.composition,"Document capacity cannot change inside a TSF input transaction or composition");
+    need(limit>0&&limit<=static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max())&&i.value.size()<=limit,"Invalid explicit rich-document text capacity");i.maximum=limit;
+}
 bool RichDocument::readOnly()const noexcept{return impl_->readonly;}
 void RichDocument::setReadOnly(bool v)noexcept{impl_->readonly=v;}
 void RichDocument::beginInputTransaction(){auto&i=*impl_;need(!i.inputSelection,"Input transaction is already active");i.inputSelection=i.selection;}

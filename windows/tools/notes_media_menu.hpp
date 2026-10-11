@@ -1,6 +1,7 @@
 #pragma once
 #include "app/overlay_host.hpp"
 #include "native/notes_controls_scene.hpp"
+#include "native/notes_automation.hpp"
 #include "native/layer_group.hpp"
 #include <functional>
 #ifdef _WIN32
@@ -30,6 +31,13 @@ public:
     bool wheel(const app::WheelEvent&,double scale,double time);
     bool key(const app::KeyEvent&,double time);
     bool requiresFrames(double time)const;
+    // UI Automation peers of the open source chooser or shelf picker: each
+    // NotesRetainedMenu item as a button "<prefix><item id>" (accessibility
+    // title, enabled/selected as painted); physical client bounds, nothing
+    // before the menu is placed.
+    void automationElements(std::vector<native::NotesAutomationElement>&,std::string_view prefix)const;
+    // NotesRetainedMenu.perform(id) for an enabled item of the open menu.
+    bool perform(std::string_view item,double time);
     void upload(native::Renderer&);
     std::span<const native::LayerCompositionEntry>entries();
     void collected(native::Renderer&);

@@ -89,6 +89,29 @@ public:
     bool filterKey(const app::NativeMessage&);
     bool message(const app::NativeMessage&,std::optional<double> time={});
     void focus(bool);
+    // UI Automation (native/notes_automation.hpp): the source HUDNotesInteraction
+    // accessibility views over the projected HUD - the toolbar while Notes is
+    // selected ("tool:text"...), every shown card's NotesCanvas.accessibleActions
+    // ("note:<id>:<verb>"), the deletion confirmation, the video seek sliders,
+    // the open field ("notes:editor:...") and the open retained menu
+    // ("notes.format:<item>", "notes.format:wheel", "notes.media:<item>").
+    // Physical client rectangles; nothing without a pose or while the owner
+    // accepts no input. Content events only (allocates).
+    void automationElements(std::vector<native::NotesAutomationElement>&)const;
+    // HUDNotesInteraction.activateAction -> NotesCanvas.perform(actionID:)
+    // and NotesRetainedMenu.perform(id), through the same owner paths as
+    // pointer input. False for an unknown, hidden or disabled id.
+    bool perform(std::string_view id,double time);
+    // Seek slider (note id, seconds) or the color wheel (0...166).
+    bool setAutomationValue(std::string_view id,double value,double time);
+    // Replaces the open field's draft (one undo group; a long value promotes
+    // a short field like a paste). False for another id or while composing.
+    bool setAutomationText(std::string_view id,std::string_view utf8,double time);
+    // The provider for this owner's group under the HUD root: elements and
+    // actions above, ClientToScreen of the owner HWND; `changed` runs after an
+    // accepted invoke/value/text so the host presents and refreshes.
+    std::unique_ptr<native::NativeNotesAutomation> automation(IRawElementProviderFragmentRoot* group,
+        std::function<double()> clock,std::function<void()> changed={});
     // Build-only automatic live profiling of the first synthetic note.
     bool diagnosticEditing(bool enabled,double time);
     bool finish(); // false: active TSF lock; owner retries after its queued message

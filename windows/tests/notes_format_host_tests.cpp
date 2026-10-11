@@ -178,6 +178,31 @@ void run(const std::filesystem::path& shader,const gpu::NativeNotesControlsAsset
     std::cout<<"Font burst shared raster entries: "<<initialEntries<<", high-water observed: "<<f.maxEntriesSeen<<" / "<<gpu::LayerRasterizer::maximumEntries<<'\n';
     f.release();
 }
+// Reproduction of the intermittent font-menu dismissal: the click that opens
+// the menu and a click on one of its rows arrive in one burst, before any
+// frame presents the menu (a quick second click in the real host). The row
+// click must land on the menu as drawn; an unplaced menu used to treat it as
+// an outside click, closing the menu and finishing the edit.
+void queuedRowClick(const std::filesystem::path& shader,const gpu::NativeNotesControlsAssets& assets,const std::filesystem::path& formats){
+    Fixture f(shader,assets,formats);data::Note note;
+    {data::NotesStore store(f.root.path);check(store.notes().size()==1,"Use only the fresh injected sample note");note=store.notes().front();}
+    f.click({note.x+30,note.y+45},true);check(f.drawContains("projected-editor-glyphs")&&!f.drawContains("notes.format"),"The field is open without a menu");
+    const double left=std::min(f.metrics.width-242.,std::max(0.,note.x));
+    const double top=std::min(f.metrics.height-184.,std::max(0.,note.y+note.height+4));
+    const core::Point button{note.x+38,note.y+note.height-15};
+    for(unsigned round=0;round<3;++round){
+        const core::Point row{left+22,top+18+24.*round};const auto frames=f.frames;
+        f.post(WM_LBUTTONDOWN,MK_LBUTTON,f.point(button));f.post(WM_LBUTTONUP,0,f.point(button));
+        f.post(WM_LBUTTONDOWN,MK_LBUTTON,f.point(row));f.post(WM_LBUTTONUP,0,f.point(row));f.drain();
+        check(f.frames==frames,"The opening click and the row click share one burst with no frame between them");f.settle();
+        check(f.drawContains("notes.format")&&f.drawContains("projected-editor-glyphs"),"A row click queued with the opening click keeps the font menu and the field open");
+        check(f.closeRequests==0&&f.unhandledEscapes==0&&!IsWindowVisible(f.window()),"The burst never closes or shows the HUD");
+        f.escape();check(!f.drawContains("notes.format")&&f.drawContains("projected-editor-glyphs"),"Escape still dismisses only the menu");
+    }
+    f.escape();check(!f.drawContains("projected-editor-glyphs"),"The field finishes");
+    {data::NotesStore store(f.root.path);check(store.notes().size()==1&&store.notes().front().text==note.text,"Font choices in bursts preserve the note text");}
+    f.release();
+}
 void callbackException(){
     // Verify the real USER32 exception boundary. No deliberately invalid menu
     // or artificially exhausted resource budget is needed to prove this route.
@@ -198,7 +223,8 @@ int wmain(int argc,wchar_t**argv){try{
     check(argc==6,"Usage: notes_format_host_tests shader Notes-assets manifest-SHA source-commit format-assets");
     Apartment apartment;
     const gpu::NativeNotesControlsAssets assets(std::filesystem::absolute(argv[2]),{ascii(argv[3]),ascii(argv[4])});
-    run(std::filesystem::absolute(argv[1]),assets,std::filesystem::absolute(argv[5]));callbackException();
+    run(std::filesystem::absolute(argv[1]),assets,std::filesystem::absolute(argv[5]));
+    queuedRowClick(std::filesystem::absolute(argv[1]),assets,std::filesystem::absolute(argv[5]));callbackException();
     std::cout<<"Native Notes formatting host: "<<checks<<" checks passed (hidden; no real TSF activation)\n";return 0;
 }catch(const std::exception&error){std::cerr<<"Native Notes formatting host failed after "<<checks<<" checks: "<<error.what()<<'\n';return 1;}}
 #endif

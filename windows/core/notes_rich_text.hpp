@@ -105,6 +105,11 @@ public:
     // An owner reopening a draft (a field promoted to another editor) restores
     // the collapsed caret's pending typing style; not an undoable edit.
     void restoreTypingStyle(TextStyle);
+    // A field moved to a larger editor (a short draft promoted to the chunked
+    // editor) raises the explicit capacity; text, runs, selection, typing
+    // style and the whole undo/redo history stay. Never below the current
+    // text; prohibited during an input lock/composition.
+    void setMaximumUnits(std::uint32_t);
     bool canUndo()const noexcept;
     bool canRedo()const noexcept;
     bool undo();bool redo();

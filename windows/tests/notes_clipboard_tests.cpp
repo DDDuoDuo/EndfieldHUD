@@ -214,7 +214,9 @@ void workspace(HWND hwnd){
     const auto promoted=w.pasteIntoEditor({longPaste,std::nullopt});w.syncEditor();
     check(promoted.changed&&w.editor()->chunked()&&w.stats().promotedFields==1,"A long paste reopens the draft in the chunked editor");
     check(w.editorDocument()->text()==u"sh"+longPaste+u"ort!"&&w.editorDocument()->selection().range==text::Range{102,102},"The draft keeps its unsaved edit and the paste lands at the caret");
-    check(w.undo().changed&&w.editorDocument()->text()==u"short!","Undo after a promotion removes the paste");w.redo();
+    check(w.undo().changed&&w.editorDocument()->text()==u"short!","Undo after a promotion removes the paste");
+    check(w.undo().changed&&w.editorDocument()->text()==u"short","Undo continues into the edit made before the promotion");
+    check(w.redo().changed&&w.editorDocument()->text()==u"short!"&&w.redo().changed&&w.editorDocument()->text()==u"sh"+longPaste+u"ort!"&&w.editor()->chunked(),"Redo replays the edit and the paste in the chunked editor");
     const std::u16string tooLong(4100,u'q');check(!w.pasteIntoEditor({tooLong,std::nullopt}).changed&&w.editorDocument()->text().size()==106,"A paste beyond the document limit is declined unchanged");
     check(w.finishEditing().saved&&state.note(shortID)->text==utf8(u"sh"+longPaste+u"ort!"),"The promoted draft saves its complete text");
     check(w.beginEditing(shortID)&&w.editor()->chunked(),"The longer note reopens chunked");w.finishEditing(false);

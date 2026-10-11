@@ -81,13 +81,33 @@ void run(const wchar_t*shader,const std::filesystem::path&fixturePath,const std:
   check(preview.key({app::KeyKind::down,'Z'},time,control)&&state.selected()->title==title,"Undo restores the deleted word");paint();
   // A paste that grows a short body past its single layout reopens it chunked.
   click(42,125);check(preview.activeField()==std::optional<std::string>("body"),"Body field for the clipboard");const auto body=state.selected()->body;
+  check(preview.key({app::KeyKind::down,VK_END},time,none)&&preview.key({app::KeyKind::character,'Z'},time,none)&&state.selected()->body==body+"Z","An unsaved edit before the paste");paint();
   std::string paste;for(unsigned n=0;n<120;++n)paste+=std::string(600,static_cast<char>('a'+n%26))+"\n";clipboard->writeText({mod::archiveUTF16(paste),std::nullopt});
   check(preview.key({app::KeyKind::down,VK_END},time,none)&&preview.key({app::KeyKind::down,'V'},time,control)&&preview.activeField()==std::optional<std::string>("body"),"A long paste keeps the body field focused");paint();
-  check(state.selected()->body==body+paste&&paste.size()>65536,"The long paste reaches the body beyond the single-layout limit");
-  check(preview.key({app::KeyKind::down,'Z'},time,control)&&state.selected()->body==body,"Undo after the promotion removes the paste");paint();
+  check(state.selected()->body==body+"Z"+paste&&paste.size()>65536,"The long paste reaches the body beyond the single-layout limit");
+  check(preview.key({app::KeyKind::down,'Z'},time,control)&&state.selected()->body==body+"Z","Undo after the promotion removes the paste");paint();
+  check(preview.key({app::KeyKind::down,'Z'},time,control)&&state.selected()->body==body,"Undo continues into the edit made before the promotion");paint();
+  check(preview.key({app::KeyKind::down,'Y'},time,control)&&state.selected()->body==body+"Z"&&preview.key({app::KeyKind::down,'Z'},time,control)&&state.selected()->body==body,"Redo and undo continue across the promotion");paint();
   check(preview.key({app::KeyKind::down,'A'},time,control)&&preview.key({app::KeyKind::down,'X'},time,control)&&state.selected()->body.empty()&&clipboard->writes==3,"Ctrl+X cuts the selected body");
   check(preview.key({app::KeyKind::down,'V'},time,control)&&state.selected()->body==body,"The cut body pastes back");check(preview.finishEditing(time),"Clipboard editing finishes");paint();
   preview.setClipboard(nullptr);}
+ // UI Automation: the HUDArchiveInteraction.layoutAccessibility peers.
+ {std::vector<gpu::NotesAutomationElement>list;const auto read=[&]{list.clear();preview.automationElements(list);};const auto find=[&](std::string_view id)->const gpu::NotesAutomationElement*{for(const auto&e:list)if(e.id==id)return &e;return nullptr;};
+  const tools::ArchiveKeyModifiers control{true,false,false};read();
+  check(find("back")&&find("back")->label=="Return"&&find("delete")&&find("delete")->label=="Delete"&&!find("formatSize"),"Document actions use the source accessibility titles; formatting waits for a field");
+  const auto*title=find("archive:field:title");check(title&&title->role==gpu::NotesAutomationRole::edit&&title->label=="Title"&&title->text==state.selected()->title,"The title field is an Edit peer with its text");
+  const auto center=point(24+176,48+15);check(center.x>=title->rect.x&&center.x<=title->rect.x+title->rect.width&&center.y>=title->rect.y&&center.y<=title->rect.y+title->rect.height,"The title peer covers its projected field");
+  check(find("archive:field:body")&&find("archive:field:body")->label=="Content"&&find("archive:field:date")&&!find("archive:gallery"),"Body and date are Edit peers; a short gallery has no scroller");
+  const auto original=state.selected()->title;check(preview.setAutomationText("archive:field:title","Automation title",time)&&state.selected()->title=="Automation title","Setting the title's value replaces its text");paint();
+  read();check(find("archive:field:title")&&find("archive:field:title")->selected&&find("archive:field:title")->text=="Automation title","The edited field holds focus and reports its new text");
+  check(find("formatSize")&&find("formatSize")->label=="Font size"&&find("formatSpecial")&&find("formatSpecial")->label=="Text style","The focused field's formatting buttons use the source titles");
+  check(preview.key({app::KeyKind::down,'Z'},time,control)&&state.selected()->title==original,"One undo restores the title");paint();
+  check(preview.perform("formatSpecial",time),"Invoking text style opens its menu");paint();read();
+  check(find("archive.menu:trait:0")&&find("archive.menu:trait:0")->label=="Bold"&&find("archive.menu:close")&&find("archive.menu:close")->label=="Close","The open menu lists its source items");
+  check(preview.perform("archive.menu:close",time),"Invoking close dismisses the menu");paint();read();check(!find("archive.menu:close"),"The closed menu leaves the peers");
+  check(!preview.perform("unknown",time)&&!preview.perform("archive.menu:close",time)&&!preview.setAutomationValue("archive:gallery",10,time),"Unavailable ids are refused");
+  auto peers=preview.automation(nullptr,[&]{return time;});peers->refresh();check(peers->size()==list.size(),"The provider lists the same peers");
+  check(preview.finishEditing(time),"Automation editing finishes");paint();}
  // An imported Mac attachment cannot open on Windows: its error text chooses the file again.
  {auto entry=*state.selected();entry.media={J::parse(R"({"version":1,"kind":"image","bookmark":"Ym9va21hcms=","isSecurityScoped":true,"lastKnownPath":"/Users/someone/Pictures/photo.heic","displayName":"photo.heic","pixelWidth":400,"pixelHeight":300,"frameCount":1})")};
   check(state.update(entry,811692802.,time),"An imported Mac attachment");paint();preview.setMediaPlayback(0,false,0,std::string("The original media file is unavailable. Choose it again to restore access."),time);paint();

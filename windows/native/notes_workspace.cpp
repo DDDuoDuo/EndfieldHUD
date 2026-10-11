@@ -73,11 +73,15 @@ struct NativeNotesWorkspace::Impl {
     };
     struct Field {
         std::string id;std::optional<std::string>itemID;double initialScrollOffset{};
-        std::unique_ptr<text::Document>ownedDocument; text::Document&document;core::notes::RichDocument*history{};core::notes::RichDocument*rich{};LayerScene scene;std::unique_ptr<NativeNotesEditor> native;
+        std::shared_ptr<core::notes::RichDocument>ownedDocument; text::Document&document;core::notes::RichDocument*history{};core::notes::RichDocument*rich{};LayerScene scene;std::unique_ptr<NativeNotesEditor> native;
         std::uint64_t initialDocumentRevision{};bool focused{};
         UINT_PTR generation{}; // scene/document outlive the adapter on destruction
         Field(std::string name,std::u16string value,std::optional<core::notes::RichText> formatting,std::uint32_t capacity,LayerRasterizer&r,std::optional<std::string>row={})
-            :id(std::move(name)),itemID(std::move(row)),ownedDocument(std::make_unique<core::notes::RichDocument>(std::move(value),std::move(formatting),capacity)),document(*ownedDocument),history(static_cast<core::notes::RichDocument*>(ownedDocument.get())),rich(itemID?nullptr:history),scene(r){initialDocumentRevision=document.revision();}
+            :id(std::move(name)),itemID(std::move(row)),ownedDocument(std::make_shared<core::notes::RichDocument>(std::move(value),std::move(formatting),capacity)),document(*ownedDocument),history(ownedDocument.get()),rich(itemID?nullptr:history),scene(r){initialDocumentRevision=document.revision();}
+        // A promoted text field continues the draft's own document (shared
+        // with the retired field, whose stopped editor still references it).
+        Field(std::string name,std::shared_ptr<core::notes::RichDocument> retained,std::uint64_t initialRevision,LayerRasterizer&r)
+            :id(std::move(name)),ownedDocument(std::move(retained)),document(*ownedDocument),history(ownedDocument.get()),rich(history),scene(r){initialDocumentRevision=initialRevision;}
     };
     struct Drag {std::string id;core::Rect original;core::Point start;mod::NotesState::Gesture kind;};
     HWND hwnd;DWORD thread{GetCurrentThreadId()};mod::NotesState&state;LayerRasterizer&raster;
@@ -318,7 +322,7 @@ struct NativeNotesWorkspace::Impl {
         pose=p;lastTime=p.time;mediaTime=std::max(mediaTime,p.time);projection=nextProjection;return changed;
     }
     // A text note's current draft reopened in the chunked editor (promotion).
-    struct Draft {std::u16string value;std::optional<core::notes::RichText>rich;text::Selection selection;core::notes::TextStyle typing;double scrollOffset{};};
+    struct Draft {std::shared_ptr<core::notes::RichDocument>document;std::uint64_t initialRevision{};double scrollOffset{};};
     std::unique_ptr<Field>prepareField(const Note&n,core::Rect r,std::optional<std::string>itemID={},const mod::NotesChecklistEdit*itemEdit=nullptr,std::optional<Draft>draft={}){
         textRecord(n);geometry(r,true);need(retiredFields.size()<retainedCeiling(),"Retire detached Notes editors before opening another field");need(generation!=std::numeric_limits<UINT_PTR>::max(),"Notes editor generation exhausted");
         std::shared_ptr<const NativeNotesTextMeasurement>measured;std::u16string value;std::optional<core::notes::RichText>rich;
@@ -327,15 +331,15 @@ struct NativeNotesWorkspace::Impl {
             value=utf16(child->text,options.maximumEditorUnits);auto*slot=find(n.id);need(slot&&slot->rowMeasurements.contains(*itemID),"Checklist editor has no retained measurement");measured=slot->rowMeasurements.at(*itemID).text;
             width=itemEdit->localRect.width;height=itemEdit->localRect.height;fontSize=11;offset=itemEdit->editorScrollOffset;
         }else{need(n.kind==ehud::data::NoteKind::text,"Checklist must choose an item editor");measured=measure(n.id,n,r,find(n.id)?find(n.id)->measurement:nullptr);
-            if(draft){value=std::move(draft->value);rich=std::move(draft->rich);offset=draft->scrollOffset;}else{value=utf16(n.text,options.maximumDocumentUnits);rich=mod::decodeNotesRichText(n.text,n.richText);}}
+            if(draft)offset=draft->scrollOffset;else{value=utf16(n.text,options.maximumDocumentUnits);rich=mod::decodeNotesRichText(n.text,n.richText);}}
         // Long text notes use the paragraph-chunked editor: an edit lays out only
         // its own chunk. Checklist rows and short notes keep the single layout.
         const bool chunked=!itemID&&(draft||value.size()>options.chunkedEditorUnits);if(!chunked&&value.size()>options.maximumEditorUnits)throw NativeNotesEditorCapacityError{};
         const auto capacity=chunked?options.maximumDocumentUnits:options.maximumEditorUnits;
-        auto next=std::make_unique<Field>(n.id,std::move(value),std::move(rich),capacity,raster,std::move(itemID));next->generation=generation+1;next->initialScrollOffset=offset;
-        // A promoted draft always commits its own text and runs.
-        if(draft){next->initialScrollOffset=find(n.id)?find(n.id)->scrollOffset:0;next->initialDocumentRevision=0;next->document.setSelection(draft->selection);
-            if(draft->selection.range.start==draft->selection.range.end)next->history->restoreTypingStyle(draft->typing);}
+        // A promoted draft keeps its document: text, runs, selection, typing
+        // style and the whole undo history continue in the chunked editor.
+        auto next=draft?std::make_unique<Field>(n.id,draft->document,draft->initialRevision,raster):std::make_unique<Field>(n.id,std::move(value),std::move(rich),capacity,raster,std::move(itemID));next->generation=generation+1;next->initialScrollOffset=offset;
+        if(draft)next->initialScrollOffset=find(n.id)?find(n.id)->scrollOffset:0;
         else{const auto end=static_cast<std::uint32_t>(next->document.text().size());next->document.setSelection({{end,end},text::ActiveEnd::end,false});}
         ProjectedEditorStyle e;e.width=width;e.height=height;e.fontSize=fontSize;e.lineHeight=measured->font.lineHeight;e.baseline=measured->font.ascent;e.fontFamily=measured->font.selectedFamily;e.fontFace="";e.cornerRadius=3;e.textColor=style.palette.primary;e.caretColor=style.palette.primary;e.selectionColor=style.selectionColor;e.compositionColor=style.compositionColor;
         const auto fieldRaster=notesRasterOptions(options.raster,width,height); // a large viewport rasters at a bounded density
@@ -364,15 +368,19 @@ struct NativeNotesWorkspace::Impl {
     }
     void finishRequired(){need(finish(true).finished,"Notes editor is held by TSF; retry this owner action after its queued notification");}
     // A paste that grows a short text note past the single-layout field
-    // reopens its unsaved draft in the chunked editor first (text, runs,
-    // selection, scroll and focus kept; nothing is saved). The undo history
-    // restarts with that paste. False keeps the current field unchanged.
+    // reopens its unsaved draft in the chunked editor first: the same document
+    // with a raised capacity, so text, runs, selection, typing style and the
+    // undo history continue (the paste undoes, then the edits before it);
+    // scroll and focus are kept and nothing is saved. False keeps the current
+    // field unchanged.
     bool promoteField(std::size_t resultingUnits){
         auto&f=*field;if(f.itemID||!f.rich||f.native->chunked()||resultingUnits<=options.maximumEditorUnits||resultingUnits>options.maximumDocumentUnits||f.document.composition())return false;
         const auto*n=state.note(f.id);const auto card=state.card(f.id);if(!n||!card)return false;
-        Draft draft{std::u16string(f.document.text()),f.rich->richText(),f.document.selection(),f.rich->typingStyle(),f.native->scrollOffset()};
-        std::unique_ptr<Field>next;try{next=prepareField(*n,card->rect,std::nullopt,nullptr,std::move(draft));}catch(const NativeNotesEditorCapacityError&){return false;}
-        if(FAILED(f.native->stop()))return false;const bool focused=f.focused;if(focused)(void)f.native->focus(false);
+        const auto previous=f.ownedDocument->maximumUnits();f.ownedDocument->setMaximumUnits(options.maximumDocumentUnits);
+        Draft draft{f.ownedDocument,f.initialDocumentRevision,f.native->scrollOffset()};
+        std::unique_ptr<Field>next;try{next=prepareField(*n,card->rect,std::nullopt,nullptr,std::move(draft));}catch(const NativeNotesEditorCapacityError&){f.ownedDocument->setMaximumUnits(previous);return false;}
+        catch(...){f.ownedDocument->setMaximumUnits(previous);throw;}
+        if(FAILED(f.native->stop())){next.reset();f.ownedDocument->setMaximumUnits(previous);return false;}const bool focused=f.focused;if(focused)(void)f.native->focus(false);
         generation=next->generation;retiredFields.push_back(std::move(field));field=std::move(next);
         if(focused&&SUCCEEDED(field->native->focus(true)))field->focused=true;
         ++stats.promotedFields;++compositionRevision;rebuildEntries();if(pose)applyPose(*pose);return true;
@@ -622,5 +630,47 @@ bool NativeNotesWorkspace::scrollAt(core::Point point,double delta){
 const mod::NotesCardPresentation*NativeNotesWorkspace::card(std::string_view id)const noexcept{const auto*s=impl_->find(id);return s?&s->presentation:nullptr;}
 NativeNotesWorkspaceStats NativeNotesWorkspace::stats()const noexcept{auto result=impl_->stats;result.cards=impl_->slots.size();result.visibleCards=impl_->active.size();result.retiredCards=impl_->retiredCards.size();result.retiredEditors=impl_->retiredFields.size();result.deletingCards=impl_->deletingCards.size();return result;}
 NativeNotesTextMeasureStats NativeNotesWorkspace::measurementStats()const{impl_->check();return impl_->measurer.stats();}
+namespace {
+// Source noteLabel: `item.text.prefix(64)` counts Characters (grapheme
+// clusters). Only a bounded leading slice of a long note is converted.
+std::string notesLabelPrefix(std::string_view value){
+    std::size_t bytes=std::min<std::size_t>(value.size(),64*1024);
+    while(bytes<value.size()&&bytes>0&&(static_cast<unsigned char>(value[bytes])&0xC0)==0x80)--bytes;
+    const auto wide=utf16(value.substr(0,bytes),std::numeric_limits<std::uint32_t>::max());
+    std::uint32_t end{};for(unsigned n=0;n<64&&end<wide.size();++n){const auto next=notesNextGrapheme(wide,end);if(next<=end)break;end=next;}
+    return utf8(std::u16string_view(wide).substr(0,end));
+}
+}
+void NativeNotesWorkspace::automationElements(std::vector<NotesAutomationElement>&out,const NativeNotesAutomationStrings&strings)const{
+    auto&i=*impl_;i.check();if(!i.pose||i.pose->opacity==0||i.synchronized!=i.state.revision())return;
+    const auto shown=[](const Impl::Slot&s){return s.visible&&!s.outgoing&&!s.deleted&&s.motion.opacity!=0;};
+    for(const auto*s:i.active){if(!shown(*s))continue;const auto*n=i.state.note(s->presentation.noteID());if(!n)continue;
+        const auto project=[&](core::Point local)->std::optional<core::Point>{return s->hitProjection.project({s->rect.x+local.x,s->rect.y+local.y});};
+        for(const auto&a:s->presentation.actions()){const auto bounds=notesAutomationBounds(a.localRect,project);if(!bounds)continue;
+            NotesAutomationElement e;e.id=a.id;e.rect=*bounds;
+            if(a.verb=="select"){const auto&title=n->kind==ehud::data::NoteKind::text?strings.text:n->kind==ehud::data::NoteKind::todo?strings.checklist:n->kind==ehud::data::NoteKind::drawing?strings.drawing:strings.media;
+                e.label=n->kind==ehud::data::NoteKind::text&&!n->text.empty()?title+": "+notesLabelPrefix(n->text):title;}
+            else e.label=a.label;
+            out.push_back(std::move(e));}
+    }
+    // HUDNotesSeekSlider: the source playback-position control of each video.
+    for(const auto*s:i.active){if(!shown(*s)||!s->media||!s->media->videoRequest||!s->media->content||!s->media->content->duration||!(*s->media->content->duration>0))continue;
+        const auto duration=*s->media->content->duration;const mod::NotesMediaLayout layout(s->rect.width,s->rect.height,mod::NotesMediaKind::video,duration);
+        const auto bounds=notesAutomationBounds(layout.geometry().seek,[&](core::Point local)->std::optional<core::Point>{return s->hitProjection.project({s->rect.x+local.x,s->rect.y+local.y});});if(!bounds)continue;
+        double value{};if(i.mediaSeek&&i.mediaSeek->id==s->presentation.noteID())value=i.mediaSeek->seconds;else if(const auto*r=i.video(s->media->key))value=r->pendingSeek.value_or(r->currentTime);
+        NotesAutomationElement e;e.id=std::string(s->presentation.noteID());e.label=strings.playbackPosition;e.rect=*bounds;e.role=NotesAutomationRole::slider;
+        e.value=std::clamp(value,0.,duration);e.minimum=0;e.maximum=duration;e.smallChange=e.largeChange=5;out.push_back(std::move(e));}
+    // The projected NSTextView of the open field (first responder).
+    if(i.field){const auto*s=i.find(i.field->id);if(s&&shown(*s)&&s->native->externalEditorSlot()){const auto r=s->native->externalEditorSlot()->localRect;
+        if(const auto bounds=notesAutomationBounds(r,[&](core::Point local)->std::optional<core::Point>{return s->hitProjection.project({s->rect.x+local.x,s->rect.y+local.y});})){
+            NotesAutomationElement e;e.id="notes:editor:"+i.field->id+(i.field->itemID?":"+*i.field->itemID:std::string{});e.label=i.field->itemID?strings.editItem:strings.editNote;e.help=strings.editHelp;e.rect=*bounds;e.role=NotesAutomationRole::edit;e.selected=true;
+            const auto draft=i.field->document.text();e.text=utf8(draft.substr(0,std::min<std::size_t>(draft.size(),65536)));
+            // A cut inside a surrogate pair would not convert; keep whole code points.
+            if(draft.size()>65536&&draft[65535]>=0xD800&&draft[65535]<=0xDBFF)e.text=utf8(draft.substr(0,65535));
+            out.push_back(std::move(e));}}}
+}
+bool NativeNotesWorkspace::seekMedia(std::string_view id,double seconds,double time){auto&i=*impl_;i.check();i.mediaClock(time);if(!std::isfinite(seconds)||i.mediaSeek)return false;auto*s=i.find(id);
+    if(!s||!s->visible||s->outgoing||s->deleted||!s->media||!s->media->videoRequest||!s->media->content||!s->media->content->duration||!(*s->media->content->duration>0)||!i.hasVideos()||!i.mediaActive)return false;
+    i.seekVideo(s->media->key,std::clamp(seconds,0.,*s->media->content->duration));i.readMedia();i.progress(*s,false);if(i.pose)i.applyPose(*i.pose);return true;}
 } // namespace endfield::native
 #endif

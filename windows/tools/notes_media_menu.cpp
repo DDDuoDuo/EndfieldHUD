@@ -51,6 +51,12 @@ void NotesMediaMenu::update(const core::Matrix4&module,const core::Matrix4&works
         const auto b=m->controls.bounds(),r=m->placement;m->world=workspace*core::Matrix4::translation(r.x,r.y+motion.y)*core::Matrix4::scale(r.width/b.width,r.height/b.height);m->opacity=m->placed?opacity*static_cast<float>(motion.opacity):0;m->projection=core::Projection::viewport(camera*m->world,width,height);m->scene->updatePose({},1,t);
     }
 }
+void NotesMediaMenu::automationElements(std::vector<gpu::NotesAutomationElement>&out,std::string_view prefix)const{
+    const auto*m=impl_->current();if(!m||!m->placed)return;const auto project=[&](core::Point p){return m->projection.project(p);};
+    for(const auto&a:m->controls.actions())if(const auto bounds=gpu::notesAutomationBounds(a.rect,project)){gpu::NotesAutomationElement e;e.id=std::string(prefix)+a.id;e.label=a.label;e.rect=*bounds;e.enabled=a.enabled;e.selected=a.selected;out.push_back(std::move(e));}
+}
+bool NotesMediaMenu::perform(std::string_view item,double t){auto&i=*impl_;auto*m=i.current();if(!m)return false;const auto actions=m->controls.actions();
+    const auto found=std::find_if(actions.begin(),actions.end(),[&](const auto&a){return a.id==item;});if(found==actions.end()||!found->enabled)return false;const std::string id(item);return i.perform(*m,id,t);}
 bool NotesMediaMenu::contains(core::Point p)const{const auto*m=impl_->current();if(!m||!m->placed)return false;const auto local=m->projection.unproject(p);return local&&inside(m->controls.bounds(),*local);}
 bool NotesMediaMenu::pointer(const app::PointerEvent&e,double scale,double t){auto&i=*impl_;auto*m=i.current();if(!m)return false;const auto q=m->projection.unproject({e.x*scale,e.y*scale});const bool hit=q&&inside(m->controls.bounds(),*q);
     if(e.kind==app::PointerKind::leave||e.kind==app::PointerKind::captureLost){m->pressed=false;m->scene->setFeedback({},false,false,t);return false;}
