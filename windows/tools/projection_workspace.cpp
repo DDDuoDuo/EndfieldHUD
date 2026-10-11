@@ -72,7 +72,7 @@ void ProjectionWorkspace::dismiss(double time,bool reduceMotion){auto&i=*impl_;i
 }
 bool ProjectionWorkspace::presented()const noexcept{return bool(impl_->view);}
 bool ProjectionWorkspace::closing()const noexcept{return impl_->closing;}
-bool ProjectionWorkspace::dismissalComplete(double time)const noexcept{return impl_->view&&impl_->closing&&(impl_->reduced||time>=impl_->closeStarted+.16);}
+bool ProjectionWorkspace::dismissalComplete(double time)const noexcept{return impl_->view&&impl_->closing&&(impl_->reduced||std::max(time,impl_->time)>=impl_->closeStarted+.16);}
 std::optional<double>ProjectionWorkspace::dismissalDeadline()const noexcept{const auto&i=*impl_;return i.view&&i.closing?std::optional{i.closeStarted+(i.reduced?0:.16)}:std::nullopt;}
 void ProjectionWorkspace::close(double time){auto&i=*impl_;i.clock(time);time=i.time;if(!i.view)return;
     i.view->setActive(false,time);if(i.media){i.media->cancelImport();i.media->sync(time);}
@@ -95,6 +95,9 @@ bool ProjectionWorkspace::wheel(const app::WheelEvent&e,double time){auto&i=*imp
 bool ProjectionWorkspace::key(const app::KeyEvent&e,double time){auto&i=*impl_;i.clock(time);return i.view&&!i.closing&&i.view->key(e,i.time);}
 void ProjectionWorkspace::cancelInteraction(double time){auto&i=*impl_;i.clock(time);if(i.view&&i.view->active())i.view->cancelInteraction(i.time);}
 core::FrameDemand ProjectionWorkspace::demand(double time)const {const auto&i=*impl_;core::FrameDemand d;if(!i.view)return d;
+    // The host may ask with a sample taken before a nested call handed the
+    // workspace a later time: demand is evaluated at the latest time seen.
+    need(std::isfinite(time),"Projection workspace needs finite time");time=std::max(time,i.time);
     d.phase=core::VisibilityPhase::visible;d.presented=d.canAdvanceTransition=true;d.onScreen=i.metrics.pixelWidth&&i.metrics.pixelHeight;d.reduceMotion=i.reduced;
     d.finiteAnimation=(!i.reduced&&time<(i.closing?i.closeStarted+.16:i.started+.18))||(i.blurAnimating&&time<i.blurStart+.18)||i.view->requiresFrames(time)||i.broker.requiresFrames();return d;
 }

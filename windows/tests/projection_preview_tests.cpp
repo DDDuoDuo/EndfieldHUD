@@ -33,7 +33,22 @@ void run(n::Renderer&renderer,const std::filesystem::path&resources){n::LayerRas
      const auto color=model.color();check(owner.setAutomationValue("projection.menu:wheel",w->value<83?w->value+40:w->value-40,now)&&model.color()!=color,"Setting the wheel value chooses another color");
      check(owner.perform("projection.menu:close",now)&&!owner.menuOpen()&&events.back().kind==t::ProjectionPreviewEvent::Kind::brushChanged,"Invoking close dismisses the menu and commits its event");frame();
      check(!owner.perform("projection.menu:close",now)&&!owner.perform("projection.toolbar:unknown",now)&&!owner.perform("projection.media:999:remove",now)&&!owner.setAutomationValue("projection.menu:wheel",10,now),"Unavailable ids are refused");}
-    owner.setPreferences(c::Language::korean,{.2,.7,1,1},{},false,now);frame();check(model.drawing().strokes().size()==1&&model.media().size()==1,"Language/accent event preserves session data");click(610,80);check(owner.menuOpen(),"Source clear confirmation opens");click(700,180);check(model.drawing().strokes().empty()&&model.media().empty()&&events.back().kind==t::ProjectionPreviewEvent::Kind::cleared,"Confirmed clear removes owned drawing/media only");check(*lease==7&&ref->encoded()==raw,"Clear never mutates external reference or lease");frame();escape();action=owner.takeAction();check(action&&action->kind==t::ProjectionPreviewAction::Kind::returnToHUD,"Canvas Escape delegates HUD handoff");composition.detach(renderer);owner.release(renderer);released=true;check(renderer.stats().textures==0&&renderer.stats().meshes==0,"Projection owner releases every local resource after detach");
+    owner.setPreferences(c::Language::korean,{.2,.7,1,1},{},false,now);frame();check(model.drawing().strokes().size()==1&&model.media().size()==1,"Language/accent event preserves session data");click(610,80);check(owner.menuOpen(),"Source clear confirmation opens");click(700,180);check(model.drawing().strokes().empty()&&model.media().empty()&&events.back().kind==t::ProjectionPreviewEvent::Kind::cleared,"Confirmed clear removes owned drawing/media only");check(*lease==7&&ref->encoded()==raw,"Clear never mutates external reference or lease");frame();escape();action=owner.takeAction();check(action&&action->kind==t::ProjectionPreviewAction::Kind::returnToHUD,"Canvas Escape delegates HUD handoff");
+    // Live order (an RC died opening Projection with "Projection controls require a finite
+    // monotonic owner clock"): the host samples its time, the owner receives later times
+    // inside that callback (a pointer handler, a UI Automation invoke reading the clock),
+    // then the host's calls with the earlier sample arrive. Each is taken at the latest
+    // time seen, as the Mac's single CACurrentMediaTime never decreases.
+    {frame(.3);const double sample=now;
+     check(owner.pointer({a::PointerKind::move,a::PointerButton::none,525,80,0},sample+.5),"A toolbar hover inside the callback is taken at its later time");
+     check(owner.perform("projection.toolbar:brush",sample+.6)&&owner.menuOpen(),"A UI Automation invoke inside the callback opens the brush menu at its later time");
+     check(owner.requiresFrames(sample),"Frame demand with the earlier host sample is the opening menu's demand at the latest time");
+     owner.update(sample);owner.upload(renderer);composition.setEntries(renderer,owner.entries());composition.present(renderer);owner.collected(renderer);
+     check(owner.pointer({a::PointerKind::move,a::PointerButton::none,525,80,0},sample)&&owner.wheel({525,80,1,false,0,3},sample)&&owner.key({a::KeyKind::down,VK_DOWN},sample),"Input with the earlier host sample is handled at the latest time");
+     owner.cancelInteraction(sample);owner.setPreferences(c::Language::korean,{.2,.7,1,1},{},false,sample);check(owner.menuOpen(),"The menu opened inside the callback stays open");
+     check(owner.requiresFrames(sample+.7)&&!owner.requiresFrames(sample+.8),"The menu opening runs its .16 seconds from the later time, not from the earlier sample");
+     now=sample+.8;frame(0);check(owner.perform("projection.menu:close",sample)&&!owner.menuOpen(),"A close with the earlier host sample dismisses the menu");frame(.3);}
+    composition.detach(renderer);owner.release(renderer);released=true;check(renderer.stats().textures==0&&renderer.stats().meshes==0,"Projection owner releases every local resource after detach");
 }
 }
 // Source OverlayController.recordProjectionEvent names, one per event kind.

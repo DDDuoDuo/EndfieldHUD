@@ -123,7 +123,10 @@ struct NativeNotesCardScene::Impl {
         if(external)need(external->background[3]==1,"Source Notes editor background must be opaque");
         for(auto&draw:mediaDraws)draw.masks.reserve(8);for(auto&draw:afterDraws)draw.masks.reserve(8);
     }
-    void time(double t){need(std::isfinite(t)&&(!lastTime||t>=*lastTime),"Notes scene requires a finite monotonic caller clock");lastTime=t;}
+    // Caller time never runs backwards here: a time earlier than one already
+    // seen (a host sample taken before a nested callback handed a later one)
+    // is the latest time, as the Mac's CACurrentMediaTime never decreases.
+    double at(double t){need(std::isfinite(t),"Notes scene requires a finite caller clock");if(lastTime&&t<*lastTime)t=*lastTime;lastTime=t;return t;}
     static double value(const Feedback&f,double t){if(!f.active||f.duration<=0)return f.target;const auto p=core::CubicTiming{0,0,.58,1}.value((t-f.start)/f.duration);return f.from+(f.target-f.from)*p;}
     bool sync(){
         need(source->contentRevision()!=0,"Initialize Notes presentation before native content");
@@ -273,7 +276,7 @@ NativeNotesCardScene::NativeNotesCardScene(modules::NotesCardPresentation&s,Laye
 NativeNotesCardScene::~NativeNotesCardScene()=default;
 bool NativeNotesCardScene::syncContent(){return impl_->sync();}
 bool NativeNotesCardScene::setFeedback(std::optional<std::string_view>verb,bool pressed,bool reduced,double time){
-    auto&i=*impl_;i.time(time);need(i.revision==i.source->contentRevision(),"Synchronize Notes content before feedback");
+    auto&i=*impl_;time=i.at(time);need(i.revision==i.source->contentRevision(),"Synchronize Notes content before feedback");
     const auto changed=i.source->setFeedback(verb,pressed,reduced);if(!changed&&i.feedbackRevision==i.source->feedbackRevision())return false;
     const auto layers=i.source->layers();
     for(const auto&highlight:i.source->highlights())for(const auto index:{highlight.tintLayer,highlight.rimLayer}){
@@ -288,7 +291,7 @@ bool NativeNotesCardScene::updatePose(const Matrix&workspace,float canvas,double
     auto&i=*impl_;need(i.revision&&i.revision==i.source->contentRevision(),"Synchronize Notes content before placement");
     need(workspace.finite()&&std::isfinite(canvas)&&canvas>=0&&canvas<=1,"Invalid Notes workspace placement or opacity");
     const auto&placement=i.source->placement();const auto r=placement.workspaceRect;
-    const auto world=workspace*Matrix::translation(r.x,r.y);const auto inverse=core::source::inverseSourceMatrix(world);i.time(time);
+    const auto world=workspace*Matrix::translation(r.x,r.y);const auto inverse=core::source::inverseSourceMatrix(world);time=i.at(time);
     const auto opacityValue=visibilityOverride.value_or(placement.visible)?canvas:0.f;bool animated{};for(auto&f:i.feedback){animated|=f.active;if(time>=f.start+f.duration)f.active=false;}
     if(i.posed&&i.priorWorld==workspace&&i.priorRect==r&&i.priorOpacity==opacityValue&&!animated)return false;
     auto pose=[&](const auto&draws,auto&placements,auto&masks){for(std::size_t index=0;index<placements.size();++index){auto&p=placements[index];const auto&original=draws[index];p.world=world*original.world;p.opacity=original.opacity*opacityValue;
@@ -326,7 +329,7 @@ bool NativeNotesCardScene::updatePose(const Matrix&workspace,float canvas,double
     i.scene.setPlacements(i.placements);
     i.priorWorld=workspace;i.priorRect=r;i.priorOpacity=opacityValue;i.posed=true;++i.stats.placementUpdates;return true;
 }
-bool NativeNotesCardScene::requiresFrames(double time)const {need(std::isfinite(time),"Notes feedback time must be finite");for(const auto&f:impl_->feedback)if(f.active&&time<f.start+f.duration)return true;return false;}
+bool NativeNotesCardScene::requiresFrames(double time)const {need(std::isfinite(time),"Notes feedback time must be finite");if(impl_->lastTime)time=std::max(time,*impl_->lastTime);for(const auto&f:impl_->feedback)if(f.active&&time<f.start+f.duration)return true;return false;}
 LayerScene&NativeNotesCardScene::scene()noexcept{return impl_->scene;}
 LayerScene*NativeNotesCardScene::frameScene()noexcept{return impl_->frameActive?&impl_->frame:nullptr;}
 const LayerScene*NativeNotesCardScene::frameScene()const noexcept{return impl_->frameActive?&impl_->frame:nullptr;}

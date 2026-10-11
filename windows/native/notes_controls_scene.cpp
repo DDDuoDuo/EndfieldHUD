@@ -89,7 +89,11 @@ struct NativeNotesControlsScene::Impl {
     std::array<PlaneMask,8>previousMasks{};std::size_t previousMaskCount{};std::optional<PlaneShutter>previousShutter;
     NativeNotesControlsSceneStats stats;
     Impl(modules::NotesControls&s,LayerRasterizer&r,LayerRasterOptions o):source(&s),scene(r),options(std::move(o)){}
-    void time(double t)const{need(std::isfinite(t)&&(!lastTime||t>=*lastTime),"Notes controls require a finite monotonic owner clock");}
+    // Owner time never runs backwards here: a time earlier than one already
+    // seen (a host sample taken before a nested callback handed a later one)
+    // is the latest time, as the Mac's single CACurrentMediaTime never
+    // decreases. Only non-finite time fails.
+    double at(double t)const{need(std::isfinite(t),"Notes controls require a finite owner clock");return lastTime?std::max(t,*lastTime):t;}
     static double sample(const Track&t,double now){if(!t.active||t.duration<=0)return t.target;return t.from+(t.target-t.from)*core::CubicTiming{0,0,.58,1}.value((now-t.start)/t.duration);}
 };
 NativeNotesControlsScene::NativeNotesControlsScene(modules::NotesControls&s,LayerRasterizer&r,LayerRasterOptions o):impl_(std::make_unique<Impl>(s,r,std::move(o))){}
@@ -107,7 +111,7 @@ bool NativeNotesControlsScene::syncContent(std::span<const NativeNotesControlsIm
     i.sourceRevision=i.source->contentRevision();i.imageRevision=imageRevision;i.feedbackRevision=i.source->feedbackRevision();i.posed=false;++i.stats.contentUpdates;return true;
 }
 bool NativeNotesControlsScene::setFeedback(std::optional<std::string_view>action,bool pressed,bool reduced,double time){
-    auto&i=*impl_;i.time(time);need(i.sourceRevision&&i.sourceRevision==i.source->contentRevision(),"Synchronize Notes controls before feedback");
+    auto&i=*impl_;time=i.at(time);need(i.sourceRevision&&i.sourceRevision==i.source->contentRevision(),"Synchronize Notes controls before feedback");
     const bool changed=i.source->setFeedback(action,pressed,reduced);if(!changed&&i.feedbackRevision==i.source->feedbackRevision())return false;
     for(std::size_t n=0;n<i.tracks.size();++n){const auto&f=i.source->feedback()[n];for(unsigned k=0;k<2;++k){auto&t=i.tracks[n][k];const auto target=k?f.rimOpacity:f.tintOpacity;
         // A changed control restarts both source animations from presentation
@@ -118,7 +122,7 @@ bool NativeNotesControlsScene::setFeedback(std::optional<std::string_view>action
     i.feedbackRevision=i.source->feedbackRevision();i.lastTime=time;i.posed=false;++i.stats.feedbackChanges;return true;
 }
 bool NativeNotesControlsScene::updatePose(const Matrix&world,float opacity,double time,std::array<double,4>offsets,std::span<const PlaneMask>ownerMasks,std::optional<PlaneShutter>shutter){
-    auto&i=*impl_;i.time(time);need(i.sourceRevision&&i.sourceRevision==i.source->contentRevision()&&i.feedbackRevision==i.source->feedbackRevision(),"Synchronize Notes controls before placement");
+    auto&i=*impl_;time=i.at(time);need(i.sourceRevision&&i.sourceRevision==i.source->contentRevision()&&i.feedbackRevision==i.source->feedbackRevision(),"Synchronize Notes controls before placement");
     need(world.finite()&&std::isfinite(opacity)&&opacity>=0&&opacity<=1&&ownerMasks.size()<=8,"Invalid Notes control placement");
     need(!i.group||opacity==0||opacity==1,"Menu opacity requires retained group composition; per-leaf fading is not equivalent");
     for(double y:offsets)need(std::isfinite(y)&&std::abs(y)<=8192,"Invalid Notes toolbar displacement");
@@ -138,7 +142,7 @@ bool NativeNotesControlsScene::updatePose(const Matrix&world,float opacity,doubl
     i.previousWorld=world;i.previousOpacity=opacity;i.previousOffsets=offsets;i.previousMaskCount=ownerMasks.size();std::copy(ownerMasks.begin(),ownerMasks.end(),i.previousMasks.begin());i.previousShutter=shutter;
     i.lastTime=time;i.posed=true;++i.stats.poseUpdates;return true;
 }
-bool NativeNotesControlsScene::requiresFrames(double time)const{const auto&i=*impl_;i.time(time);for(const auto&pair:i.tracks)for(const auto&t:pair)if(t.active&&time<t.start+t.duration)return true;return false;}
+bool NativeNotesControlsScene::requiresFrames(double time)const{const auto&i=*impl_;time=i.at(time);for(const auto&pair:i.tracks)for(const auto&t:pair)if(t.active&&time<t.start+t.duration)return true;return false;}
 LayerScene&NativeNotesControlsScene::scene()noexcept{return impl_->scene;}
 const LayerScene&NativeNotesControlsScene::scene()const noexcept{return impl_->scene;}
 bool NativeNotesControlsScene::requiresGroupOpacity()const noexcept{return impl_->group;}

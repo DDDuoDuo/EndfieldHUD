@@ -54,7 +54,9 @@ struct NativeProjectionMediaScene::Impl {
         draw[0].sourceID=draw[0].meshID="projection.media.face.mesh:"+std::to_string(sequence.fetch_add(1,std::memory_order_relaxed));
         draw[1].masks.reserve(8);feedback.fill(SIZE_MAX);
     }
-    void clock(double t)const{need(std::isfinite(t)&&(!lastTime||t>=*lastTime),"Projection media requires a finite monotonic owner clock");}
+    // A time earlier than one already seen is the latest time (the Mac's
+    // CACurrentMediaTime never decreases); only non-finite time fails.
+    double at(double t)const{need(std::isfinite(t),"Projection media requires a finite owner clock");return lastTime?std::max(t,*lastTime):t;}
     void pose(double time){if(!ready)return;world=dpi*M::translation(item->frame.x,item->frame.y);const auto inverse=core::source::inverseSourceMatrix(world);draw[0].world=world;
         for(std::size_t n=0;n<placements.size();++n){auto&p=placements[n];p.world=world*locals[n];p.opacity=1;}
         for(std::size_t n=0;n<4;++n)if(feedback[n]!=SIZE_MAX)placements[feedback[n]].opacity=float(tracks[n].sample(time));
@@ -104,14 +106,14 @@ void NativeProjectionMediaScene::setDraw(std::optional<DrawObject>d){auto&i=*imp
     i.borrowed=std::move(d);i.pose(i.lastTime.value_or(0));
 }
 void NativeProjectionMediaScene::setPose(const M&dpi){need(dpi.finite(),"Invalid Projection media plane");(void)core::source::inverseSourceMatrix(dpi);impl_->dpi=dpi;}
-void NativeProjectionMediaScene::setFeedback(std::optional<std::string_view>a,bool pressed,bool reduced,double t){auto&i=*impl_;i.clock(t);need(i.ready,"Synchronize Projection media before feedback");need(!a||*a=="play"||*a=="close","Unknown Projection media control");
+void NativeProjectionMediaScene::setFeedback(std::optional<std::string_view>a,bool pressed,bool reduced,double t){auto&i=*impl_;t=i.at(t);need(i.ready,"Synchronize Projection media before feedback");need(!a||*a=="play"||*a=="close","Unknown Projection media control");
     for(std::size_t control=0;control<2;++control){const bool active=a&&*a==(control?"close":"play")&&i.feedback[control*2]!=SIZE_MAX;const bool down=active&&pressed;
         const bool changed=active!=i.highlighted[control]||down!=i.pressed[control];i.highlighted[control]=active;i.pressed[control]=down;
         for(std::size_t k=0;k<2;++k){auto&track=i.tracks[control*2+k];if(!changed&&!reduced)continue;const double target=k?(active?1:.28):(active?(down?1:.62):0);const auto current=track.sample(t);track={current,target,t,reduced||current==target?0:down?.06:.14};}
     }i.lastTime=t;
 }
-void NativeProjectionMediaScene::update(double t){auto&i=*impl_;i.clock(t);need(i.ready,"Synchronize Projection media before placement");i.pose(t);i.lastTime=t;}
-bool NativeProjectionMediaScene::requiresFrames(double t)const{const auto&i=*impl_;i.clock(t);for(const auto&v:i.tracks)if(v.duration&&t<v.start+v.duration)return true;return false;}
+void NativeProjectionMediaScene::update(double t){auto&i=*impl_;t=i.at(t);need(i.ready,"Synchronize Projection media before placement");i.pose(t);i.lastTime=t;}
+bool NativeProjectionMediaScene::requiresFrames(double t)const{const auto&i=*impl_;t=i.at(t);for(const auto&v:i.tracks)if(v.duration&&t<v.start+v.duration)return true;return false;}
 void NativeProjectionMediaScene::upload(Renderer&r){auto&i=*impl_;need(i.ready&&(!i.owner||i.owner==&r),"Projection media belongs to another renderer or is unsynchronized");r.setMesh(i.draw[0].meshID,i.meshRevision,{i.mesh.vertices,i.mesh.indices});i.meshResident=true;i.owner=&r;i.face.uploadResources(r);i.overlay.uploadResources(r);}
 std::array<LayerCompositionEntry,2>NativeProjectionMediaScene::entries(){auto&i=*impl_;need(i.ready,"Synchronize Projection media before publication");return {{{&i.face,std::span<const DrawObject>(i.draw.data(),i.borrowed?2:1)},{&i.overlay,{}}}};}
 bool NativeProjectionMediaScene::releaseResources(Renderer&r){auto&i=*impl_;need(!i.owner||i.owner==&r,"Projection media resources belong to another renderer");const bool a=i.face.releaseResources(r),b=i.overlay.releaseResources(r);if(i.meshResident&&r.removeMesh(i.draw[0].meshID))i.meshResident=false;if(a&&b&&!i.meshResident){i.owner=nullptr;return true;}return false;}

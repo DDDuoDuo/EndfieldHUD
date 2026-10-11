@@ -80,6 +80,10 @@ void run(HWND hwnd,gpu::Renderer&renderer){
     workspace.endGesture();publish();workspace.updatePose(pose(5));
     const auto hit=workspace.hitTest({state.card(two)->rect.x+10,state.card(two)->rect.y+10});check(hit&&hit->noteID==two,"Owner hit routing uses the same projected saved workspace origin");
     workspace.setFeedback(two,"pin",false,false,5);check(workspace.requiresFrames(5.01),"Existing source hover track requests caller frames");workspace.updatePose(pose(5.2));composition.present(renderer);check(!workspace.requiresFrames(5.2),"Settled workspace owns no perpetual frame demand");
+    // Live order: the workspace saw a later time inside a callback, then the host's earlier frame sample.
+    workspace.updatePose(pose(5.1));composition.present(renderer);check(!workspace.requiresFrames(5.1),"An earlier frame time poses at the latest time seen instead of failing or restarting feedback");
+    check(workspace.setFeedback(two,{},false,false,5.1)&&workspace.requiresFrames(5.1)&&workspace.requiresFrames(5.33)&&!workspace.requiresFrames(5.35),"Feedback started at an earlier owner time starts at the latest time seen");
+    workspace.updatePose(pose(5.35));composition.present(renderer);check(!workspace.requiresFrames(5.35),"The clamped release settles after the latest time");
 
     const auto beforeClose=workspace.card(two)->contentRevision();workspace.setPresentation(false,true);check(!state.selection()&&workspace.card(two)->contentRevision()>beforeClose,"Closing refreshes appearance when source clears selected unpinned note");
     auto closing=pose(6);closing.opacity=.6f;closing.workspaceToScreen=core::Matrix4::translation(7,3);workspace.updatePose(closing);publish();

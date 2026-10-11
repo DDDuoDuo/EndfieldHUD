@@ -100,7 +100,11 @@ struct NativeProjectionControlsScene::Impl {
     Impl(modules::ProjectionControls&s,LayerRasterizer&r,LayerRasterOptions o):source(s),raster(r),options(std::move(o)),scene(r),group(scene,"projection.controls",options.pixelsPerPoint){
         static std::atomic<std::uint64_t>sequence{};probeID="projection.control.probe:"+std::to_string(sequence.fetch_add(1,std::memory_order_relaxed));
     }
-    void time(double t)const{need(std::isfinite(t)&&(!lastTime||t>=*lastTime),"Projection controls require a finite monotonic owner clock");}
+    // Owner time never runs backwards here: a time earlier than one already
+    // seen (the host's sample taken before a nested callback or the UI
+    // Automation clock handed a later one) is the latest time, as the Mac's
+    // single CACurrentMediaTime never decreases. Only non-finite time fails.
+    double at(double t)const{need(std::isfinite(t),"Projection controls require a finite owner clock");return lastTime?std::max(t,*lastTime):t;}
     void current()const{need(sourceRevision&&sourceRevision==source.contentRevision()&&fontRevision==raster.fontRevision(),"Synchronize Projection controls before feedback/placement");}
     static double sample(const Track&t,double now){if(!t.active||t.duration<=0)return t.target;return t.from+(t.target-t.from)*core::CubicTiming{0,0,.58,1}.value((now-t.start)/t.duration);}
 };
@@ -133,7 +137,7 @@ bool NativeProjectionControlsScene::syncContent(){
     i.sourceRevision=i.source.contentRevision();i.feedbackRevision=i.source.feedbackRevision();i.fontRevision=fontRevision;i.posed=false;i.contentDirty=i.localDirty=true;++i.stats.contentUpdates;return true;
 }
 bool NativeProjectionControlsScene::setFeedback(std::optional<std::string_view>action,bool pressed,bool reduced,double time){
-    auto&i=*impl_;i.time(time);i.current();const bool changed=i.source.setFeedback(action,pressed,reduced);if(!changed&&i.feedbackRevision==i.source.feedbackRevision()){i.lastTime=time;return false;}
+    auto&i=*impl_;time=i.at(time);i.current();const bool changed=i.source.setFeedback(action,pressed,reduced);if(!changed&&i.feedbackRevision==i.source.feedbackRevision()){i.lastTime=time;return false;}
     for(std::size_t n=0;n<i.tracks.size();++n){const auto&f=i.source.feedback()[n];for(unsigned k=0;k<2;++k){auto&t=i.tracks[n][k];const auto target=k?f.rimOpacity:f.tintOpacity;
             // A control's press/release restarts both channels from their actual
             // presentation values. Other controls keep their existing fade.
@@ -142,7 +146,7 @@ bool NativeProjectionControlsScene::setFeedback(std::optional<std::string_view>a
     i.feedbackRevision=i.source.feedbackRevision();i.lastTime=time;i.posed=false;++i.stats.feedbackChanges;return true;
 }
 bool NativeProjectionControlsScene::updatePose(const Matrix&world,float opacity,double time){
-    auto&i=*impl_;i.time(time);i.current();need(i.feedbackRevision==i.source.feedbackRevision(),"Apply Projection feedback through its native adapter");need(world.finite()&&std::isfinite(opacity)&&opacity>=0&&opacity<=1,"Invalid Projection control pose");
+    auto&i=*impl_;time=i.at(time);i.current();need(i.feedbackRevision==i.source.feedbackRevision(),"Apply Projection feedback through its native adapter");need(world.finite()&&std::isfinite(opacity)&&opacity>=0&&opacity<=1,"Invalid Projection control pose");
     bool active{};for(const auto&pair:i.tracks)for(const auto&t:pair)active|=t.active;
     const bool rootChanged=!i.posed||i.world!=world||i.opacity!=opacity;if(!rootChanged&&!active&&!i.localDirty){i.lastTime=time;return false;}
     bool localChanged{};for(std::size_t n=0;n<i.surfaces.size();++n){const auto&s=i.surfaces[n];auto&p=i.placements[n];float alpha=s.opacity;if(s.feedback!=ProjectionControlSurface::none)alpha*=static_cast<float>(Impl::sample(i.tracks[s.feedback][s.rim?1:0],time));localChanged|=p.opacity!=alpha;p.opacity=alpha;}
@@ -159,7 +163,7 @@ bool NativeProjectionControlsScene::upload(Renderer&renderer){
 }
 LayerCompositionEntry NativeProjectionControlsScene::entry(){return impl_->group.entry();}
 bool NativeProjectionControlsScene::releaseResources(Renderer&renderer){auto&i=*impl_;const bool released=i.group.releaseResources(renderer);if(released){i.renderer=nullptr;i.contentDirty=bool(i.sourceRevision);}return released;}
-bool NativeProjectionControlsScene::requiresFrames(double time)const{const auto&i=*impl_;i.time(time);for(const auto&pair:i.tracks)for(const auto&t:pair)if(t.active&&time<t.start+t.duration)return true;return false;}
+bool NativeProjectionControlsScene::requiresFrames(double time)const{const auto&i=*impl_;time=i.at(time);for(const auto&pair:i.tracks)for(const auto&t:pair)if(t.active&&time<t.start+t.duration)return true;return false;}
 const LayerScene&NativeProjectionControlsScene::scene()const noexcept{return impl_->scene;}
 NativeProjectionControlsSceneStats NativeProjectionControlsScene::stats()const noexcept{return impl_->stats;}
 #endif

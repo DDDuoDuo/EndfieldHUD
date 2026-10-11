@@ -77,6 +77,11 @@ void contracts(gpu::Renderer&renderer,gpu::LayerRasterizer&raster){
     check(a.scene().draws()[deleteTint].opacity==1&&a.scene().draws()[pinTint].opacity>0,"New press is fast while old control releases with .14 duration");
     a.updatePose({},1,3.14);composition.present(renderer);check(a.scene().draws()[pinTint].opacity==0,"Old feedback retires fully at its own source duration");
     a.setFeedback({},false,true,4);a.updatePose({},1,4);composition.present(renderer);check(a.scene().draws()[deleteTint].opacity==0&&!a.requiresFrames(4),"Reduced motion settles feedback immediately");
+    // Live order: the card saw a later time inside a callback, then the host's earlier sample.
+    check(a.setFeedback("pin",false,false,4.2),"A later hover reaches the card inside the callback");a.updatePose({},1,4.5);composition.present(renderer);check(std::abs(a.scene().draws()[pinTint].opacity-.62f)<1e-6f,"Hover settles before the late sample");
+    a.updatePose({},1,4.3);composition.present(renderer);check(std::abs(a.scene().draws()[pinTint].opacity-.62f)<1e-6f&&!a.requiresFrames(4.3),"An earlier caller time poses at the latest time seen instead of failing or rewinding feedback");
+    check(a.setFeedback({},false,false,4.3)&&a.requiresFrames(4.5)&&a.requiresFrames(4.63)&&!a.requiresFrames(4.65),"Feedback started at an earlier caller time starts at the latest time seen");
+    a.updatePose({},1,4.65);composition.present(renderer);check(a.scene().draws()[pinTint].opacity==0,"The clamped release settles .14 seconds after the latest time");rejects([&]{a.updatePose({},1,std::nan(""));},"A non-finite caller clock still rejects");
     check(raster.stats().rasterizations==rasterBefore.rasterizations&&raster.stats().textLayoutsCreated==rasterBefore.textLayoutsCreated&&renderer.stats().textureUploads==gpuBefore.textureUploads,"Hover/press changes no raster, text layout or texture upload");
     const auto stable=raster.stats();const auto uploads=renderer.stats();allocations=0;counting=true;
     try{for(unsigned i=0;i<120;++i){const auto t=5+i/60.;core::Matrix4 world;world.values[3]=i*.000001;world.values[7]=-i*.0000005;

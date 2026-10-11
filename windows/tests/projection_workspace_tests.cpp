@@ -5,8 +5,10 @@
 #include <DispatcherQueue.h>
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.System.h>
+#include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <vector>
 namespace {
 namespace n=endfield::native;namespace t=endfield::tools;namespace a=endfield::app;namespace c=endfield::core;
 unsigned checks{};void check(bool b,const char*s){++checks;if(!b)throw std::runtime_error(s);}
@@ -50,6 +52,26 @@ void run(const wchar_t*shader){
   check(workspace.dismissalComplete(7.27),"The owner can complete dismissal while no display frame is available");workspace.close(7.27);
   check(!workspace.dismissalDeadline(),"Closed Projection leaves no owner deadline");
   options.reduceMotion=true;workspace.show(options,media,8,false);check(backdrop.stats().panelOpacity==1&&!workspace.demand(8).finiteAnimation,"Reduced motion commits source entrance endpoint");workspace.dismiss(8.1,true);check(workspace.dismissalComplete(8.1),"Reduced motion dismisses immediately");workspace.close(8.1);
+  // Live order (an RC died opening Projection with "Projection controls require a
+  // finite monotonic owner clock"): the host samples its time, Projection
+  // receives later times inside that callback (a pointer or key handler, a UI
+  // Automation invoke reading the clock), then the host's own calls arrive with
+  // the earlier sample. Each is taken at the latest time seen, as on the Mac.
+  {options.reduceMotion=false;const double sample=10;workspace.show(options,media,sample,false);workspace.render(sample+.3,false);
+   std::vector<n::NotesAutomationElement>peers;workspace.preview()->automationElements(peers);
+   const auto brush=std::find_if(peers.begin(),peers.end(),[](const auto&e){return e.id=="projection.toolbar:brush";});check(brush!=peers.end(),"The toolbar lists its brush button");
+   const double scale=host.metrics().scale;const a::PointerEvent hover{a::PointerKind::move,a::PointerButton::none,(brush->rect.x+brush->rect.width/2)/scale,(brush->rect.y+brush->rect.height/2)/scale};
+   check(workspace.pointer(hover,sample+.5),"A toolbar hover inside the callback is handled at its later time");
+   check(workspace.preview()->perform("projection.toolbar:brush",sample+.6)&&workspace.preview()->menuOpen(),"A UI Automation invoke inside the callback opens the brush menu at its later time");
+   check(workspace.key({a::KeyKind::down,VK_DOWN},sample+.62),"A key inside the callback moves the menu focus at its later time");
+   check(workspace.demand(sample).finiteAnimation&&workspace.preview()->requiresFrames(sample),"Frame demand with the earlier host sample is the opening menu's demand at the latest time");
+   workspace.mediaChanged(sample);check(workspace.render(sample,false),"A frame with the earlier host sample presents at the latest time");
+   workspace.media()->sync(sample);workspace.media()->refresh(sample);
+   check(workspace.pointer(hover,sample)&&workspace.wheel({hover.x,hover.y,1},sample)&&workspace.key({a::KeyKind::down,VK_UP},sample),"Input with the earlier host sample is handled at the latest time");
+   workspace.cancelInteraction(sample);workspace.preview()->update(sample);check(workspace.preview()->menuOpen(),"The menu opened inside the callback stays open");
+   check(workspace.demand(sample+.7).finiteAnimation&&!workspace.demand(sample+.8).finiteAnimation,"The menu opening runs its .16 seconds from the later time, not from the earlier sample");
+   workspace.dismiss(sample,false);check(workspace.dismissalDeadline()&&std::abs(*workspace.dismissalDeadline()-(sample+.78))<.00001&&!workspace.dismissalComplete(sample+.7)&&workspace.dismissalComplete(sample+.79),"A dismissal with the earlier host sample starts at the latest time");
+   workspace.render(sample,false);workspace.close(sample);check(!workspace.presented()&&renderer.stats().textures==0&&renderer.stats().meshes==0,"Close with the earlier host sample releases every resource");}
   check(host.stats().timerArms==0&&!host.stats().visible,"Entire workspace fixture uses no independent timer or visible window");
  }
  decoder.stop();backdrop.reset();renderer.reset();host.destroy();

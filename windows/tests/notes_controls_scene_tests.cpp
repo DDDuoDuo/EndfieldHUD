@@ -83,6 +83,12 @@ void gpu(const wchar_t*shader){
     // control's independently running release fade.
     adapter.setFeedback("tool:todo",false,false,3);adapter.updatePose({},1,3.03);composition.present(renderer);const auto fading=adapter.scene().draws()[tint].opacity;
     adapter.setFeedback("tool:todo",true,false,3.03);adapter.updatePose({},1,3.04);composition.present(renderer);check(adapter.scene().draws()[tint].opacity>0&&adapter.scene().draws()[tint].opacity<fading,"Unchanged feedback targets retain their interrupted-release timing");
+    // Live order: the controls saw a later time inside a callback, then the host's earlier sample.
+    // An earlier owner time is the latest time seen (the Mac's clock never decreases), never fatal.
+    adapter.setFeedback({},false,true,3.1);adapter.setFeedback("tool:text",false,false,3.1);adapter.updatePose({},1,3.4);composition.present(renderer);const auto settled=adapter.scene().draws()[tint].opacity;check(std::abs(settled-.62f)<1e-6f,"Hover settles before the late sample");
+    adapter.updatePose({},1,3.2);composition.present(renderer);check(adapter.scene().draws()[tint].opacity==settled&&!adapter.requiresFrames(3.2),"An earlier owner time poses at the latest time seen instead of failing or rewinding feedback");
+    check(adapter.setFeedback({},false,false,3.2)&&adapter.requiresFrames(3.2)&&adapter.requiresFrames(3.53)&&!adapter.requiresFrames(3.55),"Feedback started at an earlier owner time starts at the latest time seen");
+    adapter.updatePose({},1,3.55);composition.present(renderer);check(adapter.scene().draws()[tint].opacity==0,"The clamped release settles .14 seconds after the latest time");rejects([&]{adapter.updatePose({},1,std::nan(""));},"A non-finite owner clock still rejects");
     input.kind=modules::NotesControlsKind::mediaSource;source.update(input);adapter.syncContent();adapter.updatePose(core::Matrix4::translation(10,10),1,4);composition.upload(renderer);composition.present(renderer);renderer.draw(false);
     check(adapter.requiresGroupOpacity()&&adapter.scene().draws().back().sourceID.ends_with("notes.menu/face/native-border"),"Menu keeps exact final border over its children");
     const auto oldWorld=adapter.scene().draws()[0].world;rejects([&]{adapter.updatePose(core::Matrix4::translation(90,90),.5f,4.1);},"Partial grouped menu fade rejects rather than changing source compositing");composition.present(renderer);check(adapter.scene().draws()[0].world==oldWorld,"Rejected partial opacity preserves prior scene pose");

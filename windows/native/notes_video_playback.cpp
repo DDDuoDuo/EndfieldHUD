@@ -41,7 +41,9 @@ struct NativeNotesVideoPlayback::Impl {
     Impl(Renderer&r,NotesVideoRoute route,Factory f):renderer(r),device(r.mediaDevice()),factory(f?std::move(f):detail::makeNotesMFVideoFactory()){routeValid(route);notice->route=route;visible.reserve(8);requests.reserve(8);}
     ~Impl(){ {std::lock_guard lock(notice->mutex);notice->stopped=true;notice->route={};}for(auto&[key,r]:records){(void)key;if(r.engine)r.engine->stop();r.engine.reset();try{releaseTarget(r.liveID,r.live,r.liveInstalled);releaseTarget(r.posterID,r.poster,r.posterInstalled);for(const auto&id:r.retiredTextures)renderer.removeTexture(id);}catch(...){}} }
     void check()const{need(GetCurrentThreadId()==thread,"Video owner requires its UI thread");}
-    void clock(double t){check();need(std::isfinite(t)&&t>=time,"Video owner clock must be monotonic");time=t;}
+    // An owner time earlier than one already seen is the latest time (the
+    // Mac's clock never decreases); only non-finite time fails.
+    double clock(double t){check();need(std::isfinite(t),"Video owner clock must be finite");time=std::max(time,t);return time;}
     Record*find(std::string_view key){auto it=records.find(key);return it==records.end()?nullptr:&it->second;}
     static void state(Record&r,State value){if(r.state!=value){r.state=value;++r.contentRevision;}}
     static void texture(Record&r,const std::string&id){if(r.textureID!=id){r.textureID=id;++r.frameRevision;}}
@@ -115,7 +117,7 @@ struct NativeNotesVideoPlayback::Impl {
 };
 NativeNotesVideoPlayback::NativeNotesVideoPlayback(Renderer&r,NotesVideoRoute route,Factory f):impl_(std::make_unique<Impl>(r,route,std::move(f))){}
 NativeNotesVideoPlayback::~NativeNotesVideoPlayback()=default;
-bool NativeNotesVideoPlayback::setVisible(std::span<const NotesVideoRequest>values,double now,bool preserve){auto&i=*impl_;i.clock(now);std::unordered_set<std::string_view>keys;keys.reserve(values.size());for(const auto&value:values){valid(value);need(keys.insert(value.key).second,"Duplicate visible video key");if(const auto*r=i.find(value.key))need(r->request==value,"Retire a changed video reference before reusing its identity");}if(std::equal(values.begin(),values.end(),i.requests.begin(),i.requests.end()))return false;
+bool NativeNotesVideoPlayback::setVisible(std::span<const NotesVideoRequest>values,double now,bool preserve){auto&i=*impl_;now=i.clock(now);std::unordered_set<std::string_view>keys;keys.reserve(values.size());for(const auto&value:values){valid(value);need(keys.insert(value.key).second,"Duplicate visible video key");if(const auto*r=i.find(value.key))need(r->request==value,"Retire a changed video reference before reusing its identity");}if(std::equal(values.begin(),values.end(),i.requests.begin(),i.requests.end()))return false;
     std::vector<NotesVideoRequest>next(values.begin(),values.end());i.visible.reserve(values.size());for(auto*r:i.visible)if(!keys.contains(r->request.key))i.hide(*r,preserve);i.visible.clear();
     for(const auto&v:values){auto*r=i.find(v.key);if(!r){Impl::Record fresh;fresh.request=v;fresh.duration=v.duration;fresh.posterID=v.key+".poster";fresh.liveID=v.key+".live";auto[it,inserted]=i.records.emplace(v.key,std::move(fresh));(void)inserted;r=&it->second;}if(!r->visible){r->visible=true;r->releasePoster.reset();r->error=S_OK;if(r->request.workerPoster){r->posterSettled=false;r->posterError=S_OK;}Impl::state(*r,State::loading);if(r->posterReady)i.texture(*r,r->posterID);i.enqueue(*r);}i.visible.push_back(r);}i.requests=std::move(next);i.pump();return true;
 }
@@ -150,14 +152,14 @@ bool NativeNotesVideoPlayback::setPoster(std::string_view key,std::uint64_t revi
     if(FAILED(r->posterError)){r->posterReady=false;Impl::texture(*r,{});++r->contentRevision;}
     i.guarded(*r,[&]{i.resumeAfterPoster(*r);});if(i.pendingCount)i.pump();return true;
 }
-bool NativeNotesVideoPlayback::accept(UINT_PTR generation,double now){auto&i=*impl_;i.clock(now);std::array<Notices::Cell,8>events;
+bool NativeNotesVideoPlayback::accept(UINT_PTR generation,double now){auto&i=*impl_;now=i.clock(now);std::array<Notices::Cell,8>events;
     {std::lock_guard lock(i.notice->mutex);if(i.notice->stopped||generation!=i.notice->route.generation)return false;events=i.notice->cells;for(auto&c:i.notice->cells){c.flags=0;c.error=S_OK;}i.notice->posted=false;}
     bool changed{};for(auto*r:i.engines){if(!r||r->slot>=8)continue;const auto&e=events[r->slot];if(e.serial!=r->serial||!e.flags)continue;changed=true;if(e.flags&failure){i.fail(*r,e.error);continue;}if((e.flags&ready)&&r->engine&&!r->metadataReady)i.guarded(*r,[&]{i.makeMetadata(*r);});if(!r->engine)continue;if((e.flags&firstFrame)&&!r->firstFrameSeen&&!r->request.workerPoster){r->firstFrameSeen=true;r->posterPending=true;r->posterDeadline=now+5;}
         if(e.flags&seeked){r->pendingSeek.reset();const auto current=r->engine->currentTime();if(std::isfinite(current))r->currentTime=std::max(0.,current);r->framePending=true;++r->progressRevision;}
         if((e.flags&ended)&&r->didPlay&&(r->wantsPlayback||r->state==State::playing)){r->wantsPlayback=false;r->engine->pause();r->framePending=false;r->nextProgress.reset();if(r->duration)r->currentTime=*r->duration;i.state(*r,State::paused);++r->progressRevision;}}
     return changed;
 }
-bool NativeNotesVideoPlayback::sample(double now){auto&i=*impl_;i.clock(now);bool changed{};
+bool NativeNotesVideoPlayback::sample(double now){auto&i=*impl_;now=i.clock(now);bool changed{};
     for(auto*r:i.engines){if(!r||!r->engine||!r->metadataReady)continue;
         if(!i.guarded(*r,[&]{
             if(r->posterPending){
@@ -197,7 +199,7 @@ bool NativeNotesVideoPlayback::sample(double now){auto&i=*impl_;i.clock(now);boo
     }
     for(auto&[key,r]:i.records){(void)key;if(!r.visible&&r.releasePoster&&now>=*r.releasePoster){r.releasePoster.reset();Impl::texture(r,{});changed=true;}}if(i.pendingCount)i.pump();return changed;
 }
-bool NativeNotesVideoPlayback::play(std::string_view key,double now){auto&i=*impl_;i.clock(now);auto*r=i.find(key);if(!r||!r->visible||r->state==State::failed)return false;const auto old=r->state;const auto previous=r->wantsPlayback;r->wantsPlayback=true;if(!r->engine){i.enqueue(*r);i.pump();}else i.guarded(*r,[&]{i.beginPlayback(*r);});return old!=r->state||!previous;}
+bool NativeNotesVideoPlayback::play(std::string_view key,double now){auto&i=*impl_;now=i.clock(now);auto*r=i.find(key);if(!r||!r->visible||r->state==State::failed)return false;const auto old=r->state;const auto previous=r->wantsPlayback;r->wantsPlayback=true;if(!r->engine){i.enqueue(*r);i.pump();}else i.guarded(*r,[&]{i.beginPlayback(*r);});return old!=r->state||!previous;}
 bool NativeNotesVideoPlayback::pause(std::string_view key){auto&i=*impl_;i.check();auto*r=i.find(key);if(!r)return false;const bool changed=r->wantsPlayback||r->state==State::playing;r->wantsPlayback=false;r->framePending=r->pendingSeek.has_value();r->nextProgress.reset();if(r->engine){const auto current=r->pendingSeek.value_or(r->engine->currentTime());if(std::isfinite(current))r->currentTime=std::max(0.,current);r->engine->pause();++r->progressRevision;}if(r->state==State::playing)Impl::state(*r,State::paused);if(i.pendingCount)i.pump();return changed;}
 bool NativeNotesVideoPlayback::toggle(std::string_view key,double now){impl_->check();auto*r=impl_->find(key);return r?(r->state==State::playing||r->wantsPlayback?pause(key):play(key,now)):false;}
 bool NativeNotesVideoPlayback::seek(std::string_view key,double seconds){auto&i=*impl_;i.check();auto*r=i.find(key);if(!r||!r->duration||!std::isfinite(seconds))return false;r->currentTime=std::clamp(seconds,0.,*r->duration);++r->progressRevision;if(!r->engine&&r->visible){r->pendingSeek=r->currentTime;i.enqueue(*r);i.pump();}if(r->engine&&r->metadataReady&&r->posterSettled)i.guarded(*r,[&]{i.liveTarget(*r);i.issueSeek(*r,r->currentTime);});return true;}
