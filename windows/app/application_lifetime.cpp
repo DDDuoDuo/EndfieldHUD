@@ -23,6 +23,7 @@ void Application::Impl::cleanup(){if(cleaned)return;cleaned=true;ready=false;sto
     const auto drop=[&](std::unique_ptr<ModuleOwner>&adapter){unregisterModule(adapter);};
     if(quitConfirmation){registry.remove(*quitConfirmation);quitConfirmation.reset();}
     if(clockAutomation){registry.remove(*clockAutomation);clockAutomation.reset();}
+    if(navigationAutomation){registry.remove(*navigationAutomation);navigationAutomation.reset();}
     // Added module owners may borrow Notes' TSF manager: destroy them first,
     // after withdrawing every area service and any pending area dialog.
     // The ID card presenter borrows the label scene and SourceScene and is

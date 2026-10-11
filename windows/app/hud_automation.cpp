@@ -43,6 +43,7 @@ struct HudAutomation::State {
     HRESULT group(std::size_t index,bool fromEnd,IRawElementProviderFragment**out)const;
     HRESULT sibling(const HudAutomationGroup*group,bool next,IRawElementProviderFragment**out)const;
     HRESULT hitTest(double x,double y,const ModuleOwner*only,IRawElementProviderFragment**out);
+    HRESULT focus(const ModuleOwner*only,IRawElementProviderFragment**out);
 };
 
 // One module owner's fragments under the HUD root.
@@ -112,7 +113,11 @@ public:
         if(!out)return E_POINTER;*out=nullptr;const auto s=live();if(!s)return UIA_E_ELEMENTNOTAVAILABLE;
         return s->hitTest(x,y,owner,out);
     }
-    IFACEMETHODIMP GetFocus(IRawElementProviderFragment**out)override{if(!out)return E_POINTER;*out=nullptr;return S_OK;}
+    // The owner's fragment holding the keyboard focus (HasKeyboardFocus).
+    IFACEMETHODIMP GetFocus(IRawElementProviderFragment**out)override{
+        if(!out)return E_POINTER;*out=nullptr;const auto s=live();if(!s)return UIA_E_ELEMENTNOTAVAILABLE;
+        return s->focus(owner,out);
+    }
     void disconnect()noexcept{if(!connected)return;connected=false;UiaDisconnectProvider(static_cast<IRawElementProviderSimple*>(this));}
 private:
     ~HudAutomationGroup()=default;
@@ -165,7 +170,12 @@ public:
         if(!out)return E_POINTER;*out=nullptr;const auto s=live();if(!s)return UIA_E_ELEMENTNOTAVAILABLE;
         return s->hitTest(x,y,nullptr,out);
     }
-    IFACEMETHODIMP GetFocus(IRawElementProviderFragment**out)override{if(!out)return E_POINTER;*out=nullptr;return S_OK;}
+    // UIA asks the HWND's fragment root for the focused descendant when the
+    // window gains focus: an owner fragment reporting HasKeyboardFocus.
+    IFACEMETHODIMP GetFocus(IRawElementProviderFragment**out)override{
+        if(!out)return E_POINTER;*out=nullptr;const auto s=live();if(!s)return UIA_E_ELEMENTNOTAVAILABLE;
+        return s->focus(nullptr,out);
+    }
     void disconnect()noexcept{if(!connected)return;connected=false;UiaDisconnectProvider(static_cast<IRawElementProviderSimple*>(this));}
 private:
     ~HudAutomationRoot()=default;
@@ -206,6 +216,44 @@ HRESULT HudAutomation::State::hitTest(double x,double y,const ModuleOwner*only,I
             IRawElementProviderFragment*found{};const long hr=it->owner->automationFromPoint(x,y,&found);
             if(hr<0){if(found)found->Release();continue;}
             if(found){*out=found;return S_OK;}
+        }
+        return S_OK;});
+}
+namespace {
+bool hasKeyboardFocus(IRawElementProviderFragment*fragment){
+    ComPtr<IRawElementProviderSimple>simple;if(!fragment||FAILED(fragment->QueryInterface(IID_PPV_ARGS(&simple)))||!simple)return false;
+    VARIANT v;VariantInit(&v);const bool focused=SUCCEEDED(simple->GetPropertyValue(UIA_HasKeyboardFocusPropertyId,&v))&&v.vt==VT_BOOL&&v.boolVal==VARIANT_TRUE;
+    VariantClear(&v);return focused;
+}
+// Depth-first over a fragment and its descendants (Navigate), bounded in
+// depth and in the number of fragments visited.
+ComPtr<IRawElementProviderFragment>focusedWithin(const ComPtr<IRawElementProviderFragment>&fragment,unsigned depth,unsigned&budget){
+    if(!fragment||!budget)return nullptr;--budget;
+    if(hasKeyboardFocus(fragment.Get()))return fragment;
+    if(!depth)return nullptr;
+    ComPtr<IRawElementProviderFragment>child;if(FAILED(fragment->Navigate(NavigateDirection_FirstChild,&child)))return nullptr;
+    while(child&&budget){
+        if(auto found=focusedWithin(child,depth-1,budget))return found;
+        ComPtr<IRawElementProviderFragment>next;if(FAILED(child->Navigate(NavigateDirection_NextSibling,&next)))break;child=next;
+    }
+    return nullptr;
+}
+}
+HRESULT HudAutomation::State::focus(const ModuleOwner*only,IRawElementProviderFragment**out){
+    ++statistics.focusQueries;
+    return guarded([&]{
+        // Modal owners (capturesPointer) hold the keyboard while they are up:
+        // they answer first, then the others in reverse registration order.
+        unsigned budget=512;
+        for(unsigned pass=0;pass<2;++pass)for(auto it=entries.rbegin();it!=entries.rend();++it){
+            if(only&&it->owner!=only)continue;if(!listed(*it))continue;
+            if(it->owner->capturesPointer()!=(pass==0))continue;
+            const auto n=count(it->owner);
+            for(std::size_t i=0;i<n&&budget;++i){
+                ComPtr<IRawElementProviderFragment>child;
+                if(it->owner->automationChild(i,child.GetAddressOf())<0||!child)continue;
+                if(auto found=focusedWithin(child,3,budget)){*out=found.Detach();return S_OK;}
+            }
         }
         return S_OK;});
 }

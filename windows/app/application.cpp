@@ -249,7 +249,9 @@ void Application::Impl::construct(){
     contentCatalog=std::make_unique<gpu::WatchContentCatalog>(*scene,*document,labelPlan->bindings(),contentSnapshots);
     const auto&catalogNavigation=contentCatalog->navigation();
     WatchSessionNavigation sessionNavigation{catalogNavigation.fixedActions,catalogNavigation.rightActions,catalogNavigation.managedButtons};
-    if(profile)if(const auto action=contentCatalog->actionForTarget("profile")){sessionNavigation.fixedActions[profile->rootID]=*action;for(const auto&id:profile->buttonIDs)sessionNavigation.fixedActions[id]=*action;}
+    if(profile)if(const auto action=contentCatalog->actionForTarget("profile")){sessionNavigation.fixedActions[profile->rootID]=*action;for(const auto&id:profile->buttonIDs)sessionNavigation.fixedActions[id]=*action;
+        // The profile card's one accessibility button (HUDSourceWatchView.accessibilityHitIDs).
+        profileCardRoot=profile->rootID;profileCardButtons.assign(profile->buttonIDs.begin(),profile->buttonIDs.end());}
     // HUDSourceWatchView: desktop QuitBtn nodes and close buttons are fixed
     // source buttons with the same clipped hit test and _clickCd cooldown.
     for(const auto&node:scene->nodes()){
@@ -304,6 +306,10 @@ void Application::Impl::construct(){
         try{build();}
         catch(const std::exception&e){const auto line=std::string("EndfieldHUD module ")+name+" could not start ("+typeid(e).name()+")\n";std::fputs(line.c_str(),stderr);OutputDebugStringA(line.c_str());}
     };
+    // The source navigation's accessibility buttons lie beneath every module
+    // canvas (HUDSourceWatchView under the module views): registered first,
+    // they answer UI Automation hit tests last.
+    constructNavigationAutomation();
     if(!args.notesAssets.empty())constructNotes();
     if(!args.shelfAssets.empty()&&notes)optional("file shelf",[&]{constructShelf();});
     materials->upload(renderer.sourceGraphics());publishNative();host.setCursor(cursor.handle());ready=true;startup.mark("initial-gpu-upload");
@@ -464,7 +470,10 @@ void Application::Impl::connectAreas(){
 UpdateService* Application::Impl::updates()const noexcept{return areaHost?areaHost->find<UpdateService>(UpdateService::key):nullptr;}
 void Application::Impl::refreshUpdateStatus(){
     if(!settingsUI)return;const auto l=settingsLanguage(configuration);
-    if(auto*u=updates()){auto status=u->settingsStatus(l);status.automaticTitle=u->automaticTitle(l);settingsUI->controller().setUpdateStatus(std::move(status));}
+    if(auto*u=updates()){auto status=u->settingsStatus(l);status.automaticTitle=u->automaticTitle(l);
+        // The area's toggle label meets the same bound SettingsController::setUpdateStatus applies to the other strings.
+        need(status.automaticTitle.size()<=16*1024&&Json::validUtf8(status.automaticTitle),"Invalid bounded Settings status");
+        settingsUI->controller().setUpdateStatus(std::move(status));}
     else settingsUI->controller().setUpdateStatus(updateStatus(l));
 }
 power::PowerAreaService* Application::Impl::powerArea()const noexcept{return areaHost?areaHost->find<power::PowerAreaService>(power::PowerAreaService::key):nullptr;}
@@ -1477,6 +1486,9 @@ bool Application::Impl::present(double time,bool submit){
     if(idCard)if(auto next=idCard->apply())session->setDesktopSettings(std::move(*next));
     const WatchSessionFrame*sample=nullptr;{auto stage=probe.measure(LiveProbe::sourcePose);sample=session->sample(time);}if(!sample)return false;
     if(focused&&sample->visibility.phase==core::VisibilityPhase::visible&&!session->inputEnabled())session->setInputEnabled(true,time);
+    // Scrolling rebinds the navigation's source buttons: their UI Automation
+    // names follow once a client asked (one integer compare per frame otherwise).
+    if(automation){const auto bindings=session->stats().bindingChanges;if(bindings!=navigationBindingChanges){navigationBindingChanges=bindings;automationChanged();refreshAutomation();}}
     auto parameters=materials->parameters();parameters.camera=sample->gpuCamera;parameters.timeSeconds=sample->shaderTime;parameters.width=metrics.pixelWidth;parameters.height=metrics.pixelHeight;if(nativeAppearance){std::array<float,3>linear;for(unsigned n=0;n<3;++n){const auto value=watchAppearance.accentSRGB[n];linear[n]=static_cast<float>(value<=.04045?value/12.92:std::pow((value+.055)/1.055,2.4));}parameters.desktopAccentLinear=linear;}
     {auto stage=probe.measure(LiveProbe::materials);materialPresentation->update(*sample->sourceFrame,parameters);materials->flush(renderer.sourceGraphics());}
     {auto stage=probe.measure(LiveProbe::nativeLabels);if(navigationDirty)bindNavigation(time);if(nativeContent)nativeContent->update(session->actions());
@@ -1566,6 +1578,7 @@ void Application::Impl::bindNavigation(double time){
             navigation=baseNavigation;
         }
     }
+    navigationEntries=entries; // the navigation's UI Automation names (application_navigation.cpp)
     nativeAppearance->setEntries(entries);
     // SourceWatchSession relays out the rows and resets the scroll when the
     // right-side count changes (Mac setDesktopNavigation).

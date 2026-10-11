@@ -1,6 +1,7 @@
 #include "app/source_watch_session.hpp"
 #include "core/source_native_labels.hpp"
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <stdexcept>
 
@@ -14,6 +15,27 @@ bool flag(const Json&v,bool fallback){return v.isBool()?v.boolean():v.isNumber()
 bool valid(const WatchSessionSettings&s){return std::isfinite(s.parallax)&&std::isfinite(s.perspective)&&std::isfinite(s.hudScale)&&s.hudScale>0&&std::isfinite(s.hudOffset[0])&&std::isfinite(s.hudOffset[1]);}
 bool valid(const WatchSessionEnvironment&e){return std::isfinite(e.viewport[0])&&std::isfinite(e.viewport[1])&&e.viewport[0]>=0&&e.viewport[1]>=0&&(!e.pointer||finite(*e.pointer));}
 std::string_view trim(std::string_view value){constexpr std::string_view whitespace=" \t\n\r\f\v";const auto start=value.find_first_not_of(whitespace);if(start==value.npos)return {};return value.substr(start,value.find_last_not_of(whitespace)-start+1);}
+// HUDSourceWatchView.clipPolygon: Sutherland-Hodgman against a convex clip
+// polygon of either winding, in fixed storage (a convex quad clipped by k
+// half-planes has at most 4+k vertices).
+struct Polygon {std::array<Point,32> p{};std::size_t n{};bool overflow{};void push(Point v){if(n<p.size())p[n++]=v;else overflow=true;}};
+void clipPolygon(Polygon&subject,const Polygon&clip){
+    if(clip.n<3){subject.n=0;return;}
+    double area=0;for(std::size_t i=0;i<clip.n;++i){const auto a=clip.p[i],b=clip.p[(i+1)%clip.n];area+=a.x*b.y-b.x*a.y;}
+    const double orientation=area>=0?1:-1;
+    const auto cross=[](Point a,Point b,Point q){return (b.x-a.x)*(q.y-a.y)-(b.y-a.y)*(q.x-a.x);};
+    for(std::size_t i=0;i<clip.n;++i){
+        const auto a=clip.p[i],b=clip.p[(i+1)%clip.n];const Polygon input=subject;subject.n=0;
+        if(!input.n)return;auto previous=input.p[input.n-1];double previousDistance=orientation*cross(a,b,previous);
+        for(std::size_t k=0;k<input.n;++k){const auto current=input.p[k];const double distance=orientation*cross(a,b,current);
+            if((distance>=0)!=(previousDistance>=0)){const double fraction=previousDistance/(previousDistance-distance);
+                subject.push({previous.x+(current.x-previous.x)*fraction,previous.y+(current.y-previous.y)*fraction});}
+            if(distance>=0)subject.push(current);previous=current;previousDistance=distance;}
+    }
+}
+bool projectQuad(Polygon&out,const SourceRect&rect,const Matrix4&world,const Matrix4&vp,const Rect&viewport){
+    out.n=0;for(const auto&corner:rect.corners()){const auto p=projectNativePoint(corner,world,vp,viewport);if(!p)return false;out.push(*p);}return true;
+}
 bool redDot(std::string_view name){if(name.size()<6)return false;name.remove_prefix(name.size()-6);constexpr std::string_view target="reddot";for(unsigned i=0;i<6;++i){const auto c=static_cast<unsigned char>(name[i]);if((c>='A'&&c<='Z'?c+32:c)!=static_cast<unsigned char>(target[i]))return false;}return true;}
 }
 struct SourceWatchSession::Impl {
@@ -254,6 +276,37 @@ std::optional<std::string_view> SourceWatchSession::buttonAt(Point point)const{
     if(!hit||(p.filter&&!p.filter(*hit,point)))return {};
     const auto*n=p.scene.node(*hit);return n?std::optional<std::string_view>(n->id):std::nullopt;
 }
+std::optional<core::Rect> SourceWatchSession::buttonFrame(std::span<const std::string> ids)const{
+    const auto&p=*impl_;if(p.hidden||!p.hasFrame||ids.empty())return {};
+    const auto viewport=p.viewport();if(!(viewport.width>0)||!(viewport.height>0))return {};
+    const auto vp=p.rendered.camera.projection*p.rendered.camera.view;
+    Polygon view;view.push({viewport.x,viewport.y});view.push({viewport.x+viewport.width,viewport.y});view.push({viewport.x+viewport.width,viewport.y+viewport.height});view.push({viewport.x,viewport.y+viewport.height});
+    double x0=INFINITY,y0=INFINITY,x1=-INFINITY,y1=-INFINITY;bool any=false;
+    for(const auto&hit:p.rendered.sourceFrame->hits){
+        if(std::none_of(ids.begin(),ids.end(),[&](const std::string&id){return id==hit.buttonID;}))continue;
+        Polygon polygon;if(!projectQuad(polygon,hit.rect,hit.world,vp,viewport))continue;
+        clipPolygon(polygon,view);bool masked=true;
+        for(const auto&mask:hit.masks){Polygon clip;if(!projectQuad(clip,mask.rect,mask.world,vp,viewport)){masked=false;break;}clipPolygon(polygon,clip);}
+        if(!masked||polygon.overflow)continue;
+        for(std::size_t n=0;n<polygon.n;++n){const auto q=polygon.p[n];x0=std::min(x0,q.x);y0=std::min(y0,q.y);x1=std::max(x1,q.x);y1=std::max(y1,q.y);any=true;}
+    }
+    if(!any||!(x1-x0>0)||!(y1-y0>0))return {};
+    return Rect{x0,y0,x1-x0,y1-y0};
+}
+std::optional<core::Rect> SourceWatchSession::scrollFrame()const{
+    const auto&p=*impl_;if(p.hidden||!p.hasFrame)return {};
+    const auto&info=p.rendered.sourceFrame->layoutReport.scroll;if(!info||!(info->hiddenLength>0))return {};
+    const auto*node=p.resolved(info->viewportID);if(!node||!node->activeInHierarchy||!node->rect)return {};
+    const auto viewport=p.viewport();Polygon quad;
+    if(!projectQuad(quad,*node->rect,p.rendered.camera.worldRoot*node->worldMatrix,p.rendered.camera.projection*p.rendered.camera.view,viewport))return {};
+    double x0=INFINITY,y0=INFINITY,x1=-INFINITY,y1=-INFINITY;
+    for(std::size_t n=0;n<quad.n;++n){x0=std::min(x0,quad.p[n].x);y0=std::min(y0,quad.p[n].y);x1=std::max(x1,quad.p[n].x);y1=std::max(y1,quad.p[n].y);}
+    // CGRect.intersection(bounds); an empty intersection hides the buttons.
+    x0=std::max(x0,viewport.x);y0=std::max(y0,viewport.y);x1=std::min(x1,viewport.x+viewport.width);y1=std::min(y1,viewport.y+viewport.height);
+    if(!(x1-x0>0)||!(y1-y0>0))return {};
+    return Rect{x0,y0,x1-x0,y1-y0};
+}
+bool SourceWatchSession::canScroll(int direction)const noexcept{return impl_->scrollMotion.canScroll(direction);}
 std::optional<std::string_view> SourceWatchSession::pressed()const noexcept{return impl_->pressed;}
 const std::map<std::string,std::uint64_t,std::less<>>& SourceWatchSession::actions()const noexcept{return impl_->actions;}
 const WatchSessionFrame* SourceWatchSession::currentFrame()const noexcept{return impl_->hasFrame?&impl_->rendered:nullptr;}

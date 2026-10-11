@@ -17,6 +17,7 @@
 #include "app/application_login_item.hpp"
 #include "app/utility_executor.hpp"
 #include "app/hud_automation.hpp"
+#include "app/hud_button_automation.hpp"
 // Host-side contracts of module areas (headers only; no area library link).
 #include "app/areas/app_shortcut_navigation.hpp"
 #include "app/areas/mac_import_handoff.hpp"
@@ -344,6 +345,11 @@ struct Application::Impl {
     bool clockWheel(const WheelEvent&, double time);
     void selectClockStyle(unsigned index, double time);
     void constructClockAutomation();
+    // --- Source navigation UI Automation (app/application_navigation.cpp) ----------
+    void constructNavigationAutomation();
+    void navigationPeers(std::vector<HudButtonPeer>&);
+    std::optional<core::Rect> navigationFrame(const HudButtonPeer&) const;
+    bool navigationPress(const HudButtonPeer&);
 
     // --- projection --------------------------------------------------------------
     std::optional<gpu::DisplayDescriptor> projectionDisplay(std::uintptr_t preferred);
@@ -362,6 +368,8 @@ struct Application::Impl {
     bool onBeforeKeyTranslation(const NativeMessage&);
     std::optional<std::intptr_t> onAppMessage(const NativeMessage&);
     bool onKey(const KeyEvent&);
+    OverlayCursor onCursor(core::Point);  // WM_SETCURSOR (OverlayCallbacks::cursorAt)
+    ModuleCursor cursorAt(core::Point);   // the owners' answer in pointer routing order
     void onFocus(bool);
     void onApplicationActive(bool);
     void onDisplayChanged();
@@ -640,6 +648,20 @@ struct Application::Impl {
     bool settingsLoaded{}, launchPending{};
     std::unique_ptr<QuitConfirmationOwner> quitConfirmation; // red power button card
     std::unique_ptr<ModuleOwner> clockAutomation;            // the desktop clock's UIA buttons (no drawing, no input)
+    // HUDSourceWatchView's accessibility buttons: one per bound desktop button,
+    // the red power button, the profile card and the two scroll buttons.
+    struct NavigationSlot {
+        enum class Kind : std::uint8_t { entry, quit, profile, scroll };
+        Kind kind{};
+        std::vector<std::string> ids; // source button(s) whose hits frame and press it
+        int direction{};              // scroll: -1 up, 1 down
+    };
+    std::unique_ptr<ModuleOwner> navigationAutomation;
+    std::vector<NavigationSlot> navigationSlots;               // rebuilt on content events
+    std::vector<gpu::WatchAppearanceEntry> navigationEntries;  // last bound navigation (titles of saved apps)
+    std::string profileCardRoot;
+    std::vector<std::string> profileCardButtons;
+    std::uint64_t navigationBindingChanges{};
     std::set<std::string, std::less<>> quitButtons;
     bool sessionEnded{};
     std::unique_ptr<LoginItemRegistration> loginItem;

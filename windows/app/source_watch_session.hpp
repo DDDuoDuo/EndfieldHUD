@@ -4,6 +4,7 @@
 #include "core/source_selectable_color.hpp"
 #include "core/source_watch_frame.hpp"
 #include <functional>
+#include <span>
 
 namespace endfield::app {
 namespace source=core::source;
@@ -97,6 +98,17 @@ public:
     // hit test and hit filter as the pointer, without hover, press or stats);
     // used for OLE drop routing, where the pointer events do not arrive.
     std::optional<std::string_view> buttonAt(core::Point)const;
+    // HUDSourceWatchView.updateAccessibility geometry of the current frame, in
+    // logical client coordinates and without allocating: the bounding box of
+    // every hit quad of the given buttons (the profile card has several),
+    // projected through the frame's camera and clipped to the viewport and to
+    // each hit's mask quads; none without a shown frame or a visible hit.
+    std::optional<core::Rect> buttonFrame(std::span<const std::string> buttonIDs)const;
+    // The navigation scroll viewport's projected bounding box, clipped to the
+    // viewport, while the right-side list hides rows; and whether a
+    // scrollDirection(direction) would move it now (the Mac scroll buttons).
+    std::optional<core::Rect> scrollFrame()const;
+    bool canScroll(int direction)const noexcept;
     std::optional<std::string_view> pressed()const noexcept;
     const std::map<std::string,std::uint64_t,std::less<>>& actions()const noexcept;
     const WatchSessionFrame* currentFrame()const noexcept;

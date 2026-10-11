@@ -90,6 +90,9 @@ struct KeyEvent {
     bool system{}, extended{}, alt{}, previouslyDown{};
 };
 enum class SessionEnd { query, ending, cancelled };
+// The cursor the owner wants at a client point (WM_SETCURSOR): the borrowed
+// source cursor (setCursor), or the system I-beam over an open text editor.
+enum class OverlayCursor : std::uint8_t { source, text };
 struct NativeMessage {
     void* window{};
     std::uint32_t message{};
@@ -128,6 +131,12 @@ struct OverlayCallbacks {
     // LRESULT to return (e.g. UiaReturnRawElementProvider); none falls back
     // to default handling. May arrive before the first frame or while hidden.
     std::function<std::optional<std::intptr_t>(const NativeMessage&)> getObject;
+    // WM_SETCURSOR over this window's own client area while it owns the
+    // cursor (visible, enabled, active, focused, foreground; no menu,
+    // size/move loop or suspension): which cursor to show at that signed
+    // logical client point. Called on every cursor update, so it must not
+    // allocate or change state. Absent: always the source cursor.
+    std::function<OverlayCursor(double x, double y)> cursorAt;
 };
 struct OverlayOptions {
     std::wstring title{L"EndfieldHUD"};
@@ -141,7 +150,7 @@ struct OverlayOptions {
 };
 struct OverlayHostStats {
     std::uint64_t frameRequests{}, framePosts{}, frames{}, timerArms{}, timerWakes{},
-        timerCancels{}, pointerMessages{}, cursorSets{}, cursorReleases{};
+        timerCancels{}, pointerMessages{}, cursorSets{}, cursorReleases{}, textCursorSets{};
     bool timerArmed{}, framePending{}, visible{}, focused{};
     std::uint64_t externalWakes{};
 };
@@ -172,8 +181,15 @@ public:
     void invalidate(); // many requests -> one deferred frame; hidden requests do nothing
     // Borrowed HCURSOR; never destroyed, hidden, or periodically reasserted.
     // Set only in WM_SETCURSOR for this active window's own client hit. Child
-    // controls/nonclient regions/default IME routing remain native.
+    // controls/nonclient regions/default IME routing remain native. Where
+    // OverlayCallbacks::cursorAt answers text, the shared system I-beam
+    // (IDC_IBEAM) is shown instead through the same path.
     void setCursor(void* cursor);
+    // Re-answers WM_SETCURSOR at the current pointer position through that
+    // same path, only while this window already owns the cursor (e.g. after
+    // a click opened or closed an editor under a still pointer). Event-driven;
+    // never called from a timer or frame.
+    void refreshCursor();
     void capturePointer(bool capture); // own HWND only, released on hide/focus loss
     void suspendCursor(bool suspended); // bracket native dialogs/OLE drag sessions
     // false means stop/destroy/WM_QUIT. INFINITE is the ordinary idle wait.

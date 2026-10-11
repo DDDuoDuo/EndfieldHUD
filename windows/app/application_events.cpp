@@ -24,7 +24,31 @@ OverlayCallbacks Application::Impl::callbacks(){
     value.frame=[this](double t){onFrame(t);};
     value.sessionEnding=[this](SessionEnd phase,std::uint32_t reason){sessionEnding(phase,reason);};
     value.getObject=[this](const NativeMessage&m){return automationObject(m);};
+    value.cursorAt=[this](double x,double y){return onCursor({x,y});};
     return value;
+}
+
+// SystemHUDView.cursorUpdate -> HUDSourceWatchView.refreshSourceCursor: the
+// source cursor everywhere, the I-beam over an open projected text editor
+// (HUDProjectedTextView.projectedCursor). Answered from WM_SETCURSOR, so
+// nothing here allocates or changes state.
+OverlayCursor Application::Impl::onCursor(core::Point p){
+    if(!ready||stopping||!session->inputEnabled())return OverlayCursor::source;
+    // The Projection workspace shares this window and keeps the source cursor.
+    if(projection&&projection->presented())return OverlayCursor::source;
+    return cursorAt(p)==ModuleCursor::text?OverlayCursor::text:OverlayCursor::source;
+}
+// The pointer routing order: an exclusive capture (modal card or menu) answers
+// for every point; otherwise the first owner of the pointer chain that answers
+// or covers the point decides (a pinned Notes card above an editor keeps the
+// source cursor).
+ModuleCursor Application::Impl::cursorAt(core::Point p){
+    using C=ModuleRegistry::Chain;std::optional<ModuleCursor> chosen;
+    if(registry.first(C::pointerCapture,[&](ModuleOwner&o,const ModuleRouting&){if(!o.capturesPointer())return false;chosen=o.cursorAt(p);return true;},"cursor"))
+        return chosen.value_or(ModuleCursor::source);
+    chosen.reset();
+    (void)registry.first(C::pointer,[&](ModuleOwner&o,const ModuleRouting&){chosen=o.cursorAt(p);return chosen.has_value()||o.covers(p);},"cursor");
+    return chosen.value_or(ModuleCursor::source);
 }
 
 void Application::Impl::onResize(const ClientMetrics&value){
@@ -45,6 +69,8 @@ bool Application::Impl::routePointer(ModuleOwner&owner,const PointerPolicy&polic
         if(e.kind==PointerKind::move)session->pointerMove(p,time);
         if(!policy.leftButtonCaptureOnly||e.button==PointerButton::left){if(e.kind==PointerKind::down||e.kind==PointerKind::doubleClick)host.capturePointer(true);if(e.kind==PointerKind::up)host.capturePointer(false);}
         refresh(time);
+        // A press may open or close a projected editor under a still pointer.
+        if(e.kind!=PointerKind::move)host.refreshCursor();
     }
     return handled;
 }
@@ -110,8 +136,9 @@ bool Application::Impl::onKey(const KeyEvent&e){
     if(ready&&projection&&projection->presented()){if(projectionHandoff.acceptsInput()){if(projection->key(e,now()))automationChanged();refresh(now());}return true;}
     if(ready){
         using C=ModuleRegistry::Chain;
-        if(registry.first(C::keyCapture,[&](ModuleOwner&o,const ModuleRouting&){return session->inputEnabled()&&o.capturesKeys()&&o.key(e,now());},"key")){automationChanged();refresh(now());return true;}
-        if(registry.first(C::key,[&](ModuleOwner&o,const ModuleRouting&){return session->inputEnabled()&&o.key(e,now());},"key")){automationChanged();refresh(now());return true;}
+        // A handled key may open or close an editor (Return, Escape) under the pointer.
+        if(registry.first(C::keyCapture,[&](ModuleOwner&o,const ModuleRouting&){return session->inputEnabled()&&o.capturesKeys()&&o.key(e,now());},"key")){automationChanged();refresh(now());if(e.kind==KeyKind::down)host.refreshCursor();return true;}
+        if(registry.first(C::key,[&](ModuleOwner&o,const ModuleRouting&){return session->inputEnabled()&&o.key(e,now());},"key")){automationChanged();refresh(now());if(e.kind==KeyKind::down)host.refreshCursor();return true;}
     }
     if(ready&&e.kind==KeyKind::down&&e.value==VK_ESCAPE){if(!production())std::cout<<"Preview unhandled Escape"<<std::endl;perform(lifecycle.close(),now());return true;}
     return false;

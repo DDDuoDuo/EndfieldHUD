@@ -18,21 +18,6 @@ namespace {
 constexpr std::string_view centerLogoTexture = "desktop.center-logo";
 constexpr std::array<std::string_view, 5> clockStyles{"digital", "split", "dial", "rail", "stacked"};
 constexpr std::string_view clockWorkModeID = "clock:workMode", clockStylePrefix = "clock:style:";
-// The desktop clock's accessibility buttons (SystemHUDView.layoutClockControls:
-// HUDClockActionButton over the projected status panel) as UI Automation
-// peers under the HUD root. It draws nothing and routes no input.
-class ClockAutomationOwner final : public ModuleOwner {
-public:
-    explicit ClockAutomationOwner(gpu::ScreenReaderPeerSource source) : peers_(std::move(source)) {}
-    std::string_view name() const noexcept override { return "desktopClock"; }
-    bool automationRefresh(IRawElementProviderFragmentRoot* root) override { return peers_.refresh(root); }
-    std::size_t automationCount() const override { return peers_.size(); }
-    long automationChild(std::size_t i, IRawElementProviderFragment** out) const override { return peers_.child(i, out); }
-    long automationFromPoint(double x, double y, IRawElementProviderFragment** out) const override { return peers_.fromPoint(x, y, out); }
-    void automationDisconnect() noexcept override { peers_.disconnect(); }
-private:
-    gpu::NativeScreenReaderPeers peers_;
-};
 }
 
 // --- Center logo ---------------------------------------------------------------
@@ -223,25 +208,37 @@ void Application::Impl::selectClockStyle(unsigned index, double time) {
 // style once per gesture (HUDClockStyleArtwork.scroll); wheel input over the
 // clock never reaches navigation.
 // layoutClockControls: "Work Mode" over the clock body and "Clock style N"
-// over each indicator (the selected one reports "Selected"), shown only while
-// the clock accepts input. Presses run the same routes as clicks.
+// over each indicator (the selected one's accessibilityValue is "Selected"),
+// shown only while the clock accepts input. Presses run the same routes as
+// clicks. The buttons are UI Automation peers of a host owner that draws
+// nothing and routes no input (app/hud_button_automation.hpp).
 void Application::Impl::constructClockAutomation() {
     if (!chrome) return;
-    gpu::ScreenReaderPeerSource peerSource;
-    peerSource.peers = [this] {
-        std::vector<gpu::ScreenReaderPeer> out;
-        if (!clockAcceptsInput() || !chrome->statusWorld()) return out;
+    HudButtonSource buttons;
+    buttons.name = "desktopClock";
+    buttons.peers = [this](std::vector<HudButtonPeer>& out) {
+        if (!clockAcceptsInput() || !chrome->statusWorld()) return;
         const auto l = watchAppearance.language == core::Language::system ? core::Language::english : watchAppearance.language;
-        out.push_back({std::string(clockWorkModeID), core::localized("Work Mode", "工作模式", l), {}, {}, core::Rect{0, 0, 340, 122}});
+        HudButtonPeer work;
+        work.id = std::string(clockWorkModeID); work.name = core::localized("Work Mode", "工作模式", l); work.slot = 0;
+        out.push_back(std::move(work));
         const auto selected = static_cast<unsigned>(chromeContent.style);
-        for (unsigned n = 0; n < clockStyles.size(); ++n)
-            out.push_back({std::string(clockStylePrefix) + std::to_string(n), core::localized("Clock style", "时钟样式", l) + " " + std::to_string(n + 1),
-                n == selected ? core::localized("Selected", "已选择", l) : std::string{}, {}, source::DesktopClockArtworkPlan::indicatorRect(n)});
-        return out;
+        for (unsigned n = 0; n < clockStyles.size(); ++n) {
+            HudButtonPeer style;
+            style.id = std::string(clockStylePrefix) + std::to_string(n);
+            style.name = core::localized("Clock style", "时钟样式", l) + " " + std::to_string(n + 1);
+            style.hasValue = true;
+            style.value = n == selected ? core::localized("Selected", "已选择", l) : std::string{};
+            style.slot = n + 1;
+            out.push_back(std::move(style));
+        }
     };
-    peerSource.toScreen = [this](core::Rect local) -> std::optional<core::Rect> {
+    // HUDClockStyleArtwork.projectedBounds of the body or an indicator through
+    // the status panel (logical client coordinates).
+    buttons.frame = [this](const HudButtonPeer& peer) -> std::optional<core::Rect> {
         const auto world = chrome->statusWorld();
-        if (!world || !metrics.pixelWidth || !metrics.pixelHeight) return std::nullopt;
+        if (!world || !metrics.pixelWidth || !metrics.pixelHeight || peer.slot > clockStyles.size()) return std::nullopt;
+        const auto local = peer.slot == 0 ? core::Rect{0, 0, 340, 122} : source::DesktopClockArtworkPlan::indicatorRect(peer.slot - 1);
         const auto plane = core::Projection::viewport(gpu::layerViewportProjection(metrics.pixelWidth, metrics.pixelHeight) * core::Matrix4::scale(metrics.scale, metrics.scale) * *world,
             metrics.pixelWidth, metrics.pixelHeight);
         double x0 = INFINITY, y0 = INFINITY, x1 = -INFINITY, y1 = -INFINITY;
@@ -251,24 +248,25 @@ void Application::Impl::constructClockAutomation() {
             x0 = std::min(x0, p->x); y0 = std::min(y0, p->y); x1 = std::max(x1, p->x); y1 = std::max(y1, p->y);
         }
         const double s = metrics.scale;
-        return gpu::screenReaderClientToScreen(host.hwnd(), s, core::Rect{x0 / s, y0 / s, (x1 - x0) / s, (y1 - y0) / s});
+        return core::Rect{x0 / s, y0 / s, (x1 - x0) / s, (y1 - y0) / s};
     };
-    peerSource.invoke = [this](std::string_view id) {
+    buttons.enabled = [this](const HudButtonPeer&) { return clockAcceptsInput(); };
+    buttons.invoke = [this](const HudButtonPeer& peer) {
         if (!clockAcceptsInput()) return false;
         const auto time = areaClock();
-        if (id == clockWorkModeID) {
+        if (peer.slot == 0) {
             const auto effects = lifecycle.selectModule(core::Module::workMode);
             if (effects.empty()) selectModule(core::Module::workMode, time); else perform(effects, time);
             return true;
         }
-        if (!id.starts_with(clockStylePrefix)) return false;
-        const auto digit = id.substr(clockStylePrefix.size());
-        if (digit.size() != 1 || digit[0] < '0' || digit[0] > '4') return false;
-        selectClockStyle(static_cast<unsigned>(digit[0] - '0'), time);
+        if (peer.slot > clockStyles.size()) return false;
+        selectClockStyle(peer.slot - 1, time);
         return true;
     };
-    peerSource.changed = [this] { automationChanged(); refresh(now()); };
-    clockAutomation = std::make_unique<ClockAutomationOwner>(std::move(peerSource));
+    buttons.changed = [this] { automationChanged(); refresh(now()); };
+    buttons.window = host.hwnd();
+    buttons.scale = [this] { return metrics.scale; };
+    clockAutomation = std::make_unique<HudButtonAutomation>(std::move(buttons));
     registry.add(*clockAutomation);
 }
 bool Application::Impl::clockWheel(const WheelEvent& e, double time) {

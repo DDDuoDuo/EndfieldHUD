@@ -191,6 +191,7 @@ public:
     void coverage(app::ModuleCoverage&c)override{++audit_->coverage;inner_->coverage(c);}
     bool drop(std::span<const std::string>paths,core::Point p,double t)override{return inner_->drop(paths,p,t);}
     bool dropHover(std::span<const std::string>paths,std::optional<core::Point>p,double t)override{return inner_->dropHover(paths,p,t);}
+    std::optional<app::ModuleCursor>cursorAt(core::Point p)const override{return inner_->cursorAt(p);}
     bool automationRefresh(IRawElementProviderFragmentRoot*root)override{return inner_->automationRefresh(root);}
     std::size_t automationCount()const override{return inner_->automationCount();}
     long automationChild(std::size_t i,IRawElementProviderFragment**out)const override{return inner_->automationChild(i,out);}

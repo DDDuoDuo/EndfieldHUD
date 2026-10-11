@@ -256,6 +256,8 @@ void nativeWindow() {
         if(event.message==WM_SETTINGCHANGE){++settingChanges;if(event.lParam)check(std::wstring(reinterpret_cast<const wchar_t*>(event.lParam))==L"intl","Named system setting payload reaches owner synchronously");return 0;}
         if(event.message!=WM_APP+21)return {};check(event.wParam==123,"Private owner notification preserves generation token");++privateMessages;return 45;};
     callbacks.displayChanged=[&]{++displayChanges;};
+    unsigned cursorQueries=0;
+    callbacks.cursorAt=[&](double,double){++cursorQueries;return OverlayCursor::text;};
     const auto cursorBefore = GetCursor();
     host.create({L"Endfield owned hidden host fixture", 0, 0, 128, 96, nullptr}, callbacks);
     const auto window = static_cast<HWND>(host.hwnd());
@@ -349,6 +351,17 @@ void nativeWindow() {
     check(!IsWindowVisible(window), "DPI and resize do not show test window");
     host.setCursor(LoadCursorW(nullptr, IDC_CROSS));
     host.suspendCursor(true); host.suspendCursor(false);
+    // The single cursor path answers only for a visible, focused foreground
+    // owner: a hidden window never asks for (or installs) the I-beam, and
+    // refreshCursor re-answers only a cursor the window already shows.
+    SendMessageW(window, WM_SETCURSOR, reinterpret_cast<WPARAM>(window), MAKELPARAM(HTCLIENT, WM_MOUSEMOVE));
+    host.refreshCursor();
+    check(cursorQueries == 0 && host.stats().cursorSets == 0 && host.stats().textCursorSets == 0,
+        "a hidden owner never asks which cursor to show and never installs the I-beam");
+    // The host declined, so the default window procedure answered this
+    // synthetic WM_SETCURSOR with the class arrow; leave this thread's
+    // cursor as the fixture found it.
+    SetCursor(cursorBefore);
     SendMessageW(window, WM_ENTERMENULOOP, 0, 0);
     SendMessageW(window, WM_EXITMENULOOP, 0, 0);
     SendMessageW(window, WM_ACTIVATEAPP, FALSE, 0);

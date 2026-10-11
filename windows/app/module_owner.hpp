@@ -38,6 +38,8 @@
 //                                       one OLE drop target; copy effect only)
 //   dropHover(paths, point, time)       drag feedback over that module while a
 //                                       file drag is in progress (nullopt ends it)
+//   cursorAt(point)                     pointer cursor over an open projected
+//                                       text editor (the I-beam; below)
 //   automationRefresh / automationCount / automationChild /
 //   automationFromPoint / automationDisconnect / automationModule
 //                                       UI Automation fragments under the HUD
@@ -168,6 +170,11 @@ struct ModuleAppearance {
     std::array<double, 3> accentSRGB{}; // configured accentHex
     bool reduceMotion{}, ambient{true}, lowPower{};
     bool operator==(const ModuleAppearance&) const = default;
+};
+// The pointer cursor an owner asks for (ModuleOwner::cursorAt).
+enum class ModuleCursor : std::uint8_t {
+    source, // the original Endfield cursor (SourceCursor)
+    text    // the system I-beam over an open projected text editor
 };
 struct ModuleFrame {
     const core::Matrix4& center;
@@ -310,6 +317,29 @@ public:
     // or navigation).
     virtual bool dropHover(std::span<const std::string>, std::optional<core::Point>, double) { return true; }
 
+    // Pointer cursor (Mac HUDSourceWatchView.refreshSourceCursor): the HUD
+    // shows the original source cursor everywhere except over an OPEN
+    // projected text editor, where HUDProjectedTextView.projectedCursor
+    // answers the system I-beam (the editor must be editable or selectable
+    // and the logical client point must fall inside its projected field;
+    // the Mac has no resize or other per-control cursors). The host asks
+    // from WM_SETCURSOR (each pointer move over the client area, and once
+    // after a handled pointer or key event so an editor opened or closed
+    // under a still pointer updates), in the pointer routing order:
+    // an owner whose capturesPointer() is true answers for every point;
+    // otherwise the first owner of the pointer chain that answers, or that
+    // covers() the point, decides; nothing answering keeps the source
+    // cursor. It must NOT allocate, change state, call the OS or the
+    // clock: compare the point with the open field's projected quad (e.g.
+    // the four corners of its canvas rect through the module plane).
+    // nullopt: no opinion at this point (the default). Built-in owners whose
+    // previews live in an area forward a preview member
+    //   bool textCursorAt(core::Point logicalClient) const noexcept;
+    // as soon as the preview declares it (NotesPreview, ArchivePreview,
+    // CalendarPreview, WorkModePreview; detected at compile time in
+    // app/application_modules.cpp, no host edit needed).
+    virtual std::optional<ModuleCursor> cursorAt(core::Point) const { return std::nullopt; }
+
     // UI Automation (UIA). The HUD window answers WM_GETOBJECT with one root
     // provider (IRawElementProviderFragmentRoot, hosted by the HWND). Every
     // enabled owner with fragments appears under it as one group, in
@@ -322,6 +352,15 @@ public:
     // AddRef'd fragments (HRESULTs as long; screen pixels for the hit test,
     // null out for none). automationDisconnect disconnects every fragment
     // (HUD hidden, owner removed); the next refresh may connect new ones.
+    // Hit tests ask owners whose capturesPointer() is true first (a modal
+    // card or menu hides the controls beneath it), then the others in
+    // reverse registration order. Keyboard focus: the root's and the
+    // groups' GetFocus return the fragment that reports
+    // UIA_HasKeyboardFocusPropertyId true (modal owners first, a bounded
+    // walk of each owner's fragments and their children); an owner raises
+    // UIA_AutomationFocusChangedEventId on its own fragment when its focus
+    // moves while UiaClientsAreListening() (the host never raises it for
+    // an owner, so nothing is announced twice).
     virtual bool automationRefresh(IRawElementProviderFragmentRoot*) { return false; }
     virtual std::size_t automationCount() const { return 0; }
     virtual long automationChild(std::size_t, IRawElementProviderFragment** out) const { if (out) *out = nullptr; return 0x80070057L; } // E_INVALIDARG

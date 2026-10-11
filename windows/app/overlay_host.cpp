@@ -149,6 +149,9 @@ struct OverlayHost::Impl {
     OverlayHostStats counts;
     std::exception_ptr callbackError;
     HCURSOR cursor{};
+    // The shared system I-beam (never destroyed) and the cursor this host
+    // last installed (either one), so a release never undoes another's.
+    HCURSOR textCursor{LoadCursorW(nullptr, IDC_IBEAM)}, installed{};
     double timerDeadline{}, lastX{}, lastY{};
     bool ready{}, visible{}, minimized{}, focused{}, stopped{}, armed{},
         mouseTracking{}, cursorSuspended{}, cursorOwned{}, appActive{true};
@@ -189,11 +192,35 @@ struct OverlayHost::Impl {
     void releaseCursor() noexcept {
         // Only undo a cursor actually installed by this host, and never replace
         // a text/resize/drag cursor selected subsequently by a native control.
-        if (cursorOwned && cursor && GetCursor() == cursor) {
+        if (cursorOwned && installed && GetCursor() == installed) {
             SetCursor(LoadCursorW(nullptr, IDC_ARROW));
             ++counts.cursorReleases;
         }
         cursorOwned = false;
+        installed = nullptr;
+    }
+    // The one cursor path (WM_SETCURSOR and refreshCursor): while this active,
+    // focused foreground window shows its own client area, install the source
+    // cursor, or the I-beam where the owner reports an open text editor.
+    bool ownsCursorAt(HWND target) const {
+        return (cursor || textCursor) && !cursorSuspended && !menuDepth && !sizeMoveDepth && appActive && focused &&
+            visible && IsWindowVisible(target) && IsWindowEnabled(target) && !stopped &&
+            GetForegroundWindow() == target && GetFocus() == target;
+    }
+    bool applyCursor(HWND target, const std::shared_ptr<OverlayCallbacks>& handlers) {
+        POINT point{};
+        OverlayCursor wanted = OverlayCursor::source;
+        if (handlers && handlers->cursorAt && GetCursorPos(&point) && ScreenToClient(target, &point))
+            wanted = handlers->cursorAt(point.x / client.scale, point.y / client.scale);
+        if (window != target) return false;
+        const HCURSOR chosen = wanted == OverlayCursor::text && textCursor ? textCursor : cursor;
+        if (!chosen) return false;
+        SetCursor(chosen);
+        installed = chosen;
+        cursorOwned = true;
+        ++counts.cursorSets;
+        if (chosen == textCursor) ++counts.textCursorSets;
+        return true;
     }
     void postFrame() {
         ++counts.frameRequests;
@@ -389,15 +416,10 @@ struct OverlayHost::Impl {
         case WM_ENTERSIZEMOVE: ++sizeMoveDepth; releaseCursor(); break;
         case WM_EXITSIZEMOVE: if (sizeMoveDepth) --sizeMoveDepth; break;
         case WM_SETCURSOR:
-            if (cursor && !cursorSuspended && !menuDepth && !sizeMoveDepth && appActive && focused &&
-                visible && IsWindowVisible(target) && IsWindowEnabled(target) && !stopped &&
-                reinterpret_cast<HWND>(w) == target && LOWORD(l) == HTCLIENT && HIWORD(l) != 0 &&
-                GetForegroundWindow() == target && GetFocus() == target) {
-                SetCursor(cursor);
-                cursorOwned = true;
-                ++counts.cursorSets;
+            if (reinterpret_cast<HWND>(w) == target && LOWORD(l) == HTCLIENT && HIWORD(l) != 0 &&
+                ownsCursorAt(target) && applyCursor(target, handlers))
                 return TRUE;
-            }
+            if (window != target) return 0;
             break;
         case WM_CLOSE:
             if (ready && handlers && handlers->closeRequested) handlers->closeRequested();
@@ -587,6 +609,17 @@ void OverlayHost::setCursor(void* cursor) {
     auto& p = *impl_; p.requireThread(); p.rethrow();
     if (p.cursor == cursor) return;
     p.releaseCursor(); p.cursor = static_cast<HCURSOR>(cursor);
+}
+void OverlayHost::refreshCursor() {
+    auto& p = *impl_; p.requireThread(); p.rethrow();
+    // Only a cursor this window already shows is re-answered: the pointer is
+    // over its client area and no other window, control or loop took it.
+    if (!p.window || !p.cursorOwned || !p.installed || GetCursor() != p.installed || !p.ownsCursorAt(p.window)) return;
+    POINT point{};
+    if (!GetCursorPos(&point) || WindowFromPoint(point) != p.window) return;
+    const auto handlers = p.callbacks;
+    (void)p.applyCursor(p.window, handlers);
+    p.rethrow();
 }
 void OverlayHost::suspendCursor(bool suspended) {
     auto& p = *impl_; p.requireThread(); p.rethrow();

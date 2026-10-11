@@ -11,6 +11,11 @@
 // as their parent and fragment root. The Mac exposes the projected AppKit
 // accessibility elements of the HUD the same way: one tree per HUD window.
 //
+// Hit tests and GetFocus ask modal owners (ModuleOwner::capturesPointer)
+// first, then the others in reverse registration order (later owners draw
+// above). GetFocus returns the owner fragment whose HasKeyboardFocus is true
+// (a bounded walk); owners raise their own AutomationFocusChanged events.
+//
 // Content events only: the host calls refresh() after owner calls that
 // reported changed artwork, module selection, opening and closing; nothing is
 // polled and nothing runs per frame. The root is created only when a UIA
@@ -37,7 +42,7 @@ struct HudAutomationSource {
     std::function<std::string(const ModuleOwner&)> name;
 };
 struct HudAutomationStats {
-    std::uint64_t refreshes{}, structureChanges{}, groupsCreated{}, groupsDisconnected{}, rootRequests{}, hitTests{};
+    std::uint64_t refreshes{}, structureChanges{}, groupsCreated{}, groupsDisconnected{}, rootRequests{}, hitTests{}, focusQueries{};
 };
 
 class HudAutomation final {

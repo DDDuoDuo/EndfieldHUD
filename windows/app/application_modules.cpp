@@ -34,6 +34,9 @@
 #include "tools/map_automation.hpp"
 #include "tools/calendar_automation.hpp"
 #include "tools/orbipom_automation.hpp"
+#include <array>
+#include <cmath>
+#include <concepts>
 
 namespace endfield::app {
 namespace source = core::source;
@@ -93,6 +96,42 @@ namespace {
 using Entries = std::span<const gpu::LayerCompositionEntry>;
 bool hasPixels(const ClientMetrics& m) { return m.pixelWidth && m.pixelHeight; }
 
+// ModuleOwner::cursorAt for built-in owners whose previews live in an area:
+// the preview's open-editor hit test, used as soon as the preview declares
+// `bool textCursorAt(core::Point logicalClient) const noexcept`.
+template <class Preview> concept TextCursorPreview = requires(const Preview& preview, core::Point point) {
+    { preview.textCursorAt(point) } -> std::convertible_to<bool>;
+};
+template <class Preview> std::optional<ModuleCursor> previewTextCursor(const Preview& preview, core::Point point) {
+    if constexpr (TextCursorPreview<Preview>) return preview.textCursorAt(point) ? std::optional(ModuleCursor::text) : std::nullopt;
+    else { (void)preview; (void)point; return std::nullopt; }
+}
+// True when a logical client point lies inside the convex quad a canvas rect
+// projects to: its four corners one by one through `project` (canvas rect ->
+// logical client rect; a zero-size rect is that corner). Equivalent to the
+// Mac's unprojected logicalRect.contains for a planar module plane; no
+// allocation.
+template <class Project> bool insideProjectedRect(core::Point point, core::Rect canvas, Project&& project) {
+    if (!std::isfinite(point.x) || !std::isfinite(point.y) || !(canvas.width > 0) || !(canvas.height > 0)) return false;
+    const std::array<core::Point, 4> corners{{{canvas.x, canvas.y}, {canvas.x + canvas.width, canvas.y},
+        {canvas.x + canvas.width, canvas.y + canvas.height}, {canvas.x, canvas.y + canvas.height}}};
+    std::array<core::Point, 4> quad{};
+    for (std::size_t n = 0; n < corners.size(); ++n) {
+        const std::optional<core::Rect> projected = project(core::Rect{corners[n].x, corners[n].y, 0, 0});
+        if (!projected || !std::isfinite(projected->x) || !std::isfinite(projected->y)) return false;
+        quad[n] = {projected->x, projected->y};
+    }
+    double sign = 0;
+    for (std::size_t n = 0; n < quad.size(); ++n) {
+        const auto& a = quad[n]; const auto& b = quad[(n + 1) % quad.size()];
+        const double cross = (b.x - a.x) * (point.y - a.y) - (b.y - a.y) * (point.x - a.x);
+        if (cross == 0) continue;
+        if (sign == 0) sign = cross;
+        else if ((sign > 0) != (cross > 0)) return false;
+    }
+    return sign != 0;
+}
+
 class NotesModule final : public ModuleOwner {
     tools::NotesPreview& n_;
     std::function<double()> clock_;
@@ -137,6 +176,8 @@ public:
     bool message(const NativeMessage& m, double t) override { return n_.message(m, t); }
     void focus(bool v, double) override { n_.focus(v); }
     bool finishEditing(double) override { return n_.finish(); }
+    // HUDNotesInteraction's projected editor (the preview's own hit test).
+    std::optional<ModuleCursor> cursorAt(core::Point p) const override { return previewTextCursor(n_, p); }
 };
 
 class ShelfModule final : public ModuleOwner {
@@ -348,6 +389,16 @@ public:
     bool message(const NativeMessage& m, double t) override { return w_.message(m, t); }
     void focus(bool v, double t) override { w_.focus(v, t); }
     bool finishEditing(double t) override { return w_.finishEditing(false, t); }
+    // HUDWorkModeInteraction: the open duration field is a HUDProjectedTextEditor
+    // over durationEditorRect (the rect its pointer routing also tests).
+    std::optional<ModuleCursor> cursorAt(core::Point p) const override {
+        if constexpr (TextCursorPreview<tools::WorkModePreview>) return previewTextCursor(w_, p);
+        else {
+            if (!w_.editing()) return std::nullopt;
+            const bool inside = insideProjectedRect(p, modules::WorkModePresentation::durationEditorRect(), [this](core::Rect r) { return w_.clientRect(r); });
+            return inside ? std::optional(ModuleCursor::text) : std::nullopt;
+        }
+    }
 };
 
 class BatteryModule final : public ModuleOwner {
@@ -559,6 +610,8 @@ public:
     bool releasesSelection(double t) override { return c_.dismissMenu(false, t); }
     bool finishEditing(double t) override { return c_.dismissMenu(false, t); }
     bool flush(double) override { return !hooks_.flush || hooks_.flush(); }
+    // CalendarFieldTextView editors of the event menu (the preview's own hit test).
+    std::optional<ModuleCursor> cursorAt(core::Point p) const override { return previewTextCursor(c_, p); }
 };
 
 class MapModule final : public ModuleOwner {
@@ -701,6 +754,8 @@ public:
     bool releasesSelection(double t) override { return a_.finishEditing(t); }
     bool finishEditing(double t) override { return a_.finishEditing(t); }
     bool flush(double t) override { return a_.finishEditing(t) && (!service_ || service_->flush()); }
+    // HUDArchiveInteraction's projected title/date/body/category editors.
+    std::optional<ModuleCursor> cursorAt(core::Point p) const override { return previewTextCursor(a_, p); }
 };
 } // namespace
 

@@ -288,10 +288,28 @@ int Application::Impl::runHiddenVerification(){
                     if(module==core::Module::reader&&reader&&cycle==0)
                         peerProbe(core::Module::reader,readerModuleOwner.get(),{{"settings",[&]{return reader->capturesPointer();}},{"menu:close",[&]{return !reader->capturesPointer();}}});
                     if(module==core::Module::workMode&&workMode&&cycle==0){
+                        // The cursor over Work Mode's custom duration field: the I-beam
+                        // while it is open (HUDProjectedTextView.projectedCursor), through
+                        // the owner and the host's WM_SETCURSOR route; the source cursor
+                        // beside it and once it closes.
+                        double start=time+.66;present(start,true);
+                        need(workMode->perform("work:countdown",start)&&workMode->perform("work:custom",start+.005)&&workMode->editing(),"Work Mode opens its custom duration field through its accessible controls");
+                        for(unsigned n=1;n<=6;++n)present(start+.005+double(n)/60,true);
+                        const auto field=workMode->clientRect(endfield::modules::WorkModePresentation::durationEditorRect());
+                        const auto beside=workMode->clientRect({40,150,0,0});
+                        const core::Point center=field?core::Point{field->x+field->width/2,field->y+field->height/2}:core::Point{};
+                        hostCheck(field&&workModeModuleOwner&&workModeModuleOwner->cursorAt(center)==std::optional(ModuleCursor::text),"Work Mode answers the I-beam over its open duration field");
+                        // A pinned Notes card above the field would rightly keep the source cursor.
+                        if(field&&!notes->covers(center))hostCheck(cursorAt(center)==ModuleCursor::text,"The host's cursor route shows the I-beam over the open duration field");
+                        hostCheck(beside&&!workModeModuleOwner->cursorAt({beside->x,beside->y})&&cursorAt({beside->x,beside->y})==ModuleCursor::source,"The source cursor stays beside the open field");
+                        need(workMode->finishEditing(false,start+.12)&&!workMode->editing(),"Cancelling closes the duration field");
+                        present(start+.13,true);
+                        hostCheck(!workModeModuleOwner->cursorAt(center)&&cursorAt(center)==ModuleCursor::source,"Closing the field restores the source cursor");
+                        start+=.14;
                         // Drive the host's one Work Mode controller through its accessible
                         // controls so areas observing it (Personal Profile lifetime hours)
                         // receive real checkpoints in hidden coverage.
-                        const double start=time+.66;present(start,true);
+                        present(start,true);
                         need(workMode->perform("work:stopwatch",start)&&workMode->perform("work:start",start+.01),"Work Mode starts a stopwatch through its accessible controls");
                         for(unsigned n=1;n<=30;++n)present(start+.01+double(n)/60,true);
                         const double stop=start+.6;
@@ -387,6 +405,62 @@ int Application::Impl::runHiddenVerification(){
                 groupProbe(core::Module::nowPlaying,areaOwner("nowPlaying"),std::size_t{6});
                 groupProbe(core::Module::account,areaOwner("account"),std::nullopt);
                 groupProbe(core::Module::profile,areaOwner("profile"),std::nullopt);
+                // Keyboard focus under the real root (GetFocus): the open Notes
+                // editor is the focused element of the root and of its group;
+                // finishing it leaves no Notes element focused.
+                if(notesModuleOwner&&registry.enabled(*notesModuleOwner)){
+                    selectModule(core::Module::notes,time);for(unsigned frame=0;frame<40;++frame)present(time+double(frame)/60,true);time+=1;
+                    std::vector<gpu::NotesAutomationElement>elements;notes->automationElements(elements);std::string edit;
+                    for(const auto&e:elements)if(e.enabled&&e.id.starts_with("note:")&&e.id.ends_with(":edit")){edit=e.id;break;}
+                    hostCheck(!edit.empty()&&notes->perform(edit,time),"A Notes text card opens its editor through its accessible Edit action");
+                    for(unsigned frame=1;frame<=20;++frame)present(time+double(frame)/60,true);time+=.5;
+                    HudAutomation probe(host.hwnd(),automationSource());(void)probe.refresh();
+                    ComPtr<IRawElementProviderFragment>focusedRoot,focusedGroup;ComPtr<IRawElementProviderFragmentRoot>groupRoot;
+                    const auto group=findGroup(probe,moduleCaption("notes",watchAppearance.language,"notes"));
+                    hostCheck(SUCCEEDED(probe.root()->GetFocus(&focusedRoot))&&focusedRoot&&textProperty(focusedRoot.Get(),UIA_AutomationIdPropertyId).starts_with("notes:editor:"),
+                        "The HUD root's GetFocus returns the open Notes editor");
+                    hostCheck(group&&SUCCEEDED(group.As(&groupRoot))&&SUCCEEDED(groupRoot->GetFocus(&focusedGroup))&&same(focusedGroup.Get(),focusedRoot.Get()),
+                        "The Notes group's GetFocus returns the same editor");
+                    hostCheck(notes->finish(),"The Notes editor finishes");present(time,true);time+=.5;(void)probe.refresh();
+                    ComPtr<IRawElementProviderFragment>afterwards;
+                    hostCheck(SUCCEEDED(probe.root()->GetFocus(&afterwards))&&(!afterwards||!textProperty(afterwards.Get(),UIA_AutomationIdPropertyId).starts_with("notes:editor:")),
+                        "No Notes editor holds the focus once it finished");
+                    probe.disconnectOwners();probe.shutdown();
+                }
+                // The source navigation's accessibility buttons (HUDSourceWatchView):
+                // bound entries carry their titles and the selected module the
+                // value Selected, the red power button is listed, the root's hit
+                // test reaches an entry, and Scroll modules down scrolls like the
+                // Mac scrollDesktopNavigation (with source input enabled, restored afterwards).
+                if(navigationAutomation&&registry.enabled(*navigationAutomation)){
+                    selectModule(core::Module::notes,time);session->setScrollPosition(1,time);for(unsigned frame=0;frame<40;++frame)present(time+double(frame)/60,true);time+=1;
+                    const bool inputBefore=session->inputEnabled();session->setInputEnabled(true,time);present(time,true);
+                    HudAutomation probe(host.hwnd(),automationSource());(void)probe.refresh();
+                    const auto notesTitle=moduleCaption("notes",watchAppearance.language,"notes");
+                    const auto selectedText=core::localized("Selected","已选择",watchAppearance.language==core::Language::system?core::Language::english:watchAppearance.language);
+                    ComPtr<IRawElementProviderFragment>notesEntry,quitButton,scrollUp,scrollDown;std::size_t selectedEntries{};
+                    for(std::size_t n=0;n<navigationAutomation->automationCount();++n){ComPtr<IRawElementProviderFragment>f;
+                        if(FAILED(navigationAutomation->automationChild(n,&f))||!f)continue;
+                        const auto id=textProperty(f.Get(),UIA_AutomationIdPropertyId);const auto value=textProperty(f.Get(),UIA_ValueValuePropertyId);
+                        if(value==selectedText)++selectedEntries;
+                        if(textProperty(f.Get(),UIA_NamePropertyId)==notesTitle&&id.starts_with("navigation:")&&!notesEntry)notesEntry=f;
+                        if(id.starts_with("navigation:quit:"))quitButton=f;if(id=="navigation:scrollUp")scrollUp=f;if(id=="navigation:scrollDown")scrollDown=f;}
+                    hostCheck(notesEntry&&selectedEntries==1&&textProperty(notesEntry.Get(),UIA_ValueValuePropertyId)==selectedText,
+                        "The source navigation lists the selected Notes entry, the only one valued Selected");
+                    hostCheck(quitButton!=nullptr,"The source navigation lists the red power button");
+                    UiaRect r{};ComPtr<IRawElementProviderFragment>found;if(notesEntry)(void)notesEntry->get_BoundingRectangle(&r);
+                    hostCheck(r.width>0&&r.height>0&&SUCCEEDED(probe.root()->ElementProviderFromPoint(r.left+r.width/2,r.top+r.height/2,&found))&&same(found.Get(),notesEntry.Get()),
+                        "The root's hit test finds the Notes navigation entry");
+                    const auto enabled=[&](const ComPtr<IRawElementProviderFragment>&f){ComPtr<IRawElementProviderSimple>simple;VARIANT v;VariantInit(&v);
+                        const bool on=f&&SUCCEEDED(f.As(&simple))&&SUCCEEDED(simple->GetPropertyValue(UIA_IsEnabledPropertyId,&v))&&v.vt==VT_BOOL&&v.boolVal==VARIANT_TRUE;VariantClear(&v);return on;};
+                    hostCheck(scrollUp&&scrollDown&&!enabled(scrollUp)&&enabled(scrollDown),"At the top only Scroll modules down is enabled");
+                    const double before=session->scrollPosition();ComPtr<IInvokeProvider>invoke;
+                    hostCheck(scrollDown&&SUCCEEDED(scrollDown.As(&invoke))&&invoke->Invoke()==S_OK&&session->scrollPosition()<before-1e-9,"Scroll modules down scrolls the navigation like the Mac button");
+                    for(unsigned frame=1;frame<=20;++frame)present(time+double(frame)/60,true);time+=.5;(void)probe.refresh();
+                    hostCheck(enabled(scrollUp),"After scrolling, Scroll modules up is enabled");
+                    session->setScrollPosition(1,time);session->setInputEnabled(inputBefore,time);present(time,true);time+=.5;
+                    probe.disconnectOwners();hostCheck(navigationAutomation->automationCount()==0,"Concealing disconnects the navigation buttons");probe.shutdown();
+                }
                 // Map, Calendar and the minigame (the Reader's ran in cycle 0).
                 const auto month=calendar?calendar->view().month():endfield::modules::CalendarDay{};
                 peerProbe(core::Module::map,mapModuleOwner.get(),{{"map:reset",[&]{return map->state().viewport().zoom==endfield::modules::MapViewport::defaultZoom;}}});
@@ -465,8 +539,8 @@ int Application::Impl::runHiddenVerification(){
                             ComPtr<IRawElementProviderFragment>style;std::string selected;
                             for(std::size_t n=0;n<clockAutomation->automationCount();++n){ComPtr<IRawElementProviderFragment>f;
                                 if(SUCCEEDED(clockAutomation->automationChild(n,&f))&&f){const auto id=textProperty(f.Get(),UIA_AutomationIdPropertyId);
-                                    if(id=="clock:style:2")style=f;if(!textProperty(f.Get(),UIA_HelpTextPropertyId).empty())selected=id;}}
-                            hostCheck(clockAutomation->automationCount()==6&&selected=="clock:style:4","The clock lists Work Mode and five style buttons; the selected style reports Selected");
+                                    if(id=="clock:style:2")style=f;if(!textProperty(f.Get(),UIA_ValueValuePropertyId).empty())selected=id;}}
+                            hostCheck(clockAutomation->automationCount()==6&&selected=="clock:style:4","The clock lists Work Mode and five style buttons; the selected style's value is Selected");
                             ComPtr<IInvokeProvider>invoke;
                             hostCheck(style&&SUCCEEDED(style.As(&invoke))&&invoke->Invoke()==S_OK&&settingsUI->controller().committed().string("clockStyle")=="dial","Invoking a clock style button selects that style");
                             present(time,true);time+=.1;probe.disconnectOwners();hostCheck(clockAutomation->automationCount()==0,"Concealing disconnects the clock buttons");probe.shutdown();}

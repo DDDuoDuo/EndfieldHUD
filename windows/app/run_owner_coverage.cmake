@@ -43,8 +43,10 @@ if(NOT modules EQUAL 54 OR NOT lifecycle EQUAL CHECKS)
   message(FATAL_ERROR "Owner coverage incomplete: ${modules} module results, ${lifecycle} lifecycle checks")
 endif()
 # Host integration: the UI Automation root over every module group and the
-# local peers, the Power entry, area services, the center logo, the clock,
-# the restart handoff and the drop route (HOST_CHECKS: the expected minimum).
+# local peers, keyboard focus (GetFocus), the source navigation buttons, the
+# Power entry, area services, the center logo, the clock, the I-beam cursor
+# route, the restart handoff and the drop route (HOST_CHECKS: the expected
+# minimum).
 string(JSON host_checks GET "${report}" hostIntegrationChecks)
 if(NOT HOST_CHECKS)
   set(HOST_CHECKS 7)
