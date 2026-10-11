@@ -306,6 +306,12 @@ public:
         }
     }
     void coverage(app::ModuleCoverage& step) override;
+    // Pointer cursor (HUDSourceWatchView.refreshSourceCursor ->
+    // HUDProjectedTextView.projectedCursor): the system I-beam over the open
+    // projected profile field, no opinion elsewhere. No allocation or state.
+    std::optional<app::ModuleCursor> cursorAt(core::Point p) const override {
+        return owner_->textCursorAt(p) ? std::optional(app::ModuleCursor::text) : std::nullopt;
+    }
 
     // UI Automation (HUDPersonalProfileInteraction.layoutAccessibility): one
     // fragment per projected action and slider under the profile group.
@@ -621,6 +627,14 @@ void ProfileArea::coverageModule(app::ModuleCoverage& step) {
             SysFreeString(draft);
             draft = nullptr;
             const auto view = [&] { const auto* page = owner_->page(); return page ? page->editingView() : std::nullopt; };
+            // The pointer cursor over the open field (projectedCursor): the
+            // I-beam inside its projected rect, the source cursor beside it.
+            const auto opened = view();
+            const auto field = opened ? owner_->clientRect(opened->rect) : std::nullopt;
+            const core::Point center = field ? core::Point{field->x + field->width / 2, field->y + field->height / 2} : core::Point{};
+            const auto beside = opened ? owner_->clientRect({opened->rect.x + opened->rect.width / 2, opened->rect.y >= 12 ? opened->rect.y - 8 : opened->rect.y + opened->rect.height + 8, 0, 0}) : std::nullopt;
+            step.check(field && field->width > 0 && cursorAt(center) == std::optional(app::ModuleCursor::text), "The open profile field answers the I-beam over its projected rect");
+            step.check(beside && !cursorAt({beside->x, beside->y}), "Beside the open field the profile area keeps the source cursor");
             step.check(value && SUCCEEDED(value->SetValue(L"Endmin 管理员")) && view() && view()->text == "Endmin \xe7\xae\xa1\xe7\x90\x86\xe5\x91\x98",
                        "A Value write replaces the draft through the field's document");
             step.check(!automation.refresh() && SUCCEEDED(value->get_Value(&draft)) && draft && std::wstring_view(draft) == L"Endmin 管理员",
@@ -628,6 +642,7 @@ void ProfileArea::coverageModule(app::ModuleCoverage& step) {
             SysFreeString(draft);
             step.check(owner_->page()->finishEditing(false, t) && !owner_->page()->editing() && owner_->state()->profile().name == "Endministrator",
                        "Discarding the field keeps the stored name");
+            step.check(!cursorAt(center), "Closing the field restores the source cursor");
             step.check(automation.refresh() && !uiaPeer(automation, "profile:editor:name") && value->SetValue(L"x") == UIA_E_ELEMENTNOTAVAILABLE,
                        "The closed field's peer is gone");
             if (owner_->state()->popover()) step.check(owner_->perform("profile:popoverClose", t), "The identity popover closes");
@@ -737,11 +752,25 @@ void ProfileArea::coverageCard(app::ModuleCoverage& step) {
             step.check(checkpoints_ == 0 ? live == 0 : std::abs(lastCheckpoint_ - live) < 1e-6, "A settled Work Mode total has reached the checkpoint listener");
             step.check(std::abs(lifetime - (3600 + live)) < 1e-6, "The profile lifetime is the stored hours plus the Work Mode total, counted once");
         }
+        // The host runs a stopwatch through Work Mode's accessible controls in
+        // cycle 0, before this per-cycle step (application_verification), so
+        // the checks above and the flush below carry real tracked time.
+        if (host_.workMode())
+            step.check(live > 0 && checkpoints_ >= 1 && lastCheckpoint_ > 0 && lifetime > 3600 && std::abs(lastCheckpoint_ - live) < 1e-6,
+                       "The host's Work Mode stopwatch reached the profile lifetime with nonzero tracked time");
         if (!hostProfilePath_.empty())
             step.check(ehud::data::detail::readFile(hostProfilePath_, 1024 * 1024) == hostProfileBefore_,
                        "Only the profile area writes profile.json: the host's Work Mode leaves the data root's record untouched");
     }
-    if (step.cycle != 0) return;
+    if (step.cycle != 0) {
+        // After the cycle-0 flush the stored record keeps the same Work Mode
+        // total counted once: no checkpoint or later frame adds it again.
+        drainUntil(step, [&] { const auto* s = owner_->serviceStatus(); return s && !s->busy && !s->dirty; });
+        const auto stored = ehud::data::ProfileStore(coverageRoot_).value().accumulatedWorkSeconds;
+        step.check(std::abs(stored - (3600 + work_->trackedWorkSeconds(step.time))) < 1e-6 && std::abs(stored - owner_->state()->profile().accumulatedWorkSeconds) < 1e-6,
+                   "Later cycles keep the stored lifetime at the stored hours plus the Work Mode total, counted once");
+        return;
+    }
     // Quit/session-end flush: the live Work Mode total lands once above the
     // stored lifetime and profile.json is drained; a flush never blocks quitting.
     const double now = step.time;

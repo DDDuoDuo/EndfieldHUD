@@ -112,10 +112,33 @@ void fragments(){
     automation.disconnect();check(automation.size()==0&&property(close.Get(),UIA_NamePropertyId,gone)==UIA_E_ELEMENTNOTAVAILABLE,"Disconnecting empties the group");VariantClear(&gone);
     list.clear();check(!automation.refresh()&&automation.size()==0,"An inactive page lists nothing");
 }
+// A host that routes no writes (e.g. a Work Mode owner whose field Value is
+// not wired yet): its Edit and Slider report read-only and refuse writes as
+// an invalid operation, never as a vanished element.
+void readOnlyHost(){
+    std::vector<n::ProfileAutomationControl>list{
+        {"work:editor:duration","Custom countdown: minutes and seconds","Help",{64,184,312,68},Role::edit,0,0,1,1,"25:00"},
+        {"thumbnailZoom","Thumbnail zoom","2×",{10,40,200,17},Role::slider,2,1,20,.1}};
+    n::ProfileAutomationHost host;
+    host.controls=[&]{return list;};
+    host.toScreen=[](c::Rect r)->std::optional<c::Rect>{return r;};
+    n::NativeProfileAutomation automation(std::move(host));
+    check(automation.refresh()&&automation.size()==2,"A read-only host lists its controls");
+    const auto field=peer(automation,"work:editor:duration"),slider=peer(automation,"thumbnailZoom");
+    ComPtr<IValueProvider>value;ComPtr<IRangeValueProvider>range;BOOL fieldReadOnly{FALSE},sliderReadOnly{FALSE};BSTR shown{};
+    check(field&&slider&&SUCCEEDED(field.As(&value))&&SUCCEEDED(slider.As(&range))&&SUCCEEDED(value->get_IsReadOnly(&fieldReadOnly))&&fieldReadOnly&&
+          SUCCEEDED(range->get_IsReadOnly(&sliderReadOnly))&&sliderReadOnly&&SUCCEEDED(value->get_Value(&shown))&&shown&&std::wstring_view(shown)==L"25:00",
+          "Without write routes the Edit and Slider are read-only and still report their values");
+    SysFreeString(shown);
+    check(value->SetValue(L"1:00")==UIA_E_INVALIDOPERATION&&range->SetValue(3)==UIA_E_INVALIDOPERATION&&automation.stats().texts==0&&automation.stats().values==0,
+          "Writes to a read-only peer are invalid operations");
+    automation.disconnect();
+    check(value->get_IsReadOnly(&fieldReadOnly)==UIA_E_ELEMENTNOTAVAILABLE,"A disconnected peer is no longer available");
+}
 }
 int main(){
     Apartment apartment;
-    try{builder();fragments();std::cout<<"PASS "<<checks<<" Personal Profile UI Automation checks\n";return 0;}
+    try{builder();fragments();readOnlyHost();std::cout<<"PASS "<<checks<<" Personal Profile UI Automation checks\n";return 0;}
     catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}
 }
 #else

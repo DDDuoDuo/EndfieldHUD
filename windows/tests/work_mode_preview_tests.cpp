@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <optional>
+#include <string>
 namespace {
 namespace gpu=endfield::native;namespace c=endfield::core;namespace a=endfield::app;namespace t=endfield::tools;namespace m=endfield::modules;using Json=ehud::data::Json;
 unsigned checks{};void check(bool v,const char*message){++checks;if(!v)throw std::runtime_error(message);}
@@ -25,6 +27,19 @@ void run(const std::filesystem::path&shader){Window window;gpu::Renderer rendere
     check(owner.key({a::KeyKind::down,VK_SPACE},false,now),"Space resumes source timer");frame(.1);const auto hiddenStart=now;const auto completion=owner.controller().completionDeadline();owner.setOverlayVisible(false,now);frame(.1);check(!owner.controller().visible()&&!owner.controller().displayDeadline()&&owner.nextWakeTime()==completion&&!owner.requiresFrames(now),"Closed HUD with still-selected Work Mode keeps completion only");owner.setOverlayVisible(true,now);frame(.1);check(owner.controller().visible()&&owner.controller().displayDeadline(),"Reopening uses source visible label deadline");modules.select(c::Module::power,now);frame(.5);frame(.4);check(owner.entries().empty()&&!owner.requiresFrames(now)&&owner.nextWakeTime()&&owner.controller().snapshot(now).phase==m::WorkModePhase::running,"Hidden countdown retains completion only, no UI frames");
     now=hiddenStart+4;owner.wake(now);check(owner.controller().snapshot(now).phase==m::WorkModePhase::completed&&!owner.nextWakeTime()&&focus==std::vector<bool>({true,false}),"Delayed shared wake completes countdown and requests Focus release once");check(!saves.empty()&&std::abs(saves.back()-102)<1e-9,"Absolute source work checkpoint counts exactly two active seconds");
     modules.select(c::Module::workMode,now);frame(.6);frame(.5);click({270,310});frame(.5);click({315,139});type("1:23");check(owner.key({a::KeyKind::down,VK_ESCAPE},false,now)&&!owner.editing()&&owner.controller().snapshot(now).duration==2,"Escape discards duration draft without changing controller");frame();
+    // UI Automation Value of the open field (HUDWorkDurationField's
+    // accessibility value): read the draft, replace it through the editor's
+    // document like typing; Return still validates and commits.
+    check(!owner.editingText()&&!owner.setEditingText("0:05",now),"Without an open field there is no draft to read or write");
+    click({315,139});
+    check(owner.editing()&&owner.editingText()==m::workModeDurationEditText(owner.controller().snapshot(now).duration),"The open field's draft is the current duration's edit text");
+    type("4");check(owner.editingText()==std::optional<std::string>("4"),"Typed text replaces the selected draft and is read back");
+    check(owner.setEditingText("0:09",now)&&owner.editing()&&owner.editingText()==std::optional<std::string>("0:09")&&owner.controller().snapshot(now).duration==2,"A Value write replaces the whole draft and keeps the field open without committing");
+    frame();
+    check(!owner.setEditingText("\xff\xfe",now)&&!owner.setEditingText(std::string(70000,'1'),now)&&owner.editingText()==std::optional<std::string>("0:09"),"Invalid UTF-8 and text past the field capacity are refused unchanged");
+    check(owner.key({a::KeyKind::down,VK_RETURN},false,now)&&!owner.editing()&&owner.controller().snapshot(now).duration==9,"Return commits the written draft like typed min:sec");frame();
+    click({315,139});check(owner.setEditingText("2",now)&&owner.key({a::KeyKind::down,VK_RETURN},false,now)&&!owner.editing()&&owner.controller().snapshot(now).duration==120,"A written whole number commits as minutes");frame();
+    click({315,139});check(owner.setEditingText("0:02",now)&&owner.perform("work:countdown",now)&&!owner.editing()&&owner.controller().snapshot(now).duration==2,"An accessible press commits the written draft first (activateAction)");frame();
     click({315,139});type("2:34");modules.select(c::Module::power,now);frame(.5);frame(.5);check(!owner.editing()&&owner.controller().snapshot(now).duration==2,"Leaving Work Mode cancels unsaved custom input");
     modules.select(c::Module::workMode,now);frame(.5);frame(.5);owner.setFocusStatus("Explicit unsupported platform",false,now);frame();check(std::none_of(owner.state().actions().begin(),owner.state().actions().end(),[](const auto&v){return v.id=="work:focusAccess";}),"Unsupported Focus does not invent a permission action");owner.setFocusStatus("Injected permission needed",true,now);frame();click({220,37});check(permissions==1,"Permission control reaches injected callback only");frame(.3);
     click({280,99});frame(.3);owner.key({a::KeyKind::down,VK_SPACE},false,now);frame(.4);modules.select(c::Module::power,now);frame(.5);frame(.5);check(!owner.nextWakeTime()&&owner.controller().snapshot(now).phase==m::WorkModePhase::running,"Hidden stopwatch has no periodic wake");const auto beforeSleep=owner.controller().snapshot(now).elapsed;owner.setSuspended(true,now);now+=3600;owner.setSuspended(false,now);check(owner.controller().snapshot(now).elapsed>=beforeSleep+3600&&!owner.nextWakeTime(),"Caller continuous clock includes sleep without a second ticker");

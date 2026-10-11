@@ -87,6 +87,11 @@ public:
     // a 400 x 334 canvas rect -> the logical client bounding rect of its
     // projected corners while the page accepts input; none otherwise.
     std::optional<core::Rect>clientRect(core::Rect canvas)const;
+    // HUDProjectedTextView.projectedCursor: true when a logical client point
+    // falls inside the open projected field (unprojected through the module
+    // plane, the same test as its press) while the page accepts input; the
+    // host then shows the system I-beam. Allocates nothing, changes nothing.
+    bool textCursorAt(core::Point logicalClient)const noexcept;
     bool editing()const noexcept;
     std::optional<modules::ProfileField>editingField()const noexcept;
     // The open projected field (the source NSTextView accessibility peer):

@@ -134,7 +134,7 @@ public:
     // clamps into the source range, then adjustSlider commits it.
     IFACEMETHODIMP SetValue(double value)override{
         if(!connected)return UIA_E_ELEMENTNOTAVAILABLE;if(!std::isfinite(value))return E_INVALIDARG;
-        const auto s=state.lock();if(!s||!s->host.setValue)return UIA_E_ELEMENTNOTAVAILABLE;
+        const auto s=state.lock();if(!s)return UIA_E_ELEMENTNOTAVAILABLE;if(!s->host.setValue)return UIA_E_INVALIDOPERATION; // read-only host
         const ComPtr<ProfileAutomationElement>self(this);const std::string id=control.id;++s->statistics.values;
         return s->host.setValue(id,std::min(control.maximum,std::max(control.minimum,value)))?S_OK:UIA_E_INVALIDOPERATION;
     }
@@ -143,7 +143,7 @@ public:
     IFACEMETHODIMP SetValue(LPCWSTR value)override{
         if(!connected)return UIA_E_ELEMENTNOTAVAILABLE;if(!value)return E_INVALIDARG;
         const std::wstring_view view(value);const auto utf8=narrow(view);if(!view.empty()&&utf8.empty())return E_INVALIDARG;
-        const auto s=state.lock();if(!s||!s->host.setText)return UIA_E_ELEMENTNOTAVAILABLE;
+        const auto s=state.lock();if(!s)return UIA_E_ELEMENTNOTAVAILABLE;if(!s->host.setText)return UIA_E_INVALIDOPERATION; // read-only host
         const ComPtr<ProfileAutomationElement>self(this);const std::string id=control.id;++s->statistics.texts;
         return s->host.setText(id,utf8)?S_OK:UIA_E_INVALIDOPERATION;
     }
@@ -151,8 +151,13 @@ public:
         if(!out)return E_POINTER;*out=nullptr;if(!connected)return UIA_E_ELEMENTNOTAVAILABLE;
         *out=SysAllocString(wide(control.text).c_str());return *out?S_OK:E_OUTOFMEMORY;
     }
-    // Shared by RangeValue (sliders) and Value (the open field): both writable.
-    IFACEMETHODIMP get_IsReadOnly(BOOL*out)override{if(!out)return E_POINTER;if(!connected)return UIA_E_ELEMENTNOTAVAILABLE;*out=FALSE;return S_OK;}
+    // Shared by RangeValue (sliders) and Value (the open field): writable
+    // exactly when the host routes that kind of write.
+    IFACEMETHODIMP get_IsReadOnly(BOOL*out)override{
+        if(!out)return E_POINTER;if(!connected)return UIA_E_ELEMENTNOTAVAILABLE;
+        const auto s=state.lock();if(!s)return UIA_E_ELEMENTNOTAVAILABLE;
+        *out=(control.role==Role::edit?!s->host.setText:control.role==Role::slider?!s->host.setValue:true)?TRUE:FALSE;return S_OK;
+    }
     IFACEMETHODIMP get_Maximum(double*out)override{if(!out)return E_POINTER;if(!connected)return UIA_E_ELEMENTNOTAVAILABLE;*out=control.maximum;return S_OK;}
     IFACEMETHODIMP get_Minimum(double*out)override{if(!out)return E_POINTER;if(!connected)return UIA_E_ELEMENTNOTAVAILABLE;*out=control.minimum;return S_OK;}
     IFACEMETHODIMP get_LargeChange(double*out)override{if(!out)return E_POINTER;if(!connected)return UIA_E_ELEMENTNOTAVAILABLE;*out=control.step;return S_OK;}

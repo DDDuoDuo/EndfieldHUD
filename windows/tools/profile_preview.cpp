@@ -291,6 +291,10 @@ std::optional<R>ProfilePreview::clientRect(R r)const{
         x0=std::min(x0,q->x);y0=std::min(y0,q->y);x1=std::max(x1,q->x);y1=std::max(y1,q->y);}
     const double scale=i.metrics.scale;return R{x0/scale,y0/scale,(x1-x0)/scale,(y1-y0)/scale};
 }
+bool ProfilePreview::textCursorAt(P p)const noexcept{
+    const auto&i=*impl_;if(!i.field||!i.active||!i.overlay)return false;
+    const auto q=i.local(p);return q&&inside(i.field->rect(),*q);
+}
 bool ProfilePreview::editing()const noexcept{return bool(impl_->field);}
 std::optional<m::ProfileField>ProfilePreview::editingField()const noexcept{return impl_->field?std::optional(impl_->field->field()):std::nullopt;}
 std::optional<ProfilePreview::EditingView>ProfilePreview::editingView()const{
@@ -306,7 +310,9 @@ bool ProfilePreview::setEditingText(std::string_view text,double t){
         MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,text.data(),static_cast<int>(text.size()),reinterpret_cast<wchar_t*>(value.data()),n);
     }
     const auto length=static_cast<std::uint32_t>(f.document().text().size());
-    if(!f.editor().replaceTextFromHost({0,length},value).handled)return false;
+    // A declined replacement (capacity, marked text, a lock) reports handled
+    // but leaves the document unchanged: only a change succeeds.
+    if(!f.editor().replaceTextFromHost({0,length},value).changed)return false;
     f.normalize(i->state.text());f.syncContent();return true;
 }
 bool ProfilePreview::finishEditing(bool commit,double t){auto i=impl_;i->advance(t);return i->finish(commit);}

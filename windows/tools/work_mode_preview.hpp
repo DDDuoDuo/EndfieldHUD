@@ -49,6 +49,16 @@ public:
     bool filterKey(const app::NativeMessage&);bool message(const app::NativeMessage&,double);
     void focus(bool,double);void cancelInteraction(double);bool pointerLocked()const noexcept;
     bool editing()const noexcept;bool finishEditing(bool commit,double);
+    // The open custom duration field's draft (the source HUDWorkDurationField
+    // string, its accessibility value) as UTF-8; none without a field.
+    std::optional<std::string>editingText()const;
+    // UI Automation ValuePattern.SetValue on that field: replaces the whole
+    // draft through the editor's TSF document like typed text and keeps the
+    // field open (Return, Tab or an accessible press validates and commits it
+    // as on the source). False while the page accepts no input, without an
+    // open field, while marked text is composing, for invalid UTF-8 or past
+    // the field's capacity.
+    bool setEditingText(std::string_view utf8,double);
     // Accessibility-equivalent activation (HUDWorkModeInteraction.
     // activateAction): while the page accepts input, an open duration field
     // is committed first, then the listed source action runs exactly as its

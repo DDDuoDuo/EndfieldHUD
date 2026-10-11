@@ -8,6 +8,7 @@
 #include <wrl/client.h>
 #include <algorithm>
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -45,6 +46,51 @@ void run(){
     const auto focus=std::find_if(controls.begin(),controls.end(),[](const auto&p){return p.id=="work:focusAccess";});
     check(focus!=controls.end()&&focus->help==focus->label,"The Focus permission peer's help is its label");
     state.setFocusStatus({},false,now);
+    // The open custom duration field (HUDWorkDurationField, a projected
+    // NSTextView): an Edit after the actions with the source label and help.
+    {
+        const auto same=n::workModeAutomationControls(state,c::Language::english,std::nullopt);
+        check(same==n::workModeAutomationControls(state,c::Language::english),"Without an open field the list is the action list");
+        const auto editing=n::workModeAutomationControls(state,c::Language::english,std::string("25:00"));
+        check(editing.size()==same.size()+1&&std::equal(same.begin(),same.end(),editing.begin()),"The actions keep their order before the field");
+        const auto&field=editing.back();
+        check(field.id==n::workModeDurationEditorID&&field.role==n::ProfileAutomationRole::edit&&field.label=="Custom countdown: minutes and seconds"&&
+              field.help=="Enter minutes or min:sec, between 0:01 and 1440:00. Return saves; Escape cancels."&&field.rect==m::WorkModePresentation::durationEditorRect()&&field.text=="25:00",
+              "The field is an Edit over the editor rect with the source label, help and draft");
+        const auto chinese=n::workModeAutomationControls(state,c::Language::simplifiedChinese,std::string("5"));
+        check(chinese.back().label=="自定义倒计时：分和秒"&&chinese.back().help=="输入分钟数或分:秒，范围为 0:01 至 1440:00。回车保存，Esc 取消。"&&chinese.back().text=="5","The field's label and help follow the HUD language");
+        const auto japanese=n::workModeAutomationControls(state,c::Language::japanese,std::string("5"));
+        check(japanese.back().label=="カスタムカウントダウン：分と秒","Other languages use the source catalog");
+    }
+    // The field's peer: focused, holding the draft, written through setText.
+    {
+        std::optional<std::string>draft;std::vector<std::string>written;
+        n::ProfileAutomationHost host;
+        host.controls=[&]{return n::workModeAutomationControls(state,c::Language::english,draft);};
+        host.toScreen=[](c::Rect r)->std::optional<c::Rect>{return c::Rect{r.x,r.y,r.width,r.height};};
+        host.invoke=[](std::string_view){return true;};
+        host.setText=[&](std::string_view id,std::string_view value){written.push_back(std::string(id)+"="+std::string(value));draft=std::string(value);return true;};
+        n::NativeProfileAutomation automation(std::move(host));
+        check(automation.refresh()&&!peer(automation,L"work:editor:duration"),"No field peer while the field is closed");
+        draft="25:00";
+        check(automation.refresh()&&automation.size()==state.actions().size()+1,"Opening the field adds its peer");
+        const auto field=peer(automation,L"work:editor:duration");
+        ComPtr<IValueProvider>value;BSTR shown{};BOOL readOnly{TRUE};
+        check(field&&text(field.Get(),UIA_NamePropertyId)==L"Custom countdown: minutes and seconds"&&SUCCEEDED(field.As(&value))&&SUCCEEDED(value->get_Value(&shown))&&shown&&std::wstring_view(shown)==L"25:00"&&
+              SUCCEEDED(value->get_IsReadOnly(&readOnly))&&!readOnly,"The field peer is named by the source label and holds the draft");
+        SysFreeString(shown);shown=nullptr;
+        ComPtr<IRawElementProviderSimple>simple;VARIANT focused;VariantInit(&focused);
+        check(SUCCEEDED(field.As(&simple))&&SUCCEEDED(simple->GetPropertyValue(UIA_HasKeyboardFocusPropertyId,&focused))&&focused.vt==VT_BOOL&&focused.boolVal==VARIANT_TRUE,"The open field has the HUD's keyboard focus (first responder)");
+        VariantClear(&focused);
+        const auto r=m::WorkModePresentation::durationEditorRect();ComPtr<IRawElementProviderFragment>hit;
+        check(SUCCEEDED(automation.fromPoint(r.x+r.width/2,r.y+r.height/2,&hit))&&hit&&hit.Get()==field.Get(),"The field is the topmost control over its rect");
+        check(value->SetValue(L"1:30")==S_OK&&written==std::vector<std::string>{"work:editor:duration=1:30"},"A Value write reaches the field once as UTF-8");
+        check(!automation.refresh()&&peer(automation,L"work:editor:duration").Get()==field.Get()&&SUCCEEDED(value->get_Value(&shown))&&shown&&std::wstring_view(shown)==L"1:30","The same peer reports the new draft");
+        SysFreeString(shown);
+        draft.reset();
+        check(automation.refresh()&&!peer(automation,L"work:editor:duration")&&value->SetValue(L"2")==UIA_E_ELEMENTNOTAVAILABLE&&written.size()==1,"Closing the field removes its peer");
+        automation.disconnect();
+    }
     // The peers drive the page exactly like clicks (WorkModePreview::perform).
     std::vector<std::string>pressed;
     n::ProfileAutomationHost host;

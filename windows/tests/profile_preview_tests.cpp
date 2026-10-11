@@ -44,9 +44,21 @@ void run(const std::filesystem::path&shader,const std::filesystem::path&resource
     // Identity popover, then the name editor.
     check(click(30,125)&&state.popover()==m::ProfilePopover::identity&&preview.capturesPointer(),"Menu opens the identity popover and captures input");
     check(click(60,153)&&preview.editing()&&preview.editingField()==m::ProfileField::name&&!state.popover(),"Edit name opens the projected field");
+    // The pointer cursor (HUDProjectedTextView.projectedCursor) and the UIA
+    // Value write on the open field.
+    {
+        const auto view=preview.editingView();check(view.has_value(),"The open field reports its rect and draft");
+        const auto inside=screen(view->rect.x+view->rect.width/2,view->rect.y+view->rect.height/2),outside=screen(view->rect.x+view->rect.width/2,view->rect.y+view->rect.height+12);
+        check(preview.textCursorAt({inside.x,inside.y})&&!preview.textCursorAt({outside.x,outside.y}),"The I-beam answers inside the open field's projected rect only");
+        const auto before=view->text;
+        check(!preview.setEditingText(std::string(70000,'x'),time)&&!preview.setEditingText("\xff",time)&&preview.editingView()->text==before,"Text past the field capacity and invalid UTF-8 are refused unchanged");
+        check(preview.setEditingText("Draft",time)&&preview.editingView()->text=="Draft"&&preview.editing(),"A Value write replaces the draft and keeps the field open");
+        check(preview.setEditingText(std::string(),time)&&preview.editingView()->text.empty(),"An empty Value write clears the draft");
+    }
     type(u"Zed\U0001F600");
     check(!key(VK_RETURN,{.control=true})&&preview.editingField()==m::ProfileField::name&&state.profile().name!="Zed\U0001F600","A modified Return leaves the name field open (source keyDown takes unmodified keys only)");
     check(key(VK_RETURN)&&!preview.editing()&&state.profile().name=="Zed\U0001F600","Return commits the Character-bounded name");
+    {const auto center=screen(60,153);check(!preview.textCursorAt({center.x,center.y}),"No I-beam once the field closed");}
     // A rejected tag keeps the field open; Escape cancels it.
     click(30,125);click(60,179);check(preview.editingField()==m::ProfileField::tag,"Edit # opens the tag field");
     type(u"a b");check(key(VK_RETURN)&&preview.editing()&&state.error().has_value()&&state.profile().tag=="0000","Invalid tag stays in a red field with the source message");

@@ -110,6 +110,22 @@ void WorkModePreview::cancelInteraction(double now){auto i=impl_;i->advance(now)
 bool WorkModePreview::pointerLocked()const noexcept{return impl_->fieldDragging;}
 bool WorkModePreview::editing()const noexcept{return bool(impl_->field);}
 bool WorkModePreview::finishEditing(bool commit,double now){auto i=impl_;i->advance(now);return i->finish(commit);}
+std::optional<std::string>WorkModePreview::editingText()const{const auto&f=impl_->field;if(!f)return std::nullopt;return utf8(f->document.text());}
+bool WorkModePreview::setEditingText(std::string_view text,double now){
+    auto i=impl_;i->advance(now);if(!i->input||!i->field||!i->field->editor||text.size()>4*65536||i->field->document.composition())return false;
+    std::u16string value;
+    if(!text.empty()){
+        const int n=MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,text.data(),static_cast<int>(text.size()),nullptr,0);if(n<=0)return false;
+        value.resize(static_cast<std::size_t>(n));
+        if(MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,text.data(),static_cast<int>(text.size()),reinterpret_cast<wchar_t*>(value.data()),n)!=n)return false;
+    }
+    auto&field=*i->field;const auto length=static_cast<std::uint32_t>(field.document.text().size());
+    // A declined replacement (capacity, marked text, a lock) reports handled
+    // but leaves the document unchanged: only a change succeeds.
+    if(!field.editor->replaceTextFromHost({0,length},value).changed)return false;
+    if(i->field.get()==&field&&field.editor)field.editor->syncContent();
+    return true;
+}
 bool WorkModePreview::perform(std::string_view id,double now){auto i=impl_;i->advance(now);if(!i->input||!i->finish(true))return false;
     const bool used=i->state.perform(id,i->time);i->updateFocus();return used;}
 std::optional<core::Rect>WorkModePreview::clientRect(core::Rect r)const{
