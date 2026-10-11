@@ -39,6 +39,17 @@ struct Panel {
 double linear(double c){return c<=.04045?c/12.92:std::pow((c+.055)/1.055,2.4);}
 // Straight 8-bit sRGB to linear light, computed once.
 const std::array<double,256>&linearTable(){static const auto table=[]{std::array<double,256>t{};for(unsigned i=0;i<256;++i)t[i]=linear(i/255.);return t;}();return table;}
+// Premultiplied 8-bit (alpha, value) to premultiplied linear light, computed
+// once with the exact per-sample expression, so lookups are bit-identical to
+// evaluating it (a portrait crop of a premultiplied working copy otherwise
+// spends almost all of its time in std::pow).
+const std::vector<double>&premultipliedLinearTable(){
+    static const auto table=[]{std::vector<double>t(256*256);
+        for(unsigned alpha=0;alpha<256;++alpha)for(unsigned value=0;value<256;++value){
+            const double a=alpha/255.,v=value/255.;t[std::size_t(alpha)*256+value]=a>0?linear(std::min(1.,v/a))*a:0;}
+        return t;}();
+    return table;
+}
 double encoded(double l){l=std::clamp(l,0.,1.);return l<=.0031308?l*12.92:1.055*std::pow(l,1/2.4)-.055;}
 // Measured against Core Image: a three-lobe window when reducing and a
 // two-lobe window when enlarging an axis.
@@ -156,10 +167,10 @@ ProfileImage resample(const ProfileImage&source,int orientation,core::Rect regio
     // Grid samples whose centers fall outside the crop are clear, so edges fade.
     // Only the crop's bilinear support is linearized: a 128-megapixel avatar
     // never becomes a full-size floating-point copy.
-    const auto&lut=linearTable();
+    const auto&lut=linearTable();const double*premultipliedLUT=premultipliedSource?premultipliedLinearTable().data():nullptr;
     const auto pixel=[&](unsigned x,unsigned y,std::array<double,4>&out){
         const auto s=stored(x,y);const double a=source.rgba[s+3]/255.;
-        if(premultipliedSource){for(unsigned c=0;c<3;++c){const double v=source.rgba[s+c]/255.;out[c]=a>0?linear(std::min(1.,v/a))*a:0;}}
+        if(premultipliedLUT){const auto*alphaRow=premultipliedLUT+std::size_t(source.rgba[s+3])*256;for(unsigned c=0;c<3;++c)out[c]=alphaRow[source.rgba[s+c]];}
         else for(unsigned c=0;c<3;++c)out[c]=lut[source.rgba[s+c]]*a;
         out[3]=a;
     };
@@ -203,6 +214,12 @@ ProfileImage resample(const ProfileImage&source,int orientation,core::Rect regio
 ProfileImage profileResampled(const ProfileImage&image,unsigned width,unsigned height){
     bounded(image.width,image.height);bounded(width,height);need(image.rgba.size()==std::size_t(image.width)*image.height*4,"Profile image size");
     return resample(image,1,{0,0,double(image.width),double(image.height)},width,height);
+}
+ProfileImage profileWorkingCopy(const ProfileImage&image,unsigned maximum){
+    need(maximum>0,"Profile working copy bound");const unsigned largest=std::max(image.width,image.height);
+    if(largest<=maximum)return image;
+    const double s=double(maximum)/largest;
+    return profileResampled(image,std::max(1u,static_cast<unsigned>(std::lround(image.width*s))),std::max(1u,static_cast<unsigned>(std::lround(image.height*s))));
 }
 ProfileImage profileStraight(const ProfileImage&image){
     if(!image.premultiplied)return image;ProfileImage out=image;out.premultiplied=false;

@@ -57,7 +57,9 @@ public:
     void setBackdropImage(std::optional<native::NativeProfileBackdropImage>,double time);
     // Decoded managed images (ProfileImageService). The portrait crop follows
     // zoom/offset, including a slider drag preview; null restores the source
-    // silhouette / no backdrop. Large avatars keep a 1024 px working copy here.
+    // silhouette / no backdrop. Large avatars are cropped from the decode
+    // service's 1024 px working copy (ProfileDecodedImage::working, made on
+    // the worker); a caller-built image without one is reduced here.
     void setAvatar(std::shared_ptr<const native::ProfileDecodedImage>,double time);
     void setBackground(std::shared_ptr<const native::ProfileDecodedImage>,double time);
     // The owner mutated ProfileState outside this page (account sync, lock,

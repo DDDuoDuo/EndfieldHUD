@@ -66,6 +66,21 @@ void run(){
     service.request(imported[0],m::ProfileImageKind::avatar);service.request(imported[0],m::ProfileImageKind::avatar);executor.waitIdle();executor.drain();
     check(decodedNames.size()==1&&service.cached(imported[0]),"Coalesced decode is cached");
     service.request(imported[0],m::ProfileImageKind::avatar);check(decodedNames.size()==2,"Cached image is reported without worker work");
+    // A large avatar's crop working copy is made on the worker too, so neither
+    // the page portrait nor the card avatar resamples the photo on the owner
+    // thread; a tiny avatar is its own working copy.
+    {
+        std::shared_ptr<const n::ProfileDecodedImage>tiny,large;
+        n::ProfileImageService crops(images,executor,{{},{},[&](const std::string&v,std::shared_ptr<const n::ProfileDecodedImage>d){(v==avatar?large:tiny)=std::move(d);},{}});
+        crops.request(imported[0],m::ProfileImageKind::avatar);crops.request(avatar,m::ProfileImageKind::avatar);
+        for(int n=0;n<8&&!(tiny&&large);++n){executor.waitIdle();executor.drain();}
+        check(large&&large->image.width==3000&&large->working.width==1024&&large->working.height==341&&large->working==m::profileWorkingCopy(large->image),
+              "The worker makes a large avatar's 1024 px working copy with the owner thread's former resample");
+        check(n::profileAvatarWorking(large).get()==&large->working,"The working copy is shared, never copied");
+        check(tiny&&tiny->working.width==0&&n::profileAvatarWorking(tiny).get()==&tiny->image,"A tiny avatar is its own working copy");
+        auto built=std::make_shared<n::ProfileDecodedImage>();built->image=large->image;const auto reducedNow=n::profileAvatarWorking(built);
+        check(reducedNow&&*reducedNow==large->working&&reducedNow.get()!=&built->image&&!n::profileAvatarWorking(nullptr),"A caller-built large image is reduced on demand");
+    }
     service.import(t.root/"note.txt",m::ProfileImageKind::background);executor.waitIdle();executor.drain();check(failures.size()==1&&failures[0]==m::ProfileFailure::image,"Import failure reaches the owner");
     service.discard(imported[0]);executor.waitIdle();executor.drain();check(!std::filesystem::exists(images/imported[0])&&!service.cached(imported[0]),"Rolled-back import is removed");
     executor.shutdown();

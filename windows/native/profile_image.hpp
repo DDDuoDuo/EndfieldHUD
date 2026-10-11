@@ -12,7 +12,16 @@ struct ProfileDecodedImage {
     modules::ProfileImage image; // straight sRGB RGBA8, top-left rows
     int orientation{1};          // EXIF 1...8, still to apply (avatars only)
     unsigned sourceWidth{},sourceHeight{}; // stored pixel size before any reduction
+    // Avatars larger than modules::profileAvatarWorkingPixels: the working
+    // copy the page portrait and the card avatar are cropped from
+    // (modules::profileWorkingCopy), made on the worker by
+    // ProfileImageService. Empty otherwise.
+    modules::ProfileImage working;
 };
+// The bounded working copy of a decoded avatar, sharing the decoded image's
+// ownership: its worker-made `working` copy, else the image itself when it is
+// already within the bound, else (a caller-built image) reduced now.
+std::shared_ptr<const modules::ProfileImage>profileAvatarWorking(const std::shared_ptr<const ProfileDecodedImage>&);
 // UserProfileStore.importImage on a worker thread (COM initialized per call):
 // a regular file of at most 128 MB that WIC can decode. Avatars keep their
 // original encoded bytes as <UUID>.image after a 1...32768 px per side, <=128

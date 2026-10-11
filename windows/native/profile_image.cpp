@@ -123,6 +123,12 @@ ProfileDecodedImage decodeProfileImage(const std::filesystem::path&managed,m::Pr
     }else{const auto[w,h]=bounded(s.width,s.height,2048);out.image=oriented(pixels(s,w,h),s.orientation);out.orientation=1;}
     return out;
 }
+std::shared_ptr<const m::ProfileImage>profileAvatarWorking(const std::shared_ptr<const ProfileDecodedImage>&decoded){
+    if(!decoded)return nullptr;
+    if(decoded->working.width)return std::shared_ptr<const m::ProfileImage>(decoded,&decoded->working);
+    if(std::max(decoded->image.width,decoded->image.height)<=m::profileAvatarWorkingPixels)return std::shared_ptr<const m::ProfileImage>(decoded,&decoded->image);
+    return std::make_shared<const m::ProfileImage>(m::profileWorkingCopy(decoded->image,m::profileAvatarWorkingPixels));
+}
 struct ProfileImageService::Impl:std::enable_shared_from_this<Impl> {
     std::filesystem::path directory;app::UtilityExecutor&executor;ProfileImageCallbacks callbacks;app::UtilityExecutor::Route route;
     const std::thread::id owner=std::this_thread::get_id();bool alive{true},importing{};
@@ -148,7 +154,12 @@ struct ProfileImageService::Impl:std::enable_shared_from_this<Impl> {
         while(!queuedDecodes.empty()){
             auto job=queuedDecodes.front();if(decoding.contains(job.first)){queuedDecodes.pop_front();continue;}
             auto result=std::make_shared<std::shared_ptr<const ProfileDecodedImage>>();const auto path=directory/job.first;
-            if(!executor.submit(route,[job,result,path]{*result=std::make_shared<const ProfileDecodedImage>(decodeProfileImage(path,job.second));},[weak,job,result](std::exception_ptr error){
+            if(!executor.submit(route,[job,result,path]{
+                auto decoded=decodeProfileImage(path,job.second);
+                // The crop working copy too, so no owner-thread consumer resamples a large photo.
+                if(job.second==m::ProfileImageKind::avatar&&std::max(decoded.image.width,decoded.image.height)>m::profileAvatarWorkingPixels)
+                    decoded.working=m::profileWorkingCopy(decoded.image,m::profileAvatarWorkingPixels);
+                *result=std::make_shared<const ProfileDecodedImage>(std::move(decoded));},[weak,job,result](std::exception_ptr error){
                 auto i=weak.lock();if(!i||!i->alive)return;i->decoding.erase(job.first);
                 if(error){if(i->callbacks.decodeFailed)i->callbacks.decodeFailed(job.first,classify(error).first);}
                 else{i->remember(job.first,*result);if(i->callbacks.decoded)i->callbacks.decoded(job.first,*result);}

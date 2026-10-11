@@ -42,6 +42,13 @@ ProfileImage profileRenderedImage(const ProfileImage&source,int orientation,core
 // A whole image redrawn at another size (CGContext.draw with high
 // interpolation), approximated by the same linear-light Lanczos filter.
 ProfileImage profileResampled(const ProfileImage&,unsigned width,unsigned height);
+// The bounded working copy a portrait is cropped from (the page portrait and
+// the card avatar): profileResampled to at most `maximum` px on the longer
+// side, each side rounded to the nearest pixel. An image already within the
+// bound is returned unchanged. Pure CPU work meant for the shared utility
+// worker, so a large avatar never resamples on the owner thread.
+inline constexpr unsigned profileAvatarWorkingPixels=1024;
+ProfileImage profileWorkingCopy(const ProfileImage&,unsigned maximum=profileAvatarWorkingPixels);
 // Unpremultiplied copy (top-left rows kept), e.g. for LayerImageSource.publish.
 ProfileImage profileStraight(const ProfileImage&);
 // windows/resources/profile: the verbatim business card and avatar frame

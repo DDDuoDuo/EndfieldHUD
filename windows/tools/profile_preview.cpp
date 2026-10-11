@@ -36,7 +36,7 @@ struct ProfilePreview::Impl:std::enable_shared_from_this<Impl> {
     std::optional<P>point;bool pressed{},input{},active{},overlay{true},ownerFocused{true},alive{true},drawing{};double time{};
     std::vector<gpu::LayerCompositionEntry>composed;gpu::Renderer*renderer{};
     // Page imagery published into the borrowed LayerImageSource.
-    std::shared_ptr<const gpu::ProfileDecodedImage>avatar,background;std::optional<m::ProfileImage>avatarWork;
+    std::shared_ptr<const gpu::ProfileDecodedImage>avatar,background;std::shared_ptr<const m::ProfileImage>avatarWork;
     std::optional<std::array<double,5>>cropKey;std::optional<std::array<double,3>>frameAccent;std::uint64_t imageRevision{};std::string portraitKey,frameKey;
     Impl(HWND h,m::ProfileState&s,gpu::LayerRasterizer&r,ProfilePreviewOptions o,ITfThreadMgr*mgr,TfClientId id)
         :hwnd(h),state(s),raster(r),options(withImages(std::move(o))),manager(mgr),client(id),scene(r,options.raster),geometry(r),surface(prepareGeometry(),core::Module::profile){
@@ -173,9 +173,9 @@ void ProfilePreview::setContents(m::ProfileContents c,double t){auto i=impl_;i->
 void ProfilePreview::setBackdropImage(std::optional<gpu::NativeProfileBackdropImage>image,double t){auto i=impl_;i->advance(t);i->scene.setBackdropImage(image);}
 void ProfilePreview::setAvatar(std::shared_ptr<const gpu::ProfileDecodedImage>image,double t){
     auto i=impl_;i->advance(t);if(i->avatar==image)return;i->avatar=std::move(image);i->cropKey.reset();i->avatarWork.reset();
-    if(i->avatar){const auto&v=i->avatar->image;const unsigned largest=std::max(v.width,v.height);
-        if(largest>1024){const double s=1024./largest;i->avatarWork=m::profileResampled(v,std::max(1u,unsigned(std::lround(v.width*s))),std::max(1u,unsigned(std::lround(v.height*s))));}
-        else i->avatarWork=v;}
+    // The decode service made the bounded working copy on the worker; only a
+    // caller-built large image is reduced here.
+    if(i->avatar)i->avatarWork=gpu::profileAvatarWorking(i->avatar);
     i->dirty=true;i->content();
 }
 void ProfilePreview::setBackground(std::shared_ptr<const gpu::ProfileDecodedImage>image,double t){

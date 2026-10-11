@@ -14,9 +14,8 @@ namespace m=modules;namespace gpu=native;
 void need(bool v,const char*s){if(!v)throw std::invalid_argument(s);}
 constexpr std::size_t avatarTexture=0,backgroundTexture=1,hoverTexture=2;
 // The card avatar is HUDPortraitArtwork.renderedImage at 136 pt, 2x and 1.35
-// oversampling (368 px); a bounded working copy keeps slider-drag
-// regeneration cheap on the shared worker.
-constexpr unsigned cardAvatarWorkingPixels=1024;
+// oversampling (368 px), cropped from the decoded avatar's bounded working
+// copy (gpu::profileAvatarWorking) so slider-drag regeneration stays cheap.
 struct Exit {bool&flag;~Exit(){flag=false;}};
 }
 struct ProfileOwner::Impl:std::enable_shared_from_this<Impl> {
@@ -40,7 +39,7 @@ struct ProfileOwner::Impl:std::enable_shared_from_this<Impl> {
     std::optional<m::ProfileImageKind>pendingImage;std::optional<std::array<double,3>>pendingColor;bool picking{};WPARAM pickerGeneration{1};
     std::uint64_t imageRequests{},imageRequest{}; // asynchronous chooser (requestImage): the outstanding request
     // Card textures, generated on the utility worker; one job at a time.
-    struct CardWorker {std::shared_ptr<const gpu::ProfileDecodedImage>source;m::ProfileImage working;};
+    struct CardWorker {std::shared_ptr<const gpu::ProfileDecodedImage>source;std::shared_ptr<const m::ProfileImage>working;};
     std::shared_ptr<CardWorker>cardWorker=std::make_shared<CardWorker>();
     app::UtilityExecutor::Route cardRoute;bool cardBusy{},cardDirty{};
     std::array<std::optional<IdCardTexture>,3>cardTextures;std::array<std::uint64_t,3>cardRequested{};
@@ -168,15 +167,9 @@ struct ProfileOwner::Impl:std::enable_shared_from_this<Impl> {
         const std::weak_ptr<Impl>weak=shared_from_this();
         const bool accepted=executor.submit(cardRoute,[worker,art,photo,portrait,orientation,avatarZoom,avatarOffset,thumbnailZoom,thumbnailOffset,accent,make,results]{
             if(make[avatarTexture]&&portrait){
-                if(worker->source!=portrait){
-                    const auto&v=portrait->image;const unsigned largest=std::max(v.width,v.height);
-                    if(largest>cardAvatarWorkingPixels){const double s=double(cardAvatarWorkingPixels)/largest;
-                        worker->working=m::profileResampled(v,std::max(1u,unsigned(std::lround(v.width*s))),std::max(1u,unsigned(std::lround(v.height*s))));}
-                    else worker->working=v;
-                    worker->source=portrait;
-                }
-                (*results)[avatarTexture]=m::IdCardArtwork::avatar(worker->working,orientation,avatarZoom,avatarOffset);
-            }else if(make[avatarTexture]){worker->source.reset();worker->working={};}
+                if(worker->source!=portrait){worker->working=gpu::profileAvatarWorking(portrait);worker->source=portrait;}
+                (*results)[avatarTexture]=m::IdCardArtwork::avatar(*worker->working,orientation,avatarZoom,avatarOffset);
+            }else if(make[avatarTexture]){worker->source.reset();worker->working.reset();}
             if(make[backgroundTexture])(*results)[backgroundTexture]=art->background(accent,photo?&photo->image:nullptr,thumbnailZoom,thumbnailOffset);
             if(make[hoverTexture])(*results)[hoverTexture]=art->hover(accent);
         },[weak,wanted,make,results](std::exception_ptr error){
