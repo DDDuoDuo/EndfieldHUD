@@ -343,6 +343,7 @@ struct Application::Impl {
     bool clockPress(const PointerEvent&, double time);
     bool clockWheel(const WheelEvent&, double time);
     void selectClockStyle(unsigned index, double time);
+    void constructClockAutomation();
 
     // --- projection --------------------------------------------------------------
     std::optional<gpu::DisplayDescriptor> projectionDisplay(std::uintptr_t preferred);
@@ -638,6 +639,7 @@ struct Application::Impl {
     std::optional<std::int64_t> lifecycleOpening, lifecycleClosing;
     bool settingsLoaded{}, launchPending{};
     std::unique_ptr<QuitConfirmationOwner> quitConfirmation; // red power button card
+    std::unique_ptr<ModuleOwner> clockAutomation;            // the desktop clock's UIA buttons (no drawing, no input)
     std::set<std::string, std::less<>> quitButtons;
     bool sessionEnded{};
     std::unique_ptr<LoginItemRegistration> loginItem;

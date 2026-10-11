@@ -1333,8 +1333,8 @@ swap chain; `packet_export_contracts` needs the Mac `Sources/` tree).
 
 | Run | Result |
 | --- | --- |
-| `application_owner_coverage` | 54 module results, 19 production lifecycle checks, 78 host integration checks (at least 78 now required), 14 registered areas (15 area module results), ID card connected |
-| `application_session_end_coverage` | 15 lifecycle checks, 75 host integration checks (at least 75 required) |
+| `application_owner_coverage` | 54 module results, 19 production lifecycle checks, 81 host integration checks (at least 81 now required), 14 registered areas (15 area module results), ID card connected |
+| `application_session_end_coverage` | 15 lifecycle checks, 78 host integration checks (at least 78 required) |
 | `display_center_logo_contracts` (new) | The center logo against the Mac oracle: also passes on the Mac under clang with the portable no-ICU configure |
 | Portable no-ICU configure | `cmake -S windows -B <dir> -DCMAKE_DISABLE_FIND_PACKAGE_ICU=TRUE -DBUILD_TESTING=ON` configures and generates; `settings_*`, `media_request_catalog`, `shelf_file_picker` and `display_center_logo` contracts pass there |
 
@@ -1405,7 +1405,10 @@ swap chain; `packet_export_contracts` needs the Mac `Sources/` tree).
   panel (340 x 145). Hovering it raises the hover plate when no menu
   captures the pointer and no Notes card covers it; a style indicator
   selects that style, a horizontal swipe of 28 points changes it once per
-  gesture, and the rest of the clock opens Work Mode.
+  gesture, and the rest of the clock opens Work Mode. Its accessibility
+  buttons (`layoutClockControls`: "Work Mode" and "Clock style 1-5", the
+  selected one with "Selected" as its help) are UIA peers of a host owner
+  that draws nothing and routes no input.
 - **GPU adapter change:** on a display change the production owner asks
   `Renderer::adapterCurrent()` (`IDXGIFactory1::IsCurrent`, then the default
   adapter's LUID) and takes the device-loss fresh run when the default
@@ -1413,7 +1416,7 @@ swap chain; `packet_export_contracts` needs the Mac `Sources/` tree).
 - **CMake:** the Now Playing base targets are guarded by `hud_archive` /
   `hud_now_playing`, so a portable configure without ICU generates.
 
-Hidden coverage now runs 78 host checks (75 in the session-end run, which
+Hidden coverage now runs 81 host checks (78 in the session-end run, which
 ends without the quit card), most of them over the real HUD root: the groups of
 Work Mode, File Shelf, Archive, Media Assembly, Now Playing (6 controls),
 Account and Profile (named after the module, children navigate back, the
@@ -1422,7 +1425,8 @@ root's hit test finds a control, concealing disconnects); the Reader peers
 the Power entry's help and hit test; the published services and the update
 rows; the colour and logo dialogs requested without opening; the center
 logo (a preset, an imported custom logo, Endfield again with the pixels
-retired); the clock (hit test, hover, indicator, swipe, Work Mode); drag
+retired); the clock (hit test, hover, indicator, swipe, Work Mode and its
+UIA buttons); drag
 feedback reaching App shortcuts and ending on leave; and the restart members
 (a failed save destroys the pending work unrun and its decline runs once
 from the notice; a restart pending at the confirmed quit is handed out
@@ -1658,10 +1662,10 @@ dialog itself.
 - The cursor does not change to an I-beam over open projected editors (the
   only non-source cursor the Mac shows); each editor owner must expose its
   open field's client area to a host cursor hit test.
-- UI Automation: the desktop clock's style buttons (Mac HUDClockActionButton)
-  and the navigation entries other than Power have no provider. The Power
-  area must return `core::Module::power` from `automationModule()` so its
-  group is named Power.
+- UI Automation: the navigation entries other than Power have no provider.
+  The Power area must return `core::Module::power` from `automationModule()`
+  so its group is named Power. UIA buttons have no value pattern, so the
+  clock's "Selected" is its help text.
 - Reader: render PDFs on an owned device so a quit right after reading
   cannot fault at exit (above). Reader books have no relink action.
 - Notes, Archive and App shortcuts do not update `Migration/relink.json`

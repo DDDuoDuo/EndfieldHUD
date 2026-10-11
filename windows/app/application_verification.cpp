@@ -460,6 +460,16 @@ int Application::Impl::runHiddenVerification(){
                         present(time+.2,true);time+=.5;
                         hostCheck(clockPress({PointerKind::down,PointerButton::left,body->x,body->y},time)&&notes->selected()==core::Module::workMode,"Clicking the clock opens Work Mode");
                         for(unsigned frame=0;frame<40;++frame)present(time+double(frame)/60,true);time+=1;
+                        // layoutClockControls: the clock's UIA buttons under the HUD root.
+                        if(clockAutomation){HudAutomation probe(host.hwnd(),automationSource());(void)probe.refresh();
+                            ComPtr<IRawElementProviderFragment>style;std::string selected;
+                            for(std::size_t n=0;n<clockAutomation->automationCount();++n){ComPtr<IRawElementProviderFragment>f;
+                                if(SUCCEEDED(clockAutomation->automationChild(n,&f))&&f){const auto id=textProperty(f.Get(),UIA_AutomationIdPropertyId);
+                                    if(id=="clock:style:2")style=f;if(!textProperty(f.Get(),UIA_HelpTextPropertyId).empty())selected=id;}}
+                            hostCheck(clockAutomation->automationCount()==6&&selected=="clock:style:4","The clock lists Work Mode and five style buttons; the selected style reports Selected");
+                            ComPtr<IInvokeProvider>invoke;
+                            hostCheck(style&&SUCCEEDED(style.As(&invoke))&&invoke->Invoke()==S_OK&&settingsUI->controller().committed().string("clockStyle")=="dial","Invoking a clock style button selects that style");
+                            present(time,true);time+=.1;probe.disconnectOwners();hostCheck(clockAutomation->automationCount()==0,"Concealing disconnects the clock buttons");probe.shutdown();}
                         auto restore=settingsUI->controller().committed();restore.set("clockStyle",original);settingsUI->controller().update(std::move(restore),time);present(time,true);time+=.1;
                     }
                 }

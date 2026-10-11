@@ -339,6 +339,7 @@ void Application::Impl::construct(){
         if(length&&length<path.size()){path.resize(length);loginItem=std::make_unique<LoginItemRegistration>(LoginItemLocation::production(fs::path(path)));}}
     if(notes&&chromePlan){quitConfirmation=makeQuitConfirmation(rasterizer,QuitConfirmationCallbacks{
         [this](double time){perform(lifecycle.requestQuit(),time);},[this](double time){refresh(time);}});quitConfirmation->resize(metrics);registry.add(*quitConfirmation);}
+    if(notes)constructClockAutomation(); // SystemHUDView.layoutClockControls
     if(!production()){
         std::cout<<(archive?"Synthetic module preview with Archive, rich Notes and shared media; all files remain references in the explicit temporary data root. ESC finishes editing, then animates closing.\n":notes?"Synthetic shell with rich Notes, File Shelf and isolated Clipboard history; other modules and remaining Notes tools are not connected yet. ESC finishes editing, then animates closing.\n":"Synthetic source-shell feasibility only: no module bodies/providers; font substitutions and explicit source-content variant coverage remain. ESC animates closing.\n");
         if(activity)std::cout<<(args.nativeActivity?"Native Activity reads bounded Windows counters on the shared worker; per-app disk/network remain unavailable.\n":"Activity preview uses synthetic app and system readings only.\n");
