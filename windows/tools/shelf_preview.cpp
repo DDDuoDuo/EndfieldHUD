@@ -226,7 +226,7 @@ struct ShelfPreview::Impl {
         state=std::make_unique<mod::FileShelfState>(items(),std::move(persistence),std::move(actions),std::move(strings));
         const std::array<std::uint8_t,4> transparent{};emptyIcon=memoryImages.publish("shelf.pending-icon",1,1,1,transparent);
         gpu::LayerRasterOptions ro;ro.pixelsPerPoint=2;ro.assetRoot=assets.root();ro.memoryImages=&memoryImages;
-        scene=std::make_unique<gpu::NativeShelfScene>(presentation,raster,ro,options.revealSamples);
+        scene=std::make_unique<gpu::NativeShelfScene>(presentation,raster,ro);
         geometry.load(emptyPlane(),ro);surface=std::make_unique<gpu::NativeModuleSurface>(geometry,core::Module::fileShelf);
         if(options.nativeIcons)icons=std::make_unique<gpu::NativeShelfIconProvider>(memoryImages,files.platform().resolve,gpu::ShelfIconRoute{hwnd,iconMessage,generation});
         picker=std::make_unique<gpu::NativeShelfFilePicker>(gpu::ShelfPickerRoute{hwnd,pickerMessage,generation},gpu::ShelfPickerLabels{"添加到文件暂存架","添加引用","添加选中的文件与文件夹"});
@@ -471,7 +471,8 @@ void ShelfPreview::update(const Matrix&center,const core::source::DesktopChromeS
     gpu::NativeShelfPose pose;pose.contentWorld=p.contentWorld;pose.opacity=p.opacity;pose.time=t;pose.selections=i.selectionPoses;pose.ownerMasks=std::span(&p.hostClip,1);pose.moduleShutter=p.shutter;
     if(i.toolbarStart>=0){const double v=1-Impl::progress(t,i.toolbarStart,.18);pose.toolbarY=6*v;pose.toolbarZ=-6*v;}
     if(i.dropStart>=0)pose.dropStrokeEnd=core::CubicTiming{0,0,.58,1}.value(std::clamp((t-i.dropStart)/.20,0.,1.));
-    if(i.revealStart>=0&&t-i.revealStart<.26&&i.options.revealSamples)pose.reveal= gpu::ShelfRevealSample{i.revealDirection,t-i.revealStart};
+    // HUDSubsectionTransition.reveal: the authored shutter (gpu::shelfRevealShutter).
+    if(i.revealStart>=0&&t-i.revealStart<.26)pose.reveal=gpu::ShelfRevealSample{i.revealDirection,t-i.revealStart};
     i.scene->updatePose(pose);i.registration.update(p.registration);
 }
 bool ShelfPreview::requiresFrames(double t)const{const auto&i=*impl_;if(!i.pose)return false;t=std::max(t,i.time);return i.scene->requiresFrames(t)||!i.selectionTracks.empty()||(i.toolbarStart>=0&&t-i.toolbarStart<.18)||(i.dropStart>=0&&t-i.dropStart<.20)||(i.revealStart>=0&&t-i.revealStart<.26);}

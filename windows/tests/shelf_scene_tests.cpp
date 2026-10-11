@@ -1,5 +1,6 @@
 #include "native/shelf_scene.hpp"
 #include "core/shell_packet.hpp"
+#include <array>
 #include <bit>
 #include <algorithm>
 #include <atomic>
@@ -33,7 +34,35 @@ std::vector<n::NativeShelfImage>images(const m::ShelfPresentation&p){std::vector
 const Json*find(const Json&node,std::string_view id){if(node["id"].isString()&&node["id"].string()==id)return &node;if(node["children"].isArray())for(const auto&child:node["children"].array())if(const auto*result=find(child,id))return result;return nullptr;}
 std::size_t surface(const n::ShelfScenePart&p,std::string_view id){for(std::size_t k=0;k<p.surfaces.size();++k)if(find(p.layers["children"].array()[k],id))return k;throw std::runtime_error("Missing compiled source Shelf surface");}
 const Json&leaf(const n::ShelfScenePart&p,std::string_view id){const auto*node=find(p.layers,id);if(!node)throw std::runtime_error("Missing source leaf");return *node;}
+// HUDSubsectionTransition.reveal's authored mask (shelfRevealShutter): the
+// unchanged source keyframes at their key times, then a reveal that only ever
+// grows. Core Animation's own morph of the degenerate first/last keyframes
+// re-hid revealed cards behind curved wedges (the removal glitch).
+void revealShutter(){
+    constexpr double duration=c::SubsectionTransitionStyle::duration;const auto viewport=m::ShelfPresentation::contentClip();
+    for(double direction:{-1.,1.}){
+        for(std::size_t k=0;k<4;++k){const auto expected=c::subsectionMaskKeyframe(viewport,direction,k);const auto actual=n::shelfRevealShutter(direction,c::SubsectionTransitionStyle::maskKeyTimes[k]*duration);
+            for(std::size_t strip=0;strip<4;++strip)for(std::size_t vertex=0;vertex<6;++vertex){checkNear(actual[strip][vertex].x,expected[strip][vertex].x,"Authored keyframe X at its key time");checkNear(actual[strip][vertex].y,expected[strip][vertex].y,"Authored keyframe Y at its key time");}}
+        const auto first=n::shelfRevealShutter(direction,-1),last=n::shelfRevealShutter(direction,1);const auto collapsed=c::subsectionMaskKeyframe(viewport,direction,0),full=c::subsectionMaskKeyframe(viewport,direction,3);
+        for(std::size_t strip=0;strip<4;++strip)for(std::size_t vertex=0;vertex<6;++vertex)check(first[strip][vertex].x==collapsed[strip][vertex].x&&last[strip][vertex].x==full[strip][vertex].x&&last[strip][vertex].y==full[strip][vertex].y,"Reveal clock clamps to the authored first and last keyframes");
+        // Dense 1/1200 s sweep: each strip keeps its band and its anchored edge,
+        // and its moving edge never retreats (nothing revealed is hidden again).
+        std::array<double,4>edge{};edge.fill(direction<0?viewport.x:viewport.x+viewport.width);std::array<double,4>area{};double sum{};counting=true;
+        for(unsigned step=0;step<=312;++step){const auto path=n::shelfRevealShutter(direction,duration*step/312.);
+            for(std::size_t strip=0;strip<4;++strip){const auto&p=path[strip];const double top=viewport.y+viewport.height/4*double(strip),bottom=top+viewport.height/4;
+                double low=p[0].x,high=p[0].x,a{};for(std::size_t v=0;v<6;++v){low=std::min(low,p[v].x);high=std::max(high,p[v].x);const auto&q=p[(v+1)%6];a+=p[v].x*q.y-q.x*p[v].y;sum+=p[v].y;
+                    if(p[v].y<top-1e-9||p[v].y>bottom+1e-9)throw std::runtime_error("Reveal strip left its band");}
+                a=std::abs(a)/2;
+                if(direction<0){if(std::abs(low-viewport.x)>1e-9||high<edge[strip]-1e-9)throw std::runtime_error("Left reveal strip retreated or detached");edge[strip]=high;}
+                else{if(std::abs(high-viewport.x-viewport.width)>1e-9||low>edge[strip]+1e-9)throw std::runtime_error("Right reveal strip retreated or detached");edge[strip]=low;}
+                if(a<area[strip]-1e-9)throw std::runtime_error("Revealed strip area shrank");area[strip]=a;}}
+        counting=false;check(sum>0&&allocations==0,"Dense authored reveal sampling is monotonic, banded and allocation-free");
+        check(area[0]>=viewport.width*viewport.height/4-1e-6&&area[3]>=viewport.width*viewport.height/4-1e-6,"Finished reveal covers every band");
+    }
+    rejects([]{(void)n::shelfRevealShutter(std::numeric_limits<double>::quiet_NaN(),0);},"Non-finite reveal direction rejects");rejects([]{(void)n::shelfRevealShutter(-1,std::numeric_limits<double>::infinity());},"Non-finite reveal time rejects");
+}
 void portable(){
+    revealShutter();
     m::ShelfPresentation source;rejects([&]{n::prepareShelfScene(source);},"Uninitialized shelf rejects");m::FileShelfState state(items(10000));m::ShelfPresentationStyle style;source.update(state,style);
     rejects([&]{n::prepareShelfScene(source);},"File icons and Depot artwork are explicit, never blank replacements");auto supplied=images(source);const auto original=source.chrome();const auto plan=n::prepareShelfScene(source,supplied);
     check(source.chrome()==original&&plan.cards.size()==8,"Preparation preserves descriptor and only builds eight visible cards");
@@ -70,20 +99,11 @@ struct Fixture {
     ~Fixture(){if(window)DestroyWindow(window);if(atom)UnregisterClassW(reinterpret_cast<LPCWSTR>(static_cast<ULONG_PTR>(atom)),GetModuleHandleW(nullptr));std::error_code ec;std::filesystem::remove_all(assets,ec);}
 };
 const n::DrawObject&draw(n::LayerScene&scene,std::string_view id){const auto index=scene.surfaceIndex(id);check(index.has_value(),"Original source leaf retains a native surface");scene.prepareDraws();return scene.draws()[*index];}
-void native(const wchar_t*shader,const wchar_t*maskPath){
-    std::ifstream maskFile(std::filesystem::path(maskPath),std::ios::binary);std::vector<std::uint8_t>maskBytes((std::istreambuf_iterator<char>(maskFile)),{});auto sampler=std::make_shared<c::SubsectionMaskSampler>(maskBytes,c::SubsectionMaskSampler::assetSHA256);
+void native(const wchar_t*shader){
     Fixture fixture;n::Renderer renderer;renderer.initialize(fixture.window,512,384,{n::Driver::warpForTests,shader,n::RenderTarget::offscreenForTests});renderer.setCamera(n::layerViewportProjection(512,384));
     n::LayerRasterizer raster;n::LayerRasterOptions options;options.assetRoot=fixture.assets;options.pixelsPerPoint=1;
     m::FileShelfState state(items(10000));m::ShelfPresentation source;m::ShelfPresentationStyle style;source.update(state,style);
-    // A correctly hashed asset for another viewport is not a Shelf asset. The
-    // synthetic header edit tests configuration validation, not curve rescaling.
-    auto otherViewportBytes=maskBytes;const c::Rect otherViewport{0,0,376,246};
-    const std::array<double,4>header{otherViewport.x,otherViewport.y,otherViewport.width,otherViewport.height};
-    for(std::size_t k=0;k<header.size();++k){const auto bits=std::bit_cast<std::uint64_t>(header[k]);for(unsigned byte=0;byte<8;++byte)otherViewportBytes[8+k*8+byte]=static_cast<std::uint8_t>(bits>>(byte*8));}
-    const auto otherViewportSampler=std::make_shared<c::SubsectionMaskSampler>(otherViewportBytes,c::packet::sha256(otherViewportBytes),otherViewport);
-    const auto beforeWrongViewport=raster.stats();rejects([&]{n::NativeShelfScene wrong(source,raster,options,otherViewportSampler);},"Shelf rejects a pinned sampler for a different source viewport");
-    check(raster.stats().rasterizations==beforeWrongViewport.rasterizations&&raster.stats().entries==beforeWrongViewport.entries,"Wrong viewport rejects before any Shelf artwork is allocated");
-    n::NativeShelfScene bridge(source,raster,options,sampler);
+    n::NativeShelfScene bridge(source,raster,options);
     rejects([&]{bridge.syncContent();},"Native image failure leaves initial bridge empty");check(bridge.entries().empty(),"Failed initial artwork never publishes partial entries");auto bindings=images(source);check(bridge.syncContent(bindings)&&!bridge.syncContent(),"Initial content commits once; unchanged event is a no-op");
     n::NativeShelfPose pose;pose.time=0;bridge.updatePose(pose);n::LayerComposition composition;composition.setEntries(renderer,bridge.entries());composition.present(renderer);renderer.draw(false);
     check(bridge.entries().size()==11&&bridge.stats().cards==8&&!IsWindowVisible(fixture.window),"Only eleven ordered parts and eight bounded cards; owned window remains hidden");
@@ -124,7 +144,8 @@ void native(const wchar_t*shader,const wchar_t*maskPath){
 #endif
 }
 #ifdef _WIN32
-int wmain(int argc,wchar_t**argv){const HRESULT hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);try{check(SUCCEEDED(hr)&&argc==3,"Pass HLSL and pinned mask paths to hidden owned Shelf fixture");portable();native(argv[1],argv[2]);CoUninitialize();std::cout<<"PASS "<<checks<<" Shelf scene checks\n";return 0;}catch(const std::exception&e){counting=false;if(SUCCEEDED(hr))CoUninitialize();std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
+int wmain(int argc,wchar_t**argv){const HRESULT hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);try{// argv[2] (the measured CA reveal samples) is still supplied by CMakeLists.txt; the reveal no longer reads it.
+    check(SUCCEEDED(hr)&&(argc==2||argc==3),"Pass the HLSL path to the hidden owned Shelf fixture");portable();native(argv[1]);CoUninitialize();std::cout<<"PASS "<<checks<<" Shelf scene checks\n";return 0;}catch(const std::exception&e){counting=false;if(SUCCEEDED(hr))CoUninitialize();std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
 #else
 int main(){try{portable();std::cout<<"PASS "<<checks<<" Shelf scene preparation checks\n";return 0;}catch(const std::exception&e){counting=false;std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
 #endif

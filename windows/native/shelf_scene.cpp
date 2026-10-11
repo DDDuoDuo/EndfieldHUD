@@ -1,6 +1,7 @@
 #include "native/shelf_scene.hpp"
 #include "core/motion.hpp"
 #include "core/source_camera.hpp"
+#include "core/subsection_mask.hpp"
 #include "core/subsection_transition.hpp"
 #include <atomic>
 #include <algorithm>
@@ -106,7 +107,7 @@ double cubicLength(const DropSegment&s,double end=1){
     constexpr unsigned steps=128;const double h=end/steps;double sum{};
     for(unsigned n=0;n<=steps;++n){const auto t=h*n,u=1-t;const auto x=3*(u*u*(s.c1.x-s.start.x)+2*u*t*(s.c2.x-s.c1.x)+t*t*(s.end.x-s.c2.x));const auto y=3*(u*u*(s.c1.y-s.start.y)+2*u*t*(s.c2.y-s.c1.y)+t*t*(s.end.y-s.c2.y));sum+=(n==0||n==steps?1:n%2?4:2)*std::hypot(x,y);}return sum*h/3;
 }
-[[maybe_unused]] Json curveLayer(const core::SubsectionCurvePath&path){
+Json curveLayer(const core::SubsectionCurvePath&path){
     Json::Array commands;std::size_t at{};const auto point=[&](){const Point p{path.coordinates[at],path.coordinates[at+1]};at+=2;return p;};
     for(std::size_t n=0;n<path.opcodeCount;++n)switch(path.opcodes[n]){
         case 0:commands.push_back(pathCommand("move",{point()}));break;
@@ -122,7 +123,25 @@ double cubicLength(const DropSegment&s,double end=1){
     Json shape=Json::Object{{"path",std::move(commands)},{"fillRule","non-zero"}};
     shape["fillColor"]=Json::Object{{"sRGB",Json::Array{1,1,1,1}}};result["shape"]=std::move(shape);return result;
 }
-[[maybe_unused]] const Json*findLayer(const Json&node,std::string_view id){if(text(node["id"])==id)return &node;for(const auto&child:children(node))if(const auto*p=findLayer(child,id))return p;return nullptr;}
+const Json*findLayer(const Json&node,std::string_view id){if(text(node["id"])==id)return &node;for(const auto&child:children(node))if(const auto*p=findLayer(child,id))return p;return nullptr;}
+// Four closed polygons (move, lines, close) for the mask raster.
+template<class Strips>core::SubsectionCurvePath curvePath(const Strips&strips){
+    core::SubsectionCurvePath path;
+    for(const auto&strip:strips){for(std::size_t n=0;n<strip.size();++n){path.opcodes[path.opcodeCount++]=n?1:0;path.coordinates[path.coordinateCount++]=strip[n].x;path.coordinates[path.coordinateCount++]=strip[n].y;}path.opcodes[path.opcodeCount++]=4;}
+    return path;
+}
+}
+core::SubsectionMaskPath shelfRevealShutter(double direction,double elapsed){
+    using Style=core::SubsectionTransitionStyle;need(std::isfinite(direction)&&std::isfinite(elapsed),"Invalid Shelf reveal time");
+    // CAKeyframeAnimation, calculationMode linear: the segment holding the
+    // normalized time, its own ease-out, then the authored values.
+    const auto time=std::clamp(elapsed/Style::duration,0.,1.);std::size_t segment{};while(segment<2&&time>Style::maskKeyTimes[segment+1])++segment;
+    const auto local=std::clamp((time-Style::maskKeyTimes[segment])/(Style::maskKeyTimes[segment+1]-Style::maskKeyTimes[segment]),0.,1.);
+    const auto eased=Style::maskSegmentTiming.value(local);const auto viewport=modules::ShelfPresentation::contentClip();
+    const auto from=core::subsectionMaskKeyframe(viewport,direction,segment),to=core::subsectionMaskKeyframe(viewport,direction,segment+1);
+    core::SubsectionMaskPath result;
+    for(std::size_t strip=0;strip<result.size();++strip)for(std::size_t vertex=0;vertex<result[strip].size();++vertex){const auto a=from[strip][vertex],b=to[strip][vertex];result[strip][vertex]={a.x+(b.x-a.x)*eased,a.y+(b.y-a.y)*eased};}
+    return result;
 }
 Json shelfDropStrokePath(double end){
     need(std::isfinite(end)&&end>=0&&end<=1,"Invalid source Shelf strokeEnd");const auto segments=dropSegments();
@@ -173,12 +192,12 @@ struct NativeShelfScene::Impl {
     std::vector<LayerCompositionEntry>entries;std::vector<NativeShelfImage>images;
     std::uint64_t chromeRevision{},placementRevision{},imageRevision{},compositionRevision{};std::optional<double>lastTime;
     NativeShelfSceneStats stats;DrawObject validation;
-    std::shared_ptr<const core::SubsectionMaskSampler>sampler;std::optional<core::SubsectionCurvePath>maskPath;
+    std::optional<core::SubsectionCurvePath>maskPath;
     std::optional<PlaneAlphaMask>alpha;std::shared_ptr<const LayerRasterImage>maskImage;
     std::string maskID;std::uint64_t maskRevision{},uploadedMask{};bool maskDirty{};Renderer*resourceOwner{};
     double dropEnd{1};std::optional<double>uploadedDrop;Part*dropPart{};std::uint64_t dropRevision{};
     bool revealActive{};double revealEnds{};
-    Impl(modules::ShelfPresentation&s,LayerRasterizer&r,LayerRasterOptions o,std::shared_ptr<const core::SubsectionMaskSampler>samples):source(&s),raster(&r),options(std::move(o)),sampler(std::move(samples)){if(sampler)need(sampler->sourceViewport()==core::SubsectionMaskSampler::viewport,"Shelf mask must match original source viewport");static std::atomic<std::uint64_t>sequence{};maskID="shm"+std::to_string(sequence.fetch_add(1,std::memory_order_relaxed));cards.reserve(8);retired.reserve(11);entries.reserve(11);validation.sourceID="shelf.pose";validation.masks.reserve(8);}
+    Impl(modules::ShelfPresentation&s,LayerRasterizer&r,LayerRasterOptions o):source(&s),raster(&r),options(std::move(o)){static std::atomic<std::uint64_t>sequence{};maskID="shm"+std::to_string(sequence.fetch_add(1,std::memory_order_relaxed));cards.reserve(8);retired.reserve(11);entries.reserve(11);validation.sourceID="shelf.pose";validation.masks.reserve(8);}
     void time(double value)const{need(std::isfinite(value)&&(!lastTime||value>=*lastTime),"Shelf feedback requires a finite monotonic owner clock");}
     static bool sameArtwork(const ShelfScenePart&a,const ShelfScenePart&b){
         if(a.layers!=b.layers||a.surfaces.size()!=b.surfaces.size()||a.feedback.size()!=b.feedback.size())return false;
@@ -192,7 +211,7 @@ struct NativeShelfScene::Impl {
     const Feedback*feedback(std::string_view id)const{for(const auto&f:source->chromeFeedback())if(f.actionID==id)return &f;for(const auto&c:source->cards())for(const auto&f:c.feedback)if(f.actionID==id)return &f;return nullptr;}
     bool current()const {if(!chromeRevision||chromeRevision!=source->chromeRevision()||placementRevision!=source->placementRevision()||cards.size()!=source->cards().size())return false;for(std::size_t n=0;n<cards.size();++n)if(cards[n]->plan.itemID!=source->cards()[n].itemID||cards[n]->sourceRevision!=source->cards()[n].contentRevision)return false;return true;}
 };
-NativeShelfScene::NativeShelfScene(modules::ShelfPresentation&s,LayerRasterizer&r,LayerRasterOptions o,std::shared_ptr<const core::SubsectionMaskSampler>samples):impl_(std::make_unique<Impl>(s,r,std::move(o),std::move(samples))){}
+NativeShelfScene::NativeShelfScene(modules::ShelfPresentation&s,LayerRasterizer&r,LayerRasterOptions o):impl_(std::make_unique<Impl>(s,r,std::move(o))){}
 NativeShelfScene::~NativeShelfScene(){if(impl_)impl_->raster->remove(impl_->maskID);}
 bool NativeShelfScene::syncContent(std::span<const NativeShelfImage>supplied,std::uint64_t imageRevision){
     auto&i=*impl_;bool sameCards=i.cards.size()==i.source->cards().size();for(std::size_t n=0;sameCards&&n<i.cards.size();++n)sameCards=i.cards[n]->plan.itemID==i.source->cards()[n].itemID&&i.cards[n]->sourceRevision==i.source->cards()[n].contentRevision;
@@ -233,12 +252,11 @@ bool NativeShelfScene::updatePose(const NativeShelfPose&pose){
     need(pose.collectionSublayerTransform.finite()&&std::isfinite(pose.dropStrokeEnd)&&pose.dropStrokeEnd>=0&&pose.dropStrokeEnd<=1,"Invalid Shelf subsection/drop trace");
     need(!pose.reveal||(!pose.collectionReveal&&pose.collectionSublayerTransform==Matrix{}),"Ambiguous Shelf reveal inputs");
     Matrix sublayer=pose.collectionSublayerTransform;std::optional<core::SubsectionCurvePath>nextPath;bool revealActive{};double revealEnds{};
-    if(pose.reveal){need(bool(i.sampler),"Active Shelf reveal needs pinned original CA samples");const auto&r=*pose.reveal;
+    if(pose.reveal){const auto&r=*pose.reveal;
         need(std::isfinite(r.direction)&&std::isfinite(r.elapsed),"Invalid Shelf reveal time");sublayer=core::sampleSubsectionTransform(r.direction,r.elapsed).sublayerTransform;
-        revealActive=r.elapsed<core::SubsectionMaskSampler::duration;revealEnds=pose.time+std::max(0.,core::SubsectionMaskSampler::duration-r.elapsed);
-        if(revealActive)nextPath=i.sampler->sample(r.direction,r.elapsed/core::SubsectionMaskSampler::duration);
-    }else if(pose.collectionReveal){validatePlaneShutter(PlaneShutter{Matrix{},*pose.collectionReveal});core::SubsectionCurvePath path;
-        for(const auto&strip:*pose.collectionReveal){for(std::size_t n=0;n<strip.size();++n){path.opcodes[path.opcodeCount++]=n?1:0;path.coordinates[path.coordinateCount++]=strip[n].x;path.coordinates[path.coordinateCount++]=strip[n].y;}path.opcodes[path.opcodeCount++]=4;}nextPath=path;
+        constexpr double duration=core::SubsectionTransitionStyle::duration;revealActive=r.elapsed<duration;revealEnds=pose.time+std::max(0.,duration-r.elapsed);
+        if(revealActive)nextPath=curvePath(shelfRevealShutter(r.direction,r.elapsed));
+    }else if(pose.collectionReveal){validatePlaneShutter(PlaneShutter{Matrix{},*pose.collectionReveal});nextPath=curvePath(*pose.collectionReveal);
     }
     const auto collectionWorld=pose.contentWorld*Matrix::translation(200,167)*sublayer*Matrix::translation(-200,-167);
     std::optional<PlaneAlphaMask>nextAlpha;if(nextPath)nextAlpha=PlaneAlphaMask{core::source::inverseSourceMatrix(pose.contentWorld),i.maskImage?i.maskImage->bounds:modules::ShelfPresentation::contentClip(),i.maskID};

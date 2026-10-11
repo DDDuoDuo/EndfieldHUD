@@ -1,7 +1,7 @@
 #pragma once
 #include "modules/shelf_presentation.hpp"
 #include "native/layer_scene.hpp"
-#include "core/subsection_mask.hpp"
+#include "core/subsection_transition.hpp"
 
 namespace endfield::native {
 // Explicit source-prepared artwork or caller-supplied native icon snapshots. This bridge never obtains file icons,
@@ -33,6 +33,18 @@ ShelfScenePlan prepareShelfScene(const modules::ShelfPresentation&,
 
 struct ShelfSelectionPose {std::string_view itemID;double y{},z{};};
 struct ShelfRevealSample {double direction{1},elapsed{};};
+// HUDSubsectionTransition.reveal's collection mask as authored: the four
+// shutter(progress:) keyframes (progress 0/.38/.72/1 at key times 0/.3/.68/1,
+// each segment eased out) over the Shelf viewport, interpolated point by
+// point. direction<0 opens from the left edge (removal and Clear), otherwise
+// from the right (additions). Finite elapsed seconds clamp to [0,.26]; no
+// allocation. Core Animation's own morph of these paths is deliberately not
+// reproduced: CA drops the zero-length segments of the collapsed first and
+// the full last keyframe, so the element lists no longer correspond and its
+// interpolated path (measured from paused presentation layers) sweeps curved
+// wedges across the cards during the first and last ~80 ms of every reveal.
+// Between the two well-formed keyframes CA's path equals this one.
+core::SubsectionMaskPath shelfRevealShutter(double direction,double elapsed);
 // Original rounded drop outline, trimmed by true cubic arc length. Retains
 // authored curve segments (no flattened polygon or generic fade).
 ehud::data::Json shelfDropStrokePath(double strokeEnd);
@@ -49,7 +61,7 @@ struct NativeShelfPose {
     core::Matrix4 collectionSublayerTransform;
     std::optional<SubsectionShutterPath> collectionReveal;
     double dropStrokeEnd{1};
-    std::optional<ShelfRevealSample> reveal; // finite caller-clock .26s animation
+    std::optional<ShelfRevealSample> reveal; // finite caller-clock .26s animation (shelfRevealShutter)
 };
 struct NativeShelfSceneStats {
     std::size_t cards{},retiredParts{};
@@ -66,14 +78,13 @@ struct NativeShelfSceneStats {
 // Removed/replaced parts survive until collectRetired after owner publication.
 // One uncollected generation is permitted, bounding retained resources. Detach
 // all entries and releaseResources BEFORE destruction; raster/source outlive it.
-// Curved reveal uses one bounded planar alpha texture during the finite .26s
-// transition, intersecting the independent outer module shutter. Measured CA
-// curve approximation and D2D raster antialiasing are explicit parity limits.
+// The reveal mask uses one bounded planar alpha texture during the finite .26s
+// transition, intersecting the independent outer module shutter. D2D raster
+// antialiasing is an explicit parity limit.
 // Call collectRetired after composition.present to retire a completed mask.
 class NativeShelfScene final {
 public:
-    NativeShelfScene(modules::ShelfPresentation&,LayerRasterizer&,LayerRasterOptions,
-        std::shared_ptr<const core::SubsectionMaskSampler> revealSamples={});
+    NativeShelfScene(modules::ShelfPresentation&,LayerRasterizer&,LayerRasterOptions);
     ~NativeShelfScene();
     NativeShelfScene(const NativeShelfScene&)=delete;
     NativeShelfScene&operator=(const NativeShelfScene&)=delete;

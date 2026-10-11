@@ -25,6 +25,10 @@ struct ShelfPreviewOptions {
     // nativeIcons also enables the other Shell presentation services: the
     // drag image of outgoing drags and of incoming drags over the HUD.
     bool nativeIcons{true},registerDropTarget{true};
+    // Not drawn any more (kept so existing aggregate initialisers stay valid):
+    // the collection reveal is the authored HUDSubsectionTransition shutter
+    // (native/shelf_scene.hpp shelfRevealShutter), not the measured Core
+    // Animation morph whose degenerate keyframes swept wedges over the cards.
     std::shared_ptr<const core::SubsectionMaskSampler> revealSamples;
     bool persistentDataRoot{}; // existing four-member aggregate initialisers stay valid
     // Event Log records exactly as SystemHUDView wires FileShelfCanvas:

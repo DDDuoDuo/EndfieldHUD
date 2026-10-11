@@ -63,5 +63,16 @@ if(WIN32)
     endif()
     add_test(NAME shelf_preview_thread_contracts COMMAND shelf_preview_thread_tests)
     set_tests_properties(shelf_preview_thread_contracts PROPERTIES TIMEOUT 240)
+
+    # Card removal frame by frame through the production owner, published as
+    # the HUD host publishes owners (WARP readback; optional PNG frames).
+    add_executable(shelf_removal_frames_tests tests/shelf_removal_frames_tests.cpp)
+    target_compile_definitions(shelf_removal_frames_tests PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
+    target_link_libraries(shelf_removal_frames_tests PRIVATE hud_shelf_preview ole32 windowscodecs)
+    if(MSVC)
+      target_compile_options(shelf_removal_frames_tests PRIVATE /W4 /permissive- /EHsc)
+    endif()
+    add_test(NAME shelf_removal_frames_contracts COMMAND shelf_removal_frames_tests "${CMAKE_CURRENT_SOURCE_DIR}/native/hud.hlsl" "${CMAKE_CURRENT_SOURCE_DIR}/resources/shelf" "${CMAKE_CURRENT_SOURCE_DIR}/resources/shelf/reveal-mask.bin")
+    set_tests_properties(shelf_removal_frames_contracts PROPERTIES TIMEOUT 180)
   endif()
 endif()
