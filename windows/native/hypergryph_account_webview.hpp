@@ -5,6 +5,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <array>
 #include <filesystem>
 #include <functional>
 #include <optional>
@@ -53,6 +54,9 @@ struct WebViewLoginOptions {
     // Opens Microsoft's official WebView2 download page in the user's default
     // browser (default: ShellExecuteW "open"); tests record the request.
     std::function<bool(std::string_view url)> openLink;
+    // HUDRuntimeAppearance.accent (the configured accent, sRGB): the auth
+    // buttons' plates and highlight (Mac default FAD41F).
+    std::array<double,3> accent{250./255,212./255,31./255};
 };
 class WebViewLoginPresenter final:public modules::hypergryph::AccountLoginPresenter {
 public:
@@ -69,6 +73,7 @@ public:
     void cancel() override;
     bool isPresenting() const override;
     void setLanguage(core::Language); // next login window / status text
+    void setAccent(const std::array<double,3>&); // repaints open auth buttons
     std::optional<double> nextDeadline() const;  // 25 s page load / 900 s session expiry
     void deadline(double now);
 private:

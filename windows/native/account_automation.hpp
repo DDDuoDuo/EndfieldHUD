@@ -30,11 +30,14 @@ class AccountAutomationElement;
 //                     update and the status message as its help text;
 //  notice             that status message: when it changes to a new text it
 //                     is announced once (UIA notification, Windows 10 1709+).
+// Mac accessibilityValue: the wallet toggle's value while its popover is open
+// ("Next recovery 05:12; Full recovery 23:41:07") as a read-only Value.
 struct AccountAutomationControl {
     std::string id,label;core::Rect rect;bool enabled{};
     bool focusable{},focused{};
     std::optional<bool> toggled;
     std::string help,notice;
+    std::optional<std::string> value;
     bool operator==(const AccountAutomationControl&)const=default;
 };
 // The host's view of the Account Linking owner (tools::AccountLinkingOwner):

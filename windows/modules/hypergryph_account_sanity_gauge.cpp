@@ -287,6 +287,10 @@ std::vector<GaugeAction> SanityGaugeModel::accessibleActions(core::Language lang
         sanity_->refreshAvailable&&!sanity_->isRefreshing});
     return actions;
 }
+std::optional<std::string> SanityGaugeModel::accessibilityValue(core::Language language) const {
+    if(!open_||!sanity_) return std::nullopt;
+    return core::localized("Next recovery","下次回复",language)+" "+tooltip_.text[2]+"; "+core::localized("Full recovery","全部回复",language)+" "+tooltip_.text[3];
+}
 std::optional<Time> SanityGaugeModel::nextTooltipChange() const {
     if(!open_||!sanity_) return std::nullopt;
     std::optional<Time> next;

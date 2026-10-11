@@ -251,6 +251,19 @@ void focusAndToggle() {
     check(!a.refresh() && a.stats().focusMoves == 3, "Its return is announced again");
     controls = face;
     check(a.refresh() && a.stats().focusMoves == 3 && !flagProperty(first.Get(), UIA_HasKeyboardFocusPropertyId), "Closing the menu removes its rows and the focus");
+    // Mac accessibilityValue: the wallet toggle's countdowns while its popover is open.
+    controls = {{"wallet:toggle", "Arknights: Endfield · Sanity 343 / 360", {300, 0, 168, 42}, true}};
+    ComPtr<IRawElementProviderFragment> wallet;
+    check(a.refresh() && SUCCEEDED(a.child(0, &wallet)) && !pattern<IValueProvider>(wallet.Get(), UIA_ValuePatternId) &&
+          pattern<IInvokeProvider>(wallet.Get(), UIA_InvokePatternId), "A closed wallet offers Invoke and no value");
+    controls[0].value = "Next recovery 05:12; Full recovery 23:41:07";
+    (void)a.refresh();
+    const auto value = pattern<IValueProvider>(wallet.Get(), UIA_ValuePatternId);
+    BSTR text{};
+    BOOL readOnly{};
+    check(value && SUCCEEDED(value->get_Value(&text)) && text && std::wstring_view(text) == L"Next recovery 05:12; Full recovery 23:41:07" &&
+          SUCCEEDED(value->get_IsReadOnly(&readOnly)) && readOnly && value->SetValue(L"x") == UIA_E_NOTSUPPORTED, "The open wallet reports its countdowns as a read-only value");
+    SysFreeString(text);
     a.disconnect();
 }
 

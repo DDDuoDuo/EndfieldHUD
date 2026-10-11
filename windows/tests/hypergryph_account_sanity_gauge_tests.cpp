@@ -43,8 +43,14 @@ void tooltips(const h::GaugeAssets& assets,const Json& g) {
         h::SanityGaugeModel model;
         h::SanityPresentation s{h::Game::endfield,42,360,now,now+row["next"].number(),now+row["full"].number(),false,true};
         model.update("42 / 360","Sanity 42 of 360",true,2,s,now,language);
+        check(!model.accessibilityValue(language),"A closed wallet has no accessibility value");
         check(model.canOpen()&&!model.popoverOpen()&&model.perform("toggle")&&model.popoverOpen(),"Wallet click opens the recovery popover");
         check(model.tooltip().text[2]==row["nextText"].string()&&model.tooltip().text[3]==row["fullText"].string(),"Recovery countdowns match Mac: "+model.tooltip().text[2]+" "+model.tooltip().text[3]);
+        // SystemHUDView.layoutAccountGaugeControls: L10n.text("Next recovery", "下次回复") + " " + next + "; "
+        // + L10n.text("Full recovery", "全部回复") + " " + full while the popover is open.
+        const bool chinese=language==endfield::core::Language::simplifiedChinese;
+        const auto value=std::string(chinese?"下次回复":"Next recovery")+" "+row["nextText"].string()+"; "+(chinese?"全部回复":"Full recovery")+" "+row["fullText"].string();
+        check(model.accessibilityValue(language)==std::optional(value),"The open wallet's accessibility value is the Mac countdown text: "+model.accessibilityValue(language).value_or(""));
         const auto& actions=row["actions"].array();const auto mine=model.accessibleActions(language);
         check(actions.size()==mine.size(),"Accessible gauge actions");
         for(std::size_t i=0;i<mine.size();++i) {const auto& r=actions[i]["rect"].array();

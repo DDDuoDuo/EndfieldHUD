@@ -131,6 +131,7 @@ bool AccountSanityGaugePreview::perform(std::string_view id,double t) {
     i.scene.sync(i.model,i.options.language,i.time,i.options.reduceMotion);return true;
 }
 std::vector<h::GaugeAction> AccountSanityGaugePreview::accessibleActions() const {return impl_->model.accessibleActions(impl_->options.language);}
+std::optional<std::string> AccountSanityGaugePreview::accessibilityValue() const {return impl_->model.accessibilityValue(impl_->options.language);}
 gpu::NativeSanityGaugeStats AccountSanityGaugePreview::sceneStats() const noexcept {return impl_->scene.stats();}
 void AccountSanityGaugePreview::upload(gpu::Renderer& r) {if(impl_->posed) impl_->scene.upload(r);}
 std::span<const gpu::LayerCompositionEntry> AccountSanityGaugePreview::entries() {return impl_->posed?impl_->scene.entries():std::span<const gpu::LayerCompositionEntry>{};}

@@ -48,7 +48,7 @@ struct NativeAccountAutomation::State {
     }
 };
 
-class AccountAutomationElement final:public IRawElementProviderSimple,public IRawElementProviderFragment,public IInvokeProvider,public IToggleProvider {
+class AccountAutomationElement final:public IRawElementProviderSimple,public IRawElementProviderFragment,public IInvokeProvider,public IToggleProvider,public IValueProvider {
 public:
     using State=NativeAccountAutomation::State;
     AccountAutomationElement(std::weak_ptr<State> s,AccountAutomationControl c):state(std::move(s)),control(std::move(c)),runtime(nextRuntime++) {}
@@ -60,6 +60,7 @@ public:
         else if(riid==__uuidof(IRawElementProviderFragment)) *out=static_cast<IRawElementProviderFragment*>(this);
         else if(riid==__uuidof(IInvokeProvider)) *out=static_cast<IInvokeProvider*>(this);
         else if(riid==__uuidof(IToggleProvider)) *out=static_cast<IToggleProvider*>(this);
+        else if(riid==__uuidof(IValueProvider)) *out=static_cast<IValueProvider*>(this);
         else return E_NOINTERFACE;
         AddRef();return S_OK;
     }
@@ -72,6 +73,7 @@ public:
         // The sync toggles answer Toggle; every other control Invoke.
         if(id==UIA_InvokePatternId&&!control.toggled) {*out=static_cast<IInvokeProvider*>(this);AddRef();}
         else if(id==UIA_TogglePatternId&&control.toggled) {*out=static_cast<IToggleProvider*>(this);AddRef();}
+        else if(id==UIA_ValuePatternId&&control.value) {*out=static_cast<IValueProvider*>(this);AddRef();}
         return S_OK;
     }
     IFACEMETHODIMP GetPropertyValue(PROPERTYID id,VARIANT* out) override {
@@ -131,6 +133,13 @@ public:
         if(!out) return E_POINTER;*out=ToggleState_Off;if(!connected) return UIA_E_ELEMENTNOTAVAILABLE;
         *out=control.toggled.value_or(false)?ToggleState_On:ToggleState_Off;return S_OK;
     }
+    // IValueProvider: the Mac accessibilityValue, read-only.
+    IFACEMETHODIMP SetValue(LPCWSTR) override {return connected?UIA_E_NOTSUPPORTED:UIA_E_ELEMENTNOTAVAILABLE;}
+    IFACEMETHODIMP get_Value(BSTR* out) override {
+        if(!out) return E_POINTER;*out=nullptr;if(!connected) return UIA_E_ELEMENTNOTAVAILABLE;
+        *out=SysAllocString(wide(control.value.value_or(std::string())).c_str());return *out?S_OK:E_OUTOFMEMORY;
+    }
+    IFACEMETHODIMP get_IsReadOnly(BOOL* out) override {if(!out) return E_POINTER;*out=TRUE;return connected?S_OK:UIA_E_ELEMENTNOTAVAILABLE;}
     void disconnect() noexcept {if(!connected) return;connected=false;UiaDisconnectProvider(static_cast<IRawElementProviderSimple*>(this));}
 private:
     HRESULT press(bool toggle) {
@@ -174,6 +183,7 @@ bool NativeAccountAutomation::refresh() {
                 if(e->control.focusable!=c.focusable) raise(UIA_IsKeyboardFocusablePropertyId,flag(e->control.focusable),flag(c.focusable));
                 if(e->control.focused!=c.focused) raise(UIA_HasKeyboardFocusPropertyId,flag(e->control.focused),flag(c.focused));
                 if(e->control.help!=c.help) raise(UIA_HelpTextPropertyId,text(e->control.help),text(c.help));
+                if(e->control.value!=c.value) raise(UIA_ValueValuePropertyId,text(e->control.value.value_or(std::string())),text(c.value.value_or(std::string())));
             }
             // A new status message on the face is announced once.
             if(e->control.notice!=c.notice&&!c.notice.empty()) {

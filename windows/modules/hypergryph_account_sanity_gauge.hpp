@@ -85,6 +85,10 @@ public:
     const std::string& value() const noexcept {return value_;}
     const std::string& accessibilityLabel() const noexcept {return label_;}
     std::vector<GaugeAction> accessibleActions(core::Language) const;
+    // SystemHUDView.layoutAccountGaugeControls: the toggle's accessibility
+    // value while the popover is open, "Next recovery 05:12; Full recovery
+    // 23:41:07" (the popover's countdowns); none while it is closed.
+    std::optional<std::string> accessibilityValue(core::Language) const;
     const GaugeTooltip& tooltip() const noexcept {return tooltip_;}
     const std::optional<SanityPresentation>& sanity() const noexcept {return sanity_;}
     std::uint64_t updateCount() const noexcept {return updates_;}

@@ -206,7 +206,29 @@ void shift(bool down) {
     for(int k:{VK_CONTROL,VK_LCONTROL,VK_RCONTROL,VK_MENU,VK_LMENU,VK_RMENU,VK_LWIN,VK_RWIN}) keys[k]=0;
     check(SetKeyboardState(keys)!=FALSE&&(GetKeyState(VK_SHIFT)<0)==down,"Pin this thread's Shift state");
 }
-bool defaultButton(HWND button) {return (GetWindowLongW(button,GWL_STYLE)&BS_TYPEMASK)==BS_DEFPUSHBUTTON;}
+bool ownerDrawn(HWND button) {return (GetWindowLongW(button,GWL_STYLE)&BS_TYPEMASK)==BS_OWNERDRAW;}
+// One WM_DRAWITEM of a page button into a top-down 32-bit DIB (the page
+// draws into whatever DC the item names), as RGB pixels.
+struct Shot {
+    int width{},height{};std::vector<std::uint32_t> pixels;
+    COLORREF at(int x,int y) const {const auto p=pixels[std::size_t(y)*std::size_t(width)+std::size_t(x)];return RGB((p>>16)&255,(p>>8)&255,p&255);}
+};
+Shot drawItem(HWND page,HWND button,UINT state) {
+    RECT r{};GetClientRect(button,&r);Shot shot;shot.width=r.right;shot.height=r.bottom;
+    BITMAPINFO info{};info.bmiHeader.biSize=sizeof(BITMAPINFOHEADER);info.bmiHeader.biWidth=shot.width;info.bmiHeader.biHeight=-shot.height;
+    info.bmiHeader.biPlanes=1;info.bmiHeader.biBitCount=32;info.bmiHeader.biCompression=BI_RGB;
+    void* bits{};const HDC dc=CreateCompatibleDC(nullptr);const HBITMAP bitmap=dc?CreateDIBSection(dc,&info,DIB_RGB_COLORS,&bits,nullptr,0):nullptr;
+    check(dc&&bitmap&&bits,"Off-screen drawing surface");const auto previous=SelectObject(dc,bitmap);
+    DRAWITEMSTRUCT item{ODT_BUTTON,UINT(GetDlgCtrlID(button)),0,ODA_DRAWENTIRE,state,button,dc,r,0};
+    const auto drawn=SendMessageW(page,WM_DRAWITEM,item.CtlID,reinterpret_cast<LPARAM>(&item));GdiFlush();
+    const auto* begin=static_cast<const std::uint32_t*>(bits);shot.pixels.assign(begin,begin+std::size_t(shot.width)*std::size_t(shot.height));
+    SelectObject(dc,previous);DeleteObject(bitmap);DeleteDC(dc);
+    check(drawn==TRUE,"The page draws its auth button");return shot;
+}
+COLORREF blend(COLORREF bottom,COLORREF top,double t) {
+    const auto c=[t](int b,int f){return int(std::lround(b+(f-b)*t));};
+    return RGB(c(GetRValue(bottom),GetRValue(top)),c(GetGValue(bottom),GetGValue(top)),c(GetBValue(bottom),GetBValue(top)));
+}
 int fontHeight(HWND control) {LOGFONTW font{};const auto handle=reinterpret_cast<HFONT>(SendMessageW(control,WM_GETFONT,0,0));return handle&&GetObjectW(handle,sizeof font,&font)?font.lfHeight:0;}
 // UTF-8 text of a login-window control (empty when the control is absent).
 std::string text(HWND window,int id) {
@@ -233,7 +255,9 @@ void pageFits(HWND page,const std::string& what) {
         std::wstring value(std::size_t(length)+1,L'\0');GetWindowTextW(control,value.data(),length+1);value.resize(std::size_t(length));
         wchar_t type[16]{};GetClassNameW(control,type,16);
         const bool button=_wcsicmp(type,L"Button")==0,singleLine=button||_wcsicmp(type,L"Edit")==0;
-        RECT area{};GetClientRect(control,&area);const int padding=button?12:0;
+        // Auth buttons draw their label 10 pt inside each edge (HypergryphAccountAuthButton).
+        const UINT dpi=GetDpiForWindow(GetWindow(page,GW_OWNER));
+        RECT area{};GetClientRect(control,&area);const int padding=button?2*int(std::lround(10.0*(dpi?dpi:96)/96)):0;
         const HDC dc=GetDC(control);const auto previous=SelectObject(dc,reinterpret_cast<HGDIOBJ>(SendMessageW(control,WM_GETFONT,0,0)));
         RECT need{0,0,area.right-padding,0};
         DrawTextW(dc,value.c_str(),length,&need,DT_CALCRECT|DT_NOPREFIX|(singleLine?DT_SINGLELINE:DT_WORDBREAK|DT_EXPANDTABS));
@@ -428,15 +452,14 @@ void run() {
         w.runtime.clear();presenter.present(h::Region::mainland,done);page=loginWindow();
         {
             const HWND link=GetDlgItem(page,112),open=GetDlgItem(page,105),again=GetDlgItem(page,106),cancel=GetDlgItem(page,102);
-            check(defaultButton(open)&&!defaultButton(again),"Opening Microsoft's page is the runtime page's default button");
+            check(ownerDrawn(open)&&ownerDrawn(again)&&ownerDrawn(cancel),"The page's buttons are drawn as the Mac's auth buttons");
             press(open,VK_TAB);
-            check(GetFocus()==again&&defaultButton(again)&&!defaultButton(open),"Tab moves to Check Again, which becomes the default button");
+            check(GetFocus()==again,"Tab moves to Check Again");
             check(!(SendMessageW(again,WM_QUERYUISTATE,0,0)&UISF_HIDEFOCUS),"Keyboard navigation shows the focus rectangle");
             press(again,VK_TAB);check(GetFocus()==cancel,"Then Cancel");
             press(cancel,VK_TAB);
             DWORD from{1},to{};SendMessageW(link,EM_GETSEL,reinterpret_cast<WPARAM>(&from),reinterpret_cast<LPARAM>(&to));
-            check(GetFocus()==link&&from==0&&to==DWORD(GetWindowTextLengthW(link))&&defaultButton(open)&&!defaultButton(cancel),
-                  "Tab wraps to the link field, selected for copying; the page's default button returns");
+            check(GetFocus()==link&&from==0&&to==DWORD(GetWindowTextLengthW(link)),"Tab wraps to the link field, selected for copying");
             shift(true);press(link,VK_TAB);shift(false);
             check(GetFocus()==cancel,"Shift+Tab walks backwards (wrapping)");
             press(again,VK_RETURN);
@@ -454,8 +477,8 @@ void run() {
         presenter.present(h::Region::mainland,done);page=loginWindow();
         {
             const HWND go=GetDlgItem(page,101),cancel=GetDlgItem(page,102);
-            check(defaultButton(go)&&!defaultButton(cancel),"Continue is the consent page's default button");
-            press(go,VK_TAB);check(GetFocus()==cancel&&defaultButton(cancel)&&!defaultButton(go),"Tab moves to Cancel");
+            check(ownerDrawn(go)&&ownerDrawn(cancel),"Continue and Cancel are drawn as the Mac's auth buttons");
+            press(go,VK_TAB);check(GetFocus()==cancel,"Tab moves to Cancel");
             press(cancel,VK_TAB);check(GetFocus()==go,"Tab wraps to Continue");
             press(cancel,VK_RETURN);
             check(completions==23&&failure==h::LoginFailure::cancelled&&!loginWindow()&&w.environments==environments+1,"Return on Cancel cancels before any browser");
@@ -500,12 +523,59 @@ void run() {
             check(EqualRect(&after,&suggested)!=FALSE,"The window takes the suggested frame");
             check(fontHeight(heading)==-pixels(20,dpi*2)&&fontHeight(body)==-pixels(13,dpi*2)&&fontHeight(link)==-pixels(13,dpi*2),
                   "Fonts are re-created at the same point sizes for the new DPI");
-            check(button.right-button.left==pixels(300,dpi*2)&&button.bottom-button.top==pixels(42,dpi*2),"The layout scales with the new DPI");
+            check(button.right-button.left>=pixels(240,dpi*2)&&button.bottom-button.top==pixels(42,dpi*2),"The layout scales with the new DPI");
             SendMessageW(page,WM_DPICHANGED,MAKEWPARAM(dpi,dpi),reinterpret_cast<LPARAM>(&suggested));
             check(fontHeight(heading)==title&&fontHeight(body)==detail,"Returning to the first display restores the sizes");
             pageFits(page,"runtime page after a DPI round trip");
             presenter.cancel();
             check(completions==25&&failure==h::LoginFailure::runtimeUnavailable&&!loginWindow(),"The page still closes as before");
+        }
+
+        // J. HypergryphAccountAuthButton: cut-corner plates inset 4 pt (the
+        // configured accent, or white 0.84), the HUDControlHighlightLayer rim
+        // 2 pt outside (0.28 idle, 1 highlighted) and tint (0.30 x 0.62
+        // highlighted, x 1 pressed), the label white only on a dark accent;
+        // the detail text in the Mac's secondary label colour.
+        presenter.setAccent({.2,.55,.9});
+        presenter.present(h::Region::mainland,done);page=loginWindow();
+        {
+            const HWND open=GetDlgItem(page,105),again=GetDlgItem(page,106);
+            const UINT dpi=GetDpiForWindow(owner.hwnd)?GetDpiForWindow(owner.hwnd):96;
+            const auto v=[&](double points){return int(std::lround(points*dpi/96.0));};
+            const COLORREF accent=RGB(51,140,230),window=GetSysColor(COLOR_WINDOW),gray=RGB(214,214,214);
+            const auto idle=drawItem(page,open,0),secondary=drawItem(page,again,0);
+            const int middle=idle.height/2;
+            check(idle.at(0,0)==window&&idle.at(v(7),middle)==accent&&secondary.at(v(7),middle)==gray,"Idle plates: the accent for the primary button, white 0.84 otherwise");
+            check(idle.at(v(2),middle)==blend(window,accent,.28)&&secondary.at(v(2),middle)==blend(window,accent,.28),"An idle framed rim shows the accent at 0.28");
+            SendMessageW(again,WM_MOUSEMOVE,0,MAKELPARAM(5,5));
+            auto shot=drawItem(page,again,0);
+            check(shot.at(v(7),middle)==blend(gray,accent,.30*.62)&&shot.at(v(2),middle)==accent,"The pointer highlights the button: tint 0.62, full rim");
+            check(drawItem(page,open,0).at(v(2),middle)==blend(window,accent,.28),"Only the button under the pointer is highlighted");
+            SendMessageW(again,WM_MOUSELEAVE,0,0);
+            check(drawItem(page,again,0).at(v(7),middle)==gray,"Leaving restores the idle plate");
+            check(drawItem(page,again,ODS_SELECTED).at(v(7),middle)==blend(gray,accent,.30),"A pressed button shows the full tint");
+            check(drawItem(page,again,ODS_FOCUS).at(v(2),middle)==accent&&drawItem(page,again,ODS_FOCUS|ODS_NOFOCUSRECT).at(v(2),middle)==blend(window,accent,.28),
+                  "A shown keyboard focus highlights like the Mac's first responder; a hidden one does not");
+            // Label colour: black on a light accent, white on a dark one.
+            const auto extreme=[&](const Shot& s,bool brightest){
+                int best=brightest?0:765;
+                for(int y=middle-v(5);y<=middle+v(5);++y) for(int x=v(12);x<s.width-v(12);++x) {
+                    const auto c=s.at(x,y);const int sum=GetRValue(c)+GetGValue(c)+GetBValue(c);best=brightest?std::max(best,sum):std::min(best,sum);
+                }
+                return best;
+            };
+            check(extreme(idle,false)<=120,"A light accent takes a black label");
+            presenter.setAccent({.1,.1,.4});
+            const auto dark=drawItem(page,open,0);
+            check(dark.at(v(7),middle)==RGB(26,26,102)&&extreme(dark,true)>=645,"A dark accent takes a white label");
+            HDC dc=CreateCompatibleDC(nullptr);
+            SendMessageW(page,WM_CTLCOLORSTATIC,reinterpret_cast<WPARAM>(dc),reinterpret_cast<LPARAM>(GetDlgItem(page,111)));const COLORREF detailColor=GetTextColor(dc);
+            SendMessageW(page,WM_CTLCOLORSTATIC,reinterpret_cast<WPARAM>(dc),reinterpret_cast<LPARAM>(GetDlgItem(page,110)));const COLORREF titleColor=GetTextColor(dc);
+            DeleteDC(dc);
+            check(detailColor==blend(window,GetSysColor(COLOR_WINDOWTEXT),.5)&&titleColor==GetSysColor(COLOR_WINDOWTEXT),"The detail uses the secondary label colour, the title the label colour");
+            presenter.setAccent({250./255,212./255,31./255});
+            presenter.cancel();
+            check(completions==26&&failure==h::LoginFailure::runtimeUnavailable&&!loginWindow(),"Drawing changes nothing else");
         }
         w.runtime=L"154.0.4258.62";
 
@@ -516,7 +586,7 @@ void run() {
         check(presenter.isPresenting()&&std::filesystem::exists(lastProfile),"Presenting before teardown");
         check(!last->closed,"Browser open before teardown");
     }
-    check(completions==25&&lastEnvironment->controllers[0]->closed&&!loginWindow(),"Destroying the presenter closes the browser without a completion");
+    check(completions==26&&lastEnvironment->controllers[0]->closed&&!loginWindow(),"Destroying the presenter closes the browser without a completion");
     check(!std::filesystem::exists(w.userData),"Destroying the presenter removes its private profile");
     check(!IsWindowVisible(owner.hwnd),"Nothing was ever shown");
     lastEnvironment.Reset();world=nullptr;

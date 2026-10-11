@@ -9,6 +9,7 @@
 #include "native/hypergryph_account_webview.hpp"
 #endif
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <stdexcept>
 
@@ -16,6 +17,11 @@ namespace endfield::tools {
 namespace {
 namespace h=modules::hypergryph;namespace gpu=native;
 void need(bool v,const char* s) {if(!v) throw std::invalid_argument(s);}
+// The login window's auth buttons follow HUDRuntimeAppearance.accent, which
+// the canvas style carries as its feedback accent.
+[[maybe_unused]] std::array<double,3> loginAccent(const h::CanvasStyle& style) {
+    const auto& c=style.feedbackAccent.value_or(style.accent);return {c[0],c[1],c[2]};
+}
 void earliest(std::optional<double>& wake,std::optional<double> at) {if(at&&std::isfinite(*at)) wake=wake?std::min(*wake,*at):*at;}
 }
 struct AccountLinkingOwner::Impl {
@@ -66,7 +72,7 @@ AccountLinkingOwner::AccountLinkingOwner(app::UtilityExecutor& executor,gpu::Lay
     // runtime; without one the controller receives the explicit
     // "unavailable" result and no window or browser is created.
     else if(i.options.officialLogin) {
-        gpu::WebViewLoginOptions l;l.owner=window;l.language=i.options.language;l.now=i.options.clock;
+        gpu::WebViewLoginOptions l;l.owner=window;l.language=i.options.language;l.now=i.options.clock;l.accent=loginAccent(i.options.style);
         l.scheduleChanged=[weak]{if(auto self=weak.lock();self&&self->options.invalidate) self->options.invalidate();};
         i.login=std::make_unique<gpu::WebViewLoginPresenter>(std::move(l));s.login=i.login.get();i.webView=true;
     }
@@ -96,7 +102,7 @@ void AccountLinkingOwner::setAppearance(core::Language language,const h::CanvasS
     i.module->setReduceMotion(reduceMotion);i.gauge->setReduceMotion(reduceMotion);
     i.module->setStyle(style,i.time);i.module->setLanguage(language,i.time);i.gauge->setLanguage(language,i.time);
 #ifdef EHUD_HAS_WEBVIEW2
-    if(i.login) i.login->setLanguage(language);
+    if(i.login) {i.login->setLanguage(language);i.login->setAccent(loginAccent(style));}
 #endif
 }
 void AccountLinkingOwner::setOverlayVisible(bool visible,double t) {
@@ -188,7 +194,12 @@ std::vector<gpu::AccountAutomationControl> AccountLinkingOwner::accessibleContro
             }
     }
     for(const auto& a:i.gauge->accessibleActions())
-        if(const auto r=i.gauge->clientRect(a.rect)) out.push_back({"wallet:"+a.id,a.label,*r,a.enabled});
+        if(const auto r=i.gauge->clientRect(a.rect)) {
+            gpu::AccountAutomationControl control{"wallet:"+a.id,a.label,*r,a.enabled};
+            // SystemHUDView sets the open popover's countdowns as the toggle's value.
+            if(a.id=="toggle") control.value=i.gauge->accessibilityValue();
+            out.push_back(std::move(control));
+        }
     return out;
 }
 bool AccountLinkingOwner::performAccessible(std::string_view id,double t) {

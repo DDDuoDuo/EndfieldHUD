@@ -39,7 +39,11 @@ constexpr int route = 20; // after every built-in owner (0...19)
 h::CanvasStyle canvasStyle(const ModuleAppearance& a) {
     h::CanvasStyle style;
     style.dark = a.dark;
+    // Plates take the theme's accent (SystemHUDView "yellow": darkened in the
+    // light theme); HUDControlHighlightLayer feedback follows
+    // HUDRuntimeAppearance.accent, the configured accent itself.
     style.accent = {a.accent[0], a.accent[1], a.accent[2], 1};
+    style.feedbackAccent = h::CanvasColor{a.accentSRGB[0], a.accentSRGB[1], a.accentSRGB[2], 1};
     return style;
 }
 // HUDAccountInteraction / SystemHUDView handle unmodified keys only. This is
@@ -507,6 +511,21 @@ private:
                 return std::nullopt;
             return state == ToggleState_On;
         }
+        // A peer's read-only UIA Value as UTF-8 (none: no Value pattern now).
+        std::optional<std::string> valueText(std::string_view id) {
+            Microsoft::WRL::ComPtr<IUnknown> provider;
+            Microsoft::WRL::ComPtr<IValueProvider> pattern;
+            BSTR value{};
+            const auto simple = listed(id);
+            if (!simple || FAILED(simple->GetPatternProvider(UIA_ValuePatternId, &provider)) || !provider || FAILED(provider.As(&pattern)) ||
+                FAILED(pattern->get_Value(&value)) || !value)
+                return std::nullopt;
+            std::string out;
+            const int n = WideCharToMultiByte(CP_UTF8, 0, value, -1, nullptr, 0, nullptr, nullptr);
+            if (n > 1) { out.resize(static_cast<std::size_t>(n - 1)); WideCharToMultiByte(CP_UTF8, 0, value, -1, out.data(), n, nullptr, nullptr); }
+            SysFreeString(value);
+            return out;
+        }
         // A peer's UIA help text as UTF-8.
         std::string helpText(std::string_view id) {
             const auto simple = listed(id);
@@ -729,9 +748,15 @@ private:
                        "Peers hidden by the menu are disconnected");
             step.check(d.keyDown(VK_ESCAPE) && !d.canvas().isPopoverOpen() && automationRefresh(group) && d.focusedPeer().empty(),
                        "Escape closes the menu; the face peers return without a keyboard focus");
+            step.check(!d.valueText("wallet:toggle"), "The closed wallet's peer has no value");
             step.check(d.invoke(d.peer("wallet:toggle")) == S_OK && owner_->gauge().model().popoverOpen() && automationRefresh(group) &&
                        automationCount() == faceControls + 2, "The wallet peer opens the popover and exposes its Refresh");
+            const auto countdowns = owner_->gauge().accessibilityValue();
+            step.check(countdowns && d.valueText("wallet:toggle") == countdowns && (host_.appearance().language != core::Language::english || countdowns->rfind("Next recovery ", 0) == 0),
+                       "The open wallet's peer reports the recovery countdowns as its value (Mac accessibilityValue)");
             step.check(d.keyDown(VK_ESCAPE) && !owner_->gauge().model().popoverOpen(), "Escape closes the popover");
+            (void)automationRefresh(group);
+            step.check(!d.valueText("wallet:toggle"), "Closing the popover clears the value");
             step.check(automation_->stats().invokes == invokes + 2 && controller().presentation() == w.reference, "UIA presses change nothing else");
             // HUD concealed: every fragment disconnects; the next refresh
             // (HUD shown again) lists fresh ones under the same group.

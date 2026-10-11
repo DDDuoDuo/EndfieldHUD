@@ -65,6 +65,8 @@ constexpr UINT finishMessage=WM_APP+1;
 // control): the window is no dialog, so the page itself does what the dialog
 // manager would (Tab order, Return, the Mac's Escape = Cancel key equivalent).
 constexpr UINT keyMessage=WM_APP+2;
+// A page button gained (wParam 1) or lost (0) the pointer (lParam: the button).
+constexpr UINT hoverMessage=WM_APP+3;
 // Focusable page controls (buttons, the read-only link field) forward their
 // navigation keys to the page; everything else stays the control's own.
 LRESULT CALLBACK controlProcedure(HWND hwnd,UINT message,WPARAM w,LPARAM l) {
@@ -75,12 +77,32 @@ LRESULT CALLBACK controlProcedure(HWND hwnd,UINT message,WPARAM w,LPARAM l) {
     }
     // Their characters were handled on key down (no edit-control beep).
     if(message==WM_CHAR&&(w==VK_ESCAPE||w==VK_TAB||w==VK_RETURN)) return 0;
+    // Pointer feedback (Mac NSTrackingArea mouseEntered/Exited): event driven.
+    if(message==WM_MOUSEMOVE||message==WM_MOUSELEAVE) {
+        if(message==WM_MOUSEMOVE) {TRACKMOUSEEVENT track{sizeof track,TME_LEAVE,hwnd,0};TrackMouseEvent(&track);}
+        if(const HWND page=GetParent(hwnd)) SendMessageW(page,hoverMessage,message==WM_MOUSEMOVE?1:0,reinterpret_cast<LPARAM>(hwnd));
+    }
     return original?CallWindowProcW(original,hwnd,message,w,l):DefWindowProcW(hwnd,message,w,l);
 }
 bool pushButton(HWND hwnd) {
     wchar_t type[8]{};
     if(!hwnd||!GetClassNameW(hwnd,type,8)||_wcsicmp(type,L"Button")!=0) return false;
-    const auto kind=GetWindowLongW(hwnd,GWL_STYLE)&BS_TYPEMASK;return kind==BS_PUSHBUTTON||kind==BS_DEFPUSHBUTTON;
+    const auto kind=GetWindowLongW(hwnd,GWL_STYLE)&BS_TYPEMASK;return kind==BS_PUSHBUTTON||kind==BS_DEFPUSHBUTTON||kind==BS_OWNERDRAW;
+}
+COLORREF color(const std::array<double,3>& c) {
+    const auto byte=[](double v){return static_cast<BYTE>(std::lround(std::clamp(std::isfinite(v)?v:0.0,0.0,1.0)*255));};
+    return RGB(byte(c[0]),byte(c[1]),byte(c[2]));
+}
+// Source-over of `top` at opacity `t` on an opaque `bottom`.
+COLORREF mix(COLORREF bottom,COLORREF top,double t) {
+    const auto channel=[t](int b,int f){return static_cast<BYTE>(std::lround(b+(f-b)*std::clamp(t,0.0,1.0)));};
+    return RGB(channel(GetRValue(bottom),GetRValue(top)),channel(GetGValue(bottom),GetGValue(top)),channel(GetBValue(bottom),GetBValue(top)));
+}
+// HypergryphAccountAuthButton.cutCorner / HUDControlHighlightLayer .cutCorner:
+// top-left and bottom-right corners cut by min(4 pt, shorter side / 3).
+std::array<POINT,6> cutCorner(RECT r,int corner) {
+    const int c=std::min(corner,int(std::min(r.right-r.left,r.bottom-r.top)/3));
+    return {{{r.left+c,r.top},{r.right,r.top},{r.right,r.bottom-c},{r.right-c,r.bottom},{r.left,r.bottom},{r.left,r.top+c}}};
 }
 enum Control:int {continueID=101,cancelID=102,retryID=103,toolbarCancelID=104,downloadID=105,checkID=106,titleID=110,detailID=111,siteID=112,noteID=113};
 }
@@ -95,6 +117,9 @@ struct WebViewLoginPresenter::Impl:std::enable_shared_from_this<Impl> {
     // The page control that held the keyboard focus when the window was
     // deactivated (restored on activation, as the dialog manager does).
     HWND lastFocus{};bool pageFocused{};
+    // HypergryphAccountAuthButton: bold 13 pt labels on owner-drawn plates;
+    // the button under the pointer shows the highlight feedback.
+    HFONT buttonFont{};HWND hovered{};
     // Region of the Connect that found no WebView2 Runtime: the window shows
     // the explanation page (no session, profile or browser) while set.
     std::optional<h::Region> runtimeRegion;
@@ -133,10 +158,18 @@ struct WebViewLoginPresenter::Impl:std::enable_shared_from_this<Impl> {
                 else if(LOWORD(w)==downloadID) keep->openDownloadPage();
                 else if(LOWORD(w)==checkID) keep->recheckRuntime();
                 return 0;
-            // Text sits on the window background (Mac panel), not on 3D-face boxes.
+            case WM_DRAWITEM:
+                if(const auto* item=reinterpret_cast<const DRAWITEMSTRUCT*>(l);hwnd==keep->window&&item&&item->CtlType==ODT_BUTTON) {keep->drawButton(*item);return TRUE;}
+                break;
+            case hoverMessage: if(hwnd==keep->window) keep->hover(reinterpret_cast<HWND>(l),w!=0);return 0;
+            // Text sits on the window background (Mac panel), not on 3D-face
+            // boxes; the detail, toolbar status and note use the Mac's
+            // secondaryLabelColor (label colour at half opacity).
             case WM_CTLCOLORSTATIC:
                 if(hwnd==keep->window) {
-                    const HDC dc=reinterpret_cast<HDC>(w);SetTextColor(dc,GetSysColor(COLOR_WINDOWTEXT));SetBkColor(dc,GetSysColor(COLOR_WINDOW));
+                    const HDC dc=reinterpret_cast<HDC>(w);const HWND control=reinterpret_cast<HWND>(l);
+                    const bool secondary=control&&(control==keep->detail||control==keep->status||control==keep->note);
+                    SetTextColor(dc,secondary?keep->secondaryText():GetSysColor(COLOR_WINDOWTEXT));SetBkColor(dc,GetSysColor(COLOR_WINDOW));
                     return reinterpret_cast<LRESULT>(GetSysColorBrush(COLOR_WINDOW));
                 }
                 break;
@@ -180,20 +213,21 @@ struct WebViewLoginPresenter::Impl:std::enable_shared_from_this<Impl> {
         return hwnd;
     }
     void makeFonts() {
-        for(HFONT* font:{&titleFont,&bodyFont,&monoFont}) if(*font) {DeleteObject(*font);*font=nullptr;}
+        for(HFONT* font:{&titleFont,&bodyFont,&monoFont,&buttonFont}) if(*font) {DeleteObject(*font);*font=nullptr;}
         const auto px=[&](double v){return -int(std::lround(v*scale));};
         titleFont=CreateFontW(px(20),0,0,0,FW_SEMIBOLD,0,0,0,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,L"Segoe UI");
         bodyFont=CreateFontW(px(13),0,0,0,FW_NORMAL,0,0,0,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,L"Segoe UI");
         monoFont=CreateFontW(px(13),0,0,0,FW_NORMAL,0,0,0,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,FIXED_PITCH,L"Consolas");
+        buttonFont=CreateFontW(px(13),0,0,0,FW_BOLD,0,0,0,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,L"Segoe UI");
     }
     // WM_DPICHANGED: the same point sizes at the new scale on every page control.
     void rescale(double next) {
         if(!window||!(next>0)||next==scale) return;
-        const HFONT previous[]{titleFont,bodyFont,monoFont};titleFont=bodyFont=monoFont=nullptr;
+        const HFONT previous[]{titleFont,bodyFont,monoFont,buttonFont};titleFont=bodyFont=monoFont=buttonFont=nullptr;
         scale=next;makeFonts();
         for(HWND child=GetWindow(window,GW_CHILD);child;child=GetWindow(child,GW_HWNDNEXT)) {
             const auto font=reinterpret_cast<HFONT>(SendMessageW(child,WM_GETFONT,0,0));
-            const HFONT replacement=font==previous[0]?titleFont:font==previous[2]?monoFont:font==previous[1]?bodyFont:nullptr;
+            const HFONT replacement=font==previous[0]?titleFont:font==previous[2]?monoFont:font==previous[1]?bodyFont:font==previous[3]?buttonFont:nullptr;
             if(replacement) SendMessageW(child,WM_SETFONT,reinterpret_cast<WPARAM>(replacement),TRUE);
         }
         for(HFONT font:previous) if(font) DeleteObject(font);
@@ -211,15 +245,77 @@ struct WebViewLoginPresenter::Impl:std::enable_shared_from_this<Impl> {
         return false;
     }
     // Keyboard focus to a page control, with the dialog manager's cues: the
-    // focus rectangle shows, the focused push button (else the page's
-    // default) draws as the default button, and the link field is selected.
+    // focus is shown from now on (an auth button then draws its highlight,
+    // as the Mac's first responder does) and the link field is selected.
     void focusControl(HWND target) {
         if(!target) return;
         SendMessageW(window,WM_CHANGEUISTATE,MAKEWPARAM(UIS_CLEAR,UISF_HIDEFOCUS),0);
-        const HWND chosen=pushButton(target)?target:defaultButton();
-        for(HWND stop:tabStops()) if(pushButton(stop)) SendMessageW(stop,BM_SETSTYLE,stop==chosen?BS_DEFPUSHBUTTON:BS_PUSHBUTTON,TRUE);
         SetFocus(target);
+        for(HWND stop:tabStops()) if(pushButton(stop)) InvalidateRect(stop,nullptr,FALSE);
         if(target==site) SendMessageW(site,EM_SETSEL,0,-1);
+    }
+    COLORREF secondaryText() const {return mix(GetSysColor(COLOR_WINDOW),GetSysColor(COLOR_WINDOWTEXT),.5);}
+    bool primaryButton(HWND button) const {return button&&(button==continueButton||button==download);}
+    HWND authButton(const std::wstring& label,int id) {return control(L"BUTTON",label,BS_OWNERDRAW|WS_TABSTOP,id,buttonFont);}
+    // HypergryphAccountAuthButton.intrinsicContentSize width: the label plus
+    // 34 pt, at least 240 pt (primary) or 110 pt, within the page column.
+    int buttonWidth(HWND button,int column) const {
+        const auto v=[&](double x){return int(std::lround(x*scale));};
+        const int minimum=v(primaryButton(button)?240:110);
+        if(!button) return minimum;
+        const int length=GetWindowTextLengthW(button);std::wstring label(std::size_t(length)+1,L'\0');GetWindowTextW(button,label.data(),length+1);label.resize(std::size_t(length));
+        SIZE size{};const HDC dc=GetDC(button);
+        if(dc) {const auto previous=SelectObject(dc,buttonFont);GetTextExtentPoint32W(dc,label.c_str(),length,&size);SelectObject(dc,previous);ReleaseDC(button,dc);}
+        return std::min(std::max(minimum,int(size.cx)+v(34)),std::max(minimum,column));
+    }
+    void hover(HWND button,bool inside) {
+        if(!button||!ownsControl(button)||!pushButton(button)) return;
+        const HWND before=hovered;
+        if(inside) hovered=button;else if(hovered==button) hovered=nullptr;
+        if(before==hovered) return;
+        for(HWND changed:{before,hovered}) if(changed&&IsWindow(changed)) InvalidateRect(changed,nullptr,FALSE);
+    }
+    // HypergryphAccountAuthButton.layout + HUDControlHighlightLayer: a
+    // cut-corner plate inset 4 pt (accent, or white 0.84), the accent tint
+    // (0.30, at 0.62 highlighted / 1 pressed) and the framed rim 2 pt outside
+    // the plate (0.9 pt accent, 0.28 idle / 1 highlighted), the bold 13 pt
+    // label centred in an 18 pt line (white on a dark accent, else black).
+    // Highlighted: under the pointer, pressed, or holding a shown keyboard
+    // focus (the Mac's first responder). Opacity changes are not animated
+    // (the Mac fades them over 0.14 s).
+    void drawButton(const DRAWITEMSTRUCT& item) {
+        const HDC dc=item.hDC;const RECT bounds=item.rcItem;
+        const auto v=[&](double x){return int(std::lround(x*scale));};
+        const COLORREF background=GetSysColor(COLOR_WINDOW),accent=color(options.accent);
+        FillRect(dc,&bounds,GetSysColorBrush(COLOR_WINDOW));
+        const bool enabled=!(item.itemState&ODS_DISABLED),pressed=(item.itemState&ODS_SELECTED)!=0;
+        const bool focused=(item.itemState&ODS_FOCUS)&&!(item.itemState&ODS_NOFOCUSRECT);
+        const bool active=enabled&&(pressed||focused||item.hwndItem==hovered);
+        const bool primary=primaryButton(item.hwndItem);
+        const COLORREF plate=mix(primary?accent:RGB(214,214,214),accent,active?.30*(pressed?1.0:.62):0.0);
+        const RECT face{bounds.left+v(4),bounds.top+v(4),bounds.right-v(4),bounds.bottom-v(4)};
+        const auto savedBrush=SelectObject(dc,GetStockObject(DC_BRUSH));const auto savedPen=SelectObject(dc,GetStockObject(NULL_PEN));
+        SetDCBrushColor(dc,plate);
+        auto shape=cutCorner(face,v(4));Polygon(dc,shape.data(),int(shape.size()));
+        const double rimOpacity=active?1.0:enabled?.28:0.0;
+        if(rimOpacity>0) {
+            const HPEN rim=CreatePen(PS_SOLID,std::max(1,v(.9)),mix(background,accent,rimOpacity));
+            if(rim) {
+                SelectObject(dc,rim);SelectObject(dc,GetStockObject(NULL_BRUSH));
+                const RECT frame{face.left-v(2),face.top-v(2),face.right+v(2),face.bottom+v(2)};
+                shape=cutCorner(frame,v(4));Polygon(dc,shape.data(),int(shape.size()));
+                SelectObject(dc,GetStockObject(NULL_PEN));DeleteObject(rim);
+            }
+        }
+        SelectObject(dc,savedPen);SelectObject(dc,savedBrush);
+        const auto& a=options.accent;
+        const bool darkAccent=a[0]*.2126+a[1]*.7152+a[2]*.0722<.36;
+        const int length=GetWindowTextLengthW(item.hwndItem);std::wstring label(std::size_t(length)+1,L'\0');GetWindowTextW(item.hwndItem,label.data(),length+1);label.resize(std::size_t(length));
+        const auto savedFont=SelectObject(dc,buttonFont);SetBkMode(dc,TRANSPARENT);SetTextColor(dc,primary&&darkAccent?RGB(255,255,255):RGB(0,0,0));
+        const int height=bounds.bottom-bounds.top;
+        RECT text{bounds.left+v(10),bounds.top+(height-v(18))/2,bounds.right-v(10),bounds.top+(height-v(18))/2+v(18)};
+        DrawTextW(dc,label.c_str(),length,&text,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX|DT_NOCLIP);
+        SelectObject(dc,savedFont);
     }
     // Escape cancels (Mac Cancel key equivalent); Tab / Shift+Tab walk the
     // page's controls (and, after consent, continue into the official page);
@@ -281,8 +377,8 @@ struct WebViewLoginPresenter::Impl:std::enable_shared_from_this<Impl> {
         title=control(L"STATIC",wide(strings.consentTitle),SS_CENTER,titleID,titleFont);
         detail=control(L"STATIC",wide(strings.consentDetail),SS_CENTER,detailID,bodyFont);
         site=control(L"STATIC",wide(strings.site),SS_CENTER,siteID,monoFont);
-        continueButton=control(L"BUTTON",wide(strings.continueLabel),BS_DEFPUSHBUTTON|WS_TABSTOP,continueID,bodyFont);
-        cancelButton=control(L"BUTTON",wide(strings.cancelLabel),BS_PUSHBUTTON|WS_TABSTOP,cancelID,bodyFont);
+        continueButton=authButton(wide(strings.continueLabel),continueID);
+        cancelButton=authButton(wide(strings.cancelLabel),cancelID);
     }
     void present(h::Region region) {
         session.emplace(region,nonce());reported=0;++generation;
@@ -300,9 +396,9 @@ struct WebViewLoginPresenter::Impl:std::enable_shared_from_this<Impl> {
         title=control(L"STATIC",wide(text.title),SS_CENTER,titleID,titleFont);
         detail=control(L"STATIC",wide(text.detail),SS_CENTER,detailID,bodyFont);
         site=control(L"EDIT",wide(text.site),ES_CENTER|ES_READONLY|ES_AUTOHSCROLL|WS_TABSTOP,siteID,monoFont);
-        download=control(L"BUTTON",wide(text.downloadLabel),BS_DEFPUSHBUTTON|WS_TABSTOP,downloadID,bodyFont);
-        check=control(L"BUTTON",wide(text.checkLabel),BS_PUSHBUTTON|WS_TABSTOP,checkID,bodyFont);
-        cancelButton=control(L"BUTTON",wide(strings.cancelLabel),BS_PUSHBUTTON|WS_TABSTOP,cancelID,bodyFont);
+        download=authButton(wide(text.downloadLabel),downloadID);
+        check=authButton(wide(text.checkLabel),checkID);
+        cancelButton=authButton(wide(strings.cancelLabel),cancelID);
         note=control(L"STATIC",L"",SS_CENTER,noteID,bodyFont);
         if(options.diagnostic) options.diagnostic("runtime-missing");
         show(download);
@@ -342,18 +438,21 @@ struct WebViewLoginPresenter::Impl:std::enable_shared_from_this<Impl> {
     void layout() {
         if(!window) return;RECT r{};GetClientRect(window,&r);const int width=r.right,height=r.bottom;const double s=scale;
         const auto v=[&](double x){return int(std::lround(x*s));};
+        // The consent stack (Mac NSStackView: centred, 76 % wide, 22 pt
+        // spacing); the runtime page follows the same rules.
+        const int column=int(width*.76),left=(width-column)/2;
+        const auto centred=[&](HWND button,int y){const int w=buttonWidth(button,column);MoveWindow(button,(width-w)/2,y,w,v(42),TRUE);};
         if(runtimeRegion) {
-            const int column=int(width*.76),left=(width-column)/2;int y=height/2-v(210);
-            MoveWindow(title,left,y,column,v(30),TRUE);y+=v(52);MoveWindow(detail,left,y,column,v(112),TRUE);y+=v(130);
-            MoveWindow(site,left,y,column,v(20),TRUE);y+=v(42);MoveWindow(download,(width-v(300))/2,y,v(300),v(42),TRUE);y+=v(56);
-            MoveWindow(check,(width-v(160))/2,y,v(160),v(36),TRUE);y+=v(50);MoveWindow(cancelButton,(width-v(110))/2,y,v(110),v(36),TRUE);y+=v(52);
+            int y=(height-v(440))/2;
+            MoveWindow(title,left,y,column,v(30),TRUE);y+=v(52);MoveWindow(detail,left,y,column,v(112),TRUE);y+=v(134);
+            MoveWindow(site,left,y,column,v(20),TRUE);y+=v(42);centred(download,y);y+=v(64);centred(check,y);y+=v(64);centred(cancelButton,y);y+=v(64);
             MoveWindow(note,left,y,column,v(20),TRUE);
             return;
         }
         if(!session||!session->consented()) {
-            const int column=int(width*.76),left=(width-column)/2;int y=height/2-v(170);
+            int y=height/2-v(170);
             MoveWindow(title,left,y,column,v(30),TRUE);y+=v(52);MoveWindow(detail,left,y,column,v(96),TRUE);y+=v(118);
-            MoveWindow(site,left,y,column,v(20),TRUE);y+=v(42);MoveWindow(continueButton,(width-v(240))/2,y,v(240),v(42),TRUE);y+=v(64);MoveWindow(cancelButton,(width-v(110))/2,y,v(110),v(42),TRUE);
+            MoveWindow(site,left,y,column,v(20),TRUE);y+=v(42);centred(continueButton,y);y+=v(64);centred(cancelButton,y);
             return;
         }
         MoveWindow(status,v(18),v(10),std::max(0,width-v(224)),v(20),TRUE);MoveWindow(retry,width-v(194),v(6),v(86),v(32),TRUE);MoveWindow(toolbarCancel,width-v(100),v(6),v(86),v(32),TRUE);
@@ -381,8 +480,8 @@ struct WebViewLoginPresenter::Impl:std::enable_shared_from_this<Impl> {
         title=detail=site=continueButton=cancelButton=nullptr;lastFocus=nullptr;
         const auto strings=h::LoginSession::strings(session->region(),options.language);
         status=control(L"STATIC",wide(strings.site),SS_LEFT|SS_ENDELLIPSIS,0,bodyFont);
-        retry=control(L"BUTTON",wide(strings.retryLabel),BS_PUSHBUTTON|WS_TABSTOP,retryID,bodyFont);
-        toolbarCancel=control(L"BUTTON",wide(strings.cancelLabel),BS_PUSHBUTTON|WS_TABSTOP,toolbarCancelID,bodyFont);
+        retry=authButton(wide(strings.retryLabel),retryID);
+        toolbarCancel=authButton(wide(strings.cancelLabel),toolbarCancelID);
         layout();diag();setStatus();
         userData=privateProfileFolder(options.profileRoot);sweepStaleProfiles(options.profileRoot,userData);
         std::weak_ptr<Impl> weak=shared_from_this();const auto token=generation;
@@ -555,7 +654,8 @@ struct WebViewLoginPresenter::Impl:std::enable_shared_from_this<Impl> {
     void destroyWindow() {
         if(window) {DestroyWindow(window);window=nullptr;}
         status=retry=toolbarCancel=title=detail=site=continueButton=cancelButton=download=check=note=nullptr;lastFocus=nullptr;pageFocused=false;
-        for(HFONT* font:{&titleFont,&bodyFont,&monoFont}) if(*font) {DeleteObject(*font);*font=nullptr;}
+        for(HFONT* font:{&titleFont,&bodyFont,&monoFont,&buttonFont}) if(*font) {DeleteObject(*font);*font=nullptr;}
+        hovered=nullptr;
     }
     void finish(std::optional<h::LoginResult> result,h::LoginFailure failure) {
         if(runtimeRegion) {
@@ -612,6 +712,10 @@ void WebViewLoginPresenter::present(h::Region region,std::function<void(std::opt
 void WebViewLoginPresenter::cancel() {impl_->finish(std::nullopt,h::LoginFailure::cancelled);}
 bool WebViewLoginPresenter::isPresenting() const {return (impl_->session&&impl_->session->presenting())||impl_->runtimeRegion.has_value();}
 void WebViewLoginPresenter::setLanguage(core::Language language) {impl_->options.language=language;impl_->setStatus();}
+void WebViewLoginPresenter::setAccent(const std::array<double,3>& accent) {
+    auto& i=*impl_;if(i.options.accent==accent) return;i.options.accent=accent;
+    for(HWND button:{i.continueButton,i.cancelButton,i.download,i.check,i.retry,i.toolbarCancel}) if(button) InvalidateRect(button,nullptr,FALSE);
+}
 std::optional<double> WebViewLoginPresenter::nextDeadline() const {return impl_->session?impl_->session->nextDeadline():std::nullopt;}
 void WebViewLoginPresenter::deadline(double now) {
     auto& i=*impl_;if(!i.session) return;
