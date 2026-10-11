@@ -97,6 +97,31 @@ ShelfPresentedCard card(const FileShelfState&state,const FileShelfItem&item,cons
     const auto activeColor=alpha(ink,p.available?.82:.22);add(out.artwork,shape(id+"/eye",{},eye({116,54,14,10}),{},activeColor,1,true));add(out.artwork,shape(id+"/folder",{},folder({139,54,14,11}),{},activeColor,1,true));
     add(out.artwork,shape(id+"/cross",{},{command("move",{{164,54}}),command("line",{{173,63}}),command("move",{{173,54}}),command("line",{{164,63}})},{},alpha(ink,.80),1.1,true));return out;
 }
+// NotesRetainedMenu.paint: back (-3,4) black .30; face white .08/.92 at .98
+// with a .7 accent border at .7; items on ink .07 plates with a framed
+// cut-corner highlight and a 10 pt semibold title inset (6,5); the caption
+// ("// " + title, 12 pt) as ArchiveChoiceMenu.paintContent draws it.
+ShelfPropertiesCard buildProperties(const ShelfPropertiesContent&c,const ShelfPresentationStyle&s){
+    need(c.rows.size()<=shelfPropertiesMaximumRows&&!c.itemID.empty(),"Invalid Shelf properties card");
+    const auto layout=shelfPropertiesLayout(c.rows.size());const double width=layout.frame.width,height=layout.frame.height;
+    ShelfPropertiesCard out;out.frame=layout.frame;out.origin=layout.origin;
+    const auto ink=gray(s.dark?.96:.10);
+    out.artwork=layer("shelf.properties",{0,0,width+3,height+4});out.artwork["name"]="notes.secondaryMenu";out.artwork["allowsGroupOpacity"]=false;
+    auto back=layer("shelf.properties/shadow",{0,4,width,height});back["backgroundColor"]=color(gray(0,.30));add(out.artwork,std::move(back));
+    auto face=layer("shelf.properties/face",{3,0,width,height});face["backgroundColor"]=color(gray(s.dark?.08:.92,.98));face["borderWidth"]=.7;face["borderColor"]=color(alpha(s.accent,.7));face["allowsGroupOpacity"]=false;
+    add(face,label("shelf.properties/heading",{10,12,width-50,22},"// "+c.heading,12,ink,"semibold","left",false,s.contentsScale));
+    add(face,shape("shelf.properties/rule",{},{command("move",{{10,38}}),command("line",{{width-10,38}})},{},alpha(ink,.14),.6));
+    for(std::size_t n=0;n<c.rows.size();++n){const double y=shelfPropertiesRowTop+double(n)*shelfPropertiesRowPitch;const auto id="shelf.properties/row"+std::to_string(n);
+        add(face,label(id+"/label",{10,y+1,shelfPropertiesValueX-14,15},c.rows[n].label,9.5,alpha(ink,.55),"regular","left",false,s.contentsScale));
+        auto value=label(id+"/value",{shelfPropertiesValueX,y,shelfPropertiesValueWidth,16},c.rows[n].value,10,ink,"semibold","left",false,s.contentsScale);add(face,std::move(value));}
+    for(std::size_t n=0;n<shelfPropertiesActions.size();++n){const auto id=shelfPropertiesActions[n];const std::string action(id);
+        const auto&plateRect=layout.plates[n];const Rect r{plateRect.x-layout.frame.x,plateRect.y-layout.frame.y,plateRect.width,plateRect.height};const auto&title=id==shelfPropertiesClose?std::string("×"):id==shelfPropertiesOpen?c.open:c.reveal;
+        auto plate=layer(action,r);plate["backgroundColor"]=color(alpha(ink,.07));add(face,std::move(plate));
+        highlight(face,out.feedback,action,r,true,s.accent);
+        add(face,label(action+"/title",{r.x+6,r.y+5,r.width-12,r.height-10},title,10,ink,"semibold",id==shelfPropertiesClose?"left":"center",false,s.contentsScale));
+        out.actions.push_back({action,id==shelfPropertiesClose?c.close:title,{out.frame.x+r.x,out.frame.y+r.y,r.width,r.height}});}
+    add(out.artwork,std::move(face));return out;
+}
 }
 struct ShelfPresentation::Impl {
     const FileShelfState*state{};std::uint64_t revision{},chromeRevision{},placementRevision{},serial{};std::optional<ShelfPresentationStyle>style;
@@ -104,8 +129,9 @@ struct ShelfPresentation::Impl {
     std::vector<ShelfPresentationImage>images;std::vector<ShelfPresentationFeedback>feedback;std::vector<FileShelfState::Action>actions;
     std::string status;bool empty{},confirm{},drop{},error{};std::optional<Rect>indicator;ShelfPresentationStats stats;
     std::string target;bool pressed{},reduced{};
+    std::optional<ShelfPropertiesContent>propertiesContent;std::optional<ShelfPropertiesCard>propertiesCard;bool interactive{};std::uint64_t propertiesRevision{};
     Impl(){cards.reserve(8);spare.reserve(8);keys.reserve(8);keySpare.reserve(8);}
-    bool applyFeedback(std::optional<std::string_view>id,bool press,bool reduce){bool changed{};const auto apply=[&](auto&list){for(auto&f:list){const bool hit=id&&*id==f.actionID;const double tint=hit?(press?1:.62):0,rim=hit?1:(f.framed?.28:0);if(tint!=f.tintOpacity||rim!=f.rimOpacity){changed=true;f.tintOpacity=tint;f.rimOpacity=rim;f.duration=reduce?0:press?.06:.14;}}};apply(feedback);for(auto&c:cards)apply(c.feedback);return changed;}
+    bool applyFeedback(std::optional<std::string_view>id,bool press,bool reduce){bool changed{};const auto apply=[&](auto&list){for(auto&f:list){const bool hit=id&&*id==f.actionID;const double tint=hit?(press?1:.62):0,rim=hit?1:(f.framed?.28:0);if(tint!=f.tintOpacity||rim!=f.rimOpacity){changed=true;f.tintOpacity=tint;f.rimOpacity=rim;f.duration=reduce?0:press?.06:.14;}}};apply(feedback);for(auto&c:cards)apply(c.feedback);if(propertiesCard&&interactive)apply(propertiesCard->feedback);return changed;}
 };
 ShelfPresentation::ShelfPresentation():impl_(std::make_unique<Impl>()){}ShelfPresentation::~ShelfPresentation()=default;
 bool ShelfPresentation::update(const FileShelfState&state,const ShelfPresentationStyle&style){auto&i=*impl_;if(i.state==&state&&i.revision==state.revision()&&i.style&&*i.style==style)return false;validate(style);
@@ -129,14 +155,39 @@ bool ShelfPresentation::update(const FileShelfState&state,const ShelfPresentatio
     }i.cards.swap(i.spare);i.keys.swap(i.keySpare);i.spare.clear();i.keySpare.clear();
     if(newChrome){i.chrome=std::move(newChrome->artwork);i.images=std::move(newChrome->images);i.feedback=std::move(newChrome->feedback);++i.chromeRevision;++i.stats.chromeBuilds;}
     i.actions=std::move(actions);i.style=std::move(newStyle);i.status=std::move(newStatus);i.empty=state.items().empty();i.confirm=state.confirmingClear();i.drop=state.dropTarget();i.error=state.error().has_value();i.indicator=state.scrollIndicator();
+    // A theme, accent or language event repaints an open properties card too.
+    if(styleChanged&&i.propertiesContent){i.propertiesCard=buildProperties(*i.propertiesContent,*i.style);++i.propertiesRevision;++i.stats.propertiesBuilds;if(!i.interactive)for(auto&f:i.propertiesCard->feedback){f.tintOpacity=0;f.rimOpacity=f.framed?.28:0;}}
     i.state=&state;i.revision=state.revision();i.serial=serial;++i.stats.updates;if(placementChanged){++i.placementRevision;++i.stats.placementUpdates;}i.applyFeedback(i.target.empty()?std::nullopt:std::optional<std::string_view>(i.target),i.pressed,i.reduced);return true;
 }
-bool ShelfPresentation::setFeedback(std::optional<std::string_view>id,bool pressed,bool reduce){auto&i=*impl_;if(id){bool known{};for(const auto&f:i.feedback)known=known||f.actionID==*id;for(const auto&c:i.cards)for(const auto&f:c.feedback)known=known||f.actionID==*id;if(!known)id.reset();}
+bool ShelfPresentation::setFeedback(std::optional<std::string_view>id,bool pressed,bool reduce){auto&i=*impl_;if(id){bool known{};for(const auto&f:i.feedback)known=known||f.actionID==*id;for(const auto&c:i.cards)for(const auto&f:c.feedback)known=known||f.actionID==*id;if(i.propertiesCard)for(const auto&f:i.propertiesCard->feedback)known=known||f.actionID==*id;if(!known)id.reset();}
     if(id)i.target.assign(*id);else i.target.clear();i.pressed=pressed;i.reduced=reduce;return i.applyFeedback(id,pressed,reduce);
 }
 const Json&ShelfPresentation::chrome()const noexcept{return impl_->chrome;}std::span<const ShelfPresentedCard>ShelfPresentation::cards()const noexcept{return impl_->cards;}
 std::span<const ShelfPresentationImage>ShelfPresentation::chromeImages()const noexcept{return impl_->images;}std::span<const ShelfPresentationFeedback>ShelfPresentation::chromeFeedback()const noexcept{return impl_->feedback;}
-std::span<const FileShelfState::Action>ShelfPresentation::actions()const noexcept{return impl_->actions;}std::optional<Rect>ShelfPresentation::scrollIndicator()const noexcept{return impl_->indicator;}
+std::span<const FileShelfState::Action>ShelfPresentation::actions()const noexcept{const auto&i=*impl_;if(i.propertiesCard&&i.interactive)return i.propertiesCard->actions;return i.actions;}
+ehud::data::Json shelfPropertiesValueText(std::string value,double contentsScale){return label("shelf.properties/measure",{0,0,shelfPropertiesValueWidth,16},std::move(value),10,gray(0),"semibold","left",false,contentsScale)["text"];}
+ShelfPropertiesCard prepareShelfProperties(const ShelfPropertiesContent&content,const ShelfPresentationStyle&style){validate(style);return buildProperties(content,style);}
+ShelfPropertiesLayout shelfPropertiesLayout(std::size_t rows){
+    need(rows<=shelfPropertiesMaximumRows,"Invalid Shelf properties card");
+    const double width=shelfPropertiesWidth,height=shelfPropertiesRowTop+double(rows)*shelfPropertiesRowPitch+8+28+10;
+    // The artwork origin is 3 points left of the face so the shadow's
+    // offset stays inside the card's own (0,0)-based bounds.
+    ShelfPropertiesLayout out;out.frame={std::round((400-width)/2),std::round(std::max(4.,(334-height)/2)),width,height};out.origin={out.frame.x-3,out.frame.y};
+    // NotesRetainedMenu plates: the "x" at the top right (NotesMediaSourceChooser),
+    // the two actions side by side along the bottom (ArchiveChoiceMenu).
+    const double half=(width-30)/2,buttons=out.frame.y+height-38;
+    out.plates={Rect{out.frame.x+width-31,out.frame.y+8,23,23},Rect{out.frame.x+10,buttons,half,28},Rect{out.frame.x+20+half,buttons,half,28}};return out;
+}
+bool ShelfPresentation::setProperties(std::optional<ShelfPropertiesContent>content,bool interactive){auto&i=*impl_;
+    if(content==i.propertiesContent&&(!content||interactive==i.interactive))return false;
+    std::optional<ShelfPropertiesCard>card;if(content){need(i.style.has_value(),"Update the Shelf presentation before its properties card");if(content==i.propertiesContent)card=std::move(i.propertiesCard);else{card=buildProperties(*content,*i.style);++i.stats.propertiesBuilds;}}
+    i.propertiesContent=std::move(content);i.propertiesCard=std::move(card);i.interactive=i.propertiesCard&&interactive;++i.propertiesRevision;
+    if(i.propertiesCard&&!i.interactive)for(auto&f:i.propertiesCard->feedback){f.tintOpacity=0;f.rimOpacity=f.framed?.28:0;}
+    i.applyFeedback(i.target.empty()?std::nullopt:std::optional<std::string_view>(i.target),i.pressed,i.reduced);return true;
+}
+const std::optional<ShelfPropertiesCard>&ShelfPresentation::properties()const noexcept{return impl_->propertiesCard;}
+bool ShelfPresentation::propertiesInteractive()const noexcept{return impl_->interactive;}
+std::uint64_t ShelfPresentation::propertiesRevision()const noexcept{return impl_->propertiesRevision;}std::optional<Rect>ShelfPresentation::scrollIndicator()const noexcept{return impl_->indicator;}
 ShelfColor ShelfPresentation::scrollIndicatorColor()const noexcept{return gray(FileShelfState::style(!impl_->style||impl_->style->dark).muted,.6);}
 std::uint64_t ShelfPresentation::chromeRevision()const noexcept{return impl_->chromeRevision;}std::uint64_t ShelfPresentation::placementRevision()const noexcept{return impl_->placementRevision;}ShelfPresentationStats ShelfPresentation::stats()const noexcept{return impl_->stats;}
 } // namespace endfield::modules

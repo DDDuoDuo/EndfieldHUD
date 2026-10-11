@@ -24,6 +24,7 @@ struct ShelfScenePart {
 struct ShelfScenePlan {
     ShelfScenePart collection,scrollbar,foreground;
     std::vector<ShelfScenePart> cards; // original visible collection order, at most eight
+    std::optional<ShelfScenePart> properties; // the properties card, painted above everything
 };
 // Pure content-event compiler. Empty model bounds do not erase CAShapeLayer
 // path/stroke ink. Leaves retain original coordinates and paint order; only
@@ -62,6 +63,10 @@ struct NativeShelfPose {
     std::optional<SubsectionShutterPath> collectionReveal;
     double dropStrokeEnd{1};
     std::optional<ShelfRevealSample> reveal; // finite caller-clock .26s animation (shelfRevealShutter)
+    // The properties card's fade (NotesRetainedMenu: opacity .16 s in and out),
+    // multiplied with opacity. The card sits on the Shelf plane at its origin,
+    // outside the collection clip and reveal.
+    float propertiesOpacity{1};
 };
 struct NativeShelfSceneStats {
     std::size_t cards{},retiredParts{};
@@ -72,7 +77,8 @@ struct NativeShelfSceneStats {
 // Retained settled-collection bridge. The caller supplies one already-updated
 // ShelfPresentation, prepared images and numeric source animation samples.
 // No service, file icon lookup, clock, window, renderer publisher or state copy.
-// entries() paints collection/cards, scrollbar, then drop/header/status/toolbar.
+// entries() paints collection/cards, scrollbar, then drop/header/status/toolbar,
+// then the properties card.
 // Owner composes these entries once and appends the module registration seam
 // LAST. This adapter does not replace ModuleSurface or its registration art.
 // Removed/replaced parts survive until collectRetired after owner publication.

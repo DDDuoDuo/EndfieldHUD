@@ -1,14 +1,16 @@
 // Owner-level File Shelf services: the production tools::ShelfPreview on a
-// NEW temporary data root with synthetic files, a hidden owner window, a
-// hidden preview popup and injected OLE data objects. Covers the Event Log
-// records SystemHUDView wires to the canvas (for imports, drops, removal and
-// clearing), stale-path relocation saved by refresh, Quick Look's generic
-// preview, refused virtual-file drops, localized platform text and error
-// descriptions. No user file, clipboard, Explorer window or preview handler of
-// the user is touched; the real clipboard path (ShelfPreview::paste) is never
-// called here.
+// NEW temporary data root with synthetic files, a hidden owner window and
+// injected OLE data objects. Covers the Event Log records SystemHUDView wires
+// to the canvas (for imports, drops, removal and clearing), stale-path
+// relocation saved by refresh, the properties card that replaces Quick Look
+// (read on the owner's private worker, then through a shared executor),
+// refused virtual-file drops, localized platform text and error descriptions,
+// the UI Automation peers and the import ledger API. No user file, clipboard
+// or Explorer window of the user is touched; the real clipboard path
+// (ShelfPreview::paste) is never called here.
 #ifdef _WIN32
 #include "tools/shelf_preview.hpp"
+#include "app/utility_executor.hpp"
 #include "native/file_shelf_files.hpp"
 #include "native/module_scene.hpp"
 #include "core/data/file_io.hpp"
@@ -91,11 +93,13 @@ void text() {
     check(tools::shelfText(T::revealPrefix, L::english) == "Reveal in File Explorer: " && tools::shelfText(T::revealPrefix, L::simplifiedChinese) == "在文件资源管理器中显示：" &&
           tools::shelfText(T::revealPrefix, L::traditionalChinese) == "在檔案總管中顯示：" && tools::shelfText(T::revealPrefix, L::japanese) == "エクスプローラーで表示：" &&
           tools::shelfText(T::revealPrefix, L::korean) == "파일 탐색기에서 보기: ", "Reveal names File Explorer in every source language");
-    check(tools::shelfText(T::previewPrefix, L::english) == "Preview: " && tools::shelfText(T::previewPrefix, L::korean) == "미리 보기: ", "Preview replaces the Mac Quick Look name");
+    check(tools::shelfText(T::previewPrefix, L::english) == "Properties: " && tools::shelfText(T::previewPrefix, L::korean) == "속성: ", "The properties card replaces the Mac Quick Look name");
+    check(tools::shelfText(T::properties, L::japanese) == "プロパティ" && tools::shelfText(T::propertyModified, L::simplifiedChinese) == "修改时间" && tools::shelfText(T::propertyItems, L::traditionalChinese) == "{0} 個項目" &&
+          tools::shelfText(T::open, L::korean) == "열기" && tools::shelfText(T::reveal, L::english) == "Reveal in File Explorer", "The properties card speaks every source language");
     check(tools::shelfText(T::revealFailed, L::english) == "Unable to show the file in File Explorer" && tools::shelfText(T::revealFailed, L::simplifiedChinese) == "无法在文件资源管理器中显示文件",
           "The reveal failure keeps the host's English and Chinese wording");
     for (auto language : {L::english, L::simplifiedChinese, L::traditionalChinese, L::japanese, L::korean})
-        for (unsigned n = 0; n <= unsigned(T::revealFailed); ++n) check(!tools::shelfText(T(n), language).empty() && data::Json::validUtf8(tools::shelfText(T(n), language)), "Every Windows-only Shelf text exists in every language");
+        for (unsigned n = 0; n <= unsigned(T::openFailed); ++n) check(!tools::shelfText(T(n), language).empty() && data::Json::validUtf8(tools::shelfText(T(n), language)), "Every Windows-only Shelf text exists in every language");
     using F = mod::FileShelfState::Failure;
     const auto error = [](data::StoreErrorCode code, const char* message, F failure, L language) { return tools::shelfErrorText(data::StoreError(code, message), failure, language); };
     check(error(data::StoreErrorCode::unavailable, "Item is no longer on the shelf", F::action, L::english) == "This item is no longer on the shelf.", "Missing items use the source text");
@@ -115,16 +119,17 @@ void owner(HWND hwnd, const gpu::NativeShelfAssets& assets) {
     Temp temp; gpu::LayerRasterizer raster; std::vector<Recorded> events;
     tools::ShelfPreviewOptions options{temp.root / "metadata", false, true, {}};
     options.recordEvent = [&](mod::EventKind kind, mod::EventMetadata metadata) { events.push_back({kind, std::move(metadata)}); };
-    options.visiblePanels = false;
     auto shelf = std::make_unique<tools::ShelfPreview>(hwnd, raster, assets, std::move(options));
     shelf->resize({1280, 800, 96, 1, 1280, 800}); shelf->setLanguage(core::Language::english);
     double time{};
-    const auto pump = [&] { MSG m{}; for (unsigned n = 0; n < 32 && PeekMessageW(&m, hwnd, WM_APP + 185, WM_APP + 189, PM_REMOVE); ++n) shelf->message({hwnd, m.message, m.wParam, m.lParam}, ++time); };
+    const auto pump = [&] { MSG m{}; for (unsigned n = 0; n < 32 && PeekMessageW(&m, hwnd, WM_APP + 185, tools::ShelfPreview::workMessage, PM_REMOVE); ++n) shelf->message({hwnd, m.message, m.wParam, m.lParam}, ++time); };
+    // Waits (bounded) for the owner's private utility worker, delivering its notices.
+    const auto settle = [&](auto&& done) { for (unsigned n = 0; n < 500 && !done(); ++n) { Sleep(10); pump(); } return done(); };
     const auto item = [&](std::string_view name) -> const mod::FileShelfItem* {
         const auto items = shelf->state().items(); const auto found = std::find_if(items.begin(), items.end(), [&](const auto& i) { return i.name == name; });
         return found == items.end() ? nullptr : &*found;
     };
-    check(shelf->state().strings().revealPrefix == "Reveal in File Explorer: " && shelf->state().strings().previewPrefix == "Preview: ", "Card actions use the Windows names");
+    check(shelf->state().strings().revealPrefix == "Reveal in File Explorer: " && shelf->state().strings().previewPrefix == "Properties: ", "Card actions use the Windows names");
 
     // Import: one shelfAdded per new item, none for duplicates.
     const auto report = temp.root / "Report.txt", folder = temp.root / "Folder";
@@ -177,19 +182,34 @@ void owner(HWND hwnd, const gpu::NativeShelfAssets& assets) {
         check(std::any_of(saved.items().begin(), saved.items().end(), [&](const auto& r) { return r.windowsPath == utf8(renamed); }), "The renewed path is saved");
     }
 
-    // Generic preview of a folder through the owner (hidden popup), on the
-    // dedicated preview thread.
-    shelf->requestPreview(item("Folder")->id); check(shelf->settlePanels(10000), "The preview thread settles"); pump();
+    // The properties card of a folder (eye button, double-click or Space):
+    // without a shared executor its read runs on the owner's private worker.
+    shelf->requestPreview(item("Folder")->id);
     auto panels = shelf->panels();
-    check(panels.previewActive && panels.previewFallback && !panels.previewVisible && panels.previewFallbacks == 1, "A folder opens the generic preview");
-    check(panels.previewThread != 0 && panels.previewThread != GetCurrentThreadId() && panels.previewThreads == 1 && panels.previewTimeouts == 0, "The preview runs on its own thread");
-    shelf->requestPreview(item("Folder")->id); check(shelf->settlePanels(10000), "The preview thread settles"); pump();
-    check(!shelf->panels().previewActive, "Requesting the same item again toggles the preview closed (Space)");
+    check(panels.properties && panels.propertiesItem == item("Folder")->id && panels.propertyReads == 1 && !panels.propertiesLoaded, "The folder's card opens at once and reads its properties off the HUD thread");
+    check(settle([&] { return shelf->panels().propertiesLoaded; }), "The private utility worker delivers the properties");
+    auto card = shelf->properties();
+    check(card && card->heading == "Properties" && card->open == "Open" && card->reveal == "Reveal in File Explorer" && card->rows.size() == 6, "The card has its caption, actions and six rows for a folder");
+    check(card->rows[0].label == "Name" && card->rows[0].value == "Folder" && card->rows[1].label == "Type" && card->rows[1].value == "Folder" &&
+          card->rows[2].label == "Contains" && card->rows[2].value == "0 items", "A folder shows its name, type and item count");
+    check(card->rows[3].label == "Location" && card->rows[3].value.ends_with("\\Moved") && (card->rows[3].value == utf8(movedFolder) || (card->rows[3].value.starts_with(utf8(movedFolder).substr(0, 3) + "…"))),
+          "The location is the containing folder, shortened in the middle to fit");
+    check(card->rows[4].label == "Created" && card->rows[5].label == "Modified" && card->rows[4].value.size() > 4 && card->rows[5].value != "…" && card->rows[5].value != "—", "The times arrive from the worker");
+    shelf->requestPreview(item("Folder")->id);
+    check(!shelf->panels().properties && !shelf->properties(), "Requesting the same item again closes the card (Space toggles)");
+    // A file: its exact size and the Shell's type name.
+    shelf->requestPreview(item("Renamed report.txt")->id);
+    check(settle([&] { return shelf->panels().propertiesLoaded; }), "The file's properties arrive");
+    card = shelf->properties();
+    check(card && card->rows.size() == 6 && card->rows[0].value == "Renamed report.txt" && !card->rows[1].value.empty() && card->rows[2].label == "Size" && card->rows[2].value == "16 bytes",
+          "A file shows its size in bytes");
+    shelf->cancelPanels(); check(!shelf->panels().properties, "Closing the HUD closes the card at once");
 
-    // Preview of a deleted original: a localized error, never an exception.
+    // The card of a deleted original: it closes with the localized reason.
     std::filesystem::remove(renamed); const auto deletedID = item("Renamed report.txt")->id;
-    shelf->requestPreview(deletedID); pump();
-    check(shelf->state().error() == std::optional<std::string>("This item is unavailable: the original may have been deleted, or it is not accessible.") && !shelf->panels().previewActive,
+    shelf->requestPreview(deletedID);
+    check(settle([&] { return !shelf->panels().properties; }), "The card closes when its original is gone");
+    check(shelf->state().error() == std::optional<std::string>("This item is unavailable: the original may have been deleted, or it is not accessible."),
           "An unavailable original reports the localized reason");
     shelf->showError("Drop source did not provide filesystem paths", ++time);
     check(shelf->state().error() == std::optional<std::string>("This item is unavailable: the original may have been deleted, or it is not accessible."), "A silent diagnostic does not replace the message");
@@ -206,10 +226,10 @@ void owner(HWND hwnd, const gpu::NativeShelfAssets& assets) {
     unsigned later{}; shelf->setEventRecorder([&](mod::EventKind, mod::EventMetadata) { ++later; });
     check(shelf->importFiles(std::vector<std::string>{utf8(dropped)}, ++time) && later == 1 && events.size() == 2, "A replaced recorder receives later records only");
     shelf->setLanguage(core::Language::japanese);
-    check(shelf->state().strings().revealPrefix == "エクスプローラーで表示：" && shelf->state().strings().previewPrefix == "プレビュー：", "Language changes rename the platform actions");
-    shelf->cancelPanels(); shelf->settlePanels(10000); pump();
+    check(shelf->state().strings().revealPrefix == "エクスプローラーで表示：" && shelf->state().strings().previewPrefix == "プロパティ：", "Language changes rename the platform actions");
+    shelf->cancelPanels(); pump();
     shelf.reset();
-    { MSG m{}; while (PeekMessageW(&m, hwnd, WM_APP + 185, WM_APP + 189, PM_REMOVE)) {} }
+    { MSG m{}; while (PeekMessageW(&m, hwnd, WM_APP + 185, tools::ShelfPreview::workMessage, PM_REMOVE)) {} }
     check(RevokeDragDrop(hwnd) == DRAGDROP_E_NOTREGISTERED && !IsWindowVisible(hwnd), "Teardown revokes the drop target; nothing was shown");
 }
 // Presents the Shelf on the fixture window (the drop test's projection).
@@ -251,7 +271,7 @@ HRESULT invoke(IRawElementProviderFragment* fragment) {
 // Invoke through ShelfPreview::perform, hit testing and disconnection.
 void automation(HWND hwnd, const gpu::NativeShelfAssets& assets) {
     Temp temp; gpu::LayerRasterizer raster;
-    tools::ShelfPreviewOptions options{temp.root / "metadata", false, false, {}}; options.visiblePanels = false;
+    tools::ShelfPreviewOptions options{temp.root / "metadata", false, false, {}};
     auto shelf = std::make_unique<tools::ShelfPreview>(hwnd, raster, assets, std::move(options));
     shelf->resize({1280, 800, 96, 1, 1280, 800}); shelf->setLanguage(core::Language::english);
     double time{};
@@ -268,7 +288,7 @@ void automation(HWND hwnd, const gpu::NativeShelfAssets& assets) {
     auto plateA = peer(*shelf, L"shelf:" + idA + L":select"), plateB = peer(*shelf, L"shelf:" + idB + L":select");
     check(plateA && plateB && property(plateA.Get(), UIA_NamePropertyId).starts_with(L"Alpha.txt, "), "A card plate is named by its details");
     check(value(plateA.Get()) == L"Selected" && value(plateB.Get()) == L"Selected" && value(add.Get()) == L"<none>", "Selected plates carry the Selected value; buttons have none");
-    auto preview = peer(*shelf, L"shelf:" + idA + L":preview"); check(preview && property(preview.Get(), UIA_NamePropertyId) == L"Preview: Alpha.txt", "Card buttons use the Windows action names");
+    auto preview = peer(*shelf, L"shelf:" + idA + L":preview"); check(preview && property(preview.Get(), UIA_NamePropertyId) == L"Properties: Alpha.txt", "Card buttons use the Windows action names");
     UiaRect bounds{}; ok(plateA->get_BoundingRectangle(&bounds), "Plate bounds"); check(bounds.width > 20 && bounds.height > 10 && bounds.left >= 0 && bounds.top >= 0, "Plates are projected to screen pixels");
     // The hit test finds the plate at its centre (card buttons sit on top of it elsewhere).
     ComPtr<IRawElementProviderFragment> hit; ok(shelf->automationFromPoint(bounds.left + bounds.width * .3, bounds.top + bounds.height * .3, &hit), "Hit test");
@@ -289,13 +309,30 @@ void automation(HWND hwnd, const gpu::NativeShelfAssets& assets) {
     check(shelf->automationRefresh(nullptr), "The toolbar returns");
     check(invoke(peer(*shelf, L"shelf:add").Get()) == S_OK && shelf->takeAction() && true, "Invoking Add files queues the host's choose action");
     { MSG m{}; while (PeekMessageW(&m, hwnd, WM_APP + 185, WM_APP + 189, PM_REMOVE)) shelf->message({hwnd, m.message, m.wParam, m.lParam}, ++time); }
+    // The properties card is modal for UI Automation: the card (its rows as
+    // the value) and its close/open/reveal plates replace the Shelf's peers.
+    check(invoke(peer(*shelf, L"shelf:" + idA + L":preview").Get()) == S_OK && shelf->panels().properties, "The eye button opens the properties card");
+    presented.show(*shelf, time);
+    check(shelf->automationRefresh(nullptr) && shelf->automationCount() == 4, "The open card lists only its own peers");
+    auto cardPeer = peer(*shelf, L"shelf.properties:card");
+    check(cardPeer && property(cardPeer.Get(), UIA_NamePropertyId) == L"Properties: Alpha.txt" && value(cardPeer.Get()).starts_with(L"Name: Alpha.txt; Type: ") &&
+          property(cardPeer.Get(), UIA_HelpTextPropertyId) == wide(tools::shelfText(tools::ShelfText::propertiesHelp, core::Language::english)), "The card peer reads the item's properties and the card keys");
+    check(property(peer(*shelf, L"shelf.properties:close").Get(), UIA_NamePropertyId) == L"Close" && property(peer(*shelf, L"shelf.properties:open").Get(), UIA_NamePropertyId) == L"Open",
+          "The card's plates are named");
+    check(invoke(peer(*shelf, L"shelf.properties:reveal").Get()) == S_OK && !shelf->panels().properties, "Reveal closes the card");
+    const auto reveal = shelf->takeAction();
+    check(reveal && reveal->kind == tools::ShelfPreviewAction::Kind::reveal && reveal->itemID == shelf->state().items()[0].id, "Reveal is handed to the host with the card's item");
+    { MSG m{}; while (PeekMessageW(&m, hwnd, WM_APP + 185, tools::ShelfPreview::workMessage, PM_REMOVE)) shelf->message({hwnd, m.message, m.wParam, m.lParam}, ++time); }
+    // (Not presented again here: without a renderer nothing publishes or
+    // collects the replaced artwork; the fading card takes no input already.)
+    check(shelf->automationRefresh(nullptr) && shelf->automationCount() == actions.size(), "The closed card gives the Shelf its peers back");
     // Disconnection (HUD hidden) and an unpresented Shelf.
     auto kept = peer(*shelf, L"shelf:" + idB + L":select");
     shelf->automationDisconnect(); check(shelf->automationCount() == 0 && kept->get_BoundingRectangle(&bounds) == UIA_E_ELEMENTNOTAVAILABLE, "Disconnected peers answer ELEMENTNOTAVAILABLE");
     core::ModulePresentation other(core::Module::clipboard); const auto hidden = other.sample(++time).presentation; shelf->update(presented.center, presented.settings, hidden, 1, time);
     shelf->automationRefresh(nullptr); check(shelf->automationCount() == 0, "Another module lists no Shelf peers");
     shelf.reset();
-    { MSG m{}; while (PeekMessageW(&m, hwnd, WM_APP + 185, WM_APP + 189, PM_REMOVE)) {} }
+    { MSG m{}; while (PeekMessageW(&m, hwnd, WM_APP + 185, tools::ShelfPreview::workMessage, PM_REMOVE)) {} }
 }
 
 // Mac-imported Shelf items (Migration/relink.json written by the import area):
@@ -311,11 +348,20 @@ mig::MacRelinkItem imported(std::string record, std::string name, bool folder, d
 void relink(HWND hwnd, const gpu::NativeShelfAssets& assets) {
     Temp temp; gpu::LayerRasterizer raster; std::vector<Recorded> events;
     const auto root = temp.root / "data";
-    tools::ShelfPreviewOptions options{root, false, false, {}}; options.visiblePanels = false;
+    tools::ShelfPreviewOptions options{root, false, false, {}};
     options.recordEvent = [&](mod::EventKind kind, mod::EventMetadata metadata) { events.push_back({kind, std::move(metadata)}); };
+    // The host's shared executor (EndfieldHUD.exe passes its own): the ledger
+    // is read and written on its worker; drain() runs the completions here.
+    constexpr UINT utilityNotice = WM_APP + 300;
+    app::UtilityExecutor utility([hwnd] { PostMessageW(hwnd, utilityNotice, 0, 0); });
     auto shelf = std::make_unique<tools::ShelfPreview>(hwnd, raster, assets, std::move(options));
+    shelf->setUtility(&utility);
     shelf->resize({1280, 800, 96, 1, 1280, 800}); shelf->setLanguage(core::Language::english);
     double time{};
+    const auto settle = [&] {
+        utility.waitIdle(); utility.drain();
+        MSG m{}; while (PeekMessageW(&m, hwnd, WM_APP + 185, utilityNotice, PM_REMOVE)) if (m.message != utilityNotice) shelf->message({hwnd, m.message, m.wParam, m.lParam}, ++time);
+    };
     const auto kept = temp.root / "Kept.txt"; write(kept, "kept");
     check(shelf->importFiles(std::vector<std::string>{utf8(kept)}, ++time) && shelf->pendingRelinks() == 0, "A Windows reference; nothing imported yet");
     // The import area's ledger: two Shelf items and one Notes item.
@@ -324,12 +370,14 @@ void relink(HWND hwnd, const gpu::NativeShelfAssets& assets) {
     mig::MacRelinkItem note; note.id = data::makeUUID(); note.store = std::string(mig::relinkNotesMedia); note.recordID = data::makeUUID(); note.displayName = "photo.png"; note.kind = "image";
     std::filesystem::create_directories(root / "Migration"); write(root / "Migration" / "relink.json", mig::MacRelinkLedger::encode({report, folder, note}));
     shelf->refresh(++time);
+    check(shelf->pendingRelinks() == 0, "The ledger is read on the utility worker, not during refresh");
+    settle();
     const auto items = shelf->state().items();
     check(shelf->pendingRelinks() == 2 && items.size() == 3 && items[0].name == "Kept.txt" && items[1].id == reportID && items[2].id == folderID, "Imported Shelf items follow the Windows references; other modules' entries are not listed");
     check(items[1].name == "Report.pdf" && items[1].availabilityError && items[1].byteCount == 1234 && !items[1].isDirectory && items[2].isDirectory && items[2].availabilityError,
           "An imported item is an unavailable card with its Mac metadata");
     check(shelf->state().dragSelection(reportID).empty(), "An imported item is never dragged");
-    check(!shelf->perform("shelf:" + reportID + ":preview", ++time) || !shelf->takeAction(), "An imported item is never previewed or revealed");
+    check((!shelf->perform("shelf:" + reportID + ":preview", ++time) || !shelf->takeAction()) && !shelf->panels().properties, "An imported item has no properties card and is never revealed");
     // Its relink action (UI Automation peer next to the plate).
     Presented presented; presented.show(*shelf, time); shelf->automationRefresh(nullptr);
     auto action = peer(*shelf, wide("shelf:" + reportID + ":relink"));
@@ -349,6 +397,8 @@ void relink(HWND hwnd, const gpu::NativeShelfAssets& assets) {
     check(relinked && !relinked->availabilityError && relinked->name == "Report on this PC.pdf" && relinked->lastKnownPath == utf8(chosen) && shelf->state().selectedID() == std::optional<std::string>(reportID),
           "The reference keeps the imported identifier, is available and selected");
     check(events.size() == 1 && event(events, 0, mod::EventKind::shelfAdded, "filename", "Report on this PC.pdf"), "Relinking records shelfAdded for the chosen file");
+    { mig::MacRelinkLedger ledger(root); check(ledger.find(report.id)->state == mig::RelinkState::unresolved, "The record is written first; the ledger follows on the worker"); }
+    settle();
     {
         gpu::NativeFileShelfFiles files; data::FileShelfStore saved(root, files.platform());
         const auto row = std::find_if(saved.items().begin(), saved.items().end(), [&](const auto& r) { return r.id == reportID; });
@@ -360,23 +410,25 @@ void relink(HWND hwnd, const gpu::NativeShelfAssets& assets) {
     events.clear();
     check(shelf->perform("shelf:" + folderID + ":remove", ++time) && shelf->pendingRelinks() == 0 && !shelf->state().item(folderID), "Removing an imported card dismisses it");
     check(events.size() == 1 && event(events, 0, mod::EventKind::shelfRemoved, "filename", "Mac folder"), "Removal records shelfRemoved");
+    settle();
     { mig::MacRelinkLedger ledger(root); check(ledger.find(folder.id)->state == mig::RelinkState::dismissed, "The folder entry is dismissed in the ledger"); }
     // A record written before its ledger entry (an interrupted relink) is
     // resolved on the next load, never shown twice.
     auto interrupted = imported(reportID, "Report.pdf", false, 700000000.5);
     { mig::MacRelinkLedger ledger(root); auto rows = ledger.items(); rows.push_back(interrupted); write(root / "Migration" / "relink.json", mig::MacRelinkLedger::encode(rows)); }
-    shelf->refresh(++time);
+    shelf->refresh(++time); settle();
     { mig::MacRelinkLedger ledger(root); check(shelf->pendingRelinks() == 0 && ledger.find(interrupted.id)->state == mig::RelinkState::resolved && ledger.find(interrupted.id)->windowsPath == utf8(chosen),
           "An entry whose record exists is reconciled to that record's path"); }
     // Clearing the Shelf dismisses imported items that are still pending.
     auto later = imported("AAAAAAAA-0000-4000-8000-000000000003", "Later.key", false, 700000200.0);
     { mig::MacRelinkLedger ledger(root); auto rows = ledger.items(); rows.push_back(later); write(root / "Migration" / "relink.json", mig::MacRelinkLedger::encode(rows)); }
-    shelf->refresh(++time); check(shelf->pendingRelinks() == 1, "A later imported item is listed");
+    shelf->refresh(++time); settle(); check(shelf->pendingRelinks() == 1, "A later imported item is listed");
     check(shelf->perform("shelf:clear", ++time) && shelf->perform("shelf:confirmClear", ++time) && shelf->state().items().empty() && shelf->pendingRelinks() == 0, "Clear removes references and imported items");
+    settle();
     { mig::MacRelinkLedger ledger(root); check(ledger.find(later.id)->state == mig::RelinkState::dismissed && ledger.find(note.id)->state == mig::RelinkState::unresolved, "Clear dismisses only Shelf entries"); }
     check(std::filesystem::exists(chosen) && std::filesystem::exists(kept), "Relinking and clearing never touch the files");
-    shelf.reset();
-    { MSG m{}; while (PeekMessageW(&m, hwnd, WM_APP + 185, WM_APP + 189, PM_REMOVE)) {} }
+    shelf.reset(); utility.drain();
+    { MSG m{}; while (PeekMessageW(&m, hwnd, WM_APP + 185, utilityNotice, PM_REMOVE)) {} }
 }
 } // namespace
 

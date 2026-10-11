@@ -14,12 +14,13 @@ if(WIN32)
   # Outgoing Shell drag images (IDragSourceHelper::InitializeFromBitmap on a
   # DIB section) and incoming ones (IDropTargetHelper).
   target_link_libraries(hud_shelf_transfer PRIVATE gdi32 shell32)
-  # Ctrl+V paste (OleGetClipboard) and the preview's date formatting.
+  # Ctrl+V paste (OleGetClipboard).
   target_link_libraries(hud_shelf_preview PRIVATE ole32 shell32)
-  # Preview containment: the Shell preview controller runs on a dedicated STA
-  # thread with its own pump and a one-shot watchdog (CoCancelCall), next to
-  # the controller in the same library.
-  target_sources(hud_shelf_icons PRIVATE native/shelf_preview_thread.cpp)
+  # The properties card (replaces the Quick Look preview): the item's
+  # properties are read on the shared utility worker (app/utility_executor)
+  # through the Windows property system (propsys) for dimensions and duration.
+  target_sources(hud_shelf_preview PRIVATE native/shelf_properties.cpp)
+  target_link_libraries(hud_shelf_preview PRIVATE hud_utility propsys)
   # UI Automation peers of the Shelf (Mac HUDShelfActionButton) and the relink
   # of Mac-imported Shelf items through the import ledger (core/migration).
   target_sources(hud_shelf_preview PRIVATE native/shelf_automation.cpp)
@@ -41,28 +42,30 @@ if(WIN32)
 
   if(BUILD_TESTING)
     # Owner-level Shelf services: Event Log records (picker/paste/drop alike),
-    # stale-path relocation saved by refresh, the generic preview on the
-    # preview thread, virtual-file drops, localized platform text and error
-    # descriptions, the UI Automation peers and the relink of Mac-imported items.
+    # stale-path relocation saved by refresh, the properties card (private and
+    # shared utility executors), virtual-file drops, localized platform text and
+    # error descriptions, the UI Automation peers and the relink of
+    # Mac-imported items through the import ledger API.
     add_executable(shelf_services_tests tests/shelf_services_tests.cpp)
     target_compile_definitions(shelf_services_tests PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
-    target_link_libraries(shelf_services_tests PRIVATE hud_shelf_preview hud_shelf_files hud_mac_import ole32 shell32 uiautomationcore oleaut32)
+    target_link_libraries(shelf_services_tests PRIVATE hud_shelf_preview hud_shelf_files hud_mac_import hud_utility ole32 shell32 uiautomationcore oleaut32)
     if(MSVC)
       target_compile_options(shelf_services_tests PRIVATE /W4 /permissive- /EHsc)
     endif()
     add_test(NAME shelf_services_contracts COMMAND shelf_services_tests "${CMAKE_CURRENT_SOURCE_DIR}/resources/shelf")
     set_tests_properties(shelf_services_contracts PROPERTIES TIMEOUT 180)
 
-    # The contained preview thread: lifecycle, progress, hangs outside COM and
-    # a hung out-of-process COM server (a hidden child copy of the test).
-    add_executable(shelf_preview_thread_tests tests/shelf_preview_thread_tests.cpp)
-    target_compile_definitions(shelf_preview_thread_tests PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
-    target_link_libraries(shelf_preview_thread_tests PRIVATE hud_shelf_icons ole32)
+    # Properties of synthetic files, folders, a PNG and a WAV in a NEW
+    # temporary directory (sizes, times, child counts and its bound, image
+    # dimensions and duration through the property system, identity checks).
+    add_executable(shelf_properties_tests tests/shelf_properties_tests.cpp native/shelf_properties.cpp)
+    target_compile_definitions(shelf_properties_tests PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
+    target_link_libraries(shelf_properties_tests PRIVATE hud_shelf_files ole32 shell32 propsys windowscodecs)
     if(MSVC)
-      target_compile_options(shelf_preview_thread_tests PRIVATE /W4 /permissive- /EHsc)
+      target_compile_options(shelf_properties_tests PRIVATE /W4 /permissive- /EHsc)
     endif()
-    add_test(NAME shelf_preview_thread_contracts COMMAND shelf_preview_thread_tests)
-    set_tests_properties(shelf_preview_thread_contracts PROPERTIES TIMEOUT 240)
+    add_test(NAME shelf_properties_contracts COMMAND shelf_properties_tests)
+    set_tests_properties(shelf_properties_contracts PROPERTIES TIMEOUT 120)
 
     # Card removal frame by frame through the production owner, published as
     # the HUD host publishes owners (WARP readback; optional PNG frames).

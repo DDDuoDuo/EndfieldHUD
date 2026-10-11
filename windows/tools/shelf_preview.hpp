@@ -3,18 +3,19 @@
 #include "app/overlay_host.hpp"
 #include "native/shelf_assets.hpp"
 #include "native/file_shelf_transfer.hpp"
-#include "native/shelf_file_preview.hpp"
 #include "core/source_desktop_chrome.hpp"
 #include "core/module_presentation.hpp"
 #include "core/subsection_mask.hpp"
 #include "modules/event_log.hpp"
 #include "modules/file_shelf_state.hpp"
+#include "modules/shelf_presentation.hpp"
 #include <exception>
 #include <functional>
 // UI Automation provider interfaces (uiautomationcore.h), used by pointer only.
 struct IRawElementProviderFragment;
 struct IRawElementProviderFragmentRoot;
 
+namespace endfield::app { class UtilityExecutor; }
 namespace endfield::tools {
 struct ShelfPreviewOptions {
     // Development fixture: a NEW absolute directory, created by the owner.
@@ -35,26 +36,18 @@ struct ShelfPreviewOptions {
     // shelfAdded {filename} per new item (picker, paste and drops alike),
     // shelfRemoved {filename}, shelfCleared {count}. Null records nothing.
     std::function<void(modules::EventKind,modules::EventMetadata)> recordEvent;
-    // The native preview popup is shown (false: hidden coverage keeps it hidden).
-    bool visiblePanels{true};
-    // Preview containment (native/shelf_preview_thread.hpp): the longest
-    // blocking preview operation before its handler counts as hung.
-    unsigned previewTimeoutMilliseconds{10000};
-    // Tests and hidden coverage only: replaces the Shell handler activation on
-    // the preview thread (createShelfPreviewHandler is the production default).
-    std::function<HRESULT(const ehud::data::ShelfFileMetadata&,IPreviewHandler**)>previewHandlers;
 };
-// Native panel state (picker and preview popup), for owners and coverage.
+// Native panel state (the picker and the properties card), for owners and coverage.
 struct ShelfPanelState {
-    bool picking{},previewActive{},previewVisible{},previewFallback{};
-    std::uint64_t previewOpens{},previewFallbacks{},previewFailures{};
-    // The dedicated preview thread: current thread id (0 before the first
-    // preview), threads started, watchdog expiries and cancelled calls.
-    DWORD previewThread{};std::uint64_t previewThreads{},previewTimeouts{},previewCancellations{};
-    unsigned previewBlocked{};bool previewBusy{};
+    bool picking{};
+    // The properties card: open (and accepting input), its item, whether its
+    // properties arrived from the utility worker, and the reads requested.
+    bool properties{},propertiesLoaded{};std::string propertiesItem;std::uint64_t propertyReads{};
 };
 struct ShelfPreviewAction {
-    enum class Kind {choose,preview,reveal,drag,paste};Kind kind;
+    // open: the properties card's Open (default application, after the HUD
+    // closes like reveal). preview is no longer queued: the card is in the HUD.
+    enum class Kind {choose,preview,reveal,drag,paste,open};Kind kind;
     std::string itemID;
 };
 // Connected reference-only shelf. Borrows the shell's sampled module transition,
@@ -62,9 +55,13 @@ struct ShelfPreviewAction {
 // Test construction requires a fresh data root and may disable native services;
 // production opens the persistent root (ShelfPreviewOptions::persistentDataRoot).
 // Windows-only user-facing Shelf text in the five source languages.
-enum class ShelfText {revealPrefix,previewPrefix,pickerFailed,previewFailed,virtualFiles,chooseAvailable,
-    unavailableReason,tooManyReferences,changedOnDisk,newerVersion,modified,revealFailed,previewNotResponding,
-    accessibilityHelp,relinkNeeded,relinkTitle,relinkAccept,relinkAction,relinkHelp,relinkChooseOne};
+enum class ShelfText {revealPrefix,previewPrefix,pickerFailed,virtualFiles,chooseAvailable,
+    unavailableReason,tooManyReferences,changedOnDisk,newerVersion,revealFailed,
+    accessibilityHelp,relinkNeeded,relinkTitle,relinkAccept,relinkAction,relinkHelp,relinkChooseOne,
+    // The properties card (replaces the Quick Look preview).
+    properties,propertyName,propertyType,propertySize,propertyContains,propertyLocation,propertyCreated,propertyModified,
+    propertyDimensions,propertyDuration,propertyBytes,propertyItems,propertyItem,propertyLink,open,reveal,close,
+    propertiesHelp,propertiesUnavailable,openFailed};
 std::string shelfText(ShelfText,core::Language);
 // Mac FileShelfStoreError.errorDescription for a native/store failure.
 std::string shelfErrorText(const std::exception&,modules::FileShelfState::Failure,core::Language);
@@ -75,6 +72,8 @@ std::optional<std::string> shelfKnownMessage(std::string_view,core::Language);
 class ShelfPreview final {
 public:
     static constexpr UINT noticeMessage=WM_APP+185,actionMessage=WM_APP+186;
+    // The private utility executor's completion notice (without setUtility).
+    static constexpr UINT workMessage=WM_APP+192;
     // Area-service directory key under which a host may publish this owner.
     static constexpr std::string_view serviceKey="fileShelf";
     ShelfPreview(HWND,native::LayerRasterizer&,const native::NativeShelfAssets&,ShelfPreviewOptions);
@@ -105,15 +104,22 @@ public:
     void showError(std::string,double time);
     void showError(const std::exception&,double time);
     void requestFiles();
-    // Opens the Shell preview, or Quick Look's generic preview for folders and
-    // types without a stream preview handler, on the dedicated preview thread
-    // (a hung handler is cancelled and reported, never blocking the HUD).
-    // Failures become Shelf errors.
+    // The properties card of an available item (the Shelf's preview: eye
+    // button, double-click, Space): the HUD's secondary-menu card on the Shelf
+    // plane with the item's name, type, size (a folder's item count), location,
+    // creation and modification times and, when the Windows property system
+    // has them, image dimensions and media duration, plus Open and Reveal in
+    // File Explorer. The same item again closes it. The properties are read
+    // on the utility worker (setUtility), never on the HUD thread.
     void requestPreview(std::string_view itemID);
-    // Tests and hidden coverage: waits (bounded) until the preview thread is
-    // idle and has posted its notices (the caller then delivers them); with
-    // `retired`, also until every retired preview thread has ended.
-    bool settlePanels(unsigned milliseconds,bool retired=false);
+    // The shared UtilityExecutor (app/utility_executor.hpp) for the
+    // properties reads and the import-ledger writes; the owner submits from its
+    // own calls and asks the host for a frame (its content notice) after each
+    // completion. Until one is given (or with null) a private one-worker
+    // executor notified through this owner's own message is used instead.
+    void setUtility(app::UtilityExecutor*);
+    // The open card's content (none when closed or closing).
+    std::optional<modules::ShelfPropertiesContent> properties()const;
     // Re-resolves every reference now (the activation refresh): moved/renamed
     // originals are found by identity and their paths saved, missing ones are
     // marked unavailable. Explicit only; there is no watcher or polling.
@@ -126,9 +132,14 @@ public:
     // cards, exactly like an unavailable Mac item. Double-click, Space or the
     // UI Automation "Relink" button opens the file picker for that one item;
     // the chosen file or folder becomes a reference that keeps the imported
-    // identifier and date, and the ledger entry is resolved. Removing such a
-    // card (or clearing the Shelf) dismisses its entry. Nothing is matched by
-    // path or name. relink() is the picker's completion (also for tests).
+    // identifier and date, and the ledger row is resolved. Removing such a
+    // card (or clearing the Shelf) dismisses its row. Nothing is matched by
+    // path or name. The ledger is read, reconciled (on activation and
+    // refresh), resolved and dismissed through the import ledger API
+    // (core/migration/mac_import_relink.hpp: reconcileMacRelinks,
+    // resolveMacRelink, dismissMacRelink by store and record id) on the
+    // utility worker, after the Shelf's own record write. relink() is the
+    // picker's completion (also for tests).
     bool relink(std::string_view itemID,std::span<const std::string> paths,double time);
     std::size_t pendingRelinks()const;
     // UI Automation (app/module_owner.hpp hooks): one Button peer per Mac

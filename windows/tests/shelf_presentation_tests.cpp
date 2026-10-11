@@ -80,5 +80,32 @@ void reference(const char*file){std::ifstream f(file,std::ios::binary|std::ios::
         for(const auto&a:c["animations"].array())if(a["key"].string()=="shelf.selection.depth"){checkNear(a["duration"].number(),m::FileShelfState::selectionDuration,"Source selection duration");array(a["timing"],Json::Array{Json::Array{0,0},Json::Array{.16,.78},Json::Array{.25,1},Json::Array{1,1}});}else if(a["key"].string()=="shelf.toolbar.reveal")checkNear(a["duration"].number(),m::FileShelfState::toolbarDuration,"Source toolbar duration");else if(a["key"].string()=="shelf.drop.trace")checkNear(a["duration"].number(),m::FileShelfState::dropDuration,"Source drop duration");
     }
 }
+// The properties card that replaces Quick Look: NotesRetainedMenu artwork on
+// the Shelf canvas, modal actions while open, none while it fades out, and a
+// repaint on a theme event; equal content is a no-op.
+void properties(){
+    m::FileShelfState state(items(3),{},format());m::ShelfPresentation plan;m::ShelfPresentationStyle style;
+    m::ShelfPropertiesContent content{"synthetic-1","Properties","Close","Open","Reveal in File Explorer",{{"Name","File 1"},{"Type","Text"},{"Size","100 bytes"},{"Location","C:\\Synthetic"},{"Created","Sunday"},{"Modified","Monday"}}};
+    rejects([&]{plan.setProperties(content);},"The card needs the Shelf's style first");
+    plan.update(state,style);const auto shelfActions=plan.actions().size();
+    check(plan.setProperties(content)&&plan.properties()&&plan.propertiesInteractive()&&plan.stats().propertiesBuilds==1,"An open card is built once");
+    const auto&card=*plan.properties();
+    check(card.frame.width==m::shelfPropertiesWidth&&card.frame.x==50&&card.frame.height==44+6*19+8+28+10&&card.frame.y==std::round((334-card.frame.height)/2)&&card.origin.x==card.frame.x-3&&card.origin.y==card.frame.y,
+          "The card is centred on the Shelf canvas with its shadow inside its own bounds");
+    check(card.artwork["name"].string()=="notes.secondaryMenu"&&find(card.artwork,"id","shelf.properties/shadow")&&find(card.artwork,"id","shelf.properties/face"),"NotesRetainedMenu shadow and face");
+    const auto*face=find(card.artwork,"id","shelf.properties/face");check(rect((*face)["frame"]).x==3&&(*face)["borderWidth"].number()==.7&&(*face)["borderColor"]["sRGB"].array()[3].number()==.7,"The face carries the .7 accent border at .7");
+    check(find(card.artwork,"id","shelf.properties/heading")->operator[]("text")["string"].string()=="// Properties","The caption reads // Properties");
+    check(find(card.artwork,"id","shelf.properties/row5/value")->operator[]("text")["string"].string()=="Monday"&&find(card.artwork,"id","shelf.properties/row0/label")->operator[]("text")["string"].string()=="Name","Every row has its label and value");
+    check(plan.actions().size()==3&&plan.actions()[0].id==m::shelfPropertiesClose&&plan.actions()[0].label=="Close"&&plan.actions()[1].id==m::shelfPropertiesOpen&&plan.actions()[2].label=="Reveal in File Explorer",
+          "The open card is modal: its close, open and reveal plates are the only actions");
+    check(plan.actions()[0].rect.x==card.frame.x+card.frame.width-31&&plan.actions()[1].rect.y==card.frame.y+card.frame.height-38&&card.feedback.size()==3,"Plates sit where NotesRetainedMenu puts them, each with a highlight");
+    check(!plan.setProperties(content)&&plan.stats().propertiesBuilds==1,"Equal content changes nothing");
+    const auto revision=plan.propertiesRevision();check(plan.setProperties(content,false)&&plan.properties()&&!plan.propertiesInteractive()&&plan.actions().size()==shelfActions&&plan.stats().propertiesBuilds==1&&plan.propertiesRevision()>revision,
+          "A closing card keeps its artwork without actions");
+    style.dark=false;plan.update(state,style);check(plan.stats().propertiesBuilds==2&&find(plan.properties()->artwork,"id","shelf.properties/face")->operator[]("backgroundColor")["sRGB"].array()[0].number()==.92,"A theme event repaints the card");
+    check(plan.setProperties(std::nullopt)&&!plan.properties()&&plan.actions().size()==shelfActions,"A closed card leaves");
+    auto many=content;many.rows.resize(m::shelfPropertiesMaximumRows+1,{"Row","Value"});rejects([&]{plan.setProperties(many);},"The card has a bounded number of rows");
+    check(m::shelfPropertiesValueText("C:\\Folder")["string"].string()=="C:\\Folder"&&m::shelfPropertiesValueText("x")["fontSize"].number()==10,"The value descriptor measures the value's own font");
 }
-int main(int argc,char**argv){try{tests();if(argc==2)reference(argv[1]);else if(argc!=1)throw std::invalid_argument("Usage: shelf_presentation_tests [shelf.json]");std::cout<<"PASS "<<checks<<" shelf presentation checks\n";return 0;}catch(const std::exception&e){counting=false;std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
+}
+int main(int argc,char**argv){try{tests();properties();if(argc==2)reference(argv[1]);else if(argc!=1)throw std::invalid_argument("Usage: shelf_presentation_tests [shelf.json]");std::cout<<"PASS "<<checks<<" shelf presentation checks\n";return 0;}catch(const std::exception&e){counting=false;std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}

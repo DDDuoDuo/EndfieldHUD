@@ -36,6 +36,7 @@ bool validApplicationPickerSelection(std::span<const std::string>paths)noexcept{
 #include <atomic>
 #include <shobjidl.h>
 #include <shlobj.h>
+#include <shellapi.h>
 #include <knownfolders.h>
 #include <wrl/client.h>
 
@@ -162,6 +163,12 @@ HRESULT shellReveal(const ehud::data::ShelfFileAccess&lease)noexcept{return prot
     const auto name=wide(lease.metadata().windowsPath);PIDLIST_ABSOLUTE raw{};checked(SHParseDisplayName(name.c_str(),nullptr,&raw,0,nullptr));
     struct PIDL {PIDLIST_ABSOLUTE value;~PIDL(){CoTaskMemFree(value);}}pidl{raw};need(pidl.value!=nullptr,"Cannot resolve a Shelf Explorer selection");return SHOpenFolderAndSelectItems(pidl.value,0,nullptr,0);
 });}
+HRESULT shellOpen(const ehud::data::ShelfFileAccess&lease)noexcept{return protect([&]{
+    const auto name=wide(lease.metadata().windowsPath);PIDLIST_ABSOLUTE raw{};checked(SHParseDisplayName(name.c_str(),nullptr,&raw,0,nullptr));
+    struct PIDL {PIDLIST_ABSOLUTE value;~PIDL(){CoTaskMemFree(value);}}pidl{raw};need(pidl.value!=nullptr,"Cannot resolve a Shelf item to open");
+    SHELLEXECUTEINFOW info{};info.cbSize=sizeof(info);info.fMask=SEE_MASK_IDLIST|SEE_MASK_INVOKEIDLIST;info.lpIDList=pidl.value;info.nShow=SW_SHOWNORMAL;
+    if(ShellExecuteExW(&info))return S_OK;const auto error=GetLastError();return error==ERROR_CANCELLED?S_FALSE:HRESULT_FROM_WIN32(error);
+});}
 }
 struct NativeShelfFilePicker::State {
     const DWORD thread{GetCurrentThreadId()};ShelfPickerRoute route;ShelfPickerLabels labels;Factory factory;
@@ -202,5 +209,8 @@ HRESULT revealShelfReference(ehud::data::ShelfFileAccess lease,ShelfRevealResolv
     if(!resolver)resolver=NativeFileShelfFiles{}.platform().resolve;auto current=resolver(record);need(current.open()&&record.identity.matches(current.metadata().identity)&&ehud::data::validWindowsFilePath(current.metadata().windowsPath),"Shelf Explorer reference identity changed");
     if(!operation)operation=shellReveal;return operation(current);
 });}
+HRESULT openShelfReference(ehud::data::ShelfFileAccess lease,ShelfRevealResolver resolver,ShelfRevealOperation operation)noexcept{
+    if(!operation)operation=shellOpen;return revealShelfReference(std::move(lease),std::move(resolver),std::move(operation));
+}
 } // namespace endfield::native
 #endif

@@ -24,7 +24,7 @@ bool sameDependency(const modules::ShelfPresentationImage&a,const modules::Shelf
 Json root(Json::Array leaves={}){return Json::Object{{"bounds",Json::Array{0,0,0,0}},{"position",Json::Array{0,0}},{"anchorPoint",Json::Array{0,0}},{"allowsGroupOpacity",false},{"children",std::move(leaves)}};}
 struct Compiler {
     std::span<const NativeShelfImage>images;std::span<const modules::ShelfPresentationImage>dependencies;std::span<const Feedback>feedback;
-    ShelfScenePart result;Json::Array leaves;std::set<std::string,std::less<>>ids;std::size_t visited{};
+    ShelfScenePart result;Json::Array leaves;std::set<std::string,std::less<>>ids;std::size_t visited{};std::optional<core::Rect>groupBounds;
     void emit(Json node,const Matrix&world,double opacity,bool toolbar,std::size_t feedbackIndex,bool rim){
         const auto id=text(node["id"]);need(!id.empty()&&ids.insert(id).second,"Repeated Shelf surface identity");const auto b=rect(node["bounds"]);
         node["position"]=Json::Array{world.values[12]+b.x,world.values[13]+b.y};node["anchorPoint"]=Json::Array{0,0};
@@ -81,7 +81,7 @@ struct Compiler {
             const auto&first=result.surfaces[begin];if(first.feedback==ShelfSceneSurface::none&&!first.drop)while(end<leaves.size()&&result.surfaces[end].feedback==ShelfSceneSurface::none&&result.surfaces[end].toolbar==first.toolbar&&!result.surfaces[end].drop)++end;
             if(end-begin==1){compact.push_back(std::move(leaves[begin]));surfaces.push_back(std::move(result.surfaces[begin]));}
             else {Json::Array groupChildren;groupChildren.reserve(end-begin);for(std::size_t n=begin;n<end;++n){leaves[n]["opacity"]=result.surfaces[n].opacity;groupChildren.push_back(std::move(leaves[n]));}
-                const auto id=first.id+"/retained-static";auto group=root(std::move(groupChildren));group["id"]=id;group["bounds"]=result.itemID.empty()?Json(Json::Array{0,0,400,334}):Json(Json::Array{0,0,184,74});
+                const auto id=first.id+"/retained-static";auto group=root(std::move(groupChildren));group["id"]=id;group["bounds"]=groupBounds?Json(Json::Array{groupBounds->x,groupBounds->y,groupBounds->width,groupBounds->height}):result.itemID.empty()?Json(Json::Array{0,0,400,334}):Json(Json::Array{0,0,184,74});
                 compact.push_back(std::move(group));surfaces.push_back({id,{},1,ShelfSceneSurface::none,false,first.toolbar});}
             begin=end;
         }
@@ -107,7 +107,7 @@ double cubicLength(const DropSegment&s,double end=1){
     constexpr unsigned steps=128;const double h=end/steps;double sum{};
     for(unsigned n=0;n<=steps;++n){const auto t=h*n,u=1-t;const auto x=3*(u*u*(s.c1.x-s.start.x)+2*u*t*(s.c2.x-s.c1.x)+t*t*(s.end.x-s.c2.x));const auto y=3*(u*u*(s.c1.y-s.start.y)+2*u*t*(s.c2.y-s.c1.y)+t*t*(s.end.y-s.c2.y));sum+=(n==0||n==steps?1:n%2?4:2)*std::hypot(x,y);}return sum*h/3;
 }
-Json curveLayer(const core::SubsectionCurvePath&path){
+[[maybe_unused]] Json curveLayer(const core::SubsectionCurvePath&path){
     Json::Array commands;std::size_t at{};const auto point=[&](){const Point p{path.coordinates[at],path.coordinates[at+1]};at+=2;return p;};
     for(std::size_t n=0;n<path.opcodeCount;++n)switch(path.opcodes[n]){
         case 0:commands.push_back(pathCommand("move",{point()}));break;
@@ -123,7 +123,7 @@ Json curveLayer(const core::SubsectionCurvePath&path){
     Json shape=Json::Object{{"path",std::move(commands)},{"fillRule","non-zero"}};
     shape["fillColor"]=Json::Object{{"sRGB",Json::Array{1,1,1,1}}};result["shape"]=std::move(shape);return result;
 }
-const Json*findLayer(const Json&node,std::string_view id){if(text(node["id"])==id)return &node;for(const auto&child:children(node))if(const auto*p=findLayer(child,id))return p;return nullptr;}
+[[maybe_unused]] const Json*findLayer(const Json&node,std::string_view id){if(text(node["id"])==id)return &node;for(const auto&child:children(node))if(const auto*p=findLayer(child,id))return p;return nullptr;}
 // Four closed polygons (move, lines, close) for the mask raster.
 template<class Strips>core::SubsectionCurvePath curvePath(const Strips&strips){
     core::SubsectionCurvePath path;
@@ -160,12 +160,13 @@ ShelfScenePlan prepareShelfScene(const modules::ShelfPresentation&source,std::sp
     std::size_t expected=source.chromeImages().size();for(const auto&card:source.cards())expected+=card.images.size();need(images.size()==expected,"Shelf images must exactly cover visible source dependencies");
     std::set<std::string,std::less<>>imageIDs;for(const auto&i:images)need(imageIDs.insert(i.dependency.layerID).second,"Repeated Shelf image binding");
     ShelfScenePlan result;const auto&parts=children(source.chrome());need(parts.size()==5&&text(parts[0]["id"])=="shelf.collection"&&text(parts[1]["id"])=="shelf.drop"&&text(parts[4]["id"])=="shelf.toolbar","Unexpected source Shelf paint structure");
-    Compiler collection{images,source.chromeImages(),source.chromeFeedback(),{}, {}, {},0};auto tree=parts[0];need(!tree["mask"].isNull(),"Missing source Shelf collection clip");tree.erase("mask");collection.visit(std::move(tree));result.collection=collection.finish();
-    Compiler foreground{images,source.chromeImages(),source.chromeFeedback(),{}, {}, {},0};for(std::size_t n=1;n<parts.size();++n)foreground.visit(parts[n]);result.foreground=foreground.finish();
+    Compiler collection{images,source.chromeImages(),source.chromeFeedback(),{},{},{},0,{}};auto tree=parts[0];need(!tree["mask"].isNull(),"Missing source Shelf collection clip");tree.erase("mask");collection.visit(std::move(tree));result.collection=collection.finish();
+    Compiler foreground{images,source.chromeImages(),source.chromeFeedback(),{},{},{},0,{}};for(std::size_t n=1;n<parts.size();++n)foreground.visit(parts[n]);result.foreground=foreground.finish();
     result.cards.reserve(source.cards().size());for(const auto&card:source.cards()){
-        Compiler c{images,card.images,card.feedback,{}, {}, {},0};c.result.itemID=card.itemID;c.visit(card.artwork);result.cards.push_back(c.finish());
+        Compiler c{images,card.images,card.feedback,{},{},{},0,{}};c.result.itemID=card.itemID;c.visit(card.artwork);result.cards.push_back(c.finish());
     }
-    Compiler scrollbar{{},{},{},{},{},{},0};if(auto r=source.scrollIndicator()){
+    if(const auto&card=source.properties()){Compiler c{{},{},card->feedback,{},{},{},0,rect(card->artwork["bounds"])};c.visit(card->artwork);result.properties=c.finish();}
+    Compiler scrollbar{{},{},{},{},{},{},0,{}};if(auto r=source.scrollIndicator()){
         const auto color=source.scrollIndicatorColor();Json node=Json::Object{{"id","shelf.scrollbar"},{"kind","layer"},{"bounds",Json::Array{0,0,r->width,r->height}},{"position",Json::Array{0,0}},{"anchorPoint",Json::Array{0,0}},{"cornerRadius",1},{"backgroundColor",Json::Object{{"sRGB",Json::Array{color[0],color[1],color[2],color[3]}}}},{"children",Json::Array{}}};scrollbar.visit(std::move(node));
     }result.scrollbar=scrollbar.finish();return result;
 }
@@ -188,7 +189,8 @@ struct NativeShelfScene::Impl {
         }
     };
     modules::ShelfPresentation*source;LayerRasterizer*raster;LayerRasterOptions options;
-    std::unique_ptr<Part>collection,scrollbar,foreground;std::vector<std::unique_ptr<Part>>cards,retired;
+    std::unique_ptr<Part>collection,scrollbar,foreground,properties;std::vector<std::unique_ptr<Part>>cards,retired;
+    std::uint64_t propertiesRevision{};core::Point propertiesOrigin;
     std::vector<LayerCompositionEntry>entries;std::vector<NativeShelfImage>images;
     std::uint64_t chromeRevision{},placementRevision{},imageRevision{},compositionRevision{};std::optional<double>lastTime;
     NativeShelfSceneStats stats;DrawObject validation;
@@ -205,26 +207,28 @@ struct NativeShelfScene::Impl {
         for(std::size_t n=0;n<a.feedback.size();++n){const auto&x=a.feedback[n];const auto&y=b.feedback[n];if(x.actionID!=y.actionID||x.tintLayerID!=y.tintLayerID||x.rimLayerID!=y.rimLayerID||x.framed!=y.framed)return false;}return true;
     }
     static double sample(const Track&t,double now){return !t.active||t.duration<=0?t.target:t.from+(t.target-t.from)*core::CubicTiming{0,0,.58,1}.value((now-t.start)/t.duration);}
-    template<class F>void each(F&&f){if(collection)f(*collection);for(auto&c:cards)f(*c);if(scrollbar)f(*scrollbar);if(foreground)f(*foreground);}
-    template<class F>void each(F&&f)const{if(collection)f(*collection);for(const auto&c:cards)f(*c);if(scrollbar)f(*scrollbar);if(foreground)f(*foreground);}
-    void updatePositions(){for(std::size_t n=0;n<cards.size();++n){const auto&c=source->cards()[n];cards[n]->full=c.full;cards[n]->selectionY=c.selectionY;cards[n]->selectionZ=c.selectionZ;cards[n]->sourceRevision=c.contentRevision;}if(scrollbar)scrollbar->full=source->scrollIndicator().value_or(core::Rect{});placementRevision=source->placementRevision();}
-    const Feedback*feedback(std::string_view id)const{for(const auto&f:source->chromeFeedback())if(f.actionID==id)return &f;for(const auto&c:source->cards())for(const auto&f:c.feedback)if(f.actionID==id)return &f;return nullptr;}
-    bool current()const {if(!chromeRevision||chromeRevision!=source->chromeRevision()||placementRevision!=source->placementRevision()||cards.size()!=source->cards().size())return false;for(std::size_t n=0;n<cards.size();++n)if(cards[n]->plan.itemID!=source->cards()[n].itemID||cards[n]->sourceRevision!=source->cards()[n].contentRevision)return false;return true;}
+    template<class F>void each(F&&f){if(collection)f(*collection);for(auto&c:cards)f(*c);if(scrollbar)f(*scrollbar);if(foreground)f(*foreground);if(properties)f(*properties);}
+    template<class F>void each(F&&f)const{if(collection)f(*collection);for(const auto&c:cards)f(*c);if(scrollbar)f(*scrollbar);if(foreground)f(*foreground);if(properties)f(*properties);}
+    void updatePositions(){for(std::size_t n=0;n<cards.size();++n){const auto&c=source->cards()[n];cards[n]->full=c.full;cards[n]->selectionY=c.selectionY;cards[n]->selectionZ=c.selectionZ;cards[n]->sourceRevision=c.contentRevision;}if(scrollbar)scrollbar->full=source->scrollIndicator().value_or(core::Rect{});placementRevision=source->placementRevision();
+        propertiesRevision=source->propertiesRevision();if(source->properties())propertiesOrigin=source->properties()->origin;}
+    const Feedback*feedback(std::string_view id)const{for(const auto&f:source->chromeFeedback())if(f.actionID==id)return &f;for(const auto&c:source->cards())for(const auto&f:c.feedback)if(f.actionID==id)return &f;if(source->properties())for(const auto&f:source->properties()->feedback)if(f.actionID==id)return &f;return nullptr;}
+    bool current()const {if(!chromeRevision||chromeRevision!=source->chromeRevision()||placementRevision!=source->placementRevision()||propertiesRevision!=source->propertiesRevision()||cards.size()!=source->cards().size()||bool(properties)!=source->properties().has_value())return false;for(std::size_t n=0;n<cards.size();++n)if(cards[n]->plan.itemID!=source->cards()[n].itemID||cards[n]->sourceRevision!=source->cards()[n].contentRevision)return false;return true;}
 };
 NativeShelfScene::NativeShelfScene(modules::ShelfPresentation&s,LayerRasterizer&r,LayerRasterOptions o):impl_(std::make_unique<Impl>(s,r,std::move(o))){}
 NativeShelfScene::~NativeShelfScene(){if(impl_)impl_->raster->remove(impl_->maskID);}
 bool NativeShelfScene::syncContent(std::span<const NativeShelfImage>supplied,std::uint64_t imageRevision){
     auto&i=*impl_;bool sameCards=i.cards.size()==i.source->cards().size();for(std::size_t n=0;sameCards&&n<i.cards.size();++n)sameCards=i.cards[n]->plan.itemID==i.source->cards()[n].itemID&&i.cards[n]->sourceRevision==i.source->cards()[n].contentRevision;
-    if(i.chromeRevision&&i.chromeRevision==i.source->chromeRevision()&&sameCards&&i.imageRevision==imageRevision){const bool changed=i.placementRevision!=i.source->placementRevision();i.updatePositions();if(changed)++i.stats.contentSynchronizations;return changed;}
+    if(i.chromeRevision&&i.chromeRevision==i.source->chromeRevision()&&sameCards&&i.imageRevision==imageRevision&&i.propertiesRevision==i.source->propertiesRevision()){const bool changed=i.placementRevision!=i.source->placementRevision();i.updatePositions();if(changed)++i.stats.contentSynchronizations;return changed;}
     need(i.retired.empty(),"Publish and collect prior Shelf parts before another content replacement");
     auto images=supplied.empty()?i.images:std::vector<NativeShelfImage>(supplied.begin(),supplied.end());auto plan=prepareShelfScene(*i.source,images);
     std::size_t required{};const auto reservePart=[&](const ShelfScenePart&p,const std::unique_ptr<Impl::Part>&existing){if(!existing||!Impl::sameArtwork(existing->plan,p))required+=p.surfaces.size();};
-    reservePart(plan.collection,i.collection);reservePart(plan.scrollbar,i.scrollbar);reservePart(plan.foreground,i.foreground);
+    reservePart(plan.collection,i.collection);reservePart(plan.scrollbar,i.scrollbar);reservePart(plan.foreground,i.foreground);if(plan.properties)reservePart(*plan.properties,i.properties);
     for(const auto&p:plan.cards){const auto found=std::find_if(i.cards.begin(),i.cards.end(),[&](const auto&old){return old->plan.itemID==p.itemID&&Impl::sameArtwork(old->plan,p);});if(found==i.cards.end())required+=p.surfaces.size();}
     need(required<=LayerRasterizer::maximumEntries-i.raster->stats().entries,"Shelf replacement exceeds shared raster capacity; retire unused module artwork first");
     const auto inherit=[](Impl::Part&next,const Impl::Part&prior){for(std::size_t n=0;n<next.plan.feedback.size();++n)for(std::size_t old=0;old<prior.plan.feedback.size();++old)if(next.plan.feedback[n].actionID==prior.plan.feedback[old].actionID)next.tracks[n]=prior.tracks[old];};
     const auto build=[&](ShelfScenePart&p,const std::unique_ptr<Impl::Part>&existing){if(existing&&Impl::sameArtwork(existing->plan,p))return std::unique_ptr<Impl::Part>{};auto next=std::make_unique<Impl::Part>(*i.raster,std::move(p),i.options);if(existing)inherit(*next,*existing);return next;};
     auto collection=build(plan.collection,i.collection),scrollbar=build(plan.scrollbar,i.scrollbar),foreground=build(plan.foreground,i.foreground);
+    auto properties=plan.properties?build(*plan.properties,i.properties):std::unique_ptr<Impl::Part>{};
     std::array<std::size_t,8>old{};old.fill(8);std::array<std::unique_ptr<Impl::Part>,8>built;
     for(std::size_t n=0;n<plan.cards.size();++n){for(std::size_t k=0;k<i.cards.size();++k)if(i.cards[k]->plan.itemID==plan.cards[n].itemID&&Impl::sameArtwork(i.cards[k]->plan,plan.cards[n])){old[n]=k;break;}if(old[n]==8){built[n]=std::make_unique<Impl::Part>(*i.raster,std::move(plan.cards[n]),i.options);for(const auto&prior:i.cards)if(prior->plan.itemID==built[n]->plan.itemID){inherit(*built[n],*prior);break;}}}
     std::vector<std::unique_ptr<Impl::Part>>next;next.reserve(8);
@@ -232,6 +236,7 @@ bool NativeShelfScene::syncContent(std::span<const NativeShelfImage>supplied,std
     const auto replace=[&](auto&current,auto&candidate){if(candidate){if(current)i.retired.push_back(std::move(current));current=std::move(candidate);++i.stats.partBuilds;}};
     if(foreground){i.dropPart=nullptr;i.uploadedDrop.reset();}
     replace(i.collection,collection);replace(i.scrollbar,scrollbar);replace(i.foreground,foreground);
+    if(plan.properties)replace(i.properties,properties);else if(i.properties)i.retired.push_back(std::move(i.properties));
     for(std::size_t n=0;n<plan.cards.size();++n){if(old[n]!=8)next.push_back(std::move(i.cards[old[n]]));else{next.push_back(std::move(built[n]));++i.stats.partBuilds;}}
     for(auto&card:i.cards)if(card)i.retired.push_back(std::move(card));i.cards=std::move(next);i.images=std::move(images);
     i.entries.clear();i.each([&](auto&part){i.entries.push_back({&part.scene,{}});});
@@ -251,6 +256,7 @@ bool NativeShelfScene::updatePose(const NativeShelfPose&pose){
     need(pose.contentWorld.finite()&&std::isfinite(pose.opacity)&&pose.opacity>=0&&pose.opacity<=1&&pose.ownerMasks.size()<=7,"Invalid Shelf owner placement");
     need(pose.collectionSublayerTransform.finite()&&std::isfinite(pose.dropStrokeEnd)&&pose.dropStrokeEnd>=0&&pose.dropStrokeEnd<=1,"Invalid Shelf subsection/drop trace");
     need(!pose.reveal||(!pose.collectionReveal&&pose.collectionSublayerTransform==Matrix{}),"Ambiguous Shelf reveal inputs");
+    need(std::isfinite(pose.propertiesOpacity)&&pose.propertiesOpacity>=0&&pose.propertiesOpacity<=1,"Invalid Shelf properties fade");
     Matrix sublayer=pose.collectionSublayerTransform;std::optional<core::SubsectionCurvePath>nextPath;bool revealActive{};double revealEnds{};
     if(pose.reveal){const auto&r=*pose.reveal;
         need(std::isfinite(r.direction)&&std::isfinite(r.elapsed),"Invalid Shelf reveal time");sublayer=core::sampleSubsectionTransform(r.direction,r.elapsed).sublayerTransform;
@@ -269,9 +275,11 @@ bool NativeShelfScene::updatePose(const NativeShelfPose&pose){
     for(const auto&m:pose.ownerMasks)need(m.worldToLocal.finite()&&std::isfinite(m.bounds.x)&&std::isfinite(m.bounds.y)&&std::isfinite(m.bounds.width)&&std::isfinite(m.bounds.height)&&m.bounds.width>0&&m.bounds.height>0&&std::isfinite(m.cornerRadius)&&m.cornerRadius>=0&&m.cornerRadius<=std::min(m.bounds.width,m.bounds.height)*.5,"Invalid Shelf owner clip");
     std::size_t cardIndex{};i.each([&](auto&part){const bool card=!part.plan.itemID.empty(),collection=&part==i.collection.get()||card;Matrix base=pose.contentWorld;
         if(collection)base=collectionWorld;
+        const bool properties=&part==i.properties.get();
         if(card){base=base*Matrix::translation(part.full.x,part.full.y+ys[cardIndex],zs[cardIndex]);++cardIndex;}else if(&part==i.scrollbar.get())base=base*Matrix::translation(part.full.x,part.full.y);
+        else if(properties)base=base*Matrix::translation(i.propertiesOrigin.x,i.propertiesOrigin.y);
         std::copy(pose.ownerMasks.begin(),pose.ownerMasks.end(),part.masks.begin());const auto count=pose.ownerMasks.size()+static_cast<std::size_t>(collection);if(collection)part.masks[pose.ownerMasks.size()]=collectionClip;
-        for(std::size_t n=0;n<part.plan.surfaces.size();++n){const auto&s=part.plan.surfaces[n];auto&p=part.placements[n];p.world=base*(s.toolbar?Matrix::translation(0,pose.toolbarY,pose.toolbarZ):Matrix{})*s.local;p.opacity=s.opacity*pose.opacity*(s.drop&&pose.dropStrokeEnd==0?0:1);p.masks={part.masks.data(),count};if(s.feedback!=ShelfSceneSurface::none)p.opacity*=static_cast<float>(Impl::sample(part.tracks[s.feedback][s.rim?1:0],pose.time));i.validation.world=p.world;i.validation.opacity=p.opacity;i.validation.masks.assign(p.masks.begin(),p.masks.end());i.validation.shutter=pose.moduleShutter;i.validation.alphaMask=collection?nextAlpha:std::nullopt;validateDrawObject(i.validation);}
+        for(std::size_t n=0;n<part.plan.surfaces.size();++n){const auto&s=part.plan.surfaces[n];auto&p=part.placements[n];p.world=base*(s.toolbar?Matrix::translation(0,pose.toolbarY,pose.toolbarZ):Matrix{})*s.local;p.opacity=s.opacity*pose.opacity*(s.drop&&pose.dropStrokeEnd==0?0:1)*(properties?pose.propertiesOpacity:1.f);p.masks={part.masks.data(),count};if(s.feedback!=ShelfSceneSurface::none)p.opacity*=static_cast<float>(Impl::sample(part.tracks[s.feedback][s.rim?1:0],pose.time));i.validation.world=p.world;i.validation.opacity=p.opacity;i.validation.masks.assign(p.masks.begin(),p.masks.end());i.validation.shutter=pose.moduleShutter;i.validation.alphaMask=collection?nextAlpha:std::nullopt;validateDrawObject(i.validation);}
     });
     // Numeric staging above covers every part before changing any LayerScene.
     i.each([&](auto&part){part.activePlacements.clear();for(const auto&p:part.placements)if(p.surface!=ShelfSceneSurface::none)part.activePlacements.push_back(p);part.scene.setPlacements(part.activePlacements);part.scene.setGroupShutter(pose.moduleShutter);part.scene.setGroupAlphaMask((&part==i.collection.get()||!part.plan.itemID.empty())?nextAlpha:std::nullopt);for(auto&pair:part.tracks)for(auto&t:pair)if(pose.time>=t.start+t.duration)t.active=false;});

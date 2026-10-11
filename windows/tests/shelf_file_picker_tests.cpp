@@ -107,6 +107,11 @@ void revealIdentity(){
     released=calls=0;result=n::revealShelfReference(lease(1,released),[&](const d::ShelfRecord&){return lease(2,released);},[&](const d::ShelfFileAccess&){++calls;return S_OK;});check(FAILED(result)&&calls==0&&released==2,"Replaced file identity never reaches Shell");
     released=calls=0;result=n::revealShelfReference(lease(1,released),[&](const d::ShelfRecord&){return lease(1,released);},[&](const d::ShelfFileAccess&)->HRESULT{++calls;throw std::runtime_error("Synthetic handoff failure");});check(FAILED(result)&&calls==1&&released==2,"External handoff failure cannot leak references");
     check(FAILED(n::revealShelfReference({}, {}, {})),"Closed lease cannot implicitly access any user path");
+    // The properties card's Open revalidates identity exactly like reveal.
+    released=calls=0;result=n::openShelfReference(lease(1,released),[&](const d::ShelfRecord&record){check(record.identity.objectID[0]==1,"Open independently verifies original object identity");return lease(1,released);},[&](const d::ShelfFileAccess&current){++calls;check(current.open()&&released==0,"Both leases span the Shell open");return S_OK;});
+    check(SUCCEEDED(result)&&calls==1&&released==2,"Open balances both leases");
+    released=calls=0;result=n::openShelfReference(lease(1,released),[&](const d::ShelfRecord&){return lease(2,released);},[&](const d::ShelfFileAccess&){++calls;return S_OK;});check(FAILED(result)&&calls==0&&released==2,"A replaced object is never opened");
+    check(FAILED(n::openShelfReference({}, {}, {})),"Closed lease opens nothing");
 }
 }
 int main(){try{selections();COM com;deferredAndReferences();cancellationAndFailure();destructionReentry();readerMode();revealIdentity();std::cout<<"PASS "<<checks<<" Shelf picker/reference handoff checks\n";return 0;}catch(const std::exception&error){std::cerr<<"FAIL after "<<checks<<": "<<error.what()<<'\n';return 1;}}

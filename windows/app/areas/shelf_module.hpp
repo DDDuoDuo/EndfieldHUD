@@ -22,19 +22,19 @@
 //   - the UI Automation peers of the presented Shelf (one per accessible
 //     action plus the imported card's Relink peer), Invoke selecting a card
 //     and asking for the picker, and withdrawal when the Shelf is hidden;
-//   - Quick Look's generic preview for a folder and for a type with no
-//     registered stream preview handler, in a hidden popup on the dedicated
-//     preview thread (never the HUD thread);
-//   - preview containment: a synthetic handler type that stalls is cancelled
-//     by the preview thread's watchdog (localized "not responding" text), the
-//     retired thread ends once released and the next preview runs on a fresh
-//     preview thread;
+//   - the properties card that replaces Quick Look, for a folder and a file:
+//     it opens at once, its properties are read on the shared utility worker
+//     (never the HUD thread), the same item closes it, and on a presented
+//     Shelf it is modal for UI Automation (the card and its close/open/reveal
+//     peers) with Open handed to the host after the HUD closes;
+//   - the import ledger through its owner API on the utility worker
+//     (reconcile on refresh, resolve after a relink, dismiss on remove/clear);
 //   - the localized text of those operations.
 // It owns a NEW data root inside its coverage root, a private never-shown
 // owner window (the HUD HWND keeps its own routes), a private rasterizer for
-// its presentation (outside the module cycles' measured raster usage), a
-// hidden preview popup, no icon worker, no drop registration and no clipboard
-// access. Event Log records go to a counting sink: the real Event Log is drawn
+// its presentation (outside the module cycles' measured raster usage), the
+// shared utility executor, no icon worker, no drop registration and no
+// clipboard access. Event Log records go to a counting sink: the real Event Log is drawn
 // by the module cycles, whose raster usage must repeat exactly. Outside hidden
 // coverage the factory returns null (the built-in owner is the production path).
 //

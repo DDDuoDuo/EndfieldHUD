@@ -1,4 +1,10 @@
 #pragma once
+// NOT USED by the Temporary File Shelf any more: its preview is the in-HUD
+// properties card (tools/shelf_preview.hpp, native/shelf_properties.hpp), and
+// the preview thread that contained these handlers was removed. This file and
+// its suite stay only while windows/CMakeLists.txt still lists
+// native/shelf_file_preview.cpp in hud_shelf_icons and the
+// shelf_file_preview_tests target (a host change removes all three).
 #include "core/data/file_shelf_store.hpp"
 #include <functional>
 #include <memory>

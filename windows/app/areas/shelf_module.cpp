@@ -5,7 +5,6 @@
 #include "native/file_shelf_files.hpp"
 #include "native/shelf_assets.hpp"
 #include "native/layer_raster.hpp"
-#include "native/shelf_file_preview.hpp"
 #include "tools/shelf_preview.hpp"
 #include <uiautomation.h>
 #include <wrl/client.h>
@@ -26,7 +25,7 @@ namespace data = ehud::data;
 namespace mig = ehud::migration;
 using Microsoft::WRL::ComPtr;
 constexpr wchar_t windowClass[] = L"EndfieldShelfCoverageOwner.v1";
-constexpr UINT firstShelfMessage = WM_APP + 185, lastShelfMessage = WM_APP + 189; // ShelfPreview notices/actions
+constexpr UINT firstShelfMessage = WM_APP + 185, lastShelfMessage = tools::ShelfPreview::workMessage; // ShelfPreview notices/actions
 void need(bool value, const char* why) { if (!value) throw std::runtime_error(std::string("File Shelf coverage: ") + why); }
 std::string utf8(const fs::path& path) { const auto value = path.u8string(); return {reinterpret_cast<const char*>(value.data()), value.size()}; }
 void write(const fs::path& path, std::string_view bytes) {
@@ -35,46 +34,30 @@ void write(const fs::path& path, std::string_view bytes) {
     need(bool(out), "synthetic file written");
 }
 
-// Manual-reset gate of the synthetic stalled preview handler. Shared with the
-// preview thread's handler factory, which may outlive this area while blocked.
-struct Gate {
-    HANDLE value{CreateEventW(nullptr, TRUE, FALSE, nullptr)};
-    ~Gate() { if (value) CloseHandle(value); }
-};
-constexpr std::string_view stalledExtension = ".ehudhang";
-
 class ShelfCoverageArea final : public app::ModuleOwner {
 public:
-    ShelfCoverageArea(const app::ApplicationModuleContext& c, const fs::path& assets) : root_(c.coverageRoot), assets_(assets), language_(c.host->appearance().language) {
+    ShelfCoverageArea(const app::ApplicationModuleContext& c, const fs::path& assets) : root_(c.coverageRoot), assets_(assets), language_(c.host->appearance().language), utility_(c.utility) {
         WNDCLASSEXW type{sizeof(type)};
         type.lpfnWndProc = procedure;
         type.hInstance = GetModuleHandleW(nullptr);
         type.lpszClassName = windowClass;
         need(RegisterClassExW(&type) != 0 || GetLastError() == ERROR_CLASS_ALREADY_EXISTS, "private owner class registered");
-        // Private, never-shown owner of this Shelf's notices and hidden preview
-        // popup; the HUD HWND keeps the built-in Shelf's routes untouched.
+        // Private, never-shown owner of this Shelf's notices; the HUD HWND
+        // keeps the built-in Shelf's routes untouched.
         window_ = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, windowClass, L"", WS_POPUP, 0, 0, 1, 1, nullptr, nullptr, type.hInstance, this);
         need(window_ && !IsWindowVisible(window_), "private owner window stays hidden");
-        need(gate_->value != nullptr, "stalled-handler gate created");
+        need(utility_ != nullptr, "the shared utility executor is given");
         tools::ShelfPreviewOptions options{root_ / "shelf-data", false, false, {}};
         options.recordEvent = [this](mod::EventKind kind, mod::EventMetadata metadata) { events_.push_back({kind, std::move(metadata)}); };
-        options.visiblePanels = false;
-        // Preview containment: a synthetic handler type that never returns
-        // until the step releases it; every other type uses the Shell's.
-        options.previewTimeoutMilliseconds = 400;
-        options.previewHandlers = [gate = gate_](const data::ShelfFileMetadata& metadata, IPreviewHandler** out) -> HRESULT {
-            if (std::string_view(metadata.name).ends_with(stalledExtension)) { WaitForSingleObject(gate->value, 30000); if (out) *out = nullptr; return HRESULT_FROM_WIN32(ERROR_CANCELLED); }
-            return native::createShelfPreviewHandler(metadata, out);
-        };
         // A private rasterizer: this area presents the Shelf for its UI
         // Automation steps, outside the harness's measured module raster usage.
         shelf_ = std::make_unique<tools::ShelfPreview>(window_, raster_, assets_, std::move(options));
+        shelf_->setUtility(utility_); // as EndfieldHUD.exe's host does
         shelf_->resize(c.metrics);
         shelf_->setLanguage(language_);
         metrics_ = c.metrics;
     }
     ~ShelfCoverageArea() override {
-        SetEvent(gate_->value); // a stalled synthetic handler returns; its retired thread ends
         shelf_.reset();
         if (window_) DestroyWindow(window_);
     }
@@ -94,10 +77,10 @@ private:
     fs::path root_;
     native::NativeShelfAssets assets_;
     core::Language language_;
+    app::UtilityExecutor* utility_{};
     HWND window_{};
     app::ClientMetrics metrics_;
     std::vector<Record> events_;
-    std::shared_ptr<Gate> gate_ = std::make_shared<Gate>();
     native::LayerRasterizer raster_;
     std::unique_ptr<tools::ShelfPreview> shelf_;
     double time_{};
@@ -113,7 +96,7 @@ private:
         }
         return DefWindowProcW(hwnd, message, wParam, lParam);
     }
-    // Delivers this Shelf's queued private notices (preview work and events).
+    // Delivers this Shelf's queued private notices (picker, icons, content).
     void pump() {
         MSG message{};
         for (unsigned n = 0; n < 32 && PeekMessageW(&message, window_, firstShelfMessage, lastShelfMessage, PM_REMOVE); ++n) DispatchMessageW(&message);
@@ -221,6 +204,7 @@ void ShelfCoverageArea::coverage(app::ModuleCoverage& step) {
         write(data / "Migration" / "relink.json", mig::MacRelinkLedger::encode(rows));
     }
     shelf.refresh(next());
+    step.drain(); pump(); // the ledger is read (and reconciled) on the utility worker
     step.check(shelf.pendingRelinks() == 1 && item("Imported plan.key") && item("Imported plan.key")->availabilityError && item("Imported plan.key")->id == recordID,
                "The imported item is listed as an unavailable card with its Mac identifier");
 
@@ -232,13 +216,14 @@ void ShelfCoverageArea::coverage(app::ModuleCoverage& step) {
         const auto uiaRoot = root_ / ("automation-" + std::to_string(step.cycle));
         fs::remove_all(uiaRoot, error);
         tools::ShelfPreviewOptions options{uiaRoot, false, false, {}};
-        options.visiblePanels = false;
         tools::ShelfPreview presented(window_, raster_, assets_, std::move(options));
+        presented.setUtility(utility_);
         presented.resize(metrics_); presented.setLanguage(language_);
         fs::create_directories(uiaRoot / "Migration");
         write(uiaRoot / "Migration" / "relink.json", mig::MacRelinkLedger::encode({imported}));
         step.check(presented.importFiles(std::vector<std::string>{utf8(moved), utf8(kept)}, next()), "The presented Shelf lists two references");
         presented.refresh(next()); // reads the import ledger written after construction
+        step.drain();
         step.check(presented.pendingRelinks() == 1 && presented.state().items().size() == 3, "The presented Shelf lists the imported item after its references");
         present(presented, true, next());
         presented.automationRefresh(nullptr);
@@ -253,6 +238,19 @@ void ShelfCoverageArea::coverage(app::ModuleCoverage& step) {
         const auto request = presented.takeAction();
         step.check(request && request->kind == tools::ShelfPreviewAction::Kind::choose && presented.state().selectedID() == std::optional<std::string>(recordID),
                    "Relink selects the imported card and asks for the file picker");
+        // The properties card (the eye button) is modal for UI Automation:
+        // the card itself and its close, open and reveal plates only.
+        const auto eye = peer(presented, "shelf:" + keptID + ":preview");
+        step.check(eye && invoke(eye.Get()) == S_OK && presented.panels().properties && presented.panels().propertiesItem == keptID, "The eye button opens the properties card");
+        present(presented, true, next());
+        presented.automationRefresh(nullptr);
+        const auto cardPeer = peer(presented, "shelf.properties:card");
+        step.check(presented.automationCount() == 4 && cardPeer && peer(presented, "shelf.properties:close") && peer(presented, "shelf.properties:reveal"), "The open card lists only its own peers");
+        const auto openPeer = peer(presented, "shelf.properties:open");
+        step.check(openPeer && invoke(openPeer.Get()) == S_OK && !presented.panels().properties, "Open closes the card");
+        const auto open = presented.takeAction();
+        step.check(open && open->kind == tools::ShelfPreviewAction::Kind::open && open->itemID == keptID, "Open is handed to the host with the item");
+        step.drain();
         present(presented, false, next());
         presented.automationRefresh(nullptr);
         step.check(presented.automationCount() == 0, "A withdrawn Shelf lists no peers");
@@ -268,59 +266,41 @@ void ShelfCoverageArea::coverage(app::ModuleCoverage& step) {
     step.check(shelf.relink(recordID, std::vector<std::string>{utf8(replacement)}, next()) && shelf.pendingRelinks() == 0, "The chosen file relinks the imported item");
     step.check(item("Plan on this PC.key") && item("Plan on this PC.key")->id == recordID && !item("Plan on this PC.key")->availabilityError, "The relinked reference keeps the imported identifier");
     step.check(events_.size() == 1 && recorded(0, mod::EventKind::shelfAdded, "filename", "Plan on this PC.key"), "Relinking records shelfAdded");
+    step.drain(); pump(); // resolveMacRelink runs on the utility worker after the record write
     {
         const mig::MacRelinkLedger ledger(root_ / "shelf-data");
         const auto* entry = ledger.find(imported.id);
         step.check(entry && entry->state == mig::RelinkState::resolved && entry->windowsPath == utf8(replacement), "The import ledger entry is resolved with the chosen path");
     }
 
-    // Quick Look's generic preview: a folder and a type without a handler.
+    // The properties card (replaces Quick Look) for a folder and a file: it
+    // opens at once and its properties are read on the shared utility worker.
     for (const auto* name : {"Kept folder", "Synthetic notes.ehudshelf"}) {
         const auto* target = item(name);
-        step.check(target && !target->availabilityError, "The preview target is available");
-        const auto before = shelf.panels().previewFallbacks;
+        step.check(target && !target->availabilityError, "The properties target is available");
+        const auto reads = shelf.panels().propertyReads;
         shelf.requestPreview(target->id);
-        step.check(shelf.settlePanels(10000), "The preview thread settles");
-        pump();
-        const auto panels = shelf.panels();
-        step.check(panels.previewActive && panels.previewFallback && !panels.previewVisible && panels.previewFallbacks == before + 1,
-                   "The generic preview opens in the hidden coverage popup");
-        step.check(panels.previewThread != 0 && panels.previewThread != GetCurrentThreadId(), "The preview runs on its dedicated thread, not the HUD thread");
-        step.check(!shelf.state().error(), "Opening the generic preview reports no Shelf error");
-        shelf.cancelPanels();
-        step.check(shelf.settlePanels(10000), "The preview thread settles");
-        pump();
-        step.check(!shelf.panels().previewActive, "The generic preview closes");
-    }
-
-    // Containment: a preview handler that never returns is cancelled by the
-    // preview thread's watchdog; the HUD thread only queues and is notified.
-    {
-        const auto stalled = cycle / "Stalled preview.ehudhang";
-        write(stalled, "Synthetic file whose preview handler stalls\n");
-        step.check(shelf.importFiles(std::vector<std::string>{utf8(stalled)}, next()), "A synthetic stalled-handler reference is added");
-        const auto* target = item("Stalled preview.ehudhang");
-        step.check(target != nullptr, "The stalled-handler reference is listed");
-        ResetEvent(gate_->value);
-        const auto before = shelf.panels();
+        auto panels = shelf.panels();
+        step.check(panels.properties && panels.propertiesItem == target->id && panels.propertyReads == reads + 1 && !panels.propertiesLoaded,
+                   "The card opens at once; its properties are read on the utility worker, not the HUD thread");
+        step.drain(); pump();
+        step.check(shelf.panels().propertiesLoaded, "The utility worker delivered the properties");
+        const auto content = shelf.properties();
+        const auto row = [&](tools::ShelfText label) -> const mod::ShelfPropertiesRow* {
+            if (!content) return nullptr;
+            const auto found = std::find_if(content->rows.begin(), content->rows.end(), [&](const auto& value) { return value.label == tools::shelfText(label, language_); });
+            return found == content->rows.end() ? nullptr : &*found;
+        };
+        const bool folder = std::string_view(name) == "Kept folder";
+        step.check(content && content->heading == tools::shelfText(tools::ShelfText::properties, language_) && row(tools::ShelfText::propertyName) && row(tools::ShelfText::propertyName)->value == name,
+                   "The card names the item in the HUD language");
+        step.check(row(tools::ShelfText::propertyLocation) && !row(tools::ShelfText::propertyLocation)->value.empty() && row(tools::ShelfText::propertyCreated) && row(tools::ShelfText::propertyModified) &&
+                   row(tools::ShelfText::propertyModified)->value != "…" && row(tools::ShelfText::propertyModified)->value != "—", "Location and the read times are shown");
+        step.check(folder ? row(tools::ShelfText::propertyContains) && !row(tools::ShelfText::propertySize) : row(tools::ShelfText::propertySize) && !row(tools::ShelfText::propertyContains),
+                   "A folder counts its items; a file shows its size");
+        step.check(!shelf.state().error(), "Reading the properties reports no Shelf error");
         shelf.requestPreview(target->id);
-        step.check(shelf.panels().previewThread != 0, "Requesting the preview returns while the handler stalls");
-        step.check(shelf.settlePanels(10000), "The watchdog retires the stalled preview thread");
-        pump();
-        const auto after = shelf.panels();
-        step.check(after.previewTimeouts == before.previewTimeouts + 1 && !after.previewActive && after.previewThread == 0, "The stalled handler timed out and its thread was retired");
-        step.check(shelf.state().error() == std::optional<std::string>(tools::shelfText(tools::ShelfText::previewNotResponding, language_)),
-                   "The timeout is reported in the HUD language");
-        SetEvent(gate_->value);
-        step.check(shelf.settlePanels(10000, true) && shelf.panels().previewBlocked == 0, "Released, the retired preview thread abandons its handler and ends");
-        shelf.requestPreview(item("Kept folder")->id);
-        step.check(shelf.settlePanels(10000), "The preview thread settles");
-        pump();
-        const auto fresh = shelf.panels();
-        step.check(fresh.previewActive && fresh.previewThreads == after.previewThreads + 1 && fresh.previewThread != 0, "The next preview runs on a fresh preview thread");
-        shelf.cancelPanels();
-        step.check(shelf.settlePanels(10000), "The preview thread settles");
-        pump();
+        step.check(!shelf.panels().properties && !shelf.properties(), "The same item again closes the card");
     }
 
     // Remove and clear: references only, with their Event Log records.
@@ -337,7 +317,7 @@ void ShelfCoverageArea::coverage(app::ModuleCoverage& step) {
     // Windows names for the platform actions, in the HUD language.
     step.check(shelf.state().strings().revealPrefix == tools::shelfText(tools::ShelfText::revealPrefix, language_) &&
                shelf.state().strings().previewPrefix == tools::shelfText(tools::ShelfText::previewPrefix, language_),
-               "Card actions name File Explorer and Preview in the HUD language");
+               "Card actions name File Explorer and Properties in the HUD language");
     fs::remove_all(cycle, error);
 }
 } // namespace

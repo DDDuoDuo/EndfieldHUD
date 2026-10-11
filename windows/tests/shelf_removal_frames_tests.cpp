@@ -127,6 +127,23 @@ void run(HWND hwnd,gpu::Renderer&renderer,const gpu::NativeShelfAssets&assets,st
     // The removal is animated (the collection starts collapsed) and settles exactly.
     check(difference(frames[2],settled,cells[1])>20&&difference(frames[2],before,cells[1])>20,"The first frame after removal starts the reveal");
     for(std::size_t n=2;n<frames.size();++n)if(frames[n].elapsed>=.27)check(difference(frames[n],settled,{0,0,crops.width,crops.height})==0,"After .26 s the collection is exactly settled");
+    // The properties card (replaces Quick Look) on the same plane: it fades in
+    // over .16 s above the collection, takes no part in the reveal, and a
+    // press outside it fades it out, leaving exactly the previous frame.
+    const auto first=std::string(shelf.state().items()[0].id);const auto beforeCard=settled;
+    const auto openedAt=time;shelf.requestPreview(first);check(shelf.panels().properties,"The properties card opens");
+    std::vector<Frame>cardFrames;
+    for(unsigned n=0;n<30;++n){Sleep(5);pump();frame(tick);cardFrames.push_back(capture(time-openedAt));if(!dump.empty()){std::ostringstream name;name<<"card-"<<n<<".png";writePNG(dump/name.str(),cardFrames.back());}}
+    check(shelf.panels().propertiesLoaded,"The card's properties arrived from the owner's worker");
+    const auto cardBox=region({50,40,300,250});double previousFade{};
+    for(const auto&f:cardFrames){const auto value=difference(f,beforeCard,cardBox);if(f.elapsed<=.15)check(value+.5>=previousFade,"The card fades in");previousFade=std::max(previousFade,value);}
+    check(previousFade>20&&difference(cardFrames.back(),beforeCard,header)==0&&difference(cardFrames.back(),beforeCard,toolbar)==0,"The card is drawn over the collection only");
+    const auto outside=canvas({200,6});check(shelf.pointer({app::PointerKind::down,app::PointerButton::left,outside.x,outside.y,0},time),"A press outside the card is taken");
+    check(!shelf.panels().properties,"A press outside dismisses the card");(void)shelf.pointer({app::PointerKind::up,app::PointerButton::left,outside.x,outside.y,0},time);
+    const auto closedAt=time;double previousClose=1e9;
+    for(unsigned n=0;n<20;++n){frame(tick);const auto f=capture(time-closedAt);if(!dump.empty()){std::ostringstream name;name<<"close-"<<n<<".png";writePNG(dump/name.str(),f);}
+        const auto value=difference(f,beforeCard,cardBox);check(value<=previousClose+.5,"The card fades out");previousClose=value;}
+    check(previousClose==0,"After its fade the dismissed card leaves exactly the previous frame");
     composition.detach(renderer);shelf.release(renderer);released=true;check(!IsWindowVisible(hwnd),"Fixture never displayed a window");
 }
 }

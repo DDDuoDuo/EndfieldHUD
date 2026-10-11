@@ -33,7 +33,42 @@ struct ShelfPresentedCard {
     std::vector<ShelfPresentationImage> images;
     std::vector<ShelfPresentationFeedback> feedback;
 };
-struct ShelfPresentationStats {std::uint64_t updates{},chromeBuilds{},cardBuilds{},placementUpdates{};};
+struct ShelfPresentationStats {std::uint64_t updates{},chromeBuilds{},cardBuilds{},placementUpdates{},propertiesBuilds{};};
+// The properties card that replaces the Quick Look preview (Windows): the
+// HUD's retained secondary menu (NotesRetainedMenu - offset shadow, face with
+// an accent border, "// caption", action plates with control highlights and a
+// "x" close plate) drawn on the Shelf canvas, so it follows the HUD tilt like
+// every other secondary menu. The owner formats the rows in the HUD language.
+struct ShelfPropertiesRow {
+    std::string label,value;
+    bool operator==(const ShelfPropertiesRow&)const=default;
+};
+struct ShelfPropertiesContent {
+    std::string itemID,heading,close,open,reveal;
+    std::vector<ShelfPropertiesRow> rows; // at most shelfPropertiesMaximumRows
+    bool operator==(const ShelfPropertiesContent&)const=default;
+};
+inline constexpr std::size_t shelfPropertiesMaximumRows=9;
+inline constexpr double shelfPropertiesWidth=300,shelfPropertiesValueX=90,shelfPropertiesRowTop=44,shelfPropertiesRowPitch=19;
+// Width available to a row value (the owner shortens long paths to fit).
+inline constexpr double shelfPropertiesValueWidth=shelfPropertiesWidth-shelfPropertiesValueX-10;
+inline constexpr std::string_view shelfPropertiesClose="shelf.properties:close",shelfPropertiesOpen="shelf.properties:open",shelfPropertiesReveal="shelf.properties:reveal";
+// The card's geometry for a row count (hit tests and UI Automation need no
+// artwork): the face, the artwork origin and the close/open/reveal plates,
+// all on the Shelf canvas.
+struct ShelfPropertiesLayout {core::Rect frame;core::Point origin;std::array<core::Rect,3> plates;};
+ShelfPropertiesLayout shelfPropertiesLayout(std::size_t rows);
+inline constexpr std::array<std::string_view,3> shelfPropertiesActions{shelfPropertiesClose,shelfPropertiesOpen,shelfPropertiesReveal};
+// The source-equivalent text descriptor of a row value (measurement).
+ehud::data::Json shelfPropertiesValueText(std::string value,double contentsScale=2);
+struct ShelfPropertiesCard {
+    ehud::data::Json artwork;  // local (0,0,width+3,height+4): shadow and face; no fade or tilt baked in
+    core::Rect frame;          // the face, centred on the 400 x 334 Shelf canvas
+    core::Point origin;        // where the artwork's (0,0) sits on the canvas
+    std::vector<FileShelfState::Action> actions; // canvas rects: close, open, reveal
+    std::vector<ShelfPresentationFeedback> feedback;
+};
+ShelfPropertiesCard prepareShelfProperties(const ShelfPropertiesContent&,const ShelfPresentationStyle&);
 // Source FileShelfCanvas artwork only. FileShelfState remains the sole semantic
 // state/selection/action owner. update is a content/scroll event, not a frame
 // callback; unchanged state/style returns before allocation or formatting.
@@ -58,6 +93,14 @@ public:
     // Numeric targets only; caller samples the existing source .06/.14 ease-out
     // highlight tracks. A nested action wins over its containing card.
     bool setFeedback(std::optional<std::string_view>,bool pressed,bool reduceMotion);
+    // The properties card (nullopt: none). An interactive card is modal: its
+    // close/open/reveal plates are the only actions(). interactive=false keeps
+    // a closing card's artwork for its fade-out without any action. Content
+    // event only; an equal card returns false without rebuilding.
+    bool setProperties(std::optional<ShelfPropertiesContent>,bool interactive=true);
+    const std::optional<ShelfPropertiesCard>& properties()const noexcept;
+    bool propertiesInteractive()const noexcept;
+    std::uint64_t propertiesRevision()const noexcept;
     const ehud::data::Json& chrome()const noexcept;
     std::span<const ShelfPresentedCard> cards()const noexcept;
     std::span<const ShelfPresentationImage> chromeImages()const noexcept;
