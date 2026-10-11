@@ -48,6 +48,14 @@ void copiedEvents(){Fixture f;const auto link=f.text(u"https://example.com/a",n:
     check(n::clipboardEventKind(n::ClipboardKind::text)=="text"&&n::clipboardEventKind(n::ClipboardKind::url)=="url"&&n::clipboardEventKind(n::ClipboardKind::image)=="image"&&n::clipboardEventKind(n::ClipboardKind::files)=="files","Event kinds are the source ClipboardKind raw values");
     provider.close();check(!actions.copy(plain)&&kinds.size()==2,"A closed provider records nothing");
 }
+// ClipboardStore link rows: the preview is the ORIGINAL string (an explicit
+// URL type may come with any text), the kind is url, the copy reports url.
+void links(){Fixture f;n::ClipboardPayload p;p.kind=n::ClipboardKind::url;p.text=u"  Open the\tEndfield app ";p.url=u"x-endfield:open";
+    check(f.history.ingest(std::move(p))==n::ClipboardInsertResult::inserted,"An explicit link with its original string is accepted");const auto id=f.history.items().front().id;
+    std::vector<n::ClipboardKind>kinds;auto source=f.source();source.copied=[&](n::ClipboardKind kind){kinds.push_back(kind);};n::NativeClipboardProvider provider(std::move(source));auto actions=provider.actions();n::ClipboardState state(actions);state.refresh();
+    check(state.rows().size()==1&&state.rows().front().kind==n::ClipboardKind::url&&state.rows().front().preview=="Open the Endfield app","A link row previews its compacted original string, not the URL");
+    check(actions.copy(id)&&kinds==std::vector<n::ClipboardKind>{n::ClipboardKind::url},"Copying a link reports the url kind");
+    const auto derived=f.text(u"https://example.com/路径",n::ClipboardKind::url);check(f.history.find(derived)->payload.url==u"https://example.com/%E8%B7%AF%E5%BE%84","A synthetic link string gets its URL from the Mac string heuristic");provider.close();}
 // ClipboardStore.statusMessage: CaptureError and pinned-cache messages in the
 // five languages; no status while capturing works or an image validates.
 void statuses(){namespace s=n::clipboard_status;using L=endfield::core::Language;
@@ -91,7 +99,7 @@ void native(const std::filesystem::path&shader,const std::filesystem::path&asset
 #endif
 }
 #ifdef _WIN32
-int wmain(int argc,wchar_t**argv){const auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);try{check(SUCCEEDED(hr)&&argc==4,"Pass preview oracle, HLSL, and original Clipboard assets");metadata(argv[1]);copiedEvents();statuses();thumbnails();native(argv[2],argv[3]);CoUninitialize();std::cout<<"PASS "<<checks<<" Clipboard provider/metadata/cache checks\n";return 0;}catch(const std::exception&e){counting=false;if(SUCCEEDED(hr))CoUninitialize();std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
+int wmain(int argc,wchar_t**argv){const auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);try{check(SUCCEEDED(hr)&&argc==4,"Pass preview oracle, HLSL, and original Clipboard assets");metadata(argv[1]);copiedEvents();links();statuses();thumbnails();native(argv[2],argv[3]);CoUninitialize();std::cout<<"PASS "<<checks<<" Clipboard provider/metadata/cache checks\n";return 0;}catch(const std::exception&e){counting=false;if(SUCCEEDED(hr))CoUninitialize();std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
 #else
-int main(int argc,char**argv){try{check(argc==2,"Pass original clipboard-provider-preview.json fixture");metadata(argv[1]);copiedEvents();statuses();thumbnails();std::cout<<"PASS "<<checks<<" Clipboard provider/metadata/cache checks\n";return 0;}catch(const std::exception&e){counting=false;std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
+int main(int argc,char**argv){try{check(argc==2,"Pass original clipboard-provider-preview.json fixture");metadata(argv[1]);copiedEvents();links();statuses();thumbnails();std::cout<<"PASS "<<checks<<" Clipboard provider/metadata/cache checks\n";return 0;}catch(const std::exception&e){counting=false;std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
 #endif
