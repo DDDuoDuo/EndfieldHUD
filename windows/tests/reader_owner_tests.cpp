@@ -2,6 +2,7 @@
 #include "native/reader_owner.hpp"
 #include "native/layer_raster.hpp"
 #include "core/data/file_io.hpp"
+#include "core/migration/mac_import_relink.hpp"
 #include <windows.h>
 #include <objbase.h>
 #include <filesystem>
@@ -34,8 +35,43 @@ void run(const gpu::LayerFontResources&sc,const gpu::LayerFontResources&kr){Temp
     dying=std::make_unique<gpu::ReaderOwner>(directory,bounded,sc,gpu::ReaderImportQueue::Completion{},[&]{if(destroyOnChange&&dying&&!dying->state().busy())dying.reset();});dying->state().setActive(true);settle(bounded,*dying);destroyOnChange=true;dying->state().toggleBookmark(ehud::data::makeUUID());check(dying!=nullptr,"Busy synchronous save notice cannot prematurely destroy callback fixture");const bool survivedFlush=dying->flush();check(!survivedFlush&&!dying&&writable(path),"Destruction during flushed acknowledgment safely stops the outer barrier after accepted save and same-MTA release");destroyOnChange=false;
     check(callbacks>0&&!fs::exists(fixture.root/"unrequested"),"Synthetic lifecycle never creates unrelated app data or a second worker service");
 }
+// An imported Mac library (<appRoot>/Reader) with its Migration/relink.json
+// rows: the real owner keeps the stored font name, relinks a book in place
+// through the import ledger API after the library write, dismisses the row of
+// a removed imported book and reconciles rows on load (record first, ledger
+// second). Without a ledger nothing is created.
+void relinkLedger(const gpu::LayerFontResources&sc){
+    namespace mig=ehud::migration;Temp fixture;const auto directory=fixture.root/"Reader",bookPath=fixture.root/L"重新关联 Relinked.txt";write(bookPath,"Relinked synthetic paragraph 中文.\n");
+    const auto utf8=[](const fs::path&p){const auto raw=p.u8string();return std::string(reinterpret_cast<const char*>(raw.data()),raw.size());};
+    const auto mac=[](std::string id,std::string title){mod::ReaderBook b;b.id=std::move(id);b.title=std::move(title);b.platform=mod::ReaderReferencePlatform::macOS;b.bookmarkBase64="AQ==";b.path="/Users/synthetic/Books/"+b.title+".txt";b.progress=.5;b.bookmarks={{ehud::data::makeUUID(),{},.5}};b.originalFields=mod::ReaderJson::Object{{"syntheticUnknown",true}};return b;};
+    const auto kept=mac(ehud::data::makeUUID(),"Kept"),removed=mac(ehud::data::makeUUID(),"Removed");
+    mod::ReaderLibrary library;library.books={kept,removed};library.selected=kept.id;library.preferences=mod::ReaderPreferences::defaults();fs::create_directories(directory);write(directory/"library.json",mod::encodeReaderLibrary(library).encode());
+    const auto row=[](std::string_view store,std::string record,std::string name){mig::MacRelinkItem item;item.id=ehud::data::makeUUID();item.store=std::string(store);item.recordID=std::move(record);item.displayName=name;item.lastKnownPath="/Users/synthetic/Books/"+name+".txt";item.kind="book";return item;};
+    auto lower=kept.id;for(auto&c:lower)if(c>='A'&&c<='Z')c=char(c+32);
+    const std::vector<mig::MacRelinkItem>rows{row(mig::relinkReaderBook,lower,"Kept"),row(mig::relinkReaderBook,removed.id,"Removed"),row(mig::relinkNotesMedia,ehud::data::makeUUID(),"Note picture")};
+    fs::create_directories(fixture.root/"Migration");write(fixture.root/"Migration"/"relink.json",mig::MacRelinkLedger::encode(rows));
+    const auto ledger=[&](std::size_t n){return mig::MacRelinkLedger(fixture.root).items().at(n);};
+    app::UtilityExecutor executor([]{});
+    {gpu::ReaderOwner owner(directory,executor,sc);owner.state().setActive(true);settle(executor,owner);
+     check(owner.state().loaded()&&owner.state().library().preferences.fontName=="Georgia"&&owner.state().errorCode()==mod::ReaderErrorCode::unavailable,"An imported library keeps its stored font name (Georgia ships with Windows) and its Mac book reports unavailable");
+     check(ledger(0).state==mig::RelinkState::unresolved&&ledger(1).state==mig::RelinkState::unresolved&&ledger(2).state==mig::RelinkState::unresolved,"Loading reconciles nothing while the books still hold their Mac locators");
+     check(owner.state().relink(kept.id,utf8(bookPath)),"Relink the imported book to a Windows file");settle(executor,owner);
+     const auto*book=owner.state().book();const auto expected=mig::relinkedReaderBook(kept,utf8(bookPath));
+     check(book&&book->id==expected.id&&book->platform==expected.platform&&book->windowsPath==expected.windowsPath&&book->title==expected.title&&book->bookmarks==expected.bookmarks&&book->originalFields==expected.originalFields&&book->path.empty(),"The Reader relinks exactly as ehud::migration::relinkedReaderBook");
+     check(owner.state().current()&&!owner.state().error(),"The relinked book opens through the real provider");
+     check(ledger(0).state==mig::RelinkState::resolved&&ledger(0).windowsPath==utf8(bookPath)&&ledger(1).state==mig::RelinkState::unresolved&&ledger(2).state==mig::RelinkState::unresolved,"The durable relink resolves only its own row with the chosen file (any letter case)");
+     check(owner.state().remove(removed.id),"Remove the other imported book");settle(executor,owner);check(ledger(1).state==mig::RelinkState::dismissed&&ledger(2).state==mig::RelinkState::unresolved,"The confirmed removal dismisses its row and keeps other stores' rows");
+     check(owner.shutdown(),"The relinked owner shuts down");}
+    // A run that stopped between the library write and the ledger write is
+    // repaired on load: a row whose book is now a Windows reference resolves
+    // with its path, a row whose book is gone is dismissed.
+    const std::vector<mig::MacRelinkItem>stale{row(mig::relinkReaderBook,kept.id,"Kept"),row(mig::relinkReaderBook,ehud::data::makeUUID(),"Gone")};write(fixture.root/"Migration"/"relink.json",mig::MacRelinkLedger::encode(stale));
+    {gpu::ReaderOwner owner(directory,executor,sc);owner.state().setActive(true);settle(executor,owner);check(ledger(0).state==mig::RelinkState::resolved&&ledger(0).windowsPath==utf8(bookPath)&&ledger(1).state==mig::RelinkState::dismissed,"Loading reconciles rows of relinked and removed books");check(owner.shutdown(),"The reconciling owner shuts down");}
+    Temp plain;{gpu::ReaderOwner owner(plain.root/"Reader",executor,sc);owner.state().setActive(true);settle(executor,owner);check(owner.state().addValidated(reference(bookPath)),"A Windows library imports a book");settle(executor,owner);check(owner.state().remove(owner.state().book()->id),"And removes it");settle(executor,owner);check(owner.shutdown(),"The plain owner shuts down");}
+    check(!fs::exists(plain.root/"Migration"),"Without a Mac import the Reader creates no relink ledger");
 }
-int main(int argc,char**argv){const auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);try{check(SUCCEEDED(hr)&&argc==2,"Pass existing bundled font directory to isolated Reader owner fixture");gpu::LayerFontResources sc,kr;{gpu::LayerRasterizer raster(fs::path(std::u8string(reinterpret_cast<const char8_t*>(argv[1]))));sc=raster.retainedFontResources();raster.setDefaultFontLanguage(gpu::LayerFontLanguage::korean);kr=raster.retainedFontResources();}run(sc,kr);CoUninitialize();std::cout<<"PASS "<<checks<<" Reader owner checks\n";return 0;}catch(const std::exception&e){if(SUCCEEDED(hr))CoUninitialize();std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
+}
+int main(int argc,char**argv){const auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);try{check(SUCCEEDED(hr)&&argc==2,"Pass existing bundled font directory to isolated Reader owner fixture");gpu::LayerFontResources sc,kr;{gpu::LayerRasterizer raster(fs::path(std::u8string(reinterpret_cast<const char8_t*>(argv[1]))));sc=raster.retainedFontResources();raster.setDefaultFontLanguage(gpu::LayerFontLanguage::korean);kr=raster.retainedFontResources();}run(sc,kr);relinkLedger(sc);CoUninitialize();std::cout<<"PASS "<<checks<<" Reader owner checks\n";return 0;}catch(const std::exception&e){if(SUCCEEDED(hr))CoUninitialize();std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
 #else
 int main(){return 0;}
 #endif

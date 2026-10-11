@@ -41,6 +41,19 @@ public:
     virtual void release()=0;
 };
 struct ReaderDetail {ReaderImageView view;ReaderPage page;};
+// Migration/relink.json bookkeeping of imported Mac books (core/migration/
+// mac_import_relink.hpp, store "reader.book"), injected by the native owner;
+// unset in previews and portable tests. Each hook runs on the FIFO executor
+// inside the job that made the change durable, after the library itself:
+// reconcile after the library load, resolved after the confirmed write that
+// contains a relink, dismissed after the confirmed write that removed an
+// imported Mac book. A failing hook never fails the library (it is retried by
+// the next load's reconcile).
+struct ReaderRelinkLedger {
+    std::function<void(const ReaderLibrary&)>reconcile;
+    std::function<void(const std::string&bookID,const std::string&windowsPath)>resolved;
+    std::function<void(const std::string&bookID)>dismissed;
+};
 // Source ReaderController ownership/queue contract. All public calls are on its
 // creating thread; file/library/format work is injected, lazy and bounded. No
 // private queue, timer, native service, filesystem access or book copy is made.
@@ -73,6 +86,18 @@ public:
     // and preference previews remain responsive; failed structural writes stay
     // pending for explicit retry without pretending they reached durable data.
     bool addValidated(ReaderBook);bool select(std::string_view);bool remove(std::string_view);
+    // Explicit relink (Windows only: a Mac bookmark cannot open a Windows
+    // file). The user chose `windowsPath` for the book `id` in the picker and
+    // the provider validated it like an import. The book keeps its identity,
+    // title, location, progress, bookmarks and unknown fields; only its locator
+    // becomes the Windows reference (as ehud::migration::relinkedReaderBook).
+    // It is selected and opened once the write is durable, which reports
+    // "imported" and then resolves the book's ledger row. Throws
+    // ReaderError(unavailable) for an unknown id; false before the library loads
+    // or when the book already references that file (it is then reopened).
+    bool relink(std::string_view id,std::string windowsPath);
+    // Set once by the owner before the first activation (owner thread).
+    void setRelinkLedger(ReaderRelinkLedger);
     bool saveProgress(ReaderLocation,double,std::string_view);
     bool toggleBookmark(std::string newUUID);bool setPreferences(ReaderPreferences);
     void setLayout(core::Point viewportSize,bool dark);

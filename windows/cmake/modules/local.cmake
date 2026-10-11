@@ -21,6 +21,45 @@ if(BUILD_TESTING)
   list(APPEND EHUD_LOCAL_TARGETS reader_pdf_title_tests)
 endif()
 
+# --- Reader PDF pages on an owned Direct3D device -----------------------------
+# native/reader_document renders Windows.Data.Pdf pages through
+# IPdfRendererNative on a device the document creates and releases, so a
+# process ending right after a PDF render exits cleanly (the stream renderer's
+# own device faulted in dxgi.dll at teardown, exit code 0x87A). The test runs
+# hidden children that render through the production provider and return at
+# once.
+if(WIN32 AND BUILD_TESTING AND TARGET hud_native)
+  add_executable(reader_pdf_exit_tests tests/reader_pdf_exit_tests.cpp)
+  target_compile_definitions(reader_pdf_exit_tests PRIVATE UNICODE _UNICODE NOMINMAX)
+  target_link_libraries(reader_pdf_exit_tests PRIVATE hud_native d3d11 ole32)
+  add_test(NAME reader_pdf_exit_contracts COMMAND reader_pdf_exit_tests $<TARGET_FILE_DIR:reader_pdf_exit_tests>/fonts)
+  list(APPEND EHUD_LOCAL_TARGETS reader_pdf_exit_tests)
+endif()
+
+# --- Reader relink of imported Mac books ---------------------------------------
+# The Library's "Relink…" (modules/reader_state relink) keeps the book's id,
+# progress and bookmarks; the native owner resolves, dismisses and reconciles
+# its Migration/relink.json rows through the import ledger API
+# (core/migration/mac_import_relink.hpp, declared by import.cmake).
+if(TARGET hud_reader_import)
+  target_link_libraries(hud_reader_import PRIVATE hud_mac_import)
+  if(BUILD_TESTING AND TARGET reader_owner_tests)
+    target_link_libraries(reader_owner_tests PRIVATE hud_mac_import)
+  endif()
+endif()
+
+# --- Map geography load failures ----------------------------------------------
+# native/map_assets loadMapGeography: Terrain.bin and Countries.bin load in
+# separate Results as on the Mac, so a missing, altered or undecodable dataset
+# leaves the other one, keeps the Map and its pins and shows the source
+# message (tools/map_preview). The host's geography worker calls it.
+if(BUILD_TESTING AND TARGET hud_map_assets)
+  add_executable(map_geography_load_tests tests/map_geography_load_tests.cpp)
+  target_link_libraries(map_geography_load_tests PRIVATE hud_map_assets)
+  add_test(NAME map_geography_load_contracts COMMAND map_geography_load_tests ${EHUD_MAP_RESOURCE_DIR})
+  list(APPEND EHUD_LOCAL_TARGETS map_geography_load_tests)
+endif()
+
 # --- Accessibility contracts for the shared UI Automation provider -------------
 # Source names, order and geometry of the Reader canvas/menus and of the Map
 # status, toolbar and pins (Calendar and the minigame have theirs in the

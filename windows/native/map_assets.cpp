@@ -3,6 +3,7 @@
 #include "core/shell_packet.hpp"
 #include <algorithm>
 #include <array>
+#include <span>
 #include <stdexcept>
 
 namespace endfield::native {
@@ -62,5 +63,23 @@ MapPlayerImages loadMapPlayerImages(const std::filesystem::path&root,const MapPl
     auto feather=std::make_shared<MapPaintImage>();feather->width=feather->height=880;feather->straightRGBA.resize(pixelCount*4,255);
     for(std::size_t p=0;p<pixelCount;++p)feather->straightRGBA[p*4+3]=alpha[p];
     return {std::move(result[0]),std::move(result[1]),std::move(result[2]),std::move(feather)};
+}
+modules::MapGeography loadMapGeography(const std::filesystem::path&root,const MapGeographyPins&pins){
+    modules::MapGeography result;
+    // One dataset: read within its decode bound, compare with the pin, decode.
+    const auto dataset=[&](const char*file,std::size_t maximum,const std::string&pin,auto decode)->bool{
+        try{
+            if(root.empty()||!root.is_absolute())return false;
+            const auto bytes=ehud::data::detail::readFile(root/file,maximum);
+            if(!bytes||hash(*bytes)!=pin)return false;
+            decode(std::span(reinterpret_cast<const std::uint8_t*>(bytes->data()),bytes->size()));
+            return true;
+        }catch(const std::exception&){return false;}
+    };
+    result.terrainFailed=!dataset("Terrain.bin",modules::MapTerrain::maximumBytes,pins.terrainSHA256,[&](std::span<const std::uint8_t>data){result.terrain=modules::MapTerrain::decode(data);});
+    if(result.terrainFailed)result.terrain.reset();
+    result.countriesFailed=!dataset("Countries.bin",modules::MapCountries::maximumBytes,pins.countriesSHA256,[&](std::span<const std::uint8_t>data){result.countries=modules::MapCountries::decode(data);});
+    if(result.countriesFailed)result.countries.reset();
+    return result;
 }
 }

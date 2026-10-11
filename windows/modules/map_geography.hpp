@@ -27,7 +27,10 @@ struct MapCountries {
 };
 // Each optional dataset independently supports the source's partial fallback.
 // Owners publish as shared_ptr<const MapGeography>; decoding performs no IO.
-struct MapGeography {std::optional<MapTerrain>terrain;std::optional<MapCountries>countries;};
+// A dataset that could not be read or decoded stays absent and is flagged
+// (WorldMapCanvas.requestTerrain: Result { try load() } per dataset); the Map
+// keeps its pins and shows the source message for it.
+struct MapGeography {std::optional<MapTerrain>terrain;std::optional<MapCountries>countries;bool terrainFailed{},countriesFailed{};};
 bool mapEvenOddContains(const MapPath&,core::Point)noexcept;
 struct MapClippedGeometry {MapPath fillPath,linePath;};
 // Original64-segment spatial chunks and two-level LRU simplification. Paint

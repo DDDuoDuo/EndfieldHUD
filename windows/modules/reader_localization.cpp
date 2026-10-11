@@ -22,6 +22,7 @@ ReaderStrings readerStrings(core::Language language) {
     READER_STRING(horizontal); READER_STRING(vertical);
 #undef READER_STRING
     s.chooseFile = readerTranslation(readerWindowsChooseFile, language);
+    s.relink = readerTranslation(readerWindowsRelink, language);
     s.language = language;
     return s;
 }

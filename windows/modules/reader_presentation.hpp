@@ -9,7 +9,10 @@ struct ReaderStrings {
         title{"E-Reader"},empty{"Open a book to begin reading."},loading{"Loading book…"},
         chooseFile{"Choose in Finder"},chooseShelf{"Choose from Shelf"},shelfTitle{"Choose from Shelf"},
         font{"Font"},fontSize{"Font size"},lineSpacing{"Line spacing"},margin{"Margins"},
-        horizontal{"Left to right"},vertical{"Top to bottom"};
+        horizontal{"Left to right"},vertical{"Top to bottom"},
+        // Windows only: the Library row action of a book whose reference
+        // cannot open here (an imported Mac locator), see ReaderMenuChoice.
+        relink{"Relink…"};
     // Resolved UI language of these captions: typed ReaderState errors render
     // in it at display time (modules/reader_localization.hpp).
     core::Language language{core::Language::english};
@@ -28,7 +31,10 @@ struct ReaderFeedback {std::string action,tintID,rimID;core::Rect rect;bool enab
 struct ReaderArtwork {ReaderJson root;std::vector<ReaderAction>actions;std::vector<ReaderFeedback>feedback;core::Rect bounds,progressRect;};
 ReaderArtwork prepareReaderCanvas(const ReaderCanvasInput&);
 enum class ReaderMenuType {open,library,bookmarks,shelf,settings,font};
-struct ReaderMenuChoice {std::string id,title;bool operator==(const ReaderMenuChoice&)const=default;};
+// A Library row whose book cannot open on Windows (an imported Mac locator,
+// or a Windows file reported unavailable) has `relink`: the row then also
+// offers "Relink…" (action relink:<id>) between its title and its delete ×.
+struct ReaderMenuChoice {std::string id,title;bool relink{};bool operator==(const ReaderMenuChoice&)const=default;};
 struct ReaderMenuInput {
     ReaderMenuType type{ReaderMenuType::library};ReaderStrings strings;ReaderColor accent{250./255,212./255,31./255,1};
     ReaderPreferences preferences;std::vector<ReaderMenuChoice>choices;std::size_t firstRow{};

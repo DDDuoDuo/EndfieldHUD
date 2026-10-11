@@ -13,7 +13,10 @@ struct NativeReaderInfo {
     // new imports read it; an already saved library title never changes.
     bool pdfMetadataTitleAvailable{};
 };
-struct NativeReaderStats {std::uint64_t textLayouts{},pagesRendered{},cacheHits{},pdfRenders{},imageDecodes{},imageDecodeCacheHits{},detailMetadataCacheHits{};std::size_t cachedPages{},cachedImageBytes{};};
+// pdfDevices: owned Direct3D devices created for PDF pages (one per document
+// lifetime between release() calls, plus a recreation after a lost device);
+// pdfDeviceReady: one is held now (none after release()).
+struct NativeReaderStats {std::uint64_t textLayouts{},pagesRendered{},cacheHits{},pdfRenders{},imageDecodes{},imageDecodeCacheHits{},detailMetadataCacheHits{},pdfDevices{};std::size_t cachedPages{},cachedImageBytes{};bool pdfDeviceReady{};};
 // Existing borrowed FIFO/MTA UtilityExecutor only. No worker/window/service,
 // timer, renderer, font loader or referenced-file writes. One read-only opened
 // handle and at most one 2048×2048 decoded EPUB image are retained for a document; Windows references only, explicit relink

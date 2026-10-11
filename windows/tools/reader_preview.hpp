@@ -9,6 +9,10 @@ namespace endfield::tools {
 struct ReaderScrollSnapshot {native::NativeReaderScrollSnapshot scene;double time{},targetOffset{},zoom{},panY{},deferred{};int pendingDirection{};std::uint64_t stateRevision{};bool providerBusy{};};
 struct ReaderImportAction {
     enum class Kind {chooseLocal,useShelf};Kind kind{};std::string shelfID;std::uint64_t generation{};
+    // Library "Relink…" of an unavailable (e.g. Mac-imported) book: the same
+    // single-book picker and validated import as chooseLocal; the preview then
+    // relinks this book (ReaderState::relink) instead of adding a new one.
+    std::string relinkBookID;
 };
 struct ReaderPreviewOptions {
     native::LayerRasterOptions raster;
@@ -47,6 +51,9 @@ public:
     // Native dialog cancellation leaves the existing book untouched. Call begin
     // only after an actual reference is selected, before validation starts.
     bool beginImport(std::uint64_t,double);
+    // A validated book for a relink generation replaces the locator of the
+    // relinked book (identity, title, progress and bookmarks kept) instead of
+    // adding it; if that book was removed meanwhile it is added like an import.
     bool receiveImport(std::uint64_t,modules::ReaderBook,double);
     bool receiveImportError(std::uint64_t,std::optional<std::string>,double);
     // Source documentDropURLs(.reader)/ReaderInteraction.importFiles: a file

@@ -53,7 +53,11 @@ void source(const J& root) {
         check(s.chooseFile == m::readerTranslation(m::readerWindowsChooseFile, language) && s.chooseFile != text("chooseFile"),
               "Windows replaces the Finder chooser row with File Explorer in every language");
         check(s.language == language, "The captions carry their resolved language");
+        check(s.relink == m::readerTranslation(m::readerWindowsRelink, language) && s.relink.ends_with("…"),
+              "Relink… (Windows only: Mac bookmarks need no relink) follows the import card's wording in every language");
     }
+    check(m::readerTranslation(m::readerWindowsRelink, L::traditionalChinese) == "重新連結…" && m::readerTranslation(m::readerWindowsRelink, L::korean) == "다시 연결…",
+          "The relink caption uses the import card's terms");
     check(m::ReaderStrings{}.language == L::english && m::ReaderStrings::simplifiedChinese().language == L::simplifiedChinese,
           "Default captions are English; the Chinese source captions say so");
     auto english = m::readerStrings(L::english);
@@ -133,6 +137,70 @@ struct Source : m::ReaderDocumentSource {
     }
     void release() override {}
 };
+
+m::ReaderBook macBook(unsigned n) {
+    m::ReaderBook b;
+    b.id = id(n);
+    b.title = "Imported " + std::to_string(n);
+    b.platform = m::ReaderReferencePlatform::macOS;
+    b.bookmarkBase64 = "AQ==";
+    b.path = "/Users/synthetic/Books/book" + std::to_string(n) + ".epub";
+    b.location.section = 3;
+    b.progress = .5;
+    b.bookmarks = {{id(90 + n), b.location, .5}};
+    b.originalFields = J::Object{{"syntheticUnknown", true}};
+    return b;
+}
+
+// Library "Relink…" (Windows only) and the Migration/relink.json hooks: rows
+// change after the confirmed write that contains the relink or removal.
+void relink() {
+    auto repo = std::make_shared<Repository>();
+    repo->value.books = {macBook(1), macBook(2), book(3)};
+    repo->value.selected = id(1);
+    repo->value.preferences = m::ReaderPreferences::defaults();
+    Queue q;
+    auto source = std::make_shared<Source>();
+    m::ReaderState state(repo, q.executor(), source);
+    std::vector<std::string> log, ledger;
+    unsigned reconciled{};
+    state.setEventObserver([&](std::string_view action) { log.emplace_back(action); });
+    state.setRelinkLedger({[&](const m::ReaderLibrary& library) { ++reconciled; check(library.books.size() == 3, "Reconcile sees the loaded library"); },
+                           [&](const std::string& book, const std::string& path) { ledger.push_back("resolved " + book + " " + path); },
+                           [&](const std::string& book) { ledger.push_back("dismissed " + book); }});
+    check(!state.relink(id(1), "C:\\Owned-reader-fixture\\relinked.epub"), "Nothing relinks before the library loads");
+    state.setActive(true);
+    q.drain();
+    check(reconciled == 1 && ledger.empty() && state.library().preferences.fontName == "Georgia", "The load reconciles once and keeps the imported font name");
+    const auto path = std::string("C:\\Owned-reader-fixture\\relinked.epub");
+    bool unknown{};
+    try { state.relink(id(77), path); } catch (const m::ReaderError& e) { unknown = e.code() == m::ReaderErrorCode::unavailable; }
+    check(unknown, "Relinking an unknown book is refused as unavailable");
+    repo->fail = true;
+    check(state.relink(id(2), path), "Relink the second imported book");
+    q.drain();
+    check(ledger.empty() && log.empty() && state.hasUnsavedChanges(), "A failed library write resolves no ledger row and reports nothing");
+    repo->fail = false;
+    state.retryPendingWrites();
+    q.drain();
+    check(ledger == std::vector<std::string>{"resolved " + id(2) + " " + path} && log.front() == "imported", "The retried durable write resolves the row once and reports the import");
+    const auto& saved = repo->value.books[1];
+    check(saved.id == id(2) && saved.platform == m::ReaderReferencePlatform::windows && saved.windowsPath == path && saved.title == "Imported 2" &&
+          saved.bookmarks == macBook(2).bookmarks && saved.originalFields == macBook(2).originalFields && saved.path.empty() && saved.bookmarkBase64.empty() &&
+          repo->value.selected == id(2), "The relinked book keeps id, title, bookmarks and unknown fields, drops the Mac locator and is selected");
+    check(state.book() && state.book()->id == id(2) && state.current(), "The relinked book opens");
+    ledger.clear();
+    log.clear();
+    check(!state.relink(id(2), path) && ledger.empty(), "Relinking to the same file again changes nothing");
+    q.drain();
+    check(state.remove(id(3)), "Remove a Windows book");
+    q.drain();
+    check(ledger.empty(), "A Windows book has no ledger row to dismiss");
+    check(state.remove(id(1)), "Remove the other imported Mac book");
+    check(ledger.empty(), "Dismissal waits for the confirmed write");
+    q.drain();
+    check(ledger == std::vector<std::string>{"dismissed " + id(1)} && log.back() == "deleted", "The confirmed removal dismisses the imported book's row");
+}
 
 void events() {
     auto repo = std::make_shared<Repository>();
@@ -220,6 +288,7 @@ int main(int argc, char** argv) {
         check(raw.has_value(), "The Mac oracle fixture exists");
         source(J::parse(*raw));
         events();
+        relink();
         std::cout << "PASS " << checks << " Reader localization and event checks\n";
         return 0;
     } catch (const std::exception& e) {

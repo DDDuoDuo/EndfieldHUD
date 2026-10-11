@@ -85,6 +85,11 @@ public:
     MapChange magnify(core::Point,double amount,bool ended,double time);
     MapChange advance(double time);
     MapChange endGesture();
+    // WorldMapCanvas.message set by its owner (a geography dataset that could
+    // not be loaded): drawn over the canvas and read as the accessibility
+    // status until a pin edit clears it, like a failed save. An empty or
+    // unchanged message changes nothing.
+    MapChange showMessage(std::string);
     std::optional<double>nextWakeTime()const noexcept{return wheelDeadline_;}
 private:
     MapSnapshot persisted_;MapPersistence persistence_;MapViewport viewport_;

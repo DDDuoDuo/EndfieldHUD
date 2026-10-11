@@ -80,7 +80,13 @@ struct MapPreview::Impl : std::enable_shared_from_this<Impl> {
 MapPreview::MapPreview(gpu::LayerRasterizer&r,app::UtilityExecutor&e,MapPreviewOptions o):impl_(std::make_shared<Impl>(r,e,o)){impl_->initialize(o);}
 MapPreview::~MapPreview(){if(impl_){impl_->alive=false;impl_->ready=false;impl_->changed={};impl_->pinStyleChanged={};impl_->recentered={};impl_->raster.reset();}}
 void MapPreview::resize(const app::ClientMetrics&m){need(m.pixelWidth&&m.pixelHeight&&std::isfinite(m.scale)&&m.scale>0,"Invalid Map viewport");impl_->metrics=m;}
-void MapPreview::setGeography(std::shared_ptr<const modules::MapGeography>g,double t){auto i=impl_;const Impl::Event event(*i,t);if(i->geography==g)return;i->geography=std::move(g);i->appearance.terrainReady=hasTerrain(i->geography);i->scene->setAppearance(i->appearance);i->raster->setGeography(i->geography,i->time);}
+void MapPreview::setGeography(std::shared_ptr<const modules::MapGeography>g,double t){auto i=impl_;const Impl::Event event(*i,t);if(i->geography==g)return;
+    // WorldMapCanvas.requestTerrain: a failed dataset sets the message (the
+    // country shapes' after the terrain's), the other dataset still renders
+    // and pins stay interactive; "LOADING TERRAIN" remains without terrain.
+    std::optional<std::string>message;if(g&&g->terrainFailed)message=core::localized("Terrain data could not be loaded.","无法载入地形数据。",i->language);if(g&&g->countriesFailed)message=core::localized("Country shapes could not be loaded.","无法载入地图轮廓。",i->language);
+    i->geography=std::move(g);i->appearance.terrainReady=hasTerrain(i->geography);i->scene->setAppearance(i->appearance);i->raster->setGeography(i->geography,i->time);if(!event.current())return;
+    if(message)i->synchronize(i->state.showMessage(std::move(*message)),event.revision);}
 bool MapPreview::setAppearance(gpu::MapAppearance a,double t){auto i=impl_;const Impl::Event event(*i,t);a=appearanceFor(std::move(a),hasTerrain(i->geography));if(!i->scene->setAppearance(a))return false;i->appearance=std::move(a);i->state.setReducedMotion(i->appearance.reducedMotion);if(i->appearance.reducedMotion)i->scene->settle();i->raster->configure(i->appearance.dark,i->appearance.accent,i->options.pixelsPerPoint,i->time);if(event.current()){i->feedback();i->notify();}return true;}
 void MapPreview::setLanguage(core::Language language,double t){impl_->language=language;auto a=impl_->appearance;a.strings={core::localized("MAP","地图",language),core::localized("LOADING TERRAIN","载入地形",language),core::localized("PINS","标记",language)};setAppearance(std::move(a),t);}
 void MapPreview::setOverlayVisible(bool value,double t){auto i=impl_;const Impl::Event event(*i,t);if(i->overlayVisible==value)return;i->overlayVisible=value;if(!value)i->activate(false,false);if(event.current())i->notify();}
