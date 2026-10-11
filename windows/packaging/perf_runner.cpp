@@ -5,6 +5,7 @@
 #include "core/data/json.hpp"
 #include "packaging/package_io.hpp"
 #include "packaging/perf_probe.hpp"
+#include "packaging/perf_report.hpp"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -37,8 +38,14 @@ std::wstring randomId() {
     const auto text = hex(bytes);
     return std::wstring(text.begin(), text.end());
 }
-void sleepSeconds(double seconds) {
-    if (seconds > 0) Sleep(static_cast<DWORD>(std::lround(seconds * 1000)));
+struct Cancelled : std::runtime_error {
+    Cancelled() : std::runtime_error("Cancelled by the user before the run finished") {}
+};
+// Waits, or throws Cancelled as soon as the cancel event is set.
+void sleepSeconds(double seconds, void* cancel) {
+    const auto ms = seconds > 0 ? static_cast<DWORD>(std::lround(seconds * 1000)) : 0;
+    if (!cancel) { if (ms) Sleep(ms); return; }
+    if (WaitForSingleObject(static_cast<HANDLE>(cancel), ms) == WAIT_OBJECT_0) throw Cancelled();
 }
 std::string utcNow() {
     SYSTEMTIME t{};
@@ -120,7 +127,8 @@ Json limitsJson(const IdleLimits& l) {
     put("privateGrowthBytes", l.privateGrowthBytes);
     return o;
 }
-void prepareDataRoot(const fs::path& base, bool ambient) {
+// Returns the versioned data folder (<base>\v1).
+fs::path prepareDataRoot(const fs::path& base, bool ambient) {
     const auto root = ehud::data::openApplicationRoot(base);
     ehud::data::SettingsStore store(root.data);
     auto value = store.value();
@@ -128,8 +136,56 @@ void prepareDataRoot(const fs::path& base, bool ambient) {
     value.set("ambientAnimation", ambient);
     (void)store.update(value);
     (void)store.markLaunched();              // no first-run onboarding
+    return root.data;
+}
+// The app's startup trace, when it was written (bounded, numbers only).
+std::optional<Json> readStartupTrace(const fs::path& file) {
+    constexpr std::uintmax_t bound = 4 * 1024 * 1024;
+    std::error_code error;
+    const auto size = fs::file_size(file, error);
+    if (error || size == 0 || size > bound) return std::nullopt;
+    std::ifstream in(file, std::ios::binary);
+    std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    if (!in && !in.eof()) return std::nullopt;
+    try { return Json::parse(text, bound); } catch (const std::exception&) { return std::nullopt; }
+}
+// EndfieldHUD's fatal record (app/main.cpp: <data>\Diagnostics\last-fatal.txt,
+// redacted, at most 4 KiB): the exception, message and stage lines, or
+// nullopt when the run wrote none. A fatal error leaves a message box open,
+// so the process still runs but does nothing worth measuring.
+std::optional<std::string> fatalRecord(const fs::path& file) {
+    std::error_code error;
+    if (!fs::exists(file, error)) return std::nullopt;
+    std::ifstream in(file, std::ios::binary);
+    std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    if (text.size() > 4096) text.resize(4096);
+    std::string summary;
+    std::size_t start = 0;
+    while (start < text.size()) {
+        auto end = text.find('\n', start);
+        if (end == std::string::npos) end = text.size();
+        auto line = text.substr(start, end - start);
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line.starts_with("exception: ") || line.starts_with("message: ") || line.starts_with("stage: ") || line.starts_with("hresult: "))
+            summary += (summary.empty() ? "" : "; ") + line;
+        start = end + 1;
+    }
+    return summary.empty() ? std::string("unreadable fatal record") : summary;
 }
 } // namespace
+
+double estimatedGateSeconds(const GateOptions& o) {
+    constexpr double launch = 3.0, forward = 0.35, stop = 3.0;
+    double total{};
+    const bool first = o.closed || o.open || o.lifecycle;
+    if (first) total += launch + o.settle + stop;
+    if (o.closed) total += o.seconds;
+    if (o.open || o.lifecycle) total += forward + o.openSettle + o.settle;
+    if (o.open) total += o.seconds;
+    if (o.lifecycle) total += forward + o.closeSettle + static_cast<double>(o.cycles) * (2 * forward + o.openSettle + o.closeSettle);
+    if (o.target == GateOptions::Target::endfieldhud && o.ambientOff) total += launch + o.settle + forward + o.openSettle + o.settle + o.seconds + stop;
+    return total;
+}
 
 bool supportsGateControl(const fs::path& executable) {
     std::ifstream in(executable, std::ios::binary);
@@ -147,31 +203,52 @@ GateRun runPerformanceGate(const GateOptions& o) {
     if (work.empty()) {
         std::wstring temp(MAX_PATH + 1, L'\0');
         temp.resize(GetTempPathW(static_cast<DWORD>(temp.size()), temp.data()));
-        work = fs::path(temp).lexically_normal().parent_path();
+        // %TEMP% may be an 8.3 alias (C:\Users\RUNNER~1\...); the data root
+        // and its instance names use the long form.
+        work = longPath(fs::path(temp).lexically_normal().parent_path());
     }
+    const auto others = countProcesses(L"EndfieldHUD.exe", 0);
     const auto id = randomId();
     const auto container = work / (L"EndfieldHUD-perf-" + id);
     const auto base = container / L"EndfieldHUD";
     fs::create_directories(container);
     const auto folder = o.executable.parent_path();
     const auto fixture = L"gate-" + id;
+    // The app writes its trace into its data root; the fixture where told.
+    auto traceFile = app ? base / std::string(ehud::data::applicationRootDataDirectory) / "Diagnostics" / "startup-trace.json"
+                         : container / "fixture-startup-trace.json";
+    const auto fatalFile = app ? base / std::string(ehud::data::applicationRootDataDirectory) / "Diagnostics" / "last-fatal.txt"
+                               : container / "fixture-last-fatal.txt";
+    const bool tracing = o.startupTrace && (o.open || o.lifecycle);
+    const std::size_t expectedOpenings = (o.open || o.lifecycle ? 1u : 0u) + (o.lifecycle ? 1u : 0u);
     std::vector<std::wstring> primary, reopen, toggle;
     if (app) {
         primary = {L"--data-root", base.native(), L"--login"};
         reopen = {L"--data-root", base.native()};
         toggle = {L"--data-root", base.native(), L"--toggle"};
     } else {
-        primary = {L"--perf", fixture};
+        primary = {L"--perf", fixture, L"--fatal-record", fatalFile.native()};
+        if (tracing) { primary.push_back(L"--trace"); primary.push_back(traceFile.native()); }
         for (const auto& a : o.fixtureArguments) primary.push_back(a);
         reopen = toggle = {L"--perf", fixture, L"--toggle"};
     }
+    const auto wait = [&](double seconds) { sleepSeconds(seconds, o.cancelEvent); };
+    std::optional<Json> trace;
 
     GateRun run;
     Json::Array scenarios;
     const auto failed = [&](const std::string& what) { run.failures.push_back(what); };
+    // A fatal error ends the measurement with its record (a message box
+    // keeps the process alive, so it would otherwise measure as idle).
+    const auto checkFatal = [&](const char* when) {
+        if (const auto record = fatalRecord(fatalFile)) throw std::runtime_error(std::string("The measured program stopped with a fatal error ") + when + " (" + *record + ")");
+    };
     const auto forward = [&](const std::vector<std::wstring>& args) {
         const auto code = runToCompletion(o.executable, args, folder, 15000);
-        if (code != 0u) throw std::runtime_error("A forwarded launch did not complete (exit " + (code ? std::to_string(*code) : std::string("timeout")) + ")");
+        if (code != 0u) {
+            checkFatal("while it was being opened or closed");
+            throw std::runtime_error("A forwarded launch did not complete (exit " + (code ? std::to_string(*code) : std::string("timeout")) + ")");
+        }
     };
     const auto idle = [&](ProcessProbe& probe, const std::string& name, const IdleLimits& limits) {
         std::vector<ResourceSample> samples{probe.sample()};
@@ -179,7 +256,7 @@ GateRun runPerformanceGate(const GateOptions& o) {
         const auto start = samples.front().time;
         while (samples.back().time - start < o.seconds) {
             const auto next = start + o.interval * static_cast<double>(samples.size());
-            sleepSeconds(next - gateClock());
+            wait(next - gateClock());
             samples.push_back(probe.sample());
             if (probe.exited()) throw std::runtime_error("The measured process exited during " + name);
         }
@@ -187,37 +264,50 @@ GateRun runPerformanceGate(const GateOptions& o) {
         const auto gates = gateIdle(summary, limits);
         Json::Object scenario;
         scenario["name"] = name;
+        scenario["kind"] = "idle";
         scenario["summary"] = idleJson(summary);
         scenario["limits"] = limitsJson(limits);
         scenario["busiestThreads"] = threadsJson(probe.threadsSinceMark(8));
         scenario["gates"] = gatesJson(gates);
         scenario["passed"] = allPassed(gates);
-        for (const auto& g : gates) if (!g.passed) failed(name + ": " + g.name + " " + std::to_string(g.value) + " > " + std::to_string(g.limit) + " " + g.unit);
+        for (const auto& g : gates) if (!g.passed) failed(describeFailure(name, g));
         scenarios.emplace_back(std::move(scenario));
     };
-    const auto session = [&](bool ambient, bool closed, bool open, bool lifecycle, const std::string& openName, const IdleLimits& openLimits) {
-        if (app) prepareDataRoot(base, ambient);
-        GateProcess process(o.executable, primary, folder);
+    const auto session = [&](bool ambient, bool closed, bool open, bool lifecycle, const std::string& openName, const IdleLimits& openLimits, bool traced) {
+        if (app) (void)prepareDataRoot(base, ambient);
+        {
+            std::error_code ignored;
+            fs::remove(fatalFile, ignored);
+        }
+        GateProcess::Environment environment;
+        if (traced) {
+            std::error_code ignored;
+            fs::remove(traceFile, ignored);
+            environment.emplace_back(L"ENDFIELDHUD_STARTUP_TRACE", L"1");
+        }
+        GateProcess process(o.executable, primary, folder, environment);
         if (!process.waitIdle(60000)) failed("The measured program did not reach its message loop within 60 s");
-        sleepSeconds(o.settle);
+        wait(o.settle);
+        checkFatal("during startup");
         if (!process.running()) throw std::runtime_error("The measured program exited during startup");
         ProcessProbe probe(process.id());
         if (closed) idle(probe, "closed-idle", o.closedLimits);
         if (open || lifecycle) {
             forward(reopen);
-            sleepSeconds(o.openSettle + o.settle);
+            wait(o.openSettle + o.settle);
+            checkFatal("while the HUD opened");
         }
         if (open) idle(probe, openName, openLimits);
         if (lifecycle) {
             forward(toggle); // close
-            sleepSeconds(o.closeSettle);
+            wait(o.closeSettle);
             std::vector<ResourceSample> cycles;
             Json::Array perCycle;
             for (std::size_t n = 0; n < o.cycles; ++n) {
                 forward(toggle);
-                sleepSeconds(o.openSettle);
+                wait(o.openSettle);
                 forward(toggle);
-                sleepSeconds(o.closeSettle);
+                wait(o.closeSettle);
                 cycles.push_back(probe.sample());
                 perCycle.push_back(sampleJson(cycles.back()));
                 if (probe.exited()) throw std::runtime_error("The measured process exited during the lifecycle cycles");
@@ -235,27 +325,42 @@ GateRun runPerformanceGate(const GateOptions& o) {
             }
             Json::Object scenario;
             scenario["name"] = "lifecycle-" + std::to_string(o.cycles);
+            scenario["kind"] = "lifecycle";
             scenario["warmupCycles"] = static_cast<std::int64_t>(o.lifecycleLimits.warmup);
             scenario["windowCycles"] = static_cast<std::int64_t>(o.lifecycleLimits.window);
             scenario["growth"] = std::move(growthRows);
             scenario["cycles"] = std::move(perCycle);
             scenario["gates"] = gatesJson(gates);
             scenario["passed"] = allPassed(gates);
-            for (const auto& g : gates) if (!g.passed) failed("lifecycle: " + g.name + " " + std::to_string(g.value) + " > " + std::to_string(g.limit) + " " + g.unit);
+            for (const auto& g : gates) if (!g.passed) failed(describeFailure("lifecycle-" + std::to_string(o.cycles), g));
             scenarios.emplace_back(std::move(scenario));
         }
+        checkFatal("during the measurement");
         if (!process.stopGracefully(30000)) failed("The measured program did not exit through the session-end protocol");
+        if (traced) {
+            // Written once both traced openings completed, or at exit.
+            trace = readStartupTrace(traceFile);
+            if (!trace) failed("openings: the program wrote no readable startup trace");
+            else {
+                try {
+                    scenarios.emplace_back(openingsScenario(*trace, o.coldOpenLimits, o.warmOpenLimits, expectedOpenings, run.failures));
+                } catch (const std::invalid_argument& e) {
+                    failed(std::string("openings: the startup trace is malformed (") + e.what() + ")");
+                }
+            }
+        }
         return probe.gpuCounters();
     };
 
     bool gpu{};
-    std::string error;
     try {
-        gpu = session(true, o.closed, o.open, o.lifecycle, app ? "open-idle-ambient-on" : "open-idle", o.openLimits);
-        if (app && o.ambientOff) gpu = session(false, false, true, false, "open-idle-ambient-off", o.ambientOffLimits) && gpu;
+        gpu = session(true, o.closed, o.open, o.lifecycle, app ? "open-idle-ambient-on" : "open-idle", o.openLimits, tracing);
+        if (app && o.ambientOff) gpu = session(false, false, true, false, "open-idle-ambient-off", o.ambientOffLimits, false) && gpu;
+    } catch (const Cancelled& e) {
+        run.cancelled = true;
+        failed(e.what());
     } catch (const std::exception& e) {
-        error = e.what();
-        failed(error);
+        failed(e.what());
     }
     if (!o.keepData) {
         std::error_code ignored;
@@ -278,6 +383,8 @@ GateRun runPerformanceGate(const GateOptions& o) {
     m["refreshHz"] = static_cast<std::int64_t>(machine.refreshHz);
     m["display"] = std::to_string(machine.displayWidth) + "x" + std::to_string(machine.displayHeight);
     m["session"] = machine.session;
+    m["interactiveDesktop"] = machine.interactiveDesktop;
+    m["otherEndfieldHUDProcesses"] = static_cast<std::int64_t>(others);
     Json::Object target;
     target["executable"] = utf8(o.executable.native());
     target["kind"] = app ? "endfieldhud" : "fixture";
@@ -293,17 +400,20 @@ GateRun runPerformanceGate(const GateOptions& o) {
     settings["dataRoot"] = app ? "temporary (deleted after the run)" : "none";
     Json::Object report;
     report["format"] = "EndfieldHUD.Windows.PerformanceGate";
-    report["schema"] = 1;
+    report["schema"] = 2;
     report["measuredAt"] = utcNow();
     report["machine"] = std::move(m);
     report["target"] = std::move(target);
     report["settings"] = std::move(settings);
     report["scenarios"] = std::move(scenarios);
     report["gpuCounters"] = gpu ? "available" : "unavailable in this session";
+    report["startupTrace"] = trace ? *trace : Json(nullptr);
+    report["cancelled"] = run.cancelled;
     report["notes"] = Json::Array{
         Json("Wakeups are thread context switches of the measured process (all threads), sampled with NtQuerySystemInformation."),
         Json("CPU is user+kernel time of the measured process as a percentage of one core; compositor and GPU work in other processes are not included."),
-        Json("Limits are provisional engineering gates, not Mac parity figures; values are reported regardless.")};
+        Json("Limits are provisional engineering gates, not Mac parity figures; values are reported regardless."),
+        Json("Opening timings come from the app's own startup trace (ENDFIELDHUD_STARTUP_TRACE=1): the wall time of each presented frame since the opening request and the CPU time of present().")};
     Json::Array failures;
     for (const auto& f : run.failures) failures.emplace_back(f);
     report["failures"] = std::move(failures);

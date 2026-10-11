@@ -14,6 +14,8 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 namespace endfield::packaging {
@@ -39,17 +41,32 @@ private:
 
 struct MachineInfo {
     std::string os, cpu, session;
+    bool interactiveDesktop{}; // the gate's window station is visible (a desktop the user sees)
     std::vector<std::string> gpus;
     std::uint32_t logicalProcessors{}, dpi{}, refreshHz{}, displayWidth{}, displayHeight{};
     std::uint64_t memoryBytes{};
 };
 MachineInfo describeMachine();
+// True when this process runs on a visible (interactive) window station, i.e.
+// windows it starts appear on a desktop the user sees; false in SSH, service
+// and CI sessions.
+bool interactiveDesktop() noexcept;
+// Running processes with this image name (case-insensitive), except one id.
+std::size_t countProcesses(std::wstring_view imageName, std::uint32_t excluding) noexcept;
+// The path with every existing component in its long form (8.3 aliases such
+// as C:\Users\RUNNER~1 expanded); unchanged when it cannot be resolved.
+std::filesystem::path longPath(const std::filesystem::path&);
 
 // A process started (and, at the end, stopped) by the gate. Only processes
-// the gate itself started are ever stopped.
+// the gate itself started are ever stopped. It runs in a kill-on-close job
+// object, so it ends with the gate even when the gate is closed or killed
+// (its own child processes break away and are never affected). `environment`
+// adds or replaces variables of the inherited environment.
 class GateProcess final {
 public:
-    GateProcess(const std::filesystem::path& executable, const std::vector<std::wstring>& arguments, const std::filesystem::path& folder);
+    using Environment = std::vector<std::pair<std::wstring, std::wstring>>;
+    GateProcess(const std::filesystem::path& executable, const std::vector<std::wstring>& arguments, const std::filesystem::path& folder,
+                const Environment& environment = {});
     ~GateProcess();
     GateProcess(const GateProcess&) = delete;
     GateProcess& operator=(const GateProcess&) = delete;
@@ -62,6 +79,7 @@ public:
     bool stopGracefully(std::uint32_t milliseconds);
 private:
     void* process_{};
+    void* job_{};
     std::uint32_t id_{};
     std::uint64_t startTime_{};
 };

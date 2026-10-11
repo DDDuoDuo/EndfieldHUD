@@ -40,7 +40,10 @@ get_filename_component(setup_name "${EHUD_STAGED_SETUP}" NAME)
 get_filename_component(sums_name "${EHUD_STAGED_SUMS}" NAME)
 string(JSON notes_release GET "${report}" release)
 string(REGEX REPLACE "^v" "" notes_release "${notes_release}")
-foreach(expected IN ITEMS "windows-v${notes_release}" "${setup_sha}" "${setup_name}" "${sums_name}" "--latest=false")
+# The first-release text: its gap list and the exporter at the Windows tag.
+foreach(expected IN ITEMS "windows-v${notes_release}" "${setup_sha}" "${setup_name}" "${sums_name}" "--latest=false"
+    "## Differences from the macOS version" "## Moving from a Mac"
+    "blob/windows-v${notes_release}/windows/tools/mac_import_exporter.py")
   string(FIND "${notes}" "${expected}" found)
   if(found EQUAL -1)
     message(FATAL_ERROR "The release-notes draft lacks '${expected}':\n${notes}")

@@ -8,7 +8,10 @@
 set(EHUD_PACKAGING_TARGETS "")
 
 # --- Portable format, arguments, five-language Setup text, gate evaluation ----
-add_library(hud_packaging_format packaging/package_format.cpp packaging/setup_arguments.cpp packaging/setup_text.cpp packaging/perf_gate.cpp)
+# (perf_report: cold/warm openings from the app's startup trace and the
+# readable Markdown report of the section 9 gate).
+add_library(hud_packaging_format packaging/package_format.cpp packaging/setup_arguments.cpp packaging/setup_text.cpp packaging/perf_gate.cpp
+  packaging/perf_report.cpp)
 target_include_directories(hud_packaging_format PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(hud_packaging_format PUBLIC hud_data hud_localization)
 list(APPEND EHUD_PACKAGING_TARGETS hud_packaging_format)
@@ -135,7 +138,10 @@ if(WIN32)
     "windowsUpdates|hud_windows_updates_area|app/areas/update_module.hpp|endfield::areas::windowsUpdatesModule")
 
   # Section 9 performance gates against EndfieldHUD.exe (temporary data root),
-  # measured from outside: windows/tools/package_perf_gate.cpp.
+  # measured from outside: windows/tools/package_perf_gate.cpp. The real run
+  # shows the HUD, so no test, CI step or build target ever starts it against
+  # EndfieldHUD.exe: the user runs "package_perf_gate --desktop" on the
+  # laptop's desktop (windows/packaging/README.md, Performance gates).
   add_library(hud_packaging_perf packaging/perf_probe.cpp packaging/perf_runner.cpp)
   target_compile_definitions(hud_packaging_perf PRIVATE ${EHUD_PACKAGING_DEFINITIONS})
   target_link_libraries(hud_packaging_perf PUBLIC hud_packaging_io hud_application_core PRIVATE pdh psapi dxgi version rstrtmgr bcrypt advapi32 user32)
@@ -179,12 +185,20 @@ if(WIN32)
     target_compile_definitions(packaging_perf_probe_tests PRIVATE ${EHUD_PACKAGING_DEFINITIONS})
     target_link_libraries(packaging_perf_probe_tests PRIVATE hud_packaging_perf)
     add_dependencies(packaging_perf_probe_tests packaging_fixture_app package_perf_gate)
-    add_test(NAME packaging_perf_probe_contracts COMMAND packaging_perf_probe_tests "$<TARGET_FILE:packaging_fixture_app>")
+    add_test(NAME packaging_perf_probe_contracts COMMAND packaging_perf_probe_tests "$<TARGET_FILE:packaging_fixture_app>" "$<TARGET_FILE:package_perf_gate>")
     set_tests_properties(packaging_perf_probe_contracts PROPERTIES TIMEOUT 300)
     add_test(NAME packaging_perf_gate_tool COMMAND package_perf_gate --target fixture --exe "$<TARGET_FILE:packaging_fixture_app>"
-      --report "${CMAKE_CURRENT_BINARY_DIR}/packaging/perf-gate-fixture.json" --seconds 2 --interval 0.25 --settle 0.3 --open-settle 0.05
-      --close-settle 0.05 --cycles 20 --limit lifecycle.warmup=4 --limit lifecycle.window=5 --limit closed.cpu=2 --limit open.cpu=2 --limit open.wakeups=20)
-    set_tests_properties(packaging_perf_gate_tool PROPERTIES TIMEOUT 300 PASS_REGULAR_EXPRESSION "performance gate: passed")
+      --report "${CMAKE_CURRENT_BINARY_DIR}/packaging/perf-gate-fixture.json" --markdown "${CMAKE_CURRENT_BINARY_DIR}/packaging/perf-gate-fixture.md"
+      --seconds 2 --interval 0.25 --settle 0.3 --open-settle 0.05
+      --close-settle 0.05 --cycles 20 --limit lifecycle.warmup=4 --limit lifecycle.window=5 --limit closed.cpu=2 --limit open.cpu=2 --limit open.wakeups=20
+      --limit cold-open.first-frame=100)
+    set_tests_properties(packaging_perf_gate_tool PROPERTIES TIMEOUT 300 FIXTURES_SETUP packaging_perf_gate_report
+      PASS_REGULAR_EXPRESSION "  openings +PASS  cold: first frame [0-9]+ ms" FAIL_REGULAR_EXPRESSION "performance gate: (FAILED|cancelled)|package_perf_gate: ")
+    # The saved JSON report rendered again (--render), without running anything.
+    add_test(NAME packaging_perf_gate_render COMMAND package_perf_gate --render "${CMAKE_CURRENT_BINARY_DIR}/packaging/perf-gate-fixture.json"
+      --markdown "${CMAKE_CURRENT_BINARY_DIR}/packaging/perf-gate-fixture-rendered.md")
+    set_tests_properties(packaging_perf_gate_render PROPERTIES FIXTURES_REQUIRED packaging_perf_gate_report
+      PASS_REGULAR_EXPRESSION "Readable report: .*perf-gate-fixture-rendered.md")
     add_test(NAME packaging_perf_gate_refuses_unsupported COMMAND package_perf_gate --exe "$<TARGET_FILE:packaging_fixture_app>"
       --report "${CMAKE_CURRENT_BINARY_DIR}/packaging/perf-gate-refused.json")
     set_tests_properties(packaging_perf_gate_refuses_unsupported PROPERTIES PASS_REGULAR_EXPRESSION "no --data-root/--toggle support")

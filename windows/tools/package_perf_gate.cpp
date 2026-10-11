@@ -1,26 +1,46 @@
 // WINDOWS-MIGRATION.md section 9 gate tool: closed idle, open idle (ambient
-// animation on and off) and repeated open/close lifecycle of a real
-// EndfieldHUD.exe, measured from outside with a temporary data root.
+// animation on and off), the cold and warm openings and repeated open/close
+// lifecycle of a real EndfieldHUD.exe, measured from outside with a
+// temporary data root. Writes a JSON report and a readable Markdown report.
 //
-//   package_perf_gate --exe <EndfieldHUD.exe> --report <report.json>
+// On the laptop desktop, one command (from the build's Release folder):
+//
+//   package_perf_gate --desktop
+//
+// measures the EndfieldHUD.exe next to the tool with the default settings
+// and writes performance-reports\<local time>\performance-gate.json/.md next
+// to it. It opens and closes the HUD about 100 times over ~10 minutes, so it
+// asks first and never starts on its own.
+//
+// Full form:
+//   package_perf_gate --exe <EndfieldHUD.exe> --report <report.json> [--markdown <report.md>]
 //       [--scenarios closed,open,ambient-off,lifecycle] [--seconds 60] [--settle 10]
 //       [--cycles 100] [--open-settle 1.5] [--close-settle 1.5] [--interval 1]
-//       [--limit <scenario>.<metric>=<value>]... [--keep-data]
+//       [--limit <scenario>.<metric>=<value>]... [--no-startup-trace] [--work-folder <dir>] [--keep-data] [--yes]
+//   package_perf_gate --render <report.json> [--markdown <report.md>]
 //
-// Limits: closed|open|ambient-off . cpu|wakeups|gpu|private-growth and
-// lifecycle . handles|threads|gdi|user|private|working-set|gpu-dedicated|warmup|window
+// Limits: closed|open|ambient-off . cpu|wakeups|gpu|private-growth,
+// lifecycle . handles|threads|gdi|user|private|working-set|gpu-dedicated|warmup|window,
+// cold-open|warm-open . first-frame|p95-interval|late-frames
 // ("none" removes a limit). Exit code: 0 every gate passed, 1 a gate failed,
-// 2 the run could not be performed (for example an EndfieldHUD.exe without
-// --data-root support, which is never started).
+// 2 the run could not be performed or was refused (for example an
+// EndfieldHUD.exe without --data-root support, which is never started, or a
+// run on a visible desktop without confirmation), 3 cancelled with Ctrl+C.
 //
-// Run it in an interactive desktop session on the target laptop with nothing
-// else of EndfieldHUD's running; the report records the machine, display,
-// session and settings with every result.
+// Whenever the measured EndfieldHUD.exe would appear on a visible desktop the
+// tool describes the run and waits for Enter (or --yes). In a session without
+// a visible desktop (SSH, CI) nothing is shown, so no confirmation is asked.
+#include "core/data/json.hpp"
+#include "packaging/perf_probe.hpp"
+#include "packaging/perf_report.hpp"
 #include "packaging/perf_runner.hpp"
+#include <algorithm>
 #include <charconv>
+#include <cmath>
 #include <cstdio>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -31,7 +51,19 @@
 
 namespace p = endfield::packaging;
 namespace fs = std::filesystem;
+using ehud::data::Json;
 namespace {
+HANDLE cancelEvent{};
+BOOL WINAPI consoleControl(DWORD type) {
+    // Ctrl+C / Ctrl+Break: stop at the next wait, stop the app gracefully
+    // and remove the temporary data root. Closing the console ends the
+    // process; the kill-on-close job then ends the measured app too.
+    if ((type == CTRL_C_EVENT || type == CTRL_BREAK_EVENT) && cancelEvent) {
+        SetEvent(cancelEvent);
+        return TRUE;
+    }
+    return FALSE;
+}
 std::string narrow(std::wstring_view value) {
     if (value.empty()) return {};
     const auto n = WideCharToMultiByte(CP_UTF8, 0, value.data(), static_cast<int>(value.size()), nullptr, 0, nullptr, nullptr);
@@ -70,17 +102,81 @@ void setLimit(p::GateOptions& o, const std::string& assignment) {
         else if (metric == "working-set") l.workingSet = value;
         else if (metric == "gpu-dedicated") l.gpuDedicated = value;
         else throw std::invalid_argument("Unknown lifecycle metric: " + metric);
+    } else if (scenario == "cold-open" || scenario == "warm-open") {
+        auto& l = scenario == "cold-open" ? o.coldOpenLimits : o.warmOpenLimits;
+        if (metric == "first-frame") l.firstFrameMS = value;
+        else if (metric == "p95-interval") l.p95IntervalMS = value;
+        else if (metric == "late-frames") l.lateFrames = value;
+        else throw std::invalid_argument("Unknown opening metric: " + metric);
     } else {
         throw std::invalid_argument("Unknown scenario: " + scenario);
     }
+}
+fs::path moduleFolder() {
+    std::wstring buffer(32768, L'\0');
+    const auto length = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+    if (!length || length >= buffer.size()) throw std::runtime_error("The tool's own folder is unknown");
+    buffer.resize(length);
+    return p::longPath(fs::path(buffer).parent_path());
+}
+std::wstring localStamp() {
+    SYSTEMTIME t{};
+    GetLocalTime(&t);
+    wchar_t text[32]{};
+    swprintf_s(text, L"%04u%02u%02u-%02u%02u%02u", static_cast<unsigned>(t.wYear), static_cast<unsigned>(t.wMonth), static_cast<unsigned>(t.wDay),
+               static_cast<unsigned>(t.wHour), static_cast<unsigned>(t.wMinute), static_cast<unsigned>(t.wSecond));
+    return text;
+}
+std::string readText(const fs::path& file) {
+    std::ifstream in(file, std::ios::binary);
+    if (!in) throw std::runtime_error("The report cannot be read: " + narrow(file.native()));
+    std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    if (text.size() > 64 * 1024 * 1024) throw std::runtime_error("The report is too large");
+    return text;
+}
+void writeText(const fs::path& file, const std::string& text) {
+    std::ofstream out(file, std::ios::binary | std::ios::trunc);
+    out << text;
+    if (!out) throw std::runtime_error("The file could not be written: " + narrow(file.native()));
+}
+// The run is described and the user confirms it on the console; refused
+// when there is no console to answer on.
+bool confirmed(const p::GateOptions& o, const fs::path& report) {
+    const auto minutes = std::max(1.0, std::round(p::estimatedGateSeconds(o) / 60.0));
+    const auto openings = (o.open || o.lifecycle ? 1 : 0) + (o.lifecycle ? static_cast<double>(o.cycles) : 0.0) + (o.ambientOff ? 1 : 0);
+    std::cout << "\nEndfieldHUD performance gate (WINDOWS-MIGRATION.md section 9)\n\n"
+              << "  Program:  " << narrow(o.executable.native()) << "\n"
+              << "  Data:     a new temporary data root (your EndfieldHUD data, startup entry and running copy are not used)\n"
+              << "  Duration: about " << minutes << " minute(s)\n"
+              << "  Report:   " << narrow(report.native()) << "\n\n"
+              << "The HUD opens and closes on this desktop about " << static_cast<long long>(openings) << " times. Do not use the mouse or\n"
+              << "keyboard until the gate reports its result. To stop early, switch to this window and press\n"
+              << "Ctrl+C, or close this window (the measured EndfieldHUD ends with it).\n\n";
+    if (const auto others = p::countProcesses(L"EndfieldHUD.exe", 0))
+        std::cout << others << " EndfieldHUD process(es) are already running. They are not touched, but for clean numbers quit\n"
+                  << "them first (tray icon > Quit); the report notes them either way.\n\n";
+    DWORD mode{};
+    const auto input = GetStdHandle(STD_INPUT_HANDLE);
+    if (!input || input == INVALID_HANDLE_VALUE || !GetConsoleMode(input, &mode)) {
+        std::cerr << "package_perf_gate: there is no console to confirm on; add --yes to start it from a script.\n";
+        return false;
+    }
+    std::cout << "Press Enter to start, or Ctrl+C to cancel: " << std::flush;
+    std::string line;
+    if (!std::getline(std::cin, line) || WaitForSingleObject(cancelEvent, 0) == WAIT_OBJECT_0) return false;
+    return true;
 }
 } // namespace
 
 int wmain(int argc, wchar_t** argv) {
     SetConsoleOutputCP(CP_UTF8);
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2); // report the real display DPI
+    cancelEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    SetConsoleCtrlHandler(consoleControl, TRUE);
     p::GateOptions o;
-    fs::path report;
+    o.cancelEvent = cancelEvent;
+    fs::path report, markdown, render;
+    bool desktop{}, yes{};
     try {
         for (int n = 1; n < argc; ++n) {
             const std::wstring name = argv[n];
@@ -91,6 +187,10 @@ int wmain(int argc, wchar_t** argv) {
             const auto value = [&]() { return narrow(wideValue()); };
             if (name == L"--exe") o.executable = fs::path(wideValue()).make_preferred();
             else if (name == L"--report") report = fs::path(wideValue());
+            else if (name == L"--markdown") markdown = fs::path(wideValue());
+            else if (name == L"--render") render = fs::path(wideValue());
+            else if (name == L"--desktop") desktop = true;
+            else if (name == L"--yes") yes = true;
             else if (name == L"--target") {
                 const auto t = value();
                 if (t == "endfieldhud") o.target = p::GateOptions::Target::endfieldhud;
@@ -111,16 +211,49 @@ int wmain(int argc, wchar_t** argv) {
             else if (name == L"--interval") o.interval = number(value());
             else if (name == L"--cycles") o.cycles = static_cast<std::size_t>(number(value()));
             else if (name == L"--limit") setLimit(o, value());
+            else if (name == L"--no-startup-trace") o.startupTrace = false;
             else if (name == L"--keep-data") o.keepData = true;
+            else if (name == L"--work-folder") o.workFolder = fs::path(wideValue()).make_preferred();
             else throw std::invalid_argument("Unknown argument: " + narrow(name));
         }
-        if (o.executable.empty() || report.empty()) throw std::invalid_argument("--exe and --report are required");
+        if (!render.empty()) {
+            // Offline: a saved JSON report rendered again.
+            if (markdown.empty()) markdown = fs::path(render).replace_extension(L".md");
+            writeText(markdown, p::renderGateMarkdown(Json::parse(readText(render), 64 * 1024 * 1024)));
+            std::cout << "Readable report: " << narrow(markdown.native()) << '\n';
+            return 0;
+        }
+        if (desktop) {
+            if (o.target != p::GateOptions::Target::endfieldhud) throw std::invalid_argument("--desktop measures EndfieldHUD.exe only");
+            if (!p::interactiveDesktop())
+                throw std::invalid_argument("--desktop runs on the laptop's visible desktop only: start it from a terminal there (this session has no visible desktop)");
+            const auto folder = moduleFolder();
+            if (o.executable.empty()) o.executable = folder / L"EndfieldHUD.exe";
+            if (report.empty()) report = folder / L"performance-reports" / localStamp() / L"performance-gate.json";
+        }
+        if (o.executable.empty() || report.empty()) throw std::invalid_argument("--exe and --report are required (or --desktop)");
         if (o.lifecycle && o.cycles < o.lifecycleLimits.warmup + 2 * o.lifecycleLimits.window)
             throw std::invalid_argument("--cycles must cover the warm-up plus two comparison windows");
+        if (markdown.empty()) markdown = fs::path(report).replace_extension(L".md");
     } catch (const std::exception& e) {
         std::cerr << "package_perf_gate: " << e.what() << '\n';
         return 2;
     }
+    try {
+        // The executable is checked before anything is shown or asked.
+        if (o.target == p::GateOptions::Target::endfieldhud && !p::supportsGateControl(o.executable))
+            throw std::runtime_error("This EndfieldHUD.exe has no --data-root/--toggle support, so the gate does not run it (it would use the real data root)");
+        if (o.target == p::GateOptions::Target::endfieldhud && p::interactiveDesktop() && !yes && !confirmed(o, report)) {
+            std::cerr << "package_perf_gate: not started.\n";
+            return 2;
+        }
+        if (!report.parent_path().empty()) fs::create_directories(report.parent_path());
+        if (!markdown.parent_path().empty()) fs::create_directories(markdown.parent_path());
+    } catch (const std::exception& e) {
+        std::cerr << "package_perf_gate: " << e.what() << '\n';
+        return 2;
+    }
+    if (o.target == p::GateOptions::Target::endfieldhud) std::cout << "Measuring; the result follows in about " << std::lround(p::estimatedGateSeconds(o) / 60.0) << " minute(s).\n" << std::flush;
     p::GateRun run;
     try {
         run = p::runPerformanceGate(o);
@@ -128,13 +261,17 @@ int wmain(int argc, wchar_t** argv) {
         std::cerr << "package_perf_gate: " << e.what() << '\n';
         return 2;
     }
-    std::ofstream out(report, std::ios::binary | std::ios::trunc);
-    out << run.report;
-    if (!out) {
-        std::cerr << "package_perf_gate: the report could not be written\n";
+    try {
+        writeText(report, run.report);
+        const auto parsed = Json::parse(run.report, 64 * 1024 * 1024);
+        writeText(markdown, p::renderGateMarkdown(parsed));
+        std::cout << "EndfieldHUD performance gate: " << (run.cancelled ? "cancelled" : run.passed ? "passed" : "FAILED") << '\n'
+                  << p::summarizeGateReport(parsed);
+        for (const auto& f : run.failures) std::cout << "  - " << f << '\n';
+        std::cout << "Readable report: " << narrow(markdown.native()) << "\nJSON report:     " << narrow(report.native()) << '\n';
+    } catch (const std::exception& e) {
+        std::cerr << "package_perf_gate: the report could not be written (" << e.what() << ")\n";
         return 2;
     }
-    std::cout << "EndfieldHUD performance gate: " << (run.passed ? "passed" : "FAILED") << " (" << narrow(report.native()) << ")\n";
-    for (const auto& f : run.failures) std::cout << "  " << f << '\n';
-    return run.passed ? 0 : 1;
+    return run.cancelled ? 3 : run.passed ? 0 : 1;
 }

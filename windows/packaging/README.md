@@ -307,19 +307,38 @@ starts.
 `<stem>-release-notes.md`, a draft rendered from `release-notes-template.md`.
 It contains the Windows tag, the artifact names, sizes and SHA-256 values,
 and the signing state. An incomplete package's draft is marked *Do not
-publish*. The template's comment holds the publishing checklist:
+publish*.
 
+The template is the text of the **first Windows release**, built from the
+macOS v1.2.0 build 18 parity baseline: what the release contains, install and
+uninstall, moving data from a Mac (the exporter script at the release tag and
+*Import macOS data…*), updates, the requirements, the checksums, and an honest
+list of the differences from the macOS version, taken from the platform gap
+tables in `WINDOWS-MIGRATION.md` section 6. For a later release the
+maintainer replaces *What's in this release* and checks the differences list
+again.
+
+The template's comment holds the publishing checklist:
+
+- Stage a complete package (no `-incomplete` names).
+- Run the section 9 performance gate on the laptop's desktop against that
+  build and read its report (see *Performance gates*).
+- Compare the differences list with the current gap tables.
 - Use the `windows-v` tag only, with `gh release create … --latest=false`.
 - Upload only the setup, the portable zip and SHA256SUMS.
 - Never touch the Mac release or `updates/appcast.xml`.
 
-Nothing in the build or CI publishes a release.
+Nothing in the build or CI publishes a release. `endfieldhud_release_contracts`
+checks the rendered draft: the tag, the setup's name and SHA-256, the
+SHA256SUMS name and line, `--latest=false`, both first-release sections, the
+exporter link at the tag, no placeholder left, and the *Do not publish* mark
+on an incomplete package.
 
 ## CI (`.github/workflows/windows.yml`)
 
 The workflow runs two jobs:
 
-- **`portable`** (ubuntu-24.04): the source-authority check, the Mac-feed guard, then building and running the portable suites.
+- **`portable`** (ubuntu-24.04): the source-authority check, the Mac-feed guard, then building (with `make -k`, so one run lists every compile error) and running the portable suites.
 - **`windows`** (windows-2025, MSVC x64): builds everything and runs every registered suite. It then stages the unsigned, incomplete developer package and uploads it, with its release-notes draft, as a 7-day workflow artifact.
 
 The Windows job is pinned to the `windows-2025` image rather than
@@ -336,17 +355,76 @@ Before the suites run, `package_os_capabilities` checks the image against
 `packaging_os_text_data_contracts`. A future image with older data fails with
 a message naming the cause. The assertions themselves are unchanged.
 
+**Run 38116894941 (2026-10-11, commit `e17f3af`).** The pin worked: the image
+reported Windows 10.0.26100, ICU 72.1, Unicode 15.1.0 and time-zone data
+2022g, and `archive_date_contracts` and `event_log_names_contracts` passed.
+343 of 348 Windows suites passed. The causes of the rest, all reproduced on
+the laptop:
+
+- `packaging_installer_contracts`, `endfieldhud_release_contracts`,
+  `app_notification_identity_contracts` and
+  `calendar_notification_identity_contracts`: GitHub's runners set `%TEMP%`
+  to the 8.3 alias `C:\Users\RUNNER~1\…`. The Shell stores a shortcut's
+  target with long names, so a test identity built from the alias never
+  matched the shortcut. With `%TEMP%` set to an 8.3 alias the laptop fails
+  the same three checks (30, 21 and 51 checks in). The packaging tests now use
+  the long form of `%TEMP%`; the two identity suites belong to other areas
+  (host requests).
+- `packaging_watch_runtime_staged`: the unchanged Mac packager reads its JSON
+  with Python's default encoding, which is UTF-8 on macOS but cp1252 on the
+  runner. The test now runs it in Python's UTF-8 mode (`-X utf8`).
+- The portable job stopped at a missing `<cmath>` in
+  `tests/system_overlay_state_tests.cpp` (GCC; host request).
+
 Both jobs have read-only permissions. The Mac-exported runtime inputs are not
 in the repository, so CI does not register the input-dependent suites (owner
 coverage, data-root and package contracts) and cannot run hidden WARP module
-coverage. These remain laptop checks.
+coverage. These remain laptop checks. CI never runs the performance gate
+against `EndfieldHUD.exe`.
 
-## Performance gates (`perf_gate.hpp`, `perf_probe.hpp`, `perf_runner.hpp`, `tools/package_perf_gate.cpp`)
+## Performance gates (`perf_gate.hpp`, `perf_report.hpp`, `perf_probe.hpp`, `perf_runner.hpp`, `tools/package_perf_gate.cpp`)
+
+**One command on the laptop's desktop.** Open a terminal on the laptop's
+desktop (not over SSH) and run the tool
+from the build's `Release` folder, next to `EndfieldHUD.exe`:
+
+```powershell
+& "<build>\Release\package_perf_gate.exe" --desktop
+```
+
+For the packaging slot build on the test laptop that is
+`& "$env:LOCALAPPDATA\EndfieldHUD-Windows-Rebuild-Test\slots\packaging\build\Release\package_perf_gate.exe" --desktop`.
+Build it first with `cmake --build <build> --config Release --target EndfieldHUD endfieldhud_resources package_perf_gate`.
+
+`--desktop` measures the `EndfieldHUD.exe` next to the tool, with the default
+settings below, and writes
+`Release\performance-reports\<local time>\performance-gate.json` and the
+readable `performance-gate.md`. The run opens and closes the HUD about 100
+times over roughly ten minutes, so the tool never starts on its own:
+
+- No CTest, CI step or build target runs it against `EndfieldHUD.exe`. Its
+  tests drive the packaging stand-in app only.
+- Whenever the measured app would appear on a visible desktop, the tool first
+  describes the run (program, temporary data, duration, report path) and
+  waits for Enter. Without a console to answer on it refuses unless `--yes` is
+  given. `--desktop` itself refuses in a session without a visible desktop.
+- An `EndfieldHUD.exe` without `--data-root`/`--toggle` support is never
+  started (exit 2).
+- Ctrl+C stops the run at the next wait. The app is stopped through the
+  session-end protocol, the temporary data root is removed and the partial
+  report is marked *cancelled* (exit 3).
+- The measured app runs in a kill-on-close job object, so closing the console
+  or killing the tool ends it too. Programs the app itself starts are not in
+  the job.
+
+Full form:
 
 ```
-package_perf_gate --exe <EndfieldHUD.exe> --report <report.json>
+package_perf_gate --exe <EndfieldHUD.exe> --report <report.json> [--markdown <report.md>]
     [--scenarios closed,open,ambient-off,lifecycle] [--seconds 60] [--settle 10]
-    [--cycles 100] [--open-settle 1.5] [--close-settle 1.5] [--limit open.cpu=8]…
+    [--cycles 100] [--open-settle 1.5] [--close-settle 1.5] [--interval 1]
+    [--limit <scenario>.<metric>=<value>]… [--no-startup-trace] [--work-folder <dir>] [--keep-data] [--yes]
+package_perf_gate --render <report.json> [--markdown <report.md>]
 ```
 
 The gate measures the process from outside: nothing is injected, and neither
@@ -357,37 +435,73 @@ administrator rights nor an ETW session is needed. It records the following:
 - handles, threads and GDI/USER objects
 - private bytes and working set
 - where the session exposes them, GPU engine utilization and GPU process memory (PDH)
+- the cold and warm openings, from the app's own startup trace (below)
 
 It runs these scenarios:
 
 1. **Closed idle**, 60 s.
-2. **Open idle** with ambient animation on.
+2. **Open idle** with ambient animation on. The opening before it is the
+   **cold opening**.
 3. **Lifecycle**: 100 open/close cycles. Growth is the median of the last 10
-   cycles minus the median of the first 10 after warm-up.
-4. **Open idle** with ambient animation off.
+   cycles minus the median of the first 10 after warm-up. Its first opening is
+   the **warm opening**.
+4. **Openings**: the first session runs with `ENDFIELDHUD_STARTUP_TRACE=1`
+   in its environment. EndfieldHUD then writes
+   `<data root>\v1\Diagnostics\startup-trace.json` (numbers only) once both
+   openings completed. For each opening the gate reports the time from the
+   request to the first presented frame, to the completed entrance, the
+   p50/p95/max interval between presented frames (without the first step),
+   the frames later than 25 ms (1.5 × the 60 Hz budget), and the mean/max CPU
+   of `present()`. It also lists the launch-to-first-frame time, the slowest
+   startup stages and the module owners with the longest frame work during
+   the cold opening. This is the measurement for a slow or stuttering first
+   opening after launch (section 9: "profile first and warmed opens
+   separately", p50/p95 frame times, startup latency).
+5. **Open idle** with ambient animation off.
 
-Each run uses a fresh temporary data root with launch at login off and
-onboarding done. The app is stopped through the session-end protocol. The
-report records the following:
+Each run uses a fresh temporary data root (in the long form of `%TEMP%`) with
+launch at login off and onboarding done. The app is stopped through the
+session-end protocol. The report records the following:
 
 - the OS build
 - CPU, RAM, GPUs, DPI, refresh rate and display size
-- whether the session is the interactive console
+- the session, whether it has a visible desktop, and how many other
+  EndfieldHUD processes were running
 - the executable's version and SHA-256
 - every setting and limit
 
-The limits are provisional and configurable. The closed defaults are ≤ 0.5 %
-of one core, ≤ 20 wake-ups/s and ≤ 0.5 % GPU; the Mac measured 0.11–0.26 %
-closed. Values are reported whether or not a limit is set.
+The readable report (`--markdown`, or `--render` for a saved JSON report)
+starts with the verdict and a summary table, lists the failures, then gives
+each scenario's values with their limits, the busiest threads, the opening
+tables, lifecycle growth, the settings and the notes. Unavailable values (for
+example GPU counters outside the console session) are written as *not
+available*, never as zero. The console prints one line per scenario and the
+paths of both reports.
 
-**Requirement:** the gate drives `EndfieldHUD.exe` only if the executable
-supports `--data-root <folder>` and the forwarded `--toggle`; it checks for
-both before starting anything. Until the host adds them (see the host
-requests), the tool refuses to start the app (exit 2), so it can never run
-against the real data root or the user's running copy.
+The limits are provisional and configurable (`--limit`, `none` removes one):
 
-Frame pacing, GPU duration and input latency need ETW (WPR/PresentMon) and are
-not part of this gate.
+| Scenario | Default limits |
+| --- | --- |
+| `closed` | CPU ≤ 0.5 % of one core, ≤ 20 wake-ups/s, GPU ≤ 0.5 %, private bytes growth ≤ 4 MiB (the Mac measured 0.11–0.26 % closed) |
+| `open` (ambient on) | CPU ≤ 10 %, ≤ 400 wake-ups/s, GPU ≤ 25 %, growth ≤ 8 MiB |
+| `ambient-off` | CPU ≤ 5 %, ≤ 200 wake-ups/s, GPU ≤ 15 %, growth ≤ 8 MiB |
+| `lifecycle` | growth of handles ≤ 16, threads ≤ 2, GDI/USER ≤ 8, private bytes ≤ 8 MiB, working set ≤ 24 MiB, dedicated GPU memory ≤ 16 MiB (warm-up and window 10 cycles) |
+| `cold-open` | first frame ≤ 250 ms (the Mac 1.2 first synchronous open was 225 ms on an M2), p95 interval ≤ 25 ms, ≤ 3 frames later than 25 ms (`first-frame`, `p95-interval`, `late-frames`) |
+| `warm-open` | first frame ≤ 100 ms, p95 interval ≤ 25 ms, ≤ 1 late frame |
+
+Values are reported whether or not a limit is set. Compositor latency, GPU
+duration and input latency need ETW (WPR/PresentMon) and are not part of this
+gate.
+
+A run that hits a fatal error is not measured as idle: EndfieldHUD writes
+`<data root>\v1\Diagnostics\last-fatal.txt` and keeps a message box open,
+so the gate checks for that record after startup, after the cold opening,
+after a forwarded launch fails and at the end, and stops with the record's
+exception, message and stage. This is what happens over SSH: a hidden run of
+the slot's `EndfieldHUD.exe` on the laptop (2026-10-11) stopped after 3 s
+with "Cannot locate the current display" (stage `launch > application
+start`), left no process or temporary folder behind, and wrote both reports.
+The measurement itself therefore needs the laptop's desktop.
 
 ## EHUDZ01 (`ehudz01.hpp`, `tools/package_watch_resources.cpp`)
 
@@ -412,11 +526,11 @@ test.
 | Test | What it proves |
 | --- | --- |
 | `packaging_format_contracts` (portable) | Manifest and install-manifest codecs and every rejection rule, versions, trailer and PE/Authenticode location, Setup arguments and isolation rules, all five languages and their placeholders |
-| `packaging_perf_gate_contracts` (portable) | Idle arithmetic, gates, plateau versus leak detection |
+| `packaging_perf_gate_contracts` (portable) | Idle arithmetic, gates, plateau versus leak detection; opening summaries from a startup trace (nearest-rank p50/p95, late frames, frame CPU), opening gates, malformed traces rejected; the readable report and console summary of a full synthetic report, including unavailable GPU values, failures and a cancelled run |
 | `packaging_ehudz01_contracts` (portable) | The decoder against the Mac oracle, and the staged-inventory verifier |
 | `packaging_installer_contracts` | 385 checks through the real Setup/uninstall programs with synthetic payloads in `%TEMP%\ehud-<id>` and a private HKCU subtree. Covers fresh install, repair, upgrade, launch-at-login choices, refusals, rollback after every step, interrupted-swap recovery, the Restart Manager close/restart of a stand-in app, uninstall relocation, kept data, explicit data removal and the signed layout. Outside the interactive console session (CI, the laptop's SSH session) it also drives the task-dialog windows with dialog messages: install with the box cleared, uninstall with confirmed data removal, *Keep my data*, and cancel |
 | `endfieldhud_release_contracts` | The real install tree staged, zipped, packed, installed (isolated), checked with the installed `EndfieldHUD.exe --verify-package` and uninstalled |
-| `packaging_perf_probe_contracts`, `packaging_perf_gate_tool`, `packaging_perf_gate_refuses_unsupported` | The gate against the stand-in app: a quiet process passes, one handle/GDI leak per cycle and a 10 ms wake-up are caught and attributed, and an executable without `--data-root` support is never started |
+| `packaging_perf_probe_contracts`, `packaging_perf_gate_tool`, `packaging_perf_gate_render`, `packaging_perf_gate_refuses_unsupported` | The gate against the stand-in app: a quiet process passes, one handle/GDI leak per cycle and a 10 ms wake-up are caught and attributed; `ENDFIELDHUD_STARTUP_TRACE=1` reaches the app through the environment block and its cold and warm openings are reported, a slow cold opening fails its gates; a cancelled run stops at once with a partial report; the measured process ends when the gate tool is killed (kill-on-close job); the tool writes and re-renders the readable report; an executable without `--data-root` support is never started |
 | `packaging_identity_consistency` | Setup's notification identity equals the Calendar area's |
 | `packaging_watch_runtime_staged` (CI, where `Resources/` and Python exist) | The Mac packager's real staged tree verifies natively |
 | `packaging_update_check_contracts` (portable) | The release checker against the Mac oracle (59 tags, every ordered pair, 36 page URLs, Foundation's control characters for every scalar, 31 client scenarios). Also the Windows namespace and installer-asset rules, SHA256SUMS parsing, redirect rules, and the updater controller over synthetic routes and temporary folders. The controller cases cover check, consented download and install, the HUD closing first, the saved hand-off, its outcomes on the next run or at Setup exit, failures, discover-only copies, the daily check and its preference, Retry-After, deadlines, stop, and bounded files |

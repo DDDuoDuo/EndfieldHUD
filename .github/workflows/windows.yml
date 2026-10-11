@@ -39,7 +39,8 @@ jobs:
       - name: Configure
         run: cmake -S windows -B build/portable -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
       - name: Build
-        run: cmake --build build/portable --parallel 4
+        # Keep going: one run lists every compile error, not only the first.
+        run: cmake --build build/portable --parallel 4 -- -k
       - name: Test
         run: ctest --test-dir build/portable --output-on-failure --timeout 900
 

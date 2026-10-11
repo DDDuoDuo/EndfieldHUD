@@ -13,6 +13,15 @@
 //                          GDI bitmap (the gate must report growth)
 //   --busy                 wakes every 10 ms while open (the gate must report it)
 //   --toggle               see --perf
+//   --trace <file>         with ENDFIELDHUD_STARTUP_TRACE=1 in the environment
+//                          (as EndfieldHUD.exe reads it), write a synthetic
+//                          startup trace there once two openings happened, or
+//                          at exit with what was recorded
+//   --slow-open            the traced cold opening has a slow first frame and
+//                          five late frames (the gate must report it)
+//   --fatal-record <file>  where EndfieldHUD's fatal record would be
+//   --fail-start           write a fatal record there at startup and stay idle,
+//                          like EndfieldHUD behind its fatal-error message box
 //   --login                accepted and ignored (restart command line)
 //
 // Every instance ends by itself after five minutes, so a failed test can
@@ -29,7 +38,11 @@ namespace {
 constexpr UINT toggleMessage = WM_APP + 1;
 constexpr UINT_PTR lifetimeTimer = 1, busyTimer = 2;
 std::wstring marker;
-bool refuse{}, leak{}, busy{}, open{};
+bool refuse{}, leak{}, busy{}, open{}, slowOpen{};
+std::wstring traceFile, fatalFile;
+bool failStart{};
+unsigned tracedOpenings{};
+bool traceWritten{};
 std::vector<HANDLE> leaked;
 std::vector<HGDIOBJ> leakedObjects;
 std::vector<HANDLE> openHandles;
@@ -47,8 +60,43 @@ void note(const std::wstring& text) {
     WriteFile(h, utf8.data(), static_cast<DWORD>(utf8.size()), &written, nullptr);
     CloseHandle(h);
 }
+// A synthetic startup trace in EndfieldHUD's format (app/application.cpp
+// StartupTrace::report, schema 1): fixed numbers, written atomically.
+std::string openingJson(unsigned index) {
+    const bool slow = index == 0 && slowOpen;
+    std::string intervals = slow ? "412.5" : "12.5", cpu = slow ? "40.0" : "2.0";
+    for (int n = 1; n < 36; ++n) {
+        const bool late = slow && n % 7 == 0;
+        intervals += late ? ",48.0" : ",16.7";
+        cpu += late ? ",21.0" : ",2.5";
+    }
+    return std::string("{\"index\":") + std::to_string(index) + ",\"cold\":" + (index == 0 ? "true" : "false") +
+           ",\"requestedAtMilliseconds\":" + (index == 0 ? "3000" : "9000") + ",\"requestToFirstFrameMilliseconds\":" + (slow ? "412.5" : "12.5") +
+           ",\"requestToOpenedMilliseconds\":620,\"frames\":36,\"frameIntervalsMilliseconds\":[" + intervals + "],\"frameCPUMilliseconds\":[" + cpu + "]}";
+}
+void writeTrace() {
+    if (traceFile.empty() || traceWritten) return;
+    wchar_t flag[8]{};
+    if (GetEnvironmentVariableW(L"ENDFIELDHUD_STARTUP_TRACE", flag, 8) != 1 || flag[0] != L'1') return;
+    traceWritten = true;
+    std::string openings;
+    for (unsigned n = 0; n < tracedOpenings && n < 2; ++n) openings += (n ? "," : "") + openingJson(n);
+    const std::string text = "{\"schema\":1,\"numericOnly\":true,\"preparationMilliseconds\":35.5,\"launchToFirstFrameMilliseconds\":180.25,"
+                             "\"processToFirstFrameMilliseconds\":210.75,\"startupStages\":[{\"stage\":\"renderer\",\"wallMilliseconds\":61.5,"
+                             "\"processCPUSeconds\":0.05},{\"stage\":\"owners\",\"wallMilliseconds\":24.0,\"processCPUSeconds\":0.02}],\"prewarm\":[],"
+                             "\"openings\":[" + openings + "],\"openingStages\":[{\"phase\":0,\"slowestOwners\":[{\"owner\":\"fixture\","
+                             "\"updateTotalMS\":4.5,\"updateMaxMS\":1.5,\"uploadTotalMS\":2.0,\"uploadMaxMS\":1.0}]}]}";
+    const auto staging = traceFile + L".partial";
+    HANDLE h = CreateFileW(staging.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return;
+    DWORD written{};
+    const bool ok = WriteFile(h, text.data(), static_cast<DWORD>(text.size()), &written, nullptr) && written == text.size();
+    CloseHandle(h);
+    if (!ok || !MoveFileExW(staging.c_str(), traceFile.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) DeleteFileW(staging.c_str());
+}
 void toggle(HWND window) {
     open = !open;
+    if (open && tracedOpenings < 2 && ++tracedOpenings == 2) writeTrace();
     if (open) {
         // "Opening" allocates like a HUD frame would; closing releases it.
         for (int n = 0; n < 4; ++n) openHandles.push_back(CreateEventW(nullptr, TRUE, FALSE, nullptr));
@@ -111,6 +159,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         else if (a == L"--leak") leak = true;
         else if (a == L"--busy") busy = true;
         else if (a == L"--toggle") forwardToggle = true;
+        else if (a == L"--trace" && n + 1 < count) traceFile = argv[++n];
+        else if (a == L"--slow-open") slowOpen = true;
+        else if (a == L"--fatal-record" && n + 1 < count) fatalFile = argv[++n];
+        else if (a == L"--fail-start") failStart = true;
     }
     if (argv) LocalFree(argv);
     const std::wstring className = L"EndfieldHUDPackagingFixture." + (perf.empty() ? std::to_wstring(GetCurrentProcessId()) : perf);
@@ -146,11 +198,23 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         RegisterApplicationRestart(command.c_str(), RESTART_NO_CRASH | RESTART_NO_HANG | RESTART_NO_REBOOT);
     }
     note(L"started");
+    if (failStart && !fatalFile.empty()) {
+        // The shape of app/main.cpp's record (redacted, no paths).
+        const std::string record = "EndfieldHUD fatal error\nexception: class std::runtime_error\nmessage: Cannot locate the current display\n"
+                                   "stage: launch > application start\n";
+        HANDLE h = CreateFileW(fatalFile.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (h != INVALID_HANDLE_VALUE) {
+            DWORD written{};
+            WriteFile(h, record.data(), static_cast<DWORD>(record.size()), &written, nullptr);
+            CloseHandle(h);
+        }
+    }
     MSG message{};
     while (GetMessageW(&message, nullptr, 0, 0) > 0) {
         TranslateMessage(&message);
         DispatchMessageW(&message);
     }
+    writeTrace(); // at exit with what was recorded, like EndfieldHUD
     DestroyWindow(window);
     for (auto h : leaked) CloseHandle(h);
     for (auto o : leakedObjects) DeleteObject(o);

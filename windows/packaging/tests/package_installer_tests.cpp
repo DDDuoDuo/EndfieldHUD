@@ -770,10 +770,16 @@ int wmain(int argc, wchar_t** argv) {
     if (FAILED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED))) return 1;
     try {
         // CTest passes '/'-separated paths; Setup accepts only native absolute
-        // paths. Work happens in a short folder below %TEMP%.
+        // paths. Work happens in a short folder below %TEMP%, in its long form:
+        // %TEMP% can be an 8.3 alias (GitHub's runners use C:\Users\RUNNER~1),
+        // and the Shell stores a shortcut's target with long names, so the
+        // installed shortcut would not compare equal to an 8.3 install root.
         const auto native = [](const wchar_t* value) { return fs::path(value).make_preferred().lexically_normal(); };
         std::wstring temp(MAX_PATH + 1, L'\0');
         temp.resize(GetTempPathW(static_cast<DWORD>(temp.size()), temp.data()));
+        std::wstring longTemp(32768, L'\0');
+        const auto longLength = GetLongPathNameW(temp.c_str(), longTemp.data(), static_cast<DWORD>(longTemp.size()));
+        if (longLength && longLength < longTemp.size()) temp.assign(longTemp.data(), longLength);
         const auto work = fs::path(temp).lexically_normal().parent_path();
         if (argc == 3 && std::wstring_view(argv[1]) == L"--release") release(native(argv[2]), work);
         else if (argc == 4) contracts(native(argv[1]), native(argv[2]), native(argv[3]), work);

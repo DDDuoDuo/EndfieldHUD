@@ -10,7 +10,10 @@ foreach(required PYTHON SCRIPT SOURCE TOOL WORK)
 endforeach()
 file(REMOVE_RECURSE "${WORK}")
 file(MAKE_DIRECTORY "${WORK}")
-execute_process(COMMAND "${PYTHON}" -I "${SCRIPT}" stage "${SOURCE}" "${WORK}/WatchSource" RESULT_VARIABLE staged OUTPUT_VARIABLE output ERROR_VARIABLE errors)
+# UTF-8 mode: the packager reads its JSON with Python's default text
+# encoding, which is UTF-8 on macOS (where it runs for the Mac app) but the
+# ANSI code page on Windows (cp1252 cannot decode Scene/scene.json).
+execute_process(COMMAND "${PYTHON}" -I -X utf8 "${SCRIPT}" stage "${SOURCE}" "${WORK}/WatchSource" RESULT_VARIABLE staged OUTPUT_VARIABLE output ERROR_VARIABLE errors)
 if(NOT staged EQUAL 0)
   message(FATAL_ERROR "The macOS packager failed (${staged}):\n${output}\n${errors}")
 endif()

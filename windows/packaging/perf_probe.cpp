@@ -9,6 +9,7 @@
 #include <pdhmsg.h>
 #include <psapi.h>
 #include <restartmanager.h>
+#include <tlhelp32.h>
 #include <wrl/client.h>
 #include <algorithm>
 #include <cstdio>
@@ -257,7 +258,38 @@ MachineInfo describeMachine() {
     DWORD session{};
     ProcessIdToSessionId(GetCurrentProcessId(), &session);
     m.session = (session == WTSGetActiveConsoleSessionId() ? "interactive console session " : "non-console session ") + std::to_string(session);
+    m.interactiveDesktop = interactiveDesktop();
     return m;
+}
+
+bool interactiveDesktop() noexcept {
+    const auto station = GetProcessWindowStation();
+    USEROBJECTFLAGS flags{};
+    return station && GetUserObjectInformationW(station, UOI_FLAGS, &flags, sizeof(flags), nullptr) && (flags.dwFlags & WSF_VISIBLE) != 0;
+}
+
+std::size_t countProcesses(std::wstring_view imageName, std::uint32_t excluding) noexcept {
+    const auto snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snapshot == INVALID_HANDLE_VALUE) return 0;
+    std::size_t count{};
+    PROCESSENTRY32W entry{sizeof(entry)};
+    for (auto more = Process32FirstW(snapshot, &entry); more; more = Process32NextW(snapshot, &entry))
+        if (entry.th32ProcessID != excluding &&
+            CompareStringOrdinal(entry.szExeFile, -1, imageName.data(), static_cast<int>(imageName.size()), TRUE) == CSTR_EQUAL)
+            ++count;
+    CloseHandle(snapshot);
+    return count;
+}
+
+fs::path longPath(const fs::path& path) {
+    const auto& text = path.native();
+    const auto size = GetLongPathNameW(text.c_str(), nullptr, 0);
+    if (!size) return path;
+    std::wstring out(size, L'\0');
+    const auto written = GetLongPathNameW(text.c_str(), out.data(), size);
+    if (!written || written >= size) return path;
+    out.resize(written);
+    return fs::path(out);
 }
 
 std::wstring commandLine(const fs::path& executable, const std::vector<std::wstring>& arguments) {
@@ -278,12 +310,58 @@ std::wstring commandLine(const fs::path& executable, const std::vector<std::wstr
     return command;
 }
 
-GateProcess::GateProcess(const fs::path& executable, const std::vector<std::wstring>& arguments, const fs::path& folder) {
+GateProcess::GateProcess(const fs::path& executable, const std::vector<std::wstring>& arguments, const fs::path& folder, const Environment& environment) {
     auto command = commandLine(executable, arguments);
+    // The inherited environment with `environment` applied (names compare
+    // case-insensitively, as Windows does), as a sorted Unicode block.
+    std::vector<std::wstring> variables;
+    if (auto* block = GetEnvironmentStringsW()) {
+        for (const wchar_t* at = block; *at; at += wcslen(at) + 1) variables.emplace_back(at);
+        FreeEnvironmentStringsW(block);
+    }
+    const auto nameOf = [](const std::wstring& entry) { return entry.substr(0, entry.find(L'=', 1)); };
+    for (const auto& [name, value] : environment) {
+        std::erase_if(variables, [&](const std::wstring& entry) {
+            const auto existing = nameOf(entry);
+            return CompareStringOrdinal(existing.c_str(), static_cast<int>(existing.size()), name.c_str(), static_cast<int>(name.size()), TRUE) == CSTR_EQUAL;
+        });
+        variables.push_back(name + L"=" + value);
+    }
+    std::stable_sort(variables.begin(), variables.end(), [&](const std::wstring& a, const std::wstring& b) {
+        const auto x = nameOf(a), y = nameOf(b);
+        return CompareStringOrdinal(x.c_str(), static_cast<int>(x.size()), y.c_str(), static_cast<int>(y.size()), TRUE) == CSTR_LESS_THAN;
+    });
+    std::wstring block;
+    for (const auto& v : variables) block += v + L'\0';
+    block += L'\0';
+    // Kill-on-close job: the measured HUD never outlives the gate. Processes
+    // the HUD itself starts are not in the job (silent breakaway).
+    const auto job = CreateJobObjectW(nullptr, nullptr);
+    if (!job) throw std::runtime_error("The gate's job object could not be created");
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK;
+    if (!SetInformationJobObject(job, JobObjectExtendedLimitInformation, &limits, sizeof(limits))) {
+        CloseHandle(job);
+        throw std::runtime_error("The gate's job object could not be configured");
+    }
+    job_ = job;
     STARTUPINFOW startup{sizeof(startup)};
     PROCESS_INFORMATION info{};
-    if (!CreateProcessW(executable.c_str(), command.data(), nullptr, nullptr, FALSE, 0, nullptr, folder.c_str(), &startup, &info))
+    if (!CreateProcessW(executable.c_str(), command.data(), nullptr, nullptr, FALSE, CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT, block.data(), folder.c_str(),
+                        &startup, &info)) {
+        CloseHandle(job);
+        job_ = nullptr;
         throw std::runtime_error("The measured program could not be started");
+    }
+    if (!AssignProcessToJobObject(job, info.hProcess)) {
+        TerminateProcess(info.hProcess, 1);
+        CloseHandle(info.hThread);
+        CloseHandle(info.hProcess);
+        CloseHandle(job);
+        job_ = nullptr;
+        throw std::runtime_error("The measured program could not join the gate's job object");
+    }
+    ResumeThread(info.hThread);
     CloseHandle(info.hThread);
     process_ = info.hProcess;
     id_ = info.dwProcessId;
@@ -294,6 +372,7 @@ GateProcess::GateProcess(const fs::path& executable, const std::vector<std::wstr
 GateProcess::~GateProcess() {
     if (running()) (void)stopGracefully(30000);
     if (process_) CloseHandle(static_cast<HANDLE>(process_));
+    if (job_) CloseHandle(static_cast<HANDLE>(job_));
 }
 std::uint32_t GateProcess::id() const noexcept { return id_; }
 bool GateProcess::waitIdle(std::uint32_t milliseconds) const { return WaitForInputIdle(static_cast<HANDLE>(process_), milliseconds) == 0; }
