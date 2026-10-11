@@ -68,6 +68,17 @@ void run(const std::filesystem::path&shader){
     scene.setFeedback(core::Point{30,125},false,time+=.05,false);frame(time,place);check(scene.requiresFrames(time),"Menu highlight animates in");
     frame(time+.15,place);check(!scene.requiresFrames(time),"Highlight settles after 0.14 s");check(raster.stats().rasterizations==rasterBefore,"Pointer feedback never rasterizes");
     scene.setFeedback({},false,time+=.05,false);frame(time+.2,place);
+    // 2b. Out-of-order owner times (the live Projection crash class): a pose,
+    // feedback or query earlier than a time the scene already saw uses the
+    // latest time. Nothing fails, and a settled highlight never reopens.
+    {
+        check(scene.setFeedback(core::Point{30,125},false,time+=.05,false),"The menu highlight starts again");const double start=time;
+        frame(start-.03,place);check(scene.requiresFrames(start-.03)&&scene.requiresFrames(start),"An earlier pose and query after a later feedback are placed at the latest time");
+        check(!scene.setFeedback(core::Point{30,125},false,start-.04,false),"An earlier repeated feedback is an unchanged no-op");
+        frame(start+.15,place);check(!scene.requiresFrames(start)&&!scene.requiresFrames(start+.15),"Once settled at a later time, an earlier query never reopens the highlight");
+        check(raster.stats().rasterizations==rasterBefore,"Out-of-order feedback never rasterizes");
+        scene.setFeedback({},false,time+=.05,false);frame(time+.2,place);
+    }
     // 3. Steady tilt: numeric placement only.
     const auto gpuBefore=renderer.stats();allocations=0;counting=true;
     try{for(unsigned n=0;n<120;++n)frame(time+1./60,place*M::rotation(0,.000001*n,0));}catch(...){counting=false;throw;}counting=false;

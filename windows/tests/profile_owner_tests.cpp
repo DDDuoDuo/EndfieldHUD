@@ -132,6 +132,24 @@ void run(const std::filesystem::path&shader,const std::filesystem::path&resource
     controller.resume(time);const auto due=*owner->nextWakeTime(time);
     check(owner->deadline(due+3600)&&owner->state()->shownHours()!="1.05","Shared-clock deadline refreshes the live hours");
     controller.pause(due+3600);paint();
+    // 7b. Out-of-order owner times (the live Projection crash class): the host
+    // samples its time, a callback delivers a slightly later one, then calls
+    // still carry the earlier sample. The owner takes each at the latest time
+    // it saw: nothing fails, nothing refreshes twice, animations still settle
+    // and the lifetime never moves.
+    {
+        time=due+3600;paint();const double sampled=time,later=time+.05;
+        const auto lifetime=owner->state()->profile().accumulatedWorkSeconds;const auto shown=owner->state()->shownHours();
+        check(!owner->deadline(later)&&!owner->deadline(sampled)&&owner->state()->shownHours()==shown,"A deadline earlier than one already seen refreshes nothing");
+        owner->pointer({app::PointerKind::move,app::PointerButton::none,640,400},sampled);
+        check(owner->perform("profile:popoverClose",sampled)&&!owner->state()->popover()&&owner->perform("profile:backgroundMenu",sampled-.01)&&owner->state()->popover()==m::ProfilePopover::background,
+              "An earlier press opens the card theme menu");
+        paint(0);
+        check(owner->perform("profile:themeMenu",sampled)&&owner->state()->popover()==m::ProfilePopover::themeColor&&owner->perform("profile:popoverClose",sampled-.02)&&!owner->state()->popover(),
+              "Earlier presses move through and close the menus");
+        paint(0);paint(.5);
+        check(owner->page()->active()&&!owner->requiresFrames(time)&&owner->state()->profile().accumulatedWorkSeconds==lifetime,"The page settles after the latest time seen and the lifetime never moves");
+    }
     check(owner->flush(time),"Orderly flush");settle();
     const auto saved=ehud::data::ProfileStore(t.root).value();
     check(saved.name=="Synced"&&saved.gamePlayerID=="1234567890123"&&saved.themeColorHex=="0000FF"&&saved.thumbnailZoom==2&&saved.avatarFilename==gameAvatar&&saved.accumulatedWorkSeconds>=3780+3600,"profile.json holds the final record");

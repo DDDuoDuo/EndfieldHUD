@@ -67,7 +67,10 @@ struct NativeProfileScene::Impl {
         after[1].alphaMask=PlaneAlphaMask{M{},{0,0,272,canvasHeight},ns+".contrast.mask"};outMask=PlaneAlphaMask{M{},{0,0,backdropWidth,canvasHeight},ns+".backdrop.fade"};
         visibility.snap(1);shade.snap(1);
     }
-    void clock(double t)const{need(std::isfinite(t)&&t+1e-9>=time,"Profile scene requires a finite monotonic owner clock");}
+    // Owner time never runs backwards here: a time earlier than one already
+    // seen (a host sample taken before a callback delivered a later one) is
+    // the latest time, as the Mac's single CACurrentMediaTime never decreases.
+    double at(double t)const{need(std::isfinite(t),"Profile scene requires a finite owner clock");return std::max(t,time);}
     // Structure-preserving content events update changed leaves only.
     void apply(Part&part,const m::ProfileArtworkPart&plan){
         if(part.loaded&&ids(part.plan)==ids(plan)){
@@ -106,14 +109,14 @@ struct NativeProfileScene::Impl {
         if(!backdropMove)return art.backdrop.contentsRect;
         return lerp(cropFrom,art.backdrop.contentsRect,easeOut.value(std::clamp((now-*backdropMove)/backdropDuration,0.,1.)));
     }
-    void place(Part&part,const NativeProfilePose&pose,double alpha,double dy,bool highlights){
+    void place(Part&part,const NativeProfilePose&pose,double now,double alpha,double dy,bool highlights){
         part.placements.clear();
-        const double whole=part.whole.phase(pose.time);alpha*=part.whole.start?.3+.7*whole:1;dy+=part.whole.start?3*(1-whole):0;
+        const double whole=part.whole.phase(now);alpha*=part.whole.start?.3+.7*whole:1;dy+=part.whole.start?3*(1-whole):0;
         for(std::size_t n=0;n<part.plan.surfaces.size();++n){
             if(!part.index[n])continue;const auto&s=part.plan.surfaces[n];double factor=1,shift=0;
-            if(s.highlight&&highlights&&*s.highlight<feedback.size())factor=feedback[*s.highlight][s.rim?1:0].value(pose.time);
+            if(s.highlight&&highlights&&*s.highlight<feedback.size())factor=feedback[*s.highlight][s.rim?1:0].value(now);
             else if(s.highlight)factor=0;
-            else if(part.updates[n].start){const double phase=part.updates[n].phase(pose.time);factor=.3+.7*phase;shift=3*(1-phase);}
+            else if(part.updates[n].start){const double phase=part.updates[n].phase(now);factor=.3+.7*phase;shift=3*(1-phase);}
             part.placements.push_back({*part.index[n],pose.world*M::translation(s.frame.x,s.frame.y+dy+shift),float(pose.opacity*alpha*factor),std::span<const PlaneMask>(masks.data(),maskCount)});
         }
         part.scene.setPlacements(part.placements);part.scene.setGroupShutter(pose.shutter);
@@ -125,7 +128,7 @@ NativeProfileScene::~NativeProfileScene(){
     try{if(i.groupRegistered)(void)i.renderer->removeNativeGroup(i.ns+".backdrop");}catch(...){}
 }
 bool NativeProfileScene::syncContent(const m::ProfileArtwork&next,std::uint64_t revision,double now,const NativeProfileChange&change,bool reduce){
-    auto&i=*impl_;i.clock(now);
+    auto&i=*impl_;now=i.at(now);
     if(i.synced&&i.revision==revision&&i.fontRevision==i.raster.fontRevision())return false;
     const bool animate=!reduce;const auto previous=i.art;const bool hadPopover=i.popover->loaded&&!i.popover->plan.surfaces.empty();
     // A dismissed popover leaves a departing copy; switching removes it at once.
@@ -167,7 +170,7 @@ bool NativeProfileScene::syncContent(const m::ProfileArtwork&next,std::uint64_t 
     return true;
 }
 bool NativeProfileScene::animateWork(double now,bool reduce){
-    auto&i=*impl_;i.clock(now);if(reduce||!i.fields->loaded)return false;bool any{};
+    auto&i=*impl_;now=i.at(now);if(reduce||!i.fields->loaded)return false;bool any{};
     for(std::size_t n=0;n<i.fields->plan.surfaces.size();++n)if(i.fields->plan.surfaces[n].animation=="work"){i.fields->updates[n].start=now;any=true;}
     return any;
 }
@@ -180,21 +183,21 @@ bool NativeProfileScene::setBackdropImage(std::optional<NativeProfileBackdropIma
     i.photoRevision=std::max(i.photoRevision+1,image->revision);i.groupDirty=true;return true;
 }
 bool NativeProfileScene::setFeedback(std::optional<P>point,bool down,double now,bool reduce){
-    auto&i=*impl_;i.clock(now);if(i.hover==point&&i.pressed==down&&i.reduce==reduce)return false;
+    auto&i=*impl_;now=i.at(now);if(i.hover==point&&i.pressed==down&&i.reduce==reduce)return false;
     i.hover=point;i.pressed=down;i.reduce=reduce;i.feedbackTo(point,down,now);i.time=now;return true;
 }
 void NativeProfileScene::updatePose(const NativeProfilePose&pose){
-    auto&i=*impl_;i.clock(pose.time);need(i.synced,"Synchronize Personal Profile content before posing");
+    auto&i=*impl_;const double t=i.at(pose.time);need(i.synced,"Synchronize Personal Profile content before posing");
     need(pose.world.finite()&&pose.backdropWorld.finite()&&std::isfinite(pose.opacity)&&pose.opacity>=0&&pose.opacity<=1&&
          std::isfinite(pose.backdropOpacity)&&pose.backdropOpacity>=0&&pose.backdropOpacity<=1&&pose.ownerMasks.size()<=i.masks.size(),"Invalid Personal Profile pose");
     if(pose.shutter)validatePlaneShutter(*pose.shutter);
-    std::copy(pose.ownerMasks.begin(),pose.ownerMasks.end(),i.masks.begin());i.maskCount=pose.ownerMasks.size();i.shutter=pose.shutter;i.time=pose.time;
-    const double t=pose.time;const double visible=i.visibility.value(t);
-    i.place(*i.fields,pose,visible,0,true);i.place(*i.toolbar,pose,1,0,true);i.place(*i.popover,pose,1,0,true);
+    std::copy(pose.ownerMasks.begin(),pose.ownerMasks.end(),i.masks.begin());i.maskCount=pose.ownerMasks.size();i.shutter=pose.shutter;i.time=t;
+    const double visible=i.visibility.value(t);
+    i.place(*i.fields,pose,t,visible,0,true);i.place(*i.toolbar,pose,t,1,0,true);i.place(*i.popover,pose,t,1,0,true);
     if(i.departing){
         const double e=easeOut.value(std::clamp((t-*i.departStart)/dismissDuration,0.,1.));
         if(t>=*i.departStart+dismissDuration+.01){i.retire(i.departing);i.departStart.reset();i.rebuildEntries();}
-        else i.place(*i.departing,pose,1-e,-5*e,false);
+        else i.place(*i.departing,pose,t,1-e,-5*e,false);
     }
     // Text contrast: a child of the fields layer, below every field leaf.
     {   const double whole=i.fields->whole.phase(t),alpha=visible*(i.fields->whole.start?.3+.7*whole:1),dy=i.fields->whole.start?3*(1-whole):0;
@@ -248,7 +251,7 @@ bool NativeProfileScene::uploadResources(Renderer&r){
     return changed;
 }
 bool NativeProfileScene::requiresFrames(double now)const{
-    const auto&i=*impl_;if(i.reduce)return i.departing!=nullptr;
+    const auto&i=*impl_;now=std::max(now,i.time);if(i.reduce)return i.departing!=nullptr;
     if(i.departing||i.visibility.active(now)||i.shade.active(now)||i.backdropUpdate.active(now))return true;
     if(i.backdropMove&&now<*i.backdropMove+backdropDuration)return true;
     for(const auto&pair:i.feedback)for(const auto&t:pair)if(t.active(now))return true;

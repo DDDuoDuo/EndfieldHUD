@@ -86,6 +86,23 @@ void run(const std::filesystem::path&shader){Window window;gpu::Renderer rendere
     check(owner.perform("work:pause",now)&&owner.controller().snapshot(now).phase==m::WorkModePhase::paused&&saves.size()==savesBefore+1,"The accessible pause press pauses and checkpoints like its click");
     frame(.5);
     check(owner.perform("work:resume",now)&&owner.controller().snapshot(now).phase==m::WorkModePhase::running,"The accessible resume press resumes the stopwatch");frame();
+    // Out-of-order owner times (the live Projection crash class): the host
+    // samples its time, a callback delivers a later one, then the earlier
+    // sample arrives. The owner keeps the latest time it saw, like the Mac's
+    // single monotonic clock: nothing fails, no tracked second is lost or
+    // counted twice and the checkpointed lifetime never decreases.
+    {
+        const double sampled=now,later=now+.25;owner.wake(later);const auto savedBefore=saves.back();
+        check(owner.perform("work:pause",sampled)&&owner.controller().snapshot(later).phase==m::WorkModePhase::paused,"An earlier accessible press after a later wake pauses the stopwatch");
+        const auto paused=owner.controller().snapshot(later).elapsed;
+        check(saves.back()>=savedBefore&&std::abs(saves.back()-owner.controller().trackedWorkSeconds(later))<1e-9,"The pause checkpoints the total at the latest time seen, never a lower one");
+        const auto q=point({40,150});owner.pointer({a::PointerKind::move,a::PointerButton::none,q.x,q.y},sampled-.1);
+        check(owner.key({a::KeyKind::down,VK_SPACE},t::WorkModeKeyModifiers{},sampled-.05)&&owner.controller().snapshot(later).phase==m::WorkModePhase::running&&std::abs(owner.controller().snapshot(later).elapsed-paused)<1e-9,
+              "An earlier Space resumes at the latest time seen: no tracked time is invented");
+        const auto sample=modules.sample(sampled).presentation;owner.update(center,settings,sample,1,sampled);owner.upload(renderer);composition.setEntries(renderer,owner.entries());composition.present(renderer);owner.collected(renderer);
+        check(!owner.entries().empty()&&owner.requiresFrames(sampled)==owner.requiresFrames(later),"An earlier frame is posed and queried at the latest time seen");
+        now=later;
+    }
     check(owner.message({window.window,options.textMessage,123456,0},now)&&!owner.editing(),"Stale private field notice cannot reopen/edit a retired document");composition.detach(renderer);owner.shutdown(now);owner.release(renderer);done=true;check(renderer.stats().textures==0&&renderer.stats().meshes==0&&renderer.stats().nativeGroups==0&&!IsWindowVisible(window.window),"Detached owner retires all resources and never activates TSF, Focus or real UI");
 }
 }
