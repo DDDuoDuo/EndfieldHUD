@@ -17,6 +17,8 @@
 //   update(frame)                       once per presented frame, after Notes,
 //                                       with the source center plane, chrome
 //                                       settings, module presentation and opacity
+//   prewarm(frame)                      once, while the HUD is still closed and
+//                                       idle after launch (launch prewarm)
 //   requiresFrames(time)                finite animation demand on the shared clock
 //   nextWakeTime(now) / deadline(time)  one shared waitable timer; no module timer
 //   upload / entries(module) / floatingEntries / modalEntries / collected
@@ -149,8 +151,10 @@
 #include "core/source_desktop_chrome.hpp"
 #include "native/layer_scene.hpp"
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <optional>
 #include <span>
 #include <string>
@@ -266,6 +270,15 @@ public:
     virtual void setOverlayVisible(bool, double) {}
     virtual void overlayClosing(double time) { cancelInteraction(time); setOverlayVisible(false, time); }
     virtual void update(const ModuleFrame&) {}
+    // Launch prewarm (Mac AppDelegate prewarmDesktop): called at most once,
+    // while the HUD is still closed (setOverlayVisible(false) state) and the
+    // run is idle after launch, with the first opening's frame (the selected
+    // module's presentation, opacity 0). An owner may do its bounded
+    // first-update work here (fixed layout, bundled artwork decode, text
+    // shaping, a bounded executor job) so the first opening frame does not;
+    // it must not present, open OS providers, start motion or change state
+    // the user can observe. Default: nothing.
+    virtual void prewarm(const ModuleFrame&) {}
     virtual bool requiresFrames(double) const { return false; }
     virtual std::optional<double> nextWakeTime(double) const { return {}; }
     virtual bool deadline(double) { return false; } // true: artwork changed
@@ -376,12 +389,46 @@ public:
 // dynamic type name only, never its message (messages can contain paths).
 struct ModuleFailure { std::string owner, what, operation; };
 
+// The ONE host time (app/application.cpp): every owner call, deadline,
+// utility completion, message, pointer/key event and coverage step receives
+// a sample clamped to the latest time any owner was already handed. Owners
+// require non-decreasing times (their scenes need() them); a nested message
+// dispatched inside an owner call, or an owner reading the host clock inside
+// a callback, can hand out a later time than the host's own earlier sample,
+// so the host clamps at every hand-off instead of reusing a stale sample.
+class HostClock final {
+public:
+    // A finite sample at or after every earlier hand-off is returned as is;
+    // an earlier or non-finite one returns the latest hand-off (0 before any).
+    double operator()(double sample) noexcept {
+        if (std::isfinite(sample) && !(sample <= latest_)) latest_ = sample;
+        return std::isfinite(latest_) ? latest_ : 0.;
+    }
+    std::optional<double> latest() const noexcept { return std::isfinite(latest_) ? std::optional<double>(latest_) : std::nullopt; }
+private:
+    double latest_{-std::numeric_limits<double>::infinity()};
+};
+
 // Owner-thread registry. Registration allocates; routing on warm frames does
 // not. Owners must outlive their registration (remove() before destruction).
 class ModuleRegistry final {
 public:
     enum class Chain { pointerCapture, pointer, wheelCapture, wheel, keyCapture, key, filterKey, message, finishEditing, flush, count };
     explicit ModuleRegistry(bool isolateFailures = false) : isolate_(isolateFailures) {}
+    // The host time handed to owners (HostClock): requiresFrames,
+    // nextWakeTime and broadcast clamp it again before each owner, so an
+    // owner reached after another owner's nested dispatch never receives an
+    // earlier time; the host clamps its own calls through hostTime().
+    double hostTime(double sample) noexcept { return clock_(sample); }
+    std::optional<double> latestHostTime() const noexcept { return clock_.latest(); }
+    // The owner whose isolated call is running (innermost; null outside any
+    // owner call) and the registered owner at an address (UtilityExecutor
+    // completion attribution; the address is compared, never dereferenced).
+    ModuleOwner* current() const noexcept { return current_; }
+    ModuleOwner* registered(const void* address) const noexcept {
+        for (const auto& s : slots_) if (s.owner == address) return s.owner;
+        return nullptr;
+    }
     void setFailureObserver(std::function<void(const ModuleFailure&)> observer) { observer_ = std::move(observer); }
     void setIsolation(bool value) noexcept { isolate_ = value; }
     bool isolating() const noexcept { return isolate_; }
@@ -443,6 +490,8 @@ private:
     std::array<std::vector<Slot*>, static_cast<std::size_t>(Chain::count)> chains_;
     std::vector<ModuleFailure> failures_;
     std::function<void(const ModuleFailure&)> observer_;
+    HostClock clock_;
+    ModuleOwner* current_{};
     bool isolate_{};
     unsigned iterating_{};
     struct Iteration {
@@ -456,10 +505,18 @@ private:
     const Slot* find(const ModuleOwner&) const noexcept;
     void rebuild();
     void disable(Slot&, const char* what, std::string_view operation);
+    struct Current {
+        ModuleRegistry& registry; ModuleOwner* previous;
+        Current(ModuleRegistry& r, ModuleOwner* owner) noexcept : registry(r), previous(r.current_) { r.current_ = owner; }
+        ~Current() { registry.current_ = previous; }
+        Current(const Current&) = delete;
+        Current& operator=(const Current&) = delete;
+    };
     template <class F> void run(Slot& slot, F&& f, std::string_view operation) {
         // A non-isolated (essential) owner's failure ends the run: main.cpp's
         // fatal record then names this operation and owner.
         const FatalStage stage(operation, slot.owner->name());
+        const Current current(*this, slot.owner);
         if (!isolate_ || slot.owner->essential()) { f(); return; }
         try { f(); }
         catch (const std::exception& e) { disable(slot, typeid(e).name(), operation); }

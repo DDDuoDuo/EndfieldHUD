@@ -162,8 +162,35 @@ public:
 private:
     Clock::time_point previousTime_;ProcessUsage previousUsage_;Json::Array rows_;
 };
+// Opt-in startup trace (ApplicationOptions::startupTrace): bounded numeric
+// rows only, never text, paths or document content. It times launch -> the
+// first presented frame and the frame pacing of the first two openings (the
+// cold first opening after launch and a warm one): per frame the wall time
+// since the opening request and the CPU time of present(). Frame storage is
+// reserved up front, so recording allocates nothing per frame.
+class StartupTrace final {
+public:
+    static constexpr std::size_t frameLimit = 360;
+    struct Frame { double atMS{}, cpuMS{}; };
+    struct Opening { double requestedMS{-1}, firstFrameMS{-1}, openedMS{-1}; std::vector<Frame> frames; };
+    explicit StartupTrace(Clock::time_point launch);
+    void opening(Clock::time_point at);                          // an opening of the concealed HUD was requested
+    void frame(Clock::time_point begin, Clock::time_point end);  // a presented frame and its present() duration
+    void opened(Clock::time_point at);                           // the source entrance completed
+    void stage(const char* name, Clock::time_point begin, Clock::time_point end); // prewarm stages
+    bool complete() const noexcept { return count_ >= openings_.size() && !recording_; }
+    bool recordsOpening() const noexcept { return count_ < openings_.size(); }
+    Json report(const Json::Array& startupStages, double preparedMS) const;
+private:
+    Clock::time_point launch_;
+    std::array<Opening, 2> openings_;
+    std::size_t count_{};
+    bool recording_{};
+    std::optional<double> processToFirstFrameMS_, launchToFirstFrameMS_;
+    Json::Array stages_;
+};
 struct LiveProbe {
-    enum Stage {frame,backdrop,sourcePose,materials,nativeLabels,notesPose,publication,draw,pointer,key,message,editTransition,count};
+    enum Stage {frame,backdrop,sourcePose,materials,nativeLabels,notesPose,publication,draw,pointer,key,message,editTransition,prepare,count};
     struct Timing{std::uint64_t calls{};double total{},maximum{};};
     struct Scope {
         Timing*value{};Clock::time_point start{};
@@ -175,6 +202,15 @@ struct LiveProbe {
         ~Scope(){if(value){const auto ms=milliseconds(start);++value->calls;value->total+=ms;value->maximum=std::max(value->maximum,ms);}}
     };
     bool enabled{};int phase{-1};double phaseStart{};std::array<Timing,count> timings{};Json::Array rows;
+    // Per owner (fixed storage; names are the owners' stable name() views):
+    // frame update and upload costs of the probed phase.
+    struct OwnerTiming{std::string_view name;Timing update,upload;};
+    std::array<OwnerTiming,64> owners{};std::size_t ownerCount{};
+    void owner(std::string_view name,bool upload,Clock::time_point start)noexcept{
+        const auto ms=milliseconds(start);OwnerTiming*slot=nullptr;
+        for(std::size_t n=0;n<ownerCount;++n)if(owners[n].name==name){slot=&owners[n];break;}
+        if(!slot){if(ownerCount==owners.size())return;slot=&owners[ownerCount++];slot->name=name;}
+        auto&t=upload?slot->upload:slot->update;++t.calls;t.total+=ms;t.maximum=std::max(t.maximum,ms);}
     Scope measure(Stage stage){return enabled?Scope{&timings[stage],Clock::now()}:Scope{};}
     void flush(double time);
     void next(int value,double time);
@@ -218,6 +254,11 @@ struct Application::Impl {
         void constructing(std::string_view area) { constructing_ = area; }
         void abandon(std::string_view area) noexcept;
         void clearServices() noexcept { services_.clear(); }
+        // The area whose factory published a service (empty: the host's own).
+        std::string_view publisher(std::string_view key) const noexcept {
+            const auto found = services_.find(key);
+            return found == services_.end() ? std::string_view{} : std::string_view(found->second.publisher);
+        }
     protected:
         void publishService(std::string_view key, void* value, const std::type_info& type) override;
         void* findService(std::string_view key, const std::type_info& type) const override;
@@ -239,6 +280,8 @@ struct Application::Impl {
     int runVisible();
     void shutdownVisible();
     int runHiddenVerification();
+    int runStartupTrace();      // hidden --startup-trace: cold and warm openings on the synthetic clock
+    void writeStartupTrace();   // production ENDFIELDHUD_STARTUP_TRACE: once, numbers only
     void cleanup();
 
     // --- lifecycle --------------------------------------------------------------
@@ -275,6 +318,11 @@ struct Application::Impl {
     void scheduleDeadline();
     void refresh(double time);
     bool present(double time, bool submit);
+    const WatchSessionFrame* poseShell(double time); // sampled source frame, materials, captions and chrome
+    // Launch prewarm (Mac AppDelegate prewarmDesktop/prewarmDesktopResources):
+    // once, while the HUD is still closed and idle after launch.
+    void prewarm();
+    bool prewarmed{};
     void publishNative();
     bool pointerLocked();
     std::vector<modules::NotesShelfChoice> shelfChoices();
@@ -282,6 +330,9 @@ struct Application::Impl {
     void importReaderReference(std::uint64_t generation, std::string path, std::shared_ptr<void> lease, double time);
     void activate(const WatchActivation&);
     void registerModule(std::unique_ptr<ModuleOwner>&);
+    void attributeCompletions(UtilityExecutor&);
+    void traceOpening(double time);
+    void traceOpened(double time);
     native::ScreenReaderPeerHooks peerHooks();
     VolumeModuleHooks screenHooks();
     void unregisterModule(std::unique_ptr<ModuleOwner>&) noexcept;
@@ -294,6 +345,7 @@ struct Application::Impl {
     void concealed(double time);              // the HUD finished closing (or was forced) and is hidden
     void systemChange(std::uint32_t message, double time); // WM_TIMECHANGE / WM_SETTINGCHANGE / resume
     void drainUtility(double time);           // explicit barrier + utilityCompleted (hidden coverage)
+    void utilityCompleted();                  // the shared executors' coalesced completion notice
     void finishAreaPicker(ApplicationFileResult);
     void constructAudio();
     bool routePointer(ModuleOwner&, const PointerPolicy&, const PointerEvent&, double time, core::Point);
@@ -368,6 +420,11 @@ struct Application::Impl {
     bool onBeforeKeyTranslation(const NativeMessage&);
     std::optional<std::intptr_t> onAppMessage(const NativeMessage&);
     bool onKey(const KeyEvent&);
+    // HUDSourceWatchView.mouseDown -> SystemHUDView.mouseDown fallthrough: a
+    // left press no source control or owner took closes the HUD outside the
+    // displayed circle (radius 310 around the 1000 x 640 design center).
+    std::optional<core::Point> coreDesignPoint(core::Point client) const;
+    bool backgroundPressCloses(core::Point client);
     OverlayCursor onCursor(core::Point);  // WM_SETCURSOR (OverlayCallbacks::cursorAt)
     ModuleCursor cursorAt(core::Point);   // the owners' answer in pointer routing order
     void onFocus(bool);
@@ -395,6 +452,7 @@ struct Application::Impl {
     void constructSettings();
     void createSettings(const ehud::data::Settings& loaded);
     void ensureGame(double time);
+    void constructGame(double time);
     void requestMapGeography();
     void constructTray();
     bool loadTrayIcon();
@@ -637,10 +695,19 @@ struct Application::Impl {
     ModuleAppearance moduleAppearance;
     double canvasOpenedAt{}, canvasClosedAt{}, canvasCapturedOpacity{1};
     bool concealedBroadcast{true}; // overlayConcealed was delivered for the current closed state
-    // Area clock: the shared monotonic clock, or in hidden verification the
-    // latest synthetic time presented or broadcast (never the wall clock).
+    // The ONE host time (ModuleRegistry::hostTime, HostClock). Every owner,
+    // deadline, utility completion, message, pointer/key event and coverage
+    // step receives hostTime(sample) at the moment of the call: the sample
+    // clamped to the latest time any owner was handed, so a time an owner
+    // read inside a callback, or a nested message's later sample, is never
+    // followed by an earlier one. now() samples the shared monotonic clock
+    // (visible) or the latest synthetic time presented or broadcast (hidden
+    // verification, never the wall clock) and clamps it the same way; inside
+    // these member functions it hides the raw app::now().
     double hiddenClock{};
-    double areaClock() const { return visibleMode() ? now() : hiddenClock; }
+    double hostTime(double sample) noexcept { return registry.hostTime(sample); }
+    double now() { return hostTime(visibleMode() ? endfield::app::now() : hiddenClock); }
+    double areaClock() { return now(); }
     gpu::DesktopBackdropState backdropState{0,0,true,false,.75,.63,0};
     // System overlay lifecycle (Mac AppDelegate + OverlayController policy).
     core::SystemOverlayLifecycle lifecycle;
@@ -688,11 +755,45 @@ struct Application::Impl {
         if (owner && registry.contains(*owner)) { (void)registry.guard(*owner, std::forward<F>(f), operation); return; }
         f();
     }
+    // Services published by a module area (Power, updates, app shortcuts,
+    // Mac import) run under that area owner's isolation; a disabled area's
+    // service is skipped (false).
+    ModuleOwner* serviceOwner(std::string_view key) const noexcept;
+    template <class F> bool isolateService(std::string_view key, const char* operation, F&& f) {
+        if (auto* owner = serviceOwner(key)) return registry.guard(*owner, std::forward<F>(f), operation);
+        f(); return true;
+    }
+    // Projection is a host workspace on the HUD window, not a module owner:
+    // its calls share the registry's failure isolation through one slot. A
+    // production failure closes Projection without animation (the HUD stays
+    // closed) and leaves it unavailable for this run, like a disabled module.
+    std::unique_ptr<ModuleOwner> projectionIsolation;
+    unsigned projectionDepth{};
+    bool projectionBroken{};
+    bool projectionShown() const noexcept { return projection && !projectionBroken && projection->presented(); }
+    bool projectionAvailable() const noexcept { return !projectionBroken && (!projectionIsolation || registry.enabled(*projectionIsolation)); }
+    template <class F> bool projectionCall(const char* operation, F&& f) {
+        if (!projection || projectionBroken) return false;
+        bool succeeded = true;
+        ++projectionDepth;
+        try {
+            if (projectionIsolation && registry.contains(*projectionIsolation)) succeeded = registry.guard(*projectionIsolation, std::forward<F>(f), operation);
+            else f();
+        } catch (...) { --projectionDepth; throw; }
+        --projectionDepth;
+        if (!succeeded) projectionBroken = true;
+        // The outermost call tears down (a nested failure leaves the outer call's workspace alive).
+        if (projectionBroken && projectionDepth == 0) projectionFailed();
+        return succeeded && !projectionBroken;
+    }
+    void projectionFailed();
     LiveProbe probe;
+    std::unique_ptr<StartupTrace> startupTrace;
+    bool startupTraceWritten{};
     double diagnosticStart{};
     bool diagnosticEditing{}, diagnosticFinished{};
     // Fixed WM_APP routes (unchanged from the preview) and the service generation.
-    static constexpr UINT themeColorMessage=WM_APP+239,hudDropMessage=WM_APP+236,restartDeclinedMessage=WM_APP+237,restartMessage=WM_APP+238,eventChangedMessage=WM_APP+194,utilityMessage=WM_APP+195,mediaPickerMessage=WM_APP+196,
+    static constexpr UINT prewarmMessage=WM_APP+240,themeColorMessage=WM_APP+239,hudDropMessage=WM_APP+236,restartDeclinedMessage=WM_APP+237,restartMessage=WM_APP+238,eventChangedMessage=WM_APP+194,utilityMessage=WM_APP+195,mediaPickerMessage=WM_APP+196,
         sharedMediaMessage=WM_APP+223,archiveChangedMessage=WM_APP+224,systemServiceMessage=WM_APP+225,clipboardChangedMessage=WM_APP+226,
         readerChangedMessage=WM_APP+227,readerActionMessage=WM_APP+228,projectionActionMessage=WM_APP+229,projectionDropMessage=WM_APP+230,
         mapChangedMessage=WM_APP+231,calendarChangedMessage=WM_APP+232,audioMessage=WM_APP+233,trayMessage=WM_APP+210;

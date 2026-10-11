@@ -37,8 +37,49 @@ Json counters(const Snapshot&a,const Snapshot&b){return Json::Object{
     {"localImageBuilds",std::int64_t(b.frame.localImageBuilds-a.frame.localImageBuilds)}};}
 }
 
+// watch_session_preview --startup-trace: the production owner with the module
+// coverage inputs, hidden on the synthetic clock. After the post-launch idle
+// work settled (a user summons after launch), the first opening (cold) and a
+// second one (warm) run through the production lifecycle at 60 Hz; each
+// present() is timed (CPU wall time; GPU submission included, no vsync
+// wait), utility completions are delivered between frames as the message
+// loop would, and the report is the production trace (numbers only).
+int Application::Impl::runStartupTrace(){
+    if(!startupTrace)throw std::logic_error("Startup trace requires its output");
+    double t=hostTime(args.benchmarkEpoch+10);
+    const auto settle=[&](double at){
+        if(utility&&(utility->stats().completed||(longWork&&longWork->stats().completed)))utilityCompleted();
+        if(lifecycleOpening&&!closing&&session->phase()==core::VisibilityPhase::visible){const auto token=*lifecycleOpening;lifecycleOpening.reset();traceOpened(at);perform(lifecycle.didOpen(token),at);}
+        if(lifecycleClosing&&session->phase()==core::VisibilityPhase::concealed){const auto token=*lifecycleClosing;lifecycleClosing.reset();concealed(at);perform(lifecycle.didClose(token),at);}
+    };
+    // Production selects Map at construction (OverlayController.lastSystemModule)
+    // so the first opening shows it without a module transition, and applies
+    // the loaded preference record before any opening.
+    if(notes&&notes->selected()!=core::Module::map){notes->select(core::Module::map,hostTime(t));t+=1;}
+    configurationPending=true;applyConfiguration(t);
+    // The launch prewarm, then the run idles: queued post-launch work finishes.
+    if(!args.startupTraceWithoutPrewarm)prewarm();
+    if(utility){utility->waitIdle();if(longWork)longWork->waitIdle();utilityCompleted();}
+    for(unsigned opening=0;opening<2;++opening){
+        perform(opening?lifecycle.reopen():lifecycle.toggle(),t);
+        for(unsigned frame=0;frame<150&&lifecycle.phase()!=core::SystemOverlayPhase::open;++frame){t=hostTime(t+1./60);
+            const auto begin=Clock::now();present(t,true);startupTrace->frame(begin,Clock::now());settle(t);}
+        need(lifecycle.phase()==core::SystemOverlayPhase::open,"Traced opening completes");
+        for(unsigned frame=0;frame<30;++frame){t=hostTime(t+1./60);present(t,true);settle(t);}
+        perform(lifecycle.toggle(),t);
+        for(unsigned frame=0;frame<150&&lifecycle.phase()!=core::SystemOverlayPhase::closed;++frame){t=hostTime(t+1./60);present(t,true);settle(t);}
+        need(lifecycle.phase()==core::SystemOverlayPhase::closed,"Traced closing completes");
+        t+=2;
+    }
+    need(startupTrace->complete(),"Both traced openings completed");
+    writeStartupTrace();std::cout<<"Wrote hidden startup trace\n";
+    shutdownVisible();
+    return 0;
+}
+
 int Application::Impl::runHiddenVerification(){
     if(args.mode!=ApplicationMode::hiddenBenchmark)throw std::logic_error("Hidden verification requires the hidden benchmark mode");
+    if(!args.startupTrace.empty())return runStartupTrace();
     const auto start=args.benchmarkEpoch;const auto deviceInfo=renderer.deviceInfo();unsigned lifecycleChecks{};
         auto snapshot=[&]{return Snapshot{renderer.stats(),renderer.sourceGraphics().stats(),rasterizer.stats(),session->frameStats(),session->stats()};};Json::Array rows,images;
         if(!args.snapshots.empty()){need(fs::create_directory(args.snapshots),"Cannot create new snapshot directory");ehud::data::detail::validateRoot(args.snapshots);}
@@ -91,7 +132,8 @@ int Application::Impl::runHiddenVerification(){
         const auto areaFor=[&](const ModuleOwner*owner)->ExternalModule*{for(auto&area:externalModules)if(area.owner.get()==owner)return &area;return nullptr;};
         const auto runArea=[&](ExternalModule&area,std::optional<core::Module> module,unsigned cycle,double begin){
             if(!registry.enabled(*area.owner))return;
-            auto&counts=areaCounts[area.name];double last=std::max(begin,areaLatest);
+            // Coverage steps run on the one host time (ModuleRegistry::hostTime).
+            auto&counts=areaCounts[area.name];double last=hostTime(std::max(begin,areaLatest));
             ModuleCoverage step;step.module=module;step.cycle=cycle;step.time=last;
             step.present=[&](double at){need(at>=last,"Area coverage presents on a non-decreasing clock");last=at;present(at,true);};
             step.drain=[&]{drainUtility(last);};
@@ -104,16 +146,74 @@ int Application::Impl::runHiddenVerification(){
             step.check=[&](bool value,std::string_view why){++counts.checks;if(!value)throw std::runtime_error(std::string(why));};
             step.message=[&](std::uint32_t id,std::uintptr_t wParam,std::intptr_t lParam){
                 const NativeMessage m{host.hwnd(),id,wParam,lParam};
-                return registry.first(ModuleRegistry::Chain::message,[&](ModuleOwner&o,const ModuleRouting&){return o.message(m,last);},"message")!=nullptr;};
+                return registry.first(ModuleRegistry::Chain::message,[&](ModuleOwner&o,const ModuleRouting&){return o.message(m,hostTime(last));},"message")!=nullptr;};
             ++counts.steps;
             try{area.owner->coverage(step);}catch(const std::exception&e){throw std::runtime_error("Module area "+area.name+" coverage: "+e.what());}
             areaLatest=std::max(areaLatest,last);
         };
         if(args.moduleCoverage){
-            double time=at(100);open(time);present(time+1,true);time+=2;
+            double time=at(100);
             // Host integration checks (counted in hostIntegrationChecks) and the
             // UI Automation helpers they share.
             const auto hostCheck=[&](bool value,const std::string&why){need(value,why.c_str());++hostChecks;};
+            // Build-time hud.hlsl bytecode (native/renderer.shaders.cmake) replaced the launch-time compilation.
+            if(gpu::Renderer::shadersEmbedded())hostCheck(renderer.stats().embeddedShaders,"The renderer creates its programs from the build-time hud.hlsl bytecode");
+            // The launch prewarm (run here while concealed, as after launch) poses
+            // the first opening offscreen and leaves the HUD concealed and hidden.
+            hostCheck(!prewarmed&&session->phase()==core::VisibilityPhase::concealed,"The HUD is concealed before the launch prewarm");
+            prewarm();
+            hostCheck(prewarmed&&session->phase()==core::VisibilityPhase::concealed&&!session->currentFrame()&&!host.stats().visible&&!IsWindowVisible(static_cast<HWND>(host.hwnd())),
+                "The launch prewarm poses the first opening offscreen and conceals the HUD again");
+            open(time);present(time+1,true);time+=2;
+            // Before any module is shown (every owner receives these real host
+            // calls). The ONE host time (ModuleRegistry::hostTime): an owner whose
+            // deadline() dispatches a nested event with a later time (a
+            // capture-lost or activation message inside a live call, an
+            // owner reading the clock) is followed by the host's later
+            // calls with the earlier wake sample. No owner may then receive
+            // a time earlier than one it already saw (the live RCs died with
+            // "Event persistence requires finite monotonic owner time" and
+            // "Projection controls require a finite monotonic owner clock").
+            {
+                struct ClockProbe final:ModuleOwner{
+                    std::string id;ModuleRouting route;mutable double latest{-1};mutable unsigned calls{},regressions{};
+                    std::function<void(double)>nestedDeadline,nestedMessage;std::uint32_t consumes{};
+                    explicit ClockProbe(std::string n):id(std::move(n)){route.message=0;}
+                    void see(double t)const{++calls;if(!std::isfinite(t)||t<latest)++regressions;latest=std::max(latest,t);}
+                    std::string_view name()const noexcept override{return id;}
+                    ModuleRouting routing()const noexcept override{return route;}
+                    void setAppearance(const ModuleAppearance&,double t)override{see(t);}
+                    void setOverlayVisible(bool,double t)override{see(t);}
+                    void overlayClosing(double t)override{see(t);}
+                    void update(const ModuleFrame&f)override{see(f.time);}
+                    bool requiresFrames(double t)const override{see(t);return false;}
+                    std::optional<double>nextWakeTime(double t)const override{see(t);return std::nullopt;}
+                    bool deadline(double t)override{see(t);if(auto f=std::exchange(nestedDeadline,{}))f(t);return false;}
+                    bool message(const NativeMessage&m,double t)override{see(t);if(auto f=std::exchange(nestedMessage,{}))f(t);return consumes&&m.message==consumes;}
+                    void focus(bool,double t)override{see(t);}
+                    bool hostEvent(const HostEvent&,double t)override{see(t);return false;}
+                };
+                ClockProbe first("hostClockProbeFirst"),second("hostClockProbeSecond");registry.add(first);registry.add(second);
+                // The wake: the earlier owner's deadline dispatches a later host event.
+                const double wake=hostTime(time);
+                first.nestedDeadline=[&](double t){broadcast(HostEvent::Kind::settingsChanged,t+.25);};
+                onDeadline(wake);
+                hostCheck(first.regressions==0&&second.regressions==0&&second.calls>=2&&second.latest>=wake+.25,
+                    "After a nested later event inside an owner's deadline, every later owner and the host's own calls receive the same or a later time");
+                // A WM_APP notice: the first owner in the message chain dispatches a
+                // later deadline, the second consumes the notice afterwards.
+                const auto id=areaHost?areaHost->registerMessage():std::uint32_t(WM_APP+0x3fff);second.consumes=id;
+                first.nestedMessage=[&](double t){onDeadline(t+.5);};
+                const auto latest=second.latest;
+                (void)onAppMessage(NativeMessage{host.hwnd(),id,0,0});
+                hostCheck(first.regressions==0&&second.regressions==0&&second.latest>=latest+.5,
+                    "A message routed after a nested later deadline is handed the later host time");
+                // The registry's own clamps (frame demand, wake scheduling, broadcasts).
+                (void)registry.requiresFrames(wake);(void)registry.nextWakeTime(wake);(void)registry.broadcast({HostEvent::Kind::settingsChanged,0},wake);
+                hostCheck(first.regressions==0&&second.regressions==0,"Frame demand, wake scheduling and broadcasts never hand an earlier time");
+                registry.remove(first);registry.remove(second);
+                time=std::max(time,hostTime(time))+.5;
+            }
             using Microsoft::WRL::ComPtr;
             const auto textProperty=[&](IUnknown*element,PROPERTYID id)->std::string{
                 ComPtr<IRawElementProviderSimple>simple;std::string out;if(!element||FAILED(element->QueryInterface(IID_PPV_ARGS(&simple))))return out;
@@ -585,14 +685,19 @@ int Application::Impl::runHiddenVerification(){
             {const double hostTime=time+1;suspend(Suspension::system,hostTime);resume(Suspension::system,hostTime+.1);
              systemChange(WM_TIMECHANGE,hostTime+.2);systemChange(WM_SETTINGCHANGE,hostTime+.3);drainUtility(hostTime+.4);time=hostTime+.5;}
             // Production lifecycle and the red power button over the same owner.
-            // Real event routes (onKey/onPointer) read the host clock, so this
-            // phase continues on that clock after the synthetic module timeline.
+            // Real event routes (onKey/onPointer) read the host time (here the
+            // synthetic clock), so this phase continues on it.
             if(quitConfirmation&&!quitButtons.empty()){
                 const auto settle=[&](double t){
                     if(lifecycleOpening&&!closing&&session->phase()==core::VisibilityPhase::visible){const auto token=*lifecycleOpening;lifecycleOpening.reset();perform(lifecycle.didOpen(token),t);}
                     if(lifecycleClosing&&session->phase()==core::VisibilityPhase::concealed){const auto token=*lifecycleClosing;lifecycleClosing.reset();quitConfirmation->hide(t);concealed(t);perform(lifecycle.didClose(token),t);}
                 };
-                const auto run=[&](double from,double seconds){double t=from;for(unsigned n=0;n<=unsigned(seconds*60);++n){t=from+double(n)/60;present(t,true);settle(t);if(stopping)break;}return t;};
+                const auto run=[&](double from,double seconds){double t=from;for(unsigned n=0;n<=unsigned(seconds*60);++n){t=from+double(n)/60;
+                    try{present(t,true);settle(t);}catch(const std::exception&e){const auto&shown=notes->modulePresentation();
+                        throw std::runtime_error("Lifecycle frame at "+std::to_string(t)+" phase="+std::to_string(int(lifecycle.phase()))+" visibility="+std::to_string(int(session->phase()))+
+                            " selected="+std::string(core::moduleIdentifier(notes->selected()))+" current="+std::string(core::moduleIdentifier(shown.current.module))+
+                            " incoming="+(shown.incoming?std::string(core::moduleIdentifier(shown.incoming->module)):std::string("none"))+": "+e.what());}
+                    if(stopping)break;}return t;};
                 const auto key=[&](std::uint32_t value){need(onKey({KeyKind::down,value}),"The modal card consumes the key");(void)onKey({KeyKind::up,value});};
                 double t=std::max(now(),time+2);
                 const auto lifecycleCheck=[&](bool value,const char*why){need(value,why);++lifecycleChecks;};
@@ -605,6 +710,43 @@ int Application::Impl::runHiddenVerification(){
                 lifecycleCheck(lifecycle.toggle().empty()&&lifecycle.reopen().empty(),"Summons during closing never reopen");
                 t=run(t,1.2);lifecycleCheck(lifecycle.phase()==core::SystemOverlayPhase::closed&&lifecycle.lastModule()==core::Module::notes,"Close retains the last module");
                 perform(lifecycle.reopen(),t);t=run(t,1.2);lifecycleCheck(lifecycle.phase()==core::SystemOverlayPhase::open&&notes->selected()==core::Module::notes,"Relaunch reopens on the last module");
+                // SystemHUDView.mouseDown fallthrough through the real pointer route:
+                // a press on the side of the screen (the transparent overlay
+                // outside the displayed circle) closes the HUD with the normal
+                // closing animation; empty space inside the circle keeps it open.
+                {
+                    const auto outsideCheck=[&](bool value,const char*why){need(value,why);++hostChecks;};
+                    const core::Point side{2,metrics.height*.5},corner{metrics.width-2,metrics.height-2};
+                    outsideCheck(backgroundPressCloses(side)&&backgroundPressCloses(corner),"Presses on the sides and corners of the screen fall outside the displayed circle");
+                    outsideCheck(onPointer({PointerKind::down,PointerButton::left,side.x,side.y})&&lifecycle.phase()==core::SystemOverlayPhase::closing&&closing&&session->phase()==core::VisibilityPhase::closing,
+                        "A press on the side of the screen plays the normal closing animation");
+                    (void)onPointer({PointerKind::up,PointerButton::left,side.x,side.y});
+                    t=run(t,1.2);outsideCheck(lifecycle.phase()==core::SystemOverlayPhase::closed&&session->phase()==core::VisibilityPhase::concealed,"The outside press finishes closing like Escape");
+                    perform(lifecycle.reopen(),t);
+                    // During the entrance the press is queued: the HUD closes once opening completes.
+                    t=run(t,.05);outsideCheck(lifecycle.phase()==core::SystemOverlayPhase::opening&&backgroundPressCloses(corner),"A press during the entrance is a background press");
+                    (void)onPointer({PointerKind::down,PointerButton::left,corner.x,corner.y});(void)onPointer({PointerKind::up,PointerButton::left,corner.x,corner.y});
+                    t=run(t,2.4);outsideCheck(lifecycle.phase()==core::SystemOverlayPhase::closed,"A press during the entrance closes the HUD after it opened");
+                    perform(lifecycle.reopen(),t);t=run(t,1.2);
+                    outsideCheck(lifecycle.phase()==core::SystemOverlayPhase::open&&notes->selected()==core::Module::notes,"The HUD reopens on its module after an outside close");
+                    // Empty space inside the circle, outside every control and owner.
+                    std::optional<core::Point> inside;
+                    if(chromePlan&&chromePlan->projection().center){
+                        const auto plane=core::Projection::viewport(gpu::layerViewportProjection(metrics.pixelWidth,metrics.pixelHeight)*core::Matrix4::scale(metrics.scale,metrics.scale)**chromePlan->projection().center,metrics.pixelWidth,metrics.pixelHeight);
+                        for(double radius=300;radius>=180&&!inside;radius-=15)for(unsigned degrees=0;degrees<360&&!inside;degrees+=10){
+                            const double a=degrees*3.14159265358979323846/180;const auto q=plane.project({500+radius*std::cos(a),320+radius*std::sin(a)});if(!q)continue;
+                            const core::Point p{q->x/metrics.scale,q->y/metrics.scale};
+                            if(p.x>0&&p.y>0&&p.x<metrics.width&&p.y<metrics.height&&!session->sourceControlAt(p,centerLogoMainID)&&!registry.covers(p)&&!clockPoint(p)&&!notes->covers(p))inside=p;}
+                    }
+                    outsideCheck(inside&&!backgroundPressCloses(*inside),"Empty space inside the displayed circle belongs to the HUD");
+                    // The decision is the press's (SystemHUDView.mouseDown). Its release is
+                    // withheld here: a left release routed to the hidden Reader after a
+                    // settings change re-syncs its unposed canvas and the next publish
+                    // throws "Place Reader before upload" (tools/reader_preview.cpp,
+                    // reported to the Reader owner).
+                    if(inside){(void)onPointer({PointerKind::down,PointerButton::left,inside->x,inside->y});t=run(t,.4);
+                        outsideCheck(lifecycle.phase()==core::SystemOverlayPhase::open&&!closing,"A press inside the displayed circle keeps the HUD open");}
+                }
                 // DataRootRestart through the host's own members (a gate opened
                 // for hidden coverage only): a failed save declines it.
                 const auto restartCheck=[&](bool value,const char*why){need(value,why);++hostChecks;};
@@ -647,6 +789,9 @@ int Application::Impl::runHiddenVerification(){
                 lifecycleCheck(registry.covers({metrics.width*.5,metrics.height*.5})&&registry.covers({1,1}),"The card covers every underlying control");
                 key(VK_ESCAPE);t=run(t,.4);lifecycleCheck(!quitConfirmation->presented()&&lifecycle.phase()==core::SystemOverlayPhase::open&&!quitRequested,"Escape cancels and keeps the HUD open");
                 press(t+1.1);t=run(t+1.1,.4);const auto cancel=quitConfirmation->actionPoint(false);need(cancel.has_value(),"Cancel projects through the tilted card");
+                // A modal card unwinds first: a press outside the circle stays with it.
+                (void)onPointer({PointerKind::down,PointerButton::left,2,metrics.height*.5});(void)onPointer({PointerKind::up,PointerButton::left,2,metrics.height*.5});t=run(t,.2);
+                restartCheck(quitConfirmation->presented()&&lifecycle.phase()==core::SystemOverlayPhase::open&&!closing,"A press outside the circle while the quit card is up stays with the card");
                 const auto click=[&](core::Point p){need(onPointer({PointerKind::down,PointerButton::left,p.x,p.y}),"The card consumes the press");need(onPointer({PointerKind::up,PointerButton::left,p.x,p.y}),"The card consumes the release");};
                 click({cancel->x,cancel->y});t=run(t,.4);lifecycleCheck(!quitConfirmation->presented()&&!quitRequested,"Projected Cancel dismisses the card");
                 press(t+1.1);t=run(t+1.1,.4);key(VK_RETURN);t=run(t,.4);lifecycleCheck(!quitConfirmation->presented()&&!quitRequested,"Return activates the initially focused Cancel");

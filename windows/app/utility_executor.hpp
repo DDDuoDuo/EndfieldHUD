@@ -29,6 +29,13 @@ public:
     // false means full; work was never started. The caller retains its latest
     // immutable save and retries on a completion rather than starting a timer.
     bool submit(Route,Work,Completion);
+    // Owner attribution for the host's failure isolation (ModuleRegistry):
+    // `current` names the module owner whose call is running when work is
+    // submitted (null: the host's own work); drain() hands each attributed
+    // completion to `run`, which calls it under that owner's isolation, so a
+    // failing completion disables only its module. Owner thread only.
+    using Attribution=const void*;
+    void attribute(std::function<Attribution()> current,std::function<void(Attribution,const std::function<void()>&)> run);
     std::size_t drain();
     Stats stats()const;
     // Explicit shutdown/flush barrier only; never call during pointer/paint.

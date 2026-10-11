@@ -141,6 +141,9 @@ struct RendererStats {
     std::uint64_t compositionSurfaceBorrows{},compositionSuspends{},compositionRestores{};
     bool compositionSuspended{};
     bool sourcePassEnabled{true};
+    // initialize() created its programs from the build-time bytecode of an
+    // identical hud.hlsl (native/renderer.shaders.cmake), not D3DCompile.
+    bool embeddedShaders{};
 };
 // AddRef-owned existing composition swap chain, never a copied bitmap/device.
 // The raw pointer is borrowed IDXGISwapChain1 and valid only while valid().
@@ -226,6 +229,8 @@ public:
     // Call reset() before initializing again on the same HWND: DirectComposition
     // permits only one target at that window's chosen composition layer.
     void initialize(void *window, std::uint32_t width, std::uint32_t height, const RendererOptions &options);
+    // Whether this build embeds hud.hlsl bytecode (Windows SDK fxc at build time).
+    static bool shadersEmbedded() noexcept;
     void resize(std::uint32_t width, std::uint32_t height);
     // Same live handle is reused. Offscreen renderers cannot be bridged.
     std::shared_ptr<RendererCompositionSurface>borrowCompositionSurface();

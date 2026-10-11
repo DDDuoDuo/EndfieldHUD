@@ -84,15 +84,17 @@ ModuleOwner* ModuleRegistry::presenter(core::Module module) const noexcept {
 }
 bool ModuleRegistry::covers(core::Point p) { return any([&](ModuleOwner& o) { return o.covers(p); }, "hit test"); }
 bool ModuleRegistry::pointerLocked() { return any([&](ModuleOwner& o) { return o.pointerLocked(); }, "pointer lock"); }
-bool ModuleRegistry::requiresFrames(double time) { return any([&](ModuleOwner& o) { return o.requiresFrames(time); }, "frame demand"); }
+// Each owner is handed the host time again: an earlier owner's call can
+// dispatch a nested message with a later time (HostClock).
+bool ModuleRegistry::requiresFrames(double time) { return any([&](ModuleOwner& o) { return o.requiresFrames(hostTime(time)); }, "frame demand"); }
 std::optional<double> ModuleRegistry::nextWakeTime(double now) {
     std::optional<double> next;
-    forEach([&](ModuleOwner& o) { if (const auto value = o.nextWakeTime(now); value && (!next || *value < *next)) next = value; }, "deadline");
+    forEach([&](ModuleOwner& o) { if (const auto value = o.nextWakeTime(hostTime(now)); value && (!next || *value < *next)) next = value; }, "deadline");
     return next;
 }
 bool ModuleRegistry::broadcast(const HostEvent& event, double time) {
     bool changed{};
-    forEach([&](ModuleOwner& o) { changed = o.hostEvent(event, time) || changed; }, hostEventName(event.kind));
+    forEach([&](ModuleOwner& o) { changed = o.hostEvent(event, hostTime(time)) || changed; }, hostEventName(event.kind));
     return changed;
 }
 std::string_view hostEventName(HostEvent::Kind kind) noexcept {

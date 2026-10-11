@@ -115,11 +115,13 @@ void Application::Impl::importCenterLogoFile(std::string path, LogoImport reques
         const auto& stored = configuration.fields["centerLogoRevision"];
         if (configuration.string("centerLogo") != request.selection || (stored.isString() ? stored.string() : std::string{}) != request.previous) return;
         const auto time = areaClock();
-        if (failure->has_value()) settingsUI->showImportError(modules::centerLogoErrorText((*failure)->first, settingsLanguage(configuration), (*failure)->second), time);
-        else if (!revision->empty()) settingsUI->setCustomLogo(*revision, time);
+        isolate(settingsModuleOwner, "center logo", [&] {
+            if (failure->has_value()) settingsUI->showImportError(modules::centerLogoErrorText((*failure)->first, settingsLanguage(configuration), (*failure)->second), time);
+            else if (!revision->empty()) settingsUI->setCustomLogo(*revision, time);
+        });
         refresh(time);
     });
-    if (!accepted) settingsUI->showImportError(core::localized("File picker is busy", "文件选择器正忙", settingsLanguage(configuration)), areaClock());
+    if (!accepted) isolate(settingsModuleOwner, "center logo", [&] { settingsUI->showImportError(core::localized("File picker is busy", "文件选择器正忙", settingsLanguage(configuration)), areaClock()); });
 }
 
 // --- Theme color -----------------------------------------------------------------
@@ -138,7 +140,7 @@ void Application::Impl::chooseThemeColor() {
     const auto initial = watchAppearance.accentSRGB;
     const auto l = settingsLanguage(configuration);
     // NSColorPanel(continuous): every complete change applies at once.
-    const auto live = [this](std::array<double, 3> c) { if (settingsUI && !stopping) { settingsUI->setCustomColor(c, areaClock()); refresh(areaClock()); } };
+    const auto live = [this](std::array<double, 3> c) { if (settingsUI && !stopping) { isolate(settingsModuleOwner, "theme color", [&] { settingsUI->setCustomColor(c, areaClock()); }); refresh(areaClock()); } };
     std::optional<std::array<double, 3>> chosen;
     host.suspendCursor(true);
     try { chosen = gpu::chooseProfileColor(static_cast<HWND>(host.hwnd()), initial, core::localized("Theme color", "主题颜色", l), live, &themeColorSession); }
@@ -149,8 +151,10 @@ void Application::Impl::chooseThemeColor() {
     // OK keeps the chosen colour; Cancel restores the one the picker started
     // from; a dismissal (module switch, HUD closing) keeps the last live
     // colour like the source's orderOut of the continuous panel.
-    if (chosen) settingsUI->setCustomColor(*chosen, areaClock());
-    else if (!dismissed) settingsUI->setCustomColor(initial, areaClock());
+    isolate(settingsModuleOwner, "theme color", [&] {
+        if (chosen) settingsUI->setCustomColor(*chosen, areaClock());
+        else if (!dismissed) settingsUI->setCustomColor(initial, areaClock());
+    });
     refresh(areaClock());
 }
 // HUDSettingsInteraction.deactivate: the colour panel closes and a pending
@@ -190,6 +194,7 @@ void Application::Impl::clockHover(const PointerEvent& e) {
 // clock opens Work Mode.
 bool Application::Impl::clockPress(const PointerEvent& e, double time) {
     if ((e.kind != PointerKind::down && e.kind != PointerKind::doubleClick) || e.button != PointerButton::left || !clockAcceptsInput()) return false;
+    time = hostTime(time);
     const auto local = clockPoint({e.x, e.y});
     if (!local) return false;
     if (const auto index = source::DesktopClockArtworkPlan::indicatorAt(*local)) selectClockStyle(*index, time);
@@ -202,7 +207,7 @@ void Application::Impl::selectClockStyle(unsigned index, double time) {
     auto next = settingsUI->controller().committed();
     if (next.string("clockStyle") == clockStyles[index]) return;
     next.set("clockStyle", std::string(clockStyles[index]));
-    settingsUI->controller().update(std::move(next), time);
+    isolate(settingsModuleOwner, "clock style", [&] { settingsUI->controller().update(std::move(next), hostTime(time)); });
 }
 // scrollWheel over the clock: a horizontal swipe of 28 points advances the
 // style once per gesture (HUDClockStyleArtwork.scroll); wheel input over the

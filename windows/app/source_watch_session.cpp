@@ -47,7 +47,7 @@ struct SourceWatchSession::Impl {
     struct Click {bool interactable{};double cooldown{};std::optional<double> accepted;};
     std::map<std::string_view,Click,std::less<>> clicks;
     std::vector<std::pair<std::string_view,std::string_view>> animatorButtons;
-    std::vector<std::string_view> availableButtons,hiddenDecorations;
+    std::vector<std::string_view> availableButtons,hiddenDecorations,scrollIndicators;
     DesktopScrollMotion scrollMotion;double scrollPosition{1};std::optional<double> bindingPosition;
     struct NavigationDrag {Point start;Projection plane;double lastLocalY{},hiddenLength{};bool active{};};
     std::optional<NavigationDrag> navigationDrag;
@@ -71,6 +71,8 @@ struct SourceWatchSession::Impl {
         for(const auto& n:scene.nodes()){
             if(const auto* component=document.component("UIButton",n.id)){const auto&raw=(*component)["_clickCd"];const double cooldown=raw.isNumber()?raw.number():0;
                 clicks.emplace(n.id,Click{flag((*component)["m_Interactable"],true),cooldown,{}});}
+            // HUDSourceWatchView.desktopScrollIndicatorIDs (the up/down deco lines).
+            {const std::string_view path=n.path;if(path.find("/RightBottomNode/DecoLine/")!=path.npos&&(path.ends_with("/UpLineNode/UpLine")||path.ends_with("/BottonLineNode/BottonLine")))scrollIndicators.push_back(n.id);}
             const auto name=trim(n.name);bool hide=redDot(name);
             if(!hide&&(name=="LockIcon"||name=="SafeZoneIcon")){auto ancestor=n.parent;while(ancestor&&!main.contains(*ancestor))ancestor=scene.node(*ancestor)->parent;hide=ancestor.has_value();}
             if(hide)hiddenDecorations.push_back(n.id);
@@ -307,6 +309,20 @@ std::optional<core::Rect> SourceWatchSession::scrollFrame()const{
     return Rect{x0,y0,x1-x0,y1-y0};
 }
 bool SourceWatchSession::canScroll(int direction)const noexcept{return impl_->scrollMotion.canScroll(direction);}
+bool SourceWatchSession::sourceControlAt(Point point,std::string_view logo)const{
+    const auto&p=*impl_;if(p.hidden||!p.hasFrame||!finite(point))return true;
+    const auto viewport=p.viewport();if(!viewport.contains(point))return false;
+    const auto vp=p.rendered.camera.projection*p.rendered.camera.view;
+    if(const auto hit=p.rendered.sourceFrame->buttonAt(point,vp,viewport);hit&&(!p.filter||p.filter(*hit,point)))return true;
+    const auto inside=[&](std::string_view id){const auto*node=p.resolved(id);if(!node||!node->activeInHierarchy||!node->rect)return false;
+        Polygon quad;if(!projectQuad(quad,*node->rect,p.rendered.camera.worldRoot*node->worldMatrix,vp,viewport)||quad.n<3)return false;
+        return polygonContains(std::span<const Point>(quad.p.data(),quad.n),point);};
+    if(const auto&info=p.rendered.sourceFrame->layoutReport.scroll){
+        if(inside(info->viewportID))return true;
+        if(info->hiddenLength>0)for(const auto id:p.scrollIndicators)if(inside(id))return true;
+    }
+    return !logo.empty()&&inside(logo);
+}
 std::optional<std::string_view> SourceWatchSession::pressed()const noexcept{return impl_->pressed;}
 const std::map<std::string,std::uint64_t,std::less<>>& SourceWatchSession::actions()const noexcept{return impl_->actions;}
 const WatchSessionFrame* SourceWatchSession::currentFrame()const noexcept{return impl_->hasFrame?&impl_->rendered:nullptr;}

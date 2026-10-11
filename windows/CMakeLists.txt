@@ -263,6 +263,34 @@ if(WIN32)
   endif()
   add_library(hud_native native/notes_image_playback.cpp native/notes_image_decoder.cpp native/notes_image_wic.cpp native/event_log_scene.cpp native/volume_scene.cpp native/clipboard_scene.cpp native/clipboard_assets.cpp native/renderer.cpp native/source_graphics.cpp native/source_scene.cpp native/layer_raster.cpp native/layer_text_layout.cpp native/layer_scene.cpp native/layer_group.cpp native/watch_presentation.cpp native/chrome_presentation.cpp native/notes_scene.cpp native/notes_text_measure.cpp native/notes_controls_scene.cpp native/notes_controls_assets.cpp native/shelf_scene.cpp native/shelf_assets.cpp native/notes_workspace.cpp native/module_scene.cpp native/module_registration.cpp native/source_cursor.cpp native/projected_text_input.cpp native/projected_editor.cpp native/rich_text_paint.cpp)
   target_include_directories(hud_native PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+  # hud.hlsl compiled at build time by the Windows SDK's fxc
+  # (native/renderer.shaders.cmake): the renderer creates its programs from
+  # that bytecode for an identical source instead of compiling at launch;
+  # without fxc it compiles at run time as before.
+  if(NOT EHUD_FXC)
+    get_filename_component(ehud_windows_kits "[HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows Kits\\Installed Roots;KitsRoot10]" ABSOLUTE)
+    file(GLOB ehud_fxc_candidates "${ehud_windows_kits}/bin/10.*/x64/fxc.exe")
+    list(SORT ehud_fxc_candidates COMPARE NATURAL ORDER DESCENDING)
+    set(ehud_fxc_hints "${ehud_windows_kits}/bin/${CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION}/x64")
+    foreach(candidate IN LISTS ehud_fxc_candidates)
+      get_filename_component(candidate "${candidate}" DIRECTORY)
+      list(APPEND ehud_fxc_hints "${candidate}")
+    endforeach()
+    find_program(EHUD_FXC fxc HINTS ${ehud_fxc_hints} ENV WindowsSdkVerBinPath PATH_SUFFIXES x64)
+  endif()
+  if(EHUD_FXC)
+    set(ehud_hud_shaders "${CMAKE_CURRENT_BINARY_DIR}/generated/native/hud_shaders.hpp")
+    add_custom_command(OUTPUT "${ehud_hud_shaders}"
+      COMMAND "${CMAKE_COMMAND}" "-DFXC=${EHUD_FXC}" "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/native/hud.hlsl" "-DOUTPUT=${ehud_hud_shaders}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/native/renderer.shaders.cmake"
+      DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/native/hud.hlsl" "${CMAKE_CURRENT_SOURCE_DIR}/native/renderer.shaders.cmake"
+      COMMENT "Compiling native/hud.hlsl" VERBATIM)
+    target_sources(hud_native PRIVATE "${ehud_hud_shaders}")
+    target_include_directories(hud_native PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+    target_compile_definitions(hud_native PRIVATE EHUD_EMBEDDED_HUD_SHADERS)
+  else()
+    message(STATUS "fxc not found: native/hud.hlsl is compiled at run time")
+  endif()
   target_sources(hud_native PRIVATE native/work_mode_scene.cpp native/settings_scene.cpp native/settings_safety.cpp native/notes_drawing_scene.cpp)
   target_link_libraries(hud_native PUBLIC hud_settings)
   target_sources(hud_native PRIVATE native/application_icon.cpp native/archive_scene.cpp native/archive_editor_text.cpp)

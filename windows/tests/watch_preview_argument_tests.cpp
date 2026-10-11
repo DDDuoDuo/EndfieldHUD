@@ -138,6 +138,16 @@ void run(const fs::path&executable){
            "Module coverage requires hidden mode and fresh isolated Notes data");
     reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--map-geography",assets},
            "Map needs geography and player assets together");
+    // --startup-trace times the openings of the hidden module owner instead of its coverage report.
+    const auto trace=temp.root/L"new startup trace.json";
+    reject(executable,temp,++index,{L"--startup-trace",trace.wstring()},"A startup trace replaces the module coverage report with a new output");
+    reject(executable,temp,++index,{L"--startup-trace",trace.wstring(),L"--startup-trace",trace.wstring()},"Duplicate startup trace output");
+    reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--startup-trace-cold"},"A cold startup trace (without the launch prewarm) needs --startup-trace");
+    reject(executable,temp,++index,{L"--visible",L"--startup-trace",trace.wstring()},"A startup trace replaces the module coverage report with a new output");
+    reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--startup-trace",trace.wstring(),L"--module-coverage",L"--notes-assets",assets,
+           L"--notes-assets-sha",L"synthetic-pin",L"--notes-data",fresh.wstring()},"A startup trace replaces the module coverage report with a new output");
+    reject(executable,temp,++index,{L"--startup-trace",existingReport.wstring(),L"--module-coverage",L"--notes-assets",assets,
+           L"--notes-assets-sha",L"synthetic-pin",L"--notes-data",fresh.wstring()},"A startup trace replaces the module coverage report with a new output");
     reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--map-player-assets",assets},
            "Map needs geography and player assets together");
     reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--map-geography",assets,L"--map-player-assets",assets},

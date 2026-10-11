@@ -733,6 +733,9 @@ public:
     void setOverlayVisible(bool v, double t) override { a_.setOverlayVisible(v, t); }
     void overlayClosing(double t) override { a_.cancelInteraction(t); a_.setOverlayVisible(false, t); }
     void update(const ModuleFrame& f) override { a_.update(f.center, f.chrome, f.presentation, f.opacity, f.time); }
+    // The hidden Archive's first update builds its retained view (13-17 ms of
+    // the first opening frame in the hidden startup trace): done while closed.
+    void prewarm(const ModuleFrame& f) override { a_.update(f.center, f.chrome, f.presentation, 0.f, f.time); }
     bool requiresFrames(double t) const override { return a_.requiresFrames(t); }
     std::optional<double> nextWakeTime(double) const override { return a_.nextWakeTime(); }
     bool deadline(double t) override { return a_.deadline(t); }

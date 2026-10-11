@@ -271,6 +271,11 @@ int run(const std::vector<std::string>& values) {
         auto options = productionOptions(package, root->data, runArguments);
         options.isolatedDataRoot = !isolated.empty();
         options.reopenModule = reopen;
+        // Opt-in timing trace (numbers only): ENDFIELDHUD_STARTUP_TRACE=1 writes
+        // Diagnostics/startup-trace.json in the data root once both traced
+        // openings completed (or at quit).
+        if (wchar_t flag[8]{}; GetEnvironmentVariableW(L"ENDFIELDHUD_STARTUP_TRACE", flag, 8) == 1 && flag[0] == L'1')
+            options.startupTrace = root->data / "Diagnostics" / "startup-trace.json";
         // Factory-added module areas resolve their own verified resources (the
         // locator outlives the Application and is used on its UI thread only).
         options.resources = [&locator](std::string_view id) -> fs::path { return locator.available(id) ? locator.resolve(id).path : fs::path{}; };

@@ -112,6 +112,15 @@ struct ApplicationOptions {
     std::function<std::filesystem::path(std::string_view id)> resources;
     // Hidden coverage: declared area fixtures (ApplicationModuleContext::fixture).
     std::function<std::filesystem::path(std::string_view id)> fixtures;
+    // Opt-in startup timing trace (numbers only, never content): construction
+    // stages, launch -> first frame and the frame pacing of the first and
+    // second openings, written as JSON to this new file. Production enables
+    // it with ENDFIELDHUD_STARTUP_TRACE=1 (Diagnostics/startup-trace.json in
+    // the data root); watch_session_preview --startup-trace runs the same
+    // owner hidden on the synthetic clock instead of the module coverage.
+    std::filesystem::path startupTrace;
+    // Hidden trace comparison only: skip the launch prewarm before the first opening.
+    bool startupTraceWithoutPrewarm{};
 };
 
 class Application final {

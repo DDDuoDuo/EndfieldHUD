@@ -1,5 +1,9 @@
 #include "renderer.hpp"
 #include "source_graphics.hpp"
+#include "core/shell_packet.hpp"
+#if defined(EHUD_EMBEDDED_HUD_SHADERS)
+#include "native/hud_shaders.hpp"
+#endif
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -20,8 +24,12 @@
 #include <cstring>
 #include <cwchar>
 #include <exception>
+#include <fstream>
+#include <iterator>
 #include <limits>
 #include <map>
+#include <span>
+#include <string_view>
 #include <utility>
 
 namespace endfield::native {
@@ -213,6 +221,38 @@ ComPtr<ID3DBlob> compile(const std::filesystem::path &path, const char *entry, c
     }
     return program;
 }
+// The programs of one hud.hlsl: the build-time bytecode when the given
+// source is byte-identical to the one it was compiled from (SHA-256; the
+// staged shell/hud.hlsl and the tests' source path are), otherwise
+// D3DCompileFromFile with the same flags as before. Embedding removes the
+// launch-time compilation of all eight entry points.
+class ShaderPrograms {
+public:
+    struct Program { const void* bytes{}; std::size_t size{}; ComPtr<ID3DBlob> blob; };
+    explicit ShaderPrograms(std::filesystem::path path) : path_(std::move(path)) {
+#if defined(EHUD_EMBEDDED_HUD_SHADERS)
+        std::ifstream in(path_, std::ios::binary);
+        std::string bytes;
+        if (in) bytes.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+        if (in.good() || in.eof()) {
+            const auto digest = core::packet::sha256(std::span(reinterpret_cast<const std::uint8_t *>(bytes.data()), bytes.size()));
+            embedded_ = !bytes.empty() && bytes.size() <= 1024 * 1024 && digest == hud_shaders::sourceSHA256;
+        }
+#endif
+    }
+    bool embedded() const noexcept { return embedded_; }
+    Program get(const char *entry, const char *target) const {
+#if defined(EHUD_EMBEDDED_HUD_SHADERS)
+        if (embedded_) for (const auto &e : hud_shaders::entries)
+            if (e.name == std::string_view(entry) && e.profile == std::string_view(target)) return {e.bytes, e.size, {}};
+#endif
+        auto blob = compile(path_, entry, target);
+        return {blob->GetBufferPointer(), blob->GetBufferSize(), std::move(blob)};
+    }
+private:
+    std::filesystem::path path_;
+    bool embedded_{};
+};
 ComPtr<ID3D11Buffer> immutableBuffer(ID3D11Device *device, UINT binding, const void *data, std::size_t bytes) {
     require(bytes > 0 && bytes <= std::numeric_limits<UINT>::max(), "GPU buffer size exceeds bounds");
     D3D11_BUFFER_DESC description{};
@@ -531,23 +571,25 @@ struct Renderer::Impl {
         }
         width = w; height = h; bindTargets();
 
-        auto vs = compile(options.shaderPath, "SceneVS", "vs_5_0");
-        auto ps = compile(options.shaderPath, "ScenePS", "ps_5_0");
-        checked(device->CreateVertexShader(vs->GetBufferPointer(), vs->GetBufferSize(), nullptr, &sceneVS), "Create scene vertex shader");
-        checked(device->CreatePixelShader(ps->GetBufferPointer(), ps->GetBufferSize(), nullptr, &scenePS), "Create scene pixel shader");
-        ps=compile(options.shaderPath,"SceneEncodedInputPS","ps_5_0");checked(device->CreatePixelShader(ps->GetBufferPointer(),ps->GetBufferSize(),nullptr,&encodedInputPS),"Create encoded group input shader");
-        ps=compile(options.shaderPath,"SceneEncodedOutputPS","ps_5_0");checked(device->CreatePixelShader(ps->GetBufferPointer(),ps->GetBufferSize(),nullptr,&encodedOutputPS),"Create encoded group output shader");
-        ps=compile(options.shaderPath,"SceneEncodedBothPS","ps_5_0");checked(device->CreatePixelShader(ps->GetBufferPointer(),ps->GetBufferSize(),nullptr,&encodedBothPS),"Create encoded group resident shader");
+        const ShaderPrograms programs(options.shaderPath);
+        counters.embeddedShaders = programs.embedded();
+        auto vs = programs.get("SceneVS", "vs_5_0");
+        auto ps = programs.get("ScenePS", "ps_5_0");
+        checked(device->CreateVertexShader(vs.bytes, vs.size, nullptr, &sceneVS), "Create scene vertex shader");
+        checked(device->CreatePixelShader(ps.bytes, ps.size, nullptr, &scenePS), "Create scene pixel shader");
+        ps=programs.get("SceneEncodedInputPS","ps_5_0");checked(device->CreatePixelShader(ps.bytes,ps.size,nullptr,&encodedInputPS),"Create encoded group input shader");
+        ps=programs.get("SceneEncodedOutputPS","ps_5_0");checked(device->CreatePixelShader(ps.bytes,ps.size,nullptr,&encodedOutputPS),"Create encoded group output shader");
+        ps=programs.get("SceneEncodedBothPS","ps_5_0");checked(device->CreatePixelShader(ps.bytes,ps.size,nullptr,&encodedBothPS),"Create encoded group resident shader");
         const D3D11_INPUT_ELEMENT_DESC elements[]{
             {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
             {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0},
             {"COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 20, D3D11_INPUT_PER_VERTEX_DATA, 0}};
-        checked(device->CreateInputLayout(elements, 3, vs->GetBufferPointer(), vs->GetBufferSize(), &layout), "Create retained mesh layout");
-        vs = compile(options.shaderPath, "CompositeVS", "vs_5_0");
-        ps = compile(options.shaderPath, "CompositePS", "ps_5_0");
-        checked(device->CreateVertexShader(vs->GetBufferPointer(), vs->GetBufferSize(), nullptr, &compositeVS), "Create presentation vertex shader");
-        checked(device->CreatePixelShader(ps->GetBufferPointer(), ps->GetBufferSize(), nullptr, &compositePS), "Create presentation pixel shader");
-        if(mediaVideo){ps=compile(options.shaderPath,"MediaConvertPS","ps_5_0");checked(device->CreatePixelShader(ps->GetBufferPointer(),ps->GetBufferSize(),nullptr,&mediaPS),"Create same-device media conversion shader");}
+        checked(device->CreateInputLayout(elements, 3, vs.bytes, vs.size, &layout), "Create retained mesh layout");
+        vs = programs.get("CompositeVS", "vs_5_0");
+        ps = programs.get("CompositePS", "ps_5_0");
+        checked(device->CreateVertexShader(vs.bytes, vs.size, nullptr, &compositeVS), "Create presentation vertex shader");
+        checked(device->CreatePixelShader(ps.bytes, ps.size, nullptr, &compositePS), "Create presentation pixel shader");
+        if(mediaVideo){ps=programs.get("MediaConvertPS","ps_5_0");checked(device->CreatePixelShader(ps.bytes,ps.size,nullptr,&mediaPS),"Create same-device media conversion shader");}
         D3D11_BUFFER_DESC camera{};
         camera.ByteWidth = 64; camera.Usage = D3D11_USAGE_DYNAMIC;
         camera.BindFlags = D3D11_BIND_CONSTANT_BUFFER; camera.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
@@ -1056,6 +1098,13 @@ bool Renderer::setSourcePassEnabled(bool enabled){
     if(r.sourcePassEnabled==enabled)return false;r.sourcePassEnabled=enabled;return true;
 }
 bool Renderer::sourcePassEnabled()const noexcept{return !impl_||impl_->sourcePassEnabled;}
+bool Renderer::shadersEmbedded() noexcept {
+#if defined(EHUD_EMBEDDED_HUD_SHADERS)
+    return true;
+#else
+    return false;
+#endif
+}
 RendererStats Renderer::stats() const noexcept {
     if (!impl_) return {};
     auto result = impl_->counters;

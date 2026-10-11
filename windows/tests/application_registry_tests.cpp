@@ -3,8 +3,12 @@
 #include "app/module_owner.hpp"
 #include "app/quit_confirmation_state.hpp"
 #include "native/renderer.hpp"
+#include <cmath>
+#include <functional>
 #include <iostream>
+#include <limits>
 #include <set>
+#include <utility>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -160,6 +164,67 @@ void isolation() {
     check(threw && strict.enabled(failing), "Development registries keep failures fatal");
 }
 
+// The ONE host time (ModuleRegistry::hostTime / HostClock). Owners need()
+// non-decreasing times, like the scenes that ended the live RCs. Reproduced
+// orders: (1) Projection - the host samples t1, the owner's pointer call
+// releases its capture and the nested WM_CAPTURECHANGED is handed a later
+// t2, then the host's refresh asks frame demand with its earlier sample;
+// (2) the deadline/Event Log order - an earlier owner's deadline dispatches
+// a later event, then later owners and the host's own calls follow with the
+// wake sample.
+struct Monotonic final : app::ModuleOwner {
+    std::string id; app::ModuleRouting route; mutable double latest{-1}; mutable unsigned calls{};
+    std::function<void(double)> nested;
+    explicit Monotonic(std::string name) : id(std::move(name)) {}
+    void see(double t) const { ++calls; if (!std::isfinite(t) || t < latest) throw std::logic_error(id + " requires a finite monotonic owner clock"); latest = t; }
+    std::string_view name() const noexcept override { return id; }
+    app::ModuleRouting routing() const noexcept override { return route; }
+    bool pointer(const app::PointerEvent&, double t) override { see(t); if (auto f = std::exchange(nested, {})) f(t); return true; }
+    bool requiresFrames(double t) const override { see(t); return false; }
+    std::optional<double> nextWakeTime(double t) const override { see(t); return std::nullopt; }
+    bool deadline(double t) override { see(t); if (auto f = std::exchange(nested, {})) f(t); return false; }
+    bool hostEvent(const app::HostEvent&, double t) override { see(t); return false; }
+};
+void hostClock() {
+    app::HostClock clock;
+    check(!clock.latest() && clock(std::numeric_limits<double>::quiet_NaN()) == 0, "No hand-off yet: a non-finite sample yields 0");
+    check(clock(5) == 5 && clock(4) == 5 && clock(7) == 7 && clock(std::numeric_limits<double>::infinity()) == 7 && clock.latest() == 7.,
+          "An earlier or non-finite sample is clamped to the latest hand-off");
+    using C = app::ModuleRegistry::Chain;
+    using K = app::HostEvent::Kind;
+    // Development registry: an owner's need() failure propagates, as in hidden coverage.
+    app::ModuleRegistry registry;
+    Monotonic projection("projection"), later("later");
+    projection.route.pointer = 1;
+    registry.add(projection); registry.add(later);
+    // (1) The Projection order.
+    const double sampled = registry.hostTime(10);
+    projection.nested = [&](double) {
+        (void)registry.first(C::pointer, [&](app::ModuleOwner& o, const app::ModuleRouting&) {
+            return o.pointer({app::PointerKind::captureLost}, registry.hostTime(10.004)); }, "pointer"); };
+    (void)registry.first(C::pointer, [&](app::ModuleOwner& o, const app::ModuleRouting&) {
+        return o.pointer({app::PointerKind::up, app::PointerButton::left}, registry.hostTime(sampled)); }, "pointer");
+    bool threw{};
+    try { (void)registry.requiresFrames(sampled); (void)registry.nextWakeTime(sampled); } catch (const std::logic_error&) { threw = true; }
+    check(!threw && projection.latest == 10.004 && later.latest == 10.004, "Frame demand after a nested capture-lost receives its later time, not the earlier sample");
+    threw = false;
+    try { (void)projection.requiresFrames(sampled); } catch (const std::logic_error&) { threw = true; }
+    check(threw, "The earlier sample handed directly is the live failure the clamp prevents");
+    // (2) The deadline order.
+    later.nested = [&](double t) { (void)registry.broadcast({K::utilityCompleted, 0}, t + .5); };
+    threw = false;
+    try {
+        registry.forEach([&](app::ModuleOwner& o) { (void)o.deadline(registry.hostTime(11)); }, "deadline");
+        (void)registry.broadcast({K::settingsChanged, 0}, 11);
+        (void)registry.requiresFrames(11);
+    } catch (const std::logic_error&) { threw = true; }
+    check(!threw && projection.latest == 11.5 && later.latest == 11.5 && registry.hostTime(11) == 11.5,
+          "Calls after an owner's nested later event take the later host time");
+    // A finite later sample moves the host time on.
+    check(registry.hostTime(12) == 12 && registry.latestHostTime() == 12., "A later sample advances the host time");
+    registry.remove(projection); registry.remove(later);
+}
+
 void quitState() {
     app::QuitConfirmationState card;
     card.setLanguage(core::Language::simplifiedChinese);
@@ -207,6 +272,7 @@ int main() {
         routing();
         isolation();
         broadcasts();
+        hostClock();
         quitState();
         std::cout << "Module registry/quit confirmation: " << checks << " checks passed\n";
         return 0;

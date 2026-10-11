@@ -109,6 +109,14 @@ public:
     // scrollDirection(direction) would move it now (the Mac scroll buttons).
     std::optional<core::Rect> scrollFrame()const;
     bool canScroll(int direction)const noexcept;
+    // HUDSourceWatchView.sourceControlContains, read-only and allocation-free:
+    // whether a press at this logical client point belongs to the source
+    // (true without a shown frame): a source button under it, disabled or
+    // deploying cards included, through the hit filter; the navigation
+    // scroll viewport, whose gaps between cards belong to it; its scroll
+    // indicators while rows are hidden; the given industry logo node. Any
+    // other press is the native host's (SystemHUDView.mouseDown).
+    bool sourceControlAt(core::Point,std::string_view logoNodeID={})const;
     std::optional<std::string_view> pressed()const noexcept;
     const std::map<std::string,std::uint64_t,std::less<>>& actions()const noexcept;
     const WatchSessionFrame* currentFrame()const noexcept;

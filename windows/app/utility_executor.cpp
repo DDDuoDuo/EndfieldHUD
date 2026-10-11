@@ -10,10 +10,11 @@
 
 namespace endfield::app {
 struct UtilityExecutor::Impl {
-    struct Task { Route route;Work work;Completion completion;std::exception_ptr error; };
+    struct Task { Route route;Work work;Completion completion;std::exception_ptr error;Attribution tag{}; };
     const std::thread::id owner=std::this_thread::get_id();
     const std::size_t capacity;
     std::function<void()> notify;
+    std::function<Attribution()> current;std::function<void(Attribution,const std::function<void()>&)> attributed;
     mutable std::mutex mutex;std::condition_variable ready,idle;
     std::list<Task> pending,completed;
     std::unordered_set<Route> routes;
@@ -55,8 +56,11 @@ void UtilityExecutor::invalidate(Route route,bool discardPending){auto state=imp
     if(discardPending)erase(i.pending);erase(i.completed);i.statistics.pending=i.pending.size();i.statistics.completed=i.completed.size();if(i.completed.empty())i.notified=false;if(i.pending.empty()&&!i.statistics.running)i.idle.notify_all();
     } // Captured destructors can reenter owner cleanup only after unlocking.
 }
-bool UtilityExecutor::submit(Route route,Work work,Completion completion){auto&i=*impl_;i.checkOwner();if(!work||!completion)throw std::invalid_argument("Utility task requires work and completion");std::lock_guard lock(i.mutex);if(i.stopping||!i.routes.contains(route))throw std::logic_error("Utility task route is inactive");if(i.pending.size()+i.completed.size()+i.statistics.running>=i.capacity)return false;
-    i.pending.push_back({route,std::move(work),std::move(completion),{}});
+void UtilityExecutor::attribute(std::function<Attribution()> current,std::function<void(Attribution,const std::function<void()>&)> run){auto&i=*impl_;i.checkOwner();i.current=std::move(current);i.attributed=std::move(run);}
+bool UtilityExecutor::submit(Route route,Work work,Completion completion){auto&i=*impl_;i.checkOwner();if(!work||!completion)throw std::invalid_argument("Utility task requires work and completion");
+    const Attribution tag=i.current?i.current():nullptr;
+    std::lock_guard lock(i.mutex);if(i.stopping||!i.routes.contains(route))throw std::logic_error("Utility task route is inactive");if(i.pending.size()+i.completed.size()+i.statistics.running>=i.capacity)return false;
+    i.pending.push_back({route,std::move(work),std::move(completion),{},tag});
     if(!i.worker.joinable())try{i.worker=std::thread([&i]{i.run();});i.statistics.started=true;}catch(...){i.pending.pop_back();throw;}
     ++i.statistics.accepted;i.statistics.pending=i.pending.size();i.ready.notify_one();return true;
 }
@@ -64,7 +68,8 @@ std::size_t UtilityExecutor::drain(){auto state=impl_;auto&i=*state;i.checkOwner
     // Bound this drain to results already present. Reentrant submissions and
     // concurrently finishing tasks are left for the next coalesced message.
     try{
-        while(count<available){Impl::Task task;{std::lock_guard lock(i.mutex);if(i.stopping||i.completed.empty())break;task=std::move(i.completed.front());i.completed.pop_front();i.statistics.completed=i.completed.size();if(!i.routes.contains(task.route)){++i.statistics.discarded;continue;}}++count;task.completion(task.error);}
+        while(count<available){Impl::Task task;{std::lock_guard lock(i.mutex);if(i.stopping||i.completed.empty())break;task=std::move(i.completed.front());i.completed.pop_front();i.statistics.completed=i.completed.size();if(!i.routes.contains(task.route)){++i.statistics.discarded;continue;}}++count;
+            if(task.tag&&i.attributed){const std::function<void()> call=[&task]{task.completion(task.error);};i.attributed(task.tag,call);}else task.completion(task.error);}
     }catch(...){
         // Preserve the original callback failure, but leave a wake for results
         // it prevented us from visiting. Otherwise an idle queue can strand a

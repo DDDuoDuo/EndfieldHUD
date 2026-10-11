@@ -1,5 +1,6 @@
 // Visible run loop, ordered shutdown and teardown of the Application owner.
 #include "app/application_impl.hpp"
+#include <cstdio>
 #include <iostream>
 #include <wtsapi32.h>
 #include <uiautomation.h>
@@ -14,6 +15,7 @@ void Application::Impl::cleanup(){if(cleaned)return;cleaned=true;ready=false;sto
     hudDrop->owner=nullptr;hudDrop->paths.clear();hudDropActive=false;dropHoverOwner=nullptr;
     if(automation){automation->shutdown();automation.reset();UiaDisconnectAllProviders();}
     projectionHandoff.cancel();projectionDrop->enabled=false;if(shelf)shelf->setExternalDropCallbacks({},now());releaseProjection();
+    if(projectionIsolation){registry.remove(*projectionIsolation);projectionIsolation.reset();}
     try{composition.detach(renderer);}catch(...){renderer.reset();}
     // GPU release in reverse registration order: Archive/Calendar/Work Mode
     // fields borrow Notes' activated TSF manager, so Notes releases last.
@@ -76,16 +78,33 @@ void Application::Impl::reopenAfterLaunch(double time){
     perform(lifecycle.openSettingsModule(*module),time);
     if(session->phase()!=core::VisibilityPhase::concealed&&!closing&&!stopping){host.show();refresh(time);}
 }
+// ENDFIELDHUD_STARTUP_TRACE / --startup-trace: written once, when both traced
+// openings completed or at shutdown with what was recorded (numbers only).
+void Application::Impl::writeStartupTrace(){
+    if(!startupTrace||startupTraceWritten||args.startupTrace.empty())return;startupTraceWritten=true;
+    try{
+        std::error_code ignored;fs::create_directories(args.startupTrace.parent_path(),ignored);
+        constexpr std::size_t bound=4*1024*1024;
+        auto report=startupTrace->report(startup.rows(),preparedMS);
+        report["embeddedShaders"]=renderer.stats().embeddedShaders;report["hiddenSyntheticClock"]=!visibleMode();
+        if(args.liveDiagnostics.empty())report["openingStages"]=probe.rows; // per traced opening: frame stage calls, totals and maxima (ms)
+        ehud::data::detail::replaceFile(args.startupTrace,ehud::data::detail::readFile(args.startupTrace,bound),report.encode(),bound);
+    }catch(const std::exception&e){
+        if(!production())throw;
+        const auto line=std::string("EndfieldHUD startup trace could not be written (")+typeid(e).name()+")\n";std::fputs(line.c_str(),stderr);OutputDebugStringA(line.c_str());
+    }
+}
 void Application::Impl::shutdownVisible(){
+    writeStartupTrace();
     if(!args.liveDiagnostics.empty()){
         if(probe.enabled){probe.flush(now());probe.enabled=false;gpu::setTextInputDiagnosticsEnabled(false);}
         Json report=Json::Object{{"scope","Isolated synthetic visible HUD, actual text service, inclusive CPU stage durations; no document text or desktop capture"},{"phases","0 opening/idle; 1 focused editor; 2 focused editor with controlled tilt; 3 after editing"},{"samples",probe.rows}};
         ehud::data::detail::replaceFile(args.liveDiagnostics,std::nullopt,report.encode(),1024*1024);
     }
-    ready=false;stopping=true;tray.reset();if(workMode)workMode->shutdown(now());host.requestStop();if(mediaPicker)mediaPicker->cancel();
+    ready=false;stopping=true;tray.reset();if(workMode)isolate(workModeModuleOwner,"shutdown",[&]{workMode->shutdown(now());});host.requestStop();if(mediaPicker)mediaPicker->cancel();
     if(!sessionEnded){
-        if(archive){need(archive->finishEditing(now()),"Archive text transaction is still active at shutdown");need(archiveService->flush(),"Archive changes could not be saved; draft retained until explicit shutdown failure");}
-        if(calendar)need(calendar->dismissMenu(false,now()),"Calendar text transaction is still active at shutdown");need(flushCalendar(),"Calendar changes could not be saved");
+        if(archive){bool finished=true;isolate(archiveModuleOwner,"shutdown",[&]{finished=archive->finishEditing(now());});need(finished,"Archive text transaction is still active at shutdown");need(archiveService->flush(),"Archive changes could not be saved; draft retained until explicit shutdown failure");}
+        if(calendar){bool dismissed=true;isolate(calendarModuleOwner,"shutdown",[&]{dismissed=calendar->dismissMenu(false,now());});need(dismissed,"Calendar text transaction is still active at shutdown");}need(flushCalendar(),"Calendar changes could not be saved");
         if(readerOwner)need(readerOwner->flush(),"Reader changes could not be saved");
         if(settingsSaves)need(settingsSaves->flush(),"Settings changes could not be saved");if(eventSaves)eventSaves->flush(now());
     }
