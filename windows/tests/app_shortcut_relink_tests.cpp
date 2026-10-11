@@ -88,17 +88,13 @@ void sync() {
     rows[5].state = mig::RelinkState::resolved;rows[5].windowsPath = "C:\\Earlier\\Foxtrot.exe";
     rows[7].state = mig::RelinkState::dismissed;
     writeLedger(root, rows);
-    // Whether the ledger records an AppsFolder target is the ledger's own
-    // decision (it records explicit Windows file paths today).
-    bool packagedAccepted{};
-    {
-        Temp probe;auto only = row(mig::relinkAppShortcut, d, "Delta");writeLedger(probe.path, {only});
-        mig::MacRelinkLedger ledger(probe.path);
-        try { ledger.markResolved(only.id, "shell:AppsFolder\\Synthetic.Delta_8wekyb3d8bbwe!App");packagedAccepted = true; }
-        catch (const ehud::data::StoreError& error) { check(error.code() == ehud::data::StoreErrorCode::invalid, "The ledger refuses an AppsFolder target as an invalid path"); }
-    }
+    // The ledger records a packaged application's AppsFolder target for app
+    // shortcut rows only (validMacRelinkTarget).
+    check(mig::validMacRelinkTarget(mig::relinkAppShortcut, "shell:AppsFolder\\Synthetic.Delta_8wekyb3d8bbwe!App") &&
+          !mig::validMacRelinkTarget(mig::relinkReaderBook, "shell:AppsFolder\\Synthetic.Delta_8wekyb3d8bbwe!App"),
+          "An AppsFolder target is a valid relink target of app shortcuts only");
     const auto first = m::syncShortcutRelinks(root, file);
-    check(first.resolved == (packagedAccepted ? 3u : 2u) && first.dismissed == 1 && first.open == (packagedAccepted ? 1u : 2u),
+    check(first.resolved == 3 && first.dismissed == 1 && first.open == 1,
           "The sync resolves relinked rows, dismisses removed records and keeps the others listed");
     {
         const mig::MacRelinkLedger ledger(root);
@@ -107,9 +103,8 @@ void sync() {
         check(state(1)->state == mig::RelinkState::resolved && state(1)->windowsPath == std::optional<std::string>("C:\\Apps\\Beta.exe"),
               "A record relinked to an .exe resolves its row with that file");
         check(state(2)->state == mig::RelinkState::dismissed && !state(2)->windowsPath, "A record the user removed dismisses its row");
-        check(packagedAccepted ? state(3)->state == mig::RelinkState::resolved && state(3)->windowsPath == std::optional<std::string>("shell:AppsFolder\\Synthetic.Delta_8wekyb3d8bbwe!App")
-                               : state(3)->state == mig::RelinkState::unresolved && !state(3)->windowsPath,
-              "A packaged relink follows the ledger's acceptance of its AppsFolder target");
+        check(state(3)->state == mig::RelinkState::resolved && state(3)->windowsPath == std::optional<std::string>("shell:AppsFolder\\Synthetic.Delta_8wekyb3d8bbwe!App"),
+              "A record relinked to a packaged application resolves its row with its AppsFolder target");
         check(state(4)->state == mig::RelinkState::resolved && state(4)->windowsPath == std::optional<std::string>("C:\\Links\\Echo.lnk"),
               "Record ids match regardless of case and a .lnk resolves with the selected link");
         check(*state(5) == rows[5] && *state(6) == rows[6] && *state(7) == rows[7], "Earlier decisions and other stores' rows are untouched");
@@ -120,10 +115,10 @@ void sync() {
     const auto settled = bytes(root);
     check(m::syncShortcutRelinks(root, file) == m::ShortcutRelinkSync{0, 0, first.open} && bytes(root) == settled, "A second sync writes nothing");
 
-    // 4. A later relink of A resolves its row; the packaged row stays as the ledger decided.
+    // 4. A later relink of A resolves the last listed row.
     file.items[0] = windowsRecord(a, "Alpha", executable("C:\\Apps\\Alpha 应用.exe"));
     const auto later = m::syncShortcutRelinks(root, file);
-    check(later.resolved == 1 && later.dismissed == 0 && later.open == first.open - 1 &&
+    check(later.resolved == 1 && later.dismissed == 0 && later.open == 0 &&
           mig::MacRelinkLedger(root).find(rows[0].id)->windowsPath == std::optional<std::string>("C:\\Apps\\Alpha 应用.exe"), "A later relink resolves its row with its Unicode path");
 
     // 5. An unreadable or newer ledger throws and is preserved byte for byte.

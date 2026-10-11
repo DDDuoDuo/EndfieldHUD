@@ -26,11 +26,12 @@ struct ShortcutRelinkSync {
 // application; empty for a record without a Windows locator.
 std::string shortcutRelinkTarget(const ShortcutRecord&);
 // Worker-only, after `committed` was read from or atomically written to
-// <appRoot>/AppShortcuts. Without a ledger, or without a listed app shortcut
-// row, nothing is written. Each change commits atomically (the ledger's
-// compare-and-replace); an unreadable or newer ledger throws and is kept as
-// it is. The ledger records explicit Windows file paths: a row relinked to a
-// packaged application stays listed while the ledger refuses its AppsFolder
-// target (a recorded gap), and is resolved as soon as the ledger accepts it.
+// <appRoot>/AppShortcuts, through the import's owner API
+// (ehud::migration::reconcileMacRelinks, keyed by {relinkAppShortcut,
+// shortcut id}). Without a ledger, or without a listed app shortcut row,
+// nothing is written; otherwise one serialized compare-and-replace write.
+// A row relinked to a packaged application resolves with its
+// "shell:AppsFolder\<AUMID>" target (validMacRelinkTarget). An unreadable or
+// newer ledger throws data::StoreError and is kept as it is.
 ShortcutRelinkSync syncShortcutRelinks(const std::filesystem::path& appRoot, const ShortcutFile& committed);
 } // namespace endfield::modules

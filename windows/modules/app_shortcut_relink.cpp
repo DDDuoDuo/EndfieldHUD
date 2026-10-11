@@ -34,36 +34,18 @@ std::string shortcutRelinkTarget(const ShortcutRecord& r) {
 }
 
 ShortcutRelinkSync syncShortcutRelinks(const std::filesystem::path& appRoot, const ShortcutFile& committed) {
-    mig::MacRelinkLedger ledger(appRoot); // a missing file is an empty ledger
-    ShortcutRelinkSync out;
-    const auto listed = ledger.unresolved(mig::relinkAppShortcut);
-    if (listed.empty()) return out;
-    // One atomic write: rows whose record now names a Windows file resolve
-    // with it; rows whose record the user removed are dismissed.
-    (void)ledger.reconcile(mig::relinkAppShortcut, [&](const mig::MacRelinkItem& item) -> mig::RelinkRecordCheck {
+    // The import's owner API (reconcileMacRelinks): one serialized, atomic
+    // write at most. Rows whose record now names its Windows application
+    // (an .exe/.lnk file, or a packaged application's AppsFolder target)
+    // resolve with it; rows whose record the user removed are dismissed; a
+    // record that still holds its Mac locator stays listed.
+    const auto change = mig::reconcileMacRelinks(appRoot, mig::relinkAppShortcut, [&](const mig::MacRelinkItem& item) -> mig::RelinkRecordCheck {
         const auto* current = record(committed, item.recordID);
         if (!current) return {mig::RelinkRecordState::missing, {}};
         auto target = shortcutRelinkTarget(*current);
-        if (target.empty() || !ehud::data::validWindowsFilePath(target)) return {}; // Mac locator, or a packaged target (below)
+        if (target.empty() || !mig::validMacRelinkTarget(mig::relinkAppShortcut, target)) return {};
         return {mig::RelinkRecordState::relinked, std::move(target)};
     });
-    // A packaged application has no file path. The ledger decides whether it
-    // records its AppsFolder target; while it refuses one (an invalid
-    // Windows path), the row stays listed. Other failures propagate.
-    for (const auto& item : ledger.unresolved(mig::relinkAppShortcut)) {
-        const auto* current = record(committed, item.recordID);
-        if (!current) continue;
-        auto target = shortcutRelinkTarget(*current);
-        if (target.empty()) continue;
-        try { ledger.markResolved(item.id, std::move(target)); }
-        catch (const ehud::data::StoreError& e) { if (e.code() != ehud::data::StoreErrorCode::invalid) throw; }
-    }
-    for (const auto& before : listed) {
-        const auto* after = ledger.find(before.id);
-        if (!after || after->state == mig::RelinkState::unresolved) ++out.open;
-        else if (after->state == mig::RelinkState::resolved) ++out.resolved;
-        else ++out.dismissed;
-    }
-    return out;
+    return {change.resolved, change.dismissed, change.open};
 }
 } // namespace endfield::modules
