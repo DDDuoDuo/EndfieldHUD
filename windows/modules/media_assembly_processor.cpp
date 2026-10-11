@@ -62,7 +62,9 @@ void halve(std::vector<std::array<float,4>>&texels,unsigned&width,unsigned&heigh
         for(int c=0;c<4;++c)sum[c]*=.25f;next[std::size_t(j)*w2+i]=sum;}
     texels=std::move(next);width=w2;height=h2;
 }
-std::uint8_t byte(float v)noexcept{return static_cast<std::uint8_t>(std::floor(std::clamp(v,0.f,1.f)*255.f+.5f));}
+// Round to nearest: the clamped operand is at least 0.5, where truncation
+// equals floor (and needs no library call under precise floating point).
+std::uint8_t byte(float v)noexcept{return static_cast<std::uint8_t>(static_cast<int>(std::clamp(v,0.f,1.f)*255.f+.5f));}
 // One associated working pixel as RGBA8 in the requested alpha mode.
 void store(std::uint8_t*o,const MediaAssemblyRGBA&p,MediaAssemblyOutputAlpha mode)noexcept{
     const float a=unit(p.a);o[3]=byte(a);
@@ -239,18 +241,21 @@ MediaAssemblyRGBA MediaAssemblyFrameProcessor::stickersOver(MediaAssemblyRGBA p,
     }
     return p;
 }
-void MediaAssemblyFrameProcessor::compositeStickers(unsigned first,unsigned count,std::span<std::uint8_t>rows,std::size_t stride,MediaAssemblyOutputAlpha mode)const{
-    need(first<=plan_.outputHeight&&count<=plan_.outputHeight-first&&stride>=std::size_t(plan_.outputWidth)*4&&(count==0||rows.size()>=stride*(count-1)+std::size_t(plan_.outputWidth)*4),"Invalid Media Assembly output rows");
+void MediaAssemblyFrameProcessor::renderColour(const MediaAssemblyPixels&s,unsigned first,unsigned count,std::span<float>target,std::size_t stride)const{
+    need(s.width==plan_.sourceWidth&&s.height==plan_.sourceHeight&&s.stride>=std::size_t(s.width)*4&&s.bytes.size()>=s.stride*(s.height-1)+std::size_t(s.width)*4,"Media Assembly source does not match its plan");
+    need(first<=plan_.outputHeight&&count<=plan_.outputHeight-first&&stride>=std::size_t(plan_.outputWidth)*4&&(count==0||target.size()>=stride*(count-1)+std::size_t(plan_.outputWidth)*4),"Invalid Media Assembly colour rows");
+    for(unsigned row=0;row<count;++row){
+        auto*out=target.data()+std::size_t(row)*stride;
+        for(unsigned x=0;x<plan_.outputWidth;++x){const auto p=color_.apply(source(s,x,first+row));out[x*4]=p.r;out[x*4+1]=p.g;out[x*4+2]=p.b;out[x*4+3]=p.a;}
+    }
+}
+void MediaAssemblyFrameProcessor::compositeStickers(unsigned first,unsigned count,std::span<const float>colour,std::size_t colourStride,std::span<std::uint8_t>target,std::size_t stride,MediaAssemblyOutputAlpha mode)const{
+    const std::size_t w=plan_.outputWidth;
+    need(first<=plan_.outputHeight&&count<=plan_.outputHeight-first&&colourStride>=w*4&&stride>=w*4&&(count==0||(colour.size()>=colourStride*(count-1)+w*4&&target.size()>=stride*(count-1)+w*4)),"Invalid Media Assembly output rows");
     const double H=plan_.outputHeight;
     for(unsigned row=0;row<count;++row){
-        const unsigned y=first+row;auto*out=rows.data()+std::size_t(row)*stride;const double py=H-y-.5;
-        for(unsigned x=0;x<plan_.outputWidth;++x){
-            auto*o=out+std::size_t(x)*4;const double px=x+.5;
-            // Associated RGBA8 in. An opaque pixel no sticker covers is final
-            // in either alpha mode (associated equals straight).
-            if(o[3]==255&&std::none_of(stickers_.begin(),stickers_.end(),[&](const Sticker&k){return !(px<k.minX-1||px>k.maxX+1||py<k.minY-1||py>k.maxY+1);}))continue;
-            store(o,stickersOver({o[0]/255.f,o[1]/255.f,o[2]/255.f,o[3]/255.f},px,py),mode);
-        }
+        const unsigned y=first+row;const float*in=colour.data()+std::size_t(row)*colourStride;auto*out=target.data()+std::size_t(row)*stride;const double py=H-y-.5;
+        for(std::size_t x=0;x<w;++x){const float*c=in+x*4;store(out+x*4,stickersOver({c[0],c[1],c[2],c[3]},double(x)+.5,py),mode);}
     }
 }
 std::vector<std::uint8_t>MediaAssemblyFrameProcessor::render(const MediaAssemblyPixels&s,MediaAssemblyOutputAlpha mode)const{

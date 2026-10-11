@@ -20,7 +20,8 @@ struct MediaAssemblyRGBA {
 // those outputs reaches the parity bound every characterised operator meets
 // (float 2e-5, one RGBA8 level): the best, a measured 17^3 RGB lattice per
 // 0.1 amount step, still differs by up to 8 levels on held-out pixels and 21
-// with extended-range inputs (tests/fixtures/
+// with extended-range inputs, and even a 65^3 tetrahedral lattice at its own
+// amount node misses by 5 levels near black (tests/fixtures/
 // media-assembly-highlight-shadow-fit.json). The amounts are
 // kept in the document and shown on the sliders exactly like the Mac; the
 // colour chain skips the step in previews, played frames and exports.
@@ -130,13 +131,19 @@ public:
         std::size_t stride,MediaAssemblyOutputAlpha=MediaAssemblyOutputAlpha::premultiplied)const;
     // Convenience full-frame render.
     std::vector<std::uint8_t>render(const MediaAssemblyPixels&source,MediaAssemblyOutputAlpha=MediaAssemblyOutputAlpha::premultiplied)const;
-    // The sticker step alone: output rows [first, first+count) already hold
-    // the geometry and colour result as associated RGBA8 (an equivalent GPU
-    // evaluation, native/media_assembly_gpu); the stickers are composited
-    // over them exactly as render() does and the rows are rewritten in the
-    // requested alpha mode.
-    void compositeStickers(unsigned first,unsigned count,std::span<std::uint8_t>rows,std::size_t stride,
-        MediaAssemblyOutputAlpha=MediaAssemblyOutputAlpha::premultiplied)const;
+    // Geometry and colour only: output rows [first, first+count) as
+    // associated, unclamped float RGBA (stride in floats), the values render()
+    // composites the stickers over. The reference for the GPU export rows.
+    void renderColour(const MediaAssemblyPixels&source,unsigned first,unsigned count,std::span<float>target,std::size_t stride)const;
+    // The sticker step alone: colour holds rows [first, first+count) of the
+    // geometry and colour result as associated, unclamped float RGBA (an
+    // equivalent GPU evaluation, native/media_assembly_gpu; stride in floats).
+    // The stickers are composited over them exactly as render() does, so a
+    // translucent sticker edge over extended-range colour and an unassociated
+    // translucent pixel come out as in render(); target receives RGBA8 rows in
+    // the requested alpha mode. Allocation free.
+    void compositeStickers(unsigned first,unsigned count,std::span<const float>colour,std::size_t colourStride,
+        std::span<std::uint8_t>target,std::size_t stride,MediaAssemblyOutputAlpha=MediaAssemblyOutputAlpha::premultiplied)const;
 private:
     // Sticker texels after the original affine down-scale chain: 2x2 box
     // halvings (y-up, transparent padding) until the remaining scale reaches

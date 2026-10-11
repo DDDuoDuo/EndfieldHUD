@@ -39,7 +39,7 @@ struct MediaAssemblyEngineStats {
     // processor (fallback when no device exists or the device is lost).
     std::uint64_t gpuExportFrames{},cpuExportFrames{};
     // Still exports whose rows were edited on the export job's GPU device
-    // (opaque stills) or by the exact CPU processor.
+    // (float colour bands, CPU sticker step) or by the exact CPU processor.
     std::uint64_t gpuStillExports{},cpuStillExports{};
     std::uint64_t deferredPreviews{};
     std::size_t cachedSourceBytes{};
@@ -71,8 +71,8 @@ public:
         // Device for one explicit video export job (created on the worker,
         // released when the job ends). Null result: CPU processor.
         std::function<std::shared_ptr<void>()>exportDevice{createMediaAssemblyExportDevice};
-        // Opaque still exports of at least this many output pixels use that
-        // device (smaller ones finish on the CPU before a device would exist).
+        // Still exports of at least this many output pixels use that device
+        // (smaller ones finish on the CPU before a device would exist).
         std::uint64_t gpuStillPixels{1u<<20};
     };
     static constexpr unsigned maximumPreviewDimension=1024;

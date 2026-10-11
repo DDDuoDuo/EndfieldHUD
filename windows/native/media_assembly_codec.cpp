@@ -394,25 +394,33 @@ std::string NativeMediaAssemblyEngine::exportMedia(const m::MediaAssemblyExportR
         const m::MediaAssemblyFrameProcessor processor(source.width,source.height,r.adjustments,lookup,true,stickers);
         if(ticket.cancelled())fail(m::MediaAssemblyError::cancelled);
         need(processor.width()<=65536&&processor.height()<=65536,m::MediaAssemblyError::unsupportedExport);
-        // The source CIContext renders the whole composition on the GPU. An
-        // opaque still within the D3D11 texture limit does the same here: the
-        // job's own device edits geometry and colour in row bands and the CPU
-        // composites the stickers over each band. A translucent still stays
-        // on the exact CPU processor (associated 8-bit rows would amplify
-        // rounding once unassociated); any GPU failure finishes on the CPU.
+        // The source CIContext renders the whole composition on the GPU. A
+        // still within the D3D11 texture limit does the same here: the job's
+        // own device edits geometry and colour into associated, unclamped
+        // float row bands and the CPU composites the stickers over each band
+        // and stores it, exactly as the CPU processor does (extended-range
+        // colour under translucent sticker edges and translucent pixels keep
+        // their precision). Any GPU failure finishes on the CPU.
         const m::MediaAssemblyPixels pixels{source.width,source.height,std::size_t(source.width)*4,source.straightRGBA,false};
         std::unique_ptr<NativeMediaAssemblyGpuProcessor>gpu;
-        bool opaque=true;for(std::size_t i=3;i<source.straightRGBA.size()&&opaque;i+=4)opaque=source.straightRGBA[i]==255;
         const bool large=std::uint64_t(processor.width())*processor.height()>=impl_->options.gpuStillPixels;
-        if(opaque&&large&&impl_->options.exportDevice&&std::max(source.width,source.height)<=16384)if(auto device=impl_->options.exportDevice())try{
+        if(large&&impl_->options.exportDevice&&std::max(source.width,source.height)<=16384)if(auto device=impl_->options.exportDevice())try{
             gpu=std::make_unique<NativeMediaAssemblyGpuProcessor>(std::move(device));gpu->setSource(source.width,source.height,source.straightRGBA,std::size_t(source.width)*4,false);
             const auto edited=gpu->configure(r.adjustments,lookup,false);if(edited.outputWidth!=processor.width()||edited.outputHeight!=processor.height())gpu.reset();
         }catch(const std::exception&){gpu.reset();}
         std::uint64_t gpuRows{},cpuRows{};
+        // Float colour rows for at most about 1 Mpx at a time (16 MB, and the
+        // same on the device), reused for every band of this job.
+        const std::size_t colourStride=std::size_t(processor.width())*4;const unsigned colourRows=std::max(1u,unsigned((1u<<20)/std::max(1u,processor.width())));
+        std::vector<float>colour;
         struct Count {Impl&i;std::uint64_t&g,&c;~Count(){std::lock_guard l(i.lock);if(g)++i.statistics.gpuStillExports;if(c)++i.statistics.cpuStillExports;}}count{*impl_,gpuRows,cpuRows};
         ticket.setProgress(.7);
         encodeImage(wic.Get(),tempPath,plan.format.image,processor.width(),processor.height(),[&](unsigned y,unsigned n,std::span<std::uint8_t>rows,std::size_t stride,m::MediaAssemblyOutputAlpha mode){
-            if(gpu)try{gpu->renderRows(y,n,rows,stride);processor.compositeStickers(y,n,rows,stride,mode);gpuRows+=n;return;}catch(const std::exception&){gpu.reset();}
+            if(gpu)try{
+                if(colour.empty())colour.resize(colourStride*std::min(colourRows,processor.height()));
+                for(unsigned at=0;at<n;){const unsigned part=std::min(colourRows,n-at);
+                    gpu->renderRows(y+at,part,colour,colourStride);processor.compositeStickers(y+at,part,colour,colourStride,rows.subspan(std::size_t(at)*stride),stride,mode);at+=part;}
+                gpuRows+=n;return;}catch(const std::exception&){gpu.reset();}
             processor.render(pixels,y,n,rows,stride,mode);cpuRows+=n;},ticket);
     }else{
         Platform mf;const auto range=r.adjustments.timeRange(d.duration);if(!range)fail(m::MediaAssemblyError::invalidAdjustment);

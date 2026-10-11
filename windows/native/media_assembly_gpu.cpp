@@ -36,7 +36,7 @@ cbuffer Edit : register(b0) {
 // Bit 8 (Highlights/Shadows) is never set: that step applies no change on
 // Windows (documented gap, modules/media_assembly_processor.hpp).
 static const uint StepExposure=1u, StepControls=2u, StepTemperature=4u, StepTone=16u, StepLevels=32u, StepGamma=64u, StepLookup=128u;
-static const uint FlagSourcePremultiplied=1u, FlagLinear=2u, FlagOutputPremultiplied=4u;
+static const uint FlagSourcePremultiplied=1u, FlagLinear=2u, FlagOutputPremultiplied=4u, FlagOutputUnclamped=8u;
 
 float4 FullScreen(uint id : SV_VertexID) : SV_Position {
     float2 t = float2((id << 1) & 2, id & 2);
@@ -104,6 +104,9 @@ float4 Edit(float4 c) {
     return float4(v, a);
 }
 float4 Output(float4 straight) {
+    // Float export bands: associated and unclamped, as the CPU chain hands
+    // them to the sticker composite.
+    if (Mode.y & FlagOutputUnclamped) return float4(straight.rgb * straight.a, straight.a);
     float a = saturate(straight.a);
     float3 p = min(straight.rgb * straight.a, a);
     if (Mode.y & FlagOutputPremultiplied) return float4(p, a);
@@ -150,7 +153,7 @@ const Bytecode&bytecode(){
     std::call_once(once,[]{try{value.vertex=compile("FullScreen","vs_4_0");value.process=compile("Process","ps_4_0");value.resample=compile("Resample","ps_4_0");compiled=true;}catch(...){failure=std::current_exception();}});
     if(failure)std::rethrow_exception(failure);return value;
 }
-constexpr unsigned flagSourcePremultiplied=1,flagLinear=2,flagOutputPremultiplied=4;
+constexpr unsigned flagSourcePremultiplied=1,flagLinear=2,flagOutputPremultiplied=4,flagOutputUnclamped=8;
 struct alignas(16) Constants {
     std::int32_t map0[4]{},map1[4]{};std::uint32_t mode[4]{};float controls[4]{},levels[4]{},matrix0[4]{},matrix1[4]{},matrix2[4]{},curve[16]{};
 };
@@ -167,7 +170,7 @@ struct NativeMediaAssemblyGpuProcessor::Impl {
     IDXGISurface*surface{};ComPtr<ID3D11Texture2D>surfaceTexture;ComPtr<ID3D11RenderTargetView>surfaceTarget;unsigned surfaceWidth{},surfaceHeight{};
     ComPtr<ID3D11Texture2D>processed;ComPtr<ID3D11RenderTargetView>processedTarget;ComPtr<ID3D11ShaderResourceView>processedView;unsigned processedWidth{},processedHeight{};
     ComPtr<ID3D11Texture2D>output,staging;ComPtr<ID3D11RenderTargetView>outputTarget;unsigned outputWidth{},outputHeight{};
-    // Still export bands: one RGBA8 target and staging pair, reused.
+    // Still export bands: one float RGBA target and staging pair, reused.
     ComPtr<ID3D11Texture2D>band,bandStaging;ComPtr<ID3D11RenderTargetView>bandTarget;unsigned bandWidth{},bandHeight{};
     MediaAssemblyGpuStats statistics;
 
@@ -305,23 +308,23 @@ void NativeMediaAssemblyGpuProcessor::renderToMemory(unsigned w,unsigned h,std::
     i.context->Unmap(i.staging.Get(),0);++i.statistics.renders;++i.statistics.readbacks;
 }
 
-void NativeMediaAssemblyGpuProcessor::renderRows(unsigned first,unsigned count,std::span<std::uint8_t>rgba,std::size_t stride){
+void NativeMediaAssemblyGpuProcessor::renderRows(unsigned first,unsigned count,std::span<float>associated,std::size_t stride){
     auto&i=*impl_;need(i.configured&&i.source,"configure a source first");const unsigned w=i.plan.outputWidth;
     need(count&&first<=i.plan.outputHeight&&count<=i.plan.outputHeight-first,"rows outside the edit plan");
-    need(stride>=std::size_t(w)*4&&rgba.size()>=stride*(count-1)+std::size_t(w)*4,"export rows are too short");
+    need(stride>=std::size_t(w)*4&&associated.size()>=stride*(count-1)+std::size_t(w)*4,"export rows are too short");
     if(!i.band||i.bandWidth!=w||i.bandHeight<count){
-        i.bandTarget.Reset();i.texture(i.band,w,count,DXGI_FORMAT_R8G8B8A8_UNORM,D3D11_BIND_RENDER_TARGET);check(i.device->CreateRenderTargetView(i.band.Get(),nullptr,&i.bandTarget),"create band target");
-        i.texture(i.bandStaging,w,count,DXGI_FORMAT_R8G8B8A8_UNORM,0,D3D11_USAGE_STAGING,D3D11_CPU_ACCESS_READ);i.bandWidth=w;i.bandHeight=count;
+        i.bandTarget.Reset();i.texture(i.band,w,count,DXGI_FORMAT_R32G32B32A32_FLOAT,D3D11_BIND_RENDER_TARGET);check(i.device->CreateRenderTargetView(i.band.Get(),nullptr,&i.bandTarget),"create band target");
+        i.texture(i.bandStaging,w,count,DXGI_FORMAT_R32G32B32A32_FLOAT,0,D3D11_USAGE_STAGING,D3D11_CPU_ACCESS_READ);i.bandWidth=w;i.bandHeight=count;
     }
     // The band's first output row is row `first` of the plan: shift the
     // pixel map's origin by `first` rows.
-    auto k=i.edit;k.mode[1]|=(i.sourcePremultiplied?flagSourcePremultiplied:0)|flagOutputPremultiplied;
+    auto k=i.edit;k.mode[1]|=(i.sourcePremultiplied?flagSourcePremultiplied:0)|flagOutputUnclamped;
     const long long ox=k.map0[0]+static_cast<long long>(first)*k.map1[0],oy=k.map0[1]+static_cast<long long>(first)*k.map1[1];
     need(ox>=-65536&&ox<=65536&&oy>=-65536&&oy<=65536,"geometry out of range");k.map0[0]=std::int32_t(ox);k.map0[1]=std::int32_t(oy);
     i.pass(i.process.Get(),i.sourceView.Get(),i.bandTarget.Get(),w,count,k);
     i.context->CopyResource(i.bandStaging.Get(),i.band.Get());
     D3D11_MAPPED_SUBRESOURCE mapped{};check(i.context->Map(i.bandStaging.Get(),0,D3D11_MAP_READ,0,&mapped),"read back export rows");
-    for(unsigned y=0;y<count;++y)std::memcpy(rgba.data()+std::size_t(y)*stride,static_cast<const std::uint8_t*>(mapped.pData)+std::size_t(y)*mapped.RowPitch,std::size_t(w)*4);
+    for(unsigned y=0;y<count;++y)std::memcpy(associated.data()+std::size_t(y)*stride,static_cast<const std::uint8_t*>(mapped.pData)+std::size_t(y)*mapped.RowPitch,std::size_t(w)*4*sizeof(float));
     i.context->Unmap(i.bandStaging.Get(),0);++i.statistics.renders;++i.statistics.readbacks;
 }
 

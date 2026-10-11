@@ -56,10 +56,12 @@ public:
     // size, mediaAssemblyResample semantics) and reads BGRA8 rows back.
     void renderToMemory(unsigned width,unsigned height,std::span<std::uint8_t>bgra,std::size_t stride);
     // Still export: rows [first, first+count) of the configured edit at the
-    // plan's own size as associated RGBA8 rows (the CPU processor's row
-    // layout), through one reused band target, so a full-resolution export
-    // never needs a full-size output or readback texture.
-    void renderRows(unsigned first,unsigned count,std::span<std::uint8_t>rgba,std::size_t stride);
+    // plan's own size as associated, unclamped float RGBA (stride in floats;
+    // MediaAssemblyFrameProcessor::renderColour layout) through one reused
+    // float band target, so a full-resolution export never needs a full-size
+    // output or readback texture, and the CPU sticker step composites and
+    // unassociates them exactly like the CPU processor.
+    void renderRows(unsigned first,unsigned count,std::span<float>associated,std::size_t stride);
     // Drops borrowed external-surface views (call when the frame-server or
     // media texture they belong to is retired).
     void releaseTargets()noexcept;

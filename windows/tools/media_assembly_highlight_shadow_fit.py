@@ -16,14 +16,21 @@ exports use them):
   nodes     the amount grid highlights = i/10, shadows = j/10 (121 nodes);
             at each node a 17^3 RGB lattice (red fastest, k/16) and a
             257-step grey ramp.
-  fine      a 33^3 lattice at four nodes, to separate RGB resolution from
-            amount interpolation.
+  fine      a 33^3 and a 65^3 lattice at four nodes, to separate RGB
+            resolution from amount interpolation.
   held-out  240 pseudo-random amount pairs, each with 24 random opaque pixels
             and the processor oracle's 18 standard inputs (alpha, extended
-            range); plus 1000 random pixels at each fine node.
+            range); plus, at each fine node, 4000 random pixels and 2000 with
+            one channel inside the first 1/16 (near-black edges, where the
+            outputs bend most; uniform samples rarely reach them).
   locality  one random row, a permutation of it and a 64x64 image of the same
             pixels at one amount pair: equal outputs per pixel show that the
             edit depends on each pixel alone (no neighbourhood).
+  structure generic separability tests on the rendered outputs: whether the
+            edit is one gain or one offset shared by the three channels
+            (encoded or linear sRGB), and finite differences of 21-step
+            amount sweeps (a polynomial of degree d in an amount has zero
+            differences of order d+1).
 
 Models (amounts are interpolated bilinearly between nodes for every model):
   none        no change (what Windows applies while the gap stands).
@@ -34,6 +41,10 @@ Models (amounts are interpolated bilinearly between nodes for every model):
   lattice9    trilinear 9^3 RGB lattice (every other probe node).
   lattice17   trilinear 17^3 RGB lattice.
 Values outside [0, 1] use the model at the clamped value plus the offset.
+At the fine nodes alone (no amount interpolation), a 33^3 lattice with
+trilinear and a 65^3 lattice with tetrahedral interpolation (exact across the
+channel-order planes r=g, g=b, r=b, where the outputs bend) bound what any
+RGB table can reach.
 
 The result is compared with the processor parity bound (float relative error
 2e-5 and one RGBA8 level, as every characterised operator is gated in
@@ -55,10 +66,16 @@ NODES = 10                 # amount grid step 1/NODES
 LATTICE = 17
 RAMP = 257
 FINE = 33
+FINEST = 65
+SWEEP = 21
+SWEEP_PIXELS = 500
+STRUCTURE_TOLERANCE = 1e-4
 FINE_NODES = [(0, 0), (5, 5), (0, 10), (3, 7)]
 HELD_AMOUNTS = 240
 HELD_PIXELS = 24
-NODE_PIXELS = 1000
+NODE_PIXELS = 4000
+NODE_EDGE_PIXELS = 2000
+EDGE = 1 / 16
 ROW = 4096
 FLOAT_BOUND = 2e-5
 BYTE_BOUND = 1
@@ -85,6 +102,30 @@ for _ in 0..<jobs{
 }
 try output.write(to:URL(fileURLWithPath:CommandLine.arguments[3]))
 '''
+
+
+def decode(v):
+    """sRGB transfer, odd-extended (the linear working-space reading)."""
+    s, a = (-1 if v < 0 else 1), abs(v)
+    return s * (a / 12.92 if a <= 0.04045 else ((a + 0.055) / 1.055) ** 2.4)
+
+
+def tetrahedral(table, n, rgb):
+    """Tetrahedral lattice interpolation: the cube splits along the channel
+    order, so the result is exact on the planes where two channels are equal."""
+    x = [clamp01(v) * (n - 1) for v in rgb]
+    i = [min(int(v), n - 2) for v in x]
+    f = [x[k] - i[k] for k in range(3)]
+    order = sorted(range(3), key=lambda k: -f[k])
+    corner, out = [0, 0, 0], [0.0, 0.0, 0.0]
+    weights = [1 - f[order[0]], f[order[0]] - f[order[1]], f[order[1]] - f[order[2]], f[order[2]]]
+    for step, w in enumerate(weights):
+        if step:
+            corner[order[step - 1]] = 1
+        p = table[((i[2] + corner[2]) * n + i[1] + corner[1]) * n + i[0] + corner[0]]
+        for c in range(3):
+            out[c] += w * p[c]
+    return [out[c] + rgb[c] - clamp01(rgb[c]) for c in range(3)]
 
 
 def lattice_pixels(n):
@@ -298,6 +339,7 @@ def main():
         for j in range(NODES + 1):
             node_parts[(i, j)] = (probe.add(i / NODES, j / NODES, lattice), probe.add(i / NODES, j / NODES, ramp))
     fine_parts = {n: probe.add(n[0] / NODES, n[1] / NODES, lattice_pixels(FINE)) for n in FINE_NODES}
+    finest_parts = {n: probe.add(n[0] / NODES, n[1] / NODES, lattice_pixels(FINEST)) for n in FINE_NODES}
     held = []
     for _ in range(HELD_AMOUNTS):
         h, s = rng.random(), rng.random()
@@ -306,6 +348,10 @@ def main():
     node_held = {}
     for n in FINE_NODES:
         pixels = [(rng.random(), rng.random(), rng.random(), 1.0) for _ in range(NODE_PIXELS)]
+        for _ in range(NODE_EDGE_PIXELS):
+            edge = [rng.random(), rng.random(), rng.random()]
+            edge[rng.randrange(3)] *= EDGE
+            pixels.append(tuple(edge) + (1.0,))
         node_held[n] = (pixels, probe.add(n[0] / NODES, n[1] / NODES, pixels))
     local_h, local_s = .35, .55
     row = [(rng.random(), rng.random(), rng.random(), 1.0) for _ in range(ROW)]
@@ -314,6 +360,11 @@ def main():
     local_row = probe.add(local_h, local_s, row)
     local_permuted = probe.add(local_h, local_s, [row[k] for k in order])
     local_image = probe.add(local_h, local_s, row, width=64)
+    # Structure: interior pixels (no channel near a clamp) and amount sweeps.
+    interior = [(.1 + .8 * rng.random(), .1 + .8 * rng.random(), .1 + .8 * rng.random(), 1.0) for _ in range(SWEEP_PIXELS)]
+    structure_parts = {n: probe.add(n[0] / NODES, n[1] / NODES, interior) for n in FINE_NODES}
+    sweep_parts = {(axis, other): [probe.add(*((k / (SWEEP - 1), other) if axis == 'h' else (other, k / (SWEEP - 1))), interior) for k in range(SWEEP)]
+                   for axis in ('h', 's') for other in (0.0, 0.5, 1.0)}
 
     sources = reference.pinned_sources()
     with tempfile.TemporaryDirectory(prefix='endfield-media-highlight-shadow-') as tmp:
@@ -333,7 +384,11 @@ def main():
     held_standard = [(h, s, p, e) for h, s, _, _, pixels, parts in held for p, e in zip(pixels, probe.gather(parts))]
     at_nodes = [(n[0] / NODES, n[1] / NODES, p, e) for n, (pixels, parts) in node_held.items() for p, e in zip(pixels, probe.gather(parts))]
     fine = {n: [tuple(p[:3]) for p in probe.gather(parts)] for n, parts in fine_parts.items()}
-    lattice33 = score_fine(fine, node_held, probe)
+    lattice33 = score_fine(fine, FINE, trilinear, node_held, probe)
+    finest = {n: [tuple(p[:3]) for p in probe.gather(parts)] for n, parts in finest_parts.items()}
+    lattice65 = score_fine(finest, FINEST, tetrahedral, node_held, probe)
+    structure = measure_structure(interior, {n: probe.gather(parts) for n, parts in structure_parts.items()},
+                                  {key: [probe.gather(parts) for parts in sweep] for key, sweep in sweep_parts.items()})
 
     models = []
     for name, description, floats in MODELS:
@@ -345,6 +400,8 @@ def main():
         models.append(result)
         print(name, json.dumps(result['heldOutRandom']), json.dumps(result['heldOutStandardInputs']), json.dumps(result['atFineNodes']))
     print('lattice33 at fine nodes', json.dumps(lattice33))
+    print('lattice65 tetrahedral at fine nodes', json.dumps(lattice65))
+    print('structure', json.dumps(structure))
     candidates = [m for m in models if m['name'] != 'none']
     best = min(candidates, key=lambda m: (m['heldOutRandom']['worstByte'], m['heldOutRandom']['worstFloat']))
     reaches = any(m['reachesBound'] for m in candidates)
@@ -355,12 +412,13 @@ def main():
         'probe': {'seed': SEED, 'amountNodes': (NODES + 1) ** 2, 'amountStep': 1 / NODES, 'lattice': LATTICE, 'greyRamp': RAMP,
                   'fineLattice': FINE, 'fineNodes': [[n[0] / NODES, n[1] / NODES] for n in FINE_NODES],
                   'heldOutAmounts': HELD_AMOUNTS, 'heldOutRandomPixels': HELD_PIXELS, 'heldOutStandardInputs': len(standard),
-                  'nodePixels': NODE_PIXELS, 'renderedPixels': sum(len(j[2]) for j in probe.jobs), 'jobs': len(probe.jobs),
+                  'nodePixels': NODE_PIXELS, 'nodeEdgePixels': NODE_EDGE_PIXELS, 'nodeEdge': EDGE, 'renderedPixels': sum(len(j[2]) for j in probe.jobs), 'jobs': len(probe.jobs),
                   'expectedBytes': 'RGBA8 from the rendered floats with the test rounding (colour clamped to alpha, round to nearest)'},
         'locality': {'amounts': [local_h, local_s], 'pixels': ROW, 'permutedRowMaxDifference': permuted,
                      'imageMaxDifference': planar, 'pixelsChanged': moved, 'perPixel': permuted == 0 and planar == 0},
         'parityBound': {'float': FLOAT_BOUND, 'rgba8': BYTE_BOUND},
-        'models': models, 'lattice33AtFineNodes': lattice33,
+        'models': models, 'lattice33AtFineNodes': lattice33, 'lattice65TetrahedralAtFineNodes': lattice65,
+        'structure': structure,
         'best': best['name'], 'reachesBound': reaches,
         'decision': 'model' if reaches else 'gap',
     }
@@ -369,18 +427,49 @@ def main():
     print(output, 'best', best['name'], 'reachesBound', reaches)
 
 
-def score_fine(fine, node_held, probe):
-    """Pure RGB-resolution error of a 33^3 lattice at its own amount node."""
+def score_fine(fine, size, interpolate, node_held, probe):
+    """Pure RGB-resolution error of a size^3 lattice at its own amount node."""
     worst_float, worst_byte = 0.0, 0
     for n, (pixels, parts) in node_held.items():
         for p, e in zip(pixels, probe.gather(parts)):
-            v = trilinear(fine[n], FINE, p[:3]) + [1.0]
+            v = interpolate(fine[n], size, p[:3]) + [1.0]
             gb, eb = bytes_of(v), bytes_of(e)
             for k in range(4):
                 worst_float = max(worst_float, abs(v[k] - e[k]) / max(1.0, abs(e[k])))
                 worst_byte = max(worst_byte, abs(gb[k] - eb[k]))
     return {'samples': sum(len(v[0]) for v in node_held.values()), 'worstFloat': float('%.6g' % worst_float), 'worstByte': worst_byte,
-            'tableFloatsPerNode': FINE ** 3 * 3}
+            'tableFloatsPerNode': size ** 3 * 3}
+
+
+def measure_structure(interior, at_nodes, sweeps):
+    """Generic separability tests on the rendered outputs (no model)."""
+    def spread(values):
+        return max(values) - min(values)
+    shared = {}
+    for space, f in (('encoded', lambda v: v), ('linear', decode)):
+        gain = offset = 0.0
+        for outputs in at_nodes.values():
+            for p, q in zip(interior, outputs):
+                x, y = [f(p[c]) for c in range(3)], [f(q[c]) for c in range(3)]
+                gain = max(gain, spread([y[c] / x[c] for c in range(3)]))
+                offset = max(offset, spread([y[c] - x[c] for c in range(3)]))
+        shared[space] = {'gainSpread': float('%.4g' % gain), 'offsetSpread': float('%.4g' % offset)}
+    def differences(seq, order):
+        for _ in range(order):
+            seq = [b - a for a, b in zip(seq, seq[1:])]
+        return seq
+    sweep = {}
+    for (axis, other), outputs in sweeps.items():
+        sweep['%s|%s=%g' % (axis, 's' if axis == 'h' else 'h', other)] = [
+            float('%.4g' % max(abs(d) for i in range(len(interior)) for c in range(3)
+                               for d in differences([outputs[k][i][c] for k in range(SWEEP)], order)))
+            for order in (1, 2, 3, 4)]
+    # Verdicts from the numbers: a shared gain or offset leaves spreads at
+    # float rounding; a cubic amount dependence leaves zero 4th differences.
+    return {'interiorPixels': len(interior), 'nodes': [[n[0] / NODES, n[1] / NODES] for n in at_nodes],
+            'sharedAcrossChannels': shared, 'amountSweepSteps': SWEEP, 'amountSweepMaxDifferences': sweep,
+            'sharedGainOrOffset': any(v <= STRUCTURE_TOLERANCE for s in shared.values() for v in s.values()),
+            'amountsAtMostCubic': all(v[3] <= STRUCTURE_TOLERANCE for v in sweep.values())}
 
 
 if __name__ == '__main__':

@@ -163,18 +163,27 @@ void pixels(const J&fixture,Cubes&cubes){
 //  1. Locality: a random row, a permutation of it and a 64x64 image of the
 //     same pixels give identical outputs per pixel, so a per-pixel model
 //     f(r,g,b; highlights, shadows) is sufficient in principle.
-//  2. Probe: 121 amount nodes (step 0.1), each with a 17^3 RGB lattice and a
-//     257-step grey ramp; a 33^3 lattice at four nodes.
-//  3. Models, all generic and interpolated bilinearly between amount nodes:
+//  2. Structure: on interior pixels the edit is neither one gain nor one
+//     offset shared by the three channels, in encoded or linear sRGB, and
+//     21-step amount sweeps keep nonzero 4th differences (no polynomial of
+//     degree three or less in either amount). Generic closed forms of that
+//     kind are therefore ruled out by the outputs themselves.
+//  3. Probe: 121 amount nodes (step 0.1), each with a 17^3 RGB lattice and a
+//     257-step grey ramp; 33^3 and 65^3 lattices at four nodes.
+//  4. Models, all generic and interpolated bilinearly between amount nodes:
 //     per-channel grey curve, grey gain at Rec. 709 luma, least-squares cubic
 //     RGB polynomial, trilinear 9^3 and 17^3 lattices of measured outputs.
-//  4. Held out: 240 random amount pairs with random opaque pixels and the
-//     processor oracle's standard inputs (alpha, extended range).
+//  5. Held out: 240 random amount pairs with random opaque pixels and the
+//     processor oracle's standard inputs (alpha, extended range); at the
+//     fine nodes uniform pixels plus pixels with one near-black channel.
 // Result: the best model (the 17^3 lattice, 7 MB of floats) still misses
-// the parity bound by several RGBA8 levels, and a 33^3 lattice at its own
-// node misses it too, so the source operator has features no table of this
-// size resolves. No model is shipped: Highlights/Shadows applies no change,
-// the documented gap. A future model is accepted only inside the bound, and
+// the parity bound by several RGBA8 levels. At their own nodes, without any
+// amount interpolation, a trilinear 33^3 lattice and even a 65^3 lattice
+// with tetrahedral interpolation (exact across the channel-order planes
+// where the outputs bend; 3.3 MB per node) miss it as well, by several
+// levels near black and by orders of magnitude in float. No model is
+// shipped: Highlights/Shadows applies no change, the documented gap. A
+// future model is accepted only inside the bound, and
 // mediaAssemblyHighlightShadowCharacterized must then follow the record.
 void highlightShadowGap(const J&fit){
     check(fit["sourceCommit"].string()=="ca04f142185c7de40acd8523bdb563195d90a1d1"&&!fit["usesAppOrWindow"].boolean(),"Fit uses the authoritative isolated oracle");
@@ -196,7 +205,21 @@ void highlightShadowGap(const J&fit){
         names.push_back(model["name"].string());
     }
     check(names==std::vector<std::string>{"none","greyCurve","lumaGain","poly3","lattice9","lattice17"},"Every recorded black-box model was evaluated");
-    check(fit["lattice33AtFineNodes"]["worstByte"].integer()>byteBound,"A 33^3 lattice at its own node also misses the bound");
+    const auto misses=[&](const J&r){return r["worstFloat"].number()>floatBound||r["worstByte"].integer()>byteBound;};
+    const auto&fine=fit["lattice33AtFineNodes"];const auto&finest=fit["lattice65TetrahedralAtFineNodes"];
+    check(probe["nodePixels"].integer()+probe["nodeEdgePixels"].integer()>=5000&&fine["samples"].integer()>=20000&&finest["samples"].integer()==fine["samples"].integer(),"Fine-node lattices are judged on dense held-out pixels");
+    std::cout<<"highlight/shadow lattices at their own nodes: 33^3 trilinear worst "<<fine["worstByte"].integer()<<" levels (float "<<fine["worstFloat"].number()<<"), 65^3 tetrahedral worst "
+             <<finest["worstByte"].integer()<<" levels (float "<<finest["worstFloat"].number()<<")\n";
+    check(misses(fine)&&fine["worstByte"].integer()>byteBound,"A 33^3 lattice at its own node also misses the bound");
+    check(misses(finest)&&finest["tableFloatsPerNode"].integer()==65*65*65*3,"A 65^3 tetrahedral lattice at its own node also misses the bound");
+    // Generic separability: no shared channel gain or offset in either
+    // space, and the amounts do not enter as a low-order polynomial.
+    const auto&structure=fit["structure"];bool shared{};
+    for(const auto&[space,s]:structure["sharedAcrossChannels"].object())shared=shared||s["gainSpread"].number()<=1e-4||s["offsetSpread"].number()<=1e-4;
+    bool cubic=true;for(const auto&[sweep,d]:structure["amountSweepMaxDifferences"].object())cubic=cubic&&d.array()[3].number()<=1e-4;
+    check(structure["interiorPixels"].integer()>=500&&structure["sharedAcrossChannels"].object().size()==2&&structure["amountSweepMaxDifferences"].object().size()==6,"Structure probes cover both spaces and both amounts");
+    check(shared==structure["sharedGainOrOffset"].boolean()&&cubic==structure["amountsAtMostCubic"].boolean(),"Structure verdicts follow their own numbers");
+    check(!shared&&!cubic,"The outputs rule out a shared channel gain or offset and low-order amount polynomials");
     check(fit["reachesBound"].boolean()==anyInside&&fit["decision"].string()==(anyInside?"model":"gap"),"Fit decision follows the bound");
     check(m::mediaAssemblyHighlightShadowCharacterized==anyInside,"Highlights/Shadows is applied only with a black-box model inside the parity bound");
 }
@@ -232,17 +255,38 @@ void frames(const J&fixture,Cubes&cubes,const fs::path&root){
         // halving prefilter + bilinear) are exact within RGBA8 rounding.
         check(worst<=1&&mean<.05,"Frame is pixel exact within rounding: "+f["name"].string());
         if(include&&!a.stickers.empty()){
-            // GPU still export split: associated colour rows from an equivalent
-            // evaluation, then the sticker step alone (compositeStickers).
-            const m::MediaAssemblyFrameProcessor colourOnly(w,h,a,cubes.get(a.filter),false);std::vector<std::uint8_t>split(out.size());
-            colourOnly.render(pixels,0,colourOnly.height(),split,std::size_t(processor.width())*4);
-            counting=true;allocations=0;processor.compositeStickers(0,processor.height(),split,std::size_t(processor.width())*4);counting=false;
-            check(allocations==0,"The sticker step allocates nothing");
-            int splitWorst{};for(std::size_t i=0;i<out.size();++i)splitWorst=std::max(splitWorst,std::abs(int(out[i])-int(split[i])));
-            std::cout<<"frame "<<f["name"].string()<<" colour rows + sticker step worst="<<splitWorst<<'\n';
-            check(splitWorst<=1,"Colour rows plus the sticker step equal the full render within one level: "+f["name"].string());
+            // GPU still export split: associated, unclamped float colour rows
+            // (renderColour, the reference for the GPU bands), then the
+            // sticker step alone (compositeStickers) stores the same bytes.
+            const std::size_t row=std::size_t(processor.width())*4;std::vector<float>colour(row*processor.height());std::vector<std::uint8_t>split(out.size());
+            counting=true;allocations=0;processor.renderColour(pixels,0,processor.height(),colour,row);
+            for(unsigned y=0;y<processor.height();y+=5){const unsigned n=std::min(5u,processor.height()-y);
+                processor.compositeStickers(y,n,std::span<const float>(colour).subspan(std::size_t(y)*row),row,std::span(split).subspan(std::size_t(y)*row),row);}
+            counting=false;check(allocations==0,"Colour rows and the sticker step allocate nothing");
+            check(split==out,"Float colour rows plus the sticker step equal the full render exactly: "+f["name"].string());
         }
     }
+}
+
+// The sticker step composites over unclamped colour, as render() and the
+// source's float working format do: a translucent sticker edge over pixels an
+// edit pushed out of [0, 1] differs from compositing over clamped 8-bit rows.
+void extendedStickers(){
+    const unsigned w=96,h=64,sw=32,sh=32;std::vector<std::uint8_t>src(std::size_t(w)*h*4,255),art(std::size_t(sw)*sh*4);
+    for(unsigned y=0;y<h;++y)for(unsigned x=0;x<w;++x){auto*p=src.data()+(std::size_t(y)*w+x)*4;p[0]=std::uint8_t(x*255/(w-1));p[1]=std::uint8_t(y*255/(h-1));p[2]=std::uint8_t(((x*7+y*13)*5)%256);}
+    for(unsigned y=0;y<sh;++y)for(unsigned x=0;x<sw;++x){auto*p=art.data()+(std::size_t(y)*sw+x)*4;const unsigned a=(x*255)/(sw-1);p[0]=std::uint8_t(20*a/255);p[1]=std::uint8_t(10*a/255);p[2]=std::uint8_t(40*a/255);p[3]=std::uint8_t(a);}
+    m::MediaAssemblyAdjustments a;a.exposure=1.5;a.contrast=1.6;m::MediaAssemblySticker k;k.id="synthetic";k.x=.5;k.y=.5;k.size=.8;k.rotation=10;a.stickers.push_back(k);
+    const m::MediaAssemblyStickerArtwork artwork{sw,sh,art};const m::MediaAssemblyFrameProcessor full(w,h,a,{},true,std::span(&artwork,1)),colourOnly(w,h,a,{},false);
+    const m::MediaAssemblyPixels px{w,h,std::size_t(w)*4,src,false};const auto expected=full.render(px);
+    const std::size_t row=std::size_t(full.width())*4;std::vector<float>colour(row*full.height());full.renderColour(px,0,full.height(),colour,row);
+    std::vector<std::uint8_t>split(expected.size());full.compositeStickers(0,full.height(),colour,row,split,row);
+    check(split==expected,"Float colour rows plus the sticker step equal the full render over extended-range colour");
+    // The former 8-bit associated intermediate: clamped colour, then the step.
+    const auto clamped=colourOnly.render(px);std::vector<float>narrow(clamped.size());for(std::size_t i=0;i<clamped.size();++i)narrow[i]=clamped[i]/255.f;
+    std::vector<std::uint8_t>viaBytes(expected.size());full.compositeStickers(0,full.height(),narrow,row,viaBytes,row);
+    int worst{};for(std::size_t i=0;i<expected.size();++i)worst=std::max(worst,std::abs(int(expected[i])-int(viaBytes[i])));
+    std::cout<<"sticker step over clamped 8-bit colour rows differs by "<<worst<<" levels\n";
+    check(worst>byteBound,"Clamped 8-bit colour rows would change translucent sticker edges (why the GPU bands are float)");
 }
 
 void downscale(){
@@ -286,7 +330,7 @@ int main(int argc,char**argv){
         const auto fixture=J::parse(read(argv[1]),8*1024*1024);
         check(fixture["sourceCommit"].string()=="ca04f142185c7de40acd8523bdb563195d90a1d1"&&!fixture["usesAppOrWindow"].boolean(),"Authoritative isolated oracle");
         Cubes cubes{argv[2],{}};
-        derivations();downscale();pixels(fixture,cubes);highlightShadowGap(J::parse(read(argv[3]),1024*1024));frames(fixture,cubes,argv[2]);streaming();performance(cubes);
+        derivations();downscale();pixels(fixture,cubes);highlightShadowGap(J::parse(read(argv[3]),1024*1024));frames(fixture,cubes,argv[2]);extendedStickers();streaming();performance(cubes);
         std::cout<<"media_assembly_processor_tests: "<<checks<<" checks passed\n";return 0;
     }catch(const std::exception&e){std::cerr<<"media_assembly_processor_tests: "<<e.what()<<'\n';return 1;}
 }

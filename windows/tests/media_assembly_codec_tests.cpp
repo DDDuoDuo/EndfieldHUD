@@ -145,7 +145,7 @@ void stills(const fs::path&root,const fs::path&assets){
         fs::remove(moved);fs::remove(original);check(failure([&]{engine.preview(*doc,{},0);})==m::MediaAssemblyError::sourceUnavailable&&n::mediaAssemblyLocate(utf8(original),doc->identity)==utf8(original),
             "A moved original that is gone asks to be chosen again");
         fs::remove(folder);}
-    {// Opaque stills: the export job's GPU device edits row bands and the CPU
+    {// Stills: the export job's GPU device edits float row bands and the CPU
      // composites the stickers (source CIContext); same result as the exact CPU export.
         const auto photo=root/L"opaque photo.png";writeImage(photo,GUID_ContainerFormatPng,301,203,gradient(301,203,false));
         auto doc=std::make_shared<m::MediaAssemblyDocumentInfo>(engine.open(utf8(photo)));doc->id="opaque";
@@ -162,14 +162,26 @@ void stills(const fs::path&root,const fs::path&assets){
         const auto gpuOut=root/L"opaque-gpu.png",cpuOut=root/L"opaque-cpu.png";m::MediaAssemblyExportTicket t1,t2;
         check(viaGpu.exportMedia({doc,e,utf8(gpuOut),false,"s1",false},t1)==utf8(gpuOut)&&viaCpu.exportMedia({doc,e,utf8(cpuOut),false,"s2",false},t2)==utf8(cpuOut)&&temporaries(root)==0,"GPU and CPU still exports commit");
         check(viaGpu.stats().gpuStillExports==1&&viaGpu.stats().cpuStillExports==0&&viaCpu.stats().cpuStillExports==1&&viaCpu.stats().gpuStillExports==0,"An opaque still exports on the job's GPU device; without one on the CPU");
-        unsigned gw{},gh{},cw{},ch{};const auto onGpu=readImage(gpuOut,gw,gh),onCpu=readImage(cpuOut,cw,ch);
-        int worst{};std::size_t over{};for(std::size_t i=0;i<onGpu.size()&&i<onCpu.size();++i){const int delta=std::abs(int(onGpu[i])-int(onCpu[i]));worst=std::max(worst,delta);over+=delta>1;}
-        std::cout<<"gpu/cpu still export "<<gw<<"x"<<gh<<" worst="<<worst<<" over1="<<over<<" of "<<onGpu.size()<<'\n';
-        check(gw==cw&&gh==ch&&onGpu.size()==onCpu.size()&&worst<=2,"The GPU still export matches the exact CPU export within two levels, stickers included");
-        // A translucent still stays on the exact CPU processor.
+        // GPU and CPU exports of the same edit, compared byte for byte.
+        unsigned sequence{};const auto both=[&](const std::shared_ptr<m::MediaAssemblyDocumentInfo>&document,const m::MediaAssemblyAdjustments&edit,const char*name){
+            const auto a=root/(std::wstring(L"gpu-")+std::to_wstring(++sequence)+L".png"),b=root/(std::wstring(L"cpu-")+std::to_wstring(sequence)+L".png");m::MediaAssemblyExportTicket u1,u2;
+            const auto gpuBefore=viaGpu.stats().gpuStillExports;
+            check(viaGpu.exportMedia({document,edit,utf8(a),false,"g"+std::to_string(sequence),false},u1)==utf8(a)&&viaCpu.exportMedia({document,edit,utf8(b),false,"c"+std::to_string(sequence),false},u2)==utf8(b),std::string("GPU and CPU exports commit: ")+name);
+            check(viaGpu.stats().gpuStillExports==gpuBefore+1&&viaGpu.stats().cpuStillExports==0,std::string("The still exports on the job's GPU device: ")+name);
+            unsigned aw{},ah{},bw{},bh{};const auto x=readImage(a,aw,ah),y=readImage(b,bw,bh);int worst{};std::size_t over{};
+            for(std::size_t i=0;i<x.size()&&i<y.size();++i){const int delta=std::abs(int(x[i])-int(y[i]));worst=std::max(worst,delta);over+=delta>1;}
+            std::cout<<"gpu/cpu still export "<<name<<' '<<aw<<"x"<<ah<<" worst="<<worst<<" over1="<<over<<" of "<<x.size()<<'\n';
+            check(aw==bw&&ah==bh&&x.size()==y.size()&&!x.empty()&&worst<=1,std::string("The GPU still export matches the exact CPU export within one level, stickers included: ")+name);
+            fs::remove(a);fs::remove(b);};
+        {unsigned gw{},gh{},cw{},ch{};const auto onGpu=readImage(gpuOut,gw,gh),onCpu=readImage(cpuOut,cw,ch);int worst{};for(std::size_t i=0;i<onGpu.size()&&i<onCpu.size();++i)worst=std::max(worst,std::abs(int(onGpu[i])-int(onCpu[i])));
+            check(gw==cw&&gh==ch&&onGpu.size()==onCpu.size()&&worst<=1,"The GPU still export matches the exact CPU export within one level, stickers included");}
+        // Translucent stills take the GPU too: float rows unassociate exactly.
         const auto clear=root/L"translucent.png";writeImage(clear,GUID_ContainerFormatPng,40,30,gradient(40,30,true));auto see=std::make_shared<m::MediaAssemblyDocumentInfo>(viaGpu.open(utf8(clear)));
-        {m::MediaAssemblyExportTicket t;check(viaGpu.exportMedia({see,e,utf8(root/L"translucent-out.png"),false,"s3",false},t)==utf8(root/L"translucent-out.png")&&viaGpu.stats().gpuStillExports==1&&viaGpu.stats().cpuStillExports==1,
-            "A translucent still exports on the exact CPU processor");}
+        both(see,e,"translucent");
+        // Strong colour edits without a LUT push colour out of [0, 1] under
+        // the translucent sticker edges; the float rows composite like the CPU.
+        m::MediaAssemblyAdjustments bright;bright.exposure=1.5;bright.contrast=1.6;bright.saturation=1.4;bright.stickers=e.stickers;
+        both(doc,bright,"extended-range stickers");both(see,bright,"extended-range stickers translucent");
         // Time (printed): a 12 MP heavy edit on the hardware export device vs the CPU.
         const auto big=root/L"twelve.jpg";writeImage(big,GUID_ContainerFormatJpeg,4000,3000,gradient(4000,3000,false));
         auto large=std::make_shared<m::MediaAssemblyDocumentInfo>(engine.open(utf8(big)));large->id="twelve";const bool hardware=bool(n::createMediaAssemblyExportDevice());

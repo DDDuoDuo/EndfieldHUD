@@ -101,19 +101,52 @@ void run(const fs::path&assets){
             check(r.worst<=1,"GPU render matches the CPU MediaAssemblyEngine.apply within one level: "+c.name);
         }
     }
-    // 1b. Still export rows: band renders at the plan's own size equal one
-    // full-height render exactly and the CPU associated rows within a level.
-    for(const auto&c:cases()){
-        gpu.setSource(w,h,opaque,std::size_t(w)*4,false);const auto plan=gpu.configure(c.a,cube(c.a.filter),false);
-        const m::MediaAssemblyFrameProcessor cpu(w,h,c.a,cube(c.a.filter),false,{},false);
-        const auto expected=cpu.render({w,h,std::size_t(w)*4,opaque,false},m::MediaAssemblyOutputAlpha::premultiplied);
-        const std::size_t row=std::size_t(plan.outputWidth)*4,stride=row+12;std::vector<std::uint8_t>banded(stride*plan.outputHeight),whole(stride*plan.outputHeight);
+    // 1b. Still export rows: float band renders at the plan's own size equal
+    // one full-height render exactly, track the CPU colour rows
+    // (renderColour) closely, and the sticker step over them stores the CPU
+    // processor's bytes within one level in both alpha modes, translucent
+    // sources included (no 8-bit associated intermediate to amplify).
+    for(const bool translucent:{false,true})for(const auto&c:cases()){
+        const auto&pixels=translucent?alpha:opaque;
+        gpu.setSource(w,h,pixels,std::size_t(w)*4,false);const auto plan=gpu.configure(c.a,cube(c.a.filter),false);
+        const m::MediaAssemblyFrameProcessor cpu(w,h,c.a,cube(c.a.filter),false,{},false);const m::MediaAssemblyPixels source{w,h,std::size_t(w)*4,pixels,false};
+        const std::size_t row=std::size_t(plan.outputWidth)*4,stride=row+12;std::vector<float>banded(stride*plan.outputHeight),whole(stride*plan.outputHeight),reference(row*plan.outputHeight);
         for(unsigned y=0;y<plan.outputHeight;y+=7){const unsigned n=std::min(7u,plan.outputHeight-y);gpu.renderRows(y,n,std::span(banded).subspan(std::size_t(y)*stride),stride);}
-        gpu.renderRows(0,plan.outputHeight,whole,stride);
-        std::vector<std::uint8_t>packed(expected.size()),packedWhole(expected.size());
-        for(unsigned y=0;y<plan.outputHeight;++y){std::copy_n(banded.data()+std::size_t(y)*stride,row,packed.data()+std::size_t(y)*row);std::copy_n(whole.data()+std::size_t(y)*stride,row,packedWhole.data()+std::size_t(y)*row);}
-        check(packed==packedWhole,"Row bands equal one full-height render: "+c.name);
-        check(compare(packed,expected,"rows "+c.name).worst<=1,"GPU still-export rows match the CPU associated rows within one level: "+c.name);
+        gpu.renderRows(0,plan.outputHeight,whole,stride);cpu.renderColour(source,0,plan.outputHeight,reference,row);
+        bool equal=true;double drift{};std::vector<float>packed(reference.size());
+        for(unsigned y=0;y<plan.outputHeight;++y)for(std::size_t x=0;x<row;++x){const float b=banded[std::size_t(y)*stride+x],f=whole[std::size_t(y)*stride+x],r=reference[std::size_t(y)*row+x];
+            equal=equal&&b==f;drift=std::max(drift,double(std::abs(f-r))/std::max(1.,double(std::abs(r))));packed[std::size_t(y)*row+x]=f;}
+        const std::string name=c.name+(translucent?" translucent":"");
+        check(equal,"Float row bands equal one full-height render: "+name);
+        check(drift<1e-4,"GPU colour rows follow the CPU colour rows: "+name+" (relative drift "+std::to_string(drift)+")");
+        for(const auto mode:{m::MediaAssemblyOutputAlpha::premultiplied,m::MediaAssemblyOutputAlpha::straight}){
+            std::vector<std::uint8_t>stored(row*plan.outputHeight);cpu.compositeStickers(0,plan.outputHeight,packed,row,stored,row,mode);
+            check(compare(stored,cpu.render(source,mode),"rows "+name+(mode==m::MediaAssemblyOutputAlpha::straight?" straight":"")).worst<=1,"GPU still-export rows store the CPU bytes within one level: "+name);
+        }
+    }
+    // 1c. Stickers over extended-range colour (no LUT or levels clamp it):
+    // the float rows keep the values the CPU (and the source's float working
+    // format) composites a translucent sticker edge over. A synthetic
+    // soft-edged sticker covers the frame's brightest and darkest pixels.
+    {
+        const unsigned sw=24,sh=24;std::vector<std::uint8_t>art(std::size_t(sw)*sh*4);
+        for(unsigned y=0;y<sh;++y)for(unsigned x=0;x<sw;++x){auto*q=art.data()+(std::size_t(y)*sw+x)*4;const unsigned a=(x*255)/(sw-1);q[0]=std::uint8_t(30*a/255);q[1]=std::uint8_t(12*a/255);q[2]=std::uint8_t(50*a/255);q[3]=std::uint8_t(a);}
+        const m::MediaAssemblyStickerArtwork artwork{sw,sh,art};
+        m::MediaAssemblyAdjustments a;a.exposure=1.5;a.contrast=1.6;a.saturation=1.4;
+        for(const auto[x,y]:std::array<std::pair<double,double>,3>{{{.85,.85},{.15,.2},{.5,.5}}}){m::MediaAssemblySticker k;k.id="synthetic";k.kind=m::MediaAssemblyStickerKind(0);k.x=x;k.y=y;k.size=.7;k.rotation=15;a.stickers.push_back(k);}
+        const std::array<m::MediaAssemblyStickerArtwork,3>arts{artwork,artwork,artwork};
+        for(const bool translucent:{false,true}){
+            const auto&pixels=translucent?alpha:opaque;const m::MediaAssemblyPixels source{w,h,std::size_t(w)*4,pixels,false};
+            const m::MediaAssemblyFrameProcessor cpu(w,h,a,{},true,arts);gpu.setSource(w,h,pixels,std::size_t(w)*4,false);const auto plan=gpu.configure(a,{},false);
+            const std::size_t row=std::size_t(plan.outputWidth)*4;std::vector<float>rows(row*plan.outputHeight);gpu.renderRows(0,plan.outputHeight,rows,row);
+            float low{},high{};for(std::size_t i=0;i<rows.size();++i)if(i%4!=3){low=std::min(low,rows[i]);high=std::max(high,rows[i]);}
+            check(low<0&&high>1.5f,"The edit drives colour out of range under the stickers");
+            std::vector<std::uint8_t>stored(row*plan.outputHeight);
+            counting=true;allocations=0;cpu.compositeStickers(0,plan.outputHeight,rows,row,stored,row,m::MediaAssemblyOutputAlpha::straight);counting=false;
+            check(allocations==0,"The sticker step allocates nothing");
+            check(compare(stored,cpu.render(source,m::MediaAssemblyOutputAlpha::straight),std::string("extended stickers")+(translucent?" translucent":"")).worst<=1,
+                "GPU rows plus the sticker step equal the CPU export over extended-range colour");
+        }
     }
     // 2. Export path: associated output, even-size bilinear resample, raw
     // rotation folded into the geometry (no CPU rotate copy).
@@ -189,6 +222,21 @@ void run(const fs::path&assets){
             const m::MediaAssemblyFrameProcessor cpu(w,h,a,cube(a.filter),false,{},true);
             const auto r=compare(bgra,cpu.render({w,h,std::size_t(w)*4,opaque,false},m::MediaAssemblyOutputAlpha::premultiplied),"hardware export frame");
             check(r.worst<=1,"Hardware GPU export frame matches the CPU reference");
+            // Informational: a 12 MP heavy still in the codec's 1 Mpx float
+            // bands (GPU rows, then the CPU store) against the CPU processor.
+            const unsigned bw=4000,bh=3000;std::vector<std::uint8_t>still(std::size_t(bw)*bh*4);for(std::size_t i=0;i<still.size();++i)still[i]=i%4==3?255:std::uint8_t((i*37)%251);
+            m::MediaAssemblyAdjustments heavy;heavy.exposure=.4;heavy.saturation=1.3;heavy.temperature=5200;heavy.tint=10;heavy.curve={0,.2,.55,.8,1};heavy.filter=m::MediaAssemblyFilter::filter3;
+            const m::MediaAssemblyFrameProcessor processor(bw,bh,heavy,cube(heavy.filter),false);const m::MediaAssemblyPixels source{bw,bh,std::size_t(bw)*4,still,false};
+            device.setSource(bw,bh,still,std::size_t(bw)*4,false);const auto big=device.configure(heavy,cube(heavy.filter),false);
+            const std::size_t row=std::size_t(big.outputWidth)*4;const unsigned part=std::max(1u,(1u<<20)/big.outputWidth);std::vector<float>colour(row*part);std::vector<std::uint8_t>bytes(row*big.outputHeight),reference(bytes.size());
+            double rows{},store{};
+            for(unsigned y=0;y<big.outputHeight;y+=part){const unsigned n=std::min(part,big.outputHeight-y);auto t0=std::chrono::steady_clock::now();device.renderRows(y,n,colour,row);auto t1=std::chrono::steady_clock::now();
+                processor.compositeStickers(y,n,colour,row,std::span(bytes).subspan(std::size_t(y)*row),row,m::MediaAssemblyOutputAlpha::straight);auto t2=std::chrono::steady_clock::now();
+                rows+=std::chrono::duration<double,std::milli>(t1-t0).count();store+=std::chrono::duration<double,std::milli>(t2-t1).count();}
+            const auto c0=std::chrono::steady_clock::now();processor.render(source,0,big.outputHeight,reference,row,m::MediaAssemblyOutputAlpha::straight);
+            const double cpuMs=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-c0).count();
+            std::cout<<"hardware 12 MP still rows: GPU float rows "<<rows<<" ms + sticker step/store "<<store<<" ms; CPU processor "<<cpuMs<<" ms\n";
+            check(compare(bytes,reference,"hardware 12 MP still rows").worst<=1,"Hardware float rows store the CPU processor's bytes within one level");
         }
     }
 }

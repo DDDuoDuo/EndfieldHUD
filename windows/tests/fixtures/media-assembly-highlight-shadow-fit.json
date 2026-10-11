@@ -2,10 +2,16 @@
  "best": "lattice17",
  "decision": "gap",
  "lattice33AtFineNodes": {
-  "samples": 4000,
+  "samples": 24000,
   "tableFloatsPerNode": 107811,
-  "worstByte": 6,
-  "worstFloat": 0.0241938
+  "worstByte": 7,
+  "worstFloat": 0.0267079
+ },
+ "lattice65TetrahedralAtFineNodes": {
+  "samples": 24000,
+  "tableFloatsPerNode": 823875,
+  "worstByte": 5,
+  "worstFloat": 0.0192056
  },
  "locality": {
   "amounts": [
@@ -22,11 +28,11 @@
  "models": [
   {
    "atFineNodes": {
-    "meanByte": 33.35,
-    "over1Fraction": 0.7351,
-    "samples": 4000,
-    "worstByte": 132,
-    "worstFloat": 0.518726
+    "meanByte": 29.76,
+    "over1Fraction": 0.7234,
+    "samples": 24000,
+    "worstByte": 134,
+    "worstFloat": 0.524315
    },
    "description": "No change (the Windows behaviour while the gap stands).",
    "heldOutRandom": {
@@ -49,11 +55,11 @@
   },
   {
    "atFineNodes": {
-    "meanByte": 22.36,
-    "over1Fraction": 0.5007,
-    "samples": 4000,
+    "meanByte": 20.01,
+    "over1Fraction": 0.5077,
+    "samples": 24000,
     "worstByte": 138,
-    "worstFloat": 0.541227
+    "worstFloat": 0.541277
    },
    "description": "Per-channel curve measured on a 257-step grey ramp at each amount node.",
    "heldOutRandom": {
@@ -76,11 +82,11 @@
   },
   {
    "atFineNodes": {
-    "meanByte": 27.46,
-    "over1Fraction": 0.7269,
-    "samples": 4000,
-    "worstByte": 242,
-    "worstFloat": 2.17636
+    "meanByte": 27.92,
+    "over1Fraction": 0.7205,
+    "samples": 24000,
+    "worstByte": 253,
+    "worstFloat": 3.04943
    },
    "description": "Grey-ramp gain at the Rec. 709 luma applied to all channels.",
    "heldOutRandom": {
@@ -103,11 +109,11 @@
   },
   {
    "atFineNodes": {
-    "meanByte": 5.387,
-    "over1Fraction": 0.6272,
-    "samples": 4000,
-    "worstByte": 46,
-    "worstFloat": 0.178586
+    "meanByte": 5.306,
+    "over1Fraction": 0.6148,
+    "samples": 24000,
+    "worstByte": 48,
+    "worstFloat": 0.188039
    },
    "description": "Least-squares cubic RGB polynomial per channel at each amount node (fitted on 9^3 probe points).",
    "heldOutRandom": {
@@ -130,11 +136,11 @@
   },
   {
    "atFineNodes": {
-    "meanByte": 0.6652,
-    "over1Fraction": 0.1196,
-    "samples": 4000,
-    "worstByte": 14,
-    "worstFloat": 0.057394
+    "meanByte": 0.7442,
+    "over1Fraction": 0.1388,
+    "samples": 24000,
+    "worstByte": 15,
+    "worstFloat": 0.0597691
    },
    "description": "Trilinear 9^3 RGB lattice of Core Image outputs at each amount node.",
    "heldOutRandom": {
@@ -157,11 +163,11 @@
   },
   {
    "atFineNodes": {
-    "meanByte": 0.1841,
-    "over1Fraction": 0.02581,
-    "samples": 4000,
+    "meanByte": 0.2179,
+    "over1Fraction": 0.0379,
+    "samples": 24000,
     "worstByte": 10,
-    "worstFloat": 0.0388134
+    "worstFloat": 0.0402049
    },
    "description": "Trilinear 17^3 RGB lattice of Core Image outputs at each amount node.",
    "heldOutRandom": {
@@ -214,10 +220,12 @@
   "heldOutAmounts": 240,
   "heldOutRandomPixels": 24,
   "heldOutStandardInputs": 18,
-  "jobs": 886,
+  "jobs": 1292,
   "lattice": 17,
-  "nodePixels": 1000,
-  "renderedPixels": 795686,
+  "nodeEdge": 0.0625,
+  "nodeEdgePixels": 2000,
+  "nodePixels": 4000,
+  "renderedPixels": 1979186,
   "seed": 20261011
  },
  "provenance": "Black-box only: rendered Core Image outputs of the unchanged Engine.apply on synthetic pixels. No framework binary, kernel text, CI_PRINT_TREE output or private method was read; the models are generic approximations fitted to the probe.",
@@ -227,6 +235,78 @@
   "MediaAssemblyAssetCatalog.swift": "cb9c981d28f0a8a4101357ea7c4a80464d2d6db4572527477128c0f4ae239011",
   "MediaAssemblyEngine.swift": "96af95531fcb34878f80328841964965bb7d9a359e5d7e46b9d99ba0c5258781",
   "MediaAssemblyModel.swift": "a9cc18d721360d5d41243c4e5417fe1742f16a824fcd10d5a80e271e64dfebce"
+ },
+ "structure": {
+  "amountSweepMaxDifferences": {
+   "h|s=0": [
+    0.05015,
+    0.009849,
+    0.008777,
+    0.01669
+   ],
+   "h|s=0.5": [
+    0.05262,
+    0.01189,
+    0.01142,
+    0.02192
+   ],
+   "h|s=1": [
+    0.05516,
+    0.01322,
+    0.0133,
+    0.02628
+   ],
+   "s|h=0": [
+    0.02785,
+    0.01681,
+    0.02684,
+    0.04436
+   ],
+   "s|h=0.5": [
+    0.02792,
+    0.01685,
+    0.02689,
+    0.04446
+   ],
+   "s|h=1": [
+    0.02798,
+    0.01689,
+    0.02695,
+    0.04455
+   ]
+  },
+  "amountSweepSteps": 21,
+  "amountsAtMostCubic": false,
+  "interiorPixels": 500,
+  "nodes": [
+   [
+    0.0,
+    0.0
+   ],
+   [
+    0.5,
+    0.5
+   ],
+   [
+    0.0,
+    1.0
+   ],
+   [
+    0.3,
+    0.7
+   ]
+  ],
+  "sharedAcrossChannels": {
+   "encoded": {
+    "gainSpread": 0.8489,
+    "offsetSpread": 0.3209
+   },
+   "linear": {
+    "gainSpread": 1.138,
+    "offsetSpread": 0.5798
+   }
+  },
+  "sharedGainOrOffset": false
  },
  "usesAppOrWindow": false
 }
