@@ -22,6 +22,10 @@
 //     delivered by the coverage drain, bound by key and kept across cycles;
 //   - the charge-metric telemetry link over a sampling plan;
 //   - Storage's volume title fallback and Clipboard status messages;
+//   - the authored Clipboard rows reveal and Activity sort shutters only ever
+//     growing (the user-reported glitch of the measured Core Animation morph),
+//     GPU usage per app and overall from engine running times with the fifth
+//     Activity overview row, and the Storage volume menu (Windows additions);
 //   - when the host publishes its Event Log (native::eventLogOwnerServiceKey),
 //     every record of the host-wired action hooks (Notes, Reader, Archive,
 //     Projection, File Shelf, Clipboard) carries exactly the Mac

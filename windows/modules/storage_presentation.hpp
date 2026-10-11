@@ -21,6 +21,10 @@ class StoragePresentation final {
 public:
     explicit StoragePresentation(StorageSnapshot={},StorageAppearance={});
     bool receive(StorageSnapshot);bool setAppearance(StorageAppearance);
+    // Volume choice (Windows addition): the chosen volume's title replaces
+    // the "Startup disk" caption while its capacity is being read. Empty
+    // keeps the Mac caption exactly.
+    bool setVolumeTitle(std::string);
     const StorageSnapshot&snapshot()const noexcept{return snapshot_;}const StorageAppearance&appearance()const noexcept{return appearance_;}
     const StorageLabels&labels()const noexcept{return labels_;}
     std::span<const StorageAction>actions()const noexcept{return {actions_.data(),snapshot_.isLoading?1u:2u};}
@@ -29,9 +33,31 @@ public:
     static constexpr core::Rect bounds(){return {0,0,400,334};}
     static constexpr core::Rect settingsRect(){return {12,252,166,29};}
     static constexpr core::Rect refreshRect(){return {352,252,36,29};}
-private:StorageSnapshot snapshot_;StorageAppearance appearance_;StorageLabels labels_;std::array<StorageAction,2>actions_;std::uint64_t revision_{1};void update();
+private:StorageSnapshot snapshot_;StorageAppearance appearance_;StorageLabels labels_;std::array<StorageAction,2>actions_;std::uint64_t revision_{1};std::string volumeTitle_;void update();
 };
 std::string storageBytes(std::optional<double>);
+// --- Volume choice (Windows addition, user requested) ----------------------
+// Drawn beside the Mac artwork, which stays exact: a compact "C: ▾" button at
+// the right end of the caption line (Activity's tab-plate style) opens the
+// HUD's retained secondary menu (NotesRetainedMenu: offset shadow, face with
+// an accent border, "// caption", framed cut-corner row plates, the chosen
+// row on an accent .22 plate) listing up to storageVolumeLimit volumes.
+inline constexpr std::string_view storageVolumesAction="storage:volumes";
+inline constexpr core::Rect storageChooserRect{326,21,62,19};
+// "D:" for a drive root, the mount path otherwise, empty without a root.
+std::string storageVolumeDrive(const StorageVolume&);
+// Menu row text: "Title (D:)", or the title alone without a root.
+std::string storageVolumeLabel(const StorageVolume&);
+// The five HUD languages (not in the Mac catalog).
+std::string storageVolumeMenuCaption(core::Language);
+std::string storageVolumeKind(const StorageVolume&,core::Language); // "System" / "Removable" / empty
+// A retained overlay: a virtual root whose children are the surfaces, local
+// placements relative to `frame`'s origin; actions in canvas points.
+struct StorageOverlayArtwork {core::Rect frame;ehud::data::Json layers;std::vector<StorageSurface>surfaces;std::vector<StorageAction>actions;std::vector<bool>framed;};
+StorageOverlayArtwork prepareStorageChooser(std::string_view driveLabel,const StorageAppearance&);
+// Row actions are "storage:volume:<index>" in list order.
+StorageOverlayArtwork prepareStorageVolumeMenu(std::span<const StorageVolume>,std::string_view selectedID,const StorageAppearance&);
+inline constexpr double storageVolumeMenuWidth=262,storageVolumeMenuRowTop=44,storageVolumeMenuRowPitch=32,storageVolumeMenuRowHeight=28;
 std::array<core::Rect,32>storageMeter(double fraction)noexcept; // zero-width cells are omitted from source path
 // The caller supplies the EXACT original filled refresh-arrow CGPath command
 // array from storage_presentation_reference; do not replace it with a font icon

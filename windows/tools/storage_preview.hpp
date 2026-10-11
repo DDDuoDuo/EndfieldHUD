@@ -6,6 +6,11 @@
 #include "native/storage_details_probe.hpp"
 #include "native/module_scene.hpp"
 namespace endfield::tools {
+// The production Windows readers (tools/storage_options.cpp), as distinct
+// types so the owner can tell them from injected (synthetic) readers.
+struct WindowsStorageCapacityReader {std::optional<modules::StorageCapacity>operator()()const;};
+struct WindowsStorageVolumeList {std::vector<modules::StorageVolume>operator()()const;};
+struct WindowsStorageVolumeCapacity {std::optional<modules::StorageCapacity>operator()(const std::string&volumeID)const;};
 struct StoragePreviewOptions {
     app::UtilityExecutor*utility{};native::StorageCapacityProbe::Reader readCapacity;
     std::function<void()>openSettings;
@@ -13,6 +18,22 @@ struct StoragePreviewOptions {
     double rasterDensity{2};bool reduceMotion{};
     native::StorageDetailsProbe::Scanner scanDetails;
     native::StorageDetailsProbe::Clock completionClock;
+    // Volume choice (Windows addition, user requested). Worker readers on
+    // `utility`: the volumes the menu lists, and the chosen volume's capacity
+    // by id (empty id, or a volume that is absent now: the startup volume).
+    // With both set the chooser replaces readCapacity. The production pair
+    // (makeStoragePreviewOptions) is used only together with the production
+    // readCapacity: an owner that injects another readCapacity (synthetic
+    // coverage) and keeps them gets no chooser, so no real volume is read.
+    std::function<std::vector<modules::StorageVolume>()>listVolumes;
+    std::function<std::optional<modules::StorageCapacity>(const std::string&volumeID)>readVolumeCapacity;
+    // The remembered choice, on the UI thread: read at construction and on
+    // each activation (the settings record may load later or be restored to
+    // defaults) and written on every choice (the host keeps it in the
+    // settings record as "storageVolume"). Without them the choice lasts for
+    // the session.
+    std::function<std::string()>loadVolume;
+    std::function<void(const std::string&)>saveVolume;
 };
 // Shared-shell adapter only: no window, scan, private executor, clock or
 // publication point. The app's utility executor and rasterizer outlive it.
@@ -36,7 +57,12 @@ public:
     bool covers(core::Point logicalClientPoint)const;
     bool pointer(const app::PointerEvent&,double time);
     bool pointerLocked()const noexcept;void cancelInteraction(double time);
-    bool perform(std::string_view action,double time); // source AX action route
+    bool perform(std::string_view action,double time); // source AX action route; also storage:volumes, storage:volume:<n>
+    // Volume choice state (Windows addition).
+    std::span<const modules::StorageVolume>volumes()const noexcept;
+    const std::string&chosenVolume()const noexcept;      // the remembered id (may be absent now)
+    bool volumeMenuOpen()const noexcept;
+    bool volumeChooserAvailable()const noexcept;           // two or more volumes listed
     const modules::StorageController&state()const noexcept;
     const modules::StoragePresentation&presentation()const noexcept;
     native::StorageCapacityProbe::Stats probeStats()const noexcept;

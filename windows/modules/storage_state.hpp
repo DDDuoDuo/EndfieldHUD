@@ -13,6 +13,17 @@ struct StorageCapacity {
     bool operator==(const StorageCapacity&)const=default;
 };
 struct StorageSnapshot {std::optional<StorageCapacity>capacity;bool isLoading{};std::optional<std::string>error;bool operator==(const StorageSnapshot&)const=default;};
+// Volume choice (a Windows addition, user requested; the Mac Storage module
+// shows the startup disk only). One fixed or removable volume with media.
+struct StorageVolume {
+    std::string id;    // stable identity: the volume GUID path (\\?\Volume{...}\); empty: the startup volume
+    std::string root;  // its first mount path ("D:\\"), shown in the menu
+    std::string title; // its label, else Explorer's name (storageVolumeTitle)
+    bool removable{},startup{};
+    bool operator==(const StorageVolume&)const=default;
+};
+// The menu lists at most this many volumes (the startup volume first).
+inline constexpr std::size_t storageVolumeLimit=7;
 struct StorageCategoryUsage {std::string id,title;std::optional<std::int64_t>bytes;bool isPartial{};bool operator==(const StorageCategoryUsage&)const=default;};
 struct StorageDetailsSnapshot {std::vector<StorageCategoryUsage>categories;bool isLoading{};std::optional<double>updatedAt;bool isPartial{};std::optional<std::string>error;bool operator==(const StorageDetailsSnapshot&)const=default;};
 class StorageScanCancellation final {
@@ -32,6 +43,11 @@ public:
     StorageController()=default;~StorageController();
     StorageController(const StorageController&)=delete;StorageController&operator=(const StorageController&)=delete;
     void activate(double now);void deactivate();void refresh(double now);
+    // Windows addition: the capacity source (the chosen volume) changed. A
+    // read in flight is dropped (its completion is ignored), the previous
+    // volume's capacity is cleared and, while active, a fresh read and the
+    // 60 s deadline start at once.
+    void changeSource(double now);
     void requestDetails(double now,bool refresh=false);void wake(double now);
     std::optional<double>nextWakeTime()const noexcept{return deadline_;}
     std::optional<StorageCapacityRequest>takeCapacityRequest()noexcept;

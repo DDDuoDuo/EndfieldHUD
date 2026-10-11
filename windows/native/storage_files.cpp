@@ -20,6 +20,12 @@
 #endif
 namespace endfield::native {
 namespace {void need(bool b,const char*s){if(!b)throw std::invalid_argument(s);}bool label(std::string_view s){return s.size()<=4096&&s.find('\0')==std::string_view::npos&&ehud::data::Json::validUtf8(s);}}
+std::vector<modules::StorageVolume>orderStorageVolumes(std::vector<modules::StorageVolume>volumes){
+    const auto valid=[](const modules::StorageVolume&v){return !v.id.empty()&&!v.root.empty()&&label(v.id)&&label(v.root)&&label(v.title)&&v.id.size()<=1024&&v.root.size()<=1024;};
+    std::erase_if(volumes,[&](const auto&v){return !valid(v);});
+    const auto folded=[](const std::string&v){std::string out(v);for(auto&c:out)if(c>='A'&&c<='Z')c=char(c-'A'+'a');return out;};
+    std::stable_sort(volumes.begin(),volumes.end(),[&](const auto&a,const auto&b){if(a.startup!=b.startup)return a.startup;if(a.removable!=b.removable)return !a.removable;return folded(a.root)<folded(b.root);});
+    std::set<std::string>seen;std::vector<modules::StorageVolume>out;for(auto&v:volumes){if(out.size()==modules::storageVolumeLimit)break;if(seen.insert(v.id).second)out.push_back(std::move(v));}return out;}
 std::string storageVolumeTitle(std::string_view label,std::string_view display,std::string_view root){
     const auto trim=[](std::string_view v){while(!v.empty()&&(v.front()==' '||v.front()=='\t'))v.remove_prefix(1);while(!v.empty()&&(v.back()==' '||v.back()=='\t'))v.remove_suffix(1);return v;};
     const auto usable=[](std::string_view v){return !v.empty()&&v.size()<=1024&&v.find('\0')==v.npos&&ehud::data::Json::validUtf8(v);};
@@ -94,14 +100,40 @@ std::wstring startup(){std::array<wchar_t,32768>path{},root{};const auto n=GetWi
 std::string known(REFKNOWNFOLDERID id){PWSTR path{};if(FAILED(SHGetKnownFolderPath(id,KF_FLAG_DONT_VERIFY,nullptr,&path)))return {};struct Free {PWSTR p;~Free(){CoTaskMemFree(p);}}free{path};return utf8(path);}
 }
 std::unique_ptr<StorageFileSystem>makeWindowsStorageFileSystem(){return std::make_unique<FileSystem>();}
-std::optional<modules::StorageCapacity>readWindowsCapacityAt(std::string_view explicitPath,double date){need(std::isfinite(date),"Invalid Storage capacity date");const auto p=wide(explicitPath);if(!ordinary(p))return {};std::array<wchar_t,32768>root{};if(!GetVolumePathNameW(p.c_str(),root.data(),static_cast<DWORD>(root.size())))return {};const auto drive=GetDriveTypeW(root.data());if(drive!=DRIVE_FIXED&&drive!=DRIVE_RAMDISK)return {};ULARGE_INTEGER free{},total{};if(!GetDiskFreeSpaceExW(root.data(),&free,&total,nullptr)||total.QuadPart==0||total.QuadPart>static_cast<ULONGLONG>(std::numeric_limits<std::int64_t>::max())||free.QuadPart>total.QuadPart)return {};std::array<wchar_t,MAX_PATH+1>name{};std::string label,display;if(GetVolumeInformationW(root.data(),name.data(),static_cast<DWORD>(name.size()),nullptr,nullptr,nullptr,nullptr,0))label=utf8(name.data());
+namespace {
+// Label, else Explorer's localized name of the root, else "Startup disk".
+std::string volumeTitle(const wchar_t*root){std::array<wchar_t,MAX_PATH+1>name{};std::string label,display;if(GetVolumeInformationW(root,name.data(),static_cast<DWORD>(name.size()),nullptr,nullptr,nullptr,nullptr,0))label=utf8(name.data());
     if(label.empty()){
         // Unlabelled volumes (the usual C:) take Explorer's localized name.
         // SHGetFileInfo needs COM on this worker thread; scoped like the
         // other shell readers on the shared executor.
         struct Apartment{HRESULT hr=CoInitializeEx(nullptr,COINIT_MULTITHREADED);~Apartment(){if(SUCCEEDED(hr))CoUninitialize();}}apartment;
-        SHFILEINFOW info{};if((SUCCEEDED(apartment.hr)||apartment.hr==RPC_E_CHANGED_MODE)&&SHGetFileInfoW(root.data(),0,&info,static_cast<UINT>(sizeof(info)),SHGFI_DISPLAYNAME)){info.szDisplayName[MAX_PATH-1]=0;display=utf8(info.szDisplayName);}}
-    auto title=storageVolumeTitle(label,display,utf8(root.data()));return modules::StorageCapacity{std::move(title),static_cast<std::int64_t>(total.QuadPart),static_cast<std::int64_t>(free.QuadPart),date};}
+        SHFILEINFOW info{};if((SUCCEEDED(apartment.hr)||apartment.hr==RPC_E_CHANGED_MODE)&&SHGetFileInfoW(root,0,&info,static_cast<UINT>(sizeof(info)),SHGFI_DISPLAYNAME)){info.szDisplayName[MAX_PATH-1]=0;display=utf8(info.szDisplayName);}}
+    return storageVolumeTitle(label,display,utf8(root));}
+std::optional<modules::StorageCapacity>capacityAt(const std::wstring&p,double date,bool removable){need(std::isfinite(date),"Invalid Storage capacity date");if(!ordinary(p))return {};std::array<wchar_t,32768>root{};if(!GetVolumePathNameW(p.c_str(),root.data(),static_cast<DWORD>(root.size())))return {};const auto drive=GetDriveTypeW(root.data());if(drive!=DRIVE_FIXED&&drive!=DRIVE_RAMDISK&&!(removable&&drive==DRIVE_REMOVABLE))return {};
+    ULARGE_INTEGER free{},total{};if(!GetDiskFreeSpaceExW(root.data(),&free,&total,nullptr)||total.QuadPart==0||total.QuadPart>static_cast<ULONGLONG>(std::numeric_limits<std::int64_t>::max())||free.QuadPart>total.QuadPart)return {};
+    return modules::StorageCapacity{volumeTitle(root.data()),static_cast<std::int64_t>(total.QuadPart),static_cast<std::int64_t>(free.QuadPart),date};}
+// A volume GUID path's mount paths (REG_MULTI_SZ), first one first.
+std::vector<std::wstring>mountPaths(const std::wstring&volume){DWORD length{};if(GetVolumePathNamesForVolumeNameW(volume.c_str(),nullptr,0,&length)||GetLastError()!=ERROR_MORE_DATA||!length||length>32768)return {};
+    std::vector<wchar_t>buffer(length);if(!GetVolumePathNamesForVolumeNameW(volume.c_str(),buffer.data(),length,&length))return {};std::vector<std::wstring>out;
+    for(std::size_t at=0;at<buffer.size()&&buffer[at];){const std::wstring_view path(buffer.data()+at);out.emplace_back(path);at+=path.size()+1;if(out.size()>=16)break;}return out;}
+bool volumeID(std::string_view id){return id.size()>=14&&id.size()<=64&&id.starts_with("\\\\?\\Volume{")&&id.ends_with("}\\")&&id.find('\0')==id.npos;}
+}
+std::optional<modules::StorageCapacity>readWindowsCapacityAt(std::string_view explicitPath,double date){return capacityAt(wide(explicitPath),date,false);}
+std::vector<modules::StorageVolume>listWindowsStorageVolumes(){std::vector<modules::StorageVolume>out;const auto system=startup();std::array<wchar_t,MAX_PATH+1>name{};
+    const auto find=FindFirstVolumeW(name.data(),static_cast<DWORD>(name.size()));if(find==INVALID_HANDLE_VALUE)return out;struct Close{HANDLE h;~Close(){FindVolumeClose(h);}}close{find};
+    for(unsigned guard=0;guard<256;++guard){const std::wstring volume(name.data());const auto type=GetDriveTypeW(volume.c_str());
+        if(type==DRIVE_FIXED||type==DRIVE_REMOVABLE||type==DRIVE_RAMDISK){const auto paths=mountPaths(volume);
+            // Unmounted (recovery, EFI) and media-less volumes are not listed.
+            if(!paths.empty()&&ordinary(paths.front())&&GetVolumeInformationW(volume.c_str(),nullptr,0,nullptr,nullptr,nullptr,nullptr,0)){ULARGE_INTEGER free{},total{};
+                if(GetDiskFreeSpaceExW(volume.c_str(),&free,&total,nullptr)&&total.QuadPart){bool isStartup{};for(const auto&p:paths)isStartup=isStartup||CompareStringOrdinal(p.c_str(),-1,system.c_str(),-1,TRUE)==CSTR_EQUAL;
+                    out.push_back({utf8(volume),utf8(paths.front()),volumeTitle(paths.front().c_str()),type==DRIVE_REMOVABLE,isStartup});}}}
+        if(!FindNextVolumeW(find,name.data(),static_cast<DWORD>(name.size())))break;}
+    return orderStorageVolumes(std::move(out));}
+std::optional<modules::StorageCapacity>readWindowsVolumeCapacity(std::string_view id,double date){
+    if(!id.empty()&&volumeID(id)){const auto paths=mountPaths(wide(id));if(!paths.empty())if(auto value=capacityAt(paths.front(),date,true))return value;}
+    // The startup volume when none was chosen, or the chosen one is absent now.
+    return readWindowsStartupCapacity(date);}
 std::optional<modules::StorageCapacity>readWindowsStartupCapacity(double date){const auto root=startup();return root.empty()?std::nullopt:readWindowsCapacityAt(utf8(root),date);}
 std::vector<StorageFolderScope>windowsStorageScopes(){std::vector<StorageFolderScope>out{{"applications","Applications",{}},{"documents","Documents",{}},{"downloads","Downloads",{}},{"pictures","Pictures",{}},{"music","Music",{}},{"movies","Movies",{}}};
     const auto add=[&](std::size_t index,REFKNOWNFOLDERID id){auto p=known(id);if(p.empty())return;auto&paths=out[index].paths;const auto w=wide(p);for(const auto&old:paths){const auto previous=wide(old);if(CompareStringOrdinal(w.c_str(),static_cast<int>(w.size()),previous.c_str(),static_cast<int>(previous.size()),TRUE)==CSTR_EQUAL)return;}paths.push_back(std::move(p));};

@@ -121,8 +121,26 @@ ClipboardScenePlan prepareClipboardScene(const ClipboardState&state,const Clipbo
         if(r.pinned)row.add(shape(prefix+"/pinHalo",{},ellipse({321,7,22,23}),s.accent));Json::Array pin{cmd("move",{{327,11}}),cmd("line",{{336,11}}),cmd("move",{{329,11}}),cmd("line",{{329,17}}),cmd("line",{{326,20}}),cmd("line",{{337,20}}),cmd("line",{{334,17}}),cmd("line",{{334,11}}),cmd("move",{{331.5,20}}),cmd("line",{{331.5,27}})};row.add(shape(prefix+"/pin",{},std::move(pin),{},alpha(ink,r.pinned?1:.68),1.1,true));row.add(shape(prefix+"/remove",{},Json::Array{cmd("move",{{356,13}}),cmd("line",{{365,23}}),cmd("move",{{365,13}}),cmd("line",{{356,23}})},{},alpha(ink,.76),1.1,true));result.rows.push_back(row.finish());}
     return result;
 }
+core::SubsectionMaskPath clipboardRevealShutter(double direction,double elapsed){
+    using Style=core::SubsectionTransitionStyle;need(std::isfinite(direction)&&std::isfinite(elapsed),"Invalid Clipboard reveal time");
+    // CAKeyframeAnimation, calculationMode linear: the segment holding the
+    // normalized time, its own ease-out, then the authored values.
+    const auto time=std::clamp(elapsed/Style::duration,0.,1.);std::size_t segment{};while(segment<2&&time>Style::maskKeyTimes[segment+1])++segment;
+    const auto local=std::clamp((time-Style::maskKeyTimes[segment])/(Style::maskKeyTimes[segment+1]-Style::maskKeyTimes[segment]),0.,1.);
+    const auto eased=Style::maskSegmentTiming.value(local);constexpr Rect viewport{0,0,376,246}; // rows.bounds
+    const auto from=core::subsectionMaskKeyframe(viewport,direction,segment),to=core::subsectionMaskKeyframe(viewport,direction,segment+1);
+    core::SubsectionMaskPath result;
+    for(std::size_t strip=0;strip<result.size();++strip)for(std::size_t vertex=0;vertex<result[strip].size();++vertex){const auto a=from[strip][vertex],b=to[strip][vertex];result[strip][vertex]={a.x+(b.x-a.x)*eased,a.y+(b.y-a.y)*eased};}
+    return result;
+}
 #ifdef _WIN32
 namespace {
+// Four closed polygons (move, lines, close) for the mask raster.
+core::SubsectionCurvePath curvePath(const core::SubsectionMaskPath&strips){
+    core::SubsectionCurvePath path;
+    for(const auto&strip:strips){for(std::size_t n=0;n<strip.size();++n){path.opcodes[path.opcodeCount++]=n?1:0;path.coordinates[path.coordinateCount++]=strip[n].x;path.coordinates[path.coordinateCount++]=strip[n].y;}path.opcodes[path.opcodeCount++]=4;}
+    return path;
+}
 Json sampledMaskLayer(const core::SubsectionCurvePath&p){Json::Array path;std::size_t at{};const auto point=[&](){const Point value{p.coordinates[at],p.coordinates[at+1]};at+=2;return value;};
     for(std::size_t n=0;n<p.opcodeCount;++n)switch(p.opcodes[n]){case 0:path.push_back(cmd("move",{point()}));break;case 1:path.push_back(cmd("line",{point()}));break;case 2:{const auto a=point(),b=point();path.push_back(cmd("quadratic",{a,b}));break;}case 3:{const auto a=point(),b=point(),c=point();path.push_back(cmd("cubic",{a,b,c}));break;}case 4:path.push_back(cmd("close"));break;default:need(false,"Invalid Clipboard source mask opcode");}
     need(at==p.coordinateCount,"Invalid Clipboard source mask coordinate count");return shape("clipboard.curved-mask",{0,0,376,246},std::move(path),Color{1,1,1,1});
@@ -140,18 +158,18 @@ struct NativeClipboardScene::Impl {
     };
     ClipboardState&state;LayerRasterizer&raster;LayerRasterOptions options;ClipboardAppearance appearance;ClipboardImages images;
     std::unique_ptr<Part>collection,foreground,scrollbar;std::vector<std::unique_ptr<Part>>rows,retired;std::vector<LayerCompositionEntry>entries;
-    std::shared_ptr<const core::SubsectionMaskSampler>sampler;std::optional<double>revealStart;double revealDirection{-1};
+    std::optional<double>revealStart;double revealDirection{-1};
     std::optional<core::SubsectionCurvePath>maskPath;std::optional<PlaneAlphaMask>alphaMask;std::shared_ptr<const LayerRasterImage>maskImage;
     std::string maskID;std::uint64_t maskRevision{},uploadedMask{};bool maskDirty{};Renderer*resourceOwner{};
     std::uint64_t revision{};bool appearanceDirty{true};double lastTime{};std::optional<double>toolbarStart;double toolbarDirection{1};std::optional<std::string>hover;bool pressed{};ClipboardSceneStats stats;DrawObject validation;
-    Impl(ClipboardState&s,LayerRasterizer&r,LayerRasterOptions o,ClipboardAppearance a,ClipboardImages b,std::shared_ptr<const core::SubsectionMaskSampler>samples):state(s),raster(r),options(std::move(o)),appearance(a),images(std::move(b)),sampler(std::move(samples)){static std::atomic<std::uint64_t>identity{};maskID="cbmask"+std::to_string(++identity);if(sampler)need(sampler->sourceViewport()==Rect{0,0,376,246},"Clipboard mask must match original rows.bounds");rows.reserve(7);retired.reserve(10);entries.reserve(10);validation.sourceID="clipcheck";validation.masks.reserve(8);}
+    Impl(ClipboardState&s,LayerRasterizer&r,LayerRasterOptions o,ClipboardAppearance a,ClipboardImages b):state(s),raster(r),options(std::move(o)),appearance(a),images(std::move(b)){static std::atomic<std::uint64_t>identity{};maskID="cbmask"+std::to_string(++identity);rows.reserve(7);retired.reserve(10);entries.reserve(10);validation.sourceID="clipcheck";validation.masks.reserve(8);}
     void time(double t)const{need(std::isfinite(t)&&t>=lastTime,"Clipboard requires finite monotonic owner time");}
     template<class F>void each(F&&f){if(collection)f(*collection);for(auto&p:rows)f(*p);if(scrollbar)f(*scrollbar);if(foreground)f(*foreground);}
     static double ease(double p){return core::CubicTiming{0,0,.58,1}.value(p);}
     static double sample(Track t,double now){return t.duration>0?t.from+(t.target-t.from)*ease((now-t.start)/t.duration):t.target;}
     static double y(const Part&p,double now){return p.reflowStart?p.reflowFrom+(p.plan.full.y-p.reflowFrom)*ease((now-*p.reflowStart)/.20):p.plan.full.y;}
 };
-NativeClipboardScene::NativeClipboardScene(ClipboardState&s,LayerRasterizer&r,LayerRasterOptions o,ClipboardAppearance a,ClipboardImages images,std::shared_ptr<const core::SubsectionMaskSampler>samples):impl_(std::make_unique<Impl>(s,r,std::move(o),a,std::move(images),std::move(samples))){}
+NativeClipboardScene::NativeClipboardScene(ClipboardState&s,LayerRasterizer&r,LayerRasterOptions o,ClipboardAppearance a,ClipboardImages images,std::shared_ptr<const core::SubsectionMaskSampler>):impl_(std::make_unique<Impl>(s,r,std::move(o),a,std::move(images))){}
 NativeClipboardScene::~NativeClipboardScene(){if(impl_)impl_->raster.remove(impl_->maskID);}
 void NativeClipboardScene::setAppearance(ClipboardAppearance a,ClipboardImages images){auto&i=*impl_;if(i.appearance==a&&i.images.text.has_value()==images.text.has_value()&&i.images.files.has_value()==images.files.has_value()){
     const auto same=[](const auto&x,const auto&y){return !x||(x->contents==y->contents&&x->sourceResource==y->sourceResource&&x->pixels==y->pixels&&x->tint==y->tint);};if(same(i.images.text,images.text)&&same(i.images.files,images.files))return;}
@@ -175,14 +193,14 @@ bool NativeClipboardScene::syncContent(double time){auto&i=*impl_;i.time(time);i
             if(previous)inherit(*built[n],*previous);
         }
     }
-    if(!i.sampler)for(const auto&e:i.state.pendingEvents())if(e.kind==ClipboardState::EventKind::reflow&&e.animated){bool moved{};for(std::size_t n=0;n<plan.rows.size();++n)moved|=previousY[n]!=plan.rows[n].full.y;need(moved,"Animated Clipboard subsection needs its original normalized mask asset");}auto events=i.state.takeEvents();std::vector<std::unique_ptr<Impl::Part>>next;next.reserve(7);const auto replace=[&](auto&current,auto&candidate){if(candidate){if(current)i.retired.push_back(std::move(current));current=std::move(candidate);++i.stats.builds;}};
+    auto events=i.state.takeEvents();std::vector<std::unique_ptr<Impl::Part>>next;next.reserve(7);const auto replace=[&](auto&current,auto&candidate){if(candidate){if(current)i.retired.push_back(std::move(current));current=std::move(candidate);++i.stats.builds;}};
     replace(i.collection,collection);replace(i.foreground,foreground);replace(i.scrollbar,scrollbar);
     for(std::size_t n=0;n<plan.rows.size();++n){if(old[n]!=7){next.push_back(std::move(i.rows[old[n]]));next.back()->plan.full=plan.rows[n].full;}else{next.push_back(std::move(built[n]));++i.stats.builds;}}
     for(auto&p:i.rows)if(p)i.retired.push_back(std::move(p));i.rows=std::move(next);i.entries.clear();i.each([&](auto&p){i.entries.push_back({&p.scene,{}});});
     for(const auto&e:events){if(e.kind==ClipboardState::EventKind::settle){i.revealStart.reset();i.toolbarStart.reset();for(auto&p:i.rows){p->engageStart.reset();p->reflowStart.reset();p->stroke=1;}}
         else if(e.kind==ClipboardState::EventKind::toolbar){i.toolbarStart=e.animated?std::optional(time):std::nullopt;i.toolbarDirection=e.direction;}
         else if(e.kind==ClipboardState::EventKind::engage){for(auto&p:i.rows)if(p->plan.rowID==e.id){p->engageStart=e.animated?std::optional(time):std::nullopt;p->stroke=e.animated?0:1;}}
-        else if(e.kind==ClipboardState::EventKind::reflow&&e.animated){i.revealStart.reset();bool moved{};for(std::size_t n=0;n<i.rows.size();++n){auto&p=*i.rows[n];if(previousY[n]!=p.plan.full.y){p.reflowFrom=previousY[n];p.reflowStart=time;moved=true;}}if(!moved){need(bool(i.sampler),"Animated Clipboard subsection needs its original normalized mask asset");i.revealStart=time;i.revealDirection=-1;}}
+        else if(e.kind==ClipboardState::EventKind::reflow&&e.animated){i.revealStart.reset();bool moved{};for(std::size_t n=0;n<i.rows.size();++n){auto&p=*i.rows[n];if(previousY[n]!=p.plan.full.y){p.reflowFrom=previousY[n];p.reflowStart=time;moved=true;}}if(!moved){i.revealStart=time;i.revealDirection=-1;}}
     }
     // Source repaint schedules one highlight refresh. Restore the current
     // target on new/recycled leaves now; pointer motion never rebuilds artwork.
@@ -194,12 +212,12 @@ bool NativeClipboardScene::setFeedback(std::optional<std::string_view>actionID,b
     i.hover=actionID?std::optional(std::string(*actionID)):std::nullopt;i.pressed=pressed;i.lastTime=time;return true;
 }
 bool NativeClipboardScene::updatePose(const NativeClipboardPose&pose){auto&i=*impl_;i.time(pose.time);need(i.revision==i.state.revision()&&!i.appearanceDirty,"Synchronize Clipboard before pose");need(pose.world.finite()&&std::isfinite(pose.opacity)&&pose.opacity>=0&&pose.opacity<=1&&pose.ownerMasks.size()<=7,"Invalid Clipboard placement");if(pose.shutter)validatePlaneShutter(*pose.shutter);const PlaneMask clipMask{core::source::inverseSourceMatrix(pose.world),ClipboardState::contentRect()};
-    std::optional<core::SubsectionCurvePath>nextPath;Matrix collectionWorld=pose.world;if(i.revealStart&&pose.time-*i.revealStart<.26){const double elapsed=pose.time-*i.revealStart;collectionWorld=pose.world*Matrix::translation(200,164)*core::sampleSubsectionTransform(i.revealDirection,elapsed).sublayerTransform*Matrix::translation(-200,-164);nextPath=i.sampler->sample(i.revealDirection,elapsed/.26);}
+    std::optional<core::SubsectionCurvePath>nextPath;Matrix collectionWorld=pose.world;if(i.revealStart&&pose.time-*i.revealStart<.26){const double elapsed=pose.time-*i.revealStart;collectionWorld=pose.world*Matrix::translation(200,164)*core::sampleSubsectionTransform(i.revealDirection,elapsed).sublayerTransform*Matrix::translation(-200,-164);nextPath=curvePath(clipboardRevealShutter(i.revealDirection,elapsed));}
     std::optional<PlaneAlphaMask>nextAlpha;if(nextPath)nextAlpha=PlaneAlphaMask{core::source::inverseSourceMatrix(pose.world*Matrix::translation(12,41)),i.maskImage?i.maskImage->bounds:Rect{0,0,376,246},i.maskID};
     i.each([&](auto&p){const bool row=p.plan.rowID!=0,clipped=row||&p==i.collection.get();const auto base=row?collectionWorld*Matrix::translation(p.plan.full.x,Impl::y(p,pose.time)):clipped?collectionWorld:pose.world;double engage=0;if(p.engageStart)engage=1-Impl::ease((pose.time-*p.engageStart)/.18);const double toolbar=i.toolbarStart?1-Impl::ease((pose.time-*i.toolbarStart)/.18):0;std::copy(pose.ownerMasks.begin(),pose.ownerMasks.end(),p.masks.begin());const auto count=pose.ownerMasks.size()+std::size_t(clipped);if(clipped)p.masks[pose.ownerMasks.size()]=clipMask;
         for(std::size_t n=0;n<p.placements.size();++n){const auto&s=p.plan.surfaces[n];auto&value=p.placements[n];value.world=base*(row?Matrix::translation(4*engage,0,-8*engage):s.toolbar?Matrix::translation(10*i.toolbarDirection*toolbar,0,-8*toolbar):Matrix{})*s.local;value.opacity=pose.opacity*(s.action.empty()?s.opacity:float(Impl::sample(p.feedback[n][s.rim?1:0],pose.time)));value.masks={p.masks.data(),count};i.validation.world=value.world;i.validation.opacity=value.opacity;i.validation.masks.assign(value.masks.begin(),value.masks.end());i.validation.shutter=pose.shutter;i.validation.alphaMask=clipped?nextAlpha:std::nullopt;validateDrawObject(i.validation);}
     });
-    i.each([&](auto&p){p.active.clear();for(const auto&v:p.placements)if(v.surface!=std::size_t(-1))p.active.push_back(v);p.scene.setPlacements(p.active);p.scene.setGroupShutter(pose.shutter);p.scene.setGroupAlphaMask((p.plan.rowID||&p==i.collection.get())?nextAlpha:std::nullopt);if(p.engageStart){p.stroke=Impl::ease((pose.time-*p.engageStart)/.18);if(pose.time-*p.engageStart>=.18)p.engageStart.reset();}if(p.reflowStart&&pose.time-*p.reflowStart>=.20)p.reflowStart.reset();});if(i.toolbarStart&&pose.time-*i.toolbarStart>=.18)i.toolbarStart.reset();if(i.revealStart&&pose.time-*i.revealStart>=.26)i.revealStart.reset();if(nextPath!=i.maskPath){i.maskPath=std::move(nextPath);i.maskDirty=bool(i.maskPath);if(i.maskPath&&i.maskPath->topologyGap)++i.stats.topologyGapSamples;}i.alphaMask=std::move(nextAlpha);i.lastTime=pose.time;++i.stats.poses;return true;
+    i.each([&](auto&p){p.active.clear();for(const auto&v:p.placements)if(v.surface!=std::size_t(-1))p.active.push_back(v);p.scene.setPlacements(p.active);p.scene.setGroupShutter(pose.shutter);p.scene.setGroupAlphaMask((p.plan.rowID||&p==i.collection.get())?nextAlpha:std::nullopt);if(p.engageStart){p.stroke=Impl::ease((pose.time-*p.engageStart)/.18);if(pose.time-*p.engageStart>=.18)p.engageStart.reset();}if(p.reflowStart&&pose.time-*p.reflowStart>=.20)p.reflowStart.reset();});if(i.toolbarStart&&pose.time-*i.toolbarStart>=.18)i.toolbarStart.reset();if(i.revealStart&&pose.time-*i.revealStart>=.26)i.revealStart.reset();if(nextPath!=i.maskPath){i.maskPath=std::move(nextPath);i.maskDirty=bool(i.maskPath);}i.alphaMask=std::move(nextAlpha);i.lastTime=pose.time;++i.stats.poses;return true;
 }
 bool NativeClipboardScene::uploadAnimations(Renderer&renderer){auto&i=*impl_;need(!i.resourceOwner||i.resourceOwner==&renderer,"Clipboard animation belongs to another renderer");bool changed{};
     if(i.maskPath){if(i.maskDirty){auto options=i.options;options.paddingPoints=0;auto image=i.raster.rasterize(i.maskID,++i.maskRevision,sampledMaskLayer(*i.maskPath),options);need(image->complete()&&image->width<=1600&&image->height<=1100,"Unsupported/unbounded Clipboard curve raster");i.maskImage=std::move(image);i.maskDirty=false;++i.stats.maskRasters;}
@@ -211,6 +229,6 @@ bool NativeClipboardScene::requiresFrames(double time)const{auto&i=*impl_;i.time
 std::span<const LayerCompositionEntry>NativeClipboardScene::entries()const noexcept{return impl_->entries;}
 bool NativeClipboardScene::collectRetired(Renderer&r){auto&i=*impl_;for(auto&p:i.retired)if(!p->scene.releaseResources(r))return false;i.retired.clear();if(!i.maskPath&&i.uploadedMask&&(!r.stats().initialized||r.removeTexture(i.maskID))){i.uploadedMask=0;i.maskImage.reset();i.raster.remove(i.maskID);}return true;}
 bool NativeClipboardScene::releaseResources(Renderer&r){auto&i=*impl_;bool okay=collectRetired(r);i.each([&](auto&p){okay=p.scene.releaseResources(r)&&okay;});if(i.uploadedMask){if(!r.stats().initialized||r.removeTexture(i.maskID)){i.uploadedMask=0;i.maskImage.reset();i.raster.remove(i.maskID);}else okay=false;}return okay;}
-ClipboardSceneStats NativeClipboardScene::stats()const noexcept{auto result=impl_->stats;result.rows=impl_->rows.size();result.retiredParts=impl_->retired.size();return result;}
+ClipboardSceneStats NativeClipboardScene::stats()const noexcept{auto&i=*impl_;auto result=i.stats;result.rows=i.rows.size();result.retiredParts=i.retired.size();i.each([&](const auto&p){result.residentPixelBytes+=p.scene.report().pixelBytes;});for(const auto&p:i.retired)result.residentPixelBytes+=p->scene.report().pixelBytes;if(i.maskImage)result.residentPixelBytes+=i.maskImage->straightRGBA.size();return result;}
 #endif
 } // namespace endfield::native

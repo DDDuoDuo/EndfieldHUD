@@ -31,6 +31,39 @@ if(WIN32 AND TARGET hud_activity_provider)
   # Version-resource FileDescription and AppsFolder display names.
   target_link_libraries(hud_activity_provider PRIVATE version shell32 ole32 uuid)
 endif()
+# --- Authored HUDSubsectionTransition reveals ---------------------------------
+# activitySortShutter and clipboardRevealShutter are portable (no Windows API):
+# they interpolate core::subsectionMaskKeyframe with the CA ease-out.
+if(TARGET hud_activity_scene)
+  target_link_libraries(hud_activity_scene PUBLIC hud_motion)
+endif()
+if(TARGET clipboard_scene_tests)
+  target_link_libraries(clipboard_scene_tests PRIVATE hud_motion)
+endif()
+
+# --- Activity Monitor: GPU engine usage (Windows addition) --------------------
+# "\GPU Engine(*)\Running Time" over PDH (already linked), only while
+# Activity is visible; the preview sets that demand.
+if(TARGET hud_activity_provider)
+  target_sources(hud_activity_provider PRIVATE native/activity_gpu.cpp)
+  if(TARGET hud_activity_preview)
+    target_link_libraries(hud_activity_preview PUBLIC hud_activity_provider)
+  endif()
+  if(BUILD_TESTING)
+    # Instance names, collection bounds, the visibility gate and (Windows) the
+    # live collector over this test process only.
+    add_executable(activity_gpu_tests tests/activity_gpu_tests.cpp)
+    target_link_libraries(activity_gpu_tests PRIVATE hud_activity_provider)
+    if(WIN32)
+      target_compile_definitions(activity_gpu_tests PRIVATE ${EHUD_PROVIDER_DEFINITIONS})
+      target_link_libraries(activity_gpu_tests PRIVATE d3d11 pdh)
+    endif()
+    if(MSVC)
+      target_compile_options(activity_gpu_tests PRIVATE /W4 /permissive- /EHsc)
+    endif()
+    add_test(NAME activity_gpu_contracts COMMAND activity_gpu_tests)
+  endif()
+endif()
 if(WIN32 AND TARGET hud_activity_scene)
   # Visible-row icon loads on the shared UtilityExecutor (ActivityPreviewOptions::iconExecutor).
   add_library(hud_activity_icons STATIC native/activity_icons.cpp)
@@ -97,10 +130,42 @@ if(WIN32 AND BUILD_TESTING AND TARGET hud_event_log_platform AND TARGET hud_acti
   add_library(hud_system_providers_coverage STATIC app/areas/system_activity_providers.cpp)
   target_include_directories(hud_system_providers_coverage PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
   target_compile_definitions(hud_system_providers_coverage PRIVATE ${EHUD_PROVIDER_DEFINITIONS})
-  target_link_libraries(hud_system_providers_coverage PUBLIC hud_module_registry hud_utility hud_event_log_platform hud_activity hud_activity_icons hud_native hud_storage_files hud_data hud_localization)
+  target_link_libraries(hud_system_providers_coverage PUBLIC hud_module_registry hud_utility hud_event_log_platform hud_activity hud_activity_icons hud_activity_provider hud_native hud_storage_files hud_data hud_localization)
   if(MSVC)
     target_compile_options(hud_system_providers_coverage PRIVATE /W4 /permissive- /EHsc)
   endif()
   set_property(GLOBAL APPEND PROPERTY EHUD_APP_AREAS
     "systemProviders|hud_system_providers_coverage|app/areas/system_activity_providers.hpp|endfield::providers::systemProvidersCoverage|coverage")
+endif()
+
+# --- Clipboard rows reveal and Activity sort reveal, frame by frame -----------
+# Through the owners' previews, published as the HUD host publishes owners
+# (WARP readback of a hidden window, synthetic rows and apps; optional PNGs).
+# The authored HUDSubsectionTransition shutter never re-covers revealed rows.
+if(WIN32 AND BUILD_TESTING AND TARGET hud_activity_preview AND TARGET hud_native)
+  add_executable(activity_clipboard_reveal_frames_tests tests/activity_clipboard_reveal_frames_tests.cpp tools/clipboard_preview.cpp)
+  target_compile_definitions(activity_clipboard_reveal_frames_tests PRIVATE ${EHUD_PROVIDER_DEFINITIONS})
+  target_link_libraries(activity_clipboard_reveal_frames_tests PRIVATE hud_activity_preview hud_native hud_motion ole32 windowscodecs)
+  if(MSVC)
+    target_compile_options(activity_clipboard_reveal_frames_tests PRIVATE /W4 /permissive- /EHsc)
+  endif()
+  foreach(mode clipboard activity)
+    add_test(NAME ${mode}_reveal_frames_contracts COMMAND activity_clipboard_reveal_frames_tests "${CMAKE_CURRENT_SOURCE_DIR}/native/hud.hlsl"
+      "${CMAKE_CURRENT_SOURCE_DIR}/resources/clipboard" "${CMAKE_CURRENT_SOURCE_DIR}/resources/activity" ${mode})
+    set_tests_properties(${mode}_reveal_frames_contracts PROPERTIES TIMEOUT 180)
+  endforeach()
+endif()
+
+# --- Storage: volume choice (Windows addition) -------------------------------
+# The chooser and its secondary menu through the Storage owner with synthetic
+# volumes on a hidden window and WARP; no volume of this machine is read.
+if(WIN32 AND BUILD_TESTING AND TARGET hud_storage_preview AND TARGET hud_storage_options)
+  add_executable(storage_volume_tests tests/storage_volume_tests.cpp)
+  target_compile_definitions(storage_volume_tests PRIVATE ${EHUD_PROVIDER_DEFINITIONS})
+  target_link_libraries(storage_volume_tests PRIVATE hud_storage_preview hud_storage_options)
+  if(MSVC)
+    target_compile_options(storage_volume_tests PRIVATE /W4 /permissive- /EHsc)
+  endif()
+  add_test(NAME storage_volume_contracts COMMAND storage_volume_tests "${CMAKE_CURRENT_SOURCE_DIR}/native/hud.hlsl" "${CMAKE_CURRENT_SOURCE_DIR}/resources")
+  set_tests_properties(storage_volume_contracts PROPERTIES TIMEOUT 180)
 endif()

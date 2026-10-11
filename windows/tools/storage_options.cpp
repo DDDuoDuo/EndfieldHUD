@@ -32,6 +32,9 @@ Resource load(const std::filesystem::path&root){
 }
 modules::StorageSourcePaths loadStorageSourcePaths(const std::filesystem::path&root){return load(root).paths;}
 #ifdef _WIN32
+std::optional<modules::StorageCapacity>WindowsStorageCapacityReader::operator()()const{return native::readWindowsStartupCapacity(app::OverlayHost::clockNow());}
+std::vector<modules::StorageVolume>WindowsStorageVolumeList::operator()()const{return native::listWindowsStorageVolumes();}
+std::optional<modules::StorageCapacity>WindowsStorageVolumeCapacity::operator()(const std::string&id)const{return native::readWindowsVolumeCapacity(id,app::OverlayHost::clockNow());}
 StoragePreviewOptions makeStoragePreviewOptions(const std::filesystem::path&root,app::UtilityExecutor&queue,
     std::function<void()>openSettings,modules::StorageAppearance appearance){
     need(bool(openSettings),"Storage requires the owner's settings action");
@@ -40,7 +43,9 @@ StoragePreviewOptions makeStoragePreviewOptions(const std::filesystem::path&root
     StoragePreviewOptions out;out.utility=&queue;out.paths=std::move(resource.paths);out.appearance=appearance;out.rasterDensity=std::clamp(appearance.scale,1.,4.);out.openSettings=std::move(openSettings);
     // The source controller compares updatedAt with the owner's monotonic time.
     // These immutable worker callbacks borrow no view or HWND and add no ticker.
-    out.readCapacity=[]{return native::readWindowsStartupCapacity(app::OverlayHost::clockNow());};
+    out.readCapacity=WindowsStorageCapacityReader{};
+    // Volume choice (Windows addition): listed and read on the same executor.
+    out.listVolumes=WindowsStorageVolumeList{};out.readVolumeCapacity=WindowsStorageVolumeCapacity{};
     out.scanDetails=[](const modules::StorageScanCancellation&cancel){return native::scanWindowsStorageDetails(cancel,app::OverlayHost::clockNow());};
     out.completionClock=app::OverlayHost::clockNow;return out;
 }

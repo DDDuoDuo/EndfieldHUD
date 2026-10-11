@@ -15,7 +15,9 @@ class ClipboardPreview final {
 public:
     ClipboardPreview(native::LayerRasterizer&,native::LayerRasterOptions,native::ClipboardActions,
         native::ClipboardStrings={},native::ClipboardAppearance={},native::ClipboardImages={},
-        std::shared_ptr<const core::SubsectionMaskSampler> revealSamples={});
+        // Ignored (the rows reveal is native::clipboardRevealShutter); kept so
+        // existing callers compile.
+        std::shared_ptr<const core::SubsectionMaskSampler> unusedRevealSamples={});
     ~ClipboardPreview();
     void resize(const app::ClientMetrics&);
     void setLanguage(core::Language); // preference event; retains the model and current interaction

@@ -2,6 +2,7 @@
 #include "native/layer_scene.hpp"
 #include "native/system_services.hpp"
 #include "core/subsection_mask.hpp"
+#include "core/subsection_transition.hpp"
 #include <functional>
 
 namespace endfield::native {
@@ -83,17 +84,33 @@ struct ClipboardSurface {std::string id;core::Matrix4 local;float opacity{1};std
 struct ClipboardPart {std::uint64_t rowID{};core::Rect full;ehud::data::Json layers;std::vector<ClipboardSurface>surfaces;};
 struct ClipboardScenePlan {ClipboardPart collection,foreground,scrollbar;std::vector<ClipboardPart>rows;};
 ClipboardScenePlan prepareClipboardScene(const ClipboardState&,const ClipboardAppearance&,const ClipboardImages&);
-struct ClipboardSceneStats {std::size_t rows{},retiredParts{};std::uint64_t builds{},poses{},outlineRasters{},maskRasters{},maskUploads{},topologyGapSamples{};};
+// topologyGapSamples stays 0: the authored reveal has no sampled CA topology.
+// residentPixelBytes: the retained parts' rasters plus a live reveal mask now.
+struct ClipboardSceneStats {std::size_t rows{},retiredParts{};std::uint64_t builds{},poses{},outlineRasters{},maskRasters{},maskUploads{},topologyGapSamples{};std::size_t residentPixelBytes{};};
+// ClipboardCanvas.animateCollectionChange -> HUDSubsectionTransition.reveal
+// (direction -1, after a removal or Clear that moves no row): the rows mask as
+// authored, the four shutter(progress:) keyframes (progress 0/.38/.72/1 at key
+// times 0/.3/.68/1, each segment eased out) over rows.bounds (376x246, rows
+// local), interpolated point by point. direction<0 opens from the left edge,
+// otherwise from the right. Finite elapsed seconds clamp to [0,.26]; no
+// allocation. Core Animation's own morph of these paths (the formerly sampled
+// reveal-mask.bin) is deliberately not reproduced: CA drops the zero-length
+// segments of the collapsed first and the full last keyframe, so its
+// interpolated path sweeps curved wedges back over rows it already revealed
+// during the first and last ~80 ms (the user-reported Clipboard glitch).
+// Between the two well-formed keyframes CA's path equals this one.
+core::SubsectionMaskPath clipboardRevealShutter(double direction,double elapsed);
 #ifdef _WIN32
 struct NativeClipboardPose {core::Matrix4 world;float opacity{1};double time{};std::span<const PlaneMask>ownerMasks;std::optional<PlaneShutter>shutter;};
 // One retained, virtualized module in the owner's LayerComposition. Source
-// rows/toolbar motion and feedback share the caller clock. A matching 376x246
-// normalized CA mask asset is required for animated no-row-reflow fallback.
-// The measured curve approximation and D2D antialiasing remain parity limits.
+// rows/toolbar motion and feedback share the caller clock. The no-row-reflow
+// reveal draws clipboardRevealShutter into one bounded planar alpha texture
+// during its finite .26 s; D2D antialiasing remains the parity limit.
+// The trailing sampler argument is ignored (kept so existing callers compile).
 class NativeClipboardScene final {
 public:
     NativeClipboardScene(ClipboardState&,LayerRasterizer&,LayerRasterOptions,ClipboardAppearance={},ClipboardImages={},
-        std::shared_ptr<const core::SubsectionMaskSampler> revealSamples={});
+        std::shared_ptr<const core::SubsectionMaskSampler> unusedRevealSamples={});
     ~NativeClipboardScene();
     bool syncContent(double time);void setAppearance(ClipboardAppearance,ClipboardImages);
     bool setFeedback(std::optional<std::string_view>,bool pressed,double time);

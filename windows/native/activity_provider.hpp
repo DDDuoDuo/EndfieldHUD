@@ -10,6 +10,8 @@ namespace endfield::native {
 // RAM: Windows physical total-minus-available (standby excluded), not private
 // commit. Compression is unavailable. Network: up physical Ethernet/Wi-Fi/PPP.
 // Disk and per-app network/disk await an exact provider; no fake zero values.
+// GPU: the engine running times of native/activity_gpu.hpp, read only while
+// Activity Monitor is visible (otherwise gpu stays empty).
 modules::ActivityRawSample readWindowsActivity(double timestamp,double uptime);
 // Caller supplies an explicit <=256 app catalog with <=8192 unique PIDs.
 // Opens one limited-query handle at a time; protected/reused PIDs stay unknown.

@@ -3,6 +3,7 @@
 #include <windows.h>
 #include "native/module_scene.hpp"
 #include "native/module_registration.hpp"
+#include "native/activity_gpu.hpp"
 #include <cmath>
 #include <algorithm>
 #include <array>
@@ -25,10 +26,12 @@ struct ActivityPreview::Impl {
 #endif
         if(!o.iconLoader)return {};auto out=std::make_unique<gpu::ActivityIconProvider>(*o.iconExecutor,std::move(o.iconLoader));o.raster.memoryImages=&out->images();return out;
     }
-    Impl(gpu::LayerRasterizer&r,ActivityPreviewOptions o):state(std::move(o.compareNames)),icons(makeIcons(o)),scene(state,r,o.raster,o.appearance,std::move(o.sortSamples)),geometry(r),surface(prepare(o.raster),core::Module::activityMonitor),appearance(o.appearance),demand(std::move(o.demandChanged)),reduced(o.reduceMotion){state.receive(std::move(o.initial));state.receiveApps(std::move(o.apps));composed.reserve(49);}
+    Impl(gpu::LayerRasterizer&r,ActivityPreviewOptions o):state(std::move(o.compareNames)),icons(makeIcons(o)),scene(state,r,o.raster,o.appearance,std::move(o.sortSamples)),geometry(r),surface(prepare(o.raster),core::Module::activityMonitor),appearance(o.appearance),demand(std::move(o.demandChanged)),reduced(o.reduceMotion){state.receive(std::move(o.initial));state.receiveApps(std::move(o.apps));composed.reserve(57);}
     gpu::LayerScene&prepare(const gpu::LayerRasterOptions&o){geometry.load(blank(),o);return geometry;}
     std::optional<core::Point>local(core::Point point)const{return input?projection.unproject({point.x*metrics.scale,point.y*metrics.scale}):std::nullopt;}
-    void demandChange(){if(demand)demand(active,active&&state.showingApps(),time);}
+    // The GPU engine counters follow the same visibility (set first: the
+    // demand callback may submit a sampling job at once).
+    void demandChange(){if(demand){gpu::setWindowsActivityGPUDemand(active);demand(active,active&&state.showingApps(),time);}}
     unsigned iconPixels()const{return unsigned(std::clamp(std::ceil(18*appearance.scale),16.,256.));}
     // ActivityMonitorCanvas.requestVisibleIcons: on content events only (new
     // sample, scroll, tab, scale or a finished load), never on a warm frame.
@@ -46,12 +49,11 @@ struct ActivityPreview::Impl {
     void feedback(){if(!pose)return;const auto q=pointerPoint?local(*pointerPoint):std::nullopt;scene.setFeedback(q,pressed,reduced,time);}
     bool action(std::string_view id){if(!active||!input)return false;bool valid{};for(const auto&a:scene.actions())valid|=id==a.id;if(!valid)return false;
         if(id=="activity:overview"||id=="activity:apps"){const bool next=id=="activity:apps";if(!state.setApps(next))return true;bindIcons();scene.syncContent(time,false);scene.selectPage(next,time,!reduced);demandChange();return true;}
-        static constexpr std::array keys{modules::ActivitySort::name,modules::ActivitySort::cpu,modules::ActivitySort::memory,modules::ActivitySort::network,modules::ActivitySort::disk};
-        for(auto key:keys)if(id.substr(std::string_view("activity:sort:").size())==modules::activitySortKey(key)){state.sort(key);bindIcons();scene.syncContent(time,false);scene.revealSort(state.descending()?1:-1,time,!reduced);return true;}return false;
+        for(auto key:modules::activityAppColumns)if(id.substr(std::string_view("activity:sort:").size())==modules::activitySortKey(key)){state.sort(key);bindIcons();scene.syncContent(time,false);scene.revealSort(state.descending()?1:-1,time,!reduced);return true;}return false;
     }
 };
 ActivityPreview::ActivityPreview(gpu::LayerRasterizer&r,ActivityPreviewOptions o):impl_(std::make_shared<Impl>(r,std::move(o))){}
-ActivityPreview::~ActivityPreview(){if(impl_){impl_->alive=false;impl_->active=false;impl_->input=false;auto callback=std::move(impl_->demand);if(callback)try{callback(false,false,impl_->time);}catch(...){}}}
+ActivityPreview::~ActivityPreview(){if(impl_){impl_->alive=false;impl_->active=false;impl_->input=false;auto callback=std::move(impl_->demand);if(callback){gpu::setWindowsActivityGPUDemand(false);try{callback(false,false,impl_->time);}catch(...){}}}}
 void ActivityPreview::resize(const app::ClientMetrics&m){need(m.pixelWidth&&m.pixelHeight&&std::isfinite(m.scale)&&m.scale>0,"Invalid Activity viewport");impl_->metrics=m;}
 void ActivityPreview::receive(modules::ActivitySnapshot s){impl_->state.receive(std::move(s));}void ActivityPreview::receiveApps(modules::ActivityAppsSnapshot s){impl_->state.receiveApps(std::move(s));}
 void ActivityPreview::setAppearance(modules::ActivityAppearance a){impl_->scene.setAppearance(a);impl_->appearance=a;}void ActivityPreview::setLanguage(core::Language language){auto a=impl_->appearance;a.language=language;setAppearance(a);}void ActivityPreview::setIcons(gpu::ActivityIcons icons){impl_->scene.setIcons(std::move(icons));}

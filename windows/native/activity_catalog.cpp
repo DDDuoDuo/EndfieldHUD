@@ -1,5 +1,6 @@
 #include "native/activity_catalog.hpp"
 #include "native/activity_provider.hpp"
+#include "native/activity_gpu.hpp"
 #include "core/data/json.hpp"
 #include <algorithm>
 #include <cmath>
@@ -68,6 +69,7 @@ modules::ActivityAppsRaw ActivityCatalogSampler::sample(double stamp,double now)
             if(current->identity.startID!=old.startID||current->identity.imageKey!=old.imageKey||current->identity.applicationID!=old.applicationID){members.push_back(pid);continue;}
             members.push_back(pid);if(current->usage){const auto&v=*current->usage;need(v.pid==pid&&v.startID==old.startID&&std::isfinite(v.startUptime)&&v.startUptime>=0,"Activity identity/usage mismatch");out.processes.emplace(pid,v);}
         }}
+    if(readers_.gpu){std::vector<std::uint32_t>pids;for(const auto&[id,members]:out.members)pids.insert(pids.end(),members.begin(),members.end());std::sort(pids.begin(),pids.end());pids.erase(std::unique(pids.begin(),pids.end()),pids.end());if(!pids.empty())out.gpu=readers_.gpu(pids);}
     if(!out.inventoryComplete)out.statusNotes.push_back("App helper inventory unavailable");out.statusNotes.push_back("Per-app disk and network accounting unavailable");return out;
 }
 }
@@ -157,8 +159,8 @@ std::string windowsActivityPackagedName(const std::wstring&aumid){
     if(value==aumid)return {};
     return utf8(value);
 }
-ActivityCatalogSampler::Readers windowsActivityCatalogReaders(){auto state=std::make_shared<NativeCatalog>();return {[state]{return state->inventory();},[state](auto pid){return state->read(pid,0,false,true);}};}
+ActivityCatalogSampler::Readers windowsActivityCatalogReaders(){auto state=std::make_shared<NativeCatalog>();return {[state]{return state->inventory();},[state](auto pid){return state->read(pid,0,false,true);},[](std::span<const std::uint32_t>pids){return readWindowsActivityGPU(pids);}};}
 }
 #else
-namespace endfield::native {ActivityCatalogSampler::Readers windowsActivityCatalogReaders(){return {[]{return ActivityCatalogInventory{{},false,{}};},[](auto)->std::optional<ActivityCatalogReading>{return {};}};}}
+namespace endfield::native {ActivityCatalogSampler::Readers windowsActivityCatalogReaders(){return {[]{return ActivityCatalogInventory{{},false,{}};},[](auto)->std::optional<ActivityCatalogReading>{return {};},{}};}}
 #endif

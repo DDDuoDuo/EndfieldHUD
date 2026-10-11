@@ -1,6 +1,7 @@
 #pragma once
 #include "core/scene.hpp"
 #include <array>
+#include <compare>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -17,10 +18,37 @@ using ActivityCounters=std::map<std::string,ActivityBytes,std::less<>>;
 struct ActivityMemory {std::uint64_t used{},total{};std::optional<std::uint64_t>compressed;bool operator==(const ActivityMemory&)const=default;};
 // Exact Mac physical-footprint formula, also available to the source oracle.
 std::optional<ActivityMemory>activityMacMemory(std::uint64_t physical,std::uint64_t pageSize,std::uint64_t internal,std::uint64_t purgeable,std::uint64_t wired,std::uint64_t compressed)noexcept;
-struct ActivityRawSample {double timestamp{},uptime{};std::optional<ActivityCPU>cpu;std::optional<ActivityMemory>memory;std::optional<ActivityCounters>network,disk;};
+// GPU (a Windows addition the Mac Activity Monitor does not show). One GPU
+// engine: the adapter LUID, its physical node and engine index, exactly as
+// the "GPU Engine" performance counter instance names them
+// (pid_<pid>_luid_0x<high>_0x<low>_phys_<n>_eng_<n>_engtype_<type>).
+struct ActivityGPUEngine {
+    std::uint64_t luid{};std::uint32_t physical{},engine{};
+    auto operator<=>(const ActivityGPUEngine&)const=default;
+};
+// A process's cumulative running time on one engine, in 100 ns units.
+struct ActivityGPUUsage {std::uint32_t pid{};ActivityGPUEngine engine;std::uint64_t runningTime{};bool operator==(const ActivityGPUUsage&)const=default;};
+// One collection of every engine instance: `time` is the collection's own
+// 100 ns time base; `usage` is sorted by (engine, pid) without duplicates.
+// At most maximumUsage entries (a larger collection is unavailable).
+struct ActivityGPUSample {
+    static constexpr std::size_t maximumUsage=16384;
+    std::uint64_t time{};std::vector<ActivityGPUUsage>usage;
+    bool operator==(const ActivityGPUSample&)const=default;
+};
+// Busiest-engine utilization between two collections, Task Manager's "GPU"
+// figure: per engine, the summed running-time growth of the selected
+// processes (all when `pids` is empty) over the elapsed time base, then the
+// maximum over every engine of every adapter, clamped to 0...100. A process
+// whose counter went backwards (an instance restarted) contributes nothing;
+// one present in only one collection contributes nothing. Unavailable without
+// both collections, a positive elapsed time base or a valid usage list.
+std::optional<double>activityGPUPercent(const ActivityGPUSample&current,const ActivityGPUSample&previous,std::span<const std::uint32_t>pids={});
+struct ActivityRawSample {double timestamp{},uptime{};std::optional<ActivityCPU>cpu;std::optional<ActivityMemory>memory;std::optional<ActivityCounters>network,disk;std::optional<ActivityGPUSample>gpu;};
 struct ActivitySnapshot {
     double timestamp{},uptime{};std::optional<double>cpuPercent;std::optional<ActivityMemory>memory;
     std::optional<double>upload,download,diskRead,diskWrite;std::vector<std::string>statusNotes;
+    std::optional<double>gpuPercent; // Windows addition; adds no status note (the Mac notes stay exact)
     bool operator==(const ActivitySnapshot&)const=default;
 };
 ActivitySnapshot deriveActivity(const ActivityRawSample&,const ActivityRawSample*previous=nullptr);
@@ -35,11 +63,13 @@ struct ActivityAppsRaw {
     double timestamp{},uptime{},secondsPerCPUTick{};std::vector<ActivityAppIdentity>apps;
     std::map<std::string,std::vector<std::uint32_t>,std::less<>>members;std::map<std::uint32_t,ActivityProcess>processes;
     std::optional<ActivityAppNetwork>network;bool inventoryComplete{true};std::vector<std::string>statusNotes;
+    std::optional<ActivityGPUSample>gpu; // the catalog's processes only (Windows addition)
 };
-struct ActivityApp {ActivityAppIdentity identity;std::optional<double>cpuPercent,upload,download,diskRead,diskWrite;std::optional<std::uint64_t>memoryBytes;std::vector<std::string>statusNotes;bool operator==(const ActivityApp&)const=default;};
+// gpuPercent: the app's member processes on its busiest engine (activityGPUPercent).
+struct ActivityApp {ActivityAppIdentity identity;std::optional<double>cpuPercent,upload,download,diskRead,diskWrite;std::optional<std::uint64_t>memoryBytes;std::vector<std::string>statusNotes;std::optional<double>gpuPercent;bool operator==(const ActivityApp&)const=default;};
 struct ActivityAppsSnapshot {double timestamp{},uptime{};std::vector<ActivityApp>items;std::vector<std::string>statusNotes;};
 ActivityAppsSnapshot deriveActivityApps(const ActivityAppsRaw&,const ActivityAppsRaw*previous=nullptr);
-enum class ActivitySort {name,cpu,memory,network,disk,upload,download,diskRead,diskWrite};
+enum class ActivitySort {name,cpu,memory,network,disk,upload,download,diskRead,diskWrite,gpu};
 std::string_view activitySortKey(ActivitySort)noexcept;
 // Source localizedStandardCompare is supplied by the platform, never replaced
 // with byte ordering for non-English names. Return negative/equal/positive.

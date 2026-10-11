@@ -65,6 +65,11 @@ void native(){const auto base=std::filesystem::temp_directory_path()/(L"Endfield
 }
 // StorageController volumeNameKey on Windows: label, else Explorer's name
 // without the drive suffix, else the source "Startup disk" literal.
+// The volume menu's order and bounds (pure; no volume is read).
+void order(){std::vector<m::StorageVolume>list{{"v-usb","F:\\","Stick",true,false},{"v-data","d:\\","Data",false,false},{"v-sys","C:\\","System",false,true},{"v-b","B:\\","Backup",false,false},{"","G:\\","No id",false,false},{"v-data","D:\\","Again",false,false},{"v-bad","","No root",false,false}};
+    const auto ordered=n::orderStorageVolumes(list);check(ordered.size()==4&&ordered[0].id=="v-sys"&&ordered[1].id=="v-b"&&ordered[2].id=="v-data"&&ordered[2].title=="Data"&&ordered[3].id=="v-usb","Startup first, fixed before removable, by mount path; invalid and repeated entries dropped");
+    std::vector<m::StorageVolume>many;for(unsigned k=0;k<12;++k)many.push_back({"v"+std::to_string(k),std::string(1,char('D'+k))+":\\","Disk",false,false});check(n::orderStorageVolumes(many).size()==m::storageVolumeLimit,"At most seven volumes");
+    many[0].title=std::string("\xFF");check(n::orderStorageVolumes(many).front().id!="v0","Invalid UTF-8 titles are dropped");}
 void titles(){
     check(n::storageVolumeTitle("Windows","Local Disk (C:)","C:\\")=="Windows","A volume label is the title");
     check(n::storageVolumeTitle("","Local Disk (C:)","C:\\")=="Local Disk","An unlabelled volume takes Explorer's name without its drive suffix");
@@ -72,7 +77,7 @@ void titles(){
     check(n::storageVolumeTitle("","Local Disk (D:)","C:\\")=="Local Disk (D:)","Only the volume's own drive suffix is removed");
     check(n::storageVolumeTitle("","","C:\\")=="Startup disk"&&n::storageVolumeTitle("",std::string("\xff",1),"C:\\")=="Startup disk"&&n::storageVolumeTitle(""," (C:)","C:\\")=="Startup disk","Without any usable name the source literal remains");
 }
-int main(int argc,char**argv){try{accounting();bounds();queue();titles();if(argc==2)original(argv[1]);else check(argc==1,"Pass optional original storage-files.json");
+int main(int argc,char**argv){try{accounting();bounds();queue();titles();order();if(argc==2)original(argv[1]);else check(argc==1,"Pass optional original storage-files.json");
 #ifdef _WIN32
 native();
 #endif

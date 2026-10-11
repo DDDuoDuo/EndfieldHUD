@@ -34,6 +34,9 @@ public:
     struct Readers {
         std::function<ActivityCatalogInventory()>inventory;
         std::function<std::optional<ActivityCatalogReading>(std::uint32_t)>process;
+        // Optional GPU engine readings of the catalog's processes (sorted
+        // PIDs), Windows: native::readWindowsActivityGPU.
+        std::function<std::optional<modules::ActivityGPUSample>(std::span<const std::uint32_t>)>gpu;
     };
     explicit ActivityCatalogSampler(Readers);
     // Worker-only, serial calls from the existing ActivityProbe. Five-second

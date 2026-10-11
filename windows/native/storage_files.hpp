@@ -38,6 +38,11 @@ modules::StorageDetailsSnapshot scanStorageFolders(std::span<const StorageFolder
 // Disk" for an unlabelled C:, without its " (C:)" drive suffix), else the
 // source "Startup disk" literal. Pure; the reader below supplies both names.
 std::string storageVolumeTitle(std::string_view label,std::string_view shellDisplayName,std::string_view root);
+// Volume choice (Windows addition). Pure menu order: the startup volume first,
+// then fixed before removable volumes, then by mount path (ASCII case
+// folded); entries without an id or root, with invalid UTF-8 or a repeated id
+// are dropped; at most modules::storageVolumeLimit remain.
+std::vector<modules::StorageVolume>orderStorageVolumes(std::vector<modules::StorageVolume>);
 #ifdef _WIN32
 // Worker-thread functions only. Construction/resolution is intentionally inside
 // each request, not the UI path. No query enumerates the whole startup volume.
@@ -45,6 +50,12 @@ std::string storageVolumeTitle(std::string_view label,std::string_view shellDisp
 // driver hangs; limits/cancellation are checked BETWEEN bounded metadata calls.
 std::optional<modules::StorageCapacity>readWindowsStartupCapacity(double date);
 std::optional<modules::StorageCapacity>readWindowsCapacityAt(std::string_view explicitPath,double date);
+// The fixed, removable and RAM-disk volumes that are mounted at a drive path
+// and have media, named like readWindowsCapacityAt (orderStorageVolumes).
+std::vector<modules::StorageVolume>listWindowsStorageVolumes();
+// The chosen volume's capacity by its GUID path id (removable volumes too);
+// the startup volume's for an empty id or a volume that is not mounted now.
+std::optional<modules::StorageCapacity>readWindowsVolumeCapacity(std::string_view volumeID,double date);
 std::unique_ptr<StorageFileSystem>makeWindowsStorageFileSystem();
 std::vector<StorageFolderScope>windowsStorageScopes();
 modules::StorageDetailsSnapshot scanWindowsStorageDetails(

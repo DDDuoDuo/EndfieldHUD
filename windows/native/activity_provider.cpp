@@ -1,4 +1,5 @@
 #include "native/activity_provider.hpp"
+#include "native/activity_gpu.hpp"
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -59,7 +60,9 @@ std::optional<std::uint64_t>windowsActivityProcessMemory(void*process)noexcept{
 modules::ActivityRawSample readWindowsActivity(double stamp,double uptime){clocks(stamp,uptime);modules::ActivityRawSample out;out.timestamp=stamp;out.uptime=uptime;FILETIME idle{},kernel{},user{};
     if(GetActiveProcessorGroupCount()==1&&GetSystemTimes(&idle,&kernel,&user)&&ticks(kernel)>=ticks(idle))out.cpu=modules::ActivityCPU{ticks(user),ticks(kernel)-ticks(idle),ticks(idle),0};
     MEMORYSTATUSEX memory{};memory.dwLength=sizeof(memory);if(GlobalMemoryStatusEx(&memory)&&memory.ullTotalPhys>0&&memory.ullAvailPhys<=memory.ullTotalPhys)out.memory=modules::ActivityMemory{memory.ullTotalPhys-memory.ullAvailPhys,memory.ullTotalPhys,{}};
-    Table table;if(GetIfTable2(&table.value)==NO_ERROR&&table.value&&table.value->NumEntries<=4096){modules::ActivityCounters values;for(ULONG n=0;n<table.value->NumEntries;++n){const auto&r=table.value->Table[n];const bool supported=(r.Type==IF_TYPE_ETHERNET_CSMACD||r.Type==IF_TYPE_IEEE80211)?r.InterfaceAndOperStatusFlags.HardwareInterface!=0:r.Type==IF_TYPE_PPP;if(r.OperStatus==IfOperStatusUp&&supported)values.emplace(std::to_string(r.InterfaceLuid.Value),modules::ActivityBytes{r.InOctets,r.OutOctets});}out.network=std::move(values);}return out;
+    Table table;if(GetIfTable2(&table.value)==NO_ERROR&&table.value&&table.value->NumEntries<=4096){modules::ActivityCounters values;for(ULONG n=0;n<table.value->NumEntries;++n){const auto&r=table.value->Table[n];const bool supported=(r.Type==IF_TYPE_ETHERNET_CSMACD||r.Type==IF_TYPE_IEEE80211)?r.InterfaceAndOperStatusFlags.HardwareInterface!=0:r.Type==IF_TYPE_PPP;if(r.OperStatus==IfOperStatusUp&&supported)values.emplace(std::to_string(r.InterfaceLuid.Value),modules::ActivityBytes{r.InOctets,r.OutOctets});}out.network=std::move(values);}
+    // GPU engines only while Activity Monitor is visible (native/activity_gpu.hpp).
+    out.gpu=readWindowsActivityGPU();return out;
 }
 modules::ActivityAppsRaw readWindowsActivityApps(std::span<const modules::ActivityAppIdentity>catalog,double stamp,double uptime){clocks(stamp,uptime);if(catalog.size()>256)throw std::invalid_argument("Activity catalog exceeds256");modules::ActivityAppsRaw out;out.timestamp=stamp;out.uptime=uptime;out.secondsPerCPUTick=1e-7;out.apps.assign(catalog.begin(),catalog.end());std::set<std::uint32_t>ids;std::set<std::string>names;
     for(const auto&app:catalog){if(app.id.empty()||app.id.size()>4096||app.name.size()>4096||!names.insert(app.id).second||app.processIDs.size()>8192)throw std::invalid_argument("Invalid Activity app catalog");for(auto id:app.processIDs){if(!id)throw std::invalid_argument("Invalid Activity PID");ids.insert(id);}out.members.emplace(app.id,app.processIDs);}if(ids.size()>8192)throw std::invalid_argument("Activity PID inventory exceeds8192");FILETIME now{};GetSystemTimePreciseAsFileTime(&now);const auto wall=ticks(now);

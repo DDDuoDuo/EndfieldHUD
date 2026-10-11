@@ -15,6 +15,8 @@ std::uint64_t StorageController::token(){need(serial_!=std::numeric_limits<std::
 void StorageController::activate(double now){clock(now);if(active_)return;active_=true;refreshCapacity(now);deadline_=now+capacityCacheDuration;}
 void StorageController::deactivate(){active_=false;deadline_.reset();pendingDetails_=false;if(cancellation_)cancellation_->cancel();if(details_.isLoading){details_.isLoading=false;publish();}}
 void StorageController::refresh(double now){refreshCapacity(now,true);}
+void StorageController::changeSource(double now){clock(now);capacityToken_=0;capacityRequest_.reset();requestedAt_.reset();snapshot_.capacity.reset();snapshot_.error.reset();snapshot_.isLoading=false;
+    if(active_){refreshCapacity(now,true);deadline_=now+capacityCacheDuration;}publish();}
 void StorageController::refreshCapacity(double now,bool force){clock(now);if(!active_||capacityToken_)return;if(!force&&requestedAt_&&now-*requestedAt_>=0&&now-*requestedAt_<capacityCacheDuration)return;
     const auto next=token();requestedAt_=now;capacityToken_=next;capacityRequest_=StorageCapacityRequest{next,now};snapshot_.isLoading=true;publish();}
 void StorageController::requestDetails(double now,bool refresh){clock(now);if(!active_)return;refreshCapacity(now);if(cancellation_){if(cancellation_->cancelled())pendingDetails_=true;return;}

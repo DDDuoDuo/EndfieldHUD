@@ -4,7 +4,12 @@
 #include "app/utility_executor.hpp"
 #include "core/data/data_store.hpp"
 #include "modules/activity_state.hpp"
+#include "native/activity_gpu.hpp"
 #include "native/activity_icons.hpp"
+#include "native/activity_scene.hpp"
+#include "native/clipboard_scene.hpp"
+#include "modules/activity_presentation.hpp"
+#include "modules/storage_presentation.hpp"
 #include "native/clipboard_provider.hpp"
 #include "native/event_log_owner.hpp"
 #include "native/event_log_time.hpp"
@@ -12,6 +17,7 @@
 #include "native/system_services.hpp"
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstring>
 #include <filesystem>
 #include <initializer_list>
@@ -251,11 +257,51 @@ public:
                    gpu::clipboardStatusText(gpu::clipboard_status::tooManyFiles, core::Language::english) == "This file selection is too large to cache.",
                    "Clipboard capture statuses use the source messages");
 
+        additions(step, cycle);
         hostEventLog(step, cycle);
         ++steps_;
     }
 
 private:
+    // The user-reported reveal glitch, GPU usage and the Storage volume menu.
+    void additions(app::ModuleCoverage& step, unsigned cycle) {
+        // Clipboard rows reveal and Activity sort: the authored shutter only grows.
+        for (const auto direction : {-1., 1.}) {
+            double left{1e9}, right{-1e9};
+            bool grows = true;
+            for (unsigned t = 0; t <= 26; ++t) {
+                const auto clip = gpu::clipboardRevealShutter(direction, t * .01), sort = gpu::activitySortShutter(direction, t * .01);
+                grows = grows && clip[2][4].x <= left + 1e-9 && clip[2][1].x >= right - 1e-9 && sort[3][4].x <= sort[3][1].x;
+                left = clip[2][4].x; right = clip[2][1].x;
+            }
+            step.check(grows && left == 0 && right == 376, "The Clipboard reveal and the Activity sort only ever grow their revealed rows");
+        }
+        // GPU (Windows addition): busiest engine per app and overall.
+        modules::ActivityGPUSample before, after;
+        before.time = 0; after.time = 10'000'000;
+        const modules::ActivityGPUEngine render{1, 0, 0}, copy{1, 0, 1};
+        before.usage = {{10, render, 0}, {11, render, 0}, {10, copy, 0}};
+        after.usage = {{10, render, 2'000'000}, {11, render, 3'000'000 + cycle}, {10, copy, 1'000'000}};
+        const std::array<std::uint32_t, 1> ten{10};
+        const auto overall = modules::activityGPUPercent(after, before), app = modules::activityGPUPercent(after, before, ten);
+        step.check(overall && *overall >= 50 && *overall < 50.1 && app && std::abs(*app - 20) < 1e-9, "GPU: the busiest engine, per app and overall");
+        modules::ActivityState state([](std::string_view a, std::string_view b) { return a.compare(b); });
+        modules::ActivitySnapshot sample;
+        sample.timestamp = sample.uptime = 1; sample.gpuPercent = 37.5;
+        state.receive(sample);
+        modules::ActivityAppearance appearance;
+        appearance.language = cycle % 2 ? core::Language::japanese : core::Language::simplifiedChinese;
+        const auto art = modules::prepareActivityArtwork(state, appearance);
+        step.check(art.overview["children"].array().size() == modules::ActivityArtwork::overviewRows && art.graphs[4].count == 1 &&
+                   gpu::activityGPUInstance("pid_4_luid_0x0_0x1_phys_0_eng_0_engtype_3D").has_value(), "Activity shows a GPU row and parses GPU engine instances");
+        // Storage: the volume menu lists the volumes with the chosen one marked.
+        const std::array<modules::StorageVolume, 2> volumes{modules::StorageVolume{"coverage-system", "C:\\", "System", false, true}, modules::StorageVolume{"coverage-data", "D:\\", "Data", true, false}};
+        modules::StorageAppearance storage;
+        storage.language = appearance.language;
+        const auto menu = modules::prepareStorageVolumeMenu(volumes, "coverage-data", storage);
+        step.check(menu.actions.size() == 2 && menu.actions[1].label == "Data (D:)" && gpu::orderStorageVolumes({volumes[1], volumes[0]}).front().id == "coverage-system",
+                   "Storage lists volumes startup first in its secondary menu");
+    }
     void release() noexcept {
         try { if (clipboard_) clipboard_->close(); } catch (...) {}
         services_.stop();
