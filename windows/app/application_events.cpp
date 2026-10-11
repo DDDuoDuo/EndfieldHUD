@@ -266,6 +266,13 @@ void Application::Impl::onFrame(double time){
             if(FAILED(gpu::revealShelfReference(std::move(access)))&&shelf)
                 isolate(shelfModuleOwner,"reveal",[&]{shelf->showError(tools::shelfText(tools::ShelfText::revealFailed,watchAppearance.language),hostTime(time));});
         }
+        // The properties card's Open: the identity is revalidated, then the
+        // Shell opens the item with its default verb (a cancelled choice is S_FALSE).
+        if(pendingShelfOpen&&visibleMode()&&!quitRequested){
+            auto access=std::move(*pendingShelfOpen);pendingShelfOpen.reset();
+            if(FAILED(gpu::openShelfReference(std::move(access)))&&shelf)
+                isolate(shelfModuleOwner,"open",[&]{shelf->showError(tools::shelfText(tools::ShelfText::openFailed,watchAppearance.language),hostTime(time));});
+        }
         // Settings links and the GitHub releases page (overlay.afterSystemClose).
         if(pendingLink)openPendingLink();
         if(!production()&&!tray&&!quitRequested)finishQuit(time);else if(!stopping)scheduleDeadline();
@@ -348,6 +355,10 @@ std::optional<std::intptr_t> Application::Impl::onAppMessage(const NativeMessage
         }
         if(m.message==hudDropMessage){receiveDrop(now());return 0;}
         if(m.message==prewarmMessage){prewarm();return 0;}
+        // The ID card feed changed while the HUD was concealed (connectAreas).
+        if(m.message==idCardMessage){idCardQueued=false;const FatalStage stage("id card");
+            if(idCard&&!stopping&&session->phase()==core::VisibilityPhase::concealed)if(auto next=idCard->apply())session->setDesktopSettings(std::move(*next));
+            return 0;}
         if(m.message==themeColorMessage){chooseThemeColor();return 0;}
         if(m.message==restartMessage){
             // DataRootRestart: the red power button's confirmed quit (close, the
@@ -405,7 +416,8 @@ std::optional<std::intptr_t> Application::Impl::onAppMessage(const NativeMessage
             if(action&&reader)isolate(readerModuleOwner,"import",[&]{if(!reader->importRequestCurrent(action->generation))return;try {
                 if(action->kind==tools::ReaderImportAction::Kind::chooseLocal){
                     if(pickerOwner!=PickerOwner::none||!mediaPicker)reader->receiveImportError(action->generation,modules::readerTranslation(modules::readerWindowsPickerBusy,watchAppearance.language),hostTime(time));
-                    else {const auto strings=readerStrings(watchAppearance.language);mediaPicker->setLabels({strings.open,strings.open,strings.open,gpu::ShelfPickerMode::singleReaderFile});
+                    // The Library's Relink… titles the same single-book picker.
+                    else {const auto strings=readerStrings(watchAppearance.language);const auto&caption=action->relinkBookID.empty()?strings.open:strings.relink;mediaPicker->setLabels({caption,caption,caption,gpu::ShelfPickerMode::singleReaderFile});
                         if(mediaPicker->request()){pickerOwner=PickerOwner::reader;pendingReaderPicker=*action;host.capturePointer(false);}
                         else reader->receiveImportError(action->generation,modules::readerTranslation(modules::readerWindowsPickerBusy,watchAppearance.language),hostTime(time));}
                 }else if(shelf){auto lease=std::make_shared<ehud::data::ShelfFileAccess>(shelf->access(action->shelfID));need(lease->open()&&!lease->metadata().isDirectory,"Shelf book reference is unavailable");importReaderReference(action->generation,lease->metadata().windowsPath,lease,time);}
@@ -504,6 +516,8 @@ std::optional<std::intptr_t> Application::Impl::onAppMessage(const NativeMessage
             // clipboards explain themselves; others are ignored silently).
             case K::paste:shelf->paste(now());break;
             case K::reveal:pendingShelfReveal=shelf->access(action->itemID);closeAfter=true;break;
+            // The properties card's Open (default application) waits for the close like Reveal.
+            case K::open:pendingShelfOpen=shelf->access(action->itemID);closeAfter=true;break;
             case K::preview:host.capturePointer(false);shelf->requestPreview(action->itemID);break;
             // The OLE drag loop dispatches nested messages (frames, timers) with later times.
             case K::drag:{auto transfer=shelf->prepareDrag(action->itemID);shelf->setNativeDragActive(true);host.capturePointer(false);environment.pointerLocked=false;session->setEnvironment(environment,now());DWORD effect{};const auto result=transfer->run(&effect);shelf->setNativeDragActive(false);if(result==DRAGDROP_S_DROP&&(effect&DROPEFFECT_COPY))closeAfter=true;break;}

@@ -40,7 +40,7 @@ public:
         // Source: a paused player stays listed while its process lives (HAL
         // remembers its output devices). A Windows session persists Inactive
         // until it expires, so any live writable session lists the app.
-        for(const auto&[_,group]:indices)next[group.index].available=group.writable;
+        for(const auto&[_,group]:indices){next[group.index].available=group.writable;next[group.index].rendering=group.active;}
         for(auto&a:next)if(const auto found=owned.find(a.id);found!=owned.end()){a.state=found->second.error<0?AudioApplicationRouteState::failed:AudioApplicationRouteState::active;a.gain=found->second.gain;a.error=found->second.error;}
         next.erase(std::remove_if(next.begin(),next.end(),[](const auto&a){return !a.available&&a.state==AudioApplicationRouteState::direct;}),next.end());apps=std::move(next);
     }

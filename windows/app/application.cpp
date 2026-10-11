@@ -387,6 +387,9 @@ void Application::Impl::construct(){
     if(args.nativeClipboard||args.nativeActivity||args.reader||args.calendar||!args.mapGeography.empty()||args.eventLogFixture||args.nativeEventLog||!args.settingsAssets.empty()||!args.archiveAssets.empty()||!args.storageAssets.empty()||!args.modules.empty()){
         const auto window=static_cast<HWND>(host.hwnd());utility=std::make_unique<UtilityExecutor>([window]{need(PostMessageW(window,utilityMessage,serviceGeneration,0)!=FALSE,"Post utility completion");});
         attributeCompletions(*utility);
+        // The Shelf reads item properties and writes Migration/relink.json on the
+        // shared executor (tools/shelf_preview.hpp); it was constructed before it.
+        if(shelf)isolate(shelfModuleOwner,"utility",[&]{shelf->setUtility(utility.get());});
     }
     if(!args.mapGeography.empty())optional("map",[&]{constructMap();});
     if(args.reader)optional("reader",[&]{constructReader();});
@@ -529,7 +532,15 @@ void Application::Impl::connectAreas(){
     if(idCardLeaves&&idCardBaseline)optional("id card",[&]{
         if(auto*feed=areaHost->find<gpu::IdCardFeed>(gpu::IdCardFeed::serviceKey)){
             idCard=std::make_unique<gpu::IdCardPresenter>(layers,std::move(*idCardLeaves),rasterOptions,*materials,std::move(*idCardBaseline));
-            idCard->connect(*feed,[this]{if(ready&&!stopping)host.invalidate();});
+            // The presenter's callback only schedules work. While the HUD is
+            // concealed the change is applied as its own content event (captions
+            // repainted, textures replaced for the next SourceScene flush), so a
+            // profile published after launch never lands in the first opening's
+            // first frame; while shown, the next frame applies it.
+            idCard->connect(*feed,[this]{if(!ready||stopping)return;
+                if(visibleMode()&&session->phase()==core::VisibilityPhase::concealed){
+                    if(!idCardQueued&&PostMessageW(static_cast<HWND>(host.hwnd()),idCardMessage,serviceGeneration,0))idCardQueued=true;}
+                else host.invalidate();});
         }});
     idCardLeaves.reset();idCardBaseline.reset();
     // Saved app shortcuts between Power and Add App (app_shortcut_navigation.hpp).
@@ -715,10 +726,11 @@ void Application::Impl::constructNotes(){
     startup.mark("isolated-notes-owner");
 }
 void Application::Impl::constructShelf(){
-    const auto bytes=ehud::data::detail::readFile(args.shelfMask,128*1024);need(bytes.has_value(),"Missing original Shelf reveal samples");
-    auto masks=std::make_shared<core::SubsectionMaskSampler>(std::span(reinterpret_cast<const std::uint8_t*>(bytes->data()),bytes->size()),core::SubsectionMaskSampler::assetSHA256);
+    // The Shelf reveal draws the authored HUDSubsectionTransition keyframes
+    // (native/shelf_scene.hpp shelfRevealShutter); the measured Core Animation
+    // samples (args.shelfMask, still packaged and pinned) are not read.
     shelfAssets=std::make_unique<gpu::NativeShelfAssets>(args.shelfAssets);
-    tools::ShelfPreviewOptions shelfOptions{args.shelfDataRoot,visibleMode(),visibleMode(),std::move(masks)};
+    tools::ShelfPreviewOptions shelfOptions{args.shelfDataRoot,visibleMode(),visibleMode(),nullptr};
     // SystemHUDView: shelfAdded {filename} per new item, shelfRemoved {filename},
     // shelfCleared {count}. eventOwner is checked when the record is made.
     shelfOptions.recordEvent=[this](modules::EventKind kind,modules::EventMetadata metadata){if(eventOwner&&!stopping)eventOwner->record({ehud::data::makeUUID(),kind,ehud::data::foundationNow(),std::move(metadata)});};
@@ -752,18 +764,17 @@ void Application::Impl::constructMap(){
 }
 // Decode the immutable bundled geography once on first selection. A full
 // queue retries on its next completion, never from an idle timer.
+// Terrain.bin and Countries.bin load separately (native/map_assets.hpp
+// loadMapGeography, pinned by native::MapGeographyPins): a missing, differing
+// or undecodable dataset is flagged instead of thrown, and
+// MapPreview::setGeography keeps the Map with its pins and the Mac message.
 void Application::Impl::requestMapGeography(){
     if(mapLoadRequested||stopping||!map)return;
     const auto root=args.mapGeography;
     auto result=std::make_shared<modules::MapGeography>();
     const auto window=static_cast<HWND>(host.hwnd());
-    mapLoadRequested=utility->submit(mapLoadRoute,[root,result]{
-        const auto read=[&](const char*name,std::size_t bound,const char*pin){const auto bytes=ehud::data::detail::readFile(root/name,bound);need(bytes.has_value(),"Original Map geography is unavailable");need(packet::sha256(std::span(reinterpret_cast<const std::uint8_t*>(bytes->data()),bytes->size()))==pin,"Original Map geography pin differs");return *bytes;};
-        const auto terrain=read("Terrain.bin",modules::MapTerrain::maximumBytes,"5356727bab11c5f96d69a94658d4f884a2e56b01e89f837670d57660e66635dd");
-        const auto countries=read("Countries.bin",modules::MapCountries::maximumBytes,"557e4e92f0fedb7e3f80e067cb0207655c9ecaedd9f5b29d730aa363842d0dd5");
-        result->terrain=modules::MapTerrain::decode(std::span(reinterpret_cast<const std::uint8_t*>(terrain.data()),terrain.size()));
-        result->countries=modules::MapCountries::decode(std::span(reinterpret_cast<const std::uint8_t*>(countries.data()),countries.size()));
-    },[this,result,window](std::exception_ptr error){if(stopping||!map)return;
+    mapLoadRequested=utility->submit(mapLoadRoute,[root,result]{*result=gpu::loadMapGeography(root);},
+    [this,result,window](std::exception_ptr error){if(stopping||!map)return;
         bool delivered{};isolate(mapModuleOwner,"geography",[&]{if(error)std::rethrow_exception(error);map->setGeography(result,visibleMode()?now():mapTime);delivered=true;});if(!delivered)return;
         if(ready&&!stopping&&!mapRefreshQueued){need(PostMessageW(window,mapChangedMessage,serviceGeneration,0)!=FALSE,"Post Map revision");mapRefreshQueued=true;}});
 }
@@ -1013,6 +1024,10 @@ void Application::Impl::constructVolume(){
         sample->inputs={{"test-microphone","测试麦克风"}};sample->outputID="test-speaker";sample->inputID="test-microphone";
         sample->volume=.45;sample->balance=0;sample->muted=false;
         sample->canSetVolume=sample->canSetMute=sample->canSetBalance=sample->canSetDefaultOutput=sample->canSetDefaultInput=true;
+        // Five synthetic adjustable apps (no real audio): the three-row app
+        // list scrolls (maximum offset 5 x 31 - 95 = 60 points).
+        sample->applicationActivitySupported=true;
+        for(unsigned n=0;n<5;++n)sample->applications.push_back({std::to_string(9100+n)+":1","测试应用 "+std::to_string(n+1),9100u+n,true});
         options.initial=*sample;
         const auto changed=[this,sample]{if(volume)volume->receiveSnapshot(*sample);};
         options.actions.setVolume=[sample,changed](std::string_view id,double value){if(id!=sample->outputID)return false;sample->volume=value;changed();return true;};
@@ -1020,6 +1035,10 @@ void Application::Impl::constructVolume(){
         options.actions.setMute=[sample,changed](std::string_view id,bool value){if(id!=sample->outputID)return false;sample->muted=value;changed();return true;};
         options.actions.setDefaultOutput=[sample,changed](std::string_view id){if(std::none_of(sample->outputs.begin(),sample->outputs.end(),[&](const auto&d){return d.id==id;}))return false;sample->outputID=id;changed();return true;};
         options.actions.setDefaultInput=[sample,changed](std::string_view id){if(std::none_of(sample->inputs.begin(),sample->inputs.end(),[&](const auto&d){return d.id==id;}))return false;sample->inputID=id;changed();return true;};
+        options.actions.setAppGain=[sample,changed](std::string_view id,double value){const auto app=std::find_if(sample->applications.begin(),sample->applications.end(),[&](const auto&a){return a.id==id;});
+            if(app==sample->applications.end())return false;app->state=gpu::VolumeAppState::active;app->gain=value;changed();return true;};
+        options.actions.stopApp=[sample,changed](std::string_view id){const auto app=std::find_if(sample->applications.begin(),sample->applications.end(),[&](const auto&a){return a.id==id;});
+            if(app==sample->applications.end())return false;app->state=gpu::VolumeAppState::direct;app->gain.reset();changed();return true;};
         volume=std::make_unique<tools::VolumePreview>(rasterizer,std::move(options));
     }
     volume->resize(metrics);
@@ -1345,7 +1364,7 @@ void Application::Impl::forceConceal(double time){
     // OverlayController.forceCloseSystemOverlay: sleep, session end and
     // termination cannot wait for visible animations or editor retries.
     time=hostTime(time);
-    pendingClose=false;pendingModule.reset();headerClock.setActive(false,time);pendingShelfReveal.reset();pendingLink.reset();
+    pendingClose=false;pendingModule.reset();headerClock.setActive(false,time);pendingShelfReveal.reset();pendingShelfOpen.reset();pendingLink.reset();
     if(mediaPicker)mediaPicker->cancel();pickerOwner=PickerOwner::none;pendingArchivePicker.reset();if(archiveMedia)isolate(archiveModuleOwner,"force close",[&]{archiveMedia->cancelImport();});if(readerOwner)isolate(readerModuleOwner,"force close",[&]{readerOwner->cancelImport();});pendingReaderPicker.reset();pendingReaderAction.reset();
     finishAreaPicker({true,false,{}});deactivateDisplayPanels();setClockHovered(false);
     if(session->phase()!=core::VisibilityPhase::concealed||closing){

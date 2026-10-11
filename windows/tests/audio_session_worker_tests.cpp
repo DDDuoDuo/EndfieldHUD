@@ -43,6 +43,9 @@ void transactions(){Fake f;AudioSessionRoutes routes;routes.update(f.records,f);
 }
 void pausedPlayer(){Fake f;for(auto&r:f.records)r.active=false;AudioSessionRoutes routes;routes.update(f.records,f);
     check(routes.applications().size()==1&&routes.applications()[0].available&&routes.applications()[0].state==AudioApplicationRouteState::direct,"A paused player (inactive, unexpired sessions) stays listed and adjustable, like the source's remembered output process");
+    check(!routes.applications()[0].rendering,"A paused player's route reports no rendering session (Now Playing's window-title play state)");
+    f.records[1].active=true;routes.update(f.records,f);check(routes.applications()[0].rendering,"One active session of the process reports the route rendering");
+    f.records[1].active=false;routes.update(f.records,f);check(!routes.applications()[0].rendering,"Pausing again clears it");
     check(routes.setGain("42:100",.5f,f)==0&&f.records[0].volume==.2f&&f.records[1].volume==.4f,"Paused-player volume applies relatively to every session immediately");
     f.records[1].controllable=false;f.records[1].volume.reset();routes.update(f.records,f);
     check(routes.applications()[0].state==AudioApplicationRouteState::failed,"A session that becomes uncontrollable fails the owned route instead of guessing");

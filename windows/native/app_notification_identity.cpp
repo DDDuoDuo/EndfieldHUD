@@ -50,10 +50,20 @@ void ordinaryFile(File&file,PCWSTR path,DWORD access=FILE_READ_ATTRIBUTES,DWORD 
 void actualPaths(const AppNotificationIdentity&i){File exe;const auto path=wide(i.executable);ordinaryFile(exe,path.c_str());const auto directory=wide(i.workingDirectory);const auto attributes=GetFileAttributesW(directory.c_str());need(attributes!=INVALID_FILE_ATTRIBUTES&&(attributes&FILE_ATTRIBUTE_DIRECTORY)&&!(attributes&FILE_ATTRIBUTE_REPARSE_POINT));}
 struct Variant{PROPVARIANT value{};~Variant(){PropVariantClear(&value);}};
 void stringValue(PROPVARIANT&v,const std::wstring&s){v.vt=VT_LPWSTR;v.pwszVal=static_cast<PWSTR>(CoTaskMemAlloc((s.size()+1)*sizeof(wchar_t)));if(!v.pwszVal)throw std::bad_alloc{};std::copy(s.begin(),s.end(),v.pwszVal);v.pwszVal[s.size()]=0;}
+// GetModuleFileNameW keeps an 8.3 spelling when EndfieldHUD.exe was started
+// through one, while the Shell stores a shortcut's target with long names:
+// both sides are expanded with GetLongPathNameW (unchanged when that fails)
+// and compared ordinally without case, as NTFS names are.
+std::wstring longPath(const std::wstring&path){
+    if(path.empty())return path;const auto size=GetLongPathNameW(path.c_str(),nullptr,0);if(!size)return path;
+    std::wstring out(size,L'\0');const auto length=GetLongPathNameW(path.c_str(),out.data(),size);if(!length||length>=size)return path;out.resize(length);return out;}
+bool samePath(const std::wstring&a,const std::wstring&b){
+    const auto x=longPath(a),y=longPath(b);
+    return CompareStringOrdinal(x.c_str(),static_cast<int>(x.size()),y.c_str(),static_cast<int>(y.size()),TRUE)==CSTR_EQUAL;}
 bool sameShortcut(const AppNotificationIdentity&i){
     ComPtr<IShellLinkW>link;checked(CoCreateInstance(CLSID_ShellLink,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&link)));ComPtr<IPersistFile>persist;checked(link.As(&persist));const auto file=wide(i.shortcut);checked(persist->Load(file.c_str(),STGM_READ));
     std::vector<wchar_t>path(32768),args(32768),directory(32768);checked(link->GetPath(path.data(),static_cast<int>(path.size()),nullptr,SLGP_RAWPATH));checked(link->GetArguments(args.data(),static_cast<int>(args.size())));checked(link->GetWorkingDirectory(directory.data(),static_cast<int>(directory.size())));
-    if(wide(i.executable)!=path.data()||wide(i.workingDirectory)!=directory.data()||args[0]!=L'\0')return false;
+    if(!samePath(wide(i.executable),path.data())||!samePath(wide(i.workingDirectory),directory.data())||args[0]!=L'\0')return false;
     ComPtr<IPropertyStore>store;checked(link.As(&store));Variant id,clsid;checked(store->GetValue(PKEY_AppUserModel_ID,&id.value));checked(store->GetValue(PKEY_AppUserModel_ToastActivatorCLSID,&clsid.value));return id.value.vt==VT_LPWSTR&&id.value.pwszVal&&wide(i.appUserModelID)==id.value.pwszVal&&clsid.value.vt==VT_CLSID&&clsid.value.puuid&&*clsid.value.puuid==guid(i.activatorCLSID);
 }
 bool exists(const std::wstring&path){const auto a=GetFileAttributesW(path.c_str());if(a!=INVALID_FILE_ATTRIBUTES)return true;const auto e=GetLastError();if(e==ERROR_FILE_NOT_FOUND||e==ERROR_PATH_NOT_FOUND)return false;throw Failure{HRESULT_FROM_WIN32(e)};}

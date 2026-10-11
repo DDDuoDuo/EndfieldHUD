@@ -6,6 +6,7 @@
 #include "app/areas/calendar_reminder_module.hpp"
 #include "modules/archive_presentation.hpp"
 #include "native/display_center_logo.hpp"
+#include "native/work_mode_automation.hpp"
 #include <algorithm>
 #include <iostream>
 #include <map>
@@ -402,6 +403,24 @@ int Application::Impl::runHiddenVerification(){
                         // A pinned Notes card above the field would rightly keep the source cursor.
                         if(field&&!notes->covers(center))hostCheck(cursorAt(center)==ModuleCursor::text,"The host's cursor route shows the I-beam over the open duration field");
                         hostCheck(beside&&!workModeModuleOwner->cursorAt({beside->x,beside->y})&&cursorAt({beside->x,beside->y})==ModuleCursor::source,"The source cursor stays beside the open field");
+                        // HUDWorkModeInteraction.layoutAccessibility: the open
+                        // HUDWorkDurationField is the focused Edit peer under the HUD
+                        // root; its value is the draft and SetValue replaces it.
+                        {HudAutomation probe(host.hwnd(),automationSource());(void)probe.refresh();
+                         ComPtr<IRawElementProviderFragment>editor;
+                         for(std::size_t n=0;n<workModeModuleOwner->automationCount()&&!editor;++n){ComPtr<IRawElementProviderFragment>f;
+                             if(SUCCEEDED(workModeModuleOwner->automationChild(n,&f))&&f&&textProperty(f.Get(),UIA_AutomationIdPropertyId)==gpu::workModeDurationEditorID)editor=f;}
+                         ComPtr<IRawElementProviderSimple>simple;VARIANT type,focus;VariantInit(&type);VariantInit(&focus);
+                         const bool edit=editor&&SUCCEEDED(editor.As(&simple))&&SUCCEEDED(simple->GetPropertyValue(UIA_ControlTypePropertyId,&type))&&type.vt==VT_I4&&type.lVal==UIA_EditControlTypeId&&
+                             SUCCEEDED(simple->GetPropertyValue(UIA_HasKeyboardFocusPropertyId,&focus))&&focus.vt==VT_BOOL&&focus.boolVal==VARIANT_TRUE;
+                         VariantClear(&type);VariantClear(&focus);
+                         hostCheck(edit,"Work Mode's open duration field is the focused Edit peer under the HUD root");
+                         ComPtr<IUnknown>pattern;ComPtr<IValueProvider>value;BSTR text=nullptr;
+                         const bool read=simple&&SUCCEEDED(simple->GetPatternProvider(UIA_ValuePatternId,&pattern))&&pattern&&SUCCEEDED(pattern.As(&value))&&SUCCEEDED(value->get_Value(&text))&&text&&narrow(text)==workMode->editingText().value_or(std::string{});
+                         if(text)SysFreeString(text);
+                         hostCheck(read,"The duration field's UI Automation value is its draft text");
+                         hostCheck(value&&value->SetValue(L"0:07")==S_OK&&workMode->editingText()==std::optional<std::string>("0:07")&&workMode->editing(),"Setting the duration field's value replaces the draft and keeps it open");
+                         probe.disconnectOwners();probe.shutdown();}
                         need(workMode->finishEditing(false,start+.12)&&!workMode->editing(),"Cancelling closes the duration field");
                         present(start+.13,true);
                         hostCheck(!workModeModuleOwner->cursorAt(center)&&cursorAt(center)==ModuleCursor::source,"Closing the field restores the source cursor");
@@ -464,6 +483,13 @@ int Application::Impl::runHiddenVerification(){
                     if(child&&parent){Microsoft::WRL::ComPtr<IUnknown> a,b;(void)parent.As(&a);(void)group.As(&b);hostCheck(a.Get()==b.Get(),"A fragment's parent is its owner's group");}
                     UiaRect rect{};if(child)(void)child->get_BoundingRectangle(&rect);
                     hostCheck(rect.width>0&&rect.height>0&&SUCCEEDED(probe.root()->ElementProviderFromPoint(rect.left+rect.width/2,rect.top+rect.height/2,&hit))&&hit,"The root's hit test reaches a projected Volume control");
+                    // The user-requested app list (five synthetic apps): three rows
+                    // (95 points), and a wheel step moves the retained rows without
+                    // laying the module out again.
+                    {const auto view=volume->state().applicationViewport();const auto r=volume->clientRect({view.x+20,view.y+view.height*.5,0,0});const auto before=rasterizer.stats();
+                     hostCheck(view.height==95&&r&&volume->wheel({r->x,r->y,-1,false,0,3},time)&&volume->state().applicationScroll()==36,"The Volume app list shows three rows and scrolls by one wheel detent");
+                     for(unsigned frame=0;frame<10;++frame)present(time+double(frame)/60,true);time+=1;
+                     hostCheck(rasterizer.stats().textLayoutsCreated-before.textLayoutsCreated<=3,"Scrolling the Volume app list lays out at most the row entering its window");}
                     probe.disconnectOwners();hostCheck(volumeModuleOwner->automationCount()==0&&probe.groups()==0,"Concealing disconnects every fragment");
                     probe.shutdown();
                 }
@@ -739,13 +765,15 @@ int Application::Impl::runHiddenVerification(){
                             if(p.x>0&&p.y>0&&p.x<metrics.width&&p.y<metrics.height&&!session->sourceControlAt(p,centerLogoMainID)&&!registry.covers(p)&&!clockPoint(p)&&!notes->covers(p))inside=p;}
                     }
                     outsideCheck(inside&&!backgroundPressCloses(*inside),"Empty space inside the displayed circle belongs to the HUD");
-                    // The decision is the press's (SystemHUDView.mouseDown). Its release is
-                    // withheld here: a left release routed to the hidden Reader after a
-                    // settings change re-syncs its unposed canvas and the next publish
-                    // throws "Place Reader before upload" (tools/reader_preview.cpp,
-                    // reported to the Reader owner).
-                    if(inside){(void)onPointer({PointerKind::down,PointerButton::left,inside->x,inside->y});t=run(t,.4);
-                        outsideCheck(lifecycle.phase()==core::SystemOverlayPhase::open&&!closing,"A press inside the displayed circle keeps the HUD open");}
+                    // The decision is the press's (SystemHUDView.mouseDown). Its release
+                    // reaches every owner that takes releases, the hidden Reader
+                    // included: after an appearance change marked it dirty, an inactive
+                    // Reader ignores the release instead of re-syncing its unposed
+                    // canvas (the next publish threw "Place Reader before upload").
+                    if(inside){configurationPending=true;t=run(t,.05);
+                        (void)onPointer({PointerKind::down,PointerButton::left,inside->x,inside->y});(void)onPointer({PointerKind::up,PointerButton::left,inside->x,inside->y});t=run(t,.4);
+                        outsideCheck(lifecycle.phase()==core::SystemOverlayPhase::open&&!closing,"A press and release inside the displayed circle keep the HUD open");
+                        if(readerModuleOwner)outsideCheck(registry.enabled(*readerModuleOwner),"A release over the HUD with the Reader hidden keeps the Reader owner working");}
                 }
                 // DataRootRestart through the host's own members (a gate opened
                 // for hidden coverage only): a failed save declines it.

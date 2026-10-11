@@ -344,9 +344,11 @@ public:
         if (!automation_ || automationRoot_ != root) {
             if (automation_) { rebuilt = automation_->size() > 0; automation_->disconnect(); }
             gpu::ProfileAutomationHost h; h.root = root;
-            h.controls = [this] { return w_.clientRect(modules::WorkModePresentation::bounds()) ? gpu::workModeAutomationControls(w_.state(), automationLanguage_) : std::vector<gpu::ProfileAutomationControl>{}; };
+            // The open custom duration field is the focused Edit peer (HUDWorkDurationField).
+            h.controls = [this] { return w_.clientRect(modules::WorkModePresentation::bounds()) ? gpu::workModeAutomationControls(w_.state(), automationLanguage_, w_.editingText()) : std::vector<gpu::ProfileAutomationControl>{}; };
             h.toScreen = [this](core::Rect canvas) -> std::optional<core::Rect> { const auto client = w_.clientRect(canvas); return client ? hooks_.toScreen(*client) : std::nullopt; };
             h.invoke = [this](std::string_view id) { const bool done = w_.perform(id, hooks_.clock()); if (done && hooks_.changed) hooks_.changed(); return done; };
+            h.setText = [this](std::string_view id, std::string_view utf8) { if (id != gpu::workModeDurationEditorID) return false; const bool done = w_.setEditingText(utf8, hooks_.clock()); if (done && hooks_.changed) hooks_.changed(); return done; };
             automation_ = std::make_unique<gpu::NativeProfileAutomation>(std::move(h)); automationRoot_ = root;
         }
         return automation_->refresh() || rebuilt;

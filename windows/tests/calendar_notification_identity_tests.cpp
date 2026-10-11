@@ -100,7 +100,7 @@ struct Owned {
         ok(CoCreateGuid(&id), "Fixture identifier");
         wchar_t text[40]{};
         check(StringFromGUID2(id, text, 40) > 0, "Fixture identifier formats");
-        directory = std::filesystem::temp_directory_path() / (std::wstring(L"EndfieldHUD-calendar-identity-") + text);
+        const auto temporary = std::filesystem::temp_directory_path(); wchar_t longTemporary[32768]{}; const DWORD longLength = GetLongPathNameW(temporary.c_str(), longTemporary, 32768); directory = (longLength && longLength < 32768 ? std::filesystem::path(longTemporary) : temporary) / (std::wstring(L"EndfieldHUD-calendar-identity-") + text);
         check(std::filesystem::create_directory(directory), "A NEW owned temporary folder");
         std::filesystem::create_directory(directory / L"Programs");
         std::filesystem::create_directory(directory / L"App");

@@ -324,10 +324,6 @@ int run(const std::vector<std::string>& values) {
 }
 
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
-    // The Shelf's preview popup lives on its own watched thread; a hung
-    // third-party handler there must not turn into a ghost window offering to
-    // end the whole process (the HUD thread never waits on that thread).
-    DisableProcessWindowsGhosting();
     int count{};
     auto** argv = CommandLineToArgvW(GetCommandLineW(), &count);
     std::vector<std::string> values;

@@ -110,7 +110,7 @@ void Application::Impl::shutdownVisible(){
     }
     projectionHandoff.cancel();projectionDropRoute(false,now());releaseProjection();backdrop.reset();
     if(visibleMode())need(backdrop.stats().hostAttributeRestored,"Source preview could not restore its original host-backdrop flag");
-    if(readerTrace)readerTrace->save(args.dataRoot/"reader-scroll-trace.json");cleanup();if(backdropQueue)backdropQueue->finish();pendingShelfReveal.reset(); // A reveal still pending at quit is dropped (OverlayController).
+    if(readerTrace)readerTrace->save(args.dataRoot/"reader-scroll-trace.json");cleanup();if(backdropQueue)backdropQueue->finish();pendingShelfReveal.reset();pendingShelfOpen.reset(); // A reveal or Open still pending at quit is dropped (OverlayController).
 }
 
 Application::Application(ApplicationOptions options):impl_(std::make_unique<Impl>(std::move(options))){}

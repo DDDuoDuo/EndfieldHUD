@@ -512,6 +512,7 @@ struct Application::Impl {
     std::unique_ptr<gpu::NativeShelfAssets> shelfAssets;
     std::unique_ptr<tools::ShelfPreview> shelf;
     std::optional<ehud::data::ShelfFileAccess> pendingShelfReveal;
+    std::optional<ehud::data::ShelfFileAccess> pendingShelfOpen; // the properties card's Open, after the HUD closed like Reveal
     std::unique_ptr<gpu::NativeClipboardAssets> clipboardAssets;
     std::unique_ptr<tools::ClipboardPreview> clipboard;
     std::unique_ptr<tools::VolumePreview> volume;
@@ -629,6 +630,7 @@ struct Application::Impl {
     std::optional<gpu::IdCardCaptionLeaves> idCardLeaves;
     std::optional<source::SourceDesktopFrameSettings> idCardBaseline;
     std::unique_ptr<gpu::IdCardPresenter> idCard;
+    bool idCardQueued{}; // an idCardMessage is posted (a feed change while concealed)
     // DataRootRestart: the accepted-quit teardown, then a fresh run (main.cpp).
     class Restart final : public DataRootRestart {
     public:
@@ -793,7 +795,7 @@ struct Application::Impl {
     double diagnosticStart{};
     bool diagnosticEditing{}, diagnosticFinished{};
     // Fixed WM_APP routes (unchanged from the preview) and the service generation.
-    static constexpr UINT prewarmMessage=WM_APP+240,themeColorMessage=WM_APP+239,hudDropMessage=WM_APP+236,restartDeclinedMessage=WM_APP+237,restartMessage=WM_APP+238,eventChangedMessage=WM_APP+194,utilityMessage=WM_APP+195,mediaPickerMessage=WM_APP+196,
+    static constexpr UINT idCardMessage=WM_APP+234,prewarmMessage=WM_APP+240,themeColorMessage=WM_APP+239,hudDropMessage=WM_APP+236,restartDeclinedMessage=WM_APP+237,restartMessage=WM_APP+238,eventChangedMessage=WM_APP+194,utilityMessage=WM_APP+195,mediaPickerMessage=WM_APP+196,
         sharedMediaMessage=WM_APP+223,archiveChangedMessage=WM_APP+224,systemServiceMessage=WM_APP+225,clipboardChangedMessage=WM_APP+226,
         readerChangedMessage=WM_APP+227,readerActionMessage=WM_APP+228,projectionActionMessage=WM_APP+229,projectionDropMessage=WM_APP+230,
         mapChangedMessage=WM_APP+231,calendarChangedMessage=WM_APP+232,audioMessage=WM_APP+233,trayMessage=WM_APP+210;

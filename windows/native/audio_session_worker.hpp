@@ -61,6 +61,10 @@ struct AudioApplicationRoute {
     std::optional<AudioApplicationExecutable> executable;
     // Shared by every session of this process; empty when unknown/conflicting.
     std::string appUserModelID;
+    // Any of the process's sessions is AudioSessionStateActive (rendering
+    // now). Now Playing reads it for window-title players, which report no
+    // play state; a play/pause republishes the applications.
+    bool rendering{};
     bool operator==(const AudioApplicationRoute&)const=default;
 };
 struct AudioSessionSnapshot {

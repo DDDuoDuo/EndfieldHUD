@@ -1,5 +1,6 @@
 #include "core/system_overlay_state.hpp"
 #include "core/data/file_io.hpp"
+#include <cmath>
 #include <iostream>
 #include <map>
 #include <stdexcept>
