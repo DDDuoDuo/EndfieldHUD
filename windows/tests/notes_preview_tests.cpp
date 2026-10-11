@@ -320,8 +320,10 @@ struct EditorQueueRoute final {
         check(PostMessageW(hwnd, frameMessage, 0, 0) != FALSE, "Owned invalidation posts one frame");
         pending = true;
     }
-    void postKey(UINT message, WPARAM value) {
-        check(PostMessageW(hwnd, message, value, 0) != FALSE, "Owned synthetic keyboard event queues");
+    // control: the key carries Ctrl (marked in lParam; the route never reads
+    // the real keyboard state).
+    void postKey(UINT message, WPARAM value, bool control = false) {
+        check(PostMessageW(hwnd, message, value, control ? 1 : 0) != FALSE, "Owned synthetic keyboard event queues");
     }
     static LRESULT CALLBACK dispatch(HWND hwnd, UINT message, WPARAM w, LPARAM l) {
         auto* self = static_cast<EditorQueueRoute*>(GetPropW(hwnd, property));
@@ -351,7 +353,9 @@ struct EditorQueueRoute final {
                 ++self->keys;
                 self->fixture.time += .001;
                 const auto kind = message == WM_CHAR ? app::KeyKind::character : app::KeyKind::down;
-                check(self->fixture.preview->key({kind, static_cast<std::uint32_t>(w)}, self->fixture.time),
+                std::optional<tools::NotesKeyModifiers> modifiers;
+                if (l == 1) modifiers = tools::NotesKeyModifiers{true, false, false, false};
+                check(self->fixture.preview->key({kind, static_cast<std::uint32_t>(w)}, self->fixture.time, modifiers),
                     "Queued synthetic keyboard event reaches the actual editor");
                 self->requestFrame();
                 return 0;
@@ -392,7 +396,7 @@ void postedEditorFrames(HWND hwnd, gpu::Renderer& renderer, const gpu::NativeNot
         unsigned dispatched{};
         check(route.drain(dispatched), "Editor setup notifications settle within 32 actual dispatches");
         route.resetCounts();
-        route.postKey(WM_KEYDOWN, VK_HOME);
+        route.postKey(WM_KEYDOWN, VK_HOME, true); // Ctrl+Home: the document start
         route.postKey(WM_CHAR, '@');
         route.postKey(WM_CHAR, '?');
         route.postKey(WM_KEYDOWN, VK_LEFT);
@@ -560,7 +564,8 @@ void run(HWND hwnd, gpu::Renderer& renderer, const gpu::NativeNotesControlsAsset
     const core::Point textPoint{original.x + 30, original.y + 45};
     check(fixture.preview->covers(textPoint), "Projected note body participates in shell input occlusion");
     check(fixture.pointer(app::PointerKind::doubleClick, textPoint), "Actual double-click enters the plain projected field");
-    check(fixture.key(app::KeyKind::down, VK_HOME), "Explicit Home moves the source end-selected editor to the insertion test start");
+    check(fixture.key(app::KeyKind::down, VK_HOME, tools::NotesKeyModifiers{true, false, false, false}),
+        "Explicit Ctrl+Home moves the source end-selected editor to the insertion test start");
     check(fixture.composition.sceneCount() == 4 && fixture.matching("projected-editor-glyphs", true) == 1,
         "Entering edit publishes one actual glyph surface after its card");
     check(fixture.matching("external-editor-border", true) == 1,
@@ -836,11 +841,11 @@ void clipboardKeys(HWND hwnd,gpu::Renderer&renderer,const gpu::NativeNotesContro
     const auto copied=clipboard->readText(gpu::notesClipboardMaximumUnits);check(copied&&copied->text==text&&!copied->rich,"The copy is the whole note; an unformatted note copies text alone");
     check(f.key(app::KeyKind::down,VK_END)&&f.key(app::KeyKind::down,'V',control)&&f.key(app::KeyKind::character,0x16),"Ctrl+V pastes at the end; its control character inserts nothing");
     check(f.key(app::KeyKind::down,VK_ESCAPE),"Finish the pasting session");f.tick(.2);check(wide(savedNotes(f.root.path).front().text)==text+text,"The pasted copy is saved");
-    check(f.pointer(app::PointerKind::doubleClick,{original.x+30,original.y+45})&&f.key(app::KeyKind::down,VK_HOME),"Reopen at the document start");
+    check(f.pointer(app::PointerKind::doubleClick,{original.x+30,original.y+45})&&f.key(app::KeyKind::down,VK_HOME,control),"Reopen at the document start (Ctrl+Home)");
     for(int n=0;n<3;++n)f.key(app::KeyKind::down,VK_RIGHT,shift);
     check(f.key(app::KeyKind::down,'X',control)&&clipboard->writes==2,"Ctrl+X writes the selection");const auto cut=clipboard->readText(gpu::notesClipboardMaximumUnits);check(cut&&cut->text==text.substr(0,3),"The cut text is the selected three units");
     check(f.key(app::KeyKind::down,VK_ESCAPE),"Finish the cutting session");f.tick(.2);check(wide(savedNotes(f.root.path).front().text)==(text+text).substr(3),"Cut removes the selection from the saved note");
-    check(f.pointer(app::PointerKind::doubleClick,{original.x+30,original.y+45})&&f.key(app::KeyKind::down,VK_HOME)&&f.key(app::KeyKind::down,'V',control)&&f.key(app::KeyKind::down,VK_ESCAPE),"Paste the cut text back at the start");f.tick(.2);
+    check(f.pointer(app::PointerKind::doubleClick,{original.x+30,original.y+45})&&f.key(app::KeyKind::down,VK_HOME,control)&&f.key(app::KeyKind::down,'V',control)&&f.key(app::KeyKind::down,VK_ESCAPE),"Paste the cut text back at the start");f.tick(.2);
     check(wide(savedNotes(f.root.path).front().text)==text+text,"The cut text pastes back exactly");
     f.preview->setClipboard(nullptr);check(f.pointer(app::PointerKind::doubleClick,{original.x+30,original.y+45})&&f.key(app::KeyKind::down,'V',control)&&f.key(app::KeyKind::down,VK_ESCAPE),"Without a clipboard the keys are consumed and inert");f.tick(.2);
     check(wide(savedNotes(f.root.path).front().text)==text+text&&clipboard->writes==2,"Nothing changed without a clipboard");

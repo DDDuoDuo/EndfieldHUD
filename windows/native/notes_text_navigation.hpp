@@ -2,8 +2,13 @@
 // Word and paragraph navigation for the Notes and Archive fields: the Windows
 // keyboard conventions for the source NSTextView word movements (Ctrl+Left and
 // Ctrl+Right, with Shift extending; Ctrl+Backspace and Ctrl+Delete) and the
-// source double-click word and triple-click paragraph selections. Home/End
-// keep the document start/end mapping every HUD field uses.
+// source double-click word and triple-click paragraph selections.
+//
+// Home/End follow the Windows text-field convention as the platform
+// equivalent of the source Cmd+Left/Cmd+Right (moveToBeginningOfLine /
+// moveToEndOfLine): Home and End move to the start and end of the caret's
+// VISUAL line (wrapped lines included), Ctrl+Home and Ctrl+End to the document
+// start and end (the source Cmd+Up/Cmd+Down); Shift extends from the anchor.
 //
 // Word segments come from the operating system's ICU word-break rules
 // (icu.dll, the same Unicode rules and CJK dictionaries the source text system
@@ -38,7 +43,13 @@ std::uint32_t notesPreviousGrapheme(std::u16string_view,std::uint32_t at);
 std::uint32_t notesNextGrapheme(std::u16string_view,std::uint32_t at);
 
 #ifdef _WIN32
-enum class NotesNavigation {previousWord,nextWord};
+// Home/End: the start of the caret's visual line, and its end before a hard
+// break or a soft wrap's trailing whitespace (the caret stays drawn on that
+// line; the editors keep no upstream caret affinity). From the editor's
+// synchronized geometry (both the single-layout and the chunked editor).
+std::uint32_t notesVisualLineStart(const core::text::Layout&,std::u16string_view,std::uint32_t at);
+std::uint32_t notesVisualLineEnd(const core::text::Layout&,std::u16string_view,std::uint32_t at);
+enum class NotesNavigation {previousWord,nextWord,lineStart,lineEnd};
 // Moves the caret (or extends the selection from its anchor) through the
 // editor's host selection path. Declines unchanged while composing.
 ProjectedEditorResult notesNavigate(NativeNotesEditor&,const core::text::Document&,NotesNavigation,bool extend);
@@ -47,8 +58,9 @@ ProjectedEditorResult notesNavigate(NativeNotesEditor&,const core::text::Documen
 ProjectedEditorResult notesDeleteWord(NativeNotesEditor&,core::text::Document&,bool forward);
 // Selects `range` (double/triple click), the active end at its end.
 ProjectedEditorResult notesSelectRange(NativeNotesEditor&,const core::text::Document&,core::text::Range);
-// Shared field key mapping: Ctrl+Left/Right (Shift extends), Ctrl+Backspace
-// and Ctrl+Delete. Returns handled=false for every other key.
+// Shared field key mapping: Ctrl+Left/Right (Shift extends), Ctrl+Backspace,
+// Ctrl+Delete, Home/End (visual line) and Ctrl+Home/Ctrl+End (document).
+// Returns handled=false for every other key.
 ProjectedEditorResult notesNavigationKey(NativeNotesEditor&,core::text::Document&,unsigned virtualKey,bool control,bool shift);
 // Press count of one field: 1, 2 (the platform double-click) or 3 for a press
 // inside the system double-click time and rectangle after a double-click.

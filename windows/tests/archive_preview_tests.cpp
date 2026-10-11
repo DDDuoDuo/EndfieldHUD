@@ -81,9 +81,9 @@ void run(const wchar_t*shader,const std::filesystem::path&fixturePath,const std:
   check(preview.key({app::KeyKind::down,'Z'},time,control)&&state.selected()->title==title,"Undo restores the deleted word");paint();
   // A paste that grows a short body past its single layout reopens it chunked.
   click(42,125);check(preview.activeField()==std::optional<std::string>("body"),"Body field for the clipboard");const auto body=state.selected()->body;
-  check(preview.key({app::KeyKind::down,VK_END},time,none)&&preview.key({app::KeyKind::character,'Z'},time,none)&&state.selected()->body==body+"Z","An unsaved edit before the paste");paint();
+  check(preview.key({app::KeyKind::down,VK_END},time,control)&&preview.key({app::KeyKind::character,'Z'},time,none)&&state.selected()->body==body+"Z","An unsaved edit before the paste (Ctrl+End: the document end)");paint();
   std::string paste;for(unsigned n=0;n<120;++n)paste+=std::string(600,static_cast<char>('a'+n%26))+"\n";clipboard->writeText({mod::archiveUTF16(paste),std::nullopt});
-  check(preview.key({app::KeyKind::down,VK_END},time,none)&&preview.key({app::KeyKind::down,'V'},time,control)&&preview.activeField()==std::optional<std::string>("body"),"A long paste keeps the body field focused");paint();
+  check(preview.key({app::KeyKind::down,VK_END},time,control)&&preview.key({app::KeyKind::down,'V'},time,control)&&preview.activeField()==std::optional<std::string>("body"),"A long paste keeps the body field focused");paint();
   check(state.selected()->body==body+"Z"+paste&&paste.size()>65536,"The long paste reaches the body beyond the single-layout limit");
   check(preview.key({app::KeyKind::down,'Z'},time,control)&&state.selected()->body==body+"Z","Undo after the promotion removes the paste");paint();
   check(preview.key({app::KeyKind::down,'Z'},time,control)&&state.selected()->body==body,"Undo continues into the edit made before the promotion");paint();

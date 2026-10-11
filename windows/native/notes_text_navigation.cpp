@@ -134,9 +134,32 @@ std::uint32_t notesPreviousGrapheme(std::u16string_view t,std::uint32_t at){
     std::uint32_t start{};for(std::uint32_t i=0;i<local;){std::size_t w{};const auto c=classify(piece,i,w);if(c!=Class::join)start=i;i+=static_cast<std::uint32_t>(w);}return p.start+start;
 }
 
+namespace {
+std::optional<core::Rect> caretAt(const text::Layout& l,std::uint32_t at){const auto b=l.bounds({at,at});if(!b||!std::isfinite(b->bounds.y)||!std::isfinite(b->bounds.height))return std::nullopt;return b->bounds;}
+bool sameLine(const core::Rect& a,const core::Rect& b){const double h=std::max(1e-3,std::min(a.height,b.height));return std::abs((a.y+a.height*.5)-(b.y+b.height*.5))<h*.5;}
+}
+std::uint32_t notesVisualLineStart(const text::Layout& l,std::u16string_view t,std::uint32_t at){
+    at=std::min<std::uint32_t>(at,static_cast<std::uint32_t>(t.size()));const auto caret=caretAt(l,at);if(!caret)return paragraph(t,at).start;
+    const auto hit=l.hit({-1e6,caret->y+caret->height*.5},true,false);return hit&&*hit<=at?*hit:paragraph(t,at).start;
+}
+std::uint32_t notesVisualLineEnd(const text::Layout& l,std::u16string_view t,std::uint32_t at){
+    const auto size=static_cast<std::uint32_t>(t.size());at=std::min(at,size);const auto caret=caretAt(l,at);if(!caret)return std::max(at,paragraph(t,at).end);
+    const auto hit=l.hit({1e6,caret->y+caret->height*.5},true,true);auto end=hit?std::clamp(*hit,at,size):std::max(at,paragraph(t,at).end);
+    // Past the line's last cluster (its hard break, or a soft wrap's trailing
+    // whitespace) the caret would be drawn on the next line: stay on this one.
+    for(unsigned steps=0;end>at&&steps<64;++steps){const auto b=caretAt(l,end);if(b&&sameLine(*b,*caret))break;end=notesPreviousGrapheme(t,end);}
+    return std::max(end,at);
+}
 ProjectedEditorResult notesNavigate(NativeNotesEditor& editor,const text::Document& d,NotesNavigation kind,bool extend){
-    if(d.composition())return {true,false,false};const auto t=d.text();const auto from=activePosition(d);
-    const auto target=kind==NotesNavigation::nextWord?notesNextWordStart(t,from):notesPreviousWordStart(t,from);
+    if(d.composition())return {true,false,false};
+    // Visual lines come from the painted geometry of the current text.
+    if(kind==NotesNavigation::lineStart||kind==NotesNavigation::lineEnd)editor.syncContent();
+    const auto t=d.text();const auto from=activePosition(d);
+    std::uint32_t target{};switch(kind){
+    case NotesNavigation::nextWord:target=notesNextWordStart(t,from);break;
+    case NotesNavigation::previousWord:target=notesPreviousWordStart(t,from);break;
+    case NotesNavigation::lineStart:target=notesVisualLineStart(editor.geometry(),t,from);break;
+    case NotesNavigation::lineEnd:target=notesVisualLineEnd(editor.geometry(),t,from);break;}
     const auto next=moved(d,target,extend);if(next==d.selection())return {true,false,false};return editor.setSelectionFromHost(next);
 }
 ProjectedEditorResult notesDeleteWord(NativeNotesEditor& editor,text::Document& d,bool forward){
@@ -149,6 +172,10 @@ ProjectedEditorResult notesSelectRange(NativeNotesEditor& editor,const text::Doc
     if(next==d.selection())return {true,false,false};return editor.setSelectionFromHost(next);
 }
 ProjectedEditorResult notesNavigationKey(NativeNotesEditor& editor,text::Document& d,unsigned key,bool control,bool shift){
+    if(key==VK_HOME||key==VK_END){
+        if(control)return editor.command(key==VK_HOME?ProjectedEditorCommand::documentStart:ProjectedEditorCommand::documentEnd,shift);
+        return notesNavigate(editor,d,key==VK_HOME?NotesNavigation::lineStart:NotesNavigation::lineEnd,shift);
+    }
     if(!control)return {};
     if(key==VK_LEFT||key==VK_RIGHT)return notesNavigate(editor,d,key==VK_LEFT?NotesNavigation::previousWord:NotesNavigation::nextWord,shift);
     if((key==VK_BACK||key==VK_DELETE)&&!shift)return notesDeleteWord(editor,d,key==VK_DELETE);

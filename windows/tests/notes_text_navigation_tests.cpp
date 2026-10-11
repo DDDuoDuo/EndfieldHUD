@@ -2,6 +2,7 @@
 #include "native/notes_workspace.hpp"
 #ifdef _WIN32
 #include <objbase.h>
+#include <cmath>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -68,12 +69,45 @@ void workspace(HWND hwnd){
     check(w.finishEditing().saved&&state.note(id)->text=="Hello, foo\nnext line"&&saves==1,"The navigated edits save");
     check(!w.editorNavigationKey(VK_LEFT,true,false).handled&&!w.selectEditorWord().handled,"Without a field nothing navigates");
 }
+// Home/End: the caret's visual line (wrapped lines included); Ctrl+Home and
+// Ctrl+End: the document. The Windows equivalent of the source Cmd+Left/Right
+// and Cmd+Up/Down, in the single-layout and in the chunked editor.
+void visualLines(HWND hwnd,bool chunked){
+    gpu::LayerRasterizer raster;const std::string id=chunked?"0000000E-0000-4000-8000-000000000003":"0000000E-0000-4000-8000-000000000002";
+    const std::string first="alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau upsilon phi chi psi omega";
+    data::Note note{.id=id,.kind=data::NoteKind::text,.text=first+"\nsecond paragraph",.x=40,.y=40,.width=200,.height=300,.createdAt=1};
+    mod::NotesState state({note},{[](const data::Note&){},[](std::string_view){throw std::runtime_error("Fixture never deletes");}});state.setWorkspaceBounds({0,0,1200,800});
+    gpu::NativeNotesWorkspaceStyle style;style.palette=mod::NotesPalette::source(true,{.98,.83,.12,1});style.editor={{.12,.12,.12,1},style.palette.accent};
+    gpu::NativeNotesWorkspaceOptions options;options.raster.pixelsPerPoint=1;if(chunked)options.chunkedEditorUnits=48;gpu::NativeNotesWorkspace w(hwnd,state,raster,style,options);
+    gpu::NativeNotesWorkspacePose pose;pose.screenToClip=gpu::layerViewportProjection(1200,800);pose.pixelWidth=1200;pose.pixelHeight=800;pose.time=1;w.updatePose(pose);
+    check(w.beginEditing(id)&&w.editor()&&w.editor()->chunked()==chunked,chunked?"Open the wrapping note in the chunked editor":"Open the wrapping note in the single-layout editor");w.syncEditor();
+    const auto sel=[&]{return w.editorDocument()->selection();};const auto t=std::u16string(w.editorDocument()->text());const auto length=static_cast<std::uint32_t>(first.size());
+    const auto caretY=[&](std::uint32_t at){const auto b=w.editor()->geometry().bounds({at,at});check(b.has_value(),"Every caret position has painted bounds");return b->bounds.y;};
+    std::uint32_t second{},third{};for(std::uint32_t at=1;at<length&&!second;++at)if(caretY(at)>caretY(0)+1)second=at;
+    for(std::uint32_t at=second+1;second&&at<length&&!third;++at)if(caretY(at)>caretY(second)+1)third=at;
+    check(second>0&&third>second+2,"The first paragraph wraps over at least three visual lines");
+    const auto inside=second+2;w.editor()->setSelectionFromHost({{inside,inside},text::ActiveEnd::end,false});
+    check(w.editorNavigationKey(VK_HOME,false,false).changed&&same(sel().range,{second,second}),"Home moves to the start of the caret's visual line, not the document");
+    check(!w.editorNavigationKey(VK_HOME,false,false).changed&&same(sel().range,{second,second}),"Home at a visual line start stays there");
+    check(w.editorNavigationKey(VK_END,false,true).changed&&sel().range.start==second&&sel().range.end>inside&&sel().range.end<third&&sel().activeEnd==text::ActiveEnd::end,"Shift+End extends to the end of that visual line");
+    const auto lineEnd=sel().range.end;check(std::abs(caretY(lineEnd)-caretY(second))<1&&t[lineEnd]==u' '&&lineEnd+1==third,"The visual line end is before the soft wrap's space, drawn on the same line");
+    check(w.editorNavigationKey(VK_HOME,false,true).changed&&same(sel().range,{second,second}),"Shift+Home shrinks back to the line start");
+    check(w.editorNavigationKey(VK_END,false,false).changed&&same(sel().range,{lineEnd,lineEnd}),"End collapses at the visual line end");
+    check(!w.editorNavigationKey(VK_END,false,false).changed,"End at a visual line end stays there");
+    w.editor()->setSelectionFromHost({{length-2,length-2},text::ActiveEnd::end,false});
+    check(w.editorNavigationKey(VK_END,false,false).changed&&same(sel().range,{length,length}),"End on a paragraph's last line stops before its hard break");
+    check(w.editorNavigationKey(VK_HOME,true,false).changed&&same(sel().range,{0,0}),"Ctrl+Home moves to the document start");
+    check(w.editorNavigationKey(VK_END,true,true).changed&&same(sel().range,{0,static_cast<std::uint32_t>(t.size())}),"Ctrl+Shift+End selects to the document end");
+    check(w.editorNavigationKey(VK_END,true,false).changed&&same(sel().range,{static_cast<std::uint32_t>(t.size()),static_cast<std::uint32_t>(t.size())}),"Ctrl+End moves to the document end");
+    check(w.editorNavigationKey(VK_HOME,false,false).changed&&same(sel().range,{length+1,length+1}),"Home on the last line reaches its paragraph start");
+    check(w.finishEditing().finished&&state.note(id)->text==note.text,"Navigation never edits the note");
+}
 } // namespace
 int main(){
     try{Apartment apartment;Window window;
         const auto engine=gpu::notesWordEngine();std::cout<<"Word engine: "<<(engine==gpu::NotesWordEngine::icu?"ICU (icu.dll)":"fallback")<<'\n';
         words("Word navigation (default engine)");gpu::notesUseFallbackWords(true);check(gpu::notesWordEngine()==gpu::NotesWordEngine::fallback,"The fallback can be forced");
-        words("Word navigation (fallback engine)");gpu::notesUseFallbackWords(false);clicks();workspace(window.value);
+        words("Word navigation (fallback engine)");gpu::notesUseFallbackWords(false);clicks();workspace(window.value);visualLines(window.value,false);visualLines(window.value,true);
         std::cout<<"PASS "<<checks<<" Notes text navigation contracts\n";return 0;
     }catch(const std::exception& e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}
 }
