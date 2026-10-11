@@ -21,7 +21,15 @@ public:
     void update(const core::Matrix4&,const core::source::DesktopChromeSettings&,
         const core::ModulePresentationSample&,float opacity,double time);
     bool requiresFrames(double)const;bool covers(core::Point logical)const;
-    bool pointer(const app::PointerEvent&,double);bool wheel(const app::WheelEvent&,double);bool key(const app::KeyEvent&,double);
+    bool pointer(const app::PointerEvent&,double);bool wheel(const app::WheelEvent&,double);
+    // Source HUDEventLogInteraction.keyDown takes unmodified keys only
+    // (command/control/option/shift). The first form is for the HUD window's
+    // key dispatch: it reads GetKeyState, which Win32 synchronizes with the
+    // key message being dispatched. Any other caller (tests, synthetic input)
+    // passes the modifier state explicitly, as ReaderPreview::key does: off
+    // that dispatch a thread's GetKeyState follows the live keyboard of the
+    // interactive session.
+    bool key(const app::KeyEvent&,double);bool key(const app::KeyEvent&,bool modified,double);
     void cancelInteraction();bool pointerLocked()const;
     const modules::EventLogState&state()const;
     void upload(native::Renderer&);std::span<const native::LayerCompositionEntry>entries();
