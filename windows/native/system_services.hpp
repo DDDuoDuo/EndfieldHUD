@@ -50,7 +50,14 @@ struct ClipboardPayload {
     // string heuristic does.
     std::u16string url;
     std::span<const std::uint8_t> image_bytes() const noexcept;
+    // Exact structural equality (every field, image bytes by value).
     bool operator==(const ClipboardPayload&) const;
+    // ClipboardPayload.matches: the history identity ClipboardStore.capture
+    // uses to move a repeated copy to the front instead of adding it. Text by
+    // canonical equivalence (Swift String ==), a link by its URL and original
+    // string, an image by format and bytes, files by their standardized paths
+    // in order (URL.standardizedFileURL). Oracle: tools/clipboard_matches_reference.sh.
+    bool matches(const ClipboardPayload&) const;
 };
 struct ClipboardItem {
     std::uint64_t id{};
@@ -103,6 +110,18 @@ public:
     static std::optional<std::u16string> parsed_url(std::u16string_view text, bool explicit_type);
     // The plain-string classification: at most 2048 UTF-8 bytes and a link.
     static bool url_text(std::u16string_view value);
+    // Swift String == : canonical equivalence (NFC through ICU). Only the
+    // tails after the last normalization boundary before the first differing
+    // unit are normalized, and only when either is not already NFC. Without
+    // ICU (portable builds) code units are compared.
+    static bool canonically_equal(std::u16string_view first, std::u16string_view second);
+    // The comparison key of a CF_HDROP path: URL.standardizedFileURL without
+    // file system access. / and \ both separate; empty and "." names are
+    // dropped and ".." removes the name before it, never above the drive or
+    // share; a trailing separator or a last "." or ".." is the directory hint
+    // and stays; the drive letter is upper-cased. Names keep their case and
+    // normalization. Other paths are returned as given.
+    static std::u16string standardized_file_path(std::u16string_view path);
     // Metadata preflight only: no allocation, decompression or pixel buffer.
     static bool valid_image_metadata(std::uint32_t width, std::uint32_t height,
         std::size_t encoded_bytes) noexcept;

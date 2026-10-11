@@ -26,6 +26,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <shlobj_core.h> // DROPFILES
 
 namespace endfield::providers {
 namespace {
@@ -96,6 +97,19 @@ private:
 std::vector<std::uint8_t> wide(std::u16string_view text) {
     std::vector<std::uint8_t> bytes((text.size() + 1) * sizeof(char16_t));
     std::memcpy(bytes.data(), text.data(), text.size() * sizeof(char16_t));
+    return bytes;
+}
+// Another application's CF_HDROP file list (wide paths).
+std::vector<std::uint8_t> dropped(std::initializer_list<std::u16string_view> paths) {
+    std::size_t units = 1;
+    for (const auto path : paths) units += path.size() + 1;
+    std::vector<std::uint8_t> bytes(sizeof(DROPFILES) + units * sizeof(char16_t));
+    DROPFILES header{};
+    header.pFiles = sizeof(DROPFILES);
+    header.fWide = TRUE;
+    std::memcpy(bytes.data(), &header, sizeof(header));
+    auto at = sizeof(header);
+    for (const auto path : paths) { std::memcpy(bytes.data() + at, path.data(), path.size() * sizeof(char16_t)); at += (path.size() + 1) * sizeof(char16_t); }
     return bytes;
 }
 // A valid 1x1 RGBA PNG, validated by the real WIC thumbnail job.
@@ -302,6 +316,22 @@ private:
                    "An image waits for its thumbnail");
         step.drain();
         step.check(front() && front()->payload.kind == gpu::ClipboardKind::image && services_.clipboard_status() == S_OK, "The validated image enters history");
+
+        // ClipboardPayload.matches: the same files spelled another way (or a
+        // canonically equivalent string) move the first item to the front.
+        board_->copy({{CF_HDROP, dropped({u"C:\\EndfieldCoverage\\shelf\\a.txt", u"\\\\server\\share\\b.png"})}}); changed();
+        const auto filesID = front() ? front()->id : 0;
+        board_->copy({{CF_UNICODETEXT, wide(u"Between copies")}}); changed();
+        const auto count = services_.clipboard().items().size();
+        board_->copy({{CF_HDROP, dropped({u"c:/EndfieldCoverage/x/../shelf/./a.txt", u"\\\\server\\share\\.\\b.png"})}}); changed();
+        step.check(front() && front()->id == filesID && services_.clipboard().items().size() == count &&
+                   front()->payload.files == std::vector<std::u16string>{u"C:\\EndfieldCoverage\\shelf\\a.txt", u"\\\\server\\share\\b.png"},
+                   "A respelled file selection moves to the front with its first paths");
+        board_->copy({{CF_UNICODETEXT, wide(u"Endfield caf\u00e9")}}); changed();
+        const auto textID = front() ? front()->id : 0;
+        board_->copy({{CF_UNICODETEXT, wide(u"Between copies")}}); changed();
+        board_->copy({{CF_UNICODETEXT, wide(u"Endfield cafe\u0301")}}); changed();
+        step.check(front() && front()->id == textID && front()->payload.text == u"Endfield caf\u00e9", "A canonically equivalent string is the same item");
         step.check(services_.clipboard().items().size() <= services_.clipboard().capacity(), "Clipboard history stays bounded");
     }
     void powerStorm(app::ModuleCoverage& step) {

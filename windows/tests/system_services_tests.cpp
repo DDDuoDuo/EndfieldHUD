@@ -356,6 +356,20 @@ void services(){
     check(board->opens==busyOpens+2&&services.clipboard_status()==HRESULT_FROM_WIN32(ERROR_ACCESS_DENIED),"A busy clipboard is retried once and reported");
     window.pump();check(board->opens==busyOpens+2,"No further retry loop runs");
     board->busy=false;check(services.refresh_clipboard()==S_OK&&front().text==u"after busy"&&services.clipboard_status()==S_OK,"An explicit refresh captures the released change");
+    // ClipboardPayload.matches: a repeated selection moves to the front with its first payload.
+    const auto&history=services.clipboard().items();
+    board->copy({{CF_HDROP,drop({u"C:\\Users\\me\\a.txt",u"\\\\server\\share\\b.png"})}});change();
+    const auto filesID=history.front().id;
+    board->copy({{CF_UNICODETEXT,wide(u"between files")}});change();
+    board->copy({{CF_HDROP,drop({u"c:/Users/me/sub/../a.txt",u"\\\\server\\share\\.\\b.png"})}});change();
+    check(history.front().id==filesID&&history[1].payload.text==u"between files"&&front().files==std::vector<std::u16string>{u"C:\\Users\\me\\a.txt",u"\\\\server\\share\\b.png"},
+        "The same files spelled differently move to the front with their first paths");
+    board->copy({{CF_HDROP,drop({u"\\\\server\\share\\b.png",u"C:\\Users\\me\\a.txt"})}});change();
+    check(history.front().id!=filesID&&history[1].id==filesID,"The same files in another order are another item");
+    board->copy({{CF_UNICODETEXT,wide(u"caf\u00e9")}});change();const auto composedID=history.front().id;
+    board->copy({{CF_UNICODETEXT,wide(u"between texts")}});change();
+    board->copy({{CF_UNICODETEXT,wide(u"cafe\u0301")}});change();
+    check(history.front().id==composedID&&front().text==u"caf\u00e9"&&services.clipboard_status()==S_OK,"A canonically equivalent string is the same item, as Swift strings are");
     services.stop();check(!board->listening&&!services.running(),"Stop removes the listener");
 }
 }

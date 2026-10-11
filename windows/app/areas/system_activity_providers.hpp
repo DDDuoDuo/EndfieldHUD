@@ -13,7 +13,10 @@
 //     an EventLogOwner on the coverage root; EventLogSaveQueue writes it on
 //     the shared UtilityExecutor and a second owner reads it back; changes
 //     made while capture is suspended are caught up once; an image validates
-//     on the shared executor; a WM_POWERBROADCAST storm posts one notice;
+//     on the shared executor; a file selection copied again with other path
+//     spellings, or a canonically equivalent string, moves the first item to
+//     the front (ClipboardPayload.matches); a WM_POWERBROADCAST storm posts
+//     one notice;
 //   - EventLogCanvas timestamps from the current Windows time zone;
 //   - Activity app-row icons loaded on the shared executor (synthetic loader),
 //     delivered by the coverage drain, bound by key and kept across cycles;

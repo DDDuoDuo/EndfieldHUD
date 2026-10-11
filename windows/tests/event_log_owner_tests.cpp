@@ -41,7 +41,17 @@ void lifecycle(){
     time=12;state.activate();state.perform("eventLog:clear");check(state.confirmingClear(),"Clear remains source confirmation before store mutation");state.perform("eventLog:confirmClear");check(owner.snapshot().events.empty()&&state.itemCount()==0&&notifications==3,"Confirmed clear persists through owner without logging itself");
     check(owner.revision()==3&&std::abs(*owner.saveDeadline()-12.35)<1e-12,"Clear uses current owner epoch and source revision");
     time=13;callbacks.clear();check(owner.revision()==4&&notifications==4,"Explicit empty clear is still a source change");
-    time=std::numeric_limits<double>::quiet_NaN();rejects([&]{owner.record(event(3));},"Invalid injected clock rejects before model change");check(owner.revision()==4&&notifications==4,"Invalid event leaves owner and notifications unchanged");
+    // EventLogStore (dadf151): owner time only orders the debounced save, so a
+    // nonfinite or backwards injected clock is clamped to the last owner time,
+    // never fatal; the event is kept and the save stays .35 s after the latest change.
+    time=std::numeric_limits<double>::quiet_NaN();owner.record(event(3));
+    check(owner.revision()==5&&notifications==5&&owner.snapshot().events.front().id==id(3)&&owner.saveDeadline()&&std::abs(*owner.saveDeadline()-13.35)<1e-12,
+        "A nonfinite injected clock is clamped to the last owner time");
+    time=12.5;owner.record(event(4));
+    check(owner.revision()==6&&notifications==6&&owner.snapshot().events.front().id==id(4)&&std::abs(*owner.saveDeadline()-13.35)<1e-12&&!owner.takeSave(13.3),
+        "A backwards injected clock is clamped and never saves early");
+    auto clamped=owner.takeSave(13.35);check(clamped&&clamped->execute().success&&n::EventLogOwner(temp.root,{[]{return 0.;},{}}).snapshot().events.size()==2,
+        "The clamped events persist at the deadline");
 }
 void saturatedQueue(){
     Temporary temp;double time=1;unsigned notifications{};n::EventLogOwner owner(temp.root,{[&]{return time;},[&]{++notifications;}});Executor executor;

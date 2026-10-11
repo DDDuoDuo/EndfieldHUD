@@ -12,6 +12,7 @@
 #define EHUD_CLIPBOARD_IDNA 1
 #elif defined(EHUD_CLIPBOARD_URL_ICU) // local portable verification against a system ICU
 #include <unicode/uidna.h>
+#include <unicode/unorm2.h>
 #define EHUD_CLIPBOARD_IDNA 1
 #endif
 
@@ -371,6 +372,119 @@ std::optional<std::u16string> ClipboardHistory::parsed_url(std::u16string_view t
 bool ClipboardHistory::url_text(std::u16string_view value) {
     return !value.empty() && utf8_bytes(value) <= maximum_detected_url_bytes && url_parse(value, false, nullptr);
 }
+namespace {
+bool path_separator(char16_t c) noexcept { return c == u'\\' || c == u'/'; }
+std::size_t next_separator(std::u16string_view path, std::size_t at) noexcept {
+    while (at < path.size() && !path_separator(path[at])) ++at;
+    return at;
+}
+#ifdef EHUD_CLIPBOARD_IDNA
+const UNormalizer2* nfc_normalizer() noexcept {
+    static const UNormalizer2* const value = [] { UErrorCode status = U_ZERO_ERROR; const auto* n = unorm2_getNFCInstance(&status); return U_SUCCESS(status) ? n : nullptr; }();
+    return value;
+}
+char32_t code_point_at(std::u16string_view text, std::size_t at) noexcept {
+    const char32_t unit = text[at];
+    if (unit >= 0xd800 && unit <= 0xdbff && at + 1 < text.size() && text[at + 1] >= 0xdc00 && text[at + 1] <= 0xdfff)
+        return 0x10000 + ((unit - 0xd800) << 10) + (text[at + 1] - 0xdc00);
+    return unit;
+}
+bool low_surrogate_after_high(std::u16string_view text, std::size_t at) noexcept {
+    return at > 0 && at < text.size() && text[at] >= 0xdc00 && text[at] <= 0xdfff && text[at - 1] >= 0xd800 && text[at - 1] <= 0xdbff;
+}
+bool nfc_already(const UNormalizer2* nfc, std::u16string_view text) noexcept {
+    // Every code point below U+0300 is NFC_QC=Yes: plain Latin text needs no ICU call.
+    if (std::all_of(text.begin(), text.end(), [](char16_t c) { return c < 0x300; })) return true;
+    UErrorCode status = U_ZERO_ERROR;
+    const auto result = unorm2_quickCheck(nfc, reinterpret_cast<const UChar*>(text.data()), static_cast<std::int32_t>(text.size()), &status);
+    return U_SUCCESS(status) && result == UNORM_YES;
+}
+std::optional<std::u16string> nfc_form(const UNormalizer2* nfc, std::u16string_view text) {
+    UErrorCode status = U_ZERO_ERROR;
+    const auto length = unorm2_normalize(nfc, reinterpret_cast<const UChar*>(text.data()), static_cast<std::int32_t>(text.size()), nullptr, 0, &status);
+    if ((U_FAILURE(status) && status != U_BUFFER_OVERFLOW_ERROR) || length < 0) return std::nullopt;
+    std::u16string out(static_cast<std::size_t>(length), u'\0');
+    status = U_ZERO_ERROR;
+    unorm2_normalize(nfc, reinterpret_cast<const UChar*>(text.data()), static_cast<std::int32_t>(text.size()), reinterpret_cast<UChar*>(out.data()), length, &status);
+    if (U_FAILURE(status)) return std::nullopt;
+    return out;
+}
+#endif
+}
+bool ClipboardHistory::canonically_equal(std::u16string_view first, std::u16string_view second) {
+    if (first == second) return true;
+#ifdef EHUD_CLIPBOARD_IDNA
+    const auto* nfc = nfc_normalizer();
+    if (!nfc || first.size() > static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max() / 4) ||
+        second.size() > static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max() / 4)) return false;
+    // The shared prefix is skipped back to a normalization boundary before the
+    // first difference (NFC of a concatenation splits there), so only the
+    // differing tails are normalized, and only when either is not already NFC.
+    auto at = static_cast<std::size_t>(std::mismatch(first.begin(), first.end(), second.begin(), second.end()).first - first.begin());
+    if (low_surrogate_after_high(first, at) || low_surrogate_after_high(second, at)) --at;
+    const auto boundary = [&](std::u16string_view text, std::size_t index) { return index >= text.size() || unorm2_hasBoundaryBefore(nfc, static_cast<UChar32>(code_point_at(text, index))); };
+    while (at > 0 && !(boundary(first, at) && boundary(second, at))) {
+        --at;
+        if (low_surrogate_after_high(first, at)) --at;
+    }
+    std::u16string_view a = first.substr(at), b = second.substr(at);
+    const bool composedA = nfc_already(nfc, a), composedB = nfc_already(nfc, b);
+    if (composedA && composedB) return false; // both NFC and different
+    std::optional<std::u16string> normalA, normalB;
+    if (!composedA) { if (!(normalA = nfc_form(nfc, a))) return false; a = *normalA; }
+    if (!composedB) { if (!(normalB = nfc_form(nfc, b))) return false; b = *normalB; }
+    return a == b;
+#else
+    return false; // portable builds without ICU compare code units
+#endif
+}
+std::u16string ClipboardHistory::standardized_file_path(std::u16string_view path) {
+    // The root: a drive "X:" (one volume however its letter is cased, so the
+    // letter is upper-cased) or a UNC share \\server\share. Device and
+    // verbatim paths (\\.\ and \\?\) are literal in Win32, and anything else
+    // is no absolute file reference: they stay as given.
+    std::u16string out;
+    std::size_t at{};
+    if (path.size() >= 3 && ((path[0] >= u'A' && path[0] <= u'Z') || (path[0] >= u'a' && path[0] <= u'z')) && path[1] == u':' && path_separator(path[2])) {
+        out = {static_cast<char16_t>(path[0] >= u'a' ? path[0] - (u'a' - u'A') : path[0]), u':'};
+        at = 2;
+    } else if (path.size() >= 3 && path_separator(path[0]) && path_separator(path[1])) {
+        if ((path[2] == u'?' || path[2] == u'.') && (path.size() == 3 || path_separator(path[3]))) return std::u16string(path);
+        const auto server = next_separator(path, 2);
+        if (server == 2 || server >= path.size()) return std::u16string(path);
+        const auto share = next_separator(path, server + 1);
+        if (share == server + 1) return std::u16string(path);
+        out.reserve(path.size() + 1);
+        out.append(u"\\\\").append(path.substr(2, server - 2)).push_back(u'\\');
+        out.append(path.substr(server + 1, share - server - 1));
+        at = share;
+    } else {
+        return std::u16string(path);
+    }
+    // standardizedFileURL of the file URL: empty and "." components go, ".."
+    // removes the name before it (nothing above the root), lexically like
+    // Foundation for paths through no symbolic link, and the directory hint
+    // (a trailing separator, or a last "." or "..") stays. Names are compared
+    // as given: Foundation's HFS+ decomposition is not applied because NTFS
+    // names that differ only in normalization are different files. A root
+    // followed only by "." keeps Foundation's "/./" (oracle:
+    // tools/clipboard_matches_reference.sh).
+    std::vector<std::u16string_view> names;
+    bool dot{}, parent{}, directory{true};
+    while (at < path.size()) {
+        if (path_separator(path[at])) { directory = true; ++at; continue; }
+        const auto end = next_separator(path, at);
+        const auto name = path.substr(at, end - at);
+        if (name == u".") { dot = true; directory = true; }
+        else if (name == u"..") { parent = true; directory = true; if (!names.empty()) names.pop_back(); }
+        else { names.push_back(name); directory = false; }
+        at = end;
+    }
+    if (names.empty()) { out.push_back(u'\\'); if (dot && !parent) out.append(u".\\"); return out; }
+    for (const auto name : names) { out.push_back(u'\\'); out.append(name); }
+    if (directory) out.push_back(u'\\');
+    return out;
+}
 bool ClipboardHistory::valid_image_metadata(std::uint32_t width, std::uint32_t height,
     std::size_t encoded_bytes) noexcept {
     return encoded_bytes > 0 && encoded_bytes <= maximum_image_bytes &&
@@ -449,8 +563,20 @@ std::span<const std::uint8_t> ClipboardPayload::image_bytes()const noexcept {
     return decodedImage&&decodedImage->encoded.bytes?std::span<const std::uint8_t>(*decodedImage->encoded.bytes):std::span<const std::uint8_t>(image);
 }
 bool ClipboardPayload::operator==(const ClipboardPayload&other)const {
-    // ClipboardPayload.matches: a link matches by URL and original string.
     return kind==other.kind&&text==other.text&&url==other.url&&files==other.files&&image_format==other.image_format&&std::ranges::equal(image_bytes(),other.image_bytes());
+}
+bool ClipboardPayload::matches(const ClipboardPayload& other) const {
+    if (kind != other.kind) return false;
+    switch (kind) {
+    case ClipboardKind::text: return ClipboardHistory::canonically_equal(text, other.text);
+    case ClipboardKind::url: return url == other.url && ClipboardHistory::canonically_equal(text, other.text);
+    case ClipboardKind::image: return image_format == other.image_format && std::ranges::equal(image_bytes(), other.image_bytes());
+    case ClipboardKind::files:
+        return std::ranges::equal(files, other.files, [](const std::u16string& a, const std::u16string& b) {
+            return a == b || ClipboardHistory::standardized_file_path(a) == ClipboardHistory::standardized_file_path(b);
+        });
+    }
+    return false;
 }
 std::size_t ClipboardHistory::payload_bytes(const ClipboardPayload& value) noexcept {
     if (value.kind == ClipboardKind::image) return value.image_bytes().size();
@@ -500,7 +626,8 @@ ClipboardInsertResult ClipboardHistory::ingest(ClipboardPayload payload, bool ex
         else return ClipboardInsertResult::invalid;
     }
     if (!valid(payload) || (payload.kind == ClipboardKind::url && payload.url.empty())) return ClipboardInsertResult::invalid;
-    const auto existing = std::find_if(items_.begin(), items_.end(), [&](const auto& item) { return item.payload == payload; });
+    // ClipboardStore.capture: a matching item moves to the front and keeps its payload.
+    const auto existing = std::find_if(items_.begin(), items_.end(), [&](const auto& item) { return item.payload.matches(payload); });
     if (existing != items_.end()) {
         if (existing == items_.begin()) return ClipboardInsertResult::duplicate;
         std::rotate(items_.begin(), existing, existing + 1);
