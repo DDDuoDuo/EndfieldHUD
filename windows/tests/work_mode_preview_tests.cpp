@@ -43,7 +43,14 @@ void run(const std::filesystem::path&shader){Window window;gpu::Renderer rendere
     check(!owner.editingText()&&!owner.setEditingText("0:05",now),"Without an open field there is no draft to read or write");
     click({315,139});
     check(owner.editing()&&owner.editingText()==m::workModeDurationEditText(owner.controller().snapshot(now).duration),"The open field's draft is the current duration's edit text");
+    {
+        // HUDProjectedTextView.projectedCursor: the I-beam over the open field only.
+        const auto field=owner.clientRect(m::WorkModePresentation::durationEditorRect());const auto beside=point({40,150});
+        check(field&&owner.textCursorAt({field->x+field->width/2,field->y+field->height/2})&&!owner.textCursorAt(beside),"The open field answers the I-beam inside its projected rect only");
+    }
     type("4");check(owner.editingText()==std::optional<std::string>("4"),"Typed text replaces the selected draft and is read back");
+    {const auto field=owner.clientRect(m::WorkModePresentation::durationEditorRect());check(field.has_value(),"The field projects while open");
+     const c::Point center{field->x+field->width/2,field->y+field->height/2};check(owner.finishEditing(false,now)&&!owner.textCursorAt(center),"A closed field shows no I-beam");click({315,139});type("4");}
     check(owner.setEditingText("0:09",now)&&owner.editing()&&owner.editingText()==std::optional<std::string>("0:09")&&owner.controller().snapshot(now).duration==2,"A Value write replaces the whole draft and keeps the field open without committing");
     frame();
     check(!owner.setEditingText("\xff\xfe",now)&&!owner.setEditingText(std::string(70000,'1'),now)&&owner.editingText()==std::optional<std::string>("0:09"),"Invalid UTF-8 and text past the field capacity are refused unchanged");

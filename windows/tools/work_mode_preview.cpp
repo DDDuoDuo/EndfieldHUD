@@ -162,6 +162,10 @@ std::optional<core::Rect>WorkModePreview::clientRect(core::Rect r)const{
         x0=std::min(x0,q->x);y0=std::min(y0,q->y);x1=std::max(x1,q->x);y1=std::max(y1,q->y);}
     const double scale=i.metrics.scale;return core::Rect{x0/scale,y0/scale,(x1-x0)/scale,(y1-y0)/scale};
 }
+bool WorkModePreview::textCursorAt(core::Point p)const noexcept{
+    const auto&i=*impl_;if(!i.field||!i.input||!i.pose)return false;
+    const auto q=i.local(p);return q&&contains(m::WorkModePresentation::durationEditorRect(),*q);
+}
 const m::WorkModeController&WorkModePreview::controller()const noexcept{return impl_->controller;}
 const m::WorkModePresentation&WorkModePreview::state()const noexcept{return impl_->state;}
 void WorkModePreview::upload(gpu::Renderer&r){auto i=impl_;if(!i->pose)return;i->registration.uploadGeometry(r);i->scene.uploadAnimations(r);}

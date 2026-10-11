@@ -82,6 +82,12 @@ public:
     // Source accessibility projection: a 440 x 440 canvas rect -> the logical
     // client bounding rect of its projected corners while input is accepted.
     std::optional<core::Rect>clientRect(core::Rect canvas)const;
+    // Pointer cursor (HUDProjectedTextView.projectedCursor): true when a
+    // logical client point unprojects inside the open duration field
+    // (durationEditorRect, the same test as its press) while the page accepts
+    // input; the host then shows the system I-beam. Allocates nothing,
+    // changes nothing, reads no clock.
+    bool textCursorAt(core::Point logicalClient)const noexcept;
     const modules::WorkModeController&controller()const noexcept;
     const modules::WorkModePresentation&state()const noexcept;
     void upload(native::Renderer&);std::span<const native::LayerCompositionEntry>entries();
