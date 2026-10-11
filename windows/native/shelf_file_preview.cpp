@@ -381,7 +381,7 @@ void NativeShelfFilePreview::State::abandon()noexcept{
 }
 bool NativeShelfFilePreview::State::key(const MSG&message)noexcept{
     if(!alive||!active||active->closing||(message.message!=WM_KEYDOWN&&message.message!=WM_SYSKEYDOWN))return false;
-    const bool shift=(GetKeyState(VK_SHIFT)&0x8000)!=0,control=(GetKeyState(VK_CONTROL)&0x8000)!=0,alt=(GetKeyState(VK_MENU)&0x8000)!=0;
+    ShelfPreviewModifiers held;try{held=services.modifiers();}catch(...){return false;}const bool shift=held.shift,control=held.control,alt=held.alt;
     if(!shift&&!control&&!alt&&(message.wParam==VK_ESCAPE||message.wParam==VK_SPACE)){close(true);return true;}
     if(!shift&&control&&!alt&&message.wParam=='R'){event(ShelfPreviewEventKind::revealRequested,S_OK,active->id);return true;}return false;
 }
@@ -441,6 +441,7 @@ NativeShelfFilePreview::NativeShelfFilePreview(ShelfPreviewRoute route,ShelfPrev
     validateRoute(route);need(options.clientWidth>=32&&options.clientWidth<=4096&&options.clientHeight>=32&&options.clientHeight<=4096,"Invalid native preview dimensions");
     need(!options.anchor||IsWindow(options.anchor),"Preview anchor must be a live window");
     if(!services.resolve)services.resolve=NativeFileShelfFiles().platform().resolve;if(!services.createHandler)services.createHandler=createHandler;if(!services.openStream)services.openStream=openShelfPreviewStream;
+    if(!services.modifiers)services.modifiers=[]{return ShelfPreviewModifiers{(GetKeyState(VK_SHIFT)&0x8000)!=0,(GetKeyState(VK_CONTROL)&0x8000)!=0,(GetKeyState(VK_MENU)&0x8000)!=0};};
     auto state=std::make_shared<State>();state->route=route;state->options=options;state->services=std::move(services);state->events.reserve(8);state_=std::move(state);
 }
 NativeShelfFilePreview::~NativeShelfFilePreview(){const auto state=std::move(state_);if(!state)return;if(state->thread!=GetCurrentThreadId())std::terminate();state->alive=false;state->events.clear();state->close(false,false);state->route={};}

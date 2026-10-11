@@ -57,6 +57,9 @@ struct ShelfPreviewEvent {
 struct ShelfPreviewStats {
     bool queued{},active{},visible{},fallback{};std::uint64_t requests{},opens{},closes{},failures{},notices{},fallbacks{};
 };
+// Modifier keys held for a popup key (unmodified Escape/Space close, Ctrl-R
+// reveals; source Quick Look panel keys).
+struct ShelfPreviewModifiers {bool shift{},control{},alt{};};
 struct ShelfPreviewServices {
     // Independent provider callbacks; never capture a Store or UI object. The
     // controller calls these only after its queued request leaves store/state
@@ -78,6 +81,13 @@ struct ShelfPreviewServices {
     // (for example while a cloud placeholder hydrates), not hung.
     std::function<void(bool)>watch;
     std::function<void()>activity;
+    // Modifier state of the popup key being translated, read on the popup's
+    // thread. Default: GetKeyState, which Win32 synchronizes with keyboard
+    // input that thread retrieves from its queue. A posted key message (tests,
+    // synthetic input) carries no modifier state and does not synchronize it:
+    // that thread's GetKeyState then follows the interactive session's live
+    // keyboard, so such callers inject the state explicitly.
+    std::function<ShelfPreviewModifiers()>modifiers;
 };
 // The default Shell activation (registered out-of-process stream preview
 // handler for the name's extension), for services that delegate to it.

@@ -81,8 +81,13 @@ struct Fixture {
     Owner owner;Leases leases;std::shared_ptr<Log>log=std::make_shared<Log>();std::atomic<unsigned>factories{},resolutions{};
     std::function<HRESULT(IPreviewHandler**)>factory; // null: a new in-process handler
     std::function<void()>onResolve;
+    // Modifiers of the keys posted to the popup (read on the preview thread):
+    // a posted key does not synchronize that thread's GetKeyState, which then
+    // follows the interactive session's live keyboard.
+    std::atomic<bool>control{};
     n::ShelfPreviewServices services(){
         n::ShelfPreviewServices value;
+        value.modifiers=[this]{return n::ShelfPreviewModifiers{false,control.load(),false};};
         value.resolve=[this](const d::ShelfRecord&record){++resolutions;if(onResolve)onResolve();return lease(leases,record.identity.objectID[0]);};
         value.createHandler=[this](const d::ShelfFileMetadata&,IPreviewHandler**out){++factories;*out=nullptr;if(factory)return factory(out);*out=new Handler(log);return S_OK;};
         value.openStream=[](const d::ShelfFileAccess&,IStream**out){*out=nullptr;ComPtr<IStream>stream;const auto hr=CreateStreamOnHGlobal(nullptr,TRUE,&stream);if(FAILED(hr))return hr;
@@ -119,7 +124,11 @@ void lifecycle(){
     check(preview->request(secondID,lease(fixture.leases,2))&&fixture.owner.wait(*preview,11,2,10000),"Switching items is answered");
     events=fixture.owner.take();check(events.size()==2&&events[0].kind==n::ShelfPreviewEventKind::closed&&events[0].itemID==firstID&&events[1].kind==n::ShelfPreviewEventKind::opened&&events[1].itemID==secondID,
         "Switching retires the previous preview and opens the new item");
-    const auto second=preview->window();check(second&&PostMessageW(second,WM_KEYDOWN,VK_ESCAPE,0)!=FALSE&&fixture.owner.wait(*preview,11,1,10000),"Escape reaches the popup on the preview thread");
+    const auto second=preview->window();fixture.control=true;
+    check(second&&PostMessageW(second,WM_KEYDOWN,VK_ESCAPE,0)!=FALSE&&PostMessageW(second,WM_KEYDOWN,'R',0)!=FALSE&&fixture.owner.wait(*preview,11,1,10000),"Ctrl-R reaches the popup on the preview thread");
+    events=fixture.owner.take();check(events.size()==1&&events[0].kind==n::ShelfPreviewEventKind::revealRequested&&events[0].itemID==secondID&&preview->stats().active,
+        "A modified Escape leaves the preview open; Ctrl-R only queues reveal for the owner");
+    fixture.control=false;check(PostMessageW(second,WM_KEYDOWN,VK_ESCAPE,0)!=FALSE&&fixture.owner.wait(*preview,11,1,10000),"Escape reaches the popup on the preview thread");
     events=fixture.owner.take();check(events.size()==1&&events[0].kind==n::ShelfPreviewEventKind::closed&&events[0].itemID==secondID,"The preview thread's own pump translates Escape and closes");
     check(preview->containment().threads==1&&preview->containment().timeouts==0,"Every preview reused the one healthy preview thread");
     // Invalid references are refused on the owner thread, as before.
