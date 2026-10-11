@@ -118,7 +118,22 @@ public:
         if (!out) return E_POINTER;
         return owner_.automationFromPoint(x, y, out);
     }
-    IFACEMETHODIMP GetFocus(IRawElementProviderFragment** out) override { if (!out) return E_POINTER; *out = nullptr; return S_OK; }
+    // As the host's group: the owner fragment reporting HasKeyboardFocus.
+    IFACEMETHODIMP GetFocus(IRawElementProviderFragment** out) override {
+        if (!out) return E_POINTER;
+        *out = nullptr;
+        for (std::size_t i = 0; i < owner_.automationCount(); ++i) {
+            Microsoft::WRL::ComPtr<IRawElementProviderFragment> child;
+            Microsoft::WRL::ComPtr<IRawElementProviderSimple> simple;
+            if (owner_.automationChild(i, &child) < 0 || !child || FAILED(child.As(&simple))) continue;
+            VARIANT focused;
+            VariantInit(&focused);
+            const bool found = SUCCEEDED(simple->GetPropertyValue(UIA_HasKeyboardFocusPropertyId, &focused)) && focused.vt == VT_BOOL && focused.boolVal == VARIANT_TRUE;
+            VariantClear(&focused);
+            if (found) { *out = child.Detach(); return S_OK; }
+        }
+        return S_OK;
+    }
 
 private:
     ~CoverageAutomationGroup() = default;
@@ -455,6 +470,56 @@ private:
             VariantClear(&automationId);
             return element;
         }
+        // The automation id of the peer the group's GetFocus answers ("" for none).
+        std::string focusedPeer() {
+            Microsoft::WRL::ComPtr<IRawElementProviderFragment> focused;
+            Microsoft::WRL::ComPtr<IRawElementProviderSimple> simple;
+            if (FAILED(group()->GetFocus(&focused)) || !focused || FAILED(focused.As(&simple))) return {};
+            VARIANT id;
+            VariantInit(&id);
+            std::string out;
+            if (SUCCEEDED(simple->GetPropertyValue(UIA_AutomationIdPropertyId, &id)) && id.vt == VT_BSTR && id.bstrVal)
+                for (const wchar_t* c = id.bstrVal; *c; ++c) out.push_back(static_cast<char>(*c)); // ids are ASCII
+            VariantClear(&id);
+            return out;
+        }
+        // The listed peer with this automation id (ids are ASCII).
+        Microsoft::WRL::ComPtr<IRawElementProviderSimple> listed(std::string_view id) {
+            for (std::size_t i = 0; i < self.automationCount(); ++i) {
+                Microsoft::WRL::ComPtr<IRawElementProviderFragment> child;
+                Microsoft::WRL::ComPtr<IRawElementProviderSimple> simple;
+                VARIANT name;
+                VariantInit(&name);
+                if (self.automationChild(i, &child) < 0 || !child || FAILED(child.As(&simple)) || FAILED(simple->GetPropertyValue(UIA_AutomationIdPropertyId, &name))) continue;
+                const bool match = name.vt == VT_BSTR && name.bstrVal && std::wstring_view(name.bstrVal) == std::wstring(id.begin(), id.end());
+                VariantClear(&name);
+                if (match) return simple;
+            }
+            return nullptr;
+        }
+        // The Toggle state a peer reports (none: not a toggle).
+        std::optional<bool> toggleState(std::string_view id) {
+            Microsoft::WRL::ComPtr<IUnknown> provider;
+            Microsoft::WRL::ComPtr<IToggleProvider> toggle;
+            ToggleState state{};
+            const auto simple = listed(id);
+            if (!simple || FAILED(simple->GetPatternProvider(UIA_TogglePatternId, &provider)) || !provider || FAILED(provider.As(&toggle)) || FAILED(toggle->get_ToggleState(&state)))
+                return std::nullopt;
+            return state == ToggleState_On;
+        }
+        // A peer's UIA help text as UTF-8.
+        std::string helpText(std::string_view id) {
+            const auto simple = listed(id);
+            VARIANT value;
+            VariantInit(&value);
+            std::string out;
+            if (simple && SUCCEEDED(simple->GetPropertyValue(UIA_HelpTextPropertyId, &value)) && value.vt == VT_BSTR && value.bstrVal) {
+                const int n = WideCharToMultiByte(CP_UTF8, 0, value.bstrVal, -1, nullptr, 0, nullptr, nullptr);
+                if (n > 1) { out.resize(static_cast<std::size_t>(n - 1)); WideCharToMultiByte(CP_UTF8, 0, value.bstrVal, -1, out.data(), n, nullptr, nullptr); }
+            }
+            VariantClear(&value);
+            return out;
+        }
         HRESULT invoke(const Microsoft::WRL::ComPtr<IRawElementProviderFragment>& element) {
             Microsoft::WRL::ComPtr<IInvokeProvider> invoker;
             step.check(SUCCEEDED(element.As(&invoker)), "Account peers are buttons with Invoke");
@@ -638,15 +703,32 @@ private:
             step.check(SUCCEEDED(group->QueryInterface(IID_PPV_ARGS(&parent))) && SUCCEEDED(parent->Navigate(NavigateDirection_FirstChild, &fromGroup)) &&
                        fromGroup.Get() == first.Get() && automationChild(automationCount(), &last) < 0 && !last, "The group's children are the owner's fragments in order");
             const auto invokes = automation_->stats().invokes;
+            const auto presented = controller().presentation();
+            step.check(d.focusedPeer().empty() && d.toggleState("account:syncProfile") == std::optional(presented.syncProfile) &&
+                       d.toggleState("account:syncAvatar") == std::optional(presented.syncAvatar) && !d.toggleState("account:connect"),
+                       "The face holds no keyboard focus; the sync toggles report their check marks through Toggle");
+            const auto help = d.helpText("account:connect");
+            step.check(!help.empty() && help.rfind(d.canvas().statusLine(), 0) == 0 && (presented.lastSync.empty() || help.find(presented.lastSync) != std::string::npos),
+                       "Reconnect carries the painted status line and last update as its help text");
             const auto role = d.peer("account:role");
+            const auto moves = automation_->stats().focusMoves;
             step.check(d.invoke(role) == S_OK && d.canvas().menu() == h::AccountCanvasModel::Menu::role && automationRefresh(group),
                        "Invoking the role peer opens its menu; the host's refresh restructures the tree");
+            step.check(presented.selectedRoleID && d.focusedPeer() == "account:role:" + *presented.selectedRoleID && automation_->stats().focusMoves == moves + 1,
+                       "The open menu's current role holds the keyboard focus (announced once)");
+            const auto before = d.canvas().keyboardControl();
+            step.check(d.keyDown(VK_DOWN) && d.canvas().isPopoverOpen(), "Down moves the menu selection");
+            (void)automationRefresh(group);
+            const auto after = d.canvas().keyboardControl();
+            step.check(after && d.focusedPeer() == "account:" + *after && automation_->stats().focusMoves == moves + 1 + (after != before ? 1 : 0),
+                       "The keyboard focus follows the arrows");
             Microsoft::WRL::ComPtr<IRawElementProviderSimple> stale;
             VARIANT name;
             VariantInit(&name);
             step.check(SUCCEEDED(role.As(&stale)) && stale->GetPropertyValue(UIA_NamePropertyId, &name) == UIA_E_ELEMENTNOTAVAILABLE,
                        "Peers hidden by the menu are disconnected");
-            step.check(d.keyDown(VK_ESCAPE) && !d.canvas().isPopoverOpen() && automationRefresh(group), "Escape closes the menu; the face peers return");
+            step.check(d.keyDown(VK_ESCAPE) && !d.canvas().isPopoverOpen() && automationRefresh(group) && d.focusedPeer().empty(),
+                       "Escape closes the menu; the face peers return without a keyboard focus");
             step.check(d.invoke(d.peer("wallet:toggle")) == S_OK && owner_->gauge().model().popoverOpen() && automationRefresh(group) &&
                        automationCount() == faceControls + 2, "The wallet peer opens the popover and exposes its Refresh");
             step.check(d.keyDown(VK_ESCAPE) && !owner_->gauge().model().popoverOpen(), "Escape closes the popover");

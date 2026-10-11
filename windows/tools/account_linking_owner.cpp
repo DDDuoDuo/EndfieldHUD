@@ -166,9 +166,27 @@ void AccountLinkingOwner::workModeChanged(double t) {auto& i=*impl_;i.advance(t)
 void AccountLinkingOwner::localTimeChanged(double t) {auto& i=*impl_;i.advance(t);i.module->presentationChanged(i.time);i.gauge->contentChanged(i.time);}
 std::vector<gpu::AccountAutomationControl> AccountLinkingOwner::accessibleControls() const {
     const auto& i=*impl_;std::vector<gpu::AccountAutomationControl> out;
-    if(i.module->accessible())
-        for(const auto& c:i.module->canvas().accessibleActions())
-            if(const auto r=i.module->clientRect(c.rect)) out.push_back({"account:"+c.id,c.label,*r,c.enabled});
+    if(i.module->accessible()) {
+        // An open menu's rows take the HUD's arrow keys: they are the keyboard
+        // targets, and the selected one (Return/Enter/Space) has the focus.
+        const auto& canvas=i.module->canvas();const auto& p=canvas.presentation();
+        const bool menu=canvas.isPopoverOpen();const auto keyboard=canvas.keyboardControl();
+        for(const auto& c:canvas.accessibleActions())
+            if(const auto r=i.module->clientRect(c.rect)) {
+                gpu::AccountAutomationControl control{"account:"+c.id,c.label,*r,c.enabled};
+                control.focusable=menu;control.focused=keyboard&&*keyboard==c.id;
+                if(c.id=="syncProfile") control.toggled=p.syncProfile;
+                else if(c.id=="syncAvatar") control.toggled=p.syncAvatar;
+                else if(c.id=="connect") {
+                    // The painted status texts (status line, last update,
+                    // message) have no peer of their own on the Mac either.
+                    control.help=canvas.statusLine();
+                    for(const auto* line:{&p.lastSync,&p.statusMessage}) if(!line->empty()) {control.help+='\n';control.help+=*line;}
+                    control.notice=p.statusMessage;
+                }
+                out.push_back(std::move(control));
+            }
+    }
     for(const auto& a:i.gauge->accessibleActions())
         if(const auto r=i.gauge->clientRect(a.rect)) out.push_back({"wallet:"+a.id,a.label,*r,a.enabled});
     return out;

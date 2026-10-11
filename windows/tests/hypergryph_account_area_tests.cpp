@@ -152,6 +152,107 @@ void automation() {
     a.disconnect();
     check(a.size() == 0 && invoke->Invoke() == UIA_E_ELEMENTNOTAVAILABLE, "Disconnecting the tree ends every peer");
 }
+bool flagProperty(IUnknown* element, PROPERTYID id) {
+    Microsoft::WRL::ComPtr<IRawElementProviderSimple> simple;
+    VARIANT value;
+    VariantInit(&value);
+    const bool on = element && SUCCEEDED(element->QueryInterface(IID_PPV_ARGS(&simple))) && SUCCEEDED(simple->GetPropertyValue(id, &value)) &&
+                    value.vt == VT_BOOL && value.boolVal == VARIANT_TRUE;
+    VariantClear(&value);
+    return on;
+}
+template <class Pattern> Microsoft::WRL::ComPtr<Pattern> pattern(IUnknown* element, PATTERNID id) {
+    Microsoft::WRL::ComPtr<IRawElementProviderSimple> simple;
+    Microsoft::WRL::ComPtr<IUnknown> provider;
+    Microsoft::WRL::ComPtr<Pattern> out;
+    if (element && SUCCEEDED(element->QueryInterface(IID_PPV_ARGS(&simple))) && SUCCEEDED(simple->GetPatternProvider(id, &provider)) && provider) (void)provider.As(&out);
+    return out;
+}
+// Windows additions over the Mac buttons: the sync toggles offer Toggle with
+// their check state, and an open menu's keyboard selection is the UIA focus.
+void focusAndToggle() {
+    namespace n = endfield::native;
+    using Microsoft::WRL::ComPtr;
+    n::AccountAutomationControl sync{"account:syncProfile", "Sync personal profile", {360, 203, 28, 28}, true};
+    sync.toggled = false;
+    const std::vector<n::AccountAutomationControl> face{{"account:connect", "Connect", {276, 7, 112, 28}, true}, sync};
+    std::vector<n::AccountAutomationControl> controls = face;
+    std::vector<std::string> pressed;
+    n::AccountAutomationHost host;
+    host.controls = [&] { return controls; };
+    host.toScreen = [](endfield::core::Rect r) -> std::optional<endfield::core::Rect> { return endfield::core::Rect{100 + r.x * 2, 50 + r.y * 2, r.width * 2, r.height * 2}; };
+    host.invoke = [&](std::string_view id) {
+        pressed.emplace_back(id);
+        if (id == "account:syncProfile") controls[1].toggled = !*controls[1].toggled; // the canvas emits the opposite state
+        return true;
+    };
+    n::NativeAccountAutomation a(host);
+    check(a.refresh() && a.size() == 2 && a.stats().focusMoves == 0, "Without an open menu no peer holds the keyboard focus");
+    ComPtr<IRawElementProviderFragment> connect, toggle;
+    check(SUCCEEDED(a.child(0, &connect)) && SUCCEEDED(a.child(1, &toggle)), "Face peers are listed");
+    check(!flagProperty(connect.Get(), UIA_IsKeyboardFocusablePropertyId) && !flagProperty(connect.Get(), UIA_HasKeyboardFocusPropertyId),
+          "Face buttons are not keyboard targets (the HUD routes its own keys)");
+    const auto toggler = pattern<IToggleProvider>(toggle.Get(), UIA_TogglePatternId);
+    check(toggler && !pattern<IInvokeProvider>(toggle.Get(), UIA_InvokePatternId), "A sync toggle offers Toggle instead of Invoke");
+    check(pattern<IInvokeProvider>(connect.Get(), UIA_InvokePatternId) && !pattern<IToggleProvider>(connect.Get(), UIA_TogglePatternId), "Other buttons offer Invoke only");
+    ToggleState state{ToggleState_Indeterminate};
+    check(SUCCEEDED(toggler->get_ToggleState(&state)) && state == ToggleState_Off, "An unchecked toggle reports Off");
+    check(SUCCEEDED(toggler->Toggle()) && pressed == std::vector<std::string>{"account:syncProfile"} && a.stats().toggles == 1 && a.stats().invokes == 0,
+          "Toggle performs the toggle's press");
+    check(!a.refresh() && SUCCEEDED(toggler->get_ToggleState(&state)) && state == ToggleState_On, "The refreshed toggle reports On (same element)");
+    ComPtr<IInvokeProvider> invoker;
+    check(SUCCEEDED(toggle.As(&invoker)) && invoker->Invoke() == UIA_E_INVALIDOPERATION && pressed.size() == 1, "A toggle is not pressed through Invoke");
+    controls[1].enabled = false;
+    (void)a.refresh();
+    check(toggler->Toggle() == UIA_E_ELEMENTNOTENABLED && pressed.size() == 1, "A disabled toggle refuses Toggle");
+    // The painted status texts ride on Connect as its help; a new status
+    // message is announced once (raised only while a client listens).
+    const auto help = [&] {
+        Microsoft::WRL::ComPtr<IRawElementProviderSimple> simple;
+        VARIANT value;
+        VariantInit(&value);
+        std::wstring out;
+        if (SUCCEEDED(connect.As(&simple)) && SUCCEEDED(simple->GetPropertyValue(UIA_HelpTextPropertyId, &value)) && value.vt == VT_BSTR && value.bstrVal) out = value.bstrVal;
+        VariantClear(&value);
+        return out;
+    };
+    check(help().empty(), "No help without status text");
+    controls[0].help = "Connected";
+    (void)a.refresh();
+    check(help() == L"Connected" && a.stats().announcements == 0, "Connect carries the status line as its help text");
+    const std::string runtime = "Sign-in needs the Microsoft Edge WebView2 Runtime.";
+    controls[0].help = "Connected\n" + runtime;
+    controls[0].notice = runtime;
+    (void)a.refresh();
+    check(help() == L"Connected\nSign-in needs the Microsoft Edge WebView2 Runtime." && a.stats().announcements == 1, "A new status message is announced");
+    (void)a.refresh();
+    check(a.stats().announcements == 1, "An unchanged message is not announced again");
+    controls[0].notice.clear();
+    (void)a.refresh();
+    check(a.stats().announcements == 1, "Clearing the message announces nothing");
+    // A menu opens on its current row: the rows are keyboard targets and the
+    // selected one has the focus; the arrows move it.
+    controls = {{"account:role:a", "Endfield · Fixture", {120, 160, 260, 26}, true}, {"account:role:b", "Arknights · Fixture", {120, 191, 260, 26}, true}};
+    for (auto& row : controls) row.focusable = true;
+    controls[1].focused = true;
+    check(a.refresh() && a.size() == 2 && a.stats().focusMoves == 1, "Opening a menu moves the keyboard focus to its selected row");
+    ComPtr<IRawElementProviderFragment> first, second;
+    check(SUCCEEDED(a.child(0, &first)) && SUCCEEDED(a.child(1, &second)) && flagProperty(first.Get(), UIA_IsKeyboardFocusablePropertyId) &&
+          !flagProperty(first.Get(), UIA_HasKeyboardFocusPropertyId) && flagProperty(second.Get(), UIA_HasKeyboardFocusPropertyId),
+          "Menu rows are focusable; only the selected one has the focus");
+    controls[0].focused = true;
+    controls[1].focused = false;
+    check(!a.refresh() && a.stats().focusMoves == 2 && flagProperty(first.Get(), UIA_HasKeyboardFocusPropertyId) && !flagProperty(second.Get(), UIA_HasKeyboardFocusPropertyId),
+          "An arrow moves the focus between the same elements");
+    check(!a.refresh() && a.stats().focusMoves == 2, "An unchanged refresh announces nothing");
+    controls[0].focused = false;
+    check(!a.refresh() && a.stats().focusMoves == 2 && !flagProperty(first.Get(), UIA_HasKeyboardFocusPropertyId), "A row scrolled away leaves no focus");
+    controls[0].focused = true;
+    check(!a.refresh() && a.stats().focusMoves == 3, "Its return is announced again");
+    controls = face;
+    check(a.refresh() && a.stats().focusMoves == 3 && !flagProperty(first.Get(), UIA_HasKeyboardFocusPropertyId), "Closing the menu removes its rows and the focus");
+    a.disconnect();
+}
 
 // The area's ModuleOwner UIA hooks (app/areas/account_module.cpp) over a fake
 // owner view, so the host root can be driven without the whole application.
@@ -252,6 +353,19 @@ void hostRoot() {
         check(SUCCEEDED(hud.root()->ElementProviderFromPoint(100 + 384 * 2, 50 + 21 * 2, &hit)) && hit.Get() == last.Get(), "The root's hit test reaches the wallet peer");
         ComPtr<IInvokeProvider> invoke;
         check(SUCCEEDED(hit.As(&invoke)) && SUCCEEDED(invoke->Invoke()) && pressed == std::vector<std::string>{"wallet:toggle"}, "Invoke through the root performs the press");
+        // Keyboard focus (an open menu's selected row): the host's root and
+        // the account group answer GetFocus with that peer.
+        ComPtr<IRawElementProviderFragment> focused, groupFocus, nothing;
+        ComPtr<IRawElementProviderFragmentRoot> groupRoot;
+        check(SUCCEEDED(hud.root()->GetFocus(&nothing)) && !nothing, "Nothing is focused before a menu holds the keyboard");
+        controls[0].focusable = controls[0].focused = true;
+        (void)hud.refresh();
+        check(SUCCEEDED(hud.root()->GetFocus(&focused)) && same(focused.Get(), first.Get()), "The HUD root's GetFocus returns the account peer holding the keyboard focus");
+        check(SUCCEEDED(group.As(&groupRoot)) && SUCCEEDED(groupRoot->GetFocus(&groupFocus)) && same(groupFocus.Get(), first.Get()), "So does the account group's GetFocus");
+        controls[0].focusable = controls[0].focused = false;
+        (void)hud.refresh();
+        nothing.Reset();
+        check(SUCCEEDED(hud.root()->GetFocus(&nothing)) && !nothing, "The focus leaves with the menu");
         // A content event: the popover adds its Refresh, the refresh control goes.
         controls.erase(controls.begin() + 1);
         controls.push_back({"wallet:refresh", "Refresh", {320, 50, 60, 20}, true});
@@ -281,6 +395,7 @@ int wmain(int argc, wchar_t** argv) {
         communityHost(argv[1]);
         loginHost(argv[1]);
         automation();
+        focusAndToggle();
         hostRoot();
         if (SUCCEEDED(com)) CoUninitialize();
         std::cout << "PASS " << checks << " account area provider checks\n";

@@ -15,8 +15,13 @@
 // open popover) under this owner's group of the HUD window's root provider.
 // A UIA Invoke performs the click's action and posts the area's registered
 // message, so the host refreshes frames, deadlines and the tree exactly as
-// after a routed click. Without the Evergreen WebView2 Runtime, Connect shows
-// the localized explanation page linking to Microsoft's download page
+// after a routed click. The sync toggles answer Toggle with their check
+// state; an open menu's keyboard selection (Up/Down, Return) is the UIA
+// keyboard focus the HUD root's GetFocus finds, announced as it moves; the
+// painted status line, last update and status message ride on
+// Connect/Reconnect as its help text, and a new status message is announced.
+// Without the Evergreen WebView2 Runtime, Connect shows the localized
+// explanation page linking to Microsoft's download page
 // (native/hypergryph_account_webview.hpp); nothing is bundled or downloaded.
 //
 // Hidden coverage builds the same owner over synthetic providers (an

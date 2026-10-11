@@ -39,7 +39,7 @@ struct ICoreWebView2NavigationStartingEventArgs;struct ICoreWebView2NavigationCo
 struct ICoreWebView2WebMessageReceivedEventArgs;struct ICoreWebView2NewWindowRequestedEventArgs;
 struct ICoreWebView2ProcessFailedEventArgs;struct ICoreWebView2PermissionRequestedEventArgs;
 struct ICoreWebView2DownloadStartingEventArgs;struct ICoreWebView2AcceleratorKeyPressedEventArgs;
-struct ICoreWebView2BrowserProcessExitedEventArgs;
+struct ICoreWebView2BrowserProcessExitedEventArgs;struct ICoreWebView2MoveFocusRequestedEventArgs;
 
 EHUD_WEBVIEW2_STUB_INTERFACE("5e1b0001-0000-4000-8000-00000000ae01") ICoreWebView2EnvironmentOptions:IUnknown {};
 EHUD_WEBVIEW2_STUB_INTERFACE("5e1b0001-0000-4000-8000-00000000ae02") ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler:IUnknown {
@@ -70,6 +70,8 @@ EHUD_WEBVIEW2_STUB_INTERFACE("5e1b0001-0000-4000-8000-00000000ae0e") ICoreWebVie
     virtual HRESULT STDMETHODCALLTYPE Invoke(HRESULT errorCode,LPCWSTR id)=0;};
 EHUD_WEBVIEW2_STUB_INTERFACE("5e1b0001-0000-4000-8000-00000000ae0f") ICoreWebView2ExecuteScriptCompletedHandler:IUnknown {
     virtual HRESULT STDMETHODCALLTYPE Invoke(HRESULT errorCode,LPCWSTR resultObjectAsJson)=0;};
+EHUD_WEBVIEW2_STUB_INTERFACE("5e1b0001-0000-4000-8000-00000000ae1b") ICoreWebView2MoveFocusRequestedEventHandler:IUnknown {
+    virtual HRESULT STDMETHODCALLTYPE Invoke(ICoreWebView2Controller* sender,ICoreWebView2MoveFocusRequestedEventArgs* args)=0;};
 
 EHUD_WEBVIEW2_STUB_INTERFACE("5e1b0001-0000-4000-8000-00000000ae10") ICoreWebView2Deferral:IUnknown {
     virtual HRESULT STDMETHODCALLTYPE Complete()=0;};
@@ -97,6 +99,9 @@ EHUD_WEBVIEW2_STUB_INTERFACE("5e1b0001-0000-4000-8000-00000000ae18") ICoreWebVie
     virtual HRESULT STDMETHODCALLTYPE get_VirtualKey(UINT* virtualKey)=0;
     virtual HRESULT STDMETHODCALLTYPE put_Handled(BOOL handled)=0;};
 EHUD_WEBVIEW2_STUB_INTERFACE("5e1b0001-0000-4000-8000-00000000ae19") ICoreWebView2BrowserProcessExitedEventArgs:IUnknown {};
+EHUD_WEBVIEW2_STUB_INTERFACE("5e1b0001-0000-4000-8000-00000000ae1a") ICoreWebView2MoveFocusRequestedEventArgs:IUnknown {
+    virtual HRESULT STDMETHODCALLTYPE get_Reason(COREWEBVIEW2_MOVE_FOCUS_REASON* reason)=0;
+    virtual HRESULT STDMETHODCALLTYPE put_Handled(BOOL value)=0;};
 
 EHUD_WEBVIEW2_STUB_INTERFACE("5e1b0001-0000-4000-8000-00000000ae20") ICoreWebView2Settings:IUnknown {
     virtual HRESULT STDMETHODCALLTYPE put_IsScriptEnabled(BOOL isScriptEnabled)=0;
@@ -128,6 +133,7 @@ EHUD_WEBVIEW2_STUB_INTERFACE("5e1b0001-0000-4000-8000-00000000ae23") ICoreWebVie
     virtual HRESULT STDMETHODCALLTYPE put_ZoomFactor(double zoomFactor)=0;
     virtual HRESULT STDMETHODCALLTYPE MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON reason)=0;
     virtual HRESULT STDMETHODCALLTYPE add_AcceleratorKeyPressed(ICoreWebView2AcceleratorKeyPressedEventHandler* eventHandler,EventRegistrationToken* token)=0;
+    virtual HRESULT STDMETHODCALLTYPE add_MoveFocusRequested(ICoreWebView2MoveFocusRequestedEventHandler* eventHandler,EventRegistrationToken* token)=0;
     virtual HRESULT STDMETHODCALLTYPE Close()=0;
     virtual HRESULT STDMETHODCALLTYPE get_CoreWebView2(ICoreWebView2** coreWebView2)=0;};
 EHUD_WEBVIEW2_STUB_INTERFACE("5e1b0001-0000-4000-8000-00000000ae24") ICoreWebView2ControllerOptions:IUnknown {

@@ -106,7 +106,10 @@ public:
     // Accessibility peers (Mac transparent AX buttons): the active Account
     // face ("account:<control id>"), then the header wallet and its open
     // recovery popover ("wallet:<action id>"), with projected logical client
-    // rects; a press performs exactly the click's action.
+    // rects; a press performs exactly the click's action. Windows additions:
+    // an open menu's rows are focusable and its keyboard selection focused,
+    // the sync toggles carry their state, and Connect carries the face's
+    // status texts (help) and status message (announced when it changes).
     std::vector<native::AccountAutomationControl> accessibleControls() const;
     bool performAccessible(std::string_view id,double time);
 

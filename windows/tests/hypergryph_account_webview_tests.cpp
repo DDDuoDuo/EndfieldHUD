@@ -73,6 +73,11 @@ struct KeyArgs:Com<ICoreWebView2AcceleratorKeyPressedEventArgs> {
     HRESULT STDMETHODCALLTYPE put_Handled(BOOL v) override {handled=v;return S_OK;}
 };
 struct ExitArgs:Com<ICoreWebView2BrowserProcessExitedEventArgs> {};
+struct FocusArgs:Com<ICoreWebView2MoveFocusRequestedEventArgs> {
+    COREWEBVIEW2_MOVE_FOCUS_REASON reason{};BOOL handled{};
+    HRESULT STDMETHODCALLTYPE get_Reason(COREWEBVIEW2_MOVE_FOCUS_REASON* out) override {*out=reason;return S_OK;}
+    HRESULT STDMETHODCALLTYPE put_Handled(BOOL v) override {handled=v;return S_OK;}
+};
 struct Settings:Com<ICoreWebView2Settings> {
     int script{-1},message{-1},menus{-1},status{-1},devtools{-1},zoom{-1},hostObjects{-1};
     HRESULT STDMETHODCALLTYPE put_IsScriptEnabled(BOOL v) override {script=v;return S_OK;}
@@ -128,11 +133,15 @@ struct View:RuntimeClass<RuntimeClassFlags<ClassicCom>,ChainInterfaces<ICoreWebV
 };
 struct Controller:Com<ICoreWebView2Controller> {
     ComPtr<View> view=Make<View>();HWND host{};RECT bounds{};double zoom{-1};int focus{};bool closed{},inPrivate{};
-    Handlers<ICoreWebView2AcceleratorKeyPressedEventHandler> keys;
+    std::vector<COREWEBVIEW2_MOVE_FOCUS_REASON> moves;
+    Handlers<ICoreWebView2AcceleratorKeyPressedEventHandler> keys;Handlers<ICoreWebView2MoveFocusRequestedEventHandler> leaving;
     HRESULT STDMETHODCALLTYPE put_Bounds(RECT r) override {bounds=r;return S_OK;}
     HRESULT STDMETHODCALLTYPE put_ZoomFactor(double z) override {zoom=z;return S_OK;}
-    HRESULT STDMETHODCALLTYPE MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON) override {++focus;return S_OK;}
+    HRESULT STDMETHODCALLTYPE MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON reason) override {++focus;moves.push_back(reason);return S_OK;}
     HRESULT STDMETHODCALLTYPE add_AcceleratorKeyPressed(ICoreWebView2AcceleratorKeyPressedEventHandler* h,EventRegistrationToken* t) override {return keys.add(h,t);}
+    HRESULT STDMETHODCALLTYPE add_MoveFocusRequested(ICoreWebView2MoveFocusRequestedEventHandler* h,EventRegistrationToken* t) override {return leaving.add(h,t);}
+    // Tab past the page's last (NEXT) or first (PREVIOUS) element.
+    bool leave(COREWEBVIEW2_MOVE_FOCUS_REASON reason) {auto args=Make<FocusArgs>();args->reason=reason;for(auto& handler:std::vector(leaving.list)) handler->Invoke(this,args.Get());return args->handled!=FALSE;}
     HRESULT STDMETHODCALLTYPE Close() override {closed=true;return S_OK;}
     HRESULT STDMETHODCALLTYPE get_CoreWebView2(ICoreWebView2** out) override {return view.CopyTo(out);}
     bool key(UINT vk) {auto args=Make<KeyArgs>();args->kind=COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN;args->key=vk;for(auto& handler:std::vector(keys.list)) handler->Invoke(this,args.Get());return args->handled!=FALSE;}
@@ -187,6 +196,18 @@ std::string nonceIn(const std::wstring& script) {
 }
 std::string envelope(std::string_view channel,const std::string& body) {return "{\"channel\":\""+std::string(channel)+"\",\"body\":"+body+"}";}
 void click(HWND window,int id) {SendMessageW(window,WM_COMMAND,MAKEWPARAM(id,BN_CLICKED),0);}
+// A key as the message loop dispatches it: to the control holding the focus.
+void press(HWND control,UINT key) {SendMessageW(control,WM_KEYDOWN,key,0);}
+// Pins this thread's modifier state, so Shift+Tab never follows the live
+// keyboard of whatever session runs the test.
+void shift(bool down) {
+    BYTE keys[256]{};check(GetKeyboardState(keys)!=FALSE,"Read this thread's key state");
+    for(int k:{VK_SHIFT,VK_LSHIFT,VK_RSHIFT}) keys[k]=down?0x80:0;
+    for(int k:{VK_CONTROL,VK_LCONTROL,VK_RCONTROL,VK_MENU,VK_LMENU,VK_RMENU,VK_LWIN,VK_RWIN}) keys[k]=0;
+    check(SetKeyboardState(keys)!=FALSE&&(GetKeyState(VK_SHIFT)<0)==down,"Pin this thread's Shift state");
+}
+bool defaultButton(HWND button) {return (GetWindowLongW(button,GWL_STYLE)&BS_TYPEMASK)==BS_DEFPUSHBUTTON;}
+int fontHeight(HWND control) {LOGFONTW font{};const auto handle=reinterpret_cast<HFONT>(SendMessageW(control,WM_GETFONT,0,0));return handle&&GetObjectW(handle,sizeof font,&font)?font.lfHeight:0;}
 // UTF-8 text of a login-window control (empty when the control is absent).
 std::string text(HWND window,int id) {
     const HWND control=GetDlgItem(window,id);if(!control) return {};
@@ -400,6 +421,94 @@ void run() {
         presenter.setLanguage(L::english);
         check(completions==21&&w.environments==environments+1,"Layout checks open no browser");
 
+        // H. Keyboard. The login window is no dialog, so its pages answer the
+        // dialog manager's keys themselves: Tab order, the focused (else the
+        // page's default) button on Return, Escape as Cancel from any control.
+        shift(false);
+        w.runtime.clear();presenter.present(h::Region::mainland,done);page=loginWindow();
+        {
+            const HWND link=GetDlgItem(page,112),open=GetDlgItem(page,105),again=GetDlgItem(page,106),cancel=GetDlgItem(page,102);
+            check(defaultButton(open)&&!defaultButton(again),"Opening Microsoft's page is the runtime page's default button");
+            press(open,VK_TAB);
+            check(GetFocus()==again&&defaultButton(again)&&!defaultButton(open),"Tab moves to Check Again, which becomes the default button");
+            check(!(SendMessageW(again,WM_QUERYUISTATE,0,0)&UISF_HIDEFOCUS),"Keyboard navigation shows the focus rectangle");
+            press(again,VK_TAB);check(GetFocus()==cancel,"Then Cancel");
+            press(cancel,VK_TAB);
+            DWORD from{1},to{};SendMessageW(link,EM_GETSEL,reinterpret_cast<WPARAM>(&from),reinterpret_cast<LPARAM>(&to));
+            check(GetFocus()==link&&from==0&&to==DWORD(GetWindowTextLengthW(link))&&defaultButton(open)&&!defaultButton(cancel),
+                  "Tab wraps to the link field, selected for copying; the page's default button returns");
+            shift(true);press(link,VK_TAB);shift(false);
+            check(GetFocus()==cancel,"Shift+Tab walks backwards (wrapping)");
+            press(again,VK_RETURN);
+            check(text(page,113)==runtime.stillMissing&&links.size()==1&&presenter.isPresenting(),"Return presses the focused button (Check Again)");
+            press(link,VK_RETURN);
+            check(links.size()==2&&links.back()==std::string(h::webView2DownloadURL)&&presenter.isPresenting(),"Return in the link field presses the default button");
+            // Deactivation keeps the focused control; activation restores it.
+            press(link,VK_TAB);check(GetFocus()==open,"Tab from the link reaches the download button");
+            SendMessageW(page,WM_ACTIVATE,WA_INACTIVE,0);SetFocus(page);SendMessageW(page,WM_ACTIVATE,WA_ACTIVE,0);
+            check(GetFocus()==open,"Reactivating the window restores the focused control");
+            press(open,VK_ESCAPE);
+            check(completions==22&&failure==h::LoginFailure::runtimeUnavailable&&!loginWindow()&&links.size()==2,"Escape on a focused control closes the page (Cancel key equivalent)");
+        }
+        w.runtime=L"154.0.4258.62";
+        presenter.present(h::Region::mainland,done);page=loginWindow();
+        {
+            const HWND go=GetDlgItem(page,101),cancel=GetDlgItem(page,102);
+            check(defaultButton(go)&&!defaultButton(cancel),"Continue is the consent page's default button");
+            press(go,VK_TAB);check(GetFocus()==cancel&&defaultButton(cancel)&&!defaultButton(go),"Tab moves to Cancel");
+            press(cancel,VK_TAB);check(GetFocus()==go,"Tab wraps to Continue");
+            press(cancel,VK_RETURN);
+            check(completions==23&&failure==h::LoginFailure::cancelled&&!loginWindow()&&w.environments==environments+1,"Return on Cancel cancels before any browser");
+        }
+        presenter.present(h::Region::mainland,done);page=loginWindow();
+        press(GetDlgItem(page,101),VK_RETURN);w.pump();w.pump();
+        check(w.environments==environments+2&&lastEnvironment->controllers.size()==1,"Return on Continue consents and opens the official site");
+        {
+            auto web=lastEnvironment->controllers[0];
+            const HWND retry=GetDlgItem(page,103),cancel=GetDlgItem(page,104);
+            check(retry&&cancel&&web->moves==std::vector{COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC},"The official page takes the focus once");
+            press(retry,VK_TAB);check(GetFocus()==cancel,"Tab walks the toolbar");
+            press(cancel,VK_TAB);check(web->moves.back()==COREWEBVIEW2_MOVE_FOCUS_REASON_NEXT,"Tab after Cancel continues into the official page");
+            check(web->leave(COREWEBVIEW2_MOVE_FOCUS_REASON_NEXT)&&GetFocus()==retry,"Tab past the page's last element returns to Retry");
+            check(web->leave(COREWEBVIEW2_MOVE_FOCUS_REASON_PREVIOUS)&&GetFocus()==cancel,"Shift+Tab before its first element returns to Cancel");
+            check(!web->leave(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC),"A programmatic move stays the page's own");
+            shift(true);press(retry,VK_TAB);shift(false);
+            check(web->moves.back()==COREWEBVIEW2_MOVE_FOCUS_REASON_PREVIOUS,"Shift+Tab before Retry continues into the page from its end");
+            // The official page held the focus: reactivation hands it back.
+            SetFocus(page);const auto moves=web->moves.size();
+            SendMessageW(page,WM_ACTIVATE,WA_INACTIVE,0);SendMessageW(page,WM_ACTIVATE,WA_ACTIVE,0);
+            check(web->moves.size()==moves+1&&web->moves.back()==COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC,"Reactivation returns the focus to the official page");
+            press(cancel,VK_ESCAPE);
+            check(completions==24&&failure==h::LoginFailure::cancelled&&web->closed&&!loginWindow(),"Escape on the toolbar cancels and disposes the browser");
+            lastEnvironment->exit();
+        }
+
+        // I. Per-monitor DPI: moving to a 200 % display re-creates the page
+        // fonts at the same point sizes and scales the layout.
+        w.runtime.clear();presenter.present(h::Region::mainland,done);page=loginWindow();
+        {
+            const HWND heading=GetDlgItem(page,110),body=GetDlgItem(page,111),link=GetDlgItem(page,112),open=GetDlgItem(page,105);
+            // The page starts at the HUD window's scale (points -> pixels).
+            const UINT dpi=GetDpiForWindow(owner.hwnd)?GetDpiForWindow(owner.hwnd):96;
+            const auto pixels=[&](double points,UINT at){return int(std::lround(points*at/96.0));};
+            const int title=fontHeight(heading),detail=fontHeight(body);
+            check(title==-pixels(20,dpi)&&detail==-pixels(13,dpi),"The page fonts start at the HUD's scale");
+            RECT before{};GetWindowRect(page,&before);RECT button{};
+            RECT suggested=before;
+            SendMessageW(page,WM_DPICHANGED,MAKEWPARAM(dpi*2,dpi*2),reinterpret_cast<LPARAM>(&suggested));
+            RECT after{};GetWindowRect(page,&after);GetWindowRect(open,&button);
+            check(EqualRect(&after,&suggested)!=FALSE,"The window takes the suggested frame");
+            check(fontHeight(heading)==-pixels(20,dpi*2)&&fontHeight(body)==-pixels(13,dpi*2)&&fontHeight(link)==-pixels(13,dpi*2),
+                  "Fonts are re-created at the same point sizes for the new DPI");
+            check(button.right-button.left==pixels(300,dpi*2)&&button.bottom-button.top==pixels(42,dpi*2),"The layout scales with the new DPI");
+            SendMessageW(page,WM_DPICHANGED,MAKEWPARAM(dpi,dpi),reinterpret_cast<LPARAM>(&suggested));
+            check(fontHeight(heading)==title&&fontHeight(body)==detail,"Returning to the first display restores the sizes");
+            pageFits(page,"runtime page after a DPI round trip");
+            presenter.cancel();
+            check(completions==25&&failure==h::LoginFailure::runtimeUnavailable&&!loginWindow(),"The page still closes as before");
+        }
+        w.runtime=L"154.0.4258.62";
+
         // E. Destruction while a browser is open: no callback, browser closed.
         presenter.present(h::Region::mainland,done);click(loginWindow(),101);w.pump();w.pump();
         auto last=lastEnvironment->controllers[0];const std::filesystem::path lastProfile=w.userData;
@@ -407,7 +516,7 @@ void run() {
         check(presenter.isPresenting()&&std::filesystem::exists(lastProfile),"Presenting before teardown");
         check(!last->closed,"Browser open before teardown");
     }
-    check(completions==21&&lastEnvironment->controllers[0]->closed&&!loginWindow(),"Destroying the presenter closes the browser without a completion");
+    check(completions==25&&lastEnvironment->controllers[0]->closed&&!loginWindow(),"Destroying the presenter closes the browser without a completion");
     check(!std::filesystem::exists(w.userData),"Destroying the presenter removes its private profile");
     check(!IsWindowVisible(owner.hwnd),"Nothing was ever shown");
     lastEnvironment.Reset();world=nullptr;

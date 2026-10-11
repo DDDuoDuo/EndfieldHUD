@@ -124,12 +124,22 @@ void keyboard() {
     h::AccountCanvasModel model;model.setVisible(true);std::vector<std::string> emitted;
     model.onAction=[&](const h::AccountAction& a){emitted.push_back(describe(a));};
     h::AccountPresentation p;p.isLinked=true;p.status=h::AccountPresentation::Status::connected;p.roles=roles(9);p.selectedRoleID="role-0";model.update(p);
-    check(!model.key(h::AccountCanvasModel::Key::down),"Keys pass through without a menu");
-    model.perform("role");check(model.key(h::AccountCanvasModel::Key::down)&&model.selectedChoice()==1,"Down selects the next role");
+    using Focus=std::optional<std::string>;
+    check(!model.key(h::AccountCanvasModel::Key::down)&&!model.keyboardControl(),"Keys pass through without a menu; nothing holds the keyboard focus");
+    model.perform("role");
+    check(model.keyboardControl()==Focus("role:role-0"),"The open menu's keyboard focus starts at the current role");
+    check(model.key(h::AccountCanvasModel::Key::down)&&model.selectedChoice()==1&&model.keyboardControl()==Focus("role:role-1"),"Down selects the next role");
     for(int i=0;i<20;++i) model.key(h::AccountCanvasModel::Key::down);
-    check(model.selectedChoice()==8&&model.menuScrollOffset()==8*31+28-160,"Selection clamps and scrolls the last row into view");
-    check(model.key(h::AccountCanvasModel::Key::activate)&&emitted==std::vector<std::string>{"selectRole:role-8"}&&!model.isPopoverOpen(),"Return chooses and closes");
-    model.perform("disconnect");model.key(h::AccountCanvasModel::Key::activate);
+    check(model.selectedChoice()==8&&model.menuScrollOffset()==8*31+28-160&&model.keyboardControl()==Focus("role:role-8"),"Selection clamps and scrolls the last row into view");
+    const auto list=model.listRect();
+    check(model.scroll({list.x+list.width/2,list.y+list.height/2},-250)&&model.menuScrollOffset()==0&&!model.keyboardControl()&&model.selectedChoice()==8,
+          "A selected row scrolled out of the list holds no focus (the selection stays)");
+    model.key(h::AccountCanvasModel::Key::down);
+    check(model.keyboardControl()==Focus("role:role-8")&&model.menuScrollOffset()==8*31+28-160,"The next arrow brings it back into view");
+    check(model.key(h::AccountCanvasModel::Key::activate)&&emitted==std::vector<std::string>{"selectRole:role-8"}&&!model.isPopoverOpen()&&!model.keyboardControl(),"Return chooses and closes");
+    model.perform("disconnect");
+    check(model.keyboardControl()==Focus("menu:cancel"),"Cancel holds the confirmation's keyboard focus (Return cancels)");
+    model.key(h::AccountCanvasModel::Key::activate);
     check(!model.isPopoverOpen()&&emitted.size()==1,"Return on the disconnect confirmation cancels (Mac safety)");
     model.perform("header");check(model.key(h::AccountCanvasModel::Key::escape)&&!model.isPopoverOpen(),"Escape dismisses only the menu");
     model.perform("header");p.status=h::AccountPresentation::Status::refreshing;model.update(p);check(!model.isPopoverOpen(),"Busy presentation dismisses menus");

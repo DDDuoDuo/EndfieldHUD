@@ -4,13 +4,23 @@
 // a temporary ProfileStore, the module face and the header wallet on a hidden
 // WARP target. No network request, login page, browser, real account, token,
 // profile or visible window is used.
+//
+// Then the Mac import followed by a Windows sign-in: the import tool's codec
+// turns the Mac oracle cache into the committed Account/profile-cache.json,
+// and a fresh owner over it (the hidden-coverage community host replaying the
+// oracle envelopes, an in-memory vault and the fake official-site host that
+// runs the real login policy) reconnects through its accessibility peer.
 #ifdef _WIN32
 #include "tools/account_linking_owner.hpp"
+#include "app/areas/account_coverage.hpp"
+#include "core/data/file_io.hpp"
+#include "core/migration/mac_import_codecs.hpp"
 #include "modules/hypergryph_account_identity_sync.hpp"
 #include "native/hypergryph_account_vault.hpp"
 #include "native/module_scene.hpp"
 #include "core/data/data_store.hpp"
 #include <objbase.h>
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdlib>
@@ -180,9 +190,120 @@ void run(const std::filesystem::path& shader,const std::filesystem::path& resour
     executor.shutdown();CloseHandle(utilityEvent);renderer.reset();
 }
 }
+namespace {
+// Mac import -> restart -> Windows sign-in through the production owner.
+void reconnectAfterImport(const std::filesystem::path& resources,const std::filesystem::path& oracle,const std::filesystem::path& coverage) {
+    namespace areas=endfield::app::areas;
+    // The linked Mac cache with both header games, as the controller contract picks it.
+    const auto source=ehud::data::detail::readFile(oracle,8*1024*1024);check(source.has_value(),"Read the Mac account oracle");
+    const auto json=Json::parse(*source,8*1024*1024);const Json* mac=nullptr;
+    for(const auto& entry:json["controller"]["trace"].array()) {
+        const auto& cache=entry["after"]["cache"];
+        if(!cache.isObject()||!cache["records"].contains("mainland")) continue;
+        const auto& record=cache["records"]["mainland"];
+        if(record["linked"].boolean()&&!record["requiresReconnect"].boolean()&&cache["syncProfile"].boolean()&&record["snapshots"].object().size()==2) {mac=&cache;break;}
+    }
+    check(mac!=nullptr,"The Mac oracle trace has a linked cache with both header games");
+    const auto imported=ehud::migration::importMacAccountCache(mac->encode());
+    check(imported.disconnectedRegions==std::vector<std::string>{"mainland"}&&imported.roles>0&&imported.snapshots==2,"The import tool disconnects the linked region and keeps its roles and snapshots");
+    double now{};
+    for(const auto& [id,snapshot]:(*mac)["records"]["mainland"]["snapshots"].object()) now=std::max(now,snapshot["observedAt"].isString()?std::strtod(snapshot["observedAt"].string().c_str(),nullptr):snapshot["observedAt"].number());
+    TempDirectory temp;
+    {
+        // The import's commit: ordinary file, inherited permissions.
+        std::filesystem::create_directories(temp.path/L"Account");
+        std::ofstream file(temp.path/L"Account"/L"profile-cache.json",std::ios::binary);file<<imported.bytes;
+    }
+    const auto cacheFile=temp.path/L"Account"/L"profile-cache.json";
+    check(!gpu::ownerOnly(cacheFile),"The committed import inherits its folder's permissions");
+    ehud::data::ProfileStore store(temp.path);h::ProfileStoreAccountSink sink(store);
+    const auto f=areas::loadAccountCoverageFixture(coverage);
+    areas::SyntheticCommunityHost community(f.responses);areas::SyntheticAvatarLoader avatar(community);areas::SyntheticLoginHost login(community,f.nonce);
+    h::MemoryCredentialVault vault;
+    Window window;gpu::LayerRasterizer raster;double clock=80;
+    HANDLE utilityEvent=CreateEventW(nullptr,FALSE,FALSE,nullptr);check(utilityEvent!=nullptr,"Utility wake event");
+    app::UtilityExecutor executor([utilityEvent]{SetEvent(utilityEvent);});
+    std::vector<std::string> events;
+    {
+        tools::AccountLinkingOwnerOptions o;o.window=window.hwnd;o.dataRoot=temp.path;o.gaugeResources=resources;o.raster.pixelsPerPoint=1;
+        o.clock=[&]{return clock;};o.wallClock=[&]{return now;};o.recordEvent=[&](std::string_view action){events.emplace_back(action);};o.profile=&sink;
+        o.officialLogin=false;o.wake=[]{};o.synthetic=gpu::HypergryphAccountServicesOptions::Synthetic{&community,&vault,&avatar};o.login=&login;
+        o.workMode=[]{return h::WorkModeGaugeInput{true,1500,61.5};};o.workModeRunning=[]{return true;};
+        tools::AccountLinkingOwner owner(executor,raster,o);auto& controller=owner.controller();
+        // Utility completions and the owner wake (the registered message), until idle.
+        const auto settle=[&]{
+            for(int n=0;n<400;++n) {
+                executor.drain();(void)owner.message({window.hwnd,o.serviceMessage,0,0},clock);
+                if(!community.queued()&&!controller.hasActiveRequest()&&gpu::ownerOnly(cacheFile)) break;
+                WaitForSingleObject(utilityEvent,10);
+            }
+            check(!community.queued()&&!controller.hasActiveRequest(),"Account work settles");
+        };
+        {
+            const auto& record=controller.record();
+            check(record.linked&&record.requiresReconnect&&record.roles.size()==imported.roles&&record.snapshots.size()==2,"The restarted owner reads the imported roles and snapshots");
+        }
+        check(store.profileSyncLocked()==imported.profileSyncLocked,"The profile lock is the one the import reported");
+        // The face and wallet as the HUD shows them after the restart.
+        owner.resize({1280,800,96,1,1280,800});owner.setOverlayVisible(true,clock);
+        core::source::DesktopChromeSettings settings;settings.viewport={0,0,1280,800};settings.module=core::Module::account;core::ModulePresentation modules(core::Module::account);
+        owner.update({},settings,modules.sample(clock).presentation,1,1,clock);
+        check(owner.module().canvas().presentation().statusMessage=="Sign in again to continue syncing."&&owner.module().canvas().presentation().isLinked,
+              "The face asks for a new Windows sign-in");
+        const auto wallet=controller.gaugeValue(h::WorkModeGaugeInput{true,1500,61.5}).value;
+        check(owner.gauge().model().value()==wallet&&wallet.find(" / ")!=std::string::npos&&owner.gauge().model().canOpen(),"The header wallet shows the cached sanity");
+        settle();
+        check(gpu::ownerOnly(cacheFile)&&gpu::readBoundedFile(cacheFile,h::maximumCacheBytes)==std::optional<std::string>(imported.bytes),
+              "The imported cache is restricted to the current user in place, byte for byte");
+        check(community.requests().empty()&&!vault.load(h::Region::mainland),"Nothing is requested and no credential exists before the new sign-in");
+        // Accessibility peers: Reconnect, and the sync toggle's imported state.
+        const auto controls=owner.accessibleControls();
+        const auto peer=[&](std::string_view id)->const gpu::AccountAutomationControl*{for(const auto& c:controls) if(c.id==id) return &c;return nullptr;};
+        const auto* connect=peer("account:connect");const auto* sync=peer("account:syncProfile");
+        check(connect&&connect->label=="Reconnect"&&connect->enabled&&!connect->toggled&&sync&&sync->toggled==std::optional<bool>((*mac)["syncProfile"].boolean()),
+              "UI Automation lists Reconnect and the imported sync toggle state");
+        check(connect->notice=="Sign in again to continue syncing."&&connect->help.find("\nSign in again to continue syncing.")!=std::string::npos,
+              "Reconnect's help text and announcement say a new sign-in is needed");
+        // Reconnect through the peer: the official-login policy and the accepted session.
+        check(owner.performAccessible("account:connect",clock+=.05)&&login.isPresenting()&&controller.isPresentingLogin(),"Reconnect presents the official login");
+        auto* session=login.session();
+        check(session&&session->consent(clock)&&session->allowNavigation(f.site,true,false),"Consent opens the official site");
+        session->pageStarted(clock);session->pageFinished(true,"www.skland.com");
+        const auto& accepted=f.messages.back();
+        auto result=session->credentialMessage(Json::parse(accepted.body),accepted.mainFrame,accepted.frame,accepted.page);
+        check(result.has_value()&&login.finish(std::move(result),h::LoginFailure::cancelled),"The page's session completes the login");
+        settle();
+        const auto saved=vault.load(h::Region::mainland);
+        check(saved&&saved->cred==accepted.session->cred&&saved->signingToken==accepted.session->signingToken&&saved->deviceID==accepted.session->deviceID,
+              "The new Windows credential is stored");
+        check(controller.record().linked&&!controller.record().requiresReconnect&&controller.presentation().status==h::AccountPresentation::Status::connected&&
+              std::find(events.begin(),events.end(),"linked")!=events.end(),"The region syncs again");
+        check(!community.requests().empty()&&community.requests().front().path=="/api/v1/game/player/binding"&&!community.rejected(),"Syncing resumes with the bindings");
+        for(const auto& r:community.requests())
+            check(r.header("cred")==std::optional<std::string>(accepted.session->cred)&&r.header("sign")&&r.header("sign")->size()==32,"Every request carries the new signed credential");
+        check(store.profileSyncLocked()==imported.profileSyncLocked,"The profile lock survives the new sign-in");
+        for(const auto& c:owner.accessibleControls()) if(c.id=="account:connect") check(c.label=="Reconnect"&&c.notice!="Sign in again to continue syncing.","The sign-in request leaves the face");
+        check(owner.flush(clock),"The flush writes the reconnected cache");
+        const auto written=h::decodeCacheBytes(*gpu::readBoundedFile(cacheFile,h::maximumCacheBytes));
+        check(written&&written->records.count("mainland")&&!written->records.at("mainland").requiresReconnect&&gpu::ownerOnly(cacheFile),
+              "The owner-only cache no longer asks for a sign-in (and holds no credential)");
+        const auto bytes=*gpu::readBoundedFile(cacheFile,h::maximumCacheBytes);
+        check(bytes.find(accepted.session->cred)==std::string::npos&&bytes.find(accepted.session->signingToken.value_or(accepted.session->cred))==std::string::npos,
+              "Credentials stay out of the cache");
+        owner.overlayClosing(clock+=.1);
+    }
+    executor.shutdown();CloseHandle(utilityEvent);
+    check(!IsWindowVisible(window.hwnd),"Nothing was shown");
+}
+}
 int wmain(int argc,wchar_t** argv) {
     const auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);
-    try {check(SUCCEEDED(hr)&&argc==3,"Pass shader and windows/resources/account");run(argv[1],std::filesystem::absolute(argv[2]).lexically_normal());CoUninitialize();std::cout<<"PASS "<<checks<<" Account owner checks\n";return 0;}
+    try {
+        check(SUCCEEDED(hr)&&argc==5,"Pass shader, windows/resources/account, hypergryph-account-source.json and hypergryph-account-coverage.json");
+        const auto resources=std::filesystem::absolute(argv[2]).lexically_normal();
+        run(argv[1],resources);reconnectAfterImport(resources,argv[3],argv[4]);
+        CoUninitialize();std::cout<<"PASS "<<checks<<" Account owner checks\n";return 0;
+    }
     catch(const std::exception& e) {counting=false;if(SUCCEEDED(hr)) CoUninitialize();std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}
 }
 #endif

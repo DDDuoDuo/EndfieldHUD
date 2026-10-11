@@ -5,6 +5,7 @@
 #include <wrl.h>
 #include <WebView2.h>
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <filesystem>
 #include <optional>
@@ -60,6 +61,27 @@ constexpr wchar_t windowClass[]=L"EndfieldHUDAccountLogin";
 // Completion is finished from the login window's own queue, never inside a
 // WebView2 event handler that would close its own controller.
 constexpr UINT finishMessage=WM_APP+1;
+// A page control's keyboard navigation key (wParam: virtual key, lParam: the
+// control): the window is no dialog, so the page itself does what the dialog
+// manager would (Tab order, Return, the Mac's Escape = Cancel key equivalent).
+constexpr UINT keyMessage=WM_APP+2;
+// Focusable page controls (buttons, the read-only link field) forward their
+// navigation keys to the page; everything else stays the control's own.
+LRESULT CALLBACK controlProcedure(HWND hwnd,UINT message,WPARAM w,LPARAM l) {
+    const auto original=reinterpret_cast<WNDPROC>(GetWindowLongPtrW(hwnd,GWLP_USERDATA));
+    if(message==WM_KEYDOWN&&(w==VK_ESCAPE||w==VK_TAB||w==VK_RETURN)) {
+        // The page may destroy this control (Cancel, Continue): touch nothing after it answered.
+        if(const HWND page=GetParent(hwnd);page&&SendMessageW(page,keyMessage,w,reinterpret_cast<LPARAM>(hwnd))) return 0;
+    }
+    // Their characters were handled on key down (no edit-control beep).
+    if(message==WM_CHAR&&(w==VK_ESCAPE||w==VK_TAB||w==VK_RETURN)) return 0;
+    return original?CallWindowProcW(original,hwnd,message,w,l):DefWindowProcW(hwnd,message,w,l);
+}
+bool pushButton(HWND hwnd) {
+    wchar_t type[8]{};
+    if(!hwnd||!GetClassNameW(hwnd,type,8)||_wcsicmp(type,L"Button")!=0) return false;
+    const auto kind=GetWindowLongW(hwnd,GWL_STYLE)&BS_TYPEMASK;return kind==BS_PUSHBUTTON||kind==BS_DEFPUSHBUTTON;
+}
 enum Control:int {continueID=101,cancelID=102,retryID=103,toolbarCancelID=104,downloadID=105,checkID=106,titleID=110,detailID=111,siteID=112,noteID=113};
 }
 struct WebViewLoginPresenter::Impl:std::enable_shared_from_this<Impl> {
@@ -67,6 +89,12 @@ struct WebViewLoginPresenter::Impl:std::enable_shared_from_this<Impl> {
     WebViewLoginOptions options;std::optional<h::LoginSession> session;std::size_t reported{};
     std::function<void(std::optional<h::LoginResult>,h::LoginFailure)> completion;
     HWND window{},title{},detail{},site{},continueButton{},cancelButton{},status{},retry{},toolbarCancel{},download{},check{},note{};HFONT titleFont{},bodyFont{},monoFont{};
+    // Physical pixels per point of the login window: the HUD's monitor at
+    // creation, then each WM_DPICHANGED (fonts and layout follow it).
+    double scale{1};
+    // The page control that held the keyboard focus when the window was
+    // deactivated (restored on activation, as the dialog manager does).
+    HWND lastFocus{};bool pageFocused{};
     // Region of the Connect that found no WebView2 Runtime: the window shows
     // the explanation page (no session, profile or browser) while set.
     std::optional<h::Region> runtimeRegion;
@@ -113,35 +141,131 @@ struct WebViewLoginPresenter::Impl:std::enable_shared_from_this<Impl> {
                 }
                 break;
             case WM_SIZE: if(hwnd==keep->window) keep->layout();else keep->layoutPopup(hwnd);return 0;
+            case keyMessage: return hwnd==keep->window&&keep->navigate(static_cast<UINT>(w),reinterpret_cast<HWND>(l))?1:0;
+            // Per-monitor DPI: the window takes the suggested frame; the page
+            // re-creates its fonts at the new scale and lays out again.
+            case WM_DPICHANGED: {
+                const auto* frame=reinterpret_cast<const RECT*>(l);
+                if(hwnd==keep->window) keep->rescale(HIWORD(w)/96.0);
+                if(frame) SetWindowPos(hwnd,nullptr,frame->left,frame->top,frame->right-frame->left,frame->bottom-frame->top,SWP_NOZORDER|SWP_NOACTIVATE);
+                if(hwnd==keep->window) keep->layout();
+                return 0;
+            }
             // Mac windowDidBecomeKey: a popup reads its own page, the main panel the main page.
             case WM_ACTIVATE:
                 if(LOWORD(w)!=WA_INACTIVE) {
                     ICoreWebView2* target=keep->view.Get();
                     for(const auto& popup:keep->popups) if(popup.window==hwnd) target=popup.view.Get();
                     keep->readCredential(target);
-                }
+                    // The first responder comes back with the window (Mac makeKey).
+                    if(hwnd==keep->window&&!HIWORD(w)&&keep->restoreFocus()) return 0;
+                } else if(hwnd==keep->window) keep->rememberFocus();
                 break;
-            case WM_KEYDOWN: if(w==VK_ESCAPE&&hwnd==keep->window) {keep->dismiss();return 0;}break;
+            case WM_KEYDOWN:
+                if(hwnd==keep->window&&(w==VK_ESCAPE||w==VK_TAB||w==VK_RETURN)&&keep->navigate(static_cast<UINT>(w),nullptr)) return 0;
+                break;
             case WM_CLOSE: if(hwnd==keep->window) keep->dismiss();else keep->closePopup(hwnd);return 0;
         }
         return DefWindowProcW(hwnd,message,w,l);
     }
     HWND control(const wchar_t* cls,const std::wstring& text,DWORD style,int id,HFONT font) {
         HWND hwnd=CreateWindowExW(0,cls,text.c_str(),WS_CHILD|WS_VISIBLE|style,0,0,10,10,window,reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),GetModuleHandleW(nullptr),nullptr);
-        SendMessageW(hwnd,WM_SETFONT,reinterpret_cast<WPARAM>(font),TRUE);return hwnd;
+        if(!hwnd) throw std::runtime_error("Login control could not be created");
+        SendMessageW(hwnd,WM_SETFONT,reinterpret_cast<WPARAM>(font),TRUE);
+        if(style&WS_TABSTOP) {
+            // GWLP_USERDATA belongs to the application for system controls.
+            SetWindowLongPtrW(hwnd,GWLP_USERDATA,GetWindowLongPtrW(hwnd,GWLP_WNDPROC));
+            SetWindowLongPtrW(hwnd,GWLP_WNDPROC,reinterpret_cast<LONG_PTR>(&controlProcedure));
+        }
+        return hwnd;
+    }
+    void makeFonts() {
+        for(HFONT* font:{&titleFont,&bodyFont,&monoFont}) if(*font) {DeleteObject(*font);*font=nullptr;}
+        const auto px=[&](double v){return -int(std::lround(v*scale));};
+        titleFont=CreateFontW(px(20),0,0,0,FW_SEMIBOLD,0,0,0,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,L"Segoe UI");
+        bodyFont=CreateFontW(px(13),0,0,0,FW_NORMAL,0,0,0,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,L"Segoe UI");
+        monoFont=CreateFontW(px(13),0,0,0,FW_NORMAL,0,0,0,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,FIXED_PITCH,L"Consolas");
+    }
+    // WM_DPICHANGED: the same point sizes at the new scale on every page control.
+    void rescale(double next) {
+        if(!window||!(next>0)||next==scale) return;
+        const HFONT previous[]{titleFont,bodyFont,monoFont};titleFont=bodyFont=monoFont=nullptr;
+        scale=next;makeFonts();
+        for(HWND child=GetWindow(window,GW_CHILD);child;child=GetWindow(child,GW_HWNDNEXT)) {
+            const auto font=reinterpret_cast<HFONT>(SendMessageW(child,WM_GETFONT,0,0));
+            const HFONT replacement=font==previous[0]?titleFont:font==previous[2]?monoFont:font==previous[1]?bodyFont:nullptr;
+            if(replacement) SendMessageW(child,WM_SETFONT,reinterpret_cast<WPARAM>(replacement),TRUE);
+        }
+        for(HFONT font:previous) if(font) DeleteObject(font);
+    }
+    // The page's keyboard order (visual order) and default button.
+    std::array<HWND,4> tabStops() const {
+        if(runtimeRegion) return {site,download,check,cancelButton};
+        if(session&&!session->consented()) return {continueButton,cancelButton,nullptr,nullptr};
+        return {retry,toolbarCancel,nullptr,nullptr};
+    }
+    HWND defaultButton() const {return runtimeRegion?download:session&&!session->consented()?continueButton:nullptr;}
+    bool ownsControl(HWND hwnd) const {
+        if(!hwnd) return false;
+        for(HWND stop:tabStops()) if(stop==hwnd) return true;
+        return false;
+    }
+    // Keyboard focus to a page control, with the dialog manager's cues: the
+    // focus rectangle shows, the focused push button (else the page's
+    // default) draws as the default button, and the link field is selected.
+    void focusControl(HWND target) {
+        if(!target) return;
+        SendMessageW(window,WM_CHANGEUISTATE,MAKEWPARAM(UIS_CLEAR,UISF_HIDEFOCUS),0);
+        const HWND chosen=pushButton(target)?target:defaultButton();
+        for(HWND stop:tabStops()) if(pushButton(stop)) SendMessageW(stop,BM_SETSTYLE,stop==chosen?BS_DEFPUSHBUTTON:BS_PUSHBUTTON,TRUE);
+        SetFocus(target);
+        if(target==site) SendMessageW(site,EM_SETSEL,0,-1);
+    }
+    // Escape cancels (Mac Cancel key equivalent); Tab / Shift+Tab walk the
+    // page's controls (and, after consent, continue into the official page);
+    // Return presses the focused button, else the page's default button.
+    bool navigate(UINT key,HWND from) {
+        if(!window||(from&&!ownsControl(from))) return false;
+        if(key==VK_ESCAPE) {dismiss();return true;}
+        if(key==VK_RETURN) {
+            const HWND target=pushButton(from)?from:defaultButton();
+            if(target) SendMessageW(window,WM_COMMAND,MAKEWPARAM(GetDlgCtrlID(target),BN_CLICKED),reinterpret_cast<LPARAM>(target));
+            return true;
+        }
+        if(key!=VK_TAB) return false;
+        const bool back=GetKeyState(VK_SHIFT)<0;
+        std::vector<HWND> order;for(HWND stop:tabStops()) if(stop&&IsWindowEnabled(stop)) order.push_back(stop);
+        if(order.empty()) return true;
+        std::size_t at=order.size();for(std::size_t i=0;i<order.size();++i) if(order[i]==from) at=i;
+        if(at==order.size()) {focusControl(back?order.back():order.front());return true;}
+        const bool leaves=back?at==0:at+1==order.size();
+        // After consent the official page is the next stop after the toolbar.
+        if(leaves&&controller) {controller->MoveFocus(back?COREWEBVIEW2_MOVE_FOCUS_REASON_PREVIOUS:COREWEBVIEW2_MOVE_FOCUS_REASON_NEXT);return true;}
+        focusControl(order[leaves?(back?order.size()-1:0):(back?at-1:at+1)]);
+        return true;
+    }
+    // Deactivation: a toolbar/page control keeps its focus; after consent
+    // anything else was the official page (its focus may live in the browser
+    // process, which GetFocus does not report).
+    void rememberFocus() {
+        const HWND focus=GetFocus();
+        lastFocus=ownsControl(focus)?focus:nullptr;
+        pageFocused=!lastFocus&&controller;
+    }
+    bool restoreFocus() {
+        if(ownsControl(lastFocus)&&IsWindow(lastFocus)) {SetFocus(lastFocus);return true;}
+        if(pageFocused&&controller) {controller->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);return true;}
+        return false;
     }
     // Mac NSPanel 860x650 points, minimum 680x540; above the HUD (topmost
     // owned window), centred on it. Shared by the consent and runtime pages.
     bool createWindow(h::Region region) {
         const auto strings=h::LoginSession::strings(region,options.language);
-        const double scale=dpiScale(options.owner);
+        scale=dpiScale(options.owner);lastFocus=nullptr;pageFocused=false;
         window=CreateWindowExW(WS_EX_TOPMOST,windowClass,wide(strings.title).c_str(),WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_THICKFRAME|WS_MINIMIZEBOX,
             CW_USEDEFAULT,CW_USEDEFAULT,int(860*scale),int(650*scale),options.owner,nullptr,GetModuleHandleW(nullptr),this);
         if(!window) return false;
-        const auto px=[&](double v){return -int(std::lround(v*scale));};
-        titleFont=CreateFontW(px(20),0,0,0,FW_SEMIBOLD,0,0,0,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,L"Segoe UI");
-        bodyFont=CreateFontW(px(13),0,0,0,FW_NORMAL,0,0,0,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,L"Segoe UI");
-        monoFont=CreateFontW(px(13),0,0,0,FW_NORMAL,0,0,0,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,FIXED_PITCH,L"Consolas");
+        makeFonts();
         RECT owner{},frame{};
         if(options.owner&&GetWindowRect(options.owner,&owner)&&GetWindowRect(window,&frame))
             SetWindowPos(window,HWND_TOPMOST,(owner.left+owner.right)/2-(frame.right-frame.left)/2,(owner.top+owner.bottom)/2-(frame.bottom-frame.top)/2,0,0,SWP_NOSIZE|(options.showWindows?0u:SWP_NOACTIVATE));
@@ -150,6 +274,7 @@ struct WebViewLoginPresenter::Impl:std::enable_shared_from_this<Impl> {
     void show(HWND focus) {
         layout();
         if(options.showWindows) {ShowWindow(window,SW_SHOWNORMAL);SetForegroundWindow(window);SetFocus(focus);}
+        lastFocus=focus;pageFocused=false;
     }
     void consentPage() {
         const auto strings=h::LoginSession::strings(session->region(),options.language);
@@ -199,6 +324,7 @@ struct WebViewLoginPresenter::Impl:std::enable_shared_from_this<Impl> {
         }
         const auto region=*runtimeRegion;runtimeRegion.reset();
         for(HWND* child:{&title,&detail,&site,&download,&check,&cancelButton,&note}) if(*child) {DestroyWindow(*child);*child=nullptr;}
+        lastFocus=nullptr;
         session.emplace(region,nonce());reported=0;
         if(options.diagnostic) options.diagnostic("runtime-installed");
         consentPage();show(continueButton);
@@ -214,7 +340,7 @@ struct WebViewLoginPresenter::Impl:std::enable_shared_from_this<Impl> {
         target->put_ZoomFactor(community?p::pageZoom(points):1.0);
     }
     void layout() {
-        if(!window) return;RECT r{};GetClientRect(window,&r);const int width=r.right,height=r.bottom;const double s=dpiScale(window);
+        if(!window) return;RECT r{};GetClientRect(window,&r);const int width=r.right,height=r.bottom;const double s=scale;
         const auto v=[&](double x){return int(std::lround(x*s));};
         if(runtimeRegion) {
             const int column=int(width*.76),left=(width-column)/2;int y=height/2-v(210);
@@ -252,7 +378,7 @@ struct WebViewLoginPresenter::Impl:std::enable_shared_from_this<Impl> {
     void consent() {
         if(!session||!session->consent(now())) return;
         for(HWND child:{title,detail,site,continueButton,cancelButton}) DestroyWindow(child);
-        title=detail=site=continueButton=cancelButton=nullptr;
+        title=detail=site=continueButton=cancelButton=nullptr;lastFocus=nullptr;
         const auto strings=h::LoginSession::strings(session->region(),options.language);
         status=control(L"STATIC",wide(strings.site),SS_LEFT|SS_ENDELLIPSIS,0,bodyFont);
         retry=control(L"BUTTON",wide(strings.retryLabel),BS_PUSHBUTTON|WS_TABSTOP,retryID,bodyFont);
@@ -271,7 +397,7 @@ struct WebViewLoginPresenter::Impl:std::enable_shared_from_this<Impl> {
                         if(FAILED(result)||!value) {self->session->processFailed();self->diag();self->setStatus();return S_OK;}
                         self->controller=value;self->controller->get_CoreWebView2(self->view.GetAddressOf());
                         self->configure(self->controller.Get(),self->view.Get(),false);self->layout();
-                        self->controller->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
+                        self->controller->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);self->lastFocus=nullptr;self->pageFocused=true;
                         self->view->Navigate(wide(p::siteURL(self->session->region())).c_str());
                         return S_OK;
                     }).Get());
@@ -343,6 +469,14 @@ struct WebViewLoginPresenter::Impl:std::enable_shared_from_this<Impl> {
             v4->add_DownloadStarting(Callback<ICoreWebView2DownloadStartingEventHandler>([](ICoreWebView2*,ICoreWebView2DownloadStartingEventArgs* args)->HRESULT {args->put_Cancel(TRUE);return S_OK;}).Get(),&unused);
         if(popup) webview->add_WindowCloseRequested(Callback<ICoreWebView2WindowCloseRequestedEventHandler>([weak](ICoreWebView2* sender,IUnknown*)->HRESULT {
             if(auto self=weak.lock()) for(const auto& popupView:self->popups) if(popupView.view.Get()==sender) {PostMessageW(popupView.window,WM_CLOSE,0,0);break;}
+            return S_OK;}).Get(),&unused);
+        // Tab past the official page's first/last element returns to the
+        // toolbar (the page is the stop after Cancel); popups keep their own.
+        if(!popup) host->add_MoveFocusRequested(Callback<ICoreWebView2MoveFocusRequestedEventHandler>([weak,token](ICoreWebView2Controller*,ICoreWebView2MoveFocusRequestedEventArgs* args)->HRESULT {
+            auto self=weak.lock();if(!self||self->generation!=token||!self->session||!self->retry||!self->toolbarCancel) return S_OK;
+            COREWEBVIEW2_MOVE_FOCUS_REASON reason{};args->get_Reason(&reason);
+            if(reason==COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC) return S_OK;
+            args->put_Handled(TRUE);self->focusControl(reason==COREWEBVIEW2_MOVE_FOCUS_REASON_PREVIOUS?self->toolbarCancel:self->retry);
             return S_OK;}).Get(),&unused);
         // Mac Cancel key equivalent: Escape always reaches the controller as an accelerator.
         host->add_AcceleratorKeyPressed(Callback<ICoreWebView2AcceleratorKeyPressedEventHandler>([weak,token](ICoreWebView2Controller*,ICoreWebView2AcceleratorKeyPressedEventArgs* args)->HRESULT {
@@ -420,7 +554,7 @@ struct WebViewLoginPresenter::Impl:std::enable_shared_from_this<Impl> {
     }
     void destroyWindow() {
         if(window) {DestroyWindow(window);window=nullptr;}
-        status=retry=toolbarCancel=title=detail=site=continueButton=cancelButton=download=check=note=nullptr;
+        status=retry=toolbarCancel=title=detail=site=continueButton=cancelButton=download=check=note=nullptr;lastFocus=nullptr;pageFocused=false;
         for(HFONT* font:{&titleFont,&bodyFont,&monoFont}) if(*font) {DeleteObject(*font);*font=nullptr;}
     }
     void finish(std::optional<h::LoginResult> result,h::LoginFailure failure) {

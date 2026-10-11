@@ -18,10 +18,29 @@ std::wstring wide(std::string_view s) {
 std::atomic<int> nextRuntime{1};
 VARIANT text(std::string_view s) {VARIANT v;VariantInit(&v);v.vt=VT_BSTR;v.bstrVal=SysAllocString(wide(s).c_str());return v;}
 VARIANT flag(bool b) {VARIANT v;VariantInit(&v);v.vt=VT_BOOL;v.boolVal=b?VARIANT_TRUE:VARIANT_FALSE;return v;}
+VARIANT toggleState(std::optional<bool> on) {VARIANT v;VariantInit(&v);v.vt=VT_I4;v.lVal=on.value_or(false)?ToggleState_On:ToggleState_Off;return v;}
+// UiaRaiseNotificationEvent exists from Windows 10 1709: resolved at run time
+// (no import that older systems cannot load); NotificationKind_ActionCompleted
+// and NotificationProcessing_MostRecent by value.
+using RaiseNotification=HRESULT(WINAPI*)(IRawElementProviderSimple*,int kind,int processing,BSTR text,BSTR activity);
+RaiseNotification notifier() {
+    static const RaiseNotification raise=[]{
+        const HMODULE core=GetModuleHandleW(L"UIAutomationCore.dll");
+        return core?reinterpret_cast<RaiseNotification>(reinterpret_cast<void*>(GetProcAddress(core,"UiaRaiseNotificationEvent"))):nullptr;
+    }();
+    return raise;
+}
+void announce(IRawElementProviderSimple* element,std::string_view message) {
+    const auto raise=notifier();if(!raise) return;
+    BSTR spoken=SysAllocString(wide(message).c_str()),activity=SysAllocString(L"EndfieldHUD.account.status");
+    if(spoken&&activity) raise(element,2,3,spoken,activity);
+    SysFreeString(spoken);SysFreeString(activity);
+}
 }
 
 struct NativeAccountAutomation::State {
     AccountAutomationHost host;std::vector<ComPtr<AccountAutomationElement>> order;AccountAutomationStats statistics;
+    int focused{}; // runtime id of the element that last held the keyboard focus (0: none)
     std::optional<core::Rect> screen(core::Rect r) const {
         if(!host.toScreen) return std::nullopt;const auto out=host.toScreen(r);
         if(!out||!std::isfinite(out->x)||!std::isfinite(out->y)||!std::isfinite(out->width)||!std::isfinite(out->height)||out->width<=0||out->height<=0) return std::nullopt;
@@ -29,7 +48,7 @@ struct NativeAccountAutomation::State {
     }
 };
 
-class AccountAutomationElement final:public IRawElementProviderSimple,public IRawElementProviderFragment,public IInvokeProvider {
+class AccountAutomationElement final:public IRawElementProviderSimple,public IRawElementProviderFragment,public IInvokeProvider,public IToggleProvider {
 public:
     using State=NativeAccountAutomation::State;
     AccountAutomationElement(std::weak_ptr<State> s,AccountAutomationControl c):state(std::move(s)),control(std::move(c)),runtime(nextRuntime++) {}
@@ -40,6 +59,7 @@ public:
         if(riid==__uuidof(IUnknown)||riid==__uuidof(IRawElementProviderSimple)) *out=static_cast<IRawElementProviderSimple*>(this);
         else if(riid==__uuidof(IRawElementProviderFragment)) *out=static_cast<IRawElementProviderFragment*>(this);
         else if(riid==__uuidof(IInvokeProvider)) *out=static_cast<IInvokeProvider*>(this);
+        else if(riid==__uuidof(IToggleProvider)) *out=static_cast<IToggleProvider*>(this);
         else return E_NOINTERFACE;
         AddRef();return S_OK;
     }
@@ -49,7 +69,9 @@ public:
     IFACEMETHODIMP get_ProviderOptions(ProviderOptions* out) override {if(!out) return E_POINTER;*out=ProviderOptions(ProviderOptions_ServerSideProvider|ProviderOptions_UseComThreading);return S_OK;}
     IFACEMETHODIMP GetPatternProvider(PATTERNID id,IUnknown** out) override {
         if(!out) return E_POINTER;*out=nullptr;if(!connected) return UIA_E_ELEMENTNOTAVAILABLE;
-        if(id==UIA_InvokePatternId) {*out=static_cast<IInvokeProvider*>(this);AddRef();}
+        // The sync toggles answer Toggle; every other control Invoke.
+        if(id==UIA_InvokePatternId&&!control.toggled) {*out=static_cast<IInvokeProvider*>(this);AddRef();}
+        else if(id==UIA_TogglePatternId&&control.toggled) {*out=static_cast<IToggleProvider*>(this);AddRef();}
         return S_OK;
     }
     IFACEMETHODIMP GetPropertyValue(PROPERTYID id,VARIANT* out) override {
@@ -59,9 +81,11 @@ public:
         case UIA_AutomationIdPropertyId: *out=text(control.id);break;
         case UIA_ControlTypePropertyId: out->vt=VT_I4;out->lVal=UIA_ButtonControlTypeId;break;
         case UIA_IsEnabledPropertyId: *out=flag(control.enabled);break;
-        case UIA_IsKeyboardFocusablePropertyId: *out=flag(false);break;
+        case UIA_IsKeyboardFocusablePropertyId: *out=flag(control.focusable);break;
+        case UIA_HasKeyboardFocusPropertyId: *out=flag(control.focused);break;
         case UIA_IsOffscreenPropertyId: {const auto s=state.lock();*out=flag(!s||!s->screen(control.rect));break;}
         case UIA_FrameworkIdPropertyId: *out=text("EndfieldHUD");break;
+        case UIA_HelpTextPropertyId: if(!control.help.empty()) *out=text(control.help);break;
         default: break;
         }
         return S_OK;
@@ -99,15 +123,25 @@ public:
         return S_OK;
     }
     // IInvokeProvider: AccountAXButton.accessibilityPerformPress.
-    IFACEMETHODIMP Invoke() override {
-        if(!connected) return UIA_E_ELEMENTNOTAVAILABLE;if(!control.enabled) return UIA_E_ELEMENTNOTENABLED;
-        const auto s=state.lock();if(!s||!s->host.invoke) return UIA_E_ELEMENTNOTAVAILABLE;
-        // The press may rebuild the tree; keep this element and its id alive.
-        const ComPtr<AccountAutomationElement> self(this);const std::string id=control.id;++s->statistics.invokes;
-        return s->host.invoke(id)?S_OK:UIA_E_INVALIDOPERATION;
+    IFACEMETHODIMP Invoke() override {return press(false);}
+    // IToggleProvider: the same press flips a sync toggle (the canvas emits
+    // setSyncProfile/setSyncAvatar with the opposite state).
+    IFACEMETHODIMP Toggle() override {return press(true);}
+    IFACEMETHODIMP get_ToggleState(ToggleState* out) override {
+        if(!out) return E_POINTER;*out=ToggleState_Off;if(!connected) return UIA_E_ELEMENTNOTAVAILABLE;
+        *out=control.toggled.value_or(false)?ToggleState_On:ToggleState_Off;return S_OK;
     }
     void disconnect() noexcept {if(!connected) return;connected=false;UiaDisconnectProvider(static_cast<IRawElementProviderSimple*>(this));}
 private:
+    HRESULT press(bool toggle) {
+        if(!connected) return UIA_E_ELEMENTNOTAVAILABLE;if(!control.enabled) return UIA_E_ELEMENTNOTENABLED;
+        if(toggle!=control.toggled.has_value()) return UIA_E_INVALIDOPERATION;
+        const auto s=state.lock();if(!s||!s->host.invoke) return UIA_E_ELEMENTNOTAVAILABLE;
+        // The press may rebuild the tree; keep this element and its id alive.
+        const ComPtr<AccountAutomationElement> self(this);const std::string id=control.id;
+        ++(toggle?s->statistics.toggles:s->statistics.invokes);
+        return s->host.invoke(id)?S_OK:UIA_E_INVALIDOPERATION;
+    }
     ~AccountAutomationElement()=default;
     std::atomic<ULONG> refs{1};
 };
@@ -136,6 +170,15 @@ bool NativeAccountAutomation::refresh() {
                 const auto raise=[&](PROPERTYID id,VARIANT before,VARIANT after){UiaRaiseAutomationPropertyChangedEvent(simple,id,before,after);VariantClear(&before);VariantClear(&after);};
                 if(e->control.label!=c.label) raise(UIA_NamePropertyId,text(e->control.label),text(c.label));
                 if(e->control.enabled!=c.enabled) raise(UIA_IsEnabledPropertyId,flag(e->control.enabled),flag(c.enabled));
+                if(e->control.toggled!=c.toggled) raise(UIA_ToggleToggleStatePropertyId,toggleState(e->control.toggled),toggleState(c.toggled));
+                if(e->control.focusable!=c.focusable) raise(UIA_IsKeyboardFocusablePropertyId,flag(e->control.focusable),flag(c.focusable));
+                if(e->control.focused!=c.focused) raise(UIA_HasKeyboardFocusPropertyId,flag(e->control.focused),flag(c.focused));
+                if(e->control.help!=c.help) raise(UIA_HelpTextPropertyId,text(e->control.help),text(c.help));
+            }
+            // A new status message on the face is announced once.
+            if(e->control.notice!=c.notice&&!c.notice.empty()) {
+                ++s.statistics.announcements;
+                if(listening) announce(static_cast<IRawElementProviderSimple*>(e.Get()),c.notice);
             }
             e->control=std::move(c);
         }
@@ -143,7 +186,17 @@ bool NativeAccountAutomation::refresh() {
         next.push_back(std::move(e));
     }
     for(auto& old:s.order) {bool kept=false;for(const auto& n:next) if(n.Get()==old.Get()) {kept=true;break;}if(!kept) {old->disconnect();++s.statistics.disconnected;}}
-    s.order=std::move(next);if(changed) ++s.statistics.structureChanges;return changed;
+    s.order=std::move(next);if(changed) ++s.statistics.structureChanges;
+    // Keyboard focus moved (an arrow key, a menu opening on its current row):
+    // announce the newly focused element once it is listed in the tree.
+    AccountAutomationElement* focus{};
+    for(const auto& e:s.order) if(e->control.focused) {focus=e.Get();break;}
+    const int runtime=focus?focus->runtime:0;
+    if(runtime!=s.focused) {
+        s.focused=runtime;
+        if(focus) {++s.statistics.focusMoves;if(listening) UiaRaiseAutomationEvent(static_cast<IRawElementProviderSimple*>(focus),UIA_AutomationFocusChangedEventId);}
+    }
+    return changed;
 }
 HRESULT NativeAccountAutomation::child(std::size_t index,IRawElementProviderFragment** out) const {
     if(!out) return E_POINTER;*out=nullptr;if(index>=state_->order.size()) return E_INVALIDARG;
@@ -157,7 +210,7 @@ HRESULT NativeAccountAutomation::fromPoint(double x,double y,IRawElementProvider
 }
 void NativeAccountAutomation::disconnect() noexcept {
     auto& s=*state_;for(auto& e:s.order) {e->disconnect();++s.statistics.disconnected;}
-    if(!s.order.empty()) ++s.statistics.structureChanges;s.order.clear();
+    if(!s.order.empty()) ++s.statistics.structureChanges;s.order.clear();s.focused=0;
 }
 }
 #endif

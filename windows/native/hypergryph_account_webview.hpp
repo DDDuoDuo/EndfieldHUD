@@ -29,6 +29,16 @@
 // installed (no restart), and closing the page reports runtimeUnavailable.
 // The HUD hiding closes the page like any login (the controller cancels it).
 // No profile, browser process or download is started by EndfieldHUD itself.
+//
+// Keyboard: the window is no dialog, so its pages do what the dialog manager
+// would. Tab / Shift+Tab walk the page's controls in visual order (after
+// consent: Retry, Cancel, then the official page, whose MoveFocusRequested
+// returns to the toolbar), the focused push button draws as the default one,
+// Return presses the focused button (else the page's default: Continue, the
+// download page), Escape is Cancel from any control (Mac key equivalent), and
+// reactivation restores the focused control or the page. Per-monitor DPI:
+// WM_DPICHANGED takes the suggested frame and re-creates the page fonts at
+// the same point sizes.
 namespace endfield::native {
 struct WebViewLoginOptions {
     HWND owner{};                              // HUD window: the login stays above it

@@ -55,6 +55,15 @@ public:
     std::optional<Menu> menu() const noexcept {return menu_;}
     std::optional<core::Rect> popoverBounds() const;
     std::vector<CanvasControl> accessibleActions() const;
+    // The control Return/Enter/Space activates while a menu is open: the
+    // keyboard selection that Up/Down move (activateMenuSelection), Cancel in
+    // the disconnect confirmation. Nothing draws it (the Mac paints only the
+    // current value); UI Automation reports it as the keyboard focus. None
+    // without a menu, or when the selected row is scrolled out of the list.
+    std::optional<std::string> keyboardControl() const;
+    // The face's status line under the title (Not connected, Connecting…,
+    // the account name, Syncing…, Connection unavailable), as painted.
+    std::string statusLine() const;
     double menuScrollOffset() const noexcept {return offset_;}
     std::size_t selectedChoice() const noexcept {return selected_;}
     const AccountPresentation& presentation() const noexcept {return presentation_;}

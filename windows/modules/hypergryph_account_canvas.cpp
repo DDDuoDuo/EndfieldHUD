@@ -105,6 +105,25 @@ std::vector<CanvasControl> AccountCanvasModel::menuControls() const {
     return c;
 }
 std::vector<CanvasControl> AccountCanvasModel::accessibleActions() const {return menu_?menuControls():mainControls();}
+std::string AccountCanvasModel::statusLine() const {
+    const auto& p=presentation_;using S=AccountPresentation::Status;
+    switch(p.status) {
+        case S::disconnected: return t("Not connected","未绑定");
+        case S::connecting: return t("Connecting…","正在连接…");
+        case S::connected: return p.accountName.empty()?t("Connected","已绑定"):p.accountName;
+        case S::refreshing: return t("Syncing…","正在同步…");
+        case S::failed: return t("Connection unavailable","连接不可用");
+    }
+    return {};
+}
+std::optional<std::string> AccountCanvasModel::keyboardControl() const {
+    if(!menu_) return std::nullopt;
+    if(*menu_==Menu::disconnect) return std::string("menu:cancel");
+    if(selected_>=choices_.size()) return std::nullopt;
+    const auto r=intersection({list_.x+2,list_.y+double(selected_)*rowPitch+2-offset_,list_.width-6,26},list_);
+    if(r.width<=0||r.height<=0) return std::nullopt;
+    return choices_[selected_].id;
+}
 std::optional<core::Rect> AccountCanvasModel::popoverBounds() const {if(!menu_) return std::nullopt;return menuRect_;}
 bool AccountCanvasModel::update(const AccountPresentation& value) {
     if(presentation_==value) return false;
@@ -213,15 +232,8 @@ CanvasPlan AccountCanvasModel::plan(const CanvasStyle& style) const {
     a.text("account/title","// "+t("Account","账户绑定"),{12,8,244,24},17);
     a.button("account/connect","connect",busy?t("Connecting…","正在连接…"):p.isLinked?t("Reconnect","重新连接"):t("Connect","绑定账户"),{276,7,112,28},!busy,true);
     a.fill("account/rule",{12,40,376,1},alpha(a.ink,.2));
-    using S=AccountPresentation::Status;std::string status;
-    switch(p.status) {
-        case S::disconnected: status=t("Not connected","未绑定");break;
-        case S::connecting: status=t("Connecting…","正在连接…");break;
-        case S::connected: status=p.accountName.empty()?t("Connected","已绑定"):p.accountName;break;
-        case S::refreshing: status=t("Syncing…","正在同步…");break;
-        case S::failed: status=t("Connection unavailable","连接不可用");break;
-    }
-    a.text("account/status",status,{12,53,295,18},12);
+    using S=AccountPresentation::Status;
+    a.text("account/status",statusLine(),{12,53,295,18},12);
     const bool refreshEnabled=p.isLinked&&!busy;
     a.button("account/refresh","refresh","",{321,47,28,28},refreshEnabled);
     a.shape("account/refresh/icon",refreshPath(),{326,52,18,18},alpha(a.ink,refreshEnabled?1:.35),{},1,1);
