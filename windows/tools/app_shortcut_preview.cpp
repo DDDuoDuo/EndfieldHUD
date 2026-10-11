@@ -118,9 +118,12 @@ bool AppShortcutPreview::pointer(const app::PointerEvent&e,double t){auto i=impl
 }
 bool AppShortcutPreview::scroll(core::Point p,double delta,double t){auto i=impl_;i->clock(t);if(!i->input||i->panel()||i->field||i->busy())return false;const auto q=i->local(p);return q&&i->state.scroll(*q,delta);}
 bool AppShortcutPreview::wheel(const app::WheelEvent&e,double t){if(e.horizontal)return false;return scroll({e.x,e.y},-e.steps*(e.linesPerStep==UINT32_MAX?252.:12.*e.linesPerStep),t);}
-namespace {ShortcutKeyModifiers keyboardModifiers(const app::KeyEvent&e){ShortcutKeyModifiers k;k.shift=GetKeyState(VK_SHIFT)<0;k.control=GetKeyState(VK_CONTROL)<0;k.system=e.alt||GetKeyState(VK_MENU)<0||GetKeyState(VK_LWIN)<0||GetKeyState(VK_RWIN)<0;k.modified=k.shift||k.control||k.system;return k;}}
-bool AppShortcutPreview::key(const app::KeyEvent&e,double t){return key(e,keyboardModifiers(e),t);}
-bool AppShortcutPreview::key(const app::KeyEvent&e,bool modified,double t){auto k=keyboardModifiers(e);k.modified=modified;return key(e,k,t);}
+ShortcutKeyModifiers shortcutKeyboardModifiers(const app::KeyEvent&e){ShortcutKeyModifiers k;k.shift=GetKeyState(VK_SHIFT)<0;k.control=GetKeyState(VK_CONTROL)<0;k.system=e.alt||GetKeyState(VK_MENU)<0||GetKeyState(VK_LWIN)<0||GetKeyState(VK_RWIN)<0;k.modified=k.shift||k.control||k.system;return k;}
+bool AppShortcutPreview::key(const app::KeyEvent&e,double t){return key(e,shortcutKeyboardModifiers(e),t);}
+// Synthetic input never reads the keyboard: off the HUD's key-message dispatch
+// GetKeyState follows the live keyboard, so a key held on the machine would
+// turn a plain Return or character into a modified one.
+bool AppShortcutPreview::key(const app::KeyEvent&e,bool modified,double t){ShortcutKeyModifiers k;k.system=e.alt;k.modified=modified||k.system;return key(e,k,t);}
 bool AppShortcutPreview::key(const app::KeyEvent&e,const ShortcutKeyModifiers&k,double t){const bool modified=k.modified;auto i=impl_;i->clock(t);if(!i->input||i->panel())return false;if(auto current=i->field){auto editor=current->editor;if(!editor)return false;const auto event=i->eventRevision;const auto valid=[&]{return i->alive&&i->field==current&&event==i->eventRevision;};const bool shift=k.shift,control=k.control,system=k.system;
     if(e.kind==app::KeyKind::character||e.kind==app::KeyKind::unicodeCharacter){if(e.value=='\r'||e.value=='\n'||e.value=='\t'||e.value==27)return true;if(control||system)return false;editor->character(e.value,e.kind==app::KeyKind::unicodeCharacter);if(valid())i->syncField();return true;}if(e.kind!=app::KeyKind::down)return false;if(!modified&&!current->document.composition()){if(e.value==VK_ESCAPE){i->finish(false);return true;}if(e.value==VK_RETURN||e.value==VK_TAB){i->finish(true);return true;}}if(system)return false;using C=g::ProjectedEditorCommand;
     if(control){if(!shift&&(e.value=='C'||e.value=='X'||e.value=='V'))return i->clipboardKey(current,e.value);if(e.value=='A')editor->command(C::selectAll);else if(e.value=='Z'){if(shift)editor->redo();else editor->undo();}else if(e.value=='Y')editor->redo();else return false;if(valid())i->syncField();return true;}

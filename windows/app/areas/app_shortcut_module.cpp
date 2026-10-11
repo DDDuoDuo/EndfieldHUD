@@ -245,15 +245,6 @@ struct SyntheticClipboard final : g::NotesClipboard {
     bool writeText(const g::NotesClipboardText& text) override { ++writes; value = text; return true; }
 };
 
-// Keyboard modifiers of a routed key (HUDAppShortcutInteraction.keyDown).
-tools::ShortcutKeyModifiers keyboardModifiers(const app::KeyEvent& e) {
-    tools::ShortcutKeyModifiers k;
-    k.shift = GetKeyState(VK_SHIFT) < 0;k.control = GetKeyState(VK_CONTROL) < 0;
-    k.system = e.alt || GetKeyState(VK_MENU) < 0 || GetKeyState(VK_LWIN) < 0 || GetKeyState(VK_RWIN) < 0;
-    k.modified = k.shift || k.control || k.system;
-    return k;
-}
-
 constexpr std::string_view nameFieldID = "apps:name:field";
 
 // Hidden coverage: the seeded Mac archive, the import's ledger rows for it and
@@ -344,7 +335,10 @@ public:
     bool pointerLocked() const override { return preview_->pointerLocked(); }
     bool pointer(const app::PointerEvent& e, double t) override { const bool used = preview_->pointer(e, t);pump();return used; }
     bool wheel(const app::WheelEvent& e, double t) override { return preview_->wheel(e, t); }
-    bool key(const app::KeyEvent& e, double t) override { return key(e, keyboardModifiers(e), t); }
+    // The host's key chain runs inside the HUD window's key-message dispatch,
+    // where the keyboard state matches the message (HUDAppShortcutInteraction
+    // .keyDown reads event.modifierFlags); coverage states its modifiers.
+    bool key(const app::KeyEvent& e, double t) override { return key(e, tools::shortcutKeyboardModifiers(e), t); }
     bool filterKey(const app::NativeMessage& m) override { return preview_->filterKey(m); }
     bool message(const app::NativeMessage& m, double t) override { return preview_->message(m, t); }
     void focus(bool value, double t) override { focused_ = value;preview_->focus(value, t); }

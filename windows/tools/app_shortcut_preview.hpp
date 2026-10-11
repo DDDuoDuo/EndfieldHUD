@@ -17,6 +17,10 @@ struct ShortcutRequest {
     std::optional<std::string>editingID;std::string name,icon;
 };
 struct ShortcutKeyModifiers {bool modified{},shift{},control{},system{};};
+// The modifiers of a key routed by the HUD's own key-message dispatch, where
+// GetKeyState is synchronized with that message (Shift, Ctrl, Alt or the
+// event's Alt, Windows keys). Synthetic keys state theirs instead.
+ShortcutKeyModifiers shortcutKeyboardModifiers(const app::KeyEvent&);
 struct AppShortcutPreviewOptions {
     modules::ShortcutFile initial;
     std::optional<std::string>initialError;
@@ -60,9 +64,11 @@ public:
     bool requiresFrames(double)const;bool covers(core::Point logicalClientPoint)const;
     bool pointer(const app::PointerEvent&,double);bool wheel(const app::WheelEvent&,double);
     bool scroll(core::Point logicalClientPoint,double logicalDelta,double);
-    // key(event) reads the keyboard state; `modified` overrides only whether
-    // any modifier is down; ShortcutKeyModifiers states every modifier
-    // explicitly (synthetic input in tests and hidden coverage).
+    // key(event) reads the keyboard state (the HUD's key-message dispatch
+    // only). Synthetic input in tests and hidden coverage never reads it:
+    // key(event, modified) states that an unnamed modifier is down or that
+    // none is (the event's own Alt still counts as System), and
+    // ShortcutKeyModifiers states every modifier explicitly.
     bool key(const app::KeyEvent&,double);bool key(const app::KeyEvent&,bool modified,double);
     bool key(const app::KeyEvent&,const ShortcutKeyModifiers&,double);
     bool filterKey(const app::NativeMessage&);bool message(const app::NativeMessage&,double);
