@@ -21,6 +21,10 @@
 //       [--command playPause|previous|next|seek=SECONDS]
 //                                           sends exactly one explicit command
 //                                           to the first presented player
+//       [--windows]                         also prints the top-level windows of
+//                                           NetEase Cloud Music, QQ Music and
+//                                           Kugou once (class, title, visible),
+//                                           to check their title format
 //       [--report FILE.json]                merges this run into the matrix in
 //                                           FILE (created when missing)
 //       [--markdown FILE.md]                writes the (merged) matrix as Markdown
@@ -139,7 +143,7 @@ std::string utcNow() {
 int usage(int code = 0) {
     (code ? std::cerr : std::cout)
         << "now_playing_probe --live [--seconds N] [--lyrics] [--volume] [--command playPause|previous|next|seek=SECONDS]\n"
-           "                  [--report FILE.json] [--markdown FILE.md]\n"
+           "                  [--windows] [--report FILE.json] [--markdown FILE.md]\n"
            "now_playing_probe --show FILE.json [--markdown FILE.md]\n"
            "now_playing_probe --replay SCENARIO.json [--lyrics] [--volume] [--command ...] [--report FILE.json] [--markdown FILE.md]\n"
            "Reads the current Windows media sessions (GSMTC) and the window titles of NetEase Cloud Music, QQ Music and Kugou\n"
@@ -147,12 +151,13 @@ int usage(int code = 0) {
            "--volume only reads the playing app's audio route; --command sends exactly one command to the first presented player.\n"
            "Per player: start it and play, run --live --seconds 60 --lyrics --volume --report np.json --markdown np.md, and during the run\n"
            "pause, resume and change track in the player; then run once more with --command next. Unseen players stay unverified.\n"
+           "NetEase Cloud Music, QQ Music or Kugou without a media session: add --windows to print their window titles once.\n"
            "Ctrl+C ends a live run early and still writes the report.\n";
     return code;
 }
 
 struct Arguments {
-    bool live{}, lyrics{}, volume{};
+    bool live{}, lyrics{}, volume{}, windows{};
     double seconds{15};
     std::optional<endfield::modules::NowPlayingCommand> command;
     std::optional<fs::path> report, markdown, show, replay;
@@ -178,6 +183,18 @@ t::NowPlayingAcceptanceMatrix runLive(const Arguments& a, t::NowPlayingProbeOpti
         audio = std::make_unique<n::AudioRuntime>(n::nativeAudioServiceOptions(std::nullopt), endfield::core::Language::english,
             [] { interruptWake.post(); });
         services.volume = n::nowPlayingAppVolume(*audio);
+    }
+    if (a.windows) {
+        // The window-title players' raw windows, exactly as the fallback reads
+        // them (stdout only; the report never stores a title or directory).
+        for (const auto& w : n::windowsNowPlayingWindowSystem()->windows()) {
+            const auto* player = endfield::modules::nowPlayingWindowPlayer(w.executable);
+            const auto parsed = player ? endfield::modules::nowPlayingWindowTitleTrack(*player, w.title) : std::nullopt;
+            Json::Object line{{"event", "playerWindow"}, {"player", t::nowPlayingReportIdentity(w.executable)}, {"pid", static_cast<std::int64_t>(w.pid)},
+                {"class", w.className}, {"title", w.title}, {"visible", w.visible}, {"owned", w.owned}};
+            if (parsed) line["parsed"] = Json::Object{{"title", parsed->title}, {"artist", parsed->artist}};
+            print(Json(std::move(line)));
+        }
     }
     t::NowPlayingAcceptanceMatrix matrix;
     {
@@ -219,6 +236,7 @@ int wmain(int argc, wchar_t** argv) {
         if (arg == L"--live") a.live = true;
         else if (arg == L"--lyrics") a.lyrics = true;
         else if (arg == L"--volume") a.volume = true;
+        else if (arg == L"--windows") a.windows = true;
         else if (arg == L"--seconds" && value) {
             const wchar_t* text = argv[++k];
             wchar_t* end{};
@@ -237,7 +255,7 @@ int wmain(int argc, wchar_t** argv) {
     const ConsoleUtf8 console;
     try {
         if (a.show) {
-            if (a.live || a.replay || a.report) return usage(2);
+            if (a.live || a.replay || a.report || a.windows) return usage(2);
             const auto stored = t::nowPlayingReadMatrix(*a.show);
             if (!stored) {
                 std::cerr << "now_playing_probe: no report at that path\n";
@@ -249,6 +267,8 @@ int wmain(int argc, wchar_t** argv) {
             return 0;
         }
         if (a.live == a.replay.has_value()) return usage(a.live ? 2 : 0);
+        // Only a live run may read the desktop's player windows.
+        if (a.windows && !a.live) return usage(2);
         // A report path holding anything but a matrix is refused before any
         // media session, network or audio is touched, and left unchanged.
         std::optional<t::NowPlayingAcceptanceMatrix> stored;

@@ -221,3 +221,17 @@ if(WIN32)
   set_property(GLOBAL APPEND PROPERTY EHUD_APP_AREAS
     "nowPlaying|hud_now_playing_area|app/areas/now_playing_module.hpp|endfield::areas::nowPlayingModule")
 endif()
+
+# One build target for every Now Playing test executable, tool and the area
+# library (cmake --build ... --target now_playing_all), so a verification run
+# names them without listing each.
+add_custom_target(now_playing_all)
+foreach(now_playing_target now_playing_model_tests now_playing_blend_tests now_playing_presentation_tests now_playing_scene_tests
+    now_playing_service_tests now_playing_receipt_tests now_playing_image_tests now_playing_session_tests now_playing_preview_tests
+    now_playing_warm_tests now_playing_lyrics_sources_tests now_playing_web_tests now_playing_web_winrt_tests now_playing_volume_tests
+    now_playing_sources_session_tests now_playing_accessibility_tests now_playing_automation_tests now_playing_fixture_tests
+    now_playing_runtime_volume_tests now_playing_acceptance_tests now_playing_players_tests now_playing_probe hud_now_playing_area)
+  if(TARGET ${now_playing_target})
+    add_dependencies(now_playing_all ${now_playing_target})
+  endif()
+endforeach()
