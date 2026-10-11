@@ -236,13 +236,8 @@ NativeMediaAssemblyGpuProcessor::NativeMediaAssemblyGpuProcessor(std::shared_ptr
     D3D11_RASTERIZER_DESC r{};r.FillMode=D3D11_FILL_SOLID;r.CullMode=D3D11_CULL_NONE;r.DepthClipEnable=TRUE;check(i.device->CreateRasterizerState(&r,&i.raster),"create rasterizer state");
 }
 NativeMediaAssemblyGpuProcessor::~NativeMediaAssemblyGpuProcessor()=default;
-bool NativeMediaAssemblyGpuProcessor::hasSource()const noexcept{return impl_->sourceView!=nullptr;}
-MediaAssemblyGpuStats NativeMediaAssemblyGpuProcessor::stats()const noexcept{return impl_->statistics;}
-void NativeMediaAssemblyGpuProcessor::releaseTargets()noexcept{auto&i=*impl_;i.surface=nullptr;i.surfaceTarget.Reset();i.surfaceTexture.Reset();}
-
-void NativeMediaAssemblyGpuProcessor::setSource(unsigned w,unsigned h,std::span<const std::uint8_t>rgba,std::size_t stride,bool premultiplied,unsigned rotation,std::shared_ptr<const m::MediaAssemblySourceColour>colour){
-    auto&i=*impl_;need(w&&h&&w<=16384&&h<=16384,"source exceeds the D3D11 texture limit");need(rotation==0||rotation==90||rotation==180||rotation==270,"invalid source rotation");
-    need(!(colour&&premultiplied),"an embedded profile needs a straight source");
+void NativeMediaAssemblyGpuProcessor::setColour(std::shared_ptr<const m::MediaAssemblySourceColour>colour){
+    auto&i=*impl_;
     if(colour&&(!i.colour||!(*i.colour==*colour))){
         // 256 x 1 float curves (r, g, b linear at each RGB8 code), immutable.
         std::array<float,256*4>texels{};for(std::size_t k=0;k<256;++k)for(std::size_t c=0;c<3;++c)texels[k*4+c]=colour->linear[c][k];
@@ -252,6 +247,14 @@ void NativeMediaAssemblyGpuProcessor::setSource(unsigned w,unsigned h,std::span<
         ++i.statistics.colourUploads;
     }
     i.colour=std::move(colour);
+}
+bool NativeMediaAssemblyGpuProcessor::hasSource()const noexcept{return impl_->sourceView!=nullptr;}
+MediaAssemblyGpuStats NativeMediaAssemblyGpuProcessor::stats()const noexcept{return impl_->statistics;}
+void NativeMediaAssemblyGpuProcessor::releaseTargets()noexcept{auto&i=*impl_;i.surface=nullptr;i.surfaceTarget.Reset();i.surfaceTexture.Reset();}
+
+void NativeMediaAssemblyGpuProcessor::setSource(unsigned w,unsigned h,std::span<const std::uint8_t>rgba,std::size_t stride,bool premultiplied,unsigned rotation,std::shared_ptr<const m::MediaAssemblySourceColour>colour){
+    auto&i=*impl_;need(w&&h&&w<=16384&&h<=16384,"source exceeds the D3D11 texture limit");need(rotation==0||rotation==90||rotation==180||rotation==270,"invalid source rotation");
+    need(!(colour&&premultiplied),"an embedded profile needs a straight source");setColour(std::move(colour));
     need(stride>=std::size_t(w)*4&&rgba.size()>=stride*(h-1)+std::size_t(w)*4,"source rows are too short");
     if(!i.source||i.sourceWidth!=w||i.sourceHeight!=h){
         i.sourceView.Reset();i.texture(i.source,w,h,DXGI_FORMAT_R8G8B8A8_UNORM,D3D11_BIND_SHADER_RESOURCE);--i.statistics.targetAllocations;++i.statistics.sourceAllocations;
@@ -314,7 +317,11 @@ void NativeMediaAssemblyGpuProcessor::processInPlace(IDXGISurface*s){
         check(i.device->CreateShaderResourceView(i.scratch.Get(),nullptr,&i.scratchView),"create scratch view");i.scratch->GetDesc(&i.scratchDesc);
     }
     i.context->CopyResource(i.scratch.Get(),i.surfaceTexture.Get());
-    auto k=i.edit;k.map0[0]=k.map0[1]=0;k.map0[2]=1;k.map0[3]=0;k.map1[0]=0;k.map1[1]=1;k.map1[2]=std::int32_t(d.Width);k.map1[3]=std::int32_t(d.Height);
+    // The frame server's straight frame, read through the configured colour
+    // (a movie's CoreMedia 709 reading) like a still source.
+    auto k=i.edit;
+    if(i.colour){k.mode[1]|=flagSourceColour;for(int r=0;r<3;++r)for(int c=0;c<3;++c)k.source[r][c]=i.colour->toLinearSRGB[std::size_t(r*3+c)];}
+    k.map0[0]=k.map0[1]=0;k.map0[2]=1;k.map0[3]=0;k.map1[0]=0;k.map1[1]=1;k.map1[2]=std::int32_t(d.Width);k.map1[3]=std::int32_t(d.Height);
     i.pass(i.process.Get(),i.scratchView.Get(),i.surfaceTarget.Get(),d.Width,d.Height,k);++i.statistics.inPlace;
 }
 

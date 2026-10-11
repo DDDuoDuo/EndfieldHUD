@@ -183,7 +183,7 @@ struct MediaAssemblyPreview::Impl:std::enable_shared_from_this<Impl> {
             if(video.previews&&controller->completedPreviews()==video.previews)return;
             if(playerCheck.passed!=doc->id){checkPlayer(doc);return;}
             playerCheck.passed.reset();auto path=std::exchange(playerCheck.path,{});if(path.empty())path=doc->path;
-            video.key="media.assembly.video."+std::to_string(++video.revision);gpu::NotesVideoRequest r{video.key,std::move(path),video.revision,1024,doc->duration,{},false};attachFrameFilter(r,s.adjustments());
+            video.key="media.assembly.video."+std::to_string(++video.revision);gpu::NotesVideoRequest r{video.key,std::move(path),video.revision,1024,doc->duration,{},false};attachFrameFilter(r,s.adjustments(),doc->bt709);
             options.broker->setVideos(options.client,++video.generation,std::span(&r,1),time);
             video.requested=true;video.started=false;video.document=doc->id;video.adjustments=s.adjustments();video.previews=0;
         }
@@ -220,15 +220,17 @@ struct MediaAssemblyPreview::Impl:std::enable_shared_from_this<Impl> {
         }
         presentPreview();
     }
-    // Source AVVideoComposition for played frames: the colour edits run in
-    // place on the renderer's media device between the engine's transfer and
-    // the renderer commit (Core Image's linear working space, like the source
-    // compositor); geometry maps through texture coordinates. The current
-    // edits are used directly; only a filter cube comes from the deferred
-    // preview of the same filter. Without compiled shaders (never compiled on
-    // the UI thread), a media device or that cube, played frames keep the
+    // Source AVVideoComposition for played frames: the compositor reads every
+    // BT.709 frame as Core Image's CoreMedia 709 and runs the colour edits in
+    // its linear working space. Here both run in place on the renderer's
+    // media device between the engine's transfer and the renderer commit, so
+    // a BT.709 movie always carries the filter, edited or not; geometry maps
+    // through texture coordinates. The current edits are used directly; only
+    // a filter cube comes from the deferred preview of the same filter.
+    // Without compiled shaders (never compiled on the UI thread), a media
+    // device or that cube, played frames keep the decoded values and the
     // geometry only; paused frames and exports always carry every edit.
-    template<class Request>void attachFrameFilter(Request&request,const mod::MediaAssemblyAdjustments&current){
+    template<class Request>void attachFrameFilter(Request&request,const mod::MediaAssemblyAdjustments&current,bool bt709){
         if constexpr(mediaAssemblyFrameFilterHook<Request>){
             if(!renderer||!gpu::mediaAssemblyGpuShadersReady())return;
             std::span<const std::uint8_t>lookup;
@@ -236,11 +238,12 @@ struct MediaAssemblyPreview::Impl:std::enable_shared_from_this<Impl> {
                 if(!shown||!shown->deferred()||shown->edits->filter!=current.filter||shown->lookup.empty())return;
                 lookup=shown->lookup;
             }
-            // Colour-only identity edits need no pass at all.
-            if(mod::MediaAssemblyColorPipeline(current,lookup,true,false).identity())return;
+            // Identity colour edits of a movie read as decoded need no pass.
+            const auto colour=bt709?mod::mediaAssemblyVideoColour():nullptr;
+            if(!colour&&mod::MediaAssemblyColorPipeline(current,lookup,true,false).identity())return;
             try{
                 if(!playbackProcessor)playbackProcessor=std::make_unique<gpu::NativeMediaAssemblyGpuProcessor>(renderer->mediaDevice());
-                playbackProcessor->configure(current,lookup,true);
+                playbackProcessor->configure(current,lookup,true);playbackProcessor->setColour(colour);
             }catch(const std::exception&){playbackProcessor.reset();return;}
             const std::weak_ptr<Impl>weak=weak_from_this();
             if(attachMediaAssemblyFrameFilter(request,[weak](void*surface){
@@ -248,7 +251,7 @@ struct MediaAssemblyPreview::Impl:std::enable_shared_from_this<Impl> {
                 // A device failure leaves the remaining frames geometry-only.
                 try{i->playbackProcessor->processInPlace(static_cast<IDXGISurface*>(surface));++i->filteredFrames;}catch(const std::exception&){i->playbackProcessor.reset();}
             })){++filteredPlayers;video.filter=request.frameFilter;}
-        }else{(void)request;(void)current;}
+        }else{(void)request;(void)current;(void)bt709;}
     }
     // ---- menus ----
     void retire(std::unique_ptr<Menu>m,bool animated){if(!m)return;if(animated&&!options.reduceMotion&&m->uploaded){m->closing=true;m->closed=time;closing.push_back(std::move(m));}else dead.push_back(std::move(m));}

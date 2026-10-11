@@ -114,6 +114,11 @@ struct MediaAssemblySourceColour {
     std::array<MediaAssemblyToneCurve,3>curves{MediaAssemblyToneCurve::measured,MediaAssemblyToneCurve::measured,MediaAssemblyToneCurve::measured};
     // Working-space (encoded, extended) straight colour of one source pixel.
     std::array<float,3>convert(std::uint8_t r,std::uint8_t g,std::uint8_t b)const noexcept;
+    // With an identity matrix (grey profiles, PNG gamma without cHRM, movie
+    // frames) each channel converts alone: finish() tabulates convert() per
+    // code, with identical results and no per-pixel power.
+    void finish();
+    bool separable{};std::array<std::array<float,256>,3>encoded{};
     bool operator==(const MediaAssemblySourceColour&)const=default;
 };
 enum class MediaAssemblyProfileKind {sRGB,converted,unsupported};
@@ -139,6 +144,14 @@ MediaAssemblyProfile mediaAssemblyProfile(std::span<const std::uint8_t>icc)noexc
 // the same tone-curve rules as an embedded profile (gAMA 1/1.8 and 1/2.2
 // snap, the v/16 toe). gAMA and cHRM values are the chunk's 1e-5 units.
 MediaAssemblyProfile mediaAssemblyPNGColour(bool srgbChunk,std::optional<std::uint32_t>gamma,std::optional<std::array<std::uint32_t,8>>chromaticities)noexcept;
+// Movie frames coded BT.709 (tagged, or untagged as AVFoundation guesses):
+// the original reads them in Core Image's CoreMedia 709 colour space in its
+// preview (AVAssetImageGenerator) and in its compositor (played and exported
+// frames), measured black-box as gamma 1.961 with the v/16 toe on BT.709
+// (= sRGB) primaries, sRGB-encoded in the working space (tests/fixtures/
+// media-assembly-video-colour-source.json): mid grey 128 becomes 139.
+// One shared immutable instance.
+std::shared_ptr<const MediaAssemblySourceColour>mediaAssemblyVideoColour();
 
 // Borrowed RGBA8 bitmap rows (top-left origin, encoded sRGB). colour (a
 // straight source only) converts the original encoded values per pixel.

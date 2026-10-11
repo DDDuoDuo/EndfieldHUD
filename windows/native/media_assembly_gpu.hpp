@@ -51,9 +51,14 @@ public:
     // UNORM surface of exactly the plan's output size, as straight encoded
     // pixels (the Renderer media-texture/frame-server contract).
     void render(IDXGISurface*target);
+    // The source colour reading on its own (setSource sets it too): a still's
+    // embedded profile, or for processInPlace a movie's CoreMedia 709 reading
+    // (modules::mediaAssemblyVideoColour). Null: sRGB.
+    void setColour(std::shared_ptr<const modules::MediaAssemblySourceColour>colour);
     // Colour-only edit of a straight BGRA8 frame-server surface in place
-    // (played movie frames; geometry stays in texture coordinates). The
-    // configured edits are used; no source is required.
+    // (played movie frames; geometry stays in texture coordinates), read
+    // through the current colour first. The configured edits are used; no
+    // source is required.
     void processInPlace(IDXGISurface*surface);
     // Export: renders associated pixels, bilinearly resamples them to
     // width x height when that differs from the plan (the even composition

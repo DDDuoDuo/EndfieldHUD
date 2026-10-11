@@ -9,6 +9,9 @@ struct MediaAssemblyDocumentInfo {
     // "video", ...) and identity read at open. Pixels are orientation-applied.
     MediaAssemblyKind kind{MediaAssemblyKind::image};unsigned frameCount{1};
     std::string path,name,container;MediaAssemblyFileIdentity identity;
+    // Movie frames coded BT.709 (tagged or untagged): every path reads them
+    // as Core Image's CoreMedia 709 (mediaAssemblyVideoColour).
+    bool bt709{};
     bool animated()const noexcept{return kind==MediaAssemblyKind::gif&&frameCount>1;}
     // "<stem>-edited.png" for pictures; Windows writes MP4 for movies because
     // Media Foundation has no QuickTime (.mov) sink (documented platform gap).

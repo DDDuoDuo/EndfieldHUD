@@ -156,12 +156,18 @@ void rotate(MediaAssemblyBitmap&b,unsigned degrees){
     if(degrees==0)return;const auto w=b.width,h=b.height;const bool swap=degrees==90||degrees==270;std::vector<std::uint8_t>out(b.straightRGBA.size());
     rotateInto(b.straightRGBA.data(),w,h,degrees,out.data());b.width=swap?h:w;b.height=swap?w:h;b.straightRGBA=std::move(out);
 }
-struct VideoInfo {unsigned width{},height{},rotation{};double duration{},fps{30};bool audio{};};
+// bt709: the frames are coded BT.709 (both colour tags BT.709 or unknown, as
+// AVFoundation guesses an untagged movie), read as Core Image's CoreMedia
+// 709 (mediaAssemblyVideoColour); any other primaries or transfer keep the
+// decoded values (documented gap).
+struct VideoInfo {unsigned width{},height{},rotation{};double duration{},fps{30};bool audio{},bt709{};};
 VideoInfo inspectVideo(IMFSourceReader*reader){
     VideoInfo v;ComPtr<IMFMediaType>type;check(reader->GetNativeMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM,0,&type),m::MediaAssemblyError::unsupported);
     UINT32 w{},h{};check(MFGetAttributeSize(type.Get(),MF_MT_FRAME_SIZE,&w,&h),m::MediaAssemblyError::unsupported);v.width=w;v.height=h;
     v.rotation=MFGetAttributeUINT32(type.Get(),MF_MT_VIDEO_ROTATION,0);need(v.rotation==0||v.rotation==90||v.rotation==180||v.rotation==270,m::MediaAssemblyError::unsupported);
     UINT32 num{},den{};if(SUCCEEDED(MFGetAttributeRatio(type.Get(),MF_MT_FRAME_RATE,&num,&den))&&num&&den)v.fps=double(num)/den;
+    {const auto transfer=MFGetAttributeUINT32(type.Get(),MF_MT_TRANSFER_FUNCTION,MFVideoTransFunc_Unknown),primaries=MFGetAttributeUINT32(type.Get(),MF_MT_VIDEO_PRIMARIES,MFVideoPrimaries_Unknown);
+        v.bt709=(transfer==MFVideoTransFunc_Unknown||transfer==MFVideoTransFunc_709||transfer==MFVideoTransFunc_709_sym)&&(primaries==MFVideoPrimaries_Unknown||primaries==MFVideoPrimaries_BT709);}
     Variant d;check(reader->GetPresentationAttribute(MF_SOURCE_READER_MEDIASOURCE,MF_PD_DURATION,&d.value),m::MediaAssemblyError::unsupported);need(d.value.vt==VT_UI8,m::MediaAssemblyError::unsupported);
     v.duration=double(d.value.uhVal.QuadPart)/1e7;need(w&&h&&w<=65536&&h<=65536&&std::isfinite(v.duration)&&v.duration>0&&std::uint64_t(w)*h<=NativeMediaAssemblyEngine::maximumPixels,m::MediaAssemblyError::unsupported);
     ComPtr<IMFMediaType>audio;v.audio=SUCCEEDED(reader->GetNativeMediaType(MF_SOURCE_READER_FIRST_AUDIO_STREAM,0,&audio));
@@ -321,7 +327,7 @@ modules::MediaAssemblyDocumentInfo NativeMediaAssemblyEngine::open(const std::st
     }catch(const m::MediaAssemblyFailure&f){if(f.error()==m::MediaAssemblyError::unavailable)throw;}
     // Not a still container: Media Foundation movie metadata.
     Platform mf;ComPtr<IMFSourceReader>reader;check(MFCreateSourceReaderFromURL(path.c_str(),nullptr,&reader),m::MediaAssemblyError::unsupported);
-    const auto v=inspectVideo(reader.Get());d.video=true;d.kind=m::MediaAssemblyKind::video;d.container="video";d.duration=v.duration;
+    const auto v=inspectVideo(reader.Get());d.video=true;d.kind=m::MediaAssemblyKind::video;d.container="video";d.duration=v.duration;d.bt709=v.bt709;
     const bool swap=v.rotation==90||v.rotation==270;d.pixels={double(swap?v.height:v.width),double(swap?v.width:v.height)};return d;
 }
 MediaAssemblyBitmap NativeMediaAssemblyEngine::decodeStill(const m::MediaAssemblyDocumentInfo&d,std::optional<unsigned>maximum){
@@ -357,7 +363,7 @@ MediaAssemblyBitmap NativeMediaAssemblyEngine::decodeVideoFrame(const m::MediaAs
         if(sample){copyFrame(sample.Get(),w,h,stride,out.straightRGBA.data());have=true;if(double(stamp)/1e7>=target-.08)break;}
         if(flags&MF_SOURCE_READERF_ENDOFSTREAM)break;need(GetTickCount64()-started<15000,m::MediaAssemblyError::unsupported);
     }
-    need(have,m::MediaAssemblyError::unsupported);rotate(out,v.rotation);return out;
+    need(have,m::MediaAssemblyError::unsupported);rotate(out,v.rotation);if(v.bt709)out.colour=m::mediaAssemblyVideoColour();return out;
 }
 // Source Engine.preview up to (not including) Engine.apply: identity
 // re-check, cached bounded decode and the filter cube.
@@ -513,6 +519,10 @@ std::string NativeMediaAssemblyEngine::exportMedia(const m::MediaAssemblyExportR
         DWORD videoStream{};check(writer->AddStream(h264.Get(),&videoStream),m::MediaAssemblyError::unsupportedExport);
         ComPtr<IMFMediaType>rgb;MFCreateMediaType(&rgb);rgb->SetGUID(MF_MT_MAJOR_TYPE,MFMediaType_Video);rgb->SetGUID(MF_MT_SUBTYPE,MFVideoFormat_RGB32);rgb->SetUINT32(MF_MT_INTERLACE_MODE,MFVideoInterlace_Progressive);
         MFSetAttributeSize(rgb.Get(),MF_MT_FRAME_SIZE,even.outputWidth,even.outputHeight);MFSetAttributeRatio(rgb.Get(),MF_MT_FRAME_RATE,fpsNum,fpsDen);MFSetAttributeRatio(rgb.Get(),MF_MT_PIXEL_ASPECT_RATIO,1,1);
+        // The rows below are written top-down: a positive default stride (an
+        // RGB32 type without one is read bottom-up, which flipped every
+        // exported movie upside down).
+        rgb->SetUINT32(MF_MT_DEFAULT_STRIDE,even.outputWidth*4);
         check(writer->SetInputMediaType(videoStream,rgb.Get(),nullptr),m::MediaAssemblyError::unsupportedExport);
         DWORD audioStream{};
         if(audio){
@@ -553,14 +563,14 @@ std::string NativeMediaAssemblyEngine::exportMedia(const m::MediaAssemblyExportR
                     struct Unlock {IMFMediaBuffer*b;~Unlock(){b->Unlock();}}unlock{buffer.Get()};
                     bool done{};
                     if(gpu)try{
-                        gpu->setSource(v.width,v.height,frame.straightRGBA,std::size_t(v.width)*4,false,v.rotation);
+                        gpu->setSource(v.width,v.height,frame.straightRGBA,std::size_t(v.width)*4,false,v.rotation,v.bt709?m::mediaAssemblyVideoColour():nullptr);
                         if(!gpuConfigured){gpu->configure(r.adjustments,lookup,true);gpuConfigured=true;}
                         // Opaque frames: associated BGRA equals RGB32 (X = 255).
                         gpu->renderToMemory(even.outputWidth,even.outputHeight,std::span<std::uint8_t>(dst,bytes),std::size_t(even.outputWidth)*4);done=true;++gpuFrames;
                     }catch(const std::exception&){gpu.reset();cpuBuffers();}
                     if(!done){
                         const std::uint8_t*src=frame.straightRGBA.data();if(v.rotation){rotateInto(src,v.width,v.height,v.rotation,oriented.data());src=oriented.data();}
-                        processor.render({ow,oh,std::size_t(ow)*4,std::span<const std::uint8_t>(src,frame.straightRGBA.size()),false},0,processor.height(),processed,std::size_t(processor.width())*4,m::MediaAssemblyOutputAlpha::premultiplied);
+                        processor.render({ow,oh,std::size_t(ow)*4,std::span<const std::uint8_t>(src,frame.straightRGBA.size()),false,v.bt709?m::mediaAssemblyVideoColour().get():nullptr},0,processor.height(),processed,std::size_t(processor.width())*4,m::MediaAssemblyOutputAlpha::premultiplied);
                         const std::uint8_t*rgba=processed.data();
                         if(processor.width()!=even.outputWidth||processor.height()!=even.outputHeight){m::mediaAssemblyResample({processor.width(),processor.height(),std::size_t(processor.width())*4,processed,true},even.outputWidth,even.outputHeight,scaled,std::size_t(even.outputWidth)*4);rgba=scaled.data();}
                         for(std::size_t i=0;i<bytes;i+=4){dst[i]=rgba[i+2];dst[i+1]=rgba[i+1];dst[i+2]=rgba[i];dst[i+3]=255;}++cpuFrames;

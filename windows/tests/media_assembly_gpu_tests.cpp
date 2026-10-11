@@ -208,6 +208,16 @@ void run(const fs::path&assets){
         counting=false;check(allocations==0,"Warm in-place passes allocate nothing");
         gpu.configure(a,cube(a.filter),true);
         const auto after=gpu.stats();check(after.targetAllocations==before.targetAllocations&&after.lookupUploads==before.lookupUploads&&after.inPlace==before.inPlace+30,"Warm passes create no GPU resources and an unchanged cube is not re-uploaded");
+        // A BT.709 movie's played frames are read as CoreMedia 709 first
+        // (mediaAssemblyVideoColour), edited or not, like the CPU reference.
+        const auto video=m::mediaAssemblyVideoColour();const m::MediaAssemblyPixels decoded{w,h,std::size_t(w)*4,opaque,false,video.get()};
+        for(const auto&edit:{m::MediaAssemblyAdjustments{},a}){
+            gpu.configure(edit,cube(edit.filter),true);gpu.setColour(video);d.write(surface,opaque,w);gpu.processInPlace(frame.Get());
+            const m::MediaAssemblyFrameProcessor reference(w,h,edit,cube(edit.filter),false,{},true);
+            check(compare(d.read(surface),reference.render(decoded,m::MediaAssemblyOutputAlpha::straight),"in-place CoreMedia 709 frame").worst<=1,"In-place played frames read BT.709 like the CPU video compositor");}
+        {const auto reading=m::MediaAssemblyFrameProcessor(1,1,{},{},false,{},true).render({1,1,4,std::vector<std::uint8_t>{128,128,128,255},false,video.get()},m::MediaAssemblyOutputAlpha::straight);
+            check(std::abs(int(reading[0])-139)<=1,"CoreMedia 709 reads decoded mid grey 128 as 139 like the original preview");}
+        gpu.setColour(nullptr);
     }
     // 4. Same-size source re-uploads reuse the texture; warm export frames
     // allocate nothing.

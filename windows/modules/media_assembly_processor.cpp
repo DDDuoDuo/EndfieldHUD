@@ -264,9 +264,17 @@ std::vector<std::uint8_t>MediaAssemblyFrameProcessor::render(const MediaAssembly
     std::vector<std::uint8_t>out(std::size_t(width())*height()*4);render(s,0,height(),out,std::size_t(width())*4,mode);return out;
 }
 std::array<float,3>MediaAssemblySourceColour::convert(std::uint8_t r,std::uint8_t g,std::uint8_t b)const noexcept{
+    if(separable)return {encoded[0][r],encoded[1][g],encoded[2][b]};
     const float lr=linear[0][r],lg=linear[1][g],lb=linear[2][b];const auto&m=toLinearSRGB;
     const auto encode=[](float v){return float(v<0?-MediaAssemblyColorPipeline::srgbEncode(-double(v)):MediaAssemblyColorPipeline::srgbEncode(double(v)));};
     return {encode(m[0]*lr+m[1]*lg+m[2]*lb),encode(m[3]*lr+m[4]*lg+m[5]*lb),encode(m[6]*lr+m[7]*lg+m[8]*lb)};
+}
+void MediaAssemblySourceColour::finish(){
+    separable=false;if(toLinearSRGB!=std::array<float,9>{1,0,0,0,1,0,0,0,1})return;
+    for(unsigned k=0;k<256;++k){const auto u=std::uint8_t(k);const auto v=convert(u,u,u);
+        // Channel c of convert(k, k, k) depends on code k of channel c alone.
+        for(std::size_t c=0;c<3;++c)encoded[c][k]=v[c];}
+    separable=true;
 }
 namespace {
 // ICC.1 profile fields (big-endian), bounds-checked by the caller.
@@ -357,7 +365,7 @@ MediaAssemblyProfile mediaAssemblyProfile(std::span<const std::uint8_t>icc)noexc
         bool srgb=!grey&&std::all_of(colour->curves.begin(),colour->curves.end(),[](MediaAssemblyToneCurve c){return c==MediaAssemblyToneCurve::sRGB;});
         for(std::size_t n=0;n<9&&srgb;++n)srgb=std::abs(colorants[n]-srgbPCS[n])<=1e-3;
         if(srgb)return {MediaAssemblyProfileKind::sRGB,nullptr};
-        return {MediaAssemblyProfileKind::converted,std::move(colour)};
+        colour->finish();return {MediaAssemblyProfileKind::converted,std::move(colour)};
     }catch(...){return {};}
 }
 MediaAssemblyProfile mediaAssemblyPNGColour(bool srgb,std::optional<std::uint32_t>gamma,std::optional<std::array<std::uint32_t,8>>chromaticities)noexcept{
@@ -378,8 +386,15 @@ MediaAssemblyProfile mediaAssemblyPNGColour(bool srgb,std::optional<std::uint32_
         const double exponent=100000./double(*gamma);std::array<double,256>y{};for(unsigned k=0;k<256;++k)y[k]=std::pow(k/255.,exponent);
         if(!classifyCurve(y,colour->linear[0],colour->curves[0]))return {};
         colour->linear[1]=colour->linear[2]=colour->linear[0];colour->curves[1]=colour->curves[2]=colour->curves[0];
-        return {MediaAssemblyProfileKind::converted,std::move(colour)};
+        colour->finish();return {MediaAssemblyProfileKind::converted,std::move(colour)};
     }catch(...){return {};}
+}
+std::shared_ptr<const MediaAssemblySourceColour>mediaAssemblyVideoColour(){
+    static const std::shared_ptr<const MediaAssemblySourceColour>colour=[]{
+        auto c=std::make_shared<MediaAssemblySourceColour>();
+        for(auto&curve:c->linear)for(unsigned k=0;k<256;++k)curve[k]=float(std::max(std::pow(k/255.,1.961),k/255./16.));
+        c->toLinearSRGB={1,0,0,0,1,0,0,0,1};c->finish();return c;}();
+    return colour;
 }
 void mediaAssemblyResample(const MediaAssemblyPixels&s,unsigned w,unsigned h,std::span<std::uint8_t>target,std::size_t stride){
     need(s.width&&s.height&&w&&h&&s.stride>=std::size_t(s.width)*4&&stride>=std::size_t(w)*4&&target.size()>=stride*(h-1)+std::size_t(w)*4,"Invalid Media Assembly resample");

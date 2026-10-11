@@ -225,6 +225,9 @@ void movies(const fs::path&root,const fs::path&assets){
     auto doc=std::make_shared<m::MediaAssemblyDocumentInfo>(d);check(hooked.exportMedia({doc,a,utf8(out),false,"v1",false},t)==utf8(out)&&temporaries(root)==0,"MP4 export commits");
     auto e=engine.open(utf8(out));check(e.video&&e.pixels==endfield::core::Point{64,96}&&std::abs(e.duration-1)<.2&&last>.7,"Trimmed, cropped, even MP4");
     e.id="exported";const auto first=n::NativeMediaAssemblyEngine::decodeVideoFrame(e,0,1024);const auto*q=first.straightRGBA.data()+(48*64+32)*4;check(q[0]>40,"Exported frames carry the brightness edit");
+    {// The source's top quarter is blue (writeMovie): exports keep rows top-down.
+        const auto*top=first.straightRGBA.data()+(4*64+32)*4;const auto*bottom=first.straightRGBA.data()+(90*64+32)*4;
+        std::cout<<"exported movie rows: top blue "<<int(top[2])<<" bottom blue "<<int(bottom[2])<<'\n';check(top[2]>=250&&bottom[2]<200,"Exported movies keep the source rows top-down (bottom rows are the brightened dark blue)");}
     check(failure([&]{m::MediaAssemblyExportTicket u;engine.exportMedia({doc,{},utf8(root/L"x.mov"),false,"v2",false},u);})==m::MediaAssemblyError::unsupportedExport,"MOV is an explicit Windows gap");
     m::MediaAssemblyExportTicket c;std::atomic<int>frames{};n::NativeMediaAssemblyEngine cancelling({assets,{},[&](double){if(++frames==3)c.cancel();}});
     check(failure([&]{cancelling.exportMedia({doc,{},utf8(root/L"cancel.mp4"),false,"v3",false},c);})==m::MediaAssemblyError::cancelled&&!fs::exists(root/L"cancel.mp4")&&temporaries(root)==0,"Cancelled video export leaves no file");
@@ -328,8 +331,69 @@ void colourManaged(const fs::path&root,const fs::path&assets,const fs::path&fixt
     check(converted==28&&exports==2*(9*4+27),"Every ICC and PNG colour fixture still was exported on both paths");
 }
 
+// Movie colour (tests/fixtures/media-assembly-video-colour-source.json,
+// tools/media_assembly_video_colour_reference.py): owned H.264 grey charts
+// written on the Mac (BT.709 tags and untagged). The original reads their
+// frames as Core Image's CoreMedia 709 in its preview and in its compositor
+// (played and exported frames): decoded grey 128 shows as 139. Windows
+// decodes with Media Foundation and applies the same reading
+// (mediaAssemblyVideoColour) in previews and exports.
+void movieColour(const fs::path&root,const fs::path&assets,const fs::path&fixturePath){
+    std::ifstream in(fixturePath,std::ios::binary);check(bool(in),"Movie colour fixture");const std::string text((std::istreambuf_iterator<char>(in)),std::istreambuf_iterator<char>());
+    const auto fixture=J::parse(text,1024*1024);
+    check(fixture["sourceCommit"].string()=="ca04f142185c7de40acd8523bdb563195d90a1d1"&&!fixture["usesAppOrWindow"].boolean(),"Movie colour fixture uses the authoritative isolated oracle");
+    const unsigned size=unsigned(fixture["size"].integer()),patch=unsigned(fixture["patch"].integer());check(size==128&&patch==8,"Grey chart geometry");
+    const auto patches=[&](const std::vector<std::uint8_t>&rgba,unsigned width){std::array<double,256>out{};
+        for(unsigned k=0;k<256;++k){const unsigned px=(k%(size/patch))*patch,py=(k/(size/patch))*patch;double sum{};
+            for(unsigned y=py+2;y<py+6;++y)for(unsigned x=px+2;x<px+6;++x)sum+=rgba[(std::size_t(y)*width+x)*4];out[k]=sum/16;}
+        return out;};
+    const auto worstOf=[](const std::array<double,256>&a,const J&b){double w{};for(std::size_t k=0;k<256;++k)w=std::max(w,std::abs(a[k]-b.array()[k].number()));return w;};
+    n::NativeMediaAssemblyEngine engine({assets,{},{},[]{return std::shared_ptr<void>{};}});unsigned serial{};
+    for(const auto&movie:fixture["movies"].array()){
+        const auto name=movie["name"].string();const auto file=root/(L"colour-"+std::wstring(name.begin(),name.end())+L".mp4");
+        {const auto bytes=base64(movie["mp4"].string());std::ofstream out(file,std::ios::binary);out.write(reinterpret_cast<const char*>(bytes.data()),std::streamsize(bytes.size()));check(bool(out),"Owned movie written");}
+        auto doc=std::make_shared<m::MediaAssemblyDocumentInfo>(engine.open(utf8(file)));doc->id="colour-"+name;
+        check(doc->video&&doc->bt709&&doc->pixels==endfield::core::Point{double(size),double(size)},"The movie opens as BT.709 like AVFoundation reads it: "+name);
+        // Decoded values: Media Foundation against the original's reader.
+        const auto decoded=n::NativeMediaAssemblyEngine::decodeVideoFrame(*doc,0,1024);check(decoded.colour==m::mediaAssemblyVideoColour(),"Decoded movie frames carry the CoreMedia 709 reading: "+name);
+        const auto raw=patches(decoded.straightRGBA,decoded.width);const double rawWorst=worstOf(raw,movie["raw"]);
+        // Paused preview (the original's AVAssetImageGenerator path).
+        const auto preview=engine.preview(*doc,{},0);check(preview.width==size&&preview.height==size,"Movie preview size");
+        const auto previewPatches=patches(preview.straightRGBA,preview.width);const double previewWorst=worstOf(previewPatches,movie["preview"]);
+        double unconverted{};for(std::size_t k=0;k<256;++k)unconverted=std::max(unconverted,std::abs(raw[k]-movie["preview"].array()[k].number()));
+        // The same reading of the frame Media Foundation decoded (exact path check).
+        const auto read=patches(m::MediaAssemblyFrameProcessor(decoded.width,decoded.height,{},{},false).render({decoded.width,decoded.height,std::size_t(decoded.width)*4,decoded.straightRGBA,false,decoded.colour.get()},m::MediaAssemblyOutputAlpha::straight),decoded.width);
+        double readWorst{};for(std::size_t k=0;k<256;++k)readWorst=std::max(readWorst,std::abs(read[k]-previewPatches[k]));
+        std::cout<<"movie colour "<<name<<": decode worst "<<rawWorst<<", preview worst "<<previewWorst<<" (decoded values would miss by "<<unconverted<<", own reading "<<readWorst<<")";
+        check(rawWorst<=2,"Media Foundation decodes the chart like the original's reader within two levels: "+name);
+        check(readWorst<=1,"The movie preview is the CoreMedia 709 reading of the decoded frame: "+name);
+        // A one-level decode difference grows to two through the dark end of the reading.
+        check(previewWorst<=2&&unconverted>=8,"Movie previews read BT.709 like the original preview: "+name);
+        // Exported frames (the original's compositor), identity and exposure +1:
+        // the composition of the decoded frame (CoreMedia 709 reading, linear
+        // working space) against the original's composed frames, and the
+        // exported H.264 file read back raw against that composition.
+        for(const auto&[field,exposure]:{std::pair{"composed",0.},std::pair{"composedExposure1",1.}}){
+            m::MediaAssemblyAdjustments a;a.exposure=exposure;const auto out=root/(L"colour-out-"+std::to_wstring(++serial)+L".mp4");m::MediaAssemblyExportTicket t;
+            const auto composition=patches(m::MediaAssemblyFrameProcessor(decoded.width,decoded.height,a,{},false,{},true).render({decoded.width,decoded.height,std::size_t(decoded.width)*4,decoded.straightRGBA,false,decoded.colour.get()},m::MediaAssemblyOutputAlpha::straight),decoded.width);
+            const double composedWorst=worstOf(composition,movie[field]);
+            check(engine.exportMedia({doc,a,utf8(out),false,"mc"+std::to_string(serial),false},t)==utf8(out),"Movie colour export commits");
+            auto exported=engine.open(utf8(out));exported.id="mc-out"+std::to_string(serial);const auto frame=n::NativeMediaAssemblyEngine::decodeVideoFrame(exported,0,1024);
+            const auto got=patches(frame.straightRGBA,frame.width);double encodeWorst{};for(std::size_t k=0;k<256;++k)encodeWorst=std::max(encodeWorst,std::abs(got[k]-composition[k]));
+            std::cout<<", "<<field<<": composition worst "<<composedWorst<<", H.264 round trip worst "<<encodeWorst<<" ("<<frame.width<<'x'<<frame.height<<")";
+            // A one-level decode difference doubles at most through the reading and exposure.
+            check(composedWorst<=2,std::string("Movie frames compose like the original compositor: ")+name+" "+field);
+            // Lossy H.264 at the export bitrate; a flipped or unread frame misses by 8 or more.
+            check(frame.width==size&&frame.height==size&&encodeWorst<=4,std::string("The exported movie holds the composed frames, top-down: ")+name+" "+field);
+            fs::remove(out);
+        }
+        std::cout<<'\n';fs::remove(file);
+    }
+}
+
 int wmain(int argc,wchar_t**argv){
-    COM com;try{check(SUCCEEDED(com.result)&&argc==3,"Pass windows/resources/media-assembly and the ICC fixture");Temp temp;colourManaged(temp.path,fs::absolute(argv[1]),fs::absolute(argv[2]));stills(temp.path,fs::absolute(argv[1]));movies(temp.path,fs::absolute(argv[1]));
+    COM com;try{check(SUCCEEDED(com.result)&&argc==4,"Pass windows/resources/media-assembly, the ICC fixture and the movie colour fixture");Temp temp;colourManaged(temp.path,fs::absolute(argv[1]),fs::absolute(argv[2]));stills(temp.path,fs::absolute(argv[1]));movies(temp.path,fs::absolute(argv[1]));
+        {MF mf;movieColour(temp.path,fs::absolute(argv[1]),fs::absolute(argv[3]));}
         std::cout<<"PASS "<<checks<<" native Media Assembly codec checks\n";return 0;}
     catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}
 }

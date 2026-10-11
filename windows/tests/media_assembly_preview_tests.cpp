@@ -236,25 +236,36 @@ void playback(n::Renderer&r,HWND hwnd,const fs::path&assets,const fs::path&fixtu
     // Colour edits while playing (source AVVideoComposition): the edit
     // releases the player and the next one carries the colour filter, which
     // edits each played frame in place on the renderer's device.
-    check(owner.stats().filteredPlayers==0&&!owner.playbackFrameFilter(),"Geometry-only edits need no played-frame filter");
+    // The source compositor reads every frame of a BT.709 movie (tagged, or
+    // untagged as AVFoundation guesses) as CoreMedia 709 even without colour
+    // edits, so its players always carry the filter, geometry-only edits
+    // included (tests/fixtures/media-assembly-video-colour-source.json).
+    const bool bt709=session.document()->bt709;check(bt709,"The owned movie is read as BT.709 like AVFoundation reads it");
+    const std::vector<std::uint8_t>playedRGBA{playedBGRA[2],playedBGRA[1],playedBGRA[0],playedBGRA[3]};
+    const auto playedAs=[&](const m::MediaAssemblyAdjustments&a){auto colour=a;colour.crop={};colour.rotationQuarterTurns=0;colour.mirrored=false;colour.trimStart=0;colour.trimEnd.reset();colour.stickers.clear();
+        return m::MediaAssemblyFrameProcessor(1,1,colour,{},false,{},true).render({1,1,4,playedRGBA,false,m::mediaAssemblyVideoColour().get()},m::MediaAssemblyOutputAlpha::straight);};
+    const auto sameBGRA=[](const std::array<std::uint8_t,4>&bgra,const std::vector<std::uint8_t>&rgba){return std::abs(int(bgra[0])-int(rgba[2]))<=1&&std::abs(int(bgra[1])-int(rgba[1]))<=1&&std::abs(int(bgra[2])-int(rgba[0]))<=1&&bgra[3]==rgba[3];};
+    {const auto reading=playedAs(session.adjustments());const auto shown=probe->surface?firstPixel(probe->surface.Get()):std::array<std::uint8_t,4>{};
+        std::cout<<"played frame read as CoreMedia 709: "<<int(shown[2])<<","<<int(shown[1])<<","<<int(shown[0])<<" (decoded "<<int(playedRGBA[0])<<","<<int(playedRGBA[1])<<","<<int(playedRGBA[2])<<")\n";
+        check(owner.playbackFrameFilter()&&*owner.playbackFrameFilter()&&owner.stats().filteredPlayers>=1,"A BT.709 movie's player carries the played-frame filter with geometry-only edits");
+        check(probe->surface&&sameBGRA(shown,reading)&&std::abs(int(reading[0])-int(playedRGBA[0]))>=4,"Frames played through the broker show the CoreMedia 709 reading of the decoded values");}
     {   // Highlights/Shadows applies no change on Windows (documented gap,
-        // media_assembly_processor.hpp), so it alone needs no filter either.
+        // media_assembly_processor.hpp): the filter still reads BT.709 only.
         check(owner.perform("tools",now)&&owner.perform("adjust",now)&&owner.setAccessibleValue("shadows",.6,now),"Shadows while playing");
         drain();for(int k=0;k<10;++k){frame();drain();}
-        check(probe->playing&&owner.stats().filteredPlayers==0&&!owner.playbackFrameFilter()&&session.adjustments().shadows==.6,"Highlights/Shadows alone attaches no played-frame filter (documented gap)");
+        check(probe->playing&&owner.playbackFrameFilter()&&session.adjustments().shadows==.6&&probe->surface&&sameBGRA(firstPixel(probe->surface.Get()),playedAs({})),"Highlights/Shadows adds nothing to the played-frame filter (documented gap)");
         check(owner.perform("toolBack",now)&&owner.perform("tools",now)&&!owner.presentation().drawer(),"Leaving the adjust tool and drawer");}
-    {const auto starts=owner.stats().playbackStarts;
+    {const auto starts=owner.stats().playbackStarts,filtered=owner.stats().filteredPlayers;
         check(owner.perform("tools",now)&&owner.perform("adjust",now)&&owner.setAccessibleValue("brightness",.25,now),"Brightness while playing");
         drain();for(int k=0;k<10;++k){frame();drain();}
         const auto filter=owner.playbackFrameFilter();
-        check(owner.stats().playbackStarts==starts+1&&probe->playing&&owner.stats().filteredPlayers==1&&filter&&*filter,"The resumed player carries the colour-edit filter");
-        // The CPU original of the source compositor: colour chain only (the
-        // geometry stays in texture coordinates), linear working space.
-        auto colour=session.adjustments();colour.crop={};colour.rotationQuarterTurns=0;colour.mirrored=false;colour.trimStart=0;colour.trimEnd.reset();colour.stickers.clear();
-        const std::vector<std::uint8_t>rgba{playedBGRA[2],playedBGRA[1],playedBGRA[0],playedBGRA[3]};
-        const auto expected=m::MediaAssemblyFrameProcessor(1,1,colour,{},false,{},true).render({1,1,4,rgba,false},m::MediaAssemblyOutputAlpha::straight);
-        const auto close=[&](const std::array<std::uint8_t,4>&bgra){return std::abs(int(bgra[0])-int(expected[2]))<=1&&std::abs(int(bgra[1])-int(expected[1]))<=1&&std::abs(int(bgra[2])-int(expected[0]))<=1&&bgra[3]==expected[3];};
-        check(std::abs(int(expected[0])-int(rgba[0]))>8,"Brightness visibly changes the played colour");
+        check(owner.stats().playbackStarts==starts+1&&probe->playing&&owner.stats().filteredPlayers==filtered+1&&filter&&*filter,"The resumed player carries the colour-edit filter");
+        // The CPU original of the source compositor: CoreMedia 709 reading,
+        // then the colour chain (the geometry stays in texture coordinates)
+        // in the linear working space.
+        const auto&rgba=playedRGBA;const auto expected=playedAs(session.adjustments());
+        const auto close=[&](const std::array<std::uint8_t,4>&bgra){return sameBGRA(bgra,expected);};
+        check(std::abs(int(expected[0])-int(playedAs({})[0]))>8,"Brightness visibly changes the played colour");(void)rgba;
         {   // The attached filter itself, on a frame-server surface of the renderer.
             const auto target=r.createMediaTexture("media.assembly.test.played",4,4);
             ComPtr<ID3D11Texture2D>texture;check(SUCCEEDED(static_cast<IDXGISurface*>(target->targetSurface())->QueryInterface(IID_PPV_ARGS(&texture))),"Media target texture");

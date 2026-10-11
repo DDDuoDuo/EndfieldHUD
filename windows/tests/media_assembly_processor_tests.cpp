@@ -373,7 +373,7 @@ void colourProfiles(const J&icc,Cubes&cubes){
         check(worstFloat<=5e-4&&worstByte<=1,"The source conversion matches Core Image within one level: "+name);
         if(!colour)check(worstFloat<=1e-6&&outside==0,"Core Image leaves sRGB and untagged codes unchanged: "+name);
         // Each rule is needed: the alternative misses the floats by > 1e-3.
-        const auto alternative=[&](const char*rule,auto&&curve){auto other=*colour;for(auto&c:other.linear)for(unsigned k=0;k<256;++k)c[k]=float(curve(k/255.));
+        const auto alternative=[&](const char*rule,auto&&curve){auto other=*colour;for(auto&c:other.linear)for(unsigned k=0;k<256;++k)c[k]=float(curve(k/255.));other.finish();
             const auto[f,b,o]=measure(&other);(void)o;std::cout<<"icc "<<name<<": without "<<rule<<" worst float "<<f<<", worst byte "<<b<<'\n';
             check(f>1e-3,std::string("The ")+rule+" is needed for "+name);++alternatives;};
         if(name=="p3-gamma22"||name=="p3-gamma18"||name=="gamma-561"){
@@ -425,6 +425,35 @@ void colourProfiles(const J&icc,Cubes&cubes){
     {auto b=base;const auto at=tag(b,"rXYZ");for(int k=0;k<4;++k)b[at+std::size_t(k)]=0;unsupported(b,"A profile without its red colorant is unsupported");}
 }
 
+// Movie frame colour (tests/fixtures/media-assembly-video-colour-source.json,
+// tools/media_assembly_video_colour_reference.py). The original's preview
+// and compositor read BT.709 movie frames, tagged or untagged, in Core
+// Image's CoreMedia 709 colour space. Recovered from the unclamped preview
+// floats of a grey chart holding every decoded code: linear = max(v^1.961,
+// v/16) (the same v/16 toe as profile curves; 1.96 and pure BT.709 fit
+// worse), on BT.709 = sRGB primaries, sRGB-encoded.
+void movieColour(const J&video){
+    check(video["sourceCommit"].string()=="ca04f142185c7de40acd8523bdb563195d90a1d1"&&!video["usesAppOrWindow"].boolean(),"Movie colour fixture uses the authoritative isolated oracle");
+    const auto colour=m::mediaAssemblyVideoColour();check(colour&&colour->separable&&colour==m::mediaAssemblyVideoColour(),"One shared, tabulated CoreMedia 709 reading");
+    std::size_t movies{};
+    for(const auto&movie:video["movies"].array()){
+        const auto&raw=movie["raw"].array();const auto&floats=movie["previewFloat"].array();const auto&bytes=movie["preview"].array();
+        double worstFloat{};int worstByte{};std::size_t codes{};double bt709Curve{};
+        for(std::size_t k=0;k<256;++k){const double r=raw[k].number();if(r!=std::round(r))continue;++codes;const auto code=std::uint8_t(r);
+            const float v=colour->convert(code,code,code)[0];worstFloat=std::max(worstFloat,std::abs(double(v)-floats[k].number()));
+            worstByte=std::max(worstByte,std::abs(int(std::floor(std::clamp(v,0.f,1.f)*255.f+.5f))-int(bytes[k].number()+.5)));
+            // The BT.709 camera curve itself (not what Core Image uses).
+            const double x=r/255,camera=x<.081?x/4.5:std::pow((x+.099)/1.099,1/.45);bt709Curve=std::max(bt709Curve,std::abs(m::MediaAssemblyColorPipeline::srgbEncode(camera)-floats[k].number()));}
+        std::cout<<"movie colour "<<movie["name"].string()<<": "<<codes<<" codes, CoreMedia 709 worst float "<<worstFloat<<", worst byte "<<worstByte<<"; the BT.709 camera curve misses by "<<bt709Curve<<'\n';
+        check(codes>=250&&worstFloat<=1e-3&&worstByte<=1,"The CoreMedia 709 reading matches the original preview: "+movie["name"].string());
+        check(bt709Curve>.01,"The BT.709 camera curve is not what the original applies: "+movie["name"].string());
+        // The reading lightens decoded mid grey as the original preview does.
+        check(std::abs(movie["preview"].array()[128].number()-139)<=1&&std::abs(colour->convert(128,128,128)[0]*255-139)<1,"Decoded grey 128 shows as 139");
+        ++movies;
+    }
+    check(movies==2,"Tagged and untagged movies measured");
+}
+
 void streaming(){
     // Export streams bands; bands must equal one full render, and the
     // resample used by the video composition keeps associated alpha.
@@ -457,12 +486,12 @@ void performance(Cubes&cubes){
 }
 int main(int argc,char**argv){
     try{
-        if(argc!=5)throw std::runtime_error("usage: media_assembly_processor_tests <processor-source.json> <resources/media-assembly> <highlight-shadow-fit.json> <icc-source.json>");
+        if(argc!=6)throw std::runtime_error("usage: media_assembly_processor_tests <processor-source.json> <resources/media-assembly> <highlight-shadow-fit.json> <icc-source.json> <video-colour-source.json>");
         const auto fixture=J::parse(read(argv[1]),8*1024*1024);
         check(fixture["sourceCommit"].string()=="ca04f142185c7de40acd8523bdb563195d90a1d1"&&!fixture["usesAppOrWindow"].boolean(),"Authoritative isolated oracle");
         Cubes cubes{argv[2],{}};
         derivations();downscale();pixels(fixture,cubes);highlightShadowGap(J::parse(read(argv[3]),1024*1024));frames(fixture,cubes,argv[2]);extendedStickers();
-        colourProfiles(J::parse(read(argv[4]),2*1024*1024),cubes);streaming();performance(cubes);
+        colourProfiles(J::parse(read(argv[4]),2*1024*1024),cubes);movieColour(J::parse(read(argv[5]),1024*1024));streaming();performance(cubes);
         std::cout<<"media_assembly_processor_tests: "<<checks<<" checks passed\n";return 0;
     }catch(const std::exception&e){std::cerr<<"media_assembly_processor_tests: "<<e.what()<<'\n';return 1;}
 }
