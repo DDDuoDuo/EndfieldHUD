@@ -58,7 +58,7 @@ void portable(){
     check(c.perform("audio:input",6)&&c.choosingInput(),"Input chooser remains distinct from output");auto disconnected=c.snapshot();disconnected.inputs.clear();c.receiveSnapshot(std::move(disconnected));
     auto artwork=gpu::prepareVolumeScene(c);check(leaf(artwork,"volume/title")["text"]["string"].string()=="// Input device","Disconnected input chooser retains its title and empty-device artwork");
     check(c.key(27,false,7)&&!c.choosing()&&!c.key(27,false,7),"Escape only consumes a live chooser");
-    check(c.scroll({20,260},10000,8)&&c.applicationScroll()==308&&c.selectedSlider()=="volume","Application list has smooth clamped point-based scrolling");
+    check(c.scroll({20,260},10000,8)&&c.applicationScroll()==12*31-95.&&c.applicationScroll()==c.maximumApplicationScroll()&&c.selectedSlider()=="volume","Application list has smooth clamped point-based scrolling over its three-row viewport");
     artwork=gpu::prepareVolumeScene(c);check(leaf(artwork,"volume/app-track")["bounds"].array()[2].number()==2,"Source app scrollbar retains two-point width");
     check(c.scroll({20,260},-10000,9)&&c.applicationScroll()==0,"Application list returns to top without page switching");
     before=writes.size();check(c.setSlider("app:0",1)&&writes.size()==before,"Untouched direct route at unity never starts or recreates a service");
@@ -77,26 +77,109 @@ void portable(){
     gpu::VolumeController minimal({});artwork=gpu::prepareVolumeScene(minimal);check(artwork.surfaces.size()==artwork.layers["children"].array().size(),"Unknown devices/values retain bounded explicit unavailable artwork");
     std::set<std::string>ids;for(const auto&item:artwork.surfaces)check(ids.insert(item.id).second,"Source surface identities are unique");
 }
+gpu::VolumeSnapshot apps(unsigned count){auto s=fixture();s.applications.resize(count);return s;}
+std::size_t fullyVisibleRows(const gpu::VolumeController&c){std::size_t rows{};const auto view=c.applicationViewport();for(const auto&s:c.sliders())if(s.id.starts_with("app:")&&s.visibleRect&&s.visibleRect->height==s.rect.height&&s.rect.y>=view.y)++rows;return rows;}
+std::vector<double>appSliderTops(const gpu::VolumeController&c){std::vector<double>tops;for(const auto&s:c.sliders())if(s.id.starts_with("app:"))tops.push_back(s.rect.y);return tops;}
+// User change: the app list shows at most three rows and scrolls beyond that
+// (wheel, content drag or scrollbar drag) within the source clamp limits.
+void listLayout(){
+    unsigned writes{};gpu::VolumeCallbacks calls;calls.setAppGain=[&](auto,double){++writes;return true;};calls.stopApp=[&](auto){++writes;return true;};calls.setVolume=[&](auto,double){++writes;return true;};
+    gpu::VolumeController three(apps(3),calls);three.setActive(true);
+    check(three.applicationViewport()==core::Rect{12,234,376,95}&&three.layout().applicationRows==3,"The app list viewport holds three source rows (31 points each plus the source two-point sliver)");
+    check(fullyVisibleRows(three)==3&&three.maximumApplicationScroll()==0,"Three apps are all shown and the list does not scroll");
+    check(three.scroll({20,260},40,1)&&three.applicationScroll()==0&&three.mouseDown({60,250},1)&&!three.panning()&&!three.dragging(),"A list that fits ignores wheel travel and never starts a list drag");three.mouseUp();
+    auto plan=gpu::prepareVolumeScene(three);bool track{};for(const auto&n:plan.layers["children"].array())track=track||n["id"].string()=="volume/app-track";check(!track,"A list that fits shows no scrollbar");
+    gpu::VolumeController source(apps(3),{},{},gpu::VolumeLayout::source());source.setActive(true);
+    check(source.applicationViewport()==core::Rect{12,234,376,64}&&source.maximumApplicationScroll()==29&&fullyVisibleRows(source)==2,"The source layout keeps its 64-point two-row viewport");
+    gpu::VolumeController four(apps(4),calls);four.setActive(true);
+    check(four.maximumApplicationScroll()==29&&fullyVisibleRows(four)==3,"A fourth app scrolls (by the source rule: rows·31 − viewport)");
+    plan=gpu::prepareVolumeScene(four);const Json*thumb{};const Json*trackLayer{};for(const auto&n:plan.layers["children"].array()){if(n["id"].string()=="volume/app-thumb")thumb=&n;if(n["id"].string()=="volume/app-track")trackLayer=&n;}
+    check(trackLayer&&(*trackLayer)["bounds"]==Json::Array{0,0,2,95}&&thumb&&std::abs((*thumb)["bounds"].array()[3].number()-95.*95/(29+95))<1e-9,"The source scrollbar track and thumb span the three-row viewport");
+    // Wheel: continuous point offsets, only the app sliders move.
+    gpu::VolumeController c(fixture(),calls);c.setActive(true);const auto artwork=c.artworkRevision(),content=c.contentRevision();const auto before=appSliderTops(c);
+    check(c.scroll({20,300},7.25,2)&&c.applicationScroll()==7.25&&c.artworkRevision()==artwork&&c.contentRevision()==content+1,"A wheel step changes the list offset without changing any artwork");
+    const auto after=appSliderTops(c);check(after.size()>=3&&std::abs(after[0]-(before[0]-7.25))<1e-12&&std::abs(after[1]-(before[1]-7.25))<1e-12,"App sliders follow fractional wheel travel exactly (no row snapping)");
+    const auto[first,last]=c.applicationWindow();check(first==0&&last==5,"The retained window is the visible rows (four, one partly) plus one below");
+    check(c.scroll({20,300},31*3,3)&&c.applicationWindow().first==2&&c.applicationWindow().second==8,"Scrolling slides the retained window with the rows");
+    check(!c.scroll({20,331},10,4)&&c.scroll({20,328},-1000,4)&&c.applicationScroll()==0,"The wheel acts inside the three-row viewport and clamps at the top");
+    // Content drag: the rows follow the pointer; nothing is written.
+    check(c.mouseDown({60,300},5)&&c.panning()&&c.dragging()&&writes==0,"A press on a scrollable list outside its sliders starts a list drag");
+    check(c.mouseDragged({60,260})&&c.applicationScroll()==40&&c.mouseDragged({60,250})&&c.applicationScroll()==50&&c.artworkRevision()==artwork,"Dragging up scrolls the list by the pointer travel");
+    check(c.mouseDragged({60,-5000})&&c.applicationScroll()==c.maximumApplicationScroll()&&!c.mouseDragged({60,-6000}),"A list drag clamps at the end of the list");
+    check(c.mouseDragged({60,5000})&&c.applicationScroll()==0&&writes==0,"A list drag clamps at the top and never changes a gain");c.mouseUp();check(!c.panning()&&!c.dragging(),"Pointer up ends the list drag");
+    check(c.mouseDown({200,248},6)&&!c.panning()&&c.dragging()&&writes==1,"A press on an app slider still adjusts that app, not the list");c.mouseUp();
+    // Scrollbar drag: the thumb follows the pointer over the track travel.
+    const auto max=c.maximumApplicationScroll();const auto size=std::max(12.,95.*95/(max+95));
+    check(c.mouseDown({393,236},7)&&c.panning()&&c.applicationScroll()==0,"A press on the thumb grabs it without moving the list");
+    check(c.mouseDragged({393,236+(95-size)*.5})&&std::abs(c.applicationScroll()-max*.5)<1e-9,"Dragging the thumb half its travel scrolls half the list");
+    c.mouseDragged({393,1000});check(c.applicationScroll()==max,"The thumb drag clamps at the end");c.mouseUp();
+    check(c.mouseDown({393,240},8)&&c.applicationScroll()==0,"A press on the track outside the thumb centres the thumb at the pointer (clamped)");c.mouseUp();
+    // A per-app status keeps the source status line clear: two rows.
+    auto status=c.snapshot();status.perAppStatus="Synthetic per-app status";c.receiveSnapshot(status);
+    check(c.applicationViewport()==core::Rect{12,234,376,64}&&c.maximumApplicationScroll()==12*31-64.,"A per-app status message shows the source two-row viewport");
+    check(c.scroll({20,260},10000,9)&&c.applicationScroll()==12*31-64.&&!c.scroll({20,300},-10,9),"The two-row viewport takes the wheel only above the status line");
+    plan=gpu::prepareVolumeScene(c);for(const auto&n:plan.layers["children"].array())if(n["id"].string()=="volume/per-app-status")check(n["text"]["string"].string()=="Synthetic per-app status","The status line keeps its source text and place");
+    status.perAppStatus.reset();status.routingStopped=true;c.receiveSnapshot(status);check(c.applicationViewport().height==64,"Stopped routing shows its source status line too");
+    status.routingStopped=false;c.receiveSnapshot(status);check(c.applicationViewport().height==95&&c.applicationScroll()==12*31-95.,"Without a status the list returns to three rows and clamps its offset");
+    // Composed plan (source paint order): visible rows clipped to the viewport.
+    c.scroll({20,300},-1000,9);c.scroll({20,300},15,9);plan=gpu::prepareVolumeScene(c);std::size_t rows{};for(std::size_t n=0;n<plan.surfaces.size();++n){const auto&id=plan.surfaces[n].id;if(id.starts_with("volume/app-row/")){check(plan.surfaces[n].clip==c.applicationViewport(),"Every app row leaf is clipped to the list viewport");if(id.ends_with("/name"))++rows;}}
+    check(rows==4,"At a partial offset the clipped list paints the three rows' worth of partially visible rows");
+    check(leaf(plan,"volume/app-row/0/name")["position"]==Json::Array{18,235-15.}&&leaf(plan,"volume/app-row/3/name")["position"]==Json::Array{18,235+93-15.},"Row captions follow the offset exactly");
+    rejects([&]{gpu::VolumeController bad(fixture(),{},{},gpu::VolumeLayout{4});},"The canvas fits at most three app rows");
+}
 #ifdef _WIN32
 class Window{public:Window(){WNDCLASSW c{};c.lpfnWndProc=DefWindowProcW;c.hInstance=GetModuleHandleW(nullptr);c.lpszClassName=L"EndfieldVolumeOwnedFixture";atom=RegisterClassW(&c);check(atom!=0,"Register owned Volume fixture");hwnd=CreateWindowExW(WS_EX_NOREDIRECTIONBITMAP|WS_EX_TOOLWINDOW,c.lpszClassName,L"Owned Volume fixture",WS_POPUP,0,0,400,334,nullptr,nullptr,c.hInstance,nullptr);check(hwnd!=nullptr,"Create hidden owned Volume fixture");}~Window(){if(hwnd)DestroyWindow(hwnd);if(atom)UnregisterClassW(reinterpret_cast<LPCWSTR>(static_cast<ULONG_PTR>(atom)),GetModuleHandleW(nullptr));}HWND hwnd{};ATOM atom{};};
+// Names of the composed app rows' caption draws, in paint order: y of each.
+std::vector<double>rowCaptionTops(const gpu::LayerComposition&composition){std::vector<double>tops;for(const auto&d:composition.draws())if(d.sourceID.ends_with("volume/app-row/name"))tops.push_back(d.world.values[13]);return tops;}
+// User-reported: scrolling more than two apps was not smooth because every
+// wheel event reloaded and repainted the whole module. Rows are now retained
+// scenes that move by the offset alone.
+template<class Entries>void scrolling(gpu::Renderer&renderer,gpu::LayerRasterizer&raster,gpu::LayerComposition&composition,gpu::NativeVolumeScene&scene,gpu::VolumeController&c,Entries entries){
+    double time=20;auto publish=[&]{scene.syncContent();scene.updatePose({},1,time);composition.setEntries(renderer,entries());check(scene.collectRetired(renderer),"Retired rows release after publication");composition.present(renderer);};
+    c.scroll({20,300},-1000,time);publish();renderer.draw(false);
+    const auto stats=scene.stats();const auto rasterBefore=raster.stats();const auto tops=rowCaptionTops(composition);check(tops.size()==scene.rowCount()&&tops.size()>=4,"Each retained row composes its caption");
+    // A fractional (precision touchpad) step inside the current row window.
+    check(c.scroll({20,300},7.25,time+=.01),"Wheel step lands in the list");publish();
+    const auto moved=rowCaptionTops(composition);check(moved.size()==tops.size(),"A step inside the window keeps the same retained rows");for(std::size_t n=0;n<tops.size();++n)check(std::abs(moved[n]-(tops[n]-7.25))<1e-9,"Rows move by the exact continuous offset");
+    const auto scrolled=scene.stats();check(scrolled.structureUpdates==stats.structureUpdates&&scrolled.localUpdates==stats.localUpdates&&scrolled.rowBuilds==stats.rowBuilds&&scrolled.scrollSyncs==stats.scrollSyncs+1,"A scroll event neither rebuilds nor repaints the module or any row");
+    check(raster.stats().textLayoutsCreated==rasterBefore.textLayoutsCreated&&raster.stats().rasterizations-rasterBefore.rasterizations<=4&&scrolled.rowUpdates-stats.rowUpdates<=4,"Only the clipped highlight of a row crossing the viewport edge repaints; no caption is laid out again");
+    // Settled frames after the scroll: no allocation, raster or upload.
+    const auto settledRaster=raster.stats();const auto settledGPU=renderer.stats();allocations=0;counting=true;
+    try{for(unsigned n=0;n<60;++n){core::Matrix4 matrix;matrix.values[3]=n*.000001;scene.updatePose(matrix,1,time+=1./60);composition.present(renderer);}}catch(...){counting=false;throw;}counting=false;
+    check(allocations==0&&raster.stats().rasterizations==settledRaster.rasterizations&&raster.stats().textLayoutsCreated==settledRaster.textLayoutsCreated&&renderer.stats().textureUploads==settledGPU.textureUploads&&renderer.stats().meshUploads==settledGPU.meshUploads&&!scene.requiresFrames(time),"Settled scroll frames allocate nothing, rasterize nothing, upload nothing and demand no frames");
+    // A step that brings a new row into the window builds only that row; the
+    // next one also retires the row that left the window above.
+    auto windowed=scene.stats();auto layouts=raster.stats().textLayoutsCreated;check(c.scroll({20,300},31,time+=.01),"Second wheel step");publish();
+    check(scene.stats().rowBuilds==windowed.rowBuilds+1&&scene.stats().rowRetirements==windowed.rowRetirements&&scene.stats().structureUpdates==windowed.structureUpdates&&scene.stats().localUpdates==windowed.localUpdates&&raster.stats().textLayoutsCreated-layouts<=3,"A row entering the window is built once (its three captions) and nothing else is rebuilt");
+    windowed=scene.stats();layouts=raster.stats().textLayoutsCreated;check(c.scroll({20,300},31,time+=.01),"Third wheel step");publish();
+    check(scene.stats().rowBuilds==windowed.rowBuilds+1&&scene.stats().rowRetirements==windowed.rowRetirements+1&&scene.stats().structureUpdates==windowed.structureUpdates&&raster.stats().textLayoutsCreated-layouts<=3&&scene.rowCount()==6,"The far row retires as the next one enters; the window stays bounded");
+    // Back within the retained window: the retained rows return as they were.
+    const auto back=scene.stats();check(c.scroll({20,300},-31,time+=.01),"Reverse wheel step");publish();check(scene.stats().structureUpdates==back.structureUpdates&&scene.stats().rowBuilds<=back.rowBuilds+1,"Reverse scrolling rebuilds at most the one row that re-enters the window");
+    // Continuous drag over many rows keeps the module scene untouched.
+    c.scroll({20,300},-1000,time+=.01);publish();const auto dragged=scene.stats();check(c.applicationScroll()==0&&c.mouseDown({60,300},time+=.01)&&c.panning(),"List drag starts");for(unsigned n=1;n<=40;++n){c.mouseDragged({60,300-n*3.5});publish();}c.mouseUp();
+    check(scene.stats().structureUpdates==dragged.structureUpdates&&scene.stats().localUpdates==dragged.localUpdates&&std::abs(c.applicationScroll()-140)<1e-9&&scene.rowCount()<=7,"Dragging through the list moves retained rows only and keeps the window bounded");
+}
 void native(const std::filesystem::path&shader){Window window;gpu::Renderer renderer;renderer.initialize(window.hwnd,400,334,{gpu::Driver::warpForTests,shader,gpu::RenderTarget::offscreenForTests});renderer.setCamera(gpu::layerViewportProjection(400,334));gpu::LayerRasterizer raster;gpu::LayerRasterOptions options;options.pixelsPerPoint=1;gpu::LayerImageSource icons;options.memoryImages=&icons;
-    auto state=fixture();gpu::VolumeController c(state);c.setActive(true);gpu::NativeVolumeScene scene(c,raster,options);check(scene.syncContent()&&!scene.syncContent(),"Retained Volume source content loads only on explicit events");check(scene.scene().report().unsupported.empty(),"Volume source shapes/text are supported by shared raster");scene.updatePose({},1,0);gpu::LayerComposition composition;std::array entries{gpu::LayerCompositionEntry{&scene.scene(),{}}};composition.setEntries(renderer,entries);composition.present(renderer);renderer.draw(false);const auto first=renderer.readback();check(!first.pixels.empty(),"Hidden fixture paints real original-style Volume artwork");
+    auto state=fixture();gpu::VolumeController c(state);c.setActive(true);gpu::NativeVolumeScene scene(c,raster,options);check(scene.syncContent()&&!scene.syncContent(),"Retained Volume source content loads only on explicit events");check(scene.scene().report().unsupported.empty(),"Volume source shapes/text are supported by shared raster");
+    check(scene.rowCount()==5&&scene.entries().size()==6,"The visible app rows and one row below are retained scenes after the module scene");for(const auto&e:scene.entries())check(e.scene->report().unsupported.empty(),"Retained app rows are supported by the shared raster");
+    scene.updatePose({},1,0);gpu::LayerComposition composition;const auto entries=[&]{return scene.entries();};composition.setEntries(renderer,entries());composition.present(renderer);renderer.draw(false);const auto first=renderer.readback();check(!first.pixels.empty(),"Hidden fixture paints real original-style Volume artwork");
     scene.setFeedback(core::Point{100,55},false,false,1);scene.updatePose({},1,1.14);composition.present(renderer);const auto steadyRaster=raster.stats();const auto steadyGPU=renderer.stats();allocations=0;counting=true;try{for(unsigned n=0;n<120;++n){core::Matrix4 matrix;matrix.values[3]=n*.000001;scene.updatePose(matrix,.8f,2+n/60.);composition.present(renderer);}}catch(...){counting=false;throw;}counting=false;
     check(allocations==0,"120 Volume tilt frames allocate no CPU storage");check(raster.stats().rasterizations==steadyRaster.rasterizations&&raster.stats().textLayoutsCreated==steadyRaster.textLayoutsCreated&&renderer.stats().textureUploads==steadyGPU.textureUploads&&renderer.stats().meshUploads==steadyGPU.meshUploads,"Pointer feedback and tilt reuse artwork/text/GPU resources");
     state.volume=0;c.receiveSnapshot(state);scene.syncContent();scene.updatePose({},1,5);composition.upload(renderer);composition.present(renderer);renderer.draw(false);check(scene.scene().report().unsupported.empty(),"Zero gain degenerate source fill is supported explicitly");check(scene.stats().localUpdates>0&&scene.stats().structureUpdates==1,"Master value event updates changed leaves without rebuilding complete module");
-    c.perform("audio:output",6);scene.syncContent();scene.setFeedback({},false,true,6);scene.updatePose({},1,6);composition.setEntries(renderer,entries);composition.present(renderer);renderer.draw(false);check(scene.requiresFrames(6)&&!scene.requiresFrames(6.18),"Device menu action uses only its finite source frame deadline");
-    c.dismissChooser(7);scene.syncContent();scene.updatePose({},1,7.18);composition.setEntries(renderer,entries);composition.present(renderer);state.volume.reset();state.balance.reset();state.canSetVolume=state.canSetBalance=false;c.receiveSnapshot(state);scene.syncContent();scene.updatePose({},1,8);composition.setEntries(renderer,entries);composition.present(renderer);renderer.draw(false);check(scene.scene().report().unsupported.empty(),"Unavailable controls render without guessing values");
+    c.perform("audio:output",6);scene.syncContent();scene.setFeedback({},false,true,6);scene.updatePose({},1,6);check(scene.rowCount()==0,"The device chooser retains no app rows");composition.setEntries(renderer,entries());check(scene.collectRetired(renderer),"Rows leaving the window release after the composition published without them");composition.present(renderer);renderer.draw(false);check(scene.requiresFrames(6)&&!scene.requiresFrames(6.18),"Device menu action uses only its finite source frame deadline");
+    c.dismissChooser(7);scene.syncContent();scene.updatePose({},1,7.18);composition.setEntries(renderer,entries());composition.present(renderer);state.volume.reset();state.balance.reset();state.canSetVolume=state.canSetBalance=false;c.receiveSnapshot(state);scene.syncContent();scene.updatePose({},1,8);composition.setEntries(renderer,entries());composition.present(renderer);renderer.draw(false);check(scene.scene().report().unsupported.empty(),"Unavailable controls render without guessing values");
     std::array<std::uint8_t,64*64*4>rgba{};for(std::size_t k=0;k<rgba.size();k+=4){rgba[k]=100;rgba[k+1]=20;rgba[k+2]=10;rgba[k+3]=255;}icons.publish("volume.synthetic.icon",1,64,64,rgba);
-    state=c.snapshot();state.applications[0].icon=gpu::VolumeApplicationIcon{"volume.synthetic.icon",1};c.receiveSnapshot(state);scene.syncContent();scene.updatePose({},1,9);composition.setEntries(renderer,entries);composition.present(renderer);renderer.draw(false);const auto iconFrame=renderer.readback();const auto offset=std::size_t(248)*iconFrame.rowBytes+28*4;
+    state=c.snapshot();state.applications[0].icon=gpu::VolumeApplicationIcon{"volume.synthetic.icon",1};c.receiveSnapshot(state);scene.syncContent();scene.updatePose({},1,9);composition.setEntries(renderer,entries());composition.present(renderer);renderer.draw(false);const auto iconFrame=renderer.readback();const auto offset=std::size_t(248)*iconFrame.rowBytes+28*4;
     check(iconFrame.pixels[offset+3]>=254&&std::abs(int(iconFrame.pixels[offset+2])-100)<=2&&std::abs(int(iconFrame.pixels[offset+1])-20)<=2&&std::abs(int(iconFrame.pixels[offset])-10)<=2,"Shared native instance icon paints at source position with original color and no accent tint");
     const auto warmedRaster=raster.stats();const auto warmedImages=icons.stats();const auto warmedGPU=renderer.stats();allocations=0;counting=true;try{for(unsigned n=0;n<120;++n){core::Matrix4 matrix;matrix.values[3]=n*.000001;scene.updatePose(matrix,.9f,10+n/60.);composition.present(renderer);}}catch(...){counting=false;throw;}counting=false;
     check(allocations==0&&raster.stats().rasterizations==warmedRaster.rasterizations&&icons.stats().cacheHits==warmedImages.cacheHits&&renderer.stats().textureUploads==warmedGPU.textureUploads,"120 icon-bearing tilt frames perform no allocations, rasterization, cache lookup or texture upload");
-    composition.detach(renderer);check(scene.scene().releaseResources(renderer)&&renderer.stats().textures==0&&renderer.stats().meshes==0,"Owner detach retires every Volume resource without another publisher");renderer.reset();
+    scrolling(renderer,raster,composition,scene,c,entries);
+    composition.detach(renderer);check(scene.releaseResources(renderer)&&renderer.stats().textures==0&&renderer.stats().meshes==0,"Owner detach retires every Volume resource (module scene and app rows) without another publisher");renderer.reset();
 }
 #endif
 }
 #ifdef _WIN32
-int wmain(int argc,wchar_t**argv){const auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);try{check(SUCCEEDED(hr)&&argc==2,"Pass HLSL to hidden Volume fixture");portable();native(argv[1]);CoUninitialize();std::cout<<"PASS "<<checks<<" Volume checks\n";return 0;}catch(const std::exception&e){counting=false;if(SUCCEEDED(hr))CoUninitialize();std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
+int wmain(int argc,wchar_t**argv){const auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);try{check(SUCCEEDED(hr)&&argc==2,"Pass HLSL to hidden Volume fixture");portable();listLayout();native(argv[1]);CoUninitialize();std::cout<<"PASS "<<checks<<" Volume checks\n";return 0;}catch(const std::exception&e){counting=false;if(SUCCEEDED(hr))CoUninitialize();std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
 #else
-int main(){try{portable();std::cout<<"PASS "<<checks<<" Volume portable checks\n";return 0;}catch(const std::exception&e){counting=false;std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
+int main(){try{portable();listLayout();std::cout<<"PASS "<<checks<<" Volume portable checks\n";return 0;}catch(const std::exception&e){counting=false;std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
 #endif

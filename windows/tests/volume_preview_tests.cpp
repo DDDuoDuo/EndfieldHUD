@@ -39,6 +39,33 @@ void run(const std::filesystem::path&shader){Window window;gpu::Renderer rendere
     settings.module=core::Module::power;modules.select(core::Module::power,++time);sample=modules.sample(time+.05).presentation;preview.update({},settings,sample,1,time+.05);check(!preview.state().active()&&activations==2&&!preview.pointerLocked()&&!preview.key({app::KeyKind::down,VK_LEFT},false,time+.05),"Leaving Volume immediately disables provider/input while retaining outgoing artwork");preview.upload(renderer);composition.present(renderer);
     preview.update({},settings,modules.sample(time+1).presentation,1,time+1);check(preview.entries().empty()&&!preview.requiresFrames(time+1),"Finished departure removes module entries and all local frame demand");composition.setEntries(renderer,preview.entries());preview.collected(renderer);preview.release(renderer);composition.detach(renderer);check(renderer.stats().textures==0&&renderer.stats().meshes==0&&!IsWindowVisible(window.hwnd),"Fixture retires all resources and never opens a real UI/audio provider");renderer.reset();
 }
+// User-reported: the app list (more than two apps) did not scroll smoothly.
+// Through the owner: three rows show, the wheel and a list drag move retained
+// rows, and settled frames after a scroll do no work.
+void scrolling(const std::filesystem::path&shader){Window window;gpu::Renderer renderer;renderer.initialize(window.hwnd,1280,800,{gpu::Driver::warpForTests,shader,gpu::RenderTarget::offscreenForTests});renderer.setCamera(gpu::layerViewportProjection(1280,800));gpu::LayerRasterizer raster;
+    gpu::VolumeSnapshot data;data.outputs={{"endpoint-1","Speakers"}};data.outputID="endpoint-1";data.volume=.55;data.muted=false;data.canSetVolume=data.canSetMute=true;data.applicationActivitySupported=true;
+    for(unsigned n=0;n<6;++n)data.applications.push_back({std::to_string(200+n)+":1","Synthetic app "+std::to_string(n),200+n,true,gpu::VolumeAppState::direct,{},{},{},{}});
+    unsigned gains{};tools::VolumePreviewOptions options;options.initial=data;options.rasterDensity=1;options.actions.setAppGain=[&](auto,double){++gains;return true;};
+    tools::VolumePreview preview(raster,std::move(options));preview.resize({1280,800,96,1,1280,800});core::source::DesktopChromeSettings settings;settings.viewport={0,0,1280,800};settings.module=core::Module::volume;core::ModulePresentation modules(core::Module::volume);double time{};
+    gpu::LayerComposition composition;const auto frame=[&](double t){preview.update({},settings,modules.sample(t).presentation,1,t);preview.upload(renderer);composition.setEntries(renderer,preview.entries());preview.collected(renderer);composition.present(renderer);};
+    frame(time);check(preview.state().applicationViewport().height==95&&preview.state().maximumApplicationScroll()==6*31-95.,"The owner's app list shows three rows of six");
+    check(preview.entries().size()==6&&!preview.entries().back().after.empty(),"The module scene and its retained rows compose with the registration strokes last");
+    gpu::LayerScene geometry(raster);gpu::LayerRasterOptions fixtureOptions;geometry.load(Json::Object{{"bounds",Json::Array{0,0,400,334}},{"children",Json::Array{}}},fixtureOptions);gpu::NativeModuleSurface surface(geometry,core::Module::volume);surface.update({},settings,modules.sample(time).presentation.current,1);core::Projection plane=core::Projection::viewport(gpu::layerViewportProjection(1280,800)*surface.pose().contentWorld,1280,800);
+    const auto point=[&](double x,double y){const auto p=plane.project({x,y});check(p.has_value(),"Source plane projects fixture point");return *p;};
+    auto p=point(60,280);const auto raster0=raster.stats();
+    check(preview.wheel({p.x,p.y,-1,false,0,3},time+=1./60)&&preview.state().applicationScroll()==36,"One wheel detent scrolls the list three source lines (36 points)");frame(time);
+    check(raster.stats().textLayoutsCreated-raster0.textLayoutsCreated<=3,"A wheel detent lays out at most the one row entering the retained window");
+    const auto settledRaster=raster.stats();const auto settledGPU=renderer.stats();allocations=0;counting=true;
+    try{for(unsigned n=0;n<60;++n){auto center=core::Matrix4{};center.values[3]=n*.000001;preview.update(center,settings,modules.sample(time+=1./60).presentation,1,time);composition.present(renderer);}}catch(...){counting=false;throw;}counting=false;
+    check(allocations==0&&raster.stats().rasterizations==settledRaster.rasterizations&&renderer.stats().textureUploads==settledGPU.textureUploads&&!preview.requiresFrames(time),"Frames after a scroll allocate, rasterize and upload nothing and demand no more frames");
+    frame(time+=1./60); // back to the untilted plane the fixture projects through
+    p=point(60,290);check(preview.pointer({app::PointerKind::down,app::PointerButton::left,p.x,p.y},time+=1./60)&&preview.pointerLocked()&&preview.state().panning(),"A press on the list outside its sliders captures a list drag");
+    p=point(60,270);check(preview.pointer({app::PointerKind::move,app::PointerButton::none,p.x,p.y},time+=1./60)&&std::abs(preview.state().applicationScroll()-56)<1e-6,"The list follows the captured pointer");frame(time);
+    const auto wheelWhileDragging=preview.state().applicationScroll();check(preview.wheel({p.x,p.y,-1,false,0,3},time)&&preview.state().applicationScroll()==wheelWhileDragging,"The wheel does not fight a list drag");
+    check(preview.pointer({app::PointerKind::up,app::PointerButton::left,p.x,p.y},time+=1./60)&&!preview.pointerLocked()&&gains==0,"Pointer up ends the drag; scrolling never writes an app gain");
+    p=point(60,280);preview.wheel({p.x,p.y,10,false,0,3},time+=1./60);check(preview.state().applicationScroll()==0,"Wheel up clamps at the top of the list");frame(time);
+    composition.setEntries(renderer,{});preview.collected(renderer);preview.release(renderer);composition.detach(renderer);check(renderer.stats().textures==0&&renderer.stats().meshes==0,"The owner retires the module scene and every retained row");renderer.reset();
 }
-int wmain(int argc,wchar_t**argv){const auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);try{check(SUCCEEDED(hr)&&argc==2,"Pass shader to isolated Volume integration fixture");run(argv[1]);CoUninitialize();std::cout<<"PASS "<<checks<<" Volume preview checks\n";return 0;}catch(const std::exception&e){counting=false;if(SUCCEEDED(hr))CoUninitialize();std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
+}
+int wmain(int argc,wchar_t**argv){const auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);try{check(SUCCEEDED(hr)&&argc==2,"Pass shader to isolated Volume integration fixture");run(argv[1]);scrolling(argv[1]);CoUninitialize();std::cout<<"PASS "<<checks<<" Volume preview checks\n";return 0;}catch(const std::exception&e){counting=false;if(SUCCEEDED(hr))CoUninitialize();std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
 #endif

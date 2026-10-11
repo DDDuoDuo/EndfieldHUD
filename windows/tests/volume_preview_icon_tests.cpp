@@ -24,14 +24,14 @@ bool hasIcon(const gpu::VolumeController&c,std::size_t row){
 }
 void run(){
     gpu::LayerRasterizer raster;gpu::LayerImageSource cache;gpu::VolumeIconPlan plan;unsigned visibleCalls{},hides{};
-    tools::VolumePreviewOptions options;options.initial=snapshot(5);options.rasterDensity=1;options.memoryImages=&cache;
+    tools::VolumePreviewOptions options;options.initial=snapshot(9);options.rasterDensity=1;options.memoryImages=&cache;
     options.icons.setVisible=[&](std::span<const gpu::VolumeIconApplication>apps){++visibleCalls;return plan.setVisible(apps);};
     options.icons.plan=[&]{return &plan;};options.icons.hide=[&]{++hides;plan.hide();};
     tools::VolumePreview preview(raster,std::move(options));preview.resize({1280,800,96,1,1280,800});
     core::source::DesktopChromeSettings settings;settings.viewport={0,0,1280,800};settings.module=core::Module::volume;core::ModulePresentation modules(core::Module::volume);double time{};
     check(visibleCalls==0&&preview.visibleIcons().empty(),"An inactive owner requests no icons");
     preview.update({},settings,modules.sample(time).presentation,1,time);
-    check(visibleCalls==1&&preview.visibleIcons().size()==3,"Activation requests only the visible app rows");
+    check(visibleCalls==1&&preview.visibleIcons().size()==5&&preview.visibleIcons().back().applicationID=="104:7","Activation requests only the retained row window: the visible rows (three and a sliver) plus the next one");
     check(preview.visibleIcons()[0].applicationID=="100:7"&&preview.visibleIcons()[0].executable&&ehud::data::validUUID(preview.visibleIcons()[0].requestToken),"Each request carries the exact process identity, executable metadata and a fresh UUID token");
     check(!hasIcon(preview.state(),0),"No icon is shown before a successful extraction (source nil icon)");
     // Complete the first two requests: one real icon, one generic type icon.
@@ -46,13 +46,13 @@ void run(){
     check(visibleCalls==calls,"Steady frames never re-request icons");
     // A content event that changes the rows (scroll) requests the new set; a
     // process keeps its token while listed.
-    auto next=snapshot(5);next.volume=.6;check(preview.receiveSnapshot(next)&&visibleCalls==calls,"A snapshot that keeps the rows reuses the icon request");
+    auto next=snapshot(9);next.volume=.6;check(preview.receiveSnapshot(next)&&visibleCalls==calls,"A snapshot that keeps the rows reuses the icon request");
     check(preview.state().snapshot().applications[0].icon.has_value(),"Icons survive unrelated snapshots");
     const auto hidden=hides;
     auto empty=snapshot(0);preview.receiveSnapshot(empty);preview.update({},settings,modules.sample(time+=1./60).presentation,1,time);
     check(preview.visibleIcons().empty(),"No app rows: no icon requests");
-    preview.receiveSnapshot(snapshot(5));preview.update({},settings,modules.sample(time+=1./60).presentation,1,time);
-    check(preview.visibleIcons().size()==3&&preview.visibleIcons()[0].requestToken==token,"A relisted process identity keeps its token, so its icon is not re-extracted");
+    preview.receiveSnapshot(snapshot(9));preview.update({},settings,modules.sample(time+=1./60).presentation,1,time);
+    check(preview.visibleIcons().size()==5&&preview.visibleIcons()[0].requestToken==token,"A relisted process identity keeps its token, so its icon is not re-extracted");
     check(preview.state().snapshot().applications[0].icon.has_value(),"The retained successful binding is shown again immediately");
     settings.module=core::Module::power;modules.select(core::Module::power,time+=1./60);
     for(unsigned n=0;n<90;++n)preview.update({},settings,modules.sample(time+=1./60).presentation,1,time);

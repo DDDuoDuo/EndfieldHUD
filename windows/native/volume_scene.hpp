@@ -5,6 +5,8 @@
 #include "native/audio_endpoint_snapshot.hpp"
 #include <functional>
 #include <memory>
+#include <span>
+#include <utility>
 
 namespace endfield::native {
 using VolumeColor=std::array<double,4>;
@@ -66,12 +68,22 @@ struct VolumeCallbacks {
     std::function<void()>stopAllApps;
 };
 struct VolumeActionSample {core::Matrix4 transform;core::Rect reveal{0,0,400,334};bool active{};};
+// App-list geometry. The source VolumeCanvas viewport is 64 points: two
+// 31-point rows plus a two-point sliver of the next. The Windows HUD shows up
+// to three rows (explicit user change; a 95-point viewport by the same rule)
+// and scrolls beyond that. While a per-app status message occupies the source
+// status line at y=300 the list keeps the source two-row viewport.
+struct VolumeLayout {
+    std::size_t applicationRows{3};
+    static constexpr VolumeLayout source()noexcept{return {2};}
+    bool operator==(const VolumeLayout&)const=default;
+};
 // Event-driven counterpart of VolumeCanvas + HUDVolumeInteraction. Caller owns
 // service observation, clock and lifetime; callbacks must not destroy/reenter
 // mutators, but may deliver a fresh snapshot synchronously. Never polls audio.
 class VolumeController final {
 public:
-    VolumeController(VolumeSnapshot,VolumeCallbacks={},VolumeStrings={});
+    VolumeController(VolumeSnapshot,VolumeCallbacks={},VolumeStrings={},VolumeLayout={});
     ~VolumeController();
     VolumeController(const VolumeController&)=delete;
     VolumeController&operator=(const VolumeController&)=delete;
@@ -87,16 +99,27 @@ public:
     bool nudge(double direction);
     bool dismissChooser(double time,bool reduceMotion=false);
     bool key(std::uint32_t virtualKey,bool modified,double time,bool reduceMotion=false);
-    bool active()const noexcept;bool dragging()const noexcept;bool choosing()const noexcept;bool headphones()const noexcept;
+    // dragging: the pointer is captured by a slider or by a list drag (panning).
+    bool active()const noexcept;bool dragging()const noexcept;bool panning()const noexcept;bool choosing()const noexcept;bool headphones()const noexcept;
     bool choosingInput()const noexcept;
     std::size_t pageIndex()const noexcept;std::size_t pageCount()const noexcept;double applicationScroll()const noexcept;
     const std::string&selectedSlider()const noexcept;
     const VolumeSnapshot&snapshot()const noexcept;const VolumeStrings&strings()const noexcept;
     std::span<const VolumeControl>actions()const noexcept;std::span<const VolumeSlider>sliders()const noexcept;
+    // Any change of actions/sliders, including a list offset change.
     std::uint64_t contentRevision()const noexcept;
+    // Artwork other than the list offset: a scroll or list drag changes only
+    // contentRevision, so retained rows move without being repainted.
+    std::uint64_t artworkRevision()const noexcept;
     VolumeActionSample actionSample(double time)const;
     static constexpr core::Rect bounds(){return {0,0,400,334};}
-    static constexpr core::Rect applicationViewport(){return {12,234,376,64};}
+    const VolumeLayout&layout()const noexcept;
+    core::Rect applicationViewport()const noexcept;double maximumApplicationScroll()const noexcept;
+    // Listed app rows (indices into snapshot().applications, source order) and
+    // the retained window [first,last): rows meeting the viewport plus one row
+    // either side; empty unless the app list is shown.
+    std::span<const std::size_t>applicationRows()const noexcept;
+    std::pair<std::size_t,std::size_t>applicationWindow()const noexcept;
 private:
     struct Impl;std::unique_ptr<Impl>impl_;
 };
@@ -115,8 +138,14 @@ struct VolumeScenePlan {ehud::data::Json layers;std::vector<VolumeSurface>surfac
 VolumeScenePlan prepareVolumeScene(const VolumeController&,VolumeStyle={});
 
 #ifdef _WIN32
-class LayerRasterizer;class LayerScene;struct LayerRasterOptions;struct PlaneMask;struct PlaneShutter;
-struct NativeVolumeSceneStats {std::uint64_t structureUpdates{},localUpdates{},poseUpdates{},feedbackChanges{};};
+class LayerRasterizer;class LayerScene;class Renderer;struct LayerRasterOptions;struct PlaneMask;struct PlaneShutter;struct LayerCompositionEntry;
+struct NativeVolumeSceneStats {
+    std::uint64_t structureUpdates{},localUpdates{},poseUpdates{},feedbackChanges{};
+    // App rows are retained parts keyed by process identity; a list offset
+    // change only moves them (scrollSyncs) and repaints nothing but the
+    // clipped highlight of a row crossing the viewport edge (rowUpdates).
+    std::uint64_t rowBuilds{},rowUpdates{},rowRetirements{},scrollSyncs{};
+};
 class NativeVolumeScene final {
 public:
     NativeVolumeScene(VolumeController&,LayerRasterizer&,LayerRasterOptions,VolumeStyle={});
@@ -132,7 +161,14 @@ public:
     bool updatePose(const core::Matrix4& contentWorld,float opacity,double time,
         std::span<const PlaneMask> ownerMasks={},const PlaneShutter* ownerShutter=nullptr);
     bool requiresFrames(double time)const;
+    // The module artwork without its app rows; the rows are separate retained
+    // scenes. entries() lists all in paint order (rows after this scene).
     LayerScene&scene()noexcept;const LayerScene&scene()const noexcept;
+    std::span<const LayerCompositionEntry>entries()noexcept;std::size_t rowCount()const noexcept;
+    // Resource-only paths for the caller's composition (see LayerScene).
+    // collectRetired releases rows that left the window: call it after the
+    // composition published entries() without them.
+    void uploadResources(Renderer&);bool collectRetired(Renderer&);bool releaseResources(Renderer&);
     NativeVolumeSceneStats stats()const noexcept;
 private:struct Impl;std::unique_ptr<Impl>impl_;
 };

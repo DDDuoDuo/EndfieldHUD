@@ -8,8 +8,9 @@
 #include "core/module_presentation.hpp"
 namespace endfield::tools {
 // Borrowed app-row icon source, normally a NativeVolumeIconProvider over the
-// ONE shared Shelf Shell-icon worker. The owner asks only for the visible app
-// rows (<= 8) after content events, never per frame, and hides the request set
+// ONE shared Shelf Shell-icon worker. The owner asks only for the retained app
+// row window (the visible rows plus one either side, <= 7 of the plan's 8)
+// after content events, never per frame, and hides the request set
 // when Volume leaves, the Headphones page or a chooser is shown. When the
 // shell routes the shared icon worker's completion to the provider's drain(),
 // call VolumePreview::iconsChanged() so successful bindings reach the artwork.
@@ -23,6 +24,7 @@ struct VolumePreviewOptions {
     native::VolumeCallbacks actions;
     native::VolumeStrings strings=native::VolumeStrings::simplifiedChinese();
     native::VolumeStyle style;
+    native::VolumeLayout layout; // three app rows (user change; source shows two)
     double rasterDensity{2};bool reduceMotion{};
     native::LayerImageSource*memoryImages{}; // Borrowed shared Shell icon cache; outlives this preview.
     VolumeIconHooks icons; // Optional; without it rows keep the source nil icon.
