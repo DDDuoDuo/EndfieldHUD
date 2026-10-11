@@ -16,7 +16,15 @@ struct EventLogSaveQueue::Impl:std::enable_shared_from_this<Impl> {
 };
 EventLogSaveQueue::EventLogSaveQueue(native::EventLogOwner&o,UtilityExecutor&e):impl_(std::make_shared<Impl>(o,e)){}
 EventLogSaveQueue::~EventLogSaveQueue(){auto i=impl_;i->alive=false;i->executor.invalidate(i->route,false);}
-void EventLogSaveQueue::capture(double time,bool force){auto i=impl_;if(auto next=i->owner.takeSave(time,force))i->pending=std::move(next);i->retry();}
+// Event Log persistence is a host service called outside ModuleRegistry
+// isolation (onDeadline, shutdown flush): a snapshot that cannot be prepared
+// shows the source save status ("The log could not be saved. New events are
+// kept in this session.") and keeps its deadline for the next wake instead of
+// ending the HUD. The owner's events stay in memory.
+void EventLogSaveQueue::capture(double time,bool force){auto i=impl_;
+    try{if(auto next=i->owner.takeSave(time,force))i->pending=std::move(next);}
+    catch(const std::exception&){(void)i->owner.complete({i->owner.revision(),false});return;}
+    i->retry();}
 void EventLogSaveQueue::retry(){auto i=impl_;i->retry();}
 bool EventLogSaveQueue::pending()const{return impl_->pending.has_value();}
 void EventLogSaveQueue::flush(double time){auto i=impl_;capture(time,true);if(!i->alive)return;

@@ -15,23 +15,34 @@
 //
 // --verify-package checks only this executable's own resource package and
 // exits; it creates no window, mutex or data root (used by hidden tests).
+//
+// A fatal error (an exception that left the run: only module owners are
+// isolated) is still reported in one localized message box, and is also
+// written to <data root>/v1/Diagnostics/last-fatal.txt: the exception type, a
+// bounded message with path-like words redacted, the HRESULT and the host
+// stage/module owner that was active (app/fatal_stage.hpp). No document text.
 #include "app/application.hpp"
 #include "app/application_areas.hpp"
 #include "app/application_modules.hpp"
 #include "app/application_package.hpp"
+#include "app/fatal_stage.hpp"
 #include "app/single_instance.hpp"
 #include "core/application_arguments.hpp"
 #include "core/data/application_root.hpp"
+#include "core/data/file_io.hpp"
 #include "core/migration/mac_import_work.hpp"
 #include "core/localization.hpp"
 #include "core/resource_locator.hpp"
 #include <array>
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
+#include <ctime>
 #include <functional>
 #include <optional>
 #include <iostream>
 #include <string>
+#include <typeinfo>
 #include <vector>
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -142,6 +153,54 @@ int verifyPackage() {
     return failures || !package.shell ? 2 : 0;
 }
 
+// The versioned data folder of the current run (<base>/v1), once opened; the
+// fatal record goes to its Diagnostics folder. Empty before the root opens.
+fs::path fatalDataFolder;
+
+// Exception text can carry file paths (std::filesystem_error, Windows API
+// wrappers): words with a path separator are redacted, non-ASCII bytes and
+// control characters replaced, and the result bounded.
+std::string redacted(std::string_view message) {
+    std::string out;
+    std::size_t start = 0;
+    while (start < message.size() && out.size() < 512) {
+        std::size_t end = start;
+        while (end < message.size() && message[end] != ' ') ++end;
+        const auto word = message.substr(start, end - start);
+        if (word.find_first_of("\\/") != std::string_view::npos) out += "<path>";
+        else for (const char c : word) out.push_back(c >= 0x20 && c < 0x7f ? c : '?');
+        if (end < message.size()) out.push_back(' ');
+        start = end + 1;
+    }
+    if (out.size() > 512) out.resize(512);
+    return out;
+}
+// Best effort: never throws, never replaces the message box below.
+void writeFatal(std::string_view type, std::string_view message, std::optional<std::uint32_t> hresult) noexcept {
+    try {
+        std::string text = "EndfieldHUD fatal error\n";
+        char stamp[32]{};
+        const auto now = std::time(nullptr);
+        std::tm utc{};
+        if (!gmtime_s(&utc, &now) && std::strftime(stamp, sizeof stamp, "%Y-%m-%dT%H:%M:%SZ", &utc)) text += "utc: " + std::string(stamp) + "\n";
+        text += "exception: " + redacted(type.substr(0, 160)) + "\n";
+        text += "message: " + redacted(message) + "\n";
+        if (hresult) {
+            char code[16]{};
+            std::snprintf(code, sizeof code, "%08X", static_cast<unsigned>(*hresult));
+            text += "hresult: 0x" + std::string(code) + "\n";
+        }
+        const auto stage = app::FatalStage::last();
+        text += "stage: " + (stage.empty() ? std::string("(not recorded)") : std::string(stage)) + "\n";
+        std::fputs(text.c_str(), stderr);
+        OutputDebugStringA(text.c_str());
+        if (fatalDataFolder.empty()) return;
+        constexpr std::size_t maximum = 4096;
+        const auto path = fatalDataFolder / "Diagnostics" / "last-fatal.txt";
+        ehud::data::detail::replaceFile(path, ehud::data::detail::readFile(path, maximum), text, maximum);
+    } catch (...) {}
+}
+
 // Opens the data root, reporting failures as at startup; nullopt: reported.
 std::optional<ehud::data::ApplicationRoot> openRoot(const fs::path& base) {
     try { return ehud::data::openApplicationRoot(base); }
@@ -157,6 +216,7 @@ std::optional<ehud::data::ApplicationRoot> openRoot(const fs::path& base) {
 int run(const std::vector<std::string>& values) {
     std::vector<std::string_view> views(values.begin(), values.end());
     if (views.size() == 1 && views[0] == "--verify-package") return verifyPackage();
+    const app::FatalStage launch("launch");
     core::ApplicationArguments arguments;
     try { arguments = core::parseApplicationArguments(views); }
     catch (const std::exception&) { report("EndfieldHUD received invalid launch arguments.", "EndfieldHUD 收到了无效的启动参数。"); return 1; }
@@ -205,6 +265,7 @@ int run(const std::vector<std::string>& values) {
             std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count());
         const auto root = openRoot(base);
         if (!root) return 1;
+        fatalDataFolder = root->data;
         core::ApplicationArguments runArguments = arguments;
         runArguments.startup = startup;
         auto options = productionOptions(package, root->data, runArguments);
@@ -219,17 +280,22 @@ int run(const std::vector<std::string>& values) {
         std::function<void()> work;
         std::optional<std::optional<core::Module>> recovered;
         {
+            // Declared before the owner: the teardown stage covers its destructor.
+            std::optional<app::FatalStage> stage(std::in_place, "application start");
             app::Application application(std::move(options));
             instance.setHandler([&application](std::vector<std::string> forwarded) { application.activate(forwarded); });
+            stage.emplace("application run");
             code = application.run();
             instance.setHandler({});
             work = application.takeRestartWork();
             recovered = application.takeDeviceRecovery();
+            stage.emplace("application teardown");
         }
         if (work) {
             // Every owner and store of the finished run is closed: the area's
             // work (e.g. the Mac import commit) runs exactly once, then the HUD
             // opens again on System over the same root.
+            const app::FatalStage stage("restart work");
             work(); work = {};
             startup = {}; startup.settings = true; reopen.reset();
             continue;
@@ -265,10 +331,13 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     try { return run(values); }
     catch (const winrt::hresult_error& e) {
         std::fprintf(stderr, "EndfieldHUD failed: HRESULT %08x\n", static_cast<unsigned>(e.code().value));
+        writeFatal("winrt::hresult_error", narrow(e.message()), static_cast<std::uint32_t>(e.code().value));
         report("EndfieldHUD could not start its display. Your data was not changed.", "EndfieldHUD 无法启动显示界面，数据未被更改。");
         return 1;
     } catch (const std::exception& e) {
         std::fprintf(stderr, "EndfieldHUD failed: %s\n", e.what());
+        // RendererError and std::system_error carry their HRESULT/Win32 code in the message.
+        writeFatal(typeid(e).name(), e.what(), std::nullopt);
         report("EndfieldHUD stopped because of an error. Your saved data was not changed.", "EndfieldHUD 因错误而停止，已保存的数据未被更改。");
         return 1;
     }

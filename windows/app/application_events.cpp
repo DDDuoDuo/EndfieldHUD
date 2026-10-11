@@ -2,6 +2,7 @@
 // ModuleRegistry chains (app/module_owner.hpp); OS/service/picker messages keep
 // their established WM_APP routes and order.
 #include "app/application_impl.hpp"
+#include "app/fatal_stage.hpp"
 #include <cstring>
 #include <iostream>
 #include <wrl/client.h>
@@ -183,6 +184,7 @@ void Application::Impl::onCloseRequested(){
 }
 
 void Application::Impl::onDeadline(double time){
+    const FatalStage stage("deadline");
     if(!ready||stopping)return;bool artwork=projection&&projection->dismissalComplete(time);
     if(calendarNextWake&&*calendarNextWake<=time){isolate(calendarModuleOwner,"midnight",[&]{calendar->systemChanged(time);updateCalendarWake();});artwork=true;}
     registry.forEach([&](ModuleOwner&o){artwork=o.deadline(time)||artwork;if(o.routing().deadlineRefreshesPointerLock){environment.pointerLocked=pointerLocked();session->setEnvironment(environment,time);}},"deadline");
@@ -191,12 +193,13 @@ void Application::Impl::onDeadline(double time){
     if(headerClock.wake(time)||workMode)artwork=updateClock()||artwork;
     if(workMode&&production())updateTrayMenu();
     if(eventRecorder&&workMode)eventRecorder->receiveWork(workMode->controller().snapshot(time));
-    if(eventSaves)eventSaves->capture(time);syncActivityTelemetry(time);if(activityProbe)activityProbe->update(time);
+    if(eventSaves){const FatalStage save("event log save");eventSaves->capture(time);}syncActivityTelemetry(time);if(activityProbe)activityProbe->update(time);
     perform(lifecycle.advance(time),time);
     scheduleDeadline();if(artwork)refresh(time);
 }
 
 void Application::Impl::onFrame(double time){
+    const FatalStage stage("frame");
     if(!ready)return;
     if(probe.enabled&&!diagnosticFinished){
         if(diagnosticStart==0)diagnosticStart=time;const auto elapsed=time-diagnosticStart;
@@ -252,7 +255,8 @@ std::optional<std::intptr_t> Application::Impl::onAppMessage(const NativeMessage
         return 0;
     }
     if(ready&&m.wParam==serviceGeneration){
-        if(m.message==utilityMessage){if(utility)utility->drain();if(centerLogoRetry)updateCenterLogo();if(longWork)longWork->drain();if(activityProbe)activityProbe->submitPending();syncActivityTelemetry(now());if(systemServices)systemServices->clipboard_queue_capacity_available();if(storage)isolate(storageModuleOwner,"utility completion",[&]{storage->utilityCompleted(storageFixture?storageFixture->time.load(std::memory_order_relaxed):now());});if(archiveService)archiveService->queueCapacityAvailable();if(readerOwner)readerOwner->queueCapacityAvailable();if(calendarState){calendarState->queueCapacityAvailable();calendarNotifications->queueCapacityAvailable();}if(map)isolate(mapModuleOwner,"utility completion",[&]{if(notes&&notes->selected()==core::Module::map)requestMapGeography();map->utilityCompleted(visibleMode()?now():mapTime);});if(settingsSaves){settingsSaves->queueCapacityAvailable();if(settingsSaves->status().error&&settingsUI)settingsUI->controller().setStatus(*settingsSaves->status().error);}if(eventSaves)eventSaves->retry();broadcast(HostEvent::Kind::utilityCompleted,now());refresh(now());return 0;}
+        // Utility completions run here, outside ModuleRegistry isolation.
+        if(m.message==utilityMessage){const FatalStage stage("utility completion");if(utility)utility->drain();if(centerLogoRetry)updateCenterLogo();if(longWork)longWork->drain();if(activityProbe)activityProbe->submitPending();syncActivityTelemetry(now());if(systemServices)systemServices->clipboard_queue_capacity_available();if(storage)isolate(storageModuleOwner,"utility completion",[&]{storage->utilityCompleted(storageFixture?storageFixture->time.load(std::memory_order_relaxed):now());});if(archiveService)archiveService->queueCapacityAvailable();if(readerOwner)readerOwner->queueCapacityAvailable();if(calendarState){calendarState->queueCapacityAvailable();calendarNotifications->queueCapacityAvailable();}if(map)isolate(mapModuleOwner,"utility completion",[&]{if(notes&&notes->selected()==core::Module::map)requestMapGeography();map->utilityCompleted(visibleMode()?now():mapTime);});if(settingsSaves){settingsSaves->queueCapacityAvailable();if(settingsSaves->status().error&&settingsUI)settingsUI->controller().setStatus(*settingsSaves->status().error);}if(eventSaves)eventSaves->retry();broadcast(HostEvent::Kind::utilityCompleted,now());refresh(now());return 0;}
         if(m.message==audioMessage&&audio){
             // The shared AudioRuntime posted one coalesced notice: adopt the
             // publication, feed the Event Log device list and the areas.

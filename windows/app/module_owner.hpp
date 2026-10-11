@@ -142,6 +142,7 @@
 //      harness additionally audits every area owner: constructed, resized,
 //      appearance, open/close, frames, upload, the host broadcasts and exactly
 //      one release, and the CMake test checks every registered name reported.
+#include "app/fatal_stage.hpp"
 #include "app/overlay_host.hpp"
 #include "core/localization.hpp"
 #include "core/module_presentation.hpp"
@@ -456,6 +457,9 @@ private:
     void rebuild();
     void disable(Slot&, const char* what, std::string_view operation);
     template <class F> void run(Slot& slot, F&& f, std::string_view operation) {
+        // A non-isolated (essential) owner's failure ends the run: main.cpp's
+        // fatal record then names this operation and owner.
+        const FatalStage stage(operation, slot.owner->name());
         if (!isolate_ || slot.owner->essential()) { f(); return; }
         try { f(); }
         catch (const std::exception& e) { disable(slot, typeid(e).name(), operation); }
