@@ -1,10 +1,15 @@
 // Projected UI Automation peers of the local modules (native/
 // screen_reader_peers) over an injected source: roles, patterns, presses,
 // value writes, focus, projection, hit testing, identity across refreshes,
-// group changes and teardown. No UIA client is attached, no window is shown
-// and no user data is touched.
+// group changes and teardown; then under the HUD window's actual root
+// provider (app/hud_automation.cpp, unchanged host source compiled in)
+// through a ModuleOwner that forwards its automation hooks exactly as the
+// built-in Reader, Map, Calendar and minigame owners do. No UIA client is
+// attached, no window is shown and no user data is touched.
 #ifdef _WIN32
 #include "native/screen_reader_peers.hpp"
+#include "app/hud_automation.hpp"
+#include "app/module_owner.hpp"
 #include "tests/screen_reader_peer_probe.hpp"
 #include <objbase.h>
 #include <atomic>
@@ -135,7 +140,7 @@ void peers() {
     focused.clear();
 
     // Editors.
-    check(probe::setValue(title, L"Endmin 管理员") == S_OK && texts == std::vector<std::string>{"field:title=Endmin \xe7\xae\xa1\xe7\x90\x86\xe5\x91\x98"} && changes == 2,
+    check(probe::setValue(title, L"Endmin \u7ba1\u7406\u5458") == S_OK && texts == std::vector<std::string>{"field:title=Endmin \xe7\xae\xa1\xe7\x90\x86\xe5\x91\x98"} && changes == 2,
           "Value writes reach the editor as UTF-8");
     const wchar_t lone[] = {0xD800, 0};
     check(probe::setValue(title, nullptr) == E_INVALIDARG && probe::setValue(title, lone) == E_INVALIDARG && texts.size() == 1, "Null and malformed UTF-16 values are refused unchanged");
@@ -219,6 +224,79 @@ void peers() {
     group->Release();
     other->Release();
 }
+// The built-in owners' automation hooks (app/application_modules.cpp):
+// one NativeScreenReaderPeers member, five forwarding overrides.
+class PeerOwner final : public endfield::app::ModuleOwner {
+public:
+    explicit PeerOwner(n::ScreenReaderPeerSource source) : peers_(std::move(source)) {}
+    std::string_view name() const noexcept override { return "map"; }
+    bool presents(c::Module m) const noexcept override { return m == c::Module::map; }
+    bool automationRefresh(IRawElementProviderFragmentRoot* root) override { return peers_.refresh(root); }
+    std::size_t automationCount() const override { return peers_.size(); }
+    long automationChild(std::size_t i, IRawElementProviderFragment** out) const override { return peers_.child(i, out); }
+    long automationFromPoint(double x, double y, IRawElementProviderFragment** out) const override { return peers_.fromPoint(x, y, out); }
+    void automationDisconnect() noexcept override { peers_.disconnect(); }
+private:
+    n::NativeScreenReaderPeers peers_;
+};
+class PlainOwner final : public endfield::app::ModuleOwner {
+public:
+    std::string_view name() const noexcept override { return "notes"; }
+};
+
+void root() {
+    const auto window = CreateWindowExW(WS_EX_TOOLWINDOW, L"STATIC", L"Synthetic HUD root", WS_POPUP, 0, 0, 1280, 800, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    check(window && !IsWindowVisible(window), "The root fixture window stays hidden");
+    std::vector<n::ScreenReaderPeer> list{
+        {"map:status", "Map", "Map. Drag to pan.", {}, {0, 0, 440, 440}, Role::text, true},
+        {"map:zoomIn", "Zoom in", "Map. Drag to pan.", {}, {26, 184, 22, 22}, Role::button, true},
+        {"map:addPin", "Place pin at map center", "Map. Drag to pan.", {}, {392, 207, 22, 22}, Role::button, true}};
+    std::vector<std::string> pressed;
+    unsigned changes{};
+    n::ScreenReaderPeerSource source;
+    source.peers = [&] { return list; };
+    source.toScreen = [](c::Rect r) -> std::optional<c::Rect> { return c::Rect{100 + r.x, 50 + r.y, r.width, r.height}; };
+    source.invoke = [&](std::string_view id) {
+        pressed.emplace_back(id);
+        // Placing a pin adds its peer, as the Mac re-lays out its buttons.
+        if (id == "map:addPin") list.push_back({"map:pin:00000000-0000-4000-8000-000000000001", "Yellow pin 1, 0.0 N, 0.0 E", "Map. Drag to pan.", {}, {214, 206, 12, 16}, Role::button, true});
+        return true;
+    };
+    source.changed = [&] { ++changes; };
+    PlainOwner plain;
+    PeerOwner map(std::move(source));
+    std::vector<endfield::app::ModuleOwner*> owners{&plain, &map};
+    {
+        endfield::app::HudAutomationSource hudSource;
+        hudSource.owners = [&](std::vector<endfield::app::ModuleOwner*>& out) { out.insert(out.end(), owners.begin(), owners.end()); };
+        hudSource.refresh = [](endfield::app::ModuleOwner& o, IRawElementProviderFragmentRoot* group) { return o.automationRefresh(group); };
+        hudSource.name = [](const endfield::app::ModuleOwner& o) { return o.presents(c::Module::map) ? std::string("Map") : std::string(o.name()); };
+        endfield::app::HudAutomation hud(window, std::move(hudSource));
+        check(hud.refresh() && hud.groups() == 1 && map.automationCount() == 3, "The HUD root lists the Map group with its peers");
+        ComPtr<IRawElementProviderFragment> rootFragment, group, first, parent, last, hit;
+        ComPtr<IRawElementProviderFragmentRoot> fragmentRoot;
+        check(SUCCEEDED(hud.root()->QueryInterface(IID_PPV_ARGS(&rootFragment))) && SUCCEEDED(rootFragment->Navigate(NavigateDirection_FirstChild, &group)) && group &&
+              probe::name(group) == L"Map" && probe::id(group) == L"module.map", "The group is named after the module it presents");
+        check(SUCCEEDED(group->Navigate(NavigateDirection_FirstChild, &first)) && probe::id(first) == L"map:status" && SUCCEEDED(first->Navigate(NavigateDirection_Parent, &parent)) &&
+              same(parent.Get(), group.Get()) && SUCCEEDED(first->get_FragmentRoot(&fragmentRoot)) && same(fragmentRoot.Get(), group.Get()),
+              "Peers are the group's children and name it as parent and fragment root");
+        check(SUCCEEDED(group->Navigate(NavigateDirection_LastChild, &last)) && probe::id(last) == L"map:addPin", "The group's last child is the last listed peer");
+        check(SUCCEEDED(hud.root()->ElementProviderFromPoint(100 + 392 + 5, 50 + 207 + 5, &hit)) && hit && probe::id(hit) == L"map:addPin",
+              "The root's hit test reaches the projected button above the status");
+        check(probe::invoke(hit) == S_OK && pressed == std::vector<std::string>{"map:addPin"} && changes == 1 && map.automationCount() == 4,
+              "A press through the root performs the action and re-lists the peers at once");
+        check(!hud.refresh() && map.automationCount() == 4, "The host's following refresh finds the peers already current");
+        list.pop_back();
+        check(hud.refresh() && map.automationCount() == 3, "A content event that removes a peer restructures the group");
+        hud.disconnectOwners();
+        check(map.automationCount() == 0 && hud.groups() == 0 && probe::available(first) == UIA_E_ELEMENTNOTAVAILABLE, "Concealing disconnects every peer");
+        check(hud.refresh() && hud.groups() == 1 && map.automationCount() == 3, "Showing again lists fresh peers under the same group");
+        hud.remove(map);
+        check(map.automationCount() == 0 && hud.groups() == 0, "Removing the owner disconnects its peers");
+        hud.shutdown();
+    }
+    DestroyWindow(window);
+}
 } // namespace
 
 int main() {
@@ -227,6 +305,7 @@ int main() {
         check(SUCCEEDED(apartment.hr), "Single-threaded apartment");
         projection();
         peers();
+        root();
         std::cout << "PASS " << checks << " screen reader peer checks\n";
         return 0;
     } catch (const std::exception& e) {

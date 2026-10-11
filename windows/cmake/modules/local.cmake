@@ -66,9 +66,12 @@ if(WIN32)
     target_link_libraries(hud_application PUBLIC hud_local_automation)
   endif()
   if(BUILD_TESTING)
-    add_executable(screen_reader_peers_tests tests/screen_reader_peers_tests.cpp)
-    target_compile_definitions(screen_reader_peers_tests PRIVATE UNICODE _UNICODE NOMINMAX)
-    target_link_libraries(screen_reader_peers_tests PRIVATE hud_local_automation uiautomationcore oleaut32 ole32 user32)
+    # The HUD window's UIA root (app/hud_automation.cpp, unchanged host
+    # source) is compiled in to drive the peers under it through ModuleOwner
+    # hooks forwarded as the built-in owners forward them.
+    add_executable(screen_reader_peers_tests tests/screen_reader_peers_tests.cpp app/hud_automation.cpp)
+    target_compile_definitions(screen_reader_peers_tests PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
+    target_link_libraries(screen_reader_peers_tests PRIVATE hud_local_automation hud_module_registry uiautomationcore oleaut32 ole32 user32)
     add_test(NAME screen_reader_peers_contracts COMMAND screen_reader_peers_tests)
     list(APPEND EHUD_LOCAL_TARGETS screen_reader_peers_tests)
     # The preview suites drive the same peers over the real owners.
