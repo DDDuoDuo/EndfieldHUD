@@ -8,10 +8,12 @@
 #include "core/migration/mac_import_files.hpp"
 #include "core/migration/mac_import_native.hpp"
 #include "core/migration/mac_import_outcome.hpp"
+#include "core/migration/mac_import_work.hpp"
 #include "core/migration/plist.hpp"
 #include "core/source_desktop_chrome.hpp"
 #include "modules/settings_safety.hpp"
 #include "native/layer_scene.hpp"
+#include "native/mac_import_automation.hpp"
 #include "native/renderer.hpp"
 #include <algorithm>
 #include <array>
@@ -19,6 +21,7 @@
 #include <chrono>
 #include <cmath>
 #include <filesystem>
+#include <limits>
 #include <optional>
 #include <set>
 #include <stdexcept>
@@ -29,6 +32,9 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <ole2.h> // VARIANT/BSTR helpers even under WIN32_LEAN_AND_MEAN
+#include <uiautomation.h>
+#include <wrl/client.h>
 
 namespace endfield::areas {
 namespace {
@@ -180,6 +186,21 @@ public:
         const auto g = macImportCardGeometry(*viewport_);
         return hit_.project({g.list.x + g.list.width * .5, g.list.y + g.list.height * .5});
     }
+    bool posed() const noexcept { return posed_; }
+    std::optional<MacImportCardGeometry> geometry() const { if (!posed_ || !viewport_) return {}; return macImportCardGeometry(*viewport_); }
+    // Logical client bounds of a card-local rect through the current pose
+    // (the projection pointer input uses); none when it does not project.
+    std::optional<Rect> clientRect(Rect r) const {
+        if (!posed_) return {};
+        double left = std::numeric_limits<double>::infinity(), top = left, right = -left, bottom = -left;
+        for (const auto corner : std::array<core::Point, 4>{{{r.x, r.y}, {r.x + r.width, r.y}, {r.x, r.y + r.height}, {r.x + r.width, r.y + r.height}}}) {
+            const auto q = hit_.project(corner);
+            if (!q) return {};
+            left = std::min(left, q->x); top = std::min(top, q->y);
+            right = std::max(right, q->x); bottom = std::max(bottom, q->y);
+        }
+        return Rect{left, top, right - left, bottom - top};
+    }
     void upload(g::Renderer& r) {
         need(posed_, "Place the import card before uploading");
         if (!quadUploaded_) {
@@ -260,29 +281,134 @@ private:
     std::size_t rasterizations_{};
 };
 
+
+// Hidden-coverage stand-in for this owner's group under the HUD window's UIA
+// root (app/hud_automation.cpp): a stable fragment root that forwards child
+// navigation and hit tests to the ModuleOwner hooks exactly as the host's
+// group does. It is never returned for a window, so no UIA client reaches it.
+class CoverageGroup final : public IRawElementProviderSimple, public IRawElementProviderFragment, public IRawElementProviderFragmentRoot {
+public:
+    explicit CoverageGroup(const app::ModuleOwner& owner) noexcept : owner_(owner) {}
+    CoverageGroup(const CoverageGroup&) = delete;
+    CoverageGroup& operator=(const CoverageGroup&) = delete;
+    IRawElementProviderFragmentRoot* root() noexcept { return this; }
+    IFACEMETHODIMP QueryInterface(REFIID riid, void** out) override {
+        if (!out) return E_POINTER;
+        *out = nullptr;
+        if (riid == __uuidof(IUnknown) || riid == __uuidof(IRawElementProviderSimple)) *out = static_cast<IRawElementProviderSimple*>(this);
+        else if (riid == __uuidof(IRawElementProviderFragment)) *out = static_cast<IRawElementProviderFragment*>(this);
+        else if (riid == __uuidof(IRawElementProviderFragmentRoot)) *out = static_cast<IRawElementProviderFragmentRoot*>(this);
+        else return E_NOINTERFACE;
+        AddRef();
+        return S_OK;
+    }
+    IFACEMETHODIMP_(ULONG) AddRef() override { return ++refs_; }
+    IFACEMETHODIMP_(ULONG) Release() override { const ULONG n = --refs_; if (!n) delete this; return n; }
+    IFACEMETHODIMP get_ProviderOptions(ProviderOptions* out) override {
+        if (!out) return E_POINTER;
+        *out = ProviderOptions(ProviderOptions_ServerSideProvider | ProviderOptions_UseComThreading);
+        return S_OK;
+    }
+    IFACEMETHODIMP GetPatternProvider(PATTERNID, IUnknown** out) override { if (!out) return E_POINTER; *out = nullptr; return S_OK; }
+    IFACEMETHODIMP GetPropertyValue(PROPERTYID, VARIANT* out) override { if (!out) return E_POINTER; VariantInit(out); return S_OK; }
+    IFACEMETHODIMP get_HostRawElementProvider(IRawElementProviderSimple** out) override { if (!out) return E_POINTER; *out = nullptr; return S_OK; }
+    IFACEMETHODIMP Navigate(NavigateDirection direction, IRawElementProviderFragment** out) override {
+        if (!out) return E_POINTER;
+        *out = nullptr;
+        const auto count = owner_.automationCount();
+        if (!count || (direction != NavigateDirection_FirstChild && direction != NavigateDirection_LastChild)) return S_OK;
+        return owner_.automationChild(direction == NavigateDirection_FirstChild ? 0 : count - 1, out);
+    }
+    IFACEMETHODIMP GetRuntimeId(SAFEARRAY** out) override { if (!out) return E_POINTER; *out = nullptr; return S_OK; }
+    IFACEMETHODIMP get_BoundingRectangle(UiaRect* out) override { if (!out) return E_POINTER; *out = {}; return S_OK; }
+    IFACEMETHODIMP GetEmbeddedFragmentRoots(SAFEARRAY** out) override { if (!out) return E_POINTER; *out = nullptr; return S_OK; }
+    IFACEMETHODIMP SetFocus() override { return S_OK; }
+    IFACEMETHODIMP get_FragmentRoot(IRawElementProviderFragmentRoot** out) override { if (!out) return E_POINTER; AddRef(); *out = this; return S_OK; }
+    IFACEMETHODIMP ElementProviderFromPoint(double x, double y, IRawElementProviderFragment** out) override {
+        if (!out) return E_POINTER;
+        *out = nullptr;
+        return owner_.automationFromPoint(x, y, out);
+    }
+    IFACEMETHODIMP GetFocus(IRawElementProviderFragment** out) override { if (!out) return E_POINTER; *out = nullptr; return S_OK; }
+private:
+    ~CoverageGroup() = default;
+    const app::ModuleOwner& owner_;
+    std::atomic<ULONG> refs_{1};
+};
+bool sameObject(IUnknown* a, IUnknown* b) {
+    Microsoft::WRL::ComPtr<IUnknown> x, y;
+    return a && b && SUCCEEDED(a->QueryInterface(IID_PPV_ARGS(&x))) && SUCCEEDED(b->QueryInterface(IID_PPV_ARGS(&y))) && x.Get() == y.Get();
+}
+
+// Hidden-coverage stand-in for the host's app::DataRootRestart. The host
+// publishes the real service in production only (app/application.cpp
+// requestRestart/declineRestart/finishQuit, the restart loop of app/main.cpp)
+// and leaves the key free elsewhere; in hidden coverage this area publishes
+// this object under the same key, so its production path (find, then
+// restartWith) runs unchanged. The driver plays the host's answers with the
+// host's contract: one pending request at a time; a failed save or a session
+// end destroys the work unrun and then runs `declined` on the UI thread; an
+// accepted quit tears the owner down first and runs the work exactly once.
+class CoverageRestart final : public app::DataRootRestart {
+public:
+    bool restartWith(std::function<void()> work, std::function<void()> declined) override {
+        if (pending_ || !work) { ++refused_; return false; }
+        work_ = std::move(work);
+        declined_ = std::move(declined);
+        pending_ = true;
+        ++requests_;
+        return true;
+    }
+    bool pending() const noexcept { return pending_; }
+    unsigned requests() const noexcept { return requests_; }
+    unsigned refused() const noexcept { return refused_; }
+    void decline() {
+        pending_ = false;
+        work_ = {}; // destroyed unrun
+        if (auto declined = std::exchange(declined_, {})) declined();
+    }
+    std::function<void()> accept() {
+        pending_ = false;
+        declined_ = {};
+        return std::exchange(work_, {});
+    }
+private:
+    std::function<void()> work_, declined_;
+    bool pending_{};
+    unsigned requests_{}, refused_{};
+};
+
 // A recorded outcome of the previous run and the unresolved relink entries.
 struct PendingOutcome { mig::MacImportOutcome outcome; std::vector<mig::MacRelinkItem> relink; };
 
 class MacImportArea final : public app::ModuleOwner, public app::MacImportEntry {
 public:
     MacImportArea(const app::ApplicationModuleContext& c, fs::path destination, fs::path goldenFixture)
-        : host_(*c.host), raster_(c.rasterizer), utility_(*c.utility), mode_(c.mode), destination_(std::move(destination)), coverageRoot_(c.coverageRoot),
-          goldenFixture_(std::move(goldenFixture)), metrics_(c.metrics), alive_(std::make_shared<bool>(true)) {
+        : host_(*c.host), raster_(c.rasterizer), utility_(*c.utility), mode_(c.mode), window_(c.window), destination_(std::move(destination)),
+          coverageRoot_(c.coverageRoot), goldenFixture_(std::move(goldenFixture)), metrics_(c.metrics), alive_(std::make_shared<bool>(true)) {
         outcomeRoute_ = utility_.makeRoute();
         const auto& a = host_.appearance();
         language_ = a.language;
         state_.setAppearance({a.dark, 2, a.accent});
         flow_ = makeFlow();
         host_.publish<app::MacImportEntry>(app::macImportEntryService, *this);
-        // A restart handoff of the previous run recorded its outcome next to
-        // the data root: read it (and the relink list) on the shared worker.
+        if (coverageMode() && !host_.find<app::DataRootRestart>(app::dataRootRestartService)) {
+            coverageRestart_ = std::make_unique<CoverageRestart>();
+            host_.publish<app::DataRootRestart>(app::dataRootRestartService, *coverageRestart_);
+        }
+        // Folders an earlier run left behind, then that run's recorded
+        // outcome (and relink list), both on the shared worker.
+        startSweep();
         loadOutcome();
     }
     ~MacImportArea() override {
         *alive_ = false;
         host_.withdraw(app::macImportEntryService);
-        // A queued note removal still runs; no completion reaches this owner.
+        if (coverageRestart_) host_.withdraw(app::dataRootRestartService);
+        // A queued note removal or sweep step still runs; no completion
+        // reaches this owner.
         utility_.invalidate(outcomeRoute_, false);
+        automation_.reset();
         if (flow_) flow_->shutdown();
     }
     MacImportArea(const MacImportArea&) = delete;
@@ -391,8 +517,11 @@ public:
         time_ = std::max(time_, time);
         switch (e.kind) {
         case K::utilityCompleted:
+            // Step completions already ran in the executor's drain (each one
+            // reported through flowChanged, which also refreshes UIA).
             flow_->utilityCompleted();
-            if (outcomeQueued_) loadOutcome(); // the shared queue was full at construction
+            if (outcomeQueued_) loadOutcome(); // the shared queue was full
+            if (sweepQueued_) sweepNext();
             return false;
         case K::overlayConcealed:
             // The HUD is hidden: the card goes with it; a running import keeps
@@ -403,6 +532,34 @@ public:
         }
     }
     void coverage(app::ModuleCoverage& step) override;
+
+    // UI Automation (app/module_owner.hpp): the card as one dialog under this
+    // owner's group. Fragments are created on the host's first refresh, i.e.
+    // once a UIA client asked the window; a new group replaces them.
+    bool automationRefresh(IRawElementProviderFragmentRoot* root) override {
+        if (!root) return false;
+        bool replaced = false;
+        if (automation_ && automationRoot_ != root) {
+            replaced = automation_->size() > 0;
+            automation_.reset(); // disconnects its fragments and releases the old group
+            automationRoot_ = nullptr;
+        }
+        if (!automation_) {
+            automation_ = std::make_unique<g::NativeMacImportAutomation>(automationHost(root));
+            automationRoot_ = root;
+        }
+        return automation_->refresh() || replaced;
+    }
+    std::size_t automationCount() const override { return automation_ ? automation_->size() : 0; }
+    long automationChild(std::size_t index, IRawElementProviderFragment** out) const override {
+        if (!automation_) { if (out) *out = nullptr; return E_INVALIDARG; }
+        return automation_->child(index, out);
+    }
+    long automationFromPoint(double x, double y, IRawElementProviderFragment** out) const override {
+        if (!automation_) { if (out) *out = nullptr; return S_OK; }
+        return automation_->fromPoint(x, y, out);
+    }
+    void automationDisconnect() noexcept override { if (automation_) automation_->disconnect(); }
 
 private:
     bool coverageMode() const noexcept { return mode_ == ApplicationAreaMode::hiddenCoverage; }
@@ -429,7 +586,7 @@ private:
         };
         h.inProcess = [this] { return coverageMode() && coverageInProcess_; };
         h.restart = [this](std::shared_ptr<mig::MacImportSession> session) { return requestRestart(std::move(session)); };
-        h.restartAvailable = [this] { return coverageMode() || host_.find<app::DataRootRestart>(app::dataRootRestartService) != nullptr; };
+        h.restartAvailable = [this] { return host_.find<app::DataRootRestart>(app::dataRootRestartService) != nullptr; };
         h.forgetOutcome = [this] { forgetOutcome(); };
         h.changed = [this] { flowChanged(); };
         h.unixNow = [this] { return unixNow(); };
@@ -440,8 +597,12 @@ private:
             return platform;
         }, std::move(h));
     }
-    // Production: the host's restart handoff closes every store first.
+    // The host's restart handoff closes every store first (production; the
+    // coverage stand-in in hidden coverage). The work captures only the
+    // session and the destination: it runs after this owner was destroyed.
     bool requestRestart(std::shared_ptr<mig::MacImportSession> session) {
+        auto* restart = host_.find<app::DataRootRestart>(app::dataRootRestartService);
+        if (!restart) return false;
         const auto destination = destination_;
         const bool coverage = coverageMode();
         auto work = [session = std::move(session), destination, coverage] {
@@ -453,16 +614,26 @@ private:
             flow_->restartDeclined();
             flowChanged();
         };
-        if (coverage) {
-            // Synthetic handoff: the driver plays the host (quiescence, the
-            // post-shutdown work, a declined quit).
-            coverageWork_ = std::move(work);
-            coverageDeclined_ = std::move(declined);
-            ++coverageRestarts_;
-            return true;
-        }
-        auto* restart = host_.find<app::DataRootRestart>(app::dataRootRestartService);
-        return restart && restart->restartWith(std::move(work), std::move(declined));
+        return restart->restartWith(std::move(work), std::move(declined));
+    }
+    // Bounded sweep of the importer's stale private folders next to the root.
+    void startSweep() {
+        sweep_ = std::make_shared<mig::MacImportWorkSweep>(destination_);
+        sweepNext();
+    }
+    void sweepNext() {
+        if (!sweep_) return;
+        auto sweep = sweep_;
+        auto more = std::make_shared<bool>(false);
+        std::weak_ptr<bool> alive = alive_;
+        sweepQueued_ = false;
+        const bool queued = utility_.submit(outcomeRoute_, [sweep, more] { *more = sweep->next(); }, [this, alive, sweep, more](std::exception_ptr) {
+            if (const auto token = alive.lock(); !token || !*token) return;
+            if (*more) { sweepNext(); return; }
+            swept_ = sweep->stats();
+            if (sweep_ == sweep) sweep_.reset();
+        });
+        sweepQueued_ = !queued; // a full queue resumes from utilityCompleted
     }
     void loadOutcome() {
         auto result = std::make_shared<std::optional<PendingOutcome>>();
@@ -518,6 +689,8 @@ private:
         // shown once that card closes.
         if (pending_ && !flow_->presented()) (void)presentPendingOutcome();
         host_.requestFrame();
+        // A content event: connected UIA parts follow (clients only).
+        automationActed();
     }
     void syncCard() {
         const auto t = std::max(time_, now());
@@ -538,11 +711,95 @@ private:
         }
     }
 
+    // --- UI Automation ---------------------------------------------------------
+    g::MacImportAutomationHost automationHost(IRawElementProviderFragmentRoot* root) {
+        g::MacImportAutomationHost h;
+        h.root = root;
+        h.nodes = [this] { return automationNodes(); };
+        h.toScreen = [this](Rect r) { return screenRect(r); };
+        h.invoke = [this](std::string_view id) {
+            const int button = id == "cancel" ? 0 : id == "confirm" ? 1 : -1;
+            if (button < 0 || !flow_ || !state_.presented() || state_.dismissing() || !state_.enabled()[static_cast<std::size_t>(button)]) return false;
+            time_ = std::max(time_, now());
+            // The click's action (Mac accessibilityPerformPress); the flow
+            // reports the change, which refreshes these parts.
+            answer(button ? MacImportCardAction::right : MacImportCardAction::left);
+            host_.requestFrame();
+            return true;
+        };
+        return h;
+    }
+    // The presented card in pre-order (native/mac_import_automation.hpp).
+    std::vector<g::MacImportAutomationNode> automationNodes() const {
+        using N = g::MacImportAutomationNode;
+        using R = N::Role;
+        std::vector<N> out;
+        if (!flow_ || !flow_->presented() || !state_.presented() || state_.dismissing() || !card_) return out;
+        const auto geometry = card_->geometry();
+        if (!geometry) return out;
+        const auto& c = flow_->content();
+        const auto part = [&](std::string id, R role, std::string name, std::string help, Rect local, std::size_t parent) {
+            N n;
+            n.id = std::move(id); n.role = role; n.name = std::move(name); n.help = std::move(help);
+            n.rect = card_->clientRect(local); n.parent = parent;
+            out.push_back(std::move(n));
+            return out.size() - 1;
+        };
+        const auto dialog = part("dialog", R::dialog, c.title, c.message, {0, 0, geometry->card.width, macImportCardHeight}, N::topLevel);
+        part("title", R::text, c.title, {}, geometry->title, dialog);
+        if (!c.message.empty()) part("message", R::text, c.message, {}, geometry->message, dialog);
+        if (c.progress) {
+            const auto bar = part("progress", R::progress, c.title, c.message, geometry->bar, dialog);
+            out[bar].value = std::clamp(*c.progress, 0.0, 1.0) * 100;
+        }
+        if (!c.detail.empty()) part("detail", R::text, c.detail, {}, geometry->detail, dialog);
+        else if (!flow_->list().empty()) {
+            const auto list = part("list", R::list, c.title, c.position, geometry->list, dialog);
+            const bool fullWidth = language_ == core::Language::simplifiedChinese || language_ == core::Language::traditionalChinese || language_ == core::Language::japanese;
+            const auto& rows = flow_->list();
+            const auto first = flow_->firstRow();
+            out.reserve(out.size() + rows.size() + 2);
+            for (std::size_t n = 0; n < rows.size(); ++n) {
+                N row;
+                row.id = "row." + std::to_string(n);
+                row.role = R::item;
+                row.name = rows[n].value.empty() ? rows[n].label : rows[n].label + (fullWidth ? "\xEF\xBC\x9A" : ": ") + rows[n].value;
+                // Rows scrolled out of the card are offscreen (no bounds).
+                if (n >= first && n < first + macImportCardRows) row.rect = card_->clientRect(geometry->row(n - first));
+                row.parent = list;
+                out.push_back(std::move(row));
+            }
+        }
+        for (unsigned b = 0; b < 2; ++b) {
+            const auto index = part(b ? "confirm" : "cancel", R::button, c.buttons[b], {}, b ? geometry->confirm : geometry->cancel, dialog);
+            out[index].enabled = state_.enabled()[b];
+            out[index].focused = state_.focused() == int(b);
+        }
+        return out;
+    }
+    // Logical client rect -> physical screen pixels.
+    std::optional<Rect> screenRect(Rect r) const {
+        POINT origin{};
+        if (!window_ || !ClientToScreen(static_cast<HWND>(window_), &origin)) return std::nullopt;
+        const double scale = metrics_.scale > 0 ? metrics_.scale : 1.0;
+        return Rect{origin.x + r.x * scale, origin.y + r.y * scale, r.width * scale, r.height * scale};
+    }
+    // A content event no host call reports (a dialog completion, a declined
+    // restart, an executor step, a UIA Invoke): re-list at once and, like the
+    // host after its own refresh, tell listening clients the group changed.
+    void automationActed() {
+        if (!automation_ || !automation_->refresh() || !automationRoot_ || !UiaClientsAreListening()) return;
+        Microsoft::WRL::ComPtr<IRawElementProviderSimple> group;
+        if (SUCCEEDED(automationRoot_->QueryInterface(IID_PPV_ARGS(&group))))
+            (void)UiaRaiseStructureChangedEvent(group.Get(), StructureChangeType_ChildrenInvalidated, nullptr, 0);
+    }
+
     struct Driver;
     app::ApplicationHost& host_;
     g::LayerRasterizer& raster_;
     app::UtilityExecutor& utility_;
     ApplicationAreaMode mode_{};
+    void* window_{};
     fs::path destination_, coverageRoot_, goldenFixture_;
     app::ClientMetrics metrics_;
     std::shared_ptr<bool> alive_;
@@ -555,36 +812,47 @@ private:
     std::optional<PendingOutcome> pending_;
     MacImportStep step_{MacImportStep::hidden};
     double time_{}, wheelRemainder_{};
-    bool overlayVisible_{}, outcomeLoading_{}, outcomeQueued_{};
+    bool overlayVisible_{}, outcomeLoading_{}, outcomeQueued_{}, sweepQueued_{};
+    std::shared_ptr<mig::MacImportWorkSweep> sweep_;
+    std::optional<mig::MacImportWorkSweep::Stats> swept_; // the last finished sweep
+    std::unique_ptr<g::NativeMacImportAutomation> automation_;
+    IRawElementProviderFragmentRoot* automationRoot_{}; // held by automation_
     // Hidden coverage only.
+    std::unique_ptr<CoverageRestart> coverageRestart_;
+    Microsoft::WRL::ComPtr<CoverageGroup> coverageGroup_;
     bool coverageInProcess_{true}, chooserPending_{}, chooserCancelled_{};
-    unsigned coverageChooser_{}, coverageRestarts_{};
+    unsigned coverageChooser_{};
     std::uint64_t coverageClock_{};
-    std::function<void()> coverageWork_, coverageDeclined_;
 };
 
 // One module-less hidden-coverage step per combined cycle, on the card through
-// projected pointer input and keys:
+// projected pointer input, keys and its UI Automation parts:
 //   cycle 0  in-process import of the golden export: intro, Escape, folder,
 //            bounded staging with progress, per data set review, commit with
-//            progress, final report, relink list, Done;
-//   cycle 1  the same destination again: replace prompt, review, the restart
-//            handoff (declined once, then accepted), the post-shutdown commit
-//            with backup and rollback guarantees, and the next run's report
-//            read from the recorded outcome;
+//            progress, final report, relink list, Done; the card's UIA tree
+//            (dialog, parts, focus, offscreen rows, hit test, Invoke);
+//   cycle 1  the same destination again through the production restart path
+//            against the stand-in host service: replace prompt, review, a
+//            refused second request, a failed save (declined), the accepted
+//            quit (owner teardown first, then the work once), the next run's
+//            startup sweep of planted stale folders and its recorded report;
+//            the host's pre-open recovery of an interrupted activation;
 //   cycle 2  an invalid folder (failure card), cancelling a running staging,
-//            and the keyboard path with a cancelled dialog.
+//            the keyboard path with a cancelled dialog, and a session end
+//            while a restart is pending (the work never runs).
 // Each cycle ends hidden with the card's raster entries released.
 struct MacImportArea::Driver {
+    using Fragment = Microsoft::WRL::ComPtr<IRawElementProviderFragment>;
     MacImportArea& a;
     app::ModuleCoverage& step;
     double t;
     const MacImportCardContent& content() const { return a.flow_->content(); }
     void frame(double dt = 1. / 60) { t += dt; step.present(t); }
     void frames(double seconds) { const double end = t + seconds; while (t < end) frame(); }
+    bool busy() const { return a.flow_->busy() || a.outcomeLoading_ || a.sweep_ != nullptr; }
     void settle() {
-        for (unsigned n = 0; n < 800 && (a.flow_->busy() || a.outcomeLoading_); ++n) { step.drain(); frame(); }
-        step.check(!a.flow_->busy() && !a.outcomeLoading_, "The import settles through the shared executor");
+        for (unsigned n = 0; n < 800 && busy(); ++n) { step.drain(); frame(); }
+        step.check(!busy(), "The import settles through the shared executor");
         frames(.05);
     }
     void click(int button) {
@@ -622,16 +890,33 @@ struct MacImportArea::Driver {
         a.flowChanged();
         frame();
     }
-    void stage(const fs::path& folder) {
+    void stage(const fs::path& folder, bool automation = false) {
         choose(folder);
         step.check(a.flow_->step() == MacImportStep::staging && content().progress && !a.state_.enabled()[1], "Staging shows progress with Import disabled");
-        double last = 0;
+        double last = 0, lastPercent = 0;
+        bool sawProgress = false;
         for (unsigned n = 0; n < 800 && a.flow_->step() == MacImportStep::staging; ++n) {
             step.drain(); frame();
             if (a.flow_->step() != MacImportStep::staging) break;
             step.check(content().progress && *content().progress >= last, "Staging progress only moves forward");
             last = *content().progress;
+            if (automation) {
+                // The progress bar part follows each executor step.
+                (void)a.automationRefresh(group());
+                const auto bar = part(L"macImport.progress");
+                step.check(bar.Get() != nullptr, "Staging lists a progress bar part");
+                Microsoft::WRL::ComPtr<IRangeValueProvider> range;
+                double percent{}, maximum{};
+                BOOL readOnly{};
+                step.check(SUCCEEDED(pattern(bar.Get(), UIA_RangeValuePatternId, range)) && SUCCEEDED(range->get_Value(&percent)) &&
+                           SUCCEEDED(range->get_Maximum(&maximum)) && SUCCEEDED(range->get_IsReadOnly(&readOnly)) && readOnly && maximum == 100 &&
+                           std::abs(percent - last * 100) < 1e-9 && percent >= lastPercent, "The progress bar reports the card's progress, read-only");
+                lastPercent = percent;
+                sawProgress = true;
+                step.check(invoke(L"macImport.confirm") == UIA_E_ELEMENTNOTENABLED, "Disabled buttons refuse UIA Invoke");
+            }
         }
+        step.check(!automation || sawProgress, "Staging progress reached UIA");
         settle();
     }
     void review(const Json& expected) {
@@ -647,14 +932,133 @@ struct MacImportArea::Driver {
         for (std::size_t n = 0; n < mig::macImportStores.size(); ++n)
             step.check(content().rows[n].label == macImportStoreTitle(mig::macImportStores[n], a.language_) && !content().rows[n].value.empty(), "One report row per data set");
     }
-    // The flow's own reset between two runs of the application.
-    void nextRun() {
+    // An accepted quit (application.cpp finishQuit, then ~Application): the
+    // owner's flow is destroyed with its reference to a handed-off session.
+    void endRun() {
         a.flow_->shutdown();
+    }
+    // The next run over the same root (main.cpp): a new flow, the startup
+    // sweep and the recorded outcome, exactly as the constructor starts them.
+    void startRun() {
         a.flow_ = a.makeFlow();
         a.step_ = MacImportStep::hidden;
         a.flowChanged();
+        a.startSweep();
         a.loadOutcome();
         settle();
+    }
+
+    // --- UI Automation helpers (the host's group stand-in) -------------------------
+    IRawElementProviderFragmentRoot* group() {
+        if (!a.coverageGroup_) a.coverageGroup_.Attach(new CoverageGroup(a));
+        return a.coverageGroup_->root();
+    }
+    static std::wstring text(IRawElementProviderFragment* f, PROPERTYID id) {
+        Microsoft::WRL::ComPtr<IRawElementProviderSimple> simple;
+        VARIANT v;
+        VariantInit(&v);
+        if (!f || FAILED(f->QueryInterface(IID_PPV_ARGS(&simple))) || FAILED(simple->GetPropertyValue(id, &v))) return {};
+        std::wstring out = v.vt == VT_BSTR && v.bstrVal ? std::wstring(v.bstrVal, SysStringLen(v.bstrVal)) : std::wstring{};
+        VariantClear(&v);
+        return out;
+    }
+    static std::optional<long> integer(IRawElementProviderFragment* f, PROPERTYID id) {
+        Microsoft::WRL::ComPtr<IRawElementProviderSimple> simple;
+        VARIANT v;
+        VariantInit(&v);
+        if (!f || FAILED(f->QueryInterface(IID_PPV_ARGS(&simple))) || FAILED(simple->GetPropertyValue(id, &v))) return {};
+        std::optional<long> out;
+        if (v.vt == VT_I4) out = v.lVal;
+        else if (v.vt == VT_BOOL) out = v.boolVal == VARIANT_TRUE ? 1 : 0;
+        VariantClear(&v);
+        return out;
+    }
+    static Fragment navigate(IRawElementProviderFragment* f, NavigateDirection direction) {
+        Fragment out;
+        if (f) (void)f->Navigate(direction, &out);
+        return out;
+    }
+    template <class T> static HRESULT pattern(IRawElementProviderFragment* f, PATTERNID id, Microsoft::WRL::ComPtr<T>& out) {
+        Microsoft::WRL::ComPtr<IRawElementProviderSimple> simple;
+        Microsoft::WRL::ComPtr<IUnknown> unknown;
+        if (!f || FAILED(f->QueryInterface(IID_PPV_ARGS(&simple)))) return E_FAIL;
+        const auto hr = simple->GetPatternProvider(id, &unknown);
+        if (FAILED(hr) || !unknown) return FAILED(hr) ? hr : E_NOINTERFACE;
+        return unknown.As(&out);
+    }
+    // Depth-first walk of the owner's tree through UIA navigation only.
+    void walk(IRawElementProviderFragment* f, std::vector<Fragment>& out) {
+        for (auto child = navigate(f, NavigateDirection_FirstChild); child.Get(); child = navigate(child.Get(), NavigateDirection_NextSibling)) {
+            out.push_back(child);
+            walk(child.Get(), out);
+            step.check(out.size() < 4096, "The UIA tree is finite");
+        }
+    }
+    std::vector<Fragment> parts() {
+        std::vector<Fragment> out;
+        Fragment dialog;
+        if (a.automationCount() && SUCCEEDED(a.automationChild(0, &dialog)) && dialog.Get()) { out.push_back(dialog); walk(dialog.Get(), out); }
+        return out;
+    }
+    Fragment part(std::wstring_view id) {
+        for (auto& f : parts()) if (text(f.Get(), UIA_AutomationIdPropertyId) == id) return f;
+        return {};
+    }
+    HRESULT invoke(std::wstring_view id) {
+        Microsoft::WRL::ComPtr<IInvokeProvider> button;
+        const auto f = part(id);
+        if (!f.Get()) return E_FAIL;
+        const auto hr = pattern(f.Get(), UIA_InvokePatternId, button);
+        return FAILED(hr) ? hr : button->Invoke();
+    }
+    static std::wstring wide(std::string_view s) {
+        if (s.empty()) return {};
+        const int n = MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), nullptr, 0);
+        std::wstring w(static_cast<std::size_t>(std::max(n, 0)), L'\0');
+        if (n > 0) MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), w.data(), n);
+        return w;
+    }
+    // The card's UIA tree on the intro (cycle 0): one dialog with its parts,
+    // focus, hit test on the projected button, identity across refreshes.
+    void automationIntro() {
+        auto* root = group();
+        step.check(a.automationRefresh(root) && a.automationCount() == 1 && !a.automationRefresh(root), "The card is one UIA dialog under the owner's group");
+        const auto all = parts();
+        const auto rows = a.flow_->list().size();
+        step.check(all.size() == 6 + rows && rows == mig::macImportStores.size(), "Dialog, title, message, list with every data set, two buttons");
+        const auto dialog = all.front();
+        step.check(text(dialog.Get(), UIA_NamePropertyId) == wide(content().title) && text(dialog.Get(), UIA_HelpTextPropertyId) == wide(content().message) &&
+                   integer(dialog.Get(), UIA_ControlTypePropertyId) == UIA_PaneControlTypeId && integer(dialog.Get(), 30174) == 1,
+                   "The dialog is named by the card title, helped by its message");
+        Fragment parent;
+        step.check(SUCCEEDED(dialog->Navigate(NavigateDirection_Parent, &parent)) && sameObject(parent.Get(), root), "The dialog's parent is the owner's group");
+        const auto title = navigate(dialog.Get(), NavigateDirection_FirstChild), confirm = navigate(dialog.Get(), NavigateDirection_LastChild);
+        step.check(text(title.Get(), UIA_AutomationIdPropertyId) == L"macImport.title" && text(confirm.Get(), UIA_AutomationIdPropertyId) == L"macImport.confirm" &&
+                   text(confirm.Get(), UIA_NamePropertyId) == wide(content().buttons[1]) && integer(confirm.Get(), UIA_ControlTypePropertyId) == UIA_ButtonControlTypeId,
+                   "Title first, the confirm button last");
+        const auto list = part(L"macImport.list");
+        const auto firstRow = navigate(list.Get(), NavigateDirection_FirstChild);
+        step.check(integer(list.Get(), UIA_ControlTypePropertyId) == UIA_ListControlTypeId && integer(firstRow.Get(), UIA_ControlTypePropertyId) == UIA_ListItemControlTypeId &&
+                   text(firstRow.Get(), UIA_NamePropertyId) == wide(a.flow_->list()[0].label) && sameObject(navigate(firstRow.Get(), NavigateDirection_Parent).Get(), list.Get()),
+                   "The list holds one item per data set");
+        const auto cancel = part(L"macImport.cancel");
+        step.check(integer(cancel.Get(), UIA_HasKeyboardFocusPropertyId) == 1 && integer(confirm.Get(), UIA_HasKeyboardFocusPropertyId) == 0 &&
+                   integer(confirm.Get(), UIA_IsEnabledPropertyId) == 1, "Cancel holds the card's keyboard focus first");
+        key(VK_TAB);
+        step.check(!a.automationRefresh(root) && integer(confirm.Get(), UIA_HasKeyboardFocusPropertyId) == 1 && integer(cancel.Get(), UIA_HasKeyboardFocusPropertyId) == 0,
+                   "Tab moves the focus property without restructuring");
+        key(VK_TAB);
+        // The hit test uses the projection pointer input uses.
+        const auto p = a.card_->actionPoint(1);
+        POINT origin{};
+        step.check(p && ClientToScreen(static_cast<HWND>(a.window_), &origin), "The confirm button projects");
+        const double scale = a.metrics_.scale > 0 ? a.metrics_.scale : 1.0;
+        Fragment hit;
+        step.check(SUCCEEDED(a.automationFromPoint(origin.x + p->x * scale, origin.y + p->y * scale, &hit)) && sameObject(hit.Get(), confirm.Get()),
+                   "A screen hit test on the projected button finds its part");
+        UiaRect bounds{};
+        step.check(SUCCEEDED(confirm->get_BoundingRectangle(&bounds)) && bounds.width > 0 && bounds.height > 0 && integer(confirm.Get(), UIA_IsOffscreenPropertyId) == 0,
+                   "Buttons have screen bounds");
     }
 };
 
@@ -663,9 +1067,12 @@ void MacImportArea::coverage(app::ModuleCoverage& step) {
     Driver d{*this, step, step.time};
     step.check(coverageMode() && host_.mode() == ApplicationAreaMode::hiddenCoverage && !coverageRoot_.empty() && destination_.parent_path() == coverageRoot_ / "Imported",
                "Hidden coverage imports into the area's own synthetic destination");
+    step.check(coverageRestart_ && host_.find<app::DataRootRestart>(app::dataRootRestartService) == coverageRestart_.get(),
+               "The host leaves the restart service to the coverage stand-in outside production");
     step.check(!flow_->presented() && !state_.presented() && !flow_->busy(), "The import card is idle between cycles");
     const auto exportRoot = coverageRoot_ / "Export";
-    d.settle(); // the construction-time outcome read (no note in coverage)
+    d.settle(); // the construction-time sweep and outcome read
+    step.check(swept_ && swept_->failed == 0 && (step.cycle > 0 || (swept_->candidates == 0 && swept_->removed == 0)), "The startup sweep ran on the shared executor");
     // The Mac-generated golden export, materialized once (synthetic records
     // written by the unchanged Mac stores and the exporter script).
     const auto bytes = ehud::data::detail::readFile(goldenFixture_, 64 * 1024 * 1024);
@@ -680,6 +1087,7 @@ void MacImportArea::coverage(app::ModuleCoverage& step) {
         fs::create_directories(coverageRoot_ / "NotAnExport");
     }
     const auto& expected = golden["expected"];
+    const auto rootName = utf8(destination_.filename());
     const auto clean = [&] {
         for (const auto& entry : fs::directory_iterator(destination_.parent_path()))
             if (utf8(entry.path().filename()).find(".import-") != std::string::npos) return false;
@@ -688,23 +1096,47 @@ void MacImportArea::coverage(app::ModuleCoverage& step) {
     const auto backups = [&] {
         std::size_t n{};
         for (const auto& entry : fs::directory_iterator(destination_.parent_path()))
-            if (utf8(entry.path().filename()).starts_with(utf8(destination_.filename()) + ".backup-")) ++n;
+            if (utf8(entry.path().filename()).starts_with(rootName + ".backup-")) ++n;
         return n;
+    };
+    const auto stateOf = [&](const fs::path& folder) {
+        for (const auto& f : mig::inspectMacImportWork(destination_)) if (f.folder == folder) return f.state;
+        return mig::MacImportWorkState::unrecognized;
+    };
+    // Review, then the restart handoff through the stand-in host service.
+    const auto restartFromReview = [&] {
+        const auto requests = coverageRestart_->requests();
+        d.click(1);
+        step.check(flow_->step() == MacImportStep::restarting && coverageRestart_->requests() == requests + 1 && coverageRestart_->pending() &&
+                   !state_.enabled()[0] && !state_.enabled()[1], "Import hands the reviewed session to the host's restart service");
     };
 
     if (step.cycle == 0) {
         coverageInProcess_ = true;
         d.open();
+        d.automationIntro();
         d.key(VK_ESCAPE);
         d.hidden("Escape closes the intro and releases the card");
+        (void)automationRefresh(d.group());
+        step.check(automationCount() == 0, "A hidden card lists no UIA parts");
         d.open();
-        d.stage(exportRoot);
+        (void)automationRefresh(d.group());
+        const auto dialog = d.part(L"macImport.dialog");
+        d.stage(exportRoot, true);
         d.review(expected);
+        (void)automationRefresh(d.group());
+        step.check(sameObject(d.part(L"macImport.dialog").Get(), dialog.Get()) && d.text(dialog.Get(), UIA_NamePropertyId) == Driver::wide(d.content().title),
+                   "The dialog keeps its UIA identity across steps and follows the title");
+        {
+            const auto row = d.text(d.part(L"macImport.row.0").Get(), UIA_NamePropertyId);
+            const auto label = Driver::wide(flow_->list()[0].label), value = Driver::wide(flow_->list()[0].value);
+            step.check(!value.empty() && row.size() > label.size() + value.size() && row.starts_with(label) && row.ends_with(value), "Review rows read label and value");
+        }
         const auto rasterized = card_ ? card_->rasterizations() : 0;
         d.frames(.2);
         step.check(card_ && card_->rasterizations() == rasterized, "Warm frames re-pose the card without rasterizing");
-        // Enter on the initially focused Cancel would cancel; click Import.
-        d.click(1);
+        // Import through UIA Invoke: exactly the click's action.
+        step.check(d.invoke(L"macImport.confirm") == S_OK, "UIA Invoke presses Import");
         step.check(flow_->step() == MacImportStep::committing || flow_->step() == MacImportStep::report, "Import starts the in-process commit");
         d.settle();
         step.check(flow_->step() == MacImportStep::report && fs::exists(destination_ / "Migration" / "import.json") && clean() && backups() == 0,
@@ -718,17 +1150,30 @@ void MacImportArea::coverage(app::ModuleCoverage& step) {
                    "The relink list names each reference and its module");
         d.key(VK_ESCAPE);
         step.check(flow_->step() == MacImportStep::report, "Escape returns from the relink list to the report");
-        // The report list scrolls with the wheel when it outgrows the card.
+        // The report list scrolls with the wheel when it outgrows the card;
+        // rows outside the card are offscreen UIA list items.
         if (flow_->listSize() > macImportCardRows) {
+            (void)automationRefresh(d.group());
+            const auto last = d.part(L"macImport.row." + std::to_wstring(flow_->listSize() - 1));
+            UiaRect none{};
+            step.check(d.integer(last.Get(), UIA_IsOffscreenPropertyId) == 1 && SUCCEEDED(last->get_BoundingRectangle(&none)) && none.width == 0,
+                       "Rows below the card are offscreen");
             const auto p = card_->listPoint();
             step.check(p && wheel({p->x, p->y, -3, false, 0, 3}, d.t) && flow_->firstRow() > 0, "The wheel scrolls the report");
+            (void)automationRefresh(d.group());
+            step.check(d.integer(d.part(L"macImport.row.0").Get(), UIA_IsOffscreenPropertyId) == 1, "Scrolled-out rows become offscreen");
             d.key(VK_PRIOR);
             step.check(flow_->firstRow() == 0, "Page Up returns to the top");
         }
+        (void)automationRefresh(d.group());
+        const auto done = d.part(L"macImport.confirm");
         d.click(1);
         d.hidden("Done closes the report");
+        UiaRect gone{};
+        step.check(automationCount() == 0 && done->get_BoundingRectangle(&gone) == UIA_E_ELEMENTNOTAVAILABLE,
+                   "A closed card disconnects its UIA parts");
     } else if (step.cycle == 1) {
-        coverageInProcess_ = false; // the production restart handoff, played synthetically
+        coverageInProcess_ = false; // the production restart path
         step.check(fs::exists(destination_ / "Migration" / "import.json"), "Cycle 1 starts from the earlier import");
         d.open();
         d.stage(exportRoot);
@@ -736,43 +1181,93 @@ void MacImportArea::coverage(app::ModuleCoverage& step) {
         d.click(1);
         d.settle();
         d.review(expected);
-        const auto restarts = coverageRestarts_;
-        d.click(1);
-        step.check(flow_->step() == MacImportStep::restarting && coverageRestarts_ == restarts + 1 && coverageWork_ && !state_.enabled()[0] && !state_.enabled()[1],
-                   "Import hands the reviewed session to the restart handoff");
-        // The host's save failed: the quit was cancelled and nothing ran.
-        auto declined = std::exchange(coverageDeclined_, {});
-        coverageWork_ = {};
-        declined();
+        restartFromReview();
+        step.check(!coverageRestart_->restartWith([] {}, [] {}) && coverageRestart_->refused() > 0, "A second restart cannot be requested while one is pending");
+        // The host's save failed (reopenAfterSaveFailure): the quit was
+        // cancelled, the work destroyed unrun, then `declined` ran.
+        coverageRestart_->decline();
         d.frame();
-        step.check(flow_->step() == MacImportStep::review && d.content().enabled[1] && clean() == false, "A declined restart keeps the reviewed import");
-        d.click(1);
-        step.check(flow_->step() == MacImportStep::restarting && coverageWork_, "The review is confirmed again");
-        // Every owner closed its stores (the synthetic destination is owned
-        // by this area only); the post-shutdown work commits.
-        auto work = std::exchange(coverageWork_, {});
-        coverageDeclined_ = {};
-        work();
-        work = {}; // releases the session
+        step.check(flow_->step() == MacImportStep::review && d.content().enabled[1] && !clean() && !coverageRestart_->pending(), "A declined restart keeps the reviewed import");
+        restartFromReview();
+        // The accepted quit: editors finish, `quitting` is broadcast, the
+        // flush chain runs, then every owner is destroyed before the work.
+        step.check(finishEditing(d.t) && !hostEvent({app::HostEvent::Kind::quitting, 0}, d.t) && flush(d.t), "The card never blocks the accepted quit");
+        auto work = coverageRestart_->accept();
+        d.endRun();
+        const auto held = std::find_if(fs::directory_iterator(destination_.parent_path()), fs::directory_iterator{}, [&](const auto& entry) {
+            return utf8(entry.path().filename()).starts_with(rootName + ".import-");
+        });
+        step.check(work && held != fs::directory_iterator{} && stateOf(held->path()) == mig::MacImportWorkState::live,
+                   "After the teardown only the host's work holds the reviewed import, still live");
+        work(); // main.cpp: once, while no owner has the root open
+        work = {};
         const auto outcome = mig::readMacImportOutcome(destination_);
         step.check(outcome && outcome->state == mig::MacImportOutcome::State::completed && !outcome->backup.empty() && backups() == 1 && clean(),
                    "The post-shutdown commit kept a backup, switched roots and recorded its outcome");
-        d.nextRun();
-        step.check(flow_->step() == MacImportStep::report && flow_->outcomeRecorded() && state_.presented(),
-                   "The next run shows the recorded final report once");
+        // Leftovers of earlier runs that ended while they owned a folder
+        // (synthetic): the next run's startup sweep removes only the
+        // importer's own stale folders.
+        const auto token = [](unsigned n) { return "C0VE4A6E-0000-4000-8000-00000000000" + std::to_string(n); };
+        const auto abandoned = mig::MacImportWorkLock::create(destination_, token(1), 1760000000.0).folder(); // released at once
+        mig::files::writeNewFile(abandoned / "source" / "EndfieldCharge" / "Notes" / "notes.sqlite3", "private copy");
+        mig::files::writeNewFile(abandoned / "root" / "settings.json", "{}");
+        const auto activated = mig::MacImportWorkLock::create(destination_, token(2), 1760000000.0).folder();
+        mig::files::writeNewFile(activated / utf8Path(mig::macImportActivationJournal), mig::encodeMacImportActivation(rootName, utf8(utf8Path(outcome->backup).filename())));
+        mig::files::writeNewFile(activated / "source" / "copy.bin", "private copy");
+        const auto empty = mig::macImportWorkPath(destination_, token(3));
+        fs::create_directories(empty);
+        const auto unmarked = mig::macImportWorkPath(destination_, token(4));
+        mig::files::writeNewFile(unmarked / "user.txt", "not the importer's");
+        auto live = mig::MacImportWorkLock::create(destination_, token(5), 1760000000.0);
+        d.startRun();
+        step.check(swept_ && swept_->candidates == 5 && swept_->removed == 3 && swept_->live == 1 && swept_->unrecognized == 1 && swept_->interrupted == 0 && swept_->failed == 0,
+                   "The next run sweeps abandoned, activated and empty work folders only");
+        step.check(!fs::exists(abandoned) && !fs::exists(activated) && !fs::exists(empty) && fs::exists(unmarked / "user.txt") && live.held() && fs::exists(live.folder()) &&
+                   backups() == 1 && mig::readMacImportOutcome(destination_) == outcome, "Unmarked and live folders, backups and the outcome note are untouched");
+        fs::remove_all(unmarked); // the user's own folder, removed by the driver only
+        step.check(live.remove(), "A live import removes its own folder");
+        step.check(flow_->step() == MacImportStep::report && flow_->outcomeRecorded() && state_.presented(), "The next run shows the recorded final report once");
         step.check(!d.content().rows[0].value.empty() && d.content().rows[0].value == utf8(utf8Path(outcome->backup).filename()), "The report names the backup folder");
         d.click(0);
         step.check(flow_->step() == MacImportStep::relink && flow_->listSize() == std::size_t(expected["relinkItems"].integer()), "The relink list is read from the imported root");
         d.click(1);
         d.hidden("Done closes the recorded report");
         step.drain(); // the note removal runs on the shared executor
-        step.check(!fs::exists(mig::macImportOutcomePath(destination_)), "Done forgets the recorded outcome");
+        step.check(!fs::exists(mig::macImportOutcomePath(destination_)) && clean(), "Done forgets the recorded outcome");
+
+        // The host's pre-open recovery (recoverMacImportWork, before any
+        // owner opens the root) over a second synthetic root: a process that
+        // ended between the two renames of an activation.
+        const auto recovery = coverageRoot_ / "Recovery";
+        const auto root = recovery / "EndfieldHUD";
+        const auto backup = recovery / "EndfieldHUD.backup-20260101T000000Z-C0VE4A6E";
+        mig::files::writeNewFile(backup / "settings.json", "{\"previous\":true}");
+        const auto interrupted = mig::MacImportWorkLock::create(root, token(6), 1760000000.0).folder();
+        mig::files::writeNewFile(interrupted / utf8Path(mig::macImportActivationJournal), mig::encodeMacImportActivation("EndfieldHUD", utf8(backup.filename())));
+        mig::files::writeNewFile(interrupted / "root" / "Migration" / "import.json", "{}");
+        const auto listed = mig::inspectMacImportWork(root);
+        step.check(listed.size() == 1 && listed.front().state == mig::MacImportWorkState::interrupted && listed.front().backup == backup, "An interrupted activation is recognized");
+        {
+            mig::MacImportWorkSweep sweep(root);
+            sweep.run();
+            step.check(sweep.stats().interrupted == 1 && fs::exists(interrupted / "root") && fs::exists(backup), "The sweep never removes an interrupted activation");
+        }
+        const auto restored = mig::recoverMacImportWork(root, 1760000000.0);
+        const auto note = mig::readMacImportOutcome(root);
+        step.check(restored.restored == 1 && !fs::exists(backup) && mig::files::readFile(root / "settings.json", 64) == "{\"previous\":true}" && note &&
+                   note->state == mig::MacImportOutcome::State::failed, "Recovery moves the previous data back and records why");
+        mig::MacImportWorkSweep sweep(root);
+        sweep.run();
+        step.check(sweep.stats().removed == 1 && !fs::exists(interrupted), "The rolled-back folder is then swept");
+        fs::remove_all(recovery);
     } else {
         coverageInProcess_ = true;
         const auto before = backups();
         d.open();
         d.stage(coverageRoot_ / "NotAnExport");
         step.check(flow_->step() == MacImportStep::failed && !d.content().detail.empty() && d.content().enabled[0], "An invalid folder fails with the importer's reason");
+        (void)automationRefresh(d.group());
+        step.check(d.part(L"macImport.detail").Get() && !d.part(L"macImport.list").Get(), "The failure's detail text replaces the list in UIA");
         d.click(0);
         d.hidden("Close dismisses the failure");
         d.open();
@@ -798,8 +1293,27 @@ void MacImportArea::coverage(app::ModuleCoverage& step) {
         step.check(flow_->step() == MacImportStep::intro, "A cancelled dialog returns to the intro");
         d.key(VK_ESCAPE);
         d.hidden("Escape closes the intro");
+        // A session end while the restart is pending (sessionEnding:
+        // declineRestart, runRestartDeclined, then the run stops): the work is
+        // destroyed unrun and the owner's teardown discards the import.
+        coverageInProcess_ = false;
+        d.open();
+        d.stage(exportRoot);
+        step.check(flow_->step() == MacImportStep::replace, "The earlier import asks for replacement");
+        d.click(1);
+        d.settle();
+        restartFromReview();
+        coverageRestart_->decline();
+        d.frame();
+        step.check(flow_->step() == MacImportStep::review && !clean(), "The session end declines the restart");
+        d.endRun();
+        step.check(clean() && backups() == before && !fs::exists(mig::macImportOutcomePath(destination_)) && mig::macImportCompleted(destination_),
+                   "A session end never runs the work: no backup, no outcome, the root unchanged");
+        d.startRun();
+        d.hidden("The next run has nothing to report");
+        coverageInProcess_ = true;
     }
-    step.check(!flow_->busy() && !pending_, "Nothing is left running after the cycle");
+    step.check(!flow_->busy() && !pending_ && !sweep_ && !coverageRestart_->pending(), "Nothing is left running after the cycle");
 }
 } // namespace
 

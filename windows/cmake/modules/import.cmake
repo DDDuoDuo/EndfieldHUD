@@ -11,8 +11,13 @@ if(CMAKE_SCRIPT_MODE_FILE AND DEFINED TOOL)
   if(NOT run EQUAL 0 OR NOT runOut MATCHES "\"committed\":true" OR NOT runOut MATCHES "\"workRemoved\":true" OR NOT EXISTS "${SCRATCH}/EndfieldHUD/Migration/import.json")
     message(FATAL_ERROR "Commit run failed: ${run} ${runOut} ${runError}")
   endif()
+  # The read-only work-folder listing: nothing is left behind after a commit.
+  execute_process(COMMAND "${TOOL}" --work "${SCRATCH}/EndfieldHUD" RESULT_VARIABLE work OUTPUT_VARIABLE workOut ERROR_VARIABLE workError)
+  if(NOT work EQUAL 0 OR NOT workOut MATCHES "\"workFolders\":\\[\\]")
+    message(FATAL_ERROR "Work listing failed: ${work} ${workOut} ${workError}")
+  endif()
   file(REMOVE_RECURSE "${SCRATCH}")
-  message(STATUS "PASS mac_import_tool dry run and commit on the synthetic golden export")
+  message(STATUS "PASS mac_import_tool dry run, commit and work listing on the synthetic golden export")
   return()
 endif()
 
@@ -32,7 +37,8 @@ add_library(hud_mac_import
   core/migration/mac_import_files.cpp
   core/migration/mac_import_relink.cpp
   core/migration/mac_import.cpp
-  core/migration/mac_import_outcome.cpp)
+  core/migration/mac_import_outcome.cpp
+  core/migration/mac_import_work.cpp)
 target_include_directories(hud_mac_import PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(hud_mac_import PUBLIC hud_mac_import_codec hud_data hud_reader hud_calendar hud_event_log hud_map_store)
 if(WIN32)
@@ -71,10 +77,19 @@ endif()
 # the area service app/areas/mac_import_handoff.hpp. Production commits through
 # the host's restart handoff; hidden coverage imports the Mac-generated golden
 # export into the area's own synthetic destination.
+# UI Automation parts of the import card (a dialog under the owner's group of
+# the HUD window's root; app/hud_automation.hpp).
+if(WIN32)
+  add_library(hud_mac_import_automation native/mac_import_automation.cpp)
+  target_include_directories(hud_mac_import_automation PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+  target_link_libraries(hud_mac_import_automation PUBLIC hud_scene PRIVATE uiautomationcore oleaut32 ole32)
+  list(APPEND EHUD_MAC_IMPORT_TARGETS hud_mac_import_automation)
+endif()
 if(WIN32 AND TARGET hud_mac_import_native AND TARGET hud_module_registry)
   add_library(hud_mac_import_area STATIC app/areas/mac_import_module.cpp)
   target_include_directories(hud_mac_import_area PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-  target_link_libraries(hud_mac_import_area PUBLIC hud_module_registry hud_utility hud_mac_import_flow hud_mac_import_native PRIVATE user32)
+  target_link_libraries(hud_mac_import_area PUBLIC hud_module_registry hud_utility hud_mac_import_flow hud_mac_import_native hud_mac_import_automation
+    PRIVATE user32 uiautomationcore oleaut32 ole32)
   list(APPEND EHUD_MAC_IMPORT_TARGETS hud_mac_import_area)
   set_property(GLOBAL APPEND PROPERTY EHUD_APP_AREAS
     "macImport|hud_mac_import_area|app/areas/mac_import_module.hpp|endfield::areas::macImportModule")
@@ -108,6 +123,22 @@ if(BUILD_TESTING)
     target_link_libraries(mac_import_tests PRIVATE SQLite::SQLite3)
   endif()
   add_test(NAME mac_import_contracts COMMAND mac_import_tests ${EHUD_MAC_IMPORT_FIXTURES}/map-store-source.json)
+  # Private work folders: marker and lock, activation journal, the startup
+  # sweep and the pre-open recovery of an interrupted activation.
+  add_executable(mac_import_work_tests tests/mac_import_work_tests.cpp)
+  target_link_libraries(mac_import_work_tests PRIVATE hud_mac_import hud_mac_import_service)
+  if(WIN32)
+    target_compile_definitions(mac_import_work_tests PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+    target_link_libraries(mac_import_work_tests PRIVATE winsqlite3)
+  else()
+    target_link_libraries(mac_import_work_tests PRIVATE SQLite::SQLite3)
+  endif()
+  if(MSVC)
+    target_compile_options(mac_import_work_tests PRIVATE /W4 /permissive- /EHsc)
+  else()
+    target_compile_options(mac_import_work_tests PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+  add_test(NAME mac_import_work_contracts COMMAND mac_import_work_tests)
   # The import flow, card and restart-handoff outcome over synthetic exports.
   add_executable(mac_import_flow_tests tests/mac_import_flow_tests.cpp)
   target_link_libraries(mac_import_flow_tests PRIVATE hud_mac_import_flow hud_mac_import_service)
@@ -123,6 +154,15 @@ if(BUILD_TESTING)
     target_compile_options(mac_import_flow_tests PRIVATE -Wall -Wextra -Wpedantic)
   endif()
   add_test(NAME mac_import_flow_contracts COMMAND mac_import_flow_tests)
+  if(TARGET hud_mac_import_automation)
+    add_executable(mac_import_automation_tests tests/mac_import_automation_tests.cpp)
+    target_link_libraries(mac_import_automation_tests PRIVATE hud_mac_import_automation uiautomationcore oleaut32 ole32)
+    target_compile_definitions(mac_import_automation_tests PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+    if(MSVC)
+      target_compile_options(mac_import_automation_tests PRIVATE /W4 /permissive- /EHsc)
+    endif()
+    add_test(NAME mac_import_automation_contracts COMMAND mac_import_automation_tests)
+  endif()
   # Imported reminders through the unchanged Windows reminder plan/reconcile
   # (in-memory provider; the real notification center is never used).
   if(TARGET hud_calendar_notifications)

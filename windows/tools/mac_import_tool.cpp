@@ -4,6 +4,8 @@
 //
 //   mac_import_tool EXPORT_DIR DESTINATION [--commit] [--replace] [--accept store,...]
 //   mac_import_tool --fixture GOLDEN.json SCRATCH_DIR [--commit]   (synthetic fixture only)
+//   mac_import_tool --work DESTINATION   (read only: the private import folders
+//                                         next to DESTINATION and their states)
 //
 // Use a scratch DESTINATION for acceptance; never point it at real app data
 // unless you intend to import. --commit keeps a timestamped backup of an
@@ -11,6 +13,7 @@
 #include "core/data/file_io.hpp"
 #include "core/migration/mac_import_files.hpp"
 #include "core/migration/mac_import_native.hpp"
+#include "core/migration/mac_import_work.hpp"
 #include "core/migration/plist.hpp"
 #include <fstream>
 #include <iostream>
@@ -59,6 +62,16 @@ fs::path extractFixture(const fs::path& fixture, const fs::path& scratch) {
 int main(int argc, char** argv) {
     try {
         std::vector<std::string> args(argv + 1, argv + argc);
+        if (args.size() == 2 && args[0] == "--work") {
+            // Lists what the next run's sweep would remove or keep; removes nothing.
+            const auto destination = fs::absolute(utf8Path(args[1])).lexically_normal();
+            J::Array folders;
+            for (const auto& f : m::inspectMacImportWork(destination))
+                folders.push_back(J::Object{{"folder", show(f.folder)}, {"state", std::string(m::macImportWorkStateName(f.state))},
+                                            {"backup", f.backup.empty() ? J(nullptr) : J(show(f.backup))}});
+            std::cout << J(J::Object{{"destination", show(destination)}, {"workFolders", std::move(folders)}}).encode(16 * 1024 * 1024) << '\n';
+            return 0;
+        }
         bool commit = false, replace = false, fixture = false;
         std::vector<m::MacImportStore> accept;
         std::vector<std::string> positional;
@@ -80,7 +93,8 @@ int main(int argc, char** argv) {
         }
         if (positional.size() != 2) {
             std::cerr << "Usage: mac_import_tool EXPORT_DIR DESTINATION [--commit] [--replace] [--accept store,...]\n"
-                         "       mac_import_tool --fixture GOLDEN.json SCRATCH_DIR [--commit]\n";
+                         "       mac_import_tool --fixture GOLDEN.json SCRATCH_DIR [--commit]\n"
+                         "       mac_import_tool --work DESTINATION\n";
             return 2;
         }
         fs::path exportRoot = fs::absolute(utf8Path(positional[0])), destination = fs::absolute(utf8Path(positional[1])).lexically_normal();

@@ -57,9 +57,19 @@ MacImportCardGeometry macImportCardGeometry(Rect v) {
     // HUDQuitConfirmationView width and button layout; taller for the list.
     const double width = std::min(390., std::max(220., v.width - 40)), button = (width - 58) / 2;
     constexpr double buttonsY = 358, rowTop = 150, rowHeight = 16;
-    return {{v.x + (v.width - width) / 2, v.y + (v.height - macImportCardHeight) / 2, width, macImportCardHeight},
-            {23, buttonsY, button, 32}, {35 + button, buttonsY, button, 32},
-            {19, 146, width - 38, rowHeight * double(macImportCardRows) + 8}, rowTop, rowHeight};
+    MacImportCardGeometry g;
+    g.card = {v.x + (v.width - width) / 2, v.y + (v.height - macImportCardHeight) / 2, width, macImportCardHeight};
+    g.cancel = {23, buttonsY, button, 32};
+    g.confirm = {35 + button, buttonsY, button, 32};
+    g.list = {19, 146, width - 38, rowHeight * double(macImportCardRows) + 8};
+    g.rowTop = rowTop;
+    g.rowHeight = rowHeight;
+    g.title = {23, 42, width - 46, 28};
+    g.message = {23, 74, width - 46, 58};
+    g.bar = {23, 138, width - 46, 2};
+    g.detail = {g.list.x + 10, g.rowTop + 2, g.list.width - 20, g.list.height - 12};
+    g.position = {width / 2, 18, width / 2 - 23, 13};
+    return g;
 }
 
 MacImportCardState::MacImportCardState() { updateButtons(0, false); }
@@ -257,7 +267,7 @@ MacImportArtwork prepareMacImportCardArtwork(const MacImportCardContent& content
         add(shape(id(n ? "confirmPlate" : "cancelPlate"), {r.x - 2, r.y - 2, r.width + 4, r.height + 4}, 4, paint.fill, paint.stroke, paint.width));
     }
     add(shape(id("list"), g.list, 4, gray(a.dark ? .9 : .1, .035), gray(a.dark ? .7 : .3, .18), .7));
-    const Rect bar{23, 138, width - 46, 2};
+    const Rect bar = g.bar;
     const bool showsProgress = content.progress.has_value();
     auto track = layer(id("track"), bar);
     track["backgroundColor"] = color(gray(a.dark ? .9 : .1, .12));
@@ -269,10 +279,10 @@ MacImportArtwork prepareMacImportCardArtwork(const MacImportCardContent& content
     // re-rasterizes it.
     add(std::move(fill), showsProgress && progress > 0 ? 1.f : 0.f, std::max(progress, 1e-3));
     add(text(id("caption"), {23, 18, width - 46, 13}, "ENDFIELDHUD / SYSTEM", 8, tertiary, a.scale, ".AppleSystemUIFontMonospaced-Semibold"));
-    add(text(id("position"), {width / 2, 18, width / 2 - 23, 13}, content.position, 8, tertiary, a.scale, ".AppleSystemUIFontMonospaced-Semibold", "right"));
-    add(text(id("title"), {23, 42, width - 46, 28}, content.title, 18, primary, a.scale, ".AppleSystemUIFontBold"));
-    add(text(id("message"), {23, 74, width - 46, 58}, content.message, 12, secondary, a.scale, ".AppleSystemUIFontMedium", "left", true));
-    add(text(id("detail"), {g.list.x + 10, g.rowTop + 2, g.list.width - 20, g.list.height - 12}, content.detail, 11, secondary, a.scale,
+    add(text(id("position"), g.position, content.position, 8, tertiary, a.scale, ".AppleSystemUIFontMonospaced-Semibold", "right"));
+    add(text(id("title"), g.title, content.title, 18, primary, a.scale, ".AppleSystemUIFontBold"));
+    add(text(id("message"), g.message, content.message, 12, secondary, a.scale, ".AppleSystemUIFontMedium", "left", true));
+    add(text(id("detail"), g.detail, content.detail, 11, secondary, a.scale,
              ".AppleSystemUIFontMedium", "left", true), content.detail.empty() ? 0.f : 1.f);
     for (int n = 0; n < 2; ++n) {
         const auto r = n == 0 ? g.cancel : g.confirm;

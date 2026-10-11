@@ -11,6 +11,11 @@ namespace ehud::migration::files {
 // Filesystem primitives for the one-time import. Nothing here follows a
 // symbolic link, junction or other reparse point; such entries are refused.
 // New files are created exclusively and flushed before they are trusted.
+// What an entry is, without following it: a link, junction or other reparse
+// point is `other`. Throws MacImportError (unavailable) when it cannot be
+// inspected.
+enum class EntryKind { missing, file, directory, other };
+EntryKind entryKind(const std::filesystem::path&);
 void requireOrdinaryDirectory(const std::filesystem::path&);
 // Every directory between `base` and `base/relative` must be ordinary.
 void requireOrdinaryParents(const std::filesystem::path& base, const std::filesystem::path& relative);

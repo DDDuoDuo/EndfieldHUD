@@ -170,6 +170,15 @@ struct StreamCopy::Impl {
     }
 };
 
+EntryKind entryKind(const std::filesystem::path& path) {
+    switch (inspect(path)) {
+    case Kind::missing: return EntryKind::missing;
+    case Kind::file: return EntryKind::file;
+    case Kind::directory: return EntryKind::directory;
+    case Kind::other: return EntryKind::other;
+    }
+    return EntryKind::other;
+}
 void requireOrdinaryDirectory(const std::filesystem::path& path) {
     if (inspect(path) != Kind::directory) fail(MacImportErrorCode::invalid, "Not an ordinary directory (links and junctions are refused): " + show(path));
 }

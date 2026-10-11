@@ -213,9 +213,19 @@ bool removeMacImportOutcome(const fs::path& destination) noexcept {
 MacImportOutcome commitMacImportSession(MacImportSession& session, const fs::path& destination, double finishedAt) noexcept {
     MacImportOutcome outcome;
     try {
+        bool recorded = false;
         try {
-            const auto result = session.commit();
-            outcome = completedMacImportOutcome(session.summary(), result, finishedAt);
+            // The note is recorded as soon as the imported root is in place,
+            // before the private copies are removed: a process that ends
+            // during that cleanup still reports the import, and the next run
+            // sweeps the remaining folder (mac_import_work.hpp).
+            while (session.commitNext())
+                if (!recorded && session.committed() && session.commitResult()) {
+                    outcome = completedMacImportOutcome(session.summary(), *session.commitResult(), finishedAt);
+                    try { writeMacImportOutcome(destination, outcome); recorded = true; } catch (...) {}
+                }
+            if (!session.commitResult()) throw MacImportError(MacImportErrorCode::invalid, "The import finished without a result");
+            outcome = completedMacImportOutcome(session.summary(), *session.commitResult(), finishedAt);
         } catch (const MacImportError& error) {
             const auto state = error.code() == MacImportErrorCode::cancelled ? MacImportOutcome::State::cancelled : MacImportOutcome::State::failed;
             outcome = failedMacImportOutcome(state, error.code(), error.what(), session.staged() ? &session.summary() : nullptr, finishedAt);
@@ -226,7 +236,7 @@ MacImportOutcome commitMacImportSession(MacImportSession& session, const fs::pat
         // folder failed afterwards (commit() reports workRemoved=false).
         if (outcome.state != MacImportOutcome::State::completed && session.committed() && session.commitResult())
             outcome = completedMacImportOutcome(session.summary(), *session.commitResult(), finishedAt);
-        try { writeMacImportOutcome(destination, outcome); } catch (...) {}
+        if (!recorded || outcome.state != MacImportOutcome::State::completed) try { writeMacImportOutcome(destination, outcome); } catch (...) {}
     } catch (...) {
         // Allocation failure while describing the result: report a bare failure.
         try { outcome = MacImportOutcome{}; outcome.finishedAt = finishedAt; } catch (...) {}

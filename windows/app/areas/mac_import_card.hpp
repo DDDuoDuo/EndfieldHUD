@@ -23,6 +23,10 @@ namespace endfield::areas {
 struct MacImportCardGeometry {
     core::Rect card, cancel, confirm, list;
     double rowTop{}, rowHeight{};
+    // Card-local text and bar frames (the artwork's and UI Automation's).
+    core::Rect title, message, bar, detail, position;
+    // Card-local frame of visible list row `n` (label and value together).
+    core::Rect row(std::size_t n) const noexcept { return {29, rowTop + rowHeight * double(n), card.width - 58, 14}; }
 };
 inline constexpr double macImportCardHeight = 411;
 MacImportCardGeometry macImportCardGeometry(core::Rect viewport);

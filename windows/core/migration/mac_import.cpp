@@ -4,6 +4,7 @@
 #include "core/data/map_store.hpp"
 #include "core/migration/mac_import_files.hpp"
 #include "core/migration/mac_import_sha256.hpp"
+#include "core/migration/mac_import_work.hpp"
 #include "modules/calendar_repository.hpp"
 #include "modules/reader_repository.hpp"
 #include <algorithm>
@@ -251,6 +252,7 @@ struct MacImportSession::Impl {
     std::size_t nextCarry{};
     std::unique_ptr<files::StreamCopy> copy;        // the file currently being verified or carried
     std::optional<MacImportCommitResult> result;
+    MacImportWorkLock lock;                         // the marked private folder (mac_import_work.hpp)
     bool opened{}, staged{}, commitStarted{}, activated{}, finished{}, discarded{};
 
     double now() const {
@@ -322,10 +324,11 @@ struct MacImportSession::Impl {
         // commit. Refuse links anywhere in it now, and reserve room for the
         // copies before writing anything.
         requireSpace(copied + (existing ? carryEstimate() : 0), "for the import");
-        const auto token = platform.makeUUID();
-        work = destination.parent_path() / utf8Path(show(destination.filename()) + ".import-" + token);
+        // The folder is created exclusively and marked (locked) before anything
+        // else is written, so a later run can tell it from anything else.
+        lock = MacImportWorkLock::create(destination, platform.makeUUID(), now());
+        work = lock.folder();
         std::error_code error;
-        if (!fs::create_directory(work, error) || error) fail(MacImportErrorCode::unavailable, "Cannot create the private import folder next to " + show(destination));
         source = work / "source";
         stage = work / "root";
         fs::create_directories(stage, error);
@@ -908,6 +911,9 @@ struct MacImportSession::Impl {
     void activateStep() {
         progress.phase = MacImportPhase::activating;
         bool movedAway = false;
+        // Journal first (flushed): a process that ends between the two renames
+        // leaves a folder that recoverMacImportWork() rolls back, never sweeps.
+        lock.journalActivation(summary.destinationExisted ? backupPath : fs::path{});
         try {
             hook(MacImportCommitStep::backupDestination);
             if (summary.destinationExisted) { files::renameNoReplace(destination, backupPath); movedAway = true; }
@@ -927,7 +933,7 @@ struct MacImportSession::Impl {
         progress.phase = MacImportPhase::committed;
     }
     void cleanupStep() {
-        try { hook(MacImportCommitStep::removeWork); result->workRemoved = files::removeTree(work); }
+        try { hook(MacImportCommitStep::removeWork); result->workRemoved = lock.remove(); }
         catch (...) { result->workRemoved = false; }
         finished = true;
     }
@@ -1018,6 +1024,7 @@ void MacImportSession::discard() noexcept {
         i.progress.phase = MacImportPhase::discarded;
     }
     // After activation only the private source copies remain in the work folder.
-    if (!i.work.empty() && !i.finished) files::removeTree(i.work);
+    // The marker goes last; anything left in use is swept by a later run.
+    if (!i.work.empty() && !i.finished) (void)i.lock.remove();
 }
 }

@@ -109,6 +109,8 @@ public:
     const ehud::migration::MacImportService& service() const noexcept { return *service_; }
     const std::optional<ehud::migration::MacImportOutcome>& outcome() const noexcept { return outcome_; }
     std::size_t listSize() const noexcept { return list_.size(); }
+    // The whole list behind the visible rows (UI Automation lists every row).
+    const std::vector<MacImportRow>& list() const noexcept { return list_; }
     std::size_t firstRow() const noexcept { return first_; }
     bool outcomeRecorded() const noexcept { return recorded_; }
     const std::filesystem::path& exportRoot() const noexcept { return exportRoot_; }

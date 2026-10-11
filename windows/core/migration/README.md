@@ -53,7 +53,9 @@ validated stores and carried bytes.
    hashed in place). Files a store may read are copied into a private
    `<root>.import-<uuid>` folder on the same volume while they are hashed. A
    missing, extra-long, tampered, linked or locked file fails the whole import
-   before any store is validated, and nothing is left behind.
+   before any store is validated, and nothing is left behind. The folder is
+   created exclusively and marked before anything else is written (see
+   "Private work folders" below).
 3. **Validate each store.** Each store's existing Windows codec validates the
    private copy, and migrations run only on that copy:
 
@@ -99,7 +101,63 @@ saved while the summary was being reviewed is lost:
    is left exactly as it was.
 
 Cancellation is honoured until activation; any failure before it removes the
-private folder and changes nothing. Afterwards, the owners reload from the root
+private folder and changes nothing. `commitMacImportSession` records the
+outcome note as soon as the new root is in place, before the private copies
+are removed.
+
+### Private work folders (`mac_import_work.hpp`)
+
+```
+<parent>\<root>.import-<uuid>\
+    import-work.json   marker: {"format":"EndfieldHUD.macImportWork","version":1,
+                       "root":"v1","token":"<uuid>","createdAt":<unix>}
+    source\  root\     verified export copies, staged root
+    activation.json    {"format":"EndfieldHUD.macImportActivation","version":1,
+                       "root":"v1","backup":"v1.backup-<UTC>-<id>"|null}
+```
+
+`MacImportWorkLock` creates the folder exclusively and then the marker, and
+keeps the marker open for the session's whole life (Windows: `FILE_SHARE_READ`
+only; POSIX: `flock`). The activation journal is written and flushed right
+before the first rename. A session removes its own folder with the marker
+last; if something is in use, the marker stays so a later sweep can finish.
+
+A process that ends while it owns a folder (killed while staging, or during
+the post-shutdown commit of the restart handoff) leaves the folder behind.
+`MacImportWorkSweep` removes such folders in bounded steps (256 file system
+operations per step on the shared executor), and only folders that are
+provably the importer's own and abandoned:
+
+- the name is exactly `<root>.import-<token>` next to the root, and the folder
+  is an ordinary directory, never a link or junction;
+- the marker is an ordinary file naming that root and token;
+- no live owner holds the marker, so a running import in any process is never
+  touched;
+- every top-level entry is one the importer writes. Anything else, such as a
+  file a user put there, keeps the whole folder.
+
+An empty folder with such a name holds nothing and is removed non-recursively.
+Backups, the outcome note, the data root, other roots' folders and anything
+unmarked are never touched. Links inside a swept folder are removed as entries
+and never followed. Folders made before checkpoint 124 carry no marker and are
+therefore never swept.
+
+| State | Meaning | Sweep |
+| --- | --- | --- |
+| abandoned | no journal, or the journal's backup never appeared, or the journal is unreadable | removed |
+| activated | journal present and the staged root already moved into place | removed (only private copies remain) |
+| interrupted | journal present, the root is at its backup, the staged root is still private | kept |
+| live | a session holds the marker | kept |
+| unrecognized | unmarked, foreign marker or unknown entries | kept |
+
+`recoverMacImportWork(root)` runs before any owner opens the root (the host's
+startup, under its single-instance guard). For every interrupted activation
+whose root is absent, it moves the backup back with a no-replace rename and
+records a failed outcome note ("…the previous data was restored…"), so the
+next import card explains what happened. The folder is then an ordinary
+abandoned one. Recovery never replaces an existing root: if a run already
+recreated the root, the interrupted folder and the backup are left for the
+user. Afterwards, the owners reload from the root
 and apply the summary: `profileSyncLocked`, `launchAtLogin` (the Windows
 startup provider), `remindersNeedReconcile` (Calendar notifications), and
 `customShortcutUntranslated`.
@@ -144,8 +202,30 @@ flow (`app/areas/mac_import_flow.hpp`, five HUD languages) is:
    the root (statuses, counts, backup folder, the importer's error text; no
    record content). The next run's area shows it once (final report, then the
    relink list read from `Migration/relink.json`) and removes it on Done.
-   Hidden coverage imports the golden export into the area's own synthetic
-   destination, in-process and through a synthetic restart handoff.
+8. **Startup sweep.** Each run's area starts a `MacImportWorkSweep` of the
+   root's stale private folders on the shared executor (bounded steps), before
+   it reads the outcome note.
+9. **UI Automation.** The card is one dialog (Pane, IsDialog, named by the
+   title, help: the message) under the area's group of the HUD window's UIA
+   root (`native/mac_import_automation.hpp`). Its parts are the title, the
+   message, a read-only ProgressBar (RangeValue 0–100) while a bounded job
+   runs, the detail text, a List whose ListItems are every row of the list
+   ("label: value"; rows scrolled out of the card are offscreen), and the two
+   Buttons. Invoke is the click's action and disabled buttons refuse it.
+   HasKeyboardFocus follows the card's own focus. Parts keep their COM
+   identity per id across steps and refresh on content events only.
+
+Hidden coverage imports the golden export into the area's own synthetic
+destination, in-process (cycle 0) and through the production restart path
+(cycles 1 and 2). The host publishes `DataRootRestart` in production only, so
+in hidden coverage the area publishes a stand-in under the same key, and the
+area's production code (`find`, `restartWith`) runs unchanged. The driver then
+plays the host's answers: a refused second request, a failed save (the work is
+destroyed unrun, then `declined` runs), the accepted quit (the owner's flow is
+torn down first and the work runs once), and a session end while the restart
+is pending (the work never runs). The next run sweeps planted stale folders
+and shows the recorded report. The host's pre-open recovery is exercised on a
+second synthetic root.
 
 ## 3. Relinking
 
@@ -209,6 +289,13 @@ outcome note over synthetic exports (staging progress, review, consent,
 in-process commit, restart handoff accepted/declined/discarded, the next
 run's report and relink list, failures, five languages).
 
+`mac_import_work_contracts` covers the marker and journal codecs, the lock (a
+live folder is never swept, even in-process), classification of 13 planted
+folders, a bounded sweep of a deep tree, links that are never followed, the
+pre-open recovery, and the session's journal between the two renames.
+`mac_import_automation_contracts` (Windows) covers the card's UIA tree over
+synthetic nodes.
+
 ## 4a. Verification status (checkpoint 123)
 
 Verified on the laptop by hidden tests only: `mac_import_contracts` (753
@@ -228,10 +315,13 @@ Not verified yet:
 - the card's text fit on a real display (longest CJK and Korean messages,
   DPI).
 
-A process killed during the post-shutdown commit leaves its private
-`<root>.import-*` folder, which is not swept at startup. The importer never
-deletes backups. The commit runs between two runs, so it shows no progress
-while it works; staging progress and the final report are shown.
+Since checkpoint 124 a private folder left by a process that ended during
+staging or during the post-shutdown commit is swept by the next run, if it
+is marked and abandoned. An activation interrupted between its two renames is
+rolled back only when the host calls `recoverMacImportWork` before opening the
+root. The importer never deletes backups. The commit runs between two runs,
+so it shows no progress while it works; staging progress and the final report
+are shown.
 
 ## 5. Acceptance tool
 

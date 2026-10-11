@@ -166,6 +166,21 @@ void cardArtwork() {
     check(g.rowTop + g.rowHeight * double(a::macImportCardRows) <= g.list.y + g.list.height && g.list.y + g.list.height < g.cancel.y, "Rows fit inside the list above the buttons");
     check(a::macImportCardGeometry({0, 0, 200, 500}).card.width == 220, "Narrow viewports keep the 220 pt minimum");
     const auto leaf = [&](const a::MacImportArtwork& w, a::MacImportLeaf l) -> const a::MacImportArtworkLeaf& { return w.leaves[static_cast<std::size_t>(l)]; };
+    // The frames UI Automation reports are the artwork's own leaf frames.
+    const auto frame = [&](a::MacImportLeaf l) {
+        const auto& node = art.layers["children"].array()[static_cast<std::size_t>(l)];
+        return endfield::core::Rect{node["position"].array()[0].number(), node["position"].array()[1].number(), node["bounds"].array()[2].number(), node["bounds"].array()[3].number()};
+    };
+    const auto same = [](endfield::core::Rect x, endfield::core::Rect y) { return x.x == y.x && x.y == y.y && x.width == y.width && x.height == y.height; };
+    check(same(frame(a::MacImportLeaf::title), g.title) && same(frame(a::MacImportLeaf::message), g.message) && same(frame(a::MacImportLeaf::track), g.bar) &&
+          same(frame(a::MacImportLeaf::detail), g.detail) && same(frame(a::MacImportLeaf::position), g.position), "Text and bar frames come from the geometry");
+    for (std::size_t n = 0; n < a::macImportCardRows; ++n) {
+        const auto label = frame(static_cast<a::MacImportLeaf>(static_cast<std::size_t>(a::MacImportLeaf::firstRow) + 2 * n));
+        const auto value = frame(static_cast<a::MacImportLeaf>(static_cast<std::size_t>(a::MacImportLeaf::firstRow) + 2 * n + 1));
+        const auto row = g.row(n);
+        check(row.x == label.x && row.y == label.y && row.height == label.height && row.x + row.width == value.x + value.width && value.y == row.y,
+              "A UIA row spans its label and value");
+    }
     check(leaf(art, a::MacImportLeaf::track).opacity == 0 && leaf(art, a::MacImportLeaf::fill).opacity == 0 && leaf(art, a::MacImportLeaf::detail).opacity == 0,
           "No progress bar or detail without content");
     check(art.layers["children"].array()[static_cast<std::size_t>(a::MacImportLeaf::caption)]["text"]["string"].string() == "ENDFIELDHUD / SYSTEM", "Source caption");

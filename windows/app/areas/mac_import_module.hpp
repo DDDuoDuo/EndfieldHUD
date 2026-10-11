@@ -20,10 +20,25 @@
 //    That next run's area reads the note and shows the final report and the
 //    relink list once. Without the host service the review cannot be
 //    confirmed (nothing is written).
+//  * Startup sweep: private "<root>.import-<token>" folders that an earlier
+//    run left behind (a process that ended while staging or during the
+//    post-shutdown commit) are removed in bounded steps on the shared
+//    executor, but only folders the importer created and marked and that no
+//    live import holds (core/migration/mac_import_work.hpp). Backups, the
+//    outcome note, unmarked look-alikes and interrupted activations are never
+//    touched; the host's recoverMacImportWork() before opening the root
+//    rolls the latter back.
+//  * UI Automation: the card is a dialog under this owner's group of the HUD
+//    window's root (native/mac_import_automation.hpp): title, message,
+//    progress, the full list (scrolled-out rows offscreen), detail and the
+//    two buttons (Invoke = the click).
 //  * Hidden coverage: the Mac-generated golden export (declared fixture
 //    macImport.goldenExport) is imported into the area's own synthetic
-//    destination under its coverage root, in-process and through a synthetic
-//    restart handoff; the real dialog, data root and lifecycle are never used.
+//    destination under its coverage root, in-process and through the
+//    production restart path against a coverage stand-in of the host's
+//    DataRootRestart (published under the same key, which the host leaves
+//    free outside production); the real dialog, data root and lifecycle are
+//    never used.
 // No timer, thread or poll: UtilityExecutor completions (utilityCompleted),
 // the dialog completion and the frame clock drive everything.
 #include "app/application.hpp"
