@@ -8,6 +8,7 @@
 #include "native/id_card_presenter.hpp"
 #include "native/layer_scene.hpp"
 #include "native/layer_text_layout.hpp"
+#include "native/notes_clipboard.hpp"
 #include "native/profile_automation.hpp"
 #include "native/profile_pickers.hpp"
 #include "tools/profile_owner.hpp"
@@ -157,6 +158,19 @@ void writeCoveragePNG(const fs::path& path, UINT width, UINT height) {
     ok(encoder->Commit(), "PNG commit");
 }
 
+// Hidden coverage only: the page's Edit-menu clipboard, never the system one.
+struct CoverageClipboard final : gpu::NotesClipboard {
+    std::optional<gpu::NotesClipboardText> value;
+    unsigned reads{}, writes{};
+    std::optional<gpu::NotesClipboardText> readText(std::uint32_t maximum) override {
+        ++reads;
+        if (!value || value->text.size() > maximum) return std::nullopt;
+        return value;
+    }
+    std::vector<std::string> readFiles() override { return {}; }
+    bool writeText(const gpu::NotesClipboardText& text) override { ++writes; value = text; return true; }
+};
+
 // HypergryphAccountController's profile side over the single profile owner
 // (never a second ProfileStore writer): official game fields are applied to
 // the current record as an account write, the lock mirrors gameSyncActive and
@@ -213,6 +227,10 @@ public:
 #endif
         o.cardChanged = [this] { publishCard(); };
         o.changed = [this] { host_.requestFrame(); };
+        // AppDelegate Edit menu (Ctrl+X/C/V) over the open field: the system
+        // clipboard, touched only on those keys; a synthetic one in coverage.
+        if (hiddenCoverage()) o.clipboard = coverageClipboard_ = std::make_shared<CoverageClipboard>();
+        else o.clipboard = gpu::systemNotesClipboard();
         auto* manager = static_cast<ITfThreadMgr*>(c.textManager);
         owner_ = std::make_unique<tools::ProfileOwner>(hwnd_, *c.utility, c.rasterizer, images_, *work_, std::move(o), manager,
                                                        manager ? static_cast<TfClientId>(c.textClient) : TF_CLIENTID_NULL);
@@ -364,6 +382,7 @@ private:
     std::optional<app::ApplicationFileRequest> coverageRequest_; // the request production would queue
     std::optional<std::array<double, 3>> coverageColor_;
     unsigned coverageImageAsks_{}, coverageColorAsks_{}, cropEvents_{};
+    std::shared_ptr<CoverageClipboard> coverageClipboard_;
     std::string lastCrop_;
     // Declaration order: the owner borrows the image source and is destroyed first.
     gpu::LayerImageSource images_;
@@ -640,6 +659,19 @@ void ProfileArea::coverageModule(app::ModuleCoverage& step) {
             step.check(!automation.refresh() && SUCCEEDED(value->get_Value(&draft)) && draft && std::wstring_view(draft) == L"Endmin 管理员",
                        "The peer keeps its identity and reports the new draft");
             SysFreeString(draft);
+            // AppDelegate Edit menu over the open field, through the synthetic
+            // clipboard with explicitly stated modifiers.
+            {
+                auto* page = owner_->page();
+                const tools::ProfileKeyModifiers control{false, true, false};
+                const auto writes = coverageClipboard_->writes, reads = coverageClipboard_->reads;
+                step.check(page && page->key({app::KeyKind::down, 'A'}, control, t) && page->key({app::KeyKind::down, 'C'}, control, t) &&
+                           coverageClipboard_->writes == writes + 1 && coverageClipboard_->value && coverageClipboard_->value->text == u"Endmin 管理员",
+                           "Ctrl+C copies the selected draft to the clipboard");
+                coverageClipboard_->value = gpu::NotesClipboardText{u"Pasted", std::nullopt, std::nullopt};
+                step.check(page->key({app::KeyKind::down, 'V'}, control, t) && coverageClipboard_->reads == reads + 1 && view() && view()->text == "Pasted",
+                           "Ctrl+V pastes over the selection like typing");
+            }
             step.check(owner_->page()->finishEditing(false, t) && !owner_->page()->editing() && owner_->state()->profile().name == "Endministrator",
                        "Discarding the field keeps the stored name");
             step.check(!cursorAt(center), "Closing the field restores the source cursor");

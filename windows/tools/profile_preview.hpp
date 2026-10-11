@@ -5,6 +5,7 @@
 #include "core/source_desktop_chrome.hpp"
 #include "modules/profile_presentation.hpp"
 #include "native/layer_image_source.hpp"
+#include "native/notes_clipboard.hpp"
 #include "native/profile_editor_field.hpp"
 #include "native/profile_image.hpp"
 #include "native/profile_scene.hpp"
@@ -29,6 +30,11 @@ struct ProfilePreviewOptions {
     // straight 254x254 source frame (loadProfileSourceArtwork().frame).
     native::LayerImageSource*images{};
     std::optional<modules::ProfileImage>frameSprite;
+    // AppDelegate Edit menu over the open field: Ctrl+X/C/V cut, copy and
+    // paste plain text, read or written once per key (no listener, no
+    // polling); the field then normalizes it like typing. Null declines those
+    // keys (no clipboard access at all).
+    std::shared_ptr<native::NotesClipboard>clipboard;
 };
 // Personal Profile module owner: the app's single ProfileState, the retained
 // NativeProfileScene, one projected TSF field at a time, slider drags, popover

@@ -3,6 +3,10 @@
 #include "native/profile_text.hpp"
 #include <cmath>
 #include <iostream>
+#include <vector>
+#include <string>
+#include <optional>
+#include <memory>
 #ifdef _WIN32
 #include <windows.h>
 #include <objbase.h>
@@ -10,6 +14,13 @@ namespace {
 using namespace endfield;namespace m=modules;namespace gpu=native;using J=ehud::data::Json;using M=core::Matrix4;
 unsigned checks{};
 void check(bool v,const char*why){++checks;if(!v)throw std::runtime_error(why);}
+// The injected clipboard (never the system one): one value, counted reads/writes.
+struct SyntheticClipboard final:gpu::NotesClipboard{
+    std::optional<gpu::NotesClipboardText>value;unsigned reads{},writes{};
+    std::optional<gpu::NotesClipboardText>readText(std::uint32_t maximum)override{++reads;if(!value||value->text.size()>maximum)return std::nullopt;return value;}
+    std::vector<std::string>readFiles()override{return {};}
+    bool writeText(const gpu::NotesClipboardText&v)override{++writes;value=v;return true;}
+};
 struct Window{HWND hwnd{};Window(){hwnd=CreateWindowExW(WS_EX_NOREDIRECTIONBITMAP|WS_EX_TOOLWINDOW,L"STATIC",L"Owned hidden Personal Profile owner fixture",WS_POPUP,0,0,1280,800,nullptr,nullptr,GetModuleHandleW(nullptr),nullptr);check(hwnd&&!IsWindowVisible(hwnd),"Profile owner fixture remains hidden");}~Window(){if(hwnd)DestroyWindow(hwnd);}};
 void run(const std::filesystem::path&shader,const std::filesystem::path&resources){
     Window w;gpu::Renderer renderer;renderer.initialize(w.hwnd,1280,800,{gpu::Driver::warpForTests,shader,gpu::RenderTarget::offscreenForTests});renderer.setCamera(gpu::layerViewportProjection(1280,800));
@@ -20,6 +31,7 @@ void run(const std::filesystem::path&shader,const std::filesystem::path&resource
     std::vector<m::ProfileImageKind>chosen;std::vector<std::array<double,3>>colors;
     gpu::LayerImageSource imageSource;
     tools::ProfilePreviewOptions options;options.raster.pixelsPerPoint=1;options.appearance.scale=1;options.images=&imageSource;options.frameSprite=m::loadProfileSourceArtwork(resources).frame;
+    const auto clipboard=std::make_shared<SyntheticClipboard>();options.clipboard=clipboard;
     options.chooseImage=[&](m::ProfileImageKind k){chosen.push_back(k);};options.chooseColor=[&](std::array<double,3>c){colors.push_back(c);};
     tools::ProfilePreview preview(w.hwnd,state,raster,options);preview.resize({1280,800,96,1,1280,800});preview.focus(true,0);
     core::source::DesktopChromeSettings settings;settings.viewport={0,0,1280,800};settings.module=core::Module::profile;core::ModulePresentation modules(core::Module::profile);
@@ -54,6 +66,14 @@ void run(const std::filesystem::path&shader,const std::filesystem::path&resource
         check(!preview.setEditingText(std::string(70000,'x'),time)&&!preview.setEditingText("\xff",time)&&preview.editingView()->text==before,"Text past the field capacity and invalid UTF-8 are refused unchanged");
         check(preview.setEditingText("Draft",time)&&preview.editingView()->text=="Draft"&&preview.editing(),"A Value write replaces the draft and keeps the field open");
         check(preview.setEditingText(std::string(),time)&&preview.editingView()->text.empty(),"An empty Value write clears the draft");
+        // AppDelegate Edit menu (cut:/copy:/paste:) through the injected clipboard only.
+        const tools::ProfileKeyModifiers control{false,true,false},controlShift{true,true,false};
+        check(preview.setEditingText("Copy me",time)&&key('A',control)&&key('C',control)&&clipboard->writes==1&&clipboard->value&&clipboard->value->text==u"Copy me"&&preview.editingView()->text=="Copy me","Ctrl+C copies the selected draft");
+        check(key('X',control)&&clipboard->writes==2&&preview.editingView()->text.empty(),"Ctrl+X cuts the selected draft");
+        clipboard->value=gpu::NotesClipboardText{u"Pasted",std::nullopt,std::nullopt};
+        check(key('V',control)&&clipboard->reads==1&&preview.editingView()->text=="Pasted","Ctrl+V pastes plain text like typing");
+        check(!key('V',controlShift)&&clipboard->reads==1&&key('C',control)&&clipboard->writes==2,"Ctrl+Shift+V is not the source paste; a collapsed selection copies nothing");
+        check(preview.setEditingText(std::string(),time),"The draft is cleared for typing");
     }
     type(u"Zed\U0001F600");
     check(!key(VK_RETURN,{.control=true})&&preview.editingField()==m::ProfileField::name&&state.profile().name!="Zed\U0001F600","A modified Return leaves the name field open (source keyDown takes unmodified keys only)");

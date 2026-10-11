@@ -52,6 +52,28 @@ struct WorkModePreview::Impl {
     void begin(){if(!input||controller.snapshot(time).active()||!finish(false))return;auto next=std::make_unique<Field>(window,raster,options.raster,m::workModeDurationEditText(controller.snapshot(time).duration),options.textMessage);
         if(manager){need(SUCCEEDED(next->editor->connect(*manager,client)),"Cannot connect duration field to shared text manager");if(focused)need(SUCCEEDED(next->editor->focus(true)),"Cannot focus duration field");}if(!alive)return;field=std::move(next);poseField();
     }
+    // AppDelegate Edit menu (cut:/copy:/paste:) over the duration field. A
+    // paste replaces the selection through the editor's host-edit path,
+    // bounded to the field's capacity; Return validates it as typed text.
+    bool clipboardKey(std::uint32_t key){
+        const auto clip=options.clipboard;if(!clip||!field||!field->editor)return false;
+        auto*current=field.get();const auto&doc=current->document;if(doc.composition())return true;
+        const auto range=doc.selection().range;const auto start=std::min(range.start,range.end),end=std::max(range.start,range.end);
+        if(key=='V'){
+            auto pasted=clip->readText(gpu::notesClipboardMaximumUnits);if(!alive||field.get()!=current||!current->editor||!pasted||pasted->text.empty())return true;
+            auto value=std::move(pasted->text);const std::size_t kept=doc.text().size()-(end-start),room=kept<65536?65536-kept:0;
+            if(value.size()>room){value.resize(room);if(!value.empty()&&value.back()>=0xd800&&value.back()<=0xdbff)value.pop_back();}
+            if(value.empty())return true;
+            (void)current->editor->replaceTextFromHost({start,end},value);
+        }else{
+            if(start==end)return true;
+            const std::u16string selected(doc.text().substr(start,end-start));
+            if(!clip->writeText({selected,std::nullopt})||!alive||field.get()!=current||!current->editor)return true;
+            if(key=='X')(void)current->editor->replaceTextFromHost({start,end},u"");
+        }
+        if(alive&&field.get()==current&&current->editor)current->editor->syncContent();
+        return true;
+    }
     void poseField(){if(!field||!pose)return;const auto world=pose->contentWorld*Matrix::translation(64,184);const auto camera=gpu::layerViewportProjection(metrics.pixelWidth,metrics.pixelHeight)*Matrix::scale(metrics.scale,metrics.scale);
         field->editor->setPose({world,camera,metrics.pixelWidth,metrics.pixelHeight,pose->opacity,input,focused,true});if(!alive)return;
         for(auto*part:{&field->background,&field->border}){need(part->draws().size()==1,"Duration field backing must be one surface");const std::array<gpu::LayerPlacement,1>placement{{{0,world,pose->opacity,std::span(&pose->hostClip,1)}}};part->setPlacements(placement);part->setGroupShutter(pose->shutter);}
@@ -96,9 +118,13 @@ bool WorkModePreview::pointer(const app::PointerEvent&e,double now){auto i=impl_
     if((e.kind==app::PointerKind::down||e.kind==app::PointerKind::doubleClick)&&e.button==app::PointerButton::left&&q&&contains({0,0,440,440},*q)){if(i->field&&contains(m::WorkModePresentation::durationEditorRect(),*q)){i->field->editor->syncContent();i->fieldDragging=i->field->editor->pointerDown(physical,(GetKeyState(VK_SHIFT)&0x8000)!=0).handled;return true;}if(!i->finish(true))return true;
         i->pressed=true;const auto action=i->state.actionAt(*q);const auto owned=action?std::optional(std::string(*action)):std::nullopt;i->scene.setFeedback(owned?std::optional<std::string_view>(*owned):std::nullopt,true,i->time);if(owned)i->state.perform(*owned,i->time);i->updateFocus();return true;}return false;
 }
-bool WorkModePreview::key(const app::KeyEvent&e,double now){return key(e,e.alt||GetKeyState(VK_SHIFT)<0||GetKeyState(VK_CONTROL)<0||GetKeyState(VK_MENU)<0||GetKeyState(VK_LWIN)<0||GetKeyState(VK_RWIN)<0,now);}
-bool WorkModePreview::key(const app::KeyEvent&e,bool modified,double now){auto i=impl_;i->advance(now);if(!i->input)return false;if(i->field){const bool shift=(GetKeyState(VK_SHIFT)&0x8000)!=0,control=(GetKeyState(VK_CONTROL)&0x8000)!=0;const bool systemModifiers=e.alt||GetKeyState(VK_MENU)<0||GetKeyState(VK_LWIN)<0||GetKeyState(VK_RWIN)<0;if(e.kind==app::KeyKind::character||e.kind==app::KeyKind::unicodeCharacter){if(e.value=='\r'||e.value=='\n'||e.value=='\t'||e.value==27)return true;if(!control&&!systemModifiers){i->field->editor->character(e.value,e.kind==app::KeyKind::unicodeCharacter);return true;}return false;}if(e.kind!=app::KeyKind::down)return false;if(!modified&&!i->field->document.composition()){if(e.value==VK_ESCAPE){i->finish(false);return true;}if(e.value==VK_RETURN||e.value==VK_TAB){i->finish(true);return true;}}
-        using C=gpu::ProjectedEditorCommand;if(systemModifiers)return false;if(control){if(e.value=='A'){i->field->editor->command(C::selectAll);return true;}return false;}std::optional<C>command;switch(e.value){case VK_LEFT:command=C::left;break;case VK_RIGHT:command=C::right;break;case VK_HOME:command=C::documentStart;break;case VK_END:command=C::documentEnd;break;case VK_BACK:command=C::backspace;break;case VK_DELETE:command=C::deleteForward;break;default:return false;}i->field->editor->command(*command,shift);return true;}
+bool WorkModePreview::key(const app::KeyEvent&e,double now){
+    return key(e,WorkModeKeyModifiers{GetKeyState(VK_SHIFT)<0,GetKeyState(VK_CONTROL)<0,GetKeyState(VK_MENU)<0||GetKeyState(VK_LWIN)<0||GetKeyState(VK_RWIN)<0},now);
+}
+bool WorkModePreview::key(const app::KeyEvent&e,const WorkModeKeyModifiers&modifiers,double now){auto i=impl_;i->advance(now);if(!i->input)return false;
+    const bool shift=modifiers.shift,control=modifiers.control,systemModifiers=e.alt||modifiers.system,modified=shift||control||systemModifiers;
+    if(i->field){if(e.kind==app::KeyKind::character||e.kind==app::KeyKind::unicodeCharacter){if(e.value=='\r'||e.value=='\n'||e.value=='\t'||e.value==27)return true;if(!control&&!systemModifiers){i->field->editor->character(e.value,e.kind==app::KeyKind::unicodeCharacter);return true;}return false;}if(e.kind!=app::KeyKind::down)return false;if(!modified&&!i->field->document.composition()){if(e.value==VK_ESCAPE){i->finish(false);return true;}if(e.value==VK_RETURN||e.value==VK_TAB){i->finish(true);return true;}}
+        using C=gpu::ProjectedEditorCommand;if(systemModifiers)return false;if(control){if(!shift&&(e.value=='X'||e.value=='C'||e.value=='V'))return i->clipboardKey(e.value);if(e.value=='A'){i->field->editor->command(C::selectAll);return true;}return false;}std::optional<C>command;switch(e.value){case VK_LEFT:command=C::left;break;case VK_RIGHT:command=C::right;break;case VK_HOME:command=C::documentStart;break;case VK_END:command=C::documentEnd;break;case VK_BACK:command=C::backspace;break;case VK_DELETE:command=C::deleteForward;break;default:return false;}i->field->editor->command(*command,shift);return true;}
     if(e.kind!=app::KeyKind::down||modified||(e.value!=VK_SPACE&&e.value!=VK_RETURN))return false;const auto phase=i->controller.snapshot(i->time).phase;i->state.perform(phase==m::WorkModePhase::running?"work:pause":phase==m::WorkModePhase::paused?"work:resume":"work:start",i->time);i->updateFocus();return true;
 }
 bool WorkModePreview::filterKey(const app::NativeMessage&message){auto i=impl_;return i->field&&i->input&&message.window==i->window&&i->field->editor->filterKeyMessage(message.message,message.wParam,message.lParam);}

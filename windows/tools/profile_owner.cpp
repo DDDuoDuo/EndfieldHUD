@@ -74,7 +74,7 @@ struct ProfileOwner::Impl:std::enable_shared_from_this<Impl> {
     // ---- Load ------------------------------------------------------------
     void createPage(){
         ProfilePreviewOptions o;o.raster=options.raster;o.appearance={appearance.dark,appearance.scale,appearance.accentSRGB};
-        o.reduceMotion=appearance.reduceMotion;o.textMessage=options.textMessage;o.images=&images;o.frameSprite=artwork.frame;
+        o.reduceMotion=appearance.reduceMotion;o.textMessage=options.textMessage;o.images=&images;o.frameSprite=artwork.frame;o.clipboard=options.clipboard;
         const std::weak_ptr<Impl>weak=shared_from_this();
         o.chooseImage=[weak](m::ProfileImageKind kind){if(auto i=weak.lock())i->request(kind,std::nullopt);};
         o.chooseColor=[weak](std::array<double,3>rgb){if(auto i=weak.lock())i->request(std::nullopt,rgb);};

@@ -63,6 +63,9 @@ struct ProfileOwnerOptions {
     std::function<void()>cardChanged;
     // Content changed outside a frame (worker completion, account sync): schedule one.
     std::function<void()>changed;
+    // The page's Edit-menu clipboard (ProfilePreviewOptions::clipboard): the
+    // system clipboard in production, a synthetic one in tests; null declines.
+    std::shared_ptr<native::NotesClipboard>clipboard;
 };
 // Production owner of the Personal Profile module, the bottom-left ID card
 // binding and the Work Mode lifetime hours. It owns the single ProfileService

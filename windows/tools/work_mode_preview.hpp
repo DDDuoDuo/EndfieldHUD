@@ -3,6 +3,7 @@
 #include "app/overlay_host.hpp"
 #include "native/work_mode_scene.hpp"
 #include "native/projected_editor.hpp"
+#include "native/notes_clipboard.hpp"
 #include "core/module_presentation.hpp"
 #include "core/source_desktop_chrome.hpp"
 #ifdef _WIN32
@@ -16,7 +17,14 @@ struct WorkModePreviewOptions {
     std::function<void(bool)> focusDesired; // active includes pause; no implied platform support
     std::function<void()> requestFocusAccess;
     UINT textMessage{WM_APP+208};
+    // AppDelegate Edit menu over the open duration field: Ctrl+X/C/V cut,
+    // copy and paste plain text, read or written once per key (no listener,
+    // no polling). The system clipboard by default; tests inject a synthetic
+    // one; null declines those keys.
+    std::shared_ptr<native::NotesClipboard> clipboard{native::systemNotesClipboard()};
 };
+// Modifier state of a key event; system is Alt or either Win key.
+struct WorkModeKeyModifiers {bool shift{},control{},system{};};
 // Shared module owner, driven by the shell's continuous QPC time and deadline.
 // Borrows HWND, activated manager/client and rasterizer. It never creates a
 // window, renderer, clock, timer, thread, Focus service, clipboard or store.
@@ -44,8 +52,14 @@ public:
     void update(const core::Matrix4&,const core::source::DesktopChromeSettings&,
         const core::ModulePresentationSample&,float opacity,double continuousTime);
     bool requiresFrames(double)const;bool covers(core::Point logical)const;
-    bool pointer(const app::PointerEvent&,double);bool key(const app::KeyEvent&,double);
-    bool key(const app::KeyEvent&,bool modified,double);
+    bool pointer(const app::PointerEvent&,double);
+    // The first form is for the HUD window's key dispatch: it reads
+    // GetKeyState, which Win32 synchronizes with the key message being
+    // dispatched. Any other caller (tests, synthetic input) states the
+    // modifiers explicitly: off that dispatch a thread's GetKeyState follows
+    // the live keyboard of the interactive session.
+    bool key(const app::KeyEvent&,double);
+    bool key(const app::KeyEvent&,const WorkModeKeyModifiers&,double);
     bool filterKey(const app::NativeMessage&);bool message(const app::NativeMessage&,double);
     void focus(bool,double);void cancelInteraction(double);bool pointerLocked()const noexcept;
     bool editing()const noexcept;bool finishEditing(bool commit,double);

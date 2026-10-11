@@ -107,6 +107,28 @@ struct ProfilePreview::Impl:std::enable_shared_from_this<Impl> {
         next->editor().command(gpu::ProjectedEditorCommand::selectAll);next->syncContent();
         field=std::move(next);fieldFailed=false;fieldOpened=options.reduceMotion?std::nullopt:std::optional(time);fieldDragging=false;poseField();
     }
+    // AppDelegate Edit menu (cut:/copy:/paste:) over the open field. A paste
+    // replaces the selection through the editor's host-edit path, bounded to
+    // the field's capacity; the field then normalizes it like typing.
+    bool clipboardKey(std::uint32_t key){
+        const auto clip=options.clipboard;if(!clip||!field)return false;
+        auto*current=field.get();const auto&doc=current->document();if(doc.composition())return true;
+        const auto range=doc.selection().range;const auto start=std::min(range.start,range.end),end=std::max(range.start,range.end);
+        if(key=='V'){
+            auto pasted=clip->readText(gpu::notesClipboardMaximumUnits);if(!alive||field.get()!=current||!pasted||pasted->text.empty())return true;
+            auto value=std::move(pasted->text);const std::size_t kept=doc.text().size()-(end-start),room=kept<65536?65536-kept:0;
+            if(value.size()>room){value.resize(room);if(!value.empty()&&value.back()>=0xd800&&value.back()<=0xdbff)value.pop_back();}
+            if(value.empty())return true;
+            (void)current->editor().replaceTextFromHost({start,end},value);
+        }else{
+            if(start==end)return true;
+            const std::u16string selected(doc.text().substr(start,end-start));
+            if(!clip->writeText({selected,std::nullopt,std::nullopt})||!alive||field.get()!=current)return true;
+            if(key=='X')(void)current->editor().replaceTextFromHost({start,end},u"");
+        }
+        if(alive&&field.get()==current){current->normalize(state.text());current->syncContent();}
+        return true;
+    }
     void retireField(){if(!field)return;if(fieldPublished){retired.push_back(std::move(field));need(retired.size()<=3,"Publish and collect earlier profile editors");}else field.reset();fieldPublished=false;fieldDragging=false;pendingFinish=false;fieldOpened.reset();}
     // HUDPersonalProfileInteraction.finishEditing.
     bool finish(bool commit){
@@ -252,6 +274,7 @@ bool ProfilePreview::key(const app::KeyEvent&e,const ProfileKeyModifiers&modifie
         }
         using C=gpu::ProjectedEditorCommand;if(system)return false;
         if(control){
+            if(!shift&&(e.value=='X'||e.value=='C'||e.value=='V'))return i->clipboardKey(e.value);
             if(e.value=='A')f.editor().command(C::selectAll);else if(e.value=='Z'){if(shift)f.editor().redo();else f.editor().undo();}else if(e.value=='Y')f.editor().redo();else return false;
             f.normalize(i->state.text());f.syncContent();return true;
         }
