@@ -66,6 +66,33 @@ void matcher() {
     check(chord.key == VK_OEM_3 && chord.modifiers == MOD_CONTROL && !chord.extended, "The hook chord keeps the RegisterHotKey binding");
 }
 
+// The hook thread's lifecycle on an owned message-only window, without any
+// injected input: start installs the low-level hook on its own thread (or
+// fails cleanly where the session has no input desktop), stop joins it, a
+// restart replaces it, and destruction leaves nothing running.
+void hookLifecycle() {
+    const HWND window = CreateWindowExW(0, L"STATIC", L"EndfieldHUD summon hook fixture", 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr, GetModuleHandleW(nullptr), nullptr);
+    check(window != nullptr, "An owned message-only window receives summon notices");
+    {
+        bool rejected{};
+        try { app::SummonHotkeyHook invalid(window, WM_USER); } catch (const std::invalid_argument&) { rejected = true; }
+        check(rejected, "The hook only posts owner-private WM_APP notices");
+        app::SummonHotkeyHook hook(window, WM_APP + 0x2C0);
+        check(!hook.running() && !hook.start({}, 1), "An empty chord installs nothing");
+        const bool installed = hook.start(app::SummonHotkeyHook::chord(VK_OEM_3, MOD_CONTROL), 2);
+        check(installed == hook.running() && hook.stats().installs == (installed ? 1u : 0u), "Start reports whether the low-level hook is installed on its thread");
+        if (installed) {
+            check(hook.start(app::SummonHotkeyHook::chord('H', MOD_CONTROL | MOD_ALT), 3) && hook.running(), "A new chord restarts the hook thread");
+            hook.stop();
+            check(!hook.running() && hook.stats().summons == 0 && hook.stats().consumed == 0, "Stop joins the thread; without input nothing was summoned or consumed");
+        } else std::cout << "note: this session has no input desktop for a low-level hook; the RegisterHotKey path remains\n";
+        hook.stop();
+        check(!hook.running(), "Stopping twice is harmless");
+        (void)hook.start(app::SummonHotkeyHook::chord(VK_OEM_3, MOD_CONTROL), 4);
+    } // destruction stops a running hook
+    DestroyWindow(window);
+}
+
 void displayAdaptation(const ehud::data::Json& fixture) {
     using namespace core;
     using namespace core::source;
@@ -131,6 +158,7 @@ int main(int argc, char** argv) {
     try {
         check(argc == 2, "Pass the source camera fixture");
         matcher();
+        hookLifecycle();
         displayAdaptation(read(argv[1]));
         settingsToggle();
         std::cout << "PASS " << checks << " hotkey, display adaptation and Hotkeys toggle checks\n";
