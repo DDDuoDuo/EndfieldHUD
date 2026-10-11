@@ -1,6 +1,7 @@
 #ifdef _WIN32
 #include "tools/reader_preview.hpp"
 #include "tools/reader_automation.hpp"
+#include "modules/reader_localization.hpp"
 #include "tests/screen_reader_peer_probe.hpp"
 #include "native/module_scene.hpp"
 #include <windows.h>
@@ -133,6 +134,53 @@ void relinkFlow(const std::filesystem::path&shader){Window w;gpu::Renderer rende
     const auto drop=preview.beginDrop(time);check(drop&&!preview.importRequestCurrent(action->generation),"A newer import supersedes the pending relink");check(preview.beginImport(*drop,time)&&preview.receiveImport(*drop,book(50),time),"The dropped book imports as a new book");settle();check(state.library().books.size()==4&&state.book()&&state.book()->id==uuid(50),"A superseded relink never replaces the earlier book");
     composition.detach(renderer);preview.collected(renderer);preview.release(renderer);check(renderer.stats().textures==0&&renderer.stats().meshes==0,"The relink fixture releases every Reader resource");renderer.reset();
 }
+// A hidden Reader is never asked to upload artwork it has not placed
+// ("Place Reader before upload" disabled the owner): a settings change marks
+// it dirty while another module is shown, the left release every owner
+// receives must not re-sync its canvas, and its upload only drops the page
+// textures the .35 s departure deadline cleared. Content that changes between
+// a frame's update and its upload (an event dispatched in between, such as a
+// UI Automation press during a nested COM wait) is placed with that frame's
+// pose before it uploads.
+void hiddenRelease(const std::filesystem::path&shader){Window w;gpu::Renderer renderer;renderer.initialize(w.hwnd,1280,800,{gpu::Driver::warpForTests,shader,gpu::RenderTarget::offscreenForTests});renderer.setCamera(gpu::layerViewportProjection(1280,800));gpu::LayerRasterizer raster;Queue queue;
+    auto repository=std::make_shared<Repository>();repository->saved.books={book(1),book(2)};repository->saved.selected=uuid(1);repository->saved.preferences=mod::ReaderPreferences::defaults("System");auto provider=std::make_shared<Source>();mod::ReaderState state(repository,queue.executor(),provider);
+    tools::ReaderPreviewOptions options;options.raster.pixelsPerPoint=1;options.strings=mod::ReaderStrings{};unsigned ids=400;options.newID=[&]{return uuid(++ids);};tools::ReaderPreview preview(state,raster,std::move(options));preview.resize({1280,800,96,1,1280,800});
+    core::source::DesktopChromeSettings settings;settings.viewport={0,0,1280,800};settings.module=core::Module::reader;core::ModulePresentation modules(core::Module::reader);double time{};gpu::LayerComposition composition;
+    const auto publish=[&]{preview.upload(renderer);composition.setEntries(renderer,preview.entries());composition.present(renderer);renderer.draw(false);preview.collected(renderer);};
+    const auto update=[&](double t){time=t;preview.update({},settings,modules.sample(time).presentation,1,time);};
+    const auto frame=[&](double t){update(t);publish();};
+    frame(0);for(unsigned n=0;n<4;++n){queue.drain();frame(time+.2);}check(state.current()&&preview.entries().size()==2,"The Reader shows its first page");
+    // Content changed after the frame's pose: a re-synced canvas, then a new menu.
+    update(time+.1);mod::ReaderAppearance light;light.dark=false;preview.setAppearance(light);check(preview.perform("next",time),"A press between update and upload re-syncs the canvas in the new appearance");
+    publish();check(preview.entries().size()==2,"The re-synced canvas is placed with the frame's pose before it uploads");
+    update(time+.1);check(preview.perform("library",time)&&preview.capturesPointer(),"A press between update and upload opens the Library");
+    publish();check(preview.entries().size()==3,"The new menu is placed and composed in the same frame");
+    check(preview.performMenu("close",time),"Close the Library");for(unsigned n=0;n<3;++n)frame(time+.2);check(preview.entries().size()==2&&!preview.capturesPointer(),"The closed menu retires");
+    // Another module shown: a settings change, then a release over the HUD.
+    const auto shown=renderer.stats();const auto shownPixels=preview.residency().cpuBytes;check(shownPixels>0,"A shown Reader reports the page pixels it holds");settings.module=core::Module::power;modules.select(core::Module::power,time);for(unsigned n=0;n<4;++n)frame(time+.2);
+    check(preview.entries().empty()&&!state.active()&&!preview.capturesPointer(),"Another module hides the Reader");
+    preview.setAppearance({});preview.setStrings(mod::readerStrings(core::Language::japanese));const auto revision=state.revision();
+    check(!preview.pointer({app::PointerKind::up,app::PointerButton::left,640,400},time)&&!preview.pointer({app::PointerKind::captureLost,app::PointerButton::none,640,400},time)&&state.revision()==revision,"A hidden Reader takes no release or capture loss and changes nothing");
+    frame(time+.05);check(preview.entries().empty(),"Its next frame uploads nothing and composes nothing");
+    const auto due=preview.nextWakeTime();check(due.has_value(),"The departure deadline is scheduled");time=std::max(time,*due)+.001;check(preview.deadline(time),"The .35 s departure deadline clears the page artwork");
+    frame(time);const auto parked=renderer.stats();check(parked.textures<shown.textures&&parked.nativeGroups<shown.nativeGroups&&parked.resourceBytes<shown.resourceBytes&&preview.entries().empty(),"Once its pages are cleared the hidden Reader drops their textures and parks its canvas group");
+    frame(time+.01);check(renderer.stats().nativeGroups==parked.nativeGroups&&renderer.stats().textureUploads==parked.textureUploads,"A parked Reader uploads nothing while hidden");
+    check(preview.residency().cpuBytes==0,"A parked Reader holds no page pixels");
+    std::cout<<"READER_RESIDENT renderer bytes shown="<<shown.resourceBytes<<" hidden="<<parked.resourceBytes<<" (groups "<<shown.nativeGroups<<" -> "<<parked.nativeGroups<<", textures "<<shown.textures<<" -> "<<parked.textures<<"); page pixel bytes shown="<<shownPixels<<" hidden="<<preview.residency().cpuBytes<<"\n";
+    check(!preview.pointer({app::PointerKind::up,app::PointerButton::left,640,400},time+=.01),"A later release still leaves the hidden Reader alone");frame(time+.01);
+    // Shown again: the changed appearance and strings apply on the first frame.
+    settings.module=core::Module::reader;modules.select(core::Module::reader,time);for(unsigned n=0;n<4;++n){queue.drain();frame(time+.2);}
+    check(state.current()&&preview.entries().size()==2&&preview.accessibility().canvas.size()>=7&&renderer.stats().nativeGroups>=shown.nativeGroups,"The Reader shows its page again with its controls, its canvas group uploaded afresh");
+    // The HUD closes on the Reader: no frame follows while it is concealed,
+    // yet the departure deadline still drops the cleared page textures.
+    {const auto open=renderer.stats();check(preview.residency().cpuBytes>0,"The reopened Reader holds its page pixels");preview.cancelInteraction(time+=.01);preview.setOverlayVisible(false,time);
+     check(preview.nextWakeTime().has_value(),"Closing schedules the departure deadline");
+     for(unsigned n=0;n<4&&preview.residency().cpuBytes;++n){const auto due=preview.nextWakeTime();if(!due)break;time=std::max(time,*due)+.001;(void)preview.deadline(time);}
+     check(renderer.stats().textures<open.textures&&preview.residency().cpuBytes==0&&renderer.stats().textureUploads==open.textureUploads,"With the HUD closed the deadline drops the page pixels and their textures without a frame");
+     preview.setOverlayVisible(true,time+=.01);for(unsigned n=0;n<4;++n){queue.drain();frame(time+.2);}
+     check(state.current()&&preview.entries().size()==2&&preview.residency().cpuBytes>0,"Reopening the HUD shows the page again");}
+    composition.detach(renderer);preview.collected(renderer);preview.release(renderer);check(renderer.stats().textures==0&&renderer.stats().meshes==0,"The fixture releases every Reader resource");renderer.reset();
 }
-int wmain(int argc,wchar_t**argv){const auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);try{check(SUCCEEDED(hr)&&argc==2,"Pass shared shader to hidden Reader owner fixture");run(argv[1]);relinkFlow(argv[1]);CoUninitialize();std::cout<<"PASS "<<checks<<" Reader preview checks\n";return 0;}catch(const std::exception&e){counting=false;if(SUCCEEDED(hr))CoUninitialize();std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
+}
+int wmain(int argc,wchar_t**argv){const auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);try{check(SUCCEEDED(hr)&&argc==2,"Pass shared shader to hidden Reader owner fixture");run(argv[1]);relinkFlow(argv[1]);hiddenRelease(argv[1]);CoUninitialize();std::cout<<"PASS "<<checks<<" Reader preview checks\n";return 0;}catch(const std::exception&e){counting=false;if(SUCCEEDED(hr))CoUninitialize();std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
 #endif

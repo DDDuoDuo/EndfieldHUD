@@ -24,7 +24,7 @@ struct ReaderPreview::Impl {
     mod::ReaderState*state;gpu::LayerRasterizer*raster;ReaderPreviewOptions options;mod::ReaderViewport viewport;gpu::NativeReaderScene canvas;gpu::LayerScene geometry;
     std::unique_ptr<gpu::NativeModuleSurface>surface;gpu::NativeModuleRegistration registration{"reader.registration"};
     app::ClientMetrics metrics;core::Projection projection;std::optional<gpu::ModuleSurfacePose>pose;
-    std::optional<int>pendingAdvance;bool active{},seen{},overlay{true},input{},pressed{},dirty{true};double time{};unsigned eventDepth{};std::uint64_t stateRevision{};
+    std::optional<int>pendingAdvance;bool active{},seen{},overlay{true},input{},pressed{},dirty{true},parked{};double time{};unsigned eventDepth{};std::uint64_t stateRevision{};
     struct Menu {std::unique_ptr<gpu::NativeReaderMenu>scene;mod::ReaderMenuInput input;mod::ReaderArtwork artwork;P origin;double start{},closingAt{};bool closing{};std::size_t focusedIndex{};double fontRemainder{};};
     std::unique_ptr<Menu>menu,closing;std::vector<std::unique_ptr<Menu>>retired;
     std::array<gpu::LayerCompositionEntry,4>composed;std::size_t count{};gpu::Renderer*renderer{};std::uint64_t registrationUploadedRevision{};
@@ -66,6 +66,13 @@ struct ReaderPreview::Impl {
     }
     void perform(std::string_view id){const auto old=viewport.imageView();if(id=="previous")viewport.turnPage(-1);else if(id=="next")viewport.turnPage(1);else if(id=="zoomIn")viewport.zoomBy(1.3,{200,215},time);else if(id=="zoomOut")viewport.zoomBy(1/1.3,{200,215},time);else if(id=="zoomReset")viewport.resetZoom(time);else if(id=="bookmark")state->toggleBookmark(options.newID());else if(id=="open")show(mod::ReaderMenuType::open);else if(id=="library")show(mod::ReaderMenuType::library);else if(id=="bookmarks")show(mod::ReaderMenuType::bookmarks);else if(id=="settings")show(mod::ReaderMenuType::settings);detailChanged(old);}
     void detailChanged(mod::ReaderImageView old){if(old!=viewport.imageView()){state->cancelImageDetail();canvas.syncPages(state->pages(),state->current(),state->imageDetail(),viewport,time);}navigation();content();}
+    // This frame's pose (update) for the canvas and its menus. upload() calls
+    // it again when content changed after the pose: an event dispatched
+    // between update and upload (a nested COM wait, a UI Automation press)
+    // re-syncs the canvas or opens a menu whose artwork is not placed yet.
+    void place(){const auto&p=*pose;canvas.updatePose(p.contentWorld,p.opacity,viewport,time,options.reduceMotion,std::span(&p.hostClip,1),p.shutter);
+        const auto updateMenu=[&](Menu&m){const double alpha=options.reduceMotion?1:m.closing?1-core::CubicTiming{.25,.1,.25,1}.value(std::clamp((time-m.closingAt)/.14,0.,1.)):core::CubicTiming{.25,.1,.25,1}.value(std::clamp((time-m.start)/.16,0.,1.));m.scene->updatePose(p.contentWorld*M::translation(m.origin.x,m.origin.y),static_cast<float>(alpha)*p.opacity,time,std::span(&p.hostClip,1),p.shutter);};
+        if(menu)updateMenu(*menu);if(closing){updateMenu(*closing);if(time>=closing->closingAt+.14)dispose(std::move(closing));}}
 };
 ReaderPreview::ReaderPreview(mod::ReaderState&s,gpu::LayerRasterizer&r,ReaderPreviewOptions o):impl_(std::make_unique<Impl>(s,r,std::move(o))){}ReaderPreview::~ReaderPreview()=default;
 void ReaderPreview::resize(const app::ClientMetrics&m){need(m.pixelWidth&&m.pixelHeight&&std::isfinite(m.scale)&&m.scale>0,"Invalid Reader client metrics");impl_->metrics=m;}
@@ -76,12 +83,16 @@ void ReaderPreview::setOverlayVisible(bool b,double t){auto&i=*impl_;const Impl:
 void ReaderPreview::update(const M&center,const core::source::DesktopChromeSettings&settings,const core::ModulePresentationSample&sample,float opacity,double t){auto&i=*impl_;const Impl::Event event(i,t);const auto*shown=sample.current.module==core::Module::reader?&sample.current:sample.incoming&&sample.incoming->module==core::Module::reader?&*sample.incoming:nullptr;const bool active=i.overlay&&shown&&sample.requested==core::Module::reader;
     if(active!=i.active){i.active=active;if(active){i.canvas.retainDepartingArtwork(false);i.importVisual=false;i.importApplying=false;i.importError.reset();i.importTarget.reset();i.viewport.setActive(true,i.time);i.state->setLayout({376,334},i.options.appearance.dark);i.state->setActive(true);i.dirty=true;}else i.deactivate();}i.input=active&&sample.acceptsModuleInput;if(!i.input){i.pressed=false;i.viewport.cancelInteraction();}
     if(!shown){i.pose.reset();i.registration.update({});return;}i.content();if(i.pendingAdvance){if(i.viewport.pendingContinuousDirection()!=*i.pendingAdvance)i.pendingAdvance.reset();else if(i.options.reduceMotion||i.canvas.canAdvanceVertical(*i.pendingAdvance,i.time)){const int direction=*i.pendingAdvance;i.pendingAdvance.reset();if(direction>0)i.state->next();else i.state->previous();i.dirty=true;i.content();}}i.surface->update(center,settings,*shown,opacity);i.pose=i.surface->pose();const auto&p=*i.pose;const auto camera=gpu::layerViewportProjection(i.metrics.pixelWidth,i.metrics.pixelHeight)*M::scale(i.metrics.scale,i.metrics.scale);i.projection=core::Projection::viewport(camera*p.contentWorld,i.metrics.pixelWidth,i.metrics.pixelHeight);
-    i.seen=true;i.canvas.updatePose(p.contentWorld,p.opacity,i.viewport,i.time,i.options.reduceMotion,std::span(&p.hostClip,1),p.shutter);const auto updateMenu=[&](Impl::Menu&m){const double alpha=i.options.reduceMotion?1:m.closing?1-core::CubicTiming{.25,.1,.25,1}.value(std::clamp((i.time-m.closingAt)/.14,0.,1.)):core::CubicTiming{.25,.1,.25,1}.value(std::clamp((i.time-m.start)/.16,0.,1.));m.scene->updatePose(p.contentWorld*M::translation(m.origin.x,m.origin.y),static_cast<float>(alpha)*p.opacity,i.time,std::span(&p.hostClip,1),p.shutter);};if(i.menu)updateMenu(*i.menu);if(i.closing){updateMenu(*i.closing);if(i.time>=i.closing->closingAt+.14)i.dispose(std::move(i.closing));}i.registration.update(p.registration);
+    i.seen=true;i.place();i.registration.update(p.registration);
 }
 bool ReaderPreview::requiresFrames(double t)const{const auto&i=*impl_;t=std::max(t,i.time);return i.pose&&(i.canvas.requiresFrames(t)||i.pendingAdvance||(i.menu&&((!i.options.reduceMotion&&t<i.menu->start+.16)||i.menu->scene->requiresFrames(t)))||bool(i.closing));}
 std::optional<double>ReaderPreview::nextWakeTime()const noexcept{return impl_->viewport.nextWakeTime();}
 ReaderScrollSnapshot ReaderPreview::scrollSnapshot()const noexcept{const auto&i=*impl_;return {i.canvas.scrollSnapshot(),i.time,i.viewport.scrollOffset(),i.viewport.imageView().zoom,i.viewport.imageView().pan.y,i.viewport.deferredScroll(),i.pendingAdvance.value_or(i.viewport.pendingContinuousDirection()),i.state->revision(),i.state->busy()};}
-bool ReaderPreview::deadline(double t){auto&i=*impl_;const Impl::Event event(i,t);bool changed{};if(const auto view=i.viewport.takeDetailRequest(i.time)){i.state->requestImageDetail(*view);changed=true;}if(i.viewport.artworkReleaseDue(i.time)){i.canvas.clearArtwork();changed=true;}return changed;}
+ReaderPreview::Residency ReaderPreview::residency()const noexcept{Residency r;r.cpuBytes=impl_->canvas.pixelBytes();return r;}
+// The departure deadline clears the page pictures as the source does, also
+// while the HUD is closed. No publication follows while it is concealed, so a
+// departed Reader drops the cleared page textures right here.
+bool ReaderPreview::deadline(double t){auto&i=*impl_;const Impl::Event event(i,t);bool changed{};if(const auto view=i.viewport.takeDetailRequest(i.time)){i.state->requestImageDetail(*view);changed=true;}if(i.viewport.artworkReleaseDue(i.time)){i.canvas.clearArtwork();changed=true;if(i.renderer&&!i.active)i.canvas.releaseClearedPages(*i.renderer);}return changed;}
 bool ReaderPreview::covers(P p)const{const auto q=impl_->local(p);return q&&(impl_->menu||inside({0,0,400,440},*q));}
 bool ReaderPreview::pointer(const app::PointerEvent&e,double t){auto&i=*impl_;const Impl::Event event(i,t);const auto q=i.local({e.x,e.y});if(e.kind==app::PointerKind::captureLost||(e.kind==app::PointerKind::up&&e.button==app::PointerButton::left)){const bool was=i.viewport.dragging()||i.pressed;
     // An inactive Reader (another module shown, or the HUD closing) holds no
@@ -125,7 +136,18 @@ bool ReaderPreview::performMenu(std::string_view id,double t){auto&i=*impl_;cons
     const std::string item(id);i.menuAction(item);return true;}
 std::optional<R>ReaderPreview::clientRect(R r)const{const auto&i=*impl_;if(!i.input||!i.pose)return std::nullopt;return projected(i.projection,i.metrics.scale,r);}
 const app::ClientMetrics&ReaderPreview::clientMetrics()const noexcept{return impl_->metrics;}
-void ReaderPreview::upload(gpu::Renderer&r){auto&i=*impl_;need(!i.renderer||i.renderer==&r,"Reader resources belong to another renderer");i.renderer=&r;if(i.seen)i.canvas.upload(r);if(!i.pose)return;if(i.closing)i.closing->scene->upload(r);if(i.menu)i.menu->scene->upload(r);const auto revision=i.registration.stats().geometryRevision;if(i.registrationUploadedRevision!=revision){i.registration.uploadGeometry(r);i.registrationUploadedRevision=revision;}}
+// Only a Reader posed this frame uploads. A hidden one (another module shown)
+// is never asked to upload artwork it may not have placed ("Place Reader
+// before upload"): once its .35 s departure deadline cleared the pages (the
+// source releases the page pictures then), it drops their textures and parks
+// the canvas group (its render target and control textures) until it is
+// shown again, which uploads it afresh. A release refused while the last
+// composition still holds the canvas is retried on the next upload. Content
+// changed after this frame's pose is placed again with that pose first.
+void ReaderPreview::upload(gpu::Renderer&r){auto&i=*impl_;need(!i.renderer||i.renderer==&r,"Reader resources belong to another renderer");i.renderer=&r;
+    if(!i.pose){if(i.seen&&!i.parked){i.canvas.releaseClearedPages(r);if(i.canvas.cleared())i.parked=i.canvas.release(r);}return;}i.parked=false;
+    if(!i.canvas.placed()||(i.menu&&!i.menu->scene->placed())||(i.closing&&!i.closing->scene->placed()))i.place();
+    i.canvas.upload(r);if(i.closing)i.closing->scene->upload(r);if(i.menu)i.menu->scene->upload(r);const auto revision=i.registration.stats().geometryRevision;if(i.registrationUploadedRevision!=revision){i.registration.uploadGeometry(r);i.registrationUploadedRevision=revision;}}
 std::span<const gpu::LayerCompositionEntry>ReaderPreview::entries(){auto&i=*impl_;i.count=0;if(!i.pose)return {};i.composed[i.count++]=i.canvas.entry();if(i.closing)i.composed[i.count++]=i.closing->scene->entry();if(i.menu)i.composed[i.count++]=i.menu->scene->entry();i.composed[i.count++]={&i.geometry,i.registration.draws()};return {i.composed.data(),i.count};}
 void ReaderPreview::collected(gpu::Renderer&r){auto&i=*impl_;for(auto it=i.retired.begin();it!=i.retired.end();)if((*it)->scene->release(r))it=i.retired.erase(it);else ++it;}
 void ReaderPreview::release(gpu::Renderer&r){auto&i=*impl_;need(i.canvas.release(r)&&(!i.menu||i.menu->scene->release(r))&&(!i.closing||i.closing->scene->release(r))&&i.registration.releaseResources(r),"Detach Reader entries before release");for(auto&v:i.retired)need(v->scene->release(r),"Detach retiring Reader menu before release");i.retired.clear();i.registrationUploadedRevision=0;i.renderer=nullptr;}

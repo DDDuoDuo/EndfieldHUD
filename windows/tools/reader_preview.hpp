@@ -42,6 +42,14 @@ public:
     bool requiresFrames(double)const;std::optional<double>nextWakeTime()const noexcept;
     bool deadline(double);bool covers(core::Point)const;
     ReaderScrollSnapshot scrollSnapshot()const noexcept; // source geometry only; no IDs/text/paths or extra work
+    // Memory trace (ModuleOwner::residency): the page pixels the canvas holds
+    // (the current page, its neighbours, a departing page and a zoomed crop,
+    // shared with ReaderState) beyond the shared raster cache and renderer.
+    // The document, its page cache and its PDF device live on the shared
+    // executor only while the Reader is shown and are released on hiding. It
+    // starts no thread. Counters only.
+    struct Residency {std::uint64_t cpuBytes{},gpuBytes{};std::uint32_t threads{};};
+    Residency residency()const noexcept;
     bool pointer(const app::PointerEvent&,double);bool wheel(const app::WheelEvent&,double);
     bool key(const app::KeyEvent&,double);bool key(const app::KeyEvent&,bool modified,double);
     // Local event routing only: source Reader menus/pans do not lock HUD tilt.

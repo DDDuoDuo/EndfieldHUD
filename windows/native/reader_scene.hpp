@@ -35,8 +35,19 @@ public:
     bool requiresFrames(double time)const;
     std::span<const modules::ReaderAction>actions()const noexcept;
     void retainDepartingArtwork(bool);
+    // upload() requires artwork placed by updatePose() after its last
+    // content change ("Place Reader before upload"); placed() reports it so
+    // the owner can re-place content that changed after this frame's pose.
+    bool placed()const noexcept;
     void upload(Renderer&);LayerCompositionEntry entry();
+    // A hidden owner (no pose this frame, its entry not composed) does not
+    // upload: its artwork may be unplaced until it is shown again. This only
+    // drops the GPU page textures that clearArtwork() released (the .35 s
+    // departure deadline), and only while the artwork is still placed.
+    void releaseClearedPages(Renderer&);
     void clearArtwork(); // after original .35s shared owner deadline
+    bool cleared()const noexcept; // clearArtwork() ran and no page arrived since
+    std::size_t pixelBytes()const noexcept; // distinct page pixel buffers it holds (memory trace)
     bool release(Renderer&); // detach borrowed entry from composition first
     NativeReaderSceneStats stats()const noexcept;
     double scrollPresentation(double time)const; // full-page local position from this same retained easing
@@ -53,7 +64,7 @@ public:
     bool setFeedback(std::optional<core::Point>,bool pressed,bool reduceMotion,double time);
     void updatePose(const core::Matrix4&,float opacity,double time,
         std::span<const PlaneMask> masks={},std::optional<PlaneShutter> shutter={});
-    bool requiresFrames(double time)const;
+    bool requiresFrames(double time)const;bool placed()const noexcept;
     void upload(Renderer&);LayerCompositionEntry entry();bool release(Renderer&);
 private:struct Impl;std::unique_ptr<Impl>impl_;
 };

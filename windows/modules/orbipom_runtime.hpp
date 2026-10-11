@@ -36,6 +36,7 @@ public:
     bool drop()override;bool activate(OrbiPomSkill)override;
     void cancelSkill()override;void pause(bool)override;void highScore(std::int64_t)override;
     OrbiPomRuntimeStats stats()const;
+    std::size_t residentBytes()const override; // heapBytes + snapshotCapacityBytes of stats()
 private:
     struct Impl;std::unique_ptr<Impl>impl_;
     // Isolated unit tests exercise original private reducers/physics directly,

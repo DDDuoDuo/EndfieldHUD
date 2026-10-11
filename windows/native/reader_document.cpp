@@ -15,6 +15,7 @@
 #include <wincodec.h>
 #include <shcore.h>
 #include <roapi.h>
+#include <objbase.h>
 #include <wrl.h>
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.Data.Pdf.h>
@@ -87,9 +88,13 @@ public:ID2D1RenderTarget*target{};ID2D1Brush*brush{};const TextLayout::Paragraph
     HRESULT STDMETHODCALLTYPE DrawUnderline(void*,FLOAT,FLOAT,const DWRITE_UNDERLINE*,IUnknown*)override{return S_OK;}HRESULT STDMETHODCALLTYPE DrawStrikethrough(void*,FLOAT,FLOAT,const DWRITE_STRIKETHROUGH*,IUnknown*)override{return S_OK;}HRESULT STDMETHODCALLTYPE DrawInlineObject(void*,FLOAT,FLOAT,IDWriteInlineObject*,BOOL,BOOL,IUnknown*)override{return E_NOTIMPL;}
 };
 // Windows.Data.Pdf pages render through IPdfRendererNative on a Direct3D
-// device this document owns: created on its worker at the first PDF page
-// (hardware, else WARP), reused for the document's pages and released with
-// the document (release(), owner teardown). PdfPage.RenderToStreamAsync would
+// device this document owns: created by the job of its first PDF page,
+// reused for the document's pages and released with the document (release(),
+// owner teardown). It is a WARP device that rasterizes on the calling worker
+// and starts no threads, as the source draws PDF pages on the CPU (PDFKit);
+// hardware only if WARP is unavailable. A second hardware device next to the
+// HUD renderer's cost tens of driver threads and memory and competed with a
+// running game for the GPU (reader_pdf_exit_tests). PdfPage.RenderToStreamAsync would
 // instead keep the component's own device alive until an internal idle timer
 // releases it, and a process ending first faults in dxgi.dll during that
 // DLL's static teardown (exit code 0x87A). A lost device is recreated once.
@@ -117,8 +122,11 @@ private:
     void create(ID2D1Factory&factory){if(renderer_)return;
         if(!module_){module_=LoadLibraryExW(L"Windows.Data.Pdf.dll",nullptr,LOAD_LIBRARY_SEARCH_SYSTEM32);if(!module_)throw std::runtime_error("Windows.Data.Pdf is unavailable");}
         const auto createRenderer=reinterpret_cast<Create>(reinterpret_cast<void*>(GetProcAddress(module_,"PdfCreateRenderer")));if(!createRenderer)throw std::runtime_error("PdfCreateRenderer is unavailable");
-        ComPtr<ID3D11Device>d3d;constexpr UINT flags=D3D11_CREATE_DEVICE_BGRA_SUPPORT;
-        if(FAILED(D3D11CreateDevice(nullptr,D3D_DRIVER_TYPE_HARDWARE,nullptr,flags,nullptr,0,D3D11_SDK_VERSION,&d3d,nullptr,nullptr)))hr(D3D11CreateDevice(nullptr,D3D_DRIVER_TYPE_WARP,nullptr,flags,nullptr,0,D3D11_SDK_VERSION,&d3d,nullptr,nullptr));
+        // PREVENT_INTERNAL_THREADING_OPTIMIZATIONS: WARP rasterizes on the
+        // calling worker; a hardware fallback starts fewer driver threads
+        // (on NVIDIA about twenty instead of sixty for this extra device).
+        ComPtr<ID3D11Device>d3d;constexpr UINT flags=D3D11_CREATE_DEVICE_BGRA_SUPPORT|D3D11_CREATE_DEVICE_PREVENT_INTERNAL_THREADING_OPTIMIZATIONS;
+        if(FAILED(D3D11CreateDevice(nullptr,D3D_DRIVER_TYPE_WARP,nullptr,flags,nullptr,0,D3D11_SDK_VERSION,&d3d,nullptr,nullptr)))hr(D3D11CreateDevice(nullptr,D3D_DRIVER_TYPE_HARDWARE,nullptr,flags,nullptr,0,D3D11_SDK_VERSION,&d3d,nullptr,nullptr));
         ComPtr<IDXGIDevice>dxgi;hr(d3d.As(&dxgi));ComPtr<ID2D1Factory1>factory1;hr(factory.QueryInterface(IID_PPV_ARGS(&factory1)));
         ComPtr<ID2D1Device>device;hr(factory1->CreateDevice(dxgi.Get(),&device));ComPtr<ID2D1DeviceContext>context;hr(device->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE,&context));
         ComPtr<IPdfRendererNative>renderer;hr(createRenderer(dxgi.Get(),&renderer));
@@ -136,14 +144,25 @@ private:
 };
 }
 struct NativeReaderDocument::Impl {
-    std::atomic<std::shared_ptr<const LayerFontResources>>resources;DWORD worker{};bool initialized{},roInitialized{};
+    std::atomic<std::shared_ptr<const LayerFontResources>>resources;mutable std::atomic<bool>busy{};CO_MTA_USAGE_COOKIE mta{};bool initialized{};
     ComPtr<ID2D1Factory>d2d;ComPtr<IWICImagingFactory>wic;PdfDevice pdfDevice;std::shared_ptr<ReaderBytes>file;
     winrt::Windows::Data::Pdf::PdfDocument pdf{nullptr};winrt::Windows::Storage::Streams::IRandomAccessStream pdfInput{nullptr};std::unique_ptr<ReaderEPUB>epub;std::shared_ptr<const std::vector<ReaderBlock>>plain;
     NativeReaderInfo metadata;LayerFontResources formatResources,requestFonts,cacheFonts;ReaderPreferences formatPreferences;ComPtr<IDWriteTextFormat>format;
     ComPtr<IWICBitmapSource>cachedImage;std::string cachedImagePath;unsigned cachedImageMaximum{};std::size_t cachedImageBytes{};
     std::vector<ReaderPage>cache;std::optional<ReaderPreferences>cachePreferences;core::Point cacheSize{};bool cacheDark{};std::uint64_t cacheFontRevision{};NativeReaderStats counters;
     explicit Impl(LayerFontResources fonts){need(bool(fonts));resources.store(std::make_shared<const LayerFontResources>(std::move(fonts)));}
-    void onWorker(){if(!worker)worker=GetCurrentThreadId();need(worker==GetCurrentThreadId());if(!initialized){hr(RoInitialize(RO_INIT_MULTITHREADED));try{ComPtr<ID2D1Factory>factory;ComPtr<IWICImagingFactory>images;hr(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED,__uuidof(ID2D1Factory),nullptr,reinterpret_cast<void**>(factory.GetAddressOf())));hr(CoCreateInstance(CLSID_WICImagingFactory,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&images)));d2d=std::move(factory);wic=std::move(images);roInitialized=true;initialized=true;}catch(...){RoUninitialize();worker=0;throw;}}}
+    // Serial use from the borrowed FIFO executor, whose worker may change
+    // between jobs (an idle worker exits; the next job starts a new one).
+    // From its first job until release() the document holds the process MTA
+    // (CoIncrementMTAUsage), so every job's uninitialized worker joins it
+    // implicitly and the WinRT PDF, WIC, D2D and owned D3D objects stay
+    // usable from whichever worker runs next; nothing is tied to a thread
+    // that may have exited. A thread in another apartment (an STA) and
+    // concurrent use are refused.
+    struct Use {const Impl&i;explicit Use(const Impl&v):i(v){need(!i.busy.exchange(true,std::memory_order_acq_rel));}~Use(){i.busy.store(false,std::memory_order_release);}Use(const Use&)=delete;Use&operator=(const Use&)=delete;};
+    static bool multithreaded()noexcept{APTTYPE type{};APTTYPEQUALIFIER qualifier{};return SUCCEEDED(CoGetApartmentType(&type,&qualifier))&&type==APTTYPE_MTA;}
+    void onWorker(){if(initialized){need(multithreaded());return;}hr(CoIncrementMTAUsage(&mta));try{need(multithreaded());ComPtr<ID2D1Factory>factory;ComPtr<IWICImagingFactory>images;hr(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED,__uuidof(ID2D1Factory),nullptr,reinterpret_cast<void**>(factory.GetAddressOf())));hr(CoCreateInstance(CLSID_WICImagingFactory,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&images)));d2d=std::move(factory);wic=std::move(images);initialized=true;}catch(...){(void)CoDecrementMTAUsage(mta);mta=nullptr;throw;}}
+    void shutdown()noexcept{clear();pdfDevice.reset();wic.Reset();d2d.Reset();initialized=false;if(mta){(void)CoDecrementMTAUsage(mta);mta=nullptr;}}
     void clear(){pdf=nullptr;pdfInput=nullptr;epub.reset();plain.reset();file.reset();cachedImage.Reset();cachedImagePath.clear();cachedImageMaximum=0;cachedImageBytes=0;metadata={};format.Reset();formatResources={};cache.clear();cachePreferences.reset();cacheFontRevision=0;requestFonts={};cacheFonts={};}
     ReaderBlocks blocks(const ReaderCancel&cancelled){return [this,&cancelled](std::size_t section){checkReaderCancelled(cancelled);return plain?plain:epub->blocks(section,cancelled);};}
     std::size_t count()const{return metadata.sections;}
@@ -174,9 +193,11 @@ struct NativeReaderDocument::Impl {
     }
 };
 NativeReaderDocument::NativeReaderDocument(LayerFontResources fonts):impl_(std::make_unique<Impl>(std::move(fonts))){}
-NativeReaderDocument::~NativeReaderDocument(){if(impl_->worker&&impl_->worker!=GetCurrentThreadId())std::terminate();impl_->clear();impl_->pdfDevice.reset();if(impl_->roInitialized)RoUninitialize();}
+// An open document is released on an executor worker (release()); its
+// WinRT, WIC and Direct3D objects are never destroyed from an STA.
+NativeReaderDocument::~NativeReaderDocument(){if(impl_->initialized&&!Impl::multithreaded())std::terminate();impl_->shutdown();}
 void NativeReaderDocument::setFontResources(LayerFontResources fonts){need(bool(fonts));impl_->resources.store(std::make_shared<const LayerFontResources>(std::move(fonts)));}
-void NativeReaderDocument::open(const ReaderBook&book,const ReaderCancel&cancelled){auto&i=*impl_;i.onWorker();checkReaderCancelled(cancelled);i.clear();need(book.platform==ReaderReferencePlatform::windows,ReaderErrorCode::unavailable);ReaderLibrary validation;validation.books={book};validation.selected=book.id;validateReaderLibrary(validation);try{auto file=std::make_shared<FileBytes>(book);const auto path=std::filesystem::path(wide(book.windowsPath));auto ext=path.extension().wstring();std::transform(ext.begin(),ext.end(),ext.begin(),[](wchar_t c){return c>=L'A'&&c<=L'Z'?static_cast<wchar_t>(c+32):c;});std::u16string title(reinterpret_cast<const char16_t*>(path.stem().c_str()));
+void NativeReaderDocument::open(const ReaderBook&book,const ReaderCancel&cancelled){auto&i=*impl_;const Impl::Use use(i);i.onWorker();checkReaderCancelled(cancelled);i.clear();need(book.platform==ReaderReferencePlatform::windows,ReaderErrorCode::unavailable);ReaderLibrary validation;validation.books={book};validation.selected=book.id;validateReaderLibrary(validation);try{auto file=std::make_shared<FileBytes>(book);const auto path=std::filesystem::path(wide(book.windowsPath));auto ext=path.extension().wstring();std::transform(ext.begin(),ext.end(),ext.begin(),[](wchar_t c){return c>=L'A'&&c<=L'Z'?static_cast<wchar_t>(c+32):c;});std::u16string title(reinterpret_cast<const char16_t*>(path.stem().c_str()));
         if(ext==L".txt"){auto text=decodeReaderTXT(readAll(file,32*1024*1024,cancelled));i.plain=std::make_shared<const std::vector<ReaderBlock>>(std::vector<ReaderBlock>{{ReaderBlock::Kind::text,std::move(text),{}}});i.metadata.sections=1;}
         else if(ext==L".epub"){i.epub=std::make_unique<ReaderEPUB>(file,parseReaderXML,cancelled);i.metadata.sections=i.epub->spine().size();if(!i.epub->title().empty())title=i.epub->title();}
         else if(ext==L".pdf"){need(file->size()<=1024ull*1024*1024,ReaderErrorCode::tooLarge);auto stream=Make<ByteStream>(file);need(bool(stream));winrt::Windows::Storage::Streams::IRandomAccessStream input{nullptr};hr(CreateRandomAccessStreamOverStream(stream.Get(),BSOS_DEFAULT,winrt::guid_of<winrt::Windows::Storage::Streams::IRandomAccessStream>(),winrt::put_abi(input)));try{i.pdf=winrt::Windows::Data::Pdf::PdfDocument::LoadFromStreamAsync(input).get();}catch(const winrt::hresult_error&e){if(e.code()==HRESULT_FROM_WIN32(ERROR_WRONG_PASSWORD))throw ReaderError(ReaderErrorCode::encrypted);throw;}checkReaderCancelled(cancelled);need(i.pdf&&i.pdf.PageCount()>0&&i.pdf.PageCount()<100000,ReaderErrorCode::tooLarge);i.metadata.sections=i.pdf.PageCount();i.pdfInput=std::move(input);
@@ -185,9 +206,9 @@ void NativeReaderDocument::open(const ReaderBook&book,const ReaderCancel&cancell
             if(auto metadata=readerPDFTitle(*file,cancelled)){const auto prefix=readerGraphemePrefix(*metadata,200);if(!prefix.empty()&&prefix.size()<=4096){title=std::move(*metadata);i.metadata.pdfMetadataTitleAvailable=true;}}}
         else throw ReaderError(ReaderErrorCode::unsupported);i.metadata.title=readerGraphemePrefix(title,200);need(!i.metadata.title.empty()&&i.metadata.title.size()<=4096);i.file=std::move(file);
     }catch(...){i.clear();throw;}}
-NativeReaderInfo NativeReaderDocument::info()const{need(impl_->worker==GetCurrentThreadId()&&impl_->count()>0);return impl_->metadata;}
-NativeReaderStats NativeReaderDocument::stats()const{need(!impl_->worker||impl_->worker==GetCurrentThreadId());auto counters=impl_->counters;counters.cachedPages=impl_->cache.size();counters.cachedImageBytes=impl_->cachedImageBytes;counters.pdfDevices=impl_->pdfDevice.created();counters.pdfDeviceReady=impl_->pdfDevice.ready();return counters;}
-std::vector<ReaderPage>NativeReaderDocument::render(std::optional<ReaderLocation>location,std::optional<double>progress,const ReaderPreferences&p,core::Point size,bool dark,const ReaderCancel&cancelled){auto&i=*impl_;i.onWorker();need(i.file&&i.count()>0);if(progress){need(std::isfinite(*progress));if(i.pdf)location=ReaderLocation{static_cast<std::int64_t>(std::clamp(*progress,0.,.999999)*double(i.count())),0,0,{ReaderJson::Object{}}};else location=readerLocationAt(*progress,i.count(),i.blocks(cancelled));}i.requestFonts=*i.resources.load();const auto fontRevision=i.requestFonts.revision();if(!i.cachePreferences||*i.cachePreferences!=p||i.cacheSize.x!=size.x||i.cacheSize.y!=size.y||i.cacheDark!=dark||i.cacheFontRevision!=fontRevision||i.cacheFonts.bundledCollection()!=i.requestFonts.bundledCollection()||i.cacheFonts.fallbackFamily()!=i.requestFonts.fallbackFamily()||i.cacheFonts.locale()!=i.requestFonts.locale())i.cache.clear();i.cachePreferences=p;i.cacheSize=size;i.cacheDark=dark;i.cacheFontRevision=fontRevision;i.cacheFonts=i.requestFonts;std::vector<ReaderPage>pages;pages.reserve(3);
+NativeReaderInfo NativeReaderDocument::info()const{const Impl::Use use(*impl_);need(impl_->initialized&&impl_->count()>0);return impl_->metadata;}
+NativeReaderStats NativeReaderDocument::stats()const{const Impl::Use use(*impl_);auto counters=impl_->counters;counters.cachedPages=impl_->cache.size();counters.cachedImageBytes=impl_->cachedImageBytes;counters.pdfDevices=impl_->pdfDevice.created();counters.pdfDeviceReady=impl_->pdfDevice.ready();return counters;}
+std::vector<ReaderPage>NativeReaderDocument::render(std::optional<ReaderLocation>location,std::optional<double>progress,const ReaderPreferences&p,core::Point size,bool dark,const ReaderCancel&cancelled){auto&i=*impl_;const Impl::Use use(i);i.onWorker();need(i.file&&i.count()>0);if(progress){need(std::isfinite(*progress));if(i.pdf)location=ReaderLocation{static_cast<std::int64_t>(std::clamp(*progress,0.,.999999)*double(i.count())),0,0,{ReaderJson::Object{}}};else location=readerLocationAt(*progress,i.count(),i.blocks(cancelled));}i.requestFonts=*i.resources.load();const auto fontRevision=i.requestFonts.revision();if(!i.cachePreferences||*i.cachePreferences!=p||i.cacheSize.x!=size.x||i.cacheSize.y!=size.y||i.cacheDark!=dark||i.cacheFontRevision!=fontRevision||i.cacheFonts.bundledCollection()!=i.requestFonts.bundledCollection()||i.cacheFonts.fallbackFamily()!=i.requestFonts.fallbackFamily()||i.cacheFonts.locale()!=i.requestFonts.locale())i.cache.clear();i.cachePreferences=p;i.cacheSize=size;i.cacheDark=dark;i.cacheFontRevision=fontRevision;i.cacheFonts=i.requestFonts;std::vector<ReaderPage>pages;pages.reserve(3);
     auto at=[&](ReaderLocation anchor){
         checkReaderCancelled(cancelled);anchor=i.normalized(anchor,cancelled);
         // A forward page already supplies its exact successor boundary. Reuse
@@ -206,7 +227,7 @@ std::vector<ReaderPage>NativeReaderDocument::render(std::optional<ReaderLocation
         return i.page(anchor,p,size,dark,{},cancelled,nullptr,predecessor);
     };
     auto current=at(location.value_or(ReaderLocation{}));pages.push_back(current);if(current.next){try{pages.push_back(at(*current.next));}catch(const ReaderCancelled&){throw;}catch(const std::exception&){}}if(current.previous&&current.previous!=current.next){try{pages.push_back(at(*current.previous));}catch(const ReaderCancelled&){throw;}catch(const std::exception&){}}checkReaderCancelled(cancelled);i.cache=pages;return pages;}
-ReaderPage NativeReaderDocument::detail(ReaderLocation location,const ReaderPreferences&p,core::Point size,bool dark,ReaderImageView view,const ReaderCancel&cancelled){auto&i=*impl_;i.onWorker();need(i.file&&view.valid());i.requestFonts=*i.resources.load();const ReaderPage*known{};if(i.cachePreferences&&*i.cachePreferences==p&&i.cacheSize==size&&i.cacheDark==dark&&i.cacheFonts.factory()==i.requestFonts.factory()&&i.cacheFonts.bundledCollection()==i.requestFonts.bundledCollection()&&i.cacheFonts.systemCollection()==i.requestFonts.systemCollection()&&i.cacheFonts.revision()==i.requestFonts.revision()&&i.cacheFonts.fallbackFamily()==i.requestFonts.fallbackFamily()&&i.cacheFonts.locale()==i.requestFonts.locale())for(const auto&cached:i.cache)if(cached.location==location){known=&cached;break;}return i.page(location,p,size,dark,view,cancelled,known);}
-void NativeReaderDocument::release(){auto&i=*impl_;need(!i.worker||i.worker==GetCurrentThreadId());i.clear();i.pdfDevice.reset();i.wic.Reset();i.d2d.Reset();i.initialized=false;if(i.roInitialized){RoUninitialize();i.roInitialized=false;}i.worker=0;}
+ReaderPage NativeReaderDocument::detail(ReaderLocation location,const ReaderPreferences&p,core::Point size,bool dark,ReaderImageView view,const ReaderCancel&cancelled){auto&i=*impl_;const Impl::Use use(i);i.onWorker();need(i.file&&view.valid());i.requestFonts=*i.resources.load();const ReaderPage*known{};if(i.cachePreferences&&*i.cachePreferences==p&&i.cacheSize==size&&i.cacheDark==dark&&i.cacheFonts.factory()==i.requestFonts.factory()&&i.cacheFonts.bundledCollection()==i.requestFonts.bundledCollection()&&i.cacheFonts.systemCollection()==i.requestFonts.systemCollection()&&i.cacheFonts.revision()==i.requestFonts.revision()&&i.cacheFonts.fallbackFamily()==i.requestFonts.fallbackFamily()&&i.cacheFonts.locale()==i.requestFonts.locale())for(const auto&cached:i.cache)if(cached.location==location){known=&cached;break;}return i.page(location,p,size,dark,view,cancelled,known);}
+void NativeReaderDocument::release(){auto&i=*impl_;const Impl::Use use(i);if(i.initialized)need(Impl::multithreaded());i.shutdown();}
 } // namespace endfield::native
 #endif

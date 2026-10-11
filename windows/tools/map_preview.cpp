@@ -44,7 +44,7 @@ struct MapPreview::Impl : std::enable_shared_from_this<Impl> {
     gpu::LayerScene geometry;gpu::NativeModuleSurface surface;gpu::NativeModuleRegistration registration{"map.registration"};
     std::vector<gpu::LayerCompositionEntry>composed;
     app::ClientMetrics metrics;core::Projection projection;std::optional<gpu::ModuleSurfacePose>pose;std::optional<Point>pointerPoint;
-    bool alive{true},ready{},overlayVisible{true},prepared{},input{},pressed{};double time{};unsigned eventDepth{};
+    bool alive{true},ready{},overlayVisible{true},prepared{},input{},pressed{},prewarmed{};double time{};unsigned eventDepth{};std::uint64_t playerBytes{};
     std::uint64_t cameraRevision{},gestureRevision{},eventRevision{};
     // Accessibility snapshot (requestAccessibilityLayout): what it was built
     // from, the 12 Hz gesture cadence and a due publication forced by deadline().
@@ -58,6 +58,7 @@ struct MapPreview::Impl : std::enable_shared_from_this<Impl> {
     void initialize(MapPreviewOptions&o){need(bool(o.clock),"Map owner needs the shared completion clock");time=o.clock();need(std::isfinite(time)&&time>=0,"Invalid initial Map clock");const auto weak=weak_from_this();
         raster=std::make_unique<gpu::NativeMapRaster>(utility,[weak,clock=std::move(o.clock)]{const auto now=clock();need(std::isfinite(now),"Invalid Map completion clock");if(auto self=weak.lock())return std::max(now,self->time);return now;},[weak]{if(auto self=weak.lock())self->notify();},std::move(o.paint),std::move(o.releaseWorkerCaches));
         raster->configure(appearance.dark,appearance.accent,options.pixelsPerPoint,time);raster->setGeography(geography,time);raster->update(state.viewport(),false,time);cameraRevision=state.cameraRevision();gestureRevision=state.gestureRevision();
+        for(const auto*image:{o.player.halo.get(),o.player.beam.get(),o.player.glyph.get(),o.player.feather.get()})if(image)playerBytes+=image->straightRGBA.size();
         scene=std::make_unique<gpu::NativeMapScene>(state,*raster,paint,options,std::move(o.player),appearance);ready=true;
     }
     void notify(){if(!alive||!ready)return;auto callback=changed;if(callback)callback();}
@@ -86,7 +87,9 @@ void MapPreview::setGeography(std::shared_ptr<const modules::MapGeography>g,doub
     // and pins stay interactive; "LOADING TERRAIN" remains without terrain.
     std::optional<std::string>message;if(g&&g->terrainFailed)message=core::localized("Terrain data could not be loaded.","无法载入地形数据。",i->language);if(g&&g->countriesFailed)message=core::localized("Country shapes could not be loaded.","无法载入地图轮廓。",i->language);
     i->geography=std::move(g);i->appearance.terrainReady=hasTerrain(i->geography);i->scene->setAppearance(i->appearance);i->raster->setGeography(i->geography,i->time);if(!event.current())return;
-    if(message)i->synchronize(i->state.showMessage(std::move(*message)),event.revision);}
+    if(message)i->synchronize(i->state.showMessage(std::move(*message)),event.revision);
+    // Posed content (shown, or prewarmed while closed) rebuilds its caption now.
+    if(event.current()&&i->pose)i->scene->syncContent(i->time);}
 bool MapPreview::setAppearance(gpu::MapAppearance a,double t){auto i=impl_;const Impl::Event event(*i,t);a=appearanceFor(std::move(a),hasTerrain(i->geography));if(!i->scene->setAppearance(a))return false;i->appearance=std::move(a);i->state.setReducedMotion(i->appearance.reducedMotion);if(i->appearance.reducedMotion)i->scene->settle();i->raster->configure(i->appearance.dark,i->appearance.accent,i->options.pixelsPerPoint,i->time);if(event.current()){i->feedback();i->notify();}return true;}
 void MapPreview::setLanguage(core::Language language,double t){impl_->language=language;auto a=impl_->appearance;a.strings={core::localized("MAP","地图",language),core::localized("LOADING TERRAIN","载入地形",language),core::localized("PINS","标记",language)};setAppearance(std::move(a),t);}
 void MapPreview::setOverlayVisible(bool value,double t){auto i=impl_;const Impl::Event event(*i,t);if(i->overlayVisible==value)return;i->overlayVisible=value;if(!value)i->activate(false,false);if(event.current())i->notify();}
@@ -97,6 +100,13 @@ void MapPreview::update(const Matrix&center,const core::source::DesktopChromeSet
     i->scene->syncContent(i->time);i->surface.update(center,settings,*shown,opacity);i->pose=i->surface.pose();const auto&p=*i->pose;
     const auto camera=gpu::layerViewportProjection(i->metrics.pixelWidth,i->metrics.pixelHeight)*Matrix::scale(i->metrics.scale,i->metrics.scale);i->projection=core::Projection::viewport(camera*p.contentWorld,i->metrics.pixelWidth,i->metrics.pixelHeight);
     i->feedback();i->scene->updatePose({p.contentWorld,p.opacity,i->time,std::span(&p.hostClip,1),p.shutter?&*p.shutter:nullptr});i->registration.update(p.registration);
+}
+void MapPreview::prewarm(const Matrix&center,const core::source::DesktopChromeSettings&settings,const core::ModulePresentationSample&sample,double t){auto i=impl_;const Impl::Event event(*i,t);
+    if(i->prewarmed||i->prepared||i->input||i->pose||!i->metrics.pixelWidth||!i->metrics.pixelHeight)return;
+    const auto*shown=sample.current.module==core::Module::map?&sample.current:sample.incoming&&sample.incoming->module==core::Module::map?&*sample.incoming:nullptr;if(!shown)return;i->prewarmed=true;
+    i->scene->syncContent(i->time);i->surface.update(center,settings,*shown,0.f);i->pose=i->surface.pose();const auto&p=*i->pose;
+    const auto camera=gpu::layerViewportProjection(i->metrics.pixelWidth,i->metrics.pixelHeight)*Matrix::scale(i->metrics.scale,i->metrics.scale);i->projection=core::Projection::viewport(camera*p.contentWorld,i->metrics.pixelWidth,i->metrics.pixelHeight);
+    i->scene->updatePose({p.contentWorld,p.opacity,i->time,std::span(&p.hostClip,1),p.shutter?&*p.shutter:nullptr});i->registration.update(p.registration);
 }
 bool MapPreview::utilityCompleted(double t){auto i=impl_;const Impl::Event event(*i,t);return i->raster->submitPending(i->time);}
 bool MapPreview::deadline(double t){auto i=impl_;const Impl::Event event(*i,t);const auto before=i->state.gestureRevision();i->synchronize(i->state.advance(i->time),event.revision);if(!event.current())return true;const bool submitted=i->raster->advance(i->time);
@@ -143,6 +153,11 @@ const app::ClientMetrics&MapPreview::clientMetrics()const noexcept{return impl_-
 void MapPreview::cancelInteraction(double t){auto i=impl_;const Impl::Event event(*i,t);i->pressed=false;i->pointerPoint.reset();i->synchronize(i->state.up(true),event.revision);if(!event.current())return;const auto outsidePoint=Point{-1e6,-1e6};i->synchronize(i->state.wheel(outsidePoint,0,false,true,i->time),event.revision);if(event.current())i->feedback();}
 bool MapPreview::pointerLocked()const noexcept{return impl_->state.pointerLocked();}
 const modules::MapState&MapPreview::state()const noexcept{return impl_->state;}
+MapPreview::Residency MapPreview::residency()const noexcept{const auto&i=*impl_;Residency r;r.cpuBytes=i.playerBytes;
+    for(const auto&image:{i.raster->detail(),i.raster->backdrop()})if(image)r.cpuBytes+=image->straightRGBA.size();
+    // Decoded geography: every retained vertex (country paths keep their whole path and its components).
+    if(i.geography){if(i.geography->terrain)r.cpuBytes+=i.geography->terrain->vertexCount*sizeof(core::Point);if(i.geography->countries)r.cpuBytes+=i.geography->countries->vertexCount*2*sizeof(core::Point);}
+    return r;}
 gpu::NativeMapRaster::Stats MapPreview::rasterStats()const noexcept{return impl_->raster->stats();}
 gpu::MapSceneStats MapPreview::sceneStats()const noexcept{return impl_->scene->stats();}
 void MapPreview::upload(gpu::Renderer&r){auto&i=*impl_;if(!i.pose)return;i.registration.uploadGeometry(r);i.scene->uploadResources(r);}

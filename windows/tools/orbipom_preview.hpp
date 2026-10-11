@@ -47,6 +47,11 @@ public:
     const app::ClientMetrics&clientMetrics()const noexcept;
     void upload(native::Renderer&);std::span<const native::LayerCompositionEntry>entries();void collected(native::Renderer&);void release(native::Renderer&);
     native::OrbiPomSceneStats stats()const noexcept;
+    // Memory trace (ModuleOwner::residency): the borrowed session's game VM
+    // heap and snapshot buffers, kept while hidden as in the source (the
+    // paused board resumes on reopening). It starts no thread.
+    struct Residency {std::uint64_t cpuBytes{},gpuBytes{};std::uint32_t threads{};};
+    Residency residency()const;
 private:struct Impl;std::shared_ptr<Impl>impl_;
 };
 }

@@ -27,11 +27,14 @@ endif()
 # process ending right after a PDF render exits cleanly (the stream renderer's
 # own device faulted in dxgi.dll at teardown, exit code 0x87A). The test runs
 # hidden children that render through the production provider and return at
-# once.
+# once. A further child runs forty show/hide cycles with every job on a new
+# uninitialized worker (the shared executor's idle exit), checking that the
+# document keeps working across workers and that private bytes and threads
+# return to the second cycle's level (the cycle numbers are printed).
 if(WIN32 AND BUILD_TESTING AND TARGET hud_native)
   add_executable(reader_pdf_exit_tests tests/reader_pdf_exit_tests.cpp)
   target_compile_definitions(reader_pdf_exit_tests PRIVATE UNICODE _UNICODE NOMINMAX)
-  target_link_libraries(reader_pdf_exit_tests PRIVATE hud_native d3d11 ole32)
+  target_link_libraries(reader_pdf_exit_tests PRIVATE hud_native d3d11 ole32 psapi)
   add_test(NAME reader_pdf_exit_contracts COMMAND reader_pdf_exit_tests $<TARGET_FILE_DIR:reader_pdf_exit_tests>/fonts)
   list(APPEND EHUD_LOCAL_TARGETS reader_pdf_exit_tests)
 endif()

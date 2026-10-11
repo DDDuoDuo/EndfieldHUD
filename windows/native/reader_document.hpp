@@ -17,7 +17,9 @@ struct NativeReaderInfo {
 // lifetime between release() calls, plus a recreation after a lost device);
 // pdfDeviceReady: one is held now (none after release()).
 struct NativeReaderStats {std::uint64_t textLayouts{},pagesRendered{},cacheHits{},pdfRenders{},imageDecodes{},imageDecodeCacheHits{},detailMetadataCacheHits{},pdfDevices{};std::size_t cachedPages{},cachedImageBytes{};bool pdfDeviceReady{};};
-// Existing borrowed FIFO/MTA UtilityExecutor only. No worker/window/service,
+// Existing borrowed FIFO UtilityExecutor only, used serially by its jobs on
+// whichever worker runs them (the executor may replace an idle worker); the
+// document keeps the process MTA alive while open. No worker/window/service,
 // timer, renderer, font loader or referenced-file writes. One read-only opened
 // handle and at most one 2048×2048 decoded EPUB image are retained for a document; Windows references only, explicit relink
 // required for opaque Mac bookmarks. Accepted jobs must drain before destruction.
@@ -31,8 +33,8 @@ public:
     // it at the next request, without querying the creating-thread rasterizer.
     void setFontResources(LayerFontResources);
     void open(const modules::ReaderBook&,const modules::ReaderCancel&)override;
-    NativeReaderInfo info()const; // worker only; title is source prefix200 graphemes
-    NativeReaderStats stats()const; // worker only; no filesystem/raster operation
+    NativeReaderInfo info()const; // executor job only; title is source prefix200 graphemes
+    NativeReaderStats stats()const; // executor job only; no filesystem/raster operation
     std::vector<modules::ReaderPage>render(std::optional<modules::ReaderLocation>,std::optional<double>,
         const modules::ReaderPreferences&,core::Point,bool,const modules::ReaderCancel&)override;
     modules::ReaderPage detail(modules::ReaderLocation,const modules::ReaderPreferences&,

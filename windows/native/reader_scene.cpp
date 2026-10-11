@@ -142,6 +142,13 @@ void NativeReaderScene::upload(Renderer&r){auto&i=*impl_;need(!i.renderer||i.ren
     i.art.groupUploaded=true;i.art.applyRoot();for(unsigned n=0;n<5;++n)if(!i.pixels[n])r.removeTexture(i.textureIDs[n]);
 }
 LayerCompositionEntry NativeReaderScene::entry(){return impl_->art.group->entry();}
+bool NativeReaderScene::placed()const noexcept{return impl_->art.posed;}
+// The retained group's draws reference the page textures, so the release
+// rebinds them through upload(), which is valid only for placed artwork; an
+// artwork changed while hidden keeps them until it is shown and placed again.
+void NativeReaderScene::releaseClearedPages(Renderer&r){auto&i=*impl_;need(!i.renderer||i.renderer==&r,"Reader renderer changed");bool stale{};for(std::size_t n=0;n<5;++n)stale|=!i.pixels[n]&&bool(i.uploadedPixels[n]);if(stale&&i.renderer&&i.art.posed)upload(r);}
+bool NativeReaderScene::cleared()const noexcept{return impl_->cleared;}
+std::size_t NativeReaderScene::pixelBytes()const noexcept{const auto&i=*impl_;std::size_t bytes{};for(std::size_t n=0;n<i.pixels.size();++n){if(!i.pixels[n])continue;bool repeated{};for(std::size_t k=0;k<n;++k)repeated|=i.pixels[k]==i.pixels[n];if(!repeated)bytes+=i.pixels[n]->bytes.size();}return bytes;}
 void NativeReaderScene::clearArtwork(){auto&i=*impl_;i.pixels={};i.cleared=true;for(auto&d:i.pages)d.opacity=0;for(auto&d:i.insert)d.opacity=0;}
 bool NativeReaderScene::release(Renderer&r){auto&i=*impl_;if(!i.art.group->releaseResources(r))return false;for(unsigned n=0;n<5;++n)r.removeTexture(i.textureIDs[n]);r.removeMesh(i.quadID);i.renderer=nullptr;i.uploadedPixels={};i.meshResident=false;i.art.dirty=true;i.art.groupUploaded=false;return true;}
 NativeReaderSceneStats NativeReaderScene::stats()const noexcept{return impl_->stats;}
@@ -152,7 +159,7 @@ NativeReaderMenu::NativeReaderMenu(LayerRasterizer&r,LayerRasterOptions o):impl_
 void NativeReaderMenu::syncContent(const modules::ReaderArtwork&a){impl_->art.load(a);}
 bool NativeReaderMenu::setFeedback(std::optional<P>p,bool pressed,bool reduced,double t){return impl_->art.feedback(p,pressed,reduced,t);}
 void NativeReaderMenu::updatePose(const M&w,float opacity,double t,std::span<const PlaneMask>masks,std::optional<PlaneShutter>shutter){auto&i=*impl_;i.art.rootPose(w,opacity,masks,std::move(shutter));i.art.pose(t);}
-bool NativeReaderMenu::requiresFrames(double t)const{return impl_->art.frames(t);}
+bool NativeReaderMenu::requiresFrames(double t)const{return impl_->art.frames(t);}bool NativeReaderMenu::placed()const noexcept{return impl_->art.posed;}
 void NativeReaderMenu::upload(Renderer&r){auto&i=*impl_;need(i.art.posed,"Place Reader menu before upload");if(i.art.dirty){i.art.group->uploadResources(r);i.art.dirty=false;}else i.art.group->updateLocal(r);i.art.groupUploaded=true;i.art.applyRoot();}
 LayerCompositionEntry NativeReaderMenu::entry(){return impl_->art.group->entry();}bool NativeReaderMenu::release(Renderer&r){const bool released=impl_->art.group->releaseResources(r);if(released){impl_->art.groupUploaded=false;impl_->art.dirty=true;}return released;}
 }

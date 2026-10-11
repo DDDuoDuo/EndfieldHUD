@@ -72,5 +72,6 @@ std::span<const n::LayerCompositionEntry>OrbiPomPreview::entries(){auto&i=*impl_
 void OrbiPomPreview::collected(n::Renderer&r){need(impl_->scene.collectRetired(r),"OrbiPom retired pixels still published");}
 void OrbiPomPreview::release(n::Renderer&r){auto&i=*impl_;need(i.scene.releaseResources(r)&&i.registration.releaseResources(r)&&i.geometry.releaseResources(r),"Detach OrbiPom from shared composition before releasing");}
 n::OrbiPomSceneStats OrbiPomPreview::stats()const noexcept{return impl_->scene.stats();}
+OrbiPomPreview::Residency OrbiPomPreview::residency()const{Residency r;r.cpuBytes=impl_->session.residentBytes();return r;}
 }
 #endif

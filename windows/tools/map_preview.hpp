@@ -41,6 +41,19 @@ public:
     void setOverlayVisible(bool,double time);
     void update(const core::Matrix4&,const core::source::DesktopChromeSettings&,
         const core::ModulePresentationSample&,float opacity,double time);
+    // Launch prewarm (ModuleOwner::prewarm; the host forwards it to a preview
+    // that declares it): called once while the HUD is still closed, with the
+    // first opening's frame. When that frame shows the Map, the first
+    // update's content work - chrome captions, pin shapes and markers, the
+    // retained group - is built and posed at opacity 0, so the prewarm
+    // publication uploads it (textures, feather mask, group targets) and the
+    // first opening frame only re-poses it. Nothing is activated: input, pin
+    // pulses and the terrain paint still start with the opening; it presents
+    // nothing, schedules nothing and demands no frame. A later geography
+    // completion re-syncs the posed content at once, so the "LOADING
+    // TERRAIN" caption is replaced before the opening rather than on it.
+    void prewarm(const core::Matrix4&,const core::source::DesktopChromeSettings&,
+        const core::ModulePresentationSample&,double time);
     bool utilityCompleted(double time);bool deadline(double time);
     std::optional<double>nextWakeTime()const noexcept;
     bool requiresFrames(double time)const;bool covers(core::Point logicalClientPoint)const;
@@ -82,6 +95,14 @@ public:
     const app::ClientMetrics&clientMetrics()const noexcept;
     void cancelInteraction(double time);bool pointerLocked()const noexcept;
     const modules::MapState&state()const noexcept;
+    // Memory trace (ModuleOwner::residency): what this owner keeps beyond the
+    // shared raster cache and the renderer's textures - the bundled player
+    // images and feather mask, the decoded geography it shares with the host
+    // worker, and the last painted terrain detail and backdrop it keeps for
+    // the closing and reopening animation, as the source does. It starts no
+    // thread. Counters only: no allocation, IO or OS call.
+    struct Residency {std::uint64_t cpuBytes{},gpuBytes{};std::uint32_t threads{};};
+    Residency residency()const noexcept;
     native::NativeMapRaster::Stats rasterStats()const noexcept;
     native::MapSceneStats sceneStats()const noexcept;
     void upload(native::Renderer&);std::span<const native::LayerCompositionEntry>entries();

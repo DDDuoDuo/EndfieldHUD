@@ -42,6 +42,9 @@ public:
     virtual void move(core::Point)=0;virtual void pointerUp(core::Point)=0;
     virtual bool drop()=0;virtual bool activate(OrbiPomSkill)=0;
     virtual void cancelSkill()=0;virtual void pause(bool)=0;virtual void highScore(std::int64_t)=0;
+    // Memory trace only (owner thread, never per frame): bytes the VM heap and
+    // its retained snapshot buffers hold. Zero when not reported.
+    virtual std::size_t residentBytes()const{return 0;}
 };
 enum class OrbiPomEvent {started,restarted,finished};
 struct OrbiPomSessionCallbacks {
@@ -57,6 +60,9 @@ public:
     const std::optional<std::string>&error()const noexcept{return error_;}
     std::int64_t bestScore()const noexcept{return best_;}
     bool hasRuntime()const noexcept{return bool(runtime_);}
+    // The source keeps one VM for the app's lifetime once a game started (the
+    // board survives hiding and reopening); the memory trace reads its size.
+    std::size_t residentBytes()const{return runtime_?runtime_->residentBytes():0;}
     bool manuallyPaused()const noexcept{return manual_;}
     bool start(std::optional<std::uint32_t> seed={});void advance(double seconds);
     void setManuallyPaused(bool);void pause(bool);void saveBest();

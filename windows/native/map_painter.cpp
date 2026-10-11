@@ -6,6 +6,7 @@
 #include <map>
 #include <stdexcept>
 #include <string>
+#include <atomic>
 #include <thread>
 
 // Screen geometry is evaluated in the same separate Double operations as the
@@ -33,15 +34,19 @@ struct NativeMapPainter::Impl {
     std::shared_ptr<const modules::MapGeography>source;
     std::map<std::pair<std::size_t,std::size_t>,modules::MapPathGeometry>countries;
     std::map<int,modules::MapPathGeometry>terrain,fills;
-    std::optional<std::thread::id>thread;Stats counts;
-    void check(){const auto id=std::this_thread::get_id();if(!thread)thread=id;if(*thread!=id)throw std::logic_error("Map painter is confined to its existing utility worker");}
+    Stats counts;std::atomic<bool>busy{};
+    // Serial use from the shared FIFO executor, whose worker may change
+    // between jobs (an idle worker exits and the next job starts a new one):
+    // the caches are plain data handed over by the executor's queue, and each
+    // paint opens its own apartment. Concurrent use is refused.
+    struct Use {Impl&i;explicit Use(Impl&v):i(v){if(i.busy.exchange(true,std::memory_order_acq_rel))throw std::logic_error("Map painter is used by one utility job at a time");}~Use(){i.busy.store(false,std::memory_order_release);}Use(const Use&)=delete;Use&operator=(const Use&)=delete;};
     void clear(){countries.clear();terrain.clear();fills.clear();source.reset();}
     modules::MapPathGeometry&country(std::size_t c,std::size_t p,const Path&path){const auto key=std::make_pair(c,p);auto found=countries.find(key);if(found==countries.end())found=countries.try_emplace(key,path).first;return found->second;}
     modules::MapPathGeometry&band(std::map<int,modules::MapPathGeometry>&cache,int elevation,const Path&path){auto found=cache.find(elevation);if(found==cache.end())found=cache.try_emplace(elevation,path).first;return found->second;}
 };
 NativeMapPainter::NativeMapPainter():impl_(std::make_unique<Impl>()){}NativeMapPainter::~NativeMapPainter()=default;
-void NativeMapPainter::clear(){impl_->check();impl_->clear();}
-NativeMapPainter::Stats NativeMapPainter::stats()const{auto&i=*impl_;i.check();auto s=i.counts;s.countryIndexes=i.countries.size();s.terrainIndexes=i.terrain.size();s.fillIndexes=i.fills.size();for(const auto&[key,value]:i.countries){(void)key;s.cachedLevels+=value.cachedLevels();}for(const auto&[key,value]:i.fills){(void)key;s.cachedLevels+=value.cachedLevels();}return s;}
+void NativeMapPainter::clear(){const Impl::Use use(*impl_);impl_->clear();}
+NativeMapPainter::Stats NativeMapPainter::stats()const{auto&i=*impl_;const Impl::Use use(i);auto s=i.counts;s.countryIndexes=i.countries.size();s.terrainIndexes=i.terrain.size();s.fillIndexes=i.fills.size();for(const auto&[key,value]:i.countries){(void)key;s.cachedLevels+=value.cachedLevels();}for(const auto&[key,value]:i.fills){(void)key;s.cachedLevels+=value.cachedLevels();}return s;}
 }
 
 #ifdef _WIN32
@@ -109,7 +114,7 @@ std::shared_ptr<const MapPaintImage>detail(Worker&w,const MapPaintRequest&q,cons
 }
 }
 MapPaintResult NativeMapPainter::paint(const MapPaintRequest&q,const MapPaintCancelled&cancel){
-    auto&i=*impl_;i.check();
+    auto&i=*impl_;const Impl::Use use(i);
     if(!q.geography||(!q.geography->terrain&&!q.geography->countries)||!cancel)throw std::invalid_argument("Map painter requires explicit geography/cancellation");
     const auto geometry=modules::mapRasterGeometry(q.viewport,q.contentsScale);
     if(!geometry||geometry->viewport!=q.viewport)throw std::invalid_argument("Map painter requires a constrained camera");

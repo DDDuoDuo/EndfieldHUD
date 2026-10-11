@@ -7,6 +7,7 @@
 #include <windows.h>
 #include <objbase.h>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
@@ -35,6 +36,37 @@ void reentry(){
     armed=true;owner->update(center,settings,modules.sample(now).presentation,1,now);check(!owner->state().active()&&!owner->rasterStats().active&&!owner->nextWakeTime()&&utility.stats().accepted==0,"Reentrant hide supersedes stale outer activation before any terrain task");
     now+=.1;owner->update(center,settings,modules.sample(now).presentation,1,now);check(!owner->state().active()&&!owner->rasterStats().active,"Following source presentation cannot reopen a caller-hidden owner");owner.reset();
     owner=std::make_unique<t::MapPreview>(raster,utility,options());auto appearance=n::MapAppearance{};appearance.dark=false;armed=true;destroy=true;check(owner->setAppearance(appearance,now)&&!owner,"Appearance invalidation may destroy owner without continuing on retired state");utility.waitIdle();utility.drain();utility.shutdown();
+}
+// Launch prewarm (ModuleOwner::prewarm): while the HUD is still closed the
+// Map builds and poses its first opening's content at opacity 0, the prewarm
+// publication uploads it, and the first opening frame only re-poses it. The
+// prewarm activates nothing; geography that arrives after it re-syncs the
+// caption at once instead of on the opening frame.
+void prewarmFirstOpening(n::Renderer&r){
+    using Clock=std::chrono::steady_clock;const auto ms=[](Clock::duration d){return std::chrono::duration<double,std::milli>(d).count();};
+    struct Run{double prewarm{},open{};std::uint64_t rasterizations{},layouts{},uploads{},targets{},chromeBuilds{},residentBytes{};std::size_t resourceBytes{};};
+    const auto measure=[&](bool warm,bool lateGeography){
+        n::LayerRasterizer raster;a::UtilityExecutor utility([]{});double now{};
+        t::MapPreviewOptions o;if(!lateGeography)o.geography=geography();o.clock=[&]{return now;};o.paint=paint;o.raster.pixelsPerPoint=2;o.appearance.ambient=false;o.player={image(2),image(2),image(2),image(880)};
+        t::MapPreview owner(raster,utility,std::move(o));owner.resize({1280,800,96,1,1280,800});c::ModulePresentation modules(c::Module::map);c::source::DesktopChromeSettings settings{{0,0,1280,800},1,{},c::Module::map,true};const auto center=c::source::DesktopChromeLayout::make(settings,{},{}).designToScreen;
+        n::LayerComposition composition;Run result;const auto publish=[&]{owner.upload(r);composition.setEntries(r,owner.entries());composition.present(r);};
+        if(warm){const auto begin=Clock::now();owner.prewarm(center,settings,modules.sample(now).presentation,now);publish();r.draw(false);result.prewarm=ms(Clock::now()-begin);
+            check(!owner.state().active()&&!owner.rasterStats().active&&utility.stats().accepted==0&&!owner.nextWakeTime()&&!owner.requiresFrames(now)&&owner.accessibility().status.empty()&&!owner.clientRect({0,0,440,440})&&owner.sceneStats().chromeBuilds==1,
+                "The launch prewarm builds the Map content and activates nothing: no input, pulses, terrain paint, deadline, frame demand or peers");
+            owner.prewarm(center,settings,modules.sample(now).presentation,now);check(owner.sceneStats().chromeBuilds==1,"The launch prewarm runs once");}
+        if(lateGeography){now+=.2;owner.setGeography(geography(),now);check(!owner.rasterStats().active&&utility.stats().accepted==0&&owner.sceneStats().chromeBuilds==2,"Geography arriving while closed rebuilds the prewarmed caption and paints nothing");}
+        const auto text=raster.stats();const auto gpu=r.stats();const auto scene=owner.sceneStats();
+        now+=.5;const auto begin=Clock::now();owner.setOverlayVisible(true,now);owner.update(center,settings,modules.sample(now).presentation,1,now);publish();result.open=ms(Clock::now()-begin);r.draw(false);
+        result.rasterizations=raster.stats().rasterizations-text.rasterizations;result.layouts=raster.stats().textLayoutsCreated-text.textLayoutsCreated;result.uploads=r.stats().textureUploads-gpu.textureUploads;
+        result.targets=r.stats().nativeGroupTargetAllocations-gpu.nativeGroupTargetAllocations;result.chromeBuilds=owner.sceneStats().chromeBuilds-scene.chromeBuilds;result.resourceBytes=r.stats().resourceBytes;
+        check(owner.rasterStats().active&&owner.state().active()&&!owner.entries().empty(),"The opening shows the Map, accepts input and starts its terrain paint");
+        utility.waitIdle();utility.drain();owner.utilityCompleted(now);result.residentBytes=owner.residency().cpuBytes;check(result.residentBytes>880u*880*4&&owner.residency().threads==0,"The Map reports its retained images and geography and no thread of its own");composition.detach(r);owner.release(r);check(r.stats().textures==0,"The prewarm fixture releases every Map resource");utility.shutdown();
+        return result;};
+    const auto cold=measure(false,false),warm=measure(true,false),late=measure(true,true);
+    check(cold.rasterizations>0&&cold.uploads>0&&cold.targets>0,"Without the prewarm the first opening frame rasterizes the Map and uploads its resources");
+    check(warm.rasterizations==0&&warm.layouts==0&&warm.uploads==0&&warm.targets==0&&warm.chromeBuilds==0,"After the prewarm the first opening frame rasterizes, shapes, uploads and allocates nothing");
+    check(late.rasterizations==0&&late.layouts==0&&late.chromeBuilds==0&&late.targets==0,"Geography arriving after the prewarm leaves no rasterization on the opening frame");
+    std::cout<<"MAP_FIRST_OPEN cold="<<cold.open<<" ms prewarmed="<<warm.open<<" ms (prewarm "<<warm.prewarm<<" ms) late-geography="<<late.open<<" ms; texture uploads cold="<<cold.uploads<<" prewarmed="<<warm.uploads<<" late="<<late.uploads<<"; renderer bytes shown="<<warm.resourceBytes<<"; owner CPU bytes after the first paint="<<warm.residentBytes<<"\n";
 }
 void run(n::Renderer&r,HWND window){
     n::LayerRasterizer raster;a::UtilityExecutor utility([]{});double now{};unsigned saves{},changes{},styles{},recenters{},nextID{1};std::atomic<unsigned>paints{},clears{};m::MapSnapshot saved;
@@ -105,5 +137,5 @@ void run(n::Renderer&r,HWND window){
     rejects([&]{owner.deadline(std::numeric_limits<double>::quiet_NaN());},"Nonfinite owner time is rejected");composition.detach(r);owner.release(r);released=true;check(r.stats().textures==0&&r.stats().meshes==0,"Map owner releases all local resources after shared detach");check(clears>0,"Hidden Map releases working caches on the existing utility worker");utility.shutdown();
 }
 }
-int wmain(int argc,wchar_t**argv){const auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);try{check(SUCCEEDED(hr)&&argc==2,"Pass original HUD shader");reentry();Window window;n::Renderer renderer;renderer.initialize(window.hwnd,1280,800,{n::Driver::warpForTests,argv[1],n::RenderTarget::offscreenForTests});run(renderer,window.hwnd);renderer.reset();CoUninitialize();std::cout<<"PASS "<<checks<<" Map owner checks\n";return 0;}catch(const std::exception&e){counting=false;if(SUCCEEDED(hr))CoUninitialize();std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
+int wmain(int argc,wchar_t**argv){const auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);try{check(SUCCEEDED(hr)&&argc==2,"Pass original HUD shader");reentry();Window window;n::Renderer renderer;renderer.initialize(window.hwnd,1280,800,{n::Driver::warpForTests,argv[1],n::RenderTarget::offscreenForTests});run(renderer,window.hwnd);prewarmFirstOpening(renderer);renderer.reset();CoUninitialize();std::cout<<"PASS "<<checks<<" Map owner checks\n";return 0;}catch(const std::exception&e){counting=false;if(SUCCEEDED(hr))CoUninitialize();std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
 #endif
