@@ -8,6 +8,13 @@ set(EHUD_NOTES_TARGETS "")
 # Portable Mac-to-Windows font name table for imported rich runs
 # (core/notes_font_names.hpp); part of the rich text model library.
 target_sources(hud_notes_rich PRIVATE core/notes_font_names.cpp)
+# Portable import of other applications' RTF/HTML clipboard content into the
+# Notes rich text model (core/notes_paste_import.hpp), against the pinned Mac
+# paste oracle (tools/notes_paste_reference.sh).
+add_library(hud_notes_paste core/notes_paste_import.cpp)
+target_include_directories(hud_notes_paste PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(hud_notes_paste PUBLIC hud_notes_rich PRIVATE hud_desktop_content)
+list(APPEND EHUD_NOTES_TARGETS hud_notes_paste)
 if(BUILD_TESTING)
   add_executable(notes_font_names_tests tests/notes_font_names_tests.cpp)
   target_link_libraries(notes_font_names_tests PRIVATE hud_notes_rich)
@@ -19,6 +26,10 @@ if(BUILD_TESTING)
   add_test(NAME notes_store_capacity_contracts COMMAND notes_store_capacity_tests)
   set_tests_properties(notes_store_capacity_contracts PROPERTIES TIMEOUT 300)
   list(APPEND EHUD_NOTES_TARGETS notes_store_capacity_tests)
+  add_executable(notes_paste_import_tests tests/notes_paste_import_tests.cpp)
+  target_link_libraries(notes_paste_import_tests PRIVATE hud_notes_paste hud_data)
+  add_test(NAME notes_paste_import_contracts COMMAND notes_paste_import_tests "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/notes-paste-reference.json")
+  list(APPEND EHUD_NOTES_TARGETS notes_paste_import_tests)
 endif()
 if(WIN32)
   # Paragraph-chunked long-document editor for Notes text fields: typing cost
@@ -34,7 +45,7 @@ if(WIN32)
   target_sources(hud_native PRIVATE native/notes_managed_image.cpp)
   # UI Automation peers of the projected Notes/Archive/Projection controls.
   target_sources(hud_native PRIVATE native/notes_automation.cpp)
-  target_link_libraries(hud_native PRIVATE hud_shelf_transfer shell32 uiautomationcore oleaut32)
+  target_link_libraries(hud_native PRIVATE hud_shelf_transfer hud_notes_paste shell32 uiautomationcore oleaut32)
 
   if(BUILD_TESTING)
     # Geometry, pixel and behaviour parity with the single-layout editor, TSF

@@ -243,7 +243,9 @@ struct NotesPreview::Impl {
     // Retained menus follow the workspace on every frame. A menu opened by an
     // event is placed at once on the last frame's pose, so input queued before
     // the next frame (a fast second click, a burst) hits the menu where it is
-    // drawn instead of an unplaced menu that would treat it as an outside click.
+    // drawn. An unplaced menu treated such a click as an outside click and
+    // closed itself and the field: the intermittent font-menu dismissal
+    // (reproduced by notes_format_host_tests queuedRowClick).
     void poseMenus(double t){
         if(!hasPose)return;const auto camera=gpu::layerViewportProjection(metrics.pixelWidth,metrics.pixelHeight)*Matrix::scale(metrics.scale,metrics.scale);
         if(formatMenu){if(drawingFormatNote)if(const auto*n=state->note(*drawingFormatNote))formatNoteRect={n->x,n->y,n->width,n->height};if(const auto id=workspace->editingNoteID())if(const auto*n=state->note(*id))formatNoteRect={n->x,n->y,n->width,n->height};

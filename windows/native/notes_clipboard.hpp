@@ -11,6 +11,7 @@
 // between EndfieldHUD fields as the Mac RTF pasteboard does. Foreign rich
 // formats (RTF/HTML) paste as plain text in the current typing style.
 #include "core/notes_rich_text.hpp"
+#include "core/notes_paste_import.hpp"
 #include "native/notes_long_editor.hpp"
 #include <memory>
 #include <optional>
@@ -25,8 +26,18 @@ namespace endfield::native {
 struct NotesClipboardText {
     std::u16string text;
     std::optional<core::notes::RichText> rich; // valid for text when present
+    // Another application's rich content (core/notes_paste_import.hpp): the
+    // source rich text view reads RTF, then HTML, before plain text. Rich
+    // fields paste it; plain fields (checklist rows, dates) paste `text`, the
+    // CF_UNICODETEXT string a plain NSTextView reads first. Never set with
+    // EndfieldHUD's own runs.
+    std::optional<core::notes::ImportedRichText> foreign;
     bool operator==(const NotesClipboardText&)const=default;
 };
+// The text a paste inserts into a rich or plain field.
+inline const std::u16string& notesClipboardPastedText(const NotesClipboardText& value,bool richField){
+    return richField&&value.foreign&&!value.rich?value.foreign->text:value.text;
+}
 // The largest clipboard text a field reads (the text service's safety maximum).
 inline constexpr std::uint32_t notesClipboardMaximumUnits=core::text::Buffer::safetyMaximumUnits;
 // Line breaks: LF (and a lone CR) become CRLF for CF_UNICODETEXT; CRLF and a
@@ -68,8 +79,11 @@ public:
 // returned object owns copies of its formats and never touches the clipboard.
 Microsoft::WRL::ComPtr<IDataObject> makeNotesClipboardData(const NotesClipboardText&);
 // Plain text (unpaired surrogates become U+FFFD), with the private runs only
-// when their text is exactly the CF_UNICODETEXT text. Nullopt without text or
-// above maximumUnits.
+// when their text is exactly the CF_UNICODETEXT text; without them, foreign
+// "Rich Text Format" or else "HTML Format" content (DBCS code pages through
+// MultiByteToWideChar, HTML font lists through the installed DirectWrite
+// families). Malformed or oversized foreign content leaves the plain text.
+// Nullopt without text or above maximumUnits.
 std::optional<NotesClipboardText> readNotesClipboardData(IDataObject&,std::uint32_t maximumUnits);
 // Pasted image data as one container the WIC decoder reads: the registered
 // "PNG" format first, then CF_DIBV5 or CF_DIB given a bitmap file header, then

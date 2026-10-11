@@ -1,6 +1,8 @@
 #include "native/notes_clipboard.hpp"
 #include "native/file_shelf_transfer.hpp"
+#include <dwrite.h>
 #include <atomic>
+#include <climits>
 #include <cstring>
 #ifdef _WIN32
 #include <shlobj.h>
@@ -68,6 +70,8 @@ std::optional<NotesClipboardText> notesClipboardSelection(const core::text::Docu
 
 #ifdef _WIN32
 ProjectedEditorResult notesClipboardPaste(NativeNotesEditor& editor,core::text::Document& document,const NotesClipboardText& value,bool richField){
+    // Another application's RTF/HTML formatting reaches rich fields only.
+    if(richField&&value.foreign&&!value.rich)return notesClipboardPaste(editor,document,NotesClipboardText{value.foreign->text,value.foreign->rich,std::nullopt},true);
     if(document.readOnly()||document.composition()||!core::text::Buffer::validUTF16(value.text))return {true,false,false};
     const auto range=document.selection().range;
     auto* rich=richField?dynamic_cast<core::notes::RichDocument*>(&document):nullptr;
@@ -149,6 +153,33 @@ Microsoft::WRL::ComPtr<IDataObject> makeNotesClipboardData(const NotesClipboardT
     if(value.rich){const auto format=richFormat();if(format)formats.push_back({format,encodeNotesClipboardRich(value)+'\0'});}
     ComPtr<IDataObject> object;object.Attach(new ClipboardData(std::move(formats)));return object;
 }
+namespace {
+// Foreign rich clipboard content as Notes runs (RTF first, then HTML).
+constexpr std::size_t foreignMaximumBytes=32*1024*1024;
+std::wstring wideName(std::string_view s){
+    if(s.empty()||s.size()>1024)return {};const int n=MultiByteToWideChar(CP_UTF8,0,s.data(),static_cast<int>(s.size()),nullptr,0);if(n<=0)return {};
+    std::wstring out(static_cast<std::size_t>(n),L'\0');MultiByteToWideChar(CP_UTF8,0,s.data(),static_cast<int>(s.size()),out.data(),n);return out;
+}
+std::optional<core::notes::ImportedRichText> readForeignRichText(IDataObject& source,std::uint32_t maximum){
+    static const auto rtf=static_cast<CLIPFORMAT>(RegisterClipboardFormatW(L"Rich Text Format"));
+    static const auto html=static_cast<CLIPFORMAT>(RegisterClipboardFormatW(L"HTML Format"));
+    core::notes::PasteImportOptions options;options.maximumUnits=maximum;
+    options.decode=[](std::uint32_t page,std::string_view bytes)->std::optional<std::u16string>{
+        if(bytes.empty()||bytes.size()>static_cast<std::size_t>(INT_MAX))return std::nullopt;
+        const int n=MultiByteToWideChar(page,0,bytes.data(),static_cast<int>(bytes.size()),nullptr,0);if(n<=0)return std::nullopt;
+        std::u16string out(static_cast<std::size_t>(n),u'\0');if(MultiByteToWideChar(page,0,bytes.data(),static_cast<int>(bytes.size()),reinterpret_cast<wchar_t*>(out.data()),n)!=n)return std::nullopt;return out;};
+    // WebKit takes the first installed family of a font-family list.
+    ComPtr<IDWriteFactory> factory;ComPtr<IDWriteFontCollection> fonts;
+    if(SUCCEEDED(DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED,__uuidof(IDWriteFactory),reinterpret_cast<IUnknown**>(factory.GetAddressOf())))&&SUCCEEDED(factory->GetSystemFontCollection(&fonts,FALSE)))
+        options.fontAvailable=[fonts](std::string_view family){const auto name=wideName(family);UINT32 index{};BOOL exists{};return !name.empty()&&SUCCEEDED(fonts->FindFamilyName(name.c_str(),&index,&exists))&&exists;};
+    try{
+        const auto terminated=[](const std::string& bytes){return std::string_view(bytes.data(),bytes.find('\0')==std::string::npos?bytes.size():bytes.find('\0'));};
+        if(rtf)if(const auto bytes=globalBytes(source,rtf,foreignMaximumBytes))if(auto value=core::notes::importNotesRTF(terminated(*bytes),options))return value;
+        if(html)if(const auto bytes=globalBytes(source,html,foreignMaximumBytes))if(auto value=core::notes::importNotesHTML(terminated(*bytes),options))return value;
+    }catch(const std::exception&){} // malformed foreign content pastes as plain text
+    return std::nullopt;
+}
+}
 std::optional<NotesClipboardText> readNotesClipboardData(IDataObject& source,std::uint32_t maximum){
     // CRLF expansion at most doubles a document's units on the clipboard.
     const auto bytes=globalBytes(source,CF_UNICODETEXT,(std::size_t(maximum)*2+1)*sizeof(char16_t));if(!bytes||bytes->size()<sizeof(char16_t))return std::nullopt;
@@ -159,7 +190,7 @@ std::optional<NotesClipboardText> readNotesClipboardData(IDataObject& source,std
     if(const auto payload=globalBytes(source,richFormat(),richPayloadMaximumBytes))
         if(auto decoded=decodeNotesClipboardRich(std::string_view(payload->data(),payload->find('\0')==std::string::npos?payload->size():payload->find('\0'))))
             if(notesClipboardPlatformText(decoded->text)==platform)value=std::move(*decoded);
-    if(!value.rich)value.text=notesClipboardDocumentText(platform);
+    if(!value.rich){value.text=notesClipboardDocumentText(platform);value.foreign=readForeignRichText(source,maximum);}
     if(value.text.size()>maximum)return std::nullopt;return value;
 }
 std::optional<std::vector<std::uint8_t>> readNotesClipboardImage(IDataObject& source,std::size_t maximum){

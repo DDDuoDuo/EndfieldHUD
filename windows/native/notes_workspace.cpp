@@ -560,7 +560,7 @@ ProjectedEditorResult NativeNotesWorkspace::selectEditorWord(){auto&i=*impl_;i.c
 ProjectedEditorResult NativeNotesWorkspace::selectEditorParagraph(){auto&i=*impl_;i.check();i.editorOwnership();if(!i.field)return {};const auto&d=i.field->document;const auto s=d.selection();
     return notesSelectRange(*i.field->native,d,notesParagraphAt(d.text(),s.activeEnd==text::ActiveEnd::start?s.range.start:s.range.end));}
 ProjectedEditorResult NativeNotesWorkspace::pasteIntoEditor(const NotesClipboardText&value){auto&i=*impl_;i.check();i.editorOwnership();if(!i.field)return {};
-    const auto range=i.field->document.selection().range;const auto resulting=i.field->document.text().size()-(range.end-range.start)+value.text.size();i.promoteField(resulting);
+    const auto range=i.field->document.selection().range;const auto resulting=i.field->document.text().size()-(range.end-range.start)+notesClipboardPastedText(value,i.field->rich!=nullptr).size();i.promoteField(resulting);
     return notesClipboardPaste(*i.field->native,i.field->document,value,i.field->rich!=nullptr);}
 bool NativeNotesWorkspace::beginGesture(std::string_view id,core::Point start,mod::NotesState::Gesture kind){auto&i=*impl_;i.check();if(!i.state.visible(id)||!std::isfinite(start.x)||!std::isfinite(start.y))return false;i.finishRequired();const auto c=*i.state.card(id);
     Impl::Drag next{std::string(id),c.rect,start,kind};const bool changed=i.state.beginGesture(id,start,kind);if(changed)i.drag=std::move(next);i.sync();return changed;}

@@ -124,7 +124,7 @@ struct ArchivePreview::Impl {
  void clipboardKey(Field&f,char key){
   if(!clipboard||!f.editor||f.document().composition())return;
   if(key=='V'){const auto text=clipboard->readText(gpu::notesClipboardMaximumUnits);if(!text)return;const auto range=f.document().selection().range;Field*target=&f;
-   if(promoteBody(f,f.document().text().size()-(range.end-range.start)+text->text.size()))target=fields->values[2].get();gpu::notesClipboardPaste(*target->editor,target->document(),*text,target->richDocument!=nullptr);return;}
+   if(promoteBody(f,f.document().text().size()-(range.end-range.start)+gpu::notesClipboardPastedText(*text,f.richDocument!=nullptr).size()))target=fields->values[2].get();gpu::notesClipboardPaste(*target->editor,target->document(),*text,target->richDocument!=nullptr);return;}
   if(const auto copied=gpu::notesClipboardSelection(f.document(),f.richDocument&&f.editor->richLayoutEnabled());copied&&clipboard->writeText(*copied)&&key=='X')gpu::notesClipboardDeleteSelection(*f.editor,f.document());
  }
  bool captureAll(){if(fields)for(auto&f:fields->values)if(f&&!capture(*f))return false;if(menu&&menu->categoryField&&!capture(*menu->categoryField))return false;return true;}

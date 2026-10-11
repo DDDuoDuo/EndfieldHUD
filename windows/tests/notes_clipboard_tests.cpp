@@ -9,6 +9,7 @@
 #ifdef _WIN32
 #include <objbase.h>
 #include <atomic>
+#include <cstdio>
 #include <cstring>
 #include <iostream>
 #include <stdexcept>
@@ -107,6 +108,57 @@ void dataObjects(){
     check(gpu::readNotesClipboardData(padded,100)==payload,"A padded private payload is read to its terminator");
     Foreign empty;check(!gpu::readNotesClipboardData(empty,100),"No Unicode text pastes nothing");
     rejects([]{(void)gpu::makeNotesClipboardData({std::u16string(1,u'\xdc00'),std::nullopt});},"Invalid UTF-16 is never written");
+}
+// Another application's rich clipboard content: "Rich Text Format" first,
+// then "HTML Format" (CF_HTML), as the source rich text view reads them.
+CLIPFORMAT registered(const wchar_t* name){return static_cast<CLIPFORMAT>(RegisterClipboardFormatW(name));}
+std::string cfHTML(const std::string& fragment){
+    const std::string body="<html><body><!--StartFragment-->"+fragment+"<!--EndFragment--></body></html>";
+    const auto header=[&](std::size_t base){char text[200];const auto start=body.find("<!--StartFragment-->")+20,end=body.find("<!--EndFragment-->");
+        std::snprintf(text,sizeof text,"Version:0.9\r\nStartHTML:%010zu\r\nEndHTML:%010zu\r\nStartFragment:%010zu\r\nEndFragment:%010zu\r\n",base,base+body.size(),base+start,base+end);return std::string(text);};
+    return header(header(0).size())+body;
+}
+void foreignFormats(){
+    const std::string rtf="{\\rtf1\\ansi{\\fonttbl{\\f0 Arial;}}\\f0 Plain \\b bold\\b0\\par}";
+    Foreign word;word.text(u"Plain bold\r\n");word.formats.push_back({registered(L"Rich Text Format"),rtf+'\0'});
+    const auto fromWord=gpu::readNotesClipboardData(word,100);
+    check(fromWord&&fromWord->text==u"Plain bold\n"&&!fromWord->rich&&fromWord->foreign&&fromWord->foreign->text==u"Plain bold\n","RTF arrives beside the plain text");
+    const auto&runs=fromWord->foreign->rich.runs;check(runs.size()==3&&runs[1].location==6&&runs[1].length==4&&runs[1].style.bold&&runs[0].style.fontName==std::optional<std::string>("Arial")&&!runs[2].style.bold,"The RTF runs keep their font and weight");
+    check(gpu::notesClipboardPastedText(*fromWord,true)==u"Plain bold\n"&&gpu::notesClipboardPastedText(*fromWord,false)==fromWord->text,"Rich fields paste the RTF text, plain fields the Unicode text");
+    Foreign browser;browser.text(u"red");browser.formats.push_back({registered(L"HTML Format"),cfHTML("<span style=\"color: rgb(255, 0, 0); font-size: 16px\">red</span>")+'\0'});
+    const auto fromBrowser=gpu::readNotesClipboardData(browser,100);
+    check(fromBrowser&&fromBrowser->foreign&&fromBrowser->foreign->text==u"red"&&fromBrowser->foreign->rich.runs.size()==1&&fromBrowser->foreign->rich.runs[0].style.color==notes::RGBA{1,0,0,1}&&fromBrowser->foreign->rich.runs[0].style.fontSize==16,"CF_HTML fragments arrive with their inline styles");
+    Foreign both;both.text(u"r");both.formats.push_back({registered(L"HTML Format"),cfHTML("<b>html</b>")+'\0'});both.formats.push_back({registered(L"Rich Text Format"),"{\\rtf1\\ansi \\i rtf\\par}"+std::string(1,'\0')});
+    const auto preferred=gpu::readNotesClipboardData(both,100);check(preferred&&preferred->foreign&&preferred->foreign->text==u"rtf\n"&&preferred->foreign->rich.runs[0].style.italic,"RTF is read before HTML");
+    Foreign broken;broken.text(u"plain");broken.formats.push_back({registered(L"Rich Text Format"),"not rtf"+std::string(1,'\0')});
+    const auto fallback=gpu::readNotesClipboardData(broken,100);check(fallback&&fallback->text==u"plain"&&!fallback->foreign,"Unreadable RTF leaves the plain text");
+    Foreign own;own.text(u"Bold");notes::RichText rich;rich.runs.push_back({0,4,bold(),{}});own.formats.push_back({richFormat(),gpu::encodeNotesClipboardRich({u"Bold",rich})+'\0'});own.formats.push_back({registered(L"Rich Text Format"),rtf+'\0'});
+    const auto ours=gpu::readNotesClipboardData(own,100);check(ours&&ours->rich&&!ours->foreign,"EndfieldHUD's own runs win over foreign formats");
+    Foreign large;large.text(u"big");large.formats.push_back({registered(L"Rich Text Format"),"{\\rtf1 "+std::string(200,'x')+"}"+std::string(1,'\0')});
+    const auto bounded=gpu::readNotesClipboardData(large,100);check(bounded&&bounded->text==u"big"&&!bounded->foreign,"Foreign content beyond the field's limit pastes as plain text");
+}
+void foreignPaste(HWND hwnd){
+    gpu::LayerRasterizer raster;const std::string textID="0000000D-0000-4000-8000-000000000011",todoID="0000000D-0000-4000-8000-000000000012";
+    data::Note note{.id=textID,.kind=data::NoteKind::text,.text="note ",.x=40,.y=40,.width=260,.height=200,.createdAt=1};
+    data::Note todo{.id=todoID,.kind=data::NoteKind::todo,.x=340,.y=40,.width=240,.height=160,.createdAt=2};todo.items.push_back({.id="0000000D-0000-4000-8000-0000000000B1",.text="row"});
+    mod::NotesState state({note,todo},{[](const data::Note&){},[](std::string_view){throw std::runtime_error("Fixture never deletes");}});state.setWorkspaceBounds({0,0,1200,800});
+    gpu::NativeNotesWorkspaceStyle style;style.palette=mod::NotesPalette::source(true,{.98,.83,.12,1});style.editor={{.12,.12,.12,1},style.palette.accent};
+    gpu::NativeNotesWorkspaceOptions options;options.raster.pixelsPerPoint=1;
+    gpu::NativeNotesWorkspace w(hwnd,state,raster,style,options);gpu::NativeNotesWorkspacePose pose;pose.screenToClip=gpu::layerViewportProjection(1200,800);pose.pixelWidth=1200;pose.pixelHeight=800;pose.time=1;w.updatePose(pose);
+    Foreign word;word.text(u"Big red");word.formats.push_back({registered(L"Rich Text Format"),"{\\rtf1\\ansi{\\fonttbl{\\f0 Georgia;}}{\\colortbl;\\red255\\green0\\blue0;}\\f0\\fs36\\b Big\\b0  \\cf1 red\\cf0}"+std::string(1,'\0')});
+    const auto value=gpu::readNotesClipboardData(word,gpu::notesClipboardMaximumUnits);check(value&&value->foreign,"The Word fixture offers RTF");
+    // An unformatted note: the RTF formatting turns it rich, as on the Mac.
+    check(w.beginEditing(textID)&&!w.editor()->richLayoutEnabled(),"An unformatted note edits in its plain layout");
+    check(w.pasteIntoEditor(*value).changed&&w.editor()->richLayoutEnabled()&&w.editorDocument()->text()==u"note Big red","The RTF text pastes and switches the note to rich layout");w.syncEditor();
+    check(w.undo().changed&&w.editorDocument()->text()==u"note "&&w.redo().changed,"The foreign paste is one undo group");
+    check(w.finishEditing().saved,"The pasted note saves");const auto saved=*state.note(textID);check(saved.richText.has_value(),"The saved note keeps the pasted formatting");
+    {const auto stored=notes::decodeRichText(data::Json::parse(*saved.richText),u"note Big red");bool big{},red{};
+     for(const auto&r:stored.runs){if(r.location<=5&&r.location+r.length>=8&&r.style.bold&&r.style.fontSize==18&&r.style.fontName==std::optional<std::string>("Georgia"))big=true;
+        if(r.location<=9&&r.location+r.length>=12&&r.style.color&&r.style.color->red>.99&&r.style.color->green<.2)red=true;}
+     check(big&&red,"Georgia 18 bold and the red run are stored");}
+    // A checklist row is plain: it takes the Unicode text alone.
+    check(w.beginEditingItem(todoID,"0000000D-0000-4000-8000-0000000000B1"),"Open the plain row");w.editor()->setSelectionFromHost({{3,3},text::ActiveEnd::end,false});
+    check(w.pasteIntoEditor(*value).changed&&w.editorDocument()->text()==u"rowBig red","A plain row pastes the Unicode text");check(w.finishEditing().saved,"The row saves");
 }
 // A bottom-up 32-bit DIB (CF_DIB layout) whose left half is red, right half blue.
 std::string dib(int width,int height){
@@ -227,7 +279,7 @@ void workspace(HWND hwnd){
 }
 } // namespace
 int main(){
-    try{Apartment apartment;Window window;codecs();richPaste();dataObjects();images();workspace(window.value);
+    try{Apartment apartment;Window window;codecs();richPaste();dataObjects();foreignFormats();images();workspace(window.value);foreignPaste(window.value);
         std::cout<<"PASS "<<checks<<" Notes clipboard contracts\n";return 0;
     }catch(const std::exception& e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}
 }
