@@ -196,6 +196,32 @@ std::string nonceIn(const std::wstring& script) {
 }
 std::string envelope(std::string_view channel,const std::string& body) {return "{\"channel\":\""+std::string(channel)+"\",\"body\":"+body+"}";}
 void click(HWND window,int id) {SendMessageW(window,WM_COMMAND,MAKEWPARAM(id,BN_CLICKED),0);}
+// The Mac panel geometry at the owner's scale: content size and NSPanel.minSize (frame).
+bool panelSize(HWND window,HWND owner,double width,double height,double minWidth,double minHeight) {
+    const UINT dpi=GetDpiForWindow(owner);const double s=(dpi?dpi:96)/96.0;
+    RECT client{};GetClientRect(window,&client);MINMAXINFO limits{};SendMessageW(window,WM_GETMINMAXINFO,0,reinterpret_cast<LPARAM>(&limits));
+    return client.right==std::lround(width*s)&&client.bottom==std::lround(height*s)&&limits.ptMinTrackSize.x==std::lround(minWidth*s)&&limits.ptMinTrackSize.y==std::lround(minHeight*s);
+}
+// NSPanel styleMask [.titled, .closable, .resizable]: a topmost caption with
+// close, zoom and a sizing border, and no minimize (not miniaturizable).
+bool panelChrome(HWND window) {
+    const LONG style=GetWindowLongW(window,GWL_STYLE),extended=GetWindowLongW(window,GWL_EXSTYLE);
+    return (style&WS_CAPTION)==WS_CAPTION&&(style&WS_SYSMENU)&&(style&WS_THICKFRAME)&&(style&WS_MAXIMIZEBOX)&&!(style&WS_MINIMIZEBOX)&&(extended&WS_EX_TOPMOST);
+}
+// The work area of the owner's monitor (Mac NSScreen.visibleFrame).
+RECT workAreaOf(HWND window) {
+    MONITORINFO info{};info.cbSize=sizeof info;
+    check(GetMonitorInfoW(MonitorFromWindow(window,MONITOR_DEFAULTTONEAREST),&info)!=FALSE,"Read the owner monitor's work area");
+    return info.rcWork;
+}
+// Mac placement: centred on `area` (the HUD screen's visible frame for the
+// panel, the panel's frame for a popup), the title bar never above the top
+// of the work area (NSWindow.constrainFrameRect).
+bool centredOn(HWND window,const RECT& area,const RECT& screen) {
+    RECT frame{};GetWindowRect(window,&frame);
+    const LONG width=frame.right-frame.left,height=frame.bottom-frame.top;
+    return frame.left==(area.left+area.right)/2-width/2&&frame.top==std::max<LONG>(screen.top,(area.top+area.bottom)/2-height/2);
+}
 // A key as the message loop dispatches it: to the control holding the focus.
 void press(HWND control,UINT key) {SendMessageW(control,WM_KEYDOWN,key,0);}
 // Pins this thread's modifier state, so Shift+Tab never follows the live
@@ -284,6 +310,9 @@ void run() {
         presenter.present(h::Region::mainland,done);
         HWND login=loginWindow();
         check(presenter.isPresenting()&&login&&!IsWindowVisible(login)&&GetWindow(login,GW_OWNER)==owner.hwnd,"Consent window is owned by the HUD (hidden in verification)");
+        check(panelSize(login,owner.hwnd,860,650,680,540),"The login panel has the Mac content size 860x650 and minimum frame 680x540");
+        const RECT screen=workAreaOf(owner.hwnd);
+        check(panelChrome(login)&&centredOn(login,screen,screen),"The login panel is a closable, resizable, zoomable topmost panel without minimize, centred in the HUD monitor's work area");
         check(w.environments==0&&!presenter.nextDeadline(),"No browser, profile or deadline before explicit consent");
         int again{};presenter.present(h::Region::global,[&](auto,h::LoginFailure f){again+=f==h::LoginFailure::alreadyPresenting;});
         check(again==1,"A second presentation is refused while one is open");
@@ -322,6 +351,11 @@ void run() {
         auto popup=lastEnvironment->controllers[1];
         check(popup->inPrivate&&request->window.Get()==static_cast<ICoreWebView2*>(popup->view.Get())&&!IsWindowVisible(popup->host)&&GetWindow(popup->host,GW_OWNER)==login,
               "The untouched private child view is handed back (opener relationship kept)");
+        check(panelSize(popup->host,owner.hwnd,820,640,680,440),"A popup panel has the Mac content size 820x640 and minimum frame 680x440");
+        {
+            RECT panel{};GetWindowRect(login,&panel);
+            check(panelChrome(popup->host)&&centredOn(popup->host,panel,screen),"A popup panel has the same chrome and is centred on the login panel");
+        }
         check(!popup->view->start(L"about:blank")&&!popup->view->start(L"https://user.hypergryph.com/sdk")&&popup->view->start(L"https://evil.example/"),"Popup navigation follows the same policy");
         popup->view->source=L"https://user.hypergryph.com/sdk";
         auto second=v->requestWindow(L"https://user.hypergryph.com/x");w.pump();
@@ -396,6 +430,8 @@ void run() {
         HWND page=loginWindow();
         check(completions==6&&presenter.isPresenting()&&page&&!IsWindowVisible(page)&&GetWindow(page,GW_OWNER)==owner.hwnd&&
               w.environments==environments&&w.runtimeQueries==queries+1&&!presenter.nextDeadline(),"A missing runtime opens the explanation page in the owned login window, without a profile, browser or deadline");
+        check(panelSize(page,owner.hwnd,860,650,680,540)&&panelChrome(page)&&centredOn(page,workAreaOf(owner.hwnd),workAreaOf(owner.hwnd)),
+              "The runtime page is the same Mac panel (content, minimum, chrome and placement)");
         check(text(page,110)==runtime.title&&text(page,111)==runtime.detail&&text(page,112)==std::string(h::webView2DownloadURL)&&text(page,105)==runtime.downloadLabel&&
               text(page,106)==runtime.checkLabel&&text(page,102)=="Cancel"&&text(page,113).empty()&&!GetDlgItem(page,101),"The page names the runtime, shows the official download link, Check Again and Cancel");
         check(std::find(tags.begin(),tags.end(),"runtime-missing")!=tags.end(),"The missing runtime is a fixed diagnostic tag");
@@ -506,26 +542,30 @@ void run() {
             lastEnvironment->exit();
         }
 
-        // I. Per-monitor DPI: moving to a 200 % display re-creates the page
-        // fonts at the same point sizes and scales the layout.
+        // I. Per-monitor DPI: moving to a 125 % display re-creates the page
+        // fonts at the same point sizes and scales the layout. The suggested
+        // frame is the panel's minimum there (the test desktop is small).
         w.runtime.clear();presenter.present(h::Region::mainland,done);page=loginWindow();
         {
             const HWND heading=GetDlgItem(page,110),body=GetDlgItem(page,111),link=GetDlgItem(page,112),open=GetDlgItem(page,105);
             // The page starts at the HUD window's scale (points -> pixels).
-            const UINT dpi=GetDpiForWindow(owner.hwnd)?GetDpiForWindow(owner.hwnd):96;
+            const UINT dpi=GetDpiForWindow(owner.hwnd)?GetDpiForWindow(owner.hwnd):96,next=dpi*5/4;
             const auto pixels=[&](double points,UINT at){return int(std::lround(points*at/96.0));};
             const int title=fontHeight(heading),detail=fontHeight(body);
             check(title==-pixels(20,dpi)&&detail==-pixels(13,dpi),"The page fonts start at the HUD's scale");
             RECT before{};GetWindowRect(page,&before);RECT button{};
-            RECT suggested=before;
-            SendMessageW(page,WM_DPICHANGED,MAKEWPARAM(dpi*2,dpi*2),reinterpret_cast<LPARAM>(&suggested));
+            RECT suggested{before.left,before.top,before.left+pixels(680,next),before.top+pixels(540,next)};
+            SendMessageW(page,WM_DPICHANGED,MAKEWPARAM(next,next),reinterpret_cast<LPARAM>(&suggested));
             RECT after{};GetWindowRect(page,&after);GetWindowRect(open,&button);
             check(EqualRect(&after,&suggested)!=FALSE,"The window takes the suggested frame");
-            check(fontHeight(heading)==-pixels(20,dpi*2)&&fontHeight(body)==-pixels(13,dpi*2)&&fontHeight(link)==-pixels(13,dpi*2),
+            check(fontHeight(heading)==-pixels(20,next)&&fontHeight(body)==-pixels(13,next)&&fontHeight(link)==-pixels(13,next),
                   "Fonts are re-created at the same point sizes for the new DPI");
-            check(button.right-button.left>=pixels(240,dpi*2)&&button.bottom-button.top==pixels(42,dpi*2),"The layout scales with the new DPI");
-            SendMessageW(page,WM_DPICHANGED,MAKEWPARAM(dpi,dpi),reinterpret_cast<LPARAM>(&suggested));
-            check(fontHeight(heading)==title&&fontHeight(body)==detail,"Returning to the first display restores the sizes");
+            check(button.right-button.left>=pixels(240,next)&&button.bottom-button.top==pixels(42,next),"The layout scales with the new DPI");
+            MINMAXINFO limits{};SendMessageW(page,WM_GETMINMAXINFO,0,reinterpret_cast<LPARAM>(&limits));
+            check(limits.ptMinTrackSize.x==pixels(680,next)&&limits.ptMinTrackSize.y==pixels(540,next),"The minimum frame follows the new DPI");
+            SendMessageW(page,WM_DPICHANGED,MAKEWPARAM(dpi,dpi),reinterpret_cast<LPARAM>(&before));
+            GetWindowRect(page,&after);
+            check(EqualRect(&after,&before)!=FALSE&&fontHeight(heading)==title&&fontHeight(body)==detail,"Returning to the first display restores the frame and sizes");
             pageFits(page,"runtime page after a DPI round trip");
             presenter.cancel();
             check(completions==25&&failure==h::LoginFailure::runtimeUnavailable&&!loginWindow(),"The page still closes as before");

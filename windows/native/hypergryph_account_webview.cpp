@@ -57,6 +57,24 @@ void sweepStaleProfiles(const std::filesystem::path& root,const std::filesystem:
     }
 }
 double dpiScale(HWND hwnd) {const UINT dpi=hwnd?GetDpiForWindow(hwnd):0;return dpi?dpi/96.0:1.0;}
+// The work area of the monitor nearest `of` (Mac NSScreen.visibleFrame of
+// the parent's screen), else the primary monitor's.
+RECT workArea(HWND of) {
+    MONITORINFO info{};info.cbSize=sizeof info;
+    const HMONITOR monitor=of?MonitorFromWindow(of,MONITOR_DEFAULTTONEAREST):MonitorFromPoint(POINT{0,0},MONITOR_DEFAULTTOPRIMARY);
+    if(monitor&&GetMonitorInfoW(monitor,&info)) return info.rcWork;
+    RECT area{};SystemParametersInfoW(SPI_GETWORKAREA,0,&area,0);return area;
+}
+// Mac setFrameOrigin(mid - size / 2) on `area`; ordering the panel front
+// keeps its title bar on the screen (NSWindow.constrainFrameRect), so the
+// top never rises above the work area.
+POINT centredOn(const RECT& area,SIZE size,const RECT& screen) {
+    return {(area.left+area.right)/2-size.cx/2,std::max<LONG>(screen.top,(area.top+area.bottom)/2-size.cy/2)};
+}
+// NSPanel styleMask [.titled, .closable, .resizable] (the consent/runtime
+// panel and the SDK's child panels alike): a caption with close and zoom,
+// a sizing border, and no minimize (the panel is not miniaturizable).
+constexpr DWORD panelStyle=WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_THICKFRAME|WS_MAXIMIZEBOX;
 constexpr wchar_t windowClass[]=L"EndfieldHUDAccountLogin";
 // Completion is finished from the login window's own queue, never inside a
 // WebView2 event handler that would close its own controller.
@@ -162,6 +180,15 @@ struct WebViewLoginPresenter::Impl:std::enable_shared_from_this<Impl> {
                 if(const auto* item=reinterpret_cast<const DRAWITEMSTRUCT*>(l);hwnd==keep->window&&item&&item->CtlType==ODT_BUTTON) {keep->drawButton(*item);return TRUE;}
                 break;
             case hoverMessage: if(hwnd==keep->window) keep->hover(reinterpret_cast<HWND>(l),w!=0);return 0;
+            // NSPanel.minSize (frame): 680x540 points, child panels 680x440.
+            case WM_GETMINMAXINFO:
+                if(auto* info=reinterpret_cast<MINMAXINFO*>(l)) {
+                    const bool panel=hwnd==keep->window,popup=std::any_of(keep->popups.begin(),keep->popups.end(),[&](const Popup& item){return item.window==hwnd;});
+                    // A popup follows its own monitor's DPI; the panel its page scale.
+                    const double s=panel?keep->scale:dpiScale(hwnd);
+                    if(panel||popup) {info->ptMinTrackSize={LONG(std::lround(680*s)),LONG(std::lround((panel?540:440)*s))};return 0;}
+                }
+                break;
             // Text sits on the window background (Mac panel), not on 3D-face
             // boxes; the detail, toolbar status and note use the Mac's
             // secondaryLabelColor (label colour at half opacity).
@@ -353,18 +380,27 @@ struct WebViewLoginPresenter::Impl:std::enable_shared_from_this<Impl> {
         if(pageFocused&&controller) {controller->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);return true;}
         return false;
     }
-    // Mac NSPanel 860x650 points, minimum 680x540; above the HUD (topmost
-    // owned window), centred on it. Shared by the consent and runtime pages.
+    // The window frame around a client area of width x height points (the
+    // Mac panels' contentRect) at the current scale.
+    SIZE frameFor(double width,double height,DWORD style) const {
+        RECT r{0,0,int(std::lround(width*scale)),int(std::lround(height*scale))};
+        AdjustWindowRectExForDpi(&r,style,FALSE,WS_EX_TOPMOST,UINT(std::lround(scale*96)));
+        return {r.right-r.left,r.bottom-r.top};
+    }
+    // Mac NSPanel: content 860x650 points, frame at least 680x540; above the
+    // HUD (topmost owned window), centred in the visible frame of the HUD's
+    // screen (the owner monitor's work area). Created in place, so the
+    // window starts at that monitor's DPI. Shared by the consent and runtime
+    // pages.
     bool createWindow(h::Region region) {
         const auto strings=h::LoginSession::strings(region,options.language);
         scale=dpiScale(options.owner);lastFocus=nullptr;pageFocused=false;
-        window=CreateWindowExW(WS_EX_TOPMOST,windowClass,wide(strings.title).c_str(),WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_THICKFRAME|WS_MINIMIZEBOX,
-            CW_USEDEFAULT,CW_USEDEFAULT,int(860*scale),int(650*scale),options.owner,nullptr,GetModuleHandleW(nullptr),this);
+        const auto size=frameFor(860,650,panelStyle);
+        const RECT screen=workArea(options.owner);const POINT at=centredOn(screen,size,screen);
+        window=CreateWindowExW(WS_EX_TOPMOST,windowClass,wide(strings.title).c_str(),panelStyle,
+            at.x,at.y,size.cx,size.cy,options.owner,nullptr,GetModuleHandleW(nullptr),this);
         if(!window) return false;
         makeFonts();
-        RECT owner{},frame{};
-        if(options.owner&&GetWindowRect(options.owner,&owner)&&GetWindowRect(window,&frame))
-            SetWindowPos(window,HWND_TOPMOST,(owner.left+owner.right)/2-(frame.right-frame.left)/2,(owner.top+owner.bottom)/2-(frame.bottom-frame.top)/2,0,0,SWP_NOSIZE|(options.showWindows?0u:SWP_NOACTIVATE));
         return true;
     }
     void show(HWND focus) {
@@ -587,12 +623,14 @@ struct WebViewLoginPresenter::Impl:std::enable_shared_from_this<Impl> {
             return S_OK;}).Get(),&unused);
     }
     void openPopup(ComPtr<ICoreWebView2NewWindowRequestedEventArgs> args,ComPtr<ICoreWebView2Deferral> deferral) {
-        const auto strings=h::LoginSession::strings(session->region(),options.language);const double scale=dpiScale(window);
-        HWND popupWindow=CreateWindowExW(WS_EX_TOPMOST,windowClass,wide(strings.title).c_str(),WS_OVERLAPPEDWINDOW,CW_USEDEFAULT,CW_USEDEFAULT,int(820*scale),int(640*scale),window,nullptr,GetModuleHandleW(nullptr),this);
+        const auto strings=h::LoginSession::strings(session->region(),options.language);
+        // Mac child panel: content 820x640 points, frame at least 680x440,
+        // centred on the login panel (created in place).
+        const auto size=frameFor(820,640,panelStyle);
+        RECT parent{};if(!GetWindowRect(window,&parent)) parent=workArea(window);
+        const POINT at=centredOn(parent,size,workArea(window));
+        HWND popupWindow=CreateWindowExW(WS_EX_TOPMOST,windowClass,wide(strings.title).c_str(),panelStyle,at.x,at.y,size.cx,size.cy,window,nullptr,GetModuleHandleW(nullptr),this);
         if(!popupWindow) {deferral->Complete();session->popupClosed();return;}
-        RECT parent{},frame{};
-        if(GetWindowRect(window,&parent)&&GetWindowRect(popupWindow,&frame))
-            SetWindowPos(popupWindow,HWND_TOPMOST,(parent.left+parent.right)/2-(frame.right-frame.left)/2,(parent.top+parent.bottom)/2-(frame.bottom-frame.top)/2,0,0,SWP_NOSIZE|(options.showWindows?0u:SWP_NOACTIVATE));
         popups.push_back({popupWindow,nullptr,nullptr});if(options.showWindows) ShowWindow(popupWindow,SW_SHOWNORMAL);
         std::weak_ptr<Impl> weak=shared_from_this();const auto token=generation;
         const HRESULT hr=createController(popupWindow,Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(

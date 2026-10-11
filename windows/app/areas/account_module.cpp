@@ -296,6 +296,10 @@ public:
         if (!world_) return;
         if (step.module) moduleStep(step); else areaStep(step);
     }
+    // Files dragged over the Account face: SystemHUDView.draggingUpdated has
+    // no account target, so the drag shows no operation (drop() keeps the
+    // default refusal) and the face changes nothing.
+    bool dropHover(std::span<const std::string>, std::optional<core::Point>, double) override { return false; }
 
     // --- UI Automation (ModuleOwner hooks) -------------------------------------
     // The Mac's transparent AX buttons over the projected face and the header
@@ -771,6 +775,14 @@ private:
             automationDisconnect();
             step.check(automationCount() == 0 && listed->GetPropertyValue(UIA_NamePropertyId, &label) == UIA_E_ELEMENTNOTAVAILABLE, "Disconnecting ends every peer");
             step.check(automationRefresh(group) && automationCount() == faceControls + 1, "The next refresh connects fresh peers");
+        }
+        {
+            // A file drag over the face (synthetic paths; nothing is read).
+            const std::string dragged[]{(w.root / "dragged.png").string()};
+            const auto over = d.canvasPoint({h::AccountCanvasModel::bounds.width / 2, h::AccountCanvasModel::bounds.height / 2});
+            step.check(!dropHover(dragged, over, d.t) && !dropHover(dragged, std::nullopt, d.t) && !drop(dragged, over, d.t) &&
+                       controller().presentation() == w.reference && !d.canvas().isPopoverOpen(),
+                       "A file dragged over the Account face is refused, as on the Mac (no drag operation, no drop)");
         }
         (void)pointer({PointerKind::leave, PointerButton::none, 0, 0}, d.t);
         d.settleAnimations();
