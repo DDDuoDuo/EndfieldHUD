@@ -11,6 +11,9 @@
 //   - the UI/render thread joins the MMCSS "Games" task (AvSetMmThreadCharacteristics),
 //     which the Multimedia Class Scheduler boosts for short periods while
 //     still reserving CPU time for other work (SystemResponsiveness);
+//   - Windows power throttling (EcoQoS) is switched off for the process, so
+//     on a hybrid CPU its threads are not parked on efficiency cores while a
+//     game keeps the performance cores busy (system default when concealed);
 //   - the process's GPU scheduling priority class is HIGH
 //     (D3DKMTSetProcessSchedulingPriorityClass) and the device's GPU thread
 //     priority +7 (IDXGIDevice::SetGPUThreadPriority), so its few draws per
@@ -24,7 +27,7 @@
 namespace endfield::native { class Renderer; }
 namespace endfield::app {
 struct PresentationPriorityReport {
-    bool processRaised{}, threadRegistered{}, gpuSchedulingRaised{}, gpuThreadRaised{};
+    bool processRaised{}, threadRegistered{}, gpuSchedulingRaised{}, gpuThreadRaised{}, powerThrottlingOff{};
     std::uint32_t previousClass{};   // GetPriorityClass before raising
     long gpuSchedulingStatus{};      // NTSTATUS of D3DKMTSetProcessSchedulingPriorityClass (0 success)
     long gpuThreadResult{};          // HRESULT of SetGPUThreadPriority(7)

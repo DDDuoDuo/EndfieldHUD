@@ -87,7 +87,10 @@ DesktopClockArtworkPlan::DesktopClockArtworkPlan(){artwork_.seconds.fontSize=22;
 Rect DesktopClockArtworkPlan::indicatorRect(unsigned index){require(index<5,"Invalid clock style index");return {14+double(index)*64,124,56,18};}
 std::optional<unsigned>DesktopClockArtworkPlan::indicatorAt(Point p){for(unsigned i=0;i<5;++i)if(const auto r=indicatorRect(i);p.x>=r.x&&p.x<r.x+r.width&&p.y>=r.y&&p.y<r.y+r.height)return i;return {};}
 std::string_view DesktopClockArtworkPlan::workBadge(DesktopWorkPhase phase)noexcept{return phase==DesktopWorkPhase::running?"WORK MODE / ACTIVE":phase==DesktopWorkPhase::paused?"WORK MODE / PAUSED":"";}
-std::string DesktopClockArtworkPlan::footerText(std::string_view shortcut,std::string_view close){return "ESC / "+std::string(shortcut)+" / "+std::string(close);}
+std::string DesktopClockArtworkPlan::footerText(std::string_view shortcut,std::string_view close){
+    // Windows: with opening by hotkey switched off there is no shortcut to name.
+    if(shortcut.empty())return "ESC / "+std::string(close);
+    return "ESC / "+std::string(shortcut)+" / "+std::string(close);}
 bool DesktopClockArtworkPlan::update(DesktopClockStyle style,const std::optional<DesktopClockReading>&reading){
     require(static_cast<unsigned>(style)<5,"Invalid clock style");if(previousStyle_==style&&previousReading_==reading)return false;
     auto&o=artwork_;const auto value=reading?reading->time:"--:--:--";o.time={{22,20,296,39},32,ChromeTextAlignment::right,ChromeFontRole::monospacedDigitSystem,true,false,value};

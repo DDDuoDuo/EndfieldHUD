@@ -24,6 +24,9 @@ void PresentationPriority::raise(native::Renderer* renderer) noexcept {
     const auto process = GetCurrentProcess();
     report_.previousClass = GetPriorityClass(process);
     report_.processRaised = report_.previousClass == NORMAL_PRIORITY_CLASS && SetPriorityClass(process, ABOVE_NORMAL_PRIORITY_CLASS) != FALSE;
+    // High QoS while shown: no execution-speed throttling (EcoQoS).
+    PROCESS_POWER_THROTTLING_STATE throttling{PROCESS_POWER_THROTTLING_CURRENT_VERSION, PROCESS_POWER_THROTTLING_EXECUTION_SPEED, 0};
+    report_.powerThrottlingOff = SetProcessInformation(process, ProcessPowerThrottling, &throttling, sizeof(throttling)) != FALSE;
     DWORD index = 0;
     task_ = AvSetMmThreadCharacteristicsW(L"Games", &index);
     taskIndex_ = index;
@@ -42,9 +45,14 @@ void PresentationPriority::restore() noexcept {
     if (report_.gpuThreadRaised && renderer_) (void)renderer_->setGpuThreadPriority(0);
     if (report_.gpuSchedulingRaised) if (const auto entry = schedulingClassEntry()) (void)entry(process, schedulingNormal);
     if (task_) { AvRevertMmThreadCharacteristics(task_); task_ = nullptr; }
+    if (report_.powerThrottlingOff) {
+        // Back to the system's own power management for the process.
+        PROCESS_POWER_THROTTLING_STATE throttling{PROCESS_POWER_THROTTLING_CURRENT_VERSION, 0, 0};
+        (void)SetProcessInformation(process, ProcessPowerThrottling, &throttling, sizeof(throttling));
+    }
     // Only undo our own change: a class set meanwhile by the user stays.
     if (report_.processRaised && GetPriorityClass(process) == ABOVE_NORMAL_PRIORITY_CLASS) SetPriorityClass(process, NORMAL_PRIORITY_CLASS);
-    report_.processRaised = report_.threadRegistered = report_.gpuSchedulingRaised = report_.gpuThreadRaised = false;
+    report_.processRaised = report_.threadRegistered = report_.gpuSchedulingRaised = report_.gpuThreadRaised = report_.powerThrottlingOff = false;
     renderer_ = nullptr;
 }
 } // namespace endfield::app

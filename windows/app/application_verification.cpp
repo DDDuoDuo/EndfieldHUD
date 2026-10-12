@@ -103,7 +103,7 @@ int Application::Impl::runContentionTrace(){
         const bool raised=block%2==1;auto&out=series[raised];
         if(raised){presentationPriority.raise(&renderer);const auto&r=presentationPriority.report();
             raisedReport=Json::Object{{"processRaised",r.processRaised},{"previousPriorityClass",std::int64_t(r.previousClass)},{"mmcssGamesTask",r.threadRegistered},
-                {"gpuSchedulingClassHigh",r.gpuSchedulingRaised},{"gpuSchedulingStatus",std::int64_t(r.gpuSchedulingStatus)},{"gpuThreadPriority7",r.gpuThreadRaised},{"gpuThreadPriorityResult",std::int64_t(r.gpuThreadResult)}};}
+                {"powerThrottlingOff",r.powerThrottlingOff},{"gpuSchedulingClassHigh",r.gpuSchedulingRaised},{"gpuSchedulingStatus",std::int64_t(r.gpuSchedulingStatus)},{"gpuThreadPriority7",r.gpuThreadRaised},{"gpuThreadPriorityResult",std::int64_t(r.gpuThreadResult)}};}
         else presentationPriority.restore();
         double next=clock();
         for(unsigned frame=0;frame<150;++frame){

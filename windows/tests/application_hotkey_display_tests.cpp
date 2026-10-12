@@ -121,6 +121,8 @@ void displayAdaptation(const ehud::data::Json& fixture) {
     bool rejected{};
     try { settings.contentScale = 0; (void)DesktopChromeLayout::make(settings, Matrix4{}, Matrix4{}); } catch (const std::exception&) { rejected = true; }
     check(rejected, "A non-positive adaptation is rejected");
+    check(DesktopClockArtworkPlan::footerText("CTRL + `", "Click outside to close") == "ESC / CTRL + ` / Click outside to close" &&
+        DesktopClockArtworkPlan::footerText("", "Click outside to close") == "ESC / Click outside to close", "The footer names the shortcut only while opening by hotkey is on");
 }
 
 void settingsToggle() {

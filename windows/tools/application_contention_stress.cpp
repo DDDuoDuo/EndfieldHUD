@@ -109,16 +109,24 @@ int wmain(int argc, wchar_t** argv) {
             while (running.load(std::memory_order_relaxed)) { for (unsigned k = 0; k < 4096; ++k) x = std::sqrt(x * 1.000001 + 0.5); ++local; }
             work.fetch_add(local + static_cast<std::uint64_t>(x > 1e300), std::memory_order_relaxed);
         });
-        std::uint64_t frames{}; double frameSeconds{};
+        std::uint64_t frames{}; double frameSeconds{}; unsigned iterationsUsed{};
         const auto stopRequested = [&] { return Clock::now() >= end || (!stop.empty() && std::filesystem::exists(stop)); };
         if (gpu) {
             Gpu device; device.draws = draws;
-            // Calibrate one frame to about the target time, then keep two in flight.
-            for (unsigned attempt = 0; attempt < 12; ++attempt) {
-                const auto a = Clock::now(); device.frame(0); device.wait(device.queries[0].Get()); const double ms = seconds(a, Clock::now()) * 1000;
-                if (ms > gpuTarget * .8 && ms < gpuTarget * 1.25) break;
-                device.iterations = static_cast<unsigned>(std::clamp(device.iterations * gpuTarget / std::max(.1, ms), 16., double(1 << 20)));
+            // Warm the pipeline (the first frames include driver work), then
+            // calibrate the mean of two frames to about the target time with a
+            // bounded step, and keep two frames in flight.
+            for (unsigned warm = 0; warm < 3; ++warm) { device.frame(0); device.wait(device.queries[0].Get()); }
+            double calibrated{};
+            for (unsigned attempt = 0; attempt < 24 && !stopRequested(); ++attempt) {
+                const auto a = Clock::now();
+                for (unsigned n = 0; n < 2; ++n) { device.frame(0); device.wait(device.queries[0].Get()); }
+                calibrated = seconds(a, Clock::now()) * 500;
+                if (calibrated > gpuTarget * .85 && calibrated < gpuTarget * 1.2) break;
+                const double step = std::clamp(gpuTarget / std::max(.01, calibrated), .125, 8.);
+                device.iterations = static_cast<unsigned>(std::clamp(device.iterations * step, double(draws), double(1u << 28)));
             }
+            iterationsUsed = device.iterations;
             unsigned slot = 0; device.frame(0); device.frame(1);
             while (!stopRequested()) {
                 const auto a = Clock::now(); device.wait(device.queries[slot].Get()); device.frame(slot); slot ^= 1u; frameSeconds += seconds(a, Clock::now()); ++frames;
@@ -131,7 +139,7 @@ int wmain(int argc, wchar_t** argv) {
         if (!report.empty()) {
             std::ofstream out(report, std::ios::binary);
             out << "{\"seconds\":" << elapsed << ",\"cpuThreads\":" << threads << ",\"cpuPriority\":" << priority << ",\"gpu\":" << (gpu ? "true" : "false")
-                << ",\"gpuDrawsPerFrame\":" << draws << ",\"gpuFrames\":" << frames << ",\"gpuFrameMilliseconds\":" << (frames ? frameSeconds * 1000 / frames : 0) << ",\"cpuWorkUnits\":" << work.load() << "}\n";
+                << ",\"gpuDrawsPerFrame\":" << draws << ",\"gpuIterations\":" << iterationsUsed << ",\"gpuFrames\":" << frames << ",\"gpuFrameMilliseconds\":" << (frames ? frameSeconds * 1000 / frames : 0) << ",\"cpuWorkUnits\":" << work.load() << "}\n";
         }
         std::printf("stress finished after %.1f s: %u CPU threads, %llu GPU frames\n", elapsed, threads, static_cast<unsigned long long>(frames));
         return 0;

@@ -1543,7 +1543,7 @@ void Application::Impl::applyConfiguration(double time){
     headerClock.setFormat(configuration.string("clockFormat")=="twelveHour"?modules::HUDClockFormat::twelveHour:modules::HUDClockFormat::twentyFourHour,time);
     const auto previousClockStyle=chromeContent.style;
     const auto clock=configuration.string("clockStyle");chromeContent.style=clock=="split"?source::DesktopClockStyle::split:clock=="dial"?source::DesktopClockStyle::dial:clock=="rail"?source::DesktopClockStyle::rail:clock=="stacked"?source::DesktopClockStyle::stacked:source::DesktopClockStyle::digital;
-    chromeContent.localizedClose=core::localized("Click outside to close","点击外侧关闭",watchAppearance.language);chromeContent.uppercaseShortcut=modules::settingsShortcutTitle(modules::settingsShortcut(configuration));
+    chromeContent.localizedClose=core::localized("Click outside to close","点击外侧关闭",watchAppearance.language);chromeContent.uppercaseShortcut=summonHotkeyEnabled()?modules::settingsShortcutTitle(modules::settingsShortcut(configuration)):std::string{};
     if(chrome){chrome->setAppearance({watchAppearance.dark,watchAppearance.dark?a:source::sourceBlackBlend(a,.35)});updateClock();if(chromeContent.style!=previousClockStyle)clockStyleChanged(previousClockStyle,time);}
     updateCenterLogo(); // setDesktopCenterLogo(configuration.centerLogo, revision)
     if(tray&&settingsUI&&!settingsUI->controller().capturingShortcut()&&!quitRequested)applySummonShortcut(false);
