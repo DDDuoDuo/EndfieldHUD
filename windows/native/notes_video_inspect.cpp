@@ -1,4 +1,5 @@
 #include "native/notes_image_decoder.hpp"
+#include "native/notes_video_colour.hpp"
 #ifdef _WIN32
 #include <mfapi.h>
 #include <mfidl.h>
@@ -27,7 +28,7 @@ void need(bool value,const char*message){if(!value)throw std::invalid_argument(m
 // this frame-size/color conversion; no paused Media Engine tick is assumed.
 class VideoPoster final:public NativeNotesImageDecoder::Sequence {
     NotesImageAccess access_;Platform platform_;ComPtr<IMFSourceReader>reader_;
-    NotesImageInfo info_;unsigned width_{},height_{},rotation_{};bool decoded_{};
+    NotesImageInfo info_;unsigned width_{},height_{},rotation_{};bool decoded_{},coreMedia709_{};
     void outputType(){
         ComPtr<IMFMediaType>actual;checked(reader_->GetCurrentMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM,&actual),"Read negotiated poster output");
         GUID subtype{};UINT32 width{},height{};checked(actual->GetGUID(MF_MT_SUBTYPE,&subtype),"Read poster pixel format");checked(MFGetAttributeSize(actual.Get(),MF_MT_FRAME_SIZE,&width,&height),"Read poster output dimensions");
@@ -45,6 +46,9 @@ public:
         UINT32 width{},height{};checked(MFGetAttributeSize(native.Get(),MF_MT_FRAME_SIZE,&width,&height),"Read native poster dimensions");
         need(width&&height&&width<=65536&&height<=65536,"Invalid native poster dimensions");
         rotation_=MFGetAttributeUINT32(native.Get(),MF_MT_VIDEO_ROTATION,0);need(rotation_==0||rotation_==90||rotation_==180||rotation_==270,"Unsupported movie poster rotation");
+        // AVAssetImageGenerator hands the Mac poster of a BT.709 movie (tagged
+        // or untagged) out in CoreMedia 709 space; it shows that reading.
+        coreMedia709_=notesCoreMedia709(MFGetAttributeUINT32(native.Get(),MF_MT_TRANSFER_FUNCTION,MFVideoTransFunc_Unknown),MFGetAttributeUINT32(native.Get(),MF_MT_VIDEO_PRIMARIES,MFVideoPrimaries_Unknown));
         const auto bound=modules::NotesMediaLayout::decodeDimension(request.maximumDimension);const auto ratio=std::min(1.,double(bound)/std::max(width,height));
         width_=std::max(1u,static_cast<unsigned>(std::lround(width*ratio)));height_=std::max(1u,static_cast<unsigned>(std::lround(height*ratio)));
         ComPtr<IMFMediaType>output;checked(MFCreateMediaType(&output),"Create bounded poster media type");
@@ -87,6 +91,7 @@ public:
                 const auto at=(std::size_t(dy)*frame.width+dx)*4;frame.straightRGBA[at]=source[x*4+2];frame.straightRGBA[at+1]=source[x*4+1];frame.straightRGBA[at+2]=source[x*4];frame.straightRGBA[at+3]=255;
             }
         }
+        if(coreMedia709_){notesApplyCoreMedia709(frame.straightRGBA.data(),std::size_t(frame.width)*frame.height);frame.coreMedia709=true;}
         decoded_=true;return frame;
     }
 };

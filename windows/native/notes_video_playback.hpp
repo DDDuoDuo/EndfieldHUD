@@ -33,7 +33,10 @@ struct NotesVideoRecord {
     // Original dimensions are metadata; width/height above are bounded output.
     unsigned nativeWidth{},nativeHeight{};HRESULT posterError{S_OK};
 };
-struct NotesVideoStats {std::size_t visible{},engines{};std::uint64_t notices{},events{},transfers{},ticks{};};
+struct NotesVideoStats {std::size_t visible{},engines{};std::uint64_t notices{},events{},transfers{},ticks{};
+    std::uint64_t coreMedia709Frames{}; // played BT.709 frames given the Mac's CoreMedia 709 reading
+    std::size_t readingScratchBytes{};  // that pass's scratch targets (none while no movie plays)
+};
 // Bounded native status only; no paths, media contents or callback pointers.
 struct NotesVideoDiagnostics {
     // Slots 0..31 are native events 0..31; slots 32..63 are 1000..1031.

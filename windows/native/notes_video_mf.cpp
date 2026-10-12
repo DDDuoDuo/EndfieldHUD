@@ -70,6 +70,11 @@ public:Engine(std::shared_ptr<Platform>platform,std::shared_ptr<void>device,Owne
     NotesVideoDiagnostics diagnostics()const override{NotesVideoDiagnostics out;for(std::size_t i=0;i<out.eventCounts.size();++i)out.eventCounts[i]=status_->events[i].load(std::memory_order_relaxed);out.lastEvent=status_->lastEvent.load(std::memory_order_relaxed);if(engine_){out.currentTime=engine_->GetCurrentTime();out.readyState=engine_->GetReadyState();out.networkState=engine_->GetNetworkState();out.hasVideo=engine_->HasVideo()!=FALSE;out.paused=engine_->IsPaused()!=FALSE;out.seeking=engine_->IsSeeking()!=FALSE;ComPtr<IMFMediaError>error;if(SUCCEEDED(engine_->GetError(&error))&&error){out.errorCode=error->GetErrorCode();out.error=error->GetExtendedErrorCode();}}return out;}
 };
 }
-NativeNotesVideoPlayback::Factory makeNotesMFVideoFactory(){auto platform=std::make_shared<Platform>();return [platform](std::shared_ptr<void>device,NativeNotesVideoPlayback::Notify callback){return std::make_unique<Engine>(platform,std::move(device),std::move(callback));};}
+// Media Foundation starts with the first movie engine and shuts down after
+// the last one stopped (both on the UI thread that owns the engines). Its
+// work-queue threads outlive every engine until MFShutdown: measured on the
+// test laptop, a process kept 34 more threads after playing one movie while
+// the platform stayed started.
+NativeNotesVideoPlayback::Factory makeNotesMFVideoFactory(){auto shared=std::make_shared<std::weak_ptr<Platform>>();return [shared](std::shared_ptr<void>device,NativeNotesVideoPlayback::Notify callback){auto platform=shared->lock();if(!platform){platform=std::make_shared<Platform>();*shared=platform;}return std::make_unique<Engine>(std::move(platform),std::move(device),std::move(callback));};}
 } // namespace endfield::native::detail
 #endif

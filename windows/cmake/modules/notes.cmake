@@ -44,6 +44,11 @@ foreach(owner hud_archive_service hud_notes_preview)
     target_link_libraries(${owner} PRIVATE hud_notes_relink)
   endif()
 endforeach()
+# Notes runs those ledger writes on the shared UtilityExecutor once the host
+# hands it over (NotesPreview::setUtilityExecutor).
+if(TARGET hud_notes_preview AND TARGET hud_utility)
+  target_link_libraries(hud_notes_preview PRIVATE hud_utility)
+endif()
 if(BUILD_TESTING)
   add_executable(notes_relink_ledger_tests tests/notes_relink_ledger_tests.cpp)
   target_link_libraries(notes_relink_ledger_tests PRIVATE hud_notes_relink hud_mac_import)
@@ -71,6 +76,9 @@ if(WIN32)
   target_sources(hud_native PRIVATE native/notes_managed_image.cpp)
   # UI Automation peers of the projected Notes/Archive/Projection controls.
   target_sources(hud_native PRIVATE native/notes_automation.cpp)
+  # The Mac's CoreMedia 709 reading of BT.709 movie posters and played frames
+  # (Notes, Archive and Projection share this decoder and frame server).
+  target_sources(hud_native PRIVATE native/notes_video_colour.cpp)
   target_link_libraries(hud_native PRIVATE hud_shelf_transfer hud_notes_paste shell32 uiautomationcore oleaut32)
 
   if(BUILD_TESTING)
@@ -131,7 +139,8 @@ if(WIN32)
       endif()
     endif()
     if(TARGET notes_video_poster_tests)
-      add_test(NAME notes_video_poster_contracts COMMAND notes_video_poster_tests "${ehud_notes_movie}")
+      # The Media Assembly area's pinned CoreMedia 709 oracle (BT.709 posters).
+      add_test(NAME notes_video_poster_contracts COMMAND notes_video_poster_tests "${ehud_notes_movie}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/media-assembly-video-colour-source.json")
     endif()
     if(TARGET notes_video_decode_tests)
       add_test(NAME notes_video_decode_contracts COMMAND notes_video_decode_tests "${CMAKE_CURRENT_SOURCE_DIR}/native/hud.hlsl" "${ehud_notes_movie}")

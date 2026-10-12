@@ -2,6 +2,7 @@
 #ifdef _WIN32
 #include "core/data/data_store.hpp"
 #include "native/notes_image_decoder.hpp"
+#include "native/notes_video_colour.hpp"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -32,12 +33,17 @@ struct NativeNotesVideoPlayback::Impl {
         std::unique_ptr<Engine>engine;std::shared_ptr<RendererMediaTexture>poster,live;
         std::string posterID,liveID;std::size_t slot{8};std::uint64_t serial{};
         bool metadataReady{},posterReady{},posterSettled{},posterPending{},framePending{},needsEngine{},posterInstalled{},liveInstalled{},firstFrameSeen{},didPlay{},positionRestored{},seekFrameReady{};
+        // A BT.709 movie (its worker poster says so): played frames take the Mac's CoreMedia 709 reading.
+        bool coreMedia709{};
         std::uint64_t liveGeneration{},posterGeneration{},acceptedPosterRevision{};std::vector<std::string>retiredTextures;
         std::optional<double>releasePoster,nextProgress,posterDeadline,seekDeadline;
     };
     Renderer&renderer;DWORD thread{GetCurrentThreadId()};std::shared_ptr<void>device;Factory factory;
     std::shared_ptr<Notices>notice=std::make_shared<Notices>();std::map<std::string,Record,std::less<>>records;
     std::vector<Record*>visible;std::array<Record*,8>engines{};std::size_t pendingCount{},pendingCursor{};std::vector<NotesVideoRequest>requests;std::uint64_t serial{},transfers{},ticks{};double time{};
+    // The CoreMedia 709 reading of played BT.709 frames (created on the first
+    // one; its scratch targets are dropped once no movie plays).
+    std::unique_ptr<NotesCoreMedia709Pass>reading;
     Impl(Renderer&r,NotesVideoRoute route,Factory f):renderer(r),device(r.mediaDevice()),factory(f?std::move(f):detail::makeNotesMFVideoFactory()){routeValid(route);notice->route=route;visible.reserve(8);requests.reserve(8);}
     ~Impl(){ {std::lock_guard lock(notice->mutex);notice->stopped=true;notice->route={};}for(auto&[key,r]:records){(void)key;if(r.engine)r.engine->stop();r.engine.reset();try{releaseTarget(r.liveID,r.live,r.liveInstalled);releaseTarget(r.posterID,r.poster,r.posterInstalled);for(const auto&id:r.retiredTextures)renderer.removeTexture(id);}catch(...){}} }
     void check()const{need(GetCurrentThreadId()==thread,"Video owner requires its UI thread");}
@@ -89,6 +95,13 @@ struct NativeNotesVideoPlayback::Impl {
             try{(*r.request.frameFilter)(target->targetSurface());}
             catch(...){fail(r,E_FAIL);return false;}
         }
+        // The Mac's AVPlayerLayer shows a BT.709 movie in its CoreMedia 709
+        // reading, like its poster. A request's own frame filter (Media
+        // Assembly's compositor) applies its reading itself.
+        else if(!poster&&r.coreMedia709){
+            try{if(!reading)reading=std::make_unique<NotesCoreMedia709Pass>();reading->apply(target->targetSurface());}
+            catch(...){fail(r,E_FAIL);return false;}
+        }
         renderer.commitMediaTexture(*target);++transfers;++r.frameRevision;return true;
     }
     template<class F>bool guarded(Record&r,F&&operation){
@@ -127,7 +140,7 @@ bool NativeNotesVideoPlayback::setPoster(std::string_view key,std::uint64_t revi
     need(posterRevision>0,"Poster completion requires an explicit revision");
     const auto bound=modules::NotesMediaLayout::decodeDimension(r->request.maximumDimension);
     if(SUCCEEDED(result))need(frame&&frame->index==0&&frame->width&&frame->height&&frame->width<=bound&&frame->height<=bound&&frame->straightRGBA.size()==std::size_t(frame->width)*frame->height*4,"Invalid immutable worker poster");
-    r->acceptedPosterRevision=posterRevision;r->posterError=result;r->posterSettled=true;
+    r->acceptedPosterRevision=posterRevision;r->posterError=result;r->posterSettled=true;r->coreMedia709=SUCCEEDED(result)&&frame&&frame->coreMedia709;
     if(SUCCEEDED(result)){
         std::string nextID;std::shared_ptr<RendererMediaTexture>target;
         try{
@@ -207,9 +220,11 @@ bool NativeNotesVideoPlayback::requiresFrames()const noexcept{for(const auto*r:i
 std::optional<double>NativeNotesVideoPlayback::nextWakeTime()const{const auto&i=*impl_;i.check();std::optional<double>result;for(const auto&[key,r]:i.records){(void)key;for(const auto v:{r.nextProgress,r.releasePoster})if(v&&(!result||*v<*result))result=v;}return result;}
 const NotesVideoRecord*NativeNotesVideoPlayback::find(std::string_view key)const noexcept{return impl_->find(key);}
 bool NativeNotesVideoPlayback::retire(std::string_view key){auto&i=*impl_;i.check();const auto found=i.records.find(key);if(found==i.records.end())return false;auto&r=found->second;need(!r.visible,"Hide video before retiring it");r.releasePoster.reset();Impl::texture(r,{});if(!i.collect(r))return false;i.records.erase(found);return true;}
-bool NativeNotesVideoPlayback::collectRetired(){auto&i=*impl_;i.check();bool done=true;for(auto&[key,r]:i.records){(void)key;if(!i.collect(r))done=false;}return done;}
+bool NativeNotesVideoPlayback::collectRetired(){auto&i=*impl_;i.check();bool done=true;for(auto&[key,r]:i.records){(void)key;if(!i.collect(r))done=false;}
+    // No movie plays: the reading keeps no scratch targets.
+    if(i.reading&&std::none_of(i.records.begin(),i.records.end(),[](const auto&entry){return bool(entry.second.engine);}))i.reading->release();return done;}
 void NativeNotesVideoPlayback::setRoute(NotesVideoRoute r){auto&i=*impl_;i.check();routeValid(r);std::lock_guard lock(i.notice->mutex);i.notice->route=r;i.notice->posted=false;i.notice->postLocked();}
-NotesVideoStats NativeNotesVideoPlayback::stats()const{const auto&i=*impl_;i.check();NotesVideoStats out;out.visible=i.visible.size();for(const auto&[key,r]:i.records){(void)key;if(r.engine)++out.engines;}out.transfers=i.transfers;out.ticks=i.ticks;{std::lock_guard lock(i.notice->mutex);out.events=i.notice->events;out.notices=i.notice->notices;}return out;}
+NotesVideoStats NativeNotesVideoPlayback::stats()const{const auto&i=*impl_;i.check();NotesVideoStats out;out.visible=i.visible.size();for(const auto&[key,r]:i.records){(void)key;if(r.engine)++out.engines;}out.transfers=i.transfers;out.ticks=i.ticks;if(i.reading){out.coreMedia709Frames=i.reading->passes();out.readingScratchBytes=i.reading->scratchBytes();}{std::lock_guard lock(i.notice->mutex);out.events=i.notice->events;out.notices=i.notice->notices;}return out;}
 NotesVideoDiagnostics NativeNotesVideoPlayback::diagnostics(std::string_view key)const{auto&i=*impl_;i.check();const auto*r=i.find(key);return r&&r->engine?r->engine->diagnostics():NotesVideoDiagnostics{};}
 } // namespace endfield::native
 #endif

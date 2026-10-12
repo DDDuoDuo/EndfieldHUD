@@ -1,7 +1,14 @@
 #include "native/notes_image_decoder.hpp"
+#include "native/notes_video_colour.hpp"
+#include "core/data/json.hpp"
 #include "core/shell_packet.hpp"
 #ifdef _WIN32
 #include <array>
+#include <cmath>
+#include <filesystem>
+#include <sstream>
+#include <string>
+#include <vector>
 #include <fstream>
 #include <iostream>
 #include <objbase.h>
@@ -85,7 +92,38 @@ void run(const std::filesystem::path&path){
     check(completion.frame->straightRGBA[at]>220&&!IsWindowVisible(window.value),"Borrowed poster survives worker cleanup without visible UI, playback or audio");
 }
 }
-int wmain(int argc,wchar_t**argv){const auto apartment=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);if(FAILED(apartment))return 1;int result{};try{check(argc==2,"Pass only the authored silent MP4 fixture");run(argv[1]);std::cout<<"PASS "<<checks<<" worker video poster checks\n";}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';result=1;}CoUninitialize();return result;}
+// The Mac's CoreMedia 709 reading of BT.709 movie posters (AVAssetImageGenerator
+// in NotesMediaPresentation, shared by Notes, Archive and Projection), against
+// the Media Assembly area's pinned oracle: owned synthetic H.264 movies (BT.709
+// tagged and untagged) whose patch k holds grey k, with the Mac preview of each.
+std::vector<std::uint8_t> base64(std::string_view text){std::vector<std::uint8_t>out;unsigned bits{},value{};for(const char c:text){int v=-1;if(c>='A'&&c<='Z')v=c-'A';else if(c>='a'&&c<='z')v=c-'a'+26;else if(c>='0'&&c<='9')v=c-'0'+52;else if(c=='+')v=62;else if(c=='/')v=63;else if(c=='=')break;else continue;value=(value<<6)|unsigned(v);bits+=6;if(bits>=8){bits-=8;out.push_back(static_cast<std::uint8_t>((value>>bits)&0xff));}}return out;}
+void coreMedia709(const std::filesystem::path&fixture){
+    const auto&codes=native::notesCoreMedia709Codes();check(codes[0]==0&&codes[255]==255&&codes[128]==139,"CoreMedia 709 reads decoded mid grey 128 as 139 like the Mac preview");
+    for(unsigned k=1;k<256;++k)check(codes[k]>=codes[k-1],"The reading keeps the grey ramp in order");
+    check(native::notesCoreMedia709(0,0)&&native::notesCoreMedia709(MFVideoTransFunc_709,MFVideoPrimaries_BT709)&&!native::notesCoreMedia709(MFVideoTransFunc_sRGB,MFVideoPrimaries_BT709)&&!native::notesCoreMedia709(MFVideoTransFunc_709,MFVideoPrimaries_BT2020),"Only BT.709 or untagged movies take the reading");
+    std::ifstream in(fixture,std::ios::binary);std::stringstream text;text<<in.rdbuf();check(bool(in),"Read the pinned CoreMedia 709 oracle");const auto oracle=ehud::data::Json::parse(text.str(),8*1024*1024);
+    check(oracle["size"].number()==128&&oracle["patch"].number()==8&&oracle["movies"].array().size()==2,"Oracle movies are 128-pixel grey patch charts");
+    const auto root=std::filesystem::temp_directory_path()/("endfield-notes-poster-709-"+std::to_string(GetCurrentProcessId())+"-"+std::to_string(GetTickCount64()));std::filesystem::create_directories(root);
+    struct Cleanup{std::filesystem::path p;~Cleanup(){std::error_code e;std::filesystem::remove_all(p,e);}}cleanup{root};
+    Window window;constexpr UINT message=WM_APP+258;unsigned generation=40;
+    for(const auto&movie:oracle["movies"].array()){
+        const auto name=movie["name"].string();const auto bytes=base64(movie["mp4"].string());check(bytes.size()>256,"Oracle movie bytes decode");
+        const auto file=root/(name+".mp4");{std::ofstream out(file,std::ios::binary);out.write(reinterpret_cast<const char*>(bytes.data()),static_cast<std::streamsize>(bytes.size()));check(bool(out),"Write the owned oracle movie to its temporary directory");}
+        ++generation;native::NativeNotesImageDecoder decoder([](const auto&r){return native::NotesImageAccess{std::filesystem::u8path(r.path),r.accessLease};},{window.value,message,generation},[](const auto&r,auto access){return std::make_unique<DiagnosticSequence>(r,std::move(access));});
+        const std::array request{native::NotesImageRequest{"oracle."+name,pathUTF8(std::filesystem::absolute(file)),1,512,true,{},false,true}};
+        decoder.setVisible(request);std::vector<native::NotesImageCompletion>result;const auto deadline=GetTickCount64()+10000;
+        while(result.empty()){result=decoder.drain(generation);if(!result.empty())break;const auto time=GetTickCount64();check(time<deadline,"Oracle poster finishes");MsgWaitForMultipleObjectsEx(0,nullptr,static_cast<DWORD>(deadline-time),QS_POSTMESSAGE,MWMO_INPUTAVAILABLE);MSG event{};while(PeekMessageW(&event,window.value,message,message,PM_REMOVE)){}}
+        check(SUCCEEDED(result.front().result)&&result.front().frame,"The oracle movie has a poster");const auto&frame=*result.front().frame;
+        check(frame.width==128&&frame.height==128&&frame.coreMedia709,"A BT.709 movie's poster (tagged or untagged) carries the CoreMedia 709 reading");
+        int worst{};unsigned moved{};const auto&preview=movie["preview"].array();const auto&raw=movie["raw"].array();
+        for(unsigned k=0;k<256;++k){const unsigned x0=(k%16)*8+2,y0=(k/16)*8+2;double sum{};for(unsigned y=y0;y<y0+4;++y)for(unsigned x=x0;x<x0+4;++x)sum+=frame.straightRGBA[(std::size_t(y)*128+x)*4];
+            const auto mean=static_cast<int>(std::lround(sum/16));worst=std::max(worst,std::abs(mean-static_cast<int>(preview[k].number())));moved+=std::abs(static_cast<int>(preview[k].number())-static_cast<int>(raw[k].number()))>=8;}
+        std::cout<<"Poster "<<name<<" worst difference from the Mac preview: "<<worst<<"\n";
+        check(worst<=2&&moved>=8,"The poster matches the Mac's CoreMedia 709 preview within two levels where the decoded values differ by eight or more");
+        decoder.hide();const auto worker=decoder.duplicateWorkerHandle();decoder.stop();check(WaitForSingleObject(worker,10000)==WAIT_OBJECT_0,"The oracle worker stops");CloseHandle(worker);
+    }
+}
+int wmain(int argc,wchar_t**argv){const auto apartment=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);if(FAILED(apartment))return 1;int result{};try{check(argc==2||argc==3,"Pass the authored silent MP4 fixture and optionally the CoreMedia 709 oracle");run(argv[1]);if(argc==3)coreMedia709(argv[2]);std::cout<<"PASS "<<checks<<" worker video poster checks\n";}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';result=1;}CoUninitialize();return result;}
 #else
 int main(){return 0;}
 #endif

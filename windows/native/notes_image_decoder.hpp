@@ -22,6 +22,10 @@ struct NotesImageInfo {
 struct NotesImageFrame {
     unsigned width{},height{},index{};
     std::vector<std::uint8_t>straightRGBA; // immutable once published, sRGB
+    // A movie poster of a BT.709 movie: its pixels already carry the Mac's
+    // CoreMedia 709 reading (native/notes_video_colour.hpp), and the movie's
+    // played frames take the same reading.
+    bool coreMedia709{};
 };
 struct NotesImageRequest {
     std::string key,path;std::uint64_t revision{};int maximumDimension{512};
@@ -62,6 +66,7 @@ struct NotesImageDecoderStats {
     std::uint64_t requests{},decodes{},notices{},discarded{},wakeups{};
     bool inFlight{},stopped{};
     std::size_t pending{},inspectionCompleted{}; // lightweight waiting metadata / ready import results
+    bool workerStarted{}; // the worker starts with the first job (none while no media is shown)
 };
 // App-lifetime shared serial decoder: no window, timer, polling or renderer.
 // All facade calls are owner-thread, except immutable result use. The caller
