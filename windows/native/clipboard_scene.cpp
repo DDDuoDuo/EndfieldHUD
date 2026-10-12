@@ -90,6 +90,20 @@ Json::Array rounded(Rect r,double c){const double x=r.x,y=r.y,w=r.width,h=r.heig
 Json::Array ellipse(Rect r){const double x=r.x,y=r.y,w=r.width/2,h=r.height/2,k=.5522847498;return {cmd("move",{{x+2*w,y+h}}),cmd("cubic",{{x+2*w,y+h+k*h},{x+w+k*w,y+2*h},{x+w,y+2*h}}),cmd("cubic",{{x+w-k*w,y+2*h},{x,y+h+k*h},{x,y+h}}),cmd("cubic",{{x,y+h-k*h},{x+w-k*w,y},{x+w,y}}),cmd("cubic",{{x+w+k*w,y},{x+2*w,y+h-k*h},{x+2*w,y+h}}),cmd("close")};}
 Json shape(std::string id,Rect r,Json::Array path,std::optional<Color>fill={},std::optional<Color>stroke={},double width=1,bool round=false){auto out=layer(std::move(id),r,"shape");out["shape"]=Json::Object{{"path",std::move(path)},{"fillColor",fill?color(*fill):Json{}},{"strokeColor",stroke?color(*stroke):Json{}},{"lineWidth",width},{"lineCap",round?"round":"butt"},{"lineJoin",round?"round":"miter"},{"miterLimit",10},{"fillRule","non-zero"}};return out;}
 Json label(std::string id,Rect r,std::string value,double size,Color ink,double scale,const char*weight="regular",const char*align="left",bool wrap=false){validText(value,ClipboardHistory::maximum_text_bytes);auto out=layer(std::move(id),r,"text");out["contentsScale"]=std::min(4.,std::ceil(std::clamp(scale,1.,4.)*1.35));out["text"]=Json::Object{{"string",std::move(value)},{"fontSize",size},{"font",Json::Object{{"postScriptName",std::string_view(weight)=="semibold"?".AppleSystemUIFontDemi":std::string_view(weight)=="medium"?".AppleSystemUIFontMedium":".AppleSystemUIFont"},{"familyName",".AppleSystemUIFont"},{"pointSize",size},{"symbolicTraits",std::string_view(weight)=="semibold"?2:0}}},{"foregroundColor",color(ink)},{"alignment",align},{"wrapped",wrap},{"truncation",wrap?"none":"end"}};return out;}
+// The row-space rectangle a static run actually paints: each child's own
+// bounds, or for a path shape with empty bounds its points, widened by its
+// stroke, plus a 1 pt margin, within the 376x37 row. A static group is
+// rasterized at this size instead of the whole row (no pixel changes: the
+// row plate, outline and feedback surfaces keep the full row).
+Rect inkBounds(const Json::Array&nodes,std::size_t begin,std::size_t end){double left=1e9,top=1e9,right=-1e9,bottom=-1e9;
+    const auto include=[&](double x0,double y0,double x1,double y1){left=std::min(left,x0);top=std::min(top,y0);right=std::max(right,x1);bottom=std::max(bottom,y1);};
+    for(auto n=begin;n<end;++n){const auto&node=nodes[n];const auto&p=node["position"].array();const double x=p[0].number(),y=p[1].number();const auto&b=node["bounds"].array();
+        if(b[2].number()>0&&b[3].number()>0)include(x,y,x+b[2].number(),y+b[3].number());
+        if(node["shape"].isObject()){const auto&shape=node["shape"];const double stroke=shape["strokeColor"].isNull()?0:std::max(1.,shape["lineWidth"].number()*2);
+            for(const auto&command:shape["path"].array())for(const auto&point:command["points"].array()){const double px=x+point.array()[0].number(),py=y+point.array()[1].number();include(px-stroke,py-stroke,px+stroke,py+stroke);}}}
+    if(right<left)return {0,0,376,37};
+    const double x0=std::max(0.,std::floor(left-1)),y0=std::max(0.,std::floor(top-1)),x1=std::min(376.,std::ceil(right+1)),y1=std::min(37.,std::ceil(bottom+1));
+    return x1>x0&&y1>y0?Rect{x0,y0,x1-x0,y1-y0}:Rect{0,0,376,37};}
 struct Build {ClipboardPart part;Json::Array nodes;
     void add(Json node,std::string actionID={},bool rim=false,bool framed=false,bool outline=false,bool toolbar=false,float opacity=1){const auto&id=node["id"].string();const auto&p=node["position"].array();part.surfaces.push_back({id,Matrix::translation(p[0].number(),p[1].number()),opacity,std::move(actionID),rim,framed,outline,toolbar});nodes.push_back(std::move(node));}
     void feedback(std::string id,Rect r,bool framed,const Color&accent,bool toolbar=false){const Rect local{0,0,r.width,r.height},rim=framed?Rect{-2,-2,r.width+4,r.height+4}:local;const auto path=[&](Rect rect){return framed?cut(rect,std::min(4.,std::min(rect.width,rect.height)/3)):rounded(rect,std::min(3.,std::min(rect.width,rect.height)/2));};add(shape(id+"/tint",r,path(local),alpha(accent,.30)),id,false,framed,false,toolbar,0);add(shape(id+"/rim",r,path(rim),{},accent,.9),id,true,framed,false,toolbar,framed?.28f:0);}
@@ -97,7 +111,9 @@ struct Build {ClipboardPart part;Json::Array nodes;
         if(part.rowID){Json::Array compact;std::vector<ClipboardSurface>surfaces;compact.reserve(nodes.size());surfaces.reserve(part.surfaces.size());
             for(std::size_t begin=0;begin<nodes.size();){auto end=begin+1;const auto&first=part.surfaces[begin];if(first.action.empty()&&!first.outline)while(end<nodes.size()&&part.surfaces[end].action.empty()&&!part.surfaces[end].outline)++end;
                 if(end-begin==1){compact.push_back(std::move(nodes[begin]));surfaces.push_back(std::move(part.surfaces[begin]));}
-                else{const auto id=first.id+"/static";auto group=layer(id,{0,0,376,37});Json::Array children;for(auto n=begin;n<end;++n)children.push_back(std::move(nodes[n]));group["children"]=std::move(children);group["allowsGroupOpacity"]=false;compact.push_back(std::move(group));surfaces.push_back({id,{},1,{},false,false,false,false});}begin=end;}
+                else{const auto id=first.id+"/static";const auto ink=inkBounds(nodes,begin,end);auto group=layer(id,ink);Json::Array children;
+                    for(auto n=begin;n<end;++n){auto child=std::move(nodes[n]);const auto&p=child["position"].array();child["position"]=Json::Array{p[0].number()-ink.x,p[1].number()-ink.y};children.push_back(std::move(child));}
+                    group["children"]=std::move(children);group["allowsGroupOpacity"]=false;compact.push_back(std::move(group));surfaces.push_back({id,Matrix::translation(ink.x,ink.y),1,{},false,false,false,false});}begin=end;}
             nodes=std::move(compact);part.surfaces=std::move(surfaces);
         }
         part.layers=layer("clipboard.part",{0,0,0,0});part.layers["allowsGroupOpacity"]=false;part.layers["children"]=std::move(nodes);return std::move(part);
