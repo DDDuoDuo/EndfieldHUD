@@ -1,8 +1,10 @@
 #ifdef _WIN32
 #include "tools/notes_preview.hpp"
+#include "tests/notes_host_capture.hpp"
 #include "core/data/data_store.hpp"
 #include <objbase.h>
 #include <algorithm>
+#include <array>
 #include <filesystem>
 #include <iostream>
 #include <stdexcept>
@@ -33,6 +35,34 @@ void run(HWND hwnd,gpu::Renderer&renderer,const gpu::NativeNotesControlsAssets&a
     const auto first=f.cardPoint(note,{45,65}),second=f.cardPoint(note,{120,100});check(f.pointer(app::PointerKind::down,first)&&f.preview->pointerLocked(),"Actual drawing gesture captures source tilt");f.pointer(app::PointerKind::move,second);check(endfield::modules::NotesDrawing(*f.drawing().drawing).strokes().empty(),"Actual owner has not saved a partially drawn stroke");f.pointer(app::PointerKind::up,second);check(!f.preview->pointerLocked(),"Mouse-up releases drawing capture");note=f.drawing();auto drawing=endfield::modules::NotesDrawing(*note.drawing);check(drawing.strokes().size()==1&&drawing.pointCount()==2,"Shared owner persists the complete normalized stroke once");
     f.tick();check(f.preview->pointer({app::PointerKind::down,app::PointerButton::right,first.x,first.y},f.time),"Actual right click enables eraser");f.frame();f.pointer(app::PointerKind::down,first);f.pointer(app::PointerKind::up,first);check(endfield::modules::NotesDrawing(*f.drawing().drawing).strokes().empty(),"Actual eraser removes the intersecting saved stroke");
     f.tick();f.preview->pointer({app::PointerKind::down,app::PointerButton::right,first.x,first.y},f.time);f.frame();f.pointer(app::PointerKind::down,first);f.pointer(app::PointerKind::move,second);check(f.preview->finish()&&!f.preview->pointerLocked(),"Source owner close/cancel commits an active drawing and clears input ownership");f.frame();note=f.drawing();check(endfield::modules::NotesDrawing(*note.drawing).strokes().size()==1,"Cancel interaction preserved the completed drawing rather than discarding it");
+    // The host's capture around the Notes owner (app/application_events.cpp
+    // routePointer over real OverlayHost messages). A right press switches
+    // between pen and eraser; the next drag must keep every point. Live RC
+    // 128 drew only a dot: the unreleased right-press capture was taken again
+    // by the left press, and Windows reported that as a capture loss.
+    {
+        namespace host=endfield::tests;
+        check(host::HostCaptureHarness::selfRecaptureNotifies(),"Windows answers SetCapture on the window holding the capture with WM_CAPTURECHANGED naming that window");
+        host::HostCaptureHarness capture(host::HostCaptureRoute::pressRelease,host::HostCaptureCall::always,[&](const app::PointerEvent&e){return f.preview->pointer(e,f.time);});
+        const auto send=[&](UINT message,WPARAM keys,core::Point p){f.tick();const bool handled=capture.send(message,keys,p.x,p.y);f.frame();return handled;};
+        note=f.drawing();check(endfield::modules::NotesDrawing(*note.drawing).strokes().size()==1,"One saved stroke before the switch under the host capture");
+        const auto across=f.cardPoint(note,{80,81}),away=f.cardPoint(note,{45,180});
+        check(send(WM_RBUTTONDOWN,MK_RBUTTON,away)&&capture.holdsCapture(),"A consumed right press switches to the eraser under the host's capture");
+        check(send(WM_RBUTTONUP,0,away)&&!capture.holdsCapture(),"Its release is consumed too and ends that capture");
+        const auto losses=capture.captureLosses();
+        check(send(WM_LBUTTONDOWN,MK_LBUTTON,away)&&capture.holdsCapture()&&capture.captureLosses()==losses&&f.preview->pointerLocked(),"The eraser press after the switch takes a fresh capture with no capture loss");
+        send(WM_MOUSEMOVE,MK_LBUTTON,across);check(f.preview->pointerLocked(),"The eraser drag continues under the capture");
+        send(WM_LBUTTONUP,0,across);check(!capture.holdsCapture()&&!f.preview->pointerLocked(),"Releasing ends the eraser drag and the capture");
+        check(endfield::modules::NotesDrawing(*f.drawing().drawing).strokes().empty(),"Dragging the eraser across the stroke after the switch erases it");
+        check(send(WM_RBUTTONDOWN,MK_RBUTTON,away)&&send(WM_RBUTTONUP,0,away)&&!capture.holdsCapture(),"A second right click switches back to the pen and releases its capture");
+        const std::array path{f.cardPoint(note,{60,150}),f.cardPoint(note,{100,160}),f.cardPoint(note,{140,170}),f.cardPoint(note,{180,175})};
+        const auto penLosses=capture.captureLosses();
+        check(send(WM_LBUTTONDOWN,MK_LBUTTON,path[0])&&capture.holdsCapture()&&capture.captureLosses()==penLosses,"The pen press after the switch takes a fresh capture with no capture loss");
+        for(std::size_t n=1;n<path.size();++n)send(WM_MOUSEMOVE,MK_LBUTTON,path[n]);
+        send(WM_LBUTTONUP,0,path.back());note=f.drawing();drawing=endfield::modules::NotesDrawing(*note.drawing);
+        check(drawing.strokes().size()==1&&drawing.strokes().front().points.size()==path.size(),"The stroke drawn after switching tools keeps every point, not a dot");
+        check(!capture.holdsCapture()&&!f.preview->pointerLocked(),"The pen release ends the host capture");
+    }
     f.world.values[3]=.00001;f.world.values[12]=6;f.tick();const auto*card=f.draw("note/"+note.id+"/card");check(card&&card->opacity>0,"Drawing uses the same live workspace plane");renderer.draw(false);const auto pixels=renderer.readback();bool visiblePixels{};for(std::size_t at=3;at<pixels.pixels.size();at+=4)visiblePixels|=pixels.pixels[at]!=0;check(visiblePixels,"Owned render target contains actual shared drawing artwork");f.release();check(!IsWindowVisible(hwnd),"Drawing fixture never shows a window or touches user data");
 }
 std::string ascii(const wchar_t*value){std::string out;for(;*value;++value){check(*value<=127,"Explicit pins are ASCII");out.push_back(static_cast<char>(*value));}return out;}

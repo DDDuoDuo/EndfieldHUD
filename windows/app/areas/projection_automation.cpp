@@ -89,6 +89,14 @@ private:
             ComPtr<IRawElementProviderSimple>simple;VARIANT value;VariantInit(&value);step.check(SUCCEEDED(hit.As(&simple))&&SUCCEEDED(simple->GetPropertyValue(UIA_AutomationIdPropertyId,&value))&&value.vt==VT_BSTR&&std::wstring_view(value.bstrVal)==wide("projection.menu:close"),"The hit peer is that close button");VariantClear(&value);
             step.check(invoke(*find("projection.menu:close"))&&!projection.menuOpen(),"Invoking close dismisses the menu");
             binding_.refresh(nullptr);step.check(binding_.count()==8,"The closed menu's peers leave the group");
+            // A canvas drag in the host's Projection order (each event, then
+            // pointerLocked() for the capture request): every point reaches
+            // the stroke and the release commits it (live RC 128 drew nothing).
+            {const auto again=find("projection.toolbar:eraser");step.check(again&&invoke(*again)&&!model.erasing(),"Invoking the eraser again restores the brush");
+             const auto strokes=model.drawing().strokes().size();const double y=metrics.height*.6;const auto at=clock_();
+             step.check(projection.pointer({app::PointerKind::down,app::PointerButton::left,120,y,MK_LBUTTON},at)&&projection.pointerLocked(),"A canvas press starts a stroke and asks the host for the capture");
+             for(unsigned k=1;k<=3;++k)step.check(projection.pointer({app::PointerKind::move,app::PointerButton::none,120+40.*k,y+8.*k,MK_LBUTTON},at)&&projection.pointerLocked(),"Each drag event extends the stroke under the capture");
+             step.check(projection.pointer({app::PointerKind::up,app::PointerButton::left,240,y+24,0},at)&&!projection.pointerLocked()&&model.drawing().strokes().size()==strokes+1&&model.drawing().strokes().back().points.size()==4,"Releasing commits the whole stroke and releases the capture");}
             fixture_=nullptr;binding_.refresh(nullptr);step.check(binding_.count()==0,"The fixture's peers are disconnected when it ends");
             projection.setActive(false,clock_());
         }

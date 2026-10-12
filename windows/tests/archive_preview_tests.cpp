@@ -3,9 +3,12 @@
 #include "modules/archive_repository.hpp"
 #include "native/archive_text_rules.hpp"
 #include "native/module_scene.hpp"
+#include "modules/notes_controls.hpp"
 #include "core/data/file_io.hpp"
 #include <objbase.h>
 #include <atomic>
+#include <cmath>
+#include <string>
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
@@ -44,6 +47,15 @@ void run(const wchar_t*shader,const std::filesystem::path&fixturePath,const std:
  paint();check(state.active()&&state.entries().empty()&&state.categories().empty(),"Archive opens source empty state with no invented default categories");click(25,314);check(!preview.activeField(),"Creation begins source category menu below add action");click(128,316);check(preview.activeField()==std::optional<std::string>("category"),"New category opens the projected inline name field");type(u"分类");click(333,315);check(state.categories().size()==1&&state.selected()&&state.selected()->categoryID==state.categories()[0].id,"Inline category creation selects the new document using injected SQLite callbacks");const auto documentID=state.selected()->id;
  click(42,62);check(preview.activeField()==std::optional<std::string>("title"),"Title uses its source viewport and shared editor");type(u"Archive");check(state.selected()->title=="Archive"&&preview.nextWakeTime().has_value(),"Typed title updates only retained draft and one source debounce deadline");check(preview.deadline(time+.35),"Existing owner scheduler flushes the .35 second save deadline");time+=.35;check(repository->entry(documentID)->title=="Archive","Title is persisted only in the explicit temporary Archive SQLite");
  click(114,390);check(preview.key({app::KeyKind::character,'Q'},time)&&state.selected()->title=="Archive","A modal formatting menu never forwards characters into the underlying field");click(40,344);check(state.selected()->titleStyle.bold,"Original formatting Special menu changes typed rich style");check(preview.key({app::KeyKind::down,VK_ESCAPE},time),"Escape closes the source formatting menu");paint();type(u"B");check(state.selected()->title=="ArchiveB"&&state.selected()->titleRichText.has_value()&&state.selected()->titleRichText->runs.back().style.bold,"Formatting persists rich runs and subsequent typing without plain flattening");
+ {// The size menu's scroll bar (a Windows addition shared with Notes): drag its thumb to the last sizes.
+  const auto values=mod::NotesControls::sizeValues(state.selected()->titleStyle.fontSize);check(values.size()>7&&preview.perform("formatSize",time),"The title's size menu opens with more sizes than rows");paint();
+  const auto first=mod::NotesControls::initialFirstRow(values,std::to_string(static_cast<int>(std::round(state.selected()->titleStyle.fontSize))));const auto bar=*mod::NotesControls::valueScrollBar(values.size(),first);
+  const core::Point origin{24,376-184.};const auto grip=point(origin.x+bar.thumb.x+1,origin.y+bar.thumb.y+bar.thumb.height*.5);
+  check(preview.pointer({app::PointerKind::down,app::PointerButton::left,grip.x,grip.y},time)&&preview.pointerLocked(),"A press on the size menu's thumb starts a scroll drag");
+  const auto end=point(origin.x+bar.thumb.x-40,origin.y+bar.track.y+bar.track.height+120);check(preview.pointer({app::PointerKind::move,app::PointerButton::none,end.x,end.y},time),"The drag follows the pointer past the track");
+  check(preview.pointer({app::PointerKind::up,app::PointerButton::left,end.x,end.y},time)&&!preview.pointerLocked(),"Releasing ends the drag");paint();
+  click(origin.x+40,origin.y+19);check(std::abs(state.selected()->titleStyle.fontSize-std::stod(values[values.size()-7]))<1e-9,"After dragging to the end, the first shown row is the eighth size from the last");
+  check(preview.key({app::KeyKind::down,VK_ESCAPE},time),"Escape closes the size menu");paint();}
  click(42,125);type(u"正文");check(state.selected()->body=="正文","Body uses retained natural one-point paragraph layout");const auto currentEntries=preview.entries();check(currentEntries.size()>=9,"Main scene, all three real editor fields and registration share one composition");
  const auto before=raster.stats();const auto beforeGPU=renderer.stats();allocations=0;std::array<std::size_t,4>stageAllocations{};counting=true;try{for(unsigned n=0;n<120;++n){time+=1./60;auto center=core::Matrix4{};center.values[3]=n*.000001;auto count=allocations.load();preview.update(center,settings,modules.sample(time).presentation,1,time);stageAllocations[0]+=allocations.load()-count;count=allocations.load();preview.upload(renderer);stageAllocations[1]+=allocations.load()-count;count=allocations.load();preview.entries();stageAllocations[2]+=allocations.load()-count;count=allocations.load();composition.present(renderer);stageAllocations[3]+=allocations.load()-count;}}catch(...){counting=false;throw;}counting=false;
  if(allocations||raster.stats().rasterizations!=before.rasterizations||raster.stats().textLayoutsCreated!=before.textLayoutsCreated){std::cerr<<"warm allocations="<<allocations<<" stages(update,upload,entries,present)=";for(const auto n:stageAllocations)std::cerr<<n<<',';std::cerr<<" firstSizes=";for(const auto n:firstAllocationSizes)std::cerr<<n<<',';std::cerr<<" rasters="<<raster.stats().rasterizations-before.rasterizations<<" layouts="<<raster.stats().textLayoutsCreated-before.textLayoutsCreated<<'\n';}

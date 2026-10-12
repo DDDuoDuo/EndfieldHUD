@@ -8,6 +8,7 @@
 #include "core/data/file_shelf_store.hpp"
 #include <functional>
 
+namespace endfield::app { class UtilityExecutor; }
 namespace endfield::tools {
 struct NotesKeyModifiers {bool control{},shift{},alt{},system{};};
 struct NotesPreviewMediaOptions {
@@ -36,6 +37,14 @@ public:
         const std::filesystem::path& formatAssets={},std::span<const ehud::data::Note> initialNotes={},
         NotesPreviewMediaOptions media={},bool persistentDataRoot=false);
     ~NotesPreview();
+    // The shared UtilityExecutor, handed over once by the host after
+    // construction: the Mac import relink ledger writes that follow Notes'
+    // own record writes (a relinked media note resolves its row, a deleted
+    // note dismisses it) then run on it in order instead of on the owner
+    // thread. Null (the default) keeps them here. The load's reconcile runs
+    // during construction. relinkLedgerJobs counts the ledger writes asked.
+    void setUtilityExecutor(app::UtilityExecutor*);
+    std::uint64_t relinkLedgerJobs()const noexcept;
     // Shared preview-session TSF service. Other module editors borrow this
     // already activated manager and MUST be destroyed before NotesPreview.
     ITfThreadMgr*activatedTextManager()const noexcept;
@@ -102,7 +111,8 @@ public:
     // and NotesRetainedMenu.perform(id), through the same owner paths as
     // pointer input. False for an unknown, hidden or disabled id.
     bool perform(std::string_view id,double time);
-    // Seek slider (note id, seconds) or the color wheel (0...166).
+    // Seek slider (note id, seconds), the color wheel (0...166) or the font/size
+    // menu scroll bar ("notes.format:scroll", first shown row).
     bool setAutomationValue(std::string_view id,double value,double time);
     // Replaces the open field's draft (one undo group; a long value promotes
     // a short field like a paste). False for another id or while composing.

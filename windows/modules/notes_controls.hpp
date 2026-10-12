@@ -34,6 +34,9 @@ struct NotesControlsInput {
     // Font family enumeration/selected name belong to the native owner. Size
     // lists use sizeValues() once; sample/build never enumerates installed fonts.
     std::vector<std::string> values;std::string selectedValue;std::size_t firstRow{};
+    // Windows addition (NotesMenuScrollBar): the font/size menu paints its
+    // scroll track when its owner also takes the drag (Notes, Archive).
+    bool valueScrollBar{};
     std::array<bool,4> traits{};
     core::Point colorWheelSelection{.5,.5}; // source wheel's normalized selected point
     std::vector<NotesShelfChoice> choices;bool mediaOnly{true};std::optional<std::string> selectedID;
@@ -47,6 +50,17 @@ struct NotesControlsImage {
     NotesColor tint{1,1,1,1};unsigned requestedPixels{};bool sourceInTint{},resizeAspect{};
     // Asset references are dependencies, NOT loaded pixels. The owner resolves
     // sourceResource from its pinned package. Never publish incomplete artwork.
+};
+// The Mac secondary-menu scroll track (NotesShelfMediaPicker.paintContent: a
+// 2-point track at ink .12 with an ink .6 thumb of max(10, track * visible /
+// count)) beside the font and size menus' seven value rows when more values
+// exist. A Windows addition requested on the live RC: the Mac font and size
+// menus scroll by wheel only. It sits in the free column under the close
+// button, from 8 points below it to the last row's bottom, and `hit` (that
+// whole column) takes a press or drag: the thumb follows the pointer.
+struct NotesMenuScrollBar {
+    core::Rect track,thumb,hit;std::size_t count{},firstRow{},visibleRows{};
+    bool operator==(const NotesMenuScrollBar&)const=default;
 };
 struct NotesControlsFeedback {
     std::string actionID,tintLayerID,rimLayerID;
@@ -82,6 +96,11 @@ public:
     // owner's actual module homography, never clipped by the center host.
     static core::Rect mediaSourceModuleRect()noexcept{return {96,212,208,75};}
     static core::Rect shelfModuleRect()noexcept{return {30,28,340,260};}
+    // The font/size menu scroll bar for `count` values from `firstRow`; none
+    // while every value fits in the seven rows.
+    static std::optional<NotesMenuScrollBar> valueScrollBar(std::size_t count,std::size_t firstRow)noexcept;
+    // The first row that puts the thumb's top nearest `thumbTop` (clamped).
+    static std::size_t valueScrollRow(const NotesMenuScrollBar&,double thumbTop)noexcept;
 private:
     std::optional<NotesControlsInput> input_;ehud::data::Json artwork_;
     std::vector<NotesControlsAction> actions_;std::vector<NotesControlsImage> images_;

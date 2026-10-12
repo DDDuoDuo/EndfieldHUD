@@ -1,8 +1,10 @@
 #ifdef _WIN32
 #include "tools/projection_preview.hpp"
+#include "tests/notes_host_capture.hpp"
 #include "core/data/data_store.hpp"
 #include <windows.h>
 #include <objbase.h>
+#include <algorithm>
 #include <array>
 #include <iostream>
 #include <string_view>
@@ -48,6 +50,29 @@ void run(n::Renderer&renderer,const std::filesystem::path&resources){n::LayerRas
      owner.cancelInteraction(sample);owner.setPreferences(c::Language::korean,{.2,.7,1,1},{},false,sample);check(owner.menuOpen(),"The menu opened inside the callback stays open");
      check(owner.requiresFrames(sample+.7)&&!owner.requiresFrames(sample+.8),"The menu opening runs its .16 seconds from the later time, not from the earlier sample");
      now=sample+.8;frame(0);check(owner.perform("projection.menu:close",sample)&&!owner.menuOpen(),"A close with the earlier host sample dismisses the menu");frame(.3);}
+    // The host's Projection route (app/application_events.cpp: capturePointer(
+    // pointerLocked()) after every event) over real OverlayHost messages. With
+    // the capture taken only when the window does not already hold it, a drag
+    // draws. Live RC 128 drew nothing: every drag event took the capture again,
+    // and Windows reported that as a capture loss that cancelled the stroke.
+    {
+        namespace host=endfield::tests;
+        check(host::HostCaptureHarness::selfRecaptureNotifies(),"Windows answers SetCapture on the window holding the capture with WM_CAPTURECHANGED naming that window");
+        host::HostCaptureHarness capture(host::HostCaptureRoute::pointerLocked,host::HostCaptureCall::whenNotHeld,[&](const a::PointerEvent&e){return owner.pointer(e,now);},[&]{return owner.pointerLocked();});
+        // A canvas band clear of the toolbar and every media item, so each press draws.
+        double top=-1;for(double y=140;y+160<790&&top<0;y+=10){bool clear=true;for(const auto&item:model.media()){const auto&f=item.frame;clear=clear&&!(f.x<100+260&&f.x+f.width>100&&f.y<y+160&&f.y+f.height>y);}if(clear)top=y;}
+        check(top>=0,"The canvas has a band clear of the media for the drag");
+        const auto strokes=model.drawing().strokes().size();const auto losses=capture.captureLosses();
+        now+=.01;check(capture.send(WM_LBUTTONDOWN,MK_LBUTTON,120,top)&&capture.holdsCapture()&&owner.pointerLocked(),"A Projection drawing press takes the host capture");
+        for(unsigned k=1;k<=4;++k){now+=.01;check(capture.send(WM_MOUSEMOVE,MK_LBUTTON,120+40.*k,top+10.*k),"Every drag event reaches the canvas");}
+        check(capture.holdsCapture()&&capture.captureLosses()==losses&&interaction.liveStroke()&&interaction.liveStroke()->points.size()==5,"The drag keeps the one capture and every live point");
+        now+=.01;capture.send(WM_LBUTTONUP,0,280,top+40);frame();
+        check(model.drawing().strokes().size()==strokes+1&&model.drawing().strokes().back().points.size()==5&&!capture.holdsCapture()&&!owner.pointerLocked(),"Releasing commits the whole stroke and ends the capture");
+        // A real loss (the capture taken away) still discards only the live ink.
+        const auto released=capture.captureLosses();now+=.01;check(capture.send(WM_LBUTTONDOWN,MK_LBUTTON,120,top+100)&&capture.holdsCapture(),"A second press takes the capture again");now+=.01;capture.send(WM_MOUSEMOVE,MK_LBUTTON,200,top+120);
+        ReleaseCapture();check(capture.captureLosses()==released+1&&!interaction.liveStroke()&&!owner.pointerLocked()&&model.drawing().strokes().size()==strokes+1,"A real capture loss discards only the live ink");
+        now+=.01;capture.send(WM_LBUTTONUP,0,200,top+120);frame();check(model.drawing().strokes().size()==strokes+1&&!capture.holdsCapture(),"The release after a capture loss commits nothing");
+    }
     composition.detach(renderer);owner.release(renderer);released=true;check(renderer.stats().textures==0&&renderer.stats().meshes==0,"Projection owner releases every local resource after detach");
 }
 }

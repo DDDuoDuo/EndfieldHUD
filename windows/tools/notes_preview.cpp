@@ -2,6 +2,7 @@
 #include "tools/notes_format_menu.hpp"
 #include "native/notes_managed_image.hpp"
 #include "modules/notes_relink_ledger.hpp"
+#include "app/utility_executor.hpp"
 #include "native/module_scene.hpp"
 #include "native/layer_group.hpp"
 #include "native/module_registration.hpp"
@@ -95,6 +96,13 @@ struct NotesPreview::Impl {
     NotesPreviewPreferences preferences{style(),controlInput(mod::NotesControlsKind::center).strings};
     std::optional<NotesPreviewPreferences> pendingPreferences;
     bool hasPose{},moduleVisible{true},moduleInput{true},focused{},editorDrag{},controlsPressed{},confirmationVisible{};
+    // A consumed right press (NotesCanvas.rightMouseDown: the drawing eraser
+    // toggle) also consumes its release, so the host's pointer capture taken
+    // for the press ends with it. Left unpaired, the next left press re-took
+    // the capture; Windows answers SetCapture on the window that already holds
+    // it with WM_CAPTURECHANGED, whose capture loss ended the new stroke at
+    // its first point.
+    bool rightPressed{};
     float confirmationOpacity{},menuOpacity{};double currentTime{},confirmationStarted{};std::uint64_t outgoingGeneration{},uploadedRegistration{};
     unsigned timeDepth{};
     // Win32 capture/focus and TSF can synchronously reenter this owner. Nested
@@ -141,7 +149,7 @@ struct NotesPreview::Impl {
         state=std::make_unique<mod::NotesState>(store->notes(),mod::NotesState::Persistence{[this](const auto&n){store->upsert(n);},[this](auto id){
             std::optional<std::string> image;for(const auto&n:store->notes())if(n.id==id){image=n.imageName;break;}store->remove(id);
             // Record first, then its Mac import relink row (if any) is dismissed.
-            (void)mod::notesMediaRemoved(dataRoot,id);
+            ledger([root=dataRoot,note=std::string(id)]{(void)mod::notesMediaRemoved(root,note);});
             if(image&&std::none_of(store->notes().begin(),store->notes().end(),[&](const data::Note&n){return n.imageName==image;}))gpu::removeNotesManagedImage(dataRoot,*image);}});
         state->setWorkspaceBounds({0,0,1280,800},{core::Point{540,280}});
         if(tsf)manager.start();gpu::NativeNotesWorkspaceOptions wo;wo.raster.pixelsPerPoint=2;wo.raster.paddingPoints=1;
@@ -159,7 +167,15 @@ struct NotesPreview::Impl {
         tracks.reserve(256);composed.reserve(132);
         moduleSample=modules.sample(0).presentation;
     }
-    ~Impl(){try{cancelImport();}catch(...){}}
+    ~Impl(){try{cancelImport();}catch(...){}
+        // Accepted ledger writes still finish (their closures own copies); no completion runs.
+        if(utility&&ledgerRoute)try{utility->invalidate(ledgerRoute,false);}catch(...){}}
+    // Mac import relink ledger upkeep after Notes' own (synchronous) record
+    // write: on the shared UtilityExecutor in submission order once the host
+    // handed it over, else here. A full queue runs it here as well (the
+    // ledger API serializes its in-process writers), so it is never dropped.
+    app::UtilityExecutor* utility{};std::uint64_t ledgerRoute{},ledgerJobs{};
+    void ledger(std::function<void()> work){++ledgerJobs;if(utility&&ledgerRoute&&utility->submit(ledgerRoute,work,[](std::exception_ptr){}))return;work();}
     core::Language language()const noexcept{return preferences.controls.language;}
     std::string mediaErrorText(mod::NotesMediaError e)const{return sourceText(mod::notesMediaErrorText(e),language());}
     mod::NotesControlsInput input(mod::NotesControlsKind kind)const{auto out=controlInput(kind);out.dark=preferences.dark;out.accent=preferences.workspace.palette.accent;out.strings=preferences.controls;return out;}
@@ -215,7 +231,7 @@ struct NotesPreview::Impl {
             const auto reference=data::makeWindowsMediaReference(v.path,name,static_cast<int>(info.pixelWidth),static_cast<int>(info.pixelHeight),info.kind==mod::NotesMediaKind::video?"video":info.kind==mod::NotesMediaKind::gif?"gif":"image",info.kind==mod::NotesMediaKind::image?std::nullopt:std::optional<double>(info.duration),static_cast<int>(info.frameCount));
             if(workspace->relinkMedia(*target,reference,v.lease)){
                 // The relinked note is stored; its Mac import relink row resolves.
-                (void)mod::notesMediaRelinked(dataRoot,*target,v.path);
+                ledger([root=dataRoot,note=*target,path=std::string(v.path)]{(void)mod::notesMediaRelinked(root,note,path);});
                 if(const auto token=workspace->cardToken(*target))track(*token,TrackKind::mutation,time);changed=true;}else if(state->error())changed|=setMediaError(state->error());
             return changed;}
         for(std::size_t n=0;n<completed.size();++n){const auto&v=completed[n];const auto&info=*v.info;const auto filename=std::filesystem::u8path(v.path).filename().u8string();const std::string name(reinterpret_cast<const char*>(filename.data()),filename.size());
@@ -300,7 +316,7 @@ struct NotesPreview::Impl {
         // Source deletionActions: "note:<id>:cancelDelete" / "confirmDelete".
         if(confirmationVisible)if(const auto&pending=state->pendingDeletion()){const auto project=[&](core::Point p){return confirmationProjection.project(p);};
             for(const auto&a:confirmation.actions())if(const auto b=gpu::notesAutomationBounds(a.rect,project)){gpu::NotesAutomationElement e;e.id="note:"+*pending+":"+a.id;e.label=a.label;e.rect=*b;e.enabled=a.enabled;out.push_back(std::move(e));}}
-        if(formatMenu)formatMenu->automationElements(out,"notes.format:",{core::localized("Color wheel","颜色轮盘",l),core::localized("Use arrow keys to adjust hue and saturation.","使用方向键调整色相与饱和度。",l)});
+        if(formatMenu)formatMenu->automationElements(out,"notes.format:",{core::localized("Color wheel","颜色轮盘",l),core::localized("Use arrow keys to adjust hue and saturation.","使用方向键调整色相与饱和度。",l),core::localized("Scroll","滚动",l)});
         if(mediaMenu)mediaMenu->automationElements(out,"notes.media:");
     }
     // Source HUDNotesInteraction.activateAction -> NotesCanvas.perform(actionID:)
@@ -355,8 +371,9 @@ struct NotesPreview::Impl {
         if(!hasPose)return false;const TimeScope event(*this,time);time=event.time;const auto p=physical(e);
         if(mediaMenu&&mediaMenu->pointer(e,metrics.scale,time))return true;
         if(formatMenu&&formatMenu->pointer(e,metrics.scale,time))return true;
-        if(e.kind==app::PointerKind::captureLost){editorDrag=false;if(auto*editor=workspace->editor())editor->pointerUp();workspace->endGesture();workspace->endMediaSeek(time);workspace->endDrawing();drawingStatus();controlsPressed=false;clearHover(time);return false;}
+        if(e.kind==app::PointerKind::captureLost){editorDrag=false;rightPressed=false;if(auto*editor=workspace->editor())editor->pointerUp();workspace->endGesture();workspace->endMediaSeek(time);workspace->endDrawing();drawingStatus();controlsPressed=false;clearHover(time);return false;}
         if(e.kind==app::PointerKind::leave){clearHover(time);return false;}
+        if(e.kind==app::PointerKind::up&&e.button==app::PointerButton::right&&rightPressed){rightPressed=false;return true;}
         if(e.kind==app::PointerKind::up&&e.button==app::PointerButton::left){const bool handled=editorDrag||state->dragging()||workspace->mediaSeeking()||workspace->drawingActive()||controlsPressed;editorDrag=false;controlsPressed=false;if(auto*editor=workspace->editor())editor->pointerUp();workspace->endGesture();workspace->endMediaSeek(time);workspace->endDrawing();drawingStatus();const auto q=controlsProjection.unproject(p);controlScene->setFeedback(q?controls.actionAt(*q):std::nullopt,false,preferences.reduceMotion,time);return handled;}
         if(!moduleInput){clearHover(time);return false;}
         if(e.kind==app::PointerKind::move){
@@ -371,7 +388,7 @@ struct NotesPreview::Impl {
             std::optional<std::string_view>action;if(!onConfirm&&!hit&&moduleVisible&&moduleInput){const auto q=controlsProjection.unproject(p);if(q)action=controls.actionAt(*q);}
             controlScene->setFeedback(action,controlsPressed,preferences.reduceMotion,time);return onConfirm||hit.has_value()||action.has_value();
         }
-        if(e.kind==app::PointerKind::down&&e.button==app::PointerButton::right)return workspace->toggleDrawingEraser(p);
+        if(e.kind==app::PointerKind::down&&e.button==app::PointerButton::right){rightPressed=workspace->toggleDrawingEraser(p);return rightPressed;}
         if((e.kind!=app::PointerKind::down&&e.kind!=app::PointerKind::doubleClick)||e.button!=app::PointerButton::left)return false;
         if(confirmAt(p,time,true))return true;
         if(const auto hit=workspace->hitTest(p)){
@@ -412,6 +429,8 @@ struct NotesPreview::Impl {
 };
 NotesPreview::NotesPreview(HWND h,native::LayerRasterizer&r,const std::filesystem::path&root,const native::NativeNotesControlsAssets&a,bool tsf,const std::filesystem::path&formatRoot,std::span<const data::Note>initialNotes,NotesPreviewMediaOptions media,bool persistentDataRoot):impl_(std::make_unique<Impl>(h,r,root,a,tsf,formatRoot,initialNotes,media,persistentDataRoot)){}
 NotesPreview::~NotesPreview()=default;
+void NotesPreview::setUtilityExecutor(app::UtilityExecutor*executor){auto&i=*impl_;if(i.utility==executor)return;if(i.utility&&i.ledgerRoute)i.utility->invalidate(i.ledgerRoute,false);i.utility=executor;i.ledgerRoute=executor?executor->makeRoute():0;}
+std::uint64_t NotesPreview::relinkLedgerJobs()const noexcept{return impl_->ledgerJobs;}
 ITfThreadMgr*NotesPreview::activatedTextManager()const noexcept{return impl_->manager.manager.Get();}
 TfClientId NotesPreview::textClient()const noexcept{return impl_->manager.client;}
 std::optional<NotesMediaAction>NotesPreview::takeMediaAction(UINT_PTR generation){auto&i=*impl_;if(generation!=i.mediaGeneration)return{};auto result=std::move(i.mediaAction);i.mediaAction.reset();return result;}
@@ -541,7 +560,8 @@ bool NotesPreview::finish(){return impl_->finish();}
 void NotesPreview::automationElements(std::vector<native::NotesAutomationElement>&out)const{impl_->automationElements(out);}
 bool NotesPreview::perform(std::string_view id,double t){auto&i=*impl_;const Impl::TimeScope event(i,t);return i.perform(id,event.time);}
 bool NotesPreview::setAutomationValue(std::string_view id,double value,double t){auto&i=*impl_;const Impl::TimeScope event(i,t);if(!i.hasPose||!i.moduleInput||!std::isfinite(value))return false;
-    if(id=="notes.format:wheel")return i.formatMenu&&i.formatMenu->setWheel(value,event.time);return i.workspace->seekMedia(id,value,event.time);}
+    if(id=="notes.format:wheel")return i.formatMenu&&i.formatMenu->setWheel(value,event.time);
+    if(id=="notes.format:scroll")return i.formatMenu&&i.formatMenu->setScroll(value,event.time);return i.workspace->seekMedia(id,value,event.time);}
 bool NotesPreview::setAutomationText(std::string_view id,std::string_view utf8,double t){auto&i=*impl_;const Impl::TimeScope event(i,t);if(!i.hasPose||!i.moduleInput||id.empty()||id!=i.editorAutomationID())return false;
     auto*editor=i.workspace->editor();const auto*document=i.workspace->editorDocument();if(!editor||!document||document->composition())return false;auto value=automationUTF16(utf8);if(!value)return false;*value=gpu::notesClipboardDocumentText(*value);
     const auto size=static_cast<std::uint32_t>(document->text().size());if(value->empty()&&!size)return true;

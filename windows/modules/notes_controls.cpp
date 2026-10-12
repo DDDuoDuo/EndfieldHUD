@@ -119,6 +119,9 @@ bool NotesControls::update(const NotesControlsInput&i){
             if(item.enabled)b.highlight(face,item.id,item.rect,true);
             if(!item.swatch)append(face,label(item.id+"/label",{item.rect.x+6,item.rect.y+5,item.rect.width-12,item.rect.height-10},item.title,10,ink));
         }
+        if((i.kind==NotesControlsKind::font||i.kind==NotesControlsKind::size)&&i.valueScrollBar)if(const auto bar=valueScrollBar(i.values.size(),i.firstRow)){
+            auto track=layer("notes.menu/scrollTrack",bar->track);track["backgroundColor"]=color(alpha(ink,.12));append(face,std::move(track));
+            auto thumb=layer("notes.menu/scrollThumb",bar->thumb);thumb["backgroundColor"]=color(alpha(ink,.6));append(face,std::move(thumb));}
         if(i.kind==NotesControlsKind::shelfMedia){append(face,label("notes.menu/heading",{10,10,285,20},i.strings.shelfHeading,12,ink));std::size_t count=0;for(const auto&c:i.choices)if(!i.mediaOnly||c.supported)++count;
             if(count>4){auto track=layer("notes.menu/scrollTrack",{329,62,2,152});track["backgroundColor"]=color(alpha(ink,.12));append(face,std::move(track));const auto h=std::max(10.,152*4/double(count));auto thumb=layer("notes.menu/scrollThumb",{329,62+double(i.firstRow)/double(count-4)*(152-h),2,h});thumb["backgroundColor"]=color(alpha(ink,.6));append(face,std::move(thumb));}
         }else if(i.kind==NotesControlsKind::color){const Rect wheel{8,8,166,166};auto image=layer("notes.menu/wheel",wheel);image["requiredSourceImage"]="NotesColorWheelView.wheel";append(face,std::move(image));b.images.push_back({"notes.menu/wheel","source-generated:NotesColorWheelView.wheel",wheel,{1,1,1,1},192,false,false});
@@ -143,6 +146,19 @@ bool NotesControls::setFeedback(std::optional<std::string_view> id,bool pressed,
 }
 std::optional<std::string_view> NotesControls::actionAt(Point p)const noexcept{
     if(!std::isfinite(p.x)||!std::isfinite(p.y))return {};for(auto i=actions_.rbegin();i!=actions_.rend();++i)if(i->enabled&&p.x>=i->rect.x&&p.y>=i->rect.y&&p.x<i->rect.x+i->rect.width&&p.y<i->rect.y+i->rect.height)return i->id;return {};
+}
+std::optional<NotesMenuScrollBar> NotesControls::valueScrollBar(std::size_t count,std::size_t firstRow)noexcept{
+    constexpr std::size_t rows=7;if(count<=rows)return std::nullopt;
+    // Under the 23-point close button (211, 8): its centre column, from 8
+    // points below it to the seventh row's bottom (8 + 6 * 24 + 22 = 174).
+    constexpr double top=39,bottom=174,x=211+23*.5-1,length=bottom-top;
+    const auto first=std::min(firstRow,count-rows);const double h=std::max(10.,length*double(rows)/double(count));
+    return NotesMenuScrollBar{{x,top,2,length},{x,top+double(first)/double(count-rows)*(length-h),2,h},{205,top-2,33,length+4},count,first,rows};
+}
+std::size_t NotesControls::valueScrollRow(const NotesMenuScrollBar&bar,double thumbTop)noexcept{
+    if(bar.count<=bar.visibleRows||!std::isfinite(thumbTop))return std::min(bar.firstRow,bar.count>bar.visibleRows?bar.count-bar.visibleRows:0);
+    const auto last=bar.count-bar.visibleRows;const double travel=bar.track.height-bar.thumb.height;if(!(travel>0))return bar.firstRow;
+    const double at=std::clamp((thumbTop-bar.track.y)/travel,0.,1.)*double(last);return std::min(last,static_cast<std::size_t>(std::lround(at)));
 }
 std::vector<std::string> NotesControls::sizeValues(double current){need(std::isfinite(current)&&current>=0&&current<=100000,"Invalid Notes font size");std::set<int> values{8,10,11,12,14,16,18,20,24,28,32,40,48,64,72,96,144,static_cast<int>(std::round(current))};std::vector<std::string> out;out.reserve(values.size());for(auto v:values)out.push_back(std::to_string(v));return out;}
 std::size_t NotesControls::initialFirstRow(std::span<const std::string> values,std::string_view selected){const auto found=std::find(values.begin(),values.end(),selected);return std::min(std::max<std::size_t>(7,values.size())-7,found==values.end()?0:std::size_t(found-values.begin()));}

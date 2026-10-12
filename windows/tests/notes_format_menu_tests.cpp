@@ -5,6 +5,7 @@
 #include <cmath>
 #include <numbers>
 #include <algorithm>
+#include <vector>
 namespace core=endfield::core;namespace gpu=endfield::native;namespace tools=endfield::tools;namespace app=endfield::app;namespace rich=core::notes;
 namespace {
 unsigned checks{};void check(bool v,const char*why){++checks;if(!v)throw std::runtime_error(why);}
@@ -52,6 +53,26 @@ void run(HWND hwnd,gpu::Renderer&r,const std::filesystem::path&assets){
     }
     check(menu.open("formatFont",document.selectionStyle(),time),"Native installed-font menu uses source presentation");frame(.2);const auto q=point({40,100});check(menu.wheel({q.x,q.y,-4,false,0,3},1,time),"Font list scroll stays inside menu");frame();
     check(menu.key({app::KeyKind::down,VK_ESCAPE},time),"Escape dismisses menu");check(!menu.acceptsInput()&&!menu.contains(q),"Closing artwork immediately detaches input");frame(.04);check(!menu.entries().empty(),"Finite closing animation retains old artwork");frame(.2);check(menu.entries().empty()&&!menu.requiresFrames(time),"Settled closed menu has no GPU entry or frame demand");
+    {   // The size menu's scroll bar (Windows addition, live RC 128): drag the
+        // thumb, press in its column, set it through UI Automation.
+        namespace mod=endfield::modules;check(menu.open("formatSize",document.selectionStyle(),time),"Reopen the size menu");frame(.2);const auto values=mod::NotesControls::sizeValues(document.selectionStyle().fontSize);check(values.size()>7&&menu.firstRow().has_value(),"More than seven sizes show the scroll bar");
+        const auto bar=[&]{return *mod::NotesControls::valueScrollBar(values.size(),*menu.firstRow());};
+        std::vector<gpu::NotesAutomationElement> peers;menu.automationElements(peers,"notes.format:",{});const auto slider=std::find_if(peers.begin(),peers.end(),[](const auto&e){return e.id=="notes.format:scroll";});
+        check(slider!=peers.end()&&slider->role==gpu::NotesAutomationRole::slider&&slider->label=="Scroll"&&slider->maximum==double(values.size()-7)&&slider->value==double(*menu.firstRow())&&slider->largeChange==7,"The scroll bar is a UI Automation slider over the first shown row");
+        const auto send=[&](app::PointerKind kind,core::Point local){const auto p=point(local);const bool handled=menu.pointer({kind,kind==app::PointerKind::move?app::PointerButton::none:app::PointerButton::left,p.x,p.y,0},1,time);frame();return handled;};
+        const auto size=document.selectionStyle().fontSize;const auto paints=raster.stats().rasterizations;
+        const core::Point grip{bar().thumb.x+1,bar().thumb.y+bar().thumb.height*.5};
+        check(send(app::PointerKind::down,grip)&&menu.dragging(),"A press on the thumb starts a scroll drag");
+        check(send(app::PointerKind::move,{grip.x-60,grip.y+400})&&*menu.firstRow()==values.size()-7,"Dragging the thumb past the track's end shows the last rows");
+        check(raster.stats().rasterizations>paints,"The scrolled rows and thumb are painted again");
+        check(send(app::PointerKind::up,{grip.x-60,grip.y+400})&&!menu.dragging()&&menu.acceptsInput(),"Releasing ends the drag and keeps the menu open");
+        check(send(app::PointerKind::down,{bar().track.x+1,bar().track.y+1})&&*menu.firstRow()==0,"A press at the track's top jumps to the first rows");send(app::PointerKind::up,{bar().track.x+1,bar().track.y+1});
+        check(document.selectionStyle().fontSize==size,"Scrolling never applies a size");
+        check(menu.setScroll(3,time)&&*menu.firstRow()==3&&!menu.setScroll(std::nan(""),time),"The automation slider sets the first shown row");frame();
+        click({24,19});check(document.selectionStyle().fontSize==std::stod(values[3]),"The first shown row after scrolling applies its own size");
+        const auto q=point({100,100});check(menu.wheel({q.x,q.y,-2,false,0,3},1,time)&&*menu.firstRow()==4,"The wheel still scrolls by the source eighteen-point rows");frame();
+        check(menu.key({app::KeyKind::down,VK_ESCAPE},time),"Escape closes the scrolled size menu");frame(.04);frame(.2);check(menu.entries().empty(),"The closed size menu leaves no GPU entry");
+    }
     check(document.text()==u"Selected text\nOther line","Formatting never replaces document content");composition.detach(r);menu.release(r);released=true;check(!IsWindowVisible(hwnd),"Menus never created a native popup or changed focus");
 }
 }

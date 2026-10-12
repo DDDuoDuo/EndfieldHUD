@@ -4,8 +4,11 @@
 #include "app/areas/notes_automation_binding.hpp"
 #include "core/source_desktop_chrome.hpp"
 #include "tools/notes_preview.hpp"
+#include "modules/notes_drawing.hpp"
+#include "core/data/data_store.hpp"
 #include <uiautomation.h>
 #include <wrl/client.h>
+#include <algorithm>
 #include <filesystem>
 #include <optional>
 #include <stdexcept>
@@ -87,9 +90,10 @@ private:
         if(controls_.empty()||!clock_)return; // development preview without the staged package
         using Microsoft::WRL::ComPtr;const auto rasterBefore=raster_.stats().entries;const auto root=root_/("automation-"+std::to_string(cycles_));
         const gpu::NativeNotesControlsAssets assets(controls_,{EHUD_NOTES_CONTROLS_SHA,EHUD_NOTES_CONTROLS_COMMIT});
-        const std::string textID="0000000C-0000-4000-8000-0000000000A1",todoID="0000000C-0000-4000-8000-0000000000A2",itemID="0000000C-0000-4000-8000-0000000000A3";
+        const std::string textID="0000000C-0000-4000-8000-0000000000A1",todoID="0000000C-0000-4000-8000-0000000000A2",itemID="0000000C-0000-4000-8000-0000000000A3",drawID="0000000C-0000-4000-8000-0000000000A4";
         const std::vector<data::Note> notes{{.id=textID,.kind=data::NoteKind::text,.text="hello world",.x=80,.y=80,.width=240,.height=145,.createdAt=1},
-            {.id=todoID,.kind=data::NoteKind::todo,.items={{.id=itemID,.text="first"}},.x=400,.y=80,.width=220,.height=150,.createdAt=2}};
+            {.id=todoID,.kind=data::NoteKind::todo,.items={{.id=itemID,.text="first"}},.x=400,.y=80,.width=220,.height=150,.createdAt=2},
+            {.id=drawID,.kind=data::NoteKind::drawing,.x=80,.y=260,.width=300,.height=240,.createdAt=3,.drawing=std::string(R"({"version":1,"strokes":[]})")}};
         {
             tools::NotesPreview preview(window_,raster_,root,assets,false,formats_,notes);const auto metrics=host_.metrics();preview.resize(metrics);
             core::source::DesktopChromeSettings settings;settings.viewport={0,0,metrics.width,metrics.height};settings.module=core::Module::notes;settings.sourceShell=true;
@@ -120,6 +124,11 @@ private:
                 step.check(preview.pointer(down,clock_()),"A click in the same burst reaches the open menu");
                 const app::PointerEvent up{app::PointerKind::up,app::PointerButton::left,down.x,down.y,0};preview.pointer(up,clock_());
                 peers->refresh();step.check(find("notes.format:close")&&find(valueID)&&find(valueID)->selected,"The menu stays open with the clicked size selected");
+                // Its scroll bar (a Windows addition) is a slider over the first shown row.
+                {const auto*scroll=find("notes.format:scroll");step.check(scroll&&scroll->role==gpu::NotesAutomationRole::slider&&scroll->maximum>0&&scroll->largeChange==7,"The size menu lists its scroll bar as a slider");
+                 const auto maximum=scroll->maximum;const auto last="notes.format:value:"+std::to_string(static_cast<std::size_t>(maximum)+6);ComPtr<IRawElementProviderFragment>f;ComPtr<IRangeValueProvider>range;
+                 step.check(SUCCEEDED(peers->child(index("notes.format:scroll"),&f))&&SUCCEEDED(f.As(&range))&&SUCCEEDED(range->SetValue(maximum)),"Its range value scrolls the menu");
+                 peers->refresh();step.check(find(last)&&!find("notes.format:value:0")&&find("notes.format:scroll")->value==maximum,"The last size rows are listed after scrolling to the end");}
                 step.check(preview.key({app::KeyKind::down,VK_ESCAPE},clock_(),tools::NotesKeyModifiers{}),"Escape closes the menu");peers->refresh();step.check(!find("notes.format:close"),"The closed menu's peers leave the group");
             }
             step.check(preview.finish(),"The field commits");frame();
@@ -128,6 +137,20 @@ private:
             step.check(find("note:"+textID+":cancelDelete")&&find("note:"+textID+":confirmDelete"),"The deletion confirmation is listed");
             step.check(invoke("note:"+textID+":confirmDelete"),"Confirming deletes the note");frame();peers->refresh();step.check(!find("note:"+textID+":select"),"The deleted card's peers leave the group");
             step.check(!preview.perform("note:"+textID+":pin",clock_())&&!preview.perform("unknown",clock_()),"Stale and unknown ids are refused");
+            // Pen/eraser switch on a drawing card (live RC 128): the right press
+            // that switches tools also consumes its release, so the host's
+            // capture for that press ends before the next stroke takes one.
+            {
+                peers->refresh();const auto*card=find("note:"+drawID+":select");step.check(card&&card->rect.width>60&&card->rect.height>60,"The drawing card is listed");
+                const double cx=(card->rect.x+card->rect.width*.5)/metrics.scale,cy=(card->rect.y+card->rect.height*.5)/metrics.scale;
+                const auto send=[&](app::PointerKind kind,app::PointerButton button,double x,double y){const bool handled=preview.pointer({kind,button,x,y,0},clock_());frame();return handled;};
+                using K=app::PointerKind;using B=app::PointerButton;
+                for(unsigned n=0;n<2;++n)step.check(send(K::down,B::right,cx,cy)&&send(K::up,B::right,cx,cy)&&!preview.pointerLocked(),"A right click on the drawing switches pen and eraser, consuming its press and release");
+                step.check(send(K::down,B::left,cx-30,cy)&&preview.pointerLocked(),"The pen press after the switch starts a stroke");send(K::move,B::none,cx,cy+10);send(K::move,B::none,cx+30,cy+20);
+                step.check(preview.pointerLocked()&&send(K::up,B::left,cx+30,cy+20)&&!preview.pointerLocked(),"The stroke continues to its release");
+                const data::NotesStore store(root);const auto&rows=store.notes();const auto drawn=std::find_if(rows.begin(),rows.end(),[&](const data::Note&n){return n.id==drawID;});
+                step.check(drawn!=rows.end()&&drawn->drawing&&mod::NotesDrawing(*drawn->drawing).strokes().size()==1&&mod::NotesDrawing(*drawn->drawing).pointCount()==3,"The stroke after the switch is saved with every point");
+            }
             peers.reset();step.check(preview.finish(),"The owner finishes");preview.release(host_.renderer());
         }
         std::error_code ignored;std::filesystem::remove_all(root,ignored);

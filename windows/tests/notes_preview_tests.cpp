@@ -3,6 +3,7 @@
 #define NOMINMAX
 #endif
 #include "tools/notes_preview.hpp"
+#include "app/utility_executor.hpp"
 #include "core/data/data_store.hpp"
 #include "core/data/file_io.hpp"
 #include "core/migration/mac_import_relink.hpp"
@@ -967,6 +968,18 @@ void relinkLedger(HWND hwnd,gpu::Renderer&renderer,const gpu::NativeNotesControl
      check(rows[1].state==mig::RelinkState::dismissed&&rows[2].state==mig::RelinkState::dismissed,"A deleted note's row and a note without media are dismissed");
      if(renderer.stats().initialized)preview.release(renderer);}
     check(savedNotes(root.path).size()==2,"Reconciling the ledger never changes the stored notes");
+    // Once the host hands over the shared UtilityExecutor, a deletion's ledger
+    // write runs on it (after the record write), not on the owner thread.
+    {app::UtilityExecutor executor([]{});gpu::LayerRasterizer shared;const std::array one{text};Fixture f(hwnd,renderer,shared,assets,{},one);
+     std::filesystem::create_directories(f.root.path/"Migration");
+     data::detail::replaceFile(f.root.path/"Migration"/"relink.json",std::nullopt,mig::MacRelinkLedger::encode({item(text.id)}),mig::MacRelinkLedger::maximumBytes);
+     f.preview->setUtilityExecutor(&executor);const auto accepted=executor.stats().accepted;
+     check(f.preview->perform("note:"+text.id+":delete",f.time),"The delete peer asks for confirmation");f.tick(.05);
+     check(f.preview->perform("note:"+text.id+":confirmDelete",f.time),"Confirming deletes the note");for(unsigned n=0;n<8&&!savedNotes(f.root.path).empty();++n)f.tick(.25);
+     check(savedNotes(f.root.path).empty()&&f.preview->relinkLedgerJobs()==1&&executor.stats().accepted==accepted+1,"The deletion's ledger write is queued on the shared executor");
+     executor.waitIdle();executor.drain();const auto rows=mig::MacRelinkLedger(f.root.path).items();
+     check(rows.size()==1&&rows[0].state==mig::RelinkState::dismissed,"The queued write dismisses the deleted note's row");
+     f.release();}
 }
 int wmain(int argc, wchar_t** argv) {
     try {

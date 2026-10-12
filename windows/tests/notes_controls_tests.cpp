@@ -59,6 +59,22 @@ void tests(){
     check(i.values.size()==17&&std::count(i.values.begin(),i.values.end(),"14")==1&&plan.actions().size()==8,"Source font sizes deduplicate rounded current value and show only seven rows");
     check(plan.actions()[1].label=="14"&&plan.actions()[1].selected,"Selected source size begins at clamped first row");
     i.firstRow=1000;const auto old=plan.contentRevision();rejects([&]{plan.update(i);},"Out-of-range menu scroll rejected before content publication");check(plan.contentRevision()==old,"Invalid menu scroll preserves content");
+    // Windows scroll bar (live RC 128): the Mac shelf track (2 points, ink .12,
+    // ink .6 thumb of max(10, track * 7 / count)) in the column under the close
+    // button, from 8 points below it to the seventh row's bottom.
+    {   const auto bar=NotesControls::valueScrollBar(17,1);
+        check(bar&&bar->track==Rect{221.5,39,2,135}&&bar->hit==Rect{205,37,33,139}&&bar->count==17&&bar->visibleRows==7&&bar->firstRow==1,"Size menu scroll track sits under the close button beside the rows");
+        checkNear(bar->thumb.height,135*7/17.,"Thumb shows the visible share of the values");checkNear(bar->thumb.y,39+(135-135*7/17.)/10,"Thumb starts at the first shown row");
+        check(!NotesControls::valueScrollBar(7,0)&&NotesControls::valueScrollBar(400,9999)->firstRow==393,"Seven values need no scroll bar; the first row is clamped");
+        checkNear(NotesControls::valueScrollBar(400,0)->thumb.height,10,"Long font lists keep the source ten-point minimum thumb");
+        check(NotesControls::valueScrollRow(*bar,-40)==0&&NotesControls::valueScrollRow(*bar,500)==10&&NotesControls::valueScrollRow(*bar,bar->track.y+(bar->track.height-bar->thumb.height)*.5)==5,"Thumb positions map to the nearest first row");
+        i.firstRow=10;plan.update(i);check(!find(plan.artwork(),"id","notes.menu/scrollTrack"),"Only an owner that takes the drag shows the scroll bar (the Reader's font menu keeps the Mac face)");
+        i.valueScrollBar=true;plan.update(i);const auto&track=get(plan.artwork(),"notes.menu/scrollTrack");const auto&thumb=get(plan.artwork(),"notes.menu/scrollThumb");
+        check(rect(track["frame"])==bar->track&&track["backgroundColor"]["sRGB"].array()[3].number()==.12&&thumb["backgroundColor"]["sRGB"].array()[3].number()==.6,"Size menu paints the source track and thumb");
+        checkNear(rect(thumb["frame"]).y+rect(thumb["frame"]).height,174,"The last rows put the thumb at the track's end");
+        check(plan.actionAt({222,100})==std::nullopt&&plan.actions().size()==8,"The scroll bar adds no row action");
+        auto seven=i;seven.values.resize(7);seven.firstRow=0;plan.update(seven);check(!find(plan.artwork(),"id","notes.menu/scrollTrack"),"A menu whose values fit shows no scroll bar");
+        i.firstRow=1;i.valueScrollBar=false;}
     i={};i.kind=NotesControlsKind::special;i.traits={true,false,true,false};plan.update(i);check(plan.bounds().height==48&&plan.actions().size()==5&&plan.actions()[1].label=="Bold"&&plan.actions()[1].selected&&plan.actions()[3].selected,"Original compact traits menu separates AX labels from B/I/U/S glyphs");
     i.kind=NotesControlsKind::color;plan.update(i);check(plan.images().size()==1&&plan.images()[0].requestedPixels==192&&!plan.images()[0].sourceInTint&&plan.images()[0].sourceResource=="source-generated:NotesColorWheelView.wheel","Original bounded wheel is explicit generated artwork dependency");
     check(plan.actions().size()==2&&!plan.actions()[1].enabled&&plan.feedback().size()==1,"Current color swatch has no activation/highlight");

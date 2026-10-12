@@ -36,12 +36,19 @@ public:
     // menu, NotesColorWheelView as a slider "<prefix>wheel" whose value is the
     // marker's x on the 166-point wheel in steps of 4 (the source increment
     // and decrement). Physical client bounds; nothing before the first pose.
-    struct AutomationStrings {std::string wheel{"Color wheel"},wheelHelp{"Use arrow keys to adjust hue and saturation."};};
+    // The font/size scroll bar (when the values exceed seven rows) is a
+    // slider "<prefix>scroll": its value is the first shown row (0 ... count -
+    // 7), small change one row, large change the seven shown rows.
+    struct AutomationStrings {std::string wheel{"Color wheel"},wheelHelp{"Use arrow keys to adjust hue and saturation."},scroll{"Scroll"};};
     void automationElements(std::vector<native::NotesAutomationElement>&,std::string_view prefix,const AutomationStrings&)const;
     // NotesRetainedMenu.perform(id) for an enabled item of the open menu.
     bool perform(std::string_view item,double time);
     // The color wheel at x (0...166) on the marker's current row.
     bool setWheel(double x,double time);
+    // The font/size menu's first shown row (the scroll slider's value); the
+    // scroll bar's first row while one is shown, else none.
+    bool setScroll(double row,double time);
+    std::optional<std::size_t> firstRow()const noexcept;
     void upload(native::Renderer&);
     std::span<const native::LayerCompositionEntry> entries();
     void collected(native::Renderer&);
