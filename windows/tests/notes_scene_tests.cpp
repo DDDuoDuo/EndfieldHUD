@@ -203,31 +203,48 @@ void largeCardContracts(gpu::Renderer&renderer,gpu::LayerRasterizer&raster){
     mod::NotesCardPresentation presentation(id1);const auto appearance=input("Large\nNote",1382);presentation.updateContent(state,appearance);
     gpu::LayerRasterOptions options;options.pixelsPerPoint=1;options.paddingPoints=1;gpu::NativeNotesCardScene card(presentation,raster,options,gpu::NativeNotesExternalEditorAppearance{{.12,.12,.12,1},appearance.palette.accent});
     check(card.syncContent()&&card.scene().report().unsupported.empty()&&card.scene().draws().size()>2&&card.scene().draws().back().sourceID.ends_with("/resizeGrip"),"A 1400x900 card splits into surfaces and keeps its grip last");
-    // Its plate and header are a separate frame scene below the body.
-    check(card.frameScene()&&card.frameScene()->report().unsupported.empty()&&card.frameScene()->draws().size()==2&&card.frameScene()->draws().front().sourceID.ends_with("/card")&&card.frameScene()->draws().back().sourceID.ends_with("/header")&&card.stats().frameLoads==1,"The large card's plate and header form its frame scene");
+    // Its header is a separate frame scene below the body; its plate is one
+    // filled GPU mesh (no card-sized bitmap) in an entry before that frame.
+    check(card.frameScene()&&card.frameScene()->report().unsupported.empty()&&card.frameScene()->draws().size()==1&&card.frameScene()->draws().front().sourceID.ends_with("/header")&&card.stats().frameLoads==1,"The large card's header forms its frame scene, without a plate bitmap");
+    {const auto meshes=renderer.stats().meshes;const auto rasterBytes=raster.stats().resourceBytes;
+     check(card.plateScene()&&card.plateScene()->draws().empty()&&card.plateAfterDraws().empty()&&card.uploadPlate(renderer)&&!card.uploadPlate(renderer)&&renderer.stats().meshes==meshes+1,"The plate mesh uploads once");
+     check(card.plateAfterDraws().size()==1&&card.plateAfterDraws().front().textureID.empty()&&card.plateAfterDraws().front().meshID.ends_with("/card-plate")&&raster.stats().resourceBytes==rasterBytes,"The plate is one untextured draw and rasters nothing");}
+    const auto plateEntry=[&]{return gpu::LayerCompositionEntry{card.plateScene(),card.plateAfterDraws()};};
     check(std::none_of(card.scene().draws().begin(),card.scene().draws().end(),[](const auto&d){return d.sourceID.ends_with("/card")||d.sourceID.ends_with("/header");}),"The body scene never paints the plate or header again");
+    // Its body lines are a separate lines scene between the frame and the body.
+    const auto isLine=[](const gpu::DrawObject&d){return d.sourceID.find("/content/line/")!=std::string::npos;};
+    check(card.linesScene()&&card.linesScene()->report().unsupported.empty()&&card.linesScene()->draws().size()==2&&std::all_of(card.linesScene()->draws().begin(),card.linesScene()->draws().end(),isLine)&&card.stats().lineLoads==1,"The large text card's two body lines form its lines scene");
+    check(std::none_of(card.scene().draws().begin(),card.scene().draws().end(),isLine),"The body scene never paints a line again");
+    {   // The lines sit at the viewport origin under the card's clips (unshifted pose).
+        card.updatePose({},1,0);gpu::LayerComposition lines;const std::array all{plateEntry(),gpu::LayerCompositionEntry{card.frameScene(),{}},gpu::LayerCompositionEntry{card.linesScene(),{}},gpu::LayerCompositionEntry{&card.scene(),{}}};lines.setEntries(renderer,all);lines.present(renderer);renderer.setCamera(gpu::layerViewportProjection(512,256));renderer.draw(false);
+        const auto view=renderer.readback();unsigned bright{};for(unsigned y=29;y<48;++y)for(unsigned x=9;x<70;++x){const auto at=std::size_t(y)*view.rowBytes+x*4;bright+=view.pixels[at]>150&&view.pixels[at+1]>150;}
+        unsigned stray{};for(unsigned y=50;y<70;++y)for(unsigned x=200;x<260;++x){const auto at=std::size_t(y)*view.rowBytes+x*4;stray+=view.pixels[at]>150&&view.pixels[at+1]>150;}
+        check(bright>6&&stray==0,"The first line's glyphs paint at the viewport's top left, nothing elsewhere");lines.detach(renderer);}
     // Its right edge at x=100: the top-right rounded corner and beyond are visible.
-    const auto shifted=core::Matrix4::translation(-1300,0);card.updatePose(shifted,1,0);gpu::LayerComposition composition;const std::array scenes{card.frameScene(),&card.scene()};composition.setScenes(renderer,scenes);composition.present(renderer);renderer.setCamera(gpu::layerViewportProjection(512,256));renderer.draw(false);
+    const auto shifted=core::Matrix4::translation(-1300,0);card.updatePose(shifted,1,0);gpu::LayerComposition composition;const auto scenes=[&]{return std::array{plateEntry(),gpu::LayerCompositionEntry{card.frameScene(),{}},gpu::LayerCompositionEntry{card.linesScene(),{}},gpu::LayerCompositionEntry{&card.scene(),{}}};};auto plain=scenes();composition.setEntries(renderer,plain);composition.present(renderer);renderer.setCamera(gpu::layerViewportProjection(512,256));renderer.draw(false);
     const auto frame=renderer.readback();const auto at=[&](unsigned x,unsigned y){return std::size_t(y)*frame.rowBytes+x*4;};
     check(frame.pixels[at(50,200)+3]==255&&frame.pixels[at(50,200)]<80,"The large card paints its opaque body");check(frame.pixels[at(99,0)+3]<128,"Its rounded corner stays clipped");check(frame.pixels[at(150,100)+3]==0,"Nothing paints beyond it");
     // Editing entry and exit keep the frame: its plate is never rastered again.
     const auto beforeEntry=raster.stats().rasterizations;const auto plate=card.frameScene()->draws().front().textureID;
     state.beginEditing(id1);presentation.updateContent(state,appearance);check(card.syncContent()&&card.externalEditorSlot().has_value()&&card.externalEditorAfterDraws().empty(),"The large card enters editing with its source viewport and frame; its field border ring waits to be resident");
     check(card.stats().frameLoads==1&&card.frameScene()->draws().front().textureID==plate,"Editing entry keeps the frame scene");
+    check(card.linesScene()&&card.stats().lineLoads==1,"Editing entry keeps the lines scene loaded under the field");
     const auto afterEntry=raster.stats().rasterizations;check(afterEntry-beforeEntry<=card.scene().draws().size(),"Entry rasters body surfaces only");
     check(card.frameAfterDraws().empty()&&card.uploadEditorIndicator(renderer)&&card.frameAfterDraws().size()==1&&card.frameAfterDraws().front().textureID.empty()&&card.externalEditorAfterDraws().size()==2,"The field backing is one tinted quad once its unit mesh is resident");
-    card.updatePose(shifted,1,1);const std::array editingEntries{gpu::LayerCompositionEntry{card.frameScene(),card.frameAfterDraws()},gpu::LayerCompositionEntry{&card.scene(),{}}};composition.setEntries(renderer,editingEntries);composition.present(renderer);renderer.draw(false);
+    card.updatePose(shifted,1,1);{const auto posed=card.linesScene()->prepareDraws();check(!posed.empty()&&std::all_of(posed.begin(),posed.end(),[](const auto&d){return d.opacity==0;}),"The open field's lines publish at zero opacity");}
+    const std::array editingEntries{plateEntry(),gpu::LayerCompositionEntry{card.frameScene(),card.frameAfterDraws()},gpu::LayerCompositionEntry{card.linesScene(),{}},gpu::LayerCompositionEntry{&card.scene(),{}}};composition.setEntries(renderer,editingEntries);composition.present(renderer);renderer.draw(false);
     const auto editing=renderer.readback();check(editing.pixels[at(50,200)+3]==255&&editing.pixels[at(99,0)+3]<128&&editing.pixels[at(150,100)+3]==0,"The editing card keeps its plate, rounded corner and bounds");
     // Source opaque .12 editor backing over the field (sRGB byte 31).
     check(std::abs(int(editing.pixels[at(50,200)])-31)<=2&&std::abs(int(editing.pixels[at(50,200)+1])-31)<=2&&std::abs(int(editing.pixels[at(50,200)+2])-31)<=2,"The field backing paints the source editor background");
     check(std::abs(int(editing.pixels[at(50,20)])-int(frame.pixels[at(50,20)]))<=1,"The header outside the field keeps its plate color");
     state.detachEditor();presentation.updateContent(state,appearance);check(card.syncContent()&&!card.externalEditorSlot()&&card.stats().frameLoads==1&&card.frameAfterDraws().empty(),"Editing exit keeps the frame scene and drops the backing quad");
-    composition.setScenes(renderer,scenes);composition.present(renderer);check(card.releaseEditorIndicator(renderer),"The unpublished unit mesh retires after exit");
+    plain=scenes();composition.setEntries(renderer,plain);composition.present(renderer);check(card.releaseEditorIndicator(renderer),"The unpublished unit mesh retires after exit");
     check(raster.stats().rasterizations-afterEntry<=card.scene().draws().size(),"Exit rasters body surfaces only");
+    card.updatePose(shifted,1,1.5);{const auto posed=card.linesScene()->prepareDraws();check(card.stats().lineLoads==1&&!posed.empty()&&std::all_of(posed.begin(),posed.end(),[](const auto&d){return d.opacity==1;}),"Closing the field over unchanged text shows the same line surfaces again");}
     // The card's own border is one GPU ring after its frame scene: a selection
     // retints and reshapes it and never reloads (re-rasters) the plate.
     const auto meshes=renderer.stats().meshes;check(card.frameAfterDraws().empty()&&card.uploadFrameBorder(renderer)&&renderer.stats().meshes==meshes+1&&!card.uploadFrameBorder(renderer),"The border ring uploads once");
-    const auto ringEntries=[&]{return std::array{gpu::LayerCompositionEntry{card.frameScene(),card.frameAfterDraws()},gpu::LayerCompositionEntry{&card.scene(),{}}};};
+    const auto ringEntries=[&]{return std::array{plateEntry(),gpu::LayerCompositionEntry{card.frameScene(),card.frameAfterDraws()},gpu::LayerCompositionEntry{card.linesScene(),{}},gpu::LayerCompositionEntry{&card.scene(),{}}};};
     check(card.frameAfterDraws().size()==1&&card.frameAfterDraws().front().textureID.empty()&&card.frameAfterDraws().front().meshID.ends_with("/card-border-ring"),"The ring follows the frame scene");
     card.updatePose(shifted,1,2);auto withRing=ringEntries();composition.setEntries(renderer,withRing);composition.present(renderer);renderer.draw(false);const auto selected=renderer.readback();
     check(selected.pixels[at(99,128)+2]>200&&selected.pixels[at(99,128)+1]>150&&selected.pixels[at(99,128)]<120&&selected.pixels[at(99,128)+3]==255,"The selected card's right edge is its accent border (BGRA readback)");
@@ -237,10 +254,10 @@ void largeCardContracts(gpu::Renderer&renderer,gpu::LayerRasterizer&raster){
     check(raster.stats().rasterizations-beforeSelection<=card.scene().draws().size()&&!card.uploadFrameBorder(renderer)&&renderer.stats().meshes==meshes+1,"A selection rasters no plate and replaces the ring in place");
     card.updatePose(shifted,1,3);withRing=ringEntries();composition.setEntries(renderer,withRing);composition.present(renderer);renderer.draw(false);const auto deselected=renderer.readback();
     check(deselected.pixels[at(99,128)+2]<120&&deselected.pixels[at(99,128)+3]==255&&std::abs(int(deselected.pixels[at(50,128)])-int(selected.pixels[at(50,128)]))<=1,"The deselected border is the plain one over the same plate");
-    composition.setScenes(renderer,scenes);composition.present(renderer);
+    plain=scenes();composition.setEntries(renderer,plain);composition.present(renderer);
     // Shrinking back within the group area returns the plate to the card surface.
     state.beginGesture(id1,{1400,900},mod::NotesState::Gesture::resize);state.dragTo({300,200});state.endGesture();const auto compact=input("Large\nNote",state.card(id1)->rect.width-18);presentation.updateContent(state,compact);
-    check(card.syncContent()&&!card.frameScene()&&std::any_of(card.scene().draws().begin(),card.scene().draws().end(),[](const auto&d){return d.sourceID.ends_with("/card");}),"A card back within the group area has no frame scene");
+    check(card.syncContent()&&!card.frameScene()&&!card.linesScene()&&std::any_of(card.scene().draws().begin(),card.scene().draws().end(),[](const auto&d){return d.sourceID.ends_with("/card");})&&std::count_if(card.scene().draws().begin(),card.scene().draws().end(),isLine)==0,"A card back within the group area has no frame or lines scene");
     const std::array alone{&card.scene()};card.updatePose({},1,3);composition.setScenes(renderer,alone);composition.present(renderer);check(card.collectRetired(renderer),"The unpublished frame releases its surfaces");
     composition.detach(renderer);check(card.releaseResources(renderer),"The large card releases its surfaces");
 }

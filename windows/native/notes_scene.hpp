@@ -13,6 +13,7 @@ LayerRasterOptions notesRasterOptions(LayerRasterOptions,double width,double hei
 struct NativeNotesSceneStats {
     std::uint64_t contentUpdates{},placementUpdates{},feedbackChanges{};
     std::uint64_t frameLoads{}; // large-card plate/header scene loads
+    std::uint64_t lineLoads{};  // large text card body-line scene loads
 };
 struct NativeNotesExternalEditorAppearance {
     modules::NotesColor background,border;
@@ -66,6 +67,17 @@ public:
     // CALayer border is a GPU ring mesh among frameAfterDraws().
     LayerScene* frameScene()noexcept;
     const LayerScene* frameScene()const noexcept;
+    // A large TEXT card's body lines (its visible "content/line/N" leaves) in
+    // their own scene in document coordinates, composed between frameScene()
+    // and scene(); null otherwise. It reloads only when those lines' own
+    // content changes (text, formatting, width, palette, the visible window,
+    // typography). While the card's field is open the lines stay loaded and
+    // published at zero opacity (the opaque field covers them), so closing the
+    // field over unchanged text, and every other body change, rasters no line
+    // again. Placement adds the viewport origin, the scroll offset and the
+    // card's and viewport's clips.
+    LayerScene* linesScene()noexcept;
+    const LayerScene* linesScene()const noexcept;
     // Its LayerCompositionEntry.after: [the card's border ring (once
     // uploadFrameBorder made it resident), while its field is open the opaque
     // field backing as one tinted quad on the indicator's unit mesh (once
@@ -73,15 +85,24 @@ public:
     // mesh of the source border (accent and 1.1 points when selected): a
     // selection retints and reshapes it, never rasters the plate.
     std::span<const DrawObject> frameAfterDraws()const noexcept;
+    // A large card's plate (its CALayer background) is one filled, antialiased
+    // GPU mesh instead of a card-sized bitmap: plateAfterDraws() is the only
+    // draw of the empty plateScene(), composed immediately BEFORE frameScene()
+    // (null/empty for ordinary cards; empty until uploadPlate made the mesh
+    // resident). A resize reshapes it; nothing is rastered for it. Released
+    // like the ring.
+    LayerScene* plateScene()noexcept;
+    std::span<const DrawObject> plateAfterDraws()const noexcept;
+    bool uploadPlate(Renderer&); // true when plateAfterDraws() grew
     // Uploads (or replaces, after a size or border change) the ring mesh;
     // true when frameAfterDraws() grew. Released by releaseResources(), or by
     // collectRetired() once the card no longer needs it.
     bool uploadFrameBorder(Renderer&);
     NativeNotesSceneStats stats()const noexcept;
-    // Releases both scenes' resources once unpublished (false: still referenced).
+    // Releases every scene's resources once unpublished (false: still referenced).
     bool releaseResources(Renderer&);
-    // After publication: a frame scene left behind by a shrunken card releases
-    // its resident surfaces (false while they are still published).
+    // After publication: a frame or lines scene left behind by a shrunken card
+    // releases its resident surfaces (false while they are still published).
     bool collectRetired(Renderer&);
     // Explicit external-editor mode only. Compose this stable card scene, then
     // the caller's editor scene with this span in LayerCompositionEntry.after.

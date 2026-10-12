@@ -44,6 +44,25 @@ void borderRing(double width,double height,double radius,double stroke,double pi
     for(std::uint32_t s=0;s<samples;++s){const auto a=s*rows,b=((s+1)%samples)*rows;
         for(std::uint32_t j=0;j+1<rows;++j)for(const auto v:{a+j,b+j,b+j+1,a+j,b+j+1,a+j+1})indices.push_back(v);}
 }
+// A filled CALayer plate (width x height, corner radius `radius`) as one GPU
+// mesh in rect-local points: a fan from the centre to an inner outline, and an
+// alpha ramp across one raster pixel centred on the edge (the coverage the
+// raster gives the same plate). Vertex alpha only; linearTint carries the
+// colour. Arcs: eight segments a corner, as the border ring.
+void filledPlate(double width,double height,double radius,double pixelsPerPoint,std::vector<Vertex>&vertices,std::vector<std::uint32_t>&indices){
+    vertices.clear();indices.clear();
+    const double r=std::clamp(radius,0.,std::min(width,height)*.5),h=.5/pixelsPerPoint;constexpr unsigned segments=8;constexpr double pi=std::numbers::pi;
+    const std::array<std::array<double,3>,4> corners{{{r,r,pi},{width-r,r,1.5*pi},{width-r,height-r,0},{r,height-r,.5*pi}}};
+    const auto vertex=[&](double x,double y,double alpha){vertices.push_back({{static_cast<float>(x),static_cast<float>(y),0},{0,0},{1,1,1,static_cast<float>(alpha)}});};
+    vertex(width*.5,height*.5,1);
+    for(const auto&c:corners)for(unsigned k=0;k<=segments;++k){
+        const double a=c[2]+.5*pi*k/segments,nx=std::cos(a),ny=std::sin(a),ox=c[0]+nx*r,oy=c[1]+ny*r;
+        vertex(ox-nx*h,oy-ny*h,1);vertex(ox+nx*h,oy+ny*h,0);
+    }
+    const auto samples=static_cast<std::uint32_t>((vertices.size()-1)/2);
+    for(std::uint32_t s=0;s<samples;++s){const auto a=1+s*2,b=1+((s+1)%samples)*2;
+        for(const auto v:{0u,a,b,a,a+1,b+1,a,b+1,b})indices.push_back(v);}
+}
 std::array<float,4> linearColor(const modules::NotesColor&c){std::array<float,4>out{};for(unsigned n=0;n<3;++n){const auto v=c[n];out[n]=static_cast<float>(v<=.04045?v/12.92:std::pow((v+.055)/1.055,2.4));}out[3]=static_cast<float>(c[3]);return out;}
 Json command(const char*op,std::initializer_list<core::Point> points){Json::Array p;for(auto value:points)p.push_back(point(value));return Json::Object{{"op",op},{"points",std::move(p)}};}
 Json roundedPath(core::Rect b,double radius){
@@ -126,6 +145,11 @@ struct NativeNotesCardScene::Impl {
     // Large cards: the plate and header in their own retained scene (below).
     LayerScene frame;bool frameActive{};std::optional<Json> frameLoaded;std::optional<LayerRasterOptions> frameOptions;
     std::vector<DrawObject> frameDraws;std::vector<LayerPlacement> framePlacements;std::vector<std::vector<PlaneMask>> frameMasks;std::uint64_t frameLoads{};
+    // Large text cards: the body lines in their own retained scene (document
+    // coordinates under the viewport origin minus the scroll offset).
+    LayerScene lines;std::optional<Json> linesLoaded;std::optional<LayerRasterOptions> linesOptions;bool linesShown{};
+    core::Rect linesViewport;double linesOffset{},linesRadius{};
+    std::vector<DrawObject> lineDraws;std::vector<LayerPlacement> linePlacements;std::vector<std::vector<PlaneMask>> lineMasks;std::uint64_t lineLoads{};
     std::optional<NativeNotesExternalEditorAppearance>editorAppearance;
     std::optional<NativeNotesExternalEditorSlot>editorSlot;
     std::vector<Feedback> feedback;std::vector<DrawObject> localDraws;std::vector<LayerPlacement> placements;
@@ -141,6 +165,15 @@ struct NativeNotesCardScene::Impl {
     // open field's opaque backing. The field border is a ring too (afterDraws[1]).
     struct Ring {std::string mesh;std::vector<Vertex>vertices;std::vector<std::uint32_t>indices;std::array<double,5>key{};std::uint64_t revision{},uploaded{};bool active{},resident{};Renderer*owner{};};
     std::array<DrawObject,2>frameAfter;Ring cardRing,fieldRing;bool splitEditor{};
+    // A large card's plate (its CALayer background) as one filled GPU mesh
+    // instead of a card-sized bitmap (1600x1000 points at 2 px/pt: 25.6 MB of
+    // CPU raster and twice that on the GPU). It is the only draw of an empty
+    // scene's entry composed before frameScene(), so the header, lines and
+    // body paint over it exactly as over the bitmap.
+    LayerScene plateHolder;Ring plateMesh;std::array<DrawObject,1>plateAfter;
+    static void plate(Ring&ring,double width,double height,double radius,double ppp){
+        const std::array<double,5>key{width,height,radius,-1,ppp};if(ring.revision&&ring.key==key)return;
+        filledPlate(width,height,radius,ppp,ring.vertices,ring.indices);ring.key=key;++ring.revision;}
     // Rebuilds a ring's mesh only when its geometry changed (a content event).
     static void shape(Ring&ring,double width,double height,double radius,double stroke,double ppp){
         const std::array<double,5>key{width,height,radius,stroke,ppp};if(ring.revision&&ring.key==key)return;
@@ -161,7 +194,7 @@ struct NativeNotesCardScene::Impl {
     std::uint64_t revision{},feedbackRevision{};std::optional<double>lastTime;
     NativeNotesSceneStats stats;bool posed{};Matrix priorWorld;core::Rect priorRect;float priorOpacity{};
     Impl(modules::NotesCardPresentation&s,LayerRasterizer&r,LayerRasterOptions o,std::optional<NativeNotesExternalEditorAppearance>external)
-        :source(&s),scene(r),options(std::move(o)),frame(r),editorAppearance(external){
+        :source(&s),scene(r),options(std::move(o)),frame(r),lines(r),editorAppearance(external),plateHolder(r){
         if(external)for(const auto*c:{&external->background,&external->border})for(double value:*c)need(std::isfinite(value)&&value>=0&&value<=1,"Invalid external Notes editor appearance");
         if(external)need(external->background[3]==1,"Source Notes editor background must be opaque");
         for(auto&draw:mediaDraws)draw.masks.reserve(8);for(auto&draw:afterDraws)draw.masks.reserve(8);
@@ -222,9 +255,23 @@ struct NativeNotesCardScene::Impl {
             // The plate's CALayer border is the GPU ring after the frame scene:
             // a selection's border never reloads (re-rasters) the plate.
             frameCard["borderWidth"]=0;frameCard["borderColor"]=Json{};
+            // ...and its plate is a filled GPU mesh (plateMesh): no card-sized bitmap.
+            frameCard["backgroundColor"]=Json{};
             nextFrame=Json::Object{{"bounds",rect(layers[0].bounds)},{"masksToBounds",true},{"children",Json::Array{std::move(frameCard)}}};
             for(std::size_t i=1;i<layers.size();++i)if(header[i])excluded[i]=true;
         }
+        // A large text card's body lines: their own scene, so the body's
+        // reload (field entry/exit, feedback geometry, scroll indicator...)
+        // never rasters them again. The checklist's lines live in its rows.
+        std::optional<Json> nextLines;core::Rect nextViewport{};double nextOffset{};
+        if(split){std::size_t content=layers.size();
+            for(std::size_t n=1;n<layers.size();++n)if(layers[n].name=="notes.content.scroll"&&layers[n].parent!=Layer::noParent&&layers[layers[n].parent].name=="notes.content.viewport"){content=n;break;}
+            if(content<layers.size()&&!excluded[content]){Json::Array children;double bottom=1;
+                for(std::size_t n=content+1;n<layers.size();++n)if(layers[n].parent==content&&layers[n].kind==modules::NotesLayerKind::text&&layers[n].name.starts_with("notes.content.line.")&&!excluded[n]){
+                    children.push_back(descriptor(layers[n]));bottom=std::max(bottom,layers[n].frame.y+layers[n].frame.height);excluded[n]=true;}
+                for(std::size_t n=content+1;n<layers.size();++n)if(layers[n].parent!=Layer::noParent&&excluded[layers[n].parent])excluded[n]=true;
+                if(!children.empty()){nextViewport=layers[layers[content].parent].frame;nextOffset=layers[content].bounds.y;
+                    nextLines=Json::Object{{"bounds",Json::Array{0,0,nextViewport.width,bottom}},{"children",std::move(children)}};}}}
         auto card=tree(layers,{excluded.get(),layers.size()},0);card["opacity"]=1;card["hidden"]=false;
         // The body keeps the card's rounded clip without painting its plate again.
         if(split){card["backgroundColor"]=Json{};card["borderColor"]=Json{};card["borderWidth"]=0;}
@@ -284,7 +331,22 @@ struct NativeNotesCardScene::Impl {
             frame.load(Json::Object{{"bounds",Json::Array{0,0,0,0}},{"children",Json::Array{}}},rasterOptions);frameLoaded.reset();frameOptions.reset();frameDraws.clear();framePlacements.clear();frameMasks.clear();
         }
         frameActive=split;
-        const auto draws=scene.draws();need(draws.size()>=count&&draws.size()<=upper,"Source Notes surface schema changed unexpectedly");
+        if(nextLines){
+            if(!linesLoaded||*linesLoaded!=*nextLines||linesOptions!=rasterOptions||lines.fontRevision()!=lines.currentFontRevision()){
+                lines.load(*nextLines,rasterOptions);if(!lines.report().unsupported.empty()){const auto&issue=lines.report().unsupported.front();throw std::invalid_argument("Notes lines have unsupported local raster or clipping state: "+issue.node+": "+issue.feature);}
+                linesLoaded=std::move(nextLines);linesOptions=rasterOptions;++lineLoads;
+                const auto loaded=lines.draws();lineDraws.assign(loaded.begin(),loaded.end());linePlacements.resize(lineDraws.size());lineMasks.resize(lineDraws.size());
+                for(std::size_t n=0;n<lineDraws.size();++n){linePlacements[n]={n,lineDraws[n].world,lineDraws[n].opacity,{}};lineMasks[n].reserve(8);}
+            }
+            linesViewport=nextViewport;linesOffset=nextOffset;linesRadius=layers[0].cornerRadius;linesShown=true;
+        }else if(split&&nextSlot&&linesLoaded)linesShown=false; // the open field covers them; kept for its close
+        else if(linesLoaded){
+            lines.load(Json::Object{{"bounds",Json::Array{0,0,0,0}},{"children",Json::Array{}}},rasterOptions);linesLoaded.reset();linesOptions.reset();linesShown=false;
+            lineDraws.clear();linePlacements.clear();lineMasks.clear();
+        }
+        // Every decoration draws; a large card's body may draw nothing at all
+        // (its plate and header are the frame, its lines the lines scene).
+        const auto draws=scene.draws();need(draws.size()+(split?1:0)>=count&&draws.size()<=upper,"Source Notes surface schema changed unexpectedly");
         saved.resize(draws.size());p.resize(draws.size());clipMasks.resize(draws.size());
         for(std::size_t i=0;i<draws.size();++i){const auto&draw=draws[i];need(draw.sourceID.size()<=idCapacity&&draw.meshID.size()<=idCapacity&&draw.textureID.size()<=idCapacity&&draw.masks.size()<=8,"Source Notes identity/mask schema changed unexpectedly");
             saved[i]=draw;p[i]={i,draw.world,draw.opacity,{}};
@@ -309,6 +371,10 @@ struct NativeNotesCardScene::Impl {
             auto&border=afterDraws[1];border.sourceID=fieldRing.mesh+"/draw";border.meshID=fieldRing.mesh;border.textureID.clear();border.masks.clear();border.opacity=0;border.linearTint=linearColor(editorAppearance->border);afterCount=2;
         }else fieldRing.active=false;
         // The large card's own border (selection: accent, 1.1 points).
+        plateMesh.active=split&&layers[0].background&&(*layers[0].background)[3]>0;
+        if(plateMesh.active){if(plateMesh.mesh.empty())plateMesh.mesh=layers[0].id+"/card-plate";
+            plate(plateMesh,bounds.width,bounds.height,layers[0].cornerRadius,rasterOptions.pixelsPerPoint);
+            auto&draw=plateAfter[0];draw.sourceID=plateMesh.mesh+"/draw";draw.meshID=plateMesh.mesh;draw.textureID.clear();draw.masks.clear();draw.opacity=0;draw.linearTint=linearColor(*layers[0].background);}
         cardRing.active=split&&layers[0].border&&(*layers[0].border)[3]>0&&layers[0].borderWidth>0;
         if(cardRing.active){if(cardRing.mesh.empty())cardRing.mesh=layers[0].id+"/card-border-ring";
             shape(cardRing,bounds.width,bounds.height,layers[0].cornerRadius,layers[0].borderWidth,rasterOptions.pixelsPerPoint);
@@ -357,7 +423,17 @@ bool NativeNotesCardScene::updatePose(const Matrix&workspace,float canvas,double
     }};
     pose(i.localDraws,i.placements,i.masks);
     if(i.cardRing.active){auto&ring=i.frameAfter[0];ring.world=world;ring.opacity=opacityValue;}
+    if(i.plateMesh.active){auto&draw=i.plateAfter[0];draw.world=world;draw.opacity=opacityValue;}
     if(i.frameActive){pose(i.frameDraws,i.framePlacements,i.frameMasks);i.frame.setPlacements(i.framePlacements);}
+    if(i.linesLoaded){
+        // Document coordinates under the viewport origin minus the scroll
+        // offset, clipped by the card's rounded plate and the viewport.
+        const auto&v=i.linesViewport;const auto origin=world*Matrix::translation(v.x,v.y-i.linesOffset);const auto viewportToLocal=Matrix::translation(-v.x,-v.y)*inverse;
+        const float shown=i.linesShown?opacityValue:0.f;
+        for(std::size_t n=0;n<i.linePlacements.size();++n){auto&p=i.linePlacements[n];const auto&d=i.lineDraws[n];p.world=origin*d.world;p.opacity=d.opacity*shown;
+            auto&m=i.lineMasks[n];m.clear();m.push_back({inverse,{0,0,r.width,r.height},i.linesRadius});m.push_back({viewportToLocal,{0,0,v.width,v.height},0});p.masks=m;}
+        i.lines.setPlacements(i.linePlacements);
+    }
     for(const auto&f:i.feedback)i.placements[f.surface].opacity=static_cast<float>(Impl::value(f,time))*opacityValue;
     if(i.editorSlot){for(std::size_t n=0;n<i.borderSurfaces.size();++n){const auto&frame=i.placements[i.borderSurfaces[n]];auto&after=i.afterDraws[n+1];after.world=frame.world;after.opacity=frame.opacity;after.masks.assign(frame.masks.begin(),frame.masks.end());}
         // The thumb sits inside the editor's rounded viewport (radius 3), under the border.
@@ -392,9 +468,13 @@ bool NativeNotesCardScene::updatePose(const Matrix&workspace,float canvas,double
 bool NativeNotesCardScene::requiresFrames(double time)const {need(std::isfinite(time),"Notes feedback time must be finite");if(impl_->lastTime)time=std::max(time,*impl_->lastTime);for(const auto&f:impl_->feedback)if(f.active&&time<f.start+f.duration)return true;return false;}
 LayerScene&NativeNotesCardScene::scene()noexcept{return impl_->scene;}
 LayerScene*NativeNotesCardScene::frameScene()noexcept{return impl_->frameActive?&impl_->frame:nullptr;}
+LayerScene*NativeNotesCardScene::linesScene()noexcept{return impl_->linesLoaded?&impl_->lines:nullptr;}
+const LayerScene*NativeNotesCardScene::linesScene()const noexcept{return impl_->linesLoaded?&impl_->lines:nullptr;}
 const LayerScene*NativeNotesCardScene::frameScene()const noexcept{return impl_->frameActive?&impl_->frame:nullptr;}
-bool NativeNotesCardScene::releaseResources(Renderer&r){auto&i=*impl_;const bool frame=i.frame.releaseResources(r);const bool ring=Impl::release(i.cardRing,r);return i.scene.releaseResources(r)&&frame&&ring;}
-bool NativeNotesCardScene::collectRetired(Renderer&r){auto&i=*impl_;const bool ring=i.cardRing.active||Impl::release(i.cardRing,r);return (i.frameActive||i.frame.releaseResources(r))&&ring;}
+bool NativeNotesCardScene::releaseResources(Renderer&r){auto&i=*impl_;const bool frame=i.frame.releaseResources(r);const bool lines=i.lines.releaseResources(r);const bool ring=Impl::release(i.cardRing,r);const bool plate=Impl::release(i.plateMesh,r)&&i.plateHolder.releaseResources(r);return i.scene.releaseResources(r)&&frame&&lines&&ring&&plate;}
+bool NativeNotesCardScene::collectRetired(Renderer&r){auto&i=*impl_;const bool ring=i.cardRing.active||Impl::release(i.cardRing,r);const bool plate=(i.frameActive&&i.plateMesh.active)||Impl::release(i.plateMesh,r);const bool lines=i.linesLoaded||i.lines.releaseResources(r);return (i.frameActive||i.frame.releaseResources(r))&&lines&&ring&&plate;}
+LayerScene*NativeNotesCardScene::plateScene()noexcept{return impl_->frameActive&&impl_->plateMesh.active?&impl_->plateHolder:nullptr;}
+std::span<const DrawObject>NativeNotesCardScene::plateAfterDraws()const noexcept{const auto&i=*impl_;return i.frameActive&&i.plateMesh.active&&i.plateMesh.resident?std::span<const DrawObject>{i.plateAfter.data(),1}:std::span<const DrawObject>{};}
 const LayerScene&NativeNotesCardScene::scene()const noexcept{return impl_->scene;}
 std::span<const DrawObject>NativeNotesCardScene::externalEditorAfterDraws()const noexcept{const auto&i=*impl_;if(!i.editorSlot||i.afterCount<2)return {};
     // A large card's field border is its ring: published once both meshes are resident.
@@ -404,6 +484,7 @@ std::span<const DrawObject>NativeNotesCardScene::frameAfterDraws()const noexcept
     const bool ring=i.cardRing.active&&i.cardRing.resident,backing=i.splitEditor&&i.editorSlot&&i.indicatorUploaded;
     if(ring)return {i.frameAfter.data(),backing?2u:1u};if(backing)return {i.frameAfter.data()+1,1};return {};}
 bool NativeNotesCardScene::uploadFrameBorder(Renderer&r){auto&i=*impl_;return i.frameActive&&Impl::upload(i.cardRing,r);}
+bool NativeNotesCardScene::uploadPlate(Renderer&r){auto&i=*impl_;return i.frameActive&&i.plateMesh.active&&Impl::upload(i.plateMesh,r);}
 bool NativeNotesCardScene::setEditorScrollIndicator(std::optional<core::Rect>thumb){auto&i=*impl_;if(thumb&&(!i.editorSlot||!std::isfinite(thumb->x)||!std::isfinite(thumb->y)||!std::isfinite(thumb->width)||!std::isfinite(thumb->height)||thumb->width<=0||thumb->height<=0))throw std::invalid_argument("Invalid Notes editor scroll indicator");
     if(i.indicator==thumb)return false;i.indicator=thumb;i.posed=false;return true;}
 bool NativeNotesCardScene::uploadEditorIndicator(Renderer&r){auto&i=*impl_;if(!i.editorSlot)return false;need(!i.indicatorOwner||i.indicatorOwner==&r,"Editor indicator quad belongs to a different renderer");
@@ -436,5 +517,5 @@ void NativeNotesCardScene::uploadMedia(Renderer&r){auto&i=*impl_;if(!i.mediaSlot
 std::span<const DrawObject>NativeNotesCardScene::mediaDraws()const noexcept{return{impl_->mediaDraws.data(),impl_->mediaSlot&&impl_->mediaUploaded?4u:0u};}
 const std::optional<NativeNotesMediaSlot>&NativeNotesCardScene::mediaSlot()const noexcept{return impl_->mediaSlot;}
 bool NativeNotesCardScene::releaseMedia(Renderer&r){auto&i=*impl_;if(!i.mediaUploaded)return true;need(i.mediaOwner==&r,"Cannot retire another renderer's media quad");if(!r.removeMesh(i.mediaMesh))return false;i.mediaUploaded=false;i.mediaOwner=nullptr;return true;}
-NativeNotesSceneStats NativeNotesCardScene::stats()const noexcept{auto out=impl_->stats;out.frameLoads=impl_->frameLoads;return out;}
+NativeNotesSceneStats NativeNotesCardScene::stats()const noexcept{auto out=impl_->stats;out.frameLoads=impl_->frameLoads;out.lineLoads=impl_->lineLoads;return out;}
 } // namespace endfield::native

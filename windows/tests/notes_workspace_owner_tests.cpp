@@ -170,6 +170,15 @@ void editingCost(HWND hwnd,gpu::Renderer&renderer){
         const auto edited=step([&]{check(workspace.editor()->character(u'!',false).changed,"One edit");workspace.syncEditor();check(workspace.finishEditing().saved,"The edited field saves");});
         std::cout<<"Notes "<<size.first<<"x"<<size.second<<" pt card at 2 px/pt: first "<<first.first<<" ms ("<<first.second<<" rasters), enter "<<enter.first<<" ms ("<<enter.second<<"), unchanged exit "<<leave.first<<" ms ("<<leave.second
             <<"), re-enter "<<again.first<<" ms ("<<again.second<<"), edited exit "<<edited.first<<" ms ("<<edited.second<<")\n";
+        // Resident memory of the card (memory audit): the shared rasterizer's CPU
+        // pixels and the renderer's GPU bytes, after the edited close.
+        std::cout<<"Notes "<<size.first<<"x"<<size.second<<" pt card resident: CPU raster "<<raster.stats().resourceBytes/1024<<" KiB, GPU "<<renderer.stats().resourceBytes/1024<<" KiB\n";
+        // A large text card keeps its body lines in their own scene: closing the
+        // field over unchanged text rasters none of them again (live RC 128:
+        // 46 line surfaces, 59 ms on WARP); an edit reloads them.
+        // 40 text lines: the unchanged close rasters only the body's few
+        // surfaces (feedback, grip, scroll indicator), the edited one all lines.
+        if(size.first>1000)check(leave.second<12&&edited.second>=leave.second+30,"A large card's unchanged close rasters no body line again; its edited close reloads them");
         composition.detach(renderer);check(workspace.releaseResources(renderer),"The measured card releases its resources");
     }
 }
