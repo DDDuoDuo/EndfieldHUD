@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <optional>
 #include <set>
 #include <stdexcept>
 
@@ -20,13 +21,56 @@ std::string text(const Json&j){return j.isNull()?std::string{}:j.string();}
 const Json::Array&children(const Json&j){static const Json::Array empty;return j["children"].isNull()?empty:j["children"].array();}
 core::Rect rect(const Json&j){need(j.isArray()&&j.array().size()==4,"Invalid Shelf layer bounds");const auto&a=j.array();return {number(a[0]),number(a[1]),number(a[2]),number(a[3])};}
 bool drawing(const Json&j){auto kind=text(j["kind"]);return kind=="shape"||kind=="text"||kind=="gradient"||!j["contents"].isNull()||!j["backgroundColor"].isNull()||number(j["borderWidth"])>0;}
+// Whether a leaf can put any pixel down. The rasterizer paints nothing for a
+// missing or fully transparent background, fill, stroke or border (the drop
+// outline's cleared stroke while nothing is dragged), so such a leaf keeps no
+// raster or texture; text, gradients and contents always count.
+bool visibleColor(const Json&c){if(!c.isObject()||!c["sRGB"].isArray())return false;const auto&v=c["sRGB"].array();return v.size()==4&&number(v[3])>0;}
+bool paints(const Json&j){
+    const auto kind=text(j["kind"]);
+    if(kind=="text"||kind=="gradient"||!j["contents"].isNull()||visibleColor(j["backgroundColor"]))return true;
+    if(number(j["borderWidth"])>0&&visibleColor(j["borderColor"]))return true;
+    if(kind!="shape")return false;
+    const auto&shape=j["shape"];return visibleColor(shape["fillColor"])||(visibleColor(shape["strokeColor"])&&number(shape["lineWidth"],1)>0);
+}
+// The root-space extent of a leaf's paint: its frame and, for a shape, its
+// path's control-point hull widened by half its stroke (times the miter
+// limit for mitred joins), which contains the rasterizer's widened bounds.
+// Text is clipped to its frame (D2D1_DRAW_TEXT_OPTIONS_CLIP); contents,
+// backgrounds and borders lie inside it.
+// The first point of a shape leaf's path (local coordinates), if any.
+std::optional<core::Point> firstPathPoint(const Json&node){
+    const auto&shape=node["shape"];if(text(node["kind"])!="shape"||!shape.isObject()||!shape["path"].isArray())return std::nullopt;
+    for(const auto&command:shape["path"].array())if(command.isObject()&&command["points"].isArray())for(const auto&point:command["points"].array()){
+        need(point.isArray()&&point.array().size()==2,"Invalid Shelf path point");return core::Point{number(point.array()[0]),number(point.array()[1])};}
+    return std::nullopt;
+}
+// A zero-area shape frame (the source's shapes drawn in their parent's
+// coordinates) paints nothing itself: only its path counts.
+bool zeroFrameShape(const Json&node,core::Rect b){return (b.width<=0||b.height<=0)&&firstPathPoint(node).has_value();}
+core::Rect inkExtent(const Json&node,const Matrix&world,core::Rect b){
+    const double ox=world.values[12],oy=world.values[13];
+    double left=ox+b.x,top=oy+b.y,right=left+b.width,bottom=top+b.height;
+    if(zeroFrameShape(node,b)){left=top=std::numeric_limits<double>::infinity();right=bottom=-std::numeric_limits<double>::infinity();}
+    const auto&shape=node["shape"];
+    if(text(node["kind"])=="shape"&&shape.isObject()&&shape["path"].isArray()){
+        double margin{};
+        if(visibleColor(shape["strokeColor"])){const auto join=shape["lineJoin"].isString()?shape["lineJoin"].string():std::string("miter");margin=number(shape["lineWidth"],1)/2*(join=="miter"?std::max(1.,number(shape["miterLimit"],10)):1.);}
+        for(const auto&command:shape["path"].array())if(command.isObject()&&command["points"].isArray())for(const auto&point:command["points"].array()){
+            need(point.isArray()&&point.array().size()==2,"Invalid Shelf path point");const double x=ox+number(point.array()[0]),y=oy+number(point.array()[1]);
+            left=std::min(left,x-margin);top=std::min(top,y-margin);right=std::max(right,x+margin);bottom=std::max(bottom,y+margin);}
+    }
+    return {left,top,right-left,bottom-top};
+}
 bool sameDependency(const modules::ShelfPresentationImage&a,const modules::ShelfPresentationImage&b){return a.kind==b.kind&&a.layerID==b.layerID&&a.itemID==b.itemID&&a.sourceResource==b.sourceResource&&a.lastKnownPath==b.lastKnownPath&&a.rect==b.rect&&a.tint==b.tint&&a.requestedPixels==b.requestedPixels&&a.isDirectory==b.isDirectory&&a.unavailable==b.unavailable&&a.sourceInTint==b.sourceInTint&&a.resizeAspect==b.resizeAspect;}
 Json root(Json::Array leaves={}){return Json::Object{{"bounds",Json::Array{0,0,0,0}},{"position",Json::Array{0,0}},{"anchorPoint",Json::Array{0,0}},{"allowsGroupOpacity",false},{"children",std::move(leaves)}};}
 struct Compiler {
     std::span<const NativeShelfImage>images;std::span<const modules::ShelfPresentationImage>dependencies;std::span<const Feedback>feedback;
     ShelfScenePart result;Json::Array leaves;std::set<std::string,std::less<>>ids;std::size_t visited{};std::optional<core::Rect>groupBounds;
+    std::vector<core::Rect>inks; // root-space paint extent of each emitted leaf
     void emit(Json node,const Matrix&world,double opacity,bool toolbar,std::size_t feedbackIndex,bool rim){
         const auto id=text(node["id"]);need(!id.empty()&&ids.insert(id).second,"Repeated Shelf surface identity");const auto b=rect(node["bounds"]);
+        inks.push_back(inkExtent(node,world,b));
         node["position"]=Json::Array{world.values[12]+b.x,world.values[13]+b.y};node["anchorPoint"]=Json::Array{0,0};
         node["transform"]=nullptr;node["zPosition"]=0;node["opacity"]=1;node["children"]=Json::Array{};
         leaves.push_back(std::move(node));result.surfaces.push_back({id,world,static_cast<float>(opacity),feedbackIndex,rim,toolbar,id=="shelf.drop"});
@@ -65,7 +109,10 @@ struct Compiler {
         }
         const auto savedChildren=children(node);const bool splitBorder=number(node["borderWidth"])>0&&!savedChildren.empty();
         auto own=node;if(splitBorder)own["borderWidth"]=0;
-        if(drawing(own))emit(std::move(own),world,inheritedOpacity*(feedbackIndex==ShelfSceneSurface::none?opacity:1),toolbar,feedbackIndex,rim);
+        // A static leaf that paints nothing (or never shows) keeps no surface;
+        // highlight art stays resident for its numeric feedback.
+        const double effective=inheritedOpacity*(feedbackIndex==ShelfSceneSurface::none?opacity:1);
+        if(drawing(own)&&(feedbackIndex!=ShelfSceneSurface::none||(paints(own)&&effective>0)))emit(std::move(own),world,effective,toolbar,feedbackIndex,rim);
         for(const auto&child:savedChildren)visit(child,world,inheritedOpacity*opacity,toolbar,depth+1);
         if(splitBorder){auto edge=node;edge["id"]=id+"/native-border";edge["kind"]="layer";edge["backgroundColor"]=nullptr;edge["contents"]=nullptr;edge.erase("shape");edge.erase("text");edge.erase("gradient");emit(std::move(edge),world,inheritedOpacity*opacity,toolbar,ShelfSceneSurface::none,false);}
     }
@@ -80,8 +127,32 @@ struct Compiler {
         for(std::size_t begin=0;begin<leaves.size();){std::size_t end=begin+1;
             const auto&first=result.surfaces[begin];if(first.feedback==ShelfSceneSurface::none&&!first.drop)while(end<leaves.size()&&result.surfaces[end].feedback==ShelfSceneSurface::none&&result.surfaces[end].toolbar==first.toolbar&&!result.surfaces[end].drop)++end;
             if(end-begin==1){compact.push_back(std::move(leaves[begin]));surfaces.push_back(std::move(result.surfaces[begin]));}
-            else {Json::Array groupChildren;groupChildren.reserve(end-begin);for(std::size_t n=begin;n<end;++n){leaves[n]["opacity"]=result.surfaces[n].opacity;groupChildren.push_back(std::move(leaves[n]));}
-                const auto id=first.id+"/retained-static";auto group=root(std::move(groupChildren));group["id"]=id;group["bounds"]=groupBounds?Json(Json::Array{groupBounds->x,groupBounds->y,groupBounds->width,groupBounds->height}):result.itemID.empty()?Json(Json::Array{0,0,400,334}):Json(Json::Array{0,0,184,74});
+            else {Json::Array groupChildren;groupChildren.reserve(end-begin);for(std::size_t n=begin;n<end;++n){leaves[n]["opacity"]=result.surfaces[n].opacity;
+                    // A zero-area shape frame sits at its parent's origin; the
+                    // rasterizer still measures that point, which would stretch
+                    // the group back to the card corner. Move the empty frame
+                    // onto the path's first point (position and bounds origin
+                    // together, so the path stays where it is).
+                    if(!groupBounds)if(const auto b=rect(leaves[n]["bounds"]);zeroFrameShape(leaves[n],b)){
+                        const auto first=*firstPathPoint(leaves[n]);const auto&at=leaves[n]["position"].array();const double px=number(at[0])-b.x+first.x,py=number(at[1])-b.y+first.y;
+                        leaves[n]["bounds"]=Json::Array{first.x,first.y,b.width,b.height};leaves[n]["position"]=Json::Array{px,py};}
+                    groupChildren.push_back(std::move(leaves[n]));}
+                const auto id=first.id+"/retained-static";auto group=root(std::move(groupChildren));group["id"]=id;
+                if(groupBounds)group["bounds"]=Json::Array{groupBounds->x,groupBounds->y,groupBounds->width,groupBounds->height};
+                else{
+                    // Chrome groups (header and status, toolbar runs, the empty
+                    // state) and card groups (icon and text, the action glyphs)
+                    // are rasterized over the integer-aligned extent of their
+                    // members' paint instead of the whole 400 x 334 canvas or
+                    // 184 x 74 card: the same pixels on the same grid (the
+                    // larger raster is transparent elsewhere) in a fraction of
+                    // the memory and fill. Position equals the bounds origin,
+                    // so the members keep their root-space placement.
+                    auto left=inks[begin].x,top=inks[begin].y,right=left+inks[begin].width,bottom=top+inks[begin].height;
+                    for(std::size_t n=begin+1;n<end;++n){left=std::min(left,inks[n].x);top=std::min(top,inks[n].y);right=std::max(right,inks[n].x+inks[n].width);bottom=std::max(bottom,inks[n].y+inks[n].height);}
+                    left=std::floor(left)-1;top=std::floor(top)-1;right=std::ceil(right)+1;bottom=std::ceil(bottom)+1;
+                    group["bounds"]=Json::Array{left,top,right-left,bottom-top};group["position"]=Json::Array{left,top};
+                }
                 compact.push_back(std::move(group));surfaces.push_back({id,{},1,ShelfSceneSurface::none,false,first.toolbar});}
             begin=end;
         }
@@ -311,6 +382,25 @@ LayerScene*NativeShelfScene::cardScene(std::string_view id)noexcept{for(auto&p:i
 LayerScene&NativeShelfScene::foregroundScene(){need(bool(impl_->foreground),"Synchronize Shelf before borrowing foreground");return impl_->foreground->scene;}
 bool NativeShelfScene::collectRetired(Renderer&r){auto&i=*impl_;for(const auto&part:i.retired)if(!part->scene.releaseResources(r))return false;i.retired.clear();if(!i.maskPath&&i.uploadedMask&&(!r.stats().initialized||r.removeTexture(i.maskID))){i.uploadedMask=0;i.maskImage.reset();i.raster->remove(i.maskID);}return true;}
 bool NativeShelfScene::releaseResources(Renderer&r){auto&i=*impl_;bool complete=collectRetired(r);i.each([&](auto&p){complete=p.scene.releaseResources(r)&&complete;});if(i.uploadedMask){if(!r.stats().initialized||r.removeTexture(i.maskID)){i.uploadedMask=0;i.maskImage.reset();i.raster->remove(i.maskID);}else complete=false;}return complete;}
-NativeShelfSceneStats NativeShelfScene::stats()const noexcept{auto result=impl_->stats;result.cards=impl_->cards.size();result.retiredParts=impl_->retired.size();return result;}
+bool NativeShelfScene::park(Renderer&r)noexcept{
+    auto&i=*impl_;
+    if(!i.collection&&!i.scrollbar&&!i.foreground&&!i.properties&&i.cards.empty()&&i.retired.empty()&&!i.uploadedMask&&!i.maskImage)return false;
+    // A composed part refuses (before releasing anything): stay resident.
+    try{if(!releaseResources(r))return false;}catch(...){return false;}
+    // Destroying the parts removes their raster entries from the shared
+    // rasterizer (LayerScene's destructor); their GPU resources are gone.
+    i.collection.reset();i.scrollbar.reset();i.foreground.reset();i.properties.reset();i.cards.clear();i.retired.clear();i.entries.clear();i.images.clear();
+    i.chromeRevision=i.placementRevision=i.imageRevision=i.propertiesRevision=0;i.propertiesOrigin={};
+    i.dropPart=nullptr;i.uploadedDrop.reset();i.dropEnd=1;i.maskPath.reset();i.alpha.reset();i.maskDirty=false;i.revealActive=false;i.revealEnds=0;
+    if(i.maskImage){i.maskImage.reset();i.raster->remove(i.maskID);}
+    ++i.compositionRevision;++i.stats.parks;return true;
+}
+NativeShelfSceneStats NativeShelfScene::stats()const noexcept{
+    const auto&i=*impl_;auto result=i.stats;result.cards=i.cards.size();result.retiredParts=i.retired.size();
+    const auto add=[&](const Impl::Part&part){++result.parts;result.surfaces+=part.scene.report().surfaces;result.pixelBytes+=part.scene.report().pixelBytes;};
+    i.each(add);for(const auto&part:i.retired)add(*part);
+    if(i.maskImage)result.pixelBytes+=i.maskImage->straightRGBA.size();
+    return result;
+}
 #endif
 } // namespace endfield::native

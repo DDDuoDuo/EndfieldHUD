@@ -43,6 +43,21 @@ struct ShelfPanelState {
     // The properties card: open (and accepting input), its item, whether its
     // properties arrived from the utility worker, and the reads requested.
     bool properties{},propertiesLoaded{};std::string propertiesItem;std::uint64_t propertyReads{};
+    // UI Automation focus announcements of the Shelf's peers (the card
+    // taking the keyboard focus when it opens).
+    std::uint64_t automationFocusMoves{};
+};
+// What the Shelf keeps resident (memory audit). sceneParts/Surfaces/
+// PixelBytes: the retained raster artwork (CPU copies behind the composed
+// GPU textures), released once the HUD closes while the Shelf is not shown
+// (sceneParks). The
+// Shell icon worker: whether it was created (first shown Shelf), its live
+// threads (0 while parked), starts and parks. The icon cache: at most 24
+// 64 px icons (Mac FileShelfCanvas keeps 24 recent icons).
+struct ShelfResourceStats {
+    std::size_t sceneParts{},sceneSurfaces{},scenePixelBytes{};std::uint64_t sceneParks{};
+    bool iconProvider{};std::size_t iconWorkers{};std::uint64_t iconWorkerStarts{},iconParks{};
+    std::size_t cachedIcons{},cachedIconBytes{};
 };
 struct ShelfPreviewAction {
     // open: the properties card's Open (default application, after the HUD
@@ -94,6 +109,7 @@ public:
     bool pointerLocked()const;
     bool preservesFocusOnLoss()const;
     ShelfPanelState panels()const;
+    ShelfResourceStats resources()const;
     std::optional<ShelfPreviewAction> takeAction();
     bool importFiles(std::span<const std::string>,double time);
     // Ctrl+V (HUDFileShelfInteraction.importPasteboard): file paths from the
@@ -152,7 +168,17 @@ public:
     void automationDisconnect()noexcept;
     void setEventRecorder(std::function<void(modules::EventKind,modules::EventMetadata)>);
     bool filterKey(const app::NativeMessage&);
+    // HUD closing (overlayClosing): cancels the picker, closes the card and
+    // parks the Shell icon worker when no visible icon is still missing; a
+    // Shelf that is not shown releases its raster artwork at the next
+    // publication (collected) or conceal().
     void cancelPanels();
+    // The HUD finished closing (HostEvent::overlayConcealed): a Shelf that is
+    // not shown releases its raster artwork now (the composition already
+    // released its GPU textures when it stopped composing it); showing it
+    // again rebuilds the same artwork. The selected Shelf keeps it, and a
+    // module switch inside an open HUD never releases it (no rebuild stall).
+    void conceal();
     void cancelInteraction();
     void setNativeDragActive(bool);
     // Selects the existing HWND's file-drop route. Present callbacks enable an

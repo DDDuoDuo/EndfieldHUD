@@ -29,6 +29,10 @@ struct ShelfScenePlan {
 // Pure content-event compiler. Empty model bounds do not erase CAShapeLayer
 // path/stroke ink. Leaves retain original coordinates and paint order; only
 // root placement and feedback opacity become numeric retained surface data.
+// A static leaf that paints nothing (a cleared stroke, as the drop outline's
+// while nothing is dragged) keeps no surface, and a chrome group of
+// consecutive static leaves covers the integer-aligned extent of its paint
+// instead of the whole 400 x 334 canvas (the same pixels on the same grid).
 ShelfScenePlan prepareShelfScene(const modules::ShelfPresentation&,
     std::span<const NativeShelfImage> images={});
 
@@ -72,6 +76,10 @@ struct NativeShelfSceneStats {
     std::size_t cards{},retiredParts{};
     std::uint64_t contentSynchronizations{},partBuilds{},poseUpdates{},feedbackChanges{};
     std::uint64_t maskRasters{},maskUploads{},dropRasters{},topologyGapSamples{};
+    // Resident artwork (current and retired parts): retained surfaces and the
+    // bytes of their local rasters (the CPU copies behind the GPU textures),
+    // and park() calls that released everything.
+    std::size_t parts{},surfaces{},pixelBytes{};std::uint64_t parks{};
 };
 #ifdef _WIN32
 // Retained settled-collection bridge. The caller supplies one already-updated
@@ -109,6 +117,15 @@ public:
     LayerScene& foregroundScene();
     bool collectRetired(Renderer&);
     bool releaseResources(Renderer&);
+    // A Shelf that is no longer composed (its module was switched away; the
+    // composition already released the parts' GPU resources) keeps no
+    // artwork: every part, its rasters (shared rasterizer entries) and the
+    // reveal mask are released, and the next syncContent rebuilds them, as
+    // HUDModuleContent drops the old screen's layers and makes the content
+    // again when the module is selected. True when something was released;
+    // false when there was nothing to release or a part is still composed
+    // (then everything stays resident). Never throws.
+    bool park(Renderer&)noexcept;
     NativeShelfSceneStats stats()const noexcept;
 private:
     struct Impl;std::unique_ptr<Impl>impl_;

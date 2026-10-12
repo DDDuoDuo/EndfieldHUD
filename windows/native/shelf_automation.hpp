@@ -24,9 +24,11 @@ class ShelfAutomationElement;
 // keyboard help, value = "Selected" on a selected card's plate (otherwise
 // empty; the Mac sets it on plates only). Rects are in the 400 x 334 Shelf
 // canvas; ids are the FileShelfState action ids ("shelf:add",
-// "shelf:<id>:select", ...).
+// "shelf:<id>:select", ...). focused: the element holds the HUD's keyboard
+// focus (the open properties card, which takes the keys as the Quick Look
+// panel does when it becomes key on the Mac); at most one control is focused.
 struct ShelfAutomationControl {
-    std::string id,label,help,value;core::Rect rect;bool plate{};
+    std::string id,label,help,value;core::Rect rect;bool plate{},focused{};
     bool operator==(const ShelfAutomationControl&)const=default;
 };
 // The owner's view (tools::ShelfPreview):
@@ -40,7 +42,7 @@ struct ShelfAutomationHost {
     std::function<std::optional<core::Rect>(core::Rect canvas)>toScreen;
     std::function<bool(std::string_view id)>invoke;
 };
-struct ShelfAutomationStats {std::uint64_t refreshes{},structureChanges{},created{},disconnected{},invokes{},propertyEvents{};};
+struct ShelfAutomationStats {std::uint64_t refreshes{},structureChanges{},created{},disconnected{},invokes{},propertyEvents{},focusMoves{};};
 // UI Automation fragments under the HUD window's root provider
 // (app/hud_automation.hpp): each control is a Button with Invoke; card plates
 // add a read-only Value carrying "Selected". Buttons are not tab stops: the HUD
@@ -48,8 +50,12 @@ struct ShelfAutomationStats {std::uint64_t refreshes{},structureChanges{},create
 // keep their COM identity per id across refreshes; vanished ones are
 // disconnected and answer UIA_E_ELEMENTNOTAVAILABLE. refresh() runs on content
 // events only (selection, scrolling, imports, opening/closing), never per
-// frame, and raises Name/HelpText/Value changes for listening clients. Calls
-// arrive on the UI thread (ProviderOptions_UseComThreading).
+// frame, and raises Name/HelpText/Value/HasKeyboardFocus changes for listening
+// clients. A control that becomes focused (a newly listed one or another
+// element) is announced once with UIA_AutomationFocusChangedEventId after the
+// tree lists it (app/module_owner.hpp: the owner raises its own focus events;
+// the HUD root's GetFocus finds it by HasKeyboardFocus). Calls arrive on the
+// UI thread (ProviderOptions_UseComThreading).
 class NativeShelfAutomation final {
 public:
     explicit NativeShelfAutomation(ShelfAutomationHost);

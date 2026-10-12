@@ -36,7 +36,7 @@ void write(const fs::path& path, std::string_view bytes) {
 
 class ShelfCoverageArea final : public app::ModuleOwner {
 public:
-    ShelfCoverageArea(const app::ApplicationModuleContext& c, const fs::path& assets) : root_(c.coverageRoot), assets_(assets), language_(c.host->appearance().language), utility_(c.utility) {
+    ShelfCoverageArea(const app::ApplicationModuleContext& c, const fs::path& assets) : root_(c.coverageRoot), assets_(assets), language_(c.host->appearance().language), utility_(c.utility), host_(c.host) {
         WNDCLASSEXW type{sizeof(type)};
         type.lpfnWndProc = procedure;
         type.hInstance = GetModuleHandleW(nullptr);
@@ -78,6 +78,7 @@ private:
     native::NativeShelfAssets assets_;
     core::Language language_;
     app::UtilityExecutor* utility_{};
+    app::ApplicationHost* host_{};
     HWND window_{};
     app::ClientMetrics metrics_;
     std::vector<Record> events_;
@@ -120,6 +121,11 @@ private:
             VariantClear(&value); if (match) return simple;
         }
         return nullptr;
+    }
+    static bool focused(IRawElementProviderSimple* simple) {
+        VARIANT value; VariantInit(&value);
+        const bool result = simple && SUCCEEDED(simple->GetPropertyValue(UIA_HasKeyboardFocusPropertyId, &value)) && value.vt == VT_BOOL && value.boolVal == VARIANT_TRUE;
+        VariantClear(&value); return result;
     }
     static HRESULT invoke(IRawElementProviderSimple* simple) {
         ComPtr<IUnknown> pattern; ComPtr<IInvokeProvider> provider;
@@ -246,6 +252,10 @@ void ShelfCoverageArea::coverage(app::ModuleCoverage& step) {
         presented.automationRefresh(nullptr);
         const auto cardPeer = peer(presented, "shelf.properties:card");
         step.check(presented.automationCount() == 4 && cardPeer && peer(presented, "shelf.properties:close") && peer(presented, "shelf.properties:reveal"), "The open card lists only its own peers");
+        // The card takes the keys (Quick Look's panel becomes key on the Mac):
+        // it holds the keyboard focus and is announced once when listed.
+        step.check(focused(cardPeer.Get()) && !focused(peer(presented, "shelf.properties:close").Get()) && presented.panels().automationFocusMoves == 1,
+                   "The open card holds the keyboard focus and announces it once");
         const auto openPeer = peer(presented, "shelf.properties:open");
         step.check(openPeer && invoke(openPeer.Get()) == S_OK && !presented.panels().properties, "Open closes the card");
         const auto open = presented.takeAction();
@@ -313,6 +323,23 @@ void ShelfCoverageArea::coverage(app::ModuleCoverage& step) {
     step.check(shelf.perform("shelf:confirmClear", next()) && shelf.state().items().empty(), "Confirming clears every reference");
     step.check(events_.size() == 2 && recorded(1, mod::EventKind::shelfCleared, "count", std::to_string(count)), "Clearing records shelfCleared with the cleared count");
     step.check(fs::exists(moved) && fs::exists(kept) && fs::exists(bin / "Recycled folder"), "Removing and clearing references leave every original in place");
+
+    // Memory: the built-in Shelf, which the module cycle showed and then
+    // switched away from, keeps its rasters inside the open HUD (switching
+    // back must not stall on a rebuild). When the HUD finishes closing
+    // (HostEvent::overlayConcealed -> ShelfPreview::conceal) it releases them;
+    // the next cycle shows it again with the same artwork (the cycles' raster
+    // usage repeats exactly).
+    if (auto* builtIn = host_ ? host_->find<tools::ShelfPreview>(tools::ShelfPreview::serviceKey) : nullptr) {
+        const auto open = builtIn->resources();
+        builtIn->conceal();
+        const auto closed = builtIn->resources();
+        // Each cycle showed (rebuilt) it once; a close inside the cycle may
+        // already have released it.
+        step.check(closed.sceneParts == 0 && closed.sceneSurfaces == 0 && closed.scenePixelBytes == 0 &&
+                   closed.sceneParks == open.sceneParks + (open.sceneParts ? 1u : 0u) && closed.sceneParks >= step.cycle + 1,
+                   "Once the HUD is closed the hidden built-in Shelf keeps no raster artwork");
+    }
 
     // Windows names for the platform actions, in the HUD language.
     step.check(shelf.state().strings().revealPrefix == tools::shelfText(tools::ShelfText::revealPrefix, language_) &&

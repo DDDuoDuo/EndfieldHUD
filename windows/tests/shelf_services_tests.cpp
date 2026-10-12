@@ -24,6 +24,7 @@
 #include <cstring>
 #include <fstream>
 #include <iostream>
+#include <optional>
 
 namespace gpu = endfield::native;
 namespace core = endfield::core;
@@ -244,6 +245,12 @@ std::wstring property(IRawElementProviderFragment* fragment, PROPERTYID id) {
     VARIANT value; VariantInit(&value); ok(simple->GetPropertyValue(id, &value), "Peer property");
     std::wstring out = value.vt == VT_BSTR && value.bstrVal ? std::wstring(value.bstrVal) : std::wstring{}; VariantClear(&value); return out;
 }
+// A VT_BOOL property; nullopt when the peer answers none.
+std::optional<bool> flag(IRawElementProviderFragment* fragment, PROPERTYID id) {
+    ComPtr<IRawElementProviderSimple> simple; ok(fragment->QueryInterface(IID_PPV_ARGS(&simple)), "Peer is a simple provider");
+    VARIANT value; VariantInit(&value); ok(simple->GetPropertyValue(id, &value), "Peer property");
+    const auto out = value.vt == VT_BOOL ? std::optional<bool>(value.boolVal == VARIANT_TRUE) : std::nullopt; VariantClear(&value); return out;
+}
 std::wstring wide(std::string_view text) { const auto n = MultiByteToWideChar(CP_UTF8, 0, text.data(), int(text.size()), nullptr, 0); std::wstring out(std::size_t(n), L'\0'); MultiByteToWideChar(CP_UTF8, 0, text.data(), int(text.size()), out.data(), n); return out; }
 ComPtr<IRawElementProviderFragment> peer(tools::ShelfPreview& shelf, std::wstring_view id) {
     for (std::size_t n = 0; n < shelf.automationCount(); ++n) {
@@ -311,10 +318,21 @@ void automation(HWND hwnd, const gpu::NativeShelfAssets& assets) {
     { MSG m{}; while (PeekMessageW(&m, hwnd, WM_APP + 185, WM_APP + 189, PM_REMOVE)) shelf->message({hwnd, m.message, m.wParam, m.lParam}, ++time); }
     // The properties card is modal for UI Automation: the card (its rows as
     // the value) and its close/open/reveal plates replace the Shelf's peers.
+    // No Shelf peer holds the keyboard focus (the HUD routes its own keys).
+    for (std::size_t n = 0; n < shelf->automationCount(); ++n) { ComPtr<IRawElementProviderFragment> fragment; ok(shelf->automationChild(n, &fragment), "Peer child");
+        check(flag(fragment.Get(), UIA_HasKeyboardFocusPropertyId) == false && flag(fragment.Get(), UIA_IsKeyboardFocusablePropertyId) == false, "The Shelf's buttons are not keyboard focus targets"); }
+    const auto focusBefore = shelf->panels().automationFocusMoves;
     check(invoke(peer(*shelf, L"shelf:" + idA + L":preview").Get()) == S_OK && shelf->panels().properties, "The eye button opens the properties card");
     presented.show(*shelf, time);
     check(shelf->automationRefresh(nullptr) && shelf->automationCount() == 4, "The open card lists only its own peers");
     auto cardPeer = peer(*shelf, L"shelf.properties:card");
+    // The card takes the keys like the Quick Look panel that becomes key on
+    // the Mac: it holds the keyboard focus and is announced once when listed.
+    check(cardPeer && flag(cardPeer.Get(), UIA_HasKeyboardFocusPropertyId) == true && flag(cardPeer.Get(), UIA_IsKeyboardFocusablePropertyId) == true &&
+          flag(peer(*shelf, L"shelf.properties:close").Get(), UIA_HasKeyboardFocusPropertyId) == false && flag(peer(*shelf, L"shelf.properties:open").Get(), UIA_HasKeyboardFocusPropertyId) == false,
+          "The open card holds the keyboard focus; its plates do not");
+    check(shelf->panels().automationFocusMoves == focusBefore + 1, "Opening the card announces its focus once");
+    check(!shelf->automationRefresh(nullptr) && shelf->panels().automationFocusMoves == focusBefore + 1, "A refresh with the same card announces nothing again");
     check(cardPeer && property(cardPeer.Get(), UIA_NamePropertyId) == L"Properties: Alpha.txt" && value(cardPeer.Get()).starts_with(L"Name: Alpha.txt; Type: ") &&
           property(cardPeer.Get(), UIA_HelpTextPropertyId) == wide(tools::shelfText(tools::ShelfText::propertiesHelp, core::Language::english)), "The card peer reads the item's properties and the card keys");
     check(property(peer(*shelf, L"shelf.properties:close").Get(), UIA_NamePropertyId) == L"Close" && property(peer(*shelf, L"shelf.properties:open").Get(), UIA_NamePropertyId) == L"Open",
@@ -326,6 +344,7 @@ void automation(HWND hwnd, const gpu::NativeShelfAssets& assets) {
     // (Not presented again here: without a renderer nothing publishes or
     // collects the replaced artwork; the fading card takes no input already.)
     check(shelf->automationRefresh(nullptr) && shelf->automationCount() == actions.size(), "The closed card gives the Shelf its peers back");
+    check(shelf->panels().automationFocusMoves == focusBefore + 1 && flag(peer(*shelf, L"shelf:add").Get(), UIA_HasKeyboardFocusPropertyId) == false, "Closing the card announces no Shelf peer");
     // Disconnection (HUD hidden) and an unpresented Shelf.
     auto kept = peer(*shelf, L"shelf:" + idB + L":select");
     shelf->automationDisconnect(); check(shelf->automationCount() == 0 && kept->get_BoundingRectangle(&bounds) == UIA_E_ELEMENTNOTAVAILABLE, "Disconnected peers answer ELEMENTNOTAVAILABLE");

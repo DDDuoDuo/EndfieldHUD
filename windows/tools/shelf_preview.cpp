@@ -212,6 +212,17 @@ struct ShelfPreview::Impl {
     std::shared_ptr<bool>alive=std::make_shared<bool>(true);
     // UI Automation peers (Mac HUDShelfActionButton), created on demand.
     std::unique_ptr<gpu::NativeShelfAutomation>automation;IRawElementProviderFragmentRoot*automationRoot{};bool contentPosted{};
+    // The Shell icon worker (icons) starts with the first shown Shelf, never
+    // at launch; it is parked (its thread ends) while the Shelf is switched
+    // away, or when the HUD closes with every visible icon extracted, and a
+    // missing icon starts it again.
+    bool iconsFailed{},iconsParked{};
+    // The Shelf's raster artwork is released once the HUD closes while the
+    // Shelf is not shown (conceal(), or the next publication after the close
+    // began: parkWanted), never on a module switch inside an open HUD, where
+    // rebuilding would stall the switch. renderer: the host's, from upload().
+    gpu::Renderer*renderer{};bool parkWanted{};
+    bool parkArtwork(gpu::Renderer&r){if(pose||released||!scene->park(r))return false;dirty=true;parkWanted=false;return true;}
     std::vector<gpu::NativeShelfImage>images;std::vector<gpu::ShelfIconRequest>requests;
     std::vector<Selection>selectionTracks;std::vector<gpu::ShelfSelectionPose>selectionPoses;
     std::map<std::string,gpu::ShelfIconRequest,std::less<>>requestVersions;
@@ -255,7 +266,6 @@ struct ShelfPreview::Impl {
         gpu::LayerRasterOptions ro;ro.pixelsPerPoint=2;ro.assetRoot=assets.root();ro.memoryImages=&memoryImages;
         scene=std::make_unique<gpu::NativeShelfScene>(presentation,raster,ro);
         geometry.load(emptyPlane(),ro);surface=std::make_unique<gpu::NativeModuleSurface>(geometry,core::Module::fileShelf);
-        if(options.nativeIcons)icons=std::make_unique<gpu::NativeShelfIconProvider>(memoryImages,files.platform().resolve,gpu::ShelfIconRoute{hwnd,iconMessage,generation});
         picker=std::make_unique<gpu::NativeShelfFilePicker>(gpu::ShelfPickerRoute{hwnd,pickerMessage,generation},gpu::ShelfPickerLabels{"添加到文件暂存架","添加引用","添加选中的文件与文件夹"});
         dropState->hwnd=hwnd;
         if(options.registerDropTarget){
@@ -291,6 +301,24 @@ struct ShelfPreview::Impl {
             if(!*alive)return;try{done(error);}catch(const std::exception&failure){try{state->showError(shelfErrorText(failure,mod::FileShelfState::Failure::changing,language));changed();}catch(...){}}catch(...){}
             if(shared&&!contentPosted)contentPosted=PostMessageW(hwnd,noticeMessage,generation,contentNotice)!=FALSE;});
     }
+    // ---- Shell icons ----
+    gpu::NativeShelfIconProvider*iconProvider(){
+        if(icons)return icons.get();if(!options.nativeIcons||released||iconsFailed)return nullptr;
+        // Fails only while another provider's worker still holds the
+        // process-wide gate: the cards keep their pending icon until the next
+        // activation tries again.
+        try{icons=std::make_unique<gpu::NativeShelfIconProvider>(memoryImages,files.platform().resolve,gpu::ShelfIconRoute{hwnd,iconMessage,generation});}
+        catch(const std::bad_alloc&){throw;}catch(const std::exception&){iconsFailed=true;return nullptr;}
+        return icons.get();
+    }
+    void showIcons(){
+        auto*provider=iconProvider();if(!provider)return;
+        // A worker that cannot start (runtime_error) leaves the Shell icons
+        // out; invalid requests still fail the owner.
+        try{provider->setVisible(requests);iconsParked=false;}catch(const std::runtime_error&){icons.reset();iconsFailed=true;}
+    }
+    void parkIcons(){if(icons&&!iconsParked){icons->park();iconsParked=true;}}
+    bool iconsMissing(){return std::any_of(requests.begin(),requests.end(),[&](const auto&r){return !memoryImages.acquire(r.imageKey,r.revision);});}
     bool request(ShelfPreviewAction value){if(action||nativeDrag)return false;action=std::move(value);need(PostMessageW(hwnd,actionMessage,generation,0)!=FALSE,"Queue Shelf user action");return true;}
     // ---- Mac-imported references (import ledger) ----
     const mig::MacRelinkItem*pending(std::string_view id)const{for(const auto&item:pendingRelinks)if(sameID(item.recordID,id))return &item;return nullptr;}
@@ -378,7 +406,10 @@ struct ShelfPreview::Impl {
             const auto layout=mod::shelfPropertiesLayout(cardContent->rows.size());std::string summary;
             for(const auto&row:cardContent->rows){if(!summary.empty())summary+="; ";summary+=row.label+": "+row.value;}
             const auto help=shelfText(ShelfText::propertiesHelp,language);
-            out.push_back({"shelf.properties:card",cardContent->heading+": "+(cardContent->rows.empty()?std::string{}:cardContent->rows.front().value),help,summary,layout.frame,true});
+            // The card takes the keys (Esc, Space, Enter, Ctrl+R, arrows) like
+            // the Quick Look panel that becomes key on the Mac: it holds the
+            // keyboard focus and is announced when it opens.
+            out.push_back({"shelf.properties:card",cardContent->heading+": "+(cardContent->rows.empty()?std::string{}:cardContent->rows.front().value),help,summary,layout.frame,true,true});
             const std::array<std::string,3>labels{cardContent->close,cardContent->open,cardContent->reveal};
             for(std::size_t n=0;n<layout.plates.size();++n)out.push_back({std::string(mod::shelfPropertiesActions[n]),labels[n],help,{},layout.plates[n],false});
             return out;
@@ -571,7 +602,7 @@ struct ShelfPreview::Impl {
             images.push_back({d,Json::Object{{"memoryImage",pixels->key()},{"revision",std::int64_t(pixels->revision())}}});
         }
         std::erase_if(requestVersions,[&](const auto&item){return !record(item.first)&&!pending(item.first);});
-        if(icons&&active)icons->setVisible(requests);
+        if(active)showIcons();
         scene->syncContent(images,++imageRevision);dirty=false;
     }
     std::optional<core::Point>local(core::Point logical)const{return acceptsInput?projection.unproject({logical.x*metrics.scale,logical.y*metrics.scale}):std::nullopt;}
@@ -602,9 +633,10 @@ void ShelfPreview::update(const Matrix&center,const core::source::DesktopChromeS
     auto&i=*impl_;const Impl::Event event(i,t);t=i.time;
     const auto*shown=sample.current.module==core::Module::fileShelf?&sample.current:sample.incoming&&sample.incoming->module==core::Module::fileShelf?&*sample.incoming:nullptr;
     const bool active=shown&&sample.requested==core::Module::fileShelf;
-    if(active!=i.active){i.active=active;if(active)i.state->activate();else{i.closeCard(false);i.state->deactivate();i.dragCandidate.reset();i.pressed=false;if(i.icons)i.icons->hide();}i.changed();}
+    if(active!=i.active){i.active=active;if(active){i.iconsFailed=false;i.state->activate();}else{i.closeCard(false);i.state->deactivate();i.dragCandidate.reset();i.pressed=false;i.parkIcons();}i.changed();}
     i.acceptsInput=active&&sample.acceptsModuleInput&&!i.nativeDrag;i.dropState->enabled=i.acceptsInput;if(i.drop)i.drop->setEnabled(bool(i.dropState->external)||i.acceptsInput);
     if(!shown){i.pose.reset();i.registration.update({});return;}
+    i.parkWanted=false; // shown: the selected module keeps its artwork across a close
     // A closed properties card leaves once its fade-out finished.
     if(i.cardClosing&&t-*i.cardClosing>=.16){i.cardClosing.reset();i.cardContent.reset();i.syncCard();}
     i.content();i.surface->update(center,settings,*shown,opacity);i.pose=i.surface->pose();const auto&p=*i.pose;
@@ -686,7 +718,12 @@ bool ShelfPreview::message(const app::NativeMessage&m,double t){auto&i=*impl_;if
 bool ShelfPreview::pointerLocked()const{return impl_->dragCandidate.has_value()||impl_->nativeDrag;}
 bool ShelfPreview::preservesFocusOnLoss()const{const auto&i=*impl_;const auto picker=i.picker->stats();return i.nativeDrag||picker.queued||picker.presenting||i.state->dropTarget();}
 ShelfPanelState ShelfPreview::panels()const{const auto&i=*impl_;const auto picker=i.picker->stats();
-    return {picker.queued||picker.presenting,i.card&&i.cardInteractive,i.card&&i.card->values.has_value(),i.card?i.card->itemID:std::string{},i.propertyReads};}
+    return {picker.queued||picker.presenting,i.card&&i.cardInteractive,i.card&&i.card->values.has_value(),i.card?i.card->itemID:std::string{},i.propertyReads,
+        i.automation?i.automation->stats().focusMoves:0};}
+ShelfResourceStats ShelfPreview::resources()const{const auto&i=*impl_;ShelfResourceStats out;
+    const auto scene=i.scene->stats();out.sceneParts=scene.parts;out.sceneSurfaces=scene.surfaces;out.scenePixelBytes=scene.pixelBytes;out.sceneParks=scene.parks;
+    if(i.icons){const auto icons=i.icons->stats();out.iconProvider=true;out.iconWorkers=icons.workers;out.iconWorkerStarts=icons.workerStarts;out.iconParks=icons.parks;}
+    const auto cache=i.memoryImages.stats();out.cachedIcons=cache.cachedImages;out.cachedIconBytes=cache.cachedBytes;return out;}
 std::optional<ShelfPreviewAction>ShelfPreview::takeAction(){return std::exchange(impl_->action,{});}
 bool ShelfPreview::importFiles(std::span<const std::string>paths,double t){auto&i=*impl_;const Impl::Event event(i,t);const bool value=i.state->importFiles(paths);i.changed();return value;}
 bool ShelfPreview::paste(double t){auto&i=*impl_;
@@ -754,7 +791,13 @@ void ShelfPreview::automationDisconnect()noexcept{if(impl_->automation)impl_->au
 void ShelfPreview::setEventRecorder(std::function<void(modules::EventKind,modules::EventMetadata)>value){impl_->recordEvent=std::move(value);}
 // The properties card lives in the HUD: no popup window filters keys.
 bool ShelfPreview::filterKey(const app::NativeMessage&){return false;}
-void ShelfPreview::cancelPanels(){impl_->relinkTarget.reset();impl_->picker->cancel();impl_->closeCard(false);}
+void ShelfPreview::cancelPanels(){auto&i=*impl_;i.relinkTarget.reset();i.picker->cancel();i.closeCard(false);
+    // The HUD is closing (overlayClosing): once every visible icon has been
+    // extracted the idle worker ends (they stay in the 24-icon cache);
+    // otherwise it finishes them for the next opening first. A Shelf that is
+    // not shown releases its artwork at the next publication (or conceal()).
+    if(!i.iconsMissing())i.parkIcons();i.parkWanted=true;}
+void ShelfPreview::conceal(){auto&i=*impl_;if(i.renderer)(void)i.parkArtwork(*i.renderer);}
 void ShelfPreview::cancelInteraction(){auto&i=*impl_;i.dragCandidate.reset();i.pressed=false;i.action.reset();}
 void ShelfPreview::setNativeDragActive(bool value){impl_->nativeDrag=value;cancelInteraction();}
 void ShelfPreview::setExternalDropCallbacks(std::optional<gpu::ShelfDropTarget::Callbacks> callbacks,double t){
@@ -775,8 +818,13 @@ data::ShelfFileAccess ShelfPreview::access(std::string_view id){return impl_->st
 std::unique_ptr<gpu::ShelfDragTransfer>ShelfPreview::prepareDrag(std::string_view id){auto&i=*impl_;auto ids=i.state->dragSelection(id);
     auto transfer=std::make_unique<gpu::ShelfDragTransfer>(i.store->prepareCopy(ids),i.files.platform().resolve);i.dragImage(*transfer,ids);return transfer;}
 const mod::FileShelfState&ShelfPreview::state()const{return *impl_->state;}
-void ShelfPreview::upload(gpu::Renderer&r){auto&i=*impl_;if(!i.pose)return;i.registration.uploadGeometry(r);i.scene->uploadAnimations(r);}
+void ShelfPreview::upload(gpu::Renderer&r){auto&i=*impl_;i.renderer=&r;if(!i.pose)return;i.registration.uploadGeometry(r);i.scene->uploadAnimations(r);}
 std::span<const gpu::LayerCompositionEntry>ShelfPreview::entries(){auto&i=*impl_;i.composed.clear();if(i.pose){for(const auto&e:i.scene->entries())i.composed.push_back(e);i.composed.push_back({&i.geometry,i.registration.draws()});}return i.composed;}
-void ShelfPreview::collected(gpu::Renderer&r){need(impl_->scene->collectRetired(r),"Shelf retired artwork must be detached after publication");}
+void ShelfPreview::collected(gpu::Renderer&r){auto&i=*impl_;need(i.scene->collectRetired(r),"Shelf retired artwork must be detached after publication");
+    // After a HUD close began, a Shelf that is not shown (this publication
+    // does not compose it; the composition already released its GPU
+    // resources) releases its rasters too; showing it again rebuilds them, as
+    // Mac HUDModuleContent makes the content again when it is selected.
+    i.renderer=&r;if(i.parkWanted)(void)i.parkArtwork(r);}
 void ShelfPreview::release(gpu::Renderer&r){auto&i=*impl_;cancelPanels();automationDisconnect();i.dropState->enabled=false;i.dropState->external.reset();if(i.drop)i.drop->stop();if(i.icons)i.icons->stop();need(i.scene->releaseResources(r)&&i.registration.releaseResources(r)&&i.geometry.releaseResources(r),"Shelf resources remain published during teardown");i.released=true;}
 }

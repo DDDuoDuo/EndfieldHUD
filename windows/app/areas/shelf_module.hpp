@@ -26,10 +26,15 @@
 //     it opens at once, its properties are read on the shared utility worker
 //     (never the HUD thread), the same item closes it, and on a presented
 //     Shelf it is modal for UI Automation (the card and its close/open/reveal
-//     peers) with Open handed to the host after the HUD closes;
+//     peers; the card holds the keyboard focus and is announced once) with
+//     Open handed to the host after the HUD closes;
 //   - the import ledger through its owner API on the utility worker
 //     (reconcile on refresh, resolve after a relink, dismiss on remove/clear);
-//   - the localized text of those operations.
+//   - the localized text of those operations;
+//   - memory: the built-in Shelf (found through the host's area-service
+//     directory), switched away from by the module cycle, keeps its rasters
+//     inside the open HUD and releases them when the HUD finishes closing
+//     (ShelfPreview::conceal, the overlayConcealed broadcast).
 // It owns a NEW data root inside its coverage root, a private never-shown
 // owner window (the HUD HWND keeps its own routes), a private rasterizer for
 // its presentation (outside the module cycles' measured raster usage), the

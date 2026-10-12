@@ -77,5 +77,19 @@ if(WIN32)
     endif()
     add_test(NAME shelf_removal_frames_contracts COMMAND shelf_removal_frames_tests "${CMAKE_CURRENT_SOURCE_DIR}/native/hud.hlsl" "${CMAKE_CURRENT_SOURCE_DIR}/resources/shelf" "${CMAKE_CURRENT_SOURCE_DIR}/resources/shelf/reveal-mask.bin")
     set_tests_properties(shelf_removal_frames_contracts PROPERTIES TIMEOUT 180)
+
+    # What the Shelf keeps resident (memory audit) through the production
+    # owner, published like the host: no icon worker before the first shown
+    # Shelf, no artwork (rasters, textures) and no icon thread while another
+    # module is shown, a pixel-identical rebuild from cached icons, and a
+    # worker restart only for a missing icon. Prints the measured numbers.
+    add_executable(shelf_resources_tests tests/shelf_resources_tests.cpp)
+    target_compile_definitions(shelf_resources_tests PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
+    target_link_libraries(shelf_resources_tests PRIVATE hud_shelf_preview ole32 psapi)
+    if(MSVC)
+      target_compile_options(shelf_resources_tests PRIVATE /W4 /permissive- /EHsc)
+    endif()
+    add_test(NAME shelf_resources_contracts COMMAND shelf_resources_tests "${CMAKE_CURRENT_SOURCE_DIR}/native/hud.hlsl" "${CMAKE_CURRENT_SOURCE_DIR}/resources/shelf")
+    set_tests_properties(shelf_resources_contracts PROPERTIES TIMEOUT 180)
   endif()
 endif()

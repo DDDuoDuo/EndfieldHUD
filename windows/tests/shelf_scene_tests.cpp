@@ -66,17 +66,31 @@ void portable(){
     m::ShelfPresentation source;rejects([&]{n::prepareShelfScene(source);},"Uninitialized shelf rejects");m::FileShelfState state(items(10000));m::ShelfPresentationStyle style;source.update(state,style);
     rejects([&]{n::prepareShelfScene(source);},"File icons and Depot artwork are explicit, never blank replacements");auto supplied=images(source);const auto original=source.chrome();const auto plan=n::prepareShelfScene(source,supplied);
     check(source.chrome()==original&&plan.cards.size()==8,"Preparation preserves descriptor and only builds eight visible cards");
-    check(plan.collection.surfaces.empty()&&find(plan.foreground.layers,"shelf.drop")!=nullptr&&plan.scrollbar.surfaces.size()==1,"Collection, numeric scrollbar and upper chrome remain separate paint groups");
+    check(plan.collection.surfaces.empty()&&plan.scrollbar.surfaces.size()==1&&!plan.foreground.surfaces.empty(),"Collection, numeric scrollbar and upper chrome remain separate paint groups");
+    // The drop outline's stroke is cleared while nothing is dragged: it paints
+    // nothing, so it keeps no surface (no 382 x 248 transparent raster).
+    check(find(plan.foreground.layers,"shelf.drop")==nullptr&&std::none_of(plan.foreground.surfaces.begin(),plan.foreground.surfaces.end(),[](const auto&s){return s.drop;}),"The invisible drop outline retains no surface");
+    // Chrome groups cover their members' integer-aligned paint extent, not
+    // the whole canvas; their position equals their bounds origin.
+    for(const auto&group:plan.foreground.layers["children"].array())if(group["id"].string().ends_with("/retained-static")){
+        const auto&b=group["bounds"].array();const auto&at=group["position"].array();
+        check(b[0]==at[0]&&b[1]==at[1]&&b[0].number()==std::floor(b[0].number())&&b[1].number()==std::floor(b[1].number())&&b[2].number()==std::floor(b[2].number())&&b[3].number()==std::floor(b[3].number())&&b[2].number()*b[3].number()<400*334/2.,
+              "A chrome group is integer-aligned, placed at its bounds origin and far smaller than the canvas");}
     check(find(plan.foreground.layers["children"].array().back(),"shelf:clear/title")!=nullptr,"Toolbar captions follow source sibling plate order");
     for(const auto&p:plan.cards){const auto id="shelf.card."+p.itemID;const auto plate=surface(p,id+"/plate"),icon=surface(p,id+"/icon"),separator=surface(p,id+"/separator");
         check(plate==0&&icon==separator&&separator<surface(p,id+"/eye"),"Original plate, controls, icons, text and final glyph paint order");
-        for(const auto*s:{"/plate","/separator","/eye","/folder","/cross"}){const auto&v=leaf(p,id+s);check(v["bounds"]==Json(Json::Array{0,0,0,0})&&!v["shape"]["path"].array().empty(),"Zero-bounds source shape ink is not cropped or omitted");}
+        // (Inside a group an empty frame is moved onto its path's first point,
+        // position and bounds origin together: the placement is unchanged.)
+        for(const auto*s:{"/plate","/separator","/eye","/folder","/cross"}){const auto&v=leaf(p,id+s);const auto&b=v["bounds"].array();const auto&at=v["position"].array();
+            check(b[2].number()==0&&b[3].number()==0&&at[0].number()==b[0].number()&&at[1].number()==b[1].number()&&!v["shape"]["path"].array().empty(),"Zero-bounds source shape ink is not cropped or omitted");}
         check(p.surfaces.size()==11,"Consecutive static source artwork leaves headroom for two live card generations");
         check(leaf(p,id+"/icon")["contents"]==supplied[1].contents,"Explicit pinned native icon metadata survives flattening");
         for(const auto&s:p.surfaces){check(s.local.values[14]==0,"Selection depth is never baked into raster geometry");if(s.feedback!=n::ShelfSceneSurface::none)check(leaf(p,s.id)["opacity"].number()==1,"Invisible highlight art remains resident for numeric feedback");}
     }
     for(const auto&s:plan.foreground.surfaces)if(s.id.starts_with("shelf:add")||s.id.starts_with("shelf:clear"))check(s.toolbar,"Caption siblings and highlight descendants follow the whole toolbar reveal");
-    const auto fullDrop=leaf(plan.foreground,"shelf.drop")["shape"]["path"];
+    state.setDropTarget(true);source.update(state,style);const auto dropping=n::prepareShelfScene(source,images(source));state.setDropTarget(false);source.update(state,style);
+    check(std::count_if(dropping.foreground.surfaces.begin(),dropping.foreground.surfaces.end(),[](const auto&s){return s.drop;})==1,"While a file is dragged over it the drop outline has its surface");
+    const auto fullDrop=leaf(dropping.foreground,"shelf.drop")["shape"]["path"];
     check(n::shelfDropStrokePath(1)==fullDrop,"Completed drop trace retains exact original rounded path commands");
     check(n::shelfDropStrokePath(0).array().size()==1,"Zero stroke starts with only the original right-midpoint move");
     for(const auto& sample:std::array<std::array<double,3>,3>{{{.25,191,248},{.5,0,124},{.75,191,0}}}){const auto path=n::shelfDropStrokePath(sample[0]);const auto&end=path.array().back()["points"].array().back().array();checkNear(end[0].number(),sample[1],"Source arc-length quarter endpoint x");checkNear(end[1].number(),sample[2],"Source arc-length quarter endpoint y");}
@@ -87,7 +101,9 @@ void portable(){
     check(leaf(withMemory.cards.back(),"shelf.card."+withMemory.cards.back().itemID+"/icon")["contents"]==memory.back().contents,"Native icon memory dependency passes unchanged into retained artwork");
     memory.front().contents=memory.back().contents;rejects([&]{n::prepareShelfScene(source,memory);},"Native memory images cannot replace the pinned source Depot icon");
     m::FileShelfState empty({});style.depotIconAvailable=false;source.update(empty,style);const auto fallback=n::prepareShelfScene(source);check(fallback.cards.empty()&&fallback.scrollbar.surfaces.empty()&&surface(fallback.collection,"shelf.empty/folder")==0,"Actual source folder/+ fallback compiles without OS icon lookup");
-    checkNear(leaf(fallback.collection,"shelf.empty/folder")["position"].array()[0].number(),165,"Empty fallback shape keeps source x");checkNear(leaf(fallback.collection,"shelf.empty/folder")["position"].array()[1].number(),88,"Empty fallback shape keeps source y");
+    // Placement = position - bounds origin (a grouped empty frame sits on its path's first point).
+    const auto&folderLeaf=leaf(fallback.collection,"shelf.empty/folder");
+    checkNear(folderLeaf["position"].array()[0].number()-folderLeaf["bounds"].array()[0].number(),165,"Empty fallback shape keeps source x");checkNear(folderLeaf["position"].array()[1].number()-folderLeaf["bounds"].array()[1].number(),88,"Empty fallback shape keeps source y");
 }
 #ifdef _WIN32
 struct Fixture {
@@ -139,6 +155,62 @@ void native(const wchar_t*shader){
     }}pose.reveal.reset();check(raster.stats().textLayoutsCreated==cardLayouts,"Reveal reuses all text and card artwork");
     state.setDropTarget(true);source.update(state,style);bindings=images(source);bridge.syncContent(bindings);pose.time+=.1;pose.dropStrokeEnd=.25;bridge.updatePose(pose);bridge.uploadAnimations(renderer);composition.setEntries(renderer,bridge.entries());composition.present(renderer);bridge.collectRetired(renderer);renderer.draw(false);const auto partialDrop=renderer.readback();
     const auto dropRasters=bridge.stats().dropRasters;bridge.uploadAnimations(renderer);check(bridge.stats().dropRasters==dropRasters,"Equal drop path is a retained no-op");pose.time+=.1;pose.dropStrokeEnd=1;bridge.updatePose(pose);bridge.uploadAnimations(renderer);composition.setEntries(renderer,bridge.entries());composition.present(renderer);renderer.draw(false);check(renderer.readback().pixels!=partialDrop.pixels,"Source drop outline traces its path rather than fading a full outline");
+    // Tight groups: each group of consecutive static artwork (chrome and
+    // cards) is rasterized over its integer-aligned paint extent instead of
+    // the whole 400 x 334 canvas or 184 x 74 card. At the production 2 px per
+    // point both rasters lie on one pixel grid and, everything outside a
+    // raster being transparent, paint the same image. Text, images, lines
+    // and straight-edged shapes come out bit-identical; Direct2D flattens a
+    // curve in the shifted pixel space, so a few antialiased edge samples of
+    // the curved card glyphs (eye, folder) move slightly (measured: 19
+    // samples of 5,040, at most 13 of 255 levels); no sample changes from
+    // empty to covered or the reverse.
+    {
+        auto two=options;two.pixelsPerPoint=2;two.includeRootOpacity=false;two.includeRootMask=true;
+        std::size_t groups{},cardGroups{},tightBytes{},wholeBytes{},offGrid{},differing{},crowded{},flipped{};int worst{};
+        for(const bool emptyShelf:{false,true}){
+            m::FileShelfState none({});m::ShelfPresentation emptySource;if(emptyShelf)emptySource.update(none,style);
+            const auto&shown=emptyShelf?emptySource:source;const auto plan=n::prepareShelfScene(shown,images(shown));
+            std::vector<const n::ShelfScenePart*>parts{&plan.foreground,&plan.collection};for(const auto&card:plan.cards)parts.push_back(&card);
+            for(const auto*part:parts)for(const auto&node:part->layers["children"].array()){
+                const auto id=node["id"].string();if(!id.ends_with("/retained-static"))continue;++groups;if(!part->itemID.empty())++cardGroups;
+                auto whole=node;whole["bounds"]=part->itemID.empty()?Json::Array{0,0,400,334}:Json::Array{0,0,184,74};whole["position"]=Json::Array{0,0};
+                const auto tight=raster.rasterize("tight:"+id,1,node,two),full=raster.rasterize("whole:"+id,1,whole,two);
+                check(tight->complete()&&full->complete(),"Both group rasters are complete");
+                const double dx=(tight->bounds.x-full->bounds.x)*2,dy=(tight->bounds.y-full->bounds.y)*2;
+                const bool grid=dx==std::floor(dx)&&dy==std::floor(dy);offGrid+=!grid;
+                // Pixel (x, y) of the whole raster is pixel (x - dx, y - dy) of the tight one.
+                const auto pixel=[](const n::LayerRasterImage&image,long long x,long long y,unsigned k)->int{return x<0||y<0||x>=static_cast<long long>(image.width)||y>=static_cast<long long>(image.height)?0:image.straightRGBA[(std::size_t(y)*image.width+std::size_t(x))*4+k];};
+                const long long ox=static_cast<long long>(std::floor(dx)),oy=static_cast<long long>(std::floor(dy));
+                const long long left=std::min(0ll,ox),top=std::min(0ll,oy),right=std::max<long long>(full->width,ox+tight->width),bottom=std::max<long long>(full->height,oy+tight->height);
+                std::size_t count{};int most{};
+                for(long long y=top;y<bottom;++y)for(long long x=left;x<right;++x){
+                    const int a=pixel(*full,x,y,3),b=pixel(*tight,x-ox,y-oy,3);if(a==0&&b==0)continue; // both transparent (colour undefined)
+                    int d=std::abs(a-b);for(unsigned k=0;k<3;++k)d=std::max(d,std::abs(pixel(*full,x,y,k)*a-pixel(*tight,x-ox,y-oy,k)*b)/255); // premultiplied colour
+                    if(d){++count;most=std::max(most,d);flipped+=(a==0&&b==255)||(a==255&&b==0);}}
+                differing+=count;worst=std::max(worst,most);crowded+=count*100>std::size_t(tight->width)*tight->height;
+                std::cout<<"group "<<id<<": tight "<<tight->bounds.x<<','<<tight->bounds.y<<' '<<tight->width<<'x'<<tight->height<<" px, whole "<<full->bounds.x<<','<<full->bounds.y<<' '<<full->width<<'x'<<full->height<<" px, "<<count<<" pixels differ (at most "<<most<<")\n";
+                tightBytes+=tight->straightRGBA.size();wholeBytes+=full->straightRGBA.size();raster.remove("tight:"+id);raster.remove("whole:"+id);
+            }
+        }
+        std::cout<<"Shelf static groups at 2x: "<<groups<<" groups ("<<cardGroups<<" in cards), "<<tightBytes/1024<<" KiB tight vs "<<wholeBytes/1024<<" KiB over the canvas or card; "<<differing<<" pixels differ by at most "<<worst<<"\n";
+        check(offGrid==0,"The tight and whole group rasters share one pixel grid");
+        check(worst<=16&&flipped==0&&crowded==0,"A tight group paints the pixels of the whole-canvas or whole-card group (only a few antialiased curve samples move, by at most 16 levels)");
+        check(groups>=3&&cardGroups>=8&&tightBytes*2<wholeBytes,"Groups shrink to a fraction of their canvas and card rasters");
+    }
+    // park(): a still-composed Shelf refuses and stays resident; once the
+    // composition dropped it (the module was switched away) every part, its
+    // rasters and textures go, and the next content event rebuilds the same
+    // pixels (Mac HUDModuleContent makes the content again on selection).
+    const auto composed=bridge.stats();check(composed.parts==bridge.entries().size()&&composed.parts>=4&&composed.surfaces>0&&composed.pixelBytes>0&&!bridge.park(renderer)&&bridge.stats().parts==composed.parts&&bridge.stats().parks==0,"A composed Shelf refuses to park and stays resident");
+    renderer.draw(false);const auto beforePark=renderer.readback();const auto rasterKept=raster.stats();
+    composition.setEntries(renderer,{});check(bridge.park(renderer),"Once the composition dropped it the Shelf parks");
+    const auto emptied=bridge.stats();
+    check(emptied.parts==0&&emptied.surfaces==0&&emptied.pixelBytes==0&&emptied.parks==1&&bridge.entries().empty()&&raster.stats().entries<rasterKept.entries&&raster.stats().resourceBytes+composed.pixelBytes<=rasterKept.resourceBytes&&renderer.stats().textures==0&&renderer.stats().meshes==0,
+          "Parking releases every part, its rasters and its GPU resources");
+    check(!bridge.park(renderer)&&bridge.stats().parks==1,"Parking again releases nothing");
+    check(bridge.syncContent(bindings,2),"The next content event rebuilds every part");bridge.updatePose(pose);bridge.uploadAnimations(renderer);composition.setEntries(renderer,bridge.entries());composition.present(renderer);check(bridge.collectRetired(renderer),"Nothing retired after a rebuild");renderer.draw(false);
+    check(bridge.stats().parts==composed.parts&&bridge.stats().surfaces==composed.surfaces&&bridge.stats().pixelBytes==composed.pixelBytes&&renderer.readback().pixels==beforePark.pixels,"The rebuilt Shelf is pixel-identical");
     check(renderer.stats().textureUploads>uploads.textureUploads,"Test exercises real changed local raster uploads, not an empty bridge");composition.detach(renderer);check(bridge.releaseResources(renderer)&&renderer.stats().meshes==0&&renderer.stats().textures==0,"All owned resources released after composition detach");renderer.reset();
 }
 #endif

@@ -34,11 +34,21 @@ struct ShelfIconCompletion {
 struct ShelfIconProviderStats {
     std::size_t queued{},completed{};bool inFlight{},stopped{};
     std::uint64_t requests{},extractions{},wakeups{},notices{},discarded{};
+    // Worker threads not yet finished (0 while parked), threads started over
+    // the provider's lifetime and park() calls.
+    std::size_t workers{};std::uint64_t workerStarts{},parks{};
 };
-// One app-lifetime STA worker, reused across HUD hide/show. No application
-// window, timer, polling, thumbnail request, renderer, extra pixel cache or
-// user-file enumeration. Work/results are bounded to eight visible requests;
-// owner-thread drain publishes into the supplied source-capacity24 image cache.
+// One STA worker, reused across HUD hide/show. No application window, timer,
+// polling, thumbnail request, renderer, extra pixel cache or user-file
+// enumeration. Work/results are bounded to eight visible requests; owner-
+// thread drain publishes into the supplied source-capacity24 image cache.
+// park() (the Shelf hidden or the HUD closed) lets an idle worker end its
+// thread, which releases its COM apartment, WIC factory and the Shell icon
+// handlers it loaded; the next setVisible that needs an extraction starts a
+// new worker on the same provider, cache and route (the cached icons are
+// kept, as FileShelfCanvas keeps its 24 recent icons). A worker parked while
+// it extracts finishes that call first; a setVisible before it decided to
+// end keeps it serving, so at most one worker ever runs handler code.
 // The resolver MUST independently own its dependencies and be worker-safe;
 // NativeFileShelfFiles::platform().resolve satisfies that contract. Never bind
 // UI-thread FileShelfStore::access or capture HUD/cache/store pointers in it.
@@ -68,15 +78,19 @@ public:
     // Content/visibility event only. Latest set replaces queued/results work;
     // unchanged sets do nothing unless owner explicitly requests a retry.
     bool setVisible(std::span<const ShelfIconRequest>,bool retry=false);
-    void hide(); // cancel generation, retain app worker/cache for later show
+    void hide(); // cancel generation, retain the worker/cache for later show
+    // hide(), then let the idle worker end (no wait); the cache stays. The
+    // next setVisible with a request missing from the cache starts a worker.
+    void park();
     void setRoute(ShelfIconRoute); // clear old route before destroying its HWND
     // Coalesced WM_APP message is wParam=route.generation,lParam=0; no pointers.
     // Ignore stale route generations. No callbacks execute on either thread.
     std::vector<ShelfIconCompletion>drain(UINT_PTR routeGeneration);
     void stop()noexcept;
     ShelfIconProviderStats stats()const;
-    // Explicit optional shutdown/test observation; caller owns CloseHandle.
-    // Waiting is never done by this provider or its destructor.
+    // Explicit optional shutdown/test observation of the latest worker thread;
+    // caller owns CloseHandle. Waiting is never done by this provider or its
+    // destructor.
     HANDLE duplicateWorkerHandle()const;
 private:
     struct Impl;std::unique_ptr<Impl>impl_;

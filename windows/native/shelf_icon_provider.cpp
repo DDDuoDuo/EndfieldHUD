@@ -75,20 +75,36 @@ struct State {
     std::mutex mutex;Handle work;NativeShelfIconProvider::Resolver resolver;NativeShelfIconProvider::Extractor extractor;
     std::vector<Job>queue;std::array<std::optional<Ready>,8>ready;std::size_t readyCount{};
     ShelfIconRoute route;std::uint64_t generation{1};bool stopping{},noticePosted{};ShelfIconProviderStats stats;
+    // parked: an idle worker ends its thread (park()). serving: workers inside
+    // their service loop (at most one runs handler code); threads: worker
+    // threads not yet finished. The last finished thread of a stopped provider
+    // (or stop() itself when none is left) releases the dependencies and the
+    // process-wide gate exactly once (finalized).
+    bool parked{},finalized{};unsigned serving{},threads{};
     State(NativeShelfIconProvider::Resolver r,NativeShelfIconProvider::Extractor e):resolver(std::move(r)),extractor(std::move(e)){queue.reserve(8);work.value=CreateEventW(nullptr,TRUE,FALSE,nullptr);if(!work.value)throw Failure{HRESULT_FROM_WIN32(GetLastError())};}
     void notice(){if(readyCount&&!noticePosted&&route.owner){if(PostMessageW(route.owner,route.message,route.generation,0)){noticePosted=true;++stats.notices;}}}
     void clearReady(){for(std::size_t n=0;n<readyCount;++n)ready[n].reset();stats.discarded+=readyCount;readyCount=0;noticePosted=false;}
 };
 bool stale(const std::shared_ptr<State>&s,std::uint64_t generation){std::lock_guard lock(s->mutex);return s->stopping||s->generation!=generation;}
+// Dependencies and the gate of a stopped provider whose last worker ended.
+void finalize(State&state)noexcept{
+    // Worker-owned dependency destructors run outside the mutex.
+    state.resolver=nullptr;state.extractor=nullptr;
+}
 unsigned __stdcall run(void*opaque)noexcept{
     std::unique_ptr<std::shared_ptr<State>>argument(static_cast<std::shared_ptr<State>*>(opaque));auto state=std::move(*argument);argument.reset();
     const HRESULT initialized=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED|COINIT_DISABLE_OLE1DDE);ComPtr<IWICImagingFactory>wic;HRESULT codec=initialized;
     if(SUCCEEDED(codec)&&!state->extractor)codec=CoCreateInstance(CLSID_WICImagingFactory,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&wic));
+    bool parkedExit{};
     try{for(;;){
         const auto signaled=MsgWaitForMultipleObjectsEx(1,&state->work.value,INFINITE,QS_ALLINPUT,MWMO_INPUTAVAILABLE);
         if(signaled==WAIT_FAILED)break;
         if(signaled==WAIT_OBJECT_0+1){MSG message{};while(PeekMessageW(&message,nullptr,0,0,PM_REMOVE)){if(message.message==WM_QUIT){std::lock_guard lock(state->mutex);state->stopping=true;SetEvent(state->work.value);break;}TranslateMessage(&message);DispatchMessageW(&message);}continue;}
-        std::optional<Job>job;{std::lock_guard lock(state->mutex);++state->stats.wakeups;if(state->stopping)break;if(!state->queue.empty()){job=std::move(state->queue.front());state->queue.erase(state->queue.begin());state->stats.inFlight=true;++state->stats.extractions;}if(state->queue.empty())ResetEvent(state->work.value);}
+        std::optional<Job>job;{std::lock_guard lock(state->mutex);++state->stats.wakeups;if(state->stopping)break;
+            // Parked and idle: leave the service loop; a later setVisible
+            // that finds no serving worker starts a new one.
+            if(state->parked&&state->queue.empty()){--state->serving;parkedExit=true;break;}
+            if(!state->queue.empty()){job=std::move(state->queue.front());state->queue.erase(state->queue.begin());state->stats.inFlight=true;++state->stats.extractions;}if(state->queue.empty())ResetEvent(state->work.value);}
         if(!job)continue;ShelfIconPixels pixels;
         try{
             if(FAILED(codec))throw Failure{codec};if(stale(state,job->generation))throw Failure{E_ABORT};
@@ -103,33 +119,61 @@ unsigned __stdcall run(void*opaque)noexcept{
         // Keep the STA responsive between requests without adding periodic wakeups.
         MSG message{};while(PeekMessageW(&message,nullptr,0,0,PM_REMOVE)){if(message.message==WM_QUIT){std::lock_guard lock(state->mutex);state->stopping=true;SetEvent(state->work.value);break;}TranslateMessage(&message);DispatchMessageW(&message);}
     }}catch(...){/* A failed worker never crosses into owner callbacks. */}
-    {std::lock_guard lock(state->mutex);state->route={};state->queue.clear();state->clearReady();state->stats.inFlight=false;state->stopping=true;}
-    // Worker-owned dependency destructors run outside the mutex and before its
-    // apartment closes. A stopped facade may retain only diagnostic state.
-    wic.Reset();state->resolver={};state->extractor={};
-    if(SUCCEEDED(initialized))CoUninitialize();{std::lock_guard lock(state->mutex);state->stats.stopped=true;}state.reset();workerGate().store(false,std::memory_order_release);return 0;
+    // Stopped or failed (not parked): the provider takes no further work.
+    if(!parkedExit){std::lock_guard lock(state->mutex);--state->serving;state->route={};state->queue.clear();state->clearReady();state->stats.inFlight=false;state->stopping=true;}
+    wic.Reset();
+    bool last{};{std::lock_guard lock(state->mutex);--state->threads;last=state->stopping&&!state->threads&&!state->finalized;if(last)state->finalized=true;}
+    // Worker-owned dependency destructors run before its apartment closes. A
+    // stopped facade may retain only diagnostic state.
+    if(last)finalize(*state);
+    if(SUCCEEDED(initialized))CoUninitialize();
+    if(last){{std::lock_guard lock(state->mutex);state->stats.stopped=true;}state.reset();workerGate().store(false,std::memory_order_release);}
+    return 0;
 }
 }
 struct NativeShelfIconProvider::Impl {
     const DWORD owner{GetCurrentThreadId()};LayerImageSource*images;std::shared_ptr<State>state;Handle worker;std::vector<ShelfIconRequest>visible;bool showing{};
     Impl(LayerImageSource&i):images(&i){visible.reserve(8);}
     void onThread()const{need(owner==GetCurrentThreadId(),"Shelf icon owner API requires its creating thread");}
+    // Starts the worker the caller counted (serving and threads) under the
+    // mutex; a failed start takes that count back.
+    void start(){
+        auto argument=std::make_unique<std::shared_ptr<State>>(state);
+        const auto handle=_beginthreadex(nullptr,0,run,argument.get(),0,nullptr);
+        if(!handle){std::lock_guard lock(state->mutex);--state->serving;--state->threads;throw std::runtime_error("Cannot start bounded Shelf icon worker");}
+        argument.release();if(worker.value)CloseHandle(worker.value);worker.value=reinterpret_cast<HANDLE>(handle);
+        std::lock_guard lock(state->mutex);++state->stats.workerStarts;
+    }
 };
 NativeShelfIconProvider::NativeShelfIconProvider(LayerImageSource&images,Resolver resolver,ShelfIconRoute route,Extractor extractor):impl_(std::make_unique<Impl>(images)){
     need(bool(resolver),"Shelf icons require an independent worker-safe metadata resolver");validateRoute(route);bool expected{};need(workerGate().compare_exchange_strong(expected,true,std::memory_order_acq_rel),"Previous Shelf icon worker is still active");
-    try{auto state=std::make_shared<State>(std::move(resolver),std::move(extractor));state->route=route;auto argument=std::make_unique<std::shared_ptr<State>>(state);
-        const auto handle=_beginthreadex(nullptr,0,run,argument.get(),0,nullptr);if(!handle)throw std::runtime_error("Cannot start bounded Shelf icon worker");argument.release();impl_->worker.value=reinterpret_cast<HANDLE>(handle);impl_->state=std::move(state);
-    }catch(...){workerGate().store(false,std::memory_order_release);throw;}
+    try{auto state=std::make_shared<State>(std::move(resolver),std::move(extractor));state->route=route;state->serving=state->threads=1;impl_->state=std::move(state);impl_->start();
+    }catch(...){impl_->state.reset();workerGate().store(false,std::memory_order_release);throw;}
 }
 NativeShelfIconProvider::~NativeShelfIconProvider(){stop();}
 bool NativeShelfIconProvider::setVisible(std::span<const ShelfIconRequest>requests,bool retry){
     auto&i=*impl_;i.onThread();{std::lock_guard lock(i.state->mutex);need(!i.state->stopping&&!i.state->stats.stopped,"Shelf icon provider has stopped");}need(requests.size()<=maximumVisible,"Shelf icon visible request bound exceeded");for(std::size_t n=0;n<requests.size();++n){validate(requests[n]);for(std::size_t k=0;k<n;++k)need(requests[k].imageKey!=requests[n].imageKey&&requests[k].itemID!=requests[n].itemID,"Repeated Shelf icon request");}
     if(i.showing&&!retry&&std::equal(requests.begin(),requests.end(),i.visible.begin(),i.visible.end()))return false;
     std::vector<ShelfIconRequest>visible(requests.begin(),requests.end());std::vector<Job>queue;queue.reserve(8);for(const auto&r:requests)if(!i.images->acquire(r.imageKey,r.revision))queue.push_back({r,0});
-    {std::lock_guard lock(i.state->mutex);need(!i.state->stopping&&!i.state->stats.stopped,"Shelf icon provider has stopped");need(i.state->generation<std::numeric_limits<std::uint64_t>::max(),"Shelf icon generation exhausted");const auto generation=++i.state->generation;for(auto&job:queue)job.generation=generation;i.state->queue=std::move(queue);i.state->clearReady();++i.state->stats.requests;SetEvent(i.state->work.value);}
-    i.visible=std::move(visible);i.showing=true;return true;
+    bool start{};
+    {std::lock_guard lock(i.state->mutex);need(!i.state->stopping&&!i.state->stats.stopped,"Shelf icon provider has stopped");need(i.state->generation<std::numeric_limits<std::uint64_t>::max(),"Shelf icon generation exhausted");const auto generation=++i.state->generation;for(auto&job:queue)job.generation=generation;
+        // A parked provider starts a worker only for an icon it lacks; a
+        // worker that has not left its loop yet keeps serving instead.
+        i.state->parked=false;start=!queue.empty()&&!i.state->serving;if(start){++i.state->serving;++i.state->threads;}
+        i.state->queue=std::move(queue);i.state->clearReady();++i.state->stats.requests;SetEvent(i.state->work.value);}
+    i.visible=std::move(visible);i.showing=true;
+    if(start)try{i.start();}catch(...){i.showing=false;throw;} // a later setVisible retries
+    return true;
 }
 void NativeShelfIconProvider::hide(){auto&i=*impl_;i.onThread();std::lock_guard lock(i.state->mutex);if(!i.showing||i.state->stopping)return;need(i.state->generation<std::numeric_limits<std::uint64_t>::max(),"Shelf icon generation exhausted");++i.state->generation;i.state->queue.clear();i.state->clearReady();i.visible.clear();i.showing=false;ResetEvent(i.state->work.value);}
+void NativeShelfIconProvider::park(){
+    auto&i=*impl_;i.onThread();std::lock_guard lock(i.state->mutex);if(i.state->stopping)return;
+    need(i.state->generation<std::numeric_limits<std::uint64_t>::max(),"Shelf icon generation exhausted");
+    if(i.showing){++i.state->generation;i.state->queue.clear();i.state->clearReady();i.visible.clear();i.showing=false;}
+    if(i.state->parked)return;
+    // Wake an idle worker so it ends; one inside an extraction ends after it.
+    i.state->parked=true;++i.state->stats.parks;SetEvent(i.state->work.value);
+}
 void NativeShelfIconProvider::setRoute(ShelfIconRoute route){auto&i=*impl_;i.onThread();validateRoute(route);std::lock_guard lock(i.state->mutex);need(!i.state->stopping&&!i.state->stats.stopped,"Shelf icon provider has stopped");i.state->route=route;i.state->noticePosted=false;i.state->notice();}
 std::vector<ShelfIconCompletion>NativeShelfIconProvider::drain(UINT_PTR generation){
     auto&i=*impl_;i.onThread();std::array<std::optional<Ready>,8>ready;std::size_t count{};
@@ -138,8 +182,14 @@ std::vector<ShelfIconCompletion>NativeShelfIconProvider::drain(UINT_PTR generati
         if(SUCCEEDED(result.result))try{result.image=i.images->publish(result.imageKey,result.revision,item.pixels.width,item.pixels.height,item.pixels.straightRGBA);}catch(const std::bad_alloc&){result.result=E_OUTOFMEMORY;}catch(...){result.result=E_INVALIDARG;}
         results.push_back(std::move(result));}return results;
 }
-void NativeShelfIconProvider::stop()noexcept{if(!impl_||!impl_->state)return;auto&s=*impl_->state;std::lock_guard lock(s.mutex);s.route={};s.stopping=true;s.queue.clear();s.clearReady();SetEvent(s.work.value);}
-ShelfIconProviderStats NativeShelfIconProvider::stats()const{const auto&i=*impl_;i.onThread();std::lock_guard lock(i.state->mutex);auto stats=i.state->stats;stats.queued=i.state->queue.size();stats.completed=i.state->readyCount;return stats;}
+void NativeShelfIconProvider::stop()noexcept{
+    if(!impl_||!impl_->state)return;auto&s=*impl_->state;bool last{};
+    {std::lock_guard lock(s.mutex);s.route={};s.stopping=true;s.queue.clear();s.clearReady();SetEvent(s.work.value);last=!s.threads&&!s.finalized;if(last)s.finalized=true;}
+    // No worker is left (the provider was parked): release here; otherwise
+    // the last worker does when it returns.
+    if(last){finalize(s);{std::lock_guard lock(s.mutex);s.stats.stopped=true;}workerGate().store(false,std::memory_order_release);}
+}
+ShelfIconProviderStats NativeShelfIconProvider::stats()const{const auto&i=*impl_;i.onThread();std::lock_guard lock(i.state->mutex);auto stats=i.state->stats;stats.queued=i.state->queue.size();stats.completed=i.state->readyCount;stats.workers=i.state->threads;return stats;}
 HANDLE NativeShelfIconProvider::duplicateWorkerHandle()const{const auto&i=*impl_;i.onThread();HANDLE copy{};if(!DuplicateHandle(GetCurrentProcess(),i.worker.value,GetCurrentProcess(),&copy,SYNCHRONIZE,FALSE,0))throw std::runtime_error("Cannot duplicate Shelf worker completion handle");return copy;}
 } // namespace endfield::native
 #endif

@@ -73,6 +73,37 @@ void blockedShutdown(){
     rejects([&]{n::NativeShelfIconProvider another(images,resolver(probe),{},extractor(probe));},"Reopen cannot accumulate a second blocked worker");check(probe->released==0,"Blocked worker retains independent file lease after owner destruction");SetEvent(probe->release.value);check(WaitForSingleObject(completion.value,10000)==WAIT_OBJECT_0&&probe->acquired==probe->released,"Released block completes cleanup after HUD/provider destruction");check(images.stats().publications==0,"Destroyed owner's completion never reaches its cache pointer");MSG late{};check(!PeekMessageW(&late,window.hwnd,Window::notice,Window::notice,PM_REMOVE),"No notice posts after blocked owner route is destroyed");
     n::NativeShelfIconProvider replacement(images,resolver(probe),window.route(23),extractor(probe));stopped(replacement);
 }
+// park(): the idle worker ends its thread (its COM apartment and any Shell
+// handler with it); the provider, its route and the cached icons stay. Only an
+// icon missing from the cache starts a new worker. A worker parked inside an
+// extraction finishes it and keeps serving a setVisible that arrives before
+// it left, so two workers never run extractions. stop() of a parked provider
+// completes at once and frees the process-wide gate.
+void parking(){
+    Window window;n::LayerImageSource images;auto probe=std::make_shared<Probe>();
+    auto provider=std::make_unique<n::NativeShelfIconProvider>(images,resolver(probe),window.route(61),extractor(probe));
+    check(provider->stats().workers==1&&provider->stats().workerStarts==1&&provider->stats().parks==0,"A new provider runs one worker");
+    const auto first=requests(2,200);check(provider->setVisible(first)&&collect(*provider,window,61,2).size()==2,"Two icons are extracted");
+    {Handle ended(provider->duplicateWorkerHandle());provider->park();check(WaitForSingleObject(ended.value,10000)==WAIT_OBJECT_0,"A parked idle worker ends its thread");}
+    auto stats=provider->stats();
+    check(stats.workers==0&&stats.parks==1&&!stats.stopped&&!stats.inFlight&&images.stats().cachedImages==2&&images.acquire(first[0].imageKey,1),"Parked: no worker thread; the provider and its cached icons stay");
+    check(provider->setVisible(first)&&provider->stats().queued==0&&provider->stats().workers==0&&provider->stats().workerStarts==1&&probe->calls==2,"Showing cached icons again starts no worker");
+    provider->park();
+    const auto second=requests(1,210);check(provider->setVisible(second)&&provider->stats().workerStarts==2,"A missing icon starts a new worker on the same provider");
+    auto ready=collect(*provider,window,61,1);check(ready.size()==1&&ready.front().image&&ready.front().imageKey==second[0].imageKey&&probe->worker!=GetCurrentThreadId(),"The new worker extracts off the owner thread and delivers on the same route");
+    // Parked inside an extraction: the worker finishes it; a setVisible before
+    // it left keeps it serving (no second worker).
+    probe->blockNext=true;check(provider->setVisible(requests(1,220)),"A blocked extraction starts");check(WaitForSingleObject(probe->entered.value,10000)==WAIT_OBJECT_0,"The extraction entered the worker");
+    provider->park();check(provider->stats().workers==1&&provider->stats().inFlight,"A worker parked inside an extraction is still running it");
+    const auto later=requests(1,230);check(provider->setVisible(later)&&provider->stats().workerStarts==2,"A setVisible before the parked worker left keeps it serving");
+    SetEvent(probe->release.value);ready=collect(*provider,window,61,1);
+    check(ready.size()==1&&ready.front().imageKey==later[0].imageKey&&provider->stats().workerStarts==2&&provider->stats().discarded>=1&&probe->acquired==probe->released,"The cancelled extraction is discarded; the same worker serves the later request and closes every lease");
+    {Handle ended(provider->duplicateWorkerHandle());provider->park();check(WaitForSingleObject(ended.value,10000)==WAIT_OBJECT_0&&provider->stats().workers==0,"The worker ends after its last extraction once parked");}
+    // Stop while parked: no worker to wait for; the gate is free at once.
+    provider->stop();check(provider->stats().stopped,"A parked provider stops at once");rejects([&]{provider->setVisible(first);},"A stopped provider takes no work");
+    provider.reset();n::NativeShelfIconProvider next(images,resolver(probe),window.route(62),extractor(probe));stopped(next);
+    MSG late{};while(PeekMessageW(&late,window.hwnd,Window::notice,Window::notice,PM_REMOVE))check(late.lParam==0,"Late notices carry no pointer");
+}
 std::string utf8(const std::filesystem::path&p){const auto s=p.u8string();return {reinterpret_cast<const char*>(s.data()),s.size()};}
 void nativeIcons(){
     Window window;const auto root=std::filesystem::temp_directory_path()/("endfield-synthetic-icons-"+std::to_string(GetCurrentProcessId())+"-"+std::to_string(GetTickCount64()));check(std::filesystem::create_directory(root),"Create new explicit synthetic icon directory");struct Cleanup{std::filesystem::path path;~Cleanup(){std::error_code e;std::filesystem::remove_all(path,e);}}cleanup{root};
@@ -84,7 +115,7 @@ void nativeIcons(){
     stopped(provider);check(!IsWindowVisible(window.hwnd),"No fixture shows/focuses any application window");
 }
 }
-int main(){try{portableRequests();latestAndIdle();blockedShutdown();nativeIcons();std::cout<<"PASS "<<checks+portableChecks<<" Shelf icon provider checks\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks+portableChecks<<": "<<e.what()<<'\n';return 1;}}
+int main(){try{portableRequests();latestAndIdle();blockedShutdown();parking();nativeIcons();std::cout<<"PASS "<<checks+portableChecks<<" Shelf icon provider checks\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks+portableChecks<<": "<<e.what()<<'\n';return 1;}}
 #else
 int main(){try{portableRequests();std::cout<<"PASS "<<portableChecks<<" portable Shelf icon request checks; Windows worker/Shell checks not executed\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL: "<<e.what()<<'\n';return 1;}}
 #endif

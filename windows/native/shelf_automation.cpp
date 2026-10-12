@@ -22,6 +22,7 @@ VARIANT flag(bool b){VARIANT v;VariantInit(&v);v.vt=VT_BOOL;v.boolVal=b?VARIANT_
 
 struct NativeShelfAutomation::State {
     ShelfAutomationHost host;std::vector<ComPtr<ShelfAutomationElement>>order;ShelfAutomationStats statistics;
+    int focused{}; // runtime id of the element last announced as focused (0: none)
     std::optional<core::Rect>screen(core::Rect r)const{
         if(!host.toScreen)return std::nullopt;const auto out=host.toScreen(r);
         if(!out||!std::isfinite(out->x)||!std::isfinite(out->y)||!std::isfinite(out->width)||!std::isfinite(out->height)||out->width<=0||out->height<=0)return std::nullopt;
@@ -60,7 +61,7 @@ public:
         case UIA_AutomationIdPropertyId:*out=text(control.id);break;
         case UIA_ControlTypePropertyId:out->vt=VT_I4;out->lVal=UIA_ButtonControlTypeId;break;
         case UIA_IsEnabledPropertyId:*out=flag(true);break;
-        case UIA_IsKeyboardFocusablePropertyId:case UIA_HasKeyboardFocusPropertyId:*out=flag(false);break;
+        case UIA_IsKeyboardFocusablePropertyId:case UIA_HasKeyboardFocusPropertyId:*out=flag(control.focused);break;
         case UIA_IsOffscreenPropertyId:{const auto s=state.lock();*out=flag(!s||!s->screen(control.rect));break;}
         case UIA_FrameworkIdPropertyId:*out=text("EndfieldHUD");break;
         default:break;
@@ -142,6 +143,7 @@ bool NativeShelfAutomation::refresh(){
                 if(e->control.label!=c.label)raise(UIA_NamePropertyId,text(e->control.label),text(c.label));
                 if(e->control.help!=c.help)raise(UIA_HelpTextPropertyId,text(e->control.help),text(c.help));
                 if(c.plate&&e->control.value!=c.value)raise(UIA_ValueValuePropertyId,text(e->control.value),text(c.value));
+                if(e->control.focused!=c.focused)raise(UIA_HasKeyboardFocusPropertyId,flag(e->control.focused),flag(c.focused));
             }
             e->control=std::move(c);
         }
@@ -150,6 +152,14 @@ bool NativeShelfAutomation::refresh(){
     }
     for(auto&old:s.order){bool kept=false;for(const auto&n:next)if(n.Get()==old.Get()){kept=true;break;}if(!kept){old->disconnect();++s.statistics.disconnected;}}
     s.order=std::move(next);if(changed)++s.statistics.structureChanges;
+    // Keyboard focus moved (the properties card opened, or another element
+    // took it): announce the focused element once it is listed in the tree.
+    ShelfAutomationElement*focus{};for(const auto&e:s.order)if(e->control.focused){focus=e.Get();break;}
+    const int runtime=focus?focus->runtime:0;
+    if(runtime!=s.focused){
+        s.focused=runtime;
+        if(focus){++s.statistics.focusMoves;if(listening)UiaRaiseAutomationEvent(static_cast<IRawElementProviderSimple*>(focus),UIA_AutomationFocusChangedEventId);}
+    }
     return changed;
 }
 HRESULT NativeShelfAutomation::child(std::size_t index,IRawElementProviderFragment**out)const{
@@ -164,7 +174,7 @@ HRESULT NativeShelfAutomation::fromPoint(double x,double y,IRawElementProviderFr
 }
 void NativeShelfAutomation::disconnect()noexcept{
     auto&s=*state_;for(auto&e:s.order){e->disconnect();++s.statistics.disconnected;}
-    if(!s.order.empty())++s.statistics.structureChanges;s.order.clear();
+    if(!s.order.empty())++s.statistics.structureChanges;s.order.clear();s.focused=0;
 }
 }
 #endif
