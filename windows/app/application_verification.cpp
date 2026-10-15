@@ -502,7 +502,11 @@ int Application::Impl::runHiddenVerification(){
                             utility->waitIdle();utility->drain();archiveService->queueCapacityAvailable();present(time+1.1,true);
                             need(archiveService->state().selected().has_value(),"Original category chooser creates an Uncategorized document");
                             click({50,64},time+1.12);need(archive->activeField()==std::optional<std::string>("title"),"Archive title uses the existing projected editor");
-                            need(archive->key({app::KeyKind::character,'A'},time+1.14),"Archive accepts generated plain fixture text");need(archive->finishEditing(time+1.16),"Hidden Archive field commits without a native text manager");need(archiveService->flush(),"Archive fixture writes finish through the shared utility executor");
+                            // The generated key states its modifiers: off the HUD window's key
+                            // dispatch the thread's GetKeyState follows the live keyboard of the
+                            // interactive session, so a key held on the machine would make it a
+                            // modified, untyped key (README, App shortcuts item 3).
+                            need(archive->key({app::KeyKind::character,'A'},time+1.14,endfield::tools::ArchiveKeyModifiers{}),"Archive accepts generated plain fixture text");need(archive->finishEditing(time+1.16),"Hidden Archive field commits without a native text manager");need(archiveService->flush(),"Archive fixture writes finish through the shared utility executor");
                             present(time+1.3,true);need(archiveService->state().selected()->title=="A","Archive persisted state retains generated title text");
                         }
                     }
