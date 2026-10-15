@@ -86,11 +86,27 @@ void run(const std::filesystem::path& shader) {
         return std::array<int, 4>{q[0], q[1], q[2], q[3]};
     };
     check(badge.entries().empty() && !badge.nextWakeTime(), "Closed HUD: badge submits nothing and owns no deadline");
+    // Launch prewarm while the HUD is closed: the hidden badge is placed once
+    // on the first opening's plane and its artwork installed (the CPU pixels
+    // go); nothing composes or wakes, and the reveal 0.58 s into the
+    // opening uploads nothing.
+    const auto pending = badge.retainedBytes();
+    check(badge.uploadPending() && pending > 0, "The first content waits for its upload with its CPU pixels");
+    badge.prewarm(center, 0);
+    badge.upload(renderer);
+    check(renderer.stats().textures == 0 && badge.entries().empty(), "The hidden badge's own upload installs nothing");
+    badge.preload(renderer);
+    const auto preloaded = renderer.stats().textureUploads;
+    check(renderer.stats().textures == 17 && !badge.uploadPending() && badge.retainedBytes() == 0 && badge.entries().empty() &&
+          !badge.nextWakeTime() && !badge.requiresFrames(0) && badge.state().phase() == m::ChargeBadgeState::Phase::hidden,
+          "The prewarm installs the artwork without composing, waking or showing the badge");
+    std::cout << "The 1x badge prewarm released " << pending << " bytes of CPU pixels\n";
     badge.animateEntrance(0, 7);
     frame(0);
     check(badge.entries().empty() && badge.nextWakeTime() == 0.58 && !badge.requiresFrames(0.3), "Delayed reveal is a single wake, not frames");
     auto events = frame(0.58);
     check(events.hitRegionChanged && badge.requiresFrames(0.6) && badge.entries().size() == 1, "Reveal starts the notification sequence");
+    check(renderer.stats().textureUploads == preloaded, "After the prewarm the reveal uploads nothing");
     for (double time = 0.6; time < 2.2; time += 1.0 / 60) frame(time);
     check(badge.state().stage() == m::ChargeStage::compact && badge.state().phase() == m::ChargeBadgeState::Phase::presented,
           "Entrance settles compact");

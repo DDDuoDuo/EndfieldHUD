@@ -196,6 +196,18 @@ void run(const fs::path& shader) {
             return *q;
         };
         const auto middle = project(500, 446 + 38), edge = project(600, 446 + 38);
+        // Launch prewarm (the HUD still closed; the first opening's plane at
+        // opacity 0): the badge artwork is installed before its reveal; the
+        // alert keeps no window or device while no alert shows.
+        check(!ownAlertWindow(), "No alert window or device exists before an alert");
+        const auto texturesBefore = renderer.stats().textureUploads;
+        const auto framesBefore = host.frames;
+        owner->prewarm({center, chrome, sample, 0.f, .5, false});
+        owner->upload(renderer);
+        const auto preloaded = renderer.stats().textureUploads;
+        check(preloaded == texturesBefore + 17 && owner->planeEntries().empty() && !owner->nextWakeTime(.5) && !owner->requiresFrames(.5) &&
+              !ownAlertWindow() && !service->telemetryDemand() && host.frames == framesBefore,
+              "The launch prewarm installs the hidden badge's artwork without composing, waking, presenting or creating an alert device");
         host.visible = true;
         owner->setOverlayVisible(true, 1);
         frame(1);
@@ -206,6 +218,7 @@ void run(const fs::path& shader) {
         frames(1.58, 3.2);
         check(owner->planeEntries().size() == 1 && owner->floatingEntries().empty() && owner->covers(middle) && owner->covers(edge),
               "The compact capsule holds after the entrance, composed in the core-plane slot");
+        check(renderer.stats().textureUploads == preloaded, "After the prewarm the badge's reveal and entrance upload nothing");
         frames(3.2, 6.8);
         check(owner->covers(middle) && !owner->covers(edge) && !owner->requiresFrames(6.8), "The hold collapses to the circle");
         check(owner->pointer({a::PointerKind::move, a::PointerButton::none, middle.x, middle.y, 0}, 6.9), "Hover acquires the circle");
@@ -263,13 +276,14 @@ void run(const fs::path& shader) {
         check(!service->editingPosition() && host.settingsUpdates == 0 && editing.back() == false, "Escape discards without saving");
         check(owner->message({window.h, notice, 0, 0}, 8.5) && host.opened == std::vector<c::Module>{c::Module::display},
               "The editor's end reopens Display on the next notice");
+        check(ownAlertWindow() && owner->nextWakeTime(8.5) == 18.5, "The ordered-out editor keeps its window and device until one release wake 10 s later");
         // An edit requested while the HUD is concealed starts at once; a summon over it cancels it.
         check(service->editPosition(8.6) && owner->message({window.h, notice, 0, 0}, 8.6) && service->editingPosition() && host.closes == 1,
               "A concealed HUD edits at once");
         host.visible = true;
         owner->setOverlayVisible(true, 8.7);
-        check(!service->editingPosition() && host.settingsUpdates == 0 && host.opened.size() == 1 && editing.back() == false,
-              "Summoning the HUD cancels the editor without a reopen");
+        check(!service->editingPosition() && host.settingsUpdates == 0 && host.opened.size() == 1 && editing.back() == false && ownAlertWindow(),
+              "Summoning the HUD cancels the editor without a reopen; its window and device wait (no teardown during the opening)");
         frames(8.7, 9.4);
 
         // Always mode with a CPU metric: telemetry demand follows the visible alert.
@@ -291,16 +305,19 @@ void run(const fs::path& shader) {
             t = *wake;
             (void)owner->deadline(t);
         }
-        check(t > 11.8 && t < 12.1 && !owner->nextWakeTime(t) && service->telemetryDemand(), "The persistent alert settles and stops waking");
+        check(t > 11.8 && t < 12.1 && !owner->nextWakeTime(t) && service->telemetryDemand() && ownAlertWindow(),
+              "The persistent alert settles and stops waking; its window stays while it shows");
         // Suspension reasons: the first reason suspends, the end of the last resumes.
         (void)owner->hostEvent({Kind::suspended, a::HostEvent::suspendDisplay | a::HostEvent::suspendSession}, 12);
-        check(!service->telemetryDemand() && !service->editPosition(12), "Display sleep hides the alert and refuses edits");
+        check(!service->telemetryDemand() && !service->editPosition(12) && ownAlertWindow() && owner->nextWakeTime(12) == 22,
+              "Display sleep hides the alert and refuses edits; its window waits for the release wake");
         (void)owner->hostEvent({Kind::resumed, a::HostEvent::suspendSession}, 13);
-        check(service->telemetryDemand(), "Waking from the last reason restores the persistent alert");
+        check(service->telemetryDemand() && ownAlertWindow(), "Waking from the last reason restores the persistent alert in the same window");
         // Projection holds the alert; a tray preview cannot replace it.
         service->setProjectionActive(true, 14);
         service->preview(14.1);
-        check(!service->telemetryDemand() && !owner->nextWakeTime(14.1), "Projection hides the alert and refuses previews");
+        check(!service->telemetryDemand() && owner->nextWakeTime(14.1) == 24 && ownAlertWindow(),
+              "Projection hides the alert and refuses previews; only the window's release wake remains");
         service->setProjectionActive(false, 15);
         check(!service->telemetryDemand(), "Projection ending does not replay an alert");
         service->preview(15.1);
@@ -318,13 +335,19 @@ void run(const fs::path& shader) {
         host.updateSettings([](ehud::data::Settings& s) { s.set("displayMode", Json("whenChargingStarts")); s.set("alertMetric", Json("battery")); });
         frame(18.5);
         for (double time = 18.5; time < 19.5; time += 1.0 / 60) (void)owner->deadline(time);
-        check(!service->telemetryDemand() && !owner->nextWakeTime(19.5), "Leaving always mode hides the alert");
+        // PowerAlertCoordinator.setSettings: leaving always mode hides the
+        // persistent alert without animation (hide(false)) at the settings
+        // event, so the release wake is 10 s after that event.
+        const auto release = owner->nextWakeTime(19.5);
+        check(!service->telemetryDemand() && release && std::abs(*release - 28.5) < 1e-9 && ownAlertWindow(),
+              "Leaving always mode hides the alert at once; its window and device wait 10 s after that");
+        check(!owner->deadline(*release) && !ownAlertWindow() && !owner->nextWakeTime(*release), "The release wake tears them down and leaves no wake");
 
         // The hidden coverage step itself, twice, over this host (HUD open).
         host.visible = true;
-        owner->setOverlayVisible(true, 20);
-        frames(20, 26);
-        double h = 26;
+        owner->setOverlayVisible(true, 31);
+        frames(31, 37);
+        double h = 37;
         const auto settle = [&](double seconds) { frames(h, h + seconds); h += seconds; };
 
         // SystemHUDView.updateHover over the host's hovered navigation module:

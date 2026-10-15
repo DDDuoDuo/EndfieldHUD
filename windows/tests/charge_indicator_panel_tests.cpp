@@ -8,6 +8,7 @@
 #include <wrl/client.h>
 #include <cmath>
 #include <iostream>
+#include <limits>
 
 namespace {
 namespace gpu = endfield::native;
@@ -235,6 +236,149 @@ void run(const std::filesystem::path& shader) {
     for (double t = 1; t < 6.3; t += 1.0 / 60) broken.advance(t);
     check(!broken.state().windowVisible() && !broken.nextWakeTime(), "Alert timeline still completes without a window");
 }
+
+// Residency: nothing exists at construction; a presentation creates the
+// window and device on demand (build-time programs when built in) and keeps
+// no CPU copy of the installed artwork; park() releases them only while
+// nothing shows; the next presentation rebuilds them pixel-identically; a
+// device lost while the window existed is replaced once by the next render.
+void residency(const std::filesystem::path& shader) {
+    gpu::LayerRasterizer raster;
+    gpu::ChargeIndicatorPanel panel(raster, {shader, true});
+    auto& state = panel.state();
+    m::BatteryReading reading;
+    reading.present = reading.pluggedIn = reading.charging = true;
+    reading.percentage = 50;
+    const std::vector<m::ChargeWorkArea> screens{{11, {0, 0, 1440, 900}, 2}};
+    panel.setScreens(screens, 0);
+    panel.setAppearance({});
+    state.update(reading, false, 0);
+    panel.advance(0);
+    auto r = panel.residency();
+    check(!r.window && !r.device && r.creations == 0 && r.gpuBytes == 0 && r.targetBytes == 0 && !panel.window() && !panel.park(),
+          "Nothing exists before an alert; there is nothing to park");
+    // The plug-in alert creates them on demand.
+    state.show(false, 3, true, 2);
+    for (double t = 2; t < 3.6; t += 1.0 / 60) panel.advance(t);
+    r = panel.residency();
+    check(state.windowVisible() && state.stage() == m::ChargeStage::compact && r.window && r.device && r.creations == 1 && r.lastCreationMilliseconds > 0,
+          "The alert creates its window and device on demand");
+    check(!gpu::Renderer::shadersEmbedded() || r.embeddedShaders, "The device's programs come from the build-time hud.hlsl bytecode");
+    check(r.gpuBytes > 0 && r.cpuBytes < 64 * 1024 && r.targetBytes == std::size_t{600} * 168 * (4 + 8),
+          "The artwork is installed on the GPU; only the small button rasters stay on the CPU");
+    std::cout << "alert at 2x: " << r.lastCreationMilliseconds << " ms window+device, " << r.gpuBytes << " GPU resource bytes, " << r.targetBytes
+              << " target bytes, " << r.cpuBytes << " CPU bytes\n";
+    const auto compact = panel.readbackForTests();
+    check(pixel(compact, 380, 52)[3] > 240, "The compact plate is painted at 2x");
+    check(!panel.park() && panel.window(), "park refuses while the alert shows");
+    for (double t = 3.6; t < 7.6; t += 1.0 / 60) panel.advance(t);
+    check(!state.windowVisible() && panel.window() && !panel.windowVisible() && panel.residency().device,
+          "The panel itself keeps the ordered-out window until its owner parks it");
+    check(panel.park(), "park releases them while nothing shows");
+    r = panel.residency();
+    check(!r.window && !r.device && r.parks == 1 && r.gpuBytes == 0 && r.targetBytes == 0 && !panel.window(), "Parked: no window, device or GPU resource");
+    check(!panel.park(), "Parking twice releases nothing");
+    // The next alert rebuilds everything from the retained content key.
+    state.show(false, 3, true, 8);
+    for (double t = 8; t < 9.6; t += 1.0 / 60) panel.advance(t);
+    r = panel.residency();
+    check(state.windowVisible() && r.window && r.device && r.creations == 2 && panel.lastFailure().empty() && r.cpuBytes < 64 * 1024,
+          "The next alert creates them again");
+    check(panel.readbackForTests().pixels == compact.pixels, "The rebuilt alert renders pixel-identically");
+    for (double t = 9.6; t < 13.6; t += 1.0 / 60) panel.advance(t);
+    check(!state.windowVisible() && panel.window(), "The rebuilt alert is dismissed");
+    // A device lost while the window existed (driver update, TDR): the next
+    // render replaces it once instead of failing.
+    panel.loseDeviceForTests();
+    state.show(false, 3, true, 14);
+    for (double t = 14; t < 15.6; t += 1.0 / 60) panel.advance(t);
+    r = panel.residency();
+    check(state.windowVisible() && r.device && r.recoveries == 1 && r.creations == 3 && panel.lastFailure().empty(),
+          "A lost device is replaced once by the next render");
+    check(panel.readbackForTests().pixels == compact.pixels, "The recovered alert renders pixel-identically");
+    state.hide(false, 16);
+    panel.advance(16);
+    // The position editor holds the window too.
+    check(panel.beginPositionEditing(m::chargeDemoReading(), 17) && !panel.park() && panel.window(), "park refuses while the editor shows");
+    check(panel.key(VK_ESCAPE, 18) && !state.editingPosition() && panel.park() && !panel.window(), "After the edit it parks");
+    panel.shutdown();
+    check(!panel.window() && !panel.residency().device, "Shutdown releases everything");
+}
+
+// The first frame of a presentation (content raster, window and device
+// creation) postpones it by that frame's duration, so the entrance plays
+// from its first frame once the window shows (Core Animation starts the
+// animations of a commit when the panel is on screen). Hidden tests inject a
+// fixed 45 ms; a reference panel without it shows the same frames 45 ms
+// earlier. A continuing presentation and the editor are never postponed.
+void firstFrame(const std::filesystem::path& shader) {
+    constexpr double lag = 0.045;
+    gpu::LayerRasterizer raster;
+    gpu::ChargePanelOptions lagged{shader, true};
+    lagged.firstFrameLagForTests = lag;
+    gpu::ChargeIndicatorPanel panel(raster, lagged), reference(raster, {shader, true});
+    m::BatteryReading reading;
+    reading.present = reading.pluggedIn = reading.charging = true;
+    reading.percentage = 71;
+    const std::vector<m::ChargeWorkArea> screens{{11, {0, 0, 1440, 900}, 1}};
+    for (auto* p : {&panel, &reference}) {
+        p->setScreens(screens, 0);
+        p->setAppearance({});
+        p->state().update(reading, false, 0);
+        p->state().show(false, 3, true, 2);
+        p->advance(2);
+    }
+    auto r = panel.residency();
+    check(r.postponements == 1 && std::abs(r.lastPostponedMilliseconds - 45) < 1e-9 && r.lastFirstFrameMilliseconds > 0 && reference.residency().postponements == 0,
+          "The first frame of the plug-in alert postpones its presentation once");
+    check(panel.nextWakeTime() && reference.nextWakeTime() && std::abs(*panel.nextWakeTime() - (*reference.nextWakeTime() + lag)) < 1e-9 &&
+          std::abs(*panel.nextWakeTime() - 2.245) < 1e-9 && panel.requiresFrames(2.01),
+          "The supercharge step moves with it (2 + 0.045 + 0.20 s)");
+    // Identical frames, 45 ms apart: the circle grows from its first frame.
+    for (const double at : {2.02, 2.1, 2.19, 2.3, 2.6, 3.4}) {
+        panel.advance(at + lag);
+        reference.advance(at);
+        const auto a = panel.readbackForTests(), b = reference.readbackForTests();
+        check(a.width == b.width && a.height == b.height && a.pixels == b.pixels,
+              "The postponed entrance renders the reference frame of " + std::to_string(at) + " s at " + std::to_string(at + lag) + " s");
+    }
+    check(panel.state().stage() == m::ChargeStage::compact && reference.state().stage() == m::ChargeStage::compact, "Both entrances settle compact");
+    panel.advance(3.6 + lag);
+    reference.advance(3.6);
+    const auto dismissal = panel.nextWakeTime(), referenceDismissal = reference.nextWakeTime();
+    check(dismissal && referenceDismissal && std::abs(*dismissal - (*referenceDismissal + lag)) < 1e-9 && std::abs(*dismissal - 6.545) < 1e-9,
+          "The dismissal follows the postponed entrance (2.045 + 1.5 + 3 s)");
+    // A replayed preview while the alert shows continues its presentation.
+    panel.state().show(false, 3, true, 4);
+    panel.advance(4);
+    check(panel.residency().postponements == 1 && std::abs(*panel.nextWakeTime() - 4.2) < 1e-9, "A replay inside a presentation is not postponed");
+    for (double t = 4; t < 10; t += 1.0 / 60) panel.advance(t);
+    check(!panel.state().windowVisible(), "The replay is dismissed");
+    // The next presentation (window and device still there) postpones again.
+    panel.state().show(false, 3, true, 11);
+    panel.advance(11);
+    check(panel.residency().postponements == 2 && panel.residency().creations == 1 && std::abs(*panel.nextWakeTime() - 11.245) < 1e-9,
+          "Every presentation's first frame postpones it, with or without a creation");
+    panel.state().hide(false, 12);
+    panel.advance(12);
+    // The position editor shows compact at once: nothing to postpone.
+    check(panel.beginPositionEditing(m::chargeDemoReading(), 13) && panel.residency().postponements == 2 && !panel.nextWakeTime(),
+          "The editor is never postponed");
+    check(panel.key(VK_ESCAPE, 14) && !panel.state().editingPosition(), "The editor closes");
+    // The portable state moves its deadlines without touching a settled one.
+    m::ChargeOverlayState settled;
+    settled.setScreens(screens, 0);
+    settled.postpone(1);
+    check(!settled.nextDeadline() && !settled.windowVisible(), "Postponing an idle state changes nothing");
+    settled.show(false, 3, true, 20);
+    settled.postpone(0);
+    settled.postpone(-1);
+    settled.postpone(std::numeric_limits<double>::quiet_NaN());
+    settled.postpone(std::numeric_limits<double>::infinity());
+    check(settled.nextDeadline() && std::abs(*settled.nextDeadline() - 20.2) < 1e-9, "Only a positive finite postponement moves a presentation");
+    panel.shutdown();
+    reference.shutdown();
+}
 } // namespace
 
 int wmain(int argc, wchar_t** argv) {
@@ -242,6 +386,8 @@ int wmain(int argc, wchar_t** argv) {
     try {
         check(SUCCEEDED(result) && argc == 2, "Pass HLSL to the synthetic charge alert panel test");
         run(argv[1]);
+        residency(argv[1]);
+        firstFrame(argv[1]);
         CoUninitialize();
         std::cout << "Charge alert panel: " << checks << " checks passed\n";
         return 0;

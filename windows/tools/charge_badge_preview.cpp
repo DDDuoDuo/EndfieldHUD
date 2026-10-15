@@ -162,6 +162,23 @@ m::ChargeBadgeState::Events ChargeBadgePreview::update(const Matrix& center, flo
     }
     return events;
 }
+void ChargeBadgePreview::prewarm(const Matrix& center, double now) {
+    auto& i = *impl_;
+    need(i.hasContent, "Charge badge content is required before the prewarm");
+    need(center.finite(), "Invalid charge badge placement");
+    i.clock(now);
+    if (i.visible) return; // a shown badge is already placed every frame
+    gpu::ChargeIndicatorPlacement placement;
+    placement.canvasToWorld = Impl::canvasToWorld(center);
+    placement.pose = i.state.sample(i.time);
+    placement.stage = i.state.stage();
+    placement.embeddedBorder = true;
+    placement.opacity = 0;
+    i.scene.place(placement);
+}
+void ChargeBadgePreview::preload(gpu::Renderer& renderer) { if (impl_->hasContent) impl_->scene.upload(renderer); }
+std::size_t ChargeBadgePreview::retainedBytes() const noexcept { return impl_->scene.retainedBytes(); }
+bool ChargeBadgePreview::uploadPending() const noexcept { return impl_->scene.uploadPending(); }
 bool ChargeBadgePreview::requiresFrames(double now) const {
     const auto& i = *impl_;
     return i.visible && i.state.requiresFrames(std::max(now, i.time));

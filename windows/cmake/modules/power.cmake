@@ -32,9 +32,10 @@ if(WIN32)
   target_include_directories(hud_charge_badge PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
   target_link_libraries(hud_charge_badge PUBLIC hud_charge_scene hud_overlay_host)
   target_compile_definitions(hud_charge_badge PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE)
-  # Floating desktop charge alert window (own small device, its own UI
-  # Automation root and the editor buttons' system tool tips) and the Power
-  # production owner (provider observer, alert rules, recorder, tray text).
+  # Floating desktop charge alert window (its own small device, created for
+  # a presentation and released once ordered out; its own UI Automation root
+  # and the editor buttons' system tool tips) and the Power production owner
+  # (provider observer, alert rules, recorder, tray text).
   add_library(hud_charge_panel native/charge_indicator_panel.cpp native/charge_alert_automation.cpp)
   target_include_directories(hud_charge_panel PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
   target_link_libraries(hud_charge_panel PUBLIC hud_charge_scene PRIVATE user32 shcore comctl32 uiautomationcore oleaut32 ole32)
@@ -122,10 +123,11 @@ if(BUILD_TESTING)
     target_link_libraries(battery_capacity_probe PRIVATE hud_power_service hud_services)
     add_test(NAME battery_capacity_probe_inert COMMAND battery_capacity_probe)
     set_tests_properties(battery_capacity_probe_inert PROPERTIES PASS_REGULAR_EXPRESSION "inert")
-    # User-run alert diagnostics (screens, hidden layered composition target).
+    # User-run alert diagnostics (screens, hidden layered composition target,
+    # raster timing, the alert's residency and a device's driver threads).
     add_executable(charge_alert_probe tools/charge_alert_probe.cpp)
     target_compile_definitions(charge_alert_probe PRIVATE UNICODE _UNICODE NOMINMAX)
-    target_link_libraries(charge_alert_probe PRIVATE hud_charge_panel ole32)
+    target_link_libraries(charge_alert_probe PRIVATE hud_charge_panel ole32 psapi d3d11 d3dcompiler)
     add_test(NAME charge_alert_probe_inert COMMAND charge_alert_probe)
     set_tests_properties(charge_alert_probe_inert PROPERTIES PASS_REGULAR_EXPRESSION "inert")
     list(APPEND EHUD_POWER_TARGETS battery_capacity_probe charge_alert_probe)

@@ -50,6 +50,18 @@ public:
     // center: HUD design (1000 x 640) -> world points, sharing the core
     // plane's tilt/deployment (ModuleFrame.center). opacity: shell opacity.
     modules::ChargeBadgeState::Events update(const core::Matrix4& center, float opacity, double time);
+    // Launch prewarm (ModuleOwner::prewarm, the HUD still closed): places the
+    // current pose (hidden: nothing composes) once on the first opening's
+    // core plane, so the reveal's first placement is warm. Never shows,
+    // starts motion or changes the badge state.
+    void prewarm(const core::Matrix4& center, double time);
+    // Installs pending artwork while the badge is still hidden (the launch
+    // prewarm's upload), so its reveal 0.58 s into an opening uploads nothing.
+    void preload(native::Renderer&);
+    // CPU pixels the artwork still holds (none once installed) and whether
+    // artwork waits for an upload.
+    std::size_t retainedBytes() const noexcept;
+    bool uploadPending() const noexcept;
     bool requiresFrames(double time) const;
     std::optional<double> nextWakeTime() const;
     bool exitFinished() const noexcept;

@@ -26,6 +26,18 @@ using Matrix = core::Matrix4;
 constexpr wchar_t windowClassName[] = L"EndfieldHUDChargeAlertPanel";
 // A UI Automation press, posted to this panel's own window (never the HUD's).
 constexpr UINT invokeMessage = WM_APP + 0x0C41;
+// A presentation postpones by at most this much: a first frame stalled
+// longer (a blocked UI thread) still plays its entrance from the start, but
+// the alert's deadlines never drift further from the host clock.
+constexpr double maximumFirstFrameLag = 1.0;
+
+// Monotonic seconds (QueryPerformanceCounter) for the panel's own timings.
+double clockSeconds() noexcept {
+    LARGE_INTEGER frequency{}, counter{};
+    QueryPerformanceFrequency(&frequency);
+    QueryPerformanceCounter(&counter);
+    return frequency.QuadPart ? static_cast<double>(counter.QuadPart) / static_cast<double>(frequency.QuadPart) : 0;
+}
 
 std::wstring wide(const std::string& text) {
     if (text.empty()) return {};
@@ -43,6 +55,11 @@ std::array<float, 4> tint(const m::ChargeColor& c) {
             static_cast<float>(std::clamp(c[3], 0.0, 1.0))};
 }
 bool inside(const core::Rect& r, core::Point p) { return p.x >= r.x && p.y >= r.y && p.x < r.x + r.width && p.y < r.y + r.height; }
+// Opts a renderer into a device without driver worker threads once
+// RendererOptions offers it (detected at compile time; no effect before).
+template <class Options> void preferThreadFreeDevice(Options& options) {
+    if constexpr (requires { options.preventDriverThreads = true; }) options.preventDriverThreads = true;
+}
 std::string narrow(const wchar_t* text) {
     if (!text || !*text) return {};
     const int count = WideCharToMultiByte(CP_UTF8, 0, text, -1, nullptr, 0, nullptr, nullptr);
@@ -152,6 +169,15 @@ struct ChargeIndicatorPanel::Impl {
     bool tooltipActive{}, tooltipAttempted{};
     std::array<std::wstring, 2> tipText;
     std::array<RECT, 2> tipRects{};
+    // Residency counters (creations, parks, device recoveries).
+    std::uint64_t creations{}, parks{}, recoveries{}, postponements{};
+    double creationMilliseconds{}, firstFrameMilliseconds{}, postponedMilliseconds{};
+    // The state was visible on the previous frame: the next frame continues
+    // a presentation instead of starting one.
+    bool presenting{};
+    // Nesting of this panel's window procedure: the window is never parked
+    // from inside its own message (a press or key that ends an edit).
+    unsigned procedureDepth{};
 
     Impl(LayerRasterizer& r, ChargePanelOptions o, PositionFinished f)
         : raster(&r), options(std::move(o)), finished(std::move(f)), scene(r, "charge.alert"), anchor(r), buttonAnchor(r) {
@@ -176,6 +202,13 @@ struct ChargeIndicatorPanel::Impl {
         }
         auto* self = reinterpret_cast<Impl*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
         if (!self) return DefWindowProcW(hwnd, message, wparam, lparam);
+        struct Depth {
+            unsigned& value;
+            explicit Depth(unsigned& v) noexcept : value(v) { ++value; }
+            ~Depth() { --value; }
+            Depth(const Depth&) = delete;
+            Depth& operator=(const Depth&) = delete;
+        } depth(self->procedureDepth);
         try {
             switch (message) {
             case WM_MOUSEACTIVATE: return self->state.editingPosition() ? MA_ACTIVATE : MA_NOACTIVATE;
@@ -239,9 +272,18 @@ struct ChargeIndicatorPanel::Impl {
             if (hwnd && clickThroughLayered) SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
             return hwnd;
         };
+        const double start = clockSeconds();
         RendererOptions rendererOptions;
         rendererOptions.shaderPath = options.shader;
-        if (options.hiddenForTests) { rendererOptions.driver = Driver::warpForTests; rendererOptions.target = RenderTarget::offscreenForTests; }
+        // A few dozen quads need no driver worker threads: once the renderer
+        // offers D3D11_CREATE_DEVICE_PREVENT_INTERNAL_THREADING_OPTIMIZATIONS
+        // (requested from the host; about half of a device's driver threads
+        // on the test laptop), the alert's device opts in.
+        preferThreadFreeDevice(rendererOptions);
+        if (options.hiddenForTests) {
+            rendererOptions.driver = options.hardwareForProbe ? Driver::hardware : Driver::warpForTests;
+            rendererOptions.target = RenderTarget::offscreenForTests;
+        }
         // Click-through layered first; a compositor that refuses a layered
         // target falls back to hit-test transparency (same-thread only).
         for (const bool clickThrough : {true, false}) {
@@ -261,6 +303,8 @@ struct ChargeIndicatorPanel::Impl {
         titled.clear();
         published = false;
         dirty = true;
+        creationMilliseconds = 1000.0 * (clockSeconds() - start);
+        ++creations;
     }
     // UIA clients and the tool tips go with the window; messages arriving
     // while it is destroyed no longer reach this panel.
@@ -276,14 +320,15 @@ struct ChargeIndicatorPanel::Impl {
     }
     void destroy() noexcept {
         if (automation) { automation->disconnect(); automation.reset(); }
-        try {
-            if (initialized) {
-                composition.detach(renderer);
-                scene.release(renderer);
-                for (std::size_t n = 0; n < buttonTextures.size(); ++n) if (buttonUploaded[n]) renderer.removeTexture(buttonTextures[n]);
-                if (meshUploaded) renderer.removeMesh(meshID);
-            }
-        } catch (...) {}
+        if (initialized) {
+            // Each step on its own: a lost or reset renderer may refuse one,
+            // and the scene still marks everything for reinstallation.
+            try { composition.detach(renderer); } catch (...) {}
+            (void)scene.release(renderer);
+            for (std::size_t n = 0; n < buttonTextures.size(); ++n)
+                if (buttonUploaded[n]) try { (void)renderer.removeTexture(buttonTextures[n]); } catch (...) {}
+            if (meshUploaded) try { (void)renderer.removeMesh(meshID); } catch (...) {}
+        }
         buttonUploaded = {};
         meshUploaded = false;
         renderer.reset();
@@ -519,7 +564,12 @@ struct ChargeIndicatorPanel::Impl {
     void frame(double now) {
         time = std::max(time, now);
         state.advance(time);
-        if (!state.windowVisible()) { setEditingStyle(false); hide(); return; }
+        if (!state.windowVisible()) { setEditingStyle(false); hide(); presenting = false; return; }
+        // The first frame of a presentation: its window appears only once
+        // this frame (content raster, possibly the window and device) ends.
+        const bool starting = !presenting;
+        presenting = true;
+        const double begin = starting ? clockSeconds() : 0;
         // Content events only: a new reading/preview/settings revision, an
         // appearance or telemetry change, or a monitor (density) change.
         if (contentDirty || state.contentRevision() != contentRevision) {
@@ -528,23 +578,62 @@ struct ChargeIndicatorPanel::Impl {
             contentDirty = false;
         }
         positionWindow();
-        if (!window) {
-            // A compositor that cannot host the alert (for example a
-            // disconnected session) costs one attempt per presentation; the
-            // alert state, deadlines and provider keep running.
-            if (failedGeneration == state.generation()) return;
-            try { ensureWindow(); }
-            catch (const std::exception& error) { failure = error.what(); failedGeneration = state.generation(); destroy(); return; }
-            failure.clear();
-            positionWindow();
+        for (unsigned attempt = 0;; ++attempt) {
+            if (!window) {
+                // A compositor that cannot host the alert (for example a
+                // disconnected session) costs one attempt per presentation; the
+                // alert state, deadlines and provider keep running.
+                if (failedGeneration == state.generation()) return;
+                try { ensureWindow(); }
+                catch (const std::exception& error) { failure = error.what(); failedGeneration = state.generation(); destroy(); return; }
+                failure.clear();
+                positionWindow();
+            }
+            setEditingStyle(state.editingPosition());
+            if (titled != label) { SetWindowTextW(window, wide(label).c_str()); titled = label; } // UIA name
+            // One more frame after an animation settles presents the exact final pose.
+            const bool animating = state.requiresFrames(time);
+            if (dirty || animating || animatedLastFrame || !shown) {
+                try { render(); }
+                catch (const std::exception& error) {
+                    // A device lost while the window waited (driver update,
+                    // TDR, adapter switch): one new window and device, with
+                    // the content regenerated from its key; a second failure
+                    // ends this presentation's attempts like a creation failure.
+                    destroy();
+                    if (attempt) { failure = error.what(); failedGeneration = state.generation(); return; }
+                    ++recoveries;
+                    continue;
+                }
+            }
+            animatedLastFrame = animating;
+            show();
+            if (starting) started(begin);
+            return;
         }
-        setEditingStyle(state.editingPosition());
-        if (titled != label) { SetWindowTextW(window, wide(label).c_str()); titled = label; } // UIA name
-        // One more frame after an animation settles presents the exact final pose.
-        const bool animating = state.requiresFrames(time);
-        if (dirty || animating || animatedLastFrame || !shown) render();
-        animatedLastFrame = animating;
-        show();
+    }
+    // OverlayController.show adds the entrance to a Core Animation commit,
+    // which starts it when the panel is on screen. The window shows at the
+    // end of this presentation's first frame (the hidden first pose), so the
+    // presentation moves by that frame's duration: the next frame samples
+    // the entrance from its start instead of skipping what the window and
+    // device creation took. Hidden tests use the fixed firstFrameLagForTests
+    // so their synthetic clocks stay exact. The editor has no motion.
+    void started(double begin) {
+        const double elapsed = std::max(0.0, clockSeconds() - begin);
+        firstFrameMilliseconds = 1000.0 * elapsed;
+        const double lag = options.hiddenForTests ? options.firstFrameLagForTests : std::min(maximumFirstFrameLag, elapsed);
+        if (state.editingPosition() || !(lag > 0) || !std::isfinite(lag)) return;
+        state.postpone(lag);
+        postponedMilliseconds = 1000.0 * lag;
+        ++postponements;
+    }
+    bool park() noexcept {
+        if (!window && !initialized) return false;
+        if (state.windowVisible() || state.editingPosition() || procedureDepth) return false;
+        destroy();
+        ++parks;
+        return true;
     }
     void screensChanged() {
         if (options.hiddenForTests) return;
@@ -690,6 +779,41 @@ std::vector<ChargeIndicatorPanel::ToolTip> ChargeIndicatorPanel::toolTips() cons
     return out;
 }
 bool ChargeIndicatorPanel::toolTipsActive() const noexcept { return impl_->tooltip && impl_->tooltipActive; }
+bool ChargeIndicatorPanel::resident() const noexcept { return impl_->window || impl_->initialized; }
+bool ChargeIndicatorPanel::park() noexcept { return impl_->park(); }
+ChargePanelResidency ChargeIndicatorPanel::residency() const noexcept {
+    const auto& i = *impl_;
+    ChargePanelResidency r;
+    r.window = i.window != nullptr;
+    r.device = i.initialized;
+    if (i.initialized) {
+        try {
+            const auto stats = i.renderer.stats();
+            r.embeddedShaders = stats.embeddedShaders;
+            r.gpuBytes = stats.resourceBytes;
+        } catch (...) {}
+        if (i.layout) {
+            const auto w = static_cast<std::size_t>(std::max(1L, std::lround(i.layout->window.width)));
+            const auto h = static_cast<std::size_t>(std::max(1L, std::lround(i.layout->window.height)));
+            // BGRA8 output (two composition buffers, one offscreen) + RGBA16F linear target.
+            r.targetBytes = w * h * ((i.options.hiddenForTests ? 1 : 2) * 4 + 8);
+        }
+    }
+    r.cpuBytes = i.scene.retainedBytes();
+    for (const auto& image : i.buttonImages) if (image) r.cpuBytes += image->straightRGBA.capacity();
+    r.creations = i.creations;
+    r.parks = i.parks;
+    r.recoveries = i.recoveries;
+    r.postponements = i.postponements;
+    r.lastCreationMilliseconds = i.creationMilliseconds;
+    r.lastFirstFrameMilliseconds = i.firstFrameMilliseconds;
+    r.lastPostponedMilliseconds = i.postponedMilliseconds;
+    return r;
+}
+void ChargeIndicatorPanel::loseDeviceForTests() {
+    if (!impl_->options.hiddenForTests || !impl_->initialized) throw std::logic_error("Losing the device is a hidden-test facility");
+    impl_->renderer.reset();
+}
 std::string ChargeIndicatorPanel::lastFailure() const { return impl_->failure; }
 Readback ChargeIndicatorPanel::readbackForTests() {
     if (!impl_->options.hiddenForTests || !impl_->initialized) throw std::logic_error("Readback is a hidden-test facility");

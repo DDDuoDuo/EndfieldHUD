@@ -39,6 +39,12 @@ public:
 
     // Runs due sequence steps and the dismissal deadline at their exact times.
     Events advance(double time);
+    // The presentation (sequence and dismissal) moves `seconds` later, as if
+    // shown that much later (ChargeIndicatorTimeline::postpone). The native
+    // panel calls it once per presentation with the time its first frame
+    // took (content raster, and the window and device it may have had to
+    // create), so the entrance plays from its first frame once it shows.
+    void postpone(double seconds) noexcept;
     std::optional<double> nextDeadline() const noexcept;
     bool requiresFrames(double time) const noexcept;
     ChargeIndicatorPose sample(double time) const noexcept { return timeline_.sample(time); }

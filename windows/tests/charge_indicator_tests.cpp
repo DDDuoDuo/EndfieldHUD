@@ -5,6 +5,7 @@
 #include <fstream>
 #include <iostream>
 #include <cstdlib>
+#include <limits>
 #include <map>
 #include <sstream>
 
@@ -379,6 +380,62 @@ void timelines(const Fixture& f) {
            {{0, [](auto& t, double at) { t.animateEntrance(at); }}, {0.05, hover(true)}, {0.10, [](auto& t, double at) { t.animateExit(at); }}});
 }
 
+// postpone(dt) translates a pending presentation in time: the postponed
+// timeline sampled at t + dt is the original sampled at t, for the whole
+// entrance (circle, supercharge ripples, compact) and an exit, with every
+// step and completion dt later. A settled timeline has nothing to move.
+bool samePose(const ChargeIndicatorPose& a, const ChargeIndicatorPose& b) {
+    const auto same = [](double x, double y) { return std::abs(x - y) <= 1e-9; };
+    const auto point = [&](core::Point p, core::Point q) { return same(p.x, q.x) && same(p.y, q.y); };
+    bool ok = same(a.bodyWidth, b.bodyWidth) && same(a.bodyHeight, b.bodyHeight) && same(a.bodyRadius, b.bodyRadius) && same(a.bodyScale, b.bodyScale) &&
+              same(a.bodyOpacity, b.bodyOpacity) && same(a.emblemWidth, b.emblemWidth) && same(a.emblemHeight, b.emblemHeight) &&
+              same(a.emblemRadius, b.emblemRadius) && point(a.emblemCenter, b.emblemCenter) && same(a.emblemScale, b.emblemScale) &&
+              same(a.emblemOpacity, b.emblemOpacity) && point(a.boltPosition, b.boltPosition) && same(a.boltScale, b.boltScale) &&
+              same(a.boltOpacity, b.boltOpacity) && point(a.ringPosition, b.ringPosition) && same(a.ringOpacity, b.ringOpacity) &&
+              same(a.borderWidth, b.borderWidth) && same(a.canvasOpacity, b.canvasOpacity);
+    for (std::size_t i = 0; i < 4; ++i) ok = ok && point(a.textPosition[i], b.textPosition[i]) && same(a.textOpacity[i], b.textOpacity[i]) && same(a.borderColor[i], b.borderColor[i]);
+    for (std::size_t i = 0; i < 3; ++i)
+        ok = ok && point(a.ripplePosition[i], b.ripplePosition[i]) && same(a.rippleScale[i], b.rippleScale[i]) && same(a.rippleOpacity[i], b.rippleOpacity[i]);
+    return ok;
+}
+void postponeContracts() {
+    constexpr double lag = 0.045;
+    ChargeIndicatorTimeline original, postponed;
+    for (auto* t : {&original, &postponed}) { t->setStage(ChargeStage::hidden, false, 0); t->animateEntrance(5); }
+    postponed.postpone(lag);
+    check(postponed.nextDeadline() && std::abs(*postponed.nextDeadline() - (5.20 + lag)) < 1e-9 && postponed.stage() == ChargeStage::circle,
+          "Postponing an entrance moves its +0.20 supercharge step");
+    check(samePose(postponed.sample(5 + lag), original.sample(5)) && samePose(postponed.sample(5), original.sample(5)),
+          "Before its new start the postponed entrance holds its first pose");
+    unsigned compared{}, completions{};
+    for (double t = 5; t <= 7.5; t += 1.0 / 120) {
+        const auto a = original.advance(t), b = postponed.advance(t + lag);
+        check(a == b && original.stage() == postponed.stage() && original.animating(t) == postponed.animating(t + lag) &&
+              samePose(original.sample(t), postponed.sample(t + lag)), "Postponed entrance at " + std::to_string(t) + " s");
+        if (a == ChargeIndicatorTimeline::Event::entranceCompleted) ++completions;
+        ++compared;
+    }
+    check(compared > 290 && completions == 1 && original.stage() == ChargeStage::compact, "The whole entrance compared, one completion each");
+    for (auto* t : {&original, &postponed}) t->animateExit(8);
+    postponed.postpone(lag);
+    for (double t = 8; t <= 9; t += 1.0 / 120) {
+        const auto a = original.advance(t), b = postponed.advance(t + lag);
+        check(a == b && samePose(original.sample(t), postponed.sample(t + lag)), "Postponed exit at " + std::to_string(t) + " s");
+    }
+    check(original.stage() == ChargeStage::hidden && !original.nextDeadline() && !postponed.nextDeadline(), "Both exits complete");
+    ChargeIndicatorTimeline settled;
+    settled.setStage(ChargeStage::compact, false, 0);
+    const auto before = settled.sample(3);
+    settled.postpone(2);
+    check(samePose(settled.sample(3), before) && !settled.nextDeadline() && !settled.animating(3), "A settled timeline has nothing to postpone");
+    for (const double invalid : {0.0, -1.0, std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::infinity()}) {
+        ChargeIndicatorTimeline t;
+        t.animateEntrance(1);
+        t.postpone(invalid);
+        check(t.nextDeadline() && std::abs(*t.nextDeadline() - 1.2) < 1e-9, "Only a positive finite postponement moves a timeline");
+    }
+}
+
 void sequenceContracts() {
     ChargeIndicatorTimeline t;
     t.setStage(ChargeStage::hidden, false, 0);
@@ -403,6 +460,7 @@ void sequenceContracts() {
     reduced.animateEntrance(1);
     check(reduced.stage() == ChargeStage::compact && !reduced.animating(1) &&
           reduced.advance(1) == ChargeIndicatorTimeline::Event::entranceCompleted, "Reduce Motion presents compact immediately");
+    postponeContracts();
 }
 
 void readings(const Fixture& f) {

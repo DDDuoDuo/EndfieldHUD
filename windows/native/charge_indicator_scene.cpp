@@ -198,6 +198,7 @@ struct ChargeIndicatorScene::Impl {
     bool meshesUploaded{};
     std::array<DrawObject, ChargeIndicatorScene::drawCount> draws;
     core::Rect body;
+    std::uint64_t regenerations{};
 
     Impl(LayerRasterizer& r, std::string p) : raster(&r), prefix(std::move(p)) {
         if (prefix.empty()) throw std::invalid_argument("Charge indicator scene needs an ID prefix");
@@ -257,6 +258,55 @@ struct ChargeIndicatorScene::Impl {
         r.bounds = r.image->bounds;
         r.pixels = {};
         ++r.revision;
+    }
+    // The committed content's pixels of one texture, exactly as setContent
+    // produced them (procedural slices at the content density; rasterized
+    // leaves through the shared rasterizer, the ripple at most 2x).
+    LayerRasterOptions rasterOptions(Texture t) const {
+        LayerRasterOptions options;
+        options.pixelsPerPoint = t == ripple ? std::min(2.0, density) : density;
+        options.paddingPoints = 1;
+        return options;
+    }
+    Json layer(Texture t) const {
+        switch (t) {
+        case ripple: return m::chargeRippleLayer();
+        case bolt: return m::chargeBoltLayer();
+        case ring: return m::chargeRingLayer(false);
+        case cap: return m::chargeCapLayer();
+        case laptop: return m::chargeLaptopLayer();
+        default: return content.texts[static_cast<std::size_t>(t - text0)];
+        }
+    }
+    Pixels procedural(Texture t) const {
+        switch (t) {
+        case base: return baseTexture(baseSpec, dark, density);
+        case base14: return baseTexture(bannerSpec, dark, density);
+        case border05: return borderTexture(baseSpec, 0.5, density);
+        case border15: return borderTexture(baseSpec, 1.5, density);
+        case border05r14: return borderTexture(bannerSpec, 0.5, density);
+        case border15r14: return borderTexture(bannerSpec, 1.5, density);
+        case emblemLarge: return fillTexture(emblemLargeSpec, density);
+        default: return fillTexture(emblemSmallSpec, density);
+        }
+    }
+    // A texture missing from the renderer whose CPU copy was already dropped.
+    void regenerate(Texture t) {
+        auto& r = textures[t];
+        if (t < ripple) r.pixels = procedural(t);
+        else {
+            r.image = raster->rasterize(r.id, r.revision, layer(t), rasterOptions(t));
+            if (!r.image || !r.image->complete() || !r.image->width || !r.image->height)
+                throw std::runtime_error("Unsupported charge indicator artwork " + r.id);
+            r.bounds = r.image->bounds;
+        }
+        ++regenerations;
+    }
+    // The installed GPU texture is the one resident copy.
+    void trim(Texture t) {
+        auto& r = textures[t];
+        if (r.image) { r.image.reset(); (void)raster->remove(r.id); }
+        r.pixels = {};
     }
 };
 
@@ -432,15 +482,18 @@ void ChargeIndicatorScene::upload(Renderer& renderer) {
                 quad(i.sliceMeshes[row * 3 + column], sliceUV[column], sliceUV[row], sliceUV[column + 1], sliceUV[row + 1]);
         i.meshesUploaded = true;
     }
-    for (auto& t : i.textures) {
+    for (std::size_t n = 0; n < textureCount; ++n) {
+        auto& t = i.textures[n];
         if (t.uploaded == t.revision || t.revision == 0) continue;
+        if (!t.image && t.pixels.rgba.empty()) i.regenerate(static_cast<Texture>(n)); // after a release
         TextureData data;
         if (t.image) { data.width = t.image->width; data.height = t.image->height; data.straightRGBA = t.image->straightRGBA; }
         else { data.width = t.pixels.width; data.height = t.pixels.height; data.straightRGBA = t.pixels.rgba; }
         data.colorSpace = TextureColorSpace::sRGB;
         data.filter = TextureFilter::linear;
         renderer.setTexture(t.id, t.revision, data);
-        t.uploaded = t.revision; // small CPU copies stay for a renderer reset
+        t.uploaded = t.revision;
+        i.trim(static_cast<Texture>(n));
     }
 }
 bool ChargeIndicatorScene::uploadPending() const noexcept {
@@ -448,20 +501,30 @@ bool ChargeIndicatorScene::uploadPending() const noexcept {
     for (const auto& t : impl_->textures) if (t.revision && t.uploaded != t.revision) return true;
     return false;
 }
+std::size_t ChargeIndicatorScene::retainedBytes() const noexcept {
+    std::size_t bytes{};
+    for (const auto& t : impl_->textures) bytes += t.pixels.rgba.capacity() + (t.image ? t.image->straightRGBA.capacity() : 0);
+    return bytes;
+}
+std::uint64_t ChargeIndicatorScene::regenerations() const noexcept { return impl_->regenerations; }
 std::span<const DrawObject> ChargeIndicatorScene::draws() const noexcept { return impl_->draws; }
 bool ChargeIndicatorScene::release(Renderer& renderer) noexcept {
     auto& i = *impl_;
     bool released = true;
-    try {
-        for (auto& t : i.textures) if (t.uploaded) { released = renderer.removeTexture(t.id) && released; t.uploaded = 0; }
-        if (i.meshesUploaded) {
-            released = renderer.removeMesh(i.quadMesh) && released;
-            for (const auto& mesh : i.sliceMeshes) released = renderer.removeMesh(mesh) && released;
-            i.meshesUploaded = false;
-        }
-    } catch (...) { return false; }
-    return released; // a later upload reinstalls everything from retained content
-
+    // Every resource is marked for reinstallation even when its removal
+    // fails (a reset or lost renderer no longer holds it): a later upload
+    // regenerates and reinstalls everything from the content key.
+    const auto remove = [&](auto&& call) {
+        try { released = call() && released; } catch (...) { released = false; }
+    };
+    for (auto& t : i.textures)
+        if (t.uploaded) { remove([&] { return renderer.removeTexture(t.id); }); t.uploaded = 0; }
+    if (i.meshesUploaded) {
+        remove([&] { return renderer.removeMesh(i.quadMesh); });
+        for (const auto& mesh : i.sliceMeshes) remove([&] { return renderer.removeMesh(mesh); });
+        i.meshesUploaded = false;
+    }
+    return released;
 }
 const modules::ChargeIndicatorContent& ChargeIndicatorScene::content() const noexcept { return impl_->content; }
 const ChargeIndicatorSceneContent& ChargeIndicatorScene::contentKey() const noexcept { return impl_->key; }

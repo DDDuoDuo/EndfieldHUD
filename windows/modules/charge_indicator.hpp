@@ -137,6 +137,14 @@ public:
     void animateExit(double time) noexcept;
     // cancelAnimations: generation change, deadlines dropped, all tracks removed.
     void cancel() noexcept;
+    // Translates every pending time (tracks, the ripple group, the sequence
+    // steps) `seconds` later: afterwards sample(t + seconds) equals the
+    // previous sample(t), and every deadline moves by the same amount. A host
+    // that could present a sequence's first frame only after creating its
+    // window and device uses it so the sequence plays from its first frame,
+    // as a Core Animation commit starts its animations at the commit. Positive
+    // finite values only; no allocation.
+    void postpone(double seconds) noexcept;
     // setEmbeddedHovered border feedback (0.16 s unless reduced/not animated).
     void animateBorder(double width, const ChargeColor&, bool animated, double time) noexcept;
     // Applies due sequence steps at their exact scheduled times. Returns the

@@ -6,6 +6,7 @@
 #include "modules/power_policy.hpp"
 #include "native/layer_scene.hpp"
 #include "native/power_automation.hpp"
+#include "native/renderer.hpp"
 #include "native/system_services.hpp"
 #include "tools/charge_badge_preview.hpp"
 #include "tools/power_owner.hpp"
@@ -37,6 +38,12 @@ using Kind = app::HostEvent::Kind;
 // shared waitable timer at the display cadence, plus one settle wake that
 // presents the exact final pose. Idle alerts wake only at their deadlines.
 constexpr double alertFrameInterval = 1.0 / 60;
+// The alert's window and its D3D11 device are released this long after the
+// alert (or the position editor) was ordered out with the HUD closed. Their
+// teardown blocks the UI thread for tens of milliseconds while the driver
+// joins its threads, so it waits for an idle moment off any animation, and
+// an unplug-replug or a repeated preview within it reuses them.
+constexpr double alertReleaseDelay = 10;
 // SystemHUDView: HUDChargeBadge.center + chargeSourceOffset (source shell).
 constexpr core::Point badgeDesignCenter{m::ChargeBadgeState::center.x, m::ChargeBadgeState::center.y + tools::ChargeBadgePreview::sourceOffset};
 // Hidden coverage: one synthetic 1440 x 900 work area at 1 pixel per point.
@@ -105,8 +112,11 @@ public:
         callbacks.positionEditFinished = [this] { positionEditFinished(); };
         gpu::PowerService::Reader reader; // shared provider: the battery-class devices
         if (source_ != Source::shared) reader = [] { return syntheticDevices(); };
-        power_ = std::make_unique<tools::PowerOwner>(*context.utility, context.rasterizer,
-            gpu::ChargePanelOptions{std::move(shader), mode_ == Mode::hiddenCoverage}, std::move(callbacks), std::move(reader));
+        // Hidden coverage: a hidden WARP alert whose presentations postpone by
+        // one display frame (production measures its first frame instead).
+        gpu::ChargePanelOptions alertOptions{std::move(shader), mode_ == Mode::hiddenCoverage};
+        if (mode_ == Mode::hiddenCoverage) alertOptions.firstFrameLagForTests = alertFrameInterval;
+        power_ = std::make_unique<tools::PowerOwner>(*context.utility, context.rasterizer, std::move(alertOptions), std::move(callbacks), std::move(reader));
         if (mode_ == Mode::hiddenCoverage) power_->panel().setScreens(coverageScreens, 0);
         if (source_ == Source::synthetic) synthetic_ = syntheticSnapshot(63, false, false);
         noticeMessage_ = host_.registerMessage();
@@ -187,6 +197,16 @@ public:
         (void)badge_->setNavigationHovered(host_.hoveredModule() == core::Module::power, time_);
         (void)badge_->update(frame.center, frame.opacity, time_);
     }
+    // Launch prewarm (AppDelegate prewarmDesktop; the HUD is still closed):
+    // the badge's first placement and its artwork upload move off the
+    // opening (the host's upload() follows this call). The floating alert
+    // keeps no device ahead of an alert (see syncAlertRelease).
+    void prewarm(const app::ModuleFrame& frame) override {
+        clock(frame.time);
+        prewarmed_ = true;
+        badge_->prewarm(frame.center, time_);
+        preloadBadge_ = true;
+    }
     bool requiresFrames(double time) const override { return badge_->requiresFrames(time); }
     std::optional<double> nextWakeTime(double now) const override {
         std::optional<double> next;
@@ -194,6 +214,7 @@ public:
         if (hudVisible_) include(badge_->nextWakeTime());
         if (alertCadence_) include(std::max(now, time_) + alertFrameInterval);
         include(power_->nextWakeTime());
+        include(releaseAt_);
         return next;
     }
     bool deadline(double time) override {
@@ -203,7 +224,14 @@ public:
         if (hudVisible_) due = badge_->nextWakeTime();
         return due && *due <= time_ + 1e-6; // the badge advances on the next HUD frame
     }
-    void upload(gpu::Renderer& renderer) override { ++uploads_; badge_->upload(renderer); }
+    void upload(gpu::Renderer& renderer) override {
+        ++uploads_;
+        if (std::exchange(preloadBadge_, false)) {
+            badge_->preload(renderer);
+            preloaded_ = !badge_->uploadPending();
+        }
+        badge_->upload(renderer);
+    }
     // The charge plane (SystemHUDView chargePlane inside the canvas): above
     // the center modules and the shell, below the floating Notes workspace.
     std::span<const gpu::LayerCompositionEntry> planeEntries() override { return badge_->entries(); }
@@ -399,6 +427,7 @@ private:
     std::optional<gpu::BatterySnapshot> last_, synthetic_;
     std::optional<m::ChargeTelemetry> telemetry_;
     std::optional<core::Matrix4> lastCenter_;
+    std::optional<double> releaseAt_; // the alert's window/device release (syncAlertRelease)
     std::function<void(bool)> editingObserver_;
     // Created on the first UI Automation refresh (a client asked the HUD).
     std::unique_ptr<gpu::NativePowerAutomation> automation_;
@@ -411,6 +440,7 @@ private:
     bool pendingEdit_{}, closeRequested_{}, openDisplayPending_{}, noticePosted_{}, editing_{};
     bool alertAnimating_{}, alertCadence_{}, readingApplied_{}, pendingSelect_{};
     bool constructed_{}; // badge content is applied once construction finished
+    bool prewarmed_{}, preloadBadge_{}, preloaded_{};
     unsigned uploads_{}, recordedEvents_{};
 
     static bool validMetrics(const app::ClientMetrics& metrics) noexcept {
@@ -445,6 +475,22 @@ private:
         alertCadence_ = animating || alertAnimating_;
         alertAnimating_ = animating;
         editingChanged();
+        syncAlertRelease();
+    }
+    // The alert's window, D3D11 device, composition target and textures
+    // exist while the alert or the editor shows and until alertReleaseDelay
+    // after it was ordered out with the HUD closed (an idle second device
+    // costs dozens of driver threads and tens of MB; the Mac's ordered-out
+    // panel holds no GPU device). The next presentation creates them again
+    // on demand from the build-time programs. While the HUD shows (an alert
+    // it interrupted) or a quit runs, nothing is torn down: the release
+    // waits for the next concealment, and the owner's end releases them.
+    void syncAlertRelease() {
+        auto& panel = power_->panel();
+        const bool idle = panel.resident() && !terminating_ && !hudVisible_ && !panel.state().windowVisible() && !panel.state().editingPosition();
+        if (!idle) { releaseAt_.reset(); return; }
+        if (!releaseAt_) releaseAt_ = time_ + alertReleaseDelay;
+        else if (time_ + 1e-9 >= *releaseAt_ && panel.park()) releaseAt_.reset(); // park waits outside the alert's own window procedure
     }
     void editingChanged() {
         const bool editing = power_->panel().state().editingPosition();
@@ -620,9 +666,35 @@ void PowerArea::coverage(app::ModuleCoverage& step) {
         return shaderAvailable_ ? power_->panel().lastFailure().empty() && window && !IsWindowVisible(window)
                                 : !power_->panel().lastFailure().empty() && !window;
     };
+    // An ordered-out alert keeps one wake with the HUD closed: the release of
+    // its window and device alertReleaseDelay later; at that wake both go.
+    const auto released = [&](const std::string& what) {
+        if (!shaderAvailable_) {
+            check(!nextWakeTime(t) && !power_->panel().resident(), what + " leaves no wake and no window");
+            return;
+        }
+        const auto due = releaseAt_;
+        const auto parks = power_->panel().residency().parks;
+        check(power_->panel().resident() && due && nextWakeTime(t) == due && *due > t && *due <= t + alertReleaseDelay + 1e-9,
+              what + " keeps its window and device until one release wake within " + std::to_string(alertReleaseDelay) + " s");
+        alertUntil(*due);
+        const auto r = power_->panel().residency();
+        check(!r.window && !r.device && r.gpuBytes == 0 && r.parks == parks + 1 && !releaseAt_ && !nextWakeTime(t),
+              what + " releases its window, device and textures at that wake, leaving no wake");
+    };
 
     check(mode_ == Mode::hiddenCoverage && host_.mode() == mode_ && source_ == Source::synthetic && !host_.systemServices(),
           "Power area: hidden coverage reads the synthetic provider, never the system battery");
+    // --- Launch prewarm and residency -----------------------------------------
+    // The prewarm installed the badge artwork before its first reveal. The
+    // alert holds a window and device only when the open HUD interrupted
+    // one (the previous cycle's wake alert): never more than one, nothing
+    // waking, released after the next concealment.
+    const auto resident = power_->panel().residency();
+    check(prewarmed_ && preloaded_, "Power area: the launch prewarm reached the area and installed the badge artwork before its reveal");
+    check(resident.window == resident.device && resident.creations - resident.parks == (resident.window ? 1u : 0u) && !releaseAt_ &&
+          (resident.window || resident.gpuBytes == 0) && (step.cycle > 0 || !resident.window),
+          "Power area: at most the window and device of an alert the open HUD interrupted are resident, with no release wake");
     check(host_.overlayVisible() && hudVisible_ && !terminating_ && !suspended_ && !alert.windowVisible(),
           "Power area: the HUD is open during the module cycles and holds the alert");
     step.drain();
@@ -746,6 +818,7 @@ void PowerArea::coverage(app::ModuleCoverage& step) {
     check(reading().capacity == m::BatteryReading::Capacity{32'760, 52'000, "mWh"}, "Power area: the capacity pair returns through the shared executor");
     present(t + .02);
     check(powerAccessibilityLabel().find("64%") != std::string::npos, "Power area: the badge follows the live reading");
+    check(badge_->retainedBytes() == 0 && !badge_->uploadPending(), "Power area: the badge's changed labels are installed with no CPU pixel copy kept");
 
     // --- The HUD is concealed: the alert belongs to the desktop ----------------
     (void)hostEvent({Kind::overlayConcealed, 0}, t);
@@ -754,6 +827,22 @@ void PowerArea::coverage(app::ModuleCoverage& step) {
     synthetic_ = syntheticSnapshot(64, false, false);
     notice();
     check(alert.windowVisible() && recordedEvents_ == events + 4 && rendered(), "Power area: unplugging presents the alert on its hidden coverage window");
+    {
+        // Created on demand for this alert, with the programs from the
+        // build-time hud.hlsl bytecode (no runtime compilation) and no CPU
+        // copy of its installed artwork.
+        const auto shown = power_->panel().residency();
+        check(!shaderAvailable_ || (shown.window && shown.device && shown.creations == resident.creations + (resident.window ? 0u : 1u) && shown.gpuBytes > 0 &&
+                                    (!gpu::Renderer::shadersEmbedded() || shown.embeddedShaders) && shown.cpuBytes < 64 * 1024),
+              "Power area: the alert has its window and device (on demand, from the build-time programs) and keeps no CPU pixel copy (" +
+                  std::to_string(shown.cpuBytes) + " bytes of button rasters)");
+        // Its first frame postponed the presentation (one display frame in
+        // coverage): the supercharge step follows 0.20 s after that.
+        const auto supercharge = power_->nextWakeTime();
+        check(!shaderAvailable_ || (shown.postponements == resident.postponements + 1 && std::abs(shown.lastPostponedMilliseconds - 1000 * alertFrameInterval) < 1e-6 &&
+                                    supercharge && std::abs(*supercharge - (time_ + alertFrameInterval + m::ChargeIndicatorMetrics::superchargeAt)) < 1e-9),
+              "Power area: the alert's first frame postpones its entrance by that frame, so it plays from its first pose");
+    }
     const auto cadence = nextWakeTime(t);
     check(cadence && std::abs(*cadence - (std::max(t, time_) + alertFrameInterval)) < 1e-9,
           "Power area: the animating alert wakes the shared timer at the display cadence");
@@ -762,7 +851,9 @@ void PowerArea::coverage(app::ModuleCoverage& step) {
     check(alert.stage() == m::ChargeStage::compact && !power_->requiresFrames(t) && dismissal && *dismissal > t + 1 && nextWakeTime(t) == dismissal,
           "Power area: the settled alert wakes only at its dismissal deadline");
     alertUntil(*dismissal + .8);
-    check(!alert.windowVisible() && !nextWakeTime(t) && !power_->requiresFrames(t), "Power area: the dismissed alert releases every wake");
+    check(!alert.windowVisible() && !power_->nextWakeTime() && !power_->requiresFrames(t) && !alertCadence_,
+          "Power area: the dismissed alert releases its animation and dismissal wakes");
+    released("Power area: the dismissed alert");
     // Tray "Preview charging effect".
     preview(t);
     check(alert.windowVisible() && alert.previewContent() && rendered(), "Power area: the tray preview presents with the preview label");
@@ -770,7 +861,8 @@ void PowerArea::coverage(app::ModuleCoverage& step) {
     const auto previewEnd = power_->nextWakeTime();
     check(previewEnd.has_value(), "Power area: the preview owns its dismissal deadline");
     alertUntil(*previewEnd + .8);
-    check(!alert.windowVisible() && !nextWakeTime(t), "Power area: the preview dismisses itself");
+    check(!alert.windowVisible() && !power_->nextWakeTime() && !alertCadence_, "Power area: the preview dismisses itself");
+    released("Power area: the dismissed preview");
 
     // --- Settings: always mode through the committed preference record --------
     const auto original = host_.settings();
@@ -791,8 +883,9 @@ void PowerArea::coverage(app::ModuleCoverage& step) {
               "Power area: always mode applies from the settings broadcast and presents persistently");
         restore();
         alertUntil(t + .8);
-        check(applied_ && !applied_->settings.alwaysMode && !alert.windowVisible() && !nextWakeTime(t),
+        check(applied_ && !applied_->settings.alwaysMode && !alert.windowVisible() && !power_->nextWakeTime() && !alertCadence_,
               "Power area: leaving always mode re-baselines silently");
+        released("Power area: the hidden persistent alert");
     }
 
     // --- Position editing (Settings > Edit position, after the HUD closed) ------
@@ -821,6 +914,7 @@ void PowerArea::coverage(app::ModuleCoverage& step) {
     // The private notice runs the deferred reopen (the coverage HUD is open).
     check(step.message(noticeMessage_, 0, 0) && !openDisplayPending_, "Power area: the private notice runs the deferred Display reopen");
     if (settingsOwner) restore();
+    released("Power area: the confirmed editor");
     // A UI Automation press on Discard (NSButton.performClick from a client):
     // posted to the alert window and run by its procedure, never saved.
     check(editPosition(t) && !editingPosition(), "Power area: a second edit request waits for the HUD to close");
@@ -833,6 +927,16 @@ void PowerArea::coverage(app::ModuleCoverage& step) {
     check(!editingPosition() && !editing_ && openDisplayPending_ && !alert.windowVisible() && host_.settings() == saved,
           "Power area: discarding keeps the saved position and queues the Display reopen");
     check(step.message(noticeMessage_, 0, 0) && !openDisplayPending_, "Power area: the private notice runs the deferred reopen after a discard");
+    released("Power area: the discarded editor");
+    {
+        // The unplug alert (unless it reused an interrupted alert's device),
+        // the preview, always mode and both edits each created a window and
+        // device on demand and released them after being ordered out.
+        const auto after = power_->panel().residency();
+        const auto expected = resident.creations + (resident.window ? 0u : 1u) + 1u + (settingsOwner ? 1u : 0u) + 2u;
+        check(!after.window && !after.device && after.creations == after.parks && (!shaderAvailable_ || after.creations == expected),
+              "Power area: every presentation created its window and device on demand and released them afterwards");
+    }
 
     // --- Sleep with a plug change: shown exactly once on wake --------------------
     (void)hostEvent({Kind::suspended, app::HostEvent::suspendSystem}, t);

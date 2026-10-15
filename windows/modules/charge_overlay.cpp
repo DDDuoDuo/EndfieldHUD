@@ -101,6 +101,11 @@ ChargeOverlayState::Events ChargeOverlayState::advance(double time) {
     events.windowHidden = windowBefore && !window_;
     return events;
 }
+void ChargeOverlayState::postpone(double seconds) noexcept {
+    if (!(seconds > 0) || !std::isfinite(seconds)) return;
+    timeline_.postpone(seconds);
+    if (dismissalAt_) *dismissalAt_ += seconds;
+}
 std::optional<double> ChargeOverlayState::nextDeadline() const noexcept {
     auto next = timeline_.nextDeadline();
     if (dismissalAt_ && (!next || *dismissalAt_ < *next)) next = dismissalAt_;

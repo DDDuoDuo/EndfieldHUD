@@ -17,6 +17,14 @@
 // begins), quitting is onQuitAccepted (alerts stop until a cancelled quit
 // reopens the HUD). The alert animates on the shared waitable timer while the
 // HUD (and its frame clock) is closed; no timer, thread or poll is created.
+// Residency: the launch prewarm (ModuleOwner::prewarm) places the hidden
+// badge once and installs its artwork, so its reveal 0.58 s into the first
+// opening uploads nothing; installed artwork keeps no CPU pixel copy. The
+// alert's window, D3D11 device and textures exist only while the alert or
+// the position editor shows (created on demand from the build-time hud.hlsl
+// programs, released 10 s after it is ordered out with the HUD closed); each
+// presentation starts after its first frame, so that creation never skips
+// the entrance's first frames.
 //
 // Host hooks that only the Application can call (tray preview, Settings
 // "Edit position", projection, the Power page's capacity) reach this area

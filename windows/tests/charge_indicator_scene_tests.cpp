@@ -66,7 +66,13 @@ void run(const std::filesystem::path& shader) {
     content.battery.percentage = 75;
     content.battery.capacity = m::BatteryReading::Capacity{3600, 4800, "mAh"};
     content.pixelsPerPoint = 2;
+    check(raster.stats().entries == 0 && scene.retainedBytes() == 0, "Nothing is rasterized before the first content event");
     check(scene.setContent(content), "First content event installs resources");
+    // Before the upload the scene holds every texture's pixels: the eight
+    // procedural slices and the nine rasterized leaves (ripple, bolt, ring,
+    // cap, laptop and four labels) in the shared rasterizer.
+    const auto pending = scene.retainedBytes();
+    check(pending > 640u * 640u * 4u && raster.stats().entries == 9, "The pending content holds its CPU pixels until the upload");
     check(!scene.setContent(content), "Identical content is not a content event");
     check(scene.content().reading.trailing == "75%" && scene.content().reading.primary == "3,600", "Source battery reading");
     check(scene.content().accessibility == "EndfieldHUD, Battery: 75%, Charging", "Source accessibility label");
@@ -95,6 +101,11 @@ void run(const std::filesystem::path& shader) {
     timeline.setStage(m::ChargeStage::hidden, false, 0);
     auto image = frame(0, true);
     check(std::all_of(image.pixels.begin(), image.pixels.end(), [](auto v) { return v == 0; }), "Hidden indicator paints nothing");
+    // The installed GPU textures are the only resident copy (Core Animation
+    // keeps one backing per layer): the CPU pixels and rasterizer entries go.
+    check(!scene.uploadPending() && scene.retainedBytes() == 0 && raster.stats().entries == 0 && scene.regenerations() == 0 &&
+          renderer.stats().textures == 17, "The upload keeps no CPU copy of an installed texture (" + std::to_string(pending) + " bytes released)");
+    std::cout << "Installing the 2x content released " << pending << " bytes of CPU pixels (" << renderer.stats().resourceBytes << " GPU resource bytes)\n";
     // Settled compact capsule, dark theme.
     timeline.setStage(m::ChargeStage::compact, false, 0);
     image = frame(0, false);
@@ -187,6 +198,24 @@ void run(const std::filesystem::path& shader) {
     dump(image, "compact-light-hover");
     const auto edge = at(image, 150, 23.6);
     check(edge.r > 200 && edge.b < 150, "Hovered accent border on the capsule edge");
+    check(scene.retainedBytes() == 0 && raster.stats().entries == 0, "Content events keep no CPU copy once installed");
+    // Device loss or a parked alert window: after a release the next upload
+    // regenerates every texture from the content key, pixel-identically.
+    composition.detach(renderer);
+    check(scene.release(renderer) && renderer.stats().textures == 0 && scene.uploadPending(), "A release leaves every texture to reinstall");
+    const auto regenerated = scene.regenerations();
+    scene.place(hover);
+    scene.upload(renderer);
+    {
+        const std::array<gpu::LayerCompositionEntry, 1> entries{gpu::LayerCompositionEntry{&anchor, scene.draws()}};
+        composition.setEntries(renderer, entries);
+    }
+    composition.present(renderer);
+    renderer.draw(false);
+    const auto again = renderer.readback();
+    check(scene.regenerations() == regenerated + 17 && renderer.stats().textures == 17 && scene.retainedBytes() == 0 && raster.stats().entries == 0,
+          "The reinstall regenerates all 17 textures and again keeps no CPU copy");
+    check(again.width == image.width && again.height == image.height && again.pixels == image.pixels, "Regenerated textures render pixel-identically");
     composition.detach(renderer);
     check(scene.release(renderer), "Scene releases its own resources");
     released = true;

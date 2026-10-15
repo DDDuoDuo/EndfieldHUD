@@ -338,6 +338,13 @@ void ChargeIndicatorTimeline::cancel() noexcept {
     for (auto& track : tracks_) { track.from = track.to; track.duration = 0; }
     ripplesStarted_ = false;
 }
+void ChargeIndicatorTimeline::postpone(double seconds) noexcept {
+    if (!(seconds > 0) || !std::isfinite(seconds)) return;
+    for (auto& track : tracks_) if (track.duration > 0) track.start += seconds;
+    if (ripplesStarted_)
+        for (std::size_t i = 0; i < 3; ++i) { rippleBegin_[i] += seconds; rippleAdded_[i] += seconds; }
+    if (step_ != Step::none) { stepAt_ += seconds; sequenceStart_ += seconds; }
+}
 void ChargeIndicatorTimeline::setBorderModel(double width, const ChargeColor& color, double time) noexcept {
     const double values[]{width, color[0], color[1], color[2], color[3]};
     for (std::size_t i = 0; i < 5; ++i) {
