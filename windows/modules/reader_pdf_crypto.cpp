@@ -1,4 +1,5 @@
 #include "modules/reader_pdf_crypto.hpp"
+#include <algorithm>
 #include <stdexcept>
 
 namespace endfield::modules::pdfcrypto {

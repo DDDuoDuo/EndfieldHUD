@@ -63,6 +63,10 @@ public:
     // until implemented; this class never substitutes another tone mapping.
     void renderTo(void* outputTexture, unsigned width, unsigned height);
     bool active() const noexcept;
+    // The HUD was concealed (Renderer::releaseFrameTargets): drops the
+    // full-size original sRGB attachment and its depth/stencil target; the
+    // next renderTo creates them again. Returns the bytes released.
+    std::size_t releaseTargets() noexcept;
     void clear();
     SourceGraphicsStats stats() const;
 private:

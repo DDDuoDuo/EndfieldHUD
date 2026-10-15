@@ -146,7 +146,7 @@ std::size_t retainedJsonBytes(const Json&v,unsigned depth=0){if(depth>128)invali
 }
 
 struct LayerRasterizer::Impl {
-    struct Entry { std::uint64_t revision;LayerRasterOptions options;std::shared_ptr<LayerRasterImage> image;std::vector<ComPtr<IDWriteTextLayout>> layouts;std::shared_ptr<const PaintedTextLayout> paintedText;std::uint64_t fontRevision{};bool hasText{};Json typographySource;std::size_t descriptorBytes{}; };
+    struct Entry { std::uint64_t revision;LayerRasterOptions options;std::shared_ptr<LayerRasterImage> image;std::vector<ComPtr<IDWriteTextLayout>> layouts;std::shared_ptr<const PaintedTextLayout> paintedText;std::uint64_t fontRevision{};bool hasText{};Json typographySource;std::size_t descriptorBytes{};std::string owner; };
     struct DecodedImage { unsigned width{},height{};std::vector<std::uint8_t> premultipliedBGRA; };
     struct ImagePixels {
         unsigned width{},height{};std::span<const std::uint8_t> premultipliedBGRA;
@@ -394,24 +394,6 @@ struct LayerRasterizer::Impl {
         ComPtr<IDWriteTextLayout> layout;checked(text->CreateTextLayout(value.data(),static_cast<UINT32>(value.size()),format.Get(),
             static_cast<float>(bounds.width),(options.plainTextDocument||options.richTextDocument)?std::numeric_limits<float>::max():static_cast<float>(bounds.height),layout.GetAddressOf()),"Create retained source text layout");++counts.textLayoutsCreated;
         result.textDocumentWidth=bounds.width;
-        if(flag(descriptor["sourceSingleLineField"])){
-            if(!options.plainTextDocument||flag(descriptor["wrapped"])||bounds.width<=6||!descriptor["font"]["ascender"].isNull())invalid("Single-line field needs natural plain metrics and explicit no-wrap");
-            UINT32 index{};BOOL exists{};checked(family.collection->FindFamilyName(family.family.c_str(),&index,&exists),"Resolve field font metrics");if(!exists)invalid("Field font disappeared");
-            ComPtr<IDWriteFontFamily>fontFamily;checked(family.collection->GetFontFamily(index,fontFamily.GetAddressOf()),"Read field font family");ComPtr<IDWriteFont>font;
-            checked(fontFamily->GetFirstMatchingFont(weight(descriptor["font"]),DWRITE_FONT_STRETCH_NORMAL,italic?DWRITE_FONT_STYLE_ITALIC:DWRITE_FONT_STYLE_NORMAL,font.GetAddressOf()),"Read exact field font face");
-            DWRITE_FONT_METRICS metrics{};font->GetMetrics(&metrics);if(!metrics.designUnitsPerEm)invalid("Invalid field font metrics");const double em=double(size)/metrics.designUnitsPerEm;
-            const double lineHeight=(double(metrics.ascent)+metrics.descent+metrics.lineGap)*em;result.textContentInset={3,std::max(0.,(bounds.height-lineHeight)*.5)};
-            DWRITE_TEXT_METRICS extent{};checked(layout->GetMetrics(&extent),"Measure same unwrapped field layout");if(!std::isfinite(extent.widthIncludingTrailingWhitespace)||extent.widthIncludingTrailingWhitespace<0)invalid("Invalid field text width");
-            result.textDocumentWidth=std::max(bounds.width,std::ceil(double(extent.widthIncludingTrailingWhitespace))+11);
-            checked(layout->SetMaxWidth(static_cast<float>(result.textDocumentWidth-6)),"Apply source finite field container width");
-            UINT32 lineCount{};const auto measureLines=layout->GetLineMetrics(nullptr,0,&lineCount);
-            if((FAILED(measureLines)&&measureLines!=HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER))||!lineCount||lineCount>value.size()+1)invalid("Invalid field line metrics");
-            std::vector<DWRITE_LINE_METRICS> lines(lineCount);checked(layout->GetLineMetrics(lines.data(),lineCount,&lineCount),"Read same field first line");
-            if(!std::isfinite(lines.front().height)||lines.front().height<=0)invalid("Invalid field line height");
-            // TextKit maximumNumberOfLines=1 clips the laid-out first line;
-            // the complete caller text/ACP storage remains untouched.
-            checked(layout->SetMaxHeight(lines.front().height),"Clip source field to its first natural line");
-        }
         if(!descriptor["runs"].isNull())for(const auto& run:array(descriptor["runs"],(options.richTextDocument||flag(descriptor["notesRichLine"]))?50000:4096)){
             const auto& r=array(run["utf16Range"],2);if(r.size()!=2)invalid("Invalid UTF-16 run range");
             const double start=number(r[0]),length=number(r[1]);if(start<0||length<0||std::floor(start)!=start||std::floor(length)!=length||start+length>value.size())invalid("Text run exceeds UTF-16 string");
@@ -434,6 +416,28 @@ struct LayerRasterizer::Impl {
                 }else if(key=="NSLigature") {if(number(item)!=1)issue(result,node,"nondefault text ligature setting");}
                 else issue(result,node,"unsupported text attribute: "+key);
             }
+        }
+        // A single-line field (NSTextView configureSingleLine: plain, or rich
+        // like the Archive title): the three-point inset centred on the base
+        // font's natural line, a finite container as wide as the laid-out
+        // text (after its runs) and the first natural line only.
+        if(flag(descriptor["sourceSingleLineField"])){
+            if(!(options.plainTextDocument||options.richTextDocument)||flag(descriptor["wrapped"])||bounds.width<=6||!descriptor["font"]["ascender"].isNull())invalid("Single-line field needs natural plain metrics and explicit no-wrap");
+            UINT32 index{};BOOL exists{};checked(family.collection->FindFamilyName(family.family.c_str(),&index,&exists),"Resolve field font metrics");if(!exists)invalid("Field font disappeared");
+            ComPtr<IDWriteFontFamily>fontFamily;checked(family.collection->GetFontFamily(index,fontFamily.GetAddressOf()),"Read field font family");ComPtr<IDWriteFont>font;
+            checked(fontFamily->GetFirstMatchingFont(weight(descriptor["font"]),DWRITE_FONT_STRETCH_NORMAL,italic?DWRITE_FONT_STYLE_ITALIC:DWRITE_FONT_STYLE_NORMAL,font.GetAddressOf()),"Read exact field font face");
+            DWRITE_FONT_METRICS metrics{};font->GetMetrics(&metrics);if(!metrics.designUnitsPerEm)invalid("Invalid field font metrics");const double em=double(size)/metrics.designUnitsPerEm;
+            const double lineHeight=(double(metrics.ascent)+metrics.descent+metrics.lineGap)*em;result.textContentInset={3,std::max(0.,(bounds.height-lineHeight)*.5)};
+            DWRITE_TEXT_METRICS extent{};checked(layout->GetMetrics(&extent),"Measure same unwrapped field layout");if(!std::isfinite(extent.widthIncludingTrailingWhitespace)||extent.widthIncludingTrailingWhitespace<0)invalid("Invalid field text width");
+            result.textDocumentWidth=std::max(bounds.width,std::ceil(double(extent.widthIncludingTrailingWhitespace))+11);
+            checked(layout->SetMaxWidth(static_cast<float>(result.textDocumentWidth-6)),"Apply source finite field container width");
+            UINT32 lineCount{};const auto measureLines=layout->GetLineMetrics(nullptr,0,&lineCount);
+            if((FAILED(measureLines)&&measureLines!=HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER))||!lineCount||lineCount>value.size()+1)invalid("Invalid field line metrics");
+            std::vector<DWRITE_LINE_METRICS> lines(lineCount);checked(layout->GetLineMetrics(lines.data(),lineCount,&lineCount),"Read same field first line");
+            if(!std::isfinite(lines.front().height)||lines.front().height<=0)invalid("Invalid field line height");
+            // TextKit maximumNumberOfLines=1 clips the laid-out first line;
+            // the complete caller text/ACP storage remains untouched.
+            checked(layout->SetMaxHeight(lines.front().height),"Clip source field to its first natural line");
         }
         const DocumentTextLines lines=options.richTextDocument?DocumentTextLines(*layout.Get(),descriptor):DocumentTextLines{};
         result.textDocumentOffset=textOffset(layout.Get(),options,bounds,lines,result.textContentInset,result.textDocumentWidth,flag(descriptor["sourceSingleLineField"]));
@@ -759,7 +763,10 @@ std::shared_ptr<const LayerRasterImage> LayerRasterizer::rasterize(std::string i
     const bool hasText=containsText(layer);const auto oldDescriptors=old==r.entries.end()?0:old->second.descriptorBytes;
     Json retained;std::size_t descriptorBytes{};
     if(hasText&&!options.plainTextDocument&&!options.richTextDocument){descriptorBytes=retainedJsonBytes(layer);if(descriptorBytes>maximumTypographyDescriptorBytes-(r.counts.typographyDescriptorBytes-oldDescriptors))invalid("Retained typography descriptor budget exceeded");retained=layer;}
-    r.entries.insert_or_assign(std::move(id),Impl::Entry{revision,options,result,std::move(layouts),std::move(painted),r.fontRevision,hasText,std::move(retained),descriptorBytes});
+    // Diagnostics: the creating owner (LayerRasterAttribution); a host-side
+    // replacement keeps the owner that created the surface.
+    std::string owner(LayerRasterAttribution::current());if(owner.empty()&&old!=r.entries.end())owner=std::move(old->second.owner);
+    r.entries.insert_or_assign(std::move(id),Impl::Entry{revision,options,result,std::move(layouts),std::move(painted),r.fontRevision,hasText,std::move(retained),descriptorBytes,std::move(owner)});
     r.counts.typographyDescriptorBytes=r.counts.typographyDescriptorBytes-oldDescriptors+descriptorBytes;
     r.counts.resourceBytes=r.counts.resourceBytes-previous+bytes;r.counts.textMetadataBytes=r.counts.textMetadataBytes-oldMetadata+newMetadata;++r.counts.rasterizations;return result;
 }
@@ -767,6 +774,13 @@ std::shared_ptr<const PaintedTextLayout>LayerRasterizer::textLayout(const std::s
 std::shared_ptr<const LayerRasterImage>LayerRasterizer::refreshTypography(const std::string&id,std::uint64_t revision){auto&r=*impl_;r.onThread();const auto it=r.entries.find(id);if(it==r.entries.end()||it->second.typographySource.isNull())return{};const auto options=it->second.options;return rasterize(id,revision,it->second.typographySource,options);}
 bool LayerRasterizer::remove(const std::string& id){auto& r=*impl_;r.onThread();const auto it=r.entries.find(id);if(it==r.entries.end())return false;r.counts.resourceBytes-=it->second.image->straightRGBA.size();if(it->second.paintedText)r.counts.textMetadataBytes-=it->second.paintedText->metadataBytes();r.counts.typographyDescriptorBytes-=it->second.descriptorBytes;r.entries.erase(it);return true;}
 void LayerRasterizer::clear(){auto& r=*impl_;r.onThread();r.entries.clear();r.images.clear();r.counts.resourceBytes=0;r.counts.textMetadataBytes=0;r.counts.typographyDescriptorBytes=0;}
+void LayerRasterizer::forEachEntry(const std::function<void(const LayerRasterEntryUsage&)>&visit)const{const auto&r=*impl_;r.onThread();
+    for(const auto&[id,e]:r.entries)visit({id,e.owner,e.image?e.image->straightRGBA.capacity():0,e.layouts.size(),e.descriptorBytes,e.paintedText?e.paintedText->metadataBytes():0,e.paintedText!=nullptr});}
+std::size_t LayerRasterizer::decodedImageBytes()const{const auto&r=*impl_;r.onThread();std::size_t bytes{};for(const auto&[_,image]:r.images)bytes+=image.premultipliedBGRA.capacity();return bytes;}
+namespace {thread_local std::string_view rasterAttribution;}
+LayerRasterAttribution::LayerRasterAttribution(std::string_view owner)noexcept:previous_(rasterAttribution){rasterAttribution=owner;}
+LayerRasterAttribution::~LayerRasterAttribution(){rasterAttribution=previous_;}
+std::string_view LayerRasterAttribution::current()noexcept{return rasterAttribution;}
 LayerRasterStats LayerRasterizer::stats()const{const auto& r=*impl_;r.onThread();auto result=r.counts;result.entries=r.entries.size();result.decodedImages=r.images.size();return result;}
 } // namespace endfield::native
 #endif

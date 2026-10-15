@@ -53,15 +53,17 @@ struct StorageModuleHooks {
 // `changed` presents and refreshes after an accepted peer action.
 std::unique_ptr<ModuleOwner> notesModule(tools::NotesPreview&, std::function<double()> clock = {}, std::function<void()> changed = {});
 std::unique_ptr<ModuleOwner> shelfModule(tools::ShelfPreview&);
-std::unique_ptr<ModuleOwner> clipboardModule(tools::ClipboardPreview&, const native::NativeClipboardAssets&);
+// Clipboard, Event Log, Activity Monitor and Storage list their Mac
+// accessibility buttons (tools/*_automation.hpp) under the HUD root.
+std::unique_ptr<ModuleOwner> clipboardModule(tools::ClipboardPreview&, const native::NativeClipboardAssets&, native::ScreenReaderPeerHooks);
 std::unique_ptr<ModuleOwner> volumeModule(tools::VolumePreview&, VolumeModuleHooks = {});
-std::unique_ptr<ModuleOwner> eventLogModule(tools::EventLogPreview&);
+std::unique_ptr<ModuleOwner> eventLogModule(tools::EventLogPreview&, native::ScreenReaderPeerHooks);
 // Work Mode reuses the Volume hooks (press clock and client -> screen).
 std::unique_ptr<ModuleOwner> workModeModule(tools::WorkModePreview&, VolumeModuleHooks = {});
 std::unique_ptr<ModuleOwner> batteryModule(tools::BatteryPreview&);
 std::unique_ptr<ModuleOwner> settingsModule(tools::SettingsPreview&);
-std::unique_ptr<ModuleOwner> storageModule(tools::StoragePreview&, StorageModuleHooks);
-std::unique_ptr<ModuleOwner> activityModule(tools::ActivityPreview&);
+std::unique_ptr<ModuleOwner> storageModule(tools::StoragePreview&, StorageModuleHooks, native::ScreenReaderPeerHooks);
+std::unique_ptr<ModuleOwner> activityModule(tools::ActivityPreview&, native::ScreenReaderPeerHooks);
 // Reader, Calendar, Map and the minigame list their projected peers
 // (native/screen_reader_peers.hpp, tools/*_automation.hpp) under the HUD root.
 std::unique_ptr<ModuleOwner> readerModule(tools::ReaderPreview&, native::ReaderOwner&, native::LayerRasterizer&,

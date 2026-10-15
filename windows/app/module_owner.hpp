@@ -46,6 +46,9 @@
 //   automationFromPoint / automationDisconnect / automationModule
 //                                       UI Automation fragments under the HUD
 //                                       window's root provider (below)
+//   residency()                         memory trace only: what the owner
+//                                       keeps resident beyond the shared
+//                                       raster cache and renderer (below)
 //
 // Threading: every method runs on the Application's UI thread. Owners use the
 // shared UtilityExecutor for file work and the shared frame clock for motion;
@@ -181,6 +184,16 @@ enum class ModuleCursor : std::uint8_t {
     source, // the original Endfield cursor (SourceCursor)
     text    // the system I-beam over an open projected text editor
 };
+// What an owner keeps resident outside the shared LayerRasterizer cache and
+// the Renderer's own textures (ModuleOwner::residency): decoded images and
+// frames, documents and their models, private caches, its own GPU devices or
+// textures, and the threads it keeps alive (each worker it started and has
+// not joined). Diagnostics only; zero means "not reported".
+struct ModuleResidency {
+    std::uint64_t cpuBytes{}, gpuBytes{};
+    std::uint32_t threads{};
+    bool operator==(const ModuleResidency&) const = default;
+};
 struct ModuleFrame {
     const core::Matrix4& center;
     const core::source::DesktopChromeSettings& chrome;
@@ -277,7 +290,13 @@ public:
     // first-update work here (fixed layout, bundled artwork decode, text
     // shaping, a bounded executor job) so the first opening frame does not;
     // it must not present, open OS providers, start motion or change state
-    // the user can observe. Default: nothing.
+    // the user can observe. Default: nothing. Built-in owners whose previews
+    // live in an area (Notes, Shelf, Map, Reader, Calendar, Minigame, ...)
+    // forward a preview member
+    //   void prewarm(const core::Matrix4& center, const core::source::DesktopChromeSettings&,
+    //                const core::ModulePresentationSample&, double time);
+    // as soon as the preview declares it (app/application_modules.cpp detects
+    // it at compile time; no host edit needed).
     virtual void prewarm(const ModuleFrame&) {}
     virtual bool requiresFrames(double) const { return false; }
     virtual std::optional<double> nextWakeTime(double) const { return {}; }
@@ -383,6 +402,14 @@ public:
     // UI Automation group caption for an owner that presents no HUD module
     // (none: "EndfieldHUD"), e.g. the Power navigation entry of powerCharge.
     virtual std::optional<core::Module> automationModule() const noexcept { return std::nullopt; }
+
+    // Memory trace (watch_session_preview --memory-trace, EndfieldHUD.exe
+    // with ENDFIELDHUD_MEMORY_TRACE=1): resident bytes and live threads this
+    // owner holds beyond the shared raster cache (attributed per owner by the
+    // host) and the shared renderer. Called only at diagnostic stages, never
+    // per frame; must not allocate large buffers, block or call the OS
+    // beyond reading its own counters. Default: nothing reported.
+    virtual ModuleResidency residency() const { return {}; }
 };
 
 // Failure report delivered once per disabled owner. `what` is the exception's
@@ -507,7 +534,9 @@ private:
     void disable(Slot&, const char* what, std::string_view operation);
     struct Current {
         ModuleRegistry& registry; ModuleOwner* previous;
-        Current(ModuleRegistry& r, ModuleOwner* owner) noexcept : registry(r), previous(r.current_) { r.current_ = owner; }
+        // Memory trace attribution of the retained rasters this call creates.
+        native::LayerRasterAttribution raster;
+        Current(ModuleRegistry& r, ModuleOwner* owner) noexcept : registry(r), previous(r.current_), raster(owner->name()) { r.current_ = owner; }
         ~Current() { registry.current_ = previous; }
         Current(const Current&) = delete;
         Current& operator=(const Current&) = delete;

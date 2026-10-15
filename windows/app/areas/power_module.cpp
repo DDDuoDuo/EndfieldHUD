@@ -544,7 +544,10 @@ private:
             !(metrics_.height > 0)) return;
         const auto& hud = host_.settings().fields["hudScale"];
         const double hudScale = hud.isNumber() && std::isfinite(hud.number()) && hud.number() > 0 ? hud.number() : 1;
-        const core::source::DesktopChromeSettings rest{{0, 0, metrics_.width, metrics_.height}, hudScale, {}, core::Module::power, true};
+        core::source::DesktopChromeSettings rest{{0, 0, metrics_.width, metrics_.height}, hudScale, {}, core::Module::power, true};
+        // The Windows display adaptation (host contentScale, updated before
+        // areas are resized) scales the core plane the badge rests on.
+        rest.contentScale = host_.contentScale();
         badge_->resize(metrics_, core::source::DesktopChromeLayout::make(rest, {}, {}).designScale);
     }
     void badgeContent() {

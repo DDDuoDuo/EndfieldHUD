@@ -127,6 +127,17 @@ struct ApplicationOptions {
     // lateness, CPU frame time and GPU completion per frame (numbers only).
     // Run it while a load (tools/application_contention_stress) is active.
     std::filesystem::path contentionTrace;
+    // Opt-in memory trace (numbers, owner names and system module file names
+    // only; app/process_diagnostics.hpp): process private bytes and working
+    // set, heaps, address space, per-adapter GPU usage, the shared raster
+    // cache and renderer resources by owner, owner-reported residency and
+    // every thread by start address. Production enables it with
+    // ENDFIELDHUD_MEMORY_TRACE=1 (Diagnostics/memory-trace.json in the data
+    // root: after construction, at launch idle, after the first openings and
+    // closings); watch_session_preview --memory-trace runs the same owner
+    // hidden through launch, a cold opening, a visit of every module, closing
+    // and ten more open/close cycles instead of the module coverage.
+    std::filesystem::path memoryTrace;
 };
 
 class Application final {

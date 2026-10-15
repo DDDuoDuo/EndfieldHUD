@@ -723,7 +723,8 @@ private:
         const std::string_view text(reinterpret_cast<const char*>(tail.data()), tail.size());
         const auto at = text.rfind("startxref");
         need(at != std::string_view::npos);
-        Parser parser(std::span(tail).subspan(at + 9), true);
+        const std::span<const std::uint8_t> bytes(tail);
+        Parser parser(bytes.subspan(at + 9), true);
         return static_cast<std::uint64_t>(number(parser.token())) + base_;
     }
     Section loadSection(std::uint64_t offset, Value& trailer) {

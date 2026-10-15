@@ -1,6 +1,7 @@
 #include "renderer.hpp"
 #include "source_graphics.hpp"
 #include "core/shell_packet.hpp"
+#include "native/layer_raster.hpp"
 #if defined(EHUD_EMBEDDED_HUD_SHADERS)
 #include "native/hud_shaders.hpp"
 #endif
@@ -55,6 +56,17 @@ const std::array<double, 256> &linearSRGBBytes() {
         }
         return result;
     }();
+    return values;
+}
+// 16-bit linear value -> its sRGB-encoded byte (64 KiB, built once): stores
+// premultiplied linear values in an R8G8B8A8_UNORM_SRGB texture, which the
+// sampler decodes back to linear before filtering.
+const std::array<std::uint8_t,65536>& encodedSRGBFrom16(){
+    static const auto values=[] {std::array<std::uint8_t,65536> result{};
+        for(std::size_t i=0;i<result.size();++i){const double linear=double(i)/65535;
+            const double encoded=linear<=.0031308?linear*12.92:1.055*std::pow(linear,1/2.4)-.055;
+            result[i]=static_cast<std::uint8_t>(std::lround(std::clamp(encoded,0.,1.)*255));}
+        return result;}();
     return values;
 }
 const std::array<std::uint16_t,256>& opaqueSRGB16Bytes(){
@@ -286,6 +298,21 @@ void prepareTextureRGBA16(std::span<const std::uint8_t> input,TextureColorSpace 
         output[pixel+3]=static_cast<std::uint16_t>(std::lround(alpha*65535));
     }
 }
+// sRGB textures at four bytes per pixel: premultiplied linear values in
+// sRGB encoding (R8G8B8A8_UNORM_SRGB). Opaque and transparent texels keep
+// their exact bytes; partial alpha takes the same premultiplied linear value
+// as the 16-bit path, then its nearest encoded byte.
+void prepareTextureSRGB8(std::span<const std::uint8_t> input,std::span<std::uint8_t> output){
+    require(input.size()%4==0&&output.size()==input.size(),"Invalid native texture conversion span");
+    const auto*linear=linearSRGBBytes().data();const auto*encode=encodedSRGBFrom16().data();
+    for(std::size_t pixel=0;pixel<input.size();pixel+=4){const auto alphaByte=input[pixel+3];
+        if(alphaByte==0){output[pixel]=output[pixel+1]=output[pixel+2]=output[pixel+3]=0;continue;}
+        if(alphaByte==255){output[pixel]=input[pixel];output[pixel+1]=input[pixel+1];output[pixel+2]=input[pixel+2];output[pixel+3]=255;continue;}
+        const double alpha=alphaByte/255.0;
+        for(std::size_t channel=0;channel<3;++channel)output[pixel+channel]=encode[static_cast<std::size_t>(std::lround(linear[input[pixel+channel]]*alpha*65535))];
+        output[pixel+3]=alphaByte;
+    }
+}
 } // namespace detail
 
 void validatePlaneShutter(const PlaneShutter& shutter) {
@@ -347,6 +374,7 @@ struct Renderer::Impl {
         std::uint64_t revision{};
         std::size_t bytes{};
         bool groupOwned{};NativeGroup* group{};
+        std::string owner; // memory trace: the module owner that installed it (LayerRasterAttribution)
     };
     struct Texture {
         ComPtr<ID3D11ShaderResourceView> view;
@@ -357,6 +385,7 @@ struct Renderer::Impl {
         bool encodedSRGB{};
         bool mediaOwned{};
         std::shared_ptr<RetainedMediaBytes>mediaPoster;
+        std::string owner; // memory trace: the module owner that installed it (LayerRasterAttribution)
     };
     struct Draw {
         std::string sourceID;
@@ -377,6 +406,8 @@ struct Renderer::Impl {
         std::vector<Draw> draws;
         std::vector<ObjectUniform> staged;
         bool dirty{true},visibleFrame{};unsigned depth{1};
+        bool released{}; // releaseFrameTargets(): target and sampled view dropped until drawn again
+        std::string owner; // memory trace: the module owner that configured it
     };
     DWORD ownerThread{GetCurrentThreadId()};
     HWND window{};
@@ -418,6 +449,7 @@ struct Renderer::Impl {
     std::shared_ptr<RendererCompositionSurface>compositionSurface;bool compositionSuspended{};
     std::shared_ptr<MediaBudget>mediaBudget=std::make_shared<MediaBudget>();
     std::size_t groupBytes{};
+    bool targetsReleased{}; // releaseFrameTargets(): linear (and offscreen output) targets dropped
     std::unique_ptr<SourceGraphics> source;
     bool sourcePassEnabled{true};
 
@@ -489,6 +521,26 @@ struct Renderer::Impl {
         // Filtering must interpolate premultiplied linear values. Sampling
         // straight RGB/alpha and multiplying afterwards creates dark borders
         // against transparent texels. Conversion happens only on replacement.
+        if (input.colorSpace == TextureColorSpace::sRGB) {
+            // Four bytes per texel (the common case: rasterized sRGB layers):
+            // the sRGB view decodes to the same premultiplied linear values.
+            std::vector<std::uint8_t> premultiplied(input.straightRGBA.size());
+            detail::prepareTextureSRGB8(input.straightRGBA, premultiplied);
+            D3D11_TEXTURE2D_DESC description{};
+            description.Width = input.width; description.Height = input.height;
+            description.MipLevels = description.ArraySize = description.SampleDesc.Count = 1;
+            description.Format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+            description.Usage = D3D11_USAGE_IMMUTABLE;
+            description.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+            D3D11_SUBRESOURCE_DATA pixels{};
+            pixels.pSysMem = premultiplied.data(); pixels.SysMemPitch = input.width * 4;
+            ComPtr<ID3D11Texture2D> resource;
+            checked(device->CreateTexture2D(&description, &pixels, &resource), "Upload retained texture");
+            Texture result;
+            checked(device->CreateShaderResourceView(resource.Get(), nullptr, &result.view), "Create retained texture view");
+            result.filter = input.filter; result.revision = revision; result.bytes = premultiplied.size();
+            return result;
+        }
         std::vector<std::uint16_t> premultiplied(input.straightRGBA.size());
         detail::prepareTextureRGBA16(input.straightRGBA,input.colorSpace,premultiplied);
         D3D11_TEXTURE2D_DESC description{};
@@ -526,6 +578,25 @@ struct Renderer::Impl {
         checked(device->CreateRenderTargetView(linearTarget.Get(), nullptr, &linearView), "Bind linear composition target");
         checked(device->CreateShaderResourceView(linearTarget.Get(), nullptr, &linearResource), "Bind linear composition input");
     }
+    // The frame targets dropped by releaseFrameTargets(), created again for a draw.
+    void restoreFrameTargets() {
+        if (!targetsReleased) return;
+        bindTargets(); targetsReleased = false; counters.releasedTargetBytes -= std::min(counters.releasedTargetBytes, frameTargetBytes());
+        ++counters.frameTargetRestores;
+    }
+    std::size_t frameTargetBytes() const noexcept { return std::size_t(width) * height * (offscreen ? 12 : 8); }
+    void restoreGroupTarget(NativeGroup& group) {
+        D3D11_TEXTURE2D_DESC description{}; description.Width = group.width; description.Height = group.height;
+        description.MipLevels = description.ArraySize = description.SampleDesc.Count = 1;
+        description.Format = DXGI_FORMAT_R16G16B16A16_FLOAT; description.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+        ComPtr<ID3D11Texture2D> targetTexture; checked(device->CreateTexture2D(&description, nullptr, &targetTexture), "Restore native group target");
+        ComPtr<ID3D11RenderTargetView> view; checked(device->CreateRenderTargetView(targetTexture.Get(), nullptr, &view), "Restore native group target view");
+        auto& texture = textures.find(group.output.textureID)->second;
+        checked(device->CreateShaderResourceView(targetTexture.Get(), nullptr, &texture.view), "Restore native group sampled output");
+        group.target = std::move(view); group.released = false; group.dirty = true;
+        counters.releasedTargetBytes -= std::min(counters.releasedTargetBytes, group.bytes);
+        ++counters.nativeGroupTargetRestores; ++counters.nativeGroupTargetAllocations;
+    }
     void initialize(HWND targetWindow, std::uint32_t w, std::uint32_t h, const RendererOptions &options) {
         window = targetWindow;
         dimensions(w, h);
@@ -548,7 +619,7 @@ struct Renderer::Impl {
         // do not silently replace its device or downgrade its creation flags.
         const bool requireVideoDriver=mediaVideo&&options.driver==Driver::hardware;
         checked(D3D11CreateDevice(nullptr, options.driver == Driver::hardware ? D3D_DRIVER_TYPE_HARDWARE : D3D_DRIVER_TYPE_WARP,
-            nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT|(requireVideoDriver?D3D11_CREATE_DEVICE_VIDEO_SUPPORT:0u), levels, 1, D3D11_SDK_VERSION, &device, nullptr, &context), "Create D3D11 device");
+            nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT|(requireVideoDriver?D3D11_CREATE_DEVICE_VIDEO_SUPPORT:0u)|(options.preventDriverThreads?D3D11_CREATE_DEVICE_PREVENT_INTERNAL_THREADING_OPTIMIZATIONS:0u), levels, 1, D3D11_SDK_VERSION, &device, nullptr, &context), "Create D3D11 device");
         if(mediaVideo){ComPtr<ID3D10Multithread>multithread;checked(device.As(&multithread),"Enable shared media device thread protection");multithread->SetMultithreadProtected(TRUE);}
         if (!offscreen) {
         ComPtr<IDXGIDevice1> dxgi;
@@ -672,7 +743,8 @@ void Renderer::resize(std::uint32_t width, std::uint32_t height) {
         r.context->ClearState();
         r.outputView.Reset(); r.backBuffer.Reset(); r.linearView.Reset(); r.linearResource.Reset(); r.linearTarget.Reset();
         if (!r.offscreen) checked(r.swapchain->ResizeBuffers(2, width, height, DXGI_FORMAT_B8G8R8A8_UNORM, r.swapchainFlags), "Resize composition buffers");
-        r.width = width; r.height = height; r.bindTargets();
+        r.counters.releasedTargetBytes -= std::min(r.counters.releasedTargetBytes, r.targetsReleased ? r.frameTargetBytes() : 0);
+        r.width = width; r.height = height; r.bindTargets(); r.targetsReleased = false;
         if(r.compositionSurface){r.compositionSurface->impl_->width=width;r.compositionSurface->impl_->height=height;}
     } catch (...) { reset(); throw; }
 }
@@ -716,6 +788,7 @@ bool Renderer::setMesh(std::string sourceID, std::uint64_t revision, MeshData in
     mesh.vertices = immutableBuffer(r.device.Get(), D3D11_BIND_VERTEX_BUFFER, input.vertices.data(), input.vertices.size_bytes());
     mesh.indices = immutableBuffer(r.device.Get(), D3D11_BIND_INDEX_BUFFER, input.indices.data(), input.indices.size_bytes());
     mesh.indexCount = static_cast<UINT>(input.indices.size()); mesh.revision = revision; mesh.bytes = bytes;
+    mesh.owner = LayerRasterAttribution::current(); if (mesh.owner.empty() && existing != r.meshes.end()) mesh.owner = std::move(existing->second.owner);
     auto updated=r.meshes.insert_or_assign(std::move(sourceID), std::move(mesh));r.invalidate(&updated.first->second);
     r.counters.resourceBytes = r.counters.resourceBytes - previousBytes + bytes; ++r.counters.meshUploads;
     return true;
@@ -731,9 +804,10 @@ bool Renderer::setTexture(std::string sourceID, std::uint64_t revision, TextureD
     require((input.colorSpace == TextureColorSpace::sRGB || input.colorSpace == TextureColorSpace::linear || input.colorSpace == TextureColorSpace::encodedSRGB) &&
             (input.filter == TextureFilter::nearest || input.filter == TextureFilter::linear), "Invalid texture sampling policy");
     const auto previousBytes = existing == r.textures.end() ? 0 : existing->second.bytes;
-    const auto nativeBytes = std::size_t(input.width) * input.height * 8;
+    const auto nativeBytes = std::size_t(input.width) * input.height * (input.colorSpace == TextureColorSpace::sRGB ? 4 : 8);
     r.budget(previousBytes, nativeBytes);
     auto texture = r.texture(input, revision);
+    texture.owner = LayerRasterAttribution::current(); if (texture.owner.empty() && existing != r.textures.end()) texture.owner = std::move(existing->second.owner);
     auto updated=r.textures.insert_or_assign(std::move(sourceID), std::move(texture));r.invalidate(&updated.first->second);
     r.counters.resourceBytes = r.counters.resourceBytes - previousBytes + nativeBytes; ++r.counters.textureUploads;
     return true;
@@ -753,7 +827,7 @@ std::shared_ptr<RendererMediaTexture>Renderer::createMediaTexture(std::string id
     D3D11_TEXTURE2D_DESC desc{};desc.Width=w;desc.Height=h;desc.MipLevels=1;desc.ArraySize=1;desc.SampleDesc.Count=1;desc.Format=DXGI_FORMAT_B8G8R8A8_UNORM;desc.Usage=D3D11_USAGE_DEFAULT;desc.BindFlags=D3D11_BIND_RENDER_TARGET|D3D11_BIND_SHADER_RESOURCE;
     ComPtr<ID3D11Texture2D>encoded;checked(r.device->CreateTexture2D(&desc,nullptr,&encoded),"Create bounded frame-server surface");checked(encoded.As(&media->surface),"Get owned frame-server DXGI surface");checked(r.device->CreateShaderResourceView(encoded.Get(),nullptr,&media->encoded),"Create retained frame-server view");
     desc.Format=DXGI_FORMAT_R16G16B16A16_UNORM;ComPtr<ID3D11Texture2D>linear;checked(r.device->CreateTexture2D(&desc,nullptr,&linear),"Create retained linear media texture");checked(r.device->CreateRenderTargetView(linear.Get(),nullptr,&media->linear),"Create media conversion target");
-    Impl::Texture texture;texture.filter=TextureFilter::linear;texture.mediaOwned=true;checked(r.device->CreateShaderResourceView(linear.Get(),nullptr,&texture.view),"Create retained media scene view");
+    Impl::Texture texture;texture.filter=TextureFilter::linear;texture.mediaOwned=true;texture.owner=LayerRasterAttribution::current();checked(r.device->CreateShaderResourceView(linear.Get(),nullptr,&texture.view),"Create retained media scene view");
     // Initialize both targets before publishing so no frame ever samples
     // uninitialized GPU storage while the engine is still loading.
     const float transparent[4]{};ComPtr<ID3D11RenderTargetView>inputView;checked(r.device->CreateRenderTargetView(encoded.Get(),nullptr,&inputView),"Initialize frame-server surface");r.context->ClearRenderTargetView(inputView.Get(),transparent);r.context->ClearRenderTargetView(media->linear.Get(),transparent);
@@ -903,7 +977,7 @@ bool Renderer::Impl::configureGroup(std::string id,const NativeGroupTarget&reque
         found->second->depth=depth;found->second->dirty|=changed;return changed;
     }
     require(found!=groups.end()||groups.size()<Renderer::maximumNativeGroups,"Native group count exceeds limits");
-    auto candidate=std::make_unique<NativeGroup>();candidate->depth=depth;candidate->requested=requested;candidate->coverage=coverage;
+    auto candidate=std::make_unique<NativeGroup>();candidate->owner=LayerRasterAttribution::current();candidate->depth=depth;candidate->requested=requested;candidate->coverage=coverage;
     candidate->width=pixelWidth;candidate->height=pixelHeight;candidate->bytes=std::size_t(pixelWidth)*pixelHeight*8;
     candidate->output.sourceID="native-group:"+id;candidate->output.meshID=candidate->output.sourceID+"/quad";candidate->output.textureID=candidate->output.sourceID+"/color";
     const bool existing=found!=groups.end();const auto previous=existing?found->second->bytes:0;
@@ -940,6 +1014,7 @@ bool Renderer::Impl::configureGroup(std::string id,const NativeGroupTarget&reque
         meshes.find(destination.output.meshID)->second=std::move(mesh);textures.find(destination.output.textureID)->second=std::move(texture);
         destination.depth=depth;destination.requested=requested;destination.coverage=coverage;destination.width=pixelWidth;destination.height=pixelHeight;destination.bytes=candidate->bytes;
         destination.target=std::move(candidate->target);destination.camera=std::move(candidate->camera);destination.dirty=true;
+        if(destination.released){counters.releasedTargetBytes-=std::min(counters.releasedTargetBytes,previous);destination.released=false;}
     }else{
         stagedGroups.begin()->second=std::move(candidate);meshes.merge(stagedMeshes);textures.merge(stagedTextures);groups.merge(stagedGroups);
     }
@@ -969,6 +1044,7 @@ bool Renderer::removeNativeGroup(const std::string&id){
     const auto color=r.textures.find(group.output.textureID);require(mesh!=r.meshes.end()&&color!=r.textures.end(),"Native group owned resources are missing");
     if(r.meshReferenced(&mesh->second)||r.textureReferenced(&color->second))return false;
     r.context->ClearState();r.counters.resourceBytes-=mesh->second.bytes+color->second.bytes+64;r.groupBytes-=group.bytes;
+    if(group.released)r.counters.releasedTargetBytes-=std::min(r.counters.releasedTargetBytes,group.bytes);
     r.meshes.erase(mesh);r.textures.erase(color);r.groups.erase(found);return true;
 }
 void Renderer::setCamera(const core::Matrix4 &viewProjection) {
@@ -1018,6 +1094,7 @@ void Renderer::draw(bool present) {
     require(impl_ != nullptr, "Renderer is not initialized"); auto &r = *impl_; r.thread();
     require(!present || !r.offscreen, "An isolated render target cannot present to the desktop");
     r.readbackReady = false;
+    r.restoreFrameTargets();
     const bool originalBackground = r.sourcePassEnabled && r.source && r.source->active();
     if (originalBackground) {
         r.source->renderTo(r.backBuffer.Get(), r.width, r.height);
@@ -1041,6 +1118,7 @@ void Renderer::draw(bool present) {
     for(const auto&draw:r.draws)expose(draw);
     for(auto&[id,group]:r.groups){(void)id;if(group->visibleFrame&&group->depth==2)for(const auto&draw:group->draws)expose(draw);}
     for(unsigned depth=1;depth<=2;++depth)for(auto&[id,group]:r.groups){(void)id;if(group->depth!=depth||!group->dirty||!group->visibleFrame)continue;
+        if(group->released)r.restoreGroupTarget(*group);
         r.renderNativeDraws(group->draws,group->target.Get(),group->camera.Get(),group->width,group->height,true,group->requested.colorSpace);
         group->dirty=false;++r.counters.nativeGroupRenders;
         r.invalidate(&r.textures.find(group->output.textureID)->second);
@@ -1135,6 +1213,7 @@ void Renderer::clearResources() {
     impl_->thread(); impl_->draws.clear();impl_->groups.clear();impl_->groupBytes=0; impl_->meshes.clear(); impl_->textures.clear();
     for(auto&[id,media]:impl_->media){(void)id;media->impl_->registered.store(false,std::memory_order_relaxed);}impl_->media.clear();
     impl_->context->ClearState(); impl_->counters.resourceBytes = 0;
+    impl_->counters.releasedTargetBytes = impl_->targetsReleased ? impl_->frameTargetBytes() : 0;
     if (impl_->source) impl_->source->clear();
 }
 void Renderer::reset() noexcept { impl_.reset(); }
@@ -1150,6 +1229,49 @@ bool Renderer::shadersEmbedded() noexcept {
     return false;
 #endif
 }
+std::size_t Renderer::releaseFrameTargets() {
+    require(impl_ != nullptr, "Renderer is not initialized"); auto& r = *impl_; r.thread();
+    std::size_t released{};
+    try {
+        r.readbackReady = false; r.context->ClearState();
+        if (!r.targetsReleased) {
+            // The composition back buffer is the swap chain's own (kept); an
+            // offscreen output and the linear target are this renderer's.
+            r.outputView.Reset(); r.backBuffer.Reset(); r.linearView.Reset(); r.linearResource.Reset(); r.linearTarget.Reset();
+            r.targetsReleased = true; released += r.frameTargetBytes();
+        }
+        for (auto& [id, group] : r.groups) {
+            (void)id; if (group->released) continue;
+            group->target.Reset(); r.textures.find(group->output.textureID)->second.view.Reset();
+            group->released = true; group->dirty = true; released += group->bytes;
+        }
+    } catch (const RendererError&) { reset(); throw; }
+    r.counters.releasedTargetBytes += released; ++r.counters.frameTargetReleases;
+    // The original shell pass's own full-size attachment and depth/stencil
+    // target (created again by its next render; not part of resourceBytes).
+    if (r.source) { const auto source = r.source->releaseTargets(); released += source; r.counters.sourceTargetBytesReleased += source; }
+    trim();
+    return released;
+}
+void Renderer::trim() {
+    require(impl_ != nullptr, "Renderer is not initialized"); auto& r = *impl_; r.thread();
+    // The rendered output stays readable: only bindings and driver pools go.
+    r.context->ClearState(); r.context->Flush();
+    ComPtr<IDXGIDevice3> dxgi; r.counters.driverTrimmed = false;
+    if (SUCCEEDED(r.device.As(&dxgi))) { dxgi->Trim(); r.counters.driverTrimmed = true; ++r.counters.driverTrims; }
+}
+std::size_t Renderer::releaseHiddenGroupTargets() {
+    require(impl_ != nullptr, "Renderer is not initialized"); auto& r = *impl_; r.thread();
+    std::size_t released{};
+    for (auto& [id, group] : r.groups) {
+        (void)id; if (group->released || group->visibleFrame) continue;
+        group->target.Reset(); r.textures.find(group->output.textureID)->second.view.Reset();
+        group->released = true; group->dirty = true; released += group->bytes; ++r.counters.hiddenGroupTargetReleases;
+    }
+    if (released) r.context->ClearState();
+    r.counters.releasedTargetBytes += released;
+    return released;
+}
 RendererStats Renderer::stats() const noexcept {
     if (!impl_) return {};
     auto result = impl_->counters;
@@ -1159,6 +1281,24 @@ RendererStats Renderer::stats() const noexcept {
     result.compositionSuspended=impl_->compositionSuspended;
     result.sourcePassEnabled=impl_->sourcePassEnabled;
     return result;
+}
+void Renderer::forEachResource(const std::function<void(const RendererResourceUsage&)>&visit) const {
+    if (!impl_) return; impl_->thread();
+    using K = RendererResourceUsage::Kind;
+    for (const auto& [id, t] : impl_->textures) {
+        if (t.groupOwned) continue;
+        // A live media target is charged width*height*12 (createMediaTexture);
+        // a retained poster keeps its eight bytes per pixel.
+        if (t.mediaOwned) {
+            if (t.mediaPoster) visit({id, t.owner, t.mediaPoster->bytes, K::media});
+            else if (const auto live = impl_->media.find(id); live != impl_->media.end() && live->second)
+                visit({id, t.owner, std::size_t(live->second->width()) * live->second->height() * 12, K::media});
+            continue;
+        }
+        visit({id, t.owner, t.bytes, K::texture});
+    }
+    for (const auto& [id, m] : impl_->meshes) if (!m.groupOwned) visit({id, m.owner, m.bytes, K::mesh});
+    for (const auto& [id, g] : impl_->groups) if (g) visit({id, g->owner, g->released ? 0 : g->bytes, K::nativeGroup});
 }
 RendererDeviceInfo Renderer::deviceInfo() const {
     require(impl_ != nullptr, "Renderer is not initialized"); impl_->thread();

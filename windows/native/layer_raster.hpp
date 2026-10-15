@@ -6,6 +6,7 @@
 #include "native/font_resources.hpp"
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <span>
@@ -98,6 +99,26 @@ struct LayerRasterStats {
     std::size_t textMetadataBytes{}, typographyDescriptorBytes{};
     std::uint64_t textAnalysisFormatsCreated{};
 };
+// Diagnostics (memory trace): the module owner on whose behalf the calling
+// thread rasterizes. ModuleRegistry holds one around every owner call, so a
+// new retained entry records the owner that created it ("" for the host's
+// own scenes). A thread-local view swap: no allocation, no lock.
+class LayerRasterAttribution final {
+public:
+    explicit LayerRasterAttribution(std::string_view owner) noexcept;
+    ~LayerRasterAttribution();
+    LayerRasterAttribution(const LayerRasterAttribution&) = delete;
+    LayerRasterAttribution& operator=(const LayerRasterAttribution&) = delete;
+    static std::string_view current() noexcept;
+private:
+    std::string_view previous_;
+};
+// One retained entry as the memory trace sees it (LayerRasterizer::forEachEntry).
+struct LayerRasterEntryUsage {
+    std::string_view id, owner;
+    std::size_t pixelBytes{}, retainedTextLayouts{}, typographyBytes{}, textMetadataBytes{};
+    bool paintedText{};
+};
 
 // Local model-layer rasterization only: no HWND, screen capture, clock, worker,
 // global input or projected-shell redraw. Use on its creating COM-initialized
@@ -161,6 +182,11 @@ public:
     bool remove(const std::string& sourceID);
     void clear();
     LayerRasterStats stats() const;
+    // Diagnostics only (memory trace; never on the frame path): every
+    // retained entry with its creating owner and resident bytes, and the
+    // decoded intrinsic image cache.
+    void forEachEntry(const std::function<void(const LayerRasterEntryUsage&)>&) const;
+    std::size_t decodedImageBytes() const;
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

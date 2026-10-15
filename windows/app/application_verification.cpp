@@ -3,6 +3,7 @@
 // production EndfieldHUD.exe never contains this harness. Every input is an
 // explicit synthetic fixture in a new temporary data root; nothing is shown.
 #include "app/application_impl.hpp"
+#include "app/process_diagnostics.hpp"
 #include "app/areas/calendar_reminder_module.hpp"
 #include "modules/archive_presentation.hpp"
 #include "native/display_center_logo.hpp"
@@ -134,10 +135,82 @@ int Application::Impl::runContentionTrace(){
     return 0;
 }
 
+// watch_session_preview --memory-trace: the production owner with the module
+// coverage inputs, hidden on the synthetic clock, measured where a user
+// would look: after construction, at launch idle (after the launch prewarm
+// and post-launch work), after the cold first opening, after visiting every
+// presented module once (one row per visit with its deltas), once closed and
+// after ten more open/close cycles. Hardware GPU unless --warp; synthetic
+// providers (no audio, media sessions, clipboard, accounts or installed apps).
+int Application::Impl::runMemoryTrace(){
+    if(!memoryTrace)throw std::logic_error("Memory trace requires its output");
+    double t=hostTime(args.benchmarkEpoch+10);
+    const auto settle=[&](double at){
+        if(utility&&(utility->stats().completed||(longWork&&longWork->stats().completed)))utilityCompleted();
+        if(lifecycleOpening&&!closing&&session->phase()==core::VisibilityPhase::visible){const auto token=*lifecycleOpening;lifecycleOpening.reset();perform(lifecycle.didOpen(token),at);}
+        if(lifecycleClosing&&session->phase()==core::VisibilityPhase::concealed){const auto token=*lifecycleClosing;lifecycleClosing.reset();concealed(at);perform(lifecycle.didClose(token),at);}
+    };
+    // CPU time of each traced frame (the module visits report their slowest
+    // frame and the frame that follows the end of the switch).
+    double frameMax{},frameTotal{},afterSwitch{};unsigned frameCount{},afterSwitchFrames{};bool wasSwitching{};
+    const auto frames=[&](unsigned count){for(unsigned n=0;n<count;++n){t=hostTime(t+1./60);const auto begin=Clock::now();present(t,true);const double ms=milliseconds(begin);
+        frameMax=std::max(frameMax,ms);frameTotal+=ms;++frameCount;const bool switching=notes&&notes->modulePresentation().transitioning;
+        // The frame that ends the switch (its group release and driver trim) and the two after it.
+        if(wasSwitching&&!switching)afterSwitchFrames=3;if(afterSwitchFrames){afterSwitch=std::max(afterSwitch,ms);--afterSwitchFrames;}
+        wasSwitching=switching;settle(t);}};
+    const auto idle=[&]{if(utility){utility->waitIdle();if(longWork)longWork->waitIdle();utilityCompleted();}};
+    const auto until=[&](core::SystemOverlayPhase phase,const char*what){for(unsigned n=0;n<240&&lifecycle.phase()!=phase;++n)frames(1);need(lifecycle.phase()==phase,what);};
+    // The closed HUD presents nothing; the production waitable timer still
+    // delivers the owners' deadlines (e.g. the Reader's departure release).
+    const auto deadlines=[&](double seconds){for(const double end=t+seconds;t<end;){t=hostTime(t+.1);onDeadline(t);settle(t);}};
+    // Production selects Map at construction and applies the preference record.
+    if(notes&&notes->selected()!=core::Module::map){notes->select(core::Module::map,hostTime(t));t+=1;}
+    configurationPending=true;applyConfiguration(t);
+    prewarm();idle();
+    recordMemory("launch-idle",true);
+    perform(lifecycle.toggle(),t);until(core::SystemOverlayPhase::open,"Traced opening completes");frames(30);idle();frames(2);
+    recordMemory("first-opening",false);
+    // Every presented module, as a user visits them: one row of deltas each.
+    std::vector<core::Module> modules;
+    for(unsigned n=0;n<=static_cast<unsigned>(core::Module::profile);++n){const auto module=static_cast<core::Module>(n);
+        if(auto*owner=registry.presenter(module);owner&&registry.enabled(*owner))modules.push_back(module);}
+    const auto sample=[&]{struct Sample{ProcessDiagnostics process;gpu::LayerRasterStats raster;gpu::RendererStats rendered;};return Sample{captureProcessDiagnostics(false),rasterizer.stats(),renderer.stats()};};
+    const auto gpuBytes=[](const ProcessDiagnostics&d){std::uint64_t sum{};for(const auto&a:d.adapters)sum+=a.localUsage+a.nonLocalUsage;return sum;};
+    const auto delta=[](auto after,auto before){return Json(static_cast<std::int64_t>(after)-static_cast<std::int64_t>(before));};
+    for(const auto module:modules){
+        const auto before=sample();frameMax=frameTotal=afterSwitch=0;frameCount=0;
+        selectModule(module,t);frames(45);idle();frames(5);
+        const auto after=sample();auto*owner=registry.presenter(module);
+        memoryTrace->visit(Json::Object{{"module",std::string(core::moduleIdentifier(module))},{"owner",owner?std::string(owner->name()):std::string()},
+            {"privateBytes",Json(static_cast<std::int64_t>(after.process.memory.privateBytes))},
+            {"privateBytesDelta",delta(after.process.memory.privateBytes,before.process.memory.privateBytes)},
+            {"heapCommittedDelta",delta(after.process.heaps.committed,before.process.heaps.committed)},
+            {"rasterEntriesDelta",delta(after.raster.entries,before.raster.entries)},{"rasterBytesDelta",delta(after.raster.resourceBytes,before.raster.resourceBytes)},
+            {"rendererBytesDelta",delta(after.rendered.resourceBytes,before.rendered.resourceBytes)},
+            {"gpuUsageDelta",delta(gpuBytes(after.process),gpuBytes(before.process))},
+            {"threadsDelta",delta(after.process.memory.threads,before.process.memory.threads)},{"threads",Json(static_cast<std::int64_t>(after.process.memory.threads))},
+            {"handlesDelta",delta(after.process.memory.handles,before.process.memory.handles)},
+            {"maxFrameCPUMilliseconds",frameMax},{"meanFrameCPUMilliseconds",frameCount?frameTotal/frameCount:0.},{"switchEndFrameCPUMilliseconds",afterSwitch}});
+    }
+    recordMemory("after-use",true);
+    perform(lifecycle.toggle(),t);until(core::SystemOverlayPhase::closed,"Traced closing completes");deadlines(3);idle();
+    recordMemory("closed",true);
+    for(unsigned cycle=0;cycle<10;++cycle){
+        perform(lifecycle.toggle(),t);until(core::SystemOverlayPhase::open,"Traced reopening completes");frames(10);
+        perform(lifecycle.toggle(),t);until(core::SystemOverlayPhase::closed,"Traced reclosing completes");deadlines(1);
+    }
+    deadlines(2);idle();
+    recordMemory("after-cycles",true);
+    writeMemoryTrace();std::cout<<"Wrote hidden memory trace\n";
+    shutdownVisible();
+    return 0;
+}
+
 int Application::Impl::runHiddenVerification(){
     if(args.mode!=ApplicationMode::hiddenBenchmark)throw std::logic_error("Hidden verification requires the hidden benchmark mode");
     if(!args.startupTrace.empty())return runStartupTrace();
     if(!args.contentionTrace.empty())return runContentionTrace();
+    if(!args.memoryTrace.empty())return runMemoryTrace();
     const auto start=args.benchmarkEpoch;const auto deviceInfo=renderer.deviceInfo();unsigned lifecycleChecks{};
         auto snapshot=[&]{return Snapshot{renderer.stats(),renderer.sourceGraphics().stats(),rasterizer.stats(),session->frameStats(),session->stats()};};Json::Array rows,images;
         if(!args.snapshots.empty()){need(fs::create_directory(args.snapshots),"Cannot create new snapshot directory");ehud::data::detail::validateRoot(args.snapshots);}
@@ -222,6 +295,10 @@ int Application::Impl::runHiddenVerification(){
             prewarm();
             hostCheck(prewarmed&&session->phase()==core::VisibilityPhase::concealed&&!session->currentFrame()&&!host.stats().visible&&!IsWindowVisible(static_cast<HWND>(host.hwnd())),
                 "The launch prewarm poses the first opening offscreen and conceals the HUD again");
+            // The Map adapter forwards the prewarm (MapPreview::prewarm): the first
+            // opening on Map only re-poses its built chrome; nothing is activated.
+            if(map&&mapModuleOwner&&registry.enabled(*mapModuleOwner)&&notes->selected()==core::Module::map)
+                hostCheck(map->sceneStats().chromeBuilds>=1&&!map->state().active()&&!map->rasterStats().active,"The launch prewarm builds the Map without activating it");
             open(time);present(time+1,true);time+=2;
             // Before any module is shown (every owner receives these real host
             // calls). The ONE host time (ModuleRegistry::hostTime): an owner whose
@@ -547,6 +624,17 @@ int Application::Impl::runHiddenVerification(){
                      hostCheck(view.height==95&&r&&volume->wheel({r->x,r->y,-1,false,0,3},time)&&volume->state().applicationScroll()==36,"The Volume app list shows three rows and scrolls by one wheel detent");
                      for(unsigned frame=0;frame<10;++frame)present(time+double(frame)/60,true);time+=1;
                      hostCheck(rasterizer.stats().textLayoutsCreated-before.textLayoutsCreated<=3,"Scrolling the Volume app list lays out at most the row entering its window");}
+                    // RC 128 user report (the page switch shook): Headphones / Bluetooth and
+                    // back, frame by frame through the production owner.
+                    {const auto s0=volume->sceneStats();
+                     hostCheck(volume->perform("audio:headphones",time)&&volume->state().headphones()&&volume->requiresFrames(time),"Headphones / Bluetooth starts the source page motion");
+                     unsigned frames{};while(frames<40&&volume->requiresFrames(time)){time+=1./60;present(time,true);++frames;}
+                     const auto s1=volume->sceneStats();
+                     hostCheck(frames>=10&&frames<=14&&s1.structureUpdates==s0.structureUpdates&&s1.detailBuilds==s0.detailBuilds+1&&s1.rowParks>s0.rowParks,"The Volume page switch plays the source 0.18 s motion, keeps the header and parks the app rows");
+                     hostCheck(volume->perform("audio:applications",time)&&!volume->state().headphones(),"App volume returns");
+                     frames=0;while(frames<40&&volume->requiresFrames(time)){time+=1./60;present(time,true);++frames;}
+                     const auto s2=volume->sceneStats();
+                     hostCheck(frames>=10&&frames<=14&&s2.rowRevivals>s1.rowRevivals&&s2.rowBuilds==s1.rowBuilds&&s2.structureUpdates==s1.structureUpdates,"Returning to App volume replays the motion and composes the parked rows again unchanged");time+=1;}
                     probe.disconnectOwners();hostCheck(volumeModuleOwner->automationCount()==0&&probe.groups()==0,"Concealing disconnects every fragment");
                     probe.shutdown();
                 }
@@ -588,6 +676,12 @@ int Application::Impl::runHiddenVerification(){
                 groupProbe(core::Module::nowPlaying,areaOwner("nowPlaying"),std::size_t{6});
                 groupProbe(core::Module::account,areaOwner("account"),std::nullopt);
                 groupProbe(core::Module::profile,areaOwner("profile"),std::nullopt);
+                // The provider modules' Mac accessibility buttons (and the telemetry
+                // status text) through their built-in adapters.
+                groupProbe(core::Module::clipboard,clipboardModuleOwner.get(),std::nullopt);
+                groupProbe(core::Module::eventLog,eventLogModuleOwner.get(),std::nullopt);
+                groupProbe(core::Module::activityMonitor,activityModuleOwner.get(),std::nullopt);
+                groupProbe(core::Module::storage,storageModuleOwner.get(),std::nullopt);
                 // Keyboard focus under the real root (GetFocus): the open Notes
                 // editor is the focused element of the root and of its group;
                 // finishing it leaves no Notes element focused.
@@ -876,6 +970,14 @@ int Application::Impl::runHiddenVerification(){
                 }
             }
             close(time);present(time+.7,true);concealed(time+.7);
+            // The production adapter forwards the HUD visibility and the end of
+            // the close: a Volume that is not the shown module keeps no artwork.
+            if(volume&&volumeModuleOwner&&registry.enabled(*volumeModuleOwner)&&notes->selected()!=core::Module::volume)
+                hostCheck(volume->sceneStats().parts==0&&volume->sceneStats().pixelBytes==0&&volume->sceneStats().parks>=1,"Closing the HUD on another module releases every Volume raster");
+            // Work Mode (visited by the module cycles and the UIA probes) releases its
+            // rasters and GPU resources once the HUD closed on another module.
+            if(workMode&&workModeModuleOwner&&registry.enabled(*workModeModuleOwner)&&notes->selected()!=core::Module::workMode)
+                hostCheck(workMode->resources().sceneParts==0&&!workMode->resources().gpuResident&&workMode->resources().parks>=1,"Closing the HUD on another module releases the Work Mode page");
             // Host broadcasts the module areas rely on, through the same routes
             // the visible owner uses, on the synthetic clock: suspend/resume,
             // clock/time-zone and system settings changes, utility completion.
@@ -926,6 +1028,27 @@ int Application::Impl::runHiddenVerification(){
                     t=run(t,2.4);outsideCheck(lifecycle.phase()==core::SystemOverlayPhase::closed,"A press during the entrance closes the HUD after it opened");
                     perform(lifecycle.reopen(),t);t=run(t,1.2);
                     outsideCheck(lifecycle.phase()==core::SystemOverlayPhase::open&&notes->selected()==core::Module::notes,"The HUD reopens on its module after an outside close");
+                    // The header sanity wallet (account area; core design rect 562,2 168x42,
+                    // centre 646,23, about 331 from the circle centre) is a control outside the
+                    // displayed circle: its press stays with the wallet, open or during the entrance.
+                    // The wallet's point through the core plane as currently posed (the
+                    // entrance animates the plane, so it is projected again there).
+                    const auto walletPoint=[&]()->std::optional<core::Point>{
+                        if(!chromePlan||!chromePlan->projection().center)return std::nullopt;
+                        const auto plane=core::Projection::viewport(gpu::layerViewportProjection(metrics.pixelWidth,metrics.pixelHeight)*core::Matrix4::scale(metrics.scale,metrics.scale)**chromePlan->projection().center,metrics.pixelWidth,metrics.pixelHeight);
+                        const auto q=plane.project({646,23});if(!q)return std::nullopt;return core::Point{q->x/metrics.scale,q->y/metrics.scale};};
+                    if(const auto wallet=walletPoint();wallet&&registry.covers(*wallet)){
+                        outsideCheck(onPointer({PointerKind::down,PointerButton::left,wallet->x,wallet->y})&&lifecycle.phase()==core::SystemOverlayPhase::open&&!closing,"A press on the header sanity wallet outside the displayed circle is the wallet's: the HUD stays open");
+                        (void)onPointer({PointerKind::up,PointerButton::left,wallet->x,wallet->y});t=run(t,.4);
+                        outsideCheck(lifecycle.phase()==core::SystemOverlayPhase::open&&!closing,"Its release keeps the HUD open");
+                        perform(lifecycle.toggle(),t);t=run(t,1.2);perform(lifecycle.reopen(),t);t=run(t,.05);
+                        const auto entering=walletPoint();
+                        outsideCheck(lifecycle.phase()==core::SystemOverlayPhase::opening&&entering&&registry.covers(*entering)&&!backgroundPressCloses(*entering),
+                            "During the entrance the wallet covers its posed point, which is no background press");
+                        if(entering){(void)onPointer({PointerKind::down,PointerButton::left,entering->x,entering->y});(void)onPointer({PointerKind::up,PointerButton::left,entering->x,entering->y});}
+                        t=run(t,2.4);
+                        outsideCheck(lifecycle.phase()==core::SystemOverlayPhase::open&&notes->selected()==core::Module::notes,"A press on the wallet during the entrance does not close the HUD once it opened");
+                    }
                     // Empty space inside the circle, outside every control and owner.
                     std::optional<core::Point> inside;
                     if(chromePlan&&chromePlan->projection().center){
@@ -1001,7 +1124,10 @@ int Application::Impl::runHiddenVerification(){
                 key(VK_RETURN);
                 lifecycleCheck(quitRequested&&lifecycle.terminating()&&lifecycle.phase()==core::SystemOverlayPhase::closing&&closing,"Confirmed quit plays the closing animation");
                 lifecycleCheck(lifecycle.toggle().empty()&&lifecycle.reopen().empty(),"Quitting ignores summons");
-                t=run(t,1.5);lifecycleCheck(stopping&&lifecycle.phase()==core::SystemOverlayPhase::closed&&!quitConfirmation->presented(),"The ordered drain runs after concealment, then the owner stops");
+                t=run(t,1.5);
+                {const auto state="The ordered drain runs after concealment, then the owner stops (stopping="+std::to_string(stopping)+" phase="+std::to_string(int(lifecycle.phase()))+
+                    " card="+std::to_string(quitConfirmation->presented())+" quit="+std::to_string(quitRequested)+")";
+                 lifecycleCheck(stopping&&lifecycle.phase()==core::SystemOverlayPhase::closed&&!quitConfirmation->presented(),state.c_str());}
                 {auto work=takeRestartWork();restartCheck(restartAccepted==false&&work&&!takeRestartWork(),"The accepted restart's work is handed out exactly once");
                  work();restartCheck(*restartRuns==1,"The handed-out work is the requested one");}
                 }

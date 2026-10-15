@@ -250,6 +250,7 @@ void Application::Impl::onFrame(double time){
     // once the session is visible; a focus loss queued during opening closes now.
     if(lifecycleOpening&&!closing&&session->phase()==core::VisibilityPhase::visible){const auto token=*lifecycleOpening;lifecycleOpening.reset();traceOpened(time);perform(lifecycle.didOpen(token),time);
         if(startupTrace&&startupTrace->complete())writeStartupTrace();
+        if(memoryTrace&&production()&&memoryTrace->openings<8)recordMemory("opened-"+std::to_string(++memoryTrace->openings),false);
         // Entries enabled only once opening completes (the Power navigation entry) re-read their state.
         automationChanged();refreshAutomation();if(stopping)return;}
     if(!active&&session->phase()==core::VisibilityPhase::concealed){
@@ -323,6 +324,12 @@ bool Application::Impl::backgroundPressCloses(core::Point client){
     if(phase==core::VisibilityPhase::concealed||!(session->inputEnabled()||phase==core::VisibilityPhase::opening))return false;
     if(quitConfirmation&&quitConfirmation->presented())return false;
     if(session->sourceControlAt(client,centerLogoMainID))return false;
+    // A press over a shown owner control (ModuleOwner::covers, e.g. the header
+    // sanity wallet at core design 562,2 168x42, almost entirely outside the
+    // displayed circle) is never a background press. During the entrance the
+    // owners' pointer routes refuse input (routePointer needs inputEnabled), so
+    // without this the press would queue a close.
+    if(registry.covers(client))return false;
     std::optional<core::Point> design=coreDesignPoint(client);
     if(!design){
         // SystemHUDView: `coreDesignPoint(p) ?? p` (the flat design point).

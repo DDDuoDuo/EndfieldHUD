@@ -17,6 +17,7 @@
 #include <cstdio>
 #include <typeinfo>
 #include <type_traits>
+#include <utility>
 #include <cwchar>
 #include <iostream>
 #include <shellapi.h>
@@ -245,6 +246,7 @@ Application::Impl::Impl(ApplicationOptions options)
     if(args.readerScrollTrace)readerTrace=std::make_unique<ReaderScrollTrace>();
     probe.enabled=!args.liveDiagnostics.empty();
     if(!args.startupTrace.empty())startupTrace=std::make_unique<StartupTrace>(preparation);
+    if(!args.memoryTrace.empty())memoryTrace=std::make_unique<MemoryTrace>(args.memoryTrace);
     // A failed startup still tears owners down in the established order
     // before the HWND, renderer and COM members are destroyed.
     try{construct();}catch(...){try{cleanup();}catch(...){}throw;}
@@ -359,7 +361,13 @@ void Application::Impl::construct(){
     }
     if(!visibleMode()){windowOptions.pixelWidth=args.benchmarkWidth;windowOptions.pixelHeight=args.benchmarkHeight;}
     host.create(windowOptions,callbacks());metrics=host.metrics();updateContentScale();startup.mark("hidden-window");
-    renderer.initialize(host.hwnd(),metrics.pixelWidth,metrics.pixelHeight,{args.warp?gpu::Driver::warpForTests:gpu::Driver::hardware,args.shader,visibleMode()?gpu::RenderTarget::composition:gpu::RenderTarget::offscreenForTests,!args.dataRoot.empty()});startup.mark("renderer-device-target");
+    {gpu::RendererOptions rendererOptions{args.warp?gpu::Driver::warpForTests:gpu::Driver::hardware,args.shader,visibleMode()?gpu::RenderTarget::composition:gpu::RenderTarget::offscreenForTests,!args.dataRoot.empty()};
+     // The HUD submits a few hundred quads per frame from one thread: the
+     // driver's internal threading optimizations bring it nothing, while on
+     // the measured NVIDIA driver they keep a worker pool (41 threads at
+     // launch, 59 after use) and large command queues for the device.
+     rendererOptions.preventDriverThreads=true;
+     renderer.initialize(host.hwnd(),metrics.pixelWidth,metrics.pixelHeight,rendererOptions);}startup.mark("renderer-device-target");
     if(visibleMode()){
         backdropQueue=std::make_unique<BackdropQueue>();
         const BOOL known=FALSE;const auto result=DwmSetWindowAttribute(static_cast<HWND>(host.hwnd()),DWMWA_USE_HOSTBACKDROPBRUSH,&known,sizeof(known));
@@ -385,11 +393,14 @@ void Application::Impl::construct(){
     materials->upload(renderer.sourceGraphics());publishNative();host.setCursor(cursor.handle());ready=true;startup.mark("initial-gpu-upload");
     environment.viewport={metrics.width,metrics.height};const auto start=visibleMode()?now():hostTime(args.benchmarkEpoch);session->setEnvironment(environment,start);
     if(args.nativeClipboard||args.nativeActivity||args.reader||args.calendar||!args.mapGeography.empty()||args.eventLogFixture||args.nativeEventLog||!args.settingsAssets.empty()||!args.archiveAssets.empty()||!args.storageAssets.empty()||!args.modules.empty()){
-        const auto window=static_cast<HWND>(host.hwnd());utility=std::make_unique<UtilityExecutor>([window]{need(PostMessageW(window,utilityMessage,serviceGeneration,0)!=FALSE,"Post utility completion");});
+        const auto window=static_cast<HWND>(host.hwnd());utility=std::make_unique<UtilityExecutor>([window]{need(PostMessageW(window,utilityMessage,serviceGeneration,0)!=FALSE,"Post utility completion");},32,utilityIdleExit,"EndfieldHUD utility");
         attributeCompletions(*utility);
         // The Shelf reads item properties and writes Migration/relink.json on the
         // shared executor (tools/shelf_preview.hpp); it was constructed before it.
         if(shelf)isolate(shelfModuleOwner,"utility",[&]{shelf->setUtility(utility.get());});
+        // Notes' Mac import relink ledger writes (relinks, deletions) run on the
+        // shared executor; the teardown destroys Notes before the executor.
+        if(notes)notes->setUtilityExecutor(utility.get());
     }
     if(!args.mapGeography.empty())optional("map",[&]{constructMap();});
     if(args.reader)optional("reader",[&]{constructReader();});
@@ -430,6 +441,7 @@ void Application::Impl::construct(){
     // Without the Settings store the launch prewarm follows construction.
     if(production()&&!settingsSaves)(void)PostMessageW(static_cast<HWND>(host.hwnd()),prewarmMessage,serviceGeneration,0);
     startup.mark("all-preview-owners-ready");preparedMS=milliseconds(preparation);
+    recordMemory("constructed",true);
 }
 
 // ---------------------------------------------------------------------------
@@ -463,7 +475,7 @@ void Application::Impl::constructAreas(){
     // wait behind an export. Completions post the same utility notice.
     if(utility){
         const auto window=static_cast<HWND>(host.hwnd());
-        longWork=std::make_unique<UtilityExecutor>([window]{PostMessageW(window,utilityMessage,serviceGeneration,0);});attributeCompletions(*longWork);
+        longWork=std::make_unique<UtilityExecutor>([window]{PostMessageW(window,utilityMessage,serviceGeneration,0);},32,utilityIdleExit,"EndfieldHUD long work");attributeCompletions(*longWork);
         areaHost->publish("app.longWorkExecutor",*longWork);
     }
     // The Power page shows the area's merged reading (with the mWh pair).
@@ -585,6 +597,32 @@ void Application::Impl::concealed(double time){
     // The hidden HUD has no projected controls for UI Automation.
     if(automation)automation->disconnectOwners();
     broadcast(HostEvent::Kind::overlayConcealed,time);
+    releaseConcealedGraphics();
+    // ENDFIELDHUD_MEMORY_TRACE: the first closings (the hidden run records its own stages).
+    if(memoryTrace&&production()&&memoryTrace->closings<8)recordMemory("closed-"+std::to_string(++memoryTrace->closings),true);
+}
+// Nothing is drawn until the next opening. One publication lets the owners
+// that released their artwork on the overlayConcealed broadcast retire its GPU
+// resources now (instead of at the next opening), then the renderer drops
+// what only a drawn frame uses (the linear composition target, the original
+// shell pass's attachment and depth target and the native group targets,
+// created again by the frames that draw them) and the driver trims its
+// internal buffers. Video memory is charged to this process's commit, so this
+// is what the closed HUD gives back (measured on the laptop's NVIDIA GPU:
+// 543 -> 338 MiB private after the first close, 548 -> 277 MiB after ten
+// more open/close cycles, with the four-byte textures).
+void Application::Impl::releaseConcealedGraphics(){
+    if(!ready||stopping||!renderer.stats().initialized)return;
+    try{publishNative();(void)renderer.releaseFrameTargets();}
+    catch(const std::exception&e){
+        if(!production())throw;
+        const auto line=std::string("EndfieldHUD could not release the closed HUD's graphics (")+typeid(e).name()+")\n";
+        std::fputs(line.c_str(),stderr);OutputDebugStringA(line.c_str());
+    }
+    // The process heaps keep the blocks freed by the owners' releases (raster
+    // and decode buffers, document models) committed: decommit them as well.
+    HEAP_OPTIMIZE_RESOURCES_INFORMATION heaps{HEAP_OPTIMIZE_RESOURCES_CURRENT_VERSION,0};
+    (void)HeapSetInformation(nullptr,HeapOptimizeResources,&heaps,sizeof(heaps));
 }
 void Application::Impl::systemChange(std::uint32_t message,double time){
     time=hostTime(time);if(message==WM_TIMECHANGE&&archiveDates)archiveDates->refreshSystemTimeZone();
@@ -874,7 +912,7 @@ void Application::Impl::constructClipboard(){
     }
     gpu::LayerRasterOptions ro;ro.pixelsPerPoint=2;ro.paddingPoints=1;ro.assetRoot=clipboardAssets->root();if(clipboardProvider)ro.memoryImages=&clipboardProvider->images();
     clipboard=std::make_unique<tools::ClipboardPreview>(rasterizer,ro,std::move(actions),gpu::ClipboardStrings{},gpu::ClipboardAppearance{},clipboardAssets->images(),clipboardAssets->revealSamples());clipboard->resize(metrics);
-    clipboardModuleOwner=clipboardModule(*clipboard,*clipboardAssets);registerModule(clipboardModuleOwner);
+    clipboardModuleOwner=clipboardModule(*clipboard,*clipboardAssets,peerHooks());registerModule(clipboardModuleOwner);
 }
 void Application::Impl::constructArchive(){
     const auto window=static_cast<HWND>(host.hwnd());const auto start=visibleMode()?now():args.benchmarkEpoch;
@@ -913,11 +951,17 @@ void Application::Impl::constructStorage(){
         options.scanDetails=[fixture](const modules::StorageScanCancellation&cancel){++fixture->detailScans;modules::StorageDetailsSnapshot result;if(!cancel.cancelled()){result.categories={{"documents","Synthetic Documents",123000000LL,false}};result.updatedAt=fixture->time.load(std::memory_order_relaxed);}return result;};
         options.completionClock=[fixture]{return fixture->time.load(std::memory_order_relaxed);};
         options.openSettings=[fixture]{++fixture->settingsRequests;};
+    }else{
+        // Storage volume choice (Windows addition, user request): remembered in the
+        // preference record as "storageVolume" (unknown keys survive the store;
+        // Restore Defaults clears it, which shows the startup volume).
+        options.loadVolume=[this]{const auto&value=std::as_const(configuration).fields["storageVolume"];return value.isString()?value.string():std::string{};};
+        options.saveVolume=[this](const std::string&id){if(areaHost)(void)areaHost->updateSettings([&id](ehud::data::Settings&s){s.set("storageVolume",Json(id));});};
     }
     storage=std::make_unique<tools::StoragePreview>(rasterizer,std::move(options));storage->resize(metrics);
     storageModuleOwner=storageModule(*storage,StorageModuleHooks{
         [this]{return storageFixture?storageFixture->time.load(std::memory_order_relaxed):now();},
-        [this]{return !closing&&session->phase()!=core::VisibilityPhase::concealed;}});
+        [this]{return !closing&&session->phase()!=core::VisibilityPhase::concealed;}},peerHooks());
     registerModule(storageModuleOwner);
     startup.mark(args.moduleCoverage?"synthetic-storage-owner":"development-storage-capacity-owner");
 }
@@ -958,7 +1002,7 @@ void Application::Impl::constructActivity(){
         activityTelemetry=std::make_unique<modules::ActivityTelemetryLink>(activityPlan,activity->providerState());
         activityPlan.start(now()); // AppDelegate.swift:216 activity.start(): 5 s session history from launch
     }
-    activityModuleOwner=activityModule(*activity);registerModule(activityModuleOwner);
+    activityModuleOwner=activityModule(*activity,peerHooks());registerModule(activityModuleOwner);
     startup.mark(args.nativeActivity?"native-activity-owner":"synthetic-activity-owner");
 }
 void Application::Impl::constructEventLog(){
@@ -981,7 +1025,7 @@ void Application::Impl::constructEventLog(){
     // Windows time zone; the synthetic fixture keeps its constant row text.
     auto actions=args.eventLogFixture?eventOwner->callbacks([](double){return std::string("10-08 12:34:56");}):eventOwner->callbacks(gpu::localEventLogTimestamp);
     eventLog=std::make_unique<tools::EventLogPreview>(rasterizer,gpu::LayerRasterOptions{},std::move(actions),modules::EventLogStrings{},modules::EventLogAppearance{},eventOwner->nameCompactor());eventLog->resize(metrics);
-    eventLogModuleOwner=eventLogModule(*eventLog);registerModule(eventLogModuleOwner);
+    eventLogModuleOwner=eventLogModule(*eventLog,peerHooks());registerModule(eventLogModuleOwner);
 }
 void Application::Impl::constructBattery(){
     modules::BatteryReading value;value.present=true;value.percentage=63;
@@ -1401,6 +1445,7 @@ bool Application::Impl::flushDocuments(double time,bool reopenOnFailure){
     // Archive, Calendar and Reader drains share the executor; then Settings.
     ModuleOwner*failed=registry.first(ModuleRegistry::Chain::flush,[&](ModuleOwner&o,const ModuleRouting&){return !o.flush(hostTime(time));},"flush");
     if(failed){
+        if(!production())std::cerr<<"Document flush declined by "<<failed->name()<<'\n';
         if(reopenOnFailure){
             const auto module=failed==archiveModuleOwner.get()?core::Module::archive:failed==calendarModuleOwner.get()?core::Module::calendar:core::Module::reader;
             reopenAfterSaveFailure(module,time);
@@ -1410,6 +1455,7 @@ bool Application::Impl::flushDocuments(double time,bool reopenOnFailure){
     // Flush only at an explicit shutdown boundary. A failed save retains its
     // record and restores the Settings UI instead of silently quitting.
     if(settingsSaves&&!settingsSaves->flush()){
+        if(!production())std::cerr<<"Document flush declined by the preference store\n";
         if(reopenOnFailure){if(settingsUI)settingsUI->controller().setStatus(settingsSaves->status().error.value_or("Unable to save settings"));reopenAfterSaveFailure(core::Module::system,time);}
         return false;
     }
@@ -1682,6 +1728,7 @@ void Application::Impl::prewarm(){
     else try{work();}catch(const std::exception&e){
         const auto line=std::string("EndfieldHUD launch prewarm was skipped (")+typeid(e).name()+")\n";std::fputs(line.c_str(),stderr);OutputDebugStringA(line.c_str());}
     if(startupTrace)startupTrace->stage("launch-prewarm",begin,Clock::now());
+    if(memoryTrace&&production())recordMemory("launch-prewarm",true);
 }
 bool Application::Impl::present(double time,bool submit){
     const auto traceFrameStart=readerTrace?Clock::now():Clock::time_point{};
@@ -1728,7 +1775,14 @@ bool Application::Impl::present(double time,bool submit){
     if(mediaBroker){mediaBroker->sample(time);if(notes)notes->refreshSharedMedia(hostTime(time));
         if(archiveMedia)isolate(archiveModuleOwner,"frame",[&]{if(archiveMedia->refresh(hostTime(time))&&archive&&notes&&chromePlan&&chromePlan->projection().center)archive->update(*chromePlan->projection().center,noteChromeSettings,notes->modulePresentation(),static_cast<float>(canvasOpacity(time)),hostTime(time));});}
     {auto stage=probe.measure(LiveProbe::publication);publishNative();composition.present(renderer);renderer.setCamera(gpu::layerViewportProjection(metrics.pixelWidth,metrics.pixelHeight)*core::Matrix4::scale(metrics.scale,metrics.scale,1));}
-    if(submit){auto stage=probe.measure(LiveProbe::draw);renderer.draw(visibleMode());}
+    if(submit){auto stage=probe.measure(LiveProbe::draw);renderer.draw(visibleMode());
+        // A finished module switch: the outgoing module's native group targets
+        // are no longer drawn and give their GPU memory back (created again and
+        // re-rendered if that module is shown again). Once per switch. No
+        // driver trim here: it waits for the GPU's queued frames (measured
+        // 190-580 ms behind back-to-back 2560 x 1600 frames); the closed HUD
+        // trims instead (releaseConcealedGraphics).
+        if(notes){const bool switching=notes->modulePresentation().transitioning;if(switchPresented&&!switching)(void)renderer.releaseHiddenGroupTargets();switchPresented=switching;}}
     if(centerLogoRetire)retireCenterLogo();
     if(readerTrace&&reader&&notes&&notes->selected()==core::Module::reader)readerTrace->record(false,time,reader->scrollSnapshot(),0,0,std::chrono::duration<double,std::milli>(Clock::now()-traceFrameStart).count());return true;
 }

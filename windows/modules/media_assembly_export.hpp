@@ -1,6 +1,7 @@
 #pragma once
 #include "modules/media_assembly_presentation.hpp"
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <stdexcept>
 

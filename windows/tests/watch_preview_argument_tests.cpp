@@ -148,6 +148,18 @@ void run(const fs::path&executable){
            L"--notes-assets-sha",L"synthetic-pin",L"--notes-data",fresh.wstring()},"A startup trace replaces the module coverage report with a new output");
     reject(executable,temp,++index,{L"--startup-trace",existingReport.wstring(),L"--module-coverage",L"--notes-assets",assets,
            L"--notes-assets-sha",L"synthetic-pin",L"--notes-data",fresh.wstring()},"A startup trace replaces the module coverage report with a new output");
+    // --memory-trace records the hidden module owner's memory and threads instead of its coverage report.
+    const auto memory=temp.root/L"new memory trace.json";
+    reject(executable,temp,++index,{L"--memory-trace",memory.wstring()},"A memory trace replaces the module coverage report with a new output");
+    reject(executable,temp,++index,{L"--memory-trace",memory.wstring(),L"--memory-trace",memory.wstring()},"Duplicate memory trace output");
+    reject(executable,temp,++index,{L"--visible",L"--memory-trace",memory.wstring()},"A memory trace replaces the module coverage report with a new output");
+    reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--memory-trace",memory.wstring(),L"--module-coverage",L"--notes-assets",assets,
+           L"--notes-assets-sha",L"synthetic-pin",L"--notes-data",fresh.wstring()},"A memory trace replaces the module coverage report with a new output");
+    reject(executable,temp,++index,{L"--startup-trace",trace.wstring(),L"--memory-trace",memory.wstring(),L"--module-coverage",L"--notes-assets",assets,
+           L"--notes-assets-sha",L"synthetic-pin",L"--notes-data",fresh.wstring()},"A memory trace replaces the module coverage report with a new output");
+    reject(executable,temp,++index,{L"--memory-trace",existingReport.wstring(),L"--module-coverage",L"--notes-assets",assets,
+           L"--notes-assets-sha",L"synthetic-pin",L"--notes-data",fresh.wstring()},"A memory trace replaces the module coverage report with a new output");
+    reject(executable,temp,++index,{L"--memory-trace"},"Unknown or incomplete preview argument");
     reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--map-player-assets",assets},
            "Map needs geography and player assets together");
     reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--map-geography",assets,L"--map-player-assets",assets},

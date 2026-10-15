@@ -276,6 +276,12 @@ int run(const std::vector<std::string>& values) {
         // openings completed (or at quit).
         if (wchar_t flag[8]{}; GetEnvironmentVariableW(L"ENDFIELDHUD_STARTUP_TRACE", flag, 8) == 1 && flag[0] == L'1')
             options.startupTrace = root->data / "Diagnostics" / "startup-trace.json";
+        // Opt-in memory and thread census (numbers, owner names and system
+        // module file names only): ENDFIELDHUD_MEMORY_TRACE=1 rewrites
+        // Diagnostics/memory-trace.json after construction, the launch
+        // prewarm and each of the first eight openings and closings.
+        if (wchar_t flag[8]{}; GetEnvironmentVariableW(L"ENDFIELDHUD_MEMORY_TRACE", flag, 8) == 1 && flag[0] == L'1')
+            options.memoryTrace = root->data / "Diagnostics" / "memory-trace.json";
         // Factory-added module areas resolve their own verified resources (the
         // locator outlives the Application and is used on its UI thread only).
         options.resources = [&locator](std::string_view id) -> fs::path { return locator.available(id) ? locator.resolve(id).path : fs::path{}; };

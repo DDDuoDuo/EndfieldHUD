@@ -191,6 +191,23 @@ private:
     std::optional<double> processToFirstFrameMS_, launchToFirstFrameMS_;
     Json::Array stages_;
 };
+// Opt-in memory trace (ApplicationOptions::memoryTrace, app/application_memory.cpp):
+// bounded stage rows and, in the hidden run, one row per module visit.
+class MemoryTrace final {
+public:
+    static constexpr std::size_t rowLimit = 40, visitLimit = 64;
+    explicit MemoryTrace(fs::path path) : path_(std::move(path)) {}
+    bool accepts() const noexcept { return rows_.size() < rowLimit; }
+    void add(Json row) { if (accepts()) rows_.push_back(std::move(row)); }
+    void visit(Json row) { if (visits_.size() < visitLimit) visits_.push_back(std::move(row)); }
+    const fs::path& path() const noexcept { return path_; }
+    const Json::Array& rows() const noexcept { return rows_; }
+    const Json::Array& visits() const noexcept { return visits_; }
+    unsigned openings{}, closings{};
+private:
+    fs::path path_;
+    Json::Array rows_, visits_;
+};
 struct LiveProbe {
     enum Stage {frame,backdrop,sourcePose,materials,nativeLabels,notesPose,publication,draw,pointer,key,message,editTransition,prepare,count};
     struct Timing{std::uint64_t calls{};double total{},maximum{};};
@@ -286,6 +303,12 @@ struct Application::Impl {
     int runStartupTrace();      // hidden --startup-trace: cold and warm openings on the synthetic clock
     int runContentionTrace();   // hidden --contention-trace: frame pacing at normal and raised priority
     void writeStartupTrace();   // production ENDFIELDHUD_STARTUP_TRACE: once, numbers only
+    // --- memory trace (app/application_memory.cpp) --------------------------------
+    int runMemoryTrace();       // hidden --memory-trace: launch, cold opening, every module, closing, cycles
+    void releaseConcealedGraphics(); // after the overlayConcealed broadcast: publish, release frame targets, trim
+    Json memorySnapshot(std::string_view stage, bool threads);
+    void recordMemory(std::string_view stage, bool threads); // production: also writes the report
+    void writeMemoryTrace();
     void cleanup();
 
     // --- lifecycle --------------------------------------------------------------
@@ -677,6 +700,14 @@ struct Application::Impl {
     std::optional<core::Module> deviceLostModule;
     // Explicit long area jobs (Media Assembly exports) on their own executor.
     std::unique_ptr<UtilityExecutor> longWork;
+    // The host executors' idle worker exit (UtilityExecutor idleExit) stays
+    // off: the Calendar, Reader and Archive JSON repositories and the App
+    // shortcuts model bind to the first worker thread that runs their jobs
+    // ("belongs to one FIFO executor") and refuse a later one, so a fresh
+    // worker after an idle exit fails their next write (measured: the Calendar
+    // drain at quit declined). Zero keeps one worker per executor until
+    // shutdown, as before.
+    static constexpr std::chrono::milliseconds utilityIdleExit{0};
     // OLE file drops on the HUD (one ShelfDropTarget registration).
     struct HudDropInbox {HWND hwnd{};double scale{1};Impl* owner{};core::Point point;std::vector<std::string>paths;std::string target;bool posted{};};
     std::shared_ptr<HudDropInbox> hudDrop{std::make_shared<HudDropInbox>()};
@@ -741,6 +772,7 @@ struct Application::Impl {
     // System overlay lifecycle (Mac AppDelegate + OverlayController policy).
     core::SystemOverlayLifecycle lifecycle;
     std::optional<std::int64_t> lifecycleOpening, lifecycleClosing;
+    bool switchPresented{}; // the last drawn frame was inside a module switch (present())
     bool settingsLoaded{}, launchPending{};
     std::unique_ptr<QuitConfirmationOwner> quitConfirmation; // red power button card
     std::unique_ptr<ModuleOwner> clockAutomation;            // the desktop clock's UIA buttons (no drawing, no input)
@@ -817,6 +849,7 @@ struct Application::Impl {
     }
     void projectionFailed();
     LiveProbe probe;
+    std::unique_ptr<MemoryTrace> memoryTrace;
     std::unique_ptr<StartupTrace> startupTrace;
     bool startupTraceWritten{};
     double diagnosticStart{};

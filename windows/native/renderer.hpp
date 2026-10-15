@@ -5,6 +5,7 @@
 #include <array>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <span>
@@ -33,6 +34,10 @@ struct RendererOptions {
     // Same-device media targets/thread protection. Hardware requests video
     // support; explicit WARP tests cover conversion/lifetime only, not decode.
     bool mediaVideo{};
+    // Small surfaces only (e.g. the floating charge alert): create the device
+    // with D3D11_CREATE_DEVICE_PREVENT_INTERNAL_THREADING_OPTIMIZATIONS, which
+    // halves a hardware device's driver worker threads.
+    bool preventDriverThreads{};
 };
 struct Vertex {
     std::array<float, 3> position{};
@@ -147,6 +152,14 @@ struct RendererStats {
     // initialize() created its programs from the build-time bytecode of an
     // identical hud.hlsl (native/renderer.shaders.cmake), not D3DCompile.
     bool embeddedShaders{};
+    // releaseFrameTargets(): its calls, the target bytes released now (the
+    // linear composition target, an offscreen output and native group
+    // targets not yet drawn again), the targets later draws created again,
+    // and whether the driver accepted the trim (IDXGIDevice3::Trim).
+    std::uint64_t frameTargetReleases{},frameTargetRestores{},nativeGroupTargetRestores{},hiddenGroupTargetReleases{};
+    std::size_t releasedTargetBytes{};
+    bool driverTrimmed{};std::uint64_t driverTrims{};
+    std::uint64_t sourceTargetBytesReleased{}; // the original shell pass's targets, summed over releases
 };
 // AddRef-owned existing composition swap chain, never a copied bitmap/device.
 // The raw pointer is borrowed IDXGISwapChain1 and valid only while valid().
@@ -198,6 +211,13 @@ struct Readback {
     // blend output, which may include emissive RGB beyond alpha. Do not clamp
     // or unpremultiply that source output when comparing raw references.
     std::vector<std::uint8_t> pixels;
+};
+// One retained resource as the memory trace sees it (Renderer::forEachResource).
+struct RendererResourceUsage {
+    enum class Kind : std::uint8_t { texture, mesh, nativeGroup, media };
+    std::string_view id, owner; // owner: the module owner whose call installed it ("" for the host)
+    std::size_t bytes{};
+    Kind kind{};
 };
 class RendererError : public std::runtime_error {
 public:
@@ -310,6 +330,28 @@ public:
     // Explicit diagnostic only (contention trace), never per frame: waits
     // until the GPU finished every command submitted so far; milliseconds.
     double waitForGpuIdle();
+    // The HUD was concealed: nothing is drawn until it opens again. Releases
+    // the GPU memory only a drawn frame uses - the full-size linear
+    // composition target, an offscreen output, the original shell pass's
+    // attachment and depth/stencil target, and every native group's cached
+    // target - then clears the context and lets the driver trim its internal
+    // buffers (IDXGIDevice3::Trim). Retained meshes, textures,
+    // group draw lists and the composition swap chain stay; the next draw()
+    // creates again what it uses (a group the next time it is drawn
+    // visibly, re-rendered). No-op while already released. Returns the
+    // bytes released. On the owner thread, never per frame.
+    std::size_t releaseFrameTargets();
+    // After a drawn frame, on a content event (e.g. a finished module switch,
+    // never per frame): every native group target that frame did not draw
+    // visibly gives its GPU memory back; the group keeps its draw list and is
+    // created again and re-rendered the next time it is drawn visibly.
+    // Returns the bytes released.
+    std::size_t releaseHiddenGroupTargets();
+    // Lets the driver give back its internal buffers (IDXGIDevice3::Trim,
+    // after clearing the context): upload staging and command pools grown by
+    // a burst of uploads. A content event only (the end of a module switch, a
+    // concealed HUD); the next frame rebinds everything it draws with.
+    void trim();
     Readback readback();
     // An in-use resource cannot be removed until its draw list reference is
     // removed. Replacing an existing ID updates all current references.
@@ -322,6 +364,10 @@ public:
     // Explicit diagnostic query only; never called by the frame loop. The
     // selected adapter may differ from another GPU installed in the laptop.
     RendererDeviceInfo deviceInfo() const;
+    // Diagnostics only (memory trace; never on the frame path): every retained
+    // texture, mesh, native group target and media target with its counted
+    // GPU bytes (the same accounting as RendererStats::resourceBytes).
+    void forEachResource(const std::function<void(const RendererResourceUsage&)>&) const;
     // Display/adapter change (WM_DISPLAYCHANGE): false when the adapter set
     // changed (IDXGIFactory1::IsCurrent) and the system's default adapter is
     // no longer the one this hardware device runs on. The owner then recreates

@@ -425,6 +425,22 @@ void callbackFailures() {
     PostMessageW(static_cast<HWND>(host.hwnd()),WM_KEYDOWN,'D',1|(0x20<<16));drain(host);
     check(staleKeys==0,"Destroy/recreate in pretranslation cannot deliver stale text to a replacement owner");host.destroy();
 
+    {
+        // Windows answers SetCapture on the window that already holds the
+        // capture with WM_CAPTURECHANGED naming that same window: nothing was
+        // lost, so a Projection or Notes stroke that asks for the capture on
+        // every event keeps going; a real release still reports one loss.
+        unsigned lost=0;OverlayCallbacks recaptureCallbacks;
+        recaptureCallbacks.pointer=[&](const PointerEvent&e){if(e.kind==PointerKind::captureLost)++lost;return true;};
+        host.create({L"Hidden recapture fixture",0,0,16,16,nullptr},recaptureCallbacks);
+        const auto recaptured=static_cast<HWND>(host.hwnd());
+        SetCapture(recaptured);check(GetCapture()==recaptured&&lost==0,"Recapture fixture owns only its hidden HWND's capture");
+        SetCapture(recaptured);
+        check(GetCapture()==recaptured&&lost==0,"Taking the capture again on the same window reports no capture loss");
+        ReleaseCapture();
+        check(GetCapture()!=recaptured&&lost==1,"Releasing the capture reports exactly one capture loss");
+        host.destroy();
+    }
     for(UINT message:{UINT(WM_KILLFOCUS),UINT(WM_SHOWWINDOW)}){
         bool replaced=false;unsigned staleFocus=0;
         OverlayCallbacks captureCallbacks;

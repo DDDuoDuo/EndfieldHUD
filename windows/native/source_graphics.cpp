@@ -93,6 +93,13 @@ struct SourceGraphics::Impl {
         colorView = std::move(nextColorView); depthView = std::move(nextDepthView); width = w; height = h;
     }
 };
+std::size_t SourceGraphics::releaseTargets() noexcept {
+    auto& r = *impl_;
+    if (r.owner != GetCurrentThreadId() || !r.color) return 0;
+    const auto bytes = std::size_t(r.width) * r.height * 12; // B8G8R8A8 color + D32_FLOAT_S8X24 depth
+    r.colorView.Reset(); r.depthView.Reset(); r.color.Reset(); r.depth.Reset(); r.width = r.height = 0;
+    return bytes;
+}
 SourceGraphics::SourceGraphics(void* device, void* context) : impl_(std::make_unique<Impl>()) {
     need(device && context, "Original rendering requires the existing native device");
     impl_->device = static_cast<ID3D11Device*>(device); impl_->context = static_cast<ID3D11DeviceContext*>(context);

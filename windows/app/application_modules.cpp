@@ -34,6 +34,10 @@
 #include "tools/map_automation.hpp"
 #include "tools/calendar_automation.hpp"
 #include "tools/orbipom_automation.hpp"
+#include "tools/clipboard_automation.hpp"
+#include "tools/event_log_automation.hpp"
+#include "tools/activity_automation.hpp"
+#include "tools/storage_automation.hpp"
 #include <array>
 #include <cmath>
 #include <concepts>
@@ -102,6 +106,18 @@ bool hasPixels(const ClientMetrics& m) { return m.pixelWidth && m.pixelHeight; }
 template <class Preview> concept TextCursorPreview = requires(const Preview& preview, core::Point point) {
     { preview.textCursorAt(point) } -> std::convertible_to<bool>;
 };
+// ModuleOwner::prewarm for built-in owners whose previews live in an area:
+// forwarded as soon as the preview declares
+// `void prewarm(const core::Matrix4& center, const core::source::DesktopChromeSettings& chrome,
+//               const core::ModulePresentationSample& presentation, double time)`
+// (the first opening's frame while the HUD is still closed; see module_owner.hpp).
+template <class Preview> concept PrewarmPreview = requires(Preview& preview, const ModuleFrame& frame) {
+    preview.prewarm(frame.center, frame.chrome, frame.presentation, frame.time);
+};
+template <class Preview> void previewPrewarm(Preview& preview, const ModuleFrame& frame) {
+    if constexpr (PrewarmPreview<Preview>) preview.prewarm(frame.center, frame.chrome, frame.presentation, frame.time);
+    else { (void)preview; (void)frame; }
+}
 template <class Preview> std::optional<ModuleCursor> previewTextCursor(const Preview& preview, core::Point point) {
     if constexpr (TextCursorPreview<Preview>) return preview.textCursorAt(point) ? std::optional(ModuleCursor::text) : std::nullopt;
     else { (void)preview; (void)point; return std::nullopt; }
@@ -160,6 +176,7 @@ public:
     void setOverlayVisible(bool v, double t) override { if (v) n_.setMediaActive(true, t); }
     void overlayClosing(double t) override { n_.setMediaActive(false, t, true); }
     void update(const ModuleFrame& f) override { n_.update(f.center, f.chrome, f.opacity, f.time, f.focused); }
+    void prewarm(const ModuleFrame& f) override { previewPrewarm(n_, f); }
     bool requiresFrames(double t) const override { return n_.requiresFrames(t); }
     std::optional<double> nextWakeTime(double) const override { return n_.nextWakeTime(); }
     bool deadline(double t) override { return n_.deadline(t); }
@@ -190,7 +207,12 @@ public:
     void resize(const ClientMetrics& m) override { s_.resize(m); }
     void setAppearance(const ModuleAppearance& a, double) override { s_.setLanguage(a.language); s_.setAppearance(a.dark, a.accent); }
     void overlayClosing(double) override { s_.cancelPanels(); s_.cancelInteraction(); }
+    // HUD fully closed: a Shelf that is not shown releases its raster artwork;
+    // the shown one settles its hover highlights and keeps no bitmap for those
+    // that do not show (tools/shelf_preview.hpp conceal()).
+    bool hostEvent(const HostEvent& e, double) override { if (e.kind == HostEvent::Kind::overlayConcealed) s_.conceal(); return false; }
     void update(const ModuleFrame& f) override { s_.update(f.center, f.chrome, f.presentation, f.opacity, f.time); }
+    void prewarm(const ModuleFrame& f) override { previewPrewarm(s_, f); }
     bool requiresFrames(double t) const override { return s_.requiresFrames(t); }
     void upload(gpu::Renderer& r) override { s_.upload(r); }
     Entries entries(core::Module) override { return s_.entries(); }
@@ -215,8 +237,15 @@ public:
 class ClipboardModule final : public ModuleOwner {
     tools::ClipboardPreview& c_;
     const gpu::NativeClipboardAssets& assets_;
+    gpu::NativeScreenReaderPeers peers_; // Mac HUDClipboardInteraction peers (last: disconnects first)
 public:
-    ClipboardModule(tools::ClipboardPreview& c, const gpu::NativeClipboardAssets& a) : c_(c), assets_(a) {}
+    ClipboardModule(tools::ClipboardPreview& c, const gpu::NativeClipboardAssets& a, gpu::ScreenReaderPeerHooks peerHooks)
+        : c_(c), assets_(a), peers_(tools::clipboardAutomation(c, std::move(peerHooks))) {}
+    bool automationRefresh(IRawElementProviderFragmentRoot* root) override { return peers_.refresh(root); }
+    std::size_t automationCount() const override { return peers_.size(); }
+    long automationChild(std::size_t i, IRawElementProviderFragment** out) const override { return peers_.child(i, out); }
+    long automationFromPoint(double x, double y, IRawElementProviderFragment** out) const override { return peers_.fromPoint(x, y, out); }
+    void automationDisconnect() noexcept override { peers_.disconnect(); }
     std::string_view name() const noexcept override { return "clipboard"; }
     ModuleRouting routing() const noexcept override { ModuleRouting r; r.pointer = 9; r.wheel = 5; r.key = 5; return r; }
     bool presents(core::Module m) const noexcept override { return m == core::Module::clipboard; }
@@ -224,8 +253,14 @@ public:
     void setAppearance(const ModuleAppearance& a, double) override {
         c_.setLanguage(a.language); c_.setAppearance({a.dark, 2, a.accent}, assets_.images()); c_.setReduceMotion(a.reduceMotion);
     }
-    void overlayClosing(double) override { c_.cancelInteraction(); }
+    // A close while Clipboard is not shown releases its artwork and row
+    // thumbnails; the HUD's end of a close releases what is left
+    // (tools/clipboard_preview.hpp setOverlayVisible / conceal).
+    void setOverlayVisible(bool v, double t) override { c_.setOverlayVisible(v, t); }
+    void overlayClosing(double t) override { c_.cancelInteraction(); c_.setOverlayVisible(false, t); }
+    bool hostEvent(const HostEvent& e, double) override { if (e.kind == HostEvent::Kind::overlayConcealed) c_.conceal(); return false; }
     void update(const ModuleFrame& f) override { c_.update(f.center, f.chrome, f.presentation, f.opacity, f.time); }
+    void prewarm(const ModuleFrame& f) override { previewPrewarm(c_, f); }
     bool requiresFrames(double t) const override { return c_.requiresFrames(t); }
     void upload(gpu::Renderer& r) override { c_.upload(r); }
     Entries entries(core::Module) override { return c_.entries(); }
@@ -289,7 +324,13 @@ public:
         if (language_ != a.language) { v_.setStrings(volumeStrings(a.language)); language_ = a.language; }
         automationLanguage_ = a.language;
     }
-    void overlayClosing(double t) override { v_.cancelInteraction(t); }
+    // VolumePreview builds its artwork when first shown (or by the launch
+    // prewarm as the selected module) and releases it once the HUD closes on
+    // another module; the module shown at the close keeps it.
+    void prewarm(const ModuleFrame& f) override { v_.prewarm(f.presentation); }
+    void setOverlayVisible(bool v, double t) override { v_.setOverlayVisible(v, t); }
+    void overlayClosing(double t) override { v_.cancelInteraction(t); v_.setOverlayVisible(false, t); }
+    bool hostEvent(const HostEvent& e, double) override { if (e.kind == HostEvent::Kind::overlayConcealed) v_.conceal(); return false; }
     void update(const ModuleFrame& f) override { v_.update(f.center, f.chrome, f.presentation, f.opacity, f.time); }
     bool requiresFrames(double t) const override { return v_.requiresFrames(t); }
     void upload(gpu::Renderer& r) override { v_.upload(r); }
@@ -306,15 +347,24 @@ public:
 
 class EventLogModule final : public ModuleOwner {
     tools::EventLogPreview& e_;
+    gpu::NativeScreenReaderPeers peers_; // Mac HUDEventLogInteraction peers (last: disconnects first)
 public:
-    explicit EventLogModule(tools::EventLogPreview& e) : e_(e) {}
+    EventLogModule(tools::EventLogPreview& e, gpu::ScreenReaderPeerHooks peerHooks) : e_(e), peers_(tools::eventLogAutomation(e, std::move(peerHooks))) {}
+    bool automationRefresh(IRawElementProviderFragmentRoot* root) override { return peers_.refresh(root); }
+    std::size_t automationCount() const override { return peers_.size(); }
+    long automationChild(std::size_t i, IRawElementProviderFragment** out) const override { return peers_.child(i, out); }
+    long automationFromPoint(double x, double y, IRawElementProviderFragment** out) const override { return peers_.fromPoint(x, y, out); }
+    void automationDisconnect() noexcept override { peers_.disconnect(); }
     std::string_view name() const noexcept override { return "eventLog"; }
     ModuleRouting routing() const noexcept override { ModuleRouting r; r.pointer = 13; r.wheel = 7; r.key = 7; return r; }
     bool presents(core::Module m) const noexcept override { return m == core::Module::eventLog; }
     void resize(const ClientMetrics& m) override { e_.resize(m); }
     void setAppearance(const ModuleAppearance& a, double) override { e_.setLanguage(a.language); e_.setAppearance({a.dark, 2, a.accent}); e_.setReduceMotion(a.reduceMotion); }
-    void overlayClosing(double) override { e_.cancelInteraction(); }
+    void setOverlayVisible(bool v, double t) override { e_.setOverlayVisible(v, t); }
+    void overlayClosing(double t) override { e_.cancelInteraction(); e_.setOverlayVisible(false, t); }
+    bool hostEvent(const HostEvent& e, double) override { if (e.kind == HostEvent::Kind::overlayConcealed) e_.conceal(); return false; }
     void update(const ModuleFrame& f) override { e_.update(f.center, f.chrome, f.presentation, f.opacity, f.time); }
+    void prewarm(const ModuleFrame& f) override { previewPrewarm(e_, f); }
     bool requiresFrames(double t) const override { return e_.requiresFrames(t); }
     void upload(gpu::Renderer& r) override { e_.upload(r); }
     Entries entries(core::Module) override { return e_.entries(); }
@@ -376,6 +426,7 @@ public:
     void setOverlayVisible(bool v, double t) override { w_.setOverlayVisible(v, t); }
     void overlayClosing(double t) override { w_.cancelInteraction(t); w_.setOverlayVisible(false, t); }
     void update(const ModuleFrame& f) override { w_.update(f.center, f.chrome, f.presentation, f.opacity, f.time); }
+    void prewarm(const ModuleFrame& f) override { previewPrewarm(w_, f); }
     bool requiresFrames(double t) const override { return w_.requiresFrames(t); }
     std::optional<double> nextWakeTime(double) const override { return w_.nextWakeTime(); }
     bool deadline(double t) override { const auto revision = w_.state().revision(); w_.wake(t); return revision != w_.state().revision(); }
@@ -414,6 +465,7 @@ public:
     void setAppearance(const ModuleAppearance& a, double t) override { b_.setAppearance({a.dark, 2, a.language, a.accent}); b_.setReduceMotion(a.reduceMotion, t); }
     void overlayClosing(double t) override { b_.cancelInteraction(t); }
     void update(const ModuleFrame& f) override { b_.update(f.center, f.chrome, f.presentation, f.opacity, f.time); }
+    void prewarm(const ModuleFrame& f) override { previewPrewarm(b_, f); }
     bool requiresFrames(double t) const override { return b_.requiresFrames(t); }
     void upload(gpu::Renderer& r) override { b_.upload(r); }
     Entries entries(core::Module) override { return b_.entries(); }
@@ -440,6 +492,7 @@ public:
     void setOverlayVisible(bool v, double t) override { s_.setOverlayVisible(v, t); }
     void overlayClosing(double t) override { s_.setOverlayVisible(false, t); }
     void update(const ModuleFrame& f) override { s_.update(f.center, f.chrome, f.presentation, f.opacity, f.time); }
+    void prewarm(const ModuleFrame& f) override { previewPrewarm(s_, f); }
     bool requiresFrames(double t) const override { return s_.requiresFrames(t); }
     std::optional<double> nextWakeTime(double now) const override { return s_.nextWakeTime(now); }
     bool deadline(double t) override { s_.wake(t); return true; }
@@ -463,9 +516,16 @@ public:
 class StorageModule final : public ModuleOwner {
     tools::StoragePreview& s_;
     StorageModuleHooks hooks_;
+    gpu::NativeScreenReaderPeers peers_; // Mac HUDTelemetryInteraction peers (last: disconnects first)
     double clock() const { return hooks_.clock(); }
 public:
-    StorageModule(tools::StoragePreview& s, StorageModuleHooks hooks) : s_(s), hooks_(std::move(hooks)) {}
+    StorageModule(tools::StoragePreview& s, StorageModuleHooks hooks, gpu::ScreenReaderPeerHooks peerHooks)
+        : s_(s), hooks_(std::move(hooks)), peers_(tools::storageAutomation(s, std::move(peerHooks))) {}
+    bool automationRefresh(IRawElementProviderFragmentRoot* root) override { return peers_.refresh(root); }
+    std::size_t automationCount() const override { return peers_.size(); }
+    long automationChild(std::size_t i, IRawElementProviderFragment** out) const override { return peers_.child(i, out); }
+    long automationFromPoint(double x, double y, IRawElementProviderFragment** out) const override { return peers_.fromPoint(x, y, out); }
+    void automationDisconnect() noexcept override { peers_.disconnect(); }
     std::string_view name() const noexcept override { return "storage"; }
     ModuleRouting routing() const noexcept override { ModuleRouting r; r.pointer = 11; return r; }
     bool presents(core::Module m) const noexcept override { return m == core::Module::storage; }
@@ -476,7 +536,10 @@ public:
     void setAppearance(const ModuleAppearance& a, double t) override { s_.setAppearance(storageAppearance(a.language, a.dark, a.accent), t); s_.setReduceMotion(a.reduceMotion, t); }
     void setOverlayVisible(bool v, double t) override { s_.setVisible(v, t); }
     void overlayClosing(double t) override { s_.cancelInteraction(t); s_.setVisible(false, t); }
+    // HUD fully closed: a Storage page that is not shown keeps no raster artwork.
+    bool hostEvent(const HostEvent& e, double) override { if (e.kind == HostEvent::Kind::overlayConcealed) s_.conceal(); return false; }
     void update(const ModuleFrame& f) override { s_.update(f.center, f.chrome, f.presentation, f.opacity, f.time); }
+    void prewarm(const ModuleFrame& f) override { previewPrewarm(s_, f); }
     bool requiresFrames(double t) const override { return s_.requiresFrames(t); }
     std::optional<double> nextWakeTime(double) const override { return s_.nextWakeTime(); }
     bool deadline(double t) override { return s_.deadline(t); }
@@ -492,8 +555,14 @@ public:
 
 class ActivityModule final : public ModuleOwner {
     tools::ActivityPreview& a_;
+    gpu::NativeScreenReaderPeers peers_; // Mac HUDTelemetryInteraction peers (last: disconnects first)
 public:
-    explicit ActivityModule(tools::ActivityPreview& a) : a_(a) {}
+    ActivityModule(tools::ActivityPreview& a, gpu::ScreenReaderPeerHooks peerHooks) : a_(a), peers_(tools::activityAutomation(a, std::move(peerHooks))) {}
+    bool automationRefresh(IRawElementProviderFragmentRoot* root) override { return peers_.refresh(root); }
+    std::size_t automationCount() const override { return peers_.size(); }
+    long automationChild(std::size_t i, IRawElementProviderFragment** out) const override { return peers_.child(i, out); }
+    long automationFromPoint(double x, double y, IRawElementProviderFragment** out) const override { return peers_.fromPoint(x, y, out); }
+    void automationDisconnect() noexcept override { peers_.disconnect(); }
     std::string_view name() const noexcept override { return "activityMonitor"; }
     ModuleRouting routing() const noexcept override { ModuleRouting r; r.pointer = 12; r.wheel = 8; r.key = 9; return r; }
     bool presents(core::Module m) const noexcept override { return m == core::Module::activityMonitor; }
@@ -501,7 +570,10 @@ public:
     void setAppearance(const ModuleAppearance& a, double) override { a_.setAppearance({a.dark, 2, a.language, a.accent}); a_.setReduceMotion(a.reduceMotion); }
     void setOverlayVisible(bool v, double t) override { a_.setOverlayVisible(v, t); }
     void overlayClosing(double t) override { a_.cancelInteraction(); a_.setOverlayVisible(false, t); }
+    // HUD fully closed: hidden Activity pages keep no raster artwork.
+    bool hostEvent(const HostEvent& e, double) override { if (e.kind == HostEvent::Kind::overlayConcealed) a_.conceal(); return false; }
     void update(const ModuleFrame& f) override { a_.update(f.center, f.chrome, f.presentation, f.opacity, f.time); }
+    void prewarm(const ModuleFrame& f) override { previewPrewarm(a_, f); }
     bool requiresFrames(double t) const override { return a_.requiresFrames(t); }
     void upload(gpu::Renderer& r) override { a_.upload(r); }
     Entries entries(core::Module) override { return a_.entries(); }
@@ -547,6 +619,7 @@ public:
     void setOverlayVisible(bool v, double t) override { r_.setOverlayVisible(v, t); }
     void overlayClosing(double t) override { r_.cancelInteraction(t); r_.setOverlayVisible(false, t); }
     void update(const ModuleFrame& f) override { r_.update(f.center, f.chrome, f.presentation, f.opacity, f.time); }
+    void prewarm(const ModuleFrame& f) override { previewPrewarm(r_, f); }
     bool requiresFrames(double t) const override { return r_.requiresFrames(t); }
     std::optional<double> nextWakeTime(double) const override { return r_.nextWakeTime(); }
     bool deadline(double t) override { return r_.deadline(t); }
@@ -565,6 +638,8 @@ public:
     bool key(const KeyEvent& e, double t) override { return r_.key(e, modifierDown(), t); }
     void focus(bool v, double t) override { if (!v) r_.cancelInteraction(t); }
     bool flush(double) override { return owner_.flush(); }
+    // Memory trace: canvas page pixels and the open document's buffers.
+    ModuleResidency residency() const override { const auto r = r_.residency(); return {r.cpuBytes, r.gpuBytes, r.threads}; }
 };
 
 class CalendarModule final : public ModuleOwner {
@@ -594,6 +669,7 @@ public:
     void setOverlayVisible(bool v, double t) override { c_.setOverlayVisible(v, t); }
     void overlayClosing(double t) override { c_.setOverlayVisible(false, t); if (hooks_.afterClosing) hooks_.afterClosing(); }
     void update(const ModuleFrame& f) override { c_.update(f.center, f.chrome, f.presentation, f.opacity, f.time); if (hooks_.afterUpdate) hooks_.afterUpdate(); }
+    void prewarm(const ModuleFrame& f) override { previewPrewarm(c_, f); }
     bool requiresFrames(double t) const override { return c_.requiresFrames(t); }
     void upload(gpu::Renderer& r) override { c_.upload(r); }
     Entries entries(core::Module) override { return c_.entries(); }
@@ -641,6 +717,7 @@ public:
     void setOverlayVisible(bool v, double t) override { m_.setOverlayVisible(v, t); }
     void overlayClosing(double t) override { m_.cancelInteraction(t); m_.setOverlayVisible(false, t); }
     void update(const ModuleFrame& f) override { m_.update(f.center, f.chrome, f.presentation, f.opacity, f.time); }
+    void prewarm(const ModuleFrame& f) override { previewPrewarm(m_, f); }
     bool requiresFrames(double t) const override { return m_.requiresFrames(t); }
     std::optional<double> nextWakeTime(double) const override { return m_.nextWakeTime(); }
     bool deadline(double t) override { return m_.deadline(t); }
@@ -654,6 +731,8 @@ public:
     bool wheel(const WheelEvent& e, double t) override { return m_.wheel(e, t); }
     bool key(const KeyEvent& e, double t) override { return m_.key(e, t); }
     void focus(bool v, double t) override { if (!v) m_.cancelInteraction(t); }
+    // Memory trace: player images, feather, kept terrain detail/backdrop and geography.
+    ModuleResidency residency() const override { const auto r = m_.residency(); return {r.cpuBytes, r.gpuBytes, r.threads}; }
 };
 
 class MinigameModule final : public ModuleOwner {
@@ -688,6 +767,7 @@ public:
     void setOverlayVisible(bool v, double t) override { g_.setOverlayVisible(v, t); }
     void overlayClosing(double t) override { g_.cancelInteraction(t); g_.setOverlayVisible(false, t); }
     void update(const ModuleFrame& f) override { g_.update(f.center, f.chrome, f.presentation, f.opacity, f.time); }
+    void prewarm(const ModuleFrame& f) override { previewPrewarm(g_, f); }
     bool requiresFrames(double t) const override { return g_.requiresFrames(t); }
     void upload(gpu::Renderer& r) override { g_.upload(r); }
     Entries entries(core::Module) override { return g_.entries(); }
@@ -700,6 +780,8 @@ public:
     bool wheel(const WheelEvent& e, double t) override { return g_.wheel(e, t); }
     bool key(const KeyEvent& e, double t) override { return g_.key(e, t); }
     void focus(bool v, double t) override { g_.setForeground(v, t); if (!v) g_.cancelInteraction(t); }
+    // Memory trace: the game VM heap and snapshot buffers (asks QuickJS for its heap size).
+    ModuleResidency residency() const override { const auto r = g_.residency(); return {r.cpuBytes, r.gpuBytes, r.threads}; }
 };
 
 class ArchiveModule final : public ModuleOwner {
@@ -736,8 +818,12 @@ public:
     void overlayClosing(double t) override { a_.cancelInteraction(t); a_.setOverlayVisible(false, t); }
     void update(const ModuleFrame& f) override { a_.update(f.center, f.chrome, f.presentation, f.opacity, f.time); }
     // The hidden Archive's first update builds its retained view (13-17 ms of
-    // the first opening frame in the hidden startup trace): done while closed.
-    void prewarm(const ModuleFrame& f) override { a_.update(f.center, f.chrome, f.presentation, 0.f, f.time); }
+    // the first opening frame in the hidden startup trace): done while closed,
+    // through the preview's own prewarm once it declares one.
+    void prewarm(const ModuleFrame& f) override {
+        if constexpr (PrewarmPreview<tools::ArchivePreview>) previewPrewarm(a_, f);
+        else a_.update(f.center, f.chrome, f.presentation, 0.f, f.time);
+    }
     bool requiresFrames(double t) const override { return a_.requiresFrames(t); }
     std::optional<double> nextWakeTime(double) const override { return a_.nextWakeTime(); }
     bool deadline(double t) override { return a_.deadline(t); }
@@ -766,14 +852,14 @@ public:
 
 std::unique_ptr<ModuleOwner> notesModule(tools::NotesPreview& o, std::function<double()> clock, std::function<void()> changed) { return std::make_unique<NotesModule>(o, std::move(clock), std::move(changed)); }
 std::unique_ptr<ModuleOwner> shelfModule(tools::ShelfPreview& o) { return std::make_unique<ShelfModule>(o); }
-std::unique_ptr<ModuleOwner> clipboardModule(tools::ClipboardPreview& o, const gpu::NativeClipboardAssets& a) { return std::make_unique<ClipboardModule>(o, a); }
+std::unique_ptr<ModuleOwner> clipboardModule(tools::ClipboardPreview& o, const gpu::NativeClipboardAssets& a, gpu::ScreenReaderPeerHooks peers) { return std::make_unique<ClipboardModule>(o, a, std::move(peers)); }
 std::unique_ptr<ModuleOwner> volumeModule(tools::VolumePreview& o, VolumeModuleHooks hooks) { return std::make_unique<VolumeModule>(o, std::move(hooks)); }
-std::unique_ptr<ModuleOwner> eventLogModule(tools::EventLogPreview& o) { return std::make_unique<EventLogModule>(o); }
+std::unique_ptr<ModuleOwner> eventLogModule(tools::EventLogPreview& o, gpu::ScreenReaderPeerHooks peers) { return std::make_unique<EventLogModule>(o, std::move(peers)); }
 std::unique_ptr<ModuleOwner> workModeModule(tools::WorkModePreview& o, VolumeModuleHooks hooks) { return std::make_unique<WorkModeModule>(o, std::move(hooks)); }
 std::unique_ptr<ModuleOwner> batteryModule(tools::BatteryPreview& o) { return std::make_unique<BatteryModule>(o); }
 std::unique_ptr<ModuleOwner> settingsModule(tools::SettingsPreview& o) { return std::make_unique<SettingsModule>(o); }
-std::unique_ptr<ModuleOwner> storageModule(tools::StoragePreview& o, StorageModuleHooks h) { return std::make_unique<StorageModule>(o, std::move(h)); }
-std::unique_ptr<ModuleOwner> activityModule(tools::ActivityPreview& o) { return std::make_unique<ActivityModule>(o); }
+std::unique_ptr<ModuleOwner> storageModule(tools::StoragePreview& o, StorageModuleHooks h, gpu::ScreenReaderPeerHooks peers) { return std::make_unique<StorageModule>(o, std::move(h), std::move(peers)); }
+std::unique_ptr<ModuleOwner> activityModule(tools::ActivityPreview& o, gpu::ScreenReaderPeerHooks peers) { return std::make_unique<ActivityModule>(o, std::move(peers)); }
 std::unique_ptr<ModuleOwner> readerModule(tools::ReaderPreview& o, gpu::ReaderOwner& r, gpu::LayerRasterizer& raster, std::function<void(const WheelEvent&, double)> observed, gpu::ScreenReaderPeerHooks peers) {
     return std::make_unique<ReaderModule>(o, r, raster, std::move(observed), std::move(peers));
 }
