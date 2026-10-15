@@ -7,6 +7,8 @@
 // the static wallet artwork (re-rasterized only on scale change), the value
 // numerals (only on value/scale change), the silhouette hover tint, and the
 // recovery popover (LayerScene background/refresh arrow + numeral textures).
+// The popover card is loaded the first time it opens and composed only while
+// open or fading out; park() releases it after the HUD closed.
 // Hover (0.14 s) and popover (0.16 s fade/slide) are numeric tracks on the
 // host's frame clock; Reduce Motion makes them immediate. Paint order matches
 // the Mac sublayers: back, deco, icon, value, highlight, popover (z 10). The
@@ -14,7 +16,11 @@
 // encoded sRGB like Core Animation; tilt, fade and the popover slide change
 // only their output constants, hover feedback redraws only the small target.
 namespace endfield::native {
-struct NativeSanityGaugeStats {std::uint64_t artworkRasters{},numberRasters{},tooltipRasters{},popoverLoads{},poseUpdates{},groupUploads{},groupRedraws{};};
+struct NativeSanityGaugeStats {
+    std::uint64_t artworkRasters{},numberRasters{},tooltipRasters{},popoverLoads{},poseUpdates{},groupUploads{},groupRedraws{};
+    std::uint64_t popoverParks{};
+    bool popoverLoaded{},popoverUploaded{}; // the recovery card's rasters / GPU group right now
+};
 class NativeSanityGaugeScene final {
 public:
     NativeSanityGaugeScene(std::shared_ptr<const modules::hypergryph::GaugeAssets>,LayerRasterizer&,LayerRasterOptions);
@@ -32,6 +38,11 @@ public:
     std::span<const LayerCompositionEntry> entries();
     void collected(Renderer&);
     bool release(Renderer&); // false while still published
+    // The HUD closed with the recovery popover shut: release its group
+    // target, numeral textures and card rasters (`renderer` may be null when
+    // nothing was uploaded). The wallet stays. Its next opening loads the
+    // card again. False while it is open, fading out or still composed.
+    bool park(Renderer* renderer);
     NativeSanityGaugeStats stats() const noexcept;
 private:
     struct Impl;std::unique_ptr<Impl> impl_;

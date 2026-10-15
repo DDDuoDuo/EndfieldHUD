@@ -67,6 +67,11 @@ unsigned processThreads() {
 }
 std::size_t privateBytes() {PROCESS_MEMORY_COUNTERS_EX m{};m.cb=sizeof m;return GetProcessMemoryInfo(GetCurrentProcess(),reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&m),sizeof m)?m.PrivateUsage:0;}
 std::size_t faceRasterBytes{},faceGPUBytes{},faceParkedRasterBytes{},faceParkedGPUBytes{};
+// The recovery popover card while open (reported): built by its first opening
+// only and released with the face once the HUD closed (it used to be built
+// with the owner and kept for the whole run).
+long long popoverGPUBytes{},popoverRasterBytes{};
+long long signedDelta(std::size_t after,std::size_t before) {return static_cast<long long>(after)-static_cast<long long>(before);}
 struct Window {
     ATOM atom{};HWND hwnd{};
     Window() {WNDCLASSW c{};c.lpfnWndProc=DefWindowProcW;c.hInstance=GetModuleHandleW(nullptr);c.lpszClassName=L"EndfieldAccountOwnerFixture";atom=RegisterClassW(&c);check(atom!=0,"Register hidden fixture");
@@ -175,7 +180,19 @@ void run(const std::filesystem::path& shader,const std::filesystem::path& resour
         // Header recovery popover: wallet click opens it, Esc closes only it.
         frame({});
         const core::Point wallet{562+90,2+20};
+        // The card is built and uploaded by its first opening only.
+        const auto closedGPU=renderer.stats();const auto closedRaster=raster.stats();
+        check(!owner.gauge().sceneStats().popoverLoaded&&!owner.gauge().sceneStats().popoverUploaded&&owner.gauge().sceneStats().popoverLoads==0,
+              "The recovery popover's card is not built before it first opens");
         check(owner.covers(wallet)&&owner.pointer({app::PointerKind::down,app::PointerButton::left,wallet.x,wallet.y},clock+=.05)&&owner.capturesPointer(),"Wallet click opens the recovery popover");
+        frame({});
+        {
+            const auto opened=renderer.stats();const auto openRaster=raster.stats();
+            check(owner.gauge().sceneStats().popoverLoaded&&owner.gauge().sceneStats().popoverUploaded&&opened.nativeGroups==closedGPU.nativeGroups+1&&
+                  owner.headerEntries().size()==2,"Its first opening builds, uploads and composes the card above the wallet");
+            popoverGPUBytes=signedDelta(opened.resourceBytes+opened.nativeGroupBytes,closedGPU.resourceBytes+closedGPU.nativeGroupBytes);
+            popoverRasterBytes=signedDelta(openRaster.resourceBytes,closedRaster.resourceBytes);
+        }
         check(owner.key({app::KeyKind::down,VK_ESCAPE},false,clock+=.05)&&!owner.gauge().model().popoverOpen()&&!owner.capturesPointer(),"Esc dismisses only the recovery popover");
         clock+=.5;frame({});
         // Steady tilt frames through the bundle: no allocation.
@@ -235,17 +252,19 @@ void run(const std::filesystem::path& shader,const std::filesystem::path& resour
         owner.concealed(clock);
         const auto parked=owner.module().sceneStats();const auto gpuParked=renderer.stats();const auto rasterParked=raster.stats();
         check(parked.parks==1&&!parked.uploaded&&parked.surfaces==0&&parked.pixelBytes==0,"Once the HUD closed on another module the Account face keeps no leaf raster or GPU target");
-        check(gpuParked.nativeGroups+1==gpuShown.nativeGroups&&gpuParked.nativeGroupBytes<gpuShown.nativeGroupBytes&&gpuParked.resourceBytes<gpuShown.resourceBytes&&
+        const auto popover=owner.gauge().sceneStats();
+        check(popover.popoverParks==1&&!popover.popoverLoaded&&!popover.popoverUploaded,"The recovery popover, shut since its use, keeps no card either");
+        check(gpuParked.nativeGroups+2==gpuShown.nativeGroups&&gpuParked.nativeGroupBytes<gpuShown.nativeGroupBytes&&gpuParked.resourceBytes<gpuShown.resourceBytes&&
               rasterParked.entries<rasterShown.entries&&rasterParked.resourceBytes<rasterShown.resourceBytes,
-              "Its group target, leaf textures and shared rasterizer entries are released");
+              "Their group targets, leaf textures and shared rasterizer entries are released; the wallet stays");
         faceRasterBytes=rasterShown.resourceBytes;faceParkedRasterBytes=rasterParked.resourceBytes;
         faceGPUBytes=gpuShown.resourceBytes+gpuShown.nativeGroupBytes;faceParkedGPUBytes=gpuParked.resourceBytes+gpuParked.nativeGroupBytes;
         owner.concealed(clock);check(owner.module().sceneStats().parks==1,"A second conceal changes nothing");
         // Showing Account again rebuilds the same artwork.
         owner.setOverlayVisible(true,clock+=.1);frame({});
         const auto again=owner.module().sceneStats();
-        check(again.uploaded&&again.surfaces==shown.surfaces&&again.pixelBytes==shown.pixelBytes&&raster.stats().entries==rasterShown.entries&&
-              raster.stats().resourceBytes==rasterShown.resourceBytes&&renderer.stats().nativeGroupBytes==gpuShown.nativeGroupBytes,"Showing Account again rebuilds the same artwork");
+        check(again.uploaded&&again.surfaces==shown.surfaces&&again.pixelBytes==shown.pixelBytes&&raster.stats().entries>rasterParked.entries&&
+              renderer.stats().nativeGroups==gpuParked.nativeGroups+1&&!owner.gauge().sceneStats().popoverLoaded,"Showing Account again rebuilds the same face (the shut popover stays unloaded)");
         // A close with Account shown keeps its face for the next opening.
         owner.overlayClosing(clock+=.1);owner.concealed(clock);
         check(owner.module().sceneStats().parks==1&&owner.module().sceneStats().uploaded,"A close with Account shown keeps the face");
@@ -299,7 +318,7 @@ void prewarmedOpening(const std::filesystem::path& shader,const std::filesystem:
             (after.artworkRasters-gauge.artworkRasters)+(after.numberRasters-gauge.numberRasters)+(after.groupUploads-gauge.groupUploads)+(after.groupRedraws-gauge.groupRedraws);
         if(prewarm) check(work==0,"After the prewarm the first opening frame rasterizes, uploads and re-plans nothing of the wallet");
         else {coldOpeningWork=work;check(work>0,"Without the prewarm the first opening frame installs the wallet");}
-        check(all.size()==2,"The opened HUD composes the wallet and its popover group");
+        check(all.size()==1&&!owner.gauge().sceneStats().popoverLoaded,"The opened HUD composes the wallet alone (the shut recovery popover is not loaded)");
         // The unlinked wallet (Work Mode minutes) is a control: consumed, nothing opens.
         const core::Point wallet{562+90,2+20};
         check(owner.gauge().model().value()=="24 / 25"&&!owner.gauge().model().canOpen()&&owner.covers(wallet)&&
@@ -429,7 +448,8 @@ int wmain(int argc,wchar_t** argv) {
         CoUninitialize();
         std::cout<<"PASS "<<checks<<" Account owner checks (startup: construction "<<constructionMS<<" ms, first open "<<openingMS<<" ms, first frame "<<firstFrameMS<<" ms;"
                  <<" first opening on Map: "<<coldOpeningMS<<" ms with "<<coldOpeningWork<<" rasterizations/uploads/renders cold, "<<prewarmedOpeningMS<<" ms and none after a "<<prewarmMS<<" ms prewarm;"
-                 <<" face park: rasterizer "<<faceRasterBytes/1024<<" -> "<<faceParkedRasterBytes/1024<<" KiB, GPU "<<faceGPUBytes/1024<<" -> "<<faceParkedGPUBytes/1024<<" KiB at 1 px per point;"
+                 <<" recovery popover while open: rasterizer "<<popoverRasterBytes/1024<<" KiB, GPU "<<popoverGPUBytes/1024<<" KiB, none before its first opening or once the HUD closed;"
+                 <<" face and shut popover park: rasterizer "<<faceRasterBytes/1024<<" -> "<<faceParkedRasterBytes/1024<<" KiB, GPU "<<faceGPUBytes/1024<<" -> "<<faceParkedGPUBytes/1024<<" KiB at 1 px per point;"
                  <<" first owner construction: threads "<<threadsBeforeOwner<<" -> "<<threadsAfterOwner<<", private "<<privateBeforeOwner/1024<<" -> "<<privateAfterOwner/1024<<" KiB)\n";
         return 0;
     }

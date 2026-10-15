@@ -69,6 +69,10 @@ struct NativeSanityGaugeScene::Impl {
     std::array<h::GaugeImage,4> tipImages;std::array<std::uint64_t,4> tipRevisions{};std::array<bool,4> tipDirty{true,true,true,true};std::array<Rect,4> tipFrames{};
     std::vector<LayerPlacement> popoverPlacements;std::vector<Rect> popoverFrames;std::vector<std::string> popoverIDs;
     double scale{};std::string value;bool hidden{true},open{},refreshEnabled{},popoverDirty{true},popoverForce{true},meshDirty{true},uploaded{};
+    // The recovery popover is loaded the first time it opens (most HUD
+    // sessions never open it) and parked again once the HUD closed with it
+    // shut; tipResident: its numeral textures are on the GPU.
+    bool popoverLoaded{},tipResident{};
     std::array<std::string,4> tipText;std::array<bool,4> tipNumerals{};core::Language language{core::Language::english};
     Track hover,refreshHover,popoverAlpha,popoverLift;std::optional<double> lastTime;Renderer* owner{};
     NativeSanityGaugeStats stats;
@@ -79,7 +83,6 @@ struct NativeSanityGaugeScene::Impl {
         for(std::size_t i=0;i<4;++i) {tipDraws[i].sourceID=tipIDs[i];tipDraws[i].meshID=quadID;tipDraws[i].textureID=tipIDs[i];tipDraws[i].opacity=0;}
         for(auto& image:walletImages) image={1,1,{0,0,0,0}};for(auto& image:tipImages) image={1,1,{0,0,0,0}};
         walletOutput[0].masks.reserve(8);
-        loadPopover();
         // Mac sublayers composite in encoded sRGB; group both stacks so hover
         // tints and the popover card blend the same way.
         popoverGroup=std::make_unique<NativeLayerGroup>(popover,"account.gauge.popover",options.pixelsPerPoint,NativeGroupColorSpace::encodedSRGB);
@@ -115,7 +118,7 @@ struct NativeSanityGaugeScene::Impl {
             const auto alpha=static_cast<float>(a);
             if(p.world!=world||p.opacity!=alpha||!p.masks.empty()) {p.world=world;p.opacity=alpha;p.masks={};changed=true;}
         }
-        if(changed||popoverForce) {popover.setPlacements(popoverPlacements);popoverLocalDirty=true;popoverForce=false;}
+        if(popoverLoaded&&(changed||popoverForce)) {popover.setPlacements(popoverPlacements);popoverLocalDirty=true;popoverForce=false;}
     }
     void time(double t) {need(std::isfinite(t)&&(!lastTime||t>=*lastTime),"Gauge scene requires a finite monotonic owner clock");lastTime=t;}
     static double sample(const Track& track,double t) {
@@ -152,7 +155,7 @@ struct NativeSanityGaugeScene::Impl {
         popover.load(Json::Object{{"bounds",Json::Array{0,0,224,65}},{"position",Json::Array{0,0}},{"anchorPoint",Json::Array{0,0}},{"children",std::move(leaves)}},options);
         need(popover.report().unsupported.empty(),"Gauge popover contains unsupported raster state");
         popoverPlacements.assign(popoverIDs.size(),{});for(std::size_t i=0;i<popoverPlacements.size();++i) popoverPlacements[i].surface=i;
-        popoverDirty=false;popoverForce=true;++stats.popoverLoads;
+        popoverDirty=false;popoverForce=true;popoverLoaded=true;++stats.popoverLoads;
     }
     std::size_t index(std::string_view id) const {for(std::size_t i=0;i<popoverIDs.size();++i) if(popoverIDs[i]==id) return i;return SIZE_MAX;}
 };
@@ -194,7 +197,7 @@ bool NativeSanityGaugeScene::sync(const h::SanityGaugeModel& model,core::Languag
         if(language!=i.language) {i.language=language;structure=true;}
         if(structure) i.popoverDirty=true;
     }
-    if(i.popoverDirty) {i.loadPopover();changed=true;}
+    if(i.popoverDirty&&(i.open||i.popoverLoaded)) {i.loadPopover();changed=true;}
     i.placeLocal(t);
     return changed;
 }
@@ -227,26 +230,29 @@ void NativeSanityGaugeScene::upload(Renderer& r) {
     bool walletTextures=false,tipTextures=false;
     // Premultiplied encoded artwork, kept encoded for the encoded-sRGB groups.
     for(std::size_t n=0;n<3;++n) if(i.walletDirty[n]) {const auto pixels=straight(i.walletImages[n]);r.setTexture(walletIDs[n],++i.walletRevisions[n],{i.walletImages[n].width,i.walletImages[n].height,pixels,TextureColorSpace::encodedSRGB});i.walletDirty[n]=false;walletTextures=true;}
-    for(std::size_t n=0;n<4;++n) if(i.tipDirty[n]) {const auto pixels=straight(i.tipImages[n]);r.setTexture(tipIDs[n],++i.tipRevisions[n],{i.tipImages[n].width,i.tipImages[n].height,pixels,TextureColorSpace::encodedSRGB});i.tipDirty[n]=false;tipTextures=true;}
+    if(i.popoverLoaded) for(std::size_t n=0;n<4;++n) if(i.tipDirty[n]) {const auto pixels=straight(i.tipImages[n]);r.setTexture(tipIDs[n],++i.tipRevisions[n],{i.tipImages[n].width,i.tipImages[n].height,pixels,TextureColorSpace::encodedSRGB});i.tipDirty[n]=false;tipTextures=true;i.tipResident=true;}
     i.wallet.uploadResources(r);
     if(!i.walletRegistered) {
         r.configureNativeGroup(walletGroupID,{g::artwork,i.options.pixelsPerPoint,NativeGroupColorSpace::encodedSRGB},i.walletDraws);i.walletRegistered=true;
         if(i.walletOutput[0].sourceID.empty()) {auto next=r.nativeGroupOutput(walletGroupID);next.masks.reserve(8);i.walletOutput[0]=std::move(next);}
         i.walletLocalDirty=false;++i.stats.groupUploads;
     } else if(walletTextures||i.walletLocalDirty) {r.setNativeGroupDraws(walletGroupID,i.walletDraws);i.walletLocalDirty=false;++i.stats.groupRedraws;}
-    const bool content=!i.popoverUploaded||i.popoverStructure!=i.popover.contentRevision()||i.popoverResources!=i.popover.resourceRevision();
+    const bool content=i.popoverLoaded&&(!i.popoverUploaded||i.popoverStructure!=i.popover.contentRevision()||i.popoverResources!=i.popover.resourceRevision());
     if(content) {
         const auto ink=i.popoverGroup->localCoverageBounds();const Rect& b=g::popover;
         const double x=std::min(ink.x,b.x),y=std::min(ink.y,b.y);
         i.popoverGroup->uploadResources(r,Rect{x,y,std::max(ink.x+ink.width,b.x+b.width)-x,std::max(ink.y+ink.height,b.y+b.height)-y},i.insertion());
         i.popoverUploaded=true;i.popoverStructure=i.popover.contentRevision();i.popoverResources=i.popover.resourceRevision();i.popoverLocalDirty=false;++i.stats.groupUploads;
-    } else if(tipTextures||i.popoverLocalDirty) {i.popoverGroup->updateLocal(r,i.insertion());i.popoverLocalDirty=false;++i.stats.groupRedraws;}
+    } else if(i.popoverUploaded&&(tipTextures||i.popoverLocalDirty)) {i.popoverGroup->updateLocal(r,i.insertion());i.popoverLocalDirty=false;++i.stats.groupRedraws;}
     i.uploaded=true;i.applyPose();
 }
 std::span<const LayerCompositionEntry> NativeSanityGaugeScene::entries() {
-    auto& i=*impl_;if(i.hidden||!i.walletRegistered||!i.popoverUploaded) return {};
-    // Wallet stack first, the recovery popover (z 10) above it.
-    i.composed[0]={&i.wallet,i.walletOutput};i.composed[1]=i.popoverGroup->entry();
+    auto& i=*impl_;if(i.hidden||!i.walletRegistered) return {};
+    // Wallet stack first, the recovery popover (z 10) above it while it is
+    // open or fading out; a shut popover is not composed (so it can park).
+    i.composed[0]={&i.wallet,i.walletOutput};
+    if(!i.popoverUploaded||!(i.open||i.popoverOpacity>0)) return std::span<const LayerCompositionEntry>(i.composed).first(1);
+    i.composed[1]=i.popoverGroup->entry();
     return i.composed;
 }
 void NativeSanityGaugeScene::collected(Renderer& r) {impl_->wallet.collectRetiredResources(r);}
@@ -257,11 +263,29 @@ bool NativeSanityGaugeScene::release(Renderer& r) {
     i.popoverUploaded=false;
     bool ok=i.wallet.releaseResources(r);
     for(const auto& id:walletIDs) ok=r.removeTexture(id)&&ok;
-    for(const auto& id:tipIDs) ok=r.removeTexture(id)&&ok;
+    if(i.tipResident) {for(const auto& id:tipIDs) ok=r.removeTexture(id)&&ok;if(ok) i.tipResident=false;}
     ok=r.removeMesh(quadID)&&ok;
     if(ok) {i.uploaded=false;i.meshDirty=true;i.walletDirty={true,true,true};i.tipDirty={true,true,true,true};i.owner=nullptr;}
     return ok;
 }
-NativeSanityGaugeStats NativeSanityGaugeScene::stats() const noexcept {return impl_->stats;}
+bool NativeSanityGaugeScene::park(Renderer* r) {
+    auto& i=*impl_;
+    if(!i.popoverLoaded&&!i.popoverUploaded&&!i.tipResident) return false;
+    if(i.open||i.popoverOpacity>0) return false; // shown or still fading out
+    if(i.popoverUploaded||i.tipResident) {
+        need(r&&(!i.owner||i.owner==r),"Park the gauge popover through its renderer");
+        if(i.popoverUploaded&&!i.popoverGroup->releaseResources(*r)) return false; // still composed
+        i.popoverUploaded=false;
+        if(i.tipResident) {for(const auto& id:tipIDs) (void)r->removeTexture(id);i.tipResident=false;}
+    }
+    // An empty load drops the card's leaf rasters (and their rasterizer entries).
+    i.popover.load(Json::Object{{"bounds",Json::Array{0,0,224,65}},{"position",Json::Array{0,0}},{"anchorPoint",Json::Array{0,0}},{"children",Json::Array{}}},i.options);
+    i.popoverPlacements.clear();i.popoverFrames.clear();i.popoverIDs.clear();
+    i.popoverLoaded=false;i.popoverDirty=true;i.popoverForce=true;i.popoverLocalDirty=false;i.popoverStructure=i.popoverResources=0;
+    for(auto& image:i.tipImages) image={1,1,{0,0,0,0}};
+    i.tipDirty={true,true,true,true};std::fill(i.tipText.begin(),i.tipText.end(),std::string("\x01"));i.tipNumerals={};
+    ++i.stats.popoverParks;return true;
+}
+NativeSanityGaugeStats NativeSanityGaugeScene::stats() const noexcept {auto out=impl_->stats;out.popoverLoaded=impl_->popoverLoaded;out.popoverUploaded=impl_->popoverUploaded;return out;}
 }
 #endif

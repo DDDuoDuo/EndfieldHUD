@@ -140,11 +140,11 @@ void session() {
         check(result&&result->failure&&result->failure->kind==h::ErrorKind::transport,"The waiting request completes on the owner drain");
         s=transport.sessionStats();check(!s.open&&s.closes==1&&transport.activeRequests()==0,"An unretained session closes with its last request");
         threadsClosed=processThreads();
-        // Retained (HUD shown): kept between requests, closed at once when released idle.
+        // Retained (HUD shown): kept between requests, closed when released idle.
         transport.setRetained(true);result.reset();
-        handle=transport.start(request,[&](h::HttpOutcome o){result=std::move(o);});runJob();settle();
-        s=transport.sessionStats();check(result&&s.open&&s.opens==2&&s.closes==1,"A retained session stays open after its request");
-        result.reset();handle=transport.start(request,[&](h::HttpOutcome o){result=std::move(o);});
+        handle=transport.start(request,[&](h::HttpOutcome o){result=std::move(o);});runJob();handle->cancel();
+        s=transport.sessionStats();check(!result&&s.open&&s.opens==2&&s.closes==1&&transport.activeRequests()==0,"A retained session stays open once its request ended");
+        handle=transport.start(request,[&](h::HttpOutcome o){result=std::move(o);});
         check(jobs.empty()&&transport.sessionStats().opens==2,"The next request reuses the retained session");
         transport.setRetained(false);check(transport.sessionStats().open,"Releasing keeps the session while a request is in flight");
         settle();s=transport.sessionStats();check(result&&!s.open&&s.closes==2,"The released session closes with that request");
@@ -161,8 +161,8 @@ void session() {
         runJob();s=transport.sessionStats();check(!s.open&&s.opens==4&&s.closes==4&&s.waiting==0,"The late session is closed at once");
         // A refused queue opens the session on the owner thread instead.
         refuse=true;result.reset();handle=transport.start(request,[&](h::HttpOutcome o){result=std::move(o);});
-        s=transport.sessionStats();check(s.open&&!s.opening&&s.opens==5&&jobs.empty(),"A full shared queue opens the session on the calling thread");
-        settle();check(result&&!transport.sessionStats().open,"That session also ends with its request");
+        s=transport.sessionStats();check(s.open&&!s.opening&&s.opens==5&&jobs.empty()&&s.waiting==0,"A full shared queue opens the session on the calling thread");
+        handle->cancel();s=transport.sessionStats();check(!s.open&&s.closes==5,"Cancelling the last request of an unretained session closes it");
         refuse=false;
         // The transport goes away while its session is still opening.
         result.reset();handle=transport.start(request,[&](h::HttpOutcome o){result=std::move(o);});check(jobs.size()==1,"A session open is queued");

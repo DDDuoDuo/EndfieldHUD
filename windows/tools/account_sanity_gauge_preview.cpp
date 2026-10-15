@@ -15,6 +15,7 @@ void need(bool v,const char* s) {if(!v) throw std::invalid_argument(s);}
 struct AccountSanityGaugePreview::Impl {
     h::HypergryphAccountController& controller;std::shared_ptr<const h::GaugeAssets> assets;h::SanityGaugeModel model;gpu::NativeSanityGaugeScene scene;
     AccountSanityGaugeOptions options;app::ClientMetrics metrics;core::Projection projection;bool overlayVisible{},posed{};double time{};
+    gpu::Renderer* renderer{}; // the host's, from upload() (conceal() parks through it)
     Impl(h::HypergryphAccountController& c,gpu::LayerRasterizer& r,std::shared_ptr<const h::GaugeAssets> a,AccountSanityGaugeOptions o)
         :controller(c),assets(a),scene(a,r,o.raster),options(std::move(o)) {
         // Mac: accountGauge.onRefresh = { accountController.refresh(manual: true) }.
@@ -151,7 +152,8 @@ std::vector<h::GaugeAction> AccountSanityGaugePreview::accessibleActions() const
 }
 std::optional<std::string> AccountSanityGaugePreview::accessibilityValue() const {return impl_->model.accessibilityValue(impl_->options.language);}
 gpu::NativeSanityGaugeStats AccountSanityGaugePreview::sceneStats() const noexcept {return impl_->scene.stats();}
-void AccountSanityGaugePreview::upload(gpu::Renderer& r) {if(impl_->posed) impl_->scene.upload(r);}
+void AccountSanityGaugePreview::upload(gpu::Renderer& r) {if(impl_->posed) {impl_->renderer=&r;impl_->scene.upload(r);}}
+bool AccountSanityGaugePreview::conceal() {return impl_->scene.park(impl_->renderer);}
 std::span<const gpu::LayerCompositionEntry> AccountSanityGaugePreview::entries() {return impl_->posed?impl_->scene.entries():std::span<const gpu::LayerCompositionEntry>{};}
 void AccountSanityGaugePreview::collected(gpu::Renderer& r) {impl_->scene.collected(r);}
 void AccountSanityGaugePreview::release(gpu::Renderer& r) {need(impl_->scene.release(r),"Detach the gauge composition before releasing its resources");}

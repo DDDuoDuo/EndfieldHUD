@@ -665,6 +665,11 @@ private:
             step.check(w.prewarm.prewarmed && w.prewarm.installed && w.prewarm.opened && w.prewarm.openingWork == 0,
                        "The launch prewarm installed the hidden header wallet; the first opening frame rasterized and uploaded none of it");
             {
+                const auto gauge = owner_->gauge().sceneStats();
+                step.check(!gauge.popoverLoaded && !gauge.popoverUploaded && gauge.popoverLoads == 0,
+                           "The recovery popover's card is not built before it first opens (most HUD sessions never open it)");
+            }
+            {
                 // Live RC 128: a press on the wallet closed the HUD. The wallet
                 // (header design point 562,2 to 730,44) lies almost entirely
                 // outside the displayed circle (radius 310 around 500,320), so
@@ -737,6 +742,8 @@ private:
             const auto toggle = d.gaugePoint("toggle");
             step.check(toggle && covers(*toggle) && d.press(*toggle) && owner_->gauge().model().popoverOpen() && capturesPointer(),
                        "The wallet opens its recovery popover");
+            step.check(owner_->gauge().sceneStats().popoverLoaded && owner_->gauge().sceneStats().popoverUploaded,
+                       "Its first opening builds and uploads the card");
             const auto refresh = d.gaugePoint("refresh");
             step.check(refresh.has_value() && d.press(*refresh), "The popover refresh control takes the click");
             d.settle();
@@ -873,6 +880,9 @@ private:
                            "Once the HUD is closed on another module the Account face keeps no leaf raster or GPU target");
             else
                 step.check(after.parks == before.parks, "A face shown at the close stays resident");
+            const auto gauge = owner_->gauge().sceneStats();
+            step.check(!owner_->gauge().model().popoverOpen() && !gauge.popoverLoaded && !gauge.popoverUploaded,
+                       "The shut recovery popover keeps no card once the HUD closed; the wallet stays");
         }
         d.frame();
         if (step.cycle < 2 || w.finished || !w.linked) return;

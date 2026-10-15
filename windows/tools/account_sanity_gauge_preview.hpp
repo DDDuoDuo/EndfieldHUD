@@ -55,6 +55,9 @@ public:
     std::optional<core::Rect> clientRect(core::Rect local) const;
     bool perform(std::string_view id,double time);
     native::NativeSanityGaugeStats sceneStats() const noexcept;
+    // The HUD finished closing: a shut recovery popover releases its card
+    // (loaded again when it next opens); the wallet stays. True when parked.
+    bool conceal();
     void upload(native::Renderer&);
     std::span<const native::LayerCompositionEntry> entries();
     void collected(native::Renderer&);

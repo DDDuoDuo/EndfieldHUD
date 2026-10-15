@@ -34,6 +34,8 @@ LPWSTR dup(const std::wstring& s) {auto* out=static_cast<LPWSTR>(CoTaskMemAlloc(
 
 struct World {std::deque<std::function<void()>> queue;std::wstring userData;int environments{},runtimeQueries{};std::wstring runtime{L"154.0.4258.62"};void pump() {while(!queue.empty()) {auto f=std::move(queue.front());queue.pop_front();f();}}};
 World* world{};
+// A COM object's current reference count (AddRef then Release).
+template<class T> ULONG references(T* p) {p->AddRef();return p->Release();}
 void pumpWindows() {MSG m{};while(PeekMessageW(&m,nullptr,0,0,PM_REMOVE)) {TranslateMessage(&m);DispatchMessageW(&m);}}
 
 template<class I> struct Com:RuntimeClass<RuntimeClassFlags<ClassicCom>,I> {};
@@ -386,6 +388,9 @@ void run() {
         check(std::filesystem::exists(profile)&&lastEnvironment->exited.list.size()==1,"The profile waits for the browser process to exit");
         lastEnvironment->exit();
         check(!std::filesystem::exists(profile)&&lastEnvironment->removed==1,"The private profile is deleted once the browser process exits");
+        // Only the test's and the fake runtime's own references remain.
+        check(references(lastEnvironment.Get())==1&&references(c.Get())==2&&references(popup.Get())==2,
+              "No WebView2 environment or controller reference outlives a completed login");
         const std::vector<std::string> order{"consented","page-started","navigation-blocked","page-loaded","popup-opened","popup-closed","credential-rejected","login-form-requested","credential-accepted","completed"};
         std::size_t at{};for(const auto& t:tags) if(at<order.size()&&t==order[at]) ++at;
         check(at==order.size(),"Lifecycle diagnostics are fixed tags in order");
@@ -398,6 +403,7 @@ void run() {
         check(!g->key('A')&&g->key(VK_ESCAPE),"Escape is consumed by the login");
         pumpWindows();check(completions==2&&!result&&failure==h::LoginFailure::cancelled&&g->closed,"Escape cancels and disposes the browser");
         lastEnvironment->exit();
+        check(references(lastEnvironment.Get())==1&&references(g.Get())==2,"No WebView2 environment or controller reference outlives a cancelled login");
 
         // C. Load timeout keeps the window; the 900 s expiry ends it.
         presenter.present(h::Region::mainland,done);click(loginWindow(),101);w.pump();w.pump();
@@ -409,6 +415,7 @@ void run() {
         presenter.deadline(consented+899.9);check(presenter.isPresenting(),"Not expired before 900 s");
         presenter.deadline(consented+900);check(completions==3&&failure==h::LoginFailure::expired&&!presenter.isPresenting(),"Session expires after 900 s");
         lastEnvironment->exit();
+        check(references(lastEnvironment.Get())==1&&references(e.Get())==2,"No WebView2 environment or controller reference outlives an expired login");
 
         // D. Cancel before consent creates no browser; closing the window cancels.
         const int environments=w.environments;

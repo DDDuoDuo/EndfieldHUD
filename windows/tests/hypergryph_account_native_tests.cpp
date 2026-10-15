@@ -160,6 +160,12 @@ void run(const std::filesystem::path& shader,const std::filesystem::path& resour
     counting=false;check(allocations==0,"120 changing-tilt gauge frames allocate nothing");
     check(gauge.sceneStats().groupUploads==beforeGauge.groupUploads&&gauge.sceneStats().groupRedraws==beforeGauge.groupRedraws,"Tilt never redraws the retained gauge group targets");
     const auto stats=gauge.sceneStats();check(stats.artworkRasters==1,"Wallet artwork rasterizes once per scale");
+    // The recovery popover was loaded when it first opened; shut, it is no
+    // longer composed, so a closed HUD releases its card (the wallet stays).
+    check(stats.popoverLoads>=1&&stats.popoverUploaded&&gauge.entries().size()==1,"A shut popover is not composed");
+    check(gauge.conceal()&&!gauge.sceneStats().popoverLoaded&&!gauge.sceneStats().popoverUploaded&&gauge.sceneStats().popoverParks==1&&gauge.entries().size()==1,
+          "Parking releases the shut popover's card and keeps the wallet");
+    check(!gauge.conceal(),"Parking twice changes nothing");
     // Teardown.
     composition.setEntries(renderer,{});account.collected(renderer);gauge.collected(renderer);account.release(renderer);gauge.release(renderer);composition.detach(renderer);
     check(!IsWindowVisible(window.hwnd),"Fixture never shows UI");

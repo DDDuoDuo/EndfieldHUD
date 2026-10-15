@@ -84,7 +84,8 @@ public:
     void prewarm(const core::Matrix4& center,const core::source::DesktopChromeSettings&,
         const core::ModulePresentationSample&,double time);
     // The HUD finished closing (HostEvent::overlayConcealed): an Account face
-    // that is not shown releases its GPU targets and leaf rasters.
+    // that is not shown and a shut recovery popover release their GPU
+    // targets and rasters (rebuilt when next shown); the wallet stays.
     void concealed(double time);
     bool requiresFrames(double time) const;
     std::optional<double> nextWakeTime(double now) const;

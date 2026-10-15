@@ -125,7 +125,7 @@ void AccountLinkingOwner::prewarm(const core::Matrix4& center,const core::source
     i.gauge->update(center,0,i.time);
     if(sample.requested==core::Module::account) i.module->update(center,chrome,sample,0,i.time);
 }
-void AccountLinkingOwner::concealed(double t) {auto& i=*impl_;i.advance(t);(void)i.module->conceal();}
+void AccountLinkingOwner::concealed(double t) {auto& i=*impl_;i.advance(t);(void)i.module->conceal();(void)i.gauge->conceal();}
 bool AccountLinkingOwner::requiresFrames(double t) const {const auto& i=*impl_;return i.module->requiresFrames(t)||i.gauge->requiresFrames(t);}
 std::optional<double> AccountLinkingOwner::nextWakeTime(double now) const {
     const auto& i=*impl_;std::optional<double> wake;
