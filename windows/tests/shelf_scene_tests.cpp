@@ -155,6 +155,53 @@ void native(const wchar_t*shader){
     }}pose.reveal.reset();check(raster.stats().textLayoutsCreated==cardLayouts,"Reveal reuses all text and card artwork");
     state.setDropTarget(true);source.update(state,style);bindings=images(source);bridge.syncContent(bindings);pose.time+=.1;pose.dropStrokeEnd=.25;bridge.updatePose(pose);bridge.uploadAnimations(renderer);composition.setEntries(renderer,bridge.entries());composition.present(renderer);bridge.collectRetired(renderer);renderer.draw(false);const auto partialDrop=renderer.readback();
     const auto dropRasters=bridge.stats().dropRasters;bridge.uploadAnimations(renderer);check(bridge.stats().dropRasters==dropRasters,"Equal drop path is a retained no-op");pose.time+=.1;pose.dropStrokeEnd=1;bridge.updatePose(pose);bridge.uploadAnimations(renderer);composition.setEntries(renderer,bridge.entries());composition.present(renderer);renderer.draw(false);check(renderer.readback().pixels!=partialDrop.pixels,"Source drop outline traces its path rather than fading a full outline");
+    // A hover/press tint or rim that does not show keeps no bitmap (a Mac
+    // CAShapeLayer at opacity 0 renders nothing): it holds one transparent
+    // point, paints its source shape in uploadAnimations once its feedback
+    // begins to show and, once faded out, gives the bitmap back at the next
+    // content event (never inside the frames) or when settled. Framed rims
+    // (.28 at rest) stay painted. The frames are those of the retained art.
+    {
+        const auto clip=m::ShelfPresentation::contentClip();std::string hovered;
+        for(const auto&card:source.cards())if(card.full.y>=clip.y&&card.full.y+card.full.height<=clip.y+clip.height){hovered=card.itemID;break;}
+        check(!hovered.empty(),"A whole card is visible");const auto action="shelf:"+hovered+":select";
+        renderer.draw(false);const auto resting=renderer.readback();const auto rest=bridge.stats();
+        check(!bridge.uploadAnimations(renderer)&&bridge.stats().highlightPaints==rest.highlightPaints,"Resting highlights paint nothing");
+        pose.time+=.1;bridge.setFeedback(action,false,false,pose.time);pose.time+=.2;bridge.updatePose(pose);
+        check(bridge.uploadAnimations(renderer)&&bridge.stats().highlightPaints==rest.highlightPaints+1&&bridge.stats().pixelBytes>rest.pixelBytes,"A hover paints the card's tint (its framed rim is already painted)");
+        composition.setEntries(renderer,bridge.entries());composition.present(renderer);check(bridge.collectRetired(renderer),"A highlight repaint retires nothing");renderer.draw(false);
+        check(renderer.readback().pixels!=resting.pixels,"The painted tint shows");
+        const auto painted=bridge.stats();check(!bridge.uploadAnimations(renderer)&&bridge.stats().highlightPaints==painted.highlightPaints&&bridge.stats().highlightReleases==rest.highlightReleases,"A steady hover paints nothing again");
+        bridge.setFeedback({},false,false,pose.time);pose.time+=.07;bridge.updatePose(pose);
+        check(!bridge.uploadAnimations(renderer)&&bridge.stats().highlightReleases==rest.highlightReleases&&bridge.stats().pixelBytes==painted.pixelBytes&&bridge.requiresFrames(pose.time),"A fading tint keeps its bitmap");
+        composition.present(renderer);pose.time+=.08;bridge.updatePose(pose);
+        check(!bridge.uploadAnimations(renderer)&&bridge.stats().highlightReleases==rest.highlightReleases&&bridge.stats().pixelBytes==painted.pixelBytes&&!bridge.requiresFrames(pose.time),"A faded tint does no raster work inside the frames");
+        composition.present(renderer);renderer.draw(false);check(renderer.readback().pixels==resting.pixels,"A faded tint draws nothing");
+        // The pointer moves on: that event gives the faded tint's bitmap back.
+        pose.time+=.05;bridge.setFeedback({},false,false,pose.time);bridge.updatePose(pose);
+        check(bridge.uploadAnimations(renderer)&&bridge.stats().highlightReleases==rest.highlightReleases+1&&bridge.stats().pixelBytes==rest.pixelBytes,"The next pointer event gives the faded tint's bitmap back");
+        composition.setEntries(renderer,bridge.entries());composition.present(renderer);renderer.draw(false);
+        check(renderer.readback().pixels==resting.pixels,"The released tint leaves the exact resting frame");
+        // The HUD closes while a tint still fades (the shown Shelf stays
+        // resident): settling ends the fade and gives the bitmap back at once.
+        pose.time+=.05;bridge.setFeedback(action,false,false,pose.time);pose.time+=.2;bridge.updatePose(pose);
+        check(bridge.uploadAnimations(renderer)&&bridge.stats().highlightPaints==rest.highlightPaints+2,"Hovering again paints the tint again");
+        composition.setEntries(renderer,bridge.entries());composition.present(renderer);
+        bridge.setFeedback({},false,false,pose.time);pose.time+=.03;bridge.updatePose(pose);check(!bridge.uploadAnimations(renderer)&&bridge.requiresFrames(pose.time),"The tint fades");composition.present(renderer);
+        check(bridge.settleHighlights()&&bridge.stats().highlightReleases==rest.highlightReleases+2&&bridge.stats().pixelBytes==rest.pixelBytes&&!bridge.requiresFrames(pose.time),"Settling ends the fade and gives the bitmap back at once");
+        check(!bridge.settleHighlights()&&bridge.stats().highlightReleases==rest.highlightReleases+2,"Settling again changes nothing");
+        bridge.updatePose(pose);check(!bridge.uploadAnimations(renderer),"A settled Shelf has nothing left to paint or release");composition.setEntries(renderer,bridge.entries());composition.present(renderer);renderer.draw(false);
+        check(renderer.readback().pixels==resting.pixels,"The settled Shelf draws its resting frame");
+        // What the points stand for at the production 2 px per point: every
+        // resting highlight of this Shelf rasterized as its source shape.
+        auto two=options;two.pixelsPerPoint=2;two.includeRootOpacity=false;two.includeRootMask=true;std::size_t held{},heldBytes{},kept{};
+        const auto plan=n::prepareShelfScene(source,images(source));std::vector<const n::ShelfScenePart*>parts{&plan.collection,&plan.scrollbar,&plan.foreground};for(const auto&card:plan.cards)parts.push_back(&card);
+        for(const auto*part:parts)for(std::size_t k=0;k<part->surfaces.size();++k){const auto&s=part->surfaces[k];if(s.feedback==n::ShelfSceneSurface::none)continue;
+            const auto&f=part->feedback[s.feedback];if((s.rim?f.rimOpacity:f.tintOpacity)>0){++kept;continue;}
+            const auto image=raster.rasterize("held:"+s.id,1,part->layers["children"].array()[k],two);check(image->complete(),"A held highlight rasterizes");++held;heldBytes+=image->straightRGBA.size();raster.remove("held:"+s.id);}
+        std::cout<<"Shelf highlights at 2x: "<<held<<" resting tints/rims held as transparent points ("<<heldBytes/1024<<" KiB of source shapes not kept), "<<kept<<" framed rims painted\n";
+        check(!plan.cards.empty()&&held>=plan.cards.size()&&kept>=plan.cards.size()&&heldBytes>0,"Every card's resting select tint is held as a point and its framed rim stays painted");
+    }
     // Tight groups: each group of consecutive static artwork (chrome and
     // cards) is rasterized over its integer-aligned paint extent instead of
     // the whole 400 x 334 canvas or 184 x 74 card. At the production 2 px per

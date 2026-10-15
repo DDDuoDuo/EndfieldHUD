@@ -18,6 +18,9 @@
 //     the content again when the module is selected, and showing it again
 //     rebuilds pixel-identical artwork. The selected Shelf keeps its artwork
 //     across a close.
+//   - A hover/press tint or rim that does not show keeps one transparent
+//     point instead of its bitmap: a hover paints it, and it is given back
+//     once its fade-out finished (the resting frame is pixel-identical).
 // Prints the measured numbers (raster bytes, textures, threads, private
 // bytes, rebuild time) before and after.
 #include "tools/shelf_preview.hpp"
@@ -124,6 +127,31 @@ void run(HWND hwnd,gpu::Renderer&renderer,const gpu::NativeShelfAssets&assets){
     // Switching back only re-uploads the retained rasters.
     (void)modules.select(core::Module::fileShelf,time);const double upload=timed(45);timed(20);
     check(capture()==before&&raster.stats().entries==rasterShown.entries&&raster.stats().resourceBytes==rasterShown.resourceBytes&&shelf.resources().iconWorkerStarts==1,"Switched back, the Shelf is unchanged and starts no icon worker for cached icons");
+    // A hover/press tint or rim that does not show keeps one transparent
+    // point instead of its bitmap: moving onto a card paints its highlight
+    // (the framed card rim, .28 at rest, is always painted); once it faded
+    // out it draws nothing and gives the bitmap back at the next pointer
+    // event (no raster work inside the frames), or at once when the HUD
+    // finishes closing over the shown Shelf (conceal settles the fade).
+    {const auto firstID=shelf.state().items().front().id;const auto placed=shelf.state().card(firstID);check(placed.has_value(),"The first card is shown");
+        const auto at=canvas({placed->full.x+placed->full.width*.3,placed->full.y+placed->full.height*.5});const auto rest=shelf.resources();
+        const auto hover=[&]{check(shelf.pointer({app::PointerKind::move,app::PointerButton::none,at.x,at.y,0},time),"The pointer moves over a card");timed(20);};
+        hover();const auto hovered=shelf.resources();const auto painted=hovered.highlightPaints-rest.highlightPaints;const bool shows=capture()!=before;
+        std::cout<<"Shelf hover:    "<<painted<<" highlight(s) painted while shown, +"<<kib(hovered.scenePixelBytes-rest.scenePixelBytes)<<" KiB\n";
+        check(painted>0&&hovered.highlightReleases==rest.highlightReleases&&hovered.scenePixelBytes>rest.scenePixelBytes&&shows,"Hovering a card paints its highlight");
+        (void)shelf.pointer({app::PointerKind::leave,app::PointerButton::none,0,0,0},time);timed(20);
+        const auto faded=shelf.resources();
+        check(faded.highlightReleases==rest.highlightReleases&&faded.scenePixelBytes==hovered.scenePixelBytes&&!shelf.requiresFrames(time)&&capture()==before,"A faded highlight draws nothing and does no raster work inside the frames");
+        (void)shelf.pointer({app::PointerKind::move,app::PointerButton::none,2,2,0},time);timed(2);
+        const auto left=shelf.resources();
+        check(left.highlightReleases-rest.highlightReleases==painted&&left.scenePixelBytes==rest.scenePixelBytes&&left.sceneSurfaces==rest.sceneSurfaces&&capture()==before,
+              "The next pointer event gives every faded highlight bitmap back; the frame is the resting one");
+        hover();check(shelf.resources().highlightPaints-rest.highlightPaints==2*painted,"Hovering again paints the highlight again");
+        (void)shelf.pointer({app::PointerKind::leave,app::PointerButton::none,0,0,0},time);timed(1);check(shelf.requiresFrames(time),"The highlight fades");
+        shelf.cancelPanels();shelf.conceal();const auto closed=shelf.resources();
+        check(closed.highlightReleases-rest.highlightReleases==2*painted&&closed.scenePixelBytes==rest.scenePixelBytes&&closed.sceneParks==rest.sceneParks&&!shelf.requiresFrames(time),
+              "Closed mid-fade, the shown Shelf settles its highlights and keeps only its resting artwork");
+        timed(5);check(capture()==before,"Reopened, the settled Shelf draws its resting frame");}
     // The HUD closes while another module is shown (overlayClosing, then the
     // close finishes: overlayConcealed): the Shelf releases its rasters.
     (void)modules.select(core::Module::clipboard,time);timed(45);shelf.cancelPanels();shelf.conceal();

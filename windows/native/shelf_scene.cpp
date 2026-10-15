@@ -10,6 +10,7 @@
 #include <optional>
 #include <set>
 #include <stdexcept>
+#include <utility>
 
 namespace endfield::native {
 namespace {
@@ -64,6 +65,9 @@ core::Rect inkExtent(const Json&node,const Matrix&world,core::Rect b){
 }
 bool sameDependency(const modules::ShelfPresentationImage&a,const modules::ShelfPresentationImage&b){return a.kind==b.kind&&a.layerID==b.layerID&&a.itemID==b.itemID&&a.sourceResource==b.sourceResource&&a.lastKnownPath==b.lastKnownPath&&a.rect==b.rect&&a.tint==b.tint&&a.requestedPixels==b.requestedPixels&&a.isDirectory==b.isDirectory&&a.unavailable==b.unavailable&&a.sourceInTint==b.sourceInTint&&a.resizeAspect==b.resizeAspect;}
 Json root(Json::Array leaves={}){return Json::Object{{"bounds",Json::Array{0,0,0,0}},{"position",Json::Array{0,0}},{"anchorPoint",Json::Array{0,0}},{"allowsGroupOpacity",false},{"children",std::move(leaves)}};}
+// The retained surface of a highlight that does not show: one transparent
+// point with the highlight's identity (its numeric placement stays bound).
+[[maybe_unused]] Json highlightPoint(const std::string&id){return Json::Object{{"id",id},{"kind","layer"},{"bounds",Json::Array{0,0,1,1}},{"position",Json::Array{0,0}},{"anchorPoint",Json::Array{0,0}},{"backgroundColor",Json::Object{{"sRGB",Json::Array{0,0,0,0}}}},{"children",Json::Array{}}};}
 struct Compiler {
     std::span<const NativeShelfImage>images;std::span<const modules::ShelfPresentationImage>dependencies;std::span<const Feedback>feedback;
     ShelfScenePart result;Json::Array leaves;std::set<std::string,std::less<>>ids;std::size_t visited{};std::optional<core::Rect>groupBounds;
@@ -231,13 +235,13 @@ ShelfScenePlan prepareShelfScene(const modules::ShelfPresentation&source,std::sp
     std::size_t expected=source.chromeImages().size();for(const auto&card:source.cards())expected+=card.images.size();need(images.size()==expected,"Shelf images must exactly cover visible source dependencies");
     std::set<std::string,std::less<>>imageIDs;for(const auto&i:images)need(imageIDs.insert(i.dependency.layerID).second,"Repeated Shelf image binding");
     ShelfScenePlan result;const auto&parts=children(source.chrome());need(parts.size()==5&&text(parts[0]["id"])=="shelf.collection"&&text(parts[1]["id"])=="shelf.drop"&&text(parts[4]["id"])=="shelf.toolbar","Unexpected source Shelf paint structure");
-    Compiler collection{images,source.chromeImages(),source.chromeFeedback(),{},{},{},0,{}};auto tree=parts[0];need(!tree["mask"].isNull(),"Missing source Shelf collection clip");tree.erase("mask");collection.visit(std::move(tree));result.collection=collection.finish();
-    Compiler foreground{images,source.chromeImages(),source.chromeFeedback(),{},{},{},0,{}};for(std::size_t n=1;n<parts.size();++n)foreground.visit(parts[n]);result.foreground=foreground.finish();
+    Compiler collection{images,source.chromeImages(),source.chromeFeedback(),{},{},{},0,{},{}};auto tree=parts[0];need(!tree["mask"].isNull(),"Missing source Shelf collection clip");tree.erase("mask");collection.visit(std::move(tree));result.collection=collection.finish();
+    Compiler foreground{images,source.chromeImages(),source.chromeFeedback(),{},{},{},0,{},{}};for(std::size_t n=1;n<parts.size();++n)foreground.visit(parts[n]);result.foreground=foreground.finish();
     result.cards.reserve(source.cards().size());for(const auto&card:source.cards()){
-        Compiler c{images,card.images,card.feedback,{},{},{},0,{}};c.result.itemID=card.itemID;c.visit(card.artwork);result.cards.push_back(c.finish());
+        Compiler c{images,card.images,card.feedback,{},{},{},0,{},{}};c.result.itemID=card.itemID;c.visit(card.artwork);result.cards.push_back(c.finish());
     }
-    if(const auto&card=source.properties()){Compiler c{{},{},card->feedback,{},{},{},0,rect(card->artwork["bounds"])};c.visit(card->artwork);result.properties=c.finish();}
-    Compiler scrollbar{{},{},{},{},{},{},0,{}};if(auto r=source.scrollIndicator()){
+    if(const auto&card=source.properties()){Compiler c{{},{},card->feedback,{},{},{},0,rect(card->artwork["bounds"]),{}};c.visit(card->artwork);result.properties=c.finish();}
+    Compiler scrollbar{{},{},{},{},{},{},0,{},{}};if(auto r=source.scrollIndicator()){
         const auto color=source.scrollIndicatorColor();Json node=Json::Object{{"id","shelf.scrollbar"},{"kind","layer"},{"bounds",Json::Array{0,0,r->width,r->height}},{"position",Json::Array{0,0}},{"anchorPoint",Json::Array{0,0}},{"cornerRadius",1},{"backgroundColor",Json::Object{{"sRGB",Json::Array{color[0],color[1],color[2],color[3]}}}},{"children",Json::Array{}}};scrollbar.visit(std::move(node));
     }result.scrollbar=scrollbar.finish();return result;
 }
@@ -248,15 +252,28 @@ struct NativeShelfScene::Impl {
     struct Part {
         ShelfScenePart plan;LayerScene scene;std::vector<LayerPlacement>placements,activePlacements;std::array<PlaneMask,8>masks{};
         std::vector<std::array<Track,2>>tracks;core::Rect full{};double selectionY{},selectionZ{};std::uint64_t sourceRevision{};
-        Part(LayerRasterizer&r,ShelfScenePart p,const LayerRasterOptions&options):plan(std::move(p)),scene(r),placements(plan.surfaces.size()),tracks(plan.feedback.size()){
-            activePlacements.reserve(placements.size());scene.load(plan.layers,options);need(scene.report().unsupported.empty(),"Shelf contains unsupported local raster artwork");
+        // painted[n]: highlight surface n holds its source shape; one that is
+        // not showing holds its transparent point instead (highlightPoint).
+        std::vector<std::uint8_t>painted;std::uint64_t highlightRevision{};
+        const Track&track(std::size_t n)const{const auto&s=plan.surfaces[n];return tracks[s.feedback][s.rim?1:0];}
+        Part(LayerRasterizer&r,ShelfScenePart p,const LayerRasterOptions&options):plan(std::move(p)),scene(r),placements(plan.surfaces.size()),tracks(plan.feedback.size()),painted(plan.surfaces.size(),1){
+            for(std::size_t n=0;n<tracks.size();++n){tracks[n][0].from=tracks[n][0].target=plan.feedback[n].tintOpacity;tracks[n][1].from=tracks[n][1].target=plan.feedback[n].rimOpacity;}
+            // A hover/press tint or rim that does not show keeps no bitmap (a
+            // Mac CAShapeLayer at opacity 0 renders nothing): it loads its
+            // transparent point and paints its source shape only while its
+            // feedback shows (uploadAnimations). Framed rims (.28) stay painted.
+            bool points{};for(std::size_t n=0;n<plan.surfaces.size();++n)if(plan.surfaces[n].feedback!=ShelfSceneSurface::none&&track(n).target<=0){painted[n]=0;points=true;}
+            if(points){const auto&leaves=std::as_const(plan.layers)["children"].array();need(leaves.size()==plan.surfaces.size(),"Shelf surfaces must match their compiled leaves");
+                Json::Array loaded;loaded.reserve(leaves.size());for(std::size_t n=0;n<leaves.size();++n)loaded.push_back(painted[n]?leaves[n]:highlightPoint(plan.surfaces[n].id));
+                scene.load(root(std::move(loaded)),options);}
+            else scene.load(plan.layers,options);
+            activePlacements.reserve(placements.size());need(scene.report().unsupported.empty(),"Shelf contains unsupported local raster artwork");
             // Empty strings / fully transparent paths may legitimately have no
             // ink. Their numeric surface is omitted, preserving all later IDs.
             for(std::size_t n=0;n<plan.surfaces.size();++n){const auto index=scene.surfaceIndex(plan.surfaces[n].id);placements[n].surface=index.value_or(ShelfSceneSurface::none);placements[n].world=plan.surfaces[n].local;placements[n].opacity=0;if(index)activePlacements.push_back(placements[n]);}
             // New content cannot flash unplaced cards or normalized highlights.
             // The owner supplies its first complete pose before publication.
             scene.setPlacements(activePlacements);scene.prepareDraws();
-            for(std::size_t n=0;n<tracks.size();++n){tracks[n][0].from=tracks[n][0].target=plan.feedback[n].tintOpacity;tracks[n][1].from=tracks[n][1].target=plan.feedback[n].rimOpacity;}
         }
     };
     modules::ShelfPresentation*source;LayerRasterizer*raster;LayerRasterOptions options;
@@ -283,13 +300,28 @@ struct NativeShelfScene::Impl {
     void updatePositions(){for(std::size_t n=0;n<cards.size();++n){const auto&c=source->cards()[n];cards[n]->full=c.full;cards[n]->selectionY=c.selectionY;cards[n]->selectionZ=c.selectionZ;cards[n]->sourceRevision=c.contentRevision;}if(scrollbar)scrollbar->full=source->scrollIndicator().value_or(core::Rect{});placementRevision=source->placementRevision();
         propertiesRevision=source->propertiesRevision();if(source->properties())propertiesOrigin=source->properties()->origin;}
     const Feedback*feedback(std::string_view id)const{for(const auto&f:source->chromeFeedback())if(f.actionID==id)return &f;for(const auto&c:source->cards())for(const auto&f:c.feedback)if(f.actionID==id)return &f;if(source->properties())for(const auto&f:source->properties()->feedback)if(f.actionID==id)return &f;return nullptr;}
+    // A highlight paints its source shape once its feedback begins to show
+    // (or a rebuilt part inherits one that still shows). One that settled at
+    // zero returns to its transparent point at the next content event (a
+    // pointer event, a content change, settleHighlights), never by itself
+    // inside the frames: steady and animating poses do no raster work.
+    bool releaseDue{};
+    bool paintHighlights(){
+        bool changed{};const double now=lastTime.value_or(0);
+        each([&](Part&part){for(std::size_t n=0;n<part.painted.size();++n){const auto&s=part.plan.surfaces[n];if(s.feedback==ShelfSceneSurface::none)continue;
+            const auto&t=part.track(n);const bool shown=t.target>0||sample(t,now)>0;if(shown==(part.painted[n]!=0)||(!shown&&!releaseDue))continue;
+            need(part.highlightRevision<std::numeric_limits<std::uint64_t>::max(),"Shelf highlight revision exhausted");
+            need(part.scene.updateLocalContent(s.id,++part.highlightRevision,shown?std::as_const(part.plan.layers)["children"].array()[n]:highlightPoint(s.id),options),"Shelf highlight repaint was refused");
+            part.painted[n]=shown?1:0;++(shown?stats.highlightPaints:stats.highlightReleases);changed=true;}});
+        releaseDue=false;return changed;
+    }
     bool current()const {if(!chromeRevision||chromeRevision!=source->chromeRevision()||placementRevision!=source->placementRevision()||propertiesRevision!=source->propertiesRevision()||cards.size()!=source->cards().size()||bool(properties)!=source->properties().has_value())return false;for(std::size_t n=0;n<cards.size();++n)if(cards[n]->plan.itemID!=source->cards()[n].itemID||cards[n]->sourceRevision!=source->cards()[n].contentRevision)return false;return true;}
 };
 NativeShelfScene::NativeShelfScene(modules::ShelfPresentation&s,LayerRasterizer&r,LayerRasterOptions o):impl_(std::make_unique<Impl>(s,r,std::move(o))){}
 NativeShelfScene::~NativeShelfScene(){if(impl_)impl_->raster->remove(impl_->maskID);}
 bool NativeShelfScene::syncContent(std::span<const NativeShelfImage>supplied,std::uint64_t imageRevision){
     auto&i=*impl_;bool sameCards=i.cards.size()==i.source->cards().size();for(std::size_t n=0;sameCards&&n<i.cards.size();++n)sameCards=i.cards[n]->plan.itemID==i.source->cards()[n].itemID&&i.cards[n]->sourceRevision==i.source->cards()[n].contentRevision;
-    if(i.chromeRevision&&i.chromeRevision==i.source->chromeRevision()&&sameCards&&i.imageRevision==imageRevision&&i.propertiesRevision==i.source->propertiesRevision()){const bool changed=i.placementRevision!=i.source->placementRevision();i.updatePositions();if(changed)++i.stats.contentSynchronizations;return changed;}
+    if(i.chromeRevision&&i.chromeRevision==i.source->chromeRevision()&&sameCards&&i.imageRevision==imageRevision&&i.propertiesRevision==i.source->propertiesRevision()){const bool changed=i.placementRevision!=i.source->placementRevision();i.updatePositions();if(changed){++i.stats.contentSynchronizations;i.releaseDue=true;}return changed;}
     need(i.retired.empty(),"Publish and collect prior Shelf parts before another content replacement");
     auto images=supplied.empty()?i.images:std::vector<NativeShelfImage>(supplied.begin(),supplied.end());auto plan=prepareShelfScene(*i.source,images);
     std::size_t required{};const auto reservePart=[&](const ShelfScenePart&p,const std::unique_ptr<Impl::Part>&existing){if(!existing||!Impl::sameArtwork(existing->plan,p))required+=p.surfaces.size();};
@@ -311,7 +343,7 @@ bool NativeShelfScene::syncContent(std::span<const NativeShelfImage>supplied,std
     for(std::size_t n=0;n<plan.cards.size();++n){if(old[n]!=8)next.push_back(std::move(i.cards[old[n]]));else{next.push_back(std::move(built[n]));++i.stats.partBuilds;}}
     for(auto&card:i.cards)if(card)i.retired.push_back(std::move(card));i.cards=std::move(next);i.images=std::move(images);
     i.entries.clear();i.each([&](auto&part){i.entries.push_back({&part.scene,{}});});
-    i.chromeRevision=i.source->chromeRevision();i.imageRevision=imageRevision;i.updatePositions();++i.compositionRevision;++i.stats.contentSynchronizations;return true;
+    i.chromeRevision=i.source->chromeRevision();i.imageRevision=imageRevision;i.updatePositions();++i.compositionRevision;++i.stats.contentSynchronizations;i.releaseDue=true;return true;
 }
 bool NativeShelfScene::setFeedback(std::optional<std::string_view>action,bool pressed,bool reduced,double time){
     auto&i=*impl_;i.time(time);need(i.current(),"Synchronize Shelf content before feedback");
@@ -320,7 +352,7 @@ bool NativeShelfScene::setFeedback(std::optional<std::string_view>action,bool pr
         const bool targetsChanged=pair[0].target!=f->tintOpacity||pair[1].target!=f->rimOpacity;
         if(!targetsChanged&&!reduced)continue;
         for(unsigned k=0;k<2;++k){auto&t=pair[k];const auto target=k?f->rimOpacity:f->tintOpacity;const auto from=Impl::sample(t,time);const double duration=reduced?0:f->duration;t={from,target,time,duration,duration>0&&from!=target};}retargeted=true;
-    }});i.lastTime=time;if(retargeted)++i.stats.feedbackChanges;return changed||retargeted;
+    }});i.lastTime=time;i.releaseDue=true;if(retargeted)++i.stats.feedbackChanges;return changed||retargeted;
 }
 bool NativeShelfScene::updatePose(const NativeShelfPose&pose){
     auto&i=*impl_;i.time(pose.time);need(i.current(),"Synchronize Shelf content before placement");
@@ -359,7 +391,7 @@ bool NativeShelfScene::updatePose(const NativeShelfPose&pose){
     i.lastTime=pose.time;++i.stats.poseUpdates;return true;
 }
 bool NativeShelfScene::uploadAnimations(Renderer&r){
-    auto&i=*impl_;need(!i.resourceOwner||i.resourceOwner==&r,"Shelf animation belongs to another renderer");bool changed{};
+    auto&i=*impl_;need(!i.resourceOwner||i.resourceOwner==&r,"Shelf animation belongs to another renderer");bool changed=i.paintHighlights();
     if(i.maskPath){
         if(i.maskDirty){auto options=i.options;options.paddingPoints=0;auto image=i.raster->rasterize(i.maskID,++i.maskRevision,curveLayer(*i.maskPath),options);need(image->complete()&&image->width<=1600&&image->height<=1100,"Unsupported/unbounded Shelf curved mask raster");i.maskImage=std::move(image);i.maskDirty=false;++i.stats.maskRasters;}
         if(i.uploadedMask!=i.maskRevision){r.setTexture(i.maskID,i.maskRevision,{i.maskImage->width,i.maskImage->height,i.maskImage->straightRGBA,TextureColorSpace::linear,TextureFilter::linear});i.uploadedMask=i.maskRevision;i.resourceOwner=&r;++i.stats.maskUploads;changed=true;}
@@ -376,6 +408,11 @@ bool NativeShelfScene::uploadAnimations(Renderer&r){
     return changed;
 }
 bool NativeShelfScene::requiresFrames(double time)const{const auto&i=*impl_;i.time(time);bool active=i.revealActive&&time<i.revealEnds;i.each([&](const auto&p){for(const auto&pair:p.tracks)for(const auto&t:pair)active|=t.active&&time<t.start+t.duration;});return active;}
+bool NativeShelfScene::settleHighlights(){
+    auto&i=*impl_;bool settled{};
+    i.each([&](auto&part){for(auto&pair:part.tracks)for(auto&t:pair){settled|=t.active;t.from=t.target;t.active=false;}});
+    i.releaseDue=true;return i.paintHighlights()||settled;
+}
 std::span<const LayerCompositionEntry>NativeShelfScene::entries()const noexcept{return impl_->entries;}
 std::uint64_t NativeShelfScene::compositionRevision()const noexcept{return impl_->compositionRevision;}
 LayerScene*NativeShelfScene::cardScene(std::string_view id)noexcept{for(auto&p:impl_->cards)if(p->plan.itemID==id)return &p->scene;return nullptr;}

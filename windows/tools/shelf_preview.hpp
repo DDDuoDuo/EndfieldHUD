@@ -50,12 +50,16 @@ struct ShelfPanelState {
 // What the Shelf keeps resident (memory audit). sceneParts/Surfaces/
 // PixelBytes: the retained raster artwork (CPU copies behind the composed
 // GPU textures), released once the HUD closes while the Shelf is not shown
-// (sceneParks). The
+// (sceneParks); a hover/press tint or rim that does not show keeps one
+// transparent point instead of its bitmap (highlightPaints: highlights that
+// painted their shape when their feedback began to show, highlightReleases:
+// those that gave it back once faded out, at the next pointer or content
+// event or when the HUD finished closing). The
 // Shell icon worker: whether it was created (first shown Shelf), its live
 // threads (0 while parked), starts and parks. The icon cache: at most 24
 // 64 px icons (Mac FileShelfCanvas keeps 24 recent icons).
 struct ShelfResourceStats {
-    std::size_t sceneParts{},sceneSurfaces{},scenePixelBytes{};std::uint64_t sceneParks{};
+    std::size_t sceneParts{},sceneSurfaces{},scenePixelBytes{};std::uint64_t sceneParks{},highlightPaints{},highlightReleases{};
     bool iconProvider{};std::size_t iconWorkers{};std::uint64_t iconWorkerStarts{},iconParks{};
     std::size_t cachedIcons{},cachedIconBytes{};
 };
@@ -176,8 +180,10 @@ public:
     // The HUD finished closing (HostEvent::overlayConcealed): a Shelf that is
     // not shown releases its raster artwork now (the composition already
     // released its GPU textures when it stopped composing it); showing it
-    // again rebuilds the same artwork. The selected Shelf keeps it, and a
-    // module switch inside an open HUD never releases it (no rebuild stall).
+    // again rebuilds the same artwork. The selected Shelf keeps it, settled
+    // (its hover fades end and the highlights that do not show give their
+    // bitmaps back), and a module switch inside an open HUD never releases it
+    // (no rebuild stall).
     void conceal();
     void cancelInteraction();
     void setNativeDragActive(bool);

@@ -80,6 +80,12 @@ struct NativeShelfSceneStats {
     // bytes of their local rasters (the CPU copies behind the GPU textures),
     // and park() calls that released everything.
     std::size_t parts{},surfaces{},pixelBytes{};std::uint64_t parks{};
+    // A hover/press tint or rim that does not show holds one transparent
+    // point instead of its control-sized bitmap: highlightPaints counts the
+    // highlights that painted their source shape when their feedback began to
+    // show, highlightReleases those that gave it back once faded out (at the
+    // next content event or settleHighlights).
+    std::uint64_t highlightPaints{},highlightReleases{};
 };
 #ifdef _WIN32
 // Retained settled-collection bridge. The caller supplies one already-updated
@@ -108,8 +114,16 @@ public:
     bool setFeedback(std::optional<std::string_view> action,bool pressed,bool reduced,double time);
     bool updatePose(const NativeShelfPose&);
     // After pose, before combined publication. Raster/upload only changed finite
-    // mask or stroke samples; steady poses do no bitmap or resource work.
+    // mask or stroke samples and paint a highlight whose feedback began to
+    // show; after a content event (setFeedback, a changed syncContent) a
+    // highlight that settled at zero returns to its transparent point. Steady
+    // and animating poses without such an event do no bitmap or resource work.
     bool uploadAnimations(Renderer&);
+    // The HUD finished closing while this Shelf stays resident: every hover
+    // or press fade ends at its resting value and the highlights that do not
+    // show give their bitmaps back now (nothing is drawn while hidden). True
+    // when a fade ended or a highlight changed; the next publication uploads.
+    bool settleHighlights();
     bool requiresFrames(double time)const;
     std::span<const LayerCompositionEntry> entries()const noexcept;
     std::uint64_t compositionRevision()const noexcept;

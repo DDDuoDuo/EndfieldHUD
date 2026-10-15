@@ -721,7 +721,7 @@ ShelfPanelState ShelfPreview::panels()const{const auto&i=*impl_;const auto picke
     return {picker.queued||picker.presenting,i.card&&i.cardInteractive,i.card&&i.card->values.has_value(),i.card?i.card->itemID:std::string{},i.propertyReads,
         i.automation?i.automation->stats().focusMoves:0};}
 ShelfResourceStats ShelfPreview::resources()const{const auto&i=*impl_;ShelfResourceStats out;
-    const auto scene=i.scene->stats();out.sceneParts=scene.parts;out.sceneSurfaces=scene.surfaces;out.scenePixelBytes=scene.pixelBytes;out.sceneParks=scene.parks;
+    const auto scene=i.scene->stats();out.sceneParts=scene.parts;out.sceneSurfaces=scene.surfaces;out.scenePixelBytes=scene.pixelBytes;out.sceneParks=scene.parks;out.highlightPaints=scene.highlightPaints;out.highlightReleases=scene.highlightReleases;
     if(i.icons){const auto icons=i.icons->stats();out.iconProvider=true;out.iconWorkers=icons.workers;out.iconWorkerStarts=icons.workerStarts;out.iconParks=icons.parks;}
     const auto cache=i.memoryImages.stats();out.cachedIcons=cache.cachedImages;out.cachedIconBytes=cache.cachedBytes;return out;}
 std::optional<ShelfPreviewAction>ShelfPreview::takeAction(){return std::exchange(impl_->action,{});}
@@ -797,7 +797,11 @@ void ShelfPreview::cancelPanels(){auto&i=*impl_;i.relinkTarget.reset();i.picker-
     // otherwise it finishes them for the next opening first. A Shelf that is
     // not shown releases its artwork at the next publication (or conceal()).
     if(!i.iconsMissing())i.parkIcons();i.parkWanted=true;}
-void ShelfPreview::conceal(){auto&i=*impl_;if(i.renderer)(void)i.parkArtwork(*i.renderer);}
+void ShelfPreview::conceal(){auto&i=*impl_;if(i.renderer&&i.parkArtwork(*i.renderer))return;
+    // The shown Shelf keeps its artwork for the next opening, settled: hover
+    // fades end at their resting values and the highlights that do not show
+    // keep no bitmap while the HUD is hidden.
+    if(i.pose&&!i.released)(void)i.scene->settleHighlights();}
 void ShelfPreview::cancelInteraction(){auto&i=*impl_;i.dragCandidate.reset();i.pressed=false;i.action.reset();}
 void ShelfPreview::setNativeDragActive(bool value){impl_->nativeDrag=value;cancelInteraction();}
 void ShelfPreview::setExternalDropCallbacks(std::optional<gpu::ShelfDropTarget::Callbacks> callbacks,double t){
