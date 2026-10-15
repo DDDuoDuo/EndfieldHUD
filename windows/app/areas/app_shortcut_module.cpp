@@ -1211,6 +1211,12 @@ void AppShortcutArea::coverage(app::ModuleCoverage& step) {
     const auto seeded = state.file();
     step.check(state.active() && !state.editing() && !state.error() && !preview_->entries().empty() && seeded.items.size() == 1 && !seeded.items[0].native() &&
                d.disk() == seeded, "+ Add App shows the seeded imported Mac shortcut from the data root");
+    // Memory: the card and button plates are GPU meshes and the captions
+    // rasterize only their glyphs' width (measured once per caption).
+    {
+        const auto shown = preview_->resources().scene;
+        step.check(shown.parts == 1 && shown.meshPlates >= 4 && shown.textMeasures > 0, "The shown + Add App draws its plates as meshes and measures its captions");
+    }
     // The load reconciled the import ledger on the repository worker: the
     // removed shortcut's row is dismissed, the imported one stays listed.
     step.check(relinkSyncs_ >= 1 && lastRelink_ == m::ShortcutRelinkSync{0, 1, 1} && !relinkFailures_, "The load reconciles Migration/relink.json once");

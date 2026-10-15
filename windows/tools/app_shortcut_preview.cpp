@@ -14,26 +14,33 @@ namespace g=native;namespace m=modules;using J=ehud::data::Json;using M=core::Ma
 void need(bool v,const char*s){if(!v)throw std::invalid_argument(s);}
 J blank(){return J::Object{{"bounds",J::Array{0,0,400,334}},{"children",J::Array{}}};}
 J rgba(const m::ShortcutColor&c){return J::Object{{"sRGB",J::Array{c[0],c[1],c[2],c[3]}}};}
-J fieldNode(bool border,const m::ShortcutAppearance&a){J node=J::Object{{"id",border?"apps.name.border":"apps.name.background"},{"kind","layer"},{"bounds",J::Array{0,0,304,27}},{"cornerRadius",3},{"children",J::Array{}}};if(border){node["borderWidth"]=1;node["borderColor"]=rgba(a.accent);}else {const auto white=a.dark?.17:.91;node["backgroundColor"]=rgba({white,white,white,1});}return node;}
-J fieldRoot(bool border,const m::ShortcutAppearance&a){auto root=blank();root["children"]=J::Array{fieldNode(border,a)};return root;}
+// HUDShortcutNameField: a 304x27 field with a 3-point corner radius, its
+// background (white .17 dark, .91 light) and a 1-point accent border, drawn
+// as two GPU meshes (no field-sized bitmaps) under and over the editor text.
+constexpr double fieldWidth=304,fieldHeight=27,fieldRadius=3,fieldBorder=1;
+std::array<float,4>fieldFill(const m::ShortcutAppearance&a){const auto white=a.dark?.17:.91;return g::appShortcutLinearTint({white,white,white,1});}
+std::array<float,4>fieldRing(const m::ShortcutAppearance&a){return g::appShortcutLinearTint({a.accent[0],a.accent[1],a.accent[2],a.accent[3]});}
 g::ProjectedEditorStyle fieldStyle(const m::ShortcutAppearance&a){g::ProjectedEditorStyle s;s.width=304;s.height=27;s.fontSize=11;s.fontFamily=".AppleSystemUIFont";s.fontFace=".AppleSystemUIFontDemi";const auto v=a.dark?1.:0.;s.textColor=s.caretColor=s.compositionColor={v,v,v,1};s.cornerRadius=3;s.wrapped=false;s.sourceSingleLineField=true;return s;}
 UINT_PTR editorGeneration(){static std::atomic<UINT_PTR>next{1};const auto value=next.fetch_add(1);need(value&&value!=UINTPTR_MAX,"Shortcut editor generation exhausted");return value;}
 bool writeRequest(ShortcutRequestKind kind){return kind==ShortcutRequestKind::save||kind==ShortcutRequestKind::remove;}
 }
 struct AppShortcutPreview::Impl {
     struct Field {
-        core::notes::RichDocument document;g::LayerScene background,glyphs,border;
+        // underlay: an empty scene whose supplemental draw is the background
+        // mesh; the border mesh follows the editor's glyphs.
+        core::notes::RichDocument document;g::LayerScene underlay,glyphs;std::array<g::DrawObject,1>fill,ring;
         std::shared_ptr<g::NativeProjectedEditor>editor;UINT_PTR generation;bool published{};
         std::array<g::LayerPlacement,4>placements;std::array<g::PlaneMask,2>masks;
-        std::uint64_t backgroundRevision{},borderRevision{},normalizedRevision{};
-        Field(HWND w,g::LayerRasterizer&r,const g::LayerRasterOptions&o,const m::ShortcutAppearance&a,std::string_view text,UINT message):document(m::archiveUTF16(text),{},65536),background(r),glyphs(r),border(r),generation(editorGeneration()){
-            background.load(fieldRoot(false,a),o);border.load(fieldRoot(true,a),o);need(background.report().unsupported.empty()&&border.report().unsupported.empty(),"Unsupported Shortcut editor artwork");backgroundRevision=background.contentRevision();borderRevision=border.contentRevision();
+        std::uint64_t normalizedRevision{};
+        Field(HWND w,g::LayerRasterizer&r,const g::LayerRasterOptions&o,const m::ShortcutAppearance&a,std::string_view text,UINT message,const std::string&fillMesh,const std::string&ringMesh):document(m::archiveUTF16(text),{},65536),underlay(r),glyphs(r),generation(editorGeneration()){
+            underlay.load(J::Object{{"bounds",J::Array{0,0,0,0}},{"children",J::Array{}}},o);
+            for(auto*d:{&fill[0],&ring[0]}){const bool border=d==&ring[0];d->sourceID=(border?"apps.name.ring.":"apps.name.fill.")+std::to_string(generation);d->meshID=border?ringMesh:fillMesh;d->linearTint=border?fieldRing(a):fieldFill(a);d->opacity=0;d->masks.reserve(2);}
             document.setSelection({{0,static_cast<std::uint32_t>(document.text().size())},core::text::ActiveEnd::end,false});
             editor=std::make_shared<g::NativeProjectedEditor>(w,document,glyphs,fieldStyle(a),o,g::PlainEditorFixtureCapacity{65536},message,generation,g::ProjectedEditorTextMode::plainHistory);normalizedRevision=document.revision();
         }
         bool normalize(bool force=false){if(document.composition()||(!force&&normalizedRevision==document.revision()))return true;auto retained=editor;if(!retained)return false;auto text=g::normalizeShortcutField(document.text());if(text!=document.text()){const auto selection=document.selection();const auto result=retained->replaceTextFromHost({0,static_cast<std::uint32_t>(document.text().size())},text);if(!result.changed||document.text()!=text)return false;const auto position=std::min(selection.range.start,static_cast<std::uint32_t>(text.size()));const core::text::Selection restored{{position,position},core::text::ActiveEnd::end,false};retained->setSelectionFromHost(restored);if(document.selection()!=restored)return false;}normalizedRevision=document.revision();return true;}
-        void appearance(const m::ShortcutAppearance&a,const g::LayerRasterOptions&o){editor->setStyle(fieldStyle(a));background.updateLocalContent("apps.name.background",++backgroundRevision,fieldNode(false,a),o);border.updateLocalContent("apps.name.border",++borderRevision,fieldNode(true,a),o);}
-        bool release(g::Renderer&r){return background.releaseResources(r)&&glyphs.releaseResources(r)&&border.releaseResources(r);}
+        void appearance(const m::ShortcutAppearance&a){editor->setStyle(fieldStyle(a));fill[0].linearTint=fieldFill(a);ring[0].linearTint=fieldRing(a);}
+        bool release(g::Renderer&r){return underlay.releaseResources(r)&&glyphs.releaseResources(r);}
     };
     struct Flight {std::uint64_t generation{};ShortcutRequestKind kind{};std::optional<std::string>editingID;};
     HWND window;g::LayerRasterizer&raster;const g::NativeAppShortcutAssets&assets;ITfThreadMgr*manager;TfClientId client;AppShortcutPreviewOptions options;
@@ -44,8 +51,14 @@ struct AppShortcutPreview::Impl {
     bool active{},input{},requested{},overlayVisible{true},focused{},pressed{},fieldDragging{},externalDrag{},reduced{},alive{true},finishing{};
     std::optional<bool>pendingFinish;std::uint64_t lifecycle{},eventRevision{};double time{};std::optional<core::Point>pointerPoint;
     g::Renderer*renderer{}; // the host's, from upload()/collected(): conceal() releases through it
+    // The name field's background and border meshes (uploaded while a field
+    // is shown, removed by release() and by conceal()).
+    std::string fillMesh,ringMesh;std::vector<g::Vertex>fillVertices,ringVertices;std::vector<std::uint32_t>fillIndices,ringIndices;bool fieldMeshes{};
+    void prepareFieldMeshes(){static std::atomic<std::uint64_t>id{};const auto n=std::to_string(++id);fillMesh="apps.name.fill.mesh."+n;ringMesh="apps.name.ring.mesh."+n;
+        g::appShortcutPlateFill(fieldWidth,fieldHeight,fieldRadius,options.raster.pixelsPerPoint,fillVertices,fillIndices);g::appShortcutPlateRing(fieldWidth,fieldHeight,fieldRadius,fieldBorder,options.raster.pixelsPerPoint,ringVertices,ringIndices);}
+    bool removeFieldMeshes(g::Renderer&r){if(!fieldMeshes)return true;if(r.stats().initialized&&(!r.removeMesh(fillMesh)||!r.removeMesh(ringMesh)))return false;fieldMeshes=false;return true;}
     static AppShortcutPreviewOptions prepare(AppShortcutPreviewOptions o,const g::NativeAppShortcutAssets&a){o.raster.assetRoot=a.root();return o;}
-    Impl(HWND w,g::LayerRasterizer&r,const g::NativeAppShortcutAssets&a,ITfThreadMgr*m,TfClientId c,AppShortcutPreviewOptions o):window(w),raster(r),assets(a),manager(m),client(c),options(prepare(std::move(o),a)),state(options.initial,options.initialError),scene(state,a,r,options.raster,options.appearance),geometry(r),surface(prepareGeometry(),core::Module::addApp){need(w&&IsWindow(w),"Shortcut owner requires caller HWND");need((manager==nullptr)==(client==TF_CLIENTID_NULL),"Shortcut TSF manager/client must be supplied together");need(options.textMessage>=WM_APP&&options.textMessage<=0xbfff,"Invalid Shortcut private message");retired.reserve(2);composed.reserve(6);}
+    Impl(HWND w,g::LayerRasterizer&r,const g::NativeAppShortcutAssets&a,ITfThreadMgr*m,TfClientId c,AppShortcutPreviewOptions o):window(w),raster(r),assets(a),manager(m),client(c),options(prepare(std::move(o),a)),state(options.initial,options.initialError),scene(state,a,r,options.raster,options.appearance),geometry(r),surface(prepareGeometry(),core::Module::addApp){need(w&&IsWindow(w),"Shortcut owner requires caller HWND");need((manager==nullptr)==(client==TF_CLIENTID_NULL),"Shortcut TSF manager/client must be supplied together");need(options.textMessage>=WM_APP&&options.textMessage<=0xbfff,"Invalid Shortcut private message");retired.reserve(2);composed.reserve(8);prepareFieldMeshes();}
     g::LayerScene&prepareGeometry(){geometry.load(blank(),options.raster);return geometry;}
     void clock(double t){need(std::isfinite(t),"Shortcut owner requires finite time");time=std::max(time,t);++eventRevision;}
     bool busy()const noexcept{return pending.has_value()||flight.has_value();}
@@ -59,10 +72,10 @@ struct AppShortcutPreview::Impl {
     }
     void poseField(){if(!field||!pose)return;auto current=field;auto editor=current->editor;if(!editor)return;const auto event=eventRevision;const auto world=pose->contentWorld*M::translation(m::shortcutNameRect.x,m::shortcutNameRect.y);const auto camera=g::layerViewportProjection(metrics.pixelWidth,metrics.pixelHeight)*M::scale(metrics.scale,metrics.scale);
         editor->setPose({world,camera,metrics.pixelWidth,metrics.pixelHeight,pose->opacity,input&&!state.transitioning(),focused,true});if(!alive||field!=current||event!=eventRevision||!pose)return;
-        for(auto*part:{&field->background,&field->border}){const std::array<g::LayerPlacement,1>v{{{0,world,pose->opacity,std::span(&pose->hostClip,1)}}};part->setPlacements(v);part->setGroupShutter(pose->shutter);}
+        for(auto*d:{&field->fill[0],&field->ring[0]}){d->world=world;d->opacity=pose->opacity;d->masks.assign(1,pose->hostClip);d->shutter=pose->shutter;}
         field->masks={g::PlaneMask{core::source::inverseSourceMatrix(world),{0,0,304,27},3},pose->hostClip};const auto draws=field->glyphs.prepareDraws();need(draws.size()==4,"Shortcut editor needs original shared four leaves");for(std::size_t n=0;n<4;++n)field->placements[n]={n,draws[n].world,draws[n].opacity,field->masks};field->glyphs.setPlacements(field->placements);field->glyphs.setGroupShutter(pose->shutter);
     }
-    void begin(){if(!input||busy()||!state.editing()||state.transitioning()||!finish(true)||!alive)return;const auto token=lifecycle;auto next=std::make_shared<Field>(window,raster,options.raster,options.appearance,state.draftName(),options.textMessage);auto editor=next->editor;if(manager)need(SUCCEEDED(editor->connect(*manager,client)),"Cannot connect Shortcut name to shared TSF");if(!alive||token!=lifecycle||!input||!state.editing())return;field=next;if(manager&&focused)need(SUCCEEDED(editor->focus(true)),"Cannot focus Shortcut name");if(!alive||field!=next||token!=lifecycle||!input)return;poseField();}
+    void begin(){if(!input||busy()||!state.editing()||state.transitioning()||!finish(true)||!alive)return;const auto token=lifecycle;auto next=std::make_shared<Field>(window,raster,options.raster,options.appearance,state.draftName(),options.textMessage,fillMesh,ringMesh);auto editor=next->editor;if(manager)need(SUCCEEDED(editor->connect(*manager,client)),"Cannot connect Shortcut name to shared TSF");if(!alive||token!=lifecycle||!input||!state.editing())return;field=next;if(manager&&focused)need(SUCCEEDED(editor->focus(true)),"Cannot focus Shortcut name");if(!alive||field!=next||token!=lifecycle||!input)return;poseField();}
     void syncField(){auto current=field;if(current&&current->editor){auto editor=current->editor;current->normalize();if(alive&&field==current)editor->syncContent();}}
     bool enqueue(ShortcutRequest request){if(busy())return false;need(nextRequest!=UINT64_MAX,"Shortcut request generation exhausted");request.generation=++nextRequest;pending=std::move(request);return true;}
     bool perform(m::ShortcutAction a){if(!input||busy()||state.transitioning()||!finish(true)||!alive||!input||busy()||state.transitioning())return false;
@@ -98,7 +111,7 @@ struct AppShortcutPreview::Impl {
 AppShortcutPreview::AppShortcutPreview(HWND w,g::LayerRasterizer&r,const g::NativeAppShortcutAssets&a,ITfThreadMgr*m,TfClientId c,AppShortcutPreviewOptions o):impl_(std::make_shared<Impl>(w,r,a,m,c,std::move(o))){}
 AppShortcutPreview::~AppShortcutPreview(){auto i=std::move(impl_);i->alive=false;if(i->field)i->field->editor.reset();}
 void AppShortcutPreview::resize(const app::ClientMetrics&m){need(m.pixelWidth&&m.pixelHeight&&std::isfinite(m.scale)&&m.scale>0,"Invalid Shortcut viewport");impl_->metrics=m;}
-void AppShortcutPreview::setAppearance(m::ShortcutAppearance a,double t){auto i=impl_;i->clock(t);const bool changed=i->scene.setAppearance(a);i->options.appearance=a;if(i->field&&(changed||i->field->glyphs.fontRevision()!=i->raster.fontRevision())){i->field->appearance(a,i->options.raster);i->syncField();}}
+void AppShortcutPreview::setAppearance(m::ShortcutAppearance a,double t){auto i=impl_;i->clock(t);const bool changed=i->scene.setAppearance(a);i->options.appearance=a;if(i->field&&(changed||i->field->glyphs.fontRevision()!=i->raster.fontRevision())){i->field->appearance(a);i->syncField();}}
 void AppShortcutPreview::setLanguage(core::Language l,double t){auto a=impl_->options.appearance;a.language=l;setAppearance(a,t);}
 void AppShortcutPreview::setReduceMotion(bool value,double t){auto i=impl_;i->clock(t);i->reduced=value;i->state.setReducedMotion(value,i->time);}
 void AppShortcutPreview::setOriginalImages(m::ShortcutOriginalImages value){impl_->scene.setOriginalImages(std::move(value));}
@@ -171,12 +184,13 @@ bool AppShortcutPreview::setFieldText(std::string_view text,double t){
 }
 const m::AppShortcutState&AppShortcutPreview::state()const noexcept{return impl_->state;}
 AppShortcutResourceStats AppShortcutPreview::resources()const noexcept{const auto&i=*impl_;AppShortcutResourceStats out;out.scene=i.scene.stats();
-    const auto add=[&](const Impl::Field&f){++out.fields;for(const auto*s:{&f.background,&f.glyphs,&f.border})out.fieldPixelBytes+=s->report().pixelBytes;};
+    const auto add=[&](const Impl::Field&f){++out.fields;for(const auto*s:{&f.underlay,&f.glyphs})out.fieldPixelBytes+=s->report().pixelBytes;};
     if(i.field)add(*i.field);for(const auto&f:i.retired)add(*f);return out;}
-bool AppShortcutPreview::conceal(){auto i=impl_;if(i->overlayVisible||i->pose||i->active||!i->renderer)return false;return i->scene.park(*i->renderer);}
-void AppShortcutPreview::upload(g::Renderer&r){auto i=impl_;i->renderer=&r;if(i->pose){i->registration.uploadGeometry(r);i->scene.uploadAnimations(r);}}
-std::span<const g::LayerCompositionEntry>AppShortcutPreview::entries(){auto i=impl_;i->composed.clear();if(i->pose){for(const auto&e:i->scene.entries())i->composed.push_back(e);if(i->field&&i->active){i->field->published=true;i->composed.push_back({&i->field->background,{}});i->composed.push_back({&i->field->glyphs,{}});i->composed.push_back({&i->field->border,{}});}i->composed.push_back({&i->geometry,i->registration.draws()});}return i->composed;}
-void AppShortcutPreview::collected(g::Renderer&r){auto i=impl_;i->renderer=&r;need(i->scene.collectRetired(r),"Shortcut retired artwork remains published");for(auto&f:i->retired)need(f->release(r),"Shortcut retired field remains published");i->retired.clear();if(i->field)for(auto*s:{&i->field->background,&i->field->glyphs,&i->field->border})s->collectRetiredResources(r);}
-void AppShortcutPreview::release(g::Renderer&r){auto i=impl_;need(i->finish(false),"Finish Shortcut text transaction before release");collected(r);need(i->scene.releaseResources(r)&&i->geometry.releaseResources(r)&&i->registration.releaseResources(r),"Detach Shortcut composition before release");i->renderer=nullptr;}
+bool AppShortcutPreview::conceal(){auto i=impl_;if(i->overlayVisible||i->pose||i->active||!i->renderer)return false;if(!i->field)(void)i->removeFieldMeshes(*i->renderer);return i->scene.park(*i->renderer);}
+void AppShortcutPreview::upload(g::Renderer&r){auto i=impl_;i->renderer=&r;if(i->pose){i->registration.uploadGeometry(r);i->scene.uploadAnimations(r);
+    if(i->field&&!i->fieldMeshes){r.setMesh(i->fillMesh,1,{i->fillVertices,i->fillIndices});r.setMesh(i->ringMesh,1,{i->ringVertices,i->ringIndices});i->fieldMeshes=true;}}}
+std::span<const g::LayerCompositionEntry>AppShortcutPreview::entries(){auto i=impl_;i->composed.clear();if(i->pose){for(const auto&e:i->scene.entries())i->composed.push_back(e);if(i->field&&i->active&&i->fieldMeshes){i->field->published=true;i->composed.push_back({&i->field->underlay,i->field->fill});i->composed.push_back({&i->field->glyphs,i->field->ring});}i->composed.push_back({&i->geometry,i->registration.draws()});}return i->composed;}
+void AppShortcutPreview::collected(g::Renderer&r){auto i=impl_;i->renderer=&r;need(i->scene.collectRetired(r),"Shortcut retired artwork remains published");for(auto&f:i->retired)need(f->release(r),"Shortcut retired field remains published");i->retired.clear();if(i->field)for(auto*s:{&i->field->underlay,&i->field->glyphs})s->collectRetiredResources(r);}
+void AppShortcutPreview::release(g::Renderer&r){auto i=impl_;need(i->finish(false),"Finish Shortcut text transaction before release");collected(r);need(i->scene.releaseResources(r)&&i->geometry.releaseResources(r)&&i->registration.releaseResources(r)&&i->removeFieldMeshes(r),"Detach Shortcut composition before release");i->renderer=nullptr;}
 }
 #endif
