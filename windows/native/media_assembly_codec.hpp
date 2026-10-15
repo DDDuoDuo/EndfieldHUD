@@ -21,10 +21,13 @@ std::optional<modules::MediaAssemblyFileIdentity>mediaAssemblyFileIdentity(const
 // object reopened by its file ID on the same volume (OpenFileById, verified
 // volume serial; the nearest existing ancestor of the stored path is the
 // volume hint) at its current path (GetFinalPathNameByHandleW), as a Mac
-// bookmark follows a renamed or moved file; otherwise the stored path. No
-// directory search; other volumes, file systems without stable file IDs and
-// shares without file-ID opens cannot match. Size and write time are not
-// compared here: callers re-check the full identity (changedOnDisk).
+// bookmark follows a renamed or moved file; otherwise the stored path. An
+// object that is being deleted or has no name left (removed while another
+// handle, e.g. a virus scan, still holds it open) is gone, and its current
+// path must reopen the same object. No directory search; other volumes, file
+// systems without stable file IDs and shares without file-ID opens cannot
+// match. Size and write time are not compared here: callers re-check the full
+// identity (changedOnDisk).
 std::string mediaAssemblyLocate(const std::string&utf8Path,const modules::MediaAssemblyFileIdentity&identity);
 // MoveFileExW(WRITE_THROUGH[|REPLACE_EXISTING]); exclusive move fails if the
 // target exists (renamex_np RENAME_EXCL equivalent). remove deletes a file.

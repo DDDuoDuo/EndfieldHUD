@@ -148,6 +148,38 @@ void stills(const fs::path&root,const fs::path&assets){
         fs::remove(moved);fs::remove(original);check(failure([&]{engine.preview(*doc,{},0);})==m::MediaAssemblyError::sourceUnavailable&&n::mediaAssemblyLocate(utf8(original),doc->identity)==utf8(original),
             "A moved original that is gone asks to be chosen again");
         fs::remove(folder);}
+    {// The intermittent "moved original that is gone" failure: a virus scan
+     // (after the append above), the indexer or a player can still hold an
+     // original when it is removed. NTFS then removes its name at once (POSIX
+     // delete, std::filesystem::remove) but keeps the object openable by its
+     // file ID under \$Extend\$Deleted until that handle closes. Holding the
+     // handle here makes the race deterministic: the original is gone.
+        const auto original=root/L"held.png";fs::copy_file(png,original);auto doc=std::make_shared<m::MediaAssemblyDocumentInfo>(engine.open(utf8(original)));doc->id="held";
+        const auto folder=root/L"held moved";fs::create_directory(folder);const auto moved=folder/L"held renamed.png";fs::rename(original,moved);engine.clearCaches();
+        check(n::mediaAssemblySamePath(n::mediaAssemblyLocate(utf8(original),doc->identity),utf8(moved)),"A held original is followed while it still has a name");
+        const HANDLE scan=CreateFileW(moved.c_str(),GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,nullptr,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,nullptr);
+        check(scan!=INVALID_HANDLE_VALUE,"An owned stand-in for a scanner holds the moved original");
+        struct Close{HANDLE h;~Close(){if(h!=INVALID_HANDLE_VALUE)CloseHandle(h);}}closeScan{scan};
+        fs::remove(moved);
+        {   // OS evidence (reported, not asserted): what the removed object looks like by its file ID.
+            const HANDLE hint=CreateFileW(root.c_str(),FILE_READ_ATTRIBUTES,FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,nullptr,OPEN_EXISTING,FILE_FLAG_BACKUP_SEMANTICS,nullptr);
+            FILE_ID_DESCRIPTOR id{};id.dwSize=sizeof id;id.Type=ExtendedFileIdType;std::copy(doc->identity.file.begin(),doc->identity.file.end(),id.ExtendedFileId.Identifier);
+            const HANDLE byID=hint!=INVALID_HANDLE_VALUE?OpenFileById(hint,&id,FILE_READ_ATTRIBUTES,FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,nullptr,FILE_FLAG_BACKUP_SEMANTICS):INVALID_HANDLE_VALUE;
+            FILE_STANDARD_INFO standard{};std::wstring final(1024,L'\0');DWORD length{};
+            if(byID!=INVALID_HANDLE_VALUE){(void)GetFileInformationByHandleEx(byID,FileStandardInfo,&standard,sizeof standard);length=GetFinalPathNameByHandleW(byID,final.data(),DWORD(final.size()),FILE_NAME_NORMALIZED|VOLUME_NAME_DOS);}
+            final.resize(length<final.size()?length:0);
+            std::cout<<"held removed original by file ID: opened="<<(byID!=INVALID_HANDLE_VALUE)<<" links="<<standard.NumberOfLinks<<" deletePending="<<int(standard.DeletePending)
+                     <<" name="<<(final.empty()?std::string("(none)"):utf8(fs::path(final).filename()))<<" under $Extend="<<(final.find(L"\\$Extend\\")!=std::wstring::npos)<<'\n';
+            if(byID!=INVALID_HANDLE_VALUE)CloseHandle(byID);if(hint!=INVALID_HANDLE_VALUE)CloseHandle(hint);}
+        const auto located=n::mediaAssemblyLocate(utf8(original),doc->identity);
+        check(located==utf8(original),"A removed original that something still holds open is gone, not found under its deleted name (located "+located+")");
+        check(failure([&]{engine.preview(*doc,{},0);})==m::MediaAssemblyError::sourceUnavailable&&failure([&]{engine.previewSource(*doc,{},0);})==m::MediaAssemblyError::sourceUnavailable,
+              "...so previews ask for it to be chosen again");
+        {m::MediaAssemblyExportTicket u;check(failure([&]{engine.exportMedia({doc,{},utf8(root/L"held-export.png"),false,"h1",false},u);})==m::MediaAssemblyError::sourceUnavailable&&!fs::exists(root/L"held-export.png")&&temporaries(root)==0,
+              "...and so does an export, leaving nothing");}
+        CloseHandle(closeScan.h);closeScan.h=INVALID_HANDLE_VALUE;
+        check(n::mediaAssemblyLocate(utf8(original),doc->identity)==utf8(original)&&failure([&]{engine.preview(*doc,{},0);})==m::MediaAssemblyError::sourceUnavailable,"Once released it stays gone");
+        fs::remove(folder);}
     {// Stills: the export job's GPU device edits float row bands and the CPU
      // composites the stickers (source CIContext); same result as the exact CPU export.
         const auto photo=root/L"opaque photo.png";writeImage(photo,GUID_ContainerFormatPng,301,203,gradient(301,203,false));

@@ -226,6 +226,16 @@ bool sameObject(HANDLE h,const m::MediaAssemblyFileIdentity&want){
     BY_HANDLE_FILE_INFORMATION info{};m::MediaAssemblyFileIdentity id;
     return GetFileInformationByHandle(h,&info)&&!(info.dwFileAttributes&(FILE_ATTRIBUTE_DIRECTORY|FILE_ATTRIBUTE_DEVICE))&&objectIdentity(h,info,id)&&id.volume==want.volume&&id.file==want.file;
 }
+// Still a named file: not being deleted and reachable through at least one
+// link. A file removed with POSIX semantics (DeleteFileW and std::filesystem::
+// remove on NTFS) while another handle keeps it open (an antivirus scan after
+// a write, the indexer, a player) loses its name at once but stays openable
+// by its file ID under \$Extend\$Deleted until that handle closes; a Mac
+// bookmark of a deleted file no longer resolves.
+bool linked(HANDLE h){
+    FILE_STANDARD_INFO standard{};
+    return GetFileInformationByHandleEx(h,FileStandardInfo,&standard,sizeof standard)&&!standard.DeletePending&&standard.NumberOfLinks>0;
+}
 }
 std::optional<m::MediaAssemblyFileIdentity>mediaAssemblyFileIdentity(const std::filesystem::path&path){
     Handle file;file.value=CreateFileW(path.c_str(),FILE_READ_ATTRIBUTES,shareAll,nullptr,OPEN_EXISTING,FILE_FLAG_BACKUP_SEMANTICS|FILE_FLAG_OPEN_REPARSE_POINT,nullptr);
@@ -253,13 +263,17 @@ std::string mediaAssemblyLocate(const std::string&utf8,const m::MediaAssemblyFil
     FILE_ID_DESCRIPTOR descriptor{};descriptor.dwSize=sizeof descriptor;descriptor.Type=ExtendedFileIdType;
     std::copy(identity.file.begin(),identity.file.end(),descriptor.ExtendedFileId.Identifier);
     Handle object;object.value=OpenFileById(hint.value,&descriptor,FILE_READ_ATTRIBUTES,shareAll,nullptr,FILE_FLAG_BACKUP_SEMANTICS|FILE_FLAG_OPEN_REPARSE_POINT);
-    if(!object.valid()||!sameObject(object.value,identity))return utf8;
+    if(!object.valid()||!sameObject(object.value,identity)||!linked(object.value))return utf8;
     // Its current DOS path ("\\?\C:\..." or "\\?\UNC\server\share\...").
     std::wstring final(MAX_PATH,L'\0');
     for(int attempt=0;attempt<2;++attempt){
         const DWORD n=GetFinalPathNameByHandleW(object.value,final.data(),DWORD(final.size()),FILE_NAME_NORMALIZED|VOLUME_NAME_DOS);
         if(!n)return utf8;if(n<final.size()){final.resize(n);break;}final.assign(n,L'\0');if(attempt)return utf8;
     }
+    // The name must lead back to the same linked object (a delete or rename
+    // racing this lookup leaves the stored path, which callers then report).
+    {Handle named;named.value=CreateFileW(final.c_str(),FILE_READ_ATTRIBUTES,shareAll,nullptr,OPEN_EXISTING,FILE_FLAG_BACKUP_SEMANTICS|FILE_FLAG_OPEN_REPARSE_POINT,nullptr);
+        if(!named.valid()||!sameObject(named.value,identity)||!linked(named.value))return utf8;}
     if(final.starts_with(L"\\\\?\\UNC\\"))final=L"\\\\"+final.substr(8);else if(final.starts_with(L"\\\\?\\"))final.erase(0,4);
     return mediaAssemblyUTF8(std::filesystem::path(final));
 }
