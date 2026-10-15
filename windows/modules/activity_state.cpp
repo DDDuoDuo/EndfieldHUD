@@ -19,22 +19,30 @@ void increment(U&v){if(v==std::numeric_limits<U>::max())throw std::overflow_erro
 void metric(std::optional<double>value){if(value&&(!std::isfinite(*value)||*value<0))throw std::invalid_argument("Invalid Activity metric");}
 void validateSnapshot(const ActivitySnapshot&v){time(v.uptime);if(!std::isfinite(v.timestamp))throw std::invalid_argument("Invalid Activity timestamp");metric(v.cpuPercent);metric(v.gpuPercent);metric(v.upload);metric(v.download);metric(v.diskRead);metric(v.diskWrite);if(v.memory&&(!v.memory->total||v.memory->used>v.memory->total||(v.memory->compressed&&*v.memory->compressed>v.memory->total)))throw std::invalid_argument("Invalid Activity memory");}
 }
+std::uint32_t activityGPUEngineType(std::string_view label)noexcept{std::uint32_t hash=2166136261u;for(const char c:label){hash^=static_cast<unsigned char>(c);hash*=16777619u;}return hash;}
 std::optional<double>activityGPUPercent(const ActivityGPUSample&current,const ActivityGPUSample&previous,std::span<const std::uint32_t>pids){
     const auto ordered=[](const ActivityGPUSample&v){if(v.usage.size()>ActivityGPUSample::maximumUsage)return false;for(std::size_t n=1;n<v.usage.size();++n){const auto&a=v.usage[n-1];const auto&b=v.usage[n];if(!(a.engine<b.engine||(a.engine==b.engine&&a.pid<b.pid)))return false;}return true;};
     if(current.time<=previous.time||!ordered(current)||!ordered(previous)||!std::is_sorted(pids.begin(),pids.end()))return {};
     const double elapsed=double(current.time-previous.time);const auto selected=[&](std::uint32_t pid){return pids.empty()||std::binary_search(pids.begin(),pids.end(),pid);};
-    double busiest{};std::optional<ActivityGPUEngine>engine;double running{};
-    const auto close=[&]{if(engine)busiest=std::max(busiest,running/elapsed*100);engine.reset();running=0;};
+    // One pass over the (adapter, type, engine)-ordered collection: an
+    // engine closes into its type's busiest engine, a type into its
+    // adapter's sum, an adapter into the busier adapter's load.
+    double load{},adapter{},type{},running{};std::optional<ActivityGPUEngine>engine;
+    const auto close=[&](const ActivityGPUEngine*next){if(!engine)return;type=std::max(type,std::min(100.,running/elapsed*100));running=0;
+        const bool otherAdapter=!next||next->luid!=engine->luid||next->physical!=engine->physical;
+        if(otherAdapter||next->type!=engine->type){adapter+=type;type=0;}
+        if(otherAdapter){load=std::max(load,std::min(100.,adapter));adapter=0;}
+        engine.reset();};
     // Merge join over (engine, pid); a growth only counts within one engine.
     auto old=previous.usage.begin();
     for(const auto&value:current.usage){
-        if(engine&&value.engine!=*engine)close();
+        if(engine&&value.engine!=*engine)close(&value.engine);
         if(!engine)engine=value.engine;
         while(old!=previous.usage.end()&&(old->engine<value.engine||(old->engine==value.engine&&old->pid<value.pid)))++old;
         if(old==previous.usage.end()||old->engine!=value.engine||old->pid!=value.pid||!selected(value.pid)||value.runningTime<old->runningTime)continue;
         running+=double(value.runningTime-old->runningTime);
     }
-    close();if(!std::isfinite(busiest))return {};return std::clamp(busiest,0.,100.);
+    close(nullptr);if(!std::isfinite(load))return {};return std::clamp(load,0.,100.);
 }
 std::optional<ActivityMemory>activityMacMemory(U physical,U pageSize,U internal,U purgeable,U wired,U compressed)noexcept{if(!physical||!pageSize)return {};U pages=internal-std::min(internal,purgeable);if(!add(pages,wired)||!add(pages,compressed))return {};const auto used=product(pages,pageSize),compression=product(compressed,pageSize);if(!used||!compression)return {};return ActivityMemory{std::min(physical,*used),physical,std::min(physical,*compression)};}
 ActivitySnapshot deriveActivity(const ActivityRawSample&value,const ActivityRawSample*previous){ActivitySnapshot out;out.timestamp=value.timestamp;out.uptime=value.uptime;out.memory=value.memory;const double elapsed=previous?value.uptime-previous->uptime:0;std::optional<std::array<double,2>>network,disk;if(validInterval(elapsed,15)){out.cpuPercent=cpu(value.cpu,previous->cpu);network=rates(value.network,previous->network,elapsed);disk=rates(value.disk,previous->disk,elapsed);if(value.gpu&&previous->gpu)out.gpuPercent=activityGPUPercent(*value.gpu,*previous->gpu);}if(network){out.download=(*network)[0];out.upload=(*network)[1];}if(disk){out.diskRead=(*disk)[0];out.diskWrite=(*disk)[1];}if(!out.cpuPercent)out.statusNotes.push_back(value.cpu?"Collecting CPU baseline":"CPU unavailable");if(!out.memory)out.statusNotes.push_back("RAM unavailable");if(!network)out.statusNotes.push_back(value.network?"Collecting network baseline":"Network unavailable");if(!disk)out.statusNotes.push_back(value.disk?"Collecting disk baseline":"Disk activity unavailable");return out;}

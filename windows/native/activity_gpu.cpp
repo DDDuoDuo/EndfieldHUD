@@ -19,7 +19,8 @@ std::optional<ActivityGPUInstance>activityGPUInstance(std::string_view text){
     if(!digits(text,"pid_",pid,10,10)||!digits(text,"_luid_0x",high,16,8)||!digits(text,"_0x",low,16,8)||!digits(text,"_phys_",physical,10,5)||!digits(text,"_eng_",engine,10,5)||!text.starts_with("_engtype_"))return {};
     text.remove_prefix(9);if(text.find_first_of("#\\/()")!=std::string_view::npos)return {};
     if(!pid||pid>std::numeric_limits<std::uint32_t>::max())return {};
-    return ActivityGPUInstance{std::uint32_t(pid),{(high<<32)|low,std::uint32_t(physical),std::uint32_t(engine)}};
+    // The rest is the engine type label.
+    return ActivityGPUInstance{std::uint32_t(pid),{(high<<32)|low,std::uint32_t(physical),modules::activityGPUEngineType(text),std::uint32_t(engine)}};
 }
 std::optional<modules::ActivityGPUSample>activityGPUSample(std::span<const ActivityGPUCounter>counters,std::uint64_t time,std::span<const std::uint32_t>pids){
     if(counters.size()>4*modules::ActivityGPUSample::maximumUsage||!std::is_sorted(pids.begin(),pids.end()))return {};

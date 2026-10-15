@@ -5,10 +5,13 @@
 // asserts only about this process; its optional D3D11 load is this process's
 // own work on a hardware device and is skipped where none can be created.
 #include "native/activity_gpu.hpp"
+#include <algorithm>
 #include <cmath>
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <utility>
+#include <vector>
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -28,10 +31,12 @@ namespace {
 unsigned checks{};void check(bool value,const char*why){++checks;if(!value)throw std::runtime_error(why);}
 void parsing(){
     const auto a=n::activityGPUInstance("pid_1234_luid_0x00000000_0x0000C2E1_phys_0_eng_3_engtype_3D");
-    check(a&&a->pid==1234&&a->engine.luid==0xC2E1&&a->engine.physical==0&&a->engine.engine==3,"Instance name: process, adapter LUID, node and engine");
+    check(a&&a->pid==1234&&a->engine.luid==0xC2E1&&a->engine.physical==0&&a->engine.engine==3&&a->engine.type==m::activityGPUEngineType("3D"),"Instance name: process, adapter LUID, node, engine and engine type");
     const auto b=n::activityGPUInstance("pid_7_luid_0x00000001_0xFFFFFFFF_phys_1_eng_12_engtype_VideoDecode");
-    check(b&&b->engine.luid==0x1FFFFFFFFULL&&b->engine.physical==1&&b->engine.engine==12,"High and low LUID halves");
-    check(n::activityGPUInstance("pid_7_luid_0x0_0x1_phys_0_eng_0_engtype_")&&n::activityGPUInstance("pid_7_luid_0x0_0x1_phys_0_eng_0_engtype_Video Codec"),"Short hex and any engine type label");
+    check(b&&b->engine.luid==0x1FFFFFFFFULL&&b->engine.physical==1&&b->engine.engine==12&&b->engine.type==m::activityGPUEngineType("VideoDecode"),"High and low LUID halves");
+    check(a->engine.type!=b->engine.type&&n::activityGPUInstance("pid_9_luid_0x0_0x2_phys_0_eng_7_engtype_3D")->engine.type==a->engine.type,"One engine type label, one type, on any adapter and engine");
+    const auto codec=n::activityGPUInstance("pid_7_luid_0x0_0x1_phys_0_eng_0_engtype_Video Codec");
+    check(n::activityGPUInstance("pid_7_luid_0x0_0x1_phys_0_eng_0_engtype_")&&codec&&codec->engine.type==m::activityGPUEngineType("Video Codec"),"Short hex and any engine type label");
     for(const auto*bad:{"pid_0_luid_0x0_0x1_phys_0_eng_0_engtype_3D","pid_1234_luid_0x00000000_0x0000C2E1_phys_0_eng_3_engtype_3D#1","_Total","pid_x_luid_0x0_0x1_phys_0_eng_0_engtype_3D",
         "pid_99999999999_luid_0x0_0x1_phys_0_eng_0_engtype_3D","pid_1_luid_0x123456789_0x1_phys_0_eng_0_engtype_3D","pid_1_luid_0x0_0xG_phys_0_eng_0_engtype_3D","pid_1_luid_0x0_0x1_phys_0_eng_0","pid_1_luid_0x0_0x1_phys__eng_0_engtype_3D",""})
         check(!n::activityGPUInstance(bad),"Malformed, duplicate-suffixed or zero-PID instances are not engines");
@@ -46,9 +51,10 @@ void samples(){
     const std::array<std::uint32_t,2>unsorted{9,8};check(!n::activityGPUSample(raw,1234,unsorted),"Process filter must be sorted");
     std::vector<n::ActivityGPUCounter>many(m::ActivityGPUSample::maximumUsage+1);for(std::size_t k=0;k<many.size();++k)many[k]={"pid_"+std::to_string(k+1)+"_luid_0x0_0x1_phys_0_eng_0_engtype_3D",1,true};
     check(!n::activityGPUSample(many,1),"More readings than the bound are unavailable");many.pop_back();check(n::activityGPUSample(many,1)->usage.size()==m::ActivityGPUSample::maximumUsage,"Exactly the bound is accepted");
-    // Derivation end to end: two collections one second apart.
-    std::vector<n::ActivityGPUCounter>later=raw;later[0].runningTime=50+2'500'000;later[3].runningTime=20+5'000'000;
-    const auto next=n::activityGPUSample(later,1234+10'000'000);const auto percent=m::activityGPUPercent(*next,*all);check(percent&&std::abs(*percent-50)<1e-9,"Busiest engine 50%");
+    // Derivation end to end: two collections one second apart. Adapter 1:
+    // 3D 50% + Copy 10%; adapter 2: 3D 25%. The total load is adapter 1's.
+    std::vector<n::ActivityGPUCounter>later=raw;later[0].runningTime=50+2'500'000;later[3].runningTime=20+5'000'000;later[1].runningTime=40+1'000'000;
+    const auto next=n::activityGPUSample(later,1234+10'000'000);const auto percent=m::activityGPUPercent(*next,*all);check(percent&&std::abs(*percent-60)<1e-9,"Total load 60%: the busier adapter's 3D and Copy summed");
 }
 #ifdef _WIN32
 unsigned threads(){const auto snapshot=CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD,0);if(snapshot==INVALID_HANDLE_VALUE)return 0;THREADENTRY32 entry{};entry.dwSize=sizeof(entry);unsigned count{};const auto self=GetCurrentProcessId();
@@ -65,6 +71,16 @@ struct Load {
     void run(double seconds){if(!ready)return;const auto end=std::chrono::steady_clock::now()+std::chrono::duration<double>(seconds);float color[4]{};
         while(std::chrono::steady_clock::now()<end){for(unsigned k=0;k<64;++k){color[0]=float(k)/64;context->ClearRenderTargetView(target.Get(),color);}context->End(done.Get());context->Flush();while(context->GetData(done.Get(),nullptr,0,0)==S_FALSE)std::this_thread::yield();}}
 };
+// Each physical adapter's own total load (its readings alone), logged; the
+// busiest of them.
+double adapters(const m::ActivityGPUSample&now,const m::ActivityGPUSample&before){double busiest{};
+    std::vector<std::pair<std::uint64_t,std::uint32_t>>seen;for(const auto&v:now.usage)if(std::find(seen.begin(),seen.end(),std::pair{v.engine.luid,v.engine.physical})==seen.end())seen.push_back({v.engine.luid,v.engine.physical});
+    for(const auto&adapter:seen){const auto luid=adapter.first;const auto physical=adapter.second;const auto only=[&](const m::ActivityGPUSample&s){m::ActivityGPUSample out;out.time=s.time;for(const auto&v:s.usage)if(v.engine.luid==luid&&v.engine.physical==physical)out.usage.push_back(v);return out;};
+        std::vector<std::uint32_t>types;for(const auto&v:now.usage)if(v.engine.luid==luid&&v.engine.physical==physical&&std::find(types.begin(),types.end(),v.engine.type)==types.end())types.push_back(v.engine.type);
+        const auto load=m::activityGPUPercent(only(now),only(before));check(load&&*load>=0&&*load<=100,"Each adapter's total load within 0-100%");
+        busiest=std::max(busiest,*load);std::cout<<"adapter luid 0x"<<std::hex<<luid<<std::dec<<" phys "<<physical<<": "<<types.size()<<" engine types, total load "<<*load<<"%\n";}
+    return busiest;
+}
 double own(const m::ActivityGPUSample&now,const m::ActivityGPUSample&before){const std::array<std::uint32_t,1>self{GetCurrentProcessId()};return m::activityGPUPercent(now,before,self).value_or(-1);}
 void live(){
     const auto baseline=threads();
@@ -82,9 +98,10 @@ void live(){
     const auto before=n::readWindowsActivityGPU();const auto firstSeconds=n::windowsActivityGPUStats().lastSeconds;const bool loaded=work.ready;work.run(1.0);const auto after=n::readWindowsActivityGPU();stats=n::windowsActivityGPUStats();
     check(before&&after&&after->time>before->time&&stats.collections==4,"Each sampling tick (>=250 ms apart) collects afresh");
     std::cout<<"steady collections: "<<firstSeconds*1000<<" ms and "<<stats.lastSeconds*1000<<" ms\n";
-    const auto busiest=m::activityGPUPercent(*after,*before);check(busiest&&*busiest>=0&&*busiest<=100,"System busiest engine within 0-100%");
-    const auto ownPercent=own(*after,*before);
-    std::cout<<"System GPU "<<*busiest<<"%, this process "<<ownPercent<<"% (hardware load "<<(loaded?"ran":"unavailable")<<"), collect max "<<stats.maximumSeconds*1000<<" ms\n";
+    const auto total=m::activityGPUPercent(*after,*before);check(total&&*total>=0&&*total<=100,"System total load within 0-100%");
+    const auto ownPercent=own(*after,*before);check(*total>=ownPercent-1e-9,"The whole system's total load is at least this process's");
+    std::cout<<"System GPU total load "<<*total<<"%, this process "<<ownPercent<<"% (hardware load "<<(loaded?"ran":"unavailable")<<"), collect max "<<stats.maximumSeconds*1000<<" ms\n";
+    check(std::abs(adapters(*after,*before)-*total)<1e-9,"The system's total load is its busier adapter's");
     // Units: one second of this process's own clears must register on its
     // engine (100 ns running time over the 100 ns time base, not ms or ticks).
     if(loaded)check(ownPercent>1&&ownPercent<=100,"This process's own hardware work registers as a plausible percentage");

@@ -43,7 +43,8 @@ std::string activityPercent(std::optional<double>,bool wholeMachine=true);
 // metric column.
 inline constexpr std::array<ActivitySort,6>activityAppColumns{ActivitySort::name,ActivitySort::gpu,ActivitySort::cpu,ActivitySort::memory,ActivitySort::network,ActivitySort::disk};
 inline constexpr std::array<core::Rect,6>activityAppHeaderFrames{{{12,61,98,15},{112,61,42,15},{156,61,42,15},{200,61,49,15},{251,61,65,15},{317,61,65,15}}};
-// The GPU row caption in the five HUD languages (not in the Mac catalog).
+// The GPU row caption: its total load (activityGPUPercent), worded like the
+// CPU row's, the same "TOTAL LOAD" catalog entry in the five HUD languages.
 std::string activityGPUCaption(core::Language);
 // ActivityMonitorCanvas.accessibilityStatus (the screen reader's status text):
 // on the Apps page every app of the snapshot ("name, CPU x%, RAM y, ↑ up,

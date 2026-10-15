@@ -281,15 +281,21 @@ private:
             }
             step.check(grows && left == 0 && right == 376, "The Clipboard reveal and the Activity sort only ever grow their revealed rows");
         }
-        // GPU (Windows addition): busiest engine per app and overall.
+        // GPU (Windows addition): the total load per app and overall, each
+        // adapter's engine types summed and the busier adapter shown.
         modules::ActivityGPUSample before, after;
         before.time = 0; after.time = 10'000'000;
-        const modules::ActivityGPUEngine render{1, 0, 0}, copy{1, 0, 1};
-        before.usage = {{10, render, 0}, {11, render, 0}, {10, copy, 0}};
-        after.usage = {{10, render, 2'000'000}, {11, render, 3'000'000 + cycle}, {10, copy, 1'000'000}};
-        const std::array<std::uint32_t, 1> ten{10};
-        const auto overall = modules::activityGPUPercent(after, before), app = modules::activityGPUPercent(after, before, ten);
-        step.check(overall && *overall >= 50 && *overall < 50.1 && app && std::abs(*app - 20) < 1e-9, "GPU: the busiest engine, per app and overall");
+        const auto d3 = modules::activityGPUEngineType("3D"), copyType = modules::activityGPUEngineType("Copy");
+        const modules::ActivityGPUEngine render{1, 0, d3, 0}, copy{1, 0, copyType, 1}, integrated{2, 0, d3, 0};
+        before.usage = {{10, render, 0}, {11, render, 0}, {10, copy, 0}, {12, integrated, 0}};
+        after.usage = {{10, render, 2'000'000}, {11, render, 3'000'000 + cycle}, {10, copy, 1'000'000}, {12, integrated, 4'000'000}};
+        const auto order = [](const auto& a, const auto& b) { return a.engine < b.engine || (a.engine == b.engine && a.pid < b.pid); };
+        std::sort(before.usage.begin(), before.usage.end(), order);
+        std::sort(after.usage.begin(), after.usage.end(), order);
+        const std::array<std::uint32_t, 1> ten{10}, twelve{12};
+        const auto overall = modules::activityGPUPercent(after, before), app = modules::activityGPUPercent(after, before, ten), other = modules::activityGPUPercent(after, before, twelve);
+        step.check(overall && *overall >= 60 && *overall < 60.1 && app && std::abs(*app - 30) < 1e-9 && other && std::abs(*other - 40) < 1e-9,
+                   "GPU: the total load (3D + Copy on the busier adapter), per app and overall");
         modules::ActivityState state([](std::string_view a, std::string_view b) { return a.compare(b); });
         modules::ActivitySnapshot sample;
         sample.timestamp = sample.uptime = 1; sample.gpuPercent = 37.5;
@@ -299,6 +305,8 @@ private:
         const auto art = modules::prepareActivityArtwork(state, appearance);
         step.check(art.overview["children"].array().size() == modules::ActivityArtwork::overviewRows && art.graphs[modules::ActivityArtwork::gpuRow].count == 1 &&
                    gpu::activityGPUInstance("pid_4_luid_0x0_0x1_phys_0_eng_0_engtype_3D").has_value(), "Activity shows a GPU row and parses GPU engine instances");
+        step.check(modules::activityGPUCaption(appearance.language) == core::localized("TOTAL LOAD", "总负载", appearance.language) &&
+                   modules::activityGPUCaption(appearance.language) == (cycle % 2 ? "合計負荷" : "总负载"), "The GPU row reads Total Load in the HUD language");
         // Storage: the volume menu lists the volumes with the chosen one marked.
         const std::array<modules::StorageVolume, 2> volumes{modules::StorageVolume{"coverage-system", "C:\\", "System", false, true}, modules::StorageVolume{"coverage-data", "D:\\", "Data", true, false}};
         modules::StorageAppearance storage;

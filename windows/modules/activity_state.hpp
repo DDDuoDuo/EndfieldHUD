@@ -9,6 +9,7 @@
 #include <set>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace endfield::modules {
@@ -19,13 +20,21 @@ struct ActivityMemory {std::uint64_t used{},total{};std::optional<std::uint64_t>
 // Exact Mac physical-footprint formula, also available to the source oracle.
 std::optional<ActivityMemory>activityMacMemory(std::uint64_t physical,std::uint64_t pageSize,std::uint64_t internal,std::uint64_t purgeable,std::uint64_t wired,std::uint64_t compressed)noexcept;
 // GPU (a Windows addition the Mac Activity Monitor does not show). One GPU
-// engine: the adapter LUID, its physical node and engine index, exactly as
-// the "GPU Engine" performance counter instance names them
-// (pid_<pid>_luid_0x<high>_0x<low>_phys_<n>_eng_<n>_engtype_<type>).
+// engine: the adapter LUID and its physical node (together one physical
+// adapter), the engine type and the engine index, exactly as the
+// "GPU Engine" performance counter instance names them
+// (pid_<pid>_luid_0x<high>_0x<low>_phys_<n>_eng_<n>_engtype_<type>); `type`
+// is activityGPUEngineType of the engtype_ label. Ordered by adapter, then
+// type, then index, so one adapter's engines of one type are adjacent.
 struct ActivityGPUEngine {
-    std::uint64_t luid{};std::uint32_t physical{},engine{};
+    std::uint64_t luid{};std::uint32_t physical{},type{},engine{};
     auto operator<=>(const ActivityGPUEngine&)const=default;
 };
+// The type key of an engtype_ label ("3D", "Copy", "VideoDecode",
+// "Compute_0", ...; driver-defined): 32-bit FNV-1a over its bytes, so the
+// engines of one label share a type without the label being stored. Two
+// labels colliding would only be counted as one type.
+std::uint32_t activityGPUEngineType(std::string_view label)noexcept;
 // A process's cumulative running time on one engine, in 100 ns units.
 struct ActivityGPUUsage {std::uint32_t pid{};ActivityGPUEngine engine;std::uint64_t runningTime{};bool operator==(const ActivityGPUUsage&)const=default;};
 // One collection of every engine instance: `time` is the collection's own
@@ -36,13 +45,22 @@ struct ActivityGPUSample {
     std::uint64_t time{};std::vector<ActivityGPUUsage>usage;
     bool operator==(const ActivityGPUSample&)const=default;
 };
-// Busiest-engine utilization between two collections, Task Manager's "GPU"
-// figure: per engine, the summed running-time growth of the selected
-// processes (all when `pids` is empty) over the elapsed time base, then the
-// maximum over every engine of every adapter, clamped to 0...100. A process
-// whose counter went backwards (an instance restarted) contributes nothing;
-// one present in only one collection contributes nothing. Unavailable without
-// both collections, a positive elapsed time base or a valid usage list.
+// Total GPU load between two collections (the GPU row's "TOTAL LOAD", the
+// Apps GPU column), over the selected processes (all when `pids` is empty):
+//  - an engine's utilization is their summed running-time growth on it over
+//    the elapsed time base, at most 100%;
+//  - an engine type's utilization on one physical adapter is its busiest
+//    engine of that type (two Copy engines each half busy are 50% Copy, not
+//    100%);
+//  - an adapter's total load is the sum of its engine types' utilizations
+//    (3D + Copy + Video Decode + Video Encode + Compute + ...), at most 100%;
+//  - the figure is the busier adapter's total load: two GPUs (a discrete and
+//    an integrated one) are neither added (one 0-100% figure) nor averaged
+//    (an idle adapter would dilute the busy one).
+// A process whose counter went backwards (an instance restarted) contributes
+// nothing; one present in only one collection contributes nothing.
+// Unavailable without both collections, a positive elapsed time base or a
+// valid usage list. Allocation-free.
 std::optional<double>activityGPUPercent(const ActivityGPUSample&current,const ActivityGPUSample&previous,std::span<const std::uint32_t>pids={});
 struct ActivityRawSample {double timestamp{},uptime{};std::optional<ActivityCPU>cpu;std::optional<ActivityMemory>memory;std::optional<ActivityCounters>network,disk;std::optional<ActivityGPUSample>gpu;};
 struct ActivitySnapshot {
@@ -65,7 +83,7 @@ struct ActivityAppsRaw {
     std::optional<ActivityAppNetwork>network;bool inventoryComplete{true};std::vector<std::string>statusNotes;
     std::optional<ActivityGPUSample>gpu; // the catalog's processes only (Windows addition)
 };
-// gpuPercent: the app's member processes on its busiest engine (activityGPUPercent).
+// gpuPercent: the total GPU load of the app's member processes (activityGPUPercent).
 struct ActivityApp {ActivityAppIdentity identity;std::optional<double>cpuPercent,upload,download,diskRead,diskWrite;std::optional<std::uint64_t>memoryBytes;std::vector<std::string>statusNotes;std::optional<double>gpuPercent;bool operator==(const ActivityApp&)const=default;};
 struct ActivityAppsSnapshot {double timestamp{},uptime{};std::vector<ActivityApp>items;std::vector<std::string>statusNotes;};
 ActivityAppsSnapshot deriveActivityApps(const ActivityAppsRaw&,const ActivityAppsRaw*previous=nullptr);
