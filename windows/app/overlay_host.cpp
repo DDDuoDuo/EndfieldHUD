@@ -453,6 +453,11 @@ struct OverlayHost::Impl {
             break;
         }
         case WM_MOUSELEAVE: case WM_CAPTURECHANGED: {
+            // lParam names the window gaining the capture. Windows answers
+            // SetCapture on the window that already holds the capture with
+            // WM_CAPTURECHANGED naming that same window: nothing was lost, so
+            // the owner's gesture (a Projection or Notes stroke) continues.
+            if (message == WM_CAPTURECHANGED && reinterpret_cast<HWND>(l) == target) break;
             mouseTracking = false;
             if (ready && handlers && handlers->pointer) handlers->pointer({message == WM_MOUSELEAVE ?
                 PointerKind::leave : PointerKind::captureLost, PointerButton::none, lastX, lastY, 0});
@@ -602,8 +607,11 @@ void OverlayHost::setFrameDemand(core::FrameDemand demand) {
 void OverlayHost::invalidate() { auto& p = *impl_; p.requireThread(); p.rethrow(); p.postFrame(); }
 void OverlayHost::capturePointer(bool capture) {
     auto&p=*impl_;p.requireThread();p.rethrow();
-    if(capture&&p.window&&IsWindowVisible(p.window))SetCapture(p.window);
-    else if(!capture)p.releaseCapture();
+    // Owners may request the capture on every event of a gesture (Projection
+    // asks for pointerLocked() after each one): take it only when this window
+    // does not hold it yet, so a drag is never re-captured mid-stroke.
+    if(capture){if(p.window&&IsWindowVisible(p.window)&&GetCapture()!=p.window)SetCapture(p.window);}
+    else p.releaseCapture();
 }
 void OverlayHost::setCursor(void* cursor) {
     auto& p = *impl_; p.requireThread(); p.rethrow();
