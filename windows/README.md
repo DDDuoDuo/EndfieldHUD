@@ -2561,3 +2561,365 @@ Checkpoint 124's list still applies. Batch 5 adds:
   Shelf preview became the properties card; Home/End follow the visual line;
   imported Reader libraries keep Georgia; books are relinked from the Library;
   Highlights/Shadows is derived black-box only and stays a gap.
+
+## Checkpoint 129 (batch 6, 2026-10-15)
+
+Checkpoint 128 was pushed as `03723d7`. The user then tested release
+candidate 128 on the laptop desktop and reported problems with Now Playing,
+Notes and Projection drawing, the Notes menus, glitches in Clipboard,
+Activity and Volume, the centre size, the Sanity bar, the logo, the clock,
+Storage and the summon hotkey. The user also asked for GPU usage in Activity,
+reported lag while a game runs, and measured the footprint as too heavy:
+426 MB private and 95 threads soon after launch, 599 MB and 69 threads after
+some use. This entry covers the 37 commits after `03723d7` up to `3d972c7`;
+the entry itself changes documentation only. Nothing from batch 6 is pushed.
+
+All evidence below comes from hidden runs on the laptop (hidden windows, WARP
+or the RTX 5060 offscreen, synthetic data, temporary folders, private
+registry subtrees), from probe processes on the laptop and from local clang
+builds on the Mac. None of these runs involved a UI Automation client, a
+network service, a real account, a real dialog, a game or a running NetEase
+Cloud Music. No fix has been confirmed on the desktop.
+
+### The user's reports from release candidate 128
+
+| Report | Change | Hidden evidence | Still to confirm on the desktop |
+| --- | --- | --- | --- |
+| Now Playing: NetEase transport ignored, slow covers, lyrics not following the song | Window-title players are read through their own on-screen controls (MSAA on the OS thread pool, the Mac NowPlayingAccessibility walk): elapsed, total, play state, previous/play/next, re-read on title, audio-activity or command changes; a CEF 91 page is asked for its tree once (IAccessible2). Commands press the player's own control, then its media-key hotkey (only while it is the single window-title player and the key is held), then `WM_APPCOMMAND`. Covers and lyrics come over one kept-alive WinHTTP session while presented, with a disk cache (`Caches\NowPlaying`, 256 entries / 16 MiB) and 500 px covers on the 150 % display. Kuwo, foobar2000, AIMP, PotPlayer and VLC are added; the process rendering audio ranks first (`7700973`). | `now_playing_players_contracts` (241), `now_playing_player_controls_contracts` (73, Mac oracle), `now_playing_control_reader_contracts` (in-process accessible objects), `now_playing_web_http_contracts` (108, loopback only), `now_playing_web_cache_contracts` (25), `now_playing_sources_session_contracts` (98); slot 31/31. | Everything with NetEase itself: its CEF tree, control names, `accDoDefaultAction`, media-key delivery (only hotkey ownership was observed), the real catalog over the system proxy. |
+| Notes: after a pen/eraser switch a stroke became a dot | The right press that toggles the eraser took the capture and its release was not consumed, so the next left press captured again; Windows answers that with `WM_CAPTURECHANGED` naming the same window, which ended the stroke. Notes now consumes the matching release (`d923aef`). | `notes_drawing_preview_contracts` through a hidden real `OverlayHost` with the host's capture policy (`tests/notes_host_capture.hpp`); it also checks the OS behaviour itself. Hidden coverage draws after two switches. | Drawing on the visible desktop (a hidden window cannot hold real capture through `OverlayHost::capturePointer`, so the harness calls `SetCapture` itself). |
+| Projection drew nothing | Projection asks for the capture after every event, so the first drag event re-captured and the same self-notice cancelled the stroke. `OverlayHost` now captures only when the window does not hold the capture and ignores a capture change naming itself (`5722753`). | `overlay_host_contracts` (taking the capture again reports no loss, a release exactly one; `5a2d3d3`), `projection_preview_contracts` under that policy, Projection coverage commits a 4-point stroke. `projection_capture_route_contracts` (`bf376aa`, the production route with a renderer readback) needs a desktop session: it was skipped (exit 77) in every SSH slot, so no pass is recorded here. | Drawing in Projection. |
+| Notes font and size menus | A Mac Shelf-picker-style scroll bar under the close button: draggable thumb, track press, wheel, and a UIA slider `notes.format:scroll`. Archive's formatting menus have it too; the Reader keeps its Mac face. A Windows addition (`d923aef`). | `notes_controls_contracts`, `notes_format_menu_contracts`, `archive_preview_contracts`, hidden coverage (slider SetValue). | Dragging on the real display. |
+| Clipboard and Activity glitch | Clipboard's removal reveal and Activity's sort transition draw the authored shutter keyframes like the Shelf; `reveal-mask.bin` and `sort-mask.bin` are no longer read (`dab9539`). | `clipboard_reveal_frames_contracts` (269), `activity_reveal_frames_contracts` (486): no region covered again, both settle at .26 s. | The real GPU. |
+| Volume shook on a Headphones / Bluetooth ↔ App volume switch | The page motion turned about the canvas corner and started at the press. It now turns about the content centre (200,167) from the first presenting frame; only the detail page reloads (`e9e9a58`). | `volume_scene_contracts` (actionMotion), `volume_preview_contracts` (pageSwitch, frame by frame), owner coverage (10–14 frames, header kept, rows parked and revived). | The motion on the desktop. |
+| Centre content too small | Not a DPI error: the Mac caps its design scale at 1.15 while the ring grows with the screen, so on the laptop (1707 × 1067 points) the Mac formula fills 88.8 % of the blue ring. `desktopContentScale` keeps the reference MacBook's proportion (factor ×1.161 on the laptop, exactly 1 at 1470 × 956). A deliberate deviation from Mac-exact numbers on larger displays (`d5acbe9`, `e62a46f`). | Hidden coverage: 1.0307 of the blue ring at seven display sizes, the Mac layout at 1470 × 956. | The look on the real display. |
+| GPU usage in Activity (request) | PDH `\GPU Engine(*)\Running Time`, busiest engine per app and overall (Task Manager's method): an Overview row ("TOP ENGINE", five languages) and an Apps column; collected only while Activity is visible, closed on hide (`dab9539`). | `activity_gpu_contracts` (617, including a live collection over the test process). | Figures against Task Manager with a game and two adapters. |
+| Clicking the Sanity bar closed the HUD | The shown wallet takes every press whatever it shows (`fe21a24`), and the host's background-press close asks `ModuleOwner::covers` first, also during the entrance (`5a2d3d3`). | Owner coverage presses the wallet open and during the entrance (re-projected on the animating plane); native and owner suites. | The press on the live display. |
+| Centre logo did not flicker | The ENDFIELD INDUSTRIES logo flickers like the Mac (opacity .22 at .05–.09 s, .38 at .20–.25 s, done at .46 s, glow at .78), never closes the HUD, honours Reduce Motion, and is a UIA button (`d5acbe9`). | Hidden coverage. | The animation on the display. |
+| Clock not scrollable | A mouse wheel over the clock switches styles (Mac 28-point threshold, one style per gesture); a style change pushes the inner page (.26 s ease-in-ease-out, 340 points, clipped) (`d5acbe9`). | Hidden coverage (half-way offsets and the end of the push). | The animation on the display. |
+| Storage: choose the disk (request) | A "C: ▾" secondary menu of fixed and removable volumes, read by volume id on the shared executor, persisted as `storageVolume` (`dab9539`, `5a2d3d3`). | `storage_volume_contracts` (27), `storage_automation_contracts` (23). | A USB volume and a restart. |
+| Summon hotkey failing in some apps | A low-level keyboard hook on its own thread recognises the chord (only the chord's key press is consumed, nothing is logged, other layouts match by physical key) and reinstalls itself on foreground changes; `RegisterHotKey` stays as the fallback. Settings › Hotkeys gains "Summon HUD with hotkey" (`windowsSummonHotkeyDisabled`, five languages) (`d5acbe9`, `b9b869b`, `577a707`). | `application_hotkey_display_contracts` (chord matcher; hook install, restart and stop on the laptop without injected input). | Delivery inside the games and apps where it failed. |
+| Lag while a game runs | While shown: ABOVE_NORMAL priority class, power throttling off, MMCSS "Games" for the render thread, GPU scheduling class HIGH and thread priority +7, all restored on close; a frame-latency waitable swap chain with a bounded 50 ms wait (`d5acbe9`, `577a707`). The HUD's D3D11 device runs without driver internal threading (`5a2d3d3`). | Contention trace below (offscreen, synthetic load). | The waitable swap chain (never created over SSH) and a real game under DWM. |
+| Footprint | See *Memory and threads*. | | `package_perf_gate --desktop` on the current build. |
+
+### Memory and threads
+
+The first desktop section 9 gate run (RC 128, 2026-10-11; Core Ultra 7
+251HX, RTX 5060 Laptop, 2560 × 1600 at 165 Hz) measured 352.5 MiB private
+and 58 threads closed, 425.4 MiB and 89 threads open, and 425.6 MiB and 77
+threads after 100 cycles. It failed closed idle on wake-ups (73.0/s, 67.2/s
+on one `nvwgf2umx.dll` thread) and open idle with ambient animation on CPU
+(11.43 % of one core); the 100 cycles, the openings (cold first frame 89 ms,
+warm 15 ms, p95 20.1 ms) and ambient off passed.
+
+The host pass measured the production owner with synthetic providers,
+hidden, on the RTX 5060 (`watch_session_preview --memory-trace`, 1280 × 800):
+
+| Stage (private MiB / threads) | Before the host pass | After (`3d972c7`) |
+| --- | --- | --- |
+| Constructed | 179 / 55 | 166 / 35 |
+| Launch idle | 229 / 55 | 189 / 37 |
+| First opening | 325 / 86 | 276 / 51 |
+| Open, after visiting all 21 modules | 561 / 86 | 468 / 51 |
+| Closed | 543 / 86 | 335 / 51 |
+| After 10 more cycles | 548 / 87 | 255 / 51 |
+
+At 2560 × 1600 after the change: launch idle 189, first opening 343, closed
+338 and after the cycles 259 MiB. What changed at host level (`5a2d3d3`,
+`3d972c7`):
+
+- The HUD device is created with
+  `D3D11_CREATE_DEVICE_PREVENT_INTERNAL_THREADING_OPTIMIZATIONS`
+  (`RendererOptions::preventDriverThreads`): NVIDIA driver threads 41 at
+  launch and 59 after use → 21.
+- sRGB textures are stored as `R8G8B8A8_UNORM_SRGB` (4 B per texel) holding
+  sRGB-encoded premultiplied linear texels; linear and encoded textures stay
+  16-bit. Area GPU figures below that were measured before `5a2d3d3` count
+  8 B per texel.
+- After the `overlayConcealed` broadcast, and right after the launch
+  prewarm, one publication is followed by `Renderer::releaseFrameTargets`
+  (linear, offscreen, source-pass and group targets, about 115 MB at
+  2560 × 1600), `IDXGIDevice3::Trim` and `HeapOptimizeResources`; the next
+  frame recreates what it draws. After a module switch, group targets no
+  longer drawn are released without a trim (a trim there stalled 190–580 ms
+  behind queued frames).
+- Not adopted: the segment heap (first opening +32–45 MB, steady state
+  −12–33 MB). Not enabled: the executor's idle worker exit (see *Still open
+  in code*).
+
+Costs, hidden back-to-back startup trace: cold first frame 22 → 41–51 ms,
+warm first frame 3.3 → 6–14 ms, prewarm 54 → 112–132 ms. They are inside the
+gate's limits but have not been seen at 165 Hz on the desktop.
+
+Contention trace (hostux, offscreen on the laptop's GPU, 2560 × 1600 at
+60 Hz, 560 frames per setting, 18 busy CPU threads and a GPU at 100 %):
+
+| Load | Setting | Worst late wake-up | GPU finish mean / p95 | Frame done p95 / worst | Missed frames |
+| --- | --- | --- | --- | --- | --- |
+| One 22 ms GPU draw per frame | before | 29.7 ms | 4.33 / 6.30 ms | 7.43 / 33.4 ms | 1 |
+| | after | 0.57 ms | 3.91 / 5.11 ms | 5.74 / 8.98 ms | 0 |
+| 48 draws, 29.5 ms frames | before | 2.0 ms | 1.70 / 2.78 ms | 3.75 / 5.77 ms | 0 |
+| | after | 0.54 ms | 1.22 / 1.79 ms | 2.41 / 3.12 ms | 0 |
+
+The paced 60 Hz trace with driver threading off: CPU per frame 0.64 →
+0.77 ms, GPU completion mean 2.4 → 0.8 ms and p95 11.7 → 3.9–4.6 ms, frames
+over one tick 5 → 0.
+
+Per area (each measured in the area's own suite or probe; "close" means the
+HUD closed while another module was shown):
+
+| Area | Change | Measured |
+| --- | --- | --- |
+| Reader (`e99e0f8`) | A hidden Reader drops its page textures and parks its canvas group after the .35 s departure deadline (also with the HUD closed). PDF pages render on a WARP device without internal threads (hardware only as fallback), as the Mac renders them on the CPU. | Hidden, 1 px/pt: renderer bytes 3,728,128 → 5,040, textures 38 → 0. PDF census on the laptop, 40 show/hide cycles: threads with a PDF open 96 → 38, private 92.2 → 71.2 MB open and 84.4 → 66.0 MB after release, no growth (66.0–67.6 MB). |
+| Map (`e99e0f8`, forwarded in `5a2d3d3`) | `MapPreview::prewarm` builds the first opening at opacity 0 while closed. | First opening frame on WARP 13.0–17.2 → 0.07–0.21 ms; 27 → 0 first-frame uploads. After a close the host trace still finds 28 textures (22.9 MB, linear or encoded colour spaces at 8 B per texel) and 17.9 MB of CPU residency. |
+| Notes (`83dd37d`, `c9f04a5`) | A large card's body lines live in their own scene and its plate is a filled GPU mesh; the shared media decoder and Media Foundation start with the first job and stop after the last movie. | 1600 × 1000 pt card at 2 px/pt: 47 → 22 MB CPU, 94 → 44 MB GPU; closing the editor unchanged 5 rasters / 4.6 ms (was about 46 lines, 59 ms). 46 threads before and after building the media stack; 72 instead of 80 after one movie. |
+| Clipboard, Event Log, Activity, Storage (`a2829c0`, `7918420`, `244ba30`) | Release on close, Storage built only when shown, hover tints painted only while they show, one plate leaf per row. | At rest, CPU KiB: Clipboard 8686 → 5599, Event Log 7702 → 3490, Activity Apps 2461 → 2005, Storage 2100; 0 after a close. The PDH GPU query adds no thread; about 4.3 MB stays after the first Activity visit. |
+| File Shelf (`ebcc801`, `15da40b`) | No icon thread before the Shelf shows or while it is hidden; tight static groups; release on close; resting highlights held as a transparent point. | Eight cards at 2 px/pt: 7,969 → 5,757 KiB of rasters (the before figure is from `ebcc801`, not re-measured). |
+| Volume (`a58af3a`, `7902591`, `98e4f29`) | Plates and slider parts rasterize at their own size (pixel-identical), nothing is built at launch, hover tints held as points, release on close. | App volume page, 2 px/pt: 13.2 → 2.2 MB CPU, 26.4 → 4.4 MB GPU; at launch 13.2 MB → 0; 0 after a close; first build on WARP 58.7 → 30.3 ms. |
+| Now Playing (`7700973`) | Parked on close: scene, extra decoded covers and recent compressed covers. No thread of its own. | Preview test, 1 px/pt: rasters 515,164 → 0 bytes, textures 46 → 0, native groups 6 → 0. |
+| Media Assembly (`f2e2ad6`) | A hidden editor keeps no decoded source or GPU processor textures; its canvas is released on close; GPU programs compiled at build time. | 1000 × 750 still: preview pixels 3,000,000 → 0 and processor bytes 3,229,376 → 0 while hidden; renderer 15.9 MB → 5,208 B; shared rasterizer 5.04 → 1.58 MB after a close. |
+| Personal Profile, Work Mode (`47e7d6d`, `6039135`) | Work Mode's ring and base are GPU meshes; Personal Profile is built when first shown or prewarmed; both release rasters on close. | Work Mode shown 7.82 → 1.86 MB CPU, about 16.2 → 4.47 MB GPU; Personal Profile at launch 2.65 MB → 0; 0 after a close; probe private 132.9 → 125.1 MB; rebuilding costs about 20 ms plus a 26 ms first frame on WARP. |
+| Account (`fe21a24`, `3d3b0b4`) | The recovery card is built on its first opening and released on close; WinHTTP only while requests run; no WebView2 object outlives a login. | 1 px/pt, after a close: account GPU 728 → 285 KiB, rasters 66 KiB → 0. |
+| Power (`7ea099d`) | The charge alert's window, device and textures exist only while an alert or the position editor shows, released 10 s after; no CPU copy of installed artwork. | `charge_alert_probe --residency` on the hardware driver: an ordered-out alert held +54.6 MB, +64 threads, +269 handles; after release +8.3 MB, +5 threads, +47 handles, levelling at +9 threads. |
+| *+ Add App* (`d0201be`, `f35ee05`) | Plates, preset tiles and the name field are GPU meshes; captions rasterize at their text's width; release on close. | 2 px/pt: list of eight 6220 → 400 KiB, draft 3252 → 401 KiB, name field 423 → 146 KiB; 0 after a close. |
+| Mac import (`150d07f`) | Nothing of a finished import stays resident. | MSVC: 0 B and no session after the card hides in all 7 scenarios, threads 4 → 4. |
+| Updater (`bc3ffd6`) | The WinHTTP session opens with the first request and closes when idle. | Constructing the transports 4 → 4 threads (was 4 → 6); a session adds 4. |
+
+### Test runs
+
+| Run | Result |
+| --- | --- |
+| Host pass, full MSVC x64 Release build | 391 of 394 suites before its last small edits; the three failures are the environmental ones of earlier checkpoints. After `5a2d3d3` and `3d972c7`, 23 of 23: the `application_*` suites, both owner coverage runs, `application_memory_trace`, `application_frame_targets_contracts`, `native_group_contracts`, `native_renderer_contracts`, `watch_preview_argument_contracts`, `audio_application_name_contracts` and the `endfieldhud_*` package, install and release suites. |
+| `application_owner_coverage` | 54 module results, at least 171 host checks (enforced; 117 at checkpoint 128), 14 areas constructed. `application_session_end_coverage`: at least 167 host checks (113 before). |
+| Area slots (committed tree plus the area's files) | Reader/Map/Calendar/Minigame 46/46, Notes/Archive/Projection 66/66, System providers 42/42, Shelf 17/17, Volume 19/19, Now Playing 31/31, Media Assembly 19/19, Personal Profile 24/24, Account 17/17, Power 18/18, App shortcuts 19/19, Mac import 13/13, packaging 14/14; each includes `application_owner_coverage`. Host UX: a full build and 52 related suites. The Projection capture route slot built its test and skipped it (no desktop session). |
+| Mac, clang | Portable `volume_scene_contracts` (1,026), `volume_reference_tests` (44,329, Mac oracle on the source form), `audio_application_name_contracts` (12), `packaging_perf_gate_contracts` (74, ASan/UBSan), the Mac import residency scenarios (before/after numbers in `windows/core/migration/README.md`), and the Shelf portable sources with `-Wall -Wextra -Wpedantic`. |
+| GitHub Actions | Run 38170093334 on the pushed `03723d7`: the Windows job passed 358 of 358 suites (ICU 72.1, Unicode 15.1, tzdata 2022g), confirming the 8.3 `%TEMP%` and cp1252 fixes. The portable GCC job stopped at three compile errors (`media_assembly_export.hpp` `<memory>`, `reader_pdf_title.cpp`, `reader_pdf_crypto.cpp` `<algorithm>`), fixed in `5a2d3d3` and not yet run on GitHub. |
+| The intermittent codec failure | Explained and fixed (`0a1d4b5`): a file deleted while another program holds it open keeps no name but opens by file ID from a hidden system folder, and the moved-original lookup found it there. The lookup now requires a linked, not delete-pending object whose current path reopens it; the contract holds a handle so the case occurs every run. 9 consecutive passes. |
+
+### What `EndfieldHUD.exe` contains now
+
+Changes since checkpoint 128:
+
+- **Same owners and areas:** 15 built-in owners, the quit card, the desktop
+  clock's automation owner, 10 production module areas and 4 coverage-only
+  areas.
+- **Host (`5a2d3d3`, `3d972c7`):**
+  - the memory changes above, plus a memory trace
+    (`watch_session_preview --memory-trace`, and
+    `ENDFIELDHUD_MEMORY_TRACE=1`, which writes
+    `Diagnostics/memory-trace.json` in the data root),
+    `ModuleOwner::residency` (reported by Reader, Map and the minigame),
+    per-owner raster attribution and named executor workers;
+  - adapters forward what the areas asked for: Clipboard and Event Log
+    receive visibility, closing and concealment; Activity, Storage and the
+    Shelf concealment; Volume its prewarm, visibility and concealment; the
+    Map prewarm goes through the generic preview prewarm;
+  - the Clipboard, Event Log, Activity Monitor and Storage UIA peers are
+    listed under the HUD root;
+  - the Storage volume choice persists as `storageVolume`; Notes receives
+    the shared UtilityExecutor for its relink ledger writes;
+  - a press over a control any owner `covers` is never a background press;
+  - the rasterizer accepts rich single-line fields (measured after their
+    runs);
+  - the Power badge's rest density follows the display adaptation (one line
+    in `app/areas/power_module.cpp`);
+  - `SourceGraphics::releaseTargets` for the source pass (in
+    `native/source_graphics.*`);
+  - the GCC portability fixes.
+- **Host UX (`d5acbe9`, `e62a46f`, `b9b869b`, `577a707`):** the display
+  adaptation (`desktopContentScale`, `ApplicationHost::contentScale()` for
+  areas), the logo flicker and its UIA button, the clock wheel and page push,
+  the summon hook and its setting, the priority while shown, the waitable
+  swap chain, and `watch_session_preview --contention-trace` with
+  `tools/application_contention_stress`. `b779995` lets `app.cmake` add the
+  host memory sources only when they exist (HEAD briefly listed files that
+  were not in the tree).
+- **Pointer capture (`5722753`):** see the Projection row above.
+- **Build (`69c8816`):** scratch verification builds may omit developer
+  symbols.
+- **Areas:** the commits in the tables above, plus:
+  - Reader: content that changes between a frame's update and its upload is
+    placed with that frame's pose (`e99e0f8`; the old code threw "Place
+    Reader before upload"); the Reader document and the Map painter accept a
+    changing worker (serial-use guards, the process MTA held while a
+    document is open);
+  - Notes, Archive, Projection: video posters and played frames of BT.709 or
+    untagged movies take the Mac CoreMedia 709 reading, within 2 levels of
+    the Mac preview (`c9f04a5`); the Archive date field has the Mac
+    single-line inset (`d923aef`);
+  - Shelf: the properties card announces its keyboard focus (`ebcc801`);
+  - Volume: packaged processes take their manifest's DisplayName (XmlLite,
+    no DTD, bounded; `ms-resource` through `SHLoadIndirectString`)
+    (`a58af3a`);
+  - Media Assembly: JPEG chroma read like the Mac preview (4:2:0 within each
+    MCU) and export (4:2:2 converted to 4:2:0 first): 7 synthetic files
+    within 3 levels on both paths (before: up to 142 and 188); 4:2:2
+    exports read the file once in 256-row bands (`daa5127`);
+  - Profile: the portrait crop runs on the shared worker (about 3.3 ms of
+    owner time per slider step) and the avatar cache keeps only the 1024 px
+    working copy (`47e7d6d`);
+  - Account: the first-open wallet work runs in the launch prewarm
+    (`fe21a24`);
+  - Power: the badge is installed by the launch prewarm (Power's cold
+    first-frame upload 1.23–1.38 → 0.18–0.30 ms), and each alert starts its
+    entrance after its 32–46 ms first frame so it plays from its first pose
+    (`7ea099d`);
+  - Mac import: an MSVC x64 Release temporary inside a `&&` operand left six
+    SQLite sidecar paths (544 B) alive per staging; now a named variable
+    (`150d07f`);
+  - packaging: the section 9 gate reports memory, threads and handles at
+    four points with provisional limits (160 MiB / 40 threads closed or
+    after use, 256 MiB / 64 threads open; `--limit` keys) and threads by
+    component; release notes match the gap tables (`bc3ffd6`).
+- **Package:** no new resources, vendored code or fonts. Now Playing's
+  `Windows.Web.Http` transport is replaced by WinHTTP. QuickJS-NG's
+  `LICENSE` is still not staged (`CREDITS.md`).
+
+### Verified, by suite
+
+| Area | Suites | Main evidence |
+| --- | --- | --- |
+| Host | `application_frame_targets_contracts`, `application_memory_trace`, `application_utility_idle_contracts`, `application_hotkey_display_contracts`, `overlay_host_contracts`, both coverage runs | Identical pixels after a target release, only drawn groups restored, exact byte accounting; the closed HUD keeps no group target, released its frame targets and trimmed the driver; the idle exit (tested, off); the recapture regression; the provider UIA groups under the real root; the wallet press during the entrance; the Volume page switch and the Volume and Work Mode releases on close. |
+| Reader, Map | `reader_preview_contracts` (6,258), `map_preview_contracts` (99), `reader_pdf_exit_contracts`, `map_painter_contracts`, `reader_native_contracts` | Unplaced artwork never uploaded; parking; the prewarm; the PDF census (asserts that an open PDF starts no device threads); a later worker reuses the painter's caches. |
+| Notes, Archive, Projection | `notes_drawing_preview_contracts`, `projection_preview_contracts`, `notes_controls_contracts`, `notes_format_menu_contracts`, `archive_preview_contracts`, `notes_scene_contracts`, `notes_workspace_owner_contracts`, `notes_video_poster_contracts`, `notes_video_decode_contracts`, `notes_preview_contracts` | Strokes keep every point after tool switches under the real capture policy; the menu scroll bar; the lines scene and plate mesh; posters within 2 levels of the Media Assembly oracle (grey 128 reads 139); no engine or scratch texture left after playback; the ledger write queued on a real executor. |
+| System providers | `clipboard_reveal_frames_contracts`, `activity_reveal_frames_contracts`, `activity_gpu_contracts`, `storage_volume_contracts`, the four `*_resources_contracts` and `activity_counters_resources_contracts`, the four `*_automation_contracts` (71, 36, 37, 23) | Reveal frames; GPU parsing and collection; volume choice; release on close; peers with Mac labels and help, presses that act like clicks. |
+| File Shelf | `shelf_scene_contracts`, `shelf_resources_contracts` (50) | One paint per hover, release at the next content event, `settleHighlights`, a HUD closed mid-fade. |
+| Volume | `volume_scene_contracts` (1,482), `volume_preview_contracts` (665), `audio_application_name_contracts`, `audio_service_contracts` | The page motion; compact rasters equal to the source rasters pixel for pixel; lazy build and release; synthetic manifests (modern, 8.1, CDATA, DTD refused, over 4 MiB refused). |
+| Now Playing | the suites in the first table, `now_playing_preview_contracts` (41), `now_playing_acceptance_contracts` (323) | Readings and presses through a fixture window; the HTTP session lifetime (idle pooled connection closed 20.0 s after release); the cache under a temporary folder; parking. |
+| Media Assembly | the 14 `media_assembly_*` suites | The codec race (9 passes), residency, JPEG chroma within 3 levels, the 4:2:2 band seam. |
+| Personal Profile, Work Mode | `work_mode_scene_contracts`, `work_mode_preview_contracts`, `profile_scene_contracts`, `profile_owner_contracts`, `profile_shell_scene_contracts` | The ring mesh within 16/255 of an exact supersampled stroke (the Direct2D raster was off by up to 96/255); rebuilt pages paint byte for byte; profile coverage 6 steps, 162 checks, identical raster use in cycles 1 and 2. |
+| Account | `hypergryph_account_webview_contracts` (492), `hypergryph_account_platform_contracts` (118), `hypergryph_account_owner_contracts` (103), `hypergryph_account_native_contracts` (48), `hypergryph_account_area_contracts` (77) | The wallet takes presses; the card built and released; no WebView2 reference after a completed, cancelled or expired login; the WinHTTP session opened only by a request. |
+| Power | `charge_indicator_panel_contracts`, `charge_indicator_contracts`, `charge_indicator_scene_contracts`, `charge_badge_preview_contracts`, `power_area_contracts` | Create/park/rebuild per presentation; postponed entrance pixel-identical to a reference panel; device loss replaced once; 17 uploads at prewarm, none at reveal. |
+| App shortcuts | `app_shortcut_scene_contracts`, `app_shortcut_preview_contracts` | Mesh plates against full-size leaf rasters: straight edges and text within 1 level, 3-point corners up to 23 levels on single pixels; resident bounds asserted. |
+| Mac import | `mac_import_resident_contracts` (675), `mac_import_contracts` (758) | Heap and threads around seven scenarios; leftover blocks listed on failure. |
+| Packaging | `packaging_perf_gate_contracts` (74), `packaging_perf_probe_contracts`, `packaging_update_platform_contracts` (78), `packaging_perf_gate_tool`, `endfieldhud_release_contracts` | The footprint section against a stand-in app on the laptop (48 MiB held while open, attributed threads); the lazy WinHTTP session. |
+
+### Corrections to the entries above
+
+- Checkpoint 128 says nothing from batch 5 was pushed and that its code is at
+  `58962f4`. It was pushed afterwards as `03723d7`, and the push gave batch 5
+  commits new names. The names used in the batch 5 entries and checkpoint
+  128 map to the pushed history as follows: `0aa6019` → `27cdcd9`,
+  `0deb3df` → `06dec76`, `0fcabbc` → `fb2260d`, `200e513` → `3139612`,
+  `28b3e40` → `87e2588`, `2d2f1e2` → `3b5ef68`, `3b059ec` → `5c95c32`,
+  `3d74603` → `4d3dcb7`, `454440a` → `5a3a72b`, `4b2766e` → `2571c27`,
+  `58962f4` → `ed4b2e3`, `597df08` → `aae7386`, `666505a` → `cba79ac`,
+  `70ebabb` → `777a013`, `72e59e9` → `e6a2f62`, `74cc045` → `1c867c1`,
+  `9126a23` → `3cd40f6`, `918502b` → `82e8835`, `9b91c0a` → `d3b7300`,
+  `b0fc68d` → `573da9f`, `b724f25` → `74c2c86`, `b75b1c2` → `8b98a23`,
+  `c2adc67` → `47f051d`, `c5650db` → `7ac5497`, `c57089d` → `2dbc66e`,
+  `c6ee3a1` → `6465f28`, `d29fd94` → `17a6347`, `d61626e` → `18360b8`,
+  `d6bafad` → `cdee644`, `d8bf2c9` → `4ed6537`, `dab027e` → `73bf7e7`,
+  `e441cb2` → `4d20920`, `e8f4b1f` → `b310779`, `edbe0b7` → `99943bd`,
+  `f72c590` → `0370083`. Earlier pushes renamed these: `16a186d` →
+  `46369ab`, `1d6c219` → `aab3fcd`, `2d8aa16` → `e029d2b`, `3007768` →
+  `8cf6951`, `5bc5d14` → `6ebe590`, `5dd147e` → `095ddf1`, `bb4ef09` →
+  `0a4aa0c`, `c2a500d` → `286b236`, `dd113c9` → `2ec55d5`, `e38d18d` →
+  `723fcfd`, `51fc678` → `d75f4a4`, `9798e54` → `53a549c`, `e94eba1` →
+  `1627f1b`. Every other commit name in this log is in the pushed history.
+- Checkpoint 128's "Still open in code" items done in batch 6: the Shelf
+  properties card's focus announcement; prewarm entries for Map, Account and
+  Power; the CoreMedia 709 reading for Notes, Archive and Projection video;
+  the Clipboard and Activity reveal masks; the large Notes card's line
+  re-raster on leaving the editor; the Notes relink ledger off the UI
+  thread; the Archive date inset (the title is still open); the Profile
+  portrait crop on the UI thread and the 4096 px avatar cache; the ENDFIELD
+  INDUSTRIES flicker.
+- Checkpoint 128's decision on Clipboard's reveal and Activity's sort
+  transition is settled: the user reported the glitch, and both now draw
+  the authored keyframes.
+- Checkpoint 128's unexplained codec failure is explained (see *Test runs*).
+
+### Live acceptance still needed
+
+Checkpoint 128's list still applies, except for the decided reveal question.
+Batch 6 adds:
+
+- **The reports above:** every row's last column, in particular NetEase
+  Cloud Music with the Now Playing probe (`now_playing_probe --live
+  --windows` now prints each player's controls as the HUD reads them),
+  drawing in Notes and Projection, the summon hotkey in the games where it
+  failed, and the HUD's smoothness with a game running.
+- **Footprint:** `package_perf_gate --desktop` on the current build: the new
+  footprint section, whether the 67/s NVIDIA thread of the closed idle is
+  gone (the 21 remaining driver threads share its start address, so this is
+  not certain), and the opening costs at 165 Hz after the frame-target
+  release. Task Manager after a real charge alert, after visiting the
+  provider modules, after a Mac import and with a PDF open. The
+  `ENDFIELDHUD_MEMORY_TRACE=1` census has not run on the desktop.
+- **Visuals on the real GPU at 150 %:** translucent edges with 4 B sRGB
+  textures (expected within about 1 level), the Work Mode ring mesh, the
+  Notes card plate mesh and lines at strong tilt, the *+ Add App* meshes and
+  narrower captions (CJK, emoji and italic fallback glyphs), the merged
+  Clipboard/Event Log plate leaf, BT.709 playback brightness against the
+  Mac, real JPEG photos (colour edges, 4:2:2 camera files) in Media Assembly.
+- **Platform paths never run:** the frame-latency waitable swap chain, the
+  charge alert's postponed entrance on a real composition target, a real TDR
+  or adapter switch, WinHTTP against `music.163.com` and the cover hosts,
+  the Now Playing disk cache under the real data root, packaged-app names
+  from real `resources.pri` files, heavy real PDFs on WARP, Storage with a
+  USB volume across a restart.
+- **Accessibility:** Narrator over the provider peers, the logo button, the
+  Notes menu slider and the Shelf properties card's focus.
+
+### Still open in code
+
+- **Host:** the executor's idle worker exit stays off: the Calendar, Reader
+  and Archive JSON repositories and the App shortcuts model require their
+  first worker thread ("belongs to one FIFO executor"); checking job
+  serialization instead would allow it (2 threads). An open HUD keeps freed
+  driver pools (about 120 MiB after visiting every module) until it closes.
+  27–33 OS thread-pool workers after the first opening cannot be attributed
+  by start address. About 75 MiB of heap stays committed but free after a
+  close (LFH fragmentation). The clock push keeps its two page rasters
+  (about 1–2 MB) after the first style change. The summon hook adds one
+  thread.
+- **Map:** 28 textures (22.9 MB, 8 B per texel) and 17.9 MB of CPU
+  residency while closed on another module (the Mac keeps its images for the
+  reopen animation); sRGB artwork could use 4 B per texel and the feather an
+  alpha-only format.
+- **Reader, Calendar:** after a close the Reader keeps 3.2 MB of CPU rasters;
+  Calendar keeps 2.3 MB of rasters, 2.3 MB of textures and a group.
+- **Archive:** `ArchiveModule::prewarm` runs a full hidden update at launch
+  (3.4 MB of rasters even if Archive is never opened); the title's
+  single-line inset still waits for the projected editor to accept the
+  rich single-line field the rasterizer now supports.
+- **Notes:** large-card body lines rasterize at the full viewport width and
+  scrolling reloads them; pasted images are not transcoded on the shared
+  media worker; Office HTML class style sheets are not applied; after one
+  hardware-decoded movie about 26 driver threads remain once Media
+  Foundation shuts down.
+- **Volume:** the production app rows show no app icons (the Mac shows
+  them); the shared Shell icon worker belongs to the Shelf area and is not
+  yet published to Volume.
+- **Now Playing:** control rules target Chromium players and the Mac button
+  names; other players' readings and title formats are unconfirmed.
+- **Shared rendering:** every `LayerScene` keeps a CPU copy of its leaf
+  bitmaps beside the GPU textures (for re-upload after a device loss or a
+  dropped module).
+- **Personal Profile:** the bottom-left ID card's three runtime textures
+  (about 1.4 MB) are held twice; its fixed gradient bitmaps (about 0.26 MB)
+  are made at construction.
+- **Cursor and UI Automation:** `textCursorAt` in the Notes, Archive and
+  Calendar previews; a text pattern for projected fields.
+- **Source shell:** the clickable scroll indicators are not ported.
+- **Input:** precise touchpad scroll and pinch.
+- **Packaging:** QuickJS-NG's `LICENSE` is not staged; builds are unsigned;
+  no "update available" toast; EndfieldHUD's own threads carry no
+  descriptions, so the gate groups them only by start address.
+
+### Decisions for the user
+
+- The centre content now keeps the reference MacBook's proportion on larger
+  displays (factor ×1.161 on the laptop) instead of the Mac's capped design
+  scale. Keep this deviation?
+- The section 9 footprint limits are provisional (160 MiB and 40 threads
+  closed, 256 MiB and 64 threads open). Windows private bytes include the
+  graphics driver's commit and are not the Mac's physical footprint, so the
+  user should set the targets.
+- Now Playing looks up a track only while shown, as the Mac does. Prefetch
+  the NetEase cover on a hidden title change (network work while the HUD is
+  closed) for an instant first opening?
+- Once a certificate exists, may signed builds install updates
+  automatically (Mac-style 30 s idle gate)?
+- Settled in batch 6: Clipboard and Activity draw the authored keyframes;
+  Activity shows GPU usage and Storage a chosen volume (user requests).

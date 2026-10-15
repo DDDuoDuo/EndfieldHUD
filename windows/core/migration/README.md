@@ -293,9 +293,10 @@ Owners never need a ledger id. After their own record write committed
 (record first, ledger second) they call the API below. The Shelf calls it on
 the shared UtilityExecutor, App shortcuts on their worker, Archive on its
 FIFO file queue behind the entry save, and Reader in the library's worker
-job. Notes calls it on the UI thread right after its synchronous store
-write, which happens only on an explicit relink or deletion and once when the
-owner is constructed.
+job. Notes queues its relink and deletion calls, in order, on the shared
+UtilityExecutor that the host hands it (since checkpoint 129; a full queue
+runs them inline), right after its synchronous store write; its reconcile
+runs once when the owner is constructed.
 
 | Call | When | Rows it changes |
 |---|---|---|
@@ -357,6 +358,9 @@ records now calls the owner API:
 - Notes (footer action) resolves a media note's row after a relink,
   dismisses a deleted note's row and reconciles when the persistent root
   loads (`modules/notes_relink_ledger`, `notes_relink_ledger_contracts`).
+  Since checkpoint 129 the resolve and dismiss writes run on the shared
+  executor (`notes_preview_contracts` queues a deletion's write on a real
+  executor).
 - Archive (the attachment's error text) saves the entry first, then resolves
   or dismisses on the same file queue only when the stored entry shows the
   change; deleting an entry dismisses all its rows, and the first load
@@ -516,8 +520,8 @@ Not verified yet:
 
 Known limits:
 
-- Folders made before checkpoint 124 (`e38d18d`) carry no marker. They are
-  never swept and must be removed by hand.
+- Folders made before checkpoint 124 (`723fcfd`, named `e38d18d` before the
+  push) carry no marker. They are never swept and must be removed by hand.
 - The importer never deletes backups.
 - The commit runs between two runs, so it shows no progress while it works.
   Staging progress and the final report are shown.
