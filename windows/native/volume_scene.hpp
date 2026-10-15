@@ -173,6 +173,10 @@ struct NativeVolumeSceneStats {
     // parked and retiring rows) and their CPU raster pixels. park() counts
     // each release of the whole artwork (the HUD closed on another module).
     std::size_t parts{},pixelBytes{};std::uint64_t parks{};
+    // Hover/press tints and rims hidden at rest hold a transparent point:
+    // feedbackPaints counts paints of their source shape when feedback shows,
+    // feedbackReleases the returns to the point once it faded out.
+    std::uint64_t feedbackPaints{},feedbackReleases{};
 };
 class NativeVolumeScene final {
 public:

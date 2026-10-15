@@ -96,7 +96,11 @@ void pageSwitch(const std::filesystem::path&shader){Window window;gpu::Renderer 
     // The title's local origin is canvas (12,0): canvas centre (200,167) is local (188,167).
     const auto centre=[&]{return contentPoint(inverseContent,draw(composition,"volume/title"),188,167);};
     const double w0=1+10./700;
-    const auto press=[&](double x,double y,std::string_view expected){const auto p=point(x,y);const auto raster0=raster.stats();const auto begin=std::chrono::steady_clock::now();
+    const auto press=[&](double x,double y,std::string_view expected){const auto p=point(x,y);
+        // The pointer reaches the button before pressing it: hovering paints
+        // its tint (a transparent point at rest; its framed rim already shows).
+        const auto paints=preview.sceneStats().feedbackPaints;check(preview.pointer({app::PointerKind::move,app::PointerButton::none,p.x,p.y},time+=.25)&&preview.sceneStats().feedbackPaints==paints+1,"Hovering a detail button paints only its tint");
+        const auto raster0=raster.stats();const auto begin=std::chrono::steady_clock::now();
         check(preview.pointer({app::PointerKind::down,app::PointerButton::left,p.x,p.y},time+=.5)&&preview.pointer({app::PointerKind::up,app::PointerButton::left,p.x,p.y},time),"A projected detail button takes the press");
         const auto ms=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-begin).count();const auto rasters=raster.stats().rasterizations-raster0.rasterizations,layouts=raster.stats().textLayoutsCreated-raster0.textLayoutsCreated;
         std::cout<<"Volume owner switch to "<<expected<<": "<<rasters<<" rasterizations, "<<layouts<<" text layouts, "<<ms<<" ms on the press (WARP fixture)\n";return std::pair{rasters,layouts};};

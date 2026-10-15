@@ -307,6 +307,11 @@ bool sameSurface(const VolumeSurface&a,const VolumeSurface&b){return a.id==b.id&
 bool insideRounded(Rect r,Point p){if(!contains(r,p))return false;const auto radius=std::min(3.,std::min(r.width,r.height)*.5);const auto x=std::clamp(p.x,r.x+radius,r.x+r.width-radius),y=std::clamp(p.y,r.y+radius,r.y+r.height-radius);return (p.x-x)*(p.x-x)+(p.y-y)*(p.y-y)<=radius*radius;}
 bool insideCut(Rect r,Point p){const std::array<Point,6>polygon{{{r.x+4,r.y},{r.x+r.width,r.y},{r.x+r.width,r.y+r.height-4},{r.x+r.width-4,r.y+r.height},{r.x,r.y+r.height},{r.x,r.y+4}}};return core::polygonContains(polygon,p);}
 Json payload(Json node){node["position"]=Json::Array{0,0};return node;}
+// A hover/press tint, or a rim hidden at rest (rest opacity 0), holds one
+// transparent point until its feedback shows (Mac: a CAShapeLayer at opacity
+// 0 keeps no bitmap); it paints its source shape while its feedback shows
+// and returns to the point once it has faded out.
+Json placeholder(const std::string&id){return Json::Object{{"id",id},{"kind","layer"},{"bounds",Json::Array{0,0,1,1}},{"position",Json::Array{0,0}},{"anchorPoint",Json::Array{0,0}},{"backgroundColor",Json::Object{{"sRGB",Json::Array{0,0,0,0}}}},{"children",Json::Array{}}};}
 }
 struct NativeVolumeScene::Impl {
     struct Track {std::string id;double from{},target{},start{},duration{};bool active{};};
@@ -317,6 +322,8 @@ struct NativeVolumeScene::Impl {
         explicit Part(LayerRasterizer&r):scene(r){}
         LayerScene scene;VolumeScenePlan plan;std::vector<Json>payloads;std::vector<LayerPlacement>placements;std::vector<std::array<PlaneMask,8>>masks;
         std::vector<Track>tracks;std::vector<std::size_t>trackForSurface;std::vector<std::uint64_t>localRevisions;
+        // painted: the leaf holds its source content (feedback leaves at rest hold a placeholder).
+        std::vector<std::uint8_t>painted;
         std::string application;std::size_t row{};Rect visible;bool loaded{},exposed{};
         // Resource revision this owner last uploaded: the per-frame upload
         // call skips unchanged parts (the composition re-uploads any part it
@@ -349,13 +356,18 @@ struct NativeVolumeScene::Impl {
             for(std::size_t n=0;n<next.surfaces.size();++n){const auto&s=next.surfaces[n];placements[n]={n,s.local,s.opacity,{}};if(s.feedback.empty())continue;mapping[n]=tracks.size();Track track{s.feedback,s.opacity,s.opacity,0,0,false};
                 for(std::size_t old=0;old<p.plan.surfaces.size();++old)if(p.trackForSurface[old]!=SIZE_MAX&&p.plan.surfaces[old].feedback==s.feedback&&p.plan.surfaces[old].rim==s.rim){track=p.tracks[p.trackForSurface[old]];break;}
                 tracks.push_back(std::move(track));}
-            p.scene.load(next.layers,options);need(p.scene.report().unsupported.empty()&&p.scene.draws().size()==next.surfaces.size(),"Volume artwork contains unsupported retained raster state");
+            // Feedback at rest (no carried highlight or fade) loads as a placeholder.
+            std::vector<std::uint8_t>painted(next.surfaces.size(),1);Json::Array children;children.reserve(next.surfaces.size());const auto&leaves=next.layers["children"].array();
+            for(std::size_t n=0;n<next.surfaces.size();++n){if(next.surfaces[n].opacity==0&&(mapping[n]==SIZE_MAX||(tracks[mapping[n]].target==0&&!tracks[mapping[n]].active))){painted[n]=0;children.push_back(placeholder(next.surfaces[n].id));}else children.push_back(leaves[n]);}
+            const Json root=Json::Object{{"bounds",next.layers["bounds"]},{"position",next.layers["position"]},{"anchorPoint",next.layers["anchorPoint"]},{"allowsGroupOpacity",false},{"children",std::move(children)}};
+            p.scene.load(root,options);need(p.scene.report().unsupported.empty()&&p.scene.draws().size()==next.surfaces.size(),"Volume artwork contains unsupported retained raster state");
             for(std::size_t n=0;n<next.surfaces.size();++n)need(p.scene.surfaceIndex(next.surfaces[n].id)==n,"Volume surface order changed");
-            p.placements=std::move(placements);p.masks=std::move(masks);p.tracks=std::move(tracks);p.trackForSurface=std::move(mapping);p.localRevisions=std::move(revisions);
+            p.placements=std::move(placements);p.masks=std::move(masks);p.tracks=std::move(tracks);p.trackForSurface=std::move(mapping);p.localRevisions=std::move(revisions);p.painted=std::move(painted);
         }else {
             // Content events update only changed source leaves. Pointer tilt and
             // finite feedback never enter this path or reshape caption glyphs.
-            for(std::size_t n=0;n<next.surfaces.size();++n)if(force||nextPayloads[n]!=p.payloads[n]){p.scene.updateLocalContent(next.surfaces[n].id,++p.localRevisions[n],next.layers["children"].array()[n],options);++leafUpdates;}
+            // A placeholder keeps its point; it paints the newest payload when shown.
+            for(std::size_t n=0;n<next.surfaces.size();++n)if(p.painted[n]&&(force||nextPayloads[n]!=p.payloads[n])){p.scene.updateLocalContent(next.surfaces[n].id,++p.localRevisions[n],next.layers["children"].array()[n],options);++leafUpdates;}
         }
         // The layer tree is never read again once loaded: keep only the
         // surfaces (placement) and the leaf payloads (change detection).
@@ -390,9 +402,15 @@ struct NativeVolumeScene::Impl {
     }
     bool updateTracks(Part&p,std::optional<std::string_view>hit,bool pressed,bool reduced,double time){bool changed{};
         for(std::size_t n=0;n<p.plan.surfaces.size();++n){const auto index=p.trackForSurface[n];if(index==SIZE_MAX)continue;auto&t=p.tracks[index];const auto&s=p.plan.surfaces[n];const bool selected=hit&&*hit==t.id;const double target=selected?(s.rim?1:pressed?1:.62):s.opacity;
-            if(t.target==target&&!reduced)continue;const auto current=sample(t,time);const auto duration=reduced?0:pressed&&selected?.06:.14;t.from=current;t.target=target;t.start=time;t.duration=duration;t.active=duration>0&&current!=target;changed=true;}
+            if(t.target==target&&!reduced)continue;const auto current=sample(t,time);const auto duration=reduced?0:pressed&&selected?.06:.14;t.from=current;t.target=target;t.start=time;t.duration=duration;t.active=duration>0&&current!=target;changed=true;
+            if(target>0&&!p.painted[n])paint(p,n,true);}
         return changed;
     }
+    // Feedback content event (a pointer event, or the upload after a fade).
+    void paint(Part&p,std::size_t n,bool shown){const auto&id=p.plan.surfaces[n].id;need(p.localRevisions[n]<UINT64_MAX,"Volume feedback revision exhausted");
+        p.scene.updateLocalContent(id,++p.localRevisions[n],shown?p.payloads[n]:placeholder(id),options);p.painted[n]=shown;++(shown?stats.feedbackPaints:stats.feedbackReleases);}
+    // Feedback that faded out to an invisible rest gives its bitmap back.
+    void releaseFaded(Part&p){for(std::size_t n=0;n<p.painted.size();++n){if(!p.painted[n]||p.plan.surfaces[n].opacity!=0)continue;const auto t=p.trackForSurface[n];if(t==SIZE_MAX||(p.tracks[t].target==0&&!p.tracks[t].active))paint(p,n,false);}}
 };
 NativeVolumeScene::NativeVolumeScene(VolumeController&c,LayerRasterizer&r,LayerRasterOptions options,VolumeStyle style):impl_(std::make_unique<Impl>(c,r,std::move(options),style)){}
 NativeVolumeScene::~NativeVolumeScene()=default;
@@ -443,7 +461,7 @@ bool NativeVolumeScene::requiresFrames(double time)const{const auto&i=*impl_;nee
 LayerScene&NativeVolumeScene::scene()noexcept{return impl_->main->scene;}const LayerScene&NativeVolumeScene::scene()const noexcept{return impl_->main->scene;}
 std::span<const LayerCompositionEntry>NativeVolumeScene::entries()noexcept{auto&i=*impl_;for(auto&p:i.rows)p->exposed=true;return i.entries;}
 std::size_t NativeVolumeScene::rowCount()const noexcept{return impl_->rows.size();}std::size_t NativeVolumeScene::parkedRowCount()const noexcept{return impl_->parked.size();}
-void NativeVolumeScene::uploadResources(Renderer&r){auto&i=*impl_;i.each([&](Impl::Part&p){p.exposed=true;if(p.uploaded==p.scene.resourceRevision())return;p.scene.uploadResources(r);p.uploaded=p.scene.resourceRevision();});}
+void NativeVolumeScene::uploadResources(Renderer&r){auto&i=*impl_;i.each([&](Impl::Part&p){if(!i.departing)i.releaseFaded(p);p.exposed=true;if(p.uploaded==p.scene.resourceRevision())return;p.scene.uploadResources(r);p.uploaded=p.scene.resourceRevision();});}
 // Called after a publication: retired rows and, once Volume departs, its
 // parked rows are no longer composed and release their resources.
 bool NativeVolumeScene::collectRetired(Renderer&r){auto&i=*impl_;i.each([&](Impl::Part&p){p.scene.collectRetiredResources(r);});
