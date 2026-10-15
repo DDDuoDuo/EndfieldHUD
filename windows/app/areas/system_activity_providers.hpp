@@ -24,8 +24,9 @@
 //   - Storage's volume title fallback and Clipboard status messages;
 //   - the authored Clipboard rows reveal and Activity sort shutters only ever
 //     growing (the user-reported glitch of the measured Core Animation morph),
-//     GPU usage per app and overall from engine running times with the fifth
-//     Activity overview row, and the Storage volume menu (Windows additions);
+//     GPU usage per app and overall from engine running times with the first
+//     Activity overview row (GPU first, the user's Windows layout), and the
+//     Storage volume menu (Windows additions);
 //   - when the host publishes its built-in Clipboard, Event Log, Activity
 //     Monitor and Storage owners (their previews' serviceKey), each one that
 //     is not shown keeps no raster artwork once the HUD has closed

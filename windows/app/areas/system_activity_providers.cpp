@@ -297,7 +297,7 @@ private:
         modules::ActivityAppearance appearance;
         appearance.language = cycle % 2 ? core::Language::japanese : core::Language::simplifiedChinese;
         const auto art = modules::prepareActivityArtwork(state, appearance);
-        step.check(art.overview["children"].array().size() == modules::ActivityArtwork::overviewRows && art.graphs[4].count == 1 &&
+        step.check(art.overview["children"].array().size() == modules::ActivityArtwork::overviewRows && art.graphs[modules::ActivityArtwork::gpuRow].count == 1 &&
                    gpu::activityGPUInstance("pid_4_luid_0x0_0x1_phys_0_eng_0_engtype_3D").has_value(), "Activity shows a GPU row and parses GPU engine instances");
         // Storage: the volume menu lists the volumes with the chosen one marked.
         const std::array<modules::StorageVolume, 2> volumes{modules::StorageVolume{"coverage-system", "C:\\", "System", false, true}, modules::StorageVolume{"coverage-data", "D:\\", "Data", true, false}};

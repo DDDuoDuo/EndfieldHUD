@@ -135,13 +135,17 @@ void activity(gpu::Renderer&renderer,HWND window){
     stage.select(core::Module::activityMonitor);
     const auto expected=[&]{std::vector<Expected>out{{"activity:status",mod::activityAccessibilityStatus(owner.state(),owner.language()),{},true,{0,0,400,334}}};for(const auto&a:owner.actions())out.push_back({a.id,a.label,{},false,a.rect});return out;};
     check(peers.refresh(nullptr)&&peers.size()==3,"The Overview lists its status and two tabs");listed(peers,window,owner,expected(),"Each Activity peer carries its source label and projected rect");
-    check(probe::name(probe::find(peers,"activity:status"))==L"CPU 10.0%; RAM 100 B / 1.0 KB; Upload —; Download —; Disk read —; Disk write —; GPU 12.5%","The Overview status reads the system values (GPU last)");
+    // GPU before CPU is the user-requested Windows layout (GPU is a Windows
+    // addition): the status reads the values in the order they are shown.
+    check(probe::name(probe::find(peers,"activity:status"))==L"GPU 12.5%; CPU 10.0%; RAM 100 B / 1.0 KB; Upload —; Download —; Disk read —; Disk write —","The Overview status reads the system values (GPU first, as shown)");
     // An accepted press re-lists the peers at once (NativeScreenReaderPeers).
     check(probe::invoke(probe::find(peers,"activity:apps"))==S_OK&&owner.state().showingApps()&&changes==1&&peers.size()==9,"The Apps tab peer opens Apps like its click; the page lists its status, tabs and six column headers at once");
     stage.settle();(void)peers.refresh(nullptr);listed(peers,window,owner,expected(),"The Apps peers carry the source labels and projected rects");
+    check(probe::ids(peers)==std::vector<std::wstring>{L"activity:status",L"activity:overview",L"activity:apps",L"activity:sort:name",L"activity:sort:gpu",L"activity:sort:cpu",L"activity:sort:memory",L"activity:sort:network",L"activity:sort:disk"},"The column header peers list GPU before CPU, as shown");
+    check(probe::name(probe::find(peers,"activity:sort:cpu"))==L"Sort by CPU, descending","CPU stays the default sort");
     const auto gpuHeader=probe::find(peers,"activity:sort:gpu");check(gpuHeader&&probe::name(gpuHeader)==L"Sort by GPU","The GPU column (Windows addition) reads like the other headers");
     check(probe::invoke(gpuHeader)==S_OK&&owner.state().sortKey()==mod::ActivitySort::gpu&&owner.state().descending()&&changes==2,"A header peer sorts like its click");stage.settle();(void)peers.refresh(nullptr);
-    check(probe::name(probe::find(peers,"activity:sort:gpu"))==L"Sort by GPU, descending"&&probe::name(probe::find(peers,"activity:status")).starts_with(L"Synthetic 3, CPU 13.0%, GPU 3.0%, RAM 121 MB, ↑ —, ↓ —, Read —, Write —"),"The sorted header and the app status read the current order");
+    check(probe::name(probe::find(peers,"activity:sort:gpu"))==L"Sort by GPU, descending"&&probe::name(probe::find(peers,"activity:status")).starts_with(L"Synthetic 3, GPU 3.0%, CPU 13.0%, RAM 121 MB, ↑ —, ↓ —, Read —, Write —"),"The sorted header and the app status read the current order");
     check(!owner.perform("activity:bogus",stage.time),"Only listed Activity actions perform");
     owner.setLanguage(core::Language::simplifiedChinese);stage.frame();(void)peers.refresh(nullptr);listed(peers,window,owner,expected(),"The Activity peers follow the HUD language");
     const auto kept=probe::find(peers,"activity:overview");stage.select(core::Module::power);
