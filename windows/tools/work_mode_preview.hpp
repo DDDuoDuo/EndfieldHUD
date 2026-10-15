@@ -94,9 +94,10 @@ public:
     const modules::WorkModePresentation&state()const noexcept;
     // HUDModuleContent keeps only the shown screen: once the HUD began
     // closing while Work Mode was not shown, the next publication without it
-    // (collected) releases its GPU resources (ring texture, group targets);
-    // showing it again uploads them from the kept rasters. A module switch
-    // inside the open HUD keeps them.
+    // (collected) releases its GPU resources (ring meshes, group targets) and
+    // its artwork (the parts' rasters); showing it again rebuilds them from
+    // the controller, which keeps running. A module switch inside the open
+    // HUD keeps everything.
     void upload(native::Renderer&);std::span<const native::LayerCompositionEntry>entries();
     void collected(native::Renderer&);void release(native::Renderer&);
     WorkModePageResources resources()const;

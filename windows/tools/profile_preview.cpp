@@ -45,8 +45,9 @@ struct ProfilePreview::Impl:std::enable_shared_from_this<Impl> {
     std::optional<CropKey>cropKey,cropInFlight;std::optional<Crop>lastCrop;double avatarSerial{};
     app::UtilityExecutor::Route cropRoute{};bool cropDeferred{};std::uint64_t cropJobs{},cropPublications{};
     // parkWanted: the HUD began closing while the page was not shown; its
-    // GPU resources are then released (park) until it is shown again.
-    bool parkWanted{};std::uint64_t parks{};
+    // GPU resources and artwork are then released (park). parked: nothing is
+    // built (also before the first show) until the page is drawn again.
+    bool parkWanted{},parked{true};std::uint64_t parks{};
     Impl(HWND h,m::ProfileState&s,gpu::LayerRasterizer&r,ProfilePreviewOptions o,ITfThreadMgr*mgr,TfClientId id)
         :hwnd(h),state(s),raster(r),options(withImages(std::move(o))),manager(mgr),client(id),scene(r,options.raster),geometry(r),surface(prepareGeometry(),core::Module::profile){
         need(IsWindow(h)!=FALSE,"Personal Profile requires the caller's HWND");
@@ -109,14 +110,24 @@ struct ProfilePreview::Impl:std::enable_shared_from_this<Impl> {
         if(!accepted){cropDeferred=true;return;} // retried when the queue has room
         cropInFlight=key;cropDeferred=false;++cropJobs;
     }
-    // Releases the GPU resources of a page that is not drawn; see conceal().
+    // Releases the GPU resources and artwork of a page that is not drawn; see conceal().
     bool park(gpu::Renderer*r){
         if(drawing||pose||field)return false;
-        if(!scene.stats().gpuResident){parkWanted=false;return false;} // nothing on the renderer
-        if(!scene.park(r))return false; // still published: the next publication retries
-        parkWanted=false;++parks;return true;
+        if(parked){parkWanted=false;return false;}
+        const bool released=scene.park(r);
+        if(!released&&(scene.stats().parts||scene.stats().gpuResident))return false; // still published: the next publication retries
+        parked=true;synced=false;parkWanted=false;if(released)++parks;
+        // The published page imagery goes too. The newest portrait crop (at
+        // most 256 px) stays, so the rebuilt page republishes it without a
+        // worker crop; the frame sprite is tinted again.
+        if(options.images){options.images->retire(portraitKey);options.images->retire(frameKey);}
+        cropKey.reset();frameAccent.reset();options.contents.avatar=J{};options.contents.frame=J{};
+        return released;
     }
+    // A parked page keeps only its state: the source counters move on (no
+    // update or popover animation replays when it is built again).
     void content(){
+        if(parked){committed=state.profile();seenOpens=state.popoverOpens();seenDismissals=state.popoverDismissals();seenToggles=state.visibilityToggles();dirty=true;return;}
         if(options.images&&(seenRevision!=state.revision()||dirty))imagery();
         if(!dirty&&seenRevision==state.revision()&&seenWork==state.workRevision()&&seenFont==raster.fontRevision())return;
         auto next=m::prepareProfileArtwork(state,options.appearance,options.contents);
@@ -245,11 +256,17 @@ void ProfilePreview::setOverlayVisible(bool v,double t){
 void ProfilePreview::conceal(){auto i=impl_;if(i->parkWanted)(void)i->park(i->renderer);}
 ProfilePageResources ProfilePreview::resources()const{
     const auto&i=*impl_;const auto scene=i.scene.stats();ProfilePageResources out;
-    out.sceneParts=scene.parts;out.sceneLoads=scene.loads;out.scenePixelBytes=scene.pixelBytes;out.ownedPhotoBytes=scene.ownedPhotoBytes;out.gpuResident=scene.gpuResident;
+    out.sceneParts=scene.parts;out.sceneLoads=scene.loads;out.scenePixelBytes=scene.pixelBytes;out.ownedPhotoBytes=scene.ownedPhotoBytes;out.gpuResident=scene.gpuResident;out.built=!i.parked;
     out.parks=i.parks;out.cropJobs=i.cropJobs;out.cropPublications=i.cropPublications;out.cropPending=i.cropInFlight.has_value();
     out.retainedCropBytes=i.lastCrop?i.lastCrop->pixels.rgba.size():0;return out;
 }
 void ProfilePreview::queueCapacityAvailable(){auto i=impl_;if(i->cropDeferred){i->dirty=true;i->content();}}
+void ProfilePreview::prewarm(const core::ModulePresentationSample&sample){
+    auto i=impl_;if(!i->parked)return;
+    if(sample.requested!=core::Module::profile&&sample.current.module!=core::Module::profile)return;
+    // Built for the first opening: a publication before it does not park it.
+    i->parked=false;i->parkWanted=false;i->dirty=true;i->content();
+}
 std::optional<double>ProfilePreview::nextWakeTime()const noexcept{return impl_->state.nextWorkRefresh();}
 void ProfilePreview::wake(double t){
     auto i=impl_;i->advance(t);
@@ -265,7 +282,6 @@ void ProfilePreview::update(const M&center,const core::source::DesktopChromeSett
     i->input=active&&sample.acceptsModuleInput;if(!i->input){i->pressed=false;if(i->field)i->field->editor().pointerUp();i->fieldDragging=false;}
     // Shown: the selected module keeps its GPU resources across a close.
     if(shown)i->parkWanted=false;
-    i->content();
     // Background host: module report placement without the module transition,
     // plus its own section travel (transform.translation.x before scale).
     const auto layout=core::source::DesktopChromeLayout::make(settings,center,{});const auto frame=core::moduleLocalContentFrame(core::Module::profile);
@@ -274,6 +290,9 @@ void ProfilePreview::update(const M&center,const core::source::DesktopChromeSett
     if(shown){i->surface.update(center,settings,*shown,opacity);i->pose=i->surface.pose();i->lastPose=i->pose;}else i->pose.reset();
     // The background keeps drawing through its own section fade-out.
     i->drawing=i->lastPose&&(shown||sectionOpacity>0||i->section.active(i->time));
+    // A parked (or never shown) page is built when it is drawn again.
+    if(i->drawing&&i->parked){i->parked=false;i->dirty=true;}
+    i->content();
     if(!i->drawing){i->registration.update({});return;}
     const auto&p=*i->lastPose;
     if(i->pose){const auto camera=gpu::layerViewportProjection(i->metrics.pixelWidth,i->metrics.pixelHeight)*M::scale(i->metrics.scale,i->metrics.scale);

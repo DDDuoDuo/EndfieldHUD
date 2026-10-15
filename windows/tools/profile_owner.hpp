@@ -97,6 +97,9 @@ public:
     // The HUD finished closing (HostEvent::overlayConcealed): a page that is
     // not shown releases its built artwork (ProfilePreview::conceal).
     void conceal();
+    // Launch prewarm (app::ModuleOwner::prewarm) with the first opening's
+    // module presentation: a loaded page that opening will show is built now.
+    void prewarm(const core::ModulePresentationSample&);
     void update(const core::Matrix4& center,const core::source::DesktopChromeSettings&,
         const core::ModulePresentationSample&,float opacity,double time);
     bool requiresFrames(double time)const;

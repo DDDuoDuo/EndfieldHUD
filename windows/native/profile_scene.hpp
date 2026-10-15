@@ -62,10 +62,12 @@ public:
     // HUDModuleContent drops a screen's layers once it is no longer shown: a
     // page that is no longer composed releases its GPU resources (the parts'
     // textures, the backdrop photo and group target, the fixed gradients)
-    // while the parts keep their rasters, so showing it again only uploads.
-    // `renderer` is the one the scene uploaded to. True when something was
-    // released; false when nothing is on the renderer or a resource is still
-    // published (then everything stays). Never throws.
+    // and its parts (their rasters in the shared rasterizer). The backdrop
+    // image and the fixed gradient bitmaps stay; the next syncContent rebuilds
+    // the parts from the same artwork, painting identically. `renderer` is
+    // the one the scene uploaded to (null before any upload). True when
+    // something was released; false when nothing is built or uploaded, or a
+    // resource is still published (then everything stays). Never throws.
     bool park(Renderer* renderer)noexcept;
     const modules::ProfileArtwork&artwork()const noexcept;
     NativeProfileSceneStats stats()const noexcept;

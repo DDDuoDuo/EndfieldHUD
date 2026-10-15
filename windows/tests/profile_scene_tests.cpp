@@ -113,23 +113,32 @@ void run(const std::filesystem::path&shader){
     check(raster.stats().rasterizations==backdropRasters,"Background offset/zoom never re-rasterizes");
     // 8. Parking (HUDModuleContent drops a screen once it is no longer
     // shown): a composed page refuses; once unpublished every GPU resource
-    // goes while the parts keep their rasters and the backdrop image stays,
-    // and the next upload publishes the same artwork again without a reload.
+    // and every part's raster goes while the backdrop image stays, and the
+    // next sync rebuilds artwork that paints the same frame.
     {
+        frame(time+=.02,place);const auto shownFrame=renderer.readback();
         const auto parks=scene.stats().parks;const auto textures=renderer.stats().textures;const auto loads=scene.stats().loads;
         check(!scene.park(&renderer)&&scene.stats().parts>0&&scene.stats().gpuResident&&renderer.stats().textures==textures&&renderer.stats().nativeGroups==1,
               "A published page refuses to park and stays resident");
         composition.detach(renderer);published.clear();
         const auto rasters=raster.stats();const auto parts=scene.stats().parts;const auto pixelBytes=scene.stats().pixelBytes;
-        check(scene.park(&renderer)&&!scene.stats().gpuResident&&scene.stats().parks==parks+1&&scene.stats().parts==parts&&scene.stats().pixelBytes==pixelBytes&&
-              renderer.stats().textures==0&&renderer.stats().meshes==0&&renderer.stats().nativeGroups==0&&raster.stats().entries==rasters.entries,
-              "An unpublished page parks: no GPU resource stays, the rasters do");
+        check(pixelBytes>0&&scene.park(&renderer)&&!scene.stats().gpuResident&&scene.stats().parks==parks+1&&scene.stats().parts==0&&scene.stats().pixelBytes==0&&
+              renderer.stats().textures==0&&renderer.stats().meshes==0&&renderer.stats().nativeGroups==0&&
+              raster.stats().entries<rasters.entries&&raster.stats().resourceBytes+pixelBytes<=rasters.resourceBytes,
+              "An unpublished page parks: no GPU resource and none of its rasters stays");
         check(!scene.park(&renderer)&&scene.entries().empty()&&scene.stats().ownedPhotoBytes==64*36*4,"Nothing is left to park; the backdrop image stays");
-        frame(time+=.02,place);frame(time+=.3,place);
-        check(scene.stats().gpuResident&&scene.stats().loads==loads&&scene.entries().size()==4&&renderer.stats().nativeGroups==1&&raster.stats().rasterizations==rasters.rasterizations,
-              "The next upload publishes the parked page again without reloading or rasterizing a part");
+        sync({},contents);frame(time+=.02,place);
+        check(scene.stats().gpuResident&&scene.stats().loads==loads+3&&scene.stats().parts==parts&&scene.stats().pixelBytes==pixelBytes&&scene.entries().size()==4&&renderer.stats().nativeGroups==1,
+              "The next sync rebuilds the parked page: the same parts and raster bytes");
         const auto rebuilt=renderer.readback();
-        check(rebuilt.pixels[std::size_t(20+167)*rebuilt.rowBytes+(250+200)*4+3]>0,"The re-uploaded page draws the backdrop photo again");
+        check(difference(shownFrame,rebuilt)==0,"The rebuilt page paints the published frame exactly");
+        // A built page that was never uploaded parks its rasters without a renderer.
+        {
+            gpu::NativeProfileScene fresh(raster,options);const auto entries=raster.stats().entries;
+            fresh.syncContent(m::prepareProfileArtwork(s,{},contents),1,time,{},false);
+            check(fresh.stats().parts>0&&raster.stats().entries>entries&&fresh.park(nullptr)&&fresh.stats().parts==0&&raster.stats().entries==entries&&!fresh.park(nullptr),
+                  "A page built but never uploaded releases its rasters on park");
+        }
         // An owned backdrop (the decode service's image) is borrowed, not copied.
         auto borrowed=std::make_shared<std::vector<std::uint8_t>>(pixels);const std::weak_ptr<std::vector<std::uint8_t>>held=borrowed;
         check(scene.setBackdropImage(gpu::NativeProfileBackdropImage{10,64,36,*borrowed,borrowed})&&scene.stats().ownedPhotoBytes==0,"A backdrop with an owner is borrowed, never copied");

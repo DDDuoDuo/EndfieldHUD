@@ -49,6 +49,7 @@ struct ProfilePreviewOptions {
 struct ProfilePageResources {
     std::size_t sceneParts{},scenePixelBytes{},ownedPhotoBytes{};std::uint64_t sceneLoads{};
     bool gpuResident{};            // the scene's textures/backdrop group are on the renderer
+    bool built{};                  // the page artwork exists (shown since the last park, or prewarmed)
     std::uint64_t parks{},cropJobs{},cropPublications{};
     bool cropPending{};            // a portrait crop is on the worker
     std::size_t retainedCropBytes{};
@@ -83,18 +84,25 @@ public:
     // image import, persistence failure, Work Mode checkpoint).
     void stateChanged(double time);
     void setOverlayVisible(bool,double time); // initially true
-    // HUDModuleContent drops the old screen's layers when another module is
-    // shown. Once the HUD closes (setOverlayVisible(false)) while the page is
-    // not shown, it releases its GPU resources (the parts' textures, the
-    // backdrop photo texture and group target) at the next publication
+    // HUDModuleContent makes a screen's layers when its module is shown and
+    // drops the old screen's layers when another module is shown. The page
+    // builds nothing (no raster, crop or upload) until it is first drawn or
+    // prewarmed for the first opening. Once the HUD closes
+    // (setOverlayVisible(false)) while the page is not shown, it releases its
+    // GPU resources (the parts' textures, the backdrop photo texture and group
+    // target) and its artwork (the parts' rasters) at the next publication
     // without it (collected) or when the HUD has finished closing (conceal(),
-    // the host's overlayConcealed); a hidden page never uploads. The rasters,
-    // decoded images and published portrait stay, so the next show only
-    // uploads (no rasterization, decode or crop stall). A module switch
-    // inside the open HUD keeps everything.
+    // the host's overlayConcealed); content events while it is hidden then
+    // only update the state. Showing it again rebuilds the same artwork from
+    // the kept decoded images and portrait crop (no decode or crop). A module
+    // switch inside the open HUD keeps everything.
     void conceal();
     ProfilePageResources resources()const;
     void queueCapacityAvailable(); // the executor has room again (a deferred crop)
+    // Launch prewarm (ModuleOwner::prewarm): with the HUD still closed, a
+    // first opening that will show Personal Profile builds the page artwork
+    // now (rasters and portrait crop, nothing uploaded or shown).
+    void prewarm(const core::ModulePresentationSample&);
     std::optional<double>nextWakeTime()const noexcept;
     void wake(double time);
     void update(const core::Matrix4& sourceCenter,const core::source::DesktopChromeSettings&,

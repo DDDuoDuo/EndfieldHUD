@@ -306,6 +306,7 @@ bool ProfileOwner::flush(double t){
     return i->loadError.has_value()||!i->started||i->service->flush();
 }
 void ProfileOwner::conceal(){if(impl_->page)impl_->page->conceal();}
+void ProfileOwner::prewarm(const core::ModulePresentationSample&sample){if(impl_->page)impl_->page->prewarm(sample);}
 void ProfileOwner::queueCapacityAvailable(){
     auto i=impl_;i->service->queueCapacityAvailable();i->imageService->queueCapacityAvailable();if(i->page)i->page->queueCapacityAvailable();
     if(i->cardDirty&&!i->cardBusy){i->cardDirty=false;i->scheduleCard();}

@@ -281,6 +281,8 @@ public:
     void setOverlayVisible(bool visible, double t) override { owner_->setOverlayVisible(visible, t); }
     void overlayClosing(double t) override { owner_->overlayClosing(t); }
     void update(const app::ModuleFrame& f) override { owner_->update(f.center, f.chrome, f.presentation, f.opacity, f.time); }
+    // The first opening's page is built while the HUD is still closed.
+    void prewarm(const app::ModuleFrame& f) override { owner_->prewarm(f.presentation); }
     bool requiresFrames(double t) const override { return owner_->requiresFrames(t); }
     std::optional<double> nextWakeTime(double now) const override { return owner_->nextWakeTime(now); }
     bool deadline(double t) override { return owner_->deadline(t); }

@@ -37,9 +37,10 @@ struct WorkModePreview::Impl {
     app::ClientMetrics metrics;core::Projection projection;std::optional<gpu::ModuleSurfacePose>pose;
     std::unique_ptr<Field>field;std::vector<std::unique_ptr<Field>>retired;std::vector<gpu::LayerCompositionEntry>composed;
     bool active{},input{},pressed{},fieldDragging{},focused{},pendingCancel{},focusIntent{},closed{},alive{true},overlayVisible{true},requested{};double time{};std::optional<core::Point>pointerPoint;
-    // The HUD began closing while the page was not shown: its artwork is
-    // released at the next publication without it (HUDModuleContent keeps
-    // only the shown screen); a switch inside the open HUD keeps it.
+    // The HUD began closing while the page was not shown: its artwork and
+    // GPU resources are released at the next publication without it
+    // (HUDModuleContent keeps only the shown screen); a switch inside the
+    // open HUD keeps them.
     bool parkWanted{};
     Impl(HWND w,gpu::LayerRasterizer&r,ITfThreadMgr*managerValue,TfClientId clientValue,WorkModePreviewOptions value):window(w),raster(r),manager(managerValue),client(clientValue),options(std::move(value)),controller({{},options.saveWorkSeconds}),state(controller,options.strings,{[this](core::Rect){begin();},[this]{if(options.requestFocusAccess)options.requestFocusAccess();}}),scene(state,r,options.raster,options.appearance),geometry(r),surface(prepareGeometry(),core::Module::workMode){need(window&&IsWindow(window),"Work Mode requires caller HWND");need(options.textMessage>=WM_APP&&options.textMessage<=0xbfff,"Invalid private duration message");need((manager==nullptr)==(client==TF_CLIENTID_NULL),"Borrowed TSF manager/client must be supplied together");need(std::isfinite(options.restoredWorkSeconds)&&options.restoredWorkSeconds>=0,"Invalid restored Work Mode total");controller.restoreTrackedWorkSeconds(options.restoredWorkSeconds);retired.reserve(2);composed.reserve(16);}
     gpu::LayerScene&prepareGeometry(){geometry.load(blank(),options.raster);return geometry;}
@@ -176,9 +177,9 @@ void WorkModePreview::upload(gpu::Renderer&r){auto i=impl_;if(!i->pose)return;i-
 std::span<const gpu::LayerCompositionEntry>WorkModePreview::entries(){auto i=impl_;i->composed.clear();if(i->pose){for(const auto&e:i->scene.entries())i->composed.push_back(e);if(i->field&&i->active){i->field->published=true;i->composed.push_back({&i->field->background,{}});i->composed.push_back({&i->field->glyphs,{}});i->composed.push_back({&i->field->border,{}});}i->composed.push_back({&i->geometry,i->registration.draws()});}return i->composed;}
 void WorkModePreview::collected(gpu::Renderer&r){auto i=impl_;need(i->scene.collectRetired(r),"Work Mode old artwork remains published");for(auto&f:i->retired)need(f->release(r),"Duration editor remains published");i->retired.clear();
     // After a close began, a page this publication did not compose releases
-    // its GPU resources; showing it again uploads them (the controller keeps
-    // running, the rasters stay).
-    if(i->parkWanted&&!i->pose&&!i->field&&(i->scene.park(r)||!i->scene.stats().gpuResident))i->parkWanted=false;}
+    // its GPU resources and rasters; showing it again rebuilds them (the
+    // controller keeps running). A refusal (still published) retries.
+    if(i->parkWanted&&!i->pose&&!i->field&&(i->scene.park(r)||!i->scene.stats().parts))i->parkWanted=false;}
 WorkModePageResources WorkModePreview::resources()const{const auto s=impl_->scene.stats();return {s.parts,s.pixelBytes,s.builds,s.parks,s.gpuResident};}
 void WorkModePreview::release(gpu::Renderer&r){auto i=impl_;need(!i->field||i->finish(false),"Duration editor transaction must finish before release");collected(r);need(i->scene.releaseResources(r)&&i->registration.releaseResources(r)&&i->geometry.releaseResources(r),"Work Mode resources remain published");}
 }

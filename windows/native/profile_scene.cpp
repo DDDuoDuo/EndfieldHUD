@@ -293,11 +293,18 @@ bool NativeProfileScene::releaseResources(Renderer&r){
 }
 bool NativeProfileScene::park(Renderer*r)noexcept{
     auto&i=*impl_;
-    if(!i.renderer||i.renderer!=r)return false;
+    const bool built=i.fields->loaded||i.toolbar->loaded||i.popover->loaded||i.departing||!i.retired.empty();
+    if(i.renderer&&i.renderer!=r)return false;
+    if(!i.renderer&&!built)return false;
     // A published resource refuses (a composed part throws before anything
-    // else is released): stay resident. The parts keep their rasters; the
-    // next uploadResources uploads everything again.
-    try{if(!releaseResources(*r))return false;}catch(...){return false;}
+    // else is released): stay resident.
+    try{if(i.renderer&&!releaseResources(*r))return false;}catch(...){return false;}
+    // Then the artwork: destroying the parts removes their rasters from the
+    // shared rasterizer. The fixed gradients and the (borrowed) backdrop
+    // photo stay; the next syncContent rebuilds the parts from the artwork.
+    i.fields=std::make_unique<Impl::Part>(i.raster);i.toolbar=std::make_unique<Impl::Part>(i.raster);i.popover=std::make_unique<Impl::Part>(i.raster);
+    i.departing.reset();i.departStart.reset();i.retired.clear();
+    i.synced=false;i.count=0;i.backdropPosed=false;i.hover.reset();i.pressed=false;i.stats.surfaces=0;
     ++i.stats.parks;return true;
 }
 const m::ProfileArtwork&NativeProfileScene::artwork()const noexcept{return impl_->art;}

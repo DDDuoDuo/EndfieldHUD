@@ -87,8 +87,15 @@ void run(const std::filesystem::path&shader,const std::filesystem::path&resource
     const auto pump=[&]{MSG msg;bool any{};while(PeekMessageW(&msg,w.hwnd,o.pickerMessage,o.pickerMessage,PM_REMOVE)){any=true;owner->message({msg.hwnd,msg.message,msg.wParam,msg.lParam},time);}return any;};
     // A request while the page is closed never opens a picker.
     check(owner->perform("profile:avatar",time)&&pump()&&imageAsks==0,"Picker requests need the active page");
-    // A page that was never shown puts nothing on the renderer.
-    check(owner->page()&&!owner->page()->resources().gpuResident&&renderer.stats().textures==0&&renderer.stats().nativeGroups==0,"The hidden page uploads nothing before it is first shown");
+    // A page that was never shown builds nothing (no raster, no upload): Mac
+    // HUDModuleContent makes a screen's layers when its module is shown.
+    check(owner->page()&&!owner->page()->resources().built&&owner->page()->resources().sceneParts==0&&!owner->page()->resources().gpuResident&&
+          renderer.stats().textures==0&&renderer.stats().nativeGroups==0,"The hidden page builds and uploads nothing before it is first shown");
+    {core::ModulePresentation other(core::Module::notes);owner->prewarm(other.sample(time).presentation);
+     check(!owner->page()->resources().built&&owner->page()->resources().sceneParts==0,"A launch prewarm for another module builds nothing for the page");}
+    owner->prewarm(modules.sample(time).presentation);
+    check(owner->page()->resources().built&&owner->page()->resources().sceneParts>0&&!owner->page()->resources().gpuResident&&renderer.stats().textures==0,
+          "A launch prewarm for a first opening on Personal Profile builds the page without uploading it");
     paint();paint(.5);check(!owner->entries().empty()&&owner->page()->active(),"Profile page is published");
     check(owner->page()->resources().sceneParts>0&&owner->page()->resources().gpuResident,"The first show uploads the page");
     check(owner->nextWakeTime(time).has_value(),"Active page schedules its work refresh on the shared clock");
@@ -174,32 +181,37 @@ void run(const std::filesystem::path&shader,const std::filesystem::path&resource
     // 7d. HUDModuleContent keeps only the shown screen. A switch inside the
     // open HUD keeps the page; once the HUD closes while another module is
     // shown the page releases its GPU resources (part textures, backdrop
-    // texture and group target) while its rasters, decoded images and
-    // portrait stay; reopening on another module uploads nothing, and showing
-    // it again only uploads (nothing is rasterized, decoded or cropped).
+    // texture and group target) and its parts' rasters while the decoded
+    // images and the portrait crop stay; reopening on another module and
+    // content events while it is hidden build and upload nothing, and showing
+    // it again rebuilds the page without decoding or cropping again.
     {
         modules.select(core::Module::notes,time);for(unsigned n=0;n<40;++n)paint();
         const auto open=owner->page()->resources();const auto rasters=raster.stats();const auto textures=renderer.stats().textures;
-        check(owner->entries().empty()&&open.sceneParts>0&&open.scenePixelBytes>0&&open.gpuResident&&renderer.stats().nativeGroups==1,
+        check(owner->entries().empty()&&open.built&&open.sceneParts>0&&open.scenePixelBytes>0&&open.gpuResident&&renderer.stats().nativeGroups==1,
               "A module switch inside the open HUD keeps the page artwork");
         owner->overlayClosing(time);paint();
         const auto closed=owner->page()->resources();
-        check(!closed.gpuResident&&closed.parks==open.parks+1&&closed.sceneParts==open.sceneParts&&closed.scenePixelBytes==open.scenePixelBytes&&closed.retainedCropBytes==open.retainedCropBytes,
-              "Once the HUD closes on another module the page releases its GPU resources and keeps its rasters and portrait");
-        check(renderer.stats().textures<textures&&renderer.stats().nativeGroups==0&&raster.stats().entries==rasters.entries,"Its textures and backdrop group leave the renderer; the shared rasterizer keeps its entries");
+        check(!closed.gpuResident&&!closed.built&&closed.parks==open.parks+1&&closed.sceneParts==0&&closed.scenePixelBytes==0&&closed.retainedCropBytes==open.retainedCropBytes,
+              "Once the HUD closes on another module the page releases its GPU resources and rasters and keeps its portrait crop");
+        check(imageSource.stats().liveImages==0&&imageSource.stats().liveBytes==0,"Its published portrait and frame imagery leave the image source");
+        check(renderer.stats().textures<textures&&renderer.stats().nativeGroups==0&&raster.stats().entries<rasters.entries&&raster.stats().resourceBytes+open.scenePixelBytes<=rasters.resourceBytes,
+              "Its textures, backdrop group and raster entries leave the renderer and the shared rasterizer");
         owner->conceal();check(owner->page()->resources().parks==closed.parks,"The host's later overlayConcealed finds nothing more to release");
+        const auto hidden=raster.stats();
         owner->setOverlayVisible(true,time);paint();paint(.5);
         owner->setTimeZone(u"Asia/Tokyo",time);paint(); // a content event while hidden
-        check(!owner->page()->resources().gpuResident&&renderer.stats().nativeGroups==0,"Reopening on another module and content events while it is hidden upload nothing for the page");
+        check(!owner->page()->resources().gpuResident&&!owner->page()->resources().built&&renderer.stats().nativeGroups==0&&raster.stats().rasterizations==hidden.rasterizations,
+              "Reopening on another module and content events while it is hidden build and upload nothing for the page");
         modules.select(core::Module::profile,time);paint();
         const auto shown=owner->page()->resources();
-        check(shown.gpuResident&&shown.sceneLoads==open.sceneLoads&&shown.cropJobs==closed.cropJobs&&shown.cropPublications==closed.cropPublications,
-              "Showing it again only uploads: no part is reloaded and no portrait is cropped again");
+        check(shown.built&&shown.gpuResident&&shown.sceneParts==open.sceneParts&&shown.sceneLoads>open.sceneLoads&&shown.cropJobs==closed.cropJobs&&shown.cropPublications==closed.cropPublications+1&&
+              imageSource.stats().liveImages==2,"Showing it again rebuilds the page from the kept images: the kept portrait crop is republished, none is cropped again");
         for(unsigned n=0;n<40;++n)paint();
         check(!owner->entries().empty()&&owner->page()->active()&&renderer.stats().nativeGroups==1,"The page is published again");
         // The HUD closing while the page is shown keeps it (the next opening shows it at once).
         owner->overlayClosing(time);paint();owner->conceal();
-        check(owner->page()->resources().gpuResident&&owner->page()->resources().parks==closed.parks,"Closing on Personal Profile keeps its GPU resources");
+        check(owner->page()->resources().gpuResident&&owner->page()->resources().built&&owner->page()->resources().parks==closed.parks,"Closing on Personal Profile keeps its artwork and GPU resources");
         owner->setOverlayVisible(true,time);paint();paint(.5);check(owner->page()->active(),"The page is active again after the HUD reopens on it");
     }
     check(owner->flush(time),"Orderly flush");settle();

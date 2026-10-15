@@ -20,7 +20,10 @@
 #include "native/profile_text.hpp"
 #include "native/source_scene.hpp"
 #include <algorithm>
+#include <array>
 #include <chrono>
+#include <memory>
+#include <string>
 #include <iostream>
 #ifdef _WIN32
 #include <windows.h>
@@ -170,7 +173,7 @@ void run(const fs::path&shader,const fs::path&resources,const fs::path&captionFi
         report[key+"RendererMB"]=megabytes(renderer.stats().resourceBytes);report[key+"RasterMB"]=megabytes(raster.stats().resourceBytes);
         report[key+"ImageSourceMB"]=megabytes(images.stats().liveBytes+images.stats().cachedBytes);
         if(owner&&owner->page()){const auto r=owner->page()->resources();
-            report[key+"PagePixelMB"]=megabytes(r.scenePixelBytes);report[key+"PageOwnedPhotoMB"]=megabytes(r.ownedPhotoBytes);report[key+"PageGPU"]=r.gpuResident;}
+            report[key+"PagePixelMB"]=megabytes(r.scenePixelBytes);report[key+"PageOwnedPhotoMB"]=megabytes(r.ownedPhotoBytes);report[key+"PageGPU"]=r.gpuResident;report[key+"PageBuilt"]=r.built;}
         return v;};
     const auto before=memory("memory.relaunch.before");
     set("relaunch.ownerMS",timed([&]{owner=std::make_unique<tools::ProfileOwner>(w.hwnd,executor,raster,images,work,o);owner->resize(metrics);owner->setAppearance(appearance,time);}));
@@ -208,7 +211,11 @@ void run(const fs::path&shader,const fs::path&resources,const fs::path&captionFi
         memory("memory.relaunch.otherModule");
         owner->overlayClosing(time);(void)frame(*owner,modules,1./60);owner->conceal();quiesce();
         memory("memory.relaunch.parked");
-        owner->setOverlayVisible(true,time);(void)frame(*owner,modules,1./60);modules.select(core::Module::profile,time);
+        owner->setOverlayVisible(true,time);(void)frame(*owner,modules,1./60);
+        // Rebuilding the parked page's artwork (what its next first frame
+        // otherwise does before uploading), then the frames showing it.
+        {core::ModulePresentation wanted(core::Module::profile);const auto sample=wanted.sample(time).presentation;set("reshow.buildMS",timed([&]{owner->prewarm(sample);}));}
+        modules.select(core::Module::profile,time);
         double first{},peak{};for(unsigned n=0;n<40;++n){const double d=frame(*owner,modules,1./60);if(!n)first=d;peak=std::max(peak,d);}
         set("reshow.firstProfileFrameMS",first);set("reshow.peakFrameMS",peak);
         memory("memory.relaunch.reshown");
@@ -234,6 +241,21 @@ void run(const fs::path&shader,const fs::path&resources,const fs::path&captionFi
         page.setOverlayVisible(true,time);(void)paint(1./60);modules.select(core::Module::workMode,time);
         set("workMode.reshowFirstFrameMS",paint(1./60));for(unsigned n=0;n<30;++n)(void)paint(1./60);sample("workMode.reshown");
         composition.detach(renderer);page.shutdown(time);page.release(renderer);
+        // What the source ring and ring base (440 pt circle strokes) would
+        // keep as rasters at this scale, against the GPU meshes that replace them.
+        gpu::LayerRasterizer local;gpu::LayerRasterOptions ro;ro.pixelsPerPoint=2;m::WorkModeController c;m::WorkModePresentation s(c);s.refresh(time);
+        const auto art=m::prepareWorkModeArtwork(s,{true,2,{250./255,212./255,31./255,1}});std::size_t rasterBytes{},meshBytes{};
+        std::vector<std::unique_ptr<gpu::LayerScene>>rings;std::array<std::vector<gpu::Vertex>,2>vertices;std::array<std::vector<std::uint32_t>,2>indices;
+        const auto textureBase=renderer.stats().resourceBytes;
+        for(const auto*part:{&art.ringBase,&art.ring}){
+            auto ring=std::make_unique<gpu::LayerScene>(local);ring->load(part->layers,ro);rasterBytes+=ring->report().pixelBytes;ring->uploadResources(renderer);rings.push_back(std::move(ring));}
+        const auto textureBytes=renderer.stats().resourceBytes-textureBase;for(auto&ring:rings)(void)ring->releaseResources(renderer);
+        const auto meshBase=renderer.stats().resourceBytes;
+        for(std::size_t n=0;n<2;++n){const auto*part=n?&art.ring:&art.ringBase;gpu::workModeRingMesh(part->layers["children"].array()[0]["shape"],2,vertices[n],indices[n]);
+            meshBytes+=vertices[n].size()*sizeof(gpu::Vertex)+indices[n].size()*sizeof(std::uint32_t);(void)renderer.setMesh("probe.ring."+std::to_string(n),1,{vertices[n],indices[n]});}
+        const auto meshGPU=renderer.stats().resourceBytes-meshBase;for(std::size_t n=0;n<2;++n)(void)renderer.removeMesh("probe.ring."+std::to_string(n));
+        report["workMode.ringRasterEquivalentMB"]=megabytes(rasterBytes);report["workMode.ringTextureEquivalentMB"]=megabytes(textureBytes);
+        report["workMode.ringMeshMB"]=megabytes(meshBytes);report["workMode.ringMeshGPUMB"]=megabytes(meshGPU);
     }
     executor.shutdown();
     std::cout<<report.encode()<<'\n';
