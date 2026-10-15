@@ -608,9 +608,10 @@ void Application::Impl::concealed(double time){
 // shell pass's attachment and depth target and the native group targets,
 // created again by the frames that draw them) and the driver trims its
 // internal buffers. Video memory is charged to this process's commit, so this
-// is what the closed HUD gives back (measured on the laptop's NVIDIA GPU:
-// 543 -> 338 MiB private after the first close, 548 -> 277 MiB after ten
-// more open/close cycles, with the four-byte textures).
+// is what the closed HUD gives back (hidden memory trace on the laptop's
+// NVIDIA GPU, with the four-byte textures: 229 -> 189 MiB private at launch
+// idle, 543 -> 335 MiB after the first close, 548 -> 255 MiB after ten more
+// open/close cycles).
 void Application::Impl::releaseConcealedGraphics(){
     if(!ready||stopping||!renderer.stats().initialized)return;
     try{publishNative();(void)renderer.releaseFrameTargets();}
@@ -1723,6 +1724,10 @@ void Application::Impl::prewarm(){
             }
         }catch(...){session->conceal(hostTime(time));throw;}
         session->conceal(hostTime(time));
+        // The prewarm frame drew into full-size frame targets and grew the
+        // driver's pools; the HUD stays closed after launch, so give them back
+        // as a close does (the first opening creates the targets again).
+        releaseConcealedGraphics();
     };
     if(!production())work();
     else try{work();}catch(const std::exception&e){
