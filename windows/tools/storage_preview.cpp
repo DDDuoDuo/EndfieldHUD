@@ -21,6 +21,14 @@ bool chooserEnabled(const StoragePreviewOptions&o){
     const bool production=o.listVolumes.target_type()==typeid(WindowsStorageVolumeList)||o.readVolumeCapacity.target_type()==typeid(WindowsStorageVolumeCapacity);
     return !production||o.readCapacity.target_type()==typeid(WindowsStorageCapacityReader);
 }
+// Bounding rect of a canvas rect's projected corners, in logical client points.
+std::optional<core::Rect>projected(const core::Projection&projection,double scale,core::Rect r){
+    if(!std::isfinite(r.x)||!std::isfinite(r.y)||!std::isfinite(r.width)||!std::isfinite(r.height)||r.width<0||r.height<0||!(scale>0))return std::nullopt;
+    double x0=INFINITY,y0=INFINITY,x1=-INFINITY,y1=-INFINITY;
+    for(const core::Point c:{core::Point{r.x,r.y},core::Point{r.x+r.width,r.y},core::Point{r.x,r.y+r.height},core::Point{r.x+r.width,r.y+r.height}}){
+        const auto q=projection.project(c);if(!q||!std::isfinite(q->x)||!std::isfinite(q->y))return std::nullopt;
+        x0=std::min(x0,q->x);y0=std::min(y0,q->y);x1=std::max(x1,q->x);y1=std::max(y1,q->y);}
+    return core::Rect{x0/scale,y0/scale,(x1-x0)/scale,(y1-y0)/scale};}
 gpu::StorageCapacityProbe::Reader reader(StoragePreviewOptions&o,const std::shared_ptr<Selection>&selection,bool chooser){
     if(!chooser)return o.readCapacity;return [selection,read=o.readVolumeCapacity]{return read(selection->get());};
 }
@@ -128,6 +136,12 @@ gpu::StorageCapacityProbe::Stats StoragePreview::probeStats()const noexcept{retu
 std::span<const modules::StorageVolume>StoragePreview::volumes()const noexcept{return impl_->volumes;}
 const std::string&StoragePreview::chosenVolume()const noexcept{return impl_->chosen;}
 bool StoragePreview::volumeMenuOpen()const noexcept{return impl_->menuOpen;}
+std::vector<modules::StorageAction>StoragePreview::accessibleActions()const{const auto&i=*impl_;std::vector<modules::StorageAction>out;if(!i.input)return out;
+    if(!i.menuOpen)for(const auto&a:i.presentation.actions())out.push_back(a);
+    if(i.available()){for(const auto&a:i.button.actions())out.push_back(a);if(i.menuOpen)for(const auto&a:i.menu.actions())out.push_back(a);}
+    return out;}
+std::optional<core::Rect>StoragePreview::clientRect(core::Rect r)const{const auto&i=*impl_;if(!i.input||!i.pose)return std::nullopt;return projected(i.projection,i.metrics.scale,r);}
+const app::ClientMetrics&StoragePreview::clientMetrics()const noexcept{return impl_->metrics;}
 bool StoragePreview::volumeChooserAvailable()const noexcept{return impl_->available();}
 void StoragePreview::upload(gpu::Renderer&r){auto&i=*impl_;i.renderer=&r;if(!i.pose)return;i.scene.scene().uploadResources(r);if(auto*s=i.button.scene())s->uploadResources(r);if(auto*s=i.menu.scene())s->uploadResources(r);i.registration.uploadGeometry(r);}
 std::span<const gpu::LayerCompositionEntry>StoragePreview::entries(){auto&i=*impl_;if(!i.pose)return {};i.composed[0]={&i.scene.scene(),i.registration.draws()};i.composedCount=1;

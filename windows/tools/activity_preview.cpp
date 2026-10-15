@@ -9,7 +9,16 @@
 #include <array>
 #include <string_view>
 namespace endfield::tools {
-namespace {namespace gpu=native;using Matrix=core::Matrix4;using Json=ehud::data::Json;void need(bool b,const char*m){if(!b)throw std::invalid_argument(m);}bool contains(core::Rect r,core::Point p){return r.contains(p);}Json blank(){return Json::Object{{"bounds",Json::Array{0,0,400,334}},{"position",Json::Array{0,0}},{"anchorPoint",Json::Array{0,0}},{"children",Json::Array{}}};}}
+namespace {namespace gpu=native;using Matrix=core::Matrix4;using Json=ehud::data::Json;void need(bool b,const char*m){if(!b)throw std::invalid_argument(m);}bool contains(core::Rect r,core::Point p){return r.contains(p);}Json blank(){return Json::Object{{"bounds",Json::Array{0,0,400,334}},{"position",Json::Array{0,0}},{"anchorPoint",Json::Array{0,0}},{"children",Json::Array{}}};}
+// Bounding rect of a canvas rect's projected corners, in logical client points.
+std::optional<core::Rect>projected(const core::Projection&projection,double scale,core::Rect r){
+    if(!std::isfinite(r.x)||!std::isfinite(r.y)||!std::isfinite(r.width)||!std::isfinite(r.height)||r.width<0||r.height<0||!(scale>0))return std::nullopt;
+    double x0=INFINITY,y0=INFINITY,x1=-INFINITY,y1=-INFINITY;
+    for(const core::Point c:{core::Point{r.x,r.y},core::Point{r.x+r.width,r.y},core::Point{r.x,r.y+r.height},core::Point{r.x+r.width,r.y+r.height}}){
+        const auto q=projection.project(c);if(!q||!std::isfinite(q->x)||!std::isfinite(q->y))return std::nullopt;
+        x0=std::min(x0,q->x);y0=std::min(y0,q->y);x1=std::max(x1,q->x);y1=std::max(y1,q->y);}
+    return core::Rect{x0/scale,y0/scale,(x1-x0)/scale,(y1-y0)/scale};}
+}
 struct ActivityPreview::Impl {
     modules::ActivityState state;std::unique_ptr<gpu::ActivityIconProvider>icons;gpu::NativeActivityScene scene;gpu::LayerScene geometry;gpu::NativeModuleSurface surface;gpu::NativeModuleRegistration registration{"activity.registration"};
     modules::ActivityAppearance appearance;std::function<void(bool,bool,double)>demand;std::vector<gpu::LayerCompositionEntry>composed;
@@ -73,6 +82,10 @@ void ActivityPreview::update(const Matrix&center,const core::source::DesktopChro
     if(active||i->scene.entries().empty()){const bool animate=i->hasVisibleSample&&i->lastTimestamp!=i->state.snapshot().timestamp&&!i->reduced;i->bindIcons();i->scene.syncContent(i->time,animate);i->lastTimestamp=i->state.snapshot().timestamp;i->hasVisibleSample=true;}
     i->surface.update(center,settings,*shown,opacity);i->pose=i->surface.pose();const auto&p=*i->pose;const auto camera=gpu::layerViewportProjection(i->metrics.pixelWidth,i->metrics.pixelHeight)*Matrix::scale(i->metrics.scale,i->metrics.scale);i->projection=core::Projection::viewport(camera*p.contentWorld,i->metrics.pixelWidth,i->metrics.pixelHeight);i->feedback();i->scene.updatePose({p.contentWorld,p.opacity,i->time,std::span(&p.hostClip,1),p.shutter?&*p.shutter:nullptr});i->registration.update(p.registration);
 }
+std::span<const modules::ActivityAction>ActivityPreview::actions()const noexcept{return impl_->scene.actions();}
+std::optional<core::Rect>ActivityPreview::clientRect(core::Rect r)const{const auto&i=*impl_;if(!i.input||!i.pose)return std::nullopt;return projected(i.projection,i.metrics.scale,r);}
+const app::ClientMetrics&ActivityPreview::clientMetrics()const noexcept{return impl_->metrics;}
+core::Language ActivityPreview::language()const noexcept{return impl_->appearance.language;}
 bool ActivityPreview::requiresFrames(double t)const{return impl_->pose&&impl_->scene.requiresFrames(std::max(t,impl_->time));}
 bool ActivityPreview::covers(core::Point p)const{const auto q=impl_->local(p);return q&&contains({0,0,400,334},*q);}
 bool ActivityPreview::pointer(const app::PointerEvent&e,double t){auto i=impl_;const Impl::Event event(*i,t);i->pointerPoint=core::Point{e.x,e.y};const auto q=i->local(*i->pointerPoint);

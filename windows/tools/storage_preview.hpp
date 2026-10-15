@@ -79,6 +79,16 @@ public:
     const std::string&chosenVolume()const noexcept;      // the remembered id (may be absent now)
     bool volumeMenuOpen()const noexcept;
     bool volumeChooserAvailable()const noexcept;           // two or more volumes listed
+    // UI Automation (tools/storage_automation.hpp): StorageCanvas.
+    // accessibleActions (Storage Settings; Refresh storage unless reading)
+    // and the volume chooser's button (Windows addition); while its menu is
+    // open the button and the menu's volume rows instead (the menu is modal
+    // over the page). Empty while Storage does not accept input. A canvas
+    // rect -> the logical client rect of its projected corners (none while
+    // Storage does not accept input) and the viewport metrics.
+    std::vector<modules::StorageAction>accessibleActions()const;
+    std::optional<core::Rect>clientRect(core::Rect canvas)const;
+    const app::ClientMetrics&clientMetrics()const noexcept;
     const modules::StorageController&state()const noexcept;
     const modules::StoragePresentation&presentation()const noexcept;
     native::StorageCapacityProbe::Stats probeStats()const noexcept;

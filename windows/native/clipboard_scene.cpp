@@ -130,7 +130,13 @@ ClipboardScenePlan prepareClipboardScene(const ClipboardState&state,const Clipbo
     if(state.confirmingClear())fore.add(label("clipboard.keepPinned",{12,306,202,15},strings.keepPinned,10.5,primary,s.scale),{},false,false,false,true);
     for(const auto&a:state.actions())if(a.id=="clipboard:clear"||a.id=="clipboard:cancelClear"||a.id=="clipboard:confirmClear"){const auto&r=a.rect;fore.add(shape(a.id+"/plate",r,cut({0,0,r.width,r.height},4),a.id=="clipboard:confirmClear"?s.accent:gray(s.dark?.82:.9),gray(s.dark?.93:.38,.65),.6),{},false,false,false,true);fore.feedback(a.id,r,true,s.accent,true);fore.add(label(a.id+"/label",{r.x+4,r.y+6,r.width-8,17},a.label,11,ink,s.scale,"semibold","center"),{},false,false,false,true);}result.foreground=fore.finish();
     Build scroll;if(state.maximumOffset()>0){const double h=std::max(24.,246.*246/(double(state.rows().size())*41));auto node=layer("clipboard.scrollbar",{392,41+(246-h)*state.scrollOffset()/state.maximumOffset(),2,h});node["cornerRadius"]=1;node["backgroundColor"]=color(alpha(s.accent,.55));scroll.add(std::move(node));}result.scrollbar=scroll.finish();
-    const auto[first,end]=state.visibleRange();result.rows.reserve(end-first);for(auto n=first;n<end;++n){const auto&r=state.rows()[n];const auto prefix="clipboard.row."+std::to_string(r.id);Build row;row.part.rowID=r.id;row.part.full=*state.rowRect(r.id,false);const bool selected=state.selected()==r.id;const Rect box{0,0,376,37};row.add(shape(prefix+"/fill",box,cut(box,5),gray(s.dark?.77:.90)));row.add(shape(prefix+"/outline",box,cut(box,5),{},selected?s.accent:gray(s.dark?.90:.37,.7),selected?1.4:.6),{},false,false,true);row.feedback(action(r.id,"copy"),box,true,s.accent);
+    const auto[first,end]=state.visibleRange();result.rows.reserve(end-first);for(auto n=first;n<end;++n){const auto&r=state.rows()[n];const auto prefix="clipboard.row."+std::to_string(r.id);Build row;row.part.rowID=r.id;row.part.full=*state.rowRect(r.id,false);const bool selected=state.selected()==r.id;const Rect box{0,0,376,37};
+        // The fill and its outline (the registration trace) share one leaf:
+        // one row-sized bitmap instead of two; a trace frame re-rasters it
+        // with the outline drawn to its stroke end (tracedPlate).
+        auto plate=layer(prefix+"/plate",box);plate["allowsGroupOpacity"]=false;
+        plate["children"]=Json::Array{shape(prefix+"/fill",box,cut(box,5),gray(s.dark?.77:.90)),shape(prefix+"/outline",box,cut(box,5),{},selected?s.accent:gray(s.dark?.90:.37,.7),selected?1.4:.6)};
+        row.add(std::move(plate),{},false,false,true);row.feedback(action(r.id,"copy"),box,true,s.accent);
         const auto number=n+1;row.add(label(prefix+"/number",{7,10,23,18},(number<10?"0":"")+std::to_string(number),10.5,alpha(ink,.65),s.scale,"semibold","center"));
         if(!r.thumbnail.isNull()||r.kind==ClipboardKind::text||r.kind==ClipboardKind::files)row.add(kindImage(r,s,images,prefix+"/kind"));else{Json::Array path;if(r.kind==ClipboardKind::url){path=rounded({36,10,16,12},5);auto second=rounded({46,16,16,12},5);path.insert(path.end(),second.begin(),second.end());}else{path={cmd("move",{{37,8}}),cmd("line",{{62,8}}),cmd("line",{{62,29}}),cmd("line",{{37,29}}),cmd("close"),cmd("move",{{39,25}}),cmd("line",{{47,17}}),cmd("line",{{53,23}}),cmd("line",{{58,19}}),cmd("line",{{61,22}})};auto circle=ellipse({53,11,4,4});path.insert(path.end(),circle.begin(),circle.end());}row.add(shape(prefix+"/kind",{},std::move(path),{},alpha(ink,.78),1.5,true));}
         row.add(label(prefix+"/preview",{71,5,243,17},state.displayPreview(r),11.5,ink,s.scale,"medium"));row.add(label(prefix+"/kindTitle",{71,23,243,11},strings.kinds[unsigned(r.kind)]+(r.pinned?strings.pinned:""),8.5,alpha(ink,.64),s.scale));row.feedback(action(r.id,"pin"),{320,6,23,25},false,s.accent);row.feedback(action(r.id,"remove"),{348,6,23,25},false,s.accent);
@@ -161,14 +167,26 @@ Json sampledMaskLayer(const core::SubsectionCurvePath&p){Json::Array path;std::s
     for(std::size_t n=0;n<p.opcodeCount;++n)switch(p.opcodes[n]){case 0:path.push_back(cmd("move",{point()}));break;case 1:path.push_back(cmd("line",{point()}));break;case 2:{const auto a=point(),b=point();path.push_back(cmd("quadratic",{a,b}));break;}case 3:{const auto a=point(),b=point(),c=point();path.push_back(cmd("cubic",{a,b,c}));break;}case 4:path.push_back(cmd("close"));break;default:need(false,"Invalid Clipboard source mask opcode");}
     need(at==p.coordinateCount,"Invalid Clipboard source mask coordinate count");return shape("clipboard.curved-mask",{0,0,376,246},std::move(path),Color{1,1,1,1});
 }
+// A row's plate leaf (fill and outline) with the outline drawn to `stroke`.
+Json tracedPlate(Json plate,double stroke){auto&children=const_cast<Json::Array&>(plate["children"].array());need(children.size()==2&&children[1]["shape"].isObject(),"Invalid Clipboard row plate");
+    children[1]["shape"]["path"]=cut({0,0,376,37},5,stroke);return plate;}
+// A hover or press tint, and a rim that rests hidden (unframed), keeps no
+// bitmap while its feedback does not show (Mac: a CAShapeLayer at opacity 0
+// keeps no backing store): its leaf holds one transparent point until the
+// feedback begins and gives the shape back after fading out.
+bool lazyFeedback(const ClipboardSurface&s){return !s.action.empty()&&!(s.rim&&s.framed);}
+Json feedbackPlaceholder(const std::string&id){return Json::Object{{"id",id},{"kind","layer"},{"bounds",Json::Array{0,0,1,1}},{"position",Json::Array{0,0}},{"anchorPoint",Json::Array{0,0}},{"backgroundColor",Json::Object{{"sRGB",Json::Array{0,0,0,0}}}},{"children",Json::Array{}}};}
+Json restingLayers(const ClipboardPart&plan){auto root=plan.layers;auto&nodes=const_cast<Json::Array&>(root["children"].array());need(nodes.size()==plan.surfaces.size(),"Clipboard leaves and surfaces diverged");
+    for(std::size_t n=0;n<nodes.size();++n)if(lazyFeedback(plan.surfaces[n]))nodes[n]=feedbackPlaceholder(plan.surfaces[n].id);return root;}
 }
 struct NativeClipboardScene::Impl {
     struct Track {double from{},target{},start{},duration{};};
     struct Part {
         ClipboardPart plan;LayerScene scene;std::vector<LayerPlacement>placements;std::vector<std::array<Track,2>>feedback;
-        std::array<PlaneMask,8>masks{};std::vector<LayerPlacement>active;std::optional<double>engageStart,reflowStart;double reflowFrom{};double stroke{1},uploadedStroke{1};std::uint64_t strokeRevision{};
-        Part(LayerRasterizer&r,ClipboardPart p,const LayerRasterOptions&o):plan(std::move(p)),scene(r),placements(plan.surfaces.size()),feedback(plan.surfaces.size()){
-            scene.load(plan.layers,o);need(scene.report().unsupported.empty(),"Clipboard artwork contains unsupported local effects");active.reserve(placements.size());
+        std::array<PlaneMask,8>masks{};std::vector<LayerPlacement>active;std::optional<double>engageStart,reflowStart;double reflowFrom{};double stroke{1},uploadedStroke{1};std::uint64_t strokeRevision{},paintRevision{};
+        std::vector<std::uint8_t>painted; // a lazy feedback leaf currently holds its source shape
+        Part(LayerRasterizer&r,ClipboardPart p,const LayerRasterOptions&o):plan(std::move(p)),scene(r),placements(plan.surfaces.size()),feedback(plan.surfaces.size()),painted(plan.surfaces.size(),0){
+            scene.load(restingLayers(plan),o);need(scene.report().unsupported.empty(),"Clipboard artwork contains unsupported local effects");active.reserve(placements.size());
             for(std::size_t n=0;n<placements.size();++n){const auto&s=plan.surfaces[n];placements[n].surface=scene.surfaceIndex(s.id).value_or(std::size_t(-1));placements[n].world=s.local;placements[n].opacity=0;feedback[n][0].from=feedback[n][0].target=0;feedback[n][1].from=feedback[n][1].target=s.framed?.28:0;if(placements[n].surface!=std::size_t(-1))active.push_back(placements[n]);}scene.setPlacements(active);scene.prepareDraws();
         }
     };
@@ -184,6 +202,10 @@ struct NativeClipboardScene::Impl {
     static double ease(double p){return core::CubicTiming{0,0,.58,1}.value(p);}
     static double sample(Track t,double now){return t.duration>0?t.from+(t.target-t.from)*ease((now-t.start)/t.duration):t.target;}
     static double y(const Part&p,double now){return p.reflowStart?p.reflowFrom+(p.plan.full.y-p.reflowFrom)*ease((now-*p.reflowStart)/.20):p.plan.full.y;}
+    // A lazy feedback leaf shows while its target is visible or it is still
+    // fading out from a visible value.
+    static bool shows(const Track&t,double now){return t.target>0||(t.from>0&&now<t.start+t.duration);}
+    static const Track&track(const Part&p,std::size_t n){return p.feedback[n][p.plan.surfaces[n].rim?1:0];}
 };
 NativeClipboardScene::NativeClipboardScene(ClipboardState&s,LayerRasterizer&r,LayerRasterOptions o,ClipboardAppearance a,ClipboardImages images,std::shared_ptr<const core::SubsectionMaskSampler>):impl_(std::make_unique<Impl>(s,r,std::move(o),a,std::move(images))){}
 NativeClipboardScene::~NativeClipboardScene(){if(impl_)impl_->raster.remove(impl_->maskID);}
@@ -240,8 +262,17 @@ bool NativeClipboardScene::uploadAnimations(Renderer&renderer){auto&i=*impl_;nee
         if(i.uploadedMask!=i.maskRevision){renderer.setTexture(i.maskID,i.maskRevision,{i.maskImage->width,i.maskImage->height,i.maskImage->straightRGBA,TextureColorSpace::linear,TextureFilter::linear});i.uploadedMask=i.maskRevision;i.resourceOwner=&renderer;++i.stats.maskUploads;changed=true;}
         i.alphaMask->bounds=i.maskImage->bounds;i.collection->scene.setGroupAlphaMask(i.alphaMask);for(auto&p:i.rows)p->scene.setGroupAlphaMask(i.alphaMask);
     }
-    for(auto&p:i.rows)if(p->uploadedStroke!=p->stroke){for(std::size_t n=0;n<p->plan.surfaces.size();++n)if(p->plan.surfaces[n].outline){auto node=p->plan.layers["children"].array()[n];node["shape"]["path"]=cut({0,0,376,37},5,p->stroke);p->scene.updateLocalContent(p->plan.surfaces[n].id,++p->strokeRevision,node,i.options);++i.stats.outlineRasters;changed=true;}p->uploadedStroke=p->stroke;}return changed;}
-bool NativeClipboardScene::requiresFrames(double time)const{auto&i=*impl_;i.time(time);if(i.revealStart&&time-*i.revealStart<.26)return true;if(i.toolbarStart&&time-*i.toolbarStart<.18)return true;bool value{};i.each([&](const auto&p){value|=p.engageStart&&time-*p.engageStart<.18;value|=p.reflowStart&&time-*p.reflowStart<.20;for(const auto&pair:p.feedback)for(auto track:pair)value|=track.duration>0&&track.from!=track.target&&time<track.start+track.duration;});return value;}
+    for(auto&p:i.rows)if(p->uploadedStroke!=p->stroke){for(std::size_t n=0;n<p->plan.surfaces.size();++n)if(p->plan.surfaces[n].outline){const auto node=tracedPlate(p->plan.layers["children"].array()[n],p->stroke);p->scene.updateLocalContent(p->plan.surfaces[n].id,++p->strokeRevision,node,i.options);++i.stats.outlineRasters;changed=true;}p->uploadedStroke=p->stroke;}
+    // A lazy feedback leaf paints its source shape once its feedback shows
+    // (before this frame is drawn) and gives it back after fading out.
+    i.each([&](auto&p){for(std::size_t n=0;n<p.plan.surfaces.size();++n){const auto&s=p.plan.surfaces[n];if(!lazyFeedback(s))continue;
+        const bool shows=Impl::shows(Impl::track(p,n),i.lastTime);if(shows==bool(p.painted[n]))continue;
+        p.scene.updateLocalContent(s.id,++p.paintRevision,shows?p.plan.layers["children"].array()[n]:feedbackPlaceholder(s.id),i.options);p.painted[n]=shows;++(shows?i.stats.feedbackPaints:i.stats.feedbackReleases);changed=true;}});
+    return changed;}
+bool NativeClipboardScene::requiresFrames(double time)const{auto&i=*impl_;i.time(time);if(i.revealStart&&time-*i.revealStart<.26)return true;if(i.toolbarStart&&time-*i.toolbarStart<.18)return true;bool value{};i.each([&](const auto&p){value|=p.engageStart&&time-*p.engageStart<.18;value|=p.reflowStart&&time-*p.reflowStart<.20;for(const auto&pair:p.feedback)for(auto track:pair)value|=track.duration>0&&track.from!=track.target&&time<track.start+track.duration;
+        // One more frame once a painted lazy leaf has faded out: it draws the
+        // final value and gives the bitmap back (uploadAnimations).
+        for(std::size_t n=0;n<p.painted.size();++n)value|=p.painted[n]&&!Impl::shows(Impl::track(p,n),time);});return value;}
 std::span<const LayerCompositionEntry>NativeClipboardScene::entries()const noexcept{return impl_->entries;}
 bool NativeClipboardScene::collectRetired(Renderer&r){auto&i=*impl_;for(auto&p:i.retired)if(!p->scene.releaseResources(r))return false;i.retired.clear();if(!i.maskPath&&i.uploadedMask&&(!r.stats().initialized||r.removeTexture(i.maskID))){i.uploadedMask=0;i.maskImage.reset();i.raster.remove(i.maskID);}return true;}
 bool NativeClipboardScene::releaseResources(Renderer&r){auto&i=*impl_;bool okay=collectRetired(r);i.each([&](auto&p){okay=p.scene.releaseResources(r)&&okay;});if(i.uploadedMask){if(!r.stats().initialized||r.removeTexture(i.maskID)){i.uploadedMask=0;i.maskImage.reset();i.raster.remove(i.maskID);}else okay=false;}return okay;}

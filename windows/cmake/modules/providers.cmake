@@ -199,3 +199,40 @@ if(WIN32 AND BUILD_TESTING AND TARGET hud_activity_preview AND TARGET hud_storag
     set_tests_properties(${name}_resources_contracts PROPERTIES TIMEOUT 300)
   endforeach()
 endif()
+
+# --- UI Automation peers of the provider modules ------------------------------
+# Mac HUDClipboardInteraction, HUDEventLogInteraction and HUDTelemetryInteraction
+# accessibility buttons (and the telemetry status text) as screen reader peers
+# (native/screen_reader_peers.hpp) of the built-in Clipboard, Event Log,
+# Activity Monitor and Storage owners, for their groups under the HUD window's
+# UIA root (the host's module adapters list them, app/application_modules.cpp).
+if(WIN32 AND TARGET hud_local_automation AND TARGET hud_activity_preview AND TARGET hud_storage_preview)
+  add_library(hud_provider_automation STATIC tools/clipboard_automation.cpp tools/event_log_automation.cpp
+    tools/activity_automation.cpp tools/storage_automation.cpp)
+  target_include_directories(hud_provider_automation PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+  target_compile_definitions(hud_provider_automation PRIVATE ${EHUD_PROVIDER_DEFINITIONS})
+  target_link_libraries(hud_provider_automation PUBLIC hud_local_automation hud_activity_preview hud_storage_preview hud_native hud_localization)
+  if(MSVC)
+    target_compile_options(hud_provider_automation PRIVATE /W4 /permissive- /EHsc)
+  endif()
+  if(TARGET hud_application)
+    target_link_libraries(hud_application PUBLIC hud_provider_automation)
+  endif()
+  if(BUILD_TESTING AND TARGET hud_storage_options)
+    # The peers through their provider interfaces over the owners on a hidden
+    # window and WARP; synthetic rows, events, apps and volumes only.
+    add_executable(activity_clipboard_automation_tests tests/activity_clipboard_automation_tests.cpp tools/clipboard_preview.cpp tools/event_log_preview.cpp)
+    target_compile_definitions(activity_clipboard_automation_tests PRIVATE ${EHUD_PROVIDER_DEFINITIONS})
+    target_link_libraries(activity_clipboard_automation_tests PRIVATE hud_provider_automation hud_activity_preview hud_storage_preview hud_storage_options
+      hud_native hud_motion uiautomationcore oleaut32 ole32 user32)
+    if(MSVC)
+      target_compile_options(activity_clipboard_automation_tests PRIVATE /W4 /permissive- /EHsc)
+    endif()
+    foreach(mode clipboard eventLog activity storage)
+      string(REGEX REPLACE "([A-Z])" "_\\1" name "${mode}")
+      string(TOLOWER "${name}" name)
+      add_test(NAME ${name}_automation_contracts COMMAND activity_clipboard_automation_tests "${CMAKE_CURRENT_SOURCE_DIR}/native/hud.hlsl" "${CMAKE_CURRENT_SOURCE_DIR}/resources" ${mode})
+      set_tests_properties(${name}_automation_contracts PROPERTIES TIMEOUT 180)
+    endforeach()
+  endif()
+endif()

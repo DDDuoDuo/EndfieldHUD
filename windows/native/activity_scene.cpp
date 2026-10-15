@@ -83,12 +83,18 @@ core::SubsectionCurvePath curvePath(const core::SubsectionMaskPath&strips){
     return path;
 }
 Json rootFor(const Json&content){auto root=layer("",{});children(root).push_back(content);return root;}
+// A tab's or a column header's hover tint and rim (both rest at opacity 0)
+// keep no bitmap while their feedback does not show (Mac: a CAShapeLayer at
+// opacity 0 keeps no backing store): the leaf holds one transparent point
+// until the feedback begins and gives the shape back after fading out.
+Json feedbackPlaceholder(const std::string&id){return Json::Object{{"id",id},{"kind","layer"},{"bounds",Json::Array{0,0,1,1}},{"position",Json::Array{0,0}},{"anchorPoint",Json::Array{0,0}},{"backgroundColor",Json::Object{{"sRGB",Json::Array{0,0,0,0}}}},{"children",Json::Array{}}};}
 Json maskLayer(const core::SubsectionCurvePath&p){Json::Array path;std::size_t at{};const auto point=[&](){const Point result{p.coordinates[at],p.coordinates[at+1]};at+=2;return result;};for(std::size_t n=0;n<p.opcodeCount;++n)switch(p.opcodes[n]){case 0:path.push_back(cmd("move",{point()}));break;case 1:path.push_back(cmd("line",{point()}));break;case 2:{const auto a=point(),b=point();path.push_back(cmd("quadratic",{a,b}));break;}case 3:{const auto a=point(),b=point(),c=point();path.push_back(cmd("cubic",{a,b,c}));break;}case 4:path.push_back(cmd("close"));break;default:need(false,"Invalid Activity source mask opcode");}need(at==p.coordinateCount,"Invalid Activity source mask coordinates");return shape("activity.sort.mask",{0,0,376,226},std::move(path),Color{1,1,1,1});}
 }
 struct NativeActivityScene::Impl {
     struct Track {double from{},target{},start{},duration{};};
-    struct Part {ActivitySurface plan;LayerScene scene;LayerPlacement placement;std::array<PlaneMask,8>masks{};Track feedback;std::uint64_t revision{1};bool selected{};
-        Part(ActivitySurface p,LayerRasterizer&r,const LayerRasterOptions&o):plan(std::move(p)),scene(r){scene.load(rootFor(plan.content),o);need(scene.report().unsupported.empty(),"Activity source artwork contains unsupported local effects");placement.surface=scene.surfaceIndex(plan.id).value_or(std::size_t(-1));need(placement.surface!=std::size_t(-1),"Activity surface has no original artwork");placement.world=plan.local;placement.opacity=0;scene.setPlacements(std::span(&placement,1));}
+    // painted: a feedback leaf (plan.action) holds its source shape now.
+    struct Part {ActivitySurface plan;LayerScene scene;LayerPlacement placement;std::array<PlaneMask,8>masks{};Track feedback;std::uint64_t revision{1};bool selected{},painted{};
+        Part(ActivitySurface p,LayerRasterizer&r,const LayerRasterOptions&o):plan(std::move(p)),scene(r){scene.load(rootFor(plan.action.empty()?plan.content:feedbackPlaceholder(plan.id)),o);need(scene.report().unsupported.empty(),"Activity source artwork contains unsupported local effects");placement.surface=scene.surfaceIndex(plan.id).value_or(std::size_t(-1));need(placement.surface!=std::size_t(-1),"Activity surface has no original artwork");placement.world=plan.local;placement.opacity=0;scene.setPlacements(std::span(&placement,1));}
     };
     modules::ActivityState&state;LayerRasterizer&raster;LayerRasterOptions options;modules::ActivityAppearance appearance;ActivityIcons icons;
     ActivityMotion motion;std::vector<std::unique_ptr<Part>>parts;std::vector<LayerCompositionEntry>entries;std::vector<modules::ActivityAction>actions;
@@ -98,6 +104,9 @@ struct NativeActivityScene::Impl {
     Impl(modules::ActivityState&s,LayerRasterizer&r,LayerRasterOptions o,modules::ActivityAppearance a):state(s),raster(r),options(std::move(o)),appearance(a){static std::atomic<std::uint64_t>next{};maskID="activity.mask."+std::to_string(++next);parts.reserve(56);entries.reserve(56);actions.reserve(8);}
     void checkTime(double t)const{clock(t);need(t>=time,"Activity clock cannot move backwards");}
     static double sample(const Track&t,double now){return t.duration>0?t.from+(t.target-t.from)*core::CubicTiming{0,0,.58,1}.value((now-t.start)/t.duration):t.target;}
+    // A feedback leaf shows while its target is visible or it is still fading
+    // out from a visible value.
+    static bool shows(const Track&t,double now){return t.target>0||(t.from>0&&now<t.start+t.duration);}
     Part*find(std::string_view id){for(auto&p:parts)if(p->plan.id==id)return p.get();return nullptr;}
     void feedback(double now){std::optional<std::string_view>hit;for(const auto&a:actions)if(pointer&&controlContains(a.rect,*pointer))hit=a.id;for(auto&p:parts){const auto&action=p->plan.action;if(action.empty())continue;const bool selected=hit&&*hit==action;const double target=p->plan.rim?(selected?1:0):(selected?(pressed?1:.62):0);auto&t=p->feedback;if(target!=t.target||reduced)t={sample(t,now),target,now,reduced?0:selected&&pressed?.06:.14};}}
 };
@@ -109,7 +118,7 @@ bool NativeActivityScene::syncContent(double time,bool animate){auto&i=*impl_;i.
     if(i.initialized&&!i.dirty&&oldRevision==contentRevision&&i.actions.size()==(page?2+modules::activityAppColumns.size():2)){i.rows=i.state.visibleRows();i.revision=i.state.revision();i.time=time;return false;}
     auto art=modules::prepareActivityArtwork(i.state,i.appearance);auto plan=prepareActivitySurfaces(art,i.appearance,i.icons);if(!page){i.motion.setGraphs(art.graphs,time,animate&&!i.reduced&&!i.dirty);const auto current=i.motion.graphs(time);for(auto&p:plan)if(p.graph>=0)p.content=activityGraphContent(unsigned(p.graph),current[unsigned(p.graph)]);i.preparedGraphs=current;}
     for(auto&p:i.parts)if(p->plan.plane==ActivityPlane::chrome||(page?(p->plan.plane==ActivityPlane::apps||p->plan.plane==ActivityPlane::rows):p->plan.plane==ActivityPlane::overview))p->selected=false;
-    for(auto&next:plan){auto*prior=i.find(next.id);if(!prior){need(i.parts.size()<56,"Activity retained surface budget exceeded");auto p=std::make_unique<Impl::Part>(std::move(next),i.raster,i.options);p->selected=true;i.entries.push_back({&p->scene,{}});i.parts.push_back(std::move(p));++i.stats.builds;}else{if(prior->plan.content!=next.content){prior->scene.updateLocalContent(prior->plan.id,++prior->revision,next.content,i.options);++i.stats.localUpdates;}prior->plan=std::move(next);prior->selected=true;}}
+    for(auto&next:plan){auto*prior=i.find(next.id);if(!prior){need(i.parts.size()<56,"Activity retained surface budget exceeded");auto p=std::make_unique<Impl::Part>(std::move(next),i.raster,i.options);p->selected=true;i.entries.push_back({&p->scene,{}});i.parts.push_back(std::move(p));++i.stats.builds;}else{if(prior->plan.content!=next.content&&(prior->plan.action.empty()||prior->painted)){prior->scene.updateLocalContent(prior->plan.id,++prior->revision,next.content,i.options);++i.stats.localUpdates;}prior->plan=std::move(next);prior->selected=true;}}
     // Stable source paint order also covers rows/icons arriving after an empty
     // Apps page; first allocation order must not put a row over its scrollbar.
     std::sort(i.parts.begin(),i.parts.end(),[](const auto&a,const auto&b){return a->plan.paintOrder<b->plan.paintOrder;});i.entries.clear();for(auto&p:i.parts)i.entries.push_back({&p->scene,{}});
@@ -129,9 +138,17 @@ bool NativeActivityScene::updatePose(const ActivityScenePose&pose){auto&i=*impl_
 }
 bool NativeActivityScene::uploadAnimations(Renderer&r){auto&i=*impl_;need(!i.resourceOwner||i.resourceOwner==&r,"Activity animation belongs to another renderer");bool changed{};
     if(i.graphsDirty){const auto next=i.motion.graphs(i.time);const auto began=std::chrono::steady_clock::now();for(auto&p:i.parts)if(p->plan.graph>=0){const auto n=unsigned(p->plan.graph);if(sameGraph(i.preparedGraphs[n],next[n]))continue;auto content=activityGraphContent(n,next[n]);p->scene.updateLocalContent(p->plan.id,++p->revision,content,i.options);p->plan.content=std::move(content);++i.stats.graphRasters;i.stats.graphPixelBytes+=p->scene.report().pixelBytes;changed=true;}const auto elapsed=std::chrono::duration<double>(std::chrono::steady_clock::now()-began).count();i.stats.graphRasterSeconds+=elapsed;i.stats.maximumGraphRasterSeconds=std::max(i.stats.maximumGraphRasterSeconds,elapsed);i.preparedGraphs=next;i.graphsDirty=false;}
-    if(i.maskPath){if(i.maskDirty){auto options=i.options;options.paddingPoints=0;i.maskImage=i.raster.rasterize(i.maskID,++i.maskRevision,maskLayer(*i.maskPath),options);need(i.maskImage->complete()&&i.maskImage->width<=1600&&i.maskImage->height<=1000,"Activity mask raster unsupported or oversized");i.maskDirty=false;++i.stats.maskRasters;i.stats.maskPixelBytes+=i.maskImage->straightRGBA.size();}if(i.uploadedMask!=i.maskRevision){r.setTexture(i.maskID,i.maskRevision,{i.maskImage->width,i.maskImage->height,i.maskImage->straightRGBA,TextureColorSpace::linear,TextureFilter::linear});i.uploadedMask=i.maskRevision;i.resourceOwner=&r;changed=true;}i.alpha->bounds=i.maskImage->bounds;for(auto&p:i.parts)if(p->plan.plane==ActivityPlane::rows)p->scene.setGroupAlphaMask(i.alpha);}return changed;
+    if(i.maskPath){if(i.maskDirty){auto options=i.options;options.paddingPoints=0;i.maskImage=i.raster.rasterize(i.maskID,++i.maskRevision,maskLayer(*i.maskPath),options);need(i.maskImage->complete()&&i.maskImage->width<=1600&&i.maskImage->height<=1000,"Activity mask raster unsupported or oversized");i.maskDirty=false;++i.stats.maskRasters;i.stats.maskPixelBytes+=i.maskImage->straightRGBA.size();}if(i.uploadedMask!=i.maskRevision){r.setTexture(i.maskID,i.maskRevision,{i.maskImage->width,i.maskImage->height,i.maskImage->straightRGBA,TextureColorSpace::linear,TextureFilter::linear});i.uploadedMask=i.maskRevision;i.resourceOwner=&r;changed=true;}i.alpha->bounds=i.maskImage->bounds;for(auto&p:i.parts)if(p->plan.plane==ActivityPlane::rows)p->scene.setGroupAlphaMask(i.alpha);}
+    // A feedback leaf paints its source shape once its feedback shows (before
+    // this frame is drawn) and gives it back after fading out.
+    for(auto&p:i.parts){if(p->plan.action.empty())continue;const bool shows=Impl::shows(p->feedback,i.time);if(shows==p->painted)continue;
+        p->scene.updateLocalContent(p->plan.id,++p->revision,shows?p->plan.content:feedbackPlaceholder(p->plan.id),i.options);p->painted=shows;++(shows?i.stats.feedbackPaints:i.stats.feedbackReleases);changed=true;}
+    return changed;
 }
-bool NativeActivityScene::requiresFrames(double t)const{const auto&i=*impl_;i.checkTime(t);if(i.motion.requiresFrames(t)||(i.sortStart&&t<*i.sortStart+.26))return true;for(const auto&p:i.parts){const auto&f=p->feedback;if(f.from!=f.target&&t<f.start+f.duration)return true;}return false;}
+bool NativeActivityScene::requiresFrames(double t)const{const auto&i=*impl_;i.checkTime(t);if(i.motion.requiresFrames(t)||(i.sortStart&&t<*i.sortStart+.26))return true;for(const auto&p:i.parts){const auto&f=p->feedback;if(f.from!=f.target&&t<f.start+f.duration)return true;
+        // One more frame once a painted leaf has faded out: it draws the final
+        // value and gives the bitmap back (uploadAnimations).
+        if(p->painted&&!Impl::shows(f,t))return true;}return false;}
 std::span<const LayerCompositionEntry>NativeActivityScene::entries()const noexcept{return impl_->entries;}
 std::span<const modules::ActivityAction>NativeActivityScene::actions()const noexcept{return impl_->actions;}
 bool NativeActivityScene::collectRetired(Renderer&r){auto&i=*impl_;for(auto&p:i.parts)p->scene.collectRetiredResources(r);if(!i.maskPath&&i.uploadedMask&&(!r.stats().initialized||r.removeTexture(i.maskID))){i.uploadedMask=0;i.maskImage.reset();i.raster.remove(i.maskID);}return true;}

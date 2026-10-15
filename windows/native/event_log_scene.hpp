@@ -5,7 +5,10 @@ namespace endfield::native {
 #ifdef _WIN32
 struct NativeEventLogPose {core::Matrix4 world;float opacity{1};double time{};std::span<const PlaneMask>ownerMasks;std::optional<PlaneShutter>shutter;};
 // residentPixelBytes: the retained parts' rasters (current, outgoing and retired).
-struct EventLogSceneStats {std::size_t rows{},outgoingRows{},retiredParts{};std::uint64_t builds{},poses{},outlineRasters{},parks{};std::size_t residentPixelBytes{};};
+// feedbackPaints/Releases: hover or press tints and unframed rims that painted
+// their source shape when their feedback began to show, and gave it back
+// after fading out.
+struct EventLogSceneStats {std::size_t rows{},outgoingRows{},retiredParts{};std::uint64_t builds{},poses{},outlineRasters{},parks{},feedbackPaints{},feedbackReleases{};std::size_t residentPixelBytes{};};
 // Retained original header/toolbar and two bounded row pages. All finite
 // animations consume the existing caller clock; no publisher/timer/service.
 class NativeEventLogScene final {

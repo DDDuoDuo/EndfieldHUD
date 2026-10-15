@@ -43,6 +43,14 @@ public:
     // that is not shown keeps no raster artwork. Never throws.
     void conceal()noexcept;
     const modules::EventLogState&state()const;
+    // UI Automation (tools/event_log_automation.hpp): a canvas rect -> the
+    // logical client rect of its projected corners (none while the Event Log
+    // does not accept input), the viewport metrics, and a listed action
+    // (EventLogState::actions) performed like its click (canvas.perform(
+    // actionID:)); false for an id that is not listed now.
+    std::optional<core::Rect>clientRect(core::Rect canvas)const;
+    const app::ClientMetrics&clientMetrics()const noexcept;
+    bool perform(std::string_view actionID,double time);
     void upload(native::Renderer&);std::span<const native::LayerCompositionEntry>entries();
     void collected(native::Renderer&);void release(native::Renderer&);
     native::EventLogSceneStats stats()const;

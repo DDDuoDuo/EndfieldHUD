@@ -25,6 +25,8 @@ struct Build {EventLogPart part;Json::Array nodes;
 };
 }
 Json eventLogOutlinePath(double strokeEnd){need(std::isfinite(strokeEnd)&&strokeEnd>=0&&strokeEnd<=1,"Invalid source Event Log registration phase");return cut({0,0,369,51},4,strokeEnd);}
+Json eventLogTracedPlate(Json plate,double strokeEnd){auto&children=const_cast<Json::Array&>(plate["children"].array());need(children.size()==2&&children[1]["shape"].isObject(),"Invalid Event Log row plate");
+    children[1]["shape"]["path"]=eventLogOutlinePath(strokeEnd);return plate;}
 EventLogArtwork prepareEventLogArtwork(const EventLogState&state,const EventLogAppearance&appearance){need(std::isfinite(appearance.scale)&&appearance.scale>=1&&appearance.scale<=8,"Invalid Event Log render scale");for(double component:appearance.accent)need(std::isfinite(component)&&component>=0&&component<=1,"Invalid Event Log accent");
     const auto primary=gray(appearance.dark?.94:.11),muted=gray(appearance.dark?.68:.38),ink=gray(.13);const auto&strings=state.strings();EventLogArtwork out;Build header,toolbar,empty,scroll;
     header.add(label("eventLog.heading",{12,0,376,20},strings.heading.starts_with("//")?strings.heading:"// "+strings.heading,15,primary,appearance.scale,"semibold"));
@@ -38,14 +40,21 @@ EventLogArtwork prepareEventLogArtwork(const EventLogState&state,const EventLogA
     if(!state.filteredCount())empty.add(label("eventLog.empty",{20,175,360,26},state.itemCount()?strings.emptyCategory:strings.empty,14,primary,appearance.scale,"regular","center"));out.empty=empty.finish();
     if(state.maximumOffset()>0){const double height=std::max(18.,198.*198/(double(state.filteredCount())*55));auto thumb=layer("eventLog.scrollbar",{385,94+(198-height)*state.scrollOffset()/state.maximumOffset(),2,height});thumb["backgroundColor"]=color(alpha(muted,.6));scroll.add(std::move(thumb));}out.scrollbar=scroll.finish();out.rows.reserve(5);
     for(const auto&row:state.visibleRows()){Build body;body.part.rowID=row.id;body.part.full=row.rect;const std::string prefix="eventLog.row."+row.id;const Rect rect{0,0,369,51};
-        body.add(shape(prefix+"/fill",rect,cut(rect,4),gray(appearance.dark?.16:.91)));
-        body.add(shape(prefix+"/outline",rect,cut(rect,4),{},row.selected?appearance.accent:alpha(muted,.33),row.selected?1:.5),{},false,false,true);
+        // The fill and its outline (the registration trace) share one leaf:
+        // one row-sized bitmap instead of two; a trace frame re-rasters it
+        // with the outline drawn to its stroke end (eventLogTracedPlate).
+        auto plate=layer(prefix+"/plate",rect);plate["allowsGroupOpacity"]=false;
+        plate["children"]=Json::Array{shape(prefix+"/fill",rect,cut(rect,4),gray(appearance.dark?.16:.91)),shape(prefix+"/outline",rect,cut(rect,4),{},row.selected?appearance.accent:alpha(muted,.33),row.selected?1:.5)};
+        body.add(std::move(plate),{},false,false,true);
         body.feedback("eventLog:row:"+row.id,rect,false,appearance.accent);
-        auto labels=layer(prefix+"/labels",rect);Json::Array children;
-        children.push_back(label(prefix+"/timestamp",{9,5,149,12},row.timestamp,8.7,muted,appearance.scale));
-        children.push_back(label(prefix+"/category",{211,5,146,12},row.category,8.7,muted,appearance.scale,"regular","right"));
-        children.push_back(label(prefix+"/title",{9,19,348,15},row.title,11.5,primary,appearance.scale,"medium"));
-        if(!row.detail.empty())children.push_back(label(prefix+"/detail",{9,35,348,13},row.detail,9.5,muted,appearance.scale));
+        // The labels leaf covers its text rectangles plus a 1 pt margin, not
+        // the whole row (whole points: the glyphs keep their pixel grid).
+        const bool detail=!row.detail.empty();const Rect ink{8,4,350,detail?45.:32.};
+        auto labels=layer(prefix+"/labels",ink);Json::Array children;const auto at=[&](Rect r){return Rect{r.x-ink.x,r.y-ink.y,r.width,r.height};};
+        children.push_back(label(prefix+"/timestamp",at({9,5,149,12}),row.timestamp,8.7,muted,appearance.scale));
+        children.push_back(label(prefix+"/category",at({211,5,146,12}),row.category,8.7,muted,appearance.scale,"regular","right"));
+        children.push_back(label(prefix+"/title",at({9,19,348,15}),row.title,11.5,primary,appearance.scale,"medium"));
+        if(detail)children.push_back(label(prefix+"/detail",at({9,35,348,13}),row.detail,9.5,muted,appearance.scale));
         labels["children"]=std::move(children);labels["allowsGroupOpacity"]=false;body.add(std::move(labels));out.rows.push_back(body.finish());
     }return out;
 }

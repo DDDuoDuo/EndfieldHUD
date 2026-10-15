@@ -63,6 +63,15 @@ public:
     void upload(native::Renderer&);std::span<const native::LayerCompositionEntry>entries();
     void collected(native::Renderer&);void release(native::Renderer&);native::ActivitySceneStats stats()const;
     std::optional<native::ActivityIconStats>iconStats()const;
+    // UI Automation (tools/activity_automation.hpp): the accessible actions
+    // (the Overview and Apps tabs; on the Apps page the column headers), a
+    // canvas rect -> the logical client rect of its projected corners (none
+    // while Activity does not accept input), the viewport metrics and the
+    // HUD language.
+    std::span<const modules::ActivityAction>actions()const noexcept;
+    std::optional<core::Rect>clientRect(core::Rect canvas)const;
+    const app::ClientMetrics&clientMetrics()const noexcept;
+    core::Language language()const noexcept;
 private:struct Impl;std::shared_ptr<Impl>impl_;
 };
 }

@@ -52,12 +52,16 @@ struct Window{HWND hwnd{};Window(){WNDCLASSW c{};c.lpfnWndProc=DefWindowProcW;c.
 
 // The hidden HUD plane of one module, starting on another module (Power), and
 // its host-like publication.
+Json blank(){return Json::Object{{"bounds",Json::Array{0,0,400,334}},{"position",Json::Array{0,0}},{"anchorPoint",Json::Array{0,0}},{"children",Json::Array{}}};}
 template<class Owner>struct Stage {
-    gpu::Renderer&renderer;Owner&owner;core::Module module;gpu::LayerComposition composition;core::ModulePresentation modules{core::Module::power};
+    gpu::Renderer&renderer;Owner&owner;core::Module module;gpu::LayerComposition composition;core::ModulePresentation modules{core::Module::power};gpu::LayerScene reference;std::unique_ptr<gpu::NativeModuleSurface>placement;
     core::source::DesktopChromeSettings settings;core::Matrix4 center;core::Matrix4 camera=gpu::layerViewportProjection(1280,800);double time{};bool released{};
     struct Published{gpu::LayerScene*scene{};std::uint64_t content{},resources{};const gpu::DrawObject*after{};std::size_t count{};};
     std::vector<Published>published;std::vector<gpu::LayerCompositionEntry>ordered;std::function<void()>drain;
-    Stage(gpu::Renderer&r,Owner&o,core::Module m):renderer(r),owner(o),module(m),settings{{0,0,1280,800},1,{},core::Module::power,true}{center=core::source::DesktopChromeLayout::make(settings,{},{}).designToScreen;}
+    Stage(gpu::Renderer&r,Owner&o,gpu::LayerRasterizer&raster,core::Module m):renderer(r),owner(o),module(m),reference(raster),settings{{0,0,1280,800},1,{},core::Module::power,true}{
+        reference.load(blank(),{});placement=std::make_unique<gpu::NativeModuleSurface>(reference,m);center=core::source::DesktopChromeLayout::make(settings,{},{}).designToScreen;}
+    // A point on the shown module's 400 x 334 canvas -> client point.
+    core::Point canvas(core::Point p){auto sample=modules.sample(time).presentation;placement->update(center,settings,sample.current);return *core::Projection::viewport(camera*placement->pose().contentWorld,1280,800).project(p);}
     ~Stage(){if(released)return;try{composition.detach(renderer);owner.release(renderer);}catch(...){renderer.reset();}}
     void publish(){
         owner.upload(renderer);ordered.clear();for(const auto&e:owner.entries())ordered.push_back(e);
@@ -78,6 +82,13 @@ struct Probe {
     std::function<void()>conceal;           // HostEvent::overlayConcealed
     std::function<void()>afterRebuild;      // module-specific checks once rebuilt
     bool reopenRasterizes{};                // Storage re-reads its capacity on activation
+    // Hovers a row or control (canvas point) and leaves it again;
+    // feedbackLeaves: its leaves whose feedback rests hidden (they paint only
+    // while it shows).
+    std::optional<core::Point>hover;std::uint64_t feedbackLeaves{};
+    // The raster bytes of the shown module's plan with every feedback shape
+    // painted at rest (the earlier eager leaves), for the before/after report.
+    std::function<std::size_t()>eager;
 };
 std::string kib(std::size_t bytes){char text[32];std::snprintf(text,sizeof(text),"%.1f KiB",double(bytes)/1024.);return text;}
 
@@ -89,6 +100,21 @@ template<class Owner>void lifecycle(const char*label,Stage<Owner>&stage,gpu::Lay
     // Shown: artwork, rasterizer entries and GPU textures.
     stage.select(stage.module);const auto shown=p.resident();const auto shownRaster=raster.stats();const auto shownGPU=renderer.stats();const auto before=stage.capture();
     check(shown>0&&shownRaster.entries>baseline.entries&&shownGPU.textures>baseGPU.textures,"Showing the module builds and uploads its artwork");
+    if(p.eager){const auto eager=p.eager();check(eager>shown,"Resting feedback leaves hold no bitmap");
+        std::cout<<label<<": shown at rest "<<kib(shown)<<"; with every feedback shape painted at rest (before) "<<kib(eager)<<"\n";}
+    if(p.hover){
+        // A hover tint (and a rim resting hidden) paints only while it shows.
+        const auto q=stage.canvas(*p.hover);(void)stage.owner.pointer({app::PointerKind::move,app::PointerButton::none,q.x,q.y,0},stage.time);stage.settle(.3);
+        const auto hovered=p.resident();const auto painted=raster.stats().rasterizations-shownRaster.rasterizations;
+        check(hovered>shown&&painted==p.feedbackLeaves&&raster.stats().entries==shownRaster.entries,"Hovering paints exactly the resting-hidden feedback leaves");
+        // The host presents a frame only while an owner asks for one: the
+        // fade-out's last frame draws the resting value and gives the bitmap back.
+        (void)stage.owner.pointer({app::PointerKind::leave,app::PointerButton::none,0,0,0},stage.time);
+        unsigned frames{};while(frames<120&&stage.owner.requiresFrames(stage.time+1./60)){stage.frame();++frames;}
+        check(frames>0&&frames<120,"The fade-out asks for a bounded run of frames");
+        check(p.resident()==shown&&raster.stats().rasterizations==shownRaster.rasterizations+2*p.feedbackLeaves&&stage.capture()==before,"Faded-out feedback gives its bitmap back and paints as before");
+        std::cout<<label<<": hovering adds "<<kib(hovered-shown)<<" while its feedback shows ("<<frames<<" frames to fade out and release it)\n";
+    }
     // A switch inside the open HUD keeps the artwork (a switch back only re-uploads).
     stage.select(core::Module::power);check(p.resident()==shown&&raster.stats().entries==shownRaster.entries&&p.parks()==0,"A switch inside the open HUD keeps the artwork");
     // The HUD closes on another module: everything is released at once.
@@ -136,8 +162,12 @@ void clipboard(gpu::Renderer&renderer,const std::filesystem::path&root){
     // The host's Clipboard raster options (app/application.cpp constructClipboard).
     gpu::LayerRasterOptions options;options.pixelsPerPoint=2;options.paddingPoints=1;options.assetRoot=assets.root();options.memoryImages=&thumbnails;
     tools::ClipboardPreview owner(raster,options,std::move(actions),{},{},assets.images());owner.resize({1280,800,96,1,1280,800});
-    Stage stage(renderer,owner,core::Module::clipboard);
-    Probe probe;probe.resident=[&]{return owner.stats().residentPixelBytes;};probe.parks=[&]{return owner.stats().parks;};
+    Stage stage(renderer,owner,raster,core::Module::clipboard);
+    Probe probe;probe.hover=core::Point{200,43+41+18};probe.feedbackLeaves=1; // row 2: its copy tint (the framed rim rests at .28)
+    probe.resident=[&]{return owner.stats().residentPixelBytes;};probe.parks=[&]{return owner.stats().parks;};
+    probe.eager=[&]{gpu::LayerRasterizer eager;auto plan=gpu::prepareClipboardScene(owner.state(),{},assets.images());std::size_t bytes{};
+        const auto add=[&](const gpu::ClipboardPart&part){gpu::LayerScene scene(eager);scene.load(part.layers,options);bytes+=scene.report().pixelBytes;};
+        add(plan.collection);add(plan.foreground);add(plan.scrollbar);for(const auto&row:plan.rows)add(row);return bytes;};
     // ClipboardModule: overlayClosing -> setOverlayVisible(false), opening -> setOverlayVisible(true).
     probe.close=[&](double t){owner.setOverlayVisible(false,t);if(!owner.stats().residentPixelBytes)check(thumbnails.stats().cachedImages==0,"A released Clipboard keeps no cached row thumbnail");};
     probe.open=[&](double t){owner.setOverlayVisible(true,t);};probe.conceal=[&]{owner.conceal();};
@@ -154,12 +184,19 @@ void activity(gpu::Renderer&renderer){
     options.iconLoader=[&](const std::string&key,unsigned size)->std::optional<gpu::ActivityIconPixels>{{std::lock_guard lock(mutex);++loads;}gpu::ActivityIconPixels icon{size,size,std::vector<std::uint8_t>(std::size_t(size)*size*4,0)};
         for(std::size_t k=0;k<icon.straightRGBA.size();k+=4){icon.straightRGBA[k]=std::uint8_t(key.back()*20);icon.straightRGBA[k+1]=90;icon.straightRGBA[k+2]=160;icon.straightRGBA[k+3]=255;}return icon;};
     tools::ActivityPreview owner(raster,std::move(options));owner.resize({1280,800,96,1,1280,800});
-    Stage stage(renderer,owner,core::Module::activityMonitor);stage.drain=[&]{executor.waitIdle();executor.drain();};
+    Stage stage(renderer,owner,raster,core::Module::activityMonitor);stage.drain=[&]{executor.waitIdle();executor.drain();};
     // The Apps page with its icons is the larger artwork.
     stage.select(core::Module::activityMonitor);check(owner.perform("activity:apps",stage.time),"Apps tab");stage.settle();stage.select(core::Module::power);
     owner.setOverlayVisible(false,stage.time);owner.setOverlayVisible(true,stage.time);stage.settle(.2);check(owner.stats().residentPixelBytes==0,"Parked before the measured lifecycle");
     const auto parked=owner.stats().parks;const auto loaded=loads;check(loaded>0&&loaded<=gpu::ActivityIconProvider::maximumVisible,"The visible rows' icons loaded once");
     Probe probe;probe.resident=[&]{return owner.stats().residentPixelBytes;};probe.parks=[&]{return owner.stats().parks-parked;};
+    probe.hover=core::Point{53,36};probe.feedbackLeaves=2; // the Overview tab: its tint and rim
+    // The tab and column-header tints and rims as painted leaves instead of
+    // resting points (each surface is its own retained scene).
+    probe.eager=[&]{gpu::LayerRasterizer eager;const auto plan=gpu::prepareActivitySurfaces(mod::prepareActivityArtwork(owner.state(),{}),{});std::size_t extra{};
+        const auto bytes=[&](const Json&leaf){gpu::LayerScene scene(eager);scene.load(Json::Object{{"bounds",Json::Array{0,0,0,0}},{"position",Json::Array{0,0}},{"anchorPoint",Json::Array{0,0}},{"children",Json::Array{leaf}}},{});return scene.report().pixelBytes;};
+        for(const auto&s:plan)if(!s.action.empty())extra+=bytes(s.content)-bytes(Json::Object{{"id",s.id},{"kind","layer"},{"bounds",Json::Array{0,0,1,1}},{"position",Json::Array{0,0}},{"anchorPoint",Json::Array{0,0}},{"backgroundColor",Json::Object{{"sRGB",Json::Array{0,0,0,0}}}},{"children",Json::Array{}}});
+        return owner.stats().residentPixelBytes+extra;};
     // ActivityModule: overlayClosing -> cancelInteraction + setOverlayVisible(false).
     probe.close=[&](double t){owner.cancelInteraction();owner.setOverlayVisible(false,t);};probe.open=[&](double t){owner.setOverlayVisible(true,t);};probe.conceal=[&]{owner.conceal();};
     probe.afterRebuild=[&]{check(owner.state().showingApps()&&owner.iconStats()&&owner.iconStats()->loaded==loaded&&loads==loaded,"The rebuilt Apps rows bind their cached icons without loading them again");};
@@ -172,8 +209,12 @@ void eventLog(gpu::Renderer&renderer){
     mod::EventLogCallbacks callbacks{[&]{return events;},[]{},[](double){return std::string("11-14 22:13:19");}};
     // The host's Event Log raster options (app/application.cpp).
     tools::EventLogPreview owner(raster,gpu::LayerRasterOptions{},std::move(callbacks));owner.resize({1280,800,96,1,1280,800});
-    Stage stage(renderer,owner,core::Module::eventLog);
-    Probe probe;probe.resident=[&]{return owner.stats().residentPixelBytes;};probe.parks=[&]{return owner.stats().parks;};
+    Stage stage(renderer,owner,raster,core::Module::eventLog);
+    Probe probe;probe.hover=core::Point{196,94+55+25};probe.feedbackLeaves=2; // row 2: its tint and unframed rim
+    probe.resident=[&]{return owner.stats().residentPixelBytes;};probe.parks=[&]{return owner.stats().parks;};
+    probe.eager=[&]{gpu::LayerRasterizer eager;auto plan=mod::prepareEventLogArtwork(owner.state(),{});std::size_t bytes{};
+        const auto add=[&](const mod::EventLogPart&part){gpu::LayerScene scene(eager);scene.load(part.layers,{});bytes+=scene.report().pixelBytes;};
+        add(plan.header);add(plan.toolbar);add(plan.empty);add(plan.scrollbar);for(const auto&row:plan.rows)add(row);return bytes;};
     probe.close=[&](double t){owner.setOverlayVisible(false,t);};probe.open=[&](double t){owner.setOverlayVisible(true,t);};probe.conceal=[&]{owner.conceal();};
     lifecycle("Event Log (24 events, 4 visible)",stage,raster,probe);
 }
@@ -191,7 +232,7 @@ void storage(gpu::Renderer&renderer,const std::filesystem::path&resources){
     tools::StoragePreview owner(raster,std::move(options));owner.resize({1280,800,96,1,1280,800});
     check(owner.resources().pixelBytes==0&&!owner.resources().loaded&&raster.stats().entries==0,"Constructing Storage rasterizes nothing");
     owner.setAppearance({},0);owner.setAppearance(mod::StorageAppearance{false},0);check(raster.stats().entries==0,"An appearance event while Storage is not shown rasterizes nothing");
-    Stage stage(renderer,owner,core::Module::storage);stage.drain=[&]{executor.waitIdle();executor.drain();owner.utilityCompleted(stage.time);};
+    Stage stage(renderer,owner,raster,core::Module::storage);stage.drain=[&]{executor.waitIdle();executor.drain();owner.utilityCompleted(stage.time);};
     Probe probe;probe.resident=[&]{return owner.resources().pixelBytes;};probe.parks=[&]{return owner.resources().parks;};
     // StorageModule: overlayClosing -> cancelInteraction + setVisible(false); opening -> setVisible(true).
     probe.close=[&](double t){owner.cancelInteraction(t);owner.setVisible(false,t);};probe.open=[&](double t){owner.setVisible(true,t);};probe.conceal=[&]{owner.conceal();};

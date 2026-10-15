@@ -11,4 +11,7 @@ struct EventLogArtwork {EventLogPart header,toolbar,empty,scrollbar;std::vector<
 // numeric transforms. No raster/image/OS services are created here.
 EventLogArtwork prepareEventLogArtwork(const EventLogState&,const EventLogAppearance& = {});
 ehud::data::Json eventLogOutlinePath(double strokeEnd=1);
+// A row's plate leaf (its fill and outline, the surface marked outline) with
+// the outline drawn to strokeEnd (the registration trace).
+ehud::data::Json eventLogTracedPlate(ehud::data::Json plate,double strokeEnd);
 }

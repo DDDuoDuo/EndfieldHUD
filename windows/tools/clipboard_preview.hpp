@@ -48,6 +48,16 @@ public:
     // is not shown keeps no raster artwork. Never throws.
     void conceal()noexcept;
     const native::ClipboardState&state()const;
+    // UI Automation (tools/clipboard_automation.hpp): a canvas rect -> the
+    // logical client rect of its projected corners (none while the Clipboard
+    // does not accept input), the viewport metrics, the HUD language
+    // (setLanguage), and a listed action (ClipboardState::actions) performed
+    // like its click (canvas.perform(actionID:)); false for an id that is
+    // not listed now.
+    std::optional<core::Rect>clientRect(core::Rect canvas)const;
+    const app::ClientMetrics&clientMetrics()const noexcept;
+    core::Language language()const noexcept;
+    bool perform(std::string_view actionID,double time);
     void upload(native::Renderer&);std::span<const native::LayerCompositionEntry>entries();
     void collected(native::Renderer&);void release(native::Renderer&);
     native::ClipboardSceneStats stats()const;

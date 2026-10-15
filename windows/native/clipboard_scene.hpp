@@ -86,7 +86,10 @@ struct ClipboardScenePlan {ClipboardPart collection,foreground,scrollbar;std::ve
 ClipboardScenePlan prepareClipboardScene(const ClipboardState&,const ClipboardAppearance&,const ClipboardImages&);
 // topologyGapSamples stays 0: the authored reveal has no sampled CA topology.
 // residentPixelBytes: the retained parts' rasters plus a live reveal mask now.
-struct ClipboardSceneStats {std::size_t rows{},retiredParts{};std::uint64_t builds{},poses{},outlineRasters{},maskRasters{},maskUploads{},topologyGapSamples{},parks{};std::size_t residentPixelBytes{};};
+// feedbackPaints/Releases: hover or press tints and rims (and unframed rims)
+// that painted their source shape when their feedback began to show, and gave
+// it back after fading out.
+struct ClipboardSceneStats {std::size_t rows{},retiredParts{};std::uint64_t builds{},poses{},outlineRasters{},maskRasters{},maskUploads{},topologyGapSamples{},parks{},feedbackPaints{},feedbackReleases{};std::size_t residentPixelBytes{};};
 // ClipboardCanvas.animateCollectionChange -> HUDSubsectionTransition.reveal
 // (direction -1, after a removal or Clear that moves no row): the rows mask as
 // authored, the four shutter(progress:) keyframes (progress 0/.38/.72/1 at key

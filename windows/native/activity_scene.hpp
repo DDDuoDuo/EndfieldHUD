@@ -43,7 +43,10 @@ core::SubsectionMaskPath activitySortShutter(double direction,double elapsed);
 #ifdef _WIN32
 class LayerRasterizer;class Renderer;class LayerScene;struct LayerRasterOptions;struct LayerCompositionEntry;struct PlaneMask;struct PlaneShutter;
 // residentPixelBytes: the retained surfaces' rasters plus a live sort mask now.
-struct ActivitySceneStats {std::uint64_t builds{},localUpdates{},poses{},graphRasters{},graphPixelBytes{},maskRasters{},maskPixelBytes{},parks{};double graphRasterSeconds{},maximumGraphRasterSeconds{};std::size_t surfaces{},residentPixelBytes{};};
+// feedbackPaints/Releases: tab and column-header tints and rims that painted
+// their source shape when their feedback began to show, and gave it back
+// after fading out (they rest without a bitmap).
+struct ActivitySceneStats {std::uint64_t builds{},localUpdates{},poses{},graphRasters{},graphPixelBytes{},maskRasters{},maskPixelBytes{},parks{},feedbackPaints{},feedbackReleases{};double graphRasterSeconds{},maximumGraphRasterSeconds{};std::size_t surfaces{},residentPixelBytes{};};
 struct ActivityScenePose {core::Matrix4 world;float opacity{1};double time{};std::span<const PlaneMask>ownerMasks;const PlaneShutter*shutter{};};
 class NativeActivityScene final {
 public:

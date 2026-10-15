@@ -8,16 +8,28 @@
 namespace endfield::native {
 namespace {using Json=ehud::data::Json;namespace m=modules;using Matrix=core::Matrix4;
 void need(bool value,const char*message){if(!value)throw std::invalid_argument(message);}
+// A hover or press tint, and a rim that rests hidden (unframed), keeps no
+// bitmap while its feedback does not show (Mac: a CAShapeLayer at opacity 0
+// keeps no backing store): its leaf holds one transparent point until the
+// feedback begins and gives the shape back after fading out.
+bool lazyFeedback(const m::EventLogSurface&s){return !s.action.empty()&&!(s.rim&&s.framed);}
+Json feedbackPlaceholder(const std::string&id){return Json::Object{{"id",id},{"kind","layer"},{"bounds",Json::Array{0,0,1,1}},{"position",Json::Array{0,0}},{"anchorPoint",Json::Array{0,0}},{"backgroundColor",Json::Object{{"sRGB",Json::Array{0,0,0,0}}}},{"children",Json::Array{}}};}
+Json restingLayers(const m::EventLogPart&plan){auto root=plan.layers;auto&nodes=const_cast<Json::Array&>(root["children"].array());need(nodes.size()==plan.surfaces.size(),"Event Log leaves and surfaces diverged");
+    for(std::size_t n=0;n<nodes.size();++n)if(lazyFeedback(plan.surfaces[n]))nodes[n]=feedbackPlaceholder(plan.surfaces[n].id);return root;}
 }
 struct NativeEventLogScene::Impl {
     struct Track{double from{},target{},start{},duration{};};
     static double ease(double phase){return core::CubicTiming{0,0,.58,1}.value(phase);}
     static double value(Track t,double time){return t.duration>0?t.from+(t.target-t.from)*ease((time-t.start)/t.duration):t.target;}
+    // A lazy feedback leaf shows while its target is visible or it is still
+    // fading out from a visible value.
+    static bool shows(const Track&t,double time){return t.target>0||(t.from>0&&time<t.start+t.duration);}
     struct Part{
         m::EventLogPart plan;LayerScene scene;std::vector<LayerPlacement>placements,active;std::vector<Track>feedback;std::array<PlaneMask,8>masks{};
-        std::optional<double>selectionStart;double stroke{1},uploadedStroke{1};std::uint64_t strokeRevision{1};
-        Part(LayerRasterizer&r,m::EventLogPart p,const LayerRasterOptions&o):plan(std::move(p)),scene(r),placements(plan.surfaces.size()),feedback(plan.surfaces.size()){
-            scene.load(plan.layers,o);need(scene.report().unsupported.empty(),"Unsupported original Event Log local artwork");active.reserve(placements.size());
+        std::optional<double>selectionStart;double stroke{1},uploadedStroke{1};std::uint64_t strokeRevision{1},paintRevision{};
+        std::vector<std::uint8_t>painted; // a lazy feedback leaf currently holds its source shape
+        Part(LayerRasterizer&r,m::EventLogPart p,const LayerRasterOptions&o):plan(std::move(p)),scene(r),placements(plan.surfaces.size()),feedback(plan.surfaces.size()),painted(plan.surfaces.size(),0){
+            scene.load(restingLayers(plan),o);need(scene.report().unsupported.empty(),"Unsupported original Event Log local artwork");active.reserve(placements.size());
             for(std::size_t n=0;n<placements.size();++n){const auto&s=plan.surfaces[n];placements[n].surface=scene.surfaceIndex(s.id).value_or(std::size_t(-1));placements[n].world=s.local;placements[n].opacity=0;feedback[n].from=feedback[n].target=s.rim&&s.framed?.28:0;if(placements[n].surface!=std::size_t(-1))active.push_back(placements[n]);}scene.setPlacements(active);scene.prepareDraws();
         }
     };
@@ -73,8 +85,16 @@ void NativeEventLogScene::updatePose(const NativeEventLogPose&pose){auto&i=*impl
     i.each([&](auto&part){part.active.clear();for(const auto&placement:part.placements)if(placement.surface!=std::size_t(-1))part.active.push_back(placement);part.scene.setPlacements(part.active);part.scene.setGroupShutter(pose.shutter);if(part.selectionStart){part.stroke=Impl::ease((pose.time-*part.selectionStart)/.18);if(pose.time-*part.selectionStart>=.18)part.selectionStart.reset();}});
     if(i.handoffStart&&!sample.active){i.handoffStart.reset();i.retirePage(1-i.selected);i.rebuildEntries();}if(i.confirmationStart&&pose.time-*i.confirmationStart>=.18)i.confirmationStart.reset();i.lastTime=pose.time;++i.stats.poses;
 }
-bool NativeEventLogScene::uploadAnimations(Renderer&){auto&i=*impl_;bool changed{};for(auto&page:i.pages)if(page)for(auto&part:page->rows)if(part->uploadedStroke!=part->stroke){for(std::size_t n=0;n<part->plan.surfaces.size();++n)if(part->plan.surfaces[n].outline){auto node=part->plan.layers["children"].array()[n];node["shape"]["path"]=m::eventLogOutlinePath(part->stroke);part->scene.updateLocalContent(part->plan.surfaces[n].id,++part->strokeRevision,node,i.options);++i.stats.outlineRasters;changed=true;}part->uploadedStroke=part->stroke;}return changed;}
-bool NativeEventLogScene::requiresFrames(double time)const{auto&i=*impl_;i.time(time);if(i.handoffStart&&time-*i.handoffStart<.26)return true;if(i.confirmationStart&&time-*i.confirmationStart<.18)return true;bool demand{};i.each([&](const auto&part){demand|=part.selectionStart&&time-*part.selectionStart<.18;for(auto track:part.feedback)demand|=track.duration>0&&track.from!=track.target&&time<track.start+track.duration;});return demand;}
+bool NativeEventLogScene::uploadAnimations(Renderer&){auto&i=*impl_;bool changed{};
+    // A lazy feedback leaf paints its source shape once its feedback shows
+    // (before this frame is drawn) and gives it back after fading out.
+    i.each([&](auto&p){for(std::size_t n=0;n<p.plan.surfaces.size();++n){const auto&s=p.plan.surfaces[n];if(!lazyFeedback(s))continue;
+        const bool shows=Impl::shows(p.feedback[n],i.lastTime);if(shows==bool(p.painted[n]))continue;
+        p.scene.updateLocalContent(s.id,++p.paintRevision,shows?p.plan.layers["children"].array()[n]:feedbackPlaceholder(s.id),i.options);p.painted[n]=shows;++(shows?i.stats.feedbackPaints:i.stats.feedbackReleases);changed=true;}});for(auto&page:i.pages)if(page)for(auto&part:page->rows)if(part->uploadedStroke!=part->stroke){for(std::size_t n=0;n<part->plan.surfaces.size();++n)if(part->plan.surfaces[n].outline){const auto node=m::eventLogTracedPlate(part->plan.layers["children"].array()[n],part->stroke);part->scene.updateLocalContent(part->plan.surfaces[n].id,++part->strokeRevision,node,i.options);++i.stats.outlineRasters;changed=true;}part->uploadedStroke=part->stroke;}return changed;}
+bool NativeEventLogScene::requiresFrames(double time)const{auto&i=*impl_;i.time(time);if(i.handoffStart&&time-*i.handoffStart<.26)return true;if(i.confirmationStart&&time-*i.confirmationStart<.18)return true;bool demand{};i.each([&](const auto&part){demand|=part.selectionStart&&time-*part.selectionStart<.18;for(auto track:part.feedback)demand|=track.duration>0&&track.from!=track.target&&time<track.start+track.duration;
+        // One more frame once a painted lazy leaf has faded out: it draws the
+        // final value and gives the bitmap back (uploadAnimations).
+        for(std::size_t n=0;n<part.painted.size();++n)demand|=part.painted[n]&&!Impl::shows(part.feedback[n],time);});return demand;}
 std::span<const LayerCompositionEntry>NativeEventLogScene::entries()const noexcept{return impl_->entries;}
 bool NativeEventLogScene::collectRetired(Renderer&r){auto&i=*impl_;for(auto&part:i.retired)if(!part->scene.releaseResources(r))return false;i.retired.clear();return true;}
 bool NativeEventLogScene::releaseResources(Renderer&r){bool okay=collectRetired(r);impl_->each([&](auto&part){okay=part.scene.releaseResources(r)&&okay;});return okay;}

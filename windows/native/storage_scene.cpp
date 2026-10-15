@@ -87,6 +87,7 @@ void NativeStorageOverlay::hide(double t,bool animated){auto&i=*impl_;if(!i.scen
 bool NativeStorageOverlay::accepting()const noexcept{return impl_->scene&&!impl_->leaving;}
 LayerScene*NativeStorageOverlay::scene()noexcept{return impl_->scene.get();}
 std::optional<std::string_view>NativeStorageOverlay::actionAt(Point p)const noexcept{const auto&i=*impl_;if(!accepting()||!std::isfinite(p.x)||!std::isfinite(p.y))return {};for(const auto&a:i.artwork.actions)if(a.rect.contains(p))return a.id;return {};}
+std::span<const modules::StorageAction>NativeStorageOverlay::actions()const noexcept{if(!accepting())return {};return impl_->artwork.actions;}
 bool NativeStorageOverlay::contains(Point p)const noexcept{return accepting()&&impl_->artwork.frame.contains(p);}
 bool NativeStorageOverlay::setFeedback(std::optional<Point>point,bool pressed,bool reduced,double t){auto&i=*impl_;if(!i.scene)return false;const auto hit=point&&!i.leaving?actionAt(*point):std::nullopt;bool changed{};
     for(std::size_t n=0;n<i.artwork.surfaces.size();++n){const auto&s=i.artwork.surfaces[n];if(s.action.empty())continue;const bool selected=hit&&*hit==s.action;const double target=selected?(s.rim?1:pressed?1:.62):i.rest(n);auto&track=i.tracks[n];

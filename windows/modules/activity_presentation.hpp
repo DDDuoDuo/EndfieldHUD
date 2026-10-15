@@ -38,6 +38,13 @@ inline constexpr std::array<ActivitySort,6>activityAppColumns{ActivitySort::name
 inline constexpr std::array<core::Rect,6>activityAppHeaderFrames{{{12,61,98,15},{112,61,42,15},{156,61,42,15},{200,61,49,15},{251,61,65,15},{317,61,65,15}}};
 // The GPU row caption in the five HUD languages (not in the Mac catalog).
 std::string activityGPUCaption(core::Language);
+// ActivityMonitorCanvas.accessibilityStatus (the screen reader's status text):
+// on the Apps page every app of the snapshot ("name, CPU x%, RAM y, ↑ up,
+// ↓ down, Read r, Write w", apps joined by "; "), on the Overview the system
+// values ("CPU x%; RAM used / total; Upload r; Download r; Disk read r; Disk
+// write r"). GPU (a Windows addition) reads like its neighbours: "GPU x%"
+// after an app's CPU and after the Overview's disk values.
+std::string activityAccessibilityStatus(const ActivityState&,core::Language);
 // Event-only content builder: one sample, preference change, tab/sort, or row
 // identity change. Only the selected page is built, matching the source's
 // hidden-overview fast path. Tilt/animation must use retained numeric plans.

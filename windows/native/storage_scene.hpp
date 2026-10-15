@@ -52,6 +52,8 @@ public:
     bool accepting()const noexcept;           // shown and not leaving
     LayerScene*scene()noexcept;               // null when nothing is drawn
     std::optional<std::string_view>actionAt(core::Point canvas)const noexcept;
+    // The shown artwork's actions (canvas points) while it accepts input.
+    std::span<const modules::StorageAction>actions()const noexcept;
     bool contains(core::Point canvas)const noexcept;
     bool setFeedback(std::optional<core::Point>canvas,bool pressed,bool reduced,double time);
     void updatePose(const core::Matrix4&contentWorld,float opacity,double time,std::span<const PlaneMask>masks={},const PlaneShutter*shutter=nullptr);

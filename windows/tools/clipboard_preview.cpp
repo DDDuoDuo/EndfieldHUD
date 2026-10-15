@@ -12,10 +12,19 @@ namespace {using Matrix=core::Matrix4;using Json=ehud::data::Json;namespace gpu=
 void need(bool v,const char*m){if(!v)throw std::invalid_argument(m);}
 bool contains(core::Rect r,core::Point p){return p.x>=r.x&&p.y>=r.y&&p.x<r.x+r.width&&p.y<r.y+r.height;}
 Json blank(){return Json::Object{{"bounds",Json::Array{0,0,400,334}},{"position",Json::Array{0,0}},{"anchorPoint",Json::Array{0,0}},{"children",Json::Array{}}};}
+// Bounding rect of a canvas rect's projected corners, in logical client points.
+std::optional<core::Rect>projected(const core::Projection&projection,double scale,core::Rect r){
+    if(!std::isfinite(r.x)||!std::isfinite(r.y)||!std::isfinite(r.width)||!std::isfinite(r.height)||r.width<0||r.height<0||!(scale>0))return std::nullopt;
+    double x0=INFINITY,y0=INFINITY,x1=-INFINITY,y1=-INFINITY;
+    for(const core::Point c:{core::Point{r.x,r.y},core::Point{r.x+r.width,r.y},core::Point{r.x,r.y+r.height},core::Point{r.x+r.width,r.y+r.height}}){
+        const auto q=projection.project(c);if(!q||!std::isfinite(q->x)||!std::isfinite(q->y))return std::nullopt;
+        x0=std::min(x0,q->x);y0=std::min(y0,q->y);x1=std::max(x1,q->x);y1=std::max(y1,q->y);}
+    return core::Rect{x0/scale,y0/scale,(x1-x0)/scale,(y1-y0)/scale};}
 }
 struct ClipboardPreview::Impl {
     gpu::ClipboardState state;gpu::NativeClipboardScene scene;gpu::LayerScene geometry;gpu::NativeModuleSurface surface;gpu::NativeModuleRegistration registration{"clipboard.registration"};
     app::ClientMetrics metrics;core::Projection projection;std::optional<gpu::ModuleSurfacePose>pose;bool active{},input{},pressed{};std::optional<core::Point>pointerPoint;double time{};unsigned eventDepth{};std::vector<gpu::LayerCompositionEntry>composed;
+    core::Language language{core::Language::simplifiedChinese}; // ClipboardStrings{} are the Chinese source strings
     struct Event {Impl&i;Event(Impl&v,double t):i(v){need(std::isfinite(t),"Clipboard needs finite owner time");if(!i.eventDepth)i.time=std::max(i.time,t);++i.eventDepth;}~Event(){--i.eventDepth;}};
     // The raster artwork (and the row thumbnails it borrowed from the
     // provider's image source) is released once the HUD closes while the
@@ -35,7 +44,7 @@ ClipboardPreview::ClipboardPreview(gpu::LayerRasterizer&r,gpu::LayerRasterOption
 ClipboardPreview::~ClipboardPreview()=default;
 void ClipboardPreview::resize(const app::ClientMetrics&m){need(m.pixelWidth&&m.pixelHeight&&std::isfinite(m.scale)&&m.scale>0,"Invalid Clipboard viewport");impl_->metrics=m;}
 void ClipboardPreview::refresh(){impl_->state.refresh();}
-void ClipboardPreview::setLanguage(core::Language language){impl_->state.setStrings(modules::clipboardStrings(language));}
+void ClipboardPreview::setLanguage(core::Language language){impl_->state.setStrings(modules::clipboardStrings(language));impl_->language=language;}
 void ClipboardPreview::setAppearance(gpu::ClipboardAppearance a,gpu::ClipboardImages b){impl_->scene.setAppearance(a,std::move(b));}
 void ClipboardPreview::setReduceMotion(bool value){impl_->state.setReduceMotion(value);}
 void ClipboardPreview::update(const Matrix&center,const core::source::DesktopChromeSettings&settings,const core::ModulePresentationSample&sample,float opacity,double t){auto&i=*impl_;const Impl::Event event(i,t);
@@ -64,6 +73,11 @@ void ClipboardPreview::setOverlayVisible(bool value,double t){auto&i=*impl_;cons
 void ClipboardPreview::conceal()noexcept{try{(void)impl_->park();}catch(...){}}
 void ClipboardPreview::cancelInteraction(){impl_->pressed=false;impl_->pointerPoint.reset();if(impl_->pose)impl_->scene.setFeedback({},false,impl_->time);}bool ClipboardPreview::pointerLocked()const{return impl_->pressed;}
 const gpu::ClipboardState&ClipboardPreview::state()const{return impl_->state;}
+std::optional<core::Rect>ClipboardPreview::clientRect(core::Rect r)const{const auto&i=*impl_;if(!i.input||!i.pose)return std::nullopt;return projected(i.projection,i.metrics.scale,r);}
+const app::ClientMetrics&ClipboardPreview::clientMetrics()const noexcept{return impl_->metrics;}
+core::Language ClipboardPreview::language()const noexcept{return impl_->language;}
+bool ClipboardPreview::perform(std::string_view id,double t){auto&i=*impl_;const Impl::Event event(i,t);if(!i.input)return false;const auto actions=i.state.actions();
+    if(std::none_of(actions.begin(),actions.end(),[&](const auto&a){return a.id==id;}))return false;const std::string owned(id);i.state.perform(owned);return true;}
 void ClipboardPreview::upload(gpu::Renderer&r){auto&i=*impl_;i.renderer=&r;if(!i.pose)return;i.registration.uploadGeometry(r);i.scene.uploadAnimations(r);}
 std::span<const gpu::LayerCompositionEntry>ClipboardPreview::entries(){auto&i=*impl_;i.composed.clear();if(i.pose){for(const auto&e:i.scene.entries())i.composed.push_back(e);i.composed.push_back({&i.geometry,i.registration.draws()});}return i.composed;}
 void ClipboardPreview::collected(gpu::Renderer&r){auto&i=*impl_;need(i.scene.collectRetired(r),"Clipboard old artwork still published");

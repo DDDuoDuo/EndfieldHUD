@@ -23,6 +23,14 @@ Json graph(std::string id,const ActivityGraphPlan&plan){auto out=layer(id,Activi
 }
 }
 std::string activityGPUCaption(core::Language language){switch(language){case core::Language::simplifiedChinese:case core::Language::traditionalChinese:return "最高引擎";case core::Language::japanese:return "最大エンジン";case core::Language::korean:return "최대 엔진";default:return "TOP ENGINE";}}
+std::string activityAccessibilityStatus(const ActivityState&state,core::Language language){const auto tr=[&](std::string_view en,std::string_view zh){return core::localized(en,zh,language);};std::string out;
+    if(state.showingApps()){for(const auto&item:state.appSnapshot().items){if(!out.empty())out+="; ";
+        out+=item.identity.name+", CPU "+activityPercent(item.cpuPercent,false)+", GPU "+activityPercent(item.gpuPercent)+", RAM "+activityBytes(item.memoryBytes?std::optional<double>(double(*item.memoryBytes)):std::nullopt)+
+            ", ↑ "+activityRate(item.upload)+", ↓ "+activityRate(item.download)+", "+tr("Read ","读取 ")+activityRate(item.diskRead)+", "+tr("Write ","写入 ")+activityRate(item.diskWrite);}return out;}
+    const auto&value=state.snapshot();const auto memory=value.memory;
+    return "CPU "+activityPercent(value.cpuPercent)+"; "+tr("RAM ","RAM ")+activityBytes(memory?std::optional<double>(double(memory->used)):std::nullopt)+" / "+activityBytes(memory?std::optional<double>(double(memory->total)):std::nullopt)+
+        "; "+tr("Upload ","上传 ")+activityRate(value.upload)+"; "+tr("Download ","下载 ")+activityRate(value.download)+"; "+tr("Disk read ","磁盘读取 ")+activityRate(value.diskRead)+"; "+tr("Disk write ","磁盘写入 ")+activityRate(value.diskWrite)+
+        "; GPU "+activityPercent(value.gpuPercent);}
 std::string activityBytes(std::optional<double>bytes){if(!bytes||!std::isfinite(*bytes)||*bytes<0)return "—";static constexpr std::array<const char*,6>units{"B","KB","MB","GB","TB","PB"};double value=*bytes;std::size_t index{};while(value>=1000&&index+1<units.size()){value/=1000;++index;}char out[400];std::snprintf(out,sizeof(out),value>=100||index==0?"%.0f %s":"%.1f %s",value,units[index]);return out;}
 std::string activityRate(std::optional<double>value){if(!value||!std::isfinite(*value)||*value<0)return "—";return activityBytes(value)+"/s";}
 std::string activityPercent(std::optional<double>value,bool whole){if(!value||!std::isfinite(*value)||*value<0)return "—";char out[400];std::snprintf(out,sizeof(out),"%.1f%%",whole?std::min(100.,*value):*value);return out;}
