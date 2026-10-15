@@ -284,7 +284,9 @@ public:
     void cancelInteraction(double t) override { preview_->cancelInteraction(t); }
     bool hostEvent(const app::HostEvent& e, double t) override {
         // A concealed HUD released its player: retire the broker records now.
-        if (e.kind == app::HostEvent::Kind::overlayConcealed) (void)preview_->refreshSharedMedia(t);
+        // Source: the canvas layers die with the HUD, so a hidden canvas
+        // releases its artwork, preview pixels and GPU textures (conceal()).
+        if (e.kind == app::HostEvent::Kind::overlayConcealed) { (void)preview_->refreshSharedMedia(t); preview_->conceal(); }
         return false;
     }
     // Source HUDMediaAssemblyInteraction.importFiles (first file; ignored while
@@ -440,8 +442,9 @@ private:
         const auto cycle = step.cycle;
         run.present();
         step.check(!owner.entries().empty() && !owner.controller().session().document(), "Selected Media Assembly publishes its retained empty canvas");
-        // GPU previews: the HLSL compile was queued on the shared worker when
-        // the editor was first shown; the processor exists once it drained.
+        // GPU previews: build-time programs (or, without fxc, the HLSL compile
+        // queued on the shared worker when the editor was first shown); the
+        // processor exists once they are ready.
         bool mediaCapable{};
         try { mediaCapable = host_.renderer().mediaDevice() != nullptr; } catch (const std::exception&) {}
         step.check(mediaCapable, "The application renderer offers same-device media (RendererOptions.mediaVideo)");
@@ -666,6 +669,28 @@ private:
                    "The host publishes the long-work executor and the Shelf services with the exact types the area looks up");
         step.check(owner.stats().frameFilterHook && owner.stats().frameFilterRoute,
                    "The shared frame server offers the played-frame filter hook and the media broker carries the filter to it");
+        {   // Memory. Hidden inside the open HUD the editor keeps no decoded
+            // source on the CPU or GPU (source setActive(false) clears the
+            // engine caches) but keeps its canvas artwork, so switching back
+            // does not rebuild it. Once the HUD has closed (the host's
+            // overlayConcealed broadcast, delivered here as the host does) a
+            // canvas that is not composed releases its artwork, rasters and
+            // textures; the next cycle's module step shows it rebuilt.
+            step.drain();
+            const auto hidden = owner.stats();
+            step.check(hidden.previewPixelBytes == 0 && hidden.gpuResidentBytes == 0 && hidden.playbackResidentBytes == 0 && hidden.retainedTextures == 0 && engine_->stats().cachedSourceBytes == 0,
+                       "Hidden Media Assembly keeps no decoded source, preview pixels or GPU source textures (" + std::to_string(hidden.previewPixelBytes) + " CPU, " +
+                       std::to_string(hidden.gpuResidentBytes + hidden.playbackResidentBytes) + " GPU bytes)");
+            const bool composed = !preview_->entries().empty();
+            const auto entries = host_.rasterizer().stats().entries;
+            (void)hostEvent({app::HostEvent::Kind::overlayConcealed, 0}, step.time);
+            const auto parked = owner.stats();
+            if (composed) step.check(parked.parks == hidden.parks && parked.sceneParts == hidden.sceneParts, "A composed Media Assembly keeps its canvas until it is hidden");
+            else step.check(hidden.sceneParts > 0 && hidden.scenePixelBytes > 0 && parked.parks == hidden.parks + 1 && parked.sceneParts == 0 && parked.scenePixelBytes == 0 &&
+                            parked.retainedTextures == 0 && host_.rasterizer().stats().entries < entries,
+                            "Once the HUD is closed the hidden Media Assembly releases its canvas artwork (" + std::to_string(hidden.sceneParts) + " parts, " +
+                            std::to_string(hidden.scenePixelBytes) + " raster bytes, " + std::to_string(entries - host_.rasterizer().stats().entries) + " shared raster entries)");
+        }
         {   // The host's refresh after the module step: the fragments follow the
             // owner (none while Media Assembly is not the accepting module).
             ComPtr<CoverageAutomationGroup> group; group.Attach(new CoverageAutomationGroup(*this));

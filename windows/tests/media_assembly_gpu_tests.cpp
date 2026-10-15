@@ -88,8 +88,11 @@ const std::array<std::string_view,15>filterIDs{"none","sp_filter_1","sp_filter_2
 void run(const fs::path&assets){
     Device d;std::map<m::MediaAssemblyFilter,std::vector<std::uint8_t>>cubes;
     const auto cube=[&](m::MediaAssemblyFilter f)->std::span<const std::uint8_t>{if(f==m::MediaAssemblyFilter::none)return {};auto&v=cubes[f];if(v.empty())v=readFile(assets/"luts"/(std::string(filterIDs[std::size_t(f)])+".rgb8"));return v;};
+    std::cout<<"GPU programs "<<(n::mediaAssemblyGpuShadersEmbedded()?"embedded at build time (fxc)":"compiled at run time (no fxc in this build)")<<'\n';
+    check(n::mediaAssemblyGpuShadersEmbedded()==n::mediaAssemblyGpuShadersReady(),"Build-time programs are ready before any processor exists; run-time ones only after a compile");
     const auto compileStart=std::chrono::steady_clock::now();n::NativeMediaAssemblyGpuProcessor gpu(d.shared());
-    std::cout<<"first processor (shader compile + device objects) "<<std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-compileStart).count()<<" ms\n";
+    check(n::mediaAssemblyGpuShadersReady(),"A processor leaves the programs ready");
+    std::cout<<"first processor ("<<(n::mediaAssemblyGpuShadersEmbedded()?"device objects":"shader compile + device objects")<<") "<<std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-compileStart).count()<<" ms\n";
     {const auto again=std::chrono::steady_clock::now();n::NativeMediaAssemblyGpuProcessor second(d.shared());std::cout<<"later processor (cached bytecode) "<<std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-again).count()<<" ms\n";}
     const unsigned w=67,h=43;const auto opaque=synthetic(w,h,false),alpha=synthetic(w,h,true);
     // 1. Still/preview path: straight encoded output equals the CPU processor.
@@ -239,6 +242,22 @@ void run(const fs::path&assets){
         Device other;rejected=false;try{const auto foreign=other.target(plan.outputWidth,plan.outputHeight);gpu.render(other.surface(foreign).Get());}catch(const std::exception&){rejected=true;}check(rejected,"A foreign-device surface is rejected");
         m::MediaAssemblyAdjustments bad;bad.exposure=9;rejected=false;try{gpu.configure(bad,{},false);}catch(const std::exception&){rejected=true;}check(rejected,"Invalid adjustments are rejected");
         gpu.releaseTargets();
+    }
+    // 5b. Hidden editor (source CIContext.clearCaches): releaseResources drops
+    // every texture and the CPU cube copy, keeps the programs, requires a new
+    // configure, and the next source renders exactly as before.
+    {
+        m::MediaAssemblyAdjustments a;a.exposure=.3;a.filter=m::MediaAssemblyFilter::filter5;const auto lookup=cube(a.filter);
+        gpu.setSource(w,h,opaque,std::size_t(w)*4,false);auto plan=gpu.configure(a,lookup,false);auto target=d.target(plan.outputWidth,plan.outputHeight);gpu.render(d.surface(target).Get());
+        const auto before=d.read(target);const auto held=gpu.stats();
+        check(held.residentBytes>=std::size_t(w)*h*4+32*32*32*4,"The processor reports the source and lookup textures it holds ("+std::to_string(held.residentBytes)+" bytes)");
+        gpu.releaseResources();const auto released=gpu.stats();
+        check(released.residentBytes==0&&!gpu.hasSource()&&released.releases==held.releases+1,"releaseResources drops every texture and the CPU cube copy");
+        bool rejected{};try{gpu.render(d.surface(target).Get());}catch(const std::exception&){rejected=true;}check(rejected,"After a release a render needs a source and edits again");
+        gpu.releaseResources();check(gpu.stats().releases==released.releases,"Releasing nothing counts nothing");
+        gpu.setSource(w,h,opaque,std::size_t(w)*4,false);plan=gpu.configure(a,lookup,false);gpu.render(d.surface(target).Get());
+        check(compare(d.read(target),before,"render after release").worst==0&&gpu.stats().lookupUploads==held.lookupUploads+1,"The next source and lookup upload render exactly as before");
+        gpu.releaseResources();
     }
     // 6. Throughput of the bounded preview size (informational; WARP is a CPU rasterizer).
     {

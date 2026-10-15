@@ -72,7 +72,15 @@ std::span<const LayerCompositionEntry>NativeMediaAssemblyScene::entries()const n
 bool NativeMediaAssemblyScene::requiresFrames(double time)const{const auto&i=*impl_;i.clock(time);if(i.motion.requiresFrames(time))return true;for(const auto&p:i.parts)if(p)for(const auto&t:p->tracks)if(t.active(time))return true;return false;}
 bool NativeMediaAssemblyScene::collectRetired(Renderer&r){auto&i=*impl_;for(auto&p:i.oldClosing)if(!i.releaseClose(*p,r))return false;i.oldClosing.clear();for(auto&p:i.retired)if(!i.releasePart(*p,r))return false;i.retired.clear();for(auto&p:i.parts)if(p&&!p->group)p->scene.collectRetiredResources(r);return true;}
 bool NativeMediaAssemblyScene::releaseResources(Renderer&r){auto&i=*impl_;bool done=collectRetired(r);if(i.closing)done=i.releaseClose(*i.closing,r)&&done;for(auto&p:i.parts)if(p)done=i.releasePart(*p,r)&&done;if(done)i.renderer=nullptr;return done;}
-MediaAssemblySceneStats NativeMediaAssemblyScene::stats()const noexcept{auto out=impl_->statistics;out.retired=impl_->retired.size()+impl_->oldClosing.size();for(const auto&p:impl_->parts)if(p)out.surfaces+=p->plan.size();return out;}
+bool NativeMediaAssemblyScene::park(Renderer&r)noexcept{auto&i=*impl_;
+ const bool held=std::any_of(i.parts.begin(),i.parts.end(),[](const auto&p){return bool(p);})||!i.retired.empty()||i.closing||!i.oldClosing.empty();if(!held)return false;
+ // A part that is still published refuses before anything is destroyed.
+ try{if(!releaseResources(r))return false;}catch(...){return false;}
+ for(auto&p:i.parts)p.reset();i.retired.clear();i.closing.reset();i.oldClosing.clear();i.preview.reset();i.motion.settle();i.feedbackDirty=true;i.refresh();++i.statistics.parks;return true;}
+MediaAssemblySceneStats NativeMediaAssemblyScene::stats()const noexcept{const auto&i=*impl_;auto out=i.statistics;out.retired=i.retired.size()+i.oldClosing.size();
+ const auto add=[&](const Impl::Part&p){++out.parts;out.pixelBytes+=p.scene.report().pixelBytes;};
+ for(const auto&p:i.parts)if(p){out.surfaces+=p->plan.size();add(*p);}for(const auto&p:i.retired)add(*p);
+ if(i.closing&&i.closing->stickers)add(*i.closing->stickers);for(const auto&c:i.oldClosing)if(c->stickers)add(*c->stickers);return out;}
 }
 #endif
 #if defined(_MSC_VER)&&!defined(__clang__)

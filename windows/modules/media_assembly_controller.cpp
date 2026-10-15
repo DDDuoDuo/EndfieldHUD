@@ -20,7 +20,11 @@ std::shared_ptr<const MediaAssemblyPreviewImage>MediaAssemblyController::preview
 }
 void MediaAssemblyController::setActive(bool value,double t){
     checkTime(t);lastTime_=t;if(session_.active()==value)return;
-    if(!value){flushEdited();session_.setActive(false);engine_->clearCaches();}
+    if(!value){flushEdited();session_.setActive(false);engine_->clearCaches();
+        // A preview decode already queued can start after the immediate purge
+        // and cache its bounded source again; clearing behind it releases that
+        // source while the editor stays hidden (as closeDocument does).
+        auto engine=engine_;(void)submit_([engine]{engine->clearCaches();},[](std::exception_ptr){});}
     else{session_.setActive(true);pump();}
     changed();
 }

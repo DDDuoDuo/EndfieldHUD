@@ -60,7 +60,8 @@ void run(n::Renderer&r,HWND hwnd,const fs::path&assets){
     auto dialog=[&]{MSG msg{};bool handled{};while(PeekMessageW(&msg,hwnd,0,0,PM_REMOVE))handled=owner.message({hwnd,msg.message,msg.wParam,msg.lParam},now)||handled;return handled;};
     frame();check(owner.entries().empty()&&utility.stats().accepted==0,"Unselected owner publishes nothing and starts no work");
     modules.select(c::Module::mediaAssembly,now);for(int k=0;k<40;++k)frame(.02);check(!owner.entries().empty(),"Selected Media Assembly publishes retained artwork");
-    check(!owner.stats().gpuActive&&utility.stats().accepted==1,"First shown: the GPU shader compile is queued on the utility worker, not the UI thread");
+    if(n::mediaAssemblyGpuShadersEmbedded())check(owner.stats().gpuActive&&owner.controller().deferredPreviews()&&utility.stats().accepted==0,"First shown: build-time GPU programs, so GPU previews start at once and nothing is compiled or queued");
+    else check(!owner.stats().gpuActive&&utility.stats().accepted==1,"First shown: the GPU shader compile is queued on the utility worker, not the UI thread");
     drain();frame();check(owner.stats().gpuActive&&owner.controller().deferredPreviews(),"GPU previews enabled after the worker compile");
     // Open -> chooser -> File Explorer dialog (posted, modal, injected) -> import.
     check(click({389,21})&&owner.menu()==m::MediaAssemblyMenuKind::source,"Open shows the source chooser under its trigger");frame();
@@ -166,6 +167,66 @@ void parity(n::Renderer&r,HWND hwnd,const fs::path&assets){
     int worst{};std::size_t over{},changed{};for(std::size_t k=0;k<gpu.pixels.size();++k){const int d=std::abs(int(gpu.pixels[k])-int(cpu.pixels[k]));worst=std::max(worst,d);over+=d>2;changed+=d>0;}
     std::cout<<"GPU/CPU preview stage worst="<<worst<<" over2="<<over<<" changed="<<changed<<" of "<<gpu.pixels.size()<<'\n';
     check(worst<=3&&over*1000<=gpu.pixels.size(),"GPU-edited previews compose like CPU-edited previews");
+}
+// Memory audit: what the owner keeps while shown, hidden inside the open HUD
+// and after the HUD closed (source: setActive(false) clears the editor's
+// preview and engine caches, the canvas layers die with the HUD). A
+// synthetic 1000 x 750 still with a filter, edited on the renderer's device,
+// at the production 2 pixels per point.
+void residency(n::Renderer&r,HWND hwnd,const fs::path&assets){
+    Temp temp;const auto photo=temp.path/L"residency.png";writePNG(photo,1000,750);
+    n::LayerRasterizer raster;a::UtilityExecutor utility([]{});auto engine=std::make_shared<n::NativeMediaAssemblyEngine>(n::NativeMediaAssemblyEngine::Options{assets});unsigned ids{};
+    t::MediaAssemblyPreviewOptions options;options.raster.pixelsPerPoint=2;options.raster.paddingPoints=1;options.raster.assetRoot=assets;options.window=hwnd;options.uuid=[&]{return "resident-"+std::to_string(++ids);};
+    t::MediaAssemblyPreview owner(raster,utility,engine,std::move(options));owner.resize({1280,800,96,1,1280,800});
+    n::LayerComposition composition;c::ModulePresentation modules(c::Module::power);c::source::DesktopChromeSettings settings{{0,0,1280,800},1,{},c::Module::power,true};auto center=c::source::DesktopChromeLayout::make(settings,{},{}).designToScreen;
+    const auto camera=n::layerViewportProjection(1280,800);double now{};
+    bool released{};struct Guard{n::Renderer&r;n::LayerComposition&c;t::MediaAssemblyPreview&o;bool&done;~Guard(){if(!done)try{c.detach(r);o.release(r);}catch(...){r.reset();}}}guard{r,composition,owner,released};
+    auto frame=[&](double step=.02){now+=step;const auto sample=modules.sample(now).presentation;settings.module=sample.requested;owner.update(center,settings,sample,1,now);owner.upload(r);composition.setEntries(r,owner.entries());composition.present(r);owner.collected(r);r.setCamera(camera);};
+    auto drain=[&]{for(int k=0;k<200;++k){utility.waitIdle();if(!utility.drain())break;}};
+    struct Usage{t::MediaAssemblyPreviewStats owner;n::MediaAssemblySceneStats scene;n::RendererStats gpu;n::LayerRasterStats raster;std::size_t cached{};};
+    const auto usage=[&]{return Usage{owner.stats(),owner.sceneStats(),r.stats(),raster.stats(),engine->stats().cachedSourceBytes};};
+    const auto print=[](const char*state,const Usage&u){
+        std::cout<<"Media Assembly residency, "<<state<<": canvas "<<u.scene.parts<<" parts / "<<u.scene.pixelBytes<<" raster bytes, preview pixels "<<u.owner.previewPixelBytes
+                 <<", GPU processors "<<u.owner.gpuResidentBytes+u.owner.playbackResidentBytes<<", engine cache "<<u.cached<<", renderer textures+meshes "<<u.gpu.resourceBytes
+                 <<" ("<<u.gpu.textures<<" textures) groups "<<u.gpu.nativeGroupBytes<<" media "<<u.gpu.mediaLiveBytes<<", shared rasterizer "<<u.raster.entries<<" entries + "<<u.raster.decodedImages<<" decoded images / "<<u.raster.resourceBytes<<" bytes\n";};
+    modules.select(c::Module::mediaAssembly,now);for(int k=0;k<40;++k)frame();drain();frame();
+    const std::array<std::string,1>drop{n::mediaAssemblyUTF8(photo)};check(owner.importFiles(drop,now),"Residency import");drain();frame();drain();frame();
+    owner.perform("filters",now);owner.perform("filter:sp_filter_2",now);drain();frame();owner.perform("filters",now);for(int k=0;k<20;++k){frame();drain();}
+    check(owner.stats().gpuActive&&owner.controller().previewImage()&&owner.controller().previewImage()->deferred()&&!owner.presentation().drawer()&&
+          owner.controller().session().adjustments().filter!=m::MediaAssemblyFilter::none,"Residency: a filtered still edited on the renderer's device, drawer closed");
+    const auto shown=usage();print("shown",shown);
+    check(shown.scene.parts>0&&shown.scene.pixelBytes>0&&shown.owner.previewPixelBytes>=1000u*750*4&&shown.owner.gpuResidentBytes>=1000u*750*4&&shown.cached>=1000u*750*4&&shown.owner.retainedTextures==1,
+          "A shown editor holds its canvas, one bounded source (shared by the engine cache and the GPU upload) and its GPU edit");
+    // Hidden inside the open HUD (another module): source setActive(false).
+    modules.select(c::Module::power,now);for(int k=0;k<40;++k)frame();drain();frame();
+    const auto hidden=usage();print("hidden in the open HUD",hidden);
+    check(hidden.owner.previewPixelBytes==0&&hidden.owner.gpuResidentBytes==0&&hidden.cached==0&&hidden.owner.retainedTextures==0&&hidden.gpu.mediaLiveBytes<shown.gpu.mediaLiveBytes,
+          "Hidden: no decoded source, preview pixels, GPU source or preview texture remains (released "+std::to_string(shown.owner.previewPixelBytes)+" CPU and "+
+          std::to_string(shown.owner.gpuResidentBytes)+" processor bytes)");
+    // A scene leaving the composition releases its GPU textures there
+    // (LayerComposition::setEntries); its CPU rasters stay with the canvas.
+    check(hidden.gpu.textures==0&&hidden.gpu.resourceBytes<shown.gpu.resourceBytes,"Hidden: the composition already released the canvas textures ("+std::to_string(hidden.gpu.textures)+" left)");
+    check(hidden.scene.parts==shown.scene.parts&&hidden.scene.pixelBytes==shown.scene.pixelBytes&&hidden.owner.parks==0,"Hidden inside the open HUD the canvas stays, so switching back rebuilds nothing");
+    // The HUD closes while Media Assembly is hidden: the first collection
+    // after the close began parks it; the host's conceal finds nothing more.
+    owner.setOverlayVisible(false,now);for(int k=0;k<3;++k)frame();owner.conceal();
+    const auto closed=usage();print("after the HUD closed",closed);
+    check(closed.owner.parks==1&&closed.scene.parts==0&&closed.scene.pixelBytes==0&&closed.raster.entries<hidden.raster.entries&&closed.raster.resourceBytes<hidden.raster.resourceBytes&&
+          closed.gpu.textures==0&&closed.gpu.resourceBytes<=hidden.gpu.resourceBytes&&closed.gpu.nativeGroupBytes<=hidden.gpu.nativeGroupBytes&&closed.owner.retainedTextures==0,
+          "After the HUD closed a hidden Media Assembly keeps no canvas artwork, shared rasters or textures (released "+std::to_string(hidden.raster.resourceBytes-closed.raster.resourceBytes)+
+          " raster bytes in "+std::to_string(hidden.raster.entries-closed.raster.entries)+" entries)");
+    // Reopened on Media Assembly: the canvas and one fresh preview come back.
+    owner.setOverlayVisible(true,now);modules.select(c::Module::mediaAssembly,now);for(int k=0;k<40;++k){frame();drain();}
+    const auto again=usage();print("shown again",again);
+    check(again.scene.parts==shown.scene.parts&&again.scene.pixelBytes==shown.scene.pixelBytes&&again.owner.retainedTextures==1&&again.owner.previewPixelBytes==shown.owner.previewPixelBytes&&
+          owner.controller().previewImage()&&owner.controller().session().adjustments().filter!=m::MediaAssemblyFilter::none,"Shown again: the same canvas and one fresh edited preview are rebuilt from the session");
+    // Composed when the HUD closes (the selected module): its controls stay
+    // for the next opening; the preview and its GPU source go at once.
+    owner.setOverlayVisible(false,now);for(int k=0;k<3;++k)frame();owner.conceal();
+    const auto selected=usage();print("after closing on Media Assembly",selected);
+    check(selected.owner.parks==1&&selected.scene.parts>0&&selected.owner.previewPixelBytes==0&&selected.owner.gpuResidentBytes==0&&selected.cached==0,
+          "Closing on Media Assembly keeps only its controls for the next opening");
+    composition.detach(r);owner.release(r);released=true;check(r.stats().textures==0&&r.stats().nativeGroups==0,"Residency owner releases every texture and group");
 }
 // Fake IMFMediaEngine for the shared broker (no codec, audio device or file).
 struct Probe {n::NativeNotesVideoPlayback::Notify notify;double position{};bool playing{},fresh{true},stopped{};unsigned opens{},seeks{},frames{};std::string path;ComPtr<IDXGISurface>surface;};
@@ -282,8 +343,11 @@ void playback(n::Renderer&r,HWND hwnd,const fs::path&assets,const fs::path&fixtu
         check(owner.stats().frameFilterRoute,"The shared media broker carries the played-frame filter");
         check(owner.stats().filteredFrames>1&&probe->surface&&close(firstPixel(probe->surface.Get())),"Frames played through the shared broker carry the colour edits");
         check(owner.perform("toolBack",now)&&owner.perform("tools",now)&&!owner.presentation().drawer(),"Leaving the adjust tool and drawer");}
+    const auto playing=owner.stats().playbackResidentBytes;
     owner.perform("play",now);for(int k=0;k<4;++k)frame();check(!probe->playing&&!owner.stats().videoShown,"Pause releases the player");
     check(!owner.playbackFrameFilter(),"A released player keeps no filter");
+    std::cout<<"played-frame processor: "<<playing<<" bytes while playing, "<<owner.stats().playbackResidentBytes<<" after the player is released\n";
+    check(playing>0&&owner.stats().playbackResidentBytes==0,"A released player's frame processor keeps no textures");
     // Source bookmark: a renamed or moved original keeps playing where it now is.
     {const auto folder=temp.path/L"moved";fs::create_directory(folder);const auto moved=folder/L"renamed movie.mp4";
         const auto rename=[&](const fs::path&from,const fs::path&to){std::error_code e;for(int k=0;k<100;++k){fs::rename(from,to,e);if(!e)return true;drain();frame();}return false;};
@@ -312,6 +376,7 @@ void playback(n::Renderer&r,HWND hwnd,const fs::path&assets,const fs::path&fixtu
 }
 int wmain(int argc,wchar_t**argv){Apartment apartment;try{frameFilterHook();check(SUCCEEDED(apartment.hr)&&argc==4,"Pass HLSL, resources/media-assembly and the pinned silent movie");Window window;n::Renderer renderer;renderer.initialize(window.hwnd,1280,800,{n::Driver::warpForTests,argv[1],n::RenderTarget::offscreenForTests,true});run(renderer,window.hwnd,fs::absolute(argv[2]));renderer.reset();
         {n::Renderer same;same.initialize(window.hwnd,1280,800,{n::Driver::warpForTests,argv[1],n::RenderTarget::offscreenForTests,true});parity(same,window.hwnd,fs::absolute(argv[2]));same.reset();}
+        {n::Renderer audit;audit.initialize(window.hwnd,1280,800,{n::Driver::warpForTests,argv[1],n::RenderTarget::offscreenForTests,true});residency(audit,window.hwnd,fs::absolute(argv[2]));audit.reset();}
         n::Renderer media;media.initialize(window.hwnd,1280,800,{n::Driver::warpForTests,argv[1],n::RenderTarget::offscreenForTests,true});playback(media,window.hwnd,fs::absolute(argv[2]),fs::absolute(argv[3]));media.reset();std::cout<<"Media Assembly owner: "<<checks<<" checks passed (synthetic media only)\n";return 0;}catch(const std::exception&e){counting=false;std::cerr<<"Media Assembly owner failed after "<<checks<<": "<<e.what()<<'\n';return 1;}}
 #else
 #include <iostream>

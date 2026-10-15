@@ -30,8 +30,37 @@ if(WIN32)
   # GPU evaluation of the same colour chain and geometry on an existing
   # D3D11 device (previews/played frames on the renderer's media device,
   # explicit video exports on their own job device).
-  add_library(hud_media_assembly_gpu native/media_assembly_gpu.cpp)
-  target_include_directories(hud_media_assembly_gpu PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+  # Its programs (native/media_assembly_gpu.hlsl) are compiled at build time by
+  # the Windows SDK fxc that CMakeLists.txt found for hud.hlsl
+  # (native/media_assembly_gpu.shaders.cmake), so the HUD compiles no HLSL for
+  # Media Assembly; without fxc the generated header carries only the text,
+  # compiled once at run time on the utility worker as before.
+  set(ehud_media_assembly_shader_dir "${CMAKE_CURRENT_BINARY_DIR}/generated/media_assembly")
+  set(ehud_media_assembly_shaders "${ehud_media_assembly_shader_dir}/media_assembly_gpu_shaders.hpp")
+  set(ehud_media_assembly_fxc "")
+  set(ehud_media_assembly_program_kind text)
+  if(EHUD_FXC)
+    set(ehud_media_assembly_fxc "-DFXC=${EHUD_FXC}")
+    set(ehud_media_assembly_program_kind fxc)
+  endif()
+  add_custom_command(OUTPUT "${ehud_media_assembly_shaders}"
+    COMMAND "${CMAKE_COMMAND}" ${ehud_media_assembly_fxc} "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/native/media_assembly_gpu.hlsl" "-DOUTPUT=${ehud_media_assembly_shaders}"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/native/media_assembly_gpu.shaders.cmake"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/native/media_assembly_gpu.hlsl" "${CMAKE_CURRENT_SOURCE_DIR}/native/media_assembly_gpu.shaders.cmake"
+    COMMENT "Compiling native/media_assembly_gpu.hlsl" VERBATIM)
+  # MSBuild FileTracker ignores reads under LocalAppData (cmake/
+  # msbuild_include_fingerprints.cmake): the program text's hash on the
+  # command line recompiles the processor when the HLSL or the fxc choice changes.
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/native/media_assembly_gpu.hlsl" "${CMAKE_CURRENT_SOURCE_DIR}/native/media_assembly_gpu.shaders.cmake")
+  file(SHA256 "${CMAKE_CURRENT_SOURCE_DIR}/native/media_assembly_gpu.hlsl" ehud_media_assembly_program_hash)
+  file(SHA256 "${CMAKE_CURRENT_SOURCE_DIR}/native/media_assembly_gpu.shaders.cmake" ehud_media_assembly_script_hash)
+  string(SUBSTRING "${ehud_media_assembly_program_hash}" 0 16 ehud_media_assembly_program_hash)
+  string(SUBSTRING "${ehud_media_assembly_script_hash}" 0 16 ehud_media_assembly_script_hash)
+  add_library(hud_media_assembly_gpu native/media_assembly_gpu.cpp "${ehud_media_assembly_shaders}")
+  set_property(SOURCE native/media_assembly_gpu.cpp APPEND PROPERTY COMPILE_DEFINITIONS
+    "EHUD_MEDIA_ASSEMBLY_PROGRAMS=${ehud_media_assembly_program_kind}_${ehud_media_assembly_program_hash}_${ehud_media_assembly_script_hash}")
+  target_include_directories(hud_media_assembly_gpu PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} PRIVATE "${ehud_media_assembly_shader_dir}")
   target_compile_definitions(hud_media_assembly_gpu PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
   target_link_libraries(hud_media_assembly_gpu PUBLIC hud_media_assembly_processor PRIVATE d3d11 dxgi d3dcompiler)
   if(BUILD_TESTING)

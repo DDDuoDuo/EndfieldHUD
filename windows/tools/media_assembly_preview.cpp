@@ -71,6 +71,10 @@ struct MediaAssemblyPreview::Impl:std::enable_shared_from_this<Impl> {
     // Played frames: colour edits in place on the same device, configured once
     // per player (any edit releases the player, like the source).
     std::unique_ptr<gpu::NativeMediaAssemblyGpuProcessor>playbackProcessor;std::uint64_t filteredPlayers{},filteredFrames{};
+    // Memory: the canvas artwork is parked once the HUD closes while it is
+    // not composed (conceal(), or the first collection after the close began
+    // while hidden: parkWanted); never on a module switch inside an open HUD.
+    bool parkWanted{};std::uint64_t parks{};
     // Secondary menus (one live, closing ones fade out then retire).
     struct Menu {mod::MediaAssemblyMenuKind kind{};P origin;double opened{},closed{};bool closing{},uploaded{};std::unique_ptr<ControlMenu>control;std::unique_ptr<NotesMenu>notes;std::string documentID;};
     std::unique_ptr<Menu>menu;std::vector<std::unique_ptr<Menu>>closing,dead;std::uint64_t menuSerial{};bool menuPressed{};std::size_t menuFocus{};
@@ -140,7 +144,9 @@ struct MediaAssemblyPreview::Impl:std::enable_shared_from_this<Impl> {
     void releaseVideo(){
         if(!video.requested)return;if(options.broker)options.broker->hideVideos(options.client,time);
         video.requested=video.started=video.shown=video.playing=video.playingSeen=false;video.endDeadline.reset();video.filter.reset();video.retiring.push_back(std::move(video.key));video.key.clear();++statistics.playbackReleases;
-        if(playbackProcessor)playbackProcessor->releaseTargets();presentPreview();
+        // The released player's frames are no longer filtered (each filter
+        // checks its player): its scratch and lookup textures go now.
+        if(playbackProcessor)playbackProcessor->releaseResources();presentPreview();
     }
     // Source preparePlayer/beginPlayback/releasePlayer and the end-of-range
     // stop, folded into owner events and the broker's own frame demand.
@@ -245,9 +251,11 @@ struct MediaAssemblyPreview::Impl:std::enable_shared_from_this<Impl> {
                 if(!playbackProcessor)playbackProcessor=std::make_unique<gpu::NativeMediaAssemblyGpuProcessor>(renderer->mediaDevice());
                 playbackProcessor->configure(current,lookup,true);playbackProcessor->setColour(colour);
             }catch(const std::exception&){playbackProcessor.reset();return;}
-            const std::weak_ptr<Impl>weak=weak_from_this();
-            if(attachMediaAssemblyFrameFilter(request,[weak](void*surface){
+            const std::weak_ptr<Impl>weak=weak_from_this();const auto player=video.revision;
+            if(attachMediaAssemblyFrameFilter(request,[weak,player](void*surface){
                 const auto i=weak.lock();if(!i||!i->alive||!i->playbackProcessor||!surface)return;
+                // Only this player's frames: a released one parked the processor.
+                if(!i->video.requested||i->video.revision!=player)return;
                 // A device failure leaves the remaining frames geometry-only.
                 try{i->playbackProcessor->processInPlace(static_cast<IDXGISurface*>(surface));++i->filteredFrames;}catch(const std::exception&){i->playbackProcessor.reset();}
             })){++filteredPlayers;video.filter=request.frameFilter;}
@@ -339,11 +347,32 @@ struct MediaAssemblyPreview::Impl:std::enable_shared_from_this<Impl> {
         std::optional<gpu::MediaAssemblyPreviewDraw>poster;if(shown&&!texture.empty())poster=gpu::MediaAssemblyPreviewDraw{previewDraw(texture),{0,0,1,1}};
         if(pose)scene->beginClose(poster,time,!options.reduceMotion);
         releaseVideo();retireTexture();shown.reset();scene->setPreview(std::nullopt);
+        // Source closeDocument -> engine.clearCaches: no decoded source stays.
+        releaseGpu();
         controller->closeDocument(time);
     }
     // The live preview id moves to the retired list (removed once no longer
     // drawn); a retained GPU target is dropped with it.
     void retireTexture(){if(!texture.empty()){retiredTextures.push_back(texture);texture.clear();}media.reset();if(processor)processor->releaseTargets();}
+    // Source setActive(false) -> engine.clearCaches (CIContext caches): the
+    // hidden editor keeps no decoded source on the CPU or the GPU. The
+    // processors keep only their device programs.
+    void releaseGpu(){gpuSource.reset();if(processor)processor->releaseResources();if(playbackProcessor)playbackProcessor->releaseResources();}
+    // Releases everything a hidden canvas holds (see conceal()). False while
+    // composed or active. A part the last publication still referenced is
+    // kept and retried at the next collection (parkWanted).
+    bool parkArtwork(gpu::Renderer&r){
+        if(pose||prepared)return false;
+        closeMenu(false);for(auto&m:closing)dead.push_back(std::move(m));closing.clear();
+        for(auto it=dead.begin();it!=dead.end();){auto&group=(*it)->control?*(*it)->control->group:*(*it)->notes->group;if(!(*it)->uploaded||group.releaseResources(r))it=dead.erase(it);else ++it;}
+        releaseVideo();if(shown){shown.reset();retireTexture();}textureDirty=false;releaseGpu();
+        // The canvas first: a closing poster borrows the preview texture.
+        const bool parked=scene->park(r);if(parked)++parks;
+        if(!scene->closingMedia())for(auto it=retiredTextures.begin();it!=retiredTextures.end();)if(r.removeTexture(*it))it=retiredTextures.erase(it);else ++it;
+        parkWanted=scene->closingMedia()||scene->stats().parts>0;
+        // The next showing rebuilds the canvas from the current state.
+        dirty=true;return parked;
+    }
     void gpuFailed(){processor.reset();media.reset();gpuSource.reset();controller->setDeferredPreviews(false,time);}
     void createProcessor(gpu::Renderer&r){
         try{processor=std::make_unique<gpu::NativeMediaAssemblyGpuProcessor>(r.mediaDevice());}catch(const std::exception&){processor.reset();}
@@ -364,7 +393,7 @@ struct MediaAssemblyPreview::Impl:std::enable_shared_from_this<Impl> {
         if(input!=nextInput){input=nextInput;pressed=false;if(!input){pointerPoint.reset();presentation.pointerUp(view());}}
         if(prepared!=nextPrepared){prepared=nextPrepared;
             if(!prepared){closeMenu(false);dialog.reset();presentation.hide();controller->setCropPreview(false,time);}
-            controller->setActive(prepared,time);syncPlayback();dirty=true;}
+            controller->setActive(prepared,time);syncPlayback();if(!prepared)releaseGpu();dirty=true;}
     }
     void feedback(){if(!pose)return;std::optional<P>q;if(pointerPoint)q=local(*pointerPoint);
         if(menu){const auto b=menuBounds(*menu);const auto inMenu=q&&inside(b,*q)?std::optional<P>(P{q->x-b.x,q->y-b.y}):std::nullopt;
@@ -396,7 +425,8 @@ void MediaAssemblyPreview::resize(const app::ClientMetrics&m){need(m.pixelWidth&
 void MediaAssemblyPreview::setLanguage(core::Language l,double t){auto i=impl_;const Impl::Event e(*i,t);if(i->options.appearance.language==l)return;i->options.appearance.language=l;i->closeMenu(false);i->changed();}
 void MediaAssemblyPreview::setAppearance(mod::MediaAssemblyAppearance a,double t){auto i=impl_;const Impl::Event e(*i,t);if(i->options.appearance==a)return;i->options.appearance=a;i->closeMenu(false);i->changed();}
 void MediaAssemblyPreview::setReduceMotion(bool v,double t){auto i=impl_;const Impl::Event e(*i,t);if(i->options.reduceMotion==v)return;i->options.reduceMotion=v;if(v)i->scene->settle();i->changed();}
-void MediaAssemblyPreview::setOverlayVisible(bool v,double t){auto i=impl_;const Impl::Event e(*i,t);if(i->overlay==v)return;i->overlay=v;if(!v)i->activate(false,false);i->changed();}
+void MediaAssemblyPreview::setOverlayVisible(bool v,double t){auto i=impl_;const Impl::Event e(*i,t);if(i->overlay==v)return;i->overlay=v;i->parkWanted=!v;if(!v)i->activate(false,false);i->changed();}
+void MediaAssemblyPreview::conceal(){auto&i=*impl_;if(i.renderer)(void)i.parkArtwork(*i.renderer);}
 void MediaAssemblyPreview::update(const M&center,const core::source::DesktopChromeSettings&settings,const core::ModulePresentationSample&sample,float opacity,double t){
     auto i=impl_;const Impl::Event e(*i,t);need(i->metrics.pixelWidth&&i->metrics.pixelHeight,"Resize Media Assembly before presentation");
     const auto*shown=sample.current.module==core::Module::mediaAssembly?&sample.current:sample.incoming&&sample.incoming->module==core::Module::mediaAssembly?&*sample.incoming:nullptr;
@@ -514,17 +544,23 @@ const mod::MediaAssemblyPresentation&MediaAssemblyPreview::presentation()const n
 gpu::MediaAssemblySceneStats MediaAssemblyPreview::sceneStats()const noexcept{return impl_->scene->stats();}
 bool MediaAssemblyPreview::sceneClosing()const noexcept{return impl_->scene->closingMedia();}
 MediaAssemblyPreviewStats MediaAssemblyPreview::stats()const noexcept{auto s=impl_->statistics;s.videoShown=impl_->video.shown;s.gpuActive=impl_->processor!=nullptr;
-    s.filteredPlayers=impl_->filteredPlayers;s.filteredFrames=impl_->filteredFrames;s.frameFilterHook=mediaAssemblyFrameFilterHook<gpu::NotesVideoRequest>;s.frameFilterRoute=mediaAssemblyBrokerFilterRoute<core::ScopedMediaRequest>;s.retainedTextures=impl_->retiredTextures.size()+(impl_->texture.empty()?0:1);return s;}
+    s.filteredPlayers=impl_->filteredPlayers;s.filteredFrames=impl_->filteredFrames;s.frameFilterHook=mediaAssemblyFrameFilterHook<gpu::NotesVideoRequest>;s.frameFilterRoute=mediaAssemblyBrokerFilterRoute<core::ScopedMediaRequest>;s.retainedTextures=impl_->retiredTextures.size()+(impl_->texture.empty()?0:1);
+    const auto scene=impl_->scene->stats();s.sceneParts=scene.parts;s.scenePixelBytes=scene.pixelBytes;s.parks=impl_->parks;
+    const auto&shown=impl_->shown;const auto*source=shown&&shown->deferred()?shown->source.get():nullptr;
+    s.previewPixelBytes=(shown?(source?source->straightRGBA.size():shown->straightRGBA.size()):0)+(impl_->gpuSource&&impl_->gpuSource.get()!=source?impl_->gpuSource->straightRGBA.size():0);
+    s.gpuResidentBytes=impl_->processor?impl_->processor->stats().residentBytes:0;s.playbackResidentBytes=impl_->playbackProcessor?impl_->playbackProcessor->stats().residentBytes:0;return s;}
 std::shared_ptr<const std::function<void(void*)>>MediaAssemblyPreview::playbackFrameFilter()const noexcept{return impl_->video.filter;}
 namespace {constexpr std::array<std::uint32_t,6>videoIndices{0,1,2,0,2,3};}
 void MediaAssemblyPreview::upload(gpu::Renderer&r){
     auto&i=*impl_;need(!i.renderer||i.renderer==&r,"Media Assembly resources belong to another renderer");i.renderer=&r;
     // Retired posters, parts, menus and preview textures are released only in
-    // collected(), after the host has republished its composition without them.
+    // collected(), after the host has republished its composition without them
+    // (so is a canvas hidden while the HUD closes; see conceal()).
     if(!i.pose)return;
-    // GPU previews start once the editor is first shown: the HLSL compile runs
-    // on the utility worker (no UI-thread hitch); until it completes, or if a
-    // renderer lacks same-device media support, previews use the CPU path.
+    // GPU previews start once the editor is first shown: with build-time
+    // programs at once, otherwise after the HLSL compile on the utility worker
+    // (no UI-thread hitch); until then, or if a renderer lacks same-device
+    // media support, previews use the CPU path.
     if(!i.gpuTried&&i.options.gpuPreview){
         if(!i.mediaChecked){i.mediaChecked=true;try{i.mediaCapable=r.mediaDevice()!=nullptr;}catch(const std::exception&){i.mediaCapable=false;}}
         if(!i.mediaCapable){i.gpuTried=true;i.controller->setDeferredPreviews(false,i.time);}
@@ -560,6 +596,7 @@ void MediaAssemblyPreview::collected(gpu::Renderer&r){
     auto&i=*impl_;i.scene->collectRetired(r);
     for(auto it=i.dead.begin();it!=i.dead.end();){auto&group=(*it)->control?*(*it)->control->group:*(*it)->notes->group;if(!(*it)->uploaded||group.releaseResources(r))it=i.dead.erase(it);else ++it;}
     if(!i.scene->closingMedia())for(auto it=i.retiredTextures.begin();it!=i.retiredTextures.end();)if(r.removeTexture(*it))it=i.retiredTextures.erase(it);else ++it;
+    if(!i.pose&&i.parkWanted)(void)i.parkArtwork(r);
 }
 void MediaAssemblyPreview::release(gpu::Renderer&r){
     auto&i=*impl_;i.releaseVideo();i.closeMenu(false);for(auto&m:i.closing)i.dead.push_back(std::move(m));i.closing.clear();i.scene->settle();collected(r);

@@ -31,7 +31,9 @@ struct MediaAssemblyPreviewDraw {
     // the source viewport; the provider already applies media edits/UVs.
     DrawObject draw;core::Rect sourceBounds;
 };
-struct MediaAssemblySceneStats {std::uint64_t builds{},localUpdates{},poses{},uploads{};std::size_t surfaces{},retired{};};
+// parts/pixelBytes: retained artwork parts (live, retired and closing) and the
+// raster bytes their local surfaces hold; parks: park() calls that released them.
+struct MediaAssemblySceneStats {std::uint64_t builds{},localUpdates{},poses{},uploads{};std::size_t surfaces{},retired{};std::size_t parts{},pixelBytes{};std::uint64_t parks{};};
 class NativeMediaAssemblyScene final {
 public:
     NativeMediaAssemblyScene(LayerRasterizer&,LayerRasterOptions,const NativeMediaAssemblyAssets&);
@@ -56,6 +58,12 @@ public:
     std::span<const LayerCompositionEntry>entries()const noexcept;
     bool requiresFrames(double time)const;
     bool collectRetired(Renderer&);bool releaseResources(Renderer&);
+    // HUD concealed while this canvas is not composed (source: the canvas
+    // layers die with the HUD): releases every part's GPU resources, then
+    // destroys the parts, which removes their rasters from the shared
+    // rasterizer. The next syncContent rebuilds them. False (nothing released)
+    // while a part is still published or when nothing is retained.
+    bool park(Renderer&)noexcept;
     MediaAssemblySceneStats stats()const noexcept;
 private:struct Impl;std::unique_ptr<Impl>impl_;
 };

@@ -8,6 +8,8 @@ struct ID3D11Device;struct IDXGISurface;
 namespace endfield::native {
 struct MediaAssemblyGpuStats {
     std::uint64_t renders{},inPlace{},readbacks{},sourceUploads{},sourceAllocations{},lookupUploads{},targetAllocations{},colourUploads{};
+    std::uint64_t releases{};     // releaseResources() calls that dropped textures
+    std::size_t residentBytes{};  // bytes held now: textures (source, cube, curves, scratch, export/band targets) plus the CPU cube copy
 };
 // GPU evaluation of the MediaAssemblyEngine.apply colour chain and geometry
 // (no stickers) on an existing D3D11 device. It runs exactly the portable
@@ -74,14 +76,25 @@ public:
     // Drops borrowed external-surface views (call when the frame-server or
     // media texture they belong to is retired).
     void releaseTargets()noexcept;
+    // Drops every texture this processor owns (source, lookup cube, profile
+    // curves, scratch, export and band targets, their CPU cube copy) and the
+    // borrowed views, keeping only the device programs: the owner's equivalent
+    // of the source CIContext.clearCaches when the editor is hidden or its
+    // player released. The next setSource/configure/processInPlace allocates
+    // again; until setSource, render() needs a source.
+    void releaseResources()noexcept;
     MediaAssemblyGpuStats stats()const noexcept;
 private:struct Impl;std::unique_ptr<Impl>impl_;
 };
 // Compiles the processor's shaders once per process (thread-safe; throws on
 // failure). Hosts run it on the utility worker so the UI thread never pays
 // the HLSL compile; processors created afterwards only create device objects.
+// A build that found the Windows SDK's fxc embeds their bytecode instead
+// (native/media_assembly_gpu.shaders.cmake): the shaders are then ready from
+// the start and nothing is compiled at run time.
 void prepareMediaAssemblyGpuShaders();
 bool mediaAssemblyGpuShadersReady()noexcept;
+bool mediaAssemblyGpuShadersEmbedded()noexcept;
 // A hardware D3D11 device for one explicit export job on the utility worker
 // (the source AVAssetExportSession likewise renders its composition on the
 // GPU). Released when the job ends; null when no hardware device exists, in

@@ -62,6 +62,11 @@ struct MediaAssemblyPreviewStats {
     bool frameFilterHook{};          // the shared frame server offers the hook
     bool frameFilterRoute{};         // the shared broker carries it to the frame server
     bool videoShown{};
+    // Residency (memory audit): canvas artwork parts and their raster bytes,
+    // CPU preview pixels this owner holds (the shown preview and the GPU
+    // source), bytes the preview and the played-frame GPU processors hold,
+    // and parks that released a hidden canvas after the HUD closed.
+    std::size_t sceneParts{},scenePixelBytes{},previewPixelBytes{},gpuResidentBytes{},playbackResidentBytes{};std::uint64_t parks{};
 };
 // GPU: with a Renderer created with the mediaVideo option, bounded previews
 // (stills and paused movie frames) are edited on that same device into one
@@ -96,6 +101,16 @@ public:
     void setAppearance(modules::MediaAssemblyAppearance,double time);
     void setReduceMotion(bool,double time);
     void setOverlayVisible(bool,double time);
+    // The HUD finished closing (HostEvent::overlayConcealed). Source: the
+    // canvas layers die with the HUD and the editor keeps no preview. A
+    // Media Assembly that is not composed releases its canvas artwork (GPU
+    // resources and shared-rasterizer entries), preview pixels, preview
+    // textures and GPU processor textures; the next showing rebuilds them.
+    // One composed at the close (the selected module) keeps its controls for
+    // the next opening; its preview and GPU source were already released when
+    // the editor was hidden. Otherwise the first collection after the close
+    // began, while not composed, does the same.
+    void conceal();
     void update(const core::Matrix4& sourceCenter,const core::source::DesktopChromeSettings&,
         const core::ModulePresentationSample&,float opacity,double time);
     std::optional<double>nextWakeTime()const;

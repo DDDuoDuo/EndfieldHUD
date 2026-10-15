@@ -146,7 +146,11 @@ void controller(){
     check(q.jobs.size()==1,"Rapid edits keep one running job");q.run();check(engine->previews==3&&engine->lastAdjust==std::to_string(.5),"Then exactly one latest pending preview");
     check(ctl.nextWakeTime()&&std::abs(*ctl.nextWakeTime()-1.9)<1e-9,"Edited event debounced 0.4 s after the last edit");check(!ctl.deadline(1.8)&&events.size()==1,"Not before the deadline");
     check(ctl.deadline(1.9)&&events.back()=="edited"&&!ctl.nextWakeTime(),"Edited recorded once at the deadline");
-    auto a=ctl.session().adjustments();a.contrast=1.5;ctl.update(a,{},2);ctl.setActive(false,2.1);check(events.back()=="edited"&&events.size()==3&&!ctl.previewImage()&&engine->clears>=1,"Hide flushes edited and releases bounded preview/caches");
+    auto a=ctl.session().adjustments();a.contrast=1.5;ctl.update(a,{},2);const auto queuedBeforeHide=q.jobs.size();const auto clearsBeforeHide=engine->clears;ctl.setActive(false,2.1);
+    check(events.back()=="edited"&&events.size()==3&&!ctl.previewImage()&&engine->clears==clearsBeforeHide+1,"Hide flushes edited and releases bounded preview/caches");
+    // The edit's decode was already queued: a trailing purge behind it keeps
+    // the hidden editor from caching that bounded source again.
+    check(q.jobs.size()==queuedBeforeHide+1,"Hide queues one trailing purge behind the queued decode");q.run();check(engine->clears==clearsBeforeHide+2&&!ctl.previewImage(),"The trailing purge ran after it and nothing was shown");
     ctl.setActive(true,3);q.run();
     // Invalid edits report the source error and keep the previous edit.
     auto invalid=ctl.session().adjustments();invalid.levelsBlack=.5;invalid.levelsWhite=.49;check(!ctl.update(invalid,{},3)&&ctl.session().error()==m::MediaAssemblyError::invalidAdjustment,"Invalid edit is reported");
