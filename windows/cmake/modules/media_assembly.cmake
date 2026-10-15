@@ -82,7 +82,8 @@ if(WIN32)
     target_compile_definitions(media_assembly_codec_tests PRIVATE UNICODE _UNICODE NOMINMAX)
     target_link_libraries(media_assembly_codec_tests PRIVATE hud_media_assembly_codec hud_data windowscodecs mfplat mfreadwrite mfuuid ole32 d3d11)
     add_test(NAME media_assembly_codec_contracts COMMAND media_assembly_codec_tests ${CMAKE_CURRENT_SOURCE_DIR}/resources/media-assembly
-      ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/media-assembly-icc-source.json ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/media-assembly-video-colour-source.json)
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/media-assembly-icc-source.json ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/media-assembly-video-colour-source.json
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/media-assembly-jpeg-source.json)
   endif()
 
   # UI Automation fragments for the projected controls (the host's HUD root

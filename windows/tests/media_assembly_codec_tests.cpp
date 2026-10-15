@@ -11,6 +11,7 @@
 #include <mfreadwrite.h>
 #include <wrl/client.h>
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstring>
 #include <fstream>
@@ -423,8 +424,99 @@ void movieColour(const fs::path&root,const fs::path&assets,const fs::path&fixtur
     }
 }
 
+// JPEG decoding (tests/fixtures/media-assembly-jpeg-source.json,
+// tools/media_assembly_jpeg_reference.py): owned synthetic JPEG files decoded
+// through the engine's preview and export paths, compared with the pinned
+// still preview (ImageIO thumbnail) and export (ImageIO image into Core Image)
+// on the Mac at full size (identity edits). The left half of each file is
+// smooth gradients, the right half saturated 4x4 colour cells, where chroma
+// upsampling differs most. On the Mac the two paths differ from each other at
+// chroma edges (by up to 142 levels for 4:2:0 and 190 for 4:2:2); WIC alone
+// matched one path of each (laptop: 4:2:0 previews up to 142 levels off,
+// 4:2:2 exports up to 188). The Mac readings of those two (JpegChroma in
+// native/media_assembly_codec.cpp) leave the IDCT's few levels.
+// The Mac thumbnail decoder also departs from its full decoder in some
+// high-contrast 8x8 blocks (thumbnailDepartures: located on a grey companion
+// with the same luma coefficients, so no chroma reading is involved; up to 16
+// levels in the q85 file). WIC decodes those blocks like the Mac export, so
+// there the preview may differ from the Mac preview by the departure itself
+// (a recorded gap) plus the IDCT's few levels, and nowhere else.
+void jpegDecode(const fs::path&root,const fs::path&assets,const fs::path&fixturePath){
+    std::ifstream in(fixturePath,std::ios::binary);check(bool(in),"JPEG fixture");const std::string text((std::istreambuf_iterator<char>(in)),std::istreambuf_iterator<char>());
+    const auto fixture=J::parse(text,1024*1024);
+    check(fixture["sourceCommit"].string()=="ca04f142185c7de40acd8523bdb563195d90a1d1"&&!fixture["usesAppOrWindow"].boolean(),"JPEG fixture uses the authoritative isolated oracle");
+    n::NativeMediaAssemblyEngine engine({assets,{},{},[]{return std::shared_ptr<void>{};},0});std::size_t compared{},consistent{},departedBlocks{};
+    // Regions: smooth half (0) and chroma-edge half (1) in the encoded
+    // orientation (an oriented file is measured as one region), and the
+    // thumbnail departure blocks (2), where `excess` is the largest
+    // difference beyond the departure recorded for the pixel's block.
+    struct Difference {int worst[3]{},excess{};double sum[3]{};std::size_t count[3]{},over1{};};
+    const auto measure=[](const std::vector<std::uint8_t>&got,const std::vector<std::uint8_t>&want,unsigned w,bool split,const std::vector<int>*departure){Difference d;
+        for(std::size_t i=0;i<want.size();++i){const int e=std::abs(int(got[i])-int(want[i]));const int departed=departure?(*departure)[i/4]:-1;
+            const int region=departed>=0?2:split&&(i/4)%w>=w/2?1:0;
+            d.worst[region]=std::max(d.worst[region],e);if(departed>=0)d.excess=std::max(d.excess,e-departed);if(i%4!=3){d.sum[region]+=e;++d.count[region];}d.over1+=region<2&&e>1;}return d;};
+    const auto print=[](const char*path,const Difference&d){std::cout<<' '<<path<<" smooth worst "<<d.worst[0]<<" mean "<<(d.count[0]?d.sum[0]/double(d.count[0]):0.)<<", edges worst "<<d.worst[1]
+        <<" mean "<<(d.count[1]?d.sum[1]/double(d.count[1]):0.)<<", "<<d.over1<<" values off by more than 1";
+        if(d.count[2])std::cout<<"; in the thumbnail departures worst "<<d.worst[2]<<" ("<<d.excess<<" beyond the departure)";std::cout<<';';};
+    for(const auto&image:fixture["images"].array()){
+        const auto name=image["name"].string();const unsigned W=unsigned(image["width"].integer()),H=unsigned(image["height"].integer());const bool split=image["orientation"].integer()==1;
+        const auto file=root/(L"jpeg-"+std::wstring(name.begin(),name.end())+L".jpg");
+        {const auto bytes=base64(image["jpeg"].string());std::ofstream out(file,std::ios::binary);out.write(reinterpret_cast<const char*>(bytes.data()),std::streamsize(bytes.size()));check(bool(out),"Owned JPEG written");}
+        auto doc=std::make_shared<m::MediaAssemblyDocumentInfo>(engine.open(utf8(file)));doc->id="jpeg-"+name;
+        check(doc->container=="jpeg"&&doc->pixels==endfield::core::Point{double(W),double(H)},"The JPEG opens at its oriented size: "+name);
+        const auto wantExport=base64(image["export"].string());const auto wantPreview=image["previewSameAsExport"].boolean()?wantExport:base64(image["preview"].string());
+        check(wantExport.size()==std::size_t(W)*H*4&&wantPreview.size()==wantExport.size(),"JPEG fixture bytes: "+name);
+        std::vector<int>departure(std::size_t(W)*H,-1);
+        for(const auto&entry:image["thumbnailDepartures"].array()){
+            const auto&block=entry.array();check(block.size()==3,"Thumbnail departure records are [x, y, worst]: "+name);
+            const auto x0=unsigned(block[0].integer()),y0=unsigned(block[1].integer());const int worst=int(block[2].integer());
+            check(x0%8==0&&y0%8==0&&x0<W&&y0<H&&worst>0,"Thumbnail departures are 8-pixel output blocks: "+name);++departedBlocks;
+            for(unsigned y=y0;y<std::min(H,y0+8);++y)for(unsigned x=x0;x<std::min(W,x0+8);++x)departure[std::size_t(y)*W+x]=worst;}
+        const auto preview=engine.preview(*doc,{},0);check(preview.width==W&&preview.height==H&&preview.straightRGBA.size()==wantPreview.size(),"JPEG preview size: "+name);
+        const auto out=root/(L"jpeg-out-"+std::wstring(name.begin(),name.end())+L".png");m::MediaAssemblyExportTicket t;
+        check(engine.exportMedia({doc,{},utf8(out),false,"jpeg-"+name,false},t)==utf8(out),"JPEG exports: "+name);
+        unsigned w{},h{};const auto exported=readImage(out,w,h);fs::remove(out);check(w==W&&h==H&&exported.size()==wantExport.size(),"JPEG export size: "+name);
+        const auto previewDifference=measure(preview.straightRGBA,wantPreview,W,split,&departure),exportDifference=measure(exported,wantExport,W,split,nullptr),
+                   crossDifference=measure(wantPreview,wantExport,W,split,nullptr);
+        std::cout<<"jpeg "<<name<<" ("<<image["subsampling"].string()<<(image["progressive"].boolean()?" progressive":"")<<", "<<image["thumbnailDepartures"].array().size()<<" thumbnail departure blocks):";
+        print("preview",previewDifference);print("export",exportDifference);print("Mac preview vs export",crossDifference);std::cout<<'\n';
+        const auto within=[](const Difference&d){return std::max(d.worst[0],d.worst[1])<=4&&(d.sum[0]+d.sum[1])<=.6*double(d.count[0]+d.count[1]);};
+        check(within(previewDifference),"A JPEG preview decodes like the Mac preview, chroma edges included: "+name);
+        check(previewDifference.excess<=4,"Inside the Mac thumbnail decoder's departures a JPEG preview differs by no more than the departure itself: "+name);
+        check(within(exportDifference)&&!exportDifference.count[2],"A JPEG export decodes like the Mac export, chroma edges included: "+name);
+        // Subsampled chroma reads differently per path, as on the Mac; 4:4:4
+        // and grey files keep one WIC decode for both.
+        const auto subsampling=image["subsampling"].string();const bool subsampled=subsampling=="4:2:0"||subsampling=="4:2:2";
+        consistent+=(preview.straightRGBA!=exported)==subsampled;++compared;fs::remove(file);
+    }
+    check(compared==7&&departedBlocks>0,"Every JPEG fixture file was compared, thumbnail departures included");
+    check(consistent==compared,"The preview and export decodes of subsampled JPEG files differ as the Mac's do");
+    {// Exports read 4:2:2 in bands of 256 rows with two rows of context each
+     // side: a tall WIC-encoded 4:2:2 file whose pixels repeat every 64 rows
+     // (whole MCUs, so its decoded planes repeat too) exports to the same rows
+     // in every inner repeat, across the band seams.
+        constexpr unsigned W=96,period=64,H=period*10;std::vector<std::uint8_t>bgr(std::size_t(W)*H*3);
+        for(unsigned y=0;y<H;++y)for(unsigned x=0;x<W;++x){const unsigned v=y%period;auto*p=bgr.data()+(std::size_t(y)*W+x)*3;std::array<int,3>c{};
+            if(x<W/2)c={int(x*5),int(v*4),int((7*x+3*v)%256)};else{static constexpr int palette[6][3]{{255,0,0},{0,255,0},{0,0,255},{255,255,0},{0,255,255},{255,0,255}};const auto&q=palette[((x/4)+(v/4))%6];c={q[0],q[1],q[2]};if((x+v)%9==0)c={255-c[0],255-c[1],255-c[2]};}
+            p[0]=std::uint8_t(c[2]);p[1]=std::uint8_t(c[1]);p[2]=std::uint8_t(c[0]);}
+        const auto tall=root/L"jpeg-tall-422.jpg";
+        {ComPtr<IWICImagingFactory>wic;hr(CoCreateInstance(CLSID_WICImagingFactory,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&wic)),"WIC");ComPtr<IWICStream>stream;hr(wic->CreateStream(&stream),"stream");
+            hr(stream->InitializeFromFilename(tall.c_str(),GENERIC_WRITE),"create file");ComPtr<IWICBitmapEncoder>enc;hr(wic->CreateEncoder(GUID_ContainerFormatJpeg,nullptr,&enc),"JPEG encoder");hr(enc->Initialize(stream.Get(),WICBitmapEncoderNoCache),"init");
+            ComPtr<IWICBitmapFrameEncode>frame;ComPtr<IPropertyBag2>props;hr(enc->CreateNewFrame(&frame,&props),"frame");
+            PROPBAG2 option{};option.pstrName=const_cast<LPOLESTR>(L"JpegYCrCbSubsampling");VARIANT value;VariantInit(&value);value.vt=VT_UI1;value.bVal=WICJpegYCrCbSubsampling422;hr(props->Write(1,&option,&value),"4:2:2 option");
+            hr(frame->Initialize(props.Get()),"frame init");hr(frame->SetSize(W,H),"size");WICPixelFormatGUID fmt=GUID_WICPixelFormat24bppBGR;hr(frame->SetPixelFormat(&fmt),"format");check(IsEqualGUID(fmt,GUID_WICPixelFormat24bppBGR),"24-bit JPEG input");
+            hr(frame->WritePixels(H,W*3,UINT(bgr.size()),bgr.data()),"pixels");hr(frame->Commit(),"frame commit");hr(enc->Commit(),"commit");hr(stream->Commit(STGC_DEFAULT),"stream commit");}
+        auto doc=std::make_shared<m::MediaAssemblyDocumentInfo>(engine.open(utf8(tall)));doc->id="jpeg-tall";const auto out=root/L"jpeg-tall-out.png";m::MediaAssemblyExportTicket t;
+        check(engine.exportMedia({doc,{},utf8(out),false,"jpeg-tall",false},t)==utf8(out),"The tall 4:2:2 JPEG exports");unsigned w{},h{};const auto rows=readImage(out,w,h);fs::remove(out);check(w==W&&h==H,"Tall export size");
+        std::size_t mismatched{};for(unsigned k=2;k<9;++k)mismatched+=!std::equal(rows.begin()+std::ptrdiff_t(k*period*W*4),rows.begin()+std::ptrdiff_t((k+1)*period*W*4),rows.begin()+std::ptrdiff_t(period*W*4));
+        const auto preview=engine.preview(*doc,{},0);
+        check(mismatched==0&&preview.straightRGBA!=rows,"A tall 4:2:2 export reads the Mac chroma across its band seams ("+std::to_string(mismatched)+" of 7 repeats differ)");
+        fs::remove(tall);}
+}
+
 int wmain(int argc,wchar_t**argv){
-    COM com;try{check(SUCCEEDED(com.result)&&argc==4,"Pass windows/resources/media-assembly, the ICC fixture and the movie colour fixture");Temp temp;colourManaged(temp.path,fs::absolute(argv[1]),fs::absolute(argv[2]));stills(temp.path,fs::absolute(argv[1]));movies(temp.path,fs::absolute(argv[1]));
+    COM com;try{check(SUCCEEDED(com.result)&&argc==5,"Pass windows/resources/media-assembly, the ICC, movie colour and JPEG fixtures");Temp temp;colourManaged(temp.path,fs::absolute(argv[1]),fs::absolute(argv[2]));
+        jpegDecode(temp.path,fs::absolute(argv[1]),fs::absolute(argv[4]));stills(temp.path,fs::absolute(argv[1]));movies(temp.path,fs::absolute(argv[1]));
         {MF mf;movieColour(temp.path,fs::absolute(argv[1]),fs::absolute(argv[3]));}
         std::cout<<"PASS "<<checks<<" native Media Assembly codec checks\n";return 0;}
     catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}

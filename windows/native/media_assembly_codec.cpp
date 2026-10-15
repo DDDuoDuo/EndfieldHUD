@@ -144,6 +144,91 @@ std::pair<unsigned,unsigned>bounded(unsigned w,unsigned h,std::optional<unsigned
     if(!maximum||std::max(w,h)<=*maximum)return {w,h};const double s=double(*maximum)/std::max(w,h);
     return {std::clamp<unsigned>(unsigned(std::lround(w*s)),1u,*maximum),std::clamp<unsigned>(unsigned(std::lround(h*s)),1u,*maximum)};
 }
+// JPEG chroma as the Mac reads it (black-box, tests/fixtures/media-assembly-
+// jpeg-source.json from tools/media_assembly_jpeg_reference.py). Both pinned
+// still paths upsample the decoded chroma with the JPEG "fancy" triangle
+// (3/4 nearest sample, 1/4 the next one in each subsampled direction), which
+// the WIC decoder also does, except:
+//   preview (ImageIO thumbnail) of 4:2:0: the triangle stays inside each
+//     16 x 16 MCU (8 x 8 chroma samples): its edge samples repeat instead of
+//     reading the next MCU;
+//   export (ImageIO image into Core Image) of 4:2:2: the chroma becomes
+//     4:2:0 first (each pair of rows averaged, then [1,6,1]/8 across the
+//     half-width samples) and is upsampled by the triangle in both directions.
+// These two read WIC's planar Y + CbCr samples (IWICPlanarBitmapSourceTransform,
+// native subsampling) and convert with the JFIF matrix in float, as the Mac
+// paths do. Everything else, and any file WIC cannot read planar, keeps the
+// WIC decode.
+enum class JpegChroma : std::uint8_t {perMCU420,export422};
+struct JpegPlanes {ComPtr<IWICPlanarBitmapSourceTransform>planar;unsigned chromaWidth{},chromaHeight{};};
+std::optional<JpegPlanes>jpegPlanes(IWICBitmapFrameDecode*frame,unsigned w,unsigned h){
+    JpegPlanes p;if(FAILED(frame->QueryInterface(IID_PPV_ARGS(&p.planar))))return {};
+    UINT dw=w,dh=h;const WICPixelFormatGUID formats[2]{GUID_WICPixelFormat8bppY,GUID_WICPixelFormat16bppCbCr};WICBitmapPlaneDescription planes[2]{};BOOL supported{};
+    if(FAILED(p.planar->DoesSupportTransform(&dw,&dh,WICBitmapTransformRotate0,WICPlanarOptionsPreserveSubsampling,formats,planes,2,&supported))||!supported||dw!=w||dh!=h||
+       planes[0].Width!=w||planes[0].Height!=h)return {};
+    p.chromaWidth=planes[1].Width;p.chromaHeight=planes[1].Height;return p;
+}
+inline std::uint8_t jfif(float v){return std::uint8_t(std::clamp(std::lround(v),0L,255L));}
+// Straight opaque RGBA for rows [first, first+count) from full-resolution Y
+// rows and float Cb/Cr rows (minus 128), JFIF full range.
+void jfifRows(const std::uint8_t*y,std::size_t yStride,const float*cb,const float*cr,std::size_t cStride,unsigned w,unsigned count,std::uint8_t*out){
+    for(unsigned r=0;r<count;++r)for(unsigned x=0;x<w;++x){
+        const float l=y[r*yStride+x],b=cb[r*cStride+x],c=cr[r*cStride+x];auto*o=out+(std::size_t(r)*w+x)*4;
+        o[0]=jfif(l+1.402f*c);o[1]=jfif(l-.344136f*b-.714136f*c);o[2]=jfif(l+1.772f*b);o[3]=255;}
+}
+// Fancy triangle upsampling of one half-resolution row to w samples; with
+// block > 0 the neighbour stays inside its block of samples.
+void triangle(const float*in,unsigned n,unsigned w,unsigned block,float*out){
+    for(unsigned x=0;x<w;++x){const unsigned k=std::min(n-1,x/2);unsigned lo=0,hi=n-1;if(block){lo=k/block*block;hi=std::min(n-1,lo+block-1);}
+        const unsigned other=x%2?std::min(hi,k+1):(k>lo?k-1:lo);out[x]=.75f*in[k]+.25f*in[other];}
+}
+std::optional<std::vector<std::uint8_t>>macJpeg(const JpegPlanes&p,unsigned w,unsigned h,JpegChroma model){
+    const unsigned cw=p.chromaWidth;std::vector<std::uint8_t>out(std::size_t(w)*h*4);
+    // Rows [top, top+rows) of the w x h planes (the size arguments name the
+    // whole transformed image; the rectangle selects the rows).
+    const auto copy=[&](unsigned top,unsigned rows,std::vector<std::uint8_t>&y,std::vector<std::uint8_t>&cbcr,unsigned chromaRows){
+        y.resize(std::size_t(w)*rows);cbcr.resize(std::size_t(cw)*2*chromaRows);const WICRect rect{0,INT(top),INT(w),INT(rows)};
+        WICBitmapPlane planes[2]{{GUID_WICPixelFormat8bppY,y.data(),w,UINT(y.size())},{GUID_WICPixelFormat16bppCbCr,cbcr.data(),cw*2,UINT(cbcr.size())}};
+        return SUCCEEDED(p.planar->CopyPixels(&rect,w,h,WICBitmapTransformRotate0,WICPlanarOptionsPreserveSubsampling,planes,2));};
+    std::vector<std::uint8_t>y,cbcr;
+    if(model==JpegChroma::perMCU420){
+        // Previews only (at most 1024 x 1024): the whole image at once.
+        const unsigned ch=p.chromaHeight;if(cw!=(w+1)/2||ch!=(h+1)/2||!copy(0,h,y,cbcr,ch))return {};
+        std::vector<float>horizontal(std::size_t(ch)*w*2),row(cw),cb(w),cr(w);
+        for(unsigned j=0;j<ch;++j)for(unsigned c=0;c<2;++c){for(unsigned k=0;k<cw;++k)row[k]=float(cbcr[(std::size_t(j)*cw+k)*2+c])-128.f;triangle(row.data(),cw,w,8,horizontal.data()+(std::size_t(j)*2+c)*w);}
+        for(unsigned r=0;r<h;++r){const unsigned j=std::min(ch-1,r/2),lo=j/8*8,hi=std::min(ch-1,lo+7),other=r%2?std::min(hi,j+1):(j>lo?j-1:lo);
+            for(unsigned x=0;x<w;++x){cb[x]=.75f*horizontal[(std::size_t(j)*2)*w+x]+.25f*horizontal[(std::size_t(other)*2)*w+x];cr[x]=.75f*horizontal[(std::size_t(j)*2+1)*w+x]+.25f*horizontal[(std::size_t(other)*2+1)*w+x];}
+            jfifRows(y.data()+std::size_t(r)*w,w,cb.data(),cr.data(),w,w,1,out.data()+std::size_t(r)*w*4);}
+        return out;
+    }
+    // Exports of 4:2:2. Source rows are read once and in order, in bands of
+    // 256 (the decoder reads forward). An output row needs the 4:2:0 rows next
+    // to its own, so a band's last row is written with the next band, from
+    // the kept luma row and smoothed chroma row.
+    if(cw!=(w+1)/2||p.chromaHeight!=h)return {};
+    const unsigned half=(h+1)/2;constexpr unsigned band=256;
+    std::vector<float>averaged(cw),narrow(cw),wide,previous(std::size_t(w)*2),cb(w),cr(w);std::vector<std::uint8_t>pendingY(w);
+    for(unsigned top=0;top<h;top+=band){
+        const unsigned bottom=std::min(h,top+band);if(!copy(top,bottom-top,y,cbcr,bottom-top))return {};
+        // 4:2:0 rows j in [top/2, ceil(bottom/2)): averaged row pairs, then
+        // [1,6,1]/8 across, then the triangle to full width (wide).
+        const unsigned j0=top/2,j1=std::min(half,(bottom+1)/2);wide.resize(std::size_t(j1-j0)*2*w);
+        for(unsigned j=j0;j<j1;++j){const unsigned a=2*j-top,b=std::min(h-1,2*j+1)-top;
+            for(unsigned c=0;c<2;++c){
+                for(unsigned k=0;k<cw;++k)averaged[k]=(float(cbcr[(std::size_t(a)*cw+k)*2+c])+float(cbcr[(std::size_t(b)*cw+k)*2+c]))*.5f-128.f;
+                for(unsigned k=0;k<cw;++k)narrow[k]=(averaged[k?k-1:0]+6.f*averaged[k]+averaged[std::min(cw-1,k+1)])*.125f;
+                triangle(narrow.data(),cw,w,0,wide.data()+(std::size_t(j-j0)*2+c)*w);}}
+        // Row j0 - 1 comes from the previous band.
+        const auto row=[&](unsigned j,unsigned c)->const float*{return j<j0?previous.data()+std::size_t(c)*w:wide.data()+(std::size_t(j-j0)*2+c)*w;};
+        const unsigned firstRow=top?top-1:0,endRow=bottom==h?h:bottom-1;
+        for(unsigned r=firstRow;r<endRow;++r){const unsigned j=std::min(half-1,r/2),other=r%2?std::min(half-1,j+1):(j?j-1:0);
+            const float*b0=row(j,0),*b1=row(other,0),*r0=row(j,1),*r1=row(other,1);
+            for(unsigned x=0;x<w;++x){cb[x]=.75f*b0[x]+.25f*b1[x];cr[x]=.75f*r0[x]+.25f*r1[x];}
+            jfifRows(r<top?pendingY.data():y.data()+std::size_t(r-top)*w,w,cb.data(),cr.data(),w,w,1,out.data()+std::size_t(r)*w*4);}
+        if(bottom<h){std::copy_n(y.data()+std::size_t(bottom-1-top)*w,w,pendingY.data());std::copy_n(row(j1-1,0),w,previous.data());std::copy_n(row(j1-1,1),w,previous.data()+w);}
+    }
+    return out;
+}
 // Writes decoded pixels rotated by the Media Foundation display rotation
 // into out (same byte count; no allocation).
 void rotateInto(const std::uint8_t*in,unsigned w,unsigned h,unsigned degrees,std::uint8_t*out){
@@ -351,7 +436,18 @@ MediaAssemblyBitmap NativeMediaAssemblyEngine::decodeStill(const m::MediaAssembl
     if(!s.gif){
         // Scale before orienting; the bound applies to the longest side.
         const auto[w,h]=bounded(s.width,s.height,maximum);ComPtr<IWICBitmapSource>source;check(frame.As(&source),m::MediaAssemblyError::unsupported);
-        out.width=w;out.height=h;out.straightRGBA=pixels(s.wic.Get(),source,frame.Get(),w,h,&out.colour,&png);orient(out,s.orientation);return out;
+        out.width=w;out.height=h;
+        // A full-size JPEG takes the Mac's chroma reading of its path (see
+        // JpegChroma) unless its profile needs the WIC colour transform.
+        if(IsEqualGUID(s.container,GUID_ContainerFormatJpeg)&&w==s.width&&h==s.height)
+            if(const auto planes=jpegPlanes(frame.Get(),w,h)){
+                const unsigned cw=planes->chromaWidth,ch=planes->chromaHeight;const bool half=cw==(w+1)/2;
+                const auto model=maximum&&half&&ch==(h+1)/2?std::optional(JpegChroma::perMCU420):!maximum&&half&&ch==h?std::optional(JpegChroma::export422):std::nullopt;
+                std::shared_ptr<const m::MediaAssemblySourceColour>colour;
+                if(model&&!platformColour(s.wic.Get(),frame.Get(),&colour,nullptr))
+                    if(auto rgba=macJpeg(*planes,w,h,*model)){out.straightRGBA=std::move(*rgba);out.colour=std::move(colour);orient(out,s.orientation);return out;}
+            }
+        out.straightRGBA=pixels(s.wic.Get(),source,frame.Get(),w,h,&out.colour,&png);orient(out,s.orientation);return out;
     }
     // GIF first frame on its logical screen (transparent outside the frame).
     UINT fw{},fh{};check(frame->GetSize(&fw,&fh),m::MediaAssemblyError::unsupported);ComPtr<IWICMetadataQueryReader>meta;frame->GetMetadataQueryReader(&meta);
