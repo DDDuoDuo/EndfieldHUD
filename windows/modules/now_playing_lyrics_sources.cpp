@@ -310,7 +310,9 @@ std::optional<NowPlayingCatalogMatch>nowPlayingCatalogMatch(std::span<const std:
             length?std::optional(length->value/1000):std::nullopt,track);
         if(!score)continue;
         const auto picture=string(album["picUrl"]);
-        ranked.push_back({*identifier,picture?nowPlayingCatalogCoverURL(*picture):std::nullopt,*score});
+        std::optional<double>seconds;
+        if(length&&std::isfinite(length->value)&&length->value>0)seconds=std::min(length->value/1000,nowPlayingMaximumSeconds);
+        ranked.push_back({*identifier,picture?nowPlayingCatalogCoverURL(*picture):std::nullopt,*score,seconds});
     }
     std::stable_sort(ranked.begin(),ranked.end(),[](const auto&a,const auto&b){return a.score>b.score;});
     if(ranked.empty())return {};
@@ -324,6 +326,18 @@ std::optional<std::string>nowPlayingCatalogCoverURL(std::string_view raw){
     const auto host=hostLower(parts->host);
     if(host!="p1.music.126.net"&&host!="p2.music.126.net"&&host!="p3.music.126.net"&&host!="p4.music.126.net")return {};
     return "https://"+parts->host+encodedPath(parts->path)+"?param=600y600";
+}
+std::optional<std::string>nowPlayingCatalogCoverURL(std::string_view raw,unsigned pixels){
+    auto url=nowPlayingCatalogCoverURL(raw);if(!url)return {};
+    const auto size=std::to_string(std::clamp(pixels,64u,600u));
+    url->resize(url->size()-std::string_view("600y600").size());
+    *url+=size+"y"+size;
+    return url;
+}
+unsigned nowPlayingCatalogCoverPixels(double pixelsPerPoint)noexcept{
+    const double needed=330*(std::isfinite(pixelsPerPoint)&&pixelsPerPoint>0?pixelsPerPoint:1);
+    for(const unsigned size:{200u,300u,400u})if(needed<=size)return size;
+    return 500;
 }
 std::optional<NowPlayingLyrics>nowPlayingCatalogDecodeLyrics(std::span<const std::uint8_t>bytes)try{
     const auto root=parse(bytes);if(!root||!root->isObject())return {};
@@ -433,16 +447,16 @@ void NowPlayingLyricsLoader::clear(){auto i=impl_;i->clear();}
 std::size_t NowPlayingLyricsLoader::cacheSize()const noexcept{return impl_->cache.size();}
 
 struct NowPlayingCatalog::Impl:std::enable_shared_from_this<Impl>{
-    struct Entry {NowPlayingLyricsKey key;std::optional<std::string>artwork;std::shared_ptr<const NowPlayingLyrics>lyrics;bool finished{};};
+    struct Entry {NowPlayingLyricsKey key;std::optional<std::string>artwork;std::shared_ptr<const NowPlayingLyrics>lyrics;bool finished{};std::optional<double>duration;};
     NowPlayingFetch fetch;NowPlayingDecoder decode;std::function<void()>onChange;std::vector<Entry>entries;std::optional<NowPlayingLyricsKey>desired;
     std::function<void()>cancel;std::uint64_t generation{};
     Impl(NowPlayingFetch f,NowPlayingDecoder d):fetch(std::move(f)),decode(std::move(d)){if(!fetch||!decode)throw std::invalid_argument("Now Playing catalog needs a fetch and a decoder");entries.reserve(9);}
     const Entry*current()const{if(!desired)return nullptr;for(const auto&e:entries)if(e.key==*desired)return &e;return nullptr;}
     void notify(){auto callback=onChange;if(callback)callback();}
     void stop(){auto value=std::move(cancel);cancel=nullptr;if(value)value();}
-    void update(const NowPlayingLyricsKey&key,std::optional<std::string>artwork,std::shared_ptr<const NowPlayingLyrics>lyrics,bool finished){
+    void update(const NowPlayingLyricsKey&key,std::optional<std::string>artwork,std::shared_ptr<const NowPlayingLyrics>lyrics,bool finished,std::optional<double>duration={}){
         if(!desired||!(*desired==key))return;
-        std::erase_if(entries,[&](const auto&e){return e.key==key;});entries.push_back({key,std::move(artwork),std::move(lyrics),finished});
+        std::erase_if(entries,[&](const auto&e){return e.key==key;});entries.push_back({key,std::move(artwork),std::move(lyrics),finished,duration});
         if(entries.size()>8)entries.erase(entries.begin(),entries.begin()+static_cast<std::ptrdiff_t>(entries.size()-8));
         notify();
     }
@@ -479,15 +493,15 @@ struct NowPlayingCatalog::Impl:std::enable_shared_from_this<Impl>{
                 const auto self=weak.lock();if(!self||self->generation!=expected)return;
                 const auto match=*found;
                 if(!match){self->update(key,{},nullptr,true);return;}
-                self->update(key,match->artwork,nullptr,false);
-                const auto artwork=match->artwork;
-                self->get(nowPlayingCatalogLyricsURL(match->identifier),expected,[weak,key,artwork,expected](NowPlayingBody data){
+                const auto artwork=match->artwork;const auto length=match->duration;
+                self->update(key,artwork,nullptr,false,length);
+                self->get(nowPlayingCatalogLyricsURL(match->identifier),expected,[weak,key,artwork,length,expected](NowPlayingBody data){
                     const auto self=weak.lock();if(!self)return;
-                    if(!data){self->update(key,artwork,nullptr,true);return;}
+                    if(!data){self->update(key,artwork,nullptr,true,length);return;}
                     auto result=std::make_shared<std::shared_ptr<const NowPlayingLyrics>>();
-                    self->decode([result,data]{*result=shared(nowPlayingCatalogDecodeLyrics(*data));},[weak,result,key,artwork,expected]{
+                    self->decode([result,data]{*result=shared(nowPlayingCatalogDecodeLyrics(*data));},[weak,result,key,artwork,length,expected]{
                         const auto self=weak.lock();if(!self||self->generation!=expected)return;
-                        self->update(key,artwork,std::move(*result),true);
+                        self->update(key,artwork,std::move(*result),true,length);
                     });
                 });
             });
@@ -499,6 +513,7 @@ NowPlayingCatalog::~NowPlayingCatalog(){impl_->onChange=nullptr;impl_->stop();}
 void NowPlayingCatalog::setOnChange(std::function<void()>value){impl_->onChange=std::move(value);}
 std::optional<std::string>NowPlayingCatalog::artwork()const{const auto*e=impl_->current();return e?e->artwork:std::nullopt;}
 std::shared_ptr<const NowPlayingLyrics>NowPlayingCatalog::lyrics()const{const auto*e=impl_->current();return e?e->lyrics:nullptr;}
+std::optional<double>NowPlayingCatalog::duration()const{const auto*e=impl_->current();return e?e->duration:std::nullopt;}
 bool NowPlayingCatalog::isLoading()const{const auto*e=impl_->current();return impl_->desired.has_value()&&!(e&&e->finished);}
 void NowPlayingCatalog::request(const NowPlayingLyricsKey&key,const NowPlayingTrack&track){auto i=impl_;i->request(key,track);}
 void NowPlayingCatalog::clear(){auto i=impl_;i->clear();}
@@ -552,6 +567,7 @@ std::shared_ptr<const NowPlayingLyrics>NowPlayingLyricsSources::lyrics()const{
     return i.loader.lyrics();
 }
 std::optional<std::string>NowPlayingLyricsSources::catalogArtwork()const{return impl_->catalog?impl_->catalog->artwork():std::nullopt;}
+std::optional<double>NowPlayingLyricsSources::catalogDuration()const{return impl_->catalog?impl_->catalog->duration():std::nullopt;}
 bool NowPlayingLyricsSources::catalogLoading()const{return impl_->catalog&&impl_->catalog->isLoading();}
 const std::optional<NowPlayingLyricsKey>&NowPlayingLyricsSources::key()const noexcept{return impl_->key;}
 }

@@ -151,6 +151,9 @@ bool NativeNowPlayingScene::releaseResources(Renderer&r){auto&i=*impl_;need(!i.o
     for(auto&l:i.leaves)complete=l.raster.release(r)&&complete;for(auto&f:i.fades)for(unsigned k=0;k<2;++k){if(f.coverKind){if(f.coverUploaded[k]&&(!initialized||r.removeTexture(f.raster[k].id)))f.coverUploaded[k]=0;complete=!f.coverUploaded[k]&&complete;}else complete=f.raster[k].release(r)&&complete;}
     if(i.meshResident&&(!initialized||r.removeMesh(i.mesh)))i.meshResident=false;complete=!i.meshResident&&complete;if(complete)i.owner=nullptr;return complete;
 }
-NowPlayingSceneStats NativeNowPlayingScene::stats()const noexcept{return impl_->counts;}
+NowPlayingSceneStats NativeNowPlayingScene::stats()const noexcept{auto s=impl_->counts;s.residentPixelBytes=0;
+    for(const auto&l:impl_->leaves)if(l.raster.image)s.residentPixelBytes+=l.raster.image->straightRGBA.size();
+    for(const auto&f:impl_->fades)if(!f.coverKind)for(const auto&slot:f.raster)if(slot.image)s.residentPixelBytes+=slot.image->straightRGBA.size();
+    return s;}
 }
 #endif

@@ -73,7 +73,7 @@ int main(){
         acceptance();lifecycle();
 #ifdef _WIN32
         // Construction only: obtaining the factory performs no IO or request.
-        check(bool(n::windowsNowPlayingTransport()),"Windows.Web.Http transport factory is available");
+        check(bool(n::windowsNowPlayingTransport()),"The WinHTTP transport factory is available");
 #endif
         std::cout<<"Now Playing web: "<<checks<<" checks passed (injected transport, no network)\n";return 0;
     }catch(const std::exception&e){std::cerr<<"Now Playing web failed after "<<checks<<": "<<e.what()<<'\n';return 1;}

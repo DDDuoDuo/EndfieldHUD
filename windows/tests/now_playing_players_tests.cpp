@@ -10,6 +10,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <limits>
 #include <stdexcept>
 
 namespace n = endfield::native;
@@ -85,6 +86,29 @@ void titles() {
     check(track(k, "周杰伦 - 晴天 - 酷狗音乐") == m::NowPlayingTitleTrack{"晴天", "周杰伦"} && track(k, "A - B - C") == m::NowPlayingTitleTrack{"B - C", "A"} &&
               !track(k, "酷狗音乐"), "Kugou: Artist - Title split at the first separator");
     check(!rules(qq).confirmed && !rules(kugou).confirmed && rules(netease).confirmed, "Unconfirmed title grammars stay marked for live acceptance");
+    // Other Win32 players without a media session (grammar unconfirmed).
+    const auto& kuwo = rules("C:\\EndfieldHUD-Synthetic\\KwMusic.exe");
+    check(track(kuwo, "Song - Singer") == m::NowPlayingTitleTrack{"Song", "Singer"} && !track(kuwo, "\xe9\x85\xb7\xe6\x88\x91\xe9\x9f\xb3\xe4\xb9\x90"),
+          "Kuwo: Title - Artist; its idle caption is no track");
+    const auto& foobar = rules("foobar2000.exe");
+    check(track(foobar, "Artist - Song [foobar2000]") == m::NowPlayingTitleTrack{"Song", "Artist"} && track(foobar, "A - B - C") == m::NowPlayingTitleTrack{"B - C", "A"} &&
+              !track(foobar, "foobar2000"), "foobar2000: Artist - Title with its [foobar2000] decoration removed");
+    const auto& aimp = rules("AIMP.exe");
+    check(track(aimp, "Artist - Song") == m::NowPlayingTitleTrack{"Song", "Artist"} && !track(aimp, "AIMP"), "AIMP: Artist - Title");
+    const auto& pot = rules("PotPlayerMini64.exe");
+    check(m::nowPlayingWindowPlayer("D:\\Daum\\PotPlayerMini.exe") == &pot && track(pot, "Concert.mkv - PotPlayer") == m::NowPlayingTitleTrack{"Concert.mkv", ""} &&
+              track(pot, "A - B.mp3") == m::NowPlayingTitleTrack{"A - B.mp3", ""} && !track(pot, "PotPlayer"),
+          "PotPlayer (both image names): the whole item caption is the title");
+    const auto& vlc = rules("vlc.exe");
+    check(track(vlc, "Song Name - VLC media player") == m::NowPlayingTitleTrack{"Song Name", ""} && !track(vlc, "VLC media player"),
+          "VLC: the item title before its player name");
+    for (const auto& player : m::nowPlayingWindowPlayers())
+        check(player.confirmed == (player.key == "netease"), "Only the NetEase grammar is confirmed on a real install");
+    check(m::nowPlayingSameExecutable("foobar2000.exe", "C:\\Apps\\foobar2000\\foobar2000.exe") &&
+              m::nowPlayingSameExecutable("C:\\A\\FOOBAR2000.EXE", "D:/foobar2000.exe") &&
+              !m::nowPlayingSameExecutable("SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify", "C:\\x\\Spotify.exe") &&
+              !m::nowPlayingSameExecutable("vlc", "vlc") && !m::nowPlayingSameExecutable("", "") && !m::nowPlayingSameExecutable("aimp.exe", "AIMP2.exe"),
+          "A Win32 GSMTC identity names the same image as a process path by file name only");
 
     // Main window selection.
     const std::vector<m::NowPlayingPlayerWindow> withClass{
@@ -98,6 +122,62 @@ void titles() {
     check(m::nowPlayingMainWindow(q, classless) == 2u, "Without a known class, unowned windows titled with a track win");
     const std::vector<m::NowPlayingPlayerWindow> owned{window(1, 8, qq, "Popup", "Notice - Text", true, true)};
     check(!m::nowPlayingMainWindow(q, owned) && !m::nowPlayingMainWindow(q, {}), "Owned popups alone are no player window");
+}
+
+// NetEase Cloud Music registers its global shortcuts, the media keys among
+// them, with RegisterHotKey and ignores WM_APPCOMMAND (live RC 128): the media
+// key reaches the hotkey's holder, never the foreground window.
+void transport() {
+    using T = m::NowPlayingWindowTransport;
+    check(m::nowPlayingWindowTransport(true, true) == T::mediaKey, "A held media key with a single window-title player is its transport");
+    check(m::nowPlayingWindowTransport(true, false) == T::appCommand && m::nowPlayingWindowTransport(false, true) == T::appCommand &&
+              m::nowPlayingWindowTransport(false, false) == T::appCommand,
+          "Several players (the holder is unknown) or an unheld key: WM_APPCOMMAND to the player's window");
+    check(m::nowPlayingWindowTransportKey(T::mediaKey) == "mediaKey" && m::nowPlayingWindowTransportKey(T::appCommand) == "appCommand", "Stable transport keys");
+}
+void timeline() {
+    m::NowPlayingWindowTimeline t;
+    check(!t.position(10), "Without an observed start there is no position");
+    t.restart(100.);
+    check(t.position(130) == 30. && t.position(90) == 0., "Elapsed since the observed title change (never negative)");
+    t.observe(true, 130);
+    t.observe(false, 140);
+    check(t.position(150) == 40. && t.position(145) == 40., "A pause freezes the elapsed time where it began");
+    t.observe(false, 160);
+    check(t.position(170) == 40., "A continuing pause keeps its first moment");
+    t.observe(true, 170);
+    check(t.position(180) == 50., "Resuming subtracts the whole pause");
+    t.observe(true, std::numeric_limits<double>::quiet_NaN());
+    check(t.position(180) == 50., "A non-finite observation changes nothing");
+    t.restart(std::nullopt);
+    check(!t.position(200) && t.pausedTotal == 0 && !t.pausedSince, "A track whose change was not observed has no position and no pause history");
+    t.restart(std::numeric_limits<double>::infinity());
+    check(!t.position(200), "A non-finite start is unknown");
+    t.restart(100.);
+    t.observe(false, 90);
+    check(t.position(120) == 0., "A pause seen before the start pauses at the start");
+}
+void activity() {
+    n::NowPlayingProcessActivity a;
+    const auto route = [](std::uint32_t pid, std::optional<bool> rendering, std::string id) {
+        m::NowPlayingAudioRoute r;
+        r.id = std::move(id);
+        r.pid = pid;
+        r.available = true;
+        r.rendering = rendering;
+        return r;
+    };
+    check(!a.rendering(7) && a.revision() == 0, "Nothing is known before a publication");
+    std::vector<m::NowPlayingAudioRoute> routes{route(7, false, "7:1"), route(7, true, "7:2"), route(8, false, "8:1"), route(9, std::nullopt, "9:1"), route(0, true, "0:1")};
+    check(a.update(routes) && a.rendering(7) == true && a.rendering(8) == false && !a.rendering(9) && !a.rendering(0) && a.revision() == 1,
+          "Any rendering route makes its process render; uncaptured routes and PID 0 stay unknown");
+    check(!a.update(routes) && a.revision() == 1, "An unchanged publication changes nothing");
+    routes[1].rendering = false;
+    check(a.update(routes) && a.rendering(7) == false && a.revision() == 2, "Its last rendering route going silent pauses the process");
+    std::vector<m::NowPlayingAudioRoute> many;
+    for (std::uint32_t pid = 1; pid <= 600; ++pid) many.push_back(route(pid, true, std::to_string(pid)));
+    check(a.update(many) && a.rendering(512) == true && !a.rendering(513), "At most 512 processes are kept");
+    check(a.update({}) && !a.rendering(7), "An empty publication forgets every process");
 }
 
 struct Provider final : n::NowPlayingProvider {
@@ -132,11 +212,12 @@ n::NowPlayingReadResult media(std::string identity, bool playing, bool withTrack
 }
 struct Direct {
     std::shared_ptr<n::NowPlayingWindowFixture> desktop = std::make_shared<n::NowPlayingWindowFixture>();
+    std::shared_ptr<n::NowPlayingProcessActivity> activity = std::make_shared<n::NowPlayingProcessActivity>();
     double now = 5;
     unsigned changes{};
     std::shared_ptr<n::NowPlayingProvider> provider;
     Direct() {
-        provider = n::nowPlayingWindowProvider([d = desktop] { return d; }, [this] { return now; })();
+        provider = n::nowPlayingWindowProvider([d = desktop] { return d; }, [this] { return now; }, activity)();
         bool ready{};
         provider->start([this] { ++changes; }, [&](n::NowPlayingCommandResult r) { ready = r.failure == F::none; });
         check(ready, "The window-title provider is ready at once");
@@ -186,7 +267,8 @@ void provider() {
 
     check(d.perform(token, m::NowPlayingCommandKind::playPause) == F::none, "Play/pause is delivered to the player window");
     const auto sent = d.desktop->commands();
-    check(sent.size() == 1 && sent[0].window == 10 && sent[0].pid == 7 && sent[0].kind == m::NowPlayingCommandKind::playPause, "WM_APPCOMMAND targets that window and process");
+    check(sent.size() == 1 && sent[0].window == 10 && sent[0].pid == 7 && sent[0].kind == m::NowPlayingCommandKind::playPause && sent[0].onlyPlayer,
+          "The command targets that window and process, the only player running (its media-key hotkey may carry it)");
     check(!d.read().value.track->isPlaying, "A delivered toggle flips the inferred state (the title does not report pausing)");
     check(d.perform(token, m::NowPlayingCommandKind::playPause) == F::none && d.read().value.track->isPlaying, "A second toggle flips it back");
     check(d.perform(token, m::NowPlayingCommandKind::seek) == F::unsupported && d.perform(token + 5, m::NowPlayingCommandKind::next) == F::stale,
@@ -209,6 +291,15 @@ void provider() {
     d.desktop->set({window(12, 7, netease, "OrpheusBrowserHost", "Next Song - Next Artist"), window(20, 8, qq, "QQMusic_Daemon_Wnd", "QQ Song - QQ Artist")});
     auto tie = d.read();
     check(tie.value.session->appUserModelID == qq, "Two playing players: the current one stays current");
+    check(d.perform(tie.value.session->token, m::NowPlayingCommandKind::next) == F::none && !d.desktop->commands().back().onlyPlayer,
+          "With several players running the command is never a media key (its holder is unknown)");
+    // The per-app audio publication says which player renders audio.
+    d.activity->update(std::vector<m::NowPlayingAudioRoute>{{"7:1", 7, netease, true, m::NowPlayingAudioRouteState::direct, {}, {}, true},
+        {"8:1", 8, qq, true, m::NowPlayingAudioRouteState::direct, {}, {}, false}});
+    auto audible = d.read();
+    check(audible.value.session->appUserModelID == netease && audible.value.track->isPlaying && audible.value.sessions.size() == 2,
+          "The player whose process renders audio is current; a silent one is paused");
+    d.activity->update(std::vector<m::NowPlayingAudioRoute>{});
     d.desktop->set({window(12, 7, netease, "OrpheusBrowserHost", "Next Song - Next Artist")});
     auto gone = d.read();
     const auto qqToken = several.value.sessions[1].token;
@@ -227,6 +318,109 @@ void provider() {
     d.provider->read([&](n::NowPlayingReadResult) { late = true; });
     d.provider->perform(token, 1, {m::NowPlayingCommandKind::next, 0}, [&](n::NowPlayingCommandResult) { late = true; });
     check(d.changes == changes && !late, "A stopped provider reports nothing");
+}
+
+// A window title carries no position: the elapsed time is estimated from the
+// observed title change to the track and the pauses seen since.
+void estimate() {
+    Direct d;
+    auto w = window(10, 7, netease, "OrpheusBrowserHost", "Song - Artist");
+    w.titleChangedAt = 2;
+    d.desktop->set({w});
+    auto first = d.read();
+    check(first.value.track->position == 3. && first.value.track->sampledAt == 5 && first.value.track->isPlaying && !first.value.track->duration,
+          "The track began at its observed title change; it plays on from there");
+    d.activity->update(std::vector<m::NowPlayingAudioRoute>{{"7:1", 7, netease, true, m::NowPlayingAudioRouteState::direct, {}, {}, false}});
+    d.now = 8;
+    auto paused = d.read();
+    check(!paused.value.track->isPlaying && paused.value.track->position == 6. && paused.value.metadataRevision == first.value.metadataRevision,
+          "Its process going silent pauses the estimate");
+    d.now = 20;
+    check(d.read().value.track->position == 6., "The estimate stays frozen while the process is silent");
+    d.activity->update(std::vector<m::NowPlayingAudioRoute>{{"7:1", 7, netease, true, m::NowPlayingAudioRouteState::direct, {}, {}, true}});
+    d.now = 21;
+    check(d.read().value.track->position == 6., "Resuming continues from the frozen time");
+    d.now = 25;
+    const auto resumed = d.read();
+    check(resumed.value.track->position == 10. && resumed.value.track->isPlaying, "The pause is subtracted afterwards");
+    auto next = window(10, 7, netease, "OrpheusBrowserHost", "Next - Artist");
+    next.titleChangedAt = 30;
+    d.desktop->set({next});
+    check(!d.read().value.track->position, "A title change reported after the read time is not trusted");
+    d.now = 31;
+    auto later = d.read();
+    check(!later.value.track->position, "The estimate starts only with a track change the read itself saw dated");
+    auto third = window(10, 7, netease, "OrpheusBrowserHost", "Third - Artist");
+    third.titleChangedAt = 30.5;
+    d.desktop->set({third});
+    const auto dated = d.read();
+    check(dated.value.track->title == "Third" && dated.value.track->position == .5, "A dated title change restarts the estimate");
+    auto undated = window(10, 7, netease, "OrpheusBrowserHost", "Fourth - Artist");
+    d.desktop->set({undated});
+    check(!d.read().value.track->position, "An undated title change (nothing observed it) has no position");
+}
+
+// The player's own controls (its accessibility tree, the Mac
+// NowPlayingAccessibility read): elapsed and total time, play state and
+// transport controls, resynchronized on every change.
+void controls() {
+    Direct d;
+    const auto at = [&] { return d.now; };
+    n::NowPlayingPlayerReading playing{83., 296., true, true, true, true, true};
+    d.desktop->set({window(10, 7, netease, "OrpheusBrowserHost", "Song - Artist")});
+    d.desktop->setReading(7, playing, at);
+    auto first = d.read();
+    check(d.desktop->refreshes() == 1 && first.value.track->position == 83. && first.value.track->duration == 296. && first.value.track->isPlaying &&
+              first.value.track->sampledAt == 5, "A player first seen is read: its own elapsed and total time and play state");
+    d.now = 10;
+    auto later = d.read();
+    check(d.desktop->refreshes() == 1 && later.value.track->position == 88. && later.value.track->duration == 296.,
+          "Without a change no new reading is asked; the time runs on from the player's clock");
+    // A pause inside the player: its audio stops, which asks its controls again.
+    d.desktop->setReading(7, n::NowPlayingPlayerReading{90., 296., false, true, true, true, true}, at);
+    d.activity->update(std::vector<m::NowPlayingAudioRoute>{{"7:1", 7, netease, true, m::NowPlayingAudioRouteState::direct, {}, {}, false}});
+    d.now = 12;
+    auto paused = d.read();
+    check(d.desktop->refreshes() == 2 && !paused.value.track->isPlaying && paused.value.track->position == 90., "A change of its audio activity resynchronizes the time");
+    d.now = 20;
+    check(d.read().value.track->position == 90., "Paused, the time stays");
+    // The next track: its title change resynchronizes before anything else.
+    d.desktop->setReading(7, n::NowPlayingPlayerReading{1., 200., true, true, true, true, true}, at);
+    d.activity->update(std::vector<m::NowPlayingAudioRoute>{{"7:1", 7, netease, true, m::NowPlayingAudioRouteState::direct, {}, {}, true}});
+    d.desktop->set({window(10, 7, netease, "OrpheusBrowserHost", "Next - Artist")});
+    d.now = 25;
+    auto next = d.read();
+    check(d.desktop->refreshes() == 3 && next.value.track->title == "Next" && next.value.track->position == 1. && next.value.track->duration == 200. &&
+              next.value.track->isPlaying, "A new title reads the new track's time");
+    // A reading begun before the track changed describes the previous track.
+    n::NowPlayingPlayerReading stale{50., 300., true, true, true, true, true, 24., 24.};
+    d.desktop->setReading(7, stale);
+    d.desktop->set({window(10, 7, netease, "OrpheusBrowserHost", "Third - Artist")});
+    d.now = 30;
+    auto third = d.read();
+    check(third.value.track->title == "Third" && !third.value.track->position && !third.value.track->duration, "An older reading never dates a newer track");
+    // A minimized or hidden player may stop updating its elapsed label.
+    n::NowPlayingPlayerReading hidden{40., 180., true, true, true, true, false};
+    d.desktop->setReading(7, hidden, at);
+    d.desktop->set({window(10, 7, netease, "OrpheusBrowserHost", "Fourth - Artist")});
+    d.now = 40;
+    auto minimized = d.read();
+    check(minimized.value.track->duration == 180. && !minimized.value.track->position, "A hidden window's elapsed label is not trusted (its total is)");
+
+    // Transport through the player's own controls first.
+    const auto token = minimized.value.session->token;
+    const auto sent = d.desktop->commands().size();
+    d.desktop->pressControls(true);
+    check(d.perform(token, m::NowPlayingCommandKind::next) == F::none && d.desktop->presses().size() == 1 &&
+              d.desktop->presses()[0].kind == m::NowPlayingCommandKind::next && d.desktop->presses()[0].pid == 7 && d.desktop->commands().size() == sent,
+          "Next presses the player's own control: no key or window message");
+    const auto refreshes = d.desktop->refreshes();
+    d.read();
+    check(d.desktop->refreshes() == refreshes + 1, "A delivered command resynchronizes the player's controls");
+    d.desktop->pressControls(false);
+    check(d.perform(token, m::NowPlayingCommandKind::previous) == F::none && d.desktop->commands().size() == sent + 1 &&
+              d.desktop->commands().back().kind == m::NowPlayingCommandKind::previous, "Without its own control the media key or WM_APPCOMMAND carries it");
+    check(d.perform(token, m::NowPlayingCommandKind::seek) == F::unsupported && d.desktop->presses().size() == 1, "Seek is never pressed");
 }
 
 void merge() {
@@ -264,6 +458,14 @@ void merge() {
     check(listed.value.sessions.size() == 1 && listed.value.session->appUserModelID == "cloudmusic.exe", "A player GSMTC already lists is never listed twice");
     auto store = n::nowPlayingMergeReads(media("1F8B0F94.122165AE053F_j2p0p5q0044a6!App", false, false), fallback(true));
     check(store.value.sessions.size() == 1 && !store.value.track, "The NetEase Store session also hides the Win32 window fallback");
+    {
+        auto foobar = fallback(true);
+        foobar.value.sessions[0].appUserModelID = foobar.value.sessions[0].displayName = "C:\\Apps\\foobar2000\\foobar2000.exe";
+        foobar.value.session = foobar.value.sessions[0];
+        auto same = n::nowPlayingMergeReads(media("foobar2000.exe", false), foobar);
+        check(same.value.sessions.size() == 1 && same.value.session->appUserModelID == "foobar2000.exe",
+              "A player whose image GSMTC lists (foobar2000 with its media controls on) is never listed twice");
+    }
     n::NowPlayingReadResult stale;
     stale.failure = F::stale;
     check(n::nowPlayingMergeReads(stale, fallback(true)).failure == F::stale, "A stale media read is re-read, never replaced by the fallback");
@@ -449,7 +651,12 @@ int main(int argc, char** argv) {
         if (argc != 2) throw std::runtime_error("usage: now_playing_players_tests now-playing-players-source.json");
         oracle(argv[1]);
         titles();
+        transport();
+        timeline();
+        activity();
         provider();
+        estimate();
+        controls();
         merge();
         composite();
         compositeFailures();

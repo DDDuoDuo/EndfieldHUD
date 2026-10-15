@@ -873,12 +873,12 @@ struct NowPlayingProbe::Impl {
         else set(C::metadata, V::pass, std::string("title") + (o->artist ? ", artist" : ", no artist") + (o->album ? ", album" : ", no album"));
 
         if (o->duration && o->position) set(C::timeline, V::pass, "duration " + m::nowPlayingTime(o->length) + " with position");
-        else if (window) set(C::timeline, V::gap, "a window title carries no duration or position");
+        else if (window) set(C::timeline, V::gap, "neither its window title nor its own controls gave a duration and position");
         else set(C::timeline, V::gap, o->duration ? "the player publishes no position" : o->position ? "the player publishes no duration"
                                                                                                       : "the player publishes no duration or position");
 
         if (window && !o->position)
-            set(C::progress, V::gap, "no timeline: the HUD shows no progress for a window-title player");
+            set(C::progress, V::gap, "no timeline: its own controls gave no elapsed time, so the HUD shows no progress");
         else if (!o->pairs && o->quiet >= nowPlayingProgressQuiet)
             set(C::progress, V::gap, "no timeline update during " + fixed(o->quiet, 0) +
                                          " s of playback: the player publishes its timeline only when playback changes; the HUD advances the "
@@ -950,16 +950,17 @@ struct NowPlayingProbe::Impl {
         else if (!caseless(commandApplication, o->application))
             set(C::command, V::unverified, "the command went to " + labelOf(commandApplication) + "; rerun while this player is current");
         else if (commandResult && window && commandResult->verdict == V::pass) {
-            // WM_APPCOMMAND is posted: a skip shows as a new window title; a
-            // play/pause is not reported by the title at all.
+            // The player's own control, its media-key hotkey or WM_APPCOMMAND
+            // carried it: a skip shows as a new window title; a play/pause is
+            // not reported by the title at all.
             const auto key = nowPlayingProbeCommandKey(*options.command);
             if (options.command->kind == m::NowPlayingCommandKind::playPause)
-                set(C::command, V::gap, key + " was delivered (WM_APPCOMMAND); " + commandLog + "; a window title does not report playback, so confirm it in the player");
+                set(C::command, V::gap, key + " was delivered (its own control, media key or WM_APPCOMMAND); " + commandLog + "; a window title does not report playback, so confirm it in the player");
             else if (o->commandTracks && o->tracks > *o->commandTracks)
-                set(C::command, V::pass, key + " was delivered (WM_APPCOMMAND) and the player's title changed afterwards; " + commandLog);
+                set(C::command, V::pass, key + " was delivered (its own control, media key or WM_APPCOMMAND) and the player's title changed afterwards; " + commandLog);
             else
-                set(C::command, V::unverified, key + " was delivered (WM_APPCOMMAND) but the player's title did not change afterwards: if it did not skip, "
-                                                     "the player ignores WM_APPCOMMAND");
+                set(C::command, V::unverified, key + " was delivered (its own control, media key or WM_APPCOMMAND) but the player's title did not change afterwards: if it did not skip, "
+                                                     "the player ignores every transport the HUD has for it");
         } else if (commandResult) row[C::command] = *commandResult;
         else set(C::command, V::unverified, nowPlayingProbeCommandKey(*options.command) + " was still pending when the run ended");
 

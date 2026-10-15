@@ -18,6 +18,8 @@ struct NowPlayingScenePose {
 struct NowPlayingSceneStats {
     std::uint64_t contentEvents{},localRasterUpdates{},coverUploads{},poses{},feedbackChanges{};
     std::size_t rasterSurfaces{};
+    // CPU pixels of the retained text/control rasters (covers are borrowed).
+    std::size_t residentPixelBytes{};
 };
 // Borrowed presentation/rasterizer outlive this retained scene. Artwork is a
 // source-bounded immutable <=512px thumbnail decoded on the shared utility

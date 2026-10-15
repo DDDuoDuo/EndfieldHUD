@@ -3,6 +3,7 @@
 #include "modules/archive_model.hpp"
 #include "native/archive_text_rules.hpp"
 #include <algorithm>
+#include <cmath>
 #include <stdexcept>
 #include <vector>
 #ifdef _WIN32
@@ -18,17 +19,32 @@ namespace {
 constexpr std::string_view neteaseName = "\xe7\xbd\x91\xe6\x98\x93\xe4\xba\x91\xe9\x9f\xb3\xe4\xb9\x90"; // 网易云音乐
 constexpr std::string_view qqMusicName = "QQ\xe9\x9f\xb3\xe4\xb9\x90";                                  // QQ音乐
 constexpr std::string_view kugouName = "\xe9\x85\xb7\xe7\x8b\x97\xe9\x9f\xb3\xe4\xb9\x90";                // 酷狗音乐
+constexpr std::string_view kuwoName = "\xe9\x85\xb7\xe6\x88\x91\xe9\x9f\xb3\xe4\xb9\x90";                 // 酷我音乐
 // NetEase Cloud Music's Win32 client: main window class OrpheusBrowserHost,
-// titled "Title - Artist" while a track is loaded (the reported laptop
-// diagnosis: it publishes no SMTC session). QQ Music and Kugou use the same
-// mechanism with their usual title order; their grammar is unconfirmed.
-constexpr std::array<NowPlayingWindowPlayer, 3> players{{
+// titled "Title - Artist" while a track is loaded (confirmed on the test
+// laptop with 3.1.41, which publishes no SMTC session while its own Windows
+// media control switch is off). QQ Music and Kugou use the same mechanism
+// with their usual title order. The other rows are common Win32 music and
+// media players whose window caption carries the playing item; their grammar
+// is unconfirmed until a live run (now_playing_probe --live --windows) checks
+// it. Players that publish a media session (Spotify, browsers, the Store
+// apps, foobar2000 2.x with its Windows media controls on) come from GSMTC
+// and are never listed twice.
+constexpr std::array<NowPlayingWindowPlayer, 8> players{{
     {"netease", "cloudmusic.exe", NowPlayingSource::netease, {"OrpheusBrowserHost", ""}, {neteaseName, "NetEase Cloud Music", ""},
         NowPlayingTitleOrder::titleArtist, true},
     {"qqMusic", "QQMusic.exe", NowPlayingSource::qqMusic, {"QQMusic_Daemon_Wnd", ""}, {qqMusicName, "QQ Music", ""},
         NowPlayingTitleOrder::titleArtist, false},
     {"kugou", "KuGou.exe", NowPlayingSource::kugou, {"kugou_ui", ""}, {kugouName, "KuGou Music", "KuGou"},
         NowPlayingTitleOrder::artistTitle, false},
+    {"kuwo", "KwMusic.exe", NowPlayingSource::system, {"", ""}, {kuwoName, "Kuwo Music", ""}, NowPlayingTitleOrder::titleArtist, false},
+    {"foobar2000", "foobar2000.exe", NowPlayingSource::system, {"{97E27FAA-C0B3-4b8e-A693-ED7881E99FC1}", ""}, {"foobar2000", "", ""},
+        NowPlayingTitleOrder::artistTitle, false, "", {" [foobar2000]", ""}},
+    {"aimp", "AIMP.exe", NowPlayingSource::system, {"TAIMPMainForm", ""}, {"AIMP", "", ""}, NowPlayingTitleOrder::artistTitle, false},
+    {"potPlayer", "PotPlayerMini64.exe", NowPlayingSource::system, {"PotPlayer64", "PotPlayer"}, {"PotPlayer", "", ""},
+        NowPlayingTitleOrder::titleOnly, false, "PotPlayerMini.exe"},
+    // VLC 3 (no media session) shows the item's title meta, or its file name.
+    {"vlc", "vlc.exe", NowPlayingSource::system, {"", ""}, {"VLC media player", "", ""}, NowPlayingTitleOrder::titleOnly, false},
 }};
 constexpr std::size_t maximumTitleBytes = 64 * 1024;
 
@@ -97,8 +113,13 @@ std::span<const NowPlayingWindowPlayer> nowPlayingWindowPlayers() noexcept { ret
 const NowPlayingWindowPlayer* nowPlayingWindowPlayer(std::string_view executable) noexcept {
     const auto name = fileName(executable);
     for (const auto& player : players)
-        if (caseless(name, player.executable)) return &player;
+        if (caseless(name, player.executable) || (!player.alternate.empty() && caseless(name, player.alternate))) return &player;
     return nullptr;
+}
+bool nowPlayingSameExecutable(std::string_view appUserModelID, std::string_view executablePath) noexcept {
+    const auto a = fileName(appUserModelID), b = fileName(executablePath);
+    constexpr std::string_view exe = ".exe";
+    return a.size() > exe.size() && caseless(a.substr(a.size() - exe.size()), exe) && caseless(a, b);
 }
 
 std::optional<NowPlayingTitleTrack> nowPlayingHeadingTrack(std::string_view heading) { return split(heading, true, false); }
@@ -106,18 +127,26 @@ std::optional<NowPlayingTitleTrack> nowPlayingHeadingTrack(std::string_view head
 std::optional<NowPlayingTitleTrack> nowPlayingWindowTitleTrack(const NowPlayingWindowPlayer& player, std::string_view title) {
     if (title.empty() || title.size() > maximumTitleBytes || !ehud::data::Json::validUtf8(title)) return std::nullopt;
     // The title itself is split exactly like the source heading; only a
-    // trailing " - <player name>" is removed first.
+    // trailing " - <player name>" (or another player decoration) is removed first.
     std::string body(title);
     const auto clean = trimmed(title);
-    for (const auto name : player.names) {
-        if (name.empty()) continue;
-        const std::string suffix = " - " + std::string(name);
+    const auto strip = [&](std::string_view suffix) {
         if (clean.size() > suffix.size() && clean.compare(clean.size() - suffix.size(), suffix.size(), suffix) == 0) {
             body = clean.substr(0, clean.size() - suffix.size());
-            break;
+            return true;
         }
+        return false;
+    };
+    bool stripped = false;
+    for (const auto name : player.names) {
+        if (name.empty()) continue;
+        if ((stripped = strip(" - " + std::string(name)))) break;
     }
-    if (const auto bare = trimmed(body); bare.empty() || named(player, bare)) return std::nullopt;
+    for (const auto suffix : player.suffixes)
+        if (!stripped && !suffix.empty()) stripped = strip(suffix);
+    const auto bare = trimmed(body);
+    if (bare.empty() || named(player, bare)) return std::nullopt;
+    if (player.order == NowPlayingTitleOrder::titleOnly) return NowPlayingTitleTrack{bare, {}};
     const bool artistFirst = player.order == NowPlayingTitleOrder::artistTitle;
     auto track = split(body, !artistFirst, artistFirst);
     // "QQ音乐 - 听我想听" and similar app captions are not tracks.
@@ -144,5 +173,32 @@ std::optional<std::size_t> nowPlayingMainWindow(const NowPlayingWindowPlayer& pl
     for (const auto k : candidates)
         if (windows[k].visible && !windows[k].title.empty()) return k;
     return candidates.front();
+}
+
+NowPlayingWindowTransport nowPlayingWindowTransport(bool mediaKeyHeld, bool onlyPlayer) noexcept {
+    return mediaKeyHeld && onlyPlayer ? NowPlayingWindowTransport::mediaKey : NowPlayingWindowTransport::appCommand;
+}
+std::string_view nowPlayingWindowTransportKey(NowPlayingWindowTransport value) noexcept {
+    return value == NowPlayingWindowTransport::mediaKey ? "mediaKey" : "appCommand";
+}
+
+void NowPlayingWindowTimeline::restart(std::optional<double> changedAt) noexcept {
+    startedAt = changedAt && std::isfinite(*changedAt) ? changedAt : std::nullopt;
+    pausedTotal = 0;
+    pausedSince.reset();
+}
+void NowPlayingWindowTimeline::observe(bool playing, double time) noexcept {
+    if (!std::isfinite(time)) return;
+    if (!playing) {
+        if (!pausedSince) pausedSince = startedAt ? std::max(time, *startedAt) : time;
+    } else if (pausedSince) {
+        pausedTotal += std::max(0., time - *pausedSince);
+        pausedSince.reset();
+    }
+}
+std::optional<double> NowPlayingWindowTimeline::position(double time) const noexcept {
+    if (!startedAt || !std::isfinite(time)) return std::nullopt;
+    const double end = pausedSince ? std::min(*pausedSince, time) : time;
+    return std::max(0., end - *startedAt - pausedTotal);
 }
 } // namespace endfield::modules

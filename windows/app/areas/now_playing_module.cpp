@@ -10,6 +10,7 @@
 #include "native/now_playing_players.hpp"
 #include "native/now_playing_volume.hpp"
 #include "native/now_playing_web.hpp"
+#include "native/now_playing_web_cache.hpp"
 #include "tools/now_playing_preview.hpp"
 #include <algorithm>
 #include <array>
@@ -161,15 +162,23 @@ public:
         // Kugou); its WinEvent hooks run on this (UI) thread's message loop
         // while Now Playing is presented. Hidden coverage composes the
         // fixture player with a synthetic desktop the same way.
+        // The window system lives as long as this owner: while Now Playing is
+        // hidden it keeps one title hook per known player process, so the next
+        // opening knows when the current track began. The players' audio
+        // activity (which process renders audio) comes from the shared per-app
+        // audio publication and ranks and pauses the window-title players.
         gpu::NativeNowPlayingService::Factory provider;
-        if (mode_ == ApplicationAreaMode::production) provider = gpu::windowsNowPlayingPlayers(c.clock);
-        else if (mode_ == ApplicationAreaMode::developmentPreview) provider = gpu::nowPlayingFixtureProvider(c.clock);
+        activity_ = std::make_shared<gpu::NowPlayingProcessActivity>();
+        if (mode_ == ApplicationAreaMode::production) {
+            windowSystem_ = gpu::windowsNowPlayingWindowSystem(c.clock);
+            provider = gpu::windowsNowPlayingPlayers(c.clock, windowSystem_, activity_);
+        } else if (mode_ == ApplicationAreaMode::developmentPreview) provider = gpu::nowPlayingFixtureProvider(c.clock);
         else {
             fixtureClock_ = std::make_shared<std::atomic<double>>(c.clock());
             const auto mirror = [clock = fixtureClock_] { return clock->load(std::memory_order_acquire); };
             coverageWindows_ = std::make_shared<gpu::NowPlayingWindowFixture>();
             provider = gpu::nowPlayingCompositeProvider(gpu::nowPlayingFixtureProvider(mirror),
-                gpu::nowPlayingWindowProvider([desktop = coverageWindows_] { return desktop; }, mirror));
+                gpu::nowPlayingWindowProvider([desktop = coverageWindows_] { return desktop; }, mirror, activity_));
         }
         // Each activation (selection of a visible Now Playing) creates one provider.
         provider = [inner = std::move(provider), starts = starts_] { ++*starts; return inner(); };
@@ -181,9 +190,16 @@ public:
         options.appearance = appearanceFor(host_.appearance());
         options.changed = c.invalidate;
         if (mode_ == ApplicationAreaMode::production) {
-            // Visible-only LRCLIB/NetEase lookups and catalog covers.
-            web_ = std::make_shared<gpu::NowPlayingWeb>(gpu::windowsNowPlayingTransport(), wake, c.clock);
+            // Visible-only LRCLIB/NetEase lookups and catalog covers over one
+            // kept-alive WinHTTP session (retained while Now Playing is
+            // presented), answered from a bounded disk cache when a track
+            // returns. Covers are requested at the size the slot shows.
+            http_ = std::make_shared<gpu::NowPlayingHttp>();
+            if (!c.dataRoot.empty())
+                webCache_ = std::make_shared<gpu::NowPlayingWebCache>(utility_, gpu::NowPlayingWebCache::Options{c.dataRoot / "Caches" / "NowPlaying"});
+            web_ = std::make_shared<gpu::NowPlayingWeb>(http_->transport(), wake, c.clock, 10, webCache_);
             options.web = web_;
+            options.coverPixels = coverPixels(c.metrics);
             // The playing app's mixer route through the ONE shared audio worker;
             // without it the source "unavailable" submenu remains.
             if (auto* audio = host_.audio()) options.volume = gpu::nowPlayingAppVolume(*audio);
@@ -191,6 +207,7 @@ public:
             audioFixture_ = std::make_unique<gpu::NowPlayingAudioFixture>(wake);
             options.volume = gpu::nowPlayingAppVolume(*audioFixture_);
         }
+        volume_ = options.volume;
         // Successful transport commands only; never the title (source onEvent).
         options.playback = [this](const modules::NowPlayingPlaybackEvent& event) {
             auto metadata = modules::nowPlayingPlaybackMetadata(event);
@@ -213,7 +230,11 @@ public:
         preview_.reset();
         audioFixture_.reset();
         web_.reset();
+        http_.reset();
+        webCache_.reset();
         service_.reset();
+        // Last: the hidden-time title hooks belong to this (UI) thread.
+        if (windowSystem_) windowSystem_->shutdown();
     }
     NowPlayingArea(const NowPlayingArea&) = delete;
     NowPlayingArea& operator=(const NowPlayingArea&) = delete;
@@ -231,13 +252,19 @@ public:
     void resize(const app::ClientMetrics& m) override {
         if (!hasPixels(m)) return;
         preview_->resize(m);
+        if (http_) preview_->setCoverPixels(coverPixels(m));
         sized_ = true;
     }
     void setAppearance(const app::ModuleAppearance& a, double t) override { observe(t); preview_->setAppearance(appearanceFor(a), t); }
-    void setOverlayVisible(bool visible, double t) override { observe(t); preview_->setOverlayVisible(visible, t); }
+    void setOverlayVisible(bool visible, double t) override {
+        observe(t);
+        preview_->setOverlayVisible(visible, t);
+        followPresentation();
+    }
     void update(const app::ModuleFrame& f) override {
         observe(f.time);
         if (sized_) preview_->update(f.center, f.chrome, f.presentation, f.opacity, f.time);
+        followPresentation();
     }
     bool requiresFrames(double t) const override { return preview_->requiresFrames(t); }
     std::optional<double> nextWakeTime(double) const override { return preview_->nextWakeTime(); }
@@ -277,8 +304,17 @@ public:
         case app::HostEvent::Kind::utilityCompleted:
             // Service results, downloads, decoded artwork/lyrics, queue capacity.
             return deliver(t);
+        case app::HostEvent::Kind::overlayConcealed:
+            followPresentation();
+            // Closed on another module: keep no scene rasters or GPU
+            // resources (the module shown at the close keeps its artwork for
+            // the warm reopen; showing Now Playing again rebuilds the same).
+            if (host_.selectedModule() != core::Module::nowPlaying && preview_->park(host_.renderer())) ++parks_;
+            return false;
         case app::HostEvent::Kind::audioChanged:
-            return (e.flags & app::HostEvent::audioApplications) && preview_->audioChanged(t);
+            if (!(e.flags & app::HostEvent::audioApplications)) return false;
+            followActivity();
+            return preview_->audioChanged(t);
         default:
             return false;
         }
@@ -385,8 +421,33 @@ private:
     bool deliver(double t) {
         wake_->pending.store(false, std::memory_order_release);
         bool changed = preview_->utilityCompleted(t);
-        if (audioFixture_ && audioFixture_->publish()) changed = preview_->audioChanged(t) || changed;
+        if (audioFixture_ && audioFixture_->publish()) {
+            followActivity();
+            changed = preview_->audioChanged(t) || changed;
+        }
         return changed;
+    }
+    // The WinHTTP session is retained exactly while Now Playing is presented;
+    // released, it closes with its connections once no download is in flight.
+    void followPresentation() {
+        if (!http_) return;
+        const bool active = service_->snapshot().active;
+        if (active == httpRetained_) return;
+        httpRetained_ = active;
+        http_->setRetained(active);
+    }
+    // The catalog cover size for the slot at the current display density.
+    unsigned coverPixels(const app::ClientMetrics& m) const {
+        const double scale = std::isfinite(m.scale) && m.scale > 0 ? m.scale : 1;
+        return modules::nowPlayingCatalogCoverPixels(scale * host_.contentScale());
+    }
+    // The per-app audio publication names the processes that render audio. A
+    // change for any process is folded into the window-title players' state
+    // with one provider read (event driven: only on such a publication while
+    // Now Playing is presented; the vote is withdrawn while it is hidden).
+    void followActivity() {
+        if (!activity_ || !volume_ || !volume_->routes || !service_->snapshot().active) return;
+        if (activity_->update(volume_->routes())) service_->refresh();
     }
 
     // --- Hidden coverage (synthetic fixture player and audio route only) -----
@@ -662,8 +723,9 @@ private:
         present(.3);
         auto commands = coverageWindows_->commands();
         step.check(commands.size() == sent + 1 && commands.back().window == 0x5150 && commands.back().pid == 5150 &&
-                       commands.back().kind == modules::NowPlayingCommandKind::playPause && !playing() && title() == "Coverage Song" &&
-                       recorded(events + 1, "playPause", "netease"), "Play/pause is posted to the player window, shown paused and logged with source netease");
+                       commands.back().kind == modules::NowPlayingCommandKind::playPause && commands.back().onlyPlayer && !playing() &&
+                       title() == "Coverage Song" && recorded(events + 1, "playPause", "netease"),
+                   "Play/pause goes to the only player (its media-key hotkey or window), shown paused and logged with source netease");
         desktop("\xe7\xbd\x91\xe6\x98\x93\xe4\xba\x91\xe9\x9f\xb3\xe4\xb9\x90");
         step.check(title() == "Coverage Song" && !playing() && origin() == modules::NowPlayingSessionOrigin::playerWindow,
                    "The idle caption keeps the paused track; it keeps the tie with the paused fixture");
@@ -674,6 +736,23 @@ private:
         commands = coverageWindows_->commands();
         step.check(commands.size() == sent + 2 && commands.back().window == 0x5151 && commands.back().kind == modules::NowPlayingCommandKind::next &&
                        recorded(events + 2, "next", "netease"), "Next is posted to the current main window and logged with source netease");
+        // The player's own controls (its accessibility tree): the elapsed and
+        // total labels and its own next control, through the same provider.
+        coverageWindows_->setReading(5150, gpu::NowPlayingPlayerReading{61., 200., true, true, true, true, true},
+                                     [clock = fixtureClock_] { return clock->load(std::memory_order_acquire); });
+        coverageWindows_->pressControls(true);
+        desktop("Coverage Song 3 - Coverage Artist", 0x5152);
+        step.check(title() == "Coverage Song 3" && view.input().track->duration == 200. && view.input().track->position &&
+                       std::abs(*view.input().track->position - 61) < 1e-6 && view.durationText() == "3:20" && view.sliders(t)[0].value &&
+                       !view.input().capabilities.seek, "The player's own elapsed and total labels give the window-title track a timeline (no seek)");
+        const auto pressed = coverageWindows_->presses().size();
+        step.check(preview_->perform(NowPlayingAction::next, t), "Next is enabled with the player's own controls");
+        settle(step);
+        step.check(coverageWindows_->presses().size() == pressed + 1 && coverageWindows_->presses().back().kind == modules::NowPlayingCommandKind::next &&
+                       coverageWindows_->commands().size() == commands.size() && recorded(events + 3, "next", "netease"),
+                   "Next presses the player's own control (no key or window message) and is logged with source netease");
+        coverageWindows_->pressControls(false);
+        coverageWindows_->setReading(5150, std::nullopt);
         coverageWindows_->set({});
         coverageWindows_->notify();
         settle(step);
@@ -706,6 +785,28 @@ private:
                    "Unpresented Now Playing withdraws its audio vote and starts nothing");
         step.check(!hostEvent({app::HostEvent::Kind::audioChanged, app::HostEvent::audioApplications}, step.time + .1),
                    "Audio publications are ignored while Now Playing is hidden");
+        if (host_.selectedModule() != core::Module::nowPlaying) {
+            // Memory. Once the HUD has closed on another module (the host's
+            // overlayConcealed broadcast, delivered here as the host does)
+            // the scene keeps no rasters, textures or native groups and the
+            // session only its presented cover; the next cycle's module step
+            // shows the same artwork rebuilt.
+            const auto held = preview_->sceneStats();
+            const auto memory = preview_->memory();
+            const auto entries = host_.rasterizer().stats().entries;
+            const auto parks = parks_;
+            (void)hostEvent({app::HostEvent::Kind::overlayConcealed, 0}, step.time + .1);
+            const auto parked = preview_->sceneStats();
+            const auto kept = preview_->memory();
+            if (held.contentEvents)
+                step.check(parks_ == parks + 1 && held.residentPixelBytes > 0 && parked.residentPixelBytes == 0 && parked.contentEvents == 0 &&
+                               host_.rasterizer().stats().entries < entries && kept.recentCovers == 0 && kept.artworkBytes <= memory.artworkBytes,
+                           "Closed on another module, Now Playing releases its scene (" + std::to_string(held.residentPixelBytes) + " raster bytes, " +
+                               std::to_string(entries - host_.rasterizer().stats().entries) + " shared raster entries) and keeps " +
+                               std::to_string(kept.artworkBytes) + " decoded cover bytes for its warm reopen");
+            else
+                step.check(parks_ == parks, "A Now Playing that was never shown has nothing to release");
+        }
     }
     const modules::NowPlayingPresentation& presentation() const { return preview_->presentation(); }
     CoverageGroup* coverageGroup() {
@@ -723,8 +824,13 @@ private:
     std::shared_ptr<std::atomic<double>> fixtureClock_;
     std::shared_ptr<std::uint64_t> starts_ = std::make_shared<std::uint64_t>(0);
     std::shared_ptr<gpu::NowPlayingWindowFixture> coverageWindows_; // hidden coverage only
+    std::shared_ptr<gpu::NowPlayingWindowSystem> windowSystem_;    // production only
+    std::shared_ptr<gpu::NowPlayingProcessActivity> activity_;
+    std::shared_ptr<const modules::NowPlayingAppVolume> volume_;
     // Declaration order is destruction order in reverse: the preview first.
     std::unique_ptr<gpu::NativeNowPlayingService> service_;
+    std::shared_ptr<gpu::NowPlayingWebCache> webCache_; // production with a data root
+    std::shared_ptr<gpu::NowPlayingHttp> http_;          // production only
     std::shared_ptr<gpu::NowPlayingWeb> web_;
     std::unique_ptr<gpu::NowPlayingAudioFixture> audioFixture_;
     std::unique_ptr<tools::NowPlayingPreview> preview_;
@@ -733,9 +839,9 @@ private:
     std::unique_ptr<gpu::NativeNowPlayingAutomation> automation_;
     IRawElementProviderFragmentRoot* automationRoot_{};
     Microsoft::WRL::ComPtr<CoverageGroup> coverageGroup_; // hidden coverage only
-    bool sized_{};
+    bool sized_{}, httpRetained_{};
     // Coverage evidence (never user content: action and source only).
-    unsigned playbackEvents_{}, eventsAfterFirstCycle_{};
+    unsigned playbackEvents_{}, eventsAfterFirstCycle_{}, parks_{};
     std::uint64_t startsBefore_{};
     modules::EventMetadata lastPlayback_;
 };

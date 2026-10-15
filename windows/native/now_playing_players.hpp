@@ -6,25 +6,42 @@
 //
 // What a window-title player provides: its process identity (the image path,
 // mapped to the Event Log source by file name), title and artist parsed from
-// its main window title, a playing/paused state INFERRED from title changes
-// and the HUD's own play/pause commands, and play/pause, previous and next
-// sent as WM_APPCOMMAND to that window. What it cannot provide (recorded
-// platform gaps): album, duration, position and progress, seek, a player
-// thumbnail (NetEase covers come from the public catalog lookup), timed
-// lyrics from the player, and a pause made inside a player that keeps its
-// title. GSMTC sessions keep precedence: a playing media session always wins,
-// a player already listed by GSMTC is never listed twice, and a window-title
+// its main window title, and - read from the player's own on-screen controls
+// through its accessibility tree (NowPlayingPlayerReading; the Mac
+// NowPlayingAccessibility read) - its elapsed and total time, its play state
+// and its previous / play-pause / next controls. Readings are taken in the
+// background and resynchronized on every change: a new title, a change of
+// the process's audio activity, a HUD command, the first presentation.
+// Without them: the playing state comes from the process's audio activity
+// (the shared per-app audio publication) or is INFERRED from title changes
+// and the HUD's own commands, and the elapsed time is ESTIMATED from the
+// observed title change and the pauses seen since
+// (modules::NowPlayingWindowTimeline), anchored on the last real reading.
+// Transport: the player's own control (its accessibility default action, the
+// player alone receives it), else its registered media-key hotkey, else
+// WM_APPCOMMAND (modules::NowPlayingWindowTransport). Recorded platform gaps:
+// album, seek, a player thumbnail (NetEase covers come from the public
+// catalog lookup), timed lyrics from the player, the elapsed label of a
+// minimized player (it may stop updating) and a pause made inside a player
+// whose controls cannot be read and that keeps its title and audio stream.
+// GSMTC sessions keep precedence: a playing media session always wins, a
+// player already listed by GSMTC is never listed twice, and a window-title
 // player is presented only when it ranks above the current media session.
 //
 // Event driven: WinEvent hooks (title change, show, hide, destroy) on the
-// owner's message loop while Now Playing is active; no timer or polling.
+// owner's message loop while Now Playing is active, and one process-scoped
+// title hook per known player while it is hidden (so a later opening knows
+// when the current track began; removed for a player whose page announces
+// its own elements); no timer or polling.
 #include "modules/now_playing_players.hpp"
+#include "modules/now_playing_volume.hpp"
 #include "native/now_playing_service.hpp"
 #include <cstdint>
 #include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <vector>
 
 namespace endfield::native {
@@ -32,6 +49,23 @@ inline constexpr std::size_t nowPlayingMaximumPlayerWindows = 64;
 inline constexpr std::size_t nowPlayingMaximumPlayerProcesses = 16;
 // Set on the window-title sessions' tokens inside a composite snapshot.
 inline constexpr std::uint64_t nowPlayingWindowTokenBit = std::uint64_t{1} << 63;
+
+// A reading of a window-title player's own controls through its
+// accessibility tree (modules::nowPlayingPlayerControls; the Mac
+// NowPlayingAccessibility read): the elapsed and total labels, the play/pause
+// control's state and which transport controls exist, as of `sampledAt`
+// (host clock). `startedAt` is when the reading began: a reading started
+// before a track change describes the previous track.
+struct NowPlayingPlayerReading {
+    std::optional<double> position, duration;
+    std::optional<bool> playing;
+    bool playPause{}, previous{}, next{};
+    // The labels were read from a window that was shown (a minimized or
+    // hidden player may stop updating its elapsed label).
+    bool visible{};
+    double startedAt{}, sampledAt{};
+    bool operator==(const NowPlayingPlayerReading&) const = default;
+};
 
 // The OS surface of the window-title fallback: Win32 in production
 // (windowsNowPlayingWindowSystem), NowPlayingWindowFixture in tests and the
@@ -50,23 +84,65 @@ public:
     // Any thread: top-level windows of running fallback players (z-order,
     // at most nowPlayingMaximumPlayerWindows). Never sends a message.
     virtual std::vector<modules::NowPlayingPlayerWindow> windows() = 0;
-    // Any thread: posts the media command to the window when it still belongs
-    // to `pid`. none: posted; stale: the window is gone; unsupported: seek;
-    // unavailable: it could not be posted.
-    virtual NowPlayingServiceFailure command(std::uintptr_t window, std::uint32_t pid, modules::NowPlayingCommandKind) = 0;
+    // Any thread: sends the media command for the player whose main window is
+    // `window` when it still belongs to `pid`, through the transport
+    // modules::nowPlayingWindowTransport chooses (onlyPlayer: no other
+    // fallback player process is running). none: delivered; stale: the window
+    // is gone; unsupported: seek; unavailable: it could not be sent.
+    virtual NowPlayingServiceFailure command(std::uintptr_t window, std::uint32_t pid, modules::NowPlayingCommandKind, bool onlyPlayer) = 0;
+    // Any thread: the latest reading of the player's own controls for the
+    // process's main window `window`, if one exists. With `refresh` a new
+    // reading starts in the background (at most one per process at a time; a
+    // request during one queues exactly one more); the watch callback fires,
+    // on any thread, when it completes. Default: no reader.
+    virtual std::optional<NowPlayingPlayerReading> reading(std::uintptr_t window, std::uint32_t pid, bool refresh) {
+        (void)window; (void)pid; (void)refresh;
+        return std::nullopt;
+    }
+    // Any thread: presses the player's own control for the command (its
+    // accessibility default action) in the background and calls `done(true)`
+    // once pressed, `done(false)` when it could not (on any thread, once).
+    // false (and no `done`): this system has no such control for the process.
+    virtual bool press(std::uintptr_t window, std::uint32_t pid, modules::NowPlayingCommandKind, std::function<void(bool)> done) {
+        (void)window; (void)pid; (void)done;
+        return false;
+    }
+    // Owner thread, terminal: removes every hook, including the hidden-time
+    // title hooks. Later watch() calls deliver nothing.
+    virtual void shutdown() noexcept {}
+};
+
+// Per-process audio activity (any of the process's sessions renders audio),
+// fed on the owner thread from the shared per-app audio publication and read
+// by the window-title provider on the utility worker. Thread-safe, bounded.
+class NowPlayingProcessActivity final {
+public:
+    static constexpr std::size_t maximumProcesses = 512;
+    // Replaces the published state with these routes (routes whose rendering
+    // was not captured are left out). true when any process's state changed.
+    bool update(std::span<const modules::NowPlayingAudioRoute>);
+    std::optional<bool> rendering(std::uint32_t pid) const;
+    std::uint64_t revision() const;
+private:
+    mutable std::mutex mutex_;
+    std::vector<std::pair<std::uint32_t, bool>> processes_;
+    std::uint64_t revision_{};
 };
 
 // One session per running fallback player process with a main window
 // (modules::nowPlayingMainWindow), at most nowPlayingMaximumPlayerProcesses.
 // Its identity is the process image path and its origin playerWindow; the
 // current one is the playing player, else one with a track, else the first.
-// Capabilities: toggle, previous, next. Playing state inference: a new track
-// title (or the title returning after the idle caption) is playing; the idle
-// caption keeps the last track as paused; a delivered play/pause flips it.
-// The factory runs on the owner thread (watch); `system` is called once per
+// Capabilities: toggle, previous, next. Playing state: the process's audio
+// activity when `activity` knows it; otherwise inferred: a new track title
+// (or the title returning after the idle caption) is playing, the idle
+// caption keeps the last track as paused, and a delivered play/pause flips
+// it. Elapsed time: estimated from the window's titleChangedAt and the pauses
+// observed by this provider (none when the change was not observed). The
+// factory runs on the owner thread (watch); `system` is called once per
 // provider.
 NativeNowPlayingService::Factory nowPlayingWindowProvider(std::function<std::shared_ptr<NowPlayingWindowSystem>()> system,
-    std::function<double()> now);
+    std::function<double()> now, std::shared_ptr<const NowPlayingProcessActivity> activity = {});
 
 // GSMTC first, then the window-title players. A source that fails to start
 // is left out; the composite is ready as soon as one source is, and a source
@@ -80,7 +156,9 @@ NativeNowPlayingService::Factory nowPlayingCompositeProvider(NativeNowPlayingSer
 // are dropped, and the window-title player is presented only when it ranks
 // higher (playing track > paused track > session without a track), or ranks
 // the same with a track while it was the one presented (preferWindows). A
-// failed media read is reported when no window-title player has a session.
+// window-title player is a duplicate when a media session maps to the same
+// known source or names the same image (modules::nowPlayingSameExecutable).
+// A failed media read is reported when no window-title player has a session.
 NowPlayingReadResult nowPlayingMergeReads(std::optional<NowPlayingReadResult> mediaSessions,
     std::optional<NowPlayingReadResult> playerWindows, bool preferWindows = false);
 
@@ -93,34 +171,68 @@ public:
         std::uintptr_t window{};
         std::uint32_t pid{};
         modules::NowPlayingCommandKind kind{};
+        bool onlyPlayer{};
+    };
+    // A press of the player's own control (pressControls).
+    struct Press {
+        std::uint32_t pid{};
+        modules::NowPlayingCommandKind kind{};
     };
     std::function<void()> watch(std::function<void()> changed) override;
     std::vector<modules::NowPlayingPlayerWindow> windows() override;
-    NowPlayingServiceFailure command(std::uintptr_t window, std::uint32_t pid, modules::NowPlayingCommandKind) override;
+    NowPlayingServiceFailure command(std::uintptr_t window, std::uint32_t pid, modules::NowPlayingCommandKind, bool onlyPlayer) override;
+    // A reading set with setReading is returned once a refresh asked for it
+    // (startedAt and sampledAt are the refresh's time from `clock`).
+    std::optional<NowPlayingPlayerReading> reading(std::uintptr_t window, std::uint32_t pid, bool refresh) override;
+    bool press(std::uintptr_t window, std::uint32_t pid, modules::NowPlayingCommandKind, std::function<void(bool)> done) override;
+    void shutdown() noexcept override;
     void set(std::vector<modules::NowPlayingPlayerWindow>);
     void notify();
     void refuseCommands(bool);
+    // The player's controls as its accessibility tree would show them (none:
+    // no reader result for that process). `clock` dates refreshes.
+    void setReading(std::uint32_t pid, std::optional<NowPlayingPlayerReading>, std::function<double()> clock = {});
+    // Whether presses of the player's own controls succeed (default: no controls).
+    void pressControls(bool);
     std::vector<Command> commands() const;
+    std::vector<Press> presses() const;
+    std::size_t refreshes() const;
     std::size_t watchers() const;
     std::size_t reads() const;
+    bool stopped() const;
 private:
     mutable std::mutex mutex_;
     std::vector<modules::NowPlayingPlayerWindow> windows_;
     std::vector<std::pair<std::uint64_t, std::function<void()>>> watchers_;
     std::vector<Command> commands_;
+    std::vector<Press> presses_;
+    struct Reader { std::uint32_t pid{}; std::optional<NowPlayingPlayerReading> value, delivered; std::function<double()> clock; };
+    std::vector<Reader> readers_;
     std::uint64_t next_{};
-    std::size_t reads_{};
-    bool refuse_{};
+    std::size_t reads_{}, refreshes_{};
+    bool refuse_{}, stopped_{}, controls_{};
 };
 
 #ifdef _WIN32
 // EnumWindows with a bounded per-provider process classification cache,
 // GetWindowTextW (no message to the player), WinEvent hooks on the calling
-// thread and WM_APPCOMMAND (APPCOMMAND_MEDIA_PLAY_PAUSE / PREVIOUSTRACK /
-// NEXTTRACK) posted to the player's main window.
-std::shared_ptr<NowPlayingWindowSystem> windowsNowPlayingWindowSystem();
+// (owner) thread, the title-change times of the players' windows (kept while
+// Now Playing is hidden by one process-scoped NAMECHANGE hook per known
+// player, at most nowPlayingMaximumPlayerProcesses, removed while a player
+// floods it with more than 20 events a second), the players' own controls
+// read and pressed through MSAA on the OS thread pool
+// (native/now_playing_player_controls.hpp), and the command transport of
+// modules::nowPlayingWindowTransport. `now` is the host's thread-safe
+// monotonic clock. Create it once per owner and shutdown() it on the owner
+// thread before destruction.
+std::shared_ptr<NowPlayingWindowSystem> windowsNowPlayingWindowSystem(std::function<double()> now);
+// Whether another program holds the command's media key as a registered
+// global hotkey (it is registered for an instant on the calling thread and
+// released at once when nobody held it). Seek: false.
+bool windowsNowPlayingMediaKeyHeld(modules::NowPlayingCommandKind);
 // Production: GSMTC (windowsNowPlayingProvider) composed with the window-title
-// players. The factory must run on a thread with a message loop.
-NativeNowPlayingService::Factory windowsNowPlayingPlayers(std::function<double()> now);
+// players of `system`. The factory must run on a thread with a message loop.
+NativeNowPlayingService::Factory windowsNowPlayingPlayers(std::function<double()> now, std::shared_ptr<NowPlayingWindowSystem> system,
+    std::shared_ptr<const NowPlayingProcessActivity> activity = {});
 #endif
 } // namespace endfield::native

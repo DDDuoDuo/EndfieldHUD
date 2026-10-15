@@ -7,6 +7,7 @@
 #include "native/now_playing_web.hpp"
 #include "modules/now_playing_accessibility.hpp"
 #include "modules/now_playing_volume.hpp"
+#include "tools/now_playing_session.hpp"
 #include "core/module_presentation.hpp"
 #include "core/source_desktop_chrome.hpp"
 namespace endfield::tools {
@@ -19,6 +20,7 @@ struct NowPlayingPreviewOptions {
     std::shared_ptr<native::NowPlayingWeb>web;
     std::shared_ptr<const modules::NowPlayingAppVolume>volume;
     std::function<void(const modules::NowPlayingPlaybackEvent&)>playback;
+    unsigned coverPixels{600}; // catalog cover size (NowPlayingSessionOptions)
 };
 // Sole activation owner of the borrowed service. Service, executor and raster
 // outlive this owner. No provider/worker/timer/window is created here. Host
@@ -53,6 +55,16 @@ public:
     std::optional<core::Point>project(core::Point)const;
     native::NowPlayingSceneStats sceneStats()const noexcept;
     native::NativeNowPlayingArtwork::Stats artworkStats()const;
+    // Catalog cover size after a display density change.
+    void setCoverPixels(unsigned);
+    // The HUD closed while another module was shown: releases the retained
+    // scene (its text/control rasters, textures, native groups and mesh; the
+    // next presentation rebuilds it from the same content) and the session's
+    // extra decoded thumbnails. The presented cover and the warm snapshot
+    // stay. false when shown, still composed, or nothing was released.
+    bool park(native::Renderer&);
+    // What the session keeps resident (NowPlayingSession::memory).
+    NowPlayingSessionMemory memory()const;
     void upload(native::Renderer&);std::span<const native::LayerCompositionEntry>entries();
     void release(native::Renderer&);
 private:struct Impl;std::shared_ptr<Impl>impl_;

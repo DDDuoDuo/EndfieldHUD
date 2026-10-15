@@ -58,11 +58,21 @@ std::optional<std::string>nowPlayingCatalogSearchURL(const NowPlayingTrack&);
 std::string nowPlayingCatalogLyricsURL(std::int64_t identifier);
 struct NowPlayingCatalogMatch {
     std::int64_t identifier{};std::optional<std::string>artwork;int score{};
+    // The matched recording's catalog length ("dt", seconds), when positive.
+    // Windows supplies it to window-title players, whose titles carry none.
+    std::optional<double>duration;
     bool operator==(const NowPlayingCatalogMatch&)const=default;
 };
 std::optional<NowPlayingCatalogMatch>nowPlayingCatalogMatch(std::span<const std::uint8_t>,const NowPlayingTrack&);
 // p1-p4.music.126.net only; scheme forced to https and query to param=600y600.
 std::optional<std::string>nowPlayingCatalogCoverURL(std::string_view);
+// Windows: the same cover at `pixels` square (param=<pixels>y<pixels>, 64...600)
+// instead of the source's 600, so a lookup downloads what the slot shows.
+std::optional<std::string>nowPlayingCatalogCoverURL(std::string_view,unsigned pixels);
+// The catalog cover size for the 330-point artwork slot drawn at
+// `pixelsPerPoint`: the smallest of 200/300/400/500 covering it (500 at most:
+// Windows decodes thumbnails to at most 512 pixels).
+unsigned nowPlayingCatalogCoverPixels(double pixelsPerPoint)noexcept;
 // Original-language lrc only; translated variants are ignored.
 std::optional<NowPlayingLyrics>nowPlayingCatalogDecodeLyrics(std::span<const std::uint8_t>);
 // NowPlayingLyricsDownload.isAllowedURL / NowPlayingArtworkLoader.isAllowedRemoteURL.
@@ -122,6 +132,8 @@ public:
     void setOnChange(std::function<void()>);
     std::optional<std::string>artwork()const;
     std::shared_ptr<const NowPlayingLyrics>lyrics()const;
+    // The current match's catalog length (NowPlayingCatalogMatch::duration).
+    std::optional<double>duration()const;
     bool isLoading()const;
     void request(const NowPlayingLyricsKey&,const NowPlayingTrack&);
     void clear();
@@ -152,6 +164,7 @@ public:
     void invalidateMissing();
     std::shared_ptr<const NowPlayingLyrics>lyrics()const;
     std::optional<std::string>catalogArtwork()const;
+    std::optional<double>catalogDuration()const;
     bool catalogLoading()const;
     const std::optional<NowPlayingLyricsKey>&key()const noexcept;
 private:struct Impl;std::shared_ptr<Impl>impl_;

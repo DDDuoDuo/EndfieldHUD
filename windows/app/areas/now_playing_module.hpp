@@ -15,12 +15,18 @@
 //
 //   production          GSMTC media sessions beside the window-title
 //                       fallback for Win32 players without one (NetEase
-//                       Cloud Music, QQ Music, Kugou: windowsNowPlayingPlayers,
-//                       WinEvent hooks on the UI thread while presented),
-//                       public LRCLIB/NetEase lyric and cover downloads
-//                       (Windows.Web.Http), the playing app's per-app mixer
-//                       route through the shared AudioRuntime (SMTC exposes no
-//                       player volume) and Event Log playbackAction records.
+//                       Cloud Music, QQ Music, Kugou, Kuwo, foobar2000, AIMP,
+//                       PotPlayer, VLC: windowsNowPlayingPlayers, WinEvent
+//                       hooks on the UI thread while presented, the players'
+//                       own controls read and pressed through MSAA on the OS
+//                       thread pool, ranked by the per-app audio activity),
+//                       public LRCLIB/NetEase lyric and cover downloads over
+//                       one kept-alive WinHTTP session with a bounded disk
+//                       cache (<data root>\Caches\NowPlaying), the playing
+//                       app's per-app mixer route through the shared
+//                       AudioRuntime (SMTC exposes no player volume) and Event
+//                       Log playbackAction records. Closed on another module,
+//                       the scene and extra decoded covers are released.
 //   development preview the source diagnostic fixture player and a synthetic
 //   hidden coverage     per-app route (NowPlayingAudioFixture): no media
 //                       session, network request, audio device or process;

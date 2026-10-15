@@ -18,6 +18,15 @@ struct NowPlayingSessionOptions {
     std::shared_ptr<const modules::NowPlayingAppVolume>volume;
     // Successful transport commands only (Event Log playbackAction).
     std::function<void(const modules::NowPlayingPlaybackEvent&)>playback;
+    // Square size of catalog cover downloads (source: 600; the Windows owner
+    // passes modules::nowPlayingCatalogCoverPixels of its display density).
+    unsigned coverPixels{600};
+};
+// What the owner keeps resident for Now Playing (bytes), for the memory audit.
+struct NowPlayingSessionMemory {
+    std::size_t recentCovers{},recentCoverBytes{}; // compressed catalog covers kept by URL
+    std::size_t coverBytes{};                      // the current cover when not among them
+    std::size_t artworkBytes{};                    // decoded thumbnails (current and cache)
 };
 // Non-rendering owner state, executable with injected providers on every host.
 // The caller is the sole service activation/drain owner and supplies time.
@@ -49,6 +58,16 @@ public:
     // Route currently driving the volume submenu (empty when unavailable).
     const std::string&volumeRoute()const noexcept;
     const modules::NowPlayingLyricsSources&lyricsSources()const noexcept;
+    NowPlayingSessionMemory memory()const;
+    // A new catalog cover size (display density change); the next lookup uses it.
+    void setCoverPixels(unsigned);
+    // While inactive: keeps only the presented cover (its warm reopen) and
+    // drops the other decoded thumbnails and the recent compressed covers
+    // (the disk cache answers those). true when something was released.
+    bool park();
+    // At most this many recently downloaded catalog covers are kept, together
+    // no larger than maximumRecentCoverBytes.
+    static constexpr std::size_t maximumRecentCovers=4,maximumRecentCoverBytes=2*1024*1024;
 private:struct Impl;std::shared_ptr<Impl>impl_;
 };
 }

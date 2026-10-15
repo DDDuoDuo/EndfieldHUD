@@ -21,7 +21,7 @@ struct NowPlayingPreview::Impl:std::enable_shared_from_this<Impl>{
  struct Event{Impl&i;std::uint64_t token;Event(Impl&v,double t):i(v),token(++v.event){need(std::isfinite(t)&&t>=0,"Now Playing owner needs finite nonnegative time");i.time=std::max(i.time,t);}bool current()const{return i.alive&&i.event==token;}};
  Impl(gpu::LayerRasterizer&r,NowPlayingPreviewOptions&o):raster(r),options(o.raster),changed(std::move(o.changed)),onLock(std::move(o.onLock)),geometry(r),surface(prepare(),core::Module::nowPlaying){composed.reserve(2);}
  gpu::LayerScene&prepare(){geometry.load(blank(),options);return geometry;}
- void initialize(gpu::NativeNowPlayingService&s,app::UtilityExecutor&q,NowPlayingPreviewOptions&o){const auto weak=weak_from_this();NowPlayingSessionOptions sessionOptions;sessionOptions.decode=std::move(o.decode);sessionOptions.web=std::move(o.web);sessionOptions.volume=std::move(o.volume);sessionOptions.playback=std::move(o.playback);
+ void initialize(gpu::NativeNowPlayingService&s,app::UtilityExecutor&q,NowPlayingPreviewOptions&o){const auto weak=weak_from_this();NowPlayingSessionOptions sessionOptions;sessionOptions.decode=std::move(o.decode);sessionOptions.web=std::move(o.web);sessionOptions.volume=std::move(o.volume);sessionOptions.playback=std::move(o.playback);sessionOptions.coverPixels=o.coverPixels;
   session=std::make_unique<NowPlayingSession>(s,q,o.appearance,[weak]{if(auto i=weak.lock())i->notify();},std::move(sessionOptions));scene=std::make_unique<gpu::NativeNowPlayingScene>(session->presentation(),raster,options);ready=true;}
  void notify(){if(!alive||!ready)return;auto callback=changed;if(callback)callback();}
  bool lock(std::uint64_t token){auto callback=onLock;if(callback)callback();return alive&&event==token;}
@@ -74,6 +74,13 @@ modules::NowPlayingAccessibility NowPlayingPreview::accessibility(double t)const
 std::optional<core::Point>NowPlayingPreview::project(core::Point p)const{const auto&i=*impl_;if(!i.pose||!i.input)return {};const auto q=i.projection.project(p);if(!q)return {};return core::Point{q->x/i.metrics.scale,q->y/i.metrics.scale};}
 gpu::NowPlayingSceneStats NowPlayingPreview::sceneStats()const noexcept{return impl_->scene->stats();}
 gpu::NativeNowPlayingArtwork::Stats NowPlayingPreview::artworkStats()const{return impl_->session->artworkStats();}
+void NowPlayingPreview::setCoverPixels(unsigned value){impl_->session->setCoverPixels(value);}
+NowPlayingSessionMemory NowPlayingPreview::memory()const{return impl_->session->memory();}
+bool NowPlayingPreview::park(gpu::Renderer&r){auto&i=*impl_;if(i.pose||i.prepared)return false;bool released=i.session->park();
+ const auto held=i.scene->stats();if(!held.contentEvents)return released;
+ // A composed carrier refuses before anything is retired: then all stays.
+ try{if(!i.scene->releaseResources(r))return released;}catch(...){return released;}
+ i.scene=std::make_unique<gpu::NativeNowPlayingScene>(i.session->presentation(),i.raster,i.options);return true;}
 void NowPlayingPreview::upload(gpu::Renderer&r){auto&i=*impl_;if(!i.pose)return;i.registration.uploadGeometry(r);i.scene->uploadResources(r);}
 std::span<const gpu::LayerCompositionEntry>NowPlayingPreview::entries(){auto&i=*impl_;i.composed.clear();if(i.pose){i.composed.push_back(i.scene->entry());i.composed.push_back({&i.geometry,i.registration.draws()});}return i.composed;}
 void NowPlayingPreview::release(gpu::Renderer&r){auto&i=*impl_;need(i.scene->releaseResources(r)&&i.registration.releaseResources(r)&&i.geometry.releaseResources(r),"Now Playing resources still published at teardown");}

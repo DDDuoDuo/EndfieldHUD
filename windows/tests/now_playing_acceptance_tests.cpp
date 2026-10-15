@@ -436,8 +436,8 @@ void windowPlayers(const char* fixture) {
     expect(ne, C::current, V::pass, "presented as the current session");
     expect(ne, C::source, V::pass, "Event Log source netease");
     expect(ne, C::metadata, V::pass, "title, artist, no album");
-    expect(ne, C::timeline, V::gap, "a window title carries no duration or position");
-    expect(ne, C::progress, V::gap, "no timeline: the HUD shows no progress for a window-title player");
+    expect(ne, C::timeline, V::gap, "neither its window title nor its own controls gave a duration and position");
+    expect(ne, C::progress, V::gap, "no timeline: its own controls gave no elapsed time, so the HUD shows no progress");
     expect(ne, C::playback, V::pass, "followed playing and paused (from its window title, audio activity and HUD commands)");
     expect(ne, C::trackChange, V::pass, "2 tracks followed");
     expect(ne, C::controls, V::pass, "toggle previous next");
@@ -446,7 +446,7 @@ void windowPlayers(const char* fixture) {
     expect(ne, C::lyrics, V::pass);
     check(contains(ne[C::lyrics].detail, "downloaded timed lyrics, 2 lines (NetEase catalog"), "Window-title tracks use the NetEase catalog lyrics");
     expect(ne, C::volume, V::pass, "one process route (pid 4200), level 100%");
-    expect(ne, C::command, V::pass, "next was delivered (WM_APPCOMMAND) and the player's title changed afterwards; Event Log playbackAction action=next, source=netease");
+    expect(ne, C::command, V::pass, "next was delivered (its own control, media key or WM_APPCOMMAND) and the player's title changed afterwards; Event Log playbackAction action=next, source=netease");
     expect(ne, C::service, V::pass);
     check(ne.verdict() == R::pass, "A window-title player passes with its recorded gaps");
     const auto& spotify = row(w, "spotifyDesktop");
@@ -465,7 +465,7 @@ void windowPlayers(const char* fixture) {
     auto toggle = full();
     toggle.command = m::NowPlayingCommand{m::NowPlayingCommandKind::playPause};
     expect(row(t::nowPlayingReplay(source, toggle, decoder()), "neteaseDesktop"), C::command, V::gap,
-        "playPause was delivered (WM_APPCOMMAND); Event Log playbackAction action=playPause, source=netease; a window title does not report playback, so confirm it in the player");
+        "playPause was delivered (its own control, media key or WM_APPCOMMAND); Event Log playbackAction action=playPause, source=netease; a window title does not report playback, so confirm it in the player");
     // A skip the title never followed stays unverified.
     auto still = source;
     {
@@ -475,7 +475,7 @@ void windowPlayers(const char* fixture) {
     }
     const auto ignored = t::nowPlayingReplay(still, full(), decoder());
     expect(row(ignored, "neteaseDesktop"), C::command, V::unverified,
-        "next was delivered (WM_APPCOMMAND) but the player's title did not change afterwards: if it did not skip, the player ignores WM_APPCOMMAND");
+        "next was delivered (its own control, media key or WM_APPCOMMAND) but the player's title did not change afterwards: if it did not skip, the player ignores every transport the HUD has for it");
     expect(row(ignored, "neteaseDesktop"), C::trackChange, V::unverified, "one track observed: change track in the player");
     // Playing only: the hint names the idle caption and the explicit toggle.
     auto playingOnly = source;

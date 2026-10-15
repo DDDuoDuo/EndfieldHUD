@@ -6,6 +6,7 @@
 #include "tools/now_playing_session.hpp"
 #include "modules/event_log.hpp"
 #include <iostream>
+#include <limits>
 #include <map>
 #include <stdexcept>
 
@@ -38,8 +39,8 @@ n::NowPlayingReadResult media(std::string application,m::NowPlayingTrack track=s
 struct Fixture{
     Q q{[]{}};std::shared_ptr<Provider>p=std::make_shared<Provider>();double now=10;Transport transport;Bridge bridge;std::vector<m::NowPlayingPlaybackEvent>events;unsigned decodes{};
     std::shared_ptr<n::NowPlayingWeb>web;n::NativeNowPlayingService service{q,[this]{return p;},[]{},[this]{return now;}};std::unique_ptr<t::NowPlayingSession>owner;
-    explicit Fixture(bool network=true,bool audio=false){
-        t::NowPlayingSessionOptions o;
+    explicit Fixture(bool network=true,bool audio=false,unsigned coverPixels=600){
+        t::NowPlayingSessionOptions o;o.coverPixels=coverPixels;
         o.decode=[this](std::span<const std::uint8_t>b){++decodes;auto f=std::make_shared<n::NotesImageFrame>();f->width=f->height=1;f->straightRGBA={b[0],0,0,255};return n::NowPlayingImageResult{f};};
         if(network){web=std::make_shared<n::NowPlayingWeb>(transport.bind(),[]{},[this]{return now;});o.web=web;}
         if(audio)o.volume=bridge.bind();o.playback=[this](const m::NowPlayingPlaybackEvent&e){events.push_back(e);};
@@ -79,6 +80,57 @@ void netease(){
     f.owner->setActive(false,f.now);f.now=50;f.owner->setActive(true,f.now);check(f.owner->artwork()&&f.owner->artwork()->straightRGBA[0]==7,"Reopen shows the retained cover immediately");
     f.flush();f.p->startReady({});f.flush();f.p->readReady(media("cloudmusic.exe"));f.flush();
     check(f.transport.requests.size()==3&&f.owner->artwork()&&f.input().lyrics,"Reopen reuses bounded caches without another request");
+}
+// A window-title player (NetEase without a media session) has no length in
+// its title: the matched catalog recording supplies it, so the elapsed and
+// total times and the progress show. Recently downloaded covers come back at
+// once when the player returns to one of the last tracks.
+n::NowPlayingReadResult windowPlayer(std::string title,double position){
+    const std::string identity="C:\\EndfieldHUD-Synthetic\\CloudMusic\\cloudmusic.exe";
+    n::NowPlayingReadResult r;r.value.sessions={{1,identity,identity,m::NowPlayingSessionOrigin::playerWindow}};r.value.session=r.value.sessions.front();
+    m::NowPlayingTrack t;t.title=std::move(title);t.artist="Example Artist";t.position=position;t.sampledAt=10;t.isPlaying=true;t.supportsSeeking=false;r.value.track=t;
+    r.value.capabilities.toggle=r.value.capabilities.previous=r.value.capabilities.next=true;r.value.metadataRevision=5;return r;}
+void windowPlayerCatalog(){
+    Fixture f;f.ready(windowPlayer("Synthetic Song",3));
+    check(f.transport.requests.size()==1&&f.transport.requests[0].url==search&&!f.input().track->duration,"A NetEase window title asks the public catalog; no length yet");
+    f.answer(0,body(catalogSearch));
+    check(f.input().track&&f.input().track->duration==233.4&&f.input().track->position==3.&&f.owner->presentation().durationText()=="3:53",
+          "The matched recording's catalog length becomes the window-title track's duration");
+    check(f.transport.requests.size()==3&&f.transport.requests[2].kind==n::NowPlayingWeb::Kind::artwork,"Its catalog cover is requested");
+    f.answer(2,pixels(5));const auto firstCover=f.owner->memory();
+    check(f.owner->artwork()&&f.owner->artwork()->straightRGBA[0]==5&&firstCover.recentCovers==1&&firstCover.recentCoverBytes==1&&firstCover.coverBytes==0,
+          "The downloaded cover is kept among the recent covers (no second copy)");
+    f.answer(1,body(R"({"code":200,"lrc":{"lyric":"[00:01] Catalog"}})"));
+    const std::string other=R"({"code":200,"result":{"songs":[{"id":77,"name":"Other Song","ar":[{"name":"Example Artist"}],"al":{"name":"B","picUrl":"https://p2.music.126.net/Other==/2.jpg"},"dt":100000}]}})";
+    f.read(windowPlayer("Other Song",0));const auto searches=f.transport.requests.size();
+    check(f.transport.requests.back().url.find("Other%20Song")!=std::string::npos,"The next track asks the catalog");
+    f.answer(searches-1,body(other));
+    check(f.input().track->duration==100.&&f.transport.requests.back().kind==n::NowPlayingWeb::Kind::artwork,"The next track's length and cover follow");
+    f.answer(f.transport.requests.size()-1,pixels(6));f.answer(searches,body(R"({"code":200,"lrc":{"lyric":"[00:02] Other"}})"));
+    check(f.owner->artwork()->straightRGBA[0]==6&&f.owner->memory().recentCovers==2,"Two recent covers are kept");
+    const auto requests=f.transport.requests.size();const auto decodes=f.decodes;
+    f.read(windowPlayer("Synthetic Song",0));
+    check(f.transport.requests.size()==requests&&f.owner->artwork()&&f.owner->artwork()->straightRGBA[0]==5&&f.decodes==decodes,
+          "Returning to a recent track shows its cover at once: no search, download or decode");
+    check(f.input().track->duration==233.4,"Its catalog length is cached with the match");
+}
+// Windows requests the catalog cover at the size its slot shows (the source
+// asks for 600x600 for its 2x Retina slot; Windows decodes at most 512 px).
+void sizedCover(){
+    check(m::nowPlayingCatalogCoverPixels(1)==400&&m::nowPlayingCatalogCoverPixels(.5)==200&&m::nowPlayingCatalogCoverPixels(.9)==300&&
+          m::nowPlayingCatalogCoverPixels(1.5)==500&&m::nowPlayingCatalogCoverPixels(3)==500&&m::nowPlayingCatalogCoverPixels(0)==400&&
+          m::nowPlayingCatalogCoverPixels(std::numeric_limits<double>::quiet_NaN())==400,"The 330-point slot picks the smallest standard size covering it, at most 500");
+    check(m::nowPlayingCatalogCoverURL("http://p1.music.126.net/AbC==/1099.jpg",500)=="https://p1.music.126.net/AbC==/1099.jpg?param=500y500"&&
+          m::nowPlayingCatalogCoverURL("https://p3.music.126.net/x.jpg?param=130y130",20)=="https://p3.music.126.net/x.jpg?param=64y64"&&
+          !m::nowPlayingCatalogCoverURL("https://evil.example/x.jpg",500)&&m::nowPlayingArtworkURLAllowed(*m::nowPlayingCatalogCoverURL("http://p2.music.126.net/a.jpg",300)),
+          "Sized cover URLs keep the source host rules and stay allow-listed");
+    Fixture f(true,false,500);f.ready(media("cloudmusic.exe"));f.answer(0,body(catalogSearch));
+    check(f.transport.requests.size()==3&&f.transport.requests[2].url=="https://p1.music.126.net/AbC==/1099.jpg?param=500y500","The download asks for the slot's size");
+    f.owner->setCoverPixels(300);f.read(windowPlayer("Synthetic Song",0));
+    check(f.transport.requests.size()==4&&f.transport.requests[3].url==search,"Another player's track is looked up again");
+    f.answer(3,body(catalogSearch));
+    check(f.transport.requests.back().kind==n::NowPlayingWeb::Kind::artwork&&f.transport.requests.back().url=="https://p1.music.126.net/AbC==/1099.jpg?param=300y300",
+          "A new display density applies to the next cover download");
 }
 void thumbnailFirst(){
     Fixture f;f.ready(media("cloudmusic.exe",song(),pixels(3)));f.answer(0,body(catalogSearch));
@@ -182,7 +234,7 @@ void volume(){
 }
 }
 int main(){
-    try{lrclibLyrics();netease();thumbnailFirst();embedded();visibility();offline();events();offThread();volume();
+    try{lrclibLyrics();netease();windowPlayerCatalog();sizedCover();thumbnailFirst();embedded();visibility();offline();events();offThread();volume();
         std::cout<<"Now Playing sources session: "<<checks<<" checks passed (injected provider/transport/audio routes)\n";return 0;}
     catch(const std::exception&e){std::cerr<<"Now Playing sources session failed after "<<checks<<": "<<e.what()<<'\n';return 1;}
 }

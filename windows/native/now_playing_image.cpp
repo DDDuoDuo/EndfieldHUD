@@ -34,9 +34,12 @@ bool NativeNowPlayingArtwork::request(Bytes bytes){auto i=impl_;i->check();if(by
 }
 void NativeNowPlayingArtwork::cancel(){auto i=impl_;i->check();++i->generation;i->desired.reset();i->pending=false;i->value={{},NowPlayingImageFailure::unavailable};++i->published;}
 bool NativeNowPlayingArtwork::submitPending(){return impl_->submit();}
+void NativeNowPlayingArtwork::trim(const std::shared_ptr<const NotesImageFrame>&keep){auto i=impl_;i->check();for(auto&e:i->cache)if(e.value.image&&e.value.image!=keep)e={};if(i->value.image&&i->value.image!=keep)i->value={{},NowPlayingImageFailure::unavailable};}
 const NowPlayingImageResult&NativeNowPlayingArtwork::result()const{impl_->check();return impl_->value;}
 std::uint64_t NativeNowPlayingArtwork::revision()const noexcept{return impl_->published;}
-NativeNowPlayingArtwork::Stats NativeNowPlayingArtwork::stats()const{impl_->check();auto s=impl_->counts;s.inFlight=impl_->inFlight;s.pending=impl_->pending;return s;}
+NativeNowPlayingArtwork::Stats NativeNowPlayingArtwork::stats()const{impl_->check();auto s=impl_->counts;s.inFlight=impl_->inFlight;s.pending=impl_->pending;
+ const NotesImageFrame*seen[3]{};std::size_t count{};const auto add=[&](const std::shared_ptr<const NotesImageFrame>&f){if(!f)return;for(std::size_t k=0;k<count;++k)if(seen[k]==f.get())return;seen[count++]=f.get();s.residentBytes+=f->straightRGBA.size();};
+ add(impl_->value.image);for(const auto&e:impl_->cache)add(e.value.image);return s;}
 }
 #ifdef _WIN32
 #ifndef NOMINMAX

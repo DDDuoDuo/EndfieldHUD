@@ -33,13 +33,18 @@ if(WIN32)
 endif()
 
 # Visible-only public metadata downloads (LRCLIB/NetEase JSON, catalog covers):
-# owner-thread core with an injected transport, Windows.Web.Http on Windows.
-add_library(hud_now_playing_web native/now_playing_web.cpp)
+# owner-thread core with an injected transport and an optional bounded disk
+# cache on the shared utility executor; on Windows one kept-alive WinHTTP
+# session per owner.
+add_library(hud_now_playing_web native/now_playing_web.cpp native/now_playing_web_cache.cpp)
 target_include_directories(hud_now_playing_web PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(hud_now_playing_web PUBLIC hud_now_playing_lyrics)
+target_link_libraries(hud_now_playing_web PUBLIC hud_now_playing_lyrics hud_utility)
 if(WIN32)
-  target_compile_definitions(hud_now_playing_web PRIVATE UNICODE _UNICODE NOMINMAX)
-  target_link_libraries(hud_now_playing_web PRIVATE windowsapp ole32)
+  target_compile_definitions(hud_now_playing_web PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
+  target_link_libraries(hud_now_playing_web PRIVATE winhttp)
+endif()
+if(MSVC)
+  target_compile_options(hud_now_playing_web PRIVATE /W4 /permissive- /EHsc)
 endif()
 
 # UIA descriptor model for projected buttons/sliders (host provider input).
@@ -62,13 +67,19 @@ if(BUILD_TESTING)
   add_executable(now_playing_web_tests tests/now_playing_web_tests.cpp)
   target_link_libraries(now_playing_web_tests PRIVATE hud_now_playing_web)
   add_test(NAME now_playing_web_contracts COMMAND now_playing_web_tests)
+  # The disk cache in a private temporary directory (removed afterwards).
+  add_executable(now_playing_web_cache_tests tests/now_playing_web_cache_tests.cpp)
+  target_link_libraries(now_playing_web_cache_tests PRIVATE hud_now_playing_web)
+  add_test(NAME now_playing_web_cache_contracts COMMAND now_playing_web_cache_tests)
   if(WIN32)
-    # The Windows.Web.Http transport through an in-process IHttpFilter (no socket).
-    add_executable(now_playing_web_winrt_tests tests/now_playing_web_winrt_tests.cpp)
-    target_compile_definitions(now_playing_web_winrt_tests PRIVATE UNICODE _UNICODE NOMINMAX)
-    target_link_libraries(now_playing_web_winrt_tests PRIVATE hud_now_playing_web windowsapp ole32)
-    add_test(NAME now_playing_web_winrt_contracts COMMAND now_playing_web_winrt_tests)
-    set_tests_properties(now_playing_web_winrt_contracts PROPERTIES TIMEOUT 180)
+    # The WinHTTP transport against an in-process loopback HTTP server
+    # (127.0.0.1 only): requests, headers, acceptance, streamed bounds,
+    # connection reuse, cancellation and the session lifetime. No network.
+    add_executable(now_playing_web_http_tests tests/now_playing_web_http_tests.cpp)
+    target_compile_definitions(now_playing_web_http_tests PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
+    target_link_libraries(now_playing_web_http_tests PRIVATE hud_now_playing_web ws2_32)
+    add_test(NAME now_playing_web_http_contracts COMMAND now_playing_web_http_tests)
+    set_tests_properties(now_playing_web_http_contracts PROPERTIES TIMEOUT 180)
   endif()
   add_executable(now_playing_volume_tests tests/now_playing_volume_tests.cpp)
   target_link_libraries(now_playing_volume_tests PRIVATE hud_now_playing_volume)
@@ -130,12 +141,13 @@ endif()
 # compatibility fallback) and the composite provider that puts it beside
 # GSMTC. Portable rules, provider and synthetic desktop; WinEvent hooks,
 # EnumWindows and WM_APPCOMMAND on Windows. Tests use synthetic windows only.
-add_library(hud_now_playing_players modules/now_playing_players.cpp native/now_playing_players.cpp)
+add_library(hud_now_playing_players modules/now_playing_players.cpp modules/now_playing_player_controls.cpp native/now_playing_players.cpp
+  native/now_playing_player_controls.cpp)
 target_include_directories(hud_now_playing_players PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(hud_now_playing_players PUBLIC hud_now_playing_service hud_now_playing_lyrics PRIVATE hud_archive hud_data)
 if(WIN32)
-  target_compile_definitions(hud_now_playing_players PRIVATE UNICODE _UNICODE NOMINMAX)
-  target_link_libraries(hud_now_playing_players PRIVATE icu user32)
+  target_compile_definitions(hud_now_playing_players PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
+  target_link_libraries(hud_now_playing_players PRIVATE icu user32 oleacc ole32 oleaut32)
 else()
   target_link_libraries(hud_now_playing_players PRIVATE ICU::uc ICU::i18n)
 endif()
@@ -150,6 +162,20 @@ if(BUILD_TESTING)
     target_compile_definitions(now_playing_players_tests PRIVATE UNICODE _UNICODE NOMINMAX)
   endif()
   add_test(NAME now_playing_players_contracts COMMAND now_playing_players_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/now-playing-players-source.json)
+  # Source: python3 windows/tools/now_playing_player_controls_reference.py
+  add_executable(now_playing_player_controls_tests tests/now_playing_player_controls_tests.cpp)
+  target_link_libraries(now_playing_player_controls_tests PRIVATE hud_now_playing_players hud_data)
+  add_test(NAME now_playing_player_controls_contracts COMMAND now_playing_player_controls_tests
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/now-playing-player-controls-source.json)
+  if(WIN32)
+    # The MSAA reader against the test's own hidden window and in-process
+    # accessible objects (no other process is read or pressed).
+    add_executable(now_playing_control_reader_tests tests/now_playing_control_reader_tests.cpp)
+    target_compile_definitions(now_playing_control_reader_tests PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
+    target_link_libraries(now_playing_control_reader_tests PRIVATE hud_now_playing_players hud_data oleacc ole32 oleaut32 user32)
+    add_test(NAME now_playing_control_reader_contracts COMMAND now_playing_control_reader_tests)
+    set_tests_properties(now_playing_control_reader_contracts PROPERTIES TIMEOUT 120)
+  endif()
 endif()
 
 # Per-player live acceptance matrix (tools/now_playing_acceptance.hpp): the
@@ -228,9 +254,10 @@ endif()
 add_custom_target(now_playing_all)
 foreach(now_playing_target now_playing_model_tests now_playing_blend_tests now_playing_presentation_tests now_playing_scene_tests
     now_playing_service_tests now_playing_receipt_tests now_playing_image_tests now_playing_session_tests now_playing_preview_tests
-    now_playing_warm_tests now_playing_lyrics_sources_tests now_playing_web_tests now_playing_web_winrt_tests now_playing_volume_tests
+    now_playing_warm_tests now_playing_lyrics_sources_tests now_playing_web_tests now_playing_web_cache_tests now_playing_web_http_tests now_playing_volume_tests
     now_playing_sources_session_tests now_playing_accessibility_tests now_playing_automation_tests now_playing_fixture_tests
-    now_playing_runtime_volume_tests now_playing_acceptance_tests now_playing_players_tests now_playing_probe hud_now_playing_area)
+    now_playing_runtime_volume_tests now_playing_acceptance_tests now_playing_players_tests now_playing_player_controls_tests now_playing_control_reader_tests now_playing_probe
+    hud_now_playing_area)
   if(TARGET ${now_playing_target})
     add_dependencies(now_playing_all ${now_playing_target})
   endif()

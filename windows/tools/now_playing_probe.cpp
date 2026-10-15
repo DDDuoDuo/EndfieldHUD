@@ -22,9 +22,11 @@
 //                                           sends exactly one explicit command
 //                                           to the first presented player
 //       [--windows]                         also prints the top-level windows of
-//                                           NetEase Cloud Music, QQ Music and
-//                                           Kugou once (class, title, visible),
-//                                           to check their title format
+//                                           the window-title players once (class,
+//                                           title, visible), to check their title
+//                                           format, and each player's own
+//                                           controls as the HUD reads them
+//                                           (elapsed, total, play state, buttons)
 //       [--report FILE.json]                merges this run into the matrix in
 //                                           FILE (created when missing)
 //       [--markdown FILE.md]                writes the (merged) matrix as Markdown
@@ -151,7 +153,7 @@ int usage(int code = 0) {
            "--volume only reads the playing app's audio route; --command sends exactly one command to the first presented player.\n"
            "Per player: start it and play, run --live --seconds 60 --lyrics --volume --report np.json --markdown np.md, and during the run\n"
            "pause, resume and change track in the player; then run once more with --command next. Unseen players stay unverified.\n"
-           "NetEase Cloud Music, QQ Music or Kugou without a media session: add --windows to print their window titles once.\n"
+           "Players without a media session (NetEase Cloud Music, QQ Music, Kugou, ...): add --windows to print their window titles and their own controls once.\n"
            "Ctrl+C ends a live run early and still writes the report.\n";
     return code;
 }
@@ -170,7 +172,8 @@ t::NowPlayingAcceptanceMatrix runLive(const Arguments& a, t::NowPlayingProbeOpti
     t::NowPlayingProbeServices services;
     // Exactly the HUD's provider: GSMTC beside the window-title players. The
     // factory runs on this thread, which pumps messages in Wake::wait.
-    services.provider = n::windowsNowPlayingPlayers(monotonic);
+    const auto players = n::windowsNowPlayingWindowSystem(monotonic);
+    services.provider = n::windowsNowPlayingPlayers(monotonic, players);
     if (a.lyrics) services.transport = n::windowsNowPlayingTransport();
     services.decode = n::decodeNowPlayingImage;
     services.clock = monotonic;
@@ -187,12 +190,48 @@ t::NowPlayingAcceptanceMatrix runLive(const Arguments& a, t::NowPlayingProbeOpti
     if (a.windows) {
         // The window-title players' raw windows, exactly as the fallback reads
         // them (stdout only; the report never stores a title or directory).
-        for (const auto& w : n::windowsNowPlayingWindowSystem()->windows()) {
+        for (const auto& w : players->windows()) {
             const auto* player = endfield::modules::nowPlayingWindowPlayer(w.executable);
             const auto parsed = player ? endfield::modules::nowPlayingWindowTitleTrack(*player, w.title) : std::nullopt;
             Json::Object line{{"event", "playerWindow"}, {"player", t::nowPlayingReportIdentity(w.executable)}, {"pid", static_cast<std::int64_t>(w.pid)},
                 {"class", w.className}, {"title", w.title}, {"visible", w.visible}, {"owned", w.owned}};
             if (parsed) line["parsed"] = Json::Object{{"title", parsed->title}, {"artist", parsed->artist}};
+            print(Json(std::move(line)));
+        }
+        // Each player's own controls, read exactly as the HUD reads them
+        // (numbers and flags only; reading a Chromium player turns on its
+        // accessibility tree until it exits).
+        std::vector<std::pair<std::uintptr_t, std::uint32_t>> mains;
+        {
+            const auto all = players->windows();
+            std::vector<std::uint32_t> seen;
+            for (const auto& w : all) {
+                const auto* rules = endfield::modules::nowPlayingWindowPlayer(w.executable);
+                if (!rules || std::find(seen.begin(), seen.end(), w.pid) != seen.end()) continue;
+                seen.push_back(w.pid);
+                std::vector<endfield::modules::NowPlayingPlayerWindow> process;
+                for (const auto& x : all)
+                    if (x.pid == w.pid) process.push_back(x);
+                if (const auto main = endfield::modules::nowPlayingMainWindow(*rules, process)) mains.emplace_back(process[*main].window, w.pid);
+            }
+        }
+        for (int round = 0; round < 3 && !mains.empty(); ++round) {
+            for (const auto& [window, pid] : mains) (void)players->reading(window, pid, true);
+            for (const double until = monotonic() + 1.5; monotonic() < until;) wake.wait(until - monotonic());
+        }
+        for (const auto& [window, pid] : mains) {
+            Json::Object line{{"event", "playerControls"}, {"pid", static_cast<std::int64_t>(pid)}};
+            if (const auto r = players->reading(window, pid, false)) {
+                if (r->position) line["position"] = *r->position;
+                if (r->duration) line["duration"] = *r->duration;
+                if (r->playing) line["playing"] = *r->playing;
+                line["playPause"] = r->playPause;
+                line["previous"] = r->previous;
+                line["next"] = r->next;
+                line["visible"] = r->visible;
+            } else {
+                line["found"] = false;
+            }
             print(Json(std::move(line)));
         }
     }
@@ -216,6 +255,7 @@ t::NowPlayingAcceptanceMatrix runLive(const Arguments& a, t::NowPlayingProbeOpti
         if (!matrix.runs.empty()) matrix.runs.back().seconds = std::round((monotonic() - begin) * 10) / 10;
     }
     if (audio) audio->stop();
+    players->shutdown();
     return matrix;
 }
 t::NowPlayingAcceptanceMatrix runReplay(const Arguments& a, t::NowPlayingProbeOptions options) {
