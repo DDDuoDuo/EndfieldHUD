@@ -12,15 +12,11 @@ struct ProfileDecodedImage {
     modules::ProfileImage image; // straight sRGB RGBA8, top-left rows
     int orientation{1};          // EXIF 1...8, still to apply (avatars only)
     unsigned sourceWidth{},sourceHeight{}; // stored pixel size before any reduction
-    // Avatars larger than modules::profileAvatarWorkingPixels: the working
-    // copy the page portrait and the card avatar are cropped from
-    // (modules::profileWorkingCopy), made on the worker by
-    // ProfileImageService. Empty otherwise.
-    modules::ProfileImage working;
 };
 // The bounded working copy of a decoded avatar, sharing the decoded image's
-// ownership: its worker-made `working` copy, else the image itself when it is
-// already within the bound, else (a caller-built image) reduced now.
+// ownership: the image itself when it is within
+// modules::profileAvatarWorkingPixels (every avatar ProfileImageService
+// delivers), else (a caller-built larger image) reduced now.
 std::shared_ptr<const modules::ProfileImage>profileAvatarWorking(const std::shared_ptr<const ProfileDecodedImage>&);
 // UserProfileStore.importImage on a worker thread (COM initialized per call):
 // a regular file of at most 128 MB that WIC can decode. Avatars keep their
@@ -47,8 +43,14 @@ struct ProfileImageCallbacks {
 };
 // Owner-thread binding of profile image work to the app's shared utility
 // executor: one import at a time, coalesced decodes and a bounded decoded
-// cache (two images: the current avatar and background). No thread, timer or
-// picker is created here. Callbacks run inside the executor's owner drain.
+// cache (two images: the current avatar and background). A delivered avatar
+// is only its crop working copy (modules::profileWorkingCopy of the <=4096 px
+// decode, at most profileAvatarWorkingPixels, made on the worker): the page
+// portrait and the card avatar read nothing else, and the full decode (up to
+// 64 MB) is released on the worker like the Mac's uncached CGImageSource
+// avatar. Backgrounds stay the oriented <=2048 px thumbnail the Mac caches.
+// No thread, timer or picker is created here. Callbacks run inside the
+// executor's owner drain.
 class ProfileImageService final {
 public:
     ProfileImageService(std::filesystem::path imagesDirectory,app::UtilityExecutor&,ProfileImageCallbacks={});

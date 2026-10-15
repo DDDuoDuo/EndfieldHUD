@@ -34,6 +34,10 @@ struct SourceBatchState {
 struct SourceSceneStats {
     // Payload buffers/field values; excludes allocator/container overhead.
     std::size_t batches{},draws{},meshes{},textures{},pipelines{},uniforms{},retainedCPUBytes{},inactiveUniforms{};
+    // retainedCPUBytes by kind: texture mips (installed, registered and
+    // runtime pixels), per-batch mesh vertices, original geometry, shader
+    // programs (per pipeline), and uniform/override values.
+    std::size_t textureCPUBytes{},meshCPUBytes{},geometryCPUBytes{},programCPUBytes{},uniformCPUBytes{};
     std::uint64_t updates{},uniformEncodes{},changedUniforms{},changedMeshes{},visibilityChanges{};
     // Runtime desktop texture content events (replaceTexture/restoreTexture)
     // and the GPU texture uploads they caused in flush().
@@ -234,7 +238,11 @@ public:
     bool update(std::span<const SourceBatchState>,const SourceFrameParameters&);
     // Initial upload; then flush only dirty buffers and draw visibility.
     // The caller owns the renderer lifecycle and calls on its owner thread.
-    // A fresh/reset graphics target needs upload again, explicitly.
+    // A fresh/reset graphics target needs upload again, explicitly. A scene
+    // loaded from a compiled file then releases the CPU mips of its installed
+    // textures (the immutable GPU textures hold them), except originals a
+    // runtime replacement can restore and registered textures; a later
+    // upload() reads them from the same verified file again.
     void upload(SourceGraphics&);
     void flush(SourceGraphics&);
     SourceSceneStats stats() const noexcept;

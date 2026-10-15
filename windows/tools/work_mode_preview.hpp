@@ -25,6 +25,8 @@ struct WorkModePreviewOptions {
 };
 // Modifier state of a key event; system is Alt or either Win key.
 struct WorkModeKeyModifiers {bool shift{},control{},system{};};
+// What the page keeps built (WorkModePreview::resources).
+struct WorkModePageResources {std::size_t sceneParts{},scenePixelBytes{};std::uint64_t builds{},parks{};bool gpuResident{};};
 // Shared module owner, driven by the shell's continuous QPC time and deadline.
 // Borrows HWND, activated manager/client and rasterizer. It never creates a
 // window, renderer, clock, timer, thread, Focus service, clipboard or store.
@@ -90,8 +92,14 @@ public:
     bool textCursorAt(core::Point logicalClient)const noexcept;
     const modules::WorkModeController&controller()const noexcept;
     const modules::WorkModePresentation&state()const noexcept;
+    // HUDModuleContent keeps only the shown screen: once the HUD began
+    // closing while Work Mode was not shown, the next publication without it
+    // (collected) releases its GPU resources (ring texture, group targets);
+    // showing it again uploads them from the kept rasters. A module switch
+    // inside the open HUD keeps them.
     void upload(native::Renderer&);std::span<const native::LayerCompositionEntry>entries();
     void collected(native::Renderer&);void release(native::Renderer&);
+    WorkModePageResources resources()const;
 private:struct Impl;std::shared_ptr<Impl>impl_;
 };
 }

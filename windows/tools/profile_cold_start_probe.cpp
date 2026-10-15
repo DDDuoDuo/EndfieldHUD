@@ -2,21 +2,31 @@
 // Wall milliseconds of what the profile area runs on the owner thread at
 // launch, when its record loads, when a returning user's large photo avatar
 // loads, on the first frames with another module and with Personal Profile
-// shown, and in the host's ID card presenter apply. Hidden HWND, WARP, a NEW
-// temporary data root and a synthetic gradient photo only; prints one JSON
-// object of timings and counts, never profile content.
-//   profile_cold_start_probe <hud.hlsl> <resources/profile> <id_card-native-captions.json>
+// shown, and in the host's ID card presenter apply; then the process memory
+// (private bytes, threads) a returning user's photo avatar and photo
+// background keep resident, and the owner-thread cost of a portrait slider
+// step. Hidden HWND, WARP, a NEW temporary data root and a synthetic gradient
+// photo only; prints one JSON object of timings and counts, never profile
+// content.
+//   profile_cold_start_probe <hud.hlsl> <resources/profile> <id_card-native-captions.json> [<shell catalog.ehscene>]
+// With the packaged shell catalog it also reports what the source shell's
+// SourceScene keeps resident after loading it (CPU bytes and private bytes).
 #include "tools/profile_owner.hpp"
+#include "tools/work_mode_preview.hpp"
+#include "core/data/data_store.hpp"
 #include "core/data/file_io.hpp"
 #include "modules/id_card_artwork.hpp"
 #include "native/id_card_presenter.hpp"
 #include "native/profile_text.hpp"
+#include "native/source_scene.hpp"
 #include <algorithm>
 #include <chrono>
 #include <iostream>
 #ifdef _WIN32
 #include <windows.h>
 #include <objbase.h>
+#include <psapi.h>
+#include <tlhelp32.h>
 #include <wincodec.h>
 #include <wrl/client.h>
 namespace {
@@ -24,6 +34,17 @@ using namespace endfield;namespace m=modules;namespace gpu=native;namespace fs=s
 void need(bool v,const char*why){if(!v)throw std::runtime_error(why);}
 double since(Clock::time_point start){return std::chrono::duration<double,std::milli>(Clock::now()-start).count();}
 template<class F>double timed(F&&f){const auto start=Clock::now();f();return since(start);}
+// Process private bytes (commit charge) and thread count: what the live RC's
+// memory report measures.
+struct ProcessMemory{double privateMB{};std::int64_t threads{};};
+ProcessMemory processMemory(){
+    ProcessMemory out;PROCESS_MEMORY_COUNTERS_EX counters{};counters.cb=sizeof(counters);
+    if(GetProcessMemoryInfo(GetCurrentProcess(),reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&counters),sizeof(counters)))out.privateMB=double(counters.PrivateUsage)/(1024*1024);
+    const HANDLE snapshot=CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD,0);
+    if(snapshot!=INVALID_HANDLE_VALUE){THREADENTRY32 entry{};entry.dwSize=sizeof(entry);const auto self=GetCurrentProcessId();
+        for(BOOL more=Thread32First(snapshot,&entry);more;more=Thread32Next(snapshot,&entry))if(entry.th32OwnerProcessID==self)++out.threads;CloseHandle(snapshot);}
+    return out;
+}
 struct Window{HWND hwnd{};Window(){hwnd=CreateWindowExW(WS_EX_NOREDIRECTIONBITMAP|WS_EX_TOOLWINDOW,L"STATIC",L"Hidden Personal Profile cold-start probe",WS_POPUP,0,0,1280,800,nullptr,nullptr,GetModuleHandleW(nullptr),nullptr);need(hwnd&&!IsWindowVisible(hwnd),"The probe window stays hidden");}~Window(){if(hwnd)DestroyWindow(hwnd);}};
 struct Temporary{fs::path root=fs::canonical(fs::temp_directory_path())/("EndfieldHUD-Profile-Probe-"+ehud::data::makeUUID());Temporary(){fs::create_directories(root);}~Temporary(){std::error_code e;fs::remove_all(root,e);}};
 // A synthetic gradient photo written only into the temporary root.
@@ -40,9 +61,22 @@ std::vector<std::uint8_t>photo(const fs::path&path,UINT width,UINT height){
     const auto bytes=ehud::data::detail::readFile(path,128*1024*1024);need(bytes.has_value(),"Photo reads back");
     return {bytes->begin(),bytes->end()};
 }
-void run(const fs::path&shader,const fs::path&resources,const fs::path&captionFixture){
+void run(const fs::path&shader,const fs::path&resources,const fs::path&captionFixture,const fs::path&catalog){
     Window w;Temporary t;J report=J::Object{};
     const auto set=[&](const char*key,double value){report[key]=value;};
+    report["memory.startPrivateMB"]=processMemory().privateMB;report["memory.startThreads"]=processMemory().threads;
+    if(!catalog.empty()){
+        // The host's shell scene (application.cpp: SourceScene over the packaged catalog).
+        const auto before=processMemory();std::unique_ptr<gpu::SourceScene>scene;
+        set("source.loadMS",timed([&]{scene=std::make_unique<gpu::SourceScene>(gpu::CompiledSourceScene{catalog,{}});}));
+        const auto stats=scene->stats();report["source.retainedCPUMB"]=double(stats.retainedCPUBytes)/(1024*1024);
+        report["source.textureCPUMB"]=double(stats.textureCPUBytes)/(1024*1024);report["source.meshCPUMB"]=double(stats.meshCPUBytes)/(1024*1024);
+        report["source.geometryCPUMB"]=double(stats.geometryCPUBytes)/(1024*1024);report["source.programCPUMB"]=double(stats.programCPUBytes)/(1024*1024);
+        report["source.uniformCPUMB"]=double(stats.uniformCPUBytes)/(1024*1024);
+        report["source.textures"]=std::int64_t(stats.textures);report["source.meshes"]=std::int64_t(stats.meshes);report["source.pipelines"]=std::int64_t(stats.pipelines);
+        report["source.privateMB"]=processMemory().privateMB-before.privateMB;
+        scene.reset();report["source.releasedPrivateMB"]=processMemory().privateMB-before.privateMB;
+    }
     // 1. Launch, cold in this process: what ProfileOwner's constructor runs on
     // the owner thread (ICU text and date rules, packaged artwork digests,
     // the pinned card source, the card artwork).
@@ -115,19 +149,100 @@ void run(const fs::path&shader,const fs::path&resources,const fs::path&captionFi
         set("photo.pagePortraitCropMS",timed([&]{(void)m::profileStraight(m::profileRenderedImage(working,decoded.orientation,{55,55},1,{0,0},2));}));
         set("photo.cardAvatarCropMS",timed([&]{(void)m::IdCardArtwork::avatar(working,decoded.orientation,1,{0,0});}));
     }
+    // 5. The next launch of a returning user with that photo avatar and a
+    // photo background (stored like the chooser stores one: an oriented PNG of
+    // at most 2048 px): the process memory the profile area then keeps.
+    const auto backgroundName=gpu::importProfileImage(t.root/"photo.png",m::ProfileImageKind::background,t.root/"Profile"/"Images");
+    {
+        const auto path=ehud::data::ProfileStore(t.root).path();const auto bytes=ehud::data::detail::readFile(path,1024*1024);need(bytes.has_value(),"The probe record reads back");
+        auto record=J::parse(*bytes);record["profile"]["backgroundFilename"]=backgroundName;
+        ehud::data::detail::replaceFile(path,*bytes,record.encode(),1024*1024);
+        need(ehud::data::ProfileStore(t.root).value().backgroundFilename==std::optional<std::string>(backgroundName),"The probe record keeps the background");
+    }
+    // Every queued worker job and the completions it schedules, until quiet.
+    const auto quiesce=[&]{for(int n=0;n<256;++n){executor.waitIdle();if(!executor.drain())return;}need(false,"The probe's worker settles");};
+    const auto megabytes=[](std::size_t bytes){return double(bytes)/(1024*1024);};
+    // Private bytes and threads of the process, the renderer's GPU resource
+    // bytes (system memory on WARP), the shared rasterizer's bytes and what
+    // the page keeps built.
+    const auto memory=[&](const std::string&key){
+        const auto v=processMemory();report[key+"PrivateMB"]=v.privateMB;report[key+"Threads"]=v.threads;
+        report[key+"RendererMB"]=megabytes(renderer.stats().resourceBytes);report[key+"RasterMB"]=megabytes(raster.stats().resourceBytes);
+        report[key+"ImageSourceMB"]=megabytes(images.stats().liveBytes+images.stats().cachedBytes);
+        if(owner&&owner->page()){const auto r=owner->page()->resources();
+            report[key+"PagePixelMB"]=megabytes(r.scenePixelBytes);report[key+"PageOwnedPhotoMB"]=megabytes(r.ownedPhotoBytes);report[key+"PageGPU"]=r.gpuResident;}
+        return v;};
+    const auto before=memory("memory.relaunch.before");
     set("relaunch.ownerMS",timed([&]{owner=std::make_unique<tools::ProfileOwner>(w.hwnd,executor,raster,images,work,o);owner->resize(metrics);owner->setAppearance(appearance,time);}));
     const auto relaunch=Clock::now();owner->start(time);
     measure("relaunch.loadOwnerThreadMS","relaunch.loadLongestDrainMS",[&]{return owner->loaded();});
     measure("relaunch.photoOwnerThreadMS","relaunch.photoLongestDrainMS",[&]{return owner->cardTexture(tools::IdCardTextureKind::avatar)!=nullptr&&owner->cardTexture(tools::IdCardTextureKind::background)!=nullptr;});
-    set("relaunch.photoReadyWallMS",since(relaunch));
+    quiesce();set("relaunch.photoReadyWallMS",since(relaunch));
+    // Launched with the HUD closed: decoded images and card textures only.
+    const auto decoded=memory("memory.relaunch.decoded");
+    report["memory.relaunch.decodedResidentMB"]=decoded.privateMB-before.privateMB;
     frames(*owner,"relaunch");
-    owner->release(renderer);owner.reset();executor.shutdown();
+    // The page's portrait crop and backdrop are published, then measured.
+    {core::ModulePresentation modules(core::Module::profile);for(unsigned n=0;n<3;++n){quiesce();(void)frame(*owner,modules,1./60);}composition.detach(renderer);}
+    const auto shown=memory("memory.relaunch.shown");
+    report["memory.relaunch.photoProfileResidentMB"]=shown.privateMB-before.privateMB;
+    // 6. Adjust portrait: one committed zoom step at a time (the slider's
+    // accessible value or a nudge), owner-thread wall time per step; the
+    // crop itself runs on the worker.
+    {
+        core::ModulePresentation modules(core::Module::profile);(void)frame(*owner,modules,1./60);
+        need(owner->perform("profile:menu",time)&&owner->perform("profile:portraitMenu",time),"The portrait popover opens");(void)frame(*owner,modules,1./60);
+        double total{},longest{};unsigned steps{};
+        for(unsigned n=1;n<=12;++n){const double d=timed([&]{need(owner->setSlider(m::ProfileField::avatarZoom,1+.25*n,time),"A portrait zoom step");});total+=d;longest=std::max(longest,d);++steps;(void)frame(*owner,modules,1./60);}
+        set("slider.avatarZoomStepOwnerMS",total/steps);set("slider.avatarZoomStepLongestMS",longest);
+        double drains{},drainPeak{};
+        for(int n=0;n<256;++n){executor.waitIdle();const double d=timed([&]{(void)executor.drain();});drains+=d;drainPeak=std::max(drainPeak,d);if(!executor.stats().pending&&!executor.stats().running&&!executor.stats().completed)break;}
+        set("slider.completionOwnerMS",drains);set("slider.completionLongestDrainMS",drainPeak);
+        (void)frame(*owner,modules,1./60);
+        need(owner->perform("profile:popoverClose",time),"The portrait popover closes");(void)frame(*owner,modules,1./60);
+        if(const auto*page=owner->page()){const auto r=page->resources();report["slider.cropJobs"]=std::int64_t(r.cropJobs);report["slider.cropPublications"]=std::int64_t(r.cropPublications);}
+        // 7. The HUD closes while another module is shown (HUDModuleContent
+        // keeps only the shown screen): the page parks; showing it again
+        // rebuilds it.
+        modules.select(core::Module::notes,time);for(unsigned n=0;n<40;++n)(void)frame(*owner,modules,1./60);
+        memory("memory.relaunch.otherModule");
+        owner->overlayClosing(time);(void)frame(*owner,modules,1./60);owner->conceal();quiesce();
+        memory("memory.relaunch.parked");
+        owner->setOverlayVisible(true,time);(void)frame(*owner,modules,1./60);modules.select(core::Module::profile,time);
+        double first{},peak{};for(unsigned n=0;n<40;++n){const double d=frame(*owner,modules,1./60);if(!n)first=d;peak=std::max(peak,d);}
+        set("reshow.firstProfileFrameMS",first);set("reshow.peakFrameMS",peak);
+        memory("memory.relaunch.reshown");
+        composition.detach(renderer);
+    }
+    owner->release(renderer);owner.reset();quiesce();
+    memory("memory.relaunch.released");
+    // 8. The Work Mode page (this area's scene and owner): what it keeps
+    // while shown, switched away inside the open HUD and once the HUD closed
+    // on another module, and its first frames.
+    {
+        tools::WorkModePreviewOptions wo;wo.raster.pixelsPerPoint=2;wo.clipboard=nullptr;
+        tools::WorkModePreview page(w.hwnd,raster,nullptr,TF_CLIENTID_NULL,wo);page.resize(metrics);page.setAppearance({true,2,{250./255,212./255,31./255,1}});page.focus(true,time);
+        core::ModulePresentation modules(core::Module::workMode);
+        const auto paint=[&](double advance){time+=advance;const auto sample=modules.sample(time).presentation;chrome.module=sample.requested;
+            return timed([&]{page.update({},chrome,sample,1,time);page.upload(renderer);composition.setEntries(renderer,page.entries());composition.present(renderer);page.collected(renderer);});};
+        const auto rasterBase=raster.stats().resourceBytes;const auto rendererBase=renderer.stats().resourceBytes;
+        const auto sample=[&](const std::string&key){report[key+"RasterMB"]=megabytes(raster.stats().resourceBytes-rasterBase);report[key+"RendererMB"]=megabytes(renderer.stats().resourceBytes-rendererBase);
+            report[key+"PagePixelMB"]=megabytes(page.resources().scenePixelBytes);report[key+"GPU"]=page.resources().gpuResident;};
+        set("workMode.firstFrameMS",paint(1./60));for(unsigned n=0;n<30;++n)(void)paint(1./60);sample("workMode.shown");
+        modules.select(core::Module::notes,time);for(unsigned n=0;n<40;++n)(void)paint(1./60);sample("workMode.otherModule");
+        page.cancelInteraction(time);page.setOverlayVisible(false,time);(void)paint(1./60);sample("workMode.parked");
+        page.setOverlayVisible(true,time);(void)paint(1./60);modules.select(core::Module::workMode,time);
+        set("workMode.reshowFirstFrameMS",paint(1./60));for(unsigned n=0;n<30;++n)(void)paint(1./60);sample("workMode.reshown");
+        composition.detach(renderer);page.shutdown(time);page.release(renderer);
+    }
+    executor.shutdown();
     std::cout<<report.encode()<<'\n';
 }
 }
 int wmain(int argc,wchar_t**argv){
     const auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);
-    try{need(SUCCEEDED(hr)&&argc==4,"Pass hud.hlsl, resources/profile and id_card-native-captions.json");run(argv[1],argv[2],argv[3]);CoUninitialize();return 0;}
+    try{need(SUCCEEDED(hr)&&(argc==4||argc==5),"Pass hud.hlsl, resources/profile, id_card-native-captions.json and optionally the shell catalog");
+        run(argv[1],argv[2],argv[3],argc==5?fs::path(argv[4]):fs::path{});CoUninitialize();return 0;}
     catch(const std::exception&e){if(SUCCEEDED(hr))CoUninitialize();std::cerr<<"Profile cold-start probe: "<<e.what()<<'\n';return 1;}
 }
 #else

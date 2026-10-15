@@ -75,6 +75,8 @@ struct ProfileOwner::Impl:std::enable_shared_from_this<Impl> {
         ProfilePreviewOptions o;o.raster=options.raster;o.appearance={appearance.dark,appearance.scale,appearance.accentSRGB};
         o.reduceMotion=appearance.reduceMotion;o.textMessage=options.textMessage;o.images=&images;o.frameSprite=artwork.frame;o.clipboard=options.clipboard;
         const std::weak_ptr<Impl>weak=shared_from_this();
+        // The page portrait crop runs on the shared worker like the card avatar.
+        o.executor=&executor;o.changed=[weak]{if(auto i=weak.lock())i->notify();};
         o.chooseImage=[weak](m::ProfileImageKind kind){if(auto i=weak.lock())i->request(kind,std::nullopt);};
         o.chooseColor=[weak](std::array<double,3>rgb){if(auto i=weak.lock())i->request(std::nullopt,rgb);};
         page=std::make_unique<ProfilePreview>(hwnd,*state,raster,std::move(o),manager,client);
@@ -303,8 +305,9 @@ bool ProfileOwner::flush(double t){
     if(i->state&&!i->loadError)(void)i->hours.retry();
     return i->loadError.has_value()||!i->started||i->service->flush();
 }
+void ProfileOwner::conceal(){if(impl_->page)impl_->page->conceal();}
 void ProfileOwner::queueCapacityAvailable(){
-    auto i=impl_;i->service->queueCapacityAvailable();i->imageService->queueCapacityAvailable();
+    auto i=impl_;i->service->queueCapacityAvailable();i->imageService->queueCapacityAvailable();if(i->page)i->page->queueCapacityAvailable();
     if(i->cardDirty&&!i->cardBusy){i->cardDirty=false;i->scheduleCard();}
 }
 void ProfileOwner::workModeCheckpoint(double total){

@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
+#include <memory>
 #include <new>
 #ifdef _WIN32
 #include <windows.h>
@@ -110,9 +111,36 @@ void run(const std::filesystem::path&shader){
     const auto backdropRasters=raster.stats().rasterizations;p=s.profile();p.backgroundOffsetX=120;p.backgroundZoom=2;s.refresh(p,false);
     change={};change.backdropMoved=true;sync(change,contents);frame(time+=.01,place);check(scene.requiresFrames(time),"Committed background geometry eases for 0.18 s");frame(time+=.2,place);
     check(raster.stats().rasterizations==backdropRasters,"Background offset/zoom never re-rasterizes");
-    // 8. Retirement through the shared publisher.
+    // 8. Parking (HUDModuleContent drops a screen once it is no longer
+    // shown): a composed page refuses; once unpublished every GPU resource
+    // goes while the parts keep their rasters and the backdrop image stays,
+    // and the next upload publishes the same artwork again without a reload.
+    {
+        const auto parks=scene.stats().parks;const auto textures=renderer.stats().textures;const auto loads=scene.stats().loads;
+        check(!scene.park(&renderer)&&scene.stats().parts>0&&scene.stats().gpuResident&&renderer.stats().textures==textures&&renderer.stats().nativeGroups==1,
+              "A published page refuses to park and stays resident");
+        composition.detach(renderer);published.clear();
+        const auto rasters=raster.stats();const auto parts=scene.stats().parts;const auto pixelBytes=scene.stats().pixelBytes;
+        check(scene.park(&renderer)&&!scene.stats().gpuResident&&scene.stats().parks==parks+1&&scene.stats().parts==parts&&scene.stats().pixelBytes==pixelBytes&&
+              renderer.stats().textures==0&&renderer.stats().meshes==0&&renderer.stats().nativeGroups==0&&raster.stats().entries==rasters.entries,
+              "An unpublished page parks: no GPU resource stays, the rasters do");
+        check(!scene.park(&renderer)&&scene.entries().empty()&&scene.stats().ownedPhotoBytes==64*36*4,"Nothing is left to park; the backdrop image stays");
+        frame(time+=.02,place);frame(time+=.3,place);
+        check(scene.stats().gpuResident&&scene.stats().loads==loads&&scene.entries().size()==4&&renderer.stats().nativeGroups==1&&raster.stats().rasterizations==rasters.rasterizations,
+              "The next upload publishes the parked page again without reloading or rasterizing a part");
+        const auto rebuilt=renderer.readback();
+        check(rebuilt.pixels[std::size_t(20+167)*rebuilt.rowBytes+(250+200)*4+3]>0,"The re-uploaded page draws the backdrop photo again");
+        // An owned backdrop (the decode service's image) is borrowed, not copied.
+        auto borrowed=std::make_shared<std::vector<std::uint8_t>>(pixels);const std::weak_ptr<std::vector<std::uint8_t>>held=borrowed;
+        check(scene.setBackdropImage(gpu::NativeProfileBackdropImage{10,64,36,*borrowed,borrowed})&&scene.stats().ownedPhotoBytes==0,"A backdrop with an owner is borrowed, never copied");
+        borrowed.reset();check(!held.expired(),"The scene keeps the borrowed pixels alive");
+        frame(time+=.02,place);const auto shown=renderer.readback();
+        check(shown.pixels[std::size_t(20+167)*shown.rowBytes+(250+200)*4+3]>0,"The borrowed backdrop draws");
+    }
+    // 9. Retirement through the shared publisher.
     composition.detach(renderer);published.clear();
     check(scene.releaseResources(renderer)&&renderer.stats().textures==0&&renderer.stats().meshes==0&&renderer.stats().nativeGroups==0,"All Personal Profile resources retire");
+    check(scene.releaseResources(renderer),"Releasing again removes nothing it never uploaded");
     renderer.reset();
 }
 }

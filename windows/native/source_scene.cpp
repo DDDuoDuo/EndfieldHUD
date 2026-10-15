@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstring>
 #include <map>
+#include <optional>
 #include <set>
 #include <limits>
 #include <vector>
@@ -555,6 +556,40 @@ struct SourceScene::Impl {
     std::size_t submissionGeneration{};
     bool assembled{};
     SourceGraphics* uploadedTarget{}; // identity only, never retained/dereferenced on destruction
+    // A scene loaded from a compiled file keeps no CPU copy of an installed
+    // texture once upload() created its immutable GPU texture: the mips are
+    // released (trimmedTextures) and a later upload() to a fresh target reads
+    // them from the same verified file again. Originals a runtime replacement
+    // can restore (single-level RGBA8-sRGB "desktop." textures) and
+    // registered runtime textures keep their pixels for flush().
+    std::optional<CompiledSourceScene> compiledFile;
+    std::vector<std::string> trimmedTextures;
+    static bool restorable(std::string_view id,const PreparedTexture& t){return id.starts_with("desktop.")&&t.description.pixelFormat=="rgba8Unorm_srgb"&&t.levels.size()==1;}
+    void trimUploadedTextures(){
+        if(!compiledFile)return;
+        for(auto& [id,t]:scene.textures){
+            if(registered.contains(id)||restorable(id,t)||t.levels.empty()||t.levels.front().storage.empty())continue;
+            for(auto& level:t.levels)std::string().swap(level.storage);
+            for(auto& mip:t.description.mips)mip.bytes={};
+            trimmedTextures.push_back(id);
+        }
+    }
+    void reloadTrimmedTextures(){
+        if(trimmedTextures.empty())return;
+        const auto& source=*compiledFile;auto file=read(absoluteOrdinary(source.file),SourceScene::maximumCompiledBytes);
+        if(!source.expectedSHA256.empty())require(hash(file)==source.expectedSHA256,"Compiled source shipping hash differs");
+        auto loaded=loadCompiled(file);require(loaded.provenance==provenance,"Compiled source file changed since the scene loaded");
+        for(const auto& id:trimmedTextures){
+            auto& t=scene.textures.at(id);auto found=loaded.scene.textures.find(id);
+            require(found!=loaded.scene.textures.end()&&found->second.levels.size()==t.levels.size(),"Compiled source texture changed since the scene loaded");
+            for(std::size_t n=0;n<t.levels.size();++n){
+                const auto& d=found->second.description.mips[n];auto& m=t.description.mips[n];
+                require(d.width==m.width&&d.height==m.height&&d.rowBytes==m.rowBytes,"Compiled source texture changed since the scene loaded");
+                t.levels[n]=std::move(found->second.levels[n]);m.bytes=t.levels[n].bytes();
+            }
+        }
+        trimmedTextures.clear();
+    }
     void initializeLive(std::vector<BatchPrototype> extra={}){
         prototypes=::prototypes(scene);const auto initialCount=prototypes.size();
         for(auto& p:prototypes)p.provenance=provenance;
@@ -577,6 +612,7 @@ SourceScene::SourceScene(fs::path packetRoot,fs::path compiled,std::string frame
     // released here. Typed field plans and used raw upload bytes remain.
 }
 SourceScene::SourceScene(CompiledSourceScene compiled):impl_(std::make_unique<Impl>()) {
+    impl_->compiledFile=compiled;
     auto file=read(absoluteOrdinary(compiled.file),maximumCompiledBytes);
     if(!compiled.expectedSHA256.empty())require(validSHA(compiled.expectedSHA256)&&hash(file)==compiled.expectedSHA256,"Compiled source shipping hash differs");
     auto loaded=loadCompiled(file);impl_->scene=std::move(loaded.scene);impl_->provenance=std::move(loaded.provenance);
@@ -595,7 +631,7 @@ std::span<const std::string> SourceScene::stateIDs()const noexcept{return impl_-
 void SourceScene::includeTemplates(const SourceScene& other,std::string prefix) {
     auto& impl=*impl_;auto& s=impl.scene;const auto& input=other.impl_->scene;
     require(&other!=this&&!impl.uploadedTarget&&!impl.assembled&&s.counters.updates==0,"Install source catalogs only before first upload/submission");
-    require(impl.textureRevisions.empty()&&other.impl_->textureRevisions.empty(),"Source catalogs never carry runtime texture content");
+    require(impl.textureRevisions.empty()&&other.impl_->textureRevisions.empty()&&other.impl_->trimmedTextures.empty(),"Source catalogs never carry runtime texture content");
     require(validIdentity(prefix)&&prefix.size()<=64,"Source catalog namespace must be explicit and bounded");
     require(impl.prototypes.size()+other.impl_->prototypes.size()<=4096,"Source prototype catalog exceeds bounds");
     for(const auto& p:other.impl_->prototypes){const auto id=prefix+":"+p.description.id;require(validIdentity(id),"Namespaced source prototype ID exceeds bounds");require(!impl.prototypeIDs.contains(id),"Source catalog namespace/prototype already installed");}
@@ -913,7 +949,7 @@ bool SourceScene::updateGeometry(std::string_view id,const SourceImageGeometryVi
     return updateGeometry(id,SourceGeometryView{80,data,input.indices,{}},range);
 }
 void SourceScene::writeCompiled(const fs::path& output)const {
-    require(impl_->scene.counters.updates==0&&!impl_->assembled&&impl_->textureRevisions.empty(),"Compile only unmodified source scenes/catalogs; runtime snapshots are rejected");
+    require(impl_->scene.counters.updates==0&&!impl_->assembled&&impl_->textureRevisions.empty()&&impl_->trimmedTextures.empty(),"Compile only unmodified source scenes/catalogs; runtime snapshots are rejected");
     absoluteOrdinary(output);require(!ehud::data::detail::readFile(output,maximumCompiledBytes),"Compiled output already exists");
     auto file=saveCompiled(impl_->scene,impl_->provenance,impl_->prototypes,impl_->catalogProvenance);(void)loadCompiled(file);
     ehud::data::detail::replaceFile(output,std::nullopt,file,maximumCompiledBytes);
@@ -971,13 +1007,14 @@ bool SourceScene::update(std::span<const SourceBatchState> states,const SourceFr
 }
 void SourceScene::upload(SourceGraphics& target) {
 #ifdef _WIN32
-    auto& s=impl_->scene;target.clear();
+    auto& s=impl_->scene;impl_->reloadTrimmedTextures();target.clear();
     for(auto& [id,m]:s.meshes){target.setMesh(id,m.revision,m.stride,bytes(m.vertices),m.original->indices);m.dirty=false;}
     for(const auto& [id,t]:s.textures)target.setTexture(id,impl_->uploadRevision(id),impl_->current(id,t));
     impl_->dirtyTextures.clear();
     for(const auto& [id,p]:s.pipelines)target.setPipeline(id,p.description);
     for(auto& [id,u]:s.uniforms){target.setUniform(id,bytes(u.bytes));u.dirty=false;}
     target.setDraws(s.activeDraws);s.visibilityDirty=false;impl_->uploadedTarget=&target;
+    impl_->trimUploadedTextures(); // the immutable GPU textures hold the mips now
 #else
     (void)target;throw std::runtime_error("SourceGraphics upload requires native Windows graphics");
 #endif
@@ -1004,16 +1041,18 @@ SourceSceneStats SourceScene::stats()const noexcept {
     out.textureRegistrations=impl_->textureRegistrations;out.textureUnregistrations=impl_->textureUnregistrations;out.registeredTextures=impl_->registered.size();
     // retainedCPUBytes counts registered pixels with scene.textures below.
     for(const auto& [id,r]:impl_->registered){(void)r;if(const auto t=s.textures.find(id);t!=s.textures.end())for(const auto& mip:t->second.levels)out.registeredTextureBytes+=mip.storage.size();}
-    for(const auto& [id,m]:s.meshes){(void)id;out.retainedCPUBytes+=m.vertices.size();}
-    for(const auto& [id,g]:s.originalGeometry){(void)id;out.retainedCPUBytes+=g->vertices.size()+g->indices.size()*4+g->colors.size()*16;}
-    for(const auto& [id,t]:s.textures){(void)id;for(const auto& mip:t.levels)out.retainedCPUBytes+=mip.storage.size();}
-    for(const auto& [id,p]:s.pipelines){(void)id;out.retainedCPUBytes+=p.vertexCode->size()+p.fragmentCode->size();}
+    for(const auto& [id,t]:impl_->runtimeTextures){(void)id;out.textureCPUBytes+=t.pixels.size();}
+    for(const auto& [id,m]:s.meshes){(void)id;out.retainedCPUBytes+=m.vertices.size();out.meshCPUBytes+=m.vertices.size();}
+    for(const auto& [id,g]:s.originalGeometry){(void)id;const auto size=g->vertices.size()+g->indices.size()*4+g->colors.size()*16;out.retainedCPUBytes+=size;out.geometryCPUBytes+=size;}
+    for(const auto& [id,t]:s.textures){(void)id;for(const auto& mip:t.levels){out.retainedCPUBytes+=mip.storage.size();out.textureCPUBytes+=mip.storage.size();}}
+    for(const auto& [id,p]:s.pipelines){(void)id;out.retainedCPUBytes+=p.vertexCode->size()+p.fragmentCode->size();out.programCPUBytes+=p.vertexCode->size()+p.fragmentCode->size();}
     for(const auto& [id,u]:s.uniforms){(void)id;out.retainedCPUBytes+=u.bytes.size()+u.scratch.size();for(const auto& f:u.fields)out.retainedCPUBytes+=f.value.size()*4;}
     for(const auto& b:s.batches)for(const auto& v:b.uniformOverrides)out.retainedCPUBytes+=v.value.size()*4;
     for(const auto& p:impl_->prototypes){for(const auto& v:p.description.originalState.uniformOverrides)out.retainedCPUBytes+=v.value.size()*4;
         for(const auto& [id,c]:p.cells){(void)id;out.retainedCPUBytes+=c.bytes.size()+c.scratch.size();for(const auto& f:c.fields)out.retainedCPUBytes+=f.value.size()*4;}}
     for(const auto& d:impl_->descriptors)for(const auto& v:d.originalState.uniformOverrides)out.retainedCPUBytes+=v.value.size()*4;
-    for(const auto& [id,slot]:impl_->slots)if(slot.mutableGeometry){(void)id;const auto& g=*slot.mutableGeometry;out.retainedCPUBytes+=g.vertices.size()+g.indices.size()*4+g.colors.size()*16;}
+    for(const auto& [id,slot]:impl_->slots)if(slot.mutableGeometry){(void)id;const auto& g=*slot.mutableGeometry;const auto size=g.vertices.size()+g.indices.size()*4+g.colors.size()*16;out.retainedCPUBytes+=size;out.geometryCPUBytes+=size;}
+    out.uniformCPUBytes=out.retainedCPUBytes-out.textureCPUBytes-out.meshCPUBytes-out.geometryCPUBytes-out.programCPUBytes;
     return out;
 }
 std::vector<SourceGeometryPayload> SourceScene::geometryPayloads()const {

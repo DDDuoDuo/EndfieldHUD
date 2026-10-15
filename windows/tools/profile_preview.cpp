@@ -37,7 +37,16 @@ struct ProfilePreview::Impl:std::enable_shared_from_this<Impl> {
     std::vector<gpu::LayerCompositionEntry>composed;gpu::Renderer*renderer{};
     // Page imagery published into the borrowed LayerImageSource.
     std::shared_ptr<const gpu::ProfileDecodedImage>avatar,background;std::shared_ptr<const m::ProfileImage>avatarWork;
-    std::optional<std::array<double,5>>cropKey;std::optional<std::array<double,3>>frameAccent;std::uint64_t imageRevision{};std::string portraitKey,frameKey;
+    std::optional<std::array<double,3>>frameAccent;std::uint64_t imageRevision{};std::string portraitKey,frameKey;
+    // Portrait crops: {avatar serial, zoom, offset x, offset y, scale}. The
+    // published crop (cropKey), the newest finished one (lastCrop, at most
+    // 256 px, kept across a park) and the one on the worker (cropInFlight).
+    using CropKey=std::array<double,5>;struct Crop{CropKey key;m::ProfileImage pixels;};
+    std::optional<CropKey>cropKey,cropInFlight;std::optional<Crop>lastCrop;double avatarSerial{};
+    app::UtilityExecutor::Route cropRoute{};bool cropDeferred{};std::uint64_t cropJobs{},cropPublications{};
+    // parkWanted: the HUD began closing while the page was not shown; its
+    // GPU resources are then released (park) until it is shown again.
+    bool parkWanted{};std::uint64_t parks{};
     Impl(HWND h,m::ProfileState&s,gpu::LayerRasterizer&r,ProfilePreviewOptions o,ITfThreadMgr*mgr,TfClientId id)
         :hwnd(h),state(s),raster(r),options(withImages(std::move(o))),manager(mgr),client(id),scene(r,options.raster),geometry(r),surface(prepareGeometry(),core::Module::profile){
         need(IsWindow(h)!=FALSE,"Personal Profile requires the caller's HWND");
@@ -46,6 +55,7 @@ struct ProfilePreview::Impl:std::enable_shared_from_this<Impl> {
         committed=state.profile();seenOpens=state.popoverOpens();seenDismissals=state.popoverDismissals();seenToggles=state.visibilityToggles();
         static std::atomic<std::uint64_t>serial{};const auto serialText=std::to_string(serial.fetch_add(1));portraitKey="profile.page.portrait."+serialText;frameKey="profile.page.frame."+serialText;
         retired.reserve(3);composed.reserve(12);
+        if(options.executor)cropRoute=options.executor->makeRoute();
     }
     // The retained scene resolves the published page imagery through the same source.
     static ProfilePreviewOptions withImages(ProfilePreviewOptions o){if(o.images)o.raster.memoryImages=o.images;return o;}
@@ -60,19 +70,51 @@ struct ProfilePreview::Impl:std::enable_shared_from_this<Impl> {
         if(!options.images)return;auto contents=options.contents;const auto&p=state.preview();
         if(avatar&&avatarWork){
             const double scale=std::min(options.appearance.scale,256/(55*1.35));
-            const std::array<double,5>key{static_cast<double>(reinterpret_cast<std::uintptr_t>(avatar.get())),p.avatarZoom,p.avatarOffsetX,p.avatarOffsetY,scale};
+            const CropKey key{avatarSerial,p.avatarZoom,p.avatarOffsetX,p.avatarOffsetY,scale};
+            const auto publish=[&](const Crop&crop){
+                options.images->publish(portraitKey,++imageRevision,crop.pixels.width,crop.pixels.height,crop.pixels.rgba);
+                contents.avatar=J::Object{{"memoryImage",portraitKey},{"revision",static_cast<std::int64_t>(imageRevision)}};cropKey=crop.key;++cropPublications;
+            };
+            // The newest finished crop of this avatar is shown even while a
+            // later one is wanted (a drag keeps moving); the next is then made.
+            if(lastCrop&&lastCrop->key[0]==avatarSerial&&cropKey!=lastCrop->key)publish(*lastCrop);
             if(cropKey!=key){
-                const auto crop=m::profileStraight(m::profileRenderedImage(*avatarWork,avatar->orientation,{55,55},p.avatarZoom,{p.avatarOffsetX,p.avatarOffsetY},scale));
-                options.images->publish(portraitKey,++imageRevision,crop.width,crop.height,crop.rgba);
-                contents.avatar=J::Object{{"memoryImage",portraitKey},{"revision",static_cast<std::int64_t>(imageRevision)}};cropKey=key;
+                if(!options.executor){
+                    lastCrop=Crop{key,m::profileStraight(m::profileRenderedImage(*avatarWork,avatar->orientation,{55,55},p.avatarZoom,{p.avatarOffsetX,p.avatarOffsetY},scale))};
+                    publish(*lastCrop);
+                }else requestCrop(key);
             }
-        }else if(!contents.avatar.isNull()){contents.avatar=J{};cropKey.reset();options.images->retire(portraitKey);}
+        }else if(!contents.avatar.isNull()){contents.avatar=J{};cropKey.reset();lastCrop.reset();options.images->retire(portraitKey);}
         if(options.frameSprite){const auto accent=state.accent();
             if(frameAccent!=accent){const auto tinted=m::profileStraight(m::profileTintedFrame(*options.frameSprite,accent));
                 options.images->publish(frameKey,++imageRevision,tinted.width,tinted.height,tinted.rgba);
                 contents.frame=J::Object{{"memoryImage",frameKey},{"revision",static_cast<std::int64_t>(imageRevision)}};frameAccent=accent;}}
         contents.background=background!=nullptr;contents.backgroundPixels=background?P{double(background->image.width),double(background->image.height)}:P{};
         if(!(contents==options.contents)){options.contents=std::move(contents);dirty=true;}
+    }
+    // One portrait crop on the shared worker at a time; its completion (in
+    // the owner's executor drain) publishes it and asks for the newest.
+    void requestCrop(const CropKey&key){
+        if(cropInFlight)return;
+        const auto work=avatarWork;const int orientation=avatar->orientation;
+        auto result=std::make_shared<m::ProfileImage>();const std::weak_ptr<Impl>weak=weak_from_this();
+        const bool accepted=options.executor->submit(cropRoute,[work,orientation,key,result]{
+            *result=m::profileStraight(m::profileRenderedImage(*work,orientation,{55,55},key[1],{key[2],key[3]},key[4]));
+        },[weak,key,result](std::exception_ptr error){
+            const auto i=weak.lock();if(!i||!i->alive)return;i->cropInFlight.reset();
+            if(!error&&key[0]==i->avatarSerial)i->lastCrop=Crop{key,std::move(*result)};
+            i->dirty=true;i->content();
+            if(i->alive&&i->options.changed)i->options.changed();
+        });
+        if(!accepted){cropDeferred=true;return;} // retried when the queue has room
+        cropInFlight=key;cropDeferred=false;++cropJobs;
+    }
+    // Releases the GPU resources of a page that is not drawn; see conceal().
+    bool park(gpu::Renderer*r){
+        if(drawing||pose||field)return false;
+        if(!scene.stats().gpuResident){parkWanted=false;return false;} // nothing on the renderer
+        if(!scene.park(r))return false; // still published: the next publication retries
+        parkWanted=false;++parks;return true;
     }
     void content(){
         if(options.images&&(seenRevision!=state.revision()||dirty))imagery();
@@ -164,7 +206,10 @@ struct ProfilePreview::Impl:std::enable_shared_from_this<Impl> {
     }
 };
 ProfilePreview::ProfilePreview(HWND h,m::ProfileState&s,gpu::LayerRasterizer&r,ProfilePreviewOptions o,ITfThreadMgr*mgr,TfClientId id):impl_(std::make_shared<Impl>(h,s,r,std::move(o),mgr,id)){}
-ProfilePreview::~ProfilePreview(){auto i=impl_;i->alive=false;if(i->field)i->field->stopInput();if(i->options.images){i->options.images->retire(i->portraitKey);i->options.images->retire(i->frameKey);}}
+ProfilePreview::~ProfilePreview(){
+    auto i=impl_;i->alive=false;if(i->options.executor)i->options.executor->invalidate(i->cropRoute,true);
+    if(i->field)i->field->stopInput();if(i->options.images){i->options.images->retire(i->portraitKey);i->options.images->retire(i->frameKey);}
+}
 void ProfilePreview::resize(const app::ClientMetrics&m){need(m.pixelWidth&&m.pixelHeight&&std::isfinite(m.scale)&&m.scale>0,"Invalid Personal Profile client metrics");impl_->metrics=m;}
 void ProfilePreview::setLanguage(core::Language l,double t){auto i=impl_;i->advance(t);i->state.setLanguage(l);i->content();}
 void ProfilePreview::setAppearance(m::ProfileAppearance a,double t){auto i=impl_;i->advance(t);if(i->options.appearance==a)return;i->options.appearance=a;i->state.setHudAccent(a.hudAccent);i->dirty=true;i->content();}
@@ -172,7 +217,8 @@ void ProfilePreview::setReduceMotion(bool v,double t){auto i=impl_;i->advance(t)
 void ProfilePreview::setContents(m::ProfileContents c,double t){auto i=impl_;i->advance(t);if(i->options.contents==c)return;i->options.contents=std::move(c);i->dirty=true;i->content();}
 void ProfilePreview::setBackdropImage(std::optional<gpu::NativeProfileBackdropImage>image,double t){auto i=impl_;i->advance(t);i->scene.setBackdropImage(image);}
 void ProfilePreview::setAvatar(std::shared_ptr<const gpu::ProfileDecodedImage>image,double t){
-    auto i=impl_;i->advance(t);if(i->avatar==image)return;i->avatar=std::move(image);i->cropKey.reset();i->avatarWork.reset();
+    // A new avatar: the published crop stays until the new one is ready.
+    auto i=impl_;i->advance(t);if(i->avatar==image)return;i->avatar=std::move(image);i->cropKey.reset();i->lastCrop.reset();i->avatarWork.reset();++i->avatarSerial;
     // The decode service made the bounded working copy on the worker; only a
     // caller-built large image is reduced here.
     if(i->avatar)i->avatarWork=gpu::profileAvatarWorking(i->avatar);
@@ -180,7 +226,8 @@ void ProfilePreview::setAvatar(std::shared_ptr<const gpu::ProfileDecodedImage>im
 }
 void ProfilePreview::setBackground(std::shared_ptr<const gpu::ProfileDecodedImage>image,double t){
     auto i=impl_;i->advance(t);if(i->background==image)return;i->background=std::move(image);
-    if(i->background)i->scene.setBackdropImage(gpu::NativeProfileBackdropImage{++i->imageRevision,i->background->image.width,i->background->image.height,i->background->image.rgba});
+    // The scene borrows the decoded pixels (no second 2048 px copy).
+    if(i->background)i->scene.setBackdropImage(gpu::NativeProfileBackdropImage{++i->imageRevision,i->background->image.width,i->background->image.height,i->background->image.rgba,i->background});
     else i->scene.setBackdropImage(std::nullopt);
     i->dirty=true;i->content();
 }
@@ -191,7 +238,18 @@ void ProfilePreview::stateChanged(double t){
     if(i->field&&!i->state.canEdit(i->field->field()))i->finish(false);
     if(!i->alive)return;i->content();i->requests();
 }
-void ProfilePreview::setOverlayVisible(bool v,double t){auto i=impl_;i->advance(t);if(i->overlay==v)return;i->overlay=v;if(!v&&i->active){i->active=false;i->deactivate();}}
+void ProfilePreview::setOverlayVisible(bool v,double t){
+    auto i=impl_;i->advance(t);if(i->overlay==v)return;i->overlay=v;
+    if(!v){i->parkWanted=true;if(i->active){i->active=false;i->deactivate();}}
+}
+void ProfilePreview::conceal(){auto i=impl_;if(i->parkWanted)(void)i->park(i->renderer);}
+ProfilePageResources ProfilePreview::resources()const{
+    const auto&i=*impl_;const auto scene=i.scene.stats();ProfilePageResources out;
+    out.sceneParts=scene.parts;out.sceneLoads=scene.loads;out.scenePixelBytes=scene.pixelBytes;out.ownedPhotoBytes=scene.ownedPhotoBytes;out.gpuResident=scene.gpuResident;
+    out.parks=i.parks;out.cropJobs=i.cropJobs;out.cropPublications=i.cropPublications;out.cropPending=i.cropInFlight.has_value();
+    out.retainedCropBytes=i.lastCrop?i.lastCrop->pixels.rgba.size():0;return out;
+}
+void ProfilePreview::queueCapacityAvailable(){auto i=impl_;if(i->cropDeferred){i->dirty=true;i->content();}}
 std::optional<double>ProfilePreview::nextWakeTime()const noexcept{return impl_->state.nextWorkRefresh();}
 void ProfilePreview::wake(double t){
     auto i=impl_;i->advance(t);
@@ -205,6 +263,8 @@ void ProfilePreview::update(const M&center,const core::source::DesktopChromeSett
     const bool active=requested&&shown;
     if(active!=i->active){i->active=active;if(active){i->state.activate(i->time);i->dirty=true;}else{i->deactivate();if(!i->alive)return;}}
     i->input=active&&sample.acceptsModuleInput;if(!i->input){i->pressed=false;if(i->field)i->field->editor().pointerUp();i->fieldDragging=false;}
+    // Shown: the selected module keeps its GPU resources across a close.
+    if(shown)i->parkWanted=false;
     i->content();
     // Background host: module report placement without the module transition,
     // plus its own section travel (transform.translation.x before scale).
@@ -341,7 +401,8 @@ bool ProfilePreview::setEditingText(std::string_view text,double t){
 bool ProfilePreview::finishEditing(bool commit,double t){auto i=impl_;i->advance(t);return i->finish(commit);}
 const m::ProfileArtwork&ProfilePreview::artwork()const noexcept{return impl_->art;}
 void ProfilePreview::upload(gpu::Renderer&r){
-    auto i=impl_;need(!i->renderer||i->renderer==&r,"Personal Profile resources belong to another renderer");i->renderer=&r;if(!i->lastPose)return;
+    // Only a drawn page uploads (a parked page stays off the renderer while hidden).
+    auto i=impl_;need(!i->renderer||i->renderer==&r,"Personal Profile resources belong to another renderer");i->renderer=&r;if(!i->drawing)return;
     i->scene.uploadResources(r);i->registration.uploadGeometry(r);if(i->field)i->field->upload(r);
 }
 std::span<const gpu::LayerCompositionEntry>ProfilePreview::entries(){
@@ -354,6 +415,8 @@ std::span<const gpu::LayerCompositionEntry>ProfilePreview::entries(){
 void ProfilePreview::collected(gpu::Renderer&r){
     auto i=impl_;need(i->scene.collectRetired(r),"Personal Profile artwork remains published");
     for(auto it=i->retired.begin();it!=i->retired.end();)if((*it)->releaseResources(r))it=i->retired.erase(it);else ++it;
+    // After a close began, a page this publication did not compose parks.
+    i->renderer=&r;if(i->parkWanted&&!i->drawing)(void)i->park(&r);
 }
 void ProfilePreview::release(gpu::Renderer&r){
     auto i=impl_;need(!i->field||i->finish(false),"Profile editor transaction must finish before release");collected(r);

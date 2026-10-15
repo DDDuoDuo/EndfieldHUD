@@ -1,5 +1,6 @@
 #pragma once
 #include "app/overlay_host.hpp"
+#include "app/utility_executor.hpp"
 #include "core/localization.hpp"
 #include "core/module_presentation.hpp"
 #include "core/source_desktop_chrome.hpp"
@@ -35,6 +36,22 @@ struct ProfilePreviewOptions {
     // polling); the field then normalizes it like typing. Null declines those
     // keys (no clipboard access at all).
     std::shared_ptr<native::NotesClipboard>clipboard;
+    // Optional shared utility executor: the page portrait crop
+    // (HUDPortraitArtwork at 55 pt, about 14 ms for a photo) runs there, one
+    // job at a time; the newest finished crop is shown while the next one
+    // (the latest zoom/offset, e.g. of a slider drag) is made. Null crops on
+    // the calling thread.
+    app::UtilityExecutor*executor{};
+    // A worker crop arrived outside a frame: schedule one.
+    std::function<void()>changed;
+};
+// What the page keeps resident (ProfilePreview::resources).
+struct ProfilePageResources {
+    std::size_t sceneParts{},scenePixelBytes{},ownedPhotoBytes{};std::uint64_t sceneLoads{};
+    bool gpuResident{};            // the scene's textures/backdrop group are on the renderer
+    std::uint64_t parks{},cropJobs{},cropPublications{};
+    bool cropPending{};            // a portrait crop is on the worker
+    std::size_t retainedCropBytes{};
 };
 // Personal Profile module owner: the app's single ProfileState, the retained
 // NativeProfileScene, one projected TSF field at a time, slider drags, popover
@@ -66,6 +83,18 @@ public:
     // image import, persistence failure, Work Mode checkpoint).
     void stateChanged(double time);
     void setOverlayVisible(bool,double time); // initially true
+    // HUDModuleContent drops the old screen's layers when another module is
+    // shown. Once the HUD closes (setOverlayVisible(false)) while the page is
+    // not shown, it releases its GPU resources (the parts' textures, the
+    // backdrop photo texture and group target) at the next publication
+    // without it (collected) or when the HUD has finished closing (conceal(),
+    // the host's overlayConcealed); a hidden page never uploads. The rasters,
+    // decoded images and published portrait stay, so the next show only
+    // uploads (no rasterization, decode or crop stall). A module switch
+    // inside the open HUD keeps everything.
+    void conceal();
+    ProfilePageResources resources()const;
+    void queueCapacityAvailable(); // the executor has room again (a deferred crop)
     std::optional<double>nextWakeTime()const noexcept;
     void wake(double time);
     void update(const core::Matrix4& sourceCenter,const core::source::DesktopChromeSettings&,

@@ -318,6 +318,9 @@ public:
         using K = app::HostEvent::Kind;
         switch (e.kind) {
         case K::utilityCompleted: owner_->queueCapacityAvailable(); return false;
+        // HUDModuleContent keeps only the shown screen: a Personal Profile
+        // page that is not shown when the HUD has closed drops its artwork.
+        case K::overlayConcealed: owner_->conceal(); return false;
         case K::timeChanged:
         case K::systemSettingsChanged: owner_->setTimeZone(zone_, t); return true;
         default: return false;
@@ -585,6 +588,24 @@ void ProfileArea::coverageModule(app::ModuleCoverage& step) {
         const auto* texture = feed_.texture(gpu::IdCardTextureSlot::avatar);
         step.check(texture && texture->width == 368 && texture->height == 368 && texture->revision == owner_->card()->avatarRevision(),
                    "The ID card avatar is the 136 pt crop the presenter binds to desktop.profile.avatar");
+        // The page portrait (HUDPortraitArtwork at 55 pt) is cropped on the
+        // shared worker like the card avatar: a zoom step queues one crop and
+        // the owner thread only publishes the result.
+        {
+            drainUntil(step, [&] { const auto* p = owner_->page(); return p && !p->resources().cropPending && p->resources().cropPublications > 0; });
+            const auto before = owner_->page()->resources();
+            step.check(before.cropJobs >= 1 && before.cropPublications >= 1 && !before.cropPending && before.retainedCropBytes > 0 && before.retainedCropBytes <= 256 * 256 * 4,
+                       "The page portrait is cropped on the shared worker and published");
+            step.check(owner_->perform("profile:portraitMenu", t) && owner_->setSlider(m::ProfileField::avatarZoom, 2, t) &&
+                       owner_->page()->resources().cropPending && owner_->page()->resources().cropJobs == before.cropJobs + 1 &&
+                       owner_->page()->resources().cropPublications == before.cropPublications,
+                       "A portrait zoom step queues one worker crop instead of cropping on the owner thread");
+            drainUntil(step, [&] { return !owner_->page()->resources().cropPending; });
+            step.check(owner_->page()->resources().cropPublications == before.cropPublications + 1, "The zoomed portrait is published from the worker");
+            step.check(owner_->setSlider(m::ProfileField::avatarZoom, 1, t) && owner_->perform("profile:popoverClose", t), "The portrait zoom returns and Adjust portrait closes");
+            drainUntil(step, [&] { return !owner_->page()->resources().cropPending; });
+            t += .05; step.present(t);
+        }
         // A cancelled chooser changes nothing.
         step.check(owner_->perform("profile:avatar", t) && coverageImageAsks_ == 2, "The chooser opens again");
         done = std::exchange(coverageChooser_, {});

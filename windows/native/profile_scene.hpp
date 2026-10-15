@@ -1,6 +1,7 @@
 #pragma once
 #include "modules/profile_presentation.hpp"
 #include "native/layer_scene.hpp"
+#include <memory>
 #ifdef _WIN32
 namespace endfield::native {
 struct NativeProfilePose {
@@ -18,9 +19,21 @@ struct NativeProfileChange {
     bool popoverOpened{},popoverDismissed{},visibilityToggled{},backdropMoved{};
 };
 // Decoded background thumbnail (straight sRGB RGBA8). The owner replaces it
-// on an image event only; the pixels are copied into one GPU texture.
-struct NativeProfileBackdropImage {std::uint64_t revision{};unsigned width{},height{};std::span<const std::uint8_t>straightRGBA;};
-struct NativeProfileSceneStats {std::uint64_t loads{},localUpdates{},poses{},textureUploads{},groupDraws{};std::size_t surfaces{};};
+// on an image event only; the pixels go into one GPU texture. With `owner`
+// (whatever keeps straightRGBA alive, e.g. the decode service's shared
+// image) the scene borrows the pixels instead of copying them, so a 2048 px
+// photo is resident once; without it the scene keeps its own copy.
+struct NativeProfileBackdropImage {
+    std::uint64_t revision{};unsigned width{},height{};std::span<const std::uint8_t>straightRGBA;
+    std::shared_ptr<const void>owner;
+};
+struct NativeProfileSceneStats {
+    std::uint64_t loads{},localUpdates{},poses{},textureUploads{},groupDraws{},parks{};std::size_t surfaces{};
+    // What the scene keeps resident: loaded parts and their raster pixels,
+    // the backdrop photo bytes it owns (0 while borrowed) and its GPU
+    // resources (textures, the backdrop group) on the renderer.
+    std::size_t parts{},pixelBytes{},ownedPhotoBytes{};bool gpuResident{};
+};
 // PersonalProfileCanvas fields/toolbar/popover plus its separately placed
 // background plane. Every top-level artwork leaf is one retained surface: a
 // content event re-rasterizes only changed leaves; tilt, feedback and finite
@@ -46,6 +59,14 @@ public:
     std::span<const LayerCompositionEntry>entries()const noexcept;
     bool collectRetired(Renderer&);
     bool releaseResources(Renderer&); // owner detaches the entries first
+    // HUDModuleContent drops a screen's layers once it is no longer shown: a
+    // page that is no longer composed releases its GPU resources (the parts'
+    // textures, the backdrop photo and group target, the fixed gradients)
+    // while the parts keep their rasters, so showing it again only uploads.
+    // `renderer` is the one the scene uploaded to. True when something was
+    // released; false when nothing is on the renderer or a resource is still
+    // published (then everything stays). Never throws.
+    bool park(Renderer* renderer)noexcept;
     const modules::ProfileArtwork&artwork()const noexcept;
     NativeProfileSceneStats stats()const noexcept;
 private:struct Impl;std::unique_ptr<Impl>impl_;

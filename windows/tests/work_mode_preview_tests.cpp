@@ -103,6 +103,28 @@ void run(const std::filesystem::path&shader){Window window;gpu::Renderer rendere
         check(!owner.entries().empty()&&owner.requiresFrames(sampled)==owner.requiresFrames(later),"An earlier frame is posed and queried at the latest time seen");
         now=later;
     }
+    // HUDModuleContent keeps only the shown screen: closing the HUD while
+    // another module is shown releases the Work Mode GPU resources (the ring
+    // texture and group targets) while the stopwatch keeps running and the
+    // rasters stay; reopening on another module uploads nothing and showing
+    // it again uploads from the kept rasters.
+    {
+        const auto built=owner.resources();
+        modules.select(c::Module::power,now);frame(.5);frame(.5);const auto rasters=raster.stats();
+        check(built.sceneParts>0&&built.scenePixelBytes>0&&built.gpuResident&&owner.resources().gpuResident&&owner.resources().parks==built.parks&&renderer.stats().nativeGroups>=1,
+              "A module switch inside the open HUD keeps the Work Mode GPU resources");
+        owner.cancelInteraction(now);owner.setOverlayVisible(false,now);frame(.1);
+        const auto parked=owner.resources();
+        check(!parked.gpuResident&&parked.parks==built.parks+1&&parked.sceneParts==built.sceneParts&&parked.scenePixelBytes==built.scenePixelBytes&&renderer.stats().nativeGroups==0&&
+              raster.stats().entries==rasters.entries&&owner.controller().snapshot(now).phase==m::WorkModePhase::running,
+              "Closing the HUD on another module releases the Work Mode GPU resources; the stopwatch keeps running and the rasters stay");
+        owner.setOverlayVisible(true,now);frame(.1);frame(.5);check(!owner.resources().gpuResident&&owner.resources().parks==parked.parks,"Reopening on another module uploads nothing for Work Mode");
+        modules.select(c::Module::workMode,now);frame(.5);frame(.5);
+        check(owner.resources().gpuResident&&renderer.stats().nativeGroups>=1&&!owner.entries().empty()&&owner.resources().sceneParts==built.sceneParts&&
+              owner.controller().snapshot(now).phase==m::WorkModePhase::running,"Showing Work Mode again uploads its kept artwork");
+        renderer.draw(false);const auto shown=renderer.readback();
+        check(std::any_of(shown.pixels.begin(),shown.pixels.end(),[](auto v){return v!=0;}),"The re-uploaded Work Mode paints");
+    }
     check(owner.message({window.window,options.textMessage,123456,0},now)&&!owner.editing(),"Stale private field notice cannot reopen/edit a retired document");composition.detach(renderer);owner.shutdown(now);owner.release(renderer);done=true;check(renderer.stats().textures==0&&renderer.stats().meshes==0&&renderer.stats().nativeGroups==0&&!IsWindowVisible(window.window),"Detached owner retires all resources and never activates TSF, Focus or real UI");
 }
 }

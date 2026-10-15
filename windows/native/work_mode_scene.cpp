@@ -75,6 +75,25 @@ bool NativeWorkModeScene::requiresFrames(double now)const{const auto&i=*impl_;no
 std::span<const LayerCompositionEntry>NativeWorkModeScene::entries()const noexcept{return impl_->entries;}
 bool NativeWorkModeScene::collectRetired(Renderer&r){for(auto&p:impl_->retired)if(!p->release(r))return false;impl_->retired.clear();return true;}
 bool NativeWorkModeScene::releaseResources(Renderer&r){bool result=collectRetired(r);for(auto&p:impl_->parts)if(p)result=p->release(r)&&result;return impl_->ringCarrier.releaseResources(r)&&result;}
-WorkModeSceneStats NativeWorkModeScene::stats()const noexcept{auto value=impl_->stats;value.retiredParts=impl_->retired.size();return value;}
+bool NativeWorkModeScene::park(Renderer&r)noexcept{
+    auto&i=*impl_;
+    const auto resident=[](const Impl::Part&p){return p.group?p.groupUploaded:p.ringUploaded;};
+    if(std::none_of(i.parts.begin(),i.parts.end(),[&](const auto&p){return p&&resident(*p);})&&i.retired.empty())return false;
+    // Directly composed parts were released by the composition when it
+    // dropped them; one that is still composed throws before anything else
+    // is released (stay resident). Groups and the ring texture are this
+    // scene's own GPU resources. The rasters stay for the next upload.
+    try{
+        if(!collectRetired(r))return false;
+        for(auto&p:i.parts)if(p&&!p->group&&!p->release(r))return false; // also clears the ring's upload
+        for(auto&p:i.parts)if(p&&p->group&&p->groupUploaded){if(!p->release(r))return false;p->groupUploaded=false;}
+    }catch(...){return false;}
+    i.refreshEntries();++i.stats.parks;return true;
+}
+WorkModeSceneStats NativeWorkModeScene::stats()const noexcept{
+    auto value=impl_->stats;value.retiredParts=impl_->retired.size();
+    for(const auto&p:impl_->parts)if(p){++value.parts;value.pixelBytes+=p->scene.report().pixelBytes;value.gpuResident|=p->group?p->groupUploaded:p->ringUploaded;}
+    return value;
+}
 }
 #endif

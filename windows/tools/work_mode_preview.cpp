@@ -37,6 +37,10 @@ struct WorkModePreview::Impl {
     app::ClientMetrics metrics;core::Projection projection;std::optional<gpu::ModuleSurfacePose>pose;
     std::unique_ptr<Field>field;std::vector<std::unique_ptr<Field>>retired;std::vector<gpu::LayerCompositionEntry>composed;
     bool active{},input{},pressed{},fieldDragging{},focused{},pendingCancel{},focusIntent{},closed{},alive{true},overlayVisible{true},requested{};double time{};std::optional<core::Point>pointerPoint;
+    // The HUD began closing while the page was not shown: its artwork is
+    // released at the next publication without it (HUDModuleContent keeps
+    // only the shown screen); a switch inside the open HUD keeps it.
+    bool parkWanted{};
     Impl(HWND w,gpu::LayerRasterizer&r,ITfThreadMgr*managerValue,TfClientId clientValue,WorkModePreviewOptions value):window(w),raster(r),manager(managerValue),client(clientValue),options(std::move(value)),controller({{},options.saveWorkSeconds}),state(controller,options.strings,{[this](core::Rect){begin();},[this]{if(options.requestFocusAccess)options.requestFocusAccess();}}),scene(state,r,options.raster,options.appearance),geometry(r),surface(prepareGeometry(),core::Module::workMode){need(window&&IsWindow(window),"Work Mode requires caller HWND");need(options.textMessage>=WM_APP&&options.textMessage<=0xbfff,"Invalid private duration message");need((manager==nullptr)==(client==TF_CLIENTID_NULL),"Borrowed TSF manager/client must be supplied together");need(std::isfinite(options.restoredWorkSeconds)&&options.restoredWorkSeconds>=0,"Invalid restored Work Mode total");controller.restoreTrackedWorkSeconds(options.restoredWorkSeconds);retired.reserve(2);composed.reserve(16);}
     gpu::LayerScene&prepareGeometry(){geometry.load(blank(),options.raster);return geometry;}
     void advance(double now){need(std::isfinite(now),"Work Mode needs finite continuous time");time=std::max(time,now);}
@@ -94,7 +98,7 @@ void WorkModePreview::setAppearance(m::WorkModeAppearance value){impl_->options.
 void WorkModePreview::setReduceMotion(bool value,double now){auto i=impl_;i->advance(now);i->state.setReduceMotion(value,i->time);}
 void WorkModePreview::setFocusStatus(std::string status,bool permission,double now){auto i=impl_;i->advance(now);i->state.setFocusStatus(std::move(status),permission,i->time);}
 void WorkModePreview::setOverlayVisible(bool value,double now){auto i=impl_;i->advance(now);if(i->overlayVisible==value)return;i->overlayVisible=value;i->input=false;
-    if(!value){i->finish(false);i->state.deactivate(i->time);i->active=false;i->pressed=i->fieldDragging=false;i->pointerPoint.reset();if(i->pose)i->scene.setFeedback({},false,i->time);}
+    if(!value){i->parkWanted=true;i->finish(false);i->state.deactivate(i->time);i->active=false;i->pressed=i->fieldDragging=false;i->pointerPoint.reset();if(i->pose)i->scene.setFeedback({},false,i->time);}
     else if(i->requested){i->state.activate(i->time);i->active=true;}i->updateFocus();
 }
 void WorkModePreview::setSuspended(bool value,double now){auto i=impl_;i->advance(now);i->controller.setSuspended(value,i->time);i->state.refresh(i->time,false);i->updateFocus();}
@@ -105,7 +109,7 @@ void WorkModePreview::update(const Matrix&center,const core::source::DesktopChro
     const auto*shown=sample.current.module==core::Module::workMode?&sample.current:sample.incoming&&sample.incoming->module==core::Module::workMode?&*sample.incoming:nullptr;i->requested=shown&&sample.requested==core::Module::workMode;const bool active=i->overlayVisible&&i->requested;
     if(active!=i->active){i->active=active;if(active)i->state.activate(i->time);else{i->finish(false);i->state.deactivate(i->time);i->pressed=false;i->scene.setFeedback({},false,i->time);}}
     i->input=active&&sample.acceptsModuleInput;i->state.refresh(i->time);i->updateFocus();if(i->field&&i->controller.snapshot(i->time).active())i->finish(false);
-    if(!shown){i->pose.reset();i->registration.update({});return;}i->scene.syncContent(i->time);i->surface.update(center,settings,*shown,opacity);i->pose=i->surface.pose();const auto&p=*i->pose;
+    if(!shown){i->pose.reset();i->registration.update({});return;}i->parkWanted=false;i->scene.syncContent(i->time);i->surface.update(center,settings,*shown,opacity);i->pose=i->surface.pose();const auto&p=*i->pose;
     const auto camera=gpu::layerViewportProjection(i->metrics.pixelWidth,i->metrics.pixelHeight)*Matrix::scale(i->metrics.scale,i->metrics.scale);i->projection=core::Projection::viewport(camera*p.contentWorld,i->metrics.pixelWidth,i->metrics.pixelHeight);
     if(i->pointerPoint){const auto q=i->local(*i->pointerPoint);i->scene.setFeedback(q?i->state.actionAt(*q):std::nullopt,i->pressed,i->time);}i->scene.updatePose({p.contentWorld,p.opacity,i->time,std::span(&p.hostClip,1),p.shutter});i->registration.update(p.registration);if(i->field){i->field->editor->syncContent();i->poseField();}
 }
@@ -170,7 +174,12 @@ const m::WorkModeController&WorkModePreview::controller()const noexcept{return i
 const m::WorkModePresentation&WorkModePreview::state()const noexcept{return impl_->state;}
 void WorkModePreview::upload(gpu::Renderer&r){auto i=impl_;if(!i->pose)return;i->registration.uploadGeometry(r);i->scene.uploadAnimations(r);}
 std::span<const gpu::LayerCompositionEntry>WorkModePreview::entries(){auto i=impl_;i->composed.clear();if(i->pose){for(const auto&e:i->scene.entries())i->composed.push_back(e);if(i->field&&i->active){i->field->published=true;i->composed.push_back({&i->field->background,{}});i->composed.push_back({&i->field->glyphs,{}});i->composed.push_back({&i->field->border,{}});}i->composed.push_back({&i->geometry,i->registration.draws()});}return i->composed;}
-void WorkModePreview::collected(gpu::Renderer&r){auto i=impl_;need(i->scene.collectRetired(r),"Work Mode old artwork remains published");for(auto&f:i->retired)need(f->release(r),"Duration editor remains published");i->retired.clear();}
+void WorkModePreview::collected(gpu::Renderer&r){auto i=impl_;need(i->scene.collectRetired(r),"Work Mode old artwork remains published");for(auto&f:i->retired)need(f->release(r),"Duration editor remains published");i->retired.clear();
+    // After a close began, a page this publication did not compose releases
+    // its GPU resources; showing it again uploads them (the controller keeps
+    // running, the rasters stay).
+    if(i->parkWanted&&!i->pose&&!i->field&&(i->scene.park(r)||!i->scene.stats().gpuResident))i->parkWanted=false;}
+WorkModePageResources WorkModePreview::resources()const{const auto s=impl_->scene.stats();return {s.parts,s.pixelBytes,s.builds,s.parks,s.gpuResident};}
 void WorkModePreview::release(gpu::Renderer&r){auto i=impl_;need(!i->field||i->finish(false),"Duration editor transaction must finish before release");collected(r);need(i->scene.releaseResources(r)&&i->registration.releaseResources(r)&&i->geometry.releaseResources(r),"Work Mode resources remain published");}
 }
 #endif

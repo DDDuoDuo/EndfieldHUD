@@ -3,6 +3,7 @@
 #include "core/motion.hpp"
 #include "core/source_camera.hpp"
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <stdexcept>
@@ -44,8 +45,15 @@ struct NativeProfileScene::Impl {
     LayerScene carrier;std::array<LayerCompositionEntry,5>composed{};std::size_t count{};
     std::array<DrawObject,2>after{},children{};bool groupRegistered{},groupDirty{true},backdropPosed{};
     std::array<Vertex,4>quad{};std::array<std::uint32_t,6>quadIndices{0,1,2,0,2,3};
-    std::vector<std::uint8_t>photo;unsigned photoWidth{1},photoHeight{1};std::uint64_t photoRevision{1},uploadedPhoto{};bool photoPresent{};
-    m::ProfileBitmap shadeBitmap,fadeBitmap,contrastBitmap,contrastMaskBitmap;bool staticUploaded{};
+    // The backdrop photo: borrowed from its owner (photoOwner keeps the span
+    // alive) or, without one, ownedPhoto; a 1x1 clear texel without a photo.
+    std::vector<std::uint8_t>ownedPhoto;std::shared_ptr<const void>photoOwner;std::span<const std::uint8_t>photo;
+    unsigned photoWidth{1},photoHeight{1};std::uint64_t photoRevision{1},uploadedPhoto{};bool photoPresent{};
+    void clearPhoto(){photoOwner.reset();ownedPhoto.assign({0,0,0,0});photo=ownedPhoto;photoWidth=photoHeight=1;}
+    // The fixed quad and gradients, each tracked on the renderer so a release
+    // that is refused part way re-uploads exactly what it removed.
+    m::ProfileBitmap shadeBitmap,fadeBitmap,contrastBitmap,contrastMaskBitmap;std::array<bool,5>staticResident{};
+    static constexpr std::array<const char*,5>staticIDs{".quad",".backdrop.shade",".backdrop.fade",".contrast.color",".contrast.mask"};
     std::array<PlaneMask,6>masks{};std::size_t maskCount{};std::array<PlaneMask,1>photoClip{};std::optional<PlaneShutter>shutter;
     Renderer*renderer{};double time{};NativeProfileSceneStats stats;
     Impl(LayerRasterizer&r,LayerRasterOptions o):raster(r),options(std::move(o)),carrier(r){
@@ -53,7 +61,7 @@ struct NativeProfileScene::Impl {
         fields=std::make_unique<Part>(r);toolbar=std::make_unique<Part>(r);popover=std::make_unique<Part>(r);
         carrier.load(J::Object{{"id",ns+".carrier"},{"bounds",J::Array{0,0,0,0}},{"position",J::Array{0,0}},{"anchorPoint",J::Array{0,0}},{"children",J::Array{}}},options);
         quad={Vertex{{0,0,0},{0,0},{1,1,1,1}},Vertex{{1,0,0},{1,0},{1,1,1,1}},Vertex{{1,1,0},{1,1},{1,1,1,1}},Vertex{{0,1,0},{0,1},{1,1,1,1}}};
-        photo={0,0,0,0};retired.reserve(4);
+        clearPhoto();retired.reserve(4);
         // Fixed original gradients: shade, the background fades and the text contrast.
         shadeBitmap=m::profileGradientBitmap({{{0,0,0,.70},{0,0,0,.38},{0,0,0,.03}},{0,.60,1},{0,.5},{1,.5}},256,1);
         const m::ProfileGradient vertical{{{0,0,0,0},{0,0,0,1},{0,0,0,1},{0,0,0,0}},{0,.08,.90,1},{.5,0},{.5,1}};
@@ -176,10 +184,12 @@ bool NativeProfileScene::animateWork(double now,bool reduce){
 }
 bool NativeProfileScene::setBackdropImage(std::optional<NativeProfileBackdropImage>image){
     auto&i=*impl_;
-    if(!image){if(!i.photoPresent)return false;i.photo={0,0,0,0};i.photoWidth=i.photoHeight=1;i.photoPresent=false;++i.photoRevision;i.groupDirty=true;return true;}
+    if(!image){if(!i.photoPresent)return false;i.clearPhoto();i.photoPresent=false;++i.photoRevision;i.groupDirty=true;return true;}
     need(image->width&&image->height&&image->width<=4096&&image->height<=4096&&image->straightRGBA.size()==std::size_t(image->width)*image->height*4,"Invalid profile background bitmap");
     if(i.photoPresent&&image->revision==i.photoRevision)return false;
-    i.photo.assign(image->straightRGBA.begin(),image->straightRGBA.end());i.photoWidth=image->width;i.photoHeight=image->height;i.photoPresent=true;
+    if(image->owner){i.photoOwner=std::move(image->owner);i.photo=image->straightRGBA;i.ownedPhoto=std::vector<std::uint8_t>{};}
+    else{i.photoOwner.reset();i.ownedPhoto.assign(image->straightRGBA.begin(),image->straightRGBA.end());i.photo=i.ownedPhoto;}
+    i.photoWidth=image->width;i.photoHeight=image->height;i.photoPresent=true;
     i.photoRevision=std::max(i.photoRevision+1,image->revision);i.groupDirty=true;return true;
 }
 bool NativeProfileScene::setFeedback(std::optional<P>point,bool down,double now,bool reduce){
@@ -227,13 +237,13 @@ void NativeProfileScene::updatePose(const NativeProfilePose&pose){
 }
 bool NativeProfileScene::uploadResources(Renderer&r){
     auto&i=*impl_;need(!i.renderer||i.renderer==&r,"Personal Profile resources belong to another renderer");i.renderer=&r;bool changed{};
-    if(!i.staticUploaded){
-        r.setMesh(i.ns+".quad",1,{i.quad,i.quadIndices});
-        r.setTexture(i.ns+".backdrop.shade",1,{i.shadeBitmap.width,i.shadeBitmap.height,i.shadeBitmap.rgba,TextureColorSpace::sRGB,TextureFilter::linear});
-        r.setTexture(i.ns+".backdrop.fade",1,{i.fadeBitmap.width,i.fadeBitmap.height,i.fadeBitmap.rgba,TextureColorSpace::linear,TextureFilter::linear});
-        r.setTexture(i.ns+".contrast.color",1,{i.contrastBitmap.width,i.contrastBitmap.height,i.contrastBitmap.rgba,TextureColorSpace::sRGB,TextureFilter::linear});
-        r.setTexture(i.ns+".contrast.mask",1,{i.contrastMaskBitmap.width,i.contrastMaskBitmap.height,i.contrastMaskBitmap.rgba,TextureColorSpace::linear,TextureFilter::linear});
-        i.staticUploaded=true;changed=true;i.stats.textureUploads+=4;
+    if(std::find(i.staticResident.begin(),i.staticResident.end(),false)!=i.staticResident.end()){
+        const std::array<const m::ProfileBitmap*,4>bitmaps{&i.shadeBitmap,&i.fadeBitmap,&i.contrastBitmap,&i.contrastMaskBitmap};
+        const std::array<TextureColorSpace,4>spaces{TextureColorSpace::sRGB,TextureColorSpace::linear,TextureColorSpace::sRGB,TextureColorSpace::linear};
+        if(!i.staticResident[0]){r.setMesh(i.ns+".quad",1,{i.quad,i.quadIndices});i.staticResident[0]=true;}
+        for(std::size_t n=0;n<4;++n)if(!i.staticResident[n+1]){const auto&b=*bitmaps[n];
+            r.setTexture(i.ns+Impl::staticIDs[n+1],1,{b.width,b.height,b.rgba,spaces[n],TextureFilter::linear});i.staticResident[n+1]=true;++i.stats.textureUploads;}
+        changed=true;
     }
     if(i.uploadedPhoto!=i.photoRevision){
         r.setTexture(i.ns+".backdrop.photo",i.photoRevision,{i.photoWidth,i.photoHeight,i.photo,TextureColorSpace::sRGB,TextureFilter::linear});
@@ -269,13 +279,34 @@ bool NativeProfileScene::collectRetired(Renderer&r){
 }
 bool NativeProfileScene::releaseResources(Renderer&r){
     auto&i=*impl_;bool ok=collectRetired(r);
-    for(auto*p:{i.fields.get(),i.toolbar.get(),i.popover.get(),i.departing.get()})if(p&&p->loaded)ok=p->scene.releaseResources(r)&&ok;
+    // A released part uploads again with the next uploadResources.
+    for(auto*p:{i.fields.get(),i.toolbar.get(),i.popover.get(),i.departing.get()})if(p&&p->loaded){const bool released=p->scene.releaseResources(r);if(released)p->uploaded=0;ok=released&&ok;}
     if(i.groupRegistered){if(r.removeNativeGroup(i.ns+".backdrop"))i.groupRegistered=false;else ok=false;}
-    if(ok){for(const auto*id:{".backdrop.photo",".backdrop.shade",".backdrop.fade",".contrast.color",".contrast.mask"})ok=r.removeTexture(i.ns+id)&&ok;ok=r.removeMesh(i.ns+".quad")&&ok;}
-    if(ok){i.staticUploaded=false;i.uploadedPhoto=0;i.renderer=nullptr;i.count=0;}
+    // Only what this scene uploaded is removed (nothing before its first upload).
+    if(ok){
+        if(i.staticResident[0]){if(r.removeMesh(i.ns+".quad"))i.staticResident[0]=false;else ok=false;}
+        for(std::size_t n=1;n<i.staticResident.size();++n)if(i.staticResident[n]){if(r.removeTexture(i.ns+Impl::staticIDs[n]))i.staticResident[n]=false;else ok=false;}
+        if(i.uploadedPhoto){if(r.removeTexture(i.ns+".backdrop.photo"))i.uploadedPhoto=0;else ok=false;}
+    }
+    if(ok){i.renderer=nullptr;i.count=0;}
     return ok;
 }
+bool NativeProfileScene::park(Renderer*r)noexcept{
+    auto&i=*impl_;
+    if(!i.renderer||i.renderer!=r)return false;
+    // A published resource refuses (a composed part throws before anything
+    // else is released): stay resident. The parts keep their rasters; the
+    // next uploadResources uploads everything again.
+    try{if(!releaseResources(*r))return false;}catch(...){return false;}
+    ++i.stats.parks;return true;
+}
 const m::ProfileArtwork&NativeProfileScene::artwork()const noexcept{return impl_->art;}
-NativeProfileSceneStats NativeProfileScene::stats()const noexcept{return impl_->stats;}
+NativeProfileSceneStats NativeProfileScene::stats()const noexcept{
+    const auto&i=*impl_;auto out=i.stats;
+    for(const auto*p:{i.fields.get(),i.toolbar.get(),i.popover.get(),i.departing.get()})if(p&&p->loaded){++out.parts;out.pixelBytes+=p->scene.report().pixelBytes;}
+    for(const auto&p:i.retired)if(p&&p->loaded){++out.parts;out.pixelBytes+=p->scene.report().pixelBytes;}
+    out.ownedPhotoBytes=i.photoOwner?0:i.ownedPhoto.size();out.gpuResident=i.renderer!=nullptr;
+    return out;
+}
 }
 #endif

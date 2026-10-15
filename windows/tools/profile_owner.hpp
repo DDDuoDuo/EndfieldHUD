@@ -94,6 +94,9 @@ public:
     void setAppearance(const ProfileOwnerAppearance&,double time);
     void setOverlayVisible(bool,double time);
     void overlayClosing(double time);
+    // The HUD finished closing (HostEvent::overlayConcealed): a page that is
+    // not shown releases its built artwork (ProfilePreview::conceal).
+    void conceal();
     void update(const core::Matrix4& center,const core::source::DesktopChromeSettings&,
         const core::ModulePresentationSample&,float opacity,double time);
     bool requiresFrames(double time)const;
