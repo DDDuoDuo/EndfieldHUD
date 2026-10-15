@@ -32,6 +32,14 @@ struct AppShortcutPreviewOptions {
     // Ctrl+C/Ctrl+X. Null declines those keys (no clipboard access at all).
     std::shared_ptr<native::NotesClipboard> clipboard;
 };
+// What the + Add App canvas keeps resident (memory audit): the retained
+// canvas (its parts, rasterized leaves and their CPU pixel bytes behind the
+// composed GPU textures, builds, replacements and parks) and the open or
+// retired name fields with their pixel bytes.
+struct AppShortcutResourceStats {
+    native::AppShortcutSceneStats scene;
+    std::size_t fields{},fieldPixelBytes{};
+};
 // Retained source App Launcher with one borrowed-TSF plain-history name field.
 // All OS/repository work is explicit takeRequest/complete*. One request is in
 // flight: no service, worker, clipboard read, window, timer or store IO here.
@@ -103,6 +111,17 @@ public:
     bool completeRequest(std::uint64_t,std::optional<std::string>error,double);
     bool busy()const noexcept;
     const modules::AppShortcutState&state()const noexcept;
+    AppShortcutResourceStats resources()const noexcept;
+    // The HUD finished closing (HostEvent::overlayConcealed). Mac
+    // OverlayController releases SystemHUDView on every close (systemView =
+    // nil) and makes a fresh canvas on the next opening: a canvas that is not
+    // shown (another module is selected; the composition already released
+    // its GPU textures when it stopped composing it) releases its raster
+    // artwork now, and showing it again rebuilds the same artwork. The shown
+    // + Add App keeps it, so reopening does not stall on a rebuild, and a
+    // module switch inside the open HUD never releases it. Needs the renderer
+    // of an earlier upload(); true when it released the canvas.
+    bool conceal();
     void upload(native::Renderer&);std::span<const native::LayerCompositionEntry>entries();
     void collected(native::Renderer&);void release(native::Renderer&);
 private:struct Impl;std::shared_ptr<Impl>impl_;

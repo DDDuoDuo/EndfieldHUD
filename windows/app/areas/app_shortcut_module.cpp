@@ -255,7 +255,7 @@ struct CoverageSeed { std::string archive, ledger; std::vector<std::uint8_t> log
 class AppShortcutArea final : public app::ModuleOwner, public app::AppShortcutNavigation {
 public:
     AppShortcutArea(const app::ApplicationModuleContext& c, fs::path assets, fs::path directory, fs::path relinkRoot, std::shared_ptr<SyntheticApplications> synthetic, CoverageSeed seed)
-        : host_(*c.host), window_(static_cast<HWND>(c.window)), utility_(*c.utility), mode_(c.mode), directory_(std::move(directory)),
+        : host_(*c.host), window_(static_cast<HWND>(c.window)), utility_(*c.utility), raster_(c.rasterizer), mode_(c.mode), directory_(std::move(directory)),
           relinkRoot_(std::move(relinkRoot)), coverageRoot_(c.coverageRoot), synthetic_(std::move(synthetic)), seed_(std::move(seed)), assets_(std::move(assets)),
           alive_(std::make_shared<bool>(true)) {
         need(window_ && IsWindow(window_), "the HUD window is required");
@@ -600,6 +600,10 @@ private:
         pump(); // consume the preview's cancelled reads
     }
     void concealed(double t) {
+        // OverlayController releases SystemHUDView when the HUD closes: a
+        // canvas that is not shown releases its artwork until it is shown
+        // again; the shown + Add App keeps it for the next opening.
+        (void)preview_->conceal();
         if (!launch_) return;
         if (launch_->phase == LaunchPhase::closed) {
             // completeAppShortcutHandoff: the HUD is gone; the selected
@@ -725,11 +729,20 @@ private:
         for (auto n = first; n < end; ++n) if (items[n].iconPreset == "original") want(items[n].id, items[n].locator);
         for (const auto& item : items) if (item.iconPreset == "original") want(item.id, item.locator);
         for (const auto& w : wanted_) icons_[w.id].used = ++iconUse_;
-        // Removed shortcuts, shortcuts without a Windows target (an imported
-        // record restored by a store restart) and the least recently shown
-        // beyond the bound.
+        // The draft's icon leaves with its draft (the Mac candidate carries
+        // its own icon): after Cancel, Save or a new session, and while the
+        // draft is an imported record without a Windows target, which shows
+        // the grid instead of an earlier draft's application. Then removed
+        // shortcuts, shortcuts without a Windows target (an imported record
+        // restored by a store restart) and the least recently shown beyond
+        // the bound.
+        const bool draft = std::any_of(wanted_.begin(), wanted_.end(), [](const auto& w) { return w.id.empty(); });
         std::erase_if(icons_, [&](const auto& entry) {
-            if (entry.first.empty()) return false;
+            if (entry.first.empty()) {
+                if (draft) return false;
+                if (entry.second.revision) images_->retire(iconKey({}));
+                return true;
+            }
             const auto item = std::find_if(items.begin(), items.end(), [&](const auto& v) { return v.id == entry.first; });
             const bool removed = item == items.end() || !g::appShortcutIconSelection(item->locator);
             if (removed && entry.second.revision) images_->retire(iconKey(entry.first));
@@ -861,6 +874,7 @@ private:
     app::ApplicationHost& host_;
     HWND window_{};
     app::UtilityExecutor& utility_;
+    g::LayerRasterizer& raster_; // the shared rasterizer (hidden coverage reads its usage)
     ApplicationAreaMode mode_{};
     fs::path directory_, relinkRoot_, coverageRoot_;
     std::shared_ptr<SyntheticApplications> synthetic_;
@@ -941,6 +955,8 @@ struct AppShortcutArea::Driver {
         frame();
     }
     static double row(std::size_t index) { return 44 + 52. * double(index) + 23; }
+    // The centre line of a saved app's row at the current list offset.
+    double rowAt(std::size_t index) const { return row(index) - state().scrollOffset(); }
     std::size_t index(std::string_view id) const {
         const auto& items = state().file().items;
         const auto found = std::find_if(items.begin(), items.end(), [&](const auto& v) { return v.id == id; });
@@ -1100,14 +1116,43 @@ struct AppShortcutArea::Driver {
     // transaction owner loads and reconciles them.
     void restartStore() {
         step.check(!working() && !a.preview_->busy() && !a.inflight_, "The store restarts idle");
-        a.tasks_.reset();
-        const auto file = a.directory_ / "shortcuts.json", ledger = a.relinkRoot_ / "Migration" / "relink.json";
-        ehud::data::detail::replaceFile(file, ehud::data::detail::readFile(file, m::shortcutMaximumBytes), a.seed_.archive, m::shortcutMaximumBytes);
+        const auto ledger = a.relinkRoot_ / "Migration" / "relink.json";
         ehud::data::detail::replaceFile(ledger, ehud::data::detail::readFile(ledger, mig::MacRelinkLedger::maximumBytes), a.seed_.ledger, mig::MacRelinkLedger::maximumBytes);
-        const auto syncs = a.relinkSyncs_;const auto revision = a.listRevision_;
+        const auto syncs = a.relinkSyncs_;
+        loadStore(a.seed_.archive);
+        step.check(a.relinkSyncs_ == syncs + 1 && a.lastRelink_ == m::ShortcutRelinkSync{0, 1, 1}, "The restarted store reconciles the ledger");
+    }
+    // A store restart over `archive` (EndfieldHUD starting with that
+    // shortcuts.json): a new transaction owner loads it once.
+    void loadStore(const std::string& archive) {
+        step.check(!working() && !a.preview_->busy() && !a.inflight_, "The store restarts idle");
+        a.tasks_.reset();
+        const auto file = a.directory_ / "shortcuts.json";
+        ehud::data::detail::replaceFile(file, ehud::data::detail::readFile(file, m::shortcutMaximumBytes), archive, m::shortcutMaximumBytes);
+        const auto revision = a.listRevision_;
         a.tasks_ = a.makeTasks();a.loadPending_ = true;a.pump();settle();frames(.1);
-        step.check(a.listRevision_ == revision + 1 && a.relinkSyncs_ == syncs + 1 && a.lastRelink_ == m::ShortcutRelinkSync{0, 1, 1} && !a.relinkFailures_,
-                   "The restarted store loads once and reconciles the ledger");
+        step.check(a.listRevision_ == revision + 1 && !a.relinkFailures_, "The restarted store loads once");
+    }
+    // `base` plus `count` synthetic applications (Many0.exe ...) saved by the
+    // production draft rules (AppShortcutStore.save), every second one with
+    // the App icon preset, as the encoded shortcuts.json.
+    std::string manyArchive(const fs::path& applications, m::ShortcutFile file, unsigned count) const {
+        const g::NativeAppShortcutService service(syntheticOS(a.synthetic_));
+        const auto rules = g::nativeShortcutTextRules();
+        for (unsigned n = 0; n < count; ++n) {
+            const auto candidate = service.inspect({g::AppShortcutSelectionKind::file, utf8(applications / ("Many" + std::to_string(n) + ".exe"))});
+            (void)m::saveShortcutDraft(file, candidate, candidate, candidate.name, n % 2 ? "terminal" : "original", std::nullopt, ehud::data::makeUUID(),
+                                       ehud::data::foundationNow(), rules, g::NativeAppShortcutService::sameTarget);
+        }
+        return m::encodeShortcuts(file, rules).encode(m::shortcutMaximumBytes);
+    }
+    // One wheel event over the list (one detent = 1; three lines of 12 points).
+    bool wheel(double steps) {
+        const auto p = step.project({200, 160}, 400, 334);
+        step.check(p && a.covers(*p), "The list projects onto the current module plane");
+        const bool used = a.wheel({p->x, p->y, steps, false, 0, 3}, t);
+        frame();
+        return used;
     }
     // A plain close and the next opening (no launch): a new HUD session.
     void reopenSession() {
@@ -1134,6 +1179,30 @@ void AppShortcutArea::coverage(app::ModuleCoverage& step) {
         step.check(activate(d.action("app." + seeded.id), d.t) && !launch_ && preview_->state().error() && coverageCloseRequests_ == closes &&
                    coverageSelectRequests_ == selects + (elsewhere ? 1u : 0u), "A navigation launch of an imported app shows its error in + Add App");
         preview_->showError(std::nullopt, d.t);
+        // The original application icons stay within their bound: at most 20
+        // images of 96 x 96 pixels (AppShortcutStore keeps its icon cache).
+        {
+            const auto icons = images_->stats();
+            step.check(icons.cachedImages <= maximumIcons && icons.cachedBytes <= maximumIcons * std::size_t(g::appShortcutIconPixels) * g::appShortcutIconPixels * 4,
+                       "The original application icons stay within 20 images of 96 pixels");
+        }
+        // Memory (Mac OverlayController: systemView = nil on every close):
+        // the cycle showed + Add App and then the other modules; once this
+        // owner's HUD closes while another module is shown, the canvas
+        // releases its artwork, and the next cycle shows it again with the
+        // same artwork (the cycles' raster usage repeats exactly).
+        if (elsewhere && preview_->entries().empty()) {
+            const auto open = preview_->resources();const auto shared = raster_.stats();
+            overlayClosing(d.t);(void)hostEvent({app::HostEvent::Kind::overlayConcealed, 0}, d.t);
+            const auto closed = preview_->resources();const auto released = raster_.stats();
+            step.check(open.scene.parts > 0 && open.scene.pixelBytes > 0, "The hidden + Add App still holds the canvas this cycle showed");
+            step.check(closed.scene.parts == 0 && closed.scene.rasterSurfaces == 0 && closed.scene.pixelBytes == 0 && closed.fields == 0 && closed.scene.parks == open.scene.parks + 1,
+                       "Once the HUD is closed the hidden + Add App keeps no canvas artwork");
+            step.check(released.entries + open.scene.rasterSurfaces <= shared.entries && released.resourceBytes + open.scene.pixelBytes <= shared.resourceBytes,
+                       "The released canvas returns its rasters to the shared rasterizer");
+            setOverlayVisible(true, d.t); // this owner's next opening (the harness keeps the HUD open)
+            step.check(preview_->resources().scene.parts == 0 && preview_->entries().empty(), "Opening the HUD on another module builds no + Add App canvas");
+        }
         d.frame();return;
     }
     step.check(*step.module == core::Module::addApp, "App shortcuts present only + Add App");
@@ -1197,8 +1266,11 @@ void AppShortcutArea::coverage(app::ModuleCoverage& step) {
                    image->premultipliedBGRA()[center] == 90 && image->premultipliedBGRA()[center + 1] == 160 && image->premultipliedBGRA()[center + 2] == 40 && image->premultipliedBGRA()[center + 3] == 255,
                    "The packaged draft shows its own logo from the package");
     }
-    d.click(188, 288);d.frames(.32);
-    step.check(!state.editing(), "Cancel discards the packaged draft");
+    {
+        const auto revision = icons_.contains(std::string{}) ? icons_.find(std::string{})->second.revision : 0;
+        d.click(188, 288);d.frames(.32);
+        step.check(!state.editing() && revision && !icons_.contains(std::string{}) && !images_->acquire(iconKey({}), revision), "Cancel discards the packaged draft and releases its logo");
+    }
     {
         const auto requests = coverageChooserRequests_;
         d.click(329, 16);
@@ -1421,6 +1493,7 @@ void AppShortcutArea::coverage(app::ModuleCoverage& step) {
         const auto& imported = seeded.items[0];
         d.click(337, Driver::row(0));d.settle();d.frames(.32);
         step.check(state.editing() && state.editingID() == imported.id && !state.candidate()->locator.contains("referencePlatform"), "Edit opens the imported shortcut with its Mac locator");
+        step.check(!icons_.contains(std::string{}), "The imported draft shows no earlier draft's application icon");
         const auto relinkedPath = applications / "Relinked.exe";
         d.choose(relinkedPath);
         step.check(state.editing() && state.editingID() == imported.id && state.candidate()->locator["referencePlatform"] == J("windows") && state.draftName() == imported.name &&
@@ -1440,6 +1513,61 @@ void AppShortcutArea::coverage(app::ModuleCoverage& step) {
         step.check(state.file() == seeded && d.disk() == seeded && !icons_.contains(imported.id) && !d.navigationIcon(imported.id) && !state.editing(),
                    "The restarted store shows the imported Mac shortcut again without an application icon");
         d.checkLedger(std::nullopt);
+        d.checkNavigation();
+    }
+
+    // 13. More saved apps than the list shows (a user with eight): the
+    //     restarted store lists them, the wheel scrolls the retained cards
+    //     (only a card entering the list repaints), a scrolled row's controls
+    //     and UI Automation peers hit at their scrolled place, Remove commits
+    //     a scrolled row, and the seeded file returns.
+    {
+        d.loadStore(d.manyArchive(applications, seeded, 7));
+        const auto many = state.file();
+        step.check(many.items.size() == 8 && many.items.front() == seeded.items.front() && state.scrollOffset() == 0 && state.maximumScroll() == 8 * 52 - 6 - 252 &&
+                   d.disk() == many, "Eight saved apps load in their order and the list starts at its top");
+        d.checkNavigation();
+        d.settle();
+        const auto last = many.items.back();
+        step.check(last.iconPreset == "original" && d.icon(last.id, applicationKey(last.locator)) && d.navigationIcon(last.id), "The last saved app shows its own application icon");
+        // A precision-touchpad step (a quarter detent, 9 points) only moves
+        // the retained cards; each notch (36 points) repaints at most the
+        // card that enters the list.
+        auto before = preview_->resources().scene;
+        step.check(d.wheel(-.25) && state.scrollOffset() == 9, "A quarter detent scrolls the list by 9 points");
+        auto after = preview_->resources().scene;
+        step.check(after.builds == before.builds && after.leafRepaints == before.leafRepaints && after.replacements == before.replacements + 1,
+                   "A small step re-places the retained cards without painting");
+        unsigned notches{};
+        while (state.scrollOffset() < state.maximumScroll() && notches < 8) {
+            const auto offset = state.scrollOffset();before = preview_->resources().scene;
+            step.check(d.wheel(-1) && state.scrollOffset() == std::min(offset + 36, state.maximumScroll()), "A wheel notch scrolls the list by 36 points");
+            after = preview_->resources().scene;
+            step.check(after.builds == before.builds && after.leafRepaints - before.leafRepaints <= 3, "A notch keeps the canvas and repaints at most the card entering the list");
+            ++notches;
+        }
+        step.check(notches == 5 && state.scrollOffset() == state.maximumScroll(), "Five notches reach the end of the list");
+        step.check(d.wheel(-1) && state.scrollOffset() == state.maximumScroll(), "A further notch keeps the end of the list");
+        const std::size_t end = many.items.size() - 1;
+        step.check(d.rowAt(end) > 44 && d.rowAt(end) < 44 + 252 && d.rowAt(2) < 44, "The last row is in the list and the first rows scrolled out");
+        (void)automationRefresh(automationRoot_);
+        {
+            const auto open = d.peer(m::shortcutActionID({m::ShortcutActionKind::launch, last.id, {}}));
+            step.check(d.property(open, UIA_NamePropertyId) == d.wide("Open ", "打开 ") + L"Many6 Synthetic", "The scrolled last row's peer is named after its app");
+            const auto actions = state.actions();
+            step.check(std::none_of(actions.begin(), actions.end(), [&](const auto& v) { return v.value == many.items[1].id; }) && automationCount() == actions.size(),
+                       "UIA lists only the controls of the rows inside the list");
+        }
+        automationDisconnect();
+        d.commit(369, d.rowAt(end), "Remove commits the scrolled last row");
+        step.check(state.file().items.size() == 7 && std::none_of(state.file().items.begin(), state.file().items.end(), [&](const auto& v) { return v.id == last.id; }) &&
+                   state.scrollOffset() == state.maximumScroll() && !icons_.contains(last.id), "The removed row leaves the list, which keeps its end in view, and releases its icon");
+        before = preview_->resources().scene;
+        step.check(d.wheel(5) && state.scrollOffset() == 0, "Wheel notches back return the list to its top");
+        step.check(preview_->resources().scene.builds == before.builds, "Scrolling back keeps the canvas");
+        d.restartStore();
+        step.check(state.file() == seeded && d.disk() == seeded && std::none_of(many.items.begin() + 1, many.items.end(), [&](const auto& v) { return icons_.contains(v.id); }),
+                   "The seeded list returns and the other apps' icons are released");
         d.checkNavigation();
     }
     d.frames(.2);

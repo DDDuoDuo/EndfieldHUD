@@ -21,6 +21,13 @@ double assetsMS{},constructionMS{},hiddenFrameMS{},firstShownFrameMS{},settledFr
 // Wheel scrolling cost (reported): steps of a few points inside one row
 // window and whole 36-point wheel notches across rows, each with its frame.
 struct ScrollCost{double maximumMS{},totalMS{};std::uint64_t rasterizations{},uploads{};unsigned steps{};};ScrollCost smallScroll,notchScroll;
+// What + Add App keeps resident at the production raster scale (two pixels
+// per point; reported): the canvas pixel bytes of the shown list of eight
+// saved apps and of the draft (with its open name field), what stays once
+// the HUD closed on another module (before this audit the hidden canvas
+// stayed: the list's bytes), the shared rasterizer's bytes around that
+// release, and the frame that shows + Add App again (its rebuild).
+struct Resident{std::size_t list{},listSurfaces{},draft{},draftField{},parked{},sharedBefore{},sharedAfter{};double rebuildMS{};}resident;
 struct Window {HWND hwnd{};Window(){WNDCLASSW c{};c.lpfnWndProc=DefWindowProcW;c.hInstance=GetModuleHandleW(nullptr);c.lpszClassName=L"OwnedShortcutPreviewFixture";check(RegisterClassW(&c)!=0,"Register owned isolated Shortcut fixture");hwnd=CreateWindowExW(WS_EX_NOREDIRECTIONBITMAP,c.lpszClassName,L"Synthetic",WS_POPUP,0,0,1280,800,nullptr,nullptr,c.hInstance,nullptr);check(hwnd&&!IsWindowVisible(hwnd),"Fixture stays hidden and never activates native input");}~Window(){DestroyWindow(hwnd);UnregisterClassW(L"OwnedShortcutPreviewFixture",GetModuleHandleW(nullptr));}};
 // In-memory Edit-menu clipboard; the system clipboard is never touched.
 struct Clipboard final:n::NotesClipboard{std::optional<n::NotesClipboardText>value;unsigned writes{};
@@ -79,8 +86,45 @@ void run(n::Renderer&r,n::LayerRasterizer&raster,HWND window,const n::NativeAppS
   check(owner.state().scrollOffset()==252,"Wheel steps add their exact offsets");
   check(smallScroll.rasterizations==0&&smallScroll.uploads==0,"Wheel steps inside the retained cards only re-place them: no paint, no upload");
   check(notchScroll.rasterizations<=3*notchScroll.steps&&notchScroll.uploads==notchScroll.rasterizations,"A wheel notch repaints only the own leaves of the card it brings in");check(owner.scroll(point({100,100}),-1000,time)&&owner.state().scrollOffset()==0,"The list returns to its top");frame();}
- modules.select(c::Module::power,time);frame(.03);check(!owner.entries().empty(),"Outgoing original artwork survives until shared module transition ends");frame(.4);check(owner.entries().empty()&&!owner.requiresFrames(time),"Departed module has no published content or frame demand");composition.detach(r);owner.release(r);check(r.stats().textures==0&&r.stats().meshes==0,"All Shortcut owner resources release after composition detach");done=true;
+ const auto listed=owner.resources();check(listed.scene.parts==1&&listed.scene.pixelBytes>0&&listed.fields==0,"The shown list holds one canvas");
+ modules.select(c::Module::power,time);frame(.03);check(!owner.entries().empty(),"Outgoing original artwork survives until shared module transition ends");frame(.4);check(owner.entries().empty()&&!owner.requiresFrames(time),"Departed module has no published content or frame demand");
+ // Memory (Mac OverlayController releases SystemHUDView on every close and
+ // makes a fresh canvas on the next opening): a switch inside the open HUD
+ // keeps the canvas (switching back must not stall on a rebuild); once the
+ // HUD has closed on another module it is released; the shown + Add App
+ // keeps it across a close.
+ {const auto hidden=owner.resources();
+  check(hidden.scene.parts==listed.scene.parts&&hidden.scene.pixelBytes==listed.scene.pixelBytes&&!owner.conceal(),"A module switch inside the open HUD keeps the canvas");
+  owner.setOverlayVisible(false,time);frame();const auto shared=raster.stats();
+  check(owner.conceal(),"Once the HUD closed on another module the hidden canvas is released");const auto parked=owner.resources();const auto released=raster.stats();
+  check(parked.scene.parts==0&&parked.scene.rasterSurfaces==0&&parked.scene.pixelBytes==0&&parked.fields==0&&parked.scene.parks==hidden.scene.parks+1,"The closed HUD keeps no hidden + Add App artwork");
+  check(released.resourceBytes+hidden.scene.pixelBytes==shared.resourceBytes&&released.entries+hidden.scene.rasterSurfaces<=shared.entries,"Its rasters leave the shared rasterizer");
+  check(!owner.conceal(),"Nothing more to release");
+  owner.setOverlayVisible(true,time);frame();check(owner.resources().scene.parts==0&&owner.entries().empty(),"Opening the HUD on another module builds no + Add App canvas");
+  modules.select(c::Module::addApp,time);frame(.03);frame(.4);const auto rebuilt=owner.resources();
+  check(rebuilt.scene.parts==1&&rebuilt.scene.builds==hidden.scene.builds+1&&rebuilt.scene.pixelBytes==listed.scene.pixelBytes&&rebuilt.scene.rasterSurfaces==listed.scene.rasterSurfaces,"Showing + Add App again rebuilds the same canvas");
+  owner.setOverlayVisible(false,time);frame();check(!owner.conceal()&&owner.resources().scene.parts==1&&owner.resources().scene.pixelBytes>0,"The shown + Add App keeps its canvas across a close");
+  owner.setOverlayVisible(true,time);frame(.4);modules.select(c::Module::power,time);frame(.03);frame(.4);check(owner.entries().empty(),"Departed again");}
+ composition.detach(r);owner.release(r);check(r.stats().textures==0&&r.stats().meshes==0,"All Shortcut owner resources release after composition detach");done=true;
+}
+// Resident artwork at the production raster scale (two pixels per point).
+void measure(n::Renderer&r,n::LayerRasterizer&raster,HWND window,const n::NativeAppShortcutAssets&assets){t::AppShortcutPreviewOptions options;auto file=items();file.items.resize(8);options.initial=file;
+ check(options.raster.pixelsPerPoint==2,"The production canvas rasterizes two pixels per point");
+ t::AppShortcutPreview owner(window,raster,assets,nullptr,TF_CLIENTID_NULL,options);owner.resize({1280,800,96,1,1280,800});n::LayerComposition composition;bool done{};struct Guard{n::Renderer&r;n::LayerComposition&c;t::AppShortcutPreview&o;bool&done;~Guard(){if(done)return;try{c.detach(r);o.release(r);}catch(...){r.reset();}}}guard{r,composition,owner,done};
+ c::ModulePresentation modules(c::Module::power);c::source::DesktopChromeSettings settings{{0,0,1280,800},1,{},c::Module::power,true};const auto center=c::source::DesktopChromeLayout::make(settings,{},{}).designToScreen;double time{};
+ const auto frame=[&](double dt=1./60){time+=dt;settings.module=modules.requested();const auto sample=modules.sample(time).presentation;owner.update(center,settings,sample,1,time);owner.upload(r);composition.setEntries(r,owner.entries());composition.present(r);owner.collected(r);};
+ frame();modules.select(c::Module::addApp,time);frame(.03);frame(.4);
+ {const auto list=owner.resources();check(list.scene.parts==1&&list.scene.pixelBytes>0,"The production list holds one canvas");resident.list=list.scene.pixelBytes;resident.listSurfaces=list.scene.rasterSurfaces;}
+ check(owner.perform({m::ShortcutActionKind::choose,{},{}},time),"Choose at production scale");auto request=owner.takeRequest();check(request&&owner.completeCandidate(request->generation,{"Synthetic"},time),"A candidate opens the draft");frame(.30);frame();
+ {const auto draft=owner.resources();check(owner.editingName()&&draft.fields==1,"The draft opens its name field");resident.draft=draft.scene.pixelBytes;resident.draftField=draft.fieldPixelBytes;}
+ check(owner.finishEditing(true,time)&&owner.perform({m::ShortcutActionKind::cancel,{},{}},time),"Cancel the production draft");frame(.30);frame();check(!owner.state().editing(),"The list returns");
+ modules.select(c::Module::power,time);frame(.03);frame(.4);owner.setOverlayVisible(false,time);frame();
+ resident.sharedBefore=raster.stats().resourceBytes;check(owner.conceal(),"The hidden production canvas is released after the close");resident.sharedAfter=raster.stats().resourceBytes;
+ {const auto parked=owner.resources();resident.parked=parked.scene.pixelBytes+parked.fieldPixelBytes;check(resident.parked==0,"Nothing stays resident");}
+ owner.setOverlayVisible(true,time);frame();modules.select(c::Module::addApp,time);{const auto at=Clock::now();frame(.03);resident.rebuildMS=since(at);}frame(.4);
+ check(owner.resources().scene.pixelBytes==resident.list,"Showing it again rebuilds the same production canvas");
+ modules.select(c::Module::power,time);frame(.03);frame(.4);composition.detach(r);owner.release(r);done=true;
 }
 }
-int wmain(int argc,wchar_t**argv){struct Apartment{HRESULT hr{CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED)};~Apartment(){if(SUCCEEDED(hr))CoUninitialize();}}apartment;try{check(SUCCEEDED(apartment.hr)&&argc==3,"Pass native HLSL and production Shortcut assets");Window window;n::Renderer renderer;renderer.initialize(window.hwnd,1280,800,{n::Driver::warpForTests,argv[1],n::RenderTarget::offscreenForTests});renderer.setCamera(n::layerViewportProjection(1280,800));n::LayerRasterizer raster;const auto loading=Clock::now();n::NativeAppShortcutAssets assets(std::filesystem::absolute(argv[2]));assetsMS=since(loading);run(renderer,raster,window.hwnd,assets);renderer.reset();std::cout<<"PASS "<<checks<<" Shortcut owner checks (startup: assets "<<assetsMS<<" ms, construction "<<constructionMS<<" ms, hidden frame "<<hiddenFrameMS<<" ms, first Add App frame "<<firstShownFrameMS<<" ms, settled frame "<<settledFrameMS<<" ms; scroll: "<<smallScroll.steps<<" small steps max "<<smallScroll.maximumMS<<" ms mean "<<smallScroll.totalMS/smallScroll.steps<<" ms, "<<smallScroll.rasterizations<<" rasterizations, "<<smallScroll.uploads<<" uploads; "<<notchScroll.steps<<" notches max "<<notchScroll.maximumMS<<" ms mean "<<notchScroll.totalMS/notchScroll.steps<<" ms, "<<notchScroll.rasterizations<<" rasterizations, "<<notchScroll.uploads<<" uploads)\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
+int wmain(int argc,wchar_t**argv){struct Apartment{HRESULT hr{CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED)};~Apartment(){if(SUCCEEDED(hr))CoUninitialize();}}apartment;try{check(SUCCEEDED(apartment.hr)&&argc==3,"Pass native HLSL and production Shortcut assets");Window window;n::Renderer renderer;renderer.initialize(window.hwnd,1280,800,{n::Driver::warpForTests,argv[1],n::RenderTarget::offscreenForTests});renderer.setCamera(n::layerViewportProjection(1280,800));n::LayerRasterizer raster;const auto loading=Clock::now();n::NativeAppShortcutAssets assets(std::filesystem::absolute(argv[2]));assetsMS=since(loading);run(renderer,raster,window.hwnd,assets);measure(renderer,raster,window.hwnd,assets);renderer.reset();std::cout<<"PASS "<<checks<<" Shortcut owner checks (startup: assets "<<assetsMS<<" ms, construction "<<constructionMS<<" ms, hidden frame "<<hiddenFrameMS<<" ms, first Add App frame "<<firstShownFrameMS<<" ms, settled frame "<<settledFrameMS<<" ms; scroll: "<<smallScroll.steps<<" small steps max "<<smallScroll.maximumMS<<" ms mean "<<smallScroll.totalMS/smallScroll.steps<<" ms, "<<smallScroll.rasterizations<<" rasterizations, "<<smallScroll.uploads<<" uploads; "<<notchScroll.steps<<" notches max "<<notchScroll.maximumMS<<" ms mean "<<notchScroll.totalMS/notchScroll.steps<<" ms, "<<notchScroll.rasterizations<<" rasterizations, "<<notchScroll.uploads<<" uploads; resident at 2 px/pt: list of 8 "<<resident.list/1024<<" KiB in "<<resident.listSurfaces<<" rasters, draft "<<resident.draft/1024<<" KiB + name field "<<resident.draftField/1024<<" KiB, hidden after the close "<<resident.parked/1024<<" KiB (was the list's "<<resident.list/1024<<" KiB), shared rasterizer "<<resident.sharedBefore/1024<<" -> "<<resident.sharedAfter/1024<<" KiB, rebuild frame "<<resident.rebuildMS<<" ms)\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
 #endif

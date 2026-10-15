@@ -43,6 +43,7 @@ struct AppShortcutPreview::Impl {
     std::optional<ShortcutRequest>pending;std::optional<Flight>flight;std::optional<std::uint64_t>cancelled;std::uint64_t nextRequest{};
     bool active{},input{},requested{},overlayVisible{true},focused{},pressed{},fieldDragging{},externalDrag{},reduced{},alive{true},finishing{};
     std::optional<bool>pendingFinish;std::uint64_t lifecycle{},eventRevision{};double time{};std::optional<core::Point>pointerPoint;
+    g::Renderer*renderer{}; // the host's, from upload()/collected(): conceal() releases through it
     static AppShortcutPreviewOptions prepare(AppShortcutPreviewOptions o,const g::NativeAppShortcutAssets&a){o.raster.assetRoot=a.root();return o;}
     Impl(HWND w,g::LayerRasterizer&r,const g::NativeAppShortcutAssets&a,ITfThreadMgr*m,TfClientId c,AppShortcutPreviewOptions o):window(w),raster(r),assets(a),manager(m),client(c),options(prepare(std::move(o),a)),state(options.initial,options.initialError),scene(state,a,r,options.raster,options.appearance),geometry(r),surface(prepareGeometry(),core::Module::addApp){need(w&&IsWindow(w),"Shortcut owner requires caller HWND");need((manager==nullptr)==(client==TF_CLIENTID_NULL),"Shortcut TSF manager/client must be supplied together");need(options.textMessage>=WM_APP&&options.textMessage<=0xbfff,"Invalid Shortcut private message");retired.reserve(2);composed.reserve(6);}
     g::LayerScene&prepareGeometry(){geometry.load(blank(),options.raster);return geometry;}
@@ -169,9 +170,13 @@ bool AppShortcutPreview::setFieldText(std::string_view text,double t){
     if(i->alive&&i->field==current)i->syncField();return result.changed||current->document.text()==value;
 }
 const m::AppShortcutState&AppShortcutPreview::state()const noexcept{return impl_->state;}
-void AppShortcutPreview::upload(g::Renderer&r){auto i=impl_;if(i->pose){i->registration.uploadGeometry(r);i->scene.uploadAnimations(r);}}
+AppShortcutResourceStats AppShortcutPreview::resources()const noexcept{const auto&i=*impl_;AppShortcutResourceStats out;out.scene=i.scene.stats();
+    const auto add=[&](const Impl::Field&f){++out.fields;for(const auto*s:{&f.background,&f.glyphs,&f.border})out.fieldPixelBytes+=s->report().pixelBytes;};
+    if(i.field)add(*i.field);for(const auto&f:i.retired)add(*f);return out;}
+bool AppShortcutPreview::conceal(){auto i=impl_;if(i->overlayVisible||i->pose||i->active||!i->renderer)return false;return i->scene.park(*i->renderer);}
+void AppShortcutPreview::upload(g::Renderer&r){auto i=impl_;i->renderer=&r;if(i->pose){i->registration.uploadGeometry(r);i->scene.uploadAnimations(r);}}
 std::span<const g::LayerCompositionEntry>AppShortcutPreview::entries(){auto i=impl_;i->composed.clear();if(i->pose){for(const auto&e:i->scene.entries())i->composed.push_back(e);if(i->field&&i->active){i->field->published=true;i->composed.push_back({&i->field->background,{}});i->composed.push_back({&i->field->glyphs,{}});i->composed.push_back({&i->field->border,{}});}i->composed.push_back({&i->geometry,i->registration.draws()});}return i->composed;}
-void AppShortcutPreview::collected(g::Renderer&r){auto i=impl_;need(i->scene.collectRetired(r),"Shortcut retired artwork remains published");for(auto&f:i->retired)need(f->release(r),"Shortcut retired field remains published");i->retired.clear();if(i->field)for(auto*s:{&i->field->background,&i->field->glyphs,&i->field->border})s->collectRetiredResources(r);}
-void AppShortcutPreview::release(g::Renderer&r){auto i=impl_;need(i->finish(false),"Finish Shortcut text transaction before release");collected(r);need(i->scene.releaseResources(r)&&i->geometry.releaseResources(r)&&i->registration.releaseResources(r),"Detach Shortcut composition before release");}
+void AppShortcutPreview::collected(g::Renderer&r){auto i=impl_;i->renderer=&r;need(i->scene.collectRetired(r),"Shortcut retired artwork remains published");for(auto&f:i->retired)need(f->release(r),"Shortcut retired field remains published");i->retired.clear();if(i->field)for(auto*s:{&i->field->background,&i->field->glyphs,&i->field->border})s->collectRetiredResources(r);}
+void AppShortcutPreview::release(g::Renderer&r){auto i=impl_;need(i->finish(false),"Finish Shortcut text transaction before release");collected(r);need(i->scene.releaseResources(r)&&i->geometry.releaseResources(r)&&i->registration.releaseResources(r),"Detach Shortcut composition before release");i->renderer=nullptr;}
 }
 #endif
