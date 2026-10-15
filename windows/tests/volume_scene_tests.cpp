@@ -144,13 +144,14 @@ void listLayout(){
 // points above-left of its path: the absolute geometry is unchanged.
 std::vector<core::Point>points(const Json&path,core::Point offset){std::vector<core::Point>out;for(const auto&c:path.array())for(const auto&q:c["points"].array())out.push_back({q.array()[0].number()+offset.x,q.array()[1].number()+offset.y});return out;}
 void compactForm(){
-    gpu::VolumeController c(fixture());c.setActive(true);std::size_t shapes{};
+    gpu::VolumeController c(fixture());c.setActive(true);std::size_t shapes{},captions{};
     const auto compare=[&](const char*page){
         const auto source=gpu::prepareVolumeScene(c),compact=gpu::prepareVolumeScene(c,{},true);
         check(source.surfaces.size()==compact.surfaces.size()&&source.surfaces.size()==compact.layers["children"].array().size(),"The compact form keeps every source leaf in paint order");
         for(std::size_t n=0;n<source.surfaces.size();++n){
             const auto&a=source.layers["children"].array()[n],&b=compact.layers["children"].array()[n];const auto&sa=source.surfaces[n],&sb=compact.surfaces[n];
             check(sa.id==sb.id&&sa.clip==sb.clip&&sa.feedback==sb.feedback&&sa.rim==sb.rim&&sa.opacity==sb.opacity,"Surface identity, clip, feedback and opacity are unchanged");
+            if(a["kind"].string()=="text"&&a["text"]["string"].string().empty()){auto x=a;x["bounds"]=Json::Array{0,0,0,0};check(x==b&&sa.local==sb.local,"An empty caption keeps its origin with empty bounds");++captions;continue;}
             if(a["kind"].string()!="shape"||a["position"].array()[0].number()!=0||a["position"].array()[1].number()!=0||!(sa.local==core::Matrix4{})){check(a==b&&sa.local==sb.local,"Leaves with their own frame are unchanged");continue;}
             double nearest=INFINITY;for(const auto&q:points(a["shape"]["path"],{}))nearest=std::min({nearest,q.x,q.y});
             if(nearest<2){check(a==b&&sa.local==sb.local,"A shape within two points of the canvas origin keeps the source form");continue;}
@@ -162,7 +163,7 @@ void compactForm(){
             auto x=a,y=b;x["shape"]["path"]=Json{};y["shape"]["path"]=Json{};y["position"]=Json::Array{0,0};check(x==y,"Fill, stroke and every other shape property are unchanged");}
         std::cout<<"Volume compact form ("<<page<<"): "<<source.surfaces.size()<<" leaves\n";};
     compare("App volume");c.perform("audio:headphones",1);compare("Headphones");c.perform("audio:output",2);compare("output chooser");
-    check(shapes>40,"Every plate and slider part is compacted");
+    check(shapes>40&&captions==1,"Every plate and slider part is compacted, and the empty per-app status line");
 }
 std::array<double,3>apply(const core::Matrix4&m,double x,double y){const auto&v=m.values;return {v[0]*x+v[4]*y+v[12],v[1]*x+v[5]*y+v[13],v[3]*x+v[7]*y+v[15]};}
 void actionMotion(){
@@ -258,7 +259,7 @@ void compactRasters(){
                 const auto&a=source.layers["children"].array()[n],&b=compact.layers["children"].array()[n];if(a==b)continue;
                 const auto x=raster.rasterize("source/"+std::to_string(++serial),1,a,options),y=raster.rasterize("compact/"+std::to_string(serial),1,b,options);
                 check(x&&y&&x->complete()&&y->complete(),"Both forms rasterize completely");sourceBytes+=x->straightRGBA.size();compactBytes+=y->straightRGBA.size();
-                const double fx=(compact.surfaces[n].local.values[12]+y->bounds.x-x->bounds.x)*density,fy=(compact.surfaces[n].local.values[13]+y->bounds.y-x->bounds.y)*density;
+                const double fx=(compact.surfaces[n].local.values[12]-source.surfaces[n].local.values[12]+y->bounds.x-x->bounds.x)*density,fy=(compact.surfaces[n].local.values[13]-source.surfaces[n].local.values[13]+y->bounds.y-x->bounds.y)*density;
                 check(fx==std::floor(fx)&&fy==std::floor(fy),"The compact raster lies on the source raster's pixel grid");
                 const auto dx=static_cast<long long>(fx),dy=static_cast<long long>(fy);bool same=true;
                 for(long long j=0;j<static_cast<long long>(x->height)&&same;++j)for(long long i=0;i<static_cast<long long>(x->width)&&same;++i){

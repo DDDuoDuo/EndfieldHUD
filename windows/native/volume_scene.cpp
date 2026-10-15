@@ -203,12 +203,16 @@ struct Artwork {
     // balance handle alone was ~1 MB). Compact moves each such leaf to a
     // whole-point origin two points above-left of its path and translates the
     // path: the same geometry on the same pixel grid, in a shape-sized bitmap.
-    // Shapes within two points of the canvas origin keep the source form.
+    // Shapes within two points of the canvas origin keep the source form; an
+    // empty caption keeps its origin with empty bounds.
     // The Mac-oracle comparison uses the source form (compact=false).
     bool compact{};
     explicit Artwork(VolumeStyle s):style(s),primary(white(s.dark?.94:.11)),muted(white(s.dark?.67:.37)){}
     void emit(std::string id,Json node,Rect frame={},std::string feedback={},bool rim=false,float opacity=1){node["id"]=id;node["position"]=Json::Array{frame.x,frame.y};node["anchorPoint"]=Json::Array{0,0};node["opacity"]=1;node["children"]=Json::Array{};plan.surfaces.push_back({std::move(id),Matrix::translation(frame.x,frame.y),opacity,clip,std::move(feedback),rim});layers.push_back(std::move(node));}
-    void text(std::string id,std::string value,Rect frame,double size,VolumeColor ink,std::string face="Regular",std::string align="left",bool wrapped=false){const auto font=face=="Semibold"?".AppleSystemUIFontDemi":face=="Medium"?".AppleSystemUIFontMedium":".AppleSystemUIFont";emit(std::move(id),Json::Object{{"kind","text"},{"bounds",rect({0,0,frame.width,frame.height})},{"text",Json::Object{{"string",std::move(value)},{"fontSize",size},{"font",Json::Object{{"familyName",".AppleSystemUIFont"},{"postScriptName",font},{"pointSize",size}}},{"foregroundColor",color(ink)},{"alignment",align},{"wrapped",wrapped},{"truncation",wrapped?"none":"end"},{"runs",Json::Array{}}}}},frame);}
+    // Compact form: an empty caption (e.g. the per-app status line without a
+    // status) keeps its origin with empty bounds, so it holds no line-sized
+    // transparent bitmap; a message gives it its source bounds again.
+    void text(std::string id,std::string value,Rect frame,double size,VolumeColor ink,std::string face="Regular",std::string align="left",bool wrapped=false){if(compact&&value.empty())frame={frame.x,frame.y,0,0};const auto font=face=="Semibold"?".AppleSystemUIFontDemi":face=="Medium"?".AppleSystemUIFontMedium":".AppleSystemUIFont";emit(std::move(id),Json::Object{{"kind","text"},{"bounds",rect({0,0,frame.width,frame.height})},{"text",Json::Object{{"string",std::move(value)},{"fontSize",size},{"font",Json::Object{{"familyName",".AppleSystemUIFont"},{"postScriptName",font},{"pointSize",size}}},{"foregroundColor",color(ink)},{"alignment",align},{"wrapped",wrapped},{"truncation",wrapped?"none":"end"},{"runs",Json::Array{}}}}},frame);}
     void shape(std::string id,Json path,std::optional<VolumeColor>fill,std::optional<VolumeColor>stroke={},double width=0,std::string feedback={},bool rim=false,float opacity=1,Rect frame={}){
         if(compact&&frame==Rect{}&&path.isArray()&&!path.array().empty()){double left=INFINITY,top=INFINITY;for(const auto&c:path.array())for(const auto&q:c["points"].array()){left=std::min(left,q.array()[0].number());top=std::min(top,q.array()[1].number());}
             // A shape within two points of the canvas origin is already near
