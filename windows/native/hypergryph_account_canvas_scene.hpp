@@ -19,6 +19,9 @@ namespace endfield::native {
 struct NativeAccountSceneStats {
     std::uint64_t structureUpdates{},localUpdates{},poseUpdates{},feedbackChanges{};
     std::uint64_t groupUploads{},groupRedraws{}; // content uploads / local target redraws
+    std::uint64_t parks{};                       // park() calls that released the face
+    std::size_t surfaces{},pixelBytes{};         // resident leaf rasters (CPU) right now
+    bool uploaded{};                             // the group target and leaf textures are on the GPU
 };
 class NativeAccountCanvasScene final {
 public:
@@ -40,6 +43,12 @@ public:
     std::optional<LayerCompositionEntry> entry();
     // False while the entry is still published in a composition.
     bool releaseResources(Renderer&);
+    // Parks a face that is not shown: releases the group (when uploaded to
+    // `renderer`; null when nothing is on the GPU) and drops every leaf raster
+    // from this scene and the shared rasterizer, keeping only the model
+    // binding and style. The next syncContent() rebuilds the same artwork.
+    // False (nothing released) while the entry is still published.
+    bool park(Renderer* renderer);
     const LayerScene& localScene() const noexcept;
     NativeAccountSceneStats stats() const noexcept;
 private:

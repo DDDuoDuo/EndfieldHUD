@@ -11,6 +11,8 @@
 #include <map>
 #include <mutex>
 #include <stdexcept>
+#include <utility>
+#include <vector>
 
 namespace endfield::native {
 namespace h=modules::hypergryph;
@@ -72,16 +74,25 @@ struct WinHttpAccountTransport::Impl:std::enable_shared_from_this<Impl> {
     public:
         Handle(std::weak_ptr<Impl> owner,std::shared_ptr<Context> context):owner_(std::move(owner)),context_(std::move(context)) {}
         void cancel() override {
-            if(auto owner=owner_.lock()) {owner->pending.erase(context_->id);owner->started.erase(context_->id);}
+            auto owner=owner_.lock();
+            if(owner) {owner->pending.erase(context_->id);owner->started.erase(context_->id);}
             {std::lock_guard lock(context_->mutex);context_->finished=true;}
             context_->close();
+            if(owner) owner->closeIfIdle();
         }
     private:
         std::weak_ptr<Impl> owner_;std::shared_ptr<Context> context_;
     };
-    Options options;HINTERNET session{};std::shared_ptr<Shared> shared=std::make_shared<Shared>();
+    // A request accepted before the session exists (its headers carry the
+    // signed credential: scrubbed once sent or dropped).
+    struct Waiting {std::shared_ptr<Context> context;std::wstring host,target,headers;double timeout{};};
+    // The session opened off the owner thread; closed here if never adopted
+    // (the transport went away, or the queue dropped the completion).
+    struct SessionSlot {HINTERNET handle{};~SessionSlot() {if(handle) WinHttpCloseHandle(handle);}};
+    Options options;HINTERNET session{};bool opening{},retained{true};std::uint64_t opens{},closes{},failures{};
+    std::shared_ptr<Shared> shared=std::make_shared<Shared>();
     std::map<std::uint64_t,std::function<void(h::HttpOutcome)>> pending;std::map<std::uint64_t,std::pair<double,std::weak_ptr<Context>>> started;
-    std::deque<std::function<void()>> posted;std::uint64_t next{};
+    std::vector<Waiting> waiting;std::deque<std::function<void()>> posted;std::uint64_t next{};
 
     static void CALLBACK callback(HINTERNET handle,DWORD_PTR value,DWORD status,LPVOID info,DWORD length) {
         if(!value) return;
@@ -150,57 +161,101 @@ struct WinHttpAccountTransport::Impl:std::enable_shared_from_this<Impl> {
             default: break;
         }
     }
-    explicit Impl(Options o):options(std::move(o)) {
-        if(!options.now) throw std::invalid_argument("WinHTTP account transport requires the host clock");
-        shared->notify=options.notify;
-        if(options.directOnly) session=WinHttpOpen(options.userAgent.c_str(),WINHTTP_ACCESS_TYPE_NO_PROXY,WINHTTP_NO_PROXY_NAME,WINHTTP_NO_PROXY_BYPASS,WINHTTP_FLAG_ASYNC);
-        else session=WinHttpOpen(options.userAgent.c_str(),WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,WINHTTP_NO_PROXY_NAME,WINHTTP_NO_PROXY_BYPASS,WINHTTP_FLAG_ASYNC);
-        if(!session&&!options.directOnly) session=WinHttpOpen(options.userAgent.c_str(),WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,WINHTTP_NO_PROXY_NAME,WINHTTP_NO_PROXY_BYPASS,WINHTTP_FLAG_ASYNC);
-        if(!session) throw std::runtime_error("WinHTTP session is unavailable");
+    static void scrub(std::wstring& text) {for(auto& c:text) c=0;text.clear();}
+    static bool finished(Context& context) {std::lock_guard lock(context.mutex);return context.finished;}
+    // WinHttpOpen + TLS floor + the static status callback; null on failure.
+    static HINTERNET openSession(const std::wstring& agent,bool directOnly) {
+        HINTERNET handle{};
+        if(directOnly) handle=WinHttpOpen(agent.c_str(),WINHTTP_ACCESS_TYPE_NO_PROXY,WINHTTP_NO_PROXY_NAME,WINHTTP_NO_PROXY_BYPASS,WINHTTP_FLAG_ASYNC);
+        else handle=WinHttpOpen(agent.c_str(),WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,WINHTTP_NO_PROXY_NAME,WINHTTP_NO_PROXY_BYPASS,WINHTTP_FLAG_ASYNC);
+        if(!handle&&!directOnly) handle=WinHttpOpen(agent.c_str(),WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,WINHTTP_NO_PROXY_NAME,WINHTTP_NO_PROXY_BYPASS,WINHTTP_FLAG_ASYNC);
+        if(!handle) return nullptr;
         DWORD protocols=WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2;
 #ifdef WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_3
         protocols|=WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_3;
 #endif
-        if(!WinHttpSetOption(session,WINHTTP_OPTION_SECURE_PROTOCOLS,&protocols,sizeof protocols)) {
-            protocols=WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2;WinHttpSetOption(session,WINHTTP_OPTION_SECURE_PROTOCOLS,&protocols,sizeof protocols);
+        if(!WinHttpSetOption(handle,WINHTTP_OPTION_SECURE_PROTOCOLS,&protocols,sizeof protocols)) {
+            protocols=WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2;WinHttpSetOption(handle,WINHTTP_OPTION_SECURE_PROTOCOLS,&protocols,sizeof protocols);
         }
-        if(WinHttpSetStatusCallback(session,callback,WINHTTP_CALLBACK_FLAG_ALL_COMPLETIONS|WINHTTP_CALLBACK_FLAG_HANDLES,0)==WINHTTP_INVALID_STATUS_CALLBACK) {
-            WinHttpCloseHandle(session);throw std::runtime_error("WinHTTP callback could not be installed");
+        if(WinHttpSetStatusCallback(handle,callback,WINHTTP_CALLBACK_FLAG_ALL_COMPLETIONS|WINHTTP_CALLBACK_FLAG_HANDLES,0)==WINHTTP_INVALID_STATUS_CALLBACK) {
+            WinHttpCloseHandle(handle);return nullptr;
         }
+        return handle;
+    }
+    explicit Impl(Options o):options(std::move(o)) {
+        if(!options.now) throw std::invalid_argument("WinHTTP account transport requires the host clock");
+        shared->notify=options.notify;
     }
     ~Impl() {
         {std::lock_guard lock(shared->mutex);shared->notify={};}
         for(auto& [id,entry]:started) if(auto context=entry.second.lock()) {{std::lock_guard lock(context->mutex);context->finished=true;}context->close();}
-        pending.clear();started.clear();
+        for(auto& w:waiting) scrub(w.headers);
+        waiting.clear();pending.clear();started.clear();
         if(session) WinHttpCloseHandle(session);
+    }
+    // Owner thread: open the session (once) for the waiting requests.
+    void ensureSession() {
+        if(session||opening) return;
+        if(options.background) {
+            auto slot=std::make_shared<SessionSlot>();std::weak_ptr<Impl> weak=weak_from_this();
+            const std::wstring agent=options.userAgent;const bool direct=options.directOnly;
+            opening=true;
+            if(options.background([slot,agent,direct]{slot->handle=openSession(agent,direct);},
+                                  [weak,slot](std::exception_ptr) {if(auto self=weak.lock()) {self->opening=false;self->adopt(std::exchange(slot->handle,nullptr));}}))
+                return;
+            opening=false; // the queue is full: open it here instead
+        }
+        adopt(openSession(options.userAgent,options.directOnly));
+    }
+    // The session is ready (or could not open): start or fail what waited.
+    void adopt(HINTERNET handle) {
+        if(handle) {session=handle;++opens;} else ++failures;
+        auto ready=std::move(waiting);waiting.clear();
+        for(auto& w:ready) {
+            if(session) issue(w);
+            else {if(!finished(*w.context)) {started.erase(w.context->id);w.context->finish({h::Error{h::ErrorKind::transport}});}scrub(w.headers);}
+        }
+        closeIfIdle();
+    }
+    // An unretained session closes as soon as nothing is in flight or waiting.
+    void closeIfIdle() {
+        std::erase_if(waiting,[](Waiting& w){if(!finished(*w.context)) return false;scrub(w.headers);return true;});
+        if(retained||!session||opening||!pending.empty()||!waiting.empty()) return;
+        WinHttpCloseHandle(session);session=nullptr;++closes;
+    }
+    void issue(Waiting& w) {
+        auto context=w.context;
+        if(finished(*context)) {scrub(w.headers);return;}
+        const auto fail=[&]{started.erase(context->id);context->finish({h::Error{h::ErrorKind::transport}});scrub(w.headers);};
+        const HINTERNET connect=WinHttpConnect(session,w.host.c_str(),options.port,0);
+        if(!connect) return fail();
+        {std::lock_guard lock(context->mutex);context->connect=connect;}
+        const HINTERNET request=WinHttpOpenRequest(connect,L"GET",w.target.c_str(),nullptr,WINHTTP_NO_REFERER,WINHTTP_DEFAULT_ACCEPT_TYPES,WINHTTP_FLAG_SECURE|WINHTTP_FLAG_ESCAPE_DISABLE|WINHTTP_FLAG_REFRESH);
+        if(!request) return fail();
+        {std::lock_guard lock(context->mutex);context->request=request;}
+        DWORD redirect=WINHTTP_OPTION_REDIRECT_POLICY_NEVER;WinHttpSetOption(request,WINHTTP_OPTION_REDIRECT_POLICY,&redirect,sizeof redirect);
+        DWORD disabled=WINHTTP_DISABLE_COOKIES|WINHTTP_DISABLE_REDIRECTS|WINHTTP_DISABLE_AUTHENTICATION;WinHttpSetOption(request,WINHTTP_OPTION_DISABLE_FEATURE,&disabled,sizeof disabled);
+        DWORD logon=WINHTTP_AUTOLOGON_SECURITY_LEVEL_HIGH;WinHttpSetOption(request,WINHTTP_OPTION_AUTOLOGON_POLICY,&logon,sizeof logon);
+#ifdef WINHTTP_OPTION_DECOMPRESSION
+        DWORD decompression=WINHTTP_DECOMPRESSION_FLAG_ALL;WinHttpSetOption(request,WINHTTP_OPTION_DECOMPRESSION,&decompression,sizeof decompression);
+#endif
+        const int ms=static_cast<int>(w.timeout*1000);WinHttpSetTimeouts(request,ms,ms,ms,ms);
+        auto* holder=new std::shared_ptr<Context>(context);
+        if(!WinHttpSetOption(request,WINHTTP_OPTION_CONTEXT_VALUE,&holder,sizeof holder)) {delete holder;return fail();}
+        // From here the request handle's HANDLE_CLOSING frees the holder.
+        if(!WinHttpSendRequest(request,w.headers.empty()?WINHTTP_NO_ADDITIONAL_HEADERS:w.headers.c_str(),w.headers.empty()?0:static_cast<DWORD>(-1L),
+                               WINHTTP_NO_REQUEST_DATA,0,0,reinterpret_cast<DWORD_PTR>(holder))) return fail();
+        scrub(w.headers);
     }
     h::RequestHandle open(const std::string& host,const std::string& pathAndQuery,const std::vector<std::pair<std::string,std::string>>& headers,
                           std::size_t maximum,bool authentication,bool image,double timeout,std::function<void(h::HttpOutcome)> completion) {
+        Waiting w;w.host=wide(host);w.target=wide(pathAndQuery);w.timeout=timeout;
+        for(const auto& [name,value]:headers) w.headers+=wide(name)+L": "+wide(value)+L"\r\n";
         auto context=std::make_shared<Context>();context->shared=shared;context->id=++next;context->maximum=maximum;context->authentication=authentication;context->image=image;
-        const auto fail=[&](h::ErrorKind kind){const auto id=context->id;pending[id]=std::move(completion);shared->complete(id,{h::Error{kind}});return std::make_shared<Handle>(weak_from_this(),context);};
-        context->connect=WinHttpConnect(session,wide(host).c_str(),options.port,0);
-        if(!context->connect) return fail(h::ErrorKind::transport);
-        context->request=WinHttpOpenRequest(context->connect,L"GET",wide(pathAndQuery).c_str(),nullptr,WINHTTP_NO_REFERER,WINHTTP_DEFAULT_ACCEPT_TYPES,WINHTTP_FLAG_SECURE|WINHTTP_FLAG_ESCAPE_DISABLE|WINHTTP_FLAG_REFRESH);
-        if(!context->request) {WinHttpCloseHandle(context->connect);context->connect=nullptr;return fail(h::ErrorKind::transport);}
-        DWORD redirect=WINHTTP_OPTION_REDIRECT_POLICY_NEVER;WinHttpSetOption(context->request,WINHTTP_OPTION_REDIRECT_POLICY,&redirect,sizeof redirect);
-        DWORD disabled=WINHTTP_DISABLE_COOKIES|WINHTTP_DISABLE_REDIRECTS|WINHTTP_DISABLE_AUTHENTICATION;WinHttpSetOption(context->request,WINHTTP_OPTION_DISABLE_FEATURE,&disabled,sizeof disabled);
-        DWORD logon=WINHTTP_AUTOLOGON_SECURITY_LEVEL_HIGH;WinHttpSetOption(context->request,WINHTTP_OPTION_AUTOLOGON_POLICY,&logon,sizeof logon);
-#ifdef WINHTTP_OPTION_DECOMPRESSION
-        DWORD decompression=WINHTTP_DECOMPRESSION_FLAG_ALL;WinHttpSetOption(context->request,WINHTTP_OPTION_DECOMPRESSION,&decompression,sizeof decompression);
-#endif
-        const int ms=static_cast<int>(timeout*1000);WinHttpSetTimeouts(context->request,ms,ms,ms,ms);
-        std::wstring headerText;
-        for(const auto& [name,value]:headers) headerText+=wide(name)+L": "+wide(value)+L"\r\n";
-        auto* holder=new std::shared_ptr<Context>(context);
-        if(!WinHttpSetOption(context->request,WINHTTP_OPTION_CONTEXT_VALUE,&holder,sizeof holder)) {
-            delete holder;context->close();return fail(h::ErrorKind::transport);
-        }
+        w.context=context;
         const auto id=context->id;pending[id]=std::move(completion);started[id]={options.now(),context};
-        if(!WinHttpSendRequest(context->request,headerText.empty()?WINHTTP_NO_ADDITIONAL_HEADERS:headerText.c_str(),headerText.empty()?0:static_cast<DWORD>(-1L),
-                               WINHTTP_NO_REQUEST_DATA,0,0,reinterpret_cast<DWORD_PTR>(holder))) {
-            started.erase(id);context->finish({h::Error{h::ErrorKind::transport}});
-        }
-        for(auto& c:headerText) c=0;
+        if(session) issue(w);
+        else {waiting.push_back(std::move(w));ensureSession();}
         return std::make_shared<Handle>(weak_from_this(),context);
     }
 };
@@ -237,6 +292,7 @@ std::size_t WinHttpAccountTransport::drain() {
         }
         for(auto& callback:callbacks) {callback();++count;}
     }
+    i.closeIfIdle(); // an unretained session ends with its last request
     return count;
 }
 std::optional<double> WinHttpAccountTransport::nextDeadline() const {
@@ -255,5 +311,9 @@ bool WinHttpAccountTransport::deadline(double now) {
     return !overdue.empty();
 }
 std::size_t WinHttpAccountTransport::activeRequests() const {return impl_->pending.size();}
+void WinHttpAccountTransport::setRetained(bool value) {auto& i=*impl_;i.retained=value;i.closeIfIdle();}
+WinHttpAccountTransport::SessionStats WinHttpAccountTransport::sessionStats() const {
+    const auto& i=*impl_;return {i.session!=nullptr,i.opening,i.retained,i.opens,i.closes,i.failures,i.waiting.size()};
+}
 }
 #endif

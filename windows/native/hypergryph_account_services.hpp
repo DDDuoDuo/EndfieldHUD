@@ -73,6 +73,13 @@ public:
     bool flush();                                        // shutdown: latest cache bytes reach the disk
     std::optional<double> nextDeadline() const;          // host-clock request deadlines
     bool deadline(double hostTime);
+    // The HUD is shown: keep the WinHTTP session between requests. Hidden:
+    // it closes now if idle, else with its last request (the controller
+    // cancels its requests when hidden). The session itself is opened on the
+    // shared utility queue by the first request; construction opens none.
+    void setNetworkRetained(bool);
+    // WinHTTP session state (none with the synthetic coverage transport).
+    std::optional<WinHttpAccountTransport::SessionStats> networkSession() const;
     std::function<void(std::function<void()>)> poster();
 private:
     struct Impl;std::unique_ptr<Impl> impl_;

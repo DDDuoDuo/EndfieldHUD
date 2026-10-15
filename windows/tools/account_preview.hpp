@@ -52,6 +52,11 @@ public:
     std::optional<core::Rect> clientRect(core::Rect canvas) const;
     bool perform(std::string_view id,double time);
     native::NativeAccountSceneStats sceneStats() const noexcept;
+    // The HUD finished closing (HostEvent::overlayConcealed): a face that is
+    // not shown releases its group target, leaf textures and leaf rasters
+    // (the Account page is rarely visited; showing it again rebuilds the same
+    // artwork). A face shown at the close stays resident. True when parked.
+    bool conceal();
     void upload(native::Renderer&);
     std::span<const native::LayerCompositionEntry> entries();
     void collected(native::Renderer&);

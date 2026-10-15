@@ -24,6 +24,7 @@ bool insideCut(Rect r,Point p) {
 }
 bool inside(Rect r,Point p) {return p.x>=r.x&&p.y>=r.y&&p.x<r.x+r.width&&p.y<r.y+r.height;}
 Json payload(Json node) {node["position"]=Json::Array{0,0};return node;}
+Json empty() {return Json::Object{{"bounds",Json::Array{0,0,400,334}},{"position",Json::Array{0,0}},{"anchorPoint",Json::Array{0,0}},{"allowsGroupOpacity",false},{"children",Json::Array{}}};}
 }
 struct NativeAccountCanvasScene::Impl {
     struct Surface {h::CanvasSurface plan;Rect bounds;bool retiring{};};
@@ -215,7 +216,24 @@ bool NativeAccountCanvasScene::releaseResources(Renderer& r) {
     if(!i.group->releaseResources(r)) return false;
     i.renderer=nullptr;i.uploaded=false;i.uploadedStructure=i.uploadedResources=0;return true;
 }
+bool NativeAccountCanvasScene::park(Renderer* r) {
+    auto& i=*impl_;
+    if(!i.loaded&&!i.uploaded) return false;
+    if(i.uploaded) {
+        need(r&&(!i.renderer||i.renderer==r),"Park Account artwork through its renderer");
+        if(!i.group->releaseResources(*r)) return false; // still published: stay resident
+        i.renderer=nullptr;i.uploaded=false;i.uploadedStructure=i.uploadedResources=0;
+    }
+    // An empty load drops every leaf raster (and its shared rasterizer entry).
+    i.scene.load(empty(),i.options);
+    i.surfaces.clear();i.leaves.clear();i.payloads.clear();i.placements.clear();i.masks.clear();i.tracks.clear();i.localRevisions.clear();
+    i.retiringSurfaces.clear();i.retiringLeaves.clear();i.retireStart.reset();i.retireExpired=false;i.menuStart.reset();i.rowStart.reset();
+    i.loaded=i.placed=i.posed=i.localDirty=false;i.forcePlacement=true;i.styleDirty=true;i.seenRevision=0;
+    ++i.stats.parks;return true;
+}
 const LayerScene& NativeAccountCanvasScene::localScene() const noexcept {return impl_->scene;}
-NativeAccountSceneStats NativeAccountCanvasScene::stats() const noexcept {return impl_->stats;}
+NativeAccountSceneStats NativeAccountCanvasScene::stats() const noexcept {
+    const auto& i=*impl_;auto out=i.stats;out.surfaces=i.scene.report().surfaces;out.pixelBytes=i.scene.report().pixelBytes;out.uploaded=i.uploaded;return out;
+}
 }
 #endif

@@ -107,6 +107,9 @@ void AccountLinkingOwner::setAppearance(core::Language language,const h::CanvasS
 }
 void AccountLinkingOwner::setOverlayVisible(bool visible,double t) {
     auto& i=*impl_;i.advance(t);i.module->setOverlayVisible(visible,i.time);i.gauge->setOverlayVisible(visible,i.time);
+    // Hidden: the controller has cancelled its requests; the WinHTTP session
+    // (if any) closes now, or with the last request still finishing.
+    i.services->setNetworkRetained(visible);
 }
 void AccountLinkingOwner::overlayClosing(double t) {cancelInteraction(t);setOverlayVisible(false,t);}
 void AccountLinkingOwner::update(const core::Matrix4& center,const core::source::DesktopChromeSettings& chrome,
@@ -114,6 +117,15 @@ void AccountLinkingOwner::update(const core::Matrix4& center,const core::source:
     auto& i=*impl_;i.advance(t);if(!i.resized) return;
     i.module->update(center,chrome,sample,opacity,i.time);i.gauge->update(center,headerOpacity,i.time);
 }
+void AccountLinkingOwner::prewarm(const core::Matrix4& center,const core::source::DesktopChromeSettings& chrome,
+        const core::ModulePresentationSample& sample,double t) {
+    auto& i=*impl_;i.advance(t);if(!i.resized) return;
+    // The wallet is on every opening frame (unless the header mode hides it);
+    // the hidden scene composes nothing, so posing it only enables upload().
+    i.gauge->update(center,0,i.time);
+    if(sample.requested==core::Module::account) i.module->update(center,chrome,sample,0,i.time);
+}
+void AccountLinkingOwner::concealed(double t) {auto& i=*impl_;i.advance(t);(void)i.module->conceal();}
 bool AccountLinkingOwner::requiresFrames(double t) const {const auto& i=*impl_;return i.module->requiresFrames(t)||i.gauge->requiresFrames(t);}
 std::optional<double> AccountLinkingOwner::nextWakeTime(double now) const {
     const auto& i=*impl_;std::optional<double> wake;
@@ -212,6 +224,7 @@ h::HypergryphAccountController& AccountLinkingOwner::controller() noexcept {retu
 const AccountPreview& AccountLinkingOwner::module() const noexcept {return *impl_->module;}
 const AccountSanityGaugePreview& AccountLinkingOwner::gauge() const noexcept {return *impl_->gauge;}
 std::size_t AccountLinkingOwner::activeRequests() const {return impl_->services->transport().activeRequests();}
+std::optional<gpu::WinHttpAccountTransport::SessionStats> AccountLinkingOwner::networkSession() const {return impl_->services->networkSession();}
 bool AccountLinkingOwner::officialLoginAvailable() const noexcept {return impl_->webView;}
 }
 #endif

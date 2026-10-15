@@ -137,8 +137,16 @@ void run(const std::filesystem::path& shader,const std::filesystem::path& resour
     check(gauge.key({app::KeyKind::down,VK_ESCAPE},false,time+.3)&&!gauge.model().popoverOpen(),"Esc dismisses only the recovery popover");
     h::AccountAction hide;hide.kind=h::AccountAction::Kind::selectHeaderMode;hide.headerMode=h::AccountPresentation::HeaderMode::hidden;controller.perform(hide);gauge.contentChanged(time+.4);
     check(gauge.model().hidden()&&!gauge.model().canOpen(),"Hidden header mode removes the gauge");
+    check(!gauge.covers(wallet)&&!gauge.pointer({app::PointerKind::down,app::PointerButton::left,wallet.x,wallet.y},time+.4),"A hidden wallet takes no press");
     hide.headerMode=h::AccountPresentation::HeaderMode::workMode;controller.perform(hide);gauge.contentChanged(time+.5);
     check(gauge.model().value()=="24 / 25"&&!gauge.model().canOpen(),"Work Mode header shows Work Mode minutes");
+    // The shown wallet is a header control whatever it shows: a press on
+    // Work Mode minutes is consumed (it never reaches the host's close for a
+    // press outside the displayed circle) and opens nothing.
+    for(const core::Point p:{wallet,core::Point{562+2,2+2},core::Point{562+166,2+40}})
+        check(gauge.covers(p)&&gauge.pointer({app::PointerKind::down,app::PointerButton::left,p.x,p.y},time+.5)&&!gauge.model().popoverOpen()&&!gauge.capturesPointer(),
+              "A press anywhere on the Work Mode wallet is consumed and opens nothing");
+    check(!gauge.covers({562+169,2+20})&&!gauge.pointer({app::PointerKind::down,app::PointerButton::left,562+169,2+20},time+.5),"A press beside the wallet is not the wallet's");
     {
         // The header change made a refresh due inside the 5 s guard: one wake when it opens settles the 600 s cadence.
         const auto guard=gauge.nextWakeTime(time+.5);check(guard&&std::abs(*guard-(time+.5+5))<1e-6,"A due refresh blocked by the guard wakes once when it opens");

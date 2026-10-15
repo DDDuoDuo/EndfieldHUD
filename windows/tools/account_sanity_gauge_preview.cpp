@@ -23,9 +23,12 @@ struct AccountSanityGaugePreview::Impl {
     void advance(double t) {need(std::isfinite(t),"Gauge owner needs a finite clock");time=std::max(time,t);}
     double scale() const {return std::clamp(metrics.scale>0?metrics.scale:2,1.0,3.0);}
     h::WorkModeGaugeInput work() const {return options.workMode?options.workMode():h::WorkModeGaugeInput{};}
+    // HUDAccountGauge.update(visible:) follows the header mode only: the
+    // wallet stays in the header while the HUD closes and fades out with it
+    // (it used to vanish when the close began). Input is the open HUD's only.
     void refresh() {
         const auto value=controller.gaugeValue(work());
-        model.update(value.value,value.accessibilityLabel,value.visible&&overlayVisible,scale(),controller.sanityPresentation(),controller.now(),options.language);
+        model.update(value.value,value.accessibilityLabel,value.visible,scale(),controller.sanityPresentation(),controller.now(),options.language);
         scene.sync(model,options.language,time,options.reduceMotion);
     }
     std::optional<core::Point> local(core::Point p) const {
@@ -33,6 +36,8 @@ struct AccountSanityGaugePreview::Impl {
         return projection.unproject({p.x*metrics.scale,p.y*metrics.scale});
     }
     double toHost(double controllerTime) const {return time+std::max(0.0,controllerTime-controller.now());}
+    // HUDAccountGauge.size at the gauge origin (its press and hit rect).
+    static bool inWallet(core::Point q) {return q.x>=0&&q.y>=0&&q.x<g::bounds.width&&q.y<g::bounds.height;}
     // HypergryphAccountController.gaugeValue shows Work Mode minutes unless the
     // header is hidden or a linked game (sanity) mode is selected.
     bool showsWorkMode() const {
@@ -64,11 +69,15 @@ void AccountSanityGaugePreview::update(const Matrix& center,float opacity,double
     i.scene.updatePose(world,opacity,i.time);
 }
 bool AccountSanityGaugePreview::requiresFrames(double t) const {return impl_->scene.requiresFrames(std::max(t,impl_->time));}
+// The shown wallet is a header control on every module, whatever it shows
+// (sanity, "— / —" before a snapshot, or Work Mode minutes): its press never
+// reaches the source shell beneath it or the host's close for a press outside
+// the displayed circle (most of the wallet lies outside it). The open popover
+// owns every point.
 bool AccountSanityGaugePreview::covers(core::Point p) const {
-    const auto& i=*impl_;if(!i.scene.visible()) return false;const auto q=i.local(p);if(!q) return false;
-    const bool wallet=q->x>=0&&q->y>=0&&q->x<g::bounds.width&&q->y<g::bounds.height;
-    const bool popover=i.model.popoverOpen();
-    return (i.model.canOpen()&&wallet)||popover;
+    const auto& i=*impl_;if(!i.overlayVisible||!i.scene.visible()) return false;
+    if(i.model.popoverOpen()) return true;
+    const auto q=i.local(p);return q&&i.inWallet(*q);
 }
 bool AccountSanityGaugePreview::capturesPointer() const noexcept {return impl_->model.popoverOpen();}
 bool AccountSanityGaugePreview::pointer(const app::PointerEvent& e,double t) {
@@ -76,9 +85,14 @@ bool AccountSanityGaugePreview::pointer(const app::PointerEvent& e,double t) {
     if(e.kind==app::PointerKind::leave||e.kind==app::PointerKind::captureLost) {i.scene.setHover(std::nullopt,i.time,i.options.reduceMotion);return false;}
     if(e.kind==app::PointerKind::move) {i.scene.setHover(i.model.hover(q),i.time,i.options.reduceMotion);return i.model.popoverOpen();}
     if((e.kind==app::PointerKind::down||e.kind==app::PointerKind::doubleClick)&&e.button==app::PointerButton::left) {
-        const bool handled=i.model.mouseDown(q);
-        if(handled) {i.scene.sync(i.model,i.options.language,i.time,i.options.reduceMotion);i.scene.setHover(i.model.hover(q),i.time,i.options.reduceMotion);}
-        return handled;
+        if(!i.overlayVisible) return false; // a closing or hidden HUD takes no press (allowsModuleInput)
+        // HUDAccountGauge.mouseDown: the wallet with sanity toggles its
+        // recovery popover; an open popover takes every press.
+        if(i.model.mouseDown(q)) {i.scene.sync(i.model,i.options.language,i.time,i.options.reduceMotion);i.scene.setHover(i.model.hover(q),i.time,i.options.reduceMotion);return true;}
+        // A wallet without sanity (Work Mode minutes, or a linked game with
+        // no snapshot yet) has no popover, but the press is still the shown
+        // wallet's (covers()): consumed, nothing opens.
+        return i.scene.visible()&&q&&i.inWallet(*q);
     }
     return i.model.popoverOpen()&&e.kind!=app::PointerKind::up;
 }
@@ -124,13 +138,17 @@ std::optional<core::Rect> AccountSanityGaugePreview::clientRect(core::Rect r) co
     return core::Rect{left,top,right-left,bottom-top};
 }
 bool AccountSanityGaugePreview::perform(std::string_view id,double t) {
-    auto& i=*impl_;i.advance(t);if(!i.scene.visible()) return false;
+    auto& i=*impl_;i.advance(t);if(!i.overlayVisible||!i.scene.visible()) return false;
     const auto actions=i.model.accessibleActions(i.options.language);
     const auto hit=std::find_if(actions.begin(),actions.end(),[&](const auto& a){return a.id==id;});
     if(hit==actions.end()||!hit->enabled||!i.model.perform(id)) return false;
     i.scene.sync(i.model,i.options.language,i.time,i.options.reduceMotion);return true;
 }
-std::vector<h::GaugeAction> AccountSanityGaugePreview::accessibleActions() const {return impl_->model.accessibleActions(impl_->options.language);}
+// SystemHUDView.layoutAccountGaugeControls hides the AX buttons while the HUD
+// takes no module input.
+std::vector<h::GaugeAction> AccountSanityGaugePreview::accessibleActions() const {
+    if(!impl_->overlayVisible) return {};return impl_->model.accessibleActions(impl_->options.language);
+}
 std::optional<std::string> AccountSanityGaugePreview::accessibilityValue() const {return impl_->model.accessibilityValue(impl_->options.language);}
 gpu::NativeSanityGaugeStats AccountSanityGaugePreview::sceneStats() const noexcept {return impl_->scene.stats();}
 void AccountSanityGaugePreview::upload(gpu::Renderer& r) {if(impl_->posed) impl_->scene.upload(r);}

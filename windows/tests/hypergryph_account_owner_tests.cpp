@@ -20,6 +20,8 @@
 #include "native/module_scene.hpp"
 #include "core/data/data_store.hpp"
 #include <objbase.h>
+#include <psapi.h>
+#include <tlhelp32.h>
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -50,6 +52,21 @@ unsigned checks{};void check(bool v,const char* s) {++checks;if(!v) throw std::r
 using Clock=std::chrono::steady_clock;
 double since(Clock::time_point start) {return std::chrono::duration<double,std::milli>(Clock::now()-start).count();}
 double constructionMS{},openingMS{},firstFrameMS{};
+// Launch prewarm (reported): the first opening frame on Map without and with
+// it, and the prewarm itself. Face park (reported): what a closed HUD keeps
+// of an Account face shown earlier, at this test's 1 px per point (the
+// production face uses 2, about four times the bytes).
+double coldOpeningMS{},prewarmedOpeningMS{},prewarmMS{};std::uint64_t coldOpeningWork{};
+// Process threads and private bytes around the first owner's construction (reported).
+unsigned threadsBeforeOwner{},threadsAfterOwner{};std::size_t privateBeforeOwner{},privateAfterOwner{};
+unsigned processThreads() {
+    const auto snapshot=CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD,0);if(snapshot==INVALID_HANDLE_VALUE) return 0;
+    THREADENTRY32 entry{};entry.dwSize=sizeof entry;unsigned count{};
+    for(BOOL more=Thread32First(snapshot,&entry);more;more=Thread32Next(snapshot,&entry)) if(entry.th32OwnerProcessID==GetCurrentProcessId()) ++count;
+    CloseHandle(snapshot);return count;
+}
+std::size_t privateBytes() {PROCESS_MEMORY_COUNTERS_EX m{};m.cb=sizeof m;return GetProcessMemoryInfo(GetCurrentProcess(),reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&m),sizeof m)?m.PrivateUsage:0;}
+std::size_t faceRasterBytes{},faceGPUBytes{},faceParkedRasterBytes{},faceParkedGPUBytes{};
 struct Window {
     ATOM atom{};HWND hwnd{};
     Window() {WNDCLASSW c{};c.lpfnWndProc=DefWindowProcW;c.hInstance=GetModuleHandleW(nullptr);c.lpszClassName=L"EndfieldAccountOwnerFixture";atom=RegisterClassW(&c);check(atom!=0,"Register hidden fixture");
@@ -97,9 +114,13 @@ void run(const std::filesystem::path& shader,const std::filesystem::path& resour
         o.clock=[&]{return clock;};o.wallClock=[&]{return now;};o.invalidate=[&]{++invalidations;};
         o.recordEvent=[&](std::string_view action){events.emplace_back(action);};o.profile=&sink;o.officialLogin=false;
         o.workMode=[]{return h::WorkModeGaugeInput{true,1500,61.5};};o.workModeRunning=[]{return true;};
+        threadsBeforeOwner=processThreads();privateBeforeOwner=privateBytes();
         const auto constructing=Clock::now();
         tools::AccountLinkingOwner owner(executor,raster,o);constructionMS=since(constructing);auto& controller=owner.controller();
+        threadsAfterOwner=processThreads();privateAfterOwner=privateBytes();
         check(!owner.officialLoginAvailable(),"Hidden verification never creates a browser");
+        check(owner.networkSession()&&!owner.networkSession()->open&&!owner.networkSession()->opening&&owner.networkSession()->opens==0,
+              "Constructing the owner opens no WinHTTP session (the first request opens it on the shared queue)");
         // Imported cache: cached roles/sanity stay, a fresh Windows sign-in is required.
         check(controller.record().linked&&controller.record().requiresReconnect&&controller.gameSyncActive(),"Imported Mac cache keeps the linked Endfield role and requires re-login");
         const auto& synced=store.value();
@@ -190,10 +211,46 @@ void run(const std::filesystem::path& shader,const std::filesystem::path& resour
               "Unlinking unlocks the profile and keeps the imported values (no automatic restore)");
         check(owner.gauge().model().value()=="24 / 25"&&!owner.gauge().model().canOpen(),"Unlinked header shows Work Mode minutes");
         check(invalidations>0,"Controller changes request frames");
-        // Closing the HUD: no account wake except none; nothing in flight.
+        // The unlinked wallet (Work Mode minutes) is still the wallet's control:
+        // its press is consumed (it never falls through to the host's close for
+        // a press outside the displayed circle) and opens nothing.
+        clock+=.5;frame({});clock+=.1;frame({});
+        check(owner.covers(wallet)&&owner.pointer({app::PointerKind::down,app::PointerButton::left,wallet.x,wallet.y},clock+=.05)&&
+              !owner.gauge().model().popoverOpen()&&!owner.capturesPointer(),"A press on the unlinked wallet is consumed and opens nothing");
+        (void)owner.pointer({app::PointerKind::up,app::PointerButton::left,wallet.x,wallet.y},clock);
+        // Another module before the close: the face leaves the composition but
+        // stays resident (switching back inside the open HUD rebuilds nothing).
+        {
+            auto mapSettings=settings;mapSettings.module=core::Module::map;core::ModulePresentation mapModules(core::Module::map);
+            owner.update({},mapSettings,mapModules.sample(clock).presentation,1,1,clock);owner.upload(renderer);
+            all.assign(owner.headerEntries().begin(),owner.headerEntries().end());composition.setEntries(renderer,all);composition.present(renderer);
+            check(owner.moduleEntries().empty(),"The face is not composed on another module");
+        }
+        const auto shown=owner.module().sceneStats();const auto gpuShown=renderer.stats();const auto rasterShown=raster.stats();
+        check(shown.uploaded&&shown.surfaces>0&&shown.pixelBytes>0,"The face stays resident while the HUD is open on another module");
+        // Closing the HUD: no account wake; nothing in flight.
         owner.overlayClosing(clock+=.1);
         check(!owner.nextWakeTime(clock)&&!owner.capturesPointer()&&owner.activeRequests()==0,"Closed HUD schedules no account work");
+        // The close finished (HostEvent::overlayConcealed): the hidden face parks.
+        owner.concealed(clock);
+        const auto parked=owner.module().sceneStats();const auto gpuParked=renderer.stats();const auto rasterParked=raster.stats();
+        check(parked.parks==1&&!parked.uploaded&&parked.surfaces==0&&parked.pixelBytes==0,"Once the HUD closed on another module the Account face keeps no leaf raster or GPU target");
+        check(gpuParked.nativeGroups+1==gpuShown.nativeGroups&&gpuParked.nativeGroupBytes<gpuShown.nativeGroupBytes&&gpuParked.resourceBytes<gpuShown.resourceBytes&&
+              rasterParked.entries<rasterShown.entries&&rasterParked.resourceBytes<rasterShown.resourceBytes,
+              "Its group target, leaf textures and shared rasterizer entries are released");
+        faceRasterBytes=rasterShown.resourceBytes;faceParkedRasterBytes=rasterParked.resourceBytes;
+        faceGPUBytes=gpuShown.resourceBytes+gpuShown.nativeGroupBytes;faceParkedGPUBytes=gpuParked.resourceBytes+gpuParked.nativeGroupBytes;
+        owner.concealed(clock);check(owner.module().sceneStats().parks==1,"A second conceal changes nothing");
+        // Showing Account again rebuilds the same artwork.
+        owner.setOverlayVisible(true,clock+=.1);frame({});
+        const auto again=owner.module().sceneStats();
+        check(again.uploaded&&again.surfaces==shown.surfaces&&again.pixelBytes==shown.pixelBytes&&raster.stats().entries==rasterShown.entries&&
+              raster.stats().resourceBytes==rasterShown.resourceBytes&&renderer.stats().nativeGroupBytes==gpuShown.nativeGroupBytes,"Showing Account again rebuilds the same artwork");
+        // A close with Account shown keeps its face for the next opening.
+        owner.overlayClosing(clock+=.1);owner.concealed(clock);
+        check(owner.module().sceneStats().parks==1&&owner.module().sceneStats().uploaded,"A close with Account shown keeps the face");
         check(owner.flush(clock),"A repeated flush has nothing left to write");
+        check(owner.networkSession()&&!owner.networkSession()->open&&owner.networkSession()->opens==0,"No WinHTTP session was ever opened (the imported region needs a new sign-in)");
         composition.setEntries(renderer,{});owner.collected(renderer);owner.release(renderer);composition.detach(renderer);
         check(!IsWindowVisible(window.hwnd),"Fixture never shows UI");
     }
@@ -201,6 +258,63 @@ void run(const std::filesystem::path& shader,const std::filesystem::path& resour
 }
 }
 namespace {
+// Launch prewarm (ModuleOwner::prewarm) through the production owner on a
+// fresh unlinked data root, the first opening on Map like EndfieldHUD.exe:
+// once without and once with the prewarm (and the host's publish and hidden
+// draw that follow it). After the prewarm the first opening frame installs
+// nothing of the header wallet.
+void prewarmedOpening(const std::filesystem::path& shader,const std::filesystem::path& resources) {
+    Window window;gpu::Renderer renderer;renderer.initialize(window.hwnd,1280,800,{gpu::Driver::warpForTests,shader,gpu::RenderTarget::offscreenForTests});
+    renderer.setCamera(gpu::layerViewportProjection(1280,800));gpu::LayerRasterizer raster;double clock=10;
+    HANDLE utilityEvent=CreateEventW(nullptr,FALSE,FALSE,nullptr);check(utilityEvent!=nullptr,"Utility wake event");
+    app::UtilityExecutor executor([utilityEvent]{SetEvent(utilityEvent);});
+    core::source::DesktopChromeSettings settings;settings.viewport={0,0,1280,800};settings.module=core::Module::map;core::ModulePresentation modules(core::Module::map);
+    const auto opening=[&](bool prewarm,double& firstFrame){
+        TempDirectory temp;
+        tools::AccountLinkingOwnerOptions o;o.window=window.hwnd;o.dataRoot=temp.path;o.gaugeResources=resources; // production density (2 px per point)
+        o.clock=[&]{return clock;};o.wallClock=[]{return 812692800.0;};o.officialLogin=false;
+        o.workMode=[]{return h::WorkModeGaugeInput{true,1500,61.5};};o.workModeRunning=[]{return true;};
+        tools::AccountLinkingOwner owner(executor,raster,o);
+        check(owner.networkSession()&&!owner.networkSession()->open&&owner.networkSession()->opens==0,"A fresh owner opens no WinHTTP session");
+        owner.resize({1280,800,96,1,1280,800});
+        gpu::LayerComposition composition;std::vector<gpu::LayerCompositionEntry> all;
+        const auto publish=[&]{
+            owner.upload(renderer);all.assign(owner.moduleEntries().begin(),owner.moduleEntries().end());for(const auto& e:owner.headerEntries()) all.push_back(e);
+            composition.setEntries(renderer,all);composition.present(renderer);
+        };
+        if(prewarm) {
+            const auto begin=Clock::now();owner.prewarm({},settings,modules.sample(clock).presentation,clock);publish();prewarmMS=since(begin);renderer.draw(false);
+            check(owner.moduleEntries().empty()&&owner.gauge().sceneStats().groupUploads>=1&&!owner.covers({562+90,2+20})&&
+                  !owner.pointer({app::PointerKind::down,app::PointerButton::left,562+90,2+20},clock)&&!owner.requiresFrames(clock),
+                  "The prewarm installs the wallet of the closed HUD (composed at opacity 0, taking no press); nothing animates");
+        }
+        const auto rasters=raster.stats().rasterizations;const auto gpu=renderer.stats();const auto gauge=owner.gauge().sceneStats();
+        const auto begin=Clock::now();
+        owner.setOverlayVisible(true,clock+=.1);owner.update({},settings,modules.sample(clock).presentation,1,1,clock);publish();
+        firstFrame=since(begin);renderer.draw(false);
+        const auto now=renderer.stats();const auto after=owner.gauge().sceneStats();
+        // CPU work only: the renderer draws a group target into its texture
+        // when it first becomes visible (never for a hidden composition).
+        const std::uint64_t work=(raster.stats().rasterizations-rasters)+(now.textureUploads-gpu.textureUploads)+(now.meshUploads-gpu.meshUploads)+
+            (after.artworkRasters-gauge.artworkRasters)+(after.numberRasters-gauge.numberRasters)+(after.groupUploads-gauge.groupUploads)+(after.groupRedraws-gauge.groupRedraws);
+        if(prewarm) check(work==0,"After the prewarm the first opening frame rasterizes, uploads and re-plans nothing of the wallet");
+        else {coldOpeningWork=work;check(work>0,"Without the prewarm the first opening frame installs the wallet");}
+        check(all.size()==2,"The opened HUD composes the wallet and its popover group");
+        // The unlinked wallet (Work Mode minutes) is a control: consumed, nothing opens.
+        const core::Point wallet{562+90,2+20};
+        check(owner.gauge().model().value()=="24 / 25"&&!owner.gauge().model().canOpen()&&owner.covers(wallet)&&
+              owner.pointer({app::PointerKind::down,app::PointerButton::left,wallet.x,wallet.y},clock+=.05)&&!owner.capturesPointer()&&!owner.gauge().model().popoverOpen(),
+              "A press on the unlinked wallet is consumed and opens nothing");
+        (void)owner.pointer({app::PointerKind::up,app::PointerButton::left,wallet.x,wallet.y},clock);
+        check(!owner.covers({562+170,2+20})&&!owner.covers({562+90,2+45}),"Outside the wallet the header owns no press");
+        check(owner.networkSession()&&!owner.networkSession()->open&&owner.networkSession()->opens==0,"An unlinked account never opens a WinHTTP session");
+        owner.overlayClosing(clock+=.1);owner.concealed(clock);
+        composition.setEntries(renderer,{});owner.collected(renderer);owner.release(renderer);composition.detach(renderer);
+    };
+    opening(false,coldOpeningMS);opening(true,prewarmedOpeningMS);
+    check(!IsWindowVisible(window.hwnd),"Nothing was shown");
+    executor.shutdown();CloseHandle(utilityEvent);renderer.reset();
+}
 // Mac import -> restart -> Windows sign-in through the production owner.
 void reconnectAfterImport(const std::filesystem::path& resources,const std::filesystem::path& oracle,const std::filesystem::path& coverage) {
     namespace areas=endfield::app::areas;
@@ -311,8 +425,13 @@ int wmain(int argc,wchar_t** argv) {
     try {
         check(SUCCEEDED(hr)&&argc==5,"Pass shader, windows/resources/account, hypergryph-account-source.json and hypergryph-account-coverage.json");
         const auto resources=std::filesystem::absolute(argv[2]).lexically_normal();
-        run(argv[1],resources);reconnectAfterImport(resources,argv[3],argv[4]);
-        CoUninitialize();std::cout<<"PASS "<<checks<<" Account owner checks (startup: construction "<<constructionMS<<" ms, first open "<<openingMS<<" ms, first frame "<<firstFrameMS<<" ms)\n";return 0;
+        run(argv[1],resources);prewarmedOpening(argv[1],resources);reconnectAfterImport(resources,argv[3],argv[4]);
+        CoUninitialize();
+        std::cout<<"PASS "<<checks<<" Account owner checks (startup: construction "<<constructionMS<<" ms, first open "<<openingMS<<" ms, first frame "<<firstFrameMS<<" ms;"
+                 <<" first opening on Map: "<<coldOpeningMS<<" ms with "<<coldOpeningWork<<" rasterizations/uploads/renders cold, "<<prewarmedOpeningMS<<" ms and none after a "<<prewarmMS<<" ms prewarm;"
+                 <<" face park: rasterizer "<<faceRasterBytes/1024<<" -> "<<faceParkedRasterBytes/1024<<" KiB, GPU "<<faceGPUBytes/1024<<" -> "<<faceParkedGPUBytes/1024<<" KiB at 1 px per point;"
+                 <<" first owner construction: threads "<<threadsBeforeOwner<<" -> "<<threadsAfterOwner<<", private "<<privateBeforeOwner/1024<<" -> "<<privateAfterOwner/1024<<" KiB)\n";
+        return 0;
     }
     catch(const std::exception& e) {counting=false;if(SUCCEEDED(hr)) CoUninitialize();std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}
 }

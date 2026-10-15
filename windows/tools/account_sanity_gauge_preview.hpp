@@ -32,6 +32,9 @@ public:
     void contentChanged(double time);
     void update(const core::Matrix4& projectedCenter,float chromeOpacity,double time);
     bool requiresFrames(double time) const;
+    // The shown wallet (whatever it shows) and an open popover: a left press
+    // there is always consumed by pointer(), so it never falls through to the
+    // source shell or the host's outside-the-circle close.
     bool covers(core::Point logicalClientPoint) const;
     bool capturesPointer() const noexcept;   // open recovery popover consumes clicks
     bool pointer(const app::PointerEvent&,double time);

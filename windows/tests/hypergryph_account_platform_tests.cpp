@@ -7,8 +7,10 @@
 #include "native/hypergryph_account_transport.hpp"
 #include "native/hypergryph_account_vault.hpp"
 #include <windows.h>
+#include <tlhelp32.h>
 #include <wincodec.h>
 #include <wrl/client.h>
+#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -100,6 +102,75 @@ void transport() {
         auto pendingImage=transport.startImage("https://127.0.0.1/a.png",1024,[](h::HttpOutcome){});
         // Destroying the transport with work in flight is safe.
     }
+    CloseHandle(event);
+}
+unsigned processThreads() {
+    const auto snapshot=CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD,0);check(snapshot!=INVALID_HANDLE_VALUE,"Thread snapshot");
+    THREADENTRY32 entry{};entry.dwSize=sizeof entry;unsigned count{};
+    for(BOOL more=Thread32First(snapshot,&entry);more;more=Thread32Next(snapshot,&entry)) if(entry.th32OwnerProcessID==GetCurrentProcessId()) ++count;
+    CloseHandle(snapshot);return count;
+}
+std::string sessionReport; // thread census around the session (reported, not asserted)
+// The WinHTTP session exists only while it is needed: opened off the owner
+// thread by the first request (the services use the shared UtilityExecutor;
+// here the test runs the off-thread part itself), kept while retained (HUD
+// shown) and closed when released and idle.
+void session() {
+    HANDLE event=CreateEventW(nullptr,FALSE,FALSE,nullptr);check(event!=nullptr,"Owner wake event");
+    double clock=2000;
+    using Job=std::pair<std::function<void()>,std::function<void(std::exception_ptr)>>;std::deque<Job> jobs;bool refuse{};
+    n::WinHttpAccountTransport::Options options;options.notify=[event]{SetEvent(event);};options.now=[&clock]{return clock;};options.port=1;options.directOnly=true;
+    options.background=[&](std::function<void()> work,std::function<void(std::exception_ptr)> done){if(refuse) return false;jobs.emplace_back(std::move(work),std::move(done));return true;};
+    const auto runJob=[&]{check(!jobs.empty(),"The session open was queued");auto job=std::move(jobs.front());jobs.pop_front();job.first();job.second(nullptr);};
+    const unsigned threadsBefore=processThreads();unsigned threadsOpen{},threadsRequest{},threadsClosed{};
+    {
+        n::WinHttpAccountTransport transport(options);transport.setRetained(false);
+        auto s=transport.sessionStats();
+        check(!s.open&&!s.opening&&s.opens==0&&jobs.empty(),"Constructing the transport opens no WinHTTP session");
+        h::HttpRequest request;request.host="127.0.0.1";request.path="/api/v1/game/player/binding";request.headers={{"Accept","application/json"},{"cred","SYNTHETIC-CRED"}};
+        std::optional<h::HttpOutcome> result;
+        const auto settle=[&]{for(int i=0;i<200&&!result;++i) {WaitForSingleObject(event,100);transport.drain();}};
+        auto handle=transport.start(request,[&](h::HttpOutcome o){result=std::move(o);});
+        s=transport.sessionStats();
+        check(!s.open&&s.opening&&s.waiting==1&&jobs.size()==1&&transport.activeRequests()==1&&transport.nextDeadline()==2020,
+              "The first request waits, inside its 20 s limit, while the session opens off the owner thread");
+        runJob();threadsOpen=processThreads();
+        s=transport.sessionStats();check(s.open&&!s.opening&&s.opens==1&&s.waiting==0,"The opened session starts the waiting request");
+        settle();threadsRequest=processThreads();
+        check(result&&result->failure&&result->failure->kind==h::ErrorKind::transport,"The waiting request completes on the owner drain");
+        s=transport.sessionStats();check(!s.open&&s.closes==1&&transport.activeRequests()==0,"An unretained session closes with its last request");
+        threadsClosed=processThreads();
+        // Retained (HUD shown): kept between requests, closed at once when released idle.
+        transport.setRetained(true);result.reset();
+        handle=transport.start(request,[&](h::HttpOutcome o){result=std::move(o);});runJob();settle();
+        s=transport.sessionStats();check(result&&s.open&&s.opens==2&&s.closes==1,"A retained session stays open after its request");
+        result.reset();handle=transport.start(request,[&](h::HttpOutcome o){result=std::move(o);});
+        check(jobs.empty()&&transport.sessionStats().opens==2,"The next request reuses the retained session");
+        transport.setRetained(false);check(transport.sessionStats().open,"Releasing keeps the session while a request is in flight");
+        settle();s=transport.sessionStats();check(result&&!s.open&&s.closes==2,"The released session closes with that request");
+        // Cancelled while the session opens: nothing starts, the session closes once adopted.
+        result.reset();handle=transport.start(request,[&](h::HttpOutcome o){result=std::move(o);});handle->cancel();
+        check(transport.activeRequests()==0&&transport.sessionStats().opening,"A cancelled waiting request leaves nothing active");
+        runJob();s=transport.sessionStats();check(!s.open&&!s.opening&&s.opens==3&&s.closes==3&&s.waiting==0,"Its session closes as soon as it is adopted");
+        for(int i=0;i<5;++i) {WaitForSingleObject(event,20);transport.drain();}
+        check(!result,"The cancelled request never completes");
+        // The resource deadline covers the wait for the session.
+        clock=3000;handle=transport.start(request,[&](h::HttpOutcome o){result=std::move(o);});
+        clock=3020;check(transport.deadline(clock),"A request still waiting for its session expires at its deadline");
+        transport.drain();check(result&&result->failure&&result->failure->kind==h::ErrorKind::transport&&transport.activeRequests()==0,"It reports a transport failure");
+        runJob();s=transport.sessionStats();check(!s.open&&s.opens==4&&s.closes==4&&s.waiting==0,"The late session is closed at once");
+        // A refused queue opens the session on the owner thread instead.
+        refuse=true;result.reset();handle=transport.start(request,[&](h::HttpOutcome o){result=std::move(o);});
+        s=transport.sessionStats();check(s.open&&!s.opening&&s.opens==5&&jobs.empty(),"A full shared queue opens the session on the calling thread");
+        settle();check(result&&!transport.sessionStats().open,"That session also ends with its request");
+        refuse=false;
+        // The transport goes away while its session is still opening.
+        result.reset();handle=transport.start(request,[&](h::HttpOutcome o){result=std::move(o);});check(jobs.size()==1,"A session open is queued");
+    }
+    // Its late session is closed by its own slot (no handle outlives the transport).
+    runJob();check(jobs.empty(),"The orphaned open ran and released its session");
+    sessionReport="threads: "+std::to_string(threadsBefore)+" before, "+std::to_string(threadsOpen)+" session open, "+std::to_string(threadsRequest)+" after a request, "+
+        std::to_string(threadsClosed)+" session closed, "+std::to_string(processThreads())+" transport gone";
     CloseHandle(event);
 }
 // Account client over the real transport: invalid credentials never hit WinHTTP.
@@ -239,6 +310,7 @@ void importedCache() {
 }
 int main() {
     const auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);
-    try {vault();heads();transport();clientPlumbing();avatar();queuedCache();services();importedCache();if(SUCCEEDED(hr)) CoUninitialize();std::cout<<"PASS "<<checks<<" Windows account platform checks\n";return 0;}
+    try {vault();heads();session();transport();clientPlumbing();avatar();queuedCache();services();importedCache();if(SUCCEEDED(hr)) CoUninitialize();
+        std::cout<<"PASS "<<checks<<" Windows account platform checks (WinHTTP "<<sessionReport<<")\n";return 0;}
     catch(const std::exception& e) {if(SUCCEEDED(hr)) CoUninitialize();std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}
 }

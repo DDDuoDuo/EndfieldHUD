@@ -171,6 +171,9 @@ struct CoverageWorld {
     fs::path webview2License, webview2Notice;
     // Coverage progress (module cycles repeat the same interactions after the first).
     bool linked{}, finished{};
+    // The launch prewarm as the owner saw it: installed while concealed, then
+    // the gauge work (rasters, uploads, redraws) of the first opening frame.
+    struct Prewarm { bool prewarmed{}, installed{}, opened{}; std::uint64_t installedWork{}, openingWork{}; } prewarm;
     h::AccountPresentation reference;
     std::string referenceGauge;
     std::size_t referenceRequests{};
@@ -248,17 +251,28 @@ public:
     bool presents(core::Module m) const noexcept override { return m == core::Module::account; }
     void resize(const ClientMetrics& m) override { owner_->resize(m); }
     void setAppearance(const ModuleAppearance& a, double t) override { owner_->setAppearance(a.language, canvasStyle(a), a.reduceMotion, t); }
-    void setOverlayVisible(bool v, double t) override { owner_->setOverlayVisible(v, t); }
-    void overlayClosing(double t) override { owner_->overlayClosing(t); }
+    void setOverlayVisible(bool v, double t) override { visible_ = v; owner_->setOverlayVisible(v, t); }
+    void overlayClosing(double t) override { visible_ = false; owner_->overlayClosing(t); }
     void update(const ModuleFrame& f) override {
         syncWorkMode(f.time);
         // The wallet follows the header chrome, which fades with the canvas.
         owner_->update(f.center, f.chrome, f.presentation, f.opacity, f.opacity, f.time);
     }
+    // Launch prewarm: the first opening's header wallet (and the face when
+    // that opening shows Account) is posed hidden, so the host's upload right
+    // after this installs its artwork and the first opening frame does not.
+    void prewarm(const ModuleFrame& f) override {
+        (void)syncWorkMode(f.time);
+        owner_->prewarm(f.center, f.chrome, f.presentation, f.time);
+        if (world_) world_->prewarm.prewarmed = true;
+    }
     bool requiresFrames(double t) const override { return owner_->requiresFrames(t); }
     std::optional<double> nextWakeTime(double now) const override { return owner_->nextWakeTime(now); }
     bool deadline(double t) override { const bool work = syncWorkMode(t); return owner_->deadline(t) || work; }
-    void upload(native::Renderer& r) override { owner_->upload(r); }
+    void upload(native::Renderer& r) override {
+        owner_->upload(r);
+        if (world_) observePrewarm();
+    }
     Entries entries(core::Module m) override { return m == core::Module::account ? owner_->moduleEntries() : Entries{}; }
     Entries floatingEntries() override { return owner_->headerEntries(); }
     void collected(native::Renderer& r) override { owner_->collected(r); }
@@ -289,6 +303,11 @@ public:
             const bool work = syncWorkMode(t);
             return owner_->deadline(t) || work;
         }
+        case K::overlayConcealed:
+            // The HUD finished closing: a face that is not shown parks its
+            // rasters (the next show rebuilds them); the wallet stays.
+            owner_->concealed(t);
+            return syncWorkMode(t);
         default: return syncWorkMode(t);
         }
     }
@@ -365,6 +384,7 @@ private:
     h::AccountProfileRelay relay_;
     std::unique_ptr<tools::AccountLinkingOwner> owner_;
     std::uint64_t workRevision_{};
+    bool visible_{}; // setOverlayVisible / overlayClosing (hidden coverage's prewarm probe)
     std::unique_ptr<native::NativeAccountAutomation> automation_;
     IRawElementProviderFragmentRoot* automationRoot_{}; // held (AddRef'd) by automation_
     bool automationWake_{};                             // a UIA press posted the registered message
@@ -393,6 +413,19 @@ private:
     h::HypergryphAccountController& controller() { return owner_->controller(); }
 
     // --- Hidden coverage --------------------------------------------------------
+    // Hidden coverage only: the header wallet's work at the prewarm's upload
+    // (HUD concealed) and at the first opening frame's upload.
+    std::uint64_t gaugeWork() const {
+        const auto s = owner_->gauge().sceneStats();
+        return s.artworkRasters + s.numberRasters + s.tooltipRasters + s.popoverLoads + s.groupUploads + s.groupRedraws;
+    }
+    void observePrewarm() {
+        auto& p = world_->prewarm;
+        if (!p.prewarmed || p.opened) return;
+        if (!visible_) { p.installed = owner_->gauge().sceneStats().groupUploads > 0; p.installedWork = gaugeWork(); return; }
+        p.opened = true;
+        p.openingWork = gaugeWork() - p.installedWork;
+    }
     struct Driver {
         AccountModule& self;
         ModuleCoverage& step;
@@ -629,6 +662,23 @@ private:
                        "A fresh data root starts unlinked");
             step.check(owner_->gauge().model().value() == d.expectedGauge() && !owner_->gauge().model().canOpen(),
                        "The unlinked header wallet shows Work Mode minutes");
+            step.check(w.prewarm.prewarmed && w.prewarm.installed && w.prewarm.opened && w.prewarm.openingWork == 0,
+                       "The launch prewarm installed the hidden header wallet; the first opening frame rasterized and uploaded none of it");
+            {
+                // Live RC 128: a press on the wallet closed the HUD. The wallet
+                // (header design point 562,2 to 730,44) lies almost entirely
+                // outside the displayed circle (radius 310 around 500,320), so
+                // an unconsumed press there is the host's background close.
+                // The shown wallet is a control whatever it shows: its press is
+                // consumed, and without sanity nothing opens or changes.
+                namespace g = h::gauge_geometry;
+                const auto before = controller().presentation();
+                for (const core::Point local : {core::Point{g::bounds.width / 2, g::bounds.height / 2}, core::Point{g::bounds.width - 4, g::bounds.height / 2}}) {
+                    const auto client = owner_->gauge().clientPoint(local);
+                    step.check(client && covers(*client) && d.press(*client) && !owner_->gauge().model().popoverOpen() && !capturesPointer() &&
+                               controller().presentation() == before, "A press on the unlinked wallet (Work Mode minutes) is consumed and opens nothing");
+                }
+            }
             {
                 step.check(automationRefresh(d.group()) && automationCount() == d.canvas().accessibleActions().size(),
                            "UIA lists the face's peers through the owner hooks; the unlinked wallet has none");
@@ -809,6 +859,21 @@ private:
                        "The WebView2 SDK licence and notices ship in the package");
         }
 #endif
+        {
+            // The HUD finished closing on another module (the host's
+            // overlayConcealed broadcast, delivered here as the host does): a
+            // face shown earlier parks its group target and leaf rasters; the
+            // next cycle shows it again with the same artwork (the cycles'
+            // raster usage repeats exactly).
+            const auto before = owner_->module().sceneStats();
+            (void)hostEvent({HostEvent::Kind::overlayConcealed, 0}, d.t);
+            const auto after = owner_->module().sceneStats();
+            if (host_.selectedModule() != core::Module::account)
+                step.check(after.parks == before.parks + (before.surfaces || before.uploaded ? 1u : 0u) && after.surfaces == 0 && after.pixelBytes == 0 && !after.uploaded,
+                           "Once the HUD is closed on another module the Account face keeps no leaf raster or GPU target");
+            else
+                step.check(after.parks == before.parks, "A face shown at the close stays resident");
+        }
         d.frame();
         if (step.cycle < 2 || w.finished || !w.linked) return;
         // ---- Last cycle, after the retained raster comparison: failure paths.

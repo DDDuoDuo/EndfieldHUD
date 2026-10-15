@@ -181,7 +181,7 @@ if(WIN32)
     # into hud_account_area below) stand in for WinHTTP, DPAPI and WebView2.
     add_executable(hypergryph_account_owner_tests tests/hypergryph_account_owner_tests.cpp)
     target_compile_definitions(hypergryph_account_owner_tests PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
-    target_link_libraries(hypergryph_account_owner_tests PRIVATE hud_hypergryph_account_owner hud_account_area hud_mac_import_codec ole32)
+    target_link_libraries(hypergryph_account_owner_tests PRIVATE hud_hypergryph_account_owner hud_account_area hud_mac_import_codec ole32 psapi)
     add_test(NAME hypergryph_account_owner_contracts COMMAND hypergryph_account_owner_tests
       ${CMAKE_CURRENT_SOURCE_DIR}/native/hud.hlsl ${CMAKE_CURRENT_SOURCE_DIR}/resources/account
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/hypergryph-account-source.json ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/hypergryph-account-coverage.json)

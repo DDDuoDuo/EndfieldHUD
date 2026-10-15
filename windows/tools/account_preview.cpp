@@ -21,6 +21,7 @@ struct AccountPreview::Impl {
     std::unique_ptr<gpu::NativeModuleSurface> surface;gpu::NativeModuleRegistration registration{"account.registration"};
     std::array<gpu::LayerCompositionEntry,2> composed;app::ClientMetrics metrics;core::Projection projection;std::optional<gpu::ModuleSurfacePose> pose;
     bool overlayVisible{},selected{},active{},acceptsInput{},pressed{},reduced{};double time{};std::optional<core::Point> hover;
+    gpu::Renderer* renderer{}; // the host's, from upload() (conceal() parks through it)
     Impl(h::HypergryphAccountController& c,gpu::LayerRasterizer& r,AccountPreviewOptions o)
         :controller(c),scene(canvas,r,o.raster,o.style),geometry(r),reduced(o.reduceMotion) {
         geometry.load(empty(),o.raster);surface=std::make_unique<gpu::NativeModuleSurface>(geometry,core::Module::account);
@@ -126,8 +127,14 @@ bool AccountPreview::perform(std::string_view id,double t) {
 }
 gpu::NativeAccountSceneStats AccountPreview::sceneStats() const noexcept {return impl_->scene.stats();}
 void AccountPreview::upload(gpu::Renderer& r) {
-    auto& i=*impl_;if(!i.pose) return;
+    auto& i=*impl_;if(!i.pose) return;i.renderer=&r;
     i.scene.uploadResources(r);i.registration.uploadGeometry(r); // revision-checked, no allocation when unchanged
+}
+bool AccountPreview::conceal() {
+    // Only a face that is not shown: a close with Account selected keeps it
+    // for the next opening (its entry is still published until then).
+    auto& i=*impl_;if(i.pose||i.active) return false;
+    return i.scene.park(i.renderer);
 }
 std::span<const gpu::LayerCompositionEntry> AccountPreview::entries() {
     auto& i=*impl_;if(!i.pose) return {};const auto group=i.scene.entry();if(!group) return {};

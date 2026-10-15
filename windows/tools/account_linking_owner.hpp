@@ -75,6 +75,17 @@ public:
     // the shell chrome opacity (the module face uses `opacity`).
     void update(const core::Matrix4& center,const core::source::DesktopChromeSettings&,
         const core::ModulePresentationSample&,float opacity,float headerOpacity,double time);
+    // Launch prewarm (app::ModuleOwner::prewarm), while the HUD is still
+    // closed: poses the hidden header wallet (and the face, when the first
+    // opening shows Account) at opacity 0, so the host's following upload
+    // installs their artwork, numerals, popover and group targets and the
+    // first opening frame only re-poses them. Nothing becomes visible, no
+    // request starts and no provider opens.
+    void prewarm(const core::Matrix4& center,const core::source::DesktopChromeSettings&,
+        const core::ModulePresentationSample&,double time);
+    // The HUD finished closing (HostEvent::overlayConcealed): an Account face
+    // that is not shown releases its GPU targets and leaf rasters.
+    void concealed(double time);
     bool requiresFrames(double time) const;
     std::optional<double> nextWakeTime(double now) const;
     bool deadline(double time);                         // true: visible content changed
@@ -117,6 +128,9 @@ public:
     const AccountPreview& module() const noexcept;
     const AccountSanityGaugePreview& gauge() const noexcept;
     std::size_t activeRequests() const;                 // in-flight WinHTTP requests (diagnostics/tests)
+    // The WinHTTP session (none in hidden coverage): opened on the shared
+    // queue by the first request, closed once the HUD is hidden and idle.
+    std::optional<native::WinHttpAccountTransport::SessionStats> networkSession() const;
     bool officialLoginAvailable() const noexcept;       // WebView2 login built in (the runtime is checked at each Connect)
 private:
     struct Impl;std::shared_ptr<Impl> impl_;

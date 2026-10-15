@@ -45,6 +45,7 @@ void UtilityAccountWorkQueue::run(std::function<void()> work,std::function<void(
 }
 struct HypergryphAccountServices::Impl {
     HypergryphAccountServicesOptions options;
+    app::UtilityExecutor* executor{};app::UtilityExecutor::Route sessionRoute{}; // the WinHTTP session opens on the shared queue
     std::unique_ptr<WinHttpAccountTransport> winhttp;OwnerDrainedAccountTransport* transport{};std::unique_ptr<h::HypergryphAccountClient> client;
     std::unique_ptr<DpapiAccountVault> dpapi;h::AccountCredentialVault* vault{};std::unique_ptr<QueuedAccountCacheFile> cache;
     std::unique_ptr<UtilityAccountWorkQueue> queue;std::unique_ptr<WinHttpAvatarLoader> download;h::AccountAvatarLoader* avatar{};
@@ -55,10 +56,18 @@ HypergryphAccountServices::HypergryphAccountServices(app::UtilityExecutor& execu
     if(!i.options.hostClock||!i.options.wallClock) throw std::invalid_argument("Account services need the host and wall clocks");
     if(i.options.synthetic&&!(i.options.synthetic->transport&&i.options.synthetic->vault&&i.options.synthetic->avatar))
         throw std::invalid_argument("Synthetic account services need a transport, vault and avatar loader");
+    i.executor=&executor;
     if(i.options.synthetic) i.transport=i.options.synthetic->transport;
     else {
         WinHttpAccountTransport::Options t;t.notify=i.options.notify;t.now=i.options.hostClock;
+        // WinHttpOpen (proxy settings, TLS floor) runs on the shared queue,
+        // never in a HUD frame; the request waits for it within its limit.
+        i.sessionRoute=executor.makeRoute();
+        t.background=[&executor,route=i.sessionRoute](std::function<void()> work,std::function<void(std::exception_ptr)> done){
+            return executor.submit(route,std::move(work),std::move(done));
+        };
         i.winhttp=std::make_unique<WinHttpAccountTransport>(std::move(t));i.transport=i.winhttp.get();
+        i.winhttp->setRetained(false); // the HUD starts hidden
     }
     i.client=std::make_unique<h::HypergryphAccountClient>(*i.transport,i.options.wallClock);
     if(i.options.synthetic) i.vault=i.options.synthetic->vault;
@@ -82,6 +91,8 @@ HypergryphAccountServices::HypergryphAccountServices(app::UtilityExecutor& execu
 }
 HypergryphAccountServices::~HypergryphAccountServices() {
     auto& i=*impl_;i.controller.reset();i.download.reset();i.queue.reset();i.client.reset();i.winhttp.reset();
+    // A session still opening is closed by its own slot when the queue drops it.
+    if(i.sessionRoute) i.executor->invalidate(i.sessionRoute,true);
 }
 h::HypergryphAccountController& HypergryphAccountServices::controller() noexcept {return *impl_->controller;}
 OwnerDrainedAccountTransport& HypergryphAccountServices::transport() noexcept {return *impl_->transport;}
@@ -89,6 +100,10 @@ std::size_t HypergryphAccountServices::drain() {return impl_->transport->drain()
 bool HypergryphAccountServices::flush() {return impl_->cache->flush();}
 std::optional<double> HypergryphAccountServices::nextDeadline() const {return impl_->transport->nextDeadline();}
 bool HypergryphAccountServices::deadline(double t) {const bool expired=impl_->transport->deadline(t);if(expired) impl_->transport->drain();return expired;}
+void HypergryphAccountServices::setNetworkRetained(bool value) {if(impl_->winhttp) impl_->winhttp->setRetained(value);}
+std::optional<WinHttpAccountTransport::SessionStats> HypergryphAccountServices::networkSession() const {
+    if(!impl_->winhttp) return std::nullopt;return impl_->winhttp->sessionStats();
+}
 std::function<void(std::function<void()>)> HypergryphAccountServices::poster() {
     auto* transport=impl_->transport;
     return [transport](std::function<void()> f){transport->post(std::move(f));};
