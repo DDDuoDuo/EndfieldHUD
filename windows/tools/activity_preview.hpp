@@ -30,10 +30,20 @@ struct ActivityPreviewOptions {
 };
 class ActivityPreview final {
 public:
+    // The host publishes its built-in Activity Monitor under this key for
+    // module areas (ApplicationHost::find), e.g. the hidden coverage memory checks.
+    static constexpr std::string_view serviceKey="activityMonitor";
     ActivityPreview(native::LayerRasterizer&,ActivityPreviewOptions);~ActivityPreview();
     void resize(const app::ClientMetrics&);void receive(modules::ActivitySnapshot);void receiveApps(modules::ActivityAppsSnapshot);
     void setAppearance(modules::ActivityAppearance);void setLanguage(core::Language);void setIcons(native::ActivityIcons);
-    void setReduceMotion(bool);void setOverlayVisible(bool,double time);
+    void setReduceMotion(bool);
+    // HUD visibility (overlayClosing / opening). A close while Activity is
+    // not the shown module releases its artwork at once (park); the module
+    // shown at the close keeps it, so reopening on it only re-uploads.
+    void setOverlayVisible(bool,double time);
+    // The HUD finished closing (HostEvent::overlayConcealed): an Activity
+    // Monitor that is not shown keeps no raster artwork. Never throws.
+    void conceal()noexcept;
     void update(const core::Matrix4&,const core::source::DesktopChromeSettings&,const core::ModulePresentationSample&,float opacity,double time);
     bool requiresFrames(double)const;bool covers(core::Point logical)const;
     bool pointer(const app::PointerEvent&,double);bool wheel(const app::WheelEvent&,double);

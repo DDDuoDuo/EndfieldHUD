@@ -86,7 +86,7 @@ struct ClipboardScenePlan {ClipboardPart collection,foreground,scrollbar;std::ve
 ClipboardScenePlan prepareClipboardScene(const ClipboardState&,const ClipboardAppearance&,const ClipboardImages&);
 // topologyGapSamples stays 0: the authored reveal has no sampled CA topology.
 // residentPixelBytes: the retained parts' rasters plus a live reveal mask now.
-struct ClipboardSceneStats {std::size_t rows{},retiredParts{};std::uint64_t builds{},poses{},outlineRasters{},maskRasters{},maskUploads{},topologyGapSamples{};std::size_t residentPixelBytes{};};
+struct ClipboardSceneStats {std::size_t rows{},retiredParts{};std::uint64_t builds{},poses{},outlineRasters{},maskRasters{},maskUploads{},topologyGapSamples{},parks{};std::size_t residentPixelBytes{};};
 // ClipboardCanvas.animateCollectionChange -> HUDSubsectionTransition.reveal
 // (direction -1, after a removal or Clear that moves no row): the rows mask as
 // authored, the four shutter(progress:) keyframes (progress 0/.38/.72/1 at key
@@ -116,7 +116,17 @@ public:
     bool setFeedback(std::optional<std::string_view>,bool pressed,double time);
     bool updatePose(const NativeClipboardPose&);bool uploadAnimations(Renderer&);
     bool requiresFrames(double)const;std::span<const LayerCompositionEntry>entries()const noexcept;
-    bool collectRetired(Renderer&);bool releaseResources(Renderer&);ClipboardSceneStats stats()const noexcept;
+    bool collectRetired(Renderer&);bool releaseResources(Renderer&);
+    // A Clipboard that is no longer composed (the HUD closed while another
+    // module was shown) keeps no artwork: every part, its rasters (shared
+    // rasterizer entries) and the reveal mask are released, and the next
+    // syncContent rebuilds them from the current rows, as Mac
+    // HUDModuleContent makes the content again when the module is selected.
+    // Pending motion settles. True when something was released; false when
+    // there was nothing to release or a part is still composed (then
+    // everything stays resident). Never throws.
+    bool park(Renderer&)noexcept;
+    ClipboardSceneStats stats()const noexcept;
 private:struct Impl;std::unique_ptr<Impl>impl_;
 };
 #endif

@@ -26,6 +26,10 @@
 //     growing (the user-reported glitch of the measured Core Animation morph),
 //     GPU usage per app and overall from engine running times with the fifth
 //     Activity overview row, and the Storage volume menu (Windows additions);
+//   - when the host publishes its built-in Clipboard, Event Log, Activity
+//     Monitor and Storage owners (their previews' serviceKey), each one that
+//     is not shown keeps no raster artwork once the HUD has closed
+//     (conceal(), HostEvent::overlayConcealed);
 //   - when the host publishes its Event Log (native::eventLogOwnerServiceKey),
 //     every record of the host-wired action hooks (Notes, Reader, Archive,
 //     Projection, File Shelf, Clipboard) carries exactly the Mac

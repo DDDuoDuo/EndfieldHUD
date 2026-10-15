@@ -43,7 +43,7 @@ core::SubsectionMaskPath activitySortShutter(double direction,double elapsed);
 #ifdef _WIN32
 class LayerRasterizer;class Renderer;class LayerScene;struct LayerRasterOptions;struct LayerCompositionEntry;struct PlaneMask;struct PlaneShutter;
 // residentPixelBytes: the retained surfaces' rasters plus a live sort mask now.
-struct ActivitySceneStats {std::uint64_t builds{},localUpdates{},poses{},graphRasters{},graphPixelBytes{},maskRasters{},maskPixelBytes{};double graphRasterSeconds{},maximumGraphRasterSeconds{};std::size_t surfaces{},residentPixelBytes{};};
+struct ActivitySceneStats {std::uint64_t builds{},localUpdates{},poses{},graphRasters{},graphPixelBytes{},maskRasters{},maskPixelBytes{},parks{};double graphRasterSeconds{},maximumGraphRasterSeconds{};std::size_t surfaces{},residentPixelBytes{};};
 struct ActivityScenePose {core::Matrix4 world;float opacity{1};double time{};std::span<const PlaneMask>ownerMasks;const PlaneShutter*shutter{};};
 class NativeActivityScene final {
 public:
@@ -60,7 +60,16 @@ public:
     bool updatePose(const ActivityScenePose&);bool uploadAnimations(Renderer&);
     bool requiresFrames(double time)const;std::span<const LayerCompositionEntry>entries()const noexcept;
     std::span<const modules::ActivityAction>actions()const noexcept;
-    bool collectRetired(Renderer&);bool releaseResources(Renderer&);ActivitySceneStats stats()const noexcept;
+    bool collectRetired(Renderer&);bool releaseResources(Renderer&);
+    // An Activity Monitor that is no longer composed (the HUD closed while
+    // another module was shown) keeps no artwork: every surface, its raster
+    // (shared rasterizer entries) and the sort mask are released, and the
+    // next syncContent rebuilds them, as Mac HUDModuleContent makes the
+    // content again when the module is selected. True when something was
+    // released; false when there was nothing to release or a surface is
+    // still composed (then everything stays resident). Never throws.
+    bool park(Renderer&)noexcept;
+    ActivitySceneStats stats()const noexcept;
 private:struct Impl;std::unique_ptr<Impl>impl_;
 };
 #endif

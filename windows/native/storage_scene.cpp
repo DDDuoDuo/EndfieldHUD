@@ -50,6 +50,13 @@ void NativeStorageScene::updatePose(const Matrix&world,float opacity,double t,st
 }
 bool NativeStorageScene::requiresFrames(double t)const{const auto&i=*impl_;need(std::isfinite(t)&&(!i.time||t>=*i.time),"Invalid Storage frame clock");if(!i.active)return false;if(i.rotation.running())return true;for(const auto&track:i.tracks)if(track.active&&t<track.began+track.duration)return true;return false;}
 LayerScene&NativeStorageScene::scene()noexcept{return impl_->scene;}
+bool NativeStorageScene::park(Renderer&r)noexcept{auto&i=*impl_;if(!i.revision)return false;
+    // A composed tree refuses (before anything is released): stay resident.
+    try{if(!i.scene.releaseResources(r))return false;
+        // An empty tree drops every surface and its raster entry (LayerScene::load).
+        i.scene.load(J::Object{{"bounds",J::Array{0,0,0,0}},{"position",J::Array{0,0}},{"anchorPoint",J::Array{0,0}},{"children",J::Array{}}},i.options);}catch(...){return false;}
+    i.revision=0;i.artwork={};i.payloads.clear();i.revisions.clear();i.placements.clear();i.masks.clear();i.tracks.clear();++i.stats.parks;return true;}
+bool NativeStorageScene::loaded()const noexcept{return impl_->revision!=0;}
 NativeStorageSceneStats NativeStorageScene::stats()const noexcept{return impl_->stats;}
 
 struct NativeStorageOverlay::Impl {
@@ -94,6 +101,10 @@ void NativeStorageOverlay::updatePose(const Matrix&world,float opacity,double t,
 bool NativeStorageOverlay::requiresFrames(double t)const{const auto&i=*impl_;if(!i.scene)return false;if(i.enter||i.leave)return true;for(const auto&track:i.tracks)if(track.duration>0&&track.from!=track.target&&t<track.began+track.duration)return true;return false;}
 void NativeStorageOverlay::collected(Renderer&r){auto&i=*impl_;for(auto&old:i.retired)need(old->releaseResources(r),"Storage overlay still published");i.retired.clear();if(i.scene)i.scene->collectRetiredResources(r);}
 bool NativeStorageOverlay::release(Renderer&r){auto&i=*impl_;bool okay=true;for(auto&old:i.retired)okay=old->releaseResources(r)&&okay;if(okay)i.retired.clear();if(i.scene)okay=i.scene->releaseResources(r)&&okay;return okay;}
+bool NativeStorageOverlay::park(Renderer&r)noexcept{auto&i=*impl_;if(!i.scene&&i.retired.empty())return false;
+    // A composed overlay refuses (before anything is dropped): stay resident.
+    try{if(!release(r))return false;}catch(...){return false;}
+    i.scene.reset();i.retired.clear();i.leaving=false;i.enter.reset();i.leave.reset();i.placements.clear();i.masks.clear();i.tracks.clear();i.artwork={};return true;}
 std::uint64_t NativeStorageOverlay::builds()const noexcept{return impl_->builds;}
 }
 #endif

@@ -13,6 +13,9 @@ namespace endfield::tools {
 // the shared renderer, module selection, HWND, frame clock and composition.
 class ClipboardPreview final {
 public:
+    // The host publishes its built-in Clipboard under this key for module
+    // areas (ApplicationHost::find), e.g. the hidden coverage memory checks.
+    static constexpr std::string_view serviceKey="clipboard";
     ClipboardPreview(native::LayerRasterizer&,native::LayerRasterOptions,native::ClipboardActions,
         native::ClipboardStrings={},native::ClipboardAppearance={},native::ClipboardImages={},
         // Ignored (the rows reveal is native::clipboardRevealShutter); kept so
@@ -35,6 +38,15 @@ public:
     // interactive session.
     bool key(const app::KeyEvent&,double);bool key(const app::KeyEvent&,bool modified,double);
     void cancelInteraction();bool pointerLocked()const;
+    // HUD visibility (ModuleOwner setOverlayVisible / overlayClosing). A close
+    // while Clipboard is not the shown module releases its artwork and the
+    // provider's cached row thumbnails at once (park); the module shown at
+    // the close keeps them, so reopening on it only re-uploads. A switch
+    // inside the open HUD never releases them.
+    void setOverlayVisible(bool,double time);
+    // The HUD finished closing (HostEvent::overlayConcealed): a Clipboard that
+    // is not shown keeps no raster artwork. Never throws.
+    void conceal()noexcept;
     const native::ClipboardState&state()const;
     void upload(native::Renderer&);std::span<const native::LayerCompositionEntry>entries();
     void collected(native::Renderer&);void release(native::Renderer&);

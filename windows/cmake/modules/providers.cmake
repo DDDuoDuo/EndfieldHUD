@@ -134,6 +134,13 @@ if(WIN32 AND BUILD_TESTING AND TARGET hud_event_log_platform AND TARGET hud_acti
   if(MSVC)
     target_compile_options(hud_system_providers_coverage PRIVATE /W4 /permissive- /EHsc)
   endif()
+  # The built-in Activity and Storage owners the host may publish (their
+  # memory checks); Clipboard and Event Log compile into the harness itself.
+  foreach(lib hud_activity_preview hud_storage_preview)
+    if(TARGET ${lib})
+      target_link_libraries(hud_system_providers_coverage PUBLIC ${lib})
+    endif()
+  endforeach()
   set_property(GLOBAL APPEND PROPERTY EHUD_APP_AREAS
     "systemProviders|hud_system_providers_coverage|app/areas/system_activity_providers.hpp|endfield::providers::systemProvidersCoverage|coverage")
 endif()
@@ -168,4 +175,27 @@ if(WIN32 AND BUILD_TESTING AND TARGET hud_storage_preview AND TARGET hud_storage
   endif()
   add_test(NAME storage_volume_contracts COMMAND storage_volume_tests "${CMAKE_CURRENT_SOURCE_DIR}/native/hud.hlsl" "${CMAKE_CURRENT_SOURCE_DIR}/resources")
   set_tests_properties(storage_volume_contracts PROPERTIES TIMEOUT 180)
+endif()
+
+# --- What the provider modules keep resident ---------------------------------
+# Clipboard, Activity Monitor, Event Log and Storage through their owners on a
+# hidden window and WARP: a close on another module releases every raster,
+# rasterizer entry and GPU texture, showing the module again rebuilds artwork
+# that paints identically, and the module shown at the close keeps its
+# artwork; Storage rasterizes nothing before it is shown. "activityCounters": the
+# Activity GPU engine and disk queries with this process's threads and
+# private bytes. Synthetic rows, apps, events and volumes only.
+if(WIN32 AND BUILD_TESTING AND TARGET hud_activity_preview AND TARGET hud_storage_preview AND TARGET hud_native)
+  add_executable(activity_clipboard_resources_tests tests/activity_clipboard_resources_tests.cpp tools/clipboard_preview.cpp tools/event_log_preview.cpp)
+  target_compile_definitions(activity_clipboard_resources_tests PRIVATE ${EHUD_PROVIDER_DEFINITIONS})
+  target_link_libraries(activity_clipboard_resources_tests PRIVATE hud_activity_preview hud_activity_provider hud_storage_preview hud_storage_options hud_native hud_motion psapi)
+  if(MSVC)
+    target_compile_options(activity_clipboard_resources_tests PRIVATE /W4 /permissive- /EHsc)
+  endif()
+  foreach(mode clipboard activity eventLog storage activityCounters)
+    string(REGEX REPLACE "([A-Z])" "_\\1" name "${mode}")
+    string(TOLOWER "${name}" name)
+    add_test(NAME ${name}_resources_contracts COMMAND activity_clipboard_resources_tests "${CMAKE_CURRENT_SOURCE_DIR}/native/hud.hlsl" "${CMAKE_CURRENT_SOURCE_DIR}/resources" ${mode})
+    set_tests_properties(${name}_resources_contracts PROPERTIES TIMEOUT 300)
+  endforeach()
 endif()

@@ -78,6 +78,15 @@ bool NativeEventLogScene::requiresFrames(double time)const{auto&i=*impl_;i.time(
 std::span<const LayerCompositionEntry>NativeEventLogScene::entries()const noexcept{return impl_->entries;}
 bool NativeEventLogScene::collectRetired(Renderer&r){auto&i=*impl_;for(auto&part:i.retired)if(!part->scene.releaseResources(r))return false;i.retired.clear();return true;}
 bool NativeEventLogScene::releaseResources(Renderer&r){bool okay=collectRetired(r);impl_->each([&](auto&part){okay=part.scene.releaseResources(r)&&okay;});return okay;}
-EventLogSceneStats NativeEventLogScene::stats()const noexcept{auto result=impl_->stats;result.retiredParts=impl_->retired.size();const auto current=impl_->selected;if(impl_->pages[current])result.rows=impl_->pages[current]->rows.size();if(impl_->pages[1-current])result.outgoingRows=impl_->pages[1-current]->rows.size();return result;}
+bool NativeEventLogScene::park(Renderer&r)noexcept{auto&i=*impl_;
+    if(!i.header&&!i.toolbar&&!i.pages[0]&&!i.pages[1]&&i.retired.empty())return false;
+    // A composed part refuses (before anything is released): stay resident.
+    try{if(!releaseResources(r))return false;}catch(...){return false;}
+    // Destroying the parts removes their raster entries from the shared
+    // rasterizer (LayerScene's destructor); their GPU resources are gone.
+    i.header.reset();i.toolbar.reset();i.pages[0].reset();i.pages[1].reset();i.retired.clear();i.entries.clear();
+    i.handoffStart.reset();i.confirmationStart.reset();i.revision=0;i.dirty=true;++i.stats.parks;return true;
+}
+EventLogSceneStats NativeEventLogScene::stats()const noexcept{auto result=impl_->stats;result.retiredParts=impl_->retired.size();impl_->each([&](const auto&part){result.residentPixelBytes+=part.scene.report().pixelBytes;});for(const auto&part:impl_->retired)result.residentPixelBytes+=part->scene.report().pixelBytes;const auto current=impl_->selected;if(impl_->pages[current])result.rows=impl_->pages[current]->rows.size();if(impl_->pages[1-current])result.outgoingRows=impl_->pages[1-current]->rows.size();return result;}
 }
 #endif

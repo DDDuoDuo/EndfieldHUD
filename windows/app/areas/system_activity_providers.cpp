@@ -15,6 +15,10 @@
 #include "native/event_log_time.hpp"
 #include "native/storage_files.hpp"
 #include "native/system_services.hpp"
+#include "tools/activity_preview.hpp"
+#include "tools/clipboard_preview.hpp"
+#include "tools/event_log_preview.hpp"
+#include "tools/storage_preview.hpp"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -259,6 +263,7 @@ public:
 
         additions(step, cycle);
         hostEventLog(step, cycle);
+        builtInMemory(step);
         ++steps_;
     }
 
@@ -386,6 +391,29 @@ private:
         for (unsigned n = 0; n < 2000; ++n) services_.handle_message(WM_POWERBROADCAST, n % 2 ? PBT_POWERSETTINGCHANGE : PBT_APMPOWERSTATUSCHANGE, 0);
         step.check(pump() == 1 && powerReads_ == reads + 1 && batteryChanges_ == changes + 1 && services_.battery().percent == power_.battery_percent,
                    "A WM_POWERBROADCAST storm posts one notice and reads power once");
+    }
+    // Memory: the built-in Clipboard, Event Log, Activity Monitor and Storage
+    // (when the host publishes them under their service keys), which the
+    // module cycle showed and then switched away from, keep their rasters
+    // inside the open HUD (switching back must not stall on a rebuild). Once
+    // the HUD has finished closing (HostEvent::overlayConcealed -> conceal())
+    // one that is not shown keeps no raster artwork; the next cycle shows it
+    // again with the same artwork (the cycles' raster usage repeats exactly).
+    void builtInMemory(app::ModuleCoverage& step) {
+        const auto released = [&](auto* preview, auto resident, const char* message) {
+            if (!preview) return;
+            const bool shown = !preview->entries().empty();
+            preview->conceal();
+            step.check(shown || resident(*preview) == 0, message);
+        };
+        released(host_.find<tools::ClipboardPreview>(tools::ClipboardPreview::serviceKey), [](const tools::ClipboardPreview& p) { return p.stats().residentPixelBytes; },
+                 "Once the HUD is closed the hidden built-in Clipboard keeps no raster artwork");
+        released(host_.find<tools::EventLogPreview>(tools::EventLogPreview::serviceKey), [](const tools::EventLogPreview& p) { return p.stats().residentPixelBytes; },
+                 "Once the HUD is closed the hidden built-in Event Log keeps no raster artwork");
+        released(host_.find<tools::ActivityPreview>(tools::ActivityPreview::serviceKey), [](const tools::ActivityPreview& p) { return p.stats().residentPixelBytes; },
+                 "Once the HUD is closed the hidden built-in Activity Monitor keeps no raster artwork");
+        released(host_.find<tools::StoragePreview>(tools::StoragePreview::serviceKey), [](const tools::StoragePreview& p) { return p.resources().pixelBytes; },
+                 "Once the HUD is closed the hidden built-in Storage page keeps no raster artwork");
     }
     void hostEventLog(app::ModuleCoverage& step, unsigned cycle) {
         auto* log = host_.find<gpu::EventLogOwner>(gpu::eventLogOwnerServiceKey);

@@ -136,6 +136,16 @@ std::span<const LayerCompositionEntry>NativeActivityScene::entries()const noexce
 std::span<const modules::ActivityAction>NativeActivityScene::actions()const noexcept{return impl_->actions;}
 bool NativeActivityScene::collectRetired(Renderer&r){auto&i=*impl_;for(auto&p:i.parts)p->scene.collectRetiredResources(r);if(!i.maskPath&&i.uploadedMask&&(!r.stats().initialized||r.removeTexture(i.maskID))){i.uploadedMask=0;i.maskImage.reset();i.raster.remove(i.maskID);}return true;}
 bool NativeActivityScene::releaseResources(Renderer&r){auto&i=*impl_;bool okay=true;for(auto&p:i.parts)okay=p->scene.releaseResources(r)&&okay;if(i.uploadedMask){if(!r.stats().initialized||r.removeTexture(i.maskID)){i.uploadedMask=0;i.maskImage.reset();i.raster.remove(i.maskID);}else okay=false;}return okay;}
+bool NativeActivityScene::park(Renderer&r)noexcept{auto&i=*impl_;
+    if(i.parts.empty()&&!i.uploadedMask&&!i.maskImage)return false;
+    // A composed surface refuses (before anything is released): stay resident.
+    try{if(!releaseResources(r))return false;}catch(...){return false;}
+    // Destroying the parts removes their raster entries from the shared
+    // rasterizer (LayerScene's destructor); their GPU resources are gone.
+    i.parts.clear();i.entries.clear();i.actions.clear();i.initialized=false;i.dirty=true;i.graphsDirty=false;i.overviewRevision=i.appsRevision=0;i.preparedGraphs={};
+    i.motion.settle();i.sortStart.reset();i.maskPath.reset();i.alpha.reset();i.maskDirty=false;i.maskImage.reset();i.raster.remove(i.maskID);
+    ++i.stats.parks;return true;
+}
 ActivitySceneStats NativeActivityScene::stats()const noexcept{auto value=impl_->stats;value.surfaces=impl_->parts.size();for(const auto&p:impl_->parts)value.residentPixelBytes+=p->scene.report().pixelBytes;if(impl_->maskImage)value.residentPixelBytes+=impl_->maskImage->straightRGBA.size();return value;}
 #endif
 } // namespace endfield::native

@@ -59,8 +59,10 @@ std::optional<std::size_t>activityTranslation(std::span<const std::pair<std::uin
     return std::size_t{0};
 }
 ActivityCatalogSampler::ActivityCatalogSampler(Readers r):readers_(std::move(r)){need(bool(readers_.inventory)&&bool(readers_.process),"Activity catalog requires injected readers");}
-void ActivityCatalogSampler::reset()noexcept{catalog_.apps.clear();catalog_.identities.clear();catalog_.complete=true;inventoryTime_.reset();lastTime_.reset();}
-modules::ActivityAppsRaw ActivityCatalogSampler::sample(double stamp,double now){need(std::isfinite(stamp)&&std::isfinite(now)&&now>=0,"Invalid Activity catalog clock");const auto generation=generation_.load(std::memory_order_relaxed);if(workerGeneration_!=generation){reset();workerGeneration_=generation;}need(std::isfinite(stamp)&&std::isfinite(now)&&now>=0&&(!lastTime_||now>=*lastTime_),"Invalid Activity catalog clock");lastTime_=now;
+void ActivityCatalogSampler::reset()noexcept{std::vector<modules::ActivityAppIdentity>().swap(catalog_.apps);catalog_.identities.clear();catalog_.complete=true;inventoryTime_.reset();lastTime_.reset();}
+void ActivityCatalogSampler::invalidate()noexcept{generation_.fetch_add(1,std::memory_order_relaxed);std::unique_lock lock(mutex_,std::try_to_lock);if(lock.owns_lock()){reset();workerGeneration_=generation_.load(std::memory_order_relaxed);}}
+std::size_t ActivityCatalogSampler::retainedIdentities()const noexcept{std::lock_guard lock(mutex_);return catalog_.identities.size()+catalog_.apps.size();}
+modules::ActivityAppsRaw ActivityCatalogSampler::sample(double stamp,double now){std::lock_guard lock(mutex_);need(std::isfinite(stamp)&&std::isfinite(now)&&now>=0,"Invalid Activity catalog clock");const auto generation=generation_.load(std::memory_order_relaxed);if(workerGeneration_!=generation){reset();workerGeneration_=generation;}need(std::isfinite(stamp)&&std::isfinite(now)&&now>=0&&(!lastTime_||now>=*lastTime_),"Invalid Activity catalog clock");lastTime_=now;
     if(!inventoryTime_||now-*inventoryTime_>=5){inventoryTime_=now;try{auto inventory=readers_.inventory();(void)buildActivityCatalog(inventory);for(auto pid:inventory.unreadablePIDs){const auto old=catalog_.identities.find(pid);if(old!=catalog_.identities.end())inventory.processes.push_back(old->second);}inventory.unreadablePIDs.clear();auto next=buildActivityCatalog(inventory);if(next.complete)catalog_=std::move(next);else catalog_.complete=false;}catch(const std::exception&){catalog_.complete=false;}}
     modules::ActivityAppsRaw out;out.timestamp=stamp;out.uptime=now;out.secondsPerCPUTick=1e-7;out.apps=catalog_.apps;out.inventoryComplete=catalog_.complete;
     for(const auto&app:out.apps){auto&members=out.members[app.id];for(auto pid:app.processIDs){const auto&old=catalog_.identities.at(pid);auto current=readers_.process(pid);if(!current){members.push_back(pid);continue;}validate(current->identity);need(current->identity.pid==pid,"Activity reader returned another PID");
@@ -70,7 +72,12 @@ modules::ActivityAppsRaw ActivityCatalogSampler::sample(double stamp,double now)
             members.push_back(pid);if(current->usage){const auto&v=*current->usage;need(v.pid==pid&&v.startID==old.startID&&std::isfinite(v.startUptime)&&v.startUptime>=0,"Activity identity/usage mismatch");out.processes.emplace(pid,v);}
         }}
     if(readers_.gpu){std::vector<std::uint32_t>pids;for(const auto&[id,members]:out.members)pids.insert(pids.end(),members.begin(),members.end());std::sort(pids.begin(),pids.end());pids.erase(std::unique(pids.begin(),pids.end()),pids.end());if(!pids.empty())out.gpu=readers_.gpu(pids);}
-    if(!out.inventoryComplete)out.statusNotes.push_back("App helper inventory unavailable");out.statusNotes.push_back("Per-app disk and network accounting unavailable");return out;
+    if(!out.inventoryComplete)out.statusNotes.push_back("App helper inventory unavailable");out.statusNotes.push_back("Per-app disk and network accounting unavailable");
+    // The Apps demand changed while this sample ran (invalidate() could not
+    // take the lock): its result is discarded and the catalog released now
+    // rather than kept until the next Apps showing.
+    if(const auto latest=generation_.load(std::memory_order_relaxed);latest!=generation){reset();workerGeneration_=latest;}
+    return out;
 }
 }
 #ifdef _WIN32

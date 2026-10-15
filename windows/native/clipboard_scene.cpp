@@ -245,6 +245,16 @@ bool NativeClipboardScene::requiresFrames(double time)const{auto&i=*impl_;i.time
 std::span<const LayerCompositionEntry>NativeClipboardScene::entries()const noexcept{return impl_->entries;}
 bool NativeClipboardScene::collectRetired(Renderer&r){auto&i=*impl_;for(auto&p:i.retired)if(!p->scene.releaseResources(r))return false;i.retired.clear();if(!i.maskPath&&i.uploadedMask&&(!r.stats().initialized||r.removeTexture(i.maskID))){i.uploadedMask=0;i.maskImage.reset();i.raster.remove(i.maskID);}return true;}
 bool NativeClipboardScene::releaseResources(Renderer&r){auto&i=*impl_;bool okay=collectRetired(r);i.each([&](auto&p){okay=p.scene.releaseResources(r)&&okay;});if(i.uploadedMask){if(!r.stats().initialized||r.removeTexture(i.maskID)){i.uploadedMask=0;i.maskImage.reset();i.raster.remove(i.maskID);}else okay=false;}return okay;}
+bool NativeClipboardScene::park(Renderer&r)noexcept{auto&i=*impl_;
+    if(!i.collection&&!i.foreground&&!i.scrollbar&&i.rows.empty()&&i.retired.empty()&&!i.uploadedMask&&!i.maskImage)return false;
+    // A composed part refuses (before anything is released): stay resident.
+    try{if(!releaseResources(r))return false;}catch(...){return false;}
+    // Destroying the parts removes their raster entries from the shared
+    // rasterizer (LayerScene's destructor); their GPU resources are gone.
+    i.collection.reset();i.foreground.reset();i.scrollbar.reset();i.rows.clear();i.retired.clear();i.entries.clear();
+    i.revealStart.reset();i.toolbarStart.reset();i.maskPath.reset();i.alphaMask.reset();i.maskDirty=false;i.maskImage.reset();i.raster.remove(i.maskID);
+    i.revision=0;i.appearanceDirty=true;++i.stats.parks;return true;
+}
 ClipboardSceneStats NativeClipboardScene::stats()const noexcept{auto&i=*impl_;auto result=i.stats;result.rows=i.rows.size();result.retiredParts=i.retired.size();i.each([&](const auto&p){result.residentPixelBytes+=p.scene.report().pixelBytes;});for(const auto&p:i.retired)result.residentPixelBytes+=p->scene.report().pixelBytes;if(i.maskImage)result.residentPixelBytes+=i.maskImage->straightRGBA.size();return result;}
 #endif
 } // namespace endfield::native

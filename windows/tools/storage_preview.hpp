@@ -39,12 +39,28 @@ struct StoragePreviewOptions {
 // publication point. The app's utility executor and rasterizer outlive it.
 // Settings action is explicit and injected. Owner aggregates nextWakeTime into
 // its existing deadline and calls utilityCompleted after the shared drain.
+// What the Storage owner keeps resident: its retained Mac artwork and the
+// Windows chooser/menu overlays (surfaces and raster bytes now) and how often
+// a close parked them.
+struct StorageResourceStats {std::size_t surfaces{},pixelBytes{};std::uint64_t parks{};bool loaded{};};
 class StoragePreview final {
 public:
+    // The host publishes its built-in Storage page under this key for module
+    // areas (ApplicationHost::find), e.g. the hidden coverage memory checks.
+    static constexpr std::string_view serviceKey="storage";
     StoragePreview(native::LayerRasterizer&,StoragePreviewOptions);
     ~StoragePreview();
     void resize(const app::ClientMetrics&);
+    // HUD visibility. Hiding while Storage is not the shown module releases
+    // its artwork at once (park); the module shown at the close keeps it, so
+    // reopening on it only re-uploads. The artwork is first rasterized when
+    // Storage is shown, never at construction or on an appearance event while
+    // it is not shown.
     void setVisible(bool,double time);void setReduceMotion(bool,double time);
+    // The HUD finished closing (HostEvent::overlayConcealed): a Storage page
+    // that is not shown keeps no raster artwork. Never throws.
+    void conceal()noexcept;
+    StorageResourceStats resources()const noexcept;
     bool setAppearance(modules::StorageAppearance,double time);
     void update(const core::Matrix4&,const core::source::DesktopChromeSettings&,
         const core::ModulePresentationSample&,float opacity,double time);

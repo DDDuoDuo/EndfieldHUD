@@ -11,7 +11,11 @@ namespace endfield::native {
 namespace {void clocks(double stamp,double uptime){if(!std::isfinite(stamp)||!std::isfinite(uptime)||uptime<0)throw std::invalid_argument("Invalid Activity sample clock");}}
 struct ActivityProbe::Impl:std::enable_shared_from_this<Impl>{
     struct Worker {std::optional<modules::ActivityRawSample>system;std::optional<modules::ActivityAppsRaw>apps;std::uint64_t generation{},appGeneration{};};
-    modules::ActivityState&state;modules::ActivitySamplingPlan&plan;app::UtilityExecutor&executor;Readers readers;Changed changed;app::UtilityExecutor::Route route;std::thread::id owner=std::this_thread::get_id();std::shared_ptr<Worker>worker=std::make_shared<Worker>();std::shared_ptr<std::atomic<bool>>alive=std::make_shared<std::atomic<bool>>(true);std::optional<modules::ActivityDemand>pending;Stats counts;
+    modules::ActivityState&state;modules::ActivitySamplingPlan&plan;app::UtilityExecutor&executor;Readers readers;Changed changed;app::UtilityExecutor::Route route;std::thread::id owner=std::this_thread::get_id();std::shared_ptr<Worker>worker=std::make_shared<Worker>();std::shared_ptr<std::atomic<bool>>alive=std::make_shared<std::atomic<bool>>(true);std::optional<modules::ActivityDemand>pending;Stats counts;bool appsRetained{};
+    // AppActivityMonitor.deactivate (state.stop: previous = nil): once the
+    // Apps detail is hidden the worker drops its retained Apps reading now
+    // instead of keeping it until the next Apps sample.
+    void releaseApps(){if(!appsRetained||plan.appsActive())return;if(executor.submit(route,[retained=worker]{retained->apps.reset();retained->appGeneration=0;},[](std::exception_ptr){})){appsRetained=false;++counts.appReleases;}}
     Impl(modules::ActivityState&s,modules::ActivitySamplingPlan&p,app::UtilityExecutor&e,Readers r,Changed c):state(s),plan(p),executor(e),readers(std::move(r)),changed(std::move(c)),route(e.makeRoute()){}
     void thread()const{if(std::this_thread::get_id()!=owner)throw std::logic_error("Activity probe owner-thread operation");}
     bool submit(){thread();if(counts.inFlight||!pending)return false;auto demand=*pending;if(!plan.running()||demand.generation!=plan.generation()){pending.reset();return false;}if(!plan.appsActive()||demand.appGeneration!=plan.appGeneration())demand.apps=false;if(!demand.system&&!demand.apps){pending.reset();return false;}
@@ -20,13 +24,13 @@ struct ActivityProbe::Impl:std::enable_shared_from_this<Impl>{
             if(demand.system){if(retained->generation!=demand.generation||demand.resetSystem){retained->system.reset();retained->generation=demand.generation;}auto current=reader.system();clocks(current.timestamp,current.uptime);result->system=modules::deriveActivity(current,retained->system?&*retained->system:nullptr);retained->system=std::move(current);}
             if(demand.apps&&live->load(std::memory_order_acquire)){if(retained->appGeneration!=demand.appGeneration||demand.resetApps){retained->apps.reset();retained->appGeneration=demand.appGeneration;}auto current=reader.apps();clocks(current.timestamp,current.uptime);result->apps=modules::deriveActivityApps(current,retained->apps?&*retained->apps:nullptr);retained->apps=std::move(current);}},
             [weak,result,demand](std::exception_ptr error){if(auto self=weak.lock()){self->counts.inFlight=false;++self->counts.completed;if(error)++self->counts.failures;bool system{},apps{};if(self->plan.running()&&self->plan.generation()==demand.generation){if(result->system){self->state.receive(std::move(*result->system));system=true;}if(result->apps&&self->plan.appsActive()&&self->plan.appGeneration()==demand.appGeneration){self->state.receiveApps(std::move(*result->apps));apps=true;}}if(!system&&!apps)++self->counts.discarded;auto callback=self->changed;if(callback&&(system||apps))callback(system,apps);if(self->alive->load(std::memory_order_acquire))self->submit();}})){++counts.backpressure;return false;}
-        pending.reset();counts.inFlight=true;++counts.submitted;return true;
+        if(demand.apps)appsRetained=true;pending.reset();counts.inFlight=true;++counts.submitted;return true;
     }
 };
 ActivityProbe::ActivityProbe(modules::ActivityState&s,modules::ActivitySamplingPlan&p,app::UtilityExecutor&e,Readers r,Changed c){if(!r.system||!r.apps)throw std::invalid_argument("Activity requires explicit system and app readers");impl_=std::make_shared<Impl>(s,p,e,std::move(r),std::move(c));}
 ActivityProbe::~ActivityProbe(){impl_->alive->store(false,std::memory_order_release);impl_->executor.invalidate(impl_->route);}
-bool ActivityProbe::update(double now){auto&i=*impl_;i.thread();const auto due=i.plan.takeDue(now);if((!i.counts.inFlight||due.resetSystem||due.resetApps)&&(due.system||due.apps)){if(!i.pending||i.pending->generation!=due.generation)i.pending=due;else{i.pending->system|=due.system;i.pending->apps|=due.apps;i.pending->resetSystem|=due.resetSystem;i.pending->resetApps|=due.resetApps;i.pending->appGeneration=due.appGeneration;}}return i.submit();}
-bool ActivityProbe::submitPending(){return impl_->submit();}
+bool ActivityProbe::update(double now){auto&i=*impl_;i.thread();i.releaseApps();const auto due=i.plan.takeDue(now);if((!i.counts.inFlight||due.resetSystem||due.resetApps)&&(due.system||due.apps)){if(!i.pending||i.pending->generation!=due.generation)i.pending=due;else{i.pending->system|=due.system;i.pending->apps|=due.apps;i.pending->resetSystem|=due.resetSystem;i.pending->resetApps|=due.resetApps;i.pending->appGeneration=due.appGeneration;}}return i.submit();}
+bool ActivityProbe::submitPending(){impl_->releaseApps();return impl_->submit();}
 ActivityProbe::Stats ActivityProbe::stats()const{impl_->thread();auto out=impl_->counts;out.waiting=impl_->pending.has_value();return out;}
 }
 

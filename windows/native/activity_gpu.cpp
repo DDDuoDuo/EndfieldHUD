@@ -94,9 +94,12 @@ void setWindowsActivityGPUDemand(bool visible)noexcept{demand.store(visible,std:
 WindowsActivityGPUStats windowsActivityGPUStats()noexcept{auto&c=collector();std::lock_guard lock(c.mutex);return c.stats;}
 std::optional<modules::ActivityGPUSample>readWindowsActivityGPU(std::span<const std::uint32_t>pids){
     auto&c=collector();std::lock_guard lock(c.mutex);if(!demand.load(std::memory_order_acquire)){c.close();return {};}
-    const auto tick=GetTickCount64();
-    if(!c.last||tick-c.lastTick>=250){const auto began=std::chrono::steady_clock::now();c.last=c.collect();const double seconds=std::chrono::duration<double>(std::chrono::steady_clock::now()-began).count();
-        c.lastTick=tick;++c.stats.collections;c.stats.lastSeconds=seconds;c.stats.maximumSeconds=std::max(c.stats.maximumSeconds,seconds);c.stats.instances=c.last?c.last->usage.size():0;if(!c.last)++c.stats.failures;}
+    // The reuse window runs from the end of the last collection, so the
+    // system and the Apps readers of one sampling job share a collection even
+    // when it is slow (opening the counter set on a busy machine can take
+    // longer than 250 ms).
+    if(!c.last||GetTickCount64()-c.lastTick>=250){const auto began=std::chrono::steady_clock::now();c.last=c.collect();const double seconds=std::chrono::duration<double>(std::chrono::steady_clock::now()-began).count();
+        c.lastTick=GetTickCount64();++c.stats.collections;c.stats.lastSeconds=seconds;c.stats.maximumSeconds=std::max(c.stats.maximumSeconds,seconds);c.stats.instances=c.last?c.last->usage.size():0;if(!c.last)++c.stats.failures;}
     else ++c.stats.reuses;
     if(!c.last||pids.empty())return c.last;if(!std::is_sorted(pids.begin(),pids.end()))return {};
     modules::ActivityGPUSample out;out.time=c.last->time;for(const auto&value:c.last->usage)if(std::binary_search(pids.begin(),pids.end(),value.pid))out.usage.push_back(value);return out;

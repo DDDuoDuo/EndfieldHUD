@@ -2,6 +2,7 @@
 #include "modules/activity_state.hpp"
 #include <memory>
 #include <atomic>
+#include <mutex>
 #include <optional>
 #include <span>
 #include <string>
@@ -43,9 +44,12 @@ public:
     // bounded catalog refresh; no thread/timer/event hook. reset on Apps close.
     modules::ActivityAppsRaw sample(double timestamp,double uptime);
     void reset()noexcept;
-    // UI demand change may invalidate without touching worker state or OS.
-    void invalidate()noexcept{generation_.fetch_add(1,std::memory_order_relaxed);}
-private:Readers readers_;ActivityCatalogResult catalog_;std::optional<double>inventoryTime_,lastTime_;std::atomic<std::uint64_t>generation_{1};std::uint64_t workerGeneration_{};
+    // UI demand change: invalidates without touching the OS. When no sample
+    // is running the catalog is also released at once (the Apps detail was
+    // hidden: AppActivityMonitor.deactivate), else when that sample ends.
+    void invalidate()noexcept;
+    std::size_t retainedIdentities()const noexcept; // tests: the resident catalog size
+private:Readers readers_;ActivityCatalogResult catalog_;std::optional<double>inventoryTime_,lastTime_;std::atomic<std::uint64_t>generation_{1};std::uint64_t workerGeneration_{};mutable std::mutex mutex_;
 };
 // Construction is inert. Actual metadata enumeration occurs only when its
 // inventory reader is called. No user-window titles/command lines/document

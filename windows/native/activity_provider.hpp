@@ -33,13 +33,15 @@ class ActivityProbe final {
 public:
     struct Readers {std::function<modules::ActivityRawSample()>system;std::function<modules::ActivityAppsRaw()>apps;};
     using Changed=std::function<void(bool system,bool apps)>;
-    struct Stats {std::uint64_t submitted{},completed{},discarded{},failures{},backpressure{};bool inFlight{},waiting{};};
+    struct Stats {std::uint64_t submitted{},completed{},discarded{},failures{},backpressure{},appReleases{};bool inFlight{},waiting{};};
     // State, plan and executor outlive this owner-thread object. Readers must
     // own their worker inputs; never capture HWND/UI/controller references.
     ActivityProbe(modules::ActivityState&,modules::ActivitySamplingPlan&,app::UtilityExecutor&,Readers,Changed={});
     ~ActivityProbe();ActivityProbe(const ActivityProbe&)=delete;ActivityProbe&operator=(const ActivityProbe&)=delete;
     // Call only on shared deadline, demand change, or executor drain. Busy
     // sample ticks are coalesced, not replayed. No independent clock/thread.
+    // When the Apps demand has ended either call also queues the release of
+    // the worker's retained Apps reading (the Mac drops it on deactivate).
     bool update(double now);bool submitPending();Stats stats()const;
 private:struct Impl;std::shared_ptr<Impl>impl_;
 };

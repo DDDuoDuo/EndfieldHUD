@@ -17,6 +17,12 @@ struct ActivityPreview::Impl {
     bool alive{true},active{},input{},pressed{},reduced{},overlayVisible{true},hasVisibleSample{};double lastTimestamp{},time{};unsigned eventDepth{};
     struct Event{Impl&i;Event(Impl&v,double t):i(v){need(std::isfinite(t),"Activity owner needs finite time");if(!i.eventDepth)i.time=std::max(i.time,t);++i.eventDepth;}~Event(){--i.eventDepth;}};
     std::uint64_t boundContent{},boundPlacement{},boundIcons{},retainedContent{};unsigned boundPixels{};bool bound{};
+    // The raster artwork is released once the HUD closes while Activity is
+    // not shown (setOverlayVisible(false), the next publication after it or
+    // conceal()), never on a module switch inside an open HUD, where a rebuild
+    // would stall the switch. renderer: the host's, from upload()/collected().
+    gpu::Renderer*renderer{};bool parkWanted{};
+    bool park(){if(pose||!renderer||!scene.park(*renderer))return false;(void)registration.releaseResources(*renderer);parkWanted=false;bound=false;hasVisibleSample=false;return true;}
     static std::unique_ptr<gpu::ActivityIconProvider>makeIcons(ActivityPreviewOptions&o){
         // Icons publish into the rows' memory image source; a caller-supplied
         // source would not see them, so it keeps the rows icon-free.
@@ -58,10 +64,12 @@ void ActivityPreview::resize(const app::ClientMetrics&m){need(m.pixelWidth&&m.pi
 void ActivityPreview::receive(modules::ActivitySnapshot s){impl_->state.receive(std::move(s));}void ActivityPreview::receiveApps(modules::ActivityAppsSnapshot s){impl_->state.receiveApps(std::move(s));}
 void ActivityPreview::setAppearance(modules::ActivityAppearance a){impl_->scene.setAppearance(a);impl_->appearance=a;}void ActivityPreview::setLanguage(core::Language language){auto a=impl_->appearance;a.language=language;setAppearance(a);}void ActivityPreview::setIcons(gpu::ActivityIcons icons){impl_->scene.setIcons(std::move(icons));}
 void ActivityPreview::setReduceMotion(bool value){auto i=impl_;i->reduced=value;if(value)i->scene.settle();i->feedback();}
-void ActivityPreview::setOverlayVisible(bool value,double t){auto i=impl_;const Impl::Event event(*i,t);if(i->overlayVisible==value)return;i->overlayVisible=value;if(!value){i->active=false;i->input=false;i->pressed=false;i->hasVisibleSample=false;i->scene.settle();i->feedback();i->demandChange();}}
+void ActivityPreview::setOverlayVisible(bool value,double t){auto i=impl_;const Impl::Event event(*i,t);i->parkWanted=!value;if(i->overlayVisible==value)return;i->overlayVisible=value;if(!value){i->active=false;i->input=false;i->pressed=false;i->hasVisibleSample=false;i->scene.settle();i->feedback();i->demandChange();(void)i->park();}}
+void ActivityPreview::conceal()noexcept{try{(void)impl_->park();}catch(...){}}
 void ActivityPreview::update(const Matrix&center,const core::source::DesktopChromeSettings&settings,const core::ModulePresentationSample&sample,float opacity,double t){auto i=impl_;const Impl::Event event(*i,t);const auto*shown=sample.current.module==core::Module::activityMonitor?&sample.current:sample.incoming&&sample.incoming->module==core::Module::activityMonitor?&*sample.incoming:nullptr;const bool active=shown&&sample.requested==core::Module::activityMonitor&&i->overlayVisible;
     if(active!=i->active){i->active=active;i->input=false;i->pressed=false;i->hasVisibleSample=false;if(!active)i->scene.settle();i->demandChange();if(!i->alive)return;}
     i->input=active&&sample.acceptsModuleInput;if(!shown){i->pose.reset();i->registration.update({});return;}
+    if(sample.requested==core::Module::activityMonitor)i->parkWanted=false; // the selected module keeps its artwork across a close
     if(active||i->scene.entries().empty()){const bool animate=i->hasVisibleSample&&i->lastTimestamp!=i->state.snapshot().timestamp&&!i->reduced;i->bindIcons();i->scene.syncContent(i->time,animate);i->lastTimestamp=i->state.snapshot().timestamp;i->hasVisibleSample=true;}
     i->surface.update(center,settings,*shown,opacity);i->pose=i->surface.pose();const auto&p=*i->pose;const auto camera=gpu::layerViewportProjection(i->metrics.pixelWidth,i->metrics.pixelHeight)*Matrix::scale(i->metrics.scale,i->metrics.scale);i->projection=core::Projection::viewport(camera*p.contentWorld,i->metrics.pixelWidth,i->metrics.pixelHeight);i->feedback();i->scene.updatePose({p.contentWorld,p.opacity,i->time,std::span(&p.hostClip,1),p.shutter?&*p.shutter:nullptr});i->registration.update(p.registration);
 }
@@ -79,9 +87,12 @@ bool ActivityPreview::key(const app::KeyEvent&e,double t){return key(e,e.alt||Ge
 bool ActivityPreview::key(const app::KeyEvent&e,bool modified,double t){auto i=impl_;const Impl::Event event(*i,t);if(!i->input||e.kind!=app::KeyKind::down||e.value!=VK_ESCAPE||modified)return false;return i->state.showingApps()&&i->action("activity:overview");}
 void ActivityPreview::cancelInteraction(){auto i=impl_;i->pressed=false;i->pointerPoint.reset();i->feedback();}bool ActivityPreview::pointerLocked()const noexcept{return impl_->pressed;}
 const modules::ActivityState&ActivityPreview::state()const noexcept{return impl_->state;}modules::ActivityState&ActivityPreview::providerState()noexcept{return impl_->state;}
-void ActivityPreview::upload(gpu::Renderer&r){auto&i=*impl_;if(!i.pose)return;i.registration.uploadGeometry(r);i.scene.uploadAnimations(r);}
+void ActivityPreview::upload(gpu::Renderer&r){auto&i=*impl_;i.renderer=&r;if(!i.pose)return;i.registration.uploadGeometry(r);i.scene.uploadAnimations(r);}
 std::span<const gpu::LayerCompositionEntry>ActivityPreview::entries(){auto&i=*impl_;i.composed.clear();if(i.pose){for(const auto&e:i.scene.entries())i.composed.push_back(e);i.composed.push_back({&i.geometry,i.registration.draws()});}return i.composed;}
-void ActivityPreview::collected(gpu::Renderer&r){need(impl_->scene.collectRetired(r),"Activity resources still published");}void ActivityPreview::release(gpu::Renderer&r){auto&i=*impl_;need(i.scene.releaseResources(r)&&i.registration.releaseResources(r)&&i.geometry.releaseResources(r),"Activity resources still published at teardown");}gpu::ActivitySceneStats ActivityPreview::stats()const{return impl_->scene.stats();}
+void ActivityPreview::collected(gpu::Renderer&r){auto&i=*impl_;need(i.scene.collectRetired(r),"Activity resources still published");
+    // After a HUD close began, an Activity that this publication no longer
+    // composes releases its artwork (showing it again rebuilds it).
+    i.renderer=&r;if(i.parkWanted)(void)i.park();}void ActivityPreview::release(gpu::Renderer&r){auto&i=*impl_;need(i.scene.releaseResources(r)&&i.registration.releaseResources(r)&&i.geometry.releaseResources(r),"Activity resources still published at teardown");}gpu::ActivitySceneStats ActivityPreview::stats()const{return impl_->scene.stats();}
 std::optional<gpu::ActivityIconStats>ActivityPreview::iconStats()const{if(!impl_->icons)return {};return impl_->icons->stats();}
 }
 #endif

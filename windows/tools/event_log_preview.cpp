@@ -18,6 +18,12 @@ struct EventLogPreview::Impl {
     modules::EventLogState state;gpu::NativeEventLogScene scene;gpu::LayerScene geometry;gpu::NativeModuleSurface surface;gpu::NativeModuleRegistration registration{"eventLog.registration"};
     app::ClientMetrics metrics;core::Projection projection;std::optional<gpu::ModuleSurfacePose>pose;bool active{},input{},pressed{};std::optional<core::Point>pointerPoint;double time{};unsigned eventDepth{};std::vector<gpu::LayerCompositionEntry>composed;
     struct Event {Impl&i;Event(Impl&v,double t):i(v){need(std::isfinite(t),"Event Log needs finite owner time");if(!i.eventDepth)i.time=std::max(i.time,t);++i.eventDepth;}~Event(){--i.eventDepth;}};
+    // The raster artwork is released once the HUD closes while the Event Log
+    // is not shown (setOverlayVisible(false), the next publication after it or
+    // conceal()), never on a module switch inside an open HUD. renderer: the
+    // host's, from upload()/collected().
+    gpu::Renderer*renderer{};bool parkWanted{};
+    bool park(){if(pose||!renderer||!scene.park(*renderer))return false;(void)registration.releaseResources(*renderer);parkWanted=false;return true;}
     Impl(gpu::LayerRasterizer&r,gpu::LayerRasterOptions options,modules::EventLogCallbacks callbacks,modules::EventLogStrings strings,modules::EventLogAppearance appearance,modules::EventNameCompactor compactor):state(std::move(callbacks),std::move(strings),std::move(compactor)),scene(state,r,options,appearance),geometry(r),surface(prepareGeometry(options),core::Module::eventLog){composed.reserve(18);}
     gpu::LayerScene&prepareGeometry(const gpu::LayerRasterOptions&o){geometry.load(blank(),o);return geometry;}
     std::optional<core::Point>local(core::Point p)const{return input?projection.unproject({p.x*metrics.scale,p.y*metrics.scale}):std::nullopt;}
@@ -32,7 +38,8 @@ void EventLogPreview::setReduceMotion(bool value){impl_->state.setReduceMotion(v
 void EventLogPreview::update(const Matrix&center,const core::source::DesktopChromeSettings&settings,const core::ModulePresentationSample&sample,float opacity,double t){auto&i=*impl_;const Impl::Event event(i,t);
     const auto*shown=sample.current.module==core::Module::eventLog?&sample.current:sample.incoming&&sample.incoming->module==core::Module::eventLog?&*sample.incoming:nullptr;const bool active=shown&&sample.requested==core::Module::eventLog;
     if(active!=i.active){i.active=active;if(active)i.state.activate();else{i.state.deactivate();i.pressed=false;i.scene.setFeedback({},false,i.time);}}i.input=active&&sample.acceptsModuleInput;
-    if(!shown){if(!i.scene.entries().empty()&&!i.state.pendingChanges().empty())i.scene.syncContent(i.time);i.pose.reset();i.registration.update({});return;}i.scene.syncContent(i.time);i.surface.update(center,settings,*shown,opacity);i.pose=i.surface.pose();const auto&p=*i.pose;
+    if(!shown){if(!i.scene.entries().empty()&&!i.state.pendingChanges().empty())i.scene.syncContent(i.time);i.pose.reset();i.registration.update({});return;}if(sample.requested==core::Module::eventLog)i.parkWanted=false; // the selected module keeps its artwork across a close
+    i.scene.syncContent(i.time);i.surface.update(center,settings,*shown,opacity);i.pose=i.surface.pose();const auto&p=*i.pose;
     const auto camera=gpu::layerViewportProjection(i.metrics.pixelWidth,i.metrics.pixelHeight)*Matrix::scale(i.metrics.scale,i.metrics.scale);i.projection=core::Projection::viewport(camera*p.contentWorld,i.metrics.pixelWidth,i.metrics.pixelHeight);
     if(i.pointerPoint){const auto local=i.local(*i.pointerPoint);i.scene.setFeedback(local?i.state.feedbackActionAt(*local):std::nullopt,i.pressed,i.time);}
     i.scene.updatePose({p.contentWorld,p.opacity,i.time,std::span(&p.hostClip,1),p.shutter});i.registration.update(p.registration);
@@ -50,11 +57,16 @@ bool EventLogPreview::key(const app::KeyEvent&e,double t){return key(e,e.alt||Ge
 bool EventLogPreview::key(const app::KeyEvent&e,bool modified,double t){auto&i=*impl_;const Impl::Event event(i,t);if(!i.input||e.kind!=app::KeyKind::down||modified)return false;
     switch(e.value){case VK_DOWN:i.state.selectNext(1);break;case VK_UP:i.state.selectNext(-1);break;case VK_NEXT:i.state.scrollBy(168);break;case VK_PRIOR:i.state.scrollBy(-168);break;case VK_HOME:i.state.scrollBy(-std::numeric_limits<double>::max());break;case VK_END:i.state.scrollBy(std::numeric_limits<double>::max());break;case VK_ESCAPE:return i.state.cancelConfirmation();default:return false;}return true;
 }
+void EventLogPreview::setOverlayVisible(bool value,double t){auto&i=*impl_;const Impl::Event event(i,t);i.parkWanted=!value;if(!value){cancelInteraction();(void)i.park();}}
+void EventLogPreview::conceal()noexcept{try{(void)impl_->park();}catch(...){}}
 void EventLogPreview::cancelInteraction(){impl_->pressed=false;impl_->pointerPoint.reset();if(impl_->pose)impl_->scene.setFeedback({},false,impl_->time);}bool EventLogPreview::pointerLocked()const{return impl_->pressed;}
 const modules::EventLogState&EventLogPreview::state()const{return impl_->state;}
-void EventLogPreview::upload(gpu::Renderer&r){auto&i=*impl_;if(!i.pose)return;i.registration.uploadGeometry(r);i.scene.uploadAnimations(r);}
+void EventLogPreview::upload(gpu::Renderer&r){auto&i=*impl_;i.renderer=&r;if(!i.pose)return;i.registration.uploadGeometry(r);i.scene.uploadAnimations(r);}
 std::span<const gpu::LayerCompositionEntry>EventLogPreview::entries(){auto&i=*impl_;i.composed.clear();if(i.pose){for(const auto&e:i.scene.entries())i.composed.push_back(e);i.composed.push_back({&i.geometry,i.registration.draws()});}return i.composed;}
-void EventLogPreview::collected(gpu::Renderer&r){need(impl_->scene.collectRetired(r),"Event Log old artwork still published");}
+void EventLogPreview::collected(gpu::Renderer&r){auto&i=*impl_;need(i.scene.collectRetired(r),"Event Log old artwork still published");
+    // After a HUD close began, an Event Log that this publication no longer
+    // composes releases its artwork (showing it again rebuilds it).
+    i.renderer=&r;if(i.parkWanted)(void)i.park();}
 void EventLogPreview::release(gpu::Renderer&r){auto&i=*impl_;need(i.scene.releaseResources(r)&&i.registration.releaseResources(r)&&i.geometry.releaseResources(r),"Event Log resources still published at teardown");}
 gpu::EventLogSceneStats EventLogPreview::stats()const{return impl_->scene.stats();}
 }

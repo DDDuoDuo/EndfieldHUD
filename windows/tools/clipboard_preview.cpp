@@ -3,6 +3,7 @@
 #ifdef _WIN32
 #include "native/module_scene.hpp"
 #include "native/module_registration.hpp"
+#include "native/layer_image_source.hpp"
 #include <algorithm>
 #include <cmath>
 
@@ -16,7 +17,17 @@ struct ClipboardPreview::Impl {
     gpu::ClipboardState state;gpu::NativeClipboardScene scene;gpu::LayerScene geometry;gpu::NativeModuleSurface surface;gpu::NativeModuleRegistration registration{"clipboard.registration"};
     app::ClientMetrics metrics;core::Projection projection;std::optional<gpu::ModuleSurfacePose>pose;bool active{},input{},pressed{};std::optional<core::Point>pointerPoint;double time{};unsigned eventDepth{};std::vector<gpu::LayerCompositionEntry>composed;
     struct Event {Impl&i;Event(Impl&v,double t):i(v){need(std::isfinite(t),"Clipboard needs finite owner time");if(!i.eventDepth)i.time=std::max(i.time,t);++i.eventDepth;}~Event(){--i.eventDepth;}};
-    Impl(gpu::LayerRasterizer&r,gpu::LayerRasterOptions options,gpu::ClipboardActions a,gpu::ClipboardStrings strings,gpu::ClipboardAppearance appearance,gpu::ClipboardImages images,std::shared_ptr<const core::SubsectionMaskSampler>mask):state(std::move(a),std::move(strings)),scene(state,r,options,appearance,std::move(images),std::move(mask)),geometry(r),surface(prepareGeometry(options),core::Module::clipboard){composed.reserve(12);}
+    // The raster artwork (and the row thumbnails it borrowed from the
+    // provider's image source) is released once the HUD closes while the
+    // Clipboard is not shown (setOverlayVisible(false), the next publication
+    // after it or conceal()), never on a module switch inside an open HUD.
+    // renderer: the host's, from upload()/collected().
+    gpu::LayerImageSource*thumbnails{};gpu::Renderer*renderer{};bool parkWanted{};
+    bool park(){if(pose||!renderer||!scene.park(*renderer))return false;(void)registration.releaseResources(*renderer);parkWanted=false;
+        // The rows rebuilt on the next showing publish their thumbnails again
+        // (ClipboardActions::prepareImageRows) from the shared history.
+        if(thumbnails)thumbnails->clear();return true;}
+    Impl(gpu::LayerRasterizer&r,gpu::LayerRasterOptions options,gpu::ClipboardActions a,gpu::ClipboardStrings strings,gpu::ClipboardAppearance appearance,gpu::ClipboardImages images,std::shared_ptr<const core::SubsectionMaskSampler>mask):state(std::move(a),std::move(strings)),scene(state,r,options,appearance,std::move(images),std::move(mask)),geometry(r),surface(prepareGeometry(options),core::Module::clipboard),thumbnails(options.memoryImages){composed.reserve(12);}
     gpu::LayerScene&prepareGeometry(const gpu::LayerRasterOptions&o){geometry.load(blank(),o);return geometry;}
     std::optional<core::Point>local(core::Point p)const{return input?projection.unproject({p.x*metrics.scale,p.y*metrics.scale}):std::nullopt;}
 };
@@ -30,7 +41,8 @@ void ClipboardPreview::setReduceMotion(bool value){impl_->state.setReduceMotion(
 void ClipboardPreview::update(const Matrix&center,const core::source::DesktopChromeSettings&settings,const core::ModulePresentationSample&sample,float opacity,double t){auto&i=*impl_;const Impl::Event event(i,t);
     const auto*shown=sample.current.module==core::Module::clipboard?&sample.current:sample.incoming&&sample.incoming->module==core::Module::clipboard?&*sample.incoming:nullptr;const bool active=shown&&sample.requested==core::Module::clipboard;
     if(active!=i.active){i.active=active;if(active)i.state.activate();else{i.state.deactivate();i.pressed=false;i.scene.setFeedback({},false,i.time);}}i.input=active&&sample.acceptsModuleInput;
-    if(!shown){i.pose.reset();i.registration.update({});return;}i.scene.syncContent(i.time);i.surface.update(center,settings,*shown,opacity);i.pose=i.surface.pose();const auto&p=*i.pose;
+    if(!shown){i.pose.reset();i.registration.update({});return;}if(sample.requested==core::Module::clipboard)i.parkWanted=false; // the selected module keeps its artwork across a close
+    i.scene.syncContent(i.time);i.surface.update(center,settings,*shown,opacity);i.pose=i.surface.pose();const auto&p=*i.pose;
     const auto camera=gpu::layerViewportProjection(i.metrics.pixelWidth,i.metrics.pixelHeight)*Matrix::scale(i.metrics.scale,i.metrics.scale);i.projection=core::Projection::viewport(camera*p.contentWorld,i.metrics.pixelWidth,i.metrics.pixelHeight);
     if(i.pointerPoint){const auto local=i.local(*i.pointerPoint);i.scene.setFeedback(local?i.state.feedbackActionAt(*local):std::nullopt,i.pressed,i.time);}
     i.scene.updatePose({p.contentWorld,p.opacity,i.time,std::span(&p.hostClip,1),p.shutter});i.registration.update(p.registration);
@@ -48,11 +60,16 @@ bool ClipboardPreview::key(const app::KeyEvent&e,double t){return key(e,e.alt||G
 bool ClipboardPreview::key(const app::KeyEvent&e,bool modified,double t){auto&i=*impl_;const Impl::Event event(i,t);if(!i.input||e.kind!=app::KeyKind::down||modified)return false;
     switch(e.value){case VK_DOWN:i.state.selectNext(1);break;case VK_UP:i.state.selectNext(-1);break;case VK_RETURN:i.state.copySelection();break;case VK_DELETE:case VK_BACK:i.state.deleteSelection();break;default:if(e.value<'1'||e.value>'6')return false;i.state.copyVisibleItem(e.value-'1');}return true;
 }
+void ClipboardPreview::setOverlayVisible(bool value,double t){auto&i=*impl_;const Impl::Event event(i,t);i.parkWanted=!value;if(!value){cancelInteraction();(void)i.park();}}
+void ClipboardPreview::conceal()noexcept{try{(void)impl_->park();}catch(...){}}
 void ClipboardPreview::cancelInteraction(){impl_->pressed=false;impl_->pointerPoint.reset();if(impl_->pose)impl_->scene.setFeedback({},false,impl_->time);}bool ClipboardPreview::pointerLocked()const{return impl_->pressed;}
 const gpu::ClipboardState&ClipboardPreview::state()const{return impl_->state;}
-void ClipboardPreview::upload(gpu::Renderer&r){auto&i=*impl_;if(!i.pose)return;i.registration.uploadGeometry(r);i.scene.uploadAnimations(r);}
+void ClipboardPreview::upload(gpu::Renderer&r){auto&i=*impl_;i.renderer=&r;if(!i.pose)return;i.registration.uploadGeometry(r);i.scene.uploadAnimations(r);}
 std::span<const gpu::LayerCompositionEntry>ClipboardPreview::entries(){auto&i=*impl_;i.composed.clear();if(i.pose){for(const auto&e:i.scene.entries())i.composed.push_back(e);i.composed.push_back({&i.geometry,i.registration.draws()});}return i.composed;}
-void ClipboardPreview::collected(gpu::Renderer&r){need(impl_->scene.collectRetired(r),"Clipboard old artwork still published");}
+void ClipboardPreview::collected(gpu::Renderer&r){auto&i=*impl_;need(i.scene.collectRetired(r),"Clipboard old artwork still published");
+    // After a HUD close began, a Clipboard that this publication no longer
+    // composes releases its artwork (showing it again rebuilds it).
+    i.renderer=&r;if(i.parkWanted)(void)i.park();}
 void ClipboardPreview::release(gpu::Renderer&r){auto&i=*impl_;need(i.scene.releaseResources(r)&&i.registration.releaseResources(r)&&i.geometry.releaseResources(r),"Clipboard resources still published at teardown");}
 gpu::ClipboardSceneStats ClipboardPreview::stats()const{return impl_->scene.stats();}
 }
