@@ -65,6 +65,16 @@ public:
     native::NativeVolumeSceneStats sceneStats()const noexcept;
     void upload(native::Renderer&);std::span<const native::LayerCompositionEntry>entries();
     void collected(native::Renderer&);void release(native::Renderer&);
+    // Resident artwork. Nothing is rasterized at construction: the artwork is
+    // built when Volume is first shown, or by prewarm() at launch when Volume
+    // is the selected module (ModuleOwner::prewarm). Once the HUD closes while
+    // Volume is not the shown module (setOverlayVisible(false), then the next
+    // publication without it, or conceal() after the close), every raster,
+    // rasterizer entry, GPU texture and the registration mesh is released;
+    // showing Volume again rebuilds artwork that paints identically. The
+    // module shown at the close keeps its artwork (the Mac keeps its layers).
+    void prewarm(const core::ModulePresentationSample&);
+    void setOverlayVisible(bool,double time);void conceal()noexcept;
 private:struct Impl;std::unique_ptr<Impl>impl_;
 };
 // Creates supported master/balance and asynchronous relative app writers.

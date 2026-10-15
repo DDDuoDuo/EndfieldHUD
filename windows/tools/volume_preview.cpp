@@ -20,10 +20,16 @@ struct VolumePreview::Impl {
     std::vector<gpu::LayerCompositionEntry>composed;app::ClientMetrics metrics;core::Projection projection;
     std::optional<gpu::ModuleSurfacePose>pose;bool active{},acceptsInput{},pressed{},reduced{},released{};
     double time{};unsigned eventDepth{};
+    // The artwork is built when Volume is first shown (or prewarmed), never at
+    // construction, and released once the HUD closes while Volume is not the
+    // shown module (setOverlayVisible(false), the next publication without it,
+    // or conceal()). renderer: the host's, from upload()/collected().
+    gpu::Renderer*renderer{};bool parkWanted{};
+    bool park(){if(pose||!renderer||!scene.park(*renderer))return false;(void)registration.releaseResources(*renderer);parkWanted=false;return true;}
     struct Event {Impl&i;Event(Impl&v,double requested):i(v){need(std::isfinite(requested),"Volume owner needs a finite clock");if(!i.eventDepth)i.time=std::max(i.time,requested);++i.eventDepth;}~Event(){--i.eventDepth;}};
     Impl(gpu::LayerRasterizer&r,VolumePreviewOptions options):icons(std::move(options.icons)),raw(options.initial),controller(std::move(options.initial),std::move(options.actions),std::move(options.strings),options.layout),scene(controller,r,[&]{gpu::LayerRasterOptions ro;ro.pixelsPerPoint=options.rasterDensity;ro.memoryImages=options.memoryImages;return ro;}(),options.style),geometry(r),reduced(options.reduceMotion){
         need(std::isfinite(options.rasterDensity)&&options.rasterDensity>=.1&&options.rasterDensity<=16,"Invalid Volume raster density");
-        gpu::LayerRasterOptions ro;ro.pixelsPerPoint=options.rasterDensity;geometry.load(empty(),ro);surface=std::make_unique<gpu::NativeModuleSurface>(geometry,core::Module::volume);scene.syncContent();composed.reserve(12);
+        gpu::LayerRasterOptions ro;ro.pixelsPerPoint=options.rasterDensity;geometry.load(empty(),ro);surface=std::make_unique<gpu::NativeModuleSurface>(geometry,core::Module::volume);composed.reserve(12);
     }
     std::optional<core::Point>local(core::Point p)const{return acceptsInput?projection.unproject({p.x*metrics.scale,p.y*metrics.scale}):std::nullopt;}
     void content(){if(!active)return;if(controller.contentRevision()!=iconRevision){refreshIcons();iconRevision=controller.contentRevision();}scene.syncContent();}
@@ -67,7 +73,11 @@ void VolumePreview::update(const Matrix&center,const core::source::DesktopChrome
     const auto*shown=sample.current.module==core::Module::volume?&sample.current:sample.incoming&&sample.incoming->module==core::Module::volume?&*sample.incoming:nullptr;
     const bool active=shown&&sample.requested==core::Module::volume;if(active!=i.active){i.active=active;i.acceptsInput=false;i.pressed=false;i.controller.mouseUp();if(active){i.scene.retainDepartingArtwork(false);i.controller.setActive(true);}else {i.scene.retainDepartingArtwork(true);i.controller.setActive(false);i.refreshIcons();}}
     i.acceptsInput=active&&sample.acceptsModuleInput;if(!i.acceptsInput){i.controller.mouseUp();i.pressed=false;}
-    if(!shown){i.pose.reset();i.registration.update({});return;}i.content();i.surface->update(center,settings,*shown,opacity);i.pose=i.surface->pose();const auto&p=*i.pose;
+    // The selected module keeps its artwork across a close.
+    if(sample.requested==core::Module::volume)i.parkWanted=false;
+    // Unbuilt (or parked) artwork is built only for an active Volume; an
+    // outgoing Volume whose artwork was released composes nothing.
+    if(shown)i.content();if(!shown||!i.scene.resident()){i.pose.reset();i.registration.update({});return;}i.surface->update(center,settings,*shown,opacity);i.pose=i.surface->pose();const auto&p=*i.pose;
     const auto camera=gpu::layerViewportProjection(i.metrics.pixelWidth,i.metrics.pixelHeight)*Matrix::scale(i.metrics.scale,i.metrics.scale);i.projection=core::Projection::viewport(camera*p.contentWorld,i.metrics.pixelWidth,i.metrics.pixelHeight);
     i.scene.updatePose(p.contentWorld,p.opacity,i.time,std::span(&p.hostClip,1),p.shutter?&*p.shutter:nullptr);i.registration.update(p.registration);
 }
@@ -103,11 +113,20 @@ bool VolumePreview::perform(std::string_view action,double t){auto&i=*impl_;cons
 bool VolumePreview::setAccessibleValue(std::string_view slider,double value,double t){auto&i=*impl_;const Impl::Event event(i,t);if(!acceptsInput()||!std::isfinite(value))return false;const bool used=i.controller.setSlider(slider,value);i.content();return used;}
 const gpu::VolumeController&VolumePreview::state()const noexcept{return impl_->controller;}
 gpu::NativeVolumeSceneStats VolumePreview::sceneStats()const noexcept{return impl_->scene.stats();}
-void VolumePreview::upload(gpu::Renderer&r){auto&i=*impl_;if(i.pose){i.scene.uploadResources(r);i.registration.uploadGeometry(r);}}
+void VolumePreview::upload(gpu::Renderer&r){auto&i=*impl_;i.renderer=&r;if(i.pose){i.scene.uploadResources(r);i.registration.uploadGeometry(r);}}
 std::span<const gpu::LayerCompositionEntry>VolumePreview::entries(){auto&i=*impl_;if(!i.pose)return {};const auto parts=i.scene.entries();i.composed.clear();i.composed.insert(i.composed.end(),parts.begin(),parts.end());i.composed.back().after=i.registration.draws();return i.composed;}
 // After the caller published entries(): rows that left the retained window
 // release their resources (an incomplete release retries on the next one).
-void VolumePreview::collected(gpu::Renderer&r){(void)impl_->scene.collectRetired(r);}
+void VolumePreview::collected(gpu::Renderer&r){auto&i=*impl_;(void)i.scene.collectRetired(r);
+    // After a HUD close began, a Volume this publication no longer composes
+    // releases its artwork (showing it again rebuilds it).
+    i.renderer=&r;if(i.parkWanted)(void)i.park();}
+void VolumePreview::setOverlayVisible(bool value,double t){auto&i=*impl_;const Impl::Event event(i,t);i.parkWanted=!value;if(!value){i.controller.mouseUp();i.pressed=false;(void)i.park();}}
+void VolumePreview::conceal()noexcept{try{(void)impl_->park();}catch(...){}}
+void VolumePreview::prewarm(const core::ModulePresentationSample&sample){auto&i=*impl_;
+    // Launch prewarm: the selected Volume's artwork is built while the HUD is
+    // still closed (no activation, audio vote, pose or frame).
+    if(sample.requested!=core::Module::volume||i.scene.resident()||i.active)return;i.scene.syncContent();}
 void VolumePreview::release(gpu::Renderer&r){auto&i=*impl_;need(i.scene.releaseResources(r)&&i.registration.releaseResources(r),"Detach Volume composition before releasing borrowed resources");i.released=true;}
 gpu::VolumeCallbacks volumeCallbacksFromSystemServices(gpu::SystemServices&service,std::function<void(bool)> activation){gpu::VolumeCallbacks c;c.setActive=std::move(activation);
     const auto current=[&service](std::string_view id){const auto&s=service.audio();if(!s.available||s.paused)return false;const auto&endpoint=s.controlled_device_id.empty()?s.default_device_id:s.controlled_device_id;if(endpoint.size()>32767||id.size()>4096)return false;std::array<char,4096>encoded{};const auto length=WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,endpoint.data(),static_cast<int>(endpoint.size()),encoded.data(),static_cast<int>(encoded.size()),nullptr,nullptr);return length>0&&std::string_view(encoded.data(),static_cast<std::size_t>(length))==id;};

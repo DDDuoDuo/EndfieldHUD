@@ -142,7 +142,11 @@ VolumeSnapshot volumeSnapshotFromSystemAudio(const AudioSnapshot&);
 struct VolumeStyle {bool dark{true};VolumeColor accent{250./255,212./255,31./255,1};bool operator==(const VolumeStyle&)const=default;};
 struct VolumeSurface {std::string id;core::Matrix4 local;float opacity{1};std::optional<core::Rect>clip;std::string feedback;bool rim{};};
 struct VolumeScenePlan {ehud::data::Json layers;std::vector<VolumeSurface>surfaces;};
-VolumeScenePlan prepareVolumeScene(const VolumeController&,VolumeStyle={});
+// The whole module in source paint order. compactShapes=false is the source
+// form the Mac oracle compares (zero-frame shapes with canvas paths);
+// true is the native raster form NativeVolumeScene loads: each such shape
+// sits at a whole-point origin near its path, same geometry and pixel grid.
+VolumeScenePlan prepareVolumeScene(const VolumeController&,VolumeStyle={},bool compactShapes=false);
 // How Core Animation renders VolumeCanvas.content.sublayerTransform: about the
 // content layer's anchor point (the centre of its 400x334 bounds, 200,167) and
 // flattened into the content plane (a CALayer, unlike a CATransformLayer,
@@ -165,6 +169,10 @@ struct NativeVolumeSceneStats {
     // The Headphones page parks them (rowParks) and App volume composes them
     // again unchanged (rowRevivals).
     std::uint64_t rowBuilds{},rowUpdates{},rowRetirements{},scrollSyncs{},rowParks{},rowRevivals{};
+    // Resident artwork right now: built parts (header, detail, composed,
+    // parked and retiring rows) and their CPU raster pixels. park() counts
+    // each release of the whole artwork (the HUD closed on another module).
+    std::size_t parts{},pixelBytes{};std::uint64_t parks{};
 };
 class NativeVolumeScene final {
 public:
@@ -192,6 +200,14 @@ public:
     // collectRetired releases rows that left the window: call it after the
     // composition published entries() without them.
     void uploadResources(Renderer&);bool collectRetired(Renderer&);bool releaseResources(Renderer&);
+    // Artwork is built by the first syncContent (the owner calls it when
+    // Volume is first shown or prewarmed, never at construction). park
+    // releases everything this scene holds (GPU resources, the shared
+    // rasterizer's entries and the CPU pixels behind them, parked rows) once
+    // no composition publishes it; false, with nothing released, while one
+    // still does. The next syncContent rebuilds artwork that paints the same.
+    bool park(Renderer&)noexcept;
+    bool resident()const noexcept;
     NativeVolumeSceneStats stats()const noexcept;
 private:struct Impl;std::unique_ptr<Impl>impl_;
 };

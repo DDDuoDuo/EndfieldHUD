@@ -44,6 +44,14 @@ if(NOT WIN32)
   target_link_libraries(hud_audio_runtime PUBLIC hud_audio_default)
 endif()
 
+# Packaged audio application names (the ms-resource reference rule and the
+# XmlLite AppxManifest reader) beside the WASAPI session backend, which runs
+# them once per process identity on the audio worker.
+target_sources(hud_services PRIVATE native/audio_application_name.cpp)
+if(WIN32)
+  target_link_libraries(hud_services PRIVATE xmllite shlwapi)
+endif()
+
 set(EHUD_AUDIO_TARGETS hud_audio_model hud_audio_service hud_volume_strings hud_audio_runtime)
 if(WIN32)
   # UI Automation fragments for the projected Volume controls.
@@ -68,6 +76,14 @@ if(BUILD_TESTING)
   target_link_libraries(audio_endpoint_model_tests PRIVATE hud_audio_model hud_data)
   add_test(NAME audio_endpoint_model_contracts COMMAND audio_endpoint_model_tests
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/audio-endpoint-source.json")
+
+  # Synthetic manifests in a private temporary directory only.
+  add_executable(audio_application_name_tests tests/audio_application_name_tests.cpp)
+  target_link_libraries(audio_application_name_tests PRIVATE hud_services)
+  if(WIN32)
+    target_compile_definitions(audio_application_name_tests PRIVATE UNICODE _UNICODE NOMINMAX)
+  endif()
+  add_test(NAME audio_application_name_contracts COMMAND audio_application_name_tests)
 
   add_executable(audio_route_journal_tests tests/audio_route_journal_tests.cpp)
   target_link_libraries(audio_route_journal_tests PRIVATE hud_audio_service hud_data)

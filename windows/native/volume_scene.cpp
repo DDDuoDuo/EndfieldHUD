@@ -193,12 +193,29 @@ VolumeColor white(double w,double a=1){return {w,w,w,a};}VolumeColor alpha(Volum
 Json command(const char*op,std::initializer_list<Point>points){Json::Array values;for(const auto&p:points)values.emplace_back(Json::Array{p.x,p.y});return Json::Object{{"op",op},{"points",std::move(values)}};}
 Json cut(Rect r,double corner){return Json::Array{command("move",{{r.x+corner,r.y}}),command("line",{{r.x+r.width,r.y}}),command("line",{{r.x+r.width,r.y+r.height-corner}}),command("line",{{r.x+r.width-corner,r.y+r.height}}),command("line",{{r.x,r.y+r.height}}),command("line",{{r.x,r.y+corner}}),command("close",{})};}
 Json rounded(Rect b,double radius){if(b.width<=0||b.height<=0)return Json::Array{command("move",{{b.x,b.y}}),command("line",{{b.x+b.width,b.y}}),command("line",{{b.x+b.width,b.y+b.height}}),command("line",{{b.x,b.y+b.height}}),command("close",{})};const auto rx=std::min(radius,b.width*.5),ry=std::min(radius,b.height*.5),kx=rx*.5522847498,ky=ry*.5522847498,l=b.x,t=b.y,right=l+b.width,bottom=t+b.height;return Json::Array{command("move",{{right,t+ry}}),command("line",{{right,bottom-ry}}),command("cubic",{{right,bottom-ry+ky},{right-rx+kx,bottom},{right-rx,bottom}}),command("line",{{l+rx,bottom}}),command("cubic",{{l+rx-kx,bottom},{l,bottom-ry+ky},{l,bottom-ry}}),command("line",{{l,t+ry}}),command("cubic",{{l,t+ry-ky},{l+rx-kx,t},{l+rx,t}}),command("line",{{right-rx,t}}),command("cubic",{{right-rx+kx,t},{right,t+ry-ky},{right,t+ry}}),command("close",{})};}
+// A path translated by (-dx,-dy).
+Json shifted(const Json&path,double dx,double dy){Json::Array out;for(const auto&c:path.array()){Json::Array points;for(const auto&q:c["points"].array())points.emplace_back(Json::Array{q.array()[0].number()-dx,q.array()[1].number()-dy});out.emplace_back(Json::Object{{"op",c["op"]},{"points",std::move(points)}});}return out;}
 struct Artwork {
     VolumeScenePlan plan;Json::Array layers;VolumeStyle style;VolumeColor primary,muted;std::optional<Rect>clip;
+    // Native raster form. The source paints plates and slider parts as
+    // CAShapeLayers with a zero frame and a canvas-coordinate path; a raster
+    // of that leaf spans from the canvas origin to the shape (at 2x the
+    // balance handle alone was ~1 MB). Compact moves each such leaf to a
+    // whole-point origin two points above-left of its path and translates the
+    // path: the same geometry on the same pixel grid, in a shape-sized bitmap.
+    // Shapes within two points of the canvas origin keep the source form.
+    // The Mac-oracle comparison uses the source form (compact=false).
+    bool compact{};
     explicit Artwork(VolumeStyle s):style(s),primary(white(s.dark?.94:.11)),muted(white(s.dark?.67:.37)){}
     void emit(std::string id,Json node,Rect frame={},std::string feedback={},bool rim=false,float opacity=1){node["id"]=id;node["position"]=Json::Array{frame.x,frame.y};node["anchorPoint"]=Json::Array{0,0};node["opacity"]=1;node["children"]=Json::Array{};plan.surfaces.push_back({std::move(id),Matrix::translation(frame.x,frame.y),opacity,clip,std::move(feedback),rim});layers.push_back(std::move(node));}
     void text(std::string id,std::string value,Rect frame,double size,VolumeColor ink,std::string face="Regular",std::string align="left",bool wrapped=false){const auto font=face=="Semibold"?".AppleSystemUIFontDemi":face=="Medium"?".AppleSystemUIFontMedium":".AppleSystemUIFont";emit(std::move(id),Json::Object{{"kind","text"},{"bounds",rect({0,0,frame.width,frame.height})},{"text",Json::Object{{"string",std::move(value)},{"fontSize",size},{"font",Json::Object{{"familyName",".AppleSystemUIFont"},{"postScriptName",font},{"pointSize",size}}},{"foregroundColor",color(ink)},{"alignment",align},{"wrapped",wrapped},{"truncation",wrapped?"none":"end"},{"runs",Json::Array{}}}}},frame);}
-    void shape(std::string id,Json path,std::optional<VolumeColor>fill,std::optional<VolumeColor>stroke={},double width=0,std::string feedback={},bool rim=false,float opacity=1,Rect frame={}){emit(std::move(id),Json::Object{{"kind","shape"},{"bounds",rect({})},{"shape",Json::Object{{"path",std::move(path)},{"fillColor",fill?color(*fill):Json{}},{"strokeColor",stroke?color(*stroke):Json{}},{"lineWidth",width},{"lineCap","butt"},{"lineJoin","miter"},{"fillRule","non-zero"}}}},frame,std::move(feedback),rim,opacity);}
+    void shape(std::string id,Json path,std::optional<VolumeColor>fill,std::optional<VolumeColor>stroke={},double width=0,std::string feedback={},bool rim=false,float opacity=1,Rect frame={}){
+        if(compact&&frame==Rect{}&&path.isArray()&&!path.array().empty()){double left=INFINITY,top=INFINITY;for(const auto&c:path.array())for(const auto&q:c["points"].array()){left=std::min(left,q.array()[0].number());top=std::min(top,q.array()[1].number());}
+            // A shape within two points of the canvas origin is already near
+            // tight; it keeps the source form (its stroke may cross the origin,
+            // which moves the source raster off the whole-point grid).
+            if(std::isfinite(left)&&std::isfinite(top)&&left>=2&&top>=2){const double x=std::floor(left)-2,y=std::floor(top)-2;path=shifted(path,x,y);frame={x,y,0,0};}}
+        emit(std::move(id),Json::Object{{"kind","shape"},{"bounds",rect({})},{"shape",Json::Object{{"path",std::move(path)},{"fillColor",fill?color(*fill):Json{}},{"strokeColor",stroke?color(*stroke):Json{}},{"lineWidth",width},{"lineCap","butt"},{"lineJoin","miter"},{"fillRule","non-zero"}}}},frame,std::move(feedback),rim,opacity);}
     void fillRect(std::string id,Rect r,VolumeColor c){emit(std::move(id),Json::Object{{"kind","layer"},{"bounds",rect({0,0,r.width,r.height})},{"backgroundColor",color(c)}},r);}
     void image(std::string id,const VolumeApplicationIcon&icon,Rect frame){emit(std::move(id),Json::Object{{"kind","layer"},{"bounds",rect({0,0,frame.width,frame.height})},{"contents",Json::Object{{"memoryImage",icon.imageKey},{"revision",static_cast<std::int64_t>(icon.revision)}}},{"contentsGravity","resizeAspect"}},frame);}
     // HUDControlHighlightLayer: tint and rim over the control's (visible) rect.
@@ -262,15 +279,15 @@ void mainArtwork(Artwork&a,const VolumeController&controller,std::size_t&rows,do
 // `visible` is the slider's part inside the viewport, relative to that top
 // (the source highlight is drawn over the visible rectangle only).
 [[maybe_unused]] VolumeScenePlan rowArtwork(const VolumeController&c,const VolumeApplication&app,Rect visible,VolumeStyle style){
-    Artwork a(style);a.slider(applicationSlider(app,c.strings(),{151,0,185,28},visible),"volume/app-row/slider","volume/app-row/feedback");a.applicationLabels("volume/app-row",app,0,c.strings());return a.finish({0,0,400,31});
+    Artwork a(style);a.compact=true;a.slider(applicationSlider(app,c.strings(),{151,0,185,28},visible),"volume/app-row/slider","volume/app-row/feedback");a.applicationLabels("volume/app-row",app,0,c.strings());return a.finish({0,0,400,31});
 }
 }
-VolumeScenePlan prepareVolumeScene(const VolumeController&controller,VolumeStyle style){
-    for(double c:style.accent)need(std::isfinite(c)&&c>=0&&c<=1,"Invalid Volume accent");Artwork a(style);std::size_t rows{};mainArtwork(a,controller,rows,thumbOffset(controller));
+VolumeScenePlan prepareVolumeScene(const VolumeController&controller,VolumeStyle style,bool compactShapes){
+    for(double c:style.accent)need(std::isfinite(c)&&c>=0&&c<=1,"Invalid Volume accent");Artwork a(style);a.compact=compactShapes;std::size_t rows{};mainArtwork(a,controller,rows,thumbOffset(controller));
     if(rows!=SIZE_MAX&&rowsShown(controller)){
         // Source appRowsLayer: every visible app slider, then every visible
         // row's captions, clipped to the viewport, painted before the scrollbar.
-        Artwork list(style);const auto view=controller.applicationViewport();list.clip=view;const auto&s=controller.snapshot();const auto listed=controller.applicationRows();
+        Artwork list(style);list.compact=compactShapes;const auto view=controller.applicationViewport();list.clip=view;const auto&s=controller.snapshot();const auto listed=controller.applicationRows();
         const auto row=[&](std::string_view id){for(std::size_t k=0;k<listed.size();++k)if(s.applications[listed[k]].id==id)return k;return listed.size();};
         for(const auto&slider:controller.sliders())if(slider.id.starts_with("app:")){const auto k=row(std::string_view(slider.id).substr(4));if(k<listed.size())list.slider(slider,"volume/app-row/"+std::to_string(k)+"/slider","volume/app-row/"+std::to_string(k)+"/feedback");}
         for(std::size_t k=0;k<listed.size();++k){const auto top=view.y+double(k)*31-controller.applicationScroll();if(top>=view.y+view.height)break;if(!intersect({12,top,376,30},view))continue;list.applicationLabels("volume/app-row/"+std::to_string(k),s.applications[listed[k]],top,controller.strings());}
@@ -306,7 +323,10 @@ struct NativeVolumeScene::Impl {
         // released, so a stale value only skips redundant work).
         std::uint64_t uploaded{UINT64_MAX};
     };
-    VolumeController*controller;LayerRasterizer*raster;LayerRasterOptions options;VolumeStyle style;Part main,detail;
+    VolumeController*controller;LayerRasterizer*raster;LayerRasterOptions options;VolumeStyle style;
+    // The header and the detail page. Empty until the first syncContent and
+    // again after park(): an unloaded LayerScene holds no raster entry.
+    std::unique_ptr<Part>main,detail;
     // rows: composed app rows; parked: rows kept while the Headphones page
     // hides the list; retired: rows awaiting release after a publication.
     std::vector<std::unique_ptr<Part>>rows,parked,retired;std::vector<LayerCompositionEntry>entries;
@@ -314,11 +334,11 @@ struct NativeVolumeScene::Impl {
     // Placement state captured at the last content sync (a departing module
     // keeps it while the controller has already reset its offset).
     std::size_t thumb{SIZE_MAX};double placedScroll{},placedThumb{};Rect viewport{12,234,376,64};
-    Impl(VolumeController&c,LayerRasterizer&r,LayerRasterOptions o,VolumeStyle s):controller(&c),raster(&r),options(std::move(o)),style(s),main(r),detail(r){entries.reserve(12);rows.reserve(8);parked.reserve(8);retired.reserve(16);entries.push_back({&main.scene,{}});entries.push_back({&detail.scene,{}});}
+    Impl(VolumeController&c,LayerRasterizer&r,LayerRasterOptions o,VolumeStyle s):controller(&c),raster(&r),options(std::move(o)),style(s),main(std::make_unique<Part>(r)),detail(std::make_unique<Part>(r)){entries.reserve(12);rows.reserve(8);parked.reserve(8);retired.reserve(16);entries.push_back({&main->scene,{}});entries.push_back({&detail->scene,{}});}
     void time(double t){need(std::isfinite(t)&&(!lastTime||t>=*lastTime),"Volume scene requires a finite monotonic owner clock");lastTime=t;}
     static double sample(const Track&track,double time){if(!track.active||track.duration<=0)return track.target;return track.from+(track.target-track.from)*core::CubicTiming{0,0,.58,1}.value(std::clamp((time-track.start)/track.duration,0.,1.));}
-    template<class F>void each(F&&f){f(main);f(detail);for(auto&p:rows)f(*p);}
-    template<class F>void each(F&&f)const{f(main);f(detail);for(const auto&p:rows)f(*p);}
+    template<class F>void each(F&&f){f(*main);f(*detail);for(auto&p:rows)f(*p);}
+    template<class F>void each(F&&f)const{f(*main);f(*detail);for(const auto&p:rows)f(*p);}
     // Equal surface lists update only changed leaves; otherwise the part is
     // reloaded and its feedback tracks carry over by control and rim.
     bool sync(Part&p,VolumeScenePlan next,bool force,std::uint64_t&leafUpdates){
@@ -366,7 +386,7 @@ struct NativeVolumeScene::Impl {
             rows=std::move(next);
         }
         placedThumb=thumbOffset(c);
-        entries.clear();entries.push_back({&main.scene,{}});entries.push_back({&detail.scene,{}});for(auto&p:rows)entries.push_back({&p->scene,{}});
+        entries.clear();entries.push_back({&main->scene,{}});entries.push_back({&detail->scene,{}});for(auto&p:rows)entries.push_back({&p->scene,{}});
     }
     bool updateTracks(Part&p,std::optional<std::string_view>hit,bool pressed,bool reduced,double time){bool changed{};
         for(std::size_t n=0;n<p.plan.surfaces.size();++n){const auto index=p.trackForSurface[n];if(index==SIZE_MAX)continue;auto&t=p.tracks[index];const auto&s=p.plan.surfaces[n];const bool selected=hit&&*hit==t.id;const double target=selected?(s.rim?1:pressed?1:.62):s.opacity;
@@ -378,13 +398,13 @@ NativeVolumeScene::NativeVolumeScene(VolumeController&c,LayerRasterizer&r,LayerR
 NativeVolumeScene::~NativeVolumeScene()=default;
 bool NativeVolumeScene::syncContent(){auto&i=*impl_;const auto&c=*i.controller;if(i.revision==c.contentRevision()&&!i.styleDirty)return false;
     need(!i.departing,"Departing Volume artwork is retained until reactivation");
-    if(i.styleDirty||!i.main.loaded||i.artwork!=c.artworkRevision()){
+    if(i.styleDirty||!i.main->loaded||i.artwork!=c.artworkRevision()){
         // Header and detail page are separate parts: a detail page switch or
         // a page step reloads only the detail; the header updates the leaves
         // that changed (the two detail buttons' highlight).
-        Artwork head(i.style);headArtwork(head,c);if(i.sync(i.main,head.finish(VolumeController::bounds()),i.styleDirty,i.stats.localUpdates))++i.stats.structureUpdates;
-        Artwork page(i.style);std::size_t rows{};detailArtwork(page,c,rows,0);if(i.sync(i.detail,page.finish(VolumeController::bounds()),i.styleDirty,i.stats.localUpdates))++i.stats.detailBuilds;
-        i.thumb=SIZE_MAX;for(std::size_t n=0;n<i.detail.plan.surfaces.size();++n)if(i.detail.plan.surfaces[n].id=="volume/app-thumb")i.thumb=n;
+        Artwork head(i.style);head.compact=true;headArtwork(head,c);if(i.sync(*i.main,head.finish(VolumeController::bounds()),i.styleDirty,i.stats.localUpdates))++i.stats.structureUpdates;
+        Artwork page(i.style);page.compact=true;std::size_t rows{};detailArtwork(page,c,rows,0);if(i.sync(*i.detail,page.finish(VolumeController::bounds()),i.styleDirty,i.stats.localUpdates))++i.stats.detailBuilds;
+        i.thumb=SIZE_MAX;for(std::size_t n=0;n<i.detail->plan.surfaces.size();++n)if(i.detail->plan.surfaces[n].id=="volume/app-thumb")i.thumb=n;
     }else ++i.stats.scrollSyncs;
     i.syncRows();i.revision=c.contentRevision();i.artwork=c.artworkRevision();i.styleDirty=false;i.posed=false;return true;
 }
@@ -414,13 +434,13 @@ bool NativeVolumeScene::updatePose(const Matrix&world,float opacity,double time,
             if(row)p.masks[n][count++]={inverseMoved,i.viewport};else if(s.clip)p.masks[n][count++]={inverseMoved,*s.clip};placement.masks={p.masks[n].data(),count};}
         p.scene.setPlacements(p.placements);p.scene.setGroupShutter(shutter?std::optional<PlaneShutter>{*shutter}:std::nullopt);for(auto&t:p.tracks)if(time>=t.start+t.duration)t.active=false;
     };
-    place(i.main,moved,false,true,SIZE_MAX);place(i.detail,moved,false,true,i.thumb);
+    place(*i.main,moved,false,true,SIZE_MAX);place(*i.detail,moved,false,true,i.thumb);
     // Rows move by the list offset alone: no artwork, text or mesh changes.
     for(auto&p:i.rows){const auto top=i.viewport.y+double(p->row)*31-i.placedScroll;place(*p,moved*Matrix::translation(0,top),true,intersect({12,top,376,30},i.viewport).has_value(),SIZE_MAX);}
     i.posed=true;++i.stats.poseUpdates;return true;
 }
 bool NativeVolumeScene::requiresFrames(double time)const{const auto&i=*impl_;need(std::isfinite(time)&&(!i.lastTime||time>=*i.lastTime),"Invalid Volume frame clock");if(i.departing)return false;if(i.controller->actionSample(time).active)return true;bool value{};i.each([&](const Impl::Part&p){for(const auto&t:p.tracks)value=value||(t.active&&time<t.start+t.duration);});return value;}
-LayerScene&NativeVolumeScene::scene()noexcept{return impl_->main.scene;}const LayerScene&NativeVolumeScene::scene()const noexcept{return impl_->main.scene;}
+LayerScene&NativeVolumeScene::scene()noexcept{return impl_->main->scene;}const LayerScene&NativeVolumeScene::scene()const noexcept{return impl_->main->scene;}
 std::span<const LayerCompositionEntry>NativeVolumeScene::entries()noexcept{auto&i=*impl_;for(auto&p:i.rows)p->exposed=true;return i.entries;}
 std::size_t NativeVolumeScene::rowCount()const noexcept{return impl_->rows.size();}std::size_t NativeVolumeScene::parkedRowCount()const noexcept{return impl_->parked.size();}
 void NativeVolumeScene::uploadResources(Renderer&r){auto&i=*impl_;i.each([&](Impl::Part&p){p.exposed=true;if(p.uploaded==p.scene.resourceRevision())return;p.scene.uploadResources(r);p.uploaded=p.scene.resourceRevision();});}
@@ -430,6 +450,28 @@ bool NativeVolumeScene::collectRetired(Renderer&r){auto&i=*impl_;i.each([&](Impl
     if(i.departing){for(auto&p:i.parked)i.retire(std::move(p));i.parked.clear();}
     while(!i.retired.empty()){if(!i.retired.back()->scene.releaseResources(r))return false;i.retired.pop_back();}return true;}
 bool NativeVolumeScene::releaseResources(Renderer&r){auto&i=*impl_;for(auto&p:i.parked)if(p)i.retired.push_back(std::move(p));i.parked.clear();bool complete=collectRetired(r);i.each([&](Impl::Part&p){complete=p.scene.releaseResources(r)&&complete;p.uploaded=UINT64_MAX;});return complete;}
-NativeVolumeSceneStats NativeVolumeScene::stats()const noexcept{return impl_->stats;}
+// The HUD closed on another module: release everything (Mac VolumeCanvas
+// keeps its layer tree, but a hidden Windows module parks its rasters like the
+// other built-in owners; the module shown at the close keeps its artwork).
+bool NativeVolumeScene::park(Renderer&r)noexcept{auto&i=*impl_;
+    if(!resident()&&i.rows.empty()&&i.parked.empty()&&i.retired.empty())return false;
+    try{
+        // A composed header or detail refuses first (LayerScene rejects a
+        // release while a composition owns it), before rows or rasters go.
+        const bool header=i.main->scene.releaseResources(r);i.main->uploaded=UINT64_MAX;
+        const bool page=header&&i.detail->scene.releaseResources(r);i.detail->uploaded=UINT64_MAX;
+        if(!page||!releaseResources(r))return false;
+        // Destroying the parts removes their entries (and the CPU pixels
+        // behind them) from the shared rasterizer.
+        auto head=std::make_unique<Impl::Part>(*i.raster),detail=std::make_unique<Impl::Part>(*i.raster);
+        i.rows.clear();i.parked.clear();i.retired.clear();i.main=std::move(head);i.detail=std::move(detail);
+        i.entries.clear();i.entries.push_back({&i.main->scene,{}});i.entries.push_back({&i.detail->scene,{}});
+        i.revision=0;i.artwork=0;i.thumb=SIZE_MAX;i.posed=false;i.departing=false;++i.stats.parks;return true;
+    }catch(...){i.each([](Impl::Part&p){p.uploaded=UINT64_MAX;});return false;}
+}
+bool NativeVolumeScene::resident()const noexcept{return impl_->revision!=0;}
+NativeVolumeSceneStats NativeVolumeScene::stats()const noexcept{const auto&i=*impl_;auto result=i.stats;
+    const auto count=[&](const Impl::Part&p){if(!p.loaded)return;++result.parts;result.pixelBytes+=p.scene.report().pixelBytes;};
+    i.each(count);for(const auto&p:i.parked)if(p)count(*p);for(const auto&p:i.retired)if(p)count(*p);return result;}
 }
 #endif

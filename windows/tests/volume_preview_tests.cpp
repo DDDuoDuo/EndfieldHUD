@@ -110,7 +110,7 @@ void pageSwitch(const std::filesystem::path&shader){Window window;gpu::Renderer 
         do{frame(time+=1./60);++frames;c=centre();
             check(std::abs(c[1]-167)<1e-6&&c[0]<=previous+1e-9&&c[0]>=200-1e-9,what);previous=c[0];
             const auto title=inverseContent*draw(composition,"volume/title").world*core::Matrix4::translation(-12,0);
-            const auto detailButton=inverseContent*draw(composition,"volume/action/4/plate").world;
+            const auto detailButton=inverseContent*draw(composition,"volume/action/4/plate").world*core::Matrix4::translation(-200,-203); // its compact raster origin: two points above-left of the 202,205 plate
             for(std::size_t n=0;n<16;++n)check(std::abs(title.values[n]-detailButton.values[n])<1e-9,"Header surfaces share one content motion");
             if(rows){const auto row=inverseContent*draw(composition,"volume/app-row/name").world*core::Matrix4::translation(-18,-235);for(std::size_t n=0;n<16;++n)check(std::abs(title.values[n]-row.values[n])<1e-9,"App rows move rigidly with the page");}
             check(frames<40,"The motion settles");}while(preview.requiresFrames(time));
@@ -141,5 +141,58 @@ void pageSwitch(const std::filesystem::path&shader){Window window;gpu::Renderer 
     composition.setEntries(renderer,{});preview.collected(renderer);preview.release(renderer);composition.detach(renderer);check(renderer.stats().textures==0&&renderer.stats().meshes==0,"Every Volume resource is retired");renderer.reset();
 }
 }
-int wmain(int argc,wchar_t**argv){const auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);try{check(SUCCEEDED(hr)&&argc==2,"Pass shader to isolated Volume integration fixture");run(argv[1]);scrolling(argv[1]);pageSwitch(argv[1]);CoUninitialize();std::cout<<"PASS "<<checks<<" Volume preview checks\n";return 0;}catch(const std::exception&e){counting=false;if(SUCCEEDED(hr))CoUninitialize();std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
+// Memory: the RC measured 426-599 MB private bytes. Volume used to rasterize
+// its whole artwork at construction (EndfieldHUD launch) and to keep it for the
+// process lifetime. Now nothing is built before Volume is first shown (or
+// prewarmed as the selected module), and once the HUD closes on another
+// module every raster, rasterizer entry, GPU texture and mesh is released;
+// showing Volume again paints the same pixels. The module shown at the close
+// keeps its artwork, as the Mac keeps its layers.
+void residency(const std::filesystem::path&shader){Window window;gpu::Renderer renderer;renderer.initialize(window.hwnd,1280,800,{gpu::Driver::warpForTests,shader,gpu::RenderTarget::offscreenForTests});renderer.setCamera(gpu::layerViewportProjection(1280,800));gpu::LayerRasterizer raster;
+    gpu::VolumeSnapshot data;data.outputs={{"endpoint-1","Speakers"},{"endpoint-2","Buds",true,true}};data.outputID="endpoint-1";data.volume=.55;data.balance=0;data.muted=false;data.canSetVolume=data.canSetMute=data.canSetBalance=true;data.applicationActivitySupported=true;
+    for(unsigned n=0;n<6;++n)data.applications.push_back({std::to_string(400+n)+":1","Synthetic app "+std::to_string(n),400+n,true,gpu::VolumeAppState::direct,{},{},{},{}});
+    unsigned activations{};tools::VolumePreviewOptions options;options.initial=data;options.rasterDensity=2;options.actions.setActive=[&](bool){++activations;}; // the production raster density
+    tools::VolumePreview preview(raster,options);preview.resize({1280,800,96,1,1280,800});core::source::DesktopChromeSettings settings;settings.viewport={0,0,1280,800};settings.module=core::Module::power;core::ModulePresentation modules(core::Module::power);double time{};
+    check(raster.stats().entries==0&&raster.stats().resourceBytes==0&&preview.sceneStats().parts==0&&preview.sceneStats().pixelBytes==0,"Constructing Volume rasterizes nothing");
+    gpu::LayerComposition composition;const auto frame=[&](double t){preview.update({},settings,modules.sample(t).presentation,1,t);preview.upload(renderer);composition.setEntries(renderer,preview.entries());preview.collected(renderer);composition.present(renderer);};
+    for(unsigned n=0;n<10;++n)frame(time+=1./60);check(raster.stats().entries==0&&activations==0&&preview.entries().empty(),"Frames of another module build no Volume artwork");
+    const auto select=[&](core::Module m){settings.module=m;modules.select(m,time+=.1);for(unsigned n=0;n<90;++n)frame(time+=1./60);};
+    const auto bytes=[&](const char*state){const auto s=preview.sceneStats();std::cout<<"Volume resident ("<<state<<"): "<<s.parts<<" parts, "<<s.pixelBytes<<" B of rasters; shared raster cache "<<raster.stats().resourceBytes<<" B in "<<raster.stats().entries<<" entries; GPU "<<renderer.stats().resourceBytes<<" B in "<<renderer.stats().textures<<" textures, "<<renderer.stats().meshes<<" meshes\n";return s;};
+    const auto pixels=[&]{renderer.draw(false);return renderer.readback().pixels;};
+    select(core::Module::volume);check(activations==1&&preview.state().active()&&!preview.requiresFrames(time),"Showing Volume builds and activates it");
+    const auto shown=bytes("App volume shown; before this change, held from launch");check(shown.parts==7&&shown.pixelBytes>0&&shown.pixelBytes==raster.stats().resourceBytes,"The shown App volume page holds its header, detail and five retained rows (four meet the viewport, one below), and nothing else in the rasterizer");
+    const auto painted=pixels();check(!painted.empty(),"The settled Volume paints");
+    // Switching away inside an open HUD keeps the artwork (switching back is free).
+    select(core::Module::power);check(preview.entries().empty()&&preview.sceneStats().pixelBytes==shown.pixelBytes&&renderer.stats().textures==0,"Switched away with the HUD open, Volume keeps its rasters (its GPU textures leave with the composition)");
+    bytes("switched away, HUD open");
+    // The HUD closes on another module: everything is released.
+    const auto before=raster.stats();preview.setOverlayVisible(false,time+=.1);preview.conceal();
+    const auto parked=bytes("HUD closed on another module");
+    check(parked.parts==0&&parked.pixelBytes==0&&parked.parks==1&&raster.stats().entries==0&&raster.stats().resourceBytes==0&&renderer.stats().textures==0&&renderer.stats().meshes==0,"Closing the HUD on another module releases every Volume raster, rasterizer entry, texture and mesh");
+    std::cout<<"Volume released on close: "<<before.resourceBytes<<" B of shared raster cache in "<<before.entries<<" entries\n";
+    // Reopening on another module builds nothing; showing Volume rebuilds the same artwork.
+    preview.setOverlayVisible(true,time+=.1);for(unsigned n=0;n<10;++n)frame(time+=1./60);check(raster.stats().entries==0,"Reopening on another module builds no Volume artwork");
+    select(core::Module::volume);const auto rebuilt=bytes("App volume shown again");
+    check(rebuilt.parts==shown.parts&&rebuilt.pixelBytes==shown.pixelBytes&&pixels()==painted,"Showing Volume again rebuilds artwork that paints identically");
+    // The HUD closes on Volume itself: the shown module keeps its artwork.
+    preview.setOverlayVisible(false,time+=.1);preview.conceal();for(unsigned n=0;n<5;++n)frame(time+=1./60);
+    check(preview.sceneStats().pixelBytes==shown.pixelBytes&&preview.sceneStats().parks==1,"The module shown at the close keeps its artwork (the Mac keeps its layers)");
+    preview.setOverlayVisible(true,time+=.1);
+    // Closing while Volume is still leaving: released by the publication without it.
+    settings.module=core::Module::power;modules.select(core::Module::power,time+=.1);frame(time+=1./60);check(!preview.entries().empty(),"Volume is still leaving");
+    preview.setOverlayVisible(false,time+=.01);check(preview.sceneStats().parks==1&&preview.sceneStats().pixelBytes>0,"A composed Volume is not released mid-departure");
+    for(unsigned n=0;n<90&&preview.sceneStats().parks==1;++n)frame(time+=1./60);check(preview.sceneStats().parks==2&&preview.sceneStats().pixelBytes==0&&raster.stats().entries==0,"The first publication without the departed Volume releases it");
+    composition.setEntries(renderer,{});preview.collected(renderer);preview.release(renderer);composition.detach(renderer);check(renderer.stats().textures==0&&renderer.stats().meshes==0,"Every Volume resource is retired");
+    // Launch prewarm: the selected Volume is built while the HUD is closed, with
+    // no activation (no audio vote), pose or frame; its first opening reuses it.
+    {gpu::LayerRasterizer warmRaster;unsigned warmActivations{};auto warmOptions=options;warmOptions.actions.setActive=[&](bool){++warmActivations;};tools::VolumePreview warm(warmRaster,warmOptions);warm.resize({1280,800,96,1,1280,800});
+        core::ModulePresentation warmModules(core::Module::volume);settings.module=core::Module::volume;
+        warm.prewarm(core::ModulePresentation(core::Module::power).sample(0).presentation);check(warmRaster.stats().entries==0,"Prewarm builds nothing when another module is selected");
+        warm.prewarm(warmModules.sample(0).presentation);const auto warmed=warmRaster.stats();check(warm.sceneStats().pixelBytes>0&&warmActivations==0&&!warm.state().active()&&warm.entries().empty()&&!warm.requiresFrames(0),"Prewarm builds the selected Volume without activating, posing or animating it");
+        gpu::LayerComposition warmComposition;warm.update({},settings,warmModules.sample(1).presentation,1,1);warm.upload(renderer);warmComposition.setEntries(renderer,warm.entries());warm.collected(renderer);warmComposition.present(renderer);
+        check(warmActivations==1&&warmRaster.stats().rasterizations==warmed.rasterizations&&warmRaster.stats().textLayoutsCreated==warmed.textLayoutsCreated,"The first opening reuses the prewarmed artwork: no raster or text layout");
+        warmComposition.setEntries(renderer,{});warm.collected(renderer);warm.release(renderer);warmComposition.detach(renderer);}
+    renderer.reset();
+}
+int wmain(int argc,wchar_t**argv){const auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);try{check(SUCCEEDED(hr)&&argc==2,"Pass shader to isolated Volume integration fixture");run(argv[1]);scrolling(argv[1]);pageSwitch(argv[1]);residency(argv[1]);CoUninitialize();std::cout<<"PASS "<<checks<<" Volume preview checks\n";return 0;}catch(const std::exception&e){counting=false;if(SUCCEEDED(hr))CoUninitialize();std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
 #endif

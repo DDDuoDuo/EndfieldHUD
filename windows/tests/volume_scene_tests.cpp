@@ -1,4 +1,6 @@
 #include "native/volume_scene.hpp"
+#include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <cstdlib>
@@ -135,6 +137,33 @@ void listLayout(){
 // Applied about the top-left corner it shrank the module towards the corner
 // and dragged the whole page up and left by ~2.4-2.8 points; started at the
 // press it lost its first frames to the page rebuild.
+// Memory: the source form paints every plate and slider part as a zero-frame
+// shape with a canvas-coordinate path, so each raster spanned from the canvas
+// origin to the shape (13.2 MB of rasters for the App volume page at 2x). The
+// native (compact) form moves each such shape to a whole-point origin two
+// points above-left of its path: the absolute geometry is unchanged.
+std::vector<core::Point>points(const Json&path,core::Point offset){std::vector<core::Point>out;for(const auto&c:path.array())for(const auto&q:c["points"].array())out.push_back({q.array()[0].number()+offset.x,q.array()[1].number()+offset.y});return out;}
+void compactForm(){
+    gpu::VolumeController c(fixture());c.setActive(true);std::size_t shapes{};
+    const auto compare=[&](const char*page){
+        const auto source=gpu::prepareVolumeScene(c),compact=gpu::prepareVolumeScene(c,{},true);
+        check(source.surfaces.size()==compact.surfaces.size()&&source.surfaces.size()==compact.layers["children"].array().size(),"The compact form keeps every source leaf in paint order");
+        for(std::size_t n=0;n<source.surfaces.size();++n){
+            const auto&a=source.layers["children"].array()[n],&b=compact.layers["children"].array()[n];const auto&sa=source.surfaces[n],&sb=compact.surfaces[n];
+            check(sa.id==sb.id&&sa.clip==sb.clip&&sa.feedback==sb.feedback&&sa.rim==sb.rim&&sa.opacity==sb.opacity,"Surface identity, clip, feedback and opacity are unchanged");
+            if(a["kind"].string()!="shape"||a["position"].array()[0].number()!=0||a["position"].array()[1].number()!=0||!(sa.local==core::Matrix4{})){check(a==b&&sa.local==sb.local,"Leaves with their own frame are unchanged");continue;}
+            double nearest=INFINITY;for(const auto&q:points(a["shape"]["path"],{}))nearest=std::min({nearest,q.x,q.y});
+            if(nearest<2){check(a==b&&sa.local==sb.local,"A shape within two points of the canvas origin keeps the source form");continue;}
+            ++shapes;const core::Point origin{sb.local.values[12],sb.local.values[13]};
+            check(origin.x==std::floor(origin.x)&&origin.y==std::floor(origin.y)&&b["position"]==Json(Json::Array{origin.x,origin.y})&&sb.local==core::Matrix4::translation(origin.x,origin.y),"A compact shape sits at a whole-point origin");
+            const auto absolute=points(a["shape"]["path"],{}),moved=points(b["shape"]["path"],origin);check(absolute.size()==moved.size(),"The compact path keeps every command");
+            double left=INFINITY,top=INFINITY;for(std::size_t k=0;k<absolute.size();++k){check(std::abs(absolute[k].x-moved[k].x)<1e-9&&std::abs(absolute[k].y-moved[k].y)<1e-9,"The compact path paints the same absolute geometry");left=std::min(left,absolute[k].x);top=std::min(top,absolute[k].y);}
+            check(origin.x==std::floor(left)-2&&origin.y==std::floor(top)-2,"The origin is two whole points above-left of the path");
+            auto x=a,y=b;x["shape"]["path"]=Json{};y["shape"]["path"]=Json{};y["position"]=Json::Array{0,0};check(x==y,"Fill, stroke and every other shape property are unchanged");}
+        std::cout<<"Volume compact form ("<<page<<"): "<<source.surfaces.size()<<" leaves\n";};
+    compare("App volume");c.perform("audio:headphones",1);compare("Headphones");c.perform("audio:output",2);compare("output chooser");
+    check(shapes>40,"Every plate and slider part is compacted");
+}
 std::array<double,3>apply(const core::Matrix4&m,double x,double y){const auto&v=m.values;return {v[0]*x+v[4]*y+v[12],v[1]*x+v[5]*y+v[13],v[3]*x+v[7]*y+v[15]};}
 void actionMotion(){
     gpu::VolumeController c(fixture());c.setActive(true);
@@ -216,6 +245,35 @@ template<class Entries>void detailSwitch(gpu::Renderer&renderer,gpu::LayerRaster
     c.setActive(false);scene.retainDepartingArtwork(true);composition.setEntries(renderer,entries());check(scene.collectRetired(renderer)&&scene.parkedRowCount()==0,"A departing Volume releases its parked rows after the next publication");
     scene.retainDepartingArtwork(false);c.setActive(true);check(c.perform("audio:applications",time+=.5),"Reactivated on App volume");publish(time+=.02);check(scene.rowCount()==rows,"Rows are rebuilt after a departure released them");
 }
+// The compact raster of every shape holds exactly the source raster's pixels
+// on the same pixel grid (at 1x and the production 2x), and nothing else.
+void compactRasters(){
+    gpu::LayerRasterizer raster;gpu::VolumeController c(fixture());c.setActive(true);std::size_t serial{};
+    for(const double density:{1.,2.}){
+        gpu::LayerRasterOptions options;options.pixelsPerPoint=density;std::size_t sourceBytes{},compactBytes{};
+        for(const char*page:{"audio:applications","audio:headphones","audio:output","audio:back"}){
+            check(c.perform(page,double(++serial)),"Page shown");
+            const auto source=gpu::prepareVolumeScene(c),compact=gpu::prepareVolumeScene(c,{},true);
+            for(std::size_t n=0;n<source.surfaces.size();++n){
+                const auto&a=source.layers["children"].array()[n],&b=compact.layers["children"].array()[n];if(a==b)continue;
+                const auto x=raster.rasterize("source/"+std::to_string(++serial),1,a,options),y=raster.rasterize("compact/"+std::to_string(serial),1,b,options);
+                check(x&&y&&x->complete()&&y->complete(),"Both forms rasterize completely");sourceBytes+=x->straightRGBA.size();compactBytes+=y->straightRGBA.size();
+                const double fx=(compact.surfaces[n].local.values[12]+y->bounds.x-x->bounds.x)*density,fy=(compact.surfaces[n].local.values[13]+y->bounds.y-x->bounds.y)*density;
+                check(fx==std::floor(fx)&&fy==std::floor(fy),"The compact raster lies on the source raster's pixel grid");
+                const auto dx=static_cast<long long>(fx),dy=static_cast<long long>(fy);bool same=true;
+                for(long long j=0;j<static_cast<long long>(x->height)&&same;++j)for(long long i=0;i<static_cast<long long>(x->width)&&same;++i){
+                    const auto*p=&x->straightRGBA[(std::size_t(j)*x->width+std::size_t(i))*4];const auto u=i-dx,v=j-dy;
+                    if(u<0||v<0||u>=static_cast<long long>(y->width)||v>=static_cast<long long>(y->height)){same=p[3]==0;continue;}
+                    const auto*q=&y->straightRGBA[(std::size_t(v)*y->width+std::size_t(u))*4];same=p[3]==q[3]&&(p[3]==0||(p[0]==q[0]&&p[1]==q[1]&&p[2]==q[2]));}
+                for(long long v=0;v<static_cast<long long>(y->height)&&same;++v)for(long long u=0;u<static_cast<long long>(y->width)&&same;++u){
+                    const auto i=u+dx,j=v+dy;if(i<0||j<0||i>=static_cast<long long>(x->width)||j>=static_cast<long long>(x->height))same=y->straightRGBA[(std::size_t(v)*y->width+std::size_t(u))*4+3]==0;}
+                check(same,"The compact raster paints exactly the source raster's pixels");
+            }
+        }
+        std::cout<<"Volume shape rasters at "<<density<<"x over four pages: source form "<<sourceBytes<<" B, compact "<<compactBytes<<" B\n";
+        check(compactBytes*3<sourceBytes,"Compact shape rasters are a fraction of the source form's");
+    }
+}
 void native(const std::filesystem::path&shader){Window window;gpu::Renderer renderer;renderer.initialize(window.hwnd,400,334,{gpu::Driver::warpForTests,shader,gpu::RenderTarget::offscreenForTests});renderer.setCamera(gpu::layerViewportProjection(400,334));gpu::LayerRasterizer raster;gpu::LayerRasterOptions options;options.pixelsPerPoint=1;gpu::LayerImageSource icons;options.memoryImages=&icons;
     auto state=fixture();gpu::VolumeController c(state);c.setActive(true);gpu::NativeVolumeScene scene(c,raster,options);check(scene.syncContent()&&!scene.syncContent(),"Retained Volume source content loads only on explicit events");check(scene.scene().report().unsupported.empty(),"Volume source shapes/text are supported by shared raster");
     check(scene.rowCount()==5&&scene.entries().size()==7,"The visible app rows and one row below are retained scenes after the module's header and detail scenes");for(const auto&e:scene.entries())check(e.scene->report().unsupported.empty(),"Retained app rows are supported by the shared raster");
@@ -232,12 +290,20 @@ void native(const std::filesystem::path&shader){Window window;gpu::Renderer rend
     check(allocations==0&&raster.stats().rasterizations==warmedRaster.rasterizations&&icons.stats().cacheHits==warmedImages.cacheHits&&renderer.stats().textureUploads==warmedGPU.textureUploads,"120 icon-bearing tilt frames perform no allocations, rasterization, cache lookup or texture upload");
     scrolling(renderer,raster,composition,scene,c,entries);
     detailSwitch(renderer,raster,composition,scene,c,entries);
+    // Memory: once no composition publishes it, park releases every part, the
+    // rasterizer's entries (and CPU pixels behind them) and every texture; the
+    // next content sync rebuilds the same artwork.
+    {const auto resident=scene.stats();check(resident.parts>=3&&resident.pixelBytes>0&&!scene.park(renderer)&&scene.resident()&&scene.stats().pixelBytes==resident.pixelBytes&&scene.stats().parks==0,"A composed Volume refuses to park and keeps every raster");
+     composition.setEntries(renderer,{});check(scene.park(renderer)&&!scene.resident()&&scene.stats().parts==0&&scene.stats().pixelBytes==0&&scene.stats().parks==1&&raster.stats().entries==0&&renderer.stats().textures==0,"Unpublished, park releases every Volume part, rasterizer entry and texture");
+     check(!scene.park(renderer)&&scene.stats().parks==1,"Parking released artwork does nothing");
+     check(scene.syncContent()&&scene.resident()&&scene.stats().parts==resident.parts&&scene.stats().pixelBytes==resident.pixelBytes,"The next content sync rebuilds the same artwork");
+     scene.updatePose({},1,100);composition.setEntries(renderer,entries());composition.present(renderer);}
     composition.detach(renderer);check(scene.releaseResources(renderer)&&renderer.stats().textures==0&&renderer.stats().meshes==0,"Owner detach retires every Volume resource (module scene and app rows) without another publisher");renderer.reset();
 }
 #endif
 }
 #ifdef _WIN32
-int wmain(int argc,wchar_t**argv){const auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);try{check(SUCCEEDED(hr)&&argc==2,"Pass HLSL to hidden Volume fixture");portable();listLayout();actionMotion();native(argv[1]);CoUninitialize();std::cout<<"PASS "<<checks<<" Volume checks\n";return 0;}catch(const std::exception&e){counting=false;if(SUCCEEDED(hr))CoUninitialize();std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
+int wmain(int argc,wchar_t**argv){const auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);try{check(SUCCEEDED(hr)&&argc==2,"Pass HLSL to hidden Volume fixture");portable();listLayout();actionMotion();compactForm();compactRasters();native(argv[1]);CoUninitialize();std::cout<<"PASS "<<checks<<" Volume checks\n";return 0;}catch(const std::exception&e){counting=false;if(SUCCEEDED(hr))CoUninitialize();std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
 #else
-int main(){try{portable();listLayout();actionMotion();std::cout<<"PASS "<<checks<<" Volume portable checks\n";return 0;}catch(const std::exception&e){counting=false;std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
+int main(){try{portable();listLayout();actionMotion();compactForm();std::cout<<"PASS "<<checks<<" Volume portable checks\n";return 0;}catch(const std::exception&e){counting=false;std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
 #endif

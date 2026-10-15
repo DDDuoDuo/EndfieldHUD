@@ -1,5 +1,6 @@
 #include "audio_session_worker.hpp"
 #include "native/file_shelf_files.hpp"
+#include "native/audio_application_name.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -65,6 +66,30 @@ std::wstring fileDescription(std::wstring_view path){
                 while(!text.empty()&&(text.front()==L' '||text.front()==L'\t'))text.remove_prefix(1);
                 if(!text.empty()&&text.size()<=4096)return std::wstring(text);
             }
+        }
+    }catch(...){}
+    return {};
+}
+// A packaged process's application display name from its package manifest
+// (literal or ms-resource reference resolved through SHLoadIndirectString),
+// as the Windows mixer shows it. Empty without package identity or a name.
+std::wstring packagedName(HANDLE process){
+    try{
+        std::array<wchar_t,PACKAGE_FULL_NAME_MAX_LENGTH+1>full{};UINT32 length=static_cast<UINT32>(full.size());
+        if(GetPackageFullName(process,&length,full.data())!=ERROR_SUCCESS)return {};
+        const std::wstring_view fullName(full.data(),wcsnlen(full.data(),full.size()));if(fullName.empty())return {};
+        std::array<wchar_t,APPLICATION_USER_MODEL_ID_MAX_LENGTH>aumid{};UINT32 aumidLength=static_cast<UINT32>(aumid.size());
+        const std::wstring_view application=GetApplicationUserModelId(process,&aumidLength,aumid.data())==ERROR_SUCCESS?audioPackageApplicationID(std::wstring_view(aumid.data(),wcsnlen(aumid.data(),aumid.size()))):std::wstring_view{};
+        const std::wstring fullText(fullName);UINT32 pathLength{};
+        if(GetPackagePathByFullName(fullText.c_str(),&pathLength,nullptr)!=ERROR_INSUFFICIENT_BUFFER||!pathLength||pathLength>32768)return {};
+        std::vector<wchar_t>path(pathLength);if(GetPackagePathByFullName(fullText.c_str(),&pathLength,path.data())!=ERROR_SUCCESS)return {};
+        const std::wstring_view root(path.data(),wcsnlen(path.data(),path.size()));if(root.empty())return {};
+        const auto names=readAudioPackageManifest(std::filesystem::path(root)/L"AppxManifest.xml",application);if(!names)return {};
+        for(const auto*value:{&names->applicationDisplayName,&names->packageDisplayName}){
+            if(value->empty())continue;
+            const auto references=audioPackageResourceReferences(fullName,names->packageName,*value);
+            if(references.empty()){if(value->rfind(L"ms-resource:",0)!=0&&value->size()<=4096)return *value;continue;}
+            for(const auto&reference:references){auto resolved=indirect(reference);if(!resolved.empty()&&resolved.size()<=4096)return resolved;}
         }
     }catch(...){}
     return {};
@@ -179,10 +204,13 @@ class NativeBackend final:public AudioSessionBackend {
                     if(prior!=entries.end()){next.record.executable=prior->second.record.executable;next.record.name=prior->second.processName;next.record.appUserModelID=prior->second.record.appUserModelID;}
                     else if(const auto known=metadata.find(next.record.processKey);known!=metadata.end()){next.record.executable=known->second.executable;next.record.name=known->second.name;next.record.appUserModelID=known->second.appUserModelID;known->second.used=++metadataClock;}
                     else{
+                        // Packaged apps: the package application's DisplayName;
+                        // otherwise the executable's product label, then its stem.
+                        next.record.name=packagedName(next.process->value);
                         std::array<wchar_t,32768>path{};DWORD length=static_cast<DWORD>(path.size());
                         if(QueryFullProcessImageNameW(next.process->value,0,path.data(),&length)&&length&&length<path.size()){
                             const std::wstring_view token(path.data(),length);
-                            next.record.name=fileDescription(token);
+                            if(next.record.name.empty())next.record.name=fileDescription(token);
                             if(next.record.name.empty())next.record.name=std::filesystem::path(token).stem().wstring();
                             next.record.executable=executable(token);
                         }
