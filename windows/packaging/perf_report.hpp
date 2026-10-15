@@ -25,6 +25,7 @@
 #include "packaging/perf_gate.hpp"
 #include <cstddef>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -36,6 +37,7 @@ inline constexpr double lateIntervalMilliseconds = 25.0;
 struct OpeningSummary {
     std::size_t index{};
     bool cold{};
+    double requestedAtMS{-1};              // launch -> the opening request; -1: not in the trace
     double firstFrameMS{-1}, openedMS{-1}; // -1: not reached
     std::size_t frames{};
     double p50IntervalMS{}, p95IntervalMS{}, maxIntervalMS{};
@@ -60,6 +62,12 @@ std::vector<GateResult> gateOpening(const OpeningSummary&, const OpeningLimits&)
 // Throws std::invalid_argument for a malformed trace.
 ehud::data::Json openingsScenario(const ehud::data::Json& trace, const OpeningLimits& cold, const OpeningLimits& warm, std::size_t expectedOpenings,
                                   std::vector<std::string>& failures);
+// The report's "footprint" scenario (memory, threads and handles): every
+// point's values, peaks, GPU memory, committed memory by region type, thread
+// groups and gates (FootprintPoint::limits). `cycles` names the lifecycle
+// point. Failed gates are appended to `failures`, e.g. "footprint: Private
+// bytes, closed after launch 352.54 MiB (limit 160.00 MiB)".
+ehud::data::Json footprintScenario(std::span<const FootprintPoint> points, std::size_t cycles, std::vector<std::string>& failures);
 
 // Markdown rendering of an EndfieldHUD.Windows.PerformanceGate report (the
 // JSON perf_runner writes): verdict, machine, every scenario with its values,

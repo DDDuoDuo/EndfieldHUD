@@ -17,6 +17,8 @@
 #include <ws2tcpip.h>
 #include <windows.h>
 #include <shellapi.h>
+#include <tlhelp32.h>
+#include <winhttp.h>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -27,6 +29,7 @@
 #include <iterator>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <random>
 #include <stdexcept>
 #include <thread>
@@ -176,6 +179,149 @@ u::TransportResponse fetch(u::WinHttpTransport& transport, Notice& notice, u::Tr
     return std::move(*out);
 }
 
+// Threads of this process now (Toolhelp snapshot).
+std::size_t processThreads() {
+    const auto snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    if (snapshot == INVALID_HANDLE_VALUE) return 0;
+    std::size_t count{};
+    THREADENTRY32 entry{sizeof(entry)};
+    for (auto more = Thread32First(snapshot, &entry); more; more = Thread32Next(snapshot, &entry))
+        if (entry.th32OwnerProcessID == GetCurrentProcessId()) ++count;
+    CloseHandle(snapshot);
+    return count;
+}
+// What the transport keeps running: measured first, while this process runs
+// nothing else (the loopback server is created after the constructions).
+// Constructing a transport, in the test and the production configuration,
+// opens no WinHTTP session and starts no thread; a production-style session
+// (what the windowsUpdates area held from launch before) is measured for
+// comparison, and the session closes once a request completed.
+void sessionThreads() {
+    const auto before = processThreads();
+    Notice notice;
+    u::WinHttpTransport::Options options;
+    options.notify = notice.notify();
+    options.now = [] { return 1.0; };
+    options.loopbackOnly = true;
+    std::optional<u::WinHttpTransport> t;
+    t.emplace(options);
+    auto productionOptions = options;
+    productionOptions.loopbackOnly = false;
+    std::optional<u::WinHttpTransport> production;
+    production.emplace(productionOptions);
+    const auto constructed = processThreads();
+    check(!t->sessionOpen() && t->sessionOpens() == 0 && !production->sessionOpen() && constructed <= before,
+          "Constructing the transports opens no WinHTTP session and starts no thread (" + std::to_string(before) + " -> " + std::to_string(constructed) + ")");
+    production.reset();
+    // For comparison: one asynchronous session as the production transport
+    // opens it (automatic proxy, completion callback). No request is sent.
+    HINTERNET raw = WinHttpOpen(L"EndfieldHUD-thread-measure", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, WINHTTP_FLAG_ASYNC);
+    if (raw) WinHttpSetStatusCallback(raw, [](HINTERNET, DWORD_PTR, DWORD, LPVOID, DWORD) {}, WINHTTP_CALLBACK_FLAG_ALL_COMPLETIONS | WINHTTP_CALLBACK_FLAG_HANDLES, 0);
+    const auto session = processThreads();
+    if (raw) WinHttpCloseHandle(raw);
+    std::size_t requested{};
+    {
+        LoopbackServer server;
+        server.route("/x", {"HTTP/1.1 200 OK", "x"});
+        u::TransportRequest request;
+        request.url = server.url("/x");
+        request.maximumBytes = 16;
+        check(fetch(*t, notice, request).response.status == 200, "Thread measurement request");
+        check(!t->sessionOpen() && t->sessionOpens() == 1 && t->active() == 0, "The session closes once the request completed");
+    }
+    requested = processThreads();
+    t.reset();
+    const auto destroyed = processThreads();
+    std::cout << "WinHTTP threads: " << before << " before, " << constructed << " with both transports constructed (no session), " << session
+              << " with one production-style session open, " << requested << " after one request (session closed), " << destroyed << " destroyed\n";
+}
+
+// The session opened on a background queue (the area's shared utility queue):
+// requests wait for it, keep their deadline, and a cancelled or expired one
+// never reaches the network.
+void backgroundSession() {
+    LoopbackServer server;
+    Notice notice;
+    double now = 50;
+    std::deque<std::pair<std::function<void()>, std::function<void(std::exception_ptr)>>> queue;
+    bool accept = true;
+    u::WinHttpTransport::Options options;
+    options.notify = notice.notify();
+    options.now = [&now] { return now; };
+    options.loopbackOnly = true;
+    options.background = [&](std::function<void()> work, std::function<void(std::exception_ptr)> done) {
+        if (!accept) return false;
+        queue.emplace_back(std::move(work), std::move(done));
+        return true;
+    };
+    const auto run = [&] {
+        while (!queue.empty()) {
+            auto [work, done] = std::move(queue.front());
+            queue.pop_front();
+            std::exception_ptr error;
+            try { work(); } catch (...) { error = std::current_exception(); }
+            done(error);
+        }
+    };
+    std::optional<u::WinHttpTransport> t;
+    t.emplace(options);
+    server.route("/feed", {"HTTP/1.1 200 OK", "feed"});
+    u::TransportRequest request;
+    request.url = server.url("/feed");
+    request.maximumBytes = 64;
+    request.timeout = 20;
+    std::optional<u::TransportResponse> out;
+    t->start(request, [&](u::TransportResponse r) { out = std::move(r); });
+    check(!t->sessionOpen() && queue.size() == 1 && t->active() == 1 && t->nextDeadline() == 70.0 && server.requests().empty(),
+          "A request waits for the session opening on the queue, with its deadline");
+    std::optional<u::TransportResponse> second;
+    t->start(request, [&](u::TransportResponse r) { second = std::move(r); });
+    check(queue.size() == 1, "One session opening serves every waiting request");
+    run();
+    check(t->sessionOpen() && t->sessionOpens() == 1, "The opened session is adopted on the owner thread");
+    for (int n = 0; n < 8 && !(out && second); ++n) {
+        if (!notice.wait()) break;
+        t->drain();
+    }
+    check(out && second && out->response.status == 200 && out->response.body == "feed" && second->response.body == "feed" && !t->sessionOpen() &&
+          t->active() == 0, "Both waiting requests complete, then the session closes");
+
+    // Cancelled while the session opens: nothing is requested or completed.
+    server.forget();
+    bool completed{};
+    const auto id = t->start(request, [&](u::TransportResponse) { completed = true; });
+    t->cancel(id);
+    run();
+    t->drain();
+    check(!completed && !t->sessionOpen() && t->active() == 0 && server.requests().empty() && t->sessionOpens() == 2,
+          "A request cancelled before the session opened never reaches the network");
+    // Its deadline passes while the session opens: a timeout, no request.
+    std::optional<u::TransportResponse> late;
+    t->start(request, [&](u::TransportResponse r) { late = std::move(r); });
+    check(t->deadline(now + 20), "The waiting request's deadline expires");
+    t->drain();
+    run();
+    t->drain();
+    check(late && late->failure == u::TransportResponse::Failure::timeout && !t->sessionOpen() && server.requests().empty(),
+          "A request that waited past its deadline times out without a request");
+    // A full queue: the session opens on the owner thread instead.
+    accept = false;
+    out.reset();
+    t->start(request, [&](u::TransportResponse r) { out = std::move(r); });
+    check(queue.empty() && t->sessionOpen(), "A queue that refuses the work leaves the session to the owner thread");
+    for (int n = 0; n < 4 && !out; ++n) {
+        if (!notice.wait()) break;
+        t->drain();
+    }
+    check(out && out->response.status == 200 && !t->sessionOpen(), "That request completes and the session closes");
+    // Destroyed while its session opens: the opened session is closed by its slot.
+    accept = true;
+    t->start(request, [](u::TransportResponse) {});
+    t.reset();
+    run();
+    check(queue.empty(), "A session opened for a destroyed transport is released");
+}
+
 void transport() {
     LoopbackServer server;
     Notice notice;
@@ -193,7 +339,9 @@ void transport() {
     request.url = server.url("/releases");
     request.headers = {{"Accept", "application/vnd.github+json"}, {"If-None-Match", "W/\"old\""}, {"User-Agent", "EndfieldHUD-release-check"}};
     request.maximumBytes = 4096;
+    check(!t.sessionOpen(), "No session before the first request");
     auto r = fetch(t, notice, request);
+    check(!t.sessionOpen() && t.sessionOpens() == 1, "The first request's session is closed once it completed");
     check(r.failure == u::TransportResponse::Failure::none && r.response.status == 200 && r.response.body == feed && r.bytes == feed.size() &&
           r.response.url == request.url && u::findHeader(r.response.headers, "etag") == "W/\"loop\"" && u::findHeader(r.response.headers, "Retry-After") == "7" &&
           u::findHeader(r.response.headers, "X-RateLimit-Remaining") == "59", "A 200 body and its headers");
@@ -250,8 +398,9 @@ void transport() {
     bool completed{};
     const auto id = t.start(download, [&](u::TransportResponse) { completed = true; });
     for (int n = 0; n < 100 && !fs::exists(download.file); ++n) std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    check(fs::exists(download.file) && t.nextDeadline() == now + 60, "A stalled download holds its partial file and deadline");
+    check(fs::exists(download.file) && t.nextDeadline() == now + 60 && t.sessionOpen(), "A stalled download holds its partial file, deadline and session");
     t.cancel(id);
+    check(!t.sessionOpen(), "Cancelling the last request closes the session");
     notice.wait(500);
     t.drain();
     check(!completed && !fs::exists(download.file) && t.active() == 0 && !t.nextDeadline(), "A cancelled download completes nothing and leaves no file");
@@ -260,7 +409,8 @@ void transport() {
     for (int n = 0; n < 100 && !fs::exists(download.file); ++n) std::this_thread::sleep_for(std::chrono::milliseconds(20));
     check(!t.deadline(now + 59.9) && t.deadline(now + 60), "The deadline expires on the host clock");
     t.drain();
-    check(timed && timed->failure == u::TransportResponse::Failure::timeout && !fs::exists(download.file), "A request past its deadline fails and leaves no file");
+    check(timed && timed->failure == u::TransportResponse::Failure::timeout && !fs::exists(download.file) && !t.sessionOpen(),
+          "A request past its deadline fails, leaves no file and closes the session");
     server.release();
 
     // Refusals without any connection.
@@ -559,7 +709,9 @@ int main(int argc, char** argv) {
     try {
         check(argc == 2 && fs::is_regular_file(argv[1]), "Pass the stand-in Setup (packaging_update_setup_fixture)");
         CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+        sessionThreads();
         transport();
+        backgroundSession();
         installed();
         verification(fs::path(argv[1]));
         metadataOverWinHttp();

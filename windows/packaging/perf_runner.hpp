@@ -17,7 +17,10 @@
 //      open idle (ambient on)
 //   4. --toggle closes; <cycles> x (--toggle open, --toggle close), one
 //      sample per cycle after the close settled -> lifecycle growth; the
-//      first of these openings is the warm traced one
+//      first of these openings is the warm traced one; <settle> later the
+//      closed footprint after use is taken
+//   (the end of each idle window and that point form the "footprint"
+//   scenario: memory, peaks, threads by start module and handles)
 //   5. graceful stop through the session-end protocol (Restart Manager);
 //      the startup trace is read -> the "openings" scenario
 //   6. ambient animation off: launch, reopen, open idle, stop
@@ -51,6 +54,15 @@ struct GateOptions {
     IdleLimits openLimits{10.0, 400.0, 25.0, 8.0 * 1024 * 1024};
     IdleLimits ambientOffLimits{5.0, 200.0, 15.0, 8.0 * 1024 * 1024};
     LifecycleLimits lifecycleLimits;
+    // Footprint points (perf_gate.hpp). Provisional: the Mac 1.2 physical
+    // footprint was 96.5-98.2 MiB closed and 186-190 MiB during continuous
+    // tilt (Apple M2, docs/performance-1.2.md); Windows private bytes also
+    // count the graphics driver's user-mode commit. A closed HUD after use
+    // must come back to the closed footprint.
+    FootprintLimits closedFootprint{160.0 * 1024 * 1024, std::nullopt, 40.0, std::nullopt};
+    FootprintLimits openFootprint{256.0 * 1024 * 1024, std::nullopt, 64.0, std::nullopt};
+    FootprintLimits ambientOffFootprint{256.0 * 1024 * 1024, std::nullopt, 64.0, std::nullopt};
+    FootprintLimits cyclesFootprint{160.0 * 1024 * 1024, std::nullopt, 40.0, std::nullopt};
     // Provisional: the Mac 1.2 first synchronous open was 225 ms (Apple M2);
     // 25 ms is 1.5 x the 60 Hz frame budget (section 9: stable 60 fps).
     OpeningLimits coldOpenLimits{250.0, 25.0, 3.0};

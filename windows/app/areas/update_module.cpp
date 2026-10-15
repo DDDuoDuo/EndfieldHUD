@@ -106,6 +106,13 @@ public:
             u::WinHttpTransport::Options t;
             t.notify = [window = window_, message = message_] { PostMessageW(window, message, transportNotice, 0); };
             t.now = c.clock;
+            // The WinHTTP session exists only while a check or download runs
+            // (none from launch, so WinHTTP starts no thread until the first
+            // check) and opens on the shared utility queue, never in an
+            // opening frame (the daily check starts with an opening).
+            t.background = [route = executor_.get()](std::function<void()> work, std::function<void(std::exception_ptr)> done) {
+                return route->submit(std::move(work), std::move(done));
+            };
             transport_ = std::make_unique<u::WinHttpTransport>(std::move(t));
             s.wallClock = [] { return std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count(); };
             s.installedCopy = [current = o.current] { return u::installedCopy(u::runningExecutable(), current, u::productionUninstallKey); };

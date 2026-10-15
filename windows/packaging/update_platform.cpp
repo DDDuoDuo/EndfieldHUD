@@ -16,6 +16,7 @@
 #include <mutex>
 #include <span>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 namespace endfield::packaging::updates {
@@ -98,8 +99,10 @@ struct WinHttpTransport::Impl : std::enable_shared_from_this<Impl> {
                 out = std::move(response);
                 out.failure = failure;
             }
-            shared->complete(id, std::move(out));
+            // The request and connection close before the owner can see the
+            // completion (and close an idle session after it).
             close();
+            shared->complete(id, std::move(out));
         }
         void abandon() {
             {
@@ -122,11 +125,24 @@ struct WinHttpTransport::Impl : std::enable_shared_from_this<Impl> {
             if (c) WinHttpCloseHandle(c);
         }
     };
+    // A session opened on the background queue; closed by its own slot when
+    // the transport is gone before it could adopt it.
+    struct SessionSlot {
+        HINTERNET handle{};
+        ~SessionSlot() { if (handle) WinHttpCloseHandle(handle); }
+    };
+    struct Waiting {
+        std::uint64_t id{};
+        TransportRequest request;
+    };
     Options options;
     HINTERNET session{};
+    bool opening{};
+    std::uint64_t opens{};
     std::shared_ptr<Shared> shared = std::make_shared<Shared>();
     std::map<std::uint64_t, Completion> pending;
-    std::map<std::uint64_t, std::pair<double, std::weak_ptr<Context>>> started; // deadline
+    std::map<std::uint64_t, std::pair<double, std::weak_ptr<Context>>> started; // deadline (a waiting request has no context yet)
+    std::deque<Waiting> waiting; // accepted before the session was open
     std::uint64_t next{};
 
     static Headers parseHeaders(std::wstring_view raw) {
@@ -253,25 +269,6 @@ struct WinHttpTransport::Impl : std::enable_shared_from_this<Impl> {
     explicit Impl(Options o) : options(std::move(o)) {
         if (!options.now) throw std::invalid_argument("The update transport needs the host clock");
         shared->notify = options.notify;
-        if (options.loopbackOnly)
-            session = WinHttpOpen(options.userAgent.c_str(), WINHTTP_ACCESS_TYPE_NO_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, WINHTTP_FLAG_ASYNC);
-        else {
-            session = WinHttpOpen(options.userAgent.c_str(), WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, WINHTTP_FLAG_ASYNC);
-            if (!session) session = WinHttpOpen(options.userAgent.c_str(), WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, WINHTTP_FLAG_ASYNC);
-        }
-        if (!session) throw std::runtime_error("The WinHTTP session is unavailable");
-        DWORD protocols = WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2;
-#ifdef WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_3
-        protocols |= WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_3;
-#endif
-        if (!WinHttpSetOption(session, WINHTTP_OPTION_SECURE_PROTOCOLS, &protocols, sizeof protocols)) {
-            protocols = WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2;
-            WinHttpSetOption(session, WINHTTP_OPTION_SECURE_PROTOCOLS, &protocols, sizeof protocols);
-        }
-        if (WinHttpSetStatusCallback(session, callback, WINHTTP_CALLBACK_FLAG_ALL_COMPLETIONS | WINHTTP_CALLBACK_FLAG_HANDLES, 0) == WINHTTP_INVALID_STATUS_CALLBACK) {
-            WinHttpCloseHandle(session);
-            throw std::runtime_error("The WinHTTP callback could not be installed");
-        }
     }
     ~Impl() {
         {
@@ -281,43 +278,127 @@ struct WinHttpTransport::Impl : std::enable_shared_from_this<Impl> {
         for (auto& [id, entry] : started) if (auto context = entry.second.lock()) context->abandon();
         pending.clear();
         started.clear();
+        waiting.clear();
         if (session) WinHttpCloseHandle(session);
     }
-    std::uint64_t open(TransportRequest request, Completion completion) {
+    // Any thread: an asynchronous session with this transport's callback, or
+    // null when WinHTTP cannot provide one (the waiting requests then fail).
+    static HINTERNET openSession(const std::wstring& agent, bool loopbackOnly) {
+        HINTERNET handle{};
+        if (loopbackOnly)
+            handle = WinHttpOpen(agent.c_str(), WINHTTP_ACCESS_TYPE_NO_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, WINHTTP_FLAG_ASYNC);
+        else {
+            handle = WinHttpOpen(agent.c_str(), WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, WINHTTP_FLAG_ASYNC);
+            if (!handle) handle = WinHttpOpen(agent.c_str(), WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, WINHTTP_FLAG_ASYNC);
+        }
+        if (!handle) return nullptr;
+        DWORD protocols = WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2;
+#ifdef WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_3
+        protocols |= WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_3;
+#endif
+        if (!WinHttpSetOption(handle, WINHTTP_OPTION_SECURE_PROTOCOLS, &protocols, sizeof protocols)) {
+            protocols = WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2;
+            WinHttpSetOption(handle, WINHTTP_OPTION_SECURE_PROTOCOLS, &protocols, sizeof protocols);
+        }
+        if (WinHttpSetStatusCallback(handle, callback, WINHTTP_CALLBACK_FLAG_ALL_COMPLETIONS | WINHTTP_CALLBACK_FLAG_HANDLES, 0) == WINHTTP_INVALID_STATUS_CALLBACK) {
+            WinHttpCloseHandle(handle);
+            return nullptr;
+        }
+        return handle;
+    }
+    void fail(std::uint64_t id, const std::string& url, Failure failure) {
+        TransportResponse r;
+        r.failure = failure;
+        r.response.url = url;
+        shared->complete(id, std::move(r));
+    }
+    // Owner thread: the session for the waiting requests, opened once.
+    void ensureSession() {
+        if (session || opening) return;
+        if (options.background) {
+            opening = true;
+            auto slot = std::make_shared<SessionSlot>();
+            std::weak_ptr<Impl> weak = weak_from_this();
+            if (options.background([slot, agent = options.userAgent, loopback = options.loopbackOnly] { slot->handle = openSession(agent, loopback); },
+                                   [weak, slot](std::exception_ptr) {
+                                       if (const auto self = weak.lock()) self->adopt(std::exchange(slot->handle, nullptr));
+                                   }))
+                return;
+            opening = false;
+        }
+        adopt(openSession(options.userAgent, options.loopbackOnly));
+    }
+    // The session is open (or could not be): issue or fail what waited.
+    void adopt(HINTERNET handle) {
+        opening = false;
+        if (handle) {
+            if (session) WinHttpCloseHandle(handle); // never two
+            else {
+                session = handle;
+                ++opens;
+            }
+        }
+        auto ready = std::move(waiting);
+        waiting.clear();
+        for (auto& w : ready) {
+            const auto found = started.find(w.id);
+            if (found == started.end() || !pending.contains(w.id)) continue; // cancelled or expired meanwhile
+            if (session) issue(w.id, std::move(w.request), found->second.first);
+            else fail(w.id, w.request.url, Failure::network);
+        }
+        closeIfIdle();
+    }
+    // Nothing waits or is in flight: the session closes.
+    void closeIfIdle() noexcept {
+        if (!session || opening || !pending.empty() || !waiting.empty() || !started.empty()) return;
+        WinHttpCloseHandle(session);
+        session = nullptr;
+    }
+    std::uint64_t start(TransportRequest request, Completion completion) {
+        const auto id = ++next;
+        pending[id] = std::move(completion);
+        const auto deadline = options.now() + request.timeout;
+        if (session) {
+            issue(id, std::move(request), deadline);
+            return id;
+        }
+        started[id] = {deadline, {}};
+        waiting.push_back({id, std::move(request)});
+        ensureSession();
+        return id;
+    }
+    void issue(std::uint64_t id, TransportRequest request, double deadline) {
         auto context = std::make_shared<Context>();
         context->shared = shared;
-        context->id = ++next;
+        context->id = id;
         context->maximum = request.maximumBytes;
         context->file = request.file;
         context->response.response.url = request.url;
-        const auto id = context->id;
-        pending[id] = std::move(completion);
-        const auto fail = [&](Failure failure) {
+        const auto refuse = [&](Failure failure) {
             TransportResponse r;
             r.failure = failure;
             r.response.url = request.url;
             shared->complete(id, std::move(r));
-            return id;
         };
         std::wstring url;
-        try { url = wide(request.url); } catch (...) { return fail(Failure::network); }
+        try { url = wide(request.url); } catch (...) { return refuse(Failure::network); }
         URL_COMPONENTS parts{sizeof parts};
         parts.dwHostNameLength = parts.dwUrlPathLength = parts.dwExtraInfoLength = parts.dwSchemeLength = static_cast<DWORD>(-1);
         parts.dwUserNameLength = parts.dwPasswordLength = static_cast<DWORD>(-1);
         if (url.size() > 8192 || !WinHttpCrackUrl(url.c_str(), static_cast<DWORD>(url.size()), 0, &parts) || parts.dwUserNameLength || parts.dwPasswordLength)
-            return fail(Failure::network);
+            return refuse(Failure::network);
         const std::wstring host(parts.lpszHostName, parts.dwHostNameLength);
         std::wstring object(parts.lpszUrlPath, parts.dwUrlPathLength);
         object.append(parts.lpszExtraInfo, parts.dwExtraInfoLength);
         if (object.empty()) object = L"/";
         const bool https = parts.nScheme == INTERNET_SCHEME_HTTPS;
         // Production: HTTPS only. Tests: plain HTTP to the loopback only.
-        if (options.loopbackOnly ? (https || host != L"127.0.0.1") : !https) return fail(Failure::network);
+        if (options.loopbackOnly ? (https || host != L"127.0.0.1") : !https) return refuse(Failure::network);
         context->connect = WinHttpConnect(session, host.c_str(), parts.nPort, 0);
-        if (!context->connect) return fail(Failure::network);
+        if (!context->connect) return refuse(Failure::network);
         context->request = WinHttpOpenRequest(context->connect, L"GET", object.c_str(), nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
                                               (https ? WINHTTP_FLAG_SECURE : 0) | WINHTTP_FLAG_REFRESH | WINHTTP_FLAG_ESCAPE_DISABLE | WINHTTP_FLAG_ESCAPE_DISABLE_QUERY);
-        if (!context->request) { WinHttpCloseHandle(context->connect); context->connect = nullptr; return fail(Failure::network); }
+        if (!context->request) { WinHttpCloseHandle(context->connect); context->connect = nullptr; return refuse(Failure::network); }
         DWORD redirect = WINHTTP_OPTION_REDIRECT_POLICY_NEVER;
         WinHttpSetOption(context->request, WINHTTP_OPTION_REDIRECT_POLICY, &redirect, sizeof redirect);
         DWORD disabled = WINHTTP_DISABLE_COOKIES | WINHTTP_DISABLE_REDIRECTS | WINHTTP_DISABLE_AUTHENTICATION;
@@ -337,34 +418,35 @@ struct WinHttpTransport::Impl : std::enable_shared_from_this<Impl> {
             for (const auto& [name, value] : request.headers) headerText += wide(name) + L": " + wide(value) + L"\r\n";
         } catch (...) {
             context->close();
-            return fail(Failure::network);
+            return refuse(Failure::network);
         }
         auto* holder = new std::shared_ptr<Context>(context);
         if (!WinHttpSetOption(context->request, WINHTTP_OPTION_CONTEXT_VALUE, &holder, sizeof holder)) {
             delete holder;
             context->close();
-            return fail(Failure::network);
+            return refuse(Failure::network);
         }
-        started[id] = {options.now() + request.timeout, context};
+        started[id] = {deadline, context};
         if (!WinHttpSendRequest(context->request, headerText.empty() ? WINHTTP_NO_ADDITIONAL_HEADERS : headerText.c_str(),
                                 headerText.empty() ? 0 : static_cast<DWORD>(-1L), WINHTTP_NO_REQUEST_DATA, 0, 0, reinterpret_cast<DWORD_PTR>(holder))) {
             started.erase(id);
             context->finish(Failure::network);
         }
-        return id;
     }
 };
 
 WinHttpTransport::WinHttpTransport(Options options) : impl_(std::make_shared<Impl>(std::move(options))) {}
 WinHttpTransport::~WinHttpTransport() = default;
-std::uint64_t WinHttpTransport::start(TransportRequest request, Completion completion) { return impl_->open(std::move(request), std::move(completion)); }
+std::uint64_t WinHttpTransport::start(TransportRequest request, Completion completion) { return impl_->start(std::move(request), std::move(completion)); }
 void WinHttpTransport::cancel(std::uint64_t id) noexcept {
     auto& i = *impl_;
     i.pending.erase(id);
+    std::erase_if(i.waiting, [id](const Impl::Waiting& w) { return w.id == id; });
     if (const auto it = i.started.find(id); it != i.started.end()) {
         if (auto context = it->second.second.lock()) context->abandon();
         i.started.erase(it);
     }
+    i.closeIfIdle();
 }
 std::size_t WinHttpTransport::drain() {
     auto& i = *impl_;
@@ -376,7 +458,10 @@ std::size_t WinHttpTransport::drain() {
             std::lock_guard lock(i.shared->mutex);
             ready.swap(i.shared->done);
         }
-        if (ready.empty()) return count;
+        if (ready.empty()) {
+            i.closeIfIdle();
+            return count;
+        }
         for (auto& [id, response] : ready) {
             i.started.erase(id);
             const auto found = i.pending.find(id);
@@ -400,11 +485,22 @@ bool WinHttpTransport::deadline(double now) {
     for (const auto id : overdue) {
         auto context = i.started[id].second.lock();
         i.started.erase(id);
-        if (context) context->finish(Failure::timeout);
+        if (context) {
+            context->finish(Failure::timeout);
+            continue;
+        }
+        // Still waiting for the session: it times out without a request.
+        const auto w = std::find_if(i.waiting.begin(), i.waiting.end(), [id](const Impl::Waiting& x) { return x.id == id; });
+        if (w == i.waiting.end()) continue;
+        const auto url = w->request.url;
+        i.waiting.erase(w);
+        i.fail(id, url, Failure::timeout);
     }
     return !overdue.empty();
 }
 std::size_t WinHttpTransport::active() const { return impl_->pending.size(); }
+bool WinHttpTransport::sessionOpen() const noexcept { return impl_->session != nullptr; }
+std::uint64_t WinHttpTransport::sessionOpens() const noexcept { return impl_->opens; }
 
 // --- Installed copy, verification, hand-off -----------------------------------------------
 fs::path runningExecutable() {

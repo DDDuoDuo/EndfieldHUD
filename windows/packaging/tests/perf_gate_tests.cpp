@@ -179,6 +179,113 @@ void openings() {
                                                     "\"frameIntervalsMilliseconds\":[],\"frameCPUMilliseconds\":[]}")); }, "A text where a number belongs");
 }
 
+void footprint() {
+    constexpr double mib = 1024.0 * 1024.0;
+    // Thread roles: the pool by address, the program by name, drivers and
+    // system components by module (case-insensitive), unknown modules empty.
+    check(p::threadRole("ntdll.dll", true, "EndfieldHUD.exe") == "Windows thread pool" && p::threadRole("ntdll.dll", false, "EndfieldHUD.exe") == "Windows (ntdll)" &&
+          p::threadRole("EndfieldHUD.EXE", false, "EndfieldHUD.exe") == "the program's own threads" &&
+          p::threadRole("nvwgf2umx.dll", false, "EndfieldHUD.exe") == "NVIDIA graphics driver" && p::threadRole("igd10iumd64.dll", false, "") == "Intel graphics driver" &&
+          p::threadRole("RTWorkQ.DLL", false, "") == "Media Foundation work queues" && p::threadRole("Windows.Media.Control.dll", false, "") == "Windows media (WinRT)" &&
+          p::threadRole("d3d10warp.dll", false, "") == "WARP software renderer" && p::threadRole("winhttp.dll", false, "") == "WinHTTP" &&
+          p::threadRole("unknown-helper.dll", false, "EndfieldHUD.exe").empty() && p::threadRole("", false, "EndfieldHUD.exe").empty(),
+          "Thread roles");
+    // Grouping by start and description, largest groups first.
+    const auto groups = p::groupThreads({{"ntdll.dll+0x1a2e0", "ntdll.dll", "Windows thread pool", "", 1},
+                                         {"EndfieldHUD.exe+0x10", "EndfieldHUD.exe", "the program's own threads", "", 1},
+                                         {"ntdll.dll+0x1a2e0", "ntdll.dll", "Windows thread pool", "", 1},
+                                         {"EndfieldHUD.exe+0x10", "EndfieldHUD.exe", "the program's own threads", "summon hotkey", 1},
+                                         {"ntdll.dll+0x1a2e0", "ntdll.dll", "Windows thread pool", "", 1}});
+    check(groups.size() == 3 && groups[0].start == "ntdll.dll+0x1a2e0" && groups[0].count == 3 && groups[1].count == 1 && groups[1].name.empty() &&
+          groups[2].name == "summon hotkey", "Threads are grouped by start and description");
+
+    // Gates: only the limits that are set, named by point and metric.
+    p::FootprintPoint closed;
+    closed.point = "closed";
+    closed.sample.privateBytes = static_cast<std::uint64_t>(352.5 * mib);
+    closed.sample.workingSet = static_cast<std::uint64_t>(192 * mib);
+    closed.sample.peakPrivateBytes = static_cast<std::uint64_t>(360 * mib);
+    closed.sample.peakWorkingSet = static_cast<std::uint64_t>(250 * mib);
+    closed.sample.threads = 58;
+    closed.sample.handles = 826;
+    closed.sample.gdiObjects = 46;
+    closed.sample.userObjects = 22;
+    closed.regions = p::MemoryRegions{static_cast<std::uint64_t>(300 * mib), static_cast<std::uint64_t>(40 * mib), static_cast<std::uint64_t>(80 * mib),
+                                      {static_cast<std::uint64_t>(64 * mib), static_cast<std::uint64_t>(15.6 * mib), 1048576}};
+    closed.threads = groups;
+    closed.limits = {160 * mib, std::nullopt, 40, std::nullopt};
+    auto gates = p::gateFootprint(closed);
+    check(gates.size() == 2 && gates[0].name == "closed.private-bytes" && gates[0].unit == "bytes" && !gates[0].passed && gates[1].name == "closed.threads" &&
+          gates[1].unit == "count" && !gates[1].passed, "Footprint gates over their limits fail");
+    auto open = closed;
+    open.point = "open";
+    open.sample.privateBytes = static_cast<std::uint64_t>(200 * mib);
+    open.sample.threads = 60;
+    open.sample.gpuDedicated = static_cast<std::uint64_t>(174.5 * mib);
+    open.sample.gpuShared = static_cast<std::uint64_t>(20 * mib);
+    open.regions.reset();
+    open.limits = {256 * mib, 512 * mib, 64, 2000};
+    check(p::allPassed(p::gateFootprint(open)) && p::gateFootprint(open).size() == 4, "Footprint gates within their limits pass");
+    auto after = closed;
+    after.point = "after-cycles";
+    after.sample.privateBytes = static_cast<std::uint64_t>(425.5 * mib);
+    after.sample.threads = 77;
+    after.sample.handles = 942;
+    after.threads = {{"nvwgf2umx.dll+0xeb9eb0", "nvwgf2umx.dll", "NVIDIA graphics driver", "", 12}};
+    after.limits = {};
+    check(p::gateFootprint(after).empty(), "No footprint limits, no gates");
+
+    std::vector<std::string> failures;
+    const std::vector<p::FootprintPoint> points{closed, open, after};
+    const auto scenario = p::footprintScenario(points, 100, failures);
+    check(scenario["kind"].string() == "footprint" && scenario["cycles"].integer() == 100 && scenario["points"].array().size() == 3 && !scenario["passed"].boolean() &&
+          scenario["gates"].array().size() == 6, "Footprint scenario");
+    const auto& first = scenario["points"].array()[0];
+    check(first["point"].string() == "closed" && first["privateBytes"].integer() == static_cast<std::int64_t>(352.5 * mib) && first["threads"].integer() == 58 &&
+          first["peakWorkingSetBytes"].integer() == static_cast<std::int64_t>(250 * mib) && first["gpuDedicatedBytes"].isNull() &&
+          first["memory"]["largestPrivateAllocations"].array().size() == 3 && first["threadGroups"].array().size() == 3 &&
+          first["threadGroups"].array()[0]["role"].string() == "Windows thread pool" && first["limits"]["workingSetBytes"].isNull() &&
+          scenario["points"].array()[1]["memory"].isNull() && scenario["points"].array()[1]["gpuSharedBytes"].integer() == static_cast<std::int64_t>(20 * mib),
+          "Footprint point values");
+    check(failures.size() == 2 && failures[0] == "footprint: Private bytes, closed after launch 352.50 MiB (limit 160.00 MiB)" &&
+          failures[1] == "footprint: Threads, closed after launch 58 (limit 40)",
+          "Footprint failures name the point and the limit: " + (failures.empty() ? std::string() : failures[0]));
+
+    // Rendered: the summary line, the table per point, what the closed HUD
+    // kept after use, the gates and the threads by start address.
+    auto parsed = Json::parse(R"json({"format":"EndfieldHUD.Windows.PerformanceGate","schema":2,"measuredAt":"2026-10-15T12:00:00Z",
+      "machine":{},"target":{"kind":"endfieldhud"},"settings":{},"scenarios":[],"cancelled":false,"notes":[],"failures":[],"passed":false})json");
+    auto object = parsed.object();
+    object["scenarios"] = Json(Json::Array{scenario});
+    const Json full(object);
+    const auto md = p::renderGateMarkdown(full);
+    check(contains(md, "| Memory, threads and handles | FAIL | closed after launch 352.5 MiB private, 58 threads; open 200.0 MiB private, 60 threads; "
+                       "closed after 100 cycles 425.5 MiB private, 77 threads |"), "Footprint summary row:\n" + md);
+    check(contains(md, "## Memory, threads and handles\n") &&
+          contains(md, "| Measure | Closed after launch | Open | Closed after 100 cycles |\n| --- | ---: | ---: | ---: |\n") &&
+          contains(md, "| Private bytes | 352.50 MiB | 200.00 MiB | 425.50 MiB |") && contains(md, "| Peak working set | 250.00 MiB | 250.00 MiB | 250.00 MiB |") &&
+          contains(md, "| Threads | 58 | 60 | 77 |") && contains(md, "| Handles | 826 | 826 | 942 |") && contains(md, "| GDI / USER objects | 46 / 22 | 46 / 22 | 46 / 22 |") &&
+          contains(md, "| Dedicated / shared GPU memory | not available | 174.50 / 20.00 MiB | not available |") &&
+          contains(md, "| Committed private / mapped / image | 300.00 / 40.00 / 80.00 MiB | not available | 300.00 / 40.00 / 80.00 MiB |") &&
+          contains(md, "| Largest private allocations | 64.00, 15.60, 1.00 MiB | not available | 64.00, 15.60, 1.00 MiB |"), "Footprint table:\n" + md);
+    check(contains(md, "Kept after use (closed after 100 cycles minus closed after launch): +73.00 MiB private bytes, +19 threads, +116 handles."),
+          "What the closed HUD keeps after use");
+    check(contains(md, "| Private bytes, closed after launch | 352.50 MiB | 160.00 MiB | FAIL |") && contains(md, "| Threads, closed after launch | 58 | 40 | FAIL |") &&
+          contains(md, "| Working set, open | 192.00 MiB | 512.00 MiB | PASS |") && contains(md, "| Handles, open | 826 | 2000 | PASS |"), "Footprint gates");
+    check(contains(md, "| Start | Component | Description | Closed after launch | Open | Closed after 100 cycles |") &&
+          contains(md, "| ntdll.dll+0x1a2e0 | Windows thread pool | - | 3 | 3 | 0 |") &&
+          contains(md, "| nvwgf2umx.dll+0xeb9eb0 | NVIDIA graphics driver | - | 0 | 0 | 12 |") &&
+          contains(md, "| EndfieldHUD.exe+0x10 | the program's own threads | summon hotkey | 1 | 1 | 0 |") &&
+          md.find("nvwgf2umx.dll+0xeb9eb0") < md.find("| ntdll.dll+0x1a2e0"), "Threads by start address, largest first:\n" + md);
+    check(contains(md, "96.5-98.2 MiB with the HUD closed"), "Mac context");
+    check(contains(p::summarizeGateReport(full), "  footprint                FAIL  closed after launch 352.5 MiB private, 58 threads"), "Console line");
+    // Only the points measured (a cancelled run): no "kept after use" line.
+    failures.clear();
+    object["scenarios"] = Json(Json::Array{p::footprintScenario(std::span(points).first(1), 0, failures)});
+    const auto partial = p::renderGateMarkdown(Json(object));
+    check(contains(partial, "| Measure | Closed after launch |\n") && !contains(partial, "Kept after use"), "One point only");
+}
+
 void report() {
     // A complete report as perf_runner writes it (schema 2), with one failed
     // gate, an idle window without GPU counters and the openings above.
@@ -232,6 +339,28 @@ void report() {
           "Lifecycle growth");
     check(contains(md, "Launch to the first presented frame: **510 ms** (process creation to first frame: 560 ms); preparation before the window: 40 ms."),
           "Launch timings");
+    // The gate's own order: the HUD starts closed and the cold opening comes
+    // after the closed idle window, so launch to first frame is mostly waiting.
+    {
+        auto late = Json::parse("{\"schema\":1,\"preparationMilliseconds\":1098,\"launchToFirstFrameMilliseconds\":70975,"
+                                "\"processToFirstFrameMilliseconds\":72217,\"openings\":[" + openingText(0, 89, cold, 4) + "]}").object();
+        auto first = late["openings"].array()[0].object();
+        first["requestedAtMilliseconds"] = 70886.0;
+        late["openings"] = Json(Json::Array{Json(first)});
+        std::vector<std::string> ignored;
+        auto waited = object;
+        waited["scenarios"] = Json(Json::Array{p::openingsScenario(Json(late), {}, {}, 1, ignored)});
+        waited["startupTrace"] = Json(late);
+        const auto text = p::renderGateMarkdown(Json(waited));
+        check(contains(text, "The HUD started closed, and the cold opening was requested 70.9 s after launch (after the closed idle window), so launch to "
+                             "the first presented frame (70975 ms) is mostly that wait. Startup until the app was ready, before the window: **1098 ms**.") &&
+              !contains(text, "Launch to the first presented frame: **"), "Launch timings of a HUD opened after the closed idle:\n" + text);
+        rejects([&] {
+            first["requestedAtMilliseconds"] = -1.0;
+            late["openings"] = Json(Json::Array{Json(first)});
+            (void)p::summarizeOpenings(Json(late));
+        }, "A negative request time");
+    }
     check(contains(md, "| Request to first frame | 180.0 ms | 30.0 ms |") && contains(md, "| Frame interval p50 / p95 / max | 16.7 / 16.7 / 40.0 ms | 16.7 / 16.7 / 16.7 ms |") &&
           contains(md, "| Frames later than 25 ms | 1 | 0 |") && contains(md, "| Cold: Request to first frame | 180.0 ms | 250.0 ms | PASS |") &&
           contains(md, "| Warm: Frames later than 25 ms | 0 | 1 | PASS |") && contains(md, "| shaders | 120.0 ms | 100.0 ms |"), "Opening tables");
@@ -255,6 +384,7 @@ int main() {
         idle();
         lifecycle();
         openings();
+        footprint();
         report();
         std::cout << "Performance gate evaluation: " << checks << " checks passed\n";
         return 0;

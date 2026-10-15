@@ -182,7 +182,7 @@ double estimatedGateSeconds(const GateOptions& o) {
     if (o.closed) total += o.seconds;
     if (o.open || o.lifecycle) total += forward + o.openSettle + o.settle;
     if (o.open) total += o.seconds;
-    if (o.lifecycle) total += forward + o.closeSettle + static_cast<double>(o.cycles) * (2 * forward + o.openSettle + o.closeSettle);
+    if (o.lifecycle) total += forward + o.closeSettle + static_cast<double>(o.cycles) * (2 * forward + o.openSettle + o.closeSettle) + o.settle;
     if (o.target == GateOptions::Target::endfieldhud && o.ambientOff) total += launch + o.settle + forward + o.openSettle + o.settle + o.seconds + stop;
     return total;
 }
@@ -237,7 +237,19 @@ GateRun runPerformanceGate(const GateOptions& o) {
 
     GateRun run;
     Json::Array scenarios;
+    std::vector<FootprintPoint> points;
     const auto failed = [&](const std::string& what) { run.failures.push_back(what); };
+    // A footprint point: the sample, then committed memory and the thread
+    // census taken right after it (outside any measured window).
+    const auto footprint = [&](ProcessProbe& probe, const ResourceSample& sample, const char* point, const FootprintLimits& limits) {
+        FootprintPoint p;
+        p.point = point;
+        p.sample = sample;
+        p.regions = probe.memoryRegions();
+        p.threads = probe.threadCensus();
+        p.limits = limits;
+        points.push_back(std::move(p));
+    };
     // A fatal error ends the measurement with its record (a message box
     // keeps the process alive, so it would otherwise measure as idle).
     const auto checkFatal = [&](const char* when) {
@@ -250,7 +262,7 @@ GateRun runPerformanceGate(const GateOptions& o) {
             throw std::runtime_error("A forwarded launch did not complete (exit " + (code ? std::to_string(*code) : std::string("timeout")) + ")");
         }
     };
-    const auto idle = [&](ProcessProbe& probe, const std::string& name, const IdleLimits& limits) {
+    const auto idle = [&](ProcessProbe& probe, const std::string& name, const IdleLimits& limits, const char* point, const FootprintLimits& footprintLimits) {
         std::vector<ResourceSample> samples{probe.sample()};
         probe.markThreads();
         const auto start = samples.front().time;
@@ -272,8 +284,10 @@ GateRun runPerformanceGate(const GateOptions& o) {
         scenario["passed"] = allPassed(gates);
         for (const auto& g : gates) if (!g.passed) failed(describeFailure(name, g));
         scenarios.emplace_back(std::move(scenario));
+        footprint(probe, samples.back(), point, footprintLimits);
     };
-    const auto session = [&](bool ambient, bool closed, bool open, bool lifecycle, const std::string& openName, const IdleLimits& openLimits, bool traced) {
+    const auto session = [&](bool ambient, bool closed, bool open, bool lifecycle, const std::string& openName, const IdleLimits& openLimits,
+                             const char* openPoint, const FootprintLimits& openFootprint, bool traced) {
         if (app) (void)prepareDataRoot(base, ambient);
         {
             std::error_code ignored;
@@ -291,13 +305,13 @@ GateRun runPerformanceGate(const GateOptions& o) {
         checkFatal("during startup");
         if (!process.running()) throw std::runtime_error("The measured program exited during startup");
         ProcessProbe probe(process.id());
-        if (closed) idle(probe, "closed-idle", o.closedLimits);
+        if (closed) idle(probe, "closed-idle", o.closedLimits, "closed", o.closedFootprint);
         if (open || lifecycle) {
             forward(reopen);
             wait(o.openSettle + o.settle);
             checkFatal("while the HUD opened");
         }
-        if (open) idle(probe, openName, openLimits);
+        if (open) idle(probe, openName, openLimits, openPoint, openFootprint);
         if (lifecycle) {
             forward(toggle); // close
             wait(o.closeSettle);
@@ -334,6 +348,11 @@ GateRun runPerformanceGate(const GateOptions& o) {
             scenario["passed"] = allPassed(gates);
             for (const auto& g : gates) if (!g.passed) failed(describeFailure("lifecycle-" + std::to_string(o.cycles), g));
             scenarios.emplace_back(std::move(scenario));
+            // What the closed HUD keeps after use, once deferred releases ran.
+            wait(o.settle);
+            const auto settled = probe.sample();
+            if (probe.exited()) throw std::runtime_error("The measured process exited after the lifecycle cycles");
+            footprint(probe, settled, "after-cycles", o.cyclesFootprint);
         }
         checkFatal("during the measurement");
         if (!process.stopGracefully(30000)) failed("The measured program did not exit through the session-end protocol");
@@ -354,13 +373,21 @@ GateRun runPerformanceGate(const GateOptions& o) {
 
     bool gpu{};
     try {
-        gpu = session(true, o.closed, o.open, o.lifecycle, app ? "open-idle-ambient-on" : "open-idle", o.openLimits, tracing);
-        if (app && o.ambientOff) gpu = session(false, false, true, false, "open-idle-ambient-off", o.ambientOffLimits, false) && gpu;
+        gpu = session(true, o.closed, o.open, o.lifecycle, app ? "open-idle-ambient-on" : "open-idle", o.openLimits, "open", o.openFootprint, tracing);
+        if (app && o.ambientOff)
+            gpu = session(false, false, true, false, "open-idle-ambient-off", o.ambientOffLimits, "open-ambient-off", o.ambientOffFootprint, false) && gpu;
     } catch (const Cancelled& e) {
         run.cancelled = true;
         failed(e.what());
     } catch (const std::exception& e) {
         failed(e.what());
+    }
+    // Memory, threads and handles first: every point measured, also of a
+    // cancelled or failed run.
+    if (!points.empty()) {
+        Json::Array ordered{footprintScenario(points, o.lifecycle ? o.cycles : 0, run.failures)};
+        for (auto& s : scenarios) ordered.push_back(std::move(s));
+        scenarios = std::move(ordered);
     }
     if (!o.keepData) {
         std::error_code ignored;
@@ -413,7 +440,8 @@ GateRun runPerformanceGate(const GateOptions& o) {
         Json("Wakeups are thread context switches of the measured process (all threads), sampled with NtQuerySystemInformation."),
         Json("CPU is user+kernel time of the measured process as a percentage of one core; compositor and GPU work in other processes are not included."),
         Json("Limits are provisional engineering gates, not Mac parity figures; values are reported regardless."),
-        Json("Opening timings come from the app's own startup trace (ENDFIELDHUD_STARTUP_TRACE=1): the wall time of each presented frame since the opening request and the CPU time of present().")};
+        Json("Opening timings come from the app's own startup trace (ENDFIELDHUD_STARTUP_TRACE=1): the wall time of each presented frame since the opening request and the CPU time of present()."),
+        Json("Footprint: private bytes are the process's commit charge (PrivateUsage), peaks PeakPagefileUsage and PeakWorkingSetSize; committed memory by region type and the largest private allocations come from VirtualQueryEx; threads are grouped by their Win32 start address, and Windows thread-pool workers are recognized by the gate's own pool worker.")};
     Json::Array failures;
     for (const auto& f : run.failures) failures.emplace_back(f);
     report["failures"] = std::move(failures);

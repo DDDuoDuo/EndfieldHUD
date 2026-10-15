@@ -14,6 +14,8 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <functional>
+#include <memory>
 #include <stdexcept>
 #include <unordered_map>
 
@@ -61,6 +63,57 @@ double pdhSum(PDH_HCOUNTER counter, DWORD format) {
     }
     return total;
 }
+// A thread's Win32 start address as "module+0xoffset" in `process`.
+struct ThreadStart { std::string module, start; };
+ThreadStart startOfAddress(HANDLE process, void* address) {
+    if (!address) return {};
+    MEMORY_BASIC_INFORMATION memory{};
+    if (!VirtualQueryEx(process, address, &memory, sizeof(memory)) || !memory.AllocationBase) return {};
+    wchar_t file[MAX_PATH]{};
+    if (!GetMappedFileNameW(process, memory.AllocationBase, file, MAX_PATH)) return {};
+    const std::wstring_view path(file);
+    const auto slash = path.find_last_of(L"\\/");
+    char offset[32]{};
+    std::snprintf(offset, sizeof(offset), "+0x%llx",
+                  static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(address) - reinterpret_cast<std::uintptr_t>(memory.AllocationBase)));
+    ThreadStart out;
+    out.module = narrowText(slash == std::wstring_view::npos ? path : path.substr(slash + 1));
+    out.start = out.module + offset;
+    return out;
+}
+void* threadStartAddress(HANDLE thread) {
+    static const auto queryThread = ntdll<QueryThreadInformation>("NtQueryInformationThread");
+    void* address{};
+    if (!queryThread || queryThread(thread, threadQuerySetWin32StartAddress, &address, sizeof(address), nullptr) < 0) return nullptr;
+    return address;
+}
+// The start of this machine's Windows thread-pool workers (ntdll's worker
+// routine, mapped at the same place in every process of the boot session):
+// read inside a work item of this process's own pool. "" when unknown.
+const std::string& poolWorkerStart() {
+    static const std::string start = [] {
+        struct Probe {
+            HANDLE done = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+            void* address{};
+            ~Probe() { if (done) CloseHandle(done); }
+        };
+        auto probe = std::make_shared<Probe>();
+        if (!probe->done) return std::string();
+        auto* holder = new std::shared_ptr<Probe>(probe);
+        const auto work = [](PTP_CALLBACK_INSTANCE, void* context) {
+            const std::unique_ptr<std::shared_ptr<Probe>> owned(static_cast<std::shared_ptr<Probe>*>(context));
+            (*owned)->address = threadStartAddress(GetCurrentThread());
+            SetEvent((*owned)->done);
+        };
+        if (!TrySubmitThreadpoolCallback(work, holder, nullptr)) {
+            delete holder;
+            return std::string();
+        }
+        if (WaitForSingleObject(probe->done, 5000) != WAIT_OBJECT_0) return std::string();
+        return startOfAddress(GetCurrentProcess(), probe->address).start;
+    }();
+    return start;
+}
 } // namespace
 
 double gateClock() noexcept {
@@ -82,8 +135,10 @@ struct ProcessProbe::Impl {
     bool gpu{};
     double gpuSeconds{}, lastGpuTime{};
 
+    std::string program; // the measured image's file name
     // Per-thread context switches of the process; false when it is gone.
-    bool threads(std::uint64_t& total, std::uint32_t& count) {
+    bool threads(std::uint64_t& total, std::uint32_t& count) { return snapshot(current, total, count); }
+    bool snapshot(std::unordered_map<DWORD, ULONG>& into, std::uint64_t& total, std::uint32_t& count) {
         if (!query) return false;
         for (int attempt = 0; attempt < 8; ++attempt) {
             if (buffer.empty()) buffer.resize(1u << 20);
@@ -91,7 +146,7 @@ struct ProcessProbe::Impl {
             const auto status = query(systemProcessInformation, buffer.data(), static_cast<ULONG>(buffer.size()), &needed);
             if (status == statusInfoLengthMismatch) { buffer.resize(std::max<std::size_t>(needed + 65536, buffer.size() * 2)); continue; }
             if (status < 0) return false;
-            current.clear();
+            into.clear();
             for (std::size_t at = 0;;) {
                 if (at + processHeader > buffer.size()) return false;
                 const auto pid = static_cast<DWORD>(read<std::uintptr_t>(buffer, at + processId));
@@ -103,7 +158,7 @@ struct ProcessProbe::Impl {
                         if (entry + threadEntry > buffer.size()) return false;
                         const auto tid = static_cast<DWORD>(read<std::uintptr_t>(buffer, entry + threadId));
                         const auto switches = read<ULONG>(buffer, entry + threadSwitches);
-                        current[tid] = switches;
+                        into[tid] = switches;
                         total += switches;
                     }
                     return true;
@@ -115,25 +170,14 @@ struct ProcessProbe::Impl {
         }
         return false;
     }
-    std::string startModule(DWORD tid) const {
-        static const auto queryThread = ntdll<QueryThreadInformation>("NtQueryInformationThread");
+    ThreadStart startOf(DWORD tid) const {
         HANDLE thread = OpenThread(THREAD_QUERY_INFORMATION, FALSE, tid);
-        if (!thread || !queryThread) { if (thread) CloseHandle(thread); return {}; }
-        void* address{};
-        const auto status = queryThread(thread, threadQuerySetWin32StartAddress, &address, sizeof(address), nullptr);
+        if (!thread) return {};
+        void* address = threadStartAddress(thread);
         CloseHandle(thread);
-        if (status < 0 || !address) return {};
-        MEMORY_BASIC_INFORMATION memory{};
-        if (!VirtualQueryEx(process, address, &memory, sizeof(memory)) || !memory.AllocationBase) return {};
-        wchar_t file[MAX_PATH]{};
-        if (!GetMappedFileNameW(process, memory.AllocationBase, file, MAX_PATH)) return {};
-        const std::wstring_view path(file);
-        const auto slash = path.find_last_of(L"\\/");
-        char offset[32]{};
-        std::snprintf(offset, sizeof(offset), "+0x%llx",
-                      static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(address) - reinterpret_cast<std::uintptr_t>(memory.AllocationBase)));
-        return narrowText(slash == std::wstring_view::npos ? path : path.substr(slash + 1)) + offset;
+        return startOfAddress(process, address);
     }
+    std::string startModule(DWORD tid) const { return startOf(tid).start; }
     static std::string description(DWORD tid) {
         static const auto get = reinterpret_cast<GetDescription>(reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "GetThreadDescription")));
         if (!get) return {};
@@ -151,6 +195,12 @@ ProcessProbe::ProcessProbe(std::uint32_t pid) : impl_(std::make_unique<Impl>()) 
     impl_->id = pid;
     impl_->process = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ | SYNCHRONIZE, FALSE, pid);
     if (!impl_->process) throw std::runtime_error("The measured process cannot be opened");
+    std::wstring image(32768, L'\0');
+    DWORD imageLength = static_cast<DWORD>(image.size());
+    if (QueryFullProcessImageNameW(impl_->process, 0, image.data(), &imageLength)) {
+        image.resize(imageLength);
+        impl_->program = narrowText(fs::path(image).filename().native());
+    }
     // GPU counters (Windows 10 1709+): engine utilization and process GPU memory.
     if (PdhOpenQueryW(nullptr, 0, &impl_->pdh) == ERROR_SUCCESS) {
         const auto prefix = L"pid_" + std::to_wstring(pid) + L"_*";
@@ -182,6 +232,8 @@ ResourceSample ProcessProbe::sample() {
     if (GetProcessMemoryInfo(impl_->process, reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&memory), sizeof(memory))) {
         s.privateBytes = memory.PrivateUsage;
         s.workingSet = memory.WorkingSetSize;
+        s.peakPrivateBytes = std::max<std::uint64_t>(memory.PeakPagefileUsage, memory.PrivateUsage);
+        s.peakWorkingSet = std::max<std::uint64_t>(memory.PeakWorkingSetSize, memory.WorkingSetSize);
     }
     if (!impl_->threads(s.contextSwitches, s.threads) && !exited()) throw std::runtime_error("Thread activity is unavailable");
     impl_->currentTime = s.time;
@@ -215,6 +267,59 @@ std::vector<ThreadActivity> ProcessProbe::threadsSinceMark(std::size_t count) {
         t.start = impl_->startModule(t.id);
     }
     return out;
+}
+std::vector<ThreadGroup> ProcessProbe::threadCensus() {
+    // Its own snapshot: the busiest-thread window (current/mark) is untouched.
+    std::unordered_map<DWORD, ULONG> threads;
+    std::uint64_t total{};
+    std::uint32_t count{};
+    if (!impl_->snapshot(threads, total, count)) return {};
+    const auto& pool = poolWorkerStart();
+    std::vector<ThreadGroup> list;
+    list.reserve(threads.size());
+    for (const auto& entry : threads) {
+        const auto start = impl_->startOf(entry.first);
+        ThreadGroup g;
+        g.start = start.start;
+        g.module = start.module;
+        g.name = Impl::description(entry.first);
+        g.role = threadRole(start.module, !pool.empty() && start.start == pool, impl_->program);
+        g.count = 1;
+        list.push_back(std::move(g));
+    }
+    return groupThreads(std::move(list));
+}
+std::optional<MemoryRegions> ProcessProbe::memoryRegions() {
+    MemoryRegions r;
+    std::unordered_map<std::uintptr_t, std::uint64_t> allocations;
+    MEMORY_BASIC_INFORMATION m{};
+    std::uintptr_t at{};
+    bool any{};
+    // At most a few thousand regions in practice; bounded against a process
+    // that keeps mapping while it is walked.
+    for (std::size_t guard = 0; guard < 4'000'000; ++guard) {
+        if (VirtualQueryEx(impl_->process, reinterpret_cast<LPCVOID>(at), &m, sizeof(m)) != sizeof(m)) break;
+        any = true;
+        if (m.State == MEM_COMMIT) {
+            if (m.Type == MEM_PRIVATE) {
+                r.privateCommitted += m.RegionSize;
+                allocations[reinterpret_cast<std::uintptr_t>(m.AllocationBase)] += m.RegionSize;
+            } else if (m.Type == MEM_MAPPED) {
+                r.mappedCommitted += m.RegionSize;
+            } else if (m.Type == MEM_IMAGE) {
+                r.imageCommitted += m.RegionSize;
+            }
+        }
+        const auto next = reinterpret_cast<std::uintptr_t>(m.BaseAddress) + m.RegionSize;
+        if (m.RegionSize == 0 || next <= at) break;
+        at = next;
+    }
+    if (!any) return std::nullopt;
+    r.largestPrivate.reserve(allocations.size());
+    for (const auto& entry : allocations) r.largestPrivate.push_back(entry.second);
+    std::sort(r.largestPrivate.begin(), r.largestPrivate.end(), std::greater<>());
+    if (r.largestPrivate.size() > 8) r.largestPrivate.resize(8);
+    return r;
 }
 
 MachineInfo describeMachine() {

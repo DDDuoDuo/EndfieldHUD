@@ -6,7 +6,9 @@
 // tray. It presents no HUD module and draws nothing.
 //
 //   production       WinHTTP transport (completions through a private WM_APP
-//                    notice), the shared UtilityExecutor, <data root>/Updates,
+//                    notice; its WinHTTP session exists only while a check or
+//                    download runs and opens on the shared queue), the
+//                    shared UtilityExecutor, <data root>/Updates,
 //                    the installed-copy check of this executable, real
 //                    verification and the Setup launcher. An isolated data root
 //                    (--data-root) never checks automatically and never installs.

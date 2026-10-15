@@ -7,7 +7,9 @@
 // and its cold/warm openings are gated (a slow cold opening is caught), a
 // cancelled run stops at once with a partial report, a fatal error record
 // ends the run instead of being measured as idle, the readable report is
-// rendered, and the measured process never outlives a killed gate tool.
+// rendered, the measured process never outlives a killed gate tool, and the
+// footprint (memory held while open, threads grouped by start and the
+// Windows thread pool recognized) is reported first and gated.
 //
 //   packaging_perf_probe_tests <fixture app> <package_perf_gate.exe>
 #include "core/data/json.hpp"
@@ -15,6 +17,7 @@
 #include "packaging/perf_report.hpp"
 #include "packaging/perf_runner.hpp"
 #include <cmath>
+#include <cstring>
 #include <cwchar>
 #include <filesystem>
 #include <fstream>
@@ -159,6 +162,61 @@ void contracts(const fs::path& fixture, const fs::path& tool) {
     check(contains(p::summarizeGateReport(report), "openings") && contains(p::summarizeGateReport(report), "cold: first frame ") &&
           contains(p::summarizeGateReport(report), "warm: first frame "),
           "The console summary lists the openings: " + p::summarizeGateReport(report));
+    // The footprint comes first: closed after launch, open and closed after
+    // the cycles, within the default limits for a small process.
+    const auto* quietFootprint = scenario(report, "footprint");
+    check(quietFootprint && report["scenarios"].array().front()["name"].string() == "footprint" && (*quietFootprint)["passed"].boolean() &&
+          (*quietFootprint)["points"].array().size() == 3 && (*quietFootprint)["gates"].array().size() == 6 && contains(markdown, "## Memory, threads and handles") &&
+          contains(markdown, "| Measure | Closed after launch | Open | Closed after 25 cycles |"),
+          "The quiet process's footprint is reported first and passes: " + run.report.substr(0, 4000));
+
+    // Footprint: three idle "fixture worker" threads and one waiting pool
+    // worker, and 48 MiB held while open (released on close).
+    auto held = quick(fixture);
+    held.fixtureArguments = {L"--threads", L"3", L"--hold-mib", L"48"};
+    held.startupTrace = false;
+    held.openFootprint.privateBytes = 32.0 * 1024 * 1024;
+    run = p::runPerformanceGate(held);
+    report = Json::parse(run.report, 64 * 1024 * 1024);
+    const auto* footprint = scenario(report, "footprint");
+    const auto point = [&](std::string_view name) -> const Json* {
+        if (!footprint) return nullptr;
+        for (const auto& q : (*footprint)["points"].array()) if (q["point"].string() == name) return &q;
+        return nullptr;
+    };
+    const auto* closedPoint = point("closed");
+    const auto* openPoint = point("open");
+    const auto* afterPoint = point("after-cycles");
+    check(closedPoint && openPoint && afterPoint, "Every footprint point: " + run.report.substr(0, 4000));
+    constexpr double mib = 1024.0 * 1024.0;
+    const auto bytes = [](const Json& q, const char* key) { return q[key].number(); };
+    check(bytes(*openPoint, "privateBytes") - bytes(*closedPoint, "privateBytes") >= 44 * mib &&
+          bytes(*openPoint, "workingSetBytes") - bytes(*closedPoint, "workingSetBytes") >= 44 * mib &&
+          (*openPoint)["memory"]["largestPrivateAllocations"].array().front().number() >= 48 * mib &&
+          (*openPoint)["memory"]["privateCommittedBytes"].number() >= 48 * mib && bytes(*openPoint, "peakPrivateBytes") >= bytes(*openPoint, "privateBytes") &&
+          bytes(*afterPoint, "privateBytes") <= bytes(*openPoint, "privateBytes") - 44 * mib && bytes(*afterPoint, "peakPrivateBytes") >= 48 * mib,
+          "Memory held while open is measured, its allocation listed, and it is gone after the cycles: " + Json(*footprint).encode(1 << 20).substr(0, 4000));
+    bool workers{}, pool{};
+    for (const auto& g : (*closedPoint)["threadGroups"].array()) {
+        if (g["name"].string() == "fixture worker")
+            workers = g["count"].integer() == 3 && g["module"].string() == fixture.filename().string() && g["role"].string() == "the program's own threads" &&
+                      contains(g["start"].string(), fixture.filename().string() + "+0x");
+        if (g["role"].string() == "Windows thread pool") pool = g["count"].integer() >= 1 && _stricmp(g["module"].string().c_str(), "ntdll.dll") == 0;
+    }
+    check(workers && pool && (*closedPoint)["threads"].integer() >= 5,
+          "Threads are grouped by start and description, the pool worker recognized: " + Json((*closedPoint)["threadGroups"]).encode(1 << 20).substr(0, 4000));
+    bool openFailed{}, closedPassed{};
+    for (const auto& g : (*footprint)["gates"].array()) {
+        if (g["name"].string() == "open.private-bytes") openFailed = !g["passed"].boolean();
+        if (g["name"].string() == "closed.private-bytes") closedPassed = g["passed"].boolean();
+    }
+    bool listed{};
+    for (const auto& f : run.failures) listed = listed || f.starts_with("footprint: Private bytes, open ");
+    check(!run.passed && openFailed && closedPassed && listed && !(*footprint)["passed"].boolean(), "An open footprint over its limit fails the gate");
+    const auto heldMarkdown = p::renderGateMarkdown(report);
+    check(contains(heldMarkdown, "| fixture worker | 3 | 3 | 3 |") && contains(heldMarkdown, "| Windows thread pool | - |") &&
+          contains(heldMarkdown, "| Private bytes, open | ") && contains(heldMarkdown, "Kept after use (closed after 25 cycles minus closed after launch): "),
+          "The readable report lists the footprint and the threads:\n" + heldMarkdown);
 
     // A slow cold opening: slow first frame and five late frames.
     auto slow = quick(fixture);

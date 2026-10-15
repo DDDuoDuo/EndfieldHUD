@@ -11,9 +11,15 @@
 // queue results and call `notify` (one posted owner message); completions
 // run in drain() on the owner thread. Resource deadlines are host-clock
 // seconds folded into the host's single scheduler: no timer, thread or poll.
+// The WinHTTP session exists only while a request waits or is in flight: the
+// first request opens it (on the `background` queue when given) and the last
+// completion, cancellation or deadline closes it. Constructing the transport
+// opens none, so a run that never checks starts none of WinHTTP's threads.
 #ifdef _WIN32
 #include "packaging/package_format.hpp"
 #include "packaging/updater.hpp"
+#include <cstdint>
+#include <exception>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -32,6 +38,11 @@ public:
         // Tests only: plain http://127.0.0.1:<port>/ URLs and no proxy, so a
         // test never resolves or contacts anything beyond the loopback.
         bool loopbackOnly{};
+        // Opens the session off the owner thread (EndfieldHUD: the shared
+        // utility queue; `done` runs on the owner thread). False when the
+        // queue cannot take it: the session then opens on the owner thread,
+        // as it does without `background`. Requests wait for the session.
+        std::function<bool(std::function<void()> work, std::function<void(std::exception_ptr)> done)> background;
     };
     explicit WinHttpTransport(Options);
     ~WinHttpTransport() override;
@@ -43,6 +54,9 @@ public:
     std::optional<double> nextDeadline() const override;
     bool deadline(double now) override;
     std::size_t active() const override;
+    // Diagnostics: whether a WinHTTP session is open now, and how many were opened.
+    bool sessionOpen() const noexcept;
+    std::uint64_t sessionOpens() const noexcept;
 private:
     struct Impl;
     std::shared_ptr<Impl> impl_;

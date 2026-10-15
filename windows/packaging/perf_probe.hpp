@@ -2,11 +2,12 @@
 // Out-of-process sampling and control for the section 9 performance gates
 // (packaging/perf_gate.hpp). Nothing is injected into the measured process,
 // no debugging privilege or ETW session is needed and no administrator
-// rights are used: process times and memory (GetProcessTimes,
-// GetProcessMemoryInfo), handle/GDI/USER counts, per-thread context switches
-// (NtQuerySystemInformation, the counter Process Explorer shows), thread
-// descriptions and start modules for attribution, and GPU engine/memory
-// counters through PDH when Windows provides them for the session.
+// rights are used: process times and memory with their peaks
+// (GetProcessTimes, GetProcessMemoryInfo), handle/GDI/USER counts, per-thread
+// context switches (NtQuerySystemInformation, the counter Process Explorer
+// shows), thread descriptions and start modules for attribution, committed
+// memory by region type (VirtualQueryEx), and GPU engine/memory counters
+// through PDH when Windows provides them for the session.
 #ifdef _WIN32
 #include "packaging/perf_gate.hpp"
 #include <cstdint>
@@ -32,6 +33,13 @@ public:
     void markThreads();
     // The busiest threads (context switches per second) since markThreads().
     std::vector<ThreadActivity> threadsSinceMark(std::size_t count);
+    // Every thread of the process now, grouped by start address and
+    // description (groupThreads), each with its role (threadRole): the
+    // Windows thread pool is recognized by this process's own pool worker.
+    std::vector<ThreadGroup> threadCensus();
+    // The process's committed memory by region type (VirtualQueryEx) and its
+    // largest private allocations (committed bytes per allocation base).
+    std::optional<MemoryRegions> memoryRegions();
     bool exited() const noexcept;
     bool gpuCounters() const noexcept;
 private:

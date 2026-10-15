@@ -191,7 +191,8 @@ if(WIN32)
       --report "${CMAKE_CURRENT_BINARY_DIR}/packaging/perf-gate-fixture.json" --markdown "${CMAKE_CURRENT_BINARY_DIR}/packaging/perf-gate-fixture.md"
       --seconds 2 --interval 0.25 --settle 0.3 --open-settle 0.05
       --close-settle 0.05 --cycles 20 --limit lifecycle.warmup=4 --limit lifecycle.window=5 --limit closed.cpu=2 --limit open.cpu=2 --limit open.wakeups=20
-      --limit cold-open.first-frame=100)
+      --limit cold-open.first-frame=100 --limit closed.threads=32 --limit open.handles=4000 --limit after-cycles.private=67108864
+      --limit after-cycles.working-set=none)
     set_tests_properties(packaging_perf_gate_tool PROPERTIES TIMEOUT 300 FIXTURES_SETUP packaging_perf_gate_report
       PASS_REGULAR_EXPRESSION "  openings +PASS  cold: first frame [0-9]+ ms" FAIL_REGULAR_EXPRESSION "performance gate: (FAILED|cancelled)|package_perf_gate: ")
     # The saved JSON report rendered again (--render), without running anything.
@@ -211,7 +212,7 @@ if(WIN32)
     target_link_libraries(packaging_update_setup_fixture PRIVATE shell32)
     add_executable(packaging_update_platform_tests packaging/tests/update_platform_tests.cpp)
     target_compile_definitions(packaging_update_platform_tests PRIVATE ${EHUD_PACKAGING_DEFINITIONS})
-    target_link_libraries(packaging_update_platform_tests PRIVATE hud_packaging_update_platform ws2_32 advapi32 user32 ole32 shell32)
+    target_link_libraries(packaging_update_platform_tests PRIVATE hud_packaging_update_platform winhttp ws2_32 advapi32 user32 ole32 shell32)
     add_dependencies(packaging_update_platform_tests packaging_update_setup_fixture)
     add_test(NAME packaging_update_platform_contracts COMMAND packaging_update_platform_tests "$<TARGET_FILE:packaging_update_setup_fixture>")
     set_tests_properties(packaging_update_platform_contracts PROPERTIES TIMEOUT 300)

@@ -269,6 +269,16 @@ be opened.
    downloads the checksum list and then the setup.
 2. *Ready to update* reads "Click to install …". The click installs.
 
+**What stays resident.** Between checks the area holds only its state and
+the transport's bookkeeping. The WinHTTP session exists only while a request
+waits or is in flight, so a run that never checks starts none of WinHTTP's
+threads (an asynchronous session starts them when it opens; before this, the
+area opened one at launch). The first request opens the session on the
+shared utility queue, never in an opening frame (the daily check starts with
+an opening). The last completion, cancellation or deadline closes it.
+Requests accepted while the session opens keep their deadline; one cancelled
+or expired meanwhile never reaches the network.
+
 **Download checks.**
 
 - HTTPS only, through WinHTTP. Redirects are followed by the updater, never by
@@ -376,6 +386,27 @@ the laptop:
 - The portable job stopped at a missing `<cmath>` in
   `tests/system_overlay_state_tests.cpp` (GCC; host request).
 
+**Run 38170093334 (2026-10-11, commit `03723d7`, the latest pushed).** The
+Windows job passed: 358 of 358 registered suites (among them
+`packaging_installer_contracts`, `endfieldhud_release_contracts`,
+`packaging_watch_runtime_staged` and both notification identity suites), the
+OS ICU check (ICU 72.1, Unicode 15.1.0, time-zone data 2022g) and the staged
+developer package (artifact `EndfieldHUD-windows-x64-unsigned-developer-55`).
+The 8.3 `%TEMP%` and cp1252 fixes above are confirmed there. The portable job (GCC 13) failed in its
+build step; with `make -k` it listed every compile error at once, all in other
+areas' files and all still present at the local head (host requests):
+
+- `modules/media_assembly_export.hpp` uses `std::shared_ptr` without
+  `<memory>`, which also breaks `media_assembly_export.cpp` and
+  `media_assembly_controller.cpp`;
+- `modules/reader_pdf_title.cpp` line 726,
+  `Parser parser(std::span(tail).subspan(at + 9), true);`: GCC parses it as a
+  declaration with a class template placeholder and rejects it;
+- `modules/reader_pdf_crypto.cpp` uses `std::copy_n` without `<algorithm>`.
+
+Targets that depend on `hud_media_assembly_controller` or `hud_reader` were
+not compiled, so a later run may list more.
+
 Both jobs have read-only permissions. The Mac-exported runtime inputs are not
 in the repository, so CI does not register the input-dependent suites (owner
 coverage, data-root and package contracts) and cannot run hidden WARP module
@@ -433,7 +464,14 @@ administrator rights nor an ETW session is needed. It records the following:
 - process CPU as a percentage of one core
 - wake-ups: per-thread context switches from `NtQuerySystemInformation`, with the busiest threads named by description and start module
 - handles, threads and GDI/USER objects
-- private bytes and working set
+- private bytes (the commit charge, Task Manager's *Commit size*) and working
+  set, with the process's peaks of both
+- committed memory by region type (private, mapped, image) and the largest
+  private allocations (`VirtualQueryEx`)
+- every thread grouped by its start address (module+offset) and description,
+  with what the module is: the Windows thread pool (recognized by the gate's
+  own pool worker), graphics drivers, Media Foundation, COM, WinHTTP, WebView2,
+  the program itself and other system components
 - where the session exposes them, GPU engine utilization and GPU process memory (PDH)
 - the cold and warm openings, from the app's own startup trace (below)
 
@@ -454,10 +492,24 @@ It runs these scenarios:
    the frames later than 25 ms (1.5 × the 60 Hz budget), and the mean/max CPU
    of `present()`. It also lists the launch-to-first-frame time, the slowest
    startup stages and the module owners with the longest frame work during
-   the cold opening. This is the measurement for a slow or stuttering first
+   the cold opening. The HUD starts closed and the gate opens it only after
+   the closed idle window, so the report then says that launch to the first
+   frame is mostly that wait and gives the startup time before the window
+   instead (the first desktop run showed 70975 ms there, of which 1098 ms
+   were startup). This is the measurement for a slow or stuttering first
    opening after launch (section 9: "profile first and warmed opens
    separately", p50/p95 frame times, startup latency).
 5. **Open idle** with ambient animation off.
+6. **Memory, threads and handles** (listed first in the report): private
+   bytes, working set and their peaks, threads, handles, GDI/USER objects, GPU
+   memory, committed memory by type, the largest private allocations and the
+   threads by start address at four points: closed after launch (the end of
+   closed idle), open (the end of each open idle) and closed after the cycles
+   (`--settle` seconds after the last close, so deferred releases have run).
+   The report also states what the closed HUD kept after use (closed after
+   the cycles minus closed after launch). This is the measurement for the
+   reported footprint of the live build (426 MB private bytes and 95 threads
+   soon after launch, 599 MB and 69 threads after use).
 
 Each run uses a fresh temporary data root (in the long form of `%TEMP%`) with
 launch at login off and onboarding done. The app is stopped through the
@@ -486,12 +538,18 @@ The limits are provisional and configurable (`--limit`, `none` removes one):
 | `open` (ambient on) | CPU ≤ 10 %, ≤ 400 wake-ups/s, GPU ≤ 25 %, growth ≤ 8 MiB |
 | `ambient-off` | CPU ≤ 5 %, ≤ 200 wake-ups/s, GPU ≤ 15 %, growth ≤ 8 MiB |
 | `lifecycle` | growth of handles ≤ 16, threads ≤ 2, GDI/USER ≤ 8, private bytes ≤ 8 MiB, working set ≤ 24 MiB, dedicated GPU memory ≤ 16 MiB (warm-up and window 10 cycles) |
+| `closed`, `after-cycles` footprint | private bytes ≤ 160 MiB, ≤ 40 threads; working set and handles reported (`private`, `working-set`, `threads`, `handles`) |
+| `open`, `ambient-off` footprint | private bytes ≤ 256 MiB, ≤ 64 threads; working set and handles reported |
 | `cold-open` | first frame ≤ 250 ms (the Mac 1.2 first synchronous open was 225 ms on an M2), p95 interval ≤ 25 ms, ≤ 3 frames later than 25 ms (`first-frame`, `p95-interval`, `late-frames`) |
 | `warm-open` | first frame ≤ 100 ms, p95 interval ≤ 25 ms, ≤ 1 late frame |
 
-Values are reported whether or not a limit is set. Compositor latency, GPU
-duration and input latency need ETW (WPR/PresentMon) and are not part of this
-gate.
+The footprint limits compare with the Mac 1.2 physical footprint (96.5–98.2
+MiB closed, 186–190 MiB during continuous tilt on an Apple M2,
+`docs/performance-1.2.md`). Windows private bytes also count the graphics
+driver's user-mode commit, so the limits allow some headroom; a closed HUD
+after use must come back to the closed limit. Values are reported whether or
+not a limit is set. Compositor latency, GPU duration and input latency need
+ETW (WPR/PresentMon) and are not part of this gate.
 
 A run that hits a fatal error is not measured as idle: EndfieldHUD writes
 `<data root>\v1\Diagnostics\last-fatal.txt` and keeps a message box open,
@@ -526,14 +584,14 @@ test.
 | Test | What it proves |
 | --- | --- |
 | `packaging_format_contracts` (portable) | Manifest and install-manifest codecs and every rejection rule, versions, trailer and PE/Authenticode location, Setup arguments and isolation rules, all five languages and their placeholders |
-| `packaging_perf_gate_contracts` (portable) | Idle arithmetic, gates, plateau versus leak detection; opening summaries from a startup trace (nearest-rank p50/p95, late frames, frame CPU), opening gates, malformed traces rejected; the readable report and console summary of a full synthetic report, including unavailable GPU values, failures and a cancelled run |
+| `packaging_perf_gate_contracts` (portable) | Idle arithmetic, gates, plateau versus leak detection; opening summaries from a startup trace (nearest-rank p50/p95, late frames, frame CPU), opening gates, malformed traces rejected, the launch timing of a HUD opened after the closed idle; footprint gates, thread roles and grouping, the footprint scenario and its readable table, gates, threads by start address and the memory kept after use; the readable report and console summary of a full synthetic report, including unavailable GPU values, failures and a cancelled run |
 | `packaging_ehudz01_contracts` (portable) | The decoder against the Mac oracle, and the staged-inventory verifier |
 | `packaging_installer_contracts` | 385 checks through the real Setup/uninstall programs with synthetic payloads in `%TEMP%\ehud-<id>` and a private HKCU subtree. Covers fresh install, repair, upgrade, launch-at-login choices, refusals, rollback after every step, interrupted-swap recovery, the Restart Manager close/restart of a stand-in app, uninstall relocation, kept data, explicit data removal and the signed layout. Outside the interactive console session (CI, the laptop's SSH session) it also drives the task-dialog windows with dialog messages: install with the box cleared, uninstall with confirmed data removal, *Keep my data*, and cancel |
 | `endfieldhud_release_contracts` | The real install tree staged, zipped, packed, installed (isolated), checked with the installed `EndfieldHUD.exe --verify-package` and uninstalled |
-| `packaging_perf_probe_contracts`, `packaging_perf_gate_tool`, `packaging_perf_gate_render`, `packaging_perf_gate_refuses_unsupported` | The gate against the stand-in app: a quiet process passes, one handle/GDI leak per cycle and a 10 ms wake-up are caught and attributed; `ENDFIELDHUD_STARTUP_TRACE=1` reaches the app through the environment block and its cold and warm openings are reported, a slow cold opening fails its gates; a cancelled run stops at once with a partial report; the measured process ends when the gate tool is killed (kill-on-close job); the tool writes and re-renders the readable report; an executable without `--data-root` support is never started |
+| `packaging_perf_probe_contracts`, `packaging_perf_gate_tool`, `packaging_perf_gate_render`, `packaging_perf_gate_refuses_unsupported` | The gate against the stand-in app: a quiet process passes, one handle/GDI leak per cycle and a 10 ms wake-up are caught and attributed; 48 MiB held while open shows in private bytes, working set and the largest allocations and is gone after the cycles, three described threads are grouped by start and the Windows thread pool is recognized, and an open footprint over its limit fails; `ENDFIELDHUD_STARTUP_TRACE=1` reaches the app through the environment block and its cold and warm openings are reported, a slow cold opening fails its gates; a cancelled run stops at once with a partial report; the measured process ends when the gate tool is killed (kill-on-close job); the tool writes and re-renders the readable report; an executable without `--data-root` support is never started |
 | `packaging_identity_consistency` | Setup's notification identity equals the Calendar area's |
 | `packaging_watch_runtime_staged` (CI, where `Resources/` and Python exist) | The Mac packager's real staged tree verifies natively |
 | `packaging_update_check_contracts` (portable) | The release checker against the Mac oracle (59 tags, every ordered pair, 36 page URLs, Foundation's control characters for every scalar, 31 client scenarios). Also the Windows namespace and installer-asset rules, SHA256SUMS parsing, redirect rules, and the updater controller over synthetic routes and temporary folders. The controller cases cover check, consented download and install, the HUD closing first, the saved hand-off, its outcomes on the next run or at Setup exit, failures, discover-only copies, the daily check and its preference, Retry-After, deadlines, stop, and bounded files |
-| `packaging_update_platform_contracts` | WinHTTP against a loopback fixture server: headers, no redirects followed, size bounds, file mode, cancellation, host-clock deadlines, and refusal of plain HTTP and credentials in production. Also the installed-copy check in a private HKCU subtree, verification of synthetic setups (checksum, version, incomplete, tampered payload), the held file, and the launcher with a stand-in Setup. The updater runs end to end over those services |
+| `packaging_update_platform_contracts` | WinHTTP against a loopback fixture server: headers, no redirects followed, size bounds, file mode, cancellation, host-clock deadlines, and refusal of plain HTTP and credentials in production. The session's lifetime: none and no thread at construction, open only while a request waits or runs, opened on a background queue that serves every waiting request, requests cancelled or expired while it opens never reach the network, a refusing queue opens it on the owner thread, and one opened for a destroyed transport is closed. Also the installed-copy check in a private HKCU subtree, verification of synthetic setups (checksum, version, incomplete, tampered payload), the held file, and the launcher with a stand-in Setup. The updater runs end to end over those services |
 | `packaging_os_text_data_contracts` | The OS ICU and time-zone data meet `os-requirements.json` (CI runs the same check before its suites) |
 | `application_owner_coverage` (area `windowsUpdates`) | The area in the production owner with synthetic routes. Covers Mac, draft and prerelease releases ignored, the redirects, the real payload reader on a synthetic setup, the install hand-off after the HUD closes, a refused Setup, ETag, the daily check, Retry-After, a tampered checksum, a hostile redirect and a Mac-only feed |

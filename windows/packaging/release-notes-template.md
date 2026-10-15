@@ -15,7 +15,10 @@ Publishing checklist (maintainer, after choosing a Windows release):
      so no artifact name contains "-incomplete".
   2. On the test laptop's desktop, run the section 9 performance gate against
      that build (Release\package_perf_gate.exe --desktop) and read its
-     performance-gate.md; resolve or knowingly accept every FAIL.
+     performance-gate.md; resolve or knowingly accept every FAIL. Compare its
+     "Memory, threads and handles" section (private bytes, working set,
+     threads and handles closed after launch, open, and closed after the 100
+     cycles) with the previous release's report: a release must not grow them.
   3. Check the live acceptance list (WINDOWS-MIGRATION.md sections 9 and 11)
      and compare "Differences from the macOS version" below with the platform
      gap tables in WINDOWS-MIGRATION.md section 6. Remove rows that were
@@ -137,7 +140,8 @@ system safe. The full list, with the reasons, is in
   press Ctrl+V. Items that are not real files (Outlook attachments, images
   dragged from a browser, files inside zip folders) are refused. Items moved
   to the Recycle Bin, to another drive or to some network shares show as
-  *Unavailable*.
+  *Unavailable*. An item's preview is a properties card inside the HUD, with
+  *Open* and *Reveal*, instead of Quick Look.
 - **Now Playing:** players appear when they publish to the Windows media
   controls; NetEase Cloud Music, QQ Music and Kugou are also recognized by
   their window titles. Other players show *No music playing*. A player's own
@@ -150,13 +154,18 @@ system safe. The full list, with the reasons, is in
   volume acts on the app's sound on the default device; per-app output
   routing is not available. Windows remembers each app's mixer level, so
   EndfieldHUD restores the levels it changed when it quits or the device
-  changes.
+  changes. The app list shows three rows (two on the Mac) and scrolls.
 - **Media Assembly:** videos are exported as MP4 (H.264/AAC) instead of
   QuickTime MOV. HEIC/HEIF, HEVC, WebP and some other formats need optional
   codecs from the Microsoft Store; without them they are reported as
-  unsupported.
-- **Notes:** video notes need Media Foundation, which Windows N editions lack
-  until the Media Feature Pack is installed.
+  unsupported. The Highlights/Shadows slider has no effect yet (saved amounts
+  are kept), and 16-bit images are edited with 8-bit precision.
+- **Notes and Archive:** video notes need Media Foundation, which Windows N
+  editions lack until the Media Feature Pack is installed. Home and End move
+  to the start or end of the line, and Ctrl+Home and Ctrl+End to the start or
+  end of the text, as in other Windows text fields.
+- **E-Reader and Map:** Ctrl + mouse wheel zooms. Touchpad pinch-to-zoom is
+  not supported yet, and touchpad scrolling moves in mouse-wheel steps.
 - **Calendar:** reminders are Windows notifications. Windows has no
   permission prompt for them: they follow your notification settings, and
   Focus assist can hold the banner back (it still reaches the notification
@@ -184,9 +193,12 @@ system safe. The full list, with the reasons, is in
   (Indic scripts) and recent time-zone rules (for example Samoa's) can differ
   from the Mac. Pasted Mac fonts Times and Times New Roman both become Times
   New Roman.
-- **Screen readers:** every module's controls are available to UI
-  Automation, but the section buttons other than Power are not yet, and text
-  fields expose their whole value rather than a text pattern.
+- **Screen readers:** the section buttons and every module's controls are
+  available to UI Automation. Text fields expose their whole value rather
+  than a text pattern, and the HUD's controls are used with the HUD's own
+  keys rather than as Tab stops.
+- **App icon:** the *App / menu bar icon* setting changes the tray icon;
+  File Explorer, Start and notifications keep the program's own icon.
 - **Minigame:** the rules and scoring match the Mac. Because floating-point
   math differs slightly between Windows and macOS, long-running physics can
   take a different (still deterministic) path.

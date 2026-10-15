@@ -1,7 +1,9 @@
 // WINDOWS-MIGRATION.md section 9 gate tool: closed idle, open idle (ambient
-// animation on and off), the cold and warm openings and repeated open/close
-// lifecycle of a real EndfieldHUD.exe, measured from outside with a
-// temporary data root. Writes a JSON report and a readable Markdown report.
+// animation on and off), the cold and warm openings, repeated open/close
+// lifecycle and the memory/thread/handle footprint (closed after launch,
+// open, closed after the cycles) of a real EndfieldHUD.exe, measured from
+// outside with a temporary data root. Writes a JSON report and a readable
+// Markdown report.
 //
 // On the laptop desktop, one command (from the build's Release folder):
 //
@@ -19,7 +21,9 @@
 //       [--limit <scenario>.<metric>=<value>]... [--no-startup-trace] [--work-folder <dir>] [--keep-data] [--yes]
 //   package_perf_gate --render <report.json> [--markdown <report.md>]
 //
-// Limits: closed|open|ambient-off . cpu|wakeups|gpu|private-growth,
+// Limits: closed|open|ambient-off . cpu|wakeups|gpu|private-growth (idle) and
+// private|working-set|threads|handles (footprint at the end of that idle),
+// after-cycles . private|working-set|threads|handles (closed, after the cycles),
 // lifecycle . handles|threads|gdi|user|private|working-set|gpu-dedicated|warmup|window,
 // cold-open|warm-open . first-frame|p95-interval|late-frames
 // ("none" removes a limit). Exit code: 0 every gate passed, 1 a gate failed,
@@ -82,8 +86,20 @@ void setLimit(p::GateOptions& o, const std::string& assignment) {
     if (equals == std::string::npos || dot == std::string::npos || dot > equals) throw std::invalid_argument("--limit needs <scenario>.<metric>=<value>");
     const auto scenario = assignment.substr(0, dot), metric = assignment.substr(dot + 1, equals - dot - 1), text = assignment.substr(equals + 1);
     const std::optional<double> value = text == "none" ? std::nullopt : std::optional<double>(number(text));
-    if (scenario == "closed" || scenario == "open" || scenario == "ambient-off") {
+    // Footprint points: closed, open, ambient-off and after-cycles.
+    const auto footprint = [&](p::FootprintLimits& l) {
+        if (metric == "private") l.privateBytes = value;
+        else if (metric == "working-set") l.workingSet = value;
+        else if (metric == "threads") l.threads = value;
+        else if (metric == "handles") l.handles = value;
+        else return false;
+        return true;
+    };
+    if (scenario == "after-cycles") {
+        if (!footprint(o.cyclesFootprint)) throw std::invalid_argument("Unknown footprint metric: " + metric);
+    } else if (scenario == "closed" || scenario == "open" || scenario == "ambient-off") {
         auto& l = scenario == "closed" ? o.closedLimits : scenario == "open" ? o.openLimits : o.ambientOffLimits;
+        if (footprint(scenario == "closed" ? o.closedFootprint : scenario == "open" ? o.openFootprint : o.ambientOffFootprint)) return;
         if (metric == "cpu") l.cpuPercent = value;
         else if (metric == "wakeups") l.wakeupsPerSecond = value;
         else if (metric == "gpu") l.gpuPercent = value;

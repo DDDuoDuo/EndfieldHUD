@@ -66,7 +66,29 @@ std::string withUnit(double value, std::string_view unit) {
     if (unit == "count" || unit == "frames") return fixed(value, std::abs(value - std::round(value)) < 1e-9 ? 0 : 1);
     return fixed(value, 2) + (unit.empty() ? "" : " " + std::string(unit));
 }
+// A footprint point; `cycles` 0 when the count is not known.
+std::string pointTitle(std::string_view point, std::size_t cycles) {
+    if (point == "closed") return "closed after launch";
+    if (point == "open") return "open";
+    if (point == "open-ambient-off") return "open, ambient off";
+    if (point == "after-cycles") return cycles ? "closed after " + std::to_string(cycles) + " cycles" : std::string("closed after the cycles");
+    return std::string(point);
+}
+std::string capitalized(std::string text) {
+    if (!text.empty() && text[0] >= 'a' && text[0] <= 'z') text[0] = static_cast<char>(text[0] - 'a' + 'A');
+    return text;
+}
+std::string footprintMetricTitle(std::string_view metric) {
+    if (metric == "private-bytes") return "Private bytes";
+    if (metric == "working-set") return "Working set";
+    if (metric == "threads") return "Threads";
+    if (metric == "handles") return "Handles";
+    return std::string(metric);
+}
 std::string gateTitle(std::string_view name) {
+    // Footprint gates: "<point>.<metric>".
+    if (const auto dot = name.find('.'); dot != std::string_view::npos)
+        return footprintMetricTitle(name.substr(dot + 1)) + ", " + pointTitle(name.substr(0, dot), 0);
     if (name == "cpu") return "CPU";
     if (name == "wakeups") return "Wake-ups";
     if (name == "gpu") return "GPU busy";
@@ -102,10 +124,12 @@ std::string kindOf(const Json& scenario) {
     const auto name = text(scenario["name"], "");
     if (name.starts_with("lifecycle")) return "lifecycle";
     if (name == "openings") return "openings";
+    if (name == "footprint") return "footprint";
     return "idle";
 }
 std::string scenarioTitle(const Json& scenario) {
     const auto name = text(scenario["name"], "");
+    if (name == "footprint") return "Memory, threads and handles";
     if (name == "closed-idle") return "Closed idle";
     if (name == "open-idle-ambient-on") return "Open idle, ambient animation on";
     if (name == "open-idle-ambient-off") return "Open idle, ambient animation off";
@@ -164,10 +188,26 @@ std::string openingHighlights(const Json& s) {
     }
     return out.empty() ? "no opening was recorded" : out;
 }
+std::size_t cyclesOf(const Json& s) {
+    const auto n = optionalNumber(s["cycles"]);
+    return n && *n >= 0 ? static_cast<std::size_t>(*n) : 0;
+}
+std::string footprintHighlights(const Json& s) {
+    std::string out;
+    if (!s["points"].isArray()) return "no point was measured";
+    for (const auto& p : s["points"].array()) {
+        const auto bytes = optionalNumber(p["privateBytes"]);
+        const auto threads = optionalNumber(p["threads"]);
+        out += (out.empty() ? "" : "; ") + pointTitle(text(p["point"], "?"), cyclesOf(s)) + " " + (bytes ? fixed(*bytes / (1024.0 * 1024.0), 1) : std::string("?")) +
+               " MiB private, " + (threads ? fixed(*threads, 0) : std::string("?")) + " threads";
+    }
+    return out.empty() ? "no point was measured" : out;
+}
 std::string highlights(const Json& s) {
     const auto kind = kindOf(s);
     if (kind == "lifecycle") return lifecycleHighlights(s);
     if (kind == "openings") return openingHighlights(s);
+    if (kind == "footprint") return footprintHighlights(s);
     return idleHighlights(s);
 }
 
@@ -227,12 +267,169 @@ void renderLifecycle(std::string& md, const Json& s) {
     }
     md += "\n";
 }
+void renderFootprint(std::string& md, const Json& s) {
+    std::vector<const Json*> points;
+    if (s["points"].isArray()) for (const auto& p : s["points"].array()) points.push_back(&p);
+    if (points.empty()) {
+        md += "No point was measured.\n\n";
+        return;
+    }
+    const auto cycles = cyclesOf(s);
+    md += "Process-wide values of the measured program at the end of each state. Private bytes are its commit charge (Task Manager's "
+          "\"Commit size\"), the working set its resident memory; the peaks are the process's maxima up to that moment.\n\n| Measure |";
+    std::string rule = "| --- |";
+    for (const auto* p : points) {
+        md += " " + capitalized(pointTitle(text((*p)["point"], "?"), cycles)) + " |";
+        rule += " ---: |";
+    }
+    md += "\n" + rule + "\n";
+    const auto row = [&](const char* title, auto value) {
+        md += std::string("| ") + title + " |";
+        for (const auto* p : points) md += " " + value(*p) + " |";
+        md += "\n";
+    };
+    const auto bytes = [](const Json& v) { const auto n = optionalNumber(v); return n ? mebibytes(*n) : std::string("not available"); };
+    const auto count = [](const Json& v) { const auto n = optionalNumber(v); return n ? fixed(*n, 0) : std::string("?"); };
+    row("Private bytes", [&](const Json& p) { return bytes(p["privateBytes"]); });
+    row("Working set", [&](const Json& p) { return bytes(p["workingSetBytes"]); });
+    row("Peak private bytes", [&](const Json& p) { return bytes(p["peakPrivateBytes"]); });
+    row("Peak working set", [&](const Json& p) { return bytes(p["peakWorkingSetBytes"]); });
+    row("Threads", [&](const Json& p) { return count(p["threads"]); });
+    row("Handles", [&](const Json& p) { return count(p["handles"]); });
+    row("GDI / USER objects", [&](const Json& p) { return count(p["gdiObjects"]) + " / " + count(p["userObjects"]); });
+    row("Dedicated / shared GPU memory", [&](const Json& p) {
+        const auto d = optionalNumber(p["gpuDedicatedBytes"]), sh = optionalNumber(p["gpuSharedBytes"]);
+        return d && sh ? fixed(*d / (1024.0 * 1024.0), 2) + " / " + fixed(*sh / (1024.0 * 1024.0), 2) + " MiB" : std::string("not available");
+    });
+    row("Committed private / mapped / image", [&](const Json& p) {
+        const auto& m = p["memory"];
+        const auto a = optionalNumber(m["privateCommittedBytes"]), b = optionalNumber(m["mappedCommittedBytes"]), c = optionalNumber(m["imageCommittedBytes"]);
+        return a && b && c ? fixed(*a / (1024.0 * 1024.0), 2) + " / " + fixed(*b / (1024.0 * 1024.0), 2) + " / " + fixed(*c / (1024.0 * 1024.0), 2) + " MiB"
+                           : std::string("not available");
+    });
+    row("Largest private allocations", [&](const Json& p) {
+        const auto& list = p["memory"]["largestPrivateAllocations"];
+        if (!list.isArray()) return std::string("not available");
+        std::string out;
+        std::size_t shown{};
+        for (const auto& v : list.array()) {
+            const auto n = optionalNumber(v);
+            if (!n || shown++ == 5) break;
+            out += (out.empty() ? "" : ", ") + fixed(*n / (1024.0 * 1024.0), 2);
+        }
+        return out.empty() ? std::string("none") : out + " MiB";
+    });
+    md += "\n";
+
+    // What the closed HUD keeps after use: the settled point after the
+    // cycles minus the point after launch.
+    const Json* closed{};
+    const Json* after{};
+    for (const auto* p : points) {
+        if (text((*p)["point"], "") == "closed") closed = p;
+        if (text((*p)["point"], "") == "after-cycles") after = p;
+    }
+    if (closed && after) {
+        const auto pb = optionalNumber((*closed)["privateBytes"]), pa = optionalNumber((*after)["privateBytes"]);
+        const auto tb = optionalNumber((*closed)["threads"]), ta = optionalNumber((*after)["threads"]);
+        const auto hb = optionalNumber((*closed)["handles"]), ha = optionalNumber((*after)["handles"]);
+        if (pb && pa && tb && ta && hb && ha)
+            md += "Kept after use (" + pointTitle("after-cycles", cycles) + " minus closed after launch): " + signedMebibytes(*pa - *pb) + " private bytes, " +
+                  signedCount(*ta - *tb) + " threads, " + signedCount(*ha - *hb) + " handles.\n\n";
+    }
+
+    md += "| Gate | Value | Limit | Result |\n| --- | ---: | ---: | --- |\n";
+    bool any{};
+    for (const auto* p : points) {
+        if (!(*p)["gates"].isArray()) continue;
+        for (const auto& g : (*p)["gates"].array()) {
+            const auto name = text(g["name"], "?");
+            const auto dot = name.find('.');
+            const auto title = dot == std::string::npos ? gateTitle(name)
+                                                        : footprintMetricTitle(std::string_view(name).substr(dot + 1)) + ", " + pointTitle(name.substr(0, dot), cycles);
+            const auto unit = text(g["unit"], "");
+            const auto value = optionalNumber(g["value"]);
+            const auto limit = optionalNumber(g["limit"]);
+            md += "| " + title + " | " + (value ? withUnit(*value, unit) : std::string("?")) + " | " + (limit ? withUnit(*limit, unit) : std::string("none")) + " | " +
+                  verdict(g["passed"]) + " |\n";
+            any = true;
+        }
+    }
+    if (!any) md += "| (no footprint limits set) | | | |\n";
+    md += "\n";
+
+    // Threads by start address, one column per point.
+    struct Row { std::string start, role, name; std::vector<double> counts; double most{}; };
+    std::vector<Row> rows;
+    for (std::size_t n = 0; n < points.size(); ++n) {
+        const auto& groups = (*points[n])["threadGroups"];
+        if (!groups.isArray()) continue;
+        for (const auto& g : groups.array()) {
+            const auto start = text(g["start"], "unknown"), name = text(g["name"], "");
+            auto it = std::find_if(rows.begin(), rows.end(), [&](const Row& r) { return r.start == start && r.name == name; });
+            if (it == rows.end()) {
+                rows.push_back({start, text(g["role"], ""), name, std::vector<double>(points.size(), 0.0), 0});
+                it = rows.end() - 1;
+            }
+            const auto c = optionalNumber(g["count"]).value_or(0);
+            it->counts[n] += c;
+            it->most = std::max(it->most, it->counts[n]);
+        }
+    }
+    if (!rows.empty()) {
+        std::stable_sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) {
+            if (a.most != b.most) return a.most > b.most;
+            return a.start < b.start;
+        });
+        md += "Threads by start address (module+offset of each thread's start; threads with the same start and description are counted together; "
+              "the threads the program starts itself share its C runtime's start addresses):\n\n| Start | Component | Description |";
+        std::string threadRule = "| --- | --- | --- |";
+        for (const auto* p : points) {
+            md += " " + capitalized(pointTitle(text((*p)["point"], "?"), cycles)) + " |";
+            threadRule += " ---: |";
+        }
+        md += "\n" + threadRule + "\n";
+        constexpr std::size_t shownRows = 40;
+        std::vector<double> rest(points.size(), 0.0);
+        std::size_t hidden{};
+        for (std::size_t r = 0; r < rows.size(); ++r) {
+            if (r >= shownRows) {
+                ++hidden;
+                for (std::size_t n = 0; n < points.size(); ++n) rest[n] += rows[r].counts[n];
+                continue;
+            }
+            md += "| " + cell(rows[r].start) + " | " + cell(rows[r].role.empty() ? "-" : rows[r].role) + " | " + cell(rows[r].name.empty() ? "-" : rows[r].name) + " |";
+            for (const auto c : rows[r].counts) md += " " + fixed(c, 0) + " |";
+            md += "\n";
+        }
+        if (hidden) {
+            md += "| " + std::to_string(hidden) + " other start addresses | | |";
+            for (const auto c : rest) md += " " + fixed(c, 0) + " |";
+            md += "\n";
+        }
+        md += "\n";
+    }
+    md += "For context only (different platform and measure): the macOS 1.2 measurement on an Apple M2 recorded a physical footprint of "
+          "96.5-98.2 MiB with the HUD closed and 186-190 MiB during continuous tilt (docs/performance-1.2.md).\n\n";
+}
 void renderOpenings(std::string& md, const Json& s, const Json& trace) {
     const auto launch = optionalNumber(s["launchToFirstFrameMilliseconds"]);
     const auto process = optionalNumber(s["processToFirstFrameMilliseconds"]);
     const auto prepared = optionalNumber(s["preparationMilliseconds"]);
     md += "Source: EndfieldHUD's own startup trace (numbers only). The cold opening is the first opening after launch; the warm one is the next.\n\n";
-    if (launch && *launch >= 0) {
+    // When the HUD started closed and was opened later (the gate measures
+    // closed idle first), launch to the first frame is mostly that wait.
+    std::optional<double> coldRequest;
+    if (s["openings"].isArray())
+        for (const auto& o : s["openings"].array())
+            if (o["cold"].isBool() && o["cold"].boolean()) coldRequest = optionalNumber(o["requestedAtMilliseconds"]);
+    if (launch && *launch >= 0 && coldRequest && *coldRequest > 0 && *launch >= *coldRequest) {
+        md += "The HUD started closed, and the cold opening was requested " + fixed(*coldRequest / 1000.0, 1) +
+              " s after launch (after the closed idle window), so launch to the first presented frame (" + fixed(*launch, 0) +
+              " ms) is mostly that wait";
+        if (prepared) md += ". Startup until the app was ready, before the window: **" + fixed(*prepared, 0) + " ms**";
+        md += ".\n\n";
+    } else if (launch && *launch >= 0) {
         md += "Launch to the first presented frame: **" + fixed(*launch, 0) + " ms**";
         if (process && *process >= 0) md += " (process creation to first frame: " + fixed(*process, 0) + " ms)";
         if (prepared) md += "; preparation before the window: " + fixed(*prepared, 0) + " ms";
@@ -348,6 +545,11 @@ std::vector<OpeningSummary> summarizeOpenings(const Json& trace) {
         s.index = static_cast<std::size_t>(index);
         s.cold = o["cold"].isBool() ? o["cold"].boolean() : s.index == 0;
         s.firstFrameMS = finite(o["requestToFirstFrameMilliseconds"], "requestToFirstFrameMilliseconds");
+        if (o["requestedAtMilliseconds"].isNumber()) {
+            const auto at = finite(o["requestedAtMilliseconds"], "requestedAtMilliseconds");
+            if (at < 0) throw std::invalid_argument("Startup trace field is negative: requestedAtMilliseconds");
+            s.requestedAtMS = at;
+        }
         s.openedMS = finite(o["requestToOpenedMilliseconds"], "requestToOpenedMilliseconds");
         const auto intervals = numbers(o["frameIntervalsMilliseconds"], "frameIntervalsMilliseconds");
         const auto cpu = numbers(o["frameCPUMilliseconds"], "frameCPUMilliseconds");
@@ -408,6 +610,7 @@ Json openingsScenario(const Json& trace, const OpeningLimits& cold, const Openin
         Json::Object o;
         o["index"] = static_cast<std::int64_t>(s.index);
         o["cold"] = s.cold;
+        o["requestedAtMilliseconds"] = s.requestedAtMS >= 0 ? Json(s.requestedAtMS) : Json(nullptr);
         o["firstFrameMilliseconds"] = s.firstFrameMS;
         o["openedMilliseconds"] = s.openedMS;
         o["frames"] = static_cast<std::int64_t>(s.frames);
@@ -439,6 +642,84 @@ Json openingsScenario(const Json& trace, const OpeningLimits& cold, const Openin
         openings.emplace_back(std::move(o));
     }
     scenario["openings"] = std::move(openings);
+    scenario["gates"] = std::move(allGates);
+    scenario["passed"] = passed;
+    return scenario;
+}
+
+Json footprintScenario(std::span<const FootprintPoint> points, std::size_t cycles, std::vector<std::string>& failures) {
+    const auto integer = [](std::uint64_t v) { return Json(static_cast<std::int64_t>(v)); };
+    const auto optionalLimit = [](const std::optional<double>& v) { return v ? Json(*v) : Json(nullptr); };
+    Json::Object scenario;
+    scenario["name"] = "footprint";
+    scenario["kind"] = "footprint";
+    scenario["cycles"] = static_cast<std::int64_t>(cycles);
+    Json::Array list, allGates;
+    bool passed = true;
+    for (const auto& p : points) {
+        const auto& s = p.sample;
+        Json::Object o;
+        o["point"] = p.point;
+        o["privateBytes"] = integer(s.privateBytes);
+        o["workingSetBytes"] = integer(s.workingSet);
+        o["peakPrivateBytes"] = integer(s.peakPrivateBytes);
+        o["peakWorkingSetBytes"] = integer(s.peakWorkingSet);
+        o["threads"] = static_cast<std::int64_t>(s.threads);
+        o["handles"] = static_cast<std::int64_t>(s.handles);
+        o["gdiObjects"] = static_cast<std::int64_t>(s.gdiObjects);
+        o["userObjects"] = static_cast<std::int64_t>(s.userObjects);
+        o["gpuDedicatedBytes"] = s.gpuDedicated ? integer(*s.gpuDedicated) : Json(nullptr);
+        o["gpuSharedBytes"] = s.gpuShared ? integer(*s.gpuShared) : Json(nullptr);
+        if (p.regions) {
+            Json::Object m;
+            m["privateCommittedBytes"] = integer(p.regions->privateCommitted);
+            m["mappedCommittedBytes"] = integer(p.regions->mappedCommitted);
+            m["imageCommittedBytes"] = integer(p.regions->imageCommitted);
+            Json::Array largest;
+            for (const auto v : p.regions->largestPrivate) largest.push_back(integer(v));
+            m["largestPrivateAllocations"] = std::move(largest);
+            o["memory"] = std::move(m);
+        } else {
+            o["memory"] = nullptr;
+        }
+        Json::Array groups;
+        for (const auto& g : p.threads) {
+            Json::Object row;
+            row["start"] = g.start;
+            row["module"] = g.module;
+            row["role"] = g.role;
+            row["name"] = g.name;
+            row["count"] = static_cast<std::int64_t>(g.count);
+            groups.emplace_back(std::move(row));
+        }
+        o["threadGroups"] = std::move(groups);
+        Json::Object limits;
+        limits["privateBytes"] = optionalLimit(p.limits.privateBytes);
+        limits["workingSetBytes"] = optionalLimit(p.limits.workingSet);
+        limits["threads"] = optionalLimit(p.limits.threads);
+        limits["handles"] = optionalLimit(p.limits.handles);
+        o["limits"] = std::move(limits);
+        const auto gates = gateFootprint(p);
+        Json::Array rows;
+        for (const auto& g : gates) {
+            Json::Object row;
+            row["name"] = g.name;
+            row["unit"] = g.unit;
+            row["value"] = g.value;
+            row["limit"] = g.limit;
+            row["passed"] = g.passed;
+            rows.push_back(row);
+            allGates.push_back(Json(row));
+            if (!g.passed) {
+                passed = false;
+                failures.push_back(describeFailure("footprint", g));
+            }
+        }
+        o["gates"] = std::move(rows);
+        o["passed"] = allPassed(gates);
+        list.emplace_back(std::move(o));
+    }
+    scenario["points"] = std::move(list);
     scenario["gates"] = std::move(allGates);
     scenario["passed"] = passed;
     return scenario;
@@ -499,6 +780,7 @@ std::string renderGateMarkdown(const Json& report) {
             const auto kind = kindOf(s);
             if (kind == "lifecycle") renderLifecycle(md, s);
             else if (kind == "openings") renderOpenings(md, s, report["startupTrace"]);
+            else if (kind == "footprint") renderFootprint(md, s);
             else renderIdle(md, s);
         }
     }

@@ -22,6 +22,11 @@
 //   --fatal-record <file>  where EndfieldHUD's fatal record would be
 //   --fail-start           write a fatal record there at startup and stay idle,
 //                          like EndfieldHUD behind its fatal-error message box
+//   --threads <n>          start n idle threads described "fixture worker" and
+//                          keep one Windows thread-pool worker waiting (the
+//                          footprint census must group and attribute them)
+//   --hold-mib <n>         while open, hold n MiB of committed, touched private
+//                          memory in one allocation; closing releases it
 //   --login                accepted and ignored (restart command line)
 //
 // Every instance ends by itself after five minutes, so a failed test can
@@ -31,6 +36,7 @@
 #endif
 #include <windows.h>
 #include <shellapi.h>
+#include <cstdlib>
 #include <string>
 #include <vector>
 
@@ -41,6 +47,10 @@ std::wstring marker;
 bool refuse{}, leak{}, busy{}, open{}, slowOpen{};
 std::wstring traceFile, fatalFile;
 bool failStart{};
+unsigned holdMiB{};
+void* held{};
+HANDLE quitWorkers{};
+std::vector<HANDLE> workers;
 unsigned tracedOpenings{};
 bool traceWritten{};
 std::vector<HANDLE> leaked;
@@ -110,7 +120,14 @@ void toggle(HWND window) {
             ReleaseDC(nullptr, dc);
         }
         if (busy) SetTimer(window, busyTimer, 10, nullptr);
+        if (holdMiB && !held) {
+            const SIZE_T bytes = static_cast<SIZE_T>(holdMiB) * 1024 * 1024;
+            held = VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+            if (held) for (SIZE_T at = 0; at < bytes; at += 4096) static_cast<volatile char*>(held)[at] = 1; // resident, not only committed
+        }
     } else {
+        if (held) VirtualFree(held, 0, MEM_RELEASE);
+        held = nullptr;
         for (auto h : openHandles) CloseHandle(h);
         for (auto o : openObjects) DeleteObject(o);
         openHandles.clear();
@@ -149,6 +166,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     int count{};
     auto** argv = CommandLineToArgvW(GetCommandLineW(), &count);
     bool registerRestart{}, forwardToggle{};
+    unsigned workerCount{};
     std::wstring perf;
     for (int n = 1; argv && n < count; ++n) {
         const std::wstring a = argv[n];
@@ -163,6 +181,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         else if (a == L"--slow-open") slowOpen = true;
         else if (a == L"--fatal-record" && n + 1 < count) fatalFile = argv[++n];
         else if (a == L"--fail-start") failStart = true;
+        else if (a == L"--threads" && n + 1 < count) workerCount = static_cast<unsigned>(_wtoi(argv[++n]));
+        else if (a == L"--hold-mib" && n + 1 < count) holdMiB = static_cast<unsigned>(_wtoi(argv[++n]));
     }
     if (argv) LocalFree(argv);
     const std::wstring className = L"EndfieldHUDPackagingFixture." + (perf.empty() ? std::to_wstring(GetCurrentProcessId()) : perf);
@@ -198,6 +218,21 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         RegisterApplicationRestart(command.c_str(), RESTART_NO_CRASH | RESTART_NO_HANG | RESTART_NO_REBOOT);
     }
     note(L"started");
+    if (workerCount) {
+        // Idle threads with one start routine and description, and one
+        // thread-pool worker kept waiting: none of them wakes.
+        quitWorkers = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        for (unsigned n = 0; n < workerCount && n < 64; ++n) {
+            HANDLE thread = CreateThread(nullptr, 0, [](void*) -> DWORD { WaitForSingleObject(quitWorkers, INFINITE); return 0; }, nullptr, 0, nullptr);
+            if (!thread) break;
+            SetThreadDescription(thread, L"fixture worker");
+            workers.push_back(thread);
+        }
+        TrySubmitThreadpoolCallback([](PTP_CALLBACK_INSTANCE instance, void*) {
+            CallbackMayRunLong(instance);
+            WaitForSingleObject(quitWorkers, INFINITE);
+        }, nullptr, nullptr);
+    }
     if (failStart && !fatalFile.empty()) {
         // The shape of app/main.cpp's record (redacted, no paths).
         const std::string record = "EndfieldHUD fatal error\nexception: class std::runtime_error\nmessage: Cannot locate the current display\n"
@@ -215,6 +250,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         DispatchMessageW(&message);
     }
     writeTrace(); // at exit with what was recorded, like EndfieldHUD
+    if (quitWorkers) {
+        SetEvent(quitWorkers);
+        if (!workers.empty()) WaitForMultipleObjects(static_cast<DWORD>(workers.size()), workers.data(), TRUE, 5000);
+        for (auto h : workers) CloseHandle(h);
+    }
+    if (held) VirtualFree(held, 0, MEM_RELEASE);
     DestroyWindow(window);
     for (auto h : leaked) CloseHandle(h);
     for (auto o : leakedObjects) DeleteObject(o);
