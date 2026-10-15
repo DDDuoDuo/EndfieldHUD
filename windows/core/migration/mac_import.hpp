@@ -138,4 +138,9 @@ private:
 };
 // Destination policy: <root>/Migration/import.json exists after a completed import.
 bool macImportCompleted(const std::filesystem::path& destination);
+// MacImportSession objects alive in this process (any thread). A finished,
+// discarded or failed import keeps none: the service destroys its session
+// with the step that ended it and the restart handoff drops its copy after
+// the commit (WINDOWS-MIGRATION.md section 9 residency checks).
+std::size_t macImportSessionsAlive() noexcept;
 }

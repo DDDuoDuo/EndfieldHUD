@@ -8,6 +8,7 @@
 #include "modules/calendar_repository.hpp"
 #include "modules/reader_repository.hpp"
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <ctime>
 #include <deque>
@@ -40,6 +41,7 @@ fs::path relative(const std::string& manifestPath) {
     return out;
 }
 constexpr std::uint64_t MiB = 1024 * 1024;
+std::atomic<std::size_t> liveSessions{0};
 struct StoreLayout { MacImportStore store; const char* top; const char* file; std::uint64_t limit; };
 // Relative Mac export paths, the Windows top-level name each store owns, and
 // the per-file caps of the corresponding Windows codecs.
@@ -239,10 +241,9 @@ struct MacImportSession::Impl {
     MacExportManifest manifest;
     MacImportSummary summary;
     MacImportProgress progress;
-    std::string manifestBytes, preferencesBytes;
+    std::string manifestBytes;                      // kept verbatim until the report step writes it
     std::optional<MacSettingsImport> macSettings;   // mapped from the export, before Windows-only choices are merged
     std::set<std::string> written;                  // Windows top-level names produced by the import
-    std::vector<std::string> ignoredFiles;
     std::deque<Unit> units;
     std::vector<Verification> verifications;
     std::size_t nextVerification{};
@@ -359,8 +360,7 @@ struct MacImportSession::Impl {
     }
     void classifyIgnored() {
         for (const auto& file : manifest.files)
-            if (!importLimit(file.path)) ignoredFiles.push_back(file.path);
-        summary.ignoredFiles = ignoredFiles;
+            if (!importLimit(file.path)) summary.ignoredFiles.push_back(file.path);
     }
     // Verifies (and copies) listed files, at most stepBytes per step. A damaged,
     // incomplete, linked or tampered export fails the whole import.
@@ -402,8 +402,12 @@ struct MacImportSession::Impl {
     void rejectJournals(const std::string& database) {
         for (const char* suffix : {"-wal", "-journal", "-shm"}) {
             const auto sibling = database + suffix;
-            need(!manifest.find(sibling) && !fs::exists(fs::symlink_status(exportRoot / relative(sibling))),
-                 "A live SQLite journal accompanies " + database + "; export again with EndfieldHUD closed");
+            // Named rather than a temporary inside the && below: MSVC x64
+            // Release left that conditionally created relative path alive
+            // (six paths per staging, found by mac_import_resident_contracts).
+            const auto exported = exportRoot / relative(sibling);
+            const bool live = manifest.find(sibling) != nullptr || fs::exists(fs::symlink_status(exported));
+            need(!live, "A live SQLite journal accompanies " + database + "; export again with EndfieldHUD closed");
         }
     }
     void addRelink(MacImportStoreReport& report, std::vector<MacRelinkItem> items) {
@@ -420,7 +424,8 @@ struct MacImportSession::Impl {
         auto mapped = *macSettings;
         r.warnings.clear();
         bool launched = mapped.hasLaunched.value_or(false);
-        if (files::ordinaryDirectory(destination) && files::ordinaryFileSize(destination / "settings.json")) {
+        const auto existingSettings = destination / "settings.json"; // named: see rejectJournals
+        if (files::ordinaryDirectory(destination) && files::ordinaryFileSize(existingSettings)) {
             try {
                 const data::SettingsStore existing(destination);
                 const auto& old = existing.value().fields;
@@ -471,7 +476,7 @@ struct MacImportSession::Impl {
     void settingsStep(MacImportStoreReport& r) {
         if (!manifest.preferences) { r.status = MacImportStatus::notInExport; return; }
         const auto path = ingested(*manifest.find(*manifest.preferences), layout(MacImportStore::settings).limit);
-        preferencesBytes = files::readFile(path, 16 * MiB);
+        const auto preferencesBytes = files::readFile(path, 16 * MiB);
         PlistDocument document;
         try { document = decodePlist(preferencesBytes); } catch (const PlistError& e) { fail(MacImportErrorCode::invalid, std::string("Preferences are not a valid property list: ") + e.what()); }
         if (!platform.settingsText.prefix) fail(MacImportErrorCode::invalid, "Settings import needs the installed Unicode rules");
@@ -776,6 +781,28 @@ struct MacImportSession::Impl {
             if (r.status == MacImportStatus::pending) r.status = r.warnings.empty() ? MacImportStatus::imported : MacImportStatus::importedWithWarnings;
         progress.phase = MacImportPhase::staged;
         staged = true;
+        trimStaging();
+    }
+    // Residency: what no later step reads is returned at once (vectors and
+    // strings are swapped with empty ones, so their storage goes too). A
+    // reviewed import keeps what its commit needs: the summary, the Windows
+    // settings mapping, the manifest's identity and its verbatim bytes; a
+    // finished or discarded one keeps only its summary, progress and result.
+    void trimStaging() noexcept {
+        std::vector<Verification>().swap(verifications);
+        std::vector<std::string>().swap(noteImages);
+        std::vector<MacExportFile>().swap(manifest.files); // every listed file was verified and classified
+        manifest.sqliteUserVersions.clear();
+    }
+    void trimFinished() noexcept {
+        trimStaging();
+        units.clear();
+        std::deque<Unit>().swap(units);
+        copy.reset();
+        std::string().swap(manifestBytes);
+        macSettings.reset();
+        written.clear();
+        std::vector<files::PlannedFile>().swap(carryFiles);
     }
 
     // ---------------- commit (owners have closed their stores) ----------------
@@ -895,7 +922,7 @@ struct MacImportSession::Impl {
         for (const auto& row : summary.settings)
             settingRows.push_back(Json::Object{{"key", row.key}, {"outcome", std::string(macSettingOutcomeName(row.outcome))}, {"detail", row.detail}});
         Json::Array ignored, warnings;
-        for (const auto& path : ignoredFiles) ignored.push_back(path);
+        for (const auto& path : summary.ignoredFiles) ignored.push_back(path);
         for (const auto& warning : summary.warnings) warnings.push_back(warning);
         const Json document = Json::Object{{"version", 1}, {"importedAt", now()}, {"manifestSHA256", summary.manifestSHA256},
             {"source", Json::Object{{"bundleIdentifier", manifest.bundleIdentifier}, {"appVersion", manifest.appVersion}, {"build", manifest.build}, {"exportedAt", manifest.exportedAt}}},
@@ -907,6 +934,7 @@ struct MacImportSession::Impl {
         files::writeNewFile(stage / "Migration" / "mac-export-manifest.json", manifestBytes);
         files::writeNewFile(stage / "Migration" / "relink.json", MacRelinkLedger::encode(summary.relink));
         files::writeNewFile(stage / "Migration" / "import.json", document.encode(16 * MiB));
+        std::string().swap(manifestBytes); // written; nothing reads it again
     }
     void activateStep() {
         progress.phase = MacImportPhase::activating;
@@ -936,6 +964,7 @@ struct MacImportSession::Impl {
         try { hook(MacImportCommitStep::removeWork); result->workRemoved = lock.remove(); }
         catch (...) { result->workRemoved = false; }
         finished = true;
+        trimFinished();
     }
 };
 
@@ -947,8 +976,13 @@ MacImportSession::MacImportSession(fs::path exportRoot, fs::path destination, Ma
     impl_->options = std::move(options);
     if (!impl_->platform.makeUUID) impl_->platform.makeUUID = data::makeUUID;
     if (!impl_->platform.availableBytes) impl_->platform.availableBytes = defaultAvailableBytes;
+    liveSessions.fetch_add(1, std::memory_order_relaxed);
 }
-MacImportSession::~MacImportSession() { discard(); }
+MacImportSession::~MacImportSession() {
+    discard();
+    liveSessions.fetch_sub(1, std::memory_order_relaxed);
+}
+std::size_t macImportSessionsAlive() noexcept { return liveSessions.load(std::memory_order_relaxed); }
 bool MacImportSession::stageNext() {
     auto& i = *impl_;
     if (i.discarded) fail(MacImportErrorCode::cancelled, "The import was discarded");
@@ -995,6 +1029,7 @@ bool MacImportSession::commitNext() {
         i.units.push_back({std::nullopt, [&i] { i.refreshStep(); }});
     }
     if (!i.activated && i.platform.cancelled && i.platform.cancelled()) { discard(); fail(MacImportErrorCode::cancelled, "Import cancelled"); }
+    if (i.units.empty()) return false; // discarded after activation: only the clean-up was left, and discard() did it
     auto unit = std::move(i.units.front());
     i.units.pop_front();
     try {
@@ -1026,5 +1061,6 @@ void MacImportSession::discard() noexcept {
     // After activation only the private source copies remain in the work folder.
     // The marker goes last; anything left in use is swept by a later run.
     if (!i.work.empty() && !i.finished) (void)i.lock.remove();
+    i.trimFinished();
 }
 }

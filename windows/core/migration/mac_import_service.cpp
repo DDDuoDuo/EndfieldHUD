@@ -36,6 +36,18 @@ struct MacImportService::Impl {
     bool committable{};
     Impl(endfield::app::UtilityExecutor& e, std::function<void()> c) : executor(e), route(e.makeRoute()), changed(std::move(c)) {}
     void notify() { if (changed) changed(); }
+    // Back to idle without anything of the last import (strings and lists
+    // are replaced, not cleared, so their storage is returned too).
+    void clear() {
+        state = State::idle;
+        steps = 0;
+        progress = {};
+        summary.reset();
+        result.reset();
+        error = std::string();
+        code.reset();
+        committable = false;
+    }
     void finish(State next, std::string message = {}) {
         state = next;
         error = std::move(message);
@@ -48,26 +60,35 @@ struct MacImportService::Impl {
         auto current = job;
         const std::weak_ptr<Job> weakJob = current;
         const auto kind = what;
+        // A step that ends the import (a finished commit, a discard or any
+        // failure) destroys the session here on the worker: its manifest,
+        // staged bookkeeping and private-folder lock never outlive the import
+        // on the owner thread. Only its results travel in the job.
         auto work = [current = std::move(current), kind] {
             try {
                 if (kind == Pending::stage) {
                     current->more = current->session->stageNext();
                     if (!current->more) { current->summary = current->session->summary(); current->committable = current->session->committable(); }
+                    current->progress = current->session->progress();
                 } else if (kind == Pending::commit) {
                     current->more = current->session->commitNext();
-                    if (!current->more) { current->summary = current->session->summary(); current->result = current->session->commitResult(); }
+                    current->progress = current->session->progress();
+                    if (!current->more) { current->summary = current->session->summary(); current->result = current->session->commitResult(); current->session.reset(); }
                 } else {
                     current->session->discard();
+                    current->progress = current->session->progress();
+                    current->session.reset();
                 }
-                current->progress = current->session->progress();
             } catch (const MacImportError& e) {
                 current->progress = current->session->progress();
                 current->error = e.what();
                 current->code = e.code();
+                current->session.reset();
                 throw;
             } catch (const std::exception& e) {
                 current->progress = current->session->progress();
                 current->error = e.what();
+                current->session.reset();
                 throw;
             }
         };
@@ -82,10 +103,11 @@ struct MacImportService::Impl {
             if (failure) {
                 const bool cancelledByUser = current->cancelled->load();
                 code = cancelledByUser ? std::optional<MacImportErrorCode>(MacImportErrorCode::cancelled) : current->code;
-                finish(cancelledByUser ? State::cancelled : State::failed, current->error);
+                job.reset(); // the worker already destroyed its session
+                finish(cancelledByUser ? State::cancelled : State::failed, std::move(current->error));
                 return;
             }
-            if (kind == Pending::discard) { finish(State::cancelled); return; }
+            if (kind == Pending::discard) { job.reset(); finish(State::cancelled); return; }
             ++steps;
             if (current->more) {
                 // Staging stops at once; a commit learns about cancellation in
@@ -95,8 +117,9 @@ struct MacImportService::Impl {
                 notify();
                 return;
             }
-            summary = current->summary;
-            if (kind == Pending::commit) { result = current->result; finish(State::completed); return; }
+            summary = std::move(current->summary);
+            current->summary.reset();
+            if (kind == Pending::commit) { result = std::move(current->result); job.reset(); finish(State::completed); return; }
             committable = current->committable;
             finish(State::ready);
         };
@@ -115,7 +138,7 @@ MacImportService::~MacImportService() {
     i.executor.invalidate(i.route, true);
     // An idle reviewed session still owns its private folder: remove it on the
     // worker through a detached one-shot route rather than on this thread.
-    if (i.job && !inFlight) {
+    if (i.job && i.job->session && !inFlight) {
         try {
             const auto route = i.executor.makeRoute();
             auto job = std::move(i.job);
@@ -136,13 +159,7 @@ bool MacImportService::begin(std::filesystem::path exportRoot, std::filesystem::
     platform.cancelled = [flag, user] { return flag->load() || (user && user()); };
     job->session = std::make_shared<MacImportSession>(std::move(exportRoot), std::move(destination), std::move(platform), std::move(options));
     i.job = std::move(job);
-    i.steps = 0;
-    i.progress = {};
-    i.summary.reset();
-    i.result.reset();
-    i.error.clear();
-    i.code.reset();
-    i.committable = false;
+    i.clear();
     i.state = State::staging;
     i.submit(Pending::stage);
     i.notify();
@@ -164,7 +181,7 @@ void MacImportService::cancel() {
 }
 bool MacImportService::acceptRejected(std::span<const MacImportStore> stores) {
     auto& i = *impl_;
-    if (i.state != State::ready || i.running || i.pending != Pending::none || !i.job) return false;
+    if (i.state != State::ready || i.running || i.pending != Pending::none || !i.job || !i.job->session) return false;
     // No step is queued or running, so the session is owned by this thread
     // until the next submit (the executor hand-off orders the accesses).
     i.job->session->acceptRejected(stores);
@@ -174,13 +191,31 @@ bool MacImportService::acceptRejected(std::span<const MacImportStore> stores) {
 }
 std::shared_ptr<MacImportSession> MacImportService::handOff() {
     auto& i = *impl_;
-    if (i.state != State::ready || !i.committable || i.running || i.pending != Pending::none || !i.job) return {};
+    if (i.state != State::ready || !i.committable || i.running || i.pending != Pending::none || !i.job || !i.job->session) return {};
     auto session = std::move(i.job->session);
     i.job.reset();
-    i.state = State::idle;
-    i.committable = false;
+    // The holder reads the review from the session itself; nothing of this
+    // import stays with the service.
+    i.clear();
     i.notify();
     return session;
+}
+bool MacImportService::release() {
+    auto& i = *impl_;
+    if (i.running || i.pending != Pending::none || i.state == State::staging || i.state == State::ready || i.state == State::committing) return false;
+    i.job.reset();
+    i.clear();
+    return true;
+}
+bool MacImportService::holdsSession() const noexcept {
+    // While a step runs the worker owns the session (and may destroy it):
+    // count it as held without reading the job's pointer.
+    const auto& i = *impl_;
+    return i.job && (i.running || i.job->session);
+}
+bool MacImportService::holdsResults() const noexcept {
+    const auto& i = *impl_;
+    return i.summary || i.result || !i.error.empty() || i.error.capacity() > std::string().capacity();
 }
 void MacImportService::queueCapacityAvailable() {
     auto& i = *impl_;

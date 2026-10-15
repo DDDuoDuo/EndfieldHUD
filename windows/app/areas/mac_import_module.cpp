@@ -904,6 +904,11 @@ struct MacImportArea::Driver {
     void hidden(const char* why) {
         frames(.3);
         step.check(!a.flow_->presented() && !a.state_.presented() && a.modalEntries().empty() && !a.card_ && !a.capturesPointer(), why);
+        // Residency (WINDOWS-MIGRATION.md section 9): the hidden card keeps
+        // nothing of the import (no session, results, outcome, rows or text)
+        // and no UIA part.
+        step.check(a.flow_->residency() == MacImportFlowResidency{} && (!a.automation_ || a.automation_->parts() == 0),
+                   "The hidden card holds nothing of the import");
     }
     // Choose Folder through the projected button; the dialog is synthetic.
     void choose(const fs::path& folder) {
@@ -1251,6 +1256,7 @@ void MacImportArea::coverage(app::ModuleCoverage& step) {
         const auto dialog = d.part(L"macImport.dialog");
         d.stage(exportRoot, true);
         d.review(expected);
+        step.check(flow_->residency().session && mig::macImportSessionsAlive() == 1, "The review holds the one staged session for the commit");
         (void)automationRefresh(d.group());
         step.check(sameObject(d.part(L"macImport.dialog").Get(), dialog.Get()) && d.text(dialog.Get(), UIA_NamePropertyId) == Driver::wide(d.content().title),
                    "The dialog keeps its UIA identity across steps and follows the title");
@@ -1268,6 +1274,8 @@ void MacImportArea::coverage(app::ModuleCoverage& step) {
         d.settle();
         step.check(flow_->step() == MacImportStep::report && fs::exists(destination_ / "Migration" / "import.json") && clean() && backups() == 0,
                    "The commit activated the imported root and removed its private folder");
+        step.check(!flow_->residency().session && !flow_->residency().results && flow_->residency().outcome && mig::macImportSessionsAlive() == 0,
+                   "The finished commit's session is gone; the report holds its outcome only");
         step.check(d.content().enabled[0] && d.content().buttons[0].find(std::to_string(expected["relinkItems"].integer())) != std::string::npos,
                    "The final report offers the relink list with its count");
         mig::MacRelinkLedger ledger(destination_);
@@ -1325,10 +1333,11 @@ void MacImportArea::coverage(app::ModuleCoverage& step) {
         const auto held = std::find_if(fs::directory_iterator(destination_.parent_path()), fs::directory_iterator{}, [&](const auto& entry) {
             return utf8(entry.path().filename()).starts_with(rootName + ".import-");
         });
-        step.check(work && held != fs::directory_iterator{} && stateOf(held->path()) == mig::MacImportWorkState::live,
+        step.check(work && held != fs::directory_iterator{} && stateOf(held->path()) == mig::MacImportWorkState::live && mig::macImportSessionsAlive() == 1,
                    "After the teardown only the host's work holds the reviewed import, still live");
         work(); // main.cpp: once, while no owner has the root open
         work = {};
+        step.check(mig::macImportSessionsAlive() == 0, "The finished restart work released its session");
         const auto outcome = mig::readMacImportOutcome(destination_);
         step.check(outcome && outcome->state == mig::MacImportOutcome::State::completed && !outcome->backup.empty() && backups() == 1 && clean(),
                    "The post-shutdown commit kept a backup, switched roots and recorded its outcome");
@@ -1442,6 +1451,8 @@ void MacImportArea::coverage(app::ModuleCoverage& step) {
         coverageInProcess_ = true;
     }
     step.check(!flow_->busy() && !pending_ && !sweep_ && !coverageRestart_->pending(), "Nothing is left running after the cycle");
+    step.check(!flow_->presented() && !card_ && flow_->residency() == MacImportFlowResidency{} && mig::macImportSessionsAlive() == 0,
+               "Nothing of the import stays resident after the cycle");
 }
 } // namespace
 

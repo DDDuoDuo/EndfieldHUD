@@ -284,11 +284,26 @@ void MacImportFlow::open() {
     rebuild();
     if (host_.changed) host_.changed();
 }
+// Hidden: nothing of the import stays (residency(), WINDOWS-MIGRATION.md
+// section 9). Strings and lists are replaced, not cleared, so their storage
+// is returned; the service drops the finished import's results.
 void MacImportFlow::hide() {
     step_ = MacImportStep::hidden;
-    notice_.clear(); detail_.clear(); list_.clear(); first_ = 0;
-    outcome_.reset(); relink_.clear(); relink_.shrink_to_fit(); recorded_ = false; replace_ = false; declined_ = false;
+    std::string().swap(notice_); std::string().swap(detail_); std::vector<MacImportRow>().swap(list_); first_ = 0;
+    outcome_.reset(); std::vector<mig::MacRelinkItem>().swap(relink_); recorded_ = false; replace_ = false; declined_ = false;
+    exportRoot_ = fs::path();
+    if (service_) (void)service_->release();
     rebuild();
+}
+MacImportFlowResidency MacImportFlow::residency() const noexcept {
+    MacImportFlowResidency r;
+    r.session = bool(handedOff_) || (service_ && service_->holdsSession());
+    r.results = service_ && service_->holdsResults();
+    r.outcome = outcome_.has_value();
+    r.rows = list_.capacity();
+    r.relink = relink_.capacity();
+    r.text = notice_.size() + detail_.size() + exportRoot_.native().size();
+    return r;
 }
 // Escape: the left (cancel/back) action; on the final report it is Done.
 void MacImportFlow::escape() {
@@ -495,6 +510,8 @@ void MacImportFlow::finishCommit() {
     outcome_ = mig::completedMacImportOutcome(*summary, *result, host_.unixNow ? host_.unixNow() : 0.0);
     relink_.clear();
     for (const auto& item : summary->relink) if (item.state == mig::RelinkState::unresolved) relink_.push_back(item);
+    // The report reads only the outcome and the relink rows from here on.
+    (void)service_->release();
     recorded_ = false;
     step_ = MacImportStep::report;
     first_ = 0;
@@ -504,6 +521,9 @@ void MacImportFlow::finishCommit() {
 void MacImportFlow::failed(mig::MacImportOutcome::State state, std::optional<mig::MacImportErrorCode> code, std::string error) {
     const auto* summary = service_ ? service_->summary() : nullptr;
     outcome_ = mig::failedMacImportOutcome(state, code, std::move(error), summary, host_.unixNow ? host_.unixNow() : 0.0);
+    // The failure card reads only the outcome from here on (a reviewed import
+    // is never released: release() refuses it).
+    if (service_) (void)service_->release();
     detail_ = outcome_->state == mig::MacImportOutcome::State::failed ? outcome_->error : std::string{};
     recorded_ = false;
     step_ = MacImportStep::failed;

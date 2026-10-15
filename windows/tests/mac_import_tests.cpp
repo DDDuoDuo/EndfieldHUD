@@ -683,12 +683,22 @@ void service() {
               progress.validatedStores == m::macImportStores.size(), "Service reports staging progress from the owner thread");
     }
     const auto stagedSteps = importer.completedSteps();
+    const auto alive = m::macImportSessionsAlive();
+    check(importer.holdsSession() && importer.holdsResults() && alive >= 1 && !importer.release() && importer.state() == m::MacImportService::State::ready,
+          "A reviewed import keeps its session; release() refuses it");
     check(importer.commit(), "Service commits on request");
     for (int guard = 0; guard < 20 && importer.state() == m::MacImportService::State::committing; ++guard) { executor.waitIdle(); executor.drain(); }
     check(importer.state() == m::MacImportService::State::completed && importer.result() && fs::exists(destination / "Migration" / "import.json") && notifications >= 3,
           "Service completes and notifies on the owner thread");
     // refresh, carry, report, activate, clean up
     check(importer.completedSteps() == stagedSteps + 5 && importer.progress().phase == m::MacImportPhase::committed, "Commit runs as bounded steps too");
+    // Residency: the step that finished the commit destroyed the session on
+    // the worker; the results stay until the owner releases them.
+    check(!importer.holdsSession() && importer.holdsResults() && m::macImportSessionsAlive() == alive - 1 && importer.summary() && importer.result()->workRemoved,
+          "A finished import keeps its results, not its session");
+    check(importer.release() && importer.state() == m::MacImportService::State::idle && !importer.holdsResults() && !importer.summary() && !importer.result() &&
+          importer.error().empty() && importer.completedSteps() == 0 && importer.progress() == m::MacImportProgress{} && importer.release(),
+          "release() returns a finished import to idle without anything of it (repeatable)");
     // Cancel while ready discards the private folder on the worker.
     m::MacImportService second(executor);
     const auto other = t.root / "other";
@@ -698,6 +708,7 @@ void service() {
     second.cancel();
     for (int guard = 0; guard < 20 && second.busy(); ++guard) { executor.waitIdle(); executor.drain(); }
     check(second.state() == m::MacImportService::State::cancelled && !fs::exists(other) && siblingsClean(other), "Cancelled service import leaves nothing behind");
+    check(!second.holdsSession() && m::macImportSessionsAlive() == alive - 1 && second.release() && !second.holdsResults(), "A discarded import keeps no session");
     {   // Cancelling a commit before activation leaves the root unchanged.
         m::MacImportService fifth(executor);
         const auto target = t.root / "cancel-commit";
@@ -710,6 +721,8 @@ void service() {
         for (int guard = 0; guard < 20 && fifth.busy(); ++guard) { executor.waitIdle(); executor.drain(); }
         check(fifth.state() == m::MacImportService::State::cancelled && tree(target) == before && siblingsClean(target) && backups(target) == 0,
               std::string("A cancelled commit leaves the root unchanged: ") + std::string(m::macImportServiceStateName(fifth.state())));
+        check(!fifth.holdsSession() && m::macImportSessionsAlive() == alive - 1 && fifth.holdsResults() && fifth.release() && !fifth.holdsResults(),
+              "A failed or cancelled commit keeps its error text until released, never its session");
     }
     {   // Destroying the owner mid-import drops queued steps; nothing commits.
         auto third = std::make_unique<m::MacImportService>(executor);

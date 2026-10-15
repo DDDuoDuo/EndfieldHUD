@@ -51,6 +51,19 @@ struct MacImportCardContent {
 };
 
 enum class MacImportStep { hidden, intro, choosing, staging, cancelling, replace, review, restarting, committing, report, relink, failed };
+// What the flow holds of an import (WINDOWS-MIGRATION.md section 9). Hidden
+// and idle, it holds nothing: equal to a default value. While the card is
+// open it holds what the step shows (the session while staging, reviewing or
+// committing; the outcome, its rows and relink entries on the final cards).
+struct MacImportFlowResidency {
+    bool session{};          // a MacImportSession (the service's or a handed-off one)
+    bool results{};          // the service's summary, result or error text
+    bool outcome{};          // the final report or failure
+    std::size_t rows{};      // capacity of the list behind the card's rows
+    std::size_t relink{};    // capacity of the relink entries
+    std::size_t text{};      // notice, detail and export path bytes
+    bool operator==(const MacImportFlowResidency&) const = default;
+};
 std::string_view macImportStepName(MacImportStep) noexcept;
 
 // Five-language strings of this Windows-only flow (no Mac source exists). The
@@ -114,6 +127,7 @@ public:
     std::size_t firstRow() const noexcept { return first_; }
     bool outcomeRecorded() const noexcept { return recorded_; }
     const std::filesystem::path& exportRoot() const noexcept { return exportRoot_; }
+    MacImportFlowResidency residency() const noexcept;
 
 private:
     void serviceChanged();

@@ -230,6 +230,33 @@ flow (`app/areas/mac_import_flow.hpp`, five HUD languages) is:
    Parts keep their COM identity per id across steps and refresh on content
    events only.
 
+10. **Residency.** Nothing of an import stays in memory once its card is
+   hidden (WINDOWS-MIGRATION.md section 9):
+   - `MacImportService` destroys the session on the worker with the step that
+     ends the import (the last commit step, a discard, any failure); only the
+     results travel back. `handOff()` keeps no copy of the review, and
+     `release()` returns a finished service to idle without its summary,
+     result, error text or progress (refused while staging, reviewed or
+     committing).
+   - `MacImportSession` returns what no later step reads as soon as it can:
+     after staging the manifest's file list, the verification and note-image
+     lists and the preferences bytes; after the report step the verbatim
+     manifest; after the commit or a discard everything except its summary,
+     progress and result.
+   - The flow releases the service as soon as the final report or the
+     failure card has taken its outcome, and on hiding replaces its rows,
+     relink entries, notice, detail and export path with empty values
+     (`MacImportFlow::residency()` reports all of them;
+     `macImportSessionsAlive()` counts sessions in the process).
+   - The area creates the card's rasters only while the card is presented
+     and releases them at the first frame without it; its UI Automation
+     parts are disconnected when the card hides. The import starts no thread:
+     staging, discards, the sweep and the outcome note run on the shared
+     UtilityExecutor, and the WIC check of managed images initializes COM
+     per call on that worker.
+   A card shown when the HUD closes keeps its artwork for the next opening,
+   where it appears again, like the shown module's.
+
 Hidden coverage imports the golden export into the area's own synthetic
 destination, in-process (cycle 0) and through the production restart path
 (cycles 1 and 2). The host publishes `DataRootRestart` in production only, so
@@ -375,6 +402,20 @@ outcome note over synthetic exports (staging progress, review, consent,
 in-process commit, restart handoff accepted/declined/discarded, the next
 run's report and relink list, failures, five languages).
 
+`mac_import_resident_contracts` counts every heap block of its process
+(replaced global operator new/delete, usable sizes) and its threads around
+seven scenarios over a synthetic export with 512 extra listed files: a
+session staged and discarded on its own, then through the flow a completed
+in-process import (review, report, relink list, Done), a cancelled review,
+a failed staging, a production handoff that the host declines before
+Cancel, the next run's recorded report, and the replace question. After a
+warm-up run, each scenario must return the heap to the hidden flow's own
+allocation (at most 512 bytes of allocator rounding), leave no session
+alive and start no thread. Blocks allocated in a scenario and still alive
+at its end are listed with their size and contents when it fails; that is
+how six SQLite sidecar paths per staging, left alive by MSVC x64 Release
+from a temporary inside a `&&` operand (`rejectJournals`), were found.
+
 `mac_import_work_contracts` covers the marker and journal codecs, the lock (a
 live folder is never swept, even in-process), classification of 13 planted
 folders, a bounded sweep of a deep tree, links that are never followed, the
@@ -428,6 +469,32 @@ After checkpoint 127 (relink owner API and focus events), on the laptop:
   resolve by the attachment's Mac object, a packaged App shortcut target, a
   Shelf dismissal, a no-op and a resolving Reader reconcile, a root without
   an import left untouched).
+
+After checkpoint 128 (residency), on the laptop (MSVC x64 Release):
+
+- `mac_import_resident_contracts`: 675 checks. With 512 extra listed files
+  the heap held while the card is open is 198,910 B for a staged session on
+  its own, 278,292 B on the review, 201,034 B after a production handoff,
+  11,892 B for the next run's recorded report and 1,575 B for a failure
+  card; once each card hid, 0 B stayed in all seven scenarios, no session
+  was alive and the process kept its 4 threads. The first laptop run left
+  544 B per staging (the six SQLite sidecar paths above); naming that
+  temporary removed them. Under clang on the Mac the same scenarios kept
+  645,920 B (completed), 645,328 B (cancelled review), 325,696 B (replace
+  question), 72,336 B (declined handoff), 3,776 B (failure) and 896 B
+  (recorded report) after the card hid before this change, and 0 B after;
+  the review itself went from 650,704 B to 337,280 B.
+- `mac_import_contracts`: 758 checks, including the service's residency
+  (a finished, failed or cancelled import keeps no session; `release()`
+  returns it to idle without its results; a reviewed import refuses it).
+- `mac_import_flow_contracts` (295), the work, relink, automation,
+  reconcile, native, tool, plist and settings suites and
+  `notes_relink_ledger_contracts` still pass.
+- The `macImport` area in `application_owner_coverage`: 1,621 checks. Every
+  hidden card now also reports an empty `MacImportFlowResidency` and no UIA
+  part; the review holds exactly one session, the finished commit none, the
+  restart work its one session until it ran, and every cycle ends with no
+  session alive and no card.
 
 Not verified yet:
 

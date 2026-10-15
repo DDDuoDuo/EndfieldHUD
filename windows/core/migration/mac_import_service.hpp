@@ -47,6 +47,15 @@ public:
     // its private folder (discard() or its destructor removes it). Null unless
     // state()==ready && committable() with no step queued or running.
     std::shared_ptr<MacImportSession> handOff();
+    // Residency (WINDOWS-MIGRATION.md section 9): a step that ends the import
+    // (a finished commit, a discard, any failure) destroys the session on the
+    // worker, so only the results below stay until the owner has read them.
+    // release() then returns to idle without them (summary, result, error and
+    // progress); false (nothing changes) while staging, ready or committing,
+    // or while a step is queued or running.
+    bool release();
+    bool holdsSession() const noexcept;  // a session is staging, reviewed, committing or being discarded
+    bool holdsResults() const noexcept;  // the last import's summary, result or error text
     State state() const noexcept;
     bool committable() const noexcept;
     std::size_t completedSteps() const noexcept;
