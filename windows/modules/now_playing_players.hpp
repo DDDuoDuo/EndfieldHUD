@@ -74,8 +74,10 @@ struct NowPlayingPlayerWindow {
 };
 // The window whose title carries the player's track among one process's
 // top-level windows: its main window class when present, else its unowned
-// windows; within those the first titled with a track (visible first), else
-// the first visible titled one, else the first. nullopt when none qualifies.
+// windows that are shown or titled (a helper process's hidden untitled window
+// never makes it a player); within those the first titled with a track
+// (visible first), else the first visible titled one, else the first.
+// nullopt when none qualifies.
 std::optional<std::size_t> nowPlayingMainWindow(const NowPlayingWindowPlayer&, std::span<const NowPlayingPlayerWindow> processWindows);
 
 // Transport of a window-title player's play/pause, previous and next.

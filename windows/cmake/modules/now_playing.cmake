@@ -166,7 +166,8 @@ if(BUILD_TESTING)
   add_executable(now_playing_player_controls_tests tests/now_playing_player_controls_tests.cpp)
   target_link_libraries(now_playing_player_controls_tests PRIVATE hud_now_playing_players hud_data)
   add_test(NAME now_playing_player_controls_contracts COMMAND now_playing_player_controls_tests
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/now-playing-player-controls-source.json)
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/now-playing-player-controls-source.json
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/now-playing-netease-tree.json)
   if(WIN32)
     # The MSAA reader against the test's own hidden window and in-process
     # accessible objects (no other process is read or pressed).

@@ -34,7 +34,7 @@ struct NativeNowPlayingService::Impl:std::enable_shared_from_this<Impl> {
     app::UtilityExecutor&executor;Factory factory;std::function<void()>notify;std::function<double()>now;double timeout;std::optional<double>deadline;const std::thread::id owner=std::this_thread::get_id();
     std::shared_ptr<NowPlayingProvider>provider;app::UtilityExecutor::Route route{};NowPlayingServiceSnapshot published;
     std::atomic<std::uint64_t>generation{1},events{};std::mutex mutex;std::optional<Message>message;bool notified{},changed{};
-    bool alive{true},ready{},inFlight{},pendingRead{};std::optional<Command>pendingCommand;std::optional<NowPlayingCommandReceipt>executingCommand;std::uint64_t serial{},commandToken{};Phase phase{Phase::idle};
+    bool alive{true},ready{},inFlight{},pendingRead{},pendingResync{};std::optional<Command>pendingCommand;std::optional<NowPlayingCommandReceipt>executingCommand;std::uint64_t serial{},commandToken{};Phase phase{Phase::idle};
     Impl(app::UtilityExecutor&e,Factory f,std::function<void()>n,std::function<double()>clock,double bound):executor(e),factory(std::move(f)),notify(std::move(n)),now(std::move(clock)),timeout(bound){need(bool(factory)&&bool(notify)&&bool(now)&&std::isfinite(timeout)&&timeout>0&&timeout<=30,"Now Playing needs provider, owner clock/wake and bounded timeout");}
     void check()const{if(owner!=std::this_thread::get_id())throw std::logic_error("Now Playing service belongs to its owner thread");}
     void wake(std::uint64_t expected,std::optional<Message>next={}){
@@ -45,7 +45,7 @@ struct NativeNowPlayingService::Impl:std::enable_shared_from_this<Impl> {
     }
     void stop(){
         check();generation.fetch_add(1,std::memory_order_acq_rel);auto old=std::move(provider);if(route){executor.invalidate(route);route=0;}
-        ready=inFlight=pendingRead=false;deadline.reset();pendingCommand.reset();executingCommand.reset();phase=Phase::idle;{std::lock_guard lock(mutex);message.reset();changed=notified=false;}
+        ready=inFlight=pendingRead=pendingResync=false;deadline.reset();pendingCommand.reset();executingCommand.reset();phase=Phase::idle;{std::lock_guard lock(mutex);message.reset();changed=notified=false;}
         const auto revision=published.revision+1;published={};published.revision=revision;if(old)old->stop();
     }
     void activate(){
@@ -61,25 +61,28 @@ struct NativeNowPlayingService::Impl:std::enable_shared_from_this<Impl> {
         else if(pendingRead)operation=Phase::read;
         if(operation==Phase::idle)return;
         const auto expected=generation.load(std::memory_order_acquire),request=++serial,version=events.load();const auto p=provider;const auto weak=weak_from_this();
+        const bool resync=operation==Phase::read&&pendingResync;
         auto complete=[weak,expected,request,version,operation](NowPlayingCommandResult result){if(auto self=weak.lock()){Message m;m.serial=request;m.events=version;m.phase=operation;m.result=result;if(operation==Phase::read){m.read.failure=result.failure;m.read.nativeError=result.nativeError;}self->wake(expected,std::move(m));}};
         const auto time=now();need(std::isfinite(time)&&std::isfinite(time+timeout),"Now Playing clock must be finite");
         inFlight=true;phase=operation;published.busy=true;
-        const bool accepted=executor.submit(route,[p,weak,expected,request,version,operation,command,complete]{
+        const bool accepted=executor.submit(route,[p,weak,expected,request,version,operation,command,complete,resync]{
             if(operation==Phase::start)p->start([weak,expected]{if(auto self=weak.lock())self->wake(expected);},complete);
-            else if(operation==Phase::read)p->read([weak,expected,request,version](NowPlayingReadResult result){if(auto self=weak.lock()){Message m;m.serial=request;m.events=version;m.phase=Phase::read;m.read=std::move(result);self->wake(expected,std::move(m));}});
+            else if(operation==Phase::read){if(resync)p->resynchronize();p->read([weak,expected,request,version](NowPlayingReadResult result){if(auto self=weak.lock()){Message m;m.serial=request;m.events=version;m.phase=Phase::read;m.read=std::move(result);self->wake(expected,std::move(m));}});}
             else p->perform(command->session,command->metadata,command->value,complete);
         },[complete](std::exception_ptr error){if(error)complete({NowPlayingServiceFailure::unavailable,0});});
         if(!accepted){inFlight=false;phase=Phase::idle;published.busy=false;return;}
         deadline=time+timeout;
-        if(operation==Phase::read)pendingRead=false;if(operation==Phase::command){executingCommand=command->receipt;pendingCommand.reset();}
+        if(operation==Phase::read)pendingRead=pendingResync=false;if(operation==Phase::command){executingCommand=command->receipt;pendingCommand.reset();}
     }
     void accept(NowPlayingReadResult result){
         if(result.failure!=NowPlayingServiceFailure::none){published.failure=result.failure;published.nativeError=result.nativeError;return;}
         auto&value=result.value;need(value.sessions.size()<=128,"Now Playing session list exceeds its bounded snapshot");
         for(std::size_t n=0;n<value.sessions.size();++n){const auto&s=value.sessions[n];need(s.token&&s.appUserModelID.size()<=4096&&s.displayName.size()<=4096&&ehud::data::Json::validUtf8(s.appUserModelID)&&ehud::data::Json::validUtf8(s.displayName),"Invalid Now Playing session identity");for(std::size_t prior=0;prior<n;++prior)need(value.sessions[prior].token!=s.token,"Duplicate Now Playing session token");}
         if(value.session){need(value.session->token!=0,"Now Playing session requires native identity");need(std::find(value.sessions.begin(),value.sessions.end(),*value.session)!=value.sessions.end(),"Selected Now Playing session must be in the same snapshot");}
-        else need(!value.track&&!value.artwork,"Media needs its selected session");
+        else need(!value.track&&!value.artwork&&!value.progress&&!value.artworkURL,"Media needs its selected session");
         if(value.artwork)need(value.artwork->size()<=modules::nowPlayingMaximumArtworkBytes,"Now Playing artwork exceeds source byte limit");
+        if(value.progress)need(std::isfinite(value.progress->fraction)&&value.progress->fraction>=0&&value.progress->fraction<=1&&std::isfinite(value.progress->played)&&value.progress->played>=0,"Invalid player progress");
+        if(value.artworkURL)need(value.artworkURL->size()<=2048&&ehud::data::Json::validUtf8(*value.artworkURL),"Invalid player cover address");
         if(value.track)value.track=modules::NowPlayingTrack::bounded(std::move(*value.track));
         published.media=std::move(value);published.failure=NowPlayingServiceFailure::none;published.nativeError=0;published.fresh=true;++published.mediaReadRevision;
     }
@@ -108,6 +111,7 @@ NativeNowPlayingService::NativeNowPlayingService(app::UtilityExecutor&e,Factory 
 NativeNowPlayingService::~NativeNowPlayingService(){auto i=impl_;i->check();i->alive=false;i->stop();}
 void NativeNowPlayingService::setActive(bool value){auto i=impl_;i->check();if(i->published.active==value)return;if(value)i->activate();else i->stop();}
 void NativeNowPlayingService::refresh(){auto i=impl_;i->check();if(!i->published.active)return;if(!i->provider){i->stop();i->activate();return;}i->pendingRead=true;i->schedule();}
+void NativeNowPlayingService::resynchronize(){auto i=impl_;i->check();if(!i->published.active||!i->provider)return;i->pendingResync=true;refresh();}
 bool NativeNowPlayingService::perform(modules::NowPlayingCommand request){auto i=impl_;i->check();const auto&s=i->published;if(!s.active||!s.fresh||s.failure!=NowPlayingServiceFailure::none||!s.media.session||!s.media.track)return false;const auto command=modules::nowPlayingCommand(*s.media.track,s.media.capabilities,request);if(!command)return false;need(i->commandToken!=UINT64_MAX,"Now Playing command token exhausted");NowPlayingCommandReceipt receipt{++i->commandToken,s.media.session->token,s.media.metadataRevision,*command,i->pendingCommand?std::optional(i->pendingCommand->receipt.token):std::nullopt};i->pendingCommand=Impl::Command{*command,s.media.session->token,s.media.metadataRevision,*s.media.track,receipt};i->published.commandAccepted=receipt;++i->published.revision;i->schedule();return true;}
 bool NativeNowPlayingService::drain(){auto i=impl_;return i->drain();}
 std::optional<double>NativeNowPlayingService::nextWakeTime()const{impl_->check();return impl_->deadline;}

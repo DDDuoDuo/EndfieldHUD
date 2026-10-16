@@ -18,8 +18,11 @@
 //                       Cloud Music, QQ Music, Kugou, Kuwo, foobar2000, AIMP,
 //                       PotPlayer, VLC: windowsNowPlayingPlayers, WinEvent
 //                       hooks on the UI thread while presented, the players'
-//                       own controls read and pressed through MSAA on the OS
-//                       thread pool, ranked by the per-app audio activity),
+//                       own controls read and pressed through MSAA and
+//                       IAccessible2 on the OS thread pool (NetEase 3: its
+//                       page's bar buttons, progress-bar fraction and cover,
+//                       re-read once per displayed second while its time
+//                       runs), ranked by the per-app audio activity),
 //                       public LRCLIB/NetEase lyric and cover downloads over
 //                       one kept-alive WinHTTP session with a bounded disk
 //                       cache (<data root>\Caches\NowPlaying), the playing

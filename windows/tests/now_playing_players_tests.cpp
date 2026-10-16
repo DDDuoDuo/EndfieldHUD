@@ -122,6 +122,10 @@ void titles() {
     check(m::nowPlayingMainWindow(q, classless) == 2u, "Without a known class, unowned windows titled with a track win");
     const std::vector<m::NowPlayingPlayerWindow> owned{window(1, 8, qq, "Popup", "Notice - Text", true, true)};
     check(!m::nowPlayingMainWindow(q, owned) && !m::nowPlayingMainWindow(q, {}), "Owned popups alone are no player window");
+    // NetEase 3.1 (live): its CEF GPU process owns a hidden untitled
+    // Chrome_WidgetWin_0 and an owned IME window.
+    const std::vector<m::NowPlayingPlayerWindow> helper{window(1, 9, netease, "Chrome_WidgetWin_0", "", false), window(2, 9, netease, "IME", "Default IME", false, true)};
+    check(!m::nowPlayingMainWindow(ne, helper), "A helper process's hidden untitled window makes it no player");
 }
 
 // NetEase Cloud Music registers its global shortcuts, the media keys among
@@ -423,6 +427,106 @@ void controls() {
     check(d.perform(token, m::NowPlayingCommandKind::seek) == F::unsupported && d.desktop->presses().size() == 1, "Seek is never pressed");
 }
 
+// NetEase Cloud Music 3.1 (live): no elapsed/total labels. Its bar's
+// progress fraction and cover are trusted while the window shows the title
+// the bar was read under, from a shown window; the owner converts the
+// fraction with the track's length. The owner asks for a new reading
+// (resynchronize) once per displayed second while the time runs.
+void progressBar() {
+    Direct d;
+    const auto at = [&] { return d.now; };
+    const std::string title = "Song - Artist";
+    // Its CEF GPU process: a hidden untitled top-level window of cloudmusic.exe.
+    d.desktop->set({window(10, 7, netease, "OrpheusBrowserHost", title), window(11, 8, netease, "Chrome_WidgetWin_0", "", false)});
+    n::NowPlayingPlayerReading r{std::nullopt, std::nullopt, true, true, true, true, true};
+    r.fraction = .25;
+    r.artwork = "https://p3.music.126.net/A==/1.jpg?param=600y600";
+    r.title = title;
+    d.desktop->setReading(7, r, at);
+    auto first = d.read();
+    check(first.value.sessions.size() == 1, "A NetEase helper process (its hidden untitled window) is no second player");
+    check(first.value.progress && first.value.progress->fraction == .25 && first.value.progress->played == 0. && first.value.artworkURL == r.artwork &&
+              first.value.playerControls && !first.value.track->position && !first.value.track->duration,
+          "The bar's played fraction and cover are the snapshot's; the owner converts the fraction with the track's length");
+    d.now = 8;
+    auto later = d.read();
+    check(later.value.progress->played == 3. && later.value.progress->fraction == .25 && d.desktop->refreshes() == 1,
+          "Between readings the playing time since the reading is added; no new reading without a change");
+    const auto refreshes = d.desktop->refreshes();
+    d.provider->resynchronize();
+    r.fraction = .3;
+    d.desktop->setReading(7, r, at);
+    d.now = 9;
+    auto resynced = d.read();
+    check(d.desktop->refreshes() == refreshes + 1 && resynced.value.progress->fraction == .3 && resynced.value.progress->played == 0.,
+          "resynchronize reads the player's controls anew: every reading resynchronizes the bar");
+    // Paused inside the player: its button reads play.
+    r.playing = false;
+    r.fraction = .31;
+    d.desktop->setReading(7, r, at);
+    d.provider->resynchronize();
+    d.now = 10;
+    auto paused = d.read();
+    check(!paused.value.track->isPlaying && paused.value.progress->fraction == .31, "The player's own play button pauses it");
+    d.now = 15;
+    check(d.read().value.progress->played == 0., "Paused, no playing time accrues");
+    // Its audio fades out for a second after the pause (live): the audio
+    // change asks for a reading, and the button states the play state.
+    d.activity->update(std::vector<m::NowPlayingAudioRoute>{{"7:1", 7, netease, true, m::NowPlayingAudioRouteState::direct, {}, {}, true}});
+    d.now = 16;
+    const auto asked = d.desktop->refreshes();
+    auto audible = d.read();
+    check(d.desktop->refreshes() == asked + 1 && !audible.value.track->isPlaying, "An audio change reads the button anew; it still says paused");
+    d.activity->update(std::vector<m::NowPlayingAudioRoute>{});
+    // The window title moves on before the bar: the bar's fraction and cover
+    // belong to the previous track.
+    d.desktop->set({window(10, 7, netease, "OrpheusBrowserHost", "Next - Artist"), window(11, 8, netease, "Chrome_WidgetWin_0", "", false)});
+    r.playing = true;
+    d.desktop->setReading(7, r, at);
+    d.now = 20;
+    auto next = d.read();
+    check(next.value.track->title == "Next" && !next.value.progress && !next.value.artworkURL && next.value.playerControls,
+          "A bar read under another title says nothing about the new track");
+    r.title = "Next - Artist";
+    r.fraction = .01;
+    r.artwork = "https://p4.music.126.net/B==/2.jpg?param=600y600";
+    r.visible = false;
+    d.desktop->setReading(7, r, at);
+    d.provider->resynchronize();
+    d.now = 21;
+    auto hidden = d.read();
+    check(hidden.value.progress && hidden.value.progress->fraction == .01 && hidden.value.artworkURL == r.artwork,
+          "A minimized window's bar (Chromium may stop drawing it) is shown provisionally");
+    d.provider->resynchronize();
+    d.now = 22;
+    check(d.read().value.progress->played == 1., "It runs on");
+    d.provider->resynchronize();
+    d.now = 23;
+    check(!d.read().value.progress, "A minimized bar that stood still for 1.5 s while playing is withdrawn");
+    d.provider->resynchronize();
+    d.now = 24;
+    check(!d.read().value.progress, "and stays withdrawn while it stands still");
+    r.visible = true;
+    d.desktop->setReading(7, r, at);
+    d.provider->resynchronize();
+    d.now = 25;
+    check(d.read().value.progress->fraction == .01, "Shown again, the bar is trusted");
+    r.visible = false;
+    r.fraction = .9;
+    d.desktop->setReading(7, r, at);
+    d.provider->resynchronize();
+    d.now = 26;
+    check(d.read().value.progress->fraction == .9, "A minimized bar that moved is live: it resynchronizes");
+    d.provider->resynchronize();
+    d.now = 29;
+    const auto kept = d.read();
+    check(kept.value.progress->fraction == .9 && kept.value.progress->played == 3., "When it stands still again the last live reading runs on");
+    // Commands: the helper process does not make NetEase one of several players.
+    const auto token = kept.value.session->token;
+    check(d.perform(token, m::NowPlayingCommandKind::next) == F::none && d.desktop->commands().back().onlyPlayer,
+          "With only NetEase's processes running, its media-key hotkey may carry a command");
+}
+
 void merge() {
     const auto fallback = [](bool playing, std::string title = "Window Song") {
         n::NowPlayingReadResult r;
@@ -450,6 +554,17 @@ void merge() {
     auto spotifyPaused = n::nowPlayingMergeReads(media("Spotify.exe", false), fallback(true));
     check(spotifyPaused.value.session->token == (3 | bit) && spotifyPaused.value.track->title == "Window Song" && !spotifyPaused.value.timeline &&
               !spotifyPaused.value.capabilities.seek && spotifyPaused.value.metadataRevision == 4, "A playing window player beats a paused media session");
+    {
+        auto read = fallback(true);
+        read.value.progress = n::NowPlayingMediaSnapshot::Progress{.5, 1};
+        read.value.artworkURL = "https://p3.music.126.net/A==/1.jpg?param=600y600";
+        read.value.playerControls = true;
+        auto presented = n::nowPlayingMergeReads(media("Spotify.exe", false), read);
+        check(presented.value.progress == read.value.progress && presented.value.artworkURL == read.value.artworkURL && presented.value.playerControls,
+              "A presented window player brings its bar's progress and cover");
+        auto kept = n::nowPlayingMergeReads(media("Spotify.exe", true), read);
+        check(!kept.value.progress && !kept.value.artworkURL && !kept.value.playerControls, "A presented media session never carries them");
+    }
     auto bothPaused = n::nowPlayingMergeReads(media("Spotify.exe", false), fallback(false));
     check(bothPaused.value.session->appUserModelID == "Spotify.exe", "Equal ranks keep the media session");
     auto emptySession = n::nowPlayingMergeReads(media("Chrome", false, false), fallback(false));
@@ -657,6 +772,7 @@ int main(int argc, char** argv) {
         provider();
         estimate();
         controls();
+        progressBar();
         merge();
         composite();
         compositeFailures();

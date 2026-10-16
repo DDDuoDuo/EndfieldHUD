@@ -14,7 +14,11 @@ struct NowPlayingSession::Impl:std::enable_shared_from_this<Impl>{
  struct Seek{std::uint64_t token{},session{},readAtCompletion{};modules::NowPlayingTrack track;double value{},sampledAt{};std::optional<double>rollback;};
  // Catalog cover supplement for a player that supplied no thumbnail. Only the
  // current cover's compressed bytes are retained (<= 8 MiB, one entry).
- struct Cover{std::optional<modules::NowPlayingLyricsKey>key;std::string url;modules::NowPlayingBody bytes;std::function<void()>cancel;bool inFlight{},done{};};
+ // A window-title player's own cover (the URL its player bar shows) comes
+ // first, the catalog's as supplement (source NowPlayingArtworkLoader: the
+ // player's AX image URL, then the catalog); a track keeps the cover it
+ // already has, and a failed address gives way to the other one.
+ struct Cover{std::optional<modules::NowPlayingLyricsKey>key;std::string url;std::vector<std::string>tried;modules::NowPlayingBody bytes;std::function<void()>cancel;bool inFlight{},done{};};
  // Recently downloaded catalog covers by URL (bounded, kept while hidden):
  // returning to one of the last tracks shows its cover at once, and the
  // decoded thumbnails (keyed by these exact bytes) stay valid for them too.
@@ -42,6 +46,13 @@ struct NowPlayingSession::Impl:std::enable_shared_from_this<Impl>{
  std::vector<std::pair<std::string,std::optional<std::string>>>identities;
  std::uint64_t serviceRevision{},imageRevision{},completion{},event{},coverRevision{},refreshRead{};bool alive{true},active{},imageDirty{},sourcesDirty{},retryMissing{};double time{};
  unsigned coverPixels{600};
+ // A window-title player's progress bar: the position last presented for the
+ // track. The bar is drawn a little behind the player's clock (it updates in
+ // steps), so a reading at most progressLag seconds behind the running time
+ // keeps the running time; anything else (a seek, a pause) resynchronizes.
+ struct Progress{std::optional<modules::NowPlayingLyricsKey>key;double position{},sampledAt{};bool playing{};};
+ std::optional<Progress>progress;std::optional<double>controlsRead;
+ static constexpr double progressLag=1.5,controlsInterval=.9;
  // Downloaded lyric/catalog JSON is decoded on the shared utility worker (a
  // 1 MiB LRCLIB search can take tens of milliseconds); results return through
  // the host's utility drain like decoded artwork. Hide discards queued work.
@@ -72,13 +83,18 @@ struct NowPlayingSession::Impl:std::enable_shared_from_this<Impl>{
  void stopCover(){auto cancel=std::move(cover.cancel);cover.cancel=nullptr;if(cover.inFlight){cover.inFlight=false;cover.done=false;cover.key.reset();cover.url.clear();}if(cancel)cancel();}
  // Source NowPlayingArtworkLoader: the player's embedded thumbnail first, then
  // an allow-listed catalog supplement downloaded once per track and URL.
- modules::NowPlayingBody remoteCover(const std::optional<modules::NowPlayingLyricsKey>&key){
+ modules::NowPlayingBody remoteCover(const std::optional<modules::NowPlayingLyricsKey>&key,const std::optional<std::string>&own){
   if(!web||!key)return nullptr;
-  const auto catalog=sources->catalogArtwork();
-  const auto url=catalog?modules::nowPlayingCatalogCoverURL(*catalog,coverPixels):std::nullopt;
-  if(!url){if(!cover.key||!(*cover.key==*key))stopCover();return cover.key&&*cover.key==*key?cover.bytes:nullptr;}
-  if(cover.key&&*cover.key==*key&&cover.url==*url)return cover.bytes;
-  stopCover();cover.key=key;cover.url=*url;cover.bytes.reset();cover.done=false;
+  std::vector<std::string>addresses;
+  if(own)if(auto url=modules::nowPlayingCatalogCoverURL(*own,coverPixels))addresses.push_back(std::move(*url));
+  if(const auto catalog=sources->catalogArtwork())if(auto url=modules::nowPlayingCatalogCoverURL(*catalog,coverPixels);url&&std::find(addresses.begin(),addresses.end(),*url)==addresses.end())addresses.push_back(std::move(*url));
+  const bool same=cover.key&&*cover.key==*key;
+  if(same&&(cover.inFlight||cover.bytes))return cover.bytes;
+  std::optional<std::string>url;
+  for(const auto&address:addresses)if(!same||std::find(cover.tried.begin(),cover.tried.end(),address)==cover.tried.end()){url=address;break;}
+  if(!url){if(!same)stopCover();return same?cover.bytes:nullptr;}
+  if(!same){stopCover();cover.tried.clear();}
+  cover.key=key;cover.url=*url;cover.tried.push_back(*url);cover.bytes.reset();cover.done=false;
   if(auto bytes=recalled(*url)){cover.bytes=std::move(bytes);cover.done=true;return cover.bytes;}
   cover.inFlight=true;
   const auto weak=weak_from_this();const auto expected=cover.url;
@@ -141,22 +157,30 @@ struct NowPlayingSession::Impl:std::enable_shared_from_this<Impl>{
   // Source changed(): embedded timed lyrics, the NetEase catalog for NetEase,
   // then LRCLIB. GSMTC itself never supplies timed lyrics or player volume.
   std::optional<modules::NowPlayingLyricsKey>key;if(input.track&&s.media.session)key=modules::NowPlayingLyricsKey::make(application,*input.track);
-  if(retryMissing&&s.mediaReadRevision!=refreshRead){retryMissing=false;if(s.failure==native::NowPlayingServiceFailure::none&&key){sources->update(key,input.track);sources->invalidateMissing();if(cover.key&&*cover.key==*key&&cover.done&&!cover.bytes){cover.key.reset();cover.url.clear();cover.done=false;}}}
+  if(retryMissing&&s.mediaReadRevision!=refreshRead){retryMissing=false;if(s.failure==native::NowPlayingServiceFailure::none&&key){sources->update(key,input.track);sources->invalidateMissing();if(cover.key&&*cover.key==*key&&cover.done&&!cover.bytes){cover.key.reset();cover.url.clear();cover.tried.clear();cover.done=false;}}}
   sources->update(key,input.track);
   if(seek&&input.track){input.track->position=seek->value;input.track->sampledAt=seek->sampledAt;}
   if(s.media.timeline)input.playbackRate=std::isfinite(s.media.timeline->rate)&&s.media.timeline->rate>0?s.media.timeline->rate:0;
   auto artwork=input.track?s.media.artwork:nullptr;bool remotePending{};
   // A player thumbnail always wins; an in-flight supplement is then retired.
-  if(input.track&&!artwork){artwork=remoteCover(key);remotePending=cover.inFlight;}else stopCover();
+  if(input.track&&!artwork){artwork=remoteCover(key,s.media.artworkURL);remotePending=cover.inFlight;}else stopCover();
   sourcesDirty=false;input.lyrics=sources->lyrics();
   const auto rendering=applyVolume(input,application);
   const bool playerWindow=s.media.session&&s.media.session->origin==modules::NowPlayingSessionOrigin::playerWindow;
+  // A window title carries no length: the matched catalog recording's does
+  // (NetEase), so the elapsed/total times and the progress can show.
+  if(input.track&&playerWindow&&!input.track->duration)if(const auto length=sources->catalogDuration())input.track->duration=*length;
+  // The player's own progress bar: its played fraction of that length.
+  if(input.track&&playerWindow&&s.media.progress&&input.track->duration)input.track->position=progressPosition(key,*input.track,*s.media.progress);
+  else if(!s.media.progress)progress.reset();
   // A window-title player's title does not report pausing: its single
   // process route's audio activity (AudioSessionStateActive) does, and it is
   // published event-driven by the shared audio worker. The estimated elapsed
   // time is re-based at this moment, so it neither jumps back to the last
-  // read nor keeps running until the provider's next read.
-  if(rendering&&input.track&&playerWindow&&input.track->isPlaying!=*rendering){
+  // read nor keeps running until the provider's next read. A player whose
+  // own controls were read states its play state itself (its audio fades out
+  // for a second after it pauses).
+  if(rendering&&input.track&&playerWindow&&!s.media.playerControls&&input.track->isPlaying!=*rendering){
    if(input.track->position)input.track->position=input.track->elapsed(time);
    input.track->sampledAt=time;input.track->isPlaying=*rendering;
   }
@@ -165,10 +189,26 @@ struct NowPlayingSession::Impl:std::enable_shared_from_this<Impl>{
   const bool keepWarm=warmCoverHeld&&!next&&(decoding||remotePending)&&warm&&warm->track&&input.track&&input.track->sameIdentity(*warm->track)&&s.media.session&&s.media.session->appUserModelID==warmApplication;
   if(keepWarm)next=image;else{warmCoverHeld=false;warm.reset();warmApplication.clear();}
   if(image!=next){image=std::move(next);++coverRevision;}input.coverAvailable=bool(image);input.coverRevision=coverRevision;
-  // A window title carries no length: the matched catalog recording's does
-  // (NetEase), so the elapsed/total times and the progress can show.
-  if(input.track&&playerWindow&&!input.track->duration)if(const auto length=sources->catalogDuration())input.track->duration=*length;
   serviceRevision=s.revision;view.sync(std::move(input),time);displayDeadline=view.nextDisplayDeadline(time);
+ }
+ double progressPosition(const std::optional<modules::NowPlayingLyricsKey>&key,const modules::NowPlayingTrack&track,const native::NowPlayingMediaSnapshot::Progress&bar){
+  const double duration=*track.duration;
+  double position=std::clamp(bar.fraction*duration+bar.played,0.,duration);
+  if(progress&&key&&progress->key&&*progress->key==*key&&progress->playing&&track.isPlaying){
+   const double running=std::min(duration,progress->position+std::max(0.,track.sampledAt-progress->sampledAt));
+   if(position<running&&running-position<=progressLag)position=running;
+  }
+  progress=Progress{key,position,track.sampledAt,track.isPlaying};
+  return position;
+ }
+ // Once per displayed second while a window-title player's time runs (the
+ // Mac re-reads its player each time the elapsed label changes): its own
+ // controls are read anew, never more often, never while paused or hidden.
+ void readControls(){
+  const auto&s=service.snapshot();
+  if(!active||!s.media.playerControls||!s.media.track||!s.media.track->isPlaying)return;
+  if(controlsRead&&time-*controlsRead<controlsInterval)return;
+  controlsRead=time;service.resynchronize();
  }
  bool dispatchVolume(double value){
   if(!volume||volumeRouteID.empty()||!volume->routes)return false;
@@ -190,7 +230,7 @@ NowPlayingSession::~NowPlayingSession(){auto i=impl_;i->alive=false;++i->event;i
  if(i->active){i->active=false;i->service.setActive(false);if(i->volume&&i->volume->setActive)i->volume->setActive(false);}}
 void NowPlayingSession::setActive(bool active,double t){auto i=impl_;const auto e=i->begin(t);if(i->active==active)return;
  if(!active){const auto&s=i->service.snapshot();if(s.fresh){if(s.media.session&&s.media.track&&(s.failure==native::NowPlayingServiceFailure::none||s.failure==native::NowPlayingServiceFailure::timedOut||s.failure==native::NowPlayingServiceFailure::unavailable)){i->warm=i->view.input();i->warm->track=s.media.track;i->warm->failed=false;i->warmApplication=s.media.session->appUserModelID;}else{i->warm.reset();i->warmApplication.clear();}}}
- i->active=active;i->seek.reset();i->completion=0;i->commandSources.clear();i->pendingVolume.reset();i->retryMissing=false;i->view.setActive(active,i->time);
+ i->active=active;i->seek.reset();i->completion=0;i->commandSources.clear();i->pendingVolume.reset();i->retryMissing=false;i->progress.reset();i->controlsRead.reset();i->view.setActive(active,i->time);
  if(!active){i->displayDeadline.reset();i->images->cancel();i->imageDirty=false;i->stopCover();i->sources->hide();i->discardDecodes();i->sourcesDirty=false;i->identities.clear();i->volumeRouteID.clear();i->service.setActive(false);if(i->volume&&i->volume->setActive)i->volume->setActive(false);return;}
  i->warmCoverHeld=i->warm&&bool(i->image);if(i->web)i->web->prepare();if(i->volume&&i->volume->setActive)i->volume->setActive(true);if(!i->current(e))return;i->service.setActive(true);if(i->current(e)&&i->active)i->publish();}
 bool NowPlayingSession::active()const noexcept{return impl_->active;}
@@ -200,7 +240,7 @@ bool NowPlayingSession::utilityCompleted(double t){auto i=impl_;const auto e=i->
 bool NowPlayingSession::deadline(double t){auto i=impl_;const auto e=i->begin(t);if(!i->active)return false;bool changed{};if(const auto due=i->service.nextWakeTime();due&&*due<=i->time){changed=i->service.drain();if(!i->current(e)||!i->active)return changed;}
  if(i->web)if(const auto due=i->web->nextWakeTime();due&&*due<=i->time){changed=i->web->drain()||changed;if(!i->current(e)||!i->active)return changed;}
  if(i->seek&&i->seek->rollback&&*i->seek->rollback<=i->time){i->seek.reset();changed=true;}if(changed||i->sourcesDirty||i->serviceRevision!=i->service.snapshot().revision)i->publish();
- if(i->displayDeadline&&*i->displayDeadline<=i->time){if(i->view.tick(i->time)){i->service.refresh();if(!i->current(e)||!i->active)return true;}changed=true;i->displayDeadline=i->view.nextDisplayDeadline(i->time);}return changed;
+ if(i->displayDeadline&&*i->displayDeadline<=i->time){if(i->view.tick(i->time)){i->service.refresh();if(!i->current(e)||!i->active)return true;}else{i->readControls();if(!i->current(e)||!i->active)return true;}changed=true;i->displayDeadline=i->view.nextDisplayDeadline(i->time);}return changed;
 }
 bool NowPlayingSession::audioChanged(double t){auto i=impl_;i->begin(t);if(!i->active||!i->volume)return false;const auto revision=i->volume->revision?i->volume->revision():i->volumeRevision+1;if(revision==i->volumeRevision)return false;i->publish();return true;}
 void NowPlayingSession::refreshManually(double t){auto i=impl_;i->begin(t);if(!i->active)return;i->retryMissing=true;i->refreshRead=i->service.snapshot().mediaReadRevision;i->service.refresh();}

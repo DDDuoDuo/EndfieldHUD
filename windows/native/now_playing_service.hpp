@@ -24,6 +24,18 @@ struct NowPlayingMediaSnapshot {
     // Bounded original compressed thumbnail; decoding belongs to the existing
     // utility/image path. No substitute artwork or arbitrary URL fetch.
     std::shared_ptr<const std::vector<std::uint8_t>>artwork;
+    // Window-title players read through their own controls (native/
+    // now_playing_players.hpp). progress: the played fraction of the track
+    // its progress bar showed at the last trusted reading, and the seconds it
+    // has played since (as of track->sampledAt); the owner converts it with
+    // the track's length. artworkURL: the cover the player itself shows
+    // (allow-listed catalog URL, modules::nowPlayingPlayerArtworkURL).
+    // playerControls: the play state and time come from the player's own
+    // controls, which are read again on resynchronize().
+    struct Progress {double fraction{},played{};bool operator==(const Progress&)const=default;};
+    std::optional<Progress>progress;
+    std::optional<std::string>artworkURL;
+    bool playerControls{};
 };
 struct NowPlayingReadResult {NowPlayingMediaSnapshot value;NowPlayingServiceFailure failure{NowPlayingServiceFailure::none};std::int32_t nativeError{};};
 struct NowPlayingCommandResult {NowPlayingServiceFailure failure{NowPlayingServiceFailure::none};std::int32_t nativeError{};};
@@ -39,6 +51,10 @@ public:
     virtual void read(Read)=0;
     virtual void perform(std::uint64_t session,std::uint64_t metadataRevision,
         modules::NowPlayingCommand,Ready)=0;
+    // Invoked by the borrowed utility queue right before a read the owner
+    // asked to resynchronize: sources whose state is read from a player's own
+    // controls read them anew for that read's successors. Default: nothing.
+    virtual void resynchronize()noexcept{}
     // Thread-safe, terminal, nonthrowing. Revokes events/cancels async work;
     // neither waits for completion nor starts a timer or another worker.
     virtual void stop()noexcept=0;
@@ -81,6 +97,10 @@ public:
     NativeNowPlayingService&operator=(const NativeNowPlayingService&)=delete;
     void setActive(bool);
     void refresh();
+    // refresh() that also asks the provider to read the players' own controls
+    // anew (NowPlayingProvider::resynchronize). The owner calls it at most
+    // once per displayed second while a window-title player's time plays.
+    void resynchronize();
     bool perform(modules::NowPlayingCommand);
     // Call after the shared utility completion/message drain. Capacity retry
     // occurs only here, never in a private timer or a busy loop.

@@ -32,6 +32,15 @@ struct Player {
     bool resync{true};                  // ask the player's controls again
     std::optional<NowPlayingPlayerReading> reading; // of the current track
     std::optional<double> anchored;     // the reading the estimate was anchored on
+    // The progress bar of the reading the time is anchored on: its played
+    // fraction, when it was read and the playing time since (pauses
+    // counted); provisional while only a minimized window's bar was seen,
+    // frozen once such a bar stood still while playing. The bar fraction
+    // last read, and the cover the bar showed.
+    std::optional<double> fraction, fractionAt, fractionSeen, fractionSeenAt;
+    bool provisional{}, frozen{};
+    m::NowPlayingWindowTimeline sinceFraction;
+    std::optional<std::string> artwork;
     std::uint64_t revision{1}, seen{};
 };
 struct WindowShared {
@@ -145,6 +154,12 @@ public:
                         p.timeline.restart(changeTime(w.titleChangedAt, time));
                         p.trackSeen = time;
                         p.resync = true;
+                        p.fraction.reset();
+                        p.fractionAt.reset();
+                        p.fractionSeen.reset();
+                        p.fractionSeenAt.reset();
+                        p.provisional = p.frozen = false;
+                        p.artwork.reset();
                         ++p.revision;
                     } else if (p.idle) p.inferred = true;
                     p.idle = false;
@@ -187,7 +202,40 @@ public:
                         p.timeline.restart(p.reading->sampledAt - *p.reading->position);
                         p.timeline.observe(p.reading->playing.value_or(p.playing), p.reading->sampledAt);
                     }
+                    // The bar describes this track only while the window shows
+                    // the title it was read under.
+                    const bool shown = p.reading && p.reading->title && *p.reading->title == w.title;
+                    if (shown && p.reading->fraction && std::isfinite(*p.reading->fraction) && p.fractionSeenAt != p.reading->sampledAt) {
+                        // Every reading of a shown window resynchronizes. A
+                        // minimized Chromium page may stop drawing its bar: its
+                        // reading counts once the bar moved since the last one;
+                        // the first one is shown provisionally and withdrawn
+                        // when the bar stands still for 1.5 s while playing.
+                        const double value = std::clamp(*p.reading->fraction, 0., 1.);
+                        const bool moved = p.fractionSeen && *p.fractionSeen != value;
+                        const bool playing = p.reading->playing.value_or(p.playing);
+                        const auto anchor = [&](bool provisional) {
+                            p.fraction = value;
+                            p.fractionAt = p.reading->sampledAt;
+                            p.provisional = provisional;
+                            if (!provisional) p.frozen = false;
+                            p.sinceFraction.restart(p.reading->sampledAt);
+                            p.sinceFraction.observe(playing, p.reading->sampledAt);
+                        };
+                        p.fractionSeenAt = p.reading->sampledAt;
+                        if (p.reading->visible || moved) anchor(false);
+                        else if (!p.fraction && !p.frozen) anchor(true);
+                        else if (p.provisional && playing && p.fractionAt && p.reading->sampledAt - *p.fractionAt >= 1.5) {
+                            p.fraction.reset();
+                            p.fractionAt.reset();
+                            p.provisional = false;
+                            p.frozen = true;
+                        }
+                        p.fractionSeen = value;
+                    }
+                    if (shown && p.reading->artwork) p.artwork = p.reading->artwork;
                     p.timeline.observe(p.playing, time);
+                    if (p.fraction) p.sinceFraction.observe(p.playing, time);
                 }
             }
             std::erase_if(s.players, [&](const Player& p) { return p.seen != s.generation; });
@@ -219,6 +267,10 @@ public:
                     track.supportsSeeking = false;
                     result.value.track = m::NowPlayingTrack::bounded(std::move(track));
                     result.value.capabilities.toggle = result.value.capabilities.previous = result.value.capabilities.next = true;
+                    if (current->fraction)
+                        result.value.progress = NowPlayingMediaSnapshot::Progress{*current->fraction, std::max(0., current->sinceFraction.position(time).value_or(0))};
+                    if (current->artwork && current->artwork->size() <= 2048) result.value.artworkURL = current->artwork;
+                    result.value.playerControls = current->reading.has_value();
                 }
             }
         }
@@ -235,7 +287,9 @@ public:
             if (found != shared_->players.end() && found->last) {
                 window = found->window;
                 pid = found->pid;
-                onlyPlayer = shared_->players.size() == 1;
+                // The held media key reaches whoever registered it: only the
+                // one window-title player application may be its holder.
+                onlyPlayer = std::all_of(shared_->players.begin(), shared_->players.end(), [&](const Player& p) { return p.rules == found->rules; });
             }
         }
         if (!window) {
@@ -283,6 +337,11 @@ public:
             pressing = false;
         }
         if (!pressing) finish(fallback(), ready);
+    }
+    void resynchronize() noexcept override {
+        std::lock_guard lock(shared_->mutex);
+        for (auto& p : shared_->players)
+            if (p.reading) p.resync = true;
     }
     void stop() noexcept override {
         std::function<void()> unwatch;
@@ -458,6 +517,10 @@ public:
         }
         parts_[part]->perform(token & ~nowPlayingWindowTokenBit, revision, command, std::move(ready));
     }
+    void resynchronize() noexcept override {
+        for (auto& part : parts_)
+            if (part) part->resynchronize();
+    }
     void stop() noexcept override {
         {
             std::lock_guard lock(shared_->mutex);
@@ -510,6 +573,9 @@ NowPlayingReadResult nowPlayingMergeReads(std::optional<NowPlayingReadResult> me
             fallback.session.reset();
             fallback.track.reset();
             fallback.artwork.reset();
+            fallback.progress.reset();
+            fallback.artworkURL.reset();
+            fallback.playerControls = false;
         }
         for (auto& s : fallback.sessions) s.token |= nowPlayingWindowTokenBit;
         if (fallback.session) fallback.session->token |= nowPlayingWindowTokenBit;
@@ -540,10 +606,16 @@ NowPlayingReadResult nowPlayingMergeReads(std::optional<NowPlayingReadResult> me
         v.timeline.reset();
         v.metadataRevision = fallback.metadataRevision;
         v.artwork = std::move(fallback.artwork);
+        v.progress = fallback.progress;
+        v.artworkURL = std::move(fallback.artworkURL);
+        v.playerControls = fallback.playerControls;
     } else if (v.session && std::find(v.sessions.begin(), v.sessions.end(), *v.session) == v.sessions.end()) {
         v.session.reset();
         v.track.reset();
         v.artwork.reset();
+        v.progress.reset();
+        v.artworkURL.reset();
+        v.playerControls = false;
     }
     return out;
 }

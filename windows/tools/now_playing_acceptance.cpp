@@ -136,6 +136,12 @@ Json::Object describe(const n::NowPlayingServiceSnapshot& s) {
         {"previous", c.previous}, {"next", c.next}, {"seek", c.seek}};
     if (s.media.timeline && std::isfinite(s.media.timeline->rate)) out["playbackRate"] = s.media.timeline->rate;
     out["thumbnailBytes"] = static_cast<std::int64_t>(s.media.artwork ? s.media.artwork->size() : 0);
+    // A window-title player read through its own controls: its bar's played
+    // fraction (and playing time since), and whether it showed a cover (the
+    // address itself is never printed).
+    if (s.media.progress) out["progress"] = Json::Object{{"fraction", std::round(s.media.progress->fraction * 10000) / 10000}, {"played", s.media.progress->played}};
+    out["playerCover"] = s.media.artworkURL.has_value();
+    out["playerControls"] = s.media.playerControls;
     return out;
 }
 std::string escapeCell(std::string_view text) {
@@ -516,6 +522,7 @@ struct NowPlayingProbe::Impl {
     std::vector<Observed> observed;
     std::vector<std::string> globalFailures;
     std::uint64_t serviceRevision{~std::uint64_t{}};
+    std::string presentedKey;
     std::string coverApplication, lyricsApplication;
     std::string followed; // the player whose timeline samples are being paired
     const void* coverShown{};
@@ -616,6 +623,21 @@ struct NowPlayingProbe::Impl {
         if (s.revision != serviceRevision) {
             serviceRevision = s.revision;
             emit(describe(s));
+        }
+        {
+            // What the HUD presents (a window-title player's length and
+            // position are completed by the owner: catalog length, bar
+            // fraction), whenever that changes.
+            const auto& shown = session->presentation();
+            if (const auto& t = shown.input().track) {
+                const auto key = std::to_string(t->position.has_value()) + std::to_string(t->duration.value_or(-1)) + std::to_string(t->isPlaying) +
+                                 std::to_string(t->sampledAt) + std::to_string(t->position.value_or(-1));
+                if (key != presentedKey) {
+                    presentedKey = key;
+                    emit({{"event", "presented"}, {"position", optionalNumber(t->position)}, {"duration", optionalNumber(t->duration)}, {"playing", t->isPlaying},
+                        {"elapsed", shown.elapsedText()}, {"total", shown.durationText()}});
+                }
+            }
         }
         for (const auto& listed : s.media.sessions)
             if (auto* o = find(listed.appUserModelID)) {
@@ -719,6 +741,7 @@ struct NowPlayingProbe::Impl {
             const bool player = bool(s.media.artwork);
             (player ? o.playerCover : o.catalogCover) = std::array{image->width, image->height};
             emit({{"event", "cover"}, {"player", nowPlayingReportIdentity(application)}, {"origin", player ? "player" : "catalog"},
+                {"address", s.media.artworkURL ? "playerBar" : "catalog"},
                 {"width", static_cast<std::int64_t>(image->width)}, {"height", static_cast<std::int64_t>(image->height)}});
         }
         if (!image) coverShown = nullptr;

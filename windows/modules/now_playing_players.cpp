@@ -161,9 +161,12 @@ std::optional<std::size_t> nowPlayingMainWindow(const NowPlayingWindowPlayer& pl
         for (std::size_t k = 0; k < windows.size(); ++k)
             if (caseless(windows[k].className, preferred)) candidates.push_back(k);
     }
+    // Without its main window class: the unowned windows that are shown or
+    // titled. A helper process's hidden untitled window (NetEase's CEF GPU
+    // process owns a Chrome_WidgetWin_0) is no player window.
     if (candidates.empty())
         for (std::size_t k = 0; k < windows.size(); ++k)
-            if (!windows[k].owned) candidates.push_back(k);
+            if (!windows[k].owned && (windows[k].visible || !windows[k].title.empty())) candidates.push_back(k);
     if (candidates.empty()) return std::nullopt;
     const auto track = [&](std::size_t k) { return nowPlayingWindowTitleTrack(player, windows[k].title).has_value(); };
     for (const auto k : candidates)

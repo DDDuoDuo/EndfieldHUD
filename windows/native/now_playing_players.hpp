@@ -51,19 +51,29 @@ inline constexpr std::size_t nowPlayingMaximumPlayerProcesses = 16;
 inline constexpr std::uint64_t nowPlayingWindowTokenBit = std::uint64_t{1} << 63;
 
 // A reading of a window-title player's own controls through its
-// accessibility tree (modules::nowPlayingPlayerControls; the Mac
-// NowPlayingAccessibility read): the elapsed and total labels, the play/pause
-// control's state and which transport controls exist, as of `sampledAt`
-// (host clock). `startedAt` is when the reading began: a reading started
-// before a track change describes the previous track.
+// accessibility tree (modules::NowPlayingControlScan; the Mac
+// NowPlayingAccessibility read): the elapsed and total labels or the played
+// part of its progress bar, the play/pause control's state, which transport
+// controls exist and the cover its bar shows, as of `sampledAt` (host
+// clock). `startedAt` is when the reading began: a reading started before a
+// track change describes the previous track.
 struct NowPlayingPlayerReading {
     std::optional<double> position, duration;
     std::optional<bool> playing;
     bool playPause{}, previous{}, next{};
     // The labels were read from a window that was shown (a minimized or
-    // hidden player may stop updating its elapsed label).
+    // hidden player may stop updating its elapsed label or progress bar).
     bool visible{};
     double startedAt{}, sampledAt{};
+    // The played part of the player's progress bar (0...1) when it shows one
+    // instead of elapsed/total labels (NetEase Cloud Music 3).
+    std::optional<double> fraction;
+    // The cover the player's bar shows (modules::nowPlayingPlayerArtworkURL).
+    std::optional<std::string> artwork;
+    // The main window title whose track the bar showed when it was read (one
+    // of the bar's texts is that title's track): `fraction` and `artwork`
+    // describe the track only while the window still shows this title.
+    std::optional<std::string> title;
     bool operator==(const NowPlayingPlayerReading&) const = default;
 };
 
@@ -137,8 +147,21 @@ private:
 // activity when `activity` knows it; otherwise inferred: a new track title
 // (or the title returning after the idle caption) is playing, the idle
 // caption keeps the last track as paused, and a delivered play/pause flips
-// it. Elapsed time: estimated from the window's titleChangedAt and the pauses
-// observed by this provider (none when the change was not observed). The
+// it; a reading of the player's own controls states it when it is newer
+// than the audio activity. Elapsed time: the player's own elapsed label, else
+// its progress bar (NowPlayingMediaSnapshot::progress: the played fraction
+// of a reading taken while its bar showed this window title's track, plus
+// the playing time since; the owner converts it with the track's length; a
+// minimized window's bar counts once it moved between readings, is shown
+// provisionally before, and withdrawn when it stands still while playing),
+// else estimated from the window's titleChangedAt and the pauses observed by
+// this provider (none when the change was not observed).
+// The cover the bar shows is NowPlayingMediaSnapshot::artworkURL.
+// resynchronize() reads the controls of the players that have them anew.
+// Commands press the player's own control, else (modules::
+// nowPlayingWindowTransport) its media-key hotkey while it is the only
+// window-title player APPLICATION running (other processes of the same
+// player, e.g. its CEF helpers, do not count), else WM_APPCOMMAND. The
 // factory runs on the owner thread (watch); `system` is called once per
 // provider.
 NativeNowPlayingService::Factory nowPlayingWindowProvider(std::function<std::shared_ptr<NowPlayingWindowSystem>()> system,

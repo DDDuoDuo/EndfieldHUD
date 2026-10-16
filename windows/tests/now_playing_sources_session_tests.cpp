@@ -5,6 +5,7 @@
 // network request, audio session or user data is touched.
 #include "tools/now_playing_session.hpp"
 #include "modules/event_log.hpp"
+#include <cmath>
 #include <iostream>
 #include <limits>
 #include <map>
@@ -14,7 +15,8 @@ namespace n=endfield::native;namespace m=endfield::modules;namespace t=endfield:
 namespace {
 unsigned checks{};
 void check(bool value,const char*what){++checks;if(!value)throw std::runtime_error(what);}
-struct Provider:n::NowPlayingProvider{Changed changed;Ready startReady,commandReady;Read readReady;unsigned reads{},commands{};
+struct Provider:n::NowPlayingProvider{Changed changed;Ready startReady,commandReady;Read readReady;unsigned reads{},commands{},resyncs{};
+    void resynchronize()noexcept override{++resyncs;}
     void start(Changed c,Ready r)override{changed=std::move(c);startReady=std::move(r);}void read(Read r)override{++reads;readReady=std::move(r);}
     void perform(std::uint64_t,std::uint64_t,m::NowPlayingCommand,Ready r)override{++commands;commandReady=std::move(r);}void stop()noexcept override{}};
 struct Task final:n::NowPlayingWeb::Task{unsigned cancels{};void cancel()noexcept override{++cancels;}};
@@ -147,6 +149,52 @@ void embedded(){
     Fixture n2;n2.ready(media("cloudmusic.exe",song("[00:02] Embedded")));n2.answer(0,body(catalogSearch));
     check(n2.input().lyrics&&n2.input().lyrics->lines().front().text=="Embedded"&&n2.transport.requests.size()==3,"NetEase embedded lyrics stay first while the catalog still supplies the cover");
 }
+// NetEase Cloud Music 3.1 read through its own player bar (live: no elapsed
+// or total labels): the provider states the played fraction, the playing
+// time since and the cover the bar shows. The owner starts that cover at
+// once (no wait for the catalog search), converts the fraction with the
+// catalog length, keeps the running time through the bar's stepwise drawing
+// and asks for a new reading once per displayed second while the time runs.
+n::NowPlayingReadResult barPlayer(double fraction,double sampledAt,bool playing=true,std::optional<std::string>cover={},double played=0){
+    auto r=windowPlayer("Synthetic Song",0);r.value.track->position.reset();r.value.track->sampledAt=sampledAt;r.value.track->isPlaying=playing;
+    r.value.progress=n::NowPlayingMediaSnapshot::Progress{fraction,played};r.value.artworkURL=std::move(cover);r.value.playerControls=true;return r;}
+void playerBar(){
+    const std::string own="https://p3.music.126.net/Own==/1.jpg?param=600y600";
+    Fixture f(true,false,500);f.ready(barPlayer(.5,10,true,own));
+    check(f.transport.requests.size()==2&&f.transport.requests[0].url==search&&f.transport.requests[1].kind==n::NowPlayingWeb::Kind::artwork&&
+          f.transport.requests[1].url=="https://p3.music.126.net/Own==/1.jpg?param=500y500","The player's own cover is requested at once, at the slot's size, beside the catalog search");
+    check(!f.input().track->position&&!f.input().track->duration,"Without a length the fraction has no time yet");
+    f.answer(1,pixels(8));check(f.owner->artwork()&&f.owner->artwork()->straightRGBA[0]==8,"The player's cover shows before the catalog answers");
+    f.answer(0,body(catalogSearch));
+    check(f.transport.requests.size()==3&&f.transport.requests[2].kind==n::NowPlayingWeb::Kind::lyrics&&f.owner->artwork()->straightRGBA[0]==8,
+          "The catalog answer adds lyrics; the cover is never downloaded twice");
+    check(f.input().track->duration==233.4&&std::abs(*f.input().track->position-116.7)<1e-9&&f.input().track->sampledAt==10,"The played half of the catalog length");
+    f.answer(2,body(R"({"code":200,"lrc":{"lyric":"[00:01] Catalog"}})"));
+    // The bar is drawn in steps: a reading a little behind keeps the running time.
+    f.now=11;f.read(barPlayer(.5+.6/233.4,11));
+    check(std::abs(*f.input().track->position-117.7)<1e-9,"A reading 0.4 s behind the running time keeps the running time");
+    f.now=12;f.read(barPlayer(.5+2.3/233.4,12));
+    check(std::abs(*f.input().track->position-119.)<1e-9,"A reading ahead resynchronizes");
+    f.now=13;f.read(barPlayer(60/233.4,13));
+    check(std::abs(*f.input().track->position-60)<1e-9,"A seek back inside the player resynchronizes");
+    f.now=14;f.read(barPlayer(60/233.4,14,true,{},2.5));
+    check(std::abs(*f.input().track->position-62.5)<1e-9,"The playing time since a trusted reading is added");
+    // Once per displayed second while the time runs, the player's controls are read anew.
+    f.read(barPlayer(.5,f.now));const auto before=f.p->resyncs;unsigned ticks{};
+    for(int k=0;k<3;++k){
+        const auto due=f.owner->nextWakeTime(f.now);if(!due)break;f.now=*due;f.owner->deadline(f.now);++ticks;f.flush();
+        f.p->readReady(barPlayer(.5+(f.now-14)/233.4,f.now));f.flush();
+    }
+    check(ticks==3&&f.p->resyncs==before+3,"Each displayed second asks the player's controls once");
+    f.read(barPlayer(.6,f.now,false));const auto paused=f.p->resyncs;
+    check(!f.owner->nextWakeTime(f.now)&&f.p->resyncs==paused,"Paused: no display tick, no reading");
+    // A window player without its own controls (an estimate) is never re-read on the clock.
+    auto estimate=windowPlayer("Synthetic Song",3);estimate.value.track->sampledAt=f.now;f.read(estimate);const auto plain=f.p->resyncs;
+    for(int k=0;k<2;++k){const auto due=f.owner->nextWakeTime(f.now);if(!due)break;f.now=*due;f.owner->deadline(f.now);f.flush();}
+    check(f.p->resyncs==plain,"An estimated time never asks for readings");
+    f.owner->setActive(false,f.now);
+    check(!f.owner->nextWakeTime(f.now),"Hidden: no tick and no reading");
+}
 void visibility(){
     Fixture f;f.ready(media("Spotify.exe"));check(f.transport.requests.size()==1,"Visible owner starts one request");
     f.owner->setActive(false,f.now);check(f.transport.tasks[0]->cancels==1&&f.web->stats().inFlight==0&&!f.owner->nextWakeTime(f.now),"Hide cancels in-flight downloads and leaves no deadline");
@@ -234,7 +282,7 @@ void volume(){
 }
 }
 int main(){
-    try{lrclibLyrics();netease();windowPlayerCatalog();sizedCover();thumbnailFirst();embedded();visibility();offline();events();offThread();volume();
+    try{lrclibLyrics();netease();windowPlayerCatalog();sizedCover();thumbnailFirst();playerBar();embedded();visibility();offline();events();offThread();volume();
         std::cout<<"Now Playing sources session: "<<checks<<" checks passed (injected provider/transport/audio routes)\n";return 0;}
     catch(const std::exception&e){std::cerr<<"Now Playing sources session failed after "<<checks<<": "<<e.what()<<'\n';return 1;}
 }

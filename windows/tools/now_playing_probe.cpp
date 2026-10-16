@@ -47,6 +47,7 @@
 #include "core/localization.hpp"
 #include "native/audio_runtime.hpp"
 #include "native/now_playing_image.hpp"
+#include "native/now_playing_player_controls.hpp"
 #include "native/now_playing_players.hpp"
 #include "native/now_playing_service.hpp"
 #include "native/now_playing_volume.hpp"
@@ -62,6 +63,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <memory>
 #include <optional>
 #include <string>
 
@@ -198,9 +200,9 @@ t::NowPlayingAcceptanceMatrix runLive(const Arguments& a, t::NowPlayingProbeOpti
             if (parsed) line["parsed"] = Json::Object{{"title", parsed->title}, {"artist", parsed->artist}};
             print(Json(std::move(line)));
         }
-        // Each player's own controls, read exactly as the HUD reads them
-        // (numbers and flags only; reading a Chromium player turns on its
-        // accessibility tree until it exits).
+        // Each player's own controls, read exactly as the HUD reads them, by
+        // the HUD's reader (numbers and flags only; reading a Chromium player
+        // turns on its accessibility tree until it exits).
         std::vector<std::pair<std::uintptr_t, std::uint32_t>> mains;
         {
             const auto all = players->windows();
@@ -215,25 +217,46 @@ t::NowPlayingAcceptanceMatrix runLive(const Arguments& a, t::NowPlayingProbeOpti
                 if (const auto main = endfield::modules::nowPlayingMainWindow(*rules, process)) mains.emplace_back(process[*main].window, w.pid);
             }
         }
+        n::NowPlayingControlReader reader(monotonic);
+        const auto completed = std::make_shared<std::atomic<unsigned>>(0u);
+        reader.setNotify([completed] {
+            ++*completed;
+            interruptWake.post();
+        });
         for (int round = 0; round < 3 && !mains.empty(); ++round) {
-            for (const auto& [window, pid] : mains) (void)players->reading(window, pid, true);
-            for (const double until = monotonic() + 1.5; monotonic() < until;) wake.wait(until - monotonic());
+            const auto before = completed->load();
+            const double began = monotonic();
+            for (const auto& [window, pid] : mains) (void)reader.reading(window, pid, true);
+            while (completed->load() < before + mains.size() && monotonic() < began + 1.5) wake.wait(began + 1.5 - monotonic());
+            const auto st = reader.stats();
+            print(Json(Json::Object{{"event", "playerControlsRound"}, {"round", round}, {"seconds", std::round((monotonic() - began) * 1000) / 1000},
+                {"walks", static_cast<std::int64_t>(st.walks)}, {"rereads", static_cast<std::int64_t>(st.rereads)}, {"nodes", static_cast<std::int64_t>(st.nodes)},
+                {"details", static_cast<std::int64_t>(st.details)}, {"activations", static_cast<std::int64_t>(st.activations)},
+                {"hung", static_cast<std::int64_t>(st.hung)}, {"awaiting", reader.awaiting()}}));
+            // A page whose tree was just requested is read again after a moment.
+            if (reader.awaiting())
+                for (const auto& [window, pid] : mains) (void)reader.treeChanged(pid);
         }
         for (const auto& [window, pid] : mains) {
             Json::Object line{{"event", "playerControls"}, {"pid", static_cast<std::int64_t>(pid)}};
-            if (const auto r = players->reading(window, pid, false)) {
+            if (const auto r = reader.reading(window, pid, false)) {
                 if (r->position) line["position"] = *r->position;
                 if (r->duration) line["duration"] = *r->duration;
                 if (r->playing) line["playing"] = *r->playing;
+                if (r->fraction) line["fraction"] = std::round(*r->fraction * 10000) / 10000;
                 line["playPause"] = r->playPause;
                 line["previous"] = r->previous;
                 line["next"] = r->next;
                 line["visible"] = r->visible;
+                // Flags only: never the cover address or the title.
+                line["cover"] = r->artwork.has_value();
+                line["titleConfirmed"] = r->title.has_value();
             } else {
                 line["found"] = false;
             }
             print(Json(std::move(line)));
         }
+        reader.shutdown();
     }
     t::NowPlayingAcceptanceMatrix matrix;
     {
