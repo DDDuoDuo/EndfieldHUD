@@ -419,6 +419,14 @@ void nativeWindow() {
     checkNear(wheel[1].steps, -1, "horizontal wheel direction retained");
     UINT systemLines=3,systemChars=3;SystemParametersInfoW(SPI_GETWHEELSCROLLLINES,0,&systemLines,0);SystemParametersInfoW(SPI_GETWHEELSCROLLCHARS,0,&systemChars,0);
     check(wheel[0].linesPerStep==systemLines&&wheel[1].linesPerStep==systemChars,"Native wheel preserves cached system line/page settings");
+    // A precision touchpad's pinch is Ctrl+wheel: the source magnification,
+    // one detent being the source wheel zoom step exp(.12).
+    SendMessageW(window, WM_MOUSEWHEEL, MAKEWPARAM(MK_CONTROL, 30), MAKELPARAM(ownPoint.x, ownPoint.y));
+    check(wheel.size() == 3 && (wheel[2].modifiers & MK_CONTROL) && pinchMagnification(wheel[2]).has_value(), "a Ctrl+wheel message is a pinch");
+    checkNear(*pinchMagnification(wheel[2]), std::exp(.25 * .12) - 1, "a pinch's magnification follows its fractional detents");
+    check(pinchMagnification({0, 0, -2, false, MK_CONTROL, 3}) && std::abs(*pinchMagnification({0, 0, -2, false, MK_CONTROL, 3}) - (std::exp(-.24) - 1)) < 1e-12 &&
+        !pinchMagnification(wheel[0]) && !pinchMagnification({0, 0, 1, true, MK_CONTROL, 3}) && !pinchMagnification({0, 0, std::nan(""), false, MK_CONTROL, 3}) &&
+        !pinchMagnification({0, 0, 0, false, MK_CONTROL, 3}), "only a vertical, finite, nonzero Ctrl+wheel is a pinch; a wheel turned back zooms out");
 
     SendMessageW(window, WM_KEYDOWN, 'A', 2 | (0x1e << 16) | (1ull << 30));
     SendMessageW(window, WM_KEYUP, 'A', 1 | (0x1e << 16) | (1ull << 31));

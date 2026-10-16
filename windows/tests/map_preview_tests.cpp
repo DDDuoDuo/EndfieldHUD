@@ -6,6 +6,7 @@
 #include "native/module_scene.hpp"
 #include <windows.h>
 #include <objbase.h>
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -122,6 +123,7 @@ void occlusion(n::Renderer&r){
     check(!down(activity,a::PointerButton::right)&&owner.state().pins().size()==pins,"A right press on the Activity Monitor plate adds no pin");
     check(!owner.pointer({a::PointerKind::move,a::PointerButton::none,storage.x,storage.y},now),"Hover over a plate stays with the navigation");
     check(!owner.magnify(storage,.2,false,now)&&owner.state().viewport()==viewport,"A pinch on a plate leaves the Map");
+    check(!owner.wheel({storage.x,storage.y,1,false,MK_CONTROL,3},now)&&!owner.wheel({activity.x,activity.y,-1,false,MK_CONTROL,3},now)&&owner.state().viewport()==viewport&&!owner.pointerLocked(),"A touchpad pinch (Ctrl+wheel) on a plate leaves the Map too");
     // Stable frames repaint nothing and allocate nothing.
     const auto masks=owner.sceneStats().cutoutMasks;const auto gpu=r.stats();allocations=0;counting=true;try{for(unsigned n=0;n<60;++n)frame(1./60.);}catch(...){counting=false;throw;}counting=false;
     check(allocations==0&&owner.sceneStats().cutoutMasks==masks&&r.stats().textureRegionUploads==gpu.textureRegionUploads&&r.stats().textureUploads==gpu.textureUploads,"Unchanged plates repaint and allocate nothing on warm frames");
@@ -280,6 +282,12 @@ void run(n::Renderer&r,HWND window){
      check(owner.perform(m::MapAction::pin,owner.state().pins()[0].id,now)&&!owner.state().error()&&owner.accessibility().status=="Map","A pin edit clears the message as in the source");
      owner.setGeography(geography(),now);frame();settle();check(!owner.state().error()&&owner.state().active(),"Complete geography shows no message");}
     const auto beforeWheel=owner.state().viewport();const auto wheelSaves=saves;const auto q=point({300,220});check(owner.wheel({q.x,q.y,.5,false,0,99},now)&&owner.pointerLocked(),"Fractional detent zoom uses source gesture lock, independent of OS text lines");const auto expected=m::mapZoomed(beforeWheel,{300,220},std::exp(.5*.12));check(std::abs(owner.state().viewport().zoom-expected.zoom)<1e-12&&saves==wheelSaves,"Wheel retains fractional source exponential sensitivity without per-sample saves");check(owner.nextWakeTime().has_value(),"Wheel end/refinement uses existing shared deadline");now+=.181;owner.deadline(now);check(!owner.pointerLocked()&&saves==wheelSaves+1,"Source180ms wheel completion saves once and releases lock");settle();
+    {// A precision-touchpad pinch arrives as Ctrl+wheel: the source magnify, 1 +
+     // magnification at the pointer, with the same gesture lock and one save.
+     const auto before=owner.state().viewport();const auto pinchSaves=saves;check(owner.wheel({q.x,q.y,1.5,false,MK_CONTROL,3},now)&&owner.pointerLocked(),"A pinch (Ctrl+wheel) zooms the Map under the source gesture lock");
+     const auto spread=m::mapZoomed(before,{300,220},std::clamp(1+*a::pinchMagnification({q.x,q.y,1.5,false,MK_CONTROL,3}),.5,2.));check(std::abs(owner.state().viewport().zoom-spread.zoom)<1e-12&&std::abs(owner.state().viewport().zoom-before.zoom*std::exp(1.5*.12))<1e-9,"The pinch scales by 1 + magnification, anchored at the pointer");
+     const auto out=owner.state().viewport();check(owner.wheel({q.x,q.y,-1,false,MK_CONTROL,3},now)&&std::abs(owner.state().viewport().zoom-m::mapZoomed(out,{300,220},std::exp(-.12)).zoom)<1e-12,"Pinching in zooms back out at the pointer");
+     now+=.181;owner.deadline(now);check(!owner.pointerLocked()&&saves==pinchSaves+1,"The pinch ends on the shared deadline with one save");settle();}
     center=center*c::Matrix4::rotation(.04,-.07,0);frame();check(owner.covers(point({220,5})),"Tilted Map uses its current exact source plane for hits");const auto v=owner.state().viewport();const auto selected=owner.state().selection();owner.setLanguage(c::Language::korean,now);frame();check(owner.state().viewport()==v&&owner.state().selection()==selected&&owner.state().pins().size()==1,"Locale replacement preserves camera, pins and selection");settle();const auto locale=raster.stats();owner.setLanguage(c::Language::korean,now);frame();check(raster.stats().rasterizations==locale.rasterizations,"Equal locale event shapes no text");
     auto appearance=n::MapAppearance{};appearance.dark=false;appearance.ambient=false;appearance.accent={.2,.5,.8,1};appearance.strings={"지도","지형 불러오는 중","핀"};check(owner.setAppearance(appearance,now),"Global theme/accent event is accepted");settle();check(owner.state().viewport()==v&&owner.state().selection()==selected,"Appearance keeps original durable Map identity");
     // Synthetic keys carry their modifier state: off the HUD's key dispatch the

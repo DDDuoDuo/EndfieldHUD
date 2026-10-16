@@ -643,6 +643,7 @@ struct OverlayHost::Impl {
             break;
         }
         case WM_MOUSEWHEEL: case WM_MOUSEHWHEEL: {
+            static_assert(MK_CONTROL == wheelControlKey, "pinchMagnification reads the Win32 Ctrl key bit");
             POINT point{GET_X_LPARAM(l), GET_Y_LPARAM(l)};
             if (!ScreenToClient(target, &point)) fail("Wheel ScreenToClient");
             const WheelEvent event{point.x / client.scale, point.y / client.scale,

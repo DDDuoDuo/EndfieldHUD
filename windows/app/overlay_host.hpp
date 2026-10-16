@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/motion.hpp"
+#include <cmath>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -137,6 +138,21 @@ struct WheelEvent {
     std::uint32_t modifiers{};
     std::uint32_t linesPerStep{3}; // cached OS setting; UINT32_MAX is page scrolling
 };
+// WheelEvent::modifiers bit of the Ctrl key (MK_CONTROL).
+inline constexpr std::uint32_t wheelControlKey = 0x0008;
+// A precision touchpad's pinch reaches a window that registers no
+// DirectManipulation viewport as Ctrl+wheel: WM_MOUSEWHEEL with MK_CONTROL in
+// fractional detents (spreading the fingers turns the wheel forward). This is
+// the source magnifyWithEvent magnification for it, 1 + amount scaling the
+// content: one detent is the source mouse-wheel zoom step exp(.12)
+// (WorldMapCanvas, MediaAssemblyCanvas), so Ctrl with a mouse wheel zooms by
+// those steps. nullopt for any other wheel event. The Map, the Reader and
+// Media Assembly take it like the Mac's pinch (SystemHUDView.magnify); every
+// other owner keeps the wheel, as the Mac does for Control with the wheel.
+inline std::optional<double> pinchMagnification(const WheelEvent& e) noexcept {
+    if (!(e.modifiers & wheelControlKey) || e.horizontal || !std::isfinite(e.steps) || e.steps == 0) return std::nullopt;
+    return std::exp(e.steps * .12) - 1;
+}
 enum class KeyKind { down, up, character, unicodeCharacter };
 struct KeyEvent {
     KeyKind kind{};

@@ -93,6 +93,8 @@ void run(n::Renderer&r,HWND hwnd,const fs::path&assets){
     // Zoom: Ctrl+wheel/pinch and a mouse notch zoom; fractional touchpad deltas pan.
     const auto zoomBefore=owner.presentation().viewport().zoom();const auto mid=point({220,198});
     check(owner.wheel({mid.x,mid.y,1,false,MK_CONTROL,3},now)&&owner.presentation().viewport().zoom()>zoomBefore,"Ctrl+wheel zooms the preview");
+    check(std::abs(owner.presentation().viewport().zoom()-std::clamp(zoomBefore*std::exp(.12),1.,20.))<1e-9,"A pinch (Ctrl+wheel) scales by 1 + magnification: one detent is the source wheel step exp(.12)");
+    {const auto pinched=owner.presentation().viewport().zoom();const auto outside=point({220,20});owner.wheel({outside.x,outside.y,1,false,MK_CONTROL,3},now);check(owner.presentation().viewport().zoom()==pinched,"A pinch outside the preview zooms nothing");}
     const auto zoomed=owner.presentation().viewport().zoom();check(owner.wheel({mid.x,mid.y,-1,false,0,3},now)&&owner.presentation().viewport().zoom()<zoomed,"A wheel notch zooms like the source non-precise wheel");
     owner.wheel({mid.x,mid.y,2,false,MK_CONTROL,3},now);const auto pan=owner.presentation().viewport().pan();check(owner.wheel({mid.x,mid.y,.25,false,0,3},now)&&owner.presentation().viewport().pan().y!=pan.y,"Precision touchpad deltas pan");
     // Keyboard: '+' zooms, Escape unwinds the tool before the HUD.

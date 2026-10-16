@@ -165,7 +165,11 @@ bool MapPreview::pointer(const app::PointerEvent&e,double t){auto i=impl_;const 
         i->synchronize(change,event.revision);if(event.current())i->feedback();return change.handled;
     }return false;
 }
-bool MapPreview::wheel(const app::WheelEvent&e,double t){return scroll({e.x,e.y},e.horizontal?0:e.steps,false,false,t);}
+bool MapPreview::wheel(const app::WheelEvent&e,double t){
+    // A touchpad pinch (Ctrl+wheel) is the source magnify: it skips the
+    // navigation plates (SystemHUDView.magnify asks the Map only off them).
+    if(const auto amount=app::pinchMagnification(e))return magnify({e.x,e.y},*amount,false,t);
+    return scroll({e.x,e.y},e.horizontal?0:e.steps,false,false,t);}
 bool MapPreview::scroll(Point p,double delta,bool precise,bool ended,double t){auto i=impl_;const Impl::Event event(*i,t);const auto q=i->local(p);if(!q&&!ended)return false;const auto result=i->state.wheel(q.value_or(Point{-1e6,-1e6}),delta,precise,ended,i->time);i->synchronize(result,event.revision);return result.handled;}
 bool MapPreview::magnify(Point p,double amount,bool ended,double t){auto i=impl_;const Impl::Event event(*i,t);const auto q=i->plate(p)?std::optional<Point>{}:i->local(p);if(!q&&!ended)return false;const auto result=i->state.magnify(q.value_or(Point{-1e6,-1e6}),amount,ended,i->time);i->synchronize(result,event.revision);return result.handled;}
 bool MapPreview::key(const app::KeyEvent&e,double t){return key(e,e.alt||GetKeyState(VK_SHIFT)<0||GetKeyState(VK_CONTROL)<0||GetKeyState(VK_MENU)<0||GetKeyState(VK_LWIN)<0||GetKeyState(VK_RWIN)<0,t);}

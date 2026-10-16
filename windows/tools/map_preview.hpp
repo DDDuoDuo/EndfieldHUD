@@ -81,7 +81,8 @@ public:
     bool pulsing()const noexcept;
     bool pointer(const app::PointerEvent&,double time);
     // Win32 detents keep fractional steps and source discrete sensitivity .12;
-    // a future precise/pinch route may use scroll/magnify without a new timer.
+    // a touchpad pinch (Ctrl+wheel, app::pinchMagnification) goes to magnify,
+    // which leaves the navigation plates alone.
     bool wheel(const app::WheelEvent&,double time);
     bool scroll(core::Point logicalClientPoint,double delta,bool precise,bool ended,double time);
     bool magnify(core::Point logicalClientPoint,double amount,bool ended,double time);

@@ -483,8 +483,11 @@ bool MediaAssemblyPreview::wheel(const app::WheelEvent&e,double t){
                 const auto total=std::count_if(n.input.choices.begin(),n.input.choices.end(),[&](const auto&c){return !n.input.mediaOnly||c.supported;});
                 const auto next=std::size_t(std::clamp<long long>(static_cast<long long>(n.input.firstRow)+rows,0,std::max<long long>(0,total-4)));if(next!=n.input.firstRow){n.input.firstRow=next;n.controls.update(n.input);n.scene->syncContent();n.dirty=true;i->changed();}}}
         return true;}
+    // A precision-touchpad pinch arrives as Ctrl+wheel: the source magnify,
+    // zoom(by: 1 + magnification) over the preview of an open document.
+    if(const auto amount=app::pinchMagnification(e);amount&&i->presentation.zoom(1+*amount,*q,i->view())){i->animateInline=false;i->changed();if(i->pose)i->sync();return true;}
     // Source: Command/Option or a non-precise wheel zooms; touchpad pans.
-    // Windows precision-touchpad pinch arrives as Ctrl+wheel.
+    // Ctrl elsewhere (the preset drawer) keeps the wheel.
     const bool integral=std::abs(e.steps-std::round(e.steps))<1e-9;const bool zoom=(e.modifiers&MK_CONTROL)||(!e.horizontal&&integral);
     const bool tool=i->presentation.tool().has_value();const double before=i->presentation.drawerOffset();
     const double delta=zoom&&!(e.modifiers&MK_CONTROL)?-e.steps*12:points; // source: -scrollingDeltaY*12 per wheel notch
