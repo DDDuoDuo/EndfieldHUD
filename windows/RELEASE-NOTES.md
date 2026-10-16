@@ -13,7 +13,7 @@ publishing:
      with its report.
   3. Install, upgrade and uninstall the setup live (with the SmartScreen
      prompt). Remove every item under "Not yet checked on a real PC" that has
-     passed, and the Archive end-of-line item if its fix is in the tag.
+     passed.
   4. Compare "Known differences and limitations" with WINDOWS-MIGRATION.md
      section 6 at the release commit.
   5. Create the release under the Windows tag namespace only, from the
@@ -88,7 +88,7 @@ Your notes and settings stay on your PC. EndfieldHUD goes online only for accoun
 
 Press **Ctrl + backtick (`)** to open the HUD. You can change the hotkey in **Hotkeys**. EndfieldHUD lives in the notification area (system tray); click its icon for its menu. If Windows hides the tray icon, start EndfieldHUD again from the Start menu to open the HUD.
 
-Use the side buttons to switch sections, and scroll the right side for more. **Esc** backs out of an edit before closing the HUD, and clicking outside the HUD closes it. Closing it keeps EndfieldHUD running; the red power button asks for confirmation and quits.
+Use the side buttons to switch sections, and scroll the right side, or click the arrows at its ends, for more. **Esc** backs out of an edit before closing the HUD, and clicking outside the HUD closes it. Closing it keeps EndfieldHUD running; the red power button asks for confirmation and quits.
 
 ## What's included
 
@@ -176,7 +176,7 @@ These come from Windows itself, or from choices that keep your data and system s
   - A player that starts hidden in the tray appears the next time you open the HUD or a player changes.
 - **Volume:** switch the default output or input device in Windows Settings; Windows offers apps no supported way to change it. Per-app volume acts on each app's sound on the default device; sending an app to another device is not available. Exclusive-mode audio is not detected. Windows remembers each app's mixer level, so EndfieldHUD restores the levels it changed when it quits, the PC sleeps or the device changes.
 - **Media Assembly:** videos export as MP4 (H.264/AAC), named `<name>-edited.mp4`, instead of QuickTime MOV. HEIC/HEIF, HEVC, ProRes, JPEG 2000, WebP and some older formats need optional codecs from the Microsoft Store or are not supported by Windows; without them they are reported as unsupported.
-- **Notes and Archive:** Home and End move to the start or end of the line, and Ctrl+Home and Ctrl+End to the start or end of the text, as in other Windows text fields. In Archive, the field you were typing in keeps its caret when you switch to another module and back (the Mac ends editing); your text is saved when you switch. Picture data dragged without a file cannot be dropped on Notes: copy it and press Ctrl+V. Pasted Mac fonts Times and Times New Roman both become Times New Roman.
+- **Notes and Archive:** Home and End move to the start or end of the line, and Ctrl+Home and Ctrl+End to the start or end of the text, as in other Windows text fields. Clicking to the right of a line that wraps puts the caret before the space where the line wraps; the Mac puts it after that space. In Archive, the field you were typing in keeps its caret when you switch to another module and back (the Mac ends editing); your text is saved when you switch. Picture data dragged without a file cannot be dropped on Notes: copy it and press Ctrl+V. Pasted Mac fonts Times and Times New Roman both become Times New Roman.
 - **Calendar:** reminders are Windows notifications and need a copy installed with Setup. Windows has no permission prompt for them: they follow your notification settings, and Focus assist (Do not disturb) can hold the banner back; it still reaches the notification center.
 - **Work Mode:** the timer does not switch Windows Focus or Do not disturb, which Windows reserves for approved apps. The timer, completion and lifetime hours work as on the Mac.
 - **Activity Monitor:** per-app disk and network use are not shown (Windows needs administrator rights for them). App memory is the private working set, as in Task Manager's Memory column. Apps without a window are not listed, compressed memory is not shown, and CPU shows unavailable on PCs with more than 64 logical processors. The GPU figure is the total load, so it can read higher than Task Manager's GPU column; it shows "—" where the graphics driver offers no GPU counters.
@@ -195,13 +195,10 @@ These come from Windows itself, or from choices that keep your data and system s
 ### Limitations in this release
 
 - Builds are not code-signed yet (see [Windows SmartScreen](#windows-smartscreen)).
-- **Archive:** clicking to the right of a line's text does not yet put the caret at the end of that line, as the Mac does. The title field is not yet inset exactly like the Mac's.
-- Notes, Archive and Calendar text fields show the HUD's normal cursor instead of the text cursor; the Work Mode, profile and *+ Add App* fields show the text cursor.
-- The scroll arrows at the ends of the right-hand section list do not respond to clicks yet; scroll with the mouse wheel or by dragging.
-- **E-Reader and Map:** touchpad pinch-to-zoom is not supported yet, and touchpad scrolling moves in mouse-wheel steps. Ctrl + mouse wheel zooms.
+- **Archive:** the title field is not yet inset exactly like the Mac's.
+- **E-Reader and Map:** touchpad scrolling moves in mouse-wheel steps.
 - **Media Assembly:** the Highlights/Shadows slider has no effect yet (saved amounts are kept). 16-bit images are edited with 8-bit precision. Movies tagged with a color space other than BT.709 keep their decoded colors.
 - **Projection:** lifting the pen after a very long stroke takes about 13–15 ms to redraw it.
-- **App shortcuts:** up to 20 shortcuts show their app icons at a time; the others show the generic icon.
 
 ### Not yet checked on a real PC
 
@@ -214,6 +211,7 @@ Automated tests run every tool over sample data, but these have not been tried l
 - Calendar reminder notifications, and clicking one;
 - the Mac data import with a real Mac's data;
 - Narrator and other screen readers, and Japanese and Korean input methods (Chinese input works);
+- pinch-to-zoom on a real touchpad (Map, E-Reader and Media Assembly);
 - screen recording with the HUD's cursor;
 - sleep and resume, a graphics driver reset, plugging monitors with different scaling in or out, and a monitor on another graphics card;
 - the summon hotkey in the games and apps where earlier test builds missed it;

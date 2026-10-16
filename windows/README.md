@@ -1315,7 +1315,8 @@ need the desktop.
   ships the font licences, the OrbiPom folder (with Matter's licence) and
   (checkpoint 124) the WebView2 SDK's `LICENSE.txt` and `NOTICE.txt`. It
   does not ship QuickJS-NG's `LICENSE`, although it is compiled into
-  `EndfieldHUD.exe`.
+  `EndfieldHUD.exe`. *Shipped since checkpoint 135 (`d225ef4`) in
+  `THIRD-PARTY-NOTICES.txt` next to `EndfieldHUD.exe`; see checkpoint 135.*
 - (Checkpoint 124: marked stale `<root>.import-*` folders are swept at
   startup, and an interrupted activation is rolled back before the root opens.)
 
@@ -1661,7 +1662,9 @@ dialog itself.
 
 - The cursor does not change to an I-beam over open projected editors (the
   only non-source cursor the Mac shows); each editor owner must expose its
-  open field's client area to a host cursor hit test.
+  open field's client area to a host cursor hit test. *Done in batch 5 for
+  Work Mode, the profile and Add App, and in checkpoint 135 (`33d3e9a`) for
+  Notes, Archive and Calendar.*
 - UI Automation: the navigation entries other than Power have no provider.
   The Power area must return `core::Module::power` from `automationModule()`
   so its group is named Power. UIA buttons have no value pattern, so the
@@ -1671,7 +1674,8 @@ dialog itself.
 - Notes, Archive and App shortcuts do not update `Migration/relink.json`
   after their own relinks.
 - App shortcuts: no packaged-app logos. Settings: the app-icon choice.
-- Packaging: QuickJS-NG's `LICENSE` is not shipped; builds are unsigned.
+- Packaging: QuickJS-NG's `LICENSE` is not shipped (*shipped since
+  checkpoint 135, `d225ef4`*); builds are unsigned.
 
 ## Checkpoint 124 (batch 4): consolidated status
 
@@ -1731,7 +1735,7 @@ desktop (`package_perf_gate --desktop`), and any visible run.
   `LICENSE.txt` and `NOTICE.txt`) and `common/center-logos` (byte copies of
   the Mac `Resources/AppIconSources/CenterLogos`). No vendored library or
   font was added in this batch. QuickJS-NG's `LICENSE` is still not staged
-  (`CREDITS.md`).
+  (`CREDITS.md`). *Shipped since checkpoint 135 (`d225ef4`).*
 
 ### Verified, by suite
 
@@ -1849,7 +1853,8 @@ where an account, the network or real data is involved.
     broker hook);
   - Office HTML class style sheets are not applied.
 - **Input:** precise touchpad scroll and pinch (a WM_POINTER or
-  DirectManipulation path).
+  DirectManipulation path). *The pinch is handled since checkpoint 135
+  (`a91b0f6`), as Ctrl+wheel; precise scrolling remains.*
 - **Mac import:**
   - private folders made before `e38d18d` are unmarked and never swept;
   - no progress is visible during the post-shutdown commit.
@@ -1857,7 +1862,8 @@ where an account, the network or real data is involved.
   worker (the HUD thread never waits; cloud and remote items use cached
   properties only).
 - **Packaging:**
-  - QuickJS-NG's `LICENSE` is not staged;
+  - QuickJS-NG's `LICENSE` is not staged (*shipped since checkpoint 135,
+    `d225ef4`*);
   - builds are unsigned;
   - there is no "update available" toast.
 
@@ -2301,7 +2307,9 @@ requests follow the same row window. The Mac oracle comparison
   Windows numbers exist yet.
 - `windows/packaging/release-notes-template.md` is now the first Windows
   release (v1.2.0 build 18 baseline), including moving from a Mac and the
-  differences from macOS.
+  differences from macOS. *Since `d225ef4` (checkpoint 135) the template is
+  deleted: the staged draft is `windows/RELEASE-NOTES.md` with its checksums
+  filled in; see checkpoint 135.*
 - CI run 38116894941 (`e17f3af`, windows-2025: ICU 72.1, Unicode 15.1,
   tzdata 2022g): 343 of 348 Windows suites passed. The installer, release and
   both notification identity suites failed on the runner's 8.3 `%TEMP%`
@@ -2406,7 +2414,8 @@ Changes since checkpoint 124:
   and its suite (`native/shelf_file_preview.*`), the Shelf preview thread and
   the startup read of the unused reveal samples.
 - **Package:** no new resources, vendored code or fonts. QuickJS-NG's
-  `LICENSE` is still not staged (`CREDITS.md`).
+  `LICENSE` is still not staged (`CREDITS.md`). *Shipped since checkpoint 135
+  (`d225ef4`).*
 
 ### Verified, by suite
 
@@ -2513,6 +2522,7 @@ Checkpoint 124's list still applies. Batch 5 adds:
 ### Still open in code
 
 - **Cursor:** `textCursorAt` in the Notes, Archive and Calendar previews.
+  *Resolved in checkpoint 135 (`33d3e9a`).*
 - **UI Automation:**
   - a text pattern for projected fields;
   - a focus announcement when the Shelf properties card opens;
@@ -2541,12 +2551,15 @@ Checkpoint 124's list still applies. Batch 5 adds:
   stay in the two-entry cache.
 - **Source shell:** the ENDFIELD INDUSTRIES logo's click flicker and the
   clickable scroll indicators are not ported; presses there are absorbed
-  without an action.
-- **Input:** precise touchpad scroll and pinch.
+  without an action. *The scroll indicators are ported since checkpoint 135
+  (`9e750df`).*
+- **Input:** precise touchpad scroll and pinch. *The pinch is handled since
+  checkpoint 135 (`a91b0f6`).*
 - **Mac import:** unmarked private folders from before `e38d18d`; no progress
   during the post-shutdown commit.
-- **Packaging:** QuickJS-NG's `LICENSE` is not staged; builds are unsigned;
-  no "update available" toast.
+- **Packaging:** QuickJS-NG's `LICENSE` is not staged (*shipped since
+  checkpoint 135, `d225ef4`*); builds are unsigned; no "update available"
+  toast.
 
 ### Decisions for the user
 
@@ -2774,7 +2787,8 @@ Changes since checkpoint 128:
     component; release notes match the gap tables (`bc3ffd6`).
 - **Package:** no new resources, vendored code or fonts. Now Playing's
   `Windows.Web.Http` transport is replaced by WinHTTP. QuickJS-NG's
-  `LICENSE` is still not staged (`CREDITS.md`).
+  `LICENSE` is still not staged (`CREDITS.md`). *Shipped since checkpoint 135
+  (`d225ef4`).*
 
 ### Verified, by suite
 
@@ -2909,11 +2923,15 @@ Batch 6 adds:
   (about 1.4 MB) are held twice; its fixed gradient bitmaps (about 0.26 MB)
   are made at construction.
 - **Cursor and UI Automation:** `textCursorAt` in the Notes, Archive and
-  Calendar previews; a text pattern for projected fields.
+  Calendar previews (*resolved in checkpoint 135, `33d3e9a`*); a text
+  pattern for projected fields.
 - **Source shell:** the clickable scroll indicators are not ported.
-- **Input:** precise touchpad scroll and pinch.
-- **Packaging:** QuickJS-NG's `LICENSE` is not staged; builds are unsigned;
-  no "update available" toast; EndfieldHUD's own threads carry no
+  *Resolved in checkpoint 135 (`9e750df`).*
+- **Input:** precise touchpad scroll and pinch. *The pinch is handled since
+  checkpoint 135 (`a91b0f6`); precise scrolling remains.*
+- **Packaging:** QuickJS-NG's `LICENSE` is not staged (*shipped since
+  checkpoint 135, `d225ef4`, in `THIRD-PARTY-NOTICES.txt`*); builds are
+  unsigned; no "update available" toast; EndfieldHUD's own threads carry no
   descriptions, so the gate groups them only by start address.
 
 ### Decisions for the user
@@ -3743,14 +3761,16 @@ plus `application_memory_trace` in its slot).
 
 - Archive: clicking right of a line's text does not move the caret to the
   line's end (the Mac does); found while writing the stand-by test, which
-  places the caret explicitly.
+  places the caret explicitly. *Resolved in checkpoint 135 (`ccaa682`).*
 - Archive: a switch back after the ten-minute graphics release paints its
   six surfaces again (32–35 ms).
 - Map: about 18.2 MB of CPU images stay while the HUD is closed on another
   module (its textures are 10.7 MiB since `74879a9`).
 - Projection: redrawing a very long stroke at pen-up still takes 13–15 ms.
 - Packaging: builds are unsigned, so SmartScreen warns when the setup runs;
-  release notes for a first `windows-v` release are not written.
+  release notes for a first `windows-v` release are not written. *Drafted
+  after this checkpoint in `windows/RELEASE-NOTES.md` (`b70273a`); see
+  checkpoint 135.*
 
 ### Live acceptance still needed
 
@@ -3764,3 +3784,333 @@ Checkpoint 133's list still applies. New items:
 - Volume app icons in the packaged app on the desktop.
 - Switching between modules inside the open HUD, and back (Clipboard,
   Event Log, Media Assembly, Archive).
+
+## Checkpoint 135 (2026-10-16)
+
+Checkpoint 134 was pushed at `f9c5ab3`. This entry covers the eight code
+commits after it, `ccaa682`, `d225ef4`, `2a346e3`, `33d3e9a`, `69b1934`,
+`a91b0f6`, `9e750df` and `c1471cb`, and `b70273a`, the first draft of
+[`RELEASE-NOTES.md`](RELEASE-NOTES.md). None is pushed; the entry itself
+changes documentation only.
+
+### Changes after checkpoint 134
+
+**The caret placed beside the text like the Mac (`ccaa682`).** A press in a
+multi-line field that missed the glyphs did nothing: right of a line's end,
+below the last line or in an empty line the caret stayed where it was
+(found by `archive_preview_tests` in `470fc5a`, which placed the caret with
+Ctrl+End instead). The shared editors hit-tested a press with
+`text::projectedHit(nearest=false)`, the TSF `GetACPFromPoint` contract,
+and `LayerTextLayout::hit` rejects a point outside every glyph cluster
+except in a single-line field. A drag used the nearest hit, whose rounding
+past a line's last cluster (its hard break or a soft wrap's space) put the
+selection end on the next line. Affected: the Archive title and body, Notes
+text cards and checklist rows (the single-layout and the chunked editor;
+the workspace selected the card instead of routing such a press to the
+editor), Calendar details and the Profile introduction. Single-line fields
+already accepted any point and are unchanged.
+
+`core::text::insertionHit` is NSTextView's mouse insertion
+(`characterIndexForInsertionAtPoint`): right of a line its end, before the
+hard break or before a soft wrap's trailing space; left of a line its
+start; below the last line the end of the text; elsewhere, right-to-left
+runs included, the layout's own rounded hit. `projectedInsertion` takes a
+press anywhere inside the rounded viewport. `NativeProjectedEditor` and
+`NativeNotesLongEditor` use them for presses and drags (shift-clicks and
+drags extend to the line end), and the Notes workspace for its editor hit.
+Marked text still declines a press; TSF hit-testing (`projectedHit`) is
+unchanged. A Windows difference stays: the editors keep no upstream caret
+affinity, so on a soft-wrapped line the caret goes before the wrap's
+trailing space, where End puts it, and stays drawn on that line; the Mac
+puts it after the space (section 6 of `WINDOWS-MIGRATION.md`). Tests:
+`text_input_contracts` (the insertion rules on DirectWrite-like lines),
+`projected_editor_contracts` (presses right of a line, on an empty and a
+wrapped line, left of a line and below the last line; shift-clicks and
+drags past line ends inside and outside the field; a right-to-left line;
+centred lines; declined while text is marked),
+`notes_text_navigation_contracts` (in a Notes card, both editors, every
+press in the field reaches the editor and lands where End/Home do) and
+`archive_preview_contracts` (the Ctrl+End workaround dropped: a press right
+of the reopened body's line or below it types at the end). The last three
+fail without the fix.
+
+**Up and Down keep the goal column (`69b1934`).** Up/Down in both field
+editors hit-tested the line above or below with the rounded nearest hit at
+the caret's own x. On a shorter line that hit rounded past the line's last
+cluster, so Down from the end of a long line landed on the start of the
+following line, and the next move started from that x, so a run of moves
+drifted left; Up on the first line did nothing. NSTextView's
+`moveUp:`/`moveDown:` keep the goal column for a run of vertical moves,
+stop at a shorter line's end, and go to the start or end of the text beyond
+the first or last line. `core::text::verticalInsertion` places the target
+with the `insertionHit` rule above and returns the x it used;
+`core::text::VerticalGoal` keeps that x while the document keeps the
+selection and revision the last vertical move left, so any edit, other
+move, pointer or host selection drops it. `NativeProjectedEditor` and
+`NativeNotesLongEditor` use them, Shift extension included, which covers
+Notes, Archive, Calendar and the Profile introduction. Tests:
+`text_input_contracts` (down onto a shorter line, the kept goal through it
+and back, empty and soft-wrapped lines, the first and last lines, invalid
+input, the goal's invalidation) and `notes_long_editor_contracts` (both
+editors over long and short lines spanning several chunks, agreeing at
+every step).
+
+**The I-beam over open Notes, Archive and Calendar fields (`33d3e9a`).** On
+the Mac the pointer is the system I-beam over every open projected text
+editor (`HUDProjectedTextView.projectedCursor`): the Notes field being
+edited, the open Archive document's title, date and body, the Archive
+category name field and the Calendar event menu's three fields; while a
+Notes or Archive menu holds the pointer, only that menu's own editor shows
+it. `NotesPreview`, `ArchivePreview` and `CalendarPreview` now declare
+`textCursorAt`, which the host adapters already forwarded to
+`ModuleOwner::cursorAt`. Each answer follows the preview's own press
+routing, so the I-beam shows exactly where a press places the caret:
+`NativeNotesWorkspace::editorAt` is `hitTest`'s editor case (the topmost
+card under the point is the edited one, outside its resize corner, inside
+the editor's rounded viewport) without a layout query, and
+`core::text::placementContains` is `projectedInsertion`'s viewport test.
+The source cursor stays over card headers and controls, Archive actions and
+menus, Calendar menu buttons, the deletion confirmation and beside the
+fields; the Mac has no per-control cursor. The queries are const, noexcept
+and allocation-free, and `application_modules.cpp` asserts that the three
+previews provide them. Tests: `notes_text_navigation_contracts` (a grid
+over an edited card in both editors), `archive_preview_contracts`,
+`calendar_preview_contracts` (both without allocation) and
+`notes_preview_tests` (hidden, with the prepared bundle).
+
+**Touchpad pinch in the Map, Reader and Media Assembly (`a91b0f6`).** The
+Mac handles `magnifyWithEvent` in `SystemHUDView.magnify` and offers the
+pinch to the Map, then the Reader, then Media Assembly, each only off the
+navigation plates. The Map zooms by min(2, max(.5, 1 + magnification)) at
+the pointer within 2.1–128× under its 0.18 s gesture hold; the Reader zooms
+a zoomable page by max(.05, 1 + magnification) at the pointer within 1–12×
+(not while a menu is open); Media Assembly zooms an open document's preview
+by 1 + magnification at the pointer within 1–20×. A Windows precision
+touchpad delivers the pinch to a window without a DirectManipulation
+viewport as `WM_MOUSEWHEEL` with `MK_CONTROL` in fractional detents.
+`app::pinchMagnification` turns such a Ctrl+wheel into that magnification,
+one detent being the Mac's mouse-wheel zoom step exp(.12) (WorldMapCanvas,
+MediaAssemblyCanvas), so a Ctrl+mouse wheel zooms by those steps too.
+Before, at three lines per notch, Ctrl+wheel zoomed the Reader by
+exp(.432) and Media Assembly by exp(.36) per notch, about three times the
+Mac's step, and a Ctrl+wheel on a Storage or Activity Monitor plate zoomed
+the Map. Elsewhere Ctrl and the wheel scroll as before (the Reader's other
+pages, the Media Assembly preset drawer). Notes and Projection have no
+magnify handler on the Mac, so Ctrl+wheel keeps scrolling a note or sizing
+the Projection brush. Plain wheel scrolling is unchanged, and precise
+touchpad scrolling remains a gap. No real touchpad has been tried. Tests:
+`overlay_host_contracts` (a Ctrl+wheel read as a pinch with its fractional
+magnification; plain, horizontal, zero and nonfinite wheels rejected),
+`map_preview_contracts` (a pinch on either plate leaves the Map; the zoom
+at the pointer under the gesture lock; one save at the deadline),
+`reader_preview_contracts` and `media_assembly_preview_contracts` (one
+detent scales by exp(.12); nothing outside the preview).
+
+**Clickable section-list scroll arrows (`9e750df`).** The UpLine/BottonLine
+arrows at the ends of the right-hand section list are the Mac's clickable
+scroll indicators (`HUDSourceWatchView` `desktopScrollIndicatorIDs`). A
+press inside an arrow's projected sprite quad belongs to it (after the
+industry logo, before the background press that closes the HUD and before
+the source buttons); a release over the same arrow scrolls the list 32
+points with the navigation spring, and a release elsewhere does nothing. A
+dimmed arrow still takes its press. The Mac has no hover, pressed or
+hold-to-repeat state for them and no cursor change, so none is added;
+before, Windows absorbed the press without an action. The tints follow the
+list (`refreshDesktopScrollIndicators`): tint 1 and opacity 1 while the
+list hides rows that way and its scroll target can move, tint .32 and
+opacity .65 otherwise, re-evaluated before every frame. The exported
+builder settings had frozen one list position's tints (the up arrow lit,
+the down arrow dimmed) for every position. `SourceWatchSession` gains
+`scrollIndicatorAt`, `scrollIndicatorFrame` and `scrollIndicatorEnabled`,
+and `Application::Impl::scrollIndicatorPointer` owns the press and release
+with pointer capture, like the industry logo. Tests:
+`source_watch_session_tests` with the original packet (26 Mac checkpoints;
+the oracle comparison now checks the two arrow batches against the
+session's own state instead of the frozen tints) and
+`application_owner_coverage` (through the real pointer route: a press on
+the down arrow keeps the HUD open, its release scrolls the list and lights
+the up arrow, a release off the arrow scrolls nothing).
+
+**Original icons for up to 128 App shortcuts (`c1471cb`).** The Mac caches
+one icon per App-icon shortcut without a bound
+(`AppShortcutStore.icon(for:)`); Windows named at most 20, because the
+module's `LayerImageSource` had the Shelf's fixed 24-image cache, and
+further App-icon shortcuts showed the grid glyph. `LayerImageSource` now
+takes per-provider limits (`LayerImageSourceLimits`; the default stays the
+Shelf's 24 cached, 48 live, 8 MiB), and the App shortcuts owner gives its
+own source room for `modules::shortcutOriginalIconCapacity` (128) icons
+plus the generations that rasters borrow. The bound caps memory only, at
+about 4.5 MiB of 96-pixel icons; beyond it the least recently shown keep
+the grid glyph. `modules::shortcutOriginalIconOrder` is the loading order
+the owner already used: the seven rows visible at the scroll offset, then
+the rest in stored order, App-icon preset with a Windows target only, each
+once; icons are still extracted one at a time on the shared executor. The
+Event Log is not part of the App shortcuts reopen gap: the Mac records one
+`appShortcutOpened` after every successful launch, whether or not the app
+was running (`OverlayController.completeAppShortcutHandoff`), and its
+"reopen event" is LaunchServices' reopen Apple event to a running app,
+which Windows lacks. Windows already records `appShortcutOpened` for every
+successful launch, including bringing a running program's window forward.
+Tests: `layer_image_source_contracts` (132 images under raised limits
+without eviction, least recently used evicted beyond them, borrowed images
+counted towards the live bound, invalid limits rejected, defaults
+unchanged), `app_shortcut_navigation_contracts` (all 36 App-icon shortcuts
+of a 40-item list, the visible rows first) and the owner coverage (the
+source's limits and its icons within them).
+
+**Now Playing: the NetEase re-anchor does half the work (`2a346e3`).** Now
+Playing reads NetEase Cloud Music 3's player bar only while it is the
+presented module of an open HUD and the track plays, once per displayed
+second; closed, hidden on another module or paused there is no read, wake
+or deadline. Each re-anchor still did twice the work it needed: the
+resynchronizing read enumerated the windows, read the media session and
+published the previous bar reading while asking for a new one, and the new
+one's completion brought a second full read. And every re-read asked the
+page for all found controls (about 25 cross-process accessibility calls),
+although only the bar's progress and play state change while the window
+keeps its title. A provider may now refresh its players' controls in the
+background (`NowPlayingProvider::refreshesControls`/`refreshControls`, on
+the owner thread, nonblocking): the Win32 reader's completion wakes the
+provider, and that one read takes the new reading; other providers keep
+`resynchronize`. A bar whose texts showed the current window title is
+re-read through its progress bar's and played part's bounds and its
+play/pause control's role, name and description; a new title, every eighth
+re-read and any failure re-read all found controls.
+
+| `now_playing_netease_cost_contracts`, presented and playing | Before | After `2a346e3` |
+| --- | --- | --- |
+| Window enumerations per second | 2 | 1 |
+| Media-session reads per second | 2 | 1 |
+| Owner wakes per second | 3 | 2 |
+| Content events per second | 3.15 | 2.15 |
+| Bar readings per second | 1 | 1 |
+| Accessibility calls per bar reading | 25 | 7.5 |
+| CPU per bar reading: reading process / player | 0.48 / 0.96 ms | 0.21 / 0.36 ms |
+| Real clock, stand-in, scene text included: UI thread / process (% of one core) | 0.53 / 0.72 | 0.41 / 0.50 |
+
+The new suite measures without NetEase: the production owner against a
+simulated NetEase on a synthetic clock (the time within 48 ms of the song,
+every lyric line right, pause, seeks and a track change inside the player
+followed within 1.4 s), and the production reader against a hidden
+stand-in process of the test with NetEase's page shape. For comparison, a
+well-behaved media session playing costs 0.22 / 0.23 %, and the closed HUD
+0.001 %; a page WinEvent costs the UI thread 0.005–0.006 ms and a
+402-window enumeration 0.04 ms. The players, sources-session and
+control-reader suites cover the background refresh and the quick re-read.
+Laptop slot: the Now Playing suites, `application_owner_coverage` and
+`application_session_end_coverage` pass.
+
+**Third-party notices, release notes and Windows 11 (`d225ef4`,
+`b70273a`).**
+
+- `THIRD-PARTY-NOTICES.txt`, rendered from
+  `packaging/third-party-notices.json` by
+  `packaging/third_party_notices.cmake`, ships next to `EndfieldHUD.exe` in
+  the install tree, the portable zip, the setup payload and the install
+  manifest, so uninstall removes it. It reproduces the full licences of
+  QuickJS-NG, the WebView2 SDK (with its notices), zlib, Noto Sans SC and
+  KR, Matter.js, Unity uGUI (the image geometry of
+  `core/source_image_geometry.cpp`) and C++/WinRT, and carries the
+  attributions of the HarmonyOS Sans SC numeral subset and the map data.
+  The release packer refuses a tree without it.
+  `packaging_third_party_notices_contracts` (new, portable) fails when a
+  vendored folder, bundled font, licence file, licence-marked source or
+  licence file staged into `resources/` has no notice. `CREDITS.md` adds
+  Unity uGUI and C++/WinRT and describes the shipped notices.
+- The staging build's `<stem>-release-notes.md` is
+  [`RELEASE-NOTES.md`](RELEASE-NOTES.md) (first draft in `b70273a`) with
+  its two SHA-256 cells filled in from the staged setup and portable zip;
+  `packaging/release-notes-template.md` is deleted. A draft the notes
+  cannot describe (an incomplete package, notes that do not name this
+  release's tag and artifacts, a checksum cell without a staged artifact,
+  signed artifacts) is marked *Do not publish*.
+- `SHA256SUMS` lists exactly the setup and the portable zip, the files a
+  release uploads; the symbols zip gets its own checksum file.
+- Setup refuses Windows before build 22000 (`minimumWindowsBuild`) in five
+  languages, naming the PC's build; isolated tests set the build with
+  `--test-windows-build`. Without `DWMWA_USE_HOSTBACKDROPBRUSH`,
+  `EndfieldHUD.exe` records `SystemBackdropUnavailable` in `last-fatal.txt`
+  and reports in five languages that Windows 11 is required, instead of the
+  general display error.
+- Tests: `packaging_installer_contracts` (the refusal below build 22000),
+  `packaging_format_contracts`, and `endfieldhud_release_contracts` (the
+  notices in the portable zip, the setup's file list and the install
+  manifest; the two checksum files; the draft is `RELEASE-NOTES.md` with
+  exactly its two checksums filled in).
+
+### Test runs
+
+<!-- pending: checkpoint 135 validation -->
+
+New registered tests in this checkpoint: `now_playing_netease_cost_contracts`
+and `packaging_third_party_notices_contracts`. Per-commit laptop slots are
+quoted above (only `2a346e3` records one in its message).
+
+### Corrections to the entries above
+
+- Every live release candidate up to 134 was started on the laptop by a
+  scheduled task at its default priority (7), so it ran at Below Normal
+  priority. The shown HUD's process-priority raise lifts only a Normal
+  process (`app/presentation_priority.cpp`), so it never applied in those
+  runs, which may explain the lag the user felt while gaming. Release
+  candidate 134 was raised to Normal by hand, and 135 onward start at
+  Normal. Only the test launches were affected: Windows starts the
+  installed app at Normal.
+- Checkpoints 123 to 129 say QuickJS-NG's `LICENSE` is not shipped or not
+  staged. `THIRD-PARTY-NOTICES.txt` ships it since `d225ef4`; notes in place
+  point here.
+- Batch 5's packaging entry calls `windows/packaging/release-notes-template.md`
+  the first Windows release. The template is deleted since `d225ef4`, and
+  `RELEASE-NOTES.md` is the only source of the staged draft; a note in place
+  points here.
+- The still-open lists of checkpoints 124, 128 and 129 name `textCursorAt`
+  in the Notes, Archive and Calendar previews, the clickable scroll
+  indicators and the touchpad pinch, and checkpoint 134's open items name
+  the Archive caret right of a line and the unwritten release notes. All
+  are resolved (precise touchpad scrolling remains); notes in place point
+  here.
+- Checkpoint 132's Map entry says pinches inside a plate go to the
+  navigation. On Windows a pinch arrived as Ctrl+wheel and zoomed the Map
+  there until `a91b0f6`.
+
+### Open items
+
+- Licences: the HarmonyOS Sans SC numeral subset (33 glyphs in
+  `resources/account/account-numerals.json`) has an attribution in
+  `THIRD-PARTY-NOTICES.txt` but no licence text, awaiting the owner's
+  decision. The data licence of the Unicode tables compiled into QuickJS-NG
+  is still to be checked.
+- Text fields: on a soft-wrapped line the caret goes before the wrap's
+  trailing space (no upstream affinity); the Mac puts it after the space.
+- Input: precise touchpad scrolling (precise deltas, scroll phases,
+  momentum) is still handled as wheel scrolling.
+- App shortcuts: beyond 128 App-icon shortcuts the least recently shown
+  keep the grid glyph (the Mac keeps every icon).
+- Archive: the title's single-line inset; a switch back after the
+  ten-minute graphics release paints its six surfaces again (32–35 ms).
+- Map: about 18.2 MB of CPU images stay while the HUD is closed on another
+  module.
+- Projection: redrawing a very long stroke at pen-up still takes 13–15 ms.
+- Packaging: builds are unsigned, so SmartScreen warns when the setup runs;
+  the release notes' *Performance* figures wait for the desktop gate run.
+
+### Live acceptance still needed
+
+Checkpoint 134's list still applies. New items:
+
+- Clicks right of, below and left of the text in Archive, Notes cards and
+  checklists, Calendar details and the Profile introduction; shift-clicks
+  and drags past a line's end; Up and Down through shorter lines.
+- The I-beam over the open Notes, Archive and Calendar fields, and the
+  HUD's own cursor over their buttons and beside them.
+- A pinch on a precision touchpad in the Map, the E-Reader and Media
+  Assembly, and Ctrl+mouse wheel there and over the Map's plates.
+- Clicks on the section list's arrows, and their tints at the top, in
+  between and at the bottom.
+- More than 20 App-icon shortcuts, scrolled.
+- NetEase playing with Now Playing shown: the time bar, the lyrics and
+  `EndfieldHUD.exe`'s CPU.
+- A game with the HUD open on release candidate 135, which starts at
+  Normal priority.
+- `THIRD-PARTY-NOTICES.txt` in the installed folder after Setup, and gone
+  after uninstall, as part of the live install test.

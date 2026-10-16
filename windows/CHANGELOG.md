@@ -9,6 +9,69 @@ data folder; none is a published release.
 
 ## Unreleased
 
+## RC 135 — checkpoint 135
+
+- **Clicking beside the text places the caret like the Mac**: in Archive's
+  title and body, Notes text cards and checklists, Calendar details and the
+  Profile introduction, a click to the right of a line puts the caret at the
+  end of that line, a click below the last line at the end of the text, and
+  a click to the left of a line at its start. Before, such a click did
+  nothing. Shift-clicks and drags past the end of a line stop at that line's
+  end. On a line that wraps, the caret goes before the space where the line
+  wraps, so it stays on that line (the Mac puts it after that space).
+- **Up and Down keep the caret's column**: moving up or down through a
+  shorter line stops at its end and comes back to the same column on the
+  next longer line, as on the Mac. Before, the caret jumped to the start of
+  the following line and drifted left with each move. Up on the first line
+  now goes to the start of the text, and Down on the last line to its end.
+- **Text cursor over Notes, Archive and Calendar fields**: the pointer shows
+  the text cursor (I-beam) over the Notes field you are editing, the open
+  Archive document's title, date and body, Archive's category name field
+  and the Calendar event fields, exactly where a click places the caret, as
+  on the Mac. Over buttons, menus and the space beside the fields it stays
+  the HUD's own cursor.
+- **Touchpad pinch zooms the Map, E-Reader and Media Assembly**: a pinch
+  zooms at the pointer within the Mac's limits. Ctrl + mouse wheel now zooms
+  by the Mac's mouse-wheel steps; in the E-Reader and Media Assembly it used
+  to zoom about three times as fast. A pinch or Ctrl + wheel over the
+  Storage and Activity Monitor buttons below the circle no longer zooms the
+  Map. In Notes and Projection, which have no pinch on the Mac, Ctrl + wheel
+  still scrolls a note or sizes the brush. Pinching has not been tried on a
+  real touchpad yet.
+- **Section list arrows**: the arrows at the top and bottom of the
+  right-hand section list scroll the list when clicked, and each is lit only
+  while the list can scroll that way, as on the Mac. Before, clicks on them
+  did nothing and the up arrow always looked lit.
+- **App shortcuts: original icons for up to 128 shortcuts**: up to 128
+  shortcuts with the App icon show their application's own icon (about
+  4.5 MiB at most), the visible rows first. Before, only 20 did and the
+  others showed the grid icon. The Mac has no limit.
+- **Now Playing with NetEase: less background work**: while Now Playing is
+  shown and NetEase plays, the once-a-second reading of NetEase's player bar
+  makes about 7.5 instead of 25 accessibility calls, and no longer reads
+  everything twice. EndfieldHUD's CPU while shown and playing fell from
+  about 0.72 to 0.50 % of one core (hidden test). With the HUD closed, or on
+  another module, Now Playing does not read NetEase at all (about 0.001 %).
+- **Third-party licences included**: `THIRD-PARTY-NOTICES.txt` now ships
+  next to `EndfieldHUD.exe`, in the installed folder and in the portable
+  zip, with the full licences of QuickJS-NG, the WebView2 SDK, zlib, the
+  Noto Sans SC and KR fonts, Matter.js, Unity uGUI and C++/WinRT, and the
+  attributions for the map data and the account header's numerals.
+  Uninstalling removes it with the program.
+- **Windows 11 required**: Setup refuses to install on Windows before
+  Windows 11 (build 22000) and says so in all five languages. EndfieldHUD
+  started on an older Windows says that Windows 11 is required instead of a
+  general display error.
+- **Release files**: the checksum list (SHA256SUMS) names only the setup
+  and the portable zip, the two files a release offers; the developer
+  symbols get a checksum file of their own. The release notes are drafted
+  in `windows/RELEASE-NOTES.md`.
+- **Test launch priority**: the test builds up to RC 134 were started on the
+  test laptop at Below Normal priority (RC 134 was raised to Normal by
+  hand), so the open HUD's priority raise never took effect, which may
+  explain lag felt while gaming; RC 135 starts at Normal priority, as an
+  installed copy always does.
+
 ## RC 134 — checkpoint 134
 
 - **Less memory**: once the graphics card holds a module's pictures, the HUD
