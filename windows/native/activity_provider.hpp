@@ -10,8 +10,10 @@ namespace endfield::native {
 // RAM: Windows physical total-minus-available (standby excluded), not private
 // commit. Compression is unavailable. Network: up physical Ethernet/Wi-Fi/PPP.
 // Disk and per-app network/disk await an exact provider; no fake zero values.
-// GPU: the engine running times of native/activity_gpu.hpp, read only while
-// Activity Monitor is visible (otherwise gpu stays empty).
+// GPU: the engine running times of native/activity_gpu.hpp, read with every
+// system sample like CPU and RAM (empty only where the counters are
+// unavailable), so its history fills while Activity is hidden or the HUD is
+// closed too.
 modules::ActivityRawSample readWindowsActivity(double timestamp,double uptime);
 // Caller supplies an explicit <=256 app catalog with <=8192 unique PIDs.
 // Opens one limited-query handle at a time; protected/reused PIDs stay unknown.
@@ -42,6 +44,8 @@ public:
     // sample ticks are coalesced, not replayed. No independent clock/thread.
     // When the Apps demand has ended either call also queues the release of
     // the worker's retained Apps reading (the Mac drops it on deactivate).
+    // The worker hands each superseded system sample's GPU buffer back to
+    // native::recycleWindowsActivityGPU for the next reading.
     bool update(double now);bool submitPending();Stats stats()const;
 private:struct Impl;std::shared_ptr<Impl>impl_;
 };

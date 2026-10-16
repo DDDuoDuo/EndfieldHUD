@@ -8,7 +8,10 @@
 #include <thread>
 
 namespace endfield::native {
-namespace {void clocks(double stamp,double uptime){if(!std::isfinite(stamp)||!std::isfinite(uptime)||uptime<0)throw std::invalid_argument("Invalid Activity sample clock");}}
+namespace {void clocks(double stamp,double uptime){if(!std::isfinite(stamp)||!std::isfinite(uptime)||uptime<0)throw std::invalid_argument("Invalid Activity sample clock");}
+// The previous system sample's GPU buffer carries the next GPU reading, so
+// recording GPU with every sample allocates nothing in the steady state.
+void recycle(std::optional<modules::ActivityRawSample>&previous)noexcept{if(previous&&previous->gpu){recycleWindowsActivityGPU(std::move(*previous->gpu));previous->gpu.reset();}}}
 struct ActivityProbe::Impl:std::enable_shared_from_this<Impl>{
     struct Worker {std::optional<modules::ActivityRawSample>system;std::optional<modules::ActivityAppsRaw>apps;std::uint64_t generation{},appGeneration{};};
     modules::ActivityState&state;modules::ActivitySamplingPlan&plan;app::UtilityExecutor&executor;Readers readers;Changed changed;app::UtilityExecutor::Route route;std::thread::id owner=std::this_thread::get_id();std::shared_ptr<Worker>worker=std::make_shared<Worker>();std::shared_ptr<std::atomic<bool>>alive=std::make_shared<std::atomic<bool>>(true);std::optional<modules::ActivityDemand>pending;Stats counts;bool appsRetained{};
@@ -21,7 +24,7 @@ struct ActivityProbe::Impl:std::enable_shared_from_this<Impl>{
     bool submit(){thread();if(counts.inFlight||!pending)return false;auto demand=*pending;if(!plan.running()||demand.generation!=plan.generation()){pending.reset();return false;}if(!plan.appsActive()||demand.appGeneration!=plan.appGeneration())demand.apps=false;if(!demand.system&&!demand.apps){pending.reset();return false;}
         struct Result {std::optional<modules::ActivitySnapshot>system;std::optional<modules::ActivityAppsSnapshot>apps;};auto result=std::make_shared<Result>();const auto weak=weak_from_this();
         if(!executor.submit(route,[reader=readers,retained=worker,live=alive,demand,result]{if(!live->load(std::memory_order_acquire))return;
-            if(demand.system){if(retained->generation!=demand.generation||demand.resetSystem){retained->system.reset();retained->generation=demand.generation;}auto current=reader.system();clocks(current.timestamp,current.uptime);result->system=modules::deriveActivity(current,retained->system?&*retained->system:nullptr);retained->system=std::move(current);}
+            if(demand.system){if(retained->generation!=demand.generation||demand.resetSystem){recycle(retained->system);retained->system.reset();retained->generation=demand.generation;}auto current=reader.system();clocks(current.timestamp,current.uptime);result->system=modules::deriveActivity(current,retained->system?&*retained->system:nullptr);recycle(retained->system);retained->system=std::move(current);}
             if(demand.apps&&live->load(std::memory_order_acquire)){if(retained->appGeneration!=demand.appGeneration||demand.resetApps){retained->apps.reset();retained->appGeneration=demand.appGeneration;}auto current=reader.apps();clocks(current.timestamp,current.uptime);result->apps=modules::deriveActivityApps(current,retained->apps?&*retained->apps:nullptr);retained->apps=std::move(current);}},
             [weak,result,demand](std::exception_ptr error){if(auto self=weak.lock()){self->counts.inFlight=false;++self->counts.completed;if(error)++self->counts.failures;bool system{},apps{};if(self->plan.running()&&self->plan.generation()==demand.generation){if(result->system){self->state.receive(std::move(*result->system));system=true;}if(result->apps&&self->plan.appsActive()&&self->plan.appGeneration()==demand.appGeneration){self->state.receiveApps(std::move(*result->apps));apps=true;}}if(!system&&!apps)++self->counts.discarded;auto callback=self->changed;if(callback&&(system||apps))callback(system,apps);if(self->alive->load(std::memory_order_acquire))self->submit();}})){++counts.backpressure;return false;}
         if(demand.apps)appsRetained=true;pending.reset();counts.inFlight=true;++counts.submitted;return true;
@@ -65,7 +68,8 @@ modules::ActivityRawSample readWindowsActivity(double stamp,double uptime){clock
     if(GetActiveProcessorGroupCount()==1&&GetSystemTimes(&idle,&kernel,&user)&&ticks(kernel)>=ticks(idle))out.cpu=modules::ActivityCPU{ticks(user),ticks(kernel)-ticks(idle),ticks(idle),0};
     MEMORYSTATUSEX memory{};memory.dwLength=sizeof(memory);if(GlobalMemoryStatusEx(&memory)&&memory.ullTotalPhys>0&&memory.ullAvailPhys<=memory.ullTotalPhys)out.memory=modules::ActivityMemory{memory.ullTotalPhys-memory.ullAvailPhys,memory.ullTotalPhys,{}};
     Table table;if(GetIfTable2(&table.value)==NO_ERROR&&table.value&&table.value->NumEntries<=4096){modules::ActivityCounters values;for(ULONG n=0;n<table.value->NumEntries;++n){const auto&r=table.value->Table[n];const bool supported=(r.Type==IF_TYPE_ETHERNET_CSMACD||r.Type==IF_TYPE_IEEE80211)?r.InterfaceAndOperStatusFlags.HardwareInterface!=0:r.Type==IF_TYPE_PPP;if(r.OperStatus==IfOperStatusUp&&supported)values.emplace(std::to_string(r.InterfaceLuid.Value),modules::ActivityBytes{r.InOctets,r.OutOctets});}out.network=std::move(values);}
-    // GPU engines only while Activity Monitor is visible (native/activity_gpu.hpp).
+    // GPU engines with every system sample, like CPU, RAM and network
+    // (native/activity_gpu.hpp): shown, hidden or with the HUD closed.
     out.gpu=readWindowsActivityGPU();return out;
 }
 modules::ActivityAppsRaw readWindowsActivityApps(std::span<const modules::ActivityAppIdentity>catalog,double stamp,double uptime){clocks(stamp,uptime);if(catalog.size()>256)throw std::invalid_argument("Activity catalog exceeds256");modules::ActivityAppsRaw out;out.timestamp=stamp;out.uptime=uptime;out.secondsPerCPUTick=1e-7;out.apps.assign(catalog.begin(),catalog.end());std::set<std::uint32_t>ids;std::set<std::string>names;

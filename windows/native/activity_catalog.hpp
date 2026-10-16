@@ -36,7 +36,8 @@ public:
         std::function<ActivityCatalogInventory()>inventory;
         std::function<std::optional<ActivityCatalogReading>(std::uint32_t)>process;
         // Optional GPU engine readings of the catalog's processes (sorted
-        // PIDs), Windows: native::readWindowsActivityGPU.
+        // PIDs), Windows: native::readWindowsActivityGPU (sharing the system
+        // reading's collection of the same sampling job).
         std::function<std::optional<modules::ActivityGPUSample>(std::span<const std::uint32_t>)>gpu;
     };
     explicit ActivityCatalogSampler(Readers);

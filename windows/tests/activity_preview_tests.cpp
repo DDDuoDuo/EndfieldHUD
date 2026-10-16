@@ -1,5 +1,6 @@
 #ifdef _WIN32
 #include "tools/activity_preview.hpp"
+#include "native/activity_gpu.hpp"
 #include "native/activity_assets.hpp"
 #include "native/module_scene.hpp"
 #include <windows.h>
@@ -9,6 +10,7 @@
 #include <atomic>
 #include <mutex>
 #include <thread>
+#include <chrono>
 namespace {namespace c=endfield::core;namespace a=endfield::app;namespace m=endfield::modules;namespace n=endfield::native;namespace t=endfield::tools;using J=ehud::data::Json;unsigned checks{};void check(bool b,const char*s){++checks;if(!b)throw std::runtime_error(s);}
 struct Window{HWND hwnd{};Window(){WNDCLASSW c{};c.lpfnWndProc=DefWindowProcW;c.hInstance=GetModuleHandleW(nullptr);c.lpszClassName=L"OwnedActivityPreviewFixture";check(RegisterClassW(&c)!=0,"Register own synthetic HWND");hwnd=CreateWindowExW(WS_EX_NOREDIRECTIONBITMAP,c.lpszClassName,L"Fixture",WS_POPUP,0,0,1280,800,nullptr,nullptr,c.hInstance,nullptr);check(hwnd&&!IsWindowVisible(hwnd),"Fixture never shows or focuses a user window");}~Window(){if(hwnd)DestroyWindow(hwnd);UnregisterClassW(L"OwnedActivityPreviewFixture",GetModuleHandleW(nullptr));}};
 J blank(){return J::Object{{"bounds",J::Array{0,0,400,334}},{"position",J::Array{0,0}},{"anchorPoint",J::Array{0,0}},{"children",J::Array{}}};}
@@ -28,7 +30,13 @@ void run(n::Renderer&r,const std::filesystem::path&root){n::LayerRasterizer rast
     // thread's GetKeyState follows the live keyboard of the interactive session.
     check(!owner.key({a::KeyKind::down,VK_ESCAPE},true,now)&&owner.state().showingApps()&&demands.back()==std::pair{true,true},"A modified Escape stays with host shortcuts and keeps Apps");
     check(owner.key({a::KeyKind::down,VK_ESCAPE},false,now),"Escape returns Apps to Overview before HUD close");frame(.3);check(!owner.state().showingApps()&&demands.back()==std::pair{true,false},"Escape stops app demand while keeping system demand");check(!owner.key({a::KeyKind::down,VK_ESCAPE},false,now),"Overview leaves Escape for shared HUD");
-    owner.setOverlayVisible(false,now);check(demands.back()==std::pair{false,false},"Closed HUD stops visible sampling without a new timer");frame();check(!owner.covers(point({80,130}))&&!owner.requiresFrames(now),"Closed HUD has no input or finite animation demand");owner.setOverlayVisible(true,now);frame();check(demands.back()==std::pair{true,false},"Reopen restores original selected tab demand");
+    // GPU is recorded like CPU (native/activity_gpu.hpp): the preview's
+    // visibility sets only the sampling cadence; closing the HUD neither
+    // stops the GPU reading nor closes or reopens its query.
+    const bool gpuAvailable=n::readWindowsActivityGPU().has_value();const auto gpuShown=n::windowsActivityGPUStats();
+    owner.setOverlayVisible(false,now);check(demands.back()==std::pair{false,false},"Closed HUD stops visible sampling without a new timer");
+    std::this_thread::sleep_for(std::chrono::milliseconds(260));check(n::readWindowsActivityGPU().has_value()==gpuAvailable,"The closed HUD keeps reading GPU like CPU");
+    {const auto closed=n::windowsActivityGPUStats();check(closed.open==gpuShown.open&&closed.opens==gpuShown.opens&&closed.closes==gpuShown.closes&&closed.collections==gpuShown.collections+1,"Closing the HUD leaves the one GPU query open (no visibility gate)");}frame();check(!owner.covers(point({80,130}))&&!owner.requiresFrames(now),"Closed HUD has no input or finite animation demand");owner.setOverlayVisible(true,now);frame();check(demands.back()==std::pair{true,false},"Reopen restores original selected tab demand");
     modules.select(c::Module::power,now);frame(.05);auto fresh=owner.state().snapshot();fresh.timestamp=2;fresh.uptime=2;fresh.cpuPercent=99;owner.receive(fresh);frame(.05);frame(.4);frame(.4);check(owner.entries().empty()&&!owner.requiresFrames(now),"Outgoing artwork tolerates background samples then detaches");const auto departed=raster.stats();fresh.timestamp=3;fresh.uptime=3;owner.receive(fresh);frame();check(raster.stats().rasterizations==departed.rasterizations,"Hidden provider delivery never rebuilds Activity artwork");
     composition.detach(r);owner.release(r);done=true;check(r.stats().textures==0&&r.stats().meshes==0,"Activity borrows and retires shared renderer assets");
 }

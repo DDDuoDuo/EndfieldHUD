@@ -17,9 +17,9 @@ struct ActivityPreviewOptions {
     std::shared_ptr<const core::SubsectionMaskSampler>sortSamples;bool reduceMotion{};
     // Exact visibility demand only. A shared provider owner applies this to
     // ActivitySamplingPlan along with charge-alert demand and its one deadline.
-    // No native reader, worker, polling or app enumeration here. When set (the
-    // native provider), the same visibility also gates the GPU engine
-    // counters (native::setWindowsActivityGPUDemand).
+    // No native reader, worker, polling or app enumeration here. GPU is not
+    // gated by it: like CPU and RAM it is read with every system sample
+    // (native/activity_gpu.hpp), shown, hidden or with the HUD closed.
     std::function<void(bool visible,bool apps,double ownerTime)>demandChanged;
     // Optional app-row icons (production): the visible Apps rows' icons load
     // on this shared executor with iconLoader (default: the Windows loader),

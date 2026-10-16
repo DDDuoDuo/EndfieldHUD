@@ -1,5 +1,7 @@
 #include "native/activity_provider.hpp"
+#include "native/activity_gpu.hpp"
 #include <atomic>
+#include <cmath>
 #include <chrono>
 #include <condition_variable>
 #include <iostream>
@@ -37,4 +39,26 @@ void test(){std::atomic<unsigned>notifications{},systemReads{},appReads{};std::a
  #endif
 }
 }
-int main(){try{test();std::cout<<"PASS "<<checks<<" Activity shared-worker lifecycle checks (no live telemetry reads)\n";}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
+// GPU rides the system sample: the same deadline and worker job as CPU, so
+// its history fills whether Activity is shown, hidden or the HUD is closed
+// (visibility only sets the cadence); the worker hands each superseded
+// reading's GPU buffer back for the next reading (allocation-free steady state).
+void gpu(){a::UtilityExecutor executor([]{},1);m::ActivityState state(names);m::ActivitySamplingPlan plan;std::atomic<unsigned>reads{},appReads{};std::atomic<double>clock{100};
+ const m::ActivityGPUEngine engine{1,0,m::activityGPUEngineType("3D"),0};
+ n::ActivityProbe::Readers readers;readers.system=[&]{const std::uint64_t k=++reads;const double now=clock;m::ActivityRawSample raw;raw.uptime=now;raw.timestamp=now;raw.cpu=m::ActivityCPU{k*10,k*10,k*80,0};
+  m::ActivityGPUSample sample;sample.time=std::uint64_t(now*1e7);sample.usage.reserve(64);sample.usage.push_back({7,engine,std::uint64_t(now*2.5e6)});raw.gpu=std::move(sample);return raw;}; // 25% busy
+ readers.apps=[&]{++appReads;return m::ActivityAppsRaw{};};
+ n::ActivityProbe probe(state,plan,executor,readers);const auto recycled=n::windowsActivityGPUStats().recycled;
+ const auto at=[&](double t){clock=t;(void)probe.update(t);executor.waitIdle();executor.drain();};
+ plan.start(100);at(100);at(105);at(110);check(plan.nextWakeTime()==115,"Hidden from launch: one 5 s deadline for CPU and GPU");
+ plan.setVisible(true,false,false,110);at(111);at(112);check(plan.nextWakeTime()==113,"Shown: the same deadline at 1 s");
+ plan.setVisible(false,false,false,112);at(117);at(122);check(plan.nextWakeTime()==127,"Hidden or the HUD closed: 5 s again, GPU adding no deadline");
+ std::size_t cpu{},gpu{};for(const auto&s:state.history()){cpu+=s.cpuPercent==20;gpu+=s.gpuPercent&&std::abs(*s.gpuPercent-25)<1e-9;}
+ check(state.history().size()==7&&reads==7&&appReads==0&&cpu==6&&gpu==6,"Every system sample after the baseline records GPU with CPU: shown, hidden and closed alike");
+#ifdef _WIN32
+ check(n::windowsActivityGPUStats().recycled>recycled,"The worker recycles the superseded reading's GPU buffer");
+#else
+ (void)recycled;
+#endif
+ plan.stop();at(200);check(state.history().size()==7,"Suspended: neither CPU nor GPU is sampled");}
+int main(){try{test();gpu();std::cout<<"PASS "<<checks<<" Activity shared-worker lifecycle checks (no live telemetry reads)\n";}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
