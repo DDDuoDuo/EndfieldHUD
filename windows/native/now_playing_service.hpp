@@ -11,6 +11,9 @@ struct NowPlayingTimeline {
     // accounting for LastUpdatedTime. Source's 1x Track remains unchanged.
     std::int64_t start{},end{},position{},minimumSeek{},maximumSeek{};
     double rate{1},sampledAt{};bool playing{};
+    // The player stamped LastUpdatedTime. NetEase Cloud Music's own SMTC
+    // (3.1.41, live) leaves every timeline field zero and this unset.
+    bool lastUpdated{true};
     std::optional<double>elapsed(double now)const noexcept;
     std::optional<std::int64_t>seekTicks(double relativeSeconds)const noexcept;
 };
@@ -36,6 +39,12 @@ struct NowPlayingMediaSnapshot {
     std::optional<Progress>progress;
     std::optional<std::string>artworkURL;
     bool playerControls{};
+    // The track's time (position, length, progress) comes from the player's
+    // own window, not a media timeline: a window-title session, or a media
+    // session of the same player whose timeline is unusable
+    // (nowPlayingMergeReads). The owner then fills the length from the
+    // catalog and converts the progress, exactly as for a window-title player.
+    bool playerTime{};
 };
 struct NowPlayingReadResult {NowPlayingMediaSnapshot value;NowPlayingServiceFailure failure{NowPlayingServiceFailure::none};std::int32_t nativeError{};};
 struct NowPlayingCommandResult {NowPlayingServiceFailure failure{NowPlayingServiceFailure::none};std::int32_t nativeError{};};

@@ -603,6 +603,126 @@ void merge() {
               crowded.value.sessions.back().token == (3 | bit), "The bounded list keeps the presented session and the window player");
 }
 
+// NetEase Cloud Music's own SMTC (its "enable SMTC" setting, 3.1.41) read live on the laptop:
+// AUMID cloudmusic.exe, title and artist equal to the window title's, a
+// thumbnail, play/pause/next/previous enabled, but StartTime, EndTime,
+// Position, MinSeekTime and MaxSeekTime all 0, LastUpdatedTime unset, no
+// playback rate and IsPlaybackPositionEnabled false (a position request is
+// answered true but ignored). Sanitized: synthetic titles only.
+n::NowPlayingReadResult neteaseSession(bool playing, std::string title, bool zeroTimeline = true) {
+    n::NowPlayingReadResult r;
+    r.value.sessions = {{1, "cloudmusic.exe", "cloudmusic.exe"}};
+    r.value.session = r.value.sessions.front();
+    m::NowPlayingTrack track;
+    track.title = std::move(title);
+    track.artist = "Window Artist";
+    track.isPlaying = playing;
+    track.sampledAt = 20;
+    n::NowPlayingTimeline timeline;
+    timeline.playing = playing;
+    timeline.sampledAt = 20;
+    timeline.rate = std::numeric_limits<double>::quiet_NaN();
+    if (zeroTimeline) {
+        timeline.lastUpdated = false; // every field 0, as observed
+        track.supportsSeeking = false;
+    } else {
+        // A well-behaved live timeline: 200 s long, 30 s in, stamped.
+        timeline.end = 2000000000;
+        timeline.position = 300000000;
+        timeline.maximumSeek = timeline.end;
+        timeline.rate = 1;
+        track.duration = 200;
+        track.position = 30;
+    }
+    r.value.track = track;
+    r.value.timeline = timeline;
+    r.value.capabilities.play = r.value.capabilities.toggle = r.value.capabilities.next = r.value.capabilities.previous = true;
+    r.value.capabilities.pause = playing;
+    r.value.capabilities.seek = !zeroTimeline;
+    r.value.metadataRevision = 11;
+    return r;
+}
+void neteaseSmtc() {
+    const auto bar = [](bool playing, std::string title = "Window Song") {
+        n::NowPlayingReadResult r;
+        r.value.sessions = {{3, netease, netease, m::NowPlayingSessionOrigin::playerWindow}};
+        r.value.session = r.value.sessions.front();
+        m::NowPlayingTrack track;
+        track.title = std::move(title);
+        track.artist = "Window Artist";
+        track.isPlaying = playing;
+        track.supportsSeeking = false;
+        track.sampledAt = 21;
+        r.value.track = track;
+        r.value.capabilities.toggle = r.value.capabilities.previous = r.value.capabilities.next = true;
+        r.value.progress = n::NowPlayingMediaSnapshot::Progress{.25, 1.5};
+        r.value.artworkURL = "https://p3.music.126.net/A==/1.jpg?param=600y600";
+        r.value.playerControls = true;
+        r.value.metadataRevision = 4;
+        return r;
+    };
+    check(!n::nowPlayingTimelineUsable(neteaseSession(true, "Window Song").value) && !n::nowPlayingTimelineUsable(neteaseSession(false, "Window Song").value),
+          "NetEase's all-zero SMTC timeline is unusable, playing or paused");
+    check(n::nowPlayingTimelineUsable(neteaseSession(true, "Window Song", false).value), "A stamped timeline with a length and a position is usable");
+    {
+        auto stale = neteaseSession(true, "Window Song", false);
+        stale.value.timeline->lastUpdated = false;
+        check(!n::nowPlayingTimelineUsable(stale.value), "A playing timeline the player never stamped cannot be carried between reads");
+        stale.value.track->isPlaying = stale.value.timeline->playing = false;
+        check(n::nowPlayingTimelineUsable(stale.value), "Paused, the unstamped position still holds");
+    }
+    // Observed: the session keeps identity, metadata and transport; the time
+    // comes from NetEase's own bar.
+    for (const bool playing : {true, false}) {
+        auto merged = n::nowPlayingMergeReads(neteaseSession(playing, "Window Song"), bar(playing));
+        const auto& v = merged.value;
+        check(merged.failure == F::none && v.session && v.session->appUserModelID == "cloudmusic.exe" && v.session->token == 1 && v.sessions.size() == 1,
+              "NetEase's own media session keeps precedence; its window player is not listed twice");
+        check(v.track && v.track->title == "Window Song" && v.track->isPlaying == playing && v.metadataRevision == 11 && v.capabilities.toggle && v.capabilities.next &&
+                  v.capabilities.previous && !v.capabilities.seek && !v.track->supportsSeeking,
+              "Metadata, play state and transport come from the media session; position changes stay unsupported");
+        check(v.playerTime && v.playerControls && v.progress == bar(playing).value.progress && v.track->sampledAt == 21 && !v.timeline &&
+                  v.artworkURL == bar(playing).value.artworkURL,
+              "The empty timeline is replaced by the bar's reading, kept re-read, and its missing rate no longer holds the clock");
+    }
+    // A stale (unstamped) playing timeline gives way the same way.
+    {
+        auto stale = neteaseSession(true, "Window Song", false);
+        stale.value.timeline->lastUpdated = false;
+        const auto merged = n::nowPlayingMergeReads(stale, bar(true));
+        check(merged.value.playerTime && merged.value.progress && !merged.value.timeline && merged.value.track->duration == 200. && merged.value.capabilities.seek,
+              "An unstamped timeline yields the time to the bar but keeps its length and its seek capability");
+    }
+    // A usable timeline keeps the media session's own time (unchanged GSMTC behaviour).
+    {
+        const auto merged = n::nowPlayingMergeReads(neteaseSession(true, "Window Song", false), bar(true));
+        check(!merged.value.playerTime && !merged.value.progress && !merged.value.playerControls && merged.value.timeline && merged.value.track->position == 30. &&
+                  merged.value.track->duration == 200. && merged.value.capabilities.seek,
+              "A live stamped timeline stays the clock; the bar is not mixed in");
+    }
+    // Another track in the bar (the session moved on first) is never mixed in.
+    {
+        const auto merged = n::nowPlayingMergeReads(neteaseSession(true, "Next Song"), bar(true));
+        check(!merged.value.playerTime && !merged.value.progress && merged.value.track->title == "Next Song", "The bar of another track is never taken");
+    }
+    // Another player's session with an empty timeline does not take NetEase's bar.
+    {
+        auto other = neteaseSession(true, "Window Song");
+        other.value.sessions[0].appUserModelID = other.value.sessions[0].displayName = "Chrome";
+        other.value.session = other.value.sessions[0];
+        const auto merged = n::nowPlayingMergeReads(other, bar(true));
+        check(!merged.value.playerTime && !merged.value.progress, "Only the same player's own window supplies the time");
+    }
+    // A bar without any reading or estimate leaves the session as it is.
+    {
+        auto plain = bar(true);
+        plain.value.progress.reset();
+        plain.value.playerControls = false;
+        const auto merged = n::nowPlayingMergeReads(neteaseSession(true, "Window Song"), plain);
+        check(!merged.value.playerTime && merged.value.timeline, "Without a time of its own the window adds nothing");
+    }
+}
+
 // The composite through the production service and owner, with a manual
 // GSMTC stand-in and the synthetic desktop.
 struct Owner {
@@ -774,6 +894,7 @@ int main(int argc, char** argv) {
         controls();
         progressBar();
         merge();
+        neteaseSmtc();
         composite();
         compositeFailures();
         audioActivity();

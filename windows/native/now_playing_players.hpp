@@ -182,8 +182,24 @@ NativeNowPlayingService::Factory nowPlayingCompositeProvider(NativeNowPlayingSer
 // window-title player is a duplicate when a media session maps to the same
 // known source or names the same image (modules::nowPlayingSameExecutable).
 // A failed media read is reported when no window-title player has a session.
+//
+// Per field, the most trustworthy source: a presented media session keeps
+// identity, metadata, artwork and transport, but when the same player also
+// runs as a window-title player (same known source or image) showing the same
+// title, and the session's timeline is unusable (nowPlayingTimelineUsable),
+// the track's time comes from that player's own window instead: its
+// position, length, sample time, progress-bar reading and controls
+// (playerControls, so the owner keeps re-reading them) replace the timeline,
+// and the snapshot is marked playerTime. NetEase Cloud Music's own SMTC
+// (3.1.41, live) is that case: title, artist, cover and transport, but an
+// all-zero timeline, no playback rate and position changes disabled.
 NowPlayingReadResult nowPlayingMergeReads(std::optional<NowPlayingReadResult> mediaSessions,
     std::optional<NowPlayingReadResult> playerWindows, bool preferWindows = false);
+// A media session's timeline can drive the time: it has a length and a
+// position, and, while playing, the player stamped LastUpdatedTime (without
+// it the position cannot be carried between reads). Well-behaved players
+// (Spotify, browsers, the Store apps) pass.
+bool nowPlayingTimelineUsable(const NowPlayingMediaSnapshot&) noexcept;
 
 // Synthetic desktop for tests and the hidden coverage: no window, process or
 // message is touched. Thread-safe; notify() delivers one event to every

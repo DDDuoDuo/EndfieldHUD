@@ -226,6 +226,41 @@ void neteaseQueue(){
     f.read(windowPlayer("Unqueued Song",0));
     check(std::any_of(f.transport.requests.begin(),f.transport.requests.end(),[](const auto&r){return r.url.find("/api/cloudsearch/pc?")!=std::string::npos;}),"An unqueued track falls back to the catalog title search");
 }
+// With NetEase's own SMTC on, its media session (AUMID cloudmusic.exe) is
+// presented, but its timeline is all zero (live, 3.1.41); the composite then
+// supplies the bar's reading (playerTime). The owner must run the bar and the
+// lyric line from it exactly as for the window-title player, keep reading the
+// bar while it plays, keep the clock running (no playback rate is known) and
+// leave seeking unsupported (position changes are disabled and ignored).
+n::NowPlayingReadResult smtcPlayer(double fraction,double sampledAt,bool playing=true,double played=0){
+    n::NowPlayingReadResult r;r.value.sessions={{1,"cloudmusic.exe","cloudmusic.exe"}};r.value.session=r.value.sessions.front();
+    m::NowPlayingTrack t;t.title="Synthetic Song";t.artist="Example Artist";t.isPlaying=playing;t.sampledAt=sampledAt;t.supportsSeeking=false;r.value.track=t;
+    r.value.capabilities.play=r.value.capabilities.toggle=r.value.capabilities.next=r.value.capabilities.previous=true;r.value.capabilities.pause=playing;
+    r.value.progress=n::NowPlayingMediaSnapshot::Progress{fraction,played};r.value.playerControls=true;r.value.playerTime=true;r.value.metadataRevision=7;return r;}
+void neteaseSmtc(){
+    const std::string queue=R"({"list":[{"id":"2001","track":{"id":2001,"name":"Synthetic Song","artists":[{"name":"Example Artist"}],"album":{"name":"Fixture Album","picUrl":"http://p3.music.126.net/Queue==/2001.jpg"},"duration":233400}}]})";
+    Fixture f(true,false,500,body(queue));
+    f.ready(smtcPlayer(.5,10));
+    const auto lyric=[&]{for(std::size_t k=0;k<f.transport.requests.size();++k)if(f.transport.requests[k].url=="https://music.163.com/api/song/lyric?id=2001&lv=-1&kv=-1&tv=-1")return std::optional(k);return std::optional<std::size_t>();}();
+    check(lyric&&std::none_of(f.transport.requests.begin(),f.transport.requests.end(),[](const auto&r){return r.url.find("/api/cloudsearch/pc?")!=std::string::npos;}),
+          "The media session of NetEase also reads its exact lyrics through the queue file");
+    check(f.input().track->duration==233.4&&std::abs(*f.input().track->position-116.7)<1e-9&&f.input().playbackRate==1,
+          "The bar's played half of the queue length is the time, and the clock runs (no rate from the empty timeline)");
+    f.answer(*lyric,body(R"({"code":200,"lrc":{"lyric":"[00:01]One\n[01:50]Two\n[03:00]Three"}})"));
+    check(f.owner->presentation().lyricRows()[1]=="Two","The lyric line follows the same clock as the bar");
+    for(std::size_t k=0;k<f.transport.requests.size();++k)if(f.transport.requests[k].kind==n::NowPlayingWeb::Kind::artwork)f.answer(k,pixels(5));
+    check(f.owner->artwork()&&f.owner->artwork()->straightRGBA[0]==5,"The queue's catalog cover is shown");
+    check(!f.owner->presentation().sliders(f.now)[0].enabled,"Seeking stays unsupported: NetEase disables and ignores position changes");
+    // The bar is read again while it plays, and the time keeps running between readings.
+    const auto before=f.p->resyncs;const auto due=f.owner->nextWakeTime(f.now);
+    check(due&&*due<=f.now+1,"A display tick is due within a second while it plays");
+    f.now=*due;f.owner->deadline(f.now);f.flush();
+    check(f.p->resyncs==before+1,"The tick asks NetEase's bar for a new reading");
+    f.now=12;f.p->readReady(smtcPlayer(.5+2.3/233.4,12));f.flush();
+    check(std::abs(*f.input().track->position-119.)<1e-9,"A new reading resynchronizes the time");
+    f.read(smtcPlayer(.6,f.now,false));const auto paused=f.p->resyncs;
+    check(!f.owner->nextWakeTime(f.now)&&f.p->resyncs==paused,"Paused: no tick and no reading");
+}
 void visibility(){
     Fixture f;f.ready(media("Spotify.exe"));check(f.transport.requests.size()==1,"Visible owner starts one request");
     f.owner->setActive(false,f.now);check(f.transport.tasks[0]->cancels==1&&f.web->stats().inFlight==0&&!f.owner->nextWakeTime(f.now),"Hide cancels in-flight downloads and leaves no deadline");
@@ -313,7 +348,7 @@ void volume(){
 }
 }
 int main(){
-    try{lrclibLyrics();netease();windowPlayerCatalog();sizedCover();thumbnailFirst();playerBar();neteaseQueue();embedded();visibility();offline();events();offThread();volume();
+    try{lrclibLyrics();netease();windowPlayerCatalog();sizedCover();thumbnailFirst();playerBar();neteaseQueue();neteaseSmtc();embedded();visibility();offline();events();offThread();volume();
         std::cout<<"Now Playing sources session: "<<checks<<" checks passed (injected provider/transport/audio routes)\n";return 0;}
     catch(const std::exception&e){std::cerr<<"Now Playing sources session failed after "<<checks<<": "<<e.what()<<'\n';return 1;}
 }

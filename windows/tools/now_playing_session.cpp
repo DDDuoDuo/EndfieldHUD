@@ -168,11 +168,16 @@ struct NowPlayingSession::Impl:std::enable_shared_from_this<Impl>{
   sourcesDirty=false;input.lyrics=sources->lyrics();
   const auto rendering=applyVolume(input,application);
   const bool playerWindow=s.media.session&&s.media.session->origin==modules::NowPlayingSessionOrigin::playerWindow;
+  // The time comes from the player's own window: a window-title session, or a
+  // media session of the same player whose timeline is unusable (NetEase's
+  // own SMTC leaves it all zero; nowPlayingMergeReads supplies the window's).
+  const bool playerTime=playerWindow||s.media.playerTime;
   // A window title carries no length: the matched catalog recording's does
-  // (NetEase), so the elapsed/total times and the progress can show.
-  if(input.track&&playerWindow&&!input.track->duration)if(const auto length=sources->catalogDuration())input.track->duration=*length;
+  // (NetEase: its own queue file's exact length), so the elapsed/total times
+  // and the progress can show.
+  if(input.track&&playerTime&&!input.track->duration)if(const auto length=sources->catalogDuration())input.track->duration=*length;
   // The player's own progress bar: its played fraction of that length.
-  if(input.track&&playerWindow&&s.media.progress&&input.track->duration)input.track->position=progressPosition(key,*input.track,*s.media.progress);
+  if(input.track&&playerTime&&s.media.progress&&input.track->duration)input.track->position=progressPosition(key,*input.track,*s.media.progress);
   else if(!s.media.progress)progress.reset();
   // A window-title player's title does not report pausing: its single
   // process route's audio activity (AudioSessionStateActive) does, and it is

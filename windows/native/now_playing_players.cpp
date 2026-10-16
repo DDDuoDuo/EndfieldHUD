@@ -554,8 +554,20 @@ NowPlayingReadResult nowPlayingMergeReads(std::optional<NowPlayingReadResult> me
         return none;
     }
     NowPlayingMediaSnapshot fallback;
+    // The window-title player's own time, kept before its duplicate session
+    // is dropped: a media session of the same player may need it.
+    struct OwnTime {
+        std::string identity;
+        m::NowPlayingTrack track;
+        std::optional<NowPlayingMediaSnapshot::Progress> progress;
+        std::optional<std::string> artworkURL;
+        bool playerControls{};
+    };
+    std::optional<OwnTime> own;
     if (usable(windows)) {
         fallback = std::move(windows->value);
+        if (fallback.session && fallback.track)
+            own = OwnTime{fallback.session->appUserModelID, *fallback.track, fallback.progress, fallback.artworkURL, fallback.playerControls};
         // A player GSMTC lists keeps its media session (same known source
         // mapping, or a Win32 session identity naming the same image).
         std::vector<m::NowPlayingSource> listed;
@@ -616,8 +628,34 @@ NowPlayingReadResult nowPlayingMergeReads(std::optional<NowPlayingReadResult> me
         v.progress.reset();
         v.artworkURL.reset();
         v.playerControls = false;
+    } else if (v.session && v.track && own && !nowPlayingTimelineUsable(v)) {
+        // The same player (known source or image) showing the same track:
+        // its own window states the time the media timeline does not.
+        const auto source = m::nowPlayingSourceForAppUserModelID(v.session->appUserModelID);
+        const bool samePlayer = m::nowPlayingSameExecutable(v.session->appUserModelID, own->identity) ||
+                                (source != m::NowPlayingSource::system && source == m::nowPlayingSourceForAppUserModelID(own->identity));
+        const bool sameTrack = m::nowPlayingCanonicalEqual(v.track->title, own->track.title) &&
+                               (v.track->artist.empty() || own->track.artist.empty() || m::nowPlayingCanonicalEqual(v.track->artist, own->track.artist));
+        if (samePlayer && sameTrack && (own->track.position || own->progress)) {
+            v.track->position = own->track.position;
+            if (own->track.duration) v.track->duration = own->track.duration;
+            v.track->sampledAt = own->track.sampledAt;
+            v.progress = own->progress;
+            v.playerControls = own->playerControls;
+            if (!v.artworkURL) v.artworkURL = own->artworkURL;
+            // The unusable timeline's rate (none: NetEase sets no playback
+            // rate) must not hold the clock still.
+            v.timeline.reset();
+            v.playerTime = true;
+        }
     }
     return out;
+}
+
+bool nowPlayingTimelineUsable(const NowPlayingMediaSnapshot& v) noexcept {
+    if (!v.track || !v.timeline || !v.track->duration || !v.track->position) return false;
+    if (v.timeline->end <= v.timeline->start) return false;
+    return !(v.track->isPlaying && !v.timeline->lastUpdated);
 }
 
 NativeNowPlayingService::Factory nowPlayingWindowProvider(std::function<std::shared_ptr<NowPlayingWindowSystem>()> system, std::function<double()> now,
