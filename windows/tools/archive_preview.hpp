@@ -70,6 +70,22 @@ public:
     // false means marked text or a TSF transaction must finish first. No routine
     // WM_APP refocus occurs; explicit field/focus transitions alone set focus.
     bool finishEditing(double);
+    // Before a module switch (HUDArchiveInteraction.commitEditing): every
+    // field's text and the pending saves are committed, but the editing goes
+    // on - the focused field, its selection and the formatting controls stay,
+    // so the face shown while switching away is unchanged. false: marked text
+    // must finish first.
+    bool commitEditing(double);
+    // Switched away inside the open HUD (another module requested while the
+    // HUD stays visible), Archive stands by instead of tearing its view down:
+    // input, the text service focus, menus and media playback end, the text
+    // and saves are committed and "edited" is recorded, but the built document
+    // view - the face, the fields' editors, layouts and rasters (selection,
+    // scroll, undo), the loaded document and the gallery posters - stays, so
+    // the switch back only restores the parked textures and paints nothing
+    // again. The HUD closing ends the stand-by like a hidden Archive (editors
+    // released, the document state deactivated).
+    bool standby()const noexcept;
     std::optional<ArchiveMediaAction>takeMediaAction();
     UINT_PTR mediaRouteGeneration()const noexcept;
     void presentShelfMedia(std::vector<modules::NotesShelfChoice>,double);
@@ -87,7 +103,7 @@ public:
     bool setMediaDraw(std::string_view document,std::size_t index,
         std::optional<native::DrawObject>,double);
     std::size_t mediaIndex()const noexcept;
-    bool mediaVisible()const noexcept;
+    bool mediaVisible()const noexcept; // shown and active: media plays and decodes
     bool mediaRequestCurrent(std::string_view document,std::uint64_t generation)const noexcept;
     void upload(native::Renderer&);std::span<const native::LayerCompositionEntry>entries();
     void collected(native::Renderer&);void release(native::Renderer&);

@@ -14,6 +14,7 @@
 #include <cmath>
 #include <limits>
 #include <stdexcept>
+#include <utility>
 
 namespace endfield::tools {
 namespace {
@@ -87,7 +88,10 @@ struct ArchivePreview::Impl {
  };
  HWND window;gpu::LayerRasterizer&raster;ITfThreadMgr*manager;TfClientId client;ArchivePreviewOptions options;m::ArchiveState&state;gpu::NativeArchiveScene scene;gpu::LayerScene geometry;gpu::NativeModuleSurface surface;gpu::NativeModuleRegistration registration{"archive.registration"};
  app::ClientMetrics metrics;core::Projection projection;std::optional<gpu::ModuleSurfacePose>pose;std::unique_ptr<Fields>fields;std::vector<std::unique_ptr<Fields>>retiredFields;std::vector<std::unique_ptr<Field>>retiredViewportFields;std::unique_ptr<Menu>menu;std::vector<std::unique_ptr<Menu>>retiredMenus;std::vector<gpu::LayerCompositionEntry>composed;
- bool active{},requested{},input{},focused{},overlayVisible{true},reduceMotion{},pressed{},dragging{},seeking{},wheelDrag{},alive{true},contentDirty{true},pendingDeactivate{};double time{};unsigned depth{};std::optional<Point>pointerPoint;std::optional<std::string>focusedField,pendingAction,displayedID;std::optional<std::optional<std::string>>pendingFocus;std::optional<double>scrollGrab,menuScrollGrab;std::uint64_t stateRevision{},viewRevision{1},mediaGeneration{1},registrationUploadedRevision{};gpu::Renderer*registrationRenderer{};UINT_PTR mediaRoute{nextGeneration()};bool mediaPosted{};std::optional<ArchiveMediaAction>mediaAction;
+ bool active{},requested{},input{},focused{},overlayVisible{true},reduceMotion{},pressed{},dragging{},seeking{},wheelDrag{},alive{true},contentDirty{true},pendingDeactivate{};
+ // Switched away inside the open HUD (ArchivePreview::standby): the built
+ // view is kept and content events wait for the switch back.
+ bool standby{};double time{};unsigned depth{};std::optional<Point>pointerPoint;std::optional<std::string>focusedField,pendingAction,displayedID;std::optional<std::optional<std::string>>pendingFocus;std::optional<double>scrollGrab,menuScrollGrab;std::uint64_t stateRevision{},viewRevision{1},mediaGeneration{1},registrationUploadedRevision{};gpu::Renderer*registrationRenderer{};UINT_PTR mediaRoute{nextGeneration()};bool mediaPosted{};std::optional<ArchiveMediaAction>mediaAction;
  std::optional<gpu::DrawObject>mediaDraw;std::string mediaDrawDocument;std::size_t mediaDrawIndex{};
  struct Event {Impl&i;Event(Impl&v,double t):i(v){need(std::isfinite(t),"Archive needs finite owner time");if(!i.depth)i.time=std::max(i.time,t);++i.depth;}~Event(){--i.depth;}};
  Impl(m::ArchiveState&s,HWND w,gpu::LayerRasterizer&r,ITfThreadMgr*tm,TfClientId tc,ArchivePreviewOptions value):window(w),raster(r),manager(tm),client(tc),options(std::move(value)),state(s),scene(r,options.raster),geometry(r),surface(prepareGeometry(),core::Module::archive){need(window&&IsWindow(window),"Archive requires caller HWND");need((manager==nullptr)==(client==TF_CLIENTID_NULL),"Borrowed TSF manager/client must be supplied together");need(options.newID&&options.foundationNow&&options.parseLocalDate&&options.view.dateString&&options.view.categoryCaptionWidth&&options.view.appearance.systemOrange,"Archive requires explicit ID/date/font/error-color contracts");need(options.editorCapacity>0&&options.editorCapacity<=65536&&options.textMessage>=WM_APP&&options.textMessage<=0xbfff&&options.mediaMessage>=WM_APP&&options.mediaMessage<=0xbfff&&options.mediaMessage!=options.textMessage,"Invalid Archive editor capacity or message");retiredFields.reserve(3);retiredViewportFields.reserve(3);retiredMenus.reserve(3);composed.reserve(64);}
@@ -101,7 +105,7 @@ struct ArchivePreview::Impl {
  double dateNow(){const auto result=options.foundationNow();need(std::isfinite(result),"Archive requires finite Foundation date");return result;}
  Field*field(std::string_view name){if(name=="category")return menu?menu->categoryField.get():nullptr;if(fields)for(auto&f:fields->values)if(f&&fieldName(f->kind)==name)return f.get();return nullptr;}
  Field*focusedEditor(){return focusedField?field(*focusedField):nullptr;}
- bool focusField(std::optional<std::string>name){if(focusedField==name)return true;auto*old=focusedEditor();if(old&&manager){const auto hr=old->editor->focus(false);if(hr==TS_E_NOLOCK){pendingFocus=name;return false;}need(SUCCEEDED(hr),"Cannot blur Archive editor");if(!alive)return false;}if(name){auto*next=field(*name);if(!next)return false;if(manager&&focused){const auto hr=next->editor->focus(true);if(hr==TS_E_NOLOCK){pendingFocus=name;return false;}need(SUCCEEDED(hr),"Cannot focus Archive editor");if(!alive)return false;}}
+ bool focusField(std::optional<std::string>name){if(focusedField==name)return true;auto*old=focusedEditor();if(old&&manager){const auto hr=old->editor->focus(false);if(hr==TS_E_NOLOCK){pendingFocus=name;return false;}need(SUCCEEDED(hr),"Cannot blur Archive editor");if(!alive)return false;}if(name){auto*next=field(*name);if(!next)return false;if(manager&&focused&&!standby){const auto hr=next->editor->focus(true);if(hr==TS_E_NOLOCK){pendingFocus=name;return false;}need(SUCCEEDED(hr),"Cannot focus Archive editor");if(!alive)return false;}}
   pendingFocus.reset();focusedField=std::move(name);if(focusedField&&*focusedField!="date"&&*focusedField!="category"){options.view.formattingField=focusedField;if(auto*f=focusedEditor();f&&f->richDocument)options.view.formattingColor=inkColor(f->richDocument->selectionStyle(),options.view.appearance.dark);}else if(!menu||menu->kind!=Menu::Kind::format)options.view.formattingField.reset();contentDirty=true;return true;
  }
  bool capture(Field&f,bool force=false){if(f.document().composition())return false;if(f.document().revision()==f.capturedRevision&&!f.forceCapture&&!force)return true;auto clamped=f.kind==FieldKind::date?gpu::ArchiveEditorTextClamp{std::u16string(f.document().text()),{}}:gpu::clampArchiveEditorText(f.document().text(),clampKind(f.kind));if(!clamped.removed.empty()){for(const auto r:clamped.removed)f.document().replace(r,{});f.editor->syncContent();}
@@ -147,7 +151,9 @@ struct ArchivePreview::Impl {
    try{next->values[n]=std::make_unique<Field>(window,raster,kind,rect,value,payload,style,options);}catch(const gpu::NativeNotesLongParagraphError&){options.view.statusMessage=editorCapacityText(options.menuStrings.language);contentDirty=true;continue;}if(manager)need(SUCCEEDED(next->values[n]->editor->connect(*manager,client)),"Cannot connect Archive field to shared text manager");if(!alive)return;}
   retireCurrent(true);fields=std::move(next);++mediaGeneration;mediaAction.reset();options.view.mediaIndex=0;contentDirty=true;
  }
- void refresh(){installFields();if(stateRevision==state.revision()&&!contentDirty)return;const auto selectedID=state.selected()?std::optional(state.selected()->id):std::nullopt;const bool changedSelection=stateRevision&&displayedID!=selectedID;auto prepared=options.view;
+ // Content events met during the stand-by are applied on the switch back
+ // (most leave the artwork as it was; the view is never rebuilt hidden).
+ void refresh(){if(standby)return;installFields();if(stateRevision==state.revision()&&!contentDirty)return;const auto selectedID=state.selected()?std::optional(state.selected()->id):std::nullopt;const bool changedSelection=stateRevision&&displayedID!=selectedID;auto prepared=options.view;
   // Cache one full-width progress leaf, then shrink its local GPU transform.
   // Progress events never recreate the entire source canvas or editor artwork.
   if(state.selected()&&!state.selected()->media.empty()){const auto&ref=state.selected()->media[prepared.mediaIndex];prepared.mediaTime=ref["duration"].isNumber()?ref["duration"].number():1.;prepared.mediaRelinkable=m::archiveMacMediaReference(ref);}
@@ -244,7 +250,35 @@ struct ArchivePreview::Impl {
   const auto result=value.empty()?gpu::notesClipboardDeleteSelection(*target->editor,target->document()):gpu::notesClipboardPaste(*target->editor,target->document(),{std::move(value),std::nullopt},target->richDocument!=nullptr);
   capture(*target);return result.handled||result.changed;
  }
- bool changeActive(bool value){if(active==value)return true;if(!value&&!finish()){pendingDeactivate=true;input=false;return false;}pendingDeactivate=false;active=value;input=false;pressed=dragging=false;scrollGrab.reset();if(value){for(auto&f:retiredFields)f->retire=time;for(auto&v:retiredMenus)v->closeAt=time;state.activate();}else{closeMenu(false);retireCurrent(false);state.deactivate();++mediaGeneration;mediaAction.reset();}contentDirty=true;return true;}
+ // Switched away inside the open HUD (ArchivePreview::standby): the text and
+ // saves are committed, the menu closes and the field gives the text service
+ // focus back, but it keeps its selection and stays the focused field for the
+ // switch back, so the face shown while leaving is unchanged. false: marked
+ // text or a locked TSF transaction first (retried on its message).
+ bool standBy(){
+  if(!captureAll())return false;
+  standby=true; // from here no field takes the text service focus
+  if(!closeMenu(false)){standby=false;return false;}
+  if(auto*f=focusedEditor();f&&manager){const auto hr=f->editor->focus(false);if(hr==TS_E_NOLOCK){standby=false;return false;}need(SUCCEEDED(hr),"Cannot blur Archive editor");if(!alive)return false;}
+  // Source endEditors: one "edited" action per editing session.
+  if(edited&&fields){state.recordAction("edited",fields->id);edited=false;}
+  state.flush();return true;
+ }
+ // The HUD closed during the stand-by: the kept view goes as a hidden
+ // Archive's always did (editors stopped and released, the document state
+ // deactivated); fields no frame shows any more are collected at once.
+ void endStandby(){standby=false;pendingFocus.reset();retireCurrent(false);if(!pose)for(auto&set:retiredFields)set->retire=time;state.deactivate();contentDirty=true;}
+ bool changeActive(bool value){
+  if(active==value){if(!value&&standby&&!overlayVisible)endStandby();return true;}
+  if(!value&&!(overlayVisible?standBy():finish())){pendingDeactivate=true;input=false;return false;}
+  pendingDeactivate=false;active=value;input=false;pressed=dragging=false;scrollGrab.reset();
+  if(value){for(auto&f:retiredFields)f->retire=time;for(auto&v:retiredMenus)v->closeAt=time;
+   // Back from the stand-by: everything built shows again as it was, with no
+   // reload; the focused field only takes the text service focus back.
+   if(std::exchange(standby,false)){if(auto*f=focusedEditor();f&&manager&&focused){const auto hr=f->editor->focus(true);need(SUCCEEDED(hr)||hr==TS_E_NOLOCK,"Cannot restore Archive field focus");}return true;}
+   state.activate();}
+  else{++mediaGeneration;mediaAction.reset();if(standby)return true;closeMenu(false);retireCurrent(false);state.deactivate();}
+  contentDirty=true;return true;}
 };
 
 ArchivePreview::ArchivePreview(m::ArchiveState&s,HWND w,gpu::LayerRasterizer&r,ITfThreadMgr*manager,TfClientId client,ArchivePreviewOptions options):impl_(std::make_shared<Impl>(s,w,r,manager,client,std::move(options))){}
@@ -284,7 +318,7 @@ bool ArchivePreview::key(const app::KeyEvent&e,double t,std::optional<ArchiveKey
  std::optional<C>command;switch(e.value){case VK_LEFT:command=C::left;break;case VK_RIGHT:command=C::right;break;case VK_UP:command=C::up;break;case VK_DOWN:command=C::down;break;case VK_BACK:command=C::backspace;break;case VK_DELETE:command=C::deleteForward;break;default:return false;}f->editor->command(*command,shift);i->capture(*f);return true;}
 bool ArchivePreview::filterKey(const app::NativeMessage&m){auto i=impl_;auto*f=i->focusedEditor();return i->input&&f&&(!i->menu||f->kind==FieldKind::category)&&m.window==i->window&&f->editor->filterKeyMessage(m.message,m.wParam,m.lParam);}
 bool ArchivePreview::message(const app::NativeMessage&m,double t){auto i=impl_;if(m.window!=i->window||m.message!=i->options.textMessage)return false;const Impl::Event event(*i,t);auto apply=[&](Impl::Field&f){if(f.generation!=m.wParam)return;f.editor->takeChanges(m.wParam);i->capture(f);f.editor->syncContent();i->selectionFeedback();};if(i->fields)for(auto&f:i->fields->values)if(f&&f->editor)apply(*f);if(i->menu&&i->menu->categoryField&&i->menu->categoryField->editor)apply(*i->menu->categoryField);if(i->pendingFocus){const auto desired=*i->pendingFocus;i->focusField(desired);}if(i->pendingDeactivate)i->changeActive(false);if(i->pendingAction){const auto action=*i->pendingAction;i->perform(action);}return true;}
-void ArchivePreview::focus(bool value,double t){auto i=impl_;const Impl::Event event(*i,t);i->focused=value;if(auto*f=i->focusedEditor();f&&i->manager){const auto hr=f->editor->focus(value);need(SUCCEEDED(hr)||hr==TS_E_NOLOCK,"Cannot update Archive field focus");}if(!value){i->dragging=i->pressed=false;i->scrollGrab.reset();}}
+void ArchivePreview::focus(bool value,double t){auto i=impl_;const Impl::Event event(*i,t);i->focused=value;if(auto*f=i->focusedEditor();f&&i->manager&&!i->standby){const auto hr=f->editor->focus(value);need(SUCCEEDED(hr)||hr==TS_E_NOLOCK,"Cannot update Archive field focus");}if(!value){i->dragging=i->pressed=false;i->scrollGrab.reset();}}
 void ArchivePreview::setClipboard(std::shared_ptr<gpu::NotesClipboard>clipboard){impl_->clipboard=std::move(clipboard);}
 void ArchivePreview::automationElements(std::vector<gpu::NotesAutomationElement>&out)const{impl_->automationElements(out);}
 bool ArchivePreview::perform(std::string_view id,double t){auto i=impl_;const Impl::Event event(*i,t);return i->automationPerform(id);}
@@ -305,6 +339,8 @@ std::optional<ArchiveMediaAction>ArchivePreview::dropMediaAction(double t){auto 
 void ArchivePreview::cancelInteraction(double t){auto i=impl_;const Impl::Event event(*i,t);i->pressed=i->dragging=i->seeking=i->wheelDrag=false;i->scrollGrab.reset();i->menuScrollGrab.reset();i->pointerPoint.reset();if(auto*f=i->focusedEditor())f->editor->pointerUp();}
 bool ArchivePreview::pointerLocked()const noexcept{return impl_->dragging||impl_->scrollGrab.has_value()||impl_->menuScrollGrab.has_value()||impl_->seeking||impl_->wheelDrag;}
 bool ArchivePreview::finishEditing(double t){auto i=impl_;const Impl::Event event(*i,t);return i->finish();}
+bool ArchivePreview::commitEditing(double t){auto i=impl_;const Impl::Event event(*i,t);if(!i->captureAll())return false;i->state.flush();return true;}
+bool ArchivePreview::standby()const noexcept{return impl_->standby;}
 std::optional<ArchiveMediaAction>ArchivePreview::takeMediaAction(){auto result=std::move(impl_->mediaAction);impl_->mediaAction.reset();impl_->mediaPosted=false;return result;}
 UINT_PTR ArchivePreview::mediaRouteGeneration()const noexcept{return impl_->mediaRoute;}
 void ArchivePreview::presentShelfMedia(std::vector<m::NotesShelfChoice>choices,double t){auto i=impl_;const Impl::Event event(*i,t);if(!i->active||!i->state.selected())return;if(i->showControls(m::NotesControlsKind::shelfMedia)){i->menu->controlInput->choices=std::move(choices);i->redrawMenu(*i->menu);}}
@@ -328,7 +364,7 @@ bool ArchivePreview::mediaRequestCurrent(std::string_view document,std::uint64_t
 void ArchivePreview::upload(gpu::Renderer&r){auto i=impl_;if(!i->pose)return;need(!i->registrationRenderer||i->registrationRenderer==&r,"Archive registration belongs to another renderer");i->scene.uploadResources(r);if(i->menu)i->menu->scene.uploadResources(r);for(auto&v:i->retiredMenus)v->scene.uploadResources(r);i->poseAll();i->scene.uploadAnimations(r);if(i->menu)i->menu->scene.uploadAnimations(r);for(auto&v:i->retiredMenus)v->scene.uploadAnimations(r);const auto revision=i->registration.stats().geometryRevision;if(i->registrationUploadedRevision!=revision){i->registration.uploadGeometry(r);i->registrationRenderer=&r;i->registrationUploadedRevision=revision;}}
 std::span<const gpu::LayerCompositionEntry>ArchivePreview::entries(){auto i=impl_;i->composed.clear();if(!i->pose)return i->composed;for(const auto&e:i->scene.entries())i->composed.push_back(e);const auto appendField=[&](Impl::Field&f){f.published=true;i->composed.push_back({&f.back,{}});i->composed.push_back({&f.glyphs,{}});};if(i->fields)for(auto&f:i->fields->values)if(f)appendField(*f);for(auto&set:i->retiredFields)if(i->time<set->retire)for(auto&f:set->values)if(f)appendField(*f);auto appendMenu=[&](Impl::Menu&v){v.published=true;for(const auto&e:v.scene.entries())i->composed.push_back(e);if(v.categoryField)appendField(*v.categoryField);};if(i->menu)appendMenu(*i->menu);for(auto&v:i->retiredMenus)if(i->time<v->closeAt)appendMenu(*v);i->composed.push_back({&i->geometry,i->registration.draws()});return i->composed;}
 void ArchivePreview::collected(gpu::Renderer&r){auto i=impl_;need(i->scene.collectRetired(r),"Old Archive face remains published");for(auto&f:i->retiredViewportFields)need(f->release(r),"Old Archive viewport remains published");i->retiredViewportFields.clear();if(i->menu)need(i->menu->scene.collectRetired(r),"Old Archive menu content remains published");for(auto it=i->retiredFields.begin();it!=i->retiredFields.end();)if(i->time>=(*it)->retire){for(auto&f:(*it)->values)if(f)need(f->release(r),"Old Archive field remains published");it=i->retiredFields.erase(it);}else++it;for(auto it=i->retiredMenus.begin();it!=i->retiredMenus.end();)if(i->time>=(*it)->closeAt){need((*it)->scene.releaseResources(r),"Old Archive menu remains published");if((*it)->categoryField)need((*it)->categoryField->release(r),"Old category editor remains published");it=i->retiredMenus.erase(it);}else{need((*it)->scene.collectRetired(r),"Old menu face remains published");++it;}}
-void ArchivePreview::release(gpu::Renderer&r){auto i=impl_;need(i->finish(),"Archive text transaction must finish before release");for(auto&f:i->retiredViewportFields)need(f->release(r),"Old Archive viewport remains published");if(i->fields){i->stopFields(*i->fields);for(auto&f:i->fields->values)if(f)need(f->release(r),"Archive field remains published");}if(i->menu){i->closeMenu(false);}for(auto&set:i->retiredFields)for(auto&f:set->values)if(f)need(f->release(r),"Archive outgoing field remains published");for(auto&v:i->retiredMenus){need(v->scene.releaseResources(r),"Archive outgoing menu remains published");if(v->categoryField)need(v->categoryField->release(r),"Archive category field remains published");}need(i->scene.releaseResources(r)&&i->registration.releaseResources(r)&&i->geometry.releaseResources(r),"Archive resources remain published");i->registrationRenderer=nullptr;i->registrationUploadedRevision=0;i->state.deactivate();}
+void ArchivePreview::release(gpu::Renderer&r){auto i=impl_;need(i->finish(),"Archive text transaction must finish before release");i->standby=false;for(auto&f:i->retiredViewportFields)need(f->release(r),"Old Archive viewport remains published");if(i->fields){i->stopFields(*i->fields);for(auto&f:i->fields->values)if(f)need(f->release(r),"Archive field remains published");}if(i->menu){i->closeMenu(false);}for(auto&set:i->retiredFields)for(auto&f:set->values)if(f)need(f->release(r),"Archive outgoing field remains published");for(auto&v:i->retiredMenus){need(v->scene.releaseResources(r),"Archive outgoing menu remains published");if(v->categoryField)need(v->categoryField->release(r),"Archive category field remains published");}need(i->scene.releaseResources(r)&&i->registration.releaseResources(r)&&i->geometry.releaseResources(r),"Archive resources remain published");i->registrationRenderer=nullptr;i->registrationUploadedRevision=0;i->state.deactivate();}
 const m::ArchiveState&ArchivePreview::state()const noexcept{return impl_->state;}
 std::optional<std::string>ArchivePreview::activeField()const{return impl_->focusedField;}
 }

@@ -6,7 +6,9 @@
 #include "modules/notes_controls.hpp"
 #include "core/data/file_io.hpp"
 #include <objbase.h>
+#include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <string>
 #include <cstdlib>
@@ -64,6 +66,46 @@ void run(const wchar_t*shader,const std::filesystem::path&fixturePath,const std:
  // Return both the retained scene and input helper to the same identity pose
  // before targeting source-local controls; this advances no owner time.
  paint(0);
+ // Switched away inside the open HUD and back, as the host does it (the
+ // switch first commits the text): Archive stands by with its built view, so
+ // neither side lays out or paints anything, the same retained scenes come
+ // back with their parked textures, the document stays loaded and editing
+ // continues in the same field. The switch back's frames (owner, publication
+ // and texture restores; the WARP draw aside) fit a 60 Hz frame, best of
+ // three round trips.
+ {const tools::ArchiveKeyModifiers none{};(void)state.takeEvents();
+  check(preview.activeField()==std::optional<std::string>("body")&&preview.commitEditing(time)&&preview.activeField()==std::optional<std::string>("body"),"A module switch commits the body without ending its editing");
+  std::vector<const gpu::LayerScene*>scenes;for(const auto&e:preview.entries())scenes.push_back(e.scene);
+  const auto body=state.selected()->body;const auto r0=raster.stats();const auto g0=renderer.stats();double best=1e9;
+  const auto frames=[&](core::Module module){settings.module=module;modules.select(module,time);double slowest{};
+   for(unsigned n=0;n<60;++n){time+=1./60;const auto sample=modules.sample(time).presentation;const auto begin=std::chrono::steady_clock::now();
+    preview.update({},settings,sample,1,time);preview.upload(renderer);composition.setEntries(renderer,preview.entries());preview.collected(renderer);composition.present(renderer);
+    slowest=std::max(slowest,std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-begin).count());renderer.draw(false);}
+   return slowest;};
+  for(unsigned trip=0;trip<3;++trip){
+   (void)frames(core::Module::power);
+   check(preview.standby()&&preview.entries().empty()&&!preview.mediaVisible()&&!preview.key({app::KeyKind::down,VK_END},time,none),"Switched away, Archive stands by without input, media or entries");
+   check(state.active()&&state.selected()&&state.selected()->id==documentID&&state.selected()->body==body&&preview.activeField()==std::optional<std::string>("body"),"The standing-by Archive keeps its document loaded and its focused field");
+   if(!trip){const auto events=state.takeEvents();check(std::count_if(events.begin(),events.end(),[&](const auto&e){return e.name=="edited"&&e.id==documentID;})==1,"Switching away records the editing session once (source endEditors)");}
+   best=std::min(best,frames(core::Module::archive));
+   const auto shown=preview.entries();
+   check(!preview.standby()&&shown.size()==scenes.size()&&std::equal(shown.begin(),shown.end(),scenes.begin(),[](const auto&e,const gpu::LayerScene*s){return e.scene==s;}),"The switch back shows the same retained scenes");
+   check(preview.activeField()==std::optional<std::string>("body")&&preview.key({app::KeyKind::down,VK_END},time,none),"Editing continues in the same body field");}
+  const auto r1=raster.stats();const auto g1=renderer.stats();
+  if(r1.rasterizations!=r0.rasterizations||r1.textLayoutsCreated!=r0.textLayoutsCreated||r1.pixelRepaints!=r0.pixelRepaints)std::cerr<<"switch rasters="<<r1.rasterizations-r0.rasterizations<<" layouts="<<r1.textLayoutsCreated-r0.textLayoutsCreated<<" repaints="<<r1.pixelRepaints-r0.pixelRepaints<<'\n';
+  check(r1.rasterizations==r0.rasterizations&&r1.textLayoutsCreated==r0.textLayoutsCreated&&r1.pixelRepaints==r0.pixelRepaints,"Switching away and back inside the open HUD lays out and paints no Archive content");
+  check(g1.textureParks>g0.textureParks&&g1.parkedRestores>g0.parkedRestores,"The switch parks the retained textures and the switch back restores them");
+  std::cout<<"Archive switch back inside the open HUD: slowest frame "<<best<<" ms (best of three), "<<g1.parkedRestores-g0.parkedRestores<<" textures restored\n";
+  check(best<1000./60,"The switch back's slowest frame fits a 60 Hz frame");
+  // The HUD closing on another module ends the stand-by as a hidden Archive
+  // ends: the editors stop, their scenes go at the next collection and the
+  // document state is deactivated; the next showing loads the same document.
+  (void)frames(core::Module::power);preview.setOverlayVisible(false,time);composition.setEntries(renderer,preview.entries());preview.collected(renderer);
+  check(!preview.standby()&&!state.active()&&!state.selected()&&!preview.activeField(),"The HUD closing during the stand-by ends it like a hidden Archive");
+  preview.setOverlayVisible(true,time);(void)frames(core::Module::archive);
+  check(state.active()&&state.selected()&&state.selected()->id==documentID&&state.selected()->body==body&&preview.entries().size()==scenes.size(),"Opened again, Archive loads and shows the same document");
+  // Its new editors start at the document start: edit the body again from its end.
+  paint();click(42,125);check(preview.activeField()==std::optional<std::string>("body")&&preview.key({app::KeyKind::down,VK_END},time,tools::ArchiveKeyModifiers{true,false,false}),"The reopened body is edited again from its end");paint();}
  // Media selection is queued outside the synchronous repository callback.
  click(340,17);click(169,52);const auto import=preview.takeMediaAction();check(import&&import->kind==tools::ArchiveMediaAction::Kind::chooseLocal&&import->documentID==documentID&&import->remaining==16,"Source attachment chooser queues generation-tagged local selection");const auto image=J::parse(data::makeWindowsMediaReference("C:\\Synthetic\\never-open.png","never-open.png",32,24,"image",{},1));check(preview.receiveMedia(documentID,import->generation,{image},{},time),"Reference-only media completion appends current selected document");paint();check(state.selected()->media.size()==1&&state.bodyRect().height==147,"Attachment changes only source body viewport");click(350,125);type(u"Z");check(state.selected()->body=="正文Z","Resized viewport preserves prior body text and accepts subsequent editing");click(357,322);check(state.selected()->media.empty()&&state.bodyRect().height==264,"Source remove-media action restores text viewport without dropping its content");
  check(!preview.receiveMedia(documentID,import->generation+1,{image},{},time)&&state.selected()->media.empty(),"Late/stale media generation cannot mutate a different request");
@@ -140,7 +182,8 @@ void run(const wchar_t*shader,const std::filesystem::path&fixturePath,const std:
   check(preview.receiveMedia(documentID,drop->generation,{replacement},{},time)&&state.selected()->media.size()==1&&state.selected()->media[0]==replacement,"The dropped file attaches");paint();
   entry=*state.selected();entry.media.clear();check(state.update(entry,811692804.,time),"Remove the dropped fixture attachment");paint();}
  click(370,17);check(state.selected().has_value(),"Delete first opens source confirmation without mutating storage");click(254,210);check(!state.selected()&&state.entries().empty()&&!repository->entry(documentID),"Confirmed source deletion removes document from explicit temporary SQLite");
- settings.module=core::Module::power;modules.select(core::Module::power,time+=1);preview.update({},settings,modules.sample(time+.05).presentation,1,time+.05);check(!state.active()&&!preview.key({app::KeyKind::character,'X'},time+.05),"Module transition immediately disables editor/input while retaining outgoing artwork");preview.upload(renderer);composition.setEntries(renderer,preview.entries());composition.present(renderer);preview.update({},settings,modules.sample(time+1).presentation,1,time+1);check(preview.entries().empty()&&!preview.requiresFrames(time+1),"Completed section departure has no Archive frame demand");composition.setEntries(renderer,preview.entries());preview.collected(renderer);composition.detach(renderer);preview.release(renderer);check(renderer.stats().textures==0&&renderer.stats().meshes==0&&renderer.stats().nativeGroups==0&&!IsWindowVisible(window.hwnd),"Archive fixture tears down borrowed composition resources and never activates real TSF or UI");renderer.reset();
+ settings.module=core::Module::power;modules.select(core::Module::power,time+=1);preview.update({},settings,modules.sample(time+.05).presentation,1,time+.05);check(preview.standby()&&state.active()&&!preview.key({app::KeyKind::character,'X'},time+.05),"Module transition immediately disables editor/input while retaining outgoing artwork");preview.upload(renderer);composition.setEntries(renderer,preview.entries());composition.present(renderer);preview.update({},settings,modules.sample(time+1).presentation,1,time+1);check(preview.entries().empty()&&!preview.requiresFrames(time+1),"Completed section departure has no Archive frame demand");composition.setEntries(renderer,preview.entries());preview.collected(renderer);
+ preview.setOverlayVisible(false,time+1.1);check(!preview.standby()&&!state.active()&&!preview.mediaVisible(),"The HUD closing on another module ends the stand-by like a hidden Archive (document state deactivated)");preview.collected(renderer);composition.detach(renderer);preview.release(renderer);check(renderer.stats().textures==0&&renderer.stats().meshes==0&&renderer.stats().nativeGroups==0&&!IsWindowVisible(window.hwnd),"Archive fixture tears down borrowed composition resources and never activates real TSF or UI");renderer.reset();
 }
 }
 int wmain(int argc,wchar_t**argv){const auto initialized=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);try{check(SUCCEEDED(initialized)&&argc==4,"Pass shader, original compact source fixture and prepared Archive asset root");run(argv[1],argv[2],argv[3]);CoUninitialize();std::cout<<"PASS "<<checks<<" Archive owner integration checks\n";return 0;}catch(const std::exception&e){counting=false;if(SUCCEEDED(initialized))CoUninitialize();std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}

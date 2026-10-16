@@ -821,10 +821,13 @@ public:
     void setOverlayVisible(bool v, double t) override { a_.setOverlayVisible(v, t); }
     void overlayClosing(double t) override { a_.cancelInteraction(t); a_.setOverlayVisible(false, t); }
     // ArchivePreview::update builds the retained view whenever the Archive's
-    // content changed, shown or not (13-17 ms and about 3.4 MB of rasters).
+    // content changed while active (13-17 ms and about 3.4 MB of rasters).
     // Frames reach it only while Archive is shown, plus the first frame after
-    // (it takes its pose down and deactivates), so an Archive that is never
-    // opened builds nothing; the first showing builds it.
+    // (it takes its pose down), so an Archive that is never opened builds
+    // nothing; the first showing builds it. Switched away inside the open HUD
+    // it stands by (ArchivePreview::standby): the built view stays and the
+    // switch back only restores its parked textures; the HUD closing
+    // (setOverlayVisible(false)) releases it as before.
     void update(const ModuleFrame& f) override {
         const bool shown = presentationShows(f.presentation, core::Module::archive);
         if (!shown && !posed_) return;
@@ -858,7 +861,10 @@ public:
     bool filterKey(const NativeMessage& m) override { return a_.filterKey(m); }
     bool message(const NativeMessage& m, double t) override { return a_.message(m, t); }
     void focus(bool v, double t) override { a_.focus(v, t); }
-    bool releasesSelection(double t) override { return a_.finishEditing(t); }
+    // A module switch commits the text and saves but keeps the focused field
+    // (its formatting controls stay on the face, nothing is built again on
+    // either side of the switch); marked text defers the switch.
+    bool releasesSelection(double t) override { return a_.commitEditing(t); }
     bool finishEditing(double t) override { return a_.finishEditing(t); }
     bool flush(double t) override { return a_.finishEditing(t) && (!service_ || service_->flush()); }
     // HUDArchiveInteraction's projected title/date/body/category editors.
