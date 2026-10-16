@@ -64,6 +64,16 @@ public:
     // asked to resynchronize: sources whose state is read from a player's own
     // controls read them anew for that read's successors. Default: nothing.
     virtual void resynchronize()noexcept{}
+    // Owner thread: refreshControls() reads the players' own controls in the
+    // background and Changed follows once they were read, so the owner's
+    // periodic re-anchor (resynchronize) needs no read of its own: the one
+    // read after the new reading. Default: no (resynchronize, then a read).
+    virtual bool refreshesControls()const noexcept{return false;}
+    // Owner thread, nonblocking, for a resynchronize when refreshesControls():
+    // starts the background reading of the players' own controls; Changed
+    // follows when it completes (or at once when a source can only read them
+    // in its next read). Reads nothing itself and touches no other process.
+    virtual void refreshControls()noexcept{}
     // Thread-safe, terminal, nonthrowing. Revokes events/cancels async work;
     // neither waits for completion nor starts a timer or another worker.
     virtual void stop()noexcept=0;
@@ -109,6 +119,9 @@ public:
     // refresh() that also asks the provider to read the players' own controls
     // anew (NowPlayingProvider::resynchronize). The owner calls it at most
     // once per displayed second while a window-title player's time plays.
+    // A provider that refreshesControls() reads them in the background
+    // instead and its Changed brings the one read with the new reading (no
+    // read of the previous one meanwhile).
     void resynchronize();
     bool perform(modules::NowPlayingCommand);
     // Call after the shared utility completion/message drain. Capacity retry

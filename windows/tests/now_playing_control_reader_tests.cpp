@@ -435,6 +435,32 @@ void cefPage() {
     check(reading && reading->title == "Next Song - Artist A" && reading->artwork == "https://p4.music.126.net/Next==/2.jpg?param=600y600" && reading->fraction == 0. &&
               !reader.awaiting(), "Then the bar confirms the new track, its cover and its start");
 
+    // A confirmed bar is re-read through its progress bounds and play control
+    // only (the once-a-second re-anchor); every eighth re-read reads all
+    // found controls again, and a new window title does at once.
+    {
+        const auto before = reader.stats();
+        for (unsigned k = 0; k < 8; ++k) {
+            const auto count = notified.load();
+            shapes.track.place({0, 1476, static_cast<LONG>(10 + k), 1481});
+            reader.reading(handle, pid, true);
+            check(pump([&] { return notified.load() > count; }), "A re-read of the confirmed bar completes");
+            reading = reader.reading(handle, pid, false);
+            check(reading && reading->fraction && std::abs(*reading->fraction - (10. + k) / 2561.) < 1e-9 && reading->title == "Next Song - Artist A" &&
+                      reading->artwork == "https://p4.music.126.net/Next==/2.jpg?param=600y600" && reading->playPause && reading->previous && reading->next &&
+                      reading->playing == true, "Each re-read states the bar's fraction and play state under the confirmed title, with its cover and controls");
+        }
+        const auto after = reader.stats();
+        check(after.quick - before.quick == 7 && after.rereads - before.rereads == 8 && after.walks == before.walks && after.details - before.details == 3,
+              "Seven re-reads ask only the bar's bounds and play control; the eighth reads all found controls again (attributes and cover)");
+        const auto count = notified.load();
+        SetWindowTextW(window, L"Synthetic Song - Artist A");
+        reader.reading(handle, pid, true);
+        check(pump([&] { return notified.load() > count; }), "The re-read after another title change completes");
+        reading = reader.reading(handle, pid, false);
+        check(reading && !reading->title && reader.stats().quick == after.quick, "A new window title is never confirmed by a quick re-read");
+    }
+
     reader.shutdown();
     pump([] { return false; }, 0.5);
     DestroyWindow(view);

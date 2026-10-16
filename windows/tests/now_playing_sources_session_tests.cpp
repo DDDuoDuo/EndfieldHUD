@@ -15,8 +15,9 @@ namespace n=endfield::native;namespace m=endfield::modules;namespace t=endfield:
 namespace {
 unsigned checks{};
 void check(bool value,const char*what){++checks;if(!value)throw std::runtime_error(what);}
-struct Provider:n::NowPlayingProvider{Changed changed;Ready startReady,commandReady;Read readReady;unsigned reads{},commands{},resyncs{};
+struct Provider:n::NowPlayingProvider{Changed changed;Ready startReady,commandReady;Read readReady;unsigned reads{},commands{},resyncs{},refreshes{};bool background{};
     void resynchronize()noexcept override{++resyncs;}
+    bool refreshesControls()const noexcept override{return background;}void refreshControls()noexcept override{++refreshes;}
     void start(Changed c,Ready r)override{changed=std::move(c);startReady=std::move(r);}void read(Read r)override{++reads;readReady=std::move(r);}
     void perform(std::uint64_t,std::uint64_t,m::NowPlayingCommand,Ready r)override{++commands;commandReady=std::move(r);}void stop()noexcept override{}};
 struct Task final:n::NowPlayingWeb::Task{unsigned cancels{};void cancel()noexcept override{++cancels;}};
@@ -261,6 +262,32 @@ void neteaseSmtc(){
     f.read(smtcPlayer(.6,f.now,false));const auto paused=f.p->resyncs;
     check(!f.owner->nextWakeTime(f.now)&&f.p->resyncs==paused,"Paused: no tick and no reading");
 }
+// A provider that reads the players' controls in the background (the
+// production window-title players: the reader's completion wakes it) is not
+// read for the re-anchor itself: each displayed second starts one background
+// reading, and only the read its completion brings follows (no read of the
+// previous reading meanwhile). Paused or hidden: none.
+void backgroundRefresh(){
+    const std::string queue=R"({"list":[{"id":"2001","track":{"id":2001,"name":"Synthetic Song","artists":[{"name":"Example Artist"}],"album":{"name":"Fixture Album","picUrl":"http://p3.music.126.net/Queue==/2001.jpg"},"duration":233400}}]})";
+    Fixture f(true,false,500,body(queue));f.p->background=true;
+    f.ready(smtcPlayer(.5,10));
+    check(f.input().track->duration==233.4&&std::abs(*f.input().track->position-116.7)<1e-9,"The bar and the queue length give the time");
+    for(std::size_t k=0;k<f.transport.requests.size();++k)f.answer(k,f.transport.requests[k].kind==n::NowPlayingWeb::Kind::lyrics?body(R"({"code":200,"lrc":{"lyric":"[00:01]One"}})"):nullptr);
+    const auto reads=f.p->reads;unsigned ticks{};
+    for(unsigned k=0;k<3;++k){
+        const auto due=f.owner->nextWakeTime(f.now);if(!due)break;f.now=*due;f.owner->deadline(f.now);++ticks;f.flush();
+        check(f.p->reads==reads+k&&f.p->refreshes==k+1,"The tick starts the background reading and reads nothing itself");
+        f.p->changed();f.flush(); // the reading completed
+        check(f.p->reads==reads+k+1,"Its completion brings exactly one read");
+        f.p->readReady(smtcPlayer(.5+(f.now-10)/233.4,f.now));f.flush();
+    }
+    check(ticks==3&&f.p->refreshes==3&&f.p->resyncs==0,"Each displayed second asks for one background reading, never a resynchronizing read");
+    check(std::abs(*f.input().track->position-(116.7+(f.now-10)))<1e-6,"The time follows the new readings");
+    f.read(smtcPlayer(.6,f.now,false));const auto paused=f.p->refreshes;
+    check(!f.owner->nextWakeTime(f.now)&&f.p->refreshes==paused,"Paused: no tick and no reading");
+    f.owner->setActive(false,f.now);
+    check(!f.owner->nextWakeTime(f.now)&&f.p->refreshes==paused,"Hidden: no tick and no reading");
+}
 void visibility(){
     Fixture f;f.ready(media("Spotify.exe"));check(f.transport.requests.size()==1,"Visible owner starts one request");
     f.owner->setActive(false,f.now);check(f.transport.tasks[0]->cancels==1&&f.web->stats().inFlight==0&&!f.owner->nextWakeTime(f.now),"Hide cancels in-flight downloads and leaves no deadline");
@@ -348,7 +375,7 @@ void volume(){
 }
 }
 int main(){
-    try{lrclibLyrics();netease();windowPlayerCatalog();sizedCover();thumbnailFirst();playerBar();neteaseQueue();neteaseSmtc();embedded();visibility();offline();events();offThread();volume();
+    try{lrclibLyrics();netease();windowPlayerCatalog();sizedCover();thumbnailFirst();playerBar();neteaseQueue();neteaseSmtc();backgroundRefresh();embedded();visibility();offline();events();offThread();volume();
         std::cout<<"Now Playing sources session: "<<checks<<" checks passed (injected provider/transport/audio routes)\n";return 0;}
     catch(const std::exception&e){std::cerr<<"Now Playing sources session failed after "<<checks<<": "<<e.what()<<'\n';return 1;}
 }

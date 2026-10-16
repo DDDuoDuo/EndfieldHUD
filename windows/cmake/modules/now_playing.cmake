@@ -176,6 +176,20 @@ if(BUILD_TESTING)
     target_link_libraries(now_playing_control_reader_tests PRIVATE hud_now_playing_players hud_data oleacc ole32 oleaut32 user32)
     add_test(NAME now_playing_control_reader_contracts COMMAND now_playing_control_reader_tests)
     set_tests_properties(now_playing_control_reader_contracts PROPERTIES TIMEOUT 120)
+    if(TARGET hud_now_playing_scene)
+      # Cadence and cost of the NetEase path: the production owner against a
+      # simulated NetEase Cloud Music on a synthetic clock (reads per second
+      # presented, paused, closed; time and lyric accuracy), then the
+      # production bar reader against a hidden stand-in process of this
+      # executable (CPU per reading, per WinEvent, per enumeration, and the
+      # owner presented and closed on the real clock). No real player.
+      add_executable(now_playing_netease_cost_tests tests/now_playing_netease_cost_tests.cpp)
+      target_compile_definitions(now_playing_netease_cost_tests PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
+      target_link_libraries(now_playing_netease_cost_tests PRIVATE hud_now_playing_players hud_now_playing_session hud_now_playing_scene hud_data
+        oleacc ole32 oleaut32 user32)
+      add_test(NAME now_playing_netease_cost_contracts COMMAND now_playing_netease_cost_tests)
+      set_tests_properties(now_playing_netease_cost_contracts PROPERTIES TIMEOUT 300)
+    endif()
   endif()
 endif()
 
@@ -257,7 +271,7 @@ foreach(now_playing_target now_playing_model_tests now_playing_blend_tests now_p
     now_playing_service_tests now_playing_receipt_tests now_playing_image_tests now_playing_session_tests now_playing_preview_tests
     now_playing_warm_tests now_playing_lyrics_sources_tests now_playing_web_tests now_playing_web_cache_tests now_playing_web_http_tests now_playing_volume_tests
     now_playing_sources_session_tests now_playing_accessibility_tests now_playing_automation_tests now_playing_fixture_tests
-    now_playing_runtime_volume_tests now_playing_acceptance_tests now_playing_players_tests now_playing_player_controls_tests now_playing_control_reader_tests now_playing_probe
+    now_playing_runtime_volume_tests now_playing_acceptance_tests now_playing_players_tests now_playing_player_controls_tests now_playing_control_reader_tests now_playing_netease_cost_tests now_playing_probe
     hud_now_playing_area)
   if(TARGET ${now_playing_target})
     add_dependencies(now_playing_all ${now_playing_target})

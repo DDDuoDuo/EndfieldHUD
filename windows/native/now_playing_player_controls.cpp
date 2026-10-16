@@ -135,6 +135,29 @@ std::optional<m::NowPlayingControlNode> describe(const Element& e) {
     }
     return node;
 }
+// What a control's command and state are read from: its role, name and
+// description (its value only when both are empty); no child count.
+std::optional<m::NowPlayingControlNode> describeControl(const Element& e) {
+    if (!e.object) return std::nullopt;
+    VARIANT child = childVariant(e.child), role;
+    VariantInit(&role);
+    if (FAILED(e.object->get_accRole(child, &role))) return std::nullopt;
+    m::NowPlayingControlNode node;
+    node.role = roleOf(role);
+    VariantClear(&role);
+    node.label = text([&](BSTR* out) { return e.object->get_accName(child, out); });
+    auto description = text([&](BSTR* out) { return e.object->get_accDescription(child, out); });
+    if (node.label.empty()) node.label = std::move(description);
+    else node.description = std::move(description);
+    if (node.label.empty()) node.label = text([&](BSTR* out) { return e.object->get_accValue(child, out); });
+    return node;
+}
+// An element's screen bounds only.
+std::optional<m::NowPlayingControlBounds> boundsOf(const Element& e) {
+    long left{}, top{}, width{}, height{};
+    if (!e.object || FAILED(e.object->accLocation(&left, &top, &width, &height, childVariant(e.child))) || width < 0 || height < 0) return std::nullopt;
+    return m::NowPlayingControlBounds{static_cast<double>(left), static_cast<double>(top), static_cast<double>(width), static_cast<double>(height)};
+}
 // Bounds and, through IAccessible2, a web element's class tokens and image source.
 m::NowPlayingControlDetails detailsOf(const Element& e) {
     m::NowPlayingControlDetails out;
@@ -274,6 +297,14 @@ struct NowPlayingControlReader::State : std::enable_shared_from_this<State> {
         std::optional<Element> position, duration, playPause, playLabel, previous, next, progress, played, artwork;
         std::vector<Element> texts;
         bool any() const noexcept { return position || duration || playPause || previous || next || played; }
+        // The window title the bar's texts last showed, what the read that
+        // confirmed it found besides the bar's progress and play state, and
+        // the quick re-reads since (State::quickReread).
+        std::string confirmed;
+        std::optional<std::string> artworkURL;
+        bool previousFound{}, nextFound{};
+        unsigned quick{};
+        bool quickReadable() const noexcept { return progress && played && playPause && !position && !duration && !confirmed.empty(); }
     };
     struct Press {
         m::NowPlayingCommandKind kind{};
@@ -445,6 +476,36 @@ struct NowPlayingControlReader::State : std::enable_shared_from_this<State> {
             if (callback) callback();
         }
     }
+    // Pool thread: a confirmed player bar's progress and play state only (its
+    // window title unchanged since its texts showed it). false: re-read all.
+    static constexpr unsigned quickReads = 7; // between two full re-reads
+    bool quickReread(Elements& e, const std::string& caption, m::NowPlayingPlayerControls& found) {
+        if (!e.quickReadable() || caption != e.confirmed || e.quick >= quickReads) return false;
+        const auto n = describeControl(*e.playPause);
+        if (!n) return false;
+        if (e.playLabel) {
+            const auto label = describeControl(*e.playLabel);
+            if (!label || m::nowPlayingControlKind(*label) != m::NowPlayingCommandKind::playPause) return false;
+            found.playing = m::nowPlayingControlPlaying(label->label);
+            if (!found.playing) found.playing = m::nowPlayingControlPlaying(label->description);
+        } else {
+            if (m::nowPlayingControlKind(*n) != m::NowPlayingCommandKind::playPause) return false;
+            found.playing = m::nowPlayingControlPlaying(n->label);
+            if (!found.playing) found.playing = m::nowPlayingControlPlaying(n->description);
+        }
+        const auto bar = boundsOf(*e.progress), part = boundsOf(*e.played);
+        if (!bar || !part || bar->width <= 0) return false;
+        const double end = part->left + part->width - bar->left;
+        if (!std::isfinite(end)) return false;
+        found.fraction = std::clamp(end / bar->width, 0., 1.);
+        found.playPause = 3;
+        found.played = 6;
+        if (e.previousFound) found.previous = 4;
+        if (e.nextFound) found.next = 5;
+        found.artworkURL = e.artworkURL;
+        ++e.quick;
+        return true;
+    }
     // Pool thread: re-reads the found elements; false when any went away or
     // no longer is what it was (the page changed: walk again).
     bool reread(Elements& e, m::NowPlayingPlayerControls& found) {
@@ -548,18 +609,24 @@ struct NowPlayingControlReader::State : std::enable_shared_from_this<State> {
         const ULONGLONG begin = GetTickCount64();
         const auto caption = captionOf(window);
         m::NowPlayingPlayerControls found;
-        bool reread{};
+        bool reread{}, quick{};
         if (elements.any()) {
-            // The source re-reads its cached elements first.
-            reread = this->reread(elements, found);
-            if (!reread) {
+            // The source re-reads its cached elements first: a confirmed
+            // bar only its progress and play state, else all of them.
+            quick = quickReread(elements, caption, found);
+            if (!quick) {
+                found = {};
+                reread = this->reread(elements, found);
+            }
+            if (!quick && !reread) {
                 elements = {};
                 found = {};
             }
         }
-        if (reread) {
+        if (quick || reread) {
             std::lock_guard lock(mutex);
             ++counts.rereads;
+            if (quick) ++counts.quick;
         } else {
             // A web player's page document is the walk's root (its bar then
             // lies within the source walk's depth): the render widget's
@@ -650,7 +717,10 @@ struct NowPlayingControlReader::State : std::enable_shared_from_this<State> {
         reading.visible = IsWindowVisible(window) && !IsIconic(window);
         reading.fraction = found.fraction;
         reading.artwork = found.artworkURL;
-        if (!found.textLabels.empty()) {
+        if (quick) {
+            // Read under the title its texts showed (quickReread).
+            reading.title = caption;
+        } else if (!found.textLabels.empty()) {
             // The bar's track is the one the window title names. Once it is,
             // only the texts showing that title are read again.
             if (m::nowPlayingTitleShown(caption, found.textLabels)) {
@@ -665,6 +735,15 @@ struct NowPlayingControlReader::State : std::enable_shared_from_this<State> {
                 outcome.unconfirmed = true;
                 outcome.title = caption;
             }
+        }
+        if (!quick) {
+            // A full read: the next ones may ask only the bar's progress and
+            // play state while the window keeps the title it confirmed.
+            elements.confirmed = reading.title ? *reading.title : std::string();
+            elements.artworkURL = found.artworkURL;
+            elements.previousFound = found.previous.has_value();
+            elements.nextFound = found.next.has_value();
+            elements.quick = 0;
         }
         reading.sampledAt = time();
         return reading;
@@ -688,6 +767,10 @@ NowPlayingControlReader::~NowPlayingControlReader() { shutdown(); }
 void NowPlayingControlReader::setNotify(std::function<void()> value) {
     std::lock_guard lock(state_->mutex);
     state_->notify = std::move(value);
+}
+bool NowPlayingControlReader::notifies() const {
+    std::lock_guard lock(state_->mutex);
+    return !state_->stopped && bool(state_->notify);
 }
 std::optional<NowPlayingPlayerReading> NowPlayingControlReader::reading(std::uintptr_t window, std::uint32_t pid, bool refresh) {
     auto& s = *state_;

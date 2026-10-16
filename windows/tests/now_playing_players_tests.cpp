@@ -763,6 +763,86 @@ struct Owner {
     }
     const m::NowPlayingViewInput& input() const { return owner->presentation().input(); }
 };
+// The owner's once-a-second re-anchor without a read of the previous reading
+// (NowPlayingProvider::refreshControls): a system whose readings notify (the
+// Win32 reader) reads in the background at once and its notification brings
+// the one read; the synthetic desktop (immediate readings) is asked in the
+// next read, which the provider requests itself. Players without controls
+// are never read.
+class NotifyingDesktop final : public n::NowPlayingWindowSystem {
+public:
+    explicit NotifyingDesktop(std::shared_ptr<n::NowPlayingWindowFixture> inner) : inner_(std::move(inner)) {}
+    std::function<void()> watch(std::function<void()> changed) override { return inner_->watch(std::move(changed)); }
+    std::vector<m::NowPlayingPlayerWindow> windows() override { return inner_->windows(); }
+    F command(std::uintptr_t w, std::uint32_t pid, m::NowPlayingCommandKind kind, bool only) override { return inner_->command(w, pid, kind, only); }
+    std::optional<n::NowPlayingPlayerReading> reading(std::uintptr_t w, std::uint32_t pid, bool refresh) override { return inner_->reading(w, pid, refresh); }
+    bool notifiesReadings() const noexcept override { return true; }
+private:
+    std::shared_ptr<n::NowPlayingWindowFixture> inner_;
+};
+void refreshControls() {
+    const auto title = std::string("Song - Artist");
+    n::NowPlayingPlayerReading r{std::nullopt, std::nullopt, true, true, true, true, true};
+    r.fraction = .25;
+    r.title = title;
+    {
+        Direct d;
+        const auto at = [&] { return d.now; };
+        check(d.provider->refreshesControls(), "The window-title provider reads its players' controls in the background");
+        d.desktop->set({window(10, 7, netease, "OrpheusBrowserHost", title)});
+        d.provider->refreshControls();
+        check(d.changes == 0 && d.desktop->refreshes() == 0, "Before a read there is no player to read");
+        d.desktop->setReading(7, r, at);
+        d.read();
+        const auto refreshes = d.desktop->refreshes();
+        r.fraction = .3;
+        d.desktop->setReading(7, r, at);
+        d.provider->refreshControls();
+        check(d.changes == 1 && d.desktop->refreshes() == refreshes, "Immediate readings: the provider asks for the next read");
+        d.now = 6;
+        const auto next = d.read();
+        check(d.desktop->refreshes() == refreshes + 1 && next.value.progress && next.value.progress->fraction == .3, "and that read refreshes the player's controls");
+    }
+    {
+        Direct d;
+        const auto at = [&] { return d.now; };
+        auto notifying = std::make_shared<NotifyingDesktop>(d.desktop);
+        d.provider = n::nowPlayingWindowProvider([notifying] { return notifying; }, [&] { return d.now; }, d.activity)();
+        unsigned changes{};
+        bool ready{};
+        d.provider->start([&] { ++changes; }, [&](n::NowPlayingCommandResult result) { ready = result.failure == F::none; });
+        check(ready, "The provider over a notifying system is ready");
+        d.desktop->set({window(10, 7, netease, "OrpheusBrowserHost", title), window(12, 9, qq, "TXGuiFoundation", "Other - Artist")});
+        d.desktop->setReading(7, r, at);
+        d.read();
+        const auto refreshes = d.desktop->refreshes();
+        r.fraction = .4;
+        d.desktop->setReading(7, r, at);
+        d.now = 5.5;
+        d.provider->refreshControls();
+        check(d.desktop->refreshes() == refreshes + 1 && changes == 0,
+              "Notified readings start at once for the players read through their controls only; the notification brings the read");
+        d.now = 6;
+        const auto next = d.read();
+        check(d.desktop->refreshes() == refreshes + 1 && next.value.progress && next.value.progress->fraction == .4,
+              "The read after the notification takes the new reading without reading again");
+    }
+    {
+        // The composite forwards it to the window-title players once they started.
+        Owner o;
+        o.desktop->set({window(10, 7, netease, "OrpheusBrowserHost", title)});
+        o.desktop->setReading(7, r, [&] { return o.now; });
+        o.owner->setActive(true, o.now);
+        o.flush();
+        const auto refreshes = o.desktop->refreshes();
+        const auto reads = o.gsmtc->reads;
+        o.service.resynchronize();
+        o.flush();
+        check(o.desktop->refreshes() == refreshes + 1 && o.gsmtc->reads == reads, "A resynchronize reads the player's controls; GSMTC, still starting, is not read");
+        o.owner->setActive(false, o.now);
+    }
+}
+
 void composite() {
     Owner o;
     o.desktop->set({window(10, 7, netease, "OrpheusBrowserHost", "晴天 - 周杰伦")});
@@ -893,6 +973,7 @@ int main(int argc, char** argv) {
         estimate();
         controls();
         progressBar();
+        refreshControls();
         merge();
         neteaseSmtc();
         composite();

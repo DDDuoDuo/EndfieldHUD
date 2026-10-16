@@ -109,6 +109,11 @@ public:
         (void)window; (void)pid; (void)refresh;
         return std::nullopt;
     }
+    // Any thread: a refresh reads in the background and its completion calls
+    // the watch callback (the Win32 reader). Otherwise (the default, and the
+    // synthetic desktop, whose refresh is immediate) a refresh is asked for
+    // by the provider's next read.
+    virtual bool notifiesReadings() const noexcept { return false; }
     // Any thread: presses the player's own control for the command (its
     // accessibility default action) in the background and calls `done(true)`
     // once pressed, `done(false)` when it could not (on any thread, once).
@@ -157,7 +162,11 @@ private:
 // else estimated from the window's titleChangedAt and the pauses observed by
 // this provider (none when the change was not observed).
 // The cover the bar shows is NowPlayingMediaSnapshot::artworkURL.
-// resynchronize() reads the controls of the players that have them anew.
+// resynchronize() reads the controls of the players that have them anew in
+// the next read; refreshControls() (refreshesControls) starts those readings
+// at once in the background when the system notifies them
+// (notifiesReadings), so the read their completion brings is the only one,
+// and otherwise marks them and asks for that read.
 // Commands press the player's own control, else (modules::
 // nowPlayingWindowTransport) its media-key hotkey while it is the only
 // window-title player APPLICATION running (other processes of the same

@@ -343,6 +343,45 @@ public:
         for (auto& p : shared_->players)
             if (p.reading) p.resync = true;
     }
+    bool refreshesControls() const noexcept override { return true; }
+    // The owner's re-anchor: the players read through their own controls are
+    // read again in the background, and the read their completion brings
+    // (the watch callback) is the only one. A system whose refresh is
+    // immediate is asked in the next read instead, which this requests.
+    void refreshControls() noexcept override {
+        bool background{};
+        try {
+            background = system_->notifiesReadings();
+        } catch (...) {
+            background = false;
+        }
+        std::vector<std::pair<std::uintptr_t, std::uint32_t>> targets;
+        bool next{};
+        {
+            std::lock_guard lock(shared_->mutex);
+            if (shared_->stopped) return;
+            for (auto& p : shared_->players) {
+                if (!p.reading) continue;
+                if (background) {
+                    targets.emplace_back(p.window, p.pid);
+                } else {
+                    p.resync = true;
+                    next = true;
+                }
+            }
+        }
+        for (const auto& [window, pid] : targets) {
+            try {
+                (void)system_->reading(window, pid, true);
+            } catch (...) {
+                next = true; // read in the next read instead
+                std::lock_guard lock(shared_->mutex);
+                for (auto& p : shared_->players)
+                    if (p.pid == pid) p.resync = true;
+            }
+        }
+        if (next) shared_->event();
+    }
     void stop() noexcept override {
         std::function<void()> unwatch;
         {
@@ -520,6 +559,15 @@ public:
     void resynchronize() noexcept override {
         for (auto& part : parts_)
             if (part) part->resynchronize();
+    }
+    // Only the window-title players read their own controls.
+    bool refreshesControls() const noexcept override { return parts_[1] && parts_[1]->refreshesControls(); }
+    void refreshControls() noexcept override {
+        {
+            std::lock_guard lock(shared_->mutex);
+            if (shared_->stopped || shared_->phase[1] != Phase::ready) return;
+        }
+        if (parts_[1]) parts_[1]->refreshControls();
     }
     void stop() noexcept override {
         {
@@ -1261,6 +1309,9 @@ public:
     std::optional<NowPlayingPlayerReading> reading(std::uintptr_t window, std::uint32_t pid, bool refresh) override {
         return reader_->reading(window, pid, refresh);
     }
+    // The reader calls the watch callback after each completed reading (while
+    // a presented watch has given it one).
+    bool notifiesReadings() const noexcept override { return reader_->notifies(); }
     bool press(std::uintptr_t window, std::uint32_t pid, modules::NowPlayingCommandKind kind, std::function<void(bool)> done) override {
         return reader_->press(window, pid, kind, std::move(done));
     }

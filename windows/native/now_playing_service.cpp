@@ -111,7 +111,10 @@ NativeNowPlayingService::NativeNowPlayingService(app::UtilityExecutor&e,Factory 
 NativeNowPlayingService::~NativeNowPlayingService(){auto i=impl_;i->check();i->alive=false;i->stop();}
 void NativeNowPlayingService::setActive(bool value){auto i=impl_;i->check();if(i->published.active==value)return;if(value)i->activate();else i->stop();}
 void NativeNowPlayingService::refresh(){auto i=impl_;i->check();if(!i->published.active)return;if(!i->provider){i->stop();i->activate();return;}i->pendingRead=true;i->schedule();}
-void NativeNowPlayingService::resynchronize(){auto i=impl_;i->check();if(!i->published.active||!i->provider)return;i->pendingResync=true;refresh();}
+void NativeNowPlayingService::resynchronize(){auto i=impl_;i->check();if(!i->published.active||!i->provider)return;
+ // The players' controls are read in the background; their completion's Changed brings the one read.
+ if(i->ready&&i->provider->refreshesControls()){const auto p=i->provider;p->refreshControls();return;}
+ i->pendingResync=true;refresh();}
 bool NativeNowPlayingService::perform(modules::NowPlayingCommand request){auto i=impl_;i->check();const auto&s=i->published;if(!s.active||!s.fresh||s.failure!=NowPlayingServiceFailure::none||!s.media.session||!s.media.track)return false;const auto command=modules::nowPlayingCommand(*s.media.track,s.media.capabilities,request);if(!command)return false;need(i->commandToken!=UINT64_MAX,"Now Playing command token exhausted");NowPlayingCommandReceipt receipt{++i->commandToken,s.media.session->token,s.media.metadataRevision,*command,i->pendingCommand?std::optional(i->pendingCommand->receipt.token):std::nullopt};i->pendingCommand=Impl::Command{*command,s.media.session->token,s.media.metadataRevision,*s.media.track,receipt};i->published.commandAccepted=receipt;++i->published.revision;i->schedule();return true;}
 bool NativeNowPlayingService::drain(){auto i=impl_;return i->drain();}
 std::optional<double>NativeNowPlayingService::nextWakeTime()const{impl_->check();return impl_->deadline;}

@@ -15,6 +15,14 @@
 // kept per process (at most nowPlayingMaximumPlayerProcesses) for re-reading
 // and pressing, and released on the pool when the player leaves.
 //
+// Re-reads ask only what can change. A player bar read as a played fraction
+// (NetEase 3) whose texts showed the current window title is re-read through
+// its progress bar's and played part's bounds and its play/pause control's
+// role, name and description (five accessibility calls instead of about
+// thirty): its other controls, cover, class tokens and title texts were read
+// under that same title. A new window title, every eighth re-read and any
+// failure re-read all found controls (a failure there walks the page again).
+//
 // Chromium/CEF players (NetEase Cloud Music 3, CEF 91): the walk starts at
 // the page document itself (the Chrome_RenderWidgetHostHWND child's client,
 // or, when Chromium has dropped that window, the first document a few levels
@@ -43,7 +51,9 @@ namespace endfield::native {
 class NowPlayingControlReader final {
 public:
     struct Stats {
-        std::uint64_t readings{},walks{},rereads{},nodes{},activations{},presses{},pressFailures{},hung{},submitted{},refused{},details{};
+        // quick: re-reads of a confirmed bar's progress and play state only
+        // (also counted in rereads).
+        std::uint64_t readings{},walks{},rereads{},nodes{},activations{},presses{},pressFailures{},hung{},submitted{},refused{},details{},quick{};
         std::size_t processes{},elements{};
     };
     // `now`: the host's thread-safe monotonic clock (dates readings).
@@ -54,6 +64,8 @@ public:
     // Called on a pool thread after each completed reading (any thread may
     // replace it; null stops notifications).
     void setNotify(std::function<void()>);
+    // Whether completed readings are notified now (any thread).
+    bool notifies() const;
     // NowPlayingWindowSystem::reading / press (see there).
     std::optional<NowPlayingPlayerReading> reading(std::uintptr_t window, std::uint32_t pid, bool refresh);
     bool press(std::uintptr_t window, std::uint32_t pid, modules::NowPlayingCommandKind, std::function<void(bool)> done);
