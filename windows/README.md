@@ -3460,7 +3460,7 @@ it.
 
 ### Test runs
 
-Laptop validation: pending
+Laptop validation (code at `e8cfd3a`): a clean incremental Release build; all **399** registered suites pass in the full interactive run (including the new `map_pulse_cadence_contracts`, `application_idle_trace`, the Map, Notes video, Media Assembly, Now Playing and Activity suites, and `packaging_perf_probe_contracts` on the first run). Combined module coverage and hardware composition (1,271,498 checks) pass.
 
 New registered test in this checkpoint: `map_pulse_cadence_contracts`.
 Per-commit laptop slots are quoted above (`db83a05` and `e8cfd3a` record
