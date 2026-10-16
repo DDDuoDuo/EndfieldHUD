@@ -566,7 +566,21 @@ void run(HWND hwnd, gpu::Renderer& renderer, const gpu::NativeNotesControlsAsset
     // method is bypassed and no actual TSF manager or IME is activated.
     const core::Point textPoint{original.x + 30, original.y + 45};
     check(fixture.preview->covers(textPoint), "Projected note body participates in shell input occlusion");
+    check(!fixture.preview->textCursorAt(textPoint), "A card that is not being edited keeps the source cursor");
     check(fixture.pointer(app::PointerKind::doubleClick, textPoint), "Actual double-click enters the plain projected field");
+    {
+        // HUDProjectedTextView.projectedCursor: the I-beam where a press places
+        // the caret (the open field), the source cursor over the card's header
+        // controls, its resize corner and outside it; answered without allocation.
+        const core::Point header{original.x + 30, original.y + 10}, corner{original.x + original.width - 4, original.y + original.height - 4},
+            outside{original.x - 40, original.y + 45};
+        allocations = 0;
+        counting = true;
+        const bool cursors = fixture.preview->textCursorAt(textPoint) && !fixture.preview->textCursorAt(header) &&
+            !fixture.preview->textCursorAt(corner) && !fixture.preview->textCursorAt(outside);
+        counting = false;
+        check(cursors && allocations == 0, "The open field answers the I-beam; the header, resize corner and space beside the card do not");
+    }
     check(fixture.key(app::KeyKind::down, VK_HOME, tools::NotesKeyModifiers{true, false, false, false}),
         "Explicit Ctrl+Home moves the source end-selected editor to the insertion test start");
     check(fixture.composition.sceneCount() == 4 && fixture.matching("projected-editor-glyphs", true) == 1,
@@ -582,6 +596,7 @@ void run(HWND hwnd, gpu::Renderer& renderer, const gpu::NativeNotesControlsAsset
     records = savedNotes(fixture.root.path);
     check(records.size() == 1 && records[0].text == original.text, "Draft input leaves persisted SQLite text unchanged until finish");
     check(fixture.key(app::KeyKind::down, VK_ESCAPE), "Actual finish command exits the projected editor");
+    check(!fixture.preview->textCursorAt(textPoint), "Finishing the field restores the source cursor");
     auto edited = std::string("A★ ") + original.text;
     records = savedNotes(fixture.root.path);
     check(records.size() == 1 && records[0].text == edited && records[0].createdAt == original.createdAt &&

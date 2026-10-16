@@ -97,4 +97,8 @@ std::optional<std::uint32_t> insertionHit(const Layout&,std::uint32_t textUnits,
 // A pointer press in client pixels: anywhere inside the rounded viewport
 // (Placement owns that test) places the insertion point; nullopt outside it.
 std::optional<std::uint32_t> projectedInsertion(const Document&,const Layout&,Point client,const Placement&);
+// The same viewport test without the layout: true where projectedInsertion
+// would place the caret, the open editor's I-beam area (the source
+// HUDProjectedTextView.projectedCursor). No allocation or layout query.
+bool placementContains(const Placement&,Point client)noexcept;
 } // namespace endfield::core::text

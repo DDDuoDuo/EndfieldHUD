@@ -90,6 +90,13 @@ public:
     bool requiresFrames(double time)const;
     bool pointerLocked()const;
     bool covers(core::Point logicalClientPoint)const;
+    // The pointer cursor (ModuleOwner::cursorAt): the I-beam over the open
+    // field where a press places the caret (NativeNotesWorkspace::editorAt),
+    // as HUDProjectedTextView.projectedCursor; none while a formatting,
+    // media-source or Shelf menu is open (HUDNotesInteraction.capturesPointer
+    // hit-tests only the menus) or over the deletion confirmation. No
+    // allocation, state change, OS or clock call.
+    bool textCursorAt(core::Point logicalClient)const noexcept;
     bool pointer(const app::PointerEvent&,double time);
     bool wheel(const app::WheelEvent&,double time);
     // Defaults sample the current thread's delivered keyboard modifiers. Tests

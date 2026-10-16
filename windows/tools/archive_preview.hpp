@@ -64,6 +64,12 @@ public:
     bool requiresFrames(double)const;std::optional<double>nextWakeTime()const noexcept;
     bool deadline(double);void queueCapacityAvailable();
     bool covers(core::Point logical)const;bool pointer(const app::PointerEvent&,double);
+    // The pointer cursor (ModuleOwner::cursorAt): the I-beam over the open
+    // document's title, date and body fields, as HUDProjectedTextView.
+    // projectedCursor; while a menu or the gallery scroll grab holds the
+    // pointer (HUDArchiveInteraction.capturesPointer, hitTestMenu) only over
+    // the category name field. No allocation, state change, OS or clock call.
+    bool textCursorAt(core::Point logicalClient)const noexcept;
     bool wheel(const app::WheelEvent&,double);bool key(const app::KeyEvent&,double,std::optional<ArchiveKeyModifiers> =std::nullopt);
     bool filterKey(const app::NativeMessage&);bool message(const app::NativeMessage&,double);
     void focus(bool,double);void cancelInteraction(double);bool pointerLocked()const noexcept;

@@ -249,6 +249,13 @@ public:
     std::optional<NativeNotesCardToken> confirmDeletionRetainingArtwork(std::string_view);
     bool settleDeletion(NativeNotesCardToken); // then republish + collectRetired
     std::optional<NativeNotesWorkspaceHit> hitTest(core::Point physicalClientPoint)const;
+    // The open field's I-beam (source HUDProjectedTextView.projectedCursor):
+    // true exactly where hitTest answers Kind::editor - the topmost shown card
+    // under the point is the edited one, the point is outside its resize
+    // corner and inside the editor's rounded viewport. No layout query,
+    // allocation or state change; false off the owner thread or while the
+    // workspace waits for its next state synchronization.
+    bool editorAt(core::Point physicalClientPoint)const noexcept;
     // Positive-down physical client displacement, mapped through the top
     // card's CURRENT sampled projection. True means consumed, including at
     // bounds/zero delta/during a card gesture; nonfinite input returns false.

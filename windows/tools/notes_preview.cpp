@@ -499,6 +499,11 @@ bool NotesPreview::covers(core::Point p)const{const auto&i=*impl_;if(!i.hasPose|
     if(i.confirmationVisible){const auto q=i.confirmationProjection.unproject(p);if(q&&i.confirmation.actionAt(*q))return true;}
     if(i.workspace->hitTest(p))return true;if(i.moduleVisible){const auto q=i.controlsProjection.unproject(p);if(q&&i.controls.actionAt(*q))return true;}return false;
 }
+bool NotesPreview::textCursorAt(core::Point p)const noexcept{const auto&i=*impl_;if(!i.hasPose||!i.moduleInput||!std::isfinite(p.x)||!std::isfinite(p.y))return false;
+    if((i.mediaMenu&&i.mediaMenu->acceptsInput())||(i.formatMenu&&i.formatMenu->acceptsInput()))return false;p={p.x*i.metrics.scale,p.y*i.metrics.scale};
+    if(i.confirmationVisible){const auto q=i.confirmationProjection.unproject(p);if(q&&i.confirmation.actionAt(*q))return false;}
+    return i.workspace->editorAt(p);
+}
 bool NotesPreview::pointer(const app::PointerEvent&e,double t){return impl_->pointer(e,t);}
 bool NotesPreview::wheel(const app::WheelEvent&e,double t){
     auto&i=*impl_;const Impl::TimeScope event(i,t);

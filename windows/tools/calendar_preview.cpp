@@ -109,6 +109,8 @@ void CalendarPreview::update(const M&center,const core::source::DesktopChromeSet
 bool CalendarPreview::requiresFrames(double t)const{const auto&i=*impl_;t=std::max(t,i.time);if(!i.pose)return false;return i.canvas.requiresFrames(t)||(i.menu&&((!i.options.reduceMotion&&t<i.menu->opened+.16)||i.menu->scene.requiresFrames(t)))||bool(i.closing);}
 bool CalendarPreview::covers(P p)const{const auto q=impl_->local(p);return q&&(impl_->menu||inside({0,0,400,440},*q));}
 bool CalendarPreview::capturesPointer()const noexcept{return bool(impl_->menu)||impl_->dragging;}
+bool CalendarPreview::textCursorAt(P p)const noexcept{const auto&i=*impl_;if(!i.menu||i.menu->closing||i.menu->captured||!std::isfinite(p.x)||!std::isfinite(p.y))return false;const auto q=i.local(p);if(!q)return false;
+ const P m{q->x-30,q->y-77};return std::any_of(fieldRects.begin(),fieldRects.end(),[&](const R&r){return inside(r,m);});}
 bool CalendarPreview::pointer(const app::PointerEvent&e,double t){auto i=impl_;const Impl::Event event(*i,t);i->point=P{e.x,e.y};const auto q=i->local(*i->point);
  if(e.kind==app::PointerKind::captureLost||(e.kind==app::PointerKind::up&&e.button==app::PointerButton::left)){const bool was=i->pressed||i->dragging;i->pressed=i->dragging=false;if(i->menu)for(auto&f:i->menu->fields)f->editor().pointerUp();i->feedback(q);return was;}
  if(e.kind==app::PointerKind::leave){i->point.reset();i->feedback({});return false;}if(!i->input)return false;if(i->menu&&(i->menu->pendingDismiss||i->menu->captured))return true;

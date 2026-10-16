@@ -46,6 +46,11 @@ public:
     bool covers(core::Point logicalClientPoint)const;
     // Menu routing captures pointers; Calendar does not lock the source gyro.
     bool capturesPointer()const noexcept;
+    // The pointer cursor (ModuleOwner::cursorAt): the I-beam over the open
+    // event menu's three fields (HUDCalendarInteraction.hitTestMenu asks its
+    // editors first, HUDProjectedTextView.projectedCursor); none without the
+    // menu or while it closes. No allocation, state change, OS or clock call.
+    bool textCursorAt(core::Point logicalClient)const noexcept;
     bool pointer(const app::PointerEvent&,double time);
     bool wheel(const app::WheelEvent&,double time);
     bool key(const app::KeyEvent&,double time,

@@ -617,6 +617,13 @@ std::optional<NativeNotesWorkspaceHit>NativeNotesWorkspace::hitTest(core::Point 
         const auto actions=s->presentation.actions();for(auto a=actions.rbegin();a!=actions.rend();++a)if(!a->accessibilityOnly&&inside(a->localRect,local))return NativeNotesWorkspaceHit{id,a->verb,NativeNotesWorkspaceHit::Kind::action,*p};
         return NativeNotesWorkspaceHit{id,"select",NativeNotesWorkspaceHit::Kind::body,*p};}return{};
 }
+bool NativeNotesWorkspace::editorAt(core::Point client)const noexcept{const auto&i=*impl_;
+    if(!i.field||!i.field->native||GetCurrentThreadId()!=i.thread||i.synchronized!=i.state.revision()||!i.pose||i.pose->opacity==0)return false;
+    for(auto it=i.active.rbegin();it!=i.active.rend();++it){const auto*s=*it;if(!s->visible||s->outgoing||s->deleted||s->motion.opacity==0)continue;const auto p=s->hitProjection.unproject(client);if(!p||!inside(s->rect,*p))continue;
+        if(s->presentation.noteID()!=i.field->id||inside({s->rect.width-15,s->rect.height-15,15,15},{p->x-s->rect.x,p->y-s->rect.y}))return false;
+        return text::placementContains(i.field->native->placement(),client);}
+    return false;
+}
 bool NativeNotesWorkspace::setFeedback(std::string_view id,std::optional<std::string_view>verb,bool pressed,bool reduced,double time){auto&i=*impl_;i.check();need(std::isfinite(time),"Invalid Notes feedback clock");if(i.lastTime)time=std::max(time,*i.lastTime);auto*s=i.find(id);if(!s||!s->visible)return false;const bool changed=s->native->setFeedback(verb,pressed,reduced,time);i.lastTime=time;if(i.pose)i.pose->time=time;return changed;}
 bool NativeNotesWorkspace::scrollAt(core::Point point,double delta){
     auto&i=*impl_;i.check();

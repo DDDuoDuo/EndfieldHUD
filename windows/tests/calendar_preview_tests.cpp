@@ -6,6 +6,7 @@
 #include <objbase.h>
 #include <array>
 #include <atomic>
+#include <cmath>
 #include <cstdlib>
 #include <deque>
 #include <iostream>
@@ -53,6 +54,13 @@ void owner(const std::filesystem::path&shader){
  const auto character=[&](unsigned scalar){check(preview.key({app::KeyKind::unicodeCharacter,scalar},ownerTime,tools::CalendarKeyModifiers{}),"Calendar field receives synthetic UTF16 text through the shared editor");};
  const auto outside=point(470,100);check(!preview.pointer({app::PointerKind::down,app::PointerButton::left,outside.x,outside.y},ownerTime)&&!preview.pointer({app::PointerKind::up,app::PointerButton::left,outside.x,outside.y},ownerTime),"Outside Calendar down/up remains available to navigation without poisoning press state");
  click(373,289);frame(ownerTime+.2);check(preview.editing()&&preview.focusedField()==mod::CalendarEditorField::title&&preview.entries().size()>=5,"New event shows three actual projected fields above the original menu, focused title");
+ // HUDCalendarInteraction.hitTestMenu -> HUDProjectedTextView.projectedCursor:
+ // the I-beam over the open menu's three fields (title 44,126; date 44,176;
+ // details 44,226 in canvas points), the source cursor between and beside
+ // them, answered without allocation.
+ {const auto title=point(200,141),date=point(60,190),details=point(340,300),gap=point(200,166),save=point(342,357),canvas=point(100,40);
+  allocations=0;counting=true;bool cursors{};try{cursors=preview.textCursorAt(title)&&preview.textCursorAt(date)&&preview.textCursorAt(details)&&!preview.textCursorAt(gap)&&!preview.textCursorAt(save)&&!preview.textCursorAt(canvas)&&!preview.textCursorAt({std::nan(""),0});}catch(...){counting=false;throw;}counting=false;
+  check(cursors&&allocations==0,"The open event menu's fields answer the I-beam, the menu's buttons and the canvas beside them do not");}
  {const auto ax=preview.accessibility();const auto find=[&](std::string_view id)->const mod::CalendarAccessible*{for(const auto&e:ax)if(e.id==id)return &e;return nullptr;};const auto*add=find("new");const auto*title=find("field:title");const auto*save=find("save");const auto*day=find("day:2026-10-04");
   check(add&&add->label=="Add event"&&add->rect==core::Rect{359,275,29,29}&&day&&day->label=="2026-10-04"&&save&&save->label=="Save"&&save->rect==core::Rect{327,342,30,30}&&title&&title->role==mod::CalendarAccessibleRole::textField&&title->label=="Title"&&title->rect==core::Rect{44,126,312,30},"Active Calendar exposes source AX canvas buttons plus the open menu's buttons and fields in canvas points");}
  // UI Automation peers (HUDCalendarInteraction.layoutAccessibility) over the
@@ -75,7 +83,7 @@ void owner(const std::filesystem::path&shader){
  click(60,320);frame(ownerTime+.2);check(preview.editing(),"Source event row reopens the original saved draft");const auto warmRaster=raster.stats();const auto warmGPU=renderer.stats();const auto jobs=queue.jobs.size();allocations=0;counting=true;try{for(unsigned n=0;n<120;++n)frame(ownerTime+1./60,core::Matrix4::rotation(.000001*n,.000002*n,0));}catch(...){counting=false;throw;}counting=false;
  check(allocations==0&&raster.stats().rasterizations==warmRaster.rasterizations&&raster.stats().textLayoutsCreated==warmRaster.textLayoutsCreated&&renderer.stats().textureUploads==warmGPU.textureUploads&&renderer.stats().nativeGroupRenders==warmGPU.nativeGroupRenders&&queue.jobs.size()==jobs,"120 real Calendar owner tilt frames allocate, shape, raster, upload and schedule no new content");
  frame(ownerTime+.01);click(56,355);check(state.events().size()==1,"Delete first shows source confirmation and preserves the event");frame(ownerTime+.01);click(97,355);check(state.events().size()==1,"Confirmed deletion remains durable-callback owned");queue.drain();frame(ownerTime+.2);check(state.events().empty()&&!preview.editing(),"Deletion confirmation removes only the selected event after persistence success");
- click(373,289);frame(ownerTime+.2);character('K');preview.setLanguage(core::Language::korean,ownerTime+.01);preview.setAppearance({false,{1,159./255,10./255,1}},ownerTime+.02);frame(ownerTime+.04);check(preview.editing()&&preview.focusedField()==mod::CalendarEditorField::title,"Language/theme updates preserve the active unsaved Calendar draft and focus owner");key(VK_ESCAPE);frame(ownerTime+.2);check(state.events().empty()&&!preview.editing(),"Escape disposes draft without inventing a save");
+ click(373,289);frame(ownerTime+.2);character('K');preview.setLanguage(core::Language::korean,ownerTime+.01);preview.setAppearance({false,{1,159./255,10./255,1}},ownerTime+.02);frame(ownerTime+.04);check(preview.editing()&&preview.focusedField()==mod::CalendarEditorField::title,"Language/theme updates preserve the active unsaved Calendar draft and focus owner");key(VK_ESCAPE);frame(ownerTime+.2);check(state.events().empty()&&!preview.editing(),"Escape disposes draft without inventing a save");check(!preview.textCursorAt(point(200,141)),"A closed event menu answers no I-beam");
  {namespace probe=tests::peers;check(calendarPeers->refresh(nullptr)&&!probe::find(*calendarPeers,"save")&&probe::invoke(probe::find(*calendarPeers,"new"))==S_OK&&preview.editing()&&preview.focusedField()==mod::CalendarEditorField::title,"Add event presses like its click and opens the editor");frame(ownerTime+.2);
   check(probe::setValue(probe::find(*calendarPeers,"field:title"),L"AX")==S_OK,"The title is written through its peer");
   const auto save=probe::find(*calendarPeers,"save");check(save&&probe::invoke(save)==S_OK&&state.events().empty(),"Save presses like its click and waits for persistence");queue.drain();frame(ownerTime+.2);

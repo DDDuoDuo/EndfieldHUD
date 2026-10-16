@@ -126,6 +126,13 @@ void pointerLines(HWND hwnd,bool chunked){
     std::uint32_t second{};for(std::uint32_t at=start+1;at<end&&!second;++at)if(caret(at).y>caret(start).y+1)second=at;check(second>start+2,"The paragraph soft-wraps");
     const auto lineEnd=gpu::notesVisualLineEnd(w.editor()->geometry(),t,start);check(t[lineEnd]==u' '&&lineEnd+1==second,"End stops before the soft wrap's space");
     const auto right=w.editor()->placement().viewport.width-2,below=caret(size).y+caret(size).height+12;check(below+4<w.editor()->placement().viewport.height&&w.editor()->maximumScrollOffset()==0,"The card's field shows every line with room below");
+    // HUDProjectedTextView.projectedCursor: the I-beam exactly where a press
+    // reaches the editor (inside the field's rounded viewport, outside the
+    // resize corner), never over the header or beside the card.
+    const auto inField=client(right,lineY(0));
+    {unsigned beams{},others{};for(double y=30;y<=352;y+=6)for(double x=30;x<=252;x+=6){const core::Point q{x,y};const auto hit=w.hitTest(q);const bool editor=hit&&hit->kind==gpu::NativeNotesWorkspaceHit::Kind::editor;
+        check(w.editorAt(q)==editor,"The I-beam answers exactly where a press reaches the open field");++(editor?beams:others);}
+     check(beams>100&&others>100&&w.editorAt(inField)&&w.editorAt(client(1,below))&&!w.editorAt({70,50})&&!w.editorAt({237,337})&&!w.editorAt({20,100})&&!w.editorAt({std::nan(""),100}),"The open field answers the I-beam; the header, resize corner and space beside the card do not");}
     check(press(right,lineY(0))&&same(sel(),{2,2}),"A press right of a line puts the caret before its hard break");
     check(press(right,lineY(3))&&same(sel(),{3,3}),"A press right of an empty line stays on that line");
     check(press(right,lineY(start))&&same(sel(),{lineEnd,lineEnd}),"A press right of a soft-wrapped line lands where End does, drawn on that line");
@@ -137,6 +144,7 @@ void pointerLines(HWND hwnd,bool chunked){
     check(w.editor()->pointerDrag(client(right+60,lineY(start))).handled&&same(sel(),{0,lineEnd}),"Dragging past a wrapped line's end selects to the end before the wrap");w.syncEditor();
     check(w.editor()->pointerDrag(client(right*.5,below+400)).handled&&same(sel(),{0,size}),"Dragging below the last line selects to the end of the text");w.editor()->pointerUp();w.syncEditor();
     check(w.finishEditing().finished&&state.note(id)->text==note.text,"Pointer insertion never edits the note");
+    check(!w.editorAt(inField)&&w.hitTest(inField)&&w.hitTest(inField)->kind!=gpu::NativeNotesWorkspaceHit::Kind::editor,"A finished field restores the source cursor");
 }
 } // namespace
 int main(){

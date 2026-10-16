@@ -121,6 +121,10 @@ std::optional<std::uint32_t> insertionHit(const Layout& layout,std::uint32_t uni
         if(const auto end=caretAt(layout,units);end&&p.y>=end->y+end->height)return units;
     return at;
 }
+bool placementContains(const Placement& p,Point client)noexcept{
+    if(!validPlacement(p)||!p.visible||!std::isfinite(client.x)||!std::isfinite(client.y))return false;const auto local=p.projection.unproject(client);
+    return local&&roundedContains(p.viewport,p.cornerRadius,*local);
+}
 std::optional<std::uint32_t> projectedInsertion(const Document& doc,const Layout& layout,Point client,const Placement& p){
     if(!validPlacement(p)||!p.visible||layout.textRevision()!=doc.revision())return {};const auto local=p.projection.unproject(client);
     if(!local||!roundedContains(p.viewport,p.cornerRadius,*local))return {};

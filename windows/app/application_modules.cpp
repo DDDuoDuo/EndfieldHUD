@@ -125,6 +125,9 @@ template <class Preview> std::optional<ModuleCursor> previewTextCursor(const Pre
     if constexpr (TextCursorPreview<Preview>) return preview.textCursorAt(point) ? std::optional(ModuleCursor::text) : std::nullopt;
     else { (void)preview; (void)point; return std::nullopt; }
 }
+// The previews whose open editors show the I-beam; a changed signature
+// would otherwise silently keep the source cursor over their fields.
+static_assert(TextCursorPreview<tools::NotesPreview> && TextCursorPreview<tools::ArchivePreview> && TextCursorPreview<tools::CalendarPreview>);
 // True when a logical client point lies inside the convex quad a canvas rect
 // projects to: its four corners one by one through `project` (canvas rect ->
 // logical client rect; a zero-size rect is that corner). Equivalent to the
