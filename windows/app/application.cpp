@@ -1723,9 +1723,18 @@ void Application::Impl::publishNative(){
     // The old wrapper is below the incoming wrapper, independently of owner
     // registration order. Floating Notes stay above center modules; modal
     // confirmations stay above everything.
-    const auto appendModule=[&](core::Module module){auto*owner=registry.presenter(module);if(!owner||std::find(appendedOwners.begin(),appendedOwners.end(),owner)!=appendedOwners.end())return;appendedOwners.push_back(owner);
-        registry.guard(*owner,[&]{for(const auto&e:owner->entries(module))ordered.push_back(e);},"publish");};
-    if(notes){const auto&sample=notes->modulePresentation();appendModule(sample.current.module);if(sample.incoming)appendModule(sample.incoming->module);}
+    const auto appendModule=[&](core::Module module,const gpu::PlaneAlphaMask*cut){auto*owner=registry.presenter(module);if(!owner||std::find(appendedOwners.begin(),appendedOwners.end(),owner)!=appendedOwners.end())return;appendedOwners.push_back(owner);
+        registry.guard(*owner,[&]{for(const auto&e:owner->entries(module)){ordered.push_back(e);if(cut&&!ordered.back().cut)ordered.back().cut=cut;}},"publish");};
+    // SystemHUDView.applySourceMapOcclusion masks the whole module host while
+    // the Map is presented, its switches included: during a switch into or
+    // out of the Map the other module's content and registration brackets are
+    // cut by the Storage and Activity Monitor plates too (the Map cuts its own
+    // artwork and brackets; MapPreview::transitionCut, valid after upload).
+    if(notes){const auto&sample=notes->modulePresentation();
+        const bool mapSwitch=map&&sample.incoming&&(sample.current.module==core::Module::map||sample.incoming->module==core::Module::map);
+        const auto*cut=mapSwitch?map->transitionCut():nullptr;
+        appendModule(sample.current.module,sample.current.module==core::Module::map?nullptr:cut);
+        if(sample.incoming)appendModule(sample.incoming->module,sample.incoming->module==core::Module::map?nullptr:cut);}
     // Core-plane layers (e.g. the Power charge badge) sit inside the canvas,
     // below the floating Notes workspace (SystemHUDView view order).
     registry.forEach([&](ModuleOwner&o){for(const auto&e:o.planeEntries())ordered.push_back(e);},"publish");
@@ -1737,11 +1746,11 @@ void Application::Impl::publishNative(){
     const auto fontRevision=rasterizer.fontRevision();
     for(const auto&e:ordered)if(e.scene->fontRevision()!=fontRevision)e.scene->refreshTypography();
     const auto notesRevision=notes?notes->compositionRevision():0;
-    bool changed=ordered.size()!=published.size()||notesRevision!=publishedNotesRevision;if(!changed)for(std::size_t n=0;n<ordered.size();++n){const auto&e=ordered[n];const auto&p=published[n];if(e.scene!=p.scene||e.scene->contentRevision()!=p.content||e.scene->resourceRevision()!=p.resources||e.after.data()!=p.after||e.after.size()!=p.count){changed=true;break;}}
+    bool changed=ordered.size()!=published.size()||notesRevision!=publishedNotesRevision;if(!changed)for(std::size_t n=0;n<ordered.size();++n){const auto&e=ordered[n];const auto&p=published[n];if(e.scene!=p.scene||e.scene->contentRevision()!=p.content||e.scene->resourceRevision()!=p.resources||e.after.data()!=p.after||e.after.size()!=p.count||e.cut!=p.cut){changed=true;break;}}
     // Skill selection and sprite swaps reuse their draw buffer. Pointer and
     // count alone cannot detect those resource-identity changes.
     if(!changed)changed=!composition.supplementalBindingsMatch(ordered);
-    if(changed){composition.setEntries(renderer,ordered);published.clear();for(const auto&e:ordered)published.push_back({e.scene,e.scene->contentRevision(),e.scene->resourceRevision(),e.after.data(),e.after.size()});
+    if(changed){composition.setEntries(renderer,ordered);published.clear();for(const auto&e:ordered)published.push_back({e.scene,e.scene->contentRevision(),e.scene->resourceRevision(),e.after.data(),e.after.size(),e.cut});
         registry.forEach([&](ModuleOwner&o){o.collected(renderer);},"collect");if(archiveMedia)archiveMedia->collectRetired();if(mediaBroker)mediaBroker->collectRetired();}
     publishedNotesRevision=notesRevision;
 }

@@ -134,6 +134,13 @@ struct LayerCompositionEntry {
     // resources itself. Numeric poses may change; IDs/count changes need setEntries.
     // The scene's optional screen transform also applies to these records.
     std::span<const DrawObject> after;
+    // Optional host occlusion, borrowed until the next setEntries: an alpha
+    // mask in world coordinates applied in present() to every draw of this
+    // entry (scene surfaces and `after`) that carries no alpha mask of its
+    // own - e.g. the Map's transition cut over the other module of a switch
+    // into or out of the Map. Its texture is caller-owned and resident; its
+    // numeric values may change between presents, the pointer may not.
+    const PlaneAlphaMask* cut{};
 };
 class LayerComposition final {
 public:
@@ -162,7 +169,7 @@ public:
     std::size_t sceneCount()const noexcept{return scenes_.size();}
 private:
     struct Entry {LayerScene* scene{};std::uint64_t structureRevision{},resourceRevision{};std::size_t begin{},count{};
-        std::span<const DrawObject> after;std::size_t stageBegin{};};
+        std::span<const DrawObject> after;std::size_t stageBegin{};const PlaneAlphaMask* cut{};};
     std::vector<Entry> scenes_;
     std::vector<DrawObject> draws_;
     std::vector<core::Matrix4> inverseTransforms_;
@@ -170,7 +177,7 @@ private:
     Renderer* renderer_{};
     void checkRenderer(Renderer&)const;
     bool updateRetainedResources(Renderer&,std::span<const LayerCompositionEntry>);
-    void copyPrepared(const Entry&);
+    void copyPrepared(const Entry&,const core::Matrix4& inverseTransform);
 };
 // The source native layers already project into top-left viewport points.
 // This final matrix changes only those coordinates to D3D's clip space.

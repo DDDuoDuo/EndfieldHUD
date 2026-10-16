@@ -237,6 +237,15 @@ void LayerScene::present(Renderer& renderer,const Matrix& placement){
     need(!compositionOwner_&&!groupOwner_&&!publicationOwner(renderer),"A composed/grouped renderer cannot publish an exclusive native draw list");
     renderer.setDrawList(prepareDraws(placement));
 }
+namespace {
+// A draw's own alpha mask wins; otherwise the entry's host cut, mapped through
+// the composition transform (engaged storage is reused: no per-frame allocation).
+void assignAlphaMask(std::optional<PlaneAlphaMask>& target,const std::optional<PlaneAlphaMask>& own,const PlaneAlphaMask* cut,const Matrix& inverse){
+    if(own||!cut){target=own;return;}
+    if(target)*target=*cut;else target=*cut;
+    target->worldToLocal=cut->worldToLocal*inverse;
+}
+}
 void LayerComposition::checkRenderer(Renderer& renderer)const{
     need(!renderer_||renderer_==&renderer,"A native composition belongs to another renderer");
     need(!publicationOwner(renderer)||publicationOwner(renderer)==this,"Renderer already has another native composition publisher");
@@ -267,7 +276,7 @@ void LayerComposition::setEntries(Renderer& renderer,std::span<const LayerCompos
         need(!scene->resourceOwner_||scene->resourceOwner_==&renderer,"Native scene resources belong to another renderer");
         need(scene->draws_.size()<=Renderer::maximumObjects-count,"Combined native draw count exceeds limits");
         need(input.after.size()<=Renderer::maximumObjects-count-scene->draws_.size(),"Supplemental native draw count exceeds limits");
-        next.push_back({scene,scene->revision_,scene->resourceRevision_,count,scene->draws_.size(),input.after,stageCount});
+        next.push_back({scene,scene->revision_,scene->resourceRevision_,count,scene->draws_.size(),input.after,stageCount,input.cut});
         count+=scene->draws_.size()+input.after.size();stageCount+=input.after.size();
     }
     std::vector<DrawObject> nextDraws,nextStage;nextDraws.reserve(count);nextStage.reserve(stageCount);std::vector<Matrix> nextInverse(next.size());
@@ -275,8 +284,8 @@ void LayerComposition::setEntries(Renderer& renderer,std::span<const LayerCompos
     // Stage CPU identities/capacities before GPU mutation. The last published
     // list keeps its assets resident throughout preparation, even on failure.
     for(const auto&entry:next){
-        for(const auto&draw:entry.scene->draws()){nextDraws.push_back(draw);nextDraws.back().masks.reserve(8);}
-        for(const auto&draw:entry.after){validateDrawObject(draw);nextDraws.push_back(draw);nextDraws.back().masks.reserve(8);nextStage.push_back(draw);nextStage.back().masks.reserve(8);}
+        for(const auto&draw:entry.scene->draws()){nextDraws.push_back(draw);nextDraws.back().masks.reserve(8);assignAlphaMask(nextDraws.back().alphaMask,draw.alphaMask,entry.cut,Matrix{});}
+        for(const auto&draw:entry.after){validateDrawObject(draw);nextDraws.push_back(draw);nextDraws.back().masks.reserve(8);assignAlphaMask(nextDraws.back().alphaMask,draw.alphaMask,entry.cut,Matrix{});nextStage.push_back(draw);nextStage.back().masks.reserve(8);}
     }
     try{
         for(const auto&entry:next)entry.scene->uploadResources(renderer);
@@ -326,18 +335,18 @@ bool LayerComposition::updateRetainedResources(Renderer& renderer,std::span<cons
     // local image bounds change, so no draw list/object buffer republish is
     // required. Commit borrowed spans/revisions only after every upload passes;
     // failed uploads leave prior ownership and identities available for retry.
-    for(std::size_t n=0;n<order.size();++n){scenes_[n].resourceRevision=order[n].scene->resourceRevision_;scenes_[n].after=order[n].after;}
+    for(std::size_t n=0;n<order.size();++n){scenes_[n].resourceRevision=order[n].scene->resourceRevision_;scenes_[n].after=order[n].after;scenes_[n].cut=order[n].cut;}
     return true;
 }
 void LayerComposition::upload(Renderer& renderer){
     checkRenderer(renderer);std::vector<LayerCompositionEntry> order;order.reserve(scenes_.size());for(const auto&entry:scenes_)order.push_back({entry.scene,entry.after});
     setEntries(renderer,order);
 }
-void LayerComposition::copyPrepared(const Entry&entry){
+void LayerComposition::copyPrepared(const Entry&entry,const Matrix&inverse){
     const auto source=entry.scene->draws();
     for(std::size_t i=0;i<entry.count;++i){auto&target=draws_[entry.begin+i];const auto&draw=source[i];
         target.world=draw.world;target.linearTint=draw.linearTint;target.opacity=draw.opacity;
-        target.shutter=draw.shutter;target.alphaMask=draw.alphaMask;target.angularMask=draw.angularMask;target.blend=draw.blend;
+        target.shutter=draw.shutter;assignAlphaMask(target.alphaMask,draw.alphaMask,entry.cut,inverse);target.angularMask=draw.angularMask;target.blend=draw.blend;
         target.masks.resize(draw.masks.size());std::copy(draw.masks.begin(),draw.masks.end(),target.masks.begin());
     }
 }
@@ -362,9 +371,9 @@ void LayerComposition::present(Renderer& renderer,std::span<const Matrix> transf
             validateDrawObject(stage);
         }
     }
-    for(std::size_t i=0;i<scenes_.size();++i){const auto&entry=scenes_[i];entry.scene->prepare(transforms.empty()?Matrix{}:transforms[i],inverseTransforms_[i]);copyPrepared(entry);
+    for(std::size_t i=0;i<scenes_.size();++i){const auto&entry=scenes_[i];entry.scene->prepare(transforms.empty()?Matrix{}:transforms[i],inverseTransforms_[i]);copyPrepared(entry,inverseTransforms_[i]);
         for(std::size_t j=0;j<entry.after.size();++j){const auto&stage=stagedAfter_[entry.stageBegin+j];auto&out=draws_[entry.begin+entry.count+j];
-            out.world=stage.world;out.opacity=stage.opacity;out.linearTint=stage.linearTint;out.shutter=stage.shutter;out.alphaMask=stage.alphaMask;out.angularMask=stage.angularMask;out.blend=stage.blend;
+            out.world=stage.world;out.opacity=stage.opacity;out.linearTint=stage.linearTint;out.shutter=stage.shutter;assignAlphaMask(out.alphaMask,stage.alphaMask,entry.cut,inverseTransforms_[i]);out.angularMask=stage.angularMask;out.blend=stage.blend;
             out.masks.resize(stage.masks.size());std::copy(stage.masks.begin(),stage.masks.end(),out.masks.begin());
         }
     }

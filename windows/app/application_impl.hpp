@@ -774,7 +774,7 @@ struct Application::Impl {
     std::uint64_t colorRequests{}, logoRequests{}; // hidden coverage: dialogs requested (never opened)
     std::string hudDisplayID; // persistent ID of the display the HUD covers
     // Publication.
-    struct PublishedEntry{gpu::LayerScene*scene;std::uint64_t content,resources;const gpu::DrawObject*after;std::size_t count;};
+    struct PublishedEntry{gpu::LayerScene*scene;std::uint64_t content,resources;const gpu::DrawObject*after;std::size_t count;const gpu::PlaneAlphaMask*cut;};
     std::vector<gpu::LayerCompositionEntry> ordered;
     std::vector<PublishedEntry> published;
     std::vector<const ModuleOwner*> appendedOwners;

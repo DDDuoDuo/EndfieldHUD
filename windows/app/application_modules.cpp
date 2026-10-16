@@ -710,7 +710,7 @@ public:
     bool presents(core::Module m) const noexcept override { return m == core::Module::map; }
     void resize(const ClientMetrics& m) override { if (hasPixels(m)) m_.resize(m); }
     void setAppearance(const ModuleAppearance& a, double t) override {
-        gpu::MapAppearance appearance; appearance.dark = a.dark; appearance.reducedMotion = a.reduceMotion; appearance.ambient = a.ambient;
+        gpu::MapAppearance appearance; appearance.dark = a.dark; appearance.reducedMotion = a.reduceMotion; appearance.ambient = a.ambient && !a.lowPower; // the Mac stops the pin pulse in low-power mode
         appearance.accent = {a.accent[0], a.accent[1], a.accent[2], a.accent[3]};
         m_.setAppearance(std::move(appearance), t); m_.setLanguage(a.language, t);
     }
