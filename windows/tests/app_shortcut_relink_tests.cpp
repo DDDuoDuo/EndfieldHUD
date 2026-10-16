@@ -66,7 +66,7 @@ void targets() {
           "shell:AppsFolder\\Synthetic.App_8wekyb3d8bbwe!App", "A packaged record names its AppsFolder target");
 }
 
-void sync() {
+void syncLedger() {
     Temp temp;
     const auto root = temp.path;
     const std::string a = "abcdef00-0000-4000-8000-00000000000a", b = "abcdef00-0000-4000-8000-00000000000b", c = "abcdef00-0000-4000-8000-00000000000c",
@@ -141,7 +141,7 @@ void sync() {
 int main() {
     try {
         targets();
-        sync();
+        syncLedger();
         std::cout << "App shortcut relink ledger: " << checks << " checks passed\n";
         return 0;
     } catch (const std::exception& e) {

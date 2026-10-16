@@ -938,6 +938,9 @@ if(BUILD_TESTING)
     target_link_libraries(storage_scene_tests PRIVATE hud_storage_preview)
   else()
     target_sources(module_preferences_tests PRIVATE native/clipboard_scene.cpp)
+    # clipboard_scene.cpp uses the subsection reveal timing from hud_motion;
+    # GNU ld resolves static archives in order, so link it explicitly.
+    target_link_libraries(module_preferences_tests PRIVATE hud_motion)
     target_sources(volume_provider_tests PRIVATE native/volume_provider.cpp native/volume_scene.cpp)
   endif()
   add_test(NAME module_preferences_contracts COMMAND module_preferences_tests)
