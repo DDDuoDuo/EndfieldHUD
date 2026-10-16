@@ -5,7 +5,9 @@
 #include <iostream>
 #include <new>
 #include <stdexcept>
+#include <string>
 #include <thread>
+#include <vector>
 
 namespace {std::atomic<bool>counting{};std::atomic<std::size_t>allocations{};unsigned checks{};}
 void*operator new(std::size_t n){if(counting)++allocations;if(void*p=std::malloc(n?n:1))return p;throw std::bad_alloc();}void*operator new[](std::size_t n){return ::operator new(n);}
@@ -48,5 +50,21 @@ void borrowedBudgets(){
     held[0].reset();auto resumed=source.publish("after-release",1,2,2,rgba);check(resumed&&source.stats().liveImages==48,"Released retired capacity is immediately reusable without polling");source.clear();held.clear();resumed.reset();check(source.stats().liveBytes==0&&source.stats().liveImages==0,"Explicit clear plus owner retirement drains all pixel storage");
     std::vector<std::uint8_t>large(256u*256u*4u,255);for(unsigned k=0;k<32;++k)held.push_back(source.publish("large-"+std::to_string(k),1,256,256,large));check(source.stats().liveBytes==n::LayerImageSource::maximumLiveBytes,"EightMiB byte bound includes cached and all borrowed retired images");const auto bytes=source.stats().liveBytes;rejects([&]{source.publish("too-many-bytes",1,2,2,rgba);},"Pixel-byte bound fails independently of image count");check(source.stats().liveBytes==bytes&&source.stats().liveImages==32,"Byte-bound failure preserves every owned generation");
 }
+// Per-provider limits (App shortcuts keep an original icon for every App-icon
+// shortcut): a raised cache holds all of them without eviction, and its
+// borrower and byte bounds still apply; the defaults stay the Shelf's.
+void limits(){
+    check(n::LayerImageSource{}.limits().cachedImages==n::LayerImageSource::maximumCachedImages&&n::LayerImageSource{}.limits().liveImages==n::LayerImageSource::maximumLiveImages&&
+          n::LayerImageSource{}.limits().liveBytes==n::LayerImageSource::maximumLiveBytes,"Default limits are the Shelf's 24/48/8 MiB");
+    n::LayerImageSource source({132,140,140*16});std::vector<std::string>keys;for(unsigned k=0;k<141;++k)keys.push_back("app-"+std::to_string(k));
+    std::vector<std::shared_ptr<const n::LayerMemoryImage>>held;for(unsigned k=0;k<132;++k){auto image=source.publish(keys[k],1,2,2,rgba);if(k<8)held.push_back(std::move(image));}
+    bool all=true;for(unsigned k=0;k<132;++k)all=all&&source.acquire(keys[k],1);
+    check(all&&source.stats().cachedImages==132&&source.stats().evictions==0,"A raised cache keeps 132 images without evicting any");
+    for(unsigned k=132;k<140;++k)source.publish(keys[k],1,2,2,rgba);
+    check(source.stats().cachedImages==132&&source.stats().evictions==8&&!source.acquire(keys[0],1)&&source.acquire(keys[139],1),"Beyond its limit the least recently used images leave");
+    check(source.stats().liveImages==140,"Borrowed evicted images count towards the raised live bound");rejects([&]{source.publish(keys[140],1,2,2,rgba);},"The raised live bound still rejects");
+    rejects([&]{n::LayerImageSource invalid({0,48,1024});},"A cache without room rejects");rejects([&]{n::LayerImageSource invalid({48,24,1024});},"Fewer live snapshots than cached ones reject");
+    rejects([&]{n::LayerImageSource invalid({24,48,0});},"A provider without a byte budget rejects");
 }
-int main(){try{pixels();bounds();lruAndLifetime();borrowedBudgets();std::cout<<"PASS "<<checks<<" memory image source checks\n";return 0;}catch(const std::exception&e){counting=false;std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
+}
+int main(){try{pixels();bounds();lruAndLifetime();borrowedBudgets();limits();std::cout<<"PASS "<<checks<<" memory image source checks\n";return 0;}catch(const std::exception&e){counting=false;std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}

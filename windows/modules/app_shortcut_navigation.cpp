@@ -1,10 +1,19 @@
 #include "modules/app_shortcut_navigation.hpp"
 #include <algorithm>
+#include <cmath>
 #include <limits>
 #include <set>
 
 namespace endfield::modules {
 namespace {void need(bool v,const char*s){if(!v)throw std::invalid_argument(s);}}
+std::vector<std::size_t> shortcutOriginalIconOrder(const ShortcutFile&file,double scrollOffset,std::size_t maximum,const std::function<bool(const ShortcutRecord&)>&accepts){
+    std::vector<std::size_t>order;const auto&items=file.items;std::vector<bool>taken(items.size());
+    const auto take=[&](std::size_t n){if(order.size()<maximum&&!taken[n]&&items[n].iconPreset=="original"&&(!accepts||accepts(items[n]))){taken[n]=true;order.push_back(n);}};
+    const auto first=std::isfinite(scrollOffset)&&scrollOffset>0?std::min(items.size(),static_cast<std::size_t>(scrollOffset/52)):std::size_t{};
+    for(auto n=first;n<std::min(items.size(),first+7);++n)take(n);
+    for(std::size_t n=0;n<items.size();++n)take(n);
+    return order;
+}
 ShortcutNavigation::ShortcutNavigation(std::vector<ShortcutNavigationEntry> modules,std::vector<std::uint64_t> right)
     :modules_(std::move(modules)),moduleRight_(std::move(right)){
     need(!modules_.empty()&&modules_.size()<=1024&&!moduleRight_.empty(),"Invalid application navigation base");

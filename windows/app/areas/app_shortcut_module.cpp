@@ -703,14 +703,17 @@ private:
     // --- Original application icons ---------------------------------------------
     // The draft ("" key), the visible saved rows and then the navigation's
     // other saved apps, in stored order, that use the App icon preset
-    // (AppShortcutCanvas rows and SystemHUDView.appNavigationPresentations);
-    // at most 20 retained references (the shared image cache keeps 24
-    // identities, so nothing this owner names is evicted). Further App icon
-    // shortcuts keep the source grid until one of these is released.
+    // (AppShortcutCanvas rows and SystemHUDView.appNavigationPresentations,
+    // m::shortcutOriginalIconOrder), loaded one at a time in that order. Like the
+    // Mac's icon cache every one is kept; only a list beyond
+    // m::shortcutOriginalIconCapacity leaves the least recently shown with the
+    // source grid. This owner's image source holds every image it names, so
+    // nothing named is evicted, with room for the generations rasters borrow.
     struct IconWant { std::string id, applicationKey; g::AppShortcutSelection selection; };
     struct IconEntry { std::string applicationKey; std::uint64_t revision{}, used{}; bool attempted{}; };
-    static constexpr std::size_t maximumIcons = 20;
-    static_assert(maximumIcons < g::LayerImageSource::maximumCachedImages);
+    static constexpr std::size_t maximumIcons = m::shortcutOriginalIconCapacity;
+    static constexpr std::size_t iconBytes = std::size_t(g::appShortcutIconPixels) * g::appShortcutIconPixels * 4;
+    static constexpr g::LayerImageSourceLimits iconLimits{maximumIcons + 4, 2 * (maximumIcons + 4), 2 * (maximumIcons + 4) * iconBytes};
     static std::string iconKey(std::string_view id) { return "appShortcut.icon." + (id.empty() ? std::string("draft") : std::string(id)); }
     static std::string applicationKey(const J& locator) {
         try {const auto& key = locator["windowsTarget"]["applicationKey"];return key.isString() ? key.string() : std::string{};}
@@ -725,9 +728,9 @@ private:
         };
         if (s.editing() && s.candidate()) want({}, s.candidate()->locator);
         const auto& items = s.file().items;
-        const auto first = std::min(items.size(), static_cast<std::size_t>(s.scrollOffset() / 52)), end = std::min(items.size(), first + 7);
-        for (auto n = first; n < end; ++n) if (items[n].iconPreset == "original") want(items[n].id, items[n].locator);
-        for (const auto& item : items) if (item.iconPreset == "original") want(item.id, item.locator);
+        for (const auto n : m::shortcutOriginalIconOrder(s.file(), s.scrollOffset(), maximumIcons - wanted_.size(),
+                 [](const m::ShortcutRecord& item) { return g::appShortcutIconSelection(item.locator).has_value(); }))
+            want(items[n].id, items[n].locator);
         for (const auto& w : wanted_) icons_[w.id].used = ++iconUse_;
         // The draft's icon leaves with its draft (the Mac candidate carries
         // its own icon): after Cancel, Save or a new session, and while the
@@ -883,7 +886,7 @@ private:
     std::shared_ptr<bool> alive_;
     // Outlives the preview whose raster options borrow it; shared with the
     // navigation entries that name its snapshots.
-    std::shared_ptr<g::LayerImageSource> images_{std::make_shared<g::LayerImageSource>()};
+    std::shared_ptr<g::LayerImageSource> images_{std::make_shared<g::LayerImageSource>(iconLimits)};
     std::map<std::string, std::uint64_t, std::less<>> navigationImages_;
     g::AppShortcutIconExtractor extractor_;
     app::UtilityExecutor::Route iconRoute_{};
@@ -1179,12 +1182,14 @@ void AppShortcutArea::coverage(app::ModuleCoverage& step) {
         step.check(activate(d.action("app." + seeded.id), d.t) && !launch_ && preview_->state().error() && coverageCloseRequests_ == closes &&
                    coverageSelectRequests_ == selects + (elsewhere ? 1u : 0u), "A navigation launch of an imported app shows its error in + Add App");
         preview_->showError(std::nullopt, d.t);
-        // The original application icons stay within their bound: at most 20
-        // images of 96 x 96 pixels (AppShortcutStore keeps its icon cache).
+        // The original application icons: one for every App-icon shortcut, as
+        // AppShortcutStore keeps its icon cache, within the memory bound of
+        // m::shortcutOriginalIconCapacity images of 96 x 96 pixels.
         {
             const auto icons = images_->stats();
-            step.check(icons.cachedImages <= maximumIcons && icons.cachedBytes <= maximumIcons * std::size_t(g::appShortcutIconPixels) * g::appShortcutIconPixels * 4,
-                       "The original application icons stay within 20 images of 96 pixels");
+            step.check(images_->limits().cachedImages > maximumIcons && icons.cachedImages <= maximumIcons && icons.cachedBytes <= maximumIcons * iconBytes &&
+                           icons.liveBytes <= iconLimits.liveBytes,
+                       "The original application icons stay within their 128 images of 96 pixels");
         }
         // Memory (Mac OverlayController: systemView = nil on every close):
         // the cycle showed + Add App and then the other modules; once this

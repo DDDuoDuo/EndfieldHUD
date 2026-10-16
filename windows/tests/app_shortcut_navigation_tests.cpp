@@ -1,6 +1,9 @@
 #include "modules/app_shortcut_navigation.hpp"
 #include <iostream>
 #include <array>
+#include <cmath>
+#include <string>
+#include <vector>
 namespace m=endfield::modules;
 namespace {
 unsigned checks{};void check(bool v,const char*s){++checks;if(!v)throw std::runtime_error(s);}
@@ -24,5 +27,22 @@ void run(){
     rejects([&]{m::ShortcutNavigation invalid({{1,"addApp","Add","module:addApp"}},{2});});
     for(unsigned n=0;n<10000;++n)check(nav.shortcutID(b)==two.id,"Warm hit resolution preserves identity");
 }
+// Original application icons for every App-icon shortcut (AppShortcutStore's
+// icon cache has no bound on the Mac): far more than the former 20, the
+// visible rows first, only App-icon shortcuts with a target, each once.
+void icons(){
+    m::ShortcutFile file;for(unsigned n=0;n<40;++n){m::ShortcutRecord r;r.id="00000000-0000-4000-8000-"+std::string(10,'0')+(n<10?"0":"")+std::to_string(n);r.name="App "+std::to_string(n);r.iconPreset=n%10==3?"globe":"original";file.items.push_back(r);}
+    const auto every=[](const m::ShortcutRecord&){return true;};
+    const auto order=m::shortcutOriginalIconOrder(file,0,m::shortcutOriginalIconCapacity,every);
+    check(m::shortcutOriginalIconCapacity>=128&&order.size()==36,"Every App-icon shortcut of a 40-item list loads its icon (the four Globe ones do not)");
+    check(order[0]==0&&order[1]==1&&order[2]==2&&order[3]==4&&order.back()==39,"From the top the rows load in stored order, skipping other presets");
+    const auto scrolled=m::shortcutOriginalIconOrder(file,52*20.+10,m::shortcutOriginalIconCapacity,every);
+    check(scrolled.size()==36&&scrolled[0]==20&&scrolled[1]==21&&scrolled[2]==22&&scrolled[3]==24&&scrolled[4]==25&&scrolled[5]==26&&scrolled[6]==0&&scrolled[7]==1,"The seven visible rows load first, then the rest in stored order");
+    std::vector<bool>seen(file.items.size());for(const auto n:scrolled){check(!seen[n],"Each shortcut loads once");seen[n]=true;}
+    const auto bounded=m::shortcutOriginalIconOrder(file,52*20.,5,every);check(bounded.size()==5&&bounded[0]==20&&bounded[4]==25,"The memory bound keeps the visible rows first");
+    const auto targets=m::shortcutOriginalIconOrder(file,0,m::shortcutOriginalIconCapacity,[](const m::ShortcutRecord&r){return r.name!="App 1";});
+    check(targets.size()==35&&targets[0]==0&&targets[1]==2,"A shortcut without a Windows target keeps the grid");
+    check(m::shortcutOriginalIconOrder({},0,10,every).empty()&&m::shortcutOriginalIconOrder(file,std::nan(""),3,every)==std::vector<std::size_t>{0,1,2},"An empty list loads nothing; a nonfinite offset starts at the top");
 }
-int main(){try{run();std::cout<<"Shortcut navigation: "<<checks<<" checks passed\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
+}
+int main(){try{run();icons();std::cout<<"Shortcut navigation: "<<checks<<" checks passed\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}

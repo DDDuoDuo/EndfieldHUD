@@ -20,20 +20,25 @@ LayerMemoryImage::LayerMemoryImage(std::string key,std::uint64_t revision,unsign
 }
 LayerMemoryImage::~LayerMemoryImage(){budget_->bytes.fetch_sub(pixels_.size(),std::memory_order_relaxed);budget_->count.fetch_sub(1,std::memory_order_relaxed);}
 struct LayerImageSource::Impl {
+    const LayerImageSourceLimits limits;
     const std::thread::id owner{std::this_thread::get_id()};
     std::shared_ptr<detail::LayerImageBudget>budget{std::make_shared<detail::LayerImageBudget>()};
     std::vector<std::shared_ptr<const LayerMemoryImage>>cache; // oldest first
     std::vector<std::weak_ptr<const LayerMemoryImage>>live; // bounded revision conflict registry
     LayerImageSourceStats counts;
-    Impl(){cache.reserve(maximumCachedImages);live.reserve(maximumLiveImages);}
+    explicit Impl(LayerImageSourceLimits value):limits(value){
+        need(limits.cachedImages>0&&limits.liveImages>=limits.cachedImages&&limits.liveBytes>0,"Layer image provider limits must hold its cached images");
+        cache.reserve(limits.cachedImages);live.reserve(limits.liveImages);}
     void onThread()const{need(owner==std::this_thread::get_id(),"Layer image provider requires its creating thread");}
     void remember(std::shared_ptr<const LayerMemoryImage>image){
         const auto old=std::find_if(cache.begin(),cache.end(),[&](const auto&entry){return entry->key()==image->key();});
-        if(old!=cache.end())cache.erase(old);else if(cache.size()==maximumCachedImages){cache.erase(cache.begin());++counts.evictions;}
+        if(old!=cache.end())cache.erase(old);else if(cache.size()==limits.cachedImages){cache.erase(cache.begin());++counts.evictions;}
         cache.push_back(std::move(image)); // reserved bounded storage, no allocation
     }
 };
-LayerImageSource::LayerImageSource():impl_(std::make_unique<Impl>()){}
+LayerImageSource::LayerImageSource():LayerImageSource(LayerImageSourceLimits{}){}
+LayerImageSource::LayerImageSource(LayerImageSourceLimits limits):impl_(std::make_unique<Impl>(limits)){}
+const LayerImageSourceLimits&LayerImageSource::limits()const noexcept{return impl_->limits;}
 LayerImageSource::~LayerImageSource()=default;
 std::shared_ptr<const LayerMemoryImage>LayerImageSource::publish(std::string_view key,std::uint64_t revision,unsigned width,unsigned height,std::span<const std::uint8_t>rgba){
     auto&i=*impl_;i.onThread();need(!key.empty()&&key.size()<=maximumKeyBytes&&ehud::data::Json::validUtf8(key)&&key.find('\0')==std::string_view::npos,"Invalid memory image identity");
@@ -42,8 +47,8 @@ std::shared_ptr<const LayerMemoryImage>LayerImageSource::publish(std::string_vie
     std::shared_ptr<const LayerMemoryImage>same;
     for(const auto&entry:i.live)if(const auto image=entry.lock();image&&image->key()==key){need(revision>=image->revision(),"Stale memory image revision");if(revision==image->revision())same=image;}
     if(same){need(samePixels(*same,width,height,rgba),"Conflicting pixels for immutable memory image revision");i.remember(same);return same;}
-    need(i.budget->count.load(std::memory_order_relaxed)<maximumLiveImages,"Memory image borrowers exceed live snapshot capacity");
-    const auto used=i.budget->bytes.load(std::memory_order_relaxed);need(used<=maximumLiveBytes&&bytes<=maximumLiveBytes-used,"Memory image borrowers exceed live pixel budget");
+    need(i.budget->count.load(std::memory_order_relaxed)<i.limits.liveImages,"Memory image borrowers exceed live snapshot capacity");
+    const auto used=i.budget->bytes.load(std::memory_order_relaxed);need(used<=i.limits.liveBytes&&bytes<=i.limits.liveBytes-used,"Memory image borrowers exceed live pixel budget");
     // Every throwing allocation precedes cache/LRU mutation. Snapshot lifetime
     // accounting includes a control-block allocation failure via its destructor.
     std::vector<std::uint8_t>pixels(bytes);for(std::size_t n=0;n<bytes;n+=4){const auto a=rgba[n+3];pixels[n]=premultiply(rgba[n+2],a);pixels[n+1]=premultiply(rgba[n+1],a);pixels[n+2]=premultiply(rgba[n],a);pixels[n+3]=a;}

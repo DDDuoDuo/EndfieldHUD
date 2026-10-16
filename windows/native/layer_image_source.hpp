@@ -29,6 +29,11 @@ private:
     const std::string key_;const std::uint64_t revision_;const unsigned width_,height_;
     const std::vector<std::uint8_t>pixels_;std::shared_ptr<detail::LayerImageBudget>budget_;
 };
+// Per-provider bounds; the defaults are the Shelf's (below). An owner that
+// names more images at once (App shortcuts) raises them for its own provider.
+struct LayerImageSourceLimits {
+    std::size_t cachedImages{24},liveImages{48},liveBytes{8*1024*1024};
+};
 struct LayerImageSourceStats {
     std::size_t cachedImages{},cachedBytes{},liveImages{},liveBytes{};
     std::uint64_t publications{},cacheHits{},cacheMisses{},evictions{};
@@ -44,7 +49,10 @@ public:
     static constexpr std::size_t maximumCachedImages=24,maximumLiveImages=48,
         maximumLiveBytes=8*1024*1024,maximumKeyBytes=512;
     static constexpr unsigned shelfRequestedPixels=64,maximumDimension=256;
-    LayerImageSource();~LayerImageSource();
+    // Rejects limits without room for one image or with fewer live snapshots
+    // than cached ones.
+    LayerImageSource();explicit LayerImageSource(LayerImageSourceLimits);~LayerImageSource();
+    const LayerImageSourceLimits&limits()const noexcept;
     LayerImageSource(const LayerImageSource&)=delete;
     LayerImageSource&operator=(const LayerImageSource&)=delete;
     // Tight straight RGBA8 sRGB input. One conversion/copy on a content event;
