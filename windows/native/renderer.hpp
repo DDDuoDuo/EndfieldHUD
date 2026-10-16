@@ -178,8 +178,15 @@ struct RendererStats {
     // last Present returned, and that Present's swap-chain present count.
     double presentSeconds{},lastPresentReturned{};
     std::uint64_t lastPresentCount{};
-    // CPU seconds inside draw() (Present excluded), setDrawList and setTexture.
+    // CPU seconds inside draw() (Present excluded), setDrawList and setTexture
+    // (restoreTexture included).
     double drawSeconds{},drawListSeconds{},textureUploadSeconds{};
+    // parkTexture/restoreTexture: copies held now (textures and their bytes),
+    // textures parked, restored, copies dropped (ten-minute release, clear,
+    // reset, new device), and the CPU seconds parking and restoring took.
+    std::size_t parkedTextures{},parkedBytes{};
+    std::uint64_t textureParks{},parkedRestores{},parkedDrops{};
+    double parkSeconds{},parkedRestoreSeconds{};
     // Of drawSeconds: the native passes (groups and the root list); the root
     // passes drawn, and those skipped because nothing they draw changed (the
     // retained linear target was composited as it was).
@@ -260,6 +267,25 @@ public:
 private:
     friend class Renderer;struct Impl;explicit RendererMediaTexture(std::unique_ptr<Impl>);
     std::unique_ptr<Impl>impl_;
+};
+// A texture taken off the GPU while its owner may need it again soon
+// (Renderer::parkTexture: a module that left the composition while the HUD
+// stays open): its texels exactly as the GPU stored them, in a system-memory
+// staging copy the GPU writes without the CPU waiting, and copies back into a
+// new texture when restored. The owner holds it; the renderer drops its
+// contents at the ten-minute release (suspendDevice), on a clear, a reset and
+// a new device, after which restoreTexture declines it.
+class RendererParkedTexture final {
+public:
+    ~RendererParkedTexture();
+    RendererParkedTexture(const RendererParkedTexture&)=delete;
+    RendererParkedTexture&operator=(const RendererParkedTexture&)=delete;
+    bool held()const noexcept;           // restorable (not yet dropped or restored)
+    std::uint64_t revision()const noexcept;
+    std::size_t bytes()const noexcept;   // system memory it holds now
+private:
+    friend class Renderer;struct Impl;explicit RendererParkedTexture(std::shared_ptr<Impl>);
+    std::shared_ptr<Impl>impl_;
 };
 struct RendererDeviceInfo {
     std::string name;
@@ -503,6 +529,16 @@ public:
     // owner that gave back its own copy of the pixels (LayerScene) asks it
     // before uploading, and paints them again only when the texture is gone.
     std::optional<std::uint64_t> textureRevision(const std::string &sourceID) const;
+    // Removes an unreferenced texture like removeTexture, keeping its texels
+    // in a caller-owned system-memory copy that restoreTexture installs again
+    // as a GPU copy: same bytes, format, revision and identity, no CPU
+    // upload, conversion or raster. Null (nothing removed) when the texture
+    // is missing, still referenced or owned by a group or media, or the
+    // device is suspended. Never waits for the GPU.
+    std::shared_ptr<RendererParkedTexture> parkTexture(const std::string &sourceID);
+    // Installs a parked texture again under its ID (true). False, changing
+    // nothing, when its copy was dropped or another texture holds the ID.
+    bool restoreTexture(const std::string &sourceID, RendererParkedTexture &parked);
     void clearDrawList();
     void clearResources(); // also clears draw list
     void reset() noexcept;

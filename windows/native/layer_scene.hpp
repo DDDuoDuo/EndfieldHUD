@@ -37,8 +37,12 @@ public:
     // Never publishes/clears that list or retires an asset referenced by it.
     // Call collectRetiredResources after publishing the replacement list.
     // Once a texture holds a surface's pixels, the shared rasterizer gives
-    // its CPU copy back (LayerRasterizer::releasePixels). A texture the
-    // renderer no longer holds (the composition dropped this scene, a new
+    // its CPU copy back (LayerRasterizer::releasePixels). When this scene's
+    // resources are released while it stays loaded (a module switched away
+    // from inside the open HUD), each such texture is parked: its texels go
+    // to system memory without a GPU wait, and the next upload restores them
+    // as a plain upload - a switch back never paints anything again. Only a
+    // texture whose copy is gone (the renderer's ten-minute release, a new
     // device) is uploaded from pixels painted again, byte for byte, from the
     // surface's retained local layer (LayerRasterizer::repaint).
     void uploadResources(Renderer&);
@@ -95,6 +99,9 @@ private:
         std::optional<std::uint64_t> localRevision;
         LayerRasterOptions options;
         std::size_t nodeCount{};bool grouped{};std::uint64_t fontRevision{};
+        // Texels of a released surface whose texture left the GPU while this
+        // scene was dropped (Renderer::parkTexture); restored on its next upload.
+        std::shared_ptr<RendererParkedTexture> parked{};
     };
     LayerRasterizer* rasterizer_;
     std::vector<Surface> surfaces_;

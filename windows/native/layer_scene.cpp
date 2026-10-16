@@ -136,7 +136,7 @@ bool LayerScene::updateLocalContent(std::string_view sourceID,std::uint64_t cont
     need(image->width&&image->height,"Local content cannot remove its retained surface");
     if(image->bounds!=surface.image->bounds)surface.meshRevision=token;
     report_.sourceNodes=report_.sourceNodes-surface.nodeCount+count;
-    surface.image=std::move(image);surface.imageRevision=token;surface.localRevision=contentRevision;
+    surface.image=std::move(image);surface.imageRevision=token;surface.localRevision=contentRevision;surface.parked.reset();
     surface.options=std::move(settings);surface.nodeCount=count;surface.fontRevision=rasterizer_->fontRevision();rebuildReport();++resourceRevision_;return true;
 }
 bool LayerScene::refreshTypography(){
@@ -145,7 +145,7 @@ bool LayerScene::refreshTypography(){
     struct Refresh{std::size_t index;std::uint64_t token;std::shared_ptr<const LayerRasterImage>image;};std::vector<Refresh>pending;
     for(std::size_t n=0;n<surfaces_.size();++n){const auto&s=surfaces_[n];if(s.fontRevision==generation||s.options.plainTextDocument||s.options.richTextDocument)continue;
         const auto token=++attempt_;auto image=rasterizer_->refreshTypography(s.id,token);if(image){need(image->width&&image->height,"Typography cannot remove its retained surface");pending.push_back({n,token,std::move(image)});}}
-    for(auto&change:pending){auto&s=surfaces_[change.index];if(s.image->bounds!=change.image->bounds)s.meshRevision=change.token;s.image=std::move(change.image);s.imageRevision=change.token;}
+    for(auto&change:pending){auto&s=surfaces_[change.index];if(s.image->bounds!=change.image->bounds)s.meshRevision=change.token;s.image=std::move(change.image);s.imageRevision=change.token;s.parked.reset();}
     for(auto&s:surfaces_)if(!s.options.plainTextDocument&&!s.options.richTextDocument)s.fontRevision=generation;
     fontRevision_=generation;if(!pending.empty()){rebuildReport();++resourceRevision_;}return !pending.empty();
 }
@@ -154,22 +154,24 @@ void LayerScene::uploadResources(Renderer& renderer){
     need(renderer.stats().initialized,"Native scene resources require an initialized renderer");
     resourceOwner_=&renderer;
     constexpr std::array<std::uint32_t,6> indices{0,1,2,0,2,3};
-    std::vector<std::uint8_t> repainted; // a released surface whose texture is gone
-    for(const auto&s:surfaces_){const auto&b=s.image->bounds;const auto x=float(b.x),y=float(b.y),right=float(b.x+b.width),bottom=float(b.y+b.height);
+    std::vector<std::uint8_t> repainted; // a released surface whose texture and copy are gone
+    for(auto&s:surfaces_){const auto&b=s.image->bounds;const auto x=float(b.x),y=float(b.y),right=float(b.x+b.width),bottom=float(b.y+b.height);
         const std::array<Vertex,4> vertices{{{{x,y,0},{0,0},{1,1,1,1}},{{right,y,0},{1,0},{1,1,1,1}},{{right,bottom,0},{1,1},{1,1,1,1}},{{x,bottom,0},{0,1},{1,1,1,1}}}};
         auto resident=std::find_if(uploaded_.begin(),uploaded_.end(),[&](const Resident&r){return r.id==s.id;});
         if(resident==uploaded_.end()){uploaded_.push_back({s.id});resident=std::prev(uploaded_.end());}
         renderer.setMesh(s.id,s.meshRevision,{vertices,indices});resident->mesh=true;
         // The renderer holds this revision (on its device or, suspended, in
-        // system memory): nothing to upload. Otherwise the pixels come from
-        // the image, or are painted again when they were given back (the
-        // composition dropped the texture, or this is a new renderer).
-        if(renderer.textureRevision(s.id)!=s.imageRevision){
+        // system memory): nothing to upload. Otherwise its parked texels go
+        // back as they were (a switch back), or the pixels come from the
+        // image, or are painted again when they were given back and no copy
+        // is left (the ten-minute release, a new renderer).
+        if(renderer.textureRevision(s.id)!=s.imageRevision&&
+           !(s.parked&&s.parked->revision()==s.imageRevision&&renderer.restoreTexture(s.id,*s.parked))){
             std::span<const std::uint8_t> pixels=s.image->straightRGBA;
             if(s.image->pixelsReleased()){rasterizer_->repaint(*s.image,repainted);pixels=repainted;}
             renderer.setTexture(s.id,s.imageRevision,{s.image->width,s.image->height,pixels,TextureColorSpace::sRGB,TextureFilter::linear});
         }
-        resident->texture=true;
+        s.parked.reset();resident->texture=true;
         // The GPU texture holds the unchanged surface: its CPU copy goes.
         (void)rasterizer_->releasePixels(s.id,s.image);
     }
@@ -180,8 +182,15 @@ bool LayerScene::release(Renderer& renderer,bool onlyRetired){
     if(!renderer.stats().initialized){uploaded_.clear();resourceOwner_=nullptr;uploadedRevision_=0;return true;}
     bool complete=true;
     for(auto&resident:uploaded_){
-        if(onlyRetired&&std::any_of(surfaces_.begin(),surfaces_.end(),[&](const Surface&s){return s.id==resident.id;}))continue;
+        const auto surface=std::find_if(surfaces_.begin(),surfaces_.end(),[&](const Surface&s){return s.id==resident.id;});
+        if(onlyRetired&&surface!=surfaces_.end())continue;
         if(resident.mesh&&renderer.removeMesh(resident.id))resident.mesh=false;
+        // A released surface's texture holds its only pixels: it is parked
+        // (texels to system memory, no GPU wait) so that showing this scene
+        // again is a plain upload. Scenes destroyed after the release free
+        // their copies with their surfaces.
+        if(resident.texture&&surface!=surfaces_.end()&&surface->image->pixelsReleased()&&renderer.textureRevision(resident.id)==surface->imageRevision)
+            if(auto parked=renderer.parkTexture(resident.id)){surface->parked=std::move(parked);resident.texture=false;}
         if(resident.texture&&renderer.removeTexture(resident.id))resident.texture=false;
         if(resident.mesh||resident.texture)complete=false;
     }

@@ -249,10 +249,13 @@ void roundedComposition(Renderer& renderer,LayerRasterizer& raster,const LayerRa
     auto mask=scene.draws()[0].masks[0];mask.cornerRadius=9;LayerPlacement bad{0,scene.draws()[0].world,1,std::span(&mask,1)};
     rejects([&]{scene.setPlacements(std::span(&bad,1));},"Invalid radius rejects before source placement mutation");composition.detach(renderer);
 }
-// A scene gives its CPU pixels back once its GPU textures hold them, and
-// paints them again, byte for byte, whenever they must be uploaded again: the
-// composition dropped the module and shows it again, or the device was lost.
-// The ten-minute closed release brings them back from the renderer's copies.
+// A scene gives its CPU pixels back once its GPU textures hold them. Dropped
+// from the composition while the HUD stays open (a module switched away),
+// its textures are parked (texels to system memory, no GPU wait) and a switch
+// back restores them as a plain upload: nothing is painted again. Only after
+// the ten-minute release (its copies dropped) or a device loss are the pixels
+// painted again, identically. The released device restores resident textures
+// from the renderer's own copies.
 void releasedPixels(Renderer& renderer,HWND window,const std::filesystem::path& shader,LayerRasterizer& raster,LayerRasterOptions options){
     options.pixelsPerPoint=3;
     auto caption=leaf("caption",.1,.2,.3);caption["kind"]="text";caption["class"]="CATextLayer";caption["bounds"]=Json::Array{0,0,28,12};caption["position"]=Json::Array{2,2};
@@ -268,22 +271,33 @@ void releasedPixels(Renderer& renderer,HWND window,const std::filesystem::path& 
     const auto repaints=raster.stats().pixelRepaints;const auto rasters=raster.stats().rasterizations;
     scene.uploadResources(renderer);check(raster.stats().pixelRepaints==repaints,"Resident textures are never painted again");
     // Dropped from the composition (another module shown) and shown again.
-    const std::array<LayerScene*,0> none{};composition.setScenes(renderer,none);check(renderer.stats().textures==0,"Leaving the composition releases the textures");
+    const std::array<LayerScene*,0> none{};const auto shown=renderer.stats();composition.setScenes(renderer,none);
+    check(renderer.stats().textures==0&&renderer.stats().textureParks==shown.textureParks+2&&renderer.stats().parkedTextures==2&&renderer.stats().parkedBytes>0,"Leaving the composition parks the textures off the GPU");
+    for(unsigned n=0;n<3;++n)renderer.draw(false); // frames pass while the module is away
     composition.setScenes(renderer,order);composition.present(renderer);renderer.draw(false);
-    check(renderer.readback().pixels==first&&raster.stats().pixelRepaints==repaints+2&&raster.stats().rasterizations==rasters,"Shown again, the released surfaces are painted again identically, without a raster");
-    check(raster.stats().releasedPixelBytes==bytes,"Their pixels are given back again once uploaded");
-    // The ten-minute closed release: the renderer keeps its own copies.
+    check(renderer.readback().pixels==first&&raster.stats().pixelRepaints==repaints&&raster.stats().rasterizations==rasters&&renderer.stats().parkedRestores==shown.parkedRestores+2&&renderer.stats().parkedTextures==0,
+          "Shown again, the parked textures are restored as they were: nothing is painted again");
+    check(raster.stats().releasedPixelBytes==bytes,"The pixels stay given back");
+    composition.setScenes(renderer,none);composition.setScenes(renderer,order);composition.present(renderer);renderer.draw(false);
+    check(renderer.readback().pixels==first&&raster.stats().pixelRepaints==repaints&&renderer.stats().parkedRestores==shown.parkedRestores+4,"A switch back in the same frame restores the copies just made");
+    // The ten-minute closed release: resident textures come back from the
+    // renderer's own copies; the parked copies are given back.
     check(renderer.suspendDevice(),"The closed renderer releases its device");
-    scene.uploadResources(renderer);check(renderer.deviceSuspended()&&raster.stats().pixelRepaints==repaints+2,"Uploading while suspended needs neither the device nor a repaint");
-    renderer.draw(false);check(renderer.readback().pixels==first&&raster.stats().pixelRepaints==repaints+2,"The device comes back with identical pixels from the renderer's copies");
-    // Device loss: a new device, every texture painted again.
-    composition.detach(renderer);renderer.reset();
+    scene.uploadResources(renderer);check(renderer.deviceSuspended()&&raster.stats().pixelRepaints==repaints,"Uploading while suspended needs neither the device nor a repaint");
+    renderer.draw(false);check(renderer.readback().pixels==first&&raster.stats().pixelRepaints==repaints,"The device comes back with identical pixels from the renderer's copies");
+    composition.setScenes(renderer,none);check(renderer.stats().parkedTextures==2,"Dropped again, the scene parks its textures");
+    const auto drops=renderer.stats().parkedDrops;check(renderer.suspendDevice()&&renderer.stats().parkedTextures==0&&renderer.stats().parkedBytes==0&&renderer.stats().parkedDrops==drops+2,"The ten-minute release gives the parked copies back");
+    composition.setScenes(renderer,order);composition.present(renderer);renderer.draw(false);
+    check(renderer.readback().pixels==first&&raster.stats().pixelRepaints==repaints+2&&raster.stats().rasterizations==rasters,"After it, the released surfaces are painted again with identical pixels");
+    // Device loss: a new device; a copy parked on the old one is declined.
+    composition.detach(renderer);check(renderer.stats().parkedTextures==2,"Detaching parks the scene's textures");renderer.reset();
     renderer.initialize(window,32,32,{Driver::warpForTests,shader,RenderTarget::offscreenForTests});renderer.setCamera(layerViewportProjection(32,32));
     composition.setScenes(renderer,order);composition.present(renderer);renderer.draw(false);
     check(renderer.readback().pixels==first&&raster.stats().pixelRepaints==repaints+4&&raster.stats().rasterizations==rasters,"After a device loss the released surfaces are painted again with identical pixels");
-    composition.detach(renderer);
-    // What showing a dropped module again costs now: a page of 24 captions
-    // and plates at 2 px/pt, painted again instead of uploaded from a copy.
+    composition.detach(renderer);check(scene.releaseResources(renderer),"A detached scene releases");
+    // What showing a dropped page again costs: a page of 24 captions and
+    // plates at 2 px/pt restored from its parked texels, against its first
+    // upload and against painting it again (after the ten-minute release).
     {
         auto page=options;page.pixelsPerPoint=2;Json::Array leaves;
         for(unsigned n=0;n<24;++n){auto label=leaf(("row-"+std::to_string(n)).c_str(),.12,.14,.18);label["kind"]="text";label["class"]="CATextLayer";
@@ -292,11 +306,16 @@ void releasedPixels(Renderer& renderer,HWND window,const std::filesystem::path& 
             leaves.push_back(std::move(label));}
         using clock=std::chrono::steady_clock;const auto ms=[](clock::time_point from){return std::chrono::duration<double,std::milli>(clock::now()-from).count();};
         LayerScene rows(raster);auto begin=clock::now();rows.load(Json::Object{{"bounds",Json::Array{0,0,190,490}},{"children",std::move(leaves)}},page);const double rastered=ms(begin);
-        begin=clock::now();rows.upload(renderer);const double uploaded=ms(begin);renderer.draw(false);const auto shown=renderer.readback().pixels;
-        rows.detach(renderer);const auto before=raster.stats().pixelRepaints;begin=clock::now();rows.upload(renderer);const double repainted=ms(begin);renderer.draw(false);
-        check(renderer.readback().pixels==shown&&raster.stats().pixelRepaints==before+24,"A page of released captions is painted again identically");
-        std::cout<<"Released page of 24 captions ("<<rows.report().pixelBytes/1024<<" KiB of pixels): raster "<<rastered<<" ms, first upload "<<uploaded<<" ms, upload painted again "<<repainted<<" ms\n";
-        rows.detach(renderer);
+        begin=clock::now();rows.upload(renderer);const double uploaded=ms(begin);renderer.draw(false);const auto shownPage=renderer.readback().pixels;
+        begin=clock::now();rows.detach(renderer);const double parking=ms(begin);const auto parkedBytes=renderer.stats().parkedBytes;
+        for(unsigned n=0;n<3;++n)renderer.draw(false);
+        const auto before=raster.stats().pixelRepaints;begin=clock::now();rows.upload(renderer);const double restored=ms(begin);renderer.draw(false);
+        check(renderer.readback().pixels==shownPage&&raster.stats().pixelRepaints==before,"A dropped page is restored identically without painting");
+        rows.detach(renderer);(void)renderer.suspendDevice();begin=clock::now();rows.upload(renderer);const double repainted=ms(begin);renderer.draw(false);
+        check(renderer.readback().pixels==shownPage&&raster.stats().pixelRepaints==before+24,"After the ten-minute release the page is painted again identically");
+        std::cout<<"Page of 24 captions ("<<rows.report().pixelBytes/1024<<" KiB of pixels): raster "<<rastered<<" ms, first upload "<<uploaded<<" ms; dropped: parking "<<parking
+                 <<" ms ("<<parkedBytes/1024<<" KiB parked), switch-back restore "<<restored<<" ms; after the ten-minute release: painted again "<<repainted<<" ms\n";
+        rows.detach(renderer);check(rows.releaseResources(renderer),"The page releases");
     }
 }
 void run(const std::filesystem::path& shader){

@@ -226,6 +226,50 @@ void suspendedStorage(Renderer& renderer,DrawObject& object){
     check(!renderer.deviceSuspended()&&renderer.readback().pixels==before,"Every texture format and the 8-bit group come back with identical pixels");
     renderer.clearDrawList();check(renderer.removeNativeGroup("suspend.group")&&renderer.removeTexture("suspend.srgb")&&renderer.removeTexture("suspend.linear")&&renderer.removeTexture("suspend.encoded")&&renderer.removeTexture("suspend.alpha"),"Suspension fixtures retire");
 }
+// A module switched away inside the open HUD (Renderer::parkTexture): its
+// textures leave the GPU with their texels in a system-memory staging copy
+// (no GPU wait) and come back by a GPU copy with identical pixels, in every
+// storage format. A published texture is never
+// parked; the ten-minute release drops the copies, which are then declined.
+void parkedStorage(Renderer& renderer,DrawObject& object){
+    renderer.setCamera({});object.world={};object.opacity=1;object.masks.clear();object.shutter.reset();object.alphaMask.reset();object.angularMask.reset();object.linearTint={1,1,1,1};object.textureID.clear();
+    const std::array<std::uint8_t,16> texels{255,255,255,255, 40,180,90,128, 0,0,0,0, 200,30,60,255};
+    const std::array<std::uint8_t,16> mask{255,255,255,200, 255,255,255,90, 255,255,255,0, 255,255,255,255};
+    const std::array<std::uint8_t,4> green{0,255,0,255};
+    struct Case{const char*id;TextureData data;};
+    const std::array<Case,5> cases{{{"park.srgb",{2,2,texels,TextureColorSpace::sRGB,TextureFilter::nearest}},{"park.linear",{2,2,texels,TextureColorSpace::linear,TextureFilter::nearest}},
+        {"park.encoded",{2,2,texels,TextureColorSpace::encodedSRGB,TextureFilter::nearest}},{"park.alpha",{2,2,mask,TextureColorSpace::sRGB,TextureFilter::nearest}},
+        {"park.paint",{2,2,texels,TextureColorSpace::sRGB,TextureFilter::nearest,true}}}};
+    for(const auto&c:cases){
+        check(renderer.setTexture(c.id,7,c.data),"A texture to park installs");
+        object.textureID=c.id;renderer.setDrawList(std::span(&object,1));renderer.draw(false);const auto shown=renderer.readback().pixels;const auto before=renderer.stats();
+        check(!renderer.parkTexture(c.id)&&renderer.textureRevision(c.id).has_value(),"A published texture is never parked");
+        object.textureID.clear();renderer.setDrawList(std::span(&object,1));
+        auto parked=renderer.parkTexture(c.id);
+        check(parked&&parked->held()&&parked->revision()==7&&parked->bytes()>0&&!renderer.textureRevision(c.id)&&renderer.stats().textures==before.textures-1&&
+              renderer.stats().resourceBytes<before.resourceBytes&&renderer.stats().parkedTextures==1&&renderer.stats().textureParks==before.textureParks+1,"Parking takes the texture off the GPU and keeps its texels");
+        for(unsigned n=0;n<2;++n)renderer.draw(false);
+        check(parked->held()&&renderer.stats().parkedBytes==parked->bytes(),"The parked copy stays held across frames");
+        check(renderer.restoreTexture(c.id,*parked)&&!parked->held()&&parked->bytes()==0&&renderer.textureRevision(c.id)==std::optional<std::uint64_t>(7)&&
+              renderer.stats().resourceBytes==before.resourceBytes&&renderer.stats().parkedTextures==0&&renderer.stats().parkedRestores==before.parkedRestores+1,"Restoring installs the same texture, revision and bytes");
+        check(!renderer.restoreTexture(c.id,*parked),"A restored copy is not installed twice");
+        object.textureID=c.id;renderer.setDrawList(std::span(&object,1));renderer.draw(false);check(renderer.readback().pixels==shown,"A restored texture paints identically");
+        if(c.data.updatable){check(renderer.updateTexture(c.id,8,1,1,{1,1,green}),"A restored updatable texture still paints in place");renderer.draw(false);
+            const auto image=renderer.readback();pixel(image,image.width*3/4,image.height*3/4,{0,255,0,255},0,"The texel painted after the restore shows");}
+        object.textureID.clear();renderer.setDrawList(std::span(&object,1));check(renderer.removeTexture(c.id),"The parking fixture retires");
+    }
+    // Parked and restored within one frame (before any draw).
+    {renderer.setTexture("park.quick",1,{2,2,texels,TextureColorSpace::sRGB,TextureFilter::nearest});auto quick=renderer.parkTexture("park.quick");check(quick&&renderer.restoreTexture("park.quick",*quick),"A copy restores in the frame it was parked");
+     object.textureID="park.quick";renderer.setDrawList(std::span(&object,1));renderer.draw(false);const auto image=renderer.readback();pixel(image,image.width*3/4,image.height/4,{45,90,20,128},1,"The quickly restored texture paints its texels");
+     object.textureID.clear();renderer.setDrawList(std::span(&object,1));check(renderer.removeTexture("park.quick"),"The quick fixture retires");}
+    // The ten-minute release gives the copies back; they are then declined.
+    renderer.setTexture("park.drop",1,{2,2,texels});renderer.setTexture("park.suspended",1,{2,2,texels});auto dropped=renderer.parkTexture("park.drop");const auto drops=renderer.stats().parkedDrops;
+    check(dropped&&renderer.suspendDevice()&&!dropped->held()&&dropped->bytes()==0&&renderer.stats().parkedTextures==0&&renderer.stats().parkedDrops==drops+1,"The ten-minute release drops parked copies");
+    check(!renderer.parkTexture("park.suspended")&&renderer.deviceSuspended()&&renderer.textureRevision("park.suspended").has_value(),"Nothing is parked from a suspended device");
+    (void)renderer.restorePresentation();renderer.draw(false);
+    check(!renderer.restoreTexture("park.drop",*dropped)&&!renderer.textureRevision("park.drop"),"A dropped copy is declined");
+    check(renderer.removeTexture("park.suspended"),"The suspended fixture retires");
+}
 void screenCoverage(Renderer& renderer,const std::filesystem::path& shader){
     using endfield::core::Matrix4;using ehud::data::Json;
     std::ifstream file(shader.parent_path().parent_path()/"tests/fixtures/map-screen-source.json",std::ios::binary);
@@ -653,6 +697,7 @@ void run(HWND window, const std::filesystem::path &shader, bool composition, boo
 
     textureStorage(renderer, red);
     suspendedStorage(renderer, red);
+    parkedStorage(renderer, red);
 
     if (composition) {
         // Exercise real swap-chain flips with nonempty retained content. Read
@@ -736,6 +781,11 @@ void run(HWND window, const std::filesystem::path &shader, bool composition, boo
               "An offscreen renderer has no presentation to release");
     }
 
+    {
+        const std::array<std::uint8_t, 4> opaque{10, 20, 30, 255};
+        renderer.setTexture("park.cleared", 1, {1, 1, opaque}); const auto cleared = renderer.parkTexture("park.cleared");
+        renderer.clearResources(); check(cleared && !cleared->held() && renderer.stats().parkedTextures == 0, "Clearing every resource drops parked copies too");
+    }
     renderer.clearResources(); renderer.draw(false); image = renderer.readback();
     const auto empty = renderer.stats();
     check(empty.meshes == 0 && empty.textures == 0 && empty.objects == 0 && empty.resourceBytes == 0,
