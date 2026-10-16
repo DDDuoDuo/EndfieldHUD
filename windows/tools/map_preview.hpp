@@ -61,9 +61,24 @@ public:
     // TERRAIN" caption is replaced before the opening rather than on it.
     void prewarm(const core::Matrix4&,const core::source::DesktopChromeSettings&,
         const core::ModulePresentationSample&,double time);
+    // Frame cadence. requiresFrames() is the Map's finite motion - camera
+    // moves (zoom, reset, recentre), toolbar feedback and marker style
+    // transitions - which the host presents at the display rate; a drag
+    // presents per pointer event. The pin pulse is ambient motion: on the
+    // Mac a repeating Core Animation compositor animation, here sampled from
+    // the shared clock by every frame that presents it, so its 1.7 s curve
+    // is unchanged. It asks for no display-rate frames: the host's 30 Hz
+    // ambient cadence (on whenever the pulse can run - ambient animation on,
+    // reduce motion off) presents it. Without that cadence (low-power visual
+    // mode, which stops it on the Mac but not in this adapter) nextWakeTime
+    // carries a pulse wake one ambient tick and a quarter after the last
+    // presented frame (1/24 s, so it never races an ambient tick), and
+    // deadline() then reports changed artwork once; the next presented frame
+    // re-arms it. A frame the host does not present leaves no further wake.
     bool utilityCompleted(double time);bool deadline(double time);
     std::optional<double>nextWakeTime()const noexcept;
     bool requiresFrames(double time)const;bool covers(core::Point logicalClientPoint)const;
+    bool pulsing()const noexcept;
     bool pointer(const app::PointerEvent&,double time);
     // Win32 detents keep fractional steps and source discrete sensitivity .12;
     // a future precise/pinch route may use scroll/magnify without a new timer.
@@ -113,6 +128,17 @@ public:
     // The source plates above the Map in logical client points (empty unless
     // posed with a source frame).
     const modules::MapCutouts&sourceCutouts()const noexcept;
+    // Desktop Map occlusion during a module switch into or out of the Map
+    // (SystemHUDView.applySourceMapOcclusion masks the whole module host
+    // while the Map is presented): the Storage and Activity Monitor plates
+    // as an alpha mask of the module host plane (world -> host-local 440
+    // points, alpha 0 under the plates; native::NativeMapScene::
+    // setTransitionCut). The Map applies it to its own registration
+    // brackets (its feathered artwork is cut through its own mask); the host
+    // applies it to the other module's content and brackets while both are
+    // presented. Valid after upload() and until the next update() or
+    // release(); null when the Map is settled, hidden or has no plates.
+    const native::PlaneAlphaMask*transitionCut()const noexcept;
     native::NativeMapRaster::Stats rasterStats()const noexcept;
     native::MapSceneStats sceneStats()const noexcept;
     void upload(native::Renderer&);std::span<const native::LayerCompositionEntry>entries();

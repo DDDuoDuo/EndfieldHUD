@@ -126,13 +126,12 @@ MapCutoutTexels mapCutoutUnion(MapCutoutTexels a, MapCutoutTexels b) noexcept {
     const auto x = std::min(a.x, b.x), y = std::min(a.y, b.y);
     return {x, y, std::max(a.x + a.width, b.x + b.width) - x, std::max(a.y + a.height, b.y + b.height) - y};
 }
-void mapCutoutMask(const MapCutouts& cutouts, double scale, std::span<const std::uint8_t> base, std::uint32_t baseWidth,
-    std::uint32_t baseHeight, MapCutoutTexels region, std::span<std::uint8_t> out, std::span<float> row) {
+namespace {
+// Alpha x (1 - even-odd coverage) of `region`; RGB and alpha from `base`
+// (straight RGBA of baseWidth texels per row) or, without one, opaque white.
+void coverageMask(const MapCutouts& cutouts, double scale, const std::uint8_t* base, std::uint32_t baseWidth,
+    MapCutoutTexels region, std::span<std::uint8_t> out, std::span<float> row) {
     const auto w = std::size_t(region.width), h = std::size_t(region.height);
-    if (region.empty() || !(scale > 0) || !std::isfinite(scale) || base.size() != std::size_t(baseWidth) * baseHeight * 4 ||
-        region.x > baseWidth || region.width > baseWidth - region.x || region.y > baseHeight || region.height > baseHeight - region.y ||
-        out.size() != w * h * 4 || row.size() < w)
-        throw std::invalid_argument("Invalid Map cutout mask region");
     constexpr unsigned rows = 4;
     constexpr float weight = 1.f / rows;
     std::array<double, MapCutouts::capacity * MapCutoutPolygon::capacity> crossings{};
@@ -161,13 +160,37 @@ void mapCutoutMask(const MapCutouts& cutouts, double scale, std::span<const std:
                 if (i1 < w) row[i1] += float(u1 - double(i1)) * weight;
             }
         }
-        const auto* source = base.data() + ((std::size_t(region.y) + j) * baseWidth + region.x) * 4;
         auto* target = out.data() + j * w * 4;
+        if (!base) {
+            for (std::size_t i = 0; i < w; ++i) {
+                const float covered = std::clamp(row[i], 0.f, 1.f);
+                target[i * 4] = target[i * 4 + 1] = target[i * 4 + 2] = 255;
+                target[i * 4 + 3] = static_cast<std::uint8_t>(std::lround(255.f * (1.f - covered)));
+            }
+            continue;
+        }
+        const auto* source = base + ((std::size_t(region.y) + j) * baseWidth + region.x) * 4;
         for (std::size_t i = 0; i < w; ++i) {
             const float covered = std::clamp(row[i], 0.f, 1.f);
             target[i * 4] = source[i * 4]; target[i * 4 + 1] = source[i * 4 + 1]; target[i * 4 + 2] = source[i * 4 + 2];
             target[i * 4 + 3] = static_cast<std::uint8_t>(std::lround(source[i * 4 + 3] * (1.f - covered)));
         }
     }
+}
+} // namespace
+void mapCutoutMask(const MapCutouts& cutouts, double scale, std::span<const std::uint8_t> base, std::uint32_t baseWidth,
+    std::uint32_t baseHeight, MapCutoutTexels region, std::span<std::uint8_t> out, std::span<float> row) {
+    const auto w = std::size_t(region.width), h = std::size_t(region.height);
+    if (region.empty() || !(scale > 0) || !std::isfinite(scale) || base.size() != std::size_t(baseWidth) * baseHeight * 4 ||
+        region.x > baseWidth || region.width > baseWidth - region.x || region.y > baseHeight || region.height > baseHeight - region.y ||
+        out.size() != w * h * 4 || row.size() < w)
+        throw std::invalid_argument("Invalid Map cutout mask region");
+    coverageMask(cutouts, scale, base.data(), baseWidth, region, out, row);
+}
+void mapCutoutMask(const MapCutouts& cutouts, double scale, MapCutoutTexels region, std::span<std::uint8_t> out, std::span<float> row) {
+    const auto w = std::size_t(region.width), h = std::size_t(region.height);
+    if (region.empty() || !(scale > 0) || !std::isfinite(scale) || out.size() != w * h * 4 || row.size() < w)
+        throw std::invalid_argument("Invalid Map cutout mask region");
+    coverageMask(cutouts, scale, nullptr, 0, region, out, row);
 }
 } // namespace endfield::modules

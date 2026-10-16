@@ -54,9 +54,15 @@ struct MapPreview::Impl : std::enable_shared_from_this<Impl> {
     // Desktop Map occlusion: the source plates above the Map, projected from
     // the presented source frame (client points) and into this canvas.
     std::function<std::optional<modules::MapSourceView>()>sourceFrame;modules::MapSourceCutoutPlan cutoutPlan;modules::MapCutouts canvasCutouts;
+    // The same plates in the module host plane during a switch into or out
+    // of the Map, the published cut, and the registration brackets drawn
+    // with it (a copy of registration.draws(): IDs fixed, pose per frame).
+    modules::MapCutouts hostCutouts;std::optional<gpu::PlaneAlphaMask>cut;bool cutValid{};std::array<gpu::DrawObject,1>seams;
+    // Pin pulse fallback: the last presented frame and whether its wake fired.
+    static constexpr double pulseFallback=1./30+1./120;std::optional<double>lastFrame;bool pulseWakeTaken{};
     struct Event {Impl&i;std::uint64_t revision;Event(Impl&v,double t):i(v),revision(0){need(std::isfinite(t),"Map owner needs finite time");need(i.eventRevision!=UINT64_MAX,"Map owner event revision exhausted");revision=++i.eventRevision;if(!i.eventDepth)i.time=std::max(i.time,t);++i.eventDepth;}~Event(){--i.eventDepth;}bool current()const{return i.alive&&i.eventRevision==revision;}};
     bool current(std::uint64_t revision)const{return alive&&eventRevision==revision;}
-    Impl(gpu::LayerRasterizer&r,app::UtilityExecutor&e,MapPreviewOptions&o):state(std::move(o.initial),std::move(o.persistence)),paint(r),utility(e),geography(std::move(o.geography)),appearance(appearanceFor(o.appearance,hasTerrain(geography))),options(o.raster),changed(std::move(o.changed)),recentered(std::move(o.recentered)),pinStyleChanged(std::move(o.pinStyleChanged)),geometry(r),surface(prepare(),core::Module::map),sourceFrame(std::move(o.sourceFrame)){state.setReducedMotion(appearance.reducedMotion);composed.reserve(2);}
+    Impl(gpu::LayerRasterizer&r,app::UtilityExecutor&e,MapPreviewOptions&o):state(std::move(o.initial),std::move(o.persistence)),paint(r),utility(e),geography(std::move(o.geography)),appearance(appearanceFor(o.appearance,hasTerrain(geography))),options(o.raster),changed(std::move(o.changed)),recentered(std::move(o.recentered)),pinStyleChanged(std::move(o.pinStyleChanged)),geometry(r),surface(prepare(),core::Module::map),sourceFrame(std::move(o.sourceFrame)){state.setReducedMotion(appearance.reducedMotion);composed.reserve(2);seams[0]=registration.draws()[0];seams[0].masks.reserve(8);}
     gpu::LayerScene&prepare(){geometry.load(blank(),options);return geometry;}
     void initialize(MapPreviewOptions&o){need(bool(o.clock),"Map owner needs the shared completion clock");time=o.clock();need(std::isfinite(time)&&time>=0,"Invalid initial Map clock");const auto weak=weak_from_this();
         raster=std::make_unique<gpu::NativeMapRaster>(utility,[weak,clock=std::move(o.clock)]{const auto now=clock();need(std::isfinite(now),"Invalid Map completion clock");if(auto self=weak.lock())return std::max(now,self->time);return now;},[weak]{if(auto self=weak.lock())self->notify();},std::move(o.paint),std::move(o.releaseWorkerCaches));
@@ -69,15 +75,22 @@ struct MapPreview::Impl : std::enable_shared_from_this<Impl> {
     // source frame (HUDSourceWatchView.updateDesktopBottomSilhouettes), each
     // vertex inverted through this Map's current plane into its canvas, cut
     // the Map's mask; a loop that does not invert is dropped. Allocation-free.
-    void occlude(const core::source::DesktopChromeSettings&settings){
+    // During a switch into or out of the Map (`switching`) the plates are
+    // also inverted through the module host plane, which the transition
+    // transforms do not move, for the transition cut of the whole host.
+    void occlude(const core::source::DesktopChromeSettings&settings,const Matrix&camera,bool switching){
         std::optional<modules::MapSourceView>view;if(sourceFrame&&settings.sourceShell)view=sourceFrame();
         if(view)(void)cutoutPlan.update(*view,{0,0,metrics.width,metrics.height});else (void)cutoutPlan.clear();
-        const auto&plates=cutoutPlan.cutouts();canvasCutouts.count=0;
-        for(std::size_t k=0;k<plates.count;++k){auto&polygon=canvasCutouts.polygons[canvasCutouts.count];polygon.count=0;bool inverted=true;
-            for(const auto p:plates.polygons[k].view()){const auto q=projection.unproject({p.x*metrics.scale,p.y*metrics.scale});if(!q||!std::isfinite(q->x)||!std::isfinite(q->y)){inverted=false;break;}polygon.points[polygon.count++]=*q;}
-            if(inverted)++canvasCutouts.count;}
-        (void)scene->setCutouts(canvasCutouts);
+        const auto&plates=cutoutPlan.cutouts();
+        const auto invert=[&](const core::Projection&plane,modules::MapCutouts&out){out.count=0;
+            for(std::size_t k=0;k<plates.count;++k){auto&polygon=out.polygons[out.count];polygon.count=0;bool inverted=true;
+                for(const auto p:plates.polygons[k].view()){const auto q=plane.unproject({p.x*metrics.scale,p.y*metrics.scale});if(!q||!std::isfinite(q->x)||!std::isfinite(q->y)){inverted=false;break;}polygon.points[polygon.count++]=*q;}
+                if(inverted)++out.count;}};
+        invert(projection,canvasCutouts);(void)scene->setCutouts(canvasCutouts);
+        if(switching&&pose&&plates.count)invert(core::Projection::viewport(camera*pose->hostWorld,metrics.pixelWidth,metrics.pixelHeight),hostCutouts);else hostCutouts.count=0;
+        (void)scene->setTransitionCut(hostCutouts,switching&&hostCutouts.count>0);
     }
+    std::optional<double>pulseWake()const{if(!pose||!overlayVisible||!lastFrame||pulseWakeTaken||!scene->pulsing())return std::nullopt;return *lastFrame+pulseFallback;}
     // A press inside a plate belongs to the navigation button above the Map
     // (HUDSourceWatchView.mapFilteredButton; SystemHUDView.mouseDown skips the
     // Map at a navigation target).
@@ -116,26 +129,30 @@ void MapPreview::setOverlayVisible(bool value,double t){auto i=impl_;const Impl:
 void MapPreview::update(const Matrix&center,const core::source::DesktopChromeSettings&settings,const core::ModulePresentationSample&sample,float opacity,double t){auto i=impl_;const Impl::Event event(*i,t);need(i->metrics.pixelWidth&&i->metrics.pixelHeight,"Resize Map owner before presentation");
     const auto*shown=sample.current.module==core::Module::map?&sample.current:sample.incoming&&sample.incoming->module==core::Module::map?&*sample.incoming:nullptr;
     const bool prepared=shown&&sample.requested==core::Module::map&&i->overlayVisible;i->activate(prepared,prepared&&sample.acceptsModuleInput);if(!event.current())return;
-    if(!shown){i->pose.reset();i->registration.update({});(void)i->cutoutPlan.clear();return;}
+    if(!shown){i->pose.reset();i->registration.update({});(void)i->cutoutPlan.clear();i->cutValid=false;i->lastFrame.reset();return;}
     i->scene->syncContent(i->time);i->surface.update(center,settings,*shown,opacity);i->pose=i->surface.pose();const auto&p=*i->pose;
     const auto camera=gpu::layerViewportProjection(i->metrics.pixelWidth,i->metrics.pixelHeight)*Matrix::scale(i->metrics.scale,i->metrics.scale);i->projection=core::Projection::viewport(camera*p.contentWorld,i->metrics.pixelWidth,i->metrics.pixelHeight);
-    i->occlude(settings);i->feedback();i->scene->updatePose({p.contentWorld,p.opacity,i->time,std::span(&p.hostClip,1),p.shutter?&*p.shutter:nullptr});i->registration.update(p.registration);
+    i->occlude(settings,camera,sample.incoming.has_value());i->cutValid=false;i->feedback();i->scene->updatePose({p.contentWorld,p.opacity,i->time,std::span(&p.hostClip,1),p.shutter?&*p.shutter:nullptr});i->registration.update(p.registration);
+    i->lastFrame=i->time;i->pulseWakeTaken=false;
 }
 void MapPreview::prewarm(const Matrix&center,const core::source::DesktopChromeSettings&settings,const core::ModulePresentationSample&sample,double t){auto i=impl_;const Impl::Event event(*i,t);
     if(i->prewarmed||i->prepared||i->input||i->pose||!i->metrics.pixelWidth||!i->metrics.pixelHeight)return;
     const auto*shown=sample.current.module==core::Module::map?&sample.current:sample.incoming&&sample.incoming->module==core::Module::map?&*sample.incoming:nullptr;if(!shown)return;i->prewarmed=true;
     i->scene->syncContent(i->time);i->surface.update(center,settings,*shown,0.f);i->pose=i->surface.pose();const auto&p=*i->pose;
     const auto camera=gpu::layerViewportProjection(i->metrics.pixelWidth,i->metrics.pixelHeight)*Matrix::scale(i->metrics.scale,i->metrics.scale);i->projection=core::Projection::viewport(camera*p.contentWorld,i->metrics.pixelWidth,i->metrics.pixelHeight);
-    i->occlude(settings);i->scene->updatePose({p.contentWorld,p.opacity,i->time,std::span(&p.hostClip,1),p.shutter?&*p.shutter:nullptr});i->registration.update(p.registration);
+    i->occlude(settings,camera,false);i->scene->updatePose({p.contentWorld,p.opacity,i->time,std::span(&p.hostClip,1),p.shutter?&*p.shutter:nullptr});i->registration.update(p.registration);
 }
 bool MapPreview::utilityCompleted(double t){auto i=impl_;const Impl::Event event(*i,t);return i->raster->submitPending(i->time);}
 bool MapPreview::deadline(double t){auto i=impl_;const Impl::Event event(*i,t);const auto before=i->state.gestureRevision();i->synchronize(i->state.advance(i->time),event.revision);if(!event.current())return true;const bool submitted=i->raster->advance(i->time);
     // A deferred accessibility publication is due (or its gesture ended): the
     // host's refresh after this changed artwork publishes it.
     bool accessibility{};if(i->cadence.due(i->time,i->state.pointerLocked())){i->cadence.cancel();i->accessibilityForced=true;accessibility=true;}
-    return submitted||before!=i->state.gestureRevision()||accessibility;}
-std::optional<double>MapPreview::nextWakeTime()const noexcept{return earlier(earlier(impl_->state.nextWakeTime(),impl_->raster->nextWakeTime()),impl_->cadence.deadline());}
+    // No frame came for a tick and a quarter while the pins pulse: one frame.
+    bool pulse{};if(const auto due=i->pulseWake();due&&i->time>=*due){i->pulseWakeTaken=true;pulse=true;}
+    return submitted||before!=i->state.gestureRevision()||accessibility||pulse;}
+std::optional<double>MapPreview::nextWakeTime()const noexcept{return earlier(earlier(earlier(impl_->state.nextWakeTime(),impl_->raster->nextWakeTime()),impl_->cadence.deadline()),impl_->pulseWake());}
 bool MapPreview::requiresFrames(double t)const{return impl_->pose&&impl_->overlayVisible&&impl_->scene->requiresFrames(std::max(t,impl_->time));}
+bool MapPreview::pulsing()const noexcept{return impl_->pose&&impl_->overlayVisible&&impl_->scene->pulsing();}
 bool MapPreview::covers(Point p)const{const auto q=impl_->local(p);return q&&modules::mapContains(*q)&&!impl_->plate(p);}
 bool MapPreview::pointer(const app::PointerEvent&e,double t){auto i=impl_;const Impl::Event event(*i,t);i->pointerPoint=Point{e.x,e.y};const auto q=i->local(*i->pointerPoint);const bool plate=i->plate(*i->pointerPoint);
     if(e.kind==app::PointerKind::captureLost){const bool owned=i->pressed||i->state.dragging();i->pressed=false;i->pointerPoint.reset();i->synchronize(i->state.up(true),event.revision);if(event.current())i->feedback();return owned;}
@@ -180,10 +197,18 @@ MapPreview::Residency MapPreview::residency()const noexcept{const auto&i=*impl_;
     if(i.geography){if(i.geography->terrain)r.cpuBytes+=i.geography->terrain->vertexCount*sizeof(core::Point);if(i.geography->countries)r.cpuBytes+=i.geography->countries->vertexCount*2*sizeof(core::Point);}
     return r;}
 const modules::MapCutouts&MapPreview::sourceCutouts()const noexcept{return impl_->cutoutPlan.cutouts();}
+const gpu::PlaneAlphaMask*MapPreview::transitionCut()const noexcept{return impl_->cutValid?&*impl_->cut:nullptr;}
 gpu::NativeMapRaster::Stats MapPreview::rasterStats()const noexcept{return impl_->raster->stats();}
 gpu::MapSceneStats MapPreview::sceneStats()const noexcept{return impl_->scene->stats();}
-void MapPreview::upload(gpu::Renderer&r){auto&i=*impl_;if(!i.pose)return;i.registration.uploadGeometry(r);i.scene->uploadResources(r);}
-std::span<const gpu::LayerCompositionEntry>MapPreview::entries(){auto&i=*impl_;i.composed.clear();if(i.pose){for(const auto&e:i.scene->entries())i.composed.push_back(e);i.composed.push_back({&i.geometry,i.registration.draws()});}return i.composed;}
-void MapPreview::release(gpu::Renderer&r){auto&i=*impl_;need(i.scene->releaseResources(r)&&i.registration.releaseResources(r)&&i.geometry.releaseResources(r),"Map resources still published at teardown");}
+void MapPreview::upload(gpu::Renderer&r){auto&i=*impl_;
+    // Hidden on another module: the transition cut goes once no published draw samples it.
+    if(!i.pose){i.cutValid=false;if(i.scene->stats().transitionCutBytes)(void)i.scene->releaseTransitionCut(r);return;}
+    i.registration.uploadGeometry(r);i.scene->uploadResources(r);
+    i.cutValid=false;if(const auto*texture=i.scene->transitionCutTexture()){if(!i.cut)i.cut=gpu::PlaneAlphaMask{{},{0,0,440,440},*texture};i.cut->worldToLocal=core::source::inverseSourceMatrix(i.pose->hostWorld);i.cutValid=true;}
+    // The incoming Map's registration brackets, cut like the rest of the host.
+    const auto&d=i.registration.draws()[0];auto&seam=i.seams[0];seam.world=d.world;seam.linearTint=d.linearTint;seam.opacity=d.opacity;seam.masks.assign(d.masks.begin(),d.masks.end());
+    seam.shutter=d.shutter;seam.angularMask=d.angularMask;seam.blend=d.blend;if(i.cutValid)seam.alphaMask=i.cut;else seam.alphaMask.reset();}
+std::span<const gpu::LayerCompositionEntry>MapPreview::entries(){auto&i=*impl_;i.composed.clear();if(i.pose){for(const auto&e:i.scene->entries())i.composed.push_back(e);i.composed.push_back({&i.geometry,std::span<const gpu::DrawObject>(i.seams)});}return i.composed;}
+void MapPreview::release(gpu::Renderer&r){auto&i=*impl_;i.cutValid=false;i.seams[0].alphaMask.reset();need(i.scene->releaseResources(r)&&i.registration.releaseResources(r)&&i.geometry.releaseResources(r),"Map resources still published at teardown");}
 }
 #endif

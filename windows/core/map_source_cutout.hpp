@@ -118,4 +118,8 @@ MapCutoutTexels mapCutoutUnion(MapCutoutTexels, MapCutoutTexels) noexcept;
 // No allocation.
 void mapCutoutMask(const MapCutouts& canvas, double texelsPerPoint, std::span<const std::uint8_t> baseRGBA,
     std::uint32_t baseWidth, std::uint32_t baseHeight, MapCutoutTexels region, std::span<std::uint8_t> out, std::span<float> row);
+// The same over an opaque white base (RGB 255, alpha 255 x (1 - coverage)):
+// the module host's transition cut, which has no feather. No allocation.
+void mapCutoutMask(const MapCutouts& canvas, double texelsPerPoint, MapCutoutTexels region,
+    std::span<std::uint8_t> out, std::span<float> row);
 } // namespace endfield::modules

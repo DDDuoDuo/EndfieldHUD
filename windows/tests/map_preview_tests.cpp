@@ -9,6 +9,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <iostream>
 #include <limits>
@@ -141,6 +142,86 @@ void occlusion(n::Renderer&r){
     shell=true;settings.sourceShell=false;frame();check(owner.sourceCutouts().empty(),"Off the source shell no plate is cut");settings.sourceShell=true;frame();check(owner.sourceCutouts().count==4,"Back on the source shell the plates are cut again");
     composition.detach(r);check(shellStandIn.releaseResources(r),"The shell stand-in releases its resources");owner.release(r);released=true;check(r.stats().textures==0&&r.stats().meshes==0,"The occluded Map releases its updatable mask with every resource");utility.shutdown();
 }
+// The host's cut of the other module (map-transition-host.patch: a
+// LayerCompositionEntry::cut applied by LayerComposition::present). Without
+// that patch the stand-in scene carries the cut as its group alpha mask.
+template<class Entry>bool compositionCut(Entry&entry,const n::PlaneAlphaMask*cut){if constexpr(requires(Entry&e){e.cut;}){entry.cut=cut;return true;}else{(void)entry;(void)cut;return false;}}
+// Desktop Map occlusion through module switches. The Mac masks the whole
+// module host while the Map is presented, current or incoming
+// (SystemHUDView.updateMapOcclusionPresentation: isPresenting(.map)): the
+// outgoing and incoming content and the incoming wrapper's registration
+// brackets. Into the Map the other module is drawn on the Map's 1.14 host
+// and reaches over the plates; the Map's transition cut (an alpha mask of
+// the module host plane) keeps them above it. A white full-height module
+// (Calendar's 400 x 440 frame) stands in for the other owner, cut through
+// its scene's alpha mask as the host applies the cut to its entries.
+void transitions(n::Renderer&r){
+    n::LayerRasterizer raster;a::UtilityExecutor utility([]{});double now{};
+    std::vector<c::source::Node>nodes(2);nodes[0].id="storage";nodes[0].path="WatchPanel_PC/Content/WatchNode/canvas_watch/HudBgShdow/TechtreeNode/TechtreeBtn/Icon";nodes[1].id="activity";nodes[1].path="WatchPanel_PC/Content/WatchNode/canvas_watch/HudBgShdow/ReportNode/ReportBtn/Icon";
+    const c::source::SourceRect plateRect{{-138,-55},{276,110}};std::vector<c::source::ResolvedNode>resolved{{&nodes[0],{},{},plateRect,true},{&nodes[1],{},{},plateRect,true}};std::vector<double>alpha{0,0};const c::source::CameraFrame source{};
+    t::MapPreviewOptions o;o.geography=geography();o.clock=[&]{return now;};o.paint=paint;o.raster.pixelsPerPoint=2;o.appearance.ambient=false;o.player={image(2),image(2),image(2),image(880)};
+    o.sourceFrame=[&]()->std::optional<m::MapSourceView>{return m::MapSourceView{resolved,alpha,&source};};
+    t::MapPreview owner(raster,utility,std::move(o));owner.resize({1280,800,96,1,1280,800});c::ModulePresentation modules{c::Module::map};n::LayerScene geometry(raster);geometry.load(blank(),{});n::NativeModuleSurface plane(geometry,c::Module::map);
+    c::source::DesktopChromeSettings settings{{0,0,1280,800},1,{},c::Module::map,true};const auto center=c::source::DesktopChromeLayout::make(settings,{},{}).designToScreen;const auto camera=n::layerViewportProjection(1280,800);
+    const auto layer=[](const char*id,double w,double h,std::array<double,4>rgba){return J(J::Object{{"bounds",J::Array{0,0,w,h}},{"children",J::Array{J(J::Object{{"id",id},{"kind","layer"},{"class","CALayer"},{"bounds",J::Array{0,0,w,h}},{"position",J::Array{0,0}},{"anchorPoint",J::Array{0,0}},{"backgroundColor",J::Object{{"sRGB",J::Array{rgba[0],rgba[1],rgba[2],rgba[3]}}}}})}}});};
+    n::LayerScene shellStandIn(raster);shellStandIn.load(layer("source.shell",1280,800,{0,1,0,1}),{});
+    constexpr auto other=c::Module::calendar;const auto otherFrame=c::moduleLocalContentFrame(other);
+    n::LayerScene otherScene(raster);otherScene.load(layer("other.content",otherFrame.width,otherFrame.height,{1,1,1,1}),{});n::NativeModuleSurface otherPlane(otherScene,other);
+    n::LayerComposition composition;std::vector<n::LayerCompositionEntry>ordered;ordered.reserve(8);bool released{},applyCut{true};
+    struct Cleanup{n::Renderer&r;n::LayerComposition&c;n::LayerScene&s,&x;t::MapPreview&o;bool&done;~Cleanup(){if(done)return;try{c.detach(r);(void)s.releaseResources(r);(void)x.releaseResources(r);o.release(r);}catch(...){r.reset();}}}cleanup{r,composition,shellStandIn,otherScene,owner,released};
+    // The host's publication: the current module's entries, then the incoming
+    // module's; the other module carries the Map's transition cut.
+    const auto frame=[&](double dt){now+=dt;const auto sample=modules.sample(now).presentation;settings.module=sample.requested;owner.update(center,settings,sample,1,now);owner.upload(r);
+        const auto*otherSurface=sample.current.module==other?&sample.current:sample.incoming&&sample.incoming->module==other?&*sample.incoming:nullptr;
+        const auto*cut=applyCut?owner.transitionCut():nullptr;n::LayerCompositionEntry otherEntry{&otherScene,{}};
+        if(otherSurface){otherPlane.update(center,settings,*otherSurface);if(!compositionCut(otherEntry,cut))otherScene.setGroupAlphaMask(cut?std::optional<n::PlaneAlphaMask>(*cut):std::nullopt);}
+        ordered.clear();ordered.push_back({&shellStandIn,{}});
+        const auto append=[&](c::Module module){if(module==other&&otherSurface)ordered.push_back(otherEntry);else if(module==c::Module::map)for(const auto&e:owner.entries())ordered.push_back(e);};
+        append(sample.current.module);if(sample.incoming)append(sample.incoming->module);
+        composition.setEntries(r,ordered);composition.present(r);r.setCamera(camera);return sample;};
+    const auto point=[&](c::Point p){plane.update(center,settings,modules.sample(now).presentation.current);return *c::Projection::viewport(camera*plane.pose().contentWorld,1280,800).project(p);};
+    const auto settle=[&]{for(unsigned k=0;k<16;++k){utility.waitIdle();utility.drain();owner.utilityCompleted(now);if(const auto due=owner.nextWakeTime()){now=std::max(now,*due)+.000001;owner.deadline(now);continue;}if(!utility.stats().running&&!utility.stats().pending&&!utility.stats().completed)break;}frame(.21);};
+    frame(.02);settle();check(owner.state().active(),"The switch fixture shows a stable Map");
+    // The plates below the circle, placed through the settled Map plane as in occlusion().
+    const auto o0=point({0,0}),o1=point({440,440});const double k=(o1.x-o0.x)/440;
+    const auto place=[&](std::size_t index,double x0,double y1){const c::Point origin{o0.x+k*x0,o0.y+k*y1};const double kx=k*140/276,ky=k*56/110,cx=origin.x+kx*138,cy=origin.y-ky*55;
+        resolved[index].worldMatrix=c::Matrix4::translation(2*cx/1280-1,1-2*cy/800,0)*c::Matrix4::scale(2*kx/1280,2*ky/800,1);};
+    place(0,80,400);place(1,230,400);alpha={1,1};frame(.01);check(owner.sourceCutouts().count==4,"The plates are cut at rest");
+    check(!owner.transitionCut()&&owner.sceneStats().transitionCutBytes==0,"Settled, the Map keeps no transition cut and no texture for it");
+    // Points well inside the plates (3 points of margin), on a 3-point grid.
+    std::vector<c::Point>deep;{const auto&plates=owner.sourceCutouts();for(std::size_t n=0;n<plates.count;++n){double x0=INFINITY,y0=INFINITY,x1=-INFINITY,y1=-INFINITY;for(const auto p:plates.polygons[n].view()){x0=std::min(x0,p.x);y0=std::min(y0,p.y);x1=std::max(x1,p.x);y1=std::max(y1,p.y);}
+        for(double y=std::ceil(y0);y<=y1;y+=3)for(double x=std::ceil(x0);x<=x1;x+=3){bool inside=plates.contains({x,y});for(const auto d:{c::Point{-3,0},c::Point{3,0},c::Point{0,-3},c::Point{0,3}})inside=inside&&plates.contains({x+d.x,y+d.y});if(inside)deep.push_back({x,y});}}}
+    check(deep.size()>200,"The plates hold enough interior sample points");
+    n::Readback image;const auto draw=[&]{r.draw(false);image=r.readback();};
+    const auto pixel=[&](c::Point p){const auto i=std::size_t(std::lround(p.y))*image.rowBytes+std::size_t(std::lround(p.x))*4;return std::array<int,3>{image.pixels.at(i),image.pixels.at(i+1),image.pixels.at(i+2)};};
+    const auto shellShows=[&](c::Point p){const auto v=pixel(p);return v[1]>=250&&v[0]<=5&&v[2]<=5;};
+    const auto platesShown=[&]{std::size_t shown{};for(const auto p:deep)shown+=shellShows(p)?1:0;return shown;};
+    draw();check(platesShown()==deep.size(),"At rest the plates show above the Map");
+    // Out of the Map: Map -> Calendar (the Map outgoing, Calendar incoming at its own host).
+    modules.select(other,now);unsigned cutFrames{};std::size_t worst=deep.size();
+    for(unsigned f=0;f<14;++f){const auto sample=frame(.025);if(!sample.transitioning)break;const auto*cut=owner.transitionCut();cutFrames+=cut?1:0;
+        check(cut&&cut->textureID==owner.entries().back().after[0].alphaMask.value_or(n::PlaneAlphaMask{}).textureID,"Leaving the Map, its transition cut is published (the brackets carry it)");
+        draw();worst=std::min(worst,platesShown());}
+    check(cutFrames>=10&&worst==deep.size(),"While the Map leaves, every plate point shows above the outgoing Map and the incoming module");
+    frame(.025);check(!modules.sample(now).presentation.transitioning&&!owner.transitionCut(),"On Calendar the Map publishes no cut");
+    frame(.02);check(owner.sceneStats().transitionCutBytes==0,"Once no published draw samples it, the hidden Map releases the transition cut texture");
+    // Into the Map: Calendar (outgoing, now on the Map's 1.14 host) -> Map.
+    modules.select(c::Module::map,now);applyCut=false;frame(.02);draw();const auto uncut=platesShown();
+    applyCut=true;frame(.0001);draw();const auto first=platesShown();
+    {n::LayerCompositionEntry probe{};std::printf("MAP_SWITCH stand-in (cut through %s): entering the Map the outgoing module covers %zu of %zu plate points without the cut, %zu with it\n",compositionCut(probe,nullptr)?"the composition entry":"the scene alpha mask",deep.size()-uncut,deep.size(),deep.size()-first);}
+    check(uncut<deep.size(),"Without the cut the outgoing module, on the Map's larger host, covers the plates (the switch flicker)");
+    check(first==deep.size()&&owner.sceneStats().transitionCutBytes==880u*880*4,"With the transition cut the plates stay above it (one 880 x 880 texture, two texels per point)");
+    cutFrames=0;worst=deep.size();bool brackets{};
+    for(unsigned f=0;f<14;++f){const auto sample=frame(.025);if(!sample.transitioning)break;const auto*cut=owner.transitionCut();cutFrames+=cut?1:0;
+        const auto&seam=owner.entries().back().after[0];brackets=brackets||(seam.opacity>0&&seam.alphaMask&&cut&&seam.alphaMask->textureID==cut->textureID&&seam.alphaMask->worldToLocal==cut->worldToLocal);
+        draw();worst=std::min(worst,platesShown());}
+    check(cutFrames>=10&&worst==deep.size(),"While the Map enters, every plate point shows above the outgoing module and the incoming Map");
+    check(brackets,"The incoming Map's registration brackets are drawn through the transition cut");
+    frame(.025);check(!modules.sample(now).presentation.transitioning&&!owner.transitionCut()&&!owner.entries().back().after[0].alphaMask,"Settled on the Map no cut is published");
+    draw();check(platesShown()==deep.size(),"Settled, the plates show above the Map");
+    composition.detach(r);check(shellStandIn.releaseResources(r)&&otherScene.releaseResources(r),"The stand-ins release their resources");owner.release(r);released=true;
+    check(r.stats().textures==0&&r.stats().meshes==0,"The Map releases its transition cut with every resource");utility.shutdown();
+}
 void run(n::Renderer&r,HWND window){
     n::LayerRasterizer raster;a::UtilityExecutor utility([]{});double now{};unsigned saves{},changes{},styles{},recenters{},nextID{1};std::atomic<unsigned>paints{},clears{};m::MapSnapshot saved;
     t::MapPreviewOptions options;options.geography=geography();options.clock=[&]{return now;};options.changed=[&]{++changes;};options.pinStyleChanged=[&](auto){++styles;};options.recentered=[&]{++recenters;};options.paint=[&](const auto&q,const auto&cancel){++paints;return paint(q,cancel);};options.releaseWorkerCaches=[&]{++clears;};options.raster.pixelsPerPoint=1;options.appearance.ambient=false;options.player={image(2),image(2),image(2),image(880)};options.persistence={ [&](const auto&s){saved=s;++saves;},[&]{return std::string("00000000-0000-0000-0000-")+std::string(11,'0')+char('0'+nextID++);},[]{return 1.;}};
@@ -210,5 +291,5 @@ void run(n::Renderer&r,HWND window){
     rejects([&]{owner.deadline(std::numeric_limits<double>::quiet_NaN());},"Nonfinite owner time is rejected");composition.detach(r);owner.release(r);released=true;check(r.stats().textures==0&&r.stats().meshes==0,"Map owner releases all local resources after shared detach");check(clears>0,"Hidden Map releases working caches on the existing utility worker");utility.shutdown();
 }
 }
-int wmain(int argc,wchar_t**argv){const auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);try{check(SUCCEEDED(hr)&&argc==2,"Pass original HUD shader");reentry();Window window;n::Renderer renderer;renderer.initialize(window.hwnd,1280,800,{n::Driver::warpForTests,argv[1],n::RenderTarget::offscreenForTests});run(renderer,window.hwnd);prewarmFirstOpening(renderer);occlusion(renderer);renderer.reset();CoUninitialize();std::cout<<"PASS "<<checks<<" Map owner checks\n";return 0;}catch(const std::exception&e){counting=false;if(SUCCEEDED(hr))CoUninitialize();std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
+int wmain(int argc,wchar_t**argv){const auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);try{check(SUCCEEDED(hr)&&argc==2,"Pass original HUD shader");reentry();Window window;n::Renderer renderer;renderer.initialize(window.hwnd,1280,800,{n::Driver::warpForTests,argv[1],n::RenderTarget::offscreenForTests});run(renderer,window.hwnd);prewarmFirstOpening(renderer);occlusion(renderer);transitions(renderer);renderer.reset();CoUninitialize();std::cout<<"PASS "<<checks<<" Map owner checks\n";return 0;}catch(const std::exception&e){counting=false;if(SUCCEEDED(hr))CoUninitialize();std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
 #endif

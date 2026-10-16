@@ -34,3 +34,17 @@ if(WIN32 AND BUILD_TESTING AND TARGET hud_map_preview AND TARGET hud_watch_runti
     "${ehud_map_layer_inputs}/runtime-compiled-animation")
   set_tests_properties(map_occlusion_contracts PROPERTIES TIMEOUT 300)
 endif()
+# Pin pulse cadence: the pulse is ambient motion presented at the host's 30 Hz
+# ambient cadence (the Mac runs it as a compositor animation), while camera
+# moves, toolbar feedback and marker style transitions stay display-paced. A
+# scheduling contract through the host's FrameWakePlan/DisplayPacing, then a
+# short hidden trace on the real clock through the production OverlayHost
+# scheduling (offscreen, 165 Hz) with the CPU per window. A longer GPU trace:
+#   map_pulse_cadence_tests <native/hud.hlsl> --trace-seconds 5 --hardware
+if(WIN32 AND BUILD_TESTING AND TARGET hud_map_preview)
+  add_executable(map_pulse_cadence_tests tests/map_pulse_cadence_tests.cpp)
+  target_compile_definitions(map_pulse_cadence_tests PRIVATE UNICODE _UNICODE NOMINMAX)
+  target_link_libraries(map_pulse_cadence_tests PRIVATE hud_map_preview)
+  add_test(NAME map_pulse_cadence_contracts COMMAND map_pulse_cadence_tests ${CMAKE_CURRENT_SOURCE_DIR}/native/hud.hlsl)
+  set_tests_properties(map_pulse_cadence_contracts PROPERTIES TIMEOUT 300)
+endif()

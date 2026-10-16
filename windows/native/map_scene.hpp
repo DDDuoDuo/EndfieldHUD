@@ -29,7 +29,10 @@ struct MapScenePose {core::Matrix4 world;float opacity{1};double time{};std::spa
 // cutoutMasks: in-place feather mask region updates for the source plates
 // above the Map (setCutouts); cutoutPolygons: the plates' polygons now cut;
 // cutoutMaskBytes: the retained CPU staging of those updates.
-struct MapSceneStats {std::uint64_t chromeBuilds{},statusRasters{},imageUploads{},pinBuilds{},poses{},localUpdates{},cutoutMasks{};std::size_t visiblePins{},pulsingPins{},cutoutPolygons{},cutoutMaskBytes{};};
+// transitionCutUploads: creations and in-place region updates of the module
+// host's transition cut (setTransitionCut); transitionCutBytes: its texels
+// resident now (0 when released).
+struct MapSceneStats {std::uint64_t chromeBuilds{},statusRasters{},imageUploads{},pinBuilds{},poses{},localUpdates{},cutoutMasks{},transitionCutUploads{};std::size_t visiblePins{},pulsingPins{},cutoutPolygons{},cutoutMaskBytes{},transitionCutBytes{};};
 class NativeMapScene final {
 public:
     NativeMapScene(modules::MapState&,NativeMapRaster&,LayerRasterizer&,LayerRasterOptions,MapPlayerImages,MapAppearance={});
@@ -49,7 +52,28 @@ public:
     // x (1 - even-odd plate coverage)); equal plates do nothing. True when
     // the plates changed. No allocation once the staging has grown.
     bool setCutouts(const modules::MapCutouts&);
+    // Module transition cut (SystemHUDView.applySourceMapOcclusion masks the
+    // whole module host - the outgoing and incoming content and the incoming
+    // wrapper's registration brackets - while the Map is presented, its
+    // switches included): the plates as polygons of the 440-point module
+    // host plane, which the transition transforms do not move. While `wanted`
+    // (a switch into or out of the Map) uploadResources keeps an updatable
+    // 880 x 880 alpha texture (two texels per point like the feather, so the
+    // same plate edges; alpha 1 - even-odd plate coverage, no feather; 3.1 MB)
+    // in step, repainting in place only the texels that change. It is created
+    // by the first switch and kept until releaseTransitionCut (false while a
+    // published draw still samples it) or releaseResources. transitionCutTexture() names it while it holds
+    // the wanted plates (after uploadResources), otherwise null.
+    bool setTransitionCut(const modules::MapCutouts& host,bool wanted);
+    const std::string* transitionCutTexture()const noexcept;
+    bool releaseTransitionCut(Renderer&);
+    // Finite motion only - camera moves, toolbar feedback and marker style
+    // transitions - which the host presents at the display rate. The pin
+    // pulse is ambient motion (the Mac runs it as a repeating compositor
+    // animation): pulsing() reports it, and it is sampled at whatever frame
+    // presents it, on the same clock, so its curve is unchanged.
     bool requiresFrames(double time)const;void settle();
+    bool pulsing()const noexcept;
     std::span<const LayerCompositionEntry>entries()const noexcept;
     bool releaseResources(Renderer&);MapSceneStats stats()const noexcept;
 private:struct Impl;std::unique_ptr<Impl>impl_;

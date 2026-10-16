@@ -119,6 +119,12 @@ void mask(){
     check(alpha2(11,15)==0&&alpha2(17,15)==200&&alpha2(22,15)==0,"Overlapping plates cut the even-odd path");
     rejects([&]{m::mapCutoutMask(square,2,base,40,40,{30,30,20,20},out,row);},"A region beyond the mask is rejected");
     rejects([&]{m::mapCutoutMask(square,2,base,40,40,region,std::span(out).first(4),row);},"A short output is rejected");
+    // The module host's transition cut has no feather: an opaque white base.
+    out.assign(std::size_t(region.width)*region.height*4,0);row.assign(region.width,0);
+    allocations=0;counting=true;try{m::mapCutoutMask(square,2,region,out,row);}catch(...){counting=false;throw;}counting=false;check(allocations==0,"The transition cut repaint allocates nothing");
+    check(alpha(15,15)==0&&alpha(9,9)==255&&alpha(21,15)==255&&alpha(20,15)==128,"Without a base the cut keeps full alpha beside the plates and its edge share");
+    check(out[((9-region.y)*region.width+(9-region.x))*4]==255&&out[((15-region.y)*region.width+(15-region.x))*4+1]==255,"Its color channels are opaque white");
+    rejects([&]{m::mapCutoutMask(square,2,region,std::span(out).first(4),row);},"A short transition cut output is rejected");
 }
 }
 int main(int argc,char**argv){
