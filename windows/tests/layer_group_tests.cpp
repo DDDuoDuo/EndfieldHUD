@@ -88,6 +88,14 @@ void run(HWND hwnd,const wchar_t* shader){
     group.setPose(core::Matrix4::translation(8,8),1);composition.present(renderer);renderer.draw(false);
     pixel(renderer.readback(),6,7,{255,255,0,255},"Opaque resized group retains negative local source coverage");
     check(renderer.stats().nativeGroups==1,"Group content replacement does not accumulate targets");
+    // The group's local surfaces gave their CPU pixels back once uploaded; a
+    // menu the composition dropped and shows again paints them again, so its
+    // target re-renders with identical pixels.
+    {const auto shown=renderer.readback().pixels;const auto repaints=raster.stats().pixelRepaints;
+     check(raster.stats().releasedPixelBytes>=local.report().pixelBytes&&local.report().pixelBytes>0,"Uploaded group inputs give their CPU pixels back");
+     composition.setScenes(renderer,std::array{&sibling});check(group.releaseResources(renderer),"The dropped menu releases its target and inputs");
+     group.uploadResources(renderer);composition.setEntries(renderer,order);composition.present(renderer);renderer.draw(false);
+     check(renderer.readback().pixels==shown&&raster.stats().pixelRepaints>repaints,"Shown again, the menu paints its released inputs again with identical pixels");}
     const auto siblingOnly=std::array{&sibling};composition.setScenes(renderer,siblingOnly);check(group.releaseResources(renderer),"Detach main group entry before retiring local resources");
     check(renderer.stats().nativeGroups==0&&renderer.stats().textures==1&&renderer.stats().meshes==1,"Group teardown preserves exactly the sibling assets");composition.present(renderer);renderer.draw(false);pixel(renderer.readback(),70,12,{0,255,0,255},"Sibling remains visible after group teardown");
     composition.detach(renderer);check(renderer.stats().resourceBytes==0,"Owned group and sibling resources fully retire");

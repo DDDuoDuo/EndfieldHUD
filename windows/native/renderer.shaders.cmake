@@ -20,7 +20,8 @@ file(MAKE_DIRECTORY "${work}")
 file(SHA256 "${SOURCE}" source_sha256)
 set(entries
   "SceneVS|vs_5_0" "ScenePS|ps_5_0" "SceneEncodedInputPS|ps_5_0" "SceneEncodedOutputPS|ps_5_0"
-  "SceneEncodedBothPS|ps_5_0" "CompositeVS|vs_5_0" "CompositePS|ps_5_0" "MediaConvertPS|ps_5_0")
+  "SceneEncodedBothPS|ps_5_0" "SceneAlphaPS|ps_5_0" "SceneAlphaEncodedOutputPS|ps_5_0"
+  "CompositeVS|vs_5_0" "CompositePS|ps_5_0" "MediaConvertPS|ps_5_0")
 set(arrays "")
 set(table "")
 set(row "")

@@ -5,6 +5,7 @@
 #include <windows.h>
 #include <objbase.h>
 #include <atomic>
+#include <chrono>
 #include <cstdlib>
 #include <iostream>
 #include <limits>
@@ -248,6 +249,56 @@ void roundedComposition(Renderer& renderer,LayerRasterizer& raster,const LayerRa
     auto mask=scene.draws()[0].masks[0];mask.cornerRadius=9;LayerPlacement bad{0,scene.draws()[0].world,1,std::span(&mask,1)};
     rejects([&]{scene.setPlacements(std::span(&bad,1));},"Invalid radius rejects before source placement mutation");composition.detach(renderer);
 }
+// A scene gives its CPU pixels back once its GPU textures hold them, and
+// paints them again, byte for byte, whenever they must be uploaded again: the
+// composition dropped the module and shows it again, or the device was lost.
+// The ten-minute closed release brings them back from the renderer's copies.
+void releasedPixels(Renderer& renderer,HWND window,const std::filesystem::path& shader,LayerRasterizer& raster,LayerRasterOptions options){
+    options.pixelsPerPoint=3;
+    auto caption=leaf("caption",.1,.2,.3);caption["kind"]="text";caption["class"]="CATextLayer";caption["bounds"]=Json::Array{0,0,28,12};caption["position"]=Json::Array{2,2};
+    caption["backgroundColor"]=Json::Object{{"sRGB",Json::Array{.1,.2,.3,.6}}};
+    caption["text"]=Json::Object{{"string","Map 07"},{"fontSize",8},{"alignment","left"},{"wrapped",false},{"truncation","none"},{"foregroundColor",Json::Object{{"sRGB",Json::Array{1,1,1,1}}}}};
+    auto plate=leaf("plate",.9,.4,.2);plate["bounds"]=Json::Array{0,0,20,10};plate["position"]=Json::Array{6,18};plate["cornerRadius"]=4;plate["opacity"]=.7;
+    LayerScene scene(raster);scene.load(root({caption,plate}),options);
+    LayerComposition composition;const std::array order{&scene};composition.setScenes(renderer,order);composition.present(renderer);renderer.draw(false);
+    const auto first=renderer.readback().pixels;const auto bytes=scene.report().pixelBytes;
+    check(bytes>0&&raster.stats().releasedPixelBytes==bytes&&raster.stats().pixelReleases>=2,"Uploaded surfaces give their CPU pixels back to their GPU textures");
+    std::size_t held{};raster.forEachEntry([&](const LayerRasterEntryUsage&e){held+=e.pixelBytes;});
+    check(held==0&&raster.stats().resourceBytes>=bytes,"No retained entry holds pixels its texture holds; the cache budget still answers for them");
+    const auto repaints=raster.stats().pixelRepaints;const auto rasters=raster.stats().rasterizations;
+    scene.uploadResources(renderer);check(raster.stats().pixelRepaints==repaints,"Resident textures are never painted again");
+    // Dropped from the composition (another module shown) and shown again.
+    const std::array<LayerScene*,0> none{};composition.setScenes(renderer,none);check(renderer.stats().textures==0,"Leaving the composition releases the textures");
+    composition.setScenes(renderer,order);composition.present(renderer);renderer.draw(false);
+    check(renderer.readback().pixels==first&&raster.stats().pixelRepaints==repaints+2&&raster.stats().rasterizations==rasters,"Shown again, the released surfaces are painted again identically, without a raster");
+    check(raster.stats().releasedPixelBytes==bytes,"Their pixels are given back again once uploaded");
+    // The ten-minute closed release: the renderer keeps its own copies.
+    check(renderer.suspendDevice(),"The closed renderer releases its device");
+    scene.uploadResources(renderer);check(renderer.deviceSuspended()&&raster.stats().pixelRepaints==repaints+2,"Uploading while suspended needs neither the device nor a repaint");
+    renderer.draw(false);check(renderer.readback().pixels==first&&raster.stats().pixelRepaints==repaints+2,"The device comes back with identical pixels from the renderer's copies");
+    // Device loss: a new device, every texture painted again.
+    composition.detach(renderer);renderer.reset();
+    renderer.initialize(window,32,32,{Driver::warpForTests,shader,RenderTarget::offscreenForTests});renderer.setCamera(layerViewportProjection(32,32));
+    composition.setScenes(renderer,order);composition.present(renderer);renderer.draw(false);
+    check(renderer.readback().pixels==first&&raster.stats().pixelRepaints==repaints+4&&raster.stats().rasterizations==rasters,"After a device loss the released surfaces are painted again with identical pixels");
+    composition.detach(renderer);
+    // What showing a dropped module again costs now: a page of 24 captions
+    // and plates at 2 px/pt, painted again instead of uploaded from a copy.
+    {
+        auto page=options;page.pixelsPerPoint=2;Json::Array leaves;
+        for(unsigned n=0;n<24;++n){auto label=leaf(("row-"+std::to_string(n)).c_str(),.12,.14,.18);label["kind"]="text";label["class"]="CATextLayer";
+            label["bounds"]=Json::Array{0,0,180,18};label["position"]=Json::Array{4,4+20.*n};label["cornerRadius"]=3;
+            label["text"]=Json::Object{{"string","Endfield row "+std::to_string(n)+" 设置 · 0"+std::to_string(n%10)+":2"+std::to_string(n%6)},{"fontSize",12},{"alignment","left"},{"wrapped",false},{"truncation","end"},{"foregroundColor",Json::Object{{"sRGB",Json::Array{1,1,1,.9}}}}};
+            leaves.push_back(std::move(label));}
+        using clock=std::chrono::steady_clock;const auto ms=[](clock::time_point from){return std::chrono::duration<double,std::milli>(clock::now()-from).count();};
+        LayerScene rows(raster);auto begin=clock::now();rows.load(Json::Object{{"bounds",Json::Array{0,0,190,490}},{"children",std::move(leaves)}},page);const double rastered=ms(begin);
+        begin=clock::now();rows.upload(renderer);const double uploaded=ms(begin);renderer.draw(false);const auto shown=renderer.readback().pixels;
+        rows.detach(renderer);const auto before=raster.stats().pixelRepaints;begin=clock::now();rows.upload(renderer);const double repainted=ms(begin);renderer.draw(false);
+        check(renderer.readback().pixels==shown&&raster.stats().pixelRepaints==before+24,"A page of released captions is painted again identically");
+        std::cout<<"Released page of 24 captions ("<<rows.report().pixelBytes/1024<<" KiB of pixels): raster "<<rastered<<" ms, first upload "<<uploaded<<" ms, upload painted again "<<repainted<<" ms\n";
+        rows.detach(renderer);
+    }
+}
 void run(const std::filesystem::path& shader){
     Window window;Renderer renderer;renderer.initialize(window.hwnd,32,32,{Driver::warpForTests,shader,RenderTarget::offscreenForTests});
     renderer.setCamera(layerViewportProjection(32,32));LayerRasterizer raster;LayerRasterOptions options;options.pixelsPerPoint=1;options.paddingPoints=1;
@@ -327,6 +378,7 @@ void run(const std::filesystem::path& shader){
     supplementalComposition(renderer,raster,options);
     retainedResourceComposition(renderer,raster,options);
     roundedComposition(renderer,raster,options);
+    releasedPixels(renderer,window.hwnd,shader,raster,options);
     check(raster.stats().entries==0,"Sibling scene destruction releases only its own retained local rasters");
     check(!IsWindowVisible(window.hwnd),"The fixture never shows or captures a desktop window");
 }

@@ -143,10 +143,29 @@ std::vector<const Json*> children(const Json& node) {
 namespace {
 bool containsText(const Json&node){if(node["text"].isObject())return true;if(node["children"].isArray())for(const auto&child:node["children"].array())if(containsText(child))return true;return false;}
 std::size_t retainedJsonBytes(const Json&v,unsigned depth=0){if(depth>128)invalid("Typography descriptor nesting exceeds limit");std::size_t result=sizeof(Json);auto add=[&](std::size_t n){if(n>LayerRasterizer::maximumTypographyDescriptorBytes-result)invalid("Typography descriptor exceeds limit");result+=n;};if(v.isString())add(v.string().capacity()+1);else if(v.isArray()){add(v.array().capacity()*sizeof(Json));for(const auto&a:v.array())add(retainedJsonBytes(a,depth+1));}else if(v.isObject())for(const auto&[k,a]:v.object()){add(sizeof(Json::Object::value_type)+4*sizeof(void*)+k.capacity()+1);add(retainedJsonBytes(a,depth+1));}return result;}
+// The same estimate (generous: array elements count twice), given up (false)
+// as soon as it exceeds `limit`: a local layer description is kept to repaint
+// released pixels only while it is smaller than them.
+bool jsonBytesWithin(const Json&v,std::size_t limit,std::size_t&total,unsigned depth=0){
+    const auto add=[&](std::size_t n){if(n>limit-total)return false;total+=n;return true;};
+    if(depth>128||!add(sizeof(Json)))return false;
+    if(v.isString())return add(v.string().capacity()+1);
+    if(v.isArray()){if(!add(v.array().capacity()*sizeof(Json)))return false;for(const auto&a:v.array())if(!jsonBytesWithin(a,limit,total,depth+1))return false;return true;}
+    if(v.isObject())for(const auto&[k,a]:v.object())if(!add(sizeof(Json::Object::value_type)+4*sizeof(void*)+k.capacity()+1)||!jsonBytesWithin(a,limit,total,depth+1))return false;
+    return true;
+}
 }
 
+// What painted a retained image: its local layer description, options and
+// default typography. Text entries keep it to repaint typography; a
+// releasable image keeps it to paint its released pixels again.
+struct detail::LayerRasterRecipe {
+    std::shared_ptr<const Json> layer;LayerRasterOptions options;LayerFontLanguage language{};std::size_t bytes{};
+};
+
 struct LayerRasterizer::Impl {
-    struct Entry { std::uint64_t revision;LayerRasterOptions options;std::shared_ptr<LayerRasterImage> image;std::vector<ComPtr<IDWriteTextLayout>> layouts;std::shared_ptr<const PaintedTextLayout> paintedText;std::uint64_t fontRevision{};bool hasText{};Json typographySource;std::size_t descriptorBytes{};std::string owner; };
+    using Recipe = detail::LayerRasterRecipe;
+    struct Entry { std::uint64_t revision;LayerRasterOptions options;std::shared_ptr<LayerRasterImage> image;std::vector<ComPtr<IDWriteTextLayout>> layouts;std::shared_ptr<const PaintedTextLayout> paintedText;std::uint64_t fontRevision{};bool hasText{};std::shared_ptr<const Recipe> source;std::size_t descriptorBytes{};std::string owner;bool releasable{}; };
     struct DecodedImage { unsigned width{},height{};std::vector<std::uint8_t> premultipliedBGRA; };
     struct ImagePixels {
         unsigned width{},height{};std::span<const std::uint8_t> premultipliedBGRA;
@@ -159,6 +178,7 @@ struct LayerRasterizer::Impl {
     std::map<std::string,Entry,std::less<>> entries;
     std::map<std::string,DecodedImage,std::less<>> images;
     LayerRasterStats counts;LayerFontLanguage language{LayerFontLanguage::simplifiedChinese};std::uint64_t fontRevision{1};
+    bool memoryImageUsed{}; // the current paint read a borrowed provider's image
     const char*defaultFamily()const noexcept{return language==LayerFontLanguage::korean?"Noto Sans KR":"Noto Sans SC";}
     const wchar_t*locale()const noexcept{return language==LayerFontLanguage::korean?L"ko-kr":L"zh-cn";}
     static bool bundled(std::string_view family){return family=="Noto Sans SC"||family=="Noto Sans KR";}
@@ -311,6 +331,7 @@ struct LayerRasterizer::Impl {
             if(revision<=0)invalid("Memory image revision must be positive");
             auto snapshot=options.memoryImages->acquire(contents["memoryImage"].string(),static_cast<std::uint64_t>(revision));
             if(!snapshot)invalid("Memory image key/revision is missing or retired");
+            memoryImageUsed=true;
             ImagePixels pixels{snapshot->width(),snapshot->height(),snapshot->premultipliedBGRA(),std::move(snapshot)};
             return pixels;
         }
@@ -576,6 +597,54 @@ struct LayerRasterizer::Impl {
         }
         target->SetTransform(world*pixels);while(pushes>0){--pushes;target->PopLayer();}
     }
+    // A local raster's padded bounds and pixel size (rasterize and repaint).
+    void measureRaster(const Json& layer,const LayerRasterOptions& options,LayerRasterImage& result){
+        std::size_t visited=0;auto bounds=measure(layer,Matrix::Identity(),result,visited,0);
+        bounds.x-=options.paddingPoints;bounds.y-=options.paddingPoints;bounds.width+=options.paddingPoints*2;bounds.height+=options.paddingPoints*2;
+        const double w=std::ceil(std::max(1.0/options.pixelsPerPoint,bounds.width)*options.pixelsPerPoint),h=std::ceil(std::max(1.0/options.pixelsPerPoint,bounds.height)*options.pixelsPerPoint);
+        if(w>8192||h>8192||w*h>maximumPixels)invalid("Local raster exceeds its pixel limit");
+        result.width=static_cast<unsigned>(w);result.height=static_cast<unsigned>(h);bounds.width=w/options.pixelsPerPoint;bounds.height=h/options.pixelsPerPoint;result.bounds=bounds;
+    }
+    // Paints a measured raster into a new premultiplied BGRA bitmap.
+    ComPtr<IWICBitmap> paintRaster(const Json& layer,const LayerRasterOptions& options,LayerRasterImage& result,std::vector<ComPtr<IDWriteTextLayout>>& layouts){
+        ComPtr<IWICBitmap> bitmap;checked(wic->CreateBitmap(result.width,result.height,GUID_WICPixelFormat32bppPBGRA,WICBitmapCacheOnLoad,bitmap.GetAddressOf()),"Create bounded local bitmap");
+        ComPtr<ID2D1RenderTarget> target;checked(d2d->CreateWicBitmapRenderTarget(bitmap.Get(),D2D1::RenderTargetProperties(D2D1_RENDER_TARGET_TYPE_SOFTWARE,
+            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,D2D1_ALPHA_MODE_PREMULTIPLIED),96,96),target.GetAddressOf()),"Create offscreen local layer target");
+        target->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);target->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
+        target->BeginDraw();target->Clear(D2D1::ColorF(0.f,0.f,0.f,0.f));
+        const auto&bounds=result.bounds;
+        const Matrix pixels=Matrix::Translation(static_cast<float>(-bounds.x),static_cast<float>(-bounds.y))*Matrix::Scale(static_cast<float>(options.pixelsPerPoint),static_cast<float>(options.pixelsPerPoint));
+        std::size_t visited=0;draw(target.Get(),layer,Matrix::Identity(),pixels,options,result,layouts,1,visited,0,true);
+        checked(target->EndDraw(),"Complete local layer raster");
+        return bitmap;
+    }
+    // The bitmap's tight straight RGBA rows, converted in place (no second copy).
+    static void straightPixels(IWICBitmap* bitmap,unsigned width,unsigned height,std::vector<std::uint8_t>& out){
+        const auto bytes=std::size_t(width)*height*4;out.resize(bytes);
+        checked(bitmap->CopyPixels(nullptr,width*4,static_cast<UINT>(bytes),out.data()),"Copy owned local bitmap");
+        for(std::size_t i=0;i<bytes;i+=4){const unsigned b=out[i],g=out[i+1],r=out[i+2],a=out[i+3];
+            out[i]=a?static_cast<std::uint8_t>(std::min(255u,(r*255u+a/2)/a)):0;
+            out[i+1]=a?static_cast<std::uint8_t>(std::min(255u,(g*255u+a/2)/a)):0;
+            out[i+2]=a?static_cast<std::uint8_t>(std::min(255u,(b*255u+a/2)/a)):0;
+        }
+    }
+    // A released image's pixels painted again from its recipe, with the
+    // typography it was painted with. Statistics other than pixelRepaints
+    // (and a decoded image the cache had to read again) stay as they were.
+    void repaint(const LayerRasterImage& image,std::vector<std::uint8_t>& out){
+        if(!image.recipe_)invalid("Only a releasable raster can be painted again");
+        const auto& recipe=*image.recipe_;
+        struct Restore{Impl& r;LayerFontLanguage language;LayerRasterStats counts;bool memory;
+            ~Restore(){const auto decoded=r.counts.resourceBytes;r.language=language;r.counts=counts;r.counts.resourceBytes=decoded;r.memoryImageUsed=memory;}}
+            restore{*this,language,counts,memoryImageUsed};
+        language=recipe.language;
+        LayerRasterImage scratch;measureRaster(*recipe.layer,recipe.options,scratch);
+        if(scratch.width!=image.width||scratch.height!=image.height||scratch.bounds!=image.bounds)throw std::logic_error("A released raster no longer paints its retained bounds");
+        std::vector<ComPtr<IDWriteTextLayout>> layouts;const auto bitmap=paintRaster(*recipe.layer,recipe.options,scratch,layouts);
+        straightPixels(bitmap.Get(),image.width,image.height,out);
+        restore.counts.pixelRepaints++;
+    }
+    std::shared_ptr<const LayerRasterImage> raster(std::string id,std::uint64_t revision,const Json& layer,const LayerRasterOptions& options,bool releasable,std::shared_ptr<const Recipe> reuse);
 };
 
 struct LayerPlainTextAnalysis::Impl {
@@ -707,7 +776,16 @@ LayerSourceTextMeasurement LayerRasterizer::measureSourceText(const std::string&
     return result;
 }
 std::shared_ptr<const LayerRasterImage> LayerRasterizer::rasterize(std::string id,std::uint64_t revision,const Json& layer,const LayerRasterOptions& options){
-    auto& r=*impl_;r.onThread();
+    return impl_->raster(std::move(id),revision,layer,options,false,{});
+}
+std::shared_ptr<const LayerRasterImage> LayerRasterizer::rasterize(std::string id,std::uint64_t revision,const Json& layer,const LayerRasterOptions& options,LayerRasterRetention retention){
+    if(retention!=LayerRasterRetention::pixels&&retention!=LayerRasterRetention::releasable)invalid("Unknown raster retention");
+    return impl_->raster(std::move(id),revision,layer,options,retention==LayerRasterRetention::releasable,{});
+}
+// `reuse`: the recipe of the entry being repainted for typography, whose
+// layer is `layer` (no second copy of the description).
+std::shared_ptr<const LayerRasterImage> LayerRasterizer::Impl::raster(std::string id,std::uint64_t revision,const Json& layer,const LayerRasterOptions& options,bool releasable,std::shared_ptr<const Recipe> reuse){
+    auto& r=*this;r.onThread();
     if(id.empty()||id.size()>4096||!Json::validUtf8(id))invalid("Invalid retained layer ID");
     if(!std::isfinite(options.pixelsPerPoint)||options.pixelsPerPoint<.25||options.pixelsPerPoint>4
        ||!std::isfinite(options.paddingPoints)||options.paddingPoints<0||options.paddingPoints>64)invalid("Invalid local raster scale/padding");
@@ -722,31 +800,20 @@ std::shared_ptr<const LayerRasterImage> LayerRasterizer::rasterize(std::string i
     if(options.retainedPlainText&&(old==r.entries.end()||old->second.paintedText!=options.retainedPlainText))invalid("Borrowed text layout must belong to this retained surface");
     if(options.retainedPlainText&&old->second.fontRevision!=r.fontRevision)invalid("Borrowed text layout has a different typography generation");
     if(options.retainedPlainText&&(old->second.options.fallbackFontFamily!=options.fallbackFontFamily||old->second.options.monospaceFallbackFontFamily!=options.monospaceFallbackFontFamily))invalid("Borrowed text layout has different font resolver options");
-    if(old!=r.entries.end()&&old->second.revision==revision&&old->second.options==options&&(!old->second.hasText||old->second.fontRevision==r.fontRevision)){++r.counts.cacheHits;return old->second.image;}
+    if(old!=r.entries.end()&&old->second.revision==revision&&old->second.options==options&&(!old->second.hasText||old->second.fontRevision==r.fontRevision)){
+        // The caller expects the pixels: a released image paints them again.
+        auto&image=*old->second.image;if(image.pixelsReleased())repaint(image,image.straightRGBA);
+        ++r.counts.cacheHits;return old->second.image;}
     if(old==r.entries.end()&&r.entries.size()>=maximumEntries)invalid("Retained layer cache is full; remove unused source IDs");
-    auto result=std::make_shared<LayerRasterImage>();if(options.retainedPlainText)result->fontSubstitutions=old->second.image->fontSubstitutions;std::size_t visited=0;
-    auto bounds=r.measure(layer,Matrix::Identity(),*result,visited,0);
-    bounds.x-=options.paddingPoints;bounds.y-=options.paddingPoints;bounds.width+=options.paddingPoints*2;bounds.height+=options.paddingPoints*2;
-    const double w=std::ceil(std::max(1.0/options.pixelsPerPoint,bounds.width)*options.pixelsPerPoint),h=std::ceil(std::max(1.0/options.pixelsPerPoint,bounds.height)*options.pixelsPerPoint);
-    if(w>8192||h>8192||w*h>maximumPixels)invalid("Local raster exceeds its pixel limit");
-    result->width=static_cast<unsigned>(w);result->height=static_cast<unsigned>(h);bounds.width=w/options.pixelsPerPoint;bounds.height=h/options.pixelsPerPoint;result->bounds=bounds;
-    const auto bytes=std::size_t(result->width)*result->height*4,previous=old==r.entries.end()?0:old->second.image->straightRGBA.size();
+    auto result=std::make_shared<LayerRasterImage>();if(options.retainedPlainText)result->fontSubstitutions=old->second.image->fontSubstitutions;
+    r.measureRaster(layer,options,*result);
+    const auto bytes=result->pixelBytes(),previous=old==r.entries.end()?0:old->second.image->pixelBytes();
     if(bytes>maximumResourceBytes-(r.counts.resourceBytes-previous))invalid("Retained layer resource budget exceeded");
-    ComPtr<IWICBitmap> bitmap;checked(r.wic->CreateBitmap(result->width,result->height,GUID_WICPixelFormat32bppPBGRA,WICBitmapCacheOnLoad,bitmap.GetAddressOf()),"Create bounded local bitmap");
-    ComPtr<ID2D1RenderTarget> target;checked(r.d2d->CreateWicBitmapRenderTarget(bitmap.Get(),D2D1::RenderTargetProperties(D2D1_RENDER_TARGET_TYPE_SOFTWARE,
-        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,D2D1_ALPHA_MODE_PREMULTIPLIED),96,96),target.GetAddressOf()),"Create offscreen local layer target");
-    target->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);target->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
-    target->BeginDraw();target->Clear(D2D1::ColorF(0.f,0.f,0.f,0.f));
-    const Matrix pixels=Matrix::Translation(static_cast<float>(-bounds.x),static_cast<float>(-bounds.y))*Matrix::Scale(static_cast<float>(options.pixelsPerPoint),static_cast<float>(options.pixelsPerPoint));
-    std::vector<ComPtr<IDWriteTextLayout>> layouts;visited=0;r.draw(target.Get(),layer,Matrix::Identity(),pixels,options,*result,layouts,1,visited,0,true);
-    checked(target->EndDraw(),"Complete local layer raster");
+    std::vector<ComPtr<IDWriteTextLayout>> layouts;r.memoryImageUsed=false;
+    const auto bitmap=r.paintRaster(layer,options,*result,layouts);const bool memoryImage=r.memoryImageUsed;r.memoryImageUsed=false;
     // Image cache growth while drawing also counts against the same bound.
     if(bytes>maximumResourceBytes-(r.counts.resourceBytes-previous))invalid("Retained layer resource budget exceeded after image decode");
-    std::vector<std::uint8_t> bgra(bytes);checked(bitmap->CopyPixels(nullptr,result->width*4,static_cast<UINT>(bytes),bgra.data()),"Copy owned local bitmap");
-    result->straightRGBA.resize(bytes);
-    for(std::size_t i=0;i<bytes;i+=4){const unsigned a=bgra[i+3];result->straightRGBA[i+3]=static_cast<std::uint8_t>(a);
-        for(unsigned c=0;c<3;++c)result->straightRGBA[i+c]=a?static_cast<std::uint8_t>(std::min(255u,(unsigned(bgra[i+2-c])*255u+a/2)/a)):0;
-    }
+    straightPixels(bitmap.Get(),result->width,result->height,result->straightRGBA);
     std::shared_ptr<const PaintedTextLayout> painted;
     // Editor geometry currently follows the rectangular DWrite viewport only.
     // Keep rendering nonrectangular masks, but do not fabricate matching hits
@@ -760,27 +827,59 @@ std::shared_ptr<const LayerRasterImage> LayerRasterizer::rasterize(std::string i
     const auto oldMetadata=old==r.entries.end()||!old->second.paintedText?0:old->second.paintedText->metadataBytes();
     const auto newMetadata=painted?painted->metadataBytes():0;
     if(newMetadata>maximumTextMetadataBytes-(r.counts.textMetadataBytes-oldMetadata))invalid("Retained editor text metadata exceeds its bound");
-    const bool hasText=containsText(layer);const auto oldDescriptors=old==r.entries.end()?0:old->second.descriptorBytes;
-    Json retained;std::size_t descriptorBytes{};
-    if(hasText&&!options.plainTextDocument&&!options.richTextDocument){descriptorBytes=retainedJsonBytes(layer);if(descriptorBytes>maximumTypographyDescriptorBytes-(r.counts.typographyDescriptorBytes-oldDescriptors))invalid("Retained typography descriptor budget exceeded");retained=layer;}
+    const bool hasText=containsText(layer);const bool document=options.plainTextDocument||options.richTextDocument;
+    const auto oldDescriptors=old==r.entries.end()?0:old->second.descriptorBytes;
+    // A text description is kept for typography refreshes, and doubles as
+    // the recipe of a releasable image. Another releasable image keeps its
+    // description only while it is smaller than its pixels.
+    std::shared_ptr<const Recipe> source;std::size_t descriptorBytes{};
+    releasable=releasable&&!document&&!options.retainedPlainText&&!memoryImage;
+    if(hasText&&!document){
+        const bool same=reuse&&reuse->layer.get()==&layer;
+        descriptorBytes=same?reuse->bytes:retainedJsonBytes(layer);
+        if(descriptorBytes>maximumTypographyDescriptorBytes-(r.counts.typographyDescriptorBytes-oldDescriptors))invalid("Retained typography descriptor budget exceeded");
+        source=std::make_shared<const Recipe>(Recipe{same?reuse->layer:std::make_shared<const Json>(layer),options,r.language,descriptorBytes});
+    }else if(releasable){std::size_t description{};
+        if(jsonBytesWithin(layer,bytes,description))source=std::make_shared<const Recipe>(Recipe{std::make_shared<const Json>(layer),options,r.language,description});}
+    if(releasable&&source)result->recipe_=source;else releasable=false;
     // Diagnostics: the creating owner (LayerRasterAttribution); a host-side
     // replacement keeps the owner that created the surface.
     std::string owner(LayerRasterAttribution::current());if(owner.empty()&&old!=r.entries.end())owner=std::move(old->second.owner);
-    r.entries.insert_or_assign(std::move(id),Impl::Entry{revision,options,result,std::move(layouts),std::move(painted),r.fontRevision,hasText,std::move(retained),descriptorBytes,std::move(owner)});
+    r.entries.insert_or_assign(std::move(id),Impl::Entry{revision,options,result,std::move(layouts),std::move(painted),r.fontRevision,hasText,hasText&&!document?std::move(source):nullptr,descriptorBytes,std::move(owner),releasable});
     r.counts.typographyDescriptorBytes=r.counts.typographyDescriptorBytes-oldDescriptors+descriptorBytes;
     r.counts.resourceBytes=r.counts.resourceBytes-previous+bytes;r.counts.textMetadataBytes=r.counts.textMetadataBytes-oldMetadata+newMetadata;++r.counts.rasterizations;return result;
 }
+bool LayerRasterizer::releasePixels(const std::string&id,const std::shared_ptr<const LayerRasterImage>&image){
+    auto&r=*impl_;r.onThread();
+    if(!image||!image->recipe_||image->straightRGBA.empty())return false;
+    // Nobody but the cache entry and the caller may still read these pixels.
+    const auto found=r.entries.find(id);const bool cached=found!=r.entries.end()&&found->second.image.get()==image.get();
+    if(image.use_count()!=(cached?2:1))return false;
+    // Created non-const by this rasterizer (make_shared<LayerRasterImage>).
+    std::vector<std::uint8_t>().swap(const_cast<LayerRasterImage&>(*image).straightRGBA);
+    ++r.counts.pixelReleases;return true;
+}
+void LayerRasterizer::repaint(const LayerRasterImage&image,std::vector<std::uint8_t>&straightRGBA){
+    auto&r=*impl_;r.onThread();
+    if(&straightRGBA==&image.straightRGBA)invalid("Repaint into a separate buffer");
+    r.repaint(image,straightRGBA);
+}
 std::shared_ptr<const PaintedTextLayout>LayerRasterizer::textLayout(const std::string&id,std::uint64_t revision)const{const auto&r=*impl_;r.onThread();const auto found=r.entries.find(id);return found!=r.entries.end()&&found->second.revision==revision?found->second.paintedText:nullptr;}
-std::shared_ptr<const LayerRasterImage>LayerRasterizer::refreshTypography(const std::string&id,std::uint64_t revision){auto&r=*impl_;r.onThread();const auto it=r.entries.find(id);if(it==r.entries.end()||it->second.typographySource.isNull())return{};const auto options=it->second.options;return rasterize(id,revision,it->second.typographySource,options);}
-bool LayerRasterizer::remove(const std::string& id){auto& r=*impl_;r.onThread();const auto it=r.entries.find(id);if(it==r.entries.end())return false;r.counts.resourceBytes-=it->second.image->straightRGBA.size();if(it->second.paintedText)r.counts.textMetadataBytes-=it->second.paintedText->metadataBytes();r.counts.typographyDescriptorBytes-=it->second.descriptorBytes;r.entries.erase(it);return true;}
+std::shared_ptr<const LayerRasterImage>LayerRasterizer::refreshTypography(const std::string&id,std::uint64_t revision){auto&r=*impl_;r.onThread();const auto it=r.entries.find(id);if(it==r.entries.end()||!it->second.source)return{};
+    // Held here: the entry (and its recipe) is replaced while it paints.
+    const auto source=it->second.source;const bool releasable=it->second.releasable;return r.raster(id,revision,*source->layer,source->options,releasable,source);}
+bool LayerRasterizer::remove(const std::string& id){auto& r=*impl_;r.onThread();const auto it=r.entries.find(id);if(it==r.entries.end())return false;r.counts.resourceBytes-=it->second.image->pixelBytes();if(it->second.paintedText)r.counts.textMetadataBytes-=it->second.paintedText->metadataBytes();r.counts.typographyDescriptorBytes-=it->second.descriptorBytes;r.entries.erase(it);return true;}
 void LayerRasterizer::clear(){auto& r=*impl_;r.onThread();r.entries.clear();r.images.clear();r.counts.resourceBytes=0;r.counts.textMetadataBytes=0;r.counts.typographyDescriptorBytes=0;}
 void LayerRasterizer::forEachEntry(const std::function<void(const LayerRasterEntryUsage&)>&visit)const{const auto&r=*impl_;r.onThread();
-    for(const auto&[id,e]:r.entries)visit({id,e.owner,e.image?e.image->straightRGBA.capacity():0,e.layouts.size(),e.descriptorBytes,e.paintedText?e.paintedText->metadataBytes():0,e.paintedText!=nullptr});}
+    for(const auto&[id,e]:r.entries)visit({id,e.owner,e.image?e.image->straightRGBA.capacity():0,e.layouts.size(),e.descriptorBytes,e.paintedText?e.paintedText->metadataBytes():0,e.paintedText!=nullptr,
+        e.image&&e.image->pixelsReleased()?e.image->pixelBytes():0});}
 std::size_t LayerRasterizer::decodedImageBytes()const{const auto&r=*impl_;r.onThread();std::size_t bytes{};for(const auto&[_,image]:r.images)bytes+=image.premultipliedBGRA.capacity();return bytes;}
 namespace {thread_local std::string_view rasterAttribution;}
 LayerRasterAttribution::LayerRasterAttribution(std::string_view owner)noexcept:previous_(rasterAttribution){rasterAttribution=owner;}
 LayerRasterAttribution::~LayerRasterAttribution(){rasterAttribution=previous_;}
 std::string_view LayerRasterAttribution::current()noexcept{return rasterAttribution;}
-LayerRasterStats LayerRasterizer::stats()const{const auto& r=*impl_;r.onThread();auto result=r.counts;result.entries=r.entries.size();result.decodedImages=r.images.size();return result;}
+LayerRasterStats LayerRasterizer::stats()const{const auto& r=*impl_;r.onThread();auto result=r.counts;result.entries=r.entries.size();result.decodedImages=r.images.size();
+    for(const auto&[id,e]:r.entries){(void)id;if(e.image->pixelsReleased())result.releasedPixelBytes+=e.image->pixelBytes();if(e.image->recipe_&&!e.hasText)result.repaintSourceBytes+=e.image->recipe_->bytes;}
+    return result;}
 } // namespace endfield::native
 #endif

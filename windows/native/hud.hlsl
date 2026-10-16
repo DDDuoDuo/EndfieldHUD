@@ -57,7 +57,10 @@ float3 decodeSRGB(float3 encodedRGB) {
         encodedRGB.g<=.04045?encodedRGB.g/12.92:pow((encodedRGB.g+.055)/1.055,2.4),
         encodedRGB.b<=.04045?encodedRGB.b/12.92:pow((encodedRGB.b+.055)/1.055,2.4));
 }
-float4 sceneColor(SceneVertex input,bool encodedInput,bool encodedOutput) {
+// alphaInput: an alpha-only texture (DXGI A8, stored where every covered
+// texel is white) samples as (0,0,0,a); premultiplied white is (a,a,a,a) in
+// every color space, so it reads as that linear-premultiplied texel.
+float4 sceneColor(SceneVertex input,bool encodedInput,bool encodedOutput,bool alphaInput) {
     [loop] for (uint i = 0; i < maskCount; ++i) {
         float4 local = mul(masks[i].worldToLocal, input.worldPosition);
         clip(local.w - 0.0000001);
@@ -102,6 +105,7 @@ float4 sceneColor(SceneVertex input,bool encodedInput,bool encodedOutput) {
         clip(covered ? 1 : -1);
     }
     float4 sampled = colorTexture.Sample(colorSampler, input.uv);
+    if (alphaInput) sampled = sampled.aaaa;
     float4 tint = input.linearColor * linearTint;
     float opacityFactor = saturate(tint.a * opacity);
     [branch] if (alphaControl.x != 0) {
@@ -140,10 +144,12 @@ float4 sceneColor(SceneVertex input,bool encodedInput,bool encodedOutput) {
     else color=encodeSRGB(color*tint.rgb);
     return float4(color*sampled.a*opacityFactor,sampled.a*opacityFactor);
 }
-float4 ScenePS(SceneVertex input):SV_Target{return sceneColor(input,false,false);}
-float4 SceneEncodedInputPS(SceneVertex input):SV_Target{return sceneColor(input,true,false);}
-float4 SceneEncodedOutputPS(SceneVertex input):SV_Target{return sceneColor(input,false,true);}
-float4 SceneEncodedBothPS(SceneVertex input):SV_Target{return sceneColor(input,true,true);}
+float4 ScenePS(SceneVertex input):SV_Target{return sceneColor(input,false,false,false);}
+float4 SceneEncodedInputPS(SceneVertex input):SV_Target{return sceneColor(input,true,false,false);}
+float4 SceneEncodedOutputPS(SceneVertex input):SV_Target{return sceneColor(input,false,true,false);}
+float4 SceneEncodedBothPS(SceneVertex input):SV_Target{return sceneColor(input,true,true,false);}
+float4 SceneAlphaPS(SceneVertex input):SV_Target{return sceneColor(input,false,false,true);}
+float4 SceneAlphaEncodedOutputPS(SceneVertex input):SV_Target{return sceneColor(input,false,true,true);}
 
 struct CompositeVertex { float4 position : SV_Position; };
 CompositeVertex CompositeVS(uint id : SV_VertexID) {

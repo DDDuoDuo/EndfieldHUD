@@ -24,6 +24,12 @@ class DesktopBackdrop;
 enum class Driver { hardware, warpForTests };
 // encodedSRGB retains associated encoded bytes for source Core Animation
 // groups. The default sRGB path continues to filter/blend in linear space.
+// Every texture takes four bytes per texel on the GPU: sRGB and linear ones
+// hold premultiplied linear values in sRGB encoding (R8G8B8A8_UNORM_SRGB),
+// encoded ones premultiplied encoded bytes (R8G8B8A8_UNORM). One that is
+// white wherever it covers (an alpha mask, white text) keeps one byte, its
+// alpha (A8_UNORM), and reads as premultiplied white. Encoded native groups
+// likewise keep 8-bit targets; linear groups keep half floats.
 enum class TextureColorSpace { sRGB, linear, encodedSRGB };
 enum class NativeGroupColorSpace { linear, encodedSRGB };
 enum class NativeBlend { sourceOver, screen, weightedAdd };
@@ -491,6 +497,12 @@ public:
     // removed. Replacing an existing ID updates all current references.
     bool removeMesh(const std::string &sourceID);
     bool removeTexture(const std::string &sourceID);
+    // The revision of the texture this renderer holds under `sourceID` (on
+    // its device, or in system memory while the device is suspended), or
+    // none. A lookup only: it never creates a suspended device again. An
+    // owner that gave back its own copy of the pixels (LayerScene) asks it
+    // before uploading, and paints them again only when the texture is gone.
+    std::optional<std::uint64_t> textureRevision(const std::string &sourceID) const;
     void clearDrawList();
     void clearResources(); // also clears draw list
     void reset() noexcept;

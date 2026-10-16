@@ -23,6 +23,9 @@ using namespace endfield::native;
 // rather than an 8-bit readback that could hide a changed 16-bit rounding bit.
 namespace endfield::native::detail {
 void prepareTextureRGBA16(std::span<const std::uint8_t>,TextureColorSpace,std::span<std::uint16_t>);
+void prepareTextureSRGB8(std::span<const std::uint8_t>,std::span<std::uint8_t>);
+void prepareTextureLinear8(std::span<const std::uint8_t>,std::span<std::uint8_t>);
+void prepareTextureEncoded8(std::span<const std::uint8_t>,std::span<std::uint8_t>);
 }
 namespace {
 unsigned checks{};
@@ -97,6 +100,131 @@ void textureByteConversion(){
     }
     output.fill(12345);rejects([&]{detail::prepareTextureRGBA16(std::span(input).first(3),TextureColorSpace::sRGB,output);},"Malformed conversion spans reject before writing");
     check(std::all_of(output.begin(),output.end(),[](auto value){return value==12345;}),"Rejected conversion preserves output bytes");
+    // Four bytes per texel for every color space (what the GPU now stores):
+    // sRGB and linear texels are the 16-bit path's premultiplied linear value
+    // in sRGB encoding, encoded texels Core Animation's premultiplied bytes.
+    // Alpha bytes are exact in all three, so alpha masks read what they did.
+    std::array<std::uint8_t,256*4> bytes{};
+    const auto encodedByte=[](std::uint16_t linear16){return static_cast<std::uint8_t>(std::lround(std::clamp(encoded(linear16/65535.),0.,1.)*255));};
+    for(unsigned alpha=0;alpha<256;++alpha){
+        for(unsigned value=0;value<256;++value){const auto at=value*4;input[at]=static_cast<std::uint8_t>(value);input[at+1]=static_cast<std::uint8_t>(255-value);input[at+2]=static_cast<std::uint8_t>((value*73u+19u)%256u);input[at+3]=static_cast<std::uint8_t>(alpha);}
+        for(auto space:{TextureColorSpace::sRGB,TextureColorSpace::linear}){
+            detail::prepareTextureRGBA16(input,space,output);bytes.fill(77);
+            if(space==TextureColorSpace::sRGB)detail::prepareTextureSRGB8(input,bytes);else detail::prepareTextureLinear8(input,bytes);
+            for(std::size_t at=0;at<input.size();at+=4){
+                for(std::size_t channel=0;channel<3;++channel){
+                    // Opaque sRGB bytes are stored as they are (encode(decode(e)) == e).
+                    const auto expected=space==TextureColorSpace::sRGB&&alpha==255?input[at+channel]:encodedByte(output[at+channel]);
+                    check(bytes[at+channel]==expected,space==TextureColorSpace::sRGB?"An sRGB texel stores its premultiplied linear value's nearest encoded byte":"A linear texel stores the 16-bit path's premultiplied value as its nearest encoded byte");}
+                check(bytes[at+3]==input[at+3],"Four-byte linear and sRGB texels keep the exact alpha byte");
+            }
+        }
+        bytes.fill(77);detail::prepareTextureEncoded8(input,bytes);
+        for(std::size_t at=0;at<input.size();at+=4){
+            for(std::size_t channel=0;channel<3;++channel)check(bytes[at+channel]==static_cast<std::uint8_t>((unsigned(input[at+channel])*alpha+127u)/255u),"An encoded texel stores Core Animation's premultiplied byte round(e*a/255)");
+            check(bytes[at+3]==input[at+3],"An encoded texel keeps the exact alpha byte");
+        }
+    }
+    bytes.fill(77);rejects([&]{detail::prepareTextureEncoded8(std::span(input).first(3),bytes);},"Malformed four-byte conversion spans reject before writing");
+    check(std::all_of(bytes.begin(),bytes.end(),[](auto value){return value==77;}),"Rejected four-byte conversion preserves output bytes");
+}
+// Every texture color space costs four bytes per texel, an encoded group's
+// target four bytes per pixel (a linear group's stays a half-float target),
+// and an encoded texture reaches the presented frame as Core Animation's own
+// premultiplied bytes. The owner's residency query never needs the device.
+void textureStorage(Renderer& renderer,DrawObject& object){
+    renderer.setCamera({});object.world={};object.opacity=1;object.masks.clear();object.shutter.reset();object.alphaMask.reset();object.angularMask.reset();object.linearTint={1,1,1,1};
+    const auto before=renderer.stats();
+    const std::array<std::uint8_t,16> texels{200,100,50,128, 200,100,50,128, 200,100,50,128, 200,100,50,128};
+    check(renderer.setTexture("storage.encoded",1,{2,2,texels,TextureColorSpace::encodedSRGB,TextureFilter::nearest})&&
+          renderer.setTexture("storage.linear",1,{2,2,texels,TextureColorSpace::linear,TextureFilter::nearest}),"Encoded and linear textures install");
+    check(renderer.stats().resourceBytes==before.resourceBytes+2*16,"Linear and encoded textures cost four bytes per texel");
+    check(renderer.textureRevision("storage.encoded")==std::optional<std::uint64_t>(1)&&!renderer.textureRevision("storage.missing"),"The residency query reports the installed revision only");
+    object.textureID="storage.encoded";renderer.setDrawList(std::span(&object,1));renderer.draw(false);
+    pixel(renderer.readback(),16,16,{25,50,100,128},0,"An encoded texel presents as Core Animation's premultiplied bytes");
+    const NativeGroupTarget encodedTarget{{-1,-1,2,2},8,NativeGroupColorSpace::encodedSRGB},linearTarget{{-1,-1,2,2},8};
+    const auto groups=renderer.stats();
+    check(renderer.configureNativeGroup("storage.encoded-group",encodedTarget,std::span(&object,1)),"An encoded group installs");
+    check(renderer.stats().nativeGroupBytes==groups.nativeGroupBytes+16*16*4,"An encoded group target costs four bytes per pixel");
+    auto output=renderer.nativeGroupOutput("storage.encoded-group");renderer.setDrawList(std::span(&output,1));renderer.draw(false);
+    pixel(renderer.readback(),16,16,{25,50,100,128},1,"An 8-bit encoded group carries the same premultiplied bytes");
+    renderer.clearDrawList();check(renderer.removeNativeGroup("storage.encoded-group"),"The encoded group retires");
+    object.textureID.clear();
+    check(renderer.configureNativeGroup("storage.linear-group",linearTarget,std::span(&object,1))&&renderer.stats().nativeGroupBytes==groups.nativeGroupBytes+16*16*8,"A linear group keeps its half-float target");
+    check(renderer.removeNativeGroup("storage.linear-group"),"The linear group retires");
+    check(renderer.removeTexture("storage.encoded")&&renderer.removeTexture("storage.linear")&&!renderer.textureRevision("storage.encoded")&&renderer.stats().resourceBytes==before.resourceBytes,"Retired textures leave no bytes and no revision");
+    // White wherever it covers (alpha masks, white text): one byte per
+    // texel, read as premultiplied white (a,a,a,a) in every color space -
+    // exactly its alpha, as color, as an alpha mask and in an encoded group.
+    const std::array<std::uint8_t,16> whiteAlpha{255,255,255,128, 255,255,255,128, 0,0,0,0, 255,255,255,255};
+    for(auto space:{TextureColorSpace::sRGB,TextureColorSpace::linear,TextureColorSpace::encodedSRGB}){
+        const auto installed=renderer.stats();check(renderer.setTexture("storage.white",static_cast<std::uint64_t>(space)+10,{2,2,whiteAlpha,space,TextureFilter::nearest}),"A white alpha texture installs");
+        // The first color space installs it; the others replace it in place.
+        check(renderer.stats().resourceBytes==installed.resourceBytes+(space==TextureColorSpace::sRGB?4:0),"An alpha-only texture costs one byte per texel");
+        object.textureID="storage.white";object.linearTint={1,1,1,1};renderer.setDrawList(std::span(&object,1));renderer.draw(false);
+        auto image=renderer.readback();pixel(image,image.width/4,image.height/4,{128,128,128,128},0,"Half-covered white presents as exactly its alpha");
+        pixel(image,image.width*3/4,image.height*3/4,{255,255,255,255},0,"Covered white presents opaque white");pixel(image,image.width/4,image.height*3/4,{0,0,0,0},0,"Uncovered texels stay transparent");
+        object.linearTint={1,0,0,1};renderer.setDrawList(std::span(&object,1));renderer.draw(false);
+        pixel(renderer.readback(),image.width/4,image.height/4,{0,0,128,128},0,"A tinted alpha-only texture takes the tint once");
+        object.linearTint={1,1,1,1};
+    }
+    {
+        const std::array<std::uint8_t,16> halfMask{255,255,255,128, 255,255,255,128, 255,255,255,128, 255,255,255,128};
+        check(renderer.setTexture("storage.mask",1,{2,2,halfMask}),"A white alpha mask installs");
+        object.textureID.clear();object.linearTint={0,0,1,1};object.alphaMask=PlaneAlphaMask{{},{-1,-1,2,2},"storage.mask"};renderer.setDrawList(std::span(&object,1));renderer.draw(false);
+        auto image=renderer.readback();pixel(image,image.width/4,image.height/4,{128,0,0,128},0,"An alpha-only mask multiplies exactly its alpha");
+        object.alphaMask.reset();object.linearTint={1,1,1,1};object.textureID="storage.white";
+        check(renderer.configureNativeGroup("storage.white-group",encodedTarget,std::span(&object,1)),"An alpha-only texture enters an encoded group");
+        auto output=renderer.nativeGroupOutput("storage.white-group");renderer.setDrawList(std::span(&output,1));renderer.draw(false);
+        image=renderer.readback();pixel(image,image.width/4,image.height/4,{128,128,128,128},1,"An encoded group carries premultiplied white from an alpha-only texture");
+        renderer.clearDrawList();check(renderer.removeNativeGroup("storage.white-group")&&renderer.removeTexture("storage.white")&&renderer.removeTexture("storage.mask"),"Alpha-only fixtures retire");
+    }
+    {
+        // Painted in place with color, an alpha-only texture widens once to
+        // four bytes per texel and keeps every texel it had.
+        const std::array<std::uint8_t,4> green{0,255,0,255};
+        TextureData mask{2,2,whiteAlpha,TextureColorSpace::sRGB,TextureFilter::nearest,true};
+        const auto installed=renderer.stats();check(renderer.setTexture("storage.paint",1,mask)&&renderer.stats().resourceBytes==installed.resourceBytes+4,"A covered white updatable texture is stored alpha-only");
+        object.textureID="storage.paint";renderer.setDrawList(std::span(&object,1));
+        const std::array<std::uint8_t,4> opaqueWhite{255,255,255,255};
+        check(renderer.updateTexture("storage.paint",2,1,1,{1,1,opaqueWhite}),"A white region paints in place");
+        check(renderer.stats().resourceBytes==installed.resourceBytes+4,"A white region keeps the alpha-only storage");
+        check(renderer.updateTexture("storage.paint",3,1,1,{1,1,green}),"A colored region paints in place");
+        check(renderer.stats().resourceBytes==installed.resourceBytes+16,"The texture widens to four bytes per texel once");
+        renderer.draw(false);auto image=renderer.readback();
+        pixel(image,image.width/4,image.height/4,{128,128,128,128},1,"Widening keeps the half-covered white texel");pixel(image,image.width*3/4,image.height*3/4,{0,255,0,255},0,"The colored texel is painted");
+        pixel(image,image.width/4,image.height*3/4,{0,0,0,0},0,"Widening keeps uncovered texels transparent");
+        object.textureID.clear();renderer.setDrawList(std::span(&object,1));check(renderer.removeTexture("storage.paint")&&renderer.stats().resourceBytes==installed.resourceBytes,"The widened texture retires with its new size");
+        const std::array<std::uint8_t,16> blank{};TextureData empty{2,2,blank,TextureColorSpace::sRGB,TextureFilter::nearest,true};
+        check(renderer.setTexture("storage.blank",1,empty)&&renderer.stats().resourceBytes==installed.resourceBytes+16&&renderer.removeTexture("storage.blank"),"A blank updatable texture (an ink tile) keeps four bytes per texel");
+        renderer.clearDrawList();
+    }
+}
+// The ten-minute closed release (Renderer::suspendDevice): every texture
+// format comes back from the renderer's own system-memory copy, so the frame
+// after it is identical, and the residency query answers without a device.
+void suspendedStorage(Renderer& renderer,DrawObject& object){
+    using endfield::core::Matrix4;
+    renderer.setCamera({});object.world=Matrix4::scale(.5,.5,1);object.opacity=.8f;object.masks.clear();object.shutter.reset();object.alphaMask.reset();object.angularMask.reset();object.linearTint={1,.9f,.8f,1};
+    const std::array<std::uint8_t,16> texels{255,255,255,255, 40,180,90,128, 0,0,0,0, 200,30,60,255};
+    const std::array<std::uint8_t,16> mask{255,255,255,200, 255,255,255,90, 255,255,255,0, 255,255,255,255};
+    renderer.setTexture("suspend.srgb",1,{2,2,texels});renderer.setTexture("suspend.linear",1,{2,2,texels,TextureColorSpace::linear});renderer.setTexture("suspend.encoded",1,{2,2,texels,TextureColorSpace::encodedSRGB});
+    renderer.setTexture("suspend.alpha",1,{2,2,mask});
+    std::array<DrawObject,5> list{object,object,object,object,object};
+    list[0].sourceID="suspend.a";list[0].textureID="suspend.srgb";list[0].world=Matrix4::translation(-.5,.5)*Matrix4::scale(.5,.5,1);
+    list[1].sourceID="suspend.b";list[1].textureID="suspend.linear";list[1].world=Matrix4::translation(.5,.5)*Matrix4::scale(.5,.5,1);
+    list[2].sourceID="suspend.c";list[2].textureID="suspend.encoded";list[2].world=Matrix4::translation(-.5,-.5)*Matrix4::scale(.5,.5,1);
+    std::array<DrawObject,1> child{list[2]};child[0].sourceID="suspend.child";child[0].world=Matrix4::scale(.9,.9,1);
+    renderer.configureNativeGroup("suspend.group",{{-1,-1,2,2},8,NativeGroupColorSpace::encodedSRGB},child);
+    list[3]=renderer.nativeGroupOutput("suspend.group");list[3].world=Matrix4::translation(.5,-.5)*Matrix4::scale(.5,.5,1);
+    list[4].sourceID="suspend.d";list[4].textureID="suspend.alpha";list[4].world=Matrix4::scale(.3,.3,1);list[1].alphaMask=PlaneAlphaMask{{},{-1,-1,2,2},"suspend.alpha"};
+    renderer.setDrawList(list);renderer.draw(false);const auto before=renderer.readback().pixels;
+    check(renderer.suspendDevice()&&renderer.deviceSuspended(),"The closed renderer releases its device");
+    check(renderer.textureRevision("suspend.encoded")==std::optional<std::uint64_t>(1)&&renderer.deviceSuspended(),"A texture kept in system memory still reports its revision, without a device");
+    (void)renderer.restorePresentation(); // a composition renderer reopens before its next frame
+    renderer.draw(false);
+    check(!renderer.deviceSuspended()&&renderer.readback().pixels==before,"Every texture format and the 8-bit group come back with identical pixels");
+    renderer.clearDrawList();check(renderer.removeNativeGroup("suspend.group")&&renderer.removeTexture("suspend.srgb")&&renderer.removeTexture("suspend.linear")&&renderer.removeTexture("suspend.encoded")&&renderer.removeTexture("suspend.alpha"),"Suspension fixtures retire");
 }
 void screenCoverage(Renderer& renderer,const std::filesystem::path& shader){
     using endfield::core::Matrix4;using ehud::data::Json;
@@ -522,6 +650,9 @@ void run(HWND window, const std::filesystem::path &shader, bool composition, boo
         renderer.setCamera({}); renderer.draw(false);
         check(renderer.stats().nativePasses == drawn.nativePasses + 2 && renderer.readback().pixels == first, "And again when it changes back");
     }
+
+    textureStorage(renderer, red);
+    suspendedStorage(renderer, red);
 
     if (composition) {
         // Exercise real swap-chain flips with nonempty retained content. Read

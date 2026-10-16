@@ -325,6 +325,65 @@ void prepareTextureSRGB8(std::span<const std::uint8_t> input,std::span<std::uint
         output[pixel+3]=alphaByte;
     }
 }
+// Linear textures at four bytes per pixel, in the sRGB textures' storage
+// (R8G8B8A8_UNORM_SRGB, decoded to linear by the sampler before filtering):
+// the 16-bit path's premultiplied linear value (prepareTextureRGBA16), then
+// its nearest encoded byte. Alpha keeps its exact byte, so an alpha mask
+// (sampled .a only) reads exactly what the 16-bit texture held; an opaque
+// texel reads back as the encoded byte the final presentation would write.
+void prepareTextureLinear8(std::span<const std::uint8_t> input,std::span<std::uint8_t> output){
+    require(input.size()%4==0&&output.size()==input.size(),"Invalid native texture conversion span");
+    const auto*encode=encodedSRGBFrom16().data();
+    for(std::size_t pixel=0;pixel<input.size();pixel+=4){const auto alphaByte=input[pixel+3];
+        if(alphaByte==0){output[pixel]=output[pixel+1]=output[pixel+2]=output[pixel+3]=0;continue;}
+        if(alphaByte==255){for(std::size_t channel=0;channel<3;++channel)output[pixel+channel]=encode[unsigned(input[pixel+channel])*257u];output[pixel+3]=255;continue;}
+        const double alpha=alphaByte/255.0;
+        for(std::size_t channel=0;channel<3;++channel)output[pixel+channel]=encode[static_cast<std::size_t>(std::lround(input[pixel+channel]/255.0*alpha*65535))];
+        output[pixel+3]=alphaByte;
+    }
+}
+// Encoded-sRGB textures at four bytes per pixel: premultiplied encoded bytes
+// (R8G8B8A8_UNORM), as Core Animation's own 8-bit backing stores hold them:
+// round(e*a/255) for a partial texel (never a tie for integer bytes), the
+// exact bytes when opaque. The shader divides by alpha exactly as before.
+void prepareTextureEncoded8(std::span<const std::uint8_t> input,std::span<std::uint8_t> output){
+    require(input.size()%4==0&&output.size()==input.size(),"Invalid native texture conversion span");
+    for(std::size_t pixel=0;pixel<input.size();pixel+=4){const unsigned alphaByte=input[pixel+3];
+        if(alphaByte==0){output[pixel]=output[pixel+1]=output[pixel+2]=output[pixel+3]=0;continue;}
+        if(alphaByte==255){output[pixel]=input[pixel];output[pixel+1]=input[pixel+1];output[pixel+2]=input[pixel+2];output[pixel+3]=255;continue;}
+        for(std::size_t channel=0;channel<3;++channel)output[pixel+channel]=static_cast<std::uint8_t>((unsigned(input[pixel+channel])*alphaByte+127u)/255u);
+        output[pixel+3]=static_cast<std::uint8_t>(alphaByte);
+    }
+}
+// White wherever it covers (straight RGB 255 at every texel with alpha):
+// premultiplied, such a texel is (a,a,a,a) in every color space, so its
+// alpha byte alone holds it exactly (DXGI A8, sampled by the alpha shaders).
+// Alpha masks (the Map feather and transition cut, reveal masks) and white
+// text take one byte per texel instead of four. `requireCoverage`: at least
+// one texel must have alpha (a blank updatable texture, e.g. an ink tile
+// about to be painted in color, keeps four bytes rather than widen on its
+// first stroke).
+bool alphaOnlyTexels(std::span<const std::uint8_t> straightRGBA, bool requireCoverage = false) noexcept {
+    bool uncovered = requireCoverage;
+    for(std::size_t pixel=0;pixel+3<straightRGBA.size();pixel+=4)if(straightRGBA[pixel+3]){
+        if(straightRGBA[pixel]!=255||straightRGBA[pixel+1]!=255||straightRGBA[pixel+2]!=255)return false;
+        uncovered=false;
+    }
+    return !uncovered;
+}
+void prepareTextureAlpha8(std::span<const std::uint8_t> input,std::span<std::uint8_t> output){
+    require(input.size()%4==0&&output.size()*4==input.size(),"Invalid native texture conversion span");
+    for(std::size_t texel=0;texel<output.size();++texel)output[texel]=input[texel*4+3];
+}
+// Every texture color space at four bytes per texel and its D3D format.
+DXGI_FORMAT prepareTexture8(std::span<const std::uint8_t> input,TextureColorSpace colorSpace,std::span<std::uint8_t> output){
+    switch(colorSpace){
+    case TextureColorSpace::sRGB: prepareTextureSRGB8(input,output); return DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+    case TextureColorSpace::linear: prepareTextureLinear8(input,output); return DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+    case TextureColorSpace::encodedSRGB: prepareTextureEncoded8(input,output); return DXGI_FORMAT_R8G8B8A8_UNORM;
+    }
+    throw std::invalid_argument("Invalid native texture color space");
+}
 } // namespace detail
 
 void validatePlaneShutter(const PlaneShutter& shutter) {
@@ -417,6 +476,7 @@ struct Renderer::Impl {
         std::size_t bytes{};
         bool groupOwned{};NativeGroup* group{};
         bool encodedSRGB{};
+        bool alphaOnly{}; // DXGI_FORMAT_A8_UNORM: white wherever it covers (detail::alphaOnlyTexels)
         bool mediaOwned{};
         std::shared_ptr<RetainedMediaBytes>mediaPoster;
         std::string owner; // memory trace: the module owner that installed it (LayerRasterAttribution)
@@ -471,7 +531,7 @@ struct Renderer::Impl {
     ComPtr<ID3D11RenderTargetView> outputView, linearView;
     ComPtr<ID3D11ShaderResourceView> linearResource;
     ComPtr<ID3D11VertexShader> sceneVS, compositeVS;
-    ComPtr<ID3D11PixelShader> scenePS,encodedInputPS,encodedOutputPS,encodedBothPS,compositePS,mediaPS;
+    ComPtr<ID3D11PixelShader> scenePS,encodedInputPS,encodedOutputPS,encodedBothPS,alphaPS,alphaEncodedOutputPS,compositePS,mediaPS;
     ComPtr<ID3D11InputLayout> layout;
     ComPtr<ID3D11Buffer> cameraBuffer;
     ComPtr<ID3D11BlendState> overBlend, screenBlend, weightedBlend, replaceBlend;
@@ -607,51 +667,58 @@ struct Renderer::Impl {
                 counters.resourceBytes - oldBytes + mediaBudget->bytes.load(std::memory_order_relaxed) <= Renderer::maximumResourceBytes - newBytes,
                 "Retained GPU resource budget exceeded");
     }
-    Texture texture(TextureData input, std::uint64_t revision) {
-        // Filtering must interpolate premultiplied linear values. Sampling
-        // straight RGB/alpha and multiplying afterwards creates dark borders
-        // against transparent texels. Conversion happens only on replacement.
-        if (input.colorSpace == TextureColorSpace::sRGB) {
-            // Four bytes per texel (the common case: rasterized sRGB layers):
-            // the sRGB view decodes to the same premultiplied linear values.
-            std::vector<std::uint8_t> premultiplied(input.straightRGBA.size());
-            detail::prepareTextureSRGB8(input.straightRGBA, premultiplied);
-            D3D11_TEXTURE2D_DESC description{};
-            description.Width = input.width; description.Height = input.height;
-            description.MipLevels = description.ArraySize = description.SampleDesc.Count = 1;
-            description.Format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
-            description.Usage = input.updatable ? D3D11_USAGE_DEFAULT : D3D11_USAGE_IMMUTABLE;
-            description.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-            D3D11_SUBRESOURCE_DATA pixels{};
-            pixels.pSysMem = premultiplied.data(); pixels.SysMemPitch = input.width * 4;
-            ComPtr<ID3D11Texture2D> resource;
-            checked(device->CreateTexture2D(&description, &pixels, &resource), "Upload retained texture");
-            Texture result;
-            checked(device->CreateShaderResourceView(resource.Get(), nullptr, &result.view), "Create retained texture view");
-            result.filter = input.filter; result.revision = revision; result.bytes = premultiplied.size();
-            if (input.updatable) { result.resource = resource; result.updatable = true; }
-            result.colorSpace = input.colorSpace; result.width = input.width; result.height = input.height;
-            return result;
-        }
-        std::vector<std::uint16_t> premultiplied(input.straightRGBA.size());
-        detail::prepareTextureRGBA16(input.straightRGBA,input.colorSpace,premultiplied);
+    // Whether a texture is stored alpha-only (texture()): one byte per texel.
+    static bool alphaStorage(const TextureData& input) noexcept {
+        return detail::alphaOnlyTexels(input.straightRGBA, input.updatable);
+    }
+    Texture texture(TextureData input, std::uint64_t revision, bool alphaOnly) {
+        // Filtering must interpolate premultiplied values. Sampling straight
+        // RGB/alpha and multiplying afterwards creates dark borders against
+        // transparent texels. Conversion happens only on replacement. Every
+        // color space takes four bytes per texel: sRGB and linear textures
+        // hold premultiplied linear values in sRGB encoding (the sampler
+        // decodes them before filtering), encoded textures premultiplied
+        // encoded bytes (Core Animation's own representation). A texture
+        // that is white wherever it covers keeps only its alpha (one byte).
+        std::vector<std::uint8_t> premultiplied(alphaOnly ? input.straightRGBA.size() / 4 : input.straightRGBA.size());
+        DXGI_FORMAT format = DXGI_FORMAT_A8_UNORM;
+        if (alphaOnly) detail::prepareTextureAlpha8(input.straightRGBA, premultiplied);
+        else format = detail::prepareTexture8(input.straightRGBA, input.colorSpace, premultiplied);
         D3D11_TEXTURE2D_DESC description{};
         description.Width = input.width; description.Height = input.height;
         description.MipLevels = description.ArraySize = description.SampleDesc.Count = 1;
-        description.Format = DXGI_FORMAT_R16G16B16A16_UNORM;
+        description.Format = format;
         description.Usage = input.updatable ? D3D11_USAGE_DEFAULT : D3D11_USAGE_IMMUTABLE;
         description.BindFlags = D3D11_BIND_SHADER_RESOURCE;
         D3D11_SUBRESOURCE_DATA pixels{};
-        pixels.pSysMem = premultiplied.data(); pixels.SysMemPitch = input.width * 8;
+        pixels.pSysMem = premultiplied.data(); pixels.SysMemPitch = input.width * (alphaOnly ? 1 : 4);
         ComPtr<ID3D11Texture2D> resource;
         checked(device->CreateTexture2D(&description, &pixels, &resource), "Upload retained texture");
         Texture result;
         checked(device->CreateShaderResourceView(resource.Get(), nullptr, &result.view), "Create retained texture view");
-        result.encodedSRGB=input.colorSpace==TextureColorSpace::encodedSRGB;
-        result.filter = input.filter; result.revision = revision; result.bytes = premultiplied.size() * sizeof(std::uint16_t);
+        result.encodedSRGB = input.colorSpace == TextureColorSpace::encodedSRGB; result.alphaOnly = alphaOnly;
+        result.filter = input.filter; result.revision = revision; result.bytes = premultiplied.size();
         if (input.updatable) { result.resource = resource; result.updatable = true; }
         result.colorSpace = input.colorSpace; result.width = input.width; result.height = input.height;
         return result;
+    }
+    // An updatable alpha-only texture painted with a region that is not
+    // white: the same texels again at four bytes (read back once from the
+    // GPU), same identity and revision, every draw keeps its record.
+    void widenAlphaTexture(Texture& texture) {
+        auto copy = gpu_copy::stage(device.Get(), context.Get(), texture.resource.Get(), nullptr);
+        gpu_copy::finish(context.Get(), copy);
+        const auto texels = std::size_t(texture.width) * texture.height;
+        std::vector<std::uint8_t> straight(texels * 4, 255);
+        for (std::size_t row = 0; row < texture.height; ++row)
+            for (std::size_t column = 0; column < texture.width; ++column) {
+                const auto alpha = copy.data[0][row * copy.pitch[0] + column]; auto* texel = &straight[(row * texture.width + column) * 4];
+                if (!alpha) { texel[0] = texel[1] = texel[2] = 0; }
+                texel[3] = alpha;
+            }
+        auto wide = this->texture({texture.width, texture.height, straight, texture.colorSpace, texture.filter, true}, texture.revision, false);
+        texture.view = std::move(wide.view); texture.resource = std::move(wide.resource); texture.alphaOnly = false;
+        counters.resourceBytes = counters.resourceBytes - texture.bytes + wide.bytes; texture.bytes = wide.bytes;
     }
     void bindTargets() {
         if (offscreen) {
@@ -679,10 +746,21 @@ struct Renderer::Impl {
         ++counters.frameTargetRestores;
     }
     std::size_t frameTargetBytes() const noexcept { return std::size_t(width) * height * (offscreen ? 12 : 8); }
+    // A group's cached target. An encoded group holds premultiplied encoded
+    // bytes and blends in encoded space, exactly as Core Animation's 8-bit
+    // group surfaces do: four bytes per pixel (R8G8B8A8_UNORM). A linear
+    // group blends premultiplied linear light, whose dark values and
+    // repeated over-blends need more than eight bits: half floats.
+    static DXGI_FORMAT groupFormat(NativeGroupColorSpace colorSpace) noexcept {
+        return colorSpace == NativeGroupColorSpace::encodedSRGB ? DXGI_FORMAT_R8G8B8A8_UNORM : DXGI_FORMAT_R16G16B16A16_FLOAT;
+    }
+    static std::size_t groupPixelBytes(NativeGroupColorSpace colorSpace) noexcept {
+        return colorSpace == NativeGroupColorSpace::encodedSRGB ? 4 : 8;
+    }
     void restoreGroupTarget(NativeGroup& group) {
         D3D11_TEXTURE2D_DESC description{}; description.Width = group.width; description.Height = group.height;
         description.MipLevels = description.ArraySize = description.SampleDesc.Count = 1;
-        description.Format = DXGI_FORMAT_R16G16B16A16_FLOAT; description.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+        description.Format = groupFormat(group.requested.colorSpace); description.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
         ComPtr<ID3D11Texture2D> targetTexture; checked(device->CreateTexture2D(&description, nullptr, &targetTexture), "Restore native group target");
         ComPtr<ID3D11RenderTargetView> view; checked(device->CreateRenderTargetView(targetTexture.Get(), nullptr, &view), "Restore native group target view");
         auto& texture = textures.find(group.output.textureID)->second;
@@ -832,6 +910,8 @@ struct Renderer::Impl {
         ps=programs.get("SceneEncodedInputPS","ps_5_0");checked(device->CreatePixelShader(ps.bytes,ps.size,nullptr,&encodedInputPS),"Create encoded group input shader");
         ps=programs.get("SceneEncodedOutputPS","ps_5_0");checked(device->CreatePixelShader(ps.bytes,ps.size,nullptr,&encodedOutputPS),"Create encoded group output shader");
         ps=programs.get("SceneEncodedBothPS","ps_5_0");checked(device->CreatePixelShader(ps.bytes,ps.size,nullptr,&encodedBothPS),"Create encoded group resident shader");
+        ps=programs.get("SceneAlphaPS","ps_5_0");checked(device->CreatePixelShader(ps.bytes,ps.size,nullptr,&alphaPS),"Create alpha-only texture shader");
+        ps=programs.get("SceneAlphaEncodedOutputPS","ps_5_0");checked(device->CreatePixelShader(ps.bytes,ps.size,nullptr,&alphaEncodedOutputPS),"Create alpha-only encoded group shader");
         const D3D11_INPUT_ELEMENT_DESC elements[]{
             {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
             {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0},
@@ -881,7 +961,8 @@ struct Renderer::Impl {
         sampler.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
         checked(device->CreateSamplerState(&sampler, &linearSampler), "Create linear texture sampler");
         const std::array<std::uint8_t, 4> opaqueWhite{255, 255, 255, 255};
-        white = texture({1, 1, opaqueWhite, TextureColorSpace::linear, TextureFilter::nearest}, 0);
+        // Never alpha-only: untextured draws keep the ordinary shaders.
+        white = texture({1, 1, opaqueWhite, TextureColorSpace::linear, TextureFilter::nearest}, 0, false);
         cameraDirty = true;
     }
     // Renderer::suspendDevice / resumeDevice.
@@ -896,7 +977,7 @@ struct Renderer::Impl {
         for (auto& [id, group] : groups) { (void)id; group->camera.Reset(); group->target.Reset(); for (auto& draw : group->draws) draw.constants.Reset(); }
         for (auto& draw : draws) draw.constants.Reset();
         white.view.Reset(); white.resource.Reset();
-        sceneVS.Reset(); compositeVS.Reset(); scenePS.Reset(); encodedInputPS.Reset(); encodedOutputPS.Reset(); encodedBothPS.Reset(); compositePS.Reset(); mediaPS.Reset();
+        sceneVS.Reset(); compositeVS.Reset(); scenePS.Reset(); encodedInputPS.Reset(); encodedOutputPS.Reset(); encodedBothPS.Reset(); alphaPS.Reset(); alphaEncodedOutputPS.Reset(); compositePS.Reset(); mediaPS.Reset();
         layout.Reset(); cameraBuffer.Reset(); overBlend.Reset(); screenBlend.Reset(); weightedBlend.Reset(); replaceBlend.Reset();
         raster.Reset(); noDepth.Reset(); nearestSampler.Reset(); linearSampler.Reset(); gpuIdleQuery.Reset();
         outputView.Reset(); backBuffer.Reset(); linearView.Reset(); linearResource.Reset(); linearTarget.Reset();
@@ -1098,10 +1179,11 @@ bool Renderer::setTexture(std::string sourceID, std::uint64_t revision, TextureD
     require((input.colorSpace == TextureColorSpace::sRGB || input.colorSpace == TextureColorSpace::linear || input.colorSpace == TextureColorSpace::encodedSRGB) &&
             (input.filter == TextureFilter::nearest || input.filter == TextureFilter::linear), "Invalid texture sampling policy");
     const auto previousBytes = existing == r.textures.end() ? 0 : existing->second.bytes;
-    const auto nativeBytes = std::size_t(input.width) * input.height * (input.colorSpace == TextureColorSpace::sRGB ? 4 : 8);
+    const bool alphaOnly = Impl::alphaStorage(input);
+    const auto nativeBytes = std::size_t(input.width) * input.height * (alphaOnly ? 1 : 4);
     r.budget(previousBytes, nativeBytes);
     const auto begin = qpcNow();
-    auto texture = r.texture(input, revision);
+    auto texture = r.texture(input, revision, alphaOnly);
     r.counters.textureUploadSeconds += qpcNow() - begin;
     texture.owner = LayerRasterAttribution::current(); if (texture.owner.empty() && existing != r.textures.end()) texture.owner = std::move(existing->second.owner);
     auto updated=r.textures.insert_or_assign(std::move(sourceID), std::move(texture));r.invalidate(&updated.first->second);r.touch();if(updated.second)++r.resourceEpoch;
@@ -1122,15 +1204,13 @@ bool Renderer::updateTexture(const std::string &sourceID, std::uint64_t revision
     require(region.colorSpace == texture.colorSpace, "A texture region keeps its texture's color space");
     const auto begin = qpcNow();
     const D3D11_BOX box{x, y, 0, x + region.width, y + region.height, 1};
-    if (texture.colorSpace == TextureColorSpace::sRGB) {
-        std::vector<std::uint8_t> premultiplied(region.straightRGBA.size());
-        detail::prepareTextureSRGB8(region.straightRGBA, premultiplied);
-        r.context->UpdateSubresource(texture.resource.Get(), 0, &box, premultiplied.data(), region.width * 4, 0);
-    } else {
-        std::vector<std::uint16_t> premultiplied(region.straightRGBA.size());
-        detail::prepareTextureRGBA16(region.straightRGBA, region.colorSpace, premultiplied);
-        r.context->UpdateSubresource(texture.resource.Get(), 0, &box, premultiplied.data(), region.width * 8, 0);
+    if (texture.alphaOnly && !detail::alphaOnlyTexels(region.straightRGBA)) {
+        r.budget(texture.bytes, texture.bytes * 4); r.widenAlphaTexture(texture);
     }
+    std::vector<std::uint8_t> premultiplied(texture.alphaOnly ? region.straightRGBA.size() / 4 : region.straightRGBA.size());
+    if (texture.alphaOnly) detail::prepareTextureAlpha8(region.straightRGBA, premultiplied);
+    else (void)detail::prepareTexture8(region.straightRGBA, texture.colorSpace, premultiplied);
+    r.context->UpdateSubresource(texture.resource.Get(), 0, &box, premultiplied.data(), region.width * (texture.alphaOnly ? 1 : 4), 0);
     texture.revision = revision; r.invalidate(&texture); r.touch();
     ++r.counters.textureRegionUploads; r.counters.textureRegionBytes += region.straightRGBA.size();
     r.counters.textureUploadSeconds += qpcNow() - begin;
@@ -1335,7 +1415,8 @@ bool Renderer::Impl::configureGroup(std::string id,const NativeGroupTarget&reque
     }
     require(found!=groups.end()||groups.size()<Renderer::maximumNativeGroups,"Native group count exceeds limits");
     auto candidate=std::make_unique<NativeGroup>();candidate->owner=LayerRasterAttribution::current();candidate->depth=depth;candidate->requested=requested;candidate->coverage=coverage;
-    candidate->width=pixelWidth;candidate->height=pixelHeight;candidate->bytes=std::size_t(pixelWidth)*pixelHeight*8;
+    candidate->width=pixelWidth;candidate->height=pixelHeight;candidate->bytes=std::size_t(pixelWidth)*pixelHeight*groupPixelBytes(requested.colorSpace);
+    const auto targetBytes=candidate->bytes;
     candidate->output.sourceID="native-group:"+id;candidate->output.meshID=candidate->output.sourceID+"/quad";candidate->output.textureID=candidate->output.sourceID+"/color";
     const bool existing=found!=groups.end();const auto previous=existing?found->second->bytes:0;
     require(candidate->bytes<=Renderer::maximumNativeGroupBytes&&groupBytes-previous<=Renderer::maximumNativeGroupBytes-candidate->bytes,
@@ -1356,7 +1437,7 @@ bool Renderer::Impl::configureGroup(std::string id,const NativeGroupTarget&reque
     mesh.vertices=immutableBuffer(device.Get(),D3D11_BIND_VERTEX_BUFFER,vertices.data(),sizeof(vertices));
     mesh.indices=immutableBuffer(device.Get(),D3D11_BIND_INDEX_BUFFER,indices.data(),sizeof(indices));mesh.indexCount=6;mesh.bytes=quadBytes;mesh.groupOwned=true;mesh.group=existing?found->second.get():candidate.get();
     D3D11_TEXTURE2D_DESC description{};description.Width=pixelWidth;description.Height=pixelHeight;description.MipLevels=description.ArraySize=description.SampleDesc.Count=1;
-    description.Format=DXGI_FORMAT_R16G16B16A16_FLOAT;description.BindFlags=D3D11_BIND_RENDER_TARGET|D3D11_BIND_SHADER_RESOURCE;
+    description.Format=groupFormat(requested.colorSpace);description.BindFlags=D3D11_BIND_RENDER_TARGET|D3D11_BIND_SHADER_RESOURCE;
     ComPtr<ID3D11Texture2D>targetTexture;checked(device->CreateTexture2D(&description,nullptr,&targetTexture),"Create retained native group target");
     checked(device->CreateRenderTargetView(targetTexture.Get(),nullptr,&candidate->target),"Create retained native group target view");
     auto&texture=stagedTextures.begin()->second;checked(device->CreateShaderResourceView(targetTexture.Get(),nullptr,&texture.view),"Create retained native group sampled output");
@@ -1375,8 +1456,8 @@ bool Renderer::Impl::configureGroup(std::string id,const NativeGroupTarget&reque
     }else{
         stagedGroups.begin()->second=std::move(candidate);meshes.merge(stagedMeshes);textures.merge(stagedTextures);groups.merge(stagedGroups);++resourceEpoch;
     }
-    groupBytes=groupBytes-previous+std::size_t(pixelWidth)*pixelHeight*8;
-    counters.resourceBytes=counters.resourceBytes-(existing?previous+quadBytes+64:0)+std::size_t(pixelWidth)*pixelHeight*8+quadBytes+64;
+    groupBytes=groupBytes-previous+targetBytes;
+    counters.resourceBytes=counters.resourceBytes-(existing?previous+quadBytes+64:0)+targetBytes+quadBytes+64;
     ++counters.meshUploads;++counters.textureUploads;++counters.nativeGroupTargetAllocations;return true;
 }
 bool Renderer::configureNativeGroup(std::string id,const NativeGroupTarget&target){
@@ -1432,7 +1513,9 @@ void Renderer::Impl::renderNativeDraws(std::span<const Draw>objects,ID3D11Render
     for (const auto &draw : objects) {
         if (draw.values.opacity == 0 || draw.values.tint[3] == 0) continue;
         if(boundBlend!=draw.blend){r.context->OMSetBlendState(draw.blend==NativeBlend::screen?r.screenBlend.Get():draw.blend==NativeBlend::weightedAdd?r.weightedBlend.Get():r.overBlend.Get(),nullptr,UINT_MAX);boundBlend=draw.blend;}
-        auto*shader=colorSpace==NativeGroupColorSpace::encodedSRGB?(draw.texture->encodedSRGB?r.encodedBothPS.Get():r.encodedOutputPS.Get()):(draw.texture->encodedSRGB?r.encodedInputPS.Get():r.scenePS.Get());
+        const bool encodedOutput=colorSpace==NativeGroupColorSpace::encodedSRGB;
+        auto*shader=draw.texture->alphaOnly?(encodedOutput?r.alphaEncodedOutputPS.Get():r.alphaPS.Get()):
+            encodedOutput?(draw.texture->encodedSRGB?r.encodedBothPS.Get():r.encodedOutputPS.Get()):(draw.texture->encodedSRGB?r.encodedInputPS.Get():r.scenePS.Get());
         if(shader!=boundShader){r.context->PSSetShader(shader,nullptr,0);boundShader=shader;}
         auto *vertices = draw.mesh->vertices.Get();
         r.context->IASetVertexBuffers(0, 1, &vertices, &stride, &offset);
@@ -1599,6 +1682,12 @@ bool Renderer::removeTexture(const std::string &sourceID) {
     if (r.context) r.context->ClearState();r.counters.resourceBytes -= item->second.bytes;
     if(item->second.mediaOwned){auto media=r.media.find(sourceID);if(media!=r.media.end()){media->second->impl_->registered.store(false,std::memory_order_relaxed);r.media.erase(media);}}
     r.textures.erase(item); r.touch(); ++r.resourceEpoch; return true;
+}
+std::optional<std::uint64_t> Renderer::textureRevision(const std::string &sourceID) const {
+    if (!impl_) return std::nullopt;
+    impl_->thread(); const auto item = impl_->textures.find(sourceID);
+    if (item == impl_->textures.end()) return std::nullopt;
+    return item->second.revision;
 }
 void Renderer::clearDrawList() { if (impl_) { impl_->thread(); impl_->draws.clear(); impl_->touch(); if (impl_->context) impl_->context->ClearState(); } }
 void Renderer::clearResources() {

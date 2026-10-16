@@ -17,6 +17,8 @@
 namespace endfield::native {
 class PaintedTextLayout;
 class LayerImageSource;
+class LayerRasterizer;
+namespace detail { struct LayerRasterRecipe; }
 enum class LayerFontLanguage { simplifiedChinese, korean };
 struct LayerRasterOptions {
     double pixelsPerPoint{2};
@@ -85,19 +87,48 @@ struct LayerSourceTextMeasurement {
 struct LayerRasterImage {
     core::Rect bounds; // texture edges in the input root's local point space
     unsigned width{}, height{};
-    std::vector<std::uint8_t> straightRGBA; // sRGB bytes, top-left rows, tight stride width*4
+    // sRGB bytes, top-left rows, tight stride width*4. Empty once a releasable
+    // image's pixels were given back (pixelsReleased(): the GPU holds them).
+    std::vector<std::uint8_t> straightRGBA;
     std::vector<LayerRasterIssue> unsupported;
     std::vector<LayerFontSubstitution> fontSubstitutions;
     core::Point textDocumentOffset{}; // effective offset after optional caret reveal
     core::Point textContentInset{}; // source single-line field, otherwise zero
     double textDocumentWidth{}; // finite logical document; independent of bitmap
     bool complete() const noexcept { return unsupported.empty(); }
+    // The raster's size in bytes, whether or not its pixels are held now.
+    std::size_t pixelBytes() const noexcept { return std::size_t(width) * height * 4; }
+    // LayerRasterizer::releasePixels gave the pixels back; repaint() paints
+    // the same bytes again from what painted them.
+    bool pixelsReleased() const noexcept { return straightRGBA.empty() && width && height; }
+    // A releasable image (LayerRasterRetention::releasable) keeps what painted it.
+    bool releasable() const noexcept { return recipe_ != nullptr; }
+private:
+    friend class LayerRasterizer;
+    std::shared_ptr<const detail::LayerRasterRecipe> recipe_;
 };
+// Whether a retained image keeps only its pixels (the default), or also what
+// painted them so the pixels can be given back once a GPU texture holds them
+// and painted again, byte for byte, when that texture must be uploaded again
+// (LayerScene's leaves: a module dropped from the composition and shown again,
+// a new device). Editor documents, borrowed editor layouts and memory images
+// (whose provider may be gone) always keep their pixels, as does an image
+// whose local layer description would not be smaller than its pixels.
+enum class LayerRasterRetention { pixels, releasable };
 struct LayerRasterStats {
+    // resourceBytes: the pixel bytes the cache answers for (held now, or
+    // released and repaintable) plus decoded intrinsic images; the budget.
     std::size_t entries{}, resourceBytes{}, decodedImages{};
     std::uint64_t rasterizations{}, cacheHits{}, textLayoutsCreated{}, imageDecodes{}, nodesDrawn{};
     std::size_t textMetadataBytes{}, typographyDescriptorBytes{};
     std::uint64_t textAnalysisFormatsCreated{};
+    // Of resourceBytes: the pixels of retained entries given back to the
+    // GPU texture that holds them (releasePixels), and the local layer
+    // descriptions kept to repaint released images that hold no text (text
+    // descriptions are typographyDescriptorBytes). Pixels given back, and
+    // repainted for an upload; a repaint counts no raster, layout or node.
+    std::size_t releasedPixelBytes{}, repaintSourceBytes{};
+    std::uint64_t pixelReleases{}, pixelRepaints{};
 };
 // Diagnostics (memory trace): the module owner on whose behalf the calling
 // thread rasterizes. ModuleRegistry holds one around every owner call, so a
@@ -116,8 +147,10 @@ private:
 // One retained entry as the memory trace sees it (LayerRasterizer::forEachEntry).
 struct LayerRasterEntryUsage {
     std::string_view id, owner;
+    // pixelBytes: the pixels held in system memory now (zero once released).
     std::size_t pixelBytes{}, retainedTextLayouts{}, typographyBytes{}, textMetadataBytes{};
     bool paintedText{};
+    std::size_t releasedPixelBytes{}; // given back to the GPU texture that holds them
 };
 
 // Local model-layer rasterization only: no HWND, screen capture, clock, worker,
@@ -162,6 +195,18 @@ public:
     LayerRasterizer& operator=(const LayerRasterizer&) = delete;
     std::shared_ptr<const LayerRasterImage> rasterize(std::string sourceID, std::uint64_t revision,
         const ehud::data::Json& layer, const LayerRasterOptions& options = {});
+    std::shared_ptr<const LayerRasterImage> rasterize(std::string sourceID, std::uint64_t revision,
+        const ehud::data::Json& layer, const LayerRasterOptions& options, LayerRasterRetention retention);
+    // Content event, after a GPU texture took the image's pixels: gives them
+    // back when the image is releasable and nobody but its cache entry and
+    // the caller holds it (true). The image keeps its bounds, size and
+    // reports; a cache hit on its revision paints the pixels again first.
+    bool releasePixels(const std::string& sourceID, const std::shared_ptr<const LayerRasterImage>& image);
+    // The released image's pixels again, painted from what painted them with
+    // the same fonts and options: identical bytes (tight straight RGBA, as
+    // straightRGBA was). Rejects an image that is not releasable. Its cost
+    // is a raster; no cache entry, layout or statistic but pixelRepaints changes.
+    void repaint(const LayerRasterImage& image, std::vector<std::uint8_t>& straightRGBA);
     // Exact root-text leaf only. Null means missing/wrong revision, no painted
     // text layout, or a tree surface; never returns guessed child hit geometry.
     std::shared_ptr<const PaintedTextLayout> textLayout(const std::string& sourceID,std::uint64_t expectedRevision)const;

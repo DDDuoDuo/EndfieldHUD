@@ -36,6 +36,11 @@ public:
     // Resource-only path for a caller that owns a combined native draw list.
     // Never publishes/clears that list or retires an asset referenced by it.
     // Call collectRetiredResources after publishing the replacement list.
+    // Once a texture holds a surface's pixels, the shared rasterizer gives
+    // its CPU copy back (LayerRasterizer::releasePixels). A texture the
+    // renderer no longer holds (the composition dropped this scene, a new
+    // device) is uploaded from pixels painted again, byte for byte, from the
+    // surface's retained local layer (LayerRasterizer::repaint).
     void uploadResources(Renderer&);
     void collectRetiredResources(Renderer&);
     // Release only this scene's unused resident assets. In-use assets remain

@@ -79,7 +79,7 @@ void LayerScene::append(const Json& node,const Matrix&parent,float parentOpacity
         auto settings=options;settings.includeRootOpacity=false;settings.includeRootMask=true;
         const auto id=namespace_+identity;
         rasterIDs_.push_back(id);
-        auto image=rasterizer_->rasterize(id,revision_,content,settings);
+        auto image=rasterizer_->rasterize(id,revision_,content,settings,LayerRasterRetention::releasable);
         if(image->width&&image->height){
             DrawObject draw;draw.sourceID=id;draw.meshID=id;draw.textureID=id;draw.world=world;draw.opacity=opacity;draw.masks=masks;
             std::unordered_set<std::string> localIDs;std::size_t localCount{};validateIdentities(content,localIDs,localCount,0);
@@ -117,7 +117,7 @@ void LayerScene::rebuildReport(){
     report_.surfaces=surfaces_.size();report_.pixelBytes=0;
     report_.unsupported=structuralIssues_;report_.fontSubstitutions.clear();
     for(const auto& surface:surfaces_){const auto& image=*surface.image;
-        report_.pixelBytes+=image.straightRGBA.size();
+        report_.pixelBytes+=image.pixelBytes(); // held now or given back to the GPU
         report_.unsupported.insert(report_.unsupported.end(),image.unsupported.begin(),image.unsupported.end());
         report_.fontSubstitutions.insert(report_.fontSubstitutions.end(),image.fontSubstitutions.begin(),image.fontSubstitutions.end());
     }
@@ -132,7 +132,7 @@ bool LayerScene::updateLocalContent(std::string_view sourceID,std::uint64_t cont
     need(surface.grouped||children(localContent).empty(),"A separately projected parent cannot absorb its child surfaces");
     need(report_.sourceNodes-surface.nodeCount+count<=4096,"Updated native layer tree exceeds limits");
     const auto token=++attempt_; // consume even a failed raster attempt
-    auto image=rasterizer_->rasterize(surface.id,token,localContent,settings);
+    auto image=rasterizer_->rasterize(surface.id,token,localContent,settings,LayerRasterRetention::releasable);
     need(image->width&&image->height,"Local content cannot remove its retained surface");
     if(image->bounds!=surface.image->bounds)surface.meshRevision=token;
     report_.sourceNodes=report_.sourceNodes-surface.nodeCount+count;
@@ -154,12 +154,24 @@ void LayerScene::uploadResources(Renderer& renderer){
     need(renderer.stats().initialized,"Native scene resources require an initialized renderer");
     resourceOwner_=&renderer;
     constexpr std::array<std::uint32_t,6> indices{0,1,2,0,2,3};
+    std::vector<std::uint8_t> repainted; // a released surface whose texture is gone
     for(const auto&s:surfaces_){const auto&b=s.image->bounds;const auto x=float(b.x),y=float(b.y),right=float(b.x+b.width),bottom=float(b.y+b.height);
         const std::array<Vertex,4> vertices{{{{x,y,0},{0,0},{1,1,1,1}},{{right,y,0},{1,0},{1,1,1,1}},{{right,bottom,0},{1,1},{1,1,1,1}},{{x,bottom,0},{0,1},{1,1,1,1}}}};
         auto resident=std::find_if(uploaded_.begin(),uploaded_.end(),[&](const Resident&r){return r.id==s.id;});
         if(resident==uploaded_.end()){uploaded_.push_back({s.id});resident=std::prev(uploaded_.end());}
         renderer.setMesh(s.id,s.meshRevision,{vertices,indices});resident->mesh=true;
-        renderer.setTexture(s.id,s.imageRevision,{s.image->width,s.image->height,s.image->straightRGBA,TextureColorSpace::sRGB,TextureFilter::linear});resident->texture=true;
+        // The renderer holds this revision (on its device or, suspended, in
+        // system memory): nothing to upload. Otherwise the pixels come from
+        // the image, or are painted again when they were given back (the
+        // composition dropped the texture, or this is a new renderer).
+        if(renderer.textureRevision(s.id)!=s.imageRevision){
+            std::span<const std::uint8_t> pixels=s.image->straightRGBA;
+            if(s.image->pixelsReleased()){rasterizer_->repaint(*s.image,repainted);pixels=repainted;}
+            renderer.setTexture(s.id,s.imageRevision,{s.image->width,s.image->height,pixels,TextureColorSpace::sRGB,TextureFilter::linear});
+        }
+        resident->texture=true;
+        // The GPU texture holds the unchanged surface: its CPU copy goes.
+        (void)rasterizer_->releasePixels(s.id,s.image);
     }
     uploadedRevision_=resourceRevision_;
 }

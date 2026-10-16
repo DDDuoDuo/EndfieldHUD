@@ -84,6 +84,98 @@ void memoryImages(){
     check(raster.rasterize("memory",2,Json{},options)==changed,"Already painted snapshot survives provider cache retirement");
     rejects([&]{raster.rasterize("retired",1,source,options);},"New raster cannot silently substitute retired image");
 }
+// Releasable rasters (LayerScene's leaves): once a GPU texture holds the
+// pixels they are given back, and painted again byte for byte from what
+// painted them, with the typography they were painted with, whenever the
+// texture must be uploaded again. No statistic but the release and repaint
+// counters moves; the budget still answers for the released bytes.
+void releasable(){
+    LayerRasterizer raster;LayerRasterOptions options;options.pixelsPerPoint=2;options.paddingPoints=1;
+    TemporaryAssets assets;options.assetRoot=assets.root;
+    const std::array<unsigned char,76> png{137,80,78,71,13,10,26,10,0,0,0,13,73,72,68,82,0,0,0,2,0,0,0,2,8,6,0,0,0,114,182,13,36,0,0,0,19,73,68,65,84,120,156,99,248,207,192,240,31,12,129,52,8,52,0,0,73,73,9,120,40,160,219,119,0,0,0,0,73,69,78,68,174,66,96,130};
+    {std::ofstream file(assets.root/"checker.png",std::ios::binary);file.write(reinterpret_cast<const char*>(png.data()),png.size());if(!file)throw std::runtime_error("Cannot write synthetic image");}
+    auto caption=layer("caption",160,50);caption["class"]="CATextLayer";caption["kind"]="text";
+    caption["text"]=Json::Object{{"string","Endfield 设置 01:23"},{"fontSize",21},{"foregroundColor",rgba(1,1,1)},
+        {"font",Json::Object{{"familyName","Endfield Synthetic Missing Mac Font"},{"postScriptName",".AppleSystemUIFontMedium"},{"pointSize",21},{"ascender",22},{"descender",-5},{"leading",0}}},
+        {"alignment","center"},{"wrapped",true},{"truncation","none"},
+        {"runs",Json::Array{Json::Object{{"utf16Range",Json::Array{0,8}},{"attributes",Json::Object{{"NSColor",rgba(1,.8,.1,.9)},{"NSKern",1.5}}}}}}};
+    auto card=layer("card",120,80);card["backgroundColor"]=rgba(.1,.2,.3,.7);card["cornerRadius"]=12;card["masksToBounds"]=true;card["borderColor"]=rgba(1,1,1,.5);card["borderWidth"]=2;
+    auto spill=shape("spill",90,90);spill["position"]=Json::Array{60,-20};spill["shape"]["fillColor"]=rgba(.9,.3,.2,.6);
+    auto dash=shape("dash",100,20);dash["position"]=Json::Array{8,50};dash["shape"]["path"]=Json::Array{command("move",{xy(2,10)}),command("line",{xy(98,10)})};
+    dash["shape"]["fillColor"]=Json{};dash["shape"]["strokeColor"]=rgba(1,1,1);dash["shape"]["lineWidth"]=3;dash["shape"]["lineDashPattern"]=Json::Array{6,3};dash["shape"]["lineCap"]="round";
+    auto fade=layer("fade",100,16);fade["kind"]="gradient";fade["class"]="CAGradientLayer";fade["position"]=Json::Array{10,4};
+    fade["gradient"]=Json::Object{{"colors",Json::Array{rgba(1,0,0,.2),rgba(0,.5,1,1)}},{"startPoint",Json::Array{0,.5}},{"endPoint",Json::Array{1,.5}},{"type","axial"}};
+    auto picture=layer("picture",24,24);picture["position"]=Json::Array{80,40};
+    picture["contents"]=Json::Object{{"asset","checker.png"},{"sha256","3a5917747bc40e588a2c9280e6a158590f4eac1d4c89b4381b613517013d0855"}};
+    card["children"]=Json::Array{spill,dash,fade,picture};
+    auto title=caption;title["position"]=Json::Array{0,0};title["bounds"]=Json::Array{0,0,110,30};title["text"]["string"]="Map 地图";title["text"]["runs"]=Json::Array{};
+    auto mixed=layer("mixed",130,90);mixed["children"]=Json::Array{card,title};mixed["opacity"]=.8;
+    const std::vector<std::pair<std::string,Json>> cases{{"release.caption",caption},{"release.card",card},{"release.mixed",mixed}};
+    std::vector<std::vector<std::uint8_t>> painted;std::vector<std::shared_ptr<const LayerRasterImage>> images;
+    for(const auto&[id,content]:cases){
+        auto image=raster.rasterize(id,1,content,options,LayerRasterRetention::releasable);
+        check(image->releasable()&&!image->pixelsReleased()&&image->straightRGBA.size()==image->pixelBytes()&&nonzeroAlpha(*image)>100,"A releasable raster paints its pixels like any other");
+        painted.push_back(image->straightRGBA);images.push_back(std::move(image));
+    }
+    {
+        const auto plain=raster.rasterize("release.default",1,card,options);
+        check(!plain->releasable()&&!raster.releasePixels("release.default",plain)&&plain->straightRGBA==painted[1],"The default retention keeps its pixels; the same content paints the same bytes");
+        auto extra=images[1];check(!raster.releasePixels("release.card",images[1])&&!extra->pixelsReleased(),"Pixels another holder still reads are kept");
+    }
+    for(std::size_t n=0;n<cases.size();++n){
+        const auto before=raster.stats();const auto&image=images[n];
+        check(raster.releasePixels(cases[n].first,image)&&image->pixelsReleased()&&image->straightRGBA.capacity()==0&&image->pixelBytes()==painted[n].size(),"Released pixels leave the image, its bounds and size stay");
+        const auto released=raster.stats();
+        check(released.resourceBytes==before.resourceBytes&&released.releasedPixelBytes==before.releasedPixelBytes+painted[n].size()&&released.pixelReleases==before.pixelReleases+1&&released.entries==before.entries,
+              "The budget still answers for released pixels; the release is counted");
+        check(!raster.releasePixels(cases[n].first,image),"Released pixels are not released twice");
+        std::size_t heldBytes{},releasedBytes{};raster.forEachEntry([&](const LayerRasterEntryUsage&e){if(e.id==cases[n].first){heldBytes=e.pixelBytes;releasedBytes=e.releasedPixelBytes;}});
+        check(heldBytes==0&&releasedBytes==painted[n].size(),"The memory census sees the entry hold no pixels");
+    }
+    check(raster.stats().repaintSourceBytes>0&&raster.stats().repaintSourceBytes<painted[1].size(),"A released raster without text keeps a description smaller than its pixels");
+    for(std::size_t n=0;n<cases.size();++n){
+        const auto before=raster.stats();std::vector<std::uint8_t> again;raster.repaint(*images[n],again);const auto after=raster.stats();
+        check(again==painted[n],"A released raster is painted again byte for byte");
+        check(after.pixelRepaints==before.pixelRepaints+1&&after.rasterizations==before.rasterizations&&after.textLayoutsCreated==before.textLayoutsCreated&&
+              after.nodesDrawn==before.nodesDrawn&&after.imageDecodes==before.imageDecodes&&after.cacheHits==before.cacheHits&&after.resourceBytes==before.resourceBytes&&images[n]->pixelsReleased(),
+              "A repaint counts no raster, layout, node or decode and leaves the image released");
+    }
+    // A default-font event after the release: the repaint keeps the
+    // typography the pixels were painted with; a new raster takes the new one.
+    check(raster.setDefaultFontLanguage(LayerFontLanguage::korean),"The default font changes");
+    {std::vector<std::uint8_t> again;raster.repaint(*images[0],again);check(again==painted[0],"A repaint after a font event keeps the original typography");}
+    check(raster.setDefaultFontLanguage(LayerFontLanguage::simplifiedChinese),"The default font changes back");
+    // A cache hit on a released revision gives the caller its pixels back.
+    {const auto before=raster.stats();auto hit=raster.rasterize("release.card",1,card,options,LayerRasterRetention::releasable);
+     check(hit==images[1]&&!hit->pixelsReleased()&&hit->straightRGBA==painted[1]&&raster.stats().cacheHits==before.cacheHits+1&&raster.stats().rasterizations==before.rasterizations&&raster.stats().releasedPixelBytes+painted[1].size()==before.releasedPixelBytes,
+           "A cache hit on released pixels paints them back into the retained image");
+     hit.reset();check(raster.releasePixels("release.card",images[1]),"And they can be released again");}
+    // Typography refresh of a released text entry paints a new, held image.
+    {const auto refreshed=raster.refreshTypography("release.caption",2);check(refreshed&&refreshed->releasable()&&refreshed->straightRGBA==painted[0],"A typography refresh of a released caption paints a new image with pixels");}
+    // What cannot be painted again keeps its pixels: borrowed memory images,
+    // editor documents, and a description larger than the pixels.
+    {
+        LayerImageSource provider;auto memory=options;memory.memoryImages=&provider;
+        const std::array<std::uint8_t,16> colors{255,0,0,255,0,255,0,255,0,0,255,255,255,255,255,128};provider.publish("release-icon",1,2,2,colors);
+        auto icon=layer("icon",16,16);icon["contents"]=Json::Object{{"memoryImage","release-icon"},{"revision",1}};
+        const auto image=raster.rasterize("release.icon",1,icon,memory,LayerRasterRetention::releasable);
+        check(!image->releasable()&&!raster.releasePixels("release.icon",image)&&!image->straightRGBA.empty(),"A raster of a borrowed memory image keeps its pixels");
+        auto document=options;document.plainTextDocument=true;auto field=caption;field["text"]["runs"]=Json::Array{};
+        const auto editor=raster.rasterize("release.document",1,field,document,LayerRasterRetention::releasable);
+        check(!editor->releasable()&&!raster.releasePixels("release.document",editor),"An editor document keeps its pixels");
+        LayerRasterOptions tiny;tiny.pixelsPerPoint=1;tiny.paddingPoints=0;
+        const auto dot=raster.rasterize("release.dot",1,shape("dot",1,1),tiny,LayerRasterRetention::releasable);
+        check(!dot->releasable()&&!raster.releasePixels("release.dot",dot),"A description larger than the pixels keeps the pixels instead");
+        rejects([&]{std::vector<std::uint8_t> out;raster.repaint(*dot,out);},"Only a releasable raster is painted again");
+    }
+    // A released image outlives its cache entry: removal and a full clear
+    // (decoded intrinsic images included) still let its holder repaint it.
+    {
+        auto held=images[1];check(raster.remove("release.card")&&held->pixelsReleased(),"Removing the entry leaves its holder's released image");
+        raster.clear();std::vector<std::uint8_t> again;raster.repaint(*held,again);
+        check(again==painted[1]&&raster.stats().entries==0,"A released image repaints after a clear, decoding its intrinsic image again");
+    }
+}
 void run(){
     LayerRasterizer raster;LayerRasterOptions options;options.pixelsPerPoint=1;options.paddingPoints=1;
     auto red=shape("half-red");red["shape"]["fillColor"]=rgba(1,0,0,.5);
@@ -210,7 +302,7 @@ void run(){
 int main(){
     const auto status=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);
     if(FAILED(status)){std::cerr<<"Cannot initialize fixture COM: "<<status<<'\n';return 1;}
-    int result=0;try{run();memoryImages();std::cout<<"PASS "<<checks<<" local layer raster checks (owned WIC bitmaps, no window/capture)\n";}
+    int result=0;try{run();memoryImages();releasable();std::cout<<"PASS "<<checks<<" local layer raster checks (owned WIC bitmaps, no window/capture)\n";}
     catch(const std::exception& error){std::cerr<<"FAIL after "<<checks<<" checks: "<<error.what()<<'\n';result=1;}
     CoUninitialize();return result;
 }
