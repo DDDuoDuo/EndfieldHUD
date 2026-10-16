@@ -178,6 +178,33 @@ void parity(HWND hwnd,const std::filesystem::path& shader){
 }
 // The Archive body style (natural metrics, one point after every line) keeps
 // parity too; that editor uses chunks for long bodies.
+// Source moveUp:/moveDown: in both Notes field editors, across chunk
+// boundaries (text::verticalInsertion, text::VerticalGoal): Down from a long
+// line's end ends the shorter line below before its break (the nearest hit
+// rounded past it onto the next line), a run of vertical moves keeps its goal
+// x, any other move drops it, and the first and last lines move to the text's
+// start and end. Both editors agree at every step.
+void verticalMoves(HWND hwnd){
+    gpu::LayerRasterizer raster;std::u16string value;for(unsigned n=0;n<24;++n)value+=u"abcdefgh\nab\n";value+=u"abcdefgh";
+    const auto size=static_cast<std::uint32_t>(value.size());Pair pair(hwnd,raster,value,notesStyle(raster,300,120));pair.sync();
+    check(pair.chunked->stats().chunks>3,"The vertical-move document spans several chunks");
+    using C=gpu::ProjectedEditorCommand;
+    const auto sel=[&]{check(pair.singleDocument.selection()==pair.chunkedDocument.selection(),"Both editors hold the same selection");return pair.singleDocument.selection().range;};
+    const auto at=[&](std::uint32_t v){pair.both([&](auto& e){return e.setSelectionFromHost({{v,v},text::ActiveEnd::end,false});});};
+    const auto cmd=[&](C c,bool extend=false){pair.both([&](auto& e){return e.command(c,extend);});return sel();};
+    const auto caret=[](std::uint32_t v){return text::Range{v,v};};
+    // Pair k: "abcdefgh" at 12k, its break at 12k+8, "ab" at 12k+9, its break at 12k+11.
+    for(const std::uint32_t k:{0u,5u,11u,17u}){const auto end=12*k+8;at(end);
+        check(cmd(C::down)==caret(end+3),"Down from a long line's end ends the shorter line below, before its break");
+        check(cmd(C::down)==caret(end+12),"The next Down keeps the goal x: the following long line's end");
+        check(cmd(C::up)==caret(end+3)&&cmd(C::up)==caret(end),"Up keeps the same goal back to where the run started");}
+    at(8);check(cmd(C::down,true)==text::Range{8,11}&&cmd(C::down,true)==text::Range{8,20},"Shift+Down extends through the shorter line and keeps the goal x");
+    at(8);check(cmd(C::down)==caret(11)&&cmd(C::left)==caret(10)&&cmd(C::down)==caret(13),"A Left between vertical moves drops the goal: the caret's own x is used");
+    at(1);check(cmd(C::down)==caret(10)&&cmd(C::down)==caret(13),"A column inside both lines stays in that column");
+    at(3);check(cmd(C::up)==caret(0),"Up on the first line moves to the start of the text");
+    at(size-5);check(cmd(C::down)==caret(size),"Down on the last line moves to the end of the text");
+    check(pair.singleDocument.text()==value&&pair.chunkedDocument.text()==value,"Vertical moves never edit the text");
+}
 void archiveParity(HWND hwnd){
     gpu::LayerRasterizer raster;auto style=notesStyle(raster,352,264);style.lineHeight=0;style.baseline=0;style.naturalParagraphSpacingOne=true;style.fontFamily=".AppleSystemUIFont";style.fontFace=".AppleSystemUIFont";
     Pair pair(hwnd,raster,mixed(60,11),style);check(pair.chunked->stats().chunks>4,"Archive-style document spans many chunks");
@@ -289,7 +316,7 @@ void workspace(HWND hwnd){
 } // namespace
 int wmain(int argc,wchar_t** argv){
     try{check(argc==2,"Usage: notes_long_editor_tests <hud.hlsl>");Apartment apartment;Window window;const std::filesystem::path shader(argv[1]);
-        parity(window.value,shader);archiveParity(window.value);textServices(window.value);workspace(window.value);longDocuments(window.value,shader);
+        parity(window.value,shader);verticalMoves(window.value);archiveParity(window.value);textServices(window.value);workspace(window.value);longDocuments(window.value,shader);
         std::cout<<"Passed "<<checks<<" chunked Notes editor contracts\n";return 0;
     }catch(const std::exception& e){std::cerr<<"Chunked Notes editor contract failed after "<<checks<<" checks: "<<e.what()<<'\n';return 1;}
 }

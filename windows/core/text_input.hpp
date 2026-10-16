@@ -94,6 +94,23 @@ std::optional<std::uint32_t> projectedHit(const Document&,const Layout&,Point cl
 // start, below the last line the end of the text. Elsewhere, and on
 // right-to-left runs, it is the layout's own rounded nearest hit.
 std::optional<std::uint32_t> insertionHit(const Layout&,std::uint32_t textUnits,Point);
+// Source NSTextView moveUp:/moveDown: from the caret at `from`, as a point
+// on the line above or below at the goal x placed by insertionHit: right of a
+// shorter line it is that line's end, never past its break. Above the first
+// line it is the start of the text and below the last line its end (the Mac
+// moves the caret to that boundary). `goalX` is the x a run of vertical moves
+// keeps (VerticalGoal); without one the caret's own x, which the result
+// returns for the next move.
+struct VerticalInsertion { std::uint32_t at{};double goalX{}; };
+std::optional<VerticalInsertion> verticalInsertion(const Layout&,std::uint32_t textUnits,std::uint32_t from,std::optional<double> goalX,bool up);
+// The x a run of vertical moves keeps (NSTextView's goal column, so a shorter
+// line on the way does not pull the caret left): it holds while the document
+// keeps the selection and text revision the last vertical move left; any
+// other edit, selection or pointer change drops it.
+struct VerticalGoal {
+    double x{};Selection selection;std::uint64_t revision{};
+    std::optional<double> keptFor(const Document& d)const noexcept{return selection==d.selection()&&revision==d.revision()?std::optional(x):std::nullopt;}
+};
 // A pointer press in client pixels: anywhere inside the rounded viewport
 // (Placement owns that test) places the insertion point; nullopt outside it.
 std::optional<std::uint32_t> projectedInsertion(const Document&,const Layout&,Point client,const Placement&);

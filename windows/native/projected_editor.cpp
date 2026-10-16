@@ -53,7 +53,7 @@ struct NativeProjectedEditor::Impl {
     BoundedDocument document;core::notes::RichDocument* rich{};core::notes::RichDocument*history{};bool richLayout{},normalizedParagraphs{};std::vector<text::Range> spacedParagraphs;std::u16string paragraphText;LayerScene* scene;ProjectedEditorStyle style;LayerRasterOptions options;
     std::unique_ptr<LayerTextLayout> layout;std::unique_ptr<ProjectedTextInput> input;
     std::uint64_t glyphRevision{},shapeRevision{},paintRevision{},structureRevision{},paintedFontRevision{},paintedDocument{},adornedDocument{};
-    text::Selection adornedSelection;std::optional<text::Range>adornedComposition;std::optional<char16_t>highUnit;
+    text::Selection adornedSelection;std::optional<text::Range>adornedComposition;std::optional<char16_t>highUnit;std::optional<text::VerticalGoal>verticalGoal;
     std::array<std::size_t,4> surfaces{};std::array<DrawObject,4> originals;std::array<LayerPlacement,4> placements;
     std::array<std::array<PlaneMask,8>,4> masks;std::array<std::size_t,4> maskCounts{};
     text::Placement placement;ProjectedEditorPose pose;double scroll{},horizontal{};core::Rect caretRect;Json glyphContent;std::array<Json,4>shapeContent;
@@ -266,7 +266,10 @@ ProjectedEditorResult NativeProjectedEditor::command(ProjectedEditorCommand comm
     case ProjectedEditorCommand::documentEnd:return i->select(std::uint32_t(i->document.text().size()),extend);
     case ProjectedEditorCommand::backspace:case ProjectedEditorCommand::deleteForward:
         if(range.start==range.end){if(command==ProjectedEditorCommand::backspace)range.start=i->layout->previousCluster(at);else range.end=i->layout->nextCluster(at);}return range.start==range.end?ProjectedEditorResult{true,false,false}:i->replace(range,{});
-    case ProjectedEditorCommand::up:case ProjectedEditorCommand::down:{const auto box=i->layout->bounds({at,at});if(!box||box->bounds.height<=0)return {true,false,false};const auto& r=box->bounds;const auto target=i->layout->hit({r.x,r.y+(command==ProjectedEditorCommand::up?-.5:1.5)*r.height},true,true);return target?i->select(*target,extend):ProjectedEditorResult{true,false,false};}
+    case ProjectedEditorCommand::up:case ProjectedEditorCommand::down:{
+        // Source moveUp:/moveDown: at the goal x a run of vertical moves keeps.
+        const auto move=text::verticalInsertion(*i->layout,std::uint32_t(i->document.text().size()),at,i->verticalGoal?i->verticalGoal->keptFor(i->document):std::nullopt,command==ProjectedEditorCommand::up);
+        if(!move)return {true,false,false};const auto result=i->select(move->at,extend);i->verticalGoal=text::VerticalGoal{move->goalX,i->document.selection(),i->document.revision()};return result;}
     case ProjectedEditorCommand::finish:break;
     }return {};
 }

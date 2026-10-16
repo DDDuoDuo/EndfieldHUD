@@ -113,7 +113,7 @@ struct NativeNotesLongEditor::Impl {
     Geometry geometry;std::unique_ptr<ProjectedTextInput> input;
     std::vector<Chunk> chunks;std::u16string synced;
     std::uint64_t layoutRevision{},styleGeneration{1},paintedFontRevision{},useClock{},paintRevision{},structureRevision{},shapeRevision{},adornedDocument{},chunkTextRevision{};
-    text::Selection adornedSelection;std::optional<text::Range> adornedComposition;std::optional<char16_t> highUnit;
+    text::Selection adornedSelection;std::optional<text::Range> adornedComposition;std::optional<char16_t> highUnit;std::optional<text::VerticalGoal> verticalGoal;
     std::vector<std::string> ids;std::vector<std::size_t> surfaces;std::vector<DrawObject> originals;std::vector<LayerPlacement> placements;
     std::vector<std::array<PlaneMask,8>> masks;std::vector<std::size_t> maskCounts;
     std::vector<std::uint64_t> slotRevision;std::vector<double> slotTranslate;std::vector<std::shared_ptr<const PaintedTextLayout>> slotLayout;std::vector<bool> slotEmpty;
@@ -510,7 +510,10 @@ ProjectedEditorResult NativeNotesLongEditor::command(ProjectedEditorCommand comm
     case ProjectedEditorCommand::documentEnd:return i->select(std::uint32_t(i->value().size()),extend);
     case ProjectedEditorCommand::backspace:case ProjectedEditorCommand::deleteForward:
         if(range.start==range.end){if(command==ProjectedEditorCommand::backspace)range.start=i->previousCluster(at);else range.end=i->nextCluster(at);}return range.start==range.end?ProjectedEditorResult{true,false,false}:i->replace(range,{});
-    case ProjectedEditorCommand::up:case ProjectedEditorCommand::down:{const auto box=i->bounds({at,at});if(!box||box->bounds.height<=0)return {true,false,false};const auto& r=box->bounds;const auto target=i->hit({r.x,r.y+(command==ProjectedEditorCommand::up?-.5:1.5)*r.height},true,true);return target?i->select(*target,extend):ProjectedEditorResult{true,false,false};}
+    case ProjectedEditorCommand::up:case ProjectedEditorCommand::down:{
+        // Source moveUp:/moveDown: at the goal x a run of vertical moves keeps.
+        const auto move=text::verticalInsertion(i->geometry,std::uint32_t(i->value().size()),at,i->verticalGoal?i->verticalGoal->keptFor(i->owner):std::nullopt,command==ProjectedEditorCommand::up);
+        if(!move)return {true,false,false};const auto result=i->select(move->at,extend);i->verticalGoal=text::VerticalGoal{move->goalX,i->owner.selection(),i->owner.revision()};return result;}
     case ProjectedEditorCommand::finish:break;
     }return {};
 }

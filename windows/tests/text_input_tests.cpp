@@ -65,6 +65,29 @@ void insertion(){
     p.visible=false;check(!projectedInsertion(doc,layout,{115,40},p),"A hidden field takes no press");p.visible=true;
     doc.replace({0,0},u"x");check(!projectedInsertion(doc,layout,{115,40},p),"A stale layout takes no press");
 }
+// Source NSTextView moveUp:/moveDown: through the insertion rule: onto a
+// shorter line the caret ends that line (before its hard break), a run of
+// vertical moves keeps its goal x, above the first line is the start of the
+// text and below the last line its end.
+void vertical(){
+    Buffer doc(u"abcd\nef\nghij");LinesLayout layout(doc,{0,5,8});const auto move=[&](std::uint32_t from,std::optional<double>goal,bool up){return verticalInsertion(layout,12,from,goal,up);};
+    check(layout.hit({40,15},true,true)==8u,"Fixture: the nearest hit below a longer line's end rounds past the shorter line's break");
+    const auto down=move(4,std::nullopt,false);check(down&&down->at==7u&&down->goalX==40,"Down onto a shorter line ends it before its break and reports the caret's x as the goal");
+    const auto further=move(7,down->goalX,false);check(further&&further->at==12u&&further->goalX==40,"The kept goal x places the next line's caret where the run started (here the end of the text)");
+    const auto back=move(12,further->goalX,true);check(back&&back->at==7u,"Up onto the shorter line ends it again");
+    const auto top=move(7,back->goalX,true);check(top&&top->at==4u,"The kept goal x brings the caret back to its column, before the first line's break");
+    const auto own=move(7,std::nullopt,true);check(own&&own->at==2u&&own->goalX==20,"Without a kept goal the caret's own x is used");
+    check(move(2,std::nullopt,true)->at==0u&&move(0,std::nullopt,true)->at==0u,"Up on the first line moves to the start of the text");
+    check(move(9,std::nullopt,false)->at==12u,"Down on the last line moves to the end of the text");
+    Buffer wrapped(u"ab\n\ncd efgh");LinesLayout lines(wrapped,{0,3,4,7});
+    const auto up1=verticalInsertion(lines,11,9,std::nullopt,true);check(up1&&up1->at==6u,"Up onto a soft-wrapped line keeps the column, before the wrap's space");
+    const auto up2=verticalInsertion(lines,11,up1->at,up1->goalX,true);check(up2&&up2->at==3u,"Up onto an empty line is that line");
+    const auto up3=verticalInsertion(lines,11,up2->at,up2->goalX,true);check(up3&&up3->at==2u,"The goal x survives the empty line and ends the shorter first line");
+    check(!move(13,std::nullopt,false)&&!move(4,std::numeric_limits<double>::quiet_NaN(),false),"An index past the text or a nonfinite goal has no move");
+    Buffer goalDoc(u"abc");const VerticalGoal goal{30,goalDoc.selection(),goalDoc.revision()};check(goal.keptFor(goalDoc)==30.,"The goal holds while the selection and text are those of the last move");
+    goalDoc.setSelection({{1,1},ActiveEnd::end,false});check(!goal.keptFor(goalDoc),"Another selection drops the goal");
+    const VerticalGoal typed{30,goalDoc.selection(),goalDoc.revision()};goalDoc.replace({1,1},u"x");goalDoc.setSelection({{1,1},ActiveEnd::end,false});check(!typed.keptFor(goalDoc),"An edit drops the goal even when the selection returns");
+}
 void rounded(){
     Buffer doc(u"A");RoundedLayout layout(doc);Placement p{{},{20,30,20,10},{},true,3};
     check(validPlacement(p),"Source radius three is valid in local viewport units");auto rectangular=p;rectangular.cornerRadius=0;
@@ -145,4 +168,4 @@ void run(){
     p.projection={};p.viewport.width=0;check(!projectedViewport(p),"Zero viewport rejected");p.viewport.width=100;p.projection.values.fill(0);check(!projectedViewport(p),"Singular projection rejected by shared math");
 }
 }
-int main(){try{run();rounded();insertion();std::cout<<"Passed "<<checks<<" projected UTF-16 text contracts\n";return 0;}catch(const std::exception&e){std::cerr<<e.what()<<'\n';return 1;}}
+int main(){try{run();rounded();insertion();vertical();std::cout<<"Passed "<<checks<<" projected UTF-16 text contracts\n";return 0;}catch(const std::exception&e){std::cerr<<e.what()<<'\n';return 1;}}

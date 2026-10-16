@@ -121,6 +121,14 @@ std::optional<std::uint32_t> insertionHit(const Layout& layout,std::uint32_t uni
         if(const auto end=caretAt(layout,units);end&&p.y>=end->y+end->height)return units;
     return at;
 }
+std::optional<VerticalInsertion> verticalInsertion(const Layout& layout,std::uint32_t units,std::uint32_t from,std::optional<double> goal,bool up){
+    if(from>units||(goal&&!std::isfinite(*goal)))return {};const auto caret=caretAt(layout,from);if(!caret)return {};const double x=goal.value_or(caret->x);
+    auto at=insertionHit(layout,units,{x,caret->y+(up?-.5:1.5)*caret->height});if(!at)return {};
+    // No line above: the start of the text (insertionHit already answers the
+    // end of the text below the last line).
+    if(up)if(const auto line=caretAt(layout,*at);line&&sameLine(*line,*caret))at=0u;
+    return VerticalInsertion{*at,x};
+}
 bool placementContains(const Placement& p,Point client)noexcept{
     if(!validPlacement(p)||!p.visible||!std::isfinite(client.x)||!std::isfinite(client.y))return false;const auto local=p.projection.unproject(client);
     return local&&roundedContains(p.viewport,p.cornerRadius,*local);
