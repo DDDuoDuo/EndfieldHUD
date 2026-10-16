@@ -6,7 +6,7 @@ The fresh implementation uses macOS `main` at `ca04f142185c7de40acd8523bdb563195
 
 Keep the current HUD, functions, animations, saved data and optimizations. Replace the platform plumbing. Do not redesign the interface or silently remove a module because its Windows adapter is difficult.
 
-Current checkpoint (135, 2026-10-16; code at `c1471cb`; checkpoint 134 was pushed at `f9c5ab3`, the eight code commits after it are not): `EndfieldHUD.exe` runs every module in section 6 through one application owner. It has 15 built-in owners, the quit card, the desktop clock's automation owner and 10 module areas: Media Assembly, Now Playing, Personal Profile, Account Linking, the Power charge badge and alert, App shortcuts, the Mac import card, Calendar reminders, Projection's UI Automation and the Windows updater.
+Current checkpoint (135, 2026-10-16; code at `56e064d`; checkpoint 134 was pushed at `f9c5ab3`): `EndfieldHUD.exe` runs every module in section 6 through one application owner. It has 15 built-in owners, the quit card, the desktop clock's automation owner and 10 module areas: Media Assembly, Now Playing, Personal Profile, Account Linking, the Power charge badge and alert, App shortcuts, the Mac import card, Calendar reminders, Projection's UI Automation and the Windows updater.
 
 The host adds:
 
@@ -55,7 +55,7 @@ Checkpoint 135 adds eight code commits after checkpoint 134 (pushed at `f9c5ab3`
 
 Correction for the live release candidates: up to 134 they were started on the laptop by a scheduled task at its default priority (7), so they ran at Below Normal priority, and the shown HUD's process-priority raise, which lifts only a Normal process, never applied. Release candidate 134 was raised to Normal by hand; 135 onward start at Normal. Only the test launches were affected: Windows starts the installed app at Normal.
 
-Laptop validation of checkpoint 135: <!-- pending: checkpoint 135 validation -->
+Laptop validation of checkpoint 135 (code at `56e064d`): a clean incremental Release build; 402 of 403 registered suites pass in the full interactive run, combined module coverage and hardware composition (2,058,114 checks) pass, and the release build stages a complete package with `THIRD-PARTY-NOTICES.txt` and a two-line `SHA256SUMS`. `application_idle_trace` measured 20.18 closed wake-ups per second against its limit of 20 while a game kept the laptop busy and passed alone (6.24). A first run at `c1471cb` failed three suites: two on a check that read the section list's arrow scroll before the Mac spring settled (`cdcc66d`) and the install check, which did not yet expect the notices file (`f74e82a`); `56e064d` raises the host check minimums to 187 and 183.
 
 In earlier isolated previews the user accepted the backdrop, navigation, tray, hotkey, language switching, plain-text Notes with Chinese input, the Clipboard UI, Reader scrolling, the Work Mode timer and the minigame. In the full build the user live-tested Account Linking with a real account (China), and it worked.
 
