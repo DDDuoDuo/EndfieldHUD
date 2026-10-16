@@ -36,15 +36,18 @@ struct MacImportService::Impl {
     bool committable{};
     Impl(endfield::app::UtilityExecutor& e, std::function<void()> c) : executor(e), route(e.makeRoute()), changed(std::move(c)) {}
     void notify() { if (changed) changed(); }
-    // Back to idle without anything of the last import (strings and lists
-    // are replaced, not cleared, so their storage is returned too).
+    // Back to idle without anything of the last import. The error text is
+    // swapped with an empty string, not cleared or move-assigned, so its
+    // storage is returned too: libstdc++ copies a short (SSO) string into the
+    // target's existing buffer on move assignment, keeping e.g. the 16-byte
+    // "Import cancelled" allocated (MSVC and libc++ free it).
     void clear() {
         state = State::idle;
         steps = 0;
         progress = {};
         summary.reset();
         result.reset();
-        error = std::string();
+        std::string().swap(error);
         code.reset();
         committable = false;
     }

@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <initializer_list>
 #include <span>
+#include <utility>
 
 namespace endfield::areas {
 namespace {
@@ -285,13 +286,15 @@ void MacImportFlow::open() {
     if (host_.changed) host_.changed();
 }
 // Hidden: nothing of the import stays (residency(), WINDOWS-MIGRATION.md
-// section 9). Strings and lists are replaced, not cleared, so their storage
-// is returned; the service drops the finished import's results.
+// section 9). Strings, paths and lists are swapped with empty ones, not
+// cleared or move-assigned, so their storage is returned on every standard
+// library (libstdc++ keeps a string's buffer when an empty one is
+// move-assigned into it); the service drops the finished import's results.
 void MacImportFlow::hide() {
     step_ = MacImportStep::hidden;
     std::string().swap(notice_); std::string().swap(detail_); std::vector<MacImportRow>().swap(list_); first_ = 0;
     outcome_.reset(); std::vector<mig::MacRelinkItem>().swap(relink_); recorded_ = false; replace_ = false; declined_ = false;
-    exportRoot_ = fs::path();
+    fs::path().swap(exportRoot_);
     if (service_) (void)service_->release();
     rebuild();
 }
@@ -729,6 +732,9 @@ void MacImportFlow::rebuild(bool list) {
         if (list_.size() > macImportCardRows)
             next.position = number(first_ + 1) + "\xE2\x80\x93" + number(std::min(first_ + macImportCardRows, list_.size())) + " / " + number(list_.size());
     }
-    if (next != content_) { content_ = std::move(next); ++revision_; }
+    // Swapped, not move-assigned: the previous card's text leaves with `next`
+    // (libstdc++ would copy the hidden card's empty strings into the old
+    // buffers and keep them allocated).
+    if (next != content_) { std::swap(content_, next); ++revision_; }
 }
 } // namespace endfield::areas
