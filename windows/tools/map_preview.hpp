@@ -22,6 +22,13 @@ struct MapPreviewOptions {
     native::LayerRasterOptions raster;
     native::MapPlayerImages player;
     native::MapAppearance appearance;
+    // Desktop Map occlusion (core/map_source_cutout.hpp): the presented
+    // source shell frame, read on every update/prewarm while the Map is posed
+    // on the source shell. The Storage and Activity Monitor plates below the
+    // circle then stay above the Map: its artwork is cut under them and a
+    // press there is left to the navigation (covers() and pointer() decline
+    // it). Empty or nullopt: no plates (the Map covers its whole circle).
+    std::function<std::optional<modules::MapSourceView>()> sourceFrame;
 };
 // Retained source Map canvas on the shared440-point module plane. Geography
 // decoding, persistence and worker painter are injected; this owner performs
@@ -103,6 +110,9 @@ public:
     // thread. Counters only: no allocation, IO or OS call.
     struct Residency {std::uint64_t cpuBytes{},gpuBytes{};std::uint32_t threads{};};
     Residency residency()const noexcept;
+    // The source plates above the Map in logical client points (empty unless
+    // posed with a source frame).
+    const modules::MapCutouts&sourceCutouts()const noexcept;
     native::NativeMapRaster::Stats rasterStats()const noexcept;
     native::MapSceneStats sceneStats()const noexcept;
     void upload(native::Renderer&);std::span<const native::LayerCompositionEntry>entries();

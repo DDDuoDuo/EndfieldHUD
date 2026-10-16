@@ -1,6 +1,7 @@
 #pragma once
 #include "native/map_raster.hpp"
 #include "core/data/json.hpp"
+#include "core/map_source_cutout.hpp"
 #include <string>
 
 namespace endfield::native {
@@ -25,7 +26,10 @@ struct MapPlayerImages {
 #ifdef _WIN32
 class LayerRasterizer;class LayerScene;class Renderer;struct LayerRasterOptions;struct LayerCompositionEntry;struct PlaneMask;struct PlaneShutter;
 struct MapScenePose {core::Matrix4 world;float opacity{1};double time{};std::span<const PlaneMask>masks;const PlaneShutter*shutter{};};
-struct MapSceneStats {std::uint64_t chromeBuilds{},statusRasters{},imageUploads{},pinBuilds{},poses{},localUpdates{};std::size_t visiblePins{},pulsingPins{};};
+// cutoutMasks: in-place feather mask region updates for the source plates
+// above the Map (setCutouts); cutoutPolygons: the plates' polygons now cut;
+// cutoutMaskBytes: the retained CPU staging of those updates.
+struct MapSceneStats {std::uint64_t chromeBuilds{},statusRasters{},imageUploads{},pinBuilds{},poses{},localUpdates{},cutoutMasks{};std::size_t visiblePins{},pulsingPins{},cutoutPolygons{},cutoutMaskBytes{};};
 class NativeMapScene final {
 public:
     NativeMapScene(modules::MapState&,NativeMapRaster&,LayerRasterizer&,LayerRasterOptions,MapPlayerImages,MapAppearance={});
@@ -38,6 +42,13 @@ public:
     bool syncContent(double time,bool cameraAnimated=false);
     bool setFeedback(std::optional<core::Point>,bool pressed,double time);
     bool updatePose(const MapScenePose&);bool uploadResources(Renderer&);
+    // Desktop Map occlusion (core/map_source_cutout.hpp): the source plates
+    // drawn above the Map, as polygons of its 440-point canvas. The feather
+    // mask the output samples is an updatable texture: uploadResources
+    // replaces in place only the texels the old and new plates cover (alpha
+    // x (1 - even-odd plate coverage)); equal plates do nothing. True when
+    // the plates changed. No allocation once the staging has grown.
+    bool setCutouts(const modules::MapCutouts&);
     bool requiresFrames(double time)const;void settle();
     std::span<const LayerCompositionEntry>entries()const noexcept;
     bool releaseResources(Renderer&);MapSceneStats stats()const noexcept;

@@ -68,6 +68,79 @@ void prewarmFirstOpening(n::Renderer&r){
     check(late.rasterizations==0&&late.layouts==0&&late.chromeBuilds==0&&late.targets==0,"Geography arriving after the prewarm leaves no rasterization on the opening frame");
     std::cout<<"MAP_FIRST_OPEN cold="<<cold.open<<" ms prewarmed="<<warm.open<<" ms (prewarm "<<warm.prewarm<<" ms) late-geography="<<late.open<<" ms; texture uploads cold="<<cold.uploads<<" prewarmed="<<warm.uploads<<" late="<<late.uploads<<"; renderer bytes shown="<<warm.resourceBytes<<"; owner CPU bytes after the first paint="<<warm.residentBytes<<"\n";
 }
+// Desktop Map occlusion (core/map_source_cutout.hpp; RC 131: "the map should
+// be under the storage and activity monitor buttons, not on top of it"). With
+// the presented source frame, the Storage and Activity Monitor plates below
+// the circle stay above the Map, as on the Mac (HUDSourceWatchView desktop
+// map occlusion). The source shell is drawn below every native layer, so a
+// stand-in for it is composed first: the readback shows it inside the plates
+// and the Map elsewhere, including the plates' transparent corners. Presses
+// inside the plates are left to the navigation (covers() and pointer()
+// decline them, the host's source hit filter then accepts the buttons).
+void occlusion(n::Renderer&r){
+    n::LayerRasterizer raster;a::UtilityExecutor utility([]{});double now{};bool shell{true};
+    std::vector<c::source::Node>nodes(2);nodes[0].id="storage";nodes[0].path="WatchPanel_PC/Content/WatchNode/canvas_watch/HudBgShdow/TechtreeNode/TechtreeBtn/Icon";nodes[1].id="activity";nodes[1].path="WatchPanel_PC/Content/WatchNode/canvas_watch/HudBgShdow/ReportNode/ReportBtn/Icon";
+    const c::source::SourceRect plateRect{{-138,-55},{276,110}};std::vector<c::source::ResolvedNode>resolved{{&nodes[0],{},{},plateRect,true},{&nodes[1],{},{},plateRect,true}};std::vector<double>alpha{0,0};const c::source::CameraFrame source{}; // plates faded out until placed
+    t::MapPreviewOptions o;o.geography=geography();o.clock=[&]{return now;};o.paint=paint;o.raster.pixelsPerPoint=2;o.appearance.ambient=false;o.player={image(2),image(2),image(2),image(880)};
+    o.sourceFrame=[&]()->std::optional<m::MapSourceView>{if(!shell)return std::nullopt;return m::MapSourceView{resolved,alpha,&source};};
+    t::MapPreview owner(raster,utility,std::move(o));owner.resize({1280,800,96,1,1280,800});c::ModulePresentation modules{c::Module::power};n::LayerScene geometry(raster);geometry.load(blank(),{});n::NativeModuleSurface plane(geometry,c::Module::map);
+    c::source::DesktopChromeSettings settings{{0,0,1280,800},1,{},c::Module::power,true};auto center=c::source::DesktopChromeLayout::make(settings,{},{}).designToScreen;const auto camera=n::layerViewportProjection(1280,800);
+    n::LayerScene shellStandIn(raster);shellStandIn.load(J(J::Object{{"bounds",J::Array{0,0,1280,800}},{"children",J::Array{J(J::Object{{"id","source.shell"},{"kind","layer"},{"class","CALayer"},{"bounds",J::Array{0,0,1280,800}},{"position",J::Array{0,0}},{"anchorPoint",J::Array{0,0}},{"backgroundColor",J::Object{{"sRGB",J::Array{0,1,0,1}}}}})}}}),{});
+    n::LayerComposition composition;std::vector<n::LayerCompositionEntry>ordered;ordered.reserve(8);bool released{};
+    struct Cleanup{n::Renderer&r;n::LayerComposition&c;n::LayerScene&s;t::MapPreview&o;bool&done;~Cleanup(){if(done)return;try{c.detach(r);(void)s.releaseResources(r);o.release(r);}catch(...){r.reset();}}}cleanup{r,composition,shellStandIn,owner,released};
+    const auto frame=[&](double dt=.01){now+=dt;const auto sample=modules.sample(now).presentation;settings.module=sample.requested;owner.update(center,settings,sample,1,now);owner.upload(r);ordered.clear();ordered.push_back({&shellStandIn,{}});for(const auto&e:owner.entries())ordered.push_back(e);composition.setEntries(r,ordered);composition.present(r);r.setCamera(camera);};
+    const auto point=[&](c::Point p){const auto sample=modules.sample(now).presentation;const auto*shown=sample.current.module==c::Module::map?&sample.current:&*sample.incoming;plane.update(center,settings,*shown);return *c::Projection::viewport(camera*plane.pose().contentWorld,1280,800).project(p);};
+    const auto drain=[&]{utility.waitIdle();utility.drain();owner.utilityCompleted(now);};
+    const auto settle=[&]{for(unsigned k=0;k<16;++k){drain();if(const auto due=owner.nextWakeTime()){now=std::max(now,*due)+.000001;owner.deadline(now);continue;}if(!utility.stats().running&&!utility.stats().pending&&!utility.stats().completed)break;}frame(.21);};
+    modules.select(c::Module::map,now);frame(.02);drain();frame(1);settle();check(owner.state().active(),"The occlusion fixture shows a stable Map");
+    // The untilted plane maps canvas points to client points by one scale.
+    const auto o0=point({0,0}),o1=point({440,440});const double k=(o1.x-o0.x)/440;check(k>0&&std::abs((o1.y-o0.y)/440-k)<1e-9,"The untilted Map canvas maps to client points by one uniform scale");
+    // A plate's normalized (u, v) lands on canvas (x0 + 140u, y1 - 56v): its
+    // rect-local Unity point (y up) goes through the node world to NDC.
+    std::array<c::Point,2>origins{};
+    const auto place=[&](std::size_t index,double x0,double y1){origins[index]={o0.x+k*x0,o0.y+k*y1};const double kx=k*140/276,ky=k*56/110,cx=origins[index].x+kx*138,cy=origins[index].y-ky*55;
+        resolved[index].worldMatrix=c::Matrix4::translation(2*cx/1280-1,1-2*cy/800,0)*c::Matrix4::scale(2*kx/1280,2*ky/800,1);};
+    const auto plateClient=[&](std::size_t index,double u,double v){return c::Point{origins[index].x+k*140*u,origins[index].y-k*56*v};};
+    std::vector<std::uint8_t>pixels;std::uint32_t rowBytes{};
+    const auto draw=[&]{r.draw(false);auto image=r.readback();rowBytes=image.rowBytes;pixels=std::move(image.pixels);};
+    const auto at=[&](c::Point p){const auto x=std::size_t(std::lround(p.x)),y=std::size_t(std::lround(p.y));const auto i=y*rowBytes+x*4;return std::array<int,3>{pixels.at(i),pixels.at(i+1),pixels.at(i+2)};};
+    const auto shellShows=[&](c::Point p){const auto v=at(p);return v[1]>=250&&v[0]<=5&&v[2]<=5;};
+    const auto mapShows=[&](c::Point p){return at(p)[1]<200;};
+    const auto down=[&](c::Point p,a::PointerButton b=a::PointerButton::left){return owner.pointer({a::PointerKind::down,b,p.x,p.y},now);};
+    const auto up=[&](c::Point p){return owner.pointer({a::PointerKind::up,a::PointerButton::left,p.x,p.y},now);};
+    check(owner.sourceCutouts().empty()&&owner.sceneStats().cutoutMasks==0,"Faded-out plates cut nothing");
+    place(0,80,400);place(1,230,400);alpha={1,1};frame();draw();
+    const auto storage=plateClient(0,.6,.8),activity=plateClient(1,.3,.6),corner=plateClient(0,.15,.15),interior=point({220,220});
+    check(owner.sourceCutouts().count==4&&owner.sceneStats().cutoutPolygons==4&&owner.sceneStats().cutoutMasks==1,"The presented plates cut the Map's mask once");
+    check(shellShows(storage)&&shellShows(activity),"The Storage and Activity Monitor plates are drawn above the Map");
+    check(mapShows(interior)&&mapShows(corner),"The Map still covers its circle and the plates' transparent corners");
+    check(!owner.covers(storage)&&!owner.covers(activity),"The Map leaves the plates to the navigation's hit test (the source hit filter accepts them)");
+    check(owner.covers(corner)&&owner.covers(interior),"The Map keeps the plates' transparent corners and the rest of its circle");
+    const auto pins=owner.state().pins().size();const auto viewport=owner.state().viewport();
+    check(!down(storage)&&!owner.pointerLocked()&&!owner.state().dragging(),"A press on the Storage plate starts no Map drag");check(!up(storage)&&owner.state().viewport()==viewport,"Its release is not the Map's and the camera stays");
+    check(!down(activity,a::PointerButton::right)&&owner.state().pins().size()==pins,"A right press on the Activity Monitor plate adds no pin");
+    check(!owner.pointer({a::PointerKind::move,a::PointerButton::none,storage.x,storage.y},now),"Hover over a plate stays with the navigation");
+    check(!owner.magnify(storage,.2,false,now)&&owner.state().viewport()==viewport,"A pinch on a plate leaves the Map");
+    // Stable frames repaint nothing and allocate nothing.
+    const auto masks=owner.sceneStats().cutoutMasks;const auto gpu=r.stats();allocations=0;counting=true;try{for(unsigned n=0;n<60;++n)frame(1./60.);}catch(...){counting=false;throw;}counting=false;
+    check(allocations==0&&owner.sceneStats().cutoutMasks==masks&&r.stats().textureRegionUploads==gpu.textureRegionUploads&&r.stats().textureUploads==gpu.textureUploads,"Unchanged plates repaint and allocate nothing on warm frames");
+    check(down(corner)&&owner.pointerLocked(),"A press in a plate's transparent corner still drags the Map");const auto across=plateClient(0,.6,.8);
+    check(owner.pointer({a::PointerKind::move,a::PointerButton::none,across.x,across.y},now),"An owned Map drag continues across a plate");check(up(across)&&!owner.pointerLocked(),"The Map drag ends normally");settle();
+    // The entrance or the tilt moves a plate: only its texels are repainted in place.
+    draw();const auto before=plateClient(0,.05,.95);check(shellShows(before)&&owner.sceneStats().cutoutMasks==masks,"The plate's top-left is drawn above the dragged Map");
+    const auto regions=r.stats().textureRegionUploads;place(0,80,380);frame();draw();const auto moved=plateClient(0,.6,.8);
+    check(owner.sceneStats().cutoutMasks==masks+1&&r.stats().textureRegionUploads==regions+1,"A moved plate repaints one mask region in place");
+    check(shellShows(moved)&&mapShows(before)&&!owner.covers(moved)&&owner.covers(before),"The cut and the hit precedence follow the moved plate");
+    // A tilted Map plane: the plates stay where the source draws them.
+    center=center*c::Matrix4::rotation(.04,-.07,0);frame();draw();
+    check(shellShows(moved)&&shellShows(activity)&&!owner.covers(moved)&&mapShows(point({220,220})),"Under tilt the cut follows the source plates in client space");
+    // A faded-out plate (inherited alpha .001) no longer cuts the Map.
+    alpha[0]=.0005;frame();draw();check(owner.sourceCutouts().count==3&&mapShows(moved)&&owner.covers(moved)&&shellShows(activity),"A hidden Storage plate leaves the Map whole there");
+    // Without a source frame (or off the source shell) nothing is cut.
+    alpha[0]=1;shell=false;frame();draw();check(owner.sourceCutouts().empty()&&owner.sceneStats().cutoutPolygons==0&&mapShows(activity)&&owner.covers(activity),"Without the source frame the Map covers its whole circle");
+    shell=true;settings.sourceShell=false;frame();check(owner.sourceCutouts().empty(),"Off the source shell no plate is cut");settings.sourceShell=true;frame();check(owner.sourceCutouts().count==4,"Back on the source shell the plates are cut again");
+    composition.detach(r);check(shellStandIn.releaseResources(r),"The shell stand-in releases its resources");owner.release(r);released=true;check(r.stats().textures==0&&r.stats().meshes==0,"The occluded Map releases its updatable mask with every resource");utility.shutdown();
+}
 void run(n::Renderer&r,HWND window){
     n::LayerRasterizer raster;a::UtilityExecutor utility([]{});double now{};unsigned saves{},changes{},styles{},recenters{},nextID{1};std::atomic<unsigned>paints{},clears{};m::MapSnapshot saved;
     t::MapPreviewOptions options;options.geography=geography();options.clock=[&]{return now;};options.changed=[&]{++changes;};options.pinStyleChanged=[&](auto){++styles;};options.recentered=[&]{++recenters;};options.paint=[&](const auto&q,const auto&cancel){++paints;return paint(q,cancel);};options.releaseWorkerCaches=[&]{++clears;};options.raster.pixelsPerPoint=1;options.appearance.ambient=false;options.player={image(2),image(2),image(2),image(880)};options.persistence={ [&](const auto&s){saved=s;++saves;},[&]{return std::string("00000000-0000-0000-0000-")+std::string(11,'0')+char('0'+nextID++);},[]{return 1.;}};
@@ -137,5 +210,5 @@ void run(n::Renderer&r,HWND window){
     rejects([&]{owner.deadline(std::numeric_limits<double>::quiet_NaN());},"Nonfinite owner time is rejected");composition.detach(r);owner.release(r);released=true;check(r.stats().textures==0&&r.stats().meshes==0,"Map owner releases all local resources after shared detach");check(clears>0,"Hidden Map releases working caches on the existing utility worker");utility.shutdown();
 }
 }
-int wmain(int argc,wchar_t**argv){const auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);try{check(SUCCEEDED(hr)&&argc==2,"Pass original HUD shader");reentry();Window window;n::Renderer renderer;renderer.initialize(window.hwnd,1280,800,{n::Driver::warpForTests,argv[1],n::RenderTarget::offscreenForTests});run(renderer,window.hwnd);prewarmFirstOpening(renderer);renderer.reset();CoUninitialize();std::cout<<"PASS "<<checks<<" Map owner checks\n";return 0;}catch(const std::exception&e){counting=false;if(SUCCEEDED(hr))CoUninitialize();std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
+int wmain(int argc,wchar_t**argv){const auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);try{check(SUCCEEDED(hr)&&argc==2,"Pass original HUD shader");reentry();Window window;n::Renderer renderer;renderer.initialize(window.hwnd,1280,800,{n::Driver::warpForTests,argv[1],n::RenderTarget::offscreenForTests});run(renderer,window.hwnd);prewarmFirstOpening(renderer);occlusion(renderer);renderer.reset();CoUninitialize();std::cout<<"PASS "<<checks<<" Map owner checks\n";return 0;}catch(const std::exception&e){counting=false;if(SUCCEEDED(hr))CoUninitialize();std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
 #endif

@@ -51,9 +51,12 @@ struct MapPreview::Impl : std::enable_shared_from_this<Impl> {
     struct AccessibilityKey {std::uint64_t revision{},camera{};core::Language language{};bool operator==(const AccessibilityKey&)const=default;};
     core::Language language{core::Language::english};modules::MapAccessibility published;std::optional<AccessibilityKey>publishedKey;
     modules::MapAccessibilityCadence cadence;bool accessibilityForced{};
+    // Desktop Map occlusion: the source plates above the Map, projected from
+    // the presented source frame (client points) and into this canvas.
+    std::function<std::optional<modules::MapSourceView>()>sourceFrame;modules::MapSourceCutoutPlan cutoutPlan;modules::MapCutouts canvasCutouts;
     struct Event {Impl&i;std::uint64_t revision;Event(Impl&v,double t):i(v),revision(0){need(std::isfinite(t),"Map owner needs finite time");need(i.eventRevision!=UINT64_MAX,"Map owner event revision exhausted");revision=++i.eventRevision;if(!i.eventDepth)i.time=std::max(i.time,t);++i.eventDepth;}~Event(){--i.eventDepth;}bool current()const{return i.alive&&i.eventRevision==revision;}};
     bool current(std::uint64_t revision)const{return alive&&eventRevision==revision;}
-    Impl(gpu::LayerRasterizer&r,app::UtilityExecutor&e,MapPreviewOptions&o):state(std::move(o.initial),std::move(o.persistence)),paint(r),utility(e),geography(std::move(o.geography)),appearance(appearanceFor(o.appearance,hasTerrain(geography))),options(o.raster),changed(std::move(o.changed)),recentered(std::move(o.recentered)),pinStyleChanged(std::move(o.pinStyleChanged)),geometry(r),surface(prepare(),core::Module::map){state.setReducedMotion(appearance.reducedMotion);composed.reserve(2);}
+    Impl(gpu::LayerRasterizer&r,app::UtilityExecutor&e,MapPreviewOptions&o):state(std::move(o.initial),std::move(o.persistence)),paint(r),utility(e),geography(std::move(o.geography)),appearance(appearanceFor(o.appearance,hasTerrain(geography))),options(o.raster),changed(std::move(o.changed)),recentered(std::move(o.recentered)),pinStyleChanged(std::move(o.pinStyleChanged)),geometry(r),surface(prepare(),core::Module::map),sourceFrame(std::move(o.sourceFrame)){state.setReducedMotion(appearance.reducedMotion);composed.reserve(2);}
     gpu::LayerScene&prepare(){geometry.load(blank(),options);return geometry;}
     void initialize(MapPreviewOptions&o){need(bool(o.clock),"Map owner needs the shared completion clock");time=o.clock();need(std::isfinite(time)&&time>=0,"Invalid initial Map clock");const auto weak=weak_from_this();
         raster=std::make_unique<gpu::NativeMapRaster>(utility,[weak,clock=std::move(o.clock)]{const auto now=clock();need(std::isfinite(now),"Invalid Map completion clock");if(auto self=weak.lock())return std::max(now,self->time);return now;},[weak]{if(auto self=weak.lock())self->notify();},std::move(o.paint),std::move(o.releaseWorkerCaches));
@@ -62,6 +65,23 @@ struct MapPreview::Impl : std::enable_shared_from_this<Impl> {
         scene=std::make_unique<gpu::NativeMapScene>(state,*raster,paint,options,std::move(o.player),appearance);ready=true;
     }
     void notify(){if(!alive||!ready)return;auto callback=changed;if(callback)callback();}
+    // SystemHUDView.applySourceMapOcclusion: the plates of the presented
+    // source frame (HUDSourceWatchView.updateDesktopBottomSilhouettes), each
+    // vertex inverted through this Map's current plane into its canvas, cut
+    // the Map's mask; a loop that does not invert is dropped. Allocation-free.
+    void occlude(const core::source::DesktopChromeSettings&settings){
+        std::optional<modules::MapSourceView>view;if(sourceFrame&&settings.sourceShell)view=sourceFrame();
+        if(view)(void)cutoutPlan.update(*view,{0,0,metrics.width,metrics.height});else (void)cutoutPlan.clear();
+        const auto&plates=cutoutPlan.cutouts();canvasCutouts.count=0;
+        for(std::size_t k=0;k<plates.count;++k){auto&polygon=canvasCutouts.polygons[canvasCutouts.count];polygon.count=0;bool inverted=true;
+            for(const auto p:plates.polygons[k].view()){const auto q=projection.unproject({p.x*metrics.scale,p.y*metrics.scale});if(!q||!std::isfinite(q->x)||!std::isfinite(q->y)){inverted=false;break;}polygon.points[polygon.count++]=*q;}
+            if(inverted)++canvasCutouts.count;}
+        (void)scene->setCutouts(canvasCutouts);
+    }
+    // A press inside a plate belongs to the navigation button above the Map
+    // (HUDSourceWatchView.mapFilteredButton; SystemHUDView.mouseDown skips the
+    // Map at a navigation target).
+    bool plate(Point p)const{return cutoutPlan.contains(p);}
     std::optional<Point>local(Point p)const{return input&&std::isfinite(p.x)&&std::isfinite(p.y)?projection.unproject({p.x*metrics.scale,p.y*metrics.scale}):std::nullopt;}
     void feedback(){if(!pose||!scene)return;scene->setFeedback(pointerPoint?local(*pointerPoint):std::nullopt,pressed,time);}
     void synchronize(const modules::MapChange&change,std::uint64_t revision){if(!current(revision))return;
@@ -96,17 +116,17 @@ void MapPreview::setOverlayVisible(bool value,double t){auto i=impl_;const Impl:
 void MapPreview::update(const Matrix&center,const core::source::DesktopChromeSettings&settings,const core::ModulePresentationSample&sample,float opacity,double t){auto i=impl_;const Impl::Event event(*i,t);need(i->metrics.pixelWidth&&i->metrics.pixelHeight,"Resize Map owner before presentation");
     const auto*shown=sample.current.module==core::Module::map?&sample.current:sample.incoming&&sample.incoming->module==core::Module::map?&*sample.incoming:nullptr;
     const bool prepared=shown&&sample.requested==core::Module::map&&i->overlayVisible;i->activate(prepared,prepared&&sample.acceptsModuleInput);if(!event.current())return;
-    if(!shown){i->pose.reset();i->registration.update({});return;}
+    if(!shown){i->pose.reset();i->registration.update({});(void)i->cutoutPlan.clear();return;}
     i->scene->syncContent(i->time);i->surface.update(center,settings,*shown,opacity);i->pose=i->surface.pose();const auto&p=*i->pose;
     const auto camera=gpu::layerViewportProjection(i->metrics.pixelWidth,i->metrics.pixelHeight)*Matrix::scale(i->metrics.scale,i->metrics.scale);i->projection=core::Projection::viewport(camera*p.contentWorld,i->metrics.pixelWidth,i->metrics.pixelHeight);
-    i->feedback();i->scene->updatePose({p.contentWorld,p.opacity,i->time,std::span(&p.hostClip,1),p.shutter?&*p.shutter:nullptr});i->registration.update(p.registration);
+    i->occlude(settings);i->feedback();i->scene->updatePose({p.contentWorld,p.opacity,i->time,std::span(&p.hostClip,1),p.shutter?&*p.shutter:nullptr});i->registration.update(p.registration);
 }
 void MapPreview::prewarm(const Matrix&center,const core::source::DesktopChromeSettings&settings,const core::ModulePresentationSample&sample,double t){auto i=impl_;const Impl::Event event(*i,t);
     if(i->prewarmed||i->prepared||i->input||i->pose||!i->metrics.pixelWidth||!i->metrics.pixelHeight)return;
     const auto*shown=sample.current.module==core::Module::map?&sample.current:sample.incoming&&sample.incoming->module==core::Module::map?&*sample.incoming:nullptr;if(!shown)return;i->prewarmed=true;
     i->scene->syncContent(i->time);i->surface.update(center,settings,*shown,0.f);i->pose=i->surface.pose();const auto&p=*i->pose;
     const auto camera=gpu::layerViewportProjection(i->metrics.pixelWidth,i->metrics.pixelHeight)*Matrix::scale(i->metrics.scale,i->metrics.scale);i->projection=core::Projection::viewport(camera*p.contentWorld,i->metrics.pixelWidth,i->metrics.pixelHeight);
-    i->scene->updatePose({p.contentWorld,p.opacity,i->time,std::span(&p.hostClip,1),p.shutter?&*p.shutter:nullptr});i->registration.update(p.registration);
+    i->occlude(settings);i->scene->updatePose({p.contentWorld,p.opacity,i->time,std::span(&p.hostClip,1),p.shutter?&*p.shutter:nullptr});i->registration.update(p.registration);
 }
 bool MapPreview::utilityCompleted(double t){auto i=impl_;const Impl::Event event(*i,t);return i->raster->submitPending(i->time);}
 bool MapPreview::deadline(double t){auto i=impl_;const Impl::Event event(*i,t);const auto before=i->state.gestureRevision();i->synchronize(i->state.advance(i->time),event.revision);if(!event.current())return true;const bool submitted=i->raster->advance(i->time);
@@ -116,21 +136,21 @@ bool MapPreview::deadline(double t){auto i=impl_;const Impl::Event event(*i,t);c
     return submitted||before!=i->state.gestureRevision()||accessibility;}
 std::optional<double>MapPreview::nextWakeTime()const noexcept{return earlier(earlier(impl_->state.nextWakeTime(),impl_->raster->nextWakeTime()),impl_->cadence.deadline());}
 bool MapPreview::requiresFrames(double t)const{return impl_->pose&&impl_->overlayVisible&&impl_->scene->requiresFrames(std::max(t,impl_->time));}
-bool MapPreview::covers(Point p)const{const auto q=impl_->local(p);return q&&modules::mapContains(*q);}
-bool MapPreview::pointer(const app::PointerEvent&e,double t){auto i=impl_;const Impl::Event event(*i,t);i->pointerPoint=Point{e.x,e.y};const auto q=i->local(*i->pointerPoint);
+bool MapPreview::covers(Point p)const{const auto q=impl_->local(p);return q&&modules::mapContains(*q)&&!impl_->plate(p);}
+bool MapPreview::pointer(const app::PointerEvent&e,double t){auto i=impl_;const Impl::Event event(*i,t);i->pointerPoint=Point{e.x,e.y};const auto q=i->local(*i->pointerPoint);const bool plate=i->plate(*i->pointerPoint);
     if(e.kind==app::PointerKind::captureLost){const bool owned=i->pressed||i->state.dragging();i->pressed=false;i->pointerPoint.reset();i->synchronize(i->state.up(true),event.revision);if(event.current())i->feedback();return owned;}
     if(e.kind==app::PointerKind::leave){i->pointerPoint.reset();i->feedback();return false;}
     if(e.kind==app::PointerKind::up&&e.button==app::PointerButton::left){const bool owned=i->pressed||i->state.dragging();i->pressed=false;i->synchronize(i->state.up(),event.revision);if(event.current())i->feedback();return owned;}
     if(!i->input)return false;
-    if(e.kind==app::PointerKind::move){modules::MapChange change;if(q&&i->state.dragging())change=i->state.drag(*q);i->synchronize(change,event.revision);if(event.current())i->feedback();return change.handled||(q&&modules::mapContains(*q));}
-    if((e.kind==app::PointerKind::down||e.kind==app::PointerKind::doubleClick)&&q&&modules::mapContains(*q)){
+    if(e.kind==app::PointerKind::move){modules::MapChange change;if(q&&i->state.dragging())change=i->state.drag(*q);i->synchronize(change,event.revision);if(event.current())i->feedback();return change.handled||(q&&modules::mapContains(*q)&&!plate);}
+    if((e.kind==app::PointerKind::down||e.kind==app::PointerKind::doubleClick)&&q&&modules::mapContains(*q)&&!plate){
         modules::MapChange change;if(e.button==app::PointerButton::left){i->pressed=true;i->feedback();change=i->state.down(*q);}else if(e.button==app::PointerButton::right)change=i->state.rightDown(*q);else return false;
         i->synchronize(change,event.revision);if(event.current())i->feedback();return change.handled;
     }return false;
 }
 bool MapPreview::wheel(const app::WheelEvent&e,double t){return scroll({e.x,e.y},e.horizontal?0:e.steps,false,false,t);}
 bool MapPreview::scroll(Point p,double delta,bool precise,bool ended,double t){auto i=impl_;const Impl::Event event(*i,t);const auto q=i->local(p);if(!q&&!ended)return false;const auto result=i->state.wheel(q.value_or(Point{-1e6,-1e6}),delta,precise,ended,i->time);i->synchronize(result,event.revision);return result.handled;}
-bool MapPreview::magnify(Point p,double amount,bool ended,double t){auto i=impl_;const Impl::Event event(*i,t);const auto q=i->local(p);if(!q&&!ended)return false;const auto result=i->state.magnify(q.value_or(Point{-1e6,-1e6}),amount,ended,i->time);i->synchronize(result,event.revision);return result.handled;}
+bool MapPreview::magnify(Point p,double amount,bool ended,double t){auto i=impl_;const Impl::Event event(*i,t);const auto q=i->plate(p)?std::optional<Point>{}:i->local(p);if(!q&&!ended)return false;const auto result=i->state.magnify(q.value_or(Point{-1e6,-1e6}),amount,ended,i->time);i->synchronize(result,event.revision);return result.handled;}
 bool MapPreview::key(const app::KeyEvent&e,double t){return key(e,e.alt||GetKeyState(VK_SHIFT)<0||GetKeyState(VK_CONTROL)<0||GetKeyState(VK_MENU)<0||GetKeyState(VK_LWIN)<0||GetKeyState(VK_RWIN)<0,t);}
 bool MapPreview::key(const app::KeyEvent&e,bool modified,double t){auto i=impl_;const Impl::Event event(*i,t);if(!i->input||e.kind!=app::KeyKind::down||modified)return false;
     std::optional<modules::MapKey>key;switch(e.value){case VK_LEFT:key=modules::MapKey::left;break;case VK_RIGHT:key=modules::MapKey::right;break;case VK_UP:key=modules::MapKey::up;break;case VK_DOWN:key=modules::MapKey::down;break;case VK_ADD:case VK_OEM_PLUS:key=modules::MapKey::zoomIn;break;case VK_SUBTRACT:case VK_OEM_MINUS:key=modules::MapKey::zoomOut;break;case VK_DELETE:case VK_BACK:key=modules::MapKey::erase;break;case VK_ESCAPE:key=modules::MapKey::escape;break;default:return false;}
@@ -155,9 +175,11 @@ bool MapPreview::pointerLocked()const noexcept{return impl_->state.pointerLocked
 const modules::MapState&MapPreview::state()const noexcept{return impl_->state;}
 MapPreview::Residency MapPreview::residency()const noexcept{const auto&i=*impl_;Residency r;r.cpuBytes=i.playerBytes;
     for(const auto&image:{i.raster->detail(),i.raster->backdrop()})if(image)r.cpuBytes+=image->straightRGBA.size();
+    r.cpuBytes+=i.scene->stats().cutoutMaskBytes; // staging of the plates' mask updates
     // Decoded geography: every retained vertex (country paths keep their whole path and its components).
     if(i.geography){if(i.geography->terrain)r.cpuBytes+=i.geography->terrain->vertexCount*sizeof(core::Point);if(i.geography->countries)r.cpuBytes+=i.geography->countries->vertexCount*2*sizeof(core::Point);}
     return r;}
+const modules::MapCutouts&MapPreview::sourceCutouts()const noexcept{return impl_->cutoutPlan.cutouts();}
 gpu::NativeMapRaster::Stats MapPreview::rasterStats()const noexcept{return impl_->raster->stats();}
 gpu::MapSceneStats MapPreview::sceneStats()const noexcept{return impl_->scene->stats();}
 void MapPreview::upload(gpu::Renderer&r){auto&i=*impl_;if(!i.pose)return;i.registration.uploadGeometry(r);i.scene->uploadResources(r);}
