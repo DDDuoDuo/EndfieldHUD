@@ -2634,7 +2634,9 @@ At 2560 × 1600 after the change: launch idle 189, first opening 343, closed
 - sRGB textures are stored as `R8G8B8A8_UNORM_SRGB` (4 B per texel) holding
   sRGB-encoded premultiplied linear texels; linear and encoded textures stay
   16-bit. Area GPU figures below that were measured before `5a2d3d3` count
-  8 B per texel.
+  8 B per texel. *Since `74879a9` (checkpoint 134) linear and encoded
+  textures are 4 B per texel too, and textures white wherever they cover
+  keep only their alpha (1 B); see checkpoint 134.*
 - After the `overlayConcealed` broadcast, and right after the launch
   prewarm, one publication is followed by `Renderer::releaseFrameTargets`
   (linear, offscreen, source-pass and group targets, about 115 MB at
@@ -2869,18 +2871,22 @@ Batch 6 adds:
   serialization instead would allow it (2 threads). An open HUD keeps freed
   driver pools (about 120 MiB after visiting every module) until it closes.
   27–33 OS thread-pool workers after the first opening cannot be attributed
-  by start address. About 75 MiB of heap stays committed but free after a
-  close (LFH fragmentation). The clock push keeps its two page rasters
+  by start address (*attributed in checkpoint 134, `3e06120`: WARP's
+  threaded rasterization, kept by decision*). About 75 MiB of heap stays
+  committed but free after a close (LFH fragmentation). The clock push keeps its two page rasters
   (about 1–2 MB) after the first style change. The summon hook adds one
   thread.
 - **Map:** 28 textures (22.9 MB, 8 B per texel) and 17.9 MB of CPU
   residency while closed on another module (the Mac keeps its images for the
   reopen animation); sRGB artwork could use 4 B per texel and the feather an
-  alpha-only format.
+  alpha-only format. *Since `74879a9` (checkpoint 134) the textures are 4 B
+  per texel or alpha-only (Map 22.9 → 10.7 MiB); about 18.2 MB of CPU images
+  remain.*
 - **Reader, Calendar:** after a close the Reader keeps 3.2 MB of CPU rasters;
   Calendar keeps 2.3 MB of rasters, 2.3 MB of textures and a group.
 - **Archive:** `ArchiveModule::prewarm` runs a full hidden update at launch
-  (3.4 MB of rasters even if Archive is never opened); the title's
+  (3.4 MB of rasters even if Archive is never opened; *resolved in
+  checkpoint 134, `3e06120`: built only when shown*); the title's
   single-line inset still waits for the projected editor to accept the
   rich single-line field the rasterizer now supports.
 - **Notes:** large-card body lines rasterize at the full viewport width and
@@ -2890,12 +2896,15 @@ Batch 6 adds:
   Foundation shuts down.
 - **Volume:** the production app rows show no app icons (the Mac shows
   them); the shared Shell icon worker belongs to the Shelf area and is not
-  yet published to Volume.
+  yet published to Volume. *Resolved in checkpoint 134 (`3e06120`): the
+  icons are read on the shared utility queue.*
 - **Now Playing:** control rules target Chromium players and the Mac button
   names; other players' readings and title formats are unconfirmed.
 - **Shared rendering:** every `LayerScene` keeps a CPU copy of its leaf
   bitmaps beside the GPU textures (for re-upload after a device loss or a
-  dropped module).
+  dropped module). *Resolved in checkpoint 134: the copies are given back
+  once uploaded (`74879a9`), and a dropped module's textures are parked in
+  staging copies (`f52b163`).*
 - **Personal Profile:** the bottom-left ID card's three runtime textures
   (about 1.4 MB) are held twice; its fixed gradient bitmaps (about 0.26 MB)
   are made at construction.
@@ -3504,3 +3513,221 @@ Checkpoint 132's list still applies, except seeking NetEase after turning on
 - Activity's network rates after connecting or disconnecting Wi-Fi,
   Ethernet or a VPN.
 - `package_perf_gate --desktop`: closed idle past ten minutes.
+
+## Checkpoint 134 (2026-10-16)
+
+Checkpoint 133 was pushed together with the Linux CI fixes at `0b106b4`.
+This entry covers the seven code commits after `e8cfd3a`: `6652287`,
+`d628ef1` and `0b106b4` (pushed) and `74879a9`, `3e06120`, `8815446` and
+`f52b163` (not pushed), plus the Archive switch-back fix that is still in
+progress. The entry itself changes documentation only.
+
+### Changes after checkpoint 133
+
+**GitHub Actions green on Windows and Linux (`6652287`, `0b106b4`).** The
+portable Linux job (GCC 13, libstdc++) failed where MSVC passed. `6652287`
+renames the relink test's `sync()` helper, which GCC found ambiguous with
+POSIX `sync()`, and links `hud_motion` into `module_preferences_tests` on
+non-Windows builds. `0b106b4` fixes the three portable-only suite failures:
+`mac_import_contracts` and `mac_import_resident_contracts` (the import
+service reset its error text with `error = std::string()`; libstdc++ copies
+a short source into the target's existing buffer and keeps it, so a
+released import still held a heap buffer; the service and the card flow now
+swap with an empty value) and `orbipom_presentation_contracts` (POSIX
+`absolute()` keeps the `..` of `${CMAKE_CURRENT_SOURCE_DIR}/../Resources`,
+which `validateRoot` rightly refuses; the test passes the lexically
+normalised root, and the production check is unchanged). Laptop slot: 16 of
+16 `mac_import`/OrbiPom suites; the resident suite still reports +0 B after
+every card hid on Windows. GitHub Actions is fully green on `0b106b4`: the
+Windows MSVC job and the Linux portable GCC 13 job.
+
+**Section 9 gate on both sides of the ten-minute grace (`d628ef1`,
+`8815446`).** Since `3eecf89` the closed HUD keeps its graphics device for
+ten minutes, so the gate's single closed window measured the intended grace
+and would fail at 20 wake-ups/s. The gate now reports two windows:
+*closed within the grace* (after launch, production grace: CPU as before,
+up to 200 wake-ups/s for the live device, GPU busy ≤ 0.1 %) and *closed
+after the release* (a separate launch that opens once, closes and waits the
+grace plus the settle time: the strict 20 wake-ups/s, GPU busy ≤ 0.1 %).
+Each window records how long the HUD had been closed and which grace
+applied; the footprint adds the point after the release and a graphics
+driver thread row (report schema 3; schema 2 reports still render).
+`8815446` lets `EndfieldHUD.exe` take the shorter grace for that launch:
+`ENDFIELDHUD_CLOSED_GRAPHICS_GRACE=<seconds>` (1–3600, the gate's
+`--release-grace`, default 10 s) is honoured only together with
+`--data-root`, an invalid value stops the launch with the invalid-arguments
+message, and every other run keeps 600 s. The gate recognises a build that
+reads the variable; with an older one (release candidate 133 and earlier)
+it waits the production ten minutes once and says so
+([`packaging/README.md`](packaging/README.md), Performance gates). Laptop
+slot for `d628ef1`: 12 of 12 packaging suites.
+
+**Layer pixels given back, textures at four bytes or one (`74879a9`).**
+
+- `LayerScene` rasterizes its leaves as releasable: once a texture holds the
+  pixels, `uploadResources` gives the CPU copy back
+  (`LayerRasterizer::releasePixels`, only when nobody but the cache entry
+  and the scene holds the image). A texture the renderer no longer holds is
+  uploaded from pixels painted again byte for byte
+  (`LayerRasterizer::repaint`, with the typography they were painted with).
+  `Renderer::textureRevision` answers residency without a device, so the
+  ten-minute release restores from the renderer's own copies and repaints
+  nothing. Editor documents, borrowed editor layouts, memory images and
+  surfaces whose description is not smaller than their pixels keep their
+  pixels.
+- Linear textures hold the premultiplied linear value as its nearest
+  sRGB-encoded byte (`R8G8B8A8_UNORM_SRGB`), encoded textures Core
+  Animation's premultiplied bytes (`R8G8B8A8_UNORM`). A texture white
+  wherever it covers (the Map feather and transition cut, reveal masks,
+  white text) keeps only its alpha (`A8_UNORM`, two new pixel-shader
+  variants); an updatable one painted with a coloured region widens once to
+  four bytes. Encoded native group targets are 8-bit, as Core Animation's
+  group surfaces; linear groups and the linear frame target keep half
+  floats.
+- In the commit's own trace the shared rasterizer's pixels after visiting
+  every module fell from 45.1 to 3.3 MiB, and the renderer's textures from
+  45.1 to 29.2 MiB (Map 22.9 → 10.7 MiB).
+
+Tests: `layer_raster_contracts`, `layer_scene_contracts`,
+`layer_group_contracts`, `native_renderer_contracts` (byte-exact 8-bit and
+A8 conversions, encoded group bytes, the residency query, alpha-only colour,
+mask, group and widening, identical pixels after the device suspension in
+every format, releasable rasters repainted byte for byte, scenes and groups
+shown again after the composition dropped them, after the suspension and
+after a device loss).
+
+**Parked textures: switching back never repaints (`f52b163`).** With
+`74879a9` alone a switch back to a module that the composition dropped while
+the HUD stayed open painted its pixels again (WARP: Clipboard about 35 ms,
+Event Log and Media Assembly about 30 ms). `Renderer::parkTexture` now
+removes an unreferenced texture but keeps its texels in a system-memory
+staging copy (`CopyResource`, no CPU wait), and `restoreTexture` installs it
+again under the same ID, revision, format and bytes by a GPU copy.
+`LayerScene` parks each released surface while the scene stays loaded and
+restores it on the next upload; only a surface whose copy is gone (after
+the ten-minute release or a device loss) is painted again, identically. The
+renderer drops every parked copy at the ten-minute release
+(`suspendDevice`), on `clearResources`, on a reset and with a new device.
+`RendererStats` reports the parked textures, bytes, parks, restores, drops
+and their times.
+
+| Switch back inside the open HUD (WARP, slowest frame) | Painted again | Parked (of which restore) |
+| --- | --- | --- |
+| Clipboard | about 35 ms | 8–10 ms (0.6–0.9 ms) |
+| Event Log | about 30 ms | 6.6–6.9 ms (0.8 ms) |
+| Media Assembly | about 30 ms | 3.2–3.7 ms (0.5 ms) |
+| Archive | — | 40–48 ms (0.04 ms): its own document-view rebuild, 86 rasters |
+
+Parking takes 0.4–0.6 ms. After the ten-minute release a switch back paints
+again (30–35 ms). Tests: `layer_switch_contracts` (new; the real Clipboard,
+Event Log, Media Assembly and Archive owners switched away and back inside
+the open HUD on WARP paint nothing again and show identical pixels),
+`native_renderer_contracts` (every storage format parked and restored with
+identical pixels, published textures never parked, restores in the parking
+frame, copies dropped by the ten-minute release, a clear and a reset),
+`layer_scene_contracts`, `layer_group_contracts`.
+
+Hidden memory trace of the renderer work (`watch_session_preview
+--memory-trace`, production owner with synthetic providers, RTX 5060
+offscreen, 1280 × 800):
+
+| Stage (private MiB / GPU local MiB) | Before | After (`74879a9`, `f52b163`) |
+| --- | --- | --- |
+| Launch idle | 194.6 / 25.1 | 187.8 / 23.6 |
+| First opening | 276.6 / 78.9 | 255.8 / 61.6 |
+| Open, after visiting all modules | 463.5 / 183.3 | 417.7 / 150.5 |
+| Closed | 335.3 / 61.2 | 307.3 / 47.0 |
+| After 10 more cycles | 283.1 / 53.4 | 262.6 / 39.8 |
+
+**Archive switch back (in progress).** Archive's own switch back stays at
+40–48 ms because it rebuilds its document view on reactivation (86
+rasters); the renderer's restore takes 0.04 ms of it.
+<!-- pending: archive switch-back commit -->
+<!-- pending: archive switch-back numbers -->
+
+**Volume app icons on the shared utility queue (`3e06120`).** The built-in
+Volume owner had no icon source (Mac VolumeCanvas.renderAppIcon), because
+`NativeShelfIconProvider` allows one Shell icon worker per process and the
+Shelf owns it. `VolumeQueuedIconProvider` (`native/volume_icon_provider.*`)
+sends one bounded job at a time (at most the eight visible requests) to the
+host's existing utility queue, publishes the 64 px pixels at the plan's
+exact key and revision, never extracts an answered request again, retries a
+full queue when capacity returns and ignores late completions of a hidden
+plan or a destroyed provider. The extractor opens the executable by its
+file identity and reads its own icon resource (`SHDefExtractIcon`, no Shell
+icon handler); an executable without one keeps the source's empty icon, as
+the Mac shows only an application bundle's icon. No thread of its own; the
+Shelf's Shell worker is untouched. Tests: `application_volume_icons_contracts`
+(new, 29 checks with the real `explorer.exe` icon) and hidden owner coverage
+(icons through the shared queue, the icon-less row stays empty, leaving and
+returning to App volume).
+
+**Archive built only when shown (`3e06120`).** `ArchivePreview::update`
+built the retained view whenever content changed, shown or not, so the
+launch prewarm and the first opening built about 3.4 MB of Archive rasters
+even when Archive was never opened. The adapter now forwards frames only
+while Archive is shown (plus the frame that takes its pose down), and the
+launch prewarm builds it only when Archive is the first opening's module.
+Nothing Archive-owned exists at launch. Hidden coverage: no Archive rasters
+after the launch prewarm or a first opening on another module; Clipboard,
+Event Log, Activity Monitor, Storage and File Shelf release their artwork
+when the HUD closes on another module through the production adapters. Host
+check minimums 171 → 182 (owner coverage) and 167 → 178 (session end).
+
+**OS thread-pool workers attributed (`3e06120`).** The pool workers all
+start at `ntdll!TppWorkerThread`, so the census could not tell their users
+apart. It now reads each worker's committed stack without suspending it and
+counts the modules it holds return addresses into; the memory trace records
+the workers at every stage and per module visit. Hidden trace on the RTX
+laptop: 30 pool workers after the first opening, 27 of them in
+`D3D10Warp.dll`, that is Direct2D software render targets
+(`CreateWicBitmapRenderTarget`) rasterizing on WARP with its parallel
+workers. Decision: threaded rasterization stays. About 23 workers come from
+it and retire after about 2 minutes idle, and single-threaded rasterization
+was about 17 % slower.
+
+### Test runs
+
+<!-- pending: checkpoint 134 validation -->
+
+New registered tests in this checkpoint: `application_volume_icons_contracts`
+and `layer_switch_contracts`. Per-commit laptop slots are quoted above
+(`6652287`, `74879a9`, `3e06120`, `8815446` and `f52b163` record none in
+their messages).
+
+### Corrections to the entries above
+
+- Checkpoint 129 says linear and encoded textures stay 16-bit. Since
+  `74879a9` they are 4 bytes per texel, and textures white wherever they
+  cover keep only their alpha (1 byte); a note in place points here.
+- Checkpoint 129's *Still open in code* lists the unattributed thread-pool
+  workers, the Map's 8-byte textures, Archive's launch prewarm, Volume
+  without app icons and the CPU copies kept by every `LayerScene`. All five
+  are resolved or decided in this checkpoint; notes in place point here.
+- `74879a9`'s message quotes its own three-run means, taken before the
+  parking of `f52b163` (after visiting every module 459.3 / 183.5 →
+  381.6 / 149.5 MiB). The table above is the checkpoint's record.
+
+### Open items
+
+- Archive: switching back inside the open HUD costs 40–48 ms (its
+  document-view rebuild); the fix is in progress.
+  <!-- pending: archive switch-back numbers -->
+- Map: about 18.2 MB of CPU images stay while the HUD is closed on another
+  module (its textures are 10.7 MiB since `74879a9`).
+- Projection: redrawing a very long stroke at pen-up still takes 13–15 ms.
+- Packaging: builds are unsigned, so SmartScreen warns when the setup runs;
+  release notes for a first `windows-v` release are not written.
+
+### Live acceptance still needed
+
+Checkpoint 133's list still applies. New items:
+
+- `package_perf_gate --desktop` against the packaged app, now with both
+  closed windows (within the ten-minute grace and after the release),
+  open idle and the footprint.
+- A live install, upgrade and uninstall of the setup on the desktop,
+  including the SmartScreen prompt.
+- Volume app icons in the packaged app on the desktop.
+- Switching between modules inside the open HUD, and back (Clipboard,
+  Event Log, Media Assembly, Archive).

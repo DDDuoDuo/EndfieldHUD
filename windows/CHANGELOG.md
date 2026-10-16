@@ -9,6 +9,37 @@ data folder; none is a published release.
 
 ## Unreleased
 
+## RC 134 — checkpoint 134
+
+- **Less memory**: once the graphics card holds a module's pictures, the HUD
+  gives back its own copy, and it stores pictures at 4 bytes per pixel, or 1
+  for plain masks such as the Map's soft edge. After visiting every module
+  the HUD uses about 418 instead of 464 MiB of memory and about 151 instead
+  of 183 MiB of graphics memory; closed, about 307 instead of 335 MiB and
+  47 instead of 61 MiB (hidden test).
+- **Switching back to a module stays quick**: a module you switch away from
+  keeps a ready copy of its finished pictures, so switching back shows them
+  without drawing them again: about 8–10 ms for Clipboard, 7 ms for
+  Event Log and 3–4 ms for Media Assembly (hidden test). These copies are
+  freed with the rest of the graphics after the HUD has been closed for ten
+  minutes.
+- **Archive: switching back**: switching back to Archive inside the open
+  HUD took about 40–48 ms, because Archive built its document view again
+  (hidden test).
+  <!-- pending: archive switch-back numbers -->
+- **Archive costs nothing until you open it**: Archive is built the first
+  time it shows. Launching and opening the HUD on another module no longer
+  build about 3.4 MB of Archive pictures (hidden test).
+- **Volume: app icons**: the app rows in Volume show each app's own icon, as
+  on the Mac. Icons are read on the HUD's shared background queue, without a
+  thread of their own. A program file without an icon shows none, as on the
+  Mac.
+- **Background threads after an opening**: about 23 Windows helper threads
+  appear after an opening. They belong to Windows' software drawing, which
+  draws the HUD's text and shapes on several cores at once, and end after
+  about 2 minutes without work. They stay, because drawing on one core is
+  about 17 % slower.
+
 ## RC 133 — checkpoint 133
 
 - **Map: the Storage and Activity Monitor buttons stay on top during
