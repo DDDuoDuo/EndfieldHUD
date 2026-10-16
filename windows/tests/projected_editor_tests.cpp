@@ -13,6 +13,7 @@
 #include <limits>
 #include <new>
 #include <stdexcept>
+#include <vector>
 using Microsoft::WRL::ComPtr;
 using namespace endfield::native;
 using namespace endfield::core;
@@ -419,6 +420,61 @@ void hostSelection(HWND hwnd){
     check(editor.syncContent()&&editor.layout().painted()==painted&&raster.stats().textLayoutsCreated==before.textLayoutsCreated,"Selection sync reuses the actual painted glyph layout");
     ok(store->UnadviseSink(sink.Get()),"Detach host selection fixture sink");ok(editor.stop(),"Stop host selection fixture");
 }
+// Source NSTextView pointer insertion in a multi-line field: a press right of
+// a line ends that line (before its hard break, or before a soft wrap's space
+// with the caret drawn on that line), left of a line starts it, below the
+// last line is the end of the text; shift-click and a drag past a line end
+// extend to that end. Right-to-left lines keep DirectWrite's own visual hit;
+// marked text declines the press.
+void pointerInsertion(HWND hwnd){
+    LayerRasterizer raster;LayerScene scene(raster);
+    const std::u16string value=u"ab\n\nwrapping words keep wrapping across this narrow field\nשלום עולם";Buffer doc(value,1024);
+    ProjectedEditorStyle style;style.width=150;style.height=220;style.fontSize=14;LayerRasterOptions options;options.pixelsPerPoint=1;
+    NativeProjectedEditor editor(hwnd,doc,scene,style,options,{1024},WM_APP+133,103);
+    ComPtr<Sink>sink;sink.Attach(new Sink);auto*store=editor.textStore();ok(store->AdviseSink(__uuidof(ITextStoreACPSink),sink.Get(),TS_AS_TEXT_CHANGE|TS_AS_SEL_CHANGE|TS_AS_LAYOUT_CHANGE),"Observe pointer insertion through the fake text store");
+    ProjectedEditorPose pose;pose.localToScreen=Matrix4::translation(30,20);pose.localToScreen.values[3]=.00004;pose.screenToClip=layerViewportProjection(512,256);pose.pixelWidth=512;pose.pixelHeight=256;pose.ownerFocused=true;editor.setPose(pose);
+    const auto size=static_cast<std::uint32_t>(value.size()),paragraph=4u,paragraphEnd=static_cast<std::uint32_t>(value.find(u'\n',paragraph)),rtl=paragraphEnd+1;
+    const auto caret=[&](std::uint32_t at){const auto b=editor.layout().bounds({at,at});check(b&&b->bounds.height>0,"Every insertion point has a painted caret");return b->bounds;};
+    const auto lineY=[&](std::uint32_t at){const auto c=caret(at);return c.y+c.height*.5;};
+    const auto sameLine=[&](std::uint32_t a,std::uint32_t b){return std::abs(lineY(a)-lineY(b))<caret(a).height*.5;};
+    const auto client=[&](double x,double y){const auto p=editor.placement().projection.project({x,y});check(p.has_value(),"Field point projects through the shared plane");return *p;};
+    const auto press=[&](double x,double y,bool extend=false){const auto r=editor.pointerDown(client(x,y),extend);editor.pointerUp();editor.syncContent();editor.setPose(pose);return r.handled;};
+    const auto selected=[&](std::uint32_t a,std::uint32_t b){return doc.selection().range==Range{a,b};};
+    // Visual line starts inside the paragraph, from the painted carets.
+    const auto wraps=[&]{std::vector<std::uint32_t>out;for(auto at=paragraph+1;at<paragraphEnd;++at)if(caret(at).y>caret(at-1).y+1)out.push_back(at);return out;};
+    const auto wrap=wraps().empty()?0u:wraps().front();
+    check(wrap>paragraph+2&&value[wrap-1]==u' '&&editor.maximumScrollOffset()==0,"Fixture paragraph soft-wraps after a space and the field shows every line");
+    const auto right=style.width-2,bottom=caret(size).y+caret(size).height;check(bottom+20<style.height,"Fixture field has room below its last line");
+    check(press(right,lineY(0))&&selected(2,2),"A press right of a line puts the caret at its end, before the hard break");
+    check(press(right,lineY(3))&&selected(3,3),"A press right of an empty line puts the caret on that line");
+    check(press(right,lineY(paragraph))&&selected(wrap-1,wrap-1)&&sameLine(wrap-1,paragraph),"A press right of a soft-wrapped line ends it before the wrap, the caret drawn on that line");
+    check(press(.25,lineY(wrap))&&selected(wrap,wrap),"A press at the left of a wrapped line starts that line");
+    check(press(right*.5,bottom+15)&&selected(size,size),"A press below the last line puts the caret at the end of the text");
+    check(press(.25,lineY(0))&&selected(0,0)&&press(right,lineY(0),true)&&selected(0,2)&&doc.selection().activeEnd==ActiveEnd::end,"Shift-click past a line end extends the selection to that line's end");
+    check(press(right,lineY(paragraph),true)&&selected(0,wrap-1),"Shift-click past a wrapped line's end extends to the end before the wrap");
+    // Drag past the ends: through the same insertion as a press, outside the field too.
+    check(editor.pointerDown(client(.25,lineY(0))).handled&&selected(0,0),"Start a drag at the text start");
+    const auto drag=[&](double x,double y){const auto r=editor.pointerDrag(client(x,y));editor.syncContent();editor.setPose(pose);return r.handled;};
+    check(drag(right,lineY(0))&&selected(0,2),"Dragging past a line end selects to that end, not into the next line");
+    check(drag(style.width+40,lineY(paragraph))&&selected(0,wrap-1),"Dragging past a wrapped line's end, outside the field, selects to the end before the wrap");
+    check(drag(-30,lineY(wrap))&&selected(0,wrap),"Dragging left of a line selects to its start");
+    check(drag(right*.5,bottom+15)&&selected(0,size)&&drag(right*.5,style.height+300)&&selected(0,size),"Dragging below the last line, in or below the field, selects to the end of the text");
+    editor.pointerUp();
+    // A right-to-left line keeps DirectWrite's own visual-order answer.
+    for(const double x:{right,.25}){const auto expected=editor.layout().hit({x,lineY(rtl)},true,true);check(expected&&*expected>=rtl&&press(x,lineY(rtl))&&selected(*expected,*expected),"A press beside a right-to-left line keeps its own visual hit");}
+    // Centred lines have room on both sides of each line.
+    auto centred=style;centred.alignment=ProjectedEditorAlignment::center;editor.setStyle(centred);editor.syncContent();editor.setPose(pose);
+    check(caret(0).x>4&&press(2,lineY(0))&&selected(0,0)&&press(right,lineY(0))&&selected(2,2),"A press left of a centred line starts it, right of it ends it");
+    const auto last=wraps().empty()?0u:wraps().back();check(last>=wrap&&caret(last).x>4&&press(2,lineY(last))&&selected(last,last),"A press left of a centred wrapped line starts that line");
+    // Marked text: the press is declined and the composition stays.
+    ComPtr<ITfContextOwnerCompositionSink>owner;ok(store->QueryInterface(IID_PPV_ARGS(&owner)),"Pointer fixture borrows the composition sink");
+    ComPtr<FakeRange>range;range.Attach(new FakeRange(0,1));ComPtr<FakeView>view;view.Attach(new FakeView(range.Get()));
+    locked(store,sink.Get(),[&]{BOOL accepted{};ok(owner->OnStartComposition(view.Get(),&accepted),"Start synthetic marked text");check(accepted!=FALSE,"Synthetic composition accepted");});
+    const auto marked=doc.selection();check(!editor.pointerDown(client(right,lineY(0))).handled&&doc.selection()==marked&&doc.composition().has_value(),"Marked text declines a press right of a line and keeps its composition");
+    locked(store,sink.Get(),[&]{ok(owner->OnEndComposition(view.Get()),"End synthetic marked text");});
+    check(doc.text()==value,"Pointer insertion never edits the text");
+    ok(store->UnadviseSink(sink.Get()),"Detach pointer fixture sink");ok(editor.stop(),"Stop pointer fixture");check(!IsWindowVisible(hwnd),"Pointer fixture stays hidden");
+}
 void explicitCompositionCommit(HWND hwnd){
     namespace notes=endfield::core::notes;
     LayerRasterizer raster;LayerScene scene(raster);notes::TextStyle bold;bold.bold=true;
@@ -461,5 +517,5 @@ void explicitCompositionCommit(HWND hwnd){
     check(!IsWindowVisible(hwnd),"Explicit commit fixtures never activate real IME or display a window");
 }
 }
-int wmain(int argc,wchar_t**argv){try{check(argc==2,"Pass native shader path");const auto initialized=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);ok(initialized,"Fixture COM apartment initializes");{Window window;Renderer renderer;renderer.initialize(window.hwnd,512,256,{Driver::warpForTests,argv[1],RenderTarget::offscreenForTests});run(renderer,window.hwnd);scrolling(renderer,window.hwnd);sourceStyles(window.hwnd);singleLineField(renderer,window.hwnd);hostReplacement(window.hwnd);hostSelection(window.hwnd);explicitCompositionCommit(window.hwnd);renderer.reset();}CoUninitialize();std::cout<<checks<<" projected editor integration checks passed\n";return 0;}catch(const std::exception&e){counting=false;std::cerr<<"Projected editor test failed after "<<checks<<" checks: "<<e.what()<<'\n';return 1;}}
+int wmain(int argc,wchar_t**argv){try{check(argc==2,"Pass native shader path");const auto initialized=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);ok(initialized,"Fixture COM apartment initializes");{Window window;Renderer renderer;renderer.initialize(window.hwnd,512,256,{Driver::warpForTests,argv[1],RenderTarget::offscreenForTests});run(renderer,window.hwnd);scrolling(renderer,window.hwnd);sourceStyles(window.hwnd);singleLineField(renderer,window.hwnd);hostReplacement(window.hwnd);hostSelection(window.hwnd);pointerInsertion(window.hwnd);explicitCompositionCommit(window.hwnd);renderer.reset();}CoUninitialize();std::cout<<checks<<" projected editor integration checks passed\n";return 0;}catch(const std::exception&e){counting=false;std::cerr<<"Projected editor test failed after "<<checks<<" checks: "<<e.what()<<'\n';return 1;}}
 #endif

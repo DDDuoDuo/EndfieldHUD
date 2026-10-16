@@ -111,7 +111,9 @@ public:
     // success notifies selection only. Caller synchronizes painted adornments.
     ProjectedEditorResult setSelectionFromHost(core::text::Selection);
     // Client PHYSICAL pixels. Host owns actual focus/capture. Call syncContent
-    // before hit/cluster navigation after a Document text revision.
+    // before hit/cluster navigation after a Document text revision. A press
+    // anywhere in the viewport, and a drag anywhere, take the source NSTextView
+    // insertion point (core::text::insertionHit): right of a line its end.
     ProjectedEditorResult pointerDown(core::Point,bool extend=false);
     ProjectedEditorResult pointerDrag(core::Point);
     void pointerUp()noexcept;

@@ -104,8 +104,12 @@ void run(const wchar_t*shader,const std::filesystem::path&fixturePath,const std:
   check(!preview.standby()&&!state.active()&&!state.selected()&&!preview.activeField(),"The HUD closing during the stand-by ends it like a hidden Archive");
   preview.setOverlayVisible(true,time);(void)frames(core::Module::archive);
   check(state.active()&&state.selected()&&state.selected()->id==documentID&&state.selected()->body==body&&preview.entries().size()==scenes.size(),"Opened again, Archive loads and shows the same document");
-  // Its new editors start at the document start: edit the body again from its end.
-  paint();click(42,125);check(preview.activeField()==std::optional<std::string>("body")&&preview.key({app::KeyKind::down,VK_END},time,tools::ArchiveKeyModifiers{true,false,false}),"The reopened body is edited again from its end");paint();}
+  // Its new editors start at the document start. From the text start, a press
+  // right of the body's line, or below its last line, puts the caret at the
+  // end of that line and of the text (source NSTextView); typing continues there.
+  const auto probe=[&](double x,double y,const char*why){paint();click(25,125);click(x,y);type(u"Q");check(preview.activeField()==std::optional<std::string>("body")&&state.selected()->body==body+"Q",why);
+   check(preview.key({app::KeyKind::down,VK_BACK},time,none)&&state.selected()->body==body,"Backspace removes the probe character");paint();};
+  probe(350,125,"A press right of the reopened body's line puts the caret at its end");probe(200,300,"A press below the body's last line puts the caret at the end of the text");}
  // Media selection is queued outside the synchronous repository callback.
  click(340,17);click(169,52);const auto import=preview.takeMediaAction();check(import&&import->kind==tools::ArchiveMediaAction::Kind::chooseLocal&&import->documentID==documentID&&import->remaining==16,"Source attachment chooser queues generation-tagged local selection");const auto image=J::parse(data::makeWindowsMediaReference("C:\\Synthetic\\never-open.png","never-open.png",32,24,"image",{},1));check(preview.receiveMedia(documentID,import->generation,{image},{},time),"Reference-only media completion appends current selected document");paint();check(state.selected()->media.size()==1&&state.bodyRect().height==147,"Attachment changes only source body viewport");click(350,125);type(u"Z");check(state.selected()->body=="正文Z","Resized viewport preserves prior body text and accepts subsequent editing");click(357,322);check(state.selected()->media.empty()&&state.bodyRect().height==264,"Source remove-media action restores text viewport without dropping its content");
  check(!preview.receiveMedia(documentID,import->generation+1,{image},{},time)&&state.selected()->media.empty(),"Late/stale media generation cannot mutate a different request");

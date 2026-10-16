@@ -86,4 +86,15 @@ bool validPlacement(const Placement&)noexcept;
 std::optional<Rect> projectedViewport(const Placement&);
 std::optional<ProjectedBounds> projectedRange(const Document&,const Layout&,Range,const Placement&);
 std::optional<std::uint32_t> projectedHit(const Document&,const Layout&,Point client,const Placement&,bool nearest,bool roundNearest);
+// Source NSTextView mouse insertion (characterIndexForInsertionAtPoint) at a
+// layout point; every point has one. Right of a line it is that line's end:
+// before its hard break, or before a soft wrap's trailing space (its last
+// cluster) so the caret stays drawn on that line, as End places it (the
+// editors keep no upstream caret affinity). Left of a line it is the line's
+// start, below the last line the end of the text. Elsewhere, and on
+// right-to-left runs, it is the layout's own rounded nearest hit.
+std::optional<std::uint32_t> insertionHit(const Layout&,std::uint32_t textUnits,Point);
+// A pointer press in client pixels: anywhere inside the rounded viewport
+// (Placement owns that test) places the insertion point; nullopt outside it.
+std::optional<std::uint32_t> projectedInsertion(const Document&,const Layout&,Point client,const Placement&);
 } // namespace endfield::core::text

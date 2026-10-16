@@ -613,7 +613,7 @@ bool NativeNotesWorkspace::settleDeletion(NativeNotesCardToken token){auto&i=*im
 std::optional<NativeNotesWorkspaceHit>NativeNotesWorkspace::hitTest(core::Point client)const{auto&i=*impl_;i.check();need(i.synchronized==i.state.revision(),"Synchronize Notes before pointer hit testing");if(!i.pose||i.pose->opacity==0)return{};
     for(auto it=i.active.rbegin();it!=i.active.rend();++it){auto*s=*it;if(!s->visible||s->outgoing||s->deleted||s->motion.opacity==0)continue;const auto p=s->hitProjection.unproject(client);if(!p||!inside(s->rect,*p))continue;const auto id=std::string_view(s->presentation.noteID());const core::Point local{p->x-s->rect.x,p->y-s->rect.y};
         if(inside({s->rect.width-15,s->rect.height-15,15,15},local))return NativeNotesWorkspaceHit{id,"resize",NativeNotesWorkspaceHit::Kind::resize,*p};
-        if(i.field&&i.field->id==id&&text::projectedHit(i.field->document,i.field->native->geometry(),client,i.field->native->placement(),false,true))return NativeNotesWorkspaceHit{id,"edit",NativeNotesWorkspaceHit::Kind::editor,*p};
+        if(i.field&&i.field->id==id&&text::projectedInsertion(i.field->document,i.field->native->geometry(),client,i.field->native->placement()))return NativeNotesWorkspaceHit{id,"edit",NativeNotesWorkspaceHit::Kind::editor,*p};
         const auto actions=s->presentation.actions();for(auto a=actions.rbegin();a!=actions.rend();++a)if(!a->accessibilityOnly&&inside(a->localRect,local))return NativeNotesWorkspaceHit{id,a->verb,NativeNotesWorkspaceHit::Kind::action,*p};
         return NativeNotesWorkspaceHit{id,"select",NativeNotesWorkspaceHit::Kind::body,*p};}return{};
 }

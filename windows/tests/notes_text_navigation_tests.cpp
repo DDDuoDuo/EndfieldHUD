@@ -102,12 +102,48 @@ void visualLines(HWND hwnd,bool chunked){
     check(w.editorNavigationKey(VK_HOME,false,false).changed&&same(sel().range,{length+1,length+1}),"Home on the last line reaches its paragraph start");
     check(w.finishEditing().finished&&state.note(id)->text==note.text,"Navigation never edits the note");
 }
+// Source NSTextView pointer insertion in a Notes text card: every press inside
+// its field reaches the editor; right of a visual line it lands where End does
+// (before the hard break, before a soft wrap's space), left of a line where
+// Home does, below the last line at the end of the text, and shift-click and
+// a drag past a line end extend to that end. Single-layout and chunked editor.
+void pointerLines(HWND hwnd,bool chunked){
+    gpu::LayerRasterizer raster;const std::string id=chunked?"0000000E-0000-4000-8000-000000000005":"0000000E-0000-4000-8000-000000000004";
+    const std::string paragraph="alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau upsilon phi chi psi omega";
+    data::Note note{.id=id,.kind=data::NoteKind::text,.text="ab\n\n"+paragraph+"\nlast",.x=40,.y=40,.width=200,.height=300,.createdAt=1};
+    mod::NotesState state({note},{[](const data::Note&){},[](std::string_view){throw std::runtime_error("Fixture never deletes");}});state.setWorkspaceBounds({0,0,1200,800});
+    gpu::NativeNotesWorkspaceStyle style;style.palette=mod::NotesPalette::source(true,{.98,.83,.12,1});style.editor={{.12,.12,.12,1},style.palette.accent};
+    gpu::NativeNotesWorkspaceOptions options;options.raster.pixelsPerPoint=1;if(chunked)options.chunkedEditorUnits=48;gpu::NativeNotesWorkspace w(hwnd,state,raster,style,options);
+    gpu::NativeNotesWorkspacePose pose;pose.screenToClip=gpu::layerViewportProjection(1200,800);pose.pixelWidth=1200;pose.pixelHeight=800;pose.time=1;w.updatePose(pose);
+    check(w.beginEditing(id)&&w.editor()&&w.editor()->chunked()==chunked,chunked?"Open the pointer note in the chunked editor":"Open the pointer note in the single-layout editor");w.syncEditor();
+    const auto sel=[&]{return w.editorDocument()->selection().range;};const auto t=std::u16string(w.editorDocument()->text());const auto size=static_cast<std::uint32_t>(t.size());
+    const auto start=4u,end=start+static_cast<std::uint32_t>(paragraph.size());
+    const auto caret=[&](std::uint32_t at){const auto b=w.editor()->geometry().bounds({at,at});check(b&&b->bounds.height>0,"Every caret position has painted bounds");return b->bounds;};
+    const auto lineY=[&](std::uint32_t at){const auto c=caret(at);return c.y+c.height*.5;};
+    const auto client=[&](double x,double y){const auto& p=w.editor()->placement();const auto q=p.projection.project({p.viewport.x+x-p.scroll.x,p.viewport.y+y-p.scroll.y});check(q.has_value(),"Field point projects");return *q;};
+    const auto press=[&](double x,double y,bool extend=false){const auto q=client(x,y);const auto hit=w.hitTest(q);check(hit&&hit->noteID==id&&hit->kind==gpu::NativeNotesWorkspaceHit::Kind::editor,"A press inside the card's field reaches its editor");
+        const bool handled=w.editor()->pointerDown(q,extend).handled;w.editor()->pointerUp();w.syncEditor();return handled;};
+    std::uint32_t second{};for(std::uint32_t at=start+1;at<end&&!second;++at)if(caret(at).y>caret(start).y+1)second=at;check(second>start+2,"The paragraph soft-wraps");
+    const auto lineEnd=gpu::notesVisualLineEnd(w.editor()->geometry(),t,start);check(t[lineEnd]==u' '&&lineEnd+1==second,"End stops before the soft wrap's space");
+    const auto right=w.editor()->placement().viewport.width-2,below=caret(size).y+caret(size).height+12;check(below+4<w.editor()->placement().viewport.height&&w.editor()->maximumScrollOffset()==0,"The card's field shows every line with room below");
+    check(press(right,lineY(0))&&same(sel(),{2,2}),"A press right of a line puts the caret before its hard break");
+    check(press(right,lineY(3))&&same(sel(),{3,3}),"A press right of an empty line stays on that line");
+    check(press(right,lineY(start))&&same(sel(),{lineEnd,lineEnd}),"A press right of a soft-wrapped line lands where End does, drawn on that line");
+    check(press(.25,lineY(second))&&same(sel(),{second,second})&&gpu::notesVisualLineStart(w.editor()->geometry(),t,second+3)==second,"A press at the left of a wrapped line lands where Home does");
+    check(press(right*.5,below)&&same(sel(),{size,size}),"A press below the last line puts the caret at the end of the text");
+    check(press(.25,lineY(0))&&press(right,lineY(start),true)&&same(sel(),{0,lineEnd}),"Shift-click past a wrapped line's end extends to that line's end");
+    check(w.editor()->pointerDown(client(.25,lineY(0))).handled&&same(sel(),{0,0}),"Start a drag at the text start");
+    check(w.editor()->pointerDrag(client(right,lineY(0))).handled&&same(sel(),{0,2}),"Dragging past a line end selects to that end, not into the next line");w.syncEditor();
+    check(w.editor()->pointerDrag(client(right+60,lineY(start))).handled&&same(sel(),{0,lineEnd}),"Dragging past a wrapped line's end selects to the end before the wrap");w.syncEditor();
+    check(w.editor()->pointerDrag(client(right*.5,below+400)).handled&&same(sel(),{0,size}),"Dragging below the last line selects to the end of the text");w.editor()->pointerUp();w.syncEditor();
+    check(w.finishEditing().finished&&state.note(id)->text==note.text,"Pointer insertion never edits the note");
+}
 } // namespace
 int main(){
     try{Apartment apartment;Window window;
         const auto engine=gpu::notesWordEngine();std::cout<<"Word engine: "<<(engine==gpu::NotesWordEngine::icu?"ICU (icu.dll)":"fallback")<<'\n';
         words("Word navigation (default engine)");gpu::notesUseFallbackWords(true);check(gpu::notesWordEngine()==gpu::NotesWordEngine::fallback,"The fallback can be forced");
-        words("Word navigation (fallback engine)");gpu::notesUseFallbackWords(false);clicks();workspace(window.value);visualLines(window.value,false);visualLines(window.value,true);
+        words("Word navigation (fallback engine)");gpu::notesUseFallbackWords(false);clicks();workspace(window.value);visualLines(window.value,false);visualLines(window.value,true);pointerLines(window.value,false);pointerLines(window.value,true);
         std::cout<<"PASS "<<checks<<" Notes text navigation contracts\n";return 0;
     }catch(const std::exception& e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}
 }

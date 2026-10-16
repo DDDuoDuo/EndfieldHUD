@@ -276,12 +276,12 @@ ProjectedEditorResult NativeProjectedEditor::character(std::uint32_t value,bool 
     return i->replace(i->document.selection().range,{units.data(),size});}
 ProjectedEditorResult NativeProjectedEditor::replaceTextFromHost(text::Range range,std::u16string_view value){auto i=impl_;i->onThread();i->highUnit.reset();return i->replace(range,value);}
 ProjectedEditorResult NativeProjectedEditor::setSelectionFromHost(text::Selection selection){auto i=impl_;i->onThread();i->highUnit.reset();const auto previous=i->document.selection();const auto hr=i->input->selectFromHost(selection);if(hr==E_INVALIDARG||hr==TS_E_NOLOCK)return {true,false,false};checked(hr,"Restore projected editor selection");if(i->alive)i->revealPending=true;return {true,selection!=previous,false};}
-ProjectedEditorResult NativeProjectedEditor::pointerDown(core::Point point,bool extend){auto i=impl_;i->current();need(i->poseReady,"Set editor pose before pointer input");if(i->document.composition())return {};const auto at=text::projectedHit(i->document,*i->layout,point,i->placement,false,true);if(!at)return {};i->dragging=true;return i->select(*at,extend,false);}
+ProjectedEditorResult NativeProjectedEditor::pointerDown(core::Point point,bool extend){auto i=impl_;i->current();need(i->poseReady,"Set editor pose before pointer input");if(i->document.composition())return {};const auto at=text::projectedInsertion(i->document,*i->layout,point,i->placement);if(!at)return {};i->dragging=true;return i->select(*at,extend,false);}
 ProjectedEditorResult NativeProjectedEditor::pointerDrag(core::Point point){auto i=impl_;i->current();if(!i->dragging||i->document.composition()||!i->poseReady||!i->placement.visible)return {};
     // Source text view passes the actual unprojected point outside its viewport
     // to document hit-testing, then reveals the resulting active selection.
     const auto local=i->placement.projection.unproject(point);if(!local)return {};
-    const auto at=i->layout->hit({local->x-i->placement.viewport.x+i->horizontal,local->y-i->placement.viewport.y+i->scroll},true,true);return at?i->select(*at,true):ProjectedEditorResult{};}
+    const auto at=text::insertionHit(*i->layout,static_cast<std::uint32_t>(i->document.text().size()),{local->x-i->placement.viewport.x+i->horizontal,local->y-i->placement.viewport.y+i->scroll});return at?i->select(*at,true):ProjectedEditorResult{};}
 
 void NativeProjectedEditor::pointerUp()noexcept{if(GetCurrentThreadId()==impl_->thread)impl_->dragging=false;}
 const LayerTextLayout&NativeProjectedEditor::layout()const{return *impl_->layout;}

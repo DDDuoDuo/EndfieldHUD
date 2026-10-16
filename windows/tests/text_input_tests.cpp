@@ -4,6 +4,7 @@
 #include <iostream>
 #include <limits>
 #include <stdexcept>
+#include <vector>
 using namespace endfield::core;
 using namespace endfield::core::text;
 namespace {
@@ -25,6 +26,45 @@ struct RoundedLayout final:Layout {
     std::optional<RangeBounds>bounds(Range)const override{return range;}
     std::optional<std::uint32_t>hit(Point p,bool,bool)const override{lastHit=p;return 0u;}
 };
+// DirectWrite-like lines of ten-point clusters (a hard break has no width):
+// past a line's end the hit is its last cluster's trailing edge, before its
+// start the first cluster's leading edge, an empty line answers its start; a
+// caret is drawn on the line holding its following character.
+struct LinesLayout final:Layout {
+    const Document&doc;std::vector<std::uint32_t>starts;std::uint64_t current;
+    LinesLayout(const Document&d,std::vector<std::uint32_t>s):doc(d),starts(std::move(s)),current(d.revision()){}
+    std::uint64_t textRevision()const noexcept override{return current;}
+    std::uint32_t end(std::size_t l)const{return l+1<starts.size()?starts[l+1]:static_cast<std::uint32_t>(doc.text().size());}
+    std::optional<RangeBounds> bounds(Range r)const override{std::size_t l{};while(l+1<starts.size()&&starts[l+1]<=r.start)++l;return RangeBounds{{10.*(r.start-starts[l]),10.*l,r.start==r.end?1.:10.*(r.end-r.start),10},false};}
+    std::optional<std::uint32_t> hit(Point p,bool nearest,bool round)const override{
+        const auto l=static_cast<std::size_t>(std::clamp(std::floor(p.y/10),0.,double(starts.size()-1)));const auto s=starts[l],e=end(l);if(s==e)return s;
+        const auto visible=e-s-(doc.text()[e-1]==u'\n'?1:0);std::uint32_t at{};bool trailing{},inside=p.y>=0&&p.y<10.*starts.size();
+        if(p.x<0){at=s;inside=false;}else if(p.x>=10.*visible){at=e-1;trailing=true;inside=false;}else{at=s+static_cast<std::uint32_t>(p.x/10);trailing=std::fmod(p.x,10)>=5;}
+        if(!nearest&&!inside)return {};return at+(round&&trailing?1u:0u);}
+};
+// Source NSTextView mouse insertion: right of a line its end (before the hard
+// break, before a soft wrap's trailing space), left of a line its start,
+// below the last line the end of the text.
+void insertion(){
+    Buffer doc(u"ab\n\ncd efgh");LinesLayout layout(doc,{0,3,4,7});const auto at=[&](double x,double y){return insertionHit(layout,11,{x,y});};
+    check(!layout.hit({100,5},false,true)&&layout.hit({100,5},true,true)==3u,"Fixture: a hit right of a line rounds past its hard break, onto the next line");
+    check(at(100,5)==2u,"Right of a line ends it before its hard break");
+    check(at(100,15)==3u&&at(-5,15)==3u,"Right or left of an empty line is that line");
+    check(at(100,25)==6u,"Right of a soft-wrapped line ends it before the wrap's trailing space (drawn on that line)");
+    check(at(-20,35)==7u&&at(-20,25)==4u,"Left of a line starts it, wrapped or not");
+    check(at(100,35)==11u&&at(5,100)==11u&&at(-20,1e6)==11u,"Right of or anywhere below the last line is the end of the text");
+    check(at(2,5)==0u&&at(7,5)==1u&&at(17,35)==9u,"On a line the nearest cluster edge is unchanged");
+    check(at(100,-30)==2u,"Above the first line, right of it, still ends the first line");
+    check(!insertionHit(layout,11,{std::numeric_limits<double>::quiet_NaN(),5}),"A nonfinite point has no insertion");
+    Buffer trailingBreak(u"ab\n");LinesLayout last(trailingBreak,{0,3});
+    check(insertionHit(last,3,{100,5})==2u&&insertionHit(last,3,{100,15})==3u&&insertionHit(last,3,{0,40})==3u,"A final empty line keeps its own insertion point");
+    Placement p{{},{20,30,100,60},{0,5},true,3};
+    check(projectedInsertion(doc,layout,{115,40},p)==3u&&projectedInsertion(doc,layout,{115,32},p)==2u,"A press right of a line applies viewport and scroll once");
+    check(projectedInsertion(doc,layout,{50,85},p)==11u,"A press below the last line inside the field reaches the text end");
+    check(!projectedInsertion(doc,layout,{10,40},p)&&!projectedInsertion(doc,layout,{20.2,30.2},p),"A press outside the rounded viewport is not an insertion");
+    p.visible=false;check(!projectedInsertion(doc,layout,{115,40},p),"A hidden field takes no press");p.visible=true;
+    doc.replace({0,0},u"x");check(!projectedInsertion(doc,layout,{115,40},p),"A stale layout takes no press");
+}
 void rounded(){
     Buffer doc(u"A");RoundedLayout layout(doc);Placement p{{},{20,30,20,10},{},true,3};
     check(validPlacement(p),"Source radius three is valid in local viewport units");auto rectangular=p;rectangular.cornerRadius=0;
@@ -105,4 +145,4 @@ void run(){
     p.projection={};p.viewport.width=0;check(!projectedViewport(p),"Zero viewport rejected");p.viewport.width=100;p.projection.values.fill(0);check(!projectedViewport(p),"Singular projection rejected by shared math");
 }
 }
-int main(){try{run();rounded();std::cout<<"Passed "<<checks<<" projected UTF-16 text contracts\n";return 0;}catch(const std::exception&e){std::cerr<<e.what()<<'\n';return 1;}}
+int main(){try{run();rounded();insertion();std::cout<<"Passed "<<checks<<" projected UTF-16 text contracts\n";return 0;}catch(const std::exception&e){std::cerr<<e.what()<<'\n';return 1;}}

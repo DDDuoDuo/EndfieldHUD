@@ -42,6 +42,8 @@ std::optional<Rect> projectRect(const Projection& p,Rect r){
     for(const auto& c:corners){const auto v=p.project(c);if(!v)return {};left=std::min(left,v->x);right=std::max(right,v->x);top=std::min(top,v->y);bottom=std::max(bottom,v->y);}
     const Rect result{left,top,right-left,bottom-top};return finite(result)?std::optional(result):std::nullopt;
 }
+std::optional<Rect> caretAt(const Layout& l,std::uint32_t at){const auto b=l.bounds({at,at});if(!b||!finite(b->bounds)||b->bounds.height<=0)return {};return b->bounds;}
+bool sameLine(Rect a,Rect b){const double h=std::max(1e-3,std::min(a.height,b.height));return std::abs((a.y+a.height*.5)-(b.y+b.height*.5))<h*.5;}
 }
 bool Buffer::validUTF16(std::u16string_view text)noexcept{
     for(std::size_t i=0;i<text.size();++i){if(high(text[i])){if(++i==text.size()||!low(text[i]))return false;}else if(low(text[i]))return false;}return true;
@@ -105,5 +107,23 @@ std::optional<std::uint32_t> projectedHit(const Document& doc,const Layout& layo
     if(!roundedContains(p.viewport,p.cornerRadius,*local)){if(!nearest)return {};*local=nearestRounded(p.viewport,p.cornerRadius,*local);}
     const auto hit=layout.hit({local->x-p.viewport.x+p.scroll.x,local->y-p.viewport.y+p.scroll.y},nearest,roundNearest);
     return hit&&*hit<=doc.text().size()?hit:std::nullopt;
+}
+std::optional<std::uint32_t> insertionHit(const Layout& layout,std::uint32_t units,Point p){
+    if(!std::isfinite(p.x)||!std::isfinite(p.y))return {};
+    auto at=layout.hit(p,true,true);if(!at||*at>units)return {};auto caret=caretAt(layout,*at);
+    // Rounding past a line's last cluster (its hard break, or a soft wrap's
+    // trailing space or last character) lands on the next line, away from the
+    // point: the point's own line ends before that cluster.
+    if(caret&&(p.y<caret->y||p.y>=caret->y+caret->height))
+        if(const auto lead=layout.hit(p,true,false);lead&&*lead<*at)
+            if(const auto own=caretAt(layout,*lead);own&&!sameLine(*own,*caret)){at=lead;caret=own;}
+    if(caret&&*at<units&&p.y>=caret->y+caret->height)
+        if(const auto end=caretAt(layout,units);end&&p.y>=end->y+end->height)return units;
+    return at;
+}
+std::optional<std::uint32_t> projectedInsertion(const Document& doc,const Layout& layout,Point client,const Placement& p){
+    if(!validPlacement(p)||!p.visible||layout.textRevision()!=doc.revision())return {};const auto local=p.projection.unproject(client);
+    if(!local||!roundedContains(p.viewport,p.cornerRadius,*local))return {};
+    return insertionHit(layout,static_cast<std::uint32_t>(doc.text().size()),{local->x-p.viewport.x+p.scroll.x,local->y-p.viewport.y+p.scroll.y});
 }
 } // namespace endfield::core::text
