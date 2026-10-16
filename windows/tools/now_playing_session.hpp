@@ -16,6 +16,12 @@ struct NowPlayingSessionOptions {
     // Playing-app volume through the shared per-app audio service. Null keeps
     // the source's unavailable submenu.
     std::shared_ptr<const modules::NowPlayingAppVolume>volume;
+    // Reads NetEase Cloud Music's own queue state file (its player bar carries
+    // no time labels and its progress slider no accessible value, so the HUD
+    // reads the bar's played fraction; this file supplies the track's exact
+    // length and song id). Null keeps the fuzzy catalog title search, which is
+    // what the injected test/offline backends use.
+    modules::NowPlayingPlayingListReader neteasePlayingList;
     // Successful transport commands only (Event Log playbackAction).
     std::function<void(const modules::NowPlayingPlaybackEvent&)>playback;
     // Square size of catalog cover downloads (source: 600; the Windows owner

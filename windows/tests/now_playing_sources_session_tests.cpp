@@ -41,11 +41,12 @@ n::NowPlayingReadResult media(std::string application,m::NowPlayingTrack track=s
 struct Fixture{
     Q q{[]{}};std::shared_ptr<Provider>p=std::make_shared<Provider>();double now=10;Transport transport;Bridge bridge;std::vector<m::NowPlayingPlaybackEvent>events;unsigned decodes{};
     std::shared_ptr<n::NowPlayingWeb>web;n::NativeNowPlayingService service{q,[this]{return p;},[]{},[this]{return now;}};std::unique_ptr<t::NowPlayingSession>owner;
-    explicit Fixture(bool network=true,bool audio=false,unsigned coverPixels=600){
+    explicit Fixture(bool network=true,bool audio=false,unsigned coverPixels=600,m::NowPlayingBody playlist={}){
         t::NowPlayingSessionOptions o;o.coverPixels=coverPixels;
         o.decode=[this](std::span<const std::uint8_t>b){++decodes;auto f=std::make_shared<n::NotesImageFrame>();f->width=f->height=1;f->straightRGBA={b[0],0,0,255};return n::NowPlayingImageResult{f};};
         if(network){web=std::make_shared<n::NowPlayingWeb>(transport.bind(),[]{},[this]{return now;});o.web=web;}
         if(audio)o.volume=bridge.bind();o.playback=[this](const m::NowPlayingPlaybackEvent&e){events.push_back(e);};
+        if(playlist)o.neteasePlayingList=[playlist]()->m::NowPlayingBody{return playlist;};
         owner=std::make_unique<t::NowPlayingSession>(service,q,m::NowPlayingAppearance{},[]{},std::move(o));
     }
     void work(){q.waitIdle();q.drain();}
@@ -195,6 +196,36 @@ void playerBar(){
     f.owner->setActive(false,f.now);
     check(!f.owner->nextWakeTime(f.now),"Hidden: no tick and no reading");
 }
+// NetEase Cloud Music's bar carries no time labels and its progress slider no
+// accessible value, so the HUD reads only the played fraction. When NetEase's
+// own queue state file is readable it supplies the track's exact length (so
+// the fraction becomes seconds and the bar and lyric clock run) and the exact
+// song id (so the lyrics are the track's own, not a fuzzy catalog guess).
+// Sanitized synthetic queue only.
+void neteaseQueue(){
+    const std::string own="https://p3.music.126.net/Own==/1.jpg?param=600y600";
+    const std::string queue=R"({"list":[{"id":"2001","track":{"id":2001,"name":"Synthetic Song","artists":[{"name":"Example Artist"}],"album":{"name":"Fixture Album","picUrl":"http://p3.music.126.net/Queue==/2001.jpg"},"duration":233400}}]})";
+    Fixture f(true,false,500,body(queue));
+    f.ready(barPlayer(.5,10,true,own));
+    // The bar's own cover is requested at once; the catalog reads the queue
+    // (parsed off-thread) instead of the fuzzy title search.
+    check(f.transport.requests.size()==2&&f.transport.requests[0].kind==n::NowPlayingWeb::Kind::artwork&&
+          f.transport.requests[1].url=="https://music.163.com/api/song/lyric?id=2001&lv=-1&kv=-1&tv=-1",
+          "The queue's exact song id reads the track's own lyrics; no cloudsearch");
+    check(std::none_of(f.transport.requests.begin(),f.transport.requests.end(),[](const auto&r){return r.url.find("/api/cloudsearch/pc?")!=std::string::npos;}),"The fuzzy title search is skipped entirely");
+    check(f.input().track->duration==233.4&&std::abs(*f.input().track->position-116.7)<1e-9,"The queue length turns the played half into seconds");
+    f.answer(1,body(R"({"code":200,"lrc":{"lyric":"[00:01]One\n[01:50]Two\n[03:00]Three"}})"));
+    check(f.input().lyrics&&f.input().lyrics->lines().size()==3,"The track's own lyrics reach the rows");
+    check(f.owner->presentation().lyricRows()[1]=="Two","At 116.7 s the current lyric line (110 s) is centred: the lyric clock follows the bar");
+    // The bar advances with the same clock: a later reading keeps the running time.
+    f.now=12;f.read(barPlayer(.5+2.3/233.4,12));
+    check(std::abs(*f.input().track->position-119.)<1e-9,"The bar keeps tracking in seconds against the queue length");
+    f.now=130;f.owner->deadline(f.now);f.flush();
+    check(f.owner->presentation().lyricRows()[1]=="Two"||f.owner->presentation().lyricRows()[1]=="Three","The lyric line advances on the shared clock as the song plays");
+    // A track the queue does not carry still falls back to the fuzzy search.
+    f.read(windowPlayer("Unqueued Song",0));
+    check(std::any_of(f.transport.requests.begin(),f.transport.requests.end(),[](const auto&r){return r.url.find("/api/cloudsearch/pc?")!=std::string::npos;}),"An unqueued track falls back to the catalog title search");
+}
 void visibility(){
     Fixture f;f.ready(media("Spotify.exe"));check(f.transport.requests.size()==1,"Visible owner starts one request");
     f.owner->setActive(false,f.now);check(f.transport.tasks[0]->cancels==1&&f.web->stats().inFlight==0&&!f.owner->nextWakeTime(f.now),"Hide cancels in-flight downloads and leaves no deadline");
@@ -282,7 +313,7 @@ void volume(){
 }
 }
 int main(){
-    try{lrclibLyrics();netease();windowPlayerCatalog();sizedCover();thumbnailFirst();playerBar();embedded();visibility();offline();events();offThread();volume();
+    try{lrclibLyrics();netease();windowPlayerCatalog();sizedCover();thumbnailFirst();playerBar();neteaseQueue();embedded();visibility();offline();events();offThread();volume();
         std::cout<<"Now Playing sources session: "<<checks<<" checks passed (injected provider/transport/audio routes)\n";return 0;}
     catch(const std::exception&e){std::cerr<<"Now Playing sources session failed after "<<checks<<": "<<e.what()<<'\n';return 1;}
 }

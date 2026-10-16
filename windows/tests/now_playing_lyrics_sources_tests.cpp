@@ -159,6 +159,66 @@ void deferredDecoding(){
     check(catalogNet.urls.size()==3&&catalog.cacheSize()==1&&!catalog.isLoading(),"A decode finishing after clear changes nothing and leaves no unfinished entry");
     catalog.request(kn,a);check(!catalog.isLoading()&&catalog.lyrics()&&catalogNet.urls.size()==3,"The finished entry is still a cache hit");
 }
+// NetEase Cloud Music's own queue state file resolves the current track's
+// exact song id and length (its player bar carries no time labels and its
+// progress slider no accessible value). Sanitized synthetic queue only; no
+// song metadata from the probe.
+void playingListParser(){
+    const auto track=[](std::string title,std::string artist){m::NowPlayingTrack t;t.title=std::move(title);t.artist=std::move(artist);return m::NowPlayingTrack::bounded(std::move(t));};
+    const std::string queue=R"({"list":[
+      {"id":"99","track":{"id":99,"name":"Other Song","artists":[{"name":"Example Artist"}],"album":{"name":"B","picUrl":"http://p2.music.126.net/Other==/99.jpg"},"duration":100000}},
+      {"id":"2001","track":{"id":2001,"name":"Synthetic Song","artists":[{"name":"Example Artist"},{"name":"Guest"}],"album":{"name":"Fixture Album","picUrl":"http://p3.music.126.net/Queue==/2001.jpg"},"duration":233400}}
+    ]})";
+    const auto b=bytes(queue);
+    const auto entry=m::nowPlayingNetEasePlayingListEntry(view(b),track("Synthetic Song","Example Artist"));
+    check(entry&&entry->identifier==2001&&entry->duration&&std::abs(*entry->duration-233.4)<1e-6&&entry->artwork==std::optional<std::string>("https://p3.music.126.net/Queue==/2001.jpg?param=600y600"),
+          "The queue entry matching the window title yields its song id, length and cover");
+    const auto other=m::nowPlayingNetEasePlayingListEntry(view(b),track("Other Song","Example Artist"));
+    check(other&&other->identifier==99&&other->duration&&std::abs(*other->duration-100.)<1e-6,"Another queued track resolves to its own id and length");
+    check(!m::nowPlayingNetEasePlayingListEntry(view(b),track("Unqueued Song","Example Artist")),"A track not in the queue is no match");
+    check(!m::nowPlayingNetEasePlayingListEntry(view(b),track("Synthetic Song","Different Artist")),"A different artist is no match (conservative identity)");
+    // A track-id-less entry falls back to the numeric string entry id.
+    const auto stringId=bytes(R"({"list":[{"id":"3003","track":{"name":"String Id Song","artists":[{"name":"Example Artist"}],"album":{"name":"Z"},"duration":60000}}]})");
+    const auto s=m::nowPlayingNetEasePlayingListEntry(view(stringId),track("String Id Song","Example Artist"));
+    check(s&&s->identifier==3003&&s->duration&&std::abs(*s->duration-60.)<1e-6&&!s->artwork,"A numeric string entry id is accepted; a missing cover is simply absent");
+    // Two queued entries of the same title and artist but different ids: never guessed.
+    const auto tie=bytes(R"({"list":[
+      {"id":"11","track":{"id":11,"name":"Tie Song","artists":[{"name":"Artist"}],"duration":200000}},
+      {"id":"22","track":{"id":22,"name":"Tie Song","artists":[{"name":"Artist"}],"duration":200000}}]})");
+    check(!m::nowPlayingNetEasePlayingListEntry(view(tie),track("Tie Song","Artist")),"An ambiguous queue tie is no match (source tie rule)");
+    check(!m::nowPlayingNetEasePlayingListEntry(view(bytes("not json")),track("Synthetic Song","Example Artist")),"A malformed queue file is no match");
+    check(!m::nowPlayingNetEasePlayingListEntry(view(bytes(R"({"list":[]})")),track("Synthetic Song","Example Artist")),"An empty queue is no match");
+}
+// With a queue-file reader, a NetEase track reads its lyrics by the exact id
+// and keeps the exact length, skipping the fuzzy title search; a track the
+// queue does not carry falls back to the search.
+void playingListCatalog(){
+    struct Jobs {
+        std::vector<std::pair<std::function<void()>,std::function<void()>>>queued;
+        m::NowPlayingDecoder bind(){return [this](std::function<void()>work,std::function<void()>done){queued.emplace_back(std::move(work),std::move(done));};}
+        void run(std::size_t k){auto job=std::move(queued.at(k));job.first();job.second();}
+    };
+    struct Net {
+        std::vector<std::string>urls;std::vector<std::function<void(m::NowPlayingBody)>>done;
+        m::NowPlayingFetch bind(){return [this](const std::string&url,std::function<void(m::NowPlayingBody)>completion){urls.push_back(url);done.push_back(std::move(completion));return std::function<void()>([]{});};}
+    };
+    const std::string queue=R"({"list":[{"id":"2001","track":{"id":2001,"name":"Synthetic Song","artists":[{"name":"Example Artist"}],"album":{"name":"Fixture Album","picUrl":"http://p3.music.126.net/Queue==/2001.jpg"},"duration":233400}}]})";
+    m::NowPlayingTrack a;a.title="Synthetic Song";a.artist="Example Artist";a=m::NowPlayingTrack::bounded(std::move(a));
+    m::NowPlayingTrack b;b.title="Unqueued Song";b.artist="Nobody";b=m::NowPlayingTrack::bounded(std::move(b));
+    const auto ka=m::NowPlayingLyricsKey::make("cloudmusic.exe",a),kb=m::NowPlayingLyricsKey::make("cloudmusic.exe",b);
+    Jobs jobs;Net net;m::NowPlayingCatalog catalog(net.bind(),jobs.bind());
+    unsigned reads{};catalog.setPlayingList([&]()->m::NowPlayingBody{++reads;return bytes(queue);});
+    catalog.request(ka,a);
+    check(reads==1&&net.urls.empty()&&jobs.queued.size()==1,"A NetEase track parses the queue file before any network request");
+    jobs.run(0);
+    check(net.urls.size()==1&&net.urls[0]=="https://music.163.com/api/song/lyric?id=2001&lv=-1&kv=-1&tv=-1"&&catalog.duration()&&std::abs(*catalog.duration()-233.4)<1e-6,
+          "The exact song id reads its own lyrics directly (no cloudsearch) and its length is kept");
+    check(catalog.artwork()==std::optional<std::string>("https://p3.music.126.net/Queue==/2001.jpg?param=600y600"),"The queue cover is exposed as the catalog cover");
+    net.done.at(0)(bytes(R"({"code":200,"lrc":{"lyric":"[00:01]Exact"}})"));jobs.run(1);
+    check(!catalog.isLoading()&&catalog.lyrics()&&catalog.lyrics()->lines().front().text=="Exact","The by-id lyrics finish the entry");
+    catalog.request(kb,b);jobs.run(jobs.queued.size()-1);
+    check(net.urls.size()==2&&net.urls[1].find("/api/cloudsearch/pc?")!=std::string::npos,"A track the queue does not carry falls back to the title search");
+}
 // Worst-case decode cost: a 1 MiB LRCLIB search answer whose 100 rows all
 // match the track, so every row is scored and its lyrics parsed. Production
 // runs this on the utility worker. Outcomes follow the source tie rule; the
@@ -192,7 +252,7 @@ int main(int argc,char**argv){
         check(argc==2,"Pass now-playing-lyrics-source.json");std::ifstream in(argv[1],std::ios::binary);check(bool(in),"Read original lyric source fixture");
         const auto j=Json::parse(std::string((std::istreambuf_iterator<char>(in)),{}),8*1024*1024);
         check(j["sourceCommit"].string()=="ca04f142185c7de40acd8523bdb563195d90a1d1","Lyric source fixture is pinned to the authority commit");
-        matcher(j);urls(j);decoders(j);scenarios(j);windowsSources();deferredDecoding();decodeCost();
+        matcher(j);urls(j);decoders(j);scenarios(j);windowsSources();deferredDecoding();playingListParser();playingListCatalog();decodeCost();
         std::cout<<"Now Playing lyrics sources: "<<checks<<" checks passed (original Swift oracle, injected responses only)\n";return 0;
     }catch(const std::exception&e){std::cerr<<"Now Playing lyrics sources failed after "<<checks<<" checks: "<<e.what()<<'\n';return 1;}
 }

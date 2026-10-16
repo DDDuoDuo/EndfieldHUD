@@ -21,6 +21,7 @@ struct NowPlayingPreviewOptions {
     std::shared_ptr<const modules::NowPlayingAppVolume>volume;
     std::function<void(const modules::NowPlayingPlaybackEvent&)>playback;
     unsigned coverPixels{600}; // catalog cover size (NowPlayingSessionOptions)
+    modules::NowPlayingPlayingListReader neteasePlayingList; // NetEase queue file (NowPlayingSessionOptions)
 };
 // Sole activation owner of the borrowed service. Service, executor and raster
 // outlive this owner. No provider/worker/timer/window is created here. Host

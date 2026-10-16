@@ -5,6 +5,7 @@
 #include <charconv>
 #include <cmath>
 #include <stdexcept>
+#include <system_error>
 #ifdef _WIN32
 #include <icu.h>
 #else
@@ -319,6 +320,50 @@ std::optional<NowPlayingCatalogMatch>nowPlayingCatalogMatch(std::span<const std:
     if(ranked.size()>1&&ranked[1].score==ranked[0].score&&ranked[1].identifier!=ranked[0].identifier)return {};
     return ranked[0];
 }catch(...){return {};}
+std::optional<NowPlayingNetEaseEntry>nowPlayingNetEasePlayingListEntry(std::span<const std::uint8_t>bytes,const NowPlayingTrack&track)try{
+    if(NowPlayingTrackMatcher::normalized(track.title).empty())return {};
+    const auto root=parse(bytes);if(!root||!root->isObject())return {};
+    const auto&list=(*root)["list"];if(!isObjectArray(list))return {};
+    // The same conservative identity as the catalog match: a wrong queue entry
+    // (another track of the same artist, or an ambiguous tie) is never taken.
+    struct Ranked {int score{};NowPlayingNetEaseEntry entry;};
+    std::vector<Ranked>ranked;
+    const auto&rows=list.array();
+    for(std::size_t n=0;n<std::min<std::size_t>(4096,rows.size());++n){
+        const auto&song=rows[n]["track"];if(!song.isObject())continue;
+        const auto title=string(song["name"]);if(!title)continue;
+        const auto&people=song["artists"];std::vector<std::string>names;
+        if(isObjectArray(people))for(std::size_t k=0;k<std::min<std::size_t>(32,people.array().size());++k)if(auto name=string(people.array()[k]["name"]))names.push_back(std::move(*name));
+        // The song id is the numeric track id, else the entry id (which the
+        // client stores either as a number or as a digit string).
+        const auto numericId=[](const Json&value)->std::optional<std::int64_t>{
+            if(value.isNumber()){if(const auto n=number(value))return truncated(*n);return std::nullopt;}
+            const auto text=string(value);if(!text||text->empty()||text->size()>19)return std::nullopt;
+            std::int64_t out{};const auto end=text->data()+text->size();
+            const auto result=std::from_chars(text->data(),end,out);
+            return result.ec==std::errc{}&&result.ptr==end&&out>0?std::optional(out):std::nullopt;
+        };
+        std::optional<std::int64_t>identifier=numericId(song["id"]);
+        if(!identifier||*identifier<=0)identifier=numericId(rows[n]["id"]);
+        if(!identifier||*identifier<=0)continue;
+        static const Json empty=Json::Object{};
+        const auto&album=song["album"].isObject()?song["album"]:empty;
+        const auto length=number(song["duration"]);
+        const auto score=NowPlayingTrackMatcher::score(*title,{},names,string(album["name"]).value_or(""),
+            length?std::optional(length->value/1000):std::nullopt,track);
+        if(!score)continue;
+        NowPlayingNetEaseEntry entry;entry.identifier=*identifier;
+        if(length&&std::isfinite(length->value)&&length->value>0)entry.duration=std::min(length->value/1000,nowPlayingMaximumSeconds);
+        // The queue stores the cover under "picUrl" (older builds) or "cover".
+        auto cover=string(album["picUrl"]);if(!cover)cover=string(album["cover"]);
+        if(cover)if(auto url=nowPlayingCatalogCoverURL(*cover))entry.artwork=std::move(url);
+        ranked.push_back({*score,std::move(entry)});
+    }
+    std::stable_sort(ranked.begin(),ranked.end(),[](const auto&a,const auto&b){return a.score>b.score;});
+    if(ranked.empty())return {};
+    if(ranked.size()>1&&ranked[1].score==ranked[0].score&&ranked[1].entry.identifier!=ranked[0].entry.identifier)return {};
+    return ranked[0].entry;
+}catch(...){return {};}
 std::optional<std::string>nowPlayingCatalogCoverURL(std::string_view raw){
     if(raw.size()>2048)return {};
     const auto parts=splitURL(raw);if(!parts||(parts->scheme!="http"&&parts->scheme!="https"))return {};
@@ -448,7 +493,7 @@ std::size_t NowPlayingLyricsLoader::cacheSize()const noexcept{return impl_->cach
 
 struct NowPlayingCatalog::Impl:std::enable_shared_from_this<Impl>{
     struct Entry {NowPlayingLyricsKey key;std::optional<std::string>artwork;std::shared_ptr<const NowPlayingLyrics>lyrics;bool finished{};std::optional<double>duration;};
-    NowPlayingFetch fetch;NowPlayingDecoder decode;std::function<void()>onChange;std::vector<Entry>entries;std::optional<NowPlayingLyricsKey>desired;
+    NowPlayingFetch fetch;NowPlayingDecoder decode;NowPlayingPlayingListReader playingList;std::function<void()>onChange;std::vector<Entry>entries;std::optional<NowPlayingLyricsKey>desired;
     std::function<void()>cancel;std::uint64_t generation{};
     Impl(NowPlayingFetch f,NowPlayingDecoder d):fetch(std::move(f)),decode(std::move(d)){if(!fetch||!decode)throw std::invalid_argument("Now Playing catalog needs a fetch and a decoder");entries.reserve(9);}
     const Entry*current()const{if(!desired)return nullptr;for(const auto&e:entries)if(e.key==*desired)return &e;return nullptr;}
@@ -475,14 +520,25 @@ struct NowPlayingCatalog::Impl:std::enable_shared_from_this<Impl>{
         // positive and negative entries stay in the bounded cache.
         std::erase_if(entries,[](const auto&e){return !e.finished;});
     }
-    void request(const NowPlayingLyricsKey&key,const NowPlayingTrack&track){
-        if(key.source!=NowPlayingSource::netease){clear();return;}
-        if(desired&&*desired==key)return;
-        const auto expected=++generation;stop();desired=key;
-        if(const auto found=std::find_if(entries.begin(),entries.end(),[&](const auto&e){return e.key==key&&e.finished;});found!=entries.end()){
-            auto cached=std::move(*found);entries.erase(found);entries.push_back(std::move(cached));notify();return;
-        }
-        update(key,{},nullptr,false);
+    // Reads the song's own lyric document by its catalog id, then finishes the
+    // entry with the given cover and length (shared by the queue-file and the
+    // fuzzy-search paths).
+    void lyricsById(std::int64_t identifier,const NowPlayingLyricsKey&key,std::optional<std::string>artwork,std::optional<double>length,std::uint64_t expected){
+        update(key,artwork,nullptr,false,length);
+        const auto weak=weak_from_this();
+        get(nowPlayingCatalogLyricsURL(identifier),expected,[weak,key,artwork,length,expected](NowPlayingBody data){
+            const auto self=weak.lock();if(!self)return;
+            if(!data){self->update(key,artwork,nullptr,true,length);return;}
+            auto result=std::make_shared<std::shared_ptr<const NowPlayingLyrics>>();
+            self->decode([result,data]{*result=shared(nowPlayingCatalogDecodeLyrics(*data));},[weak,result,key,artwork,length,expected]{
+                const auto self=weak.lock();if(!self||self->generation!=expected)return;
+                self->update(key,artwork,std::move(*result),true,length);
+            });
+        });
+    }
+    // The public cloudsearch (title + first artist), then the matched song's
+    // own lyrics; the fallback when the queue file gives no confident match.
+    void searchFuzzy(const NowPlayingLyricsKey&key,const NowPlayingTrack&track,std::uint64_t expected){
         const auto url=nowPlayingCatalogSearchURL(track);if(!url){update(key,{},nullptr,true);return;}
         const auto weak=weak_from_this();
         get(*url,expected,[weak,key,track,expected](NowPlayingBody data){
@@ -493,24 +549,35 @@ struct NowPlayingCatalog::Impl:std::enable_shared_from_this<Impl>{
                 const auto self=weak.lock();if(!self||self->generation!=expected)return;
                 const auto match=*found;
                 if(!match){self->update(key,{},nullptr,true);return;}
-                const auto artwork=match->artwork;const auto length=match->duration;
-                self->update(key,artwork,nullptr,false,length);
-                self->get(nowPlayingCatalogLyricsURL(match->identifier),expected,[weak,key,artwork,length,expected](NowPlayingBody data){
-                    const auto self=weak.lock();if(!self)return;
-                    if(!data){self->update(key,artwork,nullptr,true,length);return;}
-                    auto result=std::make_shared<std::shared_ptr<const NowPlayingLyrics>>();
-                    self->decode([result,data]{*result=shared(nowPlayingCatalogDecodeLyrics(*data));},[weak,result,key,artwork,length,expected]{
-                        const auto self=weak.lock();if(!self||self->generation!=expected)return;
-                        self->update(key,artwork,std::move(*result),true,length);
-                    });
-                });
+                self->lyricsById(match->identifier,key,match->artwork,match->duration,expected);
             });
+        });
+    }
+    void request(const NowPlayingLyricsKey&key,const NowPlayingTrack&track){
+        if(key.source!=NowPlayingSource::netease){clear();return;}
+        if(desired&&*desired==key)return;
+        const auto expected=++generation;stop();desired=key;
+        if(const auto found=std::find_if(entries.begin(),entries.end(),[&](const auto&e){return e.key==key&&e.finished;});found!=entries.end()){
+            auto cached=std::move(*found);entries.erase(found);entries.push_back(std::move(cached));notify();return;
+        }
+        update(key,{},nullptr,false);
+        // NetEase's own queue file resolves the exact song id and length; only
+        // its absence or an uncertain entry falls back to the title search.
+        NowPlayingBody queue;if(playingList)try{queue=playingList();}catch(...){queue.reset();}
+        if(!queue){searchFuzzy(key,track,expected);return;}
+        const auto weak=weak_from_this();
+        auto found=std::make_shared<std::optional<NowPlayingNetEaseEntry>>();
+        decode([found,queue,track]{*found=nowPlayingNetEasePlayingListEntry(*queue,track);},[weak,found,key,track,expected]{
+            const auto self=weak.lock();if(!self||self->generation!=expected)return;
+            if(const auto&entry=*found)self->lyricsById(entry->identifier,key,entry->artwork,entry->duration,expected);
+            else self->searchFuzzy(key,track,expected);
         });
     }
 };
 NowPlayingCatalog::NowPlayingCatalog(NowPlayingFetch fetch,NowPlayingDecoder decode):impl_(std::make_shared<Impl>(std::move(fetch),std::move(decode))){}
 NowPlayingCatalog::~NowPlayingCatalog(){impl_->onChange=nullptr;impl_->stop();}
 void NowPlayingCatalog::setOnChange(std::function<void()>value){impl_->onChange=std::move(value);}
+void NowPlayingCatalog::setPlayingList(NowPlayingPlayingListReader value){impl_->playingList=std::move(value);}
 std::optional<std::string>NowPlayingCatalog::artwork()const{const auto*e=impl_->current();return e?e->artwork:std::nullopt;}
 std::shared_ptr<const NowPlayingLyrics>NowPlayingCatalog::lyrics()const{const auto*e=impl_->current();return e?e->lyrics:nullptr;}
 std::optional<double>NowPlayingCatalog::duration()const{const auto*e=impl_->current();return e?e->duration:std::nullopt;}
@@ -552,6 +619,7 @@ NowPlayingLyricsSources::NowPlayingLyricsSources(NowPlayingFetch fetch,bool cata
     Impl*i=impl_.get();i->loader.setOnChange([i]{i->notify();});if(i->catalog)i->catalog->setOnChange([i]{i->catalogChanged();});
 }
 NowPlayingLyricsSources::~NowPlayingLyricsSources(){onChange=nullptr;onArtworkURL=nullptr;impl_->loader.setOnChange(nullptr);if(impl_->catalog)impl_->catalog->setOnChange(nullptr);}
+void NowPlayingLyricsSources::setPlayingList(NowPlayingPlayingListReader value){if(impl_->catalog)impl_->catalog->setPlayingList(std::move(value));}
 void NowPlayingLyricsSources::update(std::optional<NowPlayingLyricsKey>key,const std::optional<NowPlayingTrack>&track){
     auto i=impl_;i->active=true;i->key=std::move(key);i->track=i->key?track:std::nullopt;i->changed();
 }

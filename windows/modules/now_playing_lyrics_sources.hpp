@@ -64,6 +64,26 @@ struct NowPlayingCatalogMatch {
     bool operator==(const NowPlayingCatalogMatch&)const=default;
 };
 std::optional<NowPlayingCatalogMatch>nowPlayingCatalogMatch(std::span<const std::uint8_t>,const NowPlayingTrack&);
+// The NetEase Cloud Music desktop client writes its current queue to a local
+// state file (%LOCALAPPDATA%\NetEase\CloudMusic\webdata\file\playingList): a
+// JSON object with a "list" array whose entries carry the public song "id",
+// the "track" with its "name", "artists"[].name, "album".cover and "duration"
+// (milliseconds). Its player bar carries no elapsed/total labels and its
+// progress slider exposes no accessible value (read live on 3.1.41), so the
+// bar only yields a played fraction; this file supplies the authoritative
+// length that turns that fraction into seconds and the exact song id that
+// makes the lyric lookup match the track instead of a fuzzy catalog search.
+// Read only to resolve the current track; never stored.
+struct NowPlayingNetEaseEntry {
+    std::int64_t identifier{};              // the public catalog song id (> 0)
+    std::optional<double>duration;          // seconds, from "duration" (ms)
+    std::optional<std::string>artwork;      // allow-listed catalog cover, when present
+    bool operator==(const NowPlayingNetEaseEntry&)const=default;
+};
+// The queue entry whose track the window title names (conservative identity:
+// the shared NowPlayingTrackMatcher, the same rule the catalog match uses, so
+// a wrong queue entry is never taken). nullopt for no confident match.
+std::optional<NowPlayingNetEaseEntry>nowPlayingNetEasePlayingListEntry(std::span<const std::uint8_t>,const NowPlayingTrack&);
 // p1-p4.music.126.net only; scheme forced to https and query to param=600y600.
 std::optional<std::string>nowPlayingCatalogCoverURL(std::string_view);
 // Windows: the same cover at `pixels` square (param=<pixels>y<pixels>, 64...600)
@@ -121,8 +141,18 @@ public:
 private:struct Impl;std::shared_ptr<Impl>impl_;
 };
 
+// Returns the raw bytes of NetEase's queue state file, or null (no file, not
+// NetEase, or no reader). Called on the owner thread once per distinct track;
+// the parse itself runs on the decoder. The host returns cached bytes so the
+// repeated calls are cheap; nothing is stored here.
+using NowPlayingPlayingListReader=std::function<NowPlayingBody()>;
+
 // Source NowPlayingCatalog (NetEase public cloudsearch + song/lyric): one
-// search supplies cover and song ID; only that song's lyrics are read.
+// search supplies cover and song ID; only that song's lyrics are read. When a
+// queue-file reader is set, a NetEase track first resolves its exact song id
+// and length from that file (nowPlayingNetEasePlayingListEntry), reads that
+// song's lyrics by id and keeps the length, and only falls back to the fuzzy
+// title search when the file gives no confident match.
 class NowPlayingCatalog final {
 public:
     explicit NowPlayingCatalog(NowPlayingFetch,NowPlayingDecoder=nowPlayingInlineDecoder());
@@ -130,6 +160,7 @@ public:
     NowPlayingCatalog(const NowPlayingCatalog&)=delete;
     NowPlayingCatalog&operator=(const NowPlayingCatalog&)=delete;
     void setOnChange(std::function<void()>);
+    void setPlayingList(NowPlayingPlayingListReader);
     std::optional<std::string>artwork()const;
     std::shared_ptr<const NowPlayingLyrics>lyrics()const;
     // The current match's catalog length (NowPlayingCatalogMatch::duration).
@@ -156,6 +187,9 @@ public:
     // Called inside loader callbacks; must not re-enter update/hide.
     std::function<void()>onChange;
     std::function<void(const std::string&url,const NowPlayingLyricsKey&)>onArtworkURL;
+    // NetEase queue-file reader (NowPlayingCatalog::setPlayingList); null keeps
+    // the fuzzy title search, which is what the injected source backends do.
+    void setPlayingList(NowPlayingPlayingListReader);
     // Source changed(): the active presented session/track (or none).
     void update(std::optional<NowPlayingLyricsKey>,const std::optional<NowPlayingTrack>&);
     // Source deactivate(): cancel in-flight work, keep bounded caches.

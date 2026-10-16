@@ -74,6 +74,7 @@ struct NowPlayingSession::Impl:std::enable_shared_from_this<Impl>{
    if(!queued){work();done();}
   };
   sources=std::make_unique<modules::NowPlayingLyricsSources>(web?web->lyricsFetch():modules::nowPlayingOfflineFetch(),bool(web),std::move(decoder));
+  if(options.neteasePlayingList)sources->setPlayingList(std::move(options.neteasePlayingList));
   Impl*self=this;sources->onChange=[self]{self->sourcesDirty=true;};
   commandSources.reserve(9);
  }

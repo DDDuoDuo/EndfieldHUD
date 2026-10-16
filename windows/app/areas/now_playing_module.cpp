@@ -16,10 +16,13 @@
 #include <array>
 #include <atomic>
 #include <cmath>
+#include <cstdint>
 #include <limits>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <vector>
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -33,6 +36,67 @@ namespace gpu = native;
 using app::ApplicationAreaMode;
 using modules::NowPlayingAction;
 using modules::NowPlayingSliderKind;
+
+// Reads NetEase Cloud Music's own queue state file so the catalog can resolve
+// the current track's exact length and song id (its player bar exposes no
+// time labels and no accessible slider value, read live on 3.1.41). Returns
+// the raw bytes, cached and re-read only when the file's size or write time
+// changes (NetEase rewrites it on a track change), so the owner-thread caller
+// pays a stat on each distinct track and a bounded read only on a real
+// change; the parse itself runs on the shared decode worker. Nothing is kept
+// beyond the latest bytes, and nothing is written. Null when the file is
+// absent, unreadable or larger than the bound (no NetEase install, or a
+// portable build with a different data directory).
+modules::NowPlayingPlayingListReader neteasePlayingListReader() {
+    struct Cache {
+        std::wstring path;
+        bool resolved{};
+        FILETIME written{};
+        unsigned long long size{};
+        modules::NowPlayingBody bytes;
+    };
+    auto cache = std::make_shared<Cache>();
+    return [cache]() -> modules::NowPlayingBody {
+        constexpr unsigned long long maximumBytes = 16ull * 1024 * 1024;
+        if (!cache->resolved) {
+            cache->resolved = true;
+            wchar_t local[MAX_PATH]{};
+            const DWORD length = GetEnvironmentVariableW(L"LOCALAPPDATA", local, static_cast<DWORD>(std::size(local)));
+            if (length > 0 && length < std::size(local))
+                cache->path = std::wstring(local, length) + L"\\NetEase\\CloudMusic\\webdata\\file\\playingList";
+        }
+        if (cache->path.empty()) return nullptr;
+        WIN32_FILE_ATTRIBUTE_DATA info{};
+        if (!GetFileAttributesExW(cache->path.c_str(), GetFileExInfoStandard, &info)) { cache->bytes.reset(); return nullptr; }
+        const unsigned long long size = (static_cast<unsigned long long>(info.nFileSizeHigh) << 32) | info.nFileSizeLow;
+        if (cache->bytes && size == cache->size && CompareFileTime(&info.ftLastWriteTime, &cache->written) == 0) return cache->bytes;
+        cache->bytes.reset();
+        cache->size = size;
+        cache->written = info.ftLastWriteTime;
+        if (!size || size > maximumBytes) return nullptr;
+        const HANDLE file = CreateFileW(cache->path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (file == INVALID_HANDLE_VALUE) return nullptr;
+        auto data = std::make_shared<std::vector<std::uint8_t>>();
+        try {
+            data->resize(static_cast<std::size_t>(size));
+        } catch (...) {
+            CloseHandle(file);
+            return nullptr;
+        }
+        std::size_t read = 0;
+        while (read < data->size()) {
+            DWORD got = 0;
+            const DWORD want = static_cast<DWORD>(std::min<unsigned long long>(1u << 20, data->size() - read));
+            if (!ReadFile(file, data->data() + read, want, &got, nullptr) || got == 0) break;
+            read += got;
+        }
+        CloseHandle(file);
+        if (read != data->size()) return nullptr; // the file changed under us; a later call retries
+        cache->bytes = std::move(data);
+        return cache->bytes;
+    };
+}
 
 bool hasPixels(const app::ClientMetrics& m) { return m.pixelWidth && m.pixelHeight && std::isfinite(m.scale) && m.scale > 0; }
 bool modifierDown() { return (GetKeyState(VK_CONTROL) & 0x8000) || (GetKeyState(VK_MENU) & 0x8000) || (GetKeyState(VK_SHIFT) & 0x8000); }
@@ -200,6 +264,9 @@ public:
             web_ = std::make_shared<gpu::NowPlayingWeb>(http_->transport(), wake, c.clock, 10, webCache_);
             options.web = web_;
             options.coverPixels = coverPixels(c.metrics);
+            // NetEase's own queue file supplies the exact length and song id
+            // for its window-title player (no time labels, no slider value).
+            options.neteasePlayingList = neteasePlayingListReader();
             // The playing app's mixer route through the ONE shared audio worker;
             // without it the source "unavailable" submenu remains.
             if (auto* audio = host_.audio()) options.volume = gpu::nowPlayingAppVolume(*audio);
