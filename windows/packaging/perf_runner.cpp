@@ -10,6 +10,7 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <fstream>
 #include <functional>
 #include <iterator>
@@ -46,6 +47,19 @@ void sleepSeconds(double seconds, void* cancel) {
     const auto ms = seconds > 0 ? static_cast<DWORD>(std::lround(seconds * 1000)) : 0;
     if (!cancel) { if (ms) Sleep(ms); return; }
     if (WaitForSingleObject(static_cast<HANDLE>(cancel), ms) == WAIT_OBJECT_0) throw Cancelled();
+}
+// The executable's image (both checks below look for names in it).
+std::string imageOf(const fs::path& executable) {
+    std::ifstream in(executable, std::ios::binary);
+    if (!in) return {};
+    std::string image((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    return image.size() > 2 && image[0] == 'M' && image[1] == 'Z' ? image : std::string();
+}
+// "10", "1.5": the grace as EndfieldHUD reads it (wcstod, C locale).
+std::wstring graceText(double seconds) {
+    char text[32]{};
+    std::snprintf(text, sizeof(text), "%.6g", seconds);
+    return std::wstring(text, text + std::strlen(text));
 }
 std::string utcNow() {
     SYSTEMTIME t{};
@@ -184,21 +198,40 @@ double estimatedGateSeconds(const GateOptions& o) {
     if (o.open) total += o.seconds;
     if (o.lifecycle) total += forward + o.closeSettle + static_cast<double>(o.cycles) * (2 * forward + o.openSettle + o.closeSettle) + o.settle;
     if (o.target == GateOptions::Target::endfieldhud && o.ambientOff) total += launch + o.settle + forward + o.openSettle + o.settle + o.seconds + stop;
+    if (o.released) total += launch + o.settle + 2 * forward + o.openSettle + o.settle + releaseWaitGrace(o) + o.settle + o.seconds + stop;
     return total;
 }
 
 bool supportsGateControl(const fs::path& executable) {
-    std::ifstream in(executable, std::ios::binary);
-    if (!in) return false;
-    const std::string image((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    return image.size() > 2 && image[0] == 'M' && image[1] == 'Z' && image.find("--data-root") != std::string::npos && image.find("--toggle") != std::string::npos;
+    const auto image = imageOf(executable);
+    return image.find("--data-root") != std::string::npos && image.find("--toggle") != std::string::npos;
 }
+
+bool supportsGraceOverride(const fs::path& executable) {
+    const auto image = imageOf(executable);
+    if (image.empty()) return false;
+    const std::string name(graceOverrideVariable);
+    std::string wide; // GetEnvironmentVariableW's UTF-16LE literal
+    for (const char c : name) {
+        wide.push_back(c);
+        wide.push_back('\0');
+    }
+    return image.find(wide) != std::string::npos || image.find(name) != std::string::npos;
+}
+
+double releaseWaitGrace(const GateOptions& o) { return supportsGraceOverride(o.executable) ? o.releaseGrace : productionGraphicsGraceSeconds; }
 
 GateRun runPerformanceGate(const GateOptions& o) {
     const bool app = o.target == GateOptions::Target::endfieldhud;
     if (app && !supportsGateControl(o.executable))
         throw std::runtime_error("This EndfieldHUD.exe has no --data-root/--toggle support, so the gate does not run it (it would use the real data root)");
     if (o.interval <= 0 || o.seconds < 2 * o.interval) throw std::runtime_error("The sampling window needs at least two intervals");
+    if (o.released && !(o.releaseGrace >= 1 && o.releaseGrace <= 3600)) throw std::runtime_error("The release grace is 1...3600 seconds");
+    // The "released" launch shortens the graphics grace when the executable
+    // can (EndfieldHUD only with --data-root); otherwise it waits the
+    // production ten minutes. Every other launch keeps the production grace.
+    const bool graceOverride = o.released && supportsGraceOverride(o.executable);
+    const double releaseGrace = graceOverride ? o.releaseGrace : productionGraphicsGraceSeconds;
     auto work = o.workFolder;
     if (work.empty()) {
         std::wstring temp(MAX_PATH + 1, L'\0');
@@ -262,7 +295,20 @@ GateRun runPerformanceGate(const GateOptions& o) {
             throw std::runtime_error("A forwarded launch did not complete (exit " + (code ? std::to_string(*code) : std::string("timeout")) + ")");
         }
     };
-    const auto idle = [&](ProcessProbe& probe, const std::string& name, const IdleLimits& limits, const char* point, const FootprintLimits& footprintLimits) {
+    // What a closed window measures: "within-grace" (the device kept) or
+    // "after-release", closed since the "launch" or a "close".
+    const auto closedState = [&](const char* state, const char* since, double grace, bool overridden) {
+        Json::Object c;
+        c["state"] = state;
+        c["since"] = since;
+        c["graceSeconds"] = number(grace);
+        c["productionGraceSeconds"] = number(productionGraphicsGraceSeconds);
+        c["graceOverride"] = overridden;
+        return c;
+    };
+    // `closed`: the closed state and since when (gate clock) it was closed.
+    const auto idle = [&](ProcessProbe& probe, const std::string& name, const IdleLimits& limits, const char* point, const FootprintLimits& footprintLimits,
+                          const std::optional<std::pair<Json::Object, double>>& closed = std::nullopt) {
         std::vector<ResourceSample> samples{probe.sample()};
         probe.markThreads();
         const auto start = samples.front().time;
@@ -277,6 +323,11 @@ GateRun runPerformanceGate(const GateOptions& o) {
         Json::Object scenario;
         scenario["name"] = name;
         scenario["kind"] = "idle";
+        if (closed) {
+            auto state = closed->first;
+            state["closedSeconds"] = number(start - closed->second);
+            scenario["closed"] = std::move(state);
+        }
         scenario["summary"] = idleJson(summary);
         scenario["limits"] = limitsJson(limits);
         scenario["busiestThreads"] = threadsJson(probe.threadsSinceMark(8));
@@ -299,13 +350,18 @@ GateRun runPerformanceGate(const GateOptions& o) {
             fs::remove(traceFile, ignored);
             environment.emplace_back(L"ENDFIELDHUD_STARTUP_TRACE", L"1");
         }
+        const auto launched = gateClock();
         GateProcess process(o.executable, primary, folder, environment);
         if (!process.waitIdle(60000)) failed("The measured program did not reach its message loop within 60 s");
         wait(o.settle);
         checkFatal("during startup");
         if (!process.running()) throw std::runtime_error("The measured program exited during startup");
         ProcessProbe probe(process.id());
-        if (closed) idle(probe, "closed-idle", o.closedLimits, "closed", o.closedFootprint);
+        // Started closed: the production grace runs from the launch prewarm,
+        // so the HUD still keeps its graphics device here.
+        if (closed)
+            idle(probe, "closed-within-grace", o.graceLimits, "closed", o.closedFootprint,
+                 std::pair{closedState("within-grace", "launch", productionGraphicsGraceSeconds, false), launched});
         if (open || lifecycle) {
             forward(reopen);
             wait(o.openSettle + o.settle);
@@ -370,17 +426,65 @@ GateRun runPerformanceGate(const GateOptions& o) {
         }
         return probe.gpuCounters();
     };
+    // Closed after the graphics release: a separate launch (ambient on) with
+    // the shortened grace when supported, opened once and closed, then left
+    // closed for the grace plus <settle> so the release (and a retry after a
+    // media owner let go) has happened before the window.
+    const auto releasedSession = [&] {
+        if (app) (void)prepareDataRoot(base, true);
+        {
+            std::error_code ignored;
+            fs::remove(fatalFile, ignored);
+        }
+        GateProcess::Environment environment;
+        const std::string variable(graceOverrideVariable);
+        if (graceOverride) environment.emplace_back(std::wstring(variable.begin(), variable.end()), graceText(o.releaseGrace));
+        GateProcess process(o.executable, primary, folder, environment);
+        if (!process.waitIdle(60000)) failed("The measured program did not reach its message loop within 60 s");
+        wait(o.settle);
+        checkFatal("during startup");
+        if (!process.running()) throw std::runtime_error("The measured program exited during startup");
+        ProcessProbe probe(process.id());
+        forward(reopen);
+        wait(o.openSettle + o.settle);
+        checkFatal("while the HUD opened");
+        forward(toggle); // close
+        const auto closedAt = gateClock();
+        wait(releaseGrace + o.settle);
+        checkFatal("while the HUD stayed closed");
+        if (probe.exited()) throw std::runtime_error("The measured process exited while the HUD stayed closed");
+        idle(probe, "closed-after-release", o.releasedLimits, "after-release", o.releasedFootprint,
+             std::pair{closedState("after-release", "close", releaseGrace, graceOverride), closedAt});
+        checkFatal("during the measurement");
+        if (!process.stopGracefully(30000)) failed("The measured program did not exit through the session-end protocol");
+        return probe.gpuCounters();
+    };
 
-    bool gpu{};
+    std::optional<bool> gpu;
+    const auto counters = [&](bool available) { gpu = gpu.value_or(true) && available; };
     try {
-        gpu = session(true, o.closed, o.open, o.lifecycle, app ? "open-idle-ambient-on" : "open-idle", o.openLimits, "open", o.openFootprint, tracing);
+        if (o.closed || o.open || o.lifecycle)
+            counters(session(true, o.closed, o.open, o.lifecycle, app ? "open-idle-ambient-on" : "open-idle", o.openLimits, "open", o.openFootprint, tracing));
         if (app && o.ambientOff)
-            gpu = session(false, false, true, false, "open-idle-ambient-off", o.ambientOffLimits, "open-ambient-off", o.ambientOffFootprint, false) && gpu;
+            counters(session(false, false, true, false, "open-idle-ambient-off", o.ambientOffLimits, "open-ambient-off", o.ambientOffFootprint, false));
+        if (o.released) counters(releasedSession());
     } catch (const Cancelled& e) {
         run.cancelled = true;
         failed(e.what());
     } catch (const std::exception& e) {
         failed(e.what());
+    }
+    // The two closed windows side by side (the release launch runs last).
+    {
+        const auto named = [&](std::string_view name) {
+            return std::find_if(scenarios.begin(), scenarios.end(), [&](const Json& s) { return s["name"].isString() && s["name"].string() == name; });
+        };
+        const auto released = named("closed-after-release");
+        if (released != scenarios.end() && named("closed-within-grace") != scenarios.end()) {
+            auto moved = std::move(*released);
+            scenarios.erase(released);
+            scenarios.insert(named("closed-within-grace") + 1, std::move(moved));
+        }
     }
     // Memory, threads and handles first: every point measured, also of a
     // cancelled or failed run.
@@ -424,22 +528,33 @@ GateRun runPerformanceGate(const GateOptions& o) {
     settings["closeSettleSeconds"] = number(o.closeSettle);
     settings["sampleIntervalSeconds"] = number(o.interval);
     settings["cycles"] = static_cast<std::int64_t>(o.cycles);
+    settings["productionGraphicsGraceSeconds"] = number(productionGraphicsGraceSeconds);
+    if (o.released) {
+        settings["releaseGraceSeconds"] = number(releaseGrace);
+        settings["graceOverride"] = graceOverride;
+    }
     settings["dataRoot"] = app ? "temporary (deleted after the run)" : "none";
     Json::Object report;
     report["format"] = "EndfieldHUD.Windows.PerformanceGate";
-    report["schema"] = 2;
+    report["schema"] = 3;
     report["measuredAt"] = utcNow();
     report["machine"] = std::move(m);
     report["target"] = std::move(target);
     report["settings"] = std::move(settings);
     report["scenarios"] = std::move(scenarios);
-    report["gpuCounters"] = gpu ? "available" : "unavailable in this session";
+    report["gpuCounters"] = gpu.value_or(false) ? "available" : "unavailable in this session";
     report["startupTrace"] = trace ? *trace : Json(nullptr);
     report["cancelled"] = run.cancelled;
     report["notes"] = Json::Array{
         Json("Wakeups are thread context switches of the measured process (all threads), sampled with NtQuerySystemInformation."),
         Json("CPU is user+kernel time of the measured process as a percentage of one core; compositor and GPU work in other processes are not included."),
         Json("Limits are provisional engineering gates, not Mac parity figures; values are reported regardless."),
+        Json("Closed: EndfieldHUD keeps its graphics device for ten minutes after closing and after launch, so that reopening stays fast, and releases it "
+             "afterwards (app/application.hpp closedGraphicsGraceSeconds). Within that grace the live device keeps the graphics driver's thread waking the "
+             "process, so that window has a higher wake-up bound; after the release the strict bound applies. The release is measured in a separate launch, "
+             "with the grace shortened through ENDFIELDHUD_CLOSED_GRAPHICS_GRACE when the program honours it (EndfieldHUD only with --data-root)."),
+        Json("Frame submission: the gate cannot count presents from outside; a closed HUD submits no GPU work, so GPU busy is its measure where Windows "
+             "exposes the GPU counters."),
         Json("Opening timings come from the app's own startup trace (ENDFIELDHUD_STARTUP_TRACE=1): the wall time of each presented frame since the opening request and the CPU time of present()."),
         Json("Footprint: private bytes are the process's commit charge (PrivateUsage), peaks PeakPagefileUsage and PeakWorkingSetSize; committed memory by region type and the largest private allocations come from VirtualQueryEx; threads are grouped by their Win32 start address, and Windows thread-pool workers are recognized by the gate's own pool worker.")};
     Json::Array failures;

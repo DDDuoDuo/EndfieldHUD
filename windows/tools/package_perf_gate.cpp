@@ -1,9 +1,11 @@
-// WINDOWS-MIGRATION.md section 9 gate tool: closed idle, open idle (ambient
-// animation on and off), the cold and warm openings, repeated open/close
-// lifecycle and the memory/thread/handle footprint (closed after launch,
-// open, closed after the cycles) of a real EndfieldHUD.exe, measured from
-// outside with a temporary data root. Writes a JSON report and a readable
-// Markdown report.
+// WINDOWS-MIGRATION.md section 9 gate tool: closed idle on both sides of the
+// graphics grace (within it the HUD keeps its graphics device for fast
+// reopening; after it the device is released), open idle (ambient animation
+// on and off), the cold and warm openings, repeated open/close lifecycle and
+// the memory/thread/handle footprint (closed after launch, open, closed after
+// the cycles, closed after the release) of a real EndfieldHUD.exe, measured
+// from outside with a temporary data root. Writes a JSON report and a
+// readable Markdown report.
 //
 // On the laptop desktop, one command (from the build's Release folder):
 //
@@ -11,17 +13,24 @@
 //
 // measures the EndfieldHUD.exe next to the tool with the default settings
 // and writes performance-reports\<local time>\performance-gate.json/.md next
-// to it. It opens and closes the HUD about 100 times over ~10 minutes, so it
-// asks first and never starts on its own.
+// to it. It opens and closes the HUD about 100 times over ~12 minutes (an
+// EndfieldHUD.exe that cannot shorten its graphics grace for the release
+// launch adds the ten-minute grace), so it asks first and never starts on
+// its own.
 //
 // Full form:
 //   package_perf_gate --exe <EndfieldHUD.exe> --report <report.json> [--markdown <report.md>]
-//       [--scenarios closed,open,ambient-off,lifecycle] [--seconds 60] [--settle 10]
-//       [--cycles 100] [--open-settle 1.5] [--close-settle 1.5] [--interval 1]
+//       [--scenarios closed,released,open,ambient-off,lifecycle] [--seconds 60] [--settle 10]
+//       [--cycles 100] [--open-settle 1.5] [--close-settle 1.5] [--interval 1] [--release-grace 10]
 //       [--limit <scenario>.<metric>=<value>]... [--no-startup-trace] [--work-folder <dir>] [--keep-data] [--yes]
 //   package_perf_gate --render <report.json> [--markdown <report.md>]
 //
-// Limits: closed|open|ambient-off . cpu|wakeups|gpu|private-growth (idle) and
+// Scenarios: closed = closed within the graphics grace (after launch);
+// released = closed after the graphics release (a separate launch, opened
+// once and closed; --release-grace seconds through ENDFIELDHUD_CLOSED_GRAPHICS_
+// GRACE when the executable honours it, otherwise the production ten minutes).
+//
+// Limits: closed|released|open|ambient-off . cpu|wakeups|gpu|private-growth (idle) and
 // private|working-set|threads|handles (footprint at the end of that idle),
 // after-cycles . private|working-set|threads|handles (closed, after the cycles),
 // lifecycle . handles|threads|gdi|user|private|working-set|gpu-dedicated|warmup|window,
@@ -86,7 +95,7 @@ void setLimit(p::GateOptions& o, const std::string& assignment) {
     if (equals == std::string::npos || dot == std::string::npos || dot > equals) throw std::invalid_argument("--limit needs <scenario>.<metric>=<value>");
     const auto scenario = assignment.substr(0, dot), metric = assignment.substr(dot + 1, equals - dot - 1), text = assignment.substr(equals + 1);
     const std::optional<double> value = text == "none" ? std::nullopt : std::optional<double>(number(text));
-    // Footprint points: closed, open, ambient-off and after-cycles.
+    // Footprint points: closed, released, open, ambient-off and after-cycles.
     const auto footprint = [&](p::FootprintLimits& l) {
         if (metric == "private") l.privateBytes = value;
         else if (metric == "working-set") l.workingSet = value;
@@ -97,9 +106,10 @@ void setLimit(p::GateOptions& o, const std::string& assignment) {
     };
     if (scenario == "after-cycles") {
         if (!footprint(o.cyclesFootprint)) throw std::invalid_argument("Unknown footprint metric: " + metric);
-    } else if (scenario == "closed" || scenario == "open" || scenario == "ambient-off") {
-        auto& l = scenario == "closed" ? o.closedLimits : scenario == "open" ? o.openLimits : o.ambientOffLimits;
-        if (footprint(scenario == "closed" ? o.closedFootprint : scenario == "open" ? o.openFootprint : o.ambientOffFootprint)) return;
+    } else if (scenario == "closed" || scenario == "released" || scenario == "open" || scenario == "ambient-off") {
+        auto& l = scenario == "closed" ? o.graceLimits : scenario == "released" ? o.releasedLimits : scenario == "open" ? o.openLimits : o.ambientOffLimits;
+        if (footprint(scenario == "closed" ? o.closedFootprint : scenario == "released" ? o.releasedFootprint
+                      : scenario == "open" ? o.openFootprint : o.ambientOffFootprint)) return;
         if (metric == "cpu") l.cpuPercent = value;
         else if (metric == "wakeups") l.wakeupsPerSecond = value;
         else if (metric == "gpu") l.gpuPercent = value;
@@ -159,12 +169,21 @@ void writeText(const fs::path& file, const std::string& text) {
 // when there is no console to answer on.
 bool confirmed(const p::GateOptions& o, const fs::path& report) {
     const auto minutes = std::max(1.0, std::round(p::estimatedGateSeconds(o) / 60.0));
-    const auto openings = (o.open || o.lifecycle ? 1 : 0) + (o.lifecycle ? static_cast<double>(o.cycles) : 0.0) + (o.ambientOff ? 1 : 0);
+    const auto openings = (o.open || o.lifecycle ? 1 : 0) + (o.lifecycle ? static_cast<double>(o.cycles) : 0.0) + (o.ambientOff ? 1 : 0) + (o.released ? 1 : 0);
     std::cout << "\nEndfieldHUD performance gate (WINDOWS-MIGRATION.md section 9)\n\n"
               << "  Program:  " << narrow(o.executable.native()) << "\n"
               << "  Data:     a new temporary data root (your EndfieldHUD data, startup entry and running copy are not used)\n"
               << "  Duration: about " << minutes << " minute(s)\n"
-              << "  Report:   " << narrow(report.native()) << "\n\n"
+              << "  Report:   " << narrow(report.native()) << "\n";
+    if (o.released) {
+        if (p::supportsGraceOverride(o.executable))
+            std::cout << "  Release:  the closed HUD after its graphics release is measured with the grace shortened to " << o.releaseGrace
+                      << " s for that launch\n            (" << p::graceOverrideVariable << ", honoured only with a temporary data root)\n";
+        else
+            std::cout << "  Release:  this EndfieldHUD.exe cannot shorten its ten-minute graphics grace, so the gate waits the full ten\n"
+                      << "            minutes once (leave out \"released\" with --scenarios to skip it)\n";
+    }
+    std::cout << "\n"
               << "The HUD opens and closes on this desktop about " << static_cast<long long>(openings) << " times. Do not use the mouse or\n"
               << "keyboard until the gate reports its result. To stop early, switch to this window and press\n"
               << "Ctrl+C, or close this window (the measured EndfieldHUD ends with it).\n\n";
@@ -216,11 +235,17 @@ int wmain(int argc, wchar_t** argv) {
             else if (name == L"--scenarios") {
                 const auto list = "," + value() + ",";
                 o.closed = list.find(",closed,") != std::string::npos;
+                o.released = list.find(",released,") != std::string::npos;
                 o.open = list.find(",open,") != std::string::npos;
                 o.ambientOff = list.find(",ambient-off,") != std::string::npos;
                 o.lifecycle = list.find(",lifecycle,") != std::string::npos;
-                if (!o.closed && !o.open && !o.ambientOff && !o.lifecycle) throw std::invalid_argument("--scenarios names none of closed,open,ambient-off,lifecycle");
+                if (!o.closed && !o.released && !o.open && !o.ambientOff && !o.lifecycle)
+                    throw std::invalid_argument("--scenarios names none of closed,released,open,ambient-off,lifecycle");
             } else if (name == L"--seconds") o.seconds = number(value());
+            else if (name == L"--release-grace") {
+                o.releaseGrace = number(value());
+                if (o.releaseGrace < 1 || o.releaseGrace > 3600) throw std::invalid_argument("--release-grace is 1...3600 seconds");
+            }
             else if (name == L"--settle") o.settle = number(value());
             else if (name == L"--open-settle") o.openSettle = number(value());
             else if (name == L"--close-settle") o.closeSettle = number(value());

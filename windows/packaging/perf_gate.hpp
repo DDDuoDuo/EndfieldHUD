@@ -8,14 +8,18 @@
 // module turns the samples into gate results:
 //
 //   closed idle  CPU % of one core, wakeups (context switches) per second,
-//                GPU busy %, private-byte drift over the window
+//                GPU busy %, private-byte drift over the window, twice:
+//                within the graphics grace (the HUD keeps its device, so the
+//                graphics driver's thread wakes the process: a higher
+//                wake-up bound) and after the release (strict bound)
 //   open idle    the same with ambient animation on and off
 //   lifecycle    N open/close cycles: growth of handles, threads, GDI/USER
 //                objects, private bytes, working set and GPU memory between
 //                the first window after warm-up and the last window
 //   footprint    private bytes, working set, their peaks, threads (grouped
-//                by start module) and handles closed after launch, open, and
-//                closed again after the N cycles settled
+//                by start module) and handles closed after launch, open,
+//                closed again after the N cycles settled and closed after
+//                the graphics release
 //
 // The default limits are provisional engineering gates, not Mac parity
 // numbers (the Mac's closed CPU was 0.11-0.26 % of one core; docs/
@@ -29,6 +33,19 @@
 #include <vector>
 
 namespace endfield::packaging {
+// The closed HUD's graphics grace (app/application.hpp
+// closedGraphicsGraceSeconds, since 3eecf89): EndfieldHUD keeps its graphics
+// device, swap chain and composition target for ten minutes after closing
+// (and after launch), so a reopening within them stays fast, and releases
+// them afterwards. While the device lives, the graphics driver's thread wakes
+// the process (about 70 times a second on the laptop's NVIDIA GPU; RC 128's
+// desktop gate measured 73.0/s closed), so the gate measures the closed HUD
+// on both sides of the grace.
+inline constexpr double productionGraphicsGraceSeconds = 600;
+// The environment variable through which a gate run shortens that grace.
+// EndfieldHUD.exe honours it ONLY together with --data-root (an isolated
+// temporary root); the gate sets it for its separate "released" launch only.
+inline constexpr std::string_view graceOverrideVariable{"ENDFIELDHUD_CLOSED_GRAPHICS_GRACE"};
 struct ThreadActivity {
     std::uint32_t id{};
     std::string name;        // thread description, when set
@@ -48,9 +65,10 @@ struct ResourceSample {
 
 // --- Footprint: memory, threads and handles at fixed points of the run ------
 // Section 9 asks for private bytes, working set and allocation peaks; the
-// points are the end of closed idle (after launch), the end of open idle
-// (ambient on, and ambient off) and the closed HUD after the open/close
-// cycles settled. Each point also lists the process's threads grouped by
+// points are the end of closed idle within the graphics grace (after
+// launch), the end of open idle (ambient on, and ambient off), the closed HUD
+// after the open/close cycles settled and the end of closed idle after the
+// graphics release. Each point also lists the process's threads grouped by
 // their start address (module+offset) and description, and its committed
 // memory by region type with the largest private allocations.
 struct ThreadGroup {
@@ -68,7 +86,7 @@ struct FootprintLimits {
     std::optional<double> privateBytes, workingSet, threads, handles;
 };
 struct FootprintPoint {
-    std::string point; // "closed", "open", "after-cycles", "open-ambient-off"
+    std::string point; // "closed", "open", "after-cycles", "open-ambient-off", "after-release"
     ResourceSample sample;
     std::optional<MemoryRegions> regions;
     std::vector<ThreadGroup> threads;

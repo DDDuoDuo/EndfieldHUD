@@ -71,13 +71,14 @@ ehud::data::Json footprintScenario(std::span<const FootprintPoint> points, std::
 
 // Markdown rendering of an EndfieldHUD.Windows.PerformanceGate report (the
 // JSON perf_runner writes): verdict, machine, every scenario with its values,
-// limits and results, the opening timings, lifecycle growth, the busiest
+// limits and results (a closed window also says which side of the graphics
+// grace it measured), the opening timings, lifecycle growth, the busiest
 // threads and the notes. Missing or unavailable values are written as such,
 // never as zero. Throws std::invalid_argument for another document format.
 std::string renderGateMarkdown(const ehud::data::Json& report);
 // A failed gate for the report's failure list, e.g.
-// "closed-idle: CPU 0.84 % of one core (limit 0.50 % of one core)".
+// "closed-within-grace: CPU 0.84 % of one core (limit 0.50 % of one core)".
 std::string describeFailure(std::string_view scenario, const GateResult&);
-// One line per scenario for the console ("closed-idle  PASS  CPU 0.12 % ...").
+// One line per scenario for the console ("closed-after-release  PASS  CPU 0.12 % ...").
 std::string summarizeGateReport(const ehud::data::Json& report);
 } // namespace endfield::packaging

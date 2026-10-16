@@ -431,13 +431,15 @@ Build it first with `cmake --build <build> --config Release --target EndfieldHUD
 settings below, and writes
 `Release\performance-reports\<local time>\performance-gate.json` and the
 readable `performance-gate.md`. The run opens and closes the HUD about 100
-times over roughly ten minutes, so the tool never starts on its own:
+times over roughly twelve minutes (ten more when the `EndfieldHUD.exe`
+cannot shorten its graphics grace, see *The closed HUD and the graphics
+grace* below), so the tool never starts on its own:
 
 - No CTest, CI step or build target runs it against `EndfieldHUD.exe`. Its
   tests drive the packaging stand-in app only.
 - Whenever the measured app would appear on a visible desktop, the tool first
-  describes the run (program, temporary data, duration, report path) and
-  waits for Enter. Without a console to answer on it refuses unless `--yes` is
+  describes the run (program, temporary data, duration, report path, and how
+  the release window is reached) and waits for Enter. Without a console to answer on it refuses unless `--yes` is
   given. `--desktop` itself refuses in a session without a visible desktop.
 - An `EndfieldHUD.exe` without `--data-root`/`--toggle` support is never
   started (exit 2).
@@ -452,8 +454,8 @@ Full form:
 
 ```
 package_perf_gate --exe <EndfieldHUD.exe> --report <report.json> [--markdown <report.md>]
-    [--scenarios closed,open,ambient-off,lifecycle] [--seconds 60] [--settle 10]
-    [--cycles 100] [--open-settle 1.5] [--close-settle 1.5] [--interval 1]
+    [--scenarios closed,released,open,ambient-off,lifecycle] [--seconds 60] [--settle 10]
+    [--cycles 100] [--open-settle 1.5] [--close-settle 1.5] [--interval 1] [--release-grace 10]
     [--limit <scenario>.<metric>=<value>]… [--no-startup-trace] [--work-folder <dir>] [--keep-data] [--yes]
 package_perf_gate --render <report.json> [--markdown <report.md>]
 ```
@@ -477,7 +479,9 @@ administrator rights nor an ETW session is needed. It records the following:
 
 It runs these scenarios:
 
-1. **Closed idle**, 60 s.
+1. **Closed, within the graphics grace**, 60 s: the HUD starts closed
+   (`--login`) and is sampled after `--settle`, while it still keeps its
+   graphics device (below). `--scenarios closed`.
 2. **Open idle** with ambient animation on. The opening before it is the
    **cold opening**.
 3. **Lifecycle**: 100 open/close cycles. Growth is the median of the last 10
@@ -493,23 +497,65 @@ It runs these scenarios:
    of `present()`. It also lists the launch-to-first-frame time, the slowest
    startup stages and the module owners with the longest frame work during
    the cold opening. The HUD starts closed and the gate opens it only after
-   the closed idle window, so the report then says that launch to the first
+   the closed window within the grace, so the report then says that launch to the first
    frame is mostly that wait and gives the startup time before the window
    instead (the first desktop run showed 70975 ms there, of which 1098 ms
    were startup). This is the measurement for a slow or stuttering first
    opening after launch (section 9: "profile first and warmed opens
    separately", p50/p95 frame times, startup latency).
 5. **Open idle** with ambient animation off.
-6. **Memory, threads and handles** (listed first in the report): private
-   bytes, working set and their peaks, threads, handles, GDI/USER objects, GPU
-   memory, committed memory by type, the largest private allocations and the
-   threads by start address at four points: closed after launch (the end of
-   closed idle), open (the end of each open idle) and closed after the cycles
-   (`--settle` seconds after the last close, so deferred releases have run).
-   The report also states what the closed HUD kept after use (closed after
-   the cycles minus closed after launch). This is the measurement for the
-   reported footprint of the live build (426 MB private bytes and 95 threads
-   soon after launch, 599 MB and 69 threads after use).
+6. **Closed, after the graphics release**, 60 s, in a separate launch: the
+   HUD is opened once, closed, and left closed for the graphics grace plus
+   `--settle` before the window. `--scenarios released`.
+7. **Memory, threads and handles** (listed first in the report): private
+   bytes, working set and their peaks, threads (also the graphics driver's
+   threads alone), handles, GDI/USER objects, GPU memory, committed memory by
+   type, the largest private allocations and the threads by start address at
+   five points: closed after launch (the end of the window within the grace),
+   open (the end of each open idle), closed after the cycles (`--settle`
+   seconds after the last close, so deferred releases have run) and closed
+   after the release (the end of that window). The report also states what
+   the closed HUD kept after use (closed after the cycles minus closed after
+   launch) and what the graphics release gave back (closed after the release
+   minus closed after launch, two launches of the same program). This is the
+   measurement for the reported footprint of the live build (426 MB private
+   bytes and 95 threads soon after launch, 599 MB and 69 threads after use).
+
+**The closed HUD and the graphics grace.** Since `3eecf89` EndfieldHUD keeps
+its graphics device, swap chain and composition target for ten minutes after
+closing, and after launch (`app/application.hpp`
+`closedGraphicsGraceSeconds`), so every reopening within them stays fast
+(about 10–18 ms in hidden traces); it releases them afterwards. While the
+device lives, the graphics driver's thread wakes the process: 67–83 times a
+second on the laptop's NVIDIA GPU, 0.05–0.10 times once released (hidden
+traces). Release candidate 128's desktop run failed its single closed window
+on 73.0 wake-ups/s, 67.2/s from that thread; that is now the intended
+grace, so the gate measures the closed HUD on both sides of it:
+
+- **Within the grace** the limit is 200 wake-ups/s. It allows for the live
+  device (including the device-bound pool thread that brought hidden traces
+  to about 178/s before `3eecf89`), while a closed HUD that presented at
+  the display rate (165 Hz) would exceed it. The CPU limit is unchanged.
+- **After the release** the strict limit of 20 wake-ups/s applies.
+- In both, no frame may be submitted. The gate cannot count presents from
+  outside, so GPU busy (≤ 0.1 %) stands for frame submission: a closed HUD
+  submits no GPU work. It is measured where Windows exposes the GPU counters
+  (the desktop session).
+
+The window after the release would take more than ten minutes at the
+production grace. A gate run therefore shortens the grace, for its separate
+release launch only, through the environment variable
+`ENDFIELDHUD_CLOSED_GRAPHICS_GRACE=<seconds>` (`--release-grace`, default
+10 s, 1–3600). An `EndfieldHUD.exe` that reads this variable does so only
+together with `--data-root`, the isolated temporary root of a gate run; any
+other run keeps ten minutes, and production refuses another grace. The gate
+recognizes such a build by the variable's name in its image. With a build
+that does not read it (release candidate 133 and earlier), the gate waits the
+production ten minutes once instead, and both the prompt and the report say
+so. The other launches (within the grace, open, lifecycle, openings) never
+set the variable, so they measure the production policy. The report states,
+for each closed window, how long the HUD had been closed and which grace was
+in effect.
 
 Each run uses a fresh temporary data root (in the long form of `%TEMP%`) with
 launch at login off and onboarding done. The app is stopped through the
@@ -524,8 +570,11 @@ session-end protocol. The report records the following:
 
 The readable report (`--markdown`, or `--render` for a saved JSON report)
 starts with the verdict and a summary table, lists the failures, then gives
-each scenario's values with their limits, the busiest threads, the opening
-tables, lifecycle growth, the settings and the notes. Unavailable values (for
+each scenario's values with their limits (each closed window first says
+which side of the graphics grace it measured), the busiest threads, the
+opening tables, lifecycle growth, the settings (including both graces) and
+the notes. A report of schema 2 (one closed window, before the grace) still
+renders. Unavailable values (for
 example GPU counters outside the console session) are written as *not
 available*, never as zero. The console prints one line per scenario and the
 paths of both reports.
@@ -534,11 +583,12 @@ The limits are provisional and configurable (`--limit`, `none` removes one):
 
 | Scenario | Default limits |
 | --- | --- |
-| `closed` | CPU ≤ 0.5 % of one core, ≤ 20 wake-ups/s, GPU ≤ 0.5 %, private bytes growth ≤ 4 MiB (the Mac measured 0.11–0.26 % closed) |
+| `closed` (within the grace) | CPU ≤ 0.5 % of one core, ≤ 200 wake-ups/s (a live graphics device), GPU ≤ 0.1 % (no frame submission), private bytes growth ≤ 4 MiB (the Mac measured 0.11–0.26 % closed) |
+| `released` (after the release) | CPU ≤ 0.5 % of one core, ≤ 20 wake-ups/s, GPU ≤ 0.1 % (no frame submission), private bytes growth ≤ 4 MiB |
 | `open` (ambient on) | CPU ≤ 10 %, ≤ 400 wake-ups/s, GPU ≤ 25 %, growth ≤ 8 MiB |
 | `ambient-off` | CPU ≤ 5 %, ≤ 200 wake-ups/s, GPU ≤ 15 %, growth ≤ 8 MiB |
 | `lifecycle` | growth of handles ≤ 16, threads ≤ 2, GDI/USER ≤ 8, private bytes ≤ 8 MiB, working set ≤ 24 MiB, dedicated GPU memory ≤ 16 MiB (warm-up and window 10 cycles) |
-| `closed`, `after-cycles` footprint | private bytes ≤ 160 MiB, ≤ 40 threads; working set and handles reported (`private`, `working-set`, `threads`, `handles`) |
+| `closed`, `after-cycles`, `released` footprint | private bytes ≤ 160 MiB, ≤ 40 threads; working set and handles reported (`private`, `working-set`, `threads`, `handles`) |
 | `open`, `ambient-off` footprint | private bytes ≤ 256 MiB, ≤ 64 threads; working set and handles reported |
 | `cold-open` | first frame ≤ 250 ms (the Mac 1.2 first synchronous open was 225 ms on an M2), p95 interval ≤ 25 ms, ≤ 3 frames later than 25 ms (`first-frame`, `p95-interval`, `late-frames`) |
 | `warm-open` | first frame ≤ 100 ms, p95 interval ≤ 25 ms, ≤ 1 late frame |
@@ -584,11 +634,11 @@ test.
 | Test | What it proves |
 | --- | --- |
 | `packaging_format_contracts` (portable) | Manifest and install-manifest codecs and every rejection rule, versions, trailer and PE/Authenticode location, Setup arguments and isolation rules, all five languages and their placeholders |
-| `packaging_perf_gate_contracts` (portable) | Idle arithmetic, gates, plateau versus leak detection; opening summaries from a startup trace (nearest-rank p50/p95, late frames, frame CPU), opening gates, malformed traces rejected, the launch timing of a HUD opened after the closed idle; footprint gates, thread roles and grouping, the footprint scenario and its readable table, gates, threads by start address and the memory kept after use; the readable report and console summary of a full synthetic report, including unavailable GPU values, failures and a cancelled run |
+| `packaging_perf_gate_contracts` (portable) | Idle arithmetic, gates, plateau versus leak detection; opening summaries from a startup trace (nearest-rank p50/p95, late frames, frame CPU), opening gates, malformed traces rejected, the launch timing of a HUD opened after the closed window; footprint gates, thread roles and grouping, the footprint scenario and its readable table, gates, graphics driver threads, threads by start address, the memory kept after use and what the graphics release gave back; the readable report and console summary of a full synthetic report with both closed windows (within the grace at 73 wake-ups/s, after the release with the shortened or the production grace), including unavailable GPU values, failures, a cancelled run and a schema 2 report |
 | `packaging_ehudz01_contracts` (portable) | The decoder against the Mac oracle, and the staged-inventory verifier |
 | `packaging_installer_contracts` | 385 checks through the real Setup/uninstall programs with synthetic payloads in `%TEMP%\ehud-<id>` and a private HKCU subtree. Covers fresh install, repair, upgrade, launch-at-login choices, refusals, rollback after every step, interrupted-swap recovery, the Restart Manager close/restart of a stand-in app, uninstall relocation, kept data, explicit data removal and the signed layout. Outside the interactive console session (CI, the laptop's SSH session) it also drives the task-dialog windows with dialog messages: install with the box cleared, uninstall with confirmed data removal, *Keep my data*, and cancel |
 | `endfieldhud_release_contracts` | The real install tree staged, zipped, packed, installed (isolated), checked with the installed `EndfieldHUD.exe --verify-package` and uninstalled |
-| `packaging_perf_probe_contracts`, `packaging_perf_gate_tool`, `packaging_perf_gate_render`, `packaging_perf_gate_refuses_unsupported` | The gate against the stand-in app: a quiet process passes, one handle/GDI leak per cycle and a 10 ms wake-up are caught and attributed; 48 MiB held while open shows in private bytes, working set and the largest allocations and is gone after the cycles, three described threads are grouped by start and the Windows thread pool is recognized, and an open footprint over its limit fails; `ENDFIELDHUD_STARTUP_TRACE=1` reaches the app through the environment block and its cold and warm openings are reported, a slow cold opening fails its gates; a cancelled run stops at once with a partial report; the measured process ends when the gate tool is killed (kill-on-close job); the tool writes and re-renders the readable report; an executable without `--data-root` support is never started |
+| `packaging_perf_probe_contracts`, `packaging_perf_gate_tool`, `packaging_perf_gate_render`, `packaging_perf_gate_refuses_unsupported` | The gate against the stand-in app: a quiet process passes, one handle/GDI leak per cycle and a 10 ms wake-up are caught and attributed; the graphics grace: the grace override is recognized in an image (UTF-16 or 8-bit) and without it the release launch waits the production ten minutes, a stand-in device that wakes about 100 times a second passes the higher bound within the grace and is gone after the release (shortened to 1 s through `ENDFIELDHUD_CLOSED_GRAPHICS_GRACE` from the gate's environment), its thread shows in the census within the grace only, and a device kept past the grace fails the window after the release; 48 MiB held while open shows in private bytes, working set and the largest allocations and is gone after the cycles, three described threads are grouped by start and the Windows thread pool is recognized, and an open footprint over its limit fails; `ENDFIELDHUD_STARTUP_TRACE=1` reaches the app through the environment block and its cold and warm openings are reported, a slow cold opening fails its gates; a cancelled run stops at once with a partial report; the measured process ends when the gate tool is killed (kill-on-close job); the tool writes and re-renders the readable report; an executable without `--data-root` support is never started |
 | `packaging_identity_consistency` | Setup's notification identity equals the Calendar area's |
 | `packaging_watch_runtime_staged` (CI, where `Resources/` and Python exist) | The Mac packager's real staged tree verifies natively |
 | `packaging_update_check_contracts` (portable) | The release checker against the Mac oracle (59 tags, every ordered pair, 36 page URLs, Foundation's control characters for every scalar, 31 client scenarios). Also the Windows namespace and installer-asset rules, SHA256SUMS parsing, redirect rules, and the updater controller over synthetic routes and temporary folders. The controller cases cover check, consented download and install, the HUD closing first, the saved hand-off, its outcomes on the next run or at Setup exit, failures, discover-only copies, the daily check and its preference, Retry-After, deadlines, stop, and bounded files |

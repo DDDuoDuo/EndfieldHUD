@@ -9,7 +9,12 @@
 // ends the run instead of being measured as idle, the readable report is
 // rendered, the measured process never outlives a killed gate tool, and the
 // footprint (memory held while open, threads grouped by start and the
-// Windows thread pool recognized) is reported first and gated.
+// Windows thread pool recognized) is reported first and gated. The closed
+// HUD is measured on both sides of the graphics grace: a stand-in device
+// that wakes the process passes the higher bound within the grace, the
+// release launch shortens the grace through ENDFIELDHUD_CLOSED_GRAPHICS_GRACE
+// and passes the strict bound after the release, and a device kept past the
+// grace fails it.
 //
 //   packaging_perf_probe_tests <fixture app> <package_perf_gate.exe>
 #include "core/data/json.hpp"
@@ -52,7 +57,9 @@ p::GateOptions quick(const fs::path& fixture) {
     o.closeSettle = 0.05;
     o.cycles = 25;
     o.ambientOff = false;
-    o.closedLimits = {2.0, 10.0, std::nullopt, 4.0 * 1024 * 1024};
+    o.graceLimits = {2.0, 10.0, std::nullopt, 4.0 * 1024 * 1024};
+    o.releasedLimits = {2.0, 10.0, std::nullopt, 4.0 * 1024 * 1024};
+    o.releaseGrace = 1;
     o.openLimits = {2.0, 20.0, std::nullopt, 4.0 * 1024 * 1024};
     o.lifecycleLimits.warmup = 5;
     o.lifecycleLimits.window = 5;
@@ -70,6 +77,28 @@ bool gatePassed(const Json& s, std::string_view gate) {
 }
 
 bool contains(const std::string& text, std::string_view part) { return text.find(part) != std::string::npos; }
+const Json* footprintPoint(const Json& report, std::string_view name) {
+    const auto* footprint = scenario(report, "footprint");
+    if (!footprint) return nullptr;
+    for (const auto& q : (*footprint)["points"].array()) if (q["point"].string() == name) return &q;
+    return nullptr;
+}
+std::int64_t threadGroup(const Json& point, std::string_view name) {
+    std::int64_t count{};
+    for (const auto& g : point["threadGroups"].array()) if (g["name"].string() == name) count += g["count"].integer();
+    return count;
+}
+// A file that starts like an executable and holds `contents`.
+bool imageSupportsGrace(const fs::path& file, const std::string& contents) {
+    {
+        std::ofstream out(file, std::ios::binary | std::ios::trunc);
+        out << "MZ" << contents;
+    }
+    const bool supported = p::supportsGraceOverride(file);
+    std::error_code ignored;
+    fs::remove(file, ignored);
+    return supported;
+}
 const Json* opening(const Json& openings, bool cold) {
     for (const auto& o : openings["openings"].array()) if (o["cold"].boolean() == cold) return &o;
     return nullptr;
@@ -126,6 +155,20 @@ void contracts(const fs::path& fixture, const fs::path& tool) {
     bool thrown{};
     try { (void)p::runPerformanceGate(refused); } catch (const std::runtime_error&) { thrown = true; }
     check(thrown, "An EndfieldHUD.exe without a temporary data root is refused");
+    // The grace override is recognized by its name in the image (UTF-16 as
+    // GetEnvironmentVariableW reads it, or 8-bit); without it the release
+    // launch waits the production ten minutes.
+    const auto image = fs::temp_directory_path() / ("ehud-perf-image-" + std::to_string(GetCurrentProcessId()) + ".exe");
+    std::string wideName;
+    for (const char c : std::string(p::graceOverrideVariable)) { wideName.push_back(c); wideName.push_back('\0'); }
+    check(p::supportsGraceOverride(fixture) && !imageSupportsGrace(image, "--data-root --toggle") && imageSupportsGrace(image, "--data-root" + wideName) &&
+          imageSupportsGrace(image, std::string(p::graceOverrideVariable)) && !p::supportsGraceOverride(image),
+          "The grace override is recognized in the image");
+    auto noOverride = quick(fixture);
+    noOverride.executable = image;
+    check(p::releaseWaitGrace(noOverride) == p::productionGraphicsGraceSeconds && p::releaseWaitGrace(quick(fixture)) == 1 &&
+          std::abs(p::estimatedGateSeconds(noOverride) - p::estimatedGateSeconds(quick(fixture)) - (p::productionGraphicsGraceSeconds - 1)) < 1e-6,
+          "Without the override the release launch waits the production grace");
 
     // Quiet: every gate passes and the report describes the run.
     auto run = p::runPerformanceGate(quick(fixture));
@@ -134,13 +177,27 @@ void contracts(const fs::path& fixture, const fs::path& tool) {
     check(report["format"].string() == "EndfieldHUD.Windows.PerformanceGate" && !report["machine"]["os"].string().empty() &&
           report["machine"]["logicalProcessors"].integer() > 0 && report["target"]["kind"].string() == "fixture" &&
           report["target"]["sha256"].string().size() == 64, "The report records the machine and the target");
-    const auto* closed = scenario(report, "closed-idle");
+    const auto* closed = scenario(report, "closed-within-grace");
+    const auto* released = scenario(report, "closed-after-release");
     const auto* open = scenario(report, "open-idle");
     const auto* cycles = scenario(report, "lifecycle-25");
-    check(closed && open && cycles, "Closed, open and lifecycle scenarios");
-    check((*closed)["summary"]["wakeupsPerSecond"].number() < 10 && (*closed)["summary"]["seconds"].number() >= 2, "A quiet closed process barely wakes");
+    check(closed && released && open && cycles, "Closed (within the grace and after the release), open and lifecycle scenarios");
+    check(report["scenarios"].array().size() >= 3 && report["scenarios"].array()[1]["name"].string() == "closed-within-grace" &&
+          report["scenarios"].array()[2]["name"].string() == "closed-after-release", "Both closed windows follow the footprint, side by side");
+    check((*closed)["summary"]["wakeupsPerSecond"].number() < 10 && (*closed)["summary"]["seconds"].number() >= 2 &&
+          (*released)["summary"]["wakeupsPerSecond"].number() < 10, "A quiet closed process barely wakes");
+    const auto& withinState = (*closed)["closed"];
+    const auto& releasedState = (*released)["closed"];
+    check(withinState["state"].string() == "within-grace" && withinState["since"].string() == "launch" && withinState["graceSeconds"].number() == 600 &&
+          !withinState["graceOverride"].boolean() && withinState["closedSeconds"].number() >= 0.3 && withinState["closedSeconds"].number() < 30 &&
+          releasedState["state"].string() == "after-release" && releasedState["since"].string() == "close" && releasedState["graceSeconds"].number() == 1 &&
+          releasedState["graceOverride"].boolean() && releasedState["closedSeconds"].number() >= 1.2 && releasedState["closedSeconds"].number() < 30 &&
+          releasedState["productionGraceSeconds"].number() == 600,
+          "Each closed window records its side of the graphics grace: " + Json(withinState).encode() + " " + Json(releasedState).encode());
+    check(report["settings"]["releaseGraceSeconds"].number() == 1 && report["settings"]["graceOverride"].boolean() &&
+          report["settings"]["productionGraphicsGraceSeconds"].number() == 600, "The settings record the release grace");
     check((*cycles)["cycles"].array().size() == 25 && (*cycles)["growth"].array().size() >= 6, "One sample per cycle and every growth metric");
-    check(report["schema"].integer() == 2 && report["cancelled"].isBool() && !report["cancelled"].boolean() && report["machine"]["interactiveDesktop"].isBool() &&
+    check(report["schema"].integer() == 3 && report["cancelled"].isBool() && !report["cancelled"].boolean() && report["machine"]["interactiveDesktop"].isBool() &&
           report["machine"]["otherEndfieldHUDProcesses"].isNumber(), "The report records the session kind and other EndfieldHUD processes");
     // ENDFIELDHUD_STARTUP_TRACE=1 reached the stand-in through the gate's
     // environment block: its trace was read back and both openings gated.
@@ -162,12 +219,15 @@ void contracts(const fs::path& fixture, const fs::path& tool) {
     check(contains(p::summarizeGateReport(report), "openings") && contains(p::summarizeGateReport(report), "cold: first frame ") &&
           contains(p::summarizeGateReport(report), "warm: first frame "),
           "The console summary lists the openings: " + p::summarizeGateReport(report));
-    // The footprint comes first: closed after launch, open and closed after
-    // the cycles, within the default limits for a small process.
+    // The footprint comes first: closed after launch, open, closed after the
+    // cycles and closed after the release, within the default limits for a
+    // small process.
     const auto* quietFootprint = scenario(report, "footprint");
     check(quietFootprint && report["scenarios"].array().front()["name"].string() == "footprint" && (*quietFootprint)["passed"].boolean() &&
-          (*quietFootprint)["points"].array().size() == 3 && (*quietFootprint)["gates"].array().size() == 6 && contains(markdown, "## Memory, threads and handles") &&
-          contains(markdown, "| Measure | Closed after launch | Open | Closed after 25 cycles |"),
+          (*quietFootprint)["points"].array().size() == 4 && (*quietFootprint)["gates"].array().size() == 8 && contains(markdown, "## Memory, threads and handles") &&
+          contains(markdown, "| Measure | Closed after launch | Open | Closed after 25 cycles | Closed after the release |") &&
+          contains(markdown, "| Closed, within the graphics grace | PASS |") && contains(markdown, "| Closed, after the graphics release | PASS |") &&
+          contains(markdown, "| Graphics grace of the release launch | 1 s (ENDFIELDHUD_CLOSED_GRAPHICS_GRACE) |"),
           "The quiet process's footprint is reported first and passes: " + run.report.substr(0, 4000));
 
     // Footprint: three idle "fixture worker" threads and one waiting pool
@@ -214,14 +274,57 @@ void contracts(const fs::path& fixture, const fs::path& tool) {
     for (const auto& f : run.failures) listed = listed || f.starts_with("footprint: Private bytes, open ");
     check(!run.passed && openFailed && closedPassed && listed && !(*footprint)["passed"].boolean(), "An open footprint over its limit fails the gate");
     const auto heldMarkdown = p::renderGateMarkdown(report);
-    check(contains(heldMarkdown, "| fixture worker | 3 | 3 | 3 |") && contains(heldMarkdown, "| Windows thread pool | - |") &&
+    check(contains(heldMarkdown, "| fixture worker | 3 | 3 | 3 | 3 |") && contains(heldMarkdown, "| Windows thread pool | - |") &&
           contains(heldMarkdown, "| Private bytes, open | ") && contains(heldMarkdown, "Kept after use (closed after 25 cycles minus closed after launch): "),
           "The readable report lists the footprint and the threads:\n" + heldMarkdown);
+
+    // The graphics grace: a stand-in device that wakes about 100 times a
+    // second exists from the start and goes only after the grace. The first
+    // launch keeps the production grace, so its closed window sees the
+    // device and passes the higher bound; the release launch shortens the
+    // grace to 1 s and its window after the release passes the strict one.
+    auto device = quick(fixture);
+    device.fixtureArguments = {L"--device", L"100"};
+    device.open = device.lifecycle = false;
+    device.startupTrace = false;
+    device.graceLimits = {2.0, 200.0, std::nullopt, 4.0 * 1024 * 1024};
+    run = p::runPerformanceGate(device);
+    report = Json::parse(run.report, 64 * 1024 * 1024);
+    closed = scenario(report, "closed-within-grace");
+    released = scenario(report, "closed-after-release");
+    check(run.passed && closed && released && (*closed)["summary"]["wakeupsPerSecond"].number() >= 30 && gatePassed(*closed, "wakeups") &&
+          (*released)["summary"]["wakeupsPerSecond"].number() < 10 && gatePassed(*released, "wakeups") && !(*closed)["busiestThreads"].array().empty() &&
+          (*closed)["busiestThreads"].array().front()["name"].string() == "fixture graphics device",
+          "The device wakes the HUD within the grace and is gone after the release: " + run.report.substr(0, 4000));
+    const auto* withinPoint = footprintPoint(report, "closed");
+    const auto* releasedPoint = footprintPoint(report, "after-release");
+    check(withinPoint && releasedPoint && threadGroup(*withinPoint, "fixture graphics device") == 1 && threadGroup(*releasedPoint, "fixture graphics device") == 0,
+          "The device's thread shows in the census within the grace only");
+    const auto deviceMarkdown = p::renderGateMarkdown(report);
+    check(contains(deviceMarkdown, "| Closed, within the graphics grace | PASS |") && contains(deviceMarkdown, "| Closed, after the graphics release | PASS |") &&
+          contains(deviceMarkdown, "within its graphics grace of 600 s.") &&
+          contains(deviceMarkdown, "past its graphics grace of 1 s (shortened for this run through `ENDFIELDHUD_CLOSED_GRAPHICS_GRACE`") &&
+          contains(deviceMarkdown, "Given back by the graphics release (closed after the release minus closed after launch, within the grace; two launches of "
+                                   "the same program): ") &&
+          contains(deviceMarkdown, "| fixture graphics device | 1 | 0 |"),
+          "The readable report explains both closed windows:\n" + deviceMarkdown);
+    // A device kept past the grace fails the strict bound only.
+    device.fixtureArguments = {L"--device", L"100", L"--keep-device"};
+    run = p::runPerformanceGate(device);
+    report = Json::parse(run.report, 64 * 1024 * 1024);
+    closed = scenario(report, "closed-within-grace");
+    released = scenario(report, "closed-after-release");
+    bool keptListed{};
+    for (const auto& f : run.failures) keptListed = keptListed || f.starts_with("closed-after-release: Wake-ups ");
+    const auto* keptPoint = footprintPoint(report, "after-release");
+    check(!run.passed && closed && released && gatePassed(*closed, "wakeups") && !gatePassed(*released, "wakeups") && keptListed && keptPoint &&
+          threadGroup(*keptPoint, "fixture graphics device") == 1,
+          "A device kept past the grace fails the window after the release: " + run.report.substr(0, 4000));
 
     // A slow cold opening: slow first frame and five late frames.
     auto slow = quick(fixture);
     slow.fixtureArguments = {L"--slow-open"};
-    slow.closed = slow.open = false;
+    slow.closed = slow.open = slow.released = false;
     run = p::runPerformanceGate(slow);
     report = Json::parse(run.report, 64 * 1024 * 1024);
     openings = scenario(report, "openings");
@@ -263,7 +366,7 @@ void contracts(const fs::path& fixture, const fs::path& tool) {
     // One handle and one GDI object leaked per cycle.
     auto leaking = quick(fixture);
     leaking.fixtureArguments = {L"--leak"};
-    leaking.closed = leaking.open = false;
+    leaking.closed = leaking.open = leaking.released = false;
     run = p::runPerformanceGate(leaking);
     report = Json::parse(run.report, 64 * 1024 * 1024);
     cycles = scenario(report, "lifecycle-25");
@@ -277,9 +380,11 @@ void contracts(const fs::path& fixture, const fs::path& tool) {
     busy.startupTrace = false;
     run = p::runPerformanceGate(busy);
     report = Json::parse(run.report, 64 * 1024 * 1024);
-    closed = scenario(report, "closed-idle");
+    closed = scenario(report, "closed-within-grace");
+    released = scenario(report, "closed-after-release");
     open = scenario(report, "open-idle");
-    check(!run.passed && closed && open && gatePassed(*closed, "wakeups") && !gatePassed(*open, "wakeups"), "Open-state wake-ups are caught");
+    check(!run.passed && closed && released && open && gatePassed(*closed, "wakeups") && gatePassed(*released, "wakeups") && !gatePassed(*open, "wakeups"),
+          "Open-state wake-ups are caught");
     check(!scenario(report, "openings") && report["startupTrace"].isNull(), "Without the startup trace no opening scenario is reported");
     const auto& busiest = (*open)["busiestThreads"].array();
     check(!busiest.empty() && busiest.front()["wakeupsPerSecond"].number() >= 30 && busiest.front()["start"].string().find("packaging_fixture_app") != std::string::npos,

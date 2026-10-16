@@ -189,8 +189,8 @@ if(WIN32)
     set_tests_properties(packaging_perf_probe_contracts PROPERTIES TIMEOUT 300)
     add_test(NAME packaging_perf_gate_tool COMMAND package_perf_gate --target fixture --exe "$<TARGET_FILE:packaging_fixture_app>"
       --report "${CMAKE_CURRENT_BINARY_DIR}/packaging/perf-gate-fixture.json" --markdown "${CMAKE_CURRENT_BINARY_DIR}/packaging/perf-gate-fixture.md"
-      --seconds 2 --interval 0.25 --settle 0.3 --open-settle 0.05
-      --close-settle 0.05 --cycles 20 --limit lifecycle.warmup=4 --limit lifecycle.window=5 --limit closed.cpu=2 --limit open.cpu=2 --limit open.wakeups=20
+      --seconds 2 --interval 0.25 --settle 0.3 --open-settle 0.05 --release-grace 1
+      --close-settle 0.05 --cycles 20 --limit lifecycle.warmup=4 --limit lifecycle.window=5 --limit closed.cpu=2 --limit released.cpu=2 --limit open.cpu=2 --limit open.wakeups=20
       --limit cold-open.first-frame=100 --limit closed.threads=32 --limit open.handles=4000 --limit after-cycles.private=67108864
       --limit after-cycles.working-set=none)
     set_tests_properties(packaging_perf_gate_tool PROPERTIES TIMEOUT 300 FIXTURES_SETUP packaging_perf_gate_report

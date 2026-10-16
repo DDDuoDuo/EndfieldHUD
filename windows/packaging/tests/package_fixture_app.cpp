@@ -27,6 +27,17 @@
 //                          footprint census must group and attribute them)
 //   --hold-mib <n>         while open, hold n MiB of committed, touched private
 //                          memory in one allocation; closing releases it
+//   --device <n>           a stand-in graphics device: a thread described
+//                          "fixture graphics device" that wakes about n times
+//                          a second (the graphics driver's thread of a live
+//                          D3D11 device). Like EndfieldHUD it exists from the
+//                          start, stays while open and for the closed graphics
+//                          grace after launch and after every close, and is
+//                          released afterwards; the grace is ten minutes, or
+//                          ENDFIELDHUD_CLOSED_GRAPHICS_GRACE seconds from the
+//                          environment (EndfieldHUD honours that only with
+//                          --data-root; the stand-in has no data root)
+//   --keep-device          never release the device (the gate must report it)
 //   --login                accepted and ignored (restart command line)
 //
 // Every instance ends by itself after five minutes, so a failed test can
@@ -36,19 +47,24 @@
 #endif
 #include <windows.h>
 #include <shellapi.h>
+#include <algorithm>
 #include <cstdlib>
 #include <string>
 #include <vector>
 
 namespace {
 constexpr UINT toggleMessage = WM_APP + 1;
-constexpr UINT_PTR lifetimeTimer = 1, busyTimer = 2;
+constexpr UINT_PTR lifetimeTimer = 1, busyTimer = 2, graceTimer = 3;
 std::wstring marker;
 bool refuse{}, leak{}, busy{}, open{}, slowOpen{};
 std::wstring traceFile, fatalFile;
 bool failStart{};
 unsigned holdMiB{};
 void* held{};
+unsigned deviceWakes{};
+bool keepDevice{};
+UINT graceMilliseconds{600 * 1000};
+HANDLE deviceStop{}, deviceThread{};
 HANDLE quitWorkers{};
 std::vector<HANDLE> workers;
 unsigned tracedOpenings{};
@@ -104,10 +120,36 @@ void writeTrace() {
     CloseHandle(h);
     if (!ok || !MoveFileExW(staging.c_str(), traceFile.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) DeleteFileW(staging.c_str());
 }
+// The stand-in graphics device: one thread that wakes deviceWakes times a
+// second for as long as the device exists.
+void createDevice() {
+    if (!deviceWakes || deviceThread) return;
+    deviceStop = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    deviceThread = CreateThread(nullptr, 0, [](void*) -> DWORD {
+        const DWORD period = std::max<DWORD>(1, 1000 / deviceWakes);
+        while (WaitForSingleObject(deviceStop, period) == WAIT_TIMEOUT) {}
+        return 0;
+    }, nullptr, 0, nullptr);
+    if (deviceThread) SetThreadDescription(deviceThread, L"fixture graphics device");
+}
+void releaseDevice() {
+    if (!deviceThread) return;
+    SetEvent(deviceStop);
+    WaitForSingleObject(deviceThread, 5000);
+    CloseHandle(deviceThread);
+    CloseHandle(deviceStop);
+    deviceThread = deviceStop = nullptr;
+}
+// Closed (after launch or a close): the device goes after the grace.
+void armGrace(HWND window) {
+    if (deviceWakes && !keepDevice) SetTimer(window, graceTimer, graceMilliseconds, nullptr);
+}
 void toggle(HWND window) {
     open = !open;
     if (open && tracedOpenings < 2 && ++tracedOpenings == 2) writeTrace();
     if (open) {
+        KillTimer(window, graceTimer);
+        createDevice();
         // "Opening" allocates like a HUD frame would; closing releases it.
         for (int n = 0; n < 4; ++n) openHandles.push_back(CreateEventW(nullptr, TRUE, FALSE, nullptr));
         HDC screen = GetDC(nullptr);
@@ -133,6 +175,7 @@ void toggle(HWND window) {
         openHandles.clear();
         openObjects.clear();
         KillTimer(window, busyTimer);
+        armGrace(window);
     }
     note(open ? L"open" : L"closed");
 }
@@ -151,6 +194,10 @@ LRESULT CALLBACK procedure(HWND window, UINT message, WPARAM wParam, LPARAM lPar
     }
     case WM_TIMER:
         if (wParam == lifetimeTimer) { note(L"expired"); PostQuitMessage(0); }
+        if (wParam == graceTimer) {
+            KillTimer(window, graceTimer);
+            if (!open) releaseDevice();
+        }
         return 0;
     case WM_CLOSE:
         note(L"closed-window");
@@ -183,6 +230,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         else if (a == L"--fail-start") failStart = true;
         else if (a == L"--threads" && n + 1 < count) workerCount = static_cast<unsigned>(_wtoi(argv[++n]));
         else if (a == L"--hold-mib" && n + 1 < count) holdMiB = static_cast<unsigned>(_wtoi(argv[++n]));
+        else if (a == L"--device" && n + 1 < count) deviceWakes = static_cast<unsigned>(_wtoi(argv[++n]));
+        else if (a == L"--keep-device") keepDevice = true;
+    }
+    if (wchar_t grace[32]{}; GetEnvironmentVariableW(L"ENDFIELDHUD_CLOSED_GRAPHICS_GRACE", grace, 32) && grace[0]) {
+        const double seconds = _wtof(grace);
+        if (seconds >= 0.05 && seconds <= 3600) graceMilliseconds = static_cast<UINT>(seconds * 1000);
     }
     if (argv) LocalFree(argv);
     const std::wstring className = L"EndfieldHUDPackagingFixture." + (perf.empty() ? std::to_wstring(GetCurrentProcessId()) : perf);
@@ -218,6 +271,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         RegisterApplicationRestart(command.c_str(), RESTART_NO_CRASH | RESTART_NO_HANG | RESTART_NO_REBOOT);
     }
     note(L"started");
+    // Like EndfieldHUD's launch prewarm: the device exists from the start and
+    // the closed HUD's grace runs from there.
+    createDevice();
+    armGrace(window);
     if (workerCount) {
         // Idle threads with one start routine and description, and one
         // thread-pool worker kept waiting: none of them wakes.
@@ -256,6 +313,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         for (auto h : workers) CloseHandle(h);
     }
     if (held) VirtualFree(held, 0, MEM_RELEASE);
+    releaseDevice();
     DestroyWindow(window);
     for (auto h : leaked) CloseHandle(h);
     for (auto o : leakedObjects) DeleteObject(o);

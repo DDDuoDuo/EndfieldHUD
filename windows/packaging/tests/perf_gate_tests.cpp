@@ -1,5 +1,6 @@
 // Portable contracts of the section 9 gate evaluation (synthetic samples),
-// the opening timings from EndfieldHUD's startup trace and the readable report.
+// the opening timings from EndfieldHUD's startup trace and the readable report
+// (both closed windows: within the graphics grace and after the release).
 #include "core/data/json.hpp"
 #include "packaging/perf_gate.hpp"
 #include "packaging/perf_report.hpp"
@@ -141,7 +142,8 @@ void openings() {
           "A 300 ms cold first frame and a 30 ms p95 fail the provisional cold limits");
     check(p::allPassed(p::gateOpening(summaries[1], warmLimits)), "A smooth warm opening passes");
     check(p::gateOpening(summaries[0], {}).empty(), "No limits, no gates");
-    check(p::describeFailure("closed-idle", {"cpu", "% of one core", 0.84, 0.5, false}) == "closed-idle: CPU 0.84 % of one core (limit 0.50 % of one core)" &&
+    check(p::describeFailure("closed-within-grace", {"cpu", "% of one core", 0.84, 0.5, false}) ==
+              "closed-within-grace: CPU 0.84 % of one core (limit 0.50 % of one core)" &&
           p::describeFailure("lifecycle-100", {"privateBytes-growth", "bytes", 9437184, 8388608, false}) ==
               "lifecycle-100: Private bytes growth 9.00 MiB (limit 8.00 MiB)" &&
           p::describeFailure("cold opening", {"first-frame", "ms", -1, 250, false}) == "cold opening: Request to first frame never reached (limit 250.0 ms)",
@@ -264,7 +266,8 @@ void footprint() {
     check(contains(md, "## Memory, threads and handles\n") &&
           contains(md, "| Measure | Closed after launch | Open | Closed after 100 cycles |\n| --- | ---: | ---: | ---: |\n") &&
           contains(md, "| Private bytes | 352.50 MiB | 200.00 MiB | 425.50 MiB |") && contains(md, "| Peak working set | 250.00 MiB | 250.00 MiB | 250.00 MiB |") &&
-          contains(md, "| Threads | 58 | 60 | 77 |") && contains(md, "| Handles | 826 | 826 | 942 |") && contains(md, "| GDI / USER objects | 46 / 22 | 46 / 22 | 46 / 22 |") &&
+          contains(md, "| Threads | 58 | 60 | 77 |") && contains(md, "| Graphics driver threads | 0 | 0 | 12 |") && contains(md, "| Handles | 826 | 826 | 942 |") &&
+          contains(md, "| GDI / USER objects | 46 / 22 | 46 / 22 | 46 / 22 |") &&
           contains(md, "| Dedicated / shared GPU memory | not available | 174.50 / 20.00 MiB | not available |") &&
           contains(md, "| Committed private / mapped / image | 300.00 / 40.00 / 80.00 MiB | not available | 300.00 / 40.00 / 80.00 MiB |") &&
           contains(md, "| Largest private allocations | 64.00, 15.60, 1.00 MiB | not available | 64.00, 15.60, 1.00 MiB |"), "Footprint table:\n" + md);
@@ -284,6 +287,31 @@ void footprint() {
     object["scenarios"] = Json(Json::Array{p::footprintScenario(std::span(points).first(1), 0, failures)});
     const auto partial = p::renderGateMarkdown(Json(object));
     check(contains(partial, "| Measure | Closed after launch |\n") && !contains(partial, "Kept after use"), "One point only");
+
+    // Closed after the graphics release (a separate launch): its own column,
+    // the graphics driver threads gone and the difference to closed after
+    // launch, within the grace.
+    auto withDevice = closed;
+    withDevice.threads.push_back({"nvwgf2umx.dll+0xeb9eb0", "nvwgf2umx.dll", "NVIDIA graphics driver", "", 21});
+    auto released = closed;
+    released.point = "after-release";
+    released.sample.privateBytes = static_cast<std::uint64_t>(300 * mib);
+    released.sample.threads = 37;
+    released.sample.handles = 700;
+    released.threads = {{"ntdll.dll+0x1a2e0", "ntdll.dll", "Windows thread pool", "", 2}};
+    failures.clear();
+    const std::vector<p::FootprintPoint> releasePoints{withDevice, released};
+    object["scenarios"] = Json(Json::Array{p::footprintScenario(releasePoints, 0, failures)});
+    const auto releaseMd = p::renderGateMarkdown(Json(object));
+    check(failures.size() == 3 && failures[2] == "footprint: Private bytes, closed after the release 300.00 MiB (limit 160.00 MiB)",
+          "The release point's failures name it: " + (failures.size() > 2 ? failures[2] : std::string()));
+    check(contains(releaseMd, "| Measure | Closed after launch | Closed after the release |\n") && contains(releaseMd, "| Graphics driver threads | 21 | 0 |") &&
+          contains(releaseMd, "Given back by the graphics release (closed after the release minus closed after launch, within the grace; two launches of "
+                              "the same program): "
+                              "-52.50 MiB private bytes, -21 threads, -126 handles.") &&
+          contains(releaseMd, "| Private bytes, closed after the release | 300.00 MiB | 160.00 MiB | FAIL |") &&
+          contains(releaseMd, "| Threads, closed after the release | 37 | 40 | PASS |") && !contains(releaseMd, "Kept after use"),
+          "The release point in the footprint:\n" + releaseMd);
 }
 
 void report() {
@@ -295,27 +323,39 @@ void report() {
     const auto trace = traceOf(openingText(0, 180, cold, 4) + "," + openingText(1, 30, warm, 3));
     const auto openingsJson = p::openingsScenario(trace, {250.0, 25.0, 3.0}, {100.0, 25.0, 1.0}, 2, failures);
     check(failures.empty() && openingsJson["passed"].boolean(), "A 180 ms cold opening with one hitch passes");
-    auto parsed = Json::parse(R"json({"format":"EndfieldHUD.Windows.PerformanceGate","schema":2,"measuredAt":"2026-10-11T12:00:00Z",
+    auto parsed = Json::parse(R"json({"format":"EndfieldHUD.Windows.PerformanceGate","schema":3,"measuredAt":"2026-10-11T12:00:00Z",
       "machine":{"os":"Windows 10.0.26200.6584 (25H2)","cpu":"Test CPU | 8 cores","logicalProcessors":16,"memoryBytes":17179869184,
         "gpus":["Test GPU, 4096 MiB dedicated"],"dpi":144,"refreshHz":120,"display":"2880x1800","session":"interactive console session 1",
         "interactiveDesktop":true,"otherEndfieldHUDProcesses":1},
       "target":{"executable":"C:\\b\\EndfieldHUD.exe","kind":"endfieldhud","productVersion":"1.2.0.18","sha256":"ab"},
       "settings":{"seconds":60,"settleSeconds":10,"openSettleSeconds":1.5,"closeSettleSeconds":1.5,"sampleIntervalSeconds":1,"cycles":100,
-        "dataRoot":"temporary (deleted after the run)"},
+        "productionGraphicsGraceSeconds":600,"releaseGraceSeconds":10,"graceOverride":true,"dataRoot":"temporary (deleted after the run)"},
       "scenarios":[
-        {"name":"closed-idle","kind":"idle","summary":{"seconds":60,"cpuPercentOfOneCore":0.84,"wakeupsPerSecond":12.4,"gpuBusyPercent":null,
+        {"name":"closed-within-grace","kind":"idle","closed":{"state":"within-grace","since":"launch","graceSeconds":600,"productionGraceSeconds":600,
+           "graceOverride":false,"closedSeconds":10.2},
+         "summary":{"seconds":60,"cpuPercentOfOneCore":0.84,"wakeupsPerSecond":73.0,"gpuBusyPercent":null,
           "privateGrowthBytes":1048576,"privateBytes":104857600,"workingSetBytes":157286400,"threads":24,"handles":800,"gdiObjects":40,"userObjects":30},
-         "limits":{"cpuPercentOfOneCore":0.5,"wakeupsPerSecond":20,"gpuBusyPercent":0.5,"privateGrowthBytes":4194304},
-         "busiestThreads":[{"id":4242,"name":"HUD","start":"EndfieldHUD.exe+0x1234","wakeupsPerSecond":10.5}],
+         "limits":{"cpuPercentOfOneCore":0.5,"wakeupsPerSecond":200,"gpuBusyPercent":0.1,"privateGrowthBytes":4194304},
+         "busiestThreads":[{"id":4242,"name":"","start":"nvwgf2umx.dll+0xeb9eb0","wakeupsPerSecond":67.2}],
          "gates":[{"name":"cpu","unit":"% of one core","value":0.84,"limit":0.5,"passed":false},
-                  {"name":"wakeups","unit":"context switches/s","value":12.4,"limit":20,"passed":true},
+                  {"name":"wakeups","unit":"context switches/s","value":73.0,"limit":200,"passed":true},
                   {"name":"private-growth","unit":"bytes","value":1048576,"limit":4194304,"passed":true}],"passed":false},
+        {"name":"closed-after-release","kind":"idle","closed":{"state":"after-release","since":"close","graceSeconds":10,"productionGraceSeconds":600,
+           "graceOverride":true,"closedSeconds":20.4},
+         "summary":{"seconds":60,"cpuPercentOfOneCore":0.02,"wakeupsPerSecond":0.1,"gpuBusyPercent":0,
+          "privateGrowthBytes":0,"privateBytes":94371840,"workingSetBytes":104857600,"threads":20,"handles":700,"gdiObjects":40,"userObjects":30},
+         "limits":{"cpuPercentOfOneCore":0.5,"wakeupsPerSecond":20,"gpuBusyPercent":0.1,"privateGrowthBytes":4194304},
+         "busiestThreads":[],
+         "gates":[{"name":"cpu","unit":"% of one core","value":0.02,"limit":0.5,"passed":true},
+                  {"name":"wakeups","unit":"context switches/s","value":0.1,"limit":20,"passed":true},
+                  {"name":"gpu","unit":"% busy","value":0,"limit":0.1,"passed":true},
+                  {"name":"private-growth","unit":"bytes","value":0,"limit":4194304,"passed":true}],"passed":true},
         {"name":"lifecycle-100","kind":"lifecycle","warmupCycles":10,"windowCycles":10,
          "growth":[{"metric":"handles","baseline":800,"latest":802,"growth":2},{"metric":"privateBytes","baseline":104857600,"latest":105906176,"growth":1048576}],
          "gates":[{"name":"handles-growth","unit":"count","value":2,"limit":16,"passed":true},
                   {"name":"privateBytes-growth","unit":"bytes","value":1048576,"limit":8388608,"passed":true}],"passed":true}],
       "gpuCounters":"unavailable in this session","cancelled":false,
-      "notes":["CPU is user+kernel time."],"failures":["closed-idle: CPU 0.84 % of one core (limit 0.50 % of one core)"],"passed":false})json");
+      "notes":["CPU is user+kernel time."],"failures":["closed-within-grace: CPU 0.84 % of one core (limit 0.50 % of one core)"],"passed":false})json");
     auto object = parsed.object();
     auto list = object["scenarios"].array();
     list.push_back(openingsJson);
@@ -327,20 +367,31 @@ void report() {
           !contains(md, "stand-in test program"), "Verdict and program");
     check(contains(md, "Test CPU | 8 cores, 16 logical processors, 16.0 GiB RAM") && contains(md, "2880x1800 at 120 Hz, 144 DPI (150 % scale)") &&
           contains(md, "interactive console session 1, interactive desktop") && contains(md, "1 other EndfieldHUD process(es)"), "Machine, display and session");
-    check(contains(md, "| Closed idle | FAIL | CPU 0.84 % of one core, 12.4 wake-ups/s, GPU not available |") &&
+    check(contains(md, "| Closed, within the graphics grace | FAIL | CPU 0.84 % of one core, 73.0 wake-ups/s, GPU not available |") &&
+          contains(md, "| Closed, after the graphics release | PASS | CPU 0.02 % of one core, 0.1 wake-ups/s, GPU 0.00 % |") &&
           contains(md, "| Open/close lifecycle (100 cycles) | PASS | Handles +2, Private bytes +1.00 MiB |") &&
           contains(md, "| Opening the HUD (cold and warm) | PASS | cold: first frame 180 ms, p95 16.7 ms, 1 late; warm: first frame 30 ms, p95 16.7 ms, 0 late |"),
           "Summary table:\n" + md);
-    check(contains(md, "## Failures\n\n- closed-idle: CPU 0.84 % of one core (limit 0.50 % of one core)\n"), "Failures are listed");
-    check(contains(md, "| CPU | 0.84 % of one core | 0.50 % of one core | FAIL |") && contains(md, "| GPU busy | not available | 0.50 % | not measured |") &&
+    check(contains(md, "## Failures\n\n- closed-within-grace: CPU 0.84 % of one core (limit 0.50 % of one core)\n"), "Failures are listed");
+    check(contains(md, "| CPU | 0.84 % of one core | 0.50 % of one core | FAIL |") && contains(md, "| GPU busy | not available | 0.10 % | not measured |") &&
+          contains(md, "| Wake-ups (context switches) | 73.0 /s | 200.0 /s | PASS |") &&
           contains(md, "| Private bytes growth | 1.00 MiB | 4.00 MiB | PASS |") && contains(md, "| Threads / handles / GDI / USER objects | 24 / 800 / 40 / 30 | | |") &&
-          contains(md, "| 4242 | HUD | EndfieldHUD.exe+0x1234 | 10.5 |"), "Idle details with an unavailable GPU reading");
+          contains(md, "| 4242 | - | nvwgf2umx.dll+0xeb9eb0 | 67.2 |"), "Idle details with an unavailable GPU reading");
+    // Each closed window says which side of the graphics grace it measured.
+    check(contains(md, "## Closed, within the graphics grace\n\nThe HUD had been closed for 10.2 s (since launch) when this window started, within its "
+                       "graphics grace of 600 s. EndfieldHUD keeps its graphics device for that long so that reopening stays fast") &&
+          contains(md, "## Closed, after the graphics release\n\nThe HUD was opened once and had been closed for 20.4 s (since closing) when this window "
+                       "started, past its graphics grace of 10 s (shortened for this run through `ENDFIELDHUD_CLOSED_GRAPHICS_GRACE`, which EndfieldHUD "
+                       "honours only with `--data-root`; production keeps 600 s). The graphics device and the presentation have been released, so the "
+                       "strict closed limits apply.\n\nSampled for 60.0 s.") &&
+          contains(md, "| Wake-ups (context switches) | 0.1 /s | 20.0 /s | PASS |") && contains(md, "| GPU busy | 0.00 % | 0.10 % | PASS |"),
+          "Both closed windows explained:\n" + md);
     check(contains(md, "| Handles | 800.0 | 802.0 | +2 | 16 | PASS |") && contains(md, "| Private bytes | 100.00 MiB | 101.00 MiB | +1.00 MiB | 8.00 MiB | PASS |"),
           "Lifecycle growth");
     check(contains(md, "Launch to the first presented frame: **510 ms** (process creation to first frame: 560 ms); preparation before the window: 40 ms."),
           "Launch timings");
     // The gate's own order: the HUD starts closed and the cold opening comes
-    // after the closed idle window, so launch to first frame is mostly waiting.
+    // after the closed window within the grace, so launch to first frame is mostly waiting.
     {
         auto late = Json::parse("{\"schema\":1,\"preparationMilliseconds\":1098,\"launchToFirstFrameMilliseconds\":70975,"
                                 "\"processToFirstFrameMilliseconds\":72217,\"openings\":[" + openingText(0, 89, cold, 4) + "]}").object();
@@ -352,9 +403,9 @@ void report() {
         waited["scenarios"] = Json(Json::Array{p::openingsScenario(Json(late), {}, {}, 1, ignored)});
         waited["startupTrace"] = Json(late);
         const auto text = p::renderGateMarkdown(Json(waited));
-        check(contains(text, "The HUD started closed, and the cold opening was requested 70.9 s after launch (after the closed idle window), so launch to "
+        check(contains(text, "The HUD started closed, and the cold opening was requested 70.9 s after launch (after the closed window), so launch to "
                              "the first presented frame (70975 ms) is mostly that wait. Startup until the app was ready, before the window: **1098 ms**.") &&
-              !contains(text, "Launch to the first presented frame: **"), "Launch timings of a HUD opened after the closed idle:\n" + text);
+              !contains(text, "Launch to the first presented frame: **"), "Launch timings of a HUD opened after the closed window:\n" + text);
         rejects([&] {
             first["requestedAtMilliseconds"] = -1.0;
             late["openings"] = Json(Json::Array{Json(first)});
@@ -365,10 +416,50 @@ void report() {
           contains(md, "| Frames later than 25 ms | 1 | 0 |") && contains(md, "| Cold: Request to first frame | 180.0 ms | 250.0 ms | PASS |") &&
           contains(md, "| Warm: Frames later than 25 ms | 0 | 1 | PASS |") && contains(md, "| shaders | 120.0 ms | 100.0 ms |"), "Opening tables");
     check(contains(md, "| Open/close cycles | 100 |") && contains(md, "| Open settle (per cycle) | 1.50 s |") && contains(md, "- CPU is user+kernel time.\n") &&
+          contains(md, "| Graphics grace (production) | 600 s |") && contains(md, "| Graphics grace of the release launch | 10 s (ENDFIELDHUD_CLOSED_GRAPHICS_GRACE) |") &&
           contains(md, "need an ETW recording"), "Settings and notes");
     const auto summary = p::summarizeGateReport(full);
-    check(contains(summary, "  closed-idle              FAIL  CPU 0.84 % of one core") && contains(summary, "  openings                 PASS  cold: first frame 180 ms"),
+    check(contains(summary, "  closed-within-grace      FAIL  CPU 0.84 % of one core, 73.0 wake-ups/s") &&
+          contains(summary, "  closed-after-release     PASS  CPU 0.02 % of one core, 0.1 wake-ups/s") &&
+          contains(summary, "  openings                 PASS  cold: first frame 180 ms"),
           "Console summary:\n" + summary);
+    // A program that cannot shorten the grace: the release window waited the
+    // production ten minutes, and the report says so.
+    {
+        auto waited = object;
+        auto list = waited["scenarios"].array();
+        auto releasedScenario = list[1].object();
+        auto state = releasedScenario["closed"].object();
+        state["graceSeconds"] = 600.0;
+        state["graceOverride"] = false;
+        state["closedSeconds"] = 610.5;
+        releasedScenario["closed"] = Json(state);
+        list[1] = Json(releasedScenario);
+        waited["scenarios"] = Json(list);
+        auto settings = waited["settings"].object();
+        settings["releaseGraceSeconds"] = 600.0;
+        settings["graceOverride"] = false;
+        waited["settings"] = Json(settings);
+        const auto text = p::renderGateMarkdown(Json(waited));
+        check(contains(text, "had been closed for 610.5 s (since closing) when this window started, past its graphics grace of 600 s (the production grace: "
+                             "this program cannot shorten it for a gate run).") &&
+              contains(text, "| Graphics grace of the release launch | 600 s (production: this program cannot shorten it) |"),
+              "The production grace waited:\n" + text);
+    }
+    // A schema 2 report (one closed window) still renders.
+    {
+        auto old = object;
+        auto list = old["scenarios"].array();
+        auto first = list[0].object();
+        first["name"] = "closed-idle";
+        first.erase("closed");
+        list[0] = Json(first);
+        old["scenarios"] = Json(list);
+        old["schema"] = 2;
+        const auto text = p::renderGateMarkdown(Json(old));
+        check(contains(text, "| Closed idle | FAIL | CPU 0.84 % of one core") && contains(text, "## Closed idle\n\nSampled for 60.0 s."),
+              "A schema 2 report renders its closed idle window:\n" + text);
+    }
     // A cancelled run and a foreign document.
     object["cancelled"] = true;
     check(contains(p::renderGateMarkdown(Json(object)), "# EndfieldHUD performance gate: CANCELLED"), "A cancelled run");

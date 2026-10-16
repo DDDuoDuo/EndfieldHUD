@@ -72,8 +72,11 @@ std::string pointTitle(std::string_view point, std::size_t cycles) {
     if (point == "open") return "open";
     if (point == "open-ambient-off") return "open, ambient off";
     if (point == "after-cycles") return cycles ? "closed after " + std::to_string(cycles) + " cycles" : std::string("closed after the cycles");
+    if (point == "after-release") return "closed after the release";
     return std::string(point);
 }
+// Seconds without needless decimals ("600 s", "1.5 s").
+std::string secondsText(double value) { return fixed(value, std::abs(value - std::round(value)) < 1e-9 ? 0 : 1) + " s"; }
 std::string capitalized(std::string text) {
     if (!text.empty() && text[0] >= 'a' && text[0] <= 'z') text[0] = static_cast<char>(text[0] - 'a' + 'A');
     return text;
@@ -130,7 +133,9 @@ std::string kindOf(const Json& scenario) {
 std::string scenarioTitle(const Json& scenario) {
     const auto name = text(scenario["name"], "");
     if (name == "footprint") return "Memory, threads and handles";
-    if (name == "closed-idle") return "Closed idle";
+    if (name == "closed-within-grace") return "Closed, within the graphics grace";
+    if (name == "closed-after-release") return "Closed, after the graphics release";
+    if (name == "closed-idle") return "Closed idle"; // schema 2 reports
     if (name == "open-idle-ambient-on") return "Open idle, ambient animation on";
     if (name == "open-idle-ambient-off") return "Open idle, ambient animation off";
     if (name == "open-idle") return "Open idle";
@@ -211,9 +216,38 @@ std::string highlights(const Json& s) {
     return idleHighlights(s);
 }
 
+// What a closed window measured (schema 3): which side of the graphics grace
+// and how long the HUD had been closed when the window started.
+void renderClosedState(std::string& md, const Json& c) {
+    if (!c.isObject()) return;
+    const auto state = text(c["state"], "");
+    const auto closedFor = optionalNumber(c["closedSeconds"]);
+    const auto grace = optionalNumber(c["graceSeconds"]);
+    const auto production = optionalNumber(c["productionGraceSeconds"]);
+    const bool overridden = c["graceOverride"].isBool() && c["graceOverride"].boolean();
+    const auto seconds = [](const std::optional<double>& v) { return v ? secondsText(*v) : std::string("an unknown time"); };
+    const std::string since = text(c["since"], "") == "close" ? "closing" : "launch";
+    if (state == "within-grace") {
+        md += "The HUD had been closed for " + seconds(closedFor) + " (since " + since + ") when this window started, within its graphics grace of " +
+              seconds(grace) + ". EndfieldHUD keeps its graphics device for that long so that reopening stays fast, and the live device keeps the "
+              "graphics driver's thread waking the process: the wake-up limit allows for that device. GPU busy stands for frame submission, of which "
+              "a closed HUD has none.\n\n";
+    } else if (state == "after-release") {
+        md += "The HUD was opened once and had been closed for " + seconds(closedFor) + " (since " + since + ") when this window started, past its "
+              "graphics grace of " + seconds(grace);
+        if (overridden)
+            md += " (shortened for this run through `" + std::string(graceOverrideVariable) + "`, which EndfieldHUD honours only with `--data-root`; " +
+                  "production keeps " + seconds(production) + ")";
+        else
+            md += " (the production grace: this program cannot shorten it for a gate run)";
+        md += ". The graphics device and the presentation have been released, so the strict closed limits apply.\n\n";
+    }
+}
+
 void renderIdle(std::string& md, const Json& s) {
     const auto& summary = s["summary"];
     const auto& gates = s["gates"];
+    renderClosedState(md, s["closed"]);
     if (const auto seconds = optionalNumber(summary["seconds"])) md += "Sampled for " + fixed(*seconds, 1) + " s.\n\n";
     md += "| Measure | Value | Limit | Result |\n| --- | ---: | ---: | --- |\n";
     md += "| CPU | " + gateCells(optionalNumber(summary["cpuPercentOfOneCore"]), "% of one core", gateNamed(gates, "cpu")) + " |\n";
@@ -295,6 +329,15 @@ void renderFootprint(std::string& md, const Json& s) {
     row("Peak private bytes", [&](const Json& p) { return bytes(p["peakPrivateBytes"]); });
     row("Peak working set", [&](const Json& p) { return bytes(p["peakWorkingSetBytes"]); });
     row("Threads", [&](const Json& p) { return count(p["threads"]); });
+    // Driver threads live as long as a graphics device: the release shows here.
+    row("Graphics driver threads", [&](const Json& p) {
+        const auto& groups = p["threadGroups"];
+        if (!groups.isArray()) return std::string("?");
+        double n{};
+        for (const auto& g : groups.array())
+            if (text(g["role"], "").ends_with("graphics driver")) n += optionalNumber(g["count"]).value_or(0);
+        return fixed(n, 0);
+    });
     row("Handles", [&](const Json& p) { return count(p["handles"]); });
     row("GDI / USER objects", [&](const Json& p) { return count(p["gdiObjects"]) + " / " + count(p["userObjects"]); });
     row("Dedicated / shared GPU memory", [&](const Json& p) {
@@ -325,18 +368,24 @@ void renderFootprint(std::string& md, const Json& s) {
     // cycles minus the point after launch.
     const Json* closed{};
     const Json* after{};
+    const Json* released{};
     for (const auto* p : points) {
         if (text((*p)["point"], "") == "closed") closed = p;
         if (text((*p)["point"], "") == "after-cycles") after = p;
+        if (text((*p)["point"], "") == "after-release") released = p;
     }
-    if (closed && after) {
-        const auto pb = optionalNumber((*closed)["privateBytes"]), pa = optionalNumber((*after)["privateBytes"]);
-        const auto tb = optionalNumber((*closed)["threads"]), ta = optionalNumber((*after)["threads"]);
-        const auto hb = optionalNumber((*closed)["handles"]), ha = optionalNumber((*after)["handles"]);
+    // Differences against closed after launch: "<title> (<later point> minus closed after launch...)".
+    const auto difference = [&](const Json* later, const std::string& title, const std::string& how) {
+        if (!closed || !later) return;
+        const auto pb = optionalNumber((*closed)["privateBytes"]), pa = optionalNumber((*later)["privateBytes"]);
+        const auto tb = optionalNumber((*closed)["threads"]), ta = optionalNumber((*later)["threads"]);
+        const auto hb = optionalNumber((*closed)["handles"]), ha = optionalNumber((*later)["handles"]);
         if (pb && pa && tb && ta && hb && ha)
-            md += "Kept after use (" + pointTitle("after-cycles", cycles) + " minus closed after launch): " + signedMebibytes(*pa - *pb) + " private bytes, " +
-                  signedCount(*ta - *tb) + " threads, " + signedCount(*ha - *hb) + " handles.\n\n";
-    }
+            md += title + " (" + how + "): " + signedMebibytes(*pa - *pb) + " private bytes, " + signedCount(*ta - *tb) + " threads, " +
+                  signedCount(*ha - *hb) + " handles.\n\n";
+    };
+    difference(after, "Kept after use", pointTitle("after-cycles", cycles) + " minus closed after launch");
+    difference(released, "Given back by the graphics release", "closed after the release minus closed after launch, within the grace; two launches of the same program");
 
     md += "| Gate | Value | Limit | Result |\n| --- | ---: | ---: | --- |\n";
     bool any{};
@@ -418,14 +467,15 @@ void renderOpenings(std::string& md, const Json& s, const Json& trace) {
     const auto prepared = optionalNumber(s["preparationMilliseconds"]);
     md += "Source: EndfieldHUD's own startup trace (numbers only). The cold opening is the first opening after launch; the warm one is the next.\n\n";
     // When the HUD started closed and was opened later (the gate measures
-    // closed idle first), launch to the first frame is mostly that wait.
+    // the closed HUD within its graphics grace first), launch to the first
+    // frame is mostly that wait.
     std::optional<double> coldRequest;
     if (s["openings"].isArray())
         for (const auto& o : s["openings"].array())
             if (o["cold"].isBool() && o["cold"].boolean()) coldRequest = optionalNumber(o["requestedAtMilliseconds"]);
     if (launch && *launch >= 0 && coldRequest && *coldRequest > 0 && *launch >= *coldRequest) {
         md += "The HUD started closed, and the cold opening was requested " + fixed(*coldRequest / 1000.0, 1) +
-              " s after launch (after the closed idle window), so launch to the first presented frame (" + fixed(*launch, 0) +
+              " s after launch (after the closed window), so launch to the first presented frame (" + fixed(*launch, 0) +
               " ms) is mostly that wait";
         if (prepared) md += ". Startup until the app was ready, before the window: **" + fixed(*prepared, 0) + " ms**";
         md += ".\n\n";
@@ -796,6 +846,12 @@ std::string renderGateMarkdown(const Json& report) {
     setting("Close settle (per cycle)", "closeSettleSeconds", " s");
     setting("Sample interval", "sampleIntervalSeconds", " s");
     setting("Open/close cycles", "cycles", "");
+    setting("Graphics grace (production)", "productionGraphicsGraceSeconds", " s");
+    if (const auto grace = optionalNumber(settings["releaseGraceSeconds"])) {
+        const bool overridden = settings["graceOverride"].isBool() && settings["graceOverride"].boolean();
+        md += "| Graphics grace of the release launch | " + secondsText(*grace) +
+              (overridden ? " (" + std::string(graceOverrideVariable) + ")" : std::string(" (production: this program cannot shorten it)")) + " |\n";
+    }
     if (settings["dataRoot"].isString()) md += "| Data root | " + cell(settings["dataRoot"].string()) + " |\n";
     md += "\n## Notes\n\n";
     if (report["notes"].isArray())
