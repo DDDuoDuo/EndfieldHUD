@@ -2592,7 +2592,7 @@ Cloud Music. No fix has been confirmed on the desktop.
 | Clipboard and Activity glitch | Clipboard's removal reveal and Activity's sort transition draw the authored shutter keyframes like the Shelf; `reveal-mask.bin` and `sort-mask.bin` are no longer read (`dab9539`). | `clipboard_reveal_frames_contracts` (269), `activity_reveal_frames_contracts` (486): no region covered again, both settle at .26 s. | The real GPU. |
 | Volume shook on a Headphones / Bluetooth ↔ App volume switch | The page motion turned about the canvas corner and started at the press. It now turns about the content centre (200,167) from the first presenting frame; only the detail page reloads (`e9e9a58`). | `volume_scene_contracts` (actionMotion), `volume_preview_contracts` (pageSwitch, frame by frame), owner coverage (10–14 frames, header kept, rows parked and revived). | The motion on the desktop. |
 | Centre content too small | Not a DPI error: the Mac caps its design scale at 1.15 while the ring grows with the screen, so on the laptop (1707 × 1067 points) the Mac formula fills 88.8 % of the blue ring. `desktopContentScale` keeps the reference MacBook's proportion (factor ×1.161 on the laptop, exactly 1 at 1470 × 956). A deliberate deviation from Mac-exact numbers on larger displays (`d5acbe9`, `e62a46f`). | Hidden coverage: 1.0307 of the blue ring at seven display sizes, the Mac layout at 1470 × 956. | The look on the real display. |
-| GPU usage in Activity (request) | PDH `\GPU Engine(*)\Running Time`, busiest engine per app and overall (Task Manager's method): an Overview row ("TOP ENGINE", five languages) and an Apps column; collected only while Activity is visible, closed on hide (`dab9539`). | `activity_gpu_contracts` (617, including a live collection over the test process). | Figures against Task Manager with a game and two adapters. |
+| GPU usage in Activity (request) | PDH `\GPU Engine(*)\Running Time`, busiest engine per app and overall (Task Manager's method): an Overview row ("TOP ENGINE", five languages) and an Apps column; collected only while Activity is visible, closed on hide (`dab9539`). *Superseded after checkpoint 130 (`cadb88e`): the row and column now show the total load, captioned TOTAL LOAD; see checkpoint 131.* | `activity_gpu_contracts` (617, including a live collection over the test process). | Figures against Task Manager with a game and two adapters. |
 | Clicking the Sanity bar closed the HUD | The shown wallet takes every press whatever it shows (`fe21a24`), and the host's background-press close asks `ModuleOwner::covers` first, also during the entrance (`5a2d3d3`). | Owner coverage presses the wallet open and during the entrance (re-projected on the animating plane); native and owner suites. | The press on the live display. |
 | Centre logo did not flicker | The ENDFIELD INDUSTRIES logo flickers like the Mac (opacity .22 at .05–.09 s, .38 at .20–.25 s, done at .46 s, glow at .78), never closes the HUD, honours Reduce Motion, and is a UIA button (`d5acbe9`). | Hidden coverage. | The animation on the display. |
 | Clock not scrollable | A mouse wheel over the clock switches styles (Mac 28-point threshold, one style per gesture); a style change pushes the inner page (.26 s ease-in-ease-out, 340 points, clipped) (`d5acbe9`). | Hidden coverage (half-way offsets and the end of the push). | The animation on the display. |
@@ -2923,3 +2923,206 @@ Batch 6 adds:
   automatically (Mac-style 30 s idle gate)?
 - Settled in batch 6: Clipboard and Activity draw the authored keyframes;
   Activity shows GPU usage and Storage a chosen volume (user requests).
+
+## Checkpoint 131 (2026-10-15)
+
+Before checkpoint 129 was pushed its commits were rewritten (messages only;
+every tree is identical), so batch 6 commits have new names (see
+*Corrections*). The push added one coverage fix (an explicit modifier state
+for the synthetic Archive key) and ends at `80d6e37`, which is checkpoint
+130. The user tested release candidate 130 on the laptop desktop. This
+entry covers the four commits after `80d6e37` up to `c68f6c5`, which are not
+pushed; the entry itself changes documentation only.
+
+### Live results
+
+- **Account Linking:** the user live-tested it with a real account (China)
+  and it worked. This is the first run against the real service; Global is
+  still untested.
+- **Confirmed by the user on release candidates:** Media Assembly, Projection
+  drawing, the Sanity bar fix, Notes drawing and the glitch fixes.
+- **Reported on release candidate 130a:** "the brush is not following the
+  cursor in real time" in Projection (`c68f6c5`).
+- **User request:** GPU before CPU in Activity (`bc60d1b`).
+- **NetEase Cloud Music, examined live on the test laptop** (NetEase 3.1.41,
+  CEF 91, no media session): checkpoint 129's reader never reached its
+  controls, and every HUD command fell back to `WM_APPCOMMAND`, which NetEase
+  ignores (`666caa8`).
+
+### Changes after checkpoint 130
+
+**Activity order (`bc60d1b`).** The GPU row is now the first Overview row,
+followed by the Mac CPU, RAM, Network and Disk I/O rows in their Mac order and
+colours. The Apps GPU column sits between App and CPU, and the sort headers
+follow it; the default sort stays CPU. The screen-reader status reads GPU
+before CPU. This is the user's Windows layout: GPU is a Windows addition.
+
+**GPU total load (`cadb88e`).** The Overview row and the Apps column read the
+same `GPU Engine` running-time counters, but they no longer show the busiest
+engine. For each physical adapter (LUID and node), each engine type counts
+its busiest engine. The types are summed (3D + Copy + Video Decode + Video
+Encode + Compute + …) and capped at 100 %. Of two adapters (discrete and
+integrated), the busier one is shown; the two are neither added nor
+averaged. Each app is computed the same way over its processes, in one
+allocation-free pass. The caption is the CPU row's TOTAL LOAD catalog entry
+(总负载, 總負載, 合計負荷, 총 부하) instead of TOP ENGINE. The figure therefore
+reads at or above Task Manager's GPU column, which shows the busiest engine.
+Tests for both commits: `activity_gpu_contracts` (adapter 1 at 3D 50 % + Copy 10 % and adapter
+2 at 3D 25 % give 60 %; the live collection logs each adapter's load),
+`activity_state_contracts` (order, colours by metric, the caption in five
+languages), `activity_preview_contracts`, the Activity automation peers and
+the provider coverage step.
+
+**Now Playing with NetEase Cloud Music 3 (`666caa8`).** NetEase is now read
+through its own player bar, using Chromium accessibility on demand:
+
+- The walk starts at the page document. The reader answers Chromium's
+  screen-reader probe once (`WM_GETOBJECT` with object id 1, then a name
+  read): live, CEF 91 built its page tree within 300 ms only after that
+  probe, and the IAccessible2 request alone left it empty. The tree stays on
+  until NetEase exits, which costs NetEase some CPU.
+- Transport presses the bar's buttons (`pre`, `play`/`pause`, `next`). They
+  count only as one bar, so the playlists' play buttons never match. The
+  media-key hotkey is the fallback while one player application runs;
+  NetEase's CEF helper processes no longer count as a second player. The
+  last fallback is `WM_APPCOMMAND`.
+- NetEase shows no elapsed or total labels. The time is the bar's played
+  width (its `track` part, read through IAccessible2 attributes) times the
+  catalog length of the track. The bar is re-read at most once per displayed
+  second, and only while the track plays and Now Playing is shown.
+- The cover comes from the bar's `<img>`, which embeds the catalog picture.
+  The download starts with the reading, one round trip earlier (about
+  1.2–2 s on the laptop's link).
+- Gaps: there is no seek. A minimized NetEase may freeze its bar: a
+  minimized bar is trusted only once it moves, shown provisionally before
+  that, and withdrawn when it stands still while playing. Without a catalog
+  match there is no length, so no time is shown.
+- Tip for the user: turning on NetEase's own Windows media-control setting
+  makes NetEase publish an SMTC session. Now Playing prefers that session,
+  which gives full controls, including seek.
+
+Tests run against a sanitized fixture of NetEase's live page shape
+(`tests/fixtures/now-playing-netease-tree.json`):
+`now_playing_control_reader_contracts` (CEF-shaped and views-host pages,
+probe activation, IAccessible2 attributes through Windows' `ia2comproxy`,
+re-reads, title confirmation, presses), `now_playing_players_contracts`
+(helper process, progress, minimized bars, resynchronize),
+`now_playing_player_controls_contracts` and
+`now_playing_sources_session_contracts` (fraction, own cover,
+once-per-second cadence). `now_playing_probe --windows` prints the reader's
+statistics, and `tools/now_playing_player_tree_probe.ps1` records a redacted
+tree.
+
+**Projection brush latency (`c68f6c5`).** The new `projection_latency_probe`
+runs in the laptop's interactive session (2560 × 1600 at 165 Hz, RTX 5060).
+It draws a 1000 Hz stroke through the production objects: the `OverlayHost`
+pump, the Application's Projection routes, the hardware composition
+Renderer, `DesktopBackdrop` and `ProjectionWorkspace`. It found three causes:
+
+- Projection frames never waited for the swap chain's frame-latency object;
+  only the HUD path did. About 35 frames queued behind the pointer.
+- Every pointer event rasterized the live stroke's 256-pixel tiles again in
+  full and re-created their textures. Windows coalesced two thirds of the
+  mouse samples meanwhile.
+- Finite motion was paced by a fixed 1/60 s timer.
+
+| Probe measure | Before | After |
+| --- | --- | --- |
+| Input to display (DWM frame statistics) | 196 ms mean (32–35 refresh periods) | 21 ms (3.5 periods, about 2.9 of them the compositor's) |
+| Frames presented ahead of the display | about 35 (193 frames/s to a 165 Hz display) | 0 |
+| CPU per pointer move / per frame | 0.65 / 3.9 ms | 0.007 / 0.8 ms |
+| CPU while drawing | 77–81 % of one core | 21–30 % |
+| Mouse samples kept | about one third | 95–99 % |
+| Finite animation | 60 fps | 150–158 fps |
+| Open and closed idle | 0 frames, about 0 % CPU | unchanged |
+
+What changed:
+
+- **Admission:** a requested frame waits in the pump for the owner's
+  swap-chain admission while input keeps being dispatched, then runs at once
+  with the newest input. The wait is bounded at 50 ms, and a short USER timer
+  runs only while a frame is gated, so that nested modal loops can admit it.
+  Every presented frame, HUD and Projection, now holds the admission.
+- **Display pacing:** finite motion follows the refresh rate of the window's
+  monitor instead of a fixed 60 Hz. This covers the whole HUD, not only
+  Projection. Ambient (30 Hz) and low-power motion keep the source cadence;
+  `FrameWakePlan` and its source-parity contract are unchanged.
+- **Mouse history:** drag moves carry the samples that Windows coalesced,
+  recovered with `GetMouseMovePointsEx`. Projection drags use them.
+- **Ink:** each tile keeps one updatable texture. Only the changed region is
+  painted in place (a growing stroke's newest segments, or a committed or
+  erased stroke's footprint), once per frame for every sample since the
+  previous frame.
+- **Priority:** the shown Projection workspace raises the presentation
+  priority like the shown HUD and restores it on close.
+
+Tests: the `projection_ink` tests (painting in place equals a whole repaint
+for growing, committed and erased strokes), `native_renderer_contracts` and
+`overlay_host_contracts` (pacing at 60/144/165 Hz, unchanged ambient and low
+power, no idle frames, the mouse-history merge). The interactive
+`projection_capture_route_contracts` checks that each burst of samples is
+drawn by one frame, the very next one is presented, every present is
+admitted, every sample is kept and idle presents nothing; it passed 5 of 5
+runs under a running game.
+
+Still open: redrawing a very long stroke at pen-up takes 13–15 ms; Notes
+strokes do not yet use the recovered mouse samples; and finite animations at
+165 fps cost more CPU than at 60 fps.
+
+### Test runs
+
+| Run | Result |
+| --- | --- |
+| Laptop slot over SSH (recorded in `c68f6c5`) | The requested suites pass 59 of 59, with the route test skipped. The whole suite passes 390 of 394. The four failures are environmental: `projection_composition_contracts` and `projection_workspace_contracts` need an interactive desktop and pass there, `packet_export_contracts` needs the Mac `Sources/`, and the own-GPU-share check in `activity_gpu_contracts` is flaky under a game and passes on retry. |
+| Laptop interactive session (recorded in `c68f6c5`) | `projection_capture_route`, `projection_composition`, `projection_workspace`, `native_renderer --composition` (WARP and hardware) and `overlay_host --interactive-startup` pass. The route test (`eed5d52`, formerly `bf376aa`) now has recorded passes; checkpoint 129 had none. |
+| `bc60d1b`, `cadb88e`, `666caa8` | Their messages record the tests added but no run of their own. A validation of the current tree on the laptop was in progress when this entry was written; its result is not recorded here. |
+
+### Corrections to the entries above
+
+- The commit names in checkpoint 129 are the names from before the rewrite.
+  Mapped to the pushed history: `e9e9a58` → `3bfe0fc`, `dab9539` →
+  `cbc3d9c`, `e99e0f8` → `842121e`, `a2829c0` → `09b6ace`, `577a707` →
+  `0454c07`, `ebcc801` → `ce32598`, `c9f04a5` → `176e045`, `83dd37d` →
+  `024f08b`, `d923aef` → `36a10f2`, `fe21a24` → `7e76a6e`, `47e7d6d` →
+  `162a104`, `0a1d4b5` → `044baef`, `f2e2ad6` → `5710e33`, `d0201be` →
+  `fe0b3e7`, `7918420` → `2b9acf4`, `6039135` → `bbbfd4a`, `15da40b` →
+  `a0095ba`, `7700973` → `2443100`, `bf376aa` → `eed5d52`, `5722753` →
+  `438b409`, `244ba30` → `53b826a`, `a58af3a` → `91f1773`, `3d3b0b4` →
+  `b63b052`, `7ea099d` → `665885b`, `7902591` → `c0658a8`, `daa5127` →
+  `0680431`, `98e4f29` → `83e8cf2`, `150d07f` → `bb15497`, `bc3ffd6` →
+  `bd238df`, `f35ee05` → `3a4aa29`, `5a2d3d3` → `0ce8e4e`, `3d972c7` →
+  `f710e32`, and the checkpoint 129 record `1ef2375` → `76da28f`. The
+  names `69c8816`, `b779995`, `d5acbe9`, `e62a46f` and `b9b869b` did not
+  change.
+- Checkpoint 129's GPU row describes the busiest-engine figure and the TOP
+  ENGINE caption. A note in place now points to `cadb88e`.
+- Checkpoint 129 says NetEase never ran during the work. The live
+  examination for `666caa8` showed that its reader did not reach NetEase's
+  controls. The causes were the walk's depth, the missing CEF probe answer,
+  the control names, and a helper process counted as a second player.
+- Checkpoint 129 lists the frame-latency waitable swap chain as never run.
+  The interactive Projection runs created and waited on it. The HUD's frames
+  on the desktop are part of the next section 9 run.
+- Checkpoint 129 recorded no pass of `projection_capture_route_contracts`.
+  See *Test runs*.
+
+### Live acceptance still needed
+
+Checkpoint 129's list still applies, except for the items the user confirmed
+above. New items:
+
+- Now Playing with NetEase in the HUD (transport, timeline, cover), with and
+  without NetEase's media-control setting.
+- Activity's total load with a game running, on the discrete and the
+  integrated GPU.
+- The Global login of Account Linking.
+- `package_perf_gate --desktop` on the current build. Display pacing now
+  presents openings and transitions at up to the display refresh (165 Hz on
+  the laptop), so the opening figures need a new run.
+
+### Decisions for the user
+
+Checkpoint 129's open decisions still apply.
+
+- Settled after checkpoint 130: Activity shows GPU before CPU (the user's
+  Windows layout).
