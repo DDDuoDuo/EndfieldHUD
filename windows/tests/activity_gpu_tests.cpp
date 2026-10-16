@@ -7,8 +7,10 @@
 // closed, on the sampling plan's one deadline. The live part reads the
 // system's GPU engine performance counters (no user data) and asserts only
 // about this process; its optional D3D11 load is this process's own work on
-// a hardware device and is skipped where none can be created. No window is
-// shown and no input is sent.
+// a hardware device and is skipped where none can be created. The system
+// sample's network reading (native/activity_provider.hpp) is checked live
+// against the interface table the same way (byte counters only). No window
+// is shown and no input is sent.
 #include "native/activity_gpu.hpp"
 #include "native/activity_disk.hpp"
 #include "native/activity_provider.hpp"
@@ -18,6 +20,8 @@
 #include <atomic>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
+#include <initializer_list>
 #include <new>
 #include <optional>
 #include <cmath>
@@ -31,7 +35,11 @@
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
+#include <winsock2.h>
+#include <ws2ipdef.h>
 #include <windows.h>
+#include <iphlpapi.h>
+#include <netioapi.h>
 #include <intrin.h>
 #include <d3d11.h>
 #include <pdh.h>
@@ -40,7 +48,9 @@
 #include <wrl/client.h>
 #include <chrono>
 #include <map>
+#include <mutex>
 #include <thread>
+#include <tuple>
 #endif
 
 // Allocations made through this executable's operator new on the calling
@@ -159,6 +169,56 @@ void live(){
     n::releaseWindowsActivityGPU();stats=n::windowsActivityGPUStats();check(!stats.open&&stats.retainedBytes==0&&stats.closes==opened.closes+1,"Release closes the query and keeps no buffer");
     check(n::readWindowsActivityGPU().has_value()&&n::windowsActivityGPUStats().opens==opened.opens+1,"The next sample opens it again");
 }
+// The system sample's network reading, live: interface byte counters only,
+// nothing on the machine is changed. The kept counted interfaces, each read
+// by GetIfEntry2, equal the table reading (GetIfTable2) of the moment: the
+// same interfaces, every counter between the listings taken just before and
+// just after. Steady readings list nothing and allocate nothing; a kept
+// interface that cannot be read (one that does not exist, as after a
+// removal) makes that sample the table reading.
+void network(){
+    n::releaseWindowsActivityNetwork();const auto source=n::windowsActivityNetworkSource();std::vector<n::ActivityInterface>rows;
+    const auto table=[&]()->std::optional<m::ActivityCounters>{rows.clear();if(!source.table(rows))return {};return n::activityNetworkCounters(rows);};
+    const auto between=[](const std::optional<m::ActivityCounters>&reading,const std::optional<m::ActivityCounters>&before,const std::optional<m::ActivityCounters>&after){
+        if(!reading||!before||!after||reading->size()!=before->size()||reading->size()!=after->size())return false;auto b=before->begin(),a=after->begin();
+        for(const auto&[key,value]:*reading){if(key!=b->first||key!=a->first||value.received<b->second.received||value.received>a->second.received||value.sent<b->second.sent||value.sent>a->second.sent)return false;++b;++a;}return true;};
+    // The machine's interfaces changed between the two listings (keys differ or a notification came).
+    const auto changed=[](const std::optional<m::ActivityCounters>&before,const std::optional<m::ActivityCounters>&after,std::uint64_t notified){
+        if(n::windowsActivityNetworkStats().notifications!=notified||!before||!after||before->size()!=after->size())return true;
+        return !std::equal(before->begin(),before->end(),after->begin(),[](const auto&x,const auto&y){return x.first==y.first;});};
+    auto notified=n::windowsActivityNetworkStats().notifications;const auto before=table();auto previous=n::readWindowsActivityNetwork();const auto after=table();auto stats=n::windowsActivityNetworkStats();
+    if(!before){std::cout<<"network: interface table unavailable\n";check(!previous||changed(before,after,notified),"No table, no network reading");return;}
+    check(stats.watching,"The first reading registers the interface change notification");
+    check(stats.reader.listings==1&&stats.reader.entries==0,"The first reading lists the table");
+    check(changed(before,after,notified)||between(previous,before,after),"The first reading is the table reading");
+    std::cout<<"network: "<<rows.size()<<" interfaces listed, "<<stats.reader.counted<<" counted\n";
+    unsigned quiet{};std::string counts;double seconds{};LARGE_INTEGER frequency{};QueryPerformanceFrequency(&frequency);
+    for(unsigned k=0;k<6;++k){std::this_thread::sleep_for(std::chrono::milliseconds(100));notified=n::windowsActivityNetworkStats().notifications;const auto listings=n::windowsActivityNetworkStats().reader.listings;
+        const auto b=table();LARGE_INTEGER t0{},t1{};const auto used0=allocations;QueryPerformanceCounter(&t0);auto next=n::readWindowsActivityNetwork();QueryPerformanceCounter(&t1);const auto used=allocations-used0;const auto a=table();
+        seconds+=double(t1.QuadPart-t0.QuadPart)/double(frequency.QuadPart);const bool moved=changed(b,a,notified);
+        check(moved||between(next,b,a),"Each steady reading equals the table reading of the moment");
+        if(k&&!moved){check(used==0,"A steady network reading allocates nothing (the recycled previous reading is refilled)");check(n::windowsActivityNetworkStats().reader.listings==listings,"A steady network reading lists nothing");++quiet;}
+        counts+=(k?",":"")+std::to_string(used);if(previous)n::recycleWindowsActivityNetwork(std::move(*previous));previous=std::move(next);}
+    stats=n::windowsActivityNetworkStats();
+    std::cout<<"network steady readings: allocations "<<counts<<"; "<<seconds*1000/6<<" ms each; "<<stats.reader.entries<<" interface reads, "<<stats.reader.listings<<" listings, "<<stats.notifications<<" notifications\n";
+    check(quiet>=4,"Steady readings on a quiet machine");
+    {// A kept interface that cannot be read: here one that does not exist.
+        bool phantom=true;n::ActivityNetworkReader reader({[&](std::vector<n::ActivityInterface>&out){if(!source.table(out))return false;if(phantom)out.push_back({(6ull<<48)|(0xFFFFF0ull<<24),6,true,true,1,1});phantom=false;return true;},source.entry});
+        m::ActivityCounters reading;check(reader.read(reading)&&reader.stats().counted==stats.reader.counted+1,"A listed interface is kept");
+        notified=n::windowsActivityNetworkStats().notifications;const auto b=table();const bool read=reader.read(reading);const auto a=table();
+        check(read&&reader.stats().fallbacks==1&&reader.stats().listings==2&&(changed(b,a,notified)||between(reading,b,a)),"A kept interface that cannot be read: the sample lists the table and is its reading");}
+    if(previous)n::recycleWindowsActivityNetwork(std::move(*previous));
+    n::releaseWindowsActivityNetwork();check(!n::windowsActivityNetworkStats().watching,"Release cancels the notification");
+}
+// The system sample's disk reading, live: the counter type is checked by a
+// query's first collection only, and every later sample still reads the
+// same disks, their cumulative byte counters never going back.
+void diskReading(){
+    n::WindowsActivityDisk disk;auto previous=disk.sample();if(!previous){std::cout<<"disk: PhysicalDisk counters unavailable\n";return;}
+    for(unsigned k=0;k<3;++k){std::this_thread::sleep_for(std::chrono::milliseconds(100));auto next=disk.sample();check(next&&next->size()==previous->size(),"Every later disk sample reads the same disks");
+        auto old=previous->begin();for(const auto&[name,bytes]:*next){check(name==old->first&&bytes.received>=old->second.received&&bytes.sent>=old->second.sent,"Disk counters by name, never going back");++old;}previous=std::move(next);}
+    std::cout<<"disk: "<<previous->size()<<" disks read by 4 samples\n";
+}
 // GPU history accumulates exactly like CPU while Activity is hidden and the
 // HUD is closed: the production system reader on the shared executor, driven
 // only by the sampling plan's deadline (ActivityProbe::update), as the host
@@ -171,7 +231,7 @@ void history(){
     readers.apps=[&]{++appReads;return m::ActivityAppsRaw{};};
     n::ActivityProbe probe(state,plan,executor,readers);
     const bool available=n::readWindowsActivityGPU().has_value();std::this_thread::sleep_for(std::chrono::milliseconds(260));
-    const auto start=n::windowsActivityGPUStats();double t=1000;
+    const auto start=n::windowsActivityGPUStats();const auto net0=n::windowsActivityNetworkStats();double t=1000;
     const auto tick=[&](double next){std::this_thread::sleep_for(std::chrono::milliseconds(260));t=next;(void)probe.update(t);executor.waitIdle();executor.drain();};
     // Launch: the 5 s session history, Activity never shown.
     plan.start(t);(void)probe.update(t);executor.waitIdle();executor.drain();check(plan.nextWakeTime()==t+5,"Background history every 5 s from launch");
@@ -186,6 +246,13 @@ void history(){
     check(history.size()==7&&systemReads==7&&appReads==0,"Seven system samples on the plan's deadlines, no Apps reading while the Apps page is hidden");
     check(stats.collections-start.collections==7&&stats.opens==start.opens&&stats.closes==start.closes,"One GPU collection per system sample through the one kept query");
     check(cpu==6&&gpu==(available?6u:0u),"GPU history fills like CPU from launch, shown, hidden and with the HUD closed");
+    // The network reading of the same samples: the kept interfaces, listed
+    // by the first sample only (unless an interface changed meanwhile), its
+    // counters handed back by the worker for the next reading.
+    const auto net=n::windowsActivityNetworkStats();std::size_t download{};for(const auto&s:history)download+=s.download.has_value();
+    std::cout<<"history network: "<<net.reader.listings-net0.reader.listings<<" listings, "<<net.reader.entries-net0.reader.entries<<" interface reads, "<<net.notifications-net0.notifications<<" notifications, "<<net.recycled-net0.recycled<<" recycled; download in "<<download<<" samples\n";
+    check(net.watching&&net.reader.listings-net0.reader.listings<=1+(net.notifications-net0.notifications)+(net.reader.fallbacks-net0.reader.fallbacks),"The system samples list the interface table once, then read the kept interfaces");
+    check(net.recycled-net0.recycled>=6&&(download==6||net.reader.listings-net0.reader.listings>1),"Network history fills with CPU; the worker recycles each superseded reading");
     check(executor.stats().workersStarted==1,"All on the shared worker");
 }
 // Measurement (not a ctest): activity_gpu_tests --closed-idle <seconds>.
@@ -222,7 +289,13 @@ double processCPU(){FILETIME creation{},exit{},kernel{},user{};GetProcessTimes(G
 // They count at the time-stamp counter's rate, measured here against QPC.
 std::uint64_t processCycles(){ULONG64 cycles{};QueryProcessCycleTime(GetCurrentProcess(),&cycles);return cycles;}
 double cycleRate(){LARGE_INTEGER frequency{},a{},b{};QueryPerformanceFrequency(&frequency);QueryPerformanceCounter(&a);const auto t0=__rdtsc();Sleep(200);const auto t1=__rdtsc();QueryPerformanceCounter(&b);return double(t1-t0)*double(frequency.QuadPart)/double(b.QuadPart-a.QuadPart);}
-int closedIdle(double seconds){
+// --closed-idle <seconds> --notices also lists the IP interface change
+// notifications of the run (a registration of this test's own): which
+// interfaces they name and whether those count.
+struct Notices {std::mutex mutex;std::vector<std::tuple<std::uint64_t,unsigned,unsigned,double>>seen;};
+VOID NETIOAPI_API_ notice(PVOID context,PMIB_IPINTERFACE_ROW row,MIB_NOTIFICATION_TYPE type){auto&n=*static_cast<Notices*>(context);std::lock_guard lock(n.mutex);n.seen.emplace_back(row?row->InterfaceLuid.Value:0,row?unsigned(row->Family):0u,unsigned(type),double(GetTickCount64())*.001);}
+int closedIdle(double seconds,bool notices=false){
+    Notices seen;HANDLE noticeHandle{};if(notices)check(NotifyIpInterfaceChange(AF_UNSPEC,&notice,&seen,FALSE,&noticeHandle)==NO_ERROR,"Notification registered");
     namespace a=endfield::app;struct Event {HANDLE value=CreateEventW(nullptr,FALSE,FALSE,nullptr);~Event(){if(value)CloseHandle(value);}}event;const HANDLE completed=event.value;check(completed!=nullptr,"Completion event");
     a::UtilityExecutor executor([completed]{SetEvent(completed);},32,std::chrono::milliseconds::zero(),"activity closed-idle");
     m::ActivityState state([](std::string_view x,std::string_view y){return x.compare(y);});m::ActivitySamplingPlan plan;auto disk=std::make_shared<n::WindowsActivityDisk>();
@@ -241,9 +314,9 @@ int closedIdle(double seconds){
         if(WaitForSingleObject(completed,DWORD(std::ceil(delay*1000)))==WAIT_OBJECT_0){executor.drain();(void)probe.submitPending();}else (void)probe.update(clock());};
     plan.start(clock());(void)probe.update(clock());while(state.history().size()<1)turn(); // warm-up: the first sample opens the queries
     const auto firstTicks=timing->ticks.load(),firstGPU=timing->gpuTicks.load();
-    const auto gpuBefore=n::windowsActivityGPUStats();const auto threads0=threadUse();const auto cpu0=processCPU();const auto cycles0=processCycles();const auto timed0=timing->samples.load();const auto ticks0=timing->ticks.load(),gpuTicks0=timing->gpuTicks.load();const auto start=clock();const auto samples0=state.history().size();
+    const auto gpuBefore=n::windowsActivityGPUStats();const auto netBefore=n::windowsActivityNetworkStats();const auto threads0=threadUse();const auto cpu0=processCPU();const auto cycles0=processCycles();const auto timed0=timing->samples.load();const auto ticks0=timing->ticks.load(),gpuTicks0=timing->gpuTicks.load();const auto start=clock();const auto samples0=state.history().size();
     while(clock()-start<seconds)turn();
-    const auto threads1=threadUse();const auto cpu1=processCPU();const auto cycles1=processCycles();const auto elapsed=clock()-start;const auto gpuAfter=n::windowsActivityGPUStats();
+    const auto threads1=threadUse();const auto cpu1=processCPU();const auto cycles1=processCycles();const auto elapsed=clock()-start;const auto gpuAfter=n::windowsActivityGPUStats();const auto netAfter=n::windowsActivityNetworkStats();
     const auto rate=cycleRate();LARGE_INTEGER frequency{};QueryPerformanceFrequency(&frequency);const auto timed=double(timing->samples.load()-timed0);
     // Per role: this main thread (the host's message loop), the sampling
     // worker, and every other thread (system pools, PDH, the network stack).
@@ -260,17 +333,78 @@ int closedIdle(double seconds){
              <<"  the first sample (opening the queries) took "<<double(firstTicks)/double(frequency.QuadPart)*1000<<" ms, of which GPU "<<double(firstGPU)/double(frequency.QuadPart)*1000<<" ms\n"
              <<"  per minute: main "<<double(roleWakes[0])*perMinute<<" wake-ups "<<roleCPU[0]*1000*perMinute<<" ms; sampling worker "<<double(roleWakes[1])*perMinute<<" wake-ups "<<roleCPU[1]*1000*perMinute<<" ms; "
              <<roleThreads[2]<<" other threads "<<double(roleWakes[2])*perMinute<<" wake-ups "<<roleCPU[2]*1000*perMinute<<" ms\n"
+             <<"  per system sample: sampling worker "<<(timed?double(roleWakes[1])/timed:0)<<" context switches (the reading and the hand-off), "<<(timed?double(timing->ticks.load()-ticks0)/double(frequency.QuadPart)*1000/timed:0)<<" ms\n"
+             <<"  network: "<<netAfter.reader.listings-netBefore.reader.listings<<" table listings, "<<netAfter.reader.entries-netBefore.reader.entries<<" interface reads ("<<netAfter.reader.counted<<" counted), "
+             <<netAfter.notifications-netBefore.notifications<<" change notifications ("<<netAfter.reader.skipped-netBefore.reader.skipped<<" naming the kept interfaces, skipped), "<<netAfter.reader.fallbacks-netBefore.reader.fallbacks<<" fallbacks; notification "<<(netAfter.watching?"registered":"not registered")<<'\n'
              <<"  GPU collector: "<<gpuAfter.collections-gpuBefore.collections<<" collections, "<<gpuAfter.opens-gpuBefore.opens<<" opens, "<<gpuAfter.instances<<" engine instances, last "<<gpuAfter.lastSeconds*1000<<" ms, max "<<gpuAfter.maximumSeconds*1000<<" ms; GPU now "<<(state.snapshot().gpuPercent?std::to_string(*state.snapshot().gpuPercent)+"%":"unknown")<<'\n';
+    if(noticeHandle){CancelMibChangeNotify2(noticeHandle);std::lock_guard lock(seen.mutex);std::cout<<"  interface change notifications: "<<seen.seen.size()<<'\n';
+        for(const auto&[luid,family,type,time]:seen.seen){MIB_IF_ROW2 row{};row.InterfaceLuid.Value=luid;const bool known=GetIfEntry2(&row)==NO_ERROR;
+            std::cout<<"    t+"<<time-start<<" s: "<<(type==MibParameterNotification?"parameter":type==MibAddInstance?"add":type==MibDeleteInstance?"delete":"other")<<(family==AF_INET6?" IPv6":" IPv4")<<", LUID type "<<(luid>>48)<<" index "<<((luid>>24)&0xFFFFFF);
+            if(known)std::cout<<": type "<<row.Type<<(row.InterfaceAndOperStatusFlags.HardwareInterface?" hardware":" virtual")<<(row.OperStatus==IfOperStatusUp?" up":" not up")<<(row.InterfaceAndOperStatusFlags.FilterInterface?" filter":"")<<", counted "<<(n::activityCountedInterface({luid,row.Type,row.InterfaceAndOperStatusFlags.HardwareInterface!=0,row.OperStatus==IfOperStatusUp,0,0})?"yes":"no");
+            std::cout<<'\n';}}
+    return 0;
+}
+// Measurement (not a ctest): activity_gpu_tests --sample-cost <samples>.
+// Each part of the system sample alone on this thread, <samples> times one
+// second apart after a first call (which opens the queries and registers
+// the notification): this thread's context switches and time per call. The
+// raw PDH rows break the disk and GPU readings into their calls on queries
+// of their own over the same counters.
+int sampleCost(unsigned samples){
+    n::WindowsActivityDisk disk;const auto source=n::windowsActivityNetworkSource();std::vector<n::ActivityInterface>rows;
+    std::optional<m::ActivityCounters>network;std::optional<m::ActivityGPUSample>gpu;std::optional<m::ActivityRawSample>whole;
+    struct Query {PDH_HQUERY query{};std::vector<PDH_HCOUNTER>counters;~Query(){if(query)PdhCloseQuery(query);}};
+    const auto open=[](Query&q,std::initializer_list<const wchar_t*>paths){check(PdhOpenQueryW(nullptr,0,&q.query)==ERROR_SUCCESS,"PDH query");for(const auto*path:paths){PDH_HCOUNTER c{};check(PdhAddEnglishCounterW(q.query,path,0,&c)==ERROR_SUCCESS,"PDH counter");q.counters.push_back(c);}(void)PdhCollectQueryData(q.query);};
+    Query diskQuery,gpuQuery;open(diskQuery,{L"\\PhysicalDisk(*)\\Disk Read Bytes/sec",L"\\PhysicalDisk(*)\\Disk Write Bytes/sec"});open(gpuQuery,{L"\\GPU Engine(*)\\Running Time"});
+    std::vector<std::max_align_t>buffer(std::size_t(8)<<20>>4);
+    const auto arrays=[&](Query&q){for(auto c:q.counters){DWORD bytes=DWORD(buffer.size()*sizeof(std::max_align_t)),count{};(void)PdhGetRawCounterArrayW(c,&bytes,&count,reinterpret_cast<PDH_RAW_COUNTER_ITEM_W*>(buffer.data()));}};
+    const auto info=[&](Query&q){for(auto c:q.counters){DWORD bytes{};(void)PdhGetCounterInfoW(c,FALSE,&bytes,nullptr);bytes=DWORD(buffer.size()*sizeof(std::max_align_t));(void)PdhGetCounterInfoW(c,FALSE,&bytes,reinterpret_cast<PDH_COUNTER_INFO_W*>(buffer.data()));}};
+    const auto clock=[]{return double(GetTickCount64())*.001;};
+    using SystemQuery=LONG(WINAPI*)(ULONG,PVOID,ULONG,PULONG);
+    const auto systemQuery=reinterpret_cast<SystemQuery>(reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"),"NtQuerySystemInformation")));check(systemQuery!=nullptr,"NtQuerySystemInformation");
+    std::vector<std::uint8_t>processors(std::size_t(48)*GetActiveProcessorCount(ALL_PROCESSOR_GROUPS)); // SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION each
+    struct Part {const char*name;std::function<void()>read;};
+    const std::vector<Part>parts{
+        {"nothing (measurement baseline)",[]{}},
+        {"CPU (GetSystemTimes)",[]{FILETIME a{},b{},c{};(void)GetSystemTimes(&a,&b,&c);}},
+        {"CPU: its NtQuerySystemInformation(SystemProcessorPerformanceInformation) alone",[&]{ULONG bytes{};(void)systemQuery(8,processors.data(),ULONG(processors.size()),&bytes);}},
+        {"RAM (GlobalMemoryStatusEx)",[]{MEMORYSTATUSEX v{};v.dwLength=sizeof(v);(void)GlobalMemoryStatusEx(&v);}},
+        {"network, every interface (GetIfTable2; the reading before)",[&]{rows.clear();if(source.table(rows))(void)n::activityNetworkCounters(rows);}},
+        {"network, the kept counted interfaces (GetIfEntry2; the reading now)",[&]{auto next=n::readWindowsActivityNetwork();if(network)n::recycleWindowsActivityNetwork(std::move(*network));network=std::move(next);}},
+        {"GPU reading (PDH GPU Engine)",[&]{auto next=n::readWindowsActivityGPU();if(gpu)n::recycleWindowsActivityGPU(std::move(*gpu));gpu=std::move(next);}},
+        {"GPU: PdhCollectQueryData alone",[&]{(void)PdhCollectQueryData(gpuQuery.query);}},
+        {"GPU: raw counter array alone",[&]{arrays(gpuQuery);}},
+        {"disk reading (PDH PhysicalDisk)",[&]{(void)disk.sample();}},
+        {"disk: PdhCollectQueryData alone",[&]{(void)PdhCollectQueryData(diskQuery.query);}},
+        {"disk: counter info alone (2 counters)",[&]{info(diskQuery);}},
+        {"disk: raw counter arrays alone (2 counters)",[&]{arrays(diskQuery);}},
+        {"whole system sample (recycled like the probe)",[&]{const auto t=clock();auto next=n::readWindowsActivity(t,t);next.disk=disk.sample();
+            if(whole){if(whole->gpu)n::recycleWindowsActivityGPU(std::move(*whole->gpu));if(whole->network)n::recycleWindowsActivityNetwork(std::move(*whole->network));}whole=std::move(next);}}};
+    LARGE_INTEGER frequency{};QueryPerformanceFrequency(&frequency);
+    // This thread's context switches alone (its SYSTEM_THREAD_INFORMATION
+    // through NtQueryInformationThread ThreadSystemThreadInformation, x64
+    // layout: ContextSwitches at 0x40), not a system-wide snapshot whose own
+    // cost would dwarf a reading's.
+    using ThreadQuery=LONG(WINAPI*)(HANDLE,ULONG,PVOID,ULONG,PULONG);
+    static const auto threadQuery=reinterpret_cast<ThreadQuery>(reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"),"NtQueryInformationThread")));
+    const auto own=[]{alignas(8) std::array<std::uint8_t,0x50>info{};if(!threadQuery||threadQuery(GetCurrentThread(),40,info.data(),ULONG(info.size()),nullptr)<0)throw std::runtime_error("ThreadSystemThreadInformation unavailable");
+        ULONG value{};std::memcpy(&value,info.data()+0x40,sizeof(value));return value;};
+    for(const auto&part:parts){part.read();std::uint64_t switches{},least=~0ull,most{};double time{};
+        for(unsigned k=0;k<samples;++k){Sleep(1000);const auto before=own();LARGE_INTEGER a{},b{};QueryPerformanceCounter(&a);part.read();QueryPerformanceCounter(&b);const std::uint64_t used=own()-before;
+            switches+=used;least=std::min(least,used);most=std::max(most,used);time+=double(b.QuadPart-a.QuadPart)/double(frequency.QuadPart);}
+        std::cout<<part.name<<": "<<double(switches)/samples<<" switches ("<<least<<"-"<<most<<"), "<<time*1000/samples<<" ms per call\n";}
+    const auto net=n::windowsActivityNetworkStats();std::cout<<"network reader: "<<net.reader.counted<<" counted interfaces, "<<net.reader.listings<<" listings, "<<net.reader.entries<<" interface reads, "<<net.notifications<<" notifications\n";
     return 0;
 }
 #endif
 }
 int main(int argc,char**argv){try{
 #ifdef _WIN32
-    if(argc==3&&std::string_view(argv[1])=="--closed-idle")return closedIdle(std::stod(argv[2]));
+    if((argc==3||(argc==4&&std::string_view(argv[3])=="--notices"))&&std::string_view(argv[1])=="--closed-idle")return closedIdle(std::stod(argv[2]),argc==4);
+    if(argc==3&&std::string_view(argv[1])=="--sample-cost")return sampleCost(unsigned(std::stoul(argv[2])));
 #endif
     (void)argc;(void)argv;parsing();samples();
 #ifdef _WIN32
-    live();history();
+    live();network();diskReading();history();
 #endif
     std::cout<<"PASS "<<checks<<" Activity GPU checks\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}

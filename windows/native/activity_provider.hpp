@@ -1,6 +1,8 @@
 #pragma once
 #include "app/utility_executor.hpp"
 #include "modules/activity_state.hpp"
+#include <array>
+#include <atomic>
 #include <memory>
 
 namespace endfield::native {
@@ -15,6 +17,84 @@ namespace endfield::native {
 // unavailable), so its history fills while Activity is hidden or the HUD is
 // closed too.
 modules::ActivityRawSample readWindowsActivity(double timestamp,double uptime);
+// Network: the byte counters of the counted interfaces, keyed by interface
+// LUID in decimal. One interface as GetIfTable2/GetIfEntry2 report it
+// (MIB_IF_ROW2), with only the fields the reading uses.
+struct ActivityInterface {std::uint64_t luid{};std::uint32_t type{};bool hardware{},up{};std::uint64_t received{},sent{};};
+// The counting rule (the Mac counts its up, running, non-loopback en* and
+// ppp* interfaces): an up interface that is hardware Ethernet or Wi-Fi, or
+// PPP. Loopback, tunnels, virtual adapters and filter interfaces would count
+// the same packets twice.
+bool activityCountedInterface(const ActivityInterface&)noexcept;
+// The table reading: every counted interface of one interface table (a
+// repeated LUID keeps its first row); unavailable above 4096 interfaces.
+std::optional<modules::ActivityCounters>activityNetworkCounters(std::span<const ActivityInterface>table);
+// The network reading of every system sample, equal to the table reading of
+// the moment. Listing every interface (GetIfTable2) cost 22-28 context
+// switches and 1.4-1.7 ms per sample on the laptop (40 interfaces); reading
+// only the counted one (GetIfEntry2) about 2 and 0.16 ms. So the counted
+// interfaces are taken from the table once and kept, each sample reads only
+// them, and the sample lists the table again (and is the table reading
+// itself) when
+//  - an interface change notification named an interface it does not keep
+//    (one added, connected or changed; the IP interface change
+//    notification, never a timer), or invalidate() was called;
+//  - a kept interface cannot be read (removed) or no longer counts (down);
+//  - the last listing failed.
+// An interface that starts to count is found through its notification; one
+// bound to neither IPv4 nor IPv6 sends none and is counted from the next
+// listing. Notifications naming a kept interface (the counted Wi-Fi
+// adapter's parameter changes, about one a minute on the laptop) list
+// nothing: its own reading each sample shows it removed or disconnected.
+class ActivityNetworkReader final {
+public:
+    struct Source {
+        // Every interface; false when the table cannot be read.
+        std::function<bool(std::vector<ActivityInterface>&)>table;
+        // One interface by LUID; false when it cannot be read.
+        std::function<bool(std::uint64_t luid,ActivityInterface&)>entry;
+    };
+    struct Stats {std::uint64_t reads{},listings{},entries{},fallbacks{},invalidations{},skipped{};std::size_t counted{};};
+    explicit ActivityNetworkReader(Source);
+    // Any thread: the next read lists the table.
+    void invalidate()noexcept;
+    // Any thread (the change notification, naming an interface by LUID; 0
+    // for none): invalidate() unless it names a kept interface. While a
+    // listing runs (and above `watchable` kept interfaces) every
+    // notification invalidates. True when it invalidated.
+    bool notify(std::uint64_t luid)noexcept;
+    static constexpr std::size_t watchable=16;
+    // One reading into `out` (one caller at a time). With the previous
+    // reading's counters in `out` and no interface change it reads each kept
+    // interface once and allocates nothing. False (and `out` empty) when the
+    // table reading is unavailable.
+    bool read(modules::ActivityCounters&out);
+    Stats stats()const noexcept;
+private:
+    bool steady(modules::ActivityCounters&);bool list(modules::ActivityCounters&);
+    struct Kept {std::uint64_t luid{};std::string key;};
+    Source source_;std::vector<ActivityInterface>table_;std::vector<Kept>kept_;std::atomic<bool>stale_{true};std::atomic<std::uint64_t>invalidations_{},skipped_{};Stats stats_;
+    // The kept LUIDs as notify() sees them (0: none).
+    std::array<std::atomic<std::uint64_t>,watchable>watched_{};
+};
+#ifdef _WIN32
+// GetIfTable2 and GetIfEntry2 (the live test compares them).
+ActivityNetworkReader::Source windowsActivityNetworkSource();
+#endif
+// The production network reading (readWindowsActivity's): one process-wide
+// reader, its interface change notification (NotifyIpInterfaceChange, both
+// families) registered by the first reading and kept. Without a
+// registration every reading lists the table. The returned counters reuse
+// the buffer recycleWindowsActivityNetwork returned. Empty off Windows.
+std::optional<modules::ActivityCounters>readWindowsActivityNetwork();
+// Gives back a reading the sampling worker no longer needs (ActivityProbe:
+// the previous sample's), so the next reading refills it in place.
+void recycleWindowsActivityNetwork(modules::ActivityCounters&&)noexcept;
+struct WindowsActivityNetworkStats {ActivityNetworkReader::Stats reader;std::uint64_t notifications{},recycled{};bool watching{};};
+WindowsActivityNetworkStats windowsActivityNetworkStats()noexcept;
+// Cancels the notification and forgets the kept interfaces (tests; the next
+// reading registers and lists again).
+void releaseWindowsActivityNetwork()noexcept;
 // Caller supplies an explicit <=256 app catalog with <=8192 unique PIDs.
 // Opens one limited-query handle at a time; protected/reused PIDs stay unknown.
 // App memory is the process's private working set (Task Manager's "Memory"
@@ -44,8 +124,9 @@ public:
     // sample ticks are coalesced, not replayed. No independent clock/thread.
     // When the Apps demand has ended either call also queues the release of
     // the worker's retained Apps reading (the Mac drops it on deactivate).
-    // The worker hands each superseded system sample's GPU buffer back to
-    // native::recycleWindowsActivityGPU for the next reading.
+    // The worker hands each superseded system sample's GPU buffer and
+    // network counters back (native::recycleWindowsActivityGPU,
+    // recycleWindowsActivityNetwork) for the next reading.
     bool update(double now);bool submitPending();Stats stats()const;
 private:struct Impl;std::shared_ptr<Impl>impl_;
 };

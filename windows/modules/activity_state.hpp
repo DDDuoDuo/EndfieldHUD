@@ -1,21 +1,53 @@
 #pragma once
 #include "core/scene.hpp"
+#include <algorithm>
 #include <array>
 #include <compare>
 #include <cstdint>
 #include <functional>
+#include <initializer_list>
 #include <map>
 #include <optional>
 #include <set>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace endfield::modules {
 struct ActivityCPU {std::uint64_t user{},system{},idle{},nice{};bool operator==(const ActivityCPU&)const=default;};
 struct ActivityBytes {std::uint64_t received{},sent{};bool operator==(const ActivityBytes&)const=default;};
-using ActivityCounters=std::map<std::string,ActivityBytes,std::less<>>;
+// Byte counters by device or interface name: one entry per name, in name
+// order (std::less<>), with the std::map operations Activity uses. Kept in
+// one vector, so an empty one allocates nothing and a recycled one is
+// refilled in place (the network reading of a steady system sample
+// allocates nothing; native/activity_provider.hpp).
+class ActivityCounters final {
+public:
+    using value_type=std::pair<std::string,ActivityBytes>;
+    using iterator=std::vector<value_type>::iterator;using const_iterator=std::vector<value_type>::const_iterator;
+    ActivityCounters()=default;
+    ActivityCounters(std::initializer_list<value_type>values){for(const auto&value:values)emplace(value.first,value.second);}
+    // std::map::emplace: a name already present keeps its first counters.
+    std::pair<iterator,bool>emplace(std::string name,ActivityBytes value){const auto at=lower(name);if(at!=values_.end()&&at->first==name)return {at,false};return {values_.emplace(at,std::move(name),value),true};}
+    iterator find(std::string_view name)noexcept{const auto at=lower(name);return at!=values_.end()&&at->first==name?at:values_.end();}
+    const_iterator find(std::string_view name)const noexcept{const auto at=lower(name);return at!=values_.end()&&at->first==name?at:values_.end();}
+    ActivityBytes&at(std::string_view name){const auto found=find(name);if(found==end())throw std::out_of_range("No Activity counter of that name");return found->second;}
+    const ActivityBytes&at(std::string_view name)const{const auto found=find(name);if(found==end())throw std::out_of_range("No Activity counter of that name");return found->second;}
+    std::size_t erase(std::string_view name)noexcept{const auto found=find(name);if(found==end())return 0;values_.erase(found);return 1;}
+    iterator begin()noexcept{return values_.begin();}iterator end()noexcept{return values_.end();}
+    const_iterator begin()const noexcept{return values_.begin();}const_iterator end()const noexcept{return values_.end();}
+    std::size_t size()const noexcept{return values_.size();}bool empty()const noexcept{return values_.empty();}
+    void clear()noexcept{values_.clear();}void swap(ActivityCounters&other)noexcept{values_.swap(other.values_);}
+    bool operator==(const ActivityCounters&)const=default;
+private:
+    static bool before(const value_type&value,std::string_view name)noexcept{return std::string_view(value.first)<name;}
+    iterator lower(std::string_view name)noexcept{return std::lower_bound(values_.begin(),values_.end(),name,before);}
+    const_iterator lower(std::string_view name)const noexcept{return std::lower_bound(values_.begin(),values_.end(),name,before);}
+    std::vector<value_type>values_;
+};
 struct ActivityMemory {std::uint64_t used{},total{};std::optional<std::uint64_t>compressed;bool operator==(const ActivityMemory&)const=default;};
 // Exact Mac physical-footprint formula, also available to the source oracle.
 std::optional<ActivityMemory>activityMacMemory(std::uint64_t physical,std::uint64_t pageSize,std::uint64_t internal,std::uint64_t purgeable,std::uint64_t wired,std::uint64_t compressed)noexcept;

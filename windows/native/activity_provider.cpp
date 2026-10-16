@@ -9,9 +9,49 @@
 
 namespace endfield::native {
 namespace {void clocks(double stamp,double uptime){if(!std::isfinite(stamp)||!std::isfinite(uptime)||uptime<0)throw std::invalid_argument("Invalid Activity sample clock");}
-// The previous system sample's GPU buffer carries the next GPU reading, so
-// recording GPU with every sample allocates nothing in the steady state.
-void recycle(std::optional<modules::ActivityRawSample>&previous)noexcept{if(previous&&previous->gpu){recycleWindowsActivityGPU(std::move(*previous->gpu));previous->gpu.reset();}}}
+// The previous system sample's GPU buffer and network counters carry the
+// next readings, so neither allocates in the steady state.
+void recycle(std::optional<modules::ActivityRawSample>&previous)noexcept{if(!previous)return;if(previous->gpu){recycleWindowsActivityGPU(std::move(*previous->gpu));previous->gpu.reset();}
+    if(previous->network){recycleWindowsActivityNetwork(std::move(*previous->network));previous->network.reset();}}
+// MIB_IF_ROW2 Type values (ipifcons.h).
+constexpr std::uint32_t ethernet=6,ppp=23,wifi=71;}
+bool activityCountedInterface(const ActivityInterface&row)noexcept{return row.up&&((row.type==ethernet||row.type==wifi)?row.hardware:row.type==ppp);}
+std::optional<modules::ActivityCounters>activityNetworkCounters(std::span<const ActivityInterface>table){
+    if(table.size()>4096)return {};modules::ActivityCounters out;for(const auto&row:table)if(activityCountedInterface(row))out.emplace(std::to_string(row.luid),modules::ActivityBytes{row.received,row.sent});return out;}
+ActivityNetworkReader::ActivityNetworkReader(Source source):source_(std::move(source)){if(!source_.table||!source_.entry)throw std::invalid_argument("Activity network reading requires a table and an entry source");}
+void ActivityNetworkReader::invalidate()noexcept{invalidations_.fetch_add(1,std::memory_order_relaxed);stale_.store(true,std::memory_order_seq_cst);}
+bool ActivityNetworkReader::notify(std::uint64_t luid)noexcept{
+    if(luid)for(const auto&kept:watched_)if(kept.load(std::memory_order_seq_cst)==luid){skipped_.fetch_add(1,std::memory_order_relaxed);return false;}
+    invalidate();return true;}
+ActivityNetworkReader::Stats ActivityNetworkReader::stats()const noexcept{auto out=stats_;out.invalidations=invalidations_.load(std::memory_order_relaxed);out.skipped=skipped_.load(std::memory_order_relaxed);out.counted=kept_.size();return out;}
+bool ActivityNetworkReader::read(modules::ActivityCounters&out){
+    ++stats_.reads;
+    // A change notified meanwhile (even during this read) leaves the flag
+    // set for the next read.
+    if(!stale_.exchange(false,std::memory_order_seq_cst)){if(steady(out))return true;++stats_.fallbacks;}
+    return list(out);
+}
+bool ActivityNetworkReader::steady(modules::ActivityCounters&out){
+    // `out` takes the kept interfaces' names unless it already has them (the
+    // recycled previous reading): only then does a reading allocate.
+    bool same=out.size()==kept_.size();for(auto at=out.begin();same&&at!=out.end();++at)same=at->first==kept_[std::size_t(at-out.begin())].key;
+    if(!same){out.clear();for(const auto&kept:kept_)out.emplace(kept.key,{});}
+    auto at=out.begin();for(const auto&kept:kept_){ActivityInterface row;++stats_.entries;if(!source_.entry(kept.luid,row)||row.luid!=kept.luid||!activityCountedInterface(row))return false;at->second={row.received,row.sent};++at;}
+    return true;
+}
+bool ActivityNetworkReader::list(modules::ActivityCounters&out){
+    // Until this listing's interfaces are published every notification
+    // invalidates: one skipped for a previously kept interface was sent
+    // before this point, so the table read below already shows its change.
+    for(auto&kept:watched_)kept.store(0,std::memory_order_seq_cst);
+    ++stats_.listings;table_.clear();kept_.clear();out.clear();
+    if(!source_.table(table_)||table_.size()>4096){table_.clear();stale_.store(true,std::memory_order_seq_cst);return false;}
+    // activityNetworkCounters, also keeping each counted name's LUID.
+    for(const auto&row:table_)if(activityCountedInterface(row)){auto key=std::to_string(row.luid);if(out.emplace(key,{row.received,row.sent}).second)kept_.push_back({row.luid,std::move(key)});}
+    std::sort(kept_.begin(),kept_.end(),[](const Kept&a,const Kept&b){return a.key<b.key;});
+    if(kept_.size()<=watched_.size())for(std::size_t k=0;k<kept_.size();++k)watched_[k].store(kept_[k].luid,std::memory_order_seq_cst);
+    return true;
+}
 struct ActivityProbe::Impl:std::enable_shared_from_this<Impl>{
     struct Worker {std::optional<modules::ActivityRawSample>system;std::optional<modules::ActivityAppsRaw>apps;std::uint64_t generation{},appGeneration{};};
     modules::ActivityState&state;modules::ActivitySamplingPlan&plan;app::UtilityExecutor&executor;Readers readers;Changed changed;app::UtilityExecutor::Route route;std::thread::id owner=std::this_thread::get_id();std::shared_ptr<Worker>worker=std::make_shared<Worker>();std::shared_ptr<std::atomic<bool>>alive=std::make_shared<std::atomic<bool>>(true);std::optional<modules::ActivityDemand>pending;Stats counts;bool appsRetained{};
@@ -48,10 +88,29 @@ ActivityProbe::Stats ActivityProbe::stats()const{impl_->thread();auto out=impl_-
 #include <iphlpapi.h>
 #include <netioapi.h>
 #include <psapi.h>
+#include <mutex>
 namespace endfield::native {
 namespace {
 std::uint64_t ticks(FILETIME f){return (std::uint64_t(f.dwHighDateTime)<<32)|f.dwLowDateTime;}
 struct Table {MIB_IF_TABLE2*value{};~Table(){if(value)FreeMibTable(value);}};
+ActivityInterface activityInterface(const MIB_IF_ROW2&r){return {r.InterfaceLuid.Value,std::uint32_t(r.Type),r.InterfaceAndOperStatusFlags.HardwareInterface!=0,r.OperStatus==IfOperStatusUp,r.InOctets,r.OutOctets};}
+// The production network reading: one reader for the process. Its kept
+// interfaces are listed again after an IP interface change notification
+// naming another interface (added, removed, connected, disconnected,
+// changed; both families), which arrives on a system thread and only sets
+// the reader's flag; there is no timer and nothing runs between samples
+// otherwise.
+struct Network {
+    std::mutex mutex;ActivityNetworkReader reader{windowsActivityNetworkSource()};HANDLE notification{};
+    modules::ActivityCounters spare;std::atomic<std::uint64_t>notifications{};std::uint64_t recycled{};
+    ~Network(){cancel();}
+    void cancel()noexcept{if(notification)CancelMibChangeNotify2(notification);notification=nullptr;}
+    // Registered before the first listing, so no change after it is missed.
+    // Without a registration every reading lists the table, as before.
+    void watch()noexcept{if(notification)return;HANDLE handle{};if(NotifyIpInterfaceChange(AF_UNSPEC,&changed,this,FALSE,&handle)==NO_ERROR&&handle)notification=handle;else reader.invalidate();}
+    static VOID NETIOAPI_API_ changed(PVOID context,PMIB_IPINTERFACE_ROW row,MIB_NOTIFICATION_TYPE type){if(type==MibInitialNotification)return;auto&self=*static_cast<Network*>(context);self.notifications.fetch_add(1,std::memory_order_relaxed);(void)self.reader.notify(row?row->InterfaceLuid.Value:0);}
+};
+Network&network(){static Network value;return value;}
 struct Process {HANDLE value{};~Process(){if(value)CloseHandle(value);}};
 std::wstring wide(std::string_view value){if(value.size()>4096)throw std::invalid_argument("Activity name too long");if(value.empty())return {};const int length=MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,value.data(),static_cast<int>(value.size()),nullptr,0);if(!length)throw std::invalid_argument("Invalid Activity name UTF8");std::wstring out(static_cast<std::size_t>(length),0);if(!MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,value.data(),static_cast<int>(value.size()),out.data(),length))throw std::runtime_error("Activity name conversion failed");return out;}
 }
@@ -64,10 +123,25 @@ std::optional<std::uint64_t>windowsActivityProcessMemory(void*process)noexcept{
     PROCESS_MEMORY_COUNTERS basic{};basic.cb=sizeof(basic);if(GetProcessMemoryInfo(static_cast<HANDLE>(process),&basic,sizeof(basic)))return std::uint64_t(basic.WorkingSetSize);
     return {};
 }
+ActivityNetworkReader::Source windowsActivityNetworkSource(){
+    return {[](std::vector<ActivityInterface>&rows){Table table;if(GetIfTable2(&table.value)!=NO_ERROR||!table.value||table.value->NumEntries>4096)return false;rows.reserve(table.value->NumEntries);for(ULONG n=0;n<table.value->NumEntries;++n)rows.push_back(activityInterface(table.value->Table[n]));return true;},
+        [](std::uint64_t luid,ActivityInterface&row){MIB_IF_ROW2 value{};value.InterfaceLuid.Value=luid;if(GetIfEntry2(&value)!=NO_ERROR)return false;row=activityInterface(value);return true;}};
+}
+std::optional<modules::ActivityCounters>readWindowsActivityNetwork(){
+    auto&n=network();std::lock_guard lock(n.mutex);n.watch();
+    std::optional<modules::ActivityCounters>out;out.emplace();out->swap(n.spare);
+    if(!n.reader.read(*out)){n.spare.swap(*out);return {};}
+    return out;
+}
+void recycleWindowsActivityNetwork(modules::ActivityCounters&&value)noexcept{auto&n=network();std::lock_guard lock(n.mutex);n.spare.swap(value);++n.recycled;}
+WindowsActivityNetworkStats windowsActivityNetworkStats()noexcept{auto&n=network();std::lock_guard lock(n.mutex);return {n.reader.stats(),n.notifications.load(std::memory_order_relaxed),n.recycled,n.notification!=nullptr};}
+void releaseWindowsActivityNetwork()noexcept{auto&n=network();std::lock_guard lock(n.mutex);n.cancel();n.reader.invalidate();modules::ActivityCounters().swap(n.spare);}
 modules::ActivityRawSample readWindowsActivity(double stamp,double uptime){clocks(stamp,uptime);modules::ActivityRawSample out;out.timestamp=stamp;out.uptime=uptime;FILETIME idle{},kernel{},user{};
     if(GetActiveProcessorGroupCount()==1&&GetSystemTimes(&idle,&kernel,&user)&&ticks(kernel)>=ticks(idle))out.cpu=modules::ActivityCPU{ticks(user),ticks(kernel)-ticks(idle),ticks(idle),0};
     MEMORYSTATUSEX memory{};memory.dwLength=sizeof(memory);if(GlobalMemoryStatusEx(&memory)&&memory.ullTotalPhys>0&&memory.ullAvailPhys<=memory.ullTotalPhys)out.memory=modules::ActivityMemory{memory.ullTotalPhys-memory.ullAvailPhys,memory.ullTotalPhys,{}};
-    Table table;if(GetIfTable2(&table.value)==NO_ERROR&&table.value&&table.value->NumEntries<=4096){modules::ActivityCounters values;for(ULONG n=0;n<table.value->NumEntries;++n){const auto&r=table.value->Table[n];const bool supported=(r.Type==IF_TYPE_ETHERNET_CSMACD||r.Type==IF_TYPE_IEEE80211)?r.InterfaceAndOperStatusFlags.HardwareInterface!=0:r.Type==IF_TYPE_PPP;if(r.OperStatus==IfOperStatusUp&&supported)values.emplace(std::to_string(r.InterfaceLuid.Value),modules::ActivityBytes{r.InOctets,r.OutOctets});}out.network=std::move(values);}
+    // The counted interfaces only (ActivityNetworkReader): the table
+    // reading's counters without listing every interface each sample.
+    out.network=readWindowsActivityNetwork();
     // GPU engines with every system sample, like CPU, RAM and network
     // (native/activity_gpu.hpp): shown, hidden or with the HUD closed.
     out.gpu=readWindowsActivityGPU();return out;
@@ -80,6 +154,10 @@ int compareWindowsActivityNames(std::string_view a,std::string_view b){const aut
 }
 #else
 namespace endfield::native {
+std::optional<modules::ActivityCounters>readWindowsActivityNetwork(){return {};}
+void recycleWindowsActivityNetwork(modules::ActivityCounters&&)noexcept{}
+WindowsActivityNetworkStats windowsActivityNetworkStats()noexcept{return {};}
+void releaseWindowsActivityNetwork()noexcept{}
 modules::ActivityRawSample readWindowsActivity(double stamp,double uptime){clocks(stamp,uptime);modules::ActivityRawSample out;out.timestamp=stamp;out.uptime=uptime;return out;}
 modules::ActivityAppsRaw readWindowsActivityApps(std::span<const modules::ActivityAppIdentity>catalog,double stamp,double uptime){clocks(stamp,uptime);modules::ActivityAppsRaw out;out.timestamp=stamp;out.uptime=uptime;out.apps.assign(catalog.begin(),catalog.end());out.inventoryComplete=false;return out;}
 int compareWindowsActivityNames(std::string_view,std::string_view){throw std::runtime_error("Windows Activity collation unavailable; inject source fixture ordering");}

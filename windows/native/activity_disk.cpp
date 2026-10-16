@@ -24,17 +24,21 @@ namespace endfield::native {
 // PDH raw arrays: learn.microsoft.com/windows/win32/api/pdh/nf-pdh-pdhgetrawcounterarrayw
 // PERF_COUNTER_BULK_COUNT FirstValue is the cumulative byte numerator.
 struct WindowsActivityDisk::Impl {
-    PDH_HQUERY query{};PDH_HCOUNTER reads{},writes{};
+    PDH_HQUERY query{};PDH_HCOUNTER reads{},writes{};bool typed{};
     ~Impl(){if(query)PdhCloseQuery(query);}
-    void close()noexcept{if(query)PdhCloseQuery(query);query=nullptr;reads=nullptr;writes=nullptr;}
+    void close()noexcept{if(query)PdhCloseQuery(query);query=nullptr;reads=nullptr;writes=nullptr;typed=false;}
     bool open(){if(query)return true;PDH_HQUERY candidate{};if(PdhOpenQueryW(nullptr,0,&candidate)!=ERROR_SUCCESS)return false;PDH_HCOUNTER r{},w{};
         if(PdhAddEnglishCounterW(candidate,L"\\PhysicalDisk(*)\\Disk Read Bytes/sec",0,&r)!=ERROR_SUCCESS||PdhAddEnglishCounterW(candidate,L"\\PhysicalDisk(*)\\Disk Write Bytes/sec",0,&w)!=ERROR_SUCCESS){PdhCloseQuery(candidate);return false;}
         query=candidate;reads=r;writes=w;return true;
     }
-    static std::optional<std::vector<ActivityDiskCounter>>values(PDH_HCOUNTER counter){
-        DWORD infoBytes{};if(PdhGetCounterInfoW(counter,FALSE,&infoBytes,nullptr)!=PDH_MORE_DATA||infoBytes<sizeof(PDH_COUNTER_INFO_W)||infoBytes>1024*1024)return {};
+    // A cumulative byte count. A counter's type is fixed once it is added, so
+    // sample() asks after the first collection of each query only.
+    static bool bulk(PDH_HCOUNTER counter){
+        DWORD infoBytes{};if(PdhGetCounterInfoW(counter,FALSE,&infoBytes,nullptr)!=PDH_MORE_DATA||infoBytes<sizeof(PDH_COUNTER_INFO_W)||infoBytes>1024*1024)return false;
         std::vector<std::max_align_t>infoStorage((infoBytes+sizeof(std::max_align_t)-1)/sizeof(std::max_align_t));auto*info=reinterpret_cast<PDH_COUNTER_INFO_W*>(infoStorage.data());const DWORD infoCapacity=infoBytes;
-        if(PdhGetCounterInfoW(counter,FALSE,&infoBytes,info)!=ERROR_SUCCESS||infoBytes>infoCapacity||info->dwType!=PERF_COUNTER_BULK_COUNT)return {};
+        return PdhGetCounterInfoW(counter,FALSE,&infoBytes,info)==ERROR_SUCCESS&&infoBytes<=infoCapacity&&info->dwType==PERF_COUNTER_BULK_COUNT;
+    }
+    static std::optional<std::vector<ActivityDiskCounter>>values(PDH_HCOUNTER counter){
         // Probe afresh if hotplug grows the array; at most two bounded tries.
         for(unsigned attempt=0;attempt<2;++attempt){DWORD bytes{},count{};if(PdhGetRawCounterArrayW(counter,&bytes,&count,nullptr)!=PDH_MORE_DATA||bytes<sizeof(PDH_RAW_COUNTER_ITEM_W)||bytes>1024*1024||count>1025)return {};
             std::vector<std::max_align_t>storage((bytes+sizeof(std::max_align_t)-1)/sizeof(std::max_align_t));const DWORD capacity=bytes;auto*array=reinterpret_cast<PDH_RAW_COUNTER_ITEM_W*>(storage.data());const auto hr=PdhGetRawCounterArrayW(counter,&bytes,&count,array);if(hr==PDH_MORE_DATA)continue;if(hr!=ERROR_SUCCESS||bytes>capacity||count>1025||std::size_t(count)>bytes/sizeof(*array))return {};
@@ -47,7 +51,9 @@ struct WindowsActivityDisk::Impl {
     }
 };
 WindowsActivityDisk::WindowsActivityDisk():impl_(std::make_unique<Impl>()){}WindowsActivityDisk::~WindowsActivityDisk()=default;
-std::optional<modules::ActivityCounters>WindowsActivityDisk::sample(){auto&i=*impl_;if(!i.open())return {};if(PdhCollectQueryData(i.query)!=ERROR_SUCCESS){i.close();return {};}const auto reads=Impl::values(i.reads),writes=Impl::values(i.writes);if(!reads||!writes)return {};return activityDiskCounters(*reads,*writes);}
+std::optional<modules::ActivityCounters>WindowsActivityDisk::sample(){auto&i=*impl_;if(!i.open())return {};if(PdhCollectQueryData(i.query)!=ERROR_SUCCESS){i.close();return {};}
+    if(!i.typed){if(!Impl::bulk(i.reads)||!Impl::bulk(i.writes))return {};i.typed=true;}
+    const auto reads=Impl::values(i.reads),writes=Impl::values(i.writes);if(!reads||!writes)return {};return activityDiskCounters(*reads,*writes);}
 }
 #else
 namespace endfield::native {struct WindowsActivityDisk::Impl{};WindowsActivityDisk::WindowsActivityDisk():impl_(std::make_unique<Impl>()){}WindowsActivityDisk::~WindowsActivityDisk()=default;std::optional<modules::ActivityCounters>WindowsActivityDisk::sample(){return {};}}
