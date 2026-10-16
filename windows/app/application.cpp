@@ -826,6 +826,13 @@ void Application::Impl::constructMap(){
     options.paint=[painter](const auto&request,const auto&cancel){return painter->paint(request,cancel);};options.releaseWorkerCaches=[painter]{painter->clear();};
     options.raster.pixelsPerPoint=2;options.raster.paddingPoints=1;
     options.player=gpu::loadMapPlayerImages(args.mapPlayerAssets,{"3903dcef9be0a32e24b7d6e5ff06235f107df7ae56b2c0d29351b1f20facc83a","ca04f142185c7de40acd8523bdb563195d90a1d1"});
+    // HUDSourceWatchView desktop Map occlusion (core/map_source_cutout.hpp):
+    // the Map reads the source frame poseShell presented, so the Storage and
+    // Activity Monitor plates below the circle stay above it - cut out of its
+    // artwork, and their presses left to the navigation (MapPreview::covers
+    // feeds the session's source hit filter set in constructNotes).
+    options.sourceFrame=[this]()->std::optional<modules::MapSourceView>{const auto*frame=session?session->currentFrame():nullptr;
+        if(!frame||!frame->sourceFrame)return std::nullopt;return modules::MapSourceView{frame->sourceFrame->resolved,frame->sourceFrame->inheritedAlpha,&frame->camera};};
     map=std::make_unique<tools::MapPreview>(rasterizer,*utility,std::move(options));map->resize(metrics);
     mapModuleOwner=mapModule(*map,peerHooks());registerModule(mapModuleOwner);
     startup.mark("lazy-map-owner");
@@ -1910,7 +1917,8 @@ void Application::Impl::bindNavigation(double time){
 }
 // OverlayController.reconcileChargeMetricTelemetry: the shared Activity
 // sampler stays attached while the charge badge/alert shows a CPU/RAM/
-// Network/Disk metric, and each system sample reaches the Power area.
+// Network/Disk metric (or the Windows GPU total load), and each system
+// sample reaches the Power area.
 void Application::Impl::syncActivityTelemetry(double time){
     if(!activityTelemetry||stopping)return;
     time=hostTime(time);
@@ -1919,9 +1927,8 @@ void Application::Impl::syncActivityTelemetry(double time){
     const bool rescheduled=activityTelemetry->synchronize(charge&&wanted,time,[&](const modules::ActivitySnapshot*sample){
         if(!charge)return;
         std::optional<modules::ChargeTelemetry> value;
-        if(sample){value.emplace();value->cpuPercent=sample->cpuPercent;
-            if(sample->memory){value->memoryUsed=sample->memory->used;value->memoryTotal=sample->memory->total;}
-            value->upload=sample->upload;value->download=sample->download;value->diskRead=sample->diskRead;value->diskWrite=sample->diskWrite;}
+        // Every field, the Activity GPU total load (gpuPercent) included.
+        if(sample)value=modules::chargeTelemetry(*sample);
         (void)isolateService(power::PowerAreaService::key,"telemetry",[&]{charge->setTelemetry(value,hostTime(time));});});
     if(rescheduled&&activityProbe){activityProbe->update(time);scheduleDeadline();}
 }
