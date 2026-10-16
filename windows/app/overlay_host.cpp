@@ -204,6 +204,12 @@ struct OverlayHost::Impl {
     bool ownFrameDispatch{};
     unsigned menuDepth{}, sizeMoveDepth{};
     bool coverMonitor{};
+    // OverlayOptions::offscreenScheduling / refreshRate (hidden benchmarks).
+    bool offscreen{};
+    double fixedRefresh{};
+    // Whether the window presents now: natively visible, or presented for
+    // scheduling by an offscreen benchmark that never shows it.
+    bool presented() const { return window && (offscreen ? visible : IsWindowVisible(window) != FALSE); }
     UINT wheelLines{3},wheelChars{3};
     void refreshWheelSettings(){SystemParametersInfoW(SPI_GETWHEELSCROLLLINES,0,&wheelLines,0);SystemParametersInfoW(SPI_GETWHEELSCROLLCHARS,0,&wheelChars,0);}
     void releaseCapture(){if(window&&GetCapture()==window)ReleaseCapture();}
@@ -275,7 +281,8 @@ struct OverlayHost::Impl {
         std::optional<double> period;
         MONITORINFOEXW monitor{}; monitor.cbSize = sizeof(monitor);
         DEVMODEW mode{}; mode.dmSize = sizeof(mode);
-        if (window && GetMonitorInfoW(MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST), &monitor) &&
+        if (fixedRefresh > 0) period = 1.0 / fixedRefresh;
+        else if (window && GetMonitorInfoW(MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST), &monitor) &&
             EnumDisplaySettingsW(monitor.szDevice, ENUM_CURRENT_SETTINGS, &mode) && mode.dmDisplayFrequency > 1)
             period = 1.0 / mode.dmDisplayFrequency;
         const auto before = pacing.refreshPeriod();
@@ -368,7 +375,7 @@ struct OverlayHost::Impl {
     }
     void refreshSchedule() {
         const auto before = frameInterval;
-        const auto result = plan.refresh(demand, ready && visible && window && IsWindowVisible(window) && !minimized && !stopped);
+        const auto result = plan.refresh(demand, ready && visible && presented() && !minimized && !stopped);
         if (!plan.canPresent()) { cancelFrames(); syncTimer(); return; }
         const auto interval = timerInterval();
         if (!interval) deadlines.setFrame({});
@@ -711,6 +718,8 @@ void OverlayHost::create(const OverlayOptions& options, OverlayCallbacks callbac
     p.gated.reset(); p.frameInterval.reset(); p.lastMouse.reset(); p.ownFrameDispatch = false;
     p.stopped = p.ready = p.visible = p.minimized = p.focused = p.mouseTracking = false;
     p.menuDepth = p.sizeMoveDepth = 0; p.appActive = true; p.exitCode = 0; p.coverMonitor = options.coverMonitor;
+    p.offscreen = options.offscreenScheduling;
+    p.fixedRefresh = std::isfinite(options.refreshRate) && options.refreshRate > 0 ? options.refreshRate : 0;
     const auto window = CreateWindowExW(WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOOLWINDOW, windowClass,
         options.title.c_str(), WS_POPUP, options.x, options.y,
         static_cast<int>(options.pixelWidth), static_cast<int>(options.pixelHeight),
@@ -737,6 +746,10 @@ ClientMetrics OverlayHost::metrics() const { impl_->requireThread(); return impl
 void OverlayHost::show(bool activate) {
     auto& p = *impl_; p.requireThread(); p.rethrow();
     if (!p.window || p.stopped) throw std::logic_error("Cannot show stopped/uncreated overlay");
+    if (p.offscreen) {
+        // Presented for scheduling only: no ShowWindow, focus or activation.
+        p.visible = true; p.minimized = false; p.refreshSchedule(); p.rethrow(); return;
+    }
     const auto window=p.window;
     // An explicit owner request must not inherit a launcher's STARTUPINFO
     // SW_HIDE. Preserve geometry, style and topmost status; show(false) also
@@ -758,7 +771,7 @@ void OverlayHost::show(bool activate) {
 void OverlayHost::hide() {
     auto& p = *impl_; p.requireThread();
     p.visible = false; p.cancelFrames(); p.releaseCursor();
-    if (p.window) ShowWindow(p.window, SW_HIDE);
+    if (p.window && !p.offscreen) ShowWindow(p.window, SW_HIDE);
     p.syncTimer();
     p.rethrow();
 }

@@ -213,6 +213,7 @@ void Application::Impl::onDeadline(double time){
     time=hostTime(time);
     bool artwork=projectionShown()&&projection->dismissalComplete(time);
     if(calendarNextWake&&*calendarNextWake<=time){isolate(calendarModuleOwner,"midnight",[&]{calendar->systemChanged(hostTime(time));updateCalendarWake();});artwork=true;}
+    if(graphicsIdleAt&&*graphicsIdleAt<=time)releaseIdleGraphics(time);
     registry.forEach([&](ModuleOwner&o){artwork=o.deadline(hostTime(time))||artwork;if(o.routing().deadlineRefreshesPointerLock){environment.pointerLocked=pointerLocked();session->setEnvironment(environment,hostTime(time));}},"deadline");
     time=hostTime(time);
     if(artwork)automationChanged();
@@ -284,7 +285,8 @@ void Application::Impl::onFrame(double time){
         }
         // Settings links and the GitHub releases page (overlay.afterSystemClose).
         if(pendingLink)openPendingLink();
-        if(!production()&&!tray&&!quitRequested)finishQuit(time);else if(!stopping)scheduleDeadline();
+        // A development preview quits with its window; the hidden idle trace keeps running closed.
+        if(!production()&&!tray&&!quitRequested&&args.idleTrace.empty())finishQuit(time);else if(!stopping)scheduleDeadline();
     }
 }
 

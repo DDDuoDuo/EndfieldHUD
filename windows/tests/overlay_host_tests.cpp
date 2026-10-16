@@ -315,6 +315,42 @@ void nativeDeadlines() {
     bool rejected{};try{for(unsigned n=0;n<8;++n)host.pumpOnce(100);}catch(const std::runtime_error&){rejected=true;}
     check(rejected&&!host.stats().timerArmed&&!host.pumpOnce(0),"Deadline error propagates with all host work stopped");host.destroy();
 }
+// A hidden benchmark's window (OverlayOptions::offscreenScheduling, the idle
+// trace): never shown, yet scheduled exactly like a shown one at the given
+// refresh, so the traced frames are the production cadence. Ambient idle
+// draws at the source's 30 Hz and is never display-paced, finite motion
+// follows the 165 Hz display, and nothing animating, a hidden window or a
+// closed HUD gets no frame and no timer.
+void offscreenCadence() {
+    OverlayHost host; unsigned frames{};
+    OverlayCallbacks callbacks; callbacks.frame = [&](double) { ++frames; };
+    OverlayOptions options{L"Hidden offscreen schedule", 0, 0, 16, 16, nullptr};
+    options.offscreenScheduling = true; options.refreshRate = 165;
+    host.create(options, callbacks);
+    const auto window = static_cast<HWND>(host.hwnd());
+    auto ambient = visibleDemand(); ambient.ambientEnabled = true;
+    host.setFrameDemand(ambient); drain(host);
+    check(frames == 0 && !host.stats().timerArmed && !host.stats().framePending, "Before show, an offscreen window schedules nothing");
+    host.show(false);
+    check(!IsWindowVisible(window) && host.stats().visible && std::abs(host.stats().refreshRate - 165) < 1e-9, "Offscreen scheduling never shows the window");
+    const auto run = [&](double seconds) {
+        const auto end = OverlayHost::clockNow() + seconds;
+        while (OverlayHost::clockNow() < end) host.pumpOnce(static_cast<std::uint32_t>(std::ceil((end - OverlayHost::clockNow()) * 1000)));
+    };
+    frames = 0; auto before = host.stats(); run(1);
+    check(frames >= 24 && frames <= 32 && host.stats().pacedFrames == before.pacedFrames, "Ambient idle draws at the source 30 Hz and is never display-paced");
+    auto finite = ambient; finite.finiteAnimation = true;
+    host.setFrameDemand(finite);
+    frames = 0; before = host.stats(); run(.5);
+    check(frames >= 40 && host.stats().pacedFrames - before.pacedFrames >= 40, "Finite motion follows the 165 Hz display, not the source 60 Hz");
+    host.setFrameDemand(visibleDemand()); drain(host);
+    frames = 0; run(.3);
+    check(frames == 0 && !host.stats().timerArmed, "A shown HUD with nothing animating schedules nothing");
+    host.setFrameDemand(ambient); host.hide();
+    frames = 0; run(.3);
+    check(frames == 0 && !host.stats().timerArmed && !host.stats().framePending && !IsWindowVisible(window), "A hidden window gets no frame and no timer");
+    host.destroy();
+}
 void nativeWindow() {
     OverlayHost host;
     std::vector<PointerEvent> pointer;
@@ -552,7 +588,7 @@ int main(int argc,char**argv) {
 #endif
         scheduling(); coalescing(); deadlines(); displayPacing(); mouseHistory();
 #ifdef _WIN32
-        nativeWindow(); callbackFailures(); nativeDeadlines();
+        nativeWindow(); callbackFailures(); nativeDeadlines(); offscreenCadence();
         std::cout<<"Additional hidden-startup/first-frame gate is explicit --interactive-startup on an interactive station; it is not part of this Session-0-compatible suite.\n";
         std::cout << checks << " source scheduling and hidden native host checks passed\n";
 #else

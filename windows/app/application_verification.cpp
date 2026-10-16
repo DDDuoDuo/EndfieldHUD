@@ -9,6 +9,8 @@
 #include "native/display_center_logo.hpp"
 #include "native/work_mode_automation.hpp"
 #include <algorithm>
+#include <cmath>
+#include <functional>
 #include <iostream>
 #include <map>
 #include <set>
@@ -206,8 +208,149 @@ int Application::Impl::runMemoryTrace(){
     return 0;
 }
 
+// watch_session_preview --idle-trace: the production owner with the module
+// coverage inputs, hidden, on the REAL clock. Frames come from the production
+// scheduling - OverlayHost's message pump, waitable timer, source frame gate
+// and display pacing at the traced refresh (its never-shown window is
+// presented for scheduling only) - and render offscreen on the hardware GPU
+// (no swap chain, compositor or backdrop: those exist only on a desktop).
+// Each window of idleTraceSeconds records what the section 9 idle gates
+// measure (wake-ups = context switches, CPU of one core) per thread, plus the
+// frames, their cadence, their CPU per stage and owner, the uploads they made
+// and what demanded them: closed after launch, open idle with the ambient
+// animation on and off, and closed again after a close.
+int Application::Impl::runIdleTrace(){
+    if(args.idleTrace.empty())throw std::logic_error("Idle trace requires its output");
+    const double seconds=args.idleTraceSeconds;
+    need(std::isfinite(seconds)&&seconds>=1&&seconds<=600,"Idle trace windows are 1...600 seconds");
+    const auto clock=[&]{const double t=hostTime(OverlayHost::clockNow());hiddenClock=std::max(hiddenClock,t);return t;};
+    // The frame stages and owner costs of every traced frame (LiveProbe),
+    // without the live diagnostic script.
+    diagnosticFinished=true;probe.enabled=true;
+    // What asked for finite (display-paced) frames: counted after every
+    // traced frame whose demand was finite, per requesting owner.
+    std::map<std::string,unsigned,std::less<>> finiteRequests;
+    const auto requesters=[&](double at,const auto&visit){
+        registry.forEach([&](ModuleOwner&o){if(o.requiresFrames(hostTime(at)))visit(o.name());},"trace");
+        if(mediaBroker&&mediaBroker->requiresFrames())visit("media");
+        if(chrome&&chrome->styleTransitionActive())visit("clock style");
+        if(session->demand(at).finiteAnimation)visit("source shell");
+    };
+    const auto pump=[&](double duration,const std::function<bool()>&until){
+        const double end=OverlayHost::clockNow()+duration;
+        for(;;){const double left=end-OverlayHost::clockNow();if(left<=0||(until&&until()))return;
+            const auto frames=host.stats().frames;
+            need(host.pumpOnce(static_cast<std::uint32_t>(std::ceil(left*1000))),"The traced host stopped");
+            if(host.stats().frames!=frames&&session->phase()==core::VisibilityPhase::visible){const auto at=clock();
+                if(demand(at).finiteAnimation)requesters(at,[&](std::string_view name){++finiteRequests[std::string(name)];});}}
+    };
+    // Production selects Map at construction and applies the preference
+    // record; the launch prewarm and the post-launch work finish first.
+    double t=clock();
+    if(notes&&notes->selected()!=core::Module::map)notes->select(core::Module::map,t);
+    configuration.set("ambientAnimation",true);configurationPending=true;applyConfiguration(t);
+    prewarm();if(utility){utility->waitIdle();if(longWork)longWork->waitIdle();utilityCompleted();}
+    // The closed HUD's graphics are released after the grace (production
+    // host deadline): the closed windows start once it passed.
+    pump(closedGraphicsGrace+1,{});
+    Json::Array windows;
+    const auto measure=[&](const char*name){
+        const auto snapshot=[&]{return Snapshot{renderer.stats(),renderer.sourceGraphicsStats(),rasterizer.stats(),session->frameStats(),session->stats()};};
+        std::map<std::string,std::uint64_t,std::less<>> drawUploads;
+        renderer.forEachDrawUpload([&](std::string_view id,std::uint64_t uploads){drawUploads[std::string(id)]=uploads;});
+        const auto beforeHost=host.stats();const auto before=snapshot();const auto beforeThreads=captureThreadActivity();const auto beforeCPU=processUsage().cpuSeconds;
+        probe.timings={};probe.owners={};probe.ownerCount=0;finiteRequests.clear();
+        const double start=OverlayHost::clockNow();pump(seconds,{});const double elapsed=OverlayHost::clockNow()-start;
+        const auto afterThreads=captureThreadActivity();const auto afterCPU=processUsage().cpuSeconds;const auto after=snapshot();const auto afterHost=host.stats();
+        const auto frames=afterHost.frames-beforeHost.frames;
+        constexpr std::array stageNames{"frame","backdrop","sourcePose","materials","nativeLabels","notesPose","publication","draw","pointer","key","message","editTransition","prepare"};
+        Json::Object stages;
+        for(unsigned n=0;n<LiveProbe::count;++n){const auto&s=probe.timings[n];if(!s.calls)continue;
+            stages[stageNames[n]]=Json::Object{{"calls",std::int64_t(s.calls)},{"meanMS",s.total/double(s.calls)},{"maxMS",s.maximum},{"percentOfOneCore",s.total/10/elapsed}};}
+        std::array<std::size_t,64>order{};for(std::size_t n=0;n<probe.ownerCount;++n)order[n]=n;
+        std::sort(order.begin(),order.begin()+probe.ownerCount,[&](std::size_t a,std::size_t b){return probe.owners[a].update.total+probe.owners[a].upload.total>probe.owners[b].update.total+probe.owners[b].upload.total;});
+        Json::Array owners;
+        for(std::size_t n=0;n<probe.ownerCount&&n<10;++n){const auto&o=probe.owners[order[n]];
+            owners.push_back(Json::Object{{"owner",std::string(o.name)},{"updateMeanMS",o.update.calls?o.update.total/double(o.update.calls):0.},{"uploadMeanMS",o.upload.calls?o.upload.total/double(o.upload.calls):0.},
+                {"percentOfOneCore",(o.update.total+o.upload.total)/10/elapsed}});}
+        // What asks for frames at the end of the window.
+        const auto at=clock();const auto wanted=demand(at);Json::Array requesting;
+        requesters(at,[&](std::string_view owner){requesting.push_back(std::string(owner));});
+        Json::Object finiteFrames;for(const auto&[owner,count]:finiteRequests)finiteFrames[owner]=std::int64_t(count);
+        // The published draws whose constants changed most often in the window.
+        std::vector<std::pair<std::uint64_t,std::string>> changedDraws;
+        renderer.forEachDrawUpload([&](std::string_view id,std::uint64_t uploads){const auto found=drawUploads.find(id);
+            const auto delta=uploads-(found==drawUploads.end()?0:std::min(uploads,found->second));if(delta)changedDraws.emplace_back(delta,std::string(id));});
+        std::sort(changedDraws.begin(),changedDraws.end(),std::greater<>());
+        Json::Array changing;for(std::size_t n=0;n<changedDraws.size()&&n<12;++n)changing.push_back(Json::Object{{"draw",changedDraws[n].second},{"uploads",std::int64_t(changedDraws[n].first)}});
+        const char*phases[]{"concealed","opening","visible","closing"};
+        windows.push_back(Json::Object{{"window",name},{"seconds",elapsed},
+            {"cpuPercentOfOneCore",(afterCPU-beforeCPU)*100/elapsed},
+            {"activity",threadActivityJSON(beforeThreads,afterThreads,elapsed,12)},
+            {"frames",Json::Object{{"count",std::int64_t(frames)},{"perSecond",double(frames)/elapsed},{"displayPaced",std::int64_t(afterHost.pacedFrames-beforeHost.pacedFrames)},
+                {"timerWakesPerSecond",double(afterHost.timerWakes-beforeHost.timerWakes)/elapsed},
+                {"deadlineWakesPerSecond",double(afterHost.externalWakes-beforeHost.externalWakes)/elapsed},
+                {"frameTimerWakes",std::int64_t((afterHost.timerWakes-beforeHost.timerWakes)-std::min(afterHost.timerWakes-beforeHost.timerWakes,afterHost.externalWakes-beforeHost.externalWakes))},
+                {"frameRequests",std::int64_t(afterHost.frameRequests-beforeHost.frameRequests)},
+                {"timerArmedAtEnd",afterHost.timerArmed},{"framePendingAtEnd",afterHost.framePending},
+                {"drawMeanMS",frames?(after.renderer.drawSeconds-before.renderer.drawSeconds)*1000/double(frames):0.},
+                {"nativePassMeanMS",frames?(after.renderer.nativePassSeconds-before.renderer.nativePassSeconds)*1000/double(frames):0.},
+                {"drawListMeanMS",frames?(after.renderer.drawListSeconds-before.renderer.drawListSeconds)*1000/double(frames):0.},
+                {"sourcePassMeanMS",frames?(after.graphics.renderSeconds-before.graphics.renderSeconds)*1000/double(frames):0.},
+                {"sourceUploadMeanMS",frames?(after.graphics.uploadSeconds-before.graphics.uploadSeconds)*1000/double(frames):0.},
+                {"drawCallsPerFrame",frames?double(after.renderer.drawCalls-before.renderer.drawCalls)/double(frames):0.},
+                {"nativeGroupRenders",std::int64_t(after.renderer.nativeGroupRenders-before.renderer.nativeGroupRenders)},
+                {"sourceFrames",std::int64_t(after.graphics.frames-before.graphics.frames)}}},
+            {"stages",std::move(stages)},{"owners",std::move(owners)},{"uploads",counters(before,after)},{"changingDraws",std::move(changing)},
+            {"graphics",Json::Object{{"deviceSuspended",after.renderer.deviceSuspended},{"suspendedCopyBytes",std::int64_t(after.renderer.suspendedCopyBytes)},
+                {"deviceSuspensions",std::int64_t(after.renderer.deviceSuspensions)},{"deviceResumes",std::int64_t(after.renderer.deviceResumes)},
+                {"privateBytes",std::int64_t(processUsage().privateBytes)}}},
+            {"demand",Json::Object{{"phase",phases[static_cast<unsigned>(wanted.phase)]},{"finiteAnimation",wanted.finiteAnimation},{"ambientEnabled",wanted.ambientEnabled},
+                {"lowPower",wanted.lowPower},{"reduceMotion",wanted.reduceMotion},{"requesting",std::move(requesting)},{"finiteFramesBy",std::move(finiteFrames)}}}});
+        std::cout<<"Idle trace window "<<name<<": "<<double(frames)/elapsed<<" frames/s, "<<(afterCPU-beforeCPU)*100/elapsed<<"% of one core\n";
+    };
+    const auto opened=[&]{return lifecycle.phase()==core::SystemOverlayPhase::open;};
+    const auto closed=[&]{return lifecycle.phase()==core::SystemOverlayPhase::closed&&session->phase()==core::VisibilityPhase::concealed;};
+    const auto ambient=[&](bool on){configuration.set("ambientAnimation",on);configurationPending=true;applyConfiguration(clock());host.setFrameDemand(demand(clock()));host.invalidate();};
+    const auto openHUD=[&]{perform(lifecycle.toggle(),clock());host.show(false);host.setFrameDemand(demand(clock()));pump(10,opened);need(opened(),"The traced HUD opened");};
+    const auto closeHUD=[&]{perform(lifecycle.toggle(),clock());host.setFrameDemand(demand(clock()));host.invalidate();pump(10,closed);need(closed(),"The traced HUD closed");};
+    measure("closed-after-launch");
+    // The opening after a long close: the device and presentation come back
+    // first (Renderer::resumeDevice), then the first frame.
+    const auto resumedBefore=renderer.stats().deviceResumeSeconds;const auto framesBefore=host.stats().frames;
+    const auto openedAt=OverlayHost::clockNow();double firstFrameSeconds{-1};
+    perform(lifecycle.toggle(),clock());host.show(false);host.setFrameDemand(demand(clock()));
+    pump(10,[&]{if(firstFrameSeconds<0&&host.stats().frames!=framesBefore)firstFrameSeconds=OverlayHost::clockNow()-openedAt;return opened();});
+    need(opened(),"The traced HUD opened");
+    const double openingSeconds=OverlayHost::clockNow()-openedAt,resumeSeconds=renderer.stats().deviceResumeSeconds-resumedBefore;
+    pump(2,{});measure("open-idle-ambient-on");
+    ambient(false);pump(2,{});measure("open-idle-ambient-off");
+    ambient(true);pump(1,{});
+    closeHUD();pump(closedGraphicsGrace+1,{});measure("closed");
+    // A reopening within the grace keeps the device and the presentation.
+    openHUD();closeHUD();pump(1,{});
+    const auto warmResumes=renderer.stats().deviceResumes;const auto warmFrames=host.stats().frames;const auto warmAt=OverlayHost::clockNow();double warmFirstFrame{-1};
+    perform(lifecycle.toggle(),clock());host.show(false);host.setFrameDemand(demand(clock()));
+    pump(10,[&]{if(warmFirstFrame<0&&host.stats().frames!=warmFrames)warmFirstFrame=OverlayHost::clockNow()-warmAt;return opened();});
+    need(opened()&&renderer.stats().deviceResumes==warmResumes,"A reopening within the grace keeps the device");
+    closeHUD();pump(1,{});
+    const auto stats=host.stats();
+    const Json report=Json::Object{{"schema",1},
+        {"scope","EndfieldHUD hidden idle trace: wake-ups, CPU and frames per window on the real clock through the production frame scheduling; numbers, owner and system module names only"},
+        {"device",renderer.deviceInfo().name},{"warp",args.warp},{"refreshHz",stats.refreshRate},{"logicalWidth",metrics.width},{"logicalHeight",metrics.height},
+        {"openingSeconds",openingSeconds},{"openingFirstFrameSeconds",firstFrameSeconds},{"openingDeviceResumeSeconds",resumeSeconds},
+        {"deviceResume",Json::Object{{"resumes",std::int64_t(renderer.stats().deviceResumes)},{"deviceSeconds",renderer.stats().deviceCreateSeconds},{"programSeconds",renderer.stats().pipelineCreateSeconds},
+            {"resourceSeconds",renderer.stats().resourceRestoreSeconds},{"sourceSeconds",renderer.stats().sourceRestoreSeconds}}},
+        {"quickReopeningFirstFrameSeconds",warmFirstFrame},{"windows",std::move(windows)}};
+    const std::size_t bound=8*1024*1024;ehud::data::detail::replaceFile(args.idleTrace,std::nullopt,report.encode(bound),bound);
+    std::cout<<"Wrote hidden idle trace\n";
+    shutdownVisible();
+    return 0;
+}
+
 int Application::Impl::runHiddenVerification(){
     if(args.mode!=ApplicationMode::hiddenBenchmark)throw std::logic_error("Hidden verification requires the hidden benchmark mode");
+    if(!args.idleTrace.empty())return runIdleTrace();
     if(!args.startupTrace.empty())return runStartupTrace();
     if(!args.contentionTrace.empty())return runContentionTrace();
     if(!args.memoryTrace.empty())return runMemoryTrace();

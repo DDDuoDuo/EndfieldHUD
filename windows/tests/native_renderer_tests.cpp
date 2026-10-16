@@ -510,6 +510,19 @@ void run(HWND window, const std::filesystem::path &shader, bool composition, boo
     check(renderer.stats().meshUploads == afterObjects.meshUploads && renderer.stats().objectUploads == afterObjects.objectUploads,
           "Resize retains scene geometry and object constants");
 
+    // An unchanged native root pass (an ambient frame moves only the
+    // original material pass) is not drawn again; any change draws it.
+    {
+        renderer.draw(false); const auto first = renderer.readback().pixels; const auto drawn = renderer.stats();
+        renderer.draw(false);
+        check(renderer.stats().nativePassesSkipped == drawn.nativePassesSkipped + 1 && renderer.stats().nativePasses == drawn.nativePasses &&
+              renderer.stats().drawCalls == drawn.drawCalls && renderer.readback().pixels == first, "An unchanged root pass is composited as it was");
+        renderer.setCamera(endfield::core::Matrix4::scale(1.25, 1.25, 1)); renderer.draw(false);
+        check(renderer.stats().nativePasses == drawn.nativePasses + 1, "A camera change draws the root pass again");
+        renderer.setCamera({}); renderer.draw(false);
+        check(renderer.stats().nativePasses == drawn.nativePasses + 2 && renderer.readback().pixels == first, "And again when it changes back");
+    }
+
     if (composition) {
         // Exercise real swap-chain flips with nonempty retained content. Read
         // only our target BEFORE each Present; never capture the desktop or
@@ -550,7 +563,46 @@ void run(HWND window, const std::filesystem::path &shader, bool composition, boo
             check(!renderer.presentationHeld() && renderer.stats().unadmittedPresents == admitted.unadmittedPresents,
                   "The admitted frame presents with its admission");
         }
+        // The concealed HUD (Application::releaseConcealedGraphics): the swap
+        // chain, its frame latency object and the composition target go;
+        // nothing else does, and the reopened HUD's first frame presents at
+        // once with the new object's admission.
+        {
+            const auto retained = renderer.stats();
+            (void)renderer.releaseFrameTargets();
+            check(renderer.releasePresentation() && renderer.presentationReleased() && renderer.stats().presentationReleased,
+                  "The concealed renderer releases its swap chain and composition target");
+            check(!renderer.releasePresentation() && renderer.stats().presentationReleases == retained.presentationReleases + 1,
+                  "A released presentation is not released twice");
+            check(renderer.presentationWaitable() == nullptr && !renderer.presentationHeld() && renderer.waitForPresentation(0),
+                  "Without a swap chain no frame waits for an admission");
+            check(renderer.stats().meshes == retained.meshes && renderer.stats().textures == retained.textures && renderer.stats().objects == retained.objects,
+                  "Retained meshes, textures and draws stay with the device");
+            renderer.resize(40, 20);
+            check(renderer.restorePresentation() && !renderer.presentationReleased() && !renderer.restorePresentation(),
+                  "The opening HUD creates its presentation again, once");
+            check(renderer.presentationWaitable() != nullptr || !retained.frameLatencyWaitable, "The new swap chain offers a frame latency object again");
+            check(renderer.presentationHeld() || !retained.frameLatencyWaitable, "The new object's first admission belongs to the next frame");
+            const auto admitted = renderer.stats();
+            renderer.draw(true);
+            check(renderer.stats().presents == admitted.presents + 1 && renderer.stats().unadmittedPresents == admitted.unadmittedPresents,
+                  "The first frame after the restore presents with its admission");
+            // A presented draw creates a released presentation by itself.
+            (void)renderer.releasePresentation();
+            renderer.draw(true);
+            check(!renderer.presentationReleased() && renderer.stats().presentationRestores == admitted.presentationRestores + 1,
+                  "A presented draw creates a released presentation again");
+            // A borrower (the Projection foreground) gets a live swap chain.
+            (void)renderer.releasePresentation();
+            const auto surface = renderer.borrowCompositionSurface();
+            check(surface && surface->valid() && surface->swapChain() != nullptr && !renderer.presentationReleased(),
+                  "Borrowing the composition surface creates a released presentation again");
+            renderer.resize(48, 24);
+        }
         check(!IsWindowVisible(window), "Nonempty composition submission never shows the test window");
+    } else {
+        check(!renderer.releasePresentation() && !renderer.presentationReleased() && !renderer.restorePresentation(),
+              "An offscreen renderer has no presentation to release");
     }
 
     renderer.clearResources(); renderer.draw(false); image = renderer.readback();

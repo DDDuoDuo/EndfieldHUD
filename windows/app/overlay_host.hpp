@@ -219,6 +219,14 @@ struct OverlayOptions {
     // DPI change fits it to its monitor's pixel bounds instead of Windows'
     // suggested rectangle, which need not equal them for a covering popup.
     bool coverMonitor{};
+    // Hidden benchmarks only (watch_session_preview --idle-trace, with an
+    // offscreen renderer): the window is never shown, yet show() makes it
+    // presented for frame scheduling - the same frame clock, waitable timer,
+    // source gate and display pacing as a shown window - and hide() ends that.
+    bool offscreenScheduling{};
+    // Hidden benchmarks only: pace finite motion by this display refresh (Hz)
+    // instead of the window's monitor, which a service session lacks. 0: the monitor.
+    double refreshRate{};
 };
 struct OverlayHostStats {
     std::uint64_t frameRequests{}, framePosts{}, frames{}, timerArms{}, timerWakes{},

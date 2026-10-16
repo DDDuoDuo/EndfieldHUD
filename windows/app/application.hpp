@@ -138,6 +138,18 @@ struct ApplicationOptions {
     // hidden through launch, a cold opening, a visit of every module, closing
     // and ten more open/close cycles instead of the module coverage.
     std::filesystem::path memoryTrace;
+    // Hidden idle trace (watch_session_preview --idle-trace): the same owner
+    // on the REAL clock through the production frame scheduling (OverlayHost
+    // presents the never-shown window for scheduling; offscreen hardware
+    // renderer, no swap chain or compositor), measured in the section 9 idle
+    // states - closed after launch, open idle with ambient animation on and
+    // off, closed after a close - for idleTraceSeconds each: the process's
+    // wake-ups and CPU per thread, the frames, their cadence and their CPU
+    // per stage and owner, and what demanded them. Numbers and owner/module
+    // names only. Finite motion is paced at idleTraceRefreshRate (the
+    // laptop's 165 Hz display), which the hidden session lacks.
+    std::filesystem::path idleTrace;
+    double idleTraceSeconds{30}, idleTraceRefreshRate{165};
 };
 
 class Application final {

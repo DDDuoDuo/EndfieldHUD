@@ -71,7 +71,7 @@ Json Application::Impl::memorySnapshot(std::string_view stage, bool threads) {
     }
     const auto raster = rasterizer.stats();
     const auto rendered = renderer.stats();
-    const auto source = renderer.stats().initialized ? renderer.sourceGraphics().stats() : gpu::SourceGraphicsStats{};
+    const auto source = renderer.stats().initialized ? renderer.sourceGraphicsStats() : gpu::SourceGraphicsStats{};
     Json::Object executors;
     const auto executor = [](const UtilityExecutor& e) { const auto s = e.stats(); return Json::Object{{"started", s.started}, {"workerAlive", s.workerAlive}, {"workersStarted", bytes(s.workersStarted)}, {"accepted", bytes(s.accepted)}}; };
     if (utility) executors["utility"] = executor(*utility);

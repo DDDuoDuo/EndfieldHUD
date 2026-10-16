@@ -44,6 +44,8 @@ struct SourceGraphicsStats {
     std::size_t meshes{}, textures{}, pipelines{}, uniforms{}, draws{}, payloadBytes{};
     std::uint64_t geometryUploads{}, textureUploads{}, uniformUploads{}, uniformAllocations{}, frames{};
     std::uint64_t meshBufferAllocations{},vertexUploads{},indexUploads{};
+    // CPU seconds inside setMesh/setUniform/setTexture and inside renderTo.
+    double uploadSeconds{},renderSeconds{};
 };
 class SourceGraphics final {
 public:
@@ -67,6 +69,15 @@ public:
     // full-size original sRGB attachment and its depth/stencil target; the
     // next renderTo creates them again. Returns the bytes released.
     std::size_t releaseTargets() noexcept;
+    // Renderer::suspendDevice(): every retained mesh and texture copied into
+    // system memory, then every D3D11 object of the pass released with the
+    // device; resume() creates them again on the renderer's new device (same
+    // identities, revisions, programs, states and constants). Meanwhile only
+    // stats(), clear() and these calls are allowed.
+    void suspend();
+    void resume(void* device, void* context);
+    bool suspended() const noexcept;
+    std::size_t suspendedBytes() const noexcept;
     void clear();
     SourceGraphicsStats stats() const;
 private:

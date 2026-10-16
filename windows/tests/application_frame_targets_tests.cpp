@@ -13,6 +13,8 @@
 #include <objbase.h>
 #include <array>
 #include <cstdlib>
+#include <cstring>
+#include <vector>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -104,6 +106,102 @@ void run(gpu::Renderer& renderer) {
     check(renderer.stats().releasedTargetBytes == 0, "Nothing released remains counted");
     renderer.clearResources();
 }
+// The HUD closed for a while (Application::releaseIdleGraphics ->
+// Renderer::suspendDevice): the device itself goes, every retained mesh,
+// texture, group and draw keeps its identity in system memory, removals need
+// no device, and the first call that needs the GPU creates it again - the
+// frame after it is identical to the frame before. A media owner holding the
+// device keeps it.
+void suspension(gpu::Renderer& renderer) {
+    renderer.resize(64, 64);
+    renderer.setCamera(camera());
+    renderer.setMesh("quad", 1, {quad, indices});
+    const std::array<std::uint8_t, 16> texels{255, 255, 255, 255, 40, 180, 90, 128, 0, 0, 0, 0, 200, 30, 60, 255};
+    renderer.setTexture("texels", 1, {2, 2, texels});
+    renderer.setTexture("linear", 1, {2, 2, texels, gpu::TextureColorSpace::linear});
+    gpu::TextureData paintable{2, 2, texels}; paintable.updatable = true;
+    renderer.setTexture("paintable", 1, paintable);
+    renderer.setTexture("unused", 1, {2, 2, texels});
+    std::array<gpu::DrawObject, 2> children;
+    children[0].sourceID = "child/0"; children[0].meshID = "quad"; children[0].textureID = "texels"; children[0].linearTint = {1, .5f, .25f, 1};
+    children[1].sourceID = "child/1"; children[1].meshID = "quad"; children[1].textureID = "linear"; children[1].world = core::Matrix4::translation(10, 6); children[1].opacity = .6f;
+    check(renderer.configureNativeGroup("shown", {{0, 0, 30, 24}, 1.5}, children), "The suspended scene's group installs");
+    std::array<gpu::DrawObject, 3> list;
+    list[0] = renderer.nativeGroupOutput("shown"); list[0].world = core::Matrix4::translation(20, 12); list[0].opacity = .8f;
+    list[1].sourceID = "plain"; list[1].meshID = "quad"; list[1].textureID = "paintable"; list[1].world = core::Matrix4::translation(2, 40);
+    list[2].sourceID = "white"; list[2].meshID = "quad"; list[2].world = core::Matrix4::translation(40, 40); list[2].linearTint = {0, 1, 0, .5f};
+    renderer.setDrawList(list);
+    renderer.draw(false);
+    const auto before = renderer.readback().pixels;
+    const auto drawn = renderer.stats();
+
+    check(renderer.suspendDevice() && renderer.deviceSuspended() && !renderer.suspendDevice(), "The closed renderer releases its device, once");
+    const auto suspended = renderer.stats();
+    check(suspended.deviceSuspended && suspended.deviceSuspensions == drawn.deviceSuspensions + 1 && suspended.suspendedCopyBytes > 0,
+          "The retained resources are kept in system memory");
+    check(suspended.meshes == drawn.meshes && suspended.textures == drawn.textures && suspended.objects == drawn.objects &&
+          suspended.nativeGroups == drawn.nativeGroups && suspended.resourceBytes == drawn.resourceBytes,
+          "Every mesh, texture, group and draw keeps its identity and accounting");
+    check(!renderer.deviceInfo().name.empty() && renderer.adapterCurrent(), "The adapter stays known without a device");
+    check(renderer.releaseFrameTargets() == 0 && renderer.releaseHiddenGroupTargets() == 0, "A suspended renderer has no targets to release");
+    check(renderer.removeTexture("unused") && renderer.deviceSuspended() && renderer.stats().textures == drawn.textures - 1,
+          "A removal while suspended needs no device");
+    renderer.setCamera(camera());
+    check(renderer.deviceSuspended(), "Unchanged camera and stats need no device");
+
+    // The first frame after the opening: the device again, identical pixels.
+    renderer.draw(false);
+    const auto resumed = renderer.stats();
+    check(!renderer.deviceSuspended() && resumed.deviceResumes == drawn.deviceResumes + 1 && !resumed.deviceSuspended && resumed.suspendedCopyBytes == 0,
+          "The first draw creates the device again");
+    check(renderer.readback().pixels == before, "The frame after the device came back is identical to the frame before it");
+    check(resumed.nativeGroupRenders == drawn.nativeGroupRenders + 1, "The drawn group re-renders once on the new device");
+
+    // Painting in place, uploads and a second cycle keep working.
+    const std::array<std::uint8_t, 4> red{255, 0, 0, 255};
+    check(renderer.updateTexture("paintable", 2, 1, 1, {1, 1, red}), "An updatable texture is painted in place on the new device");
+    renderer.draw(false); const auto painted = renderer.readback().pixels;
+    check(painted != before, "The painted texel shows");
+    check(renderer.suspendDevice(), "A second suspension");
+    renderer.resize(64, 64);
+    check(renderer.deviceSuspended(), "An unchanged resize needs no device");
+    check(renderer.resumeDevice() && !renderer.resumeDevice(), "The device can be created again explicitly, once");
+    renderer.draw(false);
+    check(renderer.readback().pixels == painted, "An explicit resumption draws the same frame");
+    // The opening HUD: the device is created on a worker while the frame's
+    // CPU work runs, and taken by the first call that needs it.
+    check(renderer.setGpuThreadPriority(3) >= 0, "The GPU thread priority applies");
+    check(renderer.suspendDevice() && renderer.prepareDevice() && !renderer.prepareDevice(), "The opening starts creating the device, once");
+    check(renderer.setGpuThreadPriority(5) >= 0 && renderer.deviceSuspended(), "A priority asked for meanwhile waits for the device");
+    renderer.draw(false);
+    check(!renderer.deviceSuspended() && renderer.stats().devicePreparations == 1, "The first draw takes the prepared device");
+    check(renderer.readback().pixels == painted, "A texture painted in place keeps its texels across a suspension");
+    // A resize while suspended takes effect when the device comes back.
+    check(renderer.suspendDevice(), "A third suspension");
+    renderer.resize(56, 40);
+    check(renderer.deviceSuspended(), "A resize while suspended needs no device");
+    renderer.draw(false);
+    const auto resized = renderer.readback();
+    check(!renderer.deviceSuspended() && resized.width == 56 && resized.height == 40, "The device comes back at the new size");
+    renderer.resize(64, 64);
+    check(renderer.setTexture("later", 1, {2, 2, texels}) && renderer.stats().textures == drawn.textures, "Uploads continue on the new device");
+    renderer.clearDrawList(); check(renderer.removeNativeGroup("shown"), "The group retires");
+    renderer.clearResources();
+}
+// A media owner holding the device (Renderer::mediaDevice) keeps it.
+void suspensionLease(const wchar_t* shader) {
+    Window window; gpu::Renderer renderer;
+    gpu::RendererOptions options{gpu::Driver::warpForTests, shader, gpu::RenderTarget::offscreenForTests, true};
+    renderer.initialize(window.handle, 16, 16, options);
+    auto lease = renderer.mediaDevice();
+    check(lease && !renderer.suspendDevice() && !renderer.deviceSuspended(), "A lent device is not released");
+    check(renderer.mediaDevice() == lease, "Holders share one lease");
+    lease.reset();
+    check(renderer.suspendDevice() && renderer.deviceSuspended(), "Once every holder dropped the device, it is released");
+    lease = renderer.mediaDevice();
+    check(lease && !renderer.deviceSuspended(), "A media owner asking for the device creates it again");
+    lease.reset(); renderer.reset();
+}
 } // namespace
 
 int wmain(int argc, wchar_t** argv) {
@@ -114,9 +212,11 @@ int wmain(int argc, wchar_t** argv) {
             Window window; gpu::Renderer renderer;
             renderer.initialize(window.handle, 64, 64, {gpu::Driver::warpForTests, argv[1], gpu::RenderTarget::offscreenForTests});
             run(renderer);
+            suspension(renderer);
             check(!IsWindowVisible(window.handle), "The fixture never shows a window");
             renderer.reset();
         }
+        suspensionLease(argv[1]);
         CoUninitialize();
         std::cout << "application_frame_targets_contracts: " << checks << " checks passed\n";
         return 0;

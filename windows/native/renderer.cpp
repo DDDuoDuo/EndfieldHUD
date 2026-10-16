@@ -2,6 +2,7 @@
 #include "source_graphics.hpp"
 #include "core/shell_packet.hpp"
 #include "native/layer_raster.hpp"
+#include "native/source_gpu_copy.hpp"
 #if defined(EHUD_EMBEDDED_HUD_SHADERS)
 #include "native/hud_shaders.hpp"
 #endif
@@ -25,6 +26,7 @@
 #include <cstring>
 #include <cwchar>
 #include <exception>
+#include <future>
 #include <fstream>
 #include <iterator>
 #include <limits>
@@ -247,8 +249,12 @@ ComPtr<ID3DBlob> compile(const std::filesystem::path &path, const char *entry, c
 class ShaderPrograms {
 public:
     struct Program { const void* bytes{}; std::size_t size{}; ComPtr<ID3DBlob> blob; };
-    explicit ShaderPrograms(std::filesystem::path path) : path_(std::move(path)) {
+    // `embeddedBefore`: this renderer already verified the file against the
+    // embedded bytecode (a device created again after suspendDevice).
+    explicit ShaderPrograms(std::filesystem::path path, bool embeddedBefore = false) : path_(std::move(path)) {
+        (void)embeddedBefore;
 #if defined(EHUD_EMBEDDED_HUD_SHADERS)
+        if (embeddedBefore) { embedded_ = true; return; }
         std::ifstream in(path_, std::ios::binary);
         std::string bytes;
         if (in) bytes.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
@@ -376,6 +382,7 @@ struct Renderer::Impl {
     struct NativeGroup;
     struct Mesh {
         ComPtr<ID3D11Buffer> vertices, indices;
+        gpu_copy::Copy savedVertices, savedIndices; // suspendDevice(): system-memory copies
         UINT indexCount{};
         std::uint64_t revision{};
         std::size_t bytes{};
@@ -386,6 +393,7 @@ struct Renderer::Impl {
         ComPtr<ID3D11ShaderResourceView> view;
         // An updatable texture keeps its resource for updateTexture().
         ComPtr<ID3D11Texture2D> resource;
+        gpu_copy::Copy saved; bool hasSaved{}; // suspendDevice(): the texels and view in system memory
         bool updatable{};TextureColorSpace colorSpace{TextureColorSpace::sRGB};std::uint32_t width{},height{};
         TextureFilter filter{};
         std::uint64_t revision{};
@@ -403,6 +411,11 @@ struct Renderer::Impl {
         ObjectUniform values{};
         NativeBlend blend{NativeBlend::sourceOver};
         ComPtr<ID3D11Buffer> constants;
+        std::uint64_t uploads{}; // diagnostics: constant uploads since published
+        // The object these constants came from and the resource epoch its
+        // mesh/texture identities were resolved in: an unchanged object
+        // (most of them on most frames) is neither looked up nor converted.
+        DrawObject last; std::uint64_t epoch{};
     };
     struct NativeGroup {
         NativeGroupTarget requested;
@@ -411,6 +424,7 @@ struct Renderer::Impl {
         std::size_t bytes{};
         ComPtr<ID3D11RenderTargetView> target;
         ComPtr<ID3D11Buffer> camera;
+        gpu_copy::Copy savedCamera; // suspendDevice()
         DrawObject output;
         std::vector<Draw> draws;
         std::vector<ObjectUniform> staged;
@@ -461,6 +475,46 @@ struct Renderer::Impl {
     bool targetsReleased{}; // releaseFrameTargets(): linear (and offscreen output) targets dropped
     std::unique_ptr<SourceGraphics> source;
     bool sourcePassEnabled{true};
+    // suspendDevice(): the creation options, the selected adapter (served
+    // while the device is released), the suspension itself and the device
+    // lent to media owners (mediaDevice), which keeps a suspension from
+    // releasing the device.
+    RendererOptions options;
+    RendererDeviceInfo adapterInfo; LUID adapterLuid{};
+    // Everything the native root pass draws with (draw list, camera, meshes,
+    // textures, groups, targets) changes nativeRevision; the linear target
+    // holds the root pass rendered at linearRevision. An unchanged root pass
+    // (an ambient frame moves only the original material pass) is not drawn
+    // again: the target is composited as it is.
+    std::uint64_t nativeRevision{1}, linearRevision{};
+    void touch() noexcept { ++nativeRevision; }
+    // Changes whenever a mesh or texture identity is added or removed (a
+    // replacement keeps its record), so resolved draw identities stay valid.
+    std::uint64_t resourceEpoch{1};
+    bool suspended{};
+    std::weak_ptr<void> lentDevice;
+    std::size_t suspendedBytes{};
+    // prepareDevice(): the new device created on a worker thread while the
+    // opening HUD prepares its first frame; the first call that needs the
+    // GPU takes it (createDevice). And the GPU thread priority the shown HUD
+    // asked for (setGpuThreadPriority), applied to every new device.
+    struct CreatedDevice { ComPtr<ID3D11Device> device; ComPtr<ID3D11DeviceContext> context; };
+    std::future<CreatedDevice> creating;
+    int gpuThreadPriority{};
+    static CreatedDevice makeDevice(const RendererOptions& options) {
+        const D3D_FEATURE_LEVEL levels[]{D3D_FEATURE_LEVEL_11_0};
+        // The explicit WARP fixture exercises owned texture conversion, not a
+        // hardware video decoder. Some installed software runtimes reject the
+        // VIDEO_SUPPORT creation flag even though their shader path works.
+        // Production hardware still requires the requested video capability;
+        // do not silently replace its device or downgrade its creation flags.
+        const bool requireVideoDriver=options.mediaVideo&&options.driver==Driver::hardware;
+        CreatedDevice created;
+        checked(D3D11CreateDevice(nullptr, options.driver == Driver::hardware ? D3D_DRIVER_TYPE_HARDWARE : D3D_DRIVER_TYPE_WARP,
+            nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT|(requireVideoDriver?D3D11_CREATE_DEVICE_VIDEO_SUPPORT:0u)|(options.preventDriverThreads?D3D11_CREATE_DEVICE_PREVENT_INTERNAL_THREADING_OPTIMIZATIONS:0u),
+            levels, 1, D3D11_SDK_VERSION, &created.device, nullptr, &created.context), "Create D3D11 device");
+        return created;
+    }
 
     bool assignDraws(std::vector<Draw>&,std::vector<ObjectUniform>&,
         std::span<const DrawObject>,bool localGroup,NativeGroupColorSpace=NativeGroupColorSpace::linear);
@@ -603,7 +657,7 @@ struct Renderer::Impl {
     // The frame targets dropped by releaseFrameTargets(), created again for a draw.
     void restoreFrameTargets() {
         if (!targetsReleased) return;
-        bindTargets(); targetsReleased = false; counters.releasedTargetBytes -= std::min(counters.releasedTargetBytes, frameTargetBytes());
+        bindTargets(); targetsReleased = false; touch(); counters.releasedTargetBytes -= std::min(counters.releasedTargetBytes, frameTargetBytes());
         ++counters.frameTargetRestores;
     }
     std::size_t frameTargetBytes() const noexcept { return std::size_t(width) * height * (offscreen ? 12 : 8); }
@@ -619,34 +673,12 @@ struct Renderer::Impl {
         counters.releasedTargetBytes -= std::min(counters.releasedTargetBytes, group.bytes);
         ++counters.nativeGroupTargetRestores; ++counters.nativeGroupTargetAllocations;
     }
-    void initialize(HWND targetWindow, std::uint32_t w, std::uint32_t h, const RendererOptions &options) {
-        window = targetWindow;
-        dimensions(w, h);
-        require(IsWindow(window) != FALSE && !options.shaderPath.empty(), "A native HUD window and shader path are required");
-        require(options.driver == Driver::hardware || options.driver == Driver::warpForTests, "Unknown graphics driver selection");
-        require(options.target == RenderTarget::composition || options.target == RenderTarget::offscreenForTests, "Unknown render target selection");
-        offscreen = options.target == RenderTarget::offscreenForTests;
-        hardware = options.driver == Driver::hardware;
-        DWORD process{};
-        GetWindowThreadProcessId(window, &process);
-        require(process == GetCurrentProcessId(), "Renderer target must belong to this application");
-        require((GetWindowLongPtrW(window, GWL_EXSTYLE) & WS_EX_NOREDIRECTIONBITMAP) != 0,
-                "Composition window must use WS_EX_NOREDIRECTIONBITMAP");
-        const D3D_FEATURE_LEVEL levels[]{D3D_FEATURE_LEVEL_11_0};
-        mediaVideo=options.mediaVideo;
-        // The explicit WARP fixture exercises owned texture conversion, not a
-        // hardware video decoder. Some installed software runtimes reject the
-        // VIDEO_SUPPORT creation flag even though their shader path works.
-        // Production hardware still requires the requested video capability;
-        // do not silently replace its device or downgrade its creation flags.
-        const bool requireVideoDriver=mediaVideo&&options.driver==Driver::hardware;
-        checked(D3D11CreateDevice(nullptr, options.driver == Driver::hardware ? D3D_DRIVER_TYPE_HARDWARE : D3D_DRIVER_TYPE_WARP,
-            nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT|(requireVideoDriver?D3D11_CREATE_DEVICE_VIDEO_SUPPORT:0u)|(options.preventDriverThreads?D3D11_CREATE_DEVICE_PREVENT_INTERNAL_THREADING_OPTIMIZATIONS:0u), levels, 1, D3D11_SDK_VERSION, &device, nullptr, &context), "Create D3D11 device");
-        if(mediaVideo){ComPtr<ID3D10Multithread>multithread;checked(device.As(&multithread),"Enable shared media device thread protection");multithread->SetMultithreadProtected(TRUE);}
-        if (!offscreen) {
+    // The composition swap chain, its frame latency object and the
+    // DirectComposition device, target and visual of the window: created at
+    // initialization and again after releasePresentation().
+    void createPresentation(std::uint32_t w, std::uint32_t h) {
         ComPtr<IDXGIDevice1> dxgi;
         checked(device.As(&dxgi), "Get DXGI device");
-        checked(dxgi->SetMaximumFrameLatency(1), "Bound presentation latency");
         ComPtr<IDXGIAdapter> adapter;
         checked(dxgi->GetAdapter(&adapter), "Get D3D adapter");
         ComPtr<IDXGIFactory2> factory;
@@ -679,10 +711,99 @@ struct Renderer::Impl {
         checked(visual->SetContent(swapchain.Get()), "Attach HUD swap chain");
         checked(target->SetRoot(visual.Get()), "Attach HUD composition root");
         checked(composition->Commit(), "Commit HUD composition root");
+    }
+    // Renderer::releasePresentation / restorePresentation.
+    bool releasePresentation() {
+        if (offscreen || !swapchain || compositionSuspended) return false;
+        touch();
+        if (compositionSurface) {
+            auto& bridge = *compositionSurface->impl_;
+            // A registered bridge (the Projection foreground) presents through it.
+            if (bridge.observer) return false;
+            bridge.registered = false; bridge.swapchain.Reset(); compositionSurface.reset();
         }
+        readbackReady = false; context->ClearState();
+        // The swap chain's own back buffer goes with it; the linear target too
+        // when releaseFrameTargets did not drop it already.
+        if (!targetsReleased) {
+            linearView.Reset(); linearResource.Reset(); linearTarget.Reset();
+            targetsReleased = true; counters.releasedTargetBytes += frameTargetBytes();
+        }
+        outputView.Reset(); backBuffer.Reset();
+        if (target) (void)target->SetRoot(nullptr);
+        if (visual) (void)visual->SetContent(nullptr);
+        if (composition) (void)composition->Commit();
+        visual.Reset(); target.Reset(); composition.Reset();
+        if (frameLatency) { CloseHandle(frameLatency); frameLatency = nullptr; }
+        frameAcquired = false; counters.frameLatencyWaitable = false;
+        swapchain.Reset(); context->Flush();
+        counters.presentationReleased = true; ++counters.presentationReleases;
+        return true;
+    }
+    bool restorePresentation() {
+        if (offscreen || swapchain) return false;
+        try { createPresentation(width, height); }
+        catch (...) {
+            if (target) (void)target->SetRoot(nullptr);
+            visual.Reset(); target.Reset(); composition.Reset();
+            if (frameLatency) { CloseHandle(frameLatency); frameLatency = nullptr; }
+            swapchain.Reset(); counters.frameLatencyWaitable = false;
+            throw;
+        }
+        // A new frame latency object starts with one admission: the next
+        // frame presents with it (frame targets are created by its draw).
+        if (frameLatency && WaitForSingleObject(frameLatency, 0) == WAIT_OBJECT_0) frameAcquired = true;
+        counters.presentationReleased = false; ++counters.presentationRestores;
+        return true;
+    }
+    void initialize(HWND targetWindow, std::uint32_t w, std::uint32_t h, const RendererOptions &requested) {
+        window = targetWindow;
+        dimensions(w, h);
+        require(IsWindow(window) != FALSE && !requested.shaderPath.empty(), "A native HUD window and shader path are required");
+        require(requested.driver == Driver::hardware || requested.driver == Driver::warpForTests, "Unknown graphics driver selection");
+        require(requested.target == RenderTarget::composition || requested.target == RenderTarget::offscreenForTests, "Unknown render target selection");
+        offscreen = requested.target == RenderTarget::offscreenForTests;
+        hardware = requested.driver == Driver::hardware;
+        DWORD process{};
+        GetWindowThreadProcessId(window, &process);
+        require(process == GetCurrentProcessId(), "Renderer target must belong to this application");
+        require((GetWindowLongPtrW(window, GWL_EXSTYLE) & WS_EX_NOREDIRECTIONBITMAP) != 0,
+                "Composition window must use WS_EX_NOREDIRECTIONBITMAP");
+        options = requested;
+        mediaVideo=options.mediaVideo;
+        createDevice();
+        if (!offscreen) createPresentation(w, h);
         width = w; height = h; bindTargets();
-
-        const ShaderPrograms programs(options.shaderPath);
+        createPipelineObjects();
+        counters.initialized = true;
+    }
+    // The D3D11 device and immediate context with the creation options of
+    // initialize() (the HUD: hardware, BGRA, VIDEO_SUPPORT for the shared
+    // media device, PREVENT_INTERNAL_THREADING_OPTIMIZATIONS), and the
+    // adapter it selected.
+    void createDevice() {
+        // A device prepareDevice() started on a worker (its failure surfaces here).
+        auto created = creating.valid() ? creating.get() : makeDevice(options);
+        device = std::move(created.device); context = std::move(created.context);
+        if(mediaVideo){ComPtr<ID3D10Multithread>multithread;checked(device.As(&multithread),"Enable shared media device thread protection");multithread->SetMultithreadProtected(TRUE);}
+        ComPtr<IDXGIDevice1> dxgi;
+        checked(device.As(&dxgi), "Get DXGI device");
+        if (!offscreen) checked(dxgi->SetMaximumFrameLatency(1), "Bound presentation latency");
+        ComPtr<IDXGIAdapter> adapter; checked(dxgi->GetAdapter(&adapter), "Read selected renderer adapter");
+        DXGI_ADAPTER_DESC description{}; checked(adapter->GetDesc(&description), "Read selected renderer identity");
+        description.Description[127] = 0;
+        const auto length = static_cast<int>(std::wcslen(description.Description));
+        const auto bytes = WideCharToMultiByte(CP_UTF8, 0, description.Description, length, nullptr, 0, nullptr, nullptr);
+        std::string name(static_cast<std::size_t>(std::max(bytes, 0)), '\0');
+        if (bytes > 0) WideCharToMultiByte(CP_UTF8, 0, description.Description, length, name.data(), bytes, nullptr, nullptr);
+        adapterInfo = {std::move(name), description.VendorId, description.DeviceId,
+            static_cast<std::uint64_t>(description.DedicatedVideoMemory), static_cast<std::uint64_t>(description.SharedSystemMemory)};
+        adapterLuid = description.AdapterLuid;
+        if (gpuThreadPriority) (void)dxgi->SetGPUThreadPriority(gpuThreadPriority);
+    }
+    // The programs, fixed states, camera constants and the white texture.
+    void createPipelineObjects() {
+        const ShaderPrograms programs(options.shaderPath, counters.initialized && counters.embeddedShaders);
         counters.embeddedShaders = programs.embedded();
         auto vs = programs.get("SceneVS", "vs_5_0");
         auto ps = programs.get("ScenePS", "ps_5_0");
@@ -741,9 +862,128 @@ struct Renderer::Impl {
         checked(device->CreateSamplerState(&sampler, &linearSampler), "Create linear texture sampler");
         const std::array<std::uint8_t, 4> opaqueWhite{255, 255, 255, 255};
         white = texture({1, 1, opaqueWhite, TextureColorSpace::linear, TextureFilter::nearest}, 0);
-        counters.initialized = true;
+        cameraDirty = true;
+    }
+    // Renderer::suspendDevice / resumeDevice.
+    bool suspendDevice();
+    void resumeDevice();
+    void ensureDevice() { if (suspended) resumeDevice(); }
+    // Every D3D11 object of the device (the retained records keep their
+    // identities, values and system-memory copies).
+    void releaseDeviceObjects() noexcept {
+        for (auto& [id, mesh] : meshes) { (void)id; mesh.vertices.Reset(); mesh.indices.Reset(); }
+        for (auto& [id, texture] : textures) { (void)id; texture.view.Reset(); texture.resource.Reset(); }
+        for (auto& [id, group] : groups) { (void)id; group->camera.Reset(); group->target.Reset(); for (auto& draw : group->draws) draw.constants.Reset(); }
+        for (auto& draw : draws) draw.constants.Reset();
+        white.view.Reset(); white.resource.Reset();
+        sceneVS.Reset(); compositeVS.Reset(); scenePS.Reset(); encodedInputPS.Reset(); encodedOutputPS.Reset(); encodedBothPS.Reset(); compositePS.Reset(); mediaPS.Reset();
+        layout.Reset(); cameraBuffer.Reset(); overBlend.Reset(); screenBlend.Reset(); weightedBlend.Reset(); replaceBlend.Reset();
+        raster.Reset(); noDepth.Reset(); nearestSampler.Reset(); linearSampler.Reset(); gpuIdleQuery.Reset();
+        outputView.Reset(); backBuffer.Reset(); linearView.Reset(); linearResource.Reset(); linearTarget.Reset();
+        if (context) { context->ClearState(); context->Flush(); }
+        context.Reset(); device.Reset();
+    }
+    ComPtr<ID3D11Buffer> objectConstants(const ObjectUniform& values) {
+        D3D11_BUFFER_DESC description{};
+        description.ByteWidth = sizeof(ObjectUniform); description.Usage = D3D11_USAGE_DYNAMIC;
+        description.BindFlags = D3D11_BIND_CONSTANT_BUFFER; description.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+        D3D11_SUBRESOURCE_DATA initial{}; initial.pSysMem = &values;
+        ComPtr<ID3D11Buffer> buffer; checked(device->CreateBuffer(&description, &initial, &buffer), "Create a retained object uniform again");
+        return buffer;
     }
 };
+
+// The HUD has been closed for a while: no frame, no presentation, and every
+// retained resource kept in system memory instead of on the device.
+bool Renderer::Impl::suspendDevice() {
+    if (suspended || !device) return false;
+    // A media owner holding the device, a live media target or a bridged
+    // composition surface keep it: nothing can be released for them.
+    if (!lentDevice.expired() || !media.empty() || compositionSuspended) return false;
+    if (compositionSurface && compositionSurface->impl_->observer) return false;
+    if (!offscreen) (void)releasePresentation();
+    readbackReady = false; context->ClearState();
+    // Frame and group targets (and the original pass's): created again and
+    // re-rendered by the frames that draw them.
+    if (!targetsReleased) {
+        outputView.Reset(); backBuffer.Reset(); linearView.Reset(); linearResource.Reset(); linearTarget.Reset();
+        targetsReleased = true; counters.releasedTargetBytes += frameTargetBytes();
+    }
+    for (auto& [id, group] : groups) {
+        (void)id; group->dirty = true; if (group->released) continue;
+        group->target.Reset(); textures.find(group->output.textureID)->second.view.Reset();
+        group->released = true; counters.releasedTargetBytes += group->bytes;
+    }
+    if (source) (void)source->releaseTargets();
+    // System-memory copies, in batches of about 32 MiB: every GPU copy of a
+    // batch is issued before its first map waits for the GPU.
+    std::vector<gpu_copy::Copy*> batch; std::size_t batchBytes{}, total{};
+    const auto finishBatch = [&] { for (auto* copy : batch) { gpu_copy::finish(context.Get(), *copy); total += copy->bytes(); } batch.clear(); batchBytes = 0; };
+    const auto add = [&](gpu_copy::Copy& into, ID3D11Resource* resource, ID3D11ShaderResourceView* view, std::size_t bytes) {
+        into = gpu_copy::stage(device.Get(), context.Get(), resource, view); batch.push_back(&into); batchBytes += bytes;
+        if (batchBytes >= (std::size_t(32) << 20)) finishBatch();
+    };
+    const auto dropCopies = [&]() noexcept {
+        for (auto& [id, mesh] : meshes) { (void)id; mesh.savedVertices = {}; mesh.savedIndices = {}; }
+        for (auto& [id, texture] : textures) { (void)id; texture.saved = {}; texture.hasSaved = false; }
+        for (auto& [id, group] : groups) { (void)id; group->savedCamera = {}; }
+    };
+    try {
+        for (auto& [id, mesh] : meshes) { (void)id;
+            if (mesh.vertices) add(mesh.savedVertices, mesh.vertices.Get(), nullptr, mesh.bytes);
+            if (mesh.indices) add(mesh.savedIndices, mesh.indices.Get(), nullptr, 0); }
+        for (auto& [id, texture] : textures) { (void)id;
+            if (texture.groupOwned || !texture.view) continue;
+            add(texture.saved, gpu_copy::resourceOf(texture.view.Get()).Get(), texture.view.Get(), texture.bytes); texture.hasSaved = true; }
+        for (auto& [id, group] : groups) { (void)id; if (group->camera) add(group->savedCamera, group->camera.Get(), nullptr, 64); }
+        finishBatch();
+        if (source) source->suspend();
+    } catch (...) { batch.clear(); dropCopies(); throw; }
+    releaseDeviceObjects();
+    // Handles of the released device (a composition surface) are stale.
+    epoch = std::make_shared<const int>(0);
+    suspended = true; suspendedBytes = total + (source ? source->suspendedBytes() : 0);
+    counters.deviceSuspended = true; counters.suspendedCopyBytes = suspendedBytes; ++counters.deviceSuspensions;
+    return true;
+}
+// The first call that needs the GPU after suspendDevice(): a new device on
+// the current default adapter, then every retained resource again from its
+// copy (same identities, descriptions and views); targets follow on the next
+// draw and the presentation on restorePresentation or a presented draw.
+void Renderer::Impl::resumeDevice() {
+    if (!suspended) return;
+    const auto begin = qpcNow();
+    try {
+        createDevice();
+        const auto created = qpcNow(); counters.deviceCreateSeconds += created - begin;
+        createPipelineObjects();
+        const auto programs = qpcNow(); counters.pipelineCreateSeconds += programs - created;
+        for (auto& [id, mesh] : meshes) { (void)id;
+            if (!mesh.savedVertices.data.empty()) checked(gpu_copy::create(device.Get(), mesh.savedVertices, nullptr).As(&mesh.vertices), "Create a retained mesh again");
+            if (!mesh.savedIndices.data.empty()) checked(gpu_copy::create(device.Get(), mesh.savedIndices, nullptr).As(&mesh.indices), "Create a retained mesh again"); }
+        for (auto& [id, texture] : textures) { (void)id;
+            if (!texture.hasSaved) continue;
+            auto created = gpu_copy::create(device.Get(), texture.saved, &texture.view);
+            if (texture.updatable) checked(created.As(&texture.resource), "Create an updatable texture again"); }
+        for (auto& [id, group] : groups) { (void)id;
+            if (!group->savedCamera.data.empty()) checked(gpu_copy::create(device.Get(), group->savedCamera, nullptr).As(&group->camera), "Create a native group camera again");
+            for (auto& draw : group->draws) draw.constants = objectConstants(draw.values); }
+        for (auto& draw : draws) draw.constants = objectConstants(draw.values);
+        const auto restored = qpcNow(); counters.resourceRestoreSeconds += restored - programs;
+        if (source) source->resume(device.Get(), context.Get());
+        counters.sourceRestoreSeconds += qpcNow() - restored;
+    } catch (...) {
+        // Still suspended: the copies stay for the next attempt.
+        releaseDeviceObjects();
+        throw;
+    }
+    for (auto& [id, mesh] : meshes) { (void)id; mesh.savedVertices = {}; mesh.savedIndices = {}; }
+    for (auto& [id, texture] : textures) { (void)id; texture.saved = {}; texture.hasSaved = false; }
+    for (auto& [id, group] : groups) { (void)id; group->savedCamera = {}; }
+    suspended = false; suspendedBytes = 0; cameraDirty = true; touch();
+    counters.deviceSuspended = false; counters.suspendedCopyBytes = 0; ++counters.deviceResumes;
+    counters.deviceResumeSeconds += qpcNow() - begin;
+}
 
 Renderer::Renderer() = default;
 Renderer::~Renderer() = default;
@@ -759,11 +999,19 @@ void Renderer::initialize(void *window, std::uint32_t width, std::uint32_t heigh
 void Renderer::resize(std::uint32_t width, std::uint32_t height) {
     require(impl_ != nullptr, "Renderer is not initialized"); impl_->thread(); dimensions(width, height);
     if (impl_->width == width && impl_->height == height) return;
+    impl_->touch();
     try {
         auto &r = *impl_;
         r.readbackReady = false;
-        r.context->ClearState();
+        if (r.context) r.context->ClearState();
         r.outputView.Reset(); r.backBuffer.Reset(); r.linearView.Reset(); r.linearResource.Reset(); r.linearTarget.Reset();
+        if (r.suspended || (!r.offscreen && !r.swapchain)) {
+            // A suspended device or a released presentation: targets and the
+            // swap chain are created again at this size.
+            r.counters.releasedTargetBytes -= std::min(r.counters.releasedTargetBytes, r.frameTargetBytes());
+            r.width = width; r.height = height; r.counters.releasedTargetBytes += r.frameTargetBytes();
+            return;
+        }
         if (!r.offscreen) checked(r.swapchain->ResizeBuffers(2, width, height, DXGI_FORMAT_B8G8R8A8_UNORM, r.swapchainFlags), "Resize composition buffers");
         r.counters.releasedTargetBytes -= std::min(r.counters.releasedTargetBytes, r.targetsReleased ? r.frameTargetBytes() : 0);
         r.width = width; r.height = height; r.bindTargets(); r.targetsReleased = false;
@@ -771,7 +1019,9 @@ void Renderer::resize(std::uint32_t width, std::uint32_t height) {
     } catch (...) { reset(); throw; }
 }
 std::shared_ptr<RendererCompositionSurface>Renderer::borrowCompositionSurface(){
-    require(impl_!=nullptr,"Renderer is not initialized");auto&r=*impl_;r.thread();require(!r.offscreen&&r.swapchain&&r.target&&r.visual,"Offscreen renderer has no composition swap chain");
+    require(impl_!=nullptr,"Renderer is not initialized");auto&r=*impl_;r.thread();r.ensureDevice();
+    if(!r.offscreen&&!r.swapchain)(void)r.restorePresentation(); // a released presentation is created again for its borrower
+    require(!r.offscreen&&r.swapchain&&r.target&&r.visual,"Offscreen renderer has no composition swap chain");
     if(!r.compositionSurface){auto value=std::make_unique<RendererCompositionSurface::Impl>();value->swapchain=r.swapchain;value->epoch=r.epoch;value->window=r.window;value->thread=r.ownerThread;value->width=r.width;value->height=r.height;
         r.compositionSurface=std::shared_ptr<RendererCompositionSurface>(new RendererCompositionSurface(std::move(value)));++r.counters.compositionSurfaceBorrows;}
     return r.compositionSurface;
@@ -792,6 +1042,7 @@ bool Renderer::restoreComposition(const RendererCompositionSurface&surface){
 bool Renderer::setMesh(std::string sourceID, std::uint64_t revision, MeshData input) {
     require(impl_ != nullptr, "Renderer is not initialized"); auto &r = *impl_; r.thread(); identity(sourceID);
     const auto existing = r.meshes.find(sourceID);
+    if (existing == r.meshes.end() || existing->second.revision != revision) r.ensureDevice();
     require(existing==r.meshes.end()||!existing->second.groupOwned,"Native group output mesh is managed by its group");
     if (existing != r.meshes.end() && existing->second.revision == revision) return false;
     require(existing != r.meshes.end() || r.meshes.size() < maximumMeshes, "Retained mesh count exceeds bounds");
@@ -811,13 +1062,14 @@ bool Renderer::setMesh(std::string sourceID, std::uint64_t revision, MeshData in
     mesh.indices = immutableBuffer(r.device.Get(), D3D11_BIND_INDEX_BUFFER, input.indices.data(), input.indices.size_bytes());
     mesh.indexCount = static_cast<UINT>(input.indices.size()); mesh.revision = revision; mesh.bytes = bytes;
     mesh.owner = LayerRasterAttribution::current(); if (mesh.owner.empty() && existing != r.meshes.end()) mesh.owner = std::move(existing->second.owner);
-    auto updated=r.meshes.insert_or_assign(std::move(sourceID), std::move(mesh));r.invalidate(&updated.first->second);
+    auto updated=r.meshes.insert_or_assign(std::move(sourceID), std::move(mesh));r.invalidate(&updated.first->second);r.touch();if(updated.second)++r.resourceEpoch;
     r.counters.resourceBytes = r.counters.resourceBytes - previousBytes + bytes; ++r.counters.meshUploads;
     return true;
 }
 bool Renderer::setTexture(std::string sourceID, std::uint64_t revision, TextureData input) {
     require(impl_ != nullptr, "Renderer is not initialized"); auto &r = *impl_; r.thread(); identity(sourceID);
     const auto existing = r.textures.find(sourceID);
+    if (existing == r.textures.end() || existing->second.revision != revision) r.ensureDevice();
     require(existing==r.textures.end()||(!existing->second.groupOwned&&!existing->second.mediaOwned),"Native group/media texture is managed by its owner");
     if (existing != r.textures.end() && existing->second.revision == revision) return false;
     require(existing != r.textures.end() || r.textures.size() < maximumTextures, "Retained texture count exceeds bounds");
@@ -832,13 +1084,14 @@ bool Renderer::setTexture(std::string sourceID, std::uint64_t revision, TextureD
     auto texture = r.texture(input, revision);
     r.counters.textureUploadSeconds += qpcNow() - begin;
     texture.owner = LayerRasterAttribution::current(); if (texture.owner.empty() && existing != r.textures.end()) texture.owner = std::move(existing->second.owner);
-    auto updated=r.textures.insert_or_assign(std::move(sourceID), std::move(texture));r.invalidate(&updated.first->second);
+    auto updated=r.textures.insert_or_assign(std::move(sourceID), std::move(texture));r.invalidate(&updated.first->second);r.touch();if(updated.second)++r.resourceEpoch;
     r.counters.resourceBytes = r.counters.resourceBytes - previousBytes + nativeBytes; ++r.counters.textureUploads;
     return true;
 }
 bool Renderer::updateTexture(const std::string &sourceID, std::uint64_t revision, std::uint32_t x, std::uint32_t y, TextureData region) {
     require(impl_ != nullptr, "Renderer is not initialized"); auto &r = *impl_; r.thread();
     const auto found = r.textures.find(sourceID);
+    if (found != r.textures.end() && found->second.revision != revision) r.ensureDevice();
     require(found != r.textures.end() && found->second.updatable && !found->second.groupOwned && !found->second.mediaOwned,
         "Only an updatable texture installed by setTexture is painted in place");
     auto &texture = found->second;
@@ -858,17 +1111,21 @@ bool Renderer::updateTexture(const std::string &sourceID, std::uint64_t revision
         detail::prepareTextureRGBA16(region.straightRGBA, region.colorSpace, premultiplied);
         r.context->UpdateSubresource(texture.resource.Get(), 0, &box, premultiplied.data(), region.width * 8, 0);
     }
-    texture.revision = revision; r.invalidate(&texture);
+    texture.revision = revision; r.invalidate(&texture); r.touch();
     ++r.counters.textureRegionUploads; r.counters.textureRegionBytes += region.straightRGBA.size();
     r.counters.textureUploadSeconds += qpcNow() - begin;
     return true;
 }
 std::shared_ptr<void>Renderer::mediaDevice()const{
-    require(impl_&&impl_->mediaVideo,"Renderer was not initialized for same-device media");impl_->thread();auto device=impl_->device;
-    return std::shared_ptr<void>(device.Detach(),[](void*p){static_cast<ID3D11Device*>(p)->Release();});
+    require(impl_&&impl_->mediaVideo,"Renderer was not initialized for same-device media");auto&r=*impl_;r.thread();r.ensureDevice();
+    // One lease while any holder keeps it: suspendDevice() cannot release a lent device.
+    if(auto lent=r.lentDevice.lock())return lent;
+    auto device=r.device;
+    std::shared_ptr<void>lease(device.Detach(),[](void*p){static_cast<ID3D11Device*>(p)->Release();});
+    r.lentDevice=lease;return lease;
 }
 std::shared_ptr<RendererMediaTexture>Renderer::createMediaTexture(std::string id,unsigned w,unsigned h){
-    require(impl_&&impl_->mediaVideo,"Renderer was not initialized for same-device media");auto&r=*impl_;r.thread();identity(id);
+    require(impl_&&impl_->mediaVideo,"Renderer was not initialized for same-device media");auto&r=*impl_;r.thread();identity(id);r.ensureDevice();
     require(w&&h&&w<=8192&&h<=8192&&std::uint64_t(w)*h<=maximumMediaPixels,"Media target dimensions exceed bounds");
     require(r.media.size()<maximumMediaTargets&&r.textures.size()<maximumTextures,"Media texture count exceeds bounds");
     require(!r.textures.contains(id),"Media texture identity is already installed; explicitly retire it first");
@@ -886,17 +1143,17 @@ std::shared_ptr<RendererMediaTexture>Renderer::createMediaTexture(std::string id
     media->bytes=bytes;media->budget=r.mediaBudget;r.mediaBudget->bytes.fetch_add(bytes,std::memory_order_relaxed);
     auto handle=std::shared_ptr<RendererMediaTexture>(new RendererMediaTexture(std::move(media)));
     std::map<std::string,std::shared_ptr<RendererMediaTexture>>stagedMedia;stagedMedia.emplace(std::move(id),handle);
-    r.textures.merge(stagedTexture);r.media.merge(stagedMedia);++r.counters.mediaTargetAllocations;return handle;
+    r.textures.merge(stagedTexture);r.media.merge(stagedMedia);++r.counters.mediaTargetAllocations;r.touch();++r.resourceEpoch;return handle;
 }
 void Renderer::commitMediaTexture(const RendererMediaTexture&handle){
-    require(impl_&&impl_->mediaVideo,"Renderer was not initialized for same-device media");auto&r=*impl_;r.thread();const auto&media=*handle.impl_;
+    require(impl_&&impl_->mediaVideo,"Renderer was not initialized for same-device media");auto&r=*impl_;r.thread();r.ensureDevice();const auto&media=*handle.impl_;
     require(handle.valid()&&media.epoch.lock()==r.epoch,"Stale/foreign media target cannot commit");const auto installed=r.media.find(media.id);
     require(installed!=r.media.end()&&installed->second.get()==&handle,"Media target is no longer registered");auto texture=r.textures.find(media.id);require(texture!=r.textures.end()&&texture->second.mediaOwned,"Media texture ownership mismatch");
     require(texture->second.revision<std::numeric_limits<std::uint64_t>::max(),"Media frame revision exhausted");
     r.readbackReady=false;r.context->ClearState();D3D11_VIEWPORT viewport{0,0,static_cast<float>(media.width),static_cast<float>(media.height),0,1};r.context->RSSetViewports(1,&viewport);r.context->RSSetState(r.raster.Get());r.context->OMSetDepthStencilState(r.noDepth.Get(),0);r.context->OMSetBlendState(r.replaceBlend.Get(),nullptr,UINT_MAX);
     auto*target=media.linear.Get();r.context->OMSetRenderTargets(1,&target,nullptr);r.context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);r.context->VSSetShader(r.compositeVS.Get(),nullptr,0);r.context->PSSetShader(r.mediaPS.Get(),nullptr,0);auto*source=media.encoded.Get();r.context->PSSetShaderResources(0,1,&source);r.context->Draw(3,0);
     ID3D11ShaderResourceView*empty=nullptr;r.context->PSSetShaderResources(0,1,&empty);r.context->OMSetRenderTargets(0,nullptr,nullptr);
-    ++texture->second.revision;r.invalidate(&texture->second);++r.counters.mediaFrameCommits;
+    ++texture->second.revision;r.invalidate(&texture->second);r.touch();++r.counters.mediaFrameCommits;
 }
 void Renderer::retainMediaPoster(const RendererMediaTexture&handle){
     require(impl_&&impl_->mediaVideo,"Renderer was not initialized for same-device media");auto&r=*impl_;r.thread();auto&media=*handle.impl_;
@@ -910,7 +1167,27 @@ void Renderer::retainMediaPoster(const RendererMediaTexture&handle){
     auto retained=std::make_shared<RetainedMediaBytes>();retained->budget=r.mediaBudget;
     retained->bytes=std::size_t(media.width)*media.height*8;media.bytes-=retained->bytes;
     texture->second.mediaPoster=std::move(retained);media.registered.store(false,std::memory_order_relaxed);
-    media.linear.Reset();r.media.erase(installed);
+    media.linear.Reset();r.media.erase(installed);r.touch();
+}
+namespace {
+bool sameIdentity(const DrawObject& a, const DrawObject& b) noexcept {
+    return a.sourceID == b.sourceID && a.meshID == b.meshID && a.textureID == b.textureID &&
+        a.alphaMask.has_value() == b.alphaMask.has_value() && (!a.alphaMask || a.alphaMask->textureID == b.alphaMask->textureID);
+}
+bool samePose(const DrawObject& a, const DrawObject& b) noexcept {
+    if (!(a.world == b.world && a.linearTint == b.linearTint && a.opacity == b.opacity && a.blend == b.blend &&
+          a.shutter == b.shutter && a.alphaMask == b.alphaMask && a.angularMask == b.angularMask && a.masks.size() == b.masks.size())) return false;
+    for (std::size_t n = 0; n < a.masks.size(); ++n)
+        if (!(a.masks[n].worldToLocal == b.masks[n].worldToLocal && a.masks[n].bounds == b.masks[n].bounds && a.masks[n].cornerRadius == b.masks[n].cornerRadius)) return false;
+    return true;
+}
+// The pose of an object whose identities are unchanged (the same IDs), copied
+// into existing storage: nothing allocates on a steady pose stream (a tilt).
+void assignPose(DrawObject& last, const DrawObject& object) {
+    last.world = object.world; last.linearTint = object.linearTint; last.opacity = object.opacity; last.blend = object.blend;
+    last.masks.assign(object.masks.begin(), object.masks.end());
+    last.shutter = object.shutter; last.alphaMask = object.alphaMask; last.angularMask = object.angularMask;
+}
 }
 bool Renderer::Impl::assignDraws(std::vector<Draw>&activeDraws,std::vector<ObjectUniform>&staged,
     std::span<const DrawObject>objects,bool localGroup,NativeGroupColorSpace colorSpace){
@@ -920,6 +1197,8 @@ bool Renderer::Impl::assignDraws(std::vector<Draw>&activeDraws,std::vector<Objec
     bool retained = objects.size() == activeDraws.size();
     for (std::size_t i = 0; retained && i < objects.size(); ++i) {
         const auto &object = objects[i]; const auto &draw = activeDraws[i];
+        // Same identities resolved in the current epoch: the same records.
+        if (draw.epoch == r.resourceEpoch && sameIdentity(object, draw.last)) continue;
         const auto mesh = r.meshes.find(object.meshID);
         const auto texture = r.textures.find(object.textureID);
         const auto alpha = object.alphaMask?r.textures.find(object.alphaMask->textureID):r.textures.end();
@@ -931,18 +1210,23 @@ bool Renderer::Impl::assignDraws(std::vector<Draw>&activeDraws,std::vector<Objec
         // Validate the complete pose before touching any active GPU constants.
         // Storage was reserved at the last structural commit. Pointer, fade and
         // clipping updates retain both the draw records and their identities.
+        // An unchanged pose keeps its validated constants.
         staged.resize(objects.size());
-        for (std::size_t i = 0; i < objects.size(); ++i) staged[i] = uniforms(objects[i]);
+        for (std::size_t i = 0; i < objects.size(); ++i) staged[i] = samePose(objects[i], activeDraws[i].last) ? activeDraws[i].values : uniforms(objects[i]);
         bool changed{};
         {
             for (std::size_t i = 0; i < objects.size(); ++i) {
                 auto &draw = activeDraws[i]; const auto &value = staged[i];
+                const bool pose = !samePose(objects[i], draw.last);
+                if (pose) assignPose(draw.last, objects[i]);
+                draw.epoch = r.resourceEpoch;
+                if (!pose) continue;
                 if(draw.blend!=objects[i].blend){draw.blend=objects[i].blend;changed=true;}
                 if (std::memcmp(&value, &draw.values, sizeof(ObjectUniform)) == 0) continue;
                 D3D11_MAPPED_SUBRESOURCE mapped{};
                 checked(r.context->Map(draw.constants.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped), "Update retained object uniform");
                 std::memcpy(mapped.pData, &value, sizeof(ObjectUniform));
-                r.context->Unmap(draw.constants.Get(), 0); draw.values = value; ++r.counters.objectUploads; changed=true;
+                r.context->Unmap(draw.constants.Get(), 0); draw.values = value; ++r.counters.objectUploads; ++draw.uploads; changed=true;
             }
         }
         return changed;
@@ -962,7 +1246,8 @@ bool Renderer::Impl::assignDraws(std::vector<Draw>&activeDraws,std::vector<Objec
         auto alpha=object.alphaMask?r.textures.find(object.alphaMask->textureID):r.textures.end();
         require(!object.alphaMask||alpha!=r.textures.end(),"Draw refers to an unregistered alpha-mask texture");
         draw.alphaMask=object.alphaMask?&alpha->second:&r.white;
-        draw.values = uniforms(object);draw.blend=object.blend;
+        draw.values = uniforms(object);draw.blend=object.blend;draw.last=object;draw.epoch=r.resourceEpoch;
+        draw.last.masks.reserve(8); // the most a pose may carry: later poses copy without allocating
         if (i < activeDraws.size())
             draw.constants = activeDraws[i].constants;
         else {
@@ -993,8 +1278,8 @@ bool Renderer::Impl::assignDraws(std::vector<Draw>&activeDraws,std::vector<Objec
     return true;
 }
 void Renderer::setDrawList(std::span<const DrawObject>objects){
-    require(impl_!=nullptr,"Renderer is not initialized");auto&r=*impl_;r.thread();const auto begin=qpcNow();
-    try{(void)r.assignDraws(r.draws,r.stagedObjectValues,objects,false);}
+    require(impl_!=nullptr,"Renderer is not initialized");auto&r=*impl_;r.thread();r.ensureDevice();const auto begin=qpcNow();
+    try{if(r.assignDraws(r.draws,r.stagedObjectValues,objects,false))r.touch();}
     catch(const RendererError&){reset();throw;}
     r.counters.drawListSeconds+=qpcNow()-begin;
 }
@@ -1068,20 +1353,20 @@ bool Renderer::Impl::configureGroup(std::string id,const NativeGroupTarget&reque
         destination.target=std::move(candidate->target);destination.camera=std::move(candidate->camera);destination.dirty=true;
         if(destination.released){counters.releasedTargetBytes-=std::min(counters.releasedTargetBytes,previous);destination.released=false;}
     }else{
-        stagedGroups.begin()->second=std::move(candidate);meshes.merge(stagedMeshes);textures.merge(stagedTextures);groups.merge(stagedGroups);
+        stagedGroups.begin()->second=std::move(candidate);meshes.merge(stagedMeshes);textures.merge(stagedTextures);groups.merge(stagedGroups);++resourceEpoch;
     }
     groupBytes=groupBytes-previous+std::size_t(pixelWidth)*pixelHeight*8;
     counters.resourceBytes=counters.resourceBytes-(existing?previous+quadBytes+64:0)+std::size_t(pixelWidth)*pixelHeight*8+quadBytes+64;
     ++counters.meshUploads;++counters.textureUploads;++counters.nativeGroupTargetAllocations;return true;
 }
 bool Renderer::configureNativeGroup(std::string id,const NativeGroupTarget&target){
-    require(impl_!=nullptr,"Renderer is not initialized");impl_->thread();try{return impl_->configureGroup(std::move(id),target,{});}catch(const RendererError&){reset();throw;}
+    require(impl_!=nullptr,"Renderer is not initialized");impl_->thread();impl_->ensureDevice();try{const auto changed=impl_->configureGroup(std::move(id),target,{});if(changed)impl_->touch();return changed;}catch(const RendererError&){reset();throw;}
 }
 bool Renderer::configureNativeGroup(std::string id,const NativeGroupTarget&target,std::span<const DrawObject>objects){
-    require(impl_!=nullptr,"Renderer is not initialized");impl_->thread();try{return impl_->configureGroup(std::move(id),target,objects);}catch(const RendererError&){reset();throw;}
+    require(impl_!=nullptr,"Renderer is not initialized");impl_->thread();impl_->ensureDevice();try{const auto changed=impl_->configureGroup(std::move(id),target,objects);if(changed)impl_->touch();return changed;}catch(const RendererError&){reset();throw;}
 }
 bool Renderer::setNativeGroupDraws(const std::string&id,std::span<const DrawObject>objects){
-    require(impl_!=nullptr,"Renderer is not initialized");auto&r=*impl_;r.thread();const auto found=r.groups.find(id);require(found!=r.groups.end(),"Unknown native group");
+    require(impl_!=nullptr,"Renderer is not initialized");auto&r=*impl_;r.thread();r.ensureDevice();const auto found=r.groups.find(id);require(found!=r.groups.end(),"Unknown native group");
     r.groupDrawBudget(found->second.get(),objects.size());
     const auto depth=r.groupInputDepth(objects,found->second.get(),found->second->requested.colorSpace);
     try{const auto changed=r.assignDraws(found->second->draws,found->second->staged,objects,true,found->second->requested.colorSpace);found->second->depth=depth;found->second->dirty|=changed;return changed;}
@@ -1095,14 +1380,14 @@ bool Renderer::removeNativeGroup(const std::string&id){
     const auto&group=*found->second;const auto mesh=r.meshes.find(group.output.meshID);
     const auto color=r.textures.find(group.output.textureID);require(mesh!=r.meshes.end()&&color!=r.textures.end(),"Native group owned resources are missing");
     if(r.meshReferenced(&mesh->second)||r.textureReferenced(&color->second))return false;
-    r.context->ClearState();r.counters.resourceBytes-=mesh->second.bytes+color->second.bytes+64;r.groupBytes-=group.bytes;
+    if(r.context)r.context->ClearState();r.counters.resourceBytes-=mesh->second.bytes+color->second.bytes+64;r.groupBytes-=group.bytes;
     if(group.released)r.counters.releasedTargetBytes-=std::min(r.counters.releasedTargetBytes,group.bytes);
-    r.meshes.erase(mesh);r.textures.erase(color);r.groups.erase(found);return true;
+    r.meshes.erase(mesh);r.textures.erase(color);r.groups.erase(found);r.touch();++r.resourceEpoch;return true;
 }
 void Renderer::setCamera(const core::Matrix4 &viewProjection) {
     require(impl_ != nullptr, "Renderer is not initialized"); auto &r = *impl_; r.thread();
     auto next = matrix(viewProjection);
-    if (next != r.cameraValues) { r.cameraValues = next; r.cameraDirty = true; }
+    if (next != r.cameraValues) { r.cameraValues = next; r.cameraDirty = true; r.touch(); }
 }
 void Renderer::Impl::renderNativeDraws(std::span<const Draw>objects,ID3D11RenderTargetView*passTarget,
     ID3D11Buffer*passCamera,unsigned pixelWidth,unsigned pixelHeight,bool group,NativeGroupColorSpace colorSpace){
@@ -1145,10 +1430,12 @@ void Renderer::Impl::renderNativeDraws(std::span<const Draw>objects,ID3D11Render
 void Renderer::draw(bool present) {
     require(impl_ != nullptr, "Renderer is not initialized"); auto &r = *impl_; r.thread();
     require(!present || !r.offscreen, "An isolated render target cannot present to the desktop");
+    r.ensureDevice();
     // CPU time of this draw, Present excluded (diagnostics; numbers only).
     struct Timed { Impl& r; double begin{qpcNow()}, presented{r.counters.presentSeconds};
         ~Timed() { r.counters.drawSeconds += qpcNow() - begin - (r.counters.presentSeconds - presented); } } timed{r};
     r.readbackReady = false;
+    if (present && !r.swapchain) (void)r.restorePresentation();
     r.restoreFrameTargets();
     const bool originalBackground = r.sourcePassEnabled && r.source && r.source->active();
     if (originalBackground) {
@@ -1172,16 +1459,27 @@ void Renderer::draw(bool present) {
     const auto expose=[](const Impl::Draw&draw){if(draw.values.opacity<=0||draw.values.tint[3]<=0)return;if(draw.texture->group)draw.texture->group->visibleFrame=true;if(draw.alphaMask->group)draw.alphaMask->group->visibleFrame=true;};
     for(const auto&draw:r.draws)expose(draw);
     for(auto&[id,group]:r.groups){(void)id;if(group->visibleFrame&&group->depth==2)for(const auto&draw:group->draws)expose(draw);}
+    const double nativeBegin=qpcNow();
     for(unsigned depth=1;depth<=2;++depth)for(auto&[id,group]:r.groups){(void)id;if(group->depth!=depth||!group->dirty||!group->visibleFrame)continue;
         if(group->released)r.restoreGroupTarget(*group);
         r.renderNativeDraws(group->draws,group->target.Get(),group->camera.Get(),group->width,group->height,true,group->requested.colorSpace);
-        group->dirty=false;++r.counters.nativeGroupRenders;
+        group->dirty=false;++r.counters.nativeGroupRenders;r.touch();
         r.invalidate(&r.textures.find(group->output.textureID)->second);
     }
-    r.renderNativeDraws(r.draws,r.linearView.Get(),r.cameraBuffer.Get(),r.width,r.height,false);
+    if(r.linearRevision!=r.nativeRevision){
+        r.renderNativeDraws(r.draws,r.linearView.Get(),r.cameraBuffer.Get(),r.width,r.height,false);
+        r.linearRevision=r.nativeRevision;++r.counters.nativePasses;
+    }else ++r.counters.nativePassesSkipped;
+    r.counters.nativePassSeconds+=qpcNow()-nativeBegin;
     ID3D11ShaderResourceView*emptyResource=nullptr;
     auto *output = r.outputView.Get();
     r.context->OMSetRenderTargets(1, &output, nullptr);
+    // Its own fixed state: the root pass that used to leave it bound may be
+    // skipped, and the original pass or a target release clears the state.
+    const D3D11_VIEWPORT viewport{0, 0, static_cast<float>(r.width), static_cast<float>(r.height), 0, 1};
+    r.context->RSSetViewports(1, &viewport); r.context->RSSetState(r.raster.Get());
+    r.context->OMSetDepthStencilState(r.noDepth.Get(), 0);
+    r.context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     // Native captions/modules form a separate premultiplied encoded surface,
     // matching the source's Core Animation layer above its Metal attachment.
     // Preserve original shader output; only the native surface is composited.
@@ -1218,13 +1516,17 @@ void Renderer::presentationAdmitted() noexcept {
     impl_->frameAcquired = true; ++impl_->counters.presentationAdmissions;
 }
 long Renderer::setGpuThreadPriority(int priority) noexcept {
-    if (!impl_ || !impl_->device) return E_POINTER;
+    if (!impl_) return E_POINTER;
     if (priority < -7 || priority > 7) return E_INVALIDARG;
+    // Kept for every later device (suspendDevice / resumeDevice).
+    impl_->gpuThreadPriority = priority;
+    if (impl_->suspended) return S_OK;
+    if (!impl_->device) return E_POINTER;
     ComPtr<IDXGIDevice> device; if (FAILED(impl_->device.As(&device))) return E_NOINTERFACE;
     return device->SetGPUThreadPriority(priority);
 }
 double Renderer::waitForGpuIdle() {
-    require(impl_ != nullptr, "Renderer is not initialized"); auto &r = *impl_; r.thread();
+    require(impl_ != nullptr, "Renderer is not initialized"); auto &r = *impl_; r.thread(); r.ensureDevice();
     if (!r.gpuIdleQuery) { D3D11_QUERY_DESC description{D3D11_QUERY_EVENT, 0}; checked(r.device->CreateQuery(&description, &r.gpuIdleQuery), "Create GPU completion query"); }
     LARGE_INTEGER frequency{}, start{}, now{}; QueryPerformanceFrequency(&frequency); QueryPerformanceCounter(&start);
     r.context->End(r.gpuIdleQuery.Get());
@@ -1268,22 +1570,22 @@ bool Renderer::removeMesh(const std::string &sourceID) {
     if (!impl_) return false;
     auto &r = *impl_; r.thread(); auto item = r.meshes.find(sourceID);
     if (item == r.meshes.end() || item->second.groupOwned || r.meshReferenced(&item->second)) return false;
-    r.context->ClearState(); r.counters.resourceBytes -= item->second.bytes; r.meshes.erase(item); return true;
+    if (r.context) r.context->ClearState(); r.counters.resourceBytes -= item->second.bytes; r.meshes.erase(item); r.touch(); ++r.resourceEpoch; return true;
 }
 bool Renderer::removeTexture(const std::string &sourceID) {
     if (!impl_) return false;
     auto &r = *impl_; r.thread(); auto item = r.textures.find(sourceID);
     if (item == r.textures.end() || item->second.groupOwned || r.textureReferenced(&item->second)) return false;
-    r.context->ClearState();r.counters.resourceBytes -= item->second.bytes;
+    if (r.context) r.context->ClearState();r.counters.resourceBytes -= item->second.bytes;
     if(item->second.mediaOwned){auto media=r.media.find(sourceID);if(media!=r.media.end()){media->second->impl_->registered.store(false,std::memory_order_relaxed);r.media.erase(media);}}
-    r.textures.erase(item); return true;
+    r.textures.erase(item); r.touch(); ++r.resourceEpoch; return true;
 }
-void Renderer::clearDrawList() { if (impl_) { impl_->thread(); impl_->draws.clear(); impl_->context->ClearState(); } }
+void Renderer::clearDrawList() { if (impl_) { impl_->thread(); impl_->draws.clear(); impl_->touch(); if (impl_->context) impl_->context->ClearState(); } }
 void Renderer::clearResources() {
     if (!impl_) return;
-    impl_->thread(); impl_->draws.clear();impl_->groups.clear();impl_->groupBytes=0; impl_->meshes.clear(); impl_->textures.clear();
+    impl_->thread(); impl_->touch(); ++impl_->resourceEpoch; impl_->draws.clear();impl_->groups.clear();impl_->groupBytes=0; impl_->meshes.clear(); impl_->textures.clear();
     for(auto&[id,media]:impl_->media){(void)id;media->impl_->registered.store(false,std::memory_order_relaxed);}impl_->media.clear();
-    impl_->context->ClearState(); impl_->counters.resourceBytes = 0;
+    if (impl_->context) impl_->context->ClearState(); impl_->counters.resourceBytes = 0;
     impl_->counters.releasedTargetBytes = impl_->targetsReleased ? impl_->frameTargetBytes() : 0;
     if (impl_->source) impl_->source->clear();
 }
@@ -1302,6 +1604,8 @@ bool Renderer::shadersEmbedded() noexcept {
 }
 std::size_t Renderer::releaseFrameTargets() {
     require(impl_ != nullptr, "Renderer is not initialized"); auto& r = *impl_; r.thread();
+    if (r.suspended) return 0; // nothing is on a device
+    r.touch();
     std::size_t released{};
     try {
         r.readbackReady = false; r.context->ClearState();
@@ -1326,13 +1630,42 @@ std::size_t Renderer::releaseFrameTargets() {
 }
 void Renderer::trim() {
     require(impl_ != nullptr, "Renderer is not initialized"); auto& r = *impl_; r.thread();
+    if (r.suspended) return;
     // The rendered output stays readable: only bindings and driver pools go.
     r.context->ClearState(); r.context->Flush();
     ComPtr<IDXGIDevice3> dxgi; r.counters.driverTrimmed = false;
     if (SUCCEEDED(r.device.As(&dxgi))) { dxgi->Trim(); r.counters.driverTrimmed = true; ++r.counters.driverTrims; }
 }
+bool Renderer::releasePresentation() {
+    require(impl_ != nullptr, "Renderer is not initialized"); auto& r = *impl_; r.thread();
+    return r.releasePresentation();
+}
+bool Renderer::restorePresentation() {
+    require(impl_ != nullptr, "Renderer is not initialized"); auto& r = *impl_; r.thread();
+    if (r.offscreen) return false;
+    r.ensureDevice(); return r.restorePresentation();
+}
+bool Renderer::presentationReleased() const noexcept { return impl_ && !impl_->offscreen && !impl_->swapchain; }
+bool Renderer::suspendDevice() {
+    require(impl_ != nullptr, "Renderer is not initialized"); auto& r = *impl_; r.thread();
+    return r.suspendDevice();
+}
+bool Renderer::resumeDevice() {
+    require(impl_ != nullptr, "Renderer is not initialized"); auto& r = *impl_; r.thread();
+    if (!r.suspended) return false;
+    r.resumeDevice(); return true;
+}
+bool Renderer::deviceSuspended() const noexcept { return impl_ && impl_->suspended; }
+bool Renderer::prepareDevice() {
+    require(impl_ != nullptr, "Renderer is not initialized"); auto& r = *impl_; r.thread();
+    if (!r.suspended || r.creating.valid()) return false;
+    try { r.creating = std::async(std::launch::async, [options = r.options] { return Impl::makeDevice(options); }); }
+    catch (const std::system_error&) { return false; } // no thread: the first GPU call creates it here
+    ++r.counters.devicePreparations; return true;
+}
 std::size_t Renderer::releaseHiddenGroupTargets() {
     require(impl_ != nullptr, "Renderer is not initialized"); auto& r = *impl_; r.thread();
+    if (r.suspended) return 0;
     std::size_t released{};
     for (auto& [id, group] : r.groups) {
         (void)id; if (group->released || group->visibleFrame) continue;
@@ -1352,6 +1685,10 @@ RendererStats Renderer::stats() const noexcept {
     result.compositionSuspended=impl_->compositionSuspended;
     result.sourcePassEnabled=impl_->sourcePassEnabled;
     return result;
+}
+void Renderer::forEachDrawUpload(const std::function<void(std::string_view, std::uint64_t)>&visit) const {
+    if (!impl_) return;
+    for (const auto& draw : impl_->draws) visit(draw.sourceID, draw.uploads);
 }
 void Renderer::forEachResource(const std::function<void(const RendererResourceUsage&)>&visit) const {
     if (!impl_) return; impl_->thread();
@@ -1373,23 +1710,14 @@ void Renderer::forEachResource(const std::function<void(const RendererResourceUs
 }
 RendererDeviceInfo Renderer::deviceInfo() const {
     require(impl_ != nullptr, "Renderer is not initialized"); impl_->thread();
-    ComPtr<IDXGIDevice> device; checked(impl_->device.As(&device), "Read renderer DXGI device");
-    ComPtr<IDXGIAdapter> adapter; checked(device->GetAdapter(&adapter), "Read selected renderer adapter");
-    DXGI_ADAPTER_DESC description{}; checked(adapter->GetDesc(&description), "Read selected renderer identity");
-    description.Description[127] = 0;
-    const auto length = static_cast<int>(std::wcslen(description.Description));
-    const auto bytes = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, description.Description, length, nullptr, 0, nullptr, nullptr);
-    require(bytes > 0, "Selected renderer adapter has no valid name");
-    std::string name(static_cast<std::size_t>(bytes), '\0');
-    require(WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, description.Description, length, name.data(), bytes, nullptr, nullptr) == bytes,
-        "Cannot encode selected renderer adapter name");
-    return {std::move(name), description.VendorId, description.DeviceId,
-        static_cast<std::uint64_t>(description.DedicatedVideoMemory), static_cast<std::uint64_t>(description.SharedSystemMemory)};
+    // The adapter the (last) device was created on, read at its creation.
+    return impl_->adapterInfo;
 }
 bool Renderer::adapterCurrent() const noexcept {
     // Explicit display-change query, never per frame. WARP and an
     // uninitialized renderer have no hardware adapter to follow.
-    if (!impl_ || !impl_->device || !impl_->hardware) return true;
+    // A suspended device is created again on whatever adapter is current.
+    if (!impl_ || !impl_->device || !impl_->hardware || impl_->suspended) return true;
     ComPtr<IDXGIDevice> device; if (FAILED(impl_->device.As(&device))) return true;
     ComPtr<IDXGIAdapter> adapter; if (FAILED(device->GetAdapter(&adapter))) return true;
     ComPtr<IDXGIFactory1> factory; if (FAILED(adapter->GetParent(IID_PPV_ARGS(&factory)))) return true;
@@ -1402,8 +1730,12 @@ bool Renderer::adapterCurrent() const noexcept {
     // A new default adapter (D3D11CreateDevice(nullptr) would now choose it).
     return next.AdapterLuid.LowPart == current.AdapterLuid.LowPart && next.AdapterLuid.HighPart == current.AdapterLuid.HighPart;
 }
-SourceGraphics& Renderer::sourceGraphics() {
+SourceGraphicsStats Renderer::sourceGraphicsStats() const {
     require(impl_ != nullptr, "Renderer is not initialized"); impl_->thread();
+    return impl_->source ? impl_->source->stats() : SourceGraphicsStats{};
+}
+SourceGraphics& Renderer::sourceGraphics() {
+    require(impl_ != nullptr, "Renderer is not initialized"); impl_->thread(); impl_->ensureDevice();
     if (!impl_->source) impl_->source = std::make_unique<SourceGraphics>(impl_->device.Get(), impl_->context.Get());
     return *impl_->source;
 }

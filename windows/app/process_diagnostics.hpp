@@ -54,6 +54,24 @@ struct ProcessDiagnostics {
     std::vector<AdapterMemory> adapters;
     std::vector<ThreadGroup> threads; // only with threadOrigins
 };
+// One thread of this process at a capture: its context switches and CPU time
+// so far (NtQuerySystemInformation, the counters Process Explorer and the
+// section 9 gate read), with its start module, offset and description.
+struct ThreadActivity {
+    std::uint32_t id{};
+    std::string module, description;
+    std::uint64_t offset{}, contextSwitches{};
+    double cpuSeconds{};
+};
+// Every thread of this process now (empty when the system refuses the query).
+std::vector<ThreadActivity> captureThreadActivity();
+// What happened between two captures `seconds` apart: the wake-ups (context
+// switches) per second of the whole process and of each thread that ran,
+// busiest first (at most `top`; a thread created between the captures counts
+// from zero, one that exited is dropped), and the same grouped by start and
+// description.
+ehud::data::Json threadActivityJSON(const std::vector<ThreadActivity>& before, const std::vector<ThreadActivity>& after,
+                                    double seconds, std::size_t top);
 // Cheap counters only (GetProcessMemoryInfo, handle and GUI object counts).
 ProcessMemoryCounters captureProcessMemory();
 // The full census; threadOrigins adds the per-thread start address walk.

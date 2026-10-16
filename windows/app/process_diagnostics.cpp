@@ -1,6 +1,7 @@
 #include "app/process_diagnostics.hpp"
 #include <algorithm>
 #include <array>
+#include <cstring>
 #include <functional>
 #include <map>
 #include <tuple>
@@ -175,7 +176,107 @@ std::vector<AdapterMemory> adapterMemory() {
     return result;
 }
 Json integer(std::uint64_t value) { return Json(static_cast<std::int64_t>(value)); }
+// SYSTEM_PROCESS_INFORMATION / SYSTEM_THREAD_INFORMATION (x64 layout, as
+// packaging/perf_probe.cpp reads them for the section 9 gate).
+using QuerySystem = LONG(WINAPI*)(ULONG, PVOID, ULONG, PULONG);
+constexpr std::size_t processThreadCount = 0x04, processIdentifier = 0x50, processHeader = 0x100;
+constexpr std::size_t threadEntrySize = 0x50, threadKernelTime = 0x00, threadUserTime = 0x08, threadIdentifier = 0x30, threadSwitchCount = 0x40;
+template <class T> T field(const std::vector<std::uint8_t>& buffer, std::size_t at) {
+    T value{}; std::memcpy(&value, buffer.data() + at, sizeof(T)); return value;
+}
 } // namespace
+
+std::vector<ThreadActivity> captureThreadActivity() {
+    std::vector<ThreadActivity> result;
+    static const auto query = kernelProcedure<QuerySystem>(L"ntdll.dll", "NtQuerySystemInformation");
+    if (!query) return result;
+    constexpr ULONG systemProcessInformation = 5;
+    constexpr LONG lengthMismatch = static_cast<LONG>(0xC0000004L);
+    std::vector<std::uint8_t> buffer(1u << 20);
+    for (int attempt = 0; attempt < 8; ++attempt) {
+        ULONG needed{};
+        const auto status = query(systemProcessInformation, buffer.data(), static_cast<ULONG>(buffer.size()), &needed);
+        if (status == lengthMismatch) { buffer.resize(std::max<std::size_t>(needed + 65536, buffer.size() * 2)); continue; }
+        if (status < 0) return result;
+        const auto self = GetCurrentProcessId();
+        for (std::size_t at = 0;;) {
+            if (at + processHeader > buffer.size()) return result;
+            if (static_cast<DWORD>(field<std::uintptr_t>(buffer, at + processIdentifier)) == self) {
+                const auto count = field<ULONG>(buffer, at + processThreadCount);
+                for (ULONG n = 0; n < count; ++n) {
+                    const auto entry = at + processHeader + std::size_t(n) * threadEntrySize;
+                    if (entry + threadEntrySize > buffer.size()) break;
+                    ThreadActivity row;
+                    row.id = static_cast<std::uint32_t>(field<std::uintptr_t>(buffer, entry + threadIdentifier));
+                    row.contextSwitches = field<ULONG>(buffer, entry + threadSwitchCount);
+                    row.cpuSeconds = double(field<std::int64_t>(buffer, entry + threadKernelTime) + field<std::int64_t>(buffer, entry + threadUserTime)) * 1e-7;
+                    result.push_back(std::move(row));
+                }
+                break;
+            }
+            const auto next = field<ULONG>(buffer, at);
+            if (!next) return result;
+            at += next;
+        }
+        break;
+    }
+    // Start address and description per thread (as threadGroups does).
+    const auto queryThread = kernelProcedure<QueryThread>(L"ntdll.dll", "NtQueryInformationThread");
+    auto describe = kernelProcedure<ReadDescription>(L"kernelbase.dll", "GetThreadDescription");
+    if (!describe) describe = kernelProcedure<ReadDescription>(L"kernel32.dll", "GetThreadDescription");
+    for (auto& row : result) {
+        const auto thread = OpenThread(THREAD_QUERY_INFORMATION | THREAD_QUERY_LIMITED_INFORMATION, FALSE, row.id);
+        if (!thread) continue;
+        std::uintptr_t start{};
+        constexpr ULONG threadQuerySetWin32StartAddress = 9;
+        if (queryThread) (void)queryThread(thread, threadQuerySetWin32StartAddress, &start, sizeof(start), nullptr);
+        if (describe) {
+            PWSTR text{};
+            if (SUCCEEDED(describe(thread, &text)) && text) {
+                std::size_t length = 0; while (text[length] && length < 128) ++length;
+                row.description = narrow(text, length); LocalFree(text);
+            }
+        }
+        CloseHandle(thread);
+        auto [module, offset] = moduleOf(start);
+        row.module = std::move(module); row.offset = offset;
+    }
+    return result;
+}
+Json threadActivityJSON(const std::vector<ThreadActivity>& before, const std::vector<ThreadActivity>& after, double seconds, std::size_t top) {
+    seconds = std::max(seconds, 1e-6);
+    struct Row { const ThreadActivity* thread; std::uint64_t switches; double cpu; };
+    std::vector<Row> rows;
+    std::uint64_t total{};
+    double cpu{};
+    for (const auto& thread : after) {
+        const auto previous = std::find_if(before.begin(), before.end(), [&](const ThreadActivity& t) { return t.id == thread.id; });
+        const auto switches = previous == before.end() ? thread.contextSwitches : thread.contextSwitches - std::min(thread.contextSwitches, previous->contextSwitches);
+        const auto used = previous == before.end() ? thread.cpuSeconds : std::max(0., thread.cpuSeconds - previous->cpuSeconds);
+        total += switches; cpu += used;
+        if (switches || used > 0) rows.push_back({&thread, switches, used});
+    }
+    std::sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) { return a.switches != b.switches ? a.switches > b.switches : a.cpu > b.cpu; });
+    std::map<std::tuple<std::string, std::uint64_t, std::string>, std::pair<std::uint64_t, std::pair<double, std::uint32_t>>> grouped;
+    for (const auto& r : rows) {
+        auto& g = grouped[{r.thread->module, r.thread->offset, r.thread->description}];
+        g.first += r.switches; g.second.first += r.cpu; ++g.second.second;
+    }
+    Json::Array threads, groups;
+    for (std::size_t n = 0; n < rows.size() && n < top; ++n) {
+        const auto& r = rows[n];
+        threads.push_back(Json::Object{{"id", integer(r.thread->id)}, {"module", r.thread->module}, {"offset", integer(r.thread->offset)},
+            {"description", r.thread->description}, {"wakeupsPerSecond", double(r.switches) / seconds}, {"cpuPercentOfOneCore", r.cpu * 100 / seconds}});
+    }
+    std::vector<std::pair<const std::tuple<std::string, std::uint64_t, std::string>*, const std::pair<std::uint64_t, std::pair<double, std::uint32_t>>*>> order;
+    for (const auto& [key, value] : grouped) order.emplace_back(&key, &value);
+    std::sort(order.begin(), order.end(), [](const auto& a, const auto& b) { return a.second->first > b.second->first; });
+    for (const auto& [key, value] : order)
+        groups.push_back(Json::Object{{"module", std::get<0>(*key)}, {"offset", integer(std::get<1>(*key))}, {"description", std::get<2>(*key)},
+            {"threads", integer(value->second.second)}, {"wakeupsPerSecond", double(value->first) / seconds}, {"cpuPercentOfOneCore", value->second.first * 100 / seconds}});
+    return Json::Object{{"seconds", seconds}, {"threads", integer(after.size())}, {"wakeupsPerSecond", double(total) / seconds},
+        {"threadCpuPercentOfOneCore", cpu * 100 / seconds}, {"busiestThreads", std::move(threads)}, {"byStart", std::move(groups)}};
+}
 
 ProcessMemoryCounters captureProcessMemory() {
     ProcessMemoryCounters result;

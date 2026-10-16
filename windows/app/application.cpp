@@ -359,7 +359,9 @@ void Application::Impl::construct(){
         windowOptions.pixelWidth=static_cast<std::uint32_t>(bounds.right-bounds.left);
         windowOptions.pixelHeight=static_cast<std::uint32_t>(bounds.bottom-bounds.top);
     }
-    if(!visibleMode()){windowOptions.pixelWidth=args.benchmarkWidth;windowOptions.pixelHeight=args.benchmarkHeight;}
+    if(!visibleMode()){windowOptions.pixelWidth=args.benchmarkWidth;windowOptions.pixelHeight=args.benchmarkHeight;
+        // The idle trace schedules frames for its never-shown window at the traced display refresh.
+        if(!args.idleTrace.empty()){windowOptions.offscreenScheduling=true;windowOptions.refreshRate=args.idleTraceRefreshRate;}}
     host.create(windowOptions,callbacks());metrics=host.metrics();updateContentScale();startup.mark("hidden-window");
     {gpu::RendererOptions rendererOptions{args.warp?gpu::Driver::warpForTests:gpu::Driver::hardware,args.shader,visibleMode()?gpu::RenderTarget::composition:gpu::RenderTarget::offscreenForTests,!args.dataRoot.empty()};
      // The HUD submits a few hundred quads per frame from one thread: the
@@ -624,6 +626,31 @@ void Application::Impl::releaseConcealedGraphics(){
     // and decode buffers, document models) committed: decommit them as well.
     HEAP_OPTIMIZE_RESOURCES_INFORMATION heaps{HEAP_OPTIMIZE_RESOURCES_CURRENT_VERSION,0};
     (void)HeapSetInformation(nullptr,HeapOptimizeResources,&heaps,sizeof(heaps));
+    // Still closed after the grace: the presentation and the device go too.
+    idleGraphicsAttempted=false;graphicsIdleAt=now()+closedGraphicsGrace;scheduleDeadline();
+}
+// The HUD stayed closed for closedGraphicsGrace seconds (a host deadline):
+// nothing presents until the next opening, so neither the device (the driver
+// thread that wakes ~70 times a second while a D3D11 device merely exists)
+// nor the swap chain and composition target stay alive. Every retained
+// resource keeps its identity in system memory; open() starts creating the
+// device again and the first frame takes it. The Projection workspace
+// presents through the same renderer and keeps them, as does a media owner
+// that holds the device (Renderer::suspendDevice refuses then: Notes video
+// playback keeps Renderer::mediaDevice() for its lifetime today).
+void Application::Impl::releaseIdleGraphics(double time){
+    (void)time;graphicsIdleAt.reset();
+    if(!ready||stopping||!renderer.stats().initialized||session->phase()!=core::VisibilityPhase::concealed||
+       projectionHandoff.active()||projectionShown())return;
+    idleGraphicsAttempted=true;
+    // Only together: a device a media owner still holds keeps its swap chain too.
+    try{idleDeviceSuspended=renderer.suspendDevice()||renderer.deviceSuspended();}
+    catch(const std::exception&e){
+        if(!production())throw;
+        const auto line=std::string("EndfieldHUD could not release the closed HUD's graphics device (")+typeid(e).name()+")\n";
+        std::fputs(line.c_str(),stderr);OutputDebugStringA(line.c_str());
+    }
+    if(memoryTrace&&production()&&memoryTrace->closings<8)recordMemory("closed-idle-"+std::to_string(memoryTrace->closings),true);
 }
 void Application::Impl::systemChange(std::uint32_t message,double time){
     time=hostTime(time);if(message==WM_TIMECHANGE&&archiveDates)archiveDates->refreshSystemTimeZone();
@@ -1406,6 +1433,17 @@ void Application::Impl::selectModule(core::Module module,double time){
 void Application::Impl::open(double time){
     time=hostTime(time);closing=false;canvasOpenedAt=time;session->open(time,0x5eed);
     concealedBroadcast=false;
+    // The swap chain and composition target released while the HUD stayed
+    // closed come back before the first frame, which the message loop gates
+    // on their new frame latency object. A released device is created on a
+    // worker meanwhile: the first frame's CPU work (pose, captions, owners)
+    // runs before it takes the device for its uploads and draw, which then
+    // also creates the presentation. A failure here is retried by that
+    // frame (and then handled like any frame failure).
+    graphicsIdleAt.reset();idleGraphicsAttempted=idleDeviceSuspended=false;
+    try{if(!renderer.prepareDevice()&&!renderer.deviceSuspended()&&visibleMode())(void)renderer.restorePresentation();}catch(const std::exception&e){
+        if(!production())throw;
+        const auto line=std::string("EndfieldHUD could not restore the HUD's graphics (")+typeid(e).name()+")\n";std::fputs(line.c_str(),stderr);OutputDebugStringA(line.c_str());}
     // A game keeps the CPU and GPU busy: the shown HUD schedules ahead of it.
     if(visibleMode())presentationPriority.raise(&renderer);
     registry.forEach([&](ModuleOwner&o){o.setOverlayVisible(true,hostTime(time));},"open");
@@ -1611,12 +1649,16 @@ core::FrameDemand Application::Impl::demand(double time){
     if(result.phase==core::VisibilityPhase::visible)result.finiteAnimation=result.finiteAnimation||(mediaBroker&&mediaBroker->requiresFrames())||registry.requiresFrames(time)||(chrome&&chrome->styleTransitionActive());
     return result;
 }
-void Application::Impl::scheduleDeadline(){if(!visibleMode()||!ready||stopping)return;std::optional<double>next;
+void Application::Impl::scheduleDeadline(){if(!liveScheduling()||!ready||stopping)return;std::optional<double>next;
     auto include=[&](std::optional<double>value){if(value&&(!next||*value<*next))next=value;};
-    include(calendarNextWake);if(projection)include(projection->dismissalDeadline());include(headerClock.nextDeadline());include(registry.nextWakeTime(now()));
+    // A closed HUD whose graphics came back while it stayed closed (a call
+    // that needed the GPU) releases them again after the grace.
+    if(!graphicsIdleAt&&session->phase()==core::VisibilityPhase::concealed&&renderer.stats().initialized&&!renderer.deviceSuspended()&&
+       idleGraphicsAttempted&&idleDeviceSuspended&&!projectionHandoff.active()&&!projectionShown()){idleGraphicsAttempted=false;graphicsIdleAt=now()+closedGraphicsGrace;}
+    include(calendarNextWake);include(graphicsIdleAt);if(projection)include(projection->dismissalDeadline());include(headerClock.nextDeadline());include(registry.nextWakeTime(now()));
     if(mediaBroker){const auto wake=mediaBroker->nextWakeTime();if(wake&&*wake>now())include(wake);}if(eventOwner)include(eventOwner->saveDeadline());if(activityProbe)include(activityPlan.nextWakeTime());include(lifecycle.nextWakeTime());host.setDeadline(next);
 }
-void Application::Impl::refresh(double time){if(visibleMode()&&ready&&!stopping){
+void Application::Impl::refresh(double time){if(liveScheduling()&&ready&&!stopping){
     // A content event: its sample may predate a time an owner already saw
     // inside the event (a nested capture-lost message, an owner clock read).
     time=hostTime(time);
@@ -1679,7 +1721,10 @@ const WatchSessionFrame* Application::Impl::poseShell(double time){
     // names follow once a client asked (one integer compare per frame otherwise).
     if(automation){const auto bindings=session->stats().bindingChanges;if(bindings!=navigationBindingChanges){navigationBindingChanges=bindings;automationChanged();refreshAutomation();}}
     auto parameters=materials->parameters();parameters.camera=sample->gpuCamera;parameters.timeSeconds=sample->shaderTime;parameters.width=metrics.pixelWidth;parameters.height=metrics.pixelHeight;if(nativeAppearance){std::array<float,3>linear;for(unsigned n=0;n<3;++n){const auto value=watchAppearance.accentSRGB[n];linear[n]=static_cast<float>(value<=.04045?value/12.92:std::pow((value+.055)/1.055,2.4));}parameters.desktopAccentLinear=linear;}
-    {auto stage=probe.measure(LiveProbe::materials);materialPresentation->update(*sample->sourceFrame,parameters);materials->flush(renderer.sourceGraphics());}
+    // The upload (materials->flush) waits for the frame's publication, so a
+    // device created again after a long close (Renderer::prepareDevice)
+    // overlaps the CPU work before it.
+    {auto stage=probe.measure(LiveProbe::materials);materialPresentation->update(*sample->sourceFrame,parameters);}
     {auto stage=probe.measure(LiveProbe::nativeLabels);if(navigationDirty)bindNavigation(time);if(nativeContent)nativeContent->update(session->actions());
     for(auto&button:available){const auto found=session->actions().find(button.buttonID);button.enabled=found!=session->actions().end();button.expandFileShelfCaption=button.enabled&&nativeAppearance&&nativeAppearance->expandsFileShelfCaption(found->second,watchAppearance.language);}
     const core::Rect viewport{0,0,metrics.width,metrics.height};labels->update(*sample->sourceFrame,sample->camera,viewport,available);
@@ -1718,7 +1763,7 @@ void Application::Impl::prewarm(){
                     const auto prewarmChrome=chromeSettings(notes->selected());
                     registry.forEach([&](ModuleOwner&o){const ModuleFrame frame{*chromePlan->projection().center,prewarmChrome,notes->modulePresentation(),0.f,hostTime(time),false};o.prewarm(frame);},"prewarm");
                 }
-                publishNative();composition.present(renderer);
+                materials->flush(renderer.sourceGraphics());publishNative();composition.present(renderer);
                 renderer.setCamera(gpu::layerViewportProjection(metrics.pixelWidth,metrics.pixelHeight)*core::Matrix4::scale(metrics.scale,metrics.scale,1));
                 renderer.draw(false);
             }
@@ -1783,6 +1828,7 @@ bool Application::Impl::present(double time,bool submit){
     if(archiveService)isolate(archiveModuleOwner,"frame",[&]{auto actions=archiveService->state().takeEvents();if(eventOwner&&!stopping)for(const auto&e:actions)eventOwner->record({ehud::data::makeUUID(),modules::EventKind::archiveAction,ehud::data::foundationNow(),{{"action",e.name}}});});
     if(mediaBroker){mediaBroker->sample(time);if(notes)notes->refreshSharedMedia(hostTime(time));
         if(archiveMedia)isolate(archiveModuleOwner,"frame",[&]{if(archiveMedia->refresh(hostTime(time))&&archive&&notes&&chromePlan&&chromePlan->projection().center)archive->update(*chromePlan->projection().center,noteChromeSettings,notes->modulePresentation(),static_cast<float>(canvasOpacity(time)),hostTime(time));});}
+    {auto stage=probe.measure(LiveProbe::materials);materials->flush(renderer.sourceGraphics());}
     {auto stage=probe.measure(LiveProbe::publication);publishNative();composition.present(renderer);renderer.setCamera(gpu::layerViewportProjection(metrics.pixelWidth,metrics.pixelHeight)*core::Matrix4::scale(metrics.scale,metrics.scale,1));}
     if(submit){auto stage=probe.measure(LiveProbe::draw);renderer.draw(visibleMode());
         // A finished module switch: the outgoing module's native group targets
@@ -2182,7 +2228,9 @@ void Application::Impl::projectionCommand(const ProjectionHandoff::Command&comma
         trayAction(action==gpu::TrayAction::none?gpu::TrayAction::openOverlay:action,false,time);
         break;
     }
-    case A::closeImmediately:projectionDropRoute(false,time);cancelProjectionPicker();(void)projectionCall("close",[&]{projection->close(hostTime(time));});presentationPriority.restore();automationChanged();published.clear();publishedNotesRevision=0;setProjectionActive(false,time);break;
+    case A::closeImmediately:projectionDropRoute(false,time);cancelProjectionPicker();(void)projectionCall("close",[&]{projection->close(hostTime(time));});presentationPriority.restore();automationChanged();published.clear();publishedNotesRevision=0;setProjectionActive(false,time);
+        // The HUD stays closed: after the grace nothing keeps the graphics.
+        if(session->phase()==core::VisibilityPhase::concealed&&!projectionShown()){graphicsIdleAt=now()+closedGraphicsGrace;scheduleDeadline();}break;
     }
 }
 } // namespace endfield::app

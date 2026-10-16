@@ -11,12 +11,14 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 #include <variant>
 #include <type_traits>
 
 namespace endfield::native {
 class SourceGraphics;
+struct SourceGraphicsStats;
 class DesktopBackdrop;
 
 enum class Driver { hardware, warpForTests };
@@ -172,6 +174,11 @@ struct RendererStats {
     std::uint64_t lastPresentCount{};
     // CPU seconds inside draw() (Present excluded), setDrawList and setTexture.
     double drawSeconds{},drawListSeconds{},textureUploadSeconds{};
+    // Of drawSeconds: the native passes (groups and the root list); the root
+    // passes drawn, and those skipped because nothing they draw changed (the
+    // retained linear target was composited as it was).
+    double nativePassSeconds{};
+    std::uint64_t nativePasses{},nativePassesSkipped{};
     // updateTexture(): rectangles replaced in place and their texel bytes.
     std::uint64_t textureRegionUploads{},textureRegionBytes{};
     // Admissions a message loop took from the frame latency object
@@ -179,6 +186,19 @@ struct RendererStats {
     // presents made without any admission (each one may queue a frame ahead
     // of the display: Projection RC 128 queued ~35 of them, 200 ms at 165 Hz).
     std::uint64_t presentationAdmissions{},unadmittedPresents{};
+    // releasePresentation()/restorePresentation(): the swap chain and the
+    // composition target released while concealed, and created again.
+    std::uint64_t presentationReleases{},presentationRestores{};
+    bool presentationReleased{};
+    // suspendDevice()/resumeDevice(): suspensions and resumptions, whether
+    // the device is released now, the system-memory copies it keeps meanwhile
+    // and the seconds spent creating devices again.
+    std::uint64_t deviceSuspensions{},deviceResumes{},devicePreparations{};
+    bool deviceSuspended{};
+    std::size_t suspendedCopyBytes{};
+    // Of deviceResumeSeconds: creating the device, its programs and fixed
+    // states, the retained resources, and the original pass's resources.
+    double deviceResumeSeconds{},deviceCreateSeconds{},pipelineCreateSeconds{},resourceRestoreSeconds{},sourceRestoreSeconds{};
 };
 // IDXGISwapChain::GetFrameStatistics for the most recent present the
 // compositor displayed: its present count, the vertical blank it was
@@ -388,6 +408,48 @@ public:
     // visibly, re-rendered). No-op while already released. Returns the
     // bytes released. On the owner thread, never per frame.
     std::size_t releaseFrameTargets();
+    // The concealed HUD presents nothing until it opens again: releases the
+    // composition swap chain (its two full-size buffers and its frame latency
+    // object) and the window's DirectComposition device, target and visual,
+    // so neither the driver nor the compositor keeps attending to a window
+    // that shows nothing; the frame targets go with them. The device, the
+    // retained meshes, textures and groups stay. The next presented draw,
+    // restorePresentation() or borrowCompositionSurface() creates them again
+    // at the current size. False (nothing done) offscreen, when already
+    // released, while suspended, or while a borrowed composition surface is
+    // bridged (the Projection foreground). On the owner thread, never per frame.
+    bool releasePresentation();
+    // Creates a released presentation again (true when it was released): the
+    // HUD's opening calls it before its first frame, so the message loop
+    // waits on the new frame latency object, whose first admission belongs
+    // to that frame.
+    bool restorePresentation();
+    bool presentationReleased() const noexcept;
+    // The HUD has stayed closed for a while: releases the D3D11 device itself,
+    // since an idle device keeps a driver thread waking about 70 times a
+    // second (NVIDIA, measured hidden on the laptop: 67-83/s with or without
+    // PREVENT_INTERNAL_THREADING_OPTIMIZATIONS or VIDEO_SUPPORT and after
+    // Trim, 0.1-0.7/s once the device is released). Releases the frame
+    // targets and the presentation first; every retained mesh, texture,
+    // group, draw list, the camera and the original material pass keep their
+    // identities, revisions and values, with their GPU contents copied into
+    // system memory. The first later call that needs the GPU (a draw, an
+    // upload, sourceGraphics(), restorePresentation(), mediaDevice(), ...)
+    // creates a device again on the current default adapter and every
+    // resource from its copy; removals and stats need none. False (nothing
+    // done) when already suspended, while a media owner holds the device
+    // (mediaDevice()), a media target exists, or a borrowed composition
+    // surface is bridged or suspended. On the owner thread, never per frame.
+    bool suspendDevice();
+    // Creates the device again now (true when it was suspended).
+    bool resumeDevice();
+    // The opening HUD after a long close: starts creating the new device on
+    // a worker thread (D3D11CreateDevice alone takes 110-230 ms on the
+    // laptop's NVIDIA driver) while the first frame's CPU work runs; the
+    // first call that needs the GPU takes it and creates the resources
+    // again on this thread. True when it started (only while suspended).
+    bool prepareDevice();
+    bool deviceSuspended() const noexcept;
     // After a drawn frame, on a content event (e.g. a finished module switch,
     // never per frame): every native group target that frame did not draw
     // visibly gives its GPU memory back; the group keeps its draw list and is
@@ -415,6 +477,10 @@ public:
     // texture, mesh, native group target and media target with its counted
     // GPU bytes (the same accounting as RendererStats::resourceBytes).
     void forEachResource(const std::function<void(const RendererResourceUsage&)>&) const;
+    // Diagnostics only (the idle trace; never on the frame path): every draw
+    // of the published root list with the number of times its object
+    // constants were uploaded since it was published.
+    void forEachDrawUpload(const std::function<void(std::string_view sourceID, std::uint64_t uploads)>&) const;
     // Display/adapter change (WM_DISPLAYCHANGE): false when the adapter set
     // changed (IDXGIFactory1::IsCurrent) and the system's default adapter is
     // no longer the one this hardware device runs on. The owner then recreates
@@ -423,6 +489,8 @@ public:
     // Original material path shares this exact device and presentation target.
     // No new window, renderer timer or duplicate GPU device is created.
     SourceGraphics& sourceGraphics();
+    // Its counters without creating a suspended device again (diagnostics).
+    SourceGraphicsStats sourceGraphicsStats() const;
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

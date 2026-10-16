@@ -302,10 +302,27 @@ struct Application::Impl {
     int runHiddenVerification();
     int runStartupTrace();      // hidden --startup-trace: cold and warm openings on the synthetic clock
     int runContentionTrace();   // hidden --contention-trace: frame pacing at normal and raised priority
+    int runIdleTrace();         // hidden --idle-trace: closed and open idle on the real clock (wake-ups, frames, CPU)
     void writeStartupTrace();   // production ENDFIELDHUD_STARTUP_TRACE: once, numbers only
     // --- memory trace (app/application_memory.cpp) --------------------------------
     int runMemoryTrace();       // hidden --memory-trace: launch, cold opening, every module, closing, cycles
     void releaseConcealedGraphics(); // after the overlayConcealed broadcast: publish, release frame targets, trim
+    // A HUD that stays closed for closedGraphicsGrace seconds releases its
+    // swap chain, composition target and graphics device (Renderer::
+    // releasePresentation / suspendDevice: an idle NVIDIA device keeps a
+    // driver thread waking ~70 times a second); the next opening creates
+    // them again before its first frame. Closings shorter than the grace
+    // (quick toggles, the lifecycle cycles, the warm reopening) keep them.
+    static constexpr double closedGraphicsGrace = 5;
+    std::optional<double> graphicsIdleAt;
+    // This closed state already tried (and whether the device was released;
+    // a call that needed the GPU while closed, e.g. a profile feed's
+    // captions, creates it again and re-arms the grace). Reset by open().
+    bool idleGraphicsAttempted{}, idleDeviceSuspended{};
+    void releaseIdleGraphics(double time);
+    // Frame scheduling runs on the live clock: visible modes and the hidden
+    // idle trace (owner deadlines, content refreshes).
+    bool liveScheduling() const noexcept { return visibleMode() || !args.idleTrace.empty(); }
     Json memorySnapshot(std::string_view stage, bool threads);
     void recordMemory(std::string_view stage, bool threads); // production: also writes the report
     void writeMemoryTrace();

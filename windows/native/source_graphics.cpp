@@ -1,5 +1,6 @@
 #include "source_graphics.hpp"
 #include "renderer.hpp"
+#include "source_gpu_copy.hpp"
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -52,13 +53,25 @@ ComPtr<ID3D11Buffer> buffer(ID3D11Device* device, UINT flags, const void* bytes,
     ComPtr<ID3D11Buffer> result;
     okay(device->CreateBuffer(&d, &initial, &result), "Create original retained buffer"); return result;
 }
+// CPU time of a scope, added to a diagnostics counter (numbers only).
+double sourceSeconds() noexcept {
+    static const double frequency = [] { LARGE_INTEGER f{}; QueryPerformanceFrequency(&f); return double(f.QuadPart); }();
+    LARGE_INTEGER v{}; QueryPerformanceCounter(&v); return double(v.QuadPart) / frequency;
+}
+struct SourceTimed { double& total; double begin{sourceSeconds()}; ~SourceTimed() { total += sourceSeconds() - begin; } };
 }
 struct SourceGraphics::Impl {
     struct Mesh { ComPtr<ID3D11Buffer> vertices, indices; unsigned stride{}, indexCount{}; std::size_t bytes{},vertexCapacity{},indexCapacity{};std::uint64_t revision{};
-        std::vector<std::uint32_t> indexData; };
-    struct Texture { ComPtr<ID3D11ShaderResourceView> view; ComPtr<ID3D11SamplerState> sampler; std::size_t bytes{}; std::uint64_t revision{}; };
+        std::vector<std::uint32_t> indexData; gpu_copy::Copy savedVertices, savedIndices; };
+    struct Texture { ComPtr<ID3D11ShaderResourceView> view; ComPtr<ID3D11SamplerState> sampler; std::size_t bytes{}; std::uint64_t revision{};
+        gpu_copy::Copy saved; D3D11_SAMPLER_DESC samplerDesc{}; };
+    // The programs' bytecode and input layout are kept to create the
+    // pipeline again on another device (suspend/resume); the fixed states
+    // are read back from their objects.
     struct Pipeline { ComPtr<ID3D11VertexShader> vs; ComPtr<ID3D11PixelShader> ps; ComPtr<ID3D11InputLayout> layout;
-        ComPtr<ID3D11BlendState> blend; ComPtr<ID3D11DepthStencilState> depth; ComPtr<ID3D11RasterizerState> raster; unsigned vertexBytes{}; };
+        ComPtr<ID3D11BlendState> blend; ComPtr<ID3D11DepthStencilState> depth; ComPtr<ID3D11RasterizerState> raster; unsigned vertexBytes{};
+        std::vector<std::uint8_t> vertexCode, fragmentCode; std::vector<D3D11_INPUT_ELEMENT_DESC> elements;
+        D3D11_BLEND_DESC blendDesc{}; D3D11_DEPTH_STENCIL_DESC depthDesc{}; D3D11_RASTERIZER_DESC rasterDesc{}; };
     struct Uniform { ComPtr<ID3D11Buffer> buffer; std::vector<std::uint8_t> bytes; };
     struct Constant { SourceStage stage; unsigned slot; Uniform* value; };
     struct Image { SourceStage stage; unsigned slot, samplerSlot; Texture* value; };
@@ -72,7 +85,17 @@ struct SourceGraphics::Impl {
     ComPtr<ID3D11RenderTargetView> colorView; ComPtr<ID3D11DepthStencilView> depthView;
     unsigned width{}, height{};
     SourceGraphicsStats counters;
+    bool suspended{}; std::size_t suspendedBytes{};
     void thread() const { need(owner == GetCurrentThreadId(), "Source GPU calls require their owner thread"); }
+    void live() const { thread(); need(!suspended, "The original pass's device is suspended"); }
+    void releaseObjects() noexcept {
+        for (auto& [id, m] : meshes) { (void)id; m.vertices.Reset(); m.indices.Reset(); }
+        for (auto& [id, t] : textures) { (void)id; t.view.Reset(); t.sampler.Reset(); }
+        for (auto& [id, p] : pipelines) { (void)id; p.vs.Reset(); p.ps.Reset(); p.layout.Reset(); p.blend.Reset(); p.depth.Reset(); p.raster.Reset(); }
+        for (auto& [id, u] : uniforms) { (void)id; u.buffer.Reset(); }
+        colorView.Reset(); depthView.Reset(); color.Reset(); depth.Reset(); width = height = 0;
+        if (context) { context->ClearState(); context->Flush(); }
+    }
     void budget(std::size_t previous, std::size_t incoming) const {
         need(incoming <= maxBytes && counters.payloadBytes - previous <= maxBytes - incoming, "Original GPU resource budget exceeded");
     }
@@ -107,7 +130,7 @@ SourceGraphics::SourceGraphics(void* device, void* context) : impl_(std::make_un
 SourceGraphics::~SourceGraphics() = default;
 void SourceGraphics::setMesh(const std::string& id, std::uint64_t revision, unsigned stride,
                              std::span<const std::uint8_t> vertices, std::span<const std::uint32_t> indices) {
-    auto& r = *impl_; r.thread(); idCheck(id);
+    auto& r = *impl_; r.live(); idCheck(id); const SourceTimed timed{r.counters.uploadSeconds};
     auto old = r.meshes.find(id); if (old != r.meshes.end() && old->second.revision == revision) return;
     need(old != r.meshes.end() || r.meshes.size() < 4096, "Original mesh count exceeds bounds");
     need(stride >= 8 && stride <= 256 && !vertices.empty() && vertices.size() % stride == 0 &&
@@ -154,7 +177,7 @@ void SourceGraphics::setMesh(const std::string& id, std::uint64_t revision, unsi
     r.counters.meshBufferAllocations+=std::uint64_t(newVertex)+std::uint64_t(newIndex);
 }
 void SourceGraphics::setTexture(std::string id, std::uint64_t revision, const SourceTexture& input) {
-    auto& r = *impl_; r.thread(); idCheck(id);
+    auto& r = *impl_; r.live(); idCheck(id); const SourceTimed timed{r.counters.uploadSeconds};
     auto old = r.textures.find(id); if (old != r.textures.end() && old->second.revision == revision) return;
     need(old != r.textures.end() || r.textures.size() < 2048, "Original texture count exceeds bounds");
     need(!input.mips.empty() && input.mips.size() <= 15, "Invalid source mip count");
@@ -187,7 +210,7 @@ void SourceGraphics::setTexture(std::string id, std::uint64_t revision, const So
     r.textures.insert_or_assign(std::move(id), std::move(value)); r.counters.payloadBytes += size - previous; ++r.counters.textureUploads;
 }
 void SourceGraphics::setPipeline(std::string id, const SourcePipeline& input) {
-    auto& r = *impl_; r.thread(); idCheck(id);
+    auto& r = *impl_; r.live(); idCheck(id);
     need(!r.pipelines.contains(id), "An original pipeline identity is immutable");
     need(r.pipelines.size() < 2048 && !input.vertexBytecode.empty() && !input.fragmentBytecode.empty() &&
          input.vertexBytecode.size() <= 4 * 1024 * 1024 && input.fragmentBytecode.size() <= 4 * 1024 * 1024 && input.attributes.size() <= 16,
@@ -225,10 +248,13 @@ void SourceGraphics::setPipeline(std::string id, const SourcePipeline& input) {
     D3D11_RASTERIZER_DESC raster{}; raster.FillMode = D3D11_FILL_SOLID; raster.CullMode = static_cast<D3D11_CULL_MODE>(input.cull + 1);
     raster.DepthClipEnable = TRUE;
     okay(r.device->CreateRasterizerState(&raster, &pipeline.raster), "Create original raster state");
+    pipeline.vertexCode.assign(input.vertexBytecode.begin(), input.vertexBytecode.end());
+    pipeline.fragmentCode.assign(input.fragmentBytecode.begin(), input.fragmentBytecode.end());
+    pipeline.elements = std::move(attributes);
     r.pipelines.emplace(std::move(id), std::move(pipeline));
 }
 void SourceGraphics::setUniform(const std::string& id, std::span<const std::uint8_t> bytes) {
-    auto& r = *impl_; r.thread(); idCheck(id);
+    auto& r = *impl_; r.live(); idCheck(id); const SourceTimed timed{r.counters.uploadSeconds};
     need(!bytes.empty() && bytes.size() <= 65536 && bytes.size() % 16 == 0, "Original constant buffer must be bounded and 16-byte aligned");
     auto old = r.uniforms.find(id);
     if (old != r.uniforms.end() && std::equal(bytes.begin(), bytes.end(), old->second.bytes.begin(), old->second.bytes.end())) return;
@@ -246,7 +272,7 @@ void SourceGraphics::setUniform(const std::string& id, std::span<const std::uint
     r.counters.payloadBytes += bytes.size() - previous; ++r.counters.uniformUploads;
 }
 void SourceGraphics::setDraws(std::span<const SourceDraw> inputs) {
-    auto& r = *impl_; r.thread(); need(inputs.size() <= 16384, "Too many original draw passes");
+    auto& r = *impl_; r.live(); need(inputs.size() <= 16384, "Too many original draw passes");
     std::vector<Impl::Draw> draws; draws.reserve(inputs.size());
     for (const auto& input : inputs) {
         auto mesh = r.meshes.find(input.mesh); auto pipeline = r.pipelines.find(input.pipeline);
@@ -272,7 +298,7 @@ void SourceGraphics::setDraws(std::span<const SourceDraw> inputs) {
     r.draws = std::move(draws);
 }
 void SourceGraphics::renderTo(void* destination, unsigned width, unsigned height) {
-    auto& r = *impl_; r.thread(); need(destination, "Missing original output target");
+    auto& r = *impl_; r.live(); need(destination, "Missing original output target"); const SourceTimed timed{r.counters.renderSeconds};
     auto* output = static_cast<ID3D11Texture2D*>(destination); D3D11_TEXTURE2D_DESC outputDescription{}; output->GetDesc(&outputDescription);
     need(outputDescription.Width == width && outputDescription.Height == height && outputDescription.Format == DXGI_FORMAT_B8G8R8A8_UNORM &&
          outputDescription.SampleDesc.Count == 1, "Original output target contract mismatch");
@@ -282,29 +308,96 @@ void SourceGraphics::renderTo(void* destination, unsigned width, unsigned height
     r.context->ClearDepthStencilView(r.depthView.Get(), D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1, 0);
     const D3D11_VIEWPORT viewport{0,0,static_cast<float>(width),static_cast<float>(height),0,1}; r.context->RSSetViewports(1,&viewport);
     r.context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    // The ordered passes share most of their state: only what changes from
+    // one draw to the next is bound (ClearState above left everything null).
+    struct Bound {
+        ID3D11Buffer* vertices{}; UINT stride{}; ID3D11Buffer* indices{}; ID3D11InputLayout* layout{};
+        ID3D11VertexShader* vs{}; ID3D11PixelShader* ps{}; ID3D11RasterizerState* raster{}; ID3D11BlendState* blend{};
+        ID3D11DepthStencilState* depth{}; UINT stencil{~0u};
+        std::array<ID3D11Buffer*, 14> constants[2]{}; std::array<ID3D11ShaderResourceView*, 128> views[2]{}; std::array<ID3D11SamplerState*, 16> samplers[2]{};
+    } bound;
     for (const auto& draw : r.draws) {
         const auto& p = *draw.pipeline; auto* vertices = draw.mesh->vertices.Get(); const UINT offset{};
-        r.context->IASetVertexBuffers(0,1,&vertices,&draw.mesh->stride,&offset);
-        r.context->IASetIndexBuffer(draw.mesh->indices.Get(),DXGI_FORMAT_R32_UINT,0); r.context->IASetInputLayout(p.layout.Get());
-        r.context->VSSetShader(p.vs.Get(),nullptr,0); r.context->PSSetShader(p.ps.Get(),nullptr,0);
-        r.context->RSSetState(p.raster.Get()); r.context->OMSetBlendState(p.blend.Get(),nullptr,UINT_MAX);
-        r.context->OMSetDepthStencilState(p.depth.Get(),draw.stencilReference);
+        if (vertices != bound.vertices || draw.mesh->stride != bound.stride) { r.context->IASetVertexBuffers(0,1,&vertices,&draw.mesh->stride,&offset); bound.vertices = vertices; bound.stride = draw.mesh->stride; }
+        if (draw.mesh->indices.Get() != bound.indices) { r.context->IASetIndexBuffer(draw.mesh->indices.Get(),DXGI_FORMAT_R32_UINT,0); bound.indices = draw.mesh->indices.Get(); }
+        if (p.layout.Get() != bound.layout) { r.context->IASetInputLayout(p.layout.Get()); bound.layout = p.layout.Get(); }
+        if (p.vs.Get() != bound.vs) { r.context->VSSetShader(p.vs.Get(),nullptr,0); bound.vs = p.vs.Get(); }
+        if (p.ps.Get() != bound.ps) { r.context->PSSetShader(p.ps.Get(),nullptr,0); bound.ps = p.ps.Get(); }
+        if (p.raster.Get() != bound.raster) { r.context->RSSetState(p.raster.Get()); bound.raster = p.raster.Get(); }
+        if (p.blend.Get() != bound.blend) { r.context->OMSetBlendState(p.blend.Get(),nullptr,UINT_MAX); bound.blend = p.blend.Get(); }
+        if (p.depth.Get() != bound.depth || draw.stencilReference != bound.stencil) { r.context->OMSetDepthStencilState(p.depth.Get(),draw.stencilReference); bound.depth = p.depth.Get(); bound.stencil = draw.stencilReference; }
         for (const auto& u : draw.constants) {
-            auto* value = u.value->buffer.Get();
-            if (u.stage == SourceStage::vertex) r.context->VSSetConstantBuffers(u.slot,1,&value); else r.context->PSSetConstantBuffers(u.slot,1,&value);
+            auto* value = u.value->buffer.Get(); const auto stage = u.stage == SourceStage::vertex ? 0 : 1;
+            if (bound.constants[stage][u.slot] == value) continue;
+            bound.constants[stage][u.slot] = value;
+            if (stage == 0) r.context->VSSetConstantBuffers(u.slot,1,&value); else r.context->PSSetConstantBuffers(u.slot,1,&value);
         }
         for (const auto& t : draw.images) {
-            const auto& texture = *t.value; auto* view = texture.view.Get(); auto* sampler = texture.sampler.Get();
-            if (t.stage == SourceStage::vertex) { r.context->VSSetShaderResources(t.slot,1,&view); r.context->VSSetSamplers(t.samplerSlot,1,&sampler); }
-            else { r.context->PSSetShaderResources(t.slot,1,&view); r.context->PSSetSamplers(t.samplerSlot,1,&sampler); }
+            const auto& texture = *t.value; auto* view = texture.view.Get(); auto* sampler = texture.sampler.Get(); const auto stage = t.stage == SourceStage::vertex ? 0 : 1;
+            if (bound.views[stage][t.slot] != view) { bound.views[stage][t.slot] = view; if (stage == 0) r.context->VSSetShaderResources(t.slot,1,&view); else r.context->PSSetShaderResources(t.slot,1,&view); }
+            if (bound.samplers[stage][t.samplerSlot] != sampler) { bound.samplers[stage][t.samplerSlot] = sampler; if (stage == 0) r.context->VSSetSamplers(t.samplerSlot,1,&sampler); else r.context->PSSetSamplers(t.samplerSlot,1,&sampler); }
         }
         r.context->DrawIndexed(draw.indexCount,draw.firstIndex,0);
     }
     r.context->OMSetRenderTargets(0,nullptr,nullptr); r.context->CopyResource(output,r.color.Get()); ++r.counters.frames;
 }
 bool SourceGraphics::active() const noexcept { return !impl_->draws.empty(); }
+void SourceGraphics::suspend() {
+    auto& r = *impl_; r.thread();
+    if (r.suspended) return;
+    r.context->ClearState(); (void)releaseTargets();
+    // Copies first (every GPU copy issued before the first map); nothing is
+    // released until all of them are in system memory.
+    std::vector<gpu_copy::Copy*> staged; std::size_t total{};
+    try {
+        for (auto& [id, m] : r.meshes) { (void)id;
+            m.savedVertices = gpu_copy::stage(r.device.Get(), r.context.Get(), m.vertices.Get(), nullptr); staged.push_back(&m.savedVertices);
+            m.savedIndices = gpu_copy::stage(r.device.Get(), r.context.Get(), m.indices.Get(), nullptr); staged.push_back(&m.savedIndices); }
+        for (auto& [id, t] : r.textures) { (void)id;
+            t.saved = gpu_copy::stage(r.device.Get(), r.context.Get(), gpu_copy::resourceOf(t.view.Get()).Get(), t.view.Get()); staged.push_back(&t.saved);
+            t.sampler->GetDesc(&t.samplerDesc); }
+        for (auto* copy : staged) { gpu_copy::finish(r.context.Get(), *copy); total += copy->bytes(); }
+    } catch (...) {
+        for (auto& [id, m] : r.meshes) { (void)id; m.savedVertices = {}; m.savedIndices = {}; }
+        for (auto& [id, t] : r.textures) { (void)id; t.saved = {}; }
+        throw;
+    }
+    for (auto& [id, p] : r.pipelines) { (void)id; p.blend->GetDesc(&p.blendDesc); p.depth->GetDesc(&p.depthDesc); p.raster->GetDesc(&p.rasterDesc); }
+    r.releaseObjects(); r.context.Reset(); r.device.Reset();
+    r.suspended = true; r.suspendedBytes = total;
+}
+void SourceGraphics::resume(void* device, void* context) {
+    auto& r = *impl_; r.thread(); need(device && context, "Original rendering requires the existing native device");
+    if (!r.suspended) return;
+    r.device = static_cast<ID3D11Device*>(device); r.context = static_cast<ID3D11DeviceContext*>(context);
+    try {
+        for (auto& [id, m] : r.meshes) { (void)id;
+            okay(gpu_copy::create(r.device.Get(), m.savedVertices, nullptr).As(&m.vertices), "Create an original mesh again");
+            okay(gpu_copy::create(r.device.Get(), m.savedIndices, nullptr).As(&m.indices), "Create an original mesh again"); }
+        for (auto& [id, t] : r.textures) { (void)id;
+            (void)gpu_copy::create(r.device.Get(), t.saved, &t.view);
+            okay(r.device->CreateSamplerState(&t.samplerDesc, &t.sampler), "Create an original sampler again"); }
+        for (auto& [id, p] : r.pipelines) { (void)id;
+            okay(r.device->CreateVertexShader(p.vertexCode.data(), p.vertexCode.size(), nullptr, &p.vs), "Load original vertex bytecode again");
+            okay(r.device->CreatePixelShader(p.fragmentCode.data(), p.fragmentCode.size(), nullptr, &p.ps), "Load original fragment bytecode again");
+            if (!p.elements.empty()) okay(r.device->CreateInputLayout(p.elements.data(), static_cast<UINT>(p.elements.size()), p.vertexCode.data(), p.vertexCode.size(), &p.layout),
+                "Bind original vertex attributes again");
+            okay(r.device->CreateBlendState(&p.blendDesc, &p.blend), "Create an original blend state again");
+            okay(r.device->CreateDepthStencilState(&p.depthDesc, &p.depth), "Create an original depth/stencil state again");
+            okay(r.device->CreateRasterizerState(&p.rasterDesc, &p.raster), "Create an original raster state again"); }
+        for (auto& [id, u] : r.uniforms) { (void)id; u.buffer = buffer(r.device.Get(), D3D11_BIND_CONSTANT_BUFFER, u.bytes.data(), u.bytes.size(), true); }
+    } catch (...) {
+        // Still suspended: the copies stay for the next attempt.
+        r.releaseObjects(); r.context.Reset(); r.device.Reset(); throw;
+    }
+    for (auto& [id, m] : r.meshes) { (void)id; m.savedVertices = {}; m.savedIndices = {}; }
+    for (auto& [id, t] : r.textures) { (void)id; t.saved = {}; }
+    r.suspended = false; r.suspendedBytes = 0;
+}
+bool SourceGraphics::suspended() const noexcept { return impl_->suspended; }
+std::size_t SourceGraphics::suspendedBytes() const noexcept { return impl_->suspendedBytes; }
 void SourceGraphics::clear() {
-    auto& r = *impl_; r.thread(); r.context->ClearState(); r.draws.clear(); r.meshes.clear(); r.textures.clear(); r.pipelines.clear(); r.uniforms.clear();
+    auto& r = *impl_; r.thread(); if (r.context) r.context->ClearState(); r.draws.clear(); r.suspendedBytes = 0; r.meshes.clear(); r.textures.clear(); r.pipelines.clear(); r.uniforms.clear();
     r.colorView.Reset(); r.depthView.Reset(); r.color.Reset(); r.depth.Reset(); r.width = r.height = 0; r.counters.payloadBytes = 0;
 }
 SourceGraphicsStats SourceGraphics::stats() const {
