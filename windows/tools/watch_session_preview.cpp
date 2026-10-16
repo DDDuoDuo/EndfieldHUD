@@ -34,7 +34,7 @@ namespace core=endfield::core;
 namespace {
 void need(bool value,const char*message){if(!value)throw std::runtime_error(message);}
 std::string utf8(const fs::path&value){const auto bytes=value.u8string();return {reinterpret_cast<const char*>(bytes.data()),bytes.size()};}
-struct Options {bool startupTraceCold{};double idleTraceSeconds{30},idleTraceRefresh{165};fs::path idleTrace,memoryTrace,package,startupTrace,contentionTrace,packet,cache,shader,chrome,cursor,report,snapshots,watchBlur,notesAssets,notesData,notesFormatAssets,shelfAssets,shelfData,shelfMask,clipboardAssets,liveDiagnostics,residentIcons,settingsAssets,archiveAssets,storageAssets,activityAssets,mapGeography,mapPlayerAssets,orbipomAssets;std::string pin,notesAssetsSHA;bool visible{},warp{},runtimeInput{},coverage{},moduleCoverage{},sessionEndCoverage{},nativeClipboard{},nativeActivity{},readerScrollTrace{},readerModule{},calendarModule{},projectionModule{},volumeFixture{},eventLogFixture{},workModeFixture{},batteryFixture{};std::uint32_t benchmarkWidth{1280},benchmarkHeight{800};double benchmarkEpoch{};};
+struct Options {bool startupTraceCold{};double idleTraceSeconds{30},idleTraceRefresh{165};std::optional<double>idleTraceGrace,idleTraceClosed;fs::path idleTrace,memoryTrace,package,startupTrace,contentionTrace,packet,cache,shader,chrome,cursor,report,snapshots,watchBlur,notesAssets,notesData,notesFormatAssets,shelfAssets,shelfData,shelfMask,clipboardAssets,liveDiagnostics,residentIcons,settingsAssets,archiveAssets,storageAssets,activityAssets,mapGeography,mapPlayerAssets,orbipomAssets;std::string pin,notesAssetsSHA;bool visible{},warp{},runtimeInput{},coverage{},moduleCoverage{},sessionEndCoverage{},nativeClipboard{},nativeActivity{},readerScrollTrace{},readerModule{},calendarModule{},projectionModule{},volumeFixture{},eventLogFixture{},workModeFixture{},batteryFixture{};std::uint32_t benchmarkWidth{1280},benchmarkHeight{800};double benchmarkEpoch{};};
 Options options(int argc,wchar_t**argv){
     need(argc>=5,"Usage: watch_session_preview packet-root compiled-scene hud.hlsl --benchmark new-report.json | --visible --watch-blur original-watch-blur.json [--chrome chrome.json] [--cursor-png original.png] [--compiled-sha sha256] [--snapshots new-directory] [--warp] [--runtime-input] [--benchmark-size width height] [--benchmark-epoch seconds] [--coverage] [--storage-assets common-resources (development preview)]");
     Options o;o.packet=fs::absolute(argv[1]);o.cache=fs::absolute(argv[2]);o.shader=fs::absolute(argv[3]);
@@ -89,8 +89,13 @@ Options options(int argc,wchar_t**argv){
         else if(arg==L"--memory-trace"&&i+1<argc){need(o.memoryTrace.empty(),"Duplicate memory trace output");o.memoryTrace=fs::absolute(argv[++i]);}
         // Hidden only: closed and open idle of the same owner on the real clock (wake-ups, CPU and frames per window).
         else if(arg==L"--idle-trace"&&i+1<argc){need(o.idleTrace.empty(),"Duplicate idle trace output");o.idleTrace=fs::absolute(argv[++i]);}
-        else if((arg==L"--idle-trace-seconds"||arg==L"--idle-trace-refresh")&&i+1<argc){const std::wstring token=argv[++i];std::size_t used{};const double value=std::stod(token,&used);
+        // --idle-trace-grace: the closed HUD's graphics grace (production: ten
+        // minutes, app/application.hpp); --idle-trace-closed: how long the HUD
+        // stays closed before the closed windows and the first opening.
+        else if((arg==L"--idle-trace-seconds"||arg==L"--idle-trace-refresh"||arg==L"--idle-trace-grace"||arg==L"--idle-trace-closed")&&i+1<argc){const std::wstring token=argv[++i];std::size_t used{};const double value=std::stod(token,&used);
             need(used==token.size()&&std::isfinite(value),"Invalid idle trace number");if(arg==L"--idle-trace-seconds"){need(value>=1&&value<=600,"Idle trace windows are 1...600 seconds");o.idleTraceSeconds=value;}
+            else if(arg==L"--idle-trace-grace"){need(!o.idleTraceGrace&&value>=1&&value<=3600,"The idle trace grace is 1...3600 seconds, once");o.idleTraceGrace=value;}
+            else if(arg==L"--idle-trace-closed"){need(!o.idleTraceClosed&&value>=1&&value<=3600,"The idle trace closed time is 1...3600 seconds, once");o.idleTraceClosed=value;}
             else{need(value>=20&&value<=1000,"Idle trace refresh is 20...1000 Hz");o.idleTraceRefresh=value;}}
         else need(false,"Unknown or incomplete preview argument");
     }
@@ -106,6 +111,7 @@ Options options(int argc,wchar_t**argv){
     need(!o.startupTraceCold||!o.startupTrace.empty(),"A cold startup trace (without the launch prewarm) needs --startup-trace");
     need(o.contentionTrace.empty()||(o.report.empty()&&o.startupTrace.empty()&&o.memoryTrace.empty()&&!o.moduleCoverage&&!o.coverage&&!o.warp&&!fs::exists(o.contentionTrace)),"A contention trace is its own hidden hardware run with a new output");
     need(o.memoryTrace.empty()||(o.moduleCoverage&&o.report.empty()&&o.startupTrace.empty()&&!o.sessionEndCoverage&&!fs::exists(o.memoryTrace)),"A memory trace replaces the module coverage report with a new output");
+    need(!o.idleTrace.empty()||(!o.idleTraceGrace&&!o.idleTraceClosed),"The graphics grace and closed time are idle trace options");
     need(o.idleTrace.empty()||(o.moduleCoverage&&o.report.empty()&&o.startupTrace.empty()&&o.memoryTrace.empty()&&!o.sessionEndCoverage&&!fs::exists(o.idleTrace)),"An idle trace replaces the module coverage report with a new output");
     need(o.visible!=(!o.report.empty()||!o.startupTrace.empty()||!o.contentionTrace.empty()||!o.memoryTrace.empty()||!o.idleTrace.empty()),"Choose exactly one explicit visible or benchmark mode");need(!o.visible||!o.warp,"WARP is a hidden test mode only");
     need(!o.visible||!o.watchBlur.empty(),"Visible preview requires the explicit source-pinned --watch-blur animation");
@@ -249,7 +255,7 @@ app::ApplicationOptions applicationOptions(const Options&o){
     a.nativeClipboard=o.nativeClipboard;a.nativeActivity=o.nativeActivity;
     a.volumeFixture=o.volumeFixture;a.eventLogFixture=o.eventLogFixture;a.workModeFixture=o.workModeFixture;a.batteryFixture=o.batteryFixture;
     a.moduleCoverage=o.moduleCoverage;a.coverage=o.coverage;a.readerScrollTrace=o.readerScrollTrace;a.sessionEndCoverage=o.sessionEndCoverage;
-    a.report=o.report;a.snapshots=o.snapshots;a.liveDiagnostics=o.liveDiagnostics;a.startupTrace=o.startupTrace;a.startupTraceWithoutPrewarm=o.startupTraceCold;a.contentionTrace=o.contentionTrace;a.memoryTrace=o.memoryTrace;a.idleTrace=o.idleTrace;a.idleTraceSeconds=o.idleTraceSeconds;a.idleTraceRefreshRate=o.idleTraceRefresh;
+    a.report=o.report;a.snapshots=o.snapshots;a.liveDiagnostics=o.liveDiagnostics;a.startupTrace=o.startupTrace;a.startupTraceWithoutPrewarm=o.startupTraceCold;a.contentionTrace=o.contentionTrace;a.memoryTrace=o.memoryTrace;a.idleTrace=o.idleTrace;a.idleTraceSeconds=o.idleTraceSeconds;a.idleTraceRefreshRate=o.idleTraceRefresh;a.idleTraceClosedSeconds=o.idleTraceClosed;if(o.idleTraceGrace)a.closedGraphicsGrace=*o.idleTraceGrace;
     a.benchmarkWidth=o.benchmarkWidth;a.benchmarkHeight=o.benchmarkHeight;a.benchmarkEpoch=o.benchmarkEpoch;
     // Development previews keep failures fatal so hidden coverage cannot pass
     // with a silently disabled module.

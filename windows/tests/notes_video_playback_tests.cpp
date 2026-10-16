@@ -92,6 +92,33 @@ void workerPoster(const std::filesystem::path&shader){Window window;n::Renderer 
     video.hide(9);video.collectRetired();video.retire("worker.poster");
 
 }
+// The frame server holds the renderer's device only while an engine exists
+// (Renderer::mediaDevice): a playing movie refuses the closed HUD's device
+// release, and once no movie is shown neither the lease nor the CoreMedia
+// 709 pass (whose shaders and scratch targets belong to the device) keeps
+// it, so the device object is destroyed by the suspension.
+void deviceLease(const std::filesystem::path&shader){Window w;n::Renderer renderer;renderer.initialize(w.hwnd,32,32,{n::Driver::warpForTests,shader,n::RenderTarget::offscreenForTests,true});std::shared_ptr<Probe>probe;
+    n::NativeNotesVideoPlayback video(renderer,{w.hwnd,Window::notice,51},[&](auto device,auto callback){check(device!=nullptr,"An engine borrows the renderer's device");probe=std::make_shared<Probe>();probe->notify=std::move(callback);return std::make_unique<Engine>(probe);});
+    check(!video.stats().deviceHeld&&!renderer.stats().mediaDeviceLent&&renderer.deviceReleasable(),"The constructed frame server holds no device");
+    const std::array request{n::NotesVideoRequest{"lease.movie","C:\\owned-synthetic\\tiny.mp4",1,512,10,{},true}};
+    video.setVisible(request,0);video.accept(51,0);
+    check(video.stats().deviceHeld&&video.stats().engines==1&&renderer.stats().mediaDeviceLent&&!renderer.deviceReleasable()&&!renderer.suspendDevice(),"A shown movie's engine holds the device: the release is refused");
+    n::NotesImageFrame frame{4,4,0,std::vector<std::uint8_t>(4*4*4,255)};frame.coreMedia709=true;
+    check(video.setPoster("lease.movie",1,1,&frame)&&video.find("lease.movie")->state==m::NotesMediaState::paused,"The BT.709 movie's worker poster uploads");
+    check(video.play("lease.movie",.1)&&video.sample(.1)&&video.find("lease.movie")->state==m::NotesMediaState::playing&&video.stats().coreMedia709Frames==1&&video.stats().readingScratchBytes>0,
+        "The playing BT.709 movie takes the CoreMedia 709 pass on the device");
+    for(unsigned i=0;i<5;++i){probe->fresh=true;video.sample(.2+i*.02);}
+    check(video.stats().coreMedia709Frames==6&&!renderer.suspendDevice()&&!renderer.deviceSuspended(),"No release while a movie plays");
+    video.hide(.5,true);
+    check(!video.stats().deviceHeld&&video.stats().engines==0&&video.stats().readingScratchBytes==0&&video.stats().coreMedia709Frames==6&&!renderer.stats().mediaDeviceLent,
+        "Hidden: the engine, the device lease and the CoreMedia 709 pass go; the played frame count stays");
+    video.sample(1.2);check(video.collectRetired()&&renderer.stats().mediaTargets==0,"The live target retires once the poster replaced it");
+    const auto created=renderer.stats().devicesCreated;
+    check(renderer.deviceReleasable()&&renderer.suspendDevice()&&renderer.stats().devicesDestroyed==created,"With no movie shown the device is released and destroyed: no engine, lease or colour pass keeps it");
+    video.setVisible(request,2);video.accept(51,2);
+    check(!renderer.deviceSuspended()&&video.stats().deviceHeld&&video.stats().deviceAcquisitions==2&&renderer.stats().deviceResumes==1,"Shown again: the engine takes the device again, which comes back");
+    video.hide(3);video.sample(3.7);video.collectRetired();check(video.retire("lease.movie")&&!video.stats().deviceHeld&&renderer.deviceReleasable(),"Retired: nothing holds the device");
+}
 void unsupported(const std::filesystem::path&shader){Window w;n::Renderer renderer;renderer.initialize(w.hwnd,32,32,{n::Driver::warpForTests,shader,n::RenderTarget::offscreenForTests,true});
     const auto path=std::filesystem::temp_directory_path()/(L"endfield-owned-invalid-video-"+std::to_wstring(GetCurrentProcessId())+L"-"+std::to_wstring(GetTickCount64())+L".mp4");check(!std::filesystem::exists(path),"Invalid-media fixture never overwrites an existing file");struct Cleanup{std::filesystem::path path;~Cleanup(){std::error_code error;std::filesystem::remove(path,error);}}cleanup{path};{std::ofstream file(path,std::ios::binary);file<<"Owned synthetic invalid container. No encoded image, video, or audio stream.";check(bool(file),"Write only bounded invalid fixture bytes");}
     {n::NativeNotesVideoPlayback video(renderer,{w.hwnd,Window::notice,9});const auto u=path.u8string();const std::array request{n::NotesVideoRequest{"invalid",std::string(reinterpret_cast<const char*>(u.data()),u.size()),1}};video.setVisible(request,0);const auto deadline=GetTickCount64()+10000;
@@ -100,7 +127,7 @@ void unsupported(const std::filesystem::path&shader){Window w;n::Renderer render
     check(!IsWindowVisible(w.hwnd)&&renderer.stats().presents==0,"Actual invalid-container check never shows or captures desktop");
 }
 }
-int wmain(int argc,wchar_t**argv){const auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);if(FAILED(hr))return 1;int result{};try{check(argc==2,"Pass native/hud.hlsl");run(argv[1]);manyPaused(argv[1]);delayedPoster(argv[1]);workerPoster(argv[1]);unsupported(argv[1]);std::cout<<"PASS "<<checks<<" Notes video owner checks (injected video; actual invalid-container decode only, no audio)\n";}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';result=1;}CoUninitialize();return result;}
+int wmain(int argc,wchar_t**argv){const auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);if(FAILED(hr))return 1;int result{};try{check(argc==2,"Pass native/hud.hlsl");run(argv[1]);manyPaused(argv[1]);delayedPoster(argv[1]);workerPoster(argv[1]);deviceLease(argv[1]);unsupported(argv[1]);std::cout<<"PASS "<<checks<<" Notes video owner checks (injected video; actual invalid-container decode only, no audio)\n";}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';result=1;}CoUninitialize();return result;}
 #else
 int main(){return 0;}
 #endif

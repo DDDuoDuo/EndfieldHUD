@@ -30,7 +30,9 @@ struct MediaAssemblyGpuStats {
 // passes. Shader bytecode is compiled once per process.
 class NativeMediaAssemblyGpuProcessor final {
 public:
-    // device: AddRef-owned ID3D11Device*.
+    // device: AddRef-owned ID3D11Device*, held for the processor's lifetime
+    // (a Renderer::mediaDevice lease keeps the renderer from releasing the
+    // device meanwhile: drop the processor when idle).
     explicit NativeMediaAssemblyGpuProcessor(std::shared_ptr<void>device);
     ~NativeMediaAssemblyGpuProcessor();
     NativeMediaAssemblyGpuProcessor(const NativeMediaAssemblyGpuProcessor&)=delete;

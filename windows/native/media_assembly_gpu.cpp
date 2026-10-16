@@ -56,6 +56,10 @@ static_assert(sizeof(Constants)==15*16,"HLSL cbuffer layout");
 }
 
 struct NativeMediaAssemblyGpuProcessor::Impl {
+    // The lease it was given (Renderer::mediaDevice) lives as long as the
+    // processor: while it exists the renderer knows a media owner holds its
+    // device and does not release it under the processor's programs.
+    std::shared_ptr<void>lease;
     ComPtr<ID3D11Device>device;ComPtr<ID3D11DeviceContext>context;
     ComPtr<ID3D11VertexShader>vertex;ComPtr<ID3D11PixelShader>process,resample;ComPtr<ID3D11Buffer>constants;ComPtr<ID3D11RasterizerState>raster;
     ComPtr<ID3D11Texture2D>source;ComPtr<ID3D11ShaderResourceView>sourceView;unsigned sourceWidth{},sourceHeight{},rotation{};bool sourcePremultiplied{};
@@ -104,7 +108,7 @@ struct NativeMediaAssemblyGpuProcessor::Impl {
 };
 
 NativeMediaAssemblyGpuProcessor::NativeMediaAssemblyGpuProcessor(std::shared_ptr<void>device):impl_(std::make_unique<Impl>()){
-    need(device!=nullptr,"missing device");auto&i=*impl_;i.device=static_cast<ID3D11Device*>(device.get());i.device->GetImmediateContext(&i.context);
+    need(device!=nullptr,"missing device");auto&i=*impl_;i.device=static_cast<ID3D11Device*>(device.get());i.lease=std::move(device);i.device->GetImmediateContext(&i.context);
     const auto&code=bytecode();
     check(i.device->CreateVertexShader(code.vertex.data(),code.vertex.size(),nullptr,&i.vertex),"create vertex shader");
     check(i.device->CreatePixelShader(code.process.data(),code.process.size(),nullptr,&i.process),"create processing shader");

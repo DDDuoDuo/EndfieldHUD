@@ -4,14 +4,21 @@
 # real clock, production frame scheduling paced at 165 Hz), then checks the
 # scheduling contract of WINDOWS-MIGRATION.md section 4 in each window:
 #   closed (after launch and after a close): no frame and no frame timer;
-#     with NO_SHARED_MEDIA (no Notes/Archive media stack, whose video owner
-#     holds the graphics device) the device is released after the grace and
-#     the process wakes fewer than 20 times a second;
+#     closed past the graphics grace (GRACE seconds, --idle-trace-grace;
+#     production keeps ten minutes) the device is released and destroyed -
+#     with the production Notes/Archive media stack, whose movie owners take
+#     the device only while a movie exists - and the process wakes fewer
+#     than 20 times a second; closed for CLOSED seconds within the grace it
+#     keeps the device (a warm opening);
 #   open idle, ambient animation on: the source's 30 Hz ambient cadence (the
 #     Mac's idleTick) besides occasional finite animations, within a
 #     per-frame CPU bound;
 #   open idle, ambient animation off: no continuous frames.
-# The trace itself checks that a reopening within the grace keeps the device.
+# The trace itself checks that a reopening within the grace keeps the
+# device, that a media owner holding the device refuses the release until it
+# lets go, and that a device prepared for an anticipated opening (the tray
+# icon pointed at) is taken by the opening or discarded without one.
+# NO_SHARED_MEDIA leaves the media stack out (comparison runs only).
 # Prints the numbers of every window. Never shows a window or touches user data.
 cmake_minimum_required(VERSION 3.25)
 foreach(required PREVIEW WORK INPUTS SOURCE)
@@ -21,6 +28,13 @@ foreach(required PREVIEW WORK INPUTS SOURCE)
 endforeach()
 if(NOT SECONDS)
   set(SECONDS 4)
+endif()
+if(NOT GRACE)
+  set(GRACE 3)
+endif()
+set(closed_arguments "")
+if(CLOSED)
+  set(closed_arguments --idle-trace-closed ${CLOSED})
 endif()
 file(REMOVE_RECURSE "${WORK}")
 file(MAKE_DIRECTORY "${WORK}")
@@ -39,7 +53,7 @@ endif()
 execute_process(COMMAND "${PREVIEW}" "${INPUTS}/runtime-compiled-animation" "${INPUTS}/profile-outline-catalog.ehscene" "${SOURCE}/native/hud.hlsl"
   --runtime-input --module-coverage --reader --calendar
   --map-geography "${MAP}" --map-player-assets "${resources}/map-player" --orbipom-assets "${ORBIPOM}"
-  --idle-trace "${WORK}/idle-trace.json" --idle-trace-seconds ${SECONDS} --compiled-sha 64852432949d3354e50c43ebb983cfa5afcf5dae29a4512879aca974902a9ba8
+  --idle-trace "${WORK}/idle-trace.json" --idle-trace-seconds ${SECONDS} --idle-trace-grace ${GRACE} ${closed_arguments} --compiled-sha 64852432949d3354e50c43ebb983cfa5afcf5dae29a4512879aca974902a9ba8
   --notes-assets "${INPUTS}/notes-controls-assets" --notes-assets-sha 9d2fcf0eead9eeeab1be4fdbb0e940a0e1e3eedf840ab9e4c63499e40ae70c00
   --notes-data "${WORK}/notes-data" --notes-format-assets "${resources}/notes-format"
   --shelf-assets "${resources}/shelf" --shelf-data "${WORK}/shelf-data" --shelf-mask "${resources}/shelf/reveal-mask.bin"
@@ -59,6 +73,31 @@ string(JSON refresh GET "${report}" refreshHz)
 string(JSON opening GET "${report}" openingFirstFrameSeconds)
 string(JSON resume GET "${report}" openingDeviceResumeSeconds)
 string(JSON quick GET "${report}" quickReopeningFirstFrameSeconds)
+string(JSON grace_seconds GET "${report}" closedGraphicsGraceSeconds)
+string(JSON production_grace GET "${report}" productionClosedGraphicsGraceSeconds)
+string(JSON closed_seconds GET "${report}" closedSeconds)
+string(JSON release_expected GET "${report}" releaseExpected)
+string(JSON shared_media GET "${report}" sharedMedia)
+string(JSON reopen GET "${report}" reopeningAfterClose firstFrameSeconds)
+string(JSON reopen_closed GET "${report}" reopeningAfterClose closedSeconds)
+if(NOT production_grace EQUAL 600)
+  message(FATAL_ERROR "The production closed graphics grace is ${production_grace} s instead of ten minutes")
+endif()
+set(want_media ON)
+if(NO_SHARED_MEDIA)
+  set(want_media OFF)
+endif()
+if(NOT shared_media STREQUAL want_media)
+  message(FATAL_ERROR "The traced owner's shared media stack is ${shared_media}, expected ${want_media}")
+endif()
+set(anticipated "not traced")
+set(refusal "not traced")
+if(release_expected)
+  string(JSON anticipated GET "${report}" anticipatedOpening firstFrameSeconds)
+  if(shared_media)
+    string(JSON refusal GET "${report}" mediaRefusal releasedSecondsAfterLetGo)
+  endif()
+endif()
 string(JSON count LENGTH "${report}" windows)
 set(expected closed-after-launch open-idle-ambient-on open-idle-ambient-off closed)
 list(LENGTH expected expected_count)
@@ -82,6 +121,7 @@ foreach(index RANGE ${last})
   string(JSON frame_timer GET "${report}" windows ${index} frames frameTimerWakes)
   string(JSON pending GET "${report}" windows ${index} frames framePendingAtEnd)
   string(JSON suspended GET "${report}" windows ${index} graphics deviceSuspended)
+  string(JSON alive GET "${report}" windows ${index} graphics devicesAlive)
   string(JSON finite_by GET "${report}" windows ${index} demand finiteFramesBy)
   set(frame_ms 0)
   string(JSON frame_ms ERROR_VARIABLE no_frame_stage GET "${report}" windows ${index} stages frame meanMS)
@@ -89,14 +129,17 @@ foreach(index RANGE ${last})
     set(frame_ms 0)
   endif()
   math(EXPR steady "${frames} - ${paced}")
-  string(APPEND summary "\n  ${name}: ${fps} frames/s (${paced} display-paced: ${finite_by}), ${frame_ms} ms per frame, CPU ${cpu}% of one core, ${wakeups} wake-ups/s, device released ${suspended}")
+  string(APPEND summary "\n  ${name}: ${fps} frames/s (${paced} display-paced: ${finite_by}), ${frame_ms} ms per frame, CPU ${cpu}% of one core, ${wakeups} wake-ups/s, device released ${suspended} (${alive} alive)")
   if(name MATCHES "^closed")
     # Closed: no frame submission and no frame timer (section 4).
     if(NOT frames EQUAL 0 OR pending OR frame_timer GREATER 0)
       message(FATAL_ERROR "The closed HUD scheduled frames in ${name}: ${frames} frames, frame pending ${pending}, ${frame_timer} frame timer wakes")
     endif()
-    if(NO_SHARED_MEDIA AND (NOT suspended OR wakeups GREATER 20))
-      message(FATAL_ERROR "The closed HUD kept its graphics device in ${name} (released ${suspended}, ${wakeups} wake-ups/s)")
+    if(release_expected AND (NOT suspended OR NOT alive EQUAL 0 OR wakeups GREATER 20))
+      message(FATAL_ERROR "The HUD closed past the grace kept its graphics device in ${name} (released ${suspended}, ${alive} alive, ${wakeups} wake-ups/s)")
+    endif()
+    if(NOT release_expected AND suspended)
+      message(FATAL_ERROR "The HUD closed within the grace released its graphics device in ${name}")
     endif()
   else()
     # Occasional finite animations (a charge badge change) run display-paced;
@@ -122,5 +165,5 @@ foreach(index RANGE ${last})
     endif()
   endif()
 endforeach()
-message(STATUS "Hidden idle trace at ${refresh} Hz: opening after a long close ${opening} s (device ${resume} s), reopening within the grace ${quick} s:${summary}")
+message(STATUS "Hidden idle trace at ${refresh} Hz, grace ${grace_seconds} s (production ${production_grace} s), closed ${closed_seconds} s, shared media ${shared_media}: first opening ${opening} s (device ${resume} s), reopening after ${reopen_closed} s closed ${reopen} s, anticipated opening ${anticipated} s, release ${refusal} s after a media owner let go, reopening within the grace ${quick} s:${summary}")
 file(REMOVE_RECURSE "${WORK}")

@@ -214,6 +214,10 @@ void Application::Impl::onDeadline(double time){
     bool artwork=projectionShown()&&projection->dismissalComplete(time);
     if(calendarNextWake&&*calendarNextWake<=time){isolate(calendarModuleOwner,"midnight",[&]{calendar->systemChanged(hostTime(time));updateCalendarWake();});artwork=true;}
     if(graphicsIdleAt&&*graphicsIdleAt<=time)releaseIdleGraphics(time);
+    // The tray icon was pointed at but no opening came: the device prepared
+    // for it goes again (Renderer::discardPreparedDevice).
+    if(preparedGraphicsUntil&&*preparedGraphicsUntil<=time){preparedGraphicsUntil.reset();
+        if(session->phase()==core::VisibilityPhase::concealed)(void)renderer.discardPreparedDevice();}
     registry.forEach([&](ModuleOwner&o){artwork=o.deadline(hostTime(time))||artwork;if(o.routing().deadlineRefreshesPointerLock){environment.pointerLocked=pointerLocked();session->setEnvironment(environment,hostTime(time));}},"deadline");
     time=hostTime(time);
     if(artwork)automationChanged();
@@ -359,6 +363,14 @@ std::optional<std::intptr_t> Application::Impl::onAppMessage(const NativeMessage
         if(m.wParam==summonHookGeneration&&summonHook&&summonHook->running()&&summonHotkeyEnabled()&&!quitRequested&&!stopping){
             const auto time=now();lastHookSummon=time;trayAction(gpu::TrayAction::openOverlay,true,time);}
         return 0;
+    }
+    // Pointing at or pressing the tray icon precedes an opening from its
+    // menu by a few hundred milliseconds at least: a device released after
+    // a long close starts being created now (discarded again if no opening
+    // follows). Version 4 notifications carry the event in the low word.
+    if(ready&&tray&&m.message==trayMessage&&session->phase()==core::VisibilityPhase::concealed){
+        const auto event=LOWORD(static_cast<DWORD>(m.lParam));
+        if(event==WM_MOUSEMOVE||event==WM_LBUTTONDOWN||event==WM_RBUTTONDOWN||event==WM_CONTEXTMENU||event==NIN_SELECT||event==NIN_KEYSELECT)prepareGraphics(true);
     }
     if(ready&&tray&&tray->message(m.message,m.wParam,m.lParam)){
         if(const auto action=tray->takeAction()){

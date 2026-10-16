@@ -215,17 +215,24 @@ void residency(n::Renderer&r,HWND hwnd,const fs::path&assets){
           closed.gpu.textures==0&&closed.gpu.resourceBytes<=hidden.gpu.resourceBytes&&closed.gpu.nativeGroupBytes<=hidden.gpu.nativeGroupBytes&&closed.owner.retainedTextures==0,
           "After the HUD closed a hidden Media Assembly keeps no canvas artwork, shared rasters or textures (released "+std::to_string(hidden.raster.resourceBytes-closed.raster.resourceBytes)+
           " raster bytes in "+std::to_string(hidden.raster.entries-closed.raster.entries)+" entries)");
+    check(!closed.owner.gpuActive&&!closed.gpu.mediaDeviceLent&&r.deviceReleasable(),"After the HUD closed Media Assembly holds no GPU processor, so nothing of it keeps the renderer's device");
     // Reopened on Media Assembly: the canvas and one fresh preview come back.
     owner.setOverlayVisible(true,now);modules.select(c::Module::mediaAssembly,now);for(int k=0;k<40;++k){frame();drain();}
     const auto again=usage();print("shown again",again);
     check(again.scene.parts==shown.scene.parts&&again.scene.pixelBytes==shown.scene.pixelBytes&&again.owner.retainedTextures==1&&again.owner.previewPixelBytes==shown.owner.previewPixelBytes&&
           owner.controller().previewImage()&&owner.controller().session().adjustments().filter!=m::MediaAssemblyFilter::none,"Shown again: the same canvas and one fresh edited preview are rebuilt from the session");
+    check(again.owner.gpuActive&&owner.controller().previewImage()->deferred()&&again.gpu.mediaDeviceLent,"Shown again: the GPU processor is created again on the renderer's device");
     // Composed when the HUD closes (the selected module): its controls stay
     // for the next opening; the preview and its GPU source go at once.
     owner.setOverlayVisible(false,now);for(int k=0;k<3;++k)frame();owner.conceal();
     const auto selected=usage();print("after closing on Media Assembly",selected);
     check(selected.owner.parks==1&&selected.scene.parts>0&&selected.owner.previewPixelBytes==0&&selected.owner.gpuResidentBytes==0&&selected.cached==0,
           "Closing on Media Assembly keeps only its controls for the next opening");
+    // Nothing it keeps holds the device: the closed HUD can release it, and
+    // the device object really goes (no processor kept a reference).
+    check(!selected.owner.gpuActive&&!selected.gpu.mediaDeviceLent&&r.deviceReleasable()&&r.suspendDevice()&&r.stats().devicesDestroyed==r.stats().devicesCreated,
+          "Closed on Media Assembly, the renderer's device can be released and is destroyed");
+    check(r.resumeDevice(),"The device comes back for the rest of the fixture");
     composition.detach(r);owner.release(r);released=true;check(r.stats().textures==0&&r.stats().nativeGroups==0,"Residency owner releases every texture and group");
 }
 // Fake IMFMediaEngine for the shared broker (no codec, audio device or file).

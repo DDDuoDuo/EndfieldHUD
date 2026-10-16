@@ -285,6 +285,9 @@ VolumeModuleHooks Application::Impl::screenHooks(){
 }
 
 void Application::Impl::construct(){
+    // The closed HUD's graphics grace: production keeps the ten minutes.
+    need(std::isfinite(args.closedGraphicsGrace)&&args.closedGraphicsGrace>=1&&args.closedGraphicsGrace<=86400&&
+         (!production()||args.closedGraphicsGrace==closedGraphicsGraceSeconds),"The closed graphics grace is 1 s...1 day, ten minutes in production");
     if(!args.watchBlur.empty())backdropAnimation=loadWatchBlur(args.watchBlur);startup.mark("original-backdrop-animation");
     if(args.runtimeInput){runtime=std::make_unique<source::WatchRuntimeInput>(args.packet,[&](std::string_view name){const std::string label(name);startup.mark(label.c_str());});}
     else {
@@ -627,30 +630,49 @@ void Application::Impl::releaseConcealedGraphics(){
     HEAP_OPTIMIZE_RESOURCES_INFORMATION heaps{HEAP_OPTIMIZE_RESOURCES_CURRENT_VERSION,0};
     (void)HeapSetInformation(nullptr,HeapOptimizeResources,&heaps,sizeof(heaps));
     // Still closed after the grace: the presentation and the device go too.
-    idleGraphicsAttempted=false;graphicsIdleAt=now()+closedGraphicsGrace;scheduleDeadline();
+    idleGraphicsAttempted=idleGraphicsRefused=false;graphicsIdleAt=now()+closedGraphicsGrace();scheduleDeadline();
 }
-// The HUD stayed closed for closedGraphicsGrace seconds (a host deadline):
-// nothing presents until the next opening, so neither the device (the driver
-// thread that wakes ~70 times a second while a D3D11 device merely exists)
-// nor the swap chain and composition target stay alive. Every retained
-// resource keeps its identity in system memory; open() starts creating the
-// device again and the first frame takes it. The Projection workspace
-// presents through the same renderer and keeps them, as does a media owner
-// that holds the device (Renderer::suspendDevice refuses then: Notes video
-// playback keeps Renderer::mediaDevice() for its lifetime today).
+// The HUD stayed closed for closedGraphicsGrace() seconds (a host deadline,
+// ten minutes in production): nothing presents until the next opening, so
+// neither the device (the driver thread that wakes ~70 times a second while
+// a D3D11 device merely exists) nor the swap chain and composition target
+// stay alive. Every retained resource keeps its identity in system memory;
+// the opening starts creating the device again and its first frame takes
+// it. The Projection workspace presents through the same renderer and keeps
+// them. So does a media owner still holding the device (Renderer::
+// suspendDevice refuses): the media owners take it only while media plays
+// or is edited and drop it once idle (Notes, Archive and Projection movies
+// through the shared video owner, Media Assembly's processors), and the
+// release follows shortly after the last one let go (scheduleDeadline).
 void Application::Impl::releaseIdleGraphics(double time){
     (void)time;graphicsIdleAt.reset();
     if(!ready||stopping||!renderer.stats().initialized||session->phase()!=core::VisibilityPhase::concealed||
        projectionHandoff.active()||projectionShown())return;
-    idleGraphicsAttempted=true;
-    // Only together: a device a media owner still holds keeps its swap chain too.
-    try{idleDeviceSuspended=renderer.suspendDevice()||renderer.deviceSuspended();}
+    idleGraphicsAttempted=true;idleGraphicsRefused=false;
+    try{
+        // Media the closed owners retired after the concealment (a movie
+        // poster kept for its fade) leaves the composition and the renderer
+        // first; nothing of it is copied aside.
+        if(!renderer.deviceSuspended())publishNative();
+        // Only together: a device a media owner still holds keeps its swap chain too.
+        idleDeviceSuspended=renderer.suspendDevice()||renderer.deviceSuspended();
+        idleGraphicsRefused=!idleDeviceSuspended;
+    }
     catch(const std::exception&e){
         if(!production())throw;
         const auto line=std::string("EndfieldHUD could not release the closed HUD's graphics device (")+typeid(e).name()+")\n";
         std::fputs(line.c_str(),stderr);OutputDebugStringA(line.c_str());
     }
     if(memoryTrace&&production()&&memoryTrace->closings<8)recordMemory("closed-idle-"+std::to_string(memoryTrace->closings),true);
+}
+void Application::Impl::prepareGraphics(bool anticipated){
+    if(!ready||stopping||!renderer.stats().initialized||!renderer.deviceSuspended())return;
+    try{if(renderer.prepareDevice()&&anticipated&&session->phase()==core::VisibilityPhase::concealed){preparedGraphicsUntil=now()+preparedGraphicsLifetime;scheduleDeadline();}}
+    catch(const std::exception&e){
+        if(!production())throw;
+        const auto line=std::string("EndfieldHUD could not prepare the HUD's graphics device (")+typeid(e).name()+")\n";
+        std::fputs(line.c_str(),stderr);OutputDebugStringA(line.c_str());
+    }
 }
 void Application::Impl::systemChange(std::uint32_t message,double time){
     time=hostTime(time);if(message==WM_TIMECHANGE&&archiveDates)archiveDates->refreshSystemTimeZone();
@@ -1421,6 +1443,9 @@ void Application::Impl::repositionHUD(double time){
     placeOnDisplay(displays[*index]);
 }
 void Application::Impl::openPresentation(core::Module initial,double time){
+    // First of all: a device released after a long close starts being
+    // created on a worker while the display is chosen and the module selected.
+    prepareGraphics(false);
     if(startupTrace&&session->phase()==core::VisibilityPhase::concealed)traceOpening(time);
     if(production()&&session->phase()==core::VisibilityPhase::concealed)targetDisplay();
     if(notes&&notes->selected()!=initial)selectModule(initial,time);
@@ -1447,7 +1472,7 @@ void Application::Impl::open(double time){
     // runs before it takes the device for its uploads and draw, which then
     // also creates the presentation. A failure here is retried by that
     // frame (and then handled like any frame failure).
-    graphicsIdleAt.reset();idleGraphicsAttempted=idleDeviceSuspended=false;
+    graphicsIdleAt.reset();preparedGraphicsUntil.reset();idleGraphicsAttempted=idleDeviceSuspended=idleGraphicsRefused=false;
     try{if(!renderer.prepareDevice()&&!renderer.deviceSuspended()&&visibleMode())(void)renderer.restorePresentation();}catch(const std::exception&e){
         if(!production())throw;
         const auto line=std::string("EndfieldHUD could not restore the HUD's graphics (")+typeid(e).name()+")\n";std::fputs(line.c_str(),stderr);OutputDebugStringA(line.c_str());}
@@ -1658,11 +1683,13 @@ core::FrameDemand Application::Impl::demand(double time){
 }
 void Application::Impl::scheduleDeadline(){if(!liveScheduling()||!ready||stopping)return;std::optional<double>next;
     auto include=[&](std::optional<double>value){if(value&&(!next||*value<*next))next=value;};
-    // A closed HUD whose graphics came back while it stayed closed (a call
-    // that needed the GPU) releases them again after the grace.
-    if(!graphicsIdleAt&&session->phase()==core::VisibilityPhase::concealed&&renderer.stats().initialized&&!renderer.deviceSuspended()&&
-       idleGraphicsAttempted&&idleDeviceSuspended&&!projectionHandoff.active()&&!projectionShown()){idleGraphicsAttempted=false;graphicsIdleAt=now()+closedGraphicsGrace;}
-    include(calendarNextWake);include(graphicsIdleAt);if(projection)include(projection->dismissalDeadline());include(headerClock.nextDeadline());include(registry.nextWakeTime(now()));
+    // After the grace, while the HUD stays closed: graphics that came back
+    // (a call that needed the GPU) or that a media owner kept and has now
+    // let go are released again shortly.
+    if(!graphicsIdleAt&&idleGraphicsAttempted&&session->phase()==core::VisibilityPhase::concealed&&renderer.stats().initialized&&!renderer.deviceSuspended()&&
+       !projectionHandoff.active()&&!projectionShown()&&(idleDeviceSuspended||(idleGraphicsRefused&&renderer.deviceReleasable()))){
+        idleGraphicsAttempted=false;graphicsIdleAt=now()+std::min(closedGraphicsRelease,closedGraphicsGrace());}
+    include(calendarNextWake);include(graphicsIdleAt);include(preparedGraphicsUntil);if(projection)include(projection->dismissalDeadline());include(headerClock.nextDeadline());include(registry.nextWakeTime(now()));
     if(mediaBroker){const auto wake=mediaBroker->nextWakeTime();if(wake&&*wake>now())include(wake);}if(eventOwner)include(eventOwner->saveDeadline());if(activityProbe)include(activityPlan.nextWakeTime());include(lifecycle.nextWakeTime());host.setDeadline(next);
 }
 void Application::Impl::refresh(double time){if(liveScheduling()&&ready&&!stopping){
@@ -2237,7 +2264,7 @@ void Application::Impl::projectionCommand(const ProjectionHandoff::Command&comma
     }
     case A::closeImmediately:projectionDropRoute(false,time);cancelProjectionPicker();(void)projectionCall("close",[&]{projection->close(hostTime(time));});presentationPriority.restore();automationChanged();published.clear();publishedNotesRevision=0;setProjectionActive(false,time);
         // The HUD stays closed: after the grace nothing keeps the graphics.
-        if(session->phase()==core::VisibilityPhase::concealed&&!projectionShown()){graphicsIdleAt=now()+closedGraphicsGrace;scheduleDeadline();}break;
+        if(session->phase()==core::VisibilityPhase::concealed&&!projectionShown()){idleGraphicsAttempted=idleGraphicsRefused=false;graphicsIdleAt=now()+closedGraphicsGrace();scheduleDeadline();}break;
     }
 }
 } // namespace endfield::app

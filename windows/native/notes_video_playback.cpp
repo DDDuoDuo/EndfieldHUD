@@ -38,13 +38,19 @@ struct NativeNotesVideoPlayback::Impl {
         std::uint64_t liveGeneration{},posterGeneration{},acceptedPosterRevision{};std::vector<std::string>retiredTextures;
         std::optional<double>releasePoster,nextProgress,posterDeadline,seekDeadline;
     };
-    Renderer&renderer;DWORD thread{GetCurrentThreadId()};std::shared_ptr<void>device;Factory factory;
+    Renderer&renderer;DWORD thread{GetCurrentThreadId()};Factory factory;
+    // The renderer's device (Renderer::mediaDevice), held only while an
+    // engine exists: a closed HUD whose movies all stopped lets the renderer
+    // release it (suspendDevice refuses while any media owner holds it).
+    std::shared_ptr<void>device;std::uint64_t deviceAcquisitions{},readingPasses{};
     std::shared_ptr<Notices>notice=std::make_shared<Notices>();std::map<std::string,Record,std::less<>>records;
     std::vector<Record*>visible;std::array<Record*,8>engines{};std::size_t pendingCount{},pendingCursor{};std::vector<NotesVideoRequest>requests;std::uint64_t serial{},transfers{},ticks{};double time{};
     // The CoreMedia 709 reading of played BT.709 frames (created on the first
-    // one; its scratch targets are dropped once no movie plays).
+    // one; it goes with the device once no engine remains: its shaders and
+    // scratch targets belong to that device and hold it).
     std::unique_ptr<NotesCoreMedia709Pass>reading;
-    Impl(Renderer&r,NotesVideoRoute route,Factory f):renderer(r),device(r.mediaDevice()),factory(f?std::move(f):detail::makeNotesMFVideoFactory()){routeValid(route);notice->route=route;visible.reserve(8);requests.reserve(8);}
+    // Same-device media is required (the check takes no lasting lease).
+    Impl(Renderer&r,NotesVideoRoute route,Factory f):renderer(r),factory(f?std::move(f):detail::makeNotesMFVideoFactory()){(void)r.mediaDevice();routeValid(route);notice->route=route;visible.reserve(8);requests.reserve(8);}
     ~Impl(){ {std::lock_guard lock(notice->mutex);notice->stopped=true;notice->route={};}for(auto&[key,r]:records){(void)key;if(r.engine)r.engine->stop();r.engine.reset();try{releaseTarget(r.liveID,r.live,r.liveInstalled);releaseTarget(r.posterID,r.poster,r.posterInstalled);for(const auto&id:r.retiredTextures)renderer.removeTexture(id);}catch(...){}} }
     void check()const{need(GetCurrentThreadId()==thread,"Video owner requires its UI thread");}
     // An owner time earlier than one already seen is the latest time (the
@@ -53,7 +59,13 @@ struct NativeNotesVideoPlayback::Impl {
     Record*find(std::string_view key){auto it=records.find(key);return it==records.end()?nullptr:&it->second;}
     static void state(Record&r,State value){if(r.state!=value){r.state=value;++r.contentRevision;}}
     static void texture(Record&r,const std::string&id){if(r.textureID!=id){r.textureID=id;++r.frameRevision;}}
-    void endEngine(Record&r){if(r.slot<8){std::lock_guard lock(notice->mutex);notice->cells[r.slot]={};engines[r.slot]=nullptr;r.slot=8;}if(r.engine){r.engine->pause();r.engine->stop();r.engine.reset();}r.metadataReady=false;r.posterPending=false;r.posterDeadline.reset();r.seekDeadline.reset();r.seekFrameReady=false;r.framePending=false;r.nextProgress.reset();}
+    void endEngine(Record&r){if(r.slot<8){std::lock_guard lock(notice->mutex);notice->cells[r.slot]={};engines[r.slot]=nullptr;r.slot=8;}if(r.engine){r.engine->pause();r.engine->stop();r.engine.reset();}r.metadataReady=false;r.posterPending=false;r.posterDeadline.reset();r.seekDeadline.reset();r.seekFrameReady=false;r.framePending=false;r.nextProgress.reset();releaseIdleDevice();}
+    // An engine needs the device: the first one takes it.
+    const std::shared_ptr<void>&lease(){if(!device){device=renderer.mediaDevice();++deviceAcquisitions;}return device;}
+    // No engine remains (every movie hidden, failed or parked): the device
+    // and the colour pass's GPU objects go. Posters stay as retained textures.
+    void releaseIdleDevice()noexcept{if(std::any_of(engines.begin(),engines.end(),[](const Record*r){return r&&r->engine;}))return;
+        if(reading){readingPasses+=reading->passes();reading.reset();}device.reset();}
     void dequeue(Record&r){if(r.needsEngine){r.needsEngine=false;--pendingCount;}}
     void enqueue(Record&r){if(!r.engine&&!r.needsEngine&&r.visible&&r.state!=State::failed){r.needsEngine=true;++pendingCount;}}
     void fail(Record&r,HRESULT error){dequeue(r);r.error=FAILED(error)?error:E_FAIL;endEngine(r);texture(r,{});state(r,State::failed);}
@@ -65,7 +77,7 @@ struct NativeNotesVideoPlayback::Impl {
     void install(Record&r){
         r.visible=true;r.error=S_OK;r.releasePoster.reset();r.posterPending=false;if(!r.request.workerPoster)r.posterSettled=r.posterReady||FAILED(r.posterError);r.framePending=false;r.metadataReady=false;r.firstFrameSeen=false;r.didPlay=false;r.positionRestored=false;if(!r.posterSettled)state(r,State::loading);
         {std::lock_guard lock(notice->mutex);for(std::size_t n=0;n<notice->cells.size();++n)if(!notice->cells[n].serial){r.slot=n;break;}need(r.slot<8&&serial<std::numeric_limits<std::uint64_t>::max(),"Video engine capacity/generation exhausted");r.serial=++serial;notice->cells[r.slot]={r.serial};engines[r.slot]=&r;}
-        try{const auto queue=notice;const auto index=r.slot;const auto generation=r.serial;r.engine=factory(device,[queue,index,generation](std::uint32_t event,HRESULT result){queue->notify(index,generation,event,result);});need(bool(r.engine),"Video factory returned no engine");const auto result=r.engine->open(r.request);if(FAILED(result))fail(r,result);}catch(...){fail(r,E_FAIL);}
+        try{const auto queue=notice;const auto index=r.slot;const auto generation=r.serial;r.engine=factory(lease(),[queue,index,generation](std::uint32_t event,HRESULT result){queue->notify(index,generation,event,result);});need(bool(r.engine),"Video factory returned no engine");const auto result=r.engine->open(r.request);if(FAILED(result))fail(r,result);}catch(...){fail(r,E_FAIL);}
     }
     void makeMetadata(Record&r){NotesVideoMetadata metadata;const auto result=r.engine->metadata(metadata);if(FAILED(result)){fail(r,result);return;}
         if(!metadata.width||!metadata.height||metadata.width>65536||metadata.height>65536||!std::isfinite(metadata.duration)||metadata.duration<=0||metadata.duration>31536000){fail(r,MF_E_INVALIDMEDIATYPE);return;}
@@ -151,7 +163,8 @@ bool NativeNotesVideoPlayback::setPoster(std::string_view key,std::uint64_t revi
             std::vector<std::uint8_t>bgra(frame->straightRGBA.size());for(std::size_t p=0;p<bgra.size();p+=4){bgra[p]=frame->straightRGBA[p+2];bgra[p+1]=frame->straightRGBA[p+1];bgra[p+2]=frame->straightRGBA[p];bgra[p+3]=frame->straightRGBA[p+3];}
             target=i.renderer.createMediaTexture(nextID,frame->width,frame->height);
             Microsoft::WRL::ComPtr<ID3D11Texture2D>texture;const auto hr=static_cast<IDXGISurface*>(target->targetSurface())->QueryInterface(IID_PPV_ARGS(&texture));if(FAILED(hr))throw RendererError("Read owned poster upload surface",hr);
-            Microsoft::WRL::ComPtr<ID3D11DeviceContext>context;static_cast<ID3D11Device*>(i.device.get())->GetImmediateContext(&context);
+            // The target's own device (the renderer's): no lease outlives this upload.
+            Microsoft::WRL::ComPtr<ID3D11Device>owner;texture->GetDevice(&owner);Microsoft::WRL::ComPtr<ID3D11DeviceContext>context;owner->GetImmediateContext(&context);
             context->UpdateSubresource(texture.Get(),0,nullptr,bgra.data(),frame->width*4,0);i.renderer.commitMediaTexture(*target);
             // Same media byte budget, but a static poster does not occupy one
             // of the finite decoder/output slots after its one upload.
@@ -221,10 +234,10 @@ std::optional<double>NativeNotesVideoPlayback::nextWakeTime()const{const auto&i=
 const NotesVideoRecord*NativeNotesVideoPlayback::find(std::string_view key)const noexcept{return impl_->find(key);}
 bool NativeNotesVideoPlayback::retire(std::string_view key){auto&i=*impl_;i.check();const auto found=i.records.find(key);if(found==i.records.end())return false;auto&r=found->second;need(!r.visible,"Hide video before retiring it");r.releasePoster.reset();Impl::texture(r,{});if(!i.collect(r))return false;i.records.erase(found);return true;}
 bool NativeNotesVideoPlayback::collectRetired(){auto&i=*impl_;i.check();bool done=true;for(auto&[key,r]:i.records){(void)key;if(!i.collect(r))done=false;}
-    // No movie plays: the reading keeps no scratch targets.
-    if(i.reading&&std::none_of(i.records.begin(),i.records.end(),[](const auto&entry){return bool(entry.second.engine);}))i.reading->release();return done;}
+    // No movie plays: neither the device nor the reading stays.
+    i.releaseIdleDevice();return done;}
 void NativeNotesVideoPlayback::setRoute(NotesVideoRoute r){auto&i=*impl_;i.check();routeValid(r);std::lock_guard lock(i.notice->mutex);i.notice->route=r;i.notice->posted=false;i.notice->postLocked();}
-NotesVideoStats NativeNotesVideoPlayback::stats()const{const auto&i=*impl_;i.check();NotesVideoStats out;out.visible=i.visible.size();for(const auto&[key,r]:i.records){(void)key;if(r.engine)++out.engines;}out.transfers=i.transfers;out.ticks=i.ticks;if(i.reading){out.coreMedia709Frames=i.reading->passes();out.readingScratchBytes=i.reading->scratchBytes();}{std::lock_guard lock(i.notice->mutex);out.events=i.notice->events;out.notices=i.notice->notices;}return out;}
+NotesVideoStats NativeNotesVideoPlayback::stats()const{const auto&i=*impl_;i.check();NotesVideoStats out;out.visible=i.visible.size();for(const auto&[key,r]:i.records){(void)key;if(r.engine)++out.engines;}out.transfers=i.transfers;out.ticks=i.ticks;out.coreMedia709Frames=i.readingPasses;if(i.reading){out.coreMedia709Frames+=i.reading->passes();out.readingScratchBytes=i.reading->scratchBytes();}out.deviceHeld=bool(i.device);out.deviceAcquisitions=i.deviceAcquisitions;{std::lock_guard lock(i.notice->mutex);out.events=i.notice->events;out.notices=i.notice->notices;}return out;}
 NotesVideoDiagnostics NativeNotesVideoPlayback::diagnostics(std::string_view key)const{auto&i=*impl_;i.check();const auto*r=i.find(key);return r&&r->engine?r->engine->diagnostics():NotesVideoDiagnostics{};}
 } // namespace endfield::native
 #endif

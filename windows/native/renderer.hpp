@@ -196,6 +196,16 @@ struct RendererStats {
     std::uint64_t deviceSuspensions{},deviceResumes{},devicePreparations{};
     bool deviceSuspended{};
     std::size_t suspendedCopyBytes{};
+    // A media owner holds the device now (mediaDevice()), and the leases
+    // handed out since initialize (a lease lives until its last holder drops it).
+    bool mediaDeviceLent{};
+    std::uint64_t mediaDeviceLeases{};
+    // The D3D11 devices created (initialize, resumptions) and those actually
+    // destroyed: one is alive while the renderer holds it, and a suspension
+    // that leaves an outside holder keeps it alive (its driver thread with it).
+    std::uint64_t devicesCreated{},devicesDestroyed{};
+    // prepareDevice() creations given up because no opening took them.
+    std::uint64_t preparedDeviceDiscards{};
     // Of deviceResumeSeconds: creating the device, its programs and fixed
     // states, the retained resources, and the original pass's resources.
     double deviceResumeSeconds{},deviceCreateSeconds{},pipelineCreateSeconds{},resourceRestoreSeconds{},sourceRestoreSeconds{};
@@ -327,6 +337,10 @@ public:
     // AddRef-owned ID3D11Device, for the owner's MF DXGI manager. Requires the
     // explicit mediaVideo option; multithread protection is enabled at creation.
     // This is the existing device, never a new graphics context or clock.
+    // Holders share one lease, and while any holder keeps it suspendDevice()
+    // refuses: a media owner takes it only while media needs the GPU (an
+    // open engine, an edit pass) and drops it when idle, so a closed HUD can
+    // release its device. Creates the device again when it was suspended.
     std::shared_ptr<void> mediaDevice()const;
     std::shared_ptr<RendererMediaTexture>createMediaTexture(std::string sourceID,unsigned width,unsigned height);
     // GPU-only conversion from transferred encoded straight BGRA8 to retained
@@ -450,6 +464,17 @@ public:
     // again on this thread. True when it started (only while suspended).
     bool prepareDevice();
     bool deviceSuspended() const noexcept;
+    // A device started by prepareDevice() that no call has taken yet.
+    bool devicePrepared() const noexcept;
+    // An opening that was anticipated (the tray icon was pointed at) but did
+    // not come: the prepared device is released again, so it neither stays
+    // alive (its driver thread waking the closed HUD) nor ages. Waits for a
+    // creation still running. True when there was one.
+    bool discardPreparedDevice();
+    // suspendDevice() would release the device now: it exists, no media
+    // owner holds it (mediaDevice()), no media target exists and no
+    // composition surface is bridged or suspended.
+    bool deviceReleasable() const noexcept;
     // After a drawn frame, on a content event (e.g. a finished module switch,
     // never per frame): every native group target that frame did not draw
     // visibly gives its GPU memory back; the group keeps its draw list and is

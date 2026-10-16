@@ -62,6 +62,16 @@ struct ApplicationModuleContext {
 // after its built-in owners. Returning null leaves the module absent.
 using ApplicationModuleFactory = std::function<std::unique_ptr<ModuleOwner>(const ApplicationModuleContext&)>;
 
+// How long a closed HUD keeps its graphics device, swap chain and
+// composition target before releasing them (Renderer::suspendDevice; an idle
+// NVIDIA device keeps a driver thread waking the process about 70 times a
+// second, 0-2 once released). Ten minutes: every reopening within them is
+// as fast as before, and only the first opening after a long absence creates
+// the device again (D3D11CreateDevice 110-230 ms on the laptop, started on a
+// worker as soon as the opening is asked for). Hidden traces and tests may
+// shorten it (ApplicationOptions::closedGraphicsGrace); production keeps it.
+inline constexpr double closedGraphicsGraceSeconds = 600;
+
 enum class ApplicationMode {
     production,     // EndfieldHUD.exe: real providers, tray, lifecycle, persistent root
     visiblePreview, // development: explicit visible launch with synthetic inputs
@@ -150,6 +160,12 @@ struct ApplicationOptions {
     // laptop's 165 Hz display), which the hidden session lacks.
     std::filesystem::path idleTrace;
     double idleTraceSeconds{30}, idleTraceRefreshRate{165};
+    // How long the idle trace keeps the HUD closed before each closed window
+    // and before its first opening (unset: just past the grace, so they
+    // measure the released device; shorter: a closed HUD that still keeps it).
+    std::optional<double> idleTraceClosedSeconds;
+    // closedGraphicsGraceSeconds, shortened only by hidden traces and tests.
+    double closedGraphicsGrace{closedGraphicsGraceSeconds};
 };
 
 class Application final {

@@ -12,10 +12,15 @@
 #
 # application_idle_trace: the production owner hidden on the REAL clock
 # through the production frame scheduling (watch_session_preview
-# --idle-trace, short windows): the closed HUD runs no frame and arms no
-# timer, open idle with the ambient animation on draws at the source's 30 Hz
-# ambient cadence and no faster, ambient off draws (almost) nothing, and the
-# frames stay within a CPU bound. Never shows a window or touches user data.
+# --idle-trace, short windows) with the production Notes/Archive media stack:
+# the closed HUD runs no frame and arms no timer, and closed past its
+# graphics grace (shortened to 3 s; production keeps ten minutes) it has
+# released and destroyed its device and wakes fewer than 20 times a second;
+# a media owner holding the device refuses the release until it lets go; a
+# reopening within the grace keeps the device; open idle with the ambient
+# animation on draws at the source's 30 Hz ambient cadence and no faster,
+# ambient off draws (almost) nothing, and the frames stay within a CPU
+# bound. Never shows a window or touches user data.
 if(WIN32 AND BUILD_TESTING)
   if(TARGET hud_native AND TARGET hud_data AND TARGET hud_activity_provider AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/application_idle_probe.cpp")
     add_executable(application_idle_probe tests/application_idle_probe.cpp app/process_diagnostics.cpp)
@@ -31,7 +36,7 @@ if(WIN32 AND BUILD_TESTING)
     add_test(NAME application_idle_trace COMMAND "${CMAKE_COMMAND}" "-DPREVIEW=$<TARGET_FILE:watch_session_preview>"
       "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/idle-trace-work" "-DINPUTS=${ehud_app_inputs}" "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}"
       "-DMAP=${EHUD_MAP_RESOURCE_DIR}" "-DORBIPOM=${EHUD_ORBIPOM_RESOURCE_DIR}" "-DPACKAGE=$<TARGET_FILE_DIR:EndfieldHUD>/resources"
-      -DSECONDS=4 -DNO_SHARED_MEDIA=ON -P "${CMAKE_CURRENT_SOURCE_DIR}/app/run_idle_trace.cmake")
+      -DSECONDS=4 -DGRACE=3 -P "${CMAKE_CURRENT_SOURCE_DIR}/app/run_idle_trace.cmake")
     set_tests_properties(application_idle_trace PROPERTIES TIMEOUT 600)
   endif()
 endif()

@@ -109,7 +109,9 @@ public:
     // One composed at the close (the selected module) keeps its controls for
     // the next opening; its preview and GPU source were already released when
     // the editor was hidden. Otherwise the first collection after the close
-    // began, while not composed, does the same.
+    // began, while not composed, does the same. Either way the GPU
+    // processors go (they hold the renderer's device, which the closed HUD
+    // releases after a long close); the next showing creates them again.
     void conceal();
     void update(const core::Matrix4& sourceCenter,const core::source::DesktopChromeSettings&,
         const core::ModulePresentationSample&,float opacity,double time);

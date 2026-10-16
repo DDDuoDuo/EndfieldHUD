@@ -358,6 +358,12 @@ struct MediaAssemblyPreview::Impl:std::enable_shared_from_this<Impl> {
     // hidden editor keeps no decoded source on the CPU or the GPU. The
     // processors keep only their device programs.
     void releaseGpu(){gpuSource.reset();if(processor)processor->releaseResources();if(playbackProcessor)playbackProcessor->releaseResources();}
+    // The HUD closed: the processors themselves go too. Their programs live
+    // on the renderer's device and each holds it (Renderer::mediaDevice), so
+    // keeping them would keep the closed HUD's device (and its driver
+    // thread) alive; the next showing creates them again (build-time
+    // programs, no compile).
+    void dropProcessors(){processor.reset();playbackProcessor.reset();gpuSource.reset();if(gpuTried&&mediaCapable&&!shadersFailed)gpuTried=false;}
     // Releases everything a hidden canvas holds (see conceal()). False while
     // composed or active. A part the last publication still referenced is
     // kept and retried at the next collection (parkWanted).
@@ -365,7 +371,7 @@ struct MediaAssemblyPreview::Impl:std::enable_shared_from_this<Impl> {
         if(pose||prepared)return false;
         closeMenu(false);for(auto&m:closing)dead.push_back(std::move(m));closing.clear();
         for(auto it=dead.begin();it!=dead.end();){auto&group=(*it)->control?*(*it)->control->group:*(*it)->notes->group;if(!(*it)->uploaded||group.releaseResources(r))it=dead.erase(it);else ++it;}
-        releaseVideo();if(shown){shown.reset();retireTexture();}textureDirty=false;releaseGpu();
+        releaseVideo();if(shown){shown.reset();retireTexture();}textureDirty=false;releaseGpu();dropProcessors();
         // The canvas first: a closing poster borrows the preview texture.
         const bool parked=scene->park(r);if(parked)++parks;
         if(!scene->closingMedia())for(auto it=retiredTextures.begin();it!=retiredTextures.end();)if(r.removeTexture(*it))it=retiredTextures.erase(it);else ++it;
@@ -426,7 +432,7 @@ void MediaAssemblyPreview::setLanguage(core::Language l,double t){auto i=impl_;c
 void MediaAssemblyPreview::setAppearance(mod::MediaAssemblyAppearance a,double t){auto i=impl_;const Impl::Event e(*i,t);if(i->options.appearance==a)return;i->options.appearance=a;i->closeMenu(false);i->changed();}
 void MediaAssemblyPreview::setReduceMotion(bool v,double t){auto i=impl_;const Impl::Event e(*i,t);if(i->options.reduceMotion==v)return;i->options.reduceMotion=v;if(v)i->scene->settle();i->changed();}
 void MediaAssemblyPreview::setOverlayVisible(bool v,double t){auto i=impl_;const Impl::Event e(*i,t);if(i->overlay==v)return;i->overlay=v;i->parkWanted=!v;if(!v)i->activate(false,false);i->changed();}
-void MediaAssemblyPreview::conceal(){auto&i=*impl_;if(i.renderer)(void)i.parkArtwork(*i.renderer);}
+void MediaAssemblyPreview::conceal(){auto&i=*impl_;if(i.renderer)(void)i.parkArtwork(*i.renderer);if(!i.prepared)i.dropProcessors();}
 void MediaAssemblyPreview::update(const M&center,const core::source::DesktopChromeSettings&settings,const core::ModulePresentationSample&sample,float opacity,double t){
     auto i=impl_;const Impl::Event e(*i,t);need(i->metrics.pixelWidth&&i->metrics.pixelHeight,"Resize Media Assembly before presentation");
     const auto*shown=sample.current.module==core::Module::mediaAssembly?&sample.current:sample.incoming&&sample.incoming->module==core::Module::mediaAssembly?&*sample.incoming:nullptr;
@@ -560,8 +566,10 @@ void MediaAssemblyPreview::upload(gpu::Renderer&r){
     // GPU previews start once the editor is first shown: with build-time
     // programs at once, otherwise after the HLSL compile on the utility worker
     // (no UI-thread hitch); until then, or if a renderer lacks same-device
-    // media support, previews use the CPU path.
-    if(!i.gpuTried&&i.options.gpuPreview){
+    // media support, previews use the CPU path. Not while the HUD is closed
+    // (a composed editor still uploads its controls then): the processors
+    // would hold the closed HUD's device (see conceal()).
+    if(!i.gpuTried&&i.options.gpuPreview&&i.overlay){
         if(!i.mediaChecked){i.mediaChecked=true;try{i.mediaCapable=r.mediaDevice()!=nullptr;}catch(const std::exception&){i.mediaCapable=false;}}
         if(!i.mediaCapable){i.gpuTried=true;i.controller->setDeferredPreviews(false,i.time);}
         else if(gpu::mediaAssemblyGpuShadersReady()){i.gpuTried=true;i.createProcessor(r);}

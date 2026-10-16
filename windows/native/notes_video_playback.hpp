@@ -36,6 +36,9 @@ struct NotesVideoRecord {
 struct NotesVideoStats {std::size_t visible{},engines{};std::uint64_t notices{},events{},transfers{},ticks{};
     std::uint64_t coreMedia709Frames{}; // played BT.709 frames given the Mac's CoreMedia 709 reading
     std::size_t readingScratchBytes{};  // that pass's scratch targets (none while no movie plays)
+    // The renderer's device is held (only while an engine exists), and how
+    // often it was taken: the closed HUD can release it once no movie remains.
+    bool deviceHeld{};std::uint64_t deviceAcquisitions{};
 };
 // Bounded native status only; no paths, media contents or callback pointers.
 struct NotesVideoDiagnostics {
@@ -44,7 +47,11 @@ struct NotesVideoDiagnostics {
     unsigned lastEvent{},readyState{},networkState{},errorCode{};
     HRESULT error{S_OK};bool hasVideo{},paused{},seeking{};double currentTime{};
 };
-// Existing-device video frame-server, not a second renderer or clock. Media
+// Existing-device video frame-server, not a second renderer or clock. The
+// renderer's device (Renderer::mediaDevice) is taken by the first engine and
+// dropped with the last one, together with the CoreMedia 709 pass's GPU
+// objects: hidden, failed and parked movies keep only retained poster
+// textures, so a closed HUD can release its device. Media
 // Engine owns its asynchronous codec/audio pipeline; this facade adds no thread,
 // timer, window, file watcher or polling task. Call sample() only from the shared
 // presentation clock while requiresFrames(), or once after an accepted notice.

@@ -251,8 +251,14 @@ int Application::Impl::runIdleTrace(){
     configuration.set("ambientAnimation",true);configurationPending=true;applyConfiguration(t);
     prewarm();if(utility){utility->waitIdle();if(longWork)longWork->waitIdle();utilityCompleted();}
     // The closed HUD's graphics are released after the grace (production
-    // host deadline): the closed windows start once it passed.
-    pump(closedGraphicsGrace+1,{});
+    // host deadline, ten minutes; the trace may shorten it): the closed
+    // windows and the first opening follow a close of closedFor seconds,
+    // just past the grace unless the trace asks for a shorter close (a
+    // closed HUD that still keeps its device, and a warm opening).
+    const double grace=closedGraphicsGrace(),closedFor=args.idleTraceClosedSeconds.value_or(grace+1);const bool releaseExpected=closedFor>grace;
+    need(std::isfinite(closedFor)&&closedFor>=1&&(!releaseExpected||closedFor>=grace+.5),"The traced close is past the grace by half a second, or within it");
+    const auto deviceAlive=[&]{const auto s=renderer.stats();return std::int64_t(s.devicesCreated-std::min(s.devicesCreated,s.devicesDestroyed));};
+    pump(closedFor,{});
     Json::Array windows;
     const auto measure=[&](const char*name){
         const auto snapshot=[&]{return Snapshot{renderer.stats(),renderer.sourceGraphicsStats(),rasterizer.stats(),session->frameStats(),session->stats()};};
@@ -304,6 +310,9 @@ int Application::Impl::runIdleTrace(){
             {"stages",std::move(stages)},{"owners",std::move(owners)},{"uploads",counters(before,after)},{"changingDraws",std::move(changing)},
             {"graphics",Json::Object{{"deviceSuspended",after.renderer.deviceSuspended},{"suspendedCopyBytes",std::int64_t(after.renderer.suspendedCopyBytes)},
                 {"deviceSuspensions",std::int64_t(after.renderer.deviceSuspensions)},{"deviceResumes",std::int64_t(after.renderer.deviceResumes)},
+                // Device objects alive (an outside holder keeps a suspended one alive) and the media holders.
+                {"devicesAlive",deviceAlive()},{"mediaDeviceLent",after.renderer.mediaDeviceLent},{"mediaTargets",std::int64_t(after.renderer.mediaTargets)},
+                {"notesVideoDeviceHeld",mediaBroker?mediaBroker->videoStats().deviceHeld:false},{"releaseRefused",idleGraphicsRefused},
                 {"privateBytes",std::int64_t(processUsage().privateBytes)}}},
             {"demand",Json::Object{{"phase",phases[static_cast<unsigned>(wanted.phase)]},{"finiteAnimation",wanted.finiteAnimation},{"ambientEnabled",wanted.ambientEnabled},
                 {"lowPower",wanted.lowPower},{"reduceMotion",wanted.reduceMotion},{"requesting",std::move(requesting)},{"finiteFramesBy",std::move(finiteFrames)}}}});
@@ -314,34 +323,77 @@ int Application::Impl::runIdleTrace(){
     const auto ambient=[&](bool on){configuration.set("ambientAnimation",on);configurationPending=true;applyConfiguration(clock());host.setFrameDemand(demand(clock()));host.invalidate();};
     const auto openHUD=[&]{perform(lifecycle.toggle(),clock());host.show(false);host.setFrameDemand(demand(clock()));pump(10,opened);need(opened(),"The traced HUD opened");};
     const auto closeHUD=[&]{perform(lifecycle.toggle(),clock());host.setFrameDemand(demand(clock()));host.invalidate();pump(10,closed);need(closed(),"The traced HUD closed");};
+    // An opening as the summon hotkey asks for it (OverlayController toggle):
+    // the time to its first frame and to the open phase.
+    struct Opening {double firstFrame{-1},opened{},resume{};std::uint64_t resumes{};};
+    const auto timedOpening=[&]{const auto before=renderer.stats();const auto frames=host.stats().frames;const auto at=OverlayHost::clockNow();Opening o;
+        perform(lifecycle.toggle(),clock());host.show(false);host.setFrameDemand(demand(clock()));
+        pump(10,[&]{if(o.firstFrame<0&&host.stats().frames!=frames)o.firstFrame=OverlayHost::clockNow()-at;return opened();});
+        need(opened(),"The traced HUD opened");const auto after=renderer.stats();
+        o.opened=OverlayHost::clockNow()-at;o.resume=after.deviceResumeSeconds-before.deviceResumeSeconds;o.resumes=after.deviceResumes-before.deviceResumes;return o;};
     measure("closed-after-launch");
-    // The opening after a long close: the device and presentation come back
-    // first (Renderer::resumeDevice), then the first frame.
-    const auto resumedBefore=renderer.stats().deviceResumeSeconds;const auto framesBefore=host.stats().frames;
-    const auto openedAt=OverlayHost::clockNow();double firstFrameSeconds{-1};
-    perform(lifecycle.toggle(),clock());host.show(false);host.setFrameDemand(demand(clock()));
-    pump(10,[&]{if(firstFrameSeconds<0&&host.stats().frames!=framesBefore)firstFrameSeconds=OverlayHost::clockNow()-openedAt;return opened();});
-    need(opened(),"The traced HUD opened");
-    const double openingSeconds=OverlayHost::clockNow()-openedAt,resumeSeconds=renderer.stats().deviceResumeSeconds-resumedBefore;
+    // The opening after that close: a released device comes back first
+    // (prepared on a worker at the opening, Renderer::resumeDevice), then
+    // the first frame; within the grace it is a warm opening.
+    const auto first=timedOpening();
+    need(first.resumes==(releaseExpected?1u:0u),releaseExpected?"The opening after a long close creates the device again":"An opening within the grace keeps the device");
     pump(2,{});measure("open-idle-ambient-on");
     ambient(false);pump(2,{});measure("open-idle-ambient-off");
     ambient(true);pump(1,{});
-    closeHUD();pump(closedGraphicsGrace+1,{});measure("closed");
+    closeHUD();pump(closedFor,{});measure("closed");
+    // The reopening after that close (of closedFor seconds and the closed
+    // window): past the grace it creates the device again, within the grace
+    // it is as warm as a quick reopening.
+    need(renderer.deviceSuspended()==releaseExpected&&(!releaseExpected||deviceAlive()==0),
+         releaseExpected?"After the grace the closed HUD's device is released and destroyed (no media owner keeps it)":"Within the grace the closed HUD keeps its device");
+    const auto reopening=timedOpening();
+    need(reopening.resumes==(releaseExpected?1u:0u),releaseExpected?"The reopening after a long close creates the device again":"A reopening within the grace keeps the device");
+    Json::Object anticipated,refusal,discard;
+    if(releaseExpected){
+        closeHUD();pump(closedFor,{});need(renderer.deviceSuspended(),"The device is released again after the grace");
+        // The tray icon pointed at: the device is created on a worker while
+        // the menu is used (a few hundred milliseconds), then the opening.
+        prepareGraphics(true);need(renderer.devicePrepared()&&preparedGraphicsUntil.has_value(),"Pointing at the tray icon prepares the released device");
+        pump(.35,{});const auto early=timedOpening();
+        need(early.resumes==1&&!preparedGraphicsUntil,"The anticipated opening takes the prepared device");
+        anticipated=Json::Object{{"firstFrameSeconds",early.firstFrame},{"openedSeconds",early.opened},{"deviceResumeSeconds",early.resume},{"anticipationSeconds",.35}};
+        // A media owner still holding the device at the deadline (a movie
+        // playing, an edit pass) refuses the release; it follows shortly
+        // after the owner lets go. (Same-device media exists with the shared
+        // media stack.)
+        closeHUD();
+        if(mediaBroker){auto lease=renderer.mediaDevice();pump(grace+1,{});
+            need(!renderer.deviceSuspended()&&idleGraphicsRefused&&renderer.stats().mediaDeviceLent,"A media owner holding the device refuses the release");
+            const auto letGo=OverlayHost::clockNow();lease.reset();scheduleDeadline(); // the owner's event ends with the host's scheduling
+            pump(std::min(closedGraphicsRelease,grace)+1.5,[&]{return renderer.deviceSuspended();});
+            need(renderer.deviceSuspended()&&deviceAlive()==0,"Once the media owner let go the device is released");
+            refusal=Json::Object{{"refusedAtGrace",true},{"releasedSecondsAfterLetGo",OverlayHost::clockNow()-letGo}};}
+        else{pump(grace+1,{});need(renderer.deviceSuspended(),"The closed HUD's device is released again after the grace");}
+        // The tray icon pointed at without an opening: the prepared device
+        // is discarded, so no device stays alive in the closed HUD.
+        const auto discards=renderer.stats().preparedDeviceDiscards;prepareGraphics(true);need(renderer.devicePrepared(),"Pointing at the tray icon prepares the device");
+        pump(preparedGraphicsLifetime+1,[&]{return !renderer.devicePrepared();});
+        need(!renderer.devicePrepared()&&renderer.stats().preparedDeviceDiscards==discards+1&&renderer.deviceSuspended()&&deviceAlive()==0,"An anticipated device no opening took is discarded");
+        discard=Json::Object{{"discarded",true},{"lifetimeSeconds",preparedGraphicsLifetime}};
+        openHUD();
+    }
     // A reopening within the grace keeps the device and the presentation.
-    openHUD();closeHUD();pump(1,{});
-    const auto warmResumes=renderer.stats().deviceResumes;const auto warmFrames=host.stats().frames;const auto warmAt=OverlayHost::clockNow();double warmFirstFrame{-1};
-    perform(lifecycle.toggle(),clock());host.show(false);host.setFrameDemand(demand(clock()));
-    pump(10,[&]{if(warmFirstFrame<0&&host.stats().frames!=warmFrames)warmFirstFrame=OverlayHost::clockNow()-warmAt;return opened();});
-    need(opened()&&renderer.stats().deviceResumes==warmResumes,"A reopening within the grace keeps the device");
+    closeHUD();pump(1,{});
+    const auto warm=timedOpening();
+    need(warm.resumes==0,"A reopening within the grace keeps the device");
     closeHUD();pump(1,{});
     const auto stats=host.stats();
-    const Json report=Json::Object{{"schema",1},
+    const Json report=Json::Object{{"schema",2},
         {"scope","EndfieldHUD hidden idle trace: wake-ups, CPU and frames per window on the real clock through the production frame scheduling; numbers, owner and system module names only"},
         {"device",renderer.deviceInfo().name},{"warp",args.warp},{"refreshHz",stats.refreshRate},{"logicalWidth",metrics.width},{"logicalHeight",metrics.height},
-        {"openingSeconds",openingSeconds},{"openingFirstFrameSeconds",firstFrameSeconds},{"openingDeviceResumeSeconds",resumeSeconds},
+        {"closedGraphicsGraceSeconds",grace},{"productionClosedGraphicsGraceSeconds",closedGraphicsGraceSeconds},{"closedSeconds",closedFor},{"releaseExpected",releaseExpected},
+        {"sharedMedia",bool(mediaBroker)},
+        {"openingSeconds",first.opened},{"openingFirstFrameSeconds",first.firstFrame},{"openingDeviceResumeSeconds",first.resume},
         {"deviceResume",Json::Object{{"resumes",std::int64_t(renderer.stats().deviceResumes)},{"deviceSeconds",renderer.stats().deviceCreateSeconds},{"programSeconds",renderer.stats().pipelineCreateSeconds},
             {"resourceSeconds",renderer.stats().resourceRestoreSeconds},{"sourceSeconds",renderer.stats().sourceRestoreSeconds}}},
-        {"quickReopeningFirstFrameSeconds",warmFirstFrame},{"windows",std::move(windows)}};
+        {"reopeningAfterClose",Json::Object{{"closedSeconds",closedFor+seconds},{"firstFrameSeconds",reopening.firstFrame},{"openedSeconds",reopening.opened},{"deviceResumeSeconds",reopening.resume},{"deviceResumes",std::int64_t(reopening.resumes)}}},
+        {"anticipatedOpening",std::move(anticipated)},{"mediaRefusal",std::move(refusal)},{"anticipationDiscard",std::move(discard)},
+        {"quickReopeningFirstFrameSeconds",warm.firstFrame},{"windows",std::move(windows)}};
     const std::size_t bound=8*1024*1024;ehud::data::detail::replaceFile(args.idleTrace,std::nullopt,report.encode(bound),bound);
     std::cout<<"Wrote hidden idle trace\n";
     shutdownVisible();

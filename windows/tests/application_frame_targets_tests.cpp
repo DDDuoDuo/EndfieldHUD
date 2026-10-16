@@ -202,6 +202,30 @@ void suspensionLease(const wchar_t* shader) {
     check(lease && !renderer.deviceSuspended(), "A media owner asking for the device creates it again");
     lease.reset(); renderer.reset();
 }
+// The closed HUD's device object really goes (Application::Impl::
+// releaseIdleGraphics): the renderer counts the devices it created and those
+// destroyed, so an outside holder that is no lease shows; a device prepared
+// for an anticipated opening that did not come is discarded.
+void deviceLifetime(const wchar_t* shader) {
+    Window window; gpu::Renderer renderer;
+    renderer.initialize(window.handle, 16, 16, {gpu::Driver::warpForTests, shader, gpu::RenderTarget::offscreenForTests, true});
+    check(renderer.stats().devicesCreated == 1 && renderer.stats().devicesDestroyed == 0 && renderer.deviceReleasable(), "One device alive after initialize, releasable");
+    check(renderer.suspendDevice() && renderer.stats().devicesDestroyed == 1 && !renderer.deviceReleasable(), "The suspension destroys the device object");
+    check(renderer.prepareDevice() && renderer.devicePrepared() && renderer.discardPreparedDevice() && !renderer.devicePrepared() && !renderer.discardPreparedDevice(),
+          "A prepared device no opening took is discarded, once");
+    check(renderer.deviceSuspended() && renderer.stats().preparedDeviceDiscards == 1 && renderer.stats().devicesCreated == 1, "The discard leaves the renderer suspended");
+    check(renderer.prepareDevice() && renderer.resumeDevice() && !renderer.devicePrepared() && renderer.stats().devicesCreated == 2, "A later preparation is taken by the resumption");
+    auto lease = renderer.mediaDevice();
+    check(!renderer.deviceReleasable() && renderer.stats().mediaDeviceLent && renderer.stats().mediaDeviceLeases == 1 && renderer.mediaDevice() == lease, "A lent device is not releasable");
+    // A reference kept past the lease (what a media pass's ComPtr did): the
+    // renderer cannot see it, the accounting does.
+    auto* outside = static_cast<IUnknown*>(lease.get()); outside->AddRef(); lease.reset();
+    check(renderer.deviceReleasable() && !renderer.stats().mediaDeviceLent && renderer.suspendDevice() && renderer.stats().devicesDestroyed == 1,
+          "Released by the renderer, the device stays alive while an outside reference holds it");
+    outside->Release();
+    check(renderer.stats().devicesDestroyed == 2, "The device goes with the last outside reference");
+    renderer.reset();
+}
 } // namespace
 
 int wmain(int argc, wchar_t** argv) {
@@ -217,6 +241,7 @@ int wmain(int argc, wchar_t** argv) {
             renderer.reset();
         }
         suspensionLease(argv[1]);
+        deviceLifetime(argv[1]);
         CoUninitialize();
         std::cout << "application_frame_targets_contracts: " << checks << " checks passed\n";
         return 0;

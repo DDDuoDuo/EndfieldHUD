@@ -307,19 +307,34 @@ struct Application::Impl {
     // --- memory trace (app/application_memory.cpp) --------------------------------
     int runMemoryTrace();       // hidden --memory-trace: launch, cold opening, every module, closing, cycles
     void releaseConcealedGraphics(); // after the overlayConcealed broadcast: publish, release frame targets, trim
-    // A HUD that stays closed for closedGraphicsGrace seconds releases its
-    // swap chain, composition target and graphics device (Renderer::
-    // releasePresentation / suspendDevice: an idle NVIDIA device keeps a
-    // driver thread waking ~70 times a second); the next opening creates
-    // them again before its first frame. Closings shorter than the grace
-    // (quick toggles, the lifecycle cycles, the warm reopening) keep them.
-    static constexpr double closedGraphicsGrace = 5;
+    // A HUD that stays closed for closedGraphicsGrace() seconds (ten minutes,
+    // app/application.hpp closedGraphicsGraceSeconds; hidden traces shorten
+    // it) releases its swap chain, composition target and graphics device
+    // (Renderer::releasePresentation / suspendDevice: an idle NVIDIA device
+    // keeps a driver thread waking ~70 times a second); the next opening
+    // creates them again before its first frame. Every reopening within the
+    // grace keeps them and is as fast as before.
+    double closedGraphicsGrace() const noexcept { return args.closedGraphicsGrace; }
+    // After the grace: the device went and a call that needed the GPU while
+    // the HUD stays closed created it again (a profile feed's captions, an
+    // anticipated opening that did not come), or a media owner that held it
+    // at the deadline (Renderer::mediaDevice) let go. The HUD has been closed
+    // for the whole grace already, so it goes again after this short delay.
+    static constexpr double closedGraphicsRelease = 5;
     std::optional<double> graphicsIdleAt;
-    // This closed state already tried (and whether the device was released;
-    // a call that needed the GPU while closed, e.g. a profile feed's
-    // captions, creates it again and re-arms the grace). Reset by open().
-    bool idleGraphicsAttempted{}, idleDeviceSuspended{};
+    // This closed state already tried, whether the device was released, and
+    // whether a media owner refused it (retried once it lets go). Reset by open().
+    bool idleGraphicsAttempted{}, idleDeviceSuspended{}, idleGraphicsRefused{};
     void releaseIdleGraphics(double time);
+    // An opening was asked for (anticipated: the tray icon was pointed at or
+    // pressed, which precedes an opening from its menu): a released device
+    // starts being created on a worker at once (Renderer::prepareDevice), so
+    // the first frame finds it ready or nearly. An anticipated device no
+    // opening took within preparedGraphicsLifetime is discarded, so a
+    // pointer passing over the tray never leaves a closed HUD's device alive.
+    void prepareGraphics(bool anticipated);
+    static constexpr double preparedGraphicsLifetime = 15;
+    std::optional<double> preparedGraphicsUntil;
     // Frame scheduling runs on the live clock: visible modes and the hidden
     // idle trace (owner deadlines, content refreshes).
     bool liveScheduling() const noexcept { return visibleMode() || !args.idleTrace.empty(); }

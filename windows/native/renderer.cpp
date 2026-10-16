@@ -342,6 +342,23 @@ struct RetainedMediaBytes {
     std::shared_ptr<MediaBudget>budget;std::size_t bytes{};
     ~RetainedMediaBytes(){if(budget)budget->bytes.fetch_sub(bytes,std::memory_order_relaxed);}
 };
+// The D3D11 devices this renderer created, and those actually destroyed: a
+// device releases its private data interfaces when its last reference goes
+// (on whichever thread drops it), so a suspension that leaves a hidden holder
+// (a media pass's ComPtr, a Media Foundation device manager) shows as a
+// device still alive, whose driver thread keeps waking the process.
+struct DeviceLifetimes {std::atomic<std::uint64_t>created{},destroyed{};};
+class DeviceSentinel final:public IUnknown {
+    std::atomic<ULONG>refs_{1};std::shared_ptr<DeviceLifetimes>lifetimes_;
+public:explicit DeviceSentinel(std::shared_ptr<DeviceLifetimes>lifetimes):lifetimes_(std::move(lifetimes)){}
+    // Counted once the device holds it (its creation was counted then).
+    std::atomic<bool>armed{};
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID id,void**out)override{if(!out)return E_POINTER;*out=nullptr;if(id!=__uuidof(IUnknown))return E_NOINTERFACE;*out=static_cast<IUnknown*>(this);AddRef();return S_OK;}
+    ULONG STDMETHODCALLTYPE AddRef()override{return ++refs_;}
+    ULONG STDMETHODCALLTYPE Release()override{const auto left=--refs_;if(!left){if(armed.load())lifetimes_->destroyed.fetch_add(1,std::memory_order_relaxed);delete this;}return left;}
+};
+// {6F1D3B52-6C07-4E4B-9C2E-0B7A5D4E2A91}
+constexpr GUID deviceSentinelID{0x6f1d3b52,0x6c07,0x4e4b,{0x9c,0x2e,0x0b,0x7a,0x5d,0x4e,0x2a,0x91}};
 }
 struct RendererMediaTexture::Impl {
     std::string id;unsigned width{},height{};std::size_t bytes{};
@@ -501,6 +518,7 @@ struct Renderer::Impl {
     struct CreatedDevice { ComPtr<ID3D11Device> device; ComPtr<ID3D11DeviceContext> context; };
     std::future<CreatedDevice> creating;
     int gpuThreadPriority{};
+    std::shared_ptr<DeviceLifetimes> lifetimes = std::make_shared<DeviceLifetimes>();
     static CreatedDevice makeDevice(const RendererOptions& options) {
         const D3D_FEATURE_LEVEL levels[]{D3D_FEATURE_LEVEL_11_0};
         // The explicit WARP fixture exercises owned texture conversion, not a
@@ -785,6 +803,8 @@ struct Renderer::Impl {
         // A device prepareDevice() started on a worker (its failure surfaces here).
         auto created = creating.valid() ? creating.get() : makeDevice(options);
         device = std::move(created.device); context = std::move(created.context);
+        {auto*sentinel=new DeviceSentinel(lifetimes);ComPtr<IUnknown>owned;owned.Attach(sentinel);
+         if(SUCCEEDED(device->SetPrivateDataInterface(deviceSentinelID,owned.Get()))){lifetimes->created.fetch_add(1,std::memory_order_relaxed);sentinel->armed.store(true);}}
         if(mediaVideo){ComPtr<ID3D10Multithread>multithread;checked(device.As(&multithread),"Enable shared media device thread protection");multithread->SetMultithreadProtected(TRUE);}
         ComPtr<IDXGIDevice1> dxgi;
         checked(device.As(&dxgi), "Get DXGI device");
@@ -1122,7 +1142,7 @@ std::shared_ptr<void>Renderer::mediaDevice()const{
     if(auto lent=r.lentDevice.lock())return lent;
     auto device=r.device;
     std::shared_ptr<void>lease(device.Detach(),[](void*p){static_cast<ID3D11Device*>(p)->Release();});
-    r.lentDevice=lease;return lease;
+    r.lentDevice=lease;++r.counters.mediaDeviceLeases;return lease;
 }
 std::shared_ptr<RendererMediaTexture>Renderer::createMediaTexture(std::string id,unsigned w,unsigned h){
     require(impl_&&impl_->mediaVideo,"Renderer was not initialized for same-device media");auto&r=*impl_;r.thread();identity(id);r.ensureDevice();
@@ -1656,12 +1676,26 @@ bool Renderer::resumeDevice() {
     r.resumeDevice(); return true;
 }
 bool Renderer::deviceSuspended() const noexcept { return impl_ && impl_->suspended; }
+bool Renderer::deviceReleasable() const noexcept {
+    if (!impl_) return false;
+    const auto& r = *impl_;
+    return !r.suspended && r.device && r.lentDevice.expired() && r.media.empty() && !r.compositionSuspended &&
+        !(r.compositionSurface && r.compositionSurface->impl_->observer);
+}
 bool Renderer::prepareDevice() {
     require(impl_ != nullptr, "Renderer is not initialized"); auto& r = *impl_; r.thread();
     if (!r.suspended || r.creating.valid()) return false;
     try { r.creating = std::async(std::launch::async, [options = r.options] { return Impl::makeDevice(options); }); }
     catch (const std::system_error&) { return false; } // no thread: the first GPU call creates it here
     ++r.counters.devicePreparations; return true;
+}
+bool Renderer::devicePrepared() const noexcept { return impl_ && impl_->creating.valid(); }
+bool Renderer::discardPreparedDevice() {
+    require(impl_ != nullptr, "Renderer is not initialized"); auto& r = *impl_; r.thread();
+    if (!r.creating.valid()) return false;
+    // Waits for a creation still running (the worker), then releases it.
+    try { (void)r.creating.get(); } catch (...) {}
+    ++r.counters.preparedDeviceDiscards; return true;
 }
 std::size_t Renderer::releaseHiddenGroupTargets() {
     require(impl_ != nullptr, "Renderer is not initialized"); auto& r = *impl_; r.thread();
@@ -1684,6 +1718,9 @@ RendererStats Renderer::stats() const noexcept {
     result.mediaTargets=impl_->media.size();result.mediaLiveBytes=impl_->mediaBudget->bytes.load(std::memory_order_relaxed);result.resourceBytes+=result.mediaLiveBytes;
     result.compositionSuspended=impl_->compositionSuspended;
     result.sourcePassEnabled=impl_->sourcePassEnabled;
+    result.mediaDeviceLent=!impl_->lentDevice.expired();
+    result.devicesCreated=impl_->lifetimes->created.load(std::memory_order_relaxed);
+    result.devicesDestroyed=impl_->lifetimes->destroyed.load(std::memory_order_relaxed);
     return result;
 }
 void Renderer::forEachDrawUpload(const std::function<void(std::string_view, std::uint64_t)>&visit) const {
