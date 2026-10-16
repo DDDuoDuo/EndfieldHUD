@@ -3277,7 +3277,7 @@ keeps the device).
 
 ### Test runs
 
-Laptop validation: pending
+Laptop validation (code at `09b0e12`): clean incremental Release build; **397 of 398** registered suites pass in the full interactive run, including `application_idle_trace`, `map_cutout_contracts`, `map_occlusion_contracts` and `notes_drawing_ink_contracts`. `packaging_perf_probe_contracts` failed once under memory pressure from a running game (working-set rise 19.5 MiB instead of the required 44 MiB with 165 MB of 15.8 GB free) and passed when rerun alone; recorded as intermittent under heavy memory pressure. Combined module coverage and hardware composition (1,271,498 checks) pass.
 
 New registered tests in this checkpoint: `notes_drawing_ink_contracts`,
 `map_cutout_contracts`, `map_occlusion_contracts` and
