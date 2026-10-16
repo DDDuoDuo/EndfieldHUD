@@ -23,10 +23,13 @@ data folder; none is a published release.
   Event Log and 3–4 ms for Media Assembly (hidden test). These copies are
   freed with the rest of the graphics after the HUD has been closed for ten
   minutes.
-- **Archive: switching back**: switching back to Archive inside the open
-  HUD took about 40–48 ms, because Archive built its document view again
-  (hidden test).
-  <!-- pending: archive switch-back numbers -->
+- **Archive: switching back is instant too**: Archive keeps its document,
+  its fields and its pictures while you visit another module inside the
+  open HUD. Switching back takes about 2–3 ms instead of about 45 ms, and
+  switching away under 1 ms instead of about 50 ms (hidden test). Your text
+  is saved when you switch, and the field you were typing in keeps its
+  caret when you come back (the Mac ends editing on a switch). Archive lets
+  go of all of it when the HUD closes.
 - **Archive costs nothing until you open it**: Archive is built the first
   time it shows. Launching and opening the HUD on another module no longer
   build about 3.4 MB of Archive pictures (hidden test).

@@ -3639,11 +3639,41 @@ offscreen, 1280 × 800):
 | Closed | 335.3 / 61.2 | 307.3 / 47.0 |
 | After 10 more cycles | 283.1 / 53.4 | 262.6 / 39.8 |
 
-**Archive switch back (in progress).** Archive's own switch back stays at
-40–48 ms because it rebuilds its document view on reactivation (86
-rasters); the renderer's restore takes 0.04 ms of it.
-<!-- pending: archive switch-back commit -->
-<!-- pending: archive switch-back numbers -->
+**Archive stands by while switched away (`470fc5a`).** With `f52b163`
+alone, Archive's switch back still cost 40–48 ms: every switch away ran the
+full deactivation (editing ended, the three field editors retired,
+`ArchiveState::deactivate`), the next frame built a gallery face for the
+outgoing pose (the switch away's own 48–57 ms), and the switch back
+reloaded the document, built new editors and built the document face again
+(86 rasters). The Mac keeps its canvas and never rebuilds it while hidden.
+`ArchivePreview::standby` now runs when another module is requested while
+the HUD stays visible: input, the text service focus, the open menu and
+media playback end; the text and pending saves are committed and *edited*
+is recorded (source `endEditors`); the face, the editors with their
+layouts and rasters (selection, scroll, undo), the loaded document and the
+gallery posters stay. The switch back restores the parked textures,
+reloads nothing and gives the text service focus back to the focused
+field. Closing the HUD (also a forced close) ends the stand-by the way a
+hidden Archive always ended. The adapter's selection release now commits
+instead of ending the editing, so a focused field keeps its formatting
+controls and its caret across a switch (a Windows difference: the Mac ends
+editing on a switch; marked text still defers the switch).
+`layer_switch_contracts` on WARP, three runs each:
+
+| Archive | Before | After `470fc5a` |
+| --- | --- | --- |
+| Switch away | 47.7–57.1 ms | 0.4–0.6 ms |
+| Switch back | 45.1–46.0 ms (86 rasters, 1 texture restored) | 2.2–3.0 ms (0 rasters, 6 textures restored in 0.1 ms) |
+| Switch back after the ten-minute release | 55.7–60.1 ms | 32.4–34.8 ms (6 surfaces painted again) |
+| Parked while away | 2.7 MiB | 6.0 MiB (released when the HUD closes) |
+
+Tests: `archive_preview_contracts` switches away and back three times with
+the body focused (nothing laid out or painted, the same retained scenes
+come back, the document and the focused field are kept, *edited* recorded
+once, the slowest owner frame of the switch back within a 60 Hz frame:
+1.7–2.5 ms best of three), then closes the HUD during the stand-by and
+reopens it; `archive_media_binding_contracts` keeps the gallery's six
+posters through a switch away and back.
 
 **Volume app icons on the shared utility queue (`3e06120`).** The built-in
 Volume owner had no icon source (Mac VolumeCanvas.renderAppIcon), because
@@ -3688,12 +3718,13 @@ was about 17 % slower.
 
 ### Test runs
 
-<!-- pending: checkpoint 134 validation -->
+Laptop validation (code at `470fc5a`): a clean incremental Release build (323 files, about 20.5 min); all **401** registered suites pass in the full interactive run (including the new `layer_switch_contracts` and `application_volume_icons_contracts`, the Archive suites and `packaging_perf_probe_contracts` on the first run). Combined module coverage (10 of 14 module areas constructed, each with its context, every shared event, its coverage steps and one release) and hardware composition (2,058,114 checks) pass. 46 unique warning locations (42 in checkpoint 133; the new ones are C4456/C4457 shadowing in `layer_raster.cpp`, `perf_gate_tests.cpp`, `native_renderer_tests.cpp`, `application_verification.cpp` and the recompiled `notes_text_measure.cpp`).
 
 New registered tests in this checkpoint: `application_volume_icons_contracts`
 and `layer_switch_contracts`. Per-commit laptop slots are quoted above
 (`6652287`, `74879a9`, `3e06120`, `8815446` and `f52b163` record none in
-their messages).
+their messages; `470fc5a` passed its 14 Archive, switch and owner suites
+plus `application_memory_trace` in its slot).
 
 ### Corrections to the entries above
 
@@ -3710,9 +3741,11 @@ their messages).
 
 ### Open items
 
-- Archive: switching back inside the open HUD costs 40–48 ms (its
-  document-view rebuild); the fix is in progress.
-  <!-- pending: archive switch-back numbers -->
+- Archive: clicking right of a line's text does not move the caret to the
+  line's end (the Mac does); found while writing the stand-by test, which
+  places the caret explicitly.
+- Archive: a switch back after the ten-minute graphics release paints its
+  six surfaces again (32–35 ms).
 - Map: about 18.2 MB of CPU images stay while the HUD is closed on another
   module (its textures are 10.7 MiB since `74879a9`).
 - Projection: redrawing a very long stroke at pen-up still takes 13–15 ms.
