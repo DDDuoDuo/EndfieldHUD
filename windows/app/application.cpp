@@ -285,9 +285,12 @@ VolumeModuleHooks Application::Impl::screenHooks(){
 }
 
 void Application::Impl::construct(){
-    // The closed HUD's graphics grace: production keeps the ten minutes.
+    // The closed HUD's graphics grace: production keeps the ten minutes,
+    // except an isolated --data-root run (the section 9 gate) that asked for
+    // a shorter one through ENDFIELDHUD_CLOSED_GRAPHICS_GRACE (app/main.cpp).
     need(std::isfinite(args.closedGraphicsGrace)&&args.closedGraphicsGrace>=1&&args.closedGraphicsGrace<=86400&&
-         (!production()||args.closedGraphicsGrace==closedGraphicsGraceSeconds),"The closed graphics grace is 1 s...1 day, ten minutes in production");
+         (!production()||args.isolatedDataRoot||args.closedGraphicsGrace==closedGraphicsGraceSeconds),
+         "The closed graphics grace is 1 s...1 day, ten minutes in production outside an isolated data root");
     if(!args.watchBlur.empty())backdropAnimation=loadWatchBlur(args.watchBlur);startup.mark("original-backdrop-animation");
     if(args.runtimeInput){runtime=std::make_unique<source::WatchRuntimeInput>(args.packet,[&](std::string_view name){const std::string label(name);startup.mark(label.c_str());});}
     else {

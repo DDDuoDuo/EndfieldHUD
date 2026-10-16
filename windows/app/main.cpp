@@ -35,9 +35,11 @@
 #include "core/resource_locator.hpp"
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <ctime>
+#include <cwchar>
 #include <functional>
 #include <optional>
 #include <iostream>
@@ -270,6 +272,25 @@ int run(const std::vector<std::string>& values) {
         runArguments.startup = startup;
         auto options = productionOptions(package, root->data, runArguments);
         options.isolatedDataRoot = !isolated.empty();
+        // Section 9 gate only: ENDFIELDHUD_CLOSED_GRAPHICS_GRACE=<seconds>
+        // (1...3600) shortens the closed HUD's graphics grace (ten minutes,
+        // app/application.hpp closedGraphicsGraceSeconds), so the gate can
+        // measure the closed HUD after its device was released without
+        // waiting ten minutes. Honoured only with --data-root (an isolated
+        // temporary root); every other run keeps the production grace.
+        if (!isolated.empty()) {
+            wchar_t text[32]{};
+            const auto length = GetEnvironmentVariableW(L"ENDFIELDHUD_CLOSED_GRAPHICS_GRACE", text, 32);
+            if (length) {
+                wchar_t* end{};
+                const double seconds = length < 32 ? std::wcstod(text, &end) : 0.0;
+                if (length >= 32 || end != text + length || !std::isfinite(seconds) || seconds < 1 || seconds > 3600) {
+                    report("EndfieldHUD received invalid launch arguments.", "EndfieldHUD 收到了无效的启动参数。");
+                    return 1;
+                }
+                options.closedGraphicsGrace = seconds;
+            }
+        }
         options.reopenModule = reopen;
         // Opt-in timing trace (numbers only): ENDFIELDHUD_STARTUP_TRACE=1 writes
         // Diagnostics/startup-trace.json in the data root once both traced

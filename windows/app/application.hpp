@@ -69,7 +69,9 @@ using ApplicationModuleFactory = std::function<std::unique_ptr<ModuleOwner>(cons
 // as fast as before, and only the first opening after a long absence creates
 // the device again (D3D11CreateDevice 110-230 ms on the laptop, started on a
 // worker as soon as the opening is asked for). Hidden traces and tests may
-// shorten it (ApplicationOptions::closedGraphicsGrace); production keeps it.
+// shorten it (ApplicationOptions::closedGraphicsGrace), and so may the
+// section 9 gate in an isolated --data-root run (ENDFIELDHUD_CLOSED_GRAPHICS_
+// GRACE, app/main.cpp); production keeps it.
 inline constexpr double closedGraphicsGraceSeconds = 600;
 
 enum class ApplicationMode {
@@ -164,7 +166,8 @@ struct ApplicationOptions {
     // and before its first opening (unset: just past the grace, so they
     // measure the released device; shorter: a closed HUD that still keeps it).
     std::optional<double> idleTraceClosedSeconds;
-    // closedGraphicsGraceSeconds, shortened only by hidden traces and tests.
+    // closedGraphicsGraceSeconds, shortened only by hidden traces, tests and
+    // the section 9 gate's isolated --data-root runs (isolatedDataRoot).
     double closedGraphicsGrace{closedGraphicsGraceSeconds};
 };
 
