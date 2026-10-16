@@ -1737,10 +1737,14 @@ void Application::Impl::prewarm(){
 }
 bool Application::Impl::present(double time,bool submit){
     const auto traceFrameStart=readerTrace?Clock::now():Clock::time_point{};
-    // Frame start: wait (bounded) until the swap chain accepts a frame, so
-    // input and time are sampled after it and Present never blocks behind a
-    // GPU that a game saturates. Offscreen targets return at once.
-    if(submit&&visibleMode()&&!projectionShown())(void)renderer.waitForPresentation(50);
+    // Frame start: the swap chain accepts this frame, so input and time are
+    // sampled after it and Present neither blocks behind a GPU that a game
+    // saturates nor queues frames ahead of the display. The host's pump
+    // normally took that admission while it dispatched input (the wait below
+    // then returns at once); a frame run from a nested modal loop waits here,
+    // bounded. Projection frames too: without it they outran the display and
+    // queued ~35 frames (200 ms) behind the pointer. Offscreen returns at once.
+    if(submit&&visibleMode())(void)renderer.waitForPresentation(50);
     time=hostTime(time);
     if(projectionShown()){
         projectionPainting=true;try{mediaBroker->sample(time);(void)projectionCall("frame",[&]{projection->mediaChanged(hostTime(time));projection->render(hostTime(time),submit);});projectionPainting=false;}catch(...){projectionPainting=false;throw;}return true;
@@ -2109,6 +2113,7 @@ void Application::Impl::projectionFailed(){
     try{projectionDropRoute(false,time);}catch(...){}
     if(projection){
         bool closed{};try{projection->close(time);closed=true;}catch(...){}
+        presentationPriority.restore();
         if(areaHost)areaHost->withdraw(endfield::notes::projectionWorkspaceService);
         if(closed)projection.reset();
         else{
@@ -2164,17 +2169,20 @@ void Application::Impl::projectionCommand(const ProjectionHandoff::Command&comma
         try{shown=projectionCall("show",[&]{projection->resize(metrics,projectionWorkTopPixels/metrics.scale);projection->show(projectionOptions(),std::move(binding),hostTime(time));});
             if(shown)projectionDropRoute(true,time);projectionPainting=false;}
         catch(...){projectionPainting=false;projectionHandoff.cancel();throw;}
+        // Projection draws over the game the HUD was summoned over: its frames
+        // schedule ahead of the game's as the shown HUD's do (open()).
+        if(shown&&visibleMode())presentationPriority.raise(&renderer);
         automationChanged();refresh(now());break;
     }
     case A::closeProjection:projectionDropRoute(false,time);cancelProjectionPicker();(void)projectionCall("dismiss",[&]{projection->dismiss(hostTime(time),settings.reduceMotion);});automationChanged();refresh(time);break;
-    case A::showHUD:projectionDropRoute(false,time);(void)projectionCall("close",[&]{projection->close(hostTime(time));});automationChanged();published.clear();publishedNotesRevision=0;setProjectionActive(false,time);perform(lifecycle.openOverlay(),time);break;
-    case A::external:{projectionDropRoute(false,time);(void)projectionCall("close",[&]{projection->close(hostTime(time));});automationChanged();published.clear();publishedNotesRevision=0;setProjectionActive(false,time);
+    case A::showHUD:projectionDropRoute(false,time);(void)projectionCall("close",[&]{projection->close(hostTime(time));});presentationPriority.restore();automationChanged();published.clear();publishedNotesRevision=0;setProjectionActive(false,time);perform(lifecycle.openOverlay(),time);break;
+    case A::external:{projectionDropRoute(false,time);(void)projectionCall("close",[&]{projection->close(hostTime(time));});presentationPriority.restore();automationChanged();published.clear();publishedNotesRevision=0;setProjectionActive(false,time);
         const auto action=command.externalID?static_cast<gpu::TrayAction>(*command.externalID):gpu::TrayAction::openOverlay;
         if(action==gpu::TrayAction::quit){perform(lifecycle.requestTermination(),time);break;}
         trayAction(action==gpu::TrayAction::none?gpu::TrayAction::openOverlay:action,false,time);
         break;
     }
-    case A::closeImmediately:projectionDropRoute(false,time);cancelProjectionPicker();(void)projectionCall("close",[&]{projection->close(hostTime(time));});automationChanged();published.clear();publishedNotesRevision=0;setProjectionActive(false,time);break;
+    case A::closeImmediately:projectionDropRoute(false,time);cancelProjectionPicker();(void)projectionCall("close",[&]{projection->close(hostTime(time));});presentationPriority.restore();automationChanged();published.clear();publishedNotesRevision=0;setProjectionActive(false,time);break;
     }
 }
 } // namespace endfield::app

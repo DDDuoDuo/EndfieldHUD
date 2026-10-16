@@ -85,6 +85,7 @@ public:
     bool setAutomationValue(std::string_view id,double value,double time); // color wheel
     void upload(native::Renderer&);
     std::span<const native::LayerCompositionEntry>entries();
+    native::ProjectionInkStats inkStats()const noexcept; // diagnostics
     void collected(native::Renderer&);void release(native::Renderer&);
 private:struct Impl;std::shared_ptr<Impl>impl_;
 };

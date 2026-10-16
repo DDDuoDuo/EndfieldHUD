@@ -2,6 +2,11 @@
 # drew nothing): real mouse messages on the shown OverlayHost window, the
 # Application's Projection capture policy, the shared ProjectionWorkspace with
 # its composition renderer and backdrop, and a renderer readback of the stroke.
+# It then draws through the host's own pump with the production frame path
+# (the swap chain's admission) and checks the drawing latency contract: each
+# burst of samples is drawn by one frame, the very next one presented, which
+# holds the admission (RC 128 queued ~35 frames, 200 ms at 165 Hz); the stroke
+# keeps every sample; an idle workspace presents nothing.
 # Composition swap chains need an interactive desktop session: in the SSH test
 # session the test exits 77 and ctest reports it skipped. Run it from an
 # Interactive scheduled task, as the integration validator runs ctest.

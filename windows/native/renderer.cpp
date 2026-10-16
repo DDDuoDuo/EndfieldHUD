@@ -47,6 +47,12 @@ void dimensions(std::uint32_t width, std::uint32_t height) {
             std::uint64_t(width) * height <= Renderer::maximumRenderPixels, "Render dimensions exceed bounds");
 }
 void identity(const std::string &id) { require(!id.empty() && id.size() <= 512, "Invalid retained source ID"); }
+// QueryPerformanceCounter seconds: the epoch of OverlayHost::clockNow.
+double qpcSeconds(LONGLONG ticks) {
+    static const double frequency = [] { LARGE_INTEGER value{}; QueryPerformanceFrequency(&value); return static_cast<double>(value.QuadPart); }();
+    return static_cast<double>(ticks) / frequency;
+}
+double qpcNow() { LARGE_INTEGER value{}; QueryPerformanceCounter(&value); return qpcSeconds(value.QuadPart); }
 const std::array<double, 256> &linearSRGBBytes() {
     static const auto values = [] {
         std::array<double, 256> result{};
@@ -378,6 +384,9 @@ struct Renderer::Impl {
     };
     struct Texture {
         ComPtr<ID3D11ShaderResourceView> view;
+        // An updatable texture keeps its resource for updateTexture().
+        ComPtr<ID3D11Texture2D> resource;
+        bool updatable{};TextureColorSpace colorSpace{TextureColorSpace::sRGB};std::uint32_t width{},height{};
         TextureFilter filter{};
         std::uint64_t revision{};
         std::size_t bytes{};
@@ -512,6 +521,15 @@ struct Renderer::Impl {
         if (frameLatency) CloseHandle(frameLatency);
     }
     void thread() const { require(GetCurrentThreadId() == ownerThread, "Renderer calls must stay on its creating UI thread"); }
+    void present(const char* operation) {
+        if (frameLatency && !frameAcquired) ++counters.unadmittedPresents;
+        const auto begin = qpcNow();
+        checked(swapchain->Present(1, 0), operation);
+        const auto end = qpcNow();
+        counters.presentSeconds += end - begin; counters.lastPresentReturned = end;
+        UINT count{}; if (SUCCEEDED(swapchain->GetLastPresentCount(&count))) counters.lastPresentCount = count;
+        ++counters.presents; frameAcquired = false;
+    }
     void budget(std::size_t oldBytes, std::size_t newBytes) const {
         require(newBytes <= Renderer::maximumResourceBytes &&
                 counters.resourceBytes - oldBytes + mediaBudget->bytes.load(std::memory_order_relaxed) <= Renderer::maximumResourceBytes - newBytes,
@@ -530,7 +548,7 @@ struct Renderer::Impl {
             description.Width = input.width; description.Height = input.height;
             description.MipLevels = description.ArraySize = description.SampleDesc.Count = 1;
             description.Format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
-            description.Usage = D3D11_USAGE_IMMUTABLE;
+            description.Usage = input.updatable ? D3D11_USAGE_DEFAULT : D3D11_USAGE_IMMUTABLE;
             description.BindFlags = D3D11_BIND_SHADER_RESOURCE;
             D3D11_SUBRESOURCE_DATA pixels{};
             pixels.pSysMem = premultiplied.data(); pixels.SysMemPitch = input.width * 4;
@@ -539,6 +557,8 @@ struct Renderer::Impl {
             Texture result;
             checked(device->CreateShaderResourceView(resource.Get(), nullptr, &result.view), "Create retained texture view");
             result.filter = input.filter; result.revision = revision; result.bytes = premultiplied.size();
+            if (input.updatable) { result.resource = resource; result.updatable = true; }
+            result.colorSpace = input.colorSpace; result.width = input.width; result.height = input.height;
             return result;
         }
         std::vector<std::uint16_t> premultiplied(input.straightRGBA.size());
@@ -547,7 +567,7 @@ struct Renderer::Impl {
         description.Width = input.width; description.Height = input.height;
         description.MipLevels = description.ArraySize = description.SampleDesc.Count = 1;
         description.Format = DXGI_FORMAT_R16G16B16A16_UNORM;
-        description.Usage = D3D11_USAGE_IMMUTABLE;
+        description.Usage = input.updatable ? D3D11_USAGE_DEFAULT : D3D11_USAGE_IMMUTABLE;
         description.BindFlags = D3D11_BIND_SHADER_RESOURCE;
         D3D11_SUBRESOURCE_DATA pixels{};
         pixels.pSysMem = premultiplied.data(); pixels.SysMemPitch = input.width * 8;
@@ -557,6 +577,8 @@ struct Renderer::Impl {
         checked(device->CreateShaderResourceView(resource.Get(), nullptr, &result.view), "Create retained texture view");
         result.encodedSRGB=input.colorSpace==TextureColorSpace::encodedSRGB;
         result.filter = input.filter; result.revision = revision; result.bytes = premultiplied.size() * sizeof(std::uint16_t);
+        if (input.updatable) { result.resource = resource; result.updatable = true; }
+        result.colorSpace = input.colorSpace; result.width = input.width; result.height = input.height;
         return result;
     }
     void bindTargets() {
@@ -806,10 +828,39 @@ bool Renderer::setTexture(std::string sourceID, std::uint64_t revision, TextureD
     const auto previousBytes = existing == r.textures.end() ? 0 : existing->second.bytes;
     const auto nativeBytes = std::size_t(input.width) * input.height * (input.colorSpace == TextureColorSpace::sRGB ? 4 : 8);
     r.budget(previousBytes, nativeBytes);
+    const auto begin = qpcNow();
     auto texture = r.texture(input, revision);
+    r.counters.textureUploadSeconds += qpcNow() - begin;
     texture.owner = LayerRasterAttribution::current(); if (texture.owner.empty() && existing != r.textures.end()) texture.owner = std::move(existing->second.owner);
     auto updated=r.textures.insert_or_assign(std::move(sourceID), std::move(texture));r.invalidate(&updated.first->second);
     r.counters.resourceBytes = r.counters.resourceBytes - previousBytes + nativeBytes; ++r.counters.textureUploads;
+    return true;
+}
+bool Renderer::updateTexture(const std::string &sourceID, std::uint64_t revision, std::uint32_t x, std::uint32_t y, TextureData region) {
+    require(impl_ != nullptr, "Renderer is not initialized"); auto &r = *impl_; r.thread();
+    const auto found = r.textures.find(sourceID);
+    require(found != r.textures.end() && found->second.updatable && !found->second.groupOwned && !found->second.mediaOwned,
+        "Only an updatable texture installed by setTexture is painted in place");
+    auto &texture = found->second;
+    if (texture.revision == revision) return false;
+    require(region.width > 0 && region.height > 0 && x <= texture.width && y <= texture.height &&
+            region.width <= texture.width - x && region.height <= texture.height - y &&
+            std::uint64_t(region.width) * region.height * 4 == region.straightRGBA.size(), "Texture region lies outside its texture or has invalid RGBA8 dimensions");
+    require(region.colorSpace == texture.colorSpace, "A texture region keeps its texture's color space");
+    const auto begin = qpcNow();
+    const D3D11_BOX box{x, y, 0, x + region.width, y + region.height, 1};
+    if (texture.colorSpace == TextureColorSpace::sRGB) {
+        std::vector<std::uint8_t> premultiplied(region.straightRGBA.size());
+        detail::prepareTextureSRGB8(region.straightRGBA, premultiplied);
+        r.context->UpdateSubresource(texture.resource.Get(), 0, &box, premultiplied.data(), region.width * 4, 0);
+    } else {
+        std::vector<std::uint16_t> premultiplied(region.straightRGBA.size());
+        detail::prepareTextureRGBA16(region.straightRGBA, region.colorSpace, premultiplied);
+        r.context->UpdateSubresource(texture.resource.Get(), 0, &box, premultiplied.data(), region.width * 8, 0);
+    }
+    texture.revision = revision; r.invalidate(&texture);
+    ++r.counters.textureRegionUploads; r.counters.textureRegionBytes += region.straightRGBA.size();
+    r.counters.textureUploadSeconds += qpcNow() - begin;
     return true;
 }
 std::shared_ptr<void>Renderer::mediaDevice()const{
@@ -942,9 +993,10 @@ bool Renderer::Impl::assignDraws(std::vector<Draw>&activeDraws,std::vector<Objec
     return true;
 }
 void Renderer::setDrawList(std::span<const DrawObject>objects){
-    require(impl_!=nullptr,"Renderer is not initialized");auto&r=*impl_;r.thread();
+    require(impl_!=nullptr,"Renderer is not initialized");auto&r=*impl_;r.thread();const auto begin=qpcNow();
     try{(void)r.assignDraws(r.draws,r.stagedObjectValues,objects,false);}
     catch(const RendererError&){reset();throw;}
+    r.counters.drawListSeconds+=qpcNow()-begin;
 }
 bool Renderer::Impl::configureGroup(std::string id,const NativeGroupTarget&requested,
     std::optional<std::span<const DrawObject>>objects){
@@ -1093,13 +1145,16 @@ void Renderer::Impl::renderNativeDraws(std::span<const Draw>objects,ID3D11Render
 void Renderer::draw(bool present) {
     require(impl_ != nullptr, "Renderer is not initialized"); auto &r = *impl_; r.thread();
     require(!present || !r.offscreen, "An isolated render target cannot present to the desktop");
+    // CPU time of this draw, Present excluded (diagnostics; numbers only).
+    struct Timed { Impl& r; double begin{qpcNow()}, presented{r.counters.presentSeconds};
+        ~Timed() { r.counters.drawSeconds += qpcNow() - begin - (r.counters.presentSeconds - presented); } } timed{r};
     r.readbackReady = false;
     r.restoreFrameTargets();
     const bool originalBackground = r.sourcePassEnabled && r.source && r.source->active();
     if (originalBackground) {
         r.source->renderTo(r.backBuffer.Get(), r.width, r.height);
         if (r.draws.empty()) {
-            if (present) { checked(r.swapchain->Present(1, 0), "Present original HUD materials"); ++r.counters.presents; r.frameAcquired = false; }
+            if (present) r.present("Present original HUD materials");
             else r.readbackReady = true;
             return;
         }
@@ -1139,8 +1194,7 @@ void Renderer::draw(bool present) {
     r.context->PSSetShaderResources(0, 1, &emptyResource);
     r.context->OMSetRenderTargets(0, nullptr, nullptr);
     if (present) {
-        checked(r.swapchain->Present(1, 0), "Present HUD composition");
-        ++r.counters.presents; r.frameAcquired = false;
+        r.present("Present HUD composition");
     } else r.readbackReady = true;
 }
 bool Renderer::waitForPresentation(std::uint32_t timeoutMilliseconds) {
@@ -1153,6 +1207,15 @@ bool Renderer::waitForPresentation(std::uint32_t timeoutMilliseconds) {
     if (status == WAIT_OBJECT_0) { r.frameAcquired = true; return true; }
     ++r.counters.presentationWaitTimeouts;
     return false;
+}
+void* Renderer::presentationWaitable() const noexcept {
+    if (!impl_ || impl_->offscreen || !impl_->frameLatency) return nullptr;
+    return impl_->frameLatency;
+}
+bool Renderer::presentationHeld() const noexcept { return impl_ && impl_->frameAcquired; }
+void Renderer::presentationAdmitted() noexcept {
+    if (!impl_ || impl_->offscreen || !impl_->frameLatency || impl_->frameAcquired) return;
+    impl_->frameAcquired = true; ++impl_->counters.presentationAdmissions;
 }
 long Renderer::setGpuThreadPriority(int priority) noexcept {
     if (!impl_ || !impl_->device) return E_POINTER;
@@ -1169,6 +1232,14 @@ double Renderer::waitForGpuIdle() {
     while (r.context->GetData(r.gpuIdleQuery.Get(), &done, sizeof(done), 0) == S_FALSE) SwitchToThread();
     QueryPerformanceCounter(&now);
     return static_cast<double>(now.QuadPart - start.QuadPart) * 1000 / static_cast<double>(frequency.QuadPart);
+}
+std::optional<RendererFrameStatistics> Renderer::frameStatistics() const {
+    require(impl_ != nullptr, "Renderer is not initialized"); const auto &r = *impl_; r.thread();
+    if (r.offscreen || !r.swapchain) return {};
+    DXGI_FRAME_STATISTICS statistics{};
+    if (FAILED(r.swapchain->GetFrameStatistics(&statistics)) || !statistics.PresentCount) return {};
+    return RendererFrameStatistics{statistics.PresentCount, statistics.PresentRefreshCount, statistics.SyncRefreshCount,
+        qpcSeconds(statistics.SyncQPCTime.QuadPart)};
 }
 Readback Renderer::readback() {
     require(impl_ != nullptr, "Renderer is not initialized"); auto &r = *impl_; r.thread();

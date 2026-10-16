@@ -405,6 +405,40 @@ void run(HWND window, const std::filesystem::path &shader, bool composition, boo
     renderer.draw(false); image = renderer.readback();
     pixel(image, 16, 16, {188, 188, 188, 255}, 1, "Replacing an in-use linear texture updates retained draws without rebuilding them");
 
+    // Painted in place (the Projection ink tiles): an updatable texture keeps
+    // its identity and GPU resource while one rectangle of texels changes.
+    {
+        const std::array<std::uint8_t, 16> blank{};
+        const std::array<std::uint8_t, 4> green{0, 255, 0, 255};
+        const std::array<std::uint8_t, 8> twoGreen{0, 255, 0, 255, 0, 255, 0, 255};
+        check(renderer.setTexture("fixture.painted", 1, {2, 2, blank, TextureColorSpace::sRGB, TextureFilter::nearest, true}),
+              "An updatable texture installs like any other");
+        object.textureID = "fixture.painted"; renderer.setDrawList(std::span(&object, 1)); renderer.draw(false); image = renderer.readback();
+        pixel(image, 24, 8, {0, 0, 0, 0}, 0, "The updatable texture starts with its initial texels");
+        const auto before = renderer.stats();
+        check(renderer.updateTexture("fixture.painted", 2, 1, 0, {1, 1, green}), "One texel rectangle is painted in place");
+        check(!renderer.updateTexture("fixture.painted", 2, 1, 0, {1, 1, green}), "The same revision paints nothing again");
+        renderer.draw(false); image = renderer.readback();
+        pixel(image, 24, 8, {0, 255, 0, 255}, 1, "The retained draw shows the painted texel without being rebuilt");
+        pixel(image, 8, 8, {0, 0, 0, 0}, 0, "A texel outside the rectangle keeps its value");
+        pixel(image, 24, 24, {0, 0, 0, 0}, 0, "Another texel outside the rectangle keeps its value");
+        const auto after = renderer.stats();
+        check(after.textureUploads == before.textureUploads && after.textureRegionUploads == before.textureRegionUploads + 1 &&
+              after.textures == before.textures && after.resourceBytes == before.resourceBytes && after.objectUploads == before.objectUploads,
+              "Painting in place creates no texture, allocates no GPU bytes and rebinds no draw");
+        rejects([&] { renderer.updateTexture("fixture.painted", 3, 1, 1, {2, 1, twoGreen}); }, "A rectangle outside its texture rejects");
+        rejects([&] { renderer.updateTexture("fixture.painted", 3, 0, 0, {1, 1, std::span(green).first(3)}); }, "A malformed rectangle rejects");
+        rejects([&] { renderer.updateTexture("fixture.painted", 3, 0, 0, {1, 1, green, TextureColorSpace::linear}); }, "A rectangle keeps its texture's color space");
+        rejects([&] { renderer.updateTexture("fixture.gray", 3, 0, 0, {1, 1, green, TextureColorSpace::linear}); }, "An immutable texture is never painted in place");
+        rejects([&] { renderer.updateTexture("fixture.missing", 3, 0, 0, {1, 1, green}); }, "A missing texture is never painted");
+        renderer.draw(false); image = renderer.readback();
+        pixel(image, 24, 8, {0, 255, 0, 255}, 1, "Rejected rectangles leave the painted texels unchanged");
+        object.textureID = "fixture.gray"; renderer.setDrawList(std::span(&object, 1));
+        check(renderer.removeTexture("fixture.painted") && renderer.stats().resourceBytes == before.resourceBytes - 16, "An updatable texture retires like any other");
+    }
+    // The presentation gate: offscreen targets present nothing and need none.
+    if (!composition) check(renderer.presentationWaitable() == nullptr && !renderer.presentationHeld(), "An offscreen target has no presentation gate");
+
     auto red = object, blue = object;
     red.sourceID = "fixture.red"; blue.sourceID = "fixture.blue";
     red.textureID.clear(); blue.textureID.clear();
@@ -502,6 +536,20 @@ void run(HWND window, const std::filesystem::path &shader, bool composition, boo
         }
         check(renderer.stats().meshUploads == beforePresent.meshUploads && renderer.stats().textureUploads == beforePresent.textureUploads,
               "Consecutive composition flips retain their mesh and texture resources");
+        // A message loop's admission: the frame latency object admits one
+        // frame, which then presents without another wait or an unadmitted flip.
+        if (renderer.stats().frameLatencyWaitable) {
+            const auto handle = static_cast<HANDLE>(renderer.presentationWaitable());
+            check(handle != nullptr, "A composition swap chain offers its frame latency object to the message loop");
+            check(WaitForSingleObject(handle, 1000) == WAIT_OBJECT_0, "The frame latency object admits the next frame");
+            renderer.presentationAdmitted();
+            const auto admitted = renderer.stats();
+            check(renderer.presentationHeld() && admitted.presentationAdmissions == beforePresent.presentationAdmissions + 1 && renderer.waitForPresentation(0),
+                  "The admission belongs to the next frame, which needs no further wait");
+            renderer.draw(true);
+            check(!renderer.presentationHeld() && renderer.stats().unadmittedPresents == admitted.unadmittedPresents,
+                  "The admitted frame presents with its admission");
+        }
         check(!IsWindowVisible(window), "Nonempty composition submission never shows the test window");
     }
 

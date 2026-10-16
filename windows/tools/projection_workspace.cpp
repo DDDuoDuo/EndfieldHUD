@@ -16,7 +16,7 @@ struct ProjectionWorkspace::Impl {
     std::unique_ptr<ProjectionPreview>view;std::unique_ptr<ProjectionMediaBinding>media;
     n::LayerComposition composition;app::ClientMetrics metrics;double visibleTop{};
     double started{},closeStarted{},closeAlpha{1},time{};bool closing{},reduced{};
-    std::optional<bool>blurEnabled;double blurFrom{},blurTo{},blurStart{},observedBlur{-1};bool blurAnimating{};
+    std::optional<bool>blurEnabled;double blurFrom{},blurTo{},blurStart{},observedBlur{-1};bool blurAnimating{};ProjectionWorkspaceTiming timing;
     Impl(app::OverlayHost&h,n::Renderer&r,n::LayerRasterizer&l,n::DesktopBackdrop&b,
         n::NativeMediaRequestBroker&mb,m::NotesColor color,double darkness,double blur)
         :host(h),renderer(r),raster(l),backdrop(b),broker(mb),client(broker.attachClient()),
@@ -83,14 +83,18 @@ void ProjectionWorkspace::close(double time){auto&i=*impl_;i.clock(time);time=i.
 }
 bool ProjectionWorkspace::mediaChanged(double time){auto&i=*impl_;i.clock(time);time=i.time;return i.media&&i.media->refresh(time);}
 bool ProjectionWorkspace::render(double time,bool submit){auto&i=*impl_;i.clock(time);time=i.time;if(!i.view)return false;if(!i.metrics.pixelWidth||!i.metrics.pixelHeight)return true;
+    const auto begin=app::OverlayHost::clockNow();
     i.view->update(time);i.media->sync(time);i.media->refresh(time);i.updateBlur();
     i.backdrop.update({i.metrics.pixelWidth,i.metrics.pixelHeight,true,false,i.blurOpacity(time),0,1,true});
-    i.backdrop.setPanelOpacity(i.opacity(time));i.publish();
+    i.backdrop.setPanelOpacity(i.opacity(time));const auto updated=app::OverlayHost::clockNow();i.publish();
     // Workspace entries already include logical-to-physical scale.
     i.renderer.setCamera(n::layerViewportProjection(i.metrics.pixelWidth,i.metrics.pixelHeight));
-    if(submit)i.renderer.draw();return true;
+    const auto published=app::OverlayHost::clockNow();
+    if(submit)i.renderer.draw();
+    const auto end=app::OverlayHost::clockNow();i.timing.update+=updated-begin;i.timing.publish+=published-updated;i.timing.draw+=end-published;++i.timing.renders;return true;
 }
-bool ProjectionWorkspace::pointer(const app::PointerEvent&e,double time){auto&i=*impl_;i.clock(time);return i.view&&!i.closing&&i.view->pointer(e,i.time);}
+bool ProjectionWorkspace::pointer(const app::PointerEvent&e,double time){auto&i=*impl_;i.clock(time);const auto begin=app::OverlayHost::clockNow();const bool handled=i.view&&!i.closing&&i.view->pointer(e,i.time);i.timing.pointer+=app::OverlayHost::clockNow()-begin;++i.timing.pointers;return handled;}
+ProjectionWorkspaceTiming ProjectionWorkspace::timing()const noexcept{return impl_->timing;}
 bool ProjectionWorkspace::wheel(const app::WheelEvent&e,double time){auto&i=*impl_;i.clock(time);return i.view&&!i.closing&&i.view->wheel(e,i.time);}
 bool ProjectionWorkspace::key(const app::KeyEvent&e,double time){auto&i=*impl_;i.clock(time);return i.view&&!i.closing&&i.view->key(e,i.time);}
 void ProjectionWorkspace::cancelInteraction(double time){auto&i=*impl_;i.clock(time);if(i.view&&i.view->active())i.view->cancelInteraction(i.time);}

@@ -53,6 +53,10 @@ struct TextureData {
     std::span<const std::uint8_t> straightRGBA;
     TextureColorSpace colorSpace{TextureColorSpace::sRGB};
     TextureFilter filter{TextureFilter::linear};
+    // Painted in place (Renderer::updateTexture): one GPU texture keeps its
+    // identity while rectangles of its texels are replaced. Otherwise the
+    // texture is immutable and every revision creates it again.
+    bool updatable{};
 };
 struct NativeGroupTarget {
     core::Rect localBounds;
@@ -160,6 +164,28 @@ struct RendererStats {
     std::size_t releasedTargetBytes{};
     bool driverTrimmed{};std::uint64_t driverTrims{};
     std::uint64_t sourceTargetBytesReleased{}; // the original shell pass's targets, summed over releases
+    // Presentation timing, kept as numbers only (no work on their account):
+    // seconds spent inside IDXGISwapChain::Present, the monotonic time
+    // (OverlayHost::clockNow epoch, QueryPerformanceCounter) at which the
+    // last Present returned, and that Present's swap-chain present count.
+    double presentSeconds{},lastPresentReturned{};
+    std::uint64_t lastPresentCount{};
+    // CPU seconds inside draw() (Present excluded), setDrawList and setTexture.
+    double drawSeconds{},drawListSeconds{},textureUploadSeconds{};
+    // updateTexture(): rectangles replaced in place and their texel bytes.
+    std::uint64_t textureRegionUploads{},textureRegionBytes{};
+    // Admissions a message loop took from the frame latency object
+    // (presentationAdmitted) instead of a blocking frame-start wait, and
+    // presents made without any admission (each one may queue a frame ahead
+    // of the display: Projection RC 128 queued ~35 of them, 200 ms at 165 Hz).
+    std::uint64_t presentationAdmissions{},unadmittedPresents{};
+};
+// IDXGISwapChain::GetFrameStatistics for the most recent present the
+// compositor displayed: its present count, the vertical blank it was
+// displayed on and one vertical blank's monotonic time (clockNow epoch).
+struct RendererFrameStatistics {
+    std::uint64_t presentCount{},presentRefreshCount{},syncRefreshCount{};
+    double syncTime{};
 };
 // AddRef-owned existing composition swap chain, never a copied bitmap/device.
 // The raw pointer is borrowed IDXGISwapChain1 and valid only while valid().
@@ -270,6 +296,14 @@ public:
     bool sourcePassEnabled()const noexcept;
     bool setMesh(std::string sourceID, std::uint64_t revision, MeshData mesh);
     bool setTexture(std::string sourceID, std::uint64_t revision, TextureData texture);
+    // Replaces the texels of one rectangle of an updatable texture (created
+    // by setTexture with TextureData::updatable) in place: same identity,
+    // same GPU resource, no draw-list or group rebinding beyond marking the
+    // groups that sample it dirty. `region` is straight RGBA8 of the
+    // rectangle at (x, y) in texels, in the texture's own color space.
+    // Equal revisions are no-ops; invalid rectangles reject before mutation.
+    bool updateTexture(const std::string& sourceID, std::uint64_t revision,
+        std::uint32_t x, std::uint32_t y, TextureData region);
     // AddRef-owned ID3D11Device, for the owner's MF DXGI manager. Requires the
     // explicit mediaVideo option; multithread protection is enabled at creation.
     // This is the existing device, never a new graphics context or clock.
@@ -325,11 +359,24 @@ public:
     // object, or when this frame already holds the admission; false on
     // timeout (the frame may still render; Present then bounds latency).
     bool waitForPresentation(std::uint32_t timeoutMilliseconds);
+    // The same admission for a message loop that waits on it together with
+    // its input (OverlayCallbacks::presentationWaitable): the borrowed frame
+    // latency object HANDLE, or null offscreen or without one; whether the
+    // next presented frame already holds an admission; and the report that a
+    // wait on that handle succeeded (it consumed one admission, which the
+    // next frame's Present uses without waiting again).
+    void* presentationWaitable() const noexcept;
+    bool presentationHeld() const noexcept;
+    void presentationAdmitted() noexcept;
     // IDXGIDevice::SetGPUThreadPriority (-7...7) on this device; the HRESULT.
     long setGpuThreadPriority(int priority) noexcept;
     // Explicit diagnostic only (contention trace), never per frame: waits
     // until the GPU finished every command submitted so far; milliseconds.
     double waitForGpuIdle();
+    // Explicit diagnostic only (the latency probe): the compositor's
+    // statistics of the last displayed present; none offscreen, before the
+    // first displayed present or while the statistics are disjoint.
+    std::optional<RendererFrameStatistics> frameStatistics() const;
     // The HUD was concealed: nothing is drawn until it opens again. Releases
     // the GPU memory only a drawn frame uses - the full-size linear
     // composition target, an offscreen output, the original shell pass's

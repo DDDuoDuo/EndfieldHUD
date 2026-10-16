@@ -5,6 +5,8 @@
 #include <string_view>
 #include <vector>
 #include <limits>
+#include <optional>
+#include <span>
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -112,6 +114,86 @@ void scheduling() {
     demand.lowPower = false;
     checkNear(*plan.refresh(demand, true).afterSeconds, 1.0 / 60, "normal finite cadence60Hz");
     check(!plan.refresh(demand, false).present && !plan.interval(), "hidden overrides even finite demanded motion");
+}
+// Finite motion follows the display's refresh (live RC: the HUD presented
+// its transitions at 60 fps on a 165 Hz display); ambient idle and low power
+// keep the source 30 Hz; nothing that does not animate gets a frame. One
+// simulated second of host wakes, each presenting what the plan presents.
+unsigned framesInOneSecond(const DisplayPacing& pacing, FrameDemand demand, bool shown = true) {
+    FrameWakePlan plan; auto wake = plan.refresh(demand, shown);
+    unsigned frames = wake.present ? 1 : 0; double time = 0;
+    for (unsigned guard = 0; guard < 100000; ++guard) {
+        const auto interval = pacing.interval(plan);
+        if (!interval) break;
+        check(*interval > 0, "Every paced interval moves time forward");
+        time += *interval;
+        if (time > 1 + 1e-9) break;
+        if (plan.wake().present) ++frames;
+    }
+    return frames;
+}
+void displayPacing() {
+    auto finite = visibleDemand(); finite.finiteAnimation = true;
+    auto opening = visibleDemand(); opening.phase = VisibilityPhase::opening; opening.canAdvanceTransition = true;
+    auto ambient = visibleDemand(); ambient.ambientEnabled = true;
+    auto lowPower = finite; lowPower.lowPower = true;
+    for (const double hz : {60.0, 144.0, 165.0}) {
+        DisplayPacing pacing; pacing.setRefreshPeriod(1 / hz);
+        FrameWakePlan plan; plan.refresh(finite, true);
+        check(DisplayPacing::paced(plan) && pacing.interval(plan) && std::abs(*pacing.interval(plan) - 1 / hz) < 1e-12, "Finite motion is paced by the display refresh");
+        const auto expected = static_cast<unsigned>(std::lround(hz)) + 1; // the frame the demand presents at once, then one per refresh
+        check(framesInOneSecond(pacing, finite) == expected, "A finite animation presents once per refresh of a 60, 144 or 165 Hz display");
+        check(framesInOneSecond(pacing, opening) == expected, "An opening transition presents once per refresh");
+        check(framesInOneSecond(pacing, ambient) == 31, "Ambient idle keeps the source 30 Hz on any display");
+        check(framesInOneSecond(pacing, lowPower) == 31, "Low-power motion keeps the source 30 Hz on any display");
+        check(framesInOneSecond(pacing, visibleDemand()) <= 1 && !pacing.interval([&] { FrameWakePlan idle; idle.refresh(visibleDemand(), true); return idle; }()),
+            "A shown HUD with nothing animating schedules no frame after the one its change presents");
+        check(framesInOneSecond(pacing, finite, false) == 0, "A hidden window gets no frame at any refresh rate");
+        auto reduced = finite; reduced.reduceMotion = true;
+        check(framesInOneSecond(pacing, reduced) <= 1, "Reduced motion keeps its single change frame");
+    }
+    // Unknown or implausible refresh rates keep the source 60 Hz cadence.
+    for (const auto period : {std::optional<double>{}, std::optional<double>{0.}, std::optional<double>{-1.}, std::optional<double>{1.},
+                              std::optional<double>{std::numeric_limits<double>::quiet_NaN()}}) {
+        DisplayPacing pacing; pacing.setRefreshPeriod(period);
+        check(!pacing.refreshPeriod() && framesInOneSecond(pacing, finite) == 61, "Without a known refresh, finite motion keeps the source 60 Hz");
+    }
+    // Animation timing is time based: the source curve sampled at 165 Hz
+    // frame times passes through the same values at the shared instants.
+    {
+        DisplayPacing fast; fast.setRefreshPeriod(1 / 165.); DisplayPacing source;
+        VisibilityClock a(.6, .3), b(.6, .3); a.open(0); b.open(0);
+        FrameWakePlan pa, pb; pa.refresh(opening, true); pb.refresh(opening, true);
+        const auto sa = a.sample(.3), sb = b.sample(.3);
+        check(sa && sb && sa->entranceTime == sb->entranceTime, "Frame cadence never changes the sampled source timing");
+        check(fast.interval(pa) && source.interval(pb) && *fast.interval(pa) < *source.interval(pb), "Only the number of samples differs");
+    }
+}
+// Windows coalesces mouse moves into one WM_MOUSEMOVE per read of the queue;
+// a drag recovers the samples between two delivered positions from the
+// system's newest-first mouse history.
+void mouseHistory() {
+    std::vector<MouseHistoryPoint> history; // newest first, 1 ms apart
+    for (int k = 20; k >= 0; --k) history.push_back({100 + 3 * k, 200 + k, 5000u + static_cast<std::uint32_t>(k)});
+    const MouseHistoryPoint current = history.front(), previous = history[6];
+    std::vector<MouseHistoryPoint> out;
+    check(newerMouseHistory(history, current, previous, out) == 5, "Every sample between the delivered positions is recovered");
+    for (std::size_t k = 0; k < out.size(); ++k) check(out[k] == history[5 - k], "Samples arrive oldest first, without the move's own point or the last delivered one");
+    out.clear();
+    check(newerMouseHistory(std::span(history).first(1), current, previous, out) == 0, "A move with no history adds nothing");
+    // The previous position fell out of the 64-entry history: the walk stops
+    // at the first entry older than it.
+    out.clear(); auto shortened = std::vector(history.begin(), history.begin() + 4);
+    check(newerMouseHistory(shortened, current, previous, out) == 3 && out.front() == history[3], "A truncated history keeps what is newer than the last delivery");
+    // Message times wrap around after 49.7 days.
+    std::vector<MouseHistoryPoint> wrapped{{10, 10, 2u}, {9, 9, 0u}, {8, 8, 0xffffffffu}, {7, 7, 0xfffffffeu}};
+    out.clear();
+    check(newerMouseHistory(wrapped, wrapped[0], wrapped[3], out) == 2 && out[0] == wrapped[2] && out[1] == wrapped[1], "Times compare across the tick-count wraparound");
+    // Samples in the same millisecond as the last delivery still count; the
+    // delivered point itself and anything older never does.
+    std::vector<MouseHistoryPoint> sameTick{{5, 5, 70u}, {4, 4, 69u}, {3, 3, 69u}, {2, 2, 69u}, {1, 1, 68u}};
+    out.clear();
+    check(newerMouseHistory(sameTick, sameTick[0], sameTick[3], out) == 2 && out[0] == sameTick[2] && out[1] == sameTick[1], "Same-millisecond samples after the delivery are kept");
 }
 void coalescing() {
     FrameRequestBatch batch;
@@ -468,7 +550,7 @@ int main(int argc,char**argv) {
 #else
         (void)argc;(void)argv;
 #endif
-        scheduling(); coalescing(); deadlines();
+        scheduling(); coalescing(); deadlines(); displayPacing(); mouseHistory();
 #ifdef _WIN32
         nativeWindow(); callbackFailures(); nativeDeadlines();
         std::cout<<"Additional hidden-startup/first-frame gate is explicit --interactive-startup on an interactive station; it is not part of this Session-0-compatible suite.\n";

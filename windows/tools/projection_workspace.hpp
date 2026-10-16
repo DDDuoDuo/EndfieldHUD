@@ -4,6 +4,9 @@
 #include "native/desktop_backdrop.hpp"
 
 namespace endfield::tools {
+// Diagnostics (the latency probe): cumulative seconds of render()'s update,
+// publication and draw (Present included) and of pointer().
+struct ProjectionWorkspaceTiming {double update{},publish{},draw{},pointer{};std::uint64_t renders{},pointers{};};
 // Projection's session model survives each presentation. Its visible objects
 // borrow the same host, renderer, backdrop and media broker as the HUD. Root
 // detaches the HUD composition before show(), and republishes it after close().
@@ -33,6 +36,7 @@ public:
     ProjectionPreview*preview()const noexcept;
     ProjectionMediaBinding*media()const noexcept;
     const modules::ProjectionModel&model()const noexcept;
+    ProjectionWorkspaceTiming timing()const noexcept;
 private:
     struct Impl;std::unique_ptr<Impl>impl_;
 };

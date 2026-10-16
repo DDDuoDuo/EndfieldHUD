@@ -27,6 +27,12 @@ OverlayCallbacks Application::Impl::callbacks(){
     value.sessionEnding=[this](SessionEnd phase,std::uint32_t reason){sessionEnding(phase,reason);};
     value.getObject=[this](const NativeMessage&m){return automationObject(m);};
     value.cursorAt=[this](double x,double y){return onCursor({x,y});};
+    // Every presented frame (the HUD and Projection) waits for the swap
+    // chain's admission in the host's pump, with its input, instead of
+    // queueing behind or blocking on the previous one (app/overlay_host.hpp).
+    value.presentationWaitable=[this]{return renderer.presentationWaitable();};
+    value.presentationHeld=[this]{return renderer.presentationHeld();};
+    value.presentationAdmitted=[this]{renderer.presentationAdmitted();};
     return value;
 }
 

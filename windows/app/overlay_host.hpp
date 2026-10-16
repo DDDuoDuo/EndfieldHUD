@@ -5,7 +5,9 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
+#include <vector>
 
 namespace endfield::app {
 
@@ -25,6 +27,10 @@ public:
     void cancel();
     bool canPresent() const { return canPresent_; }
     std::optional<double> interval() const { return nextInterval_; }
+    // Source ticks the next wake covers: 1 when every tick presents (finite
+    // motion), 2 for the alternate ambient tick; 0 without a wake.
+    unsigned ticksPerWake() const { return sourceTicks_; }
+    const core::FrameDemand& demand() const { return demand_; }
 private:
     void planNext();
     core::FrameDemand demand_;
@@ -32,6 +38,30 @@ private:
     std::optional<double> nextInterval_;
     unsigned sourceTicks_{};
     bool canPresent_{};
+};
+
+// The display refresh paces finite motion: the source gate's normal finite
+// tick (60 Hz, every tick presents) becomes one frame per refresh of the
+// display the window presents on - 60, 144 or 165 Hz - instead of a fixed
+// 60 Hz. Ambient idle (every second 60 Hz tick: 30 Hz) and low-power motion
+// (30 Hz) keep the source cadence, and nothing that does not animate gets a
+// frame. Every frame samples the clock, so the time-based source curves are
+// unchanged: only more of their samples are shown. Pure: no clock, timer or
+// display query.
+class DisplayPacing {
+public:
+    // The display's refresh period in seconds. None, or a period outside
+    // 1/1000..1/20 s, keeps the source 60 Hz cadence.
+    void setRefreshPeriod(std::optional<double> seconds);
+    std::optional<double> refreshPeriod() const { return period_; }
+    // Normal-rate finite motion (a transition or a finite animation, not low
+    // power): the cadence that follows the display.
+    static bool paced(const FrameWakePlan&);
+    // Seconds from one frame to the next for this plan: the refresh period
+    // for paced motion, the plan's own interval otherwise, none when idle.
+    std::optional<double> interval(const FrameWakePlan&) const;
+private:
+    std::optional<double> period_;
 };
 
 // A single deferred presentation ticket. cancel() invalidates even a message
@@ -42,6 +72,8 @@ public:
     bool consume(std::uintptr_t ticket, bool allowed);
     void cancel();
     bool pending() const { return pending_; }
+    // The pending request this ticket names (not consumed or cancelled).
+    bool current(std::uintptr_t ticket) const { return pending_ && ticket == generation_; }
 private:
     std::uintptr_t generation_{1};
     bool pending_{};
@@ -69,12 +101,36 @@ struct ClientMetrics {
 };
 enum class PointerKind { move, down, up, doubleClick, leave, captureLost };
 enum class PointerButton { none, left, right, middle, extra1, extra2 };
+struct PointerSample { double x{}, y{}; }; // signed logical client coordinates
 struct PointerEvent {
     PointerKind kind{};
     PointerButton button{};
     double x{}, y{}; // signed logical client coordinates; never screen coordinates
     std::uint32_t modifiers{}; // original Win32 MK_* bits
+    // Moves only: the positions the pointer passed through since the
+    // previous pointer event, oldest first, before (x, y). Windows keeps one
+    // WM_MOUSEMOVE per read of the queue; while this window holds the
+    // capture (a drag, such as a Projection stroke) the host recovers the
+    // samples it coalesced from the system mouse history, so a stroke keeps
+    // every sample of a 1000 Hz mouse while it renders once per frame.
+    // Borrowed for the duration of the callback.
+    std::span<const PointerSample> history;
 };
+// One entry of the system mouse history (GetMouseMovePointsEx): screen
+// pixels and the input's message time in milliseconds.
+struct MouseHistoryPoint {
+    std::int32_t x{}, y{};
+    std::uint32_t time{};
+    bool operator==(const MouseHistoryPoint&) const = default;
+};
+// The entries of a newest-first mouse history that the pointer passed
+// through after `previous` (the last position already delivered) and before
+// `current` (this move's own entry), appended oldest first to `out`. The
+// walk stops at `previous` or at the first entry older than it (message
+// times wrap around); entries equal to `current` are skipped. Pure; returns
+// the number appended.
+std::size_t newerMouseHistory(std::span<const MouseHistoryPoint> newestFirst, MouseHistoryPoint current,
+    MouseHistoryPoint previous, std::vector<MouseHistoryPoint>& out);
 struct WheelEvent {
     double x{}, y{}, steps{}; // one wheel detent = 1, fractions retained
     bool horizontal{};
@@ -137,6 +193,22 @@ struct OverlayCallbacks {
     // logical client point. Called on every cursor update, so it must not
     // allocate or change state. Absent: always the source cursor.
     std::function<OverlayCursor(double x, double y)> cursorAt;
+    // Low-latency presentation through the owner's swap-chain admission (its
+    // renderer's DXGI frame latency waitable object; at most one frame
+    // queued). presentationWaitable answers that object (a borrowed HANDLE)
+    // or null when the owner presents without one; presentationHeld whether
+    // the next frame already holds an admission; presentationAdmitted that
+    // the pump's wait on the object succeeded (the admission now belongs to
+    // the next frame). With them, a requested frame waits in the pump while
+    // input keeps being dispatched, then runs the moment the swap chain
+    // accepts a frame - sampling the newest input, presenting without
+    // blocking or queueing - and display-paced finite motion asks for each
+    // next frame at once, admitted once per refresh. An object that admits
+    // nothing within 50 ms (an occluded or suspended target) runs the frame
+    // anyway. Absent: frames run when posted, motion on the waitable timer.
+    std::function<void*()> presentationWaitable;
+    std::function<bool()> presentationHeld;
+    std::function<void()> presentationAdmitted;
 };
 struct OverlayOptions {
     std::wstring title{L"EndfieldHUD"};
@@ -153,11 +225,25 @@ struct OverlayHostStats {
         timerCancels{}, pointerMessages{}, cursorSets{}, cursorReleases{}, textCursorSets{};
     bool timerArmed{}, framePending{}, visible{}, focused{};
     std::uint64_t externalWakes{};
+    // Presentation gate: frames that waited in the pump for an admission,
+    // admissions the pump took, frames run after the 50 ms bound without
+    // one, and whether a frame waits now.
+    std::uint64_t presentationWaits{}, presentationAdmissions{}, presentationFallbacks{};
+    bool presentationGated{};
+    // Coalesced samples recovered from the mouse history for drag moves.
+    std::uint64_t pointerHistorySamples{};
+    // Refresh rate of the window's display (Hz, 0 unknown) and the frames
+    // finite motion presented at that pace.
+    double refreshRate{};
+    std::uint64_t pacedFrames{};
 };
 
 // All methods and destruction belong to the creating UI thread. This is an
 // HWND/message-loop owner only: no renderer, providers, hotkeys, global input,
 // process DPI-policy changes, timer-resolution changes, workers, or polling.
+// (The owner's presentation admission is a borrowed handle it waits on; only
+// while a frame waits for it does a short USER timer let a nested modal loop
+// admit that frame.)
 // Callbacks may hide/destroy this host's HWND but must not delete the host itself.
 // Windows handles are opaque in this header to keep the scheduling tests portable.
 class OverlayHost final {

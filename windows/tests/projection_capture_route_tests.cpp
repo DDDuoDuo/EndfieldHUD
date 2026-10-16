@@ -25,6 +25,11 @@
 //     for the readback.
 // It switches the brush the ways the user can (toolbar eraser, right clicks,
 // the wheel, the brush menu), draws one stroke, and reads the stroke back.
+// Then it draws through the host's own pump with the production frame path
+// (the swap chain's admission, app/overlay_host.hpp) and proves the latency
+// contract: each burst of samples is drawn by one frame, the very next one
+// presented, which holds the swap chain's admission; the stroke keeps every
+// sample; an idle workspace presents nothing.
 // The cause of the live failure: the Projection branch asks for the capture
 // after every drag event, and Windows answers SetCapture on the window that
 // already holds the capture with WM_CAPTURECHANGED naming that window. The
@@ -74,6 +79,14 @@ struct Queue {
     ~Queue(){try{auto operation=controller.ShutdownQueueAsync();const auto end=GetTickCount64()+10000;while(operation.Status()==winrt::Windows::Foundation::AsyncStatus::Started){if(GetTickCount64()>end)std::terminate();MSG m;while(PeekMessageW(&m,nullptr,0,0,PM_REMOVE)){TranslateMessage(&m);DispatchMessageW(&m);}MsgWaitForMultipleObjectsEx(0,nullptr,10,QS_ALLINPUT,MWMO_INPUTAVAILABLE);}operation.GetResults();}catch(...){std::terminate();}}
 };
 struct Point {double x{},y{};};
+// The route window lies outside every monitor, so Windows answers the host's
+// leave tracking at once; the host pump below drops those notices (and only
+// those) as the test's own pump does.
+HWND offscreenWindow{};
+LRESULT CALLBACK dropOffscreenLeaves(int code,WPARAM remove,LPARAM value){
+    if(code==HC_ACTION&&remove==PM_REMOVE){auto&m=*reinterpret_cast<MSG*>(value);if(m.hwnd==offscreenWindow&&m.message==WM_MOUSELEAVE&&m.wParam!=0x50524F4A)m.message=WM_NULL;}
+    return CallNextHookEx(nullptr,code,remove,value);
+}
 // The source brush colour of this fixture (sRGB .98,.83,.12, opaque) in the
 // BGRA8 readback, with room for antialiasing and the encoding round trip.
 bool inked(const n::Readback&image,unsigned x,unsigned y){
@@ -87,6 +100,10 @@ void run(const wchar_t*shader,const std::filesystem::path&resources){
     a::OverlayHost host;
     t::ProjectionWorkspace*shown{}; // Application::Impl::projectionShown()
     double instant=10;unsigned losses{},strokeLosses{};
+    // The latency section below runs the whole production frame route:
+    // Application::Impl::refresh() hands the host the workspace's frame
+    // demand after every event and frame, and invalidates.
+    bool frameRoute{};
     // Nested callbacks (a WM_CAPTURECHANGED sent from inside capturePointer)
     // are handed later times, as ModuleRegistry::hostTime hands them.
     const auto later=[&]{return instant+=.004;};
@@ -98,16 +115,27 @@ void run(const wchar_t*shader,const std::filesystem::path&resources){
         bool handled{},locked{};
         handled=shown->pointer(e,later());locked=shown->preview()->pointerLocked();(void)handled;
         host.capturePointer(locked);
+        if(frameRoute){host.setFrameDemand(shown->demand(later()));host.invalidate();}
         return true;
     };
     // Application::Impl::onWheel, Projection branch.
     route.wheel=[&](const a::WheelEvent&e){if(!shown||!shown->presented())return false;(void)shown->wheel(e,later());return true;};
+    // Application::Impl::callbacks(): every presented frame waits for the
+    // swap chain's admission in the host's pump, with its input.
+    n::Renderer renderer;
+    route.presentationWaitable=[&]{return renderer.presentationWaitable();};
+    route.presentationHeld=[&]{return renderer.presentationHeld();};
+    route.presentationAdmitted=[&]{renderer.presentationAdmitted();};
+    // Application::Impl::onFrame -> present(), Projection branch: the frame
+    // start's bounded admission, then the workspace's render and Present.
+    unsigned presentedFrames{};
+    route.frame=[&](double){if(!shown||!shown->presented())return;(void)renderer.waitForPresentation(50);(void)shown->render(later(),true);++presentedFrames;
+        if(frameRoute)host.setFrameDemand(shown->demand(later()));};
     // Right of the whole virtual screen: shown, but on no monitor.
     const int left=GetSystemMetrics(SM_XVIRTUALSCREEN)+GetSystemMetrics(SM_CXVIRTUALSCREEN)+2048,top=GetSystemMetrics(SM_YVIRTUALSCREEN);
     host.create({L"Off-screen synthetic Projection input route",left,top,1280,800,{}},std::move(route));
     const auto window=static_cast<HWND>(host.hwnd());const auto metrics=host.metrics();
     RECT bounds{};check(GetWindowRect(window,&bounds)&&!MonitorFromRect(&bounds,MONITOR_DEFAULTTONULL),"The route window lies outside every monitor");
-    n::Renderer renderer;
     try{renderer.initialize(window,metrics.pixelWidth,metrics.pixelHeight,{n::Driver::warpForTests,shader,n::RenderTarget::composition});}
     catch(const n::RendererError&e){if(compositionUnavailable(e.code()))throw Unavailable{};throw;}
     // Application::Impl construction in a visible mode: the owned HWND's host
@@ -222,6 +250,57 @@ void run(const wchar_t*shader,const std::filesystem::path&resources){
         send(WM_MOUSEMOVE,MK_LBUTTON,{width*.5,height*.9});send(WM_LBUTTONUP,0,{width*.5,height*.9});
         check(projection.model().drawing().strokes().size()==committed&&events.size()==rows,"Nothing is committed after a real capture loss");
 
+        // Drawing latency (live RC 130a: "the brush is not following the cursor
+        // in real time"). RC 128's Projection frames never waited for the swap
+        // chain: 193 frames/s went to a 165 Hz display and ~35 of them (200 ms)
+        // queued between the pointer and the screen. Every presented frame now
+        // holds the swap chain's admission (at most one frame queued); the
+        // host's pump waits for it while dispatching input; every burst of drag
+        // samples reaches the screen in the very next presented frame, drawn
+        // once for all of its samples, which the stroke keeps.
+        {
+            check(renderer.stats().frameLatencyWaitable&&renderer.presentationWaitable(),"The composition swap chain offers its frame latency object to the host pump");
+            offscreenWindow=window;struct Hook{HHOOK h{};~Hook(){if(h)UnhookWindowsHookEx(h);offscreenWindow=nullptr;}}hook;
+            hook.h=SetWindowsHookExW(WH_GETMESSAGE,dropOffscreenLeaves,nullptr,GetCurrentThreadId());check(hook.h!=nullptr,"Thread-local hook for the off-screen leave notices");
+            // OverlayHost::pumpOnce itself, as EndfieldHUD.exe runs it.
+            const auto hostPump=[&](double seconds,const auto&until){const auto end=a::OverlayHost::clockNow()+seconds;while(!until()&&a::OverlayHost::clockNow()<end)check(host.pumpOnce(5),"The host keeps running");return until();};
+            const auto settled=[&]{const auto s=host.stats();return !s.framePending&&!s.presentationGated;};
+            frameRoute=true;host.setFrameDemand(projection.demand(later()));
+            check(hostPump(2.,settled),"The workspace settles after the earlier strokes");
+            const auto start=renderer.stats();
+            const auto post=[&](UINT message,WPARAM keys,Point p){check(PostMessageW(window,message,keys,MAKELPARAM(pixel(p.x),pixel(p.y)))!=FALSE,"Post a mouse message to the route window");};
+            const Point origin{width*.2,height*.55};
+            post(WM_MOUSEMOVE,0,origin);post(WM_LBUTTONDOWN,MK_LBUTTON,origin);
+            check(hostPump(2.,[&]{return projection.preview()->pointerLocked()&&renderer.stats().presents>start.presents&&settled();}),"The press starts a stroke and presents it");
+            constexpr unsigned bursts=8,samples=6;std::vector<Point>path{origin};
+            for(unsigned b=0;b<bursts;++b){
+                const auto before=renderer.stats();const auto frames=presentedFrames;
+                // One frame's worth of a 1000 Hz mouse, all queued before the
+                // host reads any of it.
+                std::vector<Point>burst;
+                for(unsigned k=1;k<=samples;++k){const double step=double(b*samples+k);burst.push_back({origin.x+step*width*.006,origin.y+std::sin(step*.15)*height*.05});post(WM_MOUSEMOVE,MK_LBUTTON,burst.back());}
+                path.insert(path.end(),burst.begin(),burst.end());
+                check(hostPump(2.,[&]{return renderer.stats().presents>before.presents&&settled();}),"The burst reaches a presented frame");
+                const auto after=renderer.stats();
+                check(after.presents==before.presents+1&&presentedFrames==frames+1,"All samples of one frame's input are drawn by one frame, not one frame per sample");
+                check(after.unadmittedPresents==before.unadmittedPresents,"That frame presents with the swap chain's admission: no frame queues ahead of the display");
+                // Nothing changed since that Present: a render-only readback of
+                // the same state shows what it presented.
+                const auto image=paint(0);
+                const auto inkedBetween=[&](Point p,Point q){return inked(image,static_cast<unsigned>(std::lround((p.x+q.x)*.5*scale)),static_cast<unsigned>(std::lround((p.y+q.y)*.5*scale)));};
+                check(inkedBetween(path[path.size()-samples-1],burst.front())&&inkedBetween(burst[samples-2],burst.back()),"The very next presented frame shows the burst's first and newest segments");
+            }
+            post(WM_LBUTTONUP,0,path.back());
+            check(hostPump(2.,[&]{return !projection.preview()->pointerLocked()&&settled();}),"The release commits the stroke");
+            const auto strokes=projection.model().drawing().strokes();
+            check(!strokes.empty()&&strokes.back().points.size()==path.size(),"The committed stroke keeps every intermediate sample ("+std::to_string(strokes.empty()?0:strokes.back().points.size())+" of "+std::to_string(path.size())+" points)");
+            check(renderer.stats().unadmittedPresents==start.unadmittedPresents,"No frame of the stroke presented without the swap chain's admission");
+            // Nothing changes: no frame, no present, no wake.
+            const auto idleHost=host.stats();const auto idleRenderer=renderer.stats();
+            hostPump(.5,[]{return false;});
+            check(host.stats().frames==idleHost.frames&&renderer.stats().presents==idleRenderer.presents&&host.stats().timerWakes==idleHost.timerWakes&&host.stats().presentationWaits==idleHost.presentationWaits,"An idle workspace presents nothing and wakes nothing");
+        }
+        frameRoute=false;
         shown=nullptr;projection.dismiss(later(),true);projection.close(later());
         check(!projection.presented()&&!IsWindowVisible(window)&&renderer.stats().textures==0&&renderer.stats().meshes==0,"Closing hides the window and releases every Projection resource");
     }

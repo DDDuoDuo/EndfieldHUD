@@ -43,6 +43,33 @@ void FrameWakePlan::cancel() {
     sourceTicks_ = 0;
     canPresent_ = false;
 }
+void DisplayPacing::setRefreshPeriod(std::optional<double> seconds) {
+    period_ = seconds && std::isfinite(*seconds) && *seconds >= 1.0 / 1000 && *seconds <= 1.0 / 20 ? seconds : std::nullopt;
+}
+bool DisplayPacing::paced(const FrameWakePlan& plan) {
+    // FrameDemandGate's finite motion: a transition phase or a finite
+    // animation; its alternate ambient wakes are not paced.
+    const auto& demand = plan.demand();
+    return plan.interval() && !demand.lowPower &&
+        (demand.phase != core::VisibilityPhase::visible || demand.finiteAnimation);
+}
+std::optional<double> DisplayPacing::interval(const FrameWakePlan& plan) const {
+    if (paced(plan) && period_) return period_;
+    return plan.interval();
+}
+std::size_t newerMouseHistory(std::span<const MouseHistoryPoint> newestFirst, MouseHistoryPoint current,
+    MouseHistoryPoint previous, std::vector<MouseHistoryPoint>& out) {
+    const auto first = out.size();
+    // Message times are GetTickCount milliseconds: compare across wraparound.
+    const auto older = [](std::uint32_t a, std::uint32_t b) { return static_cast<std::int32_t>(a - b) < 0; };
+    for (const auto& point : newestFirst) {
+        if (point == previous || older(point.time, previous.time)) break;
+        if (point == current || older(current.time, point.time)) continue;
+        out.push_back(point);
+    }
+    std::reverse(out.begin() + static_cast<std::ptrdiff_t>(first), out.end());
+    return out.size() - first;
+}
 std::optional<std::uintptr_t> FrameRequestBatch::request(bool allowed) {
     if (!allowed || pending_) return {};
     if (++generation_ == 0) ++generation_;
@@ -86,6 +113,7 @@ WakeDeadlines::Due WakeDeadlines::takeDue(double now) {
 #endif
 #include <windows.h>
 #include <windowsx.h>
+#include <array>
 #include <exception>
 #include <cstdio>
 #include <system_error>
@@ -93,6 +121,11 @@ WakeDeadlines::Due WakeDeadlines::takeDue(double now) {
 namespace endfield::app {
 namespace {
 constexpr UINT frameMessage = WM_APP + 0x31d;
+// While a frame waits for the presentation gate, a nested modal loop (a file
+// dialog, a drag, a menu) dispatches messages instead of pumpOnce: this
+// short-lived timer lets it admit (or after 50 ms run) the waiting frame.
+constexpr UINT_PTR gateTimer = 0x45484744;
+constexpr double gateBound = .05;
 constexpr wchar_t windowClass[] = L"EndfieldSourceOverlayHost.v1";
 [[noreturn]] void fail(const char* operation) {
     throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), operation);
@@ -153,8 +186,22 @@ struct OverlayHost::Impl {
     // last installed (either one), so a release never undoes another's.
     HCURSOR textCursor{LoadCursorW(nullptr, IDC_IBEAM)}, installed{};
     double timerDeadline{}, lastX{}, lastY{};
+    // Display pacing, the frame waiting for the swap chain's admission and
+    // the interval the frame deadline was planned with.
+    DisplayPacing pacing;
+    std::optional<std::uintptr_t> gated;
+    double gatedSince{};
+    std::optional<double> frameInterval;
+    // The last pointer position delivered (screen pixels, message time) and
+    // the coalesced samples recovered for the current drag move.
+    std::optional<MouseHistoryPoint> lastMouse;
+    std::vector<MouseHistoryPoint> historyPoints;
+    std::vector<PointerSample> historySamples;
     bool ready{}, visible{}, minimized{}, focused{}, stopped{}, armed{},
         mouseTracking{}, cursorSuspended{}, cursorOwned{}, appActive{true};
+    // pumpOnce itself is dispatching a frame message (not a nested modal
+    // loop, which never waits on the presentation gate).
+    bool ownFrameDispatch{};
     unsigned menuDepth{}, sizeMoveDepth{};
     bool coverMonitor{};
     UINT wheelLines{3},wheelChars{3};
@@ -186,8 +233,79 @@ struct OverlayHost::Impl {
         cancelTimer();
         plan.cancel();
         frames.cancel();
+        clearGate(); frameInterval.reset();
         deadlines.setFrame({});
         if (stopped || !window) deadlines.clear();
+    }
+    void clearGate() noexcept {
+        if (gated && window) KillTimer(window, gateTimer);
+        gated.reset();
+    }
+    // The owner's frame latency object while a frame must still wait for
+    // its admission; null when there is none or the next frame holds one.
+    static HANDLE gateObject(const std::shared_ptr<OverlayCallbacks>& handlers) {
+        if (!handlers || !handlers->presentationWaitable) return nullptr;
+        const auto object = static_cast<HANDLE>(handlers->presentationWaitable());
+        if (!object || (handlers->presentationHeld && handlers->presentationHeld())) return nullptr;
+        return object;
+    }
+    // Display-paced frames follow one another through the owner's gate.
+    bool gateChains() const {
+        const auto handlers = callbacks;
+        return handlers && handlers->presentationWaitable && handlers->presentationWaitable() != nullptr;
+    }
+    // A frame may start now: no gate, an admission held, or the object
+    // admits one at once (taken here and reported to the owner).
+    bool admitFrame(const std::shared_ptr<OverlayCallbacks>& handlers) {
+        const auto object = gateObject(handlers);
+        if (!object) return true;
+        if (WaitForSingleObject(object, 0) != WAIT_OBJECT_0) return false;
+        ++counts.presentationAdmissions;
+        if (handlers->presentationAdmitted) handlers->presentationAdmitted();
+        return true;
+    }
+    // The waitable-timer interval to the next frame: the display refresh for
+    // paced finite motion (none while the gate chains those frames), the
+    // source cadence otherwise.
+    std::optional<double> timerInterval() const {
+        if (DisplayPacing::paced(plan) && gateChains()) return {};
+        return pacing.interval(plan);
+    }
+    void refreshDisplayRate() {
+        std::optional<double> period;
+        MONITORINFOEXW monitor{}; monitor.cbSize = sizeof(monitor);
+        DEVMODEW mode{}; mode.dmSize = sizeof(mode);
+        if (window && GetMonitorInfoW(MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST), &monitor) &&
+            EnumDisplaySettingsW(monitor.szDevice, ENUM_CURRENT_SETTINGS, &mode) && mode.dmDisplayFrequency > 1)
+            period = 1.0 / mode.dmDisplayFrequency;
+        const auto before = pacing.refreshPeriod();
+        pacing.setRefreshPeriod(period);
+        counts.refreshRate = pacing.refreshPeriod() ? 1 / *pacing.refreshPeriod() : 0;
+        if (ready && before != pacing.refreshPeriod() && plan.canPresent()) {
+            const auto interval = timerInterval();
+            frameInterval = interval;
+            deadlines.setFrame(interval ? std::optional<double>(monotonicSeconds() + *interval) : std::optional<double>());
+            syncTimer();
+        }
+    }
+    // Runs the frame of a still-current ticket; display-paced motion then
+    // asks for its next frame (or, when this frame presented nothing and so
+    // kept its admission, the timer brings it a refresh later: no spinning).
+    void runFrame(std::uintptr_t ticket, const std::shared_ptr<OverlayCallbacks>& handlers) {
+        if (!frames.consume(ticket, window && !stopped && plan.canPresent() && visible && !minimized) || !handlers || !handlers->frame) return;
+        ++counts.frames;
+        const bool paced = DisplayPacing::paced(plan);
+        if (paced) ++counts.pacedFrames;
+        handlers->frame(monotonicSeconds());
+        if (!window || stopped || !plan.canPresent() || !DisplayPacing::paced(plan) || !gateChains()) return;
+        if (gateObject(callbacks)) postFrame();
+        else if (const auto period = pacing.interval(plan)) { deadlines.setFrame(monotonicSeconds() + *period); syncTimer(); }
+    }
+    void runGated() {
+        if (!gated) return;
+        const auto ticket = *gated; clearGate();
+        const auto handlers = callbacks;
+        runFrame(ticket, handlers);
     }
     void releaseCursor() noexcept {
         // Only undo a cursor actually installed by this host, and never replace
@@ -249,14 +367,16 @@ struct OverlayHost::Impl {
         cancelTimer(); arm(*next);
     }
     void refreshSchedule() {
-        const auto before = plan.interval();
+        const auto before = frameInterval;
         const auto result = plan.refresh(demand, ready && visible && window && IsWindowVisible(window) && !minimized && !stopped);
         if (!plan.canPresent()) { cancelFrames(); syncTimer(); return; }
-        if (!result.afterSeconds) deadlines.setFrame({});
-        else if (!deadlines.frame() || before != result.afterSeconds)
-            deadlines.setFrame(monotonicSeconds() + *result.afterSeconds);
+        const auto interval = timerInterval();
+        if (!interval) deadlines.setFrame({});
+        else if (!deadlines.frame() || before != interval)
+            deadlines.setFrame(monotonicSeconds() + *interval);
+        frameInterval = interval;
         syncTimer();
-        if (result.present) postFrame();
+        if (result.present || (DisplayPacing::paced(plan) && gateChains())) postFrame();
     }
     void timerReady() {
         if (!armed) return;
@@ -267,10 +387,12 @@ struct OverlayHost::Impl {
         if (due.frame) {
             const auto result = plan.wake();
             if (result.present) postFrame();
-            if (result.afterSeconds && window && !stopped) {
-            auto deadline = *due.frame + *result.afterSeconds;
+            const auto interval = timerInterval();
+            frameInterval = interval;
+            if (interval && window && !stopped) {
+            auto deadline = *due.frame + *interval;
             // No catch-up burst after a busy frame, sleep, resize, or debugger.
-            if (deadline <= now) deadline = now + *result.afterSeconds;
+            if (deadline <= now) deadline = now + *interval;
             deadlines.setFrame(deadline);
             }
         }
@@ -280,6 +402,35 @@ struct OverlayHost::Impl {
             if (handlers && handlers->deadline) handlers->deadline(now);
         }
         syncTimer();
+    }
+    // A drag move's coalesced samples: the system mouse history between the
+    // previous delivered position and this move (GetMouseMovePointsEx, which
+    // knows only real input; a posted or sent move has none).
+    std::span<const PointerSample> mouseHistory(HWND target, UINT message, LPARAM l) {
+        historySamples.clear();
+        POINT origin{0, 0};
+        if (!ClientToScreen(target, &origin)) { lastMouse.reset(); return {}; }
+        const MouseHistoryPoint current{origin.x + GET_X_LPARAM(l), origin.y + GET_Y_LPARAM(l), static_cast<std::uint32_t>(GetMessageTime())};
+        const auto previous = std::exchange(lastMouse, current);
+        if (message != WM_MOUSEMOVE || !previous || GetCapture() != target) return {};
+        MOUSEMOVEPOINT input{};
+        input.x = current.x & 0xffff; input.y = current.y & 0xffff; input.time = current.time;
+        std::array<MOUSEMOVEPOINT, 64> found{};
+        const int count = GetMouseMovePointsEx(sizeof(MOUSEMOVEPOINT), &input, found.data(), static_cast<int>(found.size()), GMMP_USE_DISPLAY_POINTS);
+        if (count <= 1) return {};
+        std::array<MouseHistoryPoint, 64> points{};
+        for (int k = 0; k < count; ++k) {
+            // Display points left of or above the primary monitor arrive as
+            // unsigned 16-bit values.
+            const auto x = found[k].x > 32767 ? found[k].x - 65536 : found[k].x, y = found[k].y > 32767 ? found[k].y - 65536 : found[k].y;
+            points[static_cast<std::size_t>(k)] = {x, y, static_cast<std::uint32_t>(found[k].time)};
+        }
+        historyPoints.clear();
+        newerMouseHistory(std::span(points.data(), static_cast<std::size_t>(count)), current, *previous, historyPoints);
+        for (const auto& point : historyPoints)
+            historySamples.push_back({(point.x - origin.x) / client.scale, (point.y - origin.y) / client.scale});
+        counts.pointerHistorySamples += historySamples.size();
+        return historySamples;
     }
     void updateMetrics() {
         RECT rect{};
@@ -343,12 +494,25 @@ struct OverlayHost::Impl {
             if (ready) postFrame();
             return 0;
         }
-        case frameMessage:
-            if (frames.consume(static_cast<std::uintptr_t>(w), window && !stopped && plan.canPresent() &&
-                visible && !minimized) && handlers && handlers->frame) {
-                ++counts.frames;
-                handlers->frame(monotonicSeconds());
+        case frameMessage: {
+            const auto ticket = static_cast<std::uintptr_t>(w);
+            if (!frames.current(ticket)) return 0;
+            // The swap chain still holds the previous frame: wait in the pump
+            // (input keeps flowing) instead of queueing or blocking. A nested
+            // modal loop runs the frame as before.
+            if (ownFrameDispatch && window && !stopped && visible && !minimized && plan.canPresent() && !admitFrame(handlers)) {
+                if (!gated) { gatedSince = monotonicSeconds(); ++counts.presentationWaits; SetTimer(target, gateTimer, USER_TIMER_MINIMUM, nullptr); }
+                gated = ticket;
+                return 0;
             }
+            runFrame(ticket, handlers);
+            return 0;
+        }
+        case WM_TIMER:
+            if (w != gateTimer) break;
+            if (!gated || !frames.current(*gated)) { clearGate(); return 0; }
+            if (admitFrame(handlers)) runGated();
+            else if (gatedSince + gateBound <= monotonicSeconds()) { ++counts.presentationFallbacks; runGated(); }
             return 0;
         case WM_SHOWWINDOW:
             visible = w != 0;
@@ -378,6 +542,7 @@ struct OverlayHost::Impl {
                 rect->right - rect->left, rect->bottom - rect->top, SWP_NOZORDER | SWP_NOACTIVATE))
                 fail("Apply WM_DPICHANGED rectangle");
             updateMetrics();
+            refreshDisplayRate();
             if (ready) postFrame();
             return 0;
         }
@@ -393,7 +558,12 @@ struct OverlayHost::Impl {
             }
             break;
         case WM_DISPLAYCHANGE:
+            refreshDisplayRate();
             if(ready&&handlers&&handlers->displayChanged)handlers->displayChanged();
+            break;
+        case WM_WINDOWPOSCHANGED:
+            // The window may now present on another display.
+            if (ready && visible) refreshDisplayRate();
             break;
         case WM_SETFOCUS: case WM_KILLFOCUS:
             focused = message == WM_SETFOCUS;
@@ -443,8 +613,9 @@ struct OverlayHost::Impl {
                 TRACKMOUSEEVENT tracking{sizeof(TRACKMOUSEEVENT), TME_LEAVE, target, 0};
                 mouseTracking = TrackMouseEvent(&tracking) != FALSE;
             }
+            const auto history = mouseHistory(target, message, l);
             const PointerEvent event{kindFor(message), buttonFor(message, w), lastX, lastY,
-                static_cast<std::uint32_t>(GET_KEYSTATE_WPARAM(w))};
+                static_cast<std::uint32_t>(GET_KEYSTATE_WPARAM(w)), history};
             const bool handled = ready && handlers && handlers->pointer && handlers->pointer(event);
             if (window != target) return 0;
             if (ready) postFrame();
@@ -537,6 +708,7 @@ void OverlayHost::create(const OverlayOptions& options, OverlayCallbacks callbac
     p.refreshWheelSettings();
     p.callbacks = std::make_shared<OverlayCallbacks>(std::move(callbacks));
     p.demand = {}; p.plan.cancel(); p.client = {}; p.counts = {};
+    p.gated.reset(); p.frameInterval.reset(); p.lastMouse.reset(); p.ownFrameDispatch = false;
     p.stopped = p.ready = p.visible = p.minimized = p.focused = p.mouseTracking = false;
     p.menuDepth = p.sizeMoveDepth = 0; p.appActive = true; p.exitCode = 0; p.coverMonitor = options.coverMonitor;
     const auto window = CreateWindowExW(WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOOLWINDOW, windowClass,
@@ -547,7 +719,7 @@ void OverlayHost::create(const OverlayOptions& options, OverlayCallbacks callbac
     p.rethrow();
     const UINT dpi = GetDpiForWindow(window);
     p.client.dpi = dpi ? dpi : 96;
-    p.updateMetrics(); p.ready = true;
+    p.updateMetrics(); p.ready = true; p.refreshDisplayRate();
     const auto handlers = p.callbacks;
     const auto initialMetrics = p.client;
     if (handlers && handlers->resize) handlers->resize(initialMetrics);
@@ -637,14 +809,36 @@ void OverlayHost::suspendCursor(bool suspended) {
 bool OverlayHost::pumpOnce(std::uint32_t timeout) {
     auto& p = *impl_; p.requireThread(); p.rethrow();
     if (!p.window || p.stopped) return false;
-    const DWORD count = p.armed ? 1 : 0;
-    const auto status = MsgWaitForMultipleObjectsEx(count, count ? &p.timer : nullptr,
-        timeout, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+    // A frame waiting for the swap chain's admission waits here, with the
+    // input: its ticket stays pending, so new requests coalesce into it, and
+    // it runs after the input that arrived with its admission.
+    HANDLE gate = nullptr; bool runGated = false;
+    if (p.gated) {
+        if (!p.frames.current(*p.gated)) p.clearGate();
+        else if (!(gate = Impl::gateObject(p.callbacks))) runGated = true; // admitted, or no gate any more
+        else if (p.gatedSince + gateBound <= monotonicSeconds()) { gate = nullptr; runGated = true; ++p.counts.presentationFallbacks; }
+    }
+    DWORD wait = timeout;
+    if (gate) wait = std::min<DWORD>(wait, static_cast<DWORD>(std::ceil(std::max(0., p.gatedSince + gateBound - monotonicSeconds()) * 1000)));
+    std::array<HANDLE, 2> handles{}; DWORD count = 0;
+    if (gate) handles[count++] = gate;
+    const DWORD timerSlot = p.armed ? count : MAXDWORD;
+    if (p.armed) handles[count++] = p.timer;
+    const auto status = runGated ? static_cast<DWORD>(WAIT_TIMEOUT) :
+        MsgWaitForMultipleObjectsEx(count, count ? handles.data() : nullptr, wait, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
     if (status == WAIT_FAILED) fail("MsgWaitForMultipleObjectsEx overlay");
-    if (count && status == WAIT_OBJECT_0) {
+    if (gate && status == WAIT_OBJECT_0) {
+        // The wait consumed the admission: it belongs to the gated frame.
+        ++p.counts.presentationAdmissions; runGated = true;
+        const auto handlers = p.callbacks;
+        if (handlers && handlers->presentationAdmitted) handlers->presentationAdmitted();
+    } else if (timerSlot != MAXDWORD && status == WAIT_OBJECT_0 + timerSlot) {
         try { p.timerReady(); }
         catch (...) { p.stopped=true;p.cancelFrames();p.releaseCursor();throw; }
+    } else if (gate && status == WAIT_TIMEOUT && p.gatedSince + gateBound <= monotonicSeconds()) {
+        ++p.counts.presentationFallbacks; runGated = true;
     }
+    p.rethrow();
     MSG message{};
     // A finite batch prevents a producer from starving the one animation clock.
     // Another pump immediately observes remaining input through INPUTAVAILABLE.
@@ -666,9 +860,15 @@ bool OverlayHost::pumpOnce(std::uint32_t timeout) {
             if(consumed||p.window!=owner||p.callbacks!=handlers)continue;
         }
         TranslateMessage(&message);
+        p.ownFrameDispatch = message.message == frameMessage && message.hwnd == owner;
         DispatchMessageW(&message);
+        p.ownFrameDispatch = false;
         p.rethrow();
         if (!p.window || p.stopped) break;
+    }
+    if (runGated && p.window && !p.stopped) {
+        try { p.runGated(); }
+        catch (...) { p.stopped=true;p.cancelFrames();p.releaseCursor();throw; }
     }
     return p.window && !p.stopped;
 }
@@ -681,6 +881,7 @@ OverlayHostStats OverlayHost::stats() const {
     auto result = p.counts;
     result.timerArmed = p.armed; result.framePending = p.frames.pending();
     result.visible = p.visible; result.focused = p.focused;
+    result.presentationGated = p.gated.has_value();
     return result;
 }
 } // namespace endfield::app
