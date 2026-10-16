@@ -2592,7 +2592,7 @@ Cloud Music. No fix has been confirmed on the desktop.
 | Clipboard and Activity glitch | Clipboard's removal reveal and Activity's sort transition draw the authored shutter keyframes like the Shelf; `reveal-mask.bin` and `sort-mask.bin` are no longer read (`dab9539`). | `clipboard_reveal_frames_contracts` (269), `activity_reveal_frames_contracts` (486): no region covered again, both settle at .26 s. | The real GPU. |
 | Volume shook on a Headphones / Bluetooth ↔ App volume switch | The page motion turned about the canvas corner and started at the press. It now turns about the content centre (200,167) from the first presenting frame; only the detail page reloads (`e9e9a58`). | `volume_scene_contracts` (actionMotion), `volume_preview_contracts` (pageSwitch, frame by frame), owner coverage (10–14 frames, header kept, rows parked and revived). | The motion on the desktop. |
 | Centre content too small | Not a DPI error: the Mac caps its design scale at 1.15 while the ring grows with the screen, so on the laptop (1707 × 1067 points) the Mac formula fills 88.8 % of the blue ring. `desktopContentScale` keeps the reference MacBook's proportion (factor ×1.161 on the laptop, exactly 1 at 1470 × 956). A deliberate deviation from Mac-exact numbers on larger displays (`d5acbe9`, `e62a46f`). | Hidden coverage: 1.0307 of the blue ring at seven display sizes, the Mac layout at 1470 × 956. | The look on the real display. |
-| GPU usage in Activity (request) | PDH `\GPU Engine(*)\Running Time`, busiest engine per app and overall (Task Manager's method): an Overview row ("TOP ENGINE", five languages) and an Apps column; collected only while Activity is visible, closed on hide (`dab9539`). *Superseded after checkpoint 130 (`cadb88e`): the row and column now show the total load, captioned TOTAL LOAD; see checkpoint 131.* | `activity_gpu_contracts` (617, including a live collection over the test process). | Figures against Task Manager with a game and two adapters. |
+| GPU usage in Activity (request) | PDH `\GPU Engine(*)\Running Time`, busiest engine per app and overall (Task Manager's method): an Overview row ("TOP ENGINE", five languages) and an Apps column; collected only while Activity is visible, closed on hide (`dab9539`). *Superseded after checkpoint 130 (`cadb88e`): the row and column now show the total load, captioned TOTAL LOAD; see checkpoint 131. Superseded after checkpoint 131 (`b0dd0e5`): the overall GPU is now read with every system sample, hidden and closed alike, and the query stays open from the first sample at launch; see checkpoint 132.* | `activity_gpu_contracts` (617, including a live collection over the test process). | Figures against Task Manager with a game and two adapters. |
 | Clicking the Sanity bar closed the HUD | The shown wallet takes every press whatever it shows (`fe21a24`), and the host's background-press close asks `ModuleOwner::covers` first, also during the entrance (`5a2d3d3`). | Owner coverage presses the wallet open and during the entrance (re-projected on the animating plane); native and owner suites. | The press on the live display. |
 | Centre logo did not flicker | The ENDFIELD INDUSTRIES logo flickers like the Mac (opacity .22 at .05–.09 s, .38 at .20–.25 s, done at .46 s, glow at .78), never closes the HUD, honours Reduce Motion, and is a UIA button (`d5acbe9`). | Hidden coverage. | The animation on the display. |
 | Clock not scrollable | A mouse wheel over the clock switches styles (Mac 28-point threshold, one style per gesture); a style change pushes the inner page (.26 s ease-in-ease-out, 340 points, clipped) (`d5acbe9`). | Hidden coverage (half-way offsets and the end of the push). | The animation on the display. |
@@ -2672,7 +2672,7 @@ HUD closed while another module was shown):
 | Reader (`e99e0f8`) | A hidden Reader drops its page textures and parks its canvas group after the .35 s departure deadline (also with the HUD closed). PDF pages render on a WARP device without internal threads (hardware only as fallback), as the Mac renders them on the CPU. | Hidden, 1 px/pt: renderer bytes 3,728,128 → 5,040, textures 38 → 0. PDF census on the laptop, 40 show/hide cycles: threads with a PDF open 96 → 38, private 92.2 → 71.2 MB open and 84.4 → 66.0 MB after release, no growth (66.0–67.6 MB). |
 | Map (`e99e0f8`, forwarded in `5a2d3d3`) | `MapPreview::prewarm` builds the first opening at opacity 0 while closed. | First opening frame on WARP 13.0–17.2 → 0.07–0.21 ms; 27 → 0 first-frame uploads. After a close the host trace still finds 28 textures (22.9 MB, linear or encoded colour spaces at 8 B per texel) and 17.9 MB of CPU residency. |
 | Notes (`83dd37d`, `c9f04a5`) | A large card's body lines live in their own scene and its plate is a filled GPU mesh; the shared media decoder and Media Foundation start with the first job and stop after the last movie. | 1600 × 1000 pt card at 2 px/pt: 47 → 22 MB CPU, 94 → 44 MB GPU; closing the editor unchanged 5 rasters / 4.6 ms (was about 46 lines, 59 ms). 46 threads before and after building the media stack; 72 instead of 80 after one movie. |
-| Clipboard, Event Log, Activity, Storage (`a2829c0`, `7918420`, `244ba30`) | Release on close, Storage built only when shown, hover tints painted only while they show, one plate leaf per row. | At rest, CPU KiB: Clipboard 8686 → 5599, Event Log 7702 → 3490, Activity Apps 2461 → 2005, Storage 2100; 0 after a close. The PDH GPU query adds no thread; about 4.3 MB stays after the first Activity visit. |
+| Clipboard, Event Log, Activity, Storage (`a2829c0`, `7918420`, `244ba30`) | Release on close, Storage built only when shown, hover tints painted only while they show, one plate leaf per row. | At rest, CPU KiB: Clipboard 8686 → 5599, Event Log 7702 → 3490, Activity Apps 2461 → 2005, Storage 2100; 0 after a close. The PDH GPU query adds no thread; about 4.3 MB stays after the first Activity visit. *Superseded by `b0dd0e5` (checkpoint 132): the query is opened by the first system sample at launch and kept; on top of the disk query it adds about 760 KiB private bytes.* |
 | File Shelf (`ebcc801`, `15da40b`) | No icon thread before the Shelf shows or while it is hidden; tight static groups; release on close; resting highlights held as a transparent point. | Eight cards at 2 px/pt: 7,969 → 5,757 KiB of rasters (the before figure is from `ebcc801`, not re-measured). |
 | Volume (`a58af3a`, `7902591`, `98e4f29`) | Plates and slider parts rasterize at their own size (pixel-identical), nothing is built at launch, hover tints held as points, release on close. | App volume page, 2 px/pt: 13.2 → 2.2 MB CPU, 26.4 → 4.4 MB GPU; at launch 13.2 MB → 0; 0 after a close; first build on WARP 58.7 → 30.3 ms. |
 | Now Playing (`7700973`) | Parked on close: scene, extra decoded covers and recent compressed covers. No thread of its own. | Preview test, 1 px/pt: rasters 515,164 → 0 bytes, textures 46 → 0, native groups 6 → 0. |
@@ -3126,3 +3126,192 @@ Checkpoint 129's open decisions still apply.
 
 - Settled after checkpoint 130: Activity shows GPU before CPU (the user's
   Windows layout).
+
+## Checkpoint 132 (2026-10-15)
+
+Checkpoint 131 was pushed at `82d778a`. This entry covers the seven code
+commits after it, up to `09b0e12`, and the two documentation commits
+`2b061ec` (Notes strokes in the gap list) and `976cfc2` (the new
+[`CHANGELOG.md`](CHANGELOG.md)). None is pushed; the entry itself changes
+documentation only.
+
+### Reports from release candidate 131
+
+- **Now Playing with NetEase (user report):** the time froze and the lyrics
+  stood still when the catalog search missed, and the lyrics drifted when it
+  matched another recording (`ca14c77`).
+- **Map over the Storage and Activity Monitor buttons:** the Map, drawn 1.14×
+  its plane, reached over the two plates below the circle (about 2,800 to
+  5,700 square points of each at rest, on displays from 1280 × 720 at 150 %
+  to 1280 × 800) and took presses on about half of that area (`5c7fd39`,
+  `09b0e12`).
+
+### Changes after checkpoint 131
+
+**Notes strokes keep every mouse sample (`aa758e8`).** A drawing drag hands
+the workspace every coalesced sample of its move (the host's mouse history
+from checkpoint 131), oldest first. A drawing card's ink is one updatable
+texture planned in 256-pixel tiles (`modules/notes_drawing_ink`) and painted
+in place once per frame: a growing stroke only where its newest segments
+reach, a committed stroke adopted where the live one was painted, an erased
+or cancelled stroke over its own footprint, a new card size whole. The
+source's 0.8-point threshold, stroke and drawing limits, eraser and stored
+format are unchanged. `notes_drawing_probe` (WARP, 1000 Hz drag, 5 samples
+per move): samples kept 241 → 895 of 1,441, CPU per move 1.44–1.81 →
+0.003–0.005 ms, drawing CPU per frame about 2.1–2.5 → 0.35 ms, no texture
+creation per frame. Tests: `notes_drawing_ink_contracts` (new),
+`notes_drawing_scene_contracts`, `notes_drawing_workspace_contracts`,
+`notes_drawing_preview_contracts`; laptop slot 47 of 47 with owner and
+session-end coverage.
+
+**Battery bar: *Don't display* and GPU (`19fd285`, `09b0e12`).** Display ›
+Battery alert gains two Windows-only choices. Display method *Don't display*
+(saved `displayMode` "never"; the row cycles Power changes → Always → Don't
+display; 不显示 / 不顯示 / 表示しない / 표시 안 함) hides instead of every
+automatic presentation (power changes, always mode, the HUD or Projection
+closing, wake), so no alert window, device, wake or Activity sampling exists
+for it; the tray preview and *Edit position* still present, and the HUD
+badge and Power page stay live. Reading *GPU* (saved `alertMetric` "gpu",
+after the five Mac readings) shows Activity's GPU total load in the CPU
+reading's layout, muted without a sample; `09b0e12` passes the whole
+Activity sample to the Power area and the Event Log titles a GPU metric
+change. Both are open strings in the v1 settings record; the Mac and older
+builds read them as Power changes / Battery. Tests (extended; the commit
+message lists none): `power_policy_contracts`, `power_area_contracts`,
+`power_owner_contracts`, `charge_indicator_contracts`,
+`charge_indicator_scene_contracts`, `data_store_contracts`,
+`settings_presentation_contracts`.
+
+**Activity GPU at all times (`b0dd0e5`).** The overall GPU reading is part
+of every system sample, on the host's one `ActivitySamplingPlan` deadline
+(5 s from launch, 1 s while Activity or a charge alert shows, hidden and
+closed alike, paused only while suspended), so its history has no gaps. No
+timer, thread or wake-up of its own; the Apps GPU column is still read with
+the per-app CPU while the Apps page shows. The query is opened by the first
+sample (about 150 ms on the worker) and kept, like the disk query; steady
+samples allocate nothing. Measured (laptop, 657 engine instances, closed,
+5 s cadence, 120 s runs): wake-ups 441 → 432 per minute, CPU 20.2 → 27.2 ms
+per minute, 0.6–0.7 ms per collection, 245 KiB of kept buffers and
++760 KiB private bytes on top of the disk query. Tests:
+`activity_gpu_contracts` (history fills with CPU from launch, shown, hidden
+and closed; one collection per sample; no allocation; one query across
+samples and HUD close; UTF-16 parsing), `activity_provider_contracts`,
+`activity_preview_contracts` and the Activity resource suites.
+
+**NetEase Cloud Music 3 time and lyrics from its queue file (`ca14c77`).**
+Live on 3.1.41 (read-only accessibility probe) the bar's slider exposes no
+accessible value, so the played width times a length is the only clock, and
+the length came from the fuzzy catalog match. NetEase writes its queue to
+`%LOCALAPPDATA%\NetEase\CloudMusic\webdata\file\playingList` (each entry:
+public song id, name, artists, cover, duration in ms). The catalog reads it
+(read only, at most 16 MiB, re-read only when its size or write time
+changes, parsed on the shared decode worker) and resolves the window title's
+track with the catalog's conservative matcher; a wrong entry or an ambiguous
+tie is never taken. The exact length turns the played fraction into seconds,
+and the exact id reads that song's lyrics. GSMTC keeps precedence and the
+fuzzy title search remains the fallback. No seek: the slider has no settable
+value and no position action. NetEase's own *开启 SMTC* setting (3.1.21 and
+later, as stated in the commit; no external source is cited) publishes a
+GSMTC session with a timeline and `TryChangePlaybackPositionAsync`, which
+Now Playing already drives and prefers. Tests (sanitized synthetic queues):
+`now_playing_lyrics_sources_contracts` (parser: exact match, another queued
+track, no match, wrong artist, string id, ambiguous tie, malformed and empty
+files; by-id path versus search fallback),
+`now_playing_sources_session_contracts` (the queue length turns the fraction
+into seconds, the lyric line follows the bar clock, unqueued tracks fall
+back). All 394 suites and `application_owner_coverage` passed on the laptop
+with this commit.
+
+**Map below the Storage and Activity Monitor plates (`5c7fd39`,
+`09b0e12`).** The port of the Mac's desktop Map occlusion
+(HUDSourceWatchView `desktopMapOcclusionEnabled` /
+`makeDesktopBottomSilhouettes`, SystemHUDView `applySourceMapOcclusion`,
+`mapFilteredButton`). `core/map_source_cutout` holds the plates'
+sprite-mesh outlines (exported from the pinned Mac source by
+`tools/map_cutout_reference.py`) and projects them from each presented
+source frame without allocating; the Map's feather mask repaints in place
+only the texels the old and new plates cover. Presses, double clicks, right
+clicks, hover and pinches inside a plate go to the navigation; a Map drag
+continues across a plate and the wheel still zooms. `09b0e12` hands the Map
+the presented frame (`constructMap`). Tests: `map_cutout_contracts` (new),
+`map_occlusion_contracts` (new; the packaged shell on five displays, and at
+1280 × 800 all 11,012 sampled plate points show above the Map that covered
+them), `map_preview_contracts`. Build, owner and session-end coverage and
+every Map contract passed with the host change.
+
+**Idle cost (`348b1ed`).** Measured hidden on the laptop (RTX 5060,
+offscreen 1280 × 800, production owner and frame scheduling):
+
+- The NVIDIA driver thread that failed RC 128's closed-idle gate belongs to
+  the D3D11 device itself: 67–83 wake-ups per second with or without
+  `PREVENT_INTERNAL_THREADING_OPTIMIZATIONS` or `VIDEO_SUPPORT`, after a
+  trim, at 1 ms timer resolution (99/s) or under EcoQoS (70/s); only
+  releasing the device stops it.
+- The renderer can release and recreate its device (`suspendDevice`,
+  `resumeDevice`, `prepareDevice`, keeping every resource's identity and
+  contents) and its presentation. The application releases both after the
+  HUD has been closed for `closedGraphicsGrace` (5 s). `suspendDevice`
+  refuses while a media owner holds `mediaDevice()`; Notes video playback
+  holds it for its lifetime, so in production the release does not happen
+  and closed idle stays at about 70 wake-ups per second.
+- An unchanged native root pass is composited from its retained target
+  (0.18 → 0.01 ms per ambient frame), and `setDrawList` resolves unchanged
+  draws without lookups (0.155 → 0.09 ms).
+
+| Idle trace (hidden) | Before | After |
+| --- | --- | --- |
+| Open idle, ambient on | 31.9 fps, 1.61–1.68 ms per frame, 5.5–6.1 % of one core | 31.9 fps, 1.48–1.56 ms, 5.2–5.5 % |
+| Closed after launch (release, no media stack) | 67.5–72.5 wake-ups/s, 167 MiB | 0.2/s, 114 MiB |
+| Closed after use (release, no media stack) | 69.6–71.5/s, 220 MiB | 0.0–1.7/s, 163 MiB |
+| Opening after a long close | first frame 50 ms | 183–197 ms (device creation 110–230 ms) |
+| Reopening within the grace | 13–33 ms | unchanged |
+
+New tools: `watch_session_preview --idle-trace` and
+`application_idle_probe` (what wakes a process holding the device, device
+creation cost per flag set, the Activity sample's context switches per
+read). Tests: `application_frame_targets_contracts`,
+`native_renderer_contracts`, `overlay_host_contracts`,
+`application_idle_trace` (new; closed: no frame or timer, device released,
+under 20 wake-ups/s; ambient cadence; per-frame CPU bound; a quick reopening
+keeps the device).
+
+### Test runs
+
+Laptop validation: pending
+
+New registered tests in this checkpoint: `notes_drawing_ink_contracts`,
+`map_cutout_contracts`, `map_occlusion_contracts` and
+`application_idle_trace`. Per-commit laptop slots are quoted above.
+
+### Corrections to the entries above
+
+- Checkpoint 129 says GPU is collected only while Activity is visible and
+  the query closes on hide, with about 4.3 MB left after the first visit. Since `b0dd0e5` it is read with every system sample and the
+  query stays open from launch; notes in place point here.
+- Checkpoint 131's *Still open* says Notes strokes do not use the recovered
+  mouse samples. They do since `aa758e8`.
+- Checkpoint 131 says NetEase shows no time without a catalog match. With
+  the queue file it needs a confident queue or catalog match.
+
+### Open items
+
+- Closed-idle wake-ups: the device release is not in effect while Notes
+  video holds the device (about 70 wake-ups/s from the driver thread). A
+  decision is pending to release only after a long close, so that quick
+  reopenings keep their speed.
+- Map: the plates are not yet cut out during the transitions into and out of
+  the Map; the pin pulse runs at the display rate while the Map shows.
+- Activity: most of a system sample's context switches come from the
+  network reading (`GetIfTable2`).
+- Projection: redrawing a very long stroke at pen-up still takes 13–15 ms.
+
+### Live acceptance still needed
+
+Checkpoint 131's list still applies. New items:
+
+- NetEase in the HUD: the bar time and lyrics with the queue file, a track
+  missing from the catalog, and seeking after turning on *开启 SMTC*.
+- The Map's plates at rest and during the Map's transitions, with presses.
+- The battery bar's *Don't display* and GPU reading.
+- Notes drawing speed on the desktop.
+- `package_perf_gate --desktop`: open idle with ambient on, and closed idle.

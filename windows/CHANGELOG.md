@@ -7,15 +7,51 @@ requirements and the current status are in
 below was a private test build on the development laptop with its own test
 data folder; none is a published release.
 
-## Unreleased (after RC 131)
+## Unreleased
 
-- **Notes drawing** keeps every mouse sample and paints only newly touched
-  ink, so strokes follow the cursor smoothly (`aa758e8`).
-- In progress: Now Playing real-time progress, synchronized lyrics and seeking
-  for NetEase Cloud Music; Activity Monitor recording GPU history at all times;
-  Map drawn beneath the Storage and Activity Monitor buttons; a "Don't display"
-  battery bar option and a GPU metric for the battery bar; lower closed-idle
-  wake-ups and ambient-animation CPU.
+## RC 132 — checkpoint 132
+
+- **Notes drawing follows the cursor**: strokes keep every mouse sample
+  Windows delivers and paint only the newly touched ink, so fast strokes stay
+  smooth. Drawing CPU per frame fell from about 2.1–2.5 ms to about 0.35 ms.
+- **Battery bar: "Don't display"**: Display › Battery alert › Display method
+  has a third choice, *Don't display* (不显示 / 不顯示 / 表示しない /
+  표시 안 함). The floating charge bar then never appears on its own: not on
+  power changes, not in *Always* mode, not after the HUD or Projection
+  closes, not after wake. It creates no window or graphics device and starts
+  no sampling for it. Still available: the tray's *Preview charging effect*,
+  *Edit position*, the HUD's charge badge (the Power entry) and the Power
+  page.
+- **Battery bar: GPU reading**: Reading has a *GPU* choice after the five Mac
+  readings. It shows Activity Monitor's GPU total load, laid out like the CPU
+  reading. The Event Log names a change to it. A Mac or an older Windows
+  build reads either new choice as *Power changes* / *Battery*.
+- **Activity Monitor GPU history has no gaps**: GPU is recorded at all times,
+  on the same schedule as CPU and RAM (every 5 s, every second while
+  Activity or the charge bar shows), also while Activity is hidden or the HUD
+  is closed. Measured cost: about 7 ms of CPU per minute and under 1 MB of
+  memory; no extra wake-ups.
+- **Now Playing with NetEase Cloud Music 3**: the time bar and the
+  synchronized lyrics now run with the song. Now Playing reads NetEase's own
+  local queue file (read only) for the exact song and its length, so the time
+  no longer stops when the online catalog search finds nothing, the lyrics no
+  longer drift when it finds a different recording, and the lyrics are those
+  of the exact song.
+- **Tip — seeking in NetEase**: Now Playing cannot move NetEase's progress
+  bar from outside, because NetEase exposes no position control for it. Turn
+  on NetEase's own **开启 SMTC** setting (NetEase 3.1.21 or later). NetEase
+  then publishes a Windows media session, and Now Playing uses it for
+  NetEase's exact position and for seeking, together with the other
+  controls.
+- **Map**: the Storage and Activity Monitor buttons below the circle stay
+  above the Map and answer clicks again, as on the Mac. The transitions into
+  and out of the Map are not cut out yet.
+- **Open idle**: with ambient animation on, frames redraw only what changed:
+  about 5.2–5.5 % of one core at the Mac's 30 Hz ambient rate (5.5–6.1 %
+  before, hidden test). Closed-idle wake-ups (about 70 per second from the
+  graphics driver) are unchanged for now: releasing the graphics device while
+  the HUD is closed is built but not yet in effect, and when to release it is
+  still being decided.
 
 ## RC 131 — checkpoint 131
 
