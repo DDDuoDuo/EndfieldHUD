@@ -126,6 +126,8 @@ public:
     bool diagnosticEditing(bool enabled,double time);
     bool finish(); // false: active TSF lock; owner retries after its queued message
     std::uint64_t compositionRevision()const noexcept;
+    // Diagnostics: a drawing card's ink painting (samples planned, regions painted).
+    native::NativeNotesDrawingStats drawingStats(std::string_view noteID)const;
     void upload(native::Renderer&);
     std::span<const native::LayerCompositionEntry> entries();
     void collected(native::Renderer&);

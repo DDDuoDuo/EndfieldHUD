@@ -103,6 +103,7 @@ struct NotesPreview::Impl {
     // it with WM_CAPTURECHANGED, whose capture loss ended the new stroke at
     // its first point.
     bool rightPressed{};
+    std::vector<core::Point> drawingSamples; // one drag move's samples, reused
     float confirmationOpacity{},menuOpacity{};double currentTime{},confirmationStarted{};std::uint64_t outgoingGeneration{},uploadedRegistration{};
     unsigned timeDepth{};
     // Win32 capture/focus and TSF can synchronously reenter this owner. Nested
@@ -378,7 +379,14 @@ struct NotesPreview::Impl {
         if(!moduleInput){clearHover(time);return false;}
         if(e.kind==app::PointerKind::move){
             if(workspace->mediaSeeking()){workspace->updateMediaSeek(p,time);return true;}
-            if(workspace->drawingActive()){workspace->updateDrawing(p);drawingStatus();return true;}
+            if(workspace->drawingActive()){
+                // Every sample the host recovered for this drag move (the
+                // positions Windows coalesced since the previous move,
+                // oldest first), then the move's own point: a fast stroke
+                // keeps the whole path of a 1000 Hz mouse while the ink is
+                // painted once per frame.
+                drawingSamples.clear();for(const auto&h:e.history)drawingSamples.push_back({h.x*metrics.scale,h.y*metrics.scale});drawingSamples.push_back(p);
+                workspace->updateDrawing(drawingSamples);drawingStatus();return true;}
             if(editorDrag){if(auto*editor=workspace->editor()){editor->pointerDrag(p);editSync();}return true;}
             if(state->dragging()){if(const auto point=workspaceProjection.unproject(p))workspace->dragTo(*point);return true;}
             workspace->updateDrawingHover(p);const bool onConfirm=confirmAt(p,time,false);const auto hit=onConfirm?std::nullopt:workspace->hitTest(p);
@@ -577,6 +585,7 @@ std::unique_ptr<native::NativeNotesAutomation>NotesPreview::automation(IRawEleme
     return std::make_unique<native::NativeNotesAutomation>(std::move(h));
 }
 std::uint64_t NotesPreview::compositionRevision()const noexcept{return impl_->workspace->compositionRevision();}
+native::NativeNotesDrawingStats NotesPreview::drawingStats(std::string_view id)const{return impl_->workspace->drawingStats(id);}
 void NotesPreview::upload(native::Renderer&r){auto&i=*impl_;need(!i.mediaRenderer||i.mediaRenderer==&r,"Notes owner cannot replace its media renderer");i.mediaRenderer=&r;i.workspace->uploadMedia(r);if(i.mediaMenu)i.mediaMenu->upload(r);if(i.formatMenu)i.formatMenu->upload(r);const auto revision=i.registration.stats().geometryRevision;if(i.uploadedRegistration!=revision){i.registration.uploadGeometry(r);i.uploadedRegistration=revision;}if(!i.groupUploaded){i.confirmationGroup->uploadResources(r);i.groupUploaded=true;}else i.confirmationGroup->updateLocal(r);i.confirmationGroup->setPose(i.confirmWorld,i.confirmationOpacity);}
 std::span<const native::LayerCompositionEntry>NotesPreview::entries(){auto&i=*impl_;i.composed.clear();i.composed.push_back({&i.controlScene->scene(),i.registration.draws()});for(const auto&e:i.workspace->entries())i.composed.push_back(e);i.composed.push_back(i.confirmationGroup->entry());if(i.formatMenu)for(const auto&e:i.formatMenu->entries())i.composed.push_back(e);if(i.mediaMenu)for(const auto&e:i.mediaMenu->entries())i.composed.push_back(e);return i.composed;}
 void NotesPreview::collected(native::Renderer&r){if(impl_->mediaMenu)impl_->mediaMenu->collected(r);if(impl_->formatMenu)impl_->formatMenu->collected(r);need(impl_->workspace->collectRetired(r),"Detached Notes assets must retire after publication");}

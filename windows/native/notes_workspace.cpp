@@ -265,7 +265,7 @@ struct NativeNotesWorkspace::Impl {
         const auto media=mediaFor(s,n);const bool edit=field&&field->id==n.id;const bool todo=n.kind==ehud::data::NoteKind::todo;const bool drawing=n.kind==ehud::data::NoteKind::drawing;const auto measurement=(todo||media||drawing)?std::shared_ptr<const NativeNotesTextMeasurement>{}:measure(n.id,n,c->rect,force?nullptr:s.measurement);
         const auto checklist=todo?measureChecklist(s,n,c->rect,force):std::shared_ptr<const mod::NotesChecklistLayout>{};
         if(drawing&&(!s.drawing||s.drawingPayload!=n.drawing)){auto value=std::make_shared<mod::NotesDrawing>(n.drawing?mod::NotesDrawing(*n.drawing):mod::NotesDrawing{});s.drawing=std::move(value);s.drawingPayload=n.drawing;s.drawingRevision=++drawingSerial;}
-        if(drawing){if(!s.drawingScene)s.drawingScene=std::make_unique<NativeNotesDrawingScene>(raster,options.raster);if(s.drawingScene->setCompleted(*s.drawing,s.drawingRevision,{c->rect.width,c->rect.height}))++compositionRevision;}
+        if(drawing){if(!s.drawingScene)s.drawingScene=std::make_unique<NativeNotesDrawingScene>(raster,options.raster);(void)s.drawingScene->setCompleted(*s.drawing,s.drawingRevision,{c->rect.width,c->rect.height});}
         std::optional<mod::NotesColor> editingColor;if(edit&&field->rich){const auto color=field->rich->selectionStyle().color;if(color)editingColor=mod::NotesColor{color->red,color->green,color->blue,color->alpha};}
         const bool content=force||(media&&s.paintedMedia!=media->content)||s.media!=media||s.editingColor!=editingColor||!s.initialized||s.measurement!=measurement||s.checklist!=checklist||s.rect.width!=c->rect.width||s.rect.height!=c->rect.height||s.selected!=c->selected||s.pinned!=c->pinned||s.editing!=edit;
         bool moved{};if(content){mod::NotesPresentationInput input;input.palette=style.palette;input.strings=style.strings;if(measurement)input.measured=measurement->presentationText(measurement);input.checklist=checklist;input.scrollOffset=s.scrollOffset;input.editingColor=editingColor;input.drawingColor=drawingColor;if(media)input.media=media->content;s.presentation.updateContent(state,input);
@@ -448,6 +448,10 @@ bool NativeNotesWorkspace::updateMediaSeek(core::Point physical,double time){aut
 bool NativeNotesWorkspace::endMediaSeek(double time){auto&i=*impl_;i.check();time=i.mediaClock(time);if(!i.mediaSeek)return false;const auto value=std::move(*i.mediaSeek);i.mediaSeek.reset();auto*s=i.find(value.id);if(s&&s->media&&i.hasVideos()){i.seekVideo(s->media->key,value.seconds);i.readMedia();i.progress(*s,false);if(i.pose)i.applyPose(*i.pose);}return true;}
 bool NativeNotesWorkspace::mediaSeeking()const noexcept{return impl_->mediaSeek.has_value();}
 void NativeNotesWorkspace::uploadMedia(Renderer&r){auto&i=*impl_;i.check();
+    // Drawing ink: every change planned since the previous frame (all samples
+    // of all pointer events) painted in place; a card's ink draw joins its
+    // entries once its texture is resident.
+    {bool joined{};for(auto*s:i.active)if(s->drawingScene)joined=s->drawingScene->upload(r)||joined;if(joined){i.rebuildEntries();if(i.pose)i.applyPose(*i.pose);}}
     // The open field's scroll-indicator quad joins its after-editor draws once.
     if(i.field)if(auto*s=i.find(i.field->id);s&&s->native->uploadEditorIndicator(r)){i.rebuildEntries();if(i.pose)i.applyPose(*i.pose);}
     // Large cards' border rings join their frame entries once resident, and
@@ -493,18 +497,28 @@ bool NativeNotesWorkspace::beginDrawing(std::string_view id,core::Point physical
     const auto point=s->hitProjection.unproject(physical);if(!point)return false;const auto viewport=mod::NotesDrawing::viewport({s->rect.width,s->rect.height});if(!inside(viewport,{point->x-s->rect.x,point->y-s->rect.y}))return false;
     i.finishRequired();endDrawing();i.drawingIssue=NativeNotesDrawingIssue::none;i.drawingGesture.emplace(Impl::DrawingGesture{std::string(id),*s->drawing,mod::DrawingStroke{{},i.drawingWidth,i.drawingColor},false});updateDrawing(physical);return true;
 }
-bool NativeNotesWorkspace::updateDrawing(core::Point physical){auto&i=*impl_;i.check();if(!i.drawingGesture)return false;auto&gesture=*i.drawingGesture;auto*s=i.find(gesture.id);need(s&&s->drawingScene,"Active drawing card disappeared");const auto point=s->hitProjection.unproject(physical);if(!point)return true;const auto viewport=mod::NotesDrawing::viewport({s->rect.width,s->rect.height});
-    const core::Point size{viewport.width,viewport.height},local{std::clamp(point->x-s->rect.x-viewport.x,0.,size.x),std::clamp(point->y-s->rect.y-viewport.y,0.,size.y)};
-    if(i.erasing){if(gesture.drawing.erase(local,i.drawingWidth*.5,size)){gesture.erased=true;s->drawingScene->setCompleted(gesture.drawing,++i.drawingSerial,{s->rect.width,s->rect.height});++i.compositionRevision;}}
-    else{const auto sample=mod::sampleDrawingStroke(gesture.stroke,local,size);if(sample==mod::DrawingSample::appended){s->drawingScene->setLive(&gesture.stroke,++i.drawingSerial);++i.compositionRevision;}else if(sample==mod::DrawingSample::limit)i.drawingIssue=NativeNotesDrawingIssue::strokeLimit;}
-    updateDrawingHover(physical);return true;
+bool NativeNotesWorkspace::updateDrawing(core::Point physical){return updateDrawing(std::span(&physical,1));}
+bool NativeNotesWorkspace::updateDrawing(std::span<const core::Point> samples){auto&i=*impl_;i.check();if(!i.drawingGesture)return false;if(samples.empty())return true;auto&gesture=*i.drawingGesture;auto*s=i.find(gesture.id);need(s&&s->drawingScene,"Active drawing card disappeared");const auto viewport=mod::NotesDrawing::viewport({s->rect.width,s->rect.height});const core::Point size{viewport.width,viewport.height};
+    // Every sample in order (source updateDrawing per mouseDragged): the
+    // eraser removes what each one touches, the pen appends each one past
+    // the source 0.8-point threshold. The ink only plans the pixels they
+    // change; the frame paints them once (NativeNotesDrawingScene::upload).
+    bool erased{},appended{};
+    for(const auto physical:samples){if(!std::isfinite(physical.x)||!std::isfinite(physical.y))continue;const auto point=s->hitProjection.unproject(physical);if(!point)continue;
+        const core::Point local{std::clamp(point->x-s->rect.x-viewport.x,0.,size.x),std::clamp(point->y-s->rect.y-viewport.y,0.,size.y)};
+        if(i.erasing){if(gesture.drawing.erase(local,i.drawingWidth*.5,size))erased=gesture.erased=true;}
+        else{const auto sample=mod::sampleDrawingStroke(gesture.stroke,local,size);if(sample==mod::DrawingSample::appended)appended=true;else if(sample==mod::DrawingSample::limit)i.drawingIssue=NativeNotesDrawingIssue::strokeLimit;}
+    }
+    if(erased)s->drawingScene->setCompleted(gesture.drawing,++i.drawingSerial,{s->rect.width,s->rect.height});
+    if(appended)s->drawingScene->setLive(&gesture.stroke,++i.drawingSerial);
+    updateDrawingHover(samples.back());return true;
 }
 bool NativeNotesWorkspace::endDrawing(){auto&i=*impl_;i.check();if(!i.drawingGesture)return false;auto gesture=std::move(*i.drawingGesture);i.drawingGesture.reset();auto*s=i.find(gesture.id);need(s&&s->drawingScene,"Finishing drawing card disappeared");
     if(!i.erasing&&!gesture.stroke.points.empty()){if(gesture.drawing.append(std::move(gesture.stroke)))gesture.erased=true;else i.drawingIssue=NativeNotesDrawingIssue::drawingLimit;}
     const bool committed=gesture.erased&&i.state.commitDrawing(gesture.id,gesture.drawing);i.sync();if(committed)i.action("drawingEdited");
     // Successful sync already painted the new completed document once. Only
     // an unaccepted erase needs to restore its previous completed pixels.
-    if(gesture.erased&&!committed){s->drawingRevision=++i.drawingSerial;s->drawingScene->setCompleted(*s->drawing,s->drawingRevision,{s->rect.width,s->rect.height});++i.compositionRevision;}
+    if(gesture.erased&&!committed){s->drawingRevision=++i.drawingSerial;s->drawingScene->setCompleted(*s->drawing,s->drawingRevision,{s->rect.width,s->rect.height});}
     s->drawingScene->setLive(nullptr,++i.drawingSerial);return true;
 }
 bool NativeNotesWorkspace::drawingActive()const noexcept{return impl_->drawingGesture.has_value();}
@@ -520,6 +534,7 @@ mod::NotesColor NativeNotesWorkspace::drawingColor()const noexcept{return impl_-
 double NativeNotesWorkspace::drawingWidth()const noexcept{return impl_->drawingWidth;}
 bool NativeNotesWorkspace::drawingErasing()const noexcept{return impl_->erasing;}
 NativeNotesDrawingIssue NativeNotesWorkspace::drawingIssue()const noexcept{return impl_->drawingIssue;}
+NativeNotesDrawingStats NativeNotesWorkspace::drawingStats(std::string_view id)const{auto&i=*impl_;i.check();const auto*s=i.find(id);return s&&s->drawingScene?s->drawingScene->stats():NativeNotesDrawingStats{};}
 bool NativeNotesWorkspace::createMedia(std::string id,double createdAt,std::string reference,core::Point point,std::shared_ptr<void>access){auto&i=*impl_;i.check();if(!i.state.notesSelected())return false;
     need(i.slots.size()+i.deletingCards.size()+i.retiredCards.size()<i.retainedCeiling(),"Notes retained-card capacity reached");
     // Source aspect-derived media dimensions are at most300x260 before the

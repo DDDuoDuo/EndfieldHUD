@@ -108,7 +108,7 @@ struct NativeNotesAutomationStrings {
 // Settled attributed line metrics and edited paragraph metrics follow their
 // distinct original source paths. TODO uses plain font11 row editors. Optional
 // still/GIF/video playback shares caller-owned decode/device/deadlines. Drawing uses
-// retained completed/live/brush surfaces and commits only when the gesture ends;
+// one retained ink texture painted in place plus a brush ring, and commits only when the gesture ends;
 // hidden unsupported records are not read/rendered. Stored text is never cut.
 // Owner appends entries() to its ONE LayerComposition and republishes whenever
 // compositionRevision changes. Removed scenes remain alive until collectRetired
@@ -166,6 +166,8 @@ public:
     bool mediaSeeking()const noexcept;
     // Before entries() publication. Upload only changed image frames and each
     // card's one retained quad; pointer/tilt updates do not touch textures.
+    // Drawing cards paint the ink regions their strokes changed since the
+    // previous call into their retained texture (in place).
     void uploadMedia(Renderer&);
     std::span<const LayerCompositionEntry> entries()const noexcept;
     std::uint64_t compositionRevision()const noexcept;
@@ -178,6 +180,11 @@ public:
     bool createDrawing(std::string noteID,double createdAt);
     bool beginDrawing(std::string_view noteID,core::Point physical);
     bool updateDrawing(core::Point physical);
+    // Every sample of one pointer event in order (the samples Windows
+    // coalesced since the previous move, then the move's own point); the
+    // brush follows the last one. Only plans the changed ink: uploadMedia
+    // paints it once per frame.
+    bool updateDrawing(std::span<const core::Point> physical);
     bool endDrawing(); // commits once, including source cancel/section close
     bool drawingActive()const noexcept;
     bool toggleDrawingEraser(core::Point physical);
@@ -187,6 +194,7 @@ public:
     double drawingWidth()const noexcept;
     bool drawingErasing()const noexcept;
     NativeNotesDrawingIssue drawingIssue()const noexcept;
+    NativeNotesDrawingStats drawingStats(std::string_view noteID)const; // diagnostics; empty without a drawing
     bool createChecklist(std::string noteID,std::string firstItemID,double createdAt);
     bool createMedia(std::string noteID,double createdAt,std::string reference,core::Point,
         std::shared_ptr<void> accessLease={}); // retained through inspection handoff/playback/card retirement

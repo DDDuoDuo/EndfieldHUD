@@ -5,6 +5,16 @@
 # synthetic documents, hidden owned windows and WARP offscreen targets only.
 
 set(EHUD_NOTES_TARGETS "")
+# Incremental ink planning of drawing cards (modules/notes_drawing_ink.hpp):
+# the changed pixels of a growing, committed or erased stroke, painted in
+# place by native/notes_drawing_scene.
+target_sources(hud_notes PRIVATE modules/notes_drawing_ink.cpp)
+if(BUILD_TESTING)
+  add_executable(notes_drawing_ink_tests tests/notes_drawing_ink_tests.cpp)
+  target_link_libraries(notes_drawing_ink_tests PRIVATE hud_notes)
+  add_test(NAME notes_drawing_ink_contracts COMMAND notes_drawing_ink_tests)
+  list(APPEND EHUD_NOTES_TARGETS notes_drawing_ink_tests)
+endif()
 # Portable Mac-to-Windows font name table for imported rich runs
 # (core/notes_font_names.hpp); part of the rich text model library.
 target_sources(hud_notes_rich PRIVATE core/notes_font_names.cpp)
@@ -147,6 +157,18 @@ if(WIN32)
       set_tests_properties(notes_video_decode_contracts PROPERTIES TIMEOUT 180)
     endif()
   endif()
+endif()
+
+# Notes drawing throughput probe: a measurement tool, not a ctest test. A fast
+# 1000 Hz drag delivered as the HUD host delivers it (one move per frame
+# carrying the samples Windows coalesced) through the production Notes owner
+# in a hidden window on WARP; prints the samples kept and the CPU per move and
+# per frame (rasters, texture creations, in-place regions). Usage:
+#   notes_drawing_probe <native/hud.hlsl> <notes-controls-assets> <sha> <commit>
+if(WIN32 AND BUILD_TESTING AND TARGET hud_notes_preview)
+  add_executable(notes_drawing_probe tests/notes_drawing_probe.cpp)
+  target_compile_definitions(notes_drawing_probe PRIVATE UNICODE _UNICODE NOMINMAX)
+  target_link_libraries(notes_drawing_probe PRIVATE hud_native hud_overlay_host hud_notes_preview)
 endif()
 
 # Projection's UI Automation group under the HUD root (production area; the

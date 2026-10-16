@@ -5,7 +5,9 @@
 #include <objbase.h>
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <filesystem>
+#include <vector>
 #include <iostream>
 #include <stdexcept>
 namespace gpu=endfield::native;namespace app=endfield::app;namespace core=endfield::core;namespace tools=endfield::tools;namespace data=ehud::data;
@@ -56,12 +58,32 @@ void run(HWND hwnd,gpu::Renderer&renderer,const gpu::NativeNotesControlsAssets&a
         check(endfield::modules::NotesDrawing(*f.drawing().drawing).strokes().empty(),"Dragging the eraser across the stroke after the switch erases it");
         check(send(WM_RBUTTONDOWN,MK_RBUTTON,away)&&send(WM_RBUTTONUP,0,away)&&!capture.holdsCapture(),"A second right click switches back to the pen and releases its capture");
         const std::array path{f.cardPoint(note,{60,150}),f.cardPoint(note,{100,160}),f.cardPoint(note,{140,170}),f.cardPoint(note,{180,175})};
-        const auto penLosses=capture.captureLosses();
+        const auto penLosses=capture.captureLosses();const auto penInk=f.preview->drawingStats(note.id);
         check(send(WM_LBUTTONDOWN,MK_LBUTTON,path[0])&&capture.holdsCapture()&&capture.captureLosses()==penLosses,"The pen press after the switch takes a fresh capture with no capture loss");
-        for(std::size_t n=1;n<path.size();++n)send(WM_MOUSEMOVE,MK_LBUTTON,path[n]);
+        for(std::size_t n=1;n<path.size();++n){const auto painted=f.preview->drawingStats(note.id).regionRasters;send(WM_MOUSEMOVE,MK_LBUTTON,path[n]);check(f.preview->drawingStats(note.id).regionRasters>painted,"Each move of the stroke after the switch paints its new segment at the next frame");}
         send(WM_LBUTTONUP,0,path.back());note=f.drawing();drawing=endfield::modules::NotesDrawing(*note.drawing);
         check(drawing.strokes().size()==1&&drawing.strokes().front().points.size()==path.size(),"The stroke drawn after switching tools keeps every point, not a dot");
+        check(f.preview->drawingStats(note.id).wholeRasters==penInk.wholeRasters&&f.preview->drawingStats(note.id).plan.adoptions==penInk.plan.adoptions+1,"It was painted in place as it was drawn and is already painted at its release");
         check(!capture.holdsCapture()&&!f.preview->pointerLocked(),"The pen release ends the host capture");
+    }
+    // A fast drag as the host delivers it: one move per frame whose history
+    // carries the samples Windows coalesced since the previous move
+    // (OverlayHost recovers them from the mouse history while the drag holds
+    // the capture). Every sample is kept and the ink is painted once per
+    // frame, in place; before, each move kept one sample and the stroke cut
+    // across the coalesced ones.
+    {
+        note=f.drawing();const auto strokes=endfield::modules::NotesDrawing(*note.drawing).strokes().size();
+        std::vector<core::Point>path;for(unsigned k=0;k<=60;++k){const double t=k/60.;path.push_back(f.cardPoint(note,{30+240*t,120+40*std::sin(t*7)}));}
+        check(f.pointer(app::PointerKind::down,path[0]),"The fast drag's press starts a stroke");const auto ink=f.preview->drawingStats(note.id);
+        std::vector<app::PointerSample>history;
+        for(unsigned j=0;j<10;++j){history.clear();for(unsigned k=1;k<=5;++k){const auto&sample=path[6*j+k];history.push_back({sample.x,sample.y});}
+            const auto&own=path[6*j+6];f.tick();const app::PointerEvent move{app::PointerKind::move,app::PointerButton::none,own.x,own.y,MK_LBUTTON,history};
+            check(f.preview->pointer(move,f.time)&&f.preview->pointerLocked(),"A move carrying coalesced samples continues the stroke");f.frame();}
+        f.pointer(app::PointerKind::up,path.back());note=f.drawing();drawing=endfield::modules::NotesDrawing(*note.drawing);
+        check(drawing.strokes().size()==strokes+1&&drawing.strokes().back().points.size()==path.size(),"Every coalesced sample of the fast drag is kept");
+        const auto after=f.preview->drawingStats(note.id);
+        check(after.wholeRasters==ink.wholeRasters&&after.textureCreations==ink.textureCreations&&after.regionRasters>ink.regionRasters&&after.paints<=ink.paints+12,"The fast drag is painted in place, once per frame");
     }
     f.world.values[3]=.00001;f.world.values[12]=6;f.tick();const auto*card=f.draw("note/"+note.id+"/card");check(card&&card->opacity>0,"Drawing uses the same live workspace plane");renderer.draw(false);const auto pixels=renderer.readback();bool visiblePixels{};for(std::size_t at=3;at<pixels.pixels.size();at+=4)visiblePixels|=pixels.pixels[at]!=0;check(visiblePixels,"Owned render target contains actual shared drawing artwork");f.release();check(!IsWindowVisible(hwnd),"Drawing fixture never shows a window or touches user data");
 }
