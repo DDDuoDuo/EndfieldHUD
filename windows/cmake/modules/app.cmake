@@ -294,6 +294,7 @@ if(WIN32)
 
   # Runtime-only install: executable, private fonts with their OFL texts, and
   # the verified resource package (no tests, fixtures, symbols or user data).
+  # cmake/modules/packaging.cmake adds THIRD-PARTY-NOTICES.txt beside the exe.
   install(TARGETS EndfieldHUD RUNTIME DESTINATION . COMPONENT EndfieldHUD)
   install(DIRECTORY "$<TARGET_FILE_DIR:EndfieldHUD>/resources/" DESTINATION resources COMPONENT EndfieldHUD)
   install(FILES ${hud_font_sources} DESTINATION fonts COMPONENT EndfieldHUD)

@@ -13,8 +13,9 @@
 // registry value (uninstall entry, Run, StartupApproved, Classes) below that
 // private HKCU subtree and REQUIRES --install-root, --programs-folder and
 // --data-base (temporary folders). Only then are --work-folder (the
-// uninstaller's relocated worker) and --fail-after <step> (rollback
-// injection) accepted. Isolated runs never stop or restart processes outside
+// uninstaller's relocated worker), --fail-after <step> (rollback
+// injection) and Setup's --test-windows-build <build> (the Windows build the
+// install plan is made for, instead of the running one) accepted. Isolated runs never stop or restart processes outside
 // the temporary install root and never touch scheduled notifications.
 //
 // Internal: uninstall.exe relaunches a copy of itself outside the install
@@ -38,7 +39,7 @@ struct SetupArguments {
     std::optional<bool> launchAtLogin;
     std::string installRoot, programsFolder, dataBase, workFolder, resultFile, testRegistry; // UTF-8; empty: unset
     std::optional<InstallStep> failAfter;
-    std::optional<std::uint32_t> parentProcess;
+    std::optional<std::uint32_t> parentProcess, testWindowsBuild;
     bool isolated() const noexcept { return !testRegistry.empty(); }
 };
 // Throws std::invalid_argument naming the problem.

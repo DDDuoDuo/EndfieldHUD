@@ -1,4 +1,8 @@
 #pragma once
+// Unity uGUI Image geometry rules, ported from the macOS app's
+// HUDSourceImageGeometry.swift. Algorithm reference: Unity-Technologies/uGUI
+// 5.6 Image.cs (MIT), pinned 3394d36ec68d9cba7152c4fce48b6eebaf8a941b. Its
+// notice ships in THIRD-PARTY-NOTICES.txt (packaging/third-party-notices.json).
 #include "core/source_watch_layout.hpp"
 
 namespace endfield::core::source {

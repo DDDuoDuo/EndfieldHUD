@@ -594,6 +594,16 @@ void contracts(const fs::path& stub, const fs::path& uninstaller, const fs::path
     run = lab.setup(v1.setup);
     check(run.exit == 3 && outcome(run) == "refused" && run.result["refusal"].string() == "newer-installed", "Downgrade refused: " + describe(run));
     check(lab.snapshot() == before, "A refused downgrade changes nothing");
+    // Below Windows 11 (build 22000) Setup refuses before reading or writing anything.
+    for (const auto* build : {L"19045", L"21999"}) {
+        run = lab.setup(v2.setup, {L"--test-windows-build", build});
+        check(run.exit == 3 && outcome(run) == "refused" && run.result["refusal"].string() == "unsupported-windows" &&
+              run.result["error"].string().find("Windows 11") != std::string::npos && run.result["error"].string().find(p::narrow(build)) != std::string::npos,
+              "Windows 10 is refused: " + describe(run));
+        check(lab.snapshot() == before, "A refusal below Windows 11 changes nothing");
+    }
+    run = lab.setup(v2.setup, {L"--test-windows-build", L"22000"});
+    check(run.exit == 0 && outcome(run) == "repaired", "Windows 11 build 22000 is supported: " + describe(run));
     run = lab.setup(incomplete.setup);
     check(run.exit == 0 && outcome(run) == "upgraded", "Isolated layouts accept developer payloads: " + describe(run));
     run = lab.setup(v2.setup, {L"--allow-downgrade"});
@@ -749,6 +759,8 @@ void contracts(const fs::path& stub, const fs::path& uninstaller, const fs::path
 void release(const fs::path& setup, const fs::path& work) {
     const auto payload = p::SetupPayload::open(setup);
     const auto& m = payload.manifest();
+    check(m.find(p::thirdPartyNoticesName) != nullptr && m.find(p::applicationExecutable) != nullptr,
+          "The setup's file list includes THIRD-PARTY-NOTICES.txt beside EndfieldHUD.exe");
     Lab lab({}, {}, {}, work);
     auto run = runProgram(setup, {L"--verify-payload"}, lab.resultFile(), lab.work());
     check(run.exit == 0, "Release payload verification: " + run.output);
@@ -756,6 +768,9 @@ void release(const fs::path& setup, const fs::path& work) {
     check(run.exit == 0 && outcome(run) == "installed", "Release install: " + describe(run));
     expectInstalled(lab, m);
     expectRegistration(lab, m, false);
+    const auto installed = p::readInstallManifest(lab.installRoot());
+    check(installed && std::any_of(installed->files.begin(), installed->files.end(), [](const p::InstalledFile& f) { return f.path == p::thirdPartyNoticesName; }),
+          "The uninstall list (install manifest) includes THIRD-PARTY-NOTICES.txt");
     run = runProgram(lab.installRoot() / L"EndfieldHUD.exe", {L"--verify-package"}, lab.resultFile(), lab.work());
     check(m.complete ? run.exit == 0 : run.exit != 0, "The installed package verifies: " + run.output);
     run = lab.uninstall();

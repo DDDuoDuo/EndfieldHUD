@@ -17,7 +17,7 @@ enum class SetupText : std::uint8_t {
     runningHeading, runningInstallBody, runningUninstallBody,
     installingHeading, stepExtract, stepStop, stepRegister, stepFinish,
     installedHeading, updatedHeading, repairedHeading, installedBody,
-    failedHeading, failedBody, refusedHeading, refusedNewer, refusedForeign, refusedIncomplete, refusedPath,
+    failedHeading, failedBody, refusedHeading, refusedNewer, refusedForeign, refusedIncomplete, refusedPath, refusedWindows,
     damagedPayload, busy, closeFailed, details,
     uninstallHeading, uninstallBody, deleteData, uninstallButton,
     confirmDataHeading, confirmDataBody, deleteDataButton, keepDataButton,

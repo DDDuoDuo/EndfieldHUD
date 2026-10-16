@@ -7,6 +7,24 @@
 # Start menu, Run key, Classes key, notification platform, network or user data.
 set(EHUD_PACKAGING_TARGETS "")
 
+# --- Third-party notices (packaging/third-party-notices.json) -----------------
+# THIRD-PARTY-NOTICES.txt, rendered at configure time, ships next to
+# EndfieldHUD.exe in the install tree, so it is in the portable zip, the
+# setup's payload and the install manifest the uninstaller removes. The
+# contract fails when a shipped component's notice is missing, including a
+# licence file inside any folder staged into resources/.
+include("${CMAKE_CURRENT_SOURCE_DIR}/packaging/third_party_notices.cmake")
+set(EHUD_THIRD_PARTY_NOTICES "${CMAKE_CURRENT_BINARY_DIR}/THIRD-PARTY-NOTICES.txt")
+ehud_write_third_party_notices("${CMAKE_CURRENT_SOURCE_DIR}" "${EHUD_THIRD_PARTY_NOTICES}")
+if(TARGET EndfieldHUD)
+  install(FILES "${EHUD_THIRD_PARTY_NOTICES}" DESTINATION . COMPONENT EndfieldHUD)
+endif()
+if(BUILD_TESTING)
+  add_test(NAME packaging_third_party_notices_contracts COMMAND "${CMAKE_COMMAND}" "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}"
+    "-DNOTICES=${EHUD_THIRD_PARTY_NOTICES}" "-DRESOURCE_SPECS=${CMAKE_CURRENT_BINARY_DIR}/endfieldhud-resources.txt"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/packaging/third_party_notices.cmake")
+endif()
+
 # --- Portable format, arguments, five-language Setup text, gate evaluation ----
 # (perf_report: cold/warm openings from the app's startup trace and the
 # readable Markdown report of the section 9 gate).

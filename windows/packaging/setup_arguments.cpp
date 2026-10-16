@@ -108,6 +108,13 @@ SetupArguments parseSetupArguments(SetupRole role, std::span<const std::string_v
             if (v == "on") a.launchAtLogin = true;
             else if (v == "off") a.launchAtLogin = false;
             else invalid("--launch-at-login must be on or off");
+        } else if (role == SetupRole::install && name == "--test-windows-build") {
+            if (a.testWindowsBuild) invalid("--test-windows-build is repeated");
+            const auto v = value();
+            std::uint32_t build{};
+            const auto [end, error] = std::from_chars(v.data(), v.data() + v.size(), build);
+            if (error != std::errc{} || end != v.data() + v.size()) invalid("--test-windows-build needs a Windows build number");
+            a.testWindowsBuild = build;
         } else if (role == SetupRole::install && name == "--open") flag(a.open);
         else if (role == SetupRole::install && name == "--allow-downgrade") flag(a.allowDowngrade);
         else if (role == SetupRole::install && name == "--verify-payload") flag(a.verifyPayload);
@@ -129,7 +136,7 @@ SetupArguments parseSetupArguments(SetupRole role, std::span<const std::string_v
         if (a.installRoot.empty() || a.programsFolder.empty() || a.dataBase.empty())
             invalid("--test-registry requires --install-root, --programs-folder and --data-base");
     } else {
-        if (a.failAfter || !a.workFolder.empty() || !a.programsFolder.empty() || !a.dataBase.empty())
+        if (a.failAfter || a.testWindowsBuild || !a.workFolder.empty() || !a.programsFolder.empty() || !a.dataBase.empty())
             invalid("Test options require --test-registry");
         if (!a.installRoot.empty() && !a.worker) invalid("--install-root requires --test-registry");
     }

@@ -108,6 +108,10 @@ void checkRuntimeOnly(const std::vector<p::PackSource>& files) {
                                lower.starts_with("tests/");
         if (forbidden) throw std::runtime_error("The consumer package contains a development or documentation file: " + f.path);
     }
+    // Every release package carries the third-party notices (packaging/third-party-notices.json).
+    for (const auto required : {p::applicationExecutable, p::thirdPartyNoticesName})
+        if (std::none_of(files.begin(), files.end(), [&](const p::PackSource& f) { return f.path == required; }))
+            throw std::runtime_error("The consumer package has no " + std::string(required));
 }
 
 int pack(const Options& o) {
@@ -204,9 +208,11 @@ int report(const Options& o) {
     root["artifacts"] = std::move(artifactRows);
     root["excluded"] = Json::Array{Json("docs/ and docs/media recordings"), Json("debug symbols (*.pdb; separate symbols archive)"),
                                    Json("tests, test fixtures and development tools"), Json("build caches and intermediate shaders"), Json("user data")};
-    root["runtimeDependencies"] = Json::Array{Json("Windows 10 or 11, x64"), Json("Visual C++ runtime: statically linked (/MT); no redistributable"),
-                                              Json("Microsoft Edge WebView2 Runtime: system component used only by account sign-in; not bundled (Connect explains it and links to Microsoft's download page); SDK loader licence and notices in resources/licenses/webview2"),
-                                              Json("Bundled fonts (fonts/) with their OFL licence texts")};
+    root["runtimeDependencies"] = Json::Array{Json("Windows 11 (build 22000 or later), x64; Setup refuses older Windows"),
+                                              Json("Visual C++ runtime: statically linked (/MT); no redistributable"),
+                                              Json("Microsoft Edge WebView2 Runtime: system component used only by account sign-in; not bundled (Connect explains it and links to Microsoft's download page)"),
+                                              Json("Bundled fonts (fonts/) with their OFL licence texts"),
+                                              Json("Third-party notices of every bundled component: THIRD-PARTY-NOTICES.txt")};
     const auto json = Json(std::move(root)).encode() + "\n";
     std::string markdown = "# EndfieldHUD " + v.display() + " Windows x64 package size\n\n";
     markdown += std::string("Package: ") + (o.flag("incomplete") ? "**incomplete developer build** (missing Mac-exported runtime inputs)" : "complete") +

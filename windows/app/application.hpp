@@ -20,6 +20,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -169,6 +170,19 @@ struct ApplicationOptions {
     // closedGraphicsGraceSeconds, shortened only by hidden traces, tests and
     // the section 9 gate's isolated --data-root runs (isolatedDataRoot).
     double closedGraphicsGrace{closedGraphicsGraceSeconds};
+};
+
+// A visible Application throws this when Windows has no host backdrop
+// (DWMWA_USE_HOSTBACKDROPBRUSH, provided from Windows 11 build 22000), which
+// the HUD's blurred background needs; EndfieldHUD.exe then reports that
+// Windows 11 is required. `result` is DwmSetWindowAttribute's HRESULT.
+class SystemBackdropUnavailable final : public std::runtime_error {
+public:
+    explicit SystemBackdropUnavailable(std::int32_t result)
+        : std::runtime_error("The Windows host backdrop (DWMWA_USE_HOSTBACKDROPBRUSH) is unavailable"), result_(result) {}
+    std::int32_t result() const noexcept { return result_; }
+private:
+    std::int32_t result_{};
 };
 
 class Application final {

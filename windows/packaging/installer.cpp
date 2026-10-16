@@ -789,6 +789,7 @@ std::string_view refusalName(Refusal r) noexcept {
     case Refusal::path: return "path";
     case Refusal::notInstalled: return "not-installed";
     case Refusal::closeFailed: return "close-failed";
+    case Refusal::unsupportedWindows: return "unsupported-windows";
     }
     return "none";
 }
@@ -896,8 +897,26 @@ void recoverInterruptedInstall(const InstallLayout& l, std::vector<std::string>&
         for (const auto& p : backups) (void)removeTree(p);
 }
 
-InstallPlan planInstall(const PayloadManifest& payload, InstallLayout layout, bool allowDowngrade) {
+std::uint32_t currentWindowsBuild() noexcept {
+    using RtlGetVersionFunction = LONG(WINAPI*)(OSVERSIONINFOW*);
+    const auto ntdll = GetModuleHandleW(L"ntdll.dll");
+    const auto get = ntdll ? reinterpret_cast<RtlGetVersionFunction>(reinterpret_cast<void*>(GetProcAddress(ntdll, "RtlGetVersion"))) : nullptr;
+    OSVERSIONINFOW version{};
+    version.dwOSVersionInfoSize = sizeof(version);
+    if (!get || get(&version) != 0) return 0;
+    return version.dwMajorVersion > 10 ? 0xffffffffu : version.dwMajorVersion < 10 ? 0 : static_cast<std::uint32_t>(version.dwBuildNumber);
+}
+
+InstallPlan planInstall(const PayloadManifest& payload, InstallLayout layout, bool allowDowngrade, std::uint32_t windowsBuild) {
     InstallPlan plan;
+    plan.windowsBuild = windowsBuild;
+    if (!supportedWindowsBuild(windowsBuild)) {
+        // Nothing is read, repaired or written below Windows 11.
+        plan.layout = std::move(layout);
+        plan.intended = Outcome::refused;
+        plan.refusal = Refusal::unsupportedWindows;
+        return plan;
+    }
     if (!layout.isolated()) {
         // An existing registration keeps its folder.
         if (const auto location = readString(layout.uninstallKey(), L"InstallLocation")) {
@@ -939,7 +958,12 @@ OperationResult install(const SetupPayload& payload, const InstallPlan& plan, co
     r.installRoot = l.installRoot;
     r.warnings = plan.warnings;
     if (plan.installed) r.previous = plan.installed->version;
-    if (plan.intended == Outcome::refused) { r.outcome = Outcome::refused; r.refusal = plan.refusal; return r; }
+    if (plan.intended == Outcome::refused) {
+        r.outcome = Outcome::refused;
+        r.refusal = plan.refusal;
+        if (plan.refusal == Refusal::unsupportedWindows) r.error = setupText(SetupText::refusedWindows, options.language, {std::to_string(plan.windowsBuild)});
+        return r;
+    }
     const auto progress = [&](double fraction, SetupText step) { if (callbacks.progress) callbacks.progress(fraction, step); };
     Apartment apartment;
     Transaction tx(l, r.warnings);

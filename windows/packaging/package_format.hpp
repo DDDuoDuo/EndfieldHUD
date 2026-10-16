@@ -5,7 +5,8 @@
 // EndfieldHUD install tree (cmake --install ... --component EndfieldHUD):
 //
 //   EndfieldHUD-<release>-build<N>-windows-x64-portable.zip
-//       EndfieldHUD/ EndfieldHUD.exe, fonts/, resources/ (the install tree)
+//       EndfieldHUD/ EndfieldHUD.exe, THIRD-PARTY-NOTICES.txt, fonts/,
+//       resources/ (the install tree)
 //   EndfieldHUD-<release>-build<N>-windows-x64-setup.exe
 //       [setup stub PE image][payload][zero padding][trailer]
 //
@@ -59,10 +60,20 @@ inline constexpr std::uint64_t maximumEncodedFileBytes = 256ull * 1024ull * 1024
 inline constexpr std::uint64_t maximumPayloadBytes = 4ull * 1024ull * 1024ull * 1024ull;
 
 // Installed layout. The install manifest is written by the installer, never
-// shipped in a payload; the uninstaller is added to the payload only.
+// shipped in a payload; the uninstaller is added to the payload only. The
+// third-party notices ship in every release package (the release packer
+// refuses a tree without them; packaging/third-party-notices.json).
 inline constexpr std::string_view applicationExecutable = "EndfieldHUD.exe";
 inline constexpr std::string_view uninstallerExecutable = "uninstall.exe";
 inline constexpr std::string_view installManifestName = "EndfieldHUD.install.json";
+inline constexpr std::string_view thirdPartyNoticesName = "THIRD-PARTY-NOTICES.txt";
+
+// Supported Windows: Windows 11 (build 22000) or later. The HUD's blurred
+// background needs DWMWA_USE_HOSTBACKDROPBRUSH, which Windows provides from
+// build 22000; EndfieldHUD.exe cannot start without it, so Setup refuses to
+// install below it.
+inline constexpr std::uint32_t minimumWindowsBuild = 22000;
+constexpr bool supportedWindowsBuild(std::uint32_t build) noexcept { return build >= minimumWindowsBuild; }
 
 enum class Encoding : std::uint8_t { identity, lzms };
 std::string_view encodingName(Encoding) noexcept;

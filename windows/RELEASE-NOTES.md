@@ -1,9 +1,13 @@
 <!--
-Draft notes for the first Windows release (tag windows-v1.2.0). Nothing is
-published from this file. Before publishing:
-  1. Fill the two SHA-256 values under "Verify the download" from the staged
-     EndfieldHUD-1.2.0-build18-windows-x64-SHA256SUMS.txt, and check the
-     installed size in the staged size report.
+Draft notes for the first Windows release (tag windows-v1.2.0), and the only
+source of its release notes: the endfieldhud_release staging build writes
+EndfieldHUD-1.2.0-build18-windows-x64-release-notes.md, which is this file
+with the two SHA-256 values under "Verify the download" filled in from the
+staged setup and portable zip. Nothing is published from either file. Before
+publishing:
+  1. Stage a complete Release build: no "-incomplete" artifact names and no
+     "Do not publish" mark in the staged draft. Check the installed size in
+     the staged size report.
   2. Run the section 9 gate on the test laptop's desktop against this build
      (package_perf_gate --desktop) and replace the "Performance" figures
      with its report.
@@ -12,7 +16,16 @@ published from this file. Before publishing:
      passed, and the Archive end-of-line item if its fix is in the tag.
   4. Compare "Known differences and limitations" with WINDOWS-MIGRATION.md
      section 6 at the release commit.
-  5. The windows-v1.2.0 links work only once the tag exists.
+  5. Create the release under the Windows tag namespace only, from the
+     staged draft:
+       gh release create windows-v1.2.0 --target <commit> --latest=false
+         --title "EndfieldHUD 1.2.0 for Windows" --notes-file <staged draft>
+         <setup.exe> <portable.zip> <SHA256SUMS.txt>
+     Upload exactly these three files: the Windows updater finds the setup
+     and SHA256SUMS by these names. Never upload the symbols zip, its
+     checksum file, the size report or an "-incomplete" artifact, and never
+     touch the Mac release or updates/appcast.xml.
+  6. The windows-v1.2.0 links work only once the tag exists.
 Remove this comment before publishing.
 -->
 # EndfieldHUD 1.2.0 for Windows
@@ -26,7 +39,7 @@ This release is not code-signed; Windows SmartScreen may show **Windows protecte
 ## Requirements
 
 - **Windows 11, 64-bit (x64).** Live testing has been done on one laptop: Windows 11 version 25H2 (build 26200), Intel Core Ultra 7 251HX, NVIDIA GeForce RTX 5060 Laptop GPU, 2560 × 1600 at 165 Hz and 150 % scaling. Other PCs, graphics cards and Windows 11 versions have not received equivalent testing.
-- **Windows 10 is not supported.** The HUD's blurred background uses a window setting that Microsoft documents from Windows 11 onward, and EndfieldHUD has not been tested on Windows 10. There is no ARM64 build.
+- **Windows 10 is not supported.** The HUD's blurred background uses a window setting that Microsoft documents from Windows 11 onward, and EndfieldHUD has not been tested on Windows 10. Setup does not install before Windows 11 (build 22000), and a portable copy reports that Windows 11 is required. There is no ARM64 build.
 - **Graphics:** a graphics card and driver with Direct3D 11 (feature level 11_0), including Direct3D 11 video support. The HUD has no software-drawing fallback.
 - **Account Binding** needs the Microsoft Edge WebView2 Runtime. If it is missing, *Connect* explains this and links to Microsoft's download page; once it is installed, *Check Again* continues without a restart.
 - **Videos** need Windows Media Foundation. On Windows N editions, install the Media Feature Pack for videos; images and GIFs work without it.
@@ -255,4 +268,4 @@ The hash must equal the value on that file's line (upper or lower case does not 
 
 ---
 
-Made by [DDDuoDuo](https://github.com/DDDuoDuo). An unofficial fan project. Game artwork and branding belong to HYPERGRYPH and their respective owners. Original code is MIT licensed; third-party assets and libraries keep their own terms. [Full credits and sources](https://github.com/DDDuoDuo/EndfieldHUD/blob/windows-v1.2.0/CREDITS.md)
+Made by [DDDuoDuo](https://github.com/DDDuoDuo). An unofficial fan project. Game artwork and branding belong to HYPERGRYPH and their respective owners. Original code is MIT licensed; third-party assets and libraries keep their own terms, and their licences are in `THIRD-PARTY-NOTICES.txt` beside `EndfieldHUD.exe`. [Full credits and sources](https://github.com/DDDuoDuo/EndfieldHUD/blob/windows-v1.2.0/CREDITS.md)

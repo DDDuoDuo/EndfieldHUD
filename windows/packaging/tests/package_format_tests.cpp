@@ -257,6 +257,24 @@ void arguments() {
         const auto step = static_cast<p::InstallStep>(n);
         check(p::installStepFromName(p::installStepName(step)) == step, "Step names round-trip");
     }
+    // Windows 11 (build 22000) or later; isolated tests name the build.
+    check(!p::supportedWindowsBuild(0) && !p::supportedWindowsBuild(19045) && !p::supportedWindowsBuild(21999) && p::supportedWindowsBuild(22000) &&
+          p::supportedWindowsBuild(26200), "Setup supports Windows 11 (build 22000) or later");
+    const std::vector<std::string_view> isolated{"--test-registry", "Software\\EndfieldHUD-Test-7", "--install-root", "C:\\t\\P", "--programs-folder",
+                                                 "C:\\t\\S", "--data-base", "C:\\t\\D"};
+    const auto isolatedWith = [&](std::vector<std::string_view> extra) {
+        auto values = isolated;
+        values.insert(values.end(), extra.begin(), extra.end());
+        return values;
+    };
+    check(parse(R::install, isolatedWith({"--test-windows-build", "19045"})).testWindowsBuild == 19045u && !parse(R::install, isolated).testWindowsBuild,
+          "Isolated Windows build override");
+    rejects<std::invalid_argument>([&] { (void)parse(R::install, {"--test-windows-build", "19045"}); }, "The Windows build override requires isolation");
+    rejects<std::invalid_argument>([&] { (void)parse(R::install, isolatedWith({"--test-windows-build", "22000x"})); }, "Windows build numbers");
+    rejects<std::invalid_argument>([&] { (void)parse(R::install, isolatedWith({"--test-windows-build", "19045", "--test-windows-build", "22000"})); },
+                                   "The Windows build override is given once");
+    const auto uninstallBuild = isolatedWith({"--test-windows-build", "19045"});
+    rejects<std::invalid_argument>([&] { (void)parse(R::uninstall, uninstallBuild); }, "Uninstall never checks the Windows build");
 }
 
 void text() {

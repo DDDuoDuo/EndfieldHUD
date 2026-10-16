@@ -2,8 +2,9 @@
 // Per-user, unpackaged EndfieldHUD install engine (no MSIX, no elevation).
 //
 // Production layout (InstallLayout::production):
-//   %LOCALAPPDATA%\Programs\EndfieldHUD\     EndfieldHUD.exe, fonts\, resources\,
-//                                           uninstall.exe, EndfieldHUD.install.json
+//   %LOCALAPPDATA%\Programs\EndfieldHUD\     EndfieldHUD.exe, THIRD-PARTY-NOTICES.txt,
+//                                           fonts\, resources\, uninstall.exe,
+//                                           EndfieldHUD.install.json (the files to remove)
 //   Start menu Programs\EndfieldHUD.lnk      AppUserModelID + toast activator CLSID
 //   HKCU\Software\Classes\CLSID\{activator}\LocalServer32
 //   HKCU\...\CurrentVersion\Uninstall\EndfieldHUD
@@ -88,7 +89,7 @@ public:
 std::unique_ptr<ScheduledNotifications> installedScheduledNotifications();
 
 enum class Outcome : std::uint8_t { installed, upgraded, repaired, uninstalled, refused, failed, cancelled };
-enum class Refusal : std::uint8_t { none, newerInstalled, foreignFolder, incomplete, path, notInstalled, closeFailed };
+enum class Refusal : std::uint8_t { none, newerInstalled, foreignFolder, incomplete, path, notInstalled, closeFailed, unsupportedWindows };
 std::string_view outcomeName(Outcome) noexcept;
 std::string_view refusalName(Refusal) noexcept;
 
@@ -117,9 +118,14 @@ struct InstallPlan {
     Outcome intended{Outcome::installed};     // installed, upgraded, repaired or refused
     Refusal refusal{Refusal::none};
     bool launchAtLogin{true};                 // the app's saved preference (Mac default: on)
+    std::uint32_t windowsBuild{};             // the build the plan was made for
     std::vector<std::string> warnings;
 };
-InstallPlan planInstall(const PayloadManifest&, InstallLayout, bool allowDowngrade);
+// Below Windows 11 (supportedWindowsBuild) the plan is refused before
+// anything is read or repaired.
+InstallPlan planInstall(const PayloadManifest&, InstallLayout, bool allowDowngrade, std::uint32_t windowsBuild);
+// The running Windows build (RtlGetVersion, never shimmed by compatibility modes).
+std::uint32_t currentWindowsBuild() noexcept;
 
 struct InstallOptions {
     std::optional<bool> launchAtLogin;      // explicit choice: also saved to the app's setting

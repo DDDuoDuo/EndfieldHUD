@@ -333,6 +333,7 @@ private:
         case p::Refusal::newerInstalled: page.content = w(SetupText::refusedNewer, language_, {plan_.installed->version.display()}); break;
         case p::Refusal::foreignFolder: page.content = w(SetupText::refusedForeign, language_, {p::narrow(plan_.layout.installRoot.native())}); break;
         case p::Refusal::incomplete: page.content = w(SetupText::refusedIncomplete, language_); break;
+        case p::Refusal::unsupportedWindows: page.content = w(SetupText::refusedWindows, language_, {std::to_string(plan_.windowsBuild)}); break;
         default: page.content = w(SetupText::refusedPath, language_, {p::narrow(plan_.layout.installRoot.native())}); break;
         }
         page.common = TDCBF_CLOSE_BUTTON;
@@ -391,7 +392,9 @@ int runInstall(const p::SetupArguments& args, HINSTANCE instance) {
         return static_cast<int>(p::SetupExit::busy);
     }
     p::removeStaleUninstallWorkers(layout.workFolder);
-    auto plan = p::planInstall(m, layout, args.allowDowngrade);
+    // Windows 11 or later (package_format.hpp minimumWindowsBuild); isolated
+    // tests may name the build the plan is made for.
+    auto plan = p::planInstall(m, layout, args.allowDowngrade, args.testWindowsBuild.value_or(p::currentWindowsBuild()));
     const auto language = p::setupLanguage(plan.layout);
     if (args.quiet) {
         p::InstallOptions options;

@@ -1,13 +1,21 @@
 # CTest endfieldhud_release_contracts: stages the real release artifacts into
-# a fresh folder, checks the portable zip listing, then installs the real
-# setup into temporary folders under a private HKCU test subtree, verifies the
-# installed package and uninstalls it (packaging_installer_tests --release).
+# a fresh folder, checks the portable zip listing, SHA256SUMS and the
+# release-notes draft, then installs the real setup into temporary folders
+# under a private HKCU test subtree, verifies the installed package and
+# uninstalls it (packaging_installer_tests --release).
 cmake_minimum_required(VERSION 3.25)
 if(NOT CHECKER)
   message(FATAL_ERROR "CHECKER is required")
 endif()
 file(REMOVE_RECURSE "${OUT}")
 set(ALLOW_INCOMPLETE ON)
+# A build without developer symbols stages a stand-in PDB, so the symbols
+# archive and its separate checksum file are always checked.
+if(NOT SYMBOLS OR NOT EXISTS "${SYMBOLS}")
+  set(SYMBOLS "${OUT}-symbols/EndfieldHUD.pdb")
+  file(REMOVE_RECURSE "${OUT}-symbols")
+  file(WRITE "${SYMBOLS}" "stand-in symbols for endfieldhud_release_contracts\n")
+endif()
 include("${CMAKE_CURRENT_LIST_DIR}/stage_release.cmake")
 
 execute_process(COMMAND "${CMAKE_COMMAND}" -E tar tf "${EHUD_STAGED_PORTABLE}" RESULT_VARIABLE listed OUTPUT_VARIABLE listing)
@@ -16,45 +24,83 @@ if(NOT listed EQUAL 0)
 endif()
 string(REPLACE "\n" ";" entries "${listing}")
 list(FILTER entries EXCLUDE REGEX "^$")
-list(FIND entries "EndfieldHUD/EndfieldHUD.exe" exe)
-list(FIND entries "EndfieldHUD/resources/resources.json" manifest)
-if(exe EQUAL -1 OR manifest EQUAL -1)
-  message(FATAL_ERROR "The portable zip lacks EndfieldHUD.exe or resources.json:\n${listing}")
-endif()
+foreach(required IN ITEMS "EndfieldHUD/EndfieldHUD.exe" "EndfieldHUD/resources/resources.json" "EndfieldHUD/THIRD-PARTY-NOTICES.txt")
+  list(FIND entries "${required}" found)
+  if(found EQUAL -1)
+    message(FATAL_ERROR "The portable zip lacks ${required}:\n${listing}")
+  endif()
+endforeach()
 foreach(entry IN LISTS entries)
-  if(NOT entry MATCHES "^EndfieldHUD/(EndfieldHUD\\.exe|fonts(/.*)?|resources(/.*)?)?$" OR entry MATCHES "\\.(pdb|ilk|gif|mp4|mov)$" OR entry MATCHES "uninstall\\.exe")
+  if(NOT entry MATCHES "^EndfieldHUD/(EndfieldHUD\\.exe|THIRD-PARTY-NOTICES\\.txt|fonts(/.*)?|resources(/.*)?)?$" OR entry MATCHES "\\.(pdb|ilk|gif|mp4|mov)$" OR entry MATCHES "uninstall\\.exe")
     message(FATAL_ERROR "Unexpected portable zip entry: ${entry}")
   endif()
 endforeach()
 file(READ "${EHUD_STAGED_REPORT}" report)
 string(JSON installed_bytes GET "${report}" installed bytes)
 string(JSON artifacts LENGTH "${report}" artifacts)
-if(installed_bytes LESS 1000000 OR artifacts LESS 2)
+if(installed_bytes LESS 1000000 OR artifacts LESS 3)
   message(FATAL_ERROR "The size report is incomplete:\n${report}")
 endif()
 
-# The release-notes draft names the Windows tag and the staged artifacts.
-file(READ "${EHUD_STAGED_NOTES}" notes)
+# SHA256SUMS lists exactly the uploaded files: the setup (the line the Windows
+# updater reads) and the portable zip. The symbols zip has its own file.
 file(SHA256 "${EHUD_STAGED_SETUP}" setup_sha)
+file(SHA256 "${EHUD_STAGED_PORTABLE}" portable_sha)
 get_filename_component(setup_name "${EHUD_STAGED_SETUP}" NAME)
+get_filename_component(portable_name "${EHUD_STAGED_PORTABLE}" NAME)
 get_filename_component(sums_name "${EHUD_STAGED_SUMS}" NAME)
+file(READ "${EHUD_STAGED_SUMS}" sums)
+if(NOT sums STREQUAL "${setup_sha}  ${setup_name}\n${portable_sha}  ${portable_name}\n")
+  message(FATAL_ERROR "SHA256SUMS must list exactly the setup and the portable zip:\n${sums}")
+endif()
+file(GLOB symbols_zip "${OUT}/*-symbols.zip")
+if(NOT symbols_zip OR NOT EHUD_STAGED_SYMBOLS_SUMS OR NOT EXISTS "${EHUD_STAGED_SYMBOLS_SUMS}")
+  message(FATAL_ERROR "The symbols zip and its checksum file were not staged")
+endif()
+file(SHA256 "${symbols_zip}" symbols_sha)
+get_filename_component(symbols_name "${symbols_zip}" NAME)
+file(READ "${EHUD_STAGED_SYMBOLS_SUMS}" symbols_sums)
+if(NOT symbols_sums STREQUAL "${symbols_sha}  ${symbols_name}\n")
+  message(FATAL_ERROR "The symbols checksum file must list exactly the symbols zip:\n${symbols_sums}")
+endif()
+
+# The release-notes draft is windows/RELEASE-NOTES.md with both SHA-256
+# cells filled in (one source of truth), plus the "Do not publish" mark on
+# an incomplete package.
+file(READ "${EHUD_STAGED_NOTES}" notes)
 string(JSON notes_release GET "${report}" release)
 string(REGEX REPLACE "^v" "" notes_release "${notes_release}")
-# The first-release text: its gap list and the exporter at the Windows tag.
-foreach(expected IN ITEMS "windows-v${notes_release}" "${setup_sha}" "${setup_name}" "${sums_name}" "--latest=false"
-    "## Differences from the macOS version" "## Moving from a Mac"
+foreach(expected IN ITEMS "windows-v${notes_release}" "| `${setup_name}` | `${setup_sha}` |" "| `${portable_name}` | `${portable_sha}` |"
+    "${sums_name}" "## Moving from a Mac" "## Known differences and limitations" "**Windows 11, 64-bit (x64).**"
     "blob/windows-v${notes_release}/windows/tools/mac_import_exporter.py")
   string(FIND "${notes}" "${expected}" found)
   if(found EQUAL -1)
     message(FATAL_ERROR "The release-notes draft lacks '${expected}':\n${notes}")
   endif()
 endforeach()
-if(notes MATCHES "@EHUD_" OR (NOT EHUD_STAGED_COMPLETE AND NOT notes MATCHES "Do not publish"))
-  message(FATAL_ERROR "The release-notes draft is not fully rendered:\n${notes}")
+foreach(stale IN ITEMS "<!-- sha256 at release -->" "Windows 10 version" "@EHUD_")
+  string(FIND "${notes}" "${stale}" found)
+  if(NOT found EQUAL -1)
+    message(FATAL_ERROR "The release-notes draft still contains '${stale}':\n${notes}")
+  endif()
+endforeach()
+string(REGEX MATCH "(^|\n)> \\*\\*[^\n]*Do not publish" marked "${notes}")
+if(EHUD_STAGED_COMPLETE AND marked)
+  message(FATAL_ERROR "windows/RELEASE-NOTES.md does not describe this complete package:\n${notes}")
+elseif(NOT EHUD_STAGED_COMPLETE AND NOT marked)
+  message(FATAL_ERROR "The incomplete package's release-notes draft is not marked Do not publish:\n${notes}")
 endif()
-file(READ "${EHUD_STAGED_SUMS}" sums)
-if(NOT sums MATCHES "${setup_sha}  ${setup_name}\n")
-  message(FATAL_ERROR "SHA256SUMS lacks the setup line the Windows updater reads:\n${sums}")
+file(READ "${SOURCE}/RELEASE-NOTES.md" source_notes)
+string(REPLACE "\r\n" "\n" source_notes "${source_notes}")
+set(restored "${notes}")
+string(REGEX REPLACE "> \\*\\*[^\n]*Do not publish[^\n]*\n\n" "" restored "${restored}")
+string(REPLACE "`${setup_sha}`" "<!-- sha256 at release -->" restored "${restored}")
+string(REPLACE "`${portable_sha}`" "<!-- sha256 at release -->" restored "${restored}")
+if(NOT EHUD_STAGED_COMPLETE)
+  string(REPLACE "${ehud_stem}${ehud_suffix}-" "${ehud_stem}-" restored "${restored}")
+endif()
+if(NOT restored STREQUAL source_notes)
+  message(FATAL_ERROR "The release-notes draft is not windows/RELEASE-NOTES.md with its checksums filled in:\n${notes}")
 endif()
 
 execute_process(COMMAND "${CHECKER}" --release "${EHUD_STAGED_SETUP}" RESULT_VARIABLE checked OUTPUT_VARIABLE output ERROR_VARIABLE errors)
@@ -62,5 +108,5 @@ message(STATUS "${output}")
 if(NOT checked EQUAL 0)
   message(FATAL_ERROR "The staged setup failed its install check (${checked}):\n${output}\n${errors}")
 endif()
-file(REMOVE_RECURSE "${OUT}")
+file(REMOVE_RECURSE "${OUT}" "${OUT}-symbols")
 message(STATUS "Release artifacts staged, installed and removed (complete: ${EHUD_STAGED_COMPLETE}, ${installed_bytes} installed bytes)")

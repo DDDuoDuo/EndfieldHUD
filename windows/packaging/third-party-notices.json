@@ -1,0 +1,133 @@
+{
+  "format": "EndfieldHUD.Windows.ThirdPartyNotices",
+  "schema": 1,
+  "about": "Every third-party component compiled into EndfieldHUD.exe, EndfieldHUD-Setup.exe or uninstall.exe, or shipped in fonts/ or resources/. packaging/third_party_notices.cmake renders THIRD-PARTY-NOTICES.txt from this list (installed next to EndfieldHUD.exe, in the setup and the portable zip); packaging_third_party_notices_contracts fails when a shipped component has no entry or its licence text is missing. 'paths' are the component's files in windows/ (every windows/third_party folder, bundled font and licence file must be covered); 'texts' are reproduced in full; 'macOriginal' is the Mac copy a text must equal when the repository root is present.",
+  "preamble": [
+    "EndfieldHUD is an unofficial fan project by DDDuoDuo (https://github.com/DDDuoDuo/EndfieldHUD). Its original code is licensed under the MIT License. EndfieldHUD.exe, EndfieldHUD Setup, the uninstaller and the files in the fonts and resources folders include the third-party components listed below. Each keeps its own licence, reproduced in full where it has one.",
+    "Arknights, Arknights: Endfield, their artwork, branding and extracted game resources belong to HYPERGRYPH and their respective owners. They are excluded from EndfieldHUD's MIT License. EndfieldHUD is not affiliated with or endorsed by HYPERGRYPH."
+  ],
+  "components": [
+    {
+      "name": "QuickJS-NG",
+      "version": "0.17.0 (commit 6d46d07d04041b40f4f49eaa7fdebe44c314c699)",
+      "url": "https://github.com/quickjs-ng/quickjs",
+      "license": "MIT",
+      "use": "JavaScript engine that runs the Merge! OrbiPom! scripts and Matter.js.",
+      "ships": ["EndfieldHUD.exe (compiled in)"],
+      "paths": ["third_party/quickjs-ng"],
+      "texts": ["third_party/quickjs-ng/LICENSE"]
+    },
+    {
+      "name": "Microsoft Edge WebView2 SDK",
+      "version": "1.0.4191.47 (Microsoft.Web.WebView2)",
+      "url": "https://www.nuget.org/packages/Microsoft.Web.WebView2/1.0.4191.47",
+      "license": "BSD-3-Clause (Microsoft), with the SDK's third-party notices",
+      "use": "WebView2.h and the static loader WebView2LoaderStatic.lib, for the account sign-in window. The SDK's licence is followed by its own third-party notices. The WebView2 Runtime itself is part of Windows and is not redistributed.",
+      "ships": ["EndfieldHUD.exe (statically linked)", "resources/licenses/webview2/LICENSE.txt", "resources/licenses/webview2/NOTICE.txt"],
+      "paths": ["third_party/webview2"],
+      "texts": ["third_party/webview2/LICENSE.txt", "third_party/webview2/NOTICE.txt"]
+    },
+    {
+      "name": "zlib",
+      "version": "1.3.2 (inflate and CRC-32 subset)",
+      "url": "https://zlib.net/",
+      "license": "Zlib",
+      "use": "Decompresses EPUB archives and PDF streams in the E-Reader.",
+      "ships": ["EndfieldHUD.exe (compiled in)"],
+      "paths": ["third_party/zlib"],
+      "texts": ["third_party/zlib/LICENSE"]
+    },
+    {
+      "name": "Noto Sans SC",
+      "version": "2.004, variable weight (google/fonts commit a85815a42757630ce188fdad368c2dfc444d4773)",
+      "url": "https://github.com/google/fonts/tree/a85815a42757630ce188fdad368c2dfc444d4773/ofl/notosanssc",
+      "license": "OFL-1.1",
+      "use": "The HUD's bundled text font, loaded privately (never installed into Windows).",
+      "ships": ["fonts/NotoSansSC.ttf", "fonts/NotoSansSC-OFL.txt"],
+      "paths": ["assets/fonts/NotoSansSC.ttf", "assets/fonts/NotoSansSC-OFL.txt", "assets/fonts/manifest.json"],
+      "texts": ["assets/fonts/NotoSansSC-OFL.txt"]
+    },
+    {
+      "name": "Noto Sans KR",
+      "version": "2.004, variable weight (google/fonts commit a85815a42757630ce188fdad368c2dfc444d4773)",
+      "url": "https://github.com/google/fonts/tree/a85815a42757630ce188fdad368c2dfc444d4773/ofl/notosanskr",
+      "license": "OFL-1.1",
+      "use": "The HUD's bundled Korean text font, loaded privately (never installed into Windows).",
+      "ships": ["fonts/NotoSansKR.ttf", "fonts/NotoSansKR-OFL.txt"],
+      "paths": ["assets/fonts/NotoSansKR.ttf", "assets/fonts/NotoSansKR-OFL.txt"],
+      "texts": ["assets/fonts/NotoSansKR-OFL.txt"]
+    },
+    {
+      "name": "Matter.js",
+      "version": "0.20.0",
+      "url": "https://github.com/liabru/matter-js",
+      "license": "MIT",
+      "use": "Physics engine of the Merge! OrbiPom! minigame, run by QuickJS-NG.",
+      "ships": ["resources/orbipom/OrbiPom/matter-0.20.0.js", "resources/orbipom/OrbiPom/Matter-LICENSE.txt"],
+      "paths": ["packaging/licenses/matter-js-LICENSE.txt"],
+      "texts": ["packaging/licenses/matter-js-LICENSE.txt"],
+      "macOriginal": "../Resources/OrbiPom/Matter-LICENSE.txt"
+    },
+    {
+      "name": "Unity uGUI (Image geometry)",
+      "version": "5.6 (commit 3394d36ec68d9cba7152c4fce48b6eebaf8a941b)",
+      "url": "https://github.com/Unity-Technologies/uGUI",
+      "license": "MIT",
+      "use": "The HUD's image geometry rules (core/source_image_geometry.cpp) follow uGUI's Image.cs, through the macOS app's port.",
+      "ships": ["EndfieldHUD.exe (compiled in)"],
+      "paths": ["core/source_image_geometry.hpp", "core/source_image_geometry.cpp", "packaging/licenses/unity-ugui-NOTICE.txt"],
+      "texts": ["packaging/licenses/unity-ugui-NOTICE.txt"],
+      "macOriginal": "../Resources/WatchSource/NOTICE.txt"
+    },
+    {
+      "name": "C++/WinRT",
+      "version": "the Windows SDK's projection headers (C++/WinRT 2.0.250303.1 in SDK 10.0.26100.0)",
+      "url": "https://github.com/microsoft/cppwinrt",
+      "license": "MIT",
+      "use": "Header-only C++ language projection of the Windows Runtime APIs.",
+      "ships": ["EndfieldHUD.exe, EndfieldHUD-Setup.exe and uninstall.exe (compiled in)"],
+      "paths": ["packaging/licenses/cppwinrt-LICENSE.txt"],
+      "texts": ["packaging/licenses/cppwinrt-LICENSE.txt"]
+    },
+    {
+      "name": "HarmonyOS Sans SC Medium (glyph subset)",
+      "version": "33 signed-distance-field glyphs from the game's font atlas",
+      "url": "",
+      "license": "HarmonyOS Sans Fonts License Agreement",
+      "use": "The account header's wallet numerals.",
+      "ships": ["resources/account/account-numerals.json"],
+      "paths": ["resources/account/account-numerals.json"],
+      "attribution": "HarmonyOS Sans is a typeface of Huawei Device Co., Ltd., used under Huawei's HarmonyOS Sans Fonts License Agreement. The glyph subset is unchanged game data taken from Arknights: Endfield; its ownership is unchanged."
+    },
+    {
+      "name": "ETOPO 2022 (NOAA National Centers for Environmental Information)",
+      "version": "ETOPO 2022 15 Arc-Second Global Relief Model",
+      "url": "https://doi.org/10.25921/fd45-gt74",
+      "license": "CC0-1.0",
+      "use": "The Map's terrain, as a simplified derivative.",
+      "ships": ["resources/map/Terrain.bin", "resources/map/SOURCES.json"],
+      "paths": [],
+      "attribution": "Terrain is a simplified derivative of NOAA National Centers for Environmental Information. 2022: ETOPO 2022 15 Arc-Second Global Relief Model. doi:10.25921/fd45-gt74 (CC0-1.0). The map is a decorative overview, not a navigation or survey map."
+    },
+    {
+      "name": "Natural Earth",
+      "version": "5.1.1, 1:10m admin 0 countries",
+      "url": "https://www.naturalearthdata.com/",
+      "license": "Public domain",
+      "use": "The Map's country outlines.",
+      "ships": ["resources/map/Countries.bin", "resources/map/Countries-SOURCES.json"],
+      "paths": [],
+      "attribution": "Made with Natural Earth. Free vector and raster map data @ naturalearthdata.com."
+    }
+  ],
+  "notShipped": [
+    {
+      "path": "native/audio_default_device_notice.txt",
+      "reason": "EarTrumpet's interop declarations in native/audio_default_device.cpp compile only under ENDFIELD_AUDIO_UNDOCUMENTED_POLICY_CONFIG, which no build sets."
+    },
+    {
+      "path": "native/audio_default_device.cpp",
+      "reason": "Its EarTrumpet-derived declarations compile only under ENDFIELD_AUDIO_UNDOCUMENTED_POLICY_CONFIG, which no build sets."
+    }
+  ]
+}

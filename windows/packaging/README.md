@@ -21,21 +21,22 @@ release.
 | --- | --- |
 | `EndfieldHUD-<release>-build<N>-windows-x64-setup.exe` | Installer: the setup stub plus a verified payload (install tree + `uninstall.exe`) |
 | `EndfieldHUD-<release>-build<N>-windows-x64-portable.zip` | The install tree under `EndfieldHUD/` (no uninstaller, no registration) |
-| `…-symbols.zip` | `EndfieldHUD.pdb`, when the build emits one (never in the consumer package) |
+| `…-SHA256SUMS.txt` | Checksums of exactly the setup and the portable zip, the files uploaded to a release (the list the Windows updater checks a download against) |
+| `…-symbols.zip` | `EndfieldHUD.pdb`, when the build emits one (never in the consumer package, never uploaded) |
+| `…-symbols-SHA256SUMS.txt` | The symbols zip's checksum, when there is one (never uploaded) |
 | `…-size-report.json` / `.md` | Installed size per part, artifact sizes and SHA-256 values, exclusions, runtime dependencies |
-| `…-SHA256SUMS.txt` | Checksums of the artifacts (the list the Windows updater checks a download against) |
-| `…-release-notes.md` | Draft notes for a `windows-v<release>` GitHub release, with the names, sizes and SHA-256 values filled in (see *Releases*) |
+| `…-release-notes.md` | `windows/RELEASE-NOTES.md` with its SHA-256 values filled in: the draft for the `windows-v<release>` GitHub release (see *Releases*) |
 
 The release staging script is `stage_release.cmake`. It runs these steps:
 
-1. Installs the `EndfieldHUD` component, which holds only `EndfieldHUD.exe`, `fonts/` and `resources/`.
+1. Installs the `EndfieldHUD` component, which holds only `EndfieldHUD.exe`, `THIRD-PARTY-NOTICES.txt`, `fonts/` and `resources/`.
 2. Rejects symbols, test programs, GIF/MP4/MOV files and archives.
 3. Runs `EndfieldHUD.exe --verify-package`.
 4. Zips the install tree.
-5. Packs the setup with `tools/package_payload.cpp`.
+5. Packs the setup with `tools/package_payload.cpp`, which refuses a tree without `THIRD-PARTY-NOTICES.txt`.
 6. Re-verifies the setup with its own reader (`--verify-payload`).
 7. Writes the size report and checksums.
-8. Renders the release-notes draft.
+8. Writes the release-notes draft.
 
 If the Mac-exported runtime inputs are missing, the package does not verify and
 staging is refused. With `-DEHUD_RELEASE_ALLOW_INCOMPLETE=ON` (CI) every
@@ -97,7 +98,7 @@ follows the app's saved language, or the Windows display language.
 
 | Item | Location |
 | --- | --- |
-| Program files | `%LOCALAPPDATA%\Programs\EndfieldHUD\` (`FOLDERID_UserProgramFiles`) with `EndfieldHUD.install.json` listing exactly what Setup wrote |
+| Program files | `%LOCALAPPDATA%\Programs\EndfieldHUD\` (`FOLDERID_UserProgramFiles`): `EndfieldHUD.exe`, `THIRD-PARTY-NOTICES.txt`, `fonts\`, `resources\` and `uninstall.exe`, with `EndfieldHUD.install.json` listing exactly what Setup wrote (the list uninstall removes) |
 | Start menu | `Programs\EndfieldHUD.lnk` with AppUserModelID `io.github.endfieldcharge.EndfieldCharge` and toast activator `{FF18639C-ADE8-4BA7-AC09-7F1216F9E200}` |
 | Toast activator | `HKCU\Software\Classes\CLSID\{…}\LocalServer32 = "<exe>" --notification-activation` |
 | Uninstall entry | `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\EndfieldHUD` (DisplayName, DisplayVersion `1.2.0.18`, Publisher, InstallLocation, DisplayIcon, UninstallString/QuietUninstallString, EstimatedSize, NoModify/NoRepair) |
@@ -144,6 +145,11 @@ restores `.EndfieldHUD.backup-<id>`.
 
 Setup refuses, and changes nothing, in these cases:
 
+- Windows is older than Windows 11 (build 22000, `minimumWindowsBuild` in
+  `package_format.hpp`): the HUD's blurred background needs
+  `DWMWA_USE_HOSTBACKDROPBRUSH`, and `EndfieldHUD.exe` cannot start without
+  it (it then reports that Windows 11 is required). The refusal names the
+  PC's build. Isolated tests set the build with `--test-windows-build`.
 - A newer version is installed. `--allow-downgrade` overrides this.
 - The folder exists and Setup did not create it.
 - The install path is too long for `MAX_PATH`.
@@ -311,38 +317,37 @@ never checks on its own and never installs. The `Updates` folder holds at most
 one download. Stale downloads and result files are removed when the area
 starts.
 
-## Releases (`release-notes-template.md`)
+## Releases (`windows/RELEASE-NOTES.md`)
 
-`stage_release.cmake` also writes
-`<stem>-release-notes.md`, a draft rendered from `release-notes-template.md`.
-It contains the Windows tag, the artifact names, sizes and SHA-256 values,
-and the signing state. An incomplete package's draft is marked *Do not
-publish*.
+`windows/RELEASE-NOTES.md` is the reviewed text of the release notes and their
+only source. `stage_release.cmake` writes `<stem>-release-notes.md`: that file
+with each `<!-- sha256 at release -->` cell filled in from the staged setup and
+portable zip. Nothing else is changed. The draft is marked *Do not publish*
+at the top when the notes cannot describe the staged files: an incomplete
+package (its names then carry `-incomplete`), notes that do not name this
+release's tag and artifacts, a checksum cell without a staged artifact, or
+signed artifacts while the notes describe unsigned builds.
 
-The template is the text of the **first Windows release**, built from the
-macOS v1.2.0 build 18 parity baseline: what the release contains, install and
-uninstall, moving data from a Mac (the exporter script at the release tag and
-*Import macOS data…*), updates, the requirements, the checksums, and an honest
-list of the differences from the macOS version, taken from the platform gap
-tables in `WINDOWS-MIGRATION.md` section 6. For a later release the
-maintainer replaces *What's in this release* and checks the differences list
-again.
-
-The template's comment holds the publishing checklist:
+The notes' comment holds the publishing checklist. For a later release the
+maintainer rewrites the notes for that release (version, artifact names,
+changes) and empties the SHA-256 cells again. Then:
 
 - Stage a complete package (no `-incomplete` names).
 - Run the section 9 performance gate on the laptop's desktop against that
   build and read its report (see *Performance gates*).
 - Compare the differences list with the current gap tables.
 - Use the `windows-v` tag only, with `gh release create … --latest=false`.
-- Upload only the setup, the portable zip and SHA256SUMS.
+- Upload only the setup, the portable zip and SHA256SUMS: never the symbols
+  zip, its checksum file, the size report or an `-incomplete` artifact.
 - Never touch the Mac release or `updates/appcast.xml`.
 
 Nothing in the build or CI publishes a release. `endfieldhud_release_contracts`
-checks the rendered draft: the tag, the setup's name and SHA-256, the
-SHA256SUMS name and line, `--latest=false`, both first-release sections, the
-exporter link at the tag, no placeholder left, and the *Do not publish* mark
-on an incomplete package.
+checks the staged files: SHA256SUMS lists exactly the setup and the portable
+zip, the symbols zip (a stand-in when the build emits no PDB) has its own
+checksum file, and the draft is `windows/RELEASE-NOTES.md` with exactly its
+two SHA-256 cells filled in, names the tag, the artifacts and the exporter
+link at the tag, says Windows 11, and is marked *Do not publish* exactly when
+the package is incomplete.
 
 ## CI (`.github/workflows/windows.yml`)
 
@@ -636,8 +641,9 @@ test.
 | `packaging_format_contracts` (portable) | Manifest and install-manifest codecs and every rejection rule, versions, trailer and PE/Authenticode location, Setup arguments and isolation rules, all five languages and their placeholders |
 | `packaging_perf_gate_contracts` (portable) | Idle arithmetic, gates, plateau versus leak detection; opening summaries from a startup trace (nearest-rank p50/p95, late frames, frame CPU), opening gates, malformed traces rejected, the launch timing of a HUD opened after the closed window; footprint gates, thread roles and grouping, the footprint scenario and its readable table, gates, graphics driver threads, threads by start address, the memory kept after use and what the graphics release gave back; the readable report and console summary of a full synthetic report with both closed windows (within the grace at 73 wake-ups/s, after the release with the shortened or the production grace), including unavailable GPU values, failures, a cancelled run and a schema 2 report |
 | `packaging_ehudz01_contracts` (portable) | The decoder against the Mac oracle, and the staged-inventory verifier |
-| `packaging_installer_contracts` | 385 checks through the real Setup/uninstall programs with synthetic payloads in `%TEMP%\ehud-<id>` and a private HKCU subtree. Covers fresh install, repair, upgrade, launch-at-login choices, refusals, rollback after every step, interrupted-swap recovery, the Restart Manager close/restart of a stand-in app, uninstall relocation, kept data, explicit data removal and the signed layout. Outside the interactive console session (CI, the laptop's SSH session) it also drives the task-dialog windows with dialog messages: install with the box cleared, uninstall with confirmed data removal, *Keep my data*, and cancel |
-| `endfieldhud_release_contracts` | The real install tree staged, zipped, packed, installed (isolated), checked with the installed `EndfieldHUD.exe --verify-package` and uninstalled |
+| `packaging_installer_contracts` | 385 checks through the real Setup/uninstall programs with synthetic payloads in `%TEMP%\ehud-<id>` and a private HKCU subtree. Covers fresh install, repair, upgrade, launch-at-login choices, refusals (including Windows builds below 22000), rollback after every step, interrupted-swap recovery, the Restart Manager close/restart of a stand-in app, uninstall relocation, kept data, explicit data removal and the signed layout. Outside the interactive console session (CI, the laptop's SSH session) it also drives the task-dialog windows with dialog messages: install with the box cleared, uninstall with confirmed data removal, *Keep my data*, and cancel |
+| `packaging_third_party_notices_contracts` (portable) | `THIRD-PARTY-NOTICES.txt` against `third-party-notices.json`: every `third_party/` folder, bundled font, licence or notice file and licence-marked source comment is covered, every component's licence text is in the rendered file, the copies in `licenses/` equal their macOS originals, no dependency is fetched by the build, and every licence file inside a folder staged into `resources/` (also external inputs such as the OrbiPom folder) is in the notices |
+| `endfieldhud_release_contracts` | The real install tree staged, zipped, packed, installed (isolated), checked with the installed `EndfieldHUD.exe --verify-package` and uninstalled. Also: `THIRD-PARTY-NOTICES.txt` in the portable zip, the setup's file list and the install manifest; SHA256SUMS lists exactly the setup and the portable zip; the symbols zip has its own checksum file; the release-notes draft is `windows/RELEASE-NOTES.md` with its checksums filled in |
 | `packaging_perf_probe_contracts`, `packaging_perf_gate_tool`, `packaging_perf_gate_render`, `packaging_perf_gate_refuses_unsupported` | The gate against the stand-in app: a quiet process passes, one handle/GDI leak per cycle and a 10 ms wake-up are caught and attributed; the graphics grace: the grace override is recognized in an image (UTF-16 or 8-bit) and without it the release launch waits the production ten minutes, a stand-in device that wakes about 100 times a second passes the higher bound within the grace and is gone after the release (shortened to 1 s through `ENDFIELDHUD_CLOSED_GRAPHICS_GRACE` from the gate's environment), its thread shows in the census within the grace only, and a device kept past the grace fails the window after the release; 48 MiB held while open shows in private bytes, working set and the largest allocations and is gone after the cycles, three described threads are grouped by start and the Windows thread pool is recognized, and an open footprint over its limit fails; `ENDFIELDHUD_STARTUP_TRACE=1` reaches the app through the environment block and its cold and warm openings are reported, a slow cold opening fails its gates; a cancelled run stops at once with a partial report; the measured process ends when the gate tool is killed (kill-on-close job); the tool writes and re-renders the readable report; an executable without `--data-root` support is never started |
 | `packaging_identity_consistency` | Setup's notification identity equals the Calendar area's |
 | `packaging_watch_runtime_staged` (CI, where `Resources/` and Python exist) | The Mac packager's real staged tree verifies natively |

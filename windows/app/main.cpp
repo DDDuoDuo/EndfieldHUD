@@ -21,6 +21,8 @@
 // written to <data root>/v1/Diagnostics/last-fatal.txt: the exception type, a
 // bounded message with path-like words redacted, the HRESULT and the host
 // stage/module owner that was active (app/fatal_stage.hpp). No document text.
+// Without the host backdrop (Windows before Windows 11 build 22000) the
+// message says that Windows 11 is required.
 #include "app/application.hpp"
 #include "app/application_areas.hpp"
 #include "app/application_modules.hpp"
@@ -82,6 +84,30 @@ core::Language interfaceLanguage() {
 void report(std::string_view english, std::string_view chinese, UINT icon = MB_ICONERROR) {
     const auto language = interfaceLanguage();
     MessageBoxW(nullptr, wide(core::localized(english, chinese, language)).c_str(), L"EndfieldHUD", MB_OK | icon | MB_SETFOREGROUND);
+}
+// Windows has no host backdrop before Windows 11 (build 22000), and the HUD's
+// blurred background needs it. Windows-only text in the five source languages
+// (the Mac catalog has no entry).
+void reportWindows11Required() {
+    std::string_view text;
+    switch (interfaceLanguage()) {
+    case core::Language::simplifiedChinese:
+        text = "EndfieldHUD 需要 Windows 11（内部版本 22000 或更高版本）：此版本的 Windows 无法绘制 HUD 的模糊背景。数据未被更改。";
+        break;
+    case core::Language::traditionalChinese:
+        text = "EndfieldHUD 需要 Windows 11（組建 22000 或更新版本）：此版本的 Windows 無法繪製 HUD 的模糊背景。資料未被變更。";
+        break;
+    case core::Language::japanese:
+        text = "EndfieldHUD には Windows 11（ビルド 22000 以降）が必要です。このバージョンの Windows では HUD のぼかし背景を描画できません。データは変更されていません。";
+        break;
+    case core::Language::korean:
+        text = "EndfieldHUD를 사용하려면 Windows 11(빌드 22000 이상)이 필요합니다. 이 버전의 Windows에서는 HUD의 흐림 배경을 그릴 수 없습니다. 데이터는 변경되지 않았습니다.";
+        break;
+    default:
+        text = "EndfieldHUD requires Windows 11 (build 22000 or later): this version of Windows cannot draw the HUD's blurred background. Your data was not changed.";
+        break;
+    }
+    MessageBoxW(nullptr, wide(text).c_str(), L"EndfieldHUD", MB_OK | MB_ICONERROR | MB_SETFOREGROUND);
 }
 fs::path executableDirectory() {
     std::wstring buffer(32768, L'\0');
@@ -357,7 +383,12 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     for (int n = 1; argv && n < count; ++n) values.push_back(narrow(argv[n]));
     if (argv) LocalFree(argv);
     try { return run(values); }
-    catch (const winrt::hresult_error& e) {
+    catch (const app::SystemBackdropUnavailable& e) {
+        std::fprintf(stderr, "EndfieldHUD failed: %s (HRESULT %08x)\n", e.what(), static_cast<unsigned>(e.result()));
+        writeFatal("SystemBackdropUnavailable", e.what(), static_cast<std::uint32_t>(e.result()));
+        reportWindows11Required();
+        return 1;
+    } catch (const winrt::hresult_error& e) {
         std::fprintf(stderr, "EndfieldHUD failed: HRESULT %08x\n", static_cast<unsigned>(e.code().value));
         writeFatal("winrt::hresult_error", narrow(e.message()), static_cast<std::uint32_t>(e.code().value));
         report("EndfieldHUD could not start its display. Your data was not changed.", "EndfieldHUD 无法启动显示界面，数据未被更改。");
