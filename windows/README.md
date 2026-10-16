@@ -3213,7 +3213,9 @@ fuzzy title search remains the fallback. No seek: the slider has no settable
 value and no position action. NetEase's own *开启 SMTC* setting (3.1.21 and
 later, as stated in the commit; no external source is cited) publishes a
 GSMTC session with a timeline and `TryChangePlaybackPositionAsync`, which
-Now Playing already drives and prefers. Tests (sanitized synthetic queues):
+Now Playing already drives and prefers. *Corrected in checkpoint 133
+(`f4baa93`): probed live, that session's timeline is all zero and it
+ignores position requests; see checkpoint 133.* Tests (sanitized synthetic queues):
 `now_playing_lyrics_sources_contracts` (parser: exact match, another queued
 track, no match, wrong artist, string id, ambiguous tie, malformed and empty
 files; by-id path versus search fallback),
@@ -3253,7 +3255,9 @@ offscreen 1280 × 800, production owner and frame scheduling):
   HUD has been closed for `closedGraphicsGrace` (5 s). `suspendDevice`
   refuses while a media owner holds `mediaDevice()`; Notes video playback
   holds it for its lifetime, so in production the release does not happen
-  and closed idle stays at about 70 wake-ups per second.
+  and closed idle stays at about 70 wake-ups per second. *Superseded by
+  `3eecf89` (checkpoint 133): the grace is ten minutes and the media owners
+  drop the device when idle, so the release takes effect.*
 - An unchanged native root pass is composited from its retained target
   (0.18 → 0.01 ms per ambient frame), and `setDrawList` resolves unchanged
   draws without lookups (0.155 → 0.09 ms).
@@ -3298,11 +3302,17 @@ New registered tests in this checkpoint: `notes_drawing_ink_contracts`,
 - Closed-idle wake-ups: the device release is not in effect while Notes
   video holds the device (about 70 wake-ups/s from the driver thread). A
   decision is pending to release only after a long close, so that quick
-  reopenings keep their speed.
+  reopenings keep their speed. *Resolved in checkpoint 133 (`3eecf89`): the
+  device is released after ten minutes closed, and every media owner drops
+  it when idle.*
 - Map: the plates are not yet cut out during the transitions into and out of
   the Map; the pin pulse runs at the display rate while the Map shows.
+  *Resolved in checkpoint 133: the plates stay on top through switches
+  (`2b7f9ec`, `db83a05`), and the pulse runs at the 30 Hz ambient cadence
+  (`2b7f9ec`, `5cee0e1`).*
 - Activity: most of a system sample's context switches come from the
-  network reading (`GetIfTable2`).
+  network reading (`GetIfTable2`). *Resolved in checkpoint 133 (`e8cfd3a`):
+  only the counted interfaces are read, with `GetIfEntry2`.*
 - Projection: redrawing a very long stroke at pen-up still takes 13–15 ms.
 
 ### Live acceptance still needed
@@ -3315,3 +3325,182 @@ Checkpoint 131's list still applies. New items:
 - The battery bar's *Don't display* and GPU reading.
 - Notes drawing speed on the desktop.
 - `package_perf_gate --desktop`: open idle with ambient on, and closed idle.
+
+## Checkpoint 133 (2026-10-16)
+
+Checkpoint 132 was pushed at `467725e`. This entry covers the six code
+commits after it, up to `e8cfd3a`. None is pushed; the entry itself changes
+documentation only.
+
+### Reports from release candidate 132
+
+- **Now Playing with NetEase's *开启 SMTC* on (user report):** transport
+  worked through NetEase's media session, but the progress bar and the
+  lyrics stood still (`f4baa93`).
+
+### Changes after checkpoint 132
+
+**Map pin pulse at the ambient cadence (`2b7f9ec`, `5cee0e1`).** With pins
+shown and ambient animation on, the pulse counted as finite motion, so the
+HUD presented at the display rate (165 Hz) as long as the Map showed. On the
+Mac it is a repeating compositor animation (WorldMapCanvas "map.pulse").
+`NativeMapScene::requiresFrames` now reports only camera moves, toolbar
+feedback and marker style transitions (display-paced as before), and
+`pulsing()` reports the pulse, which the host's 30 Hz ambient cadence
+presents. Every frame samples the pulse from the shared clock, so its curve
+is the Mac's; between 30 Hz frames the ring radius moves at most 0.54 pt and
+its opacity 0.164. If no ambient frame comes, one pulse wake 1/24 s after
+the last presented frame keeps it going (never before the next ambient
+tick, and no wake loop from an unpresented frame). `5cee0e1` lets the hidden
+trace accept a few such wakes after late ambient frames on a loaded machine.
+Hidden GPU trace (12 pins, Map owner only, 1280 × 800, production
+`OverlayHost` scheduling at 165 Hz): 165 → 30.0 frames/s, none
+display-paced, 40.6 → 18.7 ms CPU per second; low power 23.6 frames/s from
+the pulse wake, 9.4 ms/s; a zoom every 0.4 s stays display-paced. Tests:
+`map_pulse_cadence_contracts` (new: the owner's demand through
+`FrameWakePlan`/`DisplayPacing` at 165 Hz, the fallback wake's single shot,
+zoom, toolbar and marker style display-paced, drags per event, reduce motion
+and ambient off, then the production `OverlayHost` scheduling on the real
+clock), `map_scene_contracts`.
+
+**Map plates through module switches (`2b7f9ec`, `db83a05`).** The Mac masks
+the whole module host while the Map is current or incoming
+(SystemHUDView.updateMapOcclusionPresentation, applySourceMapOcclusion).
+The Map's artwork was already cut; its registration brackets were not, and
+the other module of the switch is drawn by its own owner. `2b7f9ec` inverts
+the plates through the module host plane during a switch into an updatable
+880 × 880 alpha texture (`NativeMapScene::setTransitionCut`, two texels per
+point like the feather, created by the first switch, repainted in place
+only where the plates move, released once the Map hides), draws the Map's
+brackets through it and publishes it (`MapPreview::transitionCut`).
+`db83a05` adds the host half: `LayerCompositionEntry::cut`, applied in
+`publishNative` to every draw of the outgoing or incoming module that has
+no mask of its own, so the plates no longer flicker. `db83a05` also stops
+the pin pulse in low-power visual mode, as on the Mac. Tests (from
+`2b7f9ec`; `db83a05` lists none): `map_preview_contracts` (switches out of
+and into the Map over a shell stand-in: every plate point shows on every
+frame, the brackets carry the cut, the texture is released when the Map
+hides), `map_occlusion_contracts` (the packaged shell on five displays;
+at 1280 × 800 the outgoing module covers 11,925 of 14,027 interior plate
+points without the cut and none with it on all 23 switch frames),
+`map_cutout_contracts`. Laptop slot for both Map commits: 16 of 16 Map
+suites and `application_owner_coverage`.
+
+**Closed graphics device released after ten minutes (`3eecf89`).** The
+release from `348b1ed` never ran in production: Notes video playback took
+`Renderer::mediaDevice()` in its constructor and kept it for the session,
+and Media Assembly's GPU processor kept a raw device reference without its
+lease. Now:
+
+- `closedGraphicsGraceSeconds` = 600 is the one named constant (only hidden
+  traces and tests shorten it). Reopenings within ten minutes keep the
+  device, swap chain and composition target. After the grace, a device that
+  came back while closed, or that a media owner refused and then let go, is
+  released again after 5 s (`Renderer::deviceReleasable`, no polling).
+- The device is prepared on a worker at the start of every opening, and when
+  the tray icon is pointed at or pressed; an unused prepared device is
+  discarded after 15 s. The summon hotkey has no earlier signal.
+- The shared video owner (Notes, Archive and Projection movies) takes the
+  device with its first engine and drops it, with the CoreMedia 709 pass,
+  with its last. Media Assembly's GPU processors hold the lease for their
+  lifetime and are dropped when the HUD closes. The renderer counts devices
+  created and destroyed and leases handed out, so a hidden holder shows.
+
+| Closed-graphics trace (hidden, laptop, media stack on) | Before | After |
+| --- | --- | --- |
+| Closed, wake-ups per second (after launch / after use) | 177.3 / 179.6, device never released | within ten minutes 70.8–74.7 (kept); past the grace 0.10 / 0.05 (released) |
+| Closed, private MiB (after launch / after use) | 174 / 226 | past the grace 124 / 176 |
+| Reopening within ten minutes, first frame | 13.9 ms | 11.7 ms after 80 s, 9.6–17.8 ms after 1 s |
+| First opening after a long close | — (never released) | 168–174 ms (device 131–135 ms); 42–52 ms with the tray pointed at 0.35 s ahead |
+
+Tests: `application_idle_trace` (now with the production media stack and a
+3 s grace: released, destroyed and under 20 wake-ups/s past the grace, kept
+within it, media lease refusal and release after let-go, anticipated
+opening, unused preparation discarded, production grace pinned at 600 s),
+`notes_video_playback_contracts`, `notes_video_decode_contracts`,
+`application_frame_targets_contracts`, `media_assembly_preview_contracts`;
+`watch_session_preview --idle-trace-grace` and `--idle-trace-closed`.
+Laptop slot: 28 of 28.
+
+**Now Playing with NetEase's own media session (`f4baa93`).** A read-only
+probe on 3.1.41 with *开启 SMTC* on: the session (AUMID `cloudmusic.exe`)
+carries the title, artist, a thumbnail and play/pause/next/previous, but
+StartTime, EndTime, Position, MinSeekTime and MaxSeekTime are 0,
+LastUpdatedTime is never stamped, there is no playback rate and
+IsPlaybackPositionEnabled is false; a position request is answered true and
+ignored. Because a media session takes precedence, the window-title player
+that reads the bar and the queue-file length was dropped as a duplicate.
+Now the session keeps identity, metadata, artwork and transport; when the
+same player also runs as a window-title player with the same title and the
+session's timeline is unusable, the merged snapshot takes that window's
+position, bar reading and controls (`playerTime`), and the owner runs the
+bar time and lyric clock as for a window-title player. Players with a
+usable timeline keep their GSMTC time; another track or player is never
+mixed in. Seek stays unsupported for NetEase. Tests (sanitized fixtures of
+the observed session): `now_playing_players_contracts` (usable-timeline
+rule, the merge cases), `now_playing_sources_session_contracts` (exact
+lyrics and length from the queue file, running clock, disabled seek,
+re-reads while playing, none while paused). The Now Playing suites and
+`application_owner_coverage` pass on the laptop.
+
+**Activity system sample (`e8cfd3a`).** The sample keeps the counted network
+interfaces and reads only them with `GetIfEntry2`, listing the table again
+on an interface change notification (`NotifyIpInterfaceChange`) that names
+an interface it does not keep, an unreadable or no longer counted kept
+interface, or a failed listing. Readings equal the table reading; a steady
+sample allocates nothing (`ActivityCounters` is a sorted vector). Laptop,
+closed, 5 s cadence: 38.9–42.0 → 11.8–12.9 context switches and
+2.49–2.64 → 1.28–1.42 ms per sample, wake-ups 485–532 → 182–200 per
+minute. Tests: `activity_provider_contracts` (table equivalence over 4,000
+random histories, interface changes, notifications during a listing, no
+allocation per steady sample), `activity_gpu_contracts` (live table
+equivalence, unreadable kept interface, disk steady reading);
+`activity_gpu_tests --sample-cost` and `--closed-idle [--notices]` measure
+it.
+
+### Test runs
+
+Laptop validation: pending
+
+New registered test in this checkpoint: `map_pulse_cadence_contracts`.
+Per-commit laptop slots are quoted above (`db83a05` and `e8cfd3a` record
+none in their messages).
+
+### Corrections to the entries above
+
+- Checkpoints 131 and 132 say NetEase's *开启 SMTC* session offers a
+  timeline and seek. Its timeline is all zero and it ignores position
+  requests (`f4baa93`); a note in place in checkpoint 132 points here.
+- Checkpoint 132's idle cost entry describes a 5 s grace that did not take
+  effect in production. The grace is ten minutes since `3eecf89`; a note in
+  place points here.
+- `2b7f9ec`'s message names the host half of the switch cut as a patch
+  outside the tree; it landed as `db83a05`. Its low-power fallback (about
+  24 Hz) no longer runs there, because `db83a05` stops the pulse in
+  low-power mode.
+
+### Open items
+
+- Projection: redrawing a very long stroke at pen-up still takes 13–15 ms.
+- Closed idle within the first ten minutes of a close still wakes about 70
+  times a second from the driver thread (by decision). The first opening
+  after a long close by the summon hotkey pays the device creation (about
+  170 ms).
+- Activity: CPU through `GetSystemTimes` is now the largest cost of a
+  system sample and is inherent.
+- NetEase: no seek with or without *开启 SMTC* (a player limit).
+
+### Live acceptance still needed
+
+Checkpoint 132's list still applies, except seeking NetEase after turning on
+*开启 SMTC*, which NetEase does not allow. New items:
+
+- NetEase with *开启 SMTC* on: the bar time and the lyrics run; title,
+  cover and transport come from the session.
+- The Map's plates during switches into and out of the Map (no flicker), and
+  the pin pulse at 30 Hz.
+- A close longer than ten minutes, then opening from the hotkey and from the
+  tray; Notes, Archive and Media Assembly video afterwards.
+- Activity's network rates after connecting or disconnecting Wi-Fi,
+  Ethernet or a VPN.
+- `package_perf_gate --desktop`: closed idle past ten minutes.

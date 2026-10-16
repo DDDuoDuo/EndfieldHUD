@@ -9,6 +9,43 @@ data folder; none is a published release.
 
 ## Unreleased
 
+## RC 133 — checkpoint 133
+
+- **Map: the Storage and Activity Monitor buttons stay on top during
+  switches**: switching into or out of the Map no longer draws the Map or the
+  other module over the two buttons below the circle, so they no longer
+  flicker, as on the Mac.
+- **Map: lighter pin pulse**: the pulsing pins now animate at the HUD's
+  30 Hz ambient rate instead of the monitor's refresh rate (165 Hz on the
+  laptop), with the same curve. With 12 pins the Map's CPU fell from about
+  40.6 to 18.7 ms per second (hidden test). Zooming, panning and the toolbar
+  still move at the monitor's refresh rate. In low-power visual mode the
+  pins no longer pulse, as on the Mac.
+- **Closed HUD: much less background activity**: after the HUD has been
+  closed for ten minutes it releases its graphics device. Background
+  wake-ups then fall from about 178 to about 0.1 per second, and memory
+  drops by about 50 MiB (hidden test). Reopening within ten minutes is as
+  fast as before (about 10–18 ms). The first opening after a longer close
+  takes about 170 ms, or about 45 ms if you point at the tray icon first.
+  Notes, Archive and Projection videos and Media Assembly now let go of the
+  graphics device when they are not in use, so the release can happen.
+- **Now Playing with NetEase's 开启 SMTC on**: the time bar and the
+  synchronized lyrics now run with the song. NetEase's own media session
+  gives the title, artist, cover and controls but no time, so Now Playing
+  takes the time from NetEase's player bar and the song length from its
+  queue file, and uses the session for everything else. Other players
+  (Spotify, browsers) are unchanged.
+- **Correction to RC 132's tip — seeking in NetEase**: turning on
+  **开启 SMTC** does not make seeking possible. NetEase's media session
+  reports no position and ignores position changes, so Now Playing cannot
+  move NetEase's progress bar with or without that setting.
+- **Activity Monitor: cheaper background sampling**: each system sample
+  reads only the network adapters it counts, and lists the adapters again
+  only when Windows reports a change. A sample now takes about 1.4 ms
+  instead of about 2.5 ms, with about 12 instead of about 40 context
+  switches; wake-ups from sampling while the HUD is closed fell from about
+  500 to about 190 per minute.
+
 ## RC 132 — checkpoint 132
 
 - **Notes drawing follows the cursor**: strokes keep every mouse sample
