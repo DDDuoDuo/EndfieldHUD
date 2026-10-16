@@ -51,6 +51,26 @@ bool Application::Impl::logoPointer(const PointerEvent& e, double time) {
     }
     return false;
 }
+// HUDSourceWatchView.mouseDown/mouseUp over a scroll indicator: the press is
+// the indicator's (pressedScrollDirection); a release over the same one
+// scrolls 32 points with the spring, anywhere else it does nothing. Moves keep
+// updating the list's hover, as on the Mac (no hover or pressed look).
+bool Application::Impl::scrollIndicatorPointer(const PointerEvent& e, double time) {
+    if (e.kind == PointerKind::captureLost) { scrollIndicatorPressed.reset(); return false; }
+    const core::Point p{e.x, e.y};
+    if ((e.kind == PointerKind::down || e.kind == PointerKind::doubleClick) && e.button == PointerButton::left) {
+        scrollIndicatorPressed = session->scrollIndicatorAt(p);
+        if (scrollIndicatorPressed) host.capturePointer(true);
+        return scrollIndicatorPressed.has_value();
+    }
+    if (e.kind == PointerKind::up && e.button == PointerButton::left && scrollIndicatorPressed) {
+        const int direction = *scrollIndicatorPressed;
+        scrollIndicatorPressed.reset(); host.capturePointer(false);
+        if (session->scrollIndicatorAt(p) == direction && session->scrollDirection(direction, true, time)) refresh(time);
+        return true;
+    }
+    return false;
+}
 // setDesktopCenterLogo(choice, revision): on a choice/revision change the
 // artwork is decoded and composed on the shared executor, then bound.
 void Application::Impl::updateCenterLogo() {

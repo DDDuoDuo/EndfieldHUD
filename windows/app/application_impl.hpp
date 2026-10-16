@@ -461,6 +461,12 @@ struct Application::Impl {
     // HUDSourceWatchView industry logo: press/release over the logo flickers it.
     bool logoPointer(const PointerEvent&, double time);
     bool logoPressed{};
+    // HUDSourceWatchView scroll indicators (desktopScrollDirection): a press on
+    // the up or down arrow at the ends of the list belongs to it (it never
+    // closes the HUD or reaches a card); its release over the same arrow
+    // scrolls the list (scrollDesktopNavigation(direction, animated: true)).
+    bool scrollIndicatorPointer(const PointerEvent&, double time);
+    std::optional<int> scrollIndicatorPressed;
     // --- Display adaptation (core/source_desktop_chrome.hpp desktopContentScale) ---
     double contentScale{1};
     void updateContentScale();

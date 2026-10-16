@@ -1,7 +1,9 @@
 #include "core/watch_runtime_input.hpp"
 #include "app/source_watch_session.hpp"
 #include "core/shell_packet.hpp"
+#include "core/source_native_labels.hpp"
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
@@ -100,9 +102,27 @@ void synthetic(){
     SourceWatchSession disabled(data.scene,disabledDocument,data.library,data.camera,data.resources,{},emptyTransitions());disabled.setEnvironment(environment(),0);disabled.setSettings(settings,0);disabled.setNavigation(navigation,0);disabled.showStable(0,0);disabled.setInputEnabled(true,0);disabled.sample(0);
     check(!disabled.activate("button",0),"A source-disabled UIButton never enters the click eligibility snapshot");
 }
-void compare(const WatchSessionFrame&frame,const packet::FrameData&oracle){
+// HUDSourceWatchView.desktopScrollIndicatorIDs: [0] UpLine (-1), [1] BottonLine (1).
+std::array<std::string,2> scrollIndicatorIDs(const SceneDefinition&scene){
+    std::array<std::string,2> ids;for(const auto&n:scene.nodes()){const std::string_view path=n.path;if(path.find("/RightBottomNode/DecoLine/")==path.npos)continue;
+        if(path.ends_with("/UpLineNode/UpLine"))ids[0]=n.id;if(path.ends_with("/BottonLineNode/BottonLine"))ids[1]=n.id;}
+    check(!ids[0].empty()&&!ids[1].empty(),"The source scene has both scroll indicators");return ids;
+}
+// The scroll indicators are tinted from the list's state on every frame
+// (refreshDesktopScrollIndicators: tint 1 and opacity 1 enabled, .32 and .65
+// dimmed). The exporter's builder settings froze one list position's tints
+// into every oracle frame, so those two batches are checked against the
+// session's own state with the oracle's untinted alpha.
+void compare(const WatchSessionFrame&frame,const packet::FrameData&oracle,const SourceWatchSession&session,const SourceDesktopFrameSettings&desktop,const std::array<std::string,2>&indicators){
     const auto&value=oracle.metadata;const auto&actual=*frame.sourceFrame;check(actual.batches.size()==value["batches"].array().size(),"Session matches original snapshot batch count");
     for(std::size_t i=0;i<actual.batches.size();++i){const auto&a=actual.batches[i];const auto&b=value["batches"].array()[i];check(a.sourceNodeID==b["sourceNodeID"].string()&&a.sourceMesh==b["sourceMesh"].string()&&a.material==b["material"].string(),"Session keeps original source batch order/material binding");
+        if(const auto at=std::find(indicators.begin(),indicators.end(),a.sourceNodeID);at!=indicators.end()){
+            const bool enabled=session.scrollIndicatorEnabled(at==indicators.begin()?-1:1);const auto frozen=desktop.graphicStyles.find(a.sourceNodeID);
+            const double frozenOpacity=frozen!=desktop.graphicStyles.end()?frozen->second.opacity:1;
+            for(unsigned c=0;c<3;++c)checkNear(a.color[c],enabled?1:.32,2e-6,"Scroll indicator tint follows the list");
+            checkNear(a.color[3],b["color"].array()[3].number()/frozenOpacity*(enabled?1:.65),2e-6,"Scroll indicator opacity follows the list");
+            for(unsigned c=0;c<4;++c)for(unsigned r=0;r<4;++r)checkNear(a.world.values[c*4+r],b["worldMatrix"].array()[c].array()[r].number(),2e-6,"Session batch world");
+        }else
         for(unsigned c=0;c<4;++c){checkNear(a.color[c],b["color"].array()[c].number(),2e-6,"Session source vertex tint");for(unsigned r=0;r<4;++r)checkNear(a.world.values[c*4+r],b["worldMatrix"].array()[c].array()[r].number(),2e-6,"Session batch world");}
         check(a.uniformOverrides.size()==b["uniformOverrides"].object().size(),"Session original material override count");for(const auto&[key,values]:a.uniformOverrides){check(values.size()==b["uniformOverrides"][key].array().size(),"Session override vector width");for(std::size_t c=0;c<values.size();++c)checkNear(values[c],b["uniformOverrides"][key].array()[c].number(),2e-6,"Session original override");}
     }
@@ -116,7 +136,7 @@ void actual(const std::filesystem::path&path,const std::filesystem::path&runtime
     const auto referenceAnimators=AnimatorBinding::fromJson(metadata["mountedDocument"]["animators"]);const auto referenceProfile=DesktopHoverProfile::fromJson(metadata["frameBuilder"]["profileHover"]);
     std::unique_ptr<WatchRuntimeInput> runtime;if(!runtimeRoot.empty())runtime=std::make_unique<WatchRuntimeInput>(std::filesystem::absolute(runtimeRoot));
     const auto&scene=runtime?runtime->scene():referenceScene;const auto&document=runtime?runtime->document():referenceDocument;const auto&library=runtime?runtime->library():referenceLibrary;const auto&camera=runtime?runtime->camera():referenceCamera;const auto&resources=runtime?runtime->resources():referenceResources;
-    const auto&animators=runtime?runtime->animators():referenceAnimators;const auto&profile=runtime?runtime->profile():referenceProfile;const auto&transitions=runtime?runtime->controllerTransitions():metadata["controllerTransitions"];unsigned frames{};
+    const auto&animators=runtime?runtime->animators():referenceAnimators;const auto&profile=runtime?runtime->profile():referenceProfile;const auto&transitions=runtime?runtime->controllerTransitions():metadata["controllerTransitions"];unsigned frames{};const auto indicators=scrollIndicatorIDs(scene);
     for(const auto&size:{std::pair{"1280x800",Vec2{1280,800}},std::pair{"1920x1080",Vec2{1920,1080}}}){
         const auto stable=package.loadFrame(std::string("desktop-shell-")+size.first+"-opening-4");const auto&input=stable.metadata["builderInput"];const auto desktop=runtime?runtime->desktopSettings():SourceDesktopFrameSettings::fromJson(input["desktopSettings"]);
         SourceWatchSession session(scene,document,library,camera,resources,animators,transitions,profile,desktop);
@@ -124,18 +144,18 @@ void actual(const std::filesystem::path&path,const std::filesystem::path&runtime
         // Supplying the recorded logical count does not invent an OS action.
         WatchSessionNavigation nav;for(std::size_t i=0;i<std::min<std::size_t>(4,document.buttons.size());++i)nav.fixedActions[document.buttons[i].nodeID]=i;
         for(std::int64_t i=0;i<input["entryCount"].integer();++i)nav.rightActions.push_back(static_cast<std::uint64_t>(i+4));session.setNavigation(nav,0);
-        session.showStable(0,0x5eed);compare(*session.sample(0),stable);++frames;
+        session.showStable(0,0x5eed);compare(*session.sample(0),stable,session,desktop,indicators);++frames;
         {
             SourceWatchSession opening(scene,document,library,camera,resources,animators,transitions,profile,desktop);
             opening.setEnvironment(env,0);auto motion=settings;motion.reduceMotion=false;opening.setSettings(motion,0);opening.setNavigation(nav,0);opening.open(0,0x5eed);
             for(unsigned i=0;i<5;++i){const auto oracle=package.loadFrame(std::string("desktop-shell-")+size.first+"-opening-"+std::to_string(i));
-                compare(*opening.sample(double(i)*metadata["playback"]["openingDuration"].number()/4),oracle);++frames;}
+                compare(*opening.sample(double(i)*metadata["playback"]["openingDuration"].number()/4),oracle,opening,desktop,indicators);++frames;}
         }
         settings.reduceMotion=false;session.setSettings(settings,0);session.close(0);
         for(unsigned i=0;i<4;++i){const auto oracle=package.loadFrame(std::string("desktop-shell-")+size.first+"-closing-"+std::to_string(i));const double time=double(i)*metadata["playback"]["closingDuration"].number()/4;
-            compare(*session.sample(time),oracle);++frames;}
+            compare(*session.sample(time),oracle,session,desktop,indicators);++frames;}
         session.conceal(1);settings.ambientEnabled=true;session.setSettings(settings,1);session.showStable(1,0x5eed);session.setScrollPosition(.37,1);
-        const double elapsed[]{0,.371,1.113};for(unsigned i=0;i<3;++i){const auto oracle=package.loadFrame(std::string("desktop-shell-")+size.first+"-ambient-"+std::to_string(i));compare(*session.sample(1+elapsed[i]),oracle);++frames;}
+        const double elapsed[]{0,.371,1.113};for(unsigned i=0;i<3;++i){const auto oracle=package.loadFrame(std::string("desktop-shell-")+size.first+"-ambient-"+std::to_string(i));compare(*session.sample(1+elapsed[i]),oracle,session,desktop,indicators);++frames;}
         session.sample(3);const auto statistics=session.frameStats();const auto poses=session.stats().fullPoses;allocations=0;countAllocations=true;for(unsigned i=0;i<120;++i)session.sample(3.1+i/30.);countAllocations=false;
         check(allocations==0&&session.stats().fullPoses==poses,"Actual session ambient loop performs no wrapper/button pose allocation");
         check(session.frameStats().layoutBuilds==statistics.layoutBuilds&&session.frameStats().localImageBuilds==statistics.localImageBuilds&&session.frameStats().directAmbientFrames>=statistics.directAmbientFrames+120,"Actual session retains layout/topology and applies the 29-node ambient path");
@@ -174,6 +194,29 @@ void actual(const std::filesystem::path&path,const std::filesystem::path&runtime
         check(session.scrollPosition()<=1+DesktopScrollMotion::gestureEdgeTravel/scrollInfo.hiddenLength,"Dragging overscroll remains within original bounce extent");
         session.setInputEnabled(false,24.02);check(!session.navigationPointerActive(),"Focus/input loss cancels captured navigation drag");session.sample(26);
         check(session.scrollPosition()>=0&&session.scrollPosition()<=1,"Released overscroll settles within navigation limits");
+        {// HUDSourceWatchView scroll indicators (desktopScrollDirection, scrollDesktopNavigation,
+         // refreshDesktopScrollIndicators): each answers its exact projected sprite
+         // quad, a click is one 32-point spring step, and the tints follow the list.
+            session.setInputEnabled(true,30);session.setScrollPosition(1,30);session.sample(30);session.sample(30.01);
+            const auto centre=[&](const std::string&id){const auto*f=session.currentFrame();const auto vp=f->camera.projection*f->camera.view;const Rect view{0,0,env.viewport[0],env.viewport[1]};
+                for(const auto&n:f->sourceFrame->resolved)if(n.node->id==id&&n.rect)if(const auto p=projectNativePoint({n.rect->origin[0]+n.rect->size[0]*.5,n.rect->origin[1]+n.rect->size[1]*.5,0},f->camera.worldRoot*n.worldMatrix,vp,view))return *p;
+                throw std::runtime_error("Scroll indicator has no projected centre");};
+            const auto color=[&](const std::string&id){for(const auto&b:session.currentFrame()->sourceFrame->batches)if(b.sourceNodeID==id)return b.color;throw std::runtime_error("Scroll indicator batch absent");};
+            const auto up=centre(indicators[0]),down=centre(indicators[1]);
+            check(session.scrollIndicatorAt(up)==-1&&session.scrollIndicatorAt(down)==1&&!session.scrollIndicatorAt(*scrollPoint)&&!session.scrollIndicatorAt(Point{-10,20})&&!session.scrollIndicatorAt(Point{std::nan(""),0}),
+                "The indicators answer their own projected sprites, not the list or the space beside it");
+            check(!session.scrollIndicatorEnabled(-1)&&session.scrollIndicatorEnabled(1)&&color(indicators[0])[0]==.32f&&color(indicators[1])[0]==1.f,"At the top the up arrow is dimmed and the down arrow lit");
+            check(session.scrollIndicatorAt(up)==-1&&!session.scrollDirection(-1,true,30.02)&&session.scrollPosition()==1,"A dimmed arrow still owns its press; its step does nothing");
+            check(session.scrollDirection(1,true,31)&&session.scrollPosition()==1,"A click on the down arrow starts the spring without jumping");
+            session.sample(31.05);check(session.scrollPosition()<1&&session.scrollPosition()>1-32*units/scrollInfo.hiddenLength,"The step animates toward its target");
+            session.sample(33);checkNear((1-session.scrollPosition())*scrollInfo.hiddenLength/units,32,1e-4,"One click scrolls 32 screen points, as scrollDesktopNavigation");
+            session.sample(33.01);check(session.scrollIndicatorEnabled(-1)&&session.scrollIndicatorEnabled(1)&&color(indicators[0])[0]==1.f&&color(indicators[1])[0]==1.f,"Between the ends both arrows are lit");
+            session.setScrollPosition(0,34);session.sample(34);session.sample(34.01);
+            check(session.scrollIndicatorEnabled(-1)&&!session.scrollIndicatorEnabled(1)&&color(indicators[0])[0]==1.f&&color(indicators[1])[0]==.32f,"At the bottom the up arrow is lit and the down arrow dimmed");
+            check(session.scrollDirection(-1,true,35)&&(session.sample(37),session.scrollPosition()>0),"A click on the up arrow scrolls back up");
+            session.setInputEnabled(false,38);check(!session.scrollIndicatorAt(up)&&!session.scrollIndicatorAt(down),"Without input the arrows take no press");
+            session.setScrollPosition(1,38);session.sample(38);
+        }
 
     }
     std::cout<<frames<<" original macOS session checkpoints compared\n";

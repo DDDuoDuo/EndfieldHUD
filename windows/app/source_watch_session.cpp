@@ -48,6 +48,9 @@ struct SourceWatchSession::Impl {
     std::map<std::string_view,Click,std::less<>> clicks;
     std::vector<std::pair<std::string_view,std::string_view>> animatorButtons;
     std::vector<std::string_view> availableButtons,hiddenDecorations,scrollIndicators;
+    // HUDSourceWatchView.desktopScrollIndicatorIDs: [0] up (-1), [1] down (1),
+    // and desktopScrollIndicatorState (both dimmed before the first frame).
+    std::array<std::string_view,2> indicatorIDs{};std::array<bool,2> indicatorEnabled{};
     DesktopScrollMotion scrollMotion;double scrollPosition{1};std::optional<double> bindingPosition;
     struct NavigationDrag {Point start;Projection plane;double lastLocalY{},hiddenLength{};bool active{};};
     std::optional<NavigationDrag> navigationDrag;
@@ -76,6 +79,22 @@ struct SourceWatchSession::Impl {
             if(elapsed<.46)opacity=elapsed>=.05&&elapsed<.09?.22f:elapsed>=.20&&elapsed<.25?.38f:1.f;else logoStart.reset();}
         if(applyLogoStyles(opacity))builder.setDesktopSettings(appliedSettings);
     }
+    // refreshDesktopGlowStyles for the scroll indicators: the exported
+    // settings froze one list position's tints, so both are written here.
+    bool applyIndicatorStyles(){
+        bool changed=false;
+        for(std::size_t n=0;n<indicatorIDs.size();++n){if(indicatorIDs[n].empty())continue;const float tint=indicatorEnabled[n]?1.f:.32f,opacity=indicatorEnabled[n]?1.f:.65f;
+            auto found=appliedSettings.graphicStyles.find(indicatorIDs[n]);if(found==appliedSettings.graphicStyles.end())found=appliedSettings.graphicStyles.emplace(std::string(indicatorIDs[n]),SourceDesktopGraphicStyle{}).first;
+            auto&style=found->second;const std::array<float,3> rgb{tint,tint,tint};
+            if(style.opacity!=opacity||style.tint!=rgb){style.opacity=opacity;style.tint=rgb;changed=true;}}
+        return changed;
+    }
+    // refreshDesktopScrollIndicators, before each frame from the last one.
+    void refreshIndicators(){
+        bool scrollable=false;if(hasFrame){const auto&info=rendered.sourceFrame->layoutReport.scroll;scrollable=info&&info->hiddenLength>0;}
+        const std::array<bool,2> next{scrollable&&scrollMotion.canScroll(-1),scrollable&&scrollMotion.canScroll(1)};
+        if(next==indicatorEnabled)return;indicatorEnabled=next;if(applyIndicatorStyles())builder.setDesktopSettings(appliedSettings);
+    }
     bool logoQuad(Polygon&quad)const{
         if(hidden||!hasFrame||logoMain.empty())return false;const auto*node=resolved(logoMain);if(!node||!node->activeInHierarchy||!node->rect)return false;
         return projectQuad(quad,*node->rect,rendered.camera.worldRoot*node->worldMatrix,rendered.camera.projection*rendered.camera.view,viewport())&&quad.n==4;
@@ -91,7 +110,8 @@ struct SourceWatchSession::Impl {
             if(const auto* component=document.component("UIButton",n.id)){const auto&raw=(*component)["_clickCd"];const double cooldown=raw.isNumber()?raw.number():0;
                 clicks.emplace(n.id,Click{flag((*component)["m_Interactable"],true),cooldown,{}});}
             // HUDSourceWatchView.desktopScrollIndicatorIDs (the up/down deco lines).
-            {const std::string_view path=n.path;if(path.find("/RightBottomNode/DecoLine/")!=path.npos&&(path.ends_with("/UpLineNode/UpLine")||path.ends_with("/BottonLineNode/BottonLine")))scrollIndicators.push_back(n.id);}
+            {const std::string_view path=n.path;if(path.find("/RightBottomNode/DecoLine/")!=path.npos&&(path.ends_with("/UpLineNode/UpLine")||path.ends_with("/BottonLineNode/BottonLine"))){
+                scrollIndicators.push_back(n.id);indicatorIDs[path.ends_with("/UpLineNode/UpLine")?0:1]=n.id;}}
             const auto name=trim(n.name);bool hide=redDot(name);
             if(!hide&&(name=="LockIcon"||name=="SafeZoneIcon")){auto ancestor=n.parent;while(ancestor&&!main.contains(*ancestor))ancestor=scene.node(*ancestor)->parent;hide=ancestor.has_value();}
             if(hide)hiddenDecorations.push_back(n.id);
@@ -101,6 +121,7 @@ struct SourceWatchSession::Impl {
         for(const auto&channel:ambient.channels())ambientPose.transforms[channel.node].localRotation=channel.base;
         scrollProbe.hits.resize(1);scrollProbe.hits[0].buttonID="viewport";
         for(const auto&id:hoverFeedback.sideEdgeIDs())appliedSettings.graphicStyles[id].opacity=DesktopHoverFeedback::sideEdgeOpacity;
+        (void)applyIndicatorStyles();
         // Material substitution for the profile highlight comes from the exact
         // exported desktop settings, never a guessed native material.
         builder.setDesktopSettings(appliedSettings);
@@ -182,7 +203,7 @@ void SourceWatchSession::setSettings(WatchSessionSettings value,double time){nee
     if(value.reduceMotion){p.scrollMotion.reset(p.scrollMotion.target(),*at);p.scrollPosition=p.scrollMotion.position();p.gyro.retarget({},*at,p.cameraModel.gyro().duration,true);}p.invalidatePose();}
 void SourceWatchSession::setEnvironment(WatchSessionEnvironment value,double time){need(valid(value),"Invalid Watch presentation environment");auto&p=*impl_;if(!p.advance(time)||p.environment==value)return;if(p.environment.viewport!=value.viewport){p.cancelDrag(*p.clock);p.invalidatePose();}p.environment=value;}
 void SourceWatchSession::setInputEnabled(bool value,double time){auto&p=*impl_;const auto at=p.advance(time);if(!at||p.input==value)return;p.input=value;if(!value){p.cancelDrag(*at);p.hovered.reset();p.pressed.reset();p.updateStates(*at);}p.lastHit.reset();}
-void SourceWatchSession::setDesktopSettings(SourceDesktopFrameSettings value){auto&p=*impl_;p.baseSettings=value;p.appliedSettings=std::move(value);for(const auto&id:p.hoverFeedback.sideEdgeIDs())p.appliedSettings.graphicStyles[id].opacity=DesktopHoverFeedback::sideEdgeOpacity;(void)p.applyLogoStyles(p.logoOpacity);
+void SourceWatchSession::setDesktopSettings(SourceDesktopFrameSettings value){auto&p=*impl_;p.baseSettings=value;p.appliedSettings=std::move(value);for(const auto&id:p.hoverFeedback.sideEdgeIDs())p.appliedSettings.graphicStyles[id].opacity=DesktopHoverFeedback::sideEdgeOpacity;(void)p.applyLogoStyles(p.logoOpacity);(void)p.applyIndicatorStyles();
     for(const auto&id:p.navigationInput.managedButtons){if(p.actions.contains(id))p.appliedSettings.hiddenNodes.erase(id);else p.appliedSettings.hiddenNodes.insert(id);}p.builder.setDesktopSettings(p.appliedSettings);p.lastHit.reset();}
 void SourceWatchSession::setNavigation(WatchSessionNavigation value,double time){auto&p=*impl_;const auto at=p.advance(time);if(!at||(p.hasNavigation&&p.navigationInput==value))return;
     for(const auto&[id,action]:value.fixedActions){(void)action;need(p.scene.node(id),"Navigation action node is absent");}for(const auto&id:value.managedButtons)need(p.scene.node(id),"Managed source button is absent");
@@ -263,7 +284,7 @@ const WatchSessionFrame* SourceWatchSession::sample(double value){auto&p=*impl_;
     if(!reduce&&(p.environment.onScreen||p.environment.canAdvanceTransition)&&!p.environment.pointerLocked&&p.environment.pointer){const auto point=*p.environment.pointer;
         p.gyro.retarget(p.cameraModel.gyro().desktopTarget({point.x,point.y},p.environment.viewport,p.settings.parallax,p.settings.perspective),time,p.cameraModel.gyro().duration);}
     p.gyro.finishIfNeeded(time);const auto camera=p.cameraModel.desktopFrame(p.environment.viewport,p.gyro.rotation(time),p.settings.hudOffset,p.settings.hudScale);
-    p.refreshBindings(time);const auto&tints=p.selectable.colors(time,reduce);p.refreshStyles(tints);p.refreshLogo(time);
+    p.refreshBindings(time);p.refreshIndicators();const auto&tints=p.selectable.colors(time,reduce);p.refreshStyles(tints);p.refreshLogo(time);
     const bool settled=p.playback.phase()==VisibilityPhase::visible&&!p.buttons.requiresFrames(time)&&!p.selectable.requiresFrames(time);
     const auto visibility=p.playback.sample(time,reduce,p.usesAmbient());if(visibility&&visibility->completedGeneration)p.completion=p.lifecycleToken;
     if(!visibility||visibility->phase==VisibilityPhase::concealed){p.hidden=true;p.hasFrame=false;p.input=false;return nullptr;}
@@ -328,6 +349,23 @@ std::optional<core::Rect> SourceWatchSession::scrollFrame()const{
     return Rect{x0,y0,x1-x0,y1-y0};
 }
 bool SourceWatchSession::canScroll(int direction)const noexcept{return impl_->scrollMotion.canScroll(direction);}
+std::optional<int> SourceWatchSession::scrollIndicatorAt(Point point)const{
+    const auto&p=*impl_;if(!p.input||p.hidden||p.playback.phase()!=VisibilityPhase::visible||!p.hasFrame||!finite(point))return {};
+    const auto&info=p.rendered.sourceFrame->layoutReport.scroll;if(!info||!(info->hiddenLength>0))return {};
+    const auto vp=p.rendered.camera.projection*p.rendered.camera.view;
+    for(std::size_t n=0;n<p.indicatorIDs.size();++n){const auto*node=p.indicatorIDs[n].empty()?nullptr:p.resolved(p.indicatorIDs[n]);if(!node||!node->activeInHierarchy||!node->rect)continue;
+        Polygon quad;if(projectQuad(quad,*node->rect,p.rendered.camera.worldRoot*node->worldMatrix,vp,p.viewport())&&quad.n==4&&polygonContains(std::span<const Point>(quad.p.data(),quad.n),point))return n?1:-1;}
+    return {};
+}
+std::optional<core::Rect> SourceWatchSession::scrollIndicatorFrame(int direction)const{
+    const auto&p=*impl_;if((direction!=-1&&direction!=1)||p.hidden||!p.hasFrame)return {};const auto id=p.indicatorIDs[direction<0?0:1];
+    const auto*node=id.empty()?nullptr:p.resolved(id);if(!node||!node->activeInHierarchy||!node->rect)return {};
+    Polygon quad;if(!projectQuad(quad,*node->rect,p.rendered.camera.worldRoot*node->worldMatrix,p.rendered.camera.projection*p.rendered.camera.view,p.viewport()))return {};
+    double x0=INFINITY,y0=INFINITY,x1=-INFINITY,y1=-INFINITY;
+    for(std::size_t n=0;n<quad.n;++n){x0=std::min(x0,quad.p[n].x);y0=std::min(y0,quad.p[n].y);x1=std::max(x1,quad.p[n].x);y1=std::max(y1,quad.p[n].y);}
+    if(!(x1-x0>0)||!(y1-y0>0))return {};return Rect{x0,y0,x1-x0,y1-y0};
+}
+bool SourceWatchSession::scrollIndicatorEnabled(int direction)const noexcept{return (direction==-1||direction==1)&&impl_->indicatorEnabled[direction<0?0:1];}
 bool SourceWatchSession::sourceControlAt(Point point,std::string_view logo)const{
     const auto&p=*impl_;if(p.hidden||!p.hasFrame||!finite(point))return true;
     const auto viewport=p.viewport();if(!viewport.contains(point))return false;

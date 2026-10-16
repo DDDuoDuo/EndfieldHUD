@@ -1277,6 +1277,26 @@ int Application::Impl::runHiddenVerification(){
                     t=run(t,2.4);outsideCheck(lifecycle.phase()==core::SystemOverlayPhase::closed,"A press during the entrance closes the HUD after it opened");
                     perform(lifecycle.reopen(),t);t=run(t,1.2);
                     outsideCheck(lifecycle.phase()==core::SystemOverlayPhase::open&&notes->selected()==core::Module::notes,"The HUD reopens on its module after an outside close");
+                    // The scroll arrows at the ends of the list (HUDSourceWatchView
+                    // pressedScrollDirection): a press on one is the list's (the HUD
+                    // stays open), its release over it scrolls with the spring, and a
+                    // release elsewhere scrolls nothing; the arrows' tints follow.
+                    const auto downArrow=session->scrollFrame()?session->scrollIndicatorFrame(1):std::nullopt;
+                    outsideCheck(downArrow.has_value(),"The list hides rows and shows its down arrow");
+                    if(downArrow){
+                        const core::Point arrow{downArrow->x+downArrow->width/2,downArrow->y+downArrow->height/2};
+                        session->setScrollPosition(1,t);t=run(t,.1);const double top=session->scrollPosition();
+                        outsideCheck(session->scrollIndicatorEnabled(1)&&!session->scrollIndicatorEnabled(-1)&&session->scrollIndicatorAt(arrow)==1&&!backgroundPressCloses(arrow),
+                            "At the top of the list the down arrow is lit, the up arrow dimmed, and a press on an arrow is no background press");
+                        outsideCheck(onPointer({PointerKind::down,PointerButton::left,arrow.x,arrow.y})&&lifecycle.phase()==core::SystemOverlayPhase::open&&!closing&&session->scrollPosition()==top,
+                            "A press on the down arrow is the list's: the HUD stays open and nothing moves before the release");
+                        (void)onPointer({PointerKind::up,PointerButton::left,arrow.x,arrow.y});t=run(t,.6);
+                        outsideCheck(session->scrollPosition()<top-1e-9&&lifecycle.phase()==core::SystemOverlayPhase::open&&session->scrollIndicatorEnabled(-1),"Its release scrolls the list down and lights the up arrow");
+                        const double moved=session->scrollPosition();
+                        (void)onPointer({PointerKind::down,PointerButton::left,arrow.x,arrow.y});(void)onPointer({PointerKind::up,PointerButton::left,metrics.width*.5,metrics.height*.5});t=run(t,.4);
+                        outsideCheck(session->scrollPosition()==moved&&lifecycle.phase()==core::SystemOverlayPhase::open,"A press released off the arrow scrolls nothing");
+                        session->setScrollPosition(1,t);t=run(t,.1);
+                    }
                     // The header sanity wallet (account area; core design rect 562,2 168x42,
                     // centre 646,23, about 331 from the circle centre) is a control outside the
                     // displayed circle: its press stays with the wallet, open or during the entrance.

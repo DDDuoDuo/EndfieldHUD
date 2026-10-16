@@ -109,6 +109,25 @@ public:
     // scrollDirection(direction) would move it now (the Mac scroll buttons).
     std::optional<core::Rect> scrollFrame()const;
     bool canScroll(int direction)const noexcept;
+    // HUDSourceWatchView.desktopScrollDirection: the clickable scroll
+    // indicator (the UpLine/BottonLine deco arrows at the ends of the list,
+    // -1 up and 1 down) whose exact projected sprite quad holds this logical
+    // client point, while input is enabled, the HUD is visible and the list
+    // hides rows; a dimmed indicator still answers (its release then does
+    // nothing). Read-only and allocation-free. The press and its release over
+    // the same indicator scroll 32 points with the spring
+    // (scrollDirection(direction, animated: true)); the Mac has no hover,
+    // pressed or repeat state for them.
+    std::optional<int> scrollIndicatorAt(core::Point)const;
+    // The bounding box of that indicator's projected sprite quad in the
+    // current frame (logical client coordinates, unclipped); none without a
+    // shown frame or an active indicator.
+    std::optional<core::Rect> scrollIndicatorFrame(int direction)const;
+    // refreshDesktopScrollIndicators: whether the indicator of a direction
+    // (-1 up, 1 down) is drawn enabled (tint 1, opacity 1) rather than dimmed
+    // (tint .32, opacity .65): the last frame's list hides rows and the scroll
+    // target can still move that way. Updated as each frame is sampled.
+    bool scrollIndicatorEnabled(int direction)const noexcept;
     // HUDSourceWatchView.sourceControlContains, read-only and allocation-free:
     // whether a press at this logical client point belongs to the source
     // (true without a shown frame): a source button under it, disabled or

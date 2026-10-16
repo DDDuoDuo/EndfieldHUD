@@ -107,6 +107,8 @@ bool Application::Impl::onPointer(const PointerEvent&e){
     if(clockPress(e,hostTime(time)))return true;
     // The industry logo owns its press and release (flickerIndustryLogo).
     if(logoPointer(e,hostTime(time)))return true;
+    // Then the list's scroll indicators (pressedScrollDirection).
+    if(scrollIndicatorPointer(e,hostTime(time)))return true;
     const auto at=hostTime(time);
     if(e.kind==PointerKind::move){environment.pointer=p;session->pointerMove(p,at);}
     else if((e.kind==PointerKind::down||e.kind==PointerKind::doubleClick)&&e.button==PointerButton::left){environment.pointer=p;
