@@ -3075,7 +3075,7 @@ strokes do not yet use the recovered mouse samples; and finite animations at
 | --- | --- |
 | Laptop slot over SSH (recorded in `c68f6c5`) | The requested suites pass 59 of 59, with the route test skipped. The whole suite passes 390 of 394. The four failures are environmental: `projection_composition_contracts` and `projection_workspace_contracts` need an interactive desktop and pass there, `packet_export_contracts` needs the Mac `Sources/`, and the own-GPU-share check in `activity_gpu_contracts` is flaky under a game and passes on retry. |
 | Laptop interactive session (recorded in `c68f6c5`) | `projection_capture_route`, `projection_composition`, `projection_workspace`, `native_renderer --composition` (WARP and hardware) and `overlay_host --interactive-startup` pass. The route test (`eed5d52`, formerly `bf376aa`) now has recorded passes; checkpoint 129 had none. |
-| `bc60d1b`, `cadb88e`, `666caa8` | Their messages record the tests added but no run of their own. A validation of the current tree on the laptop was in progress when this entry was written; its result is not recorded here. |
+| `bc60d1b`, `cadb88e`, `666caa8`, `c68f6c5` | Full laptop validation of checkpoint 131 (code at `c68f6c5`): incremental Release build without errors, all **394** registered suites pass (including `projection_capture_route_contracts` in the interactive session and `activity_gpu_contracts`), combined module coverage and hardware composition (1,271,485 checks) pass. |
 
 ### Corrections to the entries above
 
