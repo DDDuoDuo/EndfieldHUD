@@ -44,6 +44,7 @@ ChargeAlertSettings ChargeAlertSettings::normalized() const {
     result.scale = clamp(scale, 0.65, 1.6, 1);
     result.customX = clamp(customX, 0, 1, 0.5);
     result.customY = clamp(customY, 0, 1, 0.9);
+    if (result.alwaysMode) result.neverMode = false;
     return result;
 }
 ChargeColor ChargeAlertSettings::accent() const {
@@ -57,7 +58,9 @@ ChargeAlertSettings ChargeAlertSettings::fromSettings(const Json& f) {
     auto string = [&](const char* key, std::string fallback) { return f[key].isString() ? f[key].string() : fallback; };
     auto real = [&](const char* key, double fallback) { return f[key].isNumber() ? f[key].number() : fallback; };
     auto flag = [&](const char* key, bool fallback) { return f[key].isBool() ? f[key].boolean() : fallback; };
-    s.alwaysMode = string("displayMode", "whenChargingStarts") == "always";
+    const auto mode = string("displayMode", std::string(chargeDisplayModePowerChanges));
+    s.alwaysMode = mode == chargeDisplayModeAlways;
+    s.neverMode = mode == chargeDisplayModeNever;
     s.displayDuration = real("displayDuration", 3);
     s.accentHex = string("accentHex", "FAD41F");
     const auto theme = string("theme", "dark");
@@ -237,7 +240,10 @@ void PowerAlertCoordinator::presentLatestSnapshot(double time) {
 }
 void PowerAlertCoordinator::apply(ChargeDisplayAction action, double time) {
     if (terminating_) return;
-    if (!settings_.alertsEnabled) { presenter_->hide(true, time); return; }
+    // Battery alerts off, or the Windows "Don't display" method: every
+    // automatic presentation (a power change, always mode, the HUD or
+    // Projection closing, a wake) hides instead.
+    if (!settings_.alertsEnabled || settings_.neverMode) { presenter_->hide(true, time); return; }
     switch (action) {
     case ChargeDisplayAction::hide: presenter_->hide(true, time); break;
     case ChargeDisplayAction::showPersistent:
@@ -262,7 +268,8 @@ void PowerAlertCoordinator::setSettings(const ChargeAlertSettings& requested, do
     const auto value = snapshot_.value_or(BatteryReading{});
     if (presenter_->systemOverlayActive()) { presenter_->update(value, false, time); return; }
     if (presenter_->editingPosition()) { presenter_->update(previewValue(), true, time); return; }
-    if (settings_.alwaysMode != previous.alwaysMode || settings_.alertsEnabled != previous.alertsEnabled) {
+    if (settings_.alwaysMode != previous.alwaysMode || settings_.neverMode != previous.neverMode ||
+        settings_.alertsEnabled != previous.alertsEnabled) {
         previewSnapshot_.reset();
         presentedSnapshot_ = value;
         presenter_->update(value, false, time);

@@ -29,12 +29,24 @@ std::string_view chargeDisplayActionKey(ChargeDisplayAction) noexcept;
 ChargeDisplayAction chargeDisplayAction(const BatteryReading& snapshot, const std::optional<BatteryReading>& previous,
                                         bool alwaysMode) noexcept;
 
+// Saved "displayMode" values: the Mac's DisplayMode raw values
+// ("whenChargingStarts" = Power changes, "always") and the Windows-only
+// "never" (Don't display). Older builds and the Mac read "never" as an
+// unknown value, i.e. Power changes; an unknown value read here is too.
+inline constexpr std::string_view chargeDisplayModePowerChanges = "whenChargingStarts";
+inline constexpr std::string_view chargeDisplayModeAlways = "always";
+inline constexpr std::string_view chargeDisplayModeNever = "never";
+
 enum class ChargeTheme : std::uint8_t { dark, light, system };
 // AppConfiguration fields consumed by the alert, normalized exactly like
 // AppConfiguration.normalized (duration 1...60 else 3, scale 0.65...1.6 else 1,
 // custom position 0...1 else 0.5/0.9, six uppercase hex digits else FAD41F).
+// neverMode (Windows "Don't display"): no automatic presentation at all, on
+// a power change, in always mode, after the HUD or Projection closes or on
+// wake; the explicit tray preview and Edit position still present. It never
+// combines with alwaysMode (normalized() keeps alwaysMode).
 struct ChargeAlertSettings {
-    bool alwaysMode{};
+    bool alwaysMode{}, neverMode{};
     double displayDuration{3};
     std::string accentHex{"FAD41F"};
     ChargeTheme theme{ChargeTheme::dark};
@@ -47,7 +59,8 @@ struct ChargeAlertSettings {
     ChargeAlertSettings normalized() const;
     ChargeColor accent() const; // of the normalized hex
     // Tolerant reader of the persisted settings object (data_store fields):
-    // unknown/invalid values fall back like the Mac decoder.
+    // unknown/invalid values fall back like the Mac decoder (an unknown
+    // displayMode is Power changes, an unknown alertMetric is battery).
     static ChargeAlertSettings fromSettings(const ehud::data::Json& fields);
     bool operator==(const ChargeAlertSettings&) const = default;
 };
@@ -153,6 +166,8 @@ public:
 enum class PowerSuspension : std::uint8_t { system = 1, display = 2, session = 4 };
 // AppDelegate battery rules: receive -> presentLatestSnapshot -> DisplayPolicy,
 // manual preview ownership of its deadline, settings changes, sleep/wake.
+// Every automatic presentation goes through apply(), which hides instead
+// while alerts are disabled or the display method is Don't display.
 class PowerAlertCoordinator final {
 public:
     explicit PowerAlertCoordinator(ChargeAlertPresenter&, ChargeAlertSettings = {});

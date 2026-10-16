@@ -1,6 +1,7 @@
 // Source: windows/tools/charge_indicator_reference.sh (unchanged Mac
 // ChargeIndicatorView/HUDChargeMetric, frozen Core Animation clock).
 #include "modules/charge_indicator.hpp"
+#include "modules/activity_state.hpp"
 #include <cmath>
 #include <fstream>
 #include <iostream>
@@ -504,6 +505,69 @@ void readings(const Fixture& f) {
           "超充模式 only for a plugged-in battery machine, including a charging pause");
     check(chargeModeTitle(desktop, core::Language::english) == "POWER MODE", "Desktop without a battery never shows CHARGE MODE");
 }
+// Windows addition (no Mac oracle): the GPU reading, saved "gpu", is the CPU
+// reading's layout over the Activity GPU total load.
+void windowsGpu() {
+    constexpr std::array all{ChargeMetric::battery, ChargeMetric::ram, ChargeMetric::cpu, ChargeMetric::network, ChargeMetric::disk, ChargeMetric::gpu};
+    for (const auto m : all) check(chargeMetricFromKey(chargeMetricKey(m)) == m, "Every saved metric identifier round-trips");
+    check(chargeMetricKey(ChargeMetric::gpu) == "gpu" && chargeMetricFromKey("gpu") == ChargeMetric::gpu, "GPU is saved as \"gpu\"");
+    check(!chargeMetricFromKey("tpu") && !chargeMetricFromKey("GPU") && !chargeMetricFromKey(""), "Unknown identifiers stay unknown (readers use battery)");
+    check(chargeMetricRequiresTelemetry(ChargeMetric::gpu), "GPU attaches the shared Activity sampler while shown");
+    const std::array languages{core::Language::english, core::Language::simplifiedChinese, core::Language::traditionalChinese,
+                               core::Language::japanese, core::Language::korean};
+    for (const auto l : languages) check(chargeMetricTitle(ChargeMetric::gpu, l) == "GPU" && chargeMetricTitle(ChargeMetric::cpu, l) == "CPU",
+                                         "GPU is titled GPU in every language, like CPU");
+    BatteryReading reading;
+    reading.present = true; reading.percentage = 64;
+    ChargeTelemetry sample;
+    sample.cpuPercent = 12.5; sample.gpuPercent = 37.5;
+    const auto gpu = resolveChargeMetric(ChargeMetric::gpu, reading, sample, core::Language::english);
+    check(gpu.primary == "GPU" && gpu.secondary.empty() && gpu.unit.empty() && gpu.trailing == "37.5%" && gpu.progress == 0.375 &&
+          gpu.accessibilityValue == "GPU: 37.5%", "GPU reads its total load in the CPU layout");
+    ChargeTelemetry same;
+    same.cpuPercent = 37.5;
+    auto cpu = resolveChargeMetric(ChargeMetric::cpu, reading, same, core::Language::english);
+    cpu.primary = "GPU"; cpu.accessibilityValue = "G" + cpu.accessibilityValue.substr(1);
+    check(cpu == gpu, "GPU and CPU format the same percentage identically");
+    check(resolveChargeMetric(ChargeMetric::cpu, reading, sample, core::Language::english).trailing == "12.5%", "CPU keeps reading the CPU load");
+    for (const double invalid : std::array{-1.0, 100.5, std::nan(""), std::numeric_limits<double>::infinity()}) {
+        ChargeTelemetry bad;
+        bad.gpuPercent = invalid;
+        const auto r = resolveChargeMetric(ChargeMetric::gpu, reading, bad, core::Language::english);
+        check(r.trailing == "—" && !r.progress && r.accessibilityValue == "GPU: Unavailable", "An out-of-range GPU load stays unavailable");
+    }
+    const auto none = resolveChargeMetric(ChargeMetric::gpu, reading, std::nullopt, core::Language::simplifiedChinese);
+    check(none.primary == "GPU" && none.trailing == "—" && !none.progress && none.accessibilityValue == "GPU: 不可用",
+          "No sample: GPU unavailable, never the battery percentage");
+    ChargeTelemetry cpuOnly;
+    cpuOnly.cpuPercent = 50;
+    check(resolveChargeMetric(ChargeMetric::gpu, reading, cpuOnly, core::Language::english).trailing == "—", "GPU never substitutes the CPU load");
+    check(resolveChargeMetric(ChargeMetric::gpu, reading, ChargeTelemetry{0.0, {}, {}, {}, {}, {}, {}, 0.0}, core::Language::english).trailing == "0%" &&
+          resolveChargeMetric(ChargeMetric::gpu, reading, ChargeTelemetry{{}, {}, {}, {}, {}, {}, {}, 100.0}, core::Language::english).progress == 1.0,
+          "The GPU load's bounds are a real 0...100 range");
+    // Colours: the accent level with a reading, the muted level without (as CPU/RAM).
+    const ChargeIndicatorAppearance appearance{true, {250. / 255, 212. / 255, 31. / 255, 1}, core::Language::english};
+    for (const auto settled : {ChargeStage::compact, ChargeStage::supercharge}) {
+        const auto lit = chargeIndicatorColors(appearance, reading, ChargeMetric::gpu, 0.375, settled, false);
+        const auto muted = chargeIndicatorColors(appearance, reading, ChargeMetric::gpu, std::nullopt, settled, false);
+        const auto cpuMuted = chargeIndicatorColors(appearance, reading, ChargeMetric::cpu, std::nullopt, settled, false);
+        check(lit.level == appearance.accent && lit.ringProgress == appearance.accent, "A GPU reading draws its ring in the accent colour");
+        check(muted.level == cpuMuted.level && muted.ringTrack == cpuMuted.ringTrack && muted.level[3] == 0.45, "No GPU reading mutes the level like CPU");
+    }
+    // Content: the fitted metric line and trailing label.
+    const ChargeTextMeasure measure = [](std::string_view, const Json&) { return 10.0; };
+    const auto content = prepareChargeIndicatorContent(appearance, reading, ChargeMetric::gpu, sample, false, measure);
+    check(content.texts[2]["text"]["string"].string() == "GPU" && content.texts[3]["text"]["string"].string() == "37.5%" &&
+          content.accessibility == "EndfieldHUD, GPU: 37.5%, On battery", "The bar's labels read GPU and its load");
+    // The read-only adapter from the shared Activity system sample.
+    ActivitySnapshot activity;
+    activity.cpuPercent = 21; activity.gpuPercent = 63.5; activity.memory = ActivityMemory{8, 16, std::nullopt};
+    activity.upload = 1; activity.download = 2; activity.diskRead = 3; activity.diskWrite = 4;
+    const auto adapted = chargeTelemetry(activity);
+    check(adapted == ChargeTelemetry{21.0, 8u, 16u, 1.0, 2.0, 3.0, 4.0, 63.5}, "The Activity sample maps every field, the GPU total load included");
+    ActivitySnapshot empty;
+    check(chargeTelemetry(empty) == ChargeTelemetry{}, "An empty Activity sample maps to no readings");
+}
 } // namespace
 
 int main(int argc, char** argv) {
@@ -519,6 +583,7 @@ int main(int argc, char** argv) {
         timelines(fixture);
         sequenceContracts();
         readings(fixture);
+        windowsGpu();
         std::cout << "Charge indicator: " << checks << " original-source checks passed\n";
         return 0;
     } catch (const std::exception& error) {

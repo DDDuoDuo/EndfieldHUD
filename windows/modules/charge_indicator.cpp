@@ -1,5 +1,6 @@
 #include "modules/charge_indicator.hpp"
 #include "core/motion.hpp"
+#include "modules/activity_state.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -135,11 +136,12 @@ std::string_view chargeMetricKey(ChargeMetric metric) noexcept {
     case ChargeMetric::cpu: return "cpu";
     case ChargeMetric::network: return "network";
     case ChargeMetric::disk: return "disk";
+    case ChargeMetric::gpu: return "gpu";
     }
     return "battery";
 }
 std::optional<ChargeMetric> chargeMetricFromKey(std::string_view key) noexcept {
-    for (auto metric : {ChargeMetric::battery, ChargeMetric::ram, ChargeMetric::cpu, ChargeMetric::network, ChargeMetric::disk})
+    for (auto metric : {ChargeMetric::battery, ChargeMetric::ram, ChargeMetric::cpu, ChargeMetric::network, ChargeMetric::disk, ChargeMetric::gpu})
         if (chargeMetricKey(metric) == key) return metric;
     return std::nullopt;
 }
@@ -151,8 +153,23 @@ std::string chargeMetricTitle(ChargeMetric metric, core::Language language) {
     case ChargeMetric::cpu: return "CPU";
     case ChargeMetric::network: return tr("Network", "网络", language);
     case ChargeMetric::disk: return tr("Disk", "磁盘", language);
+    case ChargeMetric::gpu: return "GPU"; // like CPU, the same in every language
     }
     return {};
+}
+ChargeTelemetry chargeTelemetry(const ActivitySnapshot& sample) {
+    ChargeTelemetry value;
+    value.cpuPercent = sample.cpuPercent;
+    if (sample.memory) {
+        value.memoryUsed = sample.memory->used;
+        value.memoryTotal = sample.memory->total;
+    }
+    value.upload = sample.upload;
+    value.download = sample.download;
+    value.diskRead = sample.diskRead;
+    value.diskWrite = sample.diskWrite;
+    value.gpuPercent = sample.gpuPercent;
+    return value;
 }
 std::optional<BatteryLevelTone> batteryLevelTone(std::optional<unsigned> percentage) noexcept {
     if (!percentage || *percentage > 100) return std::nullopt;
@@ -190,13 +207,17 @@ ChargeMetricReading resolveChargeMetric(ChargeMetric metric, const BatteryReadin
         return {current, "/" + maximum, "GB", percentage, fraction,
                 chargeMetricTitle(metric, language) + ": " + current + "/" + maximum + " GB, " + (fraction ? percentage : unavailable)};
     }
-    case ChargeMetric::cpu: {
+    case ChargeMetric::cpu:
+    case ChargeMetric::gpu: {
+        // Windows GPU: the CPU reading's layout over the GPU total load.
+        const bool gpu = metric == ChargeMetric::gpu;
+        const std::optional<double> source = !telemetry ? std::optional<double>{} : gpu ? telemetry->gpuPercent : telemetry->cpuPercent;
         std::optional<double> percent;
-        if (telemetry && telemetry->cpuPercent && std::isfinite(*telemetry->cpuPercent) && *telemetry->cpuPercent >= 0 &&
-            *telemetry->cpuPercent <= 100) percent = telemetry->cpuPercent;
+        if (source && std::isfinite(*source) && *source >= 0 && *source <= 100) percent = source;
         const auto value = percent ? decimal(*percent) + "%" : std::string("—");
-        return {"CPU", "", "", value, percent ? std::optional<double>(*percent / 100) : std::nullopt,
-                "CPU: " + (percent ? value : unavailable)};
+        const std::string title = gpu ? "GPU" : "CPU";
+        return {title, "", "", value, percent ? std::optional<double>(*percent / 100) : std::nullopt,
+                title + ": " + (percent ? value : unavailable)};
     }
     case ChargeMetric::network:
         return rates(telemetry ? telemetry->upload : std::nullopt, telemetry ? telemetry->download : std::nullopt, "↑/↓",
@@ -467,8 +488,9 @@ ChargeIndicatorColors chargeIndicatorColors(const ChargeIndicatorAppearance& app
     c.border = embeddedHovered ? alpha(appearance.accent, 0.98) : alpha(c.foreground, dark ? 0.045 : 0.08);
     c.borderWidth = embeddedHovered ? 1.5 : 0.5;
     if (metric != ChargeMetric::battery) {
-        c.level = !metricProgress && (metric == ChargeMetric::ram || metric == ChargeMetric::cpu) ? alpha(c.foreground, 0.45)
-                                                                                                  : alpha(appearance.accent, 1);
+        // A bounded metric without a reading is muted (Windows GPU like CPU).
+        const bool bounded = metric == ChargeMetric::ram || metric == ChargeMetric::cpu || metric == ChargeMetric::gpu;
+        c.level = !metricProgress && bounded ? alpha(c.foreground, 0.45) : alpha(appearance.accent, 1);
     } else if (const auto tone = batteryLevelTone(battery.percentage)) {
         switch (*tone) {
         case BatteryLevelTone::green: c.level = dark ? ChargeColor{0.25, 0.87, 0.43, 1} : ChargeColor{0.08, 0.62, 0.27, 1}; break;

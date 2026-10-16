@@ -21,6 +21,12 @@ struct SettingsViewHooks {std::function<std::vector<SettingsDisplay>()>displays;
     std::function<std::optional<std::string>(core::Language)>macImportTitle;std::function<void()>macImport;bool summonHotkeyToggle{};};
 // The toggle's title in the five app languages (System resolves to English).
 std::string settingsSummonToggleTitle(core::Language);
+// Windows additions to Display > Battery alert, beyond the Mac options:
+// the display method "Don't display" (saved displayMode "never"; the method
+// row cycles Power changes -> Always -> Don't display), and the reading
+// "GPU" (saved alertMetric "gpu", listed after the five Mac readings).
+// Unknown saved values read as Power changes / Battery, like the alert.
+std::string settingsDisplayModeNeverTitle(core::Language); // five app languages
 enum class SettingsPage {main,battery,icons,screens,languages,logos,metrics};
 enum class SettingsRowKind {toggle,choice,slider,palette,icons,info,link,heading,selection};
 struct SettingsRow {

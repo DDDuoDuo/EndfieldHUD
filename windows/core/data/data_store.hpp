@@ -28,6 +28,9 @@ std::string makeWindowsMediaReference(std::string path, std::string displayName,
     int pixelWidth, int pixelHeight, std::string kind = "image",
     std::optional<double> duration = {}, int frameCount = 1);
 
+// One preference record (the Mac AppConfiguration keys plus additive Windows
+// keys). String choices such as displayMode/alertMetric are not closed sets:
+// a value another build wrote loads unchanged and its reader falls back.
 struct Settings {
     Json fields{Json::Object{}};
     static Settings defaults();

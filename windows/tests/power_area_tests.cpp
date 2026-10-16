@@ -506,8 +506,51 @@ void run(const fs::path& shader) {
             frames(last, last + 5); // the next cycle's modules
             last += 5;
         }
-        check(stepChecks > 60 && host.selected == c::Module::power && host.settingsUpdates == 10, "The coverage step repeats over the same host");
+        // Two updates before the coverage, then per cycle: always + restore,
+        // Don't display + restore, the confirmed position + restore.
+        check(stepChecks > 60 && host.selected == c::Module::power && host.settingsUpdates == 14, "The coverage step repeats over the same host");
         check(host.configuration == ehud::data::Settings::defaults(), "Coverage restores the preference record");
+
+        // Windows additions over the area: the GPU reading on the HUD badge,
+        // and Don't display (no alert when the HUD closes; the explicit tray
+        // preview still presents, reading the GPU sample).
+        double w = last + 1;
+        host.updateSettings([](ehud::data::Settings& s) { s.set("displayMode", Json("never")); s.set("alertMetric", Json("gpu")); });
+        frames(w, w + .5);
+        w += .5;
+        check(service->telemetryDemand(), "The HUD badge asks the shared sampler for the GPU reading");
+        service->setTelemetry(m::ChargeTelemetry{{}, {}, {}, {}, {}, {}, {}, 37.5}, w);
+        check(service->powerAccessibilityLabel() == "EndfieldHUD, GPU: 37.5%, On battery", "The badge reads the GPU total load like CPU");
+        owner->overlayClosing(w);
+        frames(w, w + .7);
+        w += .7;
+        host.visible = false;
+        (void)owner->hostEvent({Kind::overlayConcealed, 0}, w);
+        {
+            // Only an interrupted alert's window release may remain: no alert cadence.
+            const auto wake = owner->nextWakeTime(w);
+            check(!service->telemetryDemand() && (!wake || *wake >= w + 9.9), "Don't display: closing the HUD presents no alert");
+            for (unsigned guard = 0; guard < 8; ++guard) {
+                const auto next = owner->nextWakeTime(w);
+                if (!next) break;
+                w = *next;
+                (void)owner->deadline(w);
+            }
+            check(!owner->nextWakeTime(w) && !ownAlertWindow(), "Don't display: no alert window or wake remains");
+        }
+        service->preview(w);
+        check(service->telemetryDemand() && ownAlertWindow() && owner->nextWakeTime(w), "Don't display: the tray preview still presents on request");
+        for (unsigned guard = 0; guard < 4000; ++guard) {
+            const auto next = owner->nextWakeTime(w);
+            if (!next) break;
+            w = *next;
+            (void)owner->deadline(w);
+        }
+        check(!service->telemetryDemand() && !ownAlertWindow() && !owner->nextWakeTime(w), "The preview dismisses itself and releases its window");
+        host.updateSettings([](ehud::data::Settings& s) { s.set("displayMode", Json("whenChargingStarts")); s.set("alertMetric", Json("battery")); });
+        frame(w + .1);
+        check(host.configuration == ehud::data::Settings::defaults() && !owner->nextWakeTime(w + .1) && !ownAlertWindow(),
+              "Power changes and the battery reading restore without an alert");
 
         owner->release(renderer);
         owner.reset();

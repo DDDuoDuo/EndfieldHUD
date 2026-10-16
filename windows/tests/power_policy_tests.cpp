@@ -157,10 +157,25 @@ void normalization(const Fixture& f) {
     check(s.alwaysMode && s.displayDuration == 60 && s.accentHex == "3FA9F5" && s.theme == ChargeTheme::light && s.scale == 0.65 &&
           s.customPlacement && s.customScreenID == 42u && s.customX == 1 && s.customY == 0.25 && s.metric == ChargeMetric::network &&
           !s.alertsEnabled && !s.devicePopupEnabled && s.reduceMotion && s.lowPowerVisualMode, "Saved alert settings round trip");
-    Json invalid = Json::Object{{"displayMode", 3}, {"alertMetric", "gpu"}, {"customScreenID", -1}, {"scale", "large"}};
+    // "tpu": a metric this build does not know (another build's).
+    Json invalid = Json::Object{{"displayMode", 3}, {"alertMetric", "tpu"}, {"customScreenID", -1}, {"scale", "large"}};
     const auto d = ChargeAlertSettings::fromSettings(invalid);
-    check(!d.alwaysMode && d.metric == ChargeMetric::battery && !d.customScreenID && d.scale == 1 && d.alertsEnabled &&
+    check(!d.alwaysMode && !d.neverMode && d.metric == ChargeMetric::battery && !d.customScreenID && d.scale == 1 && d.alertsEnabled &&
           d.devicePopupEnabled, "Invalid saved alert settings fall back like the source decoder");
+    // Windows additions: displayMode "never" (Don't display) and alertMetric "gpu".
+    const auto windows = ChargeAlertSettings::fromSettings(Json::Object{{"displayMode", "never"}, {"alertMetric", "gpu"}});
+    check(windows.neverMode && !windows.alwaysMode && windows.metric == ChargeMetric::gpu, "Don't display and the GPU reading are read back");
+    for (const auto* mode : {"whenChargingStarts", "sometimes", "Never", ""}) {
+        const auto other = ChargeAlertSettings::fromSettings(Json::Object{{"displayMode", mode}});
+        check(!other.neverMode && !other.alwaysMode, std::string("displayMode \"") + mode + "\" reads as Power changes");
+    }
+    check(!ChargeAlertSettings::fromSettings(Json::Object{{"displayMode", "always"}}).neverMode &&
+          !ChargeAlertSettings::fromSettings(Json::Object{}).neverMode, "Always and an absent method never mean Don't display");
+    check(chargeDisplayModePowerChanges == "whenChargingStarts" && chargeDisplayModeAlways == "always" && chargeDisplayModeNever == "never",
+          "Saved display method values (the Mac's raw values plus never)");
+    ChargeAlertSettings both;
+    both.alwaysMode = both.neverMode = true;
+    check(both.normalized().alwaysMode && !both.normalized().neverMode, "A programmatic conflict keeps always mode");
 }
 
 void recorder(const Fixture& f) {
@@ -367,6 +382,89 @@ void tray() {
           demo.capacity->unit == "mAh", "Source demo snapshot");
 }
 
+// Windows "Don't display" (displayMode never): no automatic presentation on
+// any AppDelegate path; the explicit tray preview and Edit position remain.
+void dontDisplay(const Fixture& f) {
+    const auto shows = [](const RecordingPresenter& p, std::size_t from) {
+        unsigned n{};
+        for (std::size_t i = from; i < p.log.size(); ++i) n += p.log[i].starts_with("show(");
+        return n;
+    };
+    ChargeAlertSettings never;
+    never.neverMode = true;
+    RecordingPresenter presenter;
+    PowerAlertCoordinator coordinator(presenter, never);
+    coordinator.receive(f.snapshot("battery19"), 0);
+    coordinator.receive(f.snapshot("connected49"), 1);
+    coordinator.receive(f.snapshot("battery19"), 2);
+    check(shows(presenter, 0) == 0 && !presenter.isVisible, "Don't display: plugging in and unplugging present nothing");
+    // The HUD opening and closing (onSystemClosed -> presentLatestSnapshot).
+    presenter.isSystem = true;
+    coordinator.receive(f.snapshot("connected49"), 3);
+    presenter.isSystem = false;
+    coordinator.presentLatestSnapshot(4);
+    check(shows(presenter, 0) == 0 && !presenter.isVisible, "Don't display: closing the HUD presents nothing");
+    // Projection ending, position editing ending.
+    presenter.isProjection = true;
+    coordinator.receive(f.snapshot("battery19"), 5);
+    presenter.isProjection = false;
+    coordinator.presentLatestSnapshot(6);
+    presenter.isEditing = true;
+    coordinator.receive(f.snapshot("connected49"), 7);
+    presenter.isEditing = false;
+    coordinator.presentLatestSnapshot(8);
+    check(shows(presenter, 0) == 0 && !presenter.isVisible, "Don't display: Projection or the editor ending presents nothing");
+    // A plug change during sleep is not shown on wake.
+    coordinator.suspend(PowerSuspension::system, 9);
+    check(coordinator.resume(PowerSuspension::system, f.snapshot("battery19"), 10) && shows(presenter, 0) == 0 && !presenter.isVisible,
+          "Don't display: a plug change during sleep presents nothing on wake");
+    // The explicit tray preview still presents, transiently; a plug change
+    // then dismisses it instead of replaying an alert.
+    auto before = presenter.log.size();
+    coordinator.preview(11);
+    check(shows(presenter, before) == 1 && presenter.isVisible && !presenter.isPersistent && coordinator.previewSnapshot(),
+          "Don't display: the tray preview still presents on request");
+    before = presenter.log.size();
+    coordinator.receive(f.snapshot("connected49"), 12);
+    check(shows(presenter, before) == 0 && !presenter.isVisible && !coordinator.previewSnapshot(), "Don't display: a plug change ends the preview silently");
+    // Switching methods: always -> Don't display hides the persistent alert;
+    // back to Power changes re-baselines, and the next plug change presents.
+    ChargeAlertSettings always;
+    always.alwaysMode = true;
+    coordinator.setSettings(always, 13);
+    check(presenter.isVisible && presenter.isPersistent, "Always presents persistently");
+    before = presenter.log.size();
+    coordinator.setSettings(never, 14);
+    check(shows(presenter, before) == 0 && !presenter.isVisible && !presenter.isPersistent, "Choosing Don't display hides the persistent alert at once");
+    coordinator.receive(f.snapshot("battery19"), 15);
+    check(shows(presenter, before) == 0 && !presenter.isVisible, "and it stays hidden");
+    coordinator.setSettings({}, 16);
+    check(shows(presenter, before) == 0 && !presenter.isVisible, "Leaving Don't display re-baselines without an alert");
+    coordinator.receive(f.snapshot("connected49"), 17);
+    check(shows(presenter, before) == 1 && presenter.isVisible, "Power changes present again after leaving Don't display");
+    // Over the real presentation state: no window, deadline or telemetry.
+    ChargeOverlayState state;
+    const std::vector<ChargeWorkArea> screens{{11, {0, 0, 1440, 900}, 1}};
+    state.setScreens(screens, 0);
+    auto gpuNever = never;
+    gpuNever.metric = ChargeMetric::gpu;
+    state.setSettings(gpuNever);
+    PowerAlertCoordinator owner(state, gpuNever);
+    double t = 20;
+    for (const auto* name : {"battery19", "connected49", "battery19", "connected49"}) {
+        owner.receive(f.snapshot(name), t);
+        (void)state.advance(t += 1);
+        check(!state.windowVisible() && !state.nextDeadline() && !state.requiresFrames(t) && !state.telemetryDemand(),
+              std::string("Don't display: no window, deadline, frames or GPU sampling after ") + name);
+    }
+    owner.preview(t);
+    check(state.windowVisible() && state.previewContent() && state.telemetryDemand(), "The explicit preview shows the GPU reading and samples it");
+    check(state.beginPositionEditing(chargeDemoReading(), t + 5) && state.windowVisible(), "Edit position still shows the bar to place");
+    state.discardPosition(t + 6);
+    owner.presentLatestSnapshot(t + 6);
+    check(!state.windowVisible(), "Finishing the edit presents nothing");
+}
+
 // OverlayController presentation rules on the explicit clock.
 void overlay() {
     ChargeOverlayState s;
@@ -485,6 +583,7 @@ int main(int argc, char** argv) {
         capacities(fixture);
         delegate(fixture);
         tray();
+        dontDisplay(fixture);
         overlay();
         editing();
         std::cout << "Power policy: " << checks << " original-source checks passed\n";

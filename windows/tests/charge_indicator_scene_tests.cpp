@@ -183,6 +183,38 @@ void run(const std::filesystem::path& shader) {
     image = frame(4, true);
     const auto red = at(image, ringX + 11 * std::sin(0.3), ringY - 11 * std::cos(0.3));
     check(red.r > 120 && red.r > red.g + 40, "Red level arc at 19% in light theme");
+    // Windows GPU reading (the Activity GPU total load): the CPU layout, the
+    // accent level ring at the load, the muted level without a sample.
+    {
+        auto gpuContent = content;
+        gpuContent.metric = m::ChargeMetric::gpu;
+        gpuContent.telemetry = m::ChargeTelemetry{};
+        gpuContent.telemetry->gpuPercent = 75;
+        gpuContent.telemetry->cpuPercent = 10; // never read by the GPU reading
+        check(scene.setContent(gpuContent) && scene.uploadPending(), "The GPU reading is a content event");
+        check(scene.content().reading.primary == "GPU" && scene.content().reading.trailing == "75%" && scene.content().reading.progress == 0.75 &&
+              scene.content().texts[2]["text"]["string"].string() == "GPU" && scene.content().texts[3]["text"]["string"].string() == "75%",
+              "The bar's labels read GPU and its total load");
+        image = frame(4.1, true);
+        dump(image, "compact-light-gpu");
+        const auto lit = at(image, ringX + k, ringY - k), unlit = at(image, ringX - k, ringY - k);
+        check(lit.r > 200 && lit.g > 150 && lit.r > lit.b + 60, "Accent (yellow) GPU level arc through 75%");
+        check(unlit.b > lit.b + 60, "Track beyond the GPU load is the dim 0.19 level");
+        bright = 0;
+        for (double x = 56; x < 196; x += 0.5)
+            for (double y = 34; y < 51; y += 0.5) if (at(image, x, y).r < 110) ++bright;
+        check(bright > 20, "The GPU label is painted on the light plate");
+        gpuContent.telemetry.reset();
+        check(scene.setContent(gpuContent), "Losing the GPU sample is a content event");
+        check(scene.content().reading.trailing == "—" && !scene.content().reading.progress, "No GPU sample reads unavailable");
+        image = frame(4.2, true);
+        const auto muted = at(image, ringX + k, ringY - k);
+        check(std::abs(muted.r - muted.b) < 30, "Without a GPU sample the ring shows only the muted track");
+        check(scene.setContent(content), "Back to the battery reading");
+        image = frame(4.3, true);
+        const auto again = at(image, ringX + 11 * std::sin(0.3), ringY - 11 * std::cos(0.3));
+        check(again.r == red.r && again.g == red.g && again.b == red.b, "The battery level arc returns unchanged");
+    }
     // Hover border (embedded control): accent capsule outline.
     gpu::ChargeIndicatorPlacement hover;
     hover.canvasToWorld = canvasToWorld;

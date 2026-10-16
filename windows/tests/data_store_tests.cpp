@@ -175,6 +175,54 @@ void edges() {
     auto blank = value; blank.playerIDOverride = " \xE3\x80\x80\n ";
     check(!normalizedEditableProfile(blank).playerIDOverride, "A blank override becomes nil");
 }
+
+// Settings record schema for the Windows battery-alert additions (no Mac
+// oracle). displayMode and alertMetric are open string choices: "never"
+// (Don't display) and "gpu" persist and reload verbatim, as does another
+// build's unknown value (its readers fall back); a record without them (an
+// older build) takes the Mac defaults; a wrong type is still invalid.
+void settingsSchema() {
+    Temporary root;
+    {
+        SettingsStore store(root.path);
+        check(store.value() == Settings::defaults() && store.value().string("displayMode") == "whenChargingStarts" &&
+              store.value().string("alertMetric") == "battery", "A new settings record starts from the Mac defaults");
+        auto next = store.value();
+        next.set("displayMode", "never");
+        next.set("alertMetric", "gpu");
+        check(store.update(next) && !store.update(next), "The Windows choices save once");
+    }
+    const auto written = detail::readFile(root.path / "settings.json", 1024 * 1024);
+    check(written.has_value(), "The settings record is on disk");
+    const auto envelope = Json::parse(*written);
+    check(envelope["version"].integer() == 1 && envelope["settings"]["displayMode"].string() == "never" &&
+          envelope["settings"]["alertMetric"].string() == "gpu", "The v1 record stores Don't display and GPU verbatim");
+    {
+        const SettingsStore reloaded(root.path);
+        check(reloaded.value().string("displayMode") == "never" && reloaded.value().string("alertMetric") == "gpu",
+              "Don't display and GPU round-trip across a restart");
+    }
+    const auto writeSettings = [&](const Json& settings) {
+        const auto bytes = Json(Json::Object{{"version", 1}, {"settings", settings}}).encode();
+        std::ofstream file(root.path / "settings.json", std::ios::binary | std::ios::trunc);
+        file.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        check(bool(file), "Write the synthetic settings record");
+    };
+    writeSettings(Json::Object{{"displayMode", "sometimes"}, {"alertMetric", "tpu"}});
+    {
+        const SettingsStore future(root.path);
+        check(future.value().string("displayMode") == "sometimes" && future.value().string("alertMetric") == "tpu" &&
+              future.value().string("theme") == "dark", "Another build's unknown choices load verbatim");
+    }
+    writeSettings(Json::Object{{"theme", "light"}});
+    {
+        const SettingsStore older(root.path);
+        check(older.value().string("displayMode") == "whenChargingStarts" && older.value().string("alertMetric") == "battery" &&
+              older.value().string("theme") == "light", "A record without them takes the Mac defaults");
+    }
+    writeSettings(Json::Object{{"displayMode", 3}});
+    rejects([&] { SettingsStore invalid(root.path); }, "A non-string display method is still invalid");
+}
 }
 
 int main(int argc, char** argv) {
@@ -182,6 +230,7 @@ int main(int argc, char** argv) {
         if (argc != 2) throw std::runtime_error("Usage: data_store_tests profile-state-source.json");
         oracle(argv[1]);
         edges();
+        settingsSchema();
         std::cout << checks << " profile store normalization checks passed; temporary roots only\n";
         return 0;
     } catch (const std::exception& e) {

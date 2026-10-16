@@ -148,9 +148,55 @@ void run(const std::filesystem::path& shader) {
               "Opening the HUD discards the edit without saving");
         check(!owner.editPosition(44), "No editor while the HUD is open");
         owner.systemOverlayClosed(45);
-        owner.terminate(50);
+        // Windows "Don't display" (displayMode never) with the GPU reading:
+        // no power change, HUD close, wake or method switch presents the bar
+        // and nothing samples; the explicit tray preview still presents.
+        owner.setSettings(Json::Object{{"displayMode", "always"}}, true, c::Language::english, false, 46);
+        owner.advance(46);
+        check(owner.panel().state().windowVisible() && owner.panel().state().persistent(), "Always mode presents before the switch");
+        owner.setSettings(Json::Object{{"displayMode", "never"}, {"alertMetric", "gpu"}}, true, c::Language::english, false, 46.5);
+        owner.advance(46.5);
+        check(owner.coordinator().settings().neverMode && !owner.panel().state().windowVisible() && !owner.nextWakeTime() &&
+              !owner.requiresFrames(46.5) && !owner.telemetryDemand(), "Choosing Don't display hides the persistent alert at once and samples nothing");
+        const auto seen = events.size();
+        owner.receive(snapshot(31, true, true), 47);
+        owner.advance(47);
+        drain();
+        owner.receive(snapshot(31, false, false), 48);
+        owner.advance(48);
+        drain();
+        check(events.size() == seen + 4 && !owner.panel().state().windowVisible() && !owner.nextWakeTime() && !owner.telemetryDemand() &&
+              owner.reading().percentage == 31u, "Don't display: plug changes are read and recorded, and present nothing");
+        owner.systemOverlayOpening(49);
+        owner.receive(snapshot(31, true, true), 49.5);
+        owner.systemOverlayClosed(50);
+        owner.advance(50);
+        drain();
+        check(!owner.panel().state().windowVisible() && !owner.nextWakeTime(), "Don't display: closing the HUD presents nothing");
+        owner.suspend(m::PowerSuspension::system, 51);
+        owner.resume(m::PowerSuspension::system, snapshot(32, false, false), 52);
+        owner.advance(52);
+        drain();
+        check(!owner.panel().state().windowVisible() && !owner.nextWakeTime() && owner.reading().percentage == 32u,
+              "Don't display: a plug change during sleep presents nothing on wake");
+        owner.preview(53);
+        owner.advance(53);
+        check(owner.panel().state().windowVisible() && owner.panel().state().previewContent() && owner.telemetryDemand(),
+              "Don't display: the tray preview still presents on request and asks for the GPU sample");
+        m::ChargeTelemetry gpuSample;
+        gpuSample.gpuPercent = 37.5;
+        owner.setTelemetry(gpuSample);
+        owner.advance(53.1);
+        check(owner.panel().accessibilityLabel() == "EndfieldHUD, GPU: 37.5%, On battery, Preview", "The bar reads the shared GPU total load");
+        run(53.1, 59);
+        check(!owner.panel().state().windowVisible() && !owner.nextWakeTime() && !owner.telemetryDemand(), "The preview dismisses itself");
+        owner.setTelemetry(std::nullopt);
+        owner.setSettings(Json::Object{}, true, c::Language::english, false, 59.5);
+        owner.advance(59.5);
+        check(!owner.panel().state().windowVisible() && !owner.coordinator().settings().neverMode, "Power changes re-baselines silently");
+        owner.terminate(60);
         check(!owner.panel().window(), "Termination releases the panel");
-        owner.receive(snapshot(30, true, true), 51);
+        owner.receive(snapshot(30, true, true), 61);
         check(!owner.panel().state().visible(), "No alert after termination");
     }
     executor.shutdown();

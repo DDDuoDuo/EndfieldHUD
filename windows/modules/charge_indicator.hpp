@@ -18,12 +18,15 @@
 // timer, window, renderer, provider or allocation on the sampling path.
 namespace endfield::modules {
 enum class ChargeStage : std::uint8_t { hidden, circle, supercharge, compact };
-enum class ChargeMetric : std::uint8_t { battery, ram, cpu, network, disk };
+// The five Mac metrics, then the Windows-only gpu (saved "gpu"): the shared
+// Activity sampler's GPU total load, shown like CPU.
+enum class ChargeMetric : std::uint8_t { battery, ram, cpu, network, disk, gpu };
 enum class BatteryLevelTone : std::uint8_t { green, yellow, red };
 using ChargeColor = std::array<double, 4>; // straight sRGB-encoded RGBA
 
 std::string_view chargeStageKey(ChargeStage) noexcept;
 std::string_view chargeMetricKey(ChargeMetric) noexcept; // saved preference identifiers
+// Unknown identifiers (a newer build's metric) are none: readers use battery.
 std::optional<ChargeMetric> chargeMetricFromKey(std::string_view) noexcept;
 bool chargeMetricRequiresTelemetry(ChargeMetric) noexcept;
 std::string chargeMetricTitle(ChargeMetric, core::Language);
@@ -34,13 +37,21 @@ std::optional<BatteryLevelTone> batteryLevelTone(std::optional<unsigned> percent
 bool batteryChargeMode(const BatteryReading&) noexcept;
 
 // One existing activity sample, never read by this model. Bytes are exact
-// physical counts; rates are bytes per second.
+// physical counts; rates are bytes per second. gpuPercent (Windows) is the
+// Activity GPU row's total load, 0...100.
 struct ChargeTelemetry {
     std::optional<double> cpuPercent;
     std::optional<std::uint64_t> memoryUsed, memoryTotal;
     std::optional<double> upload, download, diskRead, diskWrite;
+    std::optional<double> gpuPercent;
     bool operator==(const ChargeTelemetry&) const = default;
 };
+struct ActivitySnapshot; // modules/activity_state.hpp
+// The shared Activity system sample as charge telemetry (read-only): CPU,
+// RAM, network and disk as on the Mac, plus ActivitySnapshot::gpuPercent, the
+// same GPU total load the Activity page shows. The host's reconcile delivers
+// it to the Power area (PowerAreaService::setTelemetry).
+ChargeTelemetry chargeTelemetry(const ActivitySnapshot&);
 struct ChargeMetricReading {
     std::string primary, secondary, unit, trailing;
     std::optional<double> progress; // a real bounded fraction only
@@ -48,7 +59,8 @@ struct ChargeMetricReading {
     bool operator==(const ChargeMetricReading&) const = default;
 };
 // HUDChargeMetricReading.resolve. Never substitutes battery percentage for
-// another metric; unknown values stay "—"/Unavailable.
+// another metric; unknown values stay "—"/Unavailable. GPU reads like CPU:
+// "GPU", the percentage and its bounded progress.
 ChargeMetricReading resolveChargeMetric(ChargeMetric, const BatteryReading&,
     const std::optional<ChargeTelemetry>&, core::Language);
 

@@ -890,6 +890,34 @@ void PowerArea::coverage(app::ModuleCoverage& step) {
               "Power area: leaving always mode re-baselines silently");
         released("Power area: the hidden persistent alert");
     }
+    // --- Settings: Don't display (the Windows display method "never") ----------
+    // The provider, recorder, Power page and badge stay live; no power change
+    // presents the floating alert, so it creates no window, device or wake.
+    unsigned silentEvents{};
+    if (settingsOwner) {
+        check(host_.updateSettings([](ehud::data::Settings& s) { s.set("displayMode", Json(std::string(m::chargeDisplayModeNever))); }),
+              "Power area: Don't display commits through the preference record");
+        step.drain();
+        present(t + .02);
+        check(applied_ && applied_->settings.neverMode && !applied_->settings.alwaysMode && !alert.windowVisible() && !power_->nextWakeTime() &&
+              !alertCadence_ && !power_->panel().resident(), "Power area: Don't display applies from the settings broadcast without an alert");
+        const auto quiet = recordedEvents_;
+        synthetic_ = syntheticSnapshot(64, true, true);
+        notice();
+        step.drain();
+        check(reading().pluggedIn && recordedEvents_ == quiet + 2 && !alert.windowVisible() && !power_->nextWakeTime() && !nextWakeTime(t) &&
+              !alertCadence_ && !power_->panel().resident(), "Power area: with Don't display a plug-in is recorded and read, and presents nothing");
+        synthetic_ = syntheticSnapshot(64, false, false);
+        notice();
+        step.drain();
+        check(!reading().pluggedIn && recordedEvents_ == quiet + 4 && !alert.windowVisible() && !power_->nextWakeTime() && !nextWakeTime(t) &&
+              !alertCadence_ && !power_->panel().resident(), "Power area: with Don't display an unplug presents nothing either");
+        silentEvents = recordedEvents_ - quiet;
+        restore();
+        alertUntil(t + .8);
+        check(applied_ && !applied_->settings.neverMode && !alert.windowVisible() && !power_->nextWakeTime() && !alertCadence_ &&
+              !power_->panel().resident(), "Power area: leaving Don't display re-baselines silently");
+    }
 
     // --- Position editing (Settings > Edit position, after the HUD closed) ------
     check(editPosition(t) && pendingEdit_ && !editingPosition(), "Power area: an edit request waits for the HUD to close");
@@ -947,7 +975,7 @@ void PowerArea::coverage(app::ModuleCoverage& step) {
     synthetic_ = syntheticSnapshot(64, true, true);
     t += .1;
     (void)hostEvent({Kind::resumed, app::HostEvent::suspendSystem}, t);
-    check(!suspended_ && alert.windowVisible() && reading().charging && recordedEvents_ == events + 6,
+    check(!suspended_ && alert.windowVisible() && reading().charging && recordedEvents_ == events + 6 + silentEvents,
           "Power area: a plug change during sleep presents once on wake");
     alertUntil(t + .5);
 
@@ -959,7 +987,7 @@ void PowerArea::coverage(app::ModuleCoverage& step) {
     notice();
     step.drain();
     check(reading().percentage == 63u && !reading().pluggedIn && reading().capacity == m::BatteryReading::Capacity{32'760, 52'000, "mWh"} &&
-          recordedEvents_ == events + 8 && !alert.windowVisible(), "Power area: the baseline reading returns silently under the HUD");
+          recordedEvents_ == events + 8 + silentEvents && !alert.windowVisible(), "Power area: the baseline reading returns silently under the HUD");
     hudFrames(.8, 8);
     check(!badge_->entries().empty() && badge_->state().phase() != m::ChargeBadgeState::Phase::hidden, "Power area: the badge redeploys with the HUD");
 }

@@ -206,6 +206,10 @@ bool validUUID(std::string_view value) noexcept {
     }return true;
 }
 double foundationNow() {return std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count()-978307200.0;}
+// "displayMode" and "alertMetric" are open string choices (validateSettings
+// checks only their type): the Mac values, the Windows-only "never" (Don't
+// display) and "gpu", and another build's unknown value all load and
+// round-trip verbatim; their readers fall back to Power changes / Battery.
 Settings Settings::defaults() {
     Settings result;result.fields=Json::Object{
         {"displayMode","whenChargingStarts"},{"displayDuration",3},{"accentHex","FAD41F"},{"theme","dark"},{"scale",1},
