@@ -528,6 +528,7 @@ struct Application::Impl {
     void constructBattery();
     void constructWorkMode();
     void constructVolume();
+    gpu::VolumeQueuedIconProvider* constructVolumeIcons(gpu::VolumeQueuedIconProvider::Extractor);
     void constructSettings();
     void createSettings(const ehud::data::Settings& loaded);
     void ensureGame(double time);
@@ -595,6 +596,10 @@ struct Application::Impl {
     std::optional<ehud::data::ShelfFileAccess> pendingShelfOpen; // the properties card's Open, after the HUD closed like Reveal
     std::unique_ptr<gpu::NativeClipboardAssets> clipboardAssets;
     std::unique_ptr<tools::ClipboardPreview> clipboard;
+    // Volume app-row icons on the shared utility queue; declared before the
+    // Volume owner, which borrows its image cache (constructVolumeIcons).
+    std::unique_ptr<gpu::VolumeQueuedIconProvider> volumeIcons;
+    UtilityExecutor::Route volumeIconRoute{};
     std::unique_ptr<tools::VolumePreview> volume;
     std::unique_ptr<tools::EventLogPreview> eventLog;
     std::unique_ptr<tools::WorkModePreview> workMode;

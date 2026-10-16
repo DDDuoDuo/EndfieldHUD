@@ -310,6 +310,15 @@ if(WIN32)
       target_link_libraries(application_utility_idle_tests PRIVATE hud_utility)
       add_test(NAME application_utility_idle_contracts COMMAND application_utility_idle_tests)
     endif()
+    # The built-in Volume owner's app-row icons on the shared utility queue
+    # (native/volume_icon_provider.hpp VolumeQueuedIconProvider).
+    add_executable(application_volume_icons_tests tests/application_volume_icons_tests.cpp)
+    target_compile_definitions(application_volume_icons_tests PRIVATE ${EHUD_APP_DEFINITIONS})
+    target_link_libraries(application_volume_icons_tests PRIVATE hud_shelf_icons hud_utility)
+    add_test(NAME application_volume_icons_contracts COMMAND application_volume_icons_tests)
+    if(MSVC)
+      target_compile_options(application_volume_icons_tests PRIVATE /W4 /permissive- /EHsc)
+    endif()
     # The concealed HUD's GPU release (Renderer::releaseFrameTargets): frame
     # and native group targets dropped, the driver trimmed, identical pixels
     # once the next frame creates again what it draws.
@@ -369,13 +378,13 @@ if(WIN32)
       # Hidden module coverage plus the production lifecycle/quit flow.
       add_test(NAME application_owner_coverage COMMAND "${CMAKE_COMMAND}" "-DPREVIEW=$<TARGET_FILE:watch_session_preview>"
         "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/owner-coverage-work" "-DINPUTS=${ehud_app_inputs}" "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}"
-        "-DMAP=${EHUD_MAP_RESOURCE_DIR}" "-DORBIPOM=${EHUD_ORBIPOM_RESOURCE_DIR}" -DCHECKS=19 -DHOST_CHECKS=171 "-DPACKAGE=$<TARGET_FILE_DIR:EndfieldHUD>/resources"
+        "-DMAP=${EHUD_MAP_RESOURCE_DIR}" "-DORBIPOM=${EHUD_ORBIPOM_RESOURCE_DIR}" -DCHECKS=19 -DHOST_CHECKS=182 "-DPACKAGE=$<TARGET_FILE_DIR:EndfieldHUD>/resources"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/app/run_owner_coverage.cmake")
       set_tests_properties(application_owner_coverage PROPERTIES TIMEOUT 600)
       # Same owner ending through WM_QUERYENDSESSION/WM_ENDSESSION instead of Quit.
       add_test(NAME application_session_end_coverage COMMAND "${CMAKE_COMMAND}" "-DPREVIEW=$<TARGET_FILE:watch_session_preview>"
         "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/session-end-coverage-work" "-DINPUTS=${ehud_app_inputs}" "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}"
-        "-DMAP=${EHUD_MAP_RESOURCE_DIR}" "-DORBIPOM=${EHUD_ORBIPOM_RESOURCE_DIR}" -DCHECKS=15 -DHOST_CHECKS=167 -DEXTRA=--session-end-coverage
+        "-DMAP=${EHUD_MAP_RESOURCE_DIR}" "-DORBIPOM=${EHUD_ORBIPOM_RESOURCE_DIR}" -DCHECKS=15 -DHOST_CHECKS=178 -DEXTRA=--session-end-coverage
         "-DPACKAGE=$<TARGET_FILE_DIR:EndfieldHUD>/resources" -P "${CMAKE_CURRENT_SOURCE_DIR}/app/run_owner_coverage.cmake")
       set_tests_properties(application_session_end_coverage PROPERTIES TIMEOUT 600)
       # The same owner's memory and thread census (launch, every module,

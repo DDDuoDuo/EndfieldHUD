@@ -1,9 +1,18 @@
 #include "native/volume_icon_provider.hpp"
 #include <algorithm>
+#include <cmath>
 #include <iterator>
 #include <limits>
+#include <map>
 #include <stdexcept>
 #include <utility>
+#ifdef _WIN32
+#include "native/file_shelf_files.hpp"
+#include <shellapi.h>
+#include <shlobj.h>
+#include <wincodec.h>
+#include <wrl/client.h>
+#endif
 namespace endfield::native {
 namespace {
 void need(bool v,const char*m){if(!v)throw std::invalid_argument(m);}
@@ -65,5 +74,111 @@ bool NativeVolumeIconProvider::drain(UINT_PTR generation){onThread();if(!plan_.a
     for(const auto&r:ready)results.push_back({r.imageKey,r.itemID,r.revision,r.image,r.result,r.typeFallback});return plan_.receive(results);
 }
 bool NativeVolumeIconProvider::hide(){onThread();if(!plan_.active())return false;provider_->hide();return plan_.hide();}
+
+struct VolumeQueuedIconProvider::Impl:std::enable_shared_from_this<Impl>{
+    Submit submit;std::function<void()>changed;Extractor extractor;const DWORD owner{GetCurrentThreadId()};
+    LayerImageSource images;VolumeIconPlan plan;
+    // Requests answered at their revision (success, no icon or failure): not
+    // extracted again until a retry or a new process advances the revision.
+    std::map<std::string,std::uint64_t,std::less<>>answered;
+    bool inFlight{},waiting{};VolumeQueuedIconStats counts;
+    Impl(Submit s,std::function<void()>c,Extractor e):submit(std::move(s)),changed(std::move(c)),extractor(e?std::move(e):Extractor(volumeExecutableIcon)){need(bool(submit),"Volume icons need the shared queue");}
+    void onThread()const{need(owner==GetCurrentThreadId(),"Volume icons belong to their creating thread");}
+    std::vector<ShelfIconRequest>missing(){std::vector<ShelfIconRequest>out;out.reserve(plan.requests().size());
+        for(const auto&r:plan.requests()){const auto found=answered.find(r.imageKey);if(found!=answered.end()&&found->second==r.revision)continue;if(images.acquire(r.imageKey,r.revision))continue;out.push_back(r);}
+        return out;}
+    void pump(){
+        if(inFlight||!plan.active())return;auto wanted=missing();if(wanted.empty()){waiting=false;return;}
+        if(wanted.size()>VolumeIconPlan::maximumVisible)wanted.resize(VolumeIconPlan::maximumVisible);
+        auto requests=std::make_shared<const std::vector<ShelfIconRequest>>(std::move(wanted));
+        auto results=std::make_shared<std::vector<ShelfIconPixels>>(requests->size());
+        const std::weak_ptr<Impl>weak=weak_from_this();
+        // In flight before the call: a queue that completes at once (tests)
+        // re-enters complete() from inside submit.
+        inFlight=true;waiting=false;++counts.jobs;bool accepted{};
+        try{accepted=submit([requests,results,extract=extractor]{
+            for(std::size_t n=0;n<requests->size();++n){
+                try{(*results)[n]=extract((*requests)[n]);}catch(const std::bad_alloc&){(*results)[n]={};(*results)[n].result=E_OUTOFMEMORY;}catch(...){(*results)[n]={};(*results)[n].result=E_FAIL;}}
+        },[weak,requests,results](bool failed){if(auto self=weak.lock())self->complete(*requests,*results,failed);});}
+        catch(...){inFlight=false;--counts.jobs;throw;}
+        if(!accepted){inFlight=false;--counts.jobs;waiting=true;++counts.backpressure;}
+    }
+    void complete(const std::vector<ShelfIconRequest>&requests,std::vector<ShelfIconPixels>&results,bool failed){
+        onThread();inFlight=false;std::vector<VolumeIconResult>out;out.reserve(requests.size());
+        for(std::size_t n=0;n<requests.size();++n){const auto&r=requests[n];auto&p=results[n];++counts.extractions;answered.insert_or_assign(r.imageKey,r.revision);
+            VolumeIconResult v{r.imageKey,r.itemID,r.revision,{},failed&&SUCCEEDED(p.result)?E_FAIL:p.result,p.typeFallback};
+            if(!failed&&SUCCEEDED(p.result)&&!p.typeFallback&&p.width==LayerImageSource::shelfRequestedPixels&&p.height==LayerImageSource::shelfRequestedPixels&&p.straightRGBA.size()==std::size_t(p.width)*p.height*4){
+                try{v.image=images.publish(r.imageKey,r.revision,p.width,p.height,p.straightRGBA);++counts.published;}catch(const std::bad_alloc&){throw;}catch(...){v.image.reset();v.result=E_INVALIDARG;}}
+            if(!v.image){++counts.unavailable;if(SUCCEEDED(v.result))v.result=E_FAIL;}
+            p={};out.push_back(std::move(v));}
+        // Bounded: answers are kept for the plan's visible requests and the
+        // most recent others (a process that left keeps none for long).
+        if(answered.size()>4*VolumeIconPlan::maximumRetained)for(auto it=answered.begin();it!=answered.end()&&answered.size()>VolumeIconPlan::maximumRetained;){
+            const bool visible=std::any_of(plan.requests().begin(),plan.requests().end(),[&](const auto&r){return r.imageKey==it->first;});it=visible?std::next(it):answered.erase(it);}
+        const bool art=plan.receive(out);
+        if(art&&changed)changed();
+        pump();
+    }
+};
+VolumeQueuedIconProvider::VolumeQueuedIconProvider(Submit submit,std::function<void()>changed,Extractor extractor):impl_(std::make_shared<Impl>(std::move(submit),std::move(changed),std::move(extractor))){}
+VolumeQueuedIconProvider::~VolumeQueuedIconProvider()=default;
+bool VolumeQueuedIconProvider::setVisible(std::span<const VolumeIconApplication>apps,bool retry){auto&i=*impl_;i.onThread();
+    if(i.plan.active()&&!retry&&std::equal(apps.begin(),apps.end(),i.plan.applications().begin(),i.plan.applications().end()))return false;
+    auto next=i.plan;if(!next.setVisible(apps,retry))return false;
+    // Bind what the cache holds at the exact revision now; a retained binding
+    // whose pixels the cache evicted is cleared and asked for again (the
+    // raster resolves the descriptor through the cache).
+    std::vector<VolumeIconResult>known;known.reserve(next.requests().size());
+    for(const auto&r:next.requests()){
+        if(auto image=i.images.acquire(r.imageKey,r.revision)){known.push_back({r.imageKey,r.itemID,r.revision,std::move(image),S_OK,false});continue;}
+        for(const auto&b:next.bindings())if(b.imageKey==r.imageKey&&b.image){known.push_back({r.imageKey,r.itemID,r.revision,{},E_PENDING,false});i.answered.erase(r.imageKey);break;}
+    }
+    if(!known.empty())(void)next.receive(known);
+    i.plan=std::move(next);i.pump();return true;
+}
+bool VolumeQueuedIconProvider::hide(){auto&i=*impl_;i.onThread();return i.plan.hide();}
+void VolumeQueuedIconProvider::queueCapacityAvailable(){auto&i=*impl_;i.onThread();if(i.waiting)i.pump();}
+const VolumeIconPlan&VolumeQueuedIconProvider::plan()const noexcept{return impl_->plan;}
+LayerImageSource&VolumeQueuedIconProvider::images()noexcept{return impl_->images;}
+VolumeQueuedIconStats VolumeQueuedIconProvider::stats()const noexcept{auto out=impl_->counts;out.inFlight=impl_->inFlight;return out;}
+
+namespace {
+struct QueuedApartment{HRESULT hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED|COINIT_DISABLE_OLE1DDE);~QueuedApartment(){if(SUCCEEDED(hr))CoUninitialize();}};
+struct QueuedIcon{HICON value{};~QueuedIcon(){if(value)DestroyIcon(value);}};
+std::wstring widePath(std::string_view s){if(s.empty()||s.size()>32767)return {};const int n=MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,s.data(),static_cast<int>(s.size()),nullptr,0);if(n<=0)return {};std::wstring out(static_cast<std::size_t>(n),L'\0');if(MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,s.data(),static_cast<int>(s.size()),out.data(),n)!=n)return {};return out;}
+}
+ShelfIconPixels volumeExecutableIcon(const ShelfIconRequest&r){
+    using Microsoft::WRL::ComPtr;
+    ShelfIconPixels out;out.result=E_FAIL;
+    if(!validShelfIconRequest(r)||r.directory||r.unavailable){out.result=E_INVALIDARG;return out;}
+    // The executable that still has the process's file identity, held (no
+    // delete sharing) while its resource is read.
+    ehud::data::ShelfFileAccess lease;
+    try{lease=NativeFileShelfFiles{}.acquire(r.path);}catch(const std::bad_alloc&){throw;}catch(...){out.result=HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND);return out;}
+    if(!lease.open()||lease.metadata().isDirectory||lease.metadata().kind!=ehud::data::ShelfFileKind::regular||!r.identity.matches(lease.metadata().identity)){out.result=HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND);return out;}
+    const auto path=widePath(lease.metadata().windowsPath);if(path.empty()||path.find(L'\0')!=std::wstring::npos){out.result=E_INVALIDARG;return out;}
+    constexpr unsigned size=LayerImageSource::shelfRequestedPixels;
+    // No icon resource (ExtractIconEx counts the file's icon groups): Explorer
+    // would show the generic application icon; the Mac shows none for an
+    // executable outside an application bundle.
+    if(ExtractIconExW(path.c_str(),-1,nullptr,nullptr,0)==0){out.typeFallback=true;out.result=HRESULT_FROM_WIN32(ERROR_RESOURCE_TYPE_NOT_FOUND);return out;}
+    QueuedIcon icon;const HRESULT extracted=SHDefExtractIconW(path.c_str(),0,0,&icon.value,nullptr,MAKELONG(size,0));
+    if(extracted!=S_OK||!icon.value){out.typeFallback=extracted==S_FALSE;out.result=extracted==S_FALSE?HRESULT_FROM_WIN32(ERROR_RESOURCE_TYPE_NOT_FOUND):(FAILED(extracted)?extracted:E_FAIL);return out;}
+    const QueuedApartment apartment;if(FAILED(apartment.hr)&&apartment.hr!=RPC_E_CHANGED_MODE){out.result=apartment.hr;return out;}
+    ComPtr<IWICImagingFactory>wic;HRESULT hr=CoCreateInstance(CLSID_WICImagingFactory,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&wic));if(FAILED(hr)){out.result=hr;return out;}
+    ComPtr<IWICBitmap>bitmap;if(FAILED(hr=wic->CreateBitmapFromHICON(icon.value,&bitmap))){out.result=hr;return out;}
+    UINT width{},height{};if(FAILED(hr=bitmap->GetSize(&width,&height))||!width||!height||width>LayerImageSource::maximumDimension||height>LayerImageSource::maximumDimension){out.result=FAILED(hr)?hr:E_INVALIDARG;return out;}
+    // Fit (Fant) and centre in the 64 px square, straight RGBA, as the Shelf's icons.
+    const double scale=std::min(double(size)/width,double(size)/height);
+    const auto w=std::max(1u,static_cast<unsigned>(std::lround(width*scale))),h=std::max(1u,static_cast<unsigned>(std::lround(height*scale)));
+    ComPtr<IWICBitmapScaler>scaler;ComPtr<IWICFormatConverter>converter;
+    if(FAILED(hr=wic->CreateBitmapScaler(&scaler))||FAILED(hr=scaler->Initialize(bitmap.Get(),w,h,WICBitmapInterpolationModeFant))||FAILED(hr=wic->CreateFormatConverter(&converter))||
+       FAILED(hr=converter->Initialize(scaler.Get(),GUID_WICPixelFormat32bppRGBA,WICBitmapDitherTypeNone,nullptr,0,WICBitmapPaletteTypeCustom))){out.result=hr;return out;}
+    std::vector<std::uint8_t>tight(std::size_t(w)*h*4);if(FAILED(hr=converter->CopyPixels(nullptr,w*4,static_cast<UINT>(tight.size()),tight.data()))){out.result=hr;return out;}
+    if(std::none_of(tight.begin(),tight.end(),[](std::uint8_t v){return v!=0;})){out.typeFallback=true;out.result=HRESULT_FROM_WIN32(ERROR_RESOURCE_TYPE_NOT_FOUND);return out;}
+    out.width=out.height=size;out.straightRGBA.assign(std::size_t(size)*size*4,0);const unsigned x=(size-w)/2,y=(size-h)/2;
+    for(unsigned row=0;row<h;++row)std::copy_n(tight.data()+std::size_t(row)*w*4,std::size_t(w)*4,out.straightRGBA.data()+(std::size_t(y+row)*size+x)*4);
+    out.result=S_OK;return out;
+}
 #endif
 } // namespace endfield::native

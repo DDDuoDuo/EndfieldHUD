@@ -171,12 +171,12 @@ int Application::Impl::runMemoryTrace(){
     prewarm();idle();
     recordMemory("launch-idle",true);
     perform(lifecycle.toggle(),t);until(core::SystemOverlayPhase::open,"Traced opening completes");frames(30);idle();frames(2);
-    recordMemory("first-opening",false);
+    recordMemory("first-opening",true);
     // Every presented module, as a user visits them: one row of deltas each.
     std::vector<core::Module> modules;
     for(unsigned n=0;n<=static_cast<unsigned>(core::Module::profile);++n){const auto module=static_cast<core::Module>(n);
         if(auto*owner=registry.presenter(module);owner&&registry.enabled(*owner))modules.push_back(module);}
-    const auto sample=[&]{struct Sample{ProcessDiagnostics process;gpu::LayerRasterStats raster;gpu::RendererStats rendered;};return Sample{captureProcessDiagnostics(false),rasterizer.stats(),renderer.stats()};};
+    const auto sample=[&]{struct Sample{ProcessDiagnostics process;gpu::LayerRasterStats raster;gpu::RendererStats rendered;std::uint32_t pool;};return Sample{captureProcessDiagnostics(false),rasterizer.stats(),renderer.stats(),countPoolWorkers()};};
     const auto gpuBytes=[](const ProcessDiagnostics&d){std::uint64_t sum{};for(const auto&a:d.adapters)sum+=a.localUsage+a.nonLocalUsage;return sum;};
     const auto delta=[](auto after,auto before){return Json(static_cast<std::int64_t>(after)-static_cast<std::int64_t>(before));};
     for(const auto module:modules){
@@ -191,6 +191,7 @@ int Application::Impl::runMemoryTrace(){
             {"rendererBytesDelta",delta(after.rendered.resourceBytes,before.rendered.resourceBytes)},
             {"gpuUsageDelta",delta(gpuBytes(after.process),gpuBytes(before.process))},
             {"threadsDelta",delta(after.process.memory.threads,before.process.memory.threads)},{"threads",Json(static_cast<std::int64_t>(after.process.memory.threads))},
+            {"poolWorkersDelta",delta(after.pool,before.pool)},{"poolWorkers",Json(static_cast<std::int64_t>(after.pool))},
             {"handlesDelta",delta(after.process.memory.handles,before.process.memory.handles)},
             {"maxFrameCPUMilliseconds",frameMax},{"meanFrameCPUMilliseconds",frameCount?frameTotal/frameCount:0.},{"switchEndFrameCPUMilliseconds",afterSwitch}});
     }
@@ -494,7 +495,14 @@ int Application::Impl::runHiddenVerification(){
             // opening on Map only re-poses its built chrome; nothing is activated.
             if(map&&mapModuleOwner&&registry.enabled(*mapModuleOwner)&&notes->selected()==core::Module::map)
                 hostCheck(map->sceneStats().chromeBuilds>=1&&!map->state().active()&&!map->rasterStats().active,"The launch prewarm builds the Map without activating it");
+            // An Archive that is not the first opening's module builds nothing at
+            // the launch prewarm or in the opening's frames (no rasters attributed
+            // to it): its view is built when Archive is first shown.
+            const auto archiveRasters=[&]{std::size_t entries{};rasterizer.forEachEntry([&](const gpu::LayerRasterEntryUsage&e){if(e.owner=="archive")++entries;});return entries;};
+            const bool archiveLater=archive&&archiveModuleOwner&&registry.enabled(*archiveModuleOwner)&&notes->selected()!=core::Module::archive;
+            if(archiveLater)hostCheck(archiveRasters()==0,"The launch prewarm builds no Archive artwork while another module opens first");
             open(time);present(time+1,true);time+=2;
+            if(archiveLater)hostCheck(archiveRasters()==0,"The first opening on another module builds no Archive artwork");
             // Before any module is shown (every owner receives these real host
             // calls). The ONE host time (ModuleRegistry::hostTime): an owner whose
             // deadline() dispatches a nested event with a later time (a
@@ -834,6 +842,33 @@ int Application::Impl::runHiddenVerification(){
                      frames=0;while(frames<40&&volume->requiresFrames(time)){time+=1./60;present(time,true);++frames;}
                      const auto s2=volume->sceneStats();
                      hostCheck(frames>=10&&frames<=14&&s2.rowRevivals>s1.rowRevivals&&s2.rowBuilds==s1.rowBuilds&&s2.structureUpdates==s1.structureUpdates,"Returning to App volume replays the motion and composes the parked rows again unchanged");time+=1;}
+                    // App icons (Mac VolumeCanvas.renderAppIcon) through the shared
+                    // utility queue: the retained rows' icons arrive with its
+                    // completion, an executable without an icon resource keeps the
+                    // source nil icon, Volume starts no worker of its own and the
+                    // Shelf's Shell icon worker is not used.
+                    if(volumeIcons&&utility){
+                        const auto shelfIcons=shelf?shelf->resources().iconWorkerStarts:0;const auto workers=utility->stats().workersStarted;
+                        utility->waitIdle();utilityCompleted();for(unsigned frame=0;frame<4;++frame)present(time+double(frame)/60,true);time+=1;
+                        const auto rows=volume->visibleIcons();const auto&apps=volume->state().snapshot().applications;
+                        std::size_t withIcon{},without{};bool exact=!rows.empty();
+                        for(const auto&row:rows){const auto app=std::find_if(apps.begin(),apps.end(),[&](const auto&a){return a.id==row.applicationID;});
+                            if(app==apps.end()||!row.executable){exact=false;continue;}
+                            if(row.executable->identity.objectID[0]!=3){++withIcon;exact=exact&&app->icon&&volumeIcons->images().acquire(app->icon->imageKey,app->icon->revision)!=nullptr;}
+                            else{++without;exact=exact&&!app->icon;}}
+                        hostCheck(exact&&withIcon>=2&&without==1,"Volume's retained app rows show their executables' icons from the shared queue; one without an icon resource keeps the nil icon");
+                        const auto loaded=volumeIcons->stats();
+                        hostCheck(loaded.jobs>=1&&loaded.published>=withIcon&&!loaded.inFlight&&utility->stats().workersStarted==workers&&(!shelf||shelf->resources().iconWorkerStarts==shelfIcons),
+                            "Volume icons load on the shared utility worker: no thread of their own, and the Shelf's Shell icon worker is untouched");
+                        hostCheck(volume->perform("audio:headphones",time)&&!volumeIcons->plan().active()&&volume->visibleIcons().empty(),"Leaving App volume withdraws its icon requests");
+                        for(unsigned frame=0;frame<20;++frame)present(time+double(frame)/60,true);time+=1;
+                        const bool back=volume->perform("audio:applications",time);const auto&again=volume->state().snapshot().applications;
+                        hostCheck(back&&volumeIcons->plan().active()&&volumeIcons->stats().jobs==loaded.jobs&&!volume->visibleIcons().empty()&&
+                            std::all_of(volume->visibleIcons().begin(),volume->visibleIcons().end(),[&](const auto&row){const auto app=std::find_if(again.begin(),again.end(),[&](const auto&a){return a.id==row.applicationID;});
+                                return app!=again.end()&&(row.executable&&row.executable->identity.objectID[0]==3?!app->icon:app->icon.has_value());}),
+                            "Returning to App volume binds the cached icons at once, without loading them again");
+                        for(unsigned frame=0;frame<20;++frame)present(time+double(frame)/60,true);time+=1;
+                    }
                     probe.disconnectOwners();hostCheck(volumeModuleOwner->automationCount()==0&&probe.groups()==0,"Concealing disconnects every fragment");
                     probe.shutdown();
                 }
@@ -1177,6 +1212,21 @@ int Application::Impl::runHiddenVerification(){
             // rasters and GPU resources once the HUD closed on another module.
             if(workMode&&workModeModuleOwner&&registry.enabled(*workModeModuleOwner)&&notes->selected()!=core::Module::workMode)
                 hostCheck(workMode->resources().sceneParts==0&&!workMode->resources().gpuResident&&workMode->resources().parks>=1,"Closing the HUD on another module releases the Work Mode page");
+            // The provider and Shelf adapters forward the HUD visibility and the
+            // end of the close (overlayConcealed) through this production route:
+            // the modules visited by the cycles that are not shown at the close
+            // keep no raster artwork.
+            {const auto hidden=[&](const std::unique_ptr<ModuleOwner>&owner,core::Module module){return owner&&registry.enabled(*owner)&&notes->selected()!=module;};
+             if(clipboard&&hidden(clipboardModuleOwner,core::Module::clipboard))
+                 hostCheck(clipboard->stats().residentPixelBytes==0&&clipboard->stats().parks>=1,"Closing the HUD on another module releases the Clipboard artwork");
+             if(eventLog&&hidden(eventLogModuleOwner,core::Module::eventLog))
+                 hostCheck(eventLog->stats().residentPixelBytes==0&&eventLog->stats().parks>=1,"Closing the HUD on another module releases the Event Log artwork");
+             if(activity&&hidden(activityModuleOwner,core::Module::activityMonitor))
+                 hostCheck(activity->stats().residentPixelBytes==0&&activity->stats().parks>=1,"Closing the HUD on another module releases the Activity Monitor artwork");
+             if(storage&&hidden(storageModuleOwner,core::Module::storage))
+                 hostCheck(storage->resources().pixelBytes==0&&storage->resources().parks>=1,"Closing the HUD on another module releases the Storage artwork");
+             if(shelf&&hidden(shelfModuleOwner,core::Module::fileShelf))
+                 hostCheck(shelf->resources().scenePixelBytes==0&&shelf->resources().sceneParks>=1,"Closing the HUD on another module releases the File Shelf artwork");}
             // Host broadcasts the module areas rely on, through the same routes
             // the visible owner uses, on the synthetic clock: suspend/resume,
             // clock/time-zone and system settings changes, utility completion.

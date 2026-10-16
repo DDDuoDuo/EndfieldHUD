@@ -1109,14 +1109,35 @@ void Application::Impl::constructWorkMode(){
     // HUDWorkModeInteraction accessibility buttons under the HUD root.
     workModeModuleOwner=workModeModule(*workMode,screenHooks());registerModule(workModeModuleOwner);
 }
+// Volume app-row icons (Mac VolumeCanvas.renderAppIcon from
+// NSWorkspace.icon of the app bundle): one bounded job at a time on the
+// shared utility queue (native/volume_icon_provider.hpp). The process's one
+// Shell icon worker stays the Shelf's, and Volume starts no thread of its
+// own. A completion that changed a shown row asks for one frame.
+gpu::VolumeQueuedIconProvider* Application::Impl::constructVolumeIcons(gpu::VolumeQueuedIconProvider::Extractor extractor){
+    if(!utility)return nullptr;
+    volumeIconRoute=utility->makeRoute();
+    auto submit=[this](std::function<void()>work,gpu::VolumeQueuedIconProvider::Done done){
+        return utility&&utility->submit(volumeIconRoute,std::move(work),[done=std::move(done)](std::exception_ptr error){done(bool(error));});};
+    auto changed=[this]{bool redraw{};if(volume)isolate(volumeModuleOwner,"icons",[&]{redraw=volume->iconsChanged();});if(redraw&&ready&&!stopping)host.invalidate();};
+    volumeIcons=std::make_unique<gpu::VolumeQueuedIconProvider>(std::move(submit),std::move(changed),std::move(extractor));
+    return volumeIcons.get();
+}
 void Application::Impl::constructVolume(){
     tools::VolumePreviewOptions options;
+    const auto bindIcons=[&](gpu::VolumeQueuedIconProvider::Extractor extractor){
+        auto*icons=constructVolumeIcons(std::move(extractor));if(!icons)return;
+        options.memoryImages=&icons->images();
+        options.icons={[icons](std::span<const gpu::VolumeIconApplication>apps){return icons->setVisible(apps);},[icons]{return &icons->plan();},[icons]{(void)icons->hide();}};
+    };
     if(args.nativeVolume){
         // The shared AudioRuntime binding: Volume's vote (reveal/conceal and the
         // controller's own selection) observes endpoints and per-app sessions
         // only while Volume is presented; nothing switches the default device.
         // Without the runtime Volume stays absent (never the synthetic fixture).
         need(bool(audio),"Volume needs the shared audio runtime");
+        // The executables' own icon resources, opened by their file identity.
+        bindIcons({});
         options.strings=gpu::volumeStrings(settingsLanguage(configuration));
         options.initial=audio->volume().snapshot();options.actions=audio->volume().callbacks();
         volume=std::make_unique<tools::VolumePreview>(rasterizer,std::move(options));
@@ -1130,7 +1151,18 @@ void Application::Impl::constructVolume(){
         // Five synthetic adjustable apps (no real audio): the three-row app
         // list scrolls (maximum offset 5 x 31 - 95 = 60 points).
         sample->applicationActivitySupported=true;
-        for(unsigned n=0;n<5;++n)sample->applications.push_back({std::to_string(9100+n)+":1","测试应用 "+std::to_string(n+1),9100u+n,true});
+        for(unsigned n=0;n<5;++n){sample->applications.push_back({std::to_string(9100+n)+":1","测试应用 "+std::to_string(n+1),9100u+n,true});
+            // Synthetic executables (never opened): the icons come from the
+            // synthetic extractor below through the same shared queue.
+            gpu::AudioApplicationExecutable executable;executable.path="C:\\EndfieldHUD-synthetic\\app-"+std::to_string(n+1)+".exe";
+            executable.identity.objectID[0]=static_cast<std::uint8_t>(n+1);executable.identity.volumeSerial=0x5eed;sample->applications.back().executable=std::move(executable);}
+        // Apps 1, 2, 4 and 5 have an icon resource; app 3 has none and keeps
+        // the source's nil icon.
+        bindIcons([](const gpu::ShelfIconRequest&r){gpu::ShelfIconPixels p;
+            if(r.identity.objectID[0]==3){p.typeFallback=true;p.result=HRESULT_FROM_WIN32(ERROR_RESOURCE_TYPE_NOT_FOUND);return p;}
+            constexpr unsigned size=gpu::LayerImageSource::shelfRequestedPixels;p.width=p.height=size;p.result=S_OK;p.straightRGBA.assign(std::size_t(size)*size*4,0);
+            for(unsigned y=8;y<size-8;++y)for(unsigned x=8;x<size-8;++x){auto*px=p.straightRGBA.data()+(std::size_t(y)*size+x)*4;px[0]=static_cast<std::uint8_t>(40*r.identity.objectID[0]);px[1]=160;px[2]=220;px[3]=255;}
+            return p;});
         options.initial=*sample;
         const auto changed=[this,sample]{if(volume)volume->receiveSnapshot(*sample);};
         options.actions.setVolume=[sample,changed](std::string_view id,double value){if(id!=sample->outputID)return false;sample->volume=value;changed();return true;};
@@ -1870,7 +1902,8 @@ bool Application::Impl::present(double time,bool submit){
     // Event Log archiveAction; an empty drain allocates nothing.
     if(archiveService)isolate(archiveModuleOwner,"frame",[&]{auto actions=archiveService->state().takeEvents();if(eventOwner&&!stopping)for(const auto&e:actions)eventOwner->record({ehud::data::makeUUID(),modules::EventKind::archiveAction,ehud::data::foundationNow(),{{"action",e.name}}});});
     if(mediaBroker){mediaBroker->sample(time);if(notes)notes->refreshSharedMedia(hostTime(time));
-        if(archiveMedia)isolate(archiveModuleOwner,"frame",[&]{if(archiveMedia->refresh(hostTime(time))&&archive&&notes&&chromePlan&&chromePlan->projection().center)archive->update(*chromePlan->projection().center,noteChromeSettings,notes->modulePresentation(),static_cast<float>(canvasOpacity(time)),hostTime(time));});}
+        // A hidden Archive is not updated (its adapter builds it when shown).
+        if(archiveMedia)isolate(archiveModuleOwner,"frame",[&]{if(archiveMedia->refresh(hostTime(time))&&archive&&notes&&chromePlan&&chromePlan->projection().center&&presentationShows(notes->modulePresentation(),core::Module::archive))archive->update(*chromePlan->projection().center,noteChromeSettings,notes->modulePresentation(),static_cast<float>(canvasOpacity(time)),hostTime(time));});}
     {auto stage=probe.measure(LiveProbe::materials);materials->flush(renderer.sourceGraphics());}
     {auto stage=probe.measure(LiveProbe::publication);publishNative();composition.present(renderer);renderer.setCamera(gpu::layerViewportProjection(metrics.pixelWidth,metrics.pixelHeight)*core::Matrix4::scale(metrics.scale,metrics.scale,1));}
     if(submit){auto stage=probe.measure(LiveProbe::draw);renderer.draw(visibleMode());

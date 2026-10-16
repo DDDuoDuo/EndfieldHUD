@@ -47,13 +47,36 @@ struct AdapterMemory {
     bool software{};
     std::uint64_t localUsage{}, localBudget{}, nonLocalUsage{}, nonLocalBudget{};
 };
+// The OS thread-pool workers (start ntdll!TppWorkerThread) all share one
+// start address, so the thread groups cannot tell their users apart. Each
+// worker's committed stack is read (never suspended, so no lock it holds can
+// stall the census) and every 8-byte value that is a return address into a
+// loaded module's executable section (the bytes before it are a call) counts
+// for that module: the live frames and the stale frames of the callbacks the
+// worker ran before. ntdll, kernel32 and kernelbase (on every worker) are
+// left out. A heuristic for attribution, numbers and module names only.
+struct PoolWorker {
+    std::uint32_t id{};
+    double cpuSeconds{}, ageSeconds{};
+    std::vector<std::pair<std::string, std::uint32_t>> modules; // module, return addresses seen (most first, at most 10)
+};
+struct PoolWorkers {
+    std::uint32_t workers{};
+    std::vector<std::pair<std::string, std::uint32_t>> modules; // module, workers referencing it (most first)
+    std::vector<PoolWorker> threads;
+};
 struct ProcessDiagnostics {
     ProcessMemoryCounters memory;
     ProcessHeapCounters heaps;
     AddressSpaceCounters space;
     std::vector<AdapterMemory> adapters;
     std::vector<ThreadGroup> threads; // only with threadOrigins
+    PoolWorkers pool;                 // only with threadOrigins
 };
+// The pool workers of this process now (PoolWorkers above), and only their
+// number (no stack is read).
+PoolWorkers capturePoolWorkers();
+std::uint32_t countPoolWorkers();
 // One thread of this process at a capture: its context switches and CPU time
 // so far (NtQuerySystemInformation, the counters Process Explorer and the
 // section 9 gate read), with its start module, offset and description.

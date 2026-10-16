@@ -31,6 +31,8 @@ tools::NotesPreviewPreferences notesPreferences(core::Language, bool dark, bool 
 modules::ReaderStrings readerStrings(core::Language);
 modules::StorageAppearance storageAppearance(core::Language, bool dark, std::array<double, 4> accent);
 native::VolumeStrings volumeStrings(core::Language);
+// The module's surface is drawn by this presentation sample (current or incoming).
+bool presentationShows(const core::ModulePresentationSample&, core::Module) noexcept;
 
 struct CalendarModuleHooks {
     std::function<void(core::Language)> languageChanged; // notifications + reminder refresh

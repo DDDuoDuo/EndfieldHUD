@@ -1,6 +1,7 @@
 #include "app/process_diagnostics.hpp"
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstring>
 #include <functional>
 #include <map>
@@ -304,13 +305,169 @@ ProcessMemoryCounters captureProcessMemory() {
     }
     return result;
 }
+namespace {
+// One loaded module's executable sections (PE headers read through
+// ReadProcessMemory, which fails instead of faulting on a module unloaded
+// meanwhile).
+struct CodeModule {
+    std::uintptr_t base{}, end{};
+    std::string name;
+    std::vector<std::pair<std::uintptr_t, std::uintptr_t>> code;
+};
+template <class T> bool readMemory(std::uintptr_t address, T& out) {
+    SIZE_T read{};
+    return ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<LPCVOID>(address), &out, sizeof(T), &read) && read == sizeof(T);
+}
+std::vector<CodeModule> codeModules() {
+    std::vector<CodeModule> result;
+    std::vector<HMODULE> handles(512);
+    DWORD needed{};
+    if (!EnumProcessModules(GetCurrentProcess(), handles.data(), static_cast<DWORD>(handles.size() * sizeof(HMODULE)), &needed)) return result;
+    handles.resize(std::min<std::size_t>(handles.size(), needed / sizeof(HMODULE)));
+    for (const auto handle : handles) {
+        MODULEINFO info{};
+        if (!GetModuleInformation(GetCurrentProcess(), handle, &info, sizeof(info))) continue;
+        std::array<wchar_t, MAX_PATH> name{};
+        const auto length = GetModuleBaseNameW(GetCurrentProcess(), handle, name.data(), static_cast<DWORD>(name.size()));
+        CodeModule module;
+        module.base = reinterpret_cast<std::uintptr_t>(info.lpBaseOfDll); module.end = module.base + info.SizeOfImage;
+        module.name = length ? narrow(name.data(), length) : std::string("(unnamed module)");
+        IMAGE_DOS_HEADER dos{};
+        IMAGE_NT_HEADERS64 nt{};
+        if (!readMemory(module.base, dos) || dos.e_magic != IMAGE_DOS_SIGNATURE || dos.e_lfanew <= 0 ||
+            !readMemory(module.base + static_cast<std::uintptr_t>(dos.e_lfanew), nt) || nt.Signature != IMAGE_NT_SIGNATURE) continue;
+        const auto sections = module.base + static_cast<std::uintptr_t>(dos.e_lfanew) + offsetof(IMAGE_NT_HEADERS64, OptionalHeader) + nt.FileHeader.SizeOfOptionalHeader;
+        for (WORD n = 0; n < nt.FileHeader.NumberOfSections && n < 96; ++n) {
+            IMAGE_SECTION_HEADER section{};
+            if (!readMemory(sections + n * sizeof(IMAGE_SECTION_HEADER), section)) break;
+            if (!(section.Characteristics & IMAGE_SCN_MEM_EXECUTE)) continue;
+            const auto start = module.base + section.VirtualAddress;
+            module.code.emplace_back(start, start + std::max<DWORD>(section.Misc.VirtualSize, section.SizeOfRawData));
+        }
+        if (!module.code.empty()) result.push_back(std::move(module));
+    }
+    std::sort(result.begin(), result.end(), [](const CodeModule& a, const CodeModule& b) { return a.base < b.base; });
+    return result;
+}
+// The bytes before a return address encode a call (x64): call rel32, call
+// [rip+disp32] (also the CFG dispatch), call r/[r]/[r+disp8]/[r+disp32]
+// with or without a REX prefix, and the SIB forms through rsp.
+bool afterCall(std::uintptr_t address) {
+    std::array<std::uint8_t, 7> b{};
+    if (!readMemory(address - b.size(), b)) return false;
+    const auto at = [&](int back) { return b[b.size() - static_cast<std::size_t>(back)]; };
+    if (at(5) == 0xE8) return true;
+    if (at(6) == 0xFF && at(5) == 0x15) return true;
+    if (at(2) == 0xFF && ((at(1) & 0xF8) == 0xD0 || (at(1) & 0xF8) == 0x10)) return true;
+    if (at(3) == 0xFF && (at(2) & 0xF8) == 0x50) return true;
+    if (at(6) == 0xFF && (at(5) & 0xF8) == 0x90) return true;
+    if (at(4) == 0xFF && at(3) == 0x54) return true;
+    if (at(7) == 0xFF && at(6) == 0x94) return true;
+    return false;
+}
+} // namespace
+
+PoolWorkers capturePoolWorkers() {
+    PoolWorkers result;
+    const auto modules = codeModules();
+    const auto ntdll = reinterpret_cast<std::uintptr_t>(GetModuleHandleW(L"ntdll.dll"));
+    const auto ntdllModule = std::find_if(modules.begin(), modules.end(), [&](const CodeModule& m) { return m.base == ntdll; });
+    if (!ntdll || ntdllModule == modules.end()) return result;
+    const auto query = kernelProcedure<QueryThread>(L"ntdll.dll", "NtQueryInformationThread");
+    if (!query) return result;
+    const auto everywhere = [&](std::string_view name) {
+        const auto lower = [](std::string_view s) { std::string out(s); for (auto& c : out) c = static_cast<char>(c >= 'A' && c <= 'Z' ? c - 'A' + 'a' : c); return out; };
+        const auto n = lower(name);
+        return n == "ntdll.dll" || n == "kernel32.dll" || n == "kernelbase.dll";
+    };
+    const auto snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    if (snapshot == INVALID_HANDLE_VALUE) return result;
+    FILETIME nowFile{}; GetSystemTimeAsFileTime(&nowFile);
+    const auto now = seconds(nowFile);
+    std::map<std::string, std::uint32_t> referencing;
+    std::vector<std::uint64_t> stack;
+    THREADENTRY32 entry{}; entry.dwSize = sizeof(entry);
+    const auto self = GetCurrentProcessId();
+    for (BOOL more = Thread32First(snapshot, &entry); more; more = Thread32Next(snapshot, &entry)) {
+        if (entry.th32OwnerProcessID != self || entry.th32ThreadID == GetCurrentThreadId()) continue;
+        const auto thread = OpenThread(THREAD_QUERY_INFORMATION | THREAD_QUERY_LIMITED_INFORMATION, FALSE, entry.th32ThreadID);
+        if (!thread) continue;
+        std::uintptr_t start{};
+        constexpr ULONG threadQuerySetWin32StartAddress = 9, threadBasicInformation = 0;
+        (void)query(thread, threadQuerySetWin32StartAddress, &start, sizeof(start), nullptr);
+        // THREAD_BASIC_INFORMATION: ExitStatus, TebBaseAddress, ClientId, ...
+        struct { LONG exitStatus; PVOID teb; std::uintptr_t client[2]; KAFFINITY affinity; LONG priority, basePriority; } basic{};
+        const bool pool = start >= ntdllModule->base && start < ntdllModule->end;
+        const bool known = pool && query(thread, threadBasicInformation, &basic, sizeof(basic), nullptr) >= 0 && basic.teb;
+        PoolWorker worker; worker.id = entry.th32ThreadID;
+        FILETIME created, exited, kernel, user;
+        if (pool && GetThreadTimes(thread, &created, &exited, &kernel, &user)) { worker.cpuSeconds = seconds(kernel) + seconds(user); worker.ageSeconds = std::max(0., now - seconds(created)); }
+        CloseHandle(thread);
+        if (!pool) continue;
+        ++result.workers;
+        // NT_TIB at the TEB: ExceptionList, StackBase, StackLimit.
+        std::array<std::uintptr_t, 3> tib{};
+        if (known && readMemory(reinterpret_cast<std::uintptr_t>(basic.teb), tib) && tib[1] > tib[2] && tib[1] - tib[2] <= (8u << 20)) {
+            stack.assign((tib[1] - tib[2]) / sizeof(std::uint64_t), 0);
+            SIZE_T read{};
+            if (ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<LPCVOID>(tib[2]), stack.data(), stack.size() * sizeof(std::uint64_t), &read)) stack.resize(read / sizeof(std::uint64_t));
+            else stack.clear();
+        } else stack.clear();
+        std::map<std::size_t, std::uint32_t> hits;
+        for (const auto value : stack) {
+            const auto address = static_cast<std::uintptr_t>(value);
+            auto it = std::upper_bound(modules.begin(), modules.end(), address, [](std::uintptr_t a, const CodeModule& m) { return a < m.base; });
+            if (it == modules.begin()) continue;
+            --it;
+            if (address >= it->end) continue;
+            if (std::none_of(it->code.begin(), it->code.end(), [&](const auto& r) { return address >= r.first + 8 && address < r.second; })) continue;
+            if (!afterCall(address)) continue;
+            ++hits[static_cast<std::size_t>(it - modules.begin())];
+        }
+        for (const auto& [index, count] : hits) {
+            if (everywhere(modules[index].name)) continue;
+            worker.modules.emplace_back(modules[index].name, count);
+            ++referencing[modules[index].name];
+        }
+        std::sort(worker.modules.begin(), worker.modules.end(), [](const auto& a, const auto& b) { return a.second != b.second ? a.second > b.second : a.first < b.first; });
+        if (worker.modules.size() > 10) worker.modules.resize(10);
+        result.threads.push_back(std::move(worker));
+    }
+    CloseHandle(snapshot);
+    for (auto& [name, count] : referencing) result.modules.emplace_back(name, count);
+    std::sort(result.modules.begin(), result.modules.end(), [](const auto& a, const auto& b) { return a.second != b.second ? a.second > b.second : a.first < b.first; });
+    std::sort(result.threads.begin(), result.threads.end(), [](const PoolWorker& a, const PoolWorker& b) { return a.ageSeconds > b.ageSeconds; });
+    return result;
+}
+std::uint32_t countPoolWorkers() {
+    MODULEINFO ntdll{};
+    const auto handle = GetModuleHandleW(L"ntdll.dll");
+    const auto query = kernelProcedure<QueryThread>(L"ntdll.dll", "NtQueryInformationThread");
+    if (!handle || !query || !GetModuleInformation(GetCurrentProcess(), handle, &ntdll, sizeof(ntdll))) return 0;
+    const auto base = reinterpret_cast<std::uintptr_t>(ntdll.lpBaseOfDll), end = base + ntdll.SizeOfImage;
+    const auto snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    if (snapshot == INVALID_HANDLE_VALUE) return 0;
+    std::uint32_t count{};
+    THREADENTRY32 entry{}; entry.dwSize = sizeof(entry);
+    for (BOOL more = Thread32First(snapshot, &entry); more; more = Thread32Next(snapshot, &entry)) {
+        if (entry.th32OwnerProcessID != GetCurrentProcessId()) continue;
+        const auto thread = OpenThread(THREAD_QUERY_INFORMATION | THREAD_QUERY_LIMITED_INFORMATION, FALSE, entry.th32ThreadID);
+        if (!thread) continue;
+        std::uintptr_t start{};
+        constexpr ULONG threadQuerySetWin32StartAddress = 9;
+        if (query(thread, threadQuerySetWin32StartAddress, &start, sizeof(start), nullptr) >= 0 && start >= base && start < end) ++count;
+        CloseHandle(thread);
+    }
+    CloseHandle(snapshot);
+    return count;
+}
 ProcessDiagnostics captureProcessDiagnostics(bool threadOrigins) {
     ProcessDiagnostics result;
     result.memory = captureProcessMemory();
     result.heaps = heapCounters();
     result.space = addressSpace();
     result.adapters = adapterMemory();
-    if (threadOrigins) result.threads = threadGroups();
+    if (threadOrigins) { result.threads = threadGroups(); result.pool = capturePoolWorkers(); }
     return result;
 }
 Json processMemoryJSON(const ProcessMemoryCounters& m) {
@@ -342,6 +499,16 @@ Json processDiagnosticsJSON(const ProcessDiagnostics& d) {
             {"largestPrivateAllocationsBytes", std::move(largest)}}},
         {"adapters", std::move(adapters)}};
     if (!d.threads.empty()) out["threadsByStart"] = std::move(threads);
+    if (d.pool.workers) {
+        Json::Array modules, workers;
+        for (const auto& [name, count] : d.pool.modules) modules.push_back(Json::Object{{"module", name}, {"workers", integer(count)}});
+        for (const auto& w : d.pool.threads) {
+            Json::Array seen;
+            for (const auto& [name, count] : w.modules) seen.push_back(Json::Object{{"module", name}, {"returnAddresses", integer(count)}});
+            workers.push_back(Json::Object{{"id", integer(w.id)}, {"ageSeconds", w.ageSeconds}, {"cpuSeconds", w.cpuSeconds}, {"modules", std::move(seen)}});
+        }
+        out["poolWorkers"] = Json::Object{{"count", integer(d.pool.workers)}, {"modules", std::move(modules)}, {"workers", std::move(workers)}};
+    }
     return out;
 }
 void describeCurrentThread(const wchar_t* description) noexcept {

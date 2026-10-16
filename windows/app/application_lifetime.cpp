@@ -40,7 +40,7 @@ void Application::Impl::cleanup(){if(cleaned)return;cleaned=true;ready=false;sto
     drop(calendarModuleOwner);calendar.reset();calendarState.reset();calendarNotifications.reset();if(utility&&calendarRoute)utility->invalidate(calendarRoute,false);calendarRepository.reset();calendarCivil.reset();calendarFixture.reset();
     drop(settingsModuleOwner);settingsUI.reset();drop(batteryModuleOwner);battery.reset();drop(workModeModuleOwner);workMode.reset();drop(notesModuleOwner);notes.reset();
     activityTelemetry.reset();activityPlan.stop();activityProbe.reset();
-    drop(shelfModuleOwner);shelf.reset();drop(clipboardModuleOwner);clipboard.reset();drop(volumeModuleOwner);volume.reset();drop(eventLogModuleOwner);eventLog.reset();drop(storageModuleOwner);storage.reset();drop(activityModuleOwner);activity.reset();
+    drop(shelfModuleOwner);shelf.reset();drop(clipboardModuleOwner);clipboard.reset();drop(volumeModuleOwner);volume.reset();if(utility&&volumeIconRoute)utility->invalidate(volumeIconRoute);volumeIcons.reset();drop(eventLogModuleOwner);eventLog.reset();drop(storageModuleOwner);storage.reset();drop(activityModuleOwner);activity.reset();
     drop(readerModuleOwner);reader.reset();readerOwner.reset();drop(gameModuleOwner);game.reset();gameSession.reset();drop(mapModuleOwner);map.reset();mapStore.reset();if(utility&&mapLoadRoute)utility->invalidate(mapLoadRoute);
     // Retire state routes before the shared file executor; accepted immutable
     // writes finish on its existing shutdown barrier, with callbacks dead.

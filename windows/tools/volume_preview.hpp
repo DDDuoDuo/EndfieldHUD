@@ -7,8 +7,10 @@
 #include "core/source_desktop_chrome.hpp"
 #include "core/module_presentation.hpp"
 namespace endfield::tools {
-// Borrowed app-row icon source, normally a NativeVolumeIconProvider over the
-// ONE shared Shelf Shell-icon worker. The owner asks only for the retained app
+// Borrowed app-row icon source: in EndfieldHUD.exe a VolumeQueuedIconProvider
+// on the host's shared utility queue (the Shelf keeps the process's one Shell
+// icon worker), or a NativeVolumeIconProvider over that Shelf worker where an
+// owner hands it out. The owner asks only for the retained app
 // row window (the visible rows plus one either side, <= 7 of the plan's 8)
 // after content events, never per frame, and hides the request set
 // when Volume leaves, the Headphones page or a chooser is shown. When the

@@ -90,6 +90,9 @@ modules::StorageAppearance storageAppearance(core::Language language, bool dark,
     const auto available=source::sourceWhiteBlend({accent[0],accent[1],accent[2]},.42);
     return {dark,2,language,accent,std::array<double,4>{available[0],available[1],available[2],accent[3]}};
 }
+bool presentationShows(const core::ModulePresentationSample& sample, core::Module module) noexcept {
+    return sample.current.module == module || (sample.incoming && sample.incoming->module == module);
+}
 native::VolumeStrings volumeStrings(core::Language language) {
     // The audio area's five-language catalog (native/volume_strings.hpp),
     // including the per-app routing captions; the language is already resolved.
@@ -790,6 +793,7 @@ class ArchiveModule final : public ModuleOwner {
     tools::ArchiveMediaBinding* media_;
     std::function<double()> clock_;
     std::function<void()> changed_;
+    bool posed_{}; // the last forwarded frame showed Archive
     // HUDArchiveInteraction.layoutAccessibility (native/notes_automation.hpp).
     endfield::notes::NotesAutomationBinding automation_{[this](IRawElementProviderFragmentRoot* root) { return a_.automation(root, clock_, changed_); }};
 public:
@@ -816,13 +820,25 @@ public:
     }
     void setOverlayVisible(bool v, double t) override { a_.setOverlayVisible(v, t); }
     void overlayClosing(double t) override { a_.cancelInteraction(t); a_.setOverlayVisible(false, t); }
-    void update(const ModuleFrame& f) override { a_.update(f.center, f.chrome, f.presentation, f.opacity, f.time); }
-    // The hidden Archive's first update builds its retained view (13-17 ms of
-    // the first opening frame in the hidden startup trace): done while closed,
-    // through the preview's own prewarm once it declares one.
+    // ArchivePreview::update builds the retained view whenever the Archive's
+    // content changed, shown or not (13-17 ms and about 3.4 MB of rasters).
+    // Frames reach it only while Archive is shown, plus the first frame after
+    // (it takes its pose down and deactivates), so an Archive that is never
+    // opened builds nothing; the first showing builds it.
+    void update(const ModuleFrame& f) override {
+        const bool shown = presentationShows(f.presentation, core::Module::archive);
+        if (!shown && !posed_) return;
+        a_.update(f.center, f.chrome, f.presentation, f.opacity, f.time);
+        posed_ = shown;
+    }
+    // Launch prewarm: the view is built while closed only when Archive is the
+    // first opening's module (through the preview's own prewarm once it
+    // declares one); otherwise nothing is built until Archive is opened.
     void prewarm(const ModuleFrame& f) override {
         if constexpr (PrewarmPreview<tools::ArchivePreview>) previewPrewarm(a_, f);
-        else a_.update(f.center, f.chrome, f.presentation, 0.f, f.time);
+        else if (f.presentation.requested == core::Module::archive && presentationShows(f.presentation, core::Module::archive)) {
+            a_.update(f.center, f.chrome, f.presentation, 0.f, f.time); posed_ = true;
+        }
     }
     bool requiresFrames(double t) const override { return a_.requiresFrames(t); }
     std::optional<double> nextWakeTime(double) const override { return a_.nextWakeTime(); }
