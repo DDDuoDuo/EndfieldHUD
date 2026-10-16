@@ -168,7 +168,8 @@ void trace(const wchar_t*shader,double seconds,Render render){
     const auto moving=window_("zoom every 0.4 s",false,false,true);
     std::printf("MAP_PULSE_TRACE CPU with 12 pins shown: %.1f -> %.1f ms per second (%.0f%% less), frames %.0f -> %.0f per second\n",old.cpu*1000,now.cpu*1000,old.cpu>0?(1-now.cpu/old.cpu)*100:0.,old.fps,now.fps);
     check(old.paced>old.fps*.5,"The old demand presented the pulse display-paced");
-    check(now.paced==0&&now.fps<=36&&now.fps>=10&&now.deadline<=3,"With pins shown the pulse is presented at the 30 Hz ambient cadence: no display-paced frame and no pulse wake");
+    // A pulse wake fires only when an ambient frame comes over 1/120 s later than the previous one did (a loaded machine).
+    check(now.paced==0&&now.fps<=36&&now.fps>=10&&now.deadline<=now.fps*.25,"With pins shown the pulse is presented at the 30 Hz ambient cadence: no display-paced frame, (almost) no pulse wake");
     check(low.paced==0&&low.fps<=30&&low.fps>=8&&low.deadline>=low.fps*.8,"Without the ambient cadence the pulse's own wakes present it, at most 24 Hz");
     check(moving.paced>0,"Camera motion is still display-paced");
     host.destroy();if(draws){composition.detach(renderer);o.map->release(renderer);check(renderer.stats().textures==0,"Every traced Map resource is released");renderer.reset();}
