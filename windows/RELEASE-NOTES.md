@@ -10,7 +10,13 @@ publishing:
      the staged size report.
   2. Run the section 9 gate on the test laptop's desktop against this build
      (package_perf_gate --desktop) and replace the "Performance" figures
-     with its report.
+     with its report. Skipped for windows-v1.2.0 by the owner's decision:
+     "Performance" keeps the off-screen measurements and must not claim an
+     on-screen gate pass; the gate run is a post-release follow-up, not a
+     blocker. The closed-HUD memory (about 307 MiB private within the
+     ten-minute grace, about 176 MiB after the graphics release, against
+     the gate's provisional 160 MiB) is accepted as is for this release by
+     the owner; reducing it is a post-release follow-up.
   3. Install, upgrade and uninstall the setup live (with the SmartScreen
      prompt). Done on the test laptop with release candidates 135 and 136
      (2026-10-16): installed, updated over the installed copy with the data

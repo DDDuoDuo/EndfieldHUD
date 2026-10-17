@@ -4307,9 +4307,10 @@ uninstalling works too.
   an update, the HUD appears behind the other windows; openings by the
   hotkey come to the front. A fix is in progress for the next release
   candidate.
-- **Not reported:** the on-screen `package_perf_gate --desktop` run is still
-  to do, and a pinch on a real touchpad was not specifically reported, so
-  checkpoint 135's pinch item stays open.
+- **Not reported:** the on-screen `package_perf_gate --desktop` run has not
+  been made (the owner later skipped it for `windows-v1.2.0`; *Decisions for
+  the user* below), and a pinch on a real touchpad was not specifically
+  reported, so checkpoint 135's pinch item stays open.
 
 ### Corrections to the entries above
 
@@ -4334,7 +4335,9 @@ uninstalling works too.
 ### Open items
 
 Checkpoint 135's list still applies, except the licences (settled above and
-under *Decisions for the user*). New items:
+under *Decisions for the user*); the release notes' *Performance* figures
+no longer wait for the desktop gate run, which the owner skipped for
+`windows-v1.2.0` (*Decisions for the user*). New items:
 
 - Now Playing: a queue file over 16 MiB still falls back to the fuzzy title
   search. NetEase's lyrics, time and sharp cover with *开启 SMTC* on are
@@ -4373,8 +4376,19 @@ lyrics and cover did not (above). New items:
 
 ### Decisions for the user
 
-Checkpoint 129's open decisions still apply.
+Checkpoint 129's open decisions still apply; for `windows-v1.2.0` the closed
+memory is accepted above its provisional footprint limit (below).
 
+- Settled in checkpoint 136, for `windows-v1.2.0`: the on-screen
+  `package_perf_gate --desktop` run against the packaged app is skipped,
+  and the release's performance statements rest on the hidden measurements
+  already recorded (section 9 of `WINDOWS-MIGRATION.md`); the release notes
+  claim no on-screen gate pass. The gate run stays a post-release
+  follow-up, not a release blocker (the owner's decision).
+- Settled in checkpoint 136, for `windows-v1.2.0`: the closed-HUD memory
+  (about 307 MiB private within the ten-minute grace, about 176 MiB after
+  the graphics release, against the gate's provisional 160 MiB) is accepted
+  as is. Reducing it stays a post-release follow-up (the owner's decision).
 - Settled in checkpoint 136: the HarmonyOS Sans SC numeral subset (33
   glyphs in `resources/account/account-numerals.json`) stays, covered by
   its credit line in `THIRD-PARTY-NOTICES.txt` and `CREDITS.md` only,
