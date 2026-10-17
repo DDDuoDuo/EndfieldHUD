@@ -1,0 +1,1488 @@
+{
+  "expression" : "ClipboardStore.parsedURL(_:explicit:) and read() string-path detection",
+  "provenance" : {
+    "functionSHA256" : "e8cc9a345c16298a13e8bacfdb35d66a374b9220e2f29e3fc366c075a3445ea3",
+    "modification" : "parsedURL(_:explicit:) visibility only",
+    "source" : "Sources/ClipboardStore.swift",
+    "sourceSHA256" : "3cee3eb251063751c33bb87b5d4b5585e6f51443b49c4190fdda0f5a144e73f0"
+  },
+  "rows" : [
+    {
+      "detected" : "https://example.com",
+      "explicit" : "https://example.com",
+      "parsed" : "https://example.com",
+      "text" : "https://example.com"
+    },
+    {
+      "detected" : "https://example.com/a?b=c#d",
+      "explicit" : "https://example.com/a?b=c#d",
+      "parsed" : "https://example.com/a?b=c#d",
+      "text" : "https://example.com/a?b=c#d"
+    },
+    {
+      "detected" : "https://example.com/a?b=c#d",
+      "explicit" : "https://example.com/a?b=c#d",
+      "parsed" : "https://example.com/a?b=c#d",
+      "text" : " https://example.com/a?b=c#d\n"
+    },
+    {
+      "detected" : "https://example.com",
+      "explicit" : "https://example.com",
+      "parsed" : "https://example.com",
+      "text" : "\thttps://example.com\r\n"
+    },
+    {
+      "detected" : "https://example.com/",
+      "explicit" : "https://example.com/",
+      "parsed" : "https://example.com/",
+      "text" : "https://example.com/　"
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : "﻿https://example.com"
+    },
+    {
+      "detected" : "https://a.com",
+      "explicit" : "https://a.com",
+      "parsed" : "https://a.com",
+      "text" : "https://a.com"
+    },
+    {
+      "detected" : "https://a.com/",
+      "explicit" : "https://a.com/",
+      "parsed" : "https://a.com/",
+      "text" : "https://a.com/ "
+    },
+    {
+      "detected" : "https://a.com/%E1%A0%8E",
+      "explicit" : "https://a.com/%E1%A0%8E",
+      "parsed" : "https://a.com/%E1%A0%8E",
+      "text" : "https://a.com/᠎"
+    },
+    {
+      "detected" : "https://zh.wikipedia.org/wiki/%E4%B8%AD%E5%9B%BD",
+      "explicit" : "https://zh.wikipedia.org/wiki/%E4%B8%AD%E5%9B%BD",
+      "parsed" : "https://zh.wikipedia.org/wiki/%E4%B8%AD%E5%9B%BD",
+      "text" : "https://zh.wikipedia.org/wiki/中国"
+    },
+    {
+      "detected" : "https://ja.wikipedia.org/wiki/%E6%97%A5%E6%9C%AC%E8%AA%9E?x=1#%E7%AF%80",
+      "explicit" : "https://ja.wikipedia.org/wiki/%E6%97%A5%E6%9C%AC%E8%AA%9E?x=1#%E7%AF%80",
+      "parsed" : "https://ja.wikipedia.org/wiki/%E6%97%A5%E6%9C%AC%E8%AA%9E?x=1#%E7%AF%80",
+      "text" : "https://ja.wikipedia.org/wiki/日本語?x=1#節"
+    },
+    {
+      "detected" : "https://ko.wikipedia.org/wiki/%ED%95%9C%EA%B5%AD%EC%96%B4",
+      "explicit" : "https://ko.wikipedia.org/wiki/%ED%95%9C%EA%B5%AD%EC%96%B4",
+      "parsed" : "https://ko.wikipedia.org/wiki/%ED%95%9C%EA%B5%AD%EC%96%B4",
+      "text" : "https://ko.wikipedia.org/wiki/한국어"
+    },
+    {
+      "detected" : null,
+      "explicit" : "https://example.com/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "parsed" : "https://example.com/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "text" : "https://example.com/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "detected" : null,
+      "explicit" : "https://example.com/%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD",
+      "parsed" : "https://example.com/%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD%E4%B8%AD",
+      "text" : "https://example.com/中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中"
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : ""
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : " "
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : "\n"
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : "www.example.com"
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : "example.com/path"
+    },
+    {
+      "detected" : null,
+      "explicit" : "C:%5CUsers%5Cme%5Cfile.txt",
+      "parsed" : null,
+      "text" : "C:\\Users\\me\\file.txt"
+    },
+    {
+      "detected" : null,
+      "explicit" : "localhost:3000",
+      "parsed" : null,
+      "text" : "localhost:3000"
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : "user@example.com"
+    },
+    {
+      "detected" : null,
+      "explicit" : "about:blank",
+      "parsed" : null,
+      "text" : "about:blank"
+    },
+    {
+      "detected" : null,
+      "explicit" : "data:text/plain,hi",
+      "parsed" : null,
+      "text" : "data:text/plain,hi"
+    },
+    {
+      "detected" : "http://127.0.0.1:8080/x",
+      "explicit" : "http://127.0.0.1:8080/x",
+      "parsed" : "http://127.0.0.1:8080/x",
+      "text" : "http://127.0.0.1:8080/x"
+    },
+    {
+      "detected" : "ftp://files.example.com/pub/file.zip",
+      "explicit" : "ftp://files.example.com/pub/file.zip",
+      "parsed" : "ftp://files.example.com/pub/file.zip",
+      "text" : "ftp://files.example.com/pub/file.zip"
+    },
+    {
+      "detected" : "MAILTO:someone@example.com?subject=Hi",
+      "explicit" : "MAILTO:someone@example.com?subject=Hi",
+      "parsed" : "MAILTO:someone@example.com?subject=Hi",
+      "text" : "MAILTO:someone@example.com?subject=Hi"
+    },
+    {
+      "detected" : "tel:+1-555-0100",
+      "explicit" : "tel:+1-555-0100",
+      "parsed" : "tel:+1-555-0100",
+      "text" : "tel:+1-555-0100"
+    },
+    {
+      "detected" : "file:///C:/Users/me/My%20File.txt",
+      "explicit" : "file:///C:/Users/me/My%20File.txt",
+      "parsed" : "file:///C:/Users/me/My%20File.txt",
+      "text" : "file:///C:/Users/me/My%20File.txt"
+    },
+    {
+      "detected" : "file://server/share/doc.pdf",
+      "explicit" : "file://server/share/doc.pdf",
+      "parsed" : "file://server/share/doc.pdf",
+      "text" : "file://server/share/doc.pdf"
+    },
+    {
+      "detected" : "file:///C:/Program%20Files/",
+      "explicit" : "file:///C:/Program%20Files/",
+      "parsed" : "file:///C:/Program%20Files/",
+      "text" : "file:///C:/Program%20Files/"
+    },
+    {
+      "detected" : "file://localhost/C:/x",
+      "explicit" : "file://localhost/C:/x",
+      "parsed" : "file://localhost/C:/x",
+      "text" : "file://localhost/C:/x"
+    },
+    {
+      "detected" : null,
+      "explicit" : "file:C:/x",
+      "parsed" : null,
+      "text" : "file:C:/x"
+    },
+    {
+      "detected" : "https://xn--fsqu00a.com/%E8%B7%AF%E5%BE%84",
+      "explicit" : "https://xn--fsqu00a.com/%E8%B7%AF%E5%BE%84",
+      "parsed" : "https://xn--fsqu00a.com/%E8%B7%AF%E5%BE%84",
+      "text" : "https://例子.com/路径"
+    },
+    {
+      "detected" : "https://a.com/%C3%A9",
+      "explicit" : "https://a.com/%C3%A9",
+      "parsed" : "https://a.com/%C3%A9",
+      "text" : "https://a.com/é"
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : "https://a.com/a b"
+    },
+    {
+      "detected" : "https://a.com/%3Cx%3E",
+      "explicit" : "https://a.com/%3Cx%3E",
+      "parsed" : "https://a.com/%3Cx%3E",
+      "text" : "https://a.com/<x>"
+    },
+    {
+      "detected" : "https://a.com/%25zz",
+      "explicit" : "https://a.com/%25zz",
+      "parsed" : "https://a.com/%25zz",
+      "text" : "https://a.com/%zz"
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : "https://a.com:abc/"
+    },
+    {
+      "detected" : "https://a.com:99999/",
+      "explicit" : "https://a.com:99999/",
+      "parsed" : "https://a.com:99999/",
+      "text" : "https://a.com:99999/"
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : "http://:80/"
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : "http://@/"
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : "http://user@/"
+    },
+    {
+      "detected" : "http://[::1]/",
+      "explicit" : "http://[::1]/",
+      "parsed" : "http://[::1]/",
+      "text" : "http://[::1]/"
+    },
+    {
+      "detected" : "http://[zz]/",
+      "explicit" : "http://[zz]/",
+      "parsed" : "http://[zz]/",
+      "text" : "http://[zz]/"
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : "http:///x"
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : "http://"
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : "http:"
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : "https:/a.com"
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : "https:a.com"
+    },
+    {
+      "detected" : "HTTPS://A.COM",
+      "explicit" : "HTTPS://A.COM",
+      "parsed" : "HTTPS://A.COM",
+      "text" : "HTTPS://A.COM"
+    },
+    {
+      "detected" : "ftp://h",
+      "explicit" : "ftp://h",
+      "parsed" : "ftp://h",
+      "text" : "ftp://h"
+    },
+    {
+      "detected" : null,
+      "explicit" : "mailto:",
+      "parsed" : null,
+      "text" : "mailto:"
+    },
+    {
+      "detected" : "mailto:a@b",
+      "explicit" : "mailto:a@b",
+      "parsed" : "mailto:a@b",
+      "text" : "mailto:a@b"
+    },
+    {
+      "detected" : "tel:+1",
+      "explicit" : "tel:+1",
+      "parsed" : "tel:+1",
+      "text" : "tel:+1"
+    },
+    {
+      "detected" : "sms:1",
+      "explicit" : "sms:1",
+      "parsed" : "sms:1",
+      "text" : "sms:1"
+    },
+    {
+      "detected" : null,
+      "explicit" : "file:",
+      "parsed" : null,
+      "text" : "file:"
+    },
+    {
+      "detected" : null,
+      "explicit" : "file://",
+      "parsed" : null,
+      "text" : "file://"
+    },
+    {
+      "detected" : "file:///",
+      "explicit" : "file:///",
+      "parsed" : "file:///",
+      "text" : "file:///"
+    },
+    {
+      "detected" : "file:///C:/x.txt",
+      "explicit" : "file:///C:/x.txt",
+      "parsed" : "file:///C:/x.txt",
+      "text" : "file:///C:/x.txt"
+    },
+    {
+      "detected" : null,
+      "explicit" : "file://host",
+      "parsed" : null,
+      "text" : "file://host"
+    },
+    {
+      "detected" : "file://host/x",
+      "explicit" : "file://host/x",
+      "parsed" : "file://host/x",
+      "text" : "file://host/x"
+    },
+    {
+      "detected" : null,
+      "explicit" : "javascript:alert(1)",
+      "parsed" : null,
+      "text" : "javascript:alert(1)"
+    },
+    {
+      "detected" : null,
+      "explicit" : "x-y:abc",
+      "parsed" : null,
+      "text" : "x-y:abc"
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : "1abc:x"
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : "a_b:x"
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : "abc"
+    },
+    {
+      "detected" : "http://a.com/%7C",
+      "explicit" : "http://a.com/%7C",
+      "parsed" : "http://a.com/%7C",
+      "text" : "http://a.com/|"
+    },
+    {
+      "detected" : "http://a.com/%7B%7D",
+      "explicit" : "http://a.com/%7B%7D",
+      "parsed" : "http://a.com/%7B%7D",
+      "text" : "http://a.com/{}"
+    },
+    {
+      "detected" : "http://a.com/%5Cx",
+      "explicit" : "http://a.com/%5Cx",
+      "parsed" : "http://a.com/%5Cx",
+      "text" : "http://a.com/\\x"
+    },
+    {
+      "detected" : "http://a.com/%22q%22",
+      "explicit" : "http://a.com/%22q%22",
+      "parsed" : "http://a.com/%22q%22",
+      "text" : "http://a.com/\"q\""
+    },
+    {
+      "detected" : "http://a.com/%5E",
+      "explicit" : "http://a.com/%5E",
+      "parsed" : "http://a.com/%5E",
+      "text" : "http://a.com/^"
+    },
+    {
+      "detected" : "http://a.com/%60",
+      "explicit" : "http://a.com/%60",
+      "parsed" : "http://a.com/%60",
+      "text" : "http://a.com/`"
+    },
+    {
+      "detected" : "http://a%20b.com/",
+      "explicit" : "http://a%20b.com/",
+      "parsed" : "http://a%20b.com/",
+      "text" : "http://a%20b.com/"
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : "http://a b.com"
+    },
+    {
+      "detected" : "http://a.com#frag%232",
+      "explicit" : "http://a.com#frag%232",
+      "parsed" : "http://a.com#frag%232",
+      "text" : "http://a.com#frag#2"
+    },
+    {
+      "detected" : "http://a.com/?q=%5B1%5D",
+      "explicit" : "http://a.com/?q=%5B1%5D",
+      "parsed" : "http://a.com/?q=%5B1%5D",
+      "text" : "http://a.com/?q=[1]"
+    },
+    {
+      "detected" : "http://[::1]:8080/p",
+      "explicit" : "http://[::1]:8080/p",
+      "parsed" : "http://[::1]:8080/p",
+      "text" : "http://[::1]:8080/p"
+    },
+    {
+      "detected" : "http://a..b/",
+      "explicit" : "http://a..b/",
+      "parsed" : "http://a..b/",
+      "text" : "http://a..b/"
+    },
+    {
+      "detected" : "http://-a.com/",
+      "explicit" : "http://-a.com/",
+      "parsed" : "http://-a.com/",
+      "text" : "http://-a.com/"
+    },
+    {
+      "detected" : "http://a.com./",
+      "explicit" : "http://a.com./",
+      "parsed" : "http://a.com./",
+      "text" : "http://a.com./"
+    },
+    {
+      "detected" : "http://a.com/",
+      "explicit" : "http://a.com/",
+      "parsed" : "http://a.com/",
+      "text" : "http://a​.com/"
+    },
+    {
+      "detected" : null,
+      "explicit" : "news:comp",
+      "parsed" : null,
+      "text" : "news:comp"
+    },
+    {
+      "detected" : null,
+      "explicit" : "urn:isbn:1",
+      "parsed" : null,
+      "text" : "urn:isbn:1"
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : "http://a<b>.com/"
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : "http://a|b.com/"
+    },
+    {
+      "detected" : "http://a_b.com/",
+      "explicit" : "http://a_b.com/",
+      "parsed" : "http://a_b.com/",
+      "text" : "http://a_b.com/"
+    },
+    {
+      "detected" : "http://xn--fsqu00a.com:80/x",
+      "explicit" : "http://xn--fsqu00a.com:80/x",
+      "parsed" : "http://xn--fsqu00a.com:80/x",
+      "text" : "http://例子.com:80/x"
+    },
+    {
+      "detected" : "http://xn--tda.com",
+      "explicit" : "http://xn--tda.com",
+      "parsed" : "http://xn--tda.com",
+      "text" : "http://ü.com"
+    },
+    {
+      "detected" : "http://xn--tda.com",
+      "explicit" : "http://xn--tda.com",
+      "parsed" : "http://xn--tda.com",
+      "text" : "http://Ü.COM"
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : "http://a.com:80:90/"
+    },
+    {
+      "detected" : "http://a%40b@c/",
+      "explicit" : "http://a%40b@c/",
+      "parsed" : "http://a%40b@c/",
+      "text" : "http://a@b@c/"
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : "http://a%zz.com/"
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : "http://[::1/"
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : "http://a]b/"
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : "http://a[b/"
+    },
+    {
+      "detected" : "http://xn--abc/",
+      "explicit" : "http://xn--abc/",
+      "parsed" : "http://xn--abc/",
+      "text" : "http://xn--abc/"
+    },
+    {
+      "detected" : "http://a.com:/",
+      "explicit" : "http://a.com:/",
+      "parsed" : "http://a.com:/",
+      "text" : "http://a.com:/"
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : "http://user:pa ss@a.com"
+    },
+    {
+      "detected" : "http://us%3Cer@a.com/",
+      "explicit" : "http://us%3Cer@a.com/",
+      "parsed" : "http://us%3Cer@a.com/",
+      "text" : "http://us<er@a.com/"
+    },
+    {
+      "detected" : "http://%C3%BCser@a.com/",
+      "explicit" : "http://%C3%BCser@a.com/",
+      "parsed" : "http://%C3%BCser@a.com/",
+      "text" : "http://üser@a.com/"
+    },
+    {
+      "detected" : "http://a.com/%E4%BD%A0",
+      "explicit" : "http://a.com/%E4%BD%A0",
+      "parsed" : "http://a.com/%E4%BD%A0",
+      "text" : "http://a.com/%E4%BD%A0"
+    },
+    {
+      "detected" : "http://a.com/%e4%bd%a0",
+      "explicit" : "http://a.com/%e4%bd%a0",
+      "parsed" : "http://a.com/%e4%bd%a0",
+      "text" : "http://a.com/%e4%bd%a0"
+    },
+    {
+      "detected" : "http://a.com/?q=%E4%BD%A0%E5%A5%BD&x=1",
+      "explicit" : "http://a.com/?q=%E4%BD%A0%E5%A5%BD&x=1",
+      "parsed" : "http://a.com/?q=%E4%BD%A0%E5%A5%BD&x=1",
+      "text" : "http://a.com/?q=你好&x=1"
+    },
+    {
+      "detected" : "http://a.com/#%E7%89%87%E6%AE%B5",
+      "explicit" : "http://a.com/#%E7%89%87%E6%AE%B5",
+      "parsed" : "http://a.com/#%E7%89%87%E6%AE%B5",
+      "text" : "http://a.com/#片段"
+    },
+    {
+      "detected" : "mailto:%E4%BD%A0@%E4%BE%8B%E5%AD%90.com",
+      "explicit" : "mailto:%E4%BD%A0@%E4%BE%8B%E5%AD%90.com",
+      "parsed" : "mailto:%E4%BD%A0@%E4%BE%8B%E5%AD%90.com",
+      "text" : "mailto:你@例子.com"
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : "mailto:a b"
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : "tel:+1 555"
+    },
+    {
+      "detected" : null,
+      "explicit" : "custom:%E4%BD%A0%E5%A5%BD",
+      "parsed" : null,
+      "text" : "custom:你好"
+    },
+    {
+      "detected" : "http://a.com/a%25",
+      "explicit" : "http://a.com/a%25",
+      "parsed" : "http://a.com/a%25",
+      "text" : "http://a.com/a%"
+    },
+    {
+      "detected" : "http://a.com/a%252",
+      "explicit" : "http://a.com/a%252",
+      "parsed" : "http://a.com/a%252",
+      "text" : "http://a.com/a%2"
+    },
+    {
+      "detected" : "http://a.com/%7F",
+      "explicit" : "http://a.com/%7F",
+      "parsed" : "http://a.com/%7F",
+      "text" : "http://a.com/"
+    },
+    {
+      "detected" : "http://a.com/x%01",
+      "explicit" : "http://a.com/x%01",
+      "parsed" : "http://a.com/x%01",
+      "text" : "http://a.com/x\u0001"
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : "http://a.com/x y"
+    },
+    {
+      "detected" : "http://a.com/",
+      "explicit" : "http://a.com/",
+      "parsed" : "http://a.com/",
+      "text" : "http://a.com/​"
+    },
+    {
+      "detected" : "http://ab.com/",
+      "explicit" : "http://ab.com/",
+      "parsed" : "http://ab.com/",
+      "text" : "http://a­b.com/"
+    },
+    {
+      "detected" : "http://abc.com/",
+      "explicit" : "http://abc.com/",
+      "parsed" : "http://abc.com/",
+      "text" : "http://ＡＢＣ.com/"
+    },
+    {
+      "detected" : "http://a.com/%EF%BC%A1%EF%BC%A2%EF%BC%A3",
+      "explicit" : "http://a.com/%EF%BC%A1%EF%BC%A2%EF%BC%A3",
+      "parsed" : "http://a.com/%EF%BC%A1%EF%BC%A2%EF%BC%A3",
+      "text" : "http://a.com/ＡＢＣ"
+    },
+    {
+      "detected" : "https://a.com/%F0%9F%98%80",
+      "explicit" : "https://a.com/%F0%9F%98%80",
+      "parsed" : "https://a.com/%F0%9F%98%80",
+      "text" : "https://a.com/😀"
+    },
+    {
+      "detected" : "https://xn--e28h.com/",
+      "explicit" : "https://xn--e28h.com/",
+      "parsed" : "https://xn--e28h.com/",
+      "text" : "https://😀.com/"
+    },
+    {
+      "detected" : "http://a.com?x#y?z",
+      "explicit" : "http://a.com?x#y?z",
+      "parsed" : "http://a.com?x#y?z",
+      "text" : "http://a.com?x#y?z"
+    },
+    {
+      "detected" : "http://a.com/;p=1",
+      "explicit" : "http://a.com/;p=1",
+      "parsed" : "http://a.com/;p=1",
+      "text" : "http://a.com/;p=1"
+    },
+    {
+      "detected" : "http://a.com/x'y",
+      "explicit" : "http://a.com/x'y",
+      "parsed" : "http://a.com/x'y",
+      "text" : "http://a.com/x'y"
+    },
+    {
+      "detected" : "http://a.com/x!y$z&(a)*+,=",
+      "explicit" : "http://a.com/x!y$z&(a)*+,=",
+      "parsed" : "http://a.com/x!y$z&(a)*+,=",
+      "text" : "http://a.com/x!y$z&(a)*+,="
+    },
+    {
+      "detected" : "http://a.com/~_.-",
+      "explicit" : "http://a.com/~_.-",
+      "parsed" : "http://a.com/~_.-",
+      "text" : "http://a.com/~_.-"
+    },
+    {
+      "detected" : "http://a.com/@:",
+      "explicit" : "http://a.com/@:",
+      "parsed" : "http://a.com/@:",
+      "text" : "http://a.com/@:"
+    },
+    {
+      "detected" : "http://a:b:c@d.com/",
+      "explicit" : "http://a:b:c@d.com/",
+      "parsed" : "http://a:b:c@d.com/",
+      "text" : "http://a:b:c@d.com/"
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : "http://a.com:8a/"
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : "http://a.com:-1/"
+    },
+    {
+      "detected" : "http://:@a.com/",
+      "explicit" : "http://:@a.com/",
+      "parsed" : "http://:@a.com/",
+      "text" : "http://:@a.com/"
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : "http://a.com\\b"
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : "http:\\\\a.com"
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : "https://a.com/ x"
+    },
+    {
+      "detected" : "http://xn--fa-hia.de/",
+      "explicit" : "http://xn--fa-hia.de/",
+      "parsed" : "http://xn--fa-hia.de/",
+      "text" : "http://faß.de/"
+    },
+    {
+      "detected" : "http://xn--nxasmm1c.com/",
+      "explicit" : "http://xn--nxasmm1c.com/",
+      "parsed" : "http://xn--nxasmm1c.com/",
+      "text" : "http://βόλος.com/"
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : "http://-ü.com/"
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : "http://ü-.com/"
+    },
+    {
+      "detected" : "http://xn--_b-wka.com/",
+      "explicit" : "http://xn--_b-wka.com/",
+      "parsed" : "http://xn--_b-wka.com/",
+      "text" : "http://ü_b.com/"
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : "http://üb--c.com/"
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : "http://ab--ü.com/"
+    },
+    {
+      "detected" : "http://xn--zz/",
+      "explicit" : "http://xn--zz/",
+      "parsed" : "http://xn--zz/",
+      "text" : "http://xn--zz/"
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : "http://xn--ü/"
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : "http://ü..com/"
+    },
+    {
+      "detected" : "http://xn--tda.com./",
+      "explicit" : "http://xn--tda.com./",
+      "parsed" : "http://xn--tda.com./",
+      "text" : "http://ü.com./"
+    },
+    {
+      "detected" : "http://xn--mgbh0fb.com/",
+      "explicit" : "http://xn--mgbh0fb.com/",
+      "parsed" : "http://xn--mgbh0fb.com/",
+      "text" : "http://مثال.com/"
+    },
+    {
+      "detected" : "http://xn--1-ymcl5hc.com/",
+      "explicit" : "http://xn--1-ymcl5hc.com/",
+      "parsed" : "http://xn--1-ymcl5hc.com/",
+      "text" : "http://مثال1.com/"
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : "http://1مثال.com/"
+    },
+    {
+      "detected" : "ftp://xn--tda.com",
+      "explicit" : "ftp://xn--tda.com",
+      "parsed" : "ftp://xn--tda.com",
+      "text" : "ftp://ü.com"
+    },
+    {
+      "detected" : null,
+      "explicit" : "custom://xn--tda.com/",
+      "parsed" : null,
+      "text" : "custom://ü.com/"
+    },
+    {
+      "detected" : "file://xn--tda/x",
+      "explicit" : "file://xn--tda/x",
+      "parsed" : "file://xn--tda/x",
+      "text" : "file://ü/x"
+    },
+    {
+      "detected" : null,
+      "explicit" : "ws://xn--tda.com/",
+      "parsed" : null,
+      "text" : "ws://ü.com/"
+    },
+    {
+      "detected" : "http://a.xn--tda/",
+      "explicit" : "http://a.xn--tda/",
+      "parsed" : "http://a.xn--tda/",
+      "text" : "http://a.ü/"
+    },
+    {
+      "detected" : "http://xn--tda:8080/",
+      "explicit" : "http://xn--tda:8080/",
+      "parsed" : "http://xn--tda:8080/",
+      "text" : "http://ü:8080/"
+    },
+    {
+      "detected" : "http://user@xn--tda.com/",
+      "explicit" : "http://user@xn--tda.com/",
+      "parsed" : "http://user@xn--tda.com/",
+      "text" : "http://user@ü.com/"
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : "http://[ü]/"
+    },
+    {
+      "detected" : "http://%C3%BC.com/",
+      "explicit" : "http://%C3%BC.com/",
+      "parsed" : "http://%C3%BC.com/",
+      "text" : "http://%C3%BC.com/"
+    },
+    {
+      "detected" : "http://xn--%41-goa.com/",
+      "explicit" : "http://xn--%41-goa.com/",
+      "parsed" : "http://xn--%41-goa.com/",
+      "text" : "http://ü%41.com/"
+    },
+    {
+      "detected" : "http://a%41.com/",
+      "explicit" : "http://a%41.com/",
+      "parsed" : "http://a%41.com/",
+      "text" : "http://a%41.com/"
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : "http://ü.com:abc"
+    },
+    {
+      "detected" : "http://a.com/x?y=%C3%BC#%C3%BC",
+      "explicit" : "http://a.com/x?y=%C3%BC#%C3%BC",
+      "parsed" : "http://a.com/x?y=%C3%BC#%C3%BC",
+      "text" : "http://a.com/x?y=ü#ü"
+    },
+    {
+      "detected" : "http://xn--b-zfa.com/",
+      "explicit" : "http://xn--b-zfa.com/",
+      "parsed" : "http://xn--b-zfa.com/",
+      "text" : "http://ä​b.com/"
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : "http://a‍b.com/"
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : "http://ü‌b.com/"
+    },
+    {
+      "detected" : "http://a!$&'()*+,;=.com/",
+      "explicit" : "http://a!$&'()*+,;=.com/",
+      "parsed" : "http://a!$&'()*+,;=.com/",
+      "text" : "http://a!$&'()*+,;=.com/"
+    },
+    {
+      "detected" : "http://xn--!b-wka.com/",
+      "explicit" : "http://xn--!b-wka.com/",
+      "parsed" : "http://xn--!b-wka.com/",
+      "text" : "http://ü!b.com/"
+    },
+    {
+      "detected" : "http://xii.com/",
+      "explicit" : "http://xii.com/",
+      "parsed" : "http://xii.com/",
+      "text" : "http://Ⅻ.com/"
+    },
+    {
+      "detected" : "http://fi.com/",
+      "explicit" : "http://fi.com/",
+      "parsed" : "http://fi.com/",
+      "text" : "http://ﬁ.com/"
+    },
+    {
+      "detected" : "http://xn--d-toa.com/",
+      "explicit" : "http://xn--d-toa.com/",
+      "parsed" : "http://xn--d-toa.com/",
+      "text" : "http://ǅ.com/"
+    },
+    {
+      "detected" : "http://xn--i-9bb.com/",
+      "explicit" : "http://xn--i-9bb.com/",
+      "parsed" : "http://xn--i-9bb.com/",
+      "text" : "http://İ.com/"
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : "http://ü<b.com/"
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : "http://ü|b.com/"
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : "http://ü%zz.com/"
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : "http://ü^b.com/"
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : "http://ü\"b.com/"
+    },
+    {
+      "detected" : "http://xn--~b-wka.com/",
+      "explicit" : "http://xn--~b-wka.com/",
+      "parsed" : "http://xn--~b-wka.com/",
+      "text" : "http://ü~b.com/"
+    },
+    {
+      "detected" : "http://[a:b]/",
+      "explicit" : "http://[a:b]/",
+      "parsed" : "http://[a:b]/",
+      "text" : "http://[a:b]/"
+    },
+    {
+      "detected" : "http://[::1%25eth0]/",
+      "explicit" : "http://[::1%25eth0]/",
+      "parsed" : "http://[::1%25eth0]/",
+      "text" : "http://[::1%25eth0]/"
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : "http://[a<b]/"
+    },
+    {
+      "detected" : "http://[a]:80/",
+      "explicit" : "http://[a]:80/",
+      "parsed" : "http://[a]:80/",
+      "text" : "http://[a]:80/"
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : "http://[a]x/"
+    },
+    {
+      "detected" : "http://[v1.x]/",
+      "explicit" : "http://[v1.x]/",
+      "parsed" : "http://[v1.x]/",
+      "text" : "http://[v1.x]/"
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : "http://[]/"
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : "http://%FF/"
+    },
+    {
+      "detected" : "http://%41/",
+      "explicit" : "http://%41/",
+      "parsed" : "http://%41/",
+      "text" : "http://%41/"
+    },
+    {
+      "detected" : "http://xn--%c3%bc-2ya.com/",
+      "explicit" : "http://xn--%c3%bc-2ya.com/",
+      "parsed" : "http://xn--%c3%bc-2ya.com/",
+      "text" : "http://ü%C3%BC.com/"
+    },
+    {
+      "detected" : "http://xn--tda.com%2f/",
+      "explicit" : "http://xn--tda.com%2f/",
+      "parsed" : "http://xn--tda.com%2f/",
+      "text" : "http://ü.com%2F/"
+    },
+    {
+      "detected" : "http://xn--tda.%41/",
+      "explicit" : "http://xn--tda.%41/",
+      "parsed" : "http://xn--tda.%41/",
+      "text" : "http://ü.%41/"
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : "http://üaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.com/"
+    },
+    {
+      "detected" : "http://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.com/",
+      "explicit" : "http://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.com/",
+      "parsed" : "http://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.com/",
+      "text" : "http://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.com/"
+    },
+    {
+      "detected" : "http://xn--fsqu00a.xn--fiqs8s/",
+      "explicit" : "http://xn--fsqu00a.xn--fiqs8s/",
+      "parsed" : "http://xn--fsqu00a.xn--fiqs8s/",
+      "text" : "http://例子。中国/"
+    },
+    {
+      "detected" : "https://xn--fiq228c.example/",
+      "explicit" : "https://xn--fiq228c.example/",
+      "parsed" : "https://xn--fiq228c.example/",
+      "text" : "https://中文.example/"
+    },
+    {
+      "detected" : null,
+      "explicit" : "file:///%FF",
+      "parsed" : null,
+      "text" : "file:///%FF"
+    },
+    {
+      "detected" : null,
+      "explicit" : "file:%FF",
+      "parsed" : null,
+      "text" : "file:%FF"
+    },
+    {
+      "detected" : null,
+      "explicit" : "file:x",
+      "parsed" : null,
+      "text" : "file:x"
+    },
+    {
+      "detected" : null,
+      "explicit" : "file:?q",
+      "parsed" : null,
+      "text" : "file:?q"
+    },
+    {
+      "detected" : null,
+      "explicit" : "file:%23f",
+      "parsed" : null,
+      "text" : "file:#f"
+    },
+    {
+      "detected" : null,
+      "explicit" : "file://h?q",
+      "parsed" : null,
+      "text" : "file://h?q"
+    },
+    {
+      "detected" : "http://u%25zz@a.com/",
+      "explicit" : "http://u%25zz@a.com/",
+      "parsed" : "http://u%25zz@a.com/",
+      "text" : "http://u%zz@a.com/"
+    },
+    {
+      "detected" : "http://u%41@a.com/",
+      "explicit" : "http://u%41@a.com/",
+      "parsed" : "http://u%41@a.com/",
+      "text" : "http://u%41@a.com/"
+    },
+    {
+      "detected" : "http://u:p:q@a.com/",
+      "explicit" : "http://u:p:q@a.com/",
+      "parsed" : "http://u:p:q@a.com/",
+      "text" : "http://u:p:q@a.com/"
+    },
+    {
+      "detected" : "http://u#x@a.com/",
+      "explicit" : "http://u#x@a.com/",
+      "parsed" : "http://u#x@a.com/",
+      "text" : "http://u#x@a.com/"
+    },
+    {
+      "detected" : "http://u?x@a.com/",
+      "explicit" : "http://u?x@a.com/",
+      "parsed" : "http://u?x@a.com/",
+      "text" : "http://u?x@a.com/"
+    },
+    {
+      "detected" : "http://a.com/x#y%23z",
+      "explicit" : "http://a.com/x#y%23z",
+      "parsed" : "http://a.com/x#y%23z",
+      "text" : "http://a.com/x#y#z"
+    },
+    {
+      "detected" : "http://a.com/?a?b",
+      "explicit" : "http://a.com/?a?b",
+      "parsed" : "http://a.com/?a?b",
+      "text" : "http://a.com/?a?b"
+    },
+    {
+      "detected" : "http://a.com/x%2Fy",
+      "explicit" : "http://a.com/x%2Fy",
+      "parsed" : "http://a.com/x%2Fy",
+      "text" : "http://a.com/x%2Fy"
+    },
+    {
+      "detected" : "mailto:%25",
+      "explicit" : "mailto:%25",
+      "parsed" : "mailto:%25",
+      "text" : "mailto:%"
+    },
+    {
+      "detected" : "mailto:a%25zz",
+      "explicit" : "mailto:a%25zz",
+      "parsed" : "mailto:a%25zz",
+      "text" : "mailto:a%zz"
+    },
+    {
+      "detected" : null,
+      "explicit" : "x:",
+      "parsed" : null,
+      "text" : "x:"
+    },
+    {
+      "detected" : null,
+      "explicit" : "x:/",
+      "parsed" : null,
+      "text" : "x:/"
+    },
+    {
+      "detected" : null,
+      "explicit" : "x://",
+      "parsed" : null,
+      "text" : "x://"
+    },
+    {
+      "detected" : null,
+      "explicit" : "x:///",
+      "parsed" : null,
+      "text" : "x:///"
+    },
+    {
+      "detected" : null,
+      "explicit" : "x://xn--tda",
+      "parsed" : null,
+      "text" : "x://ü"
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : "x://a<b"
+    },
+    {
+      "detected" : null,
+      "explicit" : "x:a%3Cb",
+      "parsed" : null,
+      "text" : "x:a<b"
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : "custom:a b"
+    },
+    {
+      "detected" : null,
+      "explicit" : "a+b.c-d:x",
+      "parsed" : null,
+      "text" : "a+b.c-d:x"
+    },
+    {
+      "detected" : null,
+      "explicit" : "A1:x",
+      "parsed" : null,
+      "text" : "A1:x"
+    },
+    {
+      "detected" : null,
+      "explicit" : "x:%23f",
+      "parsed" : null,
+      "text" : "x:#f"
+    },
+    {
+      "detected" : null,
+      "explicit" : "x:a%23f",
+      "parsed" : null,
+      "text" : "x:a#f"
+    },
+    {
+      "detected" : "mailto:a%23f",
+      "explicit" : "mailto:a%23f",
+      "parsed" : "mailto:a%23f",
+      "text" : "mailto:a#f"
+    },
+    {
+      "detected" : null,
+      "explicit" : "x:?q%23f",
+      "parsed" : null,
+      "text" : "x:?q#f"
+    },
+    {
+      "detected" : null,
+      "explicit" : "x:/#f",
+      "parsed" : null,
+      "text" : "x:/#f"
+    },
+    {
+      "detected" : "http://a.com#",
+      "explicit" : "http://a.com#",
+      "parsed" : "http://a.com#",
+      "text" : "http://a.com#"
+    },
+    {
+      "detected" : "http://a.com?",
+      "explicit" : "http://a.com?",
+      "parsed" : "http://a.com?",
+      "text" : "http://a.com?"
+    },
+    {
+      "detected" : null,
+      "explicit" : "x:?",
+      "parsed" : null,
+      "text" : "x:?"
+    },
+    {
+      "detected" : null,
+      "explicit" : "x:%23",
+      "parsed" : null,
+      "text" : "x:#"
+    },
+    {
+      "detected" : null,
+      "explicit" : "file:%23",
+      "parsed" : null,
+      "text" : "file:#"
+    },
+    {
+      "detected" : "http://a.com/#a%23b",
+      "explicit" : "http://a.com/#a%23b",
+      "parsed" : "http://a.com/#a%23b",
+      "text" : "http://a.com/#a#b"
+    },
+    {
+      "detected" : null,
+      "explicit" : "x:a?b%23c%23d",
+      "parsed" : null,
+      "text" : "x:a?b#c#d"
+    },
+    {
+      "detected" : null,
+      "explicit" : "x:a/b:c@d",
+      "parsed" : null,
+      "text" : "x:a/b:c@d"
+    },
+    {
+      "detected" : null,
+      "explicit" : "x:%41",
+      "parsed" : null,
+      "text" : "x:%41"
+    },
+    {
+      "detected" : null,
+      "explicit" : "x:a%25zz%23%25zz",
+      "parsed" : null,
+      "text" : "x:a%zz#%zz"
+    },
+    {
+      "detected" : "http://a.com/?%25zz",
+      "explicit" : "http://a.com/?%25zz",
+      "parsed" : "http://a.com/?%25zz",
+      "text" : "http://a.com/?%zz"
+    },
+    {
+      "detected" : "http://a.com/#%25zz",
+      "explicit" : "http://a.com/#%25zz",
+      "parsed" : "http://a.com/#%25zz",
+      "text" : "http://a.com/#%zz"
+    },
+    {
+      "detected" : null,
+      "explicit" : "x://h#f",
+      "parsed" : null,
+      "text" : "x://h#f"
+    },
+    {
+      "detected" : null,
+      "explicit" : "x://#f",
+      "parsed" : null,
+      "text" : "x://#f"
+    },
+    {
+      "detected" : null,
+      "explicit" : "x://?q",
+      "parsed" : null,
+      "text" : "x://?q"
+    },
+    {
+      "detected" : null,
+      "explicit" : "x:///#f",
+      "parsed" : null,
+      "text" : "x:///#f"
+    },
+    {
+      "detected" : "file:///#f",
+      "explicit" : "file:///#f",
+      "parsed" : "file:///#f",
+      "text" : "file:///#f"
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : "http:#f"
+    },
+    {
+      "detected" : null,
+      "explicit" : null,
+      "parsed" : null,
+      "text" : "http:?q"
+    },
+    {
+      "detected" : "mailto:%23f",
+      "explicit" : "mailto:%23f",
+      "parsed" : "mailto:%23f",
+      "text" : "mailto:#f"
+    },
+    {
+      "detected" : "mailto:?subject=x",
+      "explicit" : "mailto:?subject=x",
+      "parsed" : "mailto:?subject=x",
+      "text" : "mailto:?subject=x"
+    },
+    {
+      "detected" : "tel:%231",
+      "explicit" : "tel:%231",
+      "parsed" : "tel:%231",
+      "text" : "tel:#1"
+    },
+    {
+      "detected" : null,
+      "explicit" : "x:a%5Bb%5D",
+      "parsed" : null,
+      "text" : "x:a[b]"
+    },
+    {
+      "detected" : "http://a.com/%5Bx%5D",
+      "explicit" : "http://a.com/%5Bx%5D",
+      "parsed" : "http://a.com/%5Bx%5D",
+      "text" : "http://a.com/[x]"
+    }
+  ],
+  "runtime" : "Version 15.7.4 (Build 24G517)"
+}

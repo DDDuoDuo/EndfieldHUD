@@ -1,0 +1,112 @@
+{
+  "candidateBytes": 96492,
+  "candidateSHA256": "0f591e33e4f0448f7545fbdc080f57a1cf49388aead155009503feea3ab30734",
+  "completeRuntimeParityClaimed": false,
+  "coverageMismatches": 16,
+  "coverageProbes": 199202,
+  "discontinuityBrackets": [
+    {
+      "direction": -1,
+      "hi": 0.00017471990751218985,
+      "lo": 0.00017471990696794822,
+      "width": 5.442416265918903e-13
+    },
+    {
+      "direction": -1,
+      "hi": 0.2930087596180323,
+      "lo": 0.29300875961748807,
+      "width": 5.442313266712517e-13
+    },
+    {
+      "direction": -1,
+      "hi": 0.30022131188305207,
+      "lo": 0.30022131188236234,
+      "width": 6.897260540483785e-13
+    },
+    {
+      "direction": -1,
+      "hi": 0.6711444288493076,
+      "lo": 0.6711444288486178,
+      "width": 6.897815651996098e-13
+    },
+    {
+      "direction": -1,
+      "hi": 0.6801863679015281,
+      "lo": 0.6801863679009474,
+      "width": 5.806466418789569e-13
+    },
+    {
+      "direction": -1,
+      "hi": 0.9925426769261216,
+      "lo": 0.992542676925541,
+      "width": 5.806466418789569e-13
+    },
+    {
+      "direction": 1,
+      "hi": 0.00017471990751218985,
+      "lo": 0.00017471990696794822,
+      "width": 5.442416265918903e-13
+    },
+    {
+      "direction": 1,
+      "hi": 0.2930087596180323,
+      "lo": 0.29300875961748807,
+      "width": 5.442313266712517e-13
+    },
+    {
+      "direction": 1,
+      "hi": 0.30022131188305207,
+      "lo": 0.30022131188236234,
+      "width": 6.897260540483785e-13
+    },
+    {
+      "direction": 1,
+      "hi": 0.6711444288493076,
+      "lo": 0.6711444288486178,
+      "width": 6.897815651996098e-13
+    },
+    {
+      "direction": 1,
+      "hi": 0.6801863679015281,
+      "lo": 0.6801863679009474,
+      "width": 5.806466418789569e-13
+    },
+    {
+      "direction": 1,
+      "hi": 0.9925426769261216,
+      "lo": 0.992542676925541,
+      "width": 5.806466418789569e-13
+    }
+  ],
+  "independentBoundaryUpperBound": 0.015204050422436355,
+  "independentHoldouts": 390,
+  "maximumCoverageMismatchDistance": 0.0069936494570105165,
+  "maximumRepeatDifference": 0,
+  "measuredRegularIntervalsPass": true,
+  "provenance": {
+    "buildCopySHA256": "78dc5e77c8edf5c4286fddf85be38ec95d68b70963b19ff45490e2a4f2e5bf87",
+    "canvasSource": "Sources/ActivityMonitorCanvas.swift",
+    "canvasSourceSHA256": "5705dc2513a1011dd9a40f764a00bcaec33b309463f93fce3d24fe7e9ccff749",
+    "macOS": "15.7.4",
+    "oracleToolSHA256": "6683ac6c0b3f39a48080f8b008c3fb388c6132b08af28d20c413fcddcc4dbbb3",
+    "scope": "Exact Activity appRows.bounds, actual isolated offscreen Core Animation; no activity/providers/user data; only fixture viewport changed",
+    "sdk": "/Library/Developer/CommandLineTools/SDKs/MacOSX15.5.sdk",
+    "source": "Sources/HUDSubsectionTransition.swift",
+    "sourceSHA256": "c73bfac1c87385dafb7c9387c8d834c937e37eb51e189ad6425602dd6fcff355",
+    "viewport": [
+      0,
+      0,
+      376,
+      226
+    ]
+  },
+  "schemaVersion": 1,
+  "sourceDuration": 0.26,
+  "sourceSamples": 1270,
+  "viewport": [
+    0,
+    0,
+    376,
+    226
+  ]
+}

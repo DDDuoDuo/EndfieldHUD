@@ -1,0 +1,13 @@
+{
+  "fourByteRanges": 209,
+  "pairs": 23940,
+  "scope": "Exhaustive detached Foundation GB_18030_2000 byte-sequence API oracle, same encoding selected by original ReaderDocument.swift59. No app activation/windows/user data. Full ReaderDocument facts remain independently checked by reader-format-reference.json.",
+  "singleBytes": 256,
+  "sourceAuthority": "ca04f142185c7de40acd8523bdb563195d90a1d1",
+  "sourceSHA256": {
+    "Sources/ReaderDocument.swift": "c73e4c10b4cc3714e36efd35c3da59a4c3f103ea981eb0546a06a024f6561a72",
+    "windows/tools/reader_gb18030_reference.sh": "ae1629c0a1f5dc943be4a922f95e9c32db38ae47d104ae36cda8c10d98443fe8",
+    "windows/tools/reader_gb18030_reference.swift": "aaa4c9c7cd41e373e051e02133720a6532eca59cf4e9d005d22cd686f98afca4"
+  },
+  "tableSHA256": "0ec6fed559d66270eac4acdb54282fcbfb781115623f209aba058bcce33775e1"
+}

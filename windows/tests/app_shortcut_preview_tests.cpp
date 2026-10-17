@@ -1,0 +1,135 @@
+#ifdef _WIN32
+#include "tools/app_shortcut_preview.hpp"
+#include "native/module_scene.hpp"
+#include <windows.h>
+#include <objbase.h>
+#include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <iostream>
+#include <iterator>
+namespace {
+namespace c=endfield::core;namespace m=endfield::modules;namespace n=endfield::native;namespace a=endfield::app;namespace t=endfield::tools;using J=ehud::data::Json;
+unsigned checks{};void check(bool v,const char*s){++checks;if(!v)throw std::runtime_error(s);}
+// Startup cost of the + Add App canvas owner (reported, not asserted): the
+// pinned asset load, the owner construction, a frame while another module is
+// shown, the first frame that shows + Add App (its canvas artwork, upload and
+// composition; WARP drawing excluded) and the settled frame after it.
+using Clock=std::chrono::steady_clock;
+double since(Clock::time_point start){return std::chrono::duration<double,std::milli>(Clock::now()-start).count();}
+double assetsMS{},constructionMS{},hiddenFrameMS{},firstShownFrameMS{},settledFrameMS{};
+// Wheel scrolling cost (reported): steps of a few points inside one row
+// window and whole 36-point wheel notches across rows, each with its frame.
+struct ScrollCost{double maximumMS{},totalMS{};std::uint64_t rasterizations{},uploads{};unsigned steps{};};ScrollCost smallScroll,notchScroll;
+// What + Add App keeps resident at the production raster scale (two pixels
+// per point; reported): the canvas pixel bytes of the shown list of eight
+// saved apps and of the draft (with its open name field), what stays once
+// the HUD closed on another module (before this audit the hidden canvas
+// stayed: the list's bytes), the shared rasterizer's bytes around that
+// release, and the frame that shows + Add App again (its rebuild).
+struct Resident{std::size_t list{},listSurfaces{},listGPU{},draft{},draftField{},draftGPU{},parked{},sharedBefore{},sharedAfter{};double rebuildMS{};}resident;
+struct Window {HWND hwnd{};Window(){WNDCLASSW c{};c.lpfnWndProc=DefWindowProcW;c.hInstance=GetModuleHandleW(nullptr);c.lpszClassName=L"OwnedShortcutPreviewFixture";check(RegisterClassW(&c)!=0,"Register owned isolated Shortcut fixture");hwnd=CreateWindowExW(WS_EX_NOREDIRECTIONBITMAP,c.lpszClassName,L"Synthetic",WS_POPUP,0,0,1280,800,nullptr,nullptr,c.hInstance,nullptr);check(hwnd&&!IsWindowVisible(hwnd),"Fixture stays hidden and never activates native input");}~Window(){DestroyWindow(hwnd);UnregisterClassW(L"OwnedShortcutPreviewFixture",GetModuleHandleW(nullptr));}};
+// In-memory Edit-menu clipboard; the system clipboard is never touched.
+struct Clipboard final:n::NotesClipboard{std::optional<n::NotesClipboardText>value;unsigned writes{};
+ std::optional<n::NotesClipboardText>readText(std::uint32_t maximum)override{if(!value||value->text.size()>maximum)return std::nullopt;return value;}
+ std::vector<std::string>readFiles()override{return {};}bool writeText(const n::NotesClipboardText&v)override{++writes;value=v;return true;}};
+m::ShortcutFile items(){m::ShortcutFile f;for(unsigned k=0;k<10;++k){m::ShortcutRecord v;char id[37];snprintf(id,sizeof(id),"00000000-0000-4000-8000-%012u",k+1);v.id=id;v.name="Neutral "+std::to_string(k);v.originalName="Original";v.iconPreset="terminal";f.items.push_back(std::move(v));}return f;}
+void run(n::Renderer&r,n::LayerRasterizer&raster,HWND window,const n::NativeAppShortcutAssets&assets){t::AppShortcutPreviewOptions options;options.initial=items();options.raster.pixelsPerPoint=1;auto clipboard=std::make_shared<Clipboard>();options.clipboard=clipboard;const auto constructing=Clock::now();t::AppShortcutPreview owner(window,raster,assets,nullptr,TF_CLIENTID_NULL,options);constructionMS=since(constructing);owner.resize({1280,800,96,1,1280,800});n::LayerComposition composition;bool done{};struct Guard{n::Renderer&r;n::LayerComposition&c;t::AppShortcutPreview&o;bool&done;~Guard(){if(done)return;try{c.detach(r);o.release(r);}catch(...){r.reset();}}}guard{r,composition,owner,done};
+ c::ModulePresentation modules(c::Module::power);c::source::DesktopChromeSettings settings{{0,0,1280,800},1,{},c::Module::power,true};auto center=c::source::DesktopChromeLayout::make(settings,{},{}).designToScreen;double time{};n::LayerScene geometry(raster);geometry.load(J::Object{{"bounds",J::Array{0,0,400,334}},{"children",J::Array{}}},options.raster);n::NativeModuleSurface plane(geometry,c::Module::addApp);
+ const auto frame=[&](double dt=1./60){time+=dt;settings.module=modules.requested();const auto sample=modules.sample(time).presentation;owner.update(center,settings,sample,1,time);owner.upload(r);composition.setEntries(r,owner.entries());composition.present(r);owner.collected(r);};
+ const auto point=[&](c::Point p){const auto sample=modules.sample(time).presentation;const auto*shown=sample.current.module==c::Module::addApp?&sample.current:&*sample.incoming;plane.update(center,settings,*shown);return *c::Projection::viewport(n::layerViewportProjection(1280,800)*plane.pose().contentWorld,1280,800).project(p);};
+ const auto action=[&](m::ShortcutActionKind kind,std::string value={}){return owner.perform({kind,std::move(value),{}},time);};
+ const auto choose=[&](std::string name){check(action(m::ShortcutActionKind::choose),"Original Add requests explicit chooser");auto request=owner.takeRequest();check(request&&request->kind==t::ShortcutRequestKind::choose&&owner.presentingPanel(),"One owned picker request locks only its native dialog");check(owner.completeCandidate(request->generation,{std::move(name)},time),"Injected selected candidate begins original draft");frame(.30);};
+ {const auto at=Clock::now();frame();hiddenFrameMS=since(at);}check(owner.entries().empty()&&!owner.requiresFrames(time),"Hidden initial owner has no visible native content or frame demand");modules.select(c::Module::addApp,time);{const auto at=Clock::now();frame(.03);firstShownFrameMS=since(at);}check(!owner.covers({640,400}),"Incoming module rejects pointer until shared transition settles");{const auto at=Clock::now();frame(.4);settledFrameMS=since(at);}check(owner.covers(point({10,10})),"Settled owner uses the actual source center projection");
+ check(owner.scroll(point({100,100}),13.25,time)&&owner.state().scrollOffset()==13.25,"Fractional list scroll is preserved without a durable request");check(!owner.takeRequest(),"Scrolling never creates OS or persistence work");
+ const auto firstID=owner.state().file().items[0].id;check(action(m::ShortcutActionKind::launch,firstID),"Launch action is explicit and selected-record based");auto launch=owner.takeRequest();check(launch&&launch->record&&launch->kind==t::ShortcutRequestKind::launch,"Host receives the exact launch record before close");owner.setOverlayVisible(false,time);frame();check(owner.busy()&&!owner.takeCancelledRequest(),"Accepted close-first launch survives its required HUD conceal");check(owner.completeRequest(launch->generation,{},time)&&!owner.busy(),"Launch completion clears only the accepted request");owner.setOverlayVisible(true,time);frame();
+ check(action(m::ShortcutActionKind::choose),"Begin cancellable chooser");auto stale=owner.takeRequest();owner.setOverlayVisible(false,time);check(owner.takeCancelledRequest()==std::optional(stale->generation),"Conceal cancels the exact stale chooser generation");check(!owner.completeCandidate(stale->generation,{"Late"},time)&&!owner.state().editing(),"Late native dialog result cannot reopen hidden draft");owner.setOverlayVisible(true,time);frame();
+ // Imported (non-Windows) records are relinked by choosing while editing them: the inspection carries the edited identity, the draft keeps its name and icon.
+ check(action(m::ShortcutActionKind::edit,firstID),"Edit an imported record");auto edit=owner.takeRequest();check(edit&&edit->kind==t::ShortcutRequestKind::edit&&edit->editingID==firstID,"Edit names the imported record");
+ check(owner.completeCandidate(edit->generation,{"Original"},time)&&owner.state().editingID()==firstID,"Imported record opens its draft");frame(.30);check(owner.finishEditing(true,time),"Finish the arrival name field");
+ check(owner.inspectSelection({n::AppShortcutSelectionKind::file,"C:\\Apps\\Relinked.exe"},time),"A chosen Windows application is inspected");auto relink=owner.takeRequest();
+ check(relink&&relink->kind==t::ShortcutRequestKind::inspect&&relink->editingID==firstID,"Choosing while editing an imported record relinks that record");
+ check(owner.completeCandidate(relink->generation,{"Relinked application"},time)&&owner.state().editingID()==firstID&&owner.state().draftName()=="Neutral 0"&&owner.state().draftIcon()=="terminal"&&owner.state().candidate()->name=="Relinked application","The relink draft keeps the saved name, icon and identity");
+ frame(.30);check(owner.finishEditing(true,time)&&action(m::ShortcutActionKind::cancel),"Cancel the relink draft");frame(.30);check(!owner.state().editing(),"Relink draft cancelled");
+ {auto loaded=owner.state().file();const auto all=loaded;loaded.items.resize(3);owner.replaceItems(loaded,time);check(owner.state().file()==loaded&&owner.state().scrollOffset()==0&&!owner.takeRequest(),"A loaded committed file replaces the list without a request and clamps the scroll");owner.replaceItems(all,time);frame();check(owner.state().file()==all,"The full committed list returns");}
+ check(owner.scroll(point({100,100}),13.25,time)&&owner.state().scrollOffset()==13.25,"Restore the fractional list offset");
+ choose("A\r\nB");check(owner.editingName()&&owner.state().draftName()=="A\r\nB","Source arrival selects one borrowed plain name field");check(owner.finishEditing(true,time)&&!owner.editingName()&&owner.state().draftName()=="A  B","Finish normalizes unchanged candidate with original Foundation newline rule");frame();check(!owner.takeRequest(),"Applying name neither saves nor starts OS work");
+ check(action(m::ShortcutActionKind::name)&&owner.editingName(),"Name reopens the shared projected editor");{// key(event,false) reads no keyboard state: Control held in this thread's own key-state table (SetKeyboardState never reaches another thread or the system) leaves the plain character typed.
+  BYTE saved[256]{},held[256]{};const bool stored=GetKeyboardState(saved)!=0;std::copy(std::begin(saved),std::end(saved),std::begin(held));held[VK_CONTROL]=held[VK_LCONTROL]=0x80;const bool holding=stored&&SetKeyboardState(held)!=0;
+  const bool typed=owner.key({a::KeyKind::unicodeCharacter,'Z'},false,time);if(holding)SetKeyboardState(saved);check(typed,"Plain field accepts a source Unicode character whatever the keyboard state");}check(owner.key({a::KeyKind::down,VK_RETURN},false,time)&&!owner.editingName()&&owner.state().draftName()=="Z","Initial select-all and Return replace draft only");frame();
+ check(action(m::ShortcutActionKind::name),"Reopen name before cancel");owner.key({a::KeyKind::unicodeCharacter,'X'},false,time);check(owner.key({a::KeyKind::down,VK_ESCAPE},false,time)&&owner.state().draftName()=="Z"&&!owner.editingName(),"Unmarked Escape abandons name field before whole draft");frame();
+ // Edit-menu Cut/Copy/Paste of the name field through the injected clipboard, and the accessibility projection of the field.
+ check(action(m::ShortcutActionKind::name)&&owner.editingName()&&owner.fieldText()=="Z","Name reopens with its text selected");
+ // Synthetic keys state their modifiers (key(event,false) reads no live keyboard state).
+ t::ShortcutKeyModifiers control;control.modified=control.control=true;
+ check(!owner.key({a::KeyKind::character,'Q'},control,time)&&owner.fieldText()=="Z"&&owner.editingName(),"A Control-modified character is not typed into the name field");
+ check(owner.key({a::KeyKind::down,'C'},control,time)&&clipboard->writes==1&&clipboard->value&&clipboard->value->text==u"Z","Ctrl+C copies the selected name");
+ clipboard->value=n::NotesClipboardText{u"Pasted\nName",std::nullopt};check(owner.key({a::KeyKind::down,'V'},control,time)&&owner.fieldText()=="Pasted Name","Ctrl+V replaces the selection and line breaks become spaces");
+ check(owner.key({a::KeyKind::down,'A'},control,time)&&owner.key({a::KeyKind::down,'X'},control,time)&&owner.fieldText()==""&&clipboard->writes==2&&clipboard->value->text==u"Pasted Name","Ctrl+X cuts the selected name");
+ check(owner.setFieldText("Spoken",time)&&owner.fieldText()=="Spoken"&&owner.acceptsInput(),"The accessibility value replaces the name through its editor");
+ {const auto rect=owner.clientRect(m::shortcutNameRect);check(rect&&rect->width>0&&rect->height>0&&owner.covers({rect->x+rect->width/2,rect->y+rect->height/2}),"The name rect projects onto the current client plane");}
+ // HUDProjectedTextView.projectedCursor: the I-beam only inside the open field's projected rect.
+ check(owner.textCursorAt(point({230,90}))&&owner.textCursorAt(point({80,79}))&&!owner.textCursorAt(point({230,60}))&&!owner.textCursorAt(point({60,90}))&&!owner.textCursorAt(point({230,190}))&&
+       !owner.textCursorAt({std::nan(""),0}),"The open name field answers the I-beam inside its projected rect only");
+ check(owner.key({a::KeyKind::down,VK_ESCAPE},false,time)&&owner.state().draftName()=="Z"&&!owner.editingName()&&!owner.fieldText(),"Escape abandons the clipboard edits");frame();
+ check(!owner.textCursorAt(point({230,90})),"A closed name field answers no I-beam");
+ check(action(m::ShortcutActionKind::icon,"camera"),"Original source icon choice is retained");frame(.2);check(action(m::ShortcutActionKind::save),"Save enqueues one explicit repository operation");auto save=owner.takeRequest();check(save&&save->name=="Z"&&save->icon=="camera"&&save->candidate&&owner.busy(),"Save request freezes selected candidate and name/icon payload");check(owner.completeRequest(save->generation,"Synthetic write failure",time)&&owner.state().editing()&&owner.state().error().has_value(),"Failed durable write preserves editable source draft");frame();
+ check(action(m::ShortcutActionKind::save),"Failed save can be retried explicitly");save=owner.takeRequest();owner.setOverlayVisible(false,time);check(owner.busy()&&!owner.takeCancelledRequest(),"Accepted write is retained while hidden");auto committed=owner.state().file();auto extra=committed.items.front();extra.id="00000000-0000-4000-8000-000000000099";extra.name="Z";extra.iconPreset="camera";committed.items.push_back(extra);check(owner.completeFile(save->generation,committed,time)&&!owner.state().editing()&&owner.state().file().items.size()==11,"Only committed file acknowledgement replaces durable UI data");frame();owner.setOverlayVisible(true,time);frame(.3);
+ center=center*c::Matrix4::rotation(.03,-.06,0);frame();check(owner.covers(point({200,150})),"Tilted source paint and hits share one current plane");check(owner.scroll(point({100,100}),6.5,time)&&owner.state().scrollOffset()==19.75,"Tilt preserves fractional session list offset");
+ m::ShortcutAppearance light;light.dark=false;light.language=c::Language::korean;owner.setAppearance(light,time);frame();check(owner.state().scrollOffset()==19.75&&owner.state().file()==committed,"Language/theme events retain file and scroll identity");
+ choose("Preserved");owner.key({a::KeyKind::unicodeCharacter,'Q'},false,time);owner.setOverlayVisible(false,time);frame();check(!owner.editingName()&&owner.state().editing()&&owner.state().draftName()=="Q","Conceal commits final field text but preserves unsaved source draft");check(!owner.requiresFrames(time)&&!owner.pointerLocked(),"Closed owner has no animation or input lock");owner.setOverlayVisible(true,time);frame();check(!owner.editingName()&&owner.state().draftName()=="Q","Reopen never resurrects stale editor completion");
+ // A new HUD session (Mac recreates its canvas on every open): the owner resets the hidden canvas; an active canvas never resets.
+ owner.setOverlayVisible(false,time);frame();check(owner.resetSession(time)&&!owner.state().editing()&&!owner.state().error()&&owner.state().scrollOffset()==0&&owner.state().file()==committed&&!owner.takeRequest(),"A new session drops the draft and returns to the top of the committed list");
+ owner.setOverlayVisible(true,time);frame(.4);check(owner.state().active()&&!owner.resetSession(time)&&!owner.state().editing(),"An active canvas never resets its session");
+ {const auto step=[&](double delta,ScrollCost&cost){const auto rasters=raster.stats().rasterizations;const auto uploads=r.stats().textureUploads;check(owner.scroll(point({100,100}),delta,time),"A wheel step over the list scrolls it");const auto at=Clock::now();frame();const auto ms=since(at);cost.maximumMS=std::max(cost.maximumMS,ms);cost.totalMS+=ms;cost.rasterizations+=raster.stats().rasterizations-rasters;cost.uploads+=r.stats().textureUploads-uploads;++cost.steps;};
+  check(owner.scroll(point({100,100}),12,time)&&owner.state().scrollOffset()==12,"Scroll into one row window");frame();for(int k=0;k<6;++k)step(4,smallScroll);for(int k=0;k<6;++k)step(36,notchScroll);
+  check(owner.state().scrollOffset()==252,"Wheel steps add their exact offsets");
+  check(smallScroll.rasterizations==0&&smallScroll.uploads==0,"Wheel steps inside the retained cards only re-place them: no paint, no upload");
+  check(notchScroll.rasterizations<=3*notchScroll.steps&&notchScroll.uploads==notchScroll.rasterizations,"A wheel notch repaints only the own leaves of the card it brings in");check(owner.scroll(point({100,100}),-1000,time)&&owner.state().scrollOffset()==0,"The list returns to its top");frame();}
+ const auto listed=owner.resources();check(listed.scene.parts==1&&listed.scene.pixelBytes>0&&listed.fields==0,"The shown list holds one canvas");
+ modules.select(c::Module::power,time);frame(.03);check(!owner.entries().empty(),"Outgoing original artwork survives until shared module transition ends");frame(.4);check(owner.entries().empty()&&!owner.requiresFrames(time),"Departed module has no published content or frame demand");
+ // Memory (Mac OverlayController releases SystemHUDView on every close and
+ // makes a fresh canvas on the next opening): a switch inside the open HUD
+ // keeps the canvas (switching back must not stall on a rebuild); once the
+ // HUD has closed on another module it is released; the shown + Add App
+ // keeps it across a close.
+ {const auto hidden=owner.resources();
+  check(hidden.scene.parts==listed.scene.parts&&hidden.scene.pixelBytes==listed.scene.pixelBytes&&!owner.conceal(),"A module switch inside the open HUD keeps the canvas");
+  owner.setOverlayVisible(false,time);frame();const auto shared=raster.stats();
+  check(owner.conceal(),"Once the HUD closed on another module the hidden canvas is released");const auto parked=owner.resources();const auto released=raster.stats();
+  check(parked.scene.parts==0&&parked.scene.rasterSurfaces==0&&parked.scene.pixelBytes==0&&parked.fields==0&&parked.scene.parks==hidden.scene.parks+1,"The closed HUD keeps no hidden + Add App artwork");
+  check(released.resourceBytes+hidden.scene.pixelBytes==shared.resourceBytes&&released.entries+hidden.scene.rasterSurfaces<=shared.entries,"Its rasters leave the shared rasterizer");
+  check(!owner.conceal(),"Nothing more to release");
+  owner.setOverlayVisible(true,time);frame();check(owner.resources().scene.parts==0&&owner.entries().empty(),"Opening the HUD on another module builds no + Add App canvas");
+  modules.select(c::Module::addApp,time);frame(.03);frame(.4);const auto rebuilt=owner.resources();
+  check(rebuilt.scene.parts==1&&rebuilt.scene.builds==hidden.scene.builds+1&&rebuilt.scene.pixelBytes==listed.scene.pixelBytes&&rebuilt.scene.rasterSurfaces==listed.scene.rasterSurfaces,"Showing + Add App again rebuilds the same canvas");
+  owner.setOverlayVisible(false,time);frame();check(!owner.conceal()&&owner.resources().scene.parts==1&&owner.resources().scene.pixelBytes>0,"The shown + Add App keeps its canvas across a close");
+  owner.setOverlayVisible(true,time);frame(.4);modules.select(c::Module::power,time);frame(.03);frame(.4);check(owner.entries().empty(),"Departed again");}
+ composition.detach(r);owner.release(r);check(r.stats().textures==0&&r.stats().meshes==0,"All Shortcut owner resources release after composition detach");done=true;
+}
+// Resident artwork at the production raster scale (two pixels per point).
+void measure(n::Renderer&r,n::LayerRasterizer&raster,HWND window,const n::NativeAppShortcutAssets&assets){t::AppShortcutPreviewOptions options;auto file=items();file.items.resize(8);options.initial=file;
+ check(options.raster.pixelsPerPoint==2,"The production canvas rasterizes two pixels per point");
+ t::AppShortcutPreview owner(window,raster,assets,nullptr,TF_CLIENTID_NULL,options);owner.resize({1280,800,96,1,1280,800});n::LayerComposition composition;bool done{};struct Guard{n::Renderer&r;n::LayerComposition&c;t::AppShortcutPreview&o;bool&done;~Guard(){if(done)return;try{c.detach(r);o.release(r);}catch(...){r.reset();}}}guard{r,composition,owner,done};
+ c::ModulePresentation modules(c::Module::power);c::source::DesktopChromeSettings settings{{0,0,1280,800},1,{},c::Module::power,true};const auto center=c::source::DesktopChromeLayout::make(settings,{},{}).designToScreen;double time{};
+ const auto frame=[&](double dt=1./60){time+=dt;settings.module=modules.requested();const auto sample=modules.sample(time).presentation;owner.update(center,settings,sample,1,time);owner.upload(r);composition.setEntries(r,owner.entries());composition.present(r);owner.collected(r);};
+ frame();modules.select(c::Module::addApp,time);frame(.03);frame(.4);
+ {const auto list=owner.resources();check(list.scene.parts==1&&list.scene.pixelBytes>0,"The production list holds one canvas");resident.list=list.scene.pixelBytes;resident.listSurfaces=list.scene.rasterSurfaces;resident.listGPU=r.stats().resourceBytes;
+  // Card, button and tile plates are GPU meshes, captions rasterize their glyphs' width and idle feedback holds no
+  // bitmap: eight saved apps keep about 400 KiB (6220 KiB with every leaf a full-size bitmap).
+  check(resident.list<=512*1024,"The production list of eight keeps at most 512 KiB of raster");}
+ check(owner.perform({m::ShortcutActionKind::choose,{},{}},time),"Choose at production scale");auto request=owner.takeRequest();check(request&&owner.completeCandidate(request->generation,{"Synthetic"},time),"A candidate opens the draft");frame(.30);frame();
+ {const auto draft=owner.resources();check(owner.editingName()&&draft.fields==1,"The draft opens its name field");resident.draft=draft.scene.pixelBytes;resident.draftField=draft.fieldPixelBytes;resident.draftGPU=r.stats().resourceBytes;
+  // The name field's background and border are meshes: it keeps only its text (423 KiB with both as bitmaps).
+  check(resident.draft<=512*1024&&resident.draftField<=192*1024,"The production draft keeps at most 512 KiB and its name field 192 KiB of raster");}
+ check(owner.finishEditing(true,time)&&owner.perform({m::ShortcutActionKind::cancel,{},{}},time),"Cancel the production draft");frame(.30);frame();check(!owner.state().editing(),"The list returns");
+ modules.select(c::Module::power,time);frame(.03);frame(.4);owner.setOverlayVisible(false,time);frame();
+ resident.sharedBefore=raster.stats().resourceBytes;check(owner.conceal(),"The hidden production canvas is released after the close");resident.sharedAfter=raster.stats().resourceBytes;
+ {const auto parked=owner.resources();resident.parked=parked.scene.pixelBytes+parked.fieldPixelBytes;check(resident.parked==0,"Nothing stays resident");}
+ owner.setOverlayVisible(true,time);frame();modules.select(c::Module::addApp,time);{const auto at=Clock::now();frame(.03);resident.rebuildMS=since(at);}frame(.4);
+ check(owner.resources().scene.pixelBytes==resident.list,"Showing it again rebuilds the same production canvas");
+ modules.select(c::Module::power,time);frame(.03);frame(.4);composition.detach(r);owner.release(r);done=true;
+}
+}
+int wmain(int argc,wchar_t**argv){struct Apartment{HRESULT hr{CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED)};~Apartment(){if(SUCCEEDED(hr))CoUninitialize();}}apartment;try{check(SUCCEEDED(apartment.hr)&&argc==3,"Pass native HLSL and production Shortcut assets");Window window;n::Renderer renderer;renderer.initialize(window.hwnd,1280,800,{n::Driver::warpForTests,argv[1],n::RenderTarget::offscreenForTests});renderer.setCamera(n::layerViewportProjection(1280,800));n::LayerRasterizer raster;const auto loading=Clock::now();n::NativeAppShortcutAssets assets(std::filesystem::absolute(argv[2]));assetsMS=since(loading);run(renderer,raster,window.hwnd,assets);measure(renderer,raster,window.hwnd,assets);renderer.reset();std::cout<<"PASS "<<checks<<" Shortcut owner checks (startup: assets "<<assetsMS<<" ms, construction "<<constructionMS<<" ms, hidden frame "<<hiddenFrameMS<<" ms, first Add App frame "<<firstShownFrameMS<<" ms, settled frame "<<settledFrameMS<<" ms; scroll: "<<smallScroll.steps<<" small steps max "<<smallScroll.maximumMS<<" ms mean "<<smallScroll.totalMS/smallScroll.steps<<" ms, "<<smallScroll.rasterizations<<" rasterizations, "<<smallScroll.uploads<<" uploads; "<<notchScroll.steps<<" notches max "<<notchScroll.maximumMS<<" ms mean "<<notchScroll.totalMS/notchScroll.steps<<" ms, "<<notchScroll.rasterizations<<" rasterizations, "<<notchScroll.uploads<<" uploads; resident at 2 px/pt: list of 8 "<<resident.list/1024<<" KiB in "<<resident.listSurfaces<<" rasters, draft "<<resident.draft/1024<<" KiB + name field "<<resident.draftField/1024<<" KiB (GPU: list "<<resident.listGPU/1024<<" KiB, draft "<<resident.draftGPU/1024<<" KiB), hidden after the close "<<resident.parked/1024<<" KiB (was the list's "<<resident.list/1024<<" KiB), shared rasterizer "<<resident.sharedBefore/1024<<" -> "<<resident.sharedAfter/1024<<" KiB, rebuild frame "<<resident.rebuildMS<<" ms)\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
+#endif

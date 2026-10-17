@@ -1,0 +1,207 @@
+# Notes area fragment (included after every target in windows/CMakeLists.txt).
+# Notes, Projection and Archive are built-in owners of the production
+# Application (app/application.cpp); this fragment adds Notes sources to the
+# shared native library and registers their contract tests. Tests use
+# synthetic documents, hidden owned windows and WARP offscreen targets only.
+
+set(EHUD_NOTES_TARGETS "")
+# Incremental ink planning of drawing cards (modules/notes_drawing_ink.hpp):
+# the changed pixels of a growing, committed or erased stroke, painted in
+# place by native/notes_drawing_scene.
+target_sources(hud_notes PRIVATE modules/notes_drawing_ink.cpp)
+if(BUILD_TESTING)
+  add_executable(notes_drawing_ink_tests tests/notes_drawing_ink_tests.cpp)
+  target_link_libraries(notes_drawing_ink_tests PRIVATE hud_notes)
+  add_test(NAME notes_drawing_ink_contracts COMMAND notes_drawing_ink_tests)
+  list(APPEND EHUD_NOTES_TARGETS notes_drawing_ink_tests)
+endif()
+# Portable Mac-to-Windows font name table for imported rich runs
+# (core/notes_font_names.hpp); part of the rich text model library.
+target_sources(hud_notes_rich PRIVATE core/notes_font_names.cpp)
+# Portable import of other applications' RTF/HTML clipboard content into the
+# Notes rich text model (core/notes_paste_import.hpp), against the pinned Mac
+# paste oracle (tools/notes_paste_reference.sh).
+add_library(hud_notes_paste core/notes_paste_import.cpp)
+target_include_directories(hud_notes_paste PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(hud_notes_paste PUBLIC hud_notes_rich PRIVATE hud_desktop_content)
+list(APPEND EHUD_NOTES_TARGETS hud_notes_paste)
+if(BUILD_TESTING)
+  add_executable(notes_font_names_tests tests/notes_font_names_tests.cpp)
+  target_link_libraries(notes_font_names_tests PRIVATE hud_notes_rich)
+  add_test(NAME notes_font_names_contracts COMMAND notes_font_names_tests)
+  list(APPEND EHUD_NOTES_TARGETS notes_font_names_tests)
+  # Notes stores beyond the former 64 MiB in-memory bound open without loss.
+  add_executable(notes_store_capacity_tests tests/notes_store_capacity_tests.cpp)
+  target_link_libraries(notes_store_capacity_tests PRIVATE hud_data)
+  add_test(NAME notes_store_capacity_contracts COMMAND notes_store_capacity_tests)
+  set_tests_properties(notes_store_capacity_contracts PROPERTIES TIMEOUT 300)
+  list(APPEND EHUD_NOTES_TARGETS notes_store_capacity_tests)
+  add_executable(notes_paste_import_tests tests/notes_paste_import_tests.cpp)
+  target_link_libraries(notes_paste_import_tests PRIVATE hud_notes_paste hud_data)
+  add_test(NAME notes_paste_import_contracts COMMAND notes_paste_import_tests "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/notes-paste-reference.json")
+  list(APPEND EHUD_NOTES_TARGETS notes_paste_import_tests)
+endif()
+# Mac import relink ledger upkeep for Notes media and Archive attachments
+# (modules/notes_relink_ledger.hpp) over the import ledger's owner API
+# (core/migration/mac_import_relink.hpp, import.cmake): Notes calls it after
+# its own record writes, Archive behind them on its FIFO file queue.
+add_library(hud_notes_relink modules/notes_relink_ledger.cpp)
+target_include_directories(hud_notes_relink PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(hud_notes_relink PUBLIC hud_data PRIVATE hud_mac_import)
+list(APPEND EHUD_NOTES_TARGETS hud_notes_relink)
+foreach(owner hud_archive_service hud_notes_preview)
+  if(TARGET ${owner})
+    target_link_libraries(${owner} PRIVATE hud_notes_relink)
+  endif()
+endforeach()
+# Notes runs those ledger writes on the shared UtilityExecutor once the host
+# hands it over (NotesPreview::setUtilityExecutor).
+if(TARGET hud_notes_preview AND TARGET hud_utility)
+  target_link_libraries(hud_notes_preview PRIVATE hud_utility)
+endif()
+if(BUILD_TESTING)
+  add_executable(notes_relink_ledger_tests tests/notes_relink_ledger_tests.cpp)
+  target_link_libraries(notes_relink_ledger_tests PRIVATE hud_notes_relink hud_mac_import)
+  if(WIN32)
+    target_compile_definitions(notes_relink_ledger_tests PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+  endif()
+  add_test(NAME notes_relink_ledger_contracts COMMAND notes_relink_ledger_tests)
+  list(APPEND EHUD_NOTES_TARGETS notes_relink_ledger_tests)
+  # The Notes owner suite reconciles a synthetic ledger through its load.
+  if(TARGET notes_preview_tests)
+    target_link_libraries(notes_preview_tests PRIVATE hud_mac_import)
+  endif()
+endif()
+if(WIN32)
+  # Paragraph-chunked long-document editor for Notes text fields: typing cost
+  # follows the edited chunk, not the document length (native/notes_long_editor).
+  target_sources(hud_native PRIVATE native/notes_long_editor.cpp)
+  # Edit-menu clipboard for Notes/Archive fields (native/notes_clipboard):
+  # keypress-only reads/writes, CF_HDROP media paste through the Shelf codec.
+  target_sources(hud_native PRIVATE native/notes_clipboard.cpp)
+  # Word/paragraph navigation and multi-click selection (OS icu.dll word rules
+  # loaded on demand, character-class fallback): native/notes_text_navigation.
+  target_sources(hud_native PRIVATE native/notes_text_navigation.cpp)
+  # Pasted images as source managed "<UUID>.png" copies under Notes/Images.
+  target_sources(hud_native PRIVATE native/notes_managed_image.cpp)
+  # UI Automation peers of the projected Notes/Archive/Projection controls.
+  target_sources(hud_native PRIVATE native/notes_automation.cpp)
+  # The Mac's CoreMedia 709 reading of BT.709 movie posters and played frames
+  # (Notes, Archive and Projection share this decoder and frame server).
+  target_sources(hud_native PRIVATE native/notes_video_colour.cpp)
+  target_link_libraries(hud_native PRIVATE hud_shelf_transfer hud_notes_paste shell32 uiautomationcore oleaut32)
+
+  if(BUILD_TESTING)
+    # Geometry, pixel and behaviour parity with the single-layout editor, TSF
+    # geometry, bounded chunk work for 32k-256k unit documents.
+    add_executable(notes_long_editor_tests tests/notes_long_editor_tests.cpp)
+    target_compile_definitions(notes_long_editor_tests PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
+    target_link_libraries(notes_long_editor_tests PRIVATE hud_native)
+    add_test(NAME notes_long_editor_contracts COMMAND notes_long_editor_tests "${CMAKE_CURRENT_SOURCE_DIR}/native/hud.hlsl")
+    set_tests_properties(notes_long_editor_contracts PROPERTIES TIMEOUT 300)
+    list(APPEND EHUD_NOTES_TARGETS notes_long_editor_tests)
+    # Source NotesMediaError states on media cards and the explicit relink.
+    add_executable(notes_media_relink_tests tests/notes_media_relink_tests.cpp)
+    target_compile_definitions(notes_media_relink_tests PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
+    target_link_libraries(notes_media_relink_tests PRIVATE hud_native)
+    add_test(NAME notes_media_relink_contracts COMMAND notes_media_relink_tests)
+    list(APPEND EHUD_NOTES_TARGETS notes_media_relink_tests)
+    # Clipboard codecs, rich paste runs, cut/copy/paste and short-to-chunked
+    # promotion through a real workspace; synthetic data objects only.
+    add_executable(notes_clipboard_tests tests/notes_clipboard_tests.cpp)
+    target_compile_definitions(notes_clipboard_tests PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
+    target_link_libraries(notes_clipboard_tests PRIVATE hud_native shlwapi windowscodecs ole32)
+    add_test(NAME notes_clipboard_contracts COMMAND notes_clipboard_tests)
+    list(APPEND EHUD_NOTES_TARGETS notes_clipboard_tests)
+    # UIA peers over synthetic control lists: patterns, identity, hit tests.
+    add_executable(notes_automation_tests tests/notes_automation_tests.cpp)
+    target_compile_definitions(notes_automation_tests PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
+    target_link_libraries(notes_automation_tests PRIVATE hud_native uiautomationcore oleaut32 ole32)
+    add_test(NAME notes_automation_contracts COMMAND notes_automation_tests)
+    list(APPEND EHUD_NOTES_TARGETS notes_automation_tests)
+    add_executable(notes_text_navigation_tests tests/notes_text_navigation_tests.cpp)
+    target_compile_definitions(notes_text_navigation_tests PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
+    target_link_libraries(notes_text_navigation_tests PRIVATE hud_native)
+    add_test(NAME notes_text_navigation_contracts COMMAND notes_text_navigation_tests)
+    list(APPEND EHUD_NOTES_TARGETS notes_text_navigation_tests)
+
+    # The Notes owner suites that need the Mac-exported Notes controls bundle
+    # (app.cmake's runtime inputs). They build in CMakeLists.txt; registering
+    # them here runs the production Notes owner, its menus, TODO/drawing/media
+    # import and the movie fixtures in every configured test run.
+    set(ehud_notes_controls "${ehud_app_inputs}/notes-controls-assets")
+    set(ehud_notes_pins 9d2fcf0eead9eeeab1be4fdbb0e940a0e1e3eedf840ab9e4c63499e40ae70c00 ca04f142185c7de40acd8523bdb563195d90a1d1)
+    set(ehud_notes_movie "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/notes-owned-silent.mp4")
+    if(ehud_app_inputs AND EXISTS "${ehud_notes_controls}")
+      foreach(suite notes_preview notes_media_import notes_checklist_preview notes_media_menu notes_drawing_preview)
+        if(TARGET ${suite}_tests)
+          add_test(NAME ${suite}_contracts COMMAND ${suite}_tests "${CMAKE_CURRENT_SOURCE_DIR}/native/hud.hlsl" "${ehud_notes_controls}" ${ehud_notes_pins})
+          set_tests_properties(${suite}_contracts PROPERTIES TIMEOUT 300)
+        endif()
+      endforeach()
+      if(TARGET notes_format_host_tests)
+        add_test(NAME notes_format_host_contracts COMMAND notes_format_host_tests "${CMAKE_CURRENT_SOURCE_DIR}/native/hud.hlsl" "${ehud_notes_controls}" ${ehud_notes_pins} "${CMAKE_CURRENT_SOURCE_DIR}/resources/notes-format")
+        set_tests_properties(notes_format_host_contracts PROPERTIES TIMEOUT 300)
+      endif()
+      if(TARGET notes_video_import_tests)
+        add_test(NAME notes_video_import_contracts COMMAND notes_video_import_tests "${CMAKE_CURRENT_SOURCE_DIR}/native/hud.hlsl" "${ehud_notes_controls}" ${ehud_notes_pins} "${ehud_notes_movie}")
+        set_tests_properties(notes_video_import_contracts PROPERTIES TIMEOUT 300)
+      endif()
+    endif()
+    if(TARGET notes_video_poster_tests)
+      # The Media Assembly area's pinned CoreMedia 709 oracle (BT.709 posters).
+      add_test(NAME notes_video_poster_contracts COMMAND notes_video_poster_tests "${ehud_notes_movie}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/media-assembly-video-colour-source.json")
+    endif()
+    if(TARGET notes_video_decode_tests)
+      add_test(NAME notes_video_decode_contracts COMMAND notes_video_decode_tests "${CMAKE_CURRENT_SOURCE_DIR}/native/hud.hlsl" "${ehud_notes_movie}")
+      set_tests_properties(notes_video_decode_contracts PROPERTIES TIMEOUT 180)
+    endif()
+  endif()
+endif()
+
+# Notes drawing throughput probe: a measurement tool, not a ctest test. A fast
+# 1000 Hz drag delivered as the HUD host delivers it (one move per frame
+# carrying the samples Windows coalesced) through the production Notes owner
+# in a hidden window on WARP; prints the samples kept and the CPU per move and
+# per frame (rasters, texture creations, in-place regions). Usage:
+#   notes_drawing_probe <native/hud.hlsl> <notes-controls-assets> <sha> <commit>
+if(WIN32 AND BUILD_TESTING AND TARGET hud_notes_preview)
+  add_executable(notes_drawing_probe tests/notes_drawing_probe.cpp)
+  target_compile_definitions(notes_drawing_probe PRIVATE UNICODE _UNICODE NOMINMAX)
+  target_link_libraries(notes_drawing_probe PRIVATE hud_native hud_overlay_host hud_notes_preview)
+endif()
+
+# Projection's UI Automation group under the HUD root (production area; the
+# host publishes its workspace, app/areas/projection_automation.hpp).
+if(WIN32 AND TARGET hud_projection_preview)
+  add_library(hud_projection_automation_area STATIC app/areas/projection_automation.cpp)
+  target_include_directories(hud_projection_automation_area PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+  target_compile_definitions(hud_projection_automation_area PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
+  target_link_libraries(hud_projection_automation_area PUBLIC hud_module_registry hud_projection_preview PRIVATE uiautomationcore oleaut32 ole32)
+  list(APPEND EHUD_NOTES_TARGETS hud_projection_automation_area)
+  set_property(GLOBAL APPEND PROPERTY EHUD_APP_AREAS
+    "projection|hud_projection_automation_area|app/areas/projection_automation.hpp|endfield::notes::projectionAutomationArea")
+endif()
+
+# Hidden coverage of the Notes long-document path and the Notes owner's UI
+# Automation inside the application (app/areas/notes_coverage.hpp).
+# Test-only area: watch_session_preview only.
+if(WIN32 AND BUILD_TESTING AND TARGET hud_notes_preview)
+  add_library(hud_notes_coverage_area STATIC app/areas/notes_coverage.cpp)
+  target_include_directories(hud_notes_coverage_area PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+  # The staged Notes controls package is verified against the same build pins.
+  target_compile_definitions(hud_notes_coverage_area PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX
+    EHUD_NOTES_CONTROLS_SHA="9d2fcf0eead9eeeab1be4fdbb0e940a0e1e3eedf840ab9e4c63499e40ae70c00" EHUD_NOTES_CONTROLS_COMMIT="ca04f142185c7de40acd8523bdb563195d90a1d1")
+  target_link_libraries(hud_notes_coverage_area PUBLIC hud_module_registry hud_native hud_notes_preview PRIVATE uiautomationcore oleaut32 ole32)
+  list(APPEND EHUD_NOTES_TARGETS hud_notes_coverage_area)
+  set_property(GLOBAL APPEND PROPERTY EHUD_APP_AREAS
+    "notesLongDocument|hud_notes_coverage_area|app/areas/notes_coverage.hpp|endfield::notes::notesLongDocumentCoverage|coverage")
+endif()
+
+foreach(target IN LISTS EHUD_NOTES_TARGETS)
+  if(MSVC)
+    target_compile_options(${target} PRIVATE /W4 /permissive- /EHsc)
+  else()
+    target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+endforeach()

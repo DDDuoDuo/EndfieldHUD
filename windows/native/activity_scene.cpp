@@ -1,0 +1,168 @@
+#include "native/activity_scene.hpp"
+#include "core/subsection_transition.hpp"
+#include <algorithm>
+#include <cmath>
+#include <stdexcept>
+#ifdef _WIN32
+#include "native/layer_scene.hpp"
+#include "core/source_camera.hpp"
+#include <atomic>
+#include <chrono>
+#endif
+#if defined(__clang__)
+#pragma clang fp contract(off)
+#elif defined(_MSC_VER)
+#pragma fp_contract(off)
+#endif
+namespace endfield::native {
+namespace {
+using Json=ehud::data::Json;using Matrix=core::Matrix4;using Point=core::Point;using Rect=core::Rect;using Color=std::array<double,4>;using Graphs=std::array<modules::ActivityGraphPlan,modules::ActivityArtwork::overviewRows>;
+void need(bool b,const char*m){if(!b)throw std::invalid_argument(m);}void clock(double t){need(std::isfinite(t),"Activity needs finite owner time");}
+Json::Array&children(Json&j){return const_cast<Json::Array&>(j["children"].array());}
+Json color(Color c){return Json::Object{{"sRGB",Json::Array{c[0],c[1],c[2],c[3]}}};}
+Json layer(std::string id,Rect b,const char*kind="layer"){return Json::Object{{"id",std::move(id)},{"kind",kind},{"bounds",Json::Array{0,0,b.width,b.height}},{"position",Json::Array{b.x,b.y}},{"anchorPoint",Json::Array{0,0}},{"allowsGroupOpacity",false},{"children",Json::Array{}}};}
+Json cmd(const char*op,std::initializer_list<Point>p={}){Json::Array points;for(auto v:p)points.push_back(Json::Array{v.x,v.y});return Json::Object{{"op",op},{"points",std::move(points)}};}
+Json shape(std::string id,Rect b,Json::Array p,std::optional<Color>fill={},std::optional<Color>stroke={},double width=1){auto out=layer(std::move(id),b,"shape");out["shape"]=Json::Object{{"path",std::move(p)},{"fillColor",fill?color(*fill):Json{}},{"strokeColor",stroke?color(*stroke):Json{}},{"lineWidth",width},{"lineCap","butt"},{"lineJoin","round"},{"miterLimit",10},{"fillRule","non-zero"}};return out;}
+Json::Array rounded(Rect r){const double k=.5522847498307936,rad=3,x=r.x,y=r.y,w=r.width,h=r.height,t=rad*(1-k);return {cmd("move",{{x+rad,y}}),cmd("line",{{x+w-rad,y}}),cmd("cubic",{{x+w-t,y},{x+w,y+t},{x+w,y+rad}}),cmd("line",{{x+w,y+h-rad}}),cmd("cubic",{{x+w,y+h-t},{x+w-t,y+h},{x+w-rad,y+h}}),cmd("line",{{x+rad,y+h}}),cmd("cubic",{{x+t,y+h},{x,y+h-t},{x,y+h-rad}}),cmd("line",{{x,y+rad}}),cmd("cubic",{{x,y+t},{x+t,y},{x+rad,y}}),cmd("close")};}
+Point position(const Json&j){const auto&a=j["position"].array();return {a[0].number(),a[1].number()};}
+[[maybe_unused]] bool contains(Rect r,Point p){return p.x>=r.x&&p.y>=r.y&&p.x<r.x+r.width&&p.y<r.y+r.height;}
+[[maybe_unused]] bool controlContains(Rect r,Point p){
+    if(!contains(r,p))return false;const double dx=std::abs(p.x-std::clamp(p.x,r.x+3,r.x+r.width-3)),dy=std::abs(p.y-std::clamp(p.y,r.y+3,r.y+r.height-3));
+    if(dx==0||dy==0)return true;constexpr double k=.5522847498307936;const double x=dx/3,y=dy/3;double lo=0,hi=1;
+    for(unsigned n=0;n<32;++n){const double t=(lo+hi)*.5,u=1-t,c=u*u*u+3*u*u*t+3*u*t*t*k;if(c>x)lo=t;else hi=t;}
+    const double t=(lo+hi)*.5,u=1-t;return y<=3*u*u*t*k+3*u*t*t+t*t*t;
+}
+bool sameGraph(const modules::ActivityGraphPlan&a,const modules::ActivityGraphPlan&b){if(a.count!=b.count||a.ceiling!=b.ceiling)return false;for(unsigned n=0;n<a.count;++n){const auto&x=a.traces[n];const auto&y=b.traces[n];if(x.points!=y.points||x.coverage!=y.coverage||x.coverageCount!=y.coverageCount||x.markerVisible!=y.markerVisible||x.marker!=y.marker)return false;}return true;}
+bool sameGraphs(const Graphs&a,const Graphs&b){for(unsigned i=0;i<a.size();++i)if(!sameGraph(a[i],b[i]))return false;return true;}
+// Observed CA Float timing boundaries, bounded Newton inversion, restricted
+// to the two authored Activity curves and checked against actual CA below.
+double sourceProgress(double time,double x1,double y1,double x2,double y2){
+    if(time<=0)return 0;if(time>=1)return 1;const double x=static_cast<float>(time);
+    x1=static_cast<float>(x1);y1=static_cast<float>(y1);x2=static_cast<float>(x2);y2=static_cast<float>(y2);
+    const double ax=1-3*x2+3*x1,bx=3*x2-6*x1,cx=3*x1,ay=1-3*y2+3*y1,by=3*y2-6*y1,cy=3*y1;
+    auto t=x;for(unsigned k=0;k<8;++k){const auto error=((ax*t+bx)*t+cx)*t-x;if(std::abs(error)<1e-5)break;t-=error/((3*ax*t+2*bx)*t+cx);}
+    return static_cast<float>(((ay*t+by)*t+cy)*t);
+}
+void validateGraphs(const Graphs&g){for(const auto&v:g){need(v.count<=2&&std::isfinite(v.ceiling),"Invalid Activity graph channels");for(unsigned n=0;n<v.count;++n){const auto&t=v.traces[n];need(t.coverageCount<=59,"Invalid Activity graph coverage");for(auto p:t.points)need(std::isfinite(p.x)&&std::isfinite(p.y),"Invalid Activity graph point");}}}
+}
+void ActivityMotion::select(bool apps,double t,bool animated){clock(t);const bool changed=apps_!=apps;apps_=apps;pageStart_=changed&&animated?std::optional(t):std::nullopt;}
+void ActivityMotion::setGraphs(const Graphs&g,double t,bool animated){clock(t);validateGraphs(g);if(graphsSet_&&sameGraphs(g,to_)){if(!animated){graphStart_.reset();from_=to_;return;}if(!graphStart_||t>=*graphStart_+.32)return;}const auto prior=graphs(t);from_=prior;to_=g;graphStart_=graphsSet_&&animated?std::optional(t):std::nullopt;graphsSet_=true;}
+Graphs ActivityMotion::graphs(double t)const{clock(t);auto out=to_;if(!graphStart_)return out;const double progress=sourceProgress((t-*graphStart_)/.32,.42,0,.58,1);for(unsigned g=0;g<out.size();++g)for(unsigned c=0;c<out[g].count;++c)for(unsigned n=0;n<60;++n){auto&p=out[g].traces[c].points[n];const auto&start=from_[g].traces[c].points[n];p={start.x+(p.x-start.x)*progress,start.y+(p.y-start.y)*progress};}return out;}
+ActivityPageSample ActivityMotion::pages(double t)const{clock(t);ActivityPageSample out;const auto v=modules::ActivityArtwork::handoffViewport();out.pages[unsigned(apps_)]={true,0,v};if(!pageStart_||t-*pageStart_>=.26)return out;const double p=sourceProgress((t-*pageStart_)/.26,.2,.7,.3,1),sign=apps_?1:-1;auto&incoming=out.pages[unsigned(apps_)];auto&outgoing=out.pages[unsigned(!apps_)];incoming={true,14*sign*(1-p),{sign>0?v.x+v.width*(1-p):v.x,v.y,v.width*p,v.height}};outgoing={true,-14*sign*p,{sign>0?v.x:v.x+v.width*p,v.y,v.width*(1-p),v.height}};out.animating=true;return out;}
+void ActivityMotion::settle()noexcept{pageStart_.reset();graphStart_.reset();from_=to_;}
+bool ActivityMotion::requiresFrames(double t)const{clock(t);return(pageStart_&&t<*pageStart_+.26)||(graphStart_&&t<*graphStart_+.32);}
+Json activityGraphContent(unsigned index,const modules::ActivityGraphPlan&g){need(index<modules::ActivityArtwork::overviewRows&&g.count<=2,"Invalid Activity graph index");const auto id="activity.graph."+std::to_string(index);auto out=layer(id,{0,0,165,36});out["masksToBounds"]=true;Json::Array grid;for(unsigned n=0;n<=6;++n){const double x=165.*n/6;grid.push_back(cmd("move",{{x,0}}));grid.push_back(cmd("line",{{x,36}}));}for(unsigned n=0;n<=2;++n){const double y=36.*n/2;grid.push_back(cmd("move",{{0,y}}));grid.push_back(cmd("line",{{165,y}}));}children(out).push_back(shape(id+".grid",{0,0,165,36},std::move(grid),{},Color{.8,.8,.8,.14},.5));
+    for(unsigned c=0;c<g.count;++c){const auto&t=g.traces[c];const auto suffix=std::to_string(c);const Color ink=index==modules::ActivityArtwork::ramRow?modules::ActivityArtwork::blue:c?modules::ActivityArtwork::blue:modules::ActivityArtwork::yellow;Json::Array line{cmd("move",{t.points[0]})},area{cmd("move",{{0,36}}),cmd("line",{t.points[0]})},mask;for(unsigned n=1;n<60;++n){line.push_back(cmd("line",{t.points[n]}));area.push_back(cmd("line",{t.points[n]}));}area.push_back(cmd("line",{{165,36}}));area.push_back(cmd("close"));for(std::size_t n=0;n<t.coverageCount;++n){const auto&r=t.coverage[n];mask.push_back(cmd("move",{{r.x,r.y}}));mask.push_back(cmd("line",{{r.x+r.width,r.y}}));mask.push_back(cmd("line",{{r.x+r.width,r.y+r.height}}));mask.push_back(cmd("line",{{r.x,r.y+r.height}}));mask.push_back(cmd("close"));}auto fillInk=ink;fillInk[3]=.38;auto fill=shape(id+".area."+suffix,{0,0,165,36},std::move(area),fillInk),trace=shape(id+".line."+suffix,{0,0,165,36},std::move(line),{},ink);fill["mask"]=shape(id+".fillCoverage."+suffix,{0,0,165,36},mask,Color{0,0,0,1});trace["mask"]=shape(id+".lineCoverage."+suffix,{0,0,165,36},std::move(mask),Color{0,0,0,1});children(out).push_back(std::move(fill));children(out).push_back(std::move(trace));auto marker=layer(id+".latest."+suffix,{t.marker.x-1.5,t.marker.y-1.5,3,3});marker["cornerRadius"]=1.5;marker["backgroundColor"]=color(ink);marker["hidden"]=!t.markerVisible;children(out).push_back(std::move(marker));}return out;}
+std::vector<ActivitySurface>prepareActivitySurfaces(const modules::ActivityArtwork&a,const modules::ActivityAppearance&appearance,const ActivityIcons&icons){std::vector<ActivitySurface>out;out.reserve(48);const auto add=[&](Json j,ActivityPlane page,Matrix parent=Matrix{},int row=-1,int graph=-1,std::string action={},bool rim=false){const auto p=position(j);const auto id=j["id"].string();j["position"]=Json::Array{0,0};out.push_back({id,std::move(j),parent*Matrix::translation(p.x,p.y),page,row,graph,std::move(action),rim});};
+    const auto feedback=[&](const modules::ActivityFeedback&f,ActivityPlane page){auto tint=appearance.accent;tint[3]=.30;const auto b=Rect{0,0,f.rect.width,f.rect.height};const auto parent=Matrix::translation(f.rect.x,f.rect.y);add(shape(f.action+"/tint",b,rounded(b),tint),page,parent,-1,-1,f.action);add(shape(f.action+"/rim",b,rounded(b),{},appearance.accent,.9),page,parent,-1,-1,f.action,true);};
+    if(!a.showingApps){for(const auto&raw:a.overview["children"].array()){auto row=raw;const auto p=position(row);auto&nodes=children(row);std::erase_if(nodes,[](const Json&n){return n["id"].string().starts_with("activity.graph.");});add(std::move(row),ActivityPlane::overview);const auto n=unsigned(out.size()/2);add(activityGraphContent(n,a.graphs[n]),ActivityPlane::overview,Matrix::translation(p.x+modules::ActivityArtwork::graphRect().x,p.y+modules::ActivityArtwork::graphRect().y),-1,int(n));}}
+    else {for(const auto&r:a.rows){auto row=r.localContent;const auto found=icons.find(r.iconKey);if(found!=icons.end()){need(!found->second.memoryKey.empty()&&found->second.revision>0,"Invalid Activity icon binding");auto icon=layer("activity.app.icon."+std::to_string(r.poolIndex),{7,13,18,18});icon["contents"]=Json::Object{{"memoryImage",found->second.memoryKey},{"revision",std::int64_t(found->second.revision)}};icon["contentsGravity"]="resizeAspect";children(row).insert(children(row).begin(),std::move(icon));}add(std::move(row),ActivityPlane::rows,Matrix::translation(12+r.frame.x,84+r.frame.y),int(r.poolIndex));}
+        for(const auto&raw:a.apps["children"].array()){if(raw["id"].string()=="activity.apps.scrollbar")continue;const auto id=raw["id"].string();if(id.starts_with("activity.apps.header.")&&id!="activity.apps.header.rule"){const auto n=unsigned(id.back()-'0');feedback(a.feedback[n+2],ActivityPlane::apps);}add(raw,ActivityPlane::apps);}
+        auto scrollbar=layer("activity.apps.scrollbar",{0,0,2,1});scrollbar["backgroundColor"]=color(appearance.accent);add(std::move(scrollbar),ActivityPlane::rows,{},-2);
+    }
+    for(const auto&raw:a.chrome["children"].array()){if(!raw["id"].string().starts_with("activity.control.")){add(raw,ActivityPlane::chrome);continue;}auto plate=raw;const auto labels=children(plate);plate["children"]=Json::Array{};const auto p=position(plate);add(std::move(plate),ActivityPlane::chrome);const auto n=unsigned(raw["id"].string().back()-'0');feedback(a.feedback[n],ActivityPlane::chrome);for(const auto&label:labels)add(label,ActivityPlane::chrome,Matrix::translation(p.x,p.y));}
+    unsigned overview{},headers{},controls{};for(auto&p:out){if(p.id=="activity.heading")p.paintOrder=0;else if(p.plane==ActivityPlane::overview)p.paintOrder=10+overview++;else if(p.plane==ActivityPlane::rows)p.paintOrder=p.row>=0?100+unsigned(p.row):106;else if(p.plane==ActivityPlane::apps)p.paintOrder=120+headers++;else p.paintOrder=200+controls++;}return out;}
+core::SubsectionMaskPath activitySortShutter(double direction,double elapsed){
+    using Style=core::SubsectionTransitionStyle;need(std::isfinite(direction)&&std::isfinite(elapsed),"Invalid Activity sort reveal time");
+    // CAKeyframeAnimation, calculationMode linear: the segment holding the
+    // normalized time, its own ease-out, then the authored values.
+    const auto time=std::clamp(elapsed/Style::duration,0.,1.);std::size_t segment{};while(segment<2&&time>Style::maskKeyTimes[segment+1])++segment;
+    const auto local=std::clamp((time-Style::maskKeyTimes[segment])/(Style::maskKeyTimes[segment+1]-Style::maskKeyTimes[segment]),0.,1.);
+    const auto eased=Style::maskSegmentTiming.value(local);constexpr Rect viewport{0,0,376,226}; // appRows.bounds
+    const auto from=core::subsectionMaskKeyframe(viewport,direction,segment),to=core::subsectionMaskKeyframe(viewport,direction,segment+1);
+    core::SubsectionMaskPath result;
+    for(std::size_t strip=0;strip<result.size();++strip)for(std::size_t vertex=0;vertex<result[strip].size();++vertex){const auto a=from[strip][vertex],b=to[strip][vertex];result[strip][vertex]={a.x+(b.x-a.x)*eased,a.y+(b.y-a.y)*eased};}
+    return result;
+}
+#ifdef _WIN32
+namespace {
+// Four closed polygons (move, lines, close) for the mask raster.
+core::SubsectionCurvePath curvePath(const core::SubsectionMaskPath&strips){
+    core::SubsectionCurvePath path;
+    for(const auto&strip:strips){for(std::size_t n=0;n<strip.size();++n){path.opcodes[path.opcodeCount++]=n?1:0;path.coordinates[path.coordinateCount++]=strip[n].x;path.coordinates[path.coordinateCount++]=strip[n].y;}path.opcodes[path.opcodeCount++]=4;}
+    return path;
+}
+Json rootFor(const Json&content){auto root=layer("",{});children(root).push_back(content);return root;}
+// A tab's or a column header's hover tint and rim (both rest at opacity 0)
+// keep no bitmap while their feedback does not show (Mac: a CAShapeLayer at
+// opacity 0 keeps no backing store): the leaf holds one transparent point
+// until the feedback begins and gives the shape back after fading out.
+Json feedbackPlaceholder(const std::string&id){return Json::Object{{"id",id},{"kind","layer"},{"bounds",Json::Array{0,0,1,1}},{"position",Json::Array{0,0}},{"anchorPoint",Json::Array{0,0}},{"backgroundColor",Json::Object{{"sRGB",Json::Array{0,0,0,0}}}},{"children",Json::Array{}}};}
+Json maskLayer(const core::SubsectionCurvePath&p){Json::Array path;std::size_t at{};const auto point=[&](){const Point result{p.coordinates[at],p.coordinates[at+1]};at+=2;return result;};for(std::size_t n=0;n<p.opcodeCount;++n)switch(p.opcodes[n]){case 0:path.push_back(cmd("move",{point()}));break;case 1:path.push_back(cmd("line",{point()}));break;case 2:{const auto a=point(),b=point();path.push_back(cmd("quadratic",{a,b}));break;}case 3:{const auto a=point(),b=point(),c=point();path.push_back(cmd("cubic",{a,b,c}));break;}case 4:path.push_back(cmd("close"));break;default:need(false,"Invalid Activity source mask opcode");}need(at==p.coordinateCount,"Invalid Activity source mask coordinates");return shape("activity.sort.mask",{0,0,376,226},std::move(path),Color{1,1,1,1});}
+}
+struct NativeActivityScene::Impl {
+    struct Track {double from{},target{},start{},duration{};};
+    // painted: a feedback leaf (plan.action) holds its source shape now.
+    struct Part {ActivitySurface plan;LayerScene scene;LayerPlacement placement;std::array<PlaneMask,8>masks{};Track feedback;std::uint64_t revision{1};bool selected{},painted{};
+        Part(ActivitySurface p,LayerRasterizer&r,const LayerRasterOptions&o):plan(std::move(p)),scene(r){scene.load(rootFor(plan.action.empty()?plan.content:feedbackPlaceholder(plan.id)),o);need(scene.report().unsupported.empty(),"Activity source artwork contains unsupported local effects");placement.surface=scene.surfaceIndex(plan.id).value_or(std::size_t(-1));need(placement.surface!=std::size_t(-1),"Activity surface has no original artwork");placement.world=plan.local;placement.opacity=0;scene.setPlacements(std::span(&placement,1));}
+    };
+    modules::ActivityState&state;LayerRasterizer&raster;LayerRasterOptions options;modules::ActivityAppearance appearance;ActivityIcons icons;
+    ActivityMotion motion;std::vector<std::unique_ptr<Part>>parts;std::vector<LayerCompositionEntry>entries;std::vector<modules::ActivityAction>actions;
+    std::uint64_t revision{},overviewRevision{},appsRevision{};bool dirty{true},initialized{},graphsDirty{},reduced{},pressed{};std::optional<Point>pointer;
+    modules::ActivityRows rows;Graphs preparedGraphs{};std::optional<double>sortStart;double sortDirection{1},time{};
+    std::optional<core::SubsectionCurvePath>maskPath;std::optional<PlaneAlphaMask>alpha;std::shared_ptr<const LayerRasterImage>maskImage;std::string maskID;std::uint64_t maskRevision{},uploadedMask{};bool maskDirty{};Renderer*resourceOwner{};ActivitySceneStats stats;
+    Impl(modules::ActivityState&s,LayerRasterizer&r,LayerRasterOptions o,modules::ActivityAppearance a):state(s),raster(r),options(std::move(o)),appearance(a){static std::atomic<std::uint64_t>next{};maskID="activity.mask."+std::to_string(++next);parts.reserve(56);entries.reserve(56);actions.reserve(8);}
+    void checkTime(double t)const{clock(t);need(t>=time,"Activity clock cannot move backwards");}
+    static double sample(const Track&t,double now){return t.duration>0?t.from+(t.target-t.from)*core::CubicTiming{0,0,.58,1}.value((now-t.start)/t.duration):t.target;}
+    // A feedback leaf shows while its target is visible or it is still fading
+    // out from a visible value.
+    static bool shows(const Track&t,double now){return t.target>0||(t.from>0&&now<t.start+t.duration);}
+    Part*find(std::string_view id){for(auto&p:parts)if(p->plan.id==id)return p.get();return nullptr;}
+    void feedback(double now){std::optional<std::string_view>hit;for(const auto&a:actions)if(pointer&&controlContains(a.rect,*pointer))hit=a.id;for(auto&p:parts){const auto&action=p->plan.action;if(action.empty())continue;const bool selected=hit&&*hit==action;const double target=p->plan.rim?(selected?1:0):(selected?(pressed?1:.62):0);auto&t=p->feedback;if(target!=t.target||reduced)t={sample(t,now),target,now,reduced?0:selected&&pressed?.06:.14};}}
+};
+NativeActivityScene::NativeActivityScene(modules::ActivityState&s,LayerRasterizer&r,LayerRasterOptions o,modules::ActivityAppearance a,std::shared_ptr<const core::SubsectionMaskSampler>):impl_(std::make_unique<Impl>(s,r,std::move(o),a)){}
+NativeActivityScene::~NativeActivityScene(){if(impl_)impl_->raster.remove(impl_->maskID);}
+bool NativeActivityScene::setAppearance(modules::ActivityAppearance a){auto&i=*impl_;if(i.appearance==a)return false;for(double c:a.accent)need(std::isfinite(c)&&c>=0&&c<=1,"Invalid Activity appearance");need(std::isfinite(a.scale)&&a.scale>=1&&a.scale<=8,"Invalid Activity scale");i.appearance=a;i.dirty=true;return true;}
+bool NativeActivityScene::setIcons(ActivityIcons icons){auto&i=*impl_;need(icons.size()<=modules::ActivityState::maximumApps,"Activity icon catalog exceeds source bound");for(const auto&[id,icon]:icons)need(!id.empty()&&id.size()<=512&&!icon.memoryKey.empty()&&icon.memoryKey.size()<=512&&icon.revision>0&&icon.revision<=INT64_MAX,"Invalid Activity icon identity");if(i.icons==icons)return false;i.icons=std::move(icons);i.dirty=true;return true;}
+bool NativeActivityScene::syncContent(double time,bool animate){auto&i=*impl_;i.checkTime(time);const bool page=i.state.showingApps();const auto contentRevision=page?i.state.appsContentRevision():i.state.overviewRevision();const auto oldRevision=page?i.appsRevision:i.overviewRevision;
+    if(i.initialized&&!i.dirty&&oldRevision==contentRevision&&i.actions.size()==(page?2+modules::activityAppColumns.size():2)){i.rows=i.state.visibleRows();i.revision=i.state.revision();i.time=time;return false;}
+    auto art=modules::prepareActivityArtwork(i.state,i.appearance);auto plan=prepareActivitySurfaces(art,i.appearance,i.icons);if(!page){i.motion.setGraphs(art.graphs,time,animate&&!i.reduced&&!i.dirty);const auto current=i.motion.graphs(time);for(auto&p:plan)if(p.graph>=0)p.content=activityGraphContent(unsigned(p.graph),current[unsigned(p.graph)]);i.preparedGraphs=current;}
+    for(auto&p:i.parts)if(p->plan.plane==ActivityPlane::chrome||(page?(p->plan.plane==ActivityPlane::apps||p->plan.plane==ActivityPlane::rows):p->plan.plane==ActivityPlane::overview))p->selected=false;
+    for(auto&next:plan){auto*prior=i.find(next.id);if(!prior){need(i.parts.size()<56,"Activity retained surface budget exceeded");auto p=std::make_unique<Impl::Part>(std::move(next),i.raster,i.options);p->selected=true;i.entries.push_back({&p->scene,{}});i.parts.push_back(std::move(p));++i.stats.builds;}else{if(prior->plan.content!=next.content&&(prior->plan.action.empty()||prior->painted)){prior->scene.updateLocalContent(prior->plan.id,++prior->revision,next.content,i.options);++i.stats.localUpdates;}prior->plan=std::move(next);prior->selected=true;}}
+    // Stable source paint order also covers rows/icons arriving after an empty
+    // Apps page; first allocation order must not put a row over its scrollbar.
+    std::sort(i.parts.begin(),i.parts.end(),[](const auto&a,const auto&b){return a->plan.paintOrder<b->plan.paintOrder;});i.entries.clear();for(auto&p:i.parts)i.entries.push_back({&p->scene,{}});
+    i.actions=std::move(art.actions);i.feedback(time);if(page)i.appsRevision=contentRevision;else i.overviewRevision=contentRevision;i.rows=i.state.visibleRows();i.revision=i.state.revision();i.dirty=false;i.initialized=true;i.time=time;return true;
+}
+void NativeActivityScene::selectPage(bool apps,double t,bool animated){auto&i=*impl_;i.checkTime(t);i.motion.select(apps,t,animated&&!i.reduced);i.sortStart.reset();i.maskPath.reset();i.alpha.reset();i.time=t;}
+void NativeActivityScene::revealSort(double direction,double t,bool animated){auto&i=*impl_;i.checkTime(t);need(std::isfinite(direction),"Invalid Activity sort direction");i.motion.settle();i.sortStart=animated&&!i.reduced?std::optional(t):std::nullopt;i.sortDirection=direction<0?-1:1;i.time=t;}
+void NativeActivityScene::settle()noexcept{auto&i=*impl_;i.motion.settle();i.sortStart.reset();i.maskPath.reset();i.alpha.reset();}
+bool NativeActivityScene::setFeedback(std::optional<Point>point,bool pressed,bool reduced,double t){auto&i=*impl_;i.checkTime(t);if(point)need(std::isfinite(point->x)&&std::isfinite(point->y),"Invalid Activity pointer");if(i.pointer==point&&i.pressed==pressed&&i.reduced==reduced)return false;i.pointer=point;i.pressed=pressed;i.reduced=reduced;if(reduced)settle();i.feedback(t);i.time=t;return true;}
+bool NativeActivityScene::updatePose(const ActivityScenePose&pose){auto&i=*impl_;i.checkTime(pose.time);need(i.initialized,"Synchronize Activity before placement");need(pose.world.finite()&&std::isfinite(pose.opacity)&&pose.opacity>=0&&pose.opacity<=1&&pose.ownerMasks.size()<=6,"Invalid Activity pose");if(pose.shutter)validatePlaneShutter(*pose.shutter);const auto inverse=core::source::inverseSourceMatrix(pose.world);const auto pages=i.motion.pages(pose.time);const auto&slots=i.rows;
+    Matrix rowEffect;std::optional<core::SubsectionCurvePath>nextPath;if(i.sortStart&&pose.time-*i.sortStart<.26){rowEffect=Matrix::translation(200,197)*core::sampleSubsectionTransform(i.sortDirection,pose.time-*i.sortStart).sublayerTransform*Matrix::translation(-200,-197);nextPath=curvePath(activitySortShutter(i.sortDirection,pose.time-*i.sortStart));}else i.sortStart.reset();
+    if(nextPath!=i.maskPath){i.maskPath=std::move(nextPath);i.maskDirty=bool(i.maskPath);}i.alpha=i.maskPath?std::optional(PlaneAlphaMask{core::source::inverseSourceMatrix(pose.world*Matrix::translation(12,84)),i.maskImage?i.maskImage->bounds:Rect{0,0,376,226},i.maskID}):std::nullopt;
+    const auto graphs=i.motion.graphs(pose.time);i.graphsDirty=pages.pages[0].visible&&pose.opacity>0&&!sameGraphs(graphs,i.preparedGraphs); // Only paths change during the source finite morph.
+    for(auto&p:i.parts){const auto&plan=p->plan;const bool chrome=plan.plane==ActivityPlane::chrome,rows=plan.plane==ActivityPlane::rows;const auto&page=pages.pages[plan.plane==ActivityPlane::overview?0:1];bool visible=p->selected&&(chrome||page.visible);Matrix local=plan.local;std::size_t count=pose.ownerMasks.size();std::copy(pose.ownerMasks.begin(),pose.ownerMasks.end(),p->masks.begin());if(!chrome){auto clip=page.clip;visible=visible&&clip.width>0;if(clip.width<=0)clip=modules::ActivityArtwork::handoffViewport();p->masks[count++]={inverse,clip};}const auto base=chrome?pose.world:pose.world*Matrix::translation(page.x,0);if(rows){p->masks[count++]={core::source::inverseSourceMatrix(base),modules::ActivityState::appsViewport()};if(plan.row>=0){visible=visible&&std::size_t(plan.row)<slots.count;if(visible){const auto&r=slots.rows[std::size_t(plan.row)].rect;local=Matrix::translation(12+r.x,84+r.y);}}else if(plan.row==-2){visible=visible&&slots.scrollbar.has_value();if(slots.scrollbar){const auto&r=*slots.scrollbar;local=Matrix::translation(12+r.x,84+r.y)*Matrix::scale(1,r.height);}}}
+        p->placement.world=base*(rows?rowEffect:Matrix{})*local;p->placement.opacity=visible?pose.opacity*(plan.action.empty()?1:float(Impl::sample(p->feedback,pose.time))):0;p->placement.masks={p->masks.data(),count};p->scene.setPlacements(std::span(&p->placement,1));p->scene.setGroupShutter(pose.shutter?std::optional(*pose.shutter):std::nullopt);p->scene.setGroupAlphaMask(rows?i.alpha:std::nullopt);}
+    i.time=pose.time;++i.stats.poses;return true;
+}
+bool NativeActivityScene::uploadAnimations(Renderer&r){auto&i=*impl_;need(!i.resourceOwner||i.resourceOwner==&r,"Activity animation belongs to another renderer");bool changed{};
+    if(i.graphsDirty){const auto next=i.motion.graphs(i.time);const auto began=std::chrono::steady_clock::now();for(auto&p:i.parts)if(p->plan.graph>=0){const auto n=unsigned(p->plan.graph);if(sameGraph(i.preparedGraphs[n],next[n]))continue;auto content=activityGraphContent(n,next[n]);p->scene.updateLocalContent(p->plan.id,++p->revision,content,i.options);p->plan.content=std::move(content);++i.stats.graphRasters;i.stats.graphPixelBytes+=p->scene.report().pixelBytes;changed=true;}const auto elapsed=std::chrono::duration<double>(std::chrono::steady_clock::now()-began).count();i.stats.graphRasterSeconds+=elapsed;i.stats.maximumGraphRasterSeconds=std::max(i.stats.maximumGraphRasterSeconds,elapsed);i.preparedGraphs=next;i.graphsDirty=false;}
+    if(i.maskPath){if(i.maskDirty){auto options=i.options;options.paddingPoints=0;i.maskImage=i.raster.rasterize(i.maskID,++i.maskRevision,maskLayer(*i.maskPath),options);need(i.maskImage->complete()&&i.maskImage->width<=1600&&i.maskImage->height<=1000,"Activity mask raster unsupported or oversized");i.maskDirty=false;++i.stats.maskRasters;i.stats.maskPixelBytes+=i.maskImage->straightRGBA.size();}if(i.uploadedMask!=i.maskRevision){r.setTexture(i.maskID,i.maskRevision,{i.maskImage->width,i.maskImage->height,i.maskImage->straightRGBA,TextureColorSpace::linear,TextureFilter::linear});i.uploadedMask=i.maskRevision;i.resourceOwner=&r;changed=true;}i.alpha->bounds=i.maskImage->bounds;for(auto&p:i.parts)if(p->plan.plane==ActivityPlane::rows)p->scene.setGroupAlphaMask(i.alpha);}
+    // A feedback leaf paints its source shape once its feedback shows (before
+    // this frame is drawn) and gives it back after fading out.
+    for(auto&p:i.parts){if(p->plan.action.empty())continue;const bool shows=Impl::shows(p->feedback,i.time);if(shows==p->painted)continue;
+        p->scene.updateLocalContent(p->plan.id,++p->revision,shows?p->plan.content:feedbackPlaceholder(p->plan.id),i.options);p->painted=shows;++(shows?i.stats.feedbackPaints:i.stats.feedbackReleases);changed=true;}
+    return changed;
+}
+bool NativeActivityScene::requiresFrames(double t)const{const auto&i=*impl_;i.checkTime(t);if(i.motion.requiresFrames(t)||(i.sortStart&&t<*i.sortStart+.26))return true;for(const auto&p:i.parts){const auto&f=p->feedback;if(f.from!=f.target&&t<f.start+f.duration)return true;
+        // One more frame once a painted leaf has faded out: it draws the final
+        // value and gives the bitmap back (uploadAnimations).
+        if(p->painted&&!Impl::shows(f,t))return true;}return false;}
+std::span<const LayerCompositionEntry>NativeActivityScene::entries()const noexcept{return impl_->entries;}
+std::span<const modules::ActivityAction>NativeActivityScene::actions()const noexcept{return impl_->actions;}
+bool NativeActivityScene::collectRetired(Renderer&r){auto&i=*impl_;for(auto&p:i.parts)p->scene.collectRetiredResources(r);if(!i.maskPath&&i.uploadedMask&&(!r.stats().initialized||r.removeTexture(i.maskID))){i.uploadedMask=0;i.maskImage.reset();i.raster.remove(i.maskID);}return true;}
+bool NativeActivityScene::releaseResources(Renderer&r){auto&i=*impl_;bool okay=true;for(auto&p:i.parts)okay=p->scene.releaseResources(r)&&okay;if(i.uploadedMask){if(!r.stats().initialized||r.removeTexture(i.maskID)){i.uploadedMask=0;i.maskImage.reset();i.raster.remove(i.maskID);}else okay=false;}return okay;}
+bool NativeActivityScene::park(Renderer&r)noexcept{auto&i=*impl_;
+    if(i.parts.empty()&&!i.uploadedMask&&!i.maskImage)return false;
+    // A composed surface refuses (before anything is released): stay resident.
+    try{if(!releaseResources(r))return false;}catch(...){return false;}
+    // Destroying the parts removes their raster entries from the shared
+    // rasterizer (LayerScene's destructor); their GPU resources are gone.
+    i.parts.clear();i.entries.clear();i.actions.clear();i.initialized=false;i.dirty=true;i.graphsDirty=false;i.overviewRevision=i.appsRevision=0;i.preparedGraphs={};
+    i.motion.settle();i.sortStart.reset();i.maskPath.reset();i.alpha.reset();i.maskDirty=false;i.maskImage.reset();i.raster.remove(i.maskID);
+    ++i.stats.parks;return true;
+}
+ActivitySceneStats NativeActivityScene::stats()const noexcept{auto value=impl_->stats;value.surfaces=impl_->parts.size();for(const auto&p:impl_->parts)value.residentPixelBytes+=p->scene.report().pixelBytes;if(impl_->maskImage)value.residentPixelBytes+=impl_->maskImage->straightRGBA.size();return value;}
+#endif
+} // namespace endfield::native

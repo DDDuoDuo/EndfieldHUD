@@ -1,0 +1,74 @@
+#ifdef _WIN32
+#include "tools/activity_preview.hpp"
+#include "native/activity_gpu.hpp"
+#include "native/activity_assets.hpp"
+#include "native/module_scene.hpp"
+#include <windows.h>
+#include <objbase.h>
+#include <iostream>
+#include <algorithm>
+#include <atomic>
+#include <mutex>
+#include <thread>
+#include <chrono>
+namespace {namespace c=endfield::core;namespace a=endfield::app;namespace m=endfield::modules;namespace n=endfield::native;namespace t=endfield::tools;using J=ehud::data::Json;unsigned checks{};void check(bool b,const char*s){++checks;if(!b)throw std::runtime_error(s);}
+struct Window{HWND hwnd{};Window(){WNDCLASSW c{};c.lpfnWndProc=DefWindowProcW;c.hInstance=GetModuleHandleW(nullptr);c.lpszClassName=L"OwnedActivityPreviewFixture";check(RegisterClassW(&c)!=0,"Register own synthetic HWND");hwnd=CreateWindowExW(WS_EX_NOREDIRECTIONBITMAP,c.lpszClassName,L"Fixture",WS_POPUP,0,0,1280,800,nullptr,nullptr,c.hInstance,nullptr);check(hwnd&&!IsWindowVisible(hwnd),"Fixture never shows or focuses a user window");}~Window(){if(hwnd)DestroyWindow(hwnd);UnregisterClassW(L"OwnedActivityPreviewFixture",GetModuleHandleW(nullptr));}};
+J blank(){return J::Object{{"bounds",J::Array{0,0,400,334}},{"position",J::Array{0,0}},{"anchorPoint",J::Array{0,0}},{"children",J::Array{}}};}
+void run(n::Renderer&r,const std::filesystem::path&root){n::LayerRasterizer raster;n::NativeActivityAssets assets(root);t::ActivityPreviewOptions options;options.compareNames=[](auto a,auto b){return a.compare(b);};options.initial.timestamp=1;options.initial.uptime=1;options.initial.cpuPercent=10;options.initial.memory=m::ActivityMemory{100,1000,10};options.sortSamples=assets.sortSamples();for(unsigned k=0;k<18;++k){m::ActivityApp app;app.identity={"app"+std::to_string(k),"Synthetic "+std::to_string(k),"",{100+k}};app.cpuPercent=double(k);app.memoryBytes=1000000;options.apps.items.push_back(std::move(app));}std::vector<std::pair<bool,bool>>demands;options.demandChanged=[&](bool visible,bool apps,double){demands.emplace_back(visible,apps);};
+    t::ActivityPreview owner(raster,std::move(options));owner.resize({1280,800,96,1,1280,800});n::LayerComposition composition;c::ModulePresentation modules{c::Module::activityMonitor};n::LayerScene geometry(raster);geometry.load(blank(),{});n::NativeModuleSurface plane(geometry,c::Module::activityMonitor);c::source::DesktopChromeSettings settings{{0,0,1280,800},1,{},c::Module::activityMonitor,true};auto center=c::source::DesktopChromeLayout::make(settings,{},{}).designToScreen;const auto camera=n::layerViewportProjection(1280,800);double now{};bool done{};struct Cleanup{n::Renderer&r;n::LayerComposition&c;t::ActivityPreview&o;bool&done;~Cleanup(){if(done)return;try{c.detach(r);o.release(r);}catch(...){r.reset();}}}cleanup{r,composition,owner,done};
+    const auto frame=[&](double dt=.01){now+=dt;const auto sample=modules.sample(now).presentation;settings.module=sample.requested;owner.update(center,settings,sample,1,now);owner.upload(r);composition.setEntries(r,owner.entries());composition.present(r);owner.collected(r);r.setCamera(camera);};
+    const auto point=[&](c::Point p){const auto sample=modules.sample(now).presentation;const auto*shown=sample.current.module==c::Module::activityMonitor?&sample.current:&*sample.incoming;plane.update(center,settings,*shown);return *c::Projection::viewport(camera*plane.pose().contentWorld,1280,800).project(p);};
+    const auto click=[&](c::Point p){const auto q=point(p);check(owner.pointer({a::PointerKind::down,a::PointerButton::left,q.x,q.y,0},now),"Current projected Activity action accepts source press");check(owner.pointerLocked(),"Telemetry press keeps original lock until release");frame(.07);check(owner.pointer({a::PointerKind::up,a::PointerButton::left,q.x,q.y,0},now),"Owned source release");frame(.30);};
+    frame();check(demands.size()==1&&demands[0]==std::pair{true,false},"Only visible overview sampling demand is emitted");check(!owner.entries().empty()&&!owner.requiresFrames(now),"First snapshot settles without graph tween");click({130,35});check(owner.state().showingApps()&&demands.back()==std::pair{true,true},"Apps tab activates only existing injected app sampling");
+    // GPU before CPU is the user-requested Windows layout: the GPU header
+    // (Windows addition) sits right after App (x 112-154), CPU next (x 156-198);
+    // CPU stays the default sort, so its first click toggles it to ascending.
+    click({177,66});check(!owner.state().descending()&&owner.state().sortKey()==m::ActivitySort::cpu,"Original CPU sort toggles and completes own reveal");click({133,66});check(owner.state().descending()&&owner.state().sortKey()==m::ActivitySort::gpu,"The GPU header (Windows addition) sorts by GPU, busiest first");click({177,66});check(owner.state().descending()&&owner.state().sortKey()==m::ActivitySort::cpu,"Back to CPU, busiest first");click({177,66});check(!owner.state().descending(),"CPU toggles again");
+    const auto q=point({80,130});check(owner.wheel({q.x,q.y,-.5,false,0,3},now),"Source fractional wheel consumed");frame();check(owner.state().scrollOffset()==18,"Fractional source app scroll has no rounding");const auto oldRaster=raster.stats();check(owner.wheel({q.x,q.y,-.125,false,0,3},now),"Sub-row wheel consumed");frame();check(owner.state().scrollOffset()==22.5&&raster.stats().rasterizations==oldRaster.rasterizations,"Sub-row wheel repositions the six retained cards without raster work");
+    center=center*c::Matrix4::rotation(.06,-.11,0);frame();check(owner.covers(point({80,130})),"Tilted source panel uses its current hit projection");const auto scroll=owner.state().scrollOffset();owner.setLanguage(c::Language::korean);frame();check(owner.state().scrollOffset()==scroll&&owner.state().appSnapshot().items.size()==18,"Language event preserves original app inventory and scroll");const auto languageRaster=raster.stats();owner.setLanguage(c::Language::korean);frame();check(raster.stats().rasterizations==languageRaster.rasterizations,"Equal appearance is event-only no-op");
+    // Synthetic keys carry their modifier state: off the HUD's key dispatch the
+    // thread's GetKeyState follows the live keyboard of the interactive session.
+    check(!owner.key({a::KeyKind::down,VK_ESCAPE},true,now)&&owner.state().showingApps()&&demands.back()==std::pair{true,true},"A modified Escape stays with host shortcuts and keeps Apps");
+    check(owner.key({a::KeyKind::down,VK_ESCAPE},false,now),"Escape returns Apps to Overview before HUD close");frame(.3);check(!owner.state().showingApps()&&demands.back()==std::pair{true,false},"Escape stops app demand while keeping system demand");check(!owner.key({a::KeyKind::down,VK_ESCAPE},false,now),"Overview leaves Escape for shared HUD");
+    // GPU is recorded like CPU (native/activity_gpu.hpp): the preview's
+    // visibility sets only the sampling cadence; closing the HUD neither
+    // stops the GPU reading nor closes or reopens its query.
+    const bool gpuAvailable=n::readWindowsActivityGPU().has_value();const auto gpuShown=n::windowsActivityGPUStats();
+    owner.setOverlayVisible(false,now);check(demands.back()==std::pair{false,false},"Closed HUD stops visible sampling without a new timer");
+    std::this_thread::sleep_for(std::chrono::milliseconds(260));check(n::readWindowsActivityGPU().has_value()==gpuAvailable,"The closed HUD keeps reading GPU like CPU");
+    {const auto closed=n::windowsActivityGPUStats();check(closed.open==gpuShown.open&&closed.opens==gpuShown.opens&&closed.closes==gpuShown.closes&&closed.collections==gpuShown.collections+1,"Closing the HUD leaves the one GPU query open (no visibility gate)");}frame();check(!owner.covers(point({80,130}))&&!owner.requiresFrames(now),"Closed HUD has no input or finite animation demand");owner.setOverlayVisible(true,now);frame();check(demands.back()==std::pair{true,false},"Reopen restores original selected tab demand");
+    modules.select(c::Module::power,now);frame(.05);auto fresh=owner.state().snapshot();fresh.timestamp=2;fresh.uptime=2;fresh.cpuPercent=99;owner.receive(fresh);frame(.05);frame(.4);frame(.4);check(owner.entries().empty()&&!owner.requiresFrames(now),"Outgoing artwork tolerates background samples then detaches");const auto departed=raster.stats();fresh.timestamp=3;fresh.uptime=3;owner.receive(fresh);frame();check(raster.stats().rasterizations==departed.rasterizations,"Hidden provider delivery never rebuilds Activity artwork");
+    composition.detach(r);owner.release(r);done=true;check(r.stats().textures==0&&r.stats().meshes==0,"Activity borrows and retires shared renderer assets");
+}
+// ActivityMonitorCanvas.requestVisibleIcons: icons only for visible Apps rows,
+// loaded on the shared executor (never the UI thread), bound on content
+// events, pruned to running apps. Synthetic loader: no executable is read.
+void icons(n::Renderer&r,const std::filesystem::path&root){
+    n::LayerRasterizer raster;n::NativeActivityAssets assets(root);a::UtilityExecutor executor([]{});const auto owner=std::this_thread::get_id();
+    std::atomic<unsigned>loads{};std::atomic<bool>offThread{true};std::mutex mutex;std::vector<std::string>loaded;
+    t::ActivityPreviewOptions options;options.compareNames=[](auto x,auto y){return x.compare(y);};options.initial.timestamp=1;options.initial.uptime=1;options.initial.cpuPercent=10;options.initial.memory=m::ActivityMemory{100,1000,10};options.sortSamples=assets.sortSamples();
+    for(unsigned k=0;k<18;++k){m::ActivityApp app;app.identity={"app"+std::to_string(k),"Synthetic "+std::to_string(k),"icon/"+std::to_string(k),{100+k}};app.cpuPercent=double(k);app.memoryBytes=1000000;options.apps.items.push_back(std::move(app));}
+    options.iconExecutor=&executor;options.iconLoader=[&](const std::string&key,unsigned pixels)->std::optional<n::ActivityIconPixels>{++loads;if(std::this_thread::get_id()==owner)offThread=false;{std::lock_guard lock(mutex);loaded.push_back(key);}
+        if(key=="icon/15")return {}; // unavailable artwork: the row keeps no icon
+        n::ActivityIconPixels out;out.width=out.height=pixels;out.straightRGBA.assign(std::size_t(pixels)*pixels*4,200);return out;};
+    t::ActivityPreview preview(raster,std::move(options));preview.resize({1280,800,96,1,1280,800});check(preview.iconStats().has_value()&&loads==0,"Icons are opt-in and construction loads nothing");
+    n::LayerComposition composition;c::ModulePresentation modules{c::Module::activityMonitor};n::LayerScene geometry(raster);geometry.load(blank(),{});n::NativeModuleSurface plane(geometry,c::Module::activityMonitor);c::source::DesktopChromeSettings settings{{0,0,1280,800},1,{},c::Module::activityMonitor,true};auto center=c::source::DesktopChromeLayout::make(settings,{},{}).designToScreen;const auto camera=n::layerViewportProjection(1280,800);double now{};bool done{};
+    struct Cleanup{n::Renderer&r;n::LayerComposition&c;t::ActivityPreview&o;bool&done;~Cleanup(){if(done)return;try{c.detach(r);o.release(r);}catch(...){r.reset();}}}cleanup{r,composition,preview,done};
+    const auto frame=[&](double dt=.01){now+=dt;const auto sample=modules.sample(now).presentation;settings.module=sample.requested;preview.update(center,settings,sample,1,now);preview.upload(r);composition.setEntries(r,preview.entries());composition.present(r);preview.collected(r);r.setCamera(camera);};
+    const auto settle=[&]{executor.waitIdle();executor.drain();};
+    frame();settle();check(loads==0,"The overview tab requests no app icon");
+    check(preview.perform("activity:apps",now),"Apps tab opens");frame(.3);settle();
+    const auto first=preview.iconStats();check(loads>=1&&loads<=n::ActivityIconProvider::maximumPending&&offThread,"Visible rows' icons load on the shared executor, at most eight");
+    {std::lock_guard lock(mutex);check(std::find(loaded.begin(),loaded.end(),"icon/0")==loaded.end()&&std::find(loaded.begin(),loaded.end(),"icon/17")!=loaded.end(),"Only rows on screen (CPU-sorted) are requested");}
+    const auto beforeBind=raster.stats();frame();check(raster.stats().rasterizations>beforeBind.rasterizations&&preview.iconStats()->publications>first->publications,"A finished load rebinds the visible rows with their icons");
+    check(preview.iconStats()->unavailable==1&&preview.iconStats()->loaded+1==loads,"Unavailable artwork is remembered, not invented");
+    const auto warmLoads=loads.load();const auto warm=raster.stats();for(unsigned k=0;k<5;++k)frame();settle();check(loads==warmLoads&&raster.stats().rasterizations==warm.rasterizations,"Warm frames request, load and raster nothing");
+    const auto q=[&](c::Point p){const auto sample=modules.sample(now).presentation;const auto*shown=sample.current.module==c::Module::activityMonitor?&sample.current:&*sample.incoming;plane.update(center,settings,*shown);return *c::Projection::viewport(camera*plane.pose().contentWorld,1280,800).project(p);}({80,130});
+    check(preview.wheel({q.x,q.y,-3,false,0,3},now),"Apps scroll");frame();settle();frame();
+    {std::lock_guard lock(mutex);check(loads>warmLoads&&std::count(loaded.begin(),loaded.end(),"icon/17")==1,"Scrolling requests only newly visible rows; cached icons never reload");}
+    auto fewer=preview.state().appSnapshot();fewer.items.resize(4);fewer.timestamp=fewer.uptime=2;preview.receiveApps(std::move(fewer));frame();settle();check(preview.iconStats()->cached<=4,"The icon cache keeps only running apps");
+    composition.detach(r);preview.release(r);done=true;check(r.stats().textures==0&&r.stats().meshes==0,"Icon rows retire their renderer assets");
+}
+}
+int wmain(int argc,wchar_t**argv){const auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);try{check(SUCCEEDED(hr)&&argc==3,"Pass HLSL and packaged Activity resources");Window window;n::Renderer renderer;renderer.initialize(window.hwnd,1280,800,{n::Driver::warpForTests,argv[1],n::RenderTarget::offscreenForTests});run(renderer,std::filesystem::absolute(argv[2]));icons(renderer,std::filesystem::absolute(argv[2]));renderer.reset();CoUninitialize();std::cout<<"PASS "<<checks<<" Activity owner checks\n";return 0;}catch(const std::exception&e){if(SUCCEEDED(hr))CoUninitialize();std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
+#endif

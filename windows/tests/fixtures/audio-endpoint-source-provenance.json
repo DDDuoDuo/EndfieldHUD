@@ -1,0 +1,21 @@
+{
+  "audioBackend": "AudioDeviceController(snapshot:) + PerAppAudioController.fixture() + in-memory SystemEventLog",
+  "exporterSHA256": {
+    "windows/tools/audio_reference.sh": "4b662a9606a0ad9c9a76b150645e1485869ba3c8133ffbe3c42a2aa867da5b0c",
+    "windows/tools/audio_reference.swift": "e7bd9b1e6abe054932549e3a602e3ac91c9923ecada863e38fef3a7489eb645b"
+  },
+  "fixture": "windows/tests/fixtures/audio-endpoint-source.json",
+  "input": "synthetic fixtures only; CFFIXED_USER_HOME injected",
+  "regenerate": "bash windows/tools/audio_reference.sh <new-output-directory> (macOS)",
+  "sourceAuthority": "ca04f142185c7de40acd8523bdb563195d90a1d1",
+  "sourceSHA256": {
+    "Sources/AudioDeviceController.swift": "95e41d119967498a0c42f7fa4a355e1b4d75bc2df0fedc4c10e6efd3300c617e",
+    "Sources/AudioTopologyWatcher.swift": "8f22265516e077bf6b1ca93c6fd5539e395b0b441f01dced9522995b4f3b43c3",
+    "Sources/HUDVolumeInteraction.swift": "d8e25b9fac698985c54a1310654636a2cff2e05ffe601142a25b4b6e64b12a71",
+    "Sources/PerAppAudioController.swift": "9c2a197642db07749d370de363d564be119e09ab7f1f145e04befcdfd3129f9d",
+    "Sources/SystemEventLog.swift": "10085570f86bca00eaa011f1dda4c3436b41c2252d0d18ff3c6650d3bff64b9e",
+    "Sources/SystemEventRecorder.swift": "4d5851f6767c463a5eda7ed1b44d29a6793e05313a7149a45230bc020f77b672",
+    "Sources/VolumeCanvas.swift": "e12ffc718045de6bd149cc34d8c76d8c38a7c1e4558905226e3f106398d23538"
+  },
+  "windowsCreated": false
+}

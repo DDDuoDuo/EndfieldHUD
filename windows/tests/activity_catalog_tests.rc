@@ -1,0 +1,25 @@
+// Synthetic version resource of the test executable itself, so the
+// FileDescription reader is exercised without reading any installed app.
+#include <winver.h>
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION 1,0,0,0
+PRODUCTVERSION 1,0,0,0
+FILEFLAGSMASK 0x3fL
+FILEFLAGS 0x0L
+FILEOS VOS_NT_WINDOWS32
+FILETYPE VFT_APP
+FILESUBTYPE VFT2_UNKNOWN
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "000004b0"
+    BEGIN
+      VALUE "FileDescription", "  Synthetic  Activity Probe "
+      VALUE "ProductName", "EndfieldHUD synthetic test"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x0000, 1200
+  END
+END

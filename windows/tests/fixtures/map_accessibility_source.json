@@ -1,0 +1,122 @@
+{
+ "addPin": {
+  "english": "Place pin at map center",
+  "id": "map:addPin",
+  "japanese": "マップの中央にピンを配置",
+  "korean": "지도 중앙에 핀 놓기",
+  "rect": [
+   392,
+   207,
+   22,
+   22
+  ],
+  "simplifiedChinese": "在地图中心放置标记",
+  "traditionalChinese": "在地圖中心放置標記"
+ },
+ "cadenceHz": 12,
+ "deletePin": {
+  "english": "Remove selected pin",
+  "id": "map:deletePin",
+  "japanese": "選択したピンを削除",
+  "korean": "선택한 핀 제거",
+  "rect": [
+   316,
+   303,
+   21,
+   21
+  ],
+  "simplifiedChinese": "移除选中标记",
+  "traditionalChinese": "移除選中標記"
+ },
+ "help": {
+  "english": ". Drag to pan. Scroll or pinch to zoom. Right-click to place or remove a pin. Click a pin to cycle yellow, green and player markers. Click terrain to recenter without changing zoom. Arrow keys move the map.",
+  "japanese": "。ドラッグで移動、スクロールまたはピンチで拡大縮小、右クリックでピンを配置または削除します。ピンをクリックすると黄色、緑色、プレイヤーの順に切り替わります。地形をクリックすると倍率を変えずに中央へ移動します。矢印キーでも移動できます。",
+  "korean": ". 드래그로 이동하고 스크롤하거나 핀치하여 확대 및 축소합니다. 오른쪽 클릭으로 핀을 추가하거나 제거합니다. 핀을 클릭하면 노란색, 초록색, 플레이어 표시로 바뀝니다. 지형을 클릭하면 배율을 유지한 채 그곳을 중앙으로 이동합니다. 방향키로도 지도를 이동할 수 있습니다.",
+  "simplifiedChinese": "。拖动平移，滚动或捏合缩放，右键放置或移除标记，点击标记切换黄色、绿色和玩家样式，点击地形居中并保持缩放，方向键移动地图。",
+  "traditionalChinese": "。拖動平移，滾動或捏合縮放，右鍵放置或移除標記，點擊標記切換黃色、綠色和玩家樣式，點擊地形置中並保持縮放，方向鍵移動地圖。"
+ },
+ "pinLabel": "title + ' ' + (1-based index) + ', ' + coordinateDescription(x, y)",
+ "pinTitles": {
+  "green": {
+   "english": "Green pin",
+   "japanese": "緑色のピン",
+   "korean": "초록색 핀",
+   "simplifiedChinese": "绿色标记",
+   "traditionalChinese": "綠色標記"
+  },
+  "player": {
+   "english": "Player marker",
+   "japanese": "プレイヤーマーカー",
+   "korean": "플레이어 표시",
+   "simplifiedChinese": "玩家标记",
+   "traditionalChinese": "玩家標記"
+  },
+  "yellow": {
+   "english": "Yellow pin",
+   "japanese": "黄色のピン",
+   "korean": "노란색 핀",
+   "simplifiedChinese": "黄色标记",
+   "traditionalChinese": "黃色標記"
+  }
+ },
+ "source": {
+  "authority": "ca04f142185c7de40acd8523bdb563195d90a1d1",
+  "files": [
+   "Sources/WorldMapCanvas.swift",
+   "Sources/HUDWorldMapInteraction.swift",
+   "Sources/WorldMapPinArtwork.swift",
+   "Sources/LocalizationCatalog.swift"
+  ]
+ },
+ "status": {
+  "english": "Map",
+  "japanese": "マップ",
+  "korean": "지도",
+  "simplifiedChinese": "地图",
+  "traditionalChinese": "地圖"
+ },
+ "toolbar": [
+  {
+   "english": "Zoom in",
+   "id": "map:zoomIn",
+   "japanese": "拡大",
+   "korean": "확대",
+   "rect": [
+    26,
+    184,
+    22,
+    22
+   ],
+   "simplifiedChinese": "放大",
+   "traditionalChinese": "放大"
+  },
+  {
+   "english": "Zoom out",
+   "id": "map:zoomOut",
+   "japanese": "縮小",
+   "korean": "축소",
+   "rect": [
+    26,
+    212,
+    22,
+    22
+   ],
+   "simplifiedChinese": "缩小",
+   "traditionalChinese": "縮小"
+  },
+  {
+   "english": "Reset zoom to 3×",
+   "id": "map:reset",
+   "japanese": "ズームを3倍に戻す",
+   "korean": "3배 배율로 초기화",
+   "rect": [
+    26,
+    240,
+    22,
+    22
+   ],
+   "simplifiedChinese": "重置缩放至3×",
+   "traditionalChinese": "重設縮放至3×"
+  }
+ ]
+}
