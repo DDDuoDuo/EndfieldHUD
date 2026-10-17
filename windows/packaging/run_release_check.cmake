@@ -86,7 +86,7 @@ if(EXISTS "${SOURCE}/RELEASE-NOTES.md")
   string(REPLACE "windows-v${notes_release}" "" notes_shared "${unmarked}")
   foreach(expected IN ITEMS "v${notes_release}" "| `${setup_name}` | `${setup_sha}` |" "| `${portable_name}` | `${portable_sha}` |"
       "${sums_name}" "## Moving from a Mac" "## Known differences and limitations" "**Windows 11, 64-bit (x64).**"
-      "blob/v${notes_release}/windows/tools/mac_import_exporter.py")
+      "blob/main/windows/tools/mac_import_exporter.py")
     string(FIND "${notes_shared}" "${expected}" found)
     if(found EQUAL -1)
       message(FATAL_ERROR "The release-notes draft lacks '${expected}':\n${notes}")

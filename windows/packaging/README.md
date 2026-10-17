@@ -401,7 +401,7 @@ checks the staged files: SHA256SUMS lists exactly the setup and the portable
 zip, the symbols zip (a stand-in when the build emits no PDB) has its own
 checksum file, and, when `windows/RELEASE-NOTES.md` exists, the draft is that
 file with exactly its two SHA-256 cells filled in, names the `v<release>` tag
-(never `windows-v<release>`), the artifacts and the exporter link at the tag,
+(never `windows-v<release>`), the artifacts and the exporter link on `main`,
 says Windows 11, and is marked *Do not publish* exactly when the package is
 incomplete.
 
