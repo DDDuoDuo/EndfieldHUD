@@ -1,16 +1,20 @@
 <!--
-Draft notes for the first Windows release (tag windows-v1.2.0), and the only
-source of its release notes: the endfieldhud_release staging build writes
+Draft notes for the first Windows build, published as the Windows section of
+the existing v1.2.0 release (the Windows files are extra assets of the
+regular release tags, next to the Mac files), and the only source of that
+section: the endfieldhud_release staging build writes
 EndfieldHUD-1.2.0-build18-windows-x64-release-notes.md, which is this file
 with the two SHA-256 values under "Verify the download" filled in from the
-staged setup and portable zip. Nothing is published from either file. Before
+staged setup and portable zip. Nothing is published from either file. This
+file stays on the development branch: the main branch has no
+windows/RELEASE-NOTES.md, and staging there writes no draft. Before
 publishing:
   1. Stage a complete Release build: no "-incomplete" artifact names and no
      "Do not publish" mark in the staged draft. Check the installed size in
      the staged size report.
   2. Run the section 9 gate on the test laptop's desktop against this build
      (package_perf_gate --desktop) and replace the "Performance" figures
-     with its report. Skipped for windows-v1.2.0 by the owner's decision:
+     with its report. Skipped for Windows 1.2.0 by the owner's decision:
      "Performance" keeps the off-screen measurements and must not claim an
      on-screen gate pass; the gate run is a post-release follow-up, not a
      blocker. The closed-HUD memory (about 307 MiB private within the
@@ -32,23 +36,26 @@ publishing:
      front and took typing.
   4. Compare "Known differences and limitations" with WINDOWS-MIGRATION.md
      section 6 at the release commit.
-  5. Create the release under the Windows tag namespace only, from the
-     staged draft:
-       gh release create windows-v1.2.0 --target <commit> --latest=false
-         --title "EndfieldHUD 1.2.0 for Windows" --notes-file <staged draft>
-         <setup.exe> <portable.zip> <SHA256SUMS.txt>
+  5. Add the Windows files to the existing v1.2.0 release (no new tag):
+       gh release upload v1.2.0 <setup.exe> <portable.zip> <SHA256SUMS.txt>
      Upload exactly these three files: the Windows updater finds the setup
-     and SHA256SUMS by these names. Never upload the symbols zip, its
-     checksum file, the size report or an "-incomplete" artifact, and never
-     touch the Mac release or updates/appcast.xml.
-  6. The windows-v1.2.0 links work only once the tag exists.
+     and SHA256SUMS by these names on the release's own tag. Never upload
+     the symbols zip, its checksum file, the size report or an
+     "-incomplete" artifact. Then append the staged draft (without this
+     comment) to the v1.2.0 release notes as their Windows section. Keep the
+     Mac notes, the release title, its Mac assets and its Latest state as
+     they are, and never touch updates/appcast.xml.
+  6. The blob/v1.2.0 links below name files at the v1.2.0 tag. That tag is
+     the Mac release commit, which has no windows/ folder and no
+     WINDOWS-MIGRATION.md (and an older CREDITS.md): check that every link
+     opens before publishing.
 Remove this comment before publishing.
 -->
 # EndfieldHUD 1.2.0 for Windows
 
 The first Windows release of EndfieldHUD. It brings the same layered, animated HUD and the same tools as the macOS app, version 1.2.0 (build 18), to 64-bit Windows 11 as a native program, with the same look, animations, languages and data formats.
 
-This is a Windows-only release (tag `windows-v1.2.0`). It does not change the macOS app, its downloads or its update feed, and Macs are never offered Windows releases.
+The Windows downloads are part of the 1.2.0 release (tag `v1.2.0`), next to the macOS download. They do not change the macOS app, its downloads or its update feed.
 
 This release is not code-signed; Windows SmartScreen may show **Windows protected your PC** the first time it runs. See [Install](#install).
 
@@ -147,7 +154,7 @@ In **System**, **Display**, **Hotkeys** and **About**, change the theme and them
 
 The Mac app has no export button; a small script exports its data once.
 
-1. On the Mac, quit EndfieldHUD, download [`mac_import_exporter.py`](https://github.com/DDDuoDuo/EndfieldHUD/blob/windows-v1.2.0/windows/tools/mac_import_exporter.py) and run it with Python 3:
+1. On the Mac, quit EndfieldHUD, download [`mac_import_exporter.py`](https://github.com/DDDuoDuo/EndfieldHUD/blob/v1.2.0/windows/tools/mac_import_exporter.py) and run it with Python 3:
    `python3 mac_import_exporter.py ~/Desktop/EndfieldHUD-export`
    It copies your EndfieldHUD data and settings into that new folder. It changes nothing on the Mac and never reads the Keychain.
 2. Copy the `EndfieldHUD-export` folder to the PC.
@@ -180,7 +187,7 @@ The import has been tested with sample exports, not yet with a real Mac's data.
 
 ### Differences from the Mac
 
-These come from Windows itself, or from choices that keep your data and system safe. The full list, with the reasons, is in [WINDOWS-MIGRATION.md](https://github.com/DDDuoDuo/EndfieldHUD/blob/windows-v1.2.0/WINDOWS-MIGRATION.md) (section 6, "Windows platform gaps").
+These come from Windows itself, or from choices that keep your data and system safe. The full list, with the reasons, is in [WINDOWS-MIGRATION.md](https://github.com/DDDuoDuo/EndfieldHUD/blob/v1.2.0/WINDOWS-MIGRATION.md) (section 6, "Windows platform gaps").
 
 - **Temporary File Shelf:** files cannot be dropped on the tray icon (Windows offers no drop target there). Drop them on the open HUD's Shelf or its button, use *Add files*, or press Ctrl+V. Items that are not real files (Outlook attachments, images dragged from a browser, files inside zip folders) are refused with a message. Items moved to the Recycle Bin, to another drive or to some network shares show as *Unavailable*. The eye button, a double-click or Space shows a properties card with *Open* and *Reveal* instead of a preview.
 - **Now Playing:**
@@ -285,4 +292,4 @@ The hash must equal the value on that file's line (upper or lower case does not 
 
 ---
 
-Made by [DDDuoDuo](https://github.com/DDDuoDuo). An unofficial fan project. Game artwork and branding belong to HYPERGRYPH and their respective owners. Original code is MIT licensed; third-party assets and libraries keep their own terms, and their licences are in `THIRD-PARTY-NOTICES.txt` beside `EndfieldHUD.exe`. [Full credits and sources](https://github.com/DDDuoDuo/EndfieldHUD/blob/windows-v1.2.0/CREDITS.md)
+Made by [DDDuoDuo](https://github.com/DDDuoDuo). An unofficial fan project. Game artwork and branding belong to HYPERGRYPH and their respective owners. Original code is MIT licensed; third-party assets and libraries keep their own terms, and their licences are in `THIRD-PARTY-NOTICES.txt` beside `EndfieldHUD.exe`. [Full credits and sources](https://github.com/DDDuoDuo/EndfieldHUD/blob/v1.2.0/CREDITS.md)

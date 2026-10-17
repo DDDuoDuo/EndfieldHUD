@@ -27,9 +27,10 @@ namespace endfield::app {
 class UpdateService {
 public:
     static constexpr std::string_view key = "updates.windows";
-    // One GitHub metadata check (windows-v* releases only). Never downloads or
-    // installs. False when busy, stopped or not loaded yet (then it runs as
-    // soon as the saved state is loaded).
+    // One GitHub metadata check (only releases carrying the Windows
+    // installer assets count). Never downloads or installs. False when busy,
+    // stopped or not loaded yet (then it runs as soon as the saved state is
+    // loaded).
     virtual bool check(double time) = 0;
     // The About update row: check; on an installable update, download and
     // verify it (the click is the consent); on a verified download, close the

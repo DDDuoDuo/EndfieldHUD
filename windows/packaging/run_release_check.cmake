@@ -1,8 +1,10 @@
 # CTest endfieldhud_release_contracts: stages the real release artifacts into
-# a fresh folder, checks the portable zip listing, SHA256SUMS and the
-# release-notes draft, then installs the real setup into temporary folders
-# under a private HKCU test subtree, verifies the installed package and
-# uninstalls it (packaging_installer_tests --release).
+# a fresh folder, checks the portable zip listing, the size report, SHA256SUMS
+# and the release-notes draft (only when windows/RELEASE-NOTES.md exists: the
+# main branch has none, and then no draft may be staged), then installs the
+# real setup into temporary folders under a private HKCU test subtree,
+# verifies the installed package and uninstalls it
+# (packaging_installer_tests --release).
 cmake_minimum_required(VERSION 3.25)
 if(NOT CHECKER)
   message(FATAL_ERROR "CHECKER is required")
@@ -66,41 +68,60 @@ endif()
 
 # The release-notes draft is windows/RELEASE-NOTES.md with both SHA-256
 # cells filled in (one source of truth), plus the "Do not publish" mark on
-# an incomplete package.
-file(READ "${EHUD_STAGED_NOTES}" notes)
-string(JSON notes_release GET "${report}" release)
-string(REGEX REPLACE "^v" "" notes_release "${notes_release}")
-foreach(expected IN ITEMS "windows-v${notes_release}" "| `${setup_name}` | `${setup_sha}` |" "| `${portable_name}` | `${portable_sha}` |"
-    "${sums_name}" "## Moving from a Mac" "## Known differences and limitations" "**Windows 11, 64-bit (x64).**"
-    "blob/windows-v${notes_release}/windows/tools/mac_import_exporter.py")
-  string(FIND "${notes}" "${expected}" found)
-  if(found EQUAL -1)
-    message(FATAL_ERROR "The release-notes draft lacks '${expected}':\n${notes}")
+# an incomplete package. It names the shared "v<release>" release (the
+# Windows files are extra assets of the regular release), never the retired
+# "windows-v<release>" tag. Without windows/RELEASE-NOTES.md (the main
+# branch) staging writes no draft and these checks are skipped.
+set(notes_checked OFF)
+if(EXISTS "${SOURCE}/RELEASE-NOTES.md")
+  if(NOT EHUD_STAGED_NOTES OR NOT EXISTS "${EHUD_STAGED_NOTES}")
+    message(FATAL_ERROR "windows/RELEASE-NOTES.md exists but no release-notes draft was staged")
   endif()
-endforeach()
-foreach(stale IN ITEMS "<!-- sha256 at release -->" "Windows 10 version" "@EHUD_")
-  string(FIND "${notes}" "${stale}" found)
-  if(NOT found EQUAL -1)
-    message(FATAL_ERROR "The release-notes draft still contains '${stale}':\n${notes}")
+  file(READ "${EHUD_STAGED_NOTES}" notes)
+  string(JSON notes_release GET "${report}" release)
+  string(REGEX REPLACE "^v" "" notes_release "${notes_release}")
+  # The notes without their "Do not publish" marks (a mark's text names what
+  # is missing), and "v<release>" counted only outside "windows-v<release>".
+  string(REGEX REPLACE "> \\*\\*[^\n]*Do not publish[^\n]*\n\n" "" unmarked "${notes}")
+  string(REPLACE "windows-v${notes_release}" "" notes_shared "${unmarked}")
+  foreach(expected IN ITEMS "v${notes_release}" "| `${setup_name}` | `${setup_sha}` |" "| `${portable_name}` | `${portable_sha}` |"
+      "${sums_name}" "## Moving from a Mac" "## Known differences and limitations" "**Windows 11, 64-bit (x64).**"
+      "blob/v${notes_release}/windows/tools/mac_import_exporter.py")
+    string(FIND "${notes_shared}" "${expected}" found)
+    if(found EQUAL -1)
+      message(FATAL_ERROR "The release-notes draft lacks '${expected}':\n${notes}")
+    endif()
+  endforeach()
+  foreach(stale IN ITEMS "<!-- sha256 at release -->" "Windows 10 version" "@EHUD_" "windows-v${notes_release}")
+    string(FIND "${unmarked}" "${stale}" found)
+    if(NOT found EQUAL -1)
+      message(FATAL_ERROR "The release-notes draft still contains '${stale}':\n${notes}")
+    endif()
+  endforeach()
+  string(REGEX MATCH "(^|\n)> \\*\\*[^\n]*Do not publish" marked "${notes}")
+  if(EHUD_STAGED_COMPLETE AND marked)
+    message(FATAL_ERROR "windows/RELEASE-NOTES.md does not describe this complete package:\n${notes}")
+  elseif(NOT EHUD_STAGED_COMPLETE AND NOT marked)
+    message(FATAL_ERROR "The incomplete package's release-notes draft is not marked Do not publish:\n${notes}")
   endif()
-endforeach()
-string(REGEX MATCH "(^|\n)> \\*\\*[^\n]*Do not publish" marked "${notes}")
-if(EHUD_STAGED_COMPLETE AND marked)
-  message(FATAL_ERROR "windows/RELEASE-NOTES.md does not describe this complete package:\n${notes}")
-elseif(NOT EHUD_STAGED_COMPLETE AND NOT marked)
-  message(FATAL_ERROR "The incomplete package's release-notes draft is not marked Do not publish:\n${notes}")
-endif()
-file(READ "${SOURCE}/RELEASE-NOTES.md" source_notes)
-string(REPLACE "\r\n" "\n" source_notes "${source_notes}")
-set(restored "${notes}")
-string(REGEX REPLACE "> \\*\\*[^\n]*Do not publish[^\n]*\n\n" "" restored "${restored}")
-string(REPLACE "`${setup_sha}`" "<!-- sha256 at release -->" restored "${restored}")
-string(REPLACE "`${portable_sha}`" "<!-- sha256 at release -->" restored "${restored}")
-if(NOT EHUD_STAGED_COMPLETE)
-  string(REPLACE "${ehud_stem}${ehud_suffix}-" "${ehud_stem}-" restored "${restored}")
-endif()
-if(NOT restored STREQUAL source_notes)
-  message(FATAL_ERROR "The release-notes draft is not windows/RELEASE-NOTES.md with its checksums filled in:\n${notes}")
+  file(READ "${SOURCE}/RELEASE-NOTES.md" source_notes)
+  string(REPLACE "\r\n" "\n" source_notes "${source_notes}")
+  set(restored "${unmarked}")
+  string(REPLACE "`${setup_sha}`" "<!-- sha256 at release -->" restored "${restored}")
+  string(REPLACE "`${portable_sha}`" "<!-- sha256 at release -->" restored "${restored}")
+  if(NOT EHUD_STAGED_COMPLETE)
+    string(REPLACE "${ehud_stem}${ehud_suffix}-" "${ehud_stem}-" restored "${restored}")
+  endif()
+  if(NOT restored STREQUAL source_notes)
+    message(FATAL_ERROR "The release-notes draft is not windows/RELEASE-NOTES.md with its checksums filled in:\n${notes}")
+  endif()
+  set(notes_checked ON)
+else()
+  file(GLOB stray_notes "${OUT}/*-release-notes.md")
+  if(EHUD_STAGED_NOTES OR stray_notes)
+    message(FATAL_ERROR "A release-notes draft was staged without windows/RELEASE-NOTES.md: ${EHUD_STAGED_NOTES} ${stray_notes}")
+  endif()
+  message(STATUS "No windows/RELEASE-NOTES.md (main-branch layout): no release-notes draft staged, notes checks skipped")
 endif()
 
 execute_process(COMMAND "${CHECKER}" --release "${EHUD_STAGED_SETUP}" RESULT_VARIABLE checked OUTPUT_VARIABLE output ERROR_VARIABLE errors)
@@ -109,4 +130,4 @@ if(NOT checked EQUAL 0)
   message(FATAL_ERROR "The staged setup failed its install check (${checked}):\n${output}\n${errors}")
 endif()
 file(REMOVE_RECURSE "${OUT}" "${OUT}-symbols")
-message(STATUS "Release artifacts staged, installed and removed (complete: ${EHUD_STAGED_COMPLETE}, ${installed_bytes} installed bytes)")
+message(STATUS "Release artifacts staged, installed and removed (complete: ${EHUD_STAGED_COMPLETE}, release notes checked: ${notes_checked}, ${installed_bytes} installed bytes)")

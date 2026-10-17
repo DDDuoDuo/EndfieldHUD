@@ -333,7 +333,7 @@ void transport() {
     options.operationTimeout = 10;
     u::WinHttpTransport t(options);
     TemporaryFolder temp;
-    const std::string feed = "[{\"tag_name\":\"windows-v1.2.1\"}]";
+    const std::string feed = "[{\"tag_name\":\"v1.2.1\"}]";
     server.route("/releases", {"HTTP/1.1 200 OK\r\nETag: W/\"loop\"\r\nX-RateLimit-Remaining: 59\r\nRetry-After: 7\r\nContent-Type: application/json", feed});
     u::TransportRequest request;
     request.url = server.url("/releases");
@@ -622,7 +622,7 @@ void verification(const fs::path& standIn) {
     TemporaryFolder data;
     const auto folder = data.path / "Updates";
     u::RouteTransport routes;
-    const std::string tag = "windows-v1.2.1";
+    const std::string tag = "v1.2.1"; // the shared release: Windows files next to the Mac ones
     const auto setupName = u::setupAssetName("1.2.1", 19), sumsName = u::sumsAssetName("1.2.1", 19);
     const auto sums = u::sumsText({{releaseSha, setupName}});
     routes.serve(std::string(u::releasesEndpoint), {200, {}, u::releaseFeed({{tag, "", "", false, false, true, u::installerAssets(tag, "1.2.1", 19, releaseBytes.size(), sums.size())}}), {}});
@@ -692,7 +692,8 @@ void metadataOverWinHttp() {
     options.now = [] { return 1.0; };
     options.loopbackOnly = true;
     u::WinHttpTransport transport(options);
-    const auto feed = u::releaseFeed({{"v9.0.0", "Mac", "", false, false, true, {}}, {"windows-v1.2.1", "", "", false, false, true, u::installerAssets("windows-v1.2.1", "1.2.1", 19, 4096, 100)}});
+    // A newer Mac-only release (no Windows files) is never offered to Windows.
+    const auto feed = u::releaseFeed({{"v9.0.0", "Mac", "", false, false, true, {}}, {"v1.2.1", "", "", false, false, true, u::installerAssets("v1.2.1", "1.2.1", 19, 4096, 100)}});
     server.route("/repos/DDDuoDuo/EndfieldHUD/releases?per_page=100", {"HTTP/1.1 200 OK\r\nETag: \"loop-etag\"", feed});
     std::deque<std::pair<std::function<void()>, std::function<void(std::exception_ptr)>>> queue;
     u::UpdaterOptions o;
@@ -722,7 +723,7 @@ void metadataOverWinHttp() {
     check(notice.wait(), "WinHTTP completion notice");
     updater.drain();
     run();
-    check(updater.state().phase == u::Phase::available && updater.candidate() && updater.candidate()->tag == "windows-v1.2.1" &&
+    check(updater.state().phase == u::Phase::available && updater.candidate() && updater.candidate()->tag == "v1.2.1" &&
           updater.state().latestVersion == "1.2.1 (19)", "The updater reads the loopback feed through WinHTTP");
     server.route("/repos/DDDuoDuo/EndfieldHUD/releases?per_page=100", {"HTTP/1.1 304 Not Modified", "", false});
     server.forget();

@@ -9,9 +9,12 @@
 #   EndfieldHUD-<release>-build<N>-windows-x64-symbols-SHA256SUMS.txt   its checksum
 #   EndfieldHUD-<release>-build<N>-windows-x64-size-report.json/.md
 #   EndfieldHUD-<release>-build<N>-windows-x64-release-notes.md   windows/RELEASE-NOTES.md
-#       with its SHA-256 cells filled in: the draft for the GitHub release
+#       with its SHA-256 cells filled in: the draft of the Windows section of
+#       the GitHub release, written only when windows/RELEASE-NOTES.md exists
+#       (the main branch has no such file and stages no draft)
 #
-# Only the setup, the portable zip and SHA256SUMS are uploaded to a release.
+# Only the setup, the portable zip and SHA256SUMS are uploaded, as extra
+# assets of the shared "v<release>" GitHub release (next to the Mac files).
 #
 # A package whose resources do not verify (Mac-exported runtime inputs not
 # configured) is refused unless ALLOW_INCOMPLETE, and then every artifact is
@@ -25,8 +28,8 @@
 #   [-DREQUIRE_COMPLETE=ON] [-DSIGN_SHA1=<thumbprint> -DSIGN_TIMESTAMP=<url>] -P stage_release.cmake
 # When included from another script it leaves EHUD_STAGED_SETUP,
 # EHUD_STAGED_PORTABLE, EHUD_STAGED_REPORT, EHUD_STAGED_SUMS,
-# EHUD_STAGED_SYMBOLS_SUMS (empty without symbols), EHUD_STAGED_NOTES and
-# EHUD_STAGED_COMPLETE set.
+# EHUD_STAGED_SYMBOLS_SUMS (empty without symbols), EHUD_STAGED_NOTES (empty
+# without windows/RELEASE-NOTES.md) and EHUD_STAGED_COMPLETE set.
 cmake_minimum_required(VERSION 3.25)
 foreach(required BUILD CONFIG SOURCE OUT PACKER STUB UNINSTALLER)
   if(NOT ${required})
@@ -169,56 +172,70 @@ if(ehud_symbols)
   file(WRITE "${EHUD_STAGED_SYMBOLS_SUMS}" "${ehud_hash}  ${ehud_name}\n")
 endif()
 
-# 8. Release-notes draft: windows/RELEASE-NOTES.md, the reviewed text and the
-#    only source of the release notes, with its "<!-- sha256 at release -->"
-#    cells filled from the staged artifacts; never published here. Anything
-#    the notes cannot describe (another release, an incomplete package, signed
-#    artifacts) is marked "Do not publish" at the top of the draft.
-file(READ "${SOURCE}/RELEASE-NOTES.md" ehud_notes)
-string(REPLACE "\r\n" "\n" ehud_notes "${ehud_notes}")
-set(ehud_notes_marks "")
-foreach(expected IN ITEMS "windows-v${ehud_release_plain}" "${ehud_stem}-setup.exe" "${ehud_stem}-portable.zip" "${ehud_stem}-SHA256SUMS.txt")
-  string(FIND "${ehud_notes}" "${expected}" ehud_found)
-  if(ehud_found EQUAL -1)
-    string(APPEND ehud_notes_marks "> **Do not publish:** windows/RELEASE-NOTES.md does not name `${expected}`. Update it for this release.\n\n")
-  endif()
-endforeach()
-if(ehud_suffix)
-  string(REPLACE "${ehud_stem}-" "${ehud_stem}${ehud_suffix}-" ehud_notes "${ehud_notes}")
-endif()
-set(ehud_notes_placeholder "<!-- sha256 at release -->")
-foreach(artifact IN ITEMS "${EHUD_STAGED_SETUP}" "${EHUD_STAGED_PORTABLE}")
-  file(SHA256 "${artifact}" ehud_hash)
-  get_filename_component(ehud_name "${artifact}" NAME)
-  string(REPLACE "| `${ehud_name}` | ${ehud_notes_placeholder} |" "| `${ehud_name}` | `${ehud_hash}` |" ehud_notes "${ehud_notes}")
-endforeach()
-string(FIND "${ehud_notes}" "${ehud_notes_placeholder}" ehud_found)
-if(NOT ehud_found EQUAL -1)
-  string(APPEND ehud_notes_marks "> **Do not publish:** a SHA-256 value in windows/RELEASE-NOTES.md has no staged artifact on its row.\n\n")
-endif()
-if(ehud_signed)
-  string(FIND "${ehud_notes}" "not code-signed" ehud_found)
+# 8. Release-notes draft, only when windows/RELEASE-NOTES.md exists (the
+#    Windows sources reach the main branch without it): the reviewed text and
+#    the only source of the Windows section of the shared "v<release>"
+#    release, with its "<!-- sha256 at release -->" cells filled from the
+#    staged artifacts; never published here. Anything the notes cannot
+#    describe (another release, the retired "windows-v" tag, an incomplete
+#    package, signed artifacts) is marked "Do not publish" at the top of the
+#    draft.
+set(EHUD_STAGED_NOTES "")
+if(EXISTS "${SOURCE}/RELEASE-NOTES.md")
+  file(READ "${SOURCE}/RELEASE-NOTES.md" ehud_notes)
+  string(REPLACE "\r\n" "\n" ehud_notes "${ehud_notes}")
+  set(ehud_notes_marks "")
+  # "v<release>" must appear on its own, not only inside "windows-v<release>".
+  string(REPLACE "windows-v${ehud_release_plain}" "" ehud_notes_shared "${ehud_notes}")
+  foreach(expected IN ITEMS "v${ehud_release_plain}" "${ehud_stem}-setup.exe" "${ehud_stem}-portable.zip" "${ehud_stem}-SHA256SUMS.txt")
+    string(FIND "${ehud_notes_shared}" "${expected}" ehud_found)
+    if(ehud_found EQUAL -1)
+      string(APPEND ehud_notes_marks "> **Do not publish:** windows/RELEASE-NOTES.md does not name `${expected}`. Update it for this release.\n\n")
+    endif()
+  endforeach()
+  string(FIND "${ehud_notes}" "windows-v${ehud_release_plain}" ehud_found)
   if(NOT ehud_found EQUAL -1)
-    string(APPEND ehud_notes_marks "> **Do not publish:** these artifacts are signed, but windows/RELEASE-NOTES.md describes unsigned builds.\n\n")
+    string(APPEND ehud_notes_marks "> **Do not publish:** windows/RELEASE-NOTES.md names `windows-v${ehud_release_plain}`, but the Windows files are published on the `v${ehud_release_plain}` release.\n\n")
   endif()
-endif()
-if(NOT EHUD_STAGED_COMPLETE)
-  string(PREPEND ehud_notes_marks "> **Incomplete developer package. Do not publish:** the Mac-exported runtime inputs were missing and this setup refuses to install.\n\n")
-endif()
-if(ehud_notes_marks)
-  message(WARNING "stage_release: the release-notes draft is marked Do not publish:\n${ehud_notes_marks}")
-  # Below the maintainer comment, above the title.
-  string(FIND "${ehud_notes}" "\n# " ehud_title)
-  if(ehud_title EQUAL -1)
-    string(PREPEND ehud_notes "${ehud_notes_marks}")
-  else()
-    math(EXPR ehud_title "${ehud_title} + 1")
-    string(SUBSTRING "${ehud_notes}" 0 ${ehud_title} ehud_notes_head)
-    string(SUBSTRING "${ehud_notes}" ${ehud_title} -1 ehud_notes_tail)
-    set(ehud_notes "${ehud_notes_head}${ehud_notes_marks}${ehud_notes_tail}")
+  if(ehud_suffix)
+    string(REPLACE "${ehud_stem}-" "${ehud_stem}${ehud_suffix}-" ehud_notes "${ehud_notes}")
   endif()
+  set(ehud_notes_placeholder "<!-- sha256 at release -->")
+  foreach(artifact IN ITEMS "${EHUD_STAGED_SETUP}" "${EHUD_STAGED_PORTABLE}")
+    file(SHA256 "${artifact}" ehud_hash)
+    get_filename_component(ehud_name "${artifact}" NAME)
+    string(REPLACE "| `${ehud_name}` | ${ehud_notes_placeholder} |" "| `${ehud_name}` | `${ehud_hash}` |" ehud_notes "${ehud_notes}")
+  endforeach()
+  string(FIND "${ehud_notes}" "${ehud_notes_placeholder}" ehud_found)
+  if(NOT ehud_found EQUAL -1)
+    string(APPEND ehud_notes_marks "> **Do not publish:** a SHA-256 value in windows/RELEASE-NOTES.md has no staged artifact on its row.\n\n")
+  endif()
+  if(ehud_signed)
+    string(FIND "${ehud_notes}" "not code-signed" ehud_found)
+    if(NOT ehud_found EQUAL -1)
+      string(APPEND ehud_notes_marks "> **Do not publish:** these artifacts are signed, but windows/RELEASE-NOTES.md describes unsigned builds.\n\n")
+    endif()
+  endif()
+  if(NOT EHUD_STAGED_COMPLETE)
+    string(PREPEND ehud_notes_marks "> **Incomplete developer package. Do not publish:** the Mac-exported runtime inputs were missing and this setup refuses to install.\n\n")
+  endif()
+  if(ehud_notes_marks)
+    message(WARNING "stage_release: the release-notes draft is marked Do not publish:\n${ehud_notes_marks}")
+    # Below the maintainer comment, above the title.
+    string(FIND "${ehud_notes}" "\n# " ehud_title)
+    if(ehud_title EQUAL -1)
+      string(PREPEND ehud_notes "${ehud_notes_marks}")
+    else()
+      math(EXPR ehud_title "${ehud_title} + 1")
+      string(SUBSTRING "${ehud_notes}" 0 ${ehud_title} ehud_notes_head)
+      string(SUBSTRING "${ehud_notes}" ${ehud_title} -1 ehud_notes_tail)
+      set(ehud_notes "${ehud_notes_head}${ehud_notes_marks}${ehud_notes_tail}")
+    endif()
+  endif()
+  set(EHUD_STAGED_NOTES "${OUT}/${ehud_stem}${ehud_suffix}-release-notes.md")
+  file(WRITE "${EHUD_STAGED_NOTES}" "${ehud_notes}")
+else()
+  message(STATUS "stage_release: no windows/RELEASE-NOTES.md, so no release-notes draft is written")
 endif()
-set(EHUD_STAGED_NOTES "${OUT}/${ehud_stem}${ehud_suffix}-release-notes.md")
-file(WRITE "${EHUD_STAGED_NOTES}" "${ehud_notes}")
 file(REMOVE_RECURSE "${ehud_stage}")
 message(STATUS "EndfieldHUD release artifacts staged in ${OUT} (${ehud_stem}${ehud_suffix}; signed: ${ehud_signed})")

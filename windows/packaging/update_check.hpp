@@ -2,19 +2,30 @@
 // Windows release checker: the portable decision core (no file system, no
 // network, no OS calls). Port of the Mac release discovery in
 // Sources/HUDGitHubRelease.swift (HUDReleaseVersion, HUDGitHubRelease.
-// validatedURL, HUDGitHubReleaseClient.status) plus the Windows-only release
-// namespace, installer assets and checksum list.
+// validatedURL, HUDGitHubReleaseClient.status) plus the Windows installer
+// assets and checksum list.
 //
-// Windows and Mac releases never share a feed (WINDOWS-MIGRATION.md section
-// 10). Windows releases are tagged "windows-v<SemVer>", which the unchanged
-// Mac HUDReleaseVersion rejects (oracle: tools/package_update_reference.sh),
-// so a Windows release can never be offered to a Mac. This checker accepts
-// ONLY such tags and never reads the Mac Sparkle feed (updates/appcast.xml)
-// or a Mac asset. A Windows release is installable when it carries exactly
+// Windows and Mac share the GitHub release list, never the Mac Sparkle feed:
+// the Windows files are extra assets on the regular release tags
+// ("v<SemVer>", the Mac HUDReleaseVersion format with its optional 'v'), so
+// EndfieldHUD 1.2.0 for Windows is uploaded to the existing v1.2.0 release
+// next to the Mac files. Tags "windows-v<SemVer>" are still read for
+// compatibility; the unchanged Mac HUDReleaseVersion rejects them (oracle:
+// tools/package_update_reference.sh), so such a release is never offered to
+// a Mac. The Mac client never reads assets, so Windows assets on a shared
+// release do not change what a Mac is offered (oracle scenario "shared
+// releases with Windows assets"). This checker never reads
+// updates/appcast.xml and never downloads a Mac asset.
+//
+// A release counts for Windows ONLY when it carries exactly
 //   EndfieldHUD-<X.Y.Z>-build<N>-windows-x64-setup.exe
 //   EndfieldHUD-<X.Y.Z>-build<N>-windows-x64-SHA256SUMS.txt
-// (packaging/stage_release.cmake names) with <X.Y.Z> equal to the tag's
-// version; otherwise it is only discovered (its page can be opened).
+// (packaging/stage_release.cmake names, uploaded to that release) with
+// <X.Y.Z> equal to the tag's version. Any other release (a Mac-only release,
+// one whose Windows files are missing, still uploading or malformed) is
+// ignored entirely: never offered, never reported as the latest release.
+// A "v" and a "windows-v" release of the same version are one version: the
+// larger installer build wins, and on equal builds the shared "v" release.
 //
 // The GitHub response body is read with Foundation's JSONDecoder rules as
 // measured by the oracle: a single UTF-8 BOM, one trailing comma per array or
@@ -40,14 +51,15 @@ struct ReleaseVersion {
 };
 bool operator<(const ReleaseVersion&, const ReleaseVersion&);
 
-// Which release namespace a checker reads. `mac` exists only to prove parity
-// with the Mac client over the oracle; EndfieldHUD.exe uses `windows`.
+// Which releases a checker reads. `mac` exists only to prove parity with the
+// Mac client over the oracle (no assets); EndfieldHUD.exe uses `windows`.
 enum class TagNamespace : std::uint8_t { mac, windows };
-inline constexpr std::string_view windowsTagPrefix = "windows-v";
-// mac: a HUDReleaseVersion tag. windows: "windows-v" + a HUDReleaseVersion
-// without its optional 'v' (e.g. "windows-v1.2.1", "windows-v1.3.0-beta.1").
+inline constexpr std::string_view windowsTagPrefix = "windows-v"; // compatibility tags
+// mac: a HUDReleaseVersion tag ("v1.2.1", "1.2.1"). windows: the same tags,
+// or "windows-v" + a HUDReleaseVersion without its optional 'v'
+// (e.g. "windows-v1.2.1", "windows-v1.3.0-beta.1").
 std::optional<ReleaseVersion> releaseVersion(std::string_view tag, TagNamespace) noexcept;
-std::string windowsReleaseTag(std::string_view release); // "1.2.0" -> "windows-v1.2.0"
+std::string releaseTag(std::string_view release); // "1.2.0" or "v1.2.0" -> "v1.2.0" (the shared release tag)
 
 inline constexpr std::string_view repositoryPath = "/DDDuoDuo/EndfieldHUD";
 inline constexpr std::string_view releasesEndpoint = "https://api.github.com/repos/DDDuoDuo/EndfieldHUD/releases?per_page=100";
@@ -85,11 +97,12 @@ struct Release {
     ReleaseVersion version;
     std::string title, url;
     bool prerelease{};
-    std::optional<InstallAssets> install; // windows namespace: both installer assets valid
+    std::optional<InstallAssets> install; // windows namespace: always set (both installer assets valid); mac: never
     bool operator==(const Release&) const = default;
 };
 // Windows precedence: SemVer, then the installer build of equal versions
-// (a Windows-only rebuild such as 1.2.0 build 19 over build 18).
+// (a Windows-only rebuild such as 1.2.0 build 19 over build 18). A release
+// of the running version and build (whatever its tag) is not newer.
 bool newerRelease(const Release&, const ReleaseVersion& current, int currentBuild) noexcept;
 
 // --- HUDGitHubReleaseClient decisions ----------------------------------------------
@@ -134,7 +147,8 @@ struct ReleaseEntry {
 };
 std::optional<std::vector<ReleaseEntry>> decodeReleaseEntries(std::string_view body, TagNamespace);
 // The releases an entry list offers (drafts, unpublished, foreign tags and
-// invalid pages removed), in response order.
+// invalid pages removed; in the windows namespace also every release without
+// valid Windows installer assets), in response order.
 std::vector<Release> publishedReleases(const std::vector<ReleaseEntry>&, TagNamespace);
 
 // HUDGitHubReleaseClient without its transport, threads and delivery: the

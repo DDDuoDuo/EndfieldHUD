@@ -321,10 +321,15 @@ std::optional<InstallAssets> installAssets(const ReleaseEntry& entry, const Rele
     if (found->sums.bytes == 0 || found->sums.bytes > maximumSumsBytes) return std::nullopt;
     return found;
 }
+bool compatibilityTag(const Release& r) noexcept { return r.tag.starts_with(windowsTagPrefix); }
+// Version, then installer build; on equal builds the shared "v" release over
+// a "windows-v" one (never both tag forms in the mac namespace).
 bool candidateLess(const Release& a, const Release& b) {
     if (a.version < b.version) return true;
     if (b.version < a.version) return false;
-    return (a.install ? a.install->build : 0) < (b.install ? b.install->build : 0);
+    const int left = a.install ? a.install->build : 0, right = b.install ? b.install->build : 0;
+    if (left != right) return left < right;
+    return compatibilityTag(a) && !compatibilityTag(b);
 }
 // Swift max(by:): the first of equal maximal elements.
 template <class It> It maximum(It first, It last) {
@@ -374,8 +379,9 @@ bool operator<(const ReleaseVersion& l, const ReleaseVersion& r) {
 
 std::optional<ReleaseVersion> releaseVersion(std::string_view tag, TagNamespace ns) noexcept {
     try {
-        if (ns == TagNamespace::mac) return ReleaseVersion::parse(tag);
-        if (tag.size() > 128 || !tag.starts_with(windowsTagPrefix)) return std::nullopt;
+        // Shared releases use the Mac tags; "windows-v" tags are read for compatibility.
+        if (ns == TagNamespace::mac || !tag.starts_with(windowsTagPrefix)) return ReleaseVersion::parse(tag);
+        if (tag.size() > 128) return std::nullopt;
         const auto rest = tag.substr(windowsTagPrefix.size());
         if (rest.empty() || !digit(rest.front())) return std::nullopt;
         return ReleaseVersion::parse(rest);
@@ -383,9 +389,9 @@ std::optional<ReleaseVersion> releaseVersion(std::string_view tag, TagNamespace 
         return std::nullopt;
     }
 }
-std::string windowsReleaseTag(std::string_view release) {
+std::string releaseTag(std::string_view release) {
     if (release.starts_with('v')) release.remove_prefix(1);
-    return std::string(windowsTagPrefix) + std::string(release);
+    return "v" + std::string(release);
 }
 
 std::optional<std::string> validatedReleaseURL(std::string_view value, std::string_view tag, TagNamespace ns) {
@@ -565,7 +571,12 @@ std::vector<Release> publishedReleases(const std::vector<ReleaseEntry>& entries,
         r.title = releaseTitle(e.name, e.tag);
         r.url = std::move(*url);
         r.prerelease = e.prerelease || !version->prerelease.empty();
-        if (ns == TagNamespace::windows) r.install = installAssets(e, *version);
+        if (ns == TagNamespace::windows) {
+            // Only a release carrying the Windows installer assets is a Windows
+            // release: a Mac-only release is never offered nor reported.
+            r.install = installAssets(e, *version);
+            if (!r.install) continue;
+        }
         r.version = std::move(*version);
         releases.push_back(std::move(r));
     }

@@ -18,6 +18,18 @@ import Foundation
         for (k, v) in extra { value[k] = v }
         return value
     }
+    // A shared release's assets: the Windows setup and SHA256SUMS uploaded
+    // next to the Mac files (windows/packaging/update_check.hpp names).
+    static func windowsAssets(_ tag: String, _ release: String, _ build: Int) -> [[String: Any]] {
+        ["setup.exe": 28835840, "SHA256SUMS.txt": 300].sorted { $0.key < $1.key }.map { suffix, size in
+            let name = "EndfieldHUD-\(release)-build\(build)-windows-x64-\(suffix)"
+            return ["name": name, "size": size, "state": "uploaded",
+                    "browser_download_url": "https://github.com/DDDuoDuo/EndfieldHUD/releases/download/\(tag)/\(name)"]
+        }
+    }
+    static func macAsset(_ tag: String, _ name: String) -> [String: Any] {
+        ["name": name, "size": 9000000, "state": "uploaded", "browser_download_url": "https://github.com/DDDuoDuo/EndfieldHUD/releases/download/\(tag)/\(name)"]
+    }
     static func json(_ value: Any) -> String {
         String(data: try! JSONSerialization.data(withJSONObject: value, options: [.sortedKeys, .fragmentsAllowed]), encoding: .utf8)!
     }
@@ -248,7 +260,15 @@ import Foundation
                 Step(now: 1001, body: json([entry("v1.2.0+build.9")]))]),
             Scenario(name: "channel cache after not modified", current: "v1.2.0-beta.1", steps: [
                 Step(now: 1000, headers: ["ETag": "\"x\""], body: json([entry("v1.2.0-beta.2", prerelease: true), entry("v1.1.0")])),
-                Step(now: 1001, status: 304, body: "")])]
+                Step(now: 1001, status: 304, body: "")]),
+            // Windows files as extra assets on the regular tags: the Mac never
+            // reads assets (the Windows checker reads the same bodies).
+            Scenario(name: "shared releases with Windows assets", current: "v1.2.0", steps: [
+                Step(now: 1000, body: json([entry("v1.2.2", name: "EndfieldHUD 1.2.2", extra: ["assets": [macAsset("v1.2.2", "EndfieldHUD-1.2.2.dmg")]]),
+                    entry("v1.2.1", name: "EndfieldHUD 1.2.1", extra: ["assets": [macAsset("v1.2.1", "EndfieldHUD-1.2.1.dmg")] + windowsAssets("v1.2.1", "1.2.1", 19)]),
+                    entry("windows-v1.2.1", extra: ["assets": windowsAssets("windows-v1.2.1", "1.2.1", 19)]),
+                    entry("v1.2.0", name: "EndfieldHUD 1.2.0", extra: ["assets": [macAsset("v1.2.0", "EndfieldHUD-1.2.0.dmg")] + windowsAssets("v1.2.0", "1.2.0", 18)])])),
+                Step(now: 1001, body: json([entry("v1.2.0", name: "EndfieldHUD 1.2.0", extra: ["assets": [macAsset("v1.2.0", "EndfieldHUD-1.2.0.dmg")] + windowsAssets("v1.2.0", "1.2.0", 18)])]))])]
         let scenarios = s.map(run)
         let output: [String: Any] = ["schemaVersion": 1, "endpoint": endpoint, "maximumResponseBytes": HUDGitHubReleaseClient.maximumResponseBytes,
             "versions": versions, "validTags": valid, "less": less, "urls": urls, "controlCharacters": control, "scenarios": scenarios]

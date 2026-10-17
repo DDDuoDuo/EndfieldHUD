@@ -203,9 +203,6 @@ std::string detailText(const Detail& d, core::Language l) {
                      "此副本不是由 EndfieldHUD 安装程序安装的。请从 GitHub 发布页获取 {0}。", "此副本並非由 EndfieldHUD 安裝程式安裝。請從 GitHub 發佈頁取得 {0}。",
                      "このコピーは EndfieldHUD セットアップでインストールされていません。{0} は GitHub のリリースページから入手してください。",
                      "이 사본은 EndfieldHUD 설치 프로그램으로 설치되지 않았습니다. GitHub 릴리스 페이지에서 {0}을(를) 받으세요.", {d.value});
-    case K::waitingForPackage:
-        return text5(l, "Waiting for a compatible Windows update package.", "正在等待兼容的 Windows 更新包。", "正在等待相容的 Windows 更新套件。",
-                     "互換性のある Windows 更新パッケージを待っています。", "호환되는 Windows 업데이트 패키지를 기다리는 중입니다.");
     case K::installPrompt:
         return text5(l, "Click to install. EndfieldHUD closes, updates and reopens.", "点击安装。EndfieldHUD 将关闭、更新并重新打开。",
                      "點擊安裝。EndfieldHUD 將關閉、更新並重新開啟。", "クリックしてインストールします。EndfieldHUD は終了し、更新後に再び開きます。",
@@ -281,7 +278,7 @@ struct Updater::Impl {
         if (!services.transport || !services.submit || !services.clock || !services.wallClock)
             throw std::invalid_argument("The updater needs a transport, the shared executor and both clocks");
         if (options.folder.empty() || !options.folder.is_absolute()) throw std::invalid_argument("The updater folder must be absolute");
-        currentTag = windowsReleaseTag(options.current.release());
+        currentTag = releaseTag(options.current.release());
     }
     fs::path statePath() const { return options.folder / stateFileName; }
     fs::path resultPath() const { return options.folder / handoffResultName; }
@@ -467,9 +464,9 @@ struct Updater::Impl {
             s.releaseURL = r.url;
             s.phase = Phase::available;
             self.candidate_ = r;
+            // The checker offers only releases carrying the Windows installer assets.
             if (!s.installationSupported) s.detail = {Detail::Kind::discoverOnly, {}, s.updateVersion, 0};
-            else if (!r.install) s.detail = {Detail::Kind::waitingForPackage, {}, {}, 0};
-            else s.detail = {Detail::Kind::downloadPrompt, {}, s.updateVersion, r.install->setup.bytes};
+            else if (r.install) s.detail = {Detail::Kind::downloadPrompt, {}, s.updateVersion, r.install->setup.bytes};
             break;
         }
         case CheckResult::Kind::failed:

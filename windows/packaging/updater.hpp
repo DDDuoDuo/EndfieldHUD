@@ -1,8 +1,9 @@
 #pragma once
 // Windows updater controller (portable; every OS service is injected).
-// Port of the Mac HUDUpdateController/HUDUpdateState over the Windows-only
-// release namespace (packaging/update_check.hpp), with the Windows install
-// path in place of Sparkle:
+// Port of the Mac HUDUpdateController/HUDUpdateState over the Windows releases
+// of the shared GitHub release list (packaging/update_check.hpp: releases
+// carrying the Windows installer assets), with the Windows install path in
+// place of Sparkle:
 //
 //   check     explicit "Check for Updates" (About row, tray), or at most once
 //             per day when the HUD opens while "Check for updates daily" is on.
@@ -83,7 +84,7 @@ std::string_view phaseName(Phase) noexcept;
 // has one, Windows texts in the five source languages otherwise).
 struct Detail {
     enum class Kind : std::uint8_t {
-        none, checkError, downloadPrompt, discoverOnly, waitingForPackage, installPrompt, downloadFailed,
+        none, checkError, downloadPrompt, discoverOnly, installPrompt, downloadFailed,
         verificationFailed, launchFailed, setupFailed, closeRefused, updated, interrupted
     };
     Kind kind{Kind::none};

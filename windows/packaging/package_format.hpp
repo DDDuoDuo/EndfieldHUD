@@ -177,7 +177,7 @@ InstallManifest installManifestFor(const PayloadManifest&, std::string installed
 std::string encodeInstallManifest(const InstallManifest&);
 InstallManifest decodeInstallManifest(std::string_view json);
 
-// Release artifact names (never the Mac namespace; Windows tags will use
-// "windows-v<release>" once DDDuoDuo chooses a Windows release).
+// Release artifact names: extra assets on the shared "v<release>" GitHub
+// release, next to the Mac files (packaging/update_check.hpp).
 std::string releaseArtifactStem(const ProductVersion&); // EndfieldHUD-1.2.0-build18-windows-x64
 } // namespace endfield::packaging

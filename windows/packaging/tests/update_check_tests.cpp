@@ -1,10 +1,11 @@
 // Windows updater contracts (portable): parity of the release checker with the
 // unchanged Mac HUDGitHubRelease.swift over its oracle
 // (tools/package_update_reference.sh -> fixtures/update-release-source.json),
-// the Windows-only release namespace and installer assets, the checksum list,
-// redirect rules and the updater controller with synthetic routes, a
-// synchronous executor and temporary folders. No network, no process, no
-// user data.
+// the Windows releases of the shared release list (the Mac "v" tags and the
+// compatibility "windows-v" tags, counted only with their Windows installer
+// assets), the checksum list, redirect rules and the updater controller with
+// synthetic routes, a synchronous executor and temporary folders. No network,
+// no process, no user data.
 #include "core/data/json.hpp"
 #include "packaging/setup_arguments.hpp"
 #include "packaging/update_check.hpp"
@@ -52,6 +53,14 @@ struct TemporaryFolder {
 };
 
 // --- Oracle parity (mac namespace) ------------------------------------------------------
+u::HttpResponse responseOf(const Json& r) {
+    u::HttpResponse response;
+    response.status = static_cast<int>(r["status"].integer());
+    for (const auto& [name, value] : r["headers"].object()) response.headers.emplace_back(name, value.string());
+    response.body = r["body"].string();
+    response.url = r["url"].string();
+    return response;
+}
 void compare(const u::CheckResult& r, const Json& expect, const std::string& where) {
     const auto kind = expect["result"].string();
     if (kind == "failed") {
@@ -94,6 +103,7 @@ void oracle(const Json& f) {
     for (char32_t c = 0; c <= 0x10FFFF; ++c) same = same && u::controlCharacter(c) == controls.contains(c);
     check(same, "Foundation controlCharacters for every scalar");
     unsigned steps{};
+    bool shared{};
     for (const auto& s : f["scenarios"].array()) {
         u::ReleaseClient client(u::TagNamespace::mac);
         const auto current = s["current"].isNull() ? std::optional<std::string>() : std::optional<std::string>(s["current"].string());
@@ -116,119 +126,221 @@ void oracle(const Json& f) {
             else check(u::findHeader(headers, "If-None-Match") == sent["ifNoneMatch"].string(), where + ": If-None-Match");
             u::CheckResult result;
             if (step.contains("failure")) result = client.fail(step["failure"].string() == "cancelled" ? u::CheckErrorKind::cancelled : u::CheckErrorKind::network);
-            else {
-                const auto& r = step["response"];
-                u::HttpResponse response;
-                response.status = static_cast<int>(r["status"].integer());
-                for (const auto& [name, value] : r["headers"].object()) response.headers.emplace_back(name, value.string());
-                response.body = r["body"].string();
-                response.url = r["url"].string();
-                result = client.finish(response, now);
-            }
+            else result = client.finish(responseOf(step["response"]), now);
             compare(result, step["expect"], where);
         } catch (const std::invalid_argument& e) {
             throw std::runtime_error("Oracle scenario '" + s["name"].string() + "' could not be read: " + e.what());
         }
         if (s["name"].string() == "windows tags only")
             check(s["steps"].array()[0]["expect"]["error"].string() == "noPublishedReleases", "The unchanged Mac checker never offers a windows-v release");
+        if (s["name"].string() == "shared releases with Windows assets") {
+            // The same release list read by both platforms: the Mac ignores the
+            // Windows assets (it is offered the Mac-only v1.2.2); Windows counts
+            // only the releases carrying its installer assets.
+            shared = true;
+            const auto& rows = s["steps"].array();
+            check(rows.size() == 2 && rows[0]["expect"]["result"].string() == "available" && rows[0]["expect"]["tag"].string() == "v1.2.2" &&
+                  rows[1]["expect"]["result"].string() == "current" && rows[1]["expect"]["tag"].string() == "v1.2.0",
+                  "Windows assets on the shared releases do not change what the unchanged Mac checker offers");
+            u::ReleaseClient windowsClient;
+            std::vector<u::CheckResult> results;
+            for (const auto& step : rows) {
+                check(std::holds_alternative<u::Headers>(windowsClient.begin("v1.2.0", 18, step["now"].number())), "Windows check of the shared releases");
+                results.push_back(windowsClient.finish(responseOf(step["response"]), step["now"].number()));
+            }
+            check(results[0].kind == u::CheckResult::Kind::available && results[0].release->tag == "v1.2.1" && results[0].release->install &&
+                  results[0].release->install->build == 19 && results[0].release->url == "https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/v1.2.1" &&
+                  results[0].release->install->setup.url == "https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.2.1/EndfieldHUD-1.2.1-build19-windows-x64-setup.exe",
+                  "Windows is offered the newest shared release with Windows assets, never the Mac-only v1.2.2");
+            check(results[1].kind == u::CheckResult::Kind::current && results[1].release->tag == "v1.2.0" && u::releaseDisplay(*results[1].release) == "1.2.0 (18)",
+                  "The shared v1.2.0 release carrying the running Windows build is current");
+        }
     }
-    check(steps > 100, "Oracle covers the client scenarios");
-    for (const auto& v : f["versions"].array())
-        if (v["tag"].string().starts_with("windows-")) check(!v["valid"].boolean(), "The Mac parser rejects Windows tags: " + v["tag"].string());
-        else check(!u::releaseVersion(v["tag"].string(), u::TagNamespace::windows), "Mac tags are not Windows releases: " + v["tag"].string());
+    check(steps > 100 && shared, "Oracle covers the client scenarios, the shared releases with Windows assets included");
+    // Windows reads every Mac tag as the Mac does (shared releases), plus the
+    // compatibility "windows-v" tags, which the Mac rejects.
+    for (const auto& v : f["versions"].array()) {
+        const auto& tag = v["tag"].string();
+        if (tag.starts_with("windows-")) check(!v["valid"].boolean(), "The Mac parser rejects Windows tags: " + tag);
+        else check(u::releaseVersion(tag, u::TagNamespace::windows) == u::ReleaseVersion::parse(tag), "Windows reads the Mac tag '" + tag + "' as the Mac does");
+    }
+    for (const auto& row : f["urls"].array()) {
+        const auto& value = row["value"].string();
+        const auto& tag = row["tag"].string();
+        if (tag.starts_with("windows-")) check(u::validatedReleaseURL(value, tag, u::TagNamespace::windows) == value && row["url"].isNull(),
+                                               "A windows-v release page is valid on Windows only: " + value);
+        else check(u::validatedReleaseURL(value, tag, u::TagNamespace::windows) == u::validatedReleaseURL(value, tag, u::TagNamespace::mac),
+                   "Windows validates the release page '" + value + "' as the Mac does");
+    }
 }
 
-// --- Windows namespace, assets, checksums, redirects ---------------------------------------
+// --- Windows releases, assets, checksums, redirects ---------------------------------------
 u::HttpResponse ok(std::string body, u::Headers headers = {}) { return {200, std::move(headers), std::move(body), std::string(u::releasesEndpoint)}; }
-u::CheckResult windowsCheck(const std::string& body, std::string_view current = "windows-v1.2.0", int build = 18) {
+// The running build is 1.2.0 (18) unless named.
+u::CheckResult windowsCheck(const std::string& body, std::string_view current = "v1.2.0", int build = 18) {
     u::ReleaseClient client;
     auto begun = client.begin(current, build, 1000);
     if (auto* r = std::get_if<u::CheckResult>(&begun)) return *r;
     return client.finish(ok(body), 1000);
 }
-void windowsNamespace() {
-    const auto w = u::TagNamespace::windows;
-    check(u::releaseVersion("windows-v1.2.0", w) && u::releaseVersion("windows-v1.3.0-beta.1", w)->prerelease.size() == 2 && u::releaseVersion("windows-v1.2.0+build.19", w),
-          "Windows tags: windows-v + SemVer");
-    for (const auto* bad : {"v1.2.0", "1.2.0", "windows-1.2.0", "windows-vv1.2.0", "windows-v01.2.0", "Windows-v1.2.0", "windows-v", "windows-v1.2", "windows-v1.2.0-"})
-        check(!u::releaseVersion(bad, w), std::string("Rejected Windows tag ") + bad);
-    check(!u::releaseVersion("windows-v1.2.3-" + std::string(114, 'a'), w) && u::releaseVersion("windows-v1.2.3-" + std::string(113, 'a'), w), "Windows tags are at most 128 bytes");
-    check(u::windowsReleaseTag("v1.2.0") == "windows-v1.2.0" && u::windowsReleaseTag("1.2.1") == "windows-v1.2.1", "Windows tag of a release");
-    check(u::validatedReleaseURL("https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/windows-v1.2.0", "windows-v1.2.0", w) &&
-          !u::validatedReleaseURL("https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/v1.2.0", "v1.2.0", w), "Windows release pages");
+const std::string releasePage = "https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/";
+std::vector<u::FeedAsset> installer(const std::string& tag, const std::string& release, int build) { return u::installerAssets(tag, release, build, 28800000, 300); }
+// A release carrying the Windows installer assets of its version (a shared
+// "v" release or a compatibility "windows-v" release).
+u::FeedRelease shipped(const std::string& tag, int build, std::string name = {}, bool prerelease = false) {
+    const auto v = u::releaseVersion(tag, u::TagNamespace::windows);
+    if (!v) throw std::runtime_error("Not a Windows release tag: " + tag);
+    return {tag, std::move(name), "", false, prerelease, true, installer(tag, v->major + "." + v->minor + "." + v->patch, build)};
+}
+// A Mac-only release (no Windows assets).
+u::FeedRelease macOnly(const std::string& tag, bool prerelease = false) {
+    const auto dmg = "EndfieldHUD-" + tag.substr(1) + ".dmg";
+    return {tag, "EndfieldHUD " + tag.substr(1), "", false, prerelease, true,
+            {{dmg, u::releaseDownloadURL(tag, dmg), 9000000, "uploaded"}, {"appcast.xml", u::releaseDownloadURL(tag, "appcast.xml"), 2000, "uploaded"}}};
+}
+u::FeedRelease withoutAssets(const std::string& tag) { return {tag, "", "", false, false, true, {}}; }
 
-    const auto installer = [](std::string tag, std::string release, int build) { return u::installerAssets(tag, release, build, 28800000, 300); };
-    // A feed with Mac and Windows releases: only Windows releases count.
-    const auto mixed = u::releaseFeed({{"v9.9.9", "Mac", "", false, false, true, {{"EndfieldHUD-9.9.9.dmg", u::releaseDownloadURL("v9.9.9", "EndfieldHUD-9.9.9.dmg"), 5000, "uploaded"}}},
-                                       {"windows-v1.2.1", "Windows 1.2.1", "", false, false, true, installer("windows-v1.2.1", "1.2.1", 19)},
-                                       {"windows-v1.2.0", "", "", false, false, true, installer("windows-v1.2.0", "1.2.0", 18)}});
-    auto r = windowsCheck(mixed);
-    check(r.kind == u::CheckResult::Kind::available && r.release->tag == "windows-v1.2.1" && r.release->install && r.release->install->build == 19 &&
-          r.release->install->setup.name == "EndfieldHUD-1.2.1-build19-windows-x64-setup.exe" && r.release->install->setup.bytes == 28800000 &&
-          r.release->install->sums.name == "EndfieldHUD-1.2.1-build19-windows-x64-SHA256SUMS.txt" && u::releaseDisplay(*r.release) == "1.2.1 (19)",
-          "The newest Windows release is offered with its installer assets; the newer Mac release is ignored");
-    check(windowsCheck(u::releaseFeed({{"v9.9.9", "Mac", "", false, false, true, {}}})).error.kind == u::CheckErrorKind::noPublishedReleases,
-          "A Mac-only feed has no Windows release");
+void windowsReleases() {
+    using Kind = u::CheckResult::Kind;
+    const auto w = u::TagNamespace::windows;
+    // Tags: the shared Mac tags ("v<SemVer>", optional 'v') and, for
+    // compatibility, "windows-v<SemVer>".
+    for (const auto* good : {"v1.2.0", "1.2.0", "v1.3.0-beta.1", "v1.2.0+build.19", "windows-v1.2.0", "windows-v1.3.0-beta.1", "windows-v1.2.0+build.19"})
+        check(u::releaseVersion(good, w).has_value(), std::string("Windows release tag ") + good);
+    check(u::releaseVersion("v1.2.0", w) == u::releaseVersion("windows-v1.2.0", w) && u::releaseVersion("1.2.0", w) == u::releaseVersion("v1.2.0", w) &&
+          u::releaseVersion("windows-v1.3.0-beta.1", w) == u::releaseVersion("v1.3.0-beta.1", w) && u::releaseVersion("v1.3.0-beta.1", w)->prerelease.size() == 2,
+          "Both tag forms name the same version");
+    for (const auto* bad : {"V1.2.0", "vv1.2.0", "v1.2", "v01.2.0", "v1.2.0-", "mac-v1.2.0", "windows-1.2.0", "windows-vv1.2.0", "windows-v01.2.0", "Windows-v1.2.0",
+                            "windows-v", "windows-v1.2", "windows-v1.2.0-", ""})
+        check(!u::releaseVersion(bad, w), std::string("Rejected Windows release tag '") + bad + "'");
+    check(!u::releaseVersion("windows-v1.2.3-" + std::string(114, 'a'), w) && u::releaseVersion("windows-v1.2.3-" + std::string(113, 'a'), w) &&
+          !u::releaseVersion("v1.2.3-" + std::string(122, 'a'), w) && u::releaseVersion("v1.2.3-" + std::string(121, 'a'), w), "Release tags are at most 128 bytes");
+    check(u::releaseTag("v1.2.0") == "v1.2.0" && u::releaseTag("1.2.1") == "v1.2.1", "The shared tag of a release");
+    check(u::validatedReleaseURL(releasePage + "v1.2.0", "v1.2.0", w) && u::validatedReleaseURL(releasePage + "windows-v1.2.0", "windows-v1.2.0", w) &&
+          !u::validatedReleaseURL(releasePage + "v1.2.0", "windows-v1.2.0", w) && !u::validatedReleaseURL(releasePage + "windows-v1.2.0", "v1.2.0", w),
+          "A release page names the release's own tag");
+
+    // A shared list: Mac-only releases (newer ones included) never count.
+    auto r = windowsCheck(u::releaseFeed({macOnly("v9.9.9"), shipped("v1.2.1", 19, "EndfieldHUD 1.2.1"), shipped("windows-v1.2.0", 18)}));
+    check(r.kind == Kind::available && r.release->tag == "v1.2.1" && r.release->url == releasePage + "v1.2.1" && r.release->title == "EndfieldHUD 1.2.1" &&
+          r.release->install && r.release->install->build == 19 && r.release->install->setup.name == "EndfieldHUD-1.2.1-build19-windows-x64-setup.exe" &&
+          r.release->install->setup.url == "https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.2.1/EndfieldHUD-1.2.1-build19-windows-x64-setup.exe" &&
+          r.release->install->setup.bytes == 28800000 && r.release->install->sums.name == "EndfieldHUD-1.2.1-build19-windows-x64-SHA256SUMS.txt" &&
+          u::releaseDisplay(*r.release) == "1.2.1 (19)",
+          "The newest release with Windows assets is offered with its installer assets; the newer Mac-only release is ignored");
+    r = windowsCheck(u::releaseFeed({macOnly("v1.2.1"), shipped("v1.2.0", 18, "EndfieldHUD 1.2.0")}));
+    check(r.kind == Kind::current && r.release->tag == "v1.2.0" && r.release->url == releasePage + "v1.2.0" && u::releaseDisplay(*r.release) == "1.2.0 (18)",
+          "A Mac-only v1.2.1 without Windows assets is ignored: the running 1.2.0 (18) is up to date");
+    for (const auto& feed : {u::releaseFeed({macOnly("v1.2.1")}), u::releaseFeed({macOnly("v9.9.9"), withoutAssets("v1.2.1"), withoutAssets("windows-v1.2.2")})}) {
+        r = windowsCheck(feed);
+        check(r.kind == Kind::failed && r.error.kind == u::CheckErrorKind::noPublishedReleases && !r.release,
+              "Releases without Windows assets are never offered nor reported as the latest release");
+    }
+    r = windowsCheck(u::releaseFeed({shipped("v1.2.0", 18, "EndfieldHUD 1.2.0")}));
+    check(r.kind == Kind::current && r.release->tag == "v1.2.0" && r.release->url == releasePage + "v1.2.0" && r.release->install->build == 18,
+          "The shared v1.2.0 release with the Windows 1.2.0 (18) files is the running build: up to date");
+    r = windowsCheck(u::releaseFeed({shipped("v1.3.0", 30, "EndfieldHUD 1.3.0"), shipped("v1.2.0", 18)}));
+    check(r.kind == Kind::available && r.release->tag == "v1.3.0" && r.release->url == releasePage + "v1.3.0" && u::releaseDisplay(*r.release) == "1.3.0 (30)" &&
+          r.release->install->sums.url == "https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.3.0/EndfieldHUD-1.3.0-build30-windows-x64-SHA256SUMS.txt",
+          "The shared v1.3.0 release with Windows assets is an update");
+    // Mixed tag forms: one version, ordered by version then installer build.
+    r = windowsCheck(u::releaseFeed({shipped("windows-v1.2.0", 18), shipped("v1.2.1", 19)}));
+    check(r.kind == Kind::available && r.release->tag == "v1.2.1", "A shared release newer than a windows-v release is offered");
+    r = windowsCheck(u::releaseFeed({shipped("v1.2.1", 19), shipped("windows-v1.3.0", 30)}));
+    check(r.kind == Kind::available && r.release->tag == "windows-v1.3.0" && r.release->url == releasePage + "windows-v1.3.0" &&
+          r.release->install->setup.url == u::releaseDownloadURL("windows-v1.3.0", u::setupAssetName("1.3.0", 30)), "A newer windows-v release is still offered");
+    r = windowsCheck(u::releaseFeed({withoutAssets("v1.2.1"), shipped("windows-v1.2.1", 19)}));
+    check(r.kind == Kind::available && r.release->tag == "windows-v1.2.1", "Of one version, the release with valid Windows assets counts (windows-v)");
+    r = windowsCheck(u::releaseFeed({withoutAssets("windows-v1.2.1"), shipped("v1.2.1", 19)}));
+    check(r.kind == Kind::available && r.release->tag == "v1.2.1", "Of one version, the release with valid Windows assets counts (v)");
+    for (const bool compatibilityFirst : {true, false}) {
+        std::vector<u::FeedRelease> list{shipped("windows-v1.2.1", 19, "compatibility"), shipped("v1.2.1", 19, "shared")};
+        if (!compatibilityFirst) std::swap(list[0], list[1]);
+        r = windowsCheck(u::releaseFeed(list));
+        check(r.kind == Kind::available && r.release->tag == "v1.2.1" && r.release->title == "shared", "Equal version and build: the shared v release, in any order");
+    }
+    r = windowsCheck(u::releaseFeed({shipped("v1.2.1", 19), shipped("windows-v1.2.1", 20)}));
+    check(r.kind == Kind::available && r.release->tag == "windows-v1.2.1" && r.release->install->build == 20, "Equal versions: the larger installer build wins whatever its tag");
+    r = windowsCheck(u::releaseFeed({shipped("windows-v1.2.0", 18), shipped("v1.2.0", 18)}));
+    check(r.kind == Kind::current && r.release->tag == "v1.2.0", "Both tag forms of the running build: up to date");
+    check(windowsCheck(u::releaseFeed({shipped("v1.2.1", 19)}), "windows-v1.2.0", 18).kind == Kind::available, "A windows-v current tag still reads its version");
     // Windows-only rebuilds: equal SemVer, larger installer build.
-    for (const auto& [build, expected] : std::vector<std::pair<int, u::CheckResult::Kind>>{{19, u::CheckResult::Kind::available}, {18, u::CheckResult::Kind::current}, {17, u::CheckResult::Kind::current}})
-        check(windowsCheck(u::releaseFeed({{"windows-v1.2.0", "", "", false, false, true, installer("windows-v1.2.0", "1.2.0", build)}})).kind == expected,
-              "Windows rebuild precedence for build " + std::to_string(build));
-    check(windowsCheck(u::releaseFeed({{"windows-v1.2.0", "", "", false, false, true, {}}})).kind == u::CheckResult::Kind::current, "An equal release without assets is current");
-    r = windowsCheck(u::releaseFeed({{"windows-v1.2.0", "a", "", false, false, true, installer("windows-v1.2.0", "1.2.0", 20)},
-                                     {"windows-v1.2.0", "b", "", false, false, true, installer("windows-v1.2.0", "1.2.0", 21)}}));
-    check(r.kind == u::CheckResult::Kind::available && r.release->title == "b", "The larger build of equal versions wins");
+    for (const auto& [build, expected] : std::vector<std::pair<int, Kind>>{{19, Kind::available}, {18, Kind::current}, {17, Kind::current}})
+        check(windowsCheck(u::releaseFeed({shipped("v1.2.0", build)})).kind == expected, "Windows rebuild precedence for build " + std::to_string(build));
+    r = windowsCheck(u::releaseFeed({shipped("v1.2.0", 20, "a"), shipped("v1.2.0", 21, "b")}));
+    check(r.kind == Kind::available && r.release->title == "b", "The larger build of equal versions wins");
+    // Drafts and unpublished releases are skipped, even with Windows assets.
+    auto draft = shipped("v1.2.1", 19);
+    draft.draft = true;
+    auto unpublished = shipped("v1.2.2", 20);
+    unpublished.published = false;
+    r = windowsCheck(u::releaseFeed({draft, unpublished, shipped("v1.2.0", 18)}));
+    check(r.kind == Kind::current && r.release->tag == "v1.2.0", "Drafts and unpublished releases with Windows assets are skipped");
     // Channels.
-    const auto channel = u::releaseFeed({{"windows-v1.3.0-beta.1", "", "", false, true, true, installer("windows-v1.3.0-beta.1", "1.3.0", 30)},
-                                         {"windows-v1.2.5", "", "", false, true, true, {}}, {"windows-v1.2.1", "", "", false, false, true, {}}});
-    check(windowsCheck(channel).release->tag == "windows-v1.2.1", "Stable builds are offered stable releases only");
-    check(windowsCheck(channel, "windows-v1.3.0-alpha.1", 25).release->tag == "windows-v1.3.0-beta.1", "Prerelease builds are offered the newest release");
-    // Installer asset rules.
-    const auto assetsOf = [&](std::vector<u::FeedAsset> assets, std::string tag = "windows-v1.2.1") {
+    const auto channel = u::releaseFeed({shipped("v1.3.0-beta.1", 30, "", true), shipped("v1.2.5", 25, "", true), withoutAssets("v1.2.2"),
+                                         macOnly("v1.4.0-beta.1", true), shipped("windows-v1.2.1", 19)});
+    check(windowsCheck(channel).release->tag == "windows-v1.2.1", "Stable builds are offered stable releases with Windows assets only");
+    check(windowsCheck(channel, "v1.3.0-alpha.1", 25).release->tag == "v1.3.0-beta.1", "Prerelease builds are offered the newest release with Windows assets");
+    r = windowsCheck(u::releaseFeed({shipped("v1.3.0-beta.1", 30, "", true), macOnly("v1.2.1")}));
+    check(r.kind == Kind::failed && r.error.kind == u::CheckErrorKind::noMatchingReleases, "A stable build has no matching release when only a prerelease carries Windows assets");
+    // Installer asset rules: a release without valid assets is ignored entirely.
+    const auto assetsOf = [&](std::vector<u::FeedAsset> assets, const std::string& tag = "v1.2.1") {
         auto result = windowsCheck(u::releaseFeed({{tag, "", "", false, false, true, std::move(assets)}}));
+        check(result.release ? result.release->install.has_value() : result.error.kind == u::CheckErrorKind::noPublishedReleases,
+              "A release is offered with its installer assets or not at all");
         return result.release ? result.release->install : std::nullopt;
     };
-    check(assetsOf(installer("windows-v1.2.1", "1.2.1", 19)).has_value(), "Valid installer assets");
-    auto a = installer("windows-v1.2.1", "1.2.1", 19);
-    a[0].url = u::releaseDownloadURL("v1.2.1", a[0].name);
+    check(assetsOf(installer("v1.2.1", "1.2.1", 19)).has_value() && assetsOf(installer("windows-v1.2.1", "1.2.1", 19), "windows-v1.2.1").has_value(),
+          "Valid installer assets on a shared and on a windows-v release");
+    auto a = installer("v1.2.1", "1.2.1", 19);
+    a[0].url = u::releaseDownloadURL("windows-v1.2.1", a[0].name);
     check(!assetsOf(a), "An installer linked to another release is not installable");
-    a = installer("windows-v1.2.1", "1.2.1", 19);
+    check(!assetsOf(installer("windows-v1.2.1", "1.2.1", 19)), "Assets linked to the windows-v release do not count for the v release");
+    a = installer("v1.2.1", "1.2.1", 19);
     a[0].url = "https://objects.githubusercontent.com/" + a[0].name;
     check(!assetsOf(a), "An installer outside the release download path is not installable");
-    check(!assetsOf(installer("windows-v1.2.1", "1.2.2", 19)), "An installer for another version is not installable");
-    a = installer("windows-v1.2.1", "1.2.1", 19);
-    for (auto& extra : installer("windows-v1.2.1", "1.2.1", 20)) a.push_back(extra);
+    check(!assetsOf(installer("v1.2.1", "1.2.2", 19)), "An installer for another version is not installable");
+    a = installer("v1.2.1", "1.2.1", 19);
+    for (auto& extra : installer("v1.2.1", "1.2.1", 20)) a.push_back(extra);
     check(!assetsOf(a), "Two installers are ambiguous");
-    a = installer("windows-v1.2.1", "1.2.1", 19);
+    a = installer("v1.2.1", "1.2.1", 19);
     a.pop_back();
     check(!assetsOf(a), "An installer without SHA256SUMS is not installable");
-    a = installer("windows-v1.2.1", "1.2.1", 19);
+    a = installer("v1.2.1", "1.2.1", 19);
+    a.erase(a.begin());
+    check(!assetsOf(a), "SHA256SUMS without an installer is not installable");
+    a = installer("v1.2.1", "1.2.1", 19);
     a[1].name = u::sumsAssetName("1.2.1", 18);
-    a[1].url = u::releaseDownloadURL("windows-v1.2.1", a[1].name);
+    a[1].url = u::releaseDownloadURL("v1.2.1", a[1].name);
     check(!assetsOf(a), "Checksums of another build do not count");
-    a = installer("windows-v1.2.1", "1.2.1", 19);
+    a = installer("v1.2.1", "1.2.1", 19);
     a[0].state = "starter";
     check(!assetsOf(a), "An installer still uploading is not installable");
-    a = installer("windows-v1.2.1", "1.2.1", 19);
+    a = installer("v1.2.1", "1.2.1", 19);
     a[0].size = 0;
     check(!assetsOf(a), "An empty installer is not installable");
-    a = installer("windows-v1.2.1", "1.2.1", 19);
+    a = installer("v1.2.1", "1.2.1", 19);
     a[0].size = u::maximumSetupBytes + 1;
     check(!assetsOf(a), "An oversized installer is not installable");
-    a = installer("windows-v1.2.1", "1.2.1", 19);
+    a = installer("v1.2.1", "1.2.1", 19);
     a[1].size = u::maximumSumsBytes + 1;
     check(!assetsOf(a), "An oversized checksum list is not installable");
     for (const auto* name : {"EndfieldHUD-1.2.1-build19-windows-x64-incomplete-setup.exe", "EndfieldHUD-1.2.1-build019-windows-x64-setup.exe",
                              "EndfieldHUD-1.2.1-build0-windows-x64-setup.exe", "EndfieldHUD-1.2.1-build1234567-windows-x64-setup.exe",
-                             "EndfieldHUD-1.2.1-windows-x64-setup.exe", "EndfieldHUD-1.2.1-build19-windows-arm64-setup.exe", "EndfieldHUD-1.2.1-build19-windows-x64-portable.zip"}) {
-        std::vector<u::FeedAsset> list{{name, u::releaseDownloadURL("windows-v1.2.1", name), 1000, "uploaded"}};
-        list.push_back(installer("windows-v1.2.1", "1.2.1", 19)[1]);
+                             "EndfieldHUD-1.2.1-windows-x64-setup.exe", "EndfieldHUD-1.2.1-build19-windows-arm64-setup.exe", "EndfieldHUD-1.2.1-build19-windows-x64-portable.zip",
+                             "EndfieldHUD-1.2.1.dmg"}) {
+        std::vector<u::FeedAsset> list{{name, u::releaseDownloadURL("v1.2.1", name), 1000, "uploaded"}};
+        list.push_back(installer("v1.2.1", "1.2.1", 19)[1]);
         check(!assetsOf(list), std::string("Not an installer: ") + name);
     }
-    // Malformed assets never invalidate the Mac-compatible decode.
-    const auto odd = std::string("[{\"tag_name\":\"windows-v1.2.1\",\"html_url\":\"https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/windows-v1.2.1\",") +
-                     "\"draft\":false,\"prerelease\":false,\"published_at\":\"x\",\"assets\":[1,{\"name\":5},{\"name\":\"a\",\"browser_download_url\":\"b\",\"size\":-1}]}]";
-    r = windowsCheck(odd);
-    check(r.kind == u::CheckResult::Kind::available && !r.release->install, "Malformed assets leave a discoverable release");
+    // Malformed assets never invalidate the Mac-compatible decode: that
+    // release is ignored, the others still count.
+    const auto odd = std::string("{\"tag_name\":\"v1.2.1\",\"html_url\":\"https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/v1.2.1\",") +
+                     "\"draft\":false,\"prerelease\":false,\"published_at\":\"x\",\"assets\":[1,{\"name\":5},{\"name\":\"a\",\"browser_download_url\":\"b\",\"size\":-1}]}";
+    r = windowsCheck("[" + odd + "]");
+    check(r.kind == Kind::failed && r.error.kind == u::CheckErrorKind::noPublishedReleases, "A release with malformed assets is ignored");
+    r = windowsCheck("[" + odd + "," + u::releaseFeed({shipped("v1.2.0", 18)}).substr(1));
+    check(r.kind == Kind::current && r.release->tag == "v1.2.0", "A release with malformed assets leaves the response valid");
     // Checksum list.
     const std::string d1(64, 'a'), d2 = "0123456789ABCDEF0123456789abcdef0123456789abcdef0123456789abcdef";
     check(u::checksumFor(d1 + "  setup.exe\n" + d2 + " *portable.zip\r\n", "portable.zip") == "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" &&
@@ -240,7 +352,7 @@ void windowsNamespace() {
           "A list without the file or over its bound gives no checksum");
     // Download redirects.
     for (const auto* good : {"https://objects.githubusercontent.com/github-production-release-asset-2e65be/1?X-Amz-Signature=a&b=c",
-                             "https://release-assets.githubusercontent.com/x", "https://github.com/DDDuoDuo/EndfieldHUD/releases/download/windows-v1.2.1/a",
+                             "https://release-assets.githubusercontent.com/x", "https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.2.1/a",
                              "https://OBJECTS.GitHubUserContent.com:443/x"})
         check(u::validatedDownloadLocation(good).has_value(), std::string("Allowed redirect ") + good);
     for (const auto* bad : {"http://objects.githubusercontent.com/x", "https://githubusercontent.com/x", "https://objects.githubusercontent.com.evil.example/x",
@@ -268,7 +380,7 @@ void texts() {
     using K = u::Detail::Kind;
     for (const auto l : languages) {
         for (auto p = 0; p <= static_cast<int>(u::Phase::failed); ++p) check(!u::phaseTitle(static_cast<u::Phase>(p), l).empty(), "Phase titles in every language");
-        for (const auto k : {K::downloadPrompt, K::discoverOnly, K::waitingForPackage, K::installPrompt, K::downloadFailed, K::verificationFailed, K::launchFailed,
+        for (const auto k : {K::downloadPrompt, K::discoverOnly, K::installPrompt, K::downloadFailed, K::verificationFailed, K::launchFailed,
                              K::setupFailed, K::closeRefused, K::updated, K::interrupted, K::checkError}) {
             u::Detail d{k, {}, "1.2.1 (19)", 28835840};
             const auto text = u::detailText(d, l);
@@ -298,7 +410,7 @@ void texts() {
 // --- Updater controller --------------------------------------------------------------------
 const std::string setupBody = "EndfieldHUD synthetic setup 1.2.1 (19)\n";
 const std::string setupSha = "9cf2a3564ae284bf73293fda511c346b7d0bbe1043825829a5fa2c835a00a8a4";
-const std::string tag = "windows-v1.2.1";
+const std::string tag = "v1.2.1"; // the shared release (Windows files next to the Mac ones)
 const std::string setupName = u::setupAssetName("1.2.1", 19), sumsName = u::sumsAssetName("1.2.1", 19);
 const std::string sumsCDN = "https://release-assets.githubusercontent.com/asset/sums?sig=1", setupCDN = "https://objects.githubusercontent.com/asset/setup?sig=1";
 
@@ -371,7 +483,8 @@ struct Harness {
         routes.clear();
         std::vector<u::FeedAsset> assets;
         if (withAssets) assets = u::installerAssets(tag, "1.2.1", 19, setupBytes ? setupBytes : setupBody.size(), sumsBody.size());
-        routes.serve(std::string(u::releasesEndpoint), {200, {{"ETag", "\"feed\""}}, u::releaseFeed({{"v2.0.0", "Mac", "", false, false, true, {}}, {tag, "", "", false, false, true, assets}}), {}});
+        // A newer Mac-only release is never offered to Windows.
+        routes.serve(std::string(u::releasesEndpoint), {200, {{"ETag", "\"feed\""}}, u::releaseFeed({macOnly("v2.0.0"), {tag, "", "", false, false, true, assets}}), {}});
         routes.serve(u::releaseDownloadURL(tag, sumsName), {302, {{"Location", sumsCDN}}, {}, {}});
         routes.serve(sumsCDN, {200, {}, sumsBody, {}});
         routes.serve(u::releaseDownloadURL(tag, setupName), {302, {{"Location", setupCDN}}, {}, {}});
@@ -406,8 +519,8 @@ void controller() {
         h.settle(*updater);
         const auto& s = updater->state();
         check(s.phase == u::Phase::available && s.latestVersion == "1.2.1 (19)" && s.updateVersion == "1.2.1 (19)" && s.detail.kind == u::Detail::Kind::downloadPrompt &&
-              s.detail.bytes == setupBody.size() && s.releaseURL == "https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/" + tag && s.hasUpdate() && h.changes > 0,
-              "The Windows release is available and installable");
+              s.detail.bytes == setupBody.size() && s.releaseURL == "https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/v1.2.1" && s.hasUpdate() && h.changes > 0,
+              "The Windows files of the shared release are available and installable");
         check(updater->lastCheck() == h.wall && h.state()["lastCheck"].number() == h.wall, "The check time is saved");
         h.routes.forget();
         check(!updater->activate(h.clock) && s.phase == u::Phase::downloading, "The About click downloads");
@@ -556,7 +669,7 @@ void controller() {
         }
     }
     {
-        // Copies that cannot install themselves only discover; packages without installers wait.
+        // Copies that cannot install themselves only discover; releases without installers are never offered.
         Harness h;
         h.installed = false;
         auto updater = started(h);
@@ -568,9 +681,12 @@ void controller() {
         Harness g;
         auto other = started(g);
         g.serve(g.sums(), setupBody, false);
-        available(g, *other);
-        check(other->state().detail.kind == u::Detail::Kind::waitingForPackage && other->activate(g.clock) == other->state().releaseURL,
-              "A release without Windows installer assets is only discovered");
+        check(other->check(g.clock), "Check sent");
+        g.settle(*other);
+        const auto& st = other->state();
+        check(st.phase == u::Phase::failed && st.detail.kind == u::Detail::Kind::checkError && st.detail.error.kind == u::CheckErrorKind::noPublishedReleases &&
+              !other->candidate() && st.latestVersion.empty() && st.updateVersion.empty() && st.releaseURL.empty() && !st.hasUpdate(),
+              "A release without Windows installer assets is never offered nor discovered");
     }
     {
         // Daily checks: at most once a day, when the HUD opens, per the saved preference.
@@ -698,7 +814,7 @@ int main(int argc, char** argv) {
             catch (const std::invalid_argument& e) { throw std::runtime_error(std::string(name) + ": " + e.what()); }
         };
         stage("oracle", [&] { oracle(Json::parse(readText(argv[1]), 2 * 1024 * 1024)); });
-        stage("Windows namespace", windowsNamespace);
+        stage("Windows releases", windowsReleases);
         stage("texts", texts);
         stage("controller", controller);
         std::cout << "PASS " << checks << " Windows update checks\n";

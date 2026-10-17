@@ -44,7 +44,8 @@ if(BUILD_TESTING)
 endif()
 
 # --- Windows updater: release checker and controller (packaging/updater.hpp) --
-# Portable decisions over the windows-v* GitHub releases (never the Mac feed),
+# Portable decisions over the GitHub releases that carry the Windows installer
+# assets (the release list shared with the Mac app, never its Sparkle feed),
 # checked against the unchanged Mac HUDGitHubRelease.swift through its oracle
 # (tools/package_update_reference.sh).
 add_library(hud_packaging_updates packaging/update_check.cpp packaging/updater.cpp packaging/update_fixture.cpp)

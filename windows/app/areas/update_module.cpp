@@ -39,6 +39,12 @@ packaging::ProductVersion buildVersion() {
     if (!v) throw std::logic_error("This build's release version is invalid");
     return *v;
 }
+// Hidden coverage: the shared release of this build ("v<release>") carrying
+// this build's Windows files, which the running build reports as up to date.
+std::string currentReleaseFeed(const packaging::ProductVersion& v) {
+    const auto tag = u::releaseTag(v.release());
+    return u::releaseFeed({{tag, "EndfieldHUD " + v.release(), "", false, false, true, u::installerAssets(tag, v.release(), v.build, 1000, 200)}});
+}
 // The shared UtilityExecutor through one route of this area. Accepted state
 // writes still finish when the area goes away.
 class ExecutorRoute {
@@ -88,7 +94,7 @@ public:
             routes_ = routes.get();
             transport_ = std::move(routes);
             // A current-release baseline answers the daily check of an opening.
-            routes_->serve(std::string(u::releasesEndpoint), {200, {}, u::releaseFeed({{"windows-v1.2.0", "EndfieldHUD 1.2.0", "", false, false, true, {}}}), {}});
+            routes_->serve(std::string(u::releasesEndpoint), {200, {}, currentReleaseFeed(o.current), {}});
             s.wallClock = [this] { return coverageEpoch + clock_() + wallOffset_; };
             s.installedCopy = [] { return true; };
             s.verify = [](const fs::path& p, const std::string& sha, const packaging::ProductVersion& v) { u::verifySetup(p, sha, v, u::runningExecutable()); };
@@ -274,16 +280,21 @@ void UpdatesArea::coverage(app::ModuleCoverage& step) {
     settle();
     expect(updater_->loaded() && st.installationSupported, "Windows updates: the saved state loads on the shared executor");
     const auto& f = coverageFixture();
-    const auto tag = std::string("windows-v1.2.1");
+    // The shared release list: the Windows files are extra assets on the
+    // regular "v" releases, next to the Mac files; "windows-v" releases are
+    // still read for compatibility.
+    const auto tag = std::string("v1.2.1");
     const auto setupName = u::setupAssetName("1.2.1", 19), sumsName = u::sumsAssetName("1.2.1", 19);
     const auto sums = u::sumsText({{f.sha, setupName}, {std::string(64, '0'), "EndfieldHUD-1.2.1-build19-windows-x64-portable.zip"}});
+    auto shared = u::installerAssets(tag, "1.2.1", 19, f.bytes.size(), sums.size());
+    shared.push_back({"EndfieldHUD-1.2.1.dmg", u::releaseDownloadURL(tag, "EndfieldHUD-1.2.1.dmg"), 9000000, "uploaded"});
     std::vector<u::FeedRelease> feed{
         {"v1.3.0", "EndfieldHUD 1.3.0 (macOS)", "", false, false, true,
          {{"EndfieldHUD-1.3.0.dmg", u::releaseDownloadURL("v1.3.0", "EndfieldHUD-1.3.0.dmg"), 9000000, "uploaded"},
           {"appcast.xml", u::releaseDownloadURL("v1.3.0", "appcast.xml"), 2000, "uploaded"}}},
-        {"windows-v9.0.0", "draft", "", true, false, true, u::installerAssets("windows-v9.0.0", "9.0.0", 90, 1000, 200)},
-        {"windows-v1.4.0-beta.1", "beta", "", false, true, true, u::installerAssets("windows-v1.4.0-beta.1", "1.4.0", 30, 1000, 200)},
-        {tag, "EndfieldHUD 1.2.1 for Windows", "", false, false, true, u::installerAssets(tag, "1.2.1", 19, f.bytes.size(), sums.size())},
+        {"v9.0.0", "draft", "", true, false, true, u::installerAssets("v9.0.0", "9.0.0", 90, 1000, 200)},
+        {"v1.4.0-beta.1", "beta", "", false, true, true, u::installerAssets("v1.4.0-beta.1", "1.4.0", 30, 1000, 200)},
+        {tag, "EndfieldHUD 1.2.1", "", false, false, true, std::move(shared)},
         {"windows-v1.2.0", "EndfieldHUD 1.2.0", "", false, false, true, u::installerAssets("windows-v1.2.0", "1.2.0", 18, 1000, 200)}};
     const auto sumsURL = u::releaseDownloadURL(tag, sumsName), setupURL = u::releaseDownloadURL(tag, setupName);
     const auto sumsCDN = std::string("https://release-assets.githubusercontent.com/github-production-release-asset/1/sums?sig=coverage");
@@ -314,7 +325,7 @@ void UpdatesArea::coverage(app::ModuleCoverage& step) {
         settle();
         expect(st.phase == u::Phase::available && updater_->candidate() && updater_->candidate()->tag == tag && st.latestVersion == "1.2.1 (19)" &&
               st.detail.kind == u::Detail::Kind::downloadPrompt && st.releaseURL == "https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/" + tag,
-              "Windows updates: the newest stable windows-v release is offered; Mac, draft and prerelease releases are not");
+              "Windows updates: the newest stable release with Windows files is offered; a newer Mac-only release, drafts and prereleases are not");
     };
 
     if (step.cycle == 0) {
@@ -437,7 +448,7 @@ void UpdatesArea::coverage(app::ModuleCoverage& step) {
         for (const auto& r : routes_->requests()) contained = contained && r.url.find("example.invalid") == std::string::npos;
         expect(st.phase == u::Phase::failed && st.detail.kind == u::Detail::Kind::downloadFailed && contained && noFiles(),
               "Windows updates: a redirect outside GitHub fails the download without a request");
-        // A feed with Mac releases only offers nothing to Windows.
+        // A feed with Mac-only releases offers nothing to Windows.
         routes_->clear();
         routes_->serve(endpoint, {200, {}, u::releaseFeed({feed[0]}), {}});
         expect(check(t), "Windows updates: a check is sent");
@@ -446,11 +457,12 @@ void UpdatesArea::coverage(app::ModuleCoverage& step) {
               settingsStatus(core::Language::english).detail == "No published release found on GitHub.",
               "Windows updates: Mac releases are never offered to Windows");
         routes_->clear();
-        routes_->serve(endpoint, {200, {}, u::releaseFeed({{"windows-v1.2.0", "EndfieldHUD 1.2.0", "", false, false, true, {}}}), {}});
+        routes_->serve(endpoint, {200, {}, currentReleaseFeed(buildVersion()), {}});
         expect(check(t), "Windows updates: a check is sent");
         settle();
-        expect(st.phase == u::Phase::current && st.detail.kind == u::Detail::Kind::none && st.latestVersion == "1.2.0",
-              "Windows updates: the running release reports up to date");
+        expect(st.phase == u::Phase::current && st.detail.kind == u::Detail::Kind::none && st.latestVersion == buildVersion().display() &&
+              st.releaseURL == "https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/" + u::releaseTag(EHUD_UPDATE_RELEASE),
+              "Windows updates: the running build's files on its shared release report up to date");
     }
     expect(publications_ > 0 && !updater_->nextWakeTime(t), "Windows updates: changes are published and no request is left waiting");
 }
