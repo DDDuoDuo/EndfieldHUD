@@ -22,11 +22,14 @@ publishing:
      (2026-10-16): installed, updated over the installed copy with the data
      kept, and uninstalled from Settings → Apps. Remove every item under
      "Not yet checked on a real PC" that has passed.
-     Blocker: when Setup opens EndfieldHUD after an install or an update,
-     the HUD appears behind the other windows (openings by the hotkey come
-     to the front; tester report on release candidate 136). Fixed in
-     release candidate 137 (checkpoint 137); its live check on the test
-     laptop is pending. Do not publish until it has passed.
+     Blocker, done: when Setup opened EndfieldHUD after an install or an
+     update, the HUD appeared behind the other windows (openings by the
+     hotkey came to the front; tester report on release candidate 136).
+     Fixed in release candidate 137 (checkpoint 137), which passed its live
+     check on the test laptop (2026-10-17): release candidate 136's setup
+     installed, release candidate 137's setup updated it, and the HUD
+     opened by Setup, the Start menu, the tray or the hotkey came to the
+     front and took typing.
   4. Compare "Known differences and limitations" with WINDOWS-MIGRATION.md
      section 6 at the release commit.
   5. Create the release under the Windows tag namespace only, from the

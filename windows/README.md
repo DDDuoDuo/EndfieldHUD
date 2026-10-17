@@ -4306,8 +4306,8 @@ uninstalling works too.
 - **New problem (open):** when Setup opens EndfieldHUD after an install or
   an update, the HUD appears behind the other windows; openings by the
   hotkey come to the front. A fix is in progress for the next release
-  candidate. *Fixed in checkpoint 137 (`80f7629`); the live check on
-  release candidate 137 is pending; see checkpoint 137.*
+  candidate. *Fixed in checkpoint 137 (`80f7629`) and confirmed by the
+  tester on release candidate 137; see checkpoint 137.*
 - **Not reported:** the on-screen `package_perf_gate --desktop` run has not
   been made (the owner later skipped it for `windows-v1.2.0`; *Decisions for
   the user* below), and a pinch on a real touchpad was not specifically
@@ -4352,7 +4352,8 @@ no longer wait for the desktop gate run, which the owner skipped for
 - Setup: the HUD that Setup opens after an install or an update appears
   behind the other windows (*Tester confirmation* above); a fix is in
   progress for the next release candidate. *Fixed in checkpoint 137
-  (`80f7629`), pending the live check; see checkpoint 137.*
+  (`80f7629`) and confirmed by the tester on release candidate 137; see
+  checkpoint 137.*
 - Credits: `CREDITS.md` names the Unicode Character Database since
   `e36841f`.
 
@@ -4380,7 +4381,8 @@ lyrics and cover did not (above). New items:
   uninstall passed (above); the notices file was not specifically
   reported.*
 - Once fixed: the HUD that Setup opens after an install or an update comes
-  to the front. *Fixed in checkpoint 137 (`80f7629`); see checkpoint 137.*
+  to the front. *Fixed in checkpoint 137 (`80f7629`) and confirmed by the
+  tester on release candidate 137; see checkpoint 137.*
 
 ### Decisions for the user
 
@@ -4655,6 +4657,28 @@ carries over the previous test build's test data, so the HUD no longer
 opens by itself when a new test build starts. Only the test launches are
 affected; an installed copy keeps its own data folder.
 
+### Tester confirmation (after validation)
+
+On 2026-10-17 the tester reported on release candidate 137 on the laptop:
+"Yes, it's working."
+
+- **Setup, live:** release candidate 136's setup installed, and release
+  candidate 137's setup updated the installed copy over it.
+- **The HUD in front:** the HUD opened by Setup (*Open EndfieldHUD*), the
+  Start menu, the tray icon or the hotkey came to the front and took typing
+  (`80f7629`, `08b1b0b`). This answers release candidate 136's report and
+  resolves the release blocker (the maintainer checklist in
+  `RELEASE-NOTES.md`): checkpoint 137 is the release candidate for
+  `windows-v1.2.0`.
+- **Not reported:** the summon through the keyboard hook alone in a game
+  that blocks `RegisterHotKey`, Narrator over the Settings pages and the
+  *Keep this UI scale?* card, the hand-offs once the HUD has closed
+  (*Storage Settings*, the WebView2 download page), *Open EndfieldHUD*
+  after a fresh install by release candidate 137's setup, and the restart
+  in the tray after an update that closed a running EndfieldHUD were not
+  specifically reported, so those items stay open (*Live acceptance still
+  needed* below).
+
 ### Corrections to the entries above
 
 - Checkpoint 136's corrections and section 6 of `WINDOWS-MIGRATION.md` say
@@ -4663,13 +4687,14 @@ affected; an installed copy keeps its own data folder.
   point here.
 - Checkpoint 136's tester confirmation, open items and live list leave the
   HUD that Setup opens behind the other windows to a fix in progress. It is
-  fixed in `80f7629`, pending the tester's live check (below); notes in
-  place point here.
+  fixed in `80f7629` and confirmed by the tester on release candidate 137
+  (*Tester confirmation* above); notes in place point here.
 
 ### Open items
 
 Checkpoint 136's list still applies, except the Setup item (fixed in
-`80f7629`; the live check below still blocks the release). New items, both
+`80f7629` and confirmed by the tester on release candidate 137, *Tester
+confirmation* above; it no longer blocks the release). New items, both
 post-release follow-ups:
 
 - Shelf: a drag-out keeps the HUD shown, above other windows, while the
@@ -4686,7 +4711,8 @@ hides (`08b1b0b`).
 
 ### Live acceptance still needed
 
-Checkpoint 136's list still applies. New items:
+Checkpoint 136's list still applies, except its Setup item, confirmed on
+release candidate 137 (*Tester confirmation* above). New items:
 
 - *Open EndfieldHUD* after an install and after an update with release
   candidate 137's setup: the HUD comes to the front and takes the keyboard.
@@ -4695,18 +4721,26 @@ Checkpoint 136's list still applies. New items:
   later opening with the right (`08b1b0b`). An update that closed a running
   EndfieldHUD restarts it in the tray only, without *Open EndfieldHUD*.
   This check blocks the release (the maintainer checklist in
-  `RELEASE-NOTES.md`).
+  `RELEASE-NOTES.md`). *Passed after an update (above): the HUD came to
+  the front and took typing, and the blocker is resolved. A fresh install
+  by release candidate 137's setup, an opening without the grant and the
+  tray-only restart were not specifically reported.*
 - The HUD above other windows while it is open (opened by the hotkey, the
   Start menu or the tray), and out of that layer once it closes; Projection
-  placed on another display.
+  placed on another display. *Opened by the hotkey, the Start menu or the
+  tray, the HUD came to the front and took typing (above); leaving the
+  layer on close and Projection on another display were not specifically
+  reported.*
 - The summon hotkey through the keyboard hook alone, in a game that blocks
   `RegisterHotKey`: does the HUD come to the front over the game? Only
   `WM_HOTKEY` is known to carry the right to set the foreground window, and
-  without it Windows keeps the HUD just behind the game (`08b1b0b`).
+  without it Windows keeps the HUD just behind the game (`08b1b0b`). *Not
+  specifically reported on release candidate 137.*
 - Storage → *Storage Settings* and Account Binding's WebView2 download
   link: the HUD closes first, then the page opens in front. File choosers,
-  colour dialogs and the account sign-in open above the HUD.
+  colour dialogs and the account sign-in open above the HUD. *Not
+  specifically reported.*
 - Narrator (and Inspect) over System, Display, Hotkeys and About, their
   choice pages and the *Keep this UI scale?* card: names, values, switches,
   sliders and the status line, and the list after a module switch with no
-  further input.
+  further input. *Not specifically reported.*

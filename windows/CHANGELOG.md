@@ -23,8 +23,10 @@ data folder; none is a published release.
   moves above the other windows once you click a visible part of it or
   open it again with the hotkey. After an update that had to close
   EndfieldHUD (also one installed from About), Setup restarts it in the
-  notification area only, as before and as on the Mac. Not yet checked
-  live.
+  notification area only, as before and as on the Mac. Confirmed by the
+  tester on the test laptop: after RC 136's setup had installed it and
+  RC 137's setup had updated it, the HUD opened by Setup, the Start menu,
+  the tray icon or the hotkey came to the front and took typing.
 - **Settings work with screen readers**: System, Display, Hotkeys and
   About, their choice pages and the *Keep this UI scale?* card are now
   available to Narrator and other screen readers through Windows UI
