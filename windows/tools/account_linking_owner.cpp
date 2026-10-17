@@ -74,6 +74,7 @@ AccountLinkingOwner::AccountLinkingOwner(app::UtilityExecutor& executor,gpu::Lay
     else if(i.options.officialLogin) {
         gpu::WebViewLoginOptions l;l.owner=window;l.language=i.options.language;l.now=i.options.clock;l.accent=loginAccent(i.options.style);
         l.scheduleChanged=[weak]{if(auto self=weak.lock();self&&self->options.invalidate) self->options.invalidate();};
+        l.openLink=i.options.openLink;
         i.login=std::make_unique<gpu::WebViewLoginPresenter>(std::move(l));s.login=i.login.get();i.webView=true;
     }
 #endif

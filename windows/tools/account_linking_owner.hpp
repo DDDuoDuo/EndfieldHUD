@@ -46,6 +46,12 @@ struct AccountLinkingOwnerOptions {
     // false: Connect reports "Sign-in could not finish" and no browser is
     // ever created (hidden verification / builds without WebView2).
     bool officialLogin{true};
+    // The login window's link to Microsoft's WebView2 runtime download page
+    // (WebViewLoginOptions::openLink). The host closes the HUD (and with it
+    // the login) first and opens the page once it is hidden, like every
+    // hand-off to another application (ApplicationHost::openLinkAfterClose);
+    // empty: the login opens it itself.
+    std::function<bool(std::string_view url)> openLink;
     // Wall clock in Foundation reference seconds (Mac Date()); tests pin it.
     std::function<modules::hypergryph::Time()> wallClock;
     // "Updated MM/dd HH:mm:ss" fields (default: the user's local time zone).

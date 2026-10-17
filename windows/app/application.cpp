@@ -751,6 +751,7 @@ void Application::Impl::AreaHost::openModule(core::Module module){
     if(impl_.visibleMode()&&impl_.session->phase()!=core::VisibilityPhase::concealed&&!impl_.closing&&!impl_.stopping){impl_.host.show();impl_.refresh(time);}
 }
 void Application::Impl::AreaHost::closeOverlay(){if(impl_.ready&&!impl_.stopping)impl_.perform(impl_.lifecycle.close(),impl_.areaClock());}
+void Application::Impl::AreaHost::openLinkAfterClose(std::string url){if(impl_.ready&&!impl_.stopping)impl_.openAfterClose(std::move(url),impl_.areaClock());}
 bool Application::Impl::AreaHost::updateSettings(const std::function<void(ehud::data::Settings&)>&mutate){
     if(!impl_.settingsUI||impl_.stopping||!mutate)return false;
     auto next=impl_.settingsUI->controller().committed();mutate(next);
@@ -1000,19 +1001,16 @@ void Application::Impl::constructArchive(){
     startup.mark("shared-media-archive-owner");
 }
 void Application::Impl::constructStorage(){
-    const auto window=static_cast<HWND>(host.hwnd());
-    auto options=tools::makeStoragePreviewOptions(args.storageAssets,*utility,[window]{
-        // Explicit original Storage Settings action only; never startup or a test.
-        const auto result=reinterpret_cast<INT_PTR>(ShellExecuteW(window,L"open",L"ms-settings:storagesense",nullptr,nullptr,SW_SHOWNORMAL));
-        if(result<=32)std::cerr<<"Windows Storage Settings could not open: "<<result<<'\n';
-    });
+    // The original Storage Settings action (OverlayController
+    // openStorageAfterClose): the HUD closes first, Windows Settings opens
+    // once it is hidden (openPendingStorageSettings; hidden coverage counts it).
+    auto options=tools::makeStoragePreviewOptions(args.storageAssets,*utility,[this]{openStorageSettingsAfterClose(now());});
     if(args.moduleCoverage){
         // Replace ALL OS providers before constructing the owner.
         storageFixture=std::make_shared<StorageFixture>();storageFixture->time=args.benchmarkEpoch;const auto fixture=storageFixture;
         options.readCapacity=[fixture]()->std::optional<modules::StorageCapacity>{++fixture->capacityReads;return modules::StorageCapacity{"Synthetic startup volume",1000000000000LL,375000000000LL,fixture->time.load(std::memory_order_relaxed)};};
         options.scanDetails=[fixture](const modules::StorageScanCancellation&cancel){++fixture->detailScans;modules::StorageDetailsSnapshot result;if(!cancel.cancelled()){result.categories={{"documents","Synthetic Documents",123000000LL,false}};result.updatedAt=fixture->time.load(std::memory_order_relaxed);}return result;};
         options.completionClock=[fixture]{return fixture->time.load(std::memory_order_relaxed);};
-        options.openSettings=[fixture]{++fixture->settingsRequests;};
     }else{
         // Storage volume choice (Windows addition, user request): remembered in the
         // preference record as "storageVolume" (unknown keys survive the store;
@@ -1537,7 +1535,7 @@ void Application::Impl::forceConceal(double time){
     // OverlayController.forceCloseSystemOverlay: sleep, session end and
     // termination cannot wait for visible animations or editor retries.
     time=hostTime(time);
-    pendingClose=false;pendingModule.reset();headerClock.setActive(false,time);pendingShelfReveal.reset();pendingShelfOpen.reset();pendingLink.reset();
+    pendingClose=false;pendingModule.reset();headerClock.setActive(false,time);pendingShelfReveal.reset();pendingShelfOpen.reset();pendingLink.reset();pendingStorageSettings=false;
     if(mediaPicker)mediaPicker->cancel();pickerOwner=PickerOwner::none;pendingArchivePicker.reset();if(archiveMedia)isolate(archiveModuleOwner,"force close",[&]{archiveMedia->cancelImport();});if(readerOwner)isolate(readerModuleOwner,"force close",[&]{readerOwner->cancelImport();});pendingReaderPicker.reset();pendingReaderAction.reset();
     finishAreaPicker({true,false,{}});deactivateDisplayPanels();setClockHovered(false);
     clockSwipe=0;clockSwipeConsumed=false;clockSwipeTime=-1;if(chrome)chrome->cancelStyleTransition();
@@ -2191,20 +2189,43 @@ bool Application::Impl::restartDisplay(const std::string&reason,double time){
     stopping=true;host.setDeadline({});host.setFrameDemand({});host.requestStop();
     return true;
 }
-// Settings links and the release page open after the HUD closed
-// (overlay.afterSystemClose); hidden coverage never opens a browser.
+// Settings links, the release page and the login's runtime download open
+// after the HUD closed (overlay.afterSystemClose): the browser never opens
+// behind the shown HUD's topmost band, whether or not "Close when focus lost"
+// is on. Hidden runs take the same decision and count the link instead of
+// opening a browser.
 void Application::Impl::openAfterClose(std::string url,double time){
-    if(url.rfind("https://",0)!=0||url.size()>2048||url.find_first_of(" \"<>\\^`{|}")!=std::string::npos)return;
-    if(!visibleMode()){++linkRequests;return;}
+    if(url.rfind("https://",0)!=0||url.size()>2048||url.find_first_of(" \"<>\\^`{|}")!=std::string::npos||quitRequested)return;
     pendingLink=std::move(url);
-    if(session->phase()==core::VisibilityPhase::concealed&&!closing){openPendingLink();return;}
+    if(hudClosed()){openPendingLink();return;}
     perform(lifecycle.close(),time);
 }
 void Application::Impl::openPendingLink(){
-    auto link=std::exchange(pendingLink,std::nullopt);if(!link||!visibleMode()||quitRequested)return;
+    auto link=std::exchange(pendingLink,std::nullopt);if(!link||quitRequested)return;
+    if(!visibleMode()){++linkRequests;return;}
     const auto target=wide(*link);
     const auto result=reinterpret_cast<INT_PTR>(ShellExecuteW(nullptr,L"open",target.c_str(),nullptr,nullptr,SW_SHOWNORMAL));
     if(result<=32&&!production())std::cerr<<"Link could not open: "<<result<<'\n';
+}
+// Storage > Storage Settings (OverlayController: openStorageAfterClose = true;
+// closeSystemOverlay()): Windows Settings opens once the HUD is hidden, at
+// once while it is already closed.
+void Application::Impl::openStorageSettingsAfterClose(double time){
+    if(quitRequested)return;
+    pendingStorageSettings=true;
+    if(hudClosed()){openPendingStorageSettings();return;}
+    perform(lifecycle.close(),time);
+}
+// The close finished: the session is concealed and the lifecycle closed
+// (`closing` stays set from close() until the next opening).
+bool Application::Impl::hudClosed()const{return session->phase()==core::VisibilityPhase::concealed&&lifecycle.phase()==core::SystemOverlayPhase::closed;}
+void Application::Impl::openPendingStorageSettings(){
+    if(!std::exchange(pendingStorageSettings,false)||quitRequested)return;
+    // Hidden coverage: the fixture records the request; nothing opens.
+    if(storageFixture){++storageFixture->settingsRequests;return;}
+    if(!visibleMode())return;
+    const auto result=reinterpret_cast<INT_PTR>(ShellExecuteW(nullptr,L"open",L"ms-settings:storagesense",nullptr,nullptr,SW_SHOWNORMAL));
+    if(result<=32)std::cerr<<"Windows Storage Settings could not open: "<<result<<'\n';
 }
 
 // ---------------------------------------------------------------------------

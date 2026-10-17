@@ -275,25 +275,34 @@ void Application::Impl::onFrame(double time){
             if(auto command=projectionHandoff.hudClosed(projectionHandoff.generation(),display.has_value(),display?std::optional(display->handle):std::nullopt))projectionCommand(*command,now());return;
         }
         if(!closed.empty()){perform(closed,time);if(stopping)return;}
-        // OverlayController.tearDownSystemPresentation: a Shelf "Reveal" waits
-        // for the normal close to finish; a quit or forced close drops it.
-        if(pendingShelfReveal&&visibleMode()&&!quitRequested){
-            auto access=std::move(*pendingShelfReveal);pendingShelfReveal.reset();
-            if(FAILED(gpu::revealShelfReference(std::move(access)))&&shelf)
-                isolate(shelfModuleOwner,"reveal",[&]{shelf->showError(tools::shelfText(tools::ShelfText::revealFailed,watchAppearance.language),hostTime(time));});
-        }
-        // The properties card's Open: the identity is revalidated, then the
-        // Shell opens the item with its default verb (a cancelled choice is S_FALSE).
-        if(pendingShelfOpen&&visibleMode()&&!quitRequested){
-            auto access=std::move(*pendingShelfOpen);pendingShelfOpen.reset();
-            if(FAILED(gpu::openShelfReference(std::move(access)))&&shelf)
-                isolate(shelfModuleOwner,"open",[&]{shelf->showError(tools::shelfText(tools::ShelfText::openFailed,watchAppearance.language),hostTime(time));});
-        }
-        // Settings links and the GitHub releases page (overlay.afterSystemClose).
-        if(pendingLink)openPendingLink();
+        openAfterConcealed(time);
         // A development preview quits with its window; the hidden idle trace keeps running closed.
         if(!production()&&!tray&&!quitRequested&&args.idleTrace.empty())finishQuit(time);else if(!stopping)scheduleDeadline();
     }
+}
+
+// OverlayController.tearDownSystemPresentation: the hand-offs to other
+// applications wait for the normal close to finish (the panel ordered out;
+// here the window hidden and out of the topmost band), then open in front of
+// the windows the HUD covered; a quit or forced close drops them.
+void Application::Impl::openAfterConcealed(double time){
+    // A Shelf "Reveal" selects the item in File Explorer.
+    if(pendingShelfReveal&&visibleMode()&&!quitRequested){
+        auto access=std::move(*pendingShelfReveal);pendingShelfReveal.reset();
+        if(FAILED(gpu::revealShelfReference(std::move(access)))&&shelf)
+            isolate(shelfModuleOwner,"reveal",[&]{shelf->showError(tools::shelfText(tools::ShelfText::revealFailed,watchAppearance.language),hostTime(time));});
+    }
+    // The properties card's Open: the identity is revalidated, then the
+    // Shell opens the item with its default verb (a cancelled choice is S_FALSE).
+    if(pendingShelfOpen&&visibleMode()&&!quitRequested){
+        auto access=std::move(*pendingShelfOpen);pendingShelfOpen.reset();
+        if(FAILED(gpu::openShelfReference(std::move(access)))&&shelf)
+            isolate(shelfModuleOwner,"open",[&]{shelf->showError(tools::shelfText(tools::ShelfText::openFailed,watchAppearance.language),hostTime(time));});
+    }
+    // Storage Settings (openStorageAfterClose).
+    if(pendingStorageSettings)openPendingStorageSettings();
+    // Settings links, the update pages and the login's runtime download (afterSystemClose).
+    if(pendingLink)openPendingLink();
 }
 
 // The shared executors' coalesced completion notice. Completions an owner

@@ -97,6 +97,12 @@ public:
     virtual void selectModule(core::Module) = 0;
     virtual void openModule(core::Module) = 0;
     virtual void closeOverlay() = 0;
+    // Opens an explicit https:// page in the user's browser once the HUD has
+    // closed (Mac overlay.afterSystemClose + closeSystemOverlay), at once while
+    // it is already closed: another application never opens behind the shown
+    // HUD's topmost band. Dropped by a quit or a forced close. Hidden runs
+    // count it and open nothing. Default: ignored (hosts without a browser).
+    virtual void openLinkAfterClose(std::string /*url*/) {}
     // Mutates the committed preference record through the Settings owner
     // (normalized, persisted on the shared executor, then applied as a
     // settingsChanged broadcast). False without the Settings owner.

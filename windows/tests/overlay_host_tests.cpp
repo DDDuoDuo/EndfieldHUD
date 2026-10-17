@@ -369,6 +369,22 @@ void zBandAndActivation() {
         "Moving a shown Projection to another display keeps it in the band and leaves activation alone");
     host.hide();check(!banded(),"Projection closed: out of the band");
     check(host.place(0,0,32,32)&&placedAt(0,0,32,32)&&!banded()&&!host.stats().visible,"Placing the hidden HUD again keeps it out of the band");
+
+    // Dialogs the HUD presents itself (the file choosers, the colour dialogs,
+    // the account login) are owned by the HUD window: an owned window stays
+    // above its owner, and one of a topmost owner is topmost, so they appear
+    // above the shown HUD (Mac: sheets and panels at the HUD's level + 1).
+    // Other applications are never opened while it is shown (Application::
+    // openAfterClose and the other close-first hand-offs).
+    host.show(false);
+    const HWND dialog=CreateWindowExW(WS_EX_TOOLWINDOW,L"STATIC",L"Hidden owned dialog fixture",WS_POPUP,0,0,8,8,window,nullptr,GetModuleHandleW(nullptr),nullptr);
+    const auto above=[](HWND upper,HWND lower){for(HWND w=GetWindow(upper,GW_HWNDNEXT);w;w=GetWindow(w,GW_HWNDNEXT))if(w==lower)return true;return false;};
+    check(dialog&&!IsWindowVisible(dialog)&&GetWindow(dialog,GW_OWNER)==window,"A dialog fixture is owned by the HUD window and never shown");
+    check((GetWindowLongPtrW(dialog,GWL_EXSTYLE)&WS_EX_TOPMOST)&&above(dialog,window),"A dialog opened over the shown HUD is in the topmost band, above the HUD");
+    host.show(false);
+    check((GetWindowLongPtrW(dialog,GWL_EXSTYLE)&WS_EX_TOPMOST)&&above(dialog,window)&&banded(),"Raising the HUD to the top of the band keeps its dialog above it");
+    check(DestroyWindow(dialog)!=FALSE,"Destroy the owned dialog fixture");
+    host.hide();check(!banded(),"Hidden after the dialog: out of the band");
     host.destroy();
     check(!host.place(0,0,32,32),"No window: nothing to place");
 

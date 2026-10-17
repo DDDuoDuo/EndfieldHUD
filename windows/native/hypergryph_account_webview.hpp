@@ -52,7 +52,9 @@ struct WebViewLoginOptions {
     std::filesystem::path profileRoot;
     bool showWindows{true};                    // false only for hidden verification
     // Opens Microsoft's official WebView2 download page in the user's default
-    // browser (default: ShellExecuteW "open"); tests record the request.
+    // browser (default: ShellExecuteW "open"). The app passes its close-first
+    // hand-off: the HUD closes (cancelling this window) and the page opens once
+    // it is hidden, never behind the HUD's topmost band. Tests record the request.
     std::function<bool(std::string_view url)> openLink;
     // HUDRuntimeAppearance.accent (the configured accent, sRGB): the auth
     // buttons' plates and highlight (Mac default FAD41F).

@@ -205,6 +205,9 @@ public:
         };
         o.profile = &relay_;
         ApplicationHost* host = c.host;
+        // The runtime download page opens once the HUD (and the login above
+        // it) closed, never behind the HUD's topmost band.
+        o.openLink = [host](std::string_view url) { host->openLinkAfterClose(std::string(url)); return true; };
         auto clock = c.clock;
         o.workMode = [host, clock] { return workModeInput(host->workMode(), clock()); };
         o.workModeRunning = [host, clock] {

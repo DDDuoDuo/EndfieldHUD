@@ -661,7 +661,7 @@ int Application::Impl::runHiddenVerification(){
                         const auto ps=chromeSettings(module);probePlane.update(*chromePlan->projection().center,ps,notes->modulePresentation().current,1);
                         const auto plane=core::Projection::viewport(gpu::layerViewportProjection(metrics.pixelWidth,metrics.pixelHeight)*core::Matrix4::scale(metrics.scale,metrics.scale)*probePlane.pose().contentWorld,metrics.pixelWidth,metrics.pixelHeight);
                         const auto click=[&](core::Point local,double t){const auto projected=plane.project(local);need(projected.has_value(),"Storage action projects through its actual shared source plane");const auto x=projected->x/metrics.scale,y=projected->y/metrics.scale;need(storage->pointer({app::PointerKind::down,app::PointerButton::left,x,y},t),"Storage consumes its original projected control");storage->pointer({app::PointerKind::up,app::PointerButton::left,x,y},t);present(t,true);};
-                        const auto settingsBefore=storageFixture->settingsRequests;click({95,266.5},time+.72);need(storageFixture->settingsRequests==settingsBefore+1,"Original Storage Settings action reaches only the injected hidden callback");
+                        const auto settingsBefore=storageFixture->settingsRequests;click({95,266.5},time+.72);need(storageFixture->settingsRequests==settingsBefore&&pendingStorageSettings,"Original Storage Settings action waits for the HUD to close before Windows Settings opens (openStorageAfterClose)");
                         const auto reads=storageFixture->capacityReads.load();click({370,266.5},time+.74);utility->waitIdle();utility->drain();storage->utilityCompleted(time+.8);present(time+.8,true);need(storageFixture->capacityReads.load()==reads+1,"Manual refresh uses the shared executor once");
                         if(!cycle){need(storage->requestDetails(false,time+.82),"Explicit isolated model probe can request details without inventing a UI button");utility->waitIdle();utility->drain();storage->utilityCompleted(time+.84);need(storageFixture->detailScans.load()==1&&!storage->state().details().isLoading&&storage->state().details().categories.size()==1,"Explicit details request uses only its synthetic bounded callback");}
                         need(storage->nextWakeTime().has_value(),"Visible Storage shares the original 60-second deadline");storage->setVisible(false,time+.9);need(!storage->nextWakeTime()&&!storage->state().active(),"Hidden Storage removes its capacity deadline");
@@ -1226,6 +1226,11 @@ int Application::Impl::runHiddenVerification(){
                 }
             }
             close(time);present(time+.7,true);concealed(time+.7);
+            // tearDownSystemPresentation: the hand-offs the cycles requested open
+            // once the HUD is hidden. Storage Settings reaches only the hidden
+            // fixture, exactly once however often the cycles pressed it.
+            {const bool waiting=pendingStorageSettings;const auto launched=storageFixture?storageFixture->settingsRequests:0u;openAfterConcealed(time+.7);
+             if(storageFixture&&waiting)hostCheck(!pendingStorageSettings&&storageFixture->settingsRequests==launched+1,"Storage Settings waited for the close and opens once the HUD is hidden");}
             // The production adapter forwards the HUD visibility and the end of
             // the close: a Volume that is not the shown module keeps no artwork.
             if(volume&&volumeModuleOwner&&registry.enabled(*volumeModuleOwner)&&notes->selected()!=core::Module::volume)
@@ -1260,7 +1265,7 @@ int Application::Impl::runHiddenVerification(){
             if(quitConfirmation&&!quitButtons.empty()){
                 const auto settle=[&](double t){
                     if(lifecycleOpening&&!closing&&session->phase()==core::VisibilityPhase::visible){const auto token=*lifecycleOpening;lifecycleOpening.reset();perform(lifecycle.didOpen(token),t);}
-                    if(lifecycleClosing&&session->phase()==core::VisibilityPhase::concealed){const auto token=*lifecycleClosing;lifecycleClosing.reset();quitConfirmation->hide(t);concealed(t);perform(lifecycle.didClose(token),t);}
+                    if(lifecycleClosing&&session->phase()==core::VisibilityPhase::concealed){const auto token=*lifecycleClosing;lifecycleClosing.reset();quitConfirmation->hide(t);concealed(t);perform(lifecycle.didClose(token),t);openAfterConcealed(t);}
                 };
                 const auto run=[&](double from,double seconds){double t=from;for(unsigned n=0;n<=unsigned(seconds*60);++n){t=from+double(n)/60;
                     try{present(t,true);settle(t);}catch(const std::exception&e){const auto&shown=notes->modulePresentation();
@@ -1280,6 +1285,36 @@ int Application::Impl::runHiddenVerification(){
                 lifecycleCheck(lifecycle.toggle().empty()&&lifecycle.reopen().empty(),"Summons during closing never reopen");
                 t=run(t,1.2);lifecycleCheck(lifecycle.phase()==core::SystemOverlayPhase::closed&&lifecycle.lastModule()==core::Module::notes,"Close retains the last module");
                 perform(lifecycle.reopen(),t);t=run(t,1.2);lifecycleCheck(lifecycle.phase()==core::SystemOverlayPhase::open&&notes->selected()==core::Module::notes,"Relaunch reopens on the last module");
+                // Hand-offs to other applications (OverlayController afterSystemClose,
+                // openStorageAfterClose): requested while the HUD is open they close
+                // it with the normal animation and open only once it is hidden, so
+                // nothing opens behind its topmost band whatever "Close when focus
+                // lost" says; while it is closed they open at once. The hidden run
+                // counts them (links) or hands them to the Storage fixture.
+                {
+                    const auto handoffCheck=[&](bool value,const char*why){need(value,why);++hostChecks;};
+                    using P=core::SystemOverlayPhase;
+                    const auto link=[&](const char*what,const std::function<void()>&request){
+                        const auto links=linkRequests;request();
+                        handoffCheck(lifecycle.phase()==P::closing&&closing&&pendingLink&&linkRequests==links,what);
+                        t=run(t,1.2);handoffCheck(lifecycle.phase()==P::closed&&!pendingLink&&linkRequests==links+1,"The browser opens once the HUD is hidden");
+                        request();handoffCheck(lifecycle.phase()==P::closed&&!pendingLink&&linkRequests==links+2,"Requested while the HUD is closed, the browser opens at once");
+                        perform(lifecycle.reopen(),t);t=run(t,1.2);};
+                    if(settingsUI)link("A Settings > About link closes the HUD before the browser opens",[&]{settingsUI->controller().openLink("https://github.com/DDDuoDuo/EndfieldHUD");});
+                    // The account login's WebView2 runtime download (Windows only) through the area host.
+                    if(areaHost)link("The login's runtime download closes the HUD (and the login) before the browser opens",
+                        [&]{areaHost->openLinkAfterClose("https://developer.microsoft.com/microsoft-edge/webview2/#download-section");});
+                    if(storage&&storageFixture&&storageModuleOwner&&registry.enabled(*storageModuleOwner)){
+                        perform(lifecycle.selectModule(core::Module::storage),t);t=run(t,.8);
+                        const auto before=storageFixture->settingsRequests;
+                        handoffCheck(storage->perform("storage:settings",t)&&lifecycle.phase()==P::closing&&closing&&pendingStorageSettings&&storageFixture->settingsRequests==before,
+                            "Storage Settings closes the HUD before Windows Settings opens");
+                        t=run(t,1.2);handoffCheck(lifecycle.phase()==P::closed&&!pendingStorageSettings&&storageFixture->settingsRequests==before+1,"Windows Storage Settings opens once the HUD is hidden");
+                        perform(lifecycle.reopen(),t);t=run(t,1.2);
+                        perform(lifecycle.selectModule(core::Module::notes),t);t=run(t,.8);
+                        handoffCheck(lifecycle.phase()==P::open&&notes->selected()==core::Module::notes&&storageFixture->settingsRequests==before+1,"The HUD reopens after the hand-off");
+                    }
+                }
                 // SystemHUDView.mouseDown fallthrough through the real pointer route:
                 // a press on the side of the screen (the transparent overlay
                 // outside the displayed circle) closes the HUD with the normal

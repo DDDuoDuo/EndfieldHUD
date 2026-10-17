@@ -265,6 +265,7 @@ struct Application::Impl {
         void selectModule(core::Module) override;
         void openModule(core::Module) override;
         void closeOverlay() override;
+        void openLinkAfterClose(std::string) override;
         bool updateSettings(const std::function<void(ehud::data::Settings&)>&) override;
         bool chooseFiles(const ApplicationFileRequest&, std::function<void(ApplicationFileResult)>) override;
         void cancelFileChoice() override;
@@ -433,9 +434,17 @@ struct Application::Impl {
     bool recoverDevice(const std::exception&, double time);
     bool restartDisplay(const std::string& reason, double time);
     void checkAdapter(double time);
-    // Settings links and update checks close the HUD first (overlay.afterSystemClose).
+    // Hand-offs to other applications close the HUD first and open once it is
+    // hidden (OverlayController's afterSystemClose / openStorageAfterClose /
+    // pendingShelfReveal), so nothing opens behind the shown HUD's topmost
+    // band: Settings links, update pages and the login's runtime download
+    // (openAfterClose), Windows Storage Settings, the Shelf's Reveal and Open.
     void openAfterClose(std::string url, double time);
+    void openStorageSettingsAfterClose(double time);
+    void openAfterConcealed(double time);
     void openPendingLink();
+    void openPendingStorageSettings();
+    bool hudClosed() const;
 
     // --- Settings > Display and the desktop clock (app/application_display.cpp) ----
     struct LogoImport { std::uint64_t generation{}; std::string selection, previous; };
@@ -759,9 +768,10 @@ struct Application::Impl {
     // UI Automation root provider (lazily created on WM_GETOBJECT).
     std::unique_ptr<HudAutomation> automation;
     bool automationDirty{};
-    // Settings link/update page opened after the HUD closes.
+    // Settings link/update page and Storage Settings opened after the HUD closes.
     std::optional<std::string> pendingLink;
-    std::uint64_t linkRequests{}; // hidden coverage: links requested (never opened)
+    std::uint64_t linkRequests{}; // hidden runs: links that would have opened (never opened)
+    bool pendingStorageSettings{};
     // Activity telemetry for the Power charge metric (OverlayController.reconcileChargeMetricTelemetry).
     std::unique_ptr<modules::ActivityTelemetryLink> activityTelemetry;
     // System animation preference (SPI_GETCLIENTAREAANIMATION), folded into
