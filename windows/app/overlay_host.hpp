@@ -250,9 +250,12 @@ struct OverlayOptions {
     // testVisibility(shown, activate) replaces making the window visible (or
     // hidden) and answers whether it now counts as shown; testForeground()
     // replaces SetForegroundWindow and answers whether Windows granted it.
-    // Empty in production.
+    // testBand(topmost) replaces the z-band SetWindowPos and answers
+    // whether the window is in the topmost band afterwards, so a test can
+    // stand in for Windows refusing it. Empty in production.
     std::function<bool(bool shown, bool activate)> testVisibility;
     std::function<bool()> testForeground;
+    std::function<bool(bool topmost)> testBand;
 };
 struct OverlayHostStats {
     std::uint64_t frameRequests{}, framePosts{}, frames{}, timerArms{}, timerWakes{},
@@ -277,6 +280,12 @@ struct OverlayHostStats {
     // activations that ended such a wait.
     bool topmost{}, activationPending{};
     std::uint64_t foregroundRequests{}, foregroundRefusals{}, deferredActivations{};
+    // Attempts to enter the topmost band (each show, and a retry at
+    // activation), those Windows' foreground rules refused (the window then
+    // stays just behind the foreground window), whether a shown window still
+    // waits for the band, and the retries that entered it.
+    bool bandPending{};
+    std::uint64_t bandRequests{}, bandRefusals{}, deferredBands{};
 };
 
 // All methods and destruction belong to the creating UI thread. This is an
@@ -298,17 +307,22 @@ public:
     void* hwnd() const noexcept;
     ClientMetrics metrics() const;
     // Shows the window in the topmost band, above every normal application
-    // window however it was opened (Mac: the HUD panel's .statusBar level),
-    // keeping its geometry and style; an explicit show also overrides a
-    // launcher's STARTUPINFO SW_HIDE. Every call raises it to the top of that
-    // band. activate also asks for the foreground (Mac: NSApp.activate
-    // ignoringOtherApps). Windows' foreground lock refuses that to a process
-    // that may not set the foreground window - a run Setup started without
-    // passing that right on, or after the user's input went elsewhere: the
-    // window then stays shown above the other windows, inactive, and the
-    // first click on it activates it (WM_MOUSEACTIVATE answers MA_ACTIVATE).
-    // No input is injected and no thread input is attached. show(false)
-    // keeps keyboard focus and activation as they are.
+    // window (Mac: the HUD panel's .statusBar level), keeping its geometry
+    // and style; an explicit show also overrides a launcher's STARTUPINFO
+    // SW_HIDE. Every call raises it to the top of that band; a topmost
+    // window another program raises later may sit above it, as other
+    // status-level panels do on the Mac. activate also asks for the
+    // foreground (Mac: NSApp.activate ignoringOtherApps).
+    // Both depend on the right to set the foreground window, which the hotkey
+    // (WM_HOTKEY), a click, or a launcher that passed it on
+    // (packaging/foreground_launch.hpp) gives this process. Without it
+    // Windows refuses the foreground and even the band: the window is shown
+    // just behind the foreground window (stats().bandPending and
+    // activationPending), and its next activation - a click on a visible
+    // part of it (WM_MOUSEACTIVATE answers MA_ACTIVATE), or a later opening
+    // that holds the right - enters the band. No input is injected and no
+    // thread input is attached. show(false) keeps keyboard focus and
+    // activation as they are.
     void show(bool activate = true);
     // Hides the window and leaves the topmost band: a hidden window is never
     // topmost.

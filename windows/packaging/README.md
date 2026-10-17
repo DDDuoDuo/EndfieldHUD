@@ -204,12 +204,16 @@ behind the other windows. Now every start passes the right on:
   reopens.
 
 A grant counts only while the granting program holds the right itself, and the
-user's next input elsewhere ends it. The HUD therefore also shows itself in the
+user's next input elsewhere ends it. With the right, the HUD shows itself in the
 topmost band while it is open (as the Mac HUD panel sits above normal windows)
-and leaves that band when it hides (`app/overlay_host.hpp`). When Windows
-refuses the activation, the HUD stays in front, inactive, and the first click
-on it activates it. Nothing injects input or attaches to another program's
-input.
+and leaves that band when it hides (`app/overlay_host.hpp`). Without it,
+Windows refuses the activation and the band as well: `SetWindowPos` reports
+success, but the window stays out of the band, just behind the foreground
+window. This was observed on the laptop in the logged-in session with a game in
+front. The HUD reports the refusal and enters the band at its next activation,
+for example a click on a visible part of it. Windows gives the right with the
+summon hotkey (`RegisterHotKey`'s `WM_HOTKEY`). Nothing injects input or
+attaches to another program's input.
 
 **Command line.**
 

@@ -207,27 +207,52 @@ struct OverlayHost::Impl {
     // OverlayOptions::offscreenScheduling / refreshRate (hidden benchmarks).
     bool offscreen{};
     double fixedRefresh{};
-    // OverlayOptions::testVisibility / testForeground (hidden tests).
+    // OverlayOptions::testVisibility / testForeground / testBand (hidden
+    // tests); bandState is the stand-in band's answer.
     std::function<bool(bool, bool)> testVisibility;
     std::function<bool()> testForeground;
+    std::function<bool(bool)> testBand;
+    bool bandState{};
     // An activating show the foreground lock refused, until the window is
     // activated (the first click on it, or a later granted request).
     bool activationPending{};
+    // A shown window that Windows kept out of the topmost band (see
+    // enterBand), until a later attempt enters it.
+    bool bandPending{};
     // Whether the window presents now: natively visible, or presented for
     // scheduling by an offscreen benchmark (or a hidden test's stand-in)
     // that never shows it.
     bool presented() const { return window && (offscreen || testVisibility ? visible : IsWindowVisible(window) != FALSE); }
-    bool topmost() const { return window && (GetWindowLongPtrW(window, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0; }
+    bool topmost() const {
+        if (testBand) return window && bandState;
+        return window && (GetWindowLongPtrW(window, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0;
+    }
     // The topmost band (Mac: the HUD panel's .statusBar level, above every
     // normal window): entered by show() before the window appears, left by
     // hide() once it is hidden. Only the z-order changes, never geometry,
-    // visibility or activation; a failure leaves the window where it was.
-    void setBand(HWND target, bool topmostBand) noexcept {
+    // visibility or activation.
+    void setBand(HWND target, bool topmostBand) {
+        if (testBand) { bandState = testBand(topmostBand); return; }
         (void)SetWindowPos(target, topmostBand ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     }
+    // Windows applies its foreground rules to raising a window too: for a
+    // process that may not set the foreground window, SetWindowPos into the
+    // topmost band succeeds without an error yet leaves the window out of
+    // the band, just behind the foreground window (laptop, logged-in session
+    // with a game in front). So the band is judged by the window's own style
+    // afterwards, a refusal is counted, and the next activation of the
+    // window (when the process holds that right) enters it.
+    void enterBand(HWND target) {
+        ++counts.bandRequests;
+        setBand(target, true);
+        if (window != target) return;
+        if (topmost()) { if (std::exchange(bandPending, false)) ++counts.deferredBands; }
+        else { bandPending = true; ++counts.bandRefusals; }
+    }
     // An activating show asks for the foreground once. Refused (the foreground
-    // lock), the window stays shown in the topmost band and waits for the
-    // activation Windows allows: the first click on it.
+    // lock), the window waits for the activation Windows allows: a click on
+    // it, or a later opening that holds the right (which also enters the band
+    // if that was refused too).
     void requestForeground(HWND target) {
         ++counts.foregroundRequests;
         const bool granted = testForeground ? testForeground() : SetForegroundWindow(target) != FALSE;
@@ -236,7 +261,7 @@ struct OverlayHost::Impl {
     }
     // Hides the window (or a hidden test's stand-in) and leaves the band.
     void conceal(HWND target) {
-        activationPending = false;
+        activationPending = bandPending = false;
         if (testVisibility) { (void)testVisibility(false, false); visible = false; if (ready && window == target) refreshSchedule(); }
         else ShowWindow(target, SW_HIDE);
         if (window == target && topmost()) setBand(target, false);
@@ -609,7 +634,11 @@ struct OverlayHost::Impl {
             if (window == target) return MA_ACTIVATE;
             break;
         case WM_ACTIVATE:
-            if (window == target && LOWORD(w) != WA_INACTIVE && std::exchange(activationPending, false)) ++counts.deferredActivations;
+            if (window == target && LOWORD(w) != WA_INACTIVE) {
+                if (std::exchange(activationPending, false)) ++counts.deferredActivations;
+                // Active, the process may raise its window: the band refused earlier.
+                if (bandPending && visible) enterBand(target);
+            }
             break; // the default procedure gives this window the keyboard focus
         case WM_SETFOCUS: case WM_KILLFOCUS:
             focused = message == WM_SETFOCUS;
@@ -621,6 +650,7 @@ struct OverlayHost::Impl {
             const bool changed=appActive!=(w!=0);appActive = w != 0;
             if (!appActive) releaseCursor();
             if(window!=target||callbacks!=handlers)return 0;
+            if(appActive&&bandPending&&visible)enterBand(target);
             if(changed&&ready&&handlers&&handlers->applicationActive)handlers->applicationActive(appActive);
             break;
         }
@@ -760,7 +790,8 @@ void OverlayHost::create(const OverlayOptions& options, OverlayCallbacks callbac
     p.menuDepth = p.sizeMoveDepth = 0; p.appActive = true; p.exitCode = 0; p.coverMonitor = options.coverMonitor;
     p.offscreen = options.offscreenScheduling;
     p.fixedRefresh = std::isfinite(options.refreshRate) && options.refreshRate > 0 ? options.refreshRate : 0;
-    p.testVisibility = options.testVisibility; p.testForeground = options.testForeground; p.activationPending = false;
+    p.testVisibility = options.testVisibility; p.testForeground = options.testForeground; p.testBand = options.testBand;
+    p.activationPending = p.bandPending = p.bandState = false;
     const auto window = CreateWindowExW(WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOOLWINDOW, windowClass,
         options.title.c_str(), WS_POPUP, options.x, options.y,
         static_cast<int>(options.pixelWidth), static_cast<int>(options.pixelHeight),
@@ -792,10 +823,10 @@ void OverlayHost::show(bool activate) {
         p.visible = true; p.minimized = false; p.refreshSchedule(); p.rethrow(); return;
     }
     const auto window=p.window;
-    // Above every normal application window however the HUD was opened: the
-    // band is entered before the window appears (or raised to its top when
-    // it is already shown).
-    p.setBand(window,true);
+    // Above every normal application window: the band is entered before the
+    // window appears (or the window raised to its top when already shown),
+    // as far as Windows' foreground rules allow (enterBand).
+    p.enterBand(window);
     p.rethrow();
     if(p.window!=window||p.stopped)return;
     // An explicit owner request must not inherit a launcher's STARTUPINFO
@@ -822,7 +853,7 @@ void OverlayHost::hide() {
     auto& p = *impl_; p.requireThread();
     p.visible = false; p.cancelFrames(); p.releaseCursor();
     if (p.window && !p.offscreen) p.conceal(p.window);
-    else p.activationPending = false;
+    else p.activationPending = p.bandPending = false;
     p.syncTimer();
     p.rethrow();
 }
@@ -954,7 +985,7 @@ OverlayHostStats OverlayHost::stats() const {
     result.timerArmed = p.armed; result.framePending = p.frames.pending();
     result.visible = p.visible; result.focused = p.focused;
     result.presentationGated = p.gated.has_value();
-    result.topmost = p.topmost(); result.activationPending = p.activationPending;
+    result.topmost = p.topmost(); result.activationPending = p.activationPending; result.bandPending = p.bandPending;
     return result;
 }
 } // namespace endfield::app
