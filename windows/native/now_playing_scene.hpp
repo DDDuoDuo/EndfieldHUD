@@ -22,9 +22,11 @@ struct NowPlayingSceneStats {
     std::size_t residentPixelBytes{};
 };
 // Borrowed presentation/rasterizer outlive this retained scene. Artwork is a
-// source-bounded immutable <=512px thumbnail decoded on the shared utility
-// queue; a null image preserves the actual missing-cover state. No decoder,
-// provider, service, clock, file access or worker is owned here.
+// bounded immutable cover (<=1024 px per side; production decodes it to the
+// slot's drawn size, so it is drawn 1:1 into the cover group) decoded on the
+// shared utility queue; a null image preserves the actual missing-cover
+// state. No decoder, provider, service, clock, file access or worker is owned
+// here.
 //
 // One encoded local composition preserves the source transparent square cover
 // and per-child opacity. Its depth-one leaf groups provide exact weighted

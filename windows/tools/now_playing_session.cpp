@@ -18,7 +18,9 @@ struct NowPlayingSession::Impl:std::enable_shared_from_this<Impl>{
  // first, the catalog's as supplement (source NowPlayingArtworkLoader: the
  // player's AX image URL, then the catalog); a track keeps the cover it
  // already has, and a failed address gives way to the other one.
- struct Cover{std::optional<modules::NowPlayingLyricsKey>key;std::string url;std::vector<std::string>tried;modules::NowPlayingBody bytes;std::function<void()>cancel;bool inFlight{},done{};};
+ // broken: the downloaded cover could not be decoded (a thumbnail it was to
+ // replace stays).
+ struct Cover{std::optional<modules::NowPlayingLyricsKey>key;std::string url;std::vector<std::string>tried;modules::NowPlayingBody bytes;std::function<void()>cancel;bool inFlight{},done{},broken{};};
  // Recently downloaded catalog covers by URL (bounded, kept while hidden):
  // returning to one of the last tracks shows its cover at once, and the
  // decoded thumbnails (keyed by these exact bytes) stay valid for them too.
@@ -37,6 +39,12 @@ struct NowPlayingSession::Impl:std::enable_shared_from_this<Impl>{
  std::shared_ptr<native::NowPlayingWeb>web;std::unique_ptr<modules::NowPlayingLyricsSources>sources;Cover cover;
  std::shared_ptr<const modules::NowPlayingAppVolume>volume;std::function<void(const modules::NowPlayingPlaybackEvent&)>playback;
  std::shared_ptr<const native::NotesImageFrame>image;std::optional<Seek>seek;std::optional<double>displayDeadline;
+ // The track the presented cover belongs to: a sharper cover of the same
+ // track replaces it only once decoded, so the slot never shows a gap.
+ std::optional<modules::NowPlayingLyricsKey>imageKey;
+ // A failed lyric lookup's retry time the owner already woke for (a retry
+ // that could not start is not woken for again).
+ std::optional<double>retryServed;
  // One source warm presentation, populated only on conceal from actual
  // observed metadata. No provider/session is kept alive while hidden.
  std::optional<modules::NowPlayingViewInput>warm;std::string warmApplication;bool warmCoverHeld{};
@@ -75,6 +83,9 @@ struct NowPlayingSession::Impl:std::enable_shared_from_this<Impl>{
   };
   sources=std::make_unique<modules::NowPlayingLyricsSources>(web?web->lyricsFetch():modules::nowPlayingOfflineFetch(),bool(web),std::move(decoder));
   if(options.neteasePlayingList)sources->setPlayingList(std::move(options.neteasePlayingList));
+  // Real downloads only: a lookup that got no answer is retried with backoff
+  // on the owner's clock (an offline backend keeps the source negatives).
+  if(web){Impl*owner=this;sources->setClock([owner]{return owner->time;});}
   Impl*self=this;sources->onChange=[self]{self->sourcesDirty=true;};
   commandSources.reserve(9);
  }
@@ -82,6 +93,7 @@ struct NowPlayingSession::Impl:std::enable_shared_from_this<Impl>{
  std::uint64_t begin(double t){if(!std::isfinite(t)||t<0)throw std::invalid_argument("Now Playing owner needs finite nonnegative time");time=std::max(time,t);return ++event;}
  bool current(std::uint64_t e)const{return alive&&event==e;}
  void stopCover(){auto cancel=std::move(cover.cancel);cover.cancel=nullptr;if(cover.inFlight){cover.inFlight=false;cover.done=false;cover.key.reset();cover.url.clear();}if(cancel)cancel();}
+ std::optional<double>retryDue()const{const auto value=sources->retryTime();if(!value||(retryServed&&*retryServed==*value))return {};return value;}
  // Source NowPlayingArtworkLoader: the player's embedded thumbnail first, then
  // an allow-listed catalog supplement downloaded once per track and URL.
  modules::NowPlayingBody remoteCover(const std::optional<modules::NowPlayingLyricsKey>&key,const std::optional<std::string>&own){
@@ -95,7 +107,7 @@ struct NowPlayingSession::Impl:std::enable_shared_from_this<Impl>{
   for(const auto&address:addresses)if(!same||std::find(cover.tried.begin(),cover.tried.end(),address)==cover.tried.end()){url=address;break;}
   if(!url){if(!same)stopCover();return same?cover.bytes:nullptr;}
   if(!same){stopCover();cover.tried.clear();}
-  cover.key=key;cover.url=*url;cover.tried.push_back(*url);cover.bytes.reset();cover.done=false;
+  cover.key=key;cover.url=*url;cover.tried.push_back(*url);cover.bytes.reset();cover.done=false;cover.broken=false;
   if(auto bytes=recalled(*url)){cover.bytes=std::move(bytes);cover.done=true;return cover.bytes;}
   cover.inFlight=true;
   const auto weak=weak_from_this();const auto expected=cover.url;
@@ -162,9 +174,17 @@ struct NowPlayingSession::Impl:std::enable_shared_from_this<Impl>{
   sources->update(key,input.track);
   if(seek&&input.track){input.track->position=seek->value;input.track->sampledAt=seek->sampledAt;}
   if(s.media.timeline)input.playbackRate=std::isfinite(s.media.timeline->rate)&&s.media.timeline->rate>0?s.media.timeline->rate:0;
-  auto artwork=input.track?s.media.artwork:nullptr;bool remotePending{};
-  // A player thumbnail always wins; an in-flight supplement is then retired.
-  if(input.track&&!artwork){artwork=remoteCover(key,s.media.artworkURL);remotePending=cover.inFlight;}else stopCover();
+  const auto thumbnail=input.track?s.media.artwork:nullptr;auto artwork=thumbnail;bool remotePending{};
+  // A player thumbnail always wins (source); an in-flight supplement is then
+  // retired. Windows: NetEase's own media-session thumbnail is far smaller
+  // than the slot, so for NetEase the catalog cover at the slot's size (the
+  // bar's own cover URL, the queue file's or the catalog match's) replaces
+  // it once downloaded and decoded; the thumbnail shows meanwhile.
+  const bool sharpen=thumbnail&&modules::nowPlayingSourceForAppUserModelID(application)==modules::NowPlayingSource::netease;
+  if(input.track&&(!thumbnail||sharpen)){
+   auto remote=remoteCover(key,s.media.artworkURL);remotePending=cover.inFlight;
+   if(remote&&!(sharpen&&cover.broken))artwork=std::move(remote);
+  }else stopCover();
   sourcesDirty=false;input.lyrics=sources->lyrics();
   const auto rendering=applyVolume(input,application);
   const bool playerWindow=s.media.session&&s.media.session->origin==modules::NowPlayingSessionOrigin::playerWindow;
@@ -191,10 +211,18 @@ struct NowPlayingSession::Impl:std::enable_shared_from_this<Impl>{
    input.track->sampledAt=time;input.track->isPlaying=*rendering;
   }
   images->request(artwork);imageDirty=false;imageRevision=images->revision();auto next=images->result().image;
-  const auto imageWork=images->stats();const bool decoding=artwork&&(imageWork.inFlight||imageWork.pending);
+  auto imageWork=images->stats();bool decoding=artwork&&(imageWork.inFlight||imageWork.pending);
+  if(sharpen&&artwork!=thumbnail&&!next&&!decoding){
+   // The downloaded cover is not an image: keep the player's thumbnail.
+   cover.broken=true;artwork=thumbnail;images->request(artwork);imageRevision=images->revision();next=images->result().image;
+   imageWork=images->stats();decoding=artwork&&(imageWork.inFlight||imageWork.pending);
+  }
   const bool keepWarm=warmCoverHeld&&!next&&(decoding||remotePending)&&warm&&warm->track&&input.track&&input.track->sameIdentity(*warm->track)&&s.media.session&&s.media.session->appUserModelID==warmApplication;
-  if(keepWarm)next=image;else{warmCoverHeld=false;warm.reset();warmApplication.clear();}
-  if(image!=next){image=std::move(next);++coverRevision;}input.coverAvailable=bool(image);input.coverRevision=coverRevision;
+  // The same track's next cover (the sharper download) is shown only once
+  // decoded: the current one stays meanwhile and then crossfades into it.
+  const bool hold=!next&&decoding&&image&&key&&imageKey&&*imageKey==*key;
+  if(keepWarm)next=image;else{warmCoverHeld=false;warm.reset();warmApplication.clear();if(hold)next=image;}
+  if(image!=next){image=std::move(next);++coverRevision;imageKey=image?key:std::nullopt;}input.coverAvailable=bool(image);input.coverRevision=coverRevision;
   serviceRevision=s.revision;view.sync(std::move(input),time);displayDeadline=view.nextDisplayDeadline(time);
  }
  double progressPosition(const std::optional<modules::NowPlayingLyricsKey>&key,const modules::NowPlayingTrack&track,const native::NowPlayingMediaSnapshot::Progress&bar){
@@ -236,7 +264,7 @@ NowPlayingSession::~NowPlayingSession(){auto i=impl_;i->alive=false;++i->event;i
  if(i->active){i->active=false;i->service.setActive(false);if(i->volume&&i->volume->setActive)i->volume->setActive(false);}}
 void NowPlayingSession::setActive(bool active,double t){auto i=impl_;const auto e=i->begin(t);if(i->active==active)return;
  if(!active){const auto&s=i->service.snapshot();if(s.fresh){if(s.media.session&&s.media.track&&(s.failure==native::NowPlayingServiceFailure::none||s.failure==native::NowPlayingServiceFailure::timedOut||s.failure==native::NowPlayingServiceFailure::unavailable)){i->warm=i->view.input();i->warm->track=s.media.track;i->warm->failed=false;i->warmApplication=s.media.session->appUserModelID;}else{i->warm.reset();i->warmApplication.clear();}}}
- i->active=active;i->seek.reset();i->completion=0;i->commandSources.clear();i->pendingVolume.reset();i->retryMissing=false;i->progress.reset();i->controlsRead.reset();i->view.setActive(active,i->time);
+ i->active=active;i->seek.reset();i->completion=0;i->commandSources.clear();i->pendingVolume.reset();i->retryMissing=false;i->progress.reset();i->controlsRead.reset();i->retryServed.reset();i->view.setActive(active,i->time);
  if(!active){i->displayDeadline.reset();i->images->cancel();i->imageDirty=false;i->stopCover();i->sources->hide();i->discardDecodes();i->sourcesDirty=false;i->identities.clear();i->volumeRouteID.clear();i->service.setActive(false);if(i->volume&&i->volume->setActive)i->volume->setActive(false);return;}
  i->warmCoverHeld=i->warm&&bool(i->image);if(i->web)i->web->prepare();if(i->volume&&i->volume->setActive)i->volume->setActive(true);if(!i->current(e))return;i->service.setActive(true);if(i->current(e)&&i->active)i->publish();}
 bool NowPlayingSession::active()const noexcept{return impl_->active;}
@@ -245,7 +273,10 @@ bool NowPlayingSession::utilityCompleted(double t){auto i=impl_;const auto e=i->
  i->images->submitPending();const bool changed=updated||downloaded||i->sourcesDirty||i->serviceRevision!=i->service.snapshot().revision||i->imageDirty||i->imageRevision!=i->images->revision();if(changed)i->publish();return changed;}
 bool NowPlayingSession::deadline(double t){auto i=impl_;const auto e=i->begin(t);if(!i->active)return false;bool changed{};if(const auto due=i->service.nextWakeTime();due&&*due<=i->time){changed=i->service.drain();if(!i->current(e)||!i->active)return changed;}
  if(i->web)if(const auto due=i->web->nextWakeTime();due&&*due<=i->time){changed=i->web->drain()||changed;if(!i->current(e)||!i->active)return changed;}
- if(i->seek&&i->seek->rollback&&*i->seek->rollback<=i->time){i->seek.reset();changed=true;}if(changed||i->sourcesDirty||i->serviceRevision!=i->service.snapshot().revision)i->publish();
+ if(i->seek&&i->seek->rollback&&*i->seek->rollback<=i->time){i->seek.reset();changed=true;}
+ // A failed lyric lookup whose backoff passed: the publish asks again.
+ if(const auto retry=i->retryDue();retry&&*retry<=i->time){i->retryServed=*retry;changed=true;}
+ if(changed||i->sourcesDirty||i->serviceRevision!=i->service.snapshot().revision)i->publish();
  if(i->displayDeadline&&*i->displayDeadline<=i->time){if(i->view.tick(i->time)){i->service.refresh();if(!i->current(e)||!i->active)return true;}else{i->readControls();if(!i->current(e)||!i->active)return true;}changed=true;i->displayDeadline=i->view.nextDisplayDeadline(i->time);}return changed;
 }
 bool NowPlayingSession::audioChanged(double t){auto i=impl_;i->begin(t);if(!i->active||!i->volume)return false;const auto revision=i->volume->revision?i->volume->revision():i->volumeRevision+1;if(revision==i->volumeRevision)return false;i->publish();return true;}
@@ -259,7 +290,7 @@ bool NowPlayingSession::dispatch(modules::NowPlayingIntent intent,double t){auto
  if(command.kind==modules::NowPlayingCommandKind::seek)i->seek=Impl::Seek{receipt.token,receipt.session,0,*s.media.track,receipt.command.seconds,i->time,{}};else if(i->seek&&receipt.replacedPending==i->seek->token)i->seek.reset();i->publish();return true;
 }
 void NowPlayingSession::presentationChanged(double t){auto i=impl_;i->begin(t);i->displayDeadline=i->active?i->view.nextDisplayDeadline(i->time):std::nullopt;}
-std::optional<double>NowPlayingSession::nextWakeTime(double)const{auto&i=*impl_;if(!i.active)return {};auto due=earlier(i.service.nextWakeTime(),i.displayDeadline);if(i.web)due=earlier(due,i.web->nextWakeTime());return earlier(due,i.seek?i.seek->rollback:std::nullopt);}
+std::optional<double>NowPlayingSession::nextWakeTime(double)const{auto&i=*impl_;if(!i.active)return {};auto due=earlier(i.service.nextWakeTime(),i.displayDeadline);if(i.web)due=earlier(due,i.web->nextWakeTime());due=earlier(due,i.retryDue());return earlier(due,i.seek?i.seek->rollback:std::nullopt);}
 modules::NowPlayingPresentation&NowPlayingSession::presentation()noexcept{return impl_->view;}
 const modules::NowPlayingPresentation&NowPlayingSession::presentation()const noexcept{return impl_->view;}
 std::shared_ptr<const native::NotesImageFrame>NowPlayingSession::artwork()const noexcept{return impl_->image;}

@@ -4,6 +4,7 @@
 #include "modules/now_playing_lyrics_sources.hpp"
 #include "core/data/json.hpp"
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <fstream>
 #include <functional>
@@ -247,12 +248,178 @@ void decodeCost(){
         <<std::chrono::duration<double,std::milli>(middle-started).count()<<" ms tie, "<<std::chrono::duration<double,std::milli>(ended-middle).count()<<" ms unique\n";
 }
 }
+// A long NetEase queue (the tester's: 1352 entries, 3.2 MB) is far beyond the
+// 1 MiB lyric response bound it used to share, so it never parsed and every
+// NetEase track fell back to the fuzzy title search (which misses some songs:
+// no lyrics, no length). It is parsed within its own 16 MiB bound, once per
+// contents. Synthetic queue only.
+std::string longQueue(std::size_t rows,std::size_t target){
+    std::string out=R"({"list":[)";
+    for(std::size_t k=0;k<rows;++k){
+        const bool wanted=k==target;const auto id=std::to_string(wanted?4242:100000+k);
+        out+=(k?",":"")+std::string(R"({"id":")")+id+R"(","displayOrder":)"+std::to_string(k)+R"(,"track":{"id":)"+id+R"(,"name":")"+(wanted?std::string("Synthetic Song"):"Queued Song "+std::to_string(k))+
+            R"(","artists":[{"name":"Example Artist","id":7}],"album":{"name":"Fixture Album","picUrl":"http://p3.music.126.net/Queue==/)"+id+R"(.jpg","cover":"http://p3.music.126.net/Queue==/)"+id+
+            R"(.jpg"},"duration":)"+std::to_string(wanted?233400:180000+k)+R"(,"fee":8,"privilege":{"st":0,"pl":320000,"dl":0,"fl":320000}}})";
+    }
+    return out+"]}";
+}
+void longPlayingList(){
+    m::NowPlayingTrack wanted;wanted.title="Synthetic Song";wanted.artist="Example Artist";wanted=m::NowPlayingTrack::bounded(std::move(wanted));
+    const auto text=longQueue(6000,5990);const auto b=bytes(text);
+    check(text.size()>m::nowPlayingMaximumLyricsResponseBytes&&text.size()<m::nowPlayingMaximumPlayingListBytes,"The synthetic queue is well beyond 1 MiB and within the queue file bound");
+    const auto started=std::chrono::steady_clock::now();
+    const auto queue=m::nowPlayingNetEaseQueue(view(b));
+    const auto parsed=std::chrono::steady_clock::now();
+    const auto entry=queue?m::nowPlayingNetEaseQueueEntry(*queue,wanted):std::nullopt;
+    const auto matched=std::chrono::steady_clock::now();
+    check(queue&&queue->rows.size()==6000,"A queue beyond 1 MiB is parsed (all 6000 rows)");
+    check(entry&&entry->identifier==4242&&entry->duration&&std::abs(*entry->duration-233.4)<1e-6&&entry->artwork==std::optional<std::string>("https://p3.music.126.net/Queue==/4242.jpg?param=600y600"),
+          "The current track near the end of a long queue resolves to its exact id, length and cover");
+    check(m::nowPlayingNetEasePlayingListEntry(view(b),wanted)==entry,"The one-step lookup agrees with the parsed queue");
+    std::cout<<"NetEase queue ("<<text.size()<<" bytes, 6000 rows): parse "<<std::chrono::duration<double,std::milli>(parsed-started).count()<<" ms, match "
+        <<std::chrono::duration<double,std::milli>(matched-parsed).count()<<" ms\n";
+    // The catalog parses the file once and matches every later track against it.
+    struct Net {
+        std::vector<std::string>urls;std::vector<std::function<void(m::NowPlayingBody)>>done;
+        m::NowPlayingFetch bind(){return [this](const std::string&url,std::function<void(m::NowPlayingBody)>completion){urls.push_back(url);done.push_back(std::move(completion));return std::function<void()>([]{});};}
+    };
+    Net net;m::NowPlayingCatalog catalog(net.bind());unsigned reads{};
+    catalog.setPlayingList([&]()->m::NowPlayingBody{++reads;return b;});
+    catalog.request(m::NowPlayingLyricsKey::make("cloudmusic.exe",wanted),wanted);
+    check(net.urls.size()==1&&net.urls[0]=="https://music.163.com/api/song/lyric?id=4242&lv=-1&kv=-1&tv=-1"&&catalog.duration()&&std::abs(*catalog.duration()-233.4)<1e-6,
+          "A NetEase track in a long queue reads its own lyrics by id (no cloudsearch) and keeps the exact length");
+    m::NowPlayingTrack next;next.title="Queued Song 17";next.artist="Example Artist";next=m::NowPlayingTrack::bounded(std::move(next));
+    catalog.request(m::NowPlayingLyricsKey::make("cloudmusic.exe",next),next);
+    check(net.urls.size()==2&&net.urls[1]=="https://music.163.com/api/song/lyric?id=100017&lv=-1&kv=-1&tv=-1"&&catalog.queueParses()==1&&reads==2,
+          "The next track is matched against the same parsed queue (one parse per file contents)");
+    const auto changed=bytes(longQueue(10,3));
+    catalog.setPlayingList([&]()->m::NowPlayingBody{return changed;});
+    m::NowPlayingTrack third;third.title="Queued Song 4";third.artist="Example Artist";third=m::NowPlayingTrack::bounded(std::move(third));
+    catalog.request(m::NowPlayingLyricsKey::make("cloudmusic.exe",third),third);
+    check(catalog.queueParses()==2&&net.urls.back()=="https://music.163.com/api/song/lyric?id=100004&lv=-1&kv=-1&tv=-1","A rewritten queue file is parsed again");
+    // The list is read entry by entry: other members (with brackets and quotes
+    // in their strings) are skipped, a damaged entry is skipped, a byte order
+    // mark is accepted, and a broken file is no queue.
+    const auto quoted=bytes("\xef\xbb\xbf { \"meta\" : {\"note\":\"a ] b } \\\" [list\", \"x\":[1,{\"y\":\"]\"}]}, \"list\" : [ "
+        "{\"id\":\"1\",\"track\":{\"id\":1,\"name\":\"Brace } Song\",\"artists\":[{\"name\":\"Example Artist\"}],\"duration\":60000}} , "
+        "{\"id\":2,\"track\":{\"name\":\"Broken\",\"duration\":} } , "
+        "{\"id\":\"3\",\"track\":{\"id\":3,\"name\":\"Synthetic Song\",\"artists\":[{\"name\":\"Example Artist\"}],\"duration\":233400}} ] , \"after\": null }");
+    const auto parsedQuoted=m::nowPlayingNetEaseQueue(view(quoted));
+    check(parsedQuoted&&parsedQuoted->rows.size()==2&&parsedQuoted->rows[0].title=="Brace } Song"&&m::nowPlayingNetEaseQueueEntry(*parsedQuoted,wanted)->identifier==3,
+          "Strings with brackets and quotes, a damaged entry and a byte order mark are handled entry by entry");
+    for(const auto broken:{R"({"list":[{"track":{}})",R"({"list":[{"track":{}}] "x":1})",R"(["list"])",R"({"other":[]})","",R"({"list":"no"})"}){
+        const auto b2=bytes(broken);check(!m::nowPlayingNetEaseQueue(view(b2)),std::string("A file without a well-formed list is no queue: ")+broken);
+    }
+    const auto empty=bytes(R"({"list":[]})");check(m::nowPlayingNetEaseQueue(view(empty))&&m::nowPlayingNetEaseQueue(view(empty))->rows.empty(),"An empty list is an empty queue");
+    // More values than one JSON document may hold (1,000,000): each entry is
+    // its own document, so a long queue with rich entries still resolves.
+    std::string rich=R"({"list":[)";std::string privilege=R"("privilege":{)";
+    for(int k=0;k<80;++k)privilege+=(k?",":"")+std::string("\"f")+std::to_string(k)+"\":"+std::to_string(k);
+    privilege+="}";
+    for(int k=0;k<12000;++k)rich+=(k?",":"")+std::string(R"({"id":")")+std::to_string(k+1)+R"(","track":{"id":)"+std::to_string(k+1)+R"(,"name":")"+(k==11000?std::string("Synthetic Song"):"Rich "+std::to_string(k))+
+        R"(","artists":[{"name":"Example Artist"}],"duration":200000,)"+privilege+"}}";
+    rich+="]}";
+    const auto richBytes=bytes(rich);
+    check(rich.size()<m::nowPlayingMaximumPlayingListBytes,"The rich queue stays within the queue file bound");
+    bool whole{};try{(void)Json::parse(rich,m::nowPlayingMaximumPlayingListBytes);whole=true;}catch(...){}
+    const auto richQueue=m::nowPlayingNetEaseQueue(view(richBytes));
+    check(!whole&&richQueue&&richQueue->rows.size()==12000&&m::nowPlayingNetEaseQueueEntry(*richQueue,wanted)->identifier==11001,
+          "A queue beyond the one-document value bound resolves the current track entry by entry");
+}
+// NetEase stores some lines as [mm:ss:cc]; read as hours they never show
+// (60 times too late). Only NetEase catalog lyrics are read that way.
+void neteaseStamps(){
+    const auto b=bytes(R"({"code":200,"lrc":{"version":3,"lyric":"[00:00.00] 作词 : A\n[00:00.58] 作曲 : A\n[00:01:16]「ばぁ。」\n[00:13:04]例えば\n[01:02:345]Three\n[02:03.40]Four"}})");
+    const auto lyrics=m::nowPlayingCatalogDecodeLyrics(view(b));
+    check(lyrics&&lyrics->lines().size()==6,"Every NetEase line is kept");
+    const double expected[]{0,.58,1.16,13.04,62.345,123.4};
+    bool same=lyrics.has_value();for(std::size_t k=0;same&&k<6;++k)same=std::abs(lyrics->lines()[k].time-expected[k])<1e-9;
+    check(same&&lyrics->lines()[3].text=="例えば","[mm:ss:cc] reads as minutes, seconds and hundredths (as NetEase shows it)");
+    const auto other=m::NowPlayingLyrics::parse("[00:01:16] x");
+    check(other&&std::abs(other->lines().front().time-76)<1e-9,"Other lyrics keep the source reading of three fields");
+}
+void bodies(){
+    const auto answered=[](std::string_view t){const auto b=bytes(t);return m::nowPlayingCatalogAnswered(view(b));};
+    check(answered(R"({"code":200,"nolyric":true})")&&!answered(R"({"code":-460,"message":"Cheating"})")&&!answered(R"({"code":405,"msg":"rate"})")&&!answered("<html>")&&!answered("{}"),
+          "Only a code 200 answer is a catalog answer; refusals and damaged bodies are failures");
+    const auto keep=[](std::string_view url,std::string_view t){const auto b=bytes(t);return m::nowPlayingLyricsBodyCacheable(url,view(b));};
+    const std::string lyric="https://music.163.com/api/song/lyric?id=1&lv=-1&kv=-1&tv=-1",search="https://music.163.com/api/cloudsearch/pc?s=x&type=1&limit=10&offset=0";
+    check(keep(lyric,R"({"code":200,"lrc":{"lyric":"[00:01]x"}})")&&!keep(lyric,R"({"code":200,"nolyric":true})")&&!keep(lyric,R"({"code":-460,"msg":"Cheating"})")&&!keep(lyric,"garbage"),
+          "A lyric document is kept on disk only with lyric text");
+    check(keep(search,R"({"code":200,"result":{"songs":[{"id":1}]}})")&&!keep(search,R"({"code":200,"result":{"songs":[]}})")&&!keep(search,R"({"code":405})"),
+          "A catalog search is kept only with songs");
+    check(keep("https://lrclib.net/api/get?track_name=a&artist_name=b",R"({"id":3,"syncedLyrics":"[00:01]x"})")&&keep("https://lrclib.net/api/search?track_name=a&artist_name=b",R"([{"id":3}])")&&
+          !keep("https://lrclib.net/api/search?track_name=a&artist_name=b","[]")&&!keep("https://example.com/api/get",R"({"id":1})"),
+          "LRCLIB records and non-empty searches are kept; an empty search is asked again next time");
+}
+// A lookup that got no answer is not "no lyrics": with the owner's clock it is
+// retried after 5, 15, 45, 135 s and then every 300 s; an answer (with or
+// without lyrics) is final; hiding forgets failures. Without a clock the
+// source keeps its negative result.
+void retries(){
+    check(m::nowPlayingRetryDelay(1)==5&&m::nowPlayingRetryDelay(2)==15&&m::nowPlayingRetryDelay(3)==45&&m::nowPlayingRetryDelay(4)==135&&
+          m::nowPlayingRetryDelay(5)==300&&m::nowPlayingRetryDelay(40)==300,"Backoff 5, 15, 45, 135, then 300 s");
+    struct Net {
+        std::vector<std::string>urls;std::vector<std::function<void(m::NowPlayingBody)>>done;
+        m::NowPlayingFetch bind(){return [this](const std::string&url,std::function<void(m::NowPlayingBody)>completion){urls.push_back(url);done.push_back(std::move(completion));return std::function<void()>([]{});};}
+    };
+    const std::string search=R"({"code":200,"result":{"songs":[{"id":1901371647,"name":"Synthetic Song","ar":[{"name":"Example Artist"}],"al":{"name":"Fixture Album","picUrl":"http://p1.music.126.net/AbC==/1099.jpg"},"dt":233400}]}})";
+    m::NowPlayingTrack a;a.title="Synthetic Song";a.artist="Example Artist";a=m::NowPlayingTrack::bounded(std::move(a));
+    const auto key=m::NowPlayingLyricsKey::make("cloudmusic.exe",a);
+    double now=100;Net net;m::NowPlayingCatalog catalog(net.bind());catalog.setClock([&]{return now;});
+    catalog.request(key,a);net.done.at(0)(nullptr);
+    check(!catalog.isLoading()&&!catalog.lyrics()&&catalog.retryTime()==105.,"A search with no answer finishes without lyrics and is retried after 5 s");
+    now=104;catalog.request(key,a);check(net.urls.size()==1,"Before its wait passed the failure is not asked again");
+    now=105;catalog.request(key,a);check(net.urls.size()==2&&catalog.isLoading()&&!catalog.retryTime(),"Once the wait passed the same track asks again");
+    net.done.at(1)(bytes(R"({"code":-460,"message":"Cheating"})"));
+    check(!catalog.isLoading()&&catalog.retryTime()==120.,"A refusal is a failure too, retried after 15 s");
+    now=120;catalog.request(key,a);net.done.at(2)(bytes(search));
+    check(net.urls.size()==4&&net.urls[3].find("/api/song/lyric?id=1901371647")!=std::string::npos,"The retried search matches and asks for the song's lyrics");
+    net.done.at(3)(nullptr);
+    check(!catalog.isLoading()&&catalog.retryTime()==165.&&catalog.artwork()&&catalog.duration()==233.4,"A failed lyric document keeps the match's cover and length; retried after 45 s");
+    now=165;catalog.request(key,a);
+    check(catalog.isLoading()&&catalog.artwork()&&catalog.duration()==233.4,"While retrying, the known cover and length stay");
+    net.done.at(4)(bytes(search));net.done.at(5)(bytes(R"({"code":200,"lrc":{"lyric":"[00:01]Found"}})"));
+    check(!catalog.isLoading()&&catalog.lyrics()&&catalog.lyrics()->lines().front().text=="Found"&&!catalog.retryTime(),"The retry's answer finishes the entry with lyrics");
+    now=10000;catalog.request(key,a);check(net.urls.size()==6,"A finished answer is never asked again");
+    // A definitive "nothing" (an answer without a match) is not retried.
+    m::NowPlayingTrack b;b.title="Other Song";b.artist="Example Artist";b=m::NowPlayingTrack::bounded(std::move(b));const auto other=m::NowPlayingLyricsKey::make("cloudmusic.exe",b);
+    catalog.request(other,b);net.done.at(6)(bytes(R"({"code":200,"result":{"songs":[],"songCount":0}})"));
+    check(!catalog.isLoading()&&!catalog.lyrics()&&!catalog.retryTime(),"An answer without a match is final");
+    now=20000;catalog.request(other,b);check(net.urls.size()==7,"and never asked again");
+    // Hiding forgets failures: the next opening asks at once.
+    m::NowPlayingTrack c;c.title="Third Song";c.artist="Example Artist";c=m::NowPlayingTrack::bounded(std::move(c));const auto third=m::NowPlayingLyricsKey::make("cloudmusic.exe",c);
+    catalog.request(third,c);net.done.at(7)(nullptr);check(catalog.retryTime()==20005.,"A third track fails");
+    catalog.clear();catalog.forgetFailures();catalog.request(third,c);check(net.urls.size()==9,"After hiding, the failed track asks again at once");
+    // Without a clock (the source): the failure is the cached negative.
+    Net plain;m::NowPlayingCatalog source(plain.bind());source.request(key,a);plain.done.at(0)(nullptr);source.request(key,a);
+    check(!source.retryTime()&&plain.urls.size()==1,"Without a clock a failure stays the source negative");
+    // LRCLIB: a search with no answer is retried the same way.
+    m::NowPlayingTrack s;s.title="Synthetic Song";s.artist="Example Artist";s=m::NowPlayingTrack::bounded(std::move(s));const auto spotify=m::NowPlayingLyricsKey::make("Spotify.exe",s);
+    Net lr;m::NowPlayingLyricsLoader loader(lr.bind());loader.setClock([&]{return now;});now=500;
+    loader.request(spotify,s);lr.done.at(0)(nullptr);lr.done.at(1)(nullptr);
+    check(lr.urls.size()==2&&!loader.lyrics()&&loader.retryTime()==505.,"LRCLIB: no answer to the search is retried after 5 s");
+    now=505;loader.request(spotify,s);check(lr.urls.size()==3&&lr.urls[2].rfind("https://lrclib.net/api/get?",0)==0,"and starts over with the get");
+    lr.done.at(2)(bytes(R"({"id":1,"syncedLyrics":"[00:01]Lrclib"})"));check(loader.lyrics()&&!loader.retryTime(),"Its answer ends the retries");
+    // Sources: a retried catalog lookup keeps LRCLIB's lyrics on screen meanwhile.
+    Net both;m::NowPlayingLyricsSources sources(both.bind());sources.setClock([&]{return now;});now=1000;
+    sources.update(key,a);both.done.at(0)(nullptr);
+    check(both.urls.size()==2&&both.urls[1].rfind("https://lrclib.net/api/get?",0)==0,"A failed NetEase lookup falls back to LRCLIB at once");
+    both.done.at(1)(bytes(R"({"id":2,"syncedLyrics":"[00:01]Fallback"})"));
+    check(sources.lyrics()&&sources.lyrics()->lines().front().text=="Fallback"&&sources.retryTime()==1005.,"LRCLIB's lyrics show while the catalog waits for its retry");
+    now=1005;sources.update(key,a);
+    check(both.urls.size()==3&&sources.catalogLoading()&&sources.lyrics()&&sources.lyrics()->lines().front().text=="Fallback","The catalog retries without hiding the lyrics already shown");
+    both.done.at(2)(bytes(search));both.done.at(3)(bytes(R"({"code":200,"lrc":{"lyric":"[00:01]Catalog"}})"));
+    check(sources.lyrics()&&sources.lyrics()->lines().front().text=="Catalog"&&!sources.retryTime(),"The catalog's own lyrics then take precedence");
+    sources.hide();check(!sources.retryTime(),"Hidden: no retry is scheduled");
+}
 int main(int argc,char**argv){
     try{
         check(argc==2,"Pass now-playing-lyrics-source.json");std::ifstream in(argv[1],std::ios::binary);check(bool(in),"Read original lyric source fixture");
         const auto j=Json::parse(std::string((std::istreambuf_iterator<char>(in)),{}),8*1024*1024);
         check(j["sourceCommit"].string()=="ca04f142185c7de40acd8523bdb563195d90a1d1","Lyric source fixture is pinned to the authority commit");
         matcher(j);urls(j);decoders(j);scenarios(j);windowsSources();deferredDecoding();playingListParser();playingListCatalog();decodeCost();
+        longPlayingList();neteaseStamps();bodies();retries();
         std::cout<<"Now Playing lyrics sources: "<<checks<<" checks passed (original Swift oracle, injected responses only)\n";return 0;
     }catch(const std::exception&e){std::cerr<<"Now Playing lyrics sources failed after "<<checks<<" checks: "<<e.what()<<'\n';return 1;}
 }

@@ -96,6 +96,34 @@ void relaunch(){
     check(text(loaded)=="\xff\xd8\xff","An entry written by an earlier launch is read back");
 }
 
+// Production keeps only answers that carry lyrics, songs or a cover: a
+// refusal ({"code":-460}) or an empty answer is never written, and one an
+// earlier build stored reads as a miss and is removed, so it is asked again.
+void policy(){
+    Directory dir;Q q{[]{}};
+    const auto keep=[](const n::NowPlayingWeb::Request&r,std::span<const std::uint8_t>b){return r.kind!=Kind::lyrics||m::nowPlayingLyricsBodyCacheable(r.url,b);};
+    const auto file=[&](const n::NowPlayingWeb::Request&r){return dir.cache()/n::NowPlayingWebCache::fileName(r);};
+    {
+        // An earlier build (no policy) stored a refusal and an empty search.
+        n::NowPlayingWebCache old(q,{dir.cache()});old.prepare();settle(q);
+        old.store(lyric,body(R"({"code":-460,"message":"Cheating"})"));old.store(search,body(R"({"code":200,"result":{"songs":[]}})"));settle(q);
+        check(fs::exists(file(lyric))&&fs::exists(file(search)),"Without a policy every accepted body is stored");
+    }
+    n::NowPlayingWebCache::Options options{dir.cache()};options.keep=keep;
+    n::NowPlayingWebCache cache(q,options);cache.prepare();settle(q);
+    check(cache.contains(lyric)&&cache.contains(search),"The earlier entries are indexed");
+    m::NowPlayingBody first=body("x"),second=body("x");
+    (void)cache.load(lyric,[&](m::NowPlayingBody b){first=std::move(b);});(void)cache.load(search,[&](m::NowPlayingBody b){second=std::move(b);});settle(q);
+    check(!first&&!second&&!fs::exists(file(lyric))&&!fs::exists(file(search))&&!cache.contains(lyric)&&cache.stats().refused==2,
+          "A stored refusal or empty answer reads as a miss and is removed (asked again)");
+    cache.store(lyric,body(R"({"code":-460,"message":"Cheating"})"));cache.store(search,body(R"({"code":200,"result":{"songs":[]}})"));settle(q);
+    check(!fs::exists(file(lyric))&&!fs::exists(file(search))&&cache.stats().refused==4&&cache.stats().stores==0,"Refusals and empty answers are never written");
+    cache.store(lyric,body(R"({"code":200,"lrc":{"lyric":"[00:01]x"}})"));cache.store(cover,body("\xff\xd8\xff"));settle(q);
+    check(cache.contains(lyric)&&cache.contains(cover)&&cache.stats().stores==2,"Lyrics and covers are kept");
+    m::NowPlayingBody kept;(void)cache.load(lyric,[&](m::NowPlayingBody b){kept=std::move(b);});settle(q);
+    check(text(kept)==R"({"code":200,"lrc":{"lyric":"[00:01]x"}})","A kept answer is read back");
+}
+
 struct Task final:n::NowPlayingWeb::Task{unsigned cancels{};void cancel()noexcept override{++cancels;}};
 struct Transport{
     std::vector<n::NowPlayingWeb::Request>requests;std::vector<n::NowPlayingWeb::Done>done;std::vector<std::shared_ptr<Task>>tasks;
@@ -143,7 +171,7 @@ void web(){
 }
 int main(){
     try{
-        storage();relaunch();web();
+        storage();relaunch();policy();web();
         std::cout<<"Now Playing web cache: "<<checks<<" checks passed (private temporary directory, injected transport)\n";return 0;
     }catch(const std::exception&e){std::cerr<<"Now Playing web cache failed after "<<checks<<": "<<e.what()<<'\n';return 1;}
 }

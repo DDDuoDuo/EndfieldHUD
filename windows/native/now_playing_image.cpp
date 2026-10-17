@@ -7,7 +7,7 @@
 #include <thread>
 namespace endfield::native {
 namespace {
-bool valid(const NowPlayingImageResult&r){if(!r.image)return r.failure!=NowPlayingImageFailure::none;const auto&i=*r.image;return r.failure==NowPlayingImageFailure::none&&i.width&&i.height&&i.width<=512&&i.height<=512&&i.straightRGBA.size()==std::size_t(i.width)*i.height*4;}
+bool valid(const NowPlayingImageResult&r){if(!r.image)return r.failure!=NowPlayingImageFailure::none;const auto&i=*r.image;return r.failure==NowPlayingImageFailure::none&&i.width&&i.height&&i.width<=modules::nowPlayingMaximumCoverPixels&&i.height<=modules::nowPlayingMaximumCoverPixels&&i.straightRGBA.size()==std::size_t(i.width)*i.height*4;}
 }
 struct NativeNowPlayingArtwork::Impl:std::enable_shared_from_this<Impl>{
  struct Entry{std::weak_ptr<const std::vector<std::uint8_t>>bytes;NowPlayingImageResult value;};
@@ -69,13 +69,13 @@ unsigned orientation(IWICBitmapFrameDecode*frame,std::span<const std::uint8_t>by
 }
 WICBitmapTransformOptions transform(unsigned n){switch(n){case 2:return WICBitmapTransformFlipHorizontal;case 3:return WICBitmapTransformRotate180;case 4:return WICBitmapTransformFlipVertical;case 5:return static_cast<WICBitmapTransformOptions>(WICBitmapTransformRotate270|WICBitmapTransformFlipHorizontal);case 6:return WICBitmapTransformRotate90;case 7:return static_cast<WICBitmapTransformOptions>(WICBitmapTransformRotate90|WICBitmapTransformFlipHorizontal);case 8:return WICBitmapTransformRotate270;default:return WICBitmapTransformRotate0;}}
 ComPtr<IWICColorContext>colorContext(IWICImagingFactory*f,IWICBitmapFrameDecode*frame){UINT count{};const auto hr=frame->GetColorContexts(0,nullptr,&count);if(hr==WINCODEC_ERR_UNSUPPORTEDOPERATION||hr==E_NOTIMPL)return {};checked(hr);if(!count)return {};ComPtr<IWICColorContext>c;checked(f->CreateColorContext(&c));auto*raw=c.Get();checked(frame->GetColorContexts(1,&raw,&count));WICColorContextType type{};checked(c->GetType(&type));if(type==WICColorContextUninitialized)return {};if(type==WICColorContextProfile){UINT size{};checked(c->GetProfileBytes(0,nullptr,&size));if(size>modules::nowPlayingMaximumArtworkBytes)throw Error{NowPlayingImageFailure::unsupportedProfile,E_INVALIDARG};}if(type==WICColorContextExifColorSpace){UINT space{};checked(c->GetExifColorSpace(&space));if(space!=1&&space!=2)throw Error{NowPlayingImageFailure::unsupportedProfile,E_INVALIDARG};}return c;}
-NowPlayingImageResult wic(std::span<const std::uint8_t>bytes){
+NowPlayingImageResult wic(std::span<const std::uint8_t>bytes,unsigned maximum){
  Apartment apartment;ComPtr<IWICImagingFactory>factory;checked(CoCreateInstance(CLSID_WICImagingFactory,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&factory)));
  // Worker keeps original bytes alive until every lazy codec/transform and
  // stream below has been destroyed; only the copied RGBA thumbnail escapes.
  ComPtr<IWICStream>stream;checked(factory->CreateStream(&stream));checked(stream->InitializeFromMemory(const_cast<BYTE*>(bytes.data()),static_cast<DWORD>(bytes.size())));ComPtr<IWICBitmapDecoder>decoder;checked(factory->CreateDecoderFromStream(stream.Get(),nullptr,WICDecodeMetadataCacheOnDemand,&decoder));
  ComPtr<IWICBitmapFrameDecode>frame;checked(decoder->GetFrame(0,&frame));UINT width{},height{};checked(frame->GetSize(&width,&height));if(!modules::nowPlayingArtworkMetadata(width,height,bytes.size()))return {{},NowPlayingImageFailure::dimensions};
- const auto scale=std::min(1.,512./double(std::max(width,height)));UINT tw=std::max(1u,static_cast<unsigned>(std::floor(width*scale+.5))),th=std::max(1u,static_cast<unsigned>(std::floor(height*scale+.5)));
+ const auto scale=std::min(1.,double(maximum)/double(std::max(width,height)));UINT tw=std::max(1u,static_cast<unsigned>(std::floor(width*scale+.5))),th=std::max(1u,static_cast<unsigned>(std::floor(height*scale+.5)));
  ComPtr<IWICBitmapSource>source=frame;ComPtr<IWICBitmapScaler>scaler;if(tw!=width||th!=height){checked(factory->CreateBitmapScaler(&scaler));checked(scaler->Initialize(source.Get(),tw,th,WICBitmapInterpolationModeFant));source=scaler;}
  const auto rotation=orientation(frame.Get(),bytes);ComPtr<IWICBitmapFlipRotator>rotator;if(rotation!=1){checked(factory->CreateBitmapFlipRotator(&rotator));checked(rotator->Initialize(source.Get(),transform(rotation)));source=rotator;if(rotation>=5)std::swap(tw,th);}
  const auto profile=colorContext(factory.Get(),frame.Get());ComPtr<IWICColorContext>srgb;ComPtr<IWICColorTransform>color;if(profile){checked(factory->CreateColorContext(&srgb));checked(srgb->InitializeFromExifColorSpace(1));checked(factory->CreateColorTransformer(&color));checked(color->Initialize(source.Get(),profile.Get(),srgb.Get(),GUID_WICPixelFormat32bppRGBA));source=color;}
@@ -84,11 +84,12 @@ NowPlayingImageResult wic(std::span<const std::uint8_t>bytes){
 }}
 #endif
 namespace endfield::native {
-NowPlayingImageResult decodeNowPlayingImage(std::span<const std::uint8_t>bytes){if(bytes.empty()||bytes.size()>modules::nowPlayingMaximumArtworkBytes)return {{},NowPlayingImageFailure::invalidPayload};
+NowPlayingImageResult decodeNowPlayingCover(std::span<const std::uint8_t>bytes,unsigned maximumPixels){if(bytes.empty()||bytes.size()>modules::nowPlayingMaximumArtworkBytes)return {{},NowPlayingImageFailure::invalidPayload};
 #ifdef _WIN32
- try{return wic(bytes);}catch(const Error&e){return {{},e.kind,static_cast<std::int32_t>(e.code)};}
+ try{return wic(bytes,std::clamp(maximumPixels,64u,modules::nowPlayingMaximumCoverPixels));}catch(const Error&e){return {{},e.kind,static_cast<std::int32_t>(e.code)};}
 #else
- return {{},NowPlayingImageFailure::unavailable};
+ (void)maximumPixels;return {{},NowPlayingImageFailure::unavailable};
 #endif
 }
+NowPlayingImageResult decodeNowPlayingImage(std::span<const std::uint8_t>bytes){return decodeNowPlayingCover(bytes,modules::nowPlayingArtworkThumbnailSize);}
 }

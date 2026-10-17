@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <charconv>
 #include <cmath>
+#include <limits>
 #include <stdexcept>
 #include <system_error>
 #ifdef _WIN32
@@ -107,12 +108,12 @@ std::vector<std::string>split(std::string_view value){
 }
 std::string firstArtist(std::string_view artist){return split(artist).front();}
 std::string_view text(std::span<const std::uint8_t>bytes){return {reinterpret_cast<const char*>(bytes.data()),bytes.size()};}
-std::optional<Json>parse(std::span<const std::uint8_t>bytes){
-    if(bytes.size()>nowPlayingMaximumLyricsResponseBytes)return {};
+std::optional<Json>parse(std::span<const std::uint8_t>bytes,std::size_t limit=nowPlayingMaximumLyricsResponseBytes){
+    if(bytes.size()>limit)return {};
     auto value=text(bytes);
     // JSONSerialization accepts a UTF-8 byte order mark.
     if(value.size()>=3&&value.substr(0,3)=="\xef\xbb\xbf")value.remove_prefix(3);
-    try{return Json::parse(value,nowPlayingMaximumLyricsResponseBytes);}catch(...){return {};}
+    try{return Json::parse(value,limit);}catch(...){return {};}
 }
 // NSNumber bridging of a JSON number or boolean.
 struct Number {std::optional<std::int64_t>exact;double value{};};
@@ -156,6 +157,75 @@ std::string percentDecoded(std::string_view value){
     return out;
 }
 // URLComponents(string:) (macOS 14+) re-encodes characters invalid in a path.
+// NetEase writes some timestamps as [mm:ss:cc] (or [mm:ss:ccc]): a colon
+// where LRC has the fraction point. Read literally they are hours:minutes:
+// seconds (60 times too late); NetEase's own player reads them as
+// [mm:ss.cc]. Only exactly that shape is rewritten.
+std::string neteaseStamps(std::string value){
+    const auto digit=[&](std::size_t k){return k<value.size()&&value[k]>='0'&&value[k]<='9';};
+    for(auto at=value.find('[');at!=std::string::npos;at=value.find('[',at+1)){
+        if(!digit(at+1)||!digit(at+2)||at+3>=value.size()||value[at+3]!=':'||!digit(at+4)||!digit(at+5)||at+6>=value.size()||value[at+6]!=':'||!digit(at+7)||!digit(at+8))continue;
+        auto end=at+9;if(digit(end))++end;
+        if(end<value.size()&&value[end]==']')value[at+6]='.';
+    }
+    return value;
+}
+// The elements of the top-level "list" array of NetEase's queue file, each
+// handed over as its own JSON text, without building the whole document (a
+// long queue holds more values than one document may, and its full tree would
+// be many times the file's size). false: no well-formed "list" member.
+bool space(char c)noexcept{return c==' '||c=='\t'||c=='\n'||c=='\r';}
+std::size_t skipSpace(std::string_view t,std::size_t at)noexcept{while(at<t.size()&&space(t[at]))++at;return at;}
+// The position after the JSON value at `at`, or npos (structure only; each
+// element is parsed strictly afterwards).
+std::size_t skipValue(std::string_view t,std::size_t at)noexcept{
+    if(at>=t.size())return std::string_view::npos;
+    if(t[at]=='"'){for(++at;at<t.size();++at){if(t[at]=='\\'){++at;continue;}if(t[at]=='"')return at+1;}return std::string_view::npos;}
+    if(t[at]=='{'||t[at]=='['){
+        unsigned depth{};
+        for(;at<t.size();++at){
+            const char c=t[at];
+            if(c=='"'){for(++at;at<t.size()&&t[at]!='"';++at)if(t[at]=='\\')++at;if(at>=t.size())return std::string_view::npos;continue;}
+            if(c=='{'||c=='['){if(++depth>64)return std::string_view::npos;}
+            else if(c=='}'||c==']'){if(!depth)return std::string_view::npos;if(!--depth)return at+1;}
+        }
+        return std::string_view::npos;
+    }
+    const auto start=at;while(at<t.size()&&t[at]!=','&&t[at]!='}'&&t[at]!=']'&&!space(t[at]))++at;
+    return at>start?at:std::string_view::npos;
+}
+bool queueElements(std::string_view t,const std::function<bool(std::string_view)>&visit){
+    if(t.size()>=3&&t.substr(0,3)=="\xef\xbb\xbf")t.remove_prefix(3);
+    auto at=skipSpace(t,0);if(at>=t.size()||t[at]!='{')return false;
+    bool found{};at=skipSpace(t,at+1);
+    if(at<t.size()&&t[at]=='}')return false;
+    for(;;){
+        if(at>=t.size()||t[at]!='"')return false;
+        const auto end=skipValue(t,at);if(end==std::string_view::npos)return false;
+        const auto key=t.substr(at+1,end-at-2);
+        at=skipSpace(t,end);if(at>=t.size()||t[at]!=':')return false;at=skipSpace(t,at+1);
+        if(key=="list"&&!found){
+            if(at>=t.size()||t[at]!='[')return false;
+            found=true;at=skipSpace(t,at+1);
+            if(at<t.size()&&t[at]==']')++at;
+            else for(;;){
+                const auto element=skipValue(t,at);if(element==std::string_view::npos)return false;
+                // The visitor has enough rows: the rest of the file is not needed.
+                if(!visit(t.substr(at,element-at)))return true;
+                at=skipSpace(t,element);
+                if(at<t.size()&&t[at]==','){at=skipSpace(t,at+1);continue;}
+                if(at<t.size()&&t[at]==']'){++at;break;}
+                return false;
+            }
+        }else{const auto value=skipValue(t,at);if(value==std::string_view::npos)return false;at=value;}
+        at=skipSpace(t,at);
+        if(at<t.size()&&t[at]==','){at=skipSpace(t,at+1);continue;}
+        if(at<t.size()&&t[at]=='}')return found;
+        return false;
+    }
+}
+// The JSON "code" of a NetEase answer is 200.
+bool answered(const Json&root){if(!root.isObject())return false;const auto code=number(root["code"]);return code&&truncated(*code)==200;}
 std::string encodedPath(std::string_view path){
     static constexpr char digits[]="0123456789ABCDEF";std::string out;out.reserve(path.size());
     for(std::size_t n=0;n<path.size();++n){
@@ -320,20 +390,19 @@ std::optional<NowPlayingCatalogMatch>nowPlayingCatalogMatch(std::span<const std:
     if(ranked.size()>1&&ranked[1].score==ranked[0].score&&ranked[1].identifier!=ranked[0].identifier)return {};
     return ranked[0];
 }catch(...){return {};}
-std::optional<NowPlayingNetEaseEntry>nowPlayingNetEasePlayingListEntry(std::span<const std::uint8_t>bytes,const NowPlayingTrack&track)try{
-    if(NowPlayingTrackMatcher::normalized(track.title).empty())return {};
-    const auto root=parse(bytes);if(!root||!root->isObject())return {};
-    const auto&list=(*root)["list"];if(!isObjectArray(list))return {};
-    // The same conservative identity as the catalog match: a wrong queue entry
-    // (another track of the same artist, or an ambiguous tie) is never taken.
-    struct Ranked {int score{};NowPlayingNetEaseEntry entry;};
-    std::vector<Ranked>ranked;
-    const auto&rows=list.array();
-    for(std::size_t n=0;n<std::min<std::size_t>(4096,rows.size());++n){
-        const auto&song=rows[n]["track"];if(!song.isObject())continue;
-        const auto title=string(song["name"]);if(!title)continue;
-        const auto&people=song["artists"];std::vector<std::string>names;
-        if(isObjectArray(people))for(std::size_t k=0;k<std::min<std::size_t>(32,people.array().size());++k)if(auto name=string(people.array()[k]["name"]))names.push_back(std::move(*name));
+std::shared_ptr<const NowPlayingNetEaseQueue>nowPlayingNetEaseQueue(std::span<const std::uint8_t>bytes)try{
+    if(bytes.size()>nowPlayingMaximumPlayingListBytes)return nullptr;
+    auto queue=std::make_shared<NowPlayingNetEaseQueue>();queue->rows.reserve(256);
+    std::size_t elements{};
+    const auto row=[&](std::string_view element)->bool{
+        if(++elements>NowPlayingNetEaseQueue::maximumRows)return false;
+        // One queue entry; a damaged one is skipped.
+        Json entry;try{entry=Json::parse(element,nowPlayingMaximumLyricsResponseBytes);}catch(...){return true;}
+        if(!entry.isObject())return true;
+        const auto&song=entry["track"];if(!song.isObject())return true;
+        auto title=string(song["name"]);if(!title)return true;
+        // A title without letters or digits can never match (the matcher's rule).
+        auto titleKey=NowPlayingTrackMatcher::normalized(*title);if(titleKey.empty())return true;
         // The song id is the numeric track id, else the entry id (which the
         // client stores either as a number or as a digit string).
         const auto numericId=[](const Json&value)->std::optional<std::int64_t>{
@@ -344,19 +413,39 @@ std::optional<NowPlayingNetEaseEntry>nowPlayingNetEasePlayingListEntry(std::span
             return result.ec==std::errc{}&&result.ptr==end&&out>0?std::optional(out):std::nullopt;
         };
         std::optional<std::int64_t>identifier=numericId(song["id"]);
-        if(!identifier||*identifier<=0)identifier=numericId(rows[n]["id"]);
-        if(!identifier||*identifier<=0)continue;
+        if(!identifier||*identifier<=0)identifier=numericId(entry["id"]);
+        if(!identifier||*identifier<=0)return true;
+        NowPlayingNetEaseQueue::Row out;out.titleKey=std::move(titleKey);out.title=std::move(*title);out.identifier=*identifier;
+        const auto&people=song["artists"];
+        if(isObjectArray(people))for(std::size_t k=0;k<std::min<std::size_t>(32,people.array().size());++k)if(auto name=string(people.array()[k]["name"]))out.artists.push_back(std::move(*name));
         static const Json empty=Json::Object{};
         const auto&album=song["album"].isObject()?song["album"]:empty;
-        const auto length=number(song["duration"]);
-        const auto score=NowPlayingTrackMatcher::score(*title,{},names,string(album["name"]).value_or(""),
-            length?std::optional(length->value/1000):std::nullopt,track);
-        if(!score)continue;
-        NowPlayingNetEaseEntry entry;entry.identifier=*identifier;
-        if(length&&std::isfinite(length->value)&&length->value>0)entry.duration=std::min(length->value/1000,nowPlayingMaximumSeconds);
+        out.album=string(album["name"]).value_or("");
+        if(const auto length=number(song["duration"]))out.length=length->value/1000;
         // The queue stores the cover under "picUrl" (older builds) or "cover".
         auto cover=string(album["picUrl"]);if(!cover)cover=string(album["cover"]);
-        if(cover)if(auto url=nowPlayingCatalogCoverURL(*cover))entry.artwork=std::move(url);
+        if(cover)out.artwork=nowPlayingCatalogCoverURL(*cover);
+        queue->rows.push_back(std::move(out));
+        return true;
+    };
+    if(!queueElements(text(bytes),row))return nullptr;
+    queue->rows.shrink_to_fit();
+    return queue;
+}catch(...){return nullptr;}
+std::optional<NowPlayingNetEaseEntry>nowPlayingNetEaseQueueEntry(const NowPlayingNetEaseQueue&queue,const NowPlayingTrack&track)try{
+    const auto wanted=NowPlayingTrackMatcher::normalized(track.title);if(wanted.empty())return {};
+    // The same conservative identity as the catalog match: a wrong queue entry
+    // (another track of the same artist, or an ambiguous tie) is never taken.
+    // Rows of another title can never score, so only equal titles are scored.
+    struct Ranked {int score{};NowPlayingNetEaseEntry entry;};
+    std::vector<Ranked>ranked;
+    for(const auto&row:queue.rows){
+        if(row.titleKey!=wanted)continue;
+        const auto score=NowPlayingTrackMatcher::score(row.title,{},row.artists,row.album,row.length,track);
+        if(!score)continue;
+        NowPlayingNetEaseEntry entry;entry.identifier=row.identifier;
+        if(row.length&&std::isfinite(*row.length)&&*row.length>0)entry.duration=std::min(*row.length,nowPlayingMaximumSeconds);
+        entry.artwork=row.artwork;
         ranked.push_back({*score,std::move(entry)});
     }
     std::stable_sort(ranked.begin(),ranked.end(),[](const auto&a,const auto&b){return a.score>b.score;});
@@ -364,6 +453,11 @@ std::optional<NowPlayingNetEaseEntry>nowPlayingNetEasePlayingListEntry(std::span
     if(ranked.size()>1&&ranked[1].score==ranked[0].score&&ranked[1].entry.identifier!=ranked[0].entry.identifier)return {};
     return ranked[0].entry;
 }catch(...){return {};}
+std::optional<NowPlayingNetEaseEntry>nowPlayingNetEasePlayingListEntry(std::span<const std::uint8_t>bytes,const NowPlayingTrack&track){
+    if(NowPlayingTrackMatcher::normalized(track.title).empty())return {};
+    const auto queue=nowPlayingNetEaseQueue(bytes);
+    return queue?nowPlayingNetEaseQueueEntry(*queue,track):std::nullopt;
+}
 std::optional<std::string>nowPlayingCatalogCoverURL(std::string_view raw){
     if(raw.size()>2048)return {};
     const auto parts=splitURL(raw);if(!parts||(parts->scheme!="http"&&parts->scheme!="https"))return {};
@@ -374,23 +468,45 @@ std::optional<std::string>nowPlayingCatalogCoverURL(std::string_view raw){
 }
 std::optional<std::string>nowPlayingCatalogCoverURL(std::string_view raw,unsigned pixels){
     auto url=nowPlayingCatalogCoverURL(raw);if(!url)return {};
-    const auto size=std::to_string(std::clamp(pixels,64u,600u));
+    const auto size=std::to_string(std::clamp(pixels,64u,nowPlayingMaximumCoverPixels));
     url->resize(url->size()-std::string_view("600y600").size());
     *url+=size+"y"+size;
     return url;
 }
+unsigned nowPlayingCoverDrawnPixels(double pixelsPerPoint)noexcept{
+    const double density=std::isfinite(pixelsPerPoint)&&pixelsPerPoint>0?pixelsPerPoint:1;
+    return static_cast<unsigned>(std::clamp(std::ceil(330*density-1e-6),64.,double(nowPlayingMaximumCoverPixels)));
+}
 unsigned nowPlayingCatalogCoverPixels(double pixelsPerPoint)noexcept{
-    const double needed=330*(std::isfinite(pixelsPerPoint)&&pixelsPerPoint>0?pixelsPerPoint:1);
-    for(const unsigned size:{200u,300u,400u})if(needed<=size)return size;
-    return 500;
+    const auto needed=nowPlayingCoverDrawnPixels(pixelsPerPoint);
+    for(const unsigned size:{200u,300u,400u,500u,600u,800u})if(needed<=size)return size;
+    return nowPlayingMaximumCoverPixels;
 }
 std::optional<NowPlayingLyrics>nowPlayingCatalogDecodeLyrics(std::span<const std::uint8_t>bytes)try{
-    const auto root=parse(bytes);if(!root||!root->isObject())return {};
-    const auto code=number((*root)["code"]);if(!code||truncated(*code)!=200)return {};
+    const auto root=parse(bytes);if(!root||!answered(*root))return {};
     const auto&lrc=(*root)["lrc"];if(!lrc.isObject())return {};
     const auto primary=string(lrc["lyric"]);if(!primary)return {};
-    return NowPlayingLyrics::parse(*primary);
+    return NowPlayingLyrics::parse(neteaseStamps(*primary));
 }catch(...){return {};}
+bool nowPlayingCatalogAnswered(std::span<const std::uint8_t>bytes)try{
+    const auto root=parse(bytes);return root&&answered(*root);
+}catch(...){return false;}
+bool nowPlayingLyricsBodyCacheable(std::string_view url,std::span<const std::uint8_t>bytes)try{
+    const auto parts=splitURL(url);if(!parts)return false;
+    auto path=percentDecoded(parts->path);while(path.size()>1&&path.back()=='/')path.pop_back();
+    const auto host=hostLower(parts->host);
+    const auto root=parse(bytes);if(!root)return false;
+    if(host=="lrclib.net"){
+        // A found record (a 404 never reaches the cache) or a non-empty search.
+        if(path=="/api/get")return root->isObject()&&(number((*root)["id"]).has_value()||string((*root)["syncedLyrics"]).has_value());
+        if(path=="/api/search")return root->isArray()&&!root->array().empty();
+        return false;
+    }
+    if(host!="music.163.com"||!answered(*root))return false;
+    if(path=="/api/cloudsearch/pc"){const auto&result=(*root)["result"];return result.isObject()&&result["songs"].isArray()&&!result["songs"].array().empty();}
+    if(path=="/api/song/lyric"){const auto&lrc=(*root)["lrc"];if(!lrc.isObject())return false;const auto lyric=string(lrc["lyric"]);return lyric&&!lyric->empty();}
+    return false;
+}catch(...){return false;}
 bool nowPlayingLyricsURLAllowed(std::string_view url){
     if(url.size()>8192)return false;
     const auto parts=splitURL(url);if(!parts||parts->scheme!="https"||parts->hasUser||parts->portDelimiter||parts->hasFragment)return false;
@@ -417,22 +533,45 @@ bool NowPlayingLyricsKey::operator==(const NowPlayingLyricsKey&other)const{
 }
 NowPlayingFetch nowPlayingOfflineFetch(){return [](const std::string&,std::function<void(NowPlayingBody)>completion){completion(nullptr);return std::function<void()>([]{});};}
 NowPlayingDecoder nowPlayingInlineDecoder(){return [](std::function<void()>work,std::function<void()>done){work();done();};}
+double nowPlayingRetryDelay(unsigned failures)noexcept{
+    double delay=5;for(unsigned k=1;k<failures&&delay<300;++k)delay*=3;
+    return std::min(delay,300.);
+}
+namespace {
+// Consecutive failed lookups per track (bounded like the caches): the step of
+// its backoff. A definitive answer forgets it.
+struct Failures {
+    std::vector<std::pair<NowPlayingLyricsKey,unsigned>>rows;
+    unsigned next(const NowPlayingLyricsKey&key){
+        for(auto&row:rows)if(row.first==key)return ++row.second;
+        rows.emplace_back(key,1u);if(rows.size()>8)rows.erase(rows.begin());return 1;
+    }
+    void forget(const NowPlayingLyricsKey&key){std::erase_if(rows,[&](const auto&row){return row.first==key;});}
+};
+}
 
 struct NowPlayingLyricsLoader::Impl:std::enable_shared_from_this<Impl>{
-    struct Entry {NowPlayingLyricsKey key;std::shared_ptr<const NowPlayingLyrics>lyrics;};
+    // retryAt: a search that got no answer (Windows, with a clock only).
+    struct Entry {NowPlayingLyricsKey key;std::shared_ptr<const NowPlayingLyrics>lyrics;std::optional<double>retryAt;};
     NowPlayingFetch fetch;NowPlayingDecoder decode;std::function<void()>onChange;std::shared_ptr<const NowPlayingLyrics>lyrics;
     std::vector<Entry>cache;std::optional<NowPlayingLyricsKey>desired;std::optional<std::string>embeddedSource;
-    std::function<void()>cancel;std::uint64_t generation{};
+    std::function<void()>cancel;std::uint64_t generation{};NowPlayingClock clock;Failures failures;
     Impl(NowPlayingFetch f,NowPlayingDecoder d):fetch(std::move(f)),decode(std::move(d)){if(!fetch||!decode)throw std::invalid_argument("Now Playing lyrics need a fetch and a decoder");cache.reserve(9);}
     bool wanted(std::uint64_t expected,const NowPlayingLyricsKey&key)const{return generation==expected&&desires(key);}
     bool desires(const NowPlayingLyricsKey&key)const{return desired&&*desired==key;}
+    bool due(const Entry&e)const{return e.retryAt&&clock&&clock()>=*e.retryAt;}
+    std::vector<Entry>::iterator find(const NowPlayingLyricsKey&key){return std::find_if(cache.begin(),cache.end(),[&](const auto&e){return e.key==key;});}
     void stop(){auto value=std::move(cancel);cancel=nullptr;if(value)value();}
     void assign(std::shared_ptr<const NowPlayingLyrics>value){
         if(nowPlayingLyricsEqual(lyrics.get(),value.get()))return;
         lyrics=std::move(value);auto callback=onChange;if(callback)callback();
     }
-    void save(std::shared_ptr<const NowPlayingLyrics>result,const NowPlayingLyricsKey&key){
-        std::erase_if(cache,[&](const auto&e){return e.key==key;});cache.push_back({key,result});
+    void save(std::shared_ptr<const NowPlayingLyrics>result,const NowPlayingLyricsKey&key,bool failed=false){
+        // A failed lookup is retried after its backoff (with a clock); any
+        // answer resets the backoff.
+        std::optional<double>retryAt;
+        if(failed&&clock)retryAt=clock()+nowPlayingRetryDelay(failures.next(key));else failures.forget(key);
+        std::erase_if(cache,[&](const auto&e){return e.key==key;});cache.push_back({key,result,retryAt});
         if(cache.size()>8)cache.erase(cache.begin(),cache.begin()+static_cast<std::ptrdiff_t>(cache.size()-8));
         assign(std::move(result));
     }
@@ -442,10 +581,15 @@ struct NowPlayingLyricsLoader::Impl:std::enable_shared_from_this<Impl>{
             embeddedSource=track.timedLyrics;
             if(auto embedded=NowPlayingLyrics::parse(*track.timedLyrics)){++generation;stop();desired=key;save(shared(std::move(embedded)),key);return;}
         }
-        if(desires(key))return;
+        if(desires(key)){
+            // The wanted track's failed lookup starts over once its wait passed.
+            const auto found=find(key);if(found==cache.end()||!due(*found))return;
+            cache.erase(found);
+        }
         const auto expected=++generation;stop();desired=key;embeddedSource=track.timedLyrics;
-        if(const auto found=std::find_if(cache.begin(),cache.end(),[&](const auto&e){return e.key==key;});found!=cache.end()){
-            auto value=std::move(*found);cache.erase(found);cache.push_back(value);assign(value.lyrics);return;
+        if(const auto found=find(key);found!=cache.end()){
+            if(!due(*found)){auto value=std::move(*found);cache.erase(found);cache.push_back(value);assign(value.lyrics);return;}
+            cache.erase(found);
         }
         assign(nullptr);
         const auto url=nowPlayingLyricsRequestURL(track);if(!url){save(nullptr,key);return;}
@@ -466,7 +610,8 @@ struct NowPlayingLyricsLoader::Impl:std::enable_shared_from_this<Impl>{
         auto completed=std::make_shared<bool>(false);const auto weak=weak_from_this();
         auto cancellation=fetch(*url,[weak,completed,expected,key,track](NowPlayingBody data){
             *completed=true;const auto self=weak.lock();if(!self||!self->wanted(expected,key))return;
-            self->cancel=nullptr;if(!data){self->save(nullptr,key);return;}
+            // No answer to the search (no body, a refusal, a timeout): a failure, not "no lyrics".
+            self->cancel=nullptr;if(!data){self->save(nullptr,key,true);return;}
             auto result=std::make_shared<std::shared_ptr<const NowPlayingLyrics>>();
             self->decode([result,data,track]{*result=shared(nowPlayingDecodeLyricsSearch(*data,track));},[weak,result,expected,key]{
                 const auto self=weak.lock();if(!self||!self->wanted(expected,key))return;
@@ -489,21 +634,49 @@ void NowPlayingLyricsLoader::invalidateMissing(const NowPlayingLyricsKey&key){
     }
 }
 void NowPlayingLyricsLoader::clear(){auto i=impl_;i->clear();}
+void NowPlayingLyricsLoader::setClock(NowPlayingClock value){impl_->clock=std::move(value);}
+bool NowPlayingLyricsLoader::holds(const NowPlayingLyricsKey&key)const{return impl_->desires(key)&&impl_->lyrics;}
+std::optional<double>NowPlayingLyricsLoader::retryTime()const{
+    const auto&i=*impl_;if(!i.desired||!i.clock)return {};
+    for(const auto&e:i.cache)if(e.key==*i.desired)return e.retryAt;
+    return {};
+}
+void NowPlayingLyricsLoader::forgetFailures(){
+    auto i=impl_;i->failures.rows.clear();
+    const bool wanted=i->desired&&std::any_of(i->cache.begin(),i->cache.end(),[&](const auto&e){return e.retryAt&&e.key==*i->desired;});
+    std::erase_if(i->cache,[](const auto&e){return e.retryAt.has_value();});
+    if(wanted)i->clear();
+}
 std::size_t NowPlayingLyricsLoader::cacheSize()const noexcept{return impl_->cache.size();}
 
 struct NowPlayingCatalog::Impl:std::enable_shared_from_this<Impl>{
-    struct Entry {NowPlayingLyricsKey key;std::optional<std::string>artwork;std::shared_ptr<const NowPlayingLyrics>lyrics;bool finished{};std::optional<double>duration;};
+    // retryAt: a finished lookup that got no answer (Windows, with a clock only).
+    struct Entry {NowPlayingLyricsKey key;std::optional<std::string>artwork;std::shared_ptr<const NowPlayingLyrics>lyrics;bool finished{};std::optional<double>duration;std::optional<double>retryAt;};
     NowPlayingFetch fetch;NowPlayingDecoder decode;NowPlayingPlayingListReader playingList;std::function<void()>onChange;std::vector<Entry>entries;std::optional<NowPlayingLyricsKey>desired;
-    std::function<void()>cancel;std::uint64_t generation{};
+    std::function<void()>cancel;std::uint64_t generation{};NowPlayingClock clock;Failures failures;
+    // The last parsed queue file and its bytes (held weakly: the reader owns them).
+    std::weak_ptr<const std::vector<std::uint8_t>>queueBytes;std::shared_ptr<const NowPlayingNetEaseQueue>queueIndex;std::uint64_t parses{};
     Impl(NowPlayingFetch f,NowPlayingDecoder d):fetch(std::move(f)),decode(std::move(d)){if(!fetch||!decode)throw std::invalid_argument("Now Playing catalog needs a fetch and a decoder");entries.reserve(9);}
     const Entry*current()const{if(!desired)return nullptr;for(const auto&e:entries)if(e.key==*desired)return &e;return nullptr;}
+    bool due(const Entry&e)const{return e.retryAt&&clock&&clock()>=*e.retryAt;}
     void notify(){auto callback=onChange;if(callback)callback();}
     void stop(){auto value=std::move(cancel);cancel=nullptr;if(value)value();}
-    void update(const NowPlayingLyricsKey&key,std::optional<std::string>artwork,std::shared_ptr<const NowPlayingLyrics>lyrics,bool finished,std::optional<double>duration={}){
+    void update(const NowPlayingLyricsKey&key,std::optional<std::string>artwork,std::shared_ptr<const NowPlayingLyrics>lyrics,bool finished,std::optional<double>duration={},std::optional<double>retryAt={}){
         if(!desired||!(*desired==key))return;
-        std::erase_if(entries,[&](const auto&e){return e.key==key;});entries.push_back({key,std::move(artwork),std::move(lyrics),finished,duration});
+        if(finished&&!retryAt)failures.forget(key);
+        std::erase_if(entries,[&](const auto&e){return e.key==key;});entries.push_back({key,std::move(artwork),std::move(lyrics),finished,duration,retryAt});
         if(entries.size()>8)entries.erase(entries.begin(),entries.begin()+static_cast<std::ptrdiff_t>(entries.size()-8));
         notify();
+    }
+    // No answer (no body, a timeout, a refusal or a damaged answer): finished
+    // without lyrics, so LRCLIB may answer meanwhile. With a clock it is
+    // retried after its backoff and never kept as "no lyrics"; what the
+    // lookup already knew (cover, length) stays.
+    void fail(const NowPlayingLyricsKey&key,std::optional<std::string>artwork,std::optional<double>duration){
+        if(!desired||!(*desired==key))return;
+        if(const auto*e=current()){if(!artwork)artwork=e->artwork;if(!duration)duration=e->duration;}
+        std::optional<double>retryAt;if(clock)retryAt=clock()+nowPlayingRetryDelay(failures.next(key));
+        update(key,std::move(artwork),nullptr,true,duration,retryAt);
     }
     void get(const std::string&url,std::uint64_t expected,std::function<void(NowPlayingBody)>completion){
         auto completed=std::make_shared<bool>(false);const auto weak=weak_from_this();
@@ -528,10 +701,12 @@ struct NowPlayingCatalog::Impl:std::enable_shared_from_this<Impl>{
         const auto weak=weak_from_this();
         get(nowPlayingCatalogLyricsURL(identifier),expected,[weak,key,artwork,length,expected](NowPlayingBody data){
             const auto self=weak.lock();if(!self)return;
-            if(!data){self->update(key,artwork,nullptr,true,length);return;}
-            auto result=std::make_shared<std::shared_ptr<const NowPlayingLyrics>>();
-            self->decode([result,data]{*result=shared(nowPlayingCatalogDecodeLyrics(*data));},[weak,result,key,artwork,length,expected]{
+            if(!data){self->fail(key,artwork,length);return;}
+            auto result=std::make_shared<std::shared_ptr<const NowPlayingLyrics>>();auto ok=std::make_shared<bool>(false);
+            self->decode([result,ok,data]{*ok=nowPlayingCatalogAnswered(*data);*result=shared(nowPlayingCatalogDecodeLyrics(*data));},[weak,result,ok,key,artwork,length,expected]{
                 const auto self=weak.lock();if(!self||self->generation!=expected)return;
+                // An answer without lyrics (nolyric) is final; a refusal is not.
+                if(!*ok){self->fail(key,artwork,length);return;}
                 self->update(key,artwork,std::move(*result),true,length);
             });
         });
@@ -543,32 +718,46 @@ struct NowPlayingCatalog::Impl:std::enable_shared_from_this<Impl>{
         const auto weak=weak_from_this();
         get(*url,expected,[weak,key,track,expected](NowPlayingBody data){
             const auto self=weak.lock();if(!self)return;
-            if(!data){self->update(key,{},nullptr,true);return;}
-            auto found=std::make_shared<std::optional<NowPlayingCatalogMatch>>();
-            self->decode([found,data,track]{*found=nowPlayingCatalogMatch(*data,track);},[weak,found,key,expected]{
+            if(!data){self->fail(key,{},{});return;}
+            auto found=std::make_shared<std::optional<NowPlayingCatalogMatch>>();auto ok=std::make_shared<bool>(false);
+            self->decode([found,ok,data,track]{*ok=nowPlayingCatalogAnswered(*data);*found=nowPlayingCatalogMatch(*data,track);},[weak,found,ok,key,expected]{
                 const auto self=weak.lock();if(!self||self->generation!=expected)return;
                 const auto match=*found;
-                if(!match){self->update(key,{},nullptr,true);return;}
+                // No confident match in an answer is final; a refusal is not.
+                if(!match){if(*ok)self->update(key,{},nullptr,true);else self->fail(key,{},{});return;}
                 self->lyricsById(match->identifier,key,match->artwork,match->duration,expected);
             });
         });
     }
     void request(const NowPlayingLyricsKey&key,const NowPlayingTrack&track){
         if(key.source!=NowPlayingSource::netease){clear();return;}
-        if(desired&&*desired==key)return;
-        const auto expected=++generation;stop();desired=key;
-        if(const auto found=std::find_if(entries.begin(),entries.end(),[&](const auto&e){return e.key==key&&e.finished;});found!=entries.end()){
-            auto cached=std::move(*found);entries.erase(found);entries.push_back(std::move(cached));notify();return;
+        if(desired&&*desired==key){
+            // The wanted track's failed lookup starts over once its wait passed.
+            const auto*e=current();if(!e||!e->finished||!due(*e))return;
         }
-        update(key,{},nullptr,false);
+        const auto expected=++generation;stop();desired=key;
+        std::optional<std::string>knownArtwork;std::optional<double>knownDuration;
+        if(const auto found=std::find_if(entries.begin(),entries.end(),[&](const auto&e){return e.key==key&&e.finished;});found!=entries.end()){
+            if(!due(*found)){auto cached=std::move(*found);entries.erase(found);entries.push_back(std::move(cached));notify();return;}
+            // A retry keeps the cover and length already known while it runs.
+            knownArtwork=found->artwork;knownDuration=found->duration;
+        }
+        update(key,std::move(knownArtwork),nullptr,false,knownDuration);
         // NetEase's own queue file resolves the exact song id and length; only
         // its absence or an uncertain entry falls back to the title search.
         NowPlayingBody queue;if(playingList)try{queue=playingList();}catch(...){queue.reset();}
         if(!queue){searchFuzzy(key,track,expected);return;}
+        // The file is parsed once per contents (the reader hands back the same
+        // bytes while the file is unchanged); every later track only matches.
+        const auto held=queueBytes.lock();
+        auto parsed=std::make_shared<std::shared_ptr<const NowPlayingNetEaseQueue>>(held&&held==queue?queueIndex:nullptr);
         const auto weak=weak_from_this();
         auto found=std::make_shared<std::optional<NowPlayingNetEaseEntry>>();
-        decode([found,queue,track]{*found=nowPlayingNetEasePlayingListEntry(*queue,track);},[weak,found,key,track,expected]{
-            const auto self=weak.lock();if(!self||self->generation!=expected)return;
+        decode([found,parsed,queue,track]{if(!*parsed)*parsed=nowPlayingNetEaseQueue(*queue);if(*parsed)*found=nowPlayingNetEaseQueueEntry(**parsed,track);},
+            [weak,found,parsed,queue,key,track,expected]{
+            const auto self=weak.lock();if(!self)return;
+            if(*parsed&&self->queueIndex!=*parsed){self->queueBytes=queue;self->queueIndex=*parsed;++self->parses;}
+            if(self->generation!=expected)return;
             if(const auto&entry=*found)self->lyricsById(entry->identifier,key,entry->artwork,entry->duration,expected);
             else self->searchFuzzy(key,track,expected);
         });
@@ -578,6 +767,15 @@ NowPlayingCatalog::NowPlayingCatalog(NowPlayingFetch fetch,NowPlayingDecoder dec
 NowPlayingCatalog::~NowPlayingCatalog(){impl_->onChange=nullptr;impl_->stop();}
 void NowPlayingCatalog::setOnChange(std::function<void()>value){impl_->onChange=std::move(value);}
 void NowPlayingCatalog::setPlayingList(NowPlayingPlayingListReader value){impl_->playingList=std::move(value);}
+void NowPlayingCatalog::setClock(NowPlayingClock value){impl_->clock=std::move(value);}
+std::uint64_t NowPlayingCatalog::queueParses()const noexcept{return impl_->parses;}
+std::optional<double>NowPlayingCatalog::retryTime()const{const auto*e=impl_->current();return e&&e->finished&&impl_->clock?e->retryAt:std::nullopt;}
+void NowPlayingCatalog::forgetFailures(){
+    auto i=impl_;i->failures.rows.clear();
+    const bool wanted=i->current()&&i->current()->retryAt;
+    std::erase_if(i->entries,[](const auto&e){return e.retryAt.has_value();});
+    if(wanted)i->clear();
+}
 std::optional<std::string>NowPlayingCatalog::artwork()const{const auto*e=impl_->current();return e?e->artwork:std::nullopt;}
 std::shared_ptr<const NowPlayingLyrics>NowPlayingCatalog::lyrics()const{const auto*e=impl_->current();return e?e->lyrics:nullptr;}
 std::optional<double>NowPlayingCatalog::duration()const{const auto*e=impl_->current();return e?e->duration:std::nullopt;}
@@ -594,7 +792,7 @@ std::size_t NowPlayingCatalog::cacheSize()const noexcept{return impl_->entries.s
 
 struct NowPlayingLyricsSources::Impl {
     NowPlayingLyricsSources&owner;NowPlayingLyricsLoader loader;std::unique_ptr<NowPlayingCatalog>catalog;
-    bool active{};std::optional<NowPlayingLyricsKey>key;std::optional<NowPlayingTrack>track;
+    bool active{},retries{};std::optional<NowPlayingLyricsKey>key;std::optional<NowPlayingTrack>track;
     Impl(NowPlayingLyricsSources&o,NowPlayingFetch fetch,bool enabled,NowPlayingDecoder decode):owner(o),loader(fetch,decode),catalog(enabled?std::make_unique<NowPlayingCatalog>(fetch,decode):nullptr){}
     void notify(){auto callback=owner.onChange;if(callback)callback();}
     void changed(){
@@ -602,7 +800,9 @@ struct NowPlayingLyricsSources::Impl {
             if(catalog)catalog->request(*key,*track);
             if(track->timedLyrics)loader.request(*key,*track);
             else if((!catalog||!catalog->isLoading())&&(!catalog||!catalog->lyrics()))loader.request(*key,*track);
-            else loader.clear();
+            // A retried catalog lookup keeps LRCLIB's lyrics of the same track
+            // on screen until it has an answer of its own.
+            else if(!(retries&&catalog&&catalog->isLoading()&&loader.holds(*key)))loader.clear();
         }else{loader.clear();if(catalog)catalog->clear();}
         notify();
     }
@@ -623,7 +823,20 @@ void NowPlayingLyricsSources::setPlayingList(NowPlayingPlayingListReader value){
 void NowPlayingLyricsSources::update(std::optional<NowPlayingLyricsKey>key,const std::optional<NowPlayingTrack>&track){
     auto i=impl_;i->active=true;i->key=std::move(key);i->track=i->key?track:std::nullopt;i->changed();
 }
-void NowPlayingLyricsSources::hide(){auto i=impl_;i->active=false;i->key.reset();i->track.reset();i->loader.clear();if(i->catalog)i->catalog->clear();}
+void NowPlayingLyricsSources::hide(){
+    auto i=impl_;i->active=false;i->key.reset();i->track.reset();i->loader.clear();if(i->catalog)i->catalog->clear();
+    // Failures are not remembered across presentations: the next opening asks again.
+    i->loader.forgetFailures();if(i->catalog)i->catalog->forgetFailures();
+}
+void NowPlayingLyricsSources::setClock(NowPlayingClock value){
+    auto i=impl_;i->retries=bool(value);i->loader.setClock(value);if(i->catalog)i->catalog->setClock(std::move(value));
+}
+std::optional<double>NowPlayingLyricsSources::retryTime()const{
+    const auto&i=*impl_;if(!i.active||!i.key||!i.track)return {};
+    std::optional<double>out=i.loader.retryTime();
+    if(i.catalog)if(const auto value=i.catalog->retryTime())out=out?std::min(*out,*value):*value;
+    return out;
+}
 void NowPlayingLyricsSources::invalidateMissing(){
     auto i=impl_;if(!i->key||!i->track)return;
     i->loader.invalidateMissing(*i->key);if(i->catalog)i->catalog->invalidateMissing(*i->key);

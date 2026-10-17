@@ -16,6 +16,46 @@ void failuresAndLifetime(){Q q([]{});unsigned notices{},decodes{};auto bad=bytes
  art=std::make_unique<n::NativeNowPlayingArtwork>(q,[&]{art.reset();},[](auto){return n::NowPlayingImageResult{frame(5)};});art->request(good);flush(q);check(!art,"Completion may destroy the owner safely");
 }
 void invalidResult(){Q q([]{});auto b=bytes(7);n::NativeNowPlayingArtwork art(q,[]{},[](auto){auto i=frame(1);i->width=513;return n::NowPlayingImageResult{i};});art.request(b);flush(q);check(!art.result().image&&art.result().failure==n::NowPlayingImageFailure::decode,"Injected decoder cannot publish an invalid/oversize frame");check(n::decodeNowPlayingImage({}).failure==n::NowPlayingImageFailure::invalidPayload,"Empty source bytes fail before platform codec");}
+// Windows decodes covers to the slot's drawn size (up to 1024 pixels) rather
+// than the source's 512-pixel thumbnail; anything larger is still rejected.
+void coverBound(){Q q([]{});
+ const auto sized=[](unsigned w){auto i=std::make_shared<n::NotesImageFrame>();i->width=w;i->height=1;i->straightRGBA.assign(std::size_t(w)*4,255);return i;};
+ auto a=bytes(11),b=bytes(12);
+ n::NativeNowPlayingArtwork wide(q,[]{},[&](auto){return n::NowPlayingImageResult{sized(endfield::modules::nowPlayingMaximumCoverPixels)};});wide.request(a);flush(q);
+ check(wide.result().image&&wide.result().image->width==1024,"A cover up to 1024 pixels per side (the drawn-size bound) is accepted");
+ n::NativeNowPlayingArtwork over(q,[]{},[&](auto){return n::NowPlayingImageResult{sized(endfield::modules::nowPlayingMaximumCoverPixels+1)};});over.request(b);flush(q);
+ check(!over.result().image&&over.result().failure==n::NowPlayingImageFailure::decode,"Beyond 1024 pixels a decoder cannot publish a frame");
+ check(n::decodeNowPlayingCover({},660).failure==n::NowPlayingImageFailure::invalidPayload,"The sized decode rejects empty bytes before the codec");
+}
+#ifdef _WIN32
+// A 24-bit bottom-up BMP (WIC decodes it like any cover).
+std::vector<std::uint8_t>bitmap(unsigned w,unsigned h,bool(*white)(unsigned,unsigned)){
+ const unsigned row=(w*3+3)/4*4,data=row*h,size=54+data;std::vector<std::uint8_t>b(size);
+ const auto put=[&](std::size_t at,std::uint32_t v,unsigned n){for(unsigned k=0;k<n;++k)b[at+k]=static_cast<std::uint8_t>(v>>(8*k));};
+ b[0]='B';b[1]='M';put(2,size,4);put(10,54,4);put(14,40,4);put(18,w,4);put(22,h,4);put(26,1,2);put(28,24,2);put(34,data,4);
+ for(unsigned y=0;y<h;++y)for(unsigned x=0;x<w;++x){const auto v=white(x,h-1-y)?255:0;for(unsigned c=0;c<3;++c)b[54+std::size_t(y)*row+x*3+c]=static_cast<std::uint8_t>(v);}
+ return b;
+}
+// The cover pixel size chosen vs the drawn size, and the filter: a cover
+// larger than the 660-pixel slot is scaled down to exactly 660 with an area
+// filter (each output pixel averages its source pixels: no aliasing), a
+// smaller one keeps its size (never enlarged on the CPU), and the source path
+// keeps its 512-pixel thumbnail.
+void drawnSize(){
+ const auto stripes=bitmap(2640,8,[](unsigned x,unsigned){return x%4==0;}); // one white column in four
+ const auto cover=n::decodeNowPlayingCover(stripes,660);
+ check(cover.image&&cover.image->width==660&&cover.image->height==2,"A 2640-pixel cover is decoded to exactly the 660-pixel drawn size");
+ bool averaged=bool(cover.image);
+ if(cover.image)for(unsigned y=0;y<cover.image->height;++y)for(unsigned x=1;x+1<cover.image->width;++x){const auto v=cover.image->straightRGBA[(std::size_t(y)*cover.image->width+x)*4];averaged=averaged&&v>=40&&v<=150;}
+ check(averaged,"Downscaling averages every source column (area filter): a quarter-white grey, never a pure stripe");
+ const auto thumbnail=n::decodeNowPlayingCover(bitmap(100,100,[](unsigned x,unsigned y){return (x+y)%2==0;}),660);
+ check(thumbnail.image&&thumbnail.image->width==100&&thumbnail.image->height==100,"A smaller cover keeps its own size");
+ const auto source=n::decodeNowPlayingImage(stripes);
+ check(source.image&&source.image->width==512,"The source decode still makes a 512-pixel thumbnail");
+ const auto bounded=n::decodeNowPlayingCover(stripes,5000);
+ check(bounded.image&&bounded.image->width==endfield::modules::nowPlayingMaximumCoverPixels,"The drawn size is bounded at 1024 pixels");
+}
+#endif
 void capacity(){Q q([]{},1);auto route=q.makeRoute();std::promise<void>entered,release;auto gate=release.get_future().share();q.submit(route,[&]{entered.set_value();gate.wait();},[](auto){});entered.get_future().wait();unsigned decoded{};n::NativeNowPlayingArtwork art(q,[]{},[&](auto){++decoded;return n::NowPlayingImageResult{frame(1)};});auto b=bytes(2);std::weak_ptr<const std::vector<std::uint8_t>>weak=b;art.request(b);check(art.stats().pending&&!art.stats().inFlight&&art.stats().backpressure==1,"Full shared queue retains latest request without another thread/timer");release.set_value();flush(q);check(art.submitPending(),"Owner completion event retries bounded shared queue capacity");flush(q);check(decoded==1&&art.result().image,"Retried artwork publishes once");art.cancel();b.reset();check(weak.expired(),"Two-thumbnail cache does not retain retired compressed payload storage");}
 void source(const char*path){std::ifstream in(path,std::ios::binary);check(bool(in),"Read immutable original artwork fixture");const auto j=ehud::data::Json::parse(std::string((std::istreambuf_iterator<char>(in)),{}),16384);check(j["sourceCommit"].string()=="ca04f142185c7de40acd8523bdb563195d90a1d1","Original ImageIO decode fixture is pinned");
 #ifdef _WIN32
@@ -23,4 +63,8 @@ void source(const char*path){std::ifstream in(path,std::ios::binary);check(bool(
 #endif
 }
 }
-int main(int argc,char**argv){try{check(argc==2,"Pass original owner/artwork source fixture");source(argv[1]);boundedQueue();failuresAndLifetime();invalidResult();capacity();std::cout<<"Now Playing artwork: "<<checks<<" checks passed (synthetic bytes/decoder)\n";return 0;}catch(const std::exception&e){std::cerr<<"Now Playing artwork failed after "<<checks<<": "<<e.what()<<'\n';return 1;}}
+int main(int argc,char**argv){try{check(argc==2,"Pass original owner/artwork source fixture");source(argv[1]);boundedQueue();failuresAndLifetime();invalidResult();coverBound();
+#ifdef _WIN32
+drawnSize();
+#endif
+capacity();std::cout<<"Now Playing artwork: "<<checks<<" checks passed (synthetic bytes/decoder)\n";return 0;}catch(const std::exception&e){std::cerr<<"Now Playing artwork failed after "<<checks<<": "<<e.what()<<'\n';return 1;}}

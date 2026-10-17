@@ -133,6 +133,7 @@ struct NowPlayingWebCache::Impl:std::enable_shared_from_this<Impl>{
                 }
             }
         }
+        if(body&&options.keep&&!options.keep(request,*body)){body.reset();std::lock_guard lock(mutex);++counts.refused;}
         if(!body){
             forget(key);
             std::error_code ignored;fs::remove(path,ignored);
@@ -149,6 +150,7 @@ struct NowPlayingWebCache::Impl:std::enable_shared_from_this<Impl>{
     }
     // Worker: atomic replace through a temporary file, then the bounds.
     void write(const NowPlayingWeb::Request&request,const modules::NowPlayingBody&body){
+        if(options.keep&&!options.keep(request,*body)){std::lock_guard lock(mutex);++counts.refused;return;}
         const auto key=keyOf(request);const auto path=options.directory/hexName(key);
         auto temporary=path;temporary+=".tmp";
         bool written{};

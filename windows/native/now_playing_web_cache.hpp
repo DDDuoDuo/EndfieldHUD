@@ -21,6 +21,7 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <span>
 
 namespace endfield::native {
 class NowPlayingWebCache final {
@@ -29,10 +30,15 @@ public:
         std::filesystem::path directory;
         std::size_t maximumEntries{256};
         std::uintmax_t maximumBytes{16u*1024*1024};
+        // Which accepted bodies are kept (null: every one). Runs on the
+        // executor before a write and after a read; a body it refuses is never
+        // written, and a stored one it refuses reads as a miss and is removed
+        // (so an answer an earlier build stored heals on its first read).
+        std::function<bool(const NowPlayingWeb::Request&,std::span<const std::uint8_t>)>keep;
     };
     struct Stats {
         std::size_t entries{};std::uintmax_t bytes{};
-        std::uint64_t hits{},misses{},stores{},evictions{},failures{},backpressure{};
+        std::uint64_t hits{},misses{},stores{},evictions{},failures{},backpressure{},refused{};
         bool indexed{};
     };
     // The executor and directory outlive nothing here: queued work holds the

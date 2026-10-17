@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -253,17 +254,33 @@ public:
         options.raster.paddingPoints = 1;
         options.appearance = appearanceFor(host_.appearance());
         options.changed = c.invalidate;
+        // The cover is drawn into its 330-point group at the raster density
+        // (660 pixels at 2x), whatever the display: covers are decoded (WIC
+        // Fant, scaled down only) to exactly that size and drawn 1:1, rather
+        // than enlarged from a 512-pixel thumbnail. One decoded cover is
+        // 660 x 660 x 4 bytes.
+        coverDensity_ = options.raster.pixelsPerPoint;
+        options.decode = [pixels = modules::nowPlayingCoverDrawnPixels(coverDensity_)](std::span<const std::uint8_t> bytes) {
+            return gpu::decodeNowPlayingCover(bytes, pixels);
+        };
         if (mode_ == ApplicationAreaMode::production) {
             // Visible-only LRCLIB/NetEase lookups and catalog covers over one
             // kept-alive WinHTTP session (retained while Now Playing is
             // presented), answered from a bounded disk cache when a track
             // returns. Covers are requested at the size the slot shows.
             http_ = std::make_shared<gpu::NowPlayingHttp>();
-            if (!c.dataRoot.empty())
-                webCache_ = std::make_shared<gpu::NowPlayingWebCache>(utility_, gpu::NowPlayingWebCache::Options{c.dataRoot / "Caches" / "NowPlaying"});
+            if (!c.dataRoot.empty()) {
+                gpu::NowPlayingWebCache::Options cache{c.dataRoot / "Caches" / "NowPlaying"};
+                // Only answers that carry lyrics, songs or a cover are kept:
+                // a refusal or an empty answer is asked again next time.
+                cache.keep = [](const gpu::NowPlayingWeb::Request& request, std::span<const std::uint8_t> body) {
+                    return request.kind != gpu::NowPlayingWeb::Kind::lyrics || modules::nowPlayingLyricsBodyCacheable(request.url, body);
+                };
+                webCache_ = std::make_shared<gpu::NowPlayingWebCache>(utility_, std::move(cache));
+            }
             web_ = std::make_shared<gpu::NowPlayingWeb>(http_->transport(), wake, c.clock, 10, webCache_);
             options.web = web_;
-            options.coverPixels = coverPixels(c.metrics);
+            options.coverPixels = coverPixels();
             // NetEase's own queue file supplies the exact length and song id
             // for its window-title player (no time labels, no slider value).
             options.neteasePlayingList = neteasePlayingListReader();
@@ -319,7 +336,6 @@ public:
     void resize(const app::ClientMetrics& m) override {
         if (!hasPixels(m)) return;
         preview_->resize(m);
-        if (http_) preview_->setCoverPixels(coverPixels(m));
         sized_ = true;
     }
     void setAppearance(const app::ModuleAppearance& a, double t) override { observe(t); preview_->setAppearance(appearanceFor(a), t); }
@@ -503,11 +519,12 @@ private:
         httpRetained_ = active;
         http_->setRetained(active);
     }
-    // The catalog cover size for the slot at the current display density.
-    unsigned coverPixels(const app::ClientMetrics& m) const {
-        const double scale = std::isfinite(m.scale) && m.scale > 0 ? m.scale : 1;
-        return modules::nowPlayingCatalogCoverPixels(scale * host_.contentScale());
-    }
+    // The catalog cover download for the slot: the smallest standard size at
+    // least its drawn size (800 for the 660-pixel slot), scaled down to the
+    // drawn size by the decoder. The slot's group is drawn at the raster
+    // density on every display (the canvas, not the cover, follows the
+    // display's scale), so a larger download would add nothing.
+    unsigned coverPixels() const { return modules::nowPlayingCatalogCoverPixels(coverDensity_); }
     // The per-app audio publication names the processes that render audio. A
     // change for any process is folded into the window-title players' state
     // with one provider read (event driven: only on such a publication while
@@ -907,6 +924,7 @@ private:
     IRawElementProviderFragmentRoot* automationRoot_{};
     Microsoft::WRL::ComPtr<CoverageGroup> coverageGroup_; // hidden coverage only
     bool sized_{}, httpRetained_{};
+    double coverDensity_{2};
     // Coverage evidence (never user content: action and source only).
     unsigned playbackEvents_{}, eventsAfterFirstCycle_{}, parks_{};
     std::uint64_t startsBefore_{};

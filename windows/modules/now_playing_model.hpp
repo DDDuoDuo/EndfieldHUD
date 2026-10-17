@@ -12,6 +12,10 @@ inline constexpr std::size_t nowPlayingMaximumLyricsBytes=512*1024;
 inline constexpr std::size_t nowPlayingMaximumArtworkBytes=8*1024*1024;
 inline constexpr std::uint64_t nowPlayingMaximumArtworkPixels=32000000;
 inline constexpr unsigned nowPlayingArtworkThumbnailSize=512;
+// Windows: covers are decoded to the size the 330-point slot is drawn at
+// (nowPlayingCoverDrawnPixels), up to this bound, instead of the source's
+// 512-pixel thumbnail (which the HUD's 2x slot would enlarge).
+inline constexpr unsigned nowPlayingMaximumCoverPixels=1024;
 
 // Transient Unicode metadata only; never persisted or included in Event Log.
 // Construction applies the original Swift Character and numeric bounds once.
