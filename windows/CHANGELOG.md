@@ -9,6 +9,34 @@ data folder; none is a published release.
 
 ## Unreleased
 
+## RC 136 — checkpoint 136
+
+- **Now Playing with NetEase: lyrics show**: with NetEase's **开启 SMTC**
+  on, RC 135 showed no lyrics. Now Playing uses NetEase's own play queue
+  file however long the queue is (up to 16 MiB). Since RC 132 a queue file
+  over 1 MiB was skipped, so every song fell back to an online title
+  search, which found nothing for some songs: those had no lyrics and no
+  running time. The tester's queue (1352 songs, about 3.2 MB) now gives
+  every song tried its exact NetEase song and length. Lyrics that NetEase
+  stores with timestamps like `[01:23:45]` (1 minute 23.45 seconds) now
+  appear on time; before, they were read as hours, so only the credit lines
+  showed. A lyrics lookup that gets no answer (no connection, a timeout or a
+  refusal from NetEase) is no longer remembered as "no lyrics": it is tried
+  again after 5, 15, 45 and 135 seconds, then every 5 minutes while Now
+  Playing is shown, and LRCLIB's lyrics stay on screen meanwhile. Not yet
+  confirmed on the test laptop.
+- **Now Playing: sharp cover**: covers are drawn at exactly the size the HUD
+  shows them (660 pixels, scaled down smoothly), not enlarged from at most
+  512 pixels, which looked blurry. With NetEase's **开启 SMTC** on, the small
+  cover from NetEase's media session appears at once, then the full-size
+  cover from NetEase's image server fades in once it has loaded, without a
+  gap. Other players keep showing their own cover. Not yet confirmed on the
+  test laptop.
+- **Third-party licences: Unicode data**: `THIRD-PARTY-NOTICES.txt` now also
+  includes the Unicode License V3 for the Unicode character tables built
+  into `EndfieldHUD.exe`: those of the minigame's script engine (Unicode
+  17.0) and those of Account Binding's text checks.
+
 ## RC 135 — checkpoint 135
 
 - **Clicking beside the text places the caret like the Mac**: in Archive's

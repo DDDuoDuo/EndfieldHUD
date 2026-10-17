@@ -3234,7 +3234,9 @@ public song id, name, artists, cover, duration in ms). The catalog reads it
 (read only, at most 16 MiB, re-read only when its size or write time
 changes, parsed on the shared decode worker) and resolves the window title's
 track with the catalog's conservative matcher; a wrong entry or an ambiguous
-tie is never taken. The exact length turns the played fraction into seconds,
+tie is never taken. *Corrected in checkpoint 136 (`9a4670a`): the parse kept
+the 1 MiB bound of lyric answers, so a longer queue was never used; see
+checkpoint 136.* The exact length turns the played fraction into seconds,
 and the exact id reads that song's lyrics. GSMTC keeps precedence and the
 fuzzy title search remains the fallback. No seek: the slider has no settable
 value and no position action. NetEase's own *开启 SMTC* setting (3.1.21 and
@@ -4042,7 +4044,7 @@ Laptop slot: the Now Playing suites, `application_owner_coverage` and
 
 Laptop validation, first run (code at `c1471cb`): 400 of 403 registered suites pass. Three failed and failed again alone: `application_owner_coverage` and `application_session_end_coverage` (and the standalone module coverage) on *A press released off the arrow scrolls nothing*, and `endfieldhud_install_contracts`, whose install check did not yet expect `THIRD-PARTY-NOTICES.txt`. The arrows behave like the Mac (`HUDSourceWatchView.mouseUp`: a release away from the pressed arrow scrolls nothing); the check read the position 0.6 s after the first arrow step while the Mac spring was still moving whenever the step exceeds about 0.12 of the scroll range (about 0.18 on the laptop's list). Fixes: `f74e82a` (the install check expects the notices), `cdcc66d` (the check waits until the spring settles, requires that the arrow took the second press, and records a `scrollArrow` entry in the coverage report) and `56e064d` (host check minimums 182 → 187 and 178 → 183, the checks they now run).
 
-Laptop validation, second run (code at `56e064d`): a clean incremental Release build; **402** of 403 registered suites pass in the full interactive run, including the three above (host checks 187 and 183; `scrollArrow`: still moving at 0.6 s, settled at 0.8185, unchanged after the release off the arrow). `application_idle_trace` measured 20.18 closed wake-ups per second against its limit of 20 while a game kept the laptop busy, and passed alone (6.24 per second; 2.75 in the first run); the graphics device release itself passed. Combined module coverage (10 of 14 module areas constructed) and hardware composition (2,058,114 checks) pass, and the release build stages a complete package: the portable zip carries `THIRD-PARTY-NOTICES.txt` and `SHA256SUMS` lists exactly the setup and the portable zip. 55 unique warning locations (46 in checkpoint 134), all in code recompiled but not changed in this checkpoint (`notes_video_inspect.cpp` C4245, C4456 shadowing in `projected_text_input_tests.cpp` and `package_installer_tests.cpp`).
+Laptop validation, second run (code at `56e064d`): a clean incremental Release build; **402** of 403 registered suites pass in the full interactive run, including the three above (host checks 187 and 183; `scrollArrow`: still moving at 0.6 s, settled at 0.8185, unchanged after the release off the arrow). `application_idle_trace` measured 20.18 closed wake-ups per second against its limit of 20 while a game kept the laptop busy, and passed alone (6.24 per second; 2.75 in the first run); the graphics device release itself passed. Combined module coverage (10 of 14 module areas constructed) and hardware composition (2,058,114 checks) pass, and the release build stages a complete package: the portable zip carries `THIRD-PARTY-NOTICES.txt` and `SHA256SUMS` lists exactly the setup and the portable zip. 55 unique warning locations (46 in checkpoint 134), all in code recompiled but not changed in this checkpoint (`notes_video_inspect.cpp` C4245, C4456 shadowing in `projected_text_input_tests.cpp` and `package_installer_tests.cpp`). *Cleared in checkpoint 136 (`eb9e01f`); see checkpoint 136.*
 
 New registered tests in this checkpoint: `now_playing_netease_cost_contracts`
 and `packaging_third_party_notices_contracts`. Per-commit laptop slots are
@@ -4081,7 +4083,9 @@ quoted above (only `2a346e3` records one in its message).
   `resources/account/account-numerals.json`) has an attribution in
   `THIRD-PARTY-NOTICES.txt` but no licence text, awaiting the owner's
   decision. The data licence of the Unicode tables compiled into QuickJS-NG
-  is still to be checked.
+  is still to be checked. *Both settled in checkpoint 136: the subset keeps
+  its credit line only (the owner's decision), and the Unicode License V3
+  ships since `9c5ec5a`; see checkpoint 136.*
 - Text fields: on a soft-wrapped line the caret goes before the wrap's
   trailing space (no upstream affinity); the Mac puts it after the space.
 - Input: precise touchpad scrolling (precise deltas, scroll phases,
@@ -4111,8 +4115,236 @@ Checkpoint 134's list still applies. New items:
   between and at the bottom.
 - More than 20 App-icon shortcuts, scrolled.
 - NetEase playing with Now Playing shown: the time bar, the lyrics and
-  `EndfieldHUD.exe`'s CPU.
+  `EndfieldHUD.exe`'s CPU. *On release candidate 135, with 开启 SMTC on, no
+  lyrics showed and the cover was blurry (tester report); see checkpoint
+  136.*
 - A game with the HUD open on release candidate 135, which starts at
   Normal priority.
 - `THIRD-PARTY-NOTICES.txt` in the installed folder after Setup, and gone
   after uninstall, as part of the live install test.
+
+## Checkpoint 136 (2026-10-16)
+
+Checkpoint 135 was pushed at `f4c5bc2`, with its validation fixes `f74e82a`,
+`cdcc66d` and `56e064d`, and GitHub Actions passed on it (run 38982509329:
+the Windows job and the portable Ubuntu job). This entry covers the three
+code commits after it, `9a4670a`, `eb9e01f` and `9c5ec5a`. None is pushed;
+the entry itself changes documentation only.
+
+### Reports from release candidate 135
+
+- **Most new items work (tester report):** most of release candidate 135's
+  new items were reported working, among them the text editing and pointer
+  parity.
+- **Now Playing with NetEase's *开启 SMTC* on (tester report):** no lyrics
+  showed and the cover was blurry (`9a4670a`).
+
+### Changes after checkpoint 135
+
+**NetEase lyrics with its SMTC on (`9a4670a`).** Release candidate 135's own
+data folder, read only: the Event Log shows Now Playing in use for 83 s
+(play, nine next, one previous), and the disk cache holds a NetEase
+cloudsearch for each of the eight tracks and no cover at all. Three causes:
+
+- NetEase's queue file was never used. The tester's queue file is
+  3,258,398 bytes (1352 entries), and although the reader allowed 16 MiB,
+  the parse shared the 1 MiB bound of lyric answers
+  (`nowPlayingMaximumLyricsResponseBytes`). Every NetEase track therefore
+  fell back to the fuzzy title search, which found no confident match for
+  two of the eight tracks: no lyrics, and no length, so no time either.
+- Two of the four tracks with lyrics store NetEase's `[mm:ss:cc]` stamps,
+  which LRC reads as hours, minutes and seconds, so their lines were
+  scheduled 60 times too late and only the credit lines showed.
+- A lookup that got no answer (no body, a timeout, or a refusal such as
+  `{"code":-460}`) was kept as "no lyrics", and the disk cache also stored
+  refusals and empty answers.
+
+Fixes:
+
+- `nowPlayingNetEaseQueue` reads the queue file entry by entry under its own
+  16 MiB bound (`nowPlayingMaximumPlayingListBytes`): a long queue holds
+  more values than one JSON document may, and its full tree is many times
+  the file. It is parsed once per file contents (the reader hands back the
+  same bytes while the file is unchanged), and every later track only
+  matches the parsed rows with the same conservative matcher
+  (`nowPlayingNetEaseQueueEntry`). On the laptop the tester's file parses in
+  42.5 ms, and all eight tracks resolve to their exact song ids and
+  lengths.
+- `nowPlayingCatalogDecodeLyrics` reads `[mm:ss:cc]` and `[mm:ss:ccc]` as
+  minutes, seconds and hundredths, as NetEase shows them; other lyrics keep
+  the source reading.
+- With the owner's clock, a lookup that got no answer (for the catalog also
+  a damaged answer: `nowPlayingCatalogAnswered`) is retried after 5, 15, 45
+  and 135 s, then every 300 s while the track is presented
+  (`nowPlayingRetryDelay`). LRCLIB's lyrics stay shown meanwhile, an answer
+  with or without lyrics ends the retries, and hiding Now Playing forgets
+  the failures, so the next opening asks again. Injected and offline
+  backends keep the source's negatives, so the pinned scenarios are
+  unchanged.
+- The disk cache keeps only answers that carry lyrics, songs or a record
+  (`nowPlayingLyricsBodyCacheable`, through the cache's new `keep` rule); a
+  refusal or an empty answer is never written, and one stored earlier reads
+  as a miss and is removed.
+
+**The Now Playing cover at its drawn size (`9a4670a`).** With *开启 SMTC*
+on, NetEase's media-session thumbnail always won (the source's rule: a
+player thumbnail first), so the catalog cover was never downloaded, and
+every cover was decoded to at most 512 px. The 330-point slot is drawn into
+its group at the raster density, 660 px, on every display; on the
+2560 × 1600 laptop at 150 % (content scale 1.161) that is about 661 px on
+screen. A 512-px cover, or a smaller thumbnail, was therefore enlarged at
+least 1.29×, and catalog covers were asked at 500 px. Now:
+
+- covers are decoded through `decodeNowPlayingCover` with WIC Fant (an area
+  filter, scaled down only) to exactly the drawn size
+  (`nowPlayingCoverDrawnPixels`: 660 px, bounded at 1024 by
+  `nowPlayingMaximumCoverPixels`) and drawn 1:1; one decoded cover is
+  660 × 660 × 4 bytes (about 1.7 MB);
+- catalog covers are downloaded at the smallest standard size at least the
+  drawn size (`nowPlayingCatalogCoverPixels`: 800 for 660; 500 before, at
+  most 600);
+- for NetEase, the thumbnail shows at once, and the CDN cover at that size
+  (the bar's own URL, the queue file's or the catalog match's) replaces it
+  once decoded: the current cover stays while the next one of the same
+  track decodes, so there is no gap or placeholder, then one crossfade. A
+  download that cannot be decoded leaves the thumbnail. Other players'
+  thumbnails still always win.
+
+Tests: `now_playing_lyrics_sources_contracts` (the long queue: over 1 MiB,
+6,000 rows, one parse per contents; entry-by-entry reading with brackets and
+quotes in strings, damaged entries, a BOM and a queue beyond the
+one-document value bound; `[mm:ss:cc]`; the cache rules; the retries of the
+catalog, LRCLIB and the sources), `now_playing_sources_session_contracts`
+(the drawn-size cover sizes, NetEase's thumbnail then the sharp cover
+without a gap, the undecodable cover, the owner's retry wake-ups at 5 s and
+15 s, on an answer, hidden and reopened, and NetEase's SMTC session with a
+long queue), `now_playing_image_contracts` (the 1024 bound and, on Windows,
+the WIC drawn-size decode and its area filter) and
+`now_playing_web_cache_contracts` (the keep rule). Laptop slot: all 29 Now
+Playing suites, `application_owner_coverage` and
+`application_session_end_coverage` pass.
+
+**MSVC warnings cleared (`eb9e01f`).** Checkpoint 135's incremental laptop
+build listed 55 warning locations; a fresh hidden slot build of the
+affected targets found five more, in our code and in the vendored
+QuickJS-NG. None of the fixes changes behaviour:
+
+- C4456/C4457/C4458: inner names that hid a local, a parameter or a member
+  are renamed (the HudAutomation peers in the hidden verification, the clock
+  projections, `FatalStage` scopes, loop and block locals, the Reader root
+  masks, the renderer's group input and texture views, among others);
+- C4245: `notes_video_inspect.cpp` converts the int-based Source Reader
+  stream constants once to `DWORD` constants;
+- C4244/C4267: float opacity literals in the editor fields, the clock style
+  index cast to unsigned, `char16_t` literals in the RTF symbol table and
+  `CLIPFORMAT` values in the clipboard test's format pairs;
+- C4310: char literals instead of casts of 255 and 0x80 in tests;
+- C4996: `std::filesystem::u8path` gives way to a path from a `u8string`
+  (Notes managed images) or the ASCII literal itself (Shelf tests), and the
+  charge test reads its diagnostic switches through `_dupenv_s` under MSVC;
+- older locations from earlier logs that were still in the tree:
+  `mac_import.cpp`, the profile presentation highlight, Now Playing HTTP,
+  the Reader document stream and EXIF reader, the clipboard service, and the
+  perf gate and native renderer tests.
+
+The unmodified QuickJS-NG keeps its C4098 (a void call returned from a void
+function) and MSVC's C4117 for the reserved `__STDC_NO_ATOMICS__`; both are
+disabled for `hud_quickjs` only (`/wd4098 /wd4117`), and `third_party` is
+untouched. Hidden slot runs (HEAD `f4c5bc2` plus these files): the fresh
+build of the 52 targets that compile them (`EndfieldHUD`,
+`watch_session_preview` and their libraries, the packaging tools and the
+affected tests) left nine warning locations, all fixed in the commit; the
+follow-up build that recompiled each of those files reports no warning, and
+34 tests passed, among them `application_owner_coverage`,
+`endfieldhud_release_contracts` and `packaging_third_party_notices_contracts`.
+
+**The Unicode License V3 for the compiled-in Unicode data (`9c5ec5a`).**
+QuickJS-NG's `libunicode-table.h` is generated from the Unicode Character
+Database (Unicode 17.0: case mapping, normalization, categories, scripts
+and properties) and carries the Unicode License V3 notice, which must
+appear with every copy; QuickJS-NG's MIT licence does not cover it. The
+account module's `modules/hypergryph_account_unicode.inc` is likewise
+generated from the macOS Foundation/ICU Unicode tables. Nothing else in
+`windows/` embeds Unicode data: grapheme and word breaks come from the
+operating system's ICU, and zlib and the WebView2 SDK carry none.
+`packaging/third-party-notices.json` lists the Unicode Character Database
+(`Unicode-3.0`) for both files, with the notice from `libunicode-table.h`
+as `packaging/licenses/unicode-LICENSE.txt` (its `vendoredOriginal`), so
+`THIRD-PARTY-NOTICES.txt` now has 12 components and 10 licence texts.
+`packaging_third_party_notices_contracts` now also fails when a source
+file, vendored or generated, embeds Unicode data (the Unicode licence
+notice or a note that it holds Unicode tables) and no Unicode-licensed
+component names it, which a vendored folder's own component used to hide,
+and when the licence copy no longer equals the notice its vendored original
+embeds. Checked both ways: without the new component the suite names both
+files, and a changed copyright year in the copy is reported. Hidden slot run
+(HEAD `f4c5bc2` plus these and the warning fixes):
+`packaging_third_party_notices_contracts`, `endfieldhud_release_contracts`
+and `application_owner_coverage` pass.
+
+### Test runs
+
+<!-- pending: checkpoint 136 validation -->
+
+No new registered test in this checkpoint (403, as in checkpoint 135).
+Per-commit runs are quoted above: a laptop slot for `9a4670a`, hidden slot
+runs on `f4c5bc2` plus their files for `eb9e01f` and `9c5ec5a`.
+
+### Corrections to the entries above
+
+- Checkpoint 132's queue-file entry, and section 6 of `WINDOWS-MIGRATION.md`
+  since, say the queue file is read up to 16 MiB. The reader was, but the
+  parse kept the 1 MiB bound of lyric answers, so a longer queue (the
+  tester's: 3.2 MB, 1352 entries) was never used, and every NetEase track
+  fell back to the fuzzy title search until `9a4670a`. What checkpoints 132
+  and 133 say about the exact song's length and lyrics held only for queue
+  files under 1 MiB. A note in place points here.
+- Checkpoint 129 (batch 6) gives 500 px covers on the 150 % display, and
+  section 6 of `WINDOWS-MIGRATION.md` called the catalog covers slot-sized.
+  The 330-point slot is drawn at 660 px on every display, so those covers,
+  and every cover decoded to at most 512 px, were enlarged at least 1.29×
+  until `9a4670a`.
+- Checkpoint 135's test runs list 55 warning locations, and its open items
+  leave the HarmonyOS Sans SC subset and the Unicode tables' data licence
+  open. `eb9e01f` clears the warnings, the owner kept the subset with its
+  credit line, and `9c5ec5a` ships the Unicode notice; notes in place point
+  here.
+
+### Open items
+
+Checkpoint 135's list still applies, except the licences (settled above and
+under *Decisions for the user*). New items:
+
+- Now Playing: NetEase's lyrics, time and sharp cover with *开启 SMTC* on
+  await the tester's confirmation on release candidate 136. A queue file
+  over 16 MiB still falls back to the fuzzy title search.
+- Credits: `CREDITS.md` does not yet name the Unicode Character Database,
+  whose licence `THIRD-PARTY-NOTICES.txt` carries since `9c5ec5a`.
+
+### Live acceptance still needed
+
+Checkpoint 135's list still applies. On release candidate 135 the tester
+reported most of its new items working, among them the text editing and
+pointer parity; the NetEase lyrics and cover did not (above). New items:
+
+- NetEase on release candidate 136, with *开启 SMTC* on and off: lyrics for
+  every track, every line on time where NetEase stores `[mm:ss:cc]` stamps
+  (not only the credit lines), and the time for tracks that had none; with
+  *开启 SMTC* on, the small cover first, then the sharp cover fading in
+  without a gap.
+- Lyrics after a lost connection or a refused lookup: LRCLIB's lyrics
+  meanwhile, NetEase's once a retry is answered.
+- The live install test, which the tester is running personally on the
+  laptop: release candidate 135's setup installed, then upgraded with
+  release candidate 136's setup (data kept), then uninstalled;
+  `THIRD-PARTY-NOTICES.txt` in the installed folder, with the Unicode
+  notice after the upgrade, and gone after uninstall. Results pending.
+
+### Decisions for the user
+
+Checkpoint 129's open decisions still apply.
+
+- Settled in checkpoint 136: the HarmonyOS Sans SC numeral subset (33
+  glyphs in `resources/account/account-numerals.json`) stays, covered by
+  its credit line in `THIRD-PARTY-NOTICES.txt` and `CREDITS.md` only,
+  without a licence text (the owner's decision).
