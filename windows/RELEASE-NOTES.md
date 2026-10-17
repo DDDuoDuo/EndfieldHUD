@@ -180,15 +180,17 @@ These come from Windows itself, or from choices that keep your data and system s
 
 - **Temporary File Shelf:** files cannot be dropped on the tray icon (Windows offers no drop target there). Drop them on the open HUD's Shelf or its button, use *Add files*, or press Ctrl+V. Items that are not real files (Outlook attachments, images dragged from a browser, files inside zip folders) are refused with a message. Items moved to the Recycle Bin, to another drive or to some network shares show as *Unavailable*. The eye button, a double-click or Space shows a properties card with *Open* and *Reveal* instead of a preview.
 - **Now Playing:**
-  - Players that publish to the Windows media controls (for example Spotify and browsers) work through them. NetEase Cloud Music, QQ Music, KuGou Music, Kuwo Music, foobar2000, AIMP, PotPlayer and VLC are also found by their window and read through their own on-screen controls; only NetEase has been checked on a real PC. Other players show *No music playing*.
-  - NetEase Cloud Music 3 cannot be seeked from Now Playing, with or without its *开启 SMTC* setting. Its time comes from NetEase's player bar and the song's length from NetEase's own local play queue (read only); without a confident match there is no time. While NetEase is minimized its time may stop. A seek made in NetEase while it is paused shows once the song changes, playback resumes or you open Now Playing again.
+  - Players that publish to the Windows media controls (for example Spotify and browsers) work through them. NetEase Cloud Music, QQ Music, KuGou Music, Kuwo Music, foobar2000, AIMP, PotPlayer and VLC are also found by their window and read through their own on-screen controls; only NetEase, with its *开启 SMTC* setting on, has been checked on a real PC. Other players show *No music playing*.
+  - Players found by their window cannot be seeked from Now Playing (these programs offer other apps no way to seek), and of them only NetEase shows album art. A seek or pause made in one of these players shows once the song changes, its sound starts or stops, you use the HUD's controls or you open Now Playing again; NetEase's time also follows its player bar while a song plays.
+  - NetEase Cloud Music 3 cannot be seeked from Now Playing, with or without its *开启 SMTC* setting. Its time comes from NetEase's player bar, and the song's length from NetEase's own local play queue (read only) or, without a confident match there, from the NetEase catalog; without either there is no time. While NetEase is minimized its time may stop.
   - To read NetEase's player bar, EndfieldHUD turns on NetEase's built-in accessibility support once; it stays on until NetEase exits.
   - A player's own volume cannot be set on Windows: the volume control changes the player's level in the Windows volume mixer. Browsers and players with several audio processes cannot be adjusted here; use Volume.
   - Lyrics come from the song file's embedded lyrics, then the NetEase catalog (NetEase only), then LRCLIB.
   - A player that starts hidden in the tray appears the next time you open the HUD or a player changes.
 - **Volume:** switch the default output or input device in Windows Settings; Windows offers apps no supported way to change it. Per-app volume acts on each app's sound on the default device; sending an app to another device is not available. Exclusive-mode audio is not detected. Windows remembers each app's mixer level, so EndfieldHUD restores the levels it changed when it quits, the PC sleeps or the device changes.
-- **Media Assembly:** videos export as MP4 (H.264/AAC), named `<name>-edited.mp4`, instead of QuickTime MOV. HEIC/HEIF, HEVC, ProRes, JPEG 2000, WebP and some older formats need optional codecs from the Microsoft Store or are not supported by Windows; without them they are reported as unsupported.
-- **Notes and Archive:** Home and End move to the start or end of the line, and Ctrl+Home and Ctrl+End to the start or end of the text, as in other Windows text fields. Clicking to the right of a line that wraps puts the caret before the space where the line wraps; the Mac puts it after that space. In Archive, the field you were typing in keeps its caret when you switch to another module and back (the Mac ends editing); your text is saved when you switch. Picture data dragged without a file cannot be dropped on Notes: copy it and press Ctrl+V. Pasted Mac fonts Times and Times New Roman both become Times New Roman.
+- **Media Assembly:** videos export as MP4 (H.264/AAC), named `<name>-edited.mp4`, instead of QuickTime MOV.
+- **Image and video formats:** in Media Assembly, Notes, Archive and Projection, HEIC/HEIF, HEVC, ProRes, JPEG 2000, WebP and some older formats need optional codecs from the Microsoft Store or are not supported by Windows; without them they are reported as unsupported.
+- **Notes and Archive:** Home and End move to the start or end of the line, and Ctrl+Home and Ctrl+End to the start or end of the text, as in other Windows text fields. On a line that wraps, a click to its right, End, and Up or Down onto it put the caret before the space where the line wraps, so typing there goes before that space; the Mac puts the caret after it. The same applies to the Calendar and Personal ID text fields. In Archive, the field you were typing in keeps its caret when you switch to another module and back (the Mac ends editing); your text is saved when you switch. Picture data dragged without a file cannot be dropped on Notes: copy it and press Ctrl+V. Pasted Mac fonts Times and Times New Roman both become Times New Roman.
 - **Calendar:** reminders are Windows notifications and need a copy installed with Setup. Windows has no permission prompt for them: they follow your notification settings, and Focus assist (Do not disturb) can hold the banner back; it still reaches the notification center.
 - **Work Mode:** the timer does not switch Windows Focus or Do not disturb, which Windows reserves for approved apps. The timer, completion and lifetime hours work as on the Mac.
 - **Activity Monitor:** per-app disk and network use are not shown (Windows needs administrator rights for them). App memory is the private working set, as in Task Manager's Memory column. Apps without a window are not listed, compressed memory is not shown, and CPU shows unavailable on PCs with more than 64 logical processors. The GPU figure is the total load, so it can read higher than Task Manager's GPU column; it shows "—" where the graphics driver offers no GPU counters.
@@ -196,12 +198,12 @@ These come from Windows itself, or from choices that keep your data and system s
 - **Account Binding:** sign-in uses the Microsoft Edge WebView2 Runtime (see [Requirements](#requirements)).
 - **App shortcuts:** Windows has no "reopen" signal for a running app. Opening a regular program that is already running brings its window forward; Store apps and other targets start normally.
 - **Hotkeys:** the summon hotkey may not reach EndfieldHUD while an app running as administrator is in front, or in games whose anti-cheat captures the keyboard. Use the tray icon then.
-- **Settings:** *App / menu bar icon* changes the tray icon; File Explorer, Start and notifications keep the program's own icon. The color pickers are the standard Windows dialog: colors apply live, *OK* keeps the new color and *Cancel* restores the previous one.
+- **Settings and Personal ID:** *App / menu bar icon* changes the tray icon; File Explorer, Start and notifications keep the program's own icon. The color pickers (*Theme color*, and the ID card's color) are the standard Windows dialog: colors apply live, *OK* keeps the new color and *Cancel* restores the starting one. Closing the HUD while the ID card's picker is open also restores its starting color; the Mac keeps the last live color.
 - **Clipboard Cache:** while another app holds the clipboard open, Clipboard shows *Clipboard unavailable* until the next copy.
 - **Look:** the blurred background uses Windows' own blur, and text is drawn with Windows fonts and fonts bundled with EndfieldHUD, so both can look slightly different from the Mac.
 - **Screen readers:** every tool's controls are available to Windows UI Automation. Text fields expose their whole text as one value rather than a text pattern, and the HUD's controls are used with the HUD's own keys rather than as Tab stops.
 - **Minigame:** the rules and scoring match the Mac. Floating-point math differs slightly between Windows and macOS, so long-running physics can take a different (still repeatable) path.
-- **Text and dates:** EndfieldHUD uses Windows' Unicode and time-zone data. On Windows 11 versions before 24H2, some Indic-script text segmentation and recent time-zone rules (for example Samoa's) can differ from the Mac, and a few historical dates can fall under a different daylight-saving rule.
+- **Text and dates:** EndfieldHUD uses Windows' Unicode and time-zone data. On every Windows version, a few historical dates can fall under a different daylight-saving rule than on the Mac, because Windows' time-zone data applies each zone's earliest recorded rule to older dates. On Windows 11 versions before 24H2, some Indic-script text segmentation and Samoa's time-zone rules since 2021 can also differ from the Mac.
 - Smaller differences (Event Log audio-device events, clipboard link parsing, some color-profile conversions, the profile photo crop's resampling) are listed in WINDOWS-MIGRATION.md.
 
 ### Limitations in this release
@@ -219,16 +221,17 @@ Automated tests run every tool over sample data, but these have not been tried l
 - a full tool-by-tool check of this build on the desktop;
 - updating from one published Windows release to another (this is the first);
 - signing in with a Global account (a Mainland China account worked);
-- Now Playing with any player other than NetEase Cloud Music;
+- Now Playing with NetEase Cloud Music's *开启 SMTC* setting off, and with any other player;
 - Calendar reminder notifications, and clicking one;
+- *Launch at login* starting EndfieldHUD when you sign in;
 - the Mac data import with a real Mac's data;
 - Narrator and other screen readers, and Japanese and Korean input methods (Chinese input works);
 - pinch-to-zoom on a real touchpad (Map, E-Reader and Media Assembly);
 - screen recording with the HUD's cursor;
 - sleep and resume, a graphics driver reset, plugging monitors with different scaling in or out, and a monitor on another graphics card;
-- the summon hotkey in the games and apps where earlier test builds missed it;
+- the summon hotkey in the games and apps where earlier test builds missed it, and the HUD's smoothness while a game runs;
 - exclusive-mode audio, and per-app volume with real apps;
-- video formats beyond those on the test laptop;
+- Media Assembly video playback with color edits, and video formats beyond those on the test laptop;
 - Volume's app icons in the installed app.
 
 ## Performance
@@ -240,7 +243,7 @@ These figures come from automated runs on the test laptop with sample data, with
 - **Memory** (private memory, Task Manager's *Commit size*, plus graphics memory): about 418 MiB plus 151 MiB after visiting every tool; about 307 MiB plus 47 MiB once closed again; about 263 MiB plus 40 MiB after ten more open and close cycles. While the HUD stays open after visiting every tool, the graphics driver keeps about 120 MiB of freed memory until the HUD closes.
 - **Open and idle:** with ambient animation on, about 5.2–5.5 % of one CPU core, drawing at the Mac's 30 Hz ambient rate. Opening, closing and switching follow your display's refresh rate (150–158 fps at 165 Hz), which is smoother than 60 Hz but uses more CPU while they run.
 - **Threads:** after an opening, about 23 Windows helper threads for software drawing of text and shapes appear and end after about 2 minutes idle. After an account request or an update check, Windows' web client (WinHTTP) keeps about 9–10 threads until EndfieldHUD quits.
-- While the HUD is shown it runs at a raised priority, so it stays smooth while a game runs; the normal priority returns when it closes.
+- While the HUD is shown it runs at a raised priority; the normal priority returns when it closes. In off-screen tests with a simulated game load, this removed the HUD's CPU-side stalls and cut its 95th-percentile GPU finish time from 2.78 to 1.79 ms. A game that draws a frame as one long GPU step (22–38 ms) can still delay the HUD's frames, because the GPU cannot interrupt that step. The raised priority has not yet been tried with a real game.
 
 The only on-screen measurement so far, of an earlier test build, failed its closed-idle wake-up and open-idle CPU limits and measured 352.5 MiB and 58 threads closed. The changes since then have been measured off-screen only.
 

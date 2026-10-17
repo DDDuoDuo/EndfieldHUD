@@ -4331,6 +4331,11 @@ uninstalling works too.
   open. `eb9e01f` clears the warnings, the owner kept the subset with its
   credit line, and `9c5ec5a` ships the Unicode notice; notes in place point
   here.
+- Checkpoint 124's *UI Automation for every module* and its clarification
+  say every module lists its controls. The Settings pages (System, Display,
+  Hotkeys, About) list none: `SettingsModule` implements no automation
+  hooks (found on 2026-10-16, being fixed for release candidate 137;
+  section 6 of `WINDOWS-MIGRATION.md`).
 
 ### Open items
 
