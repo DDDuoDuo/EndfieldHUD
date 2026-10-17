@@ -23,8 +23,9 @@ An optional resident preview adds the
 original icon, tray menu and Ctrl+` reopening. Since checkpoint 122,
 `EndfieldHUD.exe` is the production application owner. Every module of the
 section 6 table joins it as a built-in owner or a registered module area
-(checkpoint 123 below). Live desktop acceptance and a signed release are still
-outstanding, so it is not a release candidate.
+(checkpoint 123 below). Checkpoint 137 is the release candidate for
+`windows-v1.2.0`, confirmed by the tester on 2026-10-17; the build is not
+code-signed (see the checkpoint 137 entry and `RELEASE-NOTES.md`).
 
 The fresh graphics path now also runs the original Mac material programs. A
 build-only exporter captures the current desktop shell's actual geometry,
