@@ -17,11 +17,14 @@ data folder; none is a published release.
   from the *Open EndfieldHUD* click itself, while Setup is still in front,
   and passes on Windows' permission to come to the front. While open, the
   HUD now stays above other windows, as on the Mac, and leaves that layer
-  when it closes. If Windows still keeps the keyboard from it, the HUD
-  shows in front anyway and the first click on it makes it active. After
-  an update that had to close EndfieldHUD (also one installed from About),
-  Setup restarts it in the notification area only, as before and as on the
-  Mac. Not yet checked live.
+  when it closes. Windows allows that layer only with the same permission,
+  which the hotkey, *Open EndfieldHUD*, the Start menu and the tray icon
+  give. Without it, the HUD opens just behind the window in front and
+  moves above the other windows once you click a visible part of it or
+  open it again with the hotkey. After an update that had to close
+  EndfieldHUD (also one installed from About), Setup restarts it in the
+  notification area only, as before and as on the Mac. Not yet checked
+  live.
 - **Settings work with screen readers**: System, Display, Hotkeys and
   About, their choice pages and the *Keep this UI scale?* card are now
   available to Narrator and other screen readers through Windows UI

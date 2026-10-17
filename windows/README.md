@@ -4406,9 +4406,9 @@ memory is accepted above its provisional footprint limit (below).
 
 Checkpoint 136 was pushed with its validation and the tester's and the
 owner's records at `b0b0f62`; `fb219df`, which aligns the release notes
-with the recorded gaps, is not. This entry covers the five code commits
-after it, `80f7629`, `9b1d6ac`, `07285f4`, `8559d89` and `acc4ae3`. None is
-pushed; the entry itself changes documentation only.
+with the recorded gaps, is not. This entry covers the six code commits
+after it, `80f7629`, `9b1d6ac`, `07285f4`, `8559d89`, `acc4ae3` and
+`08b1b0b`. None is pushed; the entry itself changes documentation only.
 
 ### Reports from release candidate 136
 
@@ -4431,7 +4431,9 @@ passed it on (`AllowSetForegroundWindow`). Two causes:
 - The HUD window was never in the topmost band: it was created without
   `WS_EX_TOPMOST`, shown with `SWP_NOZORDER`, and the result of
   `SetForegroundWindow` was ignored, so a refused activation left the shown
-  HUD under the active window.
+  HUD under the active window. The band alone does not bring the HUD to
+  the front, though: without the right Windows refuses the band as well
+  (`08b1b0b`, below), so the grant is what matters.
 - The launchers started EndfieldHUD without a foreground grant. Setup's
   *Open EndfieldHUD* only set a flag, and EndfieldHUD was started after
   Setup's window had closed, when Windows had already activated another
@@ -4461,10 +4463,11 @@ Fixes:
   before the window appears, as the Mac panel sits at its `.statusBar`
   level, and every show raises it to the top of the band; `hide` leaves the
   band once the window is hidden, so a hidden HUD is never topmost. When
-  Windows refuses the activation, the HUD stays shown on top, inactive, and
-  the first click on it activates it (`WM_MOUSEACTIVATE` answers
-  `MA_ACTIVATE`); a later granted request also ends the wait. Nothing
-  injects input or attaches thread input.
+  Windows refuses the activation, the HUD waits, inactive, until a click on
+  it (`WM_MOUSEACTIVATE` answers `MA_ACTIVATE`) or a later granted request
+  activates it. Without the right Windows refuses the band too, so such a
+  HUD is not shown on top but just behind the foreground window
+  (`08b1b0b`, below). Nothing injects input or attaches thread input.
 
 Tests: `packaging_installer_contracts` (the helper grants the started
 process while it is still suspended, and the process runs although the
@@ -4476,9 +4479,10 @@ EndfieldHUD* click itself), `packaging_update_platform_contracts` (Setup is
 granted by its process ID before it runs, and runs the hand-off although
 the grant was refused) and `overlay_host_contracts` (a created HUD is not
 topmost; shows enter the band and hides leave it; a refused activation
-waits for the first click, which activates it; a later granted request
-ends the wait). The z-band test drives the real `show` and `hide` on a
-window that is never shown and never takes the foreground.
+waits until a click activates it or a later granted request ends the
+wait). The z-band test drives the real `show` and `hide` on a window that
+is never shown and never takes the foreground; since `08b1b0b` a test seam
+also stands in for the band (below).
 
 **Projection keeps the hidden HUD out of the band (`07285f4`).**
 `moveProjection` set `HWND_TOPMOST` on the HUD window while it was hidden
@@ -4512,9 +4516,11 @@ application once the panel is ordered out.
 Dialogs the HUD presents (file choosers, colour dialogs, the account login)
 were already owned by the HUD window; the z-band test now checks that a
 window owned by the shown HUD is topmost and above it, also after the HUD
-is raised. Owner coverage checks each launch: the request closes the HUD
-first, the launch happens only once it is hidden, and a request while it is
-closed opens at once (host check minimums 207 → 217 and 203 → 213).
+is raised (since `08b1b0b` in sessions where Windows lets the test process
+into the band; below). Owner coverage checks each launch: the request
+closes the HUD first, the launch happens only once it is hidden, and a
+request while it is closed opens at once (host check minimums 207 → 217
+and 203 → 213).
 
 **Settings for screen readers (`9b1d6ac`).** The Settings owner
 (`SettingsModule` in `app/application_modules.cpp`) implemented none of the
@@ -4590,9 +4596,57 @@ coverage fails at the settled switch. Host check minimums 217 → 226 and
 background update check finishing, slider values during a drag) is listed
 at the next input, as in every module.
 
+**The band without the foreground right (`08b1b0b`).** The first laptop
+run of this checkpoint (below) failed `overlay_host_contracts` at *The
+shown HUD is in the topmost band, above normal application windows*, in
+the interactive session and again alone, while a game was in front. In
+the tester's logged-in session Windows applies its foreground rules to the
+topmost band as well: for a process that may not set the foreground
+window, `SetWindowPos(HWND_TOPMOST)` returns TRUE, yet `WS_EX_TOPMOST`
+stays clear and the window is placed just behind the foreground window.
+The hidden slot runs had passed because the SSH session has no foreground
+window. `80f7629`'s fallback therefore did not hold: a HUD whose opening
+lacks the right is not shown on top but just behind the foreground
+window. The HUD is in front only when its opening holds the right: the
+hotkey (`WM_HOTKEY` carries it), Setup's *Open EndfieldHUD* and the other
+grants of `80f7629`, the Start menu and the tray.
+
+- `OverlayHost` judges the band by the window's own style after
+  `SetWindowPos` (`enterBand`) instead of assuming it, and counts each
+  refusal (`stats().bandRefusals`, `bandPending`).
+- A shown HUD that was refused the band tries again at its next activation
+  (`WM_ACTIVATE`, `WM_ACTIVATEAPP`): a click on a visible part of it, or a
+  later opening that holds the right, enters the band (`deferredBands`).
+  Hiding drops the wait, and a hidden HUD never asks for the band.
+- The comments in `app/overlay_host.hpp`, `packaging/foreground_launch.hpp`
+  and `packaging/README.md` state the rule. Nothing injects input or
+  attaches thread input.
+
+Tests: `overlay_host_contracts`. The z-band test plays the band through a
+new test seam (`OverlayOptions::testBand`), so Windows refusing it runs
+the same way in every session: a refused band is reported and the HUD
+waits for the band and the activation; the application's activation, a
+click's activation or a later opening with the right enters the band; a
+non-activating show can be refused too; hiding drops both waits, and a
+hidden HUD never asks again. A new native test (`zBandNative`) enters the
+band through Windows itself on the real window, which is never shown, and
+checks that the host reports what Windows did. Where this process enters
+the band (the SSH session), it runs the owned-dialog checks moved from the
+z-band test and checks that a raise keeps the HUD in the band; where
+Windows refuses it (the interactive session with a game in front), it
+checks that activation tries again and that each result is reported.
+`overlay_host_tests --zband-diagnostics` prints the session's facts for a
+failing run (session, integrity level, job UI restrictions, startup flags,
+the foreground window, probes of raw windows with the host's styles); it
+shows nothing, activates nothing and reads no window titles, only class
+and image file names. Unverified: whether a summon through the keyboard
+hook alone (games that block `RegisterHotKey`) holds the right.
+
 ### Test runs
 
-Laptop validation: <!-- pending: checkpoint 137 validation -->
+Laptop validation, first run (code at `acc4ae3`): 401 of 404 registered suites pass. `overlay_host_contracts` failed in the interactive session and again alone at *The shown HUD is in the topmost band, above normal application windows*. The failure was real: Windows refused the band to the test process, which held no right to set the foreground window while a game was in front; SSH runs have no foreground window, so the hidden slot runs had passed. Fixed in `08b1b0b` (above). `hypergryph_account_webview_contracts` (*Pin this thread's Shift state*) and `notes_preview_contracts` (*Delete on the selected note opens the deletion confirmation*) failed in the full run and passed alone: the keyboard state changed under them while the tester typed in a game.
+
+Laptop validation, second run (code at `08b1b0b`): a clean incremental Release build with **no compiler or linker warnings**. All **404** registered suites pass in the full interactive run, including `settings_automation_contracts` and `overlay_host_contracts`. Combined module coverage (10 of 14 module areas constructed; host checks 226 and 222) and hardware composition (2,058,114 checks) pass. The release build stages a complete package: `THIRD-PARTY-NOTICES.txt` lists 12 components, `SHA256SUMS` lists exactly the setup and the portable zip, and the size report gives 63.98 MiB installed (67,086,568 bytes, 324 files). `endfieldhud_release_contracts` took 372 s because zipping the symbols got little CPU beside the game.
 
 New registered test in this checkpoint: `settings_automation_contracts`.
 
@@ -4625,18 +4679,30 @@ post-release follow-ups:
   update check finishing, slider values during a drag) lists the peers
   again only at the next input, as in every module.
 
+Noted option, not done: keeping the hidden HUD in the topmost band, so that
+an opening without the foreground right would still appear in front. A
+hidden window must not hold the band, so the HUD still leaves it when it
+hides (`08b1b0b`).
+
 ### Live acceptance still needed
 
 Checkpoint 136's list still applies. New items:
 
 - *Open EndfieldHUD* after an install and after an update with release
-  candidate 137's setup: the HUD comes to the front and takes the keyboard
-  or, if Windows refuses, shows in front and is activated by the first
-  click. An update that closed a running EndfieldHUD restarts it in the
-  tray only, without *Open EndfieldHUD*. This check blocks the release
-  (the maintainer checklist in `RELEASE-NOTES.md`).
-- The HUD above other windows while it is open, and out of that layer once
-  it closes; Projection placed on another display.
+  candidate 137's setup: the HUD comes to the front and takes the keyboard.
+  If Windows refuses the grant, the HUD opens just behind the foreground
+  window and comes to the front at a click on a visible part of it or a
+  later opening with the right (`08b1b0b`). An update that closed a running
+  EndfieldHUD restarts it in the tray only, without *Open EndfieldHUD*.
+  This check blocks the release (the maintainer checklist in
+  `RELEASE-NOTES.md`).
+- The HUD above other windows while it is open (opened by the hotkey, the
+  Start menu or the tray), and out of that layer once it closes; Projection
+  placed on another display.
+- The summon hotkey through the keyboard hook alone, in a game that blocks
+  `RegisterHotKey`: does the HUD come to the front over the game? Only
+  `WM_HOTKEY` is known to carry the right to set the foreground window, and
+  without it Windows keeps the HUD just behind the game (`08b1b0b`).
 - Storage → *Storage Settings* and Account Binding's WebView2 download
   link: the HUD closes first, then the page opens in front. File choosers,
   colour dialogs and the account sign-in open above the HUD.
