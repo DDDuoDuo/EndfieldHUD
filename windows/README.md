@@ -4284,7 +4284,7 @@ and `application_owner_coverage` pass.
 
 ### Test runs
 
-<!-- pending: checkpoint 136 validation -->
+Laptop validation (code at `9c5ec5a`): a clean incremental Release build (81 files) with **no compiler or linker warnings**; every file that warned in checkpoint 135 was recompiled. All **403** registered suites pass in the full interactive run, including `application_idle_trace` and `packaging_perf_probe_contracts`, while a game kept the laptop busy. Combined module coverage (10 of 14 module areas constructed; host checks 187 and 183) and hardware composition (2,058,114 checks) pass. The release build stages a complete package: `THIRD-PARTY-NOTICES.txt` in the portable zip lists 12 components with the full Unicode License V3, and `SHA256SUMS` lists exactly the setup and the portable zip.
 
 No new registered test in this checkpoint (403, as in checkpoint 135).
 Per-commit runs are quoted above: a laptop slot for `9a4670a`, hidden slot
@@ -4318,8 +4318,8 @@ under *Decisions for the user*). New items:
 - Now Playing: NetEase's lyrics, time and sharp cover with *开启 SMTC* on
   await the tester's confirmation on release candidate 136. A queue file
   over 16 MiB still falls back to the fuzzy title search.
-- Credits: `CREDITS.md` does not yet name the Unicode Character Database,
-  whose licence `THIRD-PARTY-NOTICES.txt` carries since `9c5ec5a`.
+- Credits: `CREDITS.md` names the Unicode Character Database since
+  `e36841f`.
 
 ### Live acceptance still needed
 
