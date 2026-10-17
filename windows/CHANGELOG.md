@@ -9,6 +9,37 @@ data folder; none is a published release.
 
 ## Unreleased
 
+## RC 137 — checkpoint 137
+
+- **The HUD that Setup opens comes to the front**: on RC 136, the HUD that
+  Setup opened after an install or an update (*Open EndfieldHUD*) appeared
+  behind the other windows (tester report). Setup now starts EndfieldHUD
+  from the *Open EndfieldHUD* click itself, while Setup is still in front,
+  and passes on Windows' permission to come to the front. While open, the
+  HUD now stays above other windows, as on the Mac, and leaves that layer
+  when it closes. If Windows still keeps the keyboard from it, the HUD
+  shows in front anyway and the first click on it makes it active. After
+  an update that had to close EndfieldHUD (also one installed from About),
+  Setup restarts it in the notification area only, as before and as on the
+  Mac. Not yet checked live.
+- **Settings work with screen readers**: System, Display, Hotkeys and
+  About, their choice pages and the *Keep this UI scale?* card are now
+  available to Narrator and other screen readers through Windows UI
+  Automation, as on the Mac: buttons, switches, sliders, choice lists,
+  links and headings, named in the HUD's language, with their current
+  values and states and the page's status line. Before, no Settings control
+  was listed. Switching to a page, or the card appearing or going, updates
+  the list without a further click or key; a change that arrives on its own
+  (an update check finishing in the background) reaches the screen reader
+  at the next click or key. Not yet tried with Narrator.
+- **Storage Settings and the WebView2 download page open in front**:
+  *Storage Settings* in Storage and Account Binding's link to the Microsoft
+  Edge WebView2 Runtime download now close the HUD first and open once it
+  has closed, as on the Mac, so they never open behind the HUD. A page asked
+  for while the HUD is already closed now opens at once; before, it waited
+  until the HUD had been opened and closed again. File choosers, color
+  pickers and the account sign-in window still open above the HUD.
+
 ## RC 136 — checkpoint 136
 
 - **Now Playing with NetEase: lyrics show**: with NetEase's **开启 SMTC**

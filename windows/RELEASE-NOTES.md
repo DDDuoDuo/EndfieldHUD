@@ -24,8 +24,9 @@ publishing:
      "Not yet checked on a real PC" that has passed.
      Blocker: when Setup opens EndfieldHUD after an install or an update,
      the HUD appears behind the other windows (openings by the hotkey come
-     to the front; tester report on release candidate 136). Do not publish
-     until a release candidate with the fix has been checked live.
+     to the front; tester report on release candidate 136). Fixed in
+     release candidate 137 (checkpoint 137); its live check on the test
+     laptop is pending. Do not publish until it has passed.
   4. Compare "Known differences and limitations" with WINDOWS-MIGRATION.md
      section 6 at the release commit.
   5. Create the release under the Windows tag namespace only, from the
@@ -55,7 +56,7 @@ This release is not code-signed; Windows SmartScreen may show **Windows protecte
 - **Graphics:** a graphics card and driver with Direct3D 11 (feature level 11_0), including Direct3D 11 video support. The HUD has no software-drawing fallback.
 - **Account Binding** needs the Microsoft Edge WebView2 Runtime. If it is missing, *Connect* explains this and links to Microsoft's download page; once it is installed, *Check Again* continues without a restart.
 - **Videos** need Windows Media Foundation. On Windows N editions, install the Media Feature Pack for videos; images and GIFs work without it.
-- About 61 MiB of disk space for the program, plus your data. The Visual C++ runtime is built in.
+- About 61 MiB <!-- pending: RC 137 installed size --> of disk space for the program, plus your data. The Visual C++ runtime is built in.
 
 ## Install
 

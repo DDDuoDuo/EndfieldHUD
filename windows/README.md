@@ -4306,7 +4306,8 @@ uninstalling works too.
 - **New problem (open):** when Setup opens EndfieldHUD after an install or
   an update, the HUD appears behind the other windows; openings by the
   hotkey come to the front. A fix is in progress for the next release
-  candidate.
+  candidate. *Fixed in checkpoint 137 (`80f7629`); the live check on
+  release candidate 137 is pending; see checkpoint 137.*
 - **Not reported:** the on-screen `package_perf_gate --desktop` run has not
   been made (the owner later skipped it for `windows-v1.2.0`; *Decisions for
   the user* below), and a pinch on a real touchpad was not specifically
@@ -4335,7 +4336,8 @@ uninstalling works too.
   say every module lists its controls. The Settings pages (System, Display,
   Hotkeys, About) list none: `SettingsModule` implements no automation
   hooks (found on 2026-10-16, being fixed for release candidate 137;
-  section 6 of `WINDOWS-MIGRATION.md`).
+  section 6 of `WINDOWS-MIGRATION.md`). *Resolved in checkpoint 137
+  (`9b1d6ac`, `acc4ae3`); see checkpoint 137.*
 
 ### Open items
 
@@ -4349,7 +4351,8 @@ no longer wait for the desktop gate run, which the owner skipped for
   confirmed (*Tester confirmation* above).
 - Setup: the HUD that Setup opens after an install or an update appears
   behind the other windows (*Tester confirmation* above); a fix is in
-  progress for the next release candidate.
+  progress for the next release candidate. *Fixed in checkpoint 137
+  (`80f7629`), pending the live check; see checkpoint 137.*
 - Credits: `CREDITS.md` names the Unicode Character Database since
   `e36841f`.
 
@@ -4377,7 +4380,7 @@ lyrics and cover did not (above). New items:
   uninstall passed (above); the notices file was not specifically
   reported.*
 - Once fixed: the HUD that Setup opens after an install or an update comes
-  to the front.
+  to the front. *Fixed in checkpoint 137 (`80f7629`); see checkpoint 137.*
 
 ### Decisions for the user
 
@@ -4398,3 +4401,246 @@ memory is accepted above its provisional footprint limit (below).
   glyphs in `resources/account/account-numerals.json`) stays, covered by
   its credit line in `THIRD-PARTY-NOTICES.txt` and `CREDITS.md` only,
   without a licence text (the owner's decision).
+
+## Checkpoint 137 (2026-10-16)
+
+Checkpoint 136 was pushed with its validation and the tester's and the
+owner's records at `b0b0f62`; `fb219df`, which aligns the release notes
+with the recorded gaps, is not. This entry covers the five code commits
+after it, `80f7629`, `9b1d6ac`, `07285f4`, `8559d89` and `acc4ae3`. None is
+pushed; the entry itself changes documentation only.
+
+### Reports from release candidate 136
+
+- **The HUD that Setup opens appears behind the other windows (tester
+  report):** after an install or an update, the HUD that Setup opened came
+  up behind the active window; openings by the hotkey came to the front
+  (`80f7629`).
+- **Settings without screen reader peers (found on 2026-10-16):** System,
+  Display, Hotkeys and About listed nothing under the HUD's UI Automation
+  root (checkpoint 136's corrections; `9b1d6ac`, `acc4ae3`).
+
+### Changes after checkpoint 136
+
+**The HUD in front after Setup (`80f7629`).** Windows' foreground lock lets
+a process bring its window to the front (`SetForegroundWindow`) only while
+it may set the foreground window: it is the foreground process or was
+started by it, it received the last input, or a process holding that right
+passed it on (`AllowSetForegroundWindow`). Two causes:
+
+- The HUD window was never in the topmost band: it was created without
+  `WS_EX_TOPMOST`, shown with `SWP_NOZORDER`, and the result of
+  `SetForegroundWindow` was ignored, so a refused activation left the shown
+  HUD under the active window.
+- The launchers started EndfieldHUD without a foreground grant. Setup's
+  *Open EndfieldHUD* only set a flag, and EndfieldHUD was started after
+  Setup's window had closed, when Windows had already activated another
+  window; the restart after an update and the in-app updater's start of
+  Setup passed nothing on either.
+
+Fixes:
+
+- `packaging/foreground_launch` (`startWithForeground`) starts a program
+  suspended, grants its process ID with `AllowSetForegroundWindow` and only
+  then lets it run, so the program's first window can use the right. A
+  refused grant (the launcher held no right itself) never stops the start,
+  and a program that cannot start is granted nothing.
+- *Open EndfieldHUD* starts EndfieldHUD from the click itself, while Setup's
+  window is still the foreground window; `--open` (the updater's quiet
+  hand-off) starts it the same way.
+- The restart after an update: the Restart Manager starts the registered
+  command line itself, so Setup grants `ASFW_ANY` (the next process that
+  asks, until the user's next input) just before it; the fallback start is
+  granted by its process ID. The restart stays a `--login` start, in the
+  tray only, like the Mac's, and Setup offers *Open EndfieldHUD* only when
+  it did not restart the app.
+- The in-app updater starts Setup through the same helper (outside the job
+  when allowed, as before), so Setup holds the right the HUD has from the
+  *Install* click and passes it on to the EndfieldHUD it reopens.
+- `OverlayHost::show` enters the topmost band (`HWND_TOPMOST`, z-order only)
+  before the window appears, as the Mac panel sits at its `.statusBar`
+  level, and every show raises it to the top of the band; `hide` leaves the
+  band once the window is hidden, so a hidden HUD is never topmost. When
+  Windows refuses the activation, the HUD stays shown on top, inactive, and
+  the first click on it activates it (`WM_MOUSEACTIVATE` answers
+  `MA_ACTIVATE`); a later granted request also ends the wait. Nothing
+  injects input or attaches thread input.
+
+Tests: `packaging_installer_contracts` (the helper grants the started
+process while it is still suspended, and the process runs although the
+grant was refused; *Open EndfieldHUD* and Setup's `--open` grant the
+started EndfieldHUD by its process ID; the Restart Manager's restart is
+preceded by the `ASFW_ANY` grant; the fallback restart is granted by its
+own process ID; the real Setup window starts EndfieldHUD from the *Open
+EndfieldHUD* click itself), `packaging_update_platform_contracts` (Setup is
+granted by its process ID before it runs, and runs the hand-off although
+the grant was refused) and `overlay_host_contracts` (a created HUD is not
+topmost; shows enter the band and hides leave it; a refused activation
+waits for the first click, which activates it; a later granted request
+ends the wait). The z-band test drives the real `show` and `hide` on a
+window that is never shown and never takes the foreground.
+
+**Projection keeps the hidden HUD out of the band (`07285f4`).**
+`moveProjection` set `HWND_TOPMOST` on the HUD window while it was hidden
+for the Projection hand-off. `OverlayHost::place` now moves and sizes the
+window and changes nothing else (`SWP_NOZORDER | SWP_NOACTIVATE`): the
+hidden HUD stays out of the band until Projection's show enters it, and a
+shown Projection moved to another display keeps its place in it. The
+z-band test places the hidden and the shown fixture and checks the band,
+visibility and activation.
+
+**Hand-offs once the HUD has closed (`8559d89`).** With the HUD in the
+topmost band while shown and *Close when focus lost* off, an application it
+opened while staying shown appeared behind it. The Mac never does that:
+every hand-off stores its action, closes the HUD and opens the other
+application once the panel is ordered out.
+
+- Storage → *Storage Settings* waits for the close like the Mac's
+  `openStorageAfterClose`, then opens `ms-settings:storagesense`; a quit or
+  a forced close drops it.
+- The account login's WebView2 runtime download (Windows only) goes through
+  the new `ApplicationHost::openLinkAfterClose`, the close-first path of the
+  Settings links (`overlay.afterSystemClose`).
+- The Shelf's Reveal and Open, Storage Settings and the links run from one
+  place, `openAfterConcealed`, once the window is hidden and out of the
+  band. A request while the HUD is already closed opens at once: the check
+  used `closing`, which stays set until the next opening, so such a request
+  waited for the next close.
+- Hidden runs take the same decision; only the final launch is counted (the
+  links) or handed to the Storage fixture.
+
+Dialogs the HUD presents (file choosers, colour dialogs, the account login)
+were already owned by the HUD window; the z-band test now checks that a
+window owned by the shown HUD is topmost and above it, also after the HUD
+is raised. Owner coverage checks each launch: the request closes the HUD
+first, the launch happens only once it is hidden, and a request while it is
+closed opens at once (host check minimums 207 → 217 and 203 → 213).
+
+**Settings for screen readers (`9b1d6ac`).** The Settings owner
+(`SettingsModule` in `app/application_modules.cpp`) implemented none of the
+`ModuleOwner` automation hooks. On the Mac,
+`HUDSettingsInteraction.layoutAccessibility` places one transparent
+`NSButton` per accessible action (labelled by it, with the page status as
+help) and one `NSSlider` per visible slider over the canvas, and the
+`HUDScaleSafetyView` card holds real buttons. `tools/settings_automation`
+lists the same controls as fragments (`native/settings_automation`) under a
+group named after the page that accepts input, in the page's visual order:
+
+- headings (the page title at level 1, "Credits:" at level 2) and texts
+  (About's rows, the restore question);
+- switch rows as buttons with Toggle; choice rows as buttons with Invoke and
+  a read-only Value of what the row shows (Language "English", Theme
+  "Dark"); the *Summon HUD* recorder valued by its shortcut, or "Press
+  shortcut…" with the keyboard focus while it records;
+- sliders with RangeValue over the source range and step (writes clamped
+  like the source `setAccessibilityValue`) and the formatted reading
+  ("1.00×") as Value;
+- a choice page's rows, the app and menu bar icons and the five theme
+  colours as a list with single Selection; About's links as hyperlinks
+  named by their title and value;
+- the status line as live text (LiveRegionChanged for listening clients);
+- while the *Keep this UI scale?* card is modal, only the card: a dialog
+  holding its title and message and the Revert and Keep buttons, the
+  focused one holding the keyboard focus (SetFocus moves it like
+  Left/Right; AutomationFocusChanged for listening clients).
+
+Names are the page's own localized labels, action-backed controls carry the
+page status as help, disabled controls refuse their patterns like an
+`NSButton`'s `accessibilityPerformPress`, rows scrolled out of view are not
+listed (as on the Mac) and nothing is listed while no page accepts input
+(hidden, closing, switching modules). Presses run exactly as the page's
+clicks (`SettingsPreview::perform`, `setSlider`, `performSafety`,
+`focusSafety`), and rects project through the page's or the card's current
+plane, so a tilting HUD keeps them on the drawn controls. The controls are
+not tab stops (the HUD routes its own keys), except the card's two buttons
+and the recording hotkey recorder.
+
+Tests: `settings_automation_contracts` (new, 167 checks: the real Settings
+owner on a hidden window and WARP with injected services; no UIA client, no
+visible window, no input injection, no user data) and owner coverage (each
+page's group under the real root; *Close when focus lost* listed as a
+switch in its saved state, toggled through UI Automation like its click and
+back; the controls disconnected when the HUD conceals; host check minimums
+187 → 207 and 183 → 203).
+
+**Lists that follow a module switch (`acc4ae3`).** The host listed peers
+again only on content events, so a module whose peers depend on accepting
+input showed an empty or stale list after a switch until the next click or
+key; `9b1d6ac` worked around this in the Settings adapter with an extra
+wake while a client held its peers. `refreshAutomation` now records what
+the listing saw (the module presentation: the requested, current and
+incoming module, the switch running and module input; the HUD's input
+gate; the modal capture of the owner presenting the requested module).
+After the owners' `update()` each frame, `present()` compares them and
+lists the peers again (StructureChanged for listening clients) when they
+changed: the end of a switch, and an accept-input change such as the *Keep
+this UI scale?* card appearing or going. The check runs only once a UIA
+client has asked for the root; without one nothing is compared. The
+Settings workaround is removed (the adapter's wake and deadline hook,
+`SettingsAutomation::stale` and `requested`, and
+`SettingsPreview::accessibilityRevision`).
+
+Owner coverage, with a client connected: a click switches Volume to System,
+the incoming page lists nothing at the click and its controls once the
+switch settles, with no further input; settled frames list nothing again;
+the card is listed alone once a frame shows it, and the page again once it
+is gone; switching back lists Volume. With the frame check disabled the
+coverage fails at the settled switch. Host check minimums 217 → 226 and
+213 → 222. Remaining: a Settings change that arrives with no input (a
+background update check finishing, slider values during a drag) is listed
+at the next input, as in every module.
+
+### Test runs
+
+Laptop validation: <!-- pending: checkpoint 137 validation -->
+
+New registered test in this checkpoint: `settings_automation_contracts`.
+
+Test builds: from release candidate 137, each test build on the laptop
+carries over the previous test build's test data, so the HUD no longer
+opens by itself when a new test build starts. Only the test launches are
+affected; an installed copy keeps its own data folder.
+
+### Corrections to the entries above
+
+- Checkpoint 136's corrections and section 6 of `WINDOWS-MIGRATION.md` say
+  the Settings pages list no UI Automation peers. They do since `9b1d6ac`,
+  and the list follows a module switch since `acc4ae3`; notes in place
+  point here.
+- Checkpoint 136's tester confirmation, open items and live list leave the
+  HUD that Setup opens behind the other windows to a fix in progress. It is
+  fixed in `80f7629`, pending the tester's live check (below); notes in
+  place point here.
+
+### Open items
+
+Checkpoint 136's list still applies, except the Setup item (fixed in
+`80f7629`; the live check below still blocks the release). New items, both
+post-release follow-ups:
+
+- Shelf: a drag-out keeps the HUD shown, above other windows, while the
+  item is dragged (`DoDragDrop`), where the Mac retracts and hides the HUD
+  (`OverlayController`'s `shelfDragPresentation`).
+- UI Automation: a Settings change that arrives with no input (a background
+  update check finishing, slider values during a drag) lists the peers
+  again only at the next input, as in every module.
+
+### Live acceptance still needed
+
+Checkpoint 136's list still applies. New items:
+
+- *Open EndfieldHUD* after an install and after an update with release
+  candidate 137's setup: the HUD comes to the front and takes the keyboard
+  or, if Windows refuses, shows in front and is activated by the first
+  click. An update that closed a running EndfieldHUD restarts it in the
+  tray only, without *Open EndfieldHUD*. This check blocks the release
+  (the maintainer checklist in `RELEASE-NOTES.md`).
+- The HUD above other windows while it is open, and out of that layer once
+  it closes; Projection placed on another display.
+- Storage → *Storage Settings* and Account Binding's WebView2 download
+  link: the HUD closes first, then the page opens in front. File choosers,
+  colour dialogs and the account sign-in open above the HUD.
+- Narrator (and Inspect) over System, Display, Hotkeys and About, their
+  choice pages and the *Keep this UI scale?* card: names, values, switches,
+  sliders and the status line, and the list after a module switch with no
+  further input.
