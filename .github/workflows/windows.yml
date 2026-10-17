@@ -1,11 +1,12 @@
 name: Windows port checks
 # Builds and runs the portable (Linux) and Windows suites of windows/, then
 # stages an unsigned developer package (portable zip, setup, size report,
-# SHA256SUMS and a release-notes draft) as a workflow artifact. Nothing here
+# SHA256SUMS and, when windows/RELEASE-NOTES.md exists, a release-notes draft)
+# as a workflow artifact. Nothing here
 # creates a tag, release or Mac update.
 on:
   push:
-    branches: [codex/windows-migration]
+    branches: [main, codex/windows-migration]
     paths: ['windows/**', 'Sources/**', 'Resources/**', 'updates/**', '.github/workflows/windows.yml']
   pull_request:
     paths: ['windows/**', 'Sources/**', 'Resources/**', 'updates/**', '.github/workflows/windows.yml']
@@ -32,7 +33,7 @@ jobs:
       - name: Verify current macOS source authority
         run: python windows/tools/check_source_authority.py
       - name: Keep the macOS update feed untouched
-        # Windows builds never edit the Mac Sparkle feed (WINDOWS-MIGRATION.md section 10).
+        # Windows builds never edit the Mac Sparkle feed.
         run: git diff --exit-code origin/main -- updates/appcast.xml
       - name: Install build dependencies
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libicu-dev libsqlite3-dev
