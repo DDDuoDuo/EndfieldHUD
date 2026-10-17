@@ -32,6 +32,7 @@
 #include <windows.h>
 #include <commctrl.h>
 #include <objbase.h>
+#include <tlhelp32.h>
 
 namespace p = endfield::packaging;
 namespace fs = std::filesystem;
@@ -211,6 +212,13 @@ public:
         return {L"--test-registry", registry_, L"--install-root", (installRoot.empty() ? this->installRoot() : installRoot).native(), L"--programs-folder",
                 startMenu().native(), L"--data-base", dataBase().native(), L"--work-folder", workFolder().native()};
     }
+    // The isolated layout those arguments give Setup (for in-process engine calls).
+    p::InstallLayout layout() const {
+        std::vector<std::string> values;
+        for (const auto& a : isolation()) values.push_back(p::narrow(a));
+        const std::vector<std::string_view> views(values.begin(), values.end());
+        return p::InstallLayout::fromArguments(p::parseSetupArguments(p::SetupRole::install, views));
+    }
     Run setup(const fs::path& setupFile, std::vector<std::wstring> extra = {}, const fs::path& installRoot = {}) {
         auto args = std::vector<std::wstring>{L"--quiet"};
         for (auto& a : isolation(installRoot)) args.push_back(std::move(a));
@@ -306,13 +314,17 @@ public:
             CloseHandle(h);
         }
     }
+    // A stand-in started without a marker (stopped at the end like the others).
+    void track(DWORD pid) { pids_.push_back(pid); }
     void stopStrays() const {
         for (const auto& marker : markers_) for (const auto pid : started(marker)) terminate(pid);
+        for (const auto pid : pids_) terminate(pid);
     }
 private:
     fs::path stub_, uninstaller_, app_, root_;
     std::wstring registry_;
     std::vector<fs::path> markers_;
+    std::vector<DWORD> pids_;
 };
 
 std::optional<std::wstring> regString(const std::wstring& key, const wchar_t* name) {
@@ -391,6 +403,136 @@ std::optional<bool> savedLaunchAtLogin(const Lab& lab) {
     if (!fs::exists(lab.dataBase() / "root.json")) return std::nullopt;
     const auto root = ehud::data::openApplicationRoot(lab.dataBase());
     return ehud::data::SettingsStore(root.data).value().boolean("launchAtLogin");
+}
+
+// --- Starting EndfieldHUD: the foreground right passed on ---------------------
+// Stand-ins running from `folder` (only images inside the test's folders).
+std::vector<DWORD> processesFrom(const fs::path& folder) {
+    std::vector<DWORD> out;
+    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    check(snapshot != INVALID_HANDLE_VALUE, "Process snapshot");
+    PROCESSENTRY32W entry{sizeof(entry)};
+    for (BOOL more = Process32FirstW(snapshot, &entry); more; more = Process32NextW(snapshot, &entry))
+        if (const auto image = imageOf(entry.th32ProcessID); image && inside(*image, folder)) out.push_back(entry.th32ProcessID);
+    CloseHandle(snapshot);
+    return out;
+}
+// The stand-in really runs (not left suspended): its hidden window exists.
+bool standInRuns(DWORD pid) {
+    const auto name = L"EndfieldHUDPackagingFixture." + std::to_wstring(pid);
+    for (int waited = 0; waited < 20000; waited += 50) {
+        if (FindWindowW(name.c_str(), nullptr)) return true;
+        Sleep(50);
+    }
+    return false;
+}
+// The install engine in this process (as Setup runs it), with the
+// foreground grant recorded instead of AllowSetForegroundWindow.
+p::OperationResult installHere(const Lab& lab, const Lab::Payload& payload, const p::ForegroundGrant& grant) {
+    const auto setup = p::SetupPayload::open(payload.setup);
+    const auto plan = p::planInstall(setup.manifest(), lab.layout(), false, p::minimumWindowsBuild);
+    p::InstallOptions options;
+    p::OperationCallbacks callbacks;
+    callbacks.confirmStop = [](std::span<const p::RunningApplication>) { return true; };
+    callbacks.grantForeground = grant;
+    return p::install(setup, plan, options, callbacks);
+}
+// 13. Every start of EndfieldHUD passes Setup's right to take the foreground
+//     on (packaging/foreground_launch.hpp): to the new process ID while it is
+//     still suspended, or - before the Restart Manager's restart, whose
+//     process ID is unknown - to the next process that asks. Release
+//     candidate 136 started it without that right, after Setup's window had
+//     closed, and the HUD opened behind the other windows.
+void foregroundLaunches(Lab& lab, const Lab::Payload& v1, const Lab::Payload& v2) {
+    std::error_code ignored;
+    fs::remove_all(lab.dataBase(), ignored);
+    auto run = lab.setup(v1.setup);
+    check(run.exit == 0 && outcome(run) == "installed", "Install for the launch checks: " + describe(run));
+    const auto exe = lab.installRoot() / L"EndfieldHUD.exe";
+    using Granted = std::vector<std::uint32_t>;
+    // The helper: the grant names the new process while it has not run yet.
+    {
+        const auto marker = lab.work() / L"grant-marker.txt";
+        Granted granted;
+        bool ranBeforeGrant{};
+        const auto started = p::startWithForeground(exe, commandArgument(exe.native()) + L" --marker " + commandArgument(marker.native()), lab.installRoot(), 0,
+                                                    [&](std::uint32_t pid) {
+                                                        granted.push_back(pid);
+                                                        Sleep(300); // a running stand-in writes its marker well within this
+                                                        ranBeforeGrant = fs::exists(marker);
+                                                        return false; // refused: the launcher held no right itself
+                                                    });
+        check(started.has_value(), "The stand-in starts through the foreground launch");
+        lab.track(started->processId);
+        CloseHandle(started->process);
+        check(granted == Granted{started->processId} && !started->foregroundGranted, "The grant names the started process ID, once");
+        check(!ranBeforeGrant && Lab::waitFor(marker, "started " + std::to_string(started->processId)),
+              "The process is granted while still suspended, then runs although the grant was refused");
+        lab.terminate(started->processId);
+        bool called{};
+        check(!p::startWithForeground(lab.installRoot() / L"missing.exe", L"\"missing.exe\"", lab.installRoot(), 0, [&](std::uint32_t) { called = true; return true; }) &&
+              !called, "A program that cannot start is granted nothing");
+    }
+    // Setup's Open EndfieldHUD and --open.
+    {
+        Granted granted;
+        const auto pid = p::launchInstalledApplication(lab.layout(), false, [&](std::uint32_t id) { granted.push_back(id); return true; });
+        check(pid.has_value(), "Open EndfieldHUD starts the installed EndfieldHUD.exe");
+        lab.track(*pid);
+        check(granted == Granted{*pid} && imageOf(*pid) && p::samePath(*imageOf(*pid), exe) && standInRuns(*pid),
+              "Open EndfieldHUD grants the started EndfieldHUD by its process ID, and it runs");
+        lab.terminate(*pid);
+    }
+    // The restart after an update through the Restart Manager: granted
+    // before the restarted process exists.
+    {
+        const auto marker = lab.work() / L"restart-grant-marker.txt";
+        const auto first = lab.startApp({L"--marker", marker.native(), L"--register-restart"}, marker);
+        Granted granted;
+        std::size_t startsAtGrant{};
+        const auto r = installHere(lab, v2, [&](std::uint32_t id) {
+            granted.push_back(id);
+            Sleep(300);
+            startsAtGrant = Lab::started(marker).size();
+            return false;
+        });
+        check(r.outcome == p::Outcome::upgraded && r.stoppedApplications == 1 && r.restarted, "The update closes and restarts the running app: " + r.error);
+        check(granted == Granted{p::anyProcess} && startsAtGrant == 1, "The Restart Manager's restart is preceded by the grant to the next process");
+        DWORD second{};
+        for (int waited = 0; waited < 20000 && !second; waited += 100) {
+            for (const auto pid : Lab::started(marker)) if (pid != first && lab.alive(pid)) second = pid;
+            if (!second) Sleep(100);
+        }
+        check(second != 0 && !lab.alive(first), "The updated app was restarted by the Restart Manager");
+        lab.terminate(second);
+    }
+    // The fallback restart (an EndfieldHUD not registered for restart):
+    // granted by the new process ID.
+    {
+        const auto marker = lab.work() / L"fallback-grant-marker.txt";
+        const auto first = lab.startApp({L"--marker", marker.native()}, marker);
+        Granted granted;
+        const auto r = installHere(lab, v2, [&](std::uint32_t id) { granted.push_back(id); return false; });
+        check(r.outcome == p::Outcome::repaired && r.stoppedApplications == 1 && r.restarted && !lab.alive(first), "The repair closes and restarts the running app: " + r.error);
+        check(granted.size() == 1 && granted[0] != p::anyProcess && granted[0] != first, "The fallback restart is granted by its own process ID");
+        lab.track(granted[0]);
+        check(lab.alive(granted[0]) && imageOf(granted[0]) && p::samePath(*imageOf(granted[0]), exe) && standInRuns(granted[0]),
+              "The granted process is the restarted EndfieldHUD, and it runs");
+        lab.terminate(granted[0]);
+    }
+    // The real Setup's --open (the updater's hand-off command line) starts
+    // EndfieldHUD through the same launch, and it runs.
+    {
+        check(processesFrom(lab.installRoot()).empty(), "Nothing runs from the install folder before --open");
+        run = lab.setup(v2.setup, {L"--open"});
+        const auto opened = processesFrom(lab.installRoot());
+        for (const auto pid : opened) lab.track(pid);
+        check(run.exit == 0 && outcome(run) == "repaired" && !run.result["restarted"].boolean() && opened.size() == 1 && standInRuns(opened[0]),
+              "Setup --open starts the installed EndfieldHUD once, and it runs: " + describe(run));
+        for (const auto pid : opened) lab.terminate(pid);
+    }
+    run = lab.uninstall();
+    check(run.exit == 0 && outcome(run) == "uninstalled", "Uninstall after the launch checks: " + describe(run));
 }
 
 // --- Hidden task-dialog flows -------------------------------------------------
@@ -495,6 +637,25 @@ void windowFlows(Lab& lab, const Lab::Payload& v1) {
     const auto before = lab.snapshot();
     run = runWindow(lab, lab.installRoot() / L"uninstall.exe", lab.isolation(), [&](HWND dialog) { press(dialog, IDCANCEL); });
     check(run.exit == 4 && lab.snapshot() == before, "Cancelling the uninstall window changes nothing: " + describe(run));
+    // Open EndfieldHUD on the finished page starts EndfieldHUD from the click,
+    // while Setup's window is still there (so Setup may pass on its right to
+    // take the foreground), not after the window has closed.
+    bool startedWithWindow{};
+    run = runWindow(lab, v1.setup, lab.isolation(), [&](HWND dialog) {
+        press(dialog, 100); // Repair
+        // Pressed until the finished page takes it (ignored while installing).
+        for (int attempt = 0; attempt < 600 && IsWindow(dialog); ++attempt) {
+            DWORD_PTR ignoredResult{};
+            SendMessageTimeoutW(dialog, TDM_CLICK_BUTTON, 101, 0, SMTO_ABORTIFHUNG, 1000, &ignoredResult); // Open EndfieldHUD
+            if (!processesFrom(lab.installRoot()).empty()) { startedWithWindow = true; break; }
+            Sleep(100);
+        }
+    });
+    const auto opened = processesFrom(lab.installRoot());
+    for (const auto pid : opened) lab.track(pid);
+    check(run.exit == 0 && outcome(run) == "repaired" && opened.size() == 1 && standInRuns(opened[0]), "Open EndfieldHUD starts the installed app: " + describe(run));
+    check(startedWithWindow, "EndfieldHUD starts from the Open click itself");
+    for (const auto pid : opened) lab.terminate(pid);
 }
 
 // The production layout is only resolved here (known folders, no creation,
@@ -750,6 +911,7 @@ void contracts(const fs::path& stub, const fs::path& uninstaller, const fs::path
         run = runProgram(signedSetup, {L"--verify-payload"}, lab.resultFile(), lab.work());
         check(run.exit == 0 && run.output.find(" signed") != std::string::npos, "A certificate table after the payload is honoured: " + run.output);
     }
+    foregroundLaunches(lab, v1, v2);
     windowFlows(lab, v1);
     std::cout << "Installer contracts: " << checks << " checks passed\n";
 }

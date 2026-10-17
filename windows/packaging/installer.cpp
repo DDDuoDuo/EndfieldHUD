@@ -392,7 +392,8 @@ std::vector<RunningApplication> runningFrom(const fs::path& root, const std::opt
 }
 class ApplicationStop {
 public:
-    explicit ApplicationStop(std::vector<RunningApplication> apps, fs::path executable) : apps_(std::move(apps)), executable_(std::move(executable)) {}
+    ApplicationStop(std::vector<RunningApplication> apps, fs::path executable, ForegroundGrant grant)
+        : apps_(std::move(apps)), executable_(std::move(executable)), grant_(std::move(grant)) {}
     bool stop() {
         std::vector<RM_UNIQUE_PROCESS> list;
         for (const auto& a : apps_) {
@@ -418,24 +419,30 @@ public:
     }
     // Brings back what was closed: the Restart Manager restarts the processes
     // registered with RegisterApplicationRestart ("--login"); otherwise the
-    // executable is started once with --login.
+    // executable is started once with --login. Either way Setup passes its
+    // right to take the foreground on, as for an app it opens
+    // (packaging/foreground_launch.hpp): the Restart Manager starts the
+    // registered command line itself, so that process ID is unknown
+    // beforehand and the grant just before it is to the next process that
+    // asks (until the user's next input); the fallback start is granted by
+    // its process ID while still suspended.
     bool restart() {
         if (!stopped_) return false;
         stopped_ = false;
         const bool registered = std::all_of(apps_.begin(), apps_.end(), [](const RunningApplication& a) { return a.restartable; });
-        if (registered && session_.restart() == ERROR_SUCCESS) return true;
-        std::wstring command = L"\"" + executable_.native() + L"\" --login";
-        STARTUPINFOW startup{sizeof(startup)};
-        PROCESS_INFORMATION process{};
-        const auto folder = executable_.parent_path();
-        if (!CreateProcessW(executable_.c_str(), command.data(), nullptr, nullptr, FALSE, 0, nullptr, folder.c_str(), &startup, &process)) return false;
-        CloseHandle(process.hThread);
-        CloseHandle(process.hProcess);
+        if (registered) {
+            (void)grantForeground(grant_, anyProcess);
+            if (session_.restart() == ERROR_SUCCESS) return true;
+        }
+        const auto started = startWithForeground(executable_, L"\"" + executable_.native() + L"\" --login", executable_.parent_path(), 0, grant_);
+        if (!started) return false;
+        CloseHandle(started->process);
         return true;
     }
 private:
     std::vector<RunningApplication> apps_;
     fs::path executable_;
+    ForegroundGrant grant_;
     RestartSession session_;
     bool stopped_{};
 };
@@ -828,16 +835,12 @@ std::optional<InstallManifest> readInstallManifest(const fs::path& root) {
 std::vector<RunningApplication> runningApplications(const InstallLayout& l, const std::optional<InstallManifest>& manifest, std::uint32_t excluded) {
     return runningFrom(l.installRoot, manifest, excluded);
 }
-bool launchInstalledApplication(const InstallLayout& l, bool login) {
+std::optional<std::uint32_t> launchInstalledApplication(const InstallLayout& l, bool login, const ForegroundGrant& grant) {
     const auto exe = l.executable();
-    std::wstring command = L"\"" + exe.native() + L"\"" + (login ? L" --login" : L"");
-    STARTUPINFOW startup{sizeof(startup)};
-    PROCESS_INFORMATION process{};
-    const auto folder = l.installRoot;
-    if (!CreateProcessW(exe.c_str(), command.data(), nullptr, nullptr, FALSE, 0, nullptr, folder.c_str(), &startup, &process)) return false;
-    CloseHandle(process.hThread);
-    CloseHandle(process.hProcess);
-    return true;
+    const auto started = startWithForeground(exe, L"\"" + exe.native() + L"\"" + (login ? L" --login" : L""), l.installRoot, 0, grant);
+    if (!started) return std::nullopt;
+    CloseHandle(started->process);
+    return started->processId;
 }
 void removeStaleUninstallWorkers(const fs::path& workFolder) {
     if (!ordinaryDirectory(workFolder)) return;
@@ -980,7 +983,7 @@ OperationResult install(const SetupPayload& payload, const InstallPlan& plan, co
                 return r;
             }
             progress(0.82, SetupText::stepStop);
-            stop.emplace(running, l.executable());
+            stop.emplace(running, l.executable(), callbacks.grantForeground);
             if (!stop->stop()) {
                 tx.discardStaging();
                 r.outcome = Outcome::refused;
@@ -1043,7 +1046,7 @@ OperationResult uninstall(const InstallLayout& l, const UninstallOptions& option
     const auto running = runningFrom(l.installRoot, manifest, options.parentProcess);
     if (!running.empty()) {
         if (callbacks.confirmStop && !callbacks.confirmStop(running)) { r.outcome = Outcome::cancelled; return r; }
-        ApplicationStop stop(running, l.executable());
+        ApplicationStop stop(running, l.executable(), callbacks.grantForeground); // never restarted
         if (!stop.stop()) {
             r.outcome = Outcome::refused;
             r.refusal = Refusal::closeFailed;

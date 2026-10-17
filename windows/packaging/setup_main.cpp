@@ -263,7 +263,6 @@ public:
         result_.outcome = p::Outcome::cancelled;
         run(first);
         if (worker_.joinable()) worker_.join();
-        if (result_.succeeded() && open_ && !result_.restarted) (void)p::launchInstalledApplication(plan_.layout, false);
         return exitFor(result_);
     }
     const p::OperationResult& result() const noexcept { return result_; }
@@ -287,7 +286,15 @@ protected:
         }
         if (stage_ == Stage::running && button == buttonContinue) { beginInstall(); return S_FALSE; }
         if (stage_ == Stage::progress) return S_FALSE;
-        if (stage_ == Stage::finished && button == buttonOpen) open_ = true;
+        if (stage_ == Stage::finished && button == buttonOpen && result_.succeeded() && !result_.restarted) {
+            // Started from the click, while this window is still the
+            // foreground window: Setup may then pass the right to take the
+            // foreground on to EndfieldHUD (packaging/foreground_launch.hpp),
+            // so the HUD it opens comes to the front. Started after this
+            // window had closed, it opened behind the window Windows activated
+            // instead (release candidate 136).
+            (void)p::launchInstalledApplication(plan_.layout, false);
+        }
         return S_OK;
     }
     void navigated() override {
@@ -312,7 +319,7 @@ private:
     const p::SetupArguments& args_;
     core::Language language_;
     std::atomic<Stage> stage_{Stage::welcome};
-    bool launchAtLogin_{true}, open_{};
+    bool launchAtLogin_{true};
     std::thread worker_;
     p::OperationResult result_;
 
@@ -404,6 +411,8 @@ int runInstall(const p::SetupArguments& args, HINSTANCE instance) {
         p::OperationCallbacks callbacks;
         callbacks.confirmStop = [](std::span<const p::RunningApplication>) { return true; };
         auto r = p::install(*payload, plan, options, callbacks);
+        // --open (the in-app updater's hand-off): the right to take the
+        // foreground that the updater passed on to Setup goes on to EndfieldHUD.
         if (r.succeeded() && args.open && !r.restarted) (void)p::launchInstalledApplication(plan.layout, false);
         writeResult(args, r);
         report(r);

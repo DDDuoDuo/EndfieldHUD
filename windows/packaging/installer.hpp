@@ -23,6 +23,7 @@
 // interrupted swap is repaired by the next Setup or uninstall run.
 #ifdef _WIN32
 #include "core/localization.hpp"
+#include "packaging/foreground_launch.hpp"
 #include "packaging/package_format.hpp"
 #include "packaging/package_io.hpp"
 #include "packaging/setup_arguments.hpp"
@@ -76,6 +77,11 @@ struct OperationCallbacks {
     // Called before anything changes when EndfieldHUD runs from the install
     // folder; false cancels.
     std::function<bool(std::span<const RunningApplication>)> confirmStop;
+    // Tests only: stands in for AllowSetForegroundWindow when Setup passes its
+    // right to take the foreground on to the EndfieldHUD it restarts
+    // (packaging/foreground_launch.hpp): anyProcess just before the Restart
+    // Manager's restart, the new process ID before a fallback start runs.
+    ForegroundGrant grantForeground;
 };
 
 // Scheduled Calendar toasts of the installed identity (removed before the
@@ -147,8 +153,11 @@ std::optional<InstallManifest> readInstallManifest(const std::filesystem::path& 
 // EndfieldHUD.exe processes started from the install folder (found through
 // the Restart Manager by the files they use); `excludedProcess` is skipped.
 std::vector<RunningApplication> runningApplications(const InstallLayout&, const std::optional<InstallManifest>&, std::uint32_t excludedProcess = 0);
-// Starts the installed EndfieldHUD.exe (optionally with --login).
-bool launchInstalledApplication(const InstallLayout&, bool login);
+// Starts the installed EndfieldHUD.exe (optionally with --login), suspended
+// until Setup has passed it the right to take the foreground, so the HUD it
+// opens comes to the front (packaging/foreground_launch.hpp; `grant` only in
+// tests). Its process ID, or nullopt when it could not start.
+std::optional<std::uint32_t> launchInstalledApplication(const InstallLayout&, bool login, const ForegroundGrant& grant = {});
 // Stale relocated uninstall workers (EndfieldHUD-Uninstall-*) in the work
 // folder; folders still in use stay.
 void removeStaleUninstallWorkers(const std::filesystem::path& workFolder);

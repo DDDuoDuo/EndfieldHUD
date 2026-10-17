@@ -184,6 +184,33 @@ administrator" and enter another account's credentials, it installs for that
 other account. A Setup that closed EndfieldHUD restarts it in Setup's own
 context.
 
+**Opening EndfieldHUD in front** (`foreground_launch.hpp`). Windows lets a
+program bring its window to the front only while it may set the foreground
+window: it is the foreground program or was started by it, it received the
+last input, or a program that may set it passed that right on
+(`AllowSetForegroundWindow`). Release candidate 136 started EndfieldHUD after
+Setup's window had closed, without that right, and the HUD it opened appeared
+behind the other windows. Now every start passes the right on:
+
+- *Open EndfieldHUD* starts it from the click, while Setup's window is still
+  in front; `--open` starts it the same way after a quiet install.
+- Each start is suspended until Setup has granted the new process its right,
+  so the program's first window can use it.
+- The restart after an update is granted too. The Restart Manager starts the
+  registered command line itself, so Setup grants the next program that asks,
+  just before; the fallback start is granted by its process ID.
+- The in-app updater starts Setup the same way. Setup gets the right the HUD
+  holds from the *Install* click and passes it on to the EndfieldHUD it
+  reopens.
+
+A grant counts only while the granting program holds the right itself, and the
+user's next input elsewhere ends it. The HUD therefore also shows itself in the
+topmost band while it is open (as the Mac HUD panel sits above normal windows)
+and leaves that band when it hides (`app/overlay_host.hpp`). When Windows
+refuses the activation, the HUD stays in front, inactive, and the first click
+on it activates it. Nothing injects input or attaches to another program's
+input.
+
 **Command line.**
 
 - `--quiet` (also `/quiet`, `/S`) shows no window.

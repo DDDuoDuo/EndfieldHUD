@@ -16,6 +16,7 @@
 // completion, cancellation or deadline closes it. Constructing the transport
 // opens none, so a run that never checks starts none of WinHTTP's threads.
 #ifdef _WIN32
+#include "packaging/foreground_launch.hpp"
 #include "packaging/package_format.hpp"
 #include "packaging/updater.hpp"
 #include <cstdint>
@@ -86,9 +87,13 @@ void verifySetup(const std::filesystem::path& setup, const std::string& sha256, 
 std::shared_ptr<void> holdSetup(const std::filesystem::path& setup, const std::string& sha256);
 // Starts Setup (CreateProcessW, no shell, outside any job when allowed) and
 // registers a one-shot thread-pool wait that posts (message, wParam, 0) to
-// `window` when it exits. The returned process reports its exit code.
+// `window` when it exits. The returned process reports its exit code. Setup
+// starts suspended until this run has passed it the right to take the
+// foreground it holds from the Install click, which Setup passes on to the
+// EndfieldHUD it reopens (packaging/foreground_launch.hpp; `grant` only in
+// tests).
 std::unique_ptr<SetupProcess> launchSetup(const std::filesystem::path& setup, const std::vector<std::string>& arguments,
-                                          void* window, std::uint32_t message, std::uintptr_t wParam);
+                                          void* window, std::uint32_t message, std::uintptr_t wParam, const ForegroundGrant& grant = {});
 // CommandLineToArgvW-compatible quoting of one argument.
 std::wstring commandLineArgument(std::wstring_view);
 } // namespace endfield::packaging::updates

@@ -7,6 +7,7 @@
 #include <limits>
 #include <optional>
 #include <span>
+#include <utility>
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -260,13 +261,15 @@ void hiddenStartupChild(){
     check(host.stats().framePending,"Completed native show wakes an already-stable frame demand");
     RECT after{};check(GetWindowRect(window,&after)!=FALSE,"Read own shown rectangle");
     check(EqualRect(&before,&after)!=FALSE,"Show does not reposition or resize the overlay");
-    check((GetWindowLongPtrW(window,GWL_STYLE)&~LONG_PTR(WS_VISIBLE))==(style&~LONG_PTR(WS_VISIBLE))&&GetWindowLongPtrW(window,GWL_EXSTYLE)==extended,"Show preserves borderless/composition/topmost styles");
-    check(GetFocus()==focus&&GetActiveWindow()==active&&focusEvents==0&&!host.stats().focused,"Show(false) preserves activation and keyboard focus");
+    check(!(extended&WS_EX_TOPMOST),"The created overlay is not in the topmost band");
+    check((GetWindowLongPtrW(window,GWL_STYLE)&~LONG_PTR(WS_VISIBLE))==(style&~LONG_PTR(WS_VISIBLE))&&GetWindowLongPtrW(window,GWL_EXSTYLE)==(extended|WS_EX_TOPMOST),
+        "Show preserves borderless/composition styles and enters the topmost band");
+    check(GetFocus()==focus&&GetActiveWindow()==active&&focusEvents==0&&!host.stats().focused&&host.stats().foregroundRequests==0,"Show(false) preserves activation and keyboard focus");
     drain(host);check(frames>0&&!host.stats().timerArmed,"Stable first frame renders without adding an idle timer");
     host.hide();check(!IsWindowVisible(window)&&!host.stats().framePending,"Hide cancels pending presentation");
-    check(SetWindowPos(window,HWND_TOPMOST,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE)!=FALSE,"Set test-owned topmost policy on isolated desktop");
-    host.show(false);check(GetWindowLongPtrW(window,GWL_EXSTYLE)&WS_EX_TOPMOST,"Explicit reopening preserves caller-owned topmost policy");
-    drain(host);host.hide();host.destroy();
+    check(!(GetWindowLongPtrW(window,GWL_EXSTYLE)&WS_EX_TOPMOST)&&!host.stats().topmost,"The hidden overlay leaves the topmost band");
+    host.show(false);check((GetWindowLongPtrW(window,GWL_EXSTYLE)&WS_EX_TOPMOST)&&IsWindowVisible(window),"Explicit reopening enters the topmost band again");
+    drain(host);host.hide();check(!(GetWindowLongPtrW(window,GWL_EXSTYLE)&WS_EX_TOPMOST),"Every hide leaves the band");host.destroy();
 }
 void hiddenStartupProcess(){
     // A child bound to a new desktop cannot initialize reliably from the
@@ -290,6 +293,76 @@ void hiddenStartupProcess(){
     check(WaitForSingleObject(process.value.hProcess,10000)==WAIT_OBJECT_0,"Isolated show/frame regression completes within its finite deadline");
     DWORD exit{};check(GetExitCodeProcess(process.value.hProcess,&exit)!=FALSE&&exit==0,"Hidden-startup visibility and stable-demand child contracts pass");
     check(GetThreadDesktop(GetCurrentThreadId())==original,"Regression leaves parent thread desktop untouched");
+}
+// The HUD's z-band and activation through the real show()/hide() path, on a
+// window that is never shown and never takes the foreground: the test seam
+// stands in for making it visible and for SetForegroundWindow, while the band
+// is applied to the real (hidden) window. Mac: the HUD panel's .statusBar
+// level, above every normal window, and NSApp.activate on opening.
+void zBandAndActivation() {
+    std::vector<std::pair<bool,bool>> visibility;unsigned foregroundCalls{};bool grant{};
+    OverlayCallbacks callbacks;
+    OverlayOptions options{L"Hidden z-band fixture",0,0,32,32,nullptr};
+    options.testVisibility=[&](bool shown,bool activate){visibility.emplace_back(shown,activate);return shown;};
+    options.testForeground=[&]{++foregroundCalls;return grant;};
+    OverlayHost host;host.create(options,callbacks);
+    const auto window=static_cast<HWND>(host.hwnd());
+    const auto banded=[&]{return (GetWindowLongPtrW(window,GWL_EXSTYLE)&WS_EX_TOPMOST)!=0;};
+    using Shows=std::vector<std::pair<bool,bool>>;
+    check(!banded()&&!host.stats().topmost&&!host.stats().visible,"A created HUD is hidden and not in the topmost band");
+
+    // A launch-path opening (Setup's Open, onboarding): the foreground lock
+    // refuses the activation; the HUD is shown above the other windows anyway.
+    host.show(true);
+    check(!IsWindowVisible(window),"The fixture window is never really shown");
+    check(host.stats().visible&&banded()&&host.stats().topmost,"The shown HUD is in the topmost band, above normal application windows");
+    check(visibility==Shows{{true,true}}&&foregroundCalls==1&&host.stats().foregroundRequests==1,"An activating opening asks for the foreground once");
+    check(host.stats().foregroundRefusals==1&&host.stats().activationPending,"A refused activation leaves the HUD shown, waiting for its activation");
+    check(SendMessageW(window,WM_MOUSEACTIVATE,reinterpret_cast<WPARAM>(window),MAKELPARAM(HTCLIENT,WM_LBUTTONDOWN))==MA_ACTIVATE,
+        "The first click on the waiting HUD activates it");
+    // The activation that click brings (no real activation: sent to the
+    // hidden fixture, which only ever changes this thread's focus).
+    SendMessageW(window,WM_ACTIVATE,MAKEWPARAM(WA_CLICKACTIVE,0),0);
+    check(!host.stats().activationPending&&host.stats().deferredActivations==1&&banded(),"The click's activation ends the wait; the band stays");
+    host.hide();
+    check(!host.stats().visible&&visibility.back()==std::pair{false,false}&&!banded()&&!host.stats().topmost,"The hidden HUD leaves the topmost band");
+
+    // show(false) enters the band without asking for the foreground.
+    host.show(false);
+    check(visibility.back()==std::pair{true,false}&&banded()&&foregroundCalls==1&&!host.stats().activationPending,
+        "A non-activating show is above other windows and leaves activation alone");
+    host.hide();check(!banded(),"Hidden again: out of the band");
+
+    // A granted opening (the hotkey's, or a launcher that passed its right on).
+    grant=true;host.show(true);
+    check(banded()&&foregroundCalls==2&&host.stats().foregroundRefusals==1&&!host.stats().activationPending,"A granted activation needs no fallback");
+    host.show(true);
+    check(banded()&&foregroundCalls==3&&host.stats().visible,"A repeated opening raises the HUD to the top of the band and asks again");
+    host.hide();
+
+    // A refused opening, then a later granted request (a second launch
+    // forwarded with AllowSetForegroundWindow) ends the wait.
+    grant=false;host.show(true);check(host.stats().activationPending,"Refused again");
+    grant=true;host.show(true);
+    check(!host.stats().activationPending&&host.stats().deferredActivations==2&&host.stats().foregroundRefusals==2,"A later granted request ends the wait");
+    // A refused opening that closes before any click leaves nothing waiting.
+    host.hide();grant=false;host.show(true);check(host.stats().activationPending,"Refused once more");
+    host.hide();check(!host.stats().activationPending&&!banded(),"Hiding drops the wait and the band");
+
+    // The default close (no owner callback) hides through the same path.
+    host.show(false);check(banded(),"Shown for the default close");
+    SendMessageW(window,WM_CLOSE,0,0);
+    check(IsWindow(window)&&!host.stats().visible&&!banded()&&visibility.back()==std::pair{false,false},"The default close hides the HUD out of the band");
+    host.destroy();
+
+    // A hidden benchmark's offscreen window is never shown: no band, no foreground.
+    OverlayOptions offscreen{L"Hidden offscreen z-band fixture",0,0,16,16,nullptr};offscreen.offscreenScheduling=true;
+    OverlayHost benchmark;benchmark.create(offscreen);
+    const auto benchmarkWindow=static_cast<HWND>(benchmark.hwnd());
+    benchmark.show(true);
+    check(benchmark.stats().visible&&!IsWindowVisible(benchmarkWindow)&&!(GetWindowLongPtrW(benchmarkWindow,GWL_EXSTYLE)&WS_EX_TOPMOST)&&
+        benchmark.stats().foregroundRequests==0,"An offscreen benchmark never enters the band or asks for the foreground");
+    benchmark.hide();benchmark.destroy();
 }
 void nativeDeadlines() {
     OverlayHost host;unsigned wakes{},frames{};
@@ -596,7 +669,7 @@ int main(int argc,char**argv) {
 #endif
         scheduling(); coalescing(); deadlines(); displayPacing(); mouseHistory();
 #ifdef _WIN32
-        nativeWindow(); callbackFailures(); nativeDeadlines(); offscreenCadence();
+        nativeWindow(); callbackFailures(); zBandAndActivation(); nativeDeadlines(); offscreenCadence();
         std::cout<<"Additional hidden-startup/first-frame gate is explicit --interactive-startup on an interactive station; it is not part of this Session-0-compatible suite.\n";
         std::cout << checks << " source scheduling and hidden native host checks passed\n";
 #else

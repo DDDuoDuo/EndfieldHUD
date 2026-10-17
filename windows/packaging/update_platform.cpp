@@ -634,28 +634,22 @@ private:
 };
 } // namespace
 std::unique_ptr<SetupProcess> launchSetup(const fs::path& setup, const std::vector<std::string>& arguments, void* window, std::uint32_t message,
-                                          std::uintptr_t wParam) {
+                                          std::uintptr_t wParam, const ForegroundGrant& grant) {
     std::wstring command = commandLineArgument(setup.native());
     for (const auto& a : arguments) command += L" " + commandLineArgument(wide(a));
-    STARTUPINFOW startup{};
-    startup.cb = sizeof startup;
-    PROCESS_INFORMATION process{};
     const auto folder = setup.parent_path();
     // Setup outlives this run (it closes and restarts EndfieldHUD): leave a
-    // job that would end it with us when the job allows breaking away.
-    auto line = command;
-    BOOL created = CreateProcessW(setup.c_str(), line.data(), nullptr, nullptr, FALSE, CREATE_BREAKAWAY_FROM_JOB, nullptr, folder.c_str(), &startup, &process);
-    if (!created && GetLastError() == ERROR_ACCESS_DENIED) {
-        line = command;
-        created = CreateProcessW(setup.c_str(), line.data(), nullptr, nullptr, FALSE, 0, nullptr, folder.c_str(), &startup, &process);
-    }
-    if (!created) throw std::runtime_error("Setup could not be started (" + std::to_string(GetLastError()) + ")");
-    CloseHandle(process.hThread);
+    // job that would end it with us when the job allows breaking away. It
+    // starts suspended until it holds this run's right to take the
+    // foreground, which it passes on to the EndfieldHUD it reopens (--open).
+    auto started = startWithForeground(setup, command, folder, CREATE_BREAKAWAY_FROM_JOB, grant);
+    if (!started && GetLastError() == ERROR_ACCESS_DENIED) started = startWithForeground(setup, command, folder, 0, grant);
+    if (!started) throw std::runtime_error("Setup could not be started (" + std::to_string(GetLastError()) + ")");
     auto notice = std::make_unique<ExitNotice>();
     notice->window = static_cast<HWND>(window);
     notice->message = message;
     notice->wParam = static_cast<WPARAM>(wParam);
-    return std::make_unique<LaunchedSetup>(process.hProcess, std::move(notice));
+    return std::make_unique<LaunchedSetup>(static_cast<HANDLE>(started->process), std::move(notice));
 }
 } // namespace endfield::packaging::updates
 #endif

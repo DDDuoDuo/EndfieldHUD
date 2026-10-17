@@ -243,6 +243,16 @@ struct OverlayOptions {
     // Hidden benchmarks only: pace finite motion by this display refresh (Hz)
     // instead of the window's monitor, which a service session lacks. 0: the monitor.
     double refreshRate{};
+    // Hidden tests only: stand-ins for the two steps of show() and hide()
+    // that the user would see, so a test drives the real show/hide path -
+    // the topmost band included, applied to the real never-shown window -
+    // with no visible window and no focus change on the desktop.
+    // testVisibility(shown, activate) replaces making the window visible (or
+    // hidden) and answers whether it now counts as shown; testForeground()
+    // replaces SetForegroundWindow and answers whether Windows granted it.
+    // Empty in production.
+    std::function<bool(bool shown, bool activate)> testVisibility;
+    std::function<bool()> testForeground;
 };
 struct OverlayHostStats {
     std::uint64_t frameRequests{}, framePosts{}, frames{}, timerArms{}, timerWakes{},
@@ -260,6 +270,13 @@ struct OverlayHostStats {
     // finite motion presented at that pace.
     double refreshRate{};
     std::uint64_t pacedFrames{};
+    // Z-band and activation (show/hide): whether the window is in the
+    // topmost band now (WS_EX_TOPMOST); activating shows that asked for the
+    // foreground and those Windows' foreground lock refused; whether a shown
+    // window still waits for its activation (the first click on it) and the
+    // activations that ended such a wait.
+    bool topmost{}, activationPending{};
+    std::uint64_t foregroundRequests{}, foregroundRefusals{}, deferredActivations{};
 };
 
 // All methods and destruction belong to the creating UI thread. This is an
@@ -280,7 +297,21 @@ public:
     void destroy(); // idempotent; release the renderer/DComp target before this
     void* hwnd() const noexcept;
     ClientMetrics metrics() const;
+    // Shows the window in the topmost band, above every normal application
+    // window however it was opened (Mac: the HUD panel's .statusBar level),
+    // keeping its geometry and style; an explicit show also overrides a
+    // launcher's STARTUPINFO SW_HIDE. Every call raises it to the top of that
+    // band. activate also asks for the foreground (Mac: NSApp.activate
+    // ignoringOtherApps). Windows' foreground lock refuses that to a process
+    // that may not set the foreground window - a run Setup started without
+    // passing that right on, or after the user's input went elsewhere: the
+    // window then stays shown above the other windows, inactive, and the
+    // first click on it activates it (WM_MOUSEACTIVATE answers MA_ACTIVATE).
+    // No input is injected and no thread input is attached. show(false)
+    // keeps keyboard focus and activation as they are.
     void show(bool activate = true);
+    // Hides the window and leaves the topmost band: a hidden window is never
+    // topmost.
     void hide();
     void setFrameDemand(core::FrameDemand);
     // Caller aggregates its next media/save/countdown deadline. It shares the

@@ -574,7 +574,37 @@ void verification(const fs::path& standIn) {
         check(waitNotice(2), "The Setup exit posts the owner notice");
         check(process->exitCode() == 3 && readText(result) == outcome, "Setup ran with the hand-off command line and reported its outcome");
     }
-    check(throws([&] { (void)u::launchSetup(updates / "missing-setup.exe", u::handoffArguments(result), window, message, 2); }), "A missing setup cannot start");
+    // The right to take the foreground this run holds from the Install
+    // click goes on to Setup (which passes it on to the EndfieldHUD it
+    // reopens): granted to Setup's own process ID while it is still
+    // suspended - it has not written its result yet - and Setup runs even
+    // when Windows refuses the grant (this run held no right to pass on).
+    {
+        std::error_code ignored;
+        fs::remove(result, ignored);
+        std::vector<std::uint32_t> granted;
+        std::wstring grantedImage;
+        bool ranBeforeGrant{};
+        auto process = u::launchSetup(launched, u::handoffArguments(result), window, message, 2, [&](std::uint32_t pid) {
+            granted.push_back(pid);
+            if (HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid)) {
+                std::wstring image(32768, L'\0');
+                DWORD size = static_cast<DWORD>(image.size());
+                if (QueryFullProcessImageNameW(h, 0, image.data(), &size)) grantedImage.assign(image.data(), size);
+                CloseHandle(h);
+            }
+            Sleep(300); // a running stand-in Setup writes its result well within this
+            ranBeforeGrant = fs::exists(result);
+            return false;
+        });
+        check(granted.size() == 1 && !grantedImage.empty() && fs::equivalent(fs::path(grantedImage), launched), "The grant names the started Setup's process ID, once");
+        check(!ranBeforeGrant, "Setup is granted the foreground before it runs");
+        check(waitNotice(2) && process->exitCode() == 3 && readText(result) == outcome, "Setup then runs the hand-off although the grant was refused");
+    }
+    bool missingGranted{};
+    check(throws([&] {
+              (void)u::launchSetup(updates / "missing-setup.exe", u::handoffArguments(result), window, message, 2, [&](std::uint32_t) { missingGranted = true; return true; });
+          }) && !missingGranted, "A missing setup cannot start and is granted nothing");
     for (const auto* value : {L"plain", L"with space", L"quote\"inside", L"C:\\path with space\\", L"trailing\\\\", L""}) {
         const auto line = L"x.exe " + u::commandLineArgument(value);
         int count{};

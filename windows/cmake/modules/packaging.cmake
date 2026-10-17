@@ -90,13 +90,19 @@ if(WIN32)
   add_library(hud_packaging_io packaging/package_io.cpp)
   target_compile_definitions(hud_packaging_io PRIVATE ${EHUD_PACKAGING_DEFINITIONS})
   target_link_libraries(hud_packaging_io PUBLIC hud_packaging_format PRIVATE bcrypt cabinet)
+  # Starting EndfieldHUD (from Setup) and Setup (from the updater) suspended
+  # until the launcher has passed on its right to take the foreground.
+  add_library(hud_packaging_launch packaging/foreground_launch.cpp)
+  target_include_directories(hud_packaging_launch PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+  target_compile_definitions(hud_packaging_launch PRIVATE ${EHUD_PACKAGING_DEFINITIONS})
+  target_link_libraries(hud_packaging_launch PRIVATE user32)
   # Install/upgrade/uninstall engine. Reuses the app's launch-at-login
   # registration, data root, settings store and notification identity code.
   add_library(hud_packaging_installer packaging/installer.cpp)
   target_compile_definitions(hud_packaging_installer PRIVATE ${EHUD_PACKAGING_DEFINITIONS})
-  target_link_libraries(hud_packaging_installer PUBLIC hud_packaging_io hud_app_notification_identity hud_single_instance hud_application_core
-    PRIVATE rstrtmgr ole32 shell32 advapi32 bcrypt windowsapp)
-  list(APPEND EHUD_PACKAGING_TARGETS hud_packaging_io hud_packaging_installer)
+  target_link_libraries(hud_packaging_installer PUBLIC hud_packaging_io hud_packaging_launch hud_app_notification_identity hud_single_instance
+    hud_application_core PRIVATE rstrtmgr ole32 shell32 advapi32 bcrypt windowsapp)
+  list(APPEND EHUD_PACKAGING_TARGETS hud_packaging_io hud_packaging_launch hud_packaging_installer)
 
   # EndfieldHUD-Setup.exe (stub; the release step appends the payload) and
   # uninstall.exe, from one source with the version of source-authority.json.
@@ -145,7 +151,7 @@ if(WIN32)
   # Setup hand-off) and the windowsUpdates area in EndfieldHUD.exe.
   add_library(hud_packaging_update_platform packaging/update_platform.cpp)
   target_compile_definitions(hud_packaging_update_platform PRIVATE ${EHUD_PACKAGING_DEFINITIONS})
-  target_link_libraries(hud_packaging_update_platform PUBLIC hud_packaging_updates hud_packaging_io PRIVATE winhttp wintrust crypt32 advapi32 user32)
+  target_link_libraries(hud_packaging_update_platform PUBLIC hud_packaging_updates hud_packaging_io hud_packaging_launch PRIVATE winhttp wintrust crypt32 advapi32 user32)
   add_library(hud_windows_updates_area STATIC app/areas/update_module.cpp)
   target_include_directories(hud_windows_updates_area PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
   target_compile_definitions(hud_windows_updates_area PRIVATE ${EHUD_PACKAGING_DEFINITIONS}
