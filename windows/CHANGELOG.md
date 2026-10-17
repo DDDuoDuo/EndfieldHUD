@@ -9,6 +9,13 @@ data folder; none is a published release.
 
 ## Unreleased
 
+## RC 138 — checkpoint 138
+
+- **Check for updates looks at the regular releases**: *Check for updates*
+  in About now looks at the regular EndfieldHUD releases on GitHub that
+  include Windows files, where the Windows downloads sit next to the macOS
+  ones, and skips releases without them.
+
 ## RC 137 — checkpoint 137
 
 - **The HUD that Setup opens comes to the front**: on RC 136, the HUD that

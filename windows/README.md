@@ -23,9 +23,11 @@ An optional resident preview adds the
 original icon, tray menu and Ctrl+` reopening. Since checkpoint 122,
 `EndfieldHUD.exe` is the production application owner. Every module of the
 section 6 table joins it as a built-in owner or a registered module area
-(checkpoint 123 below). Checkpoint 137 is the release candidate for
-`windows-v1.2.0`, confirmed by the tester on 2026-10-17; the build is not
-code-signed (see the checkpoint 137 entry and `RELEASE-NOTES.md`).
+(checkpoint 123 below). Checkpoint 137 is the release candidate for Windows
+1.2.0, confirmed by the tester on 2026-10-17, and checkpoint 138 is its
+release build: the Windows files go onto the existing `v1.2.0` release, next
+to the Mac files. The build is not code-signed (see the checkpoint 137 and
+138 entries and `RELEASE-NOTES.md`).
 
 The fresh graphics path now also runs the original Mac material programs. A
 build-only exporter captures the current desktop shell's actual geometry,
@@ -1586,7 +1588,11 @@ checkpoints.
   plus `application_owner_coverage`.
 - **Windows updater** (2026-10-10): the windowsUpdates area checks GitHub for
   `windows-v*` releases only (never the Mac feed or Mac assets; the unchanged
-  Mac parser rejects `windows-v` tags). It checks on *Check for Updates*, or at
+  Mac parser rejects `windows-v` tags). *Since checkpoint 138 (`9c75665`) the
+  Windows files are extra assets of the shared `v<SemVer>` releases: it
+  reads those that carry the Windows setup and SHA256SUMS, still reads
+  `windows-v` for compatibility and ignores Mac-only releases; see checkpoint
+  138.* It checks on *Check for Updates*, or at
   most once a day when the HUD opens with "Check for updates daily" on. On
   two explicit About clicks it downloads and verifies the setup (HTTPS,
   GitHub-only redirects, published size, SHA256SUMS line, the setup's own
@@ -1601,7 +1607,9 @@ checkpoints.
   `application_owner_coverage`. CI now runs on `windows-2025` and checks the
   OS ICU (laptop: build 26200, ICU 72.1, Unicode 15.1, tzdata 2022g) before its
   suites; `windows-2022` lacked Unicode 15.1 and the Samoa rules.
-  `stage_release` writes a `windows-v` release-notes draft. Builds remain
+  `stage_release` writes a `windows-v` release-notes draft. *Since
+  `9c75665` the draft names `v<release>`, and only when
+  `windows/RELEASE-NOTES.md` exists; see checkpoint 138.* Builds remain
   unsigned, so every update needs explicit consent; see
   `windows/packaging/README.md`.
 
@@ -1657,7 +1665,9 @@ dialog itself.
 - Narrator and Inspect over every group; the Notes editor peer's focus in
   the real tree.
 - An adapter switch with real GPUs; the updater against a real `windows-v`
-  release; the clock hover plate and swipe with a real touchpad.
+  release; the clock hover plate and swipe with a real touchpad. *Since
+  checkpoint 138 the real release is a shared `v` release carrying the
+  Windows files (first `v1.2.0`); see checkpoint 138.*
 
 ### Still open in code
 
@@ -1820,7 +1830,9 @@ where an account, the network or real data is involved.
   the sweep, and an interrupted activation.
 - **Calendar:** a real toast click refreshing Calendar.
 - **Updater:** the first `windows-v` release and an in-place update. Signed
-  builds and job objects that forbid breakaway are untested.
+  builds and job objects that forbid breakaway are untested. *Since
+  checkpoint 138 the first release is the Windows files on the shared
+  `v1.2.0` release; see checkpoint 138.*
 - **Shell:** a GPU adapter switch; the clock's hover plate and swipe on a
   touchpad.
 - **Performance:** the section 9 gate on the laptop desktop
@@ -2518,7 +2530,8 @@ Checkpoint 124's list still applies. Batch 5 adds:
   - Notes: the GPU card border at strong tilt and real DPI; Home/End with an
     IME.
 - **Packaging:** GitHub Actions after a push; the first `windows-v` release
-  and an in-place update.
+  and an in-place update. *Since checkpoint 138 the first release is the
+  Windows files on the shared `v1.2.0` release; see checkpoint 138.*
 
 ### Still open in code
 
@@ -3773,7 +3786,8 @@ plus `application_memory_trace` in its slot).
 - Packaging: builds are unsigned, so SmartScreen warns when the setup runs;
   release notes for a first `windows-v` release are not written. *Drafted
   after this checkpoint in `windows/RELEASE-NOTES.md` (`b70273a`); see
-  checkpoint 135.*
+  checkpoint 135. Since checkpoint 138 they are the Windows section of the
+  shared `v1.2.0` release.*
 
 ### Live acceptance still needed
 
@@ -4388,7 +4402,10 @@ lyrics and cover did not (above). New items:
 ### Decisions for the user
 
 Checkpoint 129's open decisions still apply; for `windows-v1.2.0` the closed
-memory is accepted above its provisional footprint limit (below).
+memory is accepted above its provisional footprint limit (below). *Since
+checkpoint 138 the Windows 1.2.0 files go onto the existing `v1.2.0` release
+instead of a `windows-v1.2.0` tag; these decisions apply to them unchanged.
+See checkpoint 138.*
 
 - Settled in checkpoint 136, for `windows-v1.2.0`: the on-screen
   `package_perf_gate --desktop` run against the packaged app is skipped,
@@ -4670,7 +4687,8 @@ On 2026-10-17 the tester reported on release candidate 137 on the laptop:
   (`80f7629`, `08b1b0b`). This answers release candidate 136's report and
   resolves the release blocker (the maintainer checklist in
   `RELEASE-NOTES.md`): checkpoint 137 is the release candidate for
-  `windows-v1.2.0`.
+  `windows-v1.2.0`. *Since checkpoint 138 the Windows 1.2.0 files go onto
+  the existing `v1.2.0` release; see checkpoint 138.*
 - **Not reported:** the summon through the keyboard hook alone in a game
   that blocks `RegisterHotKey`, Narrator over the Settings pages and the
   *Keep this UI scale?* card, the hand-offs once the HUD has closed
@@ -4745,3 +4763,143 @@ release candidate 137 (*Tester confirmation* above). New items:
   choice pages and the *Keep this UI scale?* card: names, values, switches,
   sliders and the status line, and the list after a module switch with no
   further input. *Not specifically reported.*
+
+## Checkpoint 138 (2026-10-17)
+
+Checkpoint 137 was pushed with its validation and the tester's confirmation
+at `23a9102`. This entry records the owner's release decisions of 2026-10-17
+and covers the two commits after checkpoint 137 that follow from them,
+`9c75665` (code) and `1d8d830` (CI). Neither is pushed; the entry itself
+changes documentation only. Checkpoint 138 is the release build for
+`v1.2.0`: its Windows files go onto the existing `v1.2.0` release, next to
+the Mac files.
+
+### The owner's decisions (2026-10-17)
+
+- **The Windows build is published on the existing `v1.2.0` release.** The
+  setup, the portable zip and `SHA256SUMS` are extra assets of the release
+  `v1.2.0` ("EndfieldHUD 1.2.0"), which stays Latest; its Mac assets, its
+  title and the Sparkle appcast (`updates/appcast.xml`) are untouched. There
+  is no `windows-v1.2.0` tag. Windows and Mac now share release tags
+  (`v<SemVer>`), never the appcast.
+- **The Windows sources reach `main` through a pull request** that leaves
+  out `WINDOWS-MIGRATION.md`, `windows/README.md`, `windows/CHANGELOG.md` and
+  `windows/RELEASE-NOTES.md`; they stay on this development branch. The root
+  READMEs on `main` get a short Windows install section.
+
+### Changes after checkpoint 137
+
+**Windows releases on the shared `v` tags (`9c75665`).** Following the
+first decision:
+
+- The update check (`packaging/update_check`) reads the Mac `v<SemVer>` tags
+  (the Mac `HUDReleaseVersion` format, with its optional `v`) and, for
+  compatibility, `windows-v<SemVer>`. A release counts for Windows only when
+  it carries the Windows setup and SHA256SUMS of its version
+  (`EndfieldHUD-<X.Y.Z>-build<N>-windows-x64-setup.exe` and
+  `…-SHA256SUMS.txt`, uploaded to that release, with `<X.Y.Z>` equal to the
+  tag's version). Any other release, a Mac-only one or one whose Windows
+  files are missing, still uploading or malformed, is ignored entirely: it
+  is never offered and never shown as the latest release. The *Waiting for a
+  compatible Windows update package* state is therefore gone
+  (`Detail::Kind::waitingForPackage`); a list without a Windows release
+  reports "No published release found on GitHub."
+- A `v` and a `windows-v` release of one version are one version: the
+  larger installer build wins, and on equal builds the shared `v` release.
+  The running build's own release is `v<release>` (`releaseTag`, formerly
+  `windowsReleaseTag`), and the page About opens is the release's own page,
+  for example `https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/v1.2.0`.
+- The checker never reads `updates/appcast.xml` and never downloads a Mac
+  asset. The Mac client reads no assets, so the Windows files on a shared
+  release do not change what a Mac is offered: the Mac oracle
+  (`tools/package_update_reference.swift`) gains the scenario *shared
+  releases with Windows assets*, which the unchanged Mac checker ignores,
+  and the Windows checker reads every Mac tag and release page as the Mac
+  does.
+- Packaging names the shared `v<release>` release (`stage_release.cmake`,
+  `package_format.hpp`). `windows/RELEASE-NOTES.md` is optional:
+  without it (the main-branch layout) staging writes no release-notes draft
+  and `endfieldhud_release_contracts` skips the notes checks (and fails if a
+  draft was staged anyway); with it, a draft that does not name
+  `v<release>`, or names `windows-v<release>`, is marked *Do not publish*,
+  and the release check requires `v<release>` and refuses
+  `windows-v<release>` in the notes without their *Do not publish* marks.
+  `packaging/README.md` describes the shared release (*Updates*,
+  *Releases*).
+
+Tests: `packaging_update_check_contracts` (32 client scenarios against the
+Mac oracle, the shared-release scenario included; every Mac tag and page as
+on the Mac, plus `windows-v`; a Mac-only `v1.2.1` ignored, `v1.2.0` with the
+running build's files up to date, `v1.3.0` offered, mixed `v` and
+`windows-v` releases of one version), `packaging_update_platform_contracts`
+and the windowsUpdates area in `application_owner_coverage` (a newer
+Mac-only release, drafts and prereleases ignored on the shared release
+list; the running build's files on its shared release report up to date),
+all over `v` tags, Mac-only releases and mixed tag forms;
+`endfieldhud_release_contracts` (the notes checks with and without
+`windows/RELEASE-NOTES.md`). Their runs belong to the pending validation
+(below).
+
+**Windows CI on `main` (`1d8d830`).** `.github/workflows/windows.yml` runs
+on pushes to `main` as well as this development branch (pull requests as
+before), so the Windows checks keep running once the sources are on `main`.
+Its comment says the release-notes draft is staged only when
+`windows/RELEASE-NOTES.md` exists, and the Mac-feed guard no longer points
+at `WINDOWS-MIGRATION.md`, which `main` will not have.
+
+**Release notes.** `RELEASE-NOTES.md` is now the Windows section of the
+shared `v1.2.0` release: the maintainer uploads the three files with
+`gh release upload v1.2.0` and appends the staged draft to that release's
+notes, keeping its title, Mac notes, Mac assets and Latest state. The
+`v1.2.0` tag is the Mac release commit, without `windows/` or
+`WINDOWS-MIGRATION.md` and with an older `CREDITS.md`, so the source links
+now point at `main` (`windows/tools/mac_import_exporter.py`, `CREDITS.md`),
+which has both once the pull request is merged, and the link to
+`WINDOWS-MIGRATION.md` is gone: the platform-gap summary in the notes stands
+on its own.
+
+### Test runs
+
+Laptop validation: <!-- pending: checkpoint 138 validation -->
+
+No new registered test in this checkpoint (404, as in checkpoint 137).
+
+### Corrections to the entries above
+
+- Checkpoint 124's updater entry, its *Not verified yet* and live lists,
+  checkpoint 128's live list and checkpoint 134's open items describe
+  separate `windows-v` releases and a `windows-v` release-notes draft, and
+  checkpoints 136 and 137 name the first Windows release `windows-v1.2.0`.
+  Since the owner's decision of 2026-10-17 the Windows files are extra
+  assets of the shared `v<SemVer>` releases, the Windows 1.2.0 files go onto
+  the existing `v1.2.0` release, and `windows-v` tags are read only for
+  compatibility (`9c75665`). The owner's decisions recorded for
+  `windows-v1.2.0` (no on-screen gate run, the closed memory accepted)
+  apply to Windows 1.2.0 on `v1.2.0` unchanged. Notes in place point here.
+
+### Open items
+
+Checkpoint 137's list still applies. New items:
+
+- Packaging: `packaging/run_release_check.cmake` still expects the
+  exporter link at `blob/v<release>/windows/tools/mac_import_exporter.py`
+  in the release-notes draft. The notes now link it on `main`, so
+  `endfieldhud_release_contracts` fails on this branch until the check
+  expects that link.
+- Publishing, after the validation: the Windows files on `v1.2.0` and the
+  Windows section of its notes (the maintainer checklist in
+  `RELEASE-NOTES.md`). The notes' source links open only once the pull
+  request to `main` is merged.
+
+### Live acceptance still needed
+
+Checkpoint 137's list still applies. New items:
+
+- The release build on the laptop: Setup over release candidate 137's
+  installed copy, then *Check for updates* in About. Before the Windows
+  files are on `v1.2.0` the release list has only Mac releases, so the
+  check reports "No published release found on GitHub."; once they are,
+  it reports the installed copy up to date and opens
+  `https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/v1.2.0`.
+- Once a later `v` release carries Windows files: the in-place update from
+  the published 1.2.0 (download, verification, install, data kept).

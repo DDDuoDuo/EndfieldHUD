@@ -45,15 +45,17 @@ publishing:
      comment) to the v1.2.0 release notes as their Windows section. Keep the
      Mac notes, the release title, its Mac assets and its Latest state as
      they are, and never touch updates/appcast.xml.
-  6. The blob/v1.2.0 links below name files at the v1.2.0 tag. That tag is
-     the Mac release commit, which has no windows/ folder and no
-     WINDOWS-MIGRATION.md (and an older CREDITS.md): check that every link
-     opens before publishing.
+  6. The source links below point at the main branch (blob/main), not at
+     the v1.2.0 tag: that tag is the Mac release commit, which has no
+     windows/ folder (and an older CREDITS.md). They open only once the
+     Windows sources are merged into main, so publish after that merge and
+     check that every link opens. WINDOWS-MIGRATION.md stays on the
+     development branch and is not linked.
 Remove this comment before publishing.
 -->
 # EndfieldHUD 1.2.0 for Windows
 
-The first Windows release of EndfieldHUD. It brings the same layered, animated HUD and the same tools as the macOS app, version 1.2.0 (build 18), to 64-bit Windows 11 as a native program, with the same look, animations, languages and data formats.
+The first Windows version of EndfieldHUD. It brings the same layered, animated HUD and the same tools as the macOS app, version 1.2.0 (build 18), to 64-bit Windows 11 as a native program, with the same look, animations, languages and data formats.
 
 The Windows downloads are part of the 1.2.0 release (tag `v1.2.0`), next to the macOS download. They do not change the macOS app, its downloads or its update feed.
 
@@ -154,7 +156,7 @@ In **System**, **Display**, **Hotkeys** and **About**, change the theme and them
 
 The Mac app has no export button; a small script exports its data once.
 
-1. On the Mac, quit EndfieldHUD, download [`mac_import_exporter.py`](https://github.com/DDDuoDuo/EndfieldHUD/blob/v1.2.0/windows/tools/mac_import_exporter.py) and run it with Python 3:
+1. On the Mac, quit EndfieldHUD, download [`mac_import_exporter.py`](https://github.com/DDDuoDuo/EndfieldHUD/blob/main/windows/tools/mac_import_exporter.py) and run it with Python 3:
    `python3 mac_import_exporter.py ~/Desktop/EndfieldHUD-export`
    It copies your EndfieldHUD data and settings into that new folder. It changes nothing on the Mac and never reads the Keychain.
 2. Copy the `EndfieldHUD-export` folder to the PC.
@@ -179,6 +181,7 @@ The import has been tested with sample exports, not yet with a real Mac's data.
 
 - In **About**, choose *Check for updates* (the tray's *Check for Updates…* does the same). With *Check for updates daily* on (the default), EndfieldHUD checks at most once a day, when the HUD opens.
 - When a new version is listed, click the update row once to download and verify it, and again to install it. EndfieldHUD closes, saves your data, updates in place and reopens.
+- EndfieldHUD looks at the regular EndfieldHUD releases on GitHub and offers only those that include the Windows downloads; releases with only macOS downloads are skipped.
 - Updates are never installed automatically, and there is no "update available" notification; the tray menu and About show when one is available.
 - Because the builds are unsigned, a download is checked against SHA256SUMS from the same release. This confirms the file is intact, but it is not an independent signature.
 - Only a copy installed with Setup updates itself. You can also run a newer setup yourself.
@@ -187,7 +190,7 @@ The import has been tested with sample exports, not yet with a real Mac's data.
 
 ### Differences from the Mac
 
-These come from Windows itself, or from choices that keep your data and system safe. The full list, with the reasons, is in [WINDOWS-MIGRATION.md](https://github.com/DDDuoDuo/EndfieldHUD/blob/v1.2.0/WINDOWS-MIGRATION.md) (section 6, "Windows platform gaps").
+These come from Windows itself, or from choices that keep your data and system safe.
 
 - **Temporary File Shelf:** files cannot be dropped on the tray icon (Windows offers no drop target there). Drop them on the open HUD's Shelf or its button, use *Add files*, or press Ctrl+V. Items that are not real files (Outlook attachments, images dragged from a browser, files inside zip folders) are refused with a message. Items moved to the Recycle Bin, to another drive or to some network shares show as *Unavailable*. The eye button, a double-click or Space shows a properties card with *Open* and *Reveal* instead of a preview.
 - **Now Playing:**
@@ -215,7 +218,7 @@ These come from Windows itself, or from choices that keep your data and system s
 - **Screen readers:** every tool's controls are available to Windows UI Automation. Text fields expose their whole text as one value rather than a text pattern, and the HUD's controls are used with the HUD's own keys rather than as Tab stops.
 - **Minigame:** the rules and scoring match the Mac. Floating-point math differs slightly between Windows and macOS, so long-running physics can take a different (still repeatable) path.
 - **Text and dates:** EndfieldHUD uses Windows' Unicode and time-zone data. On every Windows version, a few historical dates can fall under a different daylight-saving rule than on the Mac, because Windows' time-zone data applies each zone's earliest recorded rule to older dates. On Windows 11 versions before 24H2, some Indic-script text segmentation and Samoa's time-zone rules since 2021 can also differ from the Mac.
-- Smaller differences (Event Log audio-device events, clipboard link parsing, some color-profile conversions, the profile photo crop's resampling) are listed in WINDOWS-MIGRATION.md.
+- Smaller differences remain in Event Log audio-device events, clipboard link parsing, some color-profile conversions and the profile photo crop's resampling.
 
 ### Limitations in this release
 
@@ -230,7 +233,7 @@ These come from Windows itself, or from choices that keep your data and system s
 Automated tests run every tool over sample data, but these have not been tried live yet:
 
 - a full tool-by-tool check of this build on the desktop;
-- updating from one published Windows release to another (this is the first);
+- updating from one published Windows version to the next (this is the first);
 - signing in with a Global account (a Mainland China account worked);
 - Now Playing with NetEase Cloud Music's *开启 SMTC* setting off, and with any other player;
 - Calendar reminder notifications, and clicking one;
@@ -292,4 +295,4 @@ The hash must equal the value on that file's line (upper or lower case does not 
 
 ---
 
-Made by [DDDuoDuo](https://github.com/DDDuoDuo). An unofficial fan project. Game artwork and branding belong to HYPERGRYPH and their respective owners. Original code is MIT licensed; third-party assets and libraries keep their own terms, and their licences are in `THIRD-PARTY-NOTICES.txt` beside `EndfieldHUD.exe`. [Full credits and sources](https://github.com/DDDuoDuo/EndfieldHUD/blob/v1.2.0/CREDITS.md)
+Made by [DDDuoDuo](https://github.com/DDDuoDuo). An unofficial fan project. Game artwork and branding belong to HYPERGRYPH and their respective owners. Original code is MIT licensed; third-party assets and libraries keep their own terms, and their licences are in `THIRD-PARTY-NOTICES.txt` beside `EndfieldHUD.exe`. [Full credits and sources](https://github.com/DDDuoDuo/EndfieldHUD/blob/main/CREDITS.md)
