@@ -4860,7 +4860,7 @@ on its own.
 
 ### Test runs
 
-Laptop validation: <!-- pending: checkpoint 138 validation -->
+Laptop validation (code at `1d8d830`): a clean incremental Release build with no compiler or linker warnings; 403 of 404 registered suites pass in the full interactive run, including the update check, update platform, installer, install and release suites. `application_data_root_contracts` failed at "The owner edits the persisted note" while the tester was gaming and passed alone (136 checks): a key sent without modifiers lets the Notes owner read the real Ctrl/Shift/Alt/Win state, the same keyboard-state sensitivity as `notes_preview_contracts`. Combined module coverage (10 of 14 module areas; host checks 226 and 222) and hardware composition (2,058,114 checks) pass. The release build stages a complete, unsigned package (12 notice components, a two-line `SHA256SUMS`, installed size 63.98 MiB) whose release-notes draft names `v1.2.0`. The release-notes check of `7037e43` (the exporter link on `main`) passed separately in a laptop slot.
 
 No new registered test in this checkpoint (404, as in checkpoint 137).
 
