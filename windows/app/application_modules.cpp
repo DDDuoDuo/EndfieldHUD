@@ -38,6 +38,7 @@
 #include "tools/event_log_automation.hpp"
 #include "tools/activity_automation.hpp"
 #include "tools/storage_automation.hpp"
+#include "tools/settings_automation.hpp"
 #include <array>
 #include <cmath>
 #include <concepts>
@@ -483,8 +484,18 @@ public:
 
 class SettingsModule final : public ModuleOwner {
     tools::SettingsPreview& s_;
+    tools::SettingsAutomation automation_; // HUDSettingsInteraction peers (disconnects before the preview it reads)
 public:
-    explicit SettingsModule(tools::SettingsPreview& s) : s_(s) {}
+    SettingsModule(tools::SettingsPreview& s, gpu::ScreenReaderPeerHooks peerHooks) : s_(s), automation_(s, std::move(peerHooks)) {}
+    // The page's buttons, switches, sliders, choice lists, links, headings and
+    // the confirmation card (tools/settings_automation.hpp) under the group
+    // named after the page that accepts input (System, Display, Hotkeys, About).
+    bool automationRefresh(IRawElementProviderFragmentRoot* root) override { return automation_.refresh(root); }
+    std::size_t automationCount() const override { return automation_.count(); }
+    long automationChild(std::size_t i, IRawElementProviderFragment** out) const override { return automation_.child(i, out); }
+    long automationFromPoint(double x, double y, IRawElementProviderFragment** out) const override { return automation_.fromPoint(x, y, out); }
+    void automationDisconnect() noexcept override { automation_.disconnect(); }
+    std::optional<core::Module> automationModule() const noexcept override { return s_.inputModule(); }
     std::string_view name() const noexcept override { return "settings"; }
     ModuleRouting routing() const noexcept override {
         ModuleRouting r; r.pointerCapture = 1; r.pointer = 2; r.wheelCapture = 1; r.wheel = 2; r.keyCapture = 1; r.key = 2;
@@ -500,8 +511,16 @@ public:
     void update(const ModuleFrame& f) override { s_.update(f.center, f.chrome, f.presentation, f.opacity, f.time); }
     void prewarm(const ModuleFrame& f) override { previewPrewarm(s_, f); }
     bool requiresFrames(double t) const override { return s_.requiresFrames(t); }
-    std::optional<double> nextWakeTime(double now) const override { return s_.nextWakeTime(now); }
-    bool deadline(double t) override { s_.wake(t); return true; }
+    // While a UI Automation client holds the peers and they no longer match
+    // the pages (a page settled after its module switch, a slider dragged,
+    // the confirmation card shown or gone), one wake runs the deadline below,
+    // whose content event re-lists them; nothing is scheduled otherwise.
+    std::optional<double> nextWakeTime(double now) const override {
+        auto wake = s_.nextWakeTime(now);
+        if (automation_.stale()) wake = wake ? std::min(*wake, now) : now;
+        return wake;
+    }
+    bool deadline(double t) override { automation_.requested(); s_.wake(t); return true; }
     void upload(gpu::Renderer& r) override { s_.upload(r); }
     Entries entries(core::Module) override { return s_.entries(false); }
     Entries modalEntries() override { return s_.modalEntries(); }
@@ -882,7 +901,7 @@ std::unique_ptr<ModuleOwner> volumeModule(tools::VolumePreview& o, VolumeModuleH
 std::unique_ptr<ModuleOwner> eventLogModule(tools::EventLogPreview& o, gpu::ScreenReaderPeerHooks peers) { return std::make_unique<EventLogModule>(o, std::move(peers)); }
 std::unique_ptr<ModuleOwner> workModeModule(tools::WorkModePreview& o, VolumeModuleHooks hooks) { return std::make_unique<WorkModeModule>(o, std::move(hooks)); }
 std::unique_ptr<ModuleOwner> batteryModule(tools::BatteryPreview& o) { return std::make_unique<BatteryModule>(o); }
-std::unique_ptr<ModuleOwner> settingsModule(tools::SettingsPreview& o) { return std::make_unique<SettingsModule>(o); }
+std::unique_ptr<ModuleOwner> settingsModule(tools::SettingsPreview& o, gpu::ScreenReaderPeerHooks peers) { return std::make_unique<SettingsModule>(o, std::move(peers)); }
 std::unique_ptr<ModuleOwner> storageModule(tools::StoragePreview& o, StorageModuleHooks h, gpu::ScreenReaderPeerHooks peers) { return std::make_unique<StorageModule>(o, std::move(h), std::move(peers)); }
 std::unique_ptr<ModuleOwner> activityModule(tools::ActivityPreview& o, gpu::ScreenReaderPeerHooks peers) { return std::make_unique<ActivityModule>(o, std::move(peers)); }
 std::unique_ptr<ModuleOwner> readerModule(tools::ReaderPreview& o, gpu::ReaderOwner& r, gpu::LayerRasterizer& raster, std::function<void(const WheelEvent&, double)> observed, gpu::ScreenReaderPeerHooks peers) {

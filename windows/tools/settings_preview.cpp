@@ -9,7 +9,16 @@
 namespace endfield::tools {namespace {
 using Matrix=core::Matrix4;using Json=ehud::data::Json;namespace gpu=native;
 constexpr std::array<core::Module,4>modules{core::Module::system,core::Module::display,core::Module::hotkeys,core::Module::about};
-void need(bool v,const char*s){if(!v)throw std::invalid_argument(s);}Json blank(){return Json::Object{{"bounds",Json::Array{0,0,400,334}},{"position",Json::Array{0,0}},{"anchorPoint",Json::Array{0,0}},{"children",Json::Array{}}};}bool contains(core::Rect r,core::Point p){return p.x>=r.x&&p.y>=r.y&&p.x<r.x+r.width&&p.y<r.y+r.height;}
+void need(bool v,const char*s){if(!v)throw std::invalid_argument(s);}
+// Bounding rect of a canvas rect's projected corners, in logical client points.
+std::optional<core::Rect>projected(const core::Projection&projection,double scale,core::Rect r){
+ if(!std::isfinite(r.x)||!std::isfinite(r.y)||!std::isfinite(r.width)||!std::isfinite(r.height)||r.width<0||r.height<0||!(scale>0))return std::nullopt;
+ double x0=INFINITY,y0=INFINITY,x1=-INFINITY,y1=-INFINITY;
+ for(const core::Point c:{core::Point{r.x,r.y},core::Point{r.x+r.width,r.y},core::Point{r.x,r.y+r.height},core::Point{r.x+r.width,r.y+r.height}}){
+  const auto q=projection.project(c);if(!q||!std::isfinite(q->x)||!std::isfinite(q->y))return std::nullopt;
+  x0=std::min(x0,q->x);y0=std::min(y0,q->y);x1=std::max(x1,q->x);y1=std::max(y1,q->y);}
+ return core::Rect{x0/scale,y0/scale,(x1-x0)/scale,(y1-y0)/scale};}
+Json blank(){return Json::Object{{"bounds",Json::Array{0,0,400,334}},{"position",Json::Array{0,0}},{"anchorPoint",Json::Array{0,0}},{"children",Json::Array{}}};}bool contains(core::Rect r,core::Point p){return p.x>=r.x&&p.y>=r.y&&p.x<r.x+r.width&&p.y<r.y+r.height;}
 }
 struct SettingsPreview::Impl {
  struct Slot {modules::SettingsPresentation state;std::unique_ptr<gpu::NativeSettingsScene>scene;gpu::LayerScene geometry;gpu::NativeModuleSurface surface;gpu::NativeModuleRegistration registration;core::Projection projection;std::optional<gpu::ModuleSurfacePose>pose;bool active{},input{};
@@ -56,6 +65,25 @@ void SettingsPreview::cancelInteraction(double t){impl_->clock(t);impl_->cancel(
 bool SettingsPreview::pointerLocked()const noexcept{return impl_->captured||impl_->controller.capturingShortcut();}
 modules::SettingsController&SettingsPreview::controller()noexcept{return impl_->controller;}
 const modules::SettingsPresentation*SettingsPreview::view(core::Module m)const noexcept{for(const auto&s:impl_->slots)if(s->state.module()==m)return &s->state;return nullptr;}
+// UI Automation (tools/settings_automation.hpp): the page accepting input and
+// its actions, exactly as the pointer routes reach them; nothing while the
+// confirmation card is modal (it takes every click) or the HUD is closed.
+std::optional<core::Module>SettingsPreview::inputModule()const noexcept{const auto&i=*impl_;if(!i.overlay)return std::nullopt;for(const auto&s:i.slots)if(s->input&&s->pose)return s->state.module();return std::nullopt;}
+std::optional<core::Rect>SettingsPreview::clientRect(core::Rect r)const{const auto&i=*impl_;if(!i.overlay)return std::nullopt;for(const auto&s:i.slots)if(s->input&&s->pose)return projected(s->projection,i.metrics.scale,r);return std::nullopt;}
+const app::ClientMetrics&SettingsPreview::clientMetrics()const noexcept{return impl_->metrics;}
+bool SettingsPreview::perform(std::string_view action,double t){auto&i=*impl_;i.clock(t);if(!i.overlay||i.safety.modal())return false;auto*s=i.input();return s&&s->pose&&s->state.perform(action,i.time);}
+bool SettingsPreview::setSlider(std::string_view id,double value,double t){auto&i=*impl_;i.clock(t);if(!i.overlay||i.safety.modal()||!std::isfinite(value))return false;auto*s=i.input();return s&&s->pose&&s->state.setSlider(id,value,i.time);}
+const modules::SettingsSafety&SettingsPreview::safety()const noexcept{return impl_->safety;}
+core::Rect SettingsPreview::safetyViewport()const noexcept{const auto&m=impl_->metrics;return{0,0,m.width,m.height};}
+std::optional<core::Rect>SettingsPreview::safetyClientRect(core::Rect r)const{const auto&i=*impl_;if(!i.overlay||!i.safety.modal()||!i.safetyScene)return std::nullopt;return i.safetyScene->clientRect(r);}
+// The card's click: a press and release on the same button (SettingsSafety
+// pointerDown/pointerUp); true once the press reverted or kept the layout.
+bool SettingsPreview::performSafety(int button,double t){auto&i=*impl_;i.clock(t);if(!i.overlay||!i.safety.modal()||(button!=0&&button!=1)||i.safety.pose(i.time).dismissing)return false;
+ (void)i.safety.pointerDown(button,i.time);(void)i.safety.pointerUp(button,i.time);return !i.safety.modal()||i.safety.pose(i.time).dismissing;}
+bool SettingsPreview::focusSafety(int button,double t){auto&i=*impl_;i.clock(t);if(!i.overlay||!i.safety.modal()||(button!=0&&button!=1)||i.safety.pose(i.time).dismissing)return false;
+ if(i.safety.focused()!=button)(void)i.safety.key(button?VK_RIGHT:VK_LEFT,false,i.time);return i.safety.focused()==button;}
+std::uint64_t SettingsPreview::accessibilityRevision()const noexcept{const auto&i=*impl_;std::uint64_t h=1469598103934665603ull;const auto mix=[&h](std::uint64_t v){h=(h^v)*1099511628211ull;};
+ mix(i.overlay);for(std::size_t n=0;n<i.slots.size();++n){const auto&s=*i.slots[n];mix(n<<1|(s.input&&s.pose?1u:0u));mix(s.state.revision());}mix(i.safety.revision());mix(i.safety.modal());mix(i.safetyScene!=nullptr);return h;}
 void SettingsPreview::setCustomColor(std::array<double,3>color,double t){auto&i=*impl_;i.clock(t);i.slots[1]->state.setCustomColor(color,i.time);}
 void SettingsPreview::setCustomLogo(std::string revision,double t){auto&i=*impl_;i.clock(t);i.slots[1]->state.setCustomLogo(std::move(revision),i.time);}
 void SettingsPreview::showImportError(std::string error,double t){auto&i=*impl_;i.clock(t);i.slots[1]->state.showImportError(std::move(error),i.time);}

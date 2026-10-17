@@ -12,6 +12,11 @@ public:
  ~NativeSettingsSafety();void setAppearance(modules::SettingsAppearance);
  bool syncContent(core::Rect viewport,double time=0);void updatePose(core::Rect viewport,const core::Matrix4&centeredTilt,double time);
  std::optional<int>actionAt(core::Point logical)const;void upload(Renderer&);
+ // A card-local rect (SettingsSafety::geometry: the card at the origin, its
+ // buttons and labels) through the posed card plane: the bounds of its four
+ // projected corners in logical client points, as actionAt's hit test sees
+ // the card. None before the card is posed or once it is no longer modal.
+ std::optional<core::Rect>clientRect(core::Rect cardLocal)const;
  LayerCompositionEntry entry();bool releaseResources(Renderer&);
  core::Rect coverage()const noexcept;std::size_t rasterizations()const noexcept;
 private:struct Impl;std::unique_ptr<Impl>impl_;

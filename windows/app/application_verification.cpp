@@ -916,6 +916,28 @@ int Application::Impl::runHiddenVerification(){
                 groupProbe(core::Module::eventLog,eventLogModuleOwner.get(),std::nullopt);
                 groupProbe(core::Module::activityMonitor,activityModuleOwner.get(),std::nullopt);
                 groupProbe(core::Module::storage,storageModuleOwner.get(),std::nullopt);
+                // Settings (tools/settings_automation.hpp): each page's controls in
+                // a group named after the page; a switch toggled through UI
+                // Automation changes its preference exactly like its click and
+                // reports the new state.
+                if(settingsUI&&settingsModuleOwner&&registry.enabled(*settingsModuleOwner)){
+                    for(const auto page:{core::Module::system,core::Module::display,core::Module::hotkeys,core::Module::about})groupProbe(page,settingsModuleOwner.get(),std::nullopt);
+                    selectModule(core::Module::system,time);for(unsigned frame=0;frame<40;++frame)present(time+double(frame)/60,true);time+=1;
+                    HudAutomation uia(host.hwnd(),automationSource());(void)uia.refresh();
+                    ComPtr<IRawElementProviderFragment>focusLost;
+                    for(std::size_t n=0;n<settingsModuleOwner->automationCount()&&!focusLost;++n){ComPtr<IRawElementProviderFragment>f;
+                        if(SUCCEEDED(settingsModuleOwner->automationChild(n,&f))&&f&&textProperty(f.Get(),UIA_AutomationIdPropertyId)=="focus")focusLost=f;}
+                    const bool original=settingsUI->controller().configuration().boolean("closeOnFocusLost");
+                    ComPtr<IRawElementProviderSimple>simple;ComPtr<IUnknown>provider;ComPtr<IToggleProvider>toggle;ToggleState state{};
+                    hostCheck(focusLost&&SUCCEEDED(focusLost.As(&simple))&&SUCCEEDED(simple->GetPatternProvider(UIA_TogglePatternId,&provider))&&provider&&SUCCEEDED(provider.As(&toggle))&&
+                        SUCCEEDED(toggle->get_ToggleState(&state))&&(state==ToggleState_On)==original,"Settings > System lists Close when focus lost as a switch in its saved state");
+                    hostCheck(toggle&&toggle->Toggle()==S_OK&&settingsUI->controller().configuration().boolean("closeOnFocusLost")!=original&&SUCCEEDED(toggle->get_ToggleState(&state))&&(state==ToggleState_On)!=original,
+                        "Toggling the Settings switch through UI Automation changes the preference like its click and reports the new state");
+                    present(time,true);time+=.5;
+                    hostCheck(toggle&&toggle->Toggle()==S_OK&&settingsUI->controller().configuration().boolean("closeOnFocusLost")==original,"Toggling the Settings switch again restores the preference");
+                    present(time,true);time+=.5;
+                    uia.disconnectOwners();hostCheck(settingsModuleOwner->automationCount()==0,"Concealing disconnects the Settings controls");uia.shutdown();
+                }
                 // Keyboard focus under the real root (GetFocus): the open Notes
                 // editor is the focused element of the root and of its group;
                 // finishing it leaves no Notes element focused.

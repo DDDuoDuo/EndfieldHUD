@@ -1259,7 +1259,7 @@ void Application::Impl::createSettings(const ehud::data::Settings&loaded){
     options.viewHooks.logoSelection=[this]{++logoImportGeneration;};
     settingsUI=std::make_unique<tools::SettingsPreview>(rasterizer,std::move(options));settingsUI->resize(metrics);settingsUI->setOverlayVisible(session->phase()!=core::VisibilityPhase::concealed,visibleMode()?now():hostTime(args.benchmarkEpoch));
     refreshUpdateStatus();
-    settingsModuleOwner=settingsModule(*settingsUI);registerModule(settingsModuleOwner);
+    settingsModuleOwner=settingsModule(*settingsUI,peerHooks());registerModule(settingsModuleOwner);
     if(loginItem){
         // LoginItemManager.start(ensureEnabled:): only the saved preference
         // registers; a user-disabled startup entry is reported, never forced.

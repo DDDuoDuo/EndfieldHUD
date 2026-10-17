@@ -63,7 +63,9 @@ std::unique_ptr<ModuleOwner> eventLogModule(tools::EventLogPreview&, native::Scr
 // Work Mode reuses the Volume hooks (press clock and client -> screen).
 std::unique_ptr<ModuleOwner> workModeModule(tools::WorkModePreview&, VolumeModuleHooks = {});
 std::unique_ptr<ModuleOwner> batteryModule(tools::BatteryPreview&);
-std::unique_ptr<ModuleOwner> settingsModule(tools::SettingsPreview&);
+// Settings lists its pages' controls and the confirmation card
+// (tools/settings_automation.hpp) under the HUD root.
+std::unique_ptr<ModuleOwner> settingsModule(tools::SettingsPreview&, native::ScreenReaderPeerHooks = {});
 std::unique_ptr<ModuleOwner> storageModule(tools::StoragePreview&, StorageModuleHooks, native::ScreenReaderPeerHooks);
 std::unique_ptr<ModuleOwner> activityModule(tools::ActivityPreview&, native::ScreenReaderPeerHooks);
 // Reader, Calendar, Map and the minigame list their projected peers
