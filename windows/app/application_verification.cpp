@@ -734,9 +734,9 @@ int Application::Impl::runHiddenVerification(){
                         // while it is open (HUDProjectedTextView.projectedCursor), through
                         // the owner and the host's WM_SETCURSOR route; the source cursor
                         // beside it and once it closes.
-                        double start=time+.66;present(start,true);
-                        need(workMode->perform("work:countdown",start)&&workMode->perform("work:custom",start+.005)&&workMode->editing(),"Work Mode opens its custom duration field through its accessible controls");
-                        for(unsigned n=1;n<=6;++n)present(start+.005+double(n)/60,true);
+                        double workStart=time+.66;present(workStart,true);
+                        need(workMode->perform("work:countdown",workStart)&&workMode->perform("work:custom",workStart+.005)&&workMode->editing(),"Work Mode opens its custom duration field through its accessible controls");
+                        for(unsigned n=1;n<=6;++n)present(workStart+.005+double(n)/60,true);
                         const auto field=workMode->clientRect(endfield::modules::WorkModePresentation::durationEditorRect());
                         const auto beside=workMode->clientRect({40,150,0,0});
                         const core::Point center=field?core::Point{field->x+field->width/2,field->y+field->height/2}:core::Point{};
@@ -747,7 +747,7 @@ int Application::Impl::runHiddenVerification(){
                         // HUDWorkModeInteraction.layoutAccessibility: the open
                         // HUDWorkDurationField is the focused Edit peer under the HUD
                         // root; its value is the draft and SetValue replaces it.
-                        {HudAutomation probe(host.hwnd(),automationSource());(void)probe.refresh();
+                        {HudAutomation uia(host.hwnd(),automationSource());(void)uia.refresh();
                          ComPtr<IRawElementProviderFragment>editor;
                          for(std::size_t n=0;n<workModeModuleOwner->automationCount()&&!editor;++n){ComPtr<IRawElementProviderFragment>f;
                              if(SUCCEEDED(workModeModuleOwner->automationChild(n,&f))&&f&&textProperty(f.Get(),UIA_AutomationIdPropertyId)==gpu::workModeDurationEditorID)editor=f;}
@@ -761,18 +761,18 @@ int Application::Impl::runHiddenVerification(){
                          if(text)SysFreeString(text);
                          hostCheck(read,"The duration field's UI Automation value is its draft text");
                          hostCheck(value&&value->SetValue(L"0:07")==S_OK&&workMode->editingText()==std::optional<std::string>("0:07")&&workMode->editing(),"Setting the duration field's value replaces the draft and keeps it open");
-                         probe.disconnectOwners();probe.shutdown();}
-                        need(workMode->finishEditing(false,start+.12)&&!workMode->editing(),"Cancelling closes the duration field");
-                        present(start+.13,true);
+                         uia.disconnectOwners();uia.shutdown();}
+                        need(workMode->finishEditing(false,workStart+.12)&&!workMode->editing(),"Cancelling closes the duration field");
+                        present(workStart+.13,true);
                         hostCheck(!workModeModuleOwner->cursorAt(center)&&cursorAt(center)==ModuleCursor::source,"Closing the field restores the source cursor");
-                        start+=.14;
+                        workStart+=.14;
                         // Drive the host's one Work Mode controller through its accessible
                         // controls so areas observing it (Personal Profile lifetime hours)
                         // receive real checkpoints in hidden coverage.
-                        present(start,true);
-                        need(workMode->perform("work:stopwatch",start)&&workMode->perform("work:start",start+.01),"Work Mode starts a stopwatch through its accessible controls");
-                        for(unsigned n=1;n<=30;++n)present(start+.01+double(n)/60,true);
-                        const double stop=start+.6;
+                        present(workStart,true);
+                        need(workMode->perform("work:stopwatch",workStart)&&workMode->perform("work:start",workStart+.01),"Work Mode starts a stopwatch through its accessible controls");
+                        for(unsigned n=1;n<=30;++n)present(workStart+.01+double(n)/60,true);
+                        const double stop=workStart+.6;
                         need(workMode->perform("work:pause",stop)&&workMode->controller().snapshot(stop).phase==endfield::modules::WorkModePhase::paused&&workMode->controller().trackedWorkSeconds(stop)>0,"The stopwatch pauses with tracked time");
                         present(stop+.01,true);
                     }
@@ -808,10 +808,10 @@ int Application::Impl::runHiddenVerification(){
                 }
                 if(volumeModuleOwner&&registry.enabled(*volumeModuleOwner)){
                     selectModule(core::Module::volume,time);for(unsigned frame=0;frame<40;++frame)present(time+double(frame)/60,true);time+=1;
-                    HudAutomation probe(host.hwnd(),automationSource());(void)probe.refresh();
-                    hostCheck(probe.groups()>=1&&volumeModuleOwner->automationCount()>0,"The HUD's UI Automation root lists the projected Volume controls");
+                    HudAutomation uia(host.hwnd(),automationSource());(void)uia.refresh();
+                    hostCheck(uia.groups()>=1&&volumeModuleOwner->automationCount()>0,"The HUD's UI Automation root lists the projected Volume controls");
                     Microsoft::WRL::ComPtr<IRawElementProviderFragment> rootFragment,group,child,parent,hit;
-                    hostCheck(SUCCEEDED(probe.root()->QueryInterface(IID_PPV_ARGS(&rootFragment)))&&rootFragment,"The UIA root is a fragment");
+                    hostCheck(SUCCEEDED(uia.root()->QueryInterface(IID_PPV_ARGS(&rootFragment)))&&rootFragment,"The UIA root is a fragment");
                     const auto caption=moduleCaption("volume",watchAppearance.language,"volume");
                     for(HRESULT hr=rootFragment->Navigate(NavigateDirection_FirstChild,&group);SUCCEEDED(hr)&&group;){
                         Microsoft::WRL::ComPtr<IRawElementProviderSimple> simple;VARIANT name;VariantInit(&name);
@@ -823,7 +823,7 @@ int Application::Impl::runHiddenVerification(){
                         "Volume fragments are children of their group and navigate back to it");
                     if(child&&parent){Microsoft::WRL::ComPtr<IUnknown> a,b;(void)parent.As(&a);(void)group.As(&b);hostCheck(a.Get()==b.Get(),"A fragment's parent is its owner's group");}
                     UiaRect rect{};if(child)(void)child->get_BoundingRectangle(&rect);
-                    hostCheck(rect.width>0&&rect.height>0&&SUCCEEDED(probe.root()->ElementProviderFromPoint(rect.left+rect.width/2,rect.top+rect.height/2,&hit))&&hit,"The root's hit test reaches a projected Volume control");
+                    hostCheck(rect.width>0&&rect.height>0&&SUCCEEDED(uia.root()->ElementProviderFromPoint(rect.left+rect.width/2,rect.top+rect.height/2,&hit))&&hit,"The root's hit test reaches a projected Volume control");
                     // The user-requested app list (five synthetic apps): three rows
                     // (95 points), and a wheel step moves the retained rows without
                     // laying the module out again.
@@ -850,9 +850,9 @@ int Application::Impl::runHiddenVerification(){
                     if(volumeIcons&&utility){
                         const auto shelfIcons=shelf?shelf->resources().iconWorkerStarts:0;const auto workers=utility->stats().workersStarted;
                         utility->waitIdle();utilityCompleted();for(unsigned frame=0;frame<4;++frame)present(time+double(frame)/60,true);time+=1;
-                        const auto rows=volume->visibleIcons();const auto&apps=volume->state().snapshot().applications;
-                        std::size_t withIcon{},without{};bool exact=!rows.empty();
-                        for(const auto&row:rows){const auto app=std::find_if(apps.begin(),apps.end(),[&](const auto&a){return a.id==row.applicationID;});
+                        const auto iconRows=volume->visibleIcons();const auto&apps=volume->state().snapshot().applications;
+                        std::size_t withIcon{},without{};bool exact=!iconRows.empty();
+                        for(const auto&row:iconRows){const auto app=std::find_if(apps.begin(),apps.end(),[&](const auto&a){return a.id==row.applicationID;});
                             if(app==apps.end()||!row.executable){exact=false;continue;}
                             if(row.executable->identity.objectID[0]!=3){++withIcon;exact=exact&&app->icon&&volumeIcons->images().acquire(app->icon->imageKey,app->icon->revision)!=nullptr;}
                             else{++without;exact=exact&&!app->icon;}}
@@ -869,8 +869,8 @@ int Application::Impl::runHiddenVerification(){
                             "Returning to App volume binds the cached icons at once, without loading them again");
                         for(unsigned frame=0;frame<20;++frame)present(time+double(frame)/60,true);time+=1;
                     }
-                    probe.disconnectOwners();hostCheck(volumeModuleOwner->automationCount()==0&&probe.groups()==0,"Concealing disconnects every fragment");
-                    probe.shutdown();
+                    uia.disconnectOwners();hostCheck(volumeModuleOwner->automationCount()==0&&uia.groups()==0,"Concealing disconnects every fragment");
+                    uia.shutdown();
                 }
                 // Every module's UI Automation group under the real HUD root:
                 // named after its module, children navigate back to it, and the
@@ -925,18 +925,18 @@ int Application::Impl::runHiddenVerification(){
                     for(const auto&e:elements)if(e.enabled&&e.id.starts_with("note:")&&e.id.ends_with(":edit")){edit=e.id;break;}
                     hostCheck(!edit.empty()&&notes->perform(edit,time),"A Notes text card opens its editor through its accessible Edit action");
                     for(unsigned frame=1;frame<=20;++frame)present(time+double(frame)/60,true);time+=.5;
-                    HudAutomation probe(host.hwnd(),automationSource());(void)probe.refresh();
+                    HudAutomation uia(host.hwnd(),automationSource());(void)uia.refresh();
                     ComPtr<IRawElementProviderFragment>focusedRoot,focusedGroup;ComPtr<IRawElementProviderFragmentRoot>groupRoot;
-                    const auto group=findGroup(probe,moduleCaption("notes",watchAppearance.language,"notes"));
-                    hostCheck(SUCCEEDED(probe.root()->GetFocus(&focusedRoot))&&focusedRoot&&textProperty(focusedRoot.Get(),UIA_AutomationIdPropertyId).starts_with("notes:editor:"),
+                    const auto group=findGroup(uia,moduleCaption("notes",watchAppearance.language,"notes"));
+                    hostCheck(SUCCEEDED(uia.root()->GetFocus(&focusedRoot))&&focusedRoot&&textProperty(focusedRoot.Get(),UIA_AutomationIdPropertyId).starts_with("notes:editor:"),
                         "The HUD root's GetFocus returns the open Notes editor");
                     hostCheck(group&&SUCCEEDED(group.As(&groupRoot))&&SUCCEEDED(groupRoot->GetFocus(&focusedGroup))&&same(focusedGroup.Get(),focusedRoot.Get()),
                         "The Notes group's GetFocus returns the same editor");
-                    hostCheck(notes->finish(),"The Notes editor finishes");present(time,true);time+=.5;(void)probe.refresh();
+                    hostCheck(notes->finish(),"The Notes editor finishes");present(time,true);time+=.5;(void)uia.refresh();
                     ComPtr<IRawElementProviderFragment>afterwards;
-                    hostCheck(SUCCEEDED(probe.root()->GetFocus(&afterwards))&&(!afterwards||!textProperty(afterwards.Get(),UIA_AutomationIdPropertyId).starts_with("notes:editor:")),
+                    hostCheck(SUCCEEDED(uia.root()->GetFocus(&afterwards))&&(!afterwards||!textProperty(afterwards.Get(),UIA_AutomationIdPropertyId).starts_with("notes:editor:")),
                         "No Notes editor holds the focus once it finished");
-                    probe.disconnectOwners();probe.shutdown();
+                    uia.disconnectOwners();uia.shutdown();
                 }
                 // The source navigation's accessibility buttons (HUDSourceWatchView):
                 // bound entries carry their titles and the selected module the
@@ -946,7 +946,7 @@ int Application::Impl::runHiddenVerification(){
                 if(navigationAutomation&&registry.enabled(*navigationAutomation)){
                     selectModule(core::Module::notes,time);session->setScrollPosition(1,time);for(unsigned frame=0;frame<40;++frame)present(time+double(frame)/60,true);time+=1;
                     const bool inputBefore=session->inputEnabled();session->setInputEnabled(true,time);present(time,true);
-                    HudAutomation probe(host.hwnd(),automationSource());(void)probe.refresh();
+                    HudAutomation uia(host.hwnd(),automationSource());(void)uia.refresh();
                     const auto notesTitle=moduleCaption("notes",watchAppearance.language,"notes");
                     const auto selectedText=core::localized("Selected","已选择",watchAppearance.language==core::Language::system?core::Language::english:watchAppearance.language);
                     ComPtr<IRawElementProviderFragment>notesEntry,quitButton,scrollUp,scrollDown;std::size_t selectedEntries{};
@@ -960,17 +960,17 @@ int Application::Impl::runHiddenVerification(){
                         "The source navigation lists the selected Notes entry, the only one valued Selected");
                     hostCheck(quitButton!=nullptr,"The source navigation lists the red power button");
                     UiaRect r{};ComPtr<IRawElementProviderFragment>found;if(notesEntry)(void)notesEntry->get_BoundingRectangle(&r);
-                    hostCheck(r.width>0&&r.height>0&&SUCCEEDED(probe.root()->ElementProviderFromPoint(r.left+r.width/2,r.top+r.height/2,&found))&&same(found.Get(),notesEntry.Get()),
+                    hostCheck(r.width>0&&r.height>0&&SUCCEEDED(uia.root()->ElementProviderFromPoint(r.left+r.width/2,r.top+r.height/2,&found))&&same(found.Get(),notesEntry.Get()),
                         "The root's hit test finds the Notes navigation entry");
                     const auto enabled=[&](const ComPtr<IRawElementProviderFragment>&f){ComPtr<IRawElementProviderSimple>simple;VARIANT v;VariantInit(&v);
                         const bool on=f&&SUCCEEDED(f.As(&simple))&&SUCCEEDED(simple->GetPropertyValue(UIA_IsEnabledPropertyId,&v))&&v.vt==VT_BOOL&&v.boolVal==VARIANT_TRUE;VariantClear(&v);return on;};
                     hostCheck(scrollUp&&scrollDown&&!enabled(scrollUp)&&enabled(scrollDown),"At the top only Scroll modules down is enabled");
                     const double before=session->scrollPosition();ComPtr<IInvokeProvider>invoke;
                     hostCheck(scrollDown&&SUCCEEDED(scrollDown.As(&invoke))&&invoke->Invoke()==S_OK&&session->scrollPosition()<before-1e-9,"Scroll modules down scrolls the navigation like the Mac button");
-                    for(unsigned frame=1;frame<=20;++frame)present(time+double(frame)/60,true);time+=.5;(void)probe.refresh();
+                    for(unsigned frame=1;frame<=20;++frame)present(time+double(frame)/60,true);time+=.5;(void)uia.refresh();
                     hostCheck(enabled(scrollUp),"After scrolling, Scroll modules up is enabled");
                     session->setScrollPosition(1,time);session->setInputEnabled(inputBefore,time);present(time,true);time+=.5;
-                    probe.disconnectOwners();hostCheck(navigationAutomation->automationCount()==0,"Concealing disconnects the navigation buttons");probe.shutdown();
+                    uia.disconnectOwners();hostCheck(navigationAutomation->automationCount()==0,"Concealing disconnects the navigation buttons");uia.shutdown();
                 }
                 // Map, Calendar and the minigame (the Reader's ran in cycle 0).
                 const auto month=calendar?calendar->view().month():endfield::modules::CalendarDay{};
@@ -981,13 +981,13 @@ int Application::Impl::runHiddenVerification(){
                 // its group is named Power and its help is the live reading.
                 if(auto*power=areaOwner("powerCharge");power&&registry.enabled(*power)&&powerArea()){
                     selectModule(core::Module::notes,time);for(unsigned frame=0;frame<40;++frame)present(time+double(frame)/60,true);time+=1;
-                    HudAutomation probe(host.hwnd(),automationSource());(void)probe.refresh();
+                    HudAutomation uia(host.hwnd(),automationSource());(void)uia.refresh();
                     ComPtr<IRawElementProviderFragment>entry;
                     for(std::size_t n=0;n<power->automationCount()&&!entry;++n){ComPtr<IRawElementProviderFragment>f;if(SUCCEEDED(power->automationChild(n,&f))&&f&&textProperty(f.Get(),UIA_AutomationIdPropertyId)=="power")entry=f;}
                     hostCheck(entry&&textProperty(entry.Get(),UIA_HelpTextPropertyId)==powerArea()->powerAccessibilityLabel(),"The Power navigation entry's help is the live charge reading");
                     UiaRect r{};ComPtr<IRawElementProviderFragment>found;if(entry)(void)entry->get_BoundingRectangle(&r);
-                    hostCheck(r.width>0&&r.height>0&&SUCCEEDED(probe.root()->ElementProviderFromPoint(r.left+r.width/2,r.top+r.height/2,&found))&&same(found.Get(),entry.Get()),"The root's hit test finds the Power navigation entry");
-                    probe.disconnectOwners();probe.shutdown();
+                    hostCheck(r.width>0&&r.height>0&&SUCCEEDED(uia.root()->ElementProviderFromPoint(r.left+r.width/2,r.top+r.height/2,&found))&&same(found.Get(),entry.Get()),"The root's hit test finds the Power navigation entry");
+                    uia.disconnectOwners();uia.shutdown();
                 }
                 // Services the host publishes for the areas.
                 if(areaHost&&eventOwner)hostCheck(areaHost->find<gpu::EventLogOwner>(gpu::eventLogOwnerServiceKey)==eventOwner.get(),"The Event Log owner is published read-only for the areas");
@@ -1024,8 +1024,8 @@ int Application::Impl::runHiddenVerification(){
                 if(chrome&&settingsUI){
                     selectModule(core::Module::notes,time);for(unsigned frame=0;frame<40;++frame)present(time+double(frame)/60,true);time+=1;
                     const auto world=chrome->statusWorld();
-                    const auto camera=gpu::layerViewportProjection(metrics.pixelWidth,metrics.pixelHeight)*core::Matrix4::scale(metrics.scale,metrics.scale);
-                    const auto client=[&](core::Point local)->std::optional<core::Point>{if(!world)return std::nullopt;const auto p=core::Projection::viewport(camera**world,metrics.pixelWidth,metrics.pixelHeight).project(local);
+                    const auto viewProjection=gpu::layerViewportProjection(metrics.pixelWidth,metrics.pixelHeight)*core::Matrix4::scale(metrics.scale,metrics.scale);
+                    const auto client=[&](core::Point local)->std::optional<core::Point>{if(!world)return std::nullopt;const auto p=core::Projection::viewport(viewProjection**world,metrics.pixelWidth,metrics.pixelHeight).project(local);
                         if(!p)return std::nullopt;return core::Point{p->x/metrics.scale,p->y/metrics.scale};};
                     const auto original=configuration.string("clockStyle");
                     const auto indicator=source::DesktopClockArtworkPlan::indicatorRect(3);
@@ -1046,7 +1046,7 @@ int Application::Impl::runHiddenVerification(){
                         hostCheck(clockPress({PointerKind::down,PointerButton::left,body->x,body->y},time)&&notes->selected()==core::Module::workMode,"Clicking the clock opens Work Mode");
                         for(unsigned frame=0;frame<40;++frame)present(time+double(frame)/60,true);time+=1;
                         // layoutClockControls: the clock's UIA buttons under the HUD root.
-                        if(clockAutomation){HudAutomation probe(host.hwnd(),automationSource());(void)probe.refresh();
+                        if(clockAutomation){HudAutomation uia(host.hwnd(),automationSource());(void)uia.refresh();
                             ComPtr<IRawElementProviderFragment>style;std::string selected;
                             for(std::size_t n=0;n<clockAutomation->automationCount();++n){ComPtr<IRawElementProviderFragment>f;
                                 if(SUCCEEDED(clockAutomation->automationChild(n,&f))&&f){const auto id=textProperty(f.Get(),UIA_AutomationIdPropertyId);
@@ -1054,7 +1054,7 @@ int Application::Impl::runHiddenVerification(){
                             hostCheck(clockAutomation->automationCount()==6&&selected=="clock:style:4","The clock lists Work Mode and five style buttons; the selected style's value is Selected");
                             ComPtr<IInvokeProvider>invoke;
                             hostCheck(style&&SUCCEEDED(style.As(&invoke))&&invoke->Invoke()==S_OK&&settingsUI->controller().committed().string("clockStyle")=="dial","Invoking a clock style button selects that style");
-                            present(time,true);time+=.1;probe.disconnectOwners();hostCheck(clockAutomation->automationCount()==0,"Concealing disconnects the clock buttons");probe.shutdown();}
+                            present(time,true);time+=.1;uia.disconnectOwners();hostCheck(clockAutomation->automationCount()==0,"Concealing disconnects the clock buttons");uia.shutdown();}
                         auto restore=settingsUI->controller().committed();restore.set("clockStyle",original);settingsUI->controller().update(std::move(restore),time);present(time,true);time+=.1;
                     }
                 }
@@ -1065,29 +1065,29 @@ int Application::Impl::runHiddenVerification(){
                 if(chrome&&settingsUI&&!settings.reduceMotion){
                     selectModule(core::Module::notes,time);for(unsigned frame=0;frame<40;++frame)present(time+double(frame)/60,true);time+=1;
                     const auto world=chrome->statusWorld();
-                    const auto camera=gpu::layerViewportProjection(metrics.pixelWidth,metrics.pixelHeight)*core::Matrix4::scale(metrics.scale,metrics.scale);
+                    const auto viewProjection=gpu::layerViewportProjection(metrics.pixelWidth,metrics.pixelHeight)*core::Matrix4::scale(metrics.scale,metrics.scale);
                     std::optional<core::Point> body;
-                    if(world)if(const auto p=core::Projection::viewport(camera**world,metrics.pixelWidth,metrics.pixelHeight).project({170,50}))body=core::Point{p->x/metrics.scale,p->y/metrics.scale};
+                    if(world)if(const auto p=core::Projection::viewport(viewProjection**world,metrics.pixelWidth,metrics.pixelHeight).project({170,50}))body=core::Point{p->x/metrics.scale,p->y/metrics.scale};
                     hostCheck(body&&clockPoint(*body),"The clock body is hit-tested for the wheel");
                     if(body){
                         constexpr std::array<std::string_view,5> styles{"digital","split","dial","rail","stacked"};
                         const auto original=configuration.string("clockStyle");
-                        const auto at=std::find(styles.begin(),styles.end(),original);const auto index=at==styles.end()?0u:unsigned(at-styles.begin());
+                        const auto styleAt=std::find(styles.begin(),styles.end(),original);const auto index=styleAt==styles.end()?0u:unsigned(styleAt-styles.begin());
                         const auto next=std::string(styles[(index+1)%5]);
                         // Three wheel notches down within the gesture window: 36 points.
                         for(unsigned n=0;n<3;++n)(void)clockWheel({body->x,body->y,-1,false,0,3},time+double(n)*.05);
                         hostCheck(settingsUI->controller().committed().string("clockStyle")==next,"A mouse wheel turned down over the clock advances its style once");
-                        const double start=time+.2;present(start,true);
+                        const double pushStart=time+.2;present(pushStart,true);
                         auto*const pages=chrome->transitionScene();
                         hostCheck(chrome->styleTransitionActive()&&pages&&std::find_if(ordered.begin(),ordered.end(),[&](const auto&e){return e.scene==pages;})!=ordered.end(),
                             "The style change starts the clock page push and composes its two pages");
-                        present(start+source::DesktopChromeTiming::styleDuration/2,true);
+                        present(pushStart+source::DesktopChromeTiming::styleDuration/2,true);
                         const auto offsets=chrome->transitionOffsets();
                         hostCheck(offsets&&std::abs((*offsets)[0]+170)<.5&&std::abs((*offsets)[1]-170)<.5,"Half way (easeInEaseOut) the outgoing page left by 170 points and the incoming one is 170 points from the right");
-                        present(start+.3,true);
+                        present(pushStart+.3,true);
                         hostCheck(!chrome->styleTransitionActive()&&!chrome->transitionScene()&&std::none_of(ordered.begin(),ordered.end(),[&](const auto&e){return e.scene==pages;}),"After 0.26 s the push ends and the status panel shows its page again");
                         // A wheel turned up goes back; one gesture changes the style once.
-                        time=start+1;for(unsigned n=0;n<3;++n)(void)clockWheel({body->x,body->y,1,false,0,3},time+double(n)*.05);
+                        time=pushStart+1;for(unsigned n=0;n<3;++n)(void)clockWheel({body->x,body->y,1,false,0,3},time+double(n)*.05);
                         hostCheck(settingsUI->controller().committed().string("clockStyle")==original,"A mouse wheel turned up over the clock goes back one style");
                         present(time+.2,true);
                         hostCheck(chrome->styleTransitionActive()&&chrome->transitionOffsets()&&(*chrome->transitionOffsets())[1]<0,"Going back pushes the page in from the left");
@@ -1109,24 +1109,24 @@ int Application::Impl::runHiddenVerification(){
                     hostCheck(center&&session->logoContains(*center)&&session->sourceControlAt(*center,centerLogoMainID),"The industry logo's projected quad is a source control of the current frame");
                     if(center){
                         hostCheck(!backgroundPressCloses(*center),"A press on the industry logo never closes the HUD");
-                        const double start=time+.01;
-                        hostCheck(logoPointer({PointerKind::down,PointerButton::left,center->x,center->y},time)&&logoPointer({PointerKind::up,PointerButton::left,center->x,center->y},start)&&session->logoFlickering(),
+                        const double flickerStart=time+.01;
+                        hostCheck(logoPointer({PointerKind::down,PointerButton::left,center->x,center->y},time)&&logoPointer({PointerKind::up,PointerButton::left,center->x,center->y},flickerStart)&&session->logoFlickering(),
                             "Clicking the industry logo starts its flicker");
-                        present(start+.07,true);const auto first=session->logoOpacity();
-                        present(start+.15,true);const auto between=session->logoOpacity();
-                        present(start+.22,true);const auto second=session->logoOpacity();
-                        hostCheck(session->demand(start+.22).finiteAnimation,"The flicker requests frames while it runs");
-                        present(start+.5,true);
+                        present(flickerStart+.07,true);const auto first=session->logoOpacity();
+                        present(flickerStart+.15,true);const auto between=session->logoOpacity();
+                        present(flickerStart+.22,true);const auto second=session->logoOpacity();
+                        hostCheck(session->demand(flickerStart+.22).finiteAnimation,"The flicker requests frames while it runs");
+                        present(flickerStart+.5,true);
                         hostCheck(first==.22f&&between==1.f&&second==.38f&&session->logoOpacity()==1.f&&!session->logoFlickering(),"The logo dips to .22 and .38 and settles after .46 s");
-                        time=start+1;present(time,true);
-                        if(navigationAutomation){HudAutomation probe(host.hwnd(),automationSource());(void)probe.refresh();
+                        time=flickerStart+1;present(time,true);
+                        if(navigationAutomation){HudAutomation uia(host.hwnd(),automationSource());(void)uia.refresh();
                             ComPtr<IRawElementProviderFragment>logo;
                             for(std::size_t n=0;n<navigationAutomation->automationCount()&&!logo;++n){ComPtr<IRawElementProviderFragment>f;
                                 if(SUCCEEDED(navigationAutomation->automationChild(n,&f))&&f&&textProperty(f.Get(),UIA_AutomationIdPropertyId)=="navigation:industryLogo")logo=f;}
                             hostCheck(logo&&textProperty(logo.Get(),UIA_NamePropertyId)=="ENDFIELD INDUSTRIES","The navigation lists the ENDFIELD INDUSTRIES logo button");
                             ComPtr<IInvokeProvider>invoke;
                             hostCheck(logo&&SUCCEEDED(logo.As(&invoke))&&invoke->Invoke()==S_OK&&session->logoFlickering(),"Invoking the logo button flickers the logo");
-                            present(time+.6,true);time+=1;probe.disconnectOwners();probe.shutdown();}
+                            present(time+.6,true);time+=1;uia.disconnectOwners();uia.shutdown();}
                     }
                 }
                 // Display adaptation (core/source_desktop_chrome.hpp desktopContentScale):
@@ -1181,8 +1181,8 @@ int Application::Impl::runHiddenVerification(){
                     const auto ps=chromeSettings(core::Module::addApp);probePlane.update(*chromePlan->projection().center,ps,notes->modulePresentation().current,1);
                     const auto plane=core::Projection::viewport(gpu::layerViewportProjection(metrics.pixelWidth,metrics.pixelHeight)*core::Matrix4::scale(metrics.scale,metrics.scale)*probePlane.pose().contentWorld,metrics.pixelWidth,metrics.pixelHeight);
                     if(const auto center=plane.project({200,167})){const core::Point p{center->x/metrics.scale,center->y/metrics.scale};
-                        const std::vector<std::string>document{"C:\\Synthetic\\Notes.txt"};
-                        hostCheck(dropTarget(p)==std::optional<std::string>("area")&&!dropHover(document,p)&&dropHoverOwner==apps,"A file drag over Add App reaches the area, which refuses a document before the drop");
+                        const std::vector<std::string>documents{"C:\\Synthetic\\Notes.txt"};
+                        hostCheck(dropTarget(p)==std::optional<std::string>("area")&&!dropHover(documents,p)&&dropHoverOwner==apps,"A file drag over Add App reaches the area, which refuses a document before the drop");
                         hostCheck(dropHover({},std::nullopt)&&!dropHoverOwner,"Leaving the HUD ends the area's drag feedback");}
                 }
                 // The Shelf navigation entry takes an OLE file drop from any other module.

@@ -685,14 +685,14 @@ void ProfileArea::coverageModule(app::ModuleCoverage& step) {
             // AppDelegate Edit menu over the open field, through the synthetic
             // clipboard with explicitly stated modifiers.
             {
-                auto* page = owner_->page();
+                auto* editingPage = owner_->page();
                 const tools::ProfileKeyModifiers control{false, true, false};
                 const auto writes = coverageClipboard_->writes, reads = coverageClipboard_->reads;
-                step.check(page && page->key({app::KeyKind::down, 'A'}, control, t) && page->key({app::KeyKind::down, 'C'}, control, t) &&
+                step.check(editingPage && editingPage->key({app::KeyKind::down, 'A'}, control, t) && editingPage->key({app::KeyKind::down, 'C'}, control, t) &&
                            coverageClipboard_->writes == writes + 1 && coverageClipboard_->value && coverageClipboard_->value->text == u"Endmin 管理员",
                            "Ctrl+C copies the selected draft to the clipboard");
                 coverageClipboard_->value = gpu::NotesClipboardText{u"Pasted", std::nullopt, std::nullopt};
-                step.check(page->key({app::KeyKind::down, 'V'}, control, t) && coverageClipboard_->reads == reads + 1 && view() && view()->text == "Pasted",
+                step.check(editingPage->key({app::KeyKind::down, 'V'}, control, t) && coverageClipboard_->reads == reads + 1 && view() && view()->text == "Pasted",
                            "Ctrl+V pastes over the selection like typing");
             }
             step.check(owner_->page()->finishEditing(false, t) && !owner_->page()->editing() && owner_->state()->profile().name == "Endministrator",

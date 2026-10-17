@@ -56,11 +56,11 @@ Json Application::Impl::memorySnapshot(std::string_view stage, bool threads) {
         const auto value = o.residency();
         if (value != ModuleResidency{}) { r.residency = value; r.reported = true; }
     }, "residency");
-    std::vector<std::pair<std::string_view, const Owner*>> ordered;
-    for (const auto& [name, o] : owners) ordered.emplace_back(name, &o);
-    std::sort(ordered.begin(), ordered.end(), [](const auto& a, const auto& b) { return a.second->total() > b.second->total(); });
+    std::vector<std::pair<std::string_view, const Owner*>> byTotal;
+    for (const auto& [name, o] : owners) byTotal.emplace_back(name, &o);
+    std::sort(byTotal.begin(), byTotal.end(), [](const auto& a, const auto& b) { return a.second->total() > b.second->total(); });
     Json::Array ownerRows;
-    for (const auto& [name, o] : ordered) {
+    for (const auto& [name, o] : byTotal) {
         Json::Object value{{"owner", std::string(name)}, {"registered", o->registered},
             {"rasterEntries", bytes(o->rasterEntries)}, {"rasterPixelBytes", bytes(o->rasterBytes)},
             {"retainedTextLayouts", bytes(o->textLayouts)}, {"typographyBytes", bytes(o->typographyBytes)}, {"textMetadataBytes", bytes(o->textMetadataBytes)},

@@ -1236,7 +1236,7 @@ public:
         if(result.state!=ClipboardReadState::payload)return set_clipboard_error(S_OK);
         if(result.payload.kind==ClipboardKind::image)return set_clipboard_error(HRESULT_FROM_WIN32(ERROR_NOT_SUPPORTED));
         const auto inserted=clipboard.ingest(std::move(result.payload));if(inserted==ClipboardInsertResult::invalid)return set_clipboard_error(HRESULT_FROM_WIN32(ERROR_INVALID_DATA));if(inserted==ClipboardInsertResult::full)return set_clipboard_error(HRESULT_FROM_WIN32(ERROR_NOT_ENOUGH_MEMORY));
-        const bool changed=clipboard_error!=S_OK;clipboard_error=S_OK;if(inserted==ClipboardInsertResult::inserted||inserted==ClipboardInsertResult::moved||changed)notify(ServiceChange::clipboard);return inserted==ClipboardInsertResult::inserted||inserted==ClipboardInsertResult::moved?S_OK:S_FALSE;
+        const bool recovered=clipboard_error!=S_OK;clipboard_error=S_OK;if(inserted==ClipboardInsertResult::inserted||inserted==ClipboardInsertResult::moved||recovered)notify(ServiceChange::clipboard);return inserted==ClipboardInsertResult::inserted||inserted==ClipboardInsertResult::moved?S_OK:S_FALSE;
     }
     HRESULT set_clipboard_error(HRESULT status) {
         if (clipboard_error != status) { clipboard_error = status; notify(ServiceChange::clipboard); }

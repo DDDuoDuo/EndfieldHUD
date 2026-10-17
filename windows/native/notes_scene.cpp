@@ -458,8 +458,8 @@ bool NativeNotesCardScene::updatePose(const Matrix&workspace,float canvas,double
             draw.masks[0]={inverse,{0,0,r.width,r.height},3};
             draw.masks[1]={inverse,n==0?i.mediaSlot->content:core::Rect{0,0,r.width,r.height},0};
         }
-        auto&grip=i.mediaDraws[3];const auto&placement=i.placements[i.gripSurface];
-        grip.world=placement.world;grip.opacity=placement.opacity;grip.masks.assign(placement.masks.begin(),placement.masks.end());
+        auto&grip=i.mediaDraws[3];const auto&gripPlacement=i.placements[i.gripSurface];
+        grip.world=gripPlacement.world;grip.opacity=gripPlacement.opacity;grip.masks.assign(gripPlacement.masks.begin(),gripPlacement.masks.end());
         i.placements[i.gripSurface].opacity=0;
     }
     i.scene.setPlacements(i.placements);

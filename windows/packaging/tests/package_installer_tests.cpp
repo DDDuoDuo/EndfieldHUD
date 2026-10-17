@@ -715,10 +715,10 @@ void contracts(const fs::path& stub, const fs::path& uninstaller, const fs::path
     check(run.exit == 0 && run.result["dataRemoved"].boolean(), "Uninstall with data removal: " + describe(run));
     check(!fs::exists(lab.dataBase()), "The data root was deleted");
     {
-        std::string left;
+        std::string remaining;
         if (fs::exists(lab.installRoot()))
-            for (const auto& e : fs::recursive_directory_iterator(lab.installRoot())) left += " " + p::narrow(e.path().lexically_relative(lab.installRoot()).native());
-        check(!fs::exists(lab.installRoot()), "The install folder was removed; left:" + (left.empty() ? std::string(" (empty folder)") : left));
+            for (const auto& e : fs::recursive_directory_iterator(lab.installRoot())) remaining += " " + p::narrow(e.path().lexically_relative(lab.installRoot()).native());
+        check(!fs::exists(lab.installRoot()), "The install folder was removed; left:" + (remaining.empty() ? std::string(" (empty folder)") : remaining));
     }
     for (const auto& [name, value] : lab.snapshot().registry)
         check(name.find(L"\\:") == std::wstring::npos, "No private registry value remains: " + p::narrow(name));

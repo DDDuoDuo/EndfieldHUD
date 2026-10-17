@@ -80,7 +80,7 @@ void run(HWND hwnd,gpu::Renderer&renderer,const gpu::NativeShelfAssets&assets,st
     frame(tick);
     std::vector<std::string>paths;
     for(const auto*name:{"Alpha notes.txt","Beta photo.png","Gamma report.pdf","Delta draft.docx","Epsilon archive.zip","Zeta clip.mp4","Eta sheet.csv"}){
-        const auto file=temp.root/std::filesystem::u8path(name);std::ofstream out(file,std::ios::binary);out<<"Synthetic Shelf removal fixture "<<name;out.close();paths.push_back(utf8(file));}
+        const auto file=temp.root/name;std::ofstream out(file,std::ios::binary);out<<"Synthetic Shelf removal fixture "<<name;out.close();paths.push_back(utf8(file));}
     {const auto folder=temp.root/"Theta folder";std::filesystem::create_directory(folder);paths.push_back(utf8(folder));}
     check(shelf.importFiles(paths,time),"Synthetic references are added");
     // Let the import reveal finish and the Shell icon worker deliver every visible icon.

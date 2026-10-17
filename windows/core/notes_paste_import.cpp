@@ -208,8 +208,8 @@ private:
         // Characters (Cocoa: \cell and \sect add nothing, \row ends a line).
         if(w=="par"||w=="row"){emit(u"\n");return;}
         if(w=="line"){emit(u"\u2028");return;}if(w=="tab"){emit(u"\t");return;}if(w=="page"){emit(u"\f");return;}
-        static constexpr std::array<std::pair<std::string_view,char16_t>,14> symbols{{{"emdash",0x2014},{"endash",0x2013},{"bullet",0x2022},{"lquote",0x2018},{"rquote",0x2019},
-            {"ldblquote",0x201C},{"rdblquote",0x201D},{"emspace",0x2003},{"enspace",0x2002},{"qmspace",0x2005},{"zwj",0x200D},{"zwnj",0x200C},{"ltrmark",0x200E},{"rtlmark",0x200F}}};
+        static constexpr std::array<std::pair<std::string_view,char16_t>,14> symbols{{{"emdash",u'\x2014'},{"endash",u'\x2013'},{"bullet",u'\x2022'},{"lquote",u'\x2018'},{"rquote",u'\x2019'},
+            {"ldblquote",u'\x201C'},{"rdblquote",u'\x201D'},{"emspace",u'\x2003'},{"enspace",u'\x2002'},{"qmspace",u'\x2005'},{"zwj",u'\x200D'},{"zwnj",u'\x200C'},{"ltrmark",u'\x200E'},{"rtlmark",u'\x200F'}}};
         for(const auto&[name,unit]:symbols)if(w==name){emit(std::u16string_view(&unit,1));return;}
     }
 };

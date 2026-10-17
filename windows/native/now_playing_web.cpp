@@ -200,7 +200,7 @@ struct NowPlayingHttp::Impl:std::enable_shared_from_this<Impl>{
             NowPlayingWeb::Done callback;HINTERNET closing{};
             {std::lock_guard lock(mutex);if(finished)return;finished=true;callback=std::move(done);done=nullptr;closing=handle;handle=nullptr;}
             closeHandle(closing);
-            if(const auto session=owner.lock())session->ended();
+            if(const auto ownerImpl=owner.lock())ownerImpl->ended();
             if(callback)try{callback(std::move(result));}catch(...){}
         }
         bool live(){std::lock_guard lock(mutex);return !finished;}

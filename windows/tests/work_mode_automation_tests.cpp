@@ -57,8 +57,8 @@ void run(){
         check(field.id==n::workModeDurationEditorID&&field.role==n::ProfileAutomationRole::edit&&field.label=="Custom countdown: minutes and seconds"&&
               field.help=="Enter minutes or min:sec, between 0:01 and 1440:00. Return saves; Escape cancels."&&field.rect==m::WorkModePresentation::durationEditorRect()&&field.text=="25:00",
               "The field is an Edit over the editor rect with the source label, help and draft");
-        const auto chinese=n::workModeAutomationControls(state,c::Language::simplifiedChinese,std::string("5"));
-        check(chinese.back().label=="自定义倒计时：分和秒"&&chinese.back().help=="输入分钟数或分:秒，范围为 0:01 至 1440:00。回车保存，Esc 取消。"&&chinese.back().text=="5","The field's label and help follow the HUD language");
+        const auto chineseEditing=n::workModeAutomationControls(state,c::Language::simplifiedChinese,std::string("5"));
+        check(chineseEditing.back().label=="自定义倒计时：分和秒"&&chineseEditing.back().help=="输入分钟数或分:秒，范围为 0:01 至 1440:00。回车保存，Esc 取消。"&&chineseEditing.back().text=="5","The field's label and help follow the HUD language");
         const auto japanese=n::workModeAutomationControls(state,c::Language::japanese,std::string("5"));
         check(japanese.back().label=="カスタムカウントダウン：分と秒","Other languages use the source catalog");
     }

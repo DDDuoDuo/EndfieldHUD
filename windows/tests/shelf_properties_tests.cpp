@@ -49,7 +49,7 @@ void wav(const std::filesystem::path& file) {
     const auto u32 = [&](std::uint32_t v) { for (unsigned n = 0; n < 4; ++n) bytes.push_back(char((v >> (8 * n)) & 0xFF)); };
     const auto u16 = [&](std::uint16_t v) { bytes.push_back(char(v & 0xFF)); bytes.push_back(char(v >> 8)); };
     bytes += "RIFF"; u32(36 + samples); bytes += "WAVEfmt "; u32(16); u16(1); u16(1); u32(rate); u32(rate); u16(1); u16(8);
-    bytes += "data"; u32(samples); bytes.append(samples, char(0x80));
+    bytes += "data"; u32(samples); bytes.append(samples, '\x80');
     write(file, bytes);
 }
 

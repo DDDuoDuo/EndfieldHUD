@@ -1305,7 +1305,10 @@ if(WIN32)
   target_compile_definitions(hud_quickjs PRIVATE WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
 endif()
 if(MSVC)
-  target_compile_options(hud_quickjs PRIVATE /J)
+  # The unmodified upstream sources return a void call from void functions
+  # (C4098), and MSVC reserves __STDC_NO_ATOMICS__, ignoring the portable
+  # definition above (C4117): third-party warnings, not ours to fix.
+  target_compile_options(hud_quickjs PRIVATE /J /wd4098 /wd4117)
 else()
   target_compile_options(hud_quickjs PRIVATE -funsigned-char)
   target_link_libraries(hud_quickjs PRIVATE m)

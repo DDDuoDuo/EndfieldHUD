@@ -92,11 +92,11 @@ struct Builder {
         const auto&b=n["bounds"].array();const auto&p=n["position"].array();
         part.surfaces.push_back({n["id"].string(),{p[0].number(),p[1].number(),b[2].number(),b[3].number()},{},false,std::move(animation)});children.push_back(std::move(n));
     }
-    void highlight(R rect,ProfileHighlightShape kind,bool framed=false){
+    void highlight(R rect,ProfileHighlightShape highlightShape,bool framed=false){
         Path control,rim;R local{0,0,rect.width,rect.height};R expanded{framed?-2.:0.,framed?-2.:0.,rect.width+(framed?4:0),rect.height+(framed?4:0)};
-        const auto draw=[&](Path&p,R r){switch(kind){case ProfileHighlightShape::rounded:p.rounded(r,3);break;case ProfileHighlightShape::ellipse:p.ellipse(r);break;case ProfileHighlightShape::cutCorner:p.cut(r);break;}};
+        const auto draw=[&](Path&p,R r){switch(highlightShape){case ProfileHighlightShape::rounded:p.rounded(r,3);break;case ProfileHighlightShape::ellipse:p.ellipse(r);break;case ProfileHighlightShape::cutCorner:p.cut(r);break;}};
         draw(control,local);draw(rim,expanded);
-        const auto index=highlights.size();ProfileHighlight h{rect,kind,framed,true,id("tint"),{}};h.rim=std::string(h.tint.substr(0,h.tint.size()-4))+"rim";
+        const auto index=highlights.size();ProfileHighlight h{rect,highlightShape,framed,true,id("tint"),{}};h.rim=std::string(h.tint.substr(0,h.tint.size()-4))+"rim";
         auto tint=shapeIn(h.tint,rect,control,alpha(accent,.30));
         R rimFrame{rect.x-(framed?3.:1.),rect.y-(framed?3.:1.),rect.width+(framed?6:2),rect.height+(framed?6:2)};
         Path shifted;for(const auto&o:rim.ops){Path::Op v{o.op,{}};for(const auto&q:o.points)v.points.push_back({q.x+rect.x-rimFrame.x,q.y+rect.y-rimFrame.y});shifted.ops.push_back(std::move(v));}

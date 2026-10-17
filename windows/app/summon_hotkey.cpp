@@ -111,8 +111,8 @@ struct SummonHotkeyHook::Impl {
         current = this;
         matcher = SummonChordMatcher(chord);
         generation = token;
-        MSG message{};
-        PeekMessageW(&message, nullptr, WM_USER, WM_USER, PM_NOREMOVE); // the thread queue exists before ready
+        MSG msg{};
+        PeekMessageW(&msg, nullptr, WM_USER, WM_USER, PM_NOREMOVE); // the thread queue exists before ready
         const bool ok = install();
         const auto events = ok ? SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, nullptr,
             &Impl::foreground, 0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS) : nullptr;
@@ -120,9 +120,9 @@ struct SummonHotkeyHook::Impl {
         installed = ok; // the owner's flag is read once, before it returns from start()
         SetEvent(ready);
         if (ok) {
-            while (GetMessageW(&message, nullptr, 0, 0) > 0) {
-                if (message.hwnd == nullptr && message.message == stopMessage) break;
-                TranslateMessage(&message); DispatchMessageW(&message);
+            while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
+                if (msg.hwnd == nullptr && msg.message == stopMessage) break;
+                TranslateMessage(&msg); DispatchMessageW(&msg);
             }
         }
         if (events) UnhookWinEvent(events);

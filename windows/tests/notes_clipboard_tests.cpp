@@ -56,7 +56,7 @@ public:
     HRESULT STDMETHODCALLTYPE DUnadvise(DWORD)override{return E_NOTIMPL;}
     HRESULT STDMETHODCALLTYPE EnumDAdvise(IEnumSTATDATA**)override{return E_NOTIMPL;}
     std::atomic<ULONG> refs{1};
-    void text(std::u16string_view platform){std::string bytes(reinterpret_cast<const char*>(platform.data()),platform.size()*2);bytes.append(2,'\0');formats.push_back({CF_UNICODETEXT,bytes});}
+    void text(std::u16string_view platform){std::string bytes(reinterpret_cast<const char*>(platform.data()),platform.size()*2);bytes.append(2,'\0');formats.push_back({static_cast<CLIPFORMAT>(CF_UNICODETEXT),bytes});}
 };
 CLIPFORMAT richFormat(){return static_cast<CLIPFORMAT>(RegisterClipboardFormatW(L"EndfieldHUD.NotesRichText.v1"));}
 
@@ -188,7 +188,7 @@ void foreignPaste(HWND hwnd){
 std::string dib(int width,int height){
     BITMAPINFOHEADER h{};h.biSize=sizeof(h);h.biWidth=width;h.biHeight=height;h.biPlanes=1;h.biBitCount=32;h.biCompression=BI_RGB;
     std::string out(sizeof(h)+std::size_t(width)*height*4,'\0');std::memcpy(out.data(),&h,sizeof(h));
-    for(int y=0;y<height;++y)for(int x=0;x<width;++x){auto* p=out.data()+sizeof(h)+(std::size_t(y)*width+x)*4;const bool left=x<width/2;p[0]=char(left?0:255);p[1]=0;p[2]=char(left?255:0);p[3]=char(255);}
+    for(int y=0;y<height;++y)for(int x=0;x<width;++x){auto* p=out.data()+sizeof(h)+(std::size_t(y)*width+x)*4;const bool left=x<width/2;p[0]=left?'\0':'\xff';p[1]=0;p[2]=left?'\xff':'\0';p[3]='\xff';}
     return out;
 }
 struct Decoded {unsigned width{},height{};std::vector<std::uint8_t> rgba;};
@@ -211,15 +211,15 @@ std::vector<std::uint8_t> orientedTiff(){
     HGLOBAL g{};GetHGlobalFromStream(out.Get(),&g);STATSTG st{};out->Stat(&st,STATFLAG_NONAME);const auto* p=static_cast<const std::uint8_t*>(GlobalLock(g));std::vector<std::uint8_t> bytes(p,p+st.cbSize.QuadPart);GlobalUnlock(g);return bytes;
 }
 void images(){
-    Foreign bitmap;bitmap.formats.push_back({CF_DIB,dib(1800,900)});const auto bmp=gpu::readNotesClipboardImage(bitmap,gpu::notesManagedImageMaximumBytes);
+    Foreign bitmap;bitmap.formats.push_back({static_cast<CLIPFORMAT>(CF_DIB),dib(1800,900)});const auto bmp=gpu::readNotesClipboardImage(bitmap,gpu::notesManagedImageMaximumBytes);
     check(bmp&&bmp->size()==14+40+1800*900*4+7&&(*bmp)[0]=='B'&&(*bmp)[1]=='M',"A pasted DIB (with the fixture's 7 padding bytes) becomes a bitmap file");BITMAPFILEHEADER file{};std::memcpy(&file,bmp->data(),sizeof(file));check(file.bfOffBits==54&&file.bfSize==bmp->size(),"Its pixels follow the header");
     const auto managed=gpu::notesManagedImageFromData(*bmp);check(managed.pixelWidth==1600&&managed.pixelHeight==800,"The managed copy is at most 1600 pixels on its longest side");
     const auto png=decode(managed.png);const auto at=[&](unsigned x,unsigned y){return png.rgba.data()+(std::size_t(y)*png.width+x)*4;};
     check(png.width==1600&&png.height==800&&at(100,400)[0]>250&&at(100,400)[2]<5&&at(1500,400)[2]>250&&at(1500,400)[0]<5&&at(100,10)[3]==255,"The managed copy keeps the picture, upright and opaque");
-    const auto little=gpu::notesManagedImageFromData(*gpu::readNotesClipboardImage(*[]{static Foreign f;f.formats={{CF_DIB,dib(64,32)}};return &f;}(),1<<20));check(little.pixelWidth==64&&little.pixelHeight==32,"A small image is never enlarged");
+    const auto little=gpu::notesManagedImageFromData(*gpu::readNotesClipboardImage(*[]{static Foreign f;f.formats={{static_cast<CLIPFORMAT>(CF_DIB),dib(64,32)}};return &f;}(),1<<20));check(little.pixelWidth==64&&little.pixelHeight==32,"A small image is never enlarged");
     const auto tiff=orientedTiff();const auto turned=gpu::notesManagedImageFromData(tiff);const auto t=decode(turned.png);
     check(turned.pixelWidth==20&&turned.pixelHeight==40&&t.width==20&&t.height==40&&t.rgba[(19)*4]>250&&t.rgba[(19)*4+2]<5&&t.rgba[2]>250,"EXIF orientation 6 turns the picture as the source thumbnail does");
-    Foreign pngData;pngData.formats.push_back({static_cast<CLIPFORMAT>(RegisterClipboardFormatW(L"PNG")),std::string(managed.png.begin(),managed.png.end())});pngData.formats.push_back({CF_DIB,dib(4,4)});
+    Foreign pngData;pngData.formats.push_back({static_cast<CLIPFORMAT>(RegisterClipboardFormatW(L"PNG")),std::string(managed.png.begin(),managed.png.end())});pngData.formats.push_back({static_cast<CLIPFORMAT>(CF_DIB),dib(4,4)});
     const auto direct=gpu::readNotesClipboardImage(pngData,gpu::notesManagedImageMaximumBytes);check(direct&&direct->size()==managed.png.size()+7&&std::equal(managed.png.begin(),managed.png.end(),direct->begin()),"Registered PNG data (with the fixture's padding) is preferred over a DIB");
     const auto again=gpu::notesManagedImageFromData(*direct);check(again.pixelWidth==1600&&again.pixelHeight==800,"Padded PNG data still decodes");
     check(!gpu::readNotesClipboardImage(pngData,16),"Image data above the limit is not read");Foreign none;none.text(u"text");check(!gpu::readNotesClipboardImage(none,1<<20),"Text alone is no image");

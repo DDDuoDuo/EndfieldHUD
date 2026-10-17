@@ -49,8 +49,8 @@ EventLogArtwork prepareEventLogArtwork(const EventLogState&state,const EventLogA
         body.feedback("eventLog:row:"+row.id,rect,false,appearance.accent);
         // The labels leaf covers its text rectangles plus a 1 pt margin, not
         // the whole row (whole points: the glyphs keep their pixel grid).
-        const bool detail=!row.detail.empty();const Rect ink{8,4,350,detail?45.:32.};
-        auto labels=layer(prefix+"/labels",ink);Json::Array children;const auto at=[&](Rect r){return Rect{r.x-ink.x,r.y-ink.y,r.width,r.height};};
+        const bool detail=!row.detail.empty();const Rect labelBounds{8,4,350,detail?45.:32.};
+        auto labels=layer(prefix+"/labels",labelBounds);Json::Array children;const auto at=[&](Rect r){return Rect{r.x-labelBounds.x,r.y-labelBounds.y,r.width,r.height};};
         children.push_back(label(prefix+"/timestamp",at({9,5,149,12}),row.timestamp,8.7,muted,appearance.scale));
         children.push_back(label(prefix+"/category",at({211,5,146,12}),row.category,8.7,muted,appearance.scale,"regular","right"));
         children.push_back(label(prefix+"/title",at({9,19,348,15}),row.title,11.5,primary,appearance.scale,"medium"));

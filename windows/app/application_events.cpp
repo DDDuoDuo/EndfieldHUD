@@ -241,9 +241,9 @@ void Application::Impl::onFrame(double time){
         if(diagnosticStart==0)diagnosticStart=time;const auto elapsed=time-diagnosticStart;
         const int phase=elapsed<3?0:elapsed<8?1:elapsed<13?2:3;
         if(phase!=probe.phase)probe.next(phase,time);
-        if(phase>=1&&!diagnosticEditing&&phase<3){auto stage=probe.measure(LiveProbe::editTransition);diagnosticEditing=notes->diagnosticEditing(true,time);}
+        if(phase>=1&&!diagnosticEditing&&phase<3){auto measured=probe.measure(LiveProbe::editTransition);diagnosticEditing=notes->diagnosticEditing(true,time);}
         if(phase==2){environment.pointer=core::Point{metrics.width*.5+200*std::sin(elapsed*2),metrics.height*.5+120*std::cos(elapsed*2)};session->pointerMove(environment.pointer,time);}
-        if(phase==3&&diagnosticEditing){auto stage=probe.measure(LiveProbe::editTransition);if(notes->diagnosticEditing(false,time))diagnosticEditing=false;}
+        if(phase==3&&diagnosticEditing){auto measured=probe.measure(LiveProbe::editTransition);if(notes->diagnosticEditing(false,time))diagnosticEditing=false;}
         if(elapsed>=16){probe.flush(time);probe.enabled=false;gpu::setTextInputDiagnosticsEnabled(false);diagnosticFinished=true;perform(lifecycle.close(),time);}
     }
     bool active{};
@@ -388,8 +388,8 @@ std::optional<std::intptr_t> Application::Impl::onAppMessage(const NativeMessage
         if(m.message==audioMessage&&audio){
             // The shared AudioRuntime posted one coalesced notice: adopt the
             // publication, feed the Event Log device list and the areas.
-            const FatalStage stage("audio");const auto changes=audio->drain();const auto time=now();
-            if(changes.devices&&eventRecorder)if(const auto labels=audio->deviceLabels())eventRecorder->receiveAudioDevices(*labels);
+            const FatalStage audioStage("audio");const auto changes=audio->drain();const auto time=now();
+            if(changes.devices&&eventRecorder)if(const auto deviceNames=audio->deviceLabels())eventRecorder->receiveAudioDevices(*deviceNames);
             std::uint32_t flags{};
             if(changes.snapshot)flags|=HostEvent::audioSnapshot;if(changes.volume)flags|=HostEvent::audioVolume;
             if(changes.applications)flags|=HostEvent::audioApplications;if(changes.devices)flags|=HostEvent::audioDevices;
@@ -399,7 +399,7 @@ std::optional<std::intptr_t> Application::Impl::onAppMessage(const NativeMessage
         if(m.message==hudDropMessage){receiveDrop(now());return 0;}
         if(m.message==prewarmMessage){prewarm();return 0;}
         // The ID card feed changed while the HUD was concealed (connectAreas).
-        if(m.message==idCardMessage){idCardQueued=false;const FatalStage stage("id card");
+        if(m.message==idCardMessage){idCardQueued=false;const FatalStage idCardStage("id card");
             if(idCard&&!stopping&&session->phase()==core::VisibilityPhase::concealed)if(auto next=idCard->apply())session->setDesktopSettings(std::move(*next));
             return 0;}
         if(m.message==themeColorMessage){chooseThemeColor();return 0;}
@@ -473,7 +473,7 @@ std::optional<std::intptr_t> Application::Impl::onAppMessage(const NativeMessage
         if(m.message==clipboardChangedMessage){clipboardRefreshQueued=false;if(clipboardDirty&&session->phase()!=core::VisibilityPhase::concealed&&notes&&notes->selected()==core::Module::clipboard)refresh(now());return 0;}
         if(m.message==eventChangedMessage){eventRefreshQueued=false;if(eventLog)isolate(eventLogModuleOwner,"event log",[&]{eventLog->refresh();});refresh(now());return 0;}
         if(m.message==archiveChangedMessage){archiveRefreshQueued=false;refresh(now());return 0;}
-        if(m.message==sharedMediaMessage&&mediaBroker){const FatalStage stage("shared media");const auto time=now();mediaBroker->accept(m.wParam,time);if(notes)notes->refreshSharedMedia(hostTime(time));if(archiveMedia)isolate(archiveModuleOwner,"shared media",[&]{archiveMedia->refresh(hostTime(time));});if(projectionShown())(void)projectionCall("media",[&]{projection->mediaChanged(hostTime(time));});refresh(time);return 0;}
+        if(m.message==sharedMediaMessage&&mediaBroker){const FatalStage mediaStage("shared media");const auto time=now();mediaBroker->accept(m.wParam,time);if(notes)notes->refreshSharedMedia(hostTime(time));if(archiveMedia)isolate(archiveModuleOwner,"shared media",[&]{archiveMedia->refresh(hostTime(time));});if(projectionShown())(void)projectionCall("media",[&]{projection->mediaChanged(hostTime(time));});refresh(time);return 0;}
         if(m.message==mediaPickerMessage&&mediaPicker){
             host.suspendCursor(true);mediaPicker->handleMessage(m.wParam,m.lParam);host.suspendCursor(false);
             if(auto result=mediaPicker->drain(m.wParam)){

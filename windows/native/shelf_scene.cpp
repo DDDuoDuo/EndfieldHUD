@@ -138,8 +138,8 @@ struct Compiler {
                     // onto the path's first point (position and bounds origin
                     // together, so the path stays where it is).
                     if(!groupBounds)if(const auto b=rect(leaves[n]["bounds"]);zeroFrameShape(leaves[n],b)){
-                        const auto first=*firstPathPoint(leaves[n]);const auto&at=leaves[n]["position"].array();const double px=number(at[0])-b.x+first.x,py=number(at[1])-b.y+first.y;
-                        leaves[n]["bounds"]=Json::Array{first.x,first.y,b.width,b.height};leaves[n]["position"]=Json::Array{px,py};}
+                        const auto pathStart=*firstPathPoint(leaves[n]);const auto&at=leaves[n]["position"].array();const double px=number(at[0])-b.x+pathStart.x,py=number(at[1])-b.y+pathStart.y;
+                        leaves[n]["bounds"]=Json::Array{pathStart.x,pathStart.y,b.width,b.height};leaves[n]["position"]=Json::Array{px,py};}
                     groupChildren.push_back(std::move(leaves[n]));}
                 const auto id=first.id+"/retained-static";auto group=root(std::move(groupChildren));group["id"]=id;
                 if(groupBounds)group["bounds"]=Json::Array{groupBounds->x,groupBounds->y,groupBounds->width,groupBounds->height};

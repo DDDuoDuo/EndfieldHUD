@@ -542,7 +542,7 @@ struct LayerRasterizer::Impl {
             // Prepared opaque-tint icons retain that exact source alpha. A
             // preference event may recolor it without changing the pinned
             // image/geometry or the shared decoded cache. No pointer-frame work.
-            auto pixels=decoded.premultipliedBGRA;std::vector<std::uint8_t>tinted;
+            auto bgra=decoded.premultipliedBGRA;std::vector<std::uint8_t>tinted;
             if(!node["contentsSourceInTint"].isNull()){
                 D2D1_COLOR_F tint{};color(node["contentsSourceInTint"],tint);
                 // CGContext's RGBA8 source-in first quantizes the source
@@ -553,14 +553,14 @@ struct LayerRasterizer::Impl {
                     static_cast<unsigned>(std::lround(double(tint.g)*tint.a*255)),
                     static_cast<unsigned>(std::lround(double(tint.r)*tint.a*255)),
                     static_cast<unsigned>(std::lround(double(tint.a)*255))};
-                tinted.resize(pixels.size());
-                for(std::size_t at=0;at<pixels.size();at+=4){
-                    const unsigned alpha=pixels[at+3];
+                tinted.resize(bgra.size());
+                for(std::size_t at=0;at<bgra.size();at+=4){
+                    const unsigned alpha=bgra[at+3];
                     for(unsigned c=0;c<4;++c)tinted[at+c]=static_cast<std::uint8_t>((ink[c]*alpha+127u)/255u);
                 }
-                pixels=tinted;
+                bgra=tinted;
             }
-            ComPtr<ID2D1Bitmap> bitmap;checked(target->CreateBitmap(D2D1::SizeU(decoded.width,decoded.height),pixels.data(),decoded.width*4,
+            ComPtr<ID2D1Bitmap> bitmap;checked(target->CreateBitmap(D2D1::SizeU(decoded.width,decoded.height),bgra.data(),decoded.width*4,
                 D2D1::BitmapProperties(D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,D2D1_ALPHA_MODE_PREMULTIPLIED)),bitmap.GetAddressOf()),"Create local intrinsic bitmap");
             auto destination=rect(bounds);const auto gravity=string(node["contentsGravity"],"resize");
             const auto crop=node["contentsRect"].isNull()?core::Rect{0,0,1,1}:rectangle(node["contentsRect"]);

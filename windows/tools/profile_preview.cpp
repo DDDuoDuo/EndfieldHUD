@@ -175,8 +175,8 @@ struct ProfilePreview::Impl:std::enable_shared_from_this<Impl> {
             (void)current->editor().replaceTextFromHost({start,end},value);
         }else{
             if(start==end)return true;
-            const std::u16string selected(doc.text().substr(start,end-start));
-            if(!clip->writeText({selected,std::nullopt,std::nullopt})||!alive||field.get()!=current)return true;
+            const std::u16string selectedText(doc.text().substr(start,end-start));
+            if(!clip->writeText({selectedText,std::nullopt,std::nullopt})||!alive||field.get()!=current)return true;
             if(key=='X')(void)current->editor().replaceTextFromHost({start,end},u"");
         }
         if(alive&&field.get()==current){current->normalize(state.text());current->syncContent();}

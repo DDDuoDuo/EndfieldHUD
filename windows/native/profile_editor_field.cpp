@@ -73,7 +73,7 @@ struct NativeProfileEditorField::Impl {
         const auto documentHeight=editor->layout().painted()->documentHeight();const auto overflow=std::max(0.,documentHeight-rect.height);
         const auto thumb=std::clamp(rect.height*rect.height/std::max(1.,documentHeight),16.,std::max(16.,rect.height));const auto y=overflow>0?(rect.height-thumb)*editor->scrollOffset()/overflow:0;
         const auto originals=box.draws();for(std::size_t n=0;n<4;++n)boxPlacements[n]={n,originals[n].world,1,localMask};
-        boxPlacements[0].world=M{};boxPlacements[1].world=M::translation(rect.width-4,y)*M::scale(1,thumb/16);boxPlacements[1].opacity=overflow>0?1:0;
+        boxPlacements[0].world=M{};boxPlacements[1].world=M::translation(rect.width-4,y)*M::scale(1,thumb/16);boxPlacements[1].opacity=overflow>0?1.f:0.f;
         boxPlacements[2].opacity=0;boxPlacements[3].world=M{};box.setPlacements(boxPlacements);
     }
     NativeGroupInsertion insertion(){return {1,localGlyphs,{0,0,rect.width,rect.height}};}

@@ -166,13 +166,13 @@ std::shared_ptr<const NativeNotesTextMeasurement>NativeNotesTextMeasurer::measur
                 styled=analysis->richLines(paragraph,width,localRuns,maximumLines-measured.lines.size()+1);
                 if(delimiter&&styled.size()>1&&styled.back().length==0)styled=styled.first(styled.size()-1);
             }else plainLengths=analysis->lineLengths(paragraph,width,maximumLines-measured.lines.size());
-            const auto count=measured.richText?styled.size():plainLengths.size();std::size_t at=start;
-            for(std::size_t i=0;i<count;++i){const auto begin=at;auto length=measured.richText?styled[i].length:plainLengths[i];
-                if(measured.richText&&i+1==count&&delimiterEnd>paragraphEnd){const unsigned delimiterUnits=value[paragraphEnd]=='\r'&&delimiterEnd-paragraphEnd==2?2u:1u;if(length<delimiterUnits)invalid("Missing attributed source delimiter");length-=delimiterUnits;}
+            const auto lineCount=measured.richText?styled.size():plainLengths.size();std::size_t at=start;
+            for(std::size_t i=0;i<lineCount;++i){const auto begin=at;auto length=measured.richText?styled[i].length:plainLengths[i];
+                if(measured.richText&&i+1==lineCount&&delimiterEnd>paragraphEnd){const unsigned delimiterUnits=value[paragraphEnd]=='\r'&&delimiterEnd-paragraphEnd==2?2u:1u;if(length<delimiterUnits)invalid("Missing attributed source delimiter");length-=delimiterUnits;}
                 std::uint32_t units{};while(units<length){const auto s=scalar(value,at);if(s.end>paragraphEnd||s.units>length-units)invalid("Native line splits a UTF-16 surrogate/UTF-8 scalar");units+=s.units;at=s.end;}
                 if((length==0&&start!=paragraphEnd)||at>paragraphEnd)invalid("Native wrapping returned an empty interior line");
-                if(i+1==count&&at!=paragraphEnd)invalid("Native wrapping did not cover complete paragraph");
-                append(begin,i+1==count?delimiterEnd:at,at,measured.richText?styled[i].height:result->font.lineHeight);
+                if(i+1==lineCount&&at!=paragraphEnd)invalid("Native wrapping did not cover complete paragraph");
+                append(begin,i+1==lineCount?delimiterEnd:at,at,measured.richText?styled[i].height:result->font.lineHeight);
             }
         }
         start=delimiterEnd;

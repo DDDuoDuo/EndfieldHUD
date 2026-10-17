@@ -621,7 +621,7 @@ struct Renderer::Impl {
     // No allocation on numeric updates. Only a leaf may be borrowed by an
     // encoded parent; therefore two explicit render passes suffice and cycles
     // cannot enter the retained graph.
-    unsigned groupInputDepth(std::span<const DrawObject>objects,const NativeGroup*target,NativeGroupColorSpace colorSpace)const{
+    unsigned groupInputDepth(std::span<const DrawObject>objects,const NativeGroup*configured,NativeGroupColorSpace colorSpace)const{
         unsigned depth=1;
         for(const auto&object:objects){
             const auto mesh=meshes.find(object.meshID);
@@ -632,14 +632,14 @@ struct Renderer::Impl {
             const auto*textureGroup=texture==textures.end()?nullptr:texture->second.group;
             if(child||textureGroup){
                 require(child&&child==textureGroup,"Native group output mesh and texture must belong to the same group");
-                require(child!=target,"Native group cannot consume its own output");
+                require(child!=configured,"Native group cannot consume its own output");
                 require(colorSpace==NativeGroupColorSpace::encodedSRGB&&child->requested.colorSpace==NativeGroupColorSpace::encodedSRGB,"Nested groups require source encoded color space");
                 require(child->depth==1,"Native group nesting exceeds two levels");
                 require(object.blend==NativeBlend::sourceOver,"Nested group output uses source-over composition");depth=2;
             }
             if(object.alphaMask){const auto mask=textures.find(object.alphaMask->textureID);require(mask!=textures.end()&&!mask->second.groupOwned,"Native group cannot consume a missing/group alpha-mask texture");}
         }
-        if(target&&target->depth==1&&depth==2)for(const auto&[id,parent]:groups){(void)id;if(parent.get()==target)continue;for(const auto&draw:parent->draws)require(draw.mesh->group!=target,"A borrowed leaf cannot become a nested parent");}
+        if(configured&&configured->depth==1&&depth==2)for(const auto&[id,parent]:groups){(void)id;if(parent.get()==configured)continue;for(const auto&draw:parent->draws)require(draw.mesh->group!=configured,"A borrowed leaf cannot become a nested parent");}
         return depth;
     }
 
@@ -1094,8 +1094,8 @@ void Renderer::Impl::resumeDevice() {
             if (!mesh.savedIndices.data.empty()) checked(gpu_copy::create(device.Get(), mesh.savedIndices, nullptr).As(&mesh.indices), "Create a retained mesh again"); }
         for (auto& [id, texture] : textures) { (void)id;
             if (!texture.hasSaved) continue;
-            auto created = gpu_copy::create(device.Get(), texture.saved, &texture.view);
-            if (texture.updatable) checked(created.As(&texture.resource), "Create an updatable texture again"); }
+            auto recreated = gpu_copy::create(device.Get(), texture.saved, &texture.view);
+            if (texture.updatable) checked(recreated.As(&texture.resource), "Create an updatable texture again"); }
         for (auto& [id, group] : groups) { (void)id;
             if (!group->savedCamera.data.empty()) checked(gpu_copy::create(device.Get(), group->savedCamera, nullptr).As(&group->camera), "Create a native group camera again");
             for (auto& draw : group->draws) draw.constants = objectConstants(draw.values); }
@@ -1552,9 +1552,9 @@ void Renderer::Impl::renderNativeDraws(std::span<const Draw>objects,ID3D11Render
         r.context->IASetIndexBuffer(draw.mesh->indices.Get(), DXGI_FORMAT_R32_UINT, 0);
         auto *constants = draw.constants.Get();
         r.context->VSSetConstantBuffers(1, 1, &constants); r.context->PSSetConstantBuffers(1, 1, &constants);
-        ID3D11ShaderResourceView* textures[2]{draw.texture->view.Get(),draw.alphaMask->view.Get()};
+        ID3D11ShaderResourceView* views[2]{draw.texture->view.Get(),draw.alphaMask->view.Get()};
         ID3D11SamplerState* samplers[2]{draw.texture->filter==TextureFilter::nearest?r.nearestSampler.Get():r.linearSampler.Get(),r.linearSampler.Get()};
-        r.context->PSSetShaderResources(0,2,textures);r.context->PSSetSamplers(0,2,samplers);
+        r.context->PSSetShaderResources(0,2,views);r.context->PSSetSamplers(0,2,samplers);
         r.context->DrawIndexed(draw.mesh->indexCount, 0, 0); ++r.counters.drawCalls;if(group)++r.counters.nativeGroupDrawCalls;
     }
     r.context->PSSetShaderResources(0,2,emptyResources);

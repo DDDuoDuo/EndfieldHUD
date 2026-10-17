@@ -208,8 +208,8 @@ void Application::Impl::deactivateDisplayPanels() {
 // --- Desktop clock -------------------------------------------------------------
 std::optional<core::Point> Application::Impl::clockPoint(core::Point client) const {
     if (!chrome || !metrics.pixelWidth || !metrics.pixelHeight) return std::nullopt;
-    const auto camera = gpu::layerViewportProjection(metrics.pixelWidth, metrics.pixelHeight) * core::Matrix4::scale(metrics.scale, metrics.scale);
-    return chrome->statusPoint(client, camera, metrics.pixelWidth, metrics.pixelHeight, metrics.scale);
+    const auto viewProjection = gpu::layerViewportProjection(metrics.pixelWidth, metrics.pixelHeight) * core::Matrix4::scale(metrics.scale, metrics.scale);
+    return chrome->statusPoint(client, viewProjection, metrics.pixelWidth, metrics.pixelHeight, metrics.scale);
 }
 // SystemHUDView.allowsModuleInput for the chrome controls.
 bool Application::Impl::clockAcceptsInput() const {
@@ -332,7 +332,7 @@ bool Application::Impl::clockWheel(const WheelEvent& e, double time) {
     clockSwipe = 0; clockSwipeConsumed = true;
     unsigned current = 0;
     for (unsigned n = 0; n < clockStyles.size(); ++n) if (configuration.string("clockStyle") == clockStyles[n]) current = n;
-    selectClockStyle((current + clockStyles.size() + direction) % clockStyles.size(), time);
+    selectClockStyle(static_cast<unsigned>((current + clockStyles.size() + direction) % clockStyles.size()), time);
     refresh(time);
     return true;
 }

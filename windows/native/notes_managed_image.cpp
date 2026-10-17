@@ -31,7 +31,7 @@ std::string writeNotesManagedImage(const std::filesystem::path& root,std::span<c
     return name;
 }
 bool removeNotesManagedImage(const std::filesystem::path& root,std::string_view name)noexcept{
-    try{if(!validName(name))return false;const auto path=imagesDirectory(root)/std::filesystem::u8path(std::string(name));std::error_code error;
+    try{if(!validName(name))return false;const auto path=imagesDirectory(root)/std::filesystem::path(std::u8string(reinterpret_cast<const char8_t*>(name.data()),name.size()));std::error_code error;
         if(std::filesystem::is_symlink(imagesDirectory(root),error))return false;std::filesystem::remove(path,error);return !error;}catch(...){return false;}
 }
 } // namespace endfield::native

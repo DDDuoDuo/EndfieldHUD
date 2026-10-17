@@ -84,7 +84,7 @@ void run(HWND hwnd,gpu::Renderer&renderer,const gpu::NativeShelfAssets&assets){
     const auto rasterBefore=raster.stats();const auto renderBefore=renderer.stats();const auto privateBefore=privateBytes();
     std::vector<std::string>paths;
     for(const auto*name:{"Alpha notes.txt","Beta photo.png","Gamma report.pdf","Delta draft.docx","Epsilon archive.zip","Zeta clip.mp4","Eta sheet.csv"}){
-        const auto file=temp.root/std::filesystem::u8path(name);std::ofstream out(file,std::ios::binary);out<<"Synthetic Shelf resources fixture "<<name;out.close();paths.push_back(utf8(file));}
+        const auto file=temp.root/name;std::ofstream out(file,std::ios::binary);out<<"Synthetic Shelf resources fixture "<<name;out.close();paths.push_back(utf8(file));}
     {const auto folder=temp.root/"Theta folder";std::filesystem::create_directory(folder);paths.push_back(utf8(folder));}
     check(shelf.importFiles(paths,time),"Synthetic references are added");
     // Show the Shelf: the icon worker starts and delivers every visible icon.
@@ -143,8 +143,8 @@ void run(HWND hwnd,gpu::Renderer&renderer,const gpu::NativeShelfAssets&assets){
         const auto faded=shelf.resources();
         check(faded.highlightReleases==rest.highlightReleases&&faded.scenePixelBytes==hovered.scenePixelBytes&&!shelf.requiresFrames(time)&&capture()==before,"A faded highlight draws nothing and does no raster work inside the frames");
         (void)shelf.pointer({app::PointerKind::move,app::PointerButton::none,2,2,0},time);timed(2);
-        const auto left=shelf.resources();
-        check(left.highlightReleases-rest.highlightReleases==painted&&left.scenePixelBytes==rest.scenePixelBytes&&left.sceneSurfaces==rest.sceneSurfaces&&capture()==before,
+        const auto returned=shelf.resources();
+        check(returned.highlightReleases-rest.highlightReleases==painted&&returned.scenePixelBytes==rest.scenePixelBytes&&returned.sceneSurfaces==rest.sceneSurfaces&&capture()==before,
               "The next pointer event gives every faded highlight bitmap back; the frame is the resting one");
         hover();check(shelf.resources().highlightPaints-rest.highlightPaints==2*painted,"Hovering again paints the highlight again");
         (void)shelf.pointer({app::PointerKind::leave,app::PointerButton::none,0,0,0},time);timed(1);check(shelf.requiresFrames(time),"The highlight fades");

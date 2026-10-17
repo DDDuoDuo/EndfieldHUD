@@ -20,6 +20,18 @@ void check(bool value, const std::string& message) {
     ++checks;
     if (!value) throw std::runtime_error(message);
 }
+// Diagnostic output switches (the MSVC CRT deprecates std::getenv, C4996).
+bool environmentFlag(const char* name) {
+#ifdef _MSC_VER
+    char* value{};
+    std::size_t length{};
+    const bool set = _dupenv_s(&value, &length, name) == 0 && value;
+    std::free(value);
+    return set;
+#else
+    return std::getenv(name) != nullptr;
+#endif
+}
 double number(const Json& value) {
     if (value.isString()) {
         const auto s = value.string();
@@ -33,7 +45,7 @@ void near(double actual, double expected, double tolerance, const std::string& m
         auto key = message.substr(message.find(' ') + 1);
         key = key.substr(key.find(' ') + 1);
         auto& m = (*maxima)[key];
-        if (std::abs(actual - expected) > 0.01 && std::getenv("CHARGE_VERBOSE")) std::cout << message << " " << actual << " vs " << expected << "\n";
+        if (std::abs(actual - expected) > 0.01 && environmentFlag("CHARGE_VERBOSE")) std::cout << message << " " << actual << " vs " << expected << "\n";
         m = std::max(m, std::abs(actual - expected));
         ++checks;
         return;
@@ -579,7 +591,7 @@ int main(int argc, char** argv) {
         Fixture fixture{Json::parse(bytes.str(), 64 * 1024 * 1024)};
         check(fixture.root["liveServices"].boolean() == false, "Detached oracle");
         trees(fixture);
-        if (std::getenv("CHARGE_MAXIMA")) { std::map<std::string, double> m; maxima = &m; timelines(fixture); maxima = nullptr; for (auto& [k, v] : m) std::cout << k << " " << v << "\n"; }
+        if (environmentFlag("CHARGE_MAXIMA")) { std::map<std::string, double> m; maxima = &m; timelines(fixture); maxima = nullptr; for (auto& [k, v] : m) std::cout << k << " " << v << "\n"; }
         timelines(fixture);
         sequenceContracts();
         readings(fixture);

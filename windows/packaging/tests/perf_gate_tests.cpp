@@ -427,15 +427,15 @@ void report() {
     // production ten minutes, and the report says so.
     {
         auto waited = object;
-        auto list = waited["scenarios"].array();
-        auto releasedScenario = list[1].object();
+        auto scenarios = waited["scenarios"].array();
+        auto releasedScenario = scenarios[1].object();
         auto state = releasedScenario["closed"].object();
         state["graceSeconds"] = 600.0;
         state["graceOverride"] = false;
         state["closedSeconds"] = 610.5;
         releasedScenario["closed"] = Json(state);
-        list[1] = Json(releasedScenario);
-        waited["scenarios"] = Json(list);
+        scenarios[1] = Json(releasedScenario);
+        waited["scenarios"] = Json(scenarios);
         auto settings = waited["settings"].object();
         settings["releaseGraceSeconds"] = 600.0;
         settings["graceOverride"] = false;
@@ -449,12 +449,12 @@ void report() {
     // A schema 2 report (one closed window) still renders.
     {
         auto old = object;
-        auto list = old["scenarios"].array();
-        auto first = list[0].object();
+        auto scenarios = old["scenarios"].array();
+        auto first = scenarios[0].object();
         first["name"] = "closed-idle";
         first.erase("closed");
-        list[0] = Json(first);
-        old["scenarios"] = Json(list);
+        scenarios[0] = Json(first);
+        old["scenarios"] = Json(scenarios);
         old["schema"] = 2;
         const auto text = p::renderGateMarkdown(Json(old));
         check(contains(text, "| Closed idle | FAIL | CPU 0.84 % of one core") && contains(text, "## Closed idle\n\nSampled for 60.0 s."),

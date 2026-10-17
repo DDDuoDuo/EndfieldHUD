@@ -251,8 +251,8 @@ void run(){
         check((work&unsigned(TextInputChange::text))&&(work&unsigned(TextInputChange::selection))&&(work&unsigned(TextInputChange::layout)),"Removing pose echo preserves real text, selection and required layout-work flags");
         l.relayout();const auto selectionCallbacks=s->selection;lock(ts,s.Get(),TS_LF_READWRITE,[&]{TS_SELECTION_ACP selection{0,1,{TS_AE_END,FALSE}};ok(ts->SetSelection(1,&selection),"TSF-originated selection changes caller document");});
         check(messages(isolated.handle,ownerMessage,ownerToken)==1&&field.takeChanges(ownerToken)==unsigned(TextInputChange::selection)&&s->selection==selectionCallbacks,"TSF selection work reaches owner without reflecting it back to TSF");
-        ComPtr<ITfContextOwnerCompositionSink>c;ok(ts->QueryInterface(IID_PPV_ARGS(&c)),"Owner composition protocol remains installed");ComPtr<FakeRange>r;r.Attach(new FakeRange(0,1));ComPtr<FakeView>v;v.Attach(new FakeView(r.Get()));BOOL accepted{};
-        ok(c->OnStartComposition(v.Get(),&accepted),"Genuine marked composition starts");check(accepted,"Composition is accepted");ok(c->OnEndComposition(v.Get()),"Genuine marked composition ends");
+        ComPtr<ITfContextOwnerCompositionSink>c;ok(ts->QueryInterface(IID_PPV_ARGS(&c)),"Owner composition protocol remains installed");ComPtr<FakeRange>r;r.Attach(new FakeRange(0,1));ComPtr<FakeView>v;v.Attach(new FakeView(r.Get()));BOOL startAccepted{};
+        ok(c->OnStartComposition(v.Get(),&startAccepted),"Genuine marked composition starts");check(startAccepted,"Composition is accepted");ok(c->OnEndComposition(v.Get()),"Genuine marked composition ends");
         check(messages(isolated.handle,ownerMessage,ownerToken)==1&&field.takeChanges(ownerToken)==unsigned(TextInputChange::composition),"Composition lifecycle continues to schedule owner work");
         ok(ts->UnadviseSink(s.Get()),"Detach host-pose fixture observer");ok(field.stop(),"Stop host-pose fixture without a visible window");
     }

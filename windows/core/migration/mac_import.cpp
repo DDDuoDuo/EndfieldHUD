@@ -314,9 +314,9 @@ struct MacImportSession::Impl {
             // Every listed file is verified. Files a store may read are copied
             // into the private tree; the others are only checked in place.
             const auto limit = importLimit(file.path);
-            const bool copy = limit && file.bytes <= *limit;
-            if (copy) copied += file.bytes;
-            verifications.push_back({index, copy});
+            const bool copyIn = limit && file.bytes <= *limit;
+            if (copyIn) copied += file.bytes;
+            verifications.push_back({index, copyIn});
         }
         progress.exportBytes = total;
         for (const auto store : macImportStores) { MacImportStoreReport entry; entry.store = store; summary.stores.push_back(std::move(entry)); }
@@ -683,13 +683,13 @@ struct MacImportSession::Impl {
         const auto* json = manifest.find(layout(MacImportStore::account).file);
         if (!json) { r.status = MacImportStatus::notInExport; return; }
         const auto copied = ingested(*json, layout(MacImportStore::account).limit);
-        const auto result = importMacAccountCache(files::readFile(copied, macAccountCacheMaximumBytes));
+        const auto cache = importMacAccountCache(files::readFile(copied, macAccountCacheMaximumBytes));
         written.insert("Account");
-        files::writeNewFile(stage / "Account" / "profile-cache.json", result.bytes);
-        r.records = result.roles;
-        summary.profileSyncLocked = result.profileSyncLocked;
-        for (const auto& region : result.disconnectedRegions) warn(r, "Sign in again to reconnect the " + region + " account; cached roles stay visible");
-        if (!result.strippedKeys.empty()) warn(r, std::to_string(result.strippedKeys.size()) + " credential-like field(s) were removed and never imported");
+        files::writeNewFile(stage / "Account" / "profile-cache.json", cache.bytes);
+        r.records = cache.roles;
+        summary.profileSyncLocked = cache.profileSyncLocked;
+        for (const auto& region : cache.disconnectedRegions) warn(r, "Sign in again to reconnect the " + region + " account; cached roles stay visible");
+        if (!cache.strippedKeys.empty()) warn(r, std::to_string(cache.strippedKeys.size()) + " credential-like field(s) were removed and never imported");
     }
     void centerLogoStep(MacImportStoreReport& r) {
         const auto revision = macSettings ? macSettings->centerLogoRevision : std::nullopt;

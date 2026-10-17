@@ -54,20 +54,20 @@ struct UtilityExecutor::Impl {
     void run()noexcept {
         describeWorker(threadName);
         for(;;){
-            std::list<Task> current;{
+            std::list<Task> claimed;{
                 std::unique_lock lock(mutex);const auto work=[&]{return stopping||!pending.empty();};
                 // An idle worker ends after idleExit without work: one bounded
                 // wait, not a periodic wake. The thread stays joinable.
                 if(idleExit.count()>0){if(!ready.wait_for(lock,idleExit,work)){exited=true;statistics.workerAlive=false;return;}}
                 else ready.wait(lock,work);
                 if(pending.empty()){statistics.workerAlive=false;return;}
-                current.splice(current.end(),pending,pending.begin());statistics.pending=pending.size();statistics.running=1;
+                claimed.splice(claimed.end(),pending,pending.begin());statistics.pending=pending.size();statistics.running=1;
             }
-            auto&task=current.front();try{task.work();}catch(...){task.error=std::current_exception();}
+            auto&task=claimed.front();try{task.work();}catch(...){task.error=std::current_exception();}
             task.work={};bool wake{};{
                 std::lock_guard lock(mutex);statistics.running=0;++statistics.executed;
                 if(!stopping&&routes.contains(task.route)){
-                    completed.splice(completed.end(),current);statistics.completed=completed.size();wake=!notified;notified=true;
+                    completed.splice(completed.end(),claimed);statistics.completed=completed.size();wake=!notified;notified=true;
                 }else ++statistics.discarded;
                 if(pending.empty())idle.notify_all();
             }

@@ -195,9 +195,9 @@ void run(const fs::path&shader,const fs::path&resources,const fs::path&captionFi
     {
         core::ModulePresentation modules(core::Module::profile);(void)frame(*owner,modules,1./60);
         need(owner->perform("profile:menu",time)&&owner->perform("profile:portraitMenu",time),"The portrait popover opens");(void)frame(*owner,modules,1./60);
-        double total{},longest{};unsigned steps{};
-        for(unsigned n=1;n<=12;++n){const double d=timed([&]{need(owner->setSlider(m::ProfileField::avatarZoom,1+.25*n,time),"A portrait zoom step");});total+=d;longest=std::max(longest,d);++steps;(void)frame(*owner,modules,1./60);}
-        set("slider.avatarZoomStepOwnerMS",total/steps);set("slider.avatarZoomStepLongestMS",longest);
+        double total{},slowest{};unsigned steps{};
+        for(unsigned n=1;n<=12;++n){const double d=timed([&]{need(owner->setSlider(m::ProfileField::avatarZoom,1+.25*n,time),"A portrait zoom step");});total+=d;slowest=std::max(slowest,d);++steps;(void)frame(*owner,modules,1./60);}
+        set("slider.avatarZoomStepOwnerMS",total/steps);set("slider.avatarZoomStepLongestMS",slowest);
         double drains{},drainPeak{};
         for(int n=0;n<256;++n){executor.waitIdle();const double d=timed([&]{(void)executor.drain();});drains+=d;drainPeak=std::max(drainPeak,d);if(!executor.stats().pending&&!executor.stats().running&&!executor.stats().completed)break;}
         set("slider.completionOwnerMS",drains);set("slider.completionLongestDrainMS",drainPeak);

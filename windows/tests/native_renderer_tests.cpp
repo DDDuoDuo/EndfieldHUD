@@ -175,7 +175,7 @@ void textureStorage(Renderer& renderer,DrawObject& object){
         auto image=renderer.readback();pixel(image,image.width/4,image.height/4,{128,0,0,128},0,"An alpha-only mask multiplies exactly its alpha");
         object.alphaMask.reset();object.linearTint={1,1,1,1};object.textureID="storage.white";
         check(renderer.configureNativeGroup("storage.white-group",encodedTarget,std::span(&object,1)),"An alpha-only texture enters an encoded group");
-        auto output=renderer.nativeGroupOutput("storage.white-group");renderer.setDrawList(std::span(&output,1));renderer.draw(false);
+        auto whiteOutput=renderer.nativeGroupOutput("storage.white-group");renderer.setDrawList(std::span(&whiteOutput,1));renderer.draw(false);
         image=renderer.readback();pixel(image,image.width/4,image.height/4,{128,128,128,128},1,"An encoded group carries premultiplied white from an alpha-only texture");
         renderer.clearDrawList();check(renderer.removeNativeGroup("storage.white-group")&&renderer.removeTexture("storage.white")&&renderer.removeTexture("storage.mask"),"Alpha-only fixtures retire");
     }
