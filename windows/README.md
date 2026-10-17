@@ -4290,6 +4290,27 @@ No new registered test in this checkpoint (403, as in checkpoint 135).
 Per-commit runs are quoted above: a laptop slot for `9a4670a`, hidden slot
 runs on `f4c5bc2` plus their files for `eb9e01f` and `9c5ec5a`.
 
+### Tester confirmation (after validation)
+
+On 2026-10-16 the tester reported on release candidate 136 on the laptop:
+"Everything is working, including installing & updating", and then that
+uninstalling works too.
+
+- **Now Playing with NetEase's *开启 SMTC* on:** synchronized lyrics, the
+  running time and a sharp cover (`9a4670a`).
+- **Release candidates 135 and 136:** their new items work, among them the
+  text editing and pointer parity.
+- **Setup, live:** release candidate 135's setup installed, release
+  candidate 136's setup updated the installed copy over it with the data
+  kept, and the uninstall from Settings → Apps worked.
+- **New problem (open):** when Setup opens EndfieldHUD after an install or
+  an update, the HUD appears behind the other windows; openings by the
+  hotkey come to the front. A fix is in progress for the next release
+  candidate.
+- **Not reported:** the on-screen `package_perf_gate --desktop` run is still
+  to do, and a pinch on a real touchpad was not specifically reported, so
+  checkpoint 135's pinch item stays open.
+
 ### Corrections to the entries above
 
 - Checkpoint 132's queue-file entry, and section 6 of `WINDOWS-MIGRATION.md`
@@ -4315,30 +4336,40 @@ runs on `f4c5bc2` plus their files for `eb9e01f` and `9c5ec5a`.
 Checkpoint 135's list still applies, except the licences (settled above and
 under *Decisions for the user*). New items:
 
-- Now Playing: NetEase's lyrics, time and sharp cover with *开启 SMTC* on
-  await the tester's confirmation on release candidate 136. A queue file
-  over 16 MiB still falls back to the fuzzy title search.
+- Now Playing: a queue file over 16 MiB still falls back to the fuzzy title
+  search. NetEase's lyrics, time and sharp cover with *开启 SMTC* on are
+  confirmed (*Tester confirmation* above).
+- Setup: the HUD that Setup opens after an install or an update appears
+  behind the other windows (*Tester confirmation* above); a fix is in
+  progress for the next release candidate.
 - Credits: `CREDITS.md` names the Unicode Character Database since
   `e36841f`.
 
 ### Live acceptance still needed
 
-Checkpoint 135's list still applies. On release candidate 135 the tester
-reported most of its new items working, among them the text editing and
-pointer parity; the NetEase lyrics and cover did not (above). New items:
+Checkpoint 135's list still applies, except the items the tester confirmed
+on release candidate 136 (*Tester confirmation* above); its touchpad pinch
+stays open. On release candidate 135 the tester reported most of its new
+items working, among them the text editing and pointer parity; the NetEase
+lyrics and cover did not (above). New items:
 
 - NetEase on release candidate 136, with *开启 SMTC* on and off: lyrics for
   every track, every line on time where NetEase stores `[mm:ss:cc]` stamps
   (not only the credit lines), and the time for tracks that had none; with
   *开启 SMTC* on, the small cover first, then the sharp cover fading in
-  without a gap.
+  without a gap. *With 开启 SMTC on, confirmed by the tester (above); with
+  it off, not specifically reported.*
 - Lyrics after a lost connection or a refused lookup: LRCLIB's lyrics
   meanwhile, NetEase's once a retry is answered.
-- The live install test, which the tester is running personally on the
-  laptop: release candidate 135's setup installed, then upgraded with
-  release candidate 136's setup (data kept), then uninstalled;
+- The live install test, run personally by the tester on the laptop:
+  release candidate 135's setup installed, then upgraded with release
+  candidate 136's setup (data kept), then uninstalled;
   `THIRD-PARTY-NOTICES.txt` in the installed folder, with the Unicode
-  notice after the upgrade, and gone after uninstall. Results pending.
+  notice after the upgrade, and gone after uninstall. *Install, update and
+  uninstall passed (above); the notices file was not specifically
+  reported.*
+- Once fixed: the HUD that Setup opens after an install or an update comes
+  to the front.
 
 ### Decisions for the user
 

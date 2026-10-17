@@ -12,8 +12,14 @@ publishing:
      (package_perf_gate --desktop) and replace the "Performance" figures
      with its report.
   3. Install, upgrade and uninstall the setup live (with the SmartScreen
-     prompt). Remove every item under "Not yet checked on a real PC" that has
-     passed.
+     prompt). Done on the test laptop with release candidates 135 and 136
+     (2026-10-16): installed, updated over the installed copy with the data
+     kept, and uninstalled from Settings → Apps. Remove every item under
+     "Not yet checked on a real PC" that has passed.
+     Blocker: when Setup opens EndfieldHUD after an install or an update,
+     the HUD appears behind the other windows (openings by the hotkey come
+     to the front; tester report on release candidate 136). Do not publish
+     until a release candidate with the fix has been checked live.
   4. Compare "Known differences and limitations" with WINDOWS-MIGRATION.md
      section 6 at the release commit.
   5. Create the release under the Windows tag namespace only, from the
@@ -205,7 +211,7 @@ These come from Windows itself, or from choices that keep your data and system s
 Automated tests run every tool over sample data, but these have not been tried live yet:
 
 - a full tool-by-tool check of this build on the desktop;
-- installing, upgrading and uninstalling with the setup, and updating from one published Windows release to another (this is the first);
+- updating from one published Windows release to another (this is the first);
 - signing in with a Global account (a Mainland China account worked);
 - Now Playing with any player other than NetEase Cloud Music;
 - Calendar reminder notifications, and clicking one;

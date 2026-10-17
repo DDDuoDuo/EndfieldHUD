@@ -23,15 +23,16 @@ data folder; none is a published release.
   showed. A lyrics lookup that gets no answer (no connection, a timeout or a
   refusal from NetEase) is no longer remembered as "no lyrics": it is tried
   again after 5, 15, 45 and 135 seconds, then every 5 minutes while Now
-  Playing is shown, and LRCLIB's lyrics stay on screen meanwhile. Not yet
-  confirmed on the test laptop.
+  Playing is shown, and LRCLIB's lyrics stay on screen meanwhile. Confirmed
+  by the tester on the test laptop: with **开启 SMTC** on, the lyrics run in
+  time with the song and the running time shows.
 - **Now Playing: sharp cover**: covers are drawn at exactly the size the HUD
   shows them (660 pixels, scaled down smoothly), not enlarged from at most
   512 pixels, which looked blurry. With NetEase's **开启 SMTC** on, the small
   cover from NetEase's media session appears at once, then the full-size
   cover from NetEase's image server fades in once it has loaded, without a
-  gap. Other players keep showing their own cover. Not yet confirmed on the
-  test laptop.
+  gap. Other players keep showing their own cover. Confirmed by the tester
+  on the test laptop with **开启 SMTC** on.
 - **Third-party licences: Unicode data**: `THIRD-PARTY-NOTICES.txt` now also
   includes the Unicode License V3 for the Unicode character tables built
   into `EndfieldHUD.exe`: those of the minigame's script engine (Unicode
@@ -64,8 +65,8 @@ data folder; none is a published release.
   to zoom about three times as fast. A pinch or Ctrl + wheel over the
   Storage and Activity Monitor buttons below the circle no longer zooms the
   Map. In Notes and Projection, which have no pinch on the Mac, Ctrl + wheel
-  still scrolls a note or sizes the brush. Pinching has not been tried on a
-  real touchpad yet.
+  still scrolls a note or sizes the brush. Pinching on a real touchpad has
+  not been specifically reported yet.
 - **Section list arrows**: the arrows at the top and bottom of the
   right-hand section list scroll the list when clicked, and each is lit only
   while the list can scroll that way, as on the Mac. Before, clicks on them
