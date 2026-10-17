@@ -511,16 +511,8 @@ public:
     void update(const ModuleFrame& f) override { s_.update(f.center, f.chrome, f.presentation, f.opacity, f.time); }
     void prewarm(const ModuleFrame& f) override { previewPrewarm(s_, f); }
     bool requiresFrames(double t) const override { return s_.requiresFrames(t); }
-    // While a UI Automation client holds the peers and they no longer match
-    // the pages (a page settled after its module switch, a slider dragged,
-    // the confirmation card shown or gone), one wake runs the deadline below,
-    // whose content event re-lists them; nothing is scheduled otherwise.
-    std::optional<double> nextWakeTime(double now) const override {
-        auto wake = s_.nextWakeTime(now);
-        if (automation_.stale()) wake = wake ? std::min(*wake, now) : now;
-        return wake;
-    }
-    bool deadline(double t) override { automation_.requested(); s_.wake(t); return true; }
+    std::optional<double> nextWakeTime(double now) const override { return s_.nextWakeTime(now); }
+    bool deadline(double t) override { s_.wake(t); return true; }
     void upload(gpu::Renderer& r) override { s_.upload(r); }
     Entries entries(core::Module) override { return s_.entries(false); }
     Entries modalEntries() override { return s_.modalEntries(); }

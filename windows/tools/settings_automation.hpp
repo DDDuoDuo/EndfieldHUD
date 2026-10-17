@@ -58,9 +58,13 @@ double settingsSliderStep(std::string_view id, double minimum, double maximum) n
 
 // The owner's binding: the provider is created on the first refresh (a UIA
 // client asked the HUD window for its root) and again for a new group;
-// refresh() runs on content events only. Presses run at hooks.now() exactly
-// as the page's clicks (SettingsPreview::perform / setSlider / performSafety
-// / focusSafety), then hooks.changed(). Rects project through the page's
+// refresh() runs on content events only. The host also re-lists without an
+// input event when a module switch settles or the active module's
+// accept-input changes (the confirmation card shown or gone: the owner's
+// pointer capture), in the frame that changed it (Application::present).
+// Presses run at hooks.now() exactly as the page's clicks
+// (SettingsPreview::perform / setSlider / performSafety / focusSafety), then
+// hooks.changed(). Rects project through the page's
 // (or card's) current plane, the DPI scale and the HUD window's client
 // origin (native::screenReaderClientToScreen). The preview and the hooks'
 // window outlive the binding.
@@ -77,21 +81,12 @@ public:
     long fromPoint(double screenX, double screenY, IRawElementProviderFragment** out) const;
     // HUD concealed or owner removed: every fragment disconnects.
     void disconnect() noexcept;
-    // What the fragments list no longer matches the pages (a page that
-    // settled after a module switch, a slider drag, the card appearing or
-    // leaving) while a client holds them: the owner asks the host for one
-    // content event (a wake) and marks it requested() when it runs. No
-    // allocation; false before the first refresh and once disconnected.
-    bool stale() const noexcept;
-    void requested() noexcept;
     native::NativeSettingsAutomation* provider() const noexcept { return provider_.get(); }
 private:
     SettingsPreview& preview_;
     native::ScreenReaderPeerHooks hooks_;
     std::unique_ptr<native::NativeSettingsAutomation> provider_;
     IRawElementProviderFragmentRoot* group_{};
-    std::uint64_t listed_{}, requested_{};
-    bool connected_{};
 };
 } // namespace endfield::tools
 #endif

@@ -330,15 +330,15 @@ void run(const std::filesystem::path& shader) {
 
     // --- Nothing before a page accepts input ---------------------------------
     check(!binding.refresh(group) && binding.count() == 0 && !owner.inputModule() && !owner.perform("focus", now), "Before Settings is presented no control is listed or performed");
-    check(!binding.stale(), "Nothing changed since the empty listing: no content event is asked for");
     frame();
     check(owner.inputModule() == c::Module::system, "The System page accepts input once presented");
-    check(binding.stale(), "Once System accepts input, the listing (still empty) asks for one content event");
-    binding.requested();
-    check(!binding.stale(), "A requested content event is asked for once");
+    // The binding lists on content events only: the host raises one when the
+    // module switch settles (Application::present), so a client is not left
+    // with this empty listing until the next click or key.
+    check(binding.count() == 0, "Until the next content event the listing stays as it was");
 
     // --- System ---------------------------------------------------------------
-    check(binding.refresh(group) && !binding.stale(), "The System page's controls are listed");
+    check(binding.refresh(group), "The System page's controls are listed");
     check(join(topIds(binding)) == "settings:heading,language,login,focus,screen,batteryEnabled,restore",
           "System lists its title and the rows in view, top to bottom: " + join(topIds(binding)));
     check(visualOrder(), "System's nodes follow the page's visual order");
@@ -458,11 +458,10 @@ void run(const std::filesystem::path& shader) {
     binding.refresh(group);
     check(name(find(binding, "settings:heading")) == "System", "Before the switch's frame the System page is still listed");
     frame();
-    check(binding.stale(), "The settled Display page makes the listing stale (the owner asks for one content event)");
-    binding.requested();
-    check(!binding.stale(), "The request is asked for once");
+    check(owner.inputModule() == c::Module::display && name(find(binding, "settings:heading")) == "System",
+          "The settled Display page accepts input; the listing waits for the content event the host raises at the end of the switch");
     binding.refresh(group);
-    check(!binding.stale() && name(find(binding, "settings:heading")) == "Display" && owner.inputModule() == c::Module::display, "The content event lists the Display page");
+    check(name(find(binding, "settings:heading")) == "Display" && owner.inputModule() == c::Module::display, "The content event lists the Display page");
     check(visualOrder(), "Display's nodes follow the visual order");
     {
         const auto ui = find(binding, "uiScale"), parallax = find(binding, "parallax"), x = find(binding, "positionX");
@@ -484,7 +483,7 @@ void run(const std::filesystem::path& shader) {
         const auto focusMoves = binding.provider()->stats().focusMoves;
         check(setRange(ui, 1.5) == S_OK && owner.controller().scalePending(), "Setting the UI scale previews it pending confirmation");
         frame();
-        check(owner.modalActive() && binding.stale(), "The card makes the listing stale");
+        check(owner.modalActive(), "The card is modal (the owner's pointer capture, on whose change the host re-lists)");
         binding.refresh(group);
         check(join(topIds(binding)) == "settings:safety" && available(parallax) == UIA_E_ELEMENTNOTAVAILABLE && !owner.perform("ambient", now) && !owner.setSlider("parallax", 1, now),
               "While the card is up only the card is listed and page controls are refused");
@@ -618,7 +617,6 @@ void run(const std::filesystem::path& shader) {
         check(binding.count() == 0 && available(before) == UIA_E_ELEMENTNOTAVAILABLE && !owner.inputModule() && !owner.clientRect({0, 0, 400, 334}) && !owner.perform("license", now),
               "Hidden Settings lists, projects and performs nothing");
         binding.disconnect();
-        check(!binding.stale(), "A disconnected binding asks for no content event");
         owner.setOverlayVisible(true, now);
         frame();
         show(c::Module::power);

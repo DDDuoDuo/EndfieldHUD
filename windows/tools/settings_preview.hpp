@@ -51,10 +51,6 @@ public:
  const modules::SettingsSafety&safety()const noexcept;core::Rect safetyViewport()const noexcept;
  std::optional<core::Rect>safetyClientRect(core::Rect cardLocal)const;
  bool performSafety(int button,double);bool focusSafety(int button,double);
- // Changes whenever what the accessibility view lists may have changed (the
- // page accepting input, its presentation, the confirmation card). Cheap;
- // no allocation.
- std::uint64_t accessibilityRevision()const noexcept;
  void setCustomColor(std::array<double,3>,double);void setCustomLogo(std::string,double);void showImportError(std::string,double);
  // Display > Battery alert (Mac HUDSettingsCanvas.showBatterySettings), for
  // the Power page's "Battery alert ›" before Display is selected.

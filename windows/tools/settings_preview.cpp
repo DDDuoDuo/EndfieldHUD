@@ -82,8 +82,6 @@ bool SettingsPreview::performSafety(int button,double t){auto&i=*impl_;i.clock(t
  (void)i.safety.pointerDown(button,i.time);(void)i.safety.pointerUp(button,i.time);return !i.safety.modal()||i.safety.pose(i.time).dismissing;}
 bool SettingsPreview::focusSafety(int button,double t){auto&i=*impl_;i.clock(t);if(!i.overlay||!i.safety.modal()||(button!=0&&button!=1)||i.safety.pose(i.time).dismissing)return false;
  if(i.safety.focused()!=button)(void)i.safety.key(button?VK_RIGHT:VK_LEFT,false,i.time);return i.safety.focused()==button;}
-std::uint64_t SettingsPreview::accessibilityRevision()const noexcept{const auto&i=*impl_;std::uint64_t h=1469598103934665603ull;const auto mix=[&h](std::uint64_t v){h=(h^v)*1099511628211ull;};
- mix(i.overlay);for(std::size_t n=0;n<i.slots.size();++n){const auto&s=*i.slots[n];mix(n<<1|(s.input&&s.pose?1u:0u));mix(s.state.revision());}mix(i.safety.revision());mix(i.safety.modal());mix(i.safetyScene!=nullptr);return h;}
 void SettingsPreview::setCustomColor(std::array<double,3>color,double t){auto&i=*impl_;i.clock(t);i.slots[1]->state.setCustomColor(color,i.time);}
 void SettingsPreview::setCustomLogo(std::string revision,double t){auto&i=*impl_;i.clock(t);i.slots[1]->state.setCustomLogo(std::move(revision),i.time);}
 void SettingsPreview::showImportError(std::string error,double t){auto&i=*impl_;i.clock(t);i.slots[1]->state.showImportError(std::move(error),i.time);}

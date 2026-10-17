@@ -17,8 +17,11 @@
 // (a bounded walk); owners raise their own AutomationFocusChanged events.
 //
 // Content events only: the host calls refresh() after owner calls that
-// reported changed artwork, module selection, opening and closing; nothing is
-// polled and nothing runs per frame. The root is created only when a UIA
+// reported changed artwork, module selection, opening and closing, and in the
+// frame where a module switch settles or the active module's accept-input
+// changes (Application::present compares the presentation sample and the
+// active owner's modal capture with what the last refresh saw); owners are
+// never polled for their fragments. The root is created only when a UIA
 // client asks the window for it, so the HUD pays nothing without a client.
 // Calls arrive on the UI thread (ProviderOptions_UseComThreading).
 #include "app/module_owner.hpp"

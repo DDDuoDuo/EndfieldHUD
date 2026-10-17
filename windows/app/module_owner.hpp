@@ -379,9 +379,12 @@ public:
     // registration order; `root` is that owner's group, stable for the
     // owner's registration: use it as the fragments' parent and fragment root.
     // automationRefresh runs on content events (after an owner call reported
-    // changed artwork, module selection, opening and closing), never per
-    // frame; true when the owner's child set or order changed (the host then
-    // raises StructureChanged). automationChild/automationFromPoint return
+    // changed artwork, module selection, opening and closing, and once a
+    // module switch settled or the active module's accept-input changed:
+    // ModulePresentationSample::acceptsModuleInput, capturesPointer() of the
+    // owner presenting the requested module), never every frame; true when
+    // the owner's child set or order changed (the host then raises
+    // StructureChanged). automationChild/automationFromPoint return
     // AddRef'd fragments (HRESULTs as long; screen pixels for the hit test,
     // null out for none). automationDisconnect disconnects every fragment
     // (HUD hidden, owner removed); the next refresh may connect new ones.

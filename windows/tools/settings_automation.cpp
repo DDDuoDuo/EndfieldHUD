@@ -205,8 +205,6 @@ bool SettingsAutomation::refresh(IRawElementProviderFragmentRoot* group) {
         host.changed = hooks_.changed;
         provider_ = std::make_unique<native::NativeSettingsAutomation>(std::move(host));
     }
-    connected_ = true;
-    listed_ = preview_.accessibilityRevision();
     return provider_->refresh() || replaced;
 }
 std::size_t SettingsAutomation::count() const noexcept { return provider_ ? provider_->size() : 0; }
@@ -220,13 +218,6 @@ long SettingsAutomation::fromPoint(double x, double y, IRawElementProviderFragme
 }
 void SettingsAutomation::disconnect() noexcept {
     if (provider_) provider_->disconnect();
-    connected_ = false;
 }
-bool SettingsAutomation::stale() const noexcept {
-    if (!connected_ || !provider_) return false;
-    const auto now = preview_.accessibilityRevision();
-    return now != listed_ && now != requested_;
-}
-void SettingsAutomation::requested() noexcept { requested_ = preview_.accessibilityRevision(); }
 } // namespace endfield::tools
 #endif

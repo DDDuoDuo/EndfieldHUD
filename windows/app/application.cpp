@@ -1898,6 +1898,13 @@ bool Application::Impl::present(double time,bool submit){
             const ModuleFrame frame{*chromePlan->projection().center,noteChromeSettings,notes->modulePresentation(),opacity,hostTime(time),focused};o.update(frame);
             if(probe.enabled)probe.owner(o.name(),false,begin);},"frame");
     }
+    // A module switch that settled, or the active module's accept-input that
+    // changed (its confirmation card shown or gone), changes which UI
+    // Automation peers the owners list with no input event to re-list them:
+    // re-listed in the frame that changed it, after the owners' update()
+    // (StructureChanged for listening clients). Only once a client asked for
+    // the root; nothing is compared otherwise.
+    if(automation&&automationInputs()!=listedAutomation){automationChanged();refreshAutomation();}
     // Visibility unions are established first. Providers tick exactly once
     // on this existing frame clock; module owners only reread their clients.
     if(archiveMedia)isolate(archiveModuleOwner,"frame",[&]{archiveMedia->sync(hostTime(time));});
@@ -2115,7 +2122,19 @@ void Application::Impl::receiveDrop(double time){
 // UI Automation root (app/hud_automation.hpp)
 void Application::Impl::automationChanged(){automationDirty=true;}
 // Content event: re-list the owners' fragments (only once a UIA client asked).
-void Application::Impl::refreshAutomation(){if(automation&&automationDirty){automationDirty=false;automation->refresh();}}
+void Application::Impl::refreshAutomation(){if(automation&&automationDirty){automationDirty=false;listedAutomation=automationInputs();automation->refresh();}}
+// No allocation: the cached presentation sample of the last frame (what the
+// owners' update() saw), the source session's input gate and one virtual call
+// on the owner presenting the requested module.
+Application::Impl::AutomationInputs Application::Impl::automationInputs(){
+    AutomationInputs value;if(!notes)return value;
+    const auto&sample=notes->modulePresentation();
+    value.requested=sample.requested;value.current=sample.current.module;
+    if(sample.incoming)value.incoming=sample.incoming->module;
+    value.transitioning=sample.transitioning;value.moduleInput=sample.acceptsModuleInput;value.hudInput=session->inputEnabled();
+    if(auto*owner=registry.presenter(sample.requested)){value.active=owner;(void)registry.guard(*owner,[&]{value.modal=owner->capturesPointer();},"automation");}
+    return value;
+}
 HudAutomationSource Application::Impl::automationSource(){
     HudAutomationSource source;
     source.owners=[this](std::vector<ModuleOwner*>&out){registry.forEach([&](ModuleOwner&o){out.push_back(&o);},"automation");};

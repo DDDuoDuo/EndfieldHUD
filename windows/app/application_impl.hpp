@@ -768,6 +768,21 @@ struct Application::Impl {
     // UI Automation root provider (lazily created on WM_GETOBJECT).
     std::unique_ptr<HudAutomation> automation;
     bool automationDirty{};
+    // What decides which peers the owners list without an input event of its
+    // own: the module presentation (a switch running or settled, the module
+    // that accepts input), the HUD's input gate and the active module owner's
+    // modal capture (a confirmation card shown or gone). refreshAutomation()
+    // records what the listing saw; present() compares it once per frame, only
+    // once a client asked for the root, and re-lists when it changed.
+    struct AutomationInputs {
+        core::Module requested{}, current{};
+        std::optional<core::Module> incoming;
+        bool transitioning{}, moduleInput{}, hudInput{}, modal{};
+        const ModuleOwner* active{};
+        bool operator==(const AutomationInputs&) const = default;
+    };
+    AutomationInputs automationInputs();
+    AutomationInputs listedAutomation;
     // Settings link/update page and Storage Settings opened after the HUD closes.
     std::optional<std::string> pendingLink;
     std::uint64_t linkRequests{}; // hidden runs: links that would have opened (never opened)

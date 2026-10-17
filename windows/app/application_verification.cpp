@@ -938,6 +938,45 @@ int Application::Impl::runHiddenVerification(){
                     present(time,true);time+=.5;
                     uia.disconnectOwners();hostCheck(settingsModuleOwner->automationCount()==0,"Concealing disconnects the Settings controls");uia.shutdown();
                 }
+                // The host re-lists the peers when a module switch settles, and when
+                // the active module's accept-input changes, once a client asked for
+                // the root (Application::present): the module a click selected is
+                // listed with no further input, though at the click it accepted none.
+                if(settingsUI&&settingsModuleOwner&&registry.enabled(*settingsModuleOwner)&&volumeModuleOwner&&registry.enabled(*volumeModuleOwner)){
+                    const auto settle=[&](unsigned frames){for(unsigned frame=0;frame<frames;++frame)present(time+double(frame)/60,true);time+=double(frames)/60+.1;};
+                    const auto child=[&](ModuleOwner&owner,std::string_view id){ComPtr<IRawElementProviderFragment>found;
+                        for(std::size_t n=0;n<owner.automationCount()&&!found;++n){ComPtr<IRawElementProviderFragment>f;if(SUCCEEDED(owner.automationChild(n,&f))&&f&&textProperty(f.Get(),UIA_AutomationIdPropertyId)==id)found=f;}
+                        return found;};
+                    selectModule(core::Module::volume,time);settle(40);
+                    // A UIA client asks the HUD window for its root (automationObject).
+                    automation=std::make_unique<HudAutomation>(host.hwnd(),automationSource());automationChanged();refreshAutomation();
+                    hostCheck(volumeModuleOwner->automationCount()>0&&settingsModuleOwner->automationCount()==0,"With a UIA client connected the shown Volume controls are listed");
+                    // The click's content event: the switch has only begun.
+                    selectModule(core::Module::system,time);refreshAutomation();
+                    hostCheck(settingsModuleOwner->automationCount()==0,"At the click the incoming System page accepts no input yet and lists nothing");
+                    settle(40);
+                    hostCheck(findGroup(*automation,moduleCaption("system",watchAppearance.language,"system"))&&child(*settingsModuleOwner,"focus")&&volumeModuleOwner->automationCount()==0,
+                        "Once the switch settles the host lists the System page's controls with no further input; Volume's are gone");
+                    const auto refreshes=automation->stats().refreshes;settle(10);
+                    hostCheck(automation->stats().refreshes==refreshes,"Settled frames only compare: nothing is listed again");
+                    // The active module's accept-input: the layout confirmation card,
+                    // shown by a frame after the UI scale changed, takes every click, so
+                    // only the card is listed; once it is gone the page is listed again.
+                    selectModule(core::Module::display,time);refreshAutomation();settle(40);
+                    const auto scale=child(*settingsModuleOwner,"uiScale");
+                    ComPtr<IRawElementProviderSimple>simple;ComPtr<IUnknown>pattern;ComPtr<IRangeValueProvider>range;
+                    hostCheck(scale&&SUCCEEDED(scale.As(&simple))&&SUCCEEDED(simple->GetPatternProvider(UIA_RangeValuePatternId,&pattern))&&pattern&&SUCCEEDED(pattern.As(&range))&&
+                        range->SetValue(1.5)==S_OK&&settingsUI->controller().scalePending(),"The settled Display page is listed and its UI scale slider previews a new scale");
+                    settle(12);
+                    hostCheck(settingsUI->modalActive()&&settingsModuleOwner->automationCount()==1&&child(*settingsModuleOwner,"settings:safety"),
+                        "The confirmation card a frame showed is listed alone, with no further input");
+                    hostCheck(settingsUI->performSafety(0,now()),"Revert on the card restores the UI scale");
+                    settle(40);
+                    hostCheck(!settingsUI->modalActive()&&!settingsUI->controller().scalePending()&&child(*settingsModuleOwner,"uiScale"),"Once the card is gone the Display page is listed again, with no further input");
+                    selectModule(core::Module::volume,time);refreshAutomation();settle(40);
+                    hostCheck(volumeModuleOwner->automationCount()>0&&settingsModuleOwner->automationCount()==0,"Switching back lists the Volume controls with no further input");
+                    automation->disconnectOwners();automation->shutdown();automation.reset();
+                }
                 // Keyboard focus under the real root (GetFocus): the open Notes
                 // editor is the focused element of the root and of its group;
                 // finishing it leaves no Notes element focused.
