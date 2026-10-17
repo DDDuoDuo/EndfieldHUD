@@ -353,7 +353,24 @@ void zBandAndActivation() {
     host.show(false);check(banded(),"Shown for the default close");
     SendMessageW(window,WM_CLOSE,0,0);
     check(IsWindow(window)&&!host.stats().visible&&!banded()&&visibility.back()==std::pair{false,false},"The default close hides the HUD out of the band");
+
+    // The Projection hand-off (Application::moveProjection): the HUD is
+    // hidden, placed on Projection's display, then shown by Projection. The
+    // placement is geometry only: the hidden HUD stays out of the band, and a
+    // shown Projection moved to another display keeps its place in it.
+    const auto placedAt=[&](int x,int y,int w,int h){RECT r{};return GetWindowRect(window,&r)!=FALSE&&r.left==x&&r.top==y&&r.right-r.left==w&&r.bottom-r.top==h;};
+    const auto shows=visibility.size();
+    check(host.place(8,12,48,40)&&placedAt(8,12,48,40)&&host.metrics().pixelWidth==48&&host.metrics().pixelHeight==40,"Placing the hidden HUD moves and sizes it");
+    check(!banded()&&!host.stats().topmost&&!host.stats().visible&&!IsWindowVisible(window)&&visibility.size()==shows,
+        "Placing the hidden HUD for Projection leaves it hidden and out of the topmost band");
+    host.show(true);check(banded()&&visibility.size()==shows+1,"Projection's show enters the band");
+    const auto requests=host.stats().foregroundRequests;
+    check(host.place(4,6,40,36)&&placedAt(4,6,40,36)&&banded()&&host.stats().visible&&host.stats().foregroundRequests==requests&&visibility.size()==shows+1,
+        "Moving a shown Projection to another display keeps it in the band and leaves activation alone");
+    host.hide();check(!banded(),"Projection closed: out of the band");
+    check(host.place(0,0,32,32)&&placedAt(0,0,32,32)&&!banded()&&!host.stats().visible,"Placing the hidden HUD again keeps it out of the band");
     host.destroy();
+    check(!host.place(0,0,32,32),"No window: nothing to place");
 
     // A hidden benchmark's offscreen window is never shown: no band, no foreground.
     OverlayOptions offscreen{L"Hidden offscreen z-band fixture",0,0,16,16,nullptr};offscreen.offscreenScheduling=true;

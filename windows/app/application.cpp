@@ -2215,7 +2215,9 @@ std::optional<gpu::DisplayDescriptor> Application::Impl::projectionDisplay(std::
 }
 void Application::Impl::moveProjection(const gpu::DisplayDescriptor&display){
     hudDisplay=display.handle;projectionWorkTopPixels=std::max(0,display.workArea.top-display.bounds.top);
-    const auto&bounds=display.bounds;need(SetWindowPos(static_cast<HWND>(host.hwnd()),HWND_TOPMOST,bounds.left,bounds.top,bounds.right-bounds.left,bounds.bottom-bounds.top,SWP_NOACTIVATE)!=FALSE,"Position Projection on its retained display");
+    // Geometry only: the HUD hidden for the hand-off stays out of the topmost
+    // band until Projection's show() enters it; a shown Projection keeps its place.
+    const auto&bounds=display.bounds;need(host.place(bounds.left,bounds.top,bounds.right-bounds.left,bounds.bottom-bounds.top),"Position Projection on its retained display");
     (void)projectionCall("resize",[&]{projection->resize(host.metrics(),projectionWorkTopPixels/host.metrics().scale);});
 }
 void Application::Impl::projectionDropRoute(bool enabled,double time){

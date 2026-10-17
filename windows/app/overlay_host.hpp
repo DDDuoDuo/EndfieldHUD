@@ -313,6 +313,12 @@ public:
     // Hides the window and leaves the topmost band: a hidden window is never
     // topmost.
     void hide();
+    // Moves and sizes the window to these screen pixels (Projection on its
+    // retained display) and changes nothing else: z-order, visibility and
+    // activation stay as they are, so a hidden window never enters the
+    // topmost band here (only show() does) and a shown one keeps its place in
+    // it. false when Windows refuses the move or no window exists.
+    bool place(int x, int y, int pixelWidth, int pixelHeight);
     void setFrameDemand(core::FrameDemand);
     // Caller aggregates its next media/save/countdown deadline. It shares the
     // existing waitable timer, survives hide, and is consumed before callback.

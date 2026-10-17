@@ -826,6 +826,14 @@ void OverlayHost::hide() {
     p.syncTimer();
     p.rethrow();
 }
+bool OverlayHost::place(int x, int y, int width, int height) {
+    auto& p = *impl_; p.requireThread(); p.rethrow();
+    if (!p.window) return false;
+    // Geometry only: never HWND_TOPMOST here, whatever the window shows.
+    const bool placed = SetWindowPos(p.window, nullptr, x, y, width, height, SWP_NOZORDER | SWP_NOACTIVATE) != FALSE;
+    p.rethrow();
+    return placed;
+}
 double OverlayHost::clockNow() { return monotonicSeconds(); }
 void OverlayHost::setDeadline(std::optional<double> deadline) {
     auto& p=*impl_;p.requireThread();p.rethrow();
