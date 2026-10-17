@@ -1,7 +1,7 @@
 {
   "format": "EndfieldHUD.Windows.ThirdPartyNotices",
   "schema": 1,
-  "about": "Every third-party component compiled into EndfieldHUD.exe, EndfieldHUD-Setup.exe or uninstall.exe, or shipped in fonts/ or resources/. packaging/third_party_notices.cmake renders THIRD-PARTY-NOTICES.txt from this list (installed next to EndfieldHUD.exe, in the setup and the portable zip); packaging_third_party_notices_contracts fails when a shipped component has no entry or its licence text is missing. 'paths' are the component's files in windows/ (every windows/third_party folder, bundled font and licence file must be covered); 'texts' are reproduced in full; 'macOriginal' is the Mac copy a text must equal when the repository root is present.",
+  "about": "Every third-party component compiled into EndfieldHUD.exe, EndfieldHUD-Setup.exe or uninstall.exe, or shipped in fonts/ or resources/. packaging/third_party_notices.cmake renders THIRD-PARTY-NOTICES.txt from this list (installed next to EndfieldHUD.exe, in the setup and the portable zip); packaging_third_party_notices_contracts fails when a shipped component has no entry or its licence text is missing. 'paths' are the component's files in windows/ (every windows/third_party folder, bundled font and licence file must be covered); 'texts' are reproduced in full; 'macOriginal' is the Mac copy a text must equal when the repository root is present; 'vendoredOriginal' is the vendored file whose embedded notice the first text must reproduce. A source file that embeds Unicode Character Database data (a Unicode licence notice or a note that it holds generated Unicode tables) must be named in the paths of a component under the Unicode licence.",
   "preamble": [
     "EndfieldHUD is an unofficial fan project by DDDuoDuo (https://github.com/DDDuoDuo/EndfieldHUD). Its original code is licensed under the MIT License. EndfieldHUD.exe, EndfieldHUD Setup, the uninstaller and the files in the fonts and resources folders include the third-party components listed below. Each keeps its own licence, reproduced in full where it has one.",
     "Arknights, Arknights: Endfield, their artwork, branding and extracted game resources belong to HYPERGRYPH and their respective owners. They are excluded from EndfieldHUD's MIT License. EndfieldHUD is not affiliated with or endorsed by HYPERGRYPH."
@@ -16,6 +16,17 @@
       "ships": ["EndfieldHUD.exe (compiled in)"],
       "paths": ["third_party/quickjs-ng"],
       "texts": ["third_party/quickjs-ng/LICENSE"]
+    },
+    {
+      "name": "Unicode Character Database",
+      "version": "Unicode 17.0 (QuickJS-NG's generated tables); the macOS Foundation/ICU character sets of source authority ca04f142185c7de40acd8523bdb563195d90a1d1",
+      "url": "https://www.unicode.org/ucd/",
+      "license": "Unicode-3.0",
+      "use": "Unicode property tables compiled in: QuickJS-NG's case mapping, normalization, character category and script data for JavaScript strings and regular expressions (third_party/quickjs-ng/libunicode-table.h), and the Hypergryph account module's character sets for identifiers, whitespace and digits (modules/hypergryph_account_unicode.inc, generated from the macOS Foundation/ICU tables).",
+      "ships": ["EndfieldHUD.exe (compiled in)"],
+      "paths": ["third_party/quickjs-ng/libunicode-table.h", "modules/hypergryph_account_unicode.inc", "packaging/licenses/unicode-LICENSE.txt"],
+      "texts": ["packaging/licenses/unicode-LICENSE.txt"],
+      "vendoredOriginal": "third_party/quickjs-ng/libunicode-table.h"
     },
     {
       "name": "Microsoft Edge WebView2 SDK",

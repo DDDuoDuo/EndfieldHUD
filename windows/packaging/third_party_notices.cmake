@@ -20,7 +20,12 @@
 #     that differs from the list (stale build);
 #   - a licence or notice file in a folder staged into resources/ whose text
 #     is not in the rendered file (e.g. Matter.js inside the OrbiPom folder);
-#   - a copy under packaging/licenses that differs from its macOS original;
+#   - a copy under packaging/licenses that differs from its macOS original,
+#     or that its vendoredOriginal no longer embeds verbatim;
+#   - a source file, vendored or generated, that embeds Unicode Character
+#     Database data (the Unicode licence notice, or a note that it holds
+#     Unicode tables) without a Unicode-licensed component naming it: the
+#     data's notice is separate from the licence of the folder it sits in;
 #   - third-party code fetched by the build (FetchContent, ExternalProject,
 #     NuGet package references), which this list cannot see.
 if(CMAKE_SCRIPT_MODE_FILE)
@@ -246,6 +251,21 @@ foreach(index RANGE ${last})
       ehud_notices_fail("${name}: ${relative} differs from its macOS original ${original}")
     endif()
   endif()
+  # A copy of a notice embedded in a vendored file must stay identical to it.
+  ehud_notices_field("${json}" vendored components ${index} vendoredOriginal)
+  if(vendored)
+    if(NOT EXISTS "${SOURCE}/${vendored}" OR text_count EQUAL 0)
+      ehud_notices_fail("${name}: vendoredOriginal ${vendored} does not exist or there is no text to compare")
+    else()
+      ehud_notices_field("${json}" relative components ${index} texts 0)
+      ehud_notices_text("${SOURCE}/${vendored}" vendored_text)
+      ehud_notices_text("${SOURCE}/${relative}" copy_text)
+      string(FIND "${vendored_text}" "${copy_text}" found)
+      if(found EQUAL -1)
+        ehud_notices_fail("${name}: ${relative} differs from the notice embedded in ${vendored}")
+      endif()
+    endif()
+  endif()
 endforeach()
 ehud_notices_count("${json}" not_shipped notShipped)
 if(not_shipped GREATER 0)
@@ -314,6 +334,44 @@ foreach(relative IN LISTS sources)
     if(NOT ok)
       string(STRIP "${marked}" marked)
       ehud_notices_fail("${relative} names third-party code (\"${marked}\") but no component covers it")
+    endif()
+  endif()
+endforeach()
+
+# Unicode Character Database data compiled in: a table that carries the
+# Unicode licence notice or says it holds Unicode tables must be named by a
+# component under the Unicode licence, even inside a vendored folder that
+# another component covers (QuickJS-NG's MIT licence does not carry it).
+set(unicode_named "")
+math(EXPR components_last "${count} - 1")
+foreach(index RANGE ${components_last})
+  ehud_notices_field("${json}" license components ${index} license)
+  ehud_notices_count("${json}" paths components ${index} paths)
+  if(license MATCHES "^Unicode" AND paths GREATER 0)
+    math(EXPR paths_last "${paths} - 1")
+    foreach(position RANGE ${paths_last})
+      ehud_notices_field("${json}" relative components ${index} paths ${position})
+      list(APPEND unicode_named "${relative}")
+    endforeach()
+  endif()
+endforeach()
+file(GLOB_RECURSE unicode_sources RELATIVE "${SOURCE}" "${SOURCE}/*.c" "${SOURCE}/*.cpp" "${SOURCE}/*.h" "${SOURCE}/*.hpp"
+  "${SOURCE}/*.inc" "${SOURCE}/*.in")
+list(FILTER unicode_sources EXCLUDE REGEX "(^|/)tests?/")
+foreach(relative IN LISTS unicode_sources)
+  file(STRINGS "${SOURCE}/${relative}" unicode_marked LIMIT_COUNT 1
+    REGEX "UNICODE LICENSE|Unicode License|Unicode, Inc\\.|Unicode Character Database|UnicodeData\\.txt|Unicode (data|tables)([^A-Za-z]|$)")
+  if(unicode_marked)
+    set(named OFF)
+    foreach(path IN LISTS unicode_named)
+      if(relative STREQUAL path OR relative MATCHES "^${path}/")
+        set(named ON)
+        break()
+      endif()
+    endforeach()
+    if(NOT named)
+      string(STRIP "${unicode_marked}" unicode_marked)
+      ehud_notices_fail("${relative} embeds Unicode data (\"${unicode_marked}\") but no Unicode-licensed component names it")
     endif()
   endif()
 endforeach()
