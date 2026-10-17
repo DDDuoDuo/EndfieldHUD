@@ -10,7 +10,7 @@
   <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.zh-TW.md">繁體中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a>
 </p>
 
-给你的 Mac 加一点《明日方舟：终末地》的味道。按快捷键或点菜单栏，打开带动画和层次感的 HUD，记便笺、放文件、听音乐、看游戏数据，还有日常小工具。
+给你的 Mac 或 Windows 电脑加一点《明日方舟：终末地》的味道。按快捷键或点菜单栏，打开带动画和层次感的 HUD，记便笺、放文件、听音乐、看游戏数据，还有日常小工具。
 
 <a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/v1.2.0"><img src="docs/media/readme/release-v1.2.0.png" alt="版本 v1.2.0" width="326"></a>
 
@@ -25,6 +25,21 @@
 
 如果 macOS 拦住了应用，到**系统设置 → 隐私与安全性 → 仍要打开**，再确认一次。应用目前还没有经过 Apple 公证。
 
+**Windows**
+
+[下载安装程序（EXE）](https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.2.0/EndfieldHUD-1.2.0-build18-windows-x64-setup.exe) · [下载便携版（ZIP）](https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.2.0/EndfieldHUD-1.2.0-build18-windows-x64-portable.zip)
+
+0. 已经装过 EndfieldHUD？在**关于**里点**检查更新**，或者直接运行新版安装程序覆盖安装，数据都会保留。
+1. 运行安装程序。它只装在你当前的账户下，不需要管理员权限，还会在“开始”菜单里加上 EndfieldHUD。
+2. 想登录 Windows 时自动启动，就保持勾选**登录时启动**。然后点**安装**，再点**打开 EndfieldHUD**。
+3. 它的图标在通知区域（系统托盘），不在菜单栏。和 Mac 一样，按 Ctrl + 反引号（`）打开 HUD，想换快捷键可以到**快捷键**里改。
+
+如果 Windows SmartScreen 弹出**Windows 已保护你的电脑**，点**更多信息 → 仍要运行**。应用目前还没有代码签名。
+
+不想安装？下载便携版，解压到任意位置，运行 **EndfieldHUD.exe** 就行。不过它不会加到“开始”菜单，也收不到日历提醒通知。
+
+要卸载的话，到**设置 → 应用 → 已安装的应用 → EndfieldHUD → 卸载**。除非勾选**同时删除我的 EndfieldHUD 数据**，否则数据都会保留。
+
 用两侧按钮切换功能，右侧还能往下滚。**Esc** 会先退出编辑，再关闭 HUD。关闭 HUD 后应用仍会运行；点红色电源按钮可以退出应用。
 
 ![HUD 展开与收起](docs/media/readme/opening.gif)
@@ -32,6 +47,8 @@
 <img src="docs/media/readme/en-02-requirements.png" alt="系统要求" width="326">
 
 Apple 芯片：**macOS 11+**。Intel：**macOS 10.15.4+**。部分功能需要更新的系统或支持的硬件。
+
+Windows 电脑：**Windows 11 64 位（x64）**，不支持 Windows 10 和 ARM64。需要支持 Direct3D 11 的显卡，以及大约 64 MiB 磁盘空间。
 
 用到相关功能时，再允许它需要的权限：
 
