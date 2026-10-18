@@ -1,0 +1,192 @@
+{
+ "accessibility": {
+  "canvas": {
+   "new": {
+    "english": "Add event",
+    "japanese": "予定を追加",
+    "korean": "일정 추가",
+    "simplifiedChinese": "添加事项",
+    "traditionalChinese": "新增事項"
+   },
+   "nextMonth": {
+    "english": "Next month",
+    "japanese": "翌月",
+    "korean": "다음 달",
+    "simplifiedChinese": "下个月",
+    "traditionalChinese": "下個月"
+   },
+   "previousMonth": {
+    "english": "Previous month",
+    "japanese": "前月",
+    "korean": "이전 달",
+    "simplifiedChinese": "上个月",
+    "traditionalChinese": "上個月"
+   },
+   "reminders": {
+    "english": "Refresh reminders",
+    "japanese": "リマインダーを更新",
+    "korean": "알림 새로 고침",
+    "simplifiedChinese": "刷新提醒",
+    "traditionalChinese": "重新整理提醒"
+   }
+  },
+  "canvasDefault": "day:YYYY-MM-DD reads YYYY-MM-DD; any other action reads its own label",
+  "fields": {
+   "date": {
+    "english": "Date",
+    "japanese": "日付",
+    "korean": "날짜",
+    "simplifiedChinese": "日期",
+    "traditionalChinese": "日期"
+   },
+   "details": {
+    "english": "Details",
+    "japanese": "詳細",
+    "korean": "세부 사항",
+    "simplifiedChinese": "详情",
+    "traditionalChinese": "詳情"
+   },
+   "title": {
+    "english": "Title",
+    "japanese": "タイトル",
+    "korean": "제목",
+    "simplifiedChinese": "标题",
+    "traditionalChinese": "標題"
+   }
+  },
+  "menu": {
+   "cancelDelete": {
+    "english": "Cancel",
+    "japanese": "キャンセル",
+    "korean": "취소",
+    "simplifiedChinese": "取消",
+    "traditionalChinese": "取消"
+   },
+   "close": {
+    "english": "Close",
+    "japanese": "閉じる",
+    "korean": "닫기",
+    "simplifiedChinese": "关闭",
+    "traditionalChinese": "關閉"
+   },
+   "confirmDelete": {
+    "english": "Delete",
+    "japanese": "削除",
+    "korean": "삭제",
+    "simplifiedChinese": "删除",
+    "traditionalChinese": "刪除"
+   },
+   "delete": {
+    "english": "Delete",
+    "japanese": "削除",
+    "korean": "삭제",
+    "simplifiedChinese": "删除",
+    "traditionalChinese": "刪除"
+   },
+   "save": {
+    "english": "Save",
+    "japanese": "保存",
+    "korean": "저장",
+    "simplifiedChinese": "保存",
+    "traditionalChinese": "儲存"
+   }
+  }
+ },
+ "authority": "ca04f142185c7de40acd8523bdb563195d90a1d1",
+ "contract": "errors: HUDCalendarError.errorDescription in Mac case order; permission: HUDCalendarController.reminderStatus. accessibility: HUDCalendarInteraction AX names (canvas buttons, CalendarEventMenu items, editor fields). Each row is the text Mac L10n renders per language from LocalizationCatalog (Korean falls back to English).",
+ "errors": [
+  {
+   "case": "invalidData",
+   "english": "Calendar data could not be read. Your file was preserved.",
+   "japanese": "カレンダーデータを読み込めませんでした。元のファイルは保持されています。",
+   "korean": "달력 데이터를 읽을 수 없습니다. 원본 파일은 보존됩니다.",
+   "simplifiedChinese": "无法读取日历数据，原文件已保留。",
+   "traditionalChinese": "無法讀取日曆資料，原始檔案已保留。"
+  },
+  {
+   "case": "changedOnDisk",
+   "english": "Calendar changed outside this app. Restart before saving.",
+   "japanese": "カレンダーファイルが別のアプリで変更されました。保存する前に再起動してください。",
+   "korean": "다른 앱에서 달력 파일을 변경했습니다. 저장하기 전에 앱을 다시 시작하세요.",
+   "simplifiedChinese": "日历文件已被其他程序修改，请重启后再保存。",
+   "traditionalChinese": "日曆檔案已被其他程式修改，請重新啟動後再儲存。"
+  },
+  {
+   "case": "capacity",
+   "english": "The calendar can keep up to 256 events.",
+   "japanese": "カレンダーには最大256件の予定を保存できます。",
+   "korean": "달력에는 최대 256개의 일정을 저장할 수 있습니다.",
+   "simplifiedChinese": "日历最多可保存 256 个事项。",
+   "traditionalChinese": "日曆最多可儲存 256 個事項。"
+  },
+  {
+   "case": "upcomingCapacity",
+   "english": "Keep up to 30 upcoming events so every reminder can be scheduled.",
+   "japanese": "すべてのリマインダーを登録できるよう、今後の予定は30件以内にしてください。",
+   "korean": "모든 알림을 예약할 수 있도록 예정된 일정은 최대 30개로 유지하세요.",
+   "simplifiedChinese": "最多保留 30 个待办日期事项，以确保每条提醒都能安排。",
+   "traditionalChinese": "最多保留 30 個待辦日期事項，以確保每條提醒都能安排。"
+  },
+  {
+   "case": "invalidDate",
+   "english": "Enter a valid date as YYYY-MM-DD.",
+   "japanese": "有効な日付をYYYY-MM-DD形式で入力してください。",
+   "korean": "올바른 날짜를 YYYY-MM-DD 형식으로 입력하세요.",
+   "simplifiedChinese": "请输入有效日期，格式为 YYYY-MM-DD。",
+   "traditionalChinese": "請輸入有效日期，格式為 YYYY-MM-DD。"
+  },
+  {
+   "case": "missing",
+   "english": "This event is no longer available.",
+   "japanese": "この予定はもう利用できません。",
+   "korean": "이 일정은 더 이상 사용할 수 없습니다.",
+   "simplifiedChinese": "此事项已不存在。",
+   "traditionalChinese": "此事項已不存在。"
+  },
+  {
+   "case": "notifications",
+   "english": "Reminders could not be scheduled. Try again.",
+   "japanese": "リマインダーを登録できませんでした。もう一度お試しください。",
+   "korean": "알림을 예약할 수 없습니다. 다시 시도하세요.",
+   "simplifiedChinese": "无法安排提醒，请重试。",
+   "traditionalChinese": "無法安排提醒，請重試。"
+  }
+ ],
+ "permission": {
+  "authorized": {
+   "english": "Reminders: 09:00, the day before and on the date",
+   "japanese": "前日と当日の09:00に通知",
+   "korean": "알림: 전날과 당일 09:00",
+   "simplifiedChinese": "提醒：前一天及当天 09:00",
+   "traditionalChinese": "提醒：前一天及當天 09:00"
+  },
+  "denied": {
+   "english": "Notifications are off in System Settings",
+   "japanese": "システム設定で通知が無効になっています",
+   "korean": "시스템 설정에서 알림이 꺼져 있습니다",
+   "simplifiedChinese": "通知已在系统设置中关闭",
+   "traditionalChinese": "通知已在系統設定中關閉"
+  },
+  "unavailable": {
+   "english": "Notifications are unavailable",
+   "japanese": "通知を利用できません",
+   "korean": "알림을 사용할 수 없습니다",
+   "simplifiedChinese": "通知暂不可用",
+   "traditionalChinese": "通知暫時無法使用"
+  },
+  "unknown": {
+   "english": "Allow notifications when adding your first event",
+   "japanese": "最初の予定を追加するときに通知を許可してください",
+   "korean": "첫 일정을 추가할 때 알림을 허용하세요",
+   "simplifiedChinese": "添加首个事项时允许通知",
+   "traditionalChinese": "新增首個事項時允許通知"
+  }
+ },
+ "sourcePins": {
+  "Sources/HUDCalendarController.swift": "3419ed670928716128e533746171b76d29c7ca97252070fea2d9311804e5f0c3",
+  "Sources/HUDCalendarInteraction.swift": "e2f82ed149ae3406a0a0fcd0197eb03ce8c7adc8645b0fda6264b8a023f87537",
+  "Sources/HUDCalendarStore.swift": "37335abe7c88759c99ce32cad0f796f15bf096141f48003e69bd332ff0b4ea78",
+  "Sources/LocalizationCatalog.swift": "4898828e511be6bcbb6c10d17b11d521a59724d22ca6dd10866071644f00eb40",
+  "Sources/NotesFormattingControls.swift": "e24b74f7b3dbf3ff9df84c804b2a69a1edd97c87ce30af5b17e4e385e917eae1"
+ }
+}

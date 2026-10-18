@@ -1,0 +1,708 @@
+#include "native/media_assembly_codec.hpp"
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstring>
+#include <fstream>
+#include <stdexcept>
+#include <string_view>
+
+namespace endfield::native {
+std::filesystem::path mediaAssemblyPath(std::string_view s){return std::filesystem::path(std::u8string(reinterpret_cast<const char8_t*>(s.data()),s.size()));}
+std::string mediaAssemblyUTF8(const std::filesystem::path&p){const auto u=p.u8string();return std::string(reinterpret_cast<const char*>(u.data()),u.size());}
+}
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <objbase.h>
+#include <shlwapi.h>
+#include <wincodec.h>
+#include <mfapi.h>
+#include <mfidl.h>
+#include <mfreadwrite.h>
+#include <mferror.h>
+#include <codecapi.h>
+#include <wrl/client.h>
+#include <limits>
+#include <cstdio>
+#include <source_location>
+
+namespace endfield::native {
+namespace {
+namespace m=modules;using Microsoft::WRL::ComPtr;
+[[noreturn]]void fail(m::MediaAssemblyError e,const std::source_location at=std::source_location::current()){throw m::MediaAssemblyFailure(e,"line "+std::to_string(at.line()));}
+void check(HRESULT hr,m::MediaAssemblyError e,const std::source_location at=std::source_location::current()){if(FAILED(hr)){char code[16];std::snprintf(code,sizeof code,"0x%08lx",static_cast<unsigned long>(hr));throw m::MediaAssemblyFailure(e,"line "+std::to_string(at.line())+" hr "+code);}}
+void need(bool v,m::MediaAssemblyError e,const std::source_location at=std::source_location::current()){if(!v)fail(e,at);}
+struct Apartment {HRESULT hr{CoInitializeEx(nullptr,COINIT_MULTITHREADED)};~Apartment(){if(SUCCEEDED(hr))CoUninitialize();}};
+struct Platform {HRESULT hr{MFStartup(MF_VERSION,MFSTARTUP_NOSOCKET)};Platform(){check(hr,m::MediaAssemblyError::unsupported);}~Platform(){if(SUCCEEDED(hr))MFShutdown();}};
+struct Variant {PROPVARIANT value{};Variant(){PropVariantInit(&value);}~Variant(){PropVariantClear(&value);}};
+ComPtr<IWICImagingFactory>factory(){ComPtr<IWICImagingFactory>f;check(CoCreateInstance(CLSID_WICImagingFactory,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&f)),m::MediaAssemblyError::unsupported);return f;}
+std::optional<unsigned>metadata(IWICMetadataQueryReader*reader,const wchar_t*name){
+    if(!reader)return {};Variant v;if(FAILED(reader->GetMetadataByName(name,&v.value)))return {};
+    switch(v.value.vt){case VT_UI1:return v.value.bVal;case VT_UI2:return v.value.uiVal;case VT_UI4:return v.value.ulVal;case VT_I2:return unsigned(std::max<SHORT>(0,v.value.iVal));case VT_I4:return unsigned(std::max<LONG>(0,v.value.lVal));default:return {};}
+}
+std::string containerName(const GUID&g){
+    if(IsEqualGUID(g,GUID_ContainerFormatPng))return "png";if(IsEqualGUID(g,GUID_ContainerFormatJpeg))return "jpeg";
+    if(IsEqualGUID(g,GUID_ContainerFormatTiff))return "tiff";if(IsEqualGUID(g,GUID_ContainerFormatGif))return "gif";
+    if(IsEqualGUID(g,GUID_ContainerFormatBmp))return "bmp";if(IsEqualGUID(g,GUID_ContainerFormatHeif))return "heif";
+    if(IsEqualGUID(g,GUID_ContainerFormatWebp))return "webp";if(IsEqualGUID(g,GUID_ContainerFormatIco))return "ico";
+    if(IsEqualGUID(g,GUID_ContainerFormatWmp))return "jxr";if(IsEqualGUID(g,GUID_ContainerFormatDds))return "dds";
+    return "image";
+}
+struct Still {
+    ComPtr<IWICImagingFactory>wic;ComPtr<IStream>stream;ComPtr<IWICBitmapDecoder>decoder;GUID container{};unsigned frames{1},width{},height{},orientation{1};bool gif{};
+};
+// Opens one still container, enforcing the source open rules.
+Still openStill(const std::filesystem::path&path){
+    Still s;s.wic=factory();
+    check(SHCreateStreamOnFileEx(path.c_str(),STGM_READ|STGM_SHARE_DENY_WRITE,FILE_ATTRIBUTE_NORMAL,FALSE,nullptr,&s.stream),m::MediaAssemblyError::unavailable);
+    check(s.wic->CreateDecoderFromStream(s.stream.Get(),nullptr,WICDecodeMetadataCacheOnDemand,&s.decoder),m::MediaAssemblyError::unsupported);
+    check(s.decoder->GetContainerFormat(&s.container),m::MediaAssemblyError::unsupported);s.gif=IsEqualGUID(s.container,GUID_ContainerFormatGif);
+    UINT count{};check(s.decoder->GetFrameCount(&count),m::MediaAssemblyError::unsupported);need(count>=1&&(count==1||s.gif),m::MediaAssemblyError::unsupported);s.frames=count;
+    ComPtr<IWICBitmapFrameDecode>first;check(s.decoder->GetFrame(0,&first),m::MediaAssemblyError::unsupported);check(first->GetSize(&s.width,&s.height),m::MediaAssemblyError::unsupported);
+    ComPtr<IWICMetadataQueryReader>meta;first->GetMetadataQueryReader(&meta);
+    if(s.gif){ComPtr<IWICMetadataQueryReader>global;if(SUCCEEDED(s.decoder->GetMetadataQueryReader(&global))){const auto w=metadata(global.Get(),L"/logscrdesc/Width"),h=metadata(global.Get(),L"/logscrdesc/Height");if(w&&h&&*w&&*h){s.width=*w;s.height=*h;}}}
+    else s.orientation=metadata(meta.Get(),L"System.Photo.Orientation").value_or(metadata(meta.Get(),L"/app1/ifd/{ushort=274}").value_or(metadata(meta.Get(),L"/ifd/{ushort=274}").value_or(1)));
+    if(s.orientation<1||s.orientation>8)s.orientation=1;
+    need(s.width&&s.height&&std::uint64_t(s.width)*s.height<=NativeMediaAssemblyEngine::maximumPixels,m::MediaAssemblyError::unsupported);
+    return s;
+}
+// The colour chunks of a PNG file before its image data (iCCP, sRGB, gAMA,
+// cHRM), read from the file itself: WIC's PNG decoder reports colour
+// contexts and gAMA metadata of its own for chunks the file does not have.
+struct PngColour {bool png{},iccp{},srgb{};std::optional<std::uint32_t>gamma;std::optional<std::array<std::uint32_t,8>>chromaticities;};
+PngColour pngColour(const std::filesystem::path&path){
+    PngColour out;std::ifstream in(path,std::ios::binary);std::array<char,8>signature{};
+    if(!in||!in.read(signature.data(),8)||std::memcmp(signature.data(),"\x89PNG\r\n\x1a\n",8)!=0)return out;out.png=true;
+    const auto u32=[](const unsigned char*b){return (std::uint32_t(b[0])<<24)|(std::uint32_t(b[1])<<16)|(std::uint32_t(b[2])<<8)|std::uint32_t(b[3]);};
+    for(int n=0;n<256;++n){
+        std::array<unsigned char,8>head{};if(!in.read(reinterpret_cast<char*>(head.data()),8))break;
+        const auto length=u32(head.data());const std::string_view type(reinterpret_cast<const char*>(head.data()+4),4);
+        if(type=="IDAT"||type=="IEND"||length>(1u<<24))break;
+        out.iccp=out.iccp||type=="iCCP";out.srgb=out.srgb||type=="sRGB";
+        if((type=="gAMA"&&length==4)||(type=="cHRM"&&length==32)){
+            std::array<unsigned char,32>data{};if(!in.read(reinterpret_cast<char*>(data.data()),std::streamsize(length)))break;
+            if(type=="gAMA")out.gamma=u32(data.data());else{std::array<std::uint32_t,8>v{};for(std::size_t k=0;k<8;++k)v[k]=u32(data.data()+k*4);out.chromaticities=v;}
+            in.seekg(4,std::ios::cur);
+        }else in.seekg(std::streamoff(length)+4,std::ios::cur);
+    }
+    return out;
+}
+// The frame's colour, as Core Image takes a tagged CGImage into its sRGB
+// working space. An embedded ICC profile Media Assembly reads itself
+// (MediaAssemblyProfileKind::converted), or the gAMA/cHRM chunks of a PNG
+// without one as ImageIO reads them, are returned in colour and the bytes
+// keep their encoding; a profile matched to sRGB, an EXIF sRGB or
+// uncalibrated tag, or no tag leaves the pixels as they are. Only another
+// profile (lookup-table, CMYK, Lab) or an EXIF Adobe RGB tag goes through the
+// platform colour management (WIC/WCS) to sRGB, whose own rendering intent
+// and precision differ from the Mac (documented gap).
+ComPtr<IWICColorContext>platformColour(IWICImagingFactory*wic,IWICBitmapFrameDecode*frame,std::shared_ptr<const m::MediaAssemblySourceColour>*colour,const PngColour*png){
+    if(png&&png->png&&!png->iccp){
+        if(colour){const auto read=m::mediaAssemblyPNGColour(png->srgb,png->gamma,png->chromaticities);if(read.kind==m::MediaAssemblyProfileKind::converted)*colour=read.colour;}
+        return {};
+    }
+    UINT count{};if(FAILED(frame->GetColorContexts(0,nullptr,&count))||!count||count>16)return {};
+    std::array<ComPtr<IWICColorContext>,16>contexts;std::array<IWICColorContext*,16>raw{};
+    for(UINT n=0;n<count;++n){if(FAILED(wic->CreateColorContext(&contexts[n])))return {};raw[n]=contexts[n].Get();}
+    UINT actual{};if(FAILED(frame->GetColorContexts(count,raw.data(),&actual))||!actual)return {};
+    ComPtr<IWICColorContext>profile,adobe;
+    for(UINT n=0;n<std::min(actual,count);++n){WICColorContextType type{};if(FAILED(raw[n]->GetType(&type)))continue;
+        if(type==WICColorContextProfile&&!profile)profile=raw[n];
+        else if(type==WICColorContextExifColorSpace){UINT space{};if(SUCCEEDED(raw[n]->GetExifColorSpace(&space))&&space==2&&!adobe)adobe=raw[n];}}
+    if(!profile)return adobe;
+    UINT size{};if(FAILED(profile->GetProfileBytes(0,nullptr,&size))||!size||size>(16u<<20))return profile;
+    std::vector<BYTE>bytes(size);if(FAILED(profile->GetProfileBytes(size,bytes.data(),&size)))return profile;
+    const auto read=m::mediaAssemblyProfile(std::span<const std::uint8_t>(bytes.data(),std::min<std::size_t>(size,bytes.size())));
+    if(read.kind==m::MediaAssemblyProfileKind::sRGB)return {};
+    if(read.kind==m::MediaAssemblyProfileKind::converted&&colour){*colour=read.colour;return {};}
+    return profile;
+}
+// One WIC source as straight RGBA8 at width x height (Fant): sRGB, or the
+// original encoding of a profile returned in colour (see platformColour).
+std::vector<std::uint8_t>pixels(IWICImagingFactory*wic,ComPtr<IWICBitmapSource>source,IWICBitmapFrameDecode*frame,unsigned w,unsigned h,std::shared_ptr<const m::MediaAssemblySourceColour>*colour=nullptr,const PngColour*png=nullptr){
+    if(frame)if(const auto input=platformColour(wic,frame,colour,png)){
+        ComPtr<IWICColorContext>output;ComPtr<IWICColorTransform>t;
+        if(SUCCEEDED(wic->CreateColorContext(&output))&&SUCCEEDED(output->InitializeFromExifColorSpace(1))&&SUCCEEDED(wic->CreateColorTransformer(&t))&&SUCCEEDED(t->Initialize(source.Get(),input.Get(),output.Get(),GUID_WICPixelFormat32bppRGBA)))source=t;}
+    UINT sw{},sh{};check(source->GetSize(&sw,&sh),m::MediaAssemblyError::unsupported);
+    if(sw!=w||sh!=h){ComPtr<IWICBitmapScaler>scaler;check(wic->CreateBitmapScaler(&scaler),m::MediaAssemblyError::unsupported);check(scaler->Initialize(source.Get(),w,h,WICBitmapInterpolationModeFant),m::MediaAssemblyError::unsupported);source=scaler;}
+    ComPtr<IWICFormatConverter>converted;check(wic->CreateFormatConverter(&converted),m::MediaAssemblyError::unsupported);
+    check(converted->Initialize(source.Get(),GUID_WICPixelFormat32bppRGBA,WICBitmapDitherTypeNone,nullptr,0,WICBitmapPaletteTypeCustom),m::MediaAssemblyError::unsupported);
+    std::vector<std::uint8_t>out(std::size_t(w)*h*4);check(converted->CopyPixels(nullptr,w*4,UINT(out.size()),out.data()),m::MediaAssemblyError::unsupported);return out;
+}
+void orient(MediaAssemblyBitmap&b,unsigned o){
+    if(o<=1||o>8)return;const auto w=b.width,h=b.height;const bool t=o>=5;const unsigned ow=t?h:w,oh=t?w:h;std::vector<std::uint8_t>out(b.straightRGBA.size());
+    for(unsigned y=0;y<h;++y)for(unsigned x=0;x<w;++x){unsigned dx{},dy{};
+        switch(o){case 2:dx=w-1-x;dy=y;break;case 3:dx=w-1-x;dy=h-1-y;break;case 4:dx=x;dy=h-1-y;break;case 5:dx=y;dy=x;break;case 6:dx=h-1-y;dy=x;break;case 7:dx=h-1-y;dy=w-1-x;break;default:dx=y;dy=w-1-x;break;}
+        std::copy_n(b.straightRGBA.data()+(std::size_t(y)*w+x)*4,4,out.data()+(std::size_t(dy)*ow+dx)*4);}
+    b.width=ow;b.height=oh;b.straightRGBA=std::move(out);
+}
+std::pair<unsigned,unsigned>bounded(unsigned w,unsigned h,std::optional<unsigned>maximum){
+    if(!maximum||std::max(w,h)<=*maximum)return {w,h};const double s=double(*maximum)/std::max(w,h);
+    return {std::clamp<unsigned>(unsigned(std::lround(w*s)),1u,*maximum),std::clamp<unsigned>(unsigned(std::lround(h*s)),1u,*maximum)};
+}
+// JPEG chroma as the Mac reads it (black-box, tests/fixtures/media-assembly-
+// jpeg-source.json from tools/media_assembly_jpeg_reference.py). Both pinned
+// still paths upsample the decoded chroma with the JPEG "fancy" triangle
+// (3/4 nearest sample, 1/4 the next one in each subsampled direction), which
+// the WIC decoder also does, except:
+//   preview (ImageIO thumbnail) of 4:2:0: the triangle stays inside each
+//     16 x 16 MCU (8 x 8 chroma samples): its edge samples repeat instead of
+//     reading the next MCU;
+//   export (ImageIO image into Core Image) of 4:2:2: the chroma becomes
+//     4:2:0 first (each pair of rows averaged, then [1,6,1]/8 across the
+//     half-width samples) and is upsampled by the triangle in both directions.
+// These two read WIC's planar Y + CbCr samples (IWICPlanarBitmapSourceTransform,
+// native subsampling) and convert with the JFIF matrix in float, as the Mac
+// paths do. Everything else, and any file WIC cannot read planar, keeps the
+// WIC decode.
+enum class JpegChroma : std::uint8_t {perMCU420,export422};
+struct JpegPlanes {ComPtr<IWICPlanarBitmapSourceTransform>planar;unsigned chromaWidth{},chromaHeight{};};
+std::optional<JpegPlanes>jpegPlanes(IWICBitmapFrameDecode*frame,unsigned w,unsigned h){
+    JpegPlanes p;if(FAILED(frame->QueryInterface(IID_PPV_ARGS(&p.planar))))return {};
+    UINT dw=w,dh=h;const WICPixelFormatGUID formats[2]{GUID_WICPixelFormat8bppY,GUID_WICPixelFormat16bppCbCr};WICBitmapPlaneDescription planes[2]{};BOOL supported{};
+    if(FAILED(p.planar->DoesSupportTransform(&dw,&dh,WICBitmapTransformRotate0,WICPlanarOptionsPreserveSubsampling,formats,planes,2,&supported))||!supported||dw!=w||dh!=h||
+       planes[0].Width!=w||planes[0].Height!=h)return {};
+    p.chromaWidth=planes[1].Width;p.chromaHeight=planes[1].Height;return p;
+}
+inline std::uint8_t jfif(float v){return std::uint8_t(std::clamp(std::lround(v),0L,255L));}
+// Straight opaque RGBA for rows [first, first+count) from full-resolution Y
+// rows and float Cb/Cr rows (minus 128), JFIF full range.
+void jfifRows(const std::uint8_t*y,std::size_t yStride,const float*cb,const float*cr,std::size_t cStride,unsigned w,unsigned count,std::uint8_t*out){
+    for(unsigned r=0;r<count;++r)for(unsigned x=0;x<w;++x){
+        const float l=y[r*yStride+x],b=cb[r*cStride+x],c=cr[r*cStride+x];auto*o=out+(std::size_t(r)*w+x)*4;
+        o[0]=jfif(l+1.402f*c);o[1]=jfif(l-.344136f*b-.714136f*c);o[2]=jfif(l+1.772f*b);o[3]=255;}
+}
+// Fancy triangle upsampling of one half-resolution row to w samples; with
+// block > 0 the neighbour stays inside its block of samples.
+void triangle(const float*in,unsigned n,unsigned w,unsigned block,float*out){
+    for(unsigned x=0;x<w;++x){const unsigned k=std::min(n-1,x/2);unsigned lo=0,hi=n-1;if(block){lo=k/block*block;hi=std::min(n-1,lo+block-1);}
+        const unsigned other=x%2?std::min(hi,k+1):(k>lo?k-1:lo);out[x]=.75f*in[k]+.25f*in[other];}
+}
+std::optional<std::vector<std::uint8_t>>macJpeg(const JpegPlanes&p,unsigned w,unsigned h,JpegChroma model){
+    const unsigned cw=p.chromaWidth;std::vector<std::uint8_t>out(std::size_t(w)*h*4);
+    // Rows [top, top+rows) of the w x h planes (the size arguments name the
+    // whole transformed image; the rectangle selects the rows).
+    const auto copy=[&](unsigned top,unsigned rows,std::vector<std::uint8_t>&y,std::vector<std::uint8_t>&cbcr,unsigned chromaRows){
+        y.resize(std::size_t(w)*rows);cbcr.resize(std::size_t(cw)*2*chromaRows);const WICRect rect{0,INT(top),INT(w),INT(rows)};
+        WICBitmapPlane planes[2]{{GUID_WICPixelFormat8bppY,y.data(),w,UINT(y.size())},{GUID_WICPixelFormat16bppCbCr,cbcr.data(),cw*2,UINT(cbcr.size())}};
+        return SUCCEEDED(p.planar->CopyPixels(&rect,w,h,WICBitmapTransformRotate0,WICPlanarOptionsPreserveSubsampling,planes,2));};
+    std::vector<std::uint8_t>y,cbcr;
+    if(model==JpegChroma::perMCU420){
+        // Previews only (at most 1024 x 1024): the whole image at once.
+        const unsigned ch=p.chromaHeight;if(cw!=(w+1)/2||ch!=(h+1)/2||!copy(0,h,y,cbcr,ch))return {};
+        std::vector<float>horizontal(std::size_t(ch)*w*2),row(cw),cb(w),cr(w);
+        for(unsigned j=0;j<ch;++j)for(unsigned c=0;c<2;++c){for(unsigned k=0;k<cw;++k)row[k]=float(cbcr[(std::size_t(j)*cw+k)*2+c])-128.f;triangle(row.data(),cw,w,8,horizontal.data()+(std::size_t(j)*2+c)*w);}
+        for(unsigned r=0;r<h;++r){const unsigned j=std::min(ch-1,r/2),lo=j/8*8,hi=std::min(ch-1,lo+7),other=r%2?std::min(hi,j+1):(j>lo?j-1:lo);
+            for(unsigned x=0;x<w;++x){cb[x]=.75f*horizontal[(std::size_t(j)*2)*w+x]+.25f*horizontal[(std::size_t(other)*2)*w+x];cr[x]=.75f*horizontal[(std::size_t(j)*2+1)*w+x]+.25f*horizontal[(std::size_t(other)*2+1)*w+x];}
+            jfifRows(y.data()+std::size_t(r)*w,w,cb.data(),cr.data(),w,w,1,out.data()+std::size_t(r)*w*4);}
+        return out;
+    }
+    // Exports of 4:2:2. Source rows are read once and in order, in bands of
+    // 256 (the decoder reads forward). An output row needs the 4:2:0 rows next
+    // to its own, so a band's last row is written with the next band, from
+    // the kept luma row and smoothed chroma row.
+    if(cw!=(w+1)/2||p.chromaHeight!=h)return {};
+    const unsigned half=(h+1)/2;constexpr unsigned band=256;
+    std::vector<float>averaged(cw),narrow(cw),wide,previous(std::size_t(w)*2),cb(w),cr(w);std::vector<std::uint8_t>pendingY(w);
+    for(unsigned top=0;top<h;top+=band){
+        const unsigned bottom=std::min(h,top+band);if(!copy(top,bottom-top,y,cbcr,bottom-top))return {};
+        // 4:2:0 rows j in [top/2, ceil(bottom/2)): averaged row pairs, then
+        // [1,6,1]/8 across, then the triangle to full width (wide).
+        const unsigned j0=top/2,j1=std::min(half,(bottom+1)/2);wide.resize(std::size_t(j1-j0)*2*w);
+        for(unsigned j=j0;j<j1;++j){const unsigned a=2*j-top,b=std::min(h-1,2*j+1)-top;
+            for(unsigned c=0;c<2;++c){
+                for(unsigned k=0;k<cw;++k)averaged[k]=(float(cbcr[(std::size_t(a)*cw+k)*2+c])+float(cbcr[(std::size_t(b)*cw+k)*2+c]))*.5f-128.f;
+                for(unsigned k=0;k<cw;++k)narrow[k]=(averaged[k?k-1:0]+6.f*averaged[k]+averaged[std::min(cw-1,k+1)])*.125f;
+                triangle(narrow.data(),cw,w,0,wide.data()+(std::size_t(j-j0)*2+c)*w);}}
+        // Row j0 - 1 comes from the previous band.
+        const auto row=[&](unsigned j,unsigned c)->const float*{return j<j0?previous.data()+std::size_t(c)*w:wide.data()+(std::size_t(j-j0)*2+c)*w;};
+        const unsigned firstRow=top?top-1:0,endRow=bottom==h?h:bottom-1;
+        for(unsigned r=firstRow;r<endRow;++r){const unsigned j=std::min(half-1,r/2),other=r%2?std::min(half-1,j+1):(j?j-1:0);
+            const float*b0=row(j,0),*b1=row(other,0),*r0=row(j,1),*r1=row(other,1);
+            for(unsigned x=0;x<w;++x){cb[x]=.75f*b0[x]+.25f*b1[x];cr[x]=.75f*r0[x]+.25f*r1[x];}
+            jfifRows(r<top?pendingY.data():y.data()+std::size_t(r-top)*w,w,cb.data(),cr.data(),w,w,1,out.data()+std::size_t(r)*w*4);}
+        if(bottom<h){std::copy_n(y.data()+std::size_t(bottom-1-top)*w,w,pendingY.data());std::copy_n(row(j1-1,0),w,previous.data());std::copy_n(row(j1-1,1),w,previous.data()+w);}
+    }
+    return out;
+}
+// Writes decoded pixels rotated by the Media Foundation display rotation
+// into out (same byte count; no allocation).
+void rotateInto(const std::uint8_t*in,unsigned w,unsigned h,unsigned degrees,std::uint8_t*out){
+    const bool swap=degrees==90||degrees==270;const unsigned ow=swap?h:w;
+    for(unsigned y=0;y<h;++y)for(unsigned x=0;x<w;++x){unsigned dx=x,dy=y;if(degrees==90){dx=h-1-y;dy=x;}else if(degrees==180){dx=w-1-x;dy=h-1-y;}else if(degrees==270){dx=y;dy=w-1-x;}
+        std::copy_n(in+(std::size_t(y)*w+x)*4,4,out+(std::size_t(dy)*ow+dx)*4);}
+}
+// Rotates decoded pixels by the Media Foundation display rotation.
+void rotate(MediaAssemblyBitmap&b,unsigned degrees){
+    if(degrees==0)return;const auto w=b.width,h=b.height;const bool swap=degrees==90||degrees==270;std::vector<std::uint8_t>out(b.straightRGBA.size());
+    rotateInto(b.straightRGBA.data(),w,h,degrees,out.data());b.width=swap?h:w;b.height=swap?w:h;b.straightRGBA=std::move(out);
+}
+// bt709: the frames are coded BT.709 (both colour tags BT.709 or unknown, as
+// AVFoundation guesses an untagged movie), read as Core Image's CoreMedia
+// 709 (mediaAssemblyVideoColour); any other primaries or transfer keep the
+// decoded values (documented gap).
+struct VideoInfo {unsigned width{},height{},rotation{};double duration{},fps{30};bool audio{},bt709{};};
+VideoInfo inspectVideo(IMFSourceReader*reader){
+    VideoInfo v;ComPtr<IMFMediaType>type;check(reader->GetNativeMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM,0,&type),m::MediaAssemblyError::unsupported);
+    UINT32 w{},h{};check(MFGetAttributeSize(type.Get(),MF_MT_FRAME_SIZE,&w,&h),m::MediaAssemblyError::unsupported);v.width=w;v.height=h;
+    v.rotation=MFGetAttributeUINT32(type.Get(),MF_MT_VIDEO_ROTATION,0);need(v.rotation==0||v.rotation==90||v.rotation==180||v.rotation==270,m::MediaAssemblyError::unsupported);
+    UINT32 num{},den{};if(SUCCEEDED(MFGetAttributeRatio(type.Get(),MF_MT_FRAME_RATE,&num,&den))&&num&&den)v.fps=double(num)/den;
+    {const auto transfer=MFGetAttributeUINT32(type.Get(),MF_MT_TRANSFER_FUNCTION,MFVideoTransFunc_Unknown),primaries=MFGetAttributeUINT32(type.Get(),MF_MT_VIDEO_PRIMARIES,MFVideoPrimaries_Unknown);
+        v.bt709=(transfer==MFVideoTransFunc_Unknown||transfer==MFVideoTransFunc_709||transfer==MFVideoTransFunc_709_sym)&&(primaries==MFVideoPrimaries_Unknown||primaries==MFVideoPrimaries_BT709);}
+    Variant d;check(reader->GetPresentationAttribute(MF_SOURCE_READER_MEDIASOURCE,MF_PD_DURATION,&d.value),m::MediaAssemblyError::unsupported);need(d.value.vt==VT_UI8,m::MediaAssemblyError::unsupported);
+    v.duration=double(d.value.uhVal.QuadPart)/1e7;need(w&&h&&w<=65536&&h<=65536&&std::isfinite(v.duration)&&v.duration>0&&std::uint64_t(w)*h<=NativeMediaAssemblyEngine::maximumPixels,m::MediaAssemblyError::unsupported);
+    ComPtr<IMFMediaType>audio;v.audio=SUCCEEDED(reader->GetNativeMediaType(MF_SOURCE_READER_FIRST_AUDIO_STREAM,0,&audio));
+    return v;
+}
+// Locks one RGB32 sample and copies BGRA rows into straight RGBA (alpha 255).
+void copyFrame(IMFSample*sample,unsigned w,unsigned h,LONG defaultStride,std::uint8_t*out){
+    ComPtr<IMFMediaBuffer>buffer;check(sample->ConvertToContiguousBuffer(&buffer),m::MediaAssemblyError::unsupported);
+    ComPtr<IMF2DBuffer2>two;BYTE*scan{};BYTE*start{};LONG stride{};DWORD length{};
+    struct Unlock {IMF2DBuffer2*two;IMFMediaBuffer*one;~Unlock(){if(two)two->Unlock2D();else if(one)one->Unlock();}}unlock{nullptr,nullptr};
+    if(SUCCEEDED(buffer.As(&two))&&SUCCEEDED(two->Lock2DSize(MF2DBuffer_LockFlags_Read,&scan,&stride,&start,&length))){unlock.two=two.Get();}
+    else{DWORD maximum{};check(buffer->Lock(&start,&maximum,&length),m::MediaAssemblyError::unsupported);unlock.one=buffer.Get();stride=defaultStride?defaultStride:LONG(w*4);scan=stride<0?start+std::size_t(-stride)*(h-1):start;}
+    const std::int64_t pitch=stride;need(pitch&&std::abs(pitch)>=std::int64_t(w)*4&&std::uint64_t(std::abs(pitch))*h<=std::uint64_t(length)+std::uint64_t(std::abs(pitch)),m::MediaAssemblyError::unsupported);
+    for(unsigned y=0;y<h;++y){const BYTE*row=scan+std::ptrdiff_t(y)*pitch;need(row>=start&&row+std::size_t(w)*4<=start+length,m::MediaAssemblyError::unsupported);auto*d=out+std::size_t(y)*w*4;
+        for(unsigned x=0;x<w;++x){d[x*4]=row[x*4+2];d[x*4+1]=row[x*4+1];d[x*4+2]=row[x*4];d[x*4+3]=255;}}
+}
+ComPtr<IMFSourceReader>videoReader(const std::filesystem::path&path,bool audio){
+    ComPtr<IMFAttributes>attributes;check(MFCreateAttributes(&attributes,2),m::MediaAssemblyError::unsupported);
+    check(attributes->SetUINT32(MF_SOURCE_READER_ENABLE_ADVANCED_VIDEO_PROCESSING,TRUE),m::MediaAssemblyError::unsupported);
+    ComPtr<IMFSourceReader>reader;check(MFCreateSourceReaderFromURL(path.c_str(),attributes.Get(),&reader),m::MediaAssemblyError::unsupported);
+    check(reader->SetStreamSelection(MF_SOURCE_READER_ALL_STREAMS,FALSE),m::MediaAssemblyError::unsupported);
+    check(reader->SetStreamSelection(MF_SOURCE_READER_FIRST_VIDEO_STREAM,TRUE),m::MediaAssemblyError::unsupported);
+    if(audio)reader->SetStreamSelection(MF_SOURCE_READER_FIRST_AUDIO_STREAM,TRUE);
+    return reader;
+}
+LONG negotiateRGB32(IMFSourceReader*reader,unsigned w,unsigned h){
+    ComPtr<IMFMediaType>output;check(MFCreateMediaType(&output),m::MediaAssemblyError::unsupported);
+    check(output->SetGUID(MF_MT_MAJOR_TYPE,MFMediaType_Video),m::MediaAssemblyError::unsupported);check(output->SetGUID(MF_MT_SUBTYPE,MFVideoFormat_RGB32),m::MediaAssemblyError::unsupported);
+    check(MFSetAttributeSize(output.Get(),MF_MT_FRAME_SIZE,w,h),m::MediaAssemblyError::unsupported);check(MFSetAttributeRatio(output.Get(),MF_MT_PIXEL_ASPECT_RATIO,1,1),m::MediaAssemblyError::unsupported);
+    check(output->SetUINT32(MF_MT_INTERLACE_MODE,MFVideoInterlace_Progressive),m::MediaAssemblyError::unsupported);
+    check(reader->SetCurrentMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM,nullptr,output.Get()),m::MediaAssemblyError::unsupported);
+    ComPtr<IMFMediaType>actual;check(reader->GetCurrentMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM,&actual),m::MediaAssemblyError::unsupported);
+    GUID subtype{};UINT32 aw{},ah{};check(actual->GetGUID(MF_MT_SUBTYPE,&subtype),m::MediaAssemblyError::unsupported);check(MFGetAttributeSize(actual.Get(),MF_MT_FRAME_SIZE,&aw,&ah),m::MediaAssemblyError::unsupported);
+    need(subtype==MFVideoFormat_RGB32&&aw==w&&ah==h,m::MediaAssemblyError::unsupported);
+    UINT32 raw{};if(SUCCEEDED(actual->GetUINT32(MF_MT_DEFAULT_STRIDE,&raw)))return LONG(raw);LONG stride{};MFGetStrideForBitmapInfoHeader(MFVideoFormat_RGB32.Data1,w,&stride);return stride;
+}
+void seek(IMFSourceReader*reader,double seconds){Variant p;p.value.vt=VT_I8;p.value.hVal.QuadPart=LONGLONG(std::llround(std::max(0.,seconds)*1e7));check(reader->SetCurrentPosition(GUID_NULL,p.value),m::MediaAssemblyError::unsupported);}
+GUID encoderContainer(m::MediaAssemblyImageFormat f){
+    switch(f){case m::MediaAssemblyImageFormat::png:return GUID_ContainerFormatPng;case m::MediaAssemblyImageFormat::jpeg:return GUID_ContainerFormatJpeg;
+    case m::MediaAssemblyImageFormat::tiff:return GUID_ContainerFormatTiff;default:return GUID_ContainerFormatHeif;}
+}
+}
+
+namespace {
+struct Handle {HANDLE value{INVALID_HANDLE_VALUE};~Handle(){if(value!=INVALID_HANDLE_VALUE)CloseHandle(value);}bool valid()const noexcept{return value!=INVALID_HANDLE_VALUE;}};
+constexpr DWORD shareAll=FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE;
+// Volume serial and 128-bit file ID of an open object (FILE_ID_INFO; the
+// 64-bit file index zero-extended where a file system lacks it).
+bool objectIdentity(HANDLE h,const BY_HANDLE_FILE_INFORMATION&info,m::MediaAssemblyFileIdentity&id){
+    FILE_ID_INFO full{};
+    if(GetFileInformationByHandleEx(h,FileIdInfo,&full,sizeof full)){id.volume=full.VolumeSerialNumber;std::copy_n(full.FileId.Identifier,16,id.file.begin());return true;}
+    id.volume=info.dwVolumeSerialNumber;id.file={};const std::uint64_t index=(std::uint64_t(info.nFileIndexHigh)<<32)|info.nFileIndexLow;
+    for(int i=0;i<8;++i)id.file[std::size_t(i)]=std::uint8_t(index>>(8*i));return true;
+}
+bool sameObject(HANDLE h,const m::MediaAssemblyFileIdentity&want){
+    BY_HANDLE_FILE_INFORMATION info{};m::MediaAssemblyFileIdentity id;
+    return GetFileInformationByHandle(h,&info)&&!(info.dwFileAttributes&(FILE_ATTRIBUTE_DIRECTORY|FILE_ATTRIBUTE_DEVICE))&&objectIdentity(h,info,id)&&id.volume==want.volume&&id.file==want.file;
+}
+// Still a named file: not being deleted and reachable through at least one
+// link. A file removed with POSIX semantics (DeleteFileW and std::filesystem::
+// remove on NTFS) while another handle keeps it open (an antivirus scan after
+// a write, the indexer, a player) loses its name at once but stays openable
+// by its file ID under \$Extend\$Deleted until that handle closes; a Mac
+// bookmark of a deleted file no longer resolves.
+bool linked(HANDLE h){
+    FILE_STANDARD_INFO standard{};
+    return GetFileInformationByHandleEx(h,FileStandardInfo,&standard,sizeof standard)&&!standard.DeletePending&&standard.NumberOfLinks>0;
+}
+}
+std::optional<m::MediaAssemblyFileIdentity>mediaAssemblyFileIdentity(const std::filesystem::path&path){
+    Handle file;file.value=CreateFileW(path.c_str(),FILE_READ_ATTRIBUTES,shareAll,nullptr,OPEN_EXISTING,FILE_FLAG_BACKUP_SEMANTICS|FILE_FLAG_OPEN_REPARSE_POINT,nullptr);
+    if(!file.valid()){const auto e=GetLastError();if(e==ERROR_FILE_NOT_FOUND||e==ERROR_PATH_NOT_FOUND)return {};fail(m::MediaAssemblyError::unavailable);}
+    BY_HANDLE_FILE_INFORMATION info{};if(!GetFileInformationByHandle(file.value,&info))fail(m::MediaAssemblyError::unavailable);
+    if(info.dwFileAttributes&(FILE_ATTRIBUTE_DIRECTORY|FILE_ATTRIBUTE_REPARSE_POINT|FILE_ATTRIBUTE_DEVICE))fail(m::MediaAssemblyError::unavailable);
+    m::MediaAssemblyFileIdentity id;objectIdentity(file.value,info,id);
+    id.bytes=(std::uint64_t(info.nFileSizeHigh)<<32)|info.nFileSizeLow;id.modified=std::int64_t((std::uint64_t(info.ftLastWriteTime.dwHighDateTime)<<32)|info.ftLastWriteTime.dwLowDateTime);
+    return id;
+}
+std::string mediaAssemblyLocate(const std::string&utf8,const m::MediaAssemblyFileIdentity&identity){
+    const auto path=mediaAssemblyPath(utf8);
+    // 1. The stored path still names the original object (the common case).
+    {Handle at;at.value=CreateFileW(path.c_str(),FILE_READ_ATTRIBUTES,shareAll,nullptr,OPEN_EXISTING,FILE_FLAG_BACKUP_SEMANTICS|FILE_FLAG_OPEN_REPARSE_POINT,nullptr);
+        if(at.valid()&&sameObject(at.value,identity))return utf8;}
+    // 2. Bookmark equivalent: the original object by its file ID. Any handle
+    // on the original volume is the hint: the nearest existing ancestor of
+    // the stored path, verified by its volume serial.
+    std::error_code ignored;auto ancestor=path.parent_path();
+    while(!ancestor.empty()&&!std::filesystem::is_directory(ancestor,ignored)){auto up=ancestor.parent_path();if(up==ancestor)return utf8;ancestor=std::move(up);}
+    if(ancestor.empty())return utf8;
+    Handle hint;hint.value=CreateFileW(ancestor.c_str(),FILE_READ_ATTRIBUTES,shareAll,nullptr,OPEN_EXISTING,FILE_FLAG_BACKUP_SEMANTICS,nullptr);
+    BY_HANDLE_FILE_INFORMATION volume{};m::MediaAssemblyFileIdentity hintID;
+    if(!hint.valid()||!GetFileInformationByHandle(hint.value,&volume)||!objectIdentity(hint.value,volume,hintID)||hintID.volume!=identity.volume)return utf8;
+    FILE_ID_DESCRIPTOR descriptor{};descriptor.dwSize=sizeof descriptor;descriptor.Type=ExtendedFileIdType;
+    std::copy(identity.file.begin(),identity.file.end(),descriptor.ExtendedFileId.Identifier);
+    Handle object;object.value=OpenFileById(hint.value,&descriptor,FILE_READ_ATTRIBUTES,shareAll,nullptr,FILE_FLAG_BACKUP_SEMANTICS|FILE_FLAG_OPEN_REPARSE_POINT);
+    if(!object.valid()||!sameObject(object.value,identity)||!linked(object.value))return utf8;
+    // Its current DOS path ("\\?\C:\..." or "\\?\UNC\server\share\...").
+    std::wstring final(MAX_PATH,L'\0');
+    for(int attempt=0;attempt<2;++attempt){
+        const DWORD n=GetFinalPathNameByHandleW(object.value,final.data(),DWORD(final.size()),FILE_NAME_NORMALIZED|VOLUME_NAME_DOS);
+        if(!n)return utf8;if(n<final.size()){final.resize(n);break;}final.assign(n,L'\0');if(attempt)return utf8;
+    }
+    // The name must lead back to the same linked object (a delete or rename
+    // racing this lookup leaves the stored path, which callers then report).
+    {Handle named;named.value=CreateFileW(final.c_str(),FILE_READ_ATTRIBUTES,shareAll,nullptr,OPEN_EXISTING,FILE_FLAG_BACKUP_SEMANTICS|FILE_FLAG_OPEN_REPARSE_POINT,nullptr);
+        if(!named.valid()||!sameObject(named.value,identity)||!linked(named.value))return utf8;}
+    if(final.starts_with(L"\\\\?\\UNC\\"))final=L"\\\\"+final.substr(8);else if(final.starts_with(L"\\\\?\\"))final.erase(0,4);
+    return mediaAssemblyUTF8(std::filesystem::path(final));
+}
+m::MediaAssemblyFileOperations mediaAssemblyFileOperations(){
+    return {[](const std::string&p){return mediaAssemblyFileIdentity(mediaAssemblyPath(p));},
+        [](const std::string&from,const std::string&to,bool replace){return MoveFileExW(mediaAssemblyPath(from).c_str(),mediaAssemblyPath(to).c_str(),MOVEFILE_WRITE_THROUGH|(replace?MOVEFILE_REPLACE_EXISTING:0))!=FALSE;},
+        [](const std::string&p){DeleteFileW(mediaAssemblyPath(p).c_str());},
+        [](const std::string&p,const m::MediaAssemblyFileIdentity&id){return mediaAssemblyLocate(p,id);}};
+}
+bool mediaAssemblySamePath(const std::string&a,const std::string&b){
+    std::error_code ea,eb;const auto pa=std::filesystem::weakly_canonical(mediaAssemblyPath(a),ea),pb=std::filesystem::weakly_canonical(mediaAssemblyPath(b),eb);
+    const auto&x=ea?mediaAssemblyPath(a):pa;const auto&y=eb?mediaAssemblyPath(b):pb;
+    return CompareStringOrdinal(x.c_str(),-1,y.c_str(),-1,TRUE)==CSTR_EQUAL;
+}
+
+struct NativeMediaAssemblyEngine::Impl {
+    Options options;mutable std::mutex lock;NativeMediaAssemblyAssets assets;
+    struct Cached {std::string id;double time{};std::shared_ptr<const MediaAssemblyBitmap>image;};std::optional<Cached>cached;std::uint64_t generation{};
+    MediaAssemblyEngineStats statistics;std::optional<bool>heic;
+    explicit Impl(Options o):options(std::move(o)),assets(options.assetRoot){}
+};
+NativeMediaAssemblyEngine::NativeMediaAssemblyEngine(Options o):impl_(std::make_unique<Impl>(std::move(o))){}
+NativeMediaAssemblyEngine::~NativeMediaAssemblyEngine()=default;
+void NativeMediaAssemblyEngine::clearCaches()noexcept{std::lock_guard g(impl_->lock);impl_->cached.reset();++impl_->generation;impl_->assets.clear();++impl_->statistics.clears;}
+MediaAssemblyEngineStats NativeMediaAssemblyEngine::stats()const{std::lock_guard g(impl_->lock);auto s=impl_->statistics;s.cachedSourceBytes=impl_->cached&&impl_->cached->image?impl_->cached->image->straightRGBA.size():0;return s;}
+bool NativeMediaAssemblyEngine::heicEncoder()const{
+    {std::lock_guard g(impl_->lock);if(impl_->heic)return *impl_->heic;}
+    // Source CGImageDestinationCopyTypeIdentifiers filtering: HEIC is offered
+    // only when an installed WIC HEIF encoder can actually be created.
+    // The HEIF container can be installed without an HEVC encoder, so one
+    // tiny in-memory encode proves the capability (cached for the process).
+    bool available{};try{Apartment com;auto wic=factory();ComPtr<IWICBitmapEncoder>e;ComPtr<IStream>memory;
+        if(SUCCEEDED(wic->CreateEncoder(GUID_ContainerFormatHeif,nullptr,&e))&&SUCCEEDED(CreateStreamOnHGlobal(nullptr,TRUE,&memory))&&SUCCEEDED(e->Initialize(memory.Get(),WICBitmapEncoderNoCache))){
+            ComPtr<IWICBitmapFrameEncode>frame;ComPtr<IPropertyBag2>props;std::array<std::uint8_t,16*16*4>pixels{};pixels.fill(128);WICPixelFormatGUID format=GUID_WICPixelFormat32bppBGRA;
+            available=SUCCEEDED(e->CreateNewFrame(&frame,&props))&&SUCCEEDED(frame->Initialize(props.Get()))&&SUCCEEDED(frame->SetSize(16,16))&&SUCCEEDED(frame->SetPixelFormat(&format))
+                &&(IsEqualGUID(format,GUID_WICPixelFormat32bppBGRA)||IsEqualGUID(format,GUID_WICPixelFormat32bppBGR))&&SUCCEEDED(frame->WritePixels(16,64,UINT(pixels.size()),pixels.data()))&&SUCCEEDED(frame->Commit())&&SUCCEEDED(e->Commit());}}
+    catch(...){available=false;}
+    std::lock_guard g(impl_->lock);impl_->heic=available;return available;
+}
+MediaAssemblyCodecCapabilities NativeMediaAssemblyEngine::capabilities()const{
+    MediaAssemblyCodecCapabilities c;c.heicEncode=heicEncoder();
+    try{Apartment com;auto wic=factory();ComPtr<IWICBitmapDecoder>d;
+        c.heifDecode=SUCCEEDED(wic->CreateDecoder(GUID_ContainerFormatHeif,nullptr,&d));d.Reset();
+        c.webpDecode=SUCCEEDED(wic->CreateDecoder(GUID_ContainerFormatWebp,nullptr,&d));}catch(...){}
+    const auto transform=[](GUID category,GUID major,GUID subtype,bool input){
+        MFT_REGISTER_TYPE_INFO info{major,subtype};IMFActivate**found{};UINT32 count{};
+        const HRESULT hr=MFTEnumEx(category,MFT_ENUM_FLAG_SYNCMFT|MFT_ENUM_FLAG_ASYNCMFT|MFT_ENUM_FLAG_HARDWARE|MFT_ENUM_FLAG_SORTANDFILTER,input?&info:nullptr,input?nullptr:&info,&found,&count);
+        for(UINT32 i=0;i<count;++i)found[i]->Release();CoTaskMemFree(found);return SUCCEEDED(hr)&&count>0;};
+    try{Platform mf;
+        c.hevcDecode=transform(MFT_CATEGORY_VIDEO_DECODER,MFMediaType_Video,MFVideoFormat_HEVC,true);
+        c.h264Encode=transform(MFT_CATEGORY_VIDEO_ENCODER,MFMediaType_Video,MFVideoFormat_H264,false);
+        c.aacEncode=transform(MFT_CATEGORY_AUDIO_ENCODER,MFMediaType_Audio,MFAudioFormat_AAC,false);}catch(...){}
+    return c;
+}
+modules::MediaAssemblyDocumentInfo NativeMediaAssemblyEngine::open(const std::string&utf8){
+    Apartment com;const auto path=mediaAssemblyPath(utf8);
+    m::MediaAssemblyDocumentInfo d;d.path=utf8;d.name=mediaAssemblyUTF8(path.filename());
+    // Source NotesMediaFactory.makeReference: a missing file is unavailable
+    // ("choose it again"); directories and IO errors stay `unavailable`.
+    const auto identity=mediaAssemblyFileIdentity(path);if(!identity)fail(m::MediaAssemblyError::sourceUnavailable);d.identity=*identity;
+    {std::lock_guard g(impl_->lock);++impl_->statistics.opens;}
+    try{
+        const auto s=openStill(path);d.container=containerName(s.container);d.kind=s.gif?m::MediaAssemblyKind::gif:m::MediaAssemblyKind::image;d.frameCount=s.frames;
+        unsigned w=s.width,h=s.height;if(s.orientation>=5)std::swap(w,h);d.pixels={double(w),double(h)};return d;
+    }catch(const m::MediaAssemblyFailure&f){if(f.error()==m::MediaAssemblyError::unavailable)throw;}
+    // Not a still container: Media Foundation movie metadata.
+    Platform mf;ComPtr<IMFSourceReader>reader;check(MFCreateSourceReaderFromURL(path.c_str(),nullptr,&reader),m::MediaAssemblyError::unsupported);
+    const auto v=inspectVideo(reader.Get());d.video=true;d.kind=m::MediaAssemblyKind::video;d.container="video";d.duration=v.duration;d.bt709=v.bt709;
+    const bool swap=v.rotation==90||v.rotation==270;d.pixels={double(swap?v.height:v.width),double(swap?v.width:v.height)};return d;
+}
+MediaAssemblyBitmap NativeMediaAssemblyEngine::decodeStill(const m::MediaAssemblyDocumentInfo&d,std::optional<unsigned>maximum){
+    const auto path=mediaAssemblyPath(d.path);const auto s=openStill(path);MediaAssemblyBitmap out;
+    const auto png=IsEqualGUID(s.container,GUID_ContainerFormatPng)?pngColour(path):PngColour{};
+    ComPtr<IWICBitmapFrameDecode>frame;check(s.decoder->GetFrame(0,&frame),m::MediaAssemblyError::unsupported);
+    if(!s.gif){
+        // Scale before orienting; the bound applies to the longest side.
+        const auto[w,h]=bounded(s.width,s.height,maximum);ComPtr<IWICBitmapSource>source;check(frame.As(&source),m::MediaAssemblyError::unsupported);
+        out.width=w;out.height=h;
+        // A full-size JPEG takes the Mac's chroma reading of its path (see
+        // JpegChroma) unless its profile needs the WIC colour transform.
+        if(IsEqualGUID(s.container,GUID_ContainerFormatJpeg)&&w==s.width&&h==s.height)
+            if(const auto planes=jpegPlanes(frame.Get(),w,h)){
+                const unsigned cw=planes->chromaWidth,ch=planes->chromaHeight;const bool half=cw==(w+1)/2;
+                const auto model=maximum&&half&&ch==(h+1)/2?std::optional(JpegChroma::perMCU420):!maximum&&half&&ch==h?std::optional(JpegChroma::export422):std::nullopt;
+                std::shared_ptr<const m::MediaAssemblySourceColour>colour;
+                if(model&&!platformColour(s.wic.Get(),frame.Get(),&colour,nullptr))
+                    if(auto rgba=macJpeg(*planes,w,h,*model)){out.straightRGBA=std::move(*rgba);out.colour=std::move(colour);orient(out,s.orientation);return out;}
+            }
+        out.straightRGBA=pixels(s.wic.Get(),source,frame.Get(),w,h,&out.colour,&png);orient(out,s.orientation);return out;
+    }
+    // GIF first frame on its logical screen (transparent outside the frame).
+    UINT fw{},fh{};check(frame->GetSize(&fw,&fh),m::MediaAssemblyError::unsupported);ComPtr<IWICMetadataQueryReader>meta;frame->GetMetadataQueryReader(&meta);
+    const unsigned left=metadata(meta.Get(),L"/imgdesc/Left").value_or(0),top=metadata(meta.Get(),L"/imgdesc/Top").value_or(0);
+    ComPtr<IWICBitmapSource>source;check(frame.As(&source),m::MediaAssemblyError::unsupported);std::shared_ptr<const m::MediaAssemblySourceColour>colour;const auto rgba=pixels(s.wic.Get(),source,frame.Get(),fw,fh,&colour);
+    std::vector<std::uint8_t>canvas(std::size_t(s.width)*s.height*4,0);
+    for(unsigned y=0;y<fh&&top+y<s.height;++y)for(unsigned x=0;x<fw&&left+x<s.width;++x)std::copy_n(rgba.data()+(std::size_t(y)*fw+x)*4,4,canvas.data()+(std::size_t(top+y)*s.width+left+x)*4);
+    const auto[w,h]=bounded(s.width,s.height,maximum);
+    if(w==s.width&&h==s.height){out={w,h,std::move(canvas),std::move(colour)};return out;}
+    ComPtr<IWICBitmap>bitmap;check(s.wic->CreateBitmapFromMemory(s.width,s.height,GUID_WICPixelFormat32bppRGBA,s.width*4,UINT(canvas.size()),canvas.data(),&bitmap),m::MediaAssemblyError::unsupported);
+    ComPtr<IWICBitmapSource>bs;check(bitmap.As(&bs),m::MediaAssemblyError::unsupported);out={w,h,pixels(s.wic.Get(),bs,nullptr,w,h),std::move(colour)};return out;
+}
+MediaAssemblyBitmap NativeMediaAssemblyEngine::decodeVideoFrame(const m::MediaAssemblyDocumentInfo&d,double time,unsigned maximum){
+    Platform mf;auto reader=videoReader(mediaAssemblyPath(d.path),false);const auto v=inspectVideo(reader.Get());
+    // AVAssetImageGenerator: maximumSize box with the preferred transform,
+    // +/-0.08 s tolerance around min(duration - 0.001, time).
+    const auto[w,h]=bounded(v.width,v.height,maximum);const auto stride=negotiateRGB32(reader.Get(),w,h);
+    const double target=std::clamp(time,0.,std::max(0.,v.duration-.001));seek(reader.Get(),target);
+    MediaAssemblyBitmap out{w,h,std::vector<std::uint8_t>(std::size_t(w)*h*4)};bool have{};const auto started=GetTickCount64();
+    for(unsigned reads=0;reads<2000;++reads){
+        DWORD flags{};LONGLONG stamp{};ComPtr<IMFSample>sample;check(reader->ReadSample(MF_SOURCE_READER_FIRST_VIDEO_STREAM,0,nullptr,&flags,&stamp,&sample),m::MediaAssemblyError::unsupported);
+        need(!(flags&MF_SOURCE_READERF_ERROR),m::MediaAssemblyError::unsupported);
+        if(sample){copyFrame(sample.Get(),w,h,stride,out.straightRGBA.data());have=true;if(double(stamp)/1e7>=target-.08)break;}
+        if(flags&MF_SOURCE_READERF_ENDOFSTREAM)break;need(GetTickCount64()-started<15000,m::MediaAssemblyError::unsupported);
+    }
+    need(have,m::MediaAssemblyError::unsupported);rotate(out,v.rotation);if(v.bt709)out.colour=m::mediaAssemblyVideoColour();return out;
+}
+// Source Engine.preview up to (not including) Engine.apply: identity
+// re-check, cached bounded decode and the filter cube.
+std::pair<std::shared_ptr<const MediaAssemblyBitmap>,std::shared_ptr<const MediaAssemblyCube>>NativeMediaAssemblyEngine::previewInputs(const m::MediaAssemblyDocumentInfo&d,const m::MediaAssemblyAdjustments&a,double time){
+    if(!a.valid())fail(m::MediaAssemblyError::invalidAdjustment);Apartment com;
+    // Source NotesMediaFactory.resolve (the bookmark follows a renamed or
+    // moved original; missing or not a regular file: NotesMediaError.
+    // unavailable), then the identity re-check.
+    std::optional<m::MediaAssemblyFileIdentity>identity;std::string at;
+    try{at=mediaAssemblyLocate(d.path,d.identity);identity=mediaAssemblyFileIdentity(mediaAssemblyPath(at));}
+    catch(const m::MediaAssemblyFailure&f){if(f.error()==m::MediaAssemblyError::unavailable)fail(m::MediaAssemblyError::sourceUnavailable);throw;}
+    if(!identity)fail(m::MediaAssemblyError::sourceUnavailable);if(*identity!=d.identity)fail(m::MediaAssemblyError::changedOnDisk);
+    std::optional<m::MediaAssemblyDocumentInfo>moved;if(at!=d.path){moved=d;moved->path=std::move(at);}const auto&source=moved?*moved:d;
+    const double sourceTime=d.video?time:0;std::shared_ptr<const MediaAssemblyBitmap>image;std::uint64_t generation{};
+    {std::lock_guard g(impl_->lock);generation=impl_->generation;if(impl_->cached&&impl_->cached->id==d.id&&impl_->cached->time==sourceTime){image=impl_->cached->image;++impl_->statistics.previewCacheHits;}}
+    if(!image){
+        auto decoded=std::make_shared<MediaAssemblyBitmap>(source.video?decodeVideoFrame(source,time,maximumPreviewDimension):decodeStill(source,maximumPreviewDimension));image=decoded;
+        std::lock_guard g(impl_->lock);++impl_->statistics.previewDecodes;if(generation==impl_->generation)impl_->cached=Impl::Cached{d.id,sourceTime,image};
+    }
+    std::shared_ptr<const MediaAssemblyCube>cube;if(a.filter!=m::MediaAssemblyFilter::none){std::lock_guard g(impl_->lock);cube=impl_->assets.cube(a.filter);}
+    return {std::move(image),std::move(cube)};
+}
+modules::MediaAssemblyPreviewImage NativeMediaAssemblyEngine::preview(const m::MediaAssemblyDocumentInfo&d,const m::MediaAssemblyAdjustments&a,double time){
+    const auto[image,cube]=previewInputs(d,a,time);
+    const m::MediaAssemblyFrameProcessor processor(image->width,image->height,a,cube?cube->rgb8():std::span<const std::uint8_t>{},false);
+    m::MediaAssemblyPreviewImage out{processor.width(),processor.height(),{}};
+    out.straightRGBA=processor.render({image->width,image->height,std::size_t(image->width)*4,image->straightRGBA,false,image->colour.get()},m::MediaAssemblyOutputAlpha::straight);
+    return out;
+}
+modules::MediaAssemblyPreviewImage NativeMediaAssemblyEngine::previewSource(const m::MediaAssemblyDocumentInfo&d,const m::MediaAssemblyAdjustments&a,double time){
+    auto[image,cube]=previewInputs(d,a,time);auto edits=a;edits.stickers.clear();
+    const auto plan=m::mediaAssemblyPixelPlan(image->width,image->height,edits);
+    m::MediaAssemblyPreviewImage out{plan.outputWidth,plan.outputHeight,{}};out.source=std::move(image);out.edits=std::move(edits);
+    if(cube){out.lookup=cube->rgb8();out.lookupOwner=std::move(cube);}
+    {std::lock_guard g(impl_->lock);++impl_->statistics.deferredPreviews;}
+    return out;
+}
+
+namespace {
+// Rows [first, first+count) of the edited image as RGBA8 in an alpha mode.
+using ExportRows=std::function<void(unsigned first,unsigned count,std::span<std::uint8_t>rows,std::size_t stride,m::MediaAssemblyOutputAlpha)>;
+// Streams edited rows into one WIC frame in the encoder's pixel format.
+void encodeImage(IWICImagingFactory*wic,const std::filesystem::path&temp,m::MediaAssemblyImageFormat format,unsigned w,unsigned h,const ExportRows&produce,m::MediaAssemblyExportTicket&ticket){
+    ComPtr<IWICStream>stream;check(wic->CreateStream(&stream),m::MediaAssemblyError::exportFailed);check(stream->InitializeFromFilename(temp.c_str(),GENERIC_WRITE),m::MediaAssemblyError::exportFailed);
+    ComPtr<IWICBitmapEncoder>encoder;check(wic->CreateEncoder(encoderContainer(format),nullptr,&encoder),m::MediaAssemblyError::unsupportedExport);check(encoder->Initialize(stream.Get(),WICBitmapEncoderNoCache),m::MediaAssemblyError::exportFailed);
+    ComPtr<IWICBitmapFrameEncode>frame;ComPtr<IPropertyBag2>props;check(encoder->CreateNewFrame(&frame,&props),m::MediaAssemblyError::exportFailed);
+    if(format==m::MediaAssemblyImageFormat::jpeg||format==m::MediaAssemblyImageFormat::heic){
+        // kCGImageDestinationLossyCompressionQuality 0.95.
+        PROPBAG2 option{};option.pstrName=const_cast<LPOLESTR>(L"ImageQuality");VARIANT value{};VariantInit(&value);value.vt=VT_R4;value.fltVal=.95f;props->Write(1,&option,&value);
+    }
+    check(frame->Initialize(props.Get()),m::MediaAssemblyError::exportFailed);check(frame->SetSize(w,h),m::MediaAssemblyError::exportFailed);
+    // The original encodes its associated RGBA8 createCGImage result: PNG/HEIC
+    // store it unassociated, TIFF keeps associated alpha, JPEG drops alpha.
+    WICPixelFormatGUID requested=format==m::MediaAssemblyImageFormat::jpeg?GUID_WICPixelFormat24bppBGR:format==m::MediaAssemblyImageFormat::tiff?GUID_WICPixelFormat32bppPBGRA:GUID_WICPixelFormat32bppBGRA;
+    WICPixelFormatGUID actual=requested;check(frame->SetPixelFormat(&actual),m::MediaAssemblyError::unsupportedExport);
+    const bool bgr24=IsEqualGUID(actual,GUID_WICPixelFormat24bppBGR),pbgra=IsEqualGUID(actual,GUID_WICPixelFormat32bppPBGRA),bgra=IsEqualGUID(actual,GUID_WICPixelFormat32bppBGRA)||IsEqualGUID(actual,GUID_WICPixelFormat32bppBGR);
+    need(bgr24||pbgra||bgra,m::MediaAssemblyError::unsupportedExport);
+    const unsigned band=std::max(1u,std::min(h,(16u*1024u*1024u)/std::max(1u,w*4)));std::vector<std::uint8_t>rows(std::size_t(w)*band*4),packed(std::size_t(w)*band*4);
+    for(unsigned y=0;y<h;y+=band){
+        if(ticket.cancelled())fail(m::MediaAssemblyError::cancelled);const unsigned n=std::min(band,h-y);
+        produce(y,n,rows,std::size_t(w)*4,(bgra&&!pbgra)?m::MediaAssemblyOutputAlpha::straight:m::MediaAssemblyOutputAlpha::premultiplied);
+        const unsigned stride=bgr24?((w*3+3)&~3u):w*4;if(packed.size()<std::size_t(stride)*n)packed.resize(std::size_t(stride)*n);
+        for(unsigned r=0;r<n;++r){const auto*s=rows.data()+std::size_t(r)*w*4;auto*d=packed.data()+std::size_t(r)*stride;
+            for(unsigned x=0;x<w;++x){if(bgr24){d[x*3]=s[x*4+2];d[x*3+1]=s[x*4+1];d[x*3+2]=s[x*4];}else{d[x*4]=s[x*4+2];d[x*4+1]=s[x*4+1];d[x*4+2]=s[x*4];d[x*4+3]=s[x*4+3];}}}
+        check(frame->WritePixels(n,stride,UINT(std::size_t(stride)*n),packed.data()),m::MediaAssemblyError::exportFailed);
+    }
+    check(frame->Commit(),m::MediaAssemblyError::exportFailed);check(encoder->Commit(),m::MediaAssemblyError::exportFailed);check(stream->Commit(STGC_DEFAULT),m::MediaAssemblyError::exportFailed);
+}
+MediaAssemblyBitmap decodeSticker(IWICImagingFactory*wic,const std::filesystem::path&path){
+    ComPtr<IWICBitmapDecoder>decoder;check(wic->CreateDecoderFromFilename(path.c_str(),nullptr,GENERIC_READ,WICDecodeMetadataCacheOnDemand,&decoder),m::MediaAssemblyError::unavailable);
+    ComPtr<IWICBitmapFrameDecode>frame;check(decoder->GetFrame(0,&frame),m::MediaAssemblyError::unavailable);UINT w{},h{};check(frame->GetSize(&w,&h),m::MediaAssemblyError::unavailable);
+    ComPtr<IWICFormatConverter>c;check(wic->CreateFormatConverter(&c),m::MediaAssemblyError::unavailable);check(c->Initialize(frame.Get(),GUID_WICPixelFormat32bppRGBA,WICBitmapDitherTypeNone,nullptr,0,WICBitmapPaletteTypeCustom),m::MediaAssemblyError::unavailable);
+    MediaAssemblyBitmap out{w,h,std::vector<std::uint8_t>(std::size_t(w)*h*4)};check(c->CopyPixels(nullptr,w*4,UINT(out.straightRGBA.size()),out.straightRGBA.data()),m::MediaAssemblyError::unavailable);return out;
+}
+}
+
+std::string NativeMediaAssemblyEngine::exportMedia(const m::MediaAssemblyExportRequest&r,m::MediaAssemblyExportTicket&ticket){
+    Apartment com;const auto ops=mediaAssemblyFileOperations();
+    {std::lock_guard g(impl_->lock);++impl_->statistics.exports;}
+    auto plan=m::mediaAssemblyPrepareExport(r,ops,ticket,mediaAssemblySamePath);
+    struct Temporary {const m::MediaAssemblyFileOperations&ops;std::string path;bool armed{true};~Temporary(){if(armed)try{ops.remove(path);}catch(...){}}}temporary{ops,plan.temporary};
+    // The original is read where the plan located it (renamed or moved).
+    std::optional<m::MediaAssemblyDocumentInfo>moved;if(!plan.source.empty()&&plan.source!=r.document->path){moved=*r.document;moved->path=plan.source;}
+    const auto&d=moved?*moved:*r.document;const auto tempPath=mediaAssemblyPath(plan.temporary);
+    std::shared_ptr<const MediaAssemblyCube>cube;if(r.adjustments.filter!=m::MediaAssemblyFilter::none){std::lock_guard g(impl_->lock);cube=impl_->assets.cube(r.adjustments.filter);}
+    const auto lookup=cube?cube->rgb8():std::span<const std::uint8_t>{};
+    if(!d.video){
+        auto wic=factory();const auto source=decodeStill(d,std::nullopt);ticket.setProgress(.25);
+        std::vector<std::vector<std::uint8_t>>art;std::vector<m::MediaAssemblyStickerArtwork>stickers;art.reserve(r.adjustments.stickers.size());
+        for(const auto&s:r.adjustments.stickers){const auto&asset=impl_->assets.sticker(s.kind);const auto image=decodeSticker(wic.Get(),impl_->assets.root()/mediaAssemblyPath(asset.path));art.push_back(m::mediaAssemblyPremultiply(image.straightRGBA));stickers.push_back({image.width,image.height,art.back()});}
+        const m::MediaAssemblyFrameProcessor processor(source.width,source.height,r.adjustments,lookup,true,stickers);
+        if(ticket.cancelled())fail(m::MediaAssemblyError::cancelled);
+        need(processor.width()<=65536&&processor.height()<=65536,m::MediaAssemblyError::unsupportedExport);
+        // The source CIContext renders the whole composition on the GPU. A
+        // still within the D3D11 texture limit does the same here: the job's
+        // own device edits geometry and colour into associated, unclamped
+        // float row bands and the CPU composites the stickers over each band
+        // and stores it, exactly as the CPU processor does (extended-range
+        // colour under translucent sticker edges and translucent pixels keep
+        // their precision). Any GPU failure finishes on the CPU.
+        const m::MediaAssemblyPixels pixels{source.width,source.height,std::size_t(source.width)*4,source.straightRGBA,false,source.colour.get()};
+        std::unique_ptr<NativeMediaAssemblyGpuProcessor>gpu;
+        const bool large=std::uint64_t(processor.width())*processor.height()>=impl_->options.gpuStillPixels;
+        if(large&&impl_->options.exportDevice&&std::max(source.width,source.height)<=16384)if(auto device=impl_->options.exportDevice())try{
+            gpu=std::make_unique<NativeMediaAssemblyGpuProcessor>(std::move(device));gpu->setSource(source.width,source.height,source.straightRGBA,std::size_t(source.width)*4,false,0,source.colour);
+            const auto edited=gpu->configure(r.adjustments,lookup,false);if(edited.outputWidth!=processor.width()||edited.outputHeight!=processor.height())gpu.reset();
+        }catch(const std::exception&){gpu.reset();}
+        std::uint64_t gpuRows{},cpuRows{};
+        // Float colour rows for at most about 1 Mpx at a time (16 MB, and the
+        // same on the device), reused for every band of this job.
+        const std::size_t colourStride=std::size_t(processor.width())*4;const unsigned colourRows=std::max(1u,unsigned((1u<<20)/std::max(1u,processor.width())));
+        std::vector<float>colour;
+        struct Count {Impl&i;std::uint64_t&g,&c;~Count(){std::lock_guard l(i.lock);if(g)++i.statistics.gpuStillExports;if(c)++i.statistics.cpuStillExports;}}count{*impl_,gpuRows,cpuRows};
+        ticket.setProgress(.7);
+        encodeImage(wic.Get(),tempPath,plan.format.image,processor.width(),processor.height(),[&](unsigned y,unsigned n,std::span<std::uint8_t>rows,std::size_t stride,m::MediaAssemblyOutputAlpha mode){
+            if(gpu)try{
+                if(colour.empty())colour.resize(colourStride*std::min(colourRows,processor.height()));
+                for(unsigned at=0;at<n;){const unsigned part=std::min(colourRows,n-at);
+                    gpu->renderRows(y+at,part,colour,colourStride);processor.compositeStickers(y+at,part,colour,colourStride,rows.subspan(std::size_t(at)*stride),stride,mode);at+=part;}
+                gpuRows+=n;return;}catch(const std::exception&){gpu.reset();}
+            processor.render(pixels,y,n,rows,stride,mode);cpuRows+=n;},ticket);
+    }else{
+        Platform mf;const auto range=r.adjustments.timeRange(d.duration);if(!range)fail(m::MediaAssemblyError::invalidAdjustment);
+        if(!r.adjustments.stickers.empty())fail(m::MediaAssemblyError::unsupported);
+        const double start=double(range->startTicks)/600,end=start+double(range->durationTicks)/600;
+        auto reader=videoReader(mediaAssemblyPath(d.path),true);const auto v=inspectVideo(reader.Get());const auto stride=negotiateRGB32(reader.Get(),v.width,v.height);
+        bool audio=v.audio;ComPtr<IMFMediaType>pcm;
+        if(audio){
+            ComPtr<IMFMediaType>native;reader->GetNativeMediaType(MF_SOURCE_READER_FIRST_AUDIO_STREAM,0,&native);const UINT32 rate=MFGetAttributeUINT32(native.Get(),MF_MT_AUDIO_SAMPLES_PER_SECOND,48000),channels=MFGetAttributeUINT32(native.Get(),MF_MT_AUDIO_NUM_CHANNELS,2);
+            const UINT32 outRate=rate==44100?44100:48000,outChannels=channels>=2?2:1;
+            ComPtr<IMFMediaType>want;MFCreateMediaType(&want);want->SetGUID(MF_MT_MAJOR_TYPE,MFMediaType_Audio);want->SetGUID(MF_MT_SUBTYPE,MFAudioFormat_PCM);want->SetUINT32(MF_MT_AUDIO_BITS_PER_SAMPLE,16);
+            want->SetUINT32(MF_MT_AUDIO_SAMPLES_PER_SECOND,outRate);want->SetUINT32(MF_MT_AUDIO_NUM_CHANNELS,outChannels);want->SetUINT32(MF_MT_AUDIO_BLOCK_ALIGNMENT,outChannels*2);want->SetUINT32(MF_MT_AUDIO_AVG_BYTES_PER_SECOND,outRate*outChannels*2);
+            audio=SUCCEEDED(reader->SetCurrentMediaType(MF_SOURCE_READER_FIRST_AUDIO_STREAM,nullptr,want.Get()))&&SUCCEEDED(reader->GetCurrentMediaType(MF_SOURCE_READER_FIRST_AUDIO_STREAM,&pcm));
+            if(!audio)reader->SetStreamSelection(MF_SOURCE_READER_FIRST_AUDIO_STREAM,FALSE);
+        }
+        const bool swap=v.rotation==90||v.rotation==270;const unsigned ow=swap?v.height:v.width,oh=swap?v.width:v.height;
+        // MediaAssemblyEngine.composition: even output, <=16384, 1...120 fps.
+        const auto even=m::mediaAssemblyPixelPlan(ow,oh,r.adjustments,std::nullopt,true);need(even.outputWidth<=16384&&even.outputHeight<=16384,m::MediaAssemblyError::unsupportedExport);
+        const m::MediaAssemblyFrameProcessor processor(ow,oh,r.adjustments,lookup,false,{},true);
+        const double fps=std::clamp(v.fps,1.,120.);
+        // Keep the source's exact nominal rate ratio when it is already within
+        // the composition clamp (1...120 fps); otherwise use the clamped rate.
+        UINT32 sourceNum{},sourceDen{};{ComPtr<IMFMediaType>native;if(SUCCEEDED(reader->GetNativeMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM,0,&native)))MFGetAttributeRatio(native.Get(),MF_MT_FRAME_RATE,&sourceNum,&sourceDen);}
+        const bool sourceRate=sourceNum&&sourceDen&&std::abs(double(sourceNum)/sourceDen-fps)<1e-9;
+        // Microsoft's software H.264/AAC encoders: hardware MFTs reject small
+        // or unusual frame sizes with E_FAIL, so they are not opted into.
+        ComPtr<IMFAttributes>attributes;MFCreateAttributes(&attributes,1);attributes->SetGUID(MF_TRANSCODE_CONTAINERTYPE,MFTranscodeContainerType_MPEG4);
+        ComPtr<IMFSinkWriter>writer;check(MFCreateSinkWriterFromURL(tempPath.c_str(),nullptr,attributes.Get(),&writer),m::MediaAssemblyError::exportFailed);
+        const UINT32 fpsNum=sourceRate?sourceNum:UINT32(std::lround(fps*1000)),fpsDen=sourceRate?sourceDen:1000;
+        ComPtr<IMFMediaType>h264;MFCreateMediaType(&h264);h264->SetGUID(MF_MT_MAJOR_TYPE,MFMediaType_Video);h264->SetGUID(MF_MT_SUBTYPE,MFVideoFormat_H264);
+        h264->SetUINT32(MF_MT_AVG_BITRATE,UINT32(std::clamp(double(even.outputWidth)*even.outputHeight*fps*.2,500000.,std::numeric_limits<UINT32>::max()/2.)));h264->SetUINT32(MF_MT_INTERLACE_MODE,MFVideoInterlace_Progressive);
+        MFSetAttributeSize(h264.Get(),MF_MT_FRAME_SIZE,even.outputWidth,even.outputHeight);MFSetAttributeRatio(h264.Get(),MF_MT_FRAME_RATE,fpsNum,fpsDen);MFSetAttributeRatio(h264.Get(),MF_MT_PIXEL_ASPECT_RATIO,1,1);
+        DWORD videoStream{};check(writer->AddStream(h264.Get(),&videoStream),m::MediaAssemblyError::unsupportedExport);
+        ComPtr<IMFMediaType>rgb;MFCreateMediaType(&rgb);rgb->SetGUID(MF_MT_MAJOR_TYPE,MFMediaType_Video);rgb->SetGUID(MF_MT_SUBTYPE,MFVideoFormat_RGB32);rgb->SetUINT32(MF_MT_INTERLACE_MODE,MFVideoInterlace_Progressive);
+        MFSetAttributeSize(rgb.Get(),MF_MT_FRAME_SIZE,even.outputWidth,even.outputHeight);MFSetAttributeRatio(rgb.Get(),MF_MT_FRAME_RATE,fpsNum,fpsDen);MFSetAttributeRatio(rgb.Get(),MF_MT_PIXEL_ASPECT_RATIO,1,1);
+        // The rows below are written top-down: a positive default stride (an
+        // RGB32 type without one is read bottom-up, which flipped every
+        // exported movie upside down).
+        rgb->SetUINT32(MF_MT_DEFAULT_STRIDE,even.outputWidth*4);
+        check(writer->SetInputMediaType(videoStream,rgb.Get(),nullptr),m::MediaAssemblyError::unsupportedExport);
+        DWORD audioStream{};
+        if(audio){
+            const UINT32 rate=MFGetAttributeUINT32(pcm.Get(),MF_MT_AUDIO_SAMPLES_PER_SECOND,48000),channels=MFGetAttributeUINT32(pcm.Get(),MF_MT_AUDIO_NUM_CHANNELS,2);
+            ComPtr<IMFMediaType>aac;MFCreateMediaType(&aac);aac->SetGUID(MF_MT_MAJOR_TYPE,MFMediaType_Audio);aac->SetGUID(MF_MT_SUBTYPE,MFAudioFormat_AAC);aac->SetUINT32(MF_MT_AUDIO_BITS_PER_SAMPLE,16);
+            aac->SetUINT32(MF_MT_AUDIO_SAMPLES_PER_SECOND,rate);aac->SetUINT32(MF_MT_AUDIO_NUM_CHANNELS,channels);aac->SetUINT32(MF_MT_AUDIO_AVG_BYTES_PER_SECOND,24000);
+            audio=SUCCEEDED(writer->AddStream(aac.Get(),&audioStream))&&SUCCEEDED(writer->SetInputMediaType(audioStream,pcm.Get(),nullptr));
+            if(!audio)reader->SetStreamSelection(MF_SOURCE_READER_FIRST_AUDIO_STREAM,FALSE);
+        }
+        std::atomic<bool>cancelled{};ticket.observeCancellation([&cancelled]{cancelled=true;});std::atomic<double>written{0};const double span=std::max(1e-6,end-start);
+        ticket.observeProgress([&written,span]{return written.load()/span;});
+        struct Forget {m::MediaAssemblyExportTicket&t;~Forget(){t.finish();}}forget{ticket};
+        check(writer->BeginWriting(),m::MediaAssemblyError::exportFailed);seek(reader.Get(),start);
+        MediaAssemblyBitmap frame{v.width,v.height,std::vector<std::uint8_t>(std::size_t(v.width)*v.height*4)};
+        // The source composition renders on the GPU; so does this job when a
+        // device exists (raw frames upload once, the display rotation is part
+        // of the geometry). Any GPU failure finishes the job on the CPU.
+        std::unique_ptr<NativeMediaAssemblyGpuProcessor>gpu;bool gpuConfigured{};
+        if(impl_->options.exportDevice&&std::max(v.width,v.height)<=16384)if(auto device=impl_->options.exportDevice())try{gpu=std::make_unique<NativeMediaAssemblyGpuProcessor>(std::move(device));}catch(const std::exception&){gpu.reset();}
+        std::vector<std::uint8_t>oriented,processed,scaled;
+        const auto cpuBuffers=[&]{if(processed.empty()){if(v.rotation)oriented.resize(frame.straightRGBA.size());processed.resize(std::size_t(processor.width())*processor.height()*4);scaled.resize(std::size_t(even.outputWidth)*even.outputHeight*4);}};
+        if(!gpu)cpuBuffers();
+        std::uint64_t gpuFrames{},cpuFrames{};
+        struct Count {Impl&i;std::uint64_t&g,&c;~Count(){std::lock_guard l(i.lock);i.statistics.gpuExportFrames+=g;i.statistics.cpuExportFrames+=c;}}count{*impl_,gpuFrames,cpuFrames};
+        bool videoDone{},audioDone{!audio};const LONGLONG start100=LONGLONG(std::llround(start*1e7)),end100=LONGLONG(std::llround(end*1e7));
+        while(!videoDone||!audioDone){
+            if(cancelled)fail(m::MediaAssemblyError::cancelled);
+            DWORD index{},flags{};LONGLONG stamp{};ComPtr<IMFSample>sample;check(reader->ReadSample(MF_SOURCE_READER_ANY_STREAM,0,&index,&flags,&stamp,&sample),m::MediaAssemblyError::exportFailed);
+            need(!(flags&MF_SOURCE_READERF_ERROR),m::MediaAssemblyError::exportFailed);
+            ComPtr<IMFMediaType>which;bool isVideo{};if(SUCCEEDED(reader->GetCurrentMediaType(index,&which))){GUID major{};which->GetGUID(MF_MT_MAJOR_TYPE,&major);isVideo=major==MFMediaType_Video;}
+            const bool eos=(flags&MF_SOURCE_READERF_ENDOFSTREAM)!=0;
+            if(sample&&stamp<end100){
+                LONGLONG duration{};sample->GetSampleDuration(&duration);
+                if(isVideo&&stamp+std::max<LONGLONG>(duration,1)>start100){
+                    copyFrame(sample.Get(),v.width,v.height,stride,frame.straightRGBA.data());
+                    ComPtr<IMFMediaBuffer>buffer;const DWORD bytes=DWORD(std::size_t(even.outputWidth)*even.outputHeight*4);check(MFCreateMemoryBuffer(bytes,&buffer),m::MediaAssemblyError::exportFailed);
+                    {BYTE*dst{};check(buffer->Lock(&dst,nullptr,nullptr),m::MediaAssemblyError::exportFailed);
+                    struct Unlock {IMFMediaBuffer*b;~Unlock(){b->Unlock();}}unlock{buffer.Get()};
+                    bool done{};
+                    if(gpu)try{
+                        gpu->setSource(v.width,v.height,frame.straightRGBA,std::size_t(v.width)*4,false,v.rotation,v.bt709?m::mediaAssemblyVideoColour():nullptr);
+                        if(!gpuConfigured){gpu->configure(r.adjustments,lookup,true);gpuConfigured=true;}
+                        // Opaque frames: associated BGRA equals RGB32 (X = 255).
+                        gpu->renderToMemory(even.outputWidth,even.outputHeight,std::span<std::uint8_t>(dst,bytes),std::size_t(even.outputWidth)*4);done=true;++gpuFrames;
+                    }catch(const std::exception&){gpu.reset();cpuBuffers();}
+                    if(!done){
+                        const std::uint8_t*src=frame.straightRGBA.data();if(v.rotation){rotateInto(src,v.width,v.height,v.rotation,oriented.data());src=oriented.data();}
+                        processor.render({ow,oh,std::size_t(ow)*4,std::span<const std::uint8_t>(src,frame.straightRGBA.size()),false,v.bt709?m::mediaAssemblyVideoColour().get():nullptr},0,processor.height(),processed,std::size_t(processor.width())*4,m::MediaAssemblyOutputAlpha::premultiplied);
+                        const std::uint8_t*rgba=processed.data();
+                        if(processor.width()!=even.outputWidth||processor.height()!=even.outputHeight){m::mediaAssemblyResample({processor.width(),processor.height(),std::size_t(processor.width())*4,processed,true},even.outputWidth,even.outputHeight,scaled,std::size_t(even.outputWidth)*4);rgba=scaled.data();}
+                        for(std::size_t i=0;i<bytes;i+=4){dst[i]=rgba[i+2];dst[i+1]=rgba[i+1];dst[i+2]=rgba[i];dst[i+3]=255;}++cpuFrames;
+                    }}
+                    buffer->SetCurrentLength(bytes);
+                    ComPtr<IMFSample>out;MFCreateSample(&out);out->AddBuffer(buffer.Get());const LONGLONG at=std::max<LONGLONG>(0,stamp-start100);out->SetSampleTime(at);out->SetSampleDuration(duration>0?duration:LONGLONG(1e7/fps));
+                    check(writer->WriteSample(videoStream,out.Get()),m::MediaAssemblyError::exportFailed);written=std::max(written.load(),double(at)/1e7);
+                    if(impl_->options.videoFrameHook)impl_->options.videoFrameHook(double(at)/1e7);
+                }else if(!isVideo&&audio&&stamp+std::max<LONGLONG>(duration,1)>start100){
+                    const LONGLONG at=stamp-start100;if(at>=0){sample->SetSampleTime(at);check(writer->WriteSample(audioStream,sample.Get()),m::MediaAssemblyError::exportFailed);}
+                }
+            }
+            if(eos||(sample&&stamp>=end100)){
+                // Stop reading a finished stream so the other can drain.
+                if(isVideo&&!videoDone){videoDone=true;reader->SetStreamSelection(MF_SOURCE_READER_FIRST_VIDEO_STREAM,FALSE);}
+                else if(!isVideo&&!audioDone){audioDone=true;reader->SetStreamSelection(MF_SOURCE_READER_FIRST_AUDIO_STREAM,FALSE);}
+            }
+        }
+        check(writer->Finalize(),m::MediaAssemblyError::exportFailed);
+    }
+    temporary.armed=false;
+    return m::mediaAssemblyCommitExport(plan,r,ops,ticket,impl_->options.beforeCommit);
+}
+}
+#endif

@@ -1,0 +1,12 @@
+{
+  "sourceCommit": "ca04f142185c7de40acd8523bdb563195d90a1d1",
+  "sourceFile": "Sources/NotesFormattingControls.swift",
+  "sourceSHA256": "e24b74f7b3dbf3ff9df84c804b2a69a1edd97c87ce30af5b17e4e385e917eae1",
+  "kind": "NotesColorWheelView.wheel",
+  "asset": "raster/244c34ad474b15c242f9bd62cbf195272cbf7b880acbeaf0021e237d6a22abd2.png",
+  "sha256": "244c34ad474b15c242f9bd62cbf195272cbf7b880acbeaf0021e237d6a22abd2",
+  "bytes": 24871,
+  "width": 192,
+  "height": 192,
+  "derivation": "Original static wheel body evaluated with AppKit using matching macOS15.5 SDK; PNG serialization only."
+}

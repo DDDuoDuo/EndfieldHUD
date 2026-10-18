@@ -1,0 +1,163 @@
+{
+  "adaptiveTests": 186,
+  "adaptiveWorstPreSubdivision": {
+    "boundaryUpperBound": 23.50197622964412,
+    "direction": 1,
+    "interval": [
+      4.2735180854797375e-06,
+      0.9915207326410005
+    ],
+    "phase": 0.1983075653426685
+  },
+  "binaryLayout": "EHSUBC01; little-endian; Float64 viewport4/duration; UInt32 trackCount; pertrack Int32direction, topologyCount, UInt32opcodeCount+UInt8opcodes, fitCount; perfit Float64lo/hi, UInt32topologyIndex/sampleCount/coordinateCount, Float32coordinates; jumpCount+Float64lo/hi pairs",
+  "boundaryMetric": "Adaptive Bezier difference-curve norm upper bound (5e-5 tightness, depth cap14); actual geometric correspondence bounds Hausdorff; no control-only comparison",
+  "candidateBytes": 11826,
+  "candidateWithin256KiB": true,
+  "completeRuntimeParityClaimed": false,
+  "coverageMetric": "Original CGPath nonzero fill versus reconstructed candidate; grid and both-sides edge probes; mismatch distance measured to original path contours with 0.00025 flatten allowance",
+  "coverageMismatches": 1,
+  "coverageProbes": 182726,
+  "cubicIntervalsPerDirection": {
+    "-1": 17,
+    "1": 17
+  },
+  "directions": [
+    -1,
+    1
+  ],
+  "discontinuityBrackets": [
+    {
+      "direction": -1,
+      "hi": 4.2735180854797375e-06,
+      "lo": 4.273517549037934e-06,
+      "width": 5.364418033181962e-13
+    },
+    {
+      "direction": 1,
+      "hi": 4.2735180854797375e-06,
+      "lo": 4.273517549037934e-06,
+      "width": 5.364418033181962e-13
+    },
+    {
+      "direction": -1,
+      "hi": 0.9915207326415811,
+      "lo": 0.9915207326410005,
+      "width": 5.806466418789569e-13
+    },
+    {
+      "direction": 1,
+      "hi": 0.9915207326415811,
+      "lo": 0.9915207326410005,
+      "width": 5.806466418789569e-13
+    }
+  ],
+  "elapsedSeconds": 0.8116010427474976,
+  "excludedHoldouts": 0,
+  "flattenDepthCapReached": false,
+  "independentBoundaryUpperBound": 0.006736131785132516,
+  "independentHoldouts": 330,
+  "independentWorst": {
+    "actualCoordinates": [
+      0,
+      0,
+      -8.90764343727543,
+      0.19095625819991574,
+      -12.035798162332037,
+      0.19095625819991466,
+      -20.943441599607468,
+      0,
+      -27.610108266274125,
+      111.33333333333331,
+      -34.276774932940796,
+      222.66666666666666,
+      -40.94344159960747,
+      334,
+      -25.461610938633058,
+      334.3318894019414,
+      -15.481830660974415,
+      334.3318894019414,
+      0,
+      334,
+      0,
+      0
+    ],
+    "boundaryUpperBound": 0.006736131785132516,
+    "candidateCoordinates": [
+      0,
+      0,
+      -8.905779838562012,
+      0.19023945927619934,
+      -12.044154167175293,
+      0.19023945927619934,
+      -20.949934005737305,
+      0,
+      -27.616601943969727,
+      111.33333587646484,
+      -34.283267974853516,
+      222.6666717529297,
+      -40.94993591308594,
+      334,
+      -25.469755172729492,
+      334.3309020996094,
+      -15.480180740356445,
+      334.3309020996094,
+      0,
+      334,
+      0,
+      0
+    ],
+    "direction": 1,
+    "interval": [
+      4.2735180854797375e-06,
+      0.015496718191881026
+    ],
+    "opcodes": [
+      0,
+      3,
+      3,
+      3,
+      1,
+      4
+    ],
+    "phase": 0.0017502978336182578
+  },
+  "interpolation": "Fixed opcodes, four Float32 path samples at interval fractions [0,1/3,2/3,1], Double cubic Lagrange weights, Float32 output",
+  "isolation": [
+    "own detached CARenderer layers; no NSApplication/window",
+    "no screen capture, user files, stores or services",
+    "original source unchanged"
+  ],
+  "kind": "build-only-actual-CA-mask-feasibility",
+  "limits": [
+    "Measured holdouts are not a proof at all continuous times",
+    "No interpolation inside discontinuity brackets; event-side classification is unverified there",
+    "Coverage-distance metric uses source path contours, not a Boolean-union boundary extractor",
+    "Only one canonical viewport and pinned macOS CA behavior",
+    "No antialiasing/projected pixels/renderer integration verified"
+  ],
+  "maximumCoverageMismatchDistance": 0.0009606863238961891,
+  "maximumFlattenAcceptedError": 0.0002499849432331919,
+  "maximumRepeatDifference": 0,
+  "maximumSamples": 5000,
+  "maximumSeconds": 180,
+  "maximumStoredPathSamples": 512,
+  "measuredRegularIntervalsPass": true,
+  "metricSelfTestChecks": 4775,
+  "schemaVersion": 1,
+  "shippingArtifact": false,
+  "sourceDuration": 0.26,
+  "sourceSamples": 800,
+  "status": "measured regular intervals pass; temporal discontinuity brackets remain explicit",
+  "targetLocalPointDeviation": 0.02,
+  "trainingThreshold": 0.008,
+  "viewport": [
+    0,
+    0,
+    400,
+    334
+  ],
+  "sourceKind": "AppShortcutCanvas.arrival",
+  "sourceSHA256": "05bcdd613ef2ffa59cd0a069e088481baeb2e86fe2f4eb036c9ab7c1234156b3",
+  "fitterSHA256": "6683ac6c0b3f39a48080f8b008c3fb388c6132b08af28d20c413fcddcc4dbbb3",
+  "candidateSHA256": "cf4e9ac167390191d7129d8877a6dfe65e56149ec3123e7c11ff7bcc431242d2"
+}

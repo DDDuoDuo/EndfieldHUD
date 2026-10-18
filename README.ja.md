@@ -10,7 +10,7 @@
   <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.zh-TW.md">繁體中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a>
 </p>
 
-Mac に『アークナイツ：エンドフィールド』をちょっと。ショートカットやメニューバーから、奥行きのある動く HUD を開けます。メモ、ファイル、音楽、ゲームの情報、毎日使うツールをひとまとめに。
+Mac や Windows PC に『アークナイツ：エンドフィールド』をちょっと。ショートカットやメニューバーから、奥行きのある動く HUD を開けます。メモ、ファイル、音楽、ゲームの情報、毎日使うツールをひとまとめに。
 
 <a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/v1.2.0"><img src="docs/media/readme/release-v1.2.0.png" alt="リリース v1.2.0" width="326"></a>
 
@@ -25,6 +25,21 @@ Mac に『アークナイツ：エンドフィールド』をちょっと。シ�
 
 macOS にブロックされた場合は、**システム設定 → プライバシーとセキュリティ → このまま開く**から確認して開いてください。アプリはまだ Apple の公証を受けていません。
 
+**Windows**
+
+[セットアップ（EXE）をダウンロード](https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.2.0/EndfieldHUD-1.2.0-build18-windows-x64-setup.exe) · [ポータブル版（ZIP）をダウンロード](https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.2.0/EndfieldHUD-1.2.0-build18-windows-x64-portable.zip)
+
+0. すでに EndfieldHUD を使っている場合は、**このアプリについて**の **アップデートを確認**をクリックするか、新しいセットアップで上書きインストールします。データはそのまま残ります。
+1. セットアップを実行します。今のアカウントだけにインストールされるので、管理者権限はいりません。スタートメニューにも追加されます。
+2. サインイン時に起動したい場合は、**ログイン時に起動**にチェックを入れたままにします。**インストール**を選び、続けて **EndfieldHUD を開く**を選びます。
+3. アイコンはメニューバーではなく、通知領域（システムトレイ）に表示されます。Mac と同じく Ctrl + バッククォート（`）で HUD を開きます。キーは **ショートカット**で変更できます。
+
+Windows SmartScreen に **Windows によって PC が保護されました** と表示された場合は、**詳細情報 → 実行**を選んでください。アプリはまだコード署名されていません。
+
+インストールしたくない場合は、ポータブル版の ZIP を好きな場所に展開して **EndfieldHUD.exe** を実行します。スタートメニューには追加されず、カレンダーのリマインダー通知もありません。
+
+アンインストールするには、**設定 → アプリ → インストールされているアプリ → EndfieldHUD → アンインストール**を選びます。**EndfieldHUD のデータも削除する**にチェックを入れない限り、データは残ります。
+
 左右のボタンで画面を切り替え、右側をスクロールするとほかの画面も選べます。**Esc** は編集中の項目を先に閉じ、その後 HUD を閉じます。HUD を閉じてもアプリは動き続けます。終了するには赤い電源ボタンを押してください。
 
 ![HUD の開閉](docs/media/readme/opening.gif)
@@ -32,6 +47,8 @@ macOS にブロックされた場合は、**システム設定 → プライバ�
 <img src="docs/media/readme/en-02-requirements.png" alt="動作環境" width="326">
 
 Apple シリコン：**macOS 11 以降**。Intel：**macOS 10.15.4 以降**。一部の機能には、より新しい OS や対応するハードウェアが必要です。
+
+Windows PC：**Windows 11（64 ビット、x64）**。Windows 10 と ARM64 には対応していません。Direct3D 11 に対応したグラフィックカードと、約 64 MiB のディスク容量が必要です。
 
 必要な機能を使うときに、次の権限を許可してください。
 

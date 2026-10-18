@@ -1,0 +1,245 @@
+{
+ "expected": {
+  "arknights": {
+   "observedAt": "812692800.75",
+   "role": {
+    "bindingUID": "88001",
+    "game": "arknights",
+    "id": "8:mainland|9:arknights|5:88001|5:88001|1:1",
+    "isAvailable": true,
+    "isDefault": false,
+    "region": "mainland",
+    "roleID": "88001",
+    "serverID": "1"
+   },
+   "stamina": {
+    "current": 107,
+    "fullRecoveryAt": "812702800.0",
+    "maximum": 135,
+    "serverObservedAt": "812692800.0"
+   }
+  },
+  "endfield": {
+   "level": 41,
+   "name": "Endmin#1234",
+   "observedAt": "812692800.75",
+   "role": {
+    "bindingUID": "9",
+    "game": "endfield",
+    "id": "8:mainland|8:endfield|1:9|10:4000500060|1:1",
+    "isAvailable": true,
+    "isDefault": false,
+    "name": "Endmin#1234",
+    "region": "mainland",
+    "roleID": "4000500060",
+    "serverID": "1"
+   },
+   "stamina": {
+    "current": 42,
+    "fullRecoveryAt": "812699800.0",
+    "maximum": 360,
+    "serverObservedAt": "812692850.0"
+   }
+  },
+  "roles": [
+   {
+    "bindingUID": "9",
+    "game": "endfield",
+    "id": "8:mainland|8:endfield|1:9|10:4000500060|1:1",
+    "isAvailable": true,
+    "isDefault": true,
+    "name": "Endmin#1234",
+    "region": "mainland",
+    "roleID": "4000500060",
+    "serverID": "1",
+    "serverName": "Asia"
+   },
+   {
+    "bindingUID": "88001",
+    "game": "arknights",
+    "id": "8:mainland|9:arknights|5:88001|5:88001|1:1",
+    "isAvailable": true,
+    "isDefault": false,
+    "name": "Doctor",
+    "region": "mainland",
+    "roleID": "88001",
+    "serverID": "1",
+    "serverName": "官服"
+   }
+  ]
+ },
+ "expired": {
+  "body": "{\"code\":10002,\"message\":\"login\"}",
+  "status": 401
+ },
+ "login": {
+  "messages": [
+   {
+    "body": "{\"nonce\":\"00000000-0000-4000-8000-000000000001\",\"cred\":\"C1\",\"signingToken\":\"T1\",\"deviceID\":\"D1\"}",
+    "frame": "https://www.skland.com",
+    "mainFrame": false,
+    "page": "https://www.skland.com/",
+    "session": null
+   },
+   {
+    "body": "{\"nonce\":\"00000000-0000-4000-8000-000000000001\",\"cred\":\"C1\",\"signingToken\":\"T1\",\"deviceID\":\"D1\"}",
+    "frame": "https://user.hypergryph.com",
+    "mainFrame": true,
+    "page": "https://www.skland.com/",
+    "session": null
+   },
+   {
+    "body": "{\"nonce\":\"00000000-0000-4000-8000-000000000001\",\"cred\":\"C1\",\"signingToken\":\"T1\",\"deviceID\":\"D1\"}",
+    "frame": "https://www.skland.com",
+    "mainFrame": true,
+    "page": "https://user.hypergryph.com/",
+    "session": null
+   },
+   {
+    "body": "{\"nonce\":\"00000000-0000-4000-8000-000000000001\",\"cred\":\"C1\",\"signingToken\":\"T1\"}",
+    "frame": "https://www.skland.com",
+    "mainFrame": true,
+    "page": "https://www.skland.com/user",
+    "session": null
+   },
+   {
+    "body": "{\"nonce\":\"00000000-0000-4000-8000-000000000001\",\"cred\":\"C1\",\"signingToken\":\"T1\"}",
+    "frame": "https://www.skland.com",
+    "mainFrame": false,
+    "page": "https://www.skland.com/",
+    "session": null
+   },
+   {
+    "body": "{\"nonce\":\"00000000-0000-4000-8000-000000000001\",\"cred\":\"C1\",\"signingToken\":\"T1\"}",
+    "frame": "https://user.hypergryph.com",
+    "mainFrame": true,
+    "page": "https://www.skland.com/",
+    "session": null
+   },
+   {
+    "body": "{\"nonce\":\"00000000-0000-4000-8000-000000000001\",\"cred\":\"C1\",\"signingToken\":\"T1\",\"deviceID\":\"D1\"}",
+    "frame": "https://www.skland.com",
+    "mainFrame": true,
+    "page": "https://www.skland.com/user",
+    "session": {
+     "cred": "C1",
+     "deviceID": "D1",
+     "region": "mainland",
+     "signingToken": "T1"
+    }
+   }
+  ],
+  "navigation": [
+   {
+    "mainFrame": true,
+    "permits": true,
+    "url": "https://www.skland.com/"
+   },
+   {
+    "mainFrame": false,
+    "permits": true,
+    "url": "https://www.skland.com/"
+   },
+   {
+    "mainFrame": true,
+    "permits": true,
+    "url": "https://www.skland.com/x?y"
+   },
+   {
+    "mainFrame": false,
+    "permits": true,
+    "url": "https://www.skland.com/x?y"
+   },
+   {
+    "mainFrame": true,
+    "permits": false,
+    "url": "http://www.skland.com/"
+   },
+   {
+    "mainFrame": false,
+    "permits": false,
+    "url": "http://www.skland.com/"
+   },
+   {
+    "mainFrame": true,
+    "permits": false,
+    "url": "https://www.skland.com:8443/"
+   },
+   {
+    "mainFrame": false,
+    "permits": false,
+    "url": "https://www.skland.com:8443/"
+   },
+   {
+    "mainFrame": true,
+    "permits": false,
+    "url": "https://u:p@www.skland.com/"
+   },
+   {
+    "mainFrame": false,
+    "permits": false,
+    "url": "https://u:p@www.skland.com/"
+   }
+  ],
+  "nonce": "00000000-0000-4000-8000-000000000001",
+  "popups": [
+   {
+    "permits": true,
+    "source": "https://www.skland.com/",
+    "url": "https://www.skland.com/"
+   },
+   {
+    "permits": true,
+    "source": "https://www.skland.com/",
+    "url": "https://www.skland.com/x?y"
+   },
+   {
+    "permits": false,
+    "source": "https://www.skland.com/",
+    "url": "http://www.skland.com/"
+   },
+   {
+    "permits": false,
+    "source": "https://www.skland.com/",
+    "url": "https://www.skland.com:8443/"
+   },
+   {
+    "permits": false,
+    "source": "https://www.skland.com/",
+    "url": "https://u:p@www.skland.com/"
+   },
+   {
+    "permits": false,
+    "source": "https://www.skland.com/",
+    "url": "https://u@www.skland.com/"
+   }
+  ],
+  "region": "mainland",
+  "site": "https://www.skland.com/"
+ },
+ "now": "812692800.75",
+ "provenance": {
+  "generator": "windows/tools/hypergryph_account_coverage_fixture.py",
+  "source": "windows/tests/fixtures/hypergryph-account-source.json",
+  "sourceAuthority": "ca04f142185c7de40acd8523bdb563195d90a1d1",
+  "sourceSHA256": "71238d6a641d00566009545be400a2f66967605b5fca7fa651c9688448af6718"
+ },
+ "responses": {
+  "/api/v1/game/endfield/card/detail": {
+   "body": "{\"code\":0,\"data\":{\"currentTs\":1791000050,\"detail\":{\"base\":{\"level\":41,\"name\":\"Endmin#1234\",\"roleId\":\"4000500060\"},\"dungeon\":{\"curStamina\":42,\"maxStamina\":360,\"maxTs\":1791007000}}},\"message\":\"OK\",\"timestamp\":\"1791000100\"}",
+   "status": 200
+  },
+  "/api/v1/game/player/binding": {
+   "body": "{\"code\":0,\"data\":{\"list\":[{\"appCode\":\"endfield\",\"bindingList\":[{\"isDefault\":true,\"roles\":[{\"isDefault\":true,\"nickname\":\"Endmin#1234\",\"roleId\":\"4000500060\",\"serverId\":\"1\",\"serverName\":\"Asia\"}],\"uid\":\"9\"}],\"defaultUid\":\"9\"},{\"appCode\":\"arknights\",\"bindingList\":[{\"channelMasterId\":\"1\",\"channelName\":\"官服\",\"nickName\":\"Doctor\",\"uid\":\"88001\"}]}]},\"message\":\"OK\",\"timestamp\":\"1791000100\"}",
+   "status": 200
+  },
+  "/api/v1/game/player/info": {
+   "body": "{\"code\":0,\"data\":{\"currentTs\":1791000000,\"status\":{\"ap\":{\"completeRecoveryTime\":1791010000,\"current\":1,\"max\":135},\"uid\":\"88001\"}},\"message\":\"OK\",\"timestamp\":\"1791000100\"}",
+   "status": 200
+  },
+  "/web/v1/auth/refresh": {
+   "body": "{\"code\":0,\"data\":{\"token\":\"issued-token-1\"},\"message\":\"OK\",\"timestamp\":\"1791000100\"}",
+   "status": 200
+  }
+ }
+}

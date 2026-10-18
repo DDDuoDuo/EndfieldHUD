@@ -1,0 +1,69 @@
+{
+  "ico": {
+    "bytes": 58820,
+    "file": "EndfieldHUD.ico",
+    "sha256": "2141188eb436cbac8e709163b637cdafb76473ed6418bf07428bae46cb4478eb"
+  },
+  "icon": "endfield",
+  "method": "Unchanged HUDApplicationIcon.image(size:) for .endfield at each Windows icon size; detached resource resolver; no window",
+  "sizes": [
+    {
+      "file": "endfield-16.png",
+      "sha256": "bcc9a94c00cae2bc3e255009d6218358c2881141f437648f75100080f5667eaa",
+      "size": 16
+    },
+    {
+      "file": "endfield-20.png",
+      "sha256": "0adc0fd36018ee4f8a431415421a611df3e232c089cd9d1abf5c333eeeb9a8dc",
+      "size": 20
+    },
+    {
+      "file": "endfield-24.png",
+      "sha256": "1ce56241d1f4821293fe19ae9c8b96fa1e53308d0f7364e42505c22dbcba2bb2",
+      "size": 24
+    },
+    {
+      "file": "endfield-32.png",
+      "sha256": "60d3d0cd9604265be74e807493794b21413735392dfd626a5d6e77b260330905",
+      "size": 32
+    },
+    {
+      "file": "endfield-40.png",
+      "sha256": "58b3cbe4b8dd5a46d89f35d4e11d702defa997fa99fa728a4196568d09b1cbc4",
+      "size": 40
+    },
+    {
+      "file": "endfield-48.png",
+      "sha256": "12c9ec7c332f0878ced46f7ff5d256597e3edaeb38215d05f8aa038b5d728d75",
+      "size": 48
+    },
+    {
+      "file": "endfield-64.png",
+      "sha256": "fa50aabd01850c5602550b5fd838a9f65ffb759f4378de44bee4301a41bc5bf5",
+      "size": 64
+    },
+    {
+      "file": "endfield-96.png",
+      "sha256": "d4cef60fa4f6eb5e1977ec5eebd28435dcd279531b7ee4f216b4167c8a2430ae",
+      "size": 96
+    },
+    {
+      "file": "endfield-128.png",
+      "sha256": "9280f462934f0eedae83a9bb46defc2a1492a8eaa6037a2bed7d1f3a6c1efb48",
+      "size": 128
+    },
+    {
+      "file": "endfield-256.png",
+      "sha256": "4691790bbfa5f4630d3b66a3d3751e33c7361901ebc31f9c401277a63e5f20b3",
+      "size": 256
+    }
+  ],
+  "sourceAssets": {
+    "Resources/EndfieldIndustriesSource.png": "dd5468819ce5cff39cc5d8063ca3248b4f57a2addc0d8d97b5384c8871cd3db3"
+  },
+  "sourceCode": {
+    "Sources/EndfieldGameIcon.swift": "9763996185a3094faf77290e5930e5f4cc18e221d10dd4e5012adb2ea1dc3f95",
+    "Sources/HUDApplicationIcon.swift": "ebbc2e9751f24058e5882b6a2a603e5448bfb1b0b0f204c175ec8aee827e5312"
+  },
+  "sourceCommit": "ca04f142185c7de40acd8523bdb563195d90a1d1"
+}

@@ -1,0 +1,67 @@
+#include "native/notes_video_playback.hpp"
+#include "native/notes_image_decoder.hpp"
+#include "core/shell_packet.hpp"
+#ifdef _WIN32
+#include <tlhelp32.h>
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <fstream>
+#include <iostream>
+namespace n=endfield::native;namespace m=endfield::modules;
+namespace {
+unsigned checks{};void check(bool v,const char*s){++checks;if(!v)throw std::runtime_error(s);}
+struct Window {HWND hwnd{};ATOM atom{};static constexpr UINT message=WM_APP+251;Window(){WNDCLASSW c{};c.lpfnWndProc=DefWindowProcW;c.hInstance=GetModuleHandleW(nullptr);c.lpszClassName=L"EndfieldOwnedSilentVideoDecode";atom=RegisterClassW(&c);check(atom!=0,"Register owned decode fixture");hwnd=CreateWindowExW(WS_EX_NOREDIRECTIONBITMAP|WS_EX_TOOLWINDOW,c.lpszClassName,L"Hidden synthetic silent video",WS_POPUP,0,0,32,32,nullptr,nullptr,c.hInstance,nullptr);check(hwnd&&!IsWindowVisible(hwnd),"Video decode fixture stays hidden");}~Window(){if(hwnd)DestroyWindow(hwnd);if(atom)UnregisterClassW(reinterpret_cast<LPCWSTR>(static_cast<ULONG_PTR>(atom)),GetModuleHandleW(nullptr));}};
+std::string pathUTF8(const std::filesystem::path&p){const auto bytes=p.u8string();return {reinterpret_cast<const char*>(bytes.data()),bytes.size()};}
+unsigned threads(){unsigned count{};const HANDLE snapshot=CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD,0);if(snapshot==INVALID_HANDLE_VALUE)return 0;THREADENTRY32 entry{};entry.dwSize=sizeof entry;
+    if(Thread32First(snapshot,&entry))do{if(entry.th32OwnerProcessID==GetCurrentProcessId())++count;entry.dwSize=sizeof entry;}while(Thread32Next(snapshot,&entry));CloseHandle(snapshot);return count;}
+void run(const std::filesystem::path&shader,const std::filesystem::path&fixture){
+    // The only accepted media is this authored 1.2s,12-frame,64x64 H.264 file.
+    // It contains red then blue video and NO audio stream. No user media is read.
+    std::ifstream file(fixture,std::ios::binary);std::array<std::uint8_t,1701>bytes{};file.read(reinterpret_cast<char*>(bytes.data()),static_cast<std::streamsize>(bytes.size()));
+    check(file&&file.peek()==std::char_traits<char>::eof()&&endfield::core::packet::sha256(bytes)=="0de10d53a6946351f127b78b738c68658708cd91e932164d110ca6ec2f8579cf","Only pinned owned silent video fixture may be decoded");
+    Window window;n::Renderer renderer;renderer.initialize(window.hwnd,32,32,{n::Driver::hardware,shader,n::RenderTarget::offscreenForTests,true});
+    // The shared media stack the HUD builds at launch starts no thread until
+    // media is shown: the decoder worker starts with its first job, and Media
+    // Foundation starts with the first movie engine and shuts down after the
+    // last one, so its work-queue threads end with the movie.
+    const auto idleThreads=threads();
+    n::NativeNotesImageDecoder inspection([](const auto&r){return n::NotesImageAccess{std::filesystem::u8path(r.path),r.accessLease};},{window.hwnd,Window::message,12});
+    n::NativeNotesVideoPlayback video(renderer,{window.hwnd,Window::message,11});
+    const auto builtThreads=threads();std::cout<<"Process threads: before the media stack "<<idleThreads<<", after it (no media shown) "<<builtThreads<<'\n';
+    check(builtThreads<=idleThreads&&!inspection.stats().workerStarted,"Constructing the shared decoder and frame server starts no thread");const auto start=GetTickCount64();auto now=[&]{return double(GetTickCount64()-start)/1000.;};
+    const std::array request{n::NotesVideoRequest{"silent.fixture",pathUTF8(std::filesystem::absolute(fixture)),1,512,{}, {},true}};video.setVisible(request,now());
+    const std::array posterRequest{n::NotesImageRequest{"silent.fixture",pathUTF8(std::filesystem::absolute(fixture)),1,512,true,{},false,true}};inspection.setVisible(posterRequest);
+    const auto*r=video.find("silent.fixture");bool posterIsCoreMedia709{};
+    auto await=[&](auto predicate,const char*why){const auto deadline=GetTickCount64()+10000;for(;;){const auto time=now();video.accept(11,time);for(const auto&completion:inspection.drain(12)){if(completion.frame)posterIsCoreMedia709=completion.frame->coreMedia709;video.setPoster(completion.key,completion.revision,1,completion.frame.get(),completion.result);}video.sample(time);if(r->state==m::NotesMediaState::failed)throw std::runtime_error(std::string(why)+"; Media Engine HRESULT="+std::to_string(static_cast<std::int32_t>(r->error)));if(predicate())return;const auto tick=GetTickCount64();if(tick>=deadline){const auto native=video.diagnostics("silent.fixture");const auto stats=video.stats();std::cerr<<"MF diagnostic state="<<int(r->state)<<" error="<<r->error<<" posterError="<<r->posterError<<" content="<<r->contentRevision<<" frames="<<r->frameRevision<<" nativeSize="<<r->nativeWidth<<"x"<<r->nativeHeight<<" hasTexture="<<!r->textureID.empty()<<" wantsPlayback="<<r->wantsPlayback<<" demandsFrames="<<video.requiresFrames()<<" notices="<<stats.notices<<" acceptedEvents="<<stats.events<<" transfers="<<stats.transfers<<" ticks="<<stats.ticks<<" nativeReady="<<native.readyState<<" nativeNetwork="<<native.networkState<<" nativeVideo="<<native.hasVideo<<" nativePaused="<<native.paused<<" nativeSeeking="<<native.seeking<<" nativeError="<<native.errorCode<<" extended="<<native.error<<" lastEvent="<<native.lastEvent<<" eventCounts=";for(unsigned i=0;i<native.eventCounts.size();++i)if(native.eventCounts[i])std::cerr<<(i<32?i:i-32+1000)<<":"<<native.eventCounts[i]<<",";std::cerr<<'\n';}check(tick<deadline,why);const auto wait=video.requiresFrames()?16u:static_cast<unsigned>(deadline-tick);MsgWaitForMultipleObjectsEx(0,nullptr,wait,QS_ALLINPUT,MWMO_INPUTAVAILABLE);MSG message{};while(PeekMessageW(&message,nullptr,0,0,PM_REMOVE)){if(message.hwnd==window.hwnd&&message.message==Window::message)check(message.lParam==0,"Real codec posts only a generation token");else{TranslateMessage(&message);DispatchMessageW(&message);}}}};
+    await([&]{return r->state==m::NotesMediaState::paused&&!r->textureID.empty();},"SourceReader poster and paused Media Engine become ready independently");
+    std::cout<<"Movie poster read as CoreMedia 709: "<<(posterIsCoreMedia709?"yes":"no")<<'\n';
+    check(r->nativeWidth==64&&r->nativeHeight==64&&r->duration&&std::abs(*r->duration-1.2)<.02,"Actual codec returns fixture dimensions and duration");check(!video.requiresFrames()&&!video.nextWakeTime()&&renderer.stats().mediaTargets==0,"Paused worker poster has no transfer target or continuous deadline/frame demand");
+    const auto initialNative=video.diagnostics("silent.fixture");check(initialNative.paused&&std::abs(initialNative.currentTime)<.0001&&!r->wantsPlayback&&video.stats().ticks==0,"Independent poster never starts or advances the actual native player");
+    const std::array<n::Vertex,4>vertices{{{{-1,1,0},{0,0}},{{1,1,0},{1,0}},{{1,-1,0},{1,1}},{{-1,-1,0},{0,1}}}};constexpr std::array<std::uint32_t,6>indices{0,1,2,0,2,3};renderer.setMesh("fixture.quad",1,{vertices,indices});n::DrawObject draw;draw.sourceID="fixture.draw";draw.meshID="fixture.quad";
+    auto pixel=[&]{draw.textureID=r->textureID;renderer.setDrawList(std::span(&draw,1));renderer.draw(false);const auto pixels=renderer.readback();const auto at=(std::size_t(16)*32+16)*4;return std::array<unsigned,4>{pixels.pixels[at],pixels.pixels[at+1],pixels.pixels[at+2],pixels.pixels[at+3]};};
+    const auto poster=pixel();if(!(poster[2]>220&&poster[0]<40&&poster[3]>250)){const auto d=video.diagnostics("silent.fixture");const auto t=video.stats();std::cerr<<"MF poster BGRA="<<poster[0]<<","<<poster[1]<<","<<poster[2]<<","<<poster[3]<<" ready="<<d.readyState<<" currentTime="<<d.currentTime<<" paused="<<d.paused<<" seeking="<<d.seeking<<" transfers="<<t.transfers<<" ticks="<<t.ticks<<" events=";for(unsigned i=0;i<d.eventCounts.size();++i)if(d.eventCounts[i])std::cerr<<(i<32?i:i-32+1000)<<":"<<d.eventCounts[i]<<",";std::cerr<<'\n';}check(poster[2]>220&&poster[0]<40&&poster[3]>250,"Own application target contains decoded red poster pixels");
+    check(video.seek("silent.fixture",.9),"Paused source video accepts an exact requested seek");await([&]{return !r->pendingSeek&&r->textureID=="silent.fixture.live"&&!video.requiresFrames();},"Native seek completes and exposes its new paused frame");const auto sought=pixel();check(sought[0]>220&&sought[2]<40,"Actual seek reaches blue frames without reading the desktop");
+    video.seek("silent.fixture",0);await([&]{return !r->pendingSeek&&!video.requiresFrames();},"Native seek returns to first frame");const auto transfers=video.stats().transfers,allocations=renderer.stats().mediaTargetAllocations;video.play("silent.fixture",now());await([&]{return video.stats().transfers>=transfers+2;},"Actual silent video playback delivers successive frames");check(video.stats().deviceHeld&&!renderer.suspendDevice()&&!renderer.deviceSuspended(),"A playing movie holds the renderer's device: the closed HUD's release is refused");video.pause("silent.fixture");check(!video.requiresFrames()&&!video.nextWakeTime()&&renderer.stats().mediaTargetAllocations==allocations,"Paused native playback cancels demand and reuses the same live target");
+    if(posterIsCoreMedia709)check(video.stats().coreMedia709Frames>=2,"Played frames of the BT.709 movie take the CoreMedia 709 reading like its poster");
+    video.hide(now(),true);const auto held=pixel();check(held[2]>220&&held[0]<40,"Closing returns to original red poster, never the last live blue frame");renderer.clearDrawList();video.hide(now(),false);video.sample(now()+.61);check(video.collectRetired()&&video.retire("silent.fixture")&&renderer.stats().mediaLiveBytes==0,"Decoded pipeline releases both surfaces after explicit owner detach");check(!IsWindowVisible(window.hwnd)&&renderer.stats().presents==0,"Positive codec test uses only hidden owned render-target readback, with no audio");
+    inspection.hide();const auto posterDecodes=inspection.stats().decodes;
+    std::array metadataRequest{n::NotesImageRequest{"movie.metadata",pathUTF8(std::filesystem::absolute(fixture)),1,64,false,{},true}};inspection.setInspections(metadataRequest);
+    std::vector<n::NotesImageCompletion>metadata;const auto metadataDeadline=GetTickCount64()+10000;while(metadata.empty()){metadata=inspection.drainInspections(12);if(!metadata.empty())break;const auto tick=GetTickCount64();check(tick<metadataDeadline,"Existing import worker returns actual referenced movie metadata");MsgWaitForMultipleObjectsEx(0,nullptr,static_cast<DWORD>(metadataDeadline-tick),QS_ALLINPUT,MWMO_INPUTAVAILABLE);MSG message{};while(PeekMessageW(&message,window.hwnd,Window::message,Window::message,PM_REMOVE)){} }
+    check(metadata.size()==1&&SUCCEEDED(metadata[0].result)&&metadata[0].info&&metadata[0].info->kind==m::NotesMediaKind::video&&metadata[0].info->pixelWidth==64&&metadata[0].info->pixelHeight==64&&std::abs(metadata[0].info->duration-1.2)<.02,"Import metadata retains original video kind/size/duration");
+    check(!metadata[0].frame&&inspection.stats().decodes==posterDecodes,"Video metadata inspection reads no decoded full-frame image or audio samples");
+    const auto worker=inspection.duplicateWorkerHandle();inspection.stop();check(WaitForSingleObject(worker,10000)==WAIT_OBJECT_0,"Shared import worker retires its metadata file access");CloseHandle(worker);
+    check(video.stats().engines==0&&video.stats().readingScratchBytes==0,"No movie plays: no engine and no reading scratch remain");
+    // Nothing of the real Media Engine pipeline (its DXGI device manager,
+    // decoder and the CoreMedia 709 pass) keeps the device: the closed HUD
+    // can release it and the device object is destroyed.
+    check(!video.stats().deviceHeld&&!renderer.stats().mediaDeviceLent&&renderer.deviceReleasable()&&renderer.suspendDevice()&&renderer.stats().devicesDestroyed==renderer.stats().devicesCreated,
+          "No movie shown: the renderer's device is released and destroyed");
+    check(renderer.resumeDevice()&&!renderer.deviceSuspended(),"The device comes back for the next movie");
+    Sleep(200);std::cout<<"Process threads after the movie stopped and the worker ended: "<<threads()<<'\n';
+}
+}
+int wmain(int argc,wchar_t**argv){const auto com=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);if(FAILED(com))return 1;int code{};try{check(argc==3,"Pass native/hud.hlsl and owned silent MP4 fixture");run(argv[1],argv[2]);std::cout<<"PASS "<<checks<<" real silent Media Engine decode checks\n";}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';code=1;}CoUninitialize();return code;}
+#else
+int main(){return 0;}
+#endif

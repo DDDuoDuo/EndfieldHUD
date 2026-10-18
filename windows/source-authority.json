@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "application": "EndfieldHUD for macOS",
+  "release": "v1.2.0",
+  "build": 18,
+  "commit": "ca04f142185c7de40acd8523bdb563195d90a1d1",
+  "trees": {
+    "Sources": "fe6f9198c2810798127549c8065b7bfd0b8626c8",
+    "Resources": "487ec95e7c078b08e408c780b9e3ae9cd814361d"
+  },
+  "policy": "Port the desktop macOS application. The rejected Windows preview and raw game-only scene are not an application reference. Shared game assets are permitted only as used by this macOS source."
+}

@@ -1,0 +1,12 @@
+{
+  "format": "EndfieldHUD.Windows.OSRequirements",
+  "schema": 1,
+  "minimumUnicode": "15.1",
+  "minimumTimeZoneData": "2021b",
+  "samoaWithoutDaylightSaving": true,
+  "reasons": {
+    "minimumUnicode": "event_log_names_contracts compares the OS ICU grapheme breaks with Sources/SystemEventLog.swift on macOS (Unicode 15.1 Indic conjunct breaks, case 147).",
+    "minimumTimeZoneData": "archive_date_contracts parses Pacific/Apia dates; Samoa abolished daylight saving in tzdata 2021b.",
+    "samoaWithoutDaylightSaving": "The same Archive cases expect Pacific/Apia without daylight saving on 2026-10-08."
+  }
+}

@@ -1,0 +1,332 @@
+#include "native/notes_workspace.hpp"
+#ifdef _WIN32
+#include <objbase.h>
+#include <algorithm>
+#include <atomic>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <chrono>
+#include <iostream>
+#include <limits>
+#include <new>
+#include <stdexcept>
+namespace {std::atomic<bool>counting{};std::atomic<std::size_t>allocations{};}
+void*operator new(std::size_t n){if(counting)++allocations;if(auto*p=std::malloc(n?n:1))return p;throw std::bad_alloc();}
+void*operator new[](std::size_t n){return ::operator new(n);}void operator delete(void*p)noexcept{std::free(p);}void operator delete[](void*p)noexcept{std::free(p);}
+#if defined(__cpp_sized_deallocation)
+void operator delete(void*p,std::size_t)noexcept{std::free(p);}void operator delete[](void*p,std::size_t)noexcept{std::free(p);}
+#endif
+namespace gpu=endfield::native;namespace core=endfield::core;namespace mod=endfield::modules;namespace data=ehud::data;
+namespace {
+std::size_t checks{};
+void check(bool v,const char*why){++checks;if(!v)throw std::runtime_error(why);}
+template<class F>void rejects(F f,const char*why){bool rejected{};try{f();}catch(const std::exception&){rejected=true;}check(rejected,why);}
+constexpr const char*one="00000000-0000-4000-8000-000000000001";
+constexpr const char*two="00000000-0000-4000-8000-000000000002";
+constexpr const char*three="00000000-0000-4000-8000-000000000003";
+struct Window {
+    ATOM atom{};HWND hwnd{};
+    Window(){WNDCLASSW c{};c.lpfnWndProc=DefWindowProcW;c.hInstance=GetModuleHandleW(nullptr);c.lpszClassName=L"EndfieldNotesWorkspaceOwnerFixture";atom=RegisterClassW(&c);check(atom!=0,"Owned workspace fixture class");
+        hwnd=CreateWindowExW(WS_EX_NOREDIRECTIONBITMAP|WS_EX_TOOLWINDOW,c.lpszClassName,L"Hidden synthetic Notes owner",WS_POPUP,0,0,640,360,nullptr,nullptr,c.hInstance,nullptr);check(hwnd!=nullptr,"Owned workspace fixture HWND");}
+    ~Window(){if(hwnd)DestroyWindow(hwnd);if(atom)UnregisterClassW(reinterpret_cast<LPCWSTR>(static_cast<ULONG_PTR>(atom)),GetModuleHandleW(nullptr));}
+};
+gpu::NativeNotesWorkspaceStyle style(){gpu::NativeNotesWorkspaceStyle s;s.palette=mod::NotesPalette::source(true,{.98,.83,.12,1});s.editor={{.12,.12,.12,1},s.palette.accent};return s;}
+gpu::NativeNotesWorkspaceOptions options(){gpu::NativeNotesWorkspaceOptions o;o.raster.pixelsPerPoint=1;o.raster.paddingPoints=1;return o;}
+gpu::NativeNotesWorkspacePose pose(double time=0){gpu::NativeNotesWorkspacePose p;p.screenToClip=gpu::layerViewportProjection(640,360);p.pixelWidth=640;p.pixelHeight=360;p.time=time;return p;}
+data::Note note(std::string id,std::string text,double x=20,double y=20,std::int64_t z=0){return {.id=std::move(id),.kind=data::NoteKind::text,.text=std::move(text),.x=x,.y=y,.width=210,.height=140,.zIndex=z,.createdAt=123};}
+void matrixCheck(const core::Matrix4&a,const core::Matrix4&b,const char*why){for(std::size_t n=0;n<16;++n)check(std::abs(a.values[n]-b.values[n])<1e-8,why);}
+core::Matrix4 cardMotionWorld(const core::Matrix4&workspace,core::Rect rect,const mod::NotesMotionSample&sample){const auto x=rect.x+rect.width*.5,y=rect.y+rect.height*.5;return workspace*core::Matrix4::translation(x+sample.x,y+sample.y)*core::Matrix4::scale(sample.scale,sample.scale,sample.scale)*core::Matrix4::translation(-x,-y);}
+void run(HWND hwnd,gpu::Renderer&renderer){
+    std::size_t saves{},removals{};std::string saved;bool failSave{},failRemove{};
+    mod::NotesState state({note(one,"Actual text\n终末地 日本語 한국어 😀"),note(two,"",300,40,1)},
+        {[&](const data::Note&n){if(failSave)throw std::runtime_error("Injected save failure");++saves;saved=n.text;},[&](std::string_view){if(failRemove)throw std::runtime_error("Injected delete failure");++removals;}});
+    state.setWorkspaceBounds({0,0,640,360});gpu::LayerRasterizer raster;
+    gpu::NativeNotesWorkspace workspace(hwnd,state,raster,style(),options());gpu::LayerComposition composition;
+    auto publish=[&]{composition.setEntries(renderer,workspace.entries());composition.present(renderer);check(workspace.collectRetired(renderer),"Replacement permits explicit retired-scene collection");};
+    workspace.updatePose(pose());publish();renderer.setCamera(gpu::layerViewportProjection(640,360));renderer.draw(false);
+    check(workspace.entries().size()==2&&workspace.stats().cards==2&&workspace.measurementStats().measurements==2,"One retained card and measurement per visible plain record");
+    check(saves==0&&removals==0&&!state.editing(),"Constructing retained workspace writes no data or editor state");
+    const auto*initialOne=workspace.entries()[0].scene;const auto firstRevision=workspace.card(one)->contentRevision();
+    const auto secondRevision=workspace.card(two)->contentRevision();const auto measured=workspace.measurementStats().measurements;
+    workspace.select(std::string(two));check(workspace.card(one)->contentRevision()==firstRevision&&workspace.card(two)->contentRevision()>secondRevision,"Selecting one card rebuilds only its changed appearance");
+    check(workspace.measurementStats().measurements==measured&&workspace.entries()[0].scene==initialOne,"Selection retains measurement and sibling scene identity");publish();
+    const auto emptyMeasurement=workspace.card(two)->measuredText();check(!emptyMeasurement->text.empty(),"Settled empty card measures the source placeholder");
+    workspace.beginEditing(two);workspace.updatePose(pose(1));publish();
+    check(workspace.editorDocument()&&workspace.editorDocument()->text().empty()&&state.editing()->text.empty(),"Editing an empty card starts an empty draft, never its measured placeholder");
+    check(workspace.entries().size()==3&&workspace.entries()[2].scene==&workspace.editor()->scene()&&workspace.entries()[2].after.size()==1,"Editor follows its own card with the final source border appended last");
+    check(workspace.entries()[2].after[0].sourceID==composition.draws().back().sourceID,"Single shared composition preserves after-editor border order");
+    const auto generation=workspace.editorGeneration();check(generation!=0&&workspace.takeEditorChanges(generation+1)==0,"Stale owner messages cannot access the active field");
+    workspace.editor()->character(0x4e2d,true);workspace.editor()->character(0x1f600,true);workspace.syncEditor();publish();
+    check(workspace.editorDocument()->text()==u"中😀"&&state.note(two)->text.empty(),"Projected field edits remain a draft until an explicit finish");
+    const auto rasterBefore=raster.stats();const auto gpuBefore=renderer.stats();const auto measureBefore=workspace.measurementStats();const auto layout=workspace.editor()->layout().painted()->layoutIdentity();
+    const auto visits=workspace.stats().poseCardVisits;allocations=0;counting=true;
+    try{for(unsigned f=0;f<120;++f){auto p=pose(2+double(f)/60);p.workspaceToScreen.values[3]=double(f)*.0000006;p.workspaceToScreen.values[7]=-double(f)*.0000003;p.workspaceToScreen.values[12]=double(f)*.025;p.opacity=.75f;workspace.updatePose(p);composition.present(renderer);}}catch(...){counting=false;throw;}counting=false;
+    check(allocations==0,"120 editor/card pointer poses allocate no C++ storage");
+    check(workspace.stats().poseCardVisits-visits==240,"Pose visits exactly the two cached visible cards");
+    check(raster.stats().rasterizations==rasterBefore.rasterizations&&raster.stats().textLayoutsCreated==rasterBefore.textLayoutsCreated&&workspace.measurementStats().measurements==measureBefore.measurements&&renderer.stats().textureUploads==gpuBefore.textureUploads,"Pointer/closing poses perform no raster, layout, measure or texture work");
+    check(workspace.editor()->layout().painted()->layoutIdentity()==layout,"Editor keeps the exact painted DWrite layout across tilt");
+    const auto finish=workspace.finishEditing();check(finish.finished&&finish.saved&&state.note(two)->text=="中😀"&&saved=="中😀"&&!state.editing(),"Explicit finish commits exact UTF-8 through the one injected state owner");
+    check(!workspace.editor()&&workspace.stats().retiredEditors==1,"Stopped editor remains alive until owner composition replacement");
+    rejects([&]{workspace.collectRetired(renderer);},"Premature retirement rejects an editor still borrowed by the composition");
+    check(workspace.stats().retiredEditors==1,"Rejected retirement preserves the borrowed editor scene");publish();
+    check(workspace.stats().retiredEditors==0&&workspace.entries().size()==2,"One replacement retires the stopped editor and border reference");
+
+    // No scene traversal/text comparison or allocation on the movement path.
+    workspace.beginGesture(two,{310,45},mod::NotesState::Gesture::move);publish();const auto movedRaster=raster.stats();const auto movedMeasure=workspace.measurementStats();const auto movedRevision=workspace.card(two)->contentRevision();
+    allocations=0;counting=true;try{for(unsigned f=0;f<120;++f){workspace.dragTo({312+double(f)*.2,46+double(f)*.1});composition.present(renderer);}}catch(...){counting=false;throw;}counting=false;
+    check(allocations==0&&workspace.card(two)->contentRevision()==movedRevision,"120 source move samples retain card content and allocate no storage");
+    check(raster.stats().rasterizations==movedRaster.rasterizations&&workspace.measurementStats().measurements==movedMeasure.measurements,"Moving a card never remeasures/rasterizes text");
+    workspace.endGesture();publish();workspace.updatePose(pose(5));
+    const auto hit=workspace.hitTest({state.card(two)->rect.x+10,state.card(two)->rect.y+10});check(hit&&hit->noteID==two,"Owner hit routing uses the same projected saved workspace origin");
+    workspace.setFeedback(two,"pin",false,false,5);check(workspace.requiresFrames(5.01),"Existing source hover track requests caller frames");workspace.updatePose(pose(5.2));composition.present(renderer);check(!workspace.requiresFrames(5.2),"Settled workspace owns no perpetual frame demand");
+    // Live order: the workspace saw a later time inside a callback, then the host's earlier frame sample.
+    workspace.updatePose(pose(5.1));composition.present(renderer);check(!workspace.requiresFrames(5.1),"An earlier frame time poses at the latest time seen instead of failing or restarting feedback");
+    check(workspace.setFeedback(two,{},false,false,5.1)&&workspace.requiresFrames(5.1)&&workspace.requiresFrames(5.33)&&!workspace.requiresFrames(5.35),"Feedback started at an earlier owner time starts at the latest time seen");
+    workspace.updatePose(pose(5.35));composition.present(renderer);check(!workspace.requiresFrames(5.35),"The clamped release settles after the latest time");
+
+    const auto beforeClose=workspace.card(two)->contentRevision();workspace.setPresentation(false,true);check(!state.selection()&&workspace.card(two)->contentRevision()>beforeClose,"Closing refreshes appearance when source clears selected unpinned note");
+    auto closing=pose(6);closing.opacity=.6f;closing.workspaceToScreen=core::Matrix4::translation(7,3);workspace.updatePose(closing);publish();
+    check(workspace.entries().size()==2&&workspace.entries()[1].scene->draws()[0].opacity>.59f,"Outgoing cards retain source visibility while target selection is hidden");
+    check(!workspace.hitTest({40,40}),"Outgoing-only cards do not acquire new input");
+    auto duringClose=style();duringClose.palette=mod::NotesPalette::source(false,{.1,.2,.8,1});duringClose.editor={{.96,.96,.96,1},duringClose.palette.accent};
+    const auto*oldClosingScene=workspace.entries()[0].scene;workspace.setStyle(duringClose);
+    check(workspace.entries().size()==2&&workspace.entries()[0].scene!=oldClosingScene&&workspace.stats().retiredCards==2,"Appearance event replaces artwork while retaining both outgoing card lifetimes");
+    publish();
+    check(!state.notesSelected()&&workspace.entries()[0].scene->draws()[0].opacity>.59f&&workspace.entries()[0].scene->draws()[0].world.values[12]>=7,"Outgoing appearance replacement preserves current opacity and workspace pose");
+    check(workspace.stats().retiredCards==0&&!workspace.hitTest({40,40}),"Replacement safely retires old artwork without giving outgoing cards input");
+    workspace.setStyle(style());publish();
+    workspace.settleOutgoing();publish();check(workspace.entries().empty(),"Owner settles outgoing cards without a second clock");
+    const auto hiddenVisits=workspace.stats().poseCardVisits;workspace.updatePose(pose(7));check(workspace.stats().poseCardVisits==hiddenVisits,"Hidden frames visit no cached or persisted notes");
+    workspace.setPresentation(true);workspace.togglePin(two);workspace.setPresentation(false);workspace.updatePose(pose(8));publish();
+    check(workspace.entries().size()==1&&workspace.card(two)->placement().visible,"Pinned Notes remains composed outside its selected module");
+    workspace.setPresentation(true);workspace.requestDeletion(one);check(removals==0&&state.note(one),"Request deletion opens owner confirmation without removing data");publish();
+    failRemove=true;check(!workspace.confirmDeletion(one)&&state.note(one),"Failed injected deletion retains record and card");failRemove=false;
+    check(workspace.confirmDeletion(one)&&!state.note(one)&&workspace.stats().retiredCards==1,"Successful explicit confirmation moves removed card into retained retirement");
+    rejects([&]{workspace.collectRetired(renderer);},"Removed card survives while prior composition still borrows it");publish();check(removals==1&&workspace.stats().cards==1,"Replacement retires only the removed card");
+    const auto revision=state.revision(),size=state.notes().size();rejects([&]{workspace.setWorkspaceBounds({0,0,30,20});},"Unsupported narrow local artwork rejects before workspace mutation");
+    check(state.revision()==revision&&state.notes().size()==size&&state.workspaceBounds()==core::Rect{0,0,640,360},"Rejected native bounds preserve state and records");
+    workspace.createText(three,456);workspace.updatePose(pose(9));publish();check(state.note(three)&&state.note(three)->createdAt==456&&workspace.editorDocument()->text().empty(),"Creation delegates source identity/time/geometry and opens one empty field");
+    workspace.editor()->character('x');workspace.syncEditor();failSave=true;const auto unsaved=workspace.finishEditing();check(unsaved.finished&&!unsaved.saved&&state.note(three)->text=="x"&&state.unsaved().contains(three),"Failed save preserves the actual draft in NotesState");failSave=false;publish();
+    const auto newStyle=style();check(!workspace.setStyle(newStyle),"Equal appearance is a no-op");
+    auto light=newStyle;light.palette=mod::NotesPalette::source(false,{.1,.2,.8,1});light.editor={{.96,.96,.96,1},light.palette.accent};workspace.setStyle(light);workspace.updatePose(pose(10));
+    check(workspace.stats().retiredCards==2,"Appearance replacement retains former card scenes until republished");publish();
+    composition.detach(renderer);check(workspace.releaseResources(renderer)&&renderer.stats().textures==0&&renderer.stats().meshes==0,"Owner detach releases only workspace resources");
+}
+// More shown notes than the retained budget: the top cards by layer order keep
+// artwork, the rest are culled (not drawn, not hit) until budget returns.
+void culling(HWND hwnd,gpu::Renderer&renderer){
+    std::vector<data::Note> records;for(int n=0;n<12;++n){char id[40];std::snprintf(id,sizeof id,"00000000-0000-4000-8000-0000000001%02d",n);records.push_back(note(id,"Card "+std::to_string(n),20+n*30.,20+n*10.,n));}
+    std::size_t saves{},removals{};mod::NotesState state(records,{[&](const data::Note&){++saves;},[&](std::string_view){++removals;}});state.setWorkspaceBounds({0,0,640,360});gpu::LayerRasterizer raster;
+    auto budget=options();budget.maximumRetainedCards=8;gpu::NativeNotesWorkspace workspace(hwnd,state,raster,style(),budget);gpu::LayerComposition composition;
+    auto publish=[&]{composition.setEntries(renderer,workspace.entries());composition.present(renderer);check(workspace.collectRetired(renderer),"Culled artwork retires after publication");};
+    double time{};workspace.updatePose(pose(time));publish();
+    check(workspace.stats().cards==8&&workspace.stats().culledCards==4&&workspace.entries().size()==8,"Twelve shown notes keep eight retained cards and cull four");
+    for(int n=0;n<12;++n)check((workspace.card(records[n].id)!=nullptr)==(n>=4),"Exactly the top eight by layer order keep artwork");
+    check(!workspace.hitTest({25,25})&&workspace.hitTest({145,65})&&workspace.hitTest({145,65})->noteID==records[4].id,"A culled card is not hit; the lowest retained one is");
+    check(saves==0&&removals==0,"Culling never writes records");
+    // Deleting a retained card gives its budget to the next card beneath.
+    check(workspace.requestDeletion(records[11].id)&&workspace.confirmDeletion(records[11].id)&&removals==1,"Delete the top card");workspace.updatePose(pose(time+=1));publish();
+    check(workspace.stats().cards==8&&workspace.stats().culledCards==3&&workspace.card(records[3].id)&&!workspace.card(records[2].id),"The next card beneath becomes retained");
+    // Selecting raises a card to the top, so it is always retained.
+    check(workspace.select(records[0].id)&&workspace.card(records[0].id)&&!workspace.card(records[3].id)&&workspace.stats().culledCards==3,"A selected card rises and takes the budget from the lowest");
+    workspace.updatePose(pose(time+=1));publish();workspace.updatePose(pose(time+=1));publish();
+    // A theme change with a full budget restages every retained card.
+    auto light=style();light.palette=mod::NotesPalette::source(false,{.1,.2,.8,1});light.editor={{.96,.96,.96,1},light.palette.accent};check(workspace.setStyle(light)&&workspace.stats().cards==8,"A theme change with a full budget succeeds");
+    workspace.updatePose(pose(time+=1));publish();workspace.updatePose(pose(time+=1));publish();check(!workspace.requiresFrames(time),"The workspace settles");
+    const auto rasterBefore=raster.stats().rasterizations;allocations=0;counting=true;for(unsigned n=0;n<60;++n)workspace.updatePose(pose(time+=1./60));counting=false;
+    check(allocations==0&&raster.stats().rasterizations==rasterBefore,"Warm frames with culled cards allocate and rasterize nothing");
+    composition.detach(renderer);check(workspace.releaseResources(renderer)&&renderer.stats().textures==0&&renderer.stats().meshes==0,"Culling leaves no GPU resources behind");
+}
+// Resizing a card past LayerScene's local group area (the source has no card
+// size limit) keeps the gesture, the card and its editor working.
+void largeCards(HWND hwnd,gpu::Renderer&renderer){
+    std::size_t saves{};mod::NotesState state({note(one,"Large note\nsecond line")},{[&](const data::Note&){++saves;},[](std::string_view){}});state.setWorkspaceBounds({0,0,2400,1600});gpu::LayerRasterizer raster;
+    gpu::NativeNotesWorkspace workspace(hwnd,state,raster,style(),options());gpu::LayerComposition composition;
+    auto publish=[&]{composition.setEntries(renderer,workspace.entries());composition.present(renderer);check(workspace.collectRetired(renderer),"Large-card replacements retire after publication");};
+    auto p=pose();p.pixelWidth=2400;p.pixelHeight=1600;p.screenToClip=gpu::layerViewportProjection(2400,1600);workspace.updatePose(p);publish();
+    const auto rect=state.card(one)->rect;check(workspace.beginGesture(one,{rect.x+rect.width-5,rect.y+rect.height-5},mod::NotesState::Gesture::resize),"Grab the resize grip");
+    check(workspace.dragTo({rect.x+1795,rect.y+1195}),"Drag far beyond 1024x1024 points");check(workspace.endGesture()&&saves==1,"The large size saves");publish();
+    const auto large=state.card(one)->rect;check(large.width*large.height>1'048'576&&workspace.card(one)!=nullptr,"The card is larger than LayerScene's group area and retained");
+    check(workspace.beginEditing(one)&&workspace.editor(),"A large card opens its editor");workspace.updatePose(p);publish();
+    check(workspace.editor()->character(u'!',false).changed&&(workspace.syncEditor(),workspace.finishEditing().saved)&&state.note(one)->text=="Large note\nsecond line!","Editing the large card saves");publish();
+    composition.detach(renderer);check(workspace.releaseResources(renderer),"The large card releases its resources");
+}
+// Editing entry and exit on a large card at the production 2 px/pt density:
+// CPU raster and upload time and the surfaces each transition re-rasters.
+void editingCost(HWND hwnd,gpu::Renderer&renderer){
+    std::string text;for(unsigned n=0;n<40;++n)text+="Line "+std::to_string(n)+" of a large card 终末地 Endfield\n";
+    for(const auto size:{std::pair{210.,140.},std::pair{1600.,1000.}}){
+        auto record=note(one,text);record.width=size.first;record.height=size.second;
+        mod::NotesState state({record},{[](const data::Note&){},[](std::string_view){}});state.setWorkspaceBounds({0,0,2400,1600});gpu::LayerRasterizer raster;
+        auto o=options();o.raster.pixelsPerPoint=2;gpu::NativeNotesWorkspace workspace(hwnd,state,raster,style(),o);gpu::LayerComposition composition;
+        auto p=pose();p.pixelWidth=2400;p.pixelHeight=1600;p.screenToClip=gpu::layerViewportProjection(2400,1600);
+        const auto step=[&](auto&&f){const auto rasters=raster.stats().rasterizations;const auto a=std::chrono::steady_clock::now();f();workspace.updatePose(p);composition.setEntries(renderer,workspace.entries());composition.present(renderer);check(workspace.collectRetired(renderer),"Editing transitions retire after publication");
+            return std::pair{std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-a).count(),raster.stats().rasterizations-rasters};};
+        const auto first=step([]{});
+        const auto enter=step([&]{check(workspace.beginEditing(one),"The card opens its field");});
+        const auto leave=step([&]{check(workspace.finishEditing().finished,"The unchanged field closes");});
+        const auto again=step([&]{check(workspace.beginEditing(one),"The card reopens its field");});
+        const auto edited=step([&]{check(workspace.editor()->character(u'!',false).changed,"One edit");workspace.syncEditor();check(workspace.finishEditing().saved,"The edited field saves");});
+        std::cout<<"Notes "<<size.first<<"x"<<size.second<<" pt card at 2 px/pt: first "<<first.first<<" ms ("<<first.second<<" rasters), enter "<<enter.first<<" ms ("<<enter.second<<"), unchanged exit "<<leave.first<<" ms ("<<leave.second
+            <<"), re-enter "<<again.first<<" ms ("<<again.second<<"), edited exit "<<edited.first<<" ms ("<<edited.second<<")\n";
+        // Resident memory of the card (memory audit): the shared rasterizer's CPU
+        // pixels and the renderer's GPU bytes, after the edited close.
+        std::cout<<"Notes "<<size.first<<"x"<<size.second<<" pt card resident: CPU raster "<<raster.stats().resourceBytes/1024<<" KiB, GPU "<<renderer.stats().resourceBytes/1024<<" KiB\n";
+        // A large text card keeps its body lines in their own scene: closing the
+        // field over unchanged text rasters none of them again (live RC 128:
+        // 46 line surfaces, 59 ms on WARP); an edit reloads them.
+        // 40 text lines: the unchanged close rasters only the body's few
+        // surfaces (feedback, grip, scroll indicator), the edited one all lines.
+        if(size.first>1000)check(leave.second<12&&edited.second>=leave.second+30,"A large card's unchanged close rasters no body line again; its edited close reloads them");
+        composition.detach(renderer);check(workspace.releaseResources(renderer),"The measured card releases its resources");
+    }
+}
+void boundaries(HWND hwnd){
+    auto longNote=note(one,std::string(65537,'a'));mod::NotesState longState({longNote},{[](const auto&){},[](auto){}});longState.setWorkspaceBounds({0,0,640,360});gpu::LayerRasterizer raster;
+    {gpu::NativeNotesWorkspace workspace(hwnd,longState,raster,style(),options());const auto before=longState.revision();rejects([&]{workspace.beginEditing(one);},"Short-editor capacity rejects complete long document before editing");
+        check(!longState.editing()&&longState.revision()==before&&longState.note(one)->text.size()==65537,"Capacity failure never truncates or changes stored text");}
+    auto rich=note(two,"Rich source");rich.richText="{\"runs\":[]}";mod::NotesState hidden({rich},{[](const auto&){},[](auto){}},false);
+    {gpu::NativeNotesWorkspace workspace(hwnd,hidden,raster,style(),options());check(workspace.entries().empty(),"Hidden unsupported records are not rasterized");const auto before=hidden.revision();rejects([&]{workspace.setPresentation(true);},"Visible rich record rejects rather than flattening");check(hidden.revision()==before&&!hidden.notesSelected()&&hidden.note(two)->richText==rich.richText,"Rejected rich presentation leaves original payload and visibility untouched");}
+    mod::NotesState tinyState({note(one,"")},{[](const auto&){},[](auto){}});tinyState.setWorkspaceBounds({0,0,100,50});
+    {gpu::NativeNotesWorkspace workspace(hwnd,tinyState,raster,style(),options());const auto before=tinyState.revision();rejects([&]{workspace.beginEditing(one);},"Tiny field rejects source-editor ordering limitation before state changes");check(!tinyState.editing()&&tinyState.revision()==before,"Tiny editor rejection retains settled card/state");}
+    mod::NotesState limited({note(one,"")},{[](const auto&){},[](auto){}});auto oneCard=options();oneCard.maximumRetainedCards=1;
+    {gpu::NativeNotesWorkspace workspace(hwnd,limited,raster,style(),oneCard);
+        check(workspace.createText(two,123)&&workspace.stats().cards==1&&workspace.stats().culledCards==1&&workspace.card(two)&&!workspace.card(one),"Beyond its retained budget the new top card keeps artwork and the one beneath is culled, as the source has no card limit");
+        check(workspace.createText(three,124)&&workspace.card(three)&&!workspace.card(two)&&workspace.stats().culledCards==2,"Each new top card takes the budget");
+        const auto before=limited.revision();rejects([&]{workspace.createText("00000000-0000-4000-8000-000000000004",125);},"Without publication the transient retained ceiling rejects creation before persistence");
+        check(limited.revision()==before&&limited.notes().size()==3,"Card capacity failure preserves original records");workspace.finishEditing(false);}
+}
+void scrolling(HWND hwnd,gpu::Renderer&renderer){
+    std::string text;for(unsigned n=0;n<48;++n)text+="Line "+std::to_string(n)+" 终末地 😀\n";
+    std::size_t saves{},removals{};
+    mod::NotesState state({note(one,text),note(two,"No overflow",40,40,1)},
+        {[&](const data::Note&){++saves;},[&](std::string_view){++removals;}});
+    state.setWorkspaceBounds({0,0,640,360});gpu::LayerRasterizer raster;
+    gpu::NativeNotesWorkspace workspace(hwnd,state,raster,style(),options());gpu::LayerComposition composition;
+    auto publish=[&]{composition.setEntries(renderer,workspace.entries());composition.present(renderer);check(workspace.collectRetired(renderer),"Scroll replacement retires only detached resources");};
+    auto p=pose();p.screenToClip=p.screenToClip*core::Matrix4::scale(1.5,1.5);p.workspaceToScreen.values[3]=.00045;p.workspaceToScreen.values[7]=-.0002;p.workspaceToScreen.values[12]=8;
+    workspace.updatePose(p);publish();
+    const auto baseProjection=core::Projection::viewport(p.screenToClip*p.workspaceToScreen,640,360);
+    const auto overlap=baseProjection.project({60,60});check(overlap.has_value(),"Synthetic overlapped card projects");
+    const auto initialRaster=raster.stats();const auto initialMeasures=workspace.measurementStats();const auto initialRevision=state.revision();
+    check(workspace.scrollAt(*overlap,24)&&workspace.card(one)->scrollOffset()==0&&workspace.card(two)->scrollOffset()==0,"Top no-overflow card consumes wheel without scrolling card underneath");
+    check(raster.stats().rasterizations==initialRaster.rasterizations&&state.revision()==initialRevision&&saves==0,"No-overflow wheel performs no artwork or persistence work");
+    workspace.select(std::string(one));publish();
+    const auto rect=state.card(one)->rect;const mod::NotesMotionSample motion{.x=2,.y=3,.scale=.87,.opacity=1};
+    workspace.setCardMotions(std::array{gpu::NativeNotesCardMotion{*workspace.cardToken(one),motion}});workspace.updatePose(p);
+    const auto projection=core::Projection::viewport(p.screenToClip*cardMotionWorld(p.workspaceToScreen,rect,motion),640,360);
+    const auto point=projection.project({rect.x+60,rect.y+65});check(point.has_value(),"Tilted animated card scroll point projects");
+    const auto start=projection.unproject(*point),end=projection.unproject({point->x,point->y+13.25});check(start&&end,"Wheel endpoints invert through actual card tilt/scale");
+    const auto expected=end->y-start->y;const auto beforeWheel=state.revision(),savedBefore=saves;
+    check(workspace.scrollAt(*point,13.25)&&std::abs(workspace.card(one)->scrollOffset()-expected)<1e-9,"Fractional physical wheel uses current effective per-card projection");
+    check(workspace.measurementStats().measurements==initialMeasures.measurements&&state.revision()==beforeWheel&&saves==savedBefore&&removals==0,"Changed settled wheel retains measured index and never persists");publish();
+    const auto savedOffset=workspace.card(one)->scrollOffset();workspace.beginEditing(one);publish();
+    check(std::abs(workspace.editor()->scrollOffset()-savedOffset)<1e-9,"Entering editor restores prior session offset after selecting document end");
+    const auto meshesBeforeIndicator=renderer.stats().meshes;workspace.uploadMedia(renderer);publish();
+    auto indicator=[&]()->const gpu::DrawObject*{for(const auto&e:workspace.entries())if(e.after.size()==2)return &e.after[0];return nullptr;};
+    const std::string indicatorMesh=indicator()?indicator()->meshID:std::string{};
+    {const auto* thumb=indicator();check(thumb&&thumb->sourceID.ends_with("/thumb")&&thumb->opacity>0&&renderer.stats().meshes==meshesBeforeIndicator+1,"The overflowing editor shows the source scroll indicator before its border");
+     const auto v=thumb->masks[0].bounds;const auto h=v.height,overflow=workspace.editor()->maximumScrollOffset();const auto length=std::max(16.,h*h/(h+overflow));const auto t=thumb->masks[1].bounds;
+     check(overflow>0&&std::abs(t.x-(v.x+v.width-4))<1e-9&&t.width==3&&std::abs(t.height-length)<1e-9&&std::abs(t.y-(v.y+(h-length)*workspace.editor()->scrollOffset()/overflow))<1e-9,"Thumb length and position follow the source formula");}
+    check(workspace.editorDocument()->selection().range.end==workspace.editorDocument()->text().size(),"Source initial editor selection remains document end");
+    const auto layout=workspace.editor()->layout().painted()->layoutIdentity();const auto editorMeasures=workspace.measurementStats().measurements;
+    const auto editorRevision=state.revision();const auto editorSaves=saves;const auto editorText=state.note(one)->text;
+    check(workspace.scrollAt(*point,6.125),"Editing card consumes a fractional wheel without ending its draft");
+    const auto end2=projection.unproject({point->x,point->y+6.125});check(end2&&std::abs(workspace.editor()->scrollOffset()-(savedOffset+end2->y-start->y))<1e-8,"Editor viewport receives the same card-local delta");
+    check(workspace.editor()&&workspace.editor()->layout().painted()->layoutIdentity()==layout&&workspace.measurementStats().measurements==editorMeasures,"Editor wheel reuses the painted layout and settled measurement");
+    check(state.revision()==editorRevision&&saves==editorSaves&&state.note(one)->text==editorText,"Editor wheel does not save a draft or mutate NotesState");publish();
+    {const auto* thumb=indicator();const auto v=thumb->masks[0].bounds;const auto h=v.height,overflow=workspace.editor()->maximumScrollOffset();const auto length=std::max(16.,h*h/(h+overflow));
+     check(std::abs(thumb->masks[1].bounds.y-(v.y+(h-length)*workspace.editor()->scrollOffset()/overflow))<1e-9,"An editor wheel moves the thumb with the scroll offset");}
+    workspace.editor()->setScrollOffset(workspace.editor()->maximumScrollOffset());workspace.syncEditor();
+    check(workspace.finishEditing().finished,"Explicit finish captures editor session offset");publish();
+    // Unpublished and absent: a resident, unreferenced quad would be removable here.
+    check(!indicator()&&!indicatorMesh.empty()&&!renderer.removeMesh(indicatorMesh),"Finishing unpublishes and retires the indicator quad");
+    const auto settledMaximum=workspace.card(one)->measuredText()->height-workspace.card(one)->contentViewport().height;
+    check(std::abs(workspace.card(one)->scrollOffset()-settledMaximum)<1e-8,"Finishing clamps editor offset to the taller settled h-37 viewport");
+    workspace.beginEditing(one);publish();check(std::abs(workspace.editor()->scrollOffset()-settledMaximum)<1e-8,"Reopening preserves settled scroll position rather than revealing end");
+    workspace.finishEditing(false);publish();
+    for(unsigned n=0;n<16&&workspace.card(one)->scrollOffset()>0;++n)workspace.scrollAt(*point,-250);
+    check(workspace.card(one)->scrollOffset()==0,"Upward scroll clamps to first visible line");publish();
+    const auto boundRaster=raster.stats();const auto boundMeasures=workspace.measurementStats();const auto boundRevision=workspace.compositionRevision(),boundState=state.revision();const auto boundSaves=saves;
+    allocations=0;counting=true;for(unsigned n=0;n<120;++n)workspace.scrollAt(*point,-.5);counting=false;
+    check(allocations==0&&raster.stats().rasterizations==boundRaster.rasterizations&&workspace.measurementStats().measurements==boundMeasures.measurements&&workspace.compositionRevision()==boundRevision,"Repeated bounded wheel events allocate, measure and rasterize nothing");
+    check(state.revision()==boundState&&saves==boundSaves,"Bounded wheel does not touch persistence or record revision");
+    check(!workspace.scrollAt({std::numeric_limits<double>::quiet_NaN(),0},1)&&!workspace.scrollAt(*point,std::numeric_limits<double>::infinity())&&!workspace.scrollAt({-1000,-1000},5),"Invalid or uncovered wheel input leaves Notes untouched");
+    workspace.beginGesture(one,{rect.x+10,rect.y+10},mod::NotesState::Gesture::move);publish();const auto gestureSaves=saves,gestureRevision=state.revision();
+    check(workspace.scrollAt(*point,10)&&workspace.card(one)->scrollOffset()==0&&state.revision()==gestureRevision&&saves==gestureSaves,"Active card drag consumes wheel without content movement or saving");workspace.endGesture();publish();
+    check(workspace.scrollAt(*point,13.25),"Session scroll resumes after gesture");const auto retained=workspace.card(one)->scrollOffset();
+    workspace.togglePin(one);workspace.setPresentation(false);workspace.updatePose(p);publish();check(std::abs(workspace.card(one)->scrollOffset()-retained)<1e-8,"Pinned cross-tab card retains its session offset");
+    auto light=style();light.palette=mod::NotesPalette::source(false,{.1,.2,.8,1});light.editor={{.96,.96,.96,1},light.palette.accent};workspace.setStyle(light);publish();
+    check(std::abs(workspace.card(one)->scrollOffset()-retained)<1e-8,"Theme replacement retains session scroll state");
+    composition.detach(renderer);check(workspace.releaseResources(renderer)&&renderer.stats().textures==0&&renderer.stats().meshes==0,"Scrollable owner releases its bounded resources after detach");
+}
+void motionLifecycle(HWND hwnd,gpu::Renderer&renderer){
+    auto pinned=note(two,"Pinned sibling",350,40,1);pinned.isPinned=true;std::size_t removals{};bool failRemove{};
+    mod::NotesState state({note(one,"Editable card"),pinned},{[](const auto&){},[&](std::string_view){if(failRemove)throw std::runtime_error("Injected removal failure");++removals;}});state.setWorkspaceBounds({0,0,640,360});
+    gpu::LayerRasterizer raster;gpu::NativeNotesWorkspace workspace(hwnd,state,raster,style(),options());gpu::LayerComposition composition;
+    auto publish=[&]{composition.setEntries(renderer,workspace.entries());composition.present(renderer);check(workspace.collectRetired(renderer),"Motion owner collects only detached retirement");};
+    workspace.updatePose(pose());publish();const auto rect=state.card(one)->rect;auto*nativeOne=workspace.entries()[0].scene;auto*nativeTwo=workspace.entries()[1].scene;const auto initialOne=nativeOne->draws()[0].world,initialTwo=nativeTwo->draws()[0].world;
+    const auto tokenOne=*workspace.cardToken(one),tokenTwo=*workspace.cardToken(two);const auto sourceSample=mod::notesCardMotion(true,.075);
+    check(workspace.setCardMotions(std::array{gpu::NativeNotesCardMotion{tokenOne,sourceSample}}),"One caller-sampled card motion changes retained numbers");workspace.updatePose(pose(1));composition.present(renderer);
+    check(workspace.setCardMotions(std::array{gpu::NativeNotesCardMotion{tokenOne,sourceSample}}),"An unchanged valid sample remains accepted instead of canceling the caller's active track");
+    matrixCheck(workspace.entries()[0].scene->draws()[0].world,cardMotionWorld({},rect,sourceSample)*initialOne,"Card motion uses source center anchor and operation order");
+    matrixCheck(workspace.entries()[1].scene->draws()[0].world,initialTwo,"Unmentioned pinned sibling remains at its original pose");
+    check(std::abs(workspace.entries()[0].scene->draws()[0].opacity-sourceSample.opacity)<1e-6&&workspace.entries()[1].scene->draws()[0].opacity==1,"Per-card opacity does not fade sibling artwork");
+    const auto header=core::Projection::viewport(pose().screenToClip*cardMotionWorld({},rect,sourceSample),640,360).project({rect.x+12,rect.y+10});
+    check(header&&workspace.hitTest(*header)&&workspace.hitTest(*header)->noteID==one,"Inverse card hit follows the same sampled transform");
+    const auto beforeInvalid=workspace.entries()[0].scene->draws()[0].world;
+    auto invalid=sourceSample;invalid.scale=std::numeric_limits<double>::quiet_NaN();
+    rejects([&]{workspace.setCardMotions(std::array{gpu::NativeNotesCardMotion{tokenOne,{}},gpu::NativeNotesCardMotion{tokenTwo,invalid}});},"Late invalid motion rejects the whole numeric batch");
+    rejects([&]{workspace.setCardMotions(std::array{gpu::NativeNotesCardMotion{tokenOne,{}},gpu::NativeNotesCardMotion{tokenOne,sourceSample}});},"Repeated motion token rejects before mutation");
+    workspace.updatePose(pose(1));composition.present(renderer);matrixCheck(workspace.entries()[0].scene->draws()[0].world,beforeInvalid,"Invalid motion rollback preserves the first card pose");
+    workspace.beginEditing(one);publish();check(workspace.cardToken(one)==tokenOne,"Entering a field keeps the card's active source motion token");
+    workspace.updatePose(pose(1.1));composition.present(renderer);const auto editorPoint=workspace.editor()->placement().projection.project({5,5});
+    const auto expectedEditor=core::Projection::viewport(pose().screenToClip*cardMotionWorld({},rect,sourceSample)*core::Matrix4::translation(rect.x+9,rect.y+29),640,360).project({5,5});
+    check(editorPoint&&expectedEditor&&std::abs(editorPoint->x-expectedEditor->x)<1e-8&&std::abs(editorPoint->y-expectedEditor->y)<1e-8,"Editor/IME plane receives the exact same card animation and live workspace tilt");
+    const auto before=raster.stats();const auto measures=workspace.measurementStats();const auto gpuBefore=renderer.stats();const auto layout=workspace.editor()->layout().painted()->layoutIdentity();
+    allocations=0;counting=true;try{for(unsigned n=0;n<120;++n){const auto sample=mod::notesCardMotion(true,double(n)/600);workspace.setCardMotions(std::array{gpu::NativeNotesCardMotion{tokenOne,sample}});auto p=pose(2+double(n)/60);p.workspaceToScreen.values[3]=double(n)*.0000008;p.workspaceToScreen.values[7]=-double(n)*.0000003;p.workspaceToScreen.values[12]=double(n)*.02;workspace.updatePose(p);composition.present(renderer);}}catch(...){counting=false;throw;}counting=false;
+    check(allocations==0,"120 combined finite-card/editor/tilt frames allocate no C++ storage");
+    check(raster.stats().rasterizations==before.rasterizations&&raster.stats().textLayoutsCreated==before.textLayoutsCreated&&workspace.measurementStats().measurements==measures.measurements&&renderer.stats().textureUploads==gpuBefore.textureUploads&&workspace.editor()->layout().painted()->layoutIdentity()==layout,"Card animation changes no measurement, painted editor layout, raster or texture resources");
+    check(workspace.requiresFrames(4),"Caller active card sample joins existing finite demand");
+    workspace.setCardMotions(std::array{gpu::NativeNotesCardMotion{tokenOne,{}}});workspace.finishEditing(false);publish();workspace.updatePose(pose(4));check(!workspace.requiresFrames(4),"Identity/settled sample clears card frame demand");
+
+    workspace.setPresentation(false,true);const auto firstGeneration=workspace.presentationGeneration();const auto outgoing=*workspace.cardToken(one);
+    check(outgoing!=tokenOne&&workspace.cardToken(two)==tokenTwo,"Source section change cancels only the changing unpinned card token");
+    const auto exit=mod::notesSectionMotion(false,{1,0},.12);workspace.setCardMotions(std::array{gpu::NativeNotesCardMotion{outgoing,exit}});workspace.updatePose(pose(4.1));publish();
+    matrixCheck(nativeTwo->draws()[0].world,initialTwo,"Pinned card is stationary during another card's section transition");
+    check(!workspace.hitTest({rect.x+50,rect.y+50}),"Outgoing card cannot receive pointer input");
+    check(!workspace.setCardMotions(std::array{gpu::NativeNotesCardMotion{tokenOne,{}}}),"Canceled earlier card track cannot overwrite its section motion");
+    workspace.setPresentation(true);const auto incoming=*workspace.cardToken(one);check(incoming!=outgoing,"Interrupted section renews only that card's cancellation token");
+    workspace.setCardMotions(std::array{gpu::NativeNotesCardMotion{incoming,mod::notesSectionMotion(true,{0,1},.1)}});workspace.updatePose(pose(4.2));publish();
+    check(!workspace.settleOutgoing(firstGeneration)&&workspace.entries().size()==2,"Stale outgoing completion cannot remove newly incoming artwork");
+    workspace.setPresentation(false,true);const auto currentGeneration=workspace.presentationGeneration(),currentToken=*workspace.cardToken(one);
+    workspace.setCardMotions(std::array{gpu::NativeNotesCardMotion{currentToken,mod::notesSectionMotion(false,{0,1},.1)}});workspace.updatePose(pose(4.3));publish();
+    check(!workspace.settleOutgoing(firstGeneration)&&workspace.entries().size()==2,"Older completion also cannot settle a newer outgoing transition");
+    const auto measurementCount=workspace.measurementStats().measurements;auto light=style();light.palette=mod::NotesPalette::source(false,{.1,.2,.8,1});light.editor={{.96,.96,.96,1},light.palette.accent};workspace.setStyle(light);publish();
+    check(workspace.cardToken(one)==currentToken&&workspace.measurementStats().measurements==measurementCount,"Appearance replacement preserves sampled token and unchanged measured text");
+    check(workspace.settleOutgoing(currentGeneration)&&workspace.entries().size()==1&&!workspace.settleOutgoing(currentGeneration),"Current completion settles once and retains only pinned note");publish();
+    check(!workspace.setCardMotions(std::array{gpu::NativeNotesCardMotion{currentToken,exit}}),"Settled outgoing pose cannot be revived by a queued sample");
+    workspace.setPresentation(true);publish();workspace.setCardMotions(std::array{gpu::NativeNotesCardMotion{*workspace.cardToken(one),{}}});workspace.updatePose(pose(5));
+    state.setPresentation(false);check(workspace.syncState(),"syncState reports pure visibility/entry changes without artwork revision");publish();state.setPresentation(true);check(workspace.syncState()&&!workspace.syncState(),"Visibility restoration reports once and unchanged sync is false");publish();
+
+    workspace.requestDeletion(one);publish();const auto beforeDelete=*workspace.cardToken(one);failRemove=true;
+    check(!workspace.confirmDeletionRetainingArtwork(one)&&state.note(one)&&workspace.cardToken(one)==beforeDelete&&workspace.stats().deletingCards==0,"Failed persistence does not start deletion artwork or change its token");failRemove=false;
+    const auto deletion=workspace.confirmDeletionRetainingArtwork(one);check(deletion&&*deletion!=beforeDelete&&!state.note(one)&&removals==1&&workspace.stats().deletingCards==1&&workspace.entries().size()==2,"Deletion persists/removes state immediately while keeping exact artwork composed");
+    check(!workspace.cardToken(one)&&!workspace.hitTest({rect.x+50,rect.y+50}),"Deleted-only artwork has no live state binding or pointer input");publish();
+    const auto deleteRaster=raster.stats();const auto deleteMeasurements=workspace.measurementStats();const auto deleteGPU=renderer.stats();
+    allocations=0;counting=true;try{for(unsigned n=0;n<120;++n){const auto sample=mod::notesCardMotion(false,.2*double(n)/119);workspace.setCardMotions(std::array{gpu::NativeNotesCardMotion{*deletion,sample}});auto p=pose(6+double(n)/60);p.workspaceToScreen.values[3]=double(n)*.0000008;p.workspaceToScreen.values[12]=double(n)*.04;workspace.updatePose(p);composition.present(renderer);}}catch(...){counting=false;throw;}counting=false;
+    check(allocations==0&&raster.stats().rasterizations==deleteRaster.rasterizations&&workspace.measurementStats().measurements==deleteMeasurements.measurements&&renderer.stats().textureUploads==deleteGPU.textureUploads,"Retiring deletion follows 120 live-tilt samples without allocation or raster/upload work");
+    check(workspace.stats().deletingCards==1&&!workspace.requiresFrames(8)&&workspace.entries().size()==2,"Finished numeric fade stays retained until caller explicitly settles its token");
+    check(workspace.settleDeletion(*deletion)&&!workspace.settleDeletion(*deletion)&&workspace.stats().retiredCards==1&&workspace.stats().deletingCards==0,"Deletion token settles exactly once into normal deferred retirement");
+    rejects([&]{workspace.collectRetired(renderer);},"Settled deletion still cannot destroy a scene borrowed by prior composition");publish();
+    check(workspace.entries().size()==1&&!workspace.setCardMotions(std::array{gpu::NativeNotesCardMotion{*deletion,{}}}),"Published retirement rejects all later samples of deleted artwork");
+    workspace.requestDeletion(two);publish();check(workspace.confirmDeletionRetainingArtwork(two).has_value(),"Second deletion can remain active during whole-owner teardown");publish();
+    composition.detach(renderer);check(workspace.releaseResources(renderer)&&renderer.stats().meshes==0&&renderer.stats().textures==0,"Safe owner teardown releases still-held deletion artwork only after detach");
+}
+}
+int wmain(int argc,wchar_t**argv){try{check(argc==2,"Pass native hud.hlsl path");check(SUCCEEDED(CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED)),"Owned COM test apartment");
+    {Window window;gpu::Renderer renderer;renderer.initialize(window.hwnd,640,360,{gpu::Driver::warpForTests,argv[1],gpu::RenderTarget::offscreenForTests});run(window.hwnd,renderer);culling(window.hwnd,renderer);largeCards(window.hwnd,renderer);editingCost(window.hwnd,renderer);boundaries(window.hwnd);scrolling(window.hwnd,renderer);motionLifecycle(window.hwnd,renderer);check(!IsWindowVisible(window.hwnd),"Coordinator tests never show or activate a window");renderer.reset();}
+    CoUninitialize();std::cout<<"Native Notes workspace owner contracts: "<<checks<<" checks passed\n";return 0;
+}catch(const std::exception&e){counting=false;std::cerr<<"Native Notes workspace owner failed after "<<checks<<" checks: "<<e.what()<<'\n';return 1;}}
+#endif

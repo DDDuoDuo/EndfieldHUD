@@ -1,0 +1,54 @@
+{
+  "icons": [
+    {
+      "asset": "Operational_Manual_icon.png",
+      "bytes": 1986,
+      "pixels": 50,
+      "sha256": "a3bb8357db8221f477f97e0c33decad362a6255694838c09f639feef8015b0f9",
+      "sourceResource": "Operational_Manual_icon",
+      "tint": [
+        0.14,
+        0.14,
+        0.14,
+        0.78
+      ]
+    },
+    {
+      "asset": "Depot_icon.png",
+      "bytes": 1363,
+      "pixels": 50,
+      "sha256": "3dfbcd686426d56e8971b652a6d5abd8a6b311862f4d4260502ff8c8143ee8e5",
+      "sourceResource": "Depot_icon",
+      "tint": [
+        0.14,
+        0.14,
+        0.14,
+        0.78
+      ]
+    }
+  ],
+  "revealMask": {
+    "asset": "reveal-mask.bin",
+    "bytes": 96492,
+    "duration": 0.26,
+    "evidence": "reveal-mask-evidence.json",
+    "sha256": "270fafc7331eedbe3ffe3a609b8638b88edfff66d7bf289ac610bc323d5c7d60",
+    "viewport": [
+      0,
+      0,
+      376,
+      246
+    ]
+  },
+  "scale": 2,
+  "schema": 1,
+  "scope": "Original source-prepared Clipboard icons and actual sampled CA reveal for exact rows.bounds; no full module raster",
+  "sourcePins": {
+    "Sources/ClipboardCanvas.swift": "5c356c0e7543bff2b0c146a5f35f055de19e19e5efe90277f9be3d7e3d2e5a16",
+    "Sources/EndfieldGameIcon.swift": "9763996185a3094faf77290e5930e5f4cc18e221d10dd4e5012adb2ea1dc3f95",
+    "Sources/HUDControlHighlightLayer.swift": "0c76274f67c7e5e1f7252ce3bc8171fe69673b58a402a94718b83a26a43f6e56",
+    "Sources/HUDRenderScale.swift": "6b5faf934bf949c3151828d8246b062aa899d388d762a086a5ea2518eb0ef454",
+    "Sources/HUDSectionHeading.swift": "158966052117622209308a11ec167fad19aedf4f6dcd144c4dccb93478556b72",
+    "Sources/HUDSubsectionTransition.swift": "c73bfac1c87385dafb7c9387c8d834c937e37eb51e189ad6425602dd6fcff355"
+  }
+}

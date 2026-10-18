@@ -1,0 +1,133 @@
+#include "native/notes_video_playback.hpp"
+#include "native/notes_image_decoder.hpp"
+#ifdef _WIN32
+#include <d3d11.h>
+#include <dxgi.h>
+#include <wrl/client.h>
+#include <algorithm>
+#include <array>
+#include <atomic>
+#include <cmath>
+#include <fstream>
+#include <iostream>
+#include <thread>
+namespace n=endfield::native;namespace m=endfield::modules;using Microsoft::WRL::ComPtr;
+namespace {
+unsigned checks{};void check(bool v,const char*s){++checks;if(!v)throw std::runtime_error(s);}template<class F>void rejects(F f,const char*s){bool caught{};try{f();}catch(const std::exception&){caught=true;}check(caught,s);}
+struct Window {HWND hwnd{};ATOM atom{};static constexpr UINT notice=WM_APP+250;Window(){WNDCLASSW c{};c.lpfnWndProc=DefWindowProcW;c.hInstance=GetModuleHandleW(nullptr);c.lpszClassName=L"EndfieldOwnedNotesVideo";atom=RegisterClassW(&c);check(atom!=0,"Register owned video fixture");hwnd=CreateWindowExW(WS_EX_NOREDIRECTIONBITMAP|WS_EX_TOOLWINDOW,c.lpszClassName,L"Hidden synthetic video",WS_POPUP,0,0,32,32,nullptr,nullptr,c.hInstance,nullptr);check(hwnd&&!IsWindowVisible(hwnd),"Video fixture stays hidden");}~Window(){if(hwnd)DestroyWindow(hwnd);if(atom)UnregisterClassW(reinterpret_cast<LPCWSTR>(static_cast<ULONG_PTR>(atom)),GetModuleHandleW(nullptr));}};
+struct Probe {n::NativeNotesVideoPlayback::Notify notify;double position{};bool playing{},fresh{true},stopped{},preloadEnded{true},seekNeedsTick{},seekNoticePending{},stallSeek{};unsigned frames{},opens{},seeks{};HRESULT transferError{S_OK};std::array<std::uint8_t,4>pixel{0,0,255,255};std::shared_ptr<void>lease;};
+class Engine final:public n::NativeNotesVideoPlayback::Engine {
+    std::shared_ptr<Probe>p_;
+public:explicit Engine(std::shared_ptr<Probe>p):p_(std::move(p)){}~Engine()override{stop();}
+    HRESULT open(const n::NotesVideoRequest&r)override{++p_->opens;p_->lease=r.accessLease;p_->notify(n::NativeNotesVideoPlayback::ready|n::NativeNotesVideoPlayback::firstFrame|(p_->preloadEnded?n::NativeNotesVideoPlayback::ended:0u),S_OK);return S_OK;}
+    HRESULT metadata(n::NotesVideoMetadata&out)override{out={4,4,10};return S_OK;}
+    HRESULT play()override{p_->playing=true;p_->fresh=true;return S_OK;}HRESULT pause()override{p_->playing=false;return S_OK;}
+    HRESULT seek(double t)override{p_->position=t;++p_->seeks;p_->fresh=true;if(p_->seekNeedsTick)p_->seekNoticePending=true;else p_->notify(n::NativeNotesVideoPlayback::seeked,S_OK);return S_OK;}
+    double currentTime()const override{return p_->position;}
+    HRESULT tick(std::int64_t&pts)override{if(p_->seekNoticePending){if(!p_->stallSeek){p_->seekNoticePending=false;p_->notify(n::NativeNotesVideoPlayback::seeked,S_OK);}return S_FALSE;}pts=static_cast<std::int64_t>(p_->position*10000000);if(!p_->fresh)return S_FALSE;p_->fresh=false;return S_OK;}
+    HRESULT transfer(void*raw,unsigned width,unsigned height)override{if(FAILED(p_->transferError)){const auto error=p_->transferError;p_->transferError=S_OK;return error;}ComPtr<ID3D11Texture2D>texture;const auto hr=static_cast<IDXGISurface*>(raw)->QueryInterface(IID_PPV_ARGS(&texture));if(FAILED(hr))return hr;ComPtr<ID3D11Device>device;texture->GetDevice(&device);ComPtr<ID3D11DeviceContext>context;device->GetImmediateContext(&context);if(width!=4||height!=4)return E_INVALIDARG;std::array<std::uint8_t,64>pixels;for(unsigned i=0;i<pixels.size();i+=4)std::copy(p_->pixel.begin(),p_->pixel.end(),pixels.begin()+i);context->UpdateSubresource(texture.Get(),0,nullptr,pixels.data(),16,0);++p_->frames;return S_OK;}
+    void stop()noexcept override{p_->playing=false;p_->stopped=true;p_->lease.reset();}
+};
+void run(const std::filesystem::path&shader){Window w;n::Renderer renderer;renderer.initialize(w.hwnd,32,32,{n::Driver::warpForTests,shader,n::RenderTarget::offscreenForTests,true});std::vector<std::shared_ptr<Probe>>probes;HRESULT nextTransferError=S_OK;n::NativeNotesVideoPlayback video(renderer,{w.hwnd,Window::notice,3},[&](auto device,auto callback){check(device!=nullptr,"Every engine borrows same renderer device");auto p=std::make_shared<Probe>();p->notify=std::move(callback);p->transferError=nextTransferError;nextTransferError=S_OK;probes.push_back(p);return std::make_unique<Engine>(std::move(p));});
+    std::array request{n::NotesVideoRequest{"owned-video","C:\\owned-synthetic\\tiny.mp4",1,512,10,{}}};check(video.setVisible(request,0)&&!video.requiresFrames(),"Source video loads paused without a polling clock");check(!video.accept(2,0)&&video.accept(3,0),"Only current owner generation drains native notices");check(video.sample(0),"First frame becomes retained poster");const auto*r=video.find("owned-video");check(r&&r->nativeWidth==4&&r->nativeHeight==4&&r->state==m::NotesMediaState::paused&&r->textureID=="owned-video.poster"&&renderer.stats().mediaTargets==1&&!video.requiresFrames()&&!video.nextWakeTime(),"Initially paused video owns exactly one poster surface and no wakeups");
+    check(r->currentTime==0&&!r->pendingSeek,"Unsolicited native preload-end event cannot replace initial paused position");probes.back()->notify(n::NativeNotesVideoPlayback::firstFrame,S_OK);video.accept(3,0);check(!video.sample(0),"Duplicate loaded-data/first-frame readiness does not recapture or seek a settled poster");
+    const auto before=video.stats();for(unsigned i=0;i<120;++i)check(!video.sample(.1+double(i)/120),"Paused samples never transfer or query frames");check(video.stats().ticks==before.ticks&&video.stats().transfers==before.transfers,"Paused frame work stays zero");
+    check(video.play("owned-video",2)&&video.requiresFrames()&&renderer.stats().mediaTargets==2,"First actual play lazily allocates independent live surface");const auto allocations=renderer.stats().mediaTargetAllocations,uploads=renderer.stats().textureUploads;probes.back()->pixel={255,0,0,255};check(video.sample(2)&&r->textureID=="owned-video.live","New video frame switches live output without overwriting poster");
+    for(unsigned i=0;i<120;++i){probes.back()->fresh=true;probes.back()->position=double(i)/60;check(video.sample(2.01+double(i)/60),"Owner frame clock commits a newly supplied frame");}check(renderer.stats().mediaTargetAllocations==allocations&&renderer.stats().textureUploads==uploads,"120 video frames retain texture allocations and perform no CPU uploads");
+    video.pause("owned-video");check(!video.requiresFrames()&&!video.nextWakeTime(),"Pause stops frame/progress demand");check(video.seek("owned-video",999)&&r->pendingSeek==10,"Source seek clamps to duration");video.accept(3,4.1);video.sample(4.1);check(r->currentTime==10&&!r->pendingSeek,"Seek completion publishes actual position");check(video.play("owned-video",4.2)&&probes.back()->position==0,"Playing within source .05-second end margin restarts at zero");
+    video.accept(3,4.2);video.sample(4.2);probes.back()->position=3;video.hide(4.3,true);check(r->state==m::NotesMediaState::hidden&&r->textureID=="owned-video.poster"&&r->currentTime==3&&r->wantsPlayback&&!video.requiresFrames(),"Hide stops native engine but keeps source poster/time/play intent");check(video.collectRetired()&&renderer.stats().mediaTargets==1,"Detached live target retires independently of finite poster");check(video.sample(4.9)&&r->textureID.empty()&&video.collectRetired()&&renderer.stats().mediaTargets==0,"Finite source poster retention expires once then releases device target");
+    const auto stale=probes.back()->notify;video.setVisible(request,5);stale(n::NativeNotesVideoPlayback::failure,E_FAIL);video.accept(3,5);video.sample(5);check(r->state==m::NotesMediaState::playing&&probes.back()->seeks==1&&r->pendingSeek==3,"Old engine callback cannot poison new generation; reopen restores seek/play intent");
+    // Genuine off-thread notification only writes fixed mailbox state. The UI
+    // drain alone samples engine state or touches retained GPU resources.
+    const auto commits=renderer.stats().mediaFrameCommits;std::thread worker([callback=probes.back()->notify]{for(unsigned i=0;i<100;++i)callback(n::NativeNotesVideoPlayback::ended,S_OK);});worker.join();check(renderer.stats().mediaFrameCommits==commits,"Codec callback never calls renderer");video.accept(3,5.1);check(r->state==m::NotesMediaState::paused&&!r->wantsPlayback,"End notification pauses without looping or stale playback intent");
+    video.hide(6);video.collectRetired();check(video.retire("owned-video"),"Explicit retirement follows GPU detach");
+    nextTransferError=E_FAIL;video.setVisible(request,7);video.accept(3,7);check(video.sample(7),"Best-effort poster failure publishes changed metadata");r=video.find("owned-video");check(r->state==m::NotesMediaState::paused&&FAILED(r->posterError)&&r->error==S_OK&&r->textureID.empty()&&!video.requiresFrames(),"A failed static poster does not reject a valid paused movie");
+    check(video.play("owned-video",7.1),"A valid movie can play after poster extraction failed");check(video.sample(7.1)&&r->state==m::NotesMediaState::playing&&r->textureID=="owned-video.live","Live video remains available after isolated poster failure");
+    video.pause("owned-video");video.play("owned-video",7.2);probes.back()->fresh=false;check(!video.sample(7.2)&&video.requiresFrames(),"Playing waits for actual native frame availability");video.pause("owned-video");check(!video.requiresFrames()&&!video.nextWakeTime(),"Pausing cancels outstanding play-frame demand even when no frame arrived");
+    video.hide(8);video.collectRetired();check(video.retire("owned-video"),"Failed poster and played targets both retire");video.setRoute({});const auto notifications=video.stats().notices;probes.back()->notify(n::NativeNotesVideoPlayback::failure,E_FAIL);check(video.stats().notices==notifications,"Cleared owner route cannot receive teardown callbacks");check(renderer.stats().mediaLiveBytes==0&&!IsWindowVisible(w.hwnd)&&renderer.stats().presents==0,"All owned video resources released without visible UI/audio/capture");
+}
+void manyPaused(const std::filesystem::path&shader){Window window;n::Renderer renderer;renderer.initialize(window.hwnd,32,32,{n::Driver::warpForTests,shader,n::RenderTarget::offscreenForTests,true});std::vector<std::shared_ptr<Probe>>probes;
+    n::NativeNotesVideoPlayback video(renderer,{window.hwnd,Window::notice,21},[&](auto,auto callback){auto p=std::make_shared<Probe>();p->notify=std::move(callback);probes.push_back(p);return std::make_unique<Engine>(p);});
+    std::array<n::NotesVideoRequest,24>requests;for(unsigned i=0;i<requests.size();++i)requests[i]={"paused."+std::to_string(i),"C:\\owned-synthetic\\tiny.mp4",1,512,10,{}};
+    video.setVisible(requests,0);check(video.stats().visible==24&&video.stats().engines==8,"Visible movie references are not limited by eight native engines");
+    for(unsigned pass=0;pass<4;++pass){video.accept(21,double(pass)/10);video.sample(double(pass)/10);check(video.stats().engines<=8&&renderer.stats().mediaTargets<=16,"Poster scheduling retains bounded engines and decoder targets");}
+    for(const auto&r:requests){const auto*record=video.find(r.key);check(record&&record->state==m::NotesMediaState::paused&&!record->textureID.empty(),"Every queued paused movie gets its own retained poster");}
+    check(!video.requiresFrames()&&!video.nextWakeTime()&&renderer.stats().mediaLiveBytes==16*4*4*8+8*4*4*12,"Many paused posters retain exact bounded bytes with no idle clock");
+    const auto oldCallback=probes.front()->notify;check(video.play(requests.front().key,1),"Evicted first movie can reopen for explicit play");oldCallback(n::NativeNotesVideoPlayback::failure,E_FAIL);video.accept(21,1);video.sample(1);check(video.find(requests.front().key)->state==m::NotesMediaState::playing,"Parked engine callback cannot corrupt its replacement");
+    for(unsigned i=1;i<9;++i)video.play(requests[i].key,1);for(unsigned i=0;i<3;++i){video.accept(21,1);video.sample(1);}check(video.stats().engines==8&&video.find(requests[8].key)->wantsPlayback,"Ninth simultaneous play intent waits without dropping its poster/reference");
+    video.pause(requests[0].key);video.accept(21,1);video.sample(1);check(video.find(requests[8].key)->state==m::NotesMediaState::playing,"Paused engine immediately yields to queued play intent");
+    video.hide(2);video.collectRetired();for(const auto&r:requests)check(video.retire(r.key),"Visible collection can retire every original and frozen target");check(renderer.stats().mediaLiveBytes==0,"Many poster/live/borrowed targets release exact accounting");
+}
+void delayedPoster(const std::filesystem::path&shader){Window window;n::Renderer renderer;renderer.initialize(window.hwnd,32,32,{n::Driver::warpForTests,shader,n::RenderTarget::offscreenForTests,true});std::shared_ptr<Probe>probe;
+    n::NativeNotesVideoPlayback video(renderer,{window.hwnd,Window::notice,31},[&](auto,auto callback){probe=std::make_shared<Probe>();probe->fresh=false;probe->notify=std::move(callback);return std::make_unique<Engine>(probe);});
+    const std::array request{n::NotesVideoRequest{"delayed.poster","C:\\owned-synthetic\\tiny.mp4",1}};video.setVisible(request,0);video.accept(31,0);check(video.requiresFrames(),"Ready-but-not-decoded poster uses only the existing finite frame demand");
+    for(unsigned frame=0;frame<3;++frame){video.sample(double(frame)/60);check(video.find("delayed.poster")->textureID.empty()&&video.stats().transfers==0,"LOADEDDATA without an available tick never publishes transparent success");}
+    probe->fresh=true;video.sample(.1);check(video.find("delayed.poster")->textureID=="delayed.poster.poster"&&video.stats().transfers==1&&!video.requiresFrames(),"First S_OK tick captures one poster then stops paused demand");
+    video.hide(1);video.collectRetired();video.retire("delayed.poster");video.setVisible(request,2);video.accept(31,2);video.sample(7.01);const auto*r=video.find("delayed.poster");check(FAILED(r->posterError)&&r->state==m::NotesMediaState::paused&&r->textureID.empty()&&!video.requiresFrames(),"A stalled poster has a finite best-effort failure instead of idle polling");check(video.play("delayed.poster",7.1)&&video.sample(7.1)&&video.find("delayed.poster")->state==m::NotesMediaState::playing,"Poster timeout still permits explicit playback");video.hide(8);video.collectRetired();video.retire("delayed.poster");
+}
+void workerPoster(const std::filesystem::path&shader){Window window;n::Renderer renderer;renderer.initialize(window.hwnd,32,32,{n::Driver::warpForTests,shader,n::RenderTarget::offscreenForTests,true});std::shared_ptr<Probe>probe;
+    n::NativeNotesVideoPlayback video(renderer,{window.hwnd,Window::notice,41},[&](auto,auto callback){probe=std::make_shared<Probe>();probe->fresh=false;probe->notify=std::move(callback);return std::make_unique<Engine>(probe);});
+    const std::array request{n::NotesVideoRequest{"worker.poster","C:\\owned-synthetic\\tiny.mp4",1,512,10,{},true}};video.setVisible(request,0);video.accept(41,0);video.sample(0);
+    check(video.find("worker.poster")->state==m::NotesMediaState::loading&&!video.requiresFrames()&&!video.nextWakeTime()&&video.stats().ticks==0&&renderer.stats().mediaTargets==0,"Worker poster waits on completion without paused native ticks, playback or GPU target");
+    n::NotesImageFrame frame{4,4,0,std::vector<std::uint8_t>(4*4*4,255)};for(std::size_t at=0;at<frame.straightRGBA.size();at+=4){frame.straightRGBA[at+1]=0;frame.straightRGBA[at+2]=0;}
+    check(!video.setPoster("worker.poster",2,1,&frame),"Different reference revision cannot publish stale worker pixels");
+    check(video.setPoster("worker.poster",1,1,&frame),"Current immutable worker frame uploads once on owner thread");const auto*r=video.find("worker.poster");
+    check(r->state==m::NotesMediaState::paused&&!r->textureID.empty()&&probe->position==0&&!probe->playing&&probe->seeks==0&&video.stats().ticks==0&&renderer.stats().mediaTargets==0&&renderer.stats().mediaLiveBytes==4*4*8,"Static poster does not advance or play native video and releases its transfer slot");
+    const auto commits=renderer.stats().mediaFrameCommits;check(!video.setPoster("worker.poster",1,1,&frame)&&renderer.stats().mediaFrameCommits==commits,"Duplicate worker completion never repeats upload");
+    probe->seekNeedsTick=true;const auto oldPoster=r->textureID;const auto oldFrames=r->frameRevision;
+    check(video.seek("worker.poster",3)&&video.requiresFrames()&&!probe->playing,"Paused seek requests owner frames before native SEEKED without starting playback");
+    video.sample(.01);check(r->pendingSeek&&r->textureID==oldPoster&&r->frameRevision==oldFrames,"Pending seek tick does not publish a stale or unready live frame");
+    video.accept(41,.02);video.sample(.02);check(!r->pendingSeek&&!video.requiresFrames()&&r->textureID=="worker.poster.live"&&!probe->playing,"Tick-driven SEEKED publishes one ready paused frame then settles");
+    video.seek("worker.poster",0);video.sample(.03);video.accept(41,.04);video.sample(.04);
+
+    const std::array<n::Vertex,4>vertices{{{{-1,1,0},{0,0}},{{1,1,0},{1,0}},{{1,-1,0},{1,1}},{{-1,-1,0},{0,1}}}};constexpr std::array<std::uint32_t,6>indices{0,1,2,0,2,3};renderer.setMesh("poster.quad",1,{vertices,indices});n::DrawObject draw;draw.sourceID="poster.draw";draw.meshID="poster.quad";draw.textureID=oldPoster;renderer.setDrawList(std::span(&draw,1));renderer.draw(false);const auto pixels=renderer.readback();const auto center=(16*32+16)*4;
+    check(pixels.pixels[center+2]>250&&pixels.pixels[center]<3&&pixels.pixels[center+3]>250,"Worker RGBA uses existing media color conversion and paints actual red pixels");
+    video.hide(1,true);check(!video.setPoster("worker.poster",1,2,&frame),"Hidden worker result cannot reacquire resources");video.setVisible(request,1.1);video.accept(41,1.1);check(r->state==m::NotesMediaState::loading&&!video.requiresFrames(),"Re-show preserves old artwork but reports source loading while new worker result is pending");
+    video.setPoster("worker.poster",1,2,&frame);check(r->textureID!=draw.textureID&&r->state==m::NotesMediaState::paused,"Re-extracted poster gets a retained identity without mutating published prior pixels");
+    check(!video.collectRetired(),"Old published poster remains alive until owner republishes");draw.textureID=r->textureID;renderer.setDrawList(std::span(&draw,1));check(video.collectRetired(),"Replaced poster releases after publication detaches old identity");
+    renderer.clearDrawList();video.hide(2);video.collectRetired();video.retire("worker.poster");check(renderer.stats().mediaLiveBytes==0,"Worker poster retirement clears all charged GPU bytes");
+    video.setVisible(request,3);video.accept(41,3);video.setPoster("worker.poster",1,1,&frame);probe->seekNeedsTick=true;probe->stallSeek=true;
+    video.seek("worker.poster",4);video.sample(3.1);check(video.requiresFrames(),"Unfinished native seek temporarily retains bounded demand");video.sample(8.01);
+    check(video.find("worker.poster")->state==m::NotesMediaState::failed&&!video.requiresFrames()&&!video.nextWakeTime(),"Stalled native seek becomes explicit bounded failure without a persistent frame loop");
+    video.hide(9);video.collectRetired();video.retire("worker.poster");
+
+}
+// The frame server holds the renderer's device only while an engine exists
+// (Renderer::mediaDevice): a playing movie refuses the closed HUD's device
+// release, and once no movie is shown neither the lease nor the CoreMedia
+// 709 pass (whose shaders and scratch targets belong to the device) keeps
+// it, so the device object is destroyed by the suspension.
+void deviceLease(const std::filesystem::path&shader){Window w;n::Renderer renderer;renderer.initialize(w.hwnd,32,32,{n::Driver::warpForTests,shader,n::RenderTarget::offscreenForTests,true});std::shared_ptr<Probe>probe;
+    n::NativeNotesVideoPlayback video(renderer,{w.hwnd,Window::notice,51},[&](auto device,auto callback){check(device!=nullptr,"An engine borrows the renderer's device");probe=std::make_shared<Probe>();probe->notify=std::move(callback);return std::make_unique<Engine>(probe);});
+    check(!video.stats().deviceHeld&&!renderer.stats().mediaDeviceLent&&renderer.deviceReleasable(),"The constructed frame server holds no device");
+    const std::array request{n::NotesVideoRequest{"lease.movie","C:\\owned-synthetic\\tiny.mp4",1,512,10,{},true}};
+    video.setVisible(request,0);video.accept(51,0);
+    check(video.stats().deviceHeld&&video.stats().engines==1&&renderer.stats().mediaDeviceLent&&!renderer.deviceReleasable()&&!renderer.suspendDevice(),"A shown movie's engine holds the device: the release is refused");
+    n::NotesImageFrame frame{4,4,0,std::vector<std::uint8_t>(4*4*4,255)};frame.coreMedia709=true;
+    check(video.setPoster("lease.movie",1,1,&frame)&&video.find("lease.movie")->state==m::NotesMediaState::paused,"The BT.709 movie's worker poster uploads");
+    check(video.play("lease.movie",.1)&&video.sample(.1)&&video.find("lease.movie")->state==m::NotesMediaState::playing&&video.stats().coreMedia709Frames==1&&video.stats().readingScratchBytes>0,
+        "The playing BT.709 movie takes the CoreMedia 709 pass on the device");
+    for(unsigned i=0;i<5;++i){probe->fresh=true;video.sample(.2+i*.02);}
+    check(video.stats().coreMedia709Frames==6&&!renderer.suspendDevice()&&!renderer.deviceSuspended(),"No release while a movie plays");
+    video.hide(.5,true);
+    check(!video.stats().deviceHeld&&video.stats().engines==0&&video.stats().readingScratchBytes==0&&video.stats().coreMedia709Frames==6&&!renderer.stats().mediaDeviceLent,
+        "Hidden: the engine, the device lease and the CoreMedia 709 pass go; the played frame count stays");
+    video.sample(1.2);check(video.collectRetired()&&renderer.stats().mediaTargets==0,"The live target retires once the poster replaced it");
+    const auto created=renderer.stats().devicesCreated;
+    check(renderer.deviceReleasable()&&renderer.suspendDevice()&&renderer.stats().devicesDestroyed==created,"With no movie shown the device is released and destroyed: no engine, lease or colour pass keeps it");
+    video.setVisible(request,2);video.accept(51,2);
+    check(!renderer.deviceSuspended()&&video.stats().deviceHeld&&video.stats().deviceAcquisitions==2&&renderer.stats().deviceResumes==1,"Shown again: the engine takes the device again, which comes back");
+    video.hide(3);video.sample(3.7);video.collectRetired();check(video.retire("lease.movie")&&!video.stats().deviceHeld&&renderer.deviceReleasable(),"Retired: nothing holds the device");
+}
+void unsupported(const std::filesystem::path&shader){Window w;n::Renderer renderer;renderer.initialize(w.hwnd,32,32,{n::Driver::warpForTests,shader,n::RenderTarget::offscreenForTests,true});
+    const auto path=std::filesystem::temp_directory_path()/(L"endfield-owned-invalid-video-"+std::to_wstring(GetCurrentProcessId())+L"-"+std::to_wstring(GetTickCount64())+L".mp4");check(!std::filesystem::exists(path),"Invalid-media fixture never overwrites an existing file");struct Cleanup{std::filesystem::path path;~Cleanup(){std::error_code error;std::filesystem::remove(path,error);}}cleanup{path};{std::ofstream file(path,std::ios::binary);file<<"Owned synthetic invalid container. No encoded image, video, or audio stream.";check(bool(file),"Write only bounded invalid fixture bytes");}
+    {n::NativeNotesVideoPlayback video(renderer,{w.hwnd,Window::notice,9});const auto u=path.u8string();const std::array request{n::NotesVideoRequest{"invalid",std::string(reinterpret_cast<const char*>(u.data()),u.size()),1}};video.setVisible(request,0);const auto deadline=GetTickCount64()+10000;
+        while(video.find("invalid")->state!=m::NotesMediaState::failed){video.accept(9,0);if(video.find("invalid")->state==m::NotesMediaState::failed)break;const auto now=GetTickCount64();check(now<deadline,"Actual Media Engine reports invalid container within bounded fixture wait");check(MsgWaitForMultipleObjectsEx(0,nullptr,static_cast<DWORD>(deadline-now),QS_POSTMESSAGE,MWMO_INPUTAVAILABLE)==WAIT_OBJECT_0,"Media Engine failure wakes existing owner queue");MSG message{};while(PeekMessageW(&message,w.hwnd,Window::notice,Window::notice,PM_REMOVE))check(message.lParam==0,"Native Media Engine notice carries no pointer");}
+        check(!video.requiresFrames()&&!video.nextWakeTime()&&renderer.stats().mediaTargetAllocations==0,"Unsupported decode becomes explicit failure with no polling, surface allocation, or audio playback");video.hide(1);check(video.retire("invalid"),"Failed native pipeline can retire cleanly");video.setRoute({});}
+    check(!IsWindowVisible(w.hwnd)&&renderer.stats().presents==0,"Actual invalid-container check never shows or captures desktop");
+}
+}
+int wmain(int argc,wchar_t**argv){const auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);if(FAILED(hr))return 1;int result{};try{check(argc==2,"Pass native/hud.hlsl");run(argv[1]);manyPaused(argv[1]);delayedPoster(argv[1]);workerPoster(argv[1]);deviceLease(argv[1]);unsupported(argv[1]);std::cout<<"PASS "<<checks<<" Notes video owner checks (injected video; actual invalid-container decode only, no audio)\n";}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';result=1;}CoUninitialize();return result;}
+#else
+int main(){return 0;}
+#endif

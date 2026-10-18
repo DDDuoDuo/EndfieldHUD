@@ -1,0 +1,1074 @@
+{
+  "expression" : "ClipboardPayload.matches(_:): standardizedFileURL of pasteboard file URLs and String equality",
+  "lists" : [
+    {
+      "first" : [
+        "/EndfieldClipboardOracle/a/b.txt",
+        "/EndfieldClipboardOracle/c.txt"
+      ],
+      "matches" : true,
+      "second" : [
+        "/EndfieldClipboardOracle/a/./b.txt",
+        "/EndfieldClipboardOracle/x/../c.txt"
+      ]
+    },
+    {
+      "first" : [
+        "/EndfieldClipboardOracle/a/b.txt",
+        "/EndfieldClipboardOracle/c.txt"
+      ],
+      "matches" : false,
+      "second" : [
+        "/EndfieldClipboardOracle/c.txt",
+        "/EndfieldClipboardOracle/a/b.txt"
+      ]
+    },
+    {
+      "first" : [
+        "/EndfieldClipboardOracle/a/b.txt"
+      ],
+      "matches" : false,
+      "second" : [
+        "/EndfieldClipboardOracle/a/b.txt",
+        "/EndfieldClipboardOracle/a/b.txt"
+      ]
+    },
+    {
+      "first" : [
+        "/EndfieldClipboardOracle/a/b.txt",
+        "/EndfieldClipboardOracle/a/b.txt"
+      ],
+      "matches" : true,
+      "second" : [
+        "/EndfieldClipboardOracle/a//b.txt",
+        "/EndfieldClipboardOracle/a/b.txt"
+      ]
+    },
+    {
+      "first" : [
+        "/EndfieldClipboardOracle/a/b.txt",
+        "/EndfieldClipboardOracle/c.txt"
+      ],
+      "matches" : false,
+      "second" : [
+        "/EndfieldClipboardOracle/a/b.txt",
+        "/EndfieldClipboardOracle/c.txt/"
+      ]
+    },
+    {
+      "first" : [
+        "/EndfieldClipboardOracle/a",
+        "/EndfieldClipboardOracle/b"
+      ],
+      "matches" : false,
+      "second" : [
+        "/EndfieldClipboardOracle/a/.",
+        "/EndfieldClipboardOracle/b"
+      ]
+    },
+    {
+      "first" : [
+        "/EndfieldClipboardOracle/a/",
+        "/EndfieldClipboardOracle/b"
+      ],
+      "matches" : false,
+      "second" : [
+        "/EndfieldClipboardOracle/a/.",
+        "/EndfieldClipboardOracle/b/x/.."
+      ]
+    },
+    {
+      "first" : [
+        "/",
+        "/EndfieldClipboardOracle"
+      ],
+      "matches" : true,
+      "second" : [
+        "/..",
+        "/./EndfieldClipboardOracle"
+      ]
+    },
+    {
+      "first" : [
+        "/EndfieldClipboardOracle/A.txt"
+      ],
+      "matches" : false,
+      "second" : [
+        "/EndfieldClipboardOracle/a.txt"
+      ]
+    }
+  ],
+  "provenance" : {
+    "blockSHA256" : "e56a9f71408b9d10d4afe820ec4ef406abc6919bd3a28070e61e19ffb2b10d5b",
+    "modification" : "ClipboardFileReferences and ClipboardPayload: fileprivate visibility only",
+    "source" : "Sources/ClipboardStore.swift",
+    "sourceSHA256" : "3cee3eb251063751c33bb87b5d4b5585e6f51443b49c4190fdda0f5a144e73f0"
+  },
+  "rows" : [
+    {
+      "decomposed" : false,
+      "directory" : true,
+      "lexical" : "/",
+      "match" : 0,
+      "path" : "/",
+      "standardized" : "/"
+    },
+    {
+      "decomposed" : false,
+      "directory" : true,
+      "lexical" : "/",
+      "match" : 0,
+      "path" : "//",
+      "standardized" : "/"
+    },
+    {
+      "decomposed" : false,
+      "directory" : true,
+      "lexical" : "/",
+      "match" : 0,
+      "path" : "///",
+      "standardized" : "/"
+    },
+    {
+      "decomposed" : false,
+      "directory" : true,
+      "lexical" : "/./",
+      "match" : 3,
+      "path" : "/.",
+      "standardized" : "/./"
+    },
+    {
+      "decomposed" : false,
+      "directory" : true,
+      "lexical" : "/",
+      "match" : 0,
+      "path" : "/..",
+      "standardized" : "/"
+    },
+    {
+      "decomposed" : false,
+      "directory" : true,
+      "lexical" : "/./",
+      "match" : 3,
+      "path" : "/./",
+      "standardized" : "/./"
+    },
+    {
+      "decomposed" : false,
+      "directory" : true,
+      "lexical" : "/",
+      "match" : 0,
+      "path" : "/../",
+      "standardized" : "/"
+    },
+    {
+      "decomposed" : false,
+      "directory" : true,
+      "lexical" : "/./",
+      "match" : 3,
+      "path" : "/./.",
+      "standardized" : "/./"
+    },
+    {
+      "decomposed" : false,
+      "directory" : true,
+      "lexical" : "/./",
+      "match" : 3,
+      "path" : "//.",
+      "standardized" : "/./"
+    },
+    {
+      "decomposed" : false,
+      "directory" : true,
+      "lexical" : "/./",
+      "match" : 3,
+      "path" : "/.//",
+      "standardized" : "/./"
+    },
+    {
+      "decomposed" : false,
+      "directory" : true,
+      "lexical" : "/./",
+      "match" : 3,
+      "path" : "/.//.",
+      "standardized" : "/./"
+    },
+    {
+      "decomposed" : false,
+      "directory" : true,
+      "lexical" : "/",
+      "match" : 0,
+      "path" : "/../..",
+      "standardized" : "/"
+    },
+    {
+      "decomposed" : false,
+      "directory" : true,
+      "lexical" : "/",
+      "match" : 0,
+      "path" : "/.././.",
+      "standardized" : "/"
+    },
+    {
+      "decomposed" : false,
+      "directory" : true,
+      "lexical" : "/",
+      "match" : 0,
+      "path" : "/./..",
+      "standardized" : "/"
+    },
+    {
+      "decomposed" : false,
+      "directory" : true,
+      "lexical" : "/",
+      "match" : 0,
+      "path" : "/./../.",
+      "standardized" : "/"
+    },
+    {
+      "decomposed" : false,
+      "directory" : false,
+      "lexical" : "/EndfieldClipboardOracle",
+      "match" : 15,
+      "path" : "/EndfieldClipboardOracle",
+      "standardized" : "/EndfieldClipboardOracle"
+    },
+    {
+      "decomposed" : false,
+      "directory" : true,
+      "lexical" : "/EndfieldClipboardOracle/",
+      "match" : 16,
+      "path" : "/EndfieldClipboardOracle/",
+      "standardized" : "/EndfieldClipboardOracle/"
+    },
+    {
+      "decomposed" : false,
+      "directory" : true,
+      "lexical" : "/EndfieldClipboardOracle/",
+      "match" : 16,
+      "path" : "/EndfieldClipboardOracle//",
+      "standardized" : "/EndfieldClipboardOracle/"
+    },
+    {
+      "decomposed" : false,
+      "directory" : true,
+      "lexical" : "/EndfieldClipboardOracle/",
+      "match" : 16,
+      "path" : "/EndfieldClipboardOracle/.",
+      "standardized" : "/EndfieldClipboardOracle/"
+    },
+    {
+      "decomposed" : false,
+      "directory" : true,
+      "lexical" : "/EndfieldClipboardOracle/",
+      "match" : 16,
+      "path" : "/EndfieldClipboardOracle/./",
+      "standardized" : "/EndfieldClipboardOracle/"
+    },
+    {
+      "decomposed" : false,
+      "directory" : true,
+      "lexical" : "/",
+      "match" : 0,
+      "path" : "/EndfieldClipboardOracle/..",
+      "standardized" : "/"
+    },
+    {
+      "decomposed" : false,
+      "directory" : true,
+      "lexical" : "/",
+      "match" : 0,
+      "path" : "/EndfieldClipboardOracle/../",
+      "standardized" : "/"
+    },
+    {
+      "decomposed" : false,
+      "directory" : false,
+      "lexical" : "/EndfieldClipboardOracle",
+      "match" : 15,
+      "path" : "//EndfieldClipboardOracle",
+      "standardized" : "/EndfieldClipboardOracle"
+    },
+    {
+      "decomposed" : false,
+      "directory" : false,
+      "lexical" : "/EndfieldClipboardOracle/a",
+      "match" : 23,
+      "path" : "//EndfieldClipboardOracle//a",
+      "standardized" : "/EndfieldClipboardOracle/a"
+    },
+    {
+      "decomposed" : false,
+      "directory" : false,
+      "lexical" : "/EndfieldClipboardOracle",
+      "match" : 15,
+      "path" : "/./EndfieldClipboardOracle",
+      "standardized" : "/EndfieldClipboardOracle"
+    },
+    {
+      "decomposed" : false,
+      "directory" : false,
+      "lexical" : "/EndfieldClipboardOracle",
+      "match" : 15,
+      "path" : "/../EndfieldClipboardOracle",
+      "standardized" : "/EndfieldClipboardOracle"
+    },
+    {
+      "decomposed" : false,
+      "directory" : false,
+      "lexical" : "/EndfieldClipboardOracle/a",
+      "match" : 23,
+      "path" : "/../../EndfieldClipboardOracle/a",
+      "standardized" : "/EndfieldClipboardOracle/a"
+    },
+    {
+      "decomposed" : false,
+      "directory" : false,
+      "lexical" : "/EndfieldClipboardOracle/a/b.txt",
+      "match" : 27,
+      "path" : "/EndfieldClipboardOracle/a/b.txt",
+      "standardized" : "/EndfieldClipboardOracle/a/b.txt"
+    },
+    {
+      "decomposed" : false,
+      "directory" : false,
+      "lexical" : "/EndfieldClipboardOracle/a/b.txt",
+      "match" : 27,
+      "path" : "/EndfieldClipboardOracle/a/./b.txt",
+      "standardized" : "/EndfieldClipboardOracle/a/b.txt"
+    },
+    {
+      "decomposed" : false,
+      "directory" : false,
+      "lexical" : "/EndfieldClipboardOracle/a/b.txt",
+      "match" : 27,
+      "path" : "/EndfieldClipboardOracle/a//b.txt",
+      "standardized" : "/EndfieldClipboardOracle/a/b.txt"
+    },
+    {
+      "decomposed" : false,
+      "directory" : false,
+      "lexical" : "/EndfieldClipboardOracle/a/b.txt",
+      "match" : 27,
+      "path" : "/EndfieldClipboardOracle/a///b.txt",
+      "standardized" : "/EndfieldClipboardOracle/a/b.txt"
+    },
+    {
+      "decomposed" : false,
+      "directory" : false,
+      "lexical" : "/EndfieldClipboardOracle/a/b.txt",
+      "match" : 27,
+      "path" : "/EndfieldClipboardOracle//a/b.txt",
+      "standardized" : "/EndfieldClipboardOracle/a/b.txt"
+    },
+    {
+      "decomposed" : false,
+      "directory" : false,
+      "lexical" : "/EndfieldClipboardOracle/a/b.txt",
+      "match" : 27,
+      "path" : "/EndfieldClipboardOracle/a/../a/b.txt",
+      "standardized" : "/EndfieldClipboardOracle/a/b.txt"
+    },
+    {
+      "decomposed" : false,
+      "directory" : false,
+      "lexical" : "/EndfieldClipboardOracle/a/b.txt",
+      "match" : 27,
+      "path" : "/EndfieldClipboardOracle/x/../a/b.txt",
+      "standardized" : "/EndfieldClipboardOracle/a/b.txt"
+    },
+    {
+      "decomposed" : false,
+      "directory" : false,
+      "lexical" : "/EndfieldClipboardOracle/a/b.txt",
+      "match" : 27,
+      "path" : "/EndfieldClipboardOracle/x/y/../../a/b.txt",
+      "standardized" : "/EndfieldClipboardOracle/a/b.txt"
+    },
+    {
+      "decomposed" : false,
+      "directory" : false,
+      "lexical" : "/EndfieldClipboardOracle/a/b.txt",
+      "match" : 27,
+      "path" : "/EndfieldClipboardOracle/a/b/../../a/b.txt",
+      "standardized" : "/EndfieldClipboardOracle/a/b.txt"
+    },
+    {
+      "decomposed" : false,
+      "directory" : false,
+      "lexical" : "/EndfieldClipboardOracle/a/b.txt",
+      "match" : 27,
+      "path" : "/EndfieldClipboardOracle/a/x/./../b.txt",
+      "standardized" : "/EndfieldClipboardOracle/a/b.txt"
+    },
+    {
+      "decomposed" : false,
+      "directory" : false,
+      "lexical" : "/a/b.txt",
+      "match" : 37,
+      "path" : "/EndfieldClipboardOracle/a/../../../../a/b.txt",
+      "standardized" : "/a/b.txt"
+    },
+    {
+      "decomposed" : false,
+      "directory" : false,
+      "lexical" : "/a/b.txt",
+      "match" : 37,
+      "path" : "/EndfieldClipboardOracle/../../a/b.txt",
+      "standardized" : "/a/b.txt"
+    },
+    {
+      "decomposed" : false,
+      "directory" : true,
+      "lexical" : "/EndfieldClipboardOracle/a/b.txt/",
+      "match" : 39,
+      "path" : "/EndfieldClipboardOracle/a/b.txt/",
+      "standardized" : "/EndfieldClipboardOracle/a/b.txt/"
+    },
+    {
+      "decomposed" : false,
+      "directory" : true,
+      "lexical" : "/EndfieldClipboardOracle/a/b.txt/",
+      "match" : 39,
+      "path" : "/EndfieldClipboardOracle/a/b.txt//",
+      "standardized" : "/EndfieldClipboardOracle/a/b.txt/"
+    },
+    {
+      "decomposed" : false,
+      "directory" : true,
+      "lexical" : "/EndfieldClipboardOracle/a/b.txt/",
+      "match" : 39,
+      "path" : "/EndfieldClipboardOracle/a/b.txt/.",
+      "standardized" : "/EndfieldClipboardOracle/a/b.txt/"
+    },
+    {
+      "decomposed" : false,
+      "directory" : true,
+      "lexical" : "/EndfieldClipboardOracle/a/b.txt/",
+      "match" : 39,
+      "path" : "/EndfieldClipboardOracle/a/b.txt/./",
+      "standardized" : "/EndfieldClipboardOracle/a/b.txt/"
+    },
+    {
+      "decomposed" : false,
+      "directory" : true,
+      "lexical" : "/EndfieldClipboardOracle/a/",
+      "match" : 43,
+      "path" : "/EndfieldClipboardOracle/a/b.txt/..",
+      "standardized" : "/EndfieldClipboardOracle/a/"
+    },
+    {
+      "decomposed" : false,
+      "directory" : true,
+      "lexical" : "/EndfieldClipboardOracle/a/",
+      "match" : 43,
+      "path" : "/EndfieldClipboardOracle/a/b.txt/../",
+      "standardized" : "/EndfieldClipboardOracle/a/"
+    },
+    {
+      "decomposed" : false,
+      "directory" : false,
+      "lexical" : "/EndfieldClipboardOracle/a/b.txt",
+      "match" : 27,
+      "path" : "/EndfieldClipboardOracle/a/b.txt/../b.txt",
+      "standardized" : "/EndfieldClipboardOracle/a/b.txt"
+    },
+    {
+      "decomposed" : false,
+      "directory" : true,
+      "lexical" : "/EndfieldClipboardOracle/a/b.txt/",
+      "match" : 39,
+      "path" : "/EndfieldClipboardOracle/a/b.txt/x/..",
+      "standardized" : "/EndfieldClipboardOracle/a/b.txt/"
+    },
+    {
+      "decomposed" : false,
+      "directory" : false,
+      "lexical" : "/EndfieldClipboardOracle/a",
+      "match" : 23,
+      "path" : "/EndfieldClipboardOracle/a",
+      "standardized" : "/EndfieldClipboardOracle/a"
+    },
+    {
+      "decomposed" : false,
+      "directory" : true,
+      "lexical" : "/EndfieldClipboardOracle/a/",
+      "match" : 43,
+      "path" : "/EndfieldClipboardOracle/a/",
+      "standardized" : "/EndfieldClipboardOracle/a/"
+    },
+    {
+      "decomposed" : false,
+      "directory" : true,
+      "lexical" : "/EndfieldClipboardOracle/a/",
+      "match" : 43,
+      "path" : "/EndfieldClipboardOracle/a/.",
+      "standardized" : "/EndfieldClipboardOracle/a/"
+    },
+    {
+      "decomposed" : false,
+      "directory" : true,
+      "lexical" : "/EndfieldClipboardOracle/a/",
+      "match" : 43,
+      "path" : "/EndfieldClipboardOracle/a/x/..",
+      "standardized" : "/EndfieldClipboardOracle/a/"
+    },
+    {
+      "decomposed" : false,
+      "directory" : true,
+      "lexical" : "/EndfieldClipboardOracle/a/",
+      "match" : 43,
+      "path" : "/EndfieldClipboardOracle/a/x/../",
+      "standardized" : "/EndfieldClipboardOracle/a/"
+    },
+    {
+      "decomposed" : false,
+      "directory" : true,
+      "lexical" : "/EndfieldClipboardOracle/a/",
+      "match" : 43,
+      "path" : "/EndfieldClipboardOracle/a/./.",
+      "standardized" : "/EndfieldClipboardOracle/a/"
+    },
+    {
+      "decomposed" : false,
+      "directory" : false,
+      "lexical" : "/EndfieldClipboardOracle/a/b",
+      "match" : 53,
+      "path" : "/EndfieldClipboardOracle/a/b",
+      "standardized" : "/EndfieldClipboardOracle/a/b"
+    },
+    {
+      "decomposed" : false,
+      "directory" : true,
+      "lexical" : "/EndfieldClipboardOracle/",
+      "match" : 16,
+      "path" : "/EndfieldClipboardOracle/x/..",
+      "standardized" : "/EndfieldClipboardOracle/"
+    },
+    {
+      "decomposed" : false,
+      "directory" : true,
+      "lexical" : "/EndfieldClipboardOracle/",
+      "match" : 16,
+      "path" : "/EndfieldClipboardOracle/x/../.",
+      "standardized" : "/EndfieldClipboardOracle/"
+    },
+    {
+      "decomposed" : false,
+      "directory" : true,
+      "lexical" : "/EndfieldClipboardOracle/",
+      "match" : 16,
+      "path" : "/EndfieldClipboardOracle/./x/..",
+      "standardized" : "/EndfieldClipboardOracle/"
+    },
+    {
+      "decomposed" : false,
+      "directory" : false,
+      "lexical" : "/EndfieldClipboardOracle/...",
+      "match" : 57,
+      "path" : "/EndfieldClipboardOracle/...",
+      "standardized" : "/EndfieldClipboardOracle/..."
+    },
+    {
+      "decomposed" : false,
+      "directory" : true,
+      "lexical" : "/EndfieldClipboardOracle/.../",
+      "match" : 58,
+      "path" : "/EndfieldClipboardOracle/.../",
+      "standardized" : "/EndfieldClipboardOracle/.../"
+    },
+    {
+      "decomposed" : false,
+      "directory" : true,
+      "lexical" : "/EndfieldClipboardOracle/",
+      "match" : 16,
+      "path" : "/EndfieldClipboardOracle/.../..",
+      "standardized" : "/EndfieldClipboardOracle/"
+    },
+    {
+      "decomposed" : false,
+      "directory" : false,
+      "lexical" : "/EndfieldClipboardOracle/..a/a../.a./a.b",
+      "match" : 60,
+      "path" : "/EndfieldClipboardOracle/..a/a../.a./a.b",
+      "standardized" : "/EndfieldClipboardOracle/..a/a../.a./a.b"
+    },
+    {
+      "decomposed" : false,
+      "directory" : false,
+      "lexical" : "/EndfieldClipboardOracle/. /x",
+      "match" : 61,
+      "path" : "/EndfieldClipboardOracle/. /x",
+      "standardized" : "/EndfieldClipboardOracle/. /x"
+    },
+    {
+      "decomposed" : false,
+      "directory" : false,
+      "lexical" : "/EndfieldClipboardOracle/ ./x",
+      "match" : 62,
+      "path" : "/EndfieldClipboardOracle/ ./x",
+      "standardized" : "/EndfieldClipboardOracle/ ./x"
+    },
+    {
+      "decomposed" : false,
+      "directory" : false,
+      "lexical" : "/EndfieldClipboardOracle/.. /x",
+      "match" : 63,
+      "path" : "/EndfieldClipboardOracle/.. /x",
+      "standardized" : "/EndfieldClipboardOracle/.. /x"
+    },
+    {
+      "decomposed" : false,
+      "directory" : false,
+      "lexical" : "/EndfieldClipboardOracle/a/.b/..c",
+      "match" : 64,
+      "path" : "/EndfieldClipboardOracle/a/.b/..c",
+      "standardized" : "/EndfieldClipboardOracle/a/.b/..c"
+    },
+    {
+      "decomposed" : false,
+      "directory" : false,
+      "lexical" : "/EndfieldClipboardOracle/A/B.txt",
+      "match" : 65,
+      "path" : "/EndfieldClipboardOracle/A/B.txt",
+      "standardized" : "/EndfieldClipboardOracle/A/B.txt"
+    },
+    {
+      "decomposed" : false,
+      "directory" : false,
+      "lexical" : "/EndfieldClipboardOracle/a/B.txt",
+      "match" : 66,
+      "path" : "/EndfieldClipboardOracle/a/B.txt",
+      "standardized" : "/EndfieldClipboardOracle/a/B.txt"
+    },
+    {
+      "decomposed" : false,
+      "directory" : false,
+      "lexical" : "/EndfieldClipboardOracle/a b/c%20d",
+      "match" : 67,
+      "path" : "/EndfieldClipboardOracle/a b/c%20d",
+      "standardized" : "/EndfieldClipboardOracle/a b/c%20d"
+    },
+    {
+      "decomposed" : false,
+      "directory" : false,
+      "lexical" : "/EndfieldClipboardOracle/a b/c%20d",
+      "match" : 67,
+      "path" : "/EndfieldClipboardOracle/a b/./c%20d",
+      "standardized" : "/EndfieldClipboardOracle/a b/c%20d"
+    },
+    {
+      "decomposed" : false,
+      "directory" : false,
+      "lexical" : "/EndfieldClipboardOracle/#?;=&+,$@!'()*",
+      "match" : 69,
+      "path" : "/EndfieldClipboardOracle/#?;=&+,$@!'()*",
+      "standardized" : "/EndfieldClipboardOracle/#?;=&+,$@!'()*"
+    },
+    {
+      "decomposed" : false,
+      "directory" : false,
+      "lexical" : "/EndfieldClipboardOracle/%",
+      "match" : 70,
+      "path" : "/EndfieldClipboardOracle/%",
+      "standardized" : "/EndfieldClipboardOracle/%"
+    },
+    {
+      "decomposed" : false,
+      "directory" : false,
+      "lexical" : "/EndfieldClipboardOracle/%2F",
+      "match" : 71,
+      "path" : "/EndfieldClipboardOracle/%2F",
+      "standardized" : "/EndfieldClipboardOracle/%2F"
+    },
+    {
+      "decomposed" : false,
+      "directory" : false,
+      "lexical" : "/EndfieldClipboardOracle/%2e%2e",
+      "match" : 72,
+      "path" : "/EndfieldClipboardOracle/%2e%2e",
+      "standardized" : "/EndfieldClipboardOracle/%2e%2e"
+    },
+    {
+      "decomposed" : false,
+      "directory" : false,
+      "lexical" : "/EndfieldClipboardOracle/中文/文件.txt",
+      "match" : 73,
+      "path" : "/EndfieldClipboardOracle/中文/文件.txt",
+      "standardized" : "/EndfieldClipboardOracle/中文/文件.txt"
+    },
+    {
+      "decomposed" : false,
+      "directory" : false,
+      "lexical" : "/EndfieldClipboardOracle/中文/文件.txt",
+      "match" : 73,
+      "path" : "/EndfieldClipboardOracle/中文/../中文/文件.txt",
+      "standardized" : "/EndfieldClipboardOracle/中文/文件.txt"
+    },
+    {
+      "decomposed" : true,
+      "directory" : false,
+      "lexical" : "/EndfieldClipboardOracle/é",
+      "match" : 75,
+      "path" : "/EndfieldClipboardOracle/é",
+      "standardized" : "/EndfieldClipboardOracle/é"
+    },
+    {
+      "decomposed" : false,
+      "directory" : false,
+      "lexical" : "/EndfieldClipboardOracle/é",
+      "match" : 75,
+      "path" : "/EndfieldClipboardOracle/é",
+      "standardized" : "/EndfieldClipboardOracle/é"
+    },
+    {
+      "decomposed" : true,
+      "directory" : false,
+      "lexical" : "/EndfieldClipboardOracle/Å/x",
+      "match" : 77,
+      "path" : "/EndfieldClipboardOracle/Å/x",
+      "standardized" : "/EndfieldClipboardOracle/Å/x"
+    },
+    {
+      "decomposed" : false,
+      "directory" : false,
+      "lexical" : "/EndfieldClipboardOracle/Å/x",
+      "match" : 78,
+      "path" : "/EndfieldClipboardOracle/Å/x",
+      "standardized" : "/EndfieldClipboardOracle/Å/x"
+    },
+    {
+      "decomposed" : false,
+      "directory" : false,
+      "lexical" : "/EndfieldClipboardOracle/Å/x",
+      "match" : 77,
+      "path" : "/EndfieldClipboardOracle/Å/x",
+      "standardized" : "/EndfieldClipboardOracle/Å/x"
+    },
+    {
+      "decomposed" : true,
+      "directory" : false,
+      "lexical" : "/EndfieldClipboardOracle/가",
+      "match" : 80,
+      "path" : "/EndfieldClipboardOracle/가",
+      "standardized" : "/EndfieldClipboardOracle/가"
+    },
+    {
+      "decomposed" : false,
+      "directory" : false,
+      "lexical" : "/EndfieldClipboardOracle/가",
+      "match" : 80,
+      "path" : "/EndfieldClipboardOracle/가",
+      "standardized" : "/EndfieldClipboardOracle/가"
+    },
+    {
+      "decomposed" : false,
+      "directory" : false,
+      "lexical" : "/EndfieldClipboardOracle/😀/x",
+      "match" : 82,
+      "path" : "/EndfieldClipboardOracle/😀/x",
+      "standardized" : "/EndfieldClipboardOracle/😀/x"
+    },
+    {
+      "decomposed" : false,
+      "directory" : false,
+      "lexical" : "/EndfieldClipboardOracle/~",
+      "match" : 83,
+      "path" : "/EndfieldClipboardOracle/~",
+      "standardized" : "/EndfieldClipboardOracle/~"
+    },
+    {
+      "decomposed" : false,
+      "directory" : false,
+      "lexical" : "/EndfieldClipboardOracle/~/x",
+      "match" : 84,
+      "path" : "/EndfieldClipboardOracle/~/x",
+      "standardized" : "/EndfieldClipboardOracle/~/x"
+    },
+    {
+      "decomposed" : false,
+      "directory" : false,
+      "lexical" : "/~",
+      "match" : 85,
+      "path" : "/~",
+      "standardized" : "/~"
+    },
+    {
+      "decomposed" : false,
+      "directory" : false,
+      "lexical" : "/EndfieldClipboardOracle/a/b.txt",
+      "match" : 27,
+      "path" : "/EndfieldClipboardOracle/a/~/../b.txt",
+      "standardized" : "/EndfieldClipboardOracle/a/b.txt"
+    }
+  ],
+  "runtime" : "Version 15.7.4 (Build 24G517)",
+  "texts" : [
+    {
+      "first" : "abc",
+      "kind" : "text",
+      "matches" : true,
+      "second" : "abc"
+    },
+    {
+      "first" : "abc",
+      "kind" : "text",
+      "matches" : false,
+      "second" : "abd"
+    },
+    {
+      "first" : "abc",
+      "kind" : "text",
+      "matches" : false,
+      "second" : "ab"
+    },
+    {
+      "first" : "A",
+      "kind" : "text",
+      "matches" : false,
+      "second" : "a"
+    },
+    {
+      "first" : "café",
+      "kind" : "text",
+      "matches" : true,
+      "second" : "café"
+    },
+    {
+      "first" : "K",
+      "kind" : "text",
+      "matches" : true,
+      "second" : "K"
+    },
+    {
+      "first" : "Å",
+      "kind" : "text",
+      "matches" : true,
+      "second" : "Å"
+    },
+    {
+      "first" : "Å",
+      "kind" : "text",
+      "matches" : true,
+      "second" : "Å"
+    },
+    {
+      "first" : "Å",
+      "kind" : "text",
+      "matches" : true,
+      "second" : "Å"
+    },
+    {
+      "first" : "ą́",
+      "kind" : "text",
+      "matches" : true,
+      "second" : "ą́"
+    },
+    {
+      "first" : "á̀",
+      "kind" : "text",
+      "matches" : false,
+      "second" : "à́"
+    },
+    {
+      "first" : "가",
+      "kind" : "text",
+      "matches" : true,
+      "second" : "가"
+    },
+    {
+      "first" : "각",
+      "kind" : "text",
+      "matches" : true,
+      "second" : "각"
+    },
+    {
+      "first" : "각",
+      "kind" : "text",
+      "matches" : true,
+      "second" : "각"
+    },
+    {
+      "first" : ";",
+      "kind" : "text",
+      "matches" : true,
+      "second" : ";"
+    },
+    {
+      "first" : "Ω",
+      "kind" : "text",
+      "matches" : true,
+      "second" : "Ω"
+    },
+    {
+      "first" : "ά",
+      "kind" : "text",
+      "matches" : true,
+      "second" : "ά"
+    },
+    {
+      "first" : "क़",
+      "kind" : "text",
+      "matches" : true,
+      "second" : "क़"
+    },
+    {
+      "first" : "fi",
+      "kind" : "text",
+      "matches" : false,
+      "second" : "ﬁ"
+    },
+    {
+      "first" : "é",
+      "kind" : "text",
+      "matches" : false,
+      "second" : "è"
+    },
+    {
+      "first" : "x́",
+      "kind" : "text",
+      "matches" : false,
+      "second" : "x"
+    },
+    {
+      "first" : "\r\n",
+      "kind" : "text",
+      "matches" : false,
+      "second" : "\n"
+    },
+    {
+      "first" : "é́",
+      "kind" : "text",
+      "matches" : true,
+      "second" : "é́"
+    },
+    {
+      "first" : "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaé",
+      "kind" : "text",
+      "matches" : true,
+      "second" : "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaé"
+    },
+    {
+      "first" : "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaéaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind" : "text",
+      "matches" : false,
+      "second" : "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaéaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab"
+    },
+    {
+      "first" : "👨‍👩‍👧",
+      "kind" : "text",
+      "matches" : true,
+      "second" : "👨‍👩‍👧"
+    },
+    {
+      "first" : "👨‍👩‍👧",
+      "kind" : "text",
+      "matches" : false,
+      "second" : "👨👩👧"
+    },
+    {
+      "first" : "𝅗𝅥",
+      "kind" : "text",
+      "matches" : true,
+      "second" : "𝅗𝅥"
+    },
+    {
+      "first" : " ",
+      "kind" : "text",
+      "matches" : true,
+      "second" : " "
+    },
+    {
+      "first" : " ",
+      "kind" : "text",
+      "matches" : false,
+      "second" : " "
+    },
+    {
+      "first" : "豈",
+      "kind" : "text",
+      "matches" : true,
+      "second" : "豈"
+    },
+    {
+      "first" : "丽",
+      "kind" : "text",
+      "matches" : true,
+      "second" : "丽"
+    },
+    {
+      "first" : "Ｋ",
+      "kind" : "text",
+      "matches" : false,
+      "second" : "K"
+    },
+    {
+      "first" : "̀",
+      "kind" : "text",
+      "matches" : true,
+      "second" : "̀"
+    },
+    {
+      "first" : "̈́",
+      "kind" : "text",
+      "matches" : true,
+      "second" : "̈́"
+    },
+    {
+      "first" : "q̣̇",
+      "kind" : "text",
+      "matches" : true,
+      "second" : "q̣̇"
+    },
+    {
+      "first" : "ḍ̇",
+      "kind" : "text",
+      "matches" : true,
+      "second" : "ḍ̇"
+    },
+    {
+      "first" : "ẛ̣",
+      "kind" : "text",
+      "matches" : true,
+      "second" : "ẛ̣"
+    },
+    {
+      "first" : "中文",
+      "kind" : "text",
+      "matches" : true,
+      "second" : "中文"
+    },
+    {
+      "first" : "café",
+      "firstURL" : "https://example.com/",
+      "kind" : "url",
+      "matches" : true,
+      "second" : "café",
+      "secondURL" : "https://example.com/"
+    },
+    {
+      "first" : "K",
+      "firstURL" : "https://example.com/",
+      "kind" : "url",
+      "matches" : true,
+      "second" : "K",
+      "secondURL" : "https://example.com/"
+    },
+    {
+      "first" : "abc",
+      "firstURL" : "https://example.com/",
+      "kind" : "url",
+      "matches" : false,
+      "second" : "abd",
+      "secondURL" : "https://example.com/"
+    },
+    {
+      "first" : "abc",
+      "firstURL" : "https://example.com/",
+      "kind" : "url",
+      "matches" : false,
+      "second" : "abc",
+      "secondURL" : "https://example.com/b"
+    }
+  ]
+}

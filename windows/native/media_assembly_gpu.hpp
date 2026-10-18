@@ -1,0 +1,106 @@
+#pragma once
+#include "modules/media_assembly_processor.hpp"
+#include <memory>
+#include <span>
+
+#ifdef _WIN32
+struct ID3D11Device;struct IDXGISurface;
+namespace endfield::native {
+struct MediaAssemblyGpuStats {
+    std::uint64_t renders{},inPlace{},readbacks{},sourceUploads{},sourceAllocations{},lookupUploads{},targetAllocations{},colourUploads{};
+    std::uint64_t releases{};     // releaseResources() calls that dropped textures
+    std::size_t residentBytes{};  // bytes held now: textures (source, cube, curves, scratch, export/band targets) plus the CPU cube copy
+};
+// GPU evaluation of the MediaAssemblyEngine.apply colour chain and geometry
+// (no stickers) on an existing D3D11 device. It runs exactly the portable
+// MediaAssemblyColorPipeline constants (modules/media_assembly_processor):
+// the integer crop/mirror/quarter-turn permutation, exposure, colour
+// controls, the temperature/tint matrix, the tone spline, levels, gamma and
+// the exact trilinear 32^3 lookup (Highlights/Shadows applies no change, the
+// documented gap in media_assembly_processor.hpp), in the encoded
+// (still/preview) or linear (video compositor) working space. Results match
+// the CPU reference within one RGBA8 level (WARP test).
+//
+// Threading/resources: every call belongs to the thread that owns the
+// device's immediate context (the UI thread for Renderer::mediaDevice(), or
+// the explicit export job's own device on the utility worker). It creates no
+// thread, timer or device. Textures are allocated only when a size/format
+// changes (source, scratch, export targets) and reused for later frames; the
+// context state is cleared after each pass, matching the renderer's own
+// passes. Shader bytecode is compiled once per process.
+class NativeMediaAssemblyGpuProcessor final {
+public:
+    // device: AddRef-owned ID3D11Device*, held for the processor's lifetime
+    // (a Renderer::mediaDevice lease keeps the renderer from releasing the
+    // device meanwhile: drop the processor when idle).
+    explicit NativeMediaAssemblyGpuProcessor(std::shared_ptr<void>device);
+    ~NativeMediaAssemblyGpuProcessor();
+    NativeMediaAssemblyGpuProcessor(const NativeMediaAssemblyGpuProcessor&)=delete;
+    NativeMediaAssemblyGpuProcessor&operator=(const NativeMediaAssemblyGpuProcessor&)=delete;
+    // RGBA8 rows (top-left origin, encoded sRGB). rotationDegrees is the Media
+    // Foundation display rotation (0/90/180/270), folded into the geometry so
+    // movie frames need no CPU rotation copy. Same-size uploads reuse the
+    // texture. The edit plan is computed on the oriented size. colour (a
+    // straight still with an embedded profile) converts each source pixel
+    // into the working space first, exactly like MediaAssemblyPixels::colour
+    // on the CPU; its 256-entry curves are uploaded once per profile.
+    void setSource(unsigned width,unsigned height,std::span<const std::uint8_t>rgba,std::size_t stride,bool premultiplied,unsigned rotationDegrees=0,
+        std::shared_ptr<const modules::MediaAssemblySourceColour>colour={});
+    bool hasSource()const noexcept;
+    // Edits for the following passes (stickers are ignored: they are retained
+    // scene leaves in previews and composited by the CPU on image export).
+    // Returns the processed output plan for the current source.
+    modules::MediaAssemblyPixelPlan configure(const modules::MediaAssemblyAdjustments&,std::span<const std::uint8_t>lookup,bool linearWorkingSpace);
+    // Renders the configured edit of the source into an RTV-capable 8-bit
+    // UNORM surface of exactly the plan's output size, as straight encoded
+    // pixels (the Renderer media-texture/frame-server contract).
+    void render(IDXGISurface*target);
+    // The source colour reading on its own (setSource sets it too): a still's
+    // embedded profile, or for processInPlace a movie's CoreMedia 709 reading
+    // (modules::mediaAssemblyVideoColour). Null: sRGB.
+    void setColour(std::shared_ptr<const modules::MediaAssemblySourceColour>colour);
+    // Colour-only edit of a straight BGRA8 frame-server surface in place
+    // (played movie frames; geometry stays in texture coordinates), read
+    // through the current colour first. The configured edits are used; no
+    // source is required.
+    void processInPlace(IDXGISurface*surface);
+    // Export: renders associated pixels, bilinearly resamples them to
+    // width x height when that differs from the plan (the even composition
+    // size, mediaAssemblyResample semantics) and reads BGRA8 rows back.
+    void renderToMemory(unsigned width,unsigned height,std::span<std::uint8_t>bgra,std::size_t stride);
+    // Still export: rows [first, first+count) of the configured edit at the
+    // plan's own size as associated, unclamped float RGBA (stride in floats;
+    // MediaAssemblyFrameProcessor::renderColour layout) through one reused
+    // float band target, so a full-resolution export never needs a full-size
+    // output or readback texture, and the CPU sticker step composites and
+    // unassociates them exactly like the CPU processor.
+    void renderRows(unsigned first,unsigned count,std::span<float>associated,std::size_t stride);
+    // Drops borrowed external-surface views (call when the frame-server or
+    // media texture they belong to is retired).
+    void releaseTargets()noexcept;
+    // Drops every texture this processor owns (source, lookup cube, profile
+    // curves, scratch, export and band targets, their CPU cube copy) and the
+    // borrowed views, keeping only the device programs: the owner's equivalent
+    // of the source CIContext.clearCaches when the editor is hidden or its
+    // player released. The next setSource/configure/processInPlace allocates
+    // again; until setSource, render() needs a source.
+    void releaseResources()noexcept;
+    MediaAssemblyGpuStats stats()const noexcept;
+private:struct Impl;std::unique_ptr<Impl>impl_;
+};
+// Compiles the processor's shaders once per process (thread-safe; throws on
+// failure). Hosts run it on the utility worker so the UI thread never pays
+// the HLSL compile; processors created afterwards only create device objects.
+// A build that found the Windows SDK's fxc embeds their bytecode instead
+// (native/media_assembly_gpu.shaders.cmake): the shaders are then ready from
+// the start and nothing is compiled at run time.
+void prepareMediaAssemblyGpuShaders();
+bool mediaAssemblyGpuShadersReady()noexcept;
+bool mediaAssemblyGpuShadersEmbedded()noexcept;
+// A hardware D3D11 device for one explicit export job on the utility worker
+// (the source AVAssetExportSession likewise renders its composition on the
+// GPU). Released when the job ends; null when no hardware device exists, in
+// which case the caller uses the CPU processor.
+std::shared_ptr<void>createMediaAssemblyExportDevice()noexcept;
+}
+#endif

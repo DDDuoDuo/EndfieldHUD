@@ -1,0 +1,1021 @@
+{
+  "accessibility" : [
+    {
+      "buttons" : [
+        {
+          "enabled" : false,
+          "help" : "Adjust each audio process independently. 100% is full volume and keeps an enabled route running.",
+          "label" : "Choose output device"
+        },
+        {
+          "enabled" : false,
+          "help" : "Adjust each audio process independently. 100% is full volume and keeps an enabled route running.",
+          "label" : "Choose input device"
+        },
+        {
+          "enabled" : true,
+          "help" : "Adjust each audio process independently. 100% is full volume and keeps an enabled route running.",
+          "label" : "Mute"
+        },
+        {
+          "enabled" : true,
+          "help" : "Adjust each audio process independently. 100% is full volume and keeps an enabled route running.",
+          "label" : "Headphones / Bluetooth"
+        },
+        {
+          "enabled" : true,
+          "help" : "Adjust each audio process independently. 100% is full volume and keeps an enabled route running.",
+          "label" : "App volume"
+        }
+      ],
+      "sliders" : [
+        {
+          "enabled" : true,
+          "help" : "55%",
+          "label" : "Output volume",
+          "maximum" : 1,
+          "minimum" : 0,
+          "value" : 0.55000000000000004,
+          "valueText" : null
+        },
+        {
+          "enabled" : true,
+          "help" : "L 25%",
+          "label" : "Left/right balance",
+          "maximum" : 1,
+          "minimum" : -1,
+          "value" : -0.25,
+          "valueText" : null
+        },
+        {
+          "enabled" : true,
+          "help" : "100% · Adjust to enable a temporary audio route; macOS may request System Audio Recording access",
+          "label" : "Player · PID 1000 volume",
+          "maximum" : 1,
+          "minimum" : 0,
+          "value" : 1,
+          "valueText" : null
+        },
+        {
+          "enabled" : true,
+          "help" : "100% · Adjust to enable a temporary audio route; macOS may request System Audio Recording access",
+          "label" : "PID 1001 volume",
+          "maximum" : 1,
+          "minimum" : 0,
+          "value" : 1,
+          "valueText" : null
+        }
+      ],
+      "state" : "main",
+      "status" : "Adjust each audio process independently. 100% is full volume and keeps an enabled route running."
+    },
+    {
+      "buttons" : [
+        {
+          "enabled" : false,
+          "help" : "Adjust each audio process independently. 100% is full volume and keeps an enabled route running.",
+          "label" : "Choose output device"
+        },
+        {
+          "enabled" : false,
+          "help" : "Adjust each audio process independently. 100% is full volume and keeps an enabled route running.",
+          "label" : "Choose input device"
+        },
+        {
+          "enabled" : true,
+          "help" : "Adjust each audio process independently. 100% is full volume and keeps an enabled route running.",
+          "label" : "Mute"
+        },
+        {
+          "enabled" : true,
+          "help" : "Adjust each audio process independently. 100% is full volume and keeps an enabled route running.",
+          "label" : "Headphones / Bluetooth"
+        },
+        {
+          "enabled" : true,
+          "help" : "Adjust each audio process independently. 100% is full volume and keeps an enabled route running.",
+          "label" : "App volume"
+        }
+      ],
+      "sliders" : [
+        {
+          "enabled" : true,
+          "help" : "55%",
+          "label" : "Output volume",
+          "maximum" : 1,
+          "minimum" : 0,
+          "value" : 0.55000000000000004,
+          "valueText" : null
+        },
+        {
+          "enabled" : true,
+          "help" : "L 25%",
+          "label" : "Left/right balance",
+          "maximum" : 1,
+          "minimum" : -1,
+          "value" : -0.25,
+          "valueText" : null
+        },
+        {
+          "enabled" : true,
+          "help" : "50% · Adjusts only this audio process; 100% keeps its route running at full volume",
+          "label" : "Player · PID 1000 volume",
+          "maximum" : 1,
+          "minimum" : 0,
+          "value" : 0.5,
+          "valueText" : null
+        },
+        {
+          "enabled" : true,
+          "help" : "100% · Adjust to enable a temporary audio route; macOS may request System Audio Recording access",
+          "label" : "PID 1001 volume",
+          "maximum" : 1,
+          "minimum" : 0,
+          "value" : 1,
+          "valueText" : null
+        }
+      ],
+      "state" : "app-active",
+      "status" : "Adjust each audio process independently. 100% is full volume and keeps an enabled route running."
+    },
+    {
+      "buttons" : [
+        {
+          "enabled" : false,
+          "help" : "Adjust each audio process independently. 100% is full volume and keeps an enabled route running.",
+          "label" : "Choose output device"
+        },
+        {
+          "enabled" : false,
+          "help" : "Adjust each audio process independently. 100% is full volume and keeps an enabled route running.",
+          "label" : "Choose input device"
+        },
+        {
+          "enabled" : true,
+          "help" : "Adjust each audio process independently. 100% is full volume and keeps an enabled route running.",
+          "label" : "Mute"
+        },
+        {
+          "enabled" : true,
+          "help" : "Adjust each audio process independently. 100% is full volume and keeps an enabled route running.",
+          "label" : "Headphones / Bluetooth"
+        },
+        {
+          "enabled" : true,
+          "help" : "Adjust each audio process independently. 100% is full volume and keeps an enabled route running.",
+          "label" : "App volume"
+        }
+      ],
+      "sliders" : [
+        {
+          "enabled" : false,
+          "help" : "55% · Not adjustable on this device",
+          "label" : "Output volume",
+          "maximum" : 1,
+          "minimum" : 0,
+          "value" : 0.55000000000000004,
+          "valueText" : null
+        },
+        {
+          "enabled" : false,
+          "help" : "Unavailable · Not adjustable on this device",
+          "label" : "Left/right balance",
+          "maximum" : 1,
+          "minimum" : -1,
+          "value" : null,
+          "valueText" : "Unavailable"
+        },
+        {
+          "enabled" : true,
+          "help" : "100% · Adjust to enable a temporary audio route; macOS may request System Audio Recording access",
+          "label" : "Player · PID 1000 volume",
+          "maximum" : 1,
+          "minimum" : 0,
+          "value" : 1,
+          "valueText" : null
+        },
+        {
+          "enabled" : true,
+          "help" : "100% · Adjust to enable a temporary audio route; macOS may request System Audio Recording access",
+          "label" : "PID 1001 volume",
+          "maximum" : 1,
+          "minimum" : 0,
+          "value" : 1,
+          "valueText" : null
+        }
+      ],
+      "state" : "fixed",
+      "status" : "Adjust each audio process independently. 100% is full volume and keeps an enabled route running."
+    },
+    {
+      "buttons" : [
+        {
+          "enabled" : false,
+          "help" : "Adjust each audio process independently. 100% is full volume and keeps an enabled route running.",
+          "label" : "Choose output device"
+        },
+        {
+          "enabled" : false,
+          "help" : "Adjust each audio process independently. 100% is full volume and keeps an enabled route running.",
+          "label" : "Choose input device"
+        },
+        {
+          "enabled" : true,
+          "help" : "Adjust each audio process independently. 100% is full volume and keeps an enabled route running.",
+          "label" : "Mute"
+        },
+        {
+          "enabled" : true,
+          "help" : "Adjust each audio process independently. 100% is full volume and keeps an enabled route running.",
+          "label" : "Headphones / Bluetooth"
+        },
+        {
+          "enabled" : true,
+          "help" : "Adjust each audio process independently. 100% is full volume and keeps an enabled route running.",
+          "label" : "App volume"
+        }
+      ],
+      "sliders" : [
+        {
+          "enabled" : true,
+          "help" : "55%",
+          "label" : "Output volume",
+          "maximum" : 1,
+          "minimum" : 0,
+          "value" : 0.55000000000000004,
+          "valueText" : null
+        },
+        {
+          "enabled" : true,
+          "help" : "Centered",
+          "label" : "Left/right balance",
+          "maximum" : 1,
+          "minimum" : -1,
+          "value" : 0.0040000000000000001,
+          "valueText" : null
+        },
+        {
+          "enabled" : true,
+          "help" : "100% · Adjust to enable a temporary audio route; macOS may request System Audio Recording access",
+          "label" : "Player · PID 1000 volume",
+          "maximum" : 1,
+          "minimum" : 0,
+          "value" : 1,
+          "valueText" : null
+        },
+        {
+          "enabled" : true,
+          "help" : "100% · Adjust to enable a temporary audio route; macOS may request System Audio Recording access",
+          "label" : "PID 1001 volume",
+          "maximum" : 1,
+          "minimum" : 0,
+          "value" : 1,
+          "valueText" : null
+        }
+      ],
+      "state" : "centered",
+      "status" : "Adjust each audio process independently. 100% is full volume and keeps an enabled route running."
+    },
+    {
+      "buttons" : [
+        {
+          "enabled" : false,
+          "help" : "Adjust each audio process independently. 100% is full volume and keeps an enabled route running.",
+          "label" : "Choose output device"
+        },
+        {
+          "enabled" : false,
+          "help" : "Adjust each audio process independently. 100% is full volume and keeps an enabled route running.",
+          "label" : "Choose input device"
+        },
+        {
+          "enabled" : true,
+          "help" : "Adjust each audio process independently. 100% is full volume and keeps an enabled route running.",
+          "label" : "Mute"
+        },
+        {
+          "enabled" : true,
+          "help" : "Adjust each audio process independently. 100% is full volume and keeps an enabled route running.",
+          "label" : "Headphones / Bluetooth"
+        },
+        {
+          "enabled" : true,
+          "help" : "Adjust each audio process independently. 100% is full volume and keeps an enabled route running.",
+          "label" : "App volume"
+        }
+      ],
+      "sliders" : [
+        {
+          "enabled" : false,
+          "help" : "Unavailable · Not adjustable on this device",
+          "label" : "Output volume",
+          "maximum" : 1,
+          "minimum" : 0,
+          "value" : null,
+          "valueText" : "Unavailable"
+        },
+        {
+          "enabled" : true,
+          "help" : "R 60%",
+          "label" : "Left/right balance",
+          "maximum" : 1,
+          "minimum" : -1,
+          "value" : 0.59999999999999998,
+          "valueText" : null
+        },
+        {
+          "enabled" : true,
+          "help" : "100% · Adjust to enable a temporary audio route; macOS may request System Audio Recording access",
+          "label" : "Player · PID 1000 volume",
+          "maximum" : 1,
+          "minimum" : 0,
+          "value" : 1,
+          "valueText" : null
+        },
+        {
+          "enabled" : true,
+          "help" : "100% · Adjust to enable a temporary audio route; macOS may request System Audio Recording access",
+          "label" : "PID 1001 volume",
+          "maximum" : 1,
+          "minimum" : 0,
+          "value" : 1,
+          "valueText" : null
+        }
+      ],
+      "state" : "right-unavailable",
+      "status" : "Adjust each audio process independently. 100% is full volume and keeps an enabled route running."
+    },
+    {
+      "buttons" : [
+        {
+          "enabled" : false,
+          "help" : "Adjust each audio process independently. 100% is full volume and keeps an enabled route running.",
+          "label" : "Choose output device"
+        },
+        {
+          "enabled" : false,
+          "help" : "Adjust each audio process independently. 100% is full volume and keeps an enabled route running.",
+          "label" : "Choose input device"
+        },
+        {
+          "enabled" : true,
+          "help" : "Adjust each audio process independently. 100% is full volume and keeps an enabled route running.",
+          "label" : "Mute"
+        },
+        {
+          "enabled" : true,
+          "help" : "Adjust each audio process independently. 100% is full volume and keeps an enabled route running.",
+          "label" : "Headphones / Bluetooth"
+        },
+        {
+          "enabled" : true,
+          "help" : "Adjust each audio process independently. 100% is full volume and keeps an enabled route running.",
+          "label" : "App volume"
+        }
+      ],
+      "sliders" : [
+        {
+          "enabled" : true,
+          "help" : "55%",
+          "label" : "Output volume",
+          "maximum" : 1,
+          "minimum" : 0,
+          "value" : 0.55000000000000004,
+          "valueText" : null
+        },
+        {
+          "enabled" : true,
+          "help" : "L 25%",
+          "label" : "Left/right balance",
+          "maximum" : 1,
+          "minimum" : -1,
+          "value" : -0.25,
+          "valueText" : null
+        }
+      ],
+      "state" : "headphones",
+      "status" : "Adjust each audio process independently. 100% is full volume and keeps an enabled route running."
+    }
+  ],
+  "balance" : [
+    {
+      "balance" : 0,
+      "left" : 0,
+      "right" : 0
+    },
+    {
+      "balance" : 1,
+      "left" : 0,
+      "right" : 0.10000000000000001
+    },
+    {
+      "balance" : 1,
+      "left" : 0,
+      "right" : 0.25
+    },
+    {
+      "balance" : 1,
+      "left" : 0,
+      "right" : 0.5
+    },
+    {
+      "balance" : 1,
+      "left" : 0,
+      "right" : 0.75
+    },
+    {
+      "balance" : 1,
+      "left" : 0,
+      "right" : 0.90000000000000002
+    },
+    {
+      "balance" : 1,
+      "left" : 0,
+      "right" : 1
+    },
+    {
+      "balance" : -1,
+      "left" : 0.10000000000000001,
+      "right" : 0
+    },
+    {
+      "balance" : 0,
+      "left" : 0.10000000000000001,
+      "right" : 0.10000000000000001
+    },
+    {
+      "balance" : 0.59999999999999998,
+      "left" : 0.10000000000000001,
+      "right" : 0.25
+    },
+    {
+      "balance" : 0.80000000000000004,
+      "left" : 0.10000000000000001,
+      "right" : 0.5
+    },
+    {
+      "balance" : 0.8666666666666667,
+      "left" : 0.10000000000000001,
+      "right" : 0.75
+    },
+    {
+      "balance" : 0.88888888888888895,
+      "left" : 0.10000000000000001,
+      "right" : 0.90000000000000002
+    },
+    {
+      "balance" : 0.90000000000000002,
+      "left" : 0.10000000000000001,
+      "right" : 1
+    },
+    {
+      "balance" : -1,
+      "left" : 0.25,
+      "right" : 0
+    },
+    {
+      "balance" : -0.59999999999999998,
+      "left" : 0.25,
+      "right" : 0.10000000000000001
+    },
+    {
+      "balance" : 0,
+      "left" : 0.25,
+      "right" : 0.25
+    },
+    {
+      "balance" : 0.5,
+      "left" : 0.25,
+      "right" : 0.5
+    },
+    {
+      "balance" : 0.66666666666666663,
+      "left" : 0.25,
+      "right" : 0.75
+    },
+    {
+      "balance" : 0.72222222222222221,
+      "left" : 0.25,
+      "right" : 0.90000000000000002
+    },
+    {
+      "balance" : 0.75,
+      "left" : 0.25,
+      "right" : 1
+    },
+    {
+      "balance" : -1,
+      "left" : 0.5,
+      "right" : 0
+    },
+    {
+      "balance" : -0.80000000000000004,
+      "left" : 0.5,
+      "right" : 0.10000000000000001
+    },
+    {
+      "balance" : -0.5,
+      "left" : 0.5,
+      "right" : 0.25
+    },
+    {
+      "balance" : 0,
+      "left" : 0.5,
+      "right" : 0.5
+    },
+    {
+      "balance" : 0.33333333333333331,
+      "left" : 0.5,
+      "right" : 0.75
+    },
+    {
+      "balance" : 0.44444444444444448,
+      "left" : 0.5,
+      "right" : 0.90000000000000002
+    },
+    {
+      "balance" : 0.5,
+      "left" : 0.5,
+      "right" : 1
+    },
+    {
+      "balance" : -1,
+      "left" : 0.75,
+      "right" : 0
+    },
+    {
+      "balance" : -0.8666666666666667,
+      "left" : 0.75,
+      "right" : 0.10000000000000001
+    },
+    {
+      "balance" : -0.66666666666666663,
+      "left" : 0.75,
+      "right" : 0.25
+    },
+    {
+      "balance" : -0.33333333333333331,
+      "left" : 0.75,
+      "right" : 0.5
+    },
+    {
+      "balance" : 0,
+      "left" : 0.75,
+      "right" : 0.75
+    },
+    {
+      "balance" : 0.16666666666666669,
+      "left" : 0.75,
+      "right" : 0.90000000000000002
+    },
+    {
+      "balance" : 0.25,
+      "left" : 0.75,
+      "right" : 1
+    },
+    {
+      "balance" : -1,
+      "left" : 0.90000000000000002,
+      "right" : 0
+    },
+    {
+      "balance" : -0.88888888888888895,
+      "left" : 0.90000000000000002,
+      "right" : 0.10000000000000001
+    },
+    {
+      "balance" : -0.72222222222222221,
+      "left" : 0.90000000000000002,
+      "right" : 0.25
+    },
+    {
+      "balance" : -0.44444444444444448,
+      "left" : 0.90000000000000002,
+      "right" : 0.5
+    },
+    {
+      "balance" : -0.16666666666666669,
+      "left" : 0.90000000000000002,
+      "right" : 0.75
+    },
+    {
+      "balance" : 0,
+      "left" : 0.90000000000000002,
+      "right" : 0.90000000000000002
+    },
+    {
+      "balance" : 0.099999999999999978,
+      "left" : 0.90000000000000002,
+      "right" : 1
+    },
+    {
+      "balance" : -1,
+      "left" : 1,
+      "right" : 0
+    },
+    {
+      "balance" : -0.90000000000000002,
+      "left" : 1,
+      "right" : 0.10000000000000001
+    },
+    {
+      "balance" : -0.75,
+      "left" : 1,
+      "right" : 0.25
+    },
+    {
+      "balance" : -0.5,
+      "left" : 1,
+      "right" : 0.5
+    },
+    {
+      "balance" : -0.25,
+      "left" : 1,
+      "right" : 0.75
+    },
+    {
+      "balance" : -0.099999999999999978,
+      "left" : 1,
+      "right" : 0.90000000000000002
+    },
+    {
+      "balance" : 0,
+      "left" : 1,
+      "right" : 1
+    }
+  ],
+  "ordering" : [
+    "alpha",
+    "Bluetooth Buds",
+    "Headphones",
+    "Headphones A",
+    "headphones B",
+    "Line In 4",
+    "Line In 05",
+    "Speakers 1",
+    "speakers 2",
+    "Speakers 10",
+    "USB Audio 3",
+    "USB Audio 12",
+    "Zeta"
+  ],
+  "realAudioActivated" : false,
+  "schemaVersion" : 1,
+  "sourceAuthority" : "ca04f142185c7de40acd8523bdb563195d90a1d1",
+  "stereo" : [
+    {
+      "balance" : -1,
+      "levels" : [
+        0,
+        0
+      ],
+      "volume" : 0
+    },
+    {
+      "balance" : -0.59999999999999998,
+      "levels" : [
+        0,
+        0
+      ],
+      "volume" : 0
+    },
+    {
+      "balance" : -0.25,
+      "levels" : [
+        0,
+        0
+      ],
+      "volume" : 0
+    },
+    {
+      "balance" : 0,
+      "levels" : [
+        0,
+        0
+      ],
+      "volume" : 0
+    },
+    {
+      "balance" : 0.25,
+      "levels" : [
+        0,
+        0
+      ],
+      "volume" : 0
+    },
+    {
+      "balance" : 0.59999999999999998,
+      "levels" : [
+        0,
+        0
+      ],
+      "volume" : 0
+    },
+    {
+      "balance" : 1,
+      "levels" : [
+        0,
+        0
+      ],
+      "volume" : 0
+    },
+    {
+      "balance" : -1,
+      "levels" : [
+        0.29999999999999999,
+        0
+      ],
+      "volume" : 0.29999999999999999
+    },
+    {
+      "balance" : -0.59999999999999998,
+      "levels" : [
+        0.29999999999999999,
+        0.12
+      ],
+      "volume" : 0.29999999999999999
+    },
+    {
+      "balance" : -0.25,
+      "levels" : [
+        0.29999999999999999,
+        0.22499999999999998
+      ],
+      "volume" : 0.29999999999999999
+    },
+    {
+      "balance" : 0,
+      "levels" : [
+        0.29999999999999999,
+        0.29999999999999999
+      ],
+      "volume" : 0.29999999999999999
+    },
+    {
+      "balance" : 0.25,
+      "levels" : [
+        0.22499999999999998,
+        0.29999999999999999
+      ],
+      "volume" : 0.29999999999999999
+    },
+    {
+      "balance" : 0.59999999999999998,
+      "levels" : [
+        0.12,
+        0.29999999999999999
+      ],
+      "volume" : 0.29999999999999999
+    },
+    {
+      "balance" : 1,
+      "levels" : [
+        0,
+        0.29999999999999999
+      ],
+      "volume" : 0.29999999999999999
+    },
+    {
+      "balance" : -1,
+      "levels" : [
+        0.55000000000000004,
+        0
+      ],
+      "volume" : 0.55000000000000004
+    },
+    {
+      "balance" : -0.59999999999999998,
+      "levels" : [
+        0.55000000000000004,
+        0.22000000000000003
+      ],
+      "volume" : 0.55000000000000004
+    },
+    {
+      "balance" : -0.25,
+      "levels" : [
+        0.55000000000000004,
+        0.41250000000000003
+      ],
+      "volume" : 0.55000000000000004
+    },
+    {
+      "balance" : 0,
+      "levels" : [
+        0.55000000000000004,
+        0.55000000000000004
+      ],
+      "volume" : 0.55000000000000004
+    },
+    {
+      "balance" : 0.25,
+      "levels" : [
+        0.41250000000000003,
+        0.55000000000000004
+      ],
+      "volume" : 0.55000000000000004
+    },
+    {
+      "balance" : 0.59999999999999998,
+      "levels" : [
+        0.22000000000000003,
+        0.55000000000000004
+      ],
+      "volume" : 0.55000000000000004
+    },
+    {
+      "balance" : 1,
+      "levels" : [
+        0,
+        0.55000000000000004
+      ],
+      "volume" : 0.55000000000000004
+    },
+    {
+      "balance" : -1,
+      "levels" : [
+        1,
+        0
+      ],
+      "volume" : 1
+    },
+    {
+      "balance" : -0.59999999999999998,
+      "levels" : [
+        1,
+        0.40000000000000002
+      ],
+      "volume" : 1
+    },
+    {
+      "balance" : -0.25,
+      "levels" : [
+        1,
+        0.75
+      ],
+      "volume" : 1
+    },
+    {
+      "balance" : 0,
+      "levels" : [
+        1,
+        1
+      ],
+      "volume" : 1
+    },
+    {
+      "balance" : 0.25,
+      "levels" : [
+        0.75,
+        1
+      ],
+      "volume" : 1
+    },
+    {
+      "balance" : 0.59999999999999998,
+      "levels" : [
+        0.40000000000000002,
+        1
+      ],
+      "volume" : 1
+    },
+    {
+      "balance" : 1,
+      "levels" : [
+        0,
+        1
+      ],
+      "volume" : 1
+    }
+  ],
+  "topology" : [
+    {
+      "devices" : [
+        {
+          "id" : "{0.0.0.00000000}.{a}",
+          "name" : "Speakers (Synthetic Audio)"
+        },
+        {
+          "id" : "{0.0.1.00000000}.{m}",
+          "name" : "Microphone (Synthetic Audio)"
+        }
+      ],
+      "events" : [
+
+      ]
+    },
+    {
+      "devices" : [
+        {
+          "id" : "{0.0.0.00000000}.{a}",
+          "name" : "Speakers (Synthetic Audio)"
+        },
+        {
+          "id" : "{0.0.0.00000000}.{h}",
+          "name" : "Headphones (Synthetic USB)"
+        },
+        {
+          "id" : "{0.0.1.00000000}.{h}",
+          "name" : "Headset Microphone (Synthetic USB)"
+        },
+        {
+          "id" : "{0.0.1.00000000}.{m}",
+          "name" : "Microphone (Synthetic Audio)"
+        }
+      ],
+      "events" : [
+        {
+          "device" : "Headphones (Synthetic USB)",
+          "kind" : "connected"
+        },
+        {
+          "device" : "Headset Microphone (Synthetic USB)",
+          "kind" : "connected"
+        }
+      ]
+    },
+    {
+      "devices" : [
+        {
+          "id" : "{0.0.0.00000000}.{a}",
+          "name" : "Speakers (Synthetic Audio)"
+        },
+        {
+          "id" : "{0.0.0.00000000}.{b}",
+          "name" : "Buds (Synthetic Bluetooth)"
+        }
+      ],
+      "events" : [
+        {
+          "device" : "Headphones (Synthetic USB)",
+          "kind" : "disconnected"
+        },
+        {
+          "device" : "Headset Microphone (Synthetic USB)",
+          "kind" : "disconnected"
+        },
+        {
+          "device" : "Microphone (Synthetic Audio)",
+          "kind" : "disconnected"
+        },
+        {
+          "device" : "Buds (Synthetic Bluetooth)",
+          "kind" : "connected"
+        }
+      ]
+    },
+    {
+      "devices" : [
+        {
+          "id" : "{0.0.0.00000000}.{a}",
+          "name" : "Speakers (Synthetic Audio)"
+        },
+        {
+          "id" : "{0.0.0.00000000}.{b}",
+          "name" : "Buds (Synthetic Bluetooth)"
+        }
+      ],
+      "events" : [
+
+      ]
+    },
+    {
+      "devices" : [
+
+      ],
+      "events" : [
+        {
+          "device" : "Speakers (Synthetic Audio)",
+          "kind" : "disconnected"
+        },
+        {
+          "device" : "Buds (Synthetic Bluetooth)",
+          "kind" : "disconnected"
+        }
+      ]
+    },
+    {
+      "devices" : [
+        {
+          "id" : "{0.0.0.00000000}.{a}",
+          "name" : "Speakers (Synthetic Audio)"
+        },
+        {
+          "id" : "{0.0.0.00000000}.{z}",
+          "name" : "扬声器 (合成)"
+        }
+      ],
+      "events" : [
+        {
+          "device" : "Speakers (Synthetic Audio)",
+          "kind" : "connected"
+        },
+        {
+          "device" : "扬声器 (合成)",
+          "kind" : "connected"
+        }
+      ]
+    }
+  ],
+  "windowCreated" : false
+}

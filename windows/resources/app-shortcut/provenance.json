@@ -1,0 +1,53 @@
+{
+  "sourceCommit": "ca04f142185c7de40acd8523bdb563195d90a1d1",
+  "sourcePins": {
+    "Sources/AppShortcutCanvas.swift": "05bcdd613ef2ffa59cd0a069e088481baeb2e86fe2f4eb036c9ab7c1234156b3",
+    "Sources/AppShortcutArtwork.swift": "76aa98f32b5bea0c15fd98fda61a03a6f8ef17ee34d977823f077e60f8930b7f",
+    "Sources/EndfieldGameIcon.swift": "9763996185a3094faf77290e5930e5f4cc18e221d10dd4e5012adb2ea1dc3f95",
+    "Sources/HUDControlHighlightLayer.swift": "0c76274f67c7e5e1f7252ce3bc8171fe69673b58a402a94718b83a26a43f6e56",
+    "Sources/AppShortcutStore.swift": "ba71520500f85d1e4b0615250f67a9c76470c639bbaa0d6c44a4e67c0d7ad814",
+    "Sources/HUDAppShortcutInteraction.swift": "ad71d3ae279ea530cc6a63fceef3a2fffb8623e7cdc280fec3c38a675cb4eb42"
+  },
+  "generatedBy": "windows/tools/app_shortcut_reference.py",
+  "artworkSHA256": "4400e1eed35bf3012269b5cda92797fbc505b2ddb93928a5aaf484c659d225b8",
+  "originalPNGBytes": 19281,
+  "images": [
+    {
+      "file": "AppIconSources/EndfieldWiki/Power_icon.png",
+      "sha256": "c1f59f467bac8d1c014427c92d34938e924d4f4818dec0330b0a6e6ed6f9b1f1"
+    },
+    {
+      "file": "AppIconSources/EndfieldWiki/Medal_Icon.png",
+      "sha256": "dbee388881229d081e607700e0c35bcc8e3f753c3543be1f96d700e5ddc4665b"
+    },
+    {
+      "file": "AppIconSources/EndfieldWiki/Environment_Monitoring.png",
+      "sha256": "c2bddf1785f8b391fbc906c3185515247a45465125cb3ad4b9d828ee7d25c961"
+    },
+    {
+      "file": "AppIconSources/EndfieldWiki/Store_icon.png",
+      "sha256": "569cf597bf7b4816a6ec4965b2fc84ad11c996df825d3da6af979fcb18aa512e"
+    },
+    {
+      "file": "AppIconSources/EndfieldWiki/Depot_icon.png",
+      "sha256": "41f9a002dcc84117907751576c791239705d21a286b6df0d31ae34c8af4705d3"
+    },
+    {
+      "file": "AppIconSources/EndfieldWiki/AIC_Icon.png",
+      "sha256": "8a8a34bb48a10687caaa61386382b12551fd1d2587d9c0b5e58f22dd23df13b9"
+    },
+    {
+      "file": "AppIconSources/EndfieldWiki/Operator_icon.png",
+      "sha256": "e07d1db4cb377d422e6733f05c93d3617a838a68c72c2c743fe82f486c6308f5"
+    },
+    {
+      "file": "AppIconSources/EndfieldWiki/World_Map_Icon.png",
+      "sha256": "a9382bcfa7f39453dadcca14c725a967a12f59f0922868ca23dea4ff6a22ed1b"
+    },
+    {
+      "file": "AppIconSources/EndfieldWiki/Baker_Icon.png",
+      "sha256": "f1ace87336ac90a08431039921f77351729da6ee0ec8ed38a67d826f1229ad62"
+    }
+  ],
+  "authority": "Original detached AppShortcutArtwork/HUDPencilArtwork/HUDControlHighlightLayer; original unchanged wiki PNGs, attribution in Resources/AppIconSources/EndfieldWiki/SOURCES.json. No user/application icons included."
+}

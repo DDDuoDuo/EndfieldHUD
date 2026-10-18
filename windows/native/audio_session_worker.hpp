@@ -1,0 +1,143 @@
+#pragma once
+#include "core/data/file_shelf_store.hpp"
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <optional>
+#include <span>
+#include <string>
+#include <string_view>
+#include <vector>
+
+namespace endfield::native {
+// Optional presentation metadata, captured on the existing audio worker from
+// the retained PID+creation-time process handle. The file identity describes
+// the current regular file at that process-reported executable path, not a
+// proof of which historical bytes Windows mapped into the running process.
+// No file handle, icon pixels, persistent shelf record or UI object crosses
+// into the snapshot. The shared Shell worker revalidates before extraction.
+struct AudioApplicationExecutable {
+    std::string path;ehud::data::ShelfFileIdentity identity;
+    bool operator==(const AudioApplicationExecutable&)const=default;
+};
+bool validAudioApplicationExecutable(const AudioApplicationExecutable&)noexcept;
+// Internal provider for SystemServices, not another application service. Exact
+// session IDs are backend lease keys; processKey is PID + creation-time identity.
+// A backend must never invent process ownership for multi-process/system audio.
+struct AudioSessionRecord {
+    std::string id,processKey;
+    std::wstring name;
+    std::uint32_t pid{};
+    bool active{},controllable{};
+    std::optional<float> volume;
+    std::int32_t error{};
+    std::optional<AudioApplicationExecutable> executable;
+    // IAudioSessionControl2::GetSessionIdentifier: the cross-instance key under
+    // which Windows persists an application's mixer level. Used only by the
+    // owned-attenuation recovery journal, never to merge processes.
+    std::string persistentID;
+    // GetApplicationUserModelId of the exact PID+creation-time process, when
+    // the process has one (packaged/explicit identity). Never inferred.
+    std::string appUserModelID;
+    // The exact PID+creation-time process has terminated while this session
+    // object is still held. Reported once so owned attenuation can be restored
+    // on the still-existing session (Windows persists the level per app); the
+    // backend releases the session on its next read. Never listed as an app.
+    bool exited{};
+    bool operator==(const AudioSessionRecord&)const=default;
+};
+// Native float scalars are compared with this tolerance everywhere a readback
+// must prove that a value is still the one this owner wrote.
+inline constexpr float audioSessionScalarTolerance=2e-6f;
+enum class AudioApplicationRouteState { direct,active,failed };
+struct AudioApplicationRoute {
+    std::string id;
+    std::wstring name;
+    std::uint32_t pid{};
+    bool available{};
+    AudioApplicationRouteState state{};
+    std::optional<float>gain;
+    std::int32_t error{};
+    std::optional<AudioApplicationExecutable> executable;
+    // Shared by every session of this process; empty when unknown/conflicting.
+    std::string appUserModelID;
+    // Any of the process's sessions is AudioSessionStateActive (rendering
+    // now). Now Playing reads it for window-title players, which report no
+    // play state; a play/pause republishes the applications.
+    bool rendering{};
+    bool operator==(const AudioApplicationRoute&)const=default;
+};
+struct AudioSessionSnapshot {
+    std::uint64_t revision{};
+    bool paused{true},supported{};
+    std::wstring endpoint;
+    std::vector<AudioApplicationRoute>applications;
+    std::int32_t error{};
+    bool operator==(const AudioSessionSnapshot&)const=default;
+};
+// All methods, construction and destruction are called on the ONE worker.
+// Wake may run on native COM callback threads and must be nonblocking. Backend
+// pause unregisters notifications but retains leased volume interfaces, allowing
+// identity-bound cleanup without a second service or polling. close is terminal.
+class AudioSessionBackend {
+public:
+    using Wake=std::function<void()>;
+    virtual ~AudioSessionBackend()=default;
+    virtual std::int32_t open(std::wstring_view endpoint,Wake)=0;
+    virtual std::int32_t resume(Wake)=0;
+    virtual void pause()noexcept=0;
+    virtual std::int32_t read(std::vector<AudioSessionRecord>&)=0;
+    virtual std::int32_t readVolume(std::string_view,float&)=0;
+    virtual std::int32_t writeVolume(std::string_view,float)=0;
+    virtual void close()noexcept=0;
+};
+// Source-owned attenuation transaction. Direct100% does not alter the user's
+// native mixer; each opted-in session remembers its original scalar. Stop only
+// restores scalars still equal to this owner’s last write, preserving external
+// changes observed before cleanup. Public WASAPI has no atomic compare-and-set;
+// a concurrent external write between native read/write cannot be excluded.
+// No OS calls, clocks, threads or persistence exist in this typed core.
+class AudioSessionRoutes final {
+public:
+    static constexpr std::size_t maximumSessions=512,maximumApplications=512;
+    AudioSessionRoutes();~AudioSessionRoutes();
+    AudioSessionRoutes(AudioSessionRoutes&&)noexcept;
+    AudioSessionRoutes&operator=(AudioSessionRoutes&&)noexcept;
+    AudioSessionRoutes(const AudioSessionRoutes&)=delete;
+    AudioSessionRoutes&operator=(const AudioSessionRoutes&)=delete;
+    void update(std::span<const AudioSessionRecord>,AudioSessionBackend&);
+    std::int32_t setGain(std::string_view,float,AudioSessionBackend&);
+    std::int32_t stop(std::string_view,AudioSessionBackend&);
+    std::int32_t stopAll(AudioSessionBackend&);
+    const std::vector<AudioApplicationRoute>&applications()const noexcept;
+private:class Impl;std::unique_ptr<Impl>impl_;
+};
+// All lifecycle/command/drain calls belong to one owner thread. Notice must not
+// destroy/stop this object on its worker; post an owner message instead.
+// Caller-owned lifecycle. One sleeping atomic-wait worker, bounded/coalesced
+// explicit commands, no timers. The notice runs on that worker and should only
+// PostMessage the owner's existing coalesced WM_APP generation. Factory injection
+// lets isolated tests exercise lifecycle without activating native audio.
+class AudioSessionWorker final {
+public:
+    using Factory=std::function<std::unique_ptr<AudioSessionBackend>()>;
+    using Notice=std::function<void()>;
+    explicit AudioSessionWorker(Factory,Notice={});~AudioSessionWorker();
+    AudioSessionWorker(const AudioSessionWorker&)=delete;
+    AudioSessionWorker&operator=(const AudioSessionWorker&)=delete;
+    // Empty endpoint means unsupported, never silently follows another device.
+    bool activate(std::wstring endpoint);
+    bool pause();
+    bool setGain(std::string application,float scalar);
+    bool stopApplication(std::string application);
+    bool stopApplications();
+    bool takeSnapshot(AudioSessionSnapshot&);
+    void stop()noexcept;
+private:class Impl;std::unique_ptr<Impl>impl_;
+};
+#ifdef _WIN32
+// Constructed on the worker MTA only. Merely obtaining the factory does not
+// activate COM/audio; tests must inject their own backend rather than invoke it.
+AudioSessionWorker::Factory nativeAudioSessionBackendFactory();
+#endif
+} // namespace endfield::native

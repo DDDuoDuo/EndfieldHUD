@@ -10,7 +10,7 @@
   <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.zh-TW.md">繁體中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a>
 </p>
 
-A little bit of *Arknights: Endfield* on your Mac. Open a layered, animated HUD using hotkey/from the menu bar for notes, files, music, game stats, and everyday tools.
+A little bit of *Arknights: Endfield* on your Mac or Windows PC. Open a layered, animated HUD using hotkey/from the menu bar for notes, files, music, game stats, and everyday tools.
 
 <a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/v1.2.0"><img src="docs/media/readme/release-v1.2.0.png" alt="Release v1.2.0" width="326"></a>
 
@@ -25,6 +25,21 @@ A little bit of *Arknights: Endfield* on your Mac. Open a layered, animated HUD 
 
 If macOS blocks the app, go to **System Settings → Privacy & Security → Open Anyway**, then confirm. The app isn't notarized by Apple yet.
 
+**Windows**
+
+[Download Setup EXE](https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.2.0/EndfieldHUD-1.2.0-build18-windows-x64-setup.exe) · [Download Portable ZIP](https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.2.0/EndfieldHUD-1.2.0-build18-windows-x64-portable.zip)
+
+0. If you have already installed a copy of EndfieldHUD, click **Check for updates** in **About**, or run a newer setup over it. Your data stays.
+1. Run the setup. It installs for your account only (no administrator permission needed) and adds EndfieldHUD to the Start menu.
+2. Keep **Launch at login** ticked if you want it to start when you sign in. Choose **Install**, then **Open EndfieldHUD**.
+3. Look for its icon in the notification area (system tray) instead of the menu bar. Press Ctrl + backtick (`) to open the HUD, same as on the Mac. You can change it in **Hotkeys**.
+
+If Windows SmartScreen shows **Windows protected your PC**, choose **More info → Run anyway**. The app isn't code-signed yet.
+
+Don't want to install? Unzip the portable ZIP anywhere and run **EndfieldHUD.exe**. It has no Start menu entry and no Calendar reminder notifications.
+
+To uninstall, go to **Settings → Apps → Installed apps → EndfieldHUD → Uninstall**. Your data stays unless you tick **Also delete my EndfieldHUD data**.
+
 Use the side buttons to switch sections, and scroll the right side for more. **Esc** backs out of an edit before closing the HUD. Closing it keeps the app running; pressing the red power button allows you to quit this app.
 
 ![HUD opening and closing](docs/media/readme/opening.gif)
@@ -32,6 +47,8 @@ Use the side buttons to switch sections, and scroll the right side for more. **E
 <img src="docs/media/readme/en-02-requirements.png" alt="Requirements" width="326">
 
 Apple silicon: **macOS 11+**. Intel: **macOS 10.15.4+**. Some tools need a newer system or supported hardware.
+
+Windows PC: **Windows 11, 64-bit (x64)**. Windows 10 and ARM64 aren't supported. It needs a Direct3D 11 graphics card and about 64 MiB of disk space.
 
 Allow permissions when you use the features that need them:
 

@@ -1,0 +1,367 @@
+#pragma once
+#include "audio_session_worker.hpp"
+#include "clipboard_image.hpp"
+
+#include <atomic>
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <optional>
+#include <span>
+#include <string>
+#include <string_view>
+#include <vector>
+
+namespace endfield::native {
+
+struct PowerStatus {
+    std::uint8_t ac_line_status{255}, battery_flags{255}, battery_percent{255};
+    std::uint32_t remaining_seconds{0xffffffffu}, full_seconds{0xffffffffu};
+};
+struct BatterySnapshot {
+    bool available{};
+    std::optional<bool> present, ac_connected, charging, fully_charged;
+    std::optional<unsigned> percent;
+    std::optional<std::uint32_t> remaining_seconds, full_seconds;
+    bool operator==(const BatterySnapshot&) const = default;
+};
+// Pure decoder also used by synthetic tests. Unknown native values stay unknown.
+BatterySnapshot decode_power_status(const PowerStatus& status) noexcept;
+
+enum class ClipboardKind { text, url, files, image };
+enum class ClipboardImageFormat { dib, dib_v5, png, tiff };
+struct ClipboardPayload {
+    ClipboardKind kind{ClipboardKind::text};
+    // kind text: the string. kind url: the ORIGINAL string the link came from
+    // (Mac ClipboardPayload.url(_, original)): the row preview and the
+    // CF_UNICODETEXT copy-back.
+    std::u16string text;
+    std::vector<std::u16string> files;
+    ClipboardImageFormat image_format{ClipboardImageFormat::dib};
+    std::vector<std::uint8_t> image;
+    // Native capture shares original encoded bytes with its validated thumbnail.
+    // Legacy value-owned synthetic callers can continue using image instead.
+    std::shared_ptr<const ClipboardImageThumbnail> decodedImage;
+    // kind url only: the link itself (Mac url.absoluteString), ASCII, written
+    // back as UniformResourceLocatorW. Synthetic callers may leave it empty;
+    // ClipboardHistory::ingest then derives it from text exactly as the Mac
+    // string heuristic does.
+    std::u16string url;
+    std::span<const std::uint8_t> image_bytes() const noexcept;
+    // Exact structural equality (every field, image bytes by value).
+    bool operator==(const ClipboardPayload&) const;
+    // ClipboardPayload.matches: the history identity ClipboardStore.capture
+    // uses to move a repeated copy to the front instead of adding it. Text by
+    // canonical equivalence (Swift String ==), a link by its URL and original
+    // string, an image by format and bytes, files by their standardized paths
+    // in order (URL.standardizedFileURL). Oracle: tools/clipboard_matches_reference.sh.
+    bool matches(const ClipboardPayload&) const;
+};
+struct ClipboardItem {
+    std::uint64_t id{};
+    bool pinned{};
+    ClipboardPayload payload;
+};
+enum class ClipboardInsertResult { inserted, moved, duplicate, excluded, invalid, full };
+
+// No OS access, file copies, disk persistence or timers. Newest item is first.
+// Image bytes preserve the accepted clipboard format, including its alpha data.
+class ClipboardHistory final {
+public:
+    static constexpr std::size_t maximum_text_bytes = 1'048'576;
+    static constexpr std::size_t maximum_image_bytes = 64 * 1'048'576;
+    // ClipboardStore.swift:183–195. Encoded payload storage is independent of
+    // decoded dimensions; a preview consumer must produce only a 96px thumbnail.
+    static constexpr std::uint32_t maximum_image_dimension = 100'000;
+    static constexpr std::uint64_t maximum_image_pixels = 100'000'000;
+    static constexpr unsigned maximum_thumbnail_dimension = 96;
+    static constexpr std::size_t maximum_retained_bytes = 128 * 1'048'576;
+    static constexpr std::size_t maximum_files = 512;
+    static constexpr std::size_t maximum_capacity = 512;
+    explicit ClipboardHistory(std::size_t capacity = 10);
+    const std::vector<ClipboardItem>& items() const noexcept { return items_; }
+    const ClipboardItem* find(std::uint64_t id) const noexcept;
+    std::size_t retained_bytes() const noexcept { return retained_bytes_; }
+    std::size_t capacity() const noexcept { return capacity_; }
+    ClipboardInsertResult ingest(ClipboardPayload payload, bool excluded = false);
+    bool erase(std::uint64_t id);
+    bool pin(std::uint64_t id, bool pinned);
+    bool set_capacity(std::size_t capacity);
+    void clear(bool keep_pinned = true);
+    static bool valid(const ClipboardPayload& payload) noexcept;
+    static std::size_t payload_bytes(const ClipboardPayload& payload) noexcept;
+    static bool valid_utf16(std::u16string_view value) noexcept;
+    static std::size_t utf8_bytes(std::u16string_view value) noexcept;
+    // ClipboardStore.read: a plain string is a link only up to 2048 UTF-8 bytes.
+    static constexpr std::size_t maximum_detected_url_bytes = 2048;
+    // A stored link (ASCII absoluteString) never exceeds 4x the text bound:
+    // percent-encoding triples a UTF-8 byte and IDNA labels stay below 4x.
+    static constexpr std::size_t maximum_url_units = 4 * maximum_text_bytes;
+    // ClipboardStore.parsedURL(_:explicit:) on macOS 14+ Foundation: trims
+    // whitespace and newlines, rejects inner whitespace, parses like
+    // URL(string:) (RFC 3986 with invalid characters percent-encoded and
+    // non-ASCII hosts converted by UTS #46 IDNA) and returns absoluteString.
+    // http/https/ftp need a host; explicit_type (the clipboard's URL type)
+    // accepts any scheme, a plain string only mailto/tel/sms with content and
+    // file with a path. Oracle: tools/clipboard_url_reference.sh. Without ICU
+    // (portable builds) a non-ASCII host is rejected.
+    static std::optional<std::u16string> parsed_url(std::u16string_view text, bool explicit_type);
+    // The plain-string classification: at most 2048 UTF-8 bytes and a link.
+    static bool url_text(std::u16string_view value);
+    // Swift String == : canonical equivalence (NFC through ICU). Only the
+    // tails after the last normalization boundary before the first differing
+    // unit are normalized, and only when either is not already NFC. Without
+    // ICU (portable builds) code units are compared.
+    static bool canonically_equal(std::u16string_view first, std::u16string_view second);
+    // The comparison key of a CF_HDROP path: URL.standardizedFileURL without
+    // file system access. / and \ both separate; empty and "." names are
+    // dropped and ".." removes the name before it, never above the drive or
+    // share; a trailing separator or a last "." or ".." is the directory hint
+    // and stays; the drive letter is upper-cased. Names keep their case and
+    // normalization. Other paths are returned as given.
+    static std::u16string standardized_file_path(std::u16string_view path);
+    // Metadata preflight only: no allocation, decompression or pixel buffer.
+    static bool valid_image_metadata(std::uint32_t width, std::uint32_t height,
+        std::size_t encoded_bytes) noexcept;
+    // Pure structural DIB/PNG validation, without invoking an image decoder.
+    // PNG stream/CRC validity and successful bounded thumbnail decoding remain
+    // the image consumer's responsibility, as distinct from these size limits.
+    static bool valid_image(ClipboardImageFormat format, std::span<const std::uint8_t> bytes) noexcept;
+private:
+    std::vector<ClipboardItem> items_;
+    std::size_t capacity_{10}, retained_bytes_{};
+    std::uint64_t next_id_{1};
+};
+
+// The reader runs ONLY on the owner thread. Each invocation atomically reads
+// under the native clipboard lease and verifies expectedSequence, including
+// format fallbacks after asynchronous decode. No OS access belongs to a worker.
+enum class ClipboardReadState { payload,empty,excluded,busy,stale,invalid };
+struct ClipboardReadResult {
+    ClipboardReadState state{ClipboardReadState::empty};
+    std::uint32_t sequence{};
+    ClipboardPayload payload;
+    unsigned nextImage{};
+    std::int32_t nativeError{};
+};
+enum class ClipboardCaptureState { idle,pending,changed,unchanged,empty,excluded,busy,stale,invalid,full,unavailable };
+class ClipboardCapture final {
+public:
+    static constexpr std::array imageFormats{ClipboardImageFormat::png,ClipboardImageFormat::tiff,ClipboardImageFormat::dib_v5,ClipboardImageFormat::dib};
+    using Reader=std::function<ClipboardReadResult(std::uint32_t expectedSequence,unsigned firstImage)>;
+    using Sequence=std::function<std::uint32_t()>;
+    using Changed=std::function<void(ClipboardCaptureState,std::int32_t)>;
+    // History and executor must outlive capture. Decoder injection is for owned
+    // fixtures; default performs real bounded WIC validation on the utility job.
+    ClipboardCapture(ClipboardHistory&,app::UtilityExecutor&,Reader,Sequence,Changed,
+        NativeClipboardImageProbe::Decoder=decodeClipboardImage);
+    ~ClipboardCapture();
+    ClipboardCapture(const ClipboardCapture&)=delete;
+    ClipboardCapture&operator=(const ClipboardCapture&)=delete;
+    ClipboardCaptureState begin(std::uint32_t sequence);
+    void cancel();
+    bool queueCapacityAvailable();
+    // One caller-posted retry after a busy native lease; preserves next format.
+    bool retryBusy();
+    ClipboardCaptureState state() const;
+private:struct Impl;std::shared_ptr<Impl>impl_;
+};
+
+struct AudioDevice {
+    std::wstring id, name;
+    bool is_default{};
+    bool headphones{}; // Explicit endpoint form factor; no name/ID guessing.
+    bool operator==(const AudioDevice&) const = default;
+};
+struct AudioSnapshot {
+    bool available{}, paused{true};
+    std::vector<AudioDevice> devices;
+    std::wstring default_device_id, controlled_device_id;
+    std::optional<float> volume;
+    std::optional<bool> muted;
+    // HRESULT represented without a Windows dependency for model consumers.
+    std::int32_t error{};
+    std::vector<AudioDevice> inputs;
+    std::wstring default_input_device_id;
+    std::optional<float> balance;
+    bool can_set_balance{};
+    std::int32_t input_error{};
+    bool application_supported{},applications_paused{true};
+    std::vector<AudioApplicationRoute>applications;
+    std::int32_t application_error{};
+    bool operator==(const AudioSnapshot&) const = default;
+};
+// Same peak-preserving stereo math as Mac AudioVolumeMath. Unknown/nonfinite
+// channel state remains unavailable; all-zero channels cannot infer balance.
+std::optional<float> audio_stereo_balance(float left,float right) noexcept;
+std::array<float,2> audio_stereo_levels(float peak,float balance) noexcept;
+struct AudioStereoAccess {
+    std::function<std::int32_t(unsigned,float&)>read;
+    std::function<std::int32_t(unsigned,float)>write;
+};
+// HRESULT-shaped status, preserving the first failure unless rollback fails.
+// Reads both originals before mutation, validates each readback, and restores
+// all attempted channels in reverse order, as the source HAL transaction does.
+std::int32_t apply_audio_stereo_balance(float,const AudioStereoAccess&) noexcept;
+enum class ServiceChange : unsigned { battery = 1, clipboard = 2, audio = 4 };
+
+// Testable, allocation-free callback mailbox. request() returns true only for
+// the first event in a batch; the caller posts one message. cancel() is terminal.
+// Posted messages carry a separately allocated generation, never a raw pointer.
+class NotificationBatch final {
+public:
+    bool request(unsigned events) noexcept;
+    unsigned drain() noexcept;
+    void cancel() noexcept;
+    bool active() const noexcept { return active_.load(std::memory_order_acquire); }
+private:
+    std::atomic<bool> active_{true};
+    std::atomic<unsigned> pending_{};
+};
+class ClipboardSequence final {
+public:
+    void begin(std::uint32_t sequence) noexcept { last_ = sequence; own_ = 0; }
+    bool should_capture(std::uint32_t sequence) const noexcept;
+    void acknowledge(std::uint32_t sequence) noexcept { last_ = sequence; }
+    void copied(std::uint32_t sequence) noexcept { last_ = own_ = sequence; }
+    // An acknowledged capture was interrupted before it reached history (an
+    // image still validating when capture was suspended): the next refresh may
+    // read the current clipboard again; the app's own copy stays excluded.
+    void reopen() noexcept { last_ = 0; }
+private:
+    std::uint32_t last_{}, own_{};
+};
+struct ClipboardExclusion {
+    bool concealed_marker{}, malformed_history_flag{};
+    std::optional<std::uint32_t> include_in_history;
+};
+bool excludes_clipboard(const ClipboardExclusion& policy) noexcept;
+
+} // namespace endfield::native
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+
+namespace endfield::native {
+
+// The clipboard SystemServices listens to, reads and writes. Production uses
+// the session's Windows clipboard (windowsClipboardBackend). Tests and hidden
+// coverage pass a synthetic clipboard (SystemServicesOptions::clipboard) so
+// the user's clipboard is never read, written or listened to. Every call runs
+// on the owner thread.
+struct ClipboardFormatData { const void* data{}; std::size_t size{}; };
+struct ClipboardFormatWrite { UINT format{}; std::span<const std::uint8_t> bytes; bool required{true}; };
+struct ClipboardWriteResult {
+    bool prepared{true}; // false: a required buffer could not be allocated (clipboard untouched)
+    bool opened{};       // false: another process holds the clipboard (status says why)
+    HRESULT status{S_OK};
+    DWORD sequence{};    // read inside the lease after the writes (opened only)
+};
+class ClipboardBackend {
+public:
+    virtual ~ClipboardBackend() = default;
+    virtual UINT register_format(const wchar_t* name) = 0; // RegisterClipboardFormatW; 0 on failure
+    virtual bool listen(HWND owner) = 0;                    // AddClipboardFormatListener
+    virtual void unlisten(HWND owner) noexcept = 0;
+    virtual DWORD sequence() = 0;                           // GetClipboardSequenceNumber
+    virtual HRESULT open(HWND owner) = 0;                   // OpenClipboard: S_OK or why not (busy)
+    virtual void close() noexcept = 0;                      // releases every data() view
+    virtual bool available(UINT format) = 0;                // inside open()
+    virtual ClipboardFormatData data(UINT format) = 0;      // inside open(); empty when absent
+    // Opens the clipboard, empties it and sets the formats in order, then
+    // reads the sequence and closes. A required format that cannot be set
+    // fails the write; optional ones (metadata) are best effort. Buffers are
+    // prepared before the lease is taken.
+    virtual ClipboardWriteResult write(HWND owner, std::span<const ClipboardFormatWrite> formats) = 0;
+};
+std::shared_ptr<ClipboardBackend> windowsClipboardBackend();
+// Seams for SystemServices::start. Production passes none.
+struct SystemServicesOptions {
+    std::shared_ptr<ClipboardBackend> clipboard;    // null: the Windows clipboard
+    // Synthetic AC/battery readings: replaces GetSystemPowerStatus and skips
+    // the OS power-setting registrations (WM_POWERBROADCAST still routes).
+    std::function<bool(PowerStatus&)> power;
+};
+// CF_HDROP payload (DROPFILES with a wide or ANSI double-NUL list). Returns
+// S_OK, HRESULT_FROM_WIN32(ERROR_TOO_MANY_NAMES) beyond ClipboardHistory's
+// file count or aggregate path bound (Mac tooManyFiles), ERROR_BUFFER_OVERFLOW
+// for a path beyond 32767 units, ERROR_INVALID_DATA for an empty or malformed
+// list. Pure; used by the reader and tests.
+HRESULT parse_clipboard_drop(ClipboardFormatData, std::vector<std::u16string>& files);
+
+// All public methods and destruction belong to the owner HWND's thread.
+// Call stop() before destroying its HWND. Changed callbacks must not stop or
+// restart this service reentrantly; queue that operation onto the owner instead.
+// Core Audio callbacks only post a coalesced message; they never call UI code.
+// Forward WM_POWERBROADCAST, WM_CLIPBOARDUPDATE and notification_message to
+// handle_message. A recognized message may still need the owner's own handling.
+class SystemServices final {
+public:
+    using Changed = std::function<void(ServiceChange)>;
+    SystemServices();
+    ~SystemServices();
+    SystemServices(const SystemServices&) = delete;
+    SystemServices& operator=(const SystemServices&) = delete;
+    // The message must be a dedicated WM_APP..0xBFFF value. No initial clipboard
+    // read occurs: history begins with subsequent clipboard-change events.
+    // A valid start can have unavailable individual services; inspect snapshots
+    // and clipboard_status rather than treating missing hardware as fake data.
+    HRESULT start(HWND owner, UINT notification_message, Changed changed, bool audio_active = false,
+        app::UtilityExecutor* clipboard_executor = nullptr, SystemServicesOptions options = {});
+    // Call after draining the SAME borrowed executor. Image capture requires
+    // it; without it text/files work but images are not accepted undecoded.
+    bool clipboard_queue_capacity_available();
+    // Inactive audio has no endpoint/device listeners. Battery + clipboard stay
+    // registered, with no polling. Resume does a single fresh topology read.
+    HRESULT set_audio_active(bool active);
+    void stop() noexcept;
+    bool running() const noexcept;
+    bool handle_message(UINT message, WPARAM wparam, LPARAM lparam);
+    const BatterySnapshot& battery() const noexcept;
+    const ClipboardHistory& clipboard() const noexcept;
+    HRESULT clipboard_status() const noexcept;
+    const AudioSnapshot& audio() const noexcept;
+    void refresh_battery();
+    // Native update events get one coalesced retry when another process holds
+    // the clipboard. If still busy, this explicit UI action may retry later.
+    HRESULT refresh_clipboard();
+    // ClipboardWatcher.setSuspended: while suspended (sleep, display off,
+    // session lock) clipboard notifications and refreshes are ignored and a
+    // running capture is cancelled (an image still validating is read again
+    // later); resuming runs exactly one sequence-checked refresh, so only the
+    // latest change made while suspended is captured, once.
+    void set_clipboard_suspended(bool suspended);
+    bool clipboard_suspended() const noexcept;
+    HRESULT copy_clipboard_item(std::uint64_t id);
+    bool erase_clipboard_item(std::uint64_t id);
+    bool pin_clipboard_item(std::uint64_t id, bool pinned);
+    bool set_clipboard_capacity(std::size_t capacity);
+    void clear_clipboard(bool keep_pinned = false);
+    HRESULT refresh_audio();
+    // Selects the endpoint whose own volume is controlled. This does NOT switch
+    // the Windows default playback device or reroute another application's audio.
+    // Empty id follows the system's default eConsole render endpoint.
+    HRESULT select_audio_endpoint(std::wstring id);
+    HRESULT set_master_volume(float scalar);
+    HRESULT set_master_mute(bool muted);
+    // Public endpoint channel controls only, exactly stereo with a nonzero
+    // readable peak. Unsupported/multichannel devices retain no fake balance.
+    HRESULT set_output_balance(float balance);
+    // Async owner commands. Accepted writes return S_OK; their actual result is
+    // published through the existing audio-change notification and snapshot.
+    // Gain is relative to each confirmed session's preexisting mixer level.
+    HRESULT set_application_gain(std::string application,float gain);
+    HRESULT stop_application(std::string application);
+    HRESULT stop_applications();
+private:
+    class Impl;
+    std::unique_ptr<Impl> impl_;
+};
+
+} // namespace endfield::native
+#endif

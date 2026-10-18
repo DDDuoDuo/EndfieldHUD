@@ -1,0 +1,27 @@
+#pragma once
+#include "core/notes_rich_text.hpp"
+#include "core/notes_font_names.hpp"
+#include <array>
+namespace endfield::native {
+// One descriptor mapping for settled Notes shaping/paint. Public names remain
+// explicit; source-private system fonts use the configured native fallback.
+inline bool notesHasExplicitFont(const core::notes::TextStyle&s)noexcept{
+    return s.fontName&&!s.fontName->starts_with(".");
+}
+// The family the font menu shows as selected: a stored Mac PostScript name
+// shows its Windows counterpart (core/notes_font_names.hpp).
+inline std::string_view notesSelectedFontFamily(const core::notes::TextStyle&s,std::string_view fallback)noexcept{
+    if(!notesHasExplicitFont(s))return fallback;if(const auto mapped=core::notes::notesWindowsFontFamily(*s.fontName))return *mapped;return std::string_view(*s.fontName);
+}
+inline ehud::data::Json notesRunFont(const core::notes::TextStyle&s){
+    using J=ehud::data::Json;const bool named=notesHasExplicitFont(s);
+    return J::Object{{"familyName",named?*s.fontName:".AppleSystemUIFont"},{"postScriptName",named?*s.fontName:".SFNS-Regular"},
+        {"pointSize",s.fontSize},{"symbolicTraits",(s.bold?2:0)|(s.italic?1:0)},{"preserveUserFont",named}};
+}
+inline ehud::data::Json notesRunDescriptor(const core::notes::TextRun&r,const std::array<double,4>&theme){
+    using J=ehud::data::Json;const auto&s=r.style;const auto c=s.color?std::array<double,4>{s.color->red,s.color->green,s.color->blue,s.color->alpha}:theme;
+    return J::Object{{"utf16Range",J::Array{double(r.location),double(r.length)}},{"attributes",J::Object{
+        {"NSFont",notesRunFont(s)},{"NSColor",J::Object{{"sRGB",J::Array{c[0],c[1],c[2],c[3]}}}},
+        {"NSUnderline",s.underline?1:0},{"NSStrikethrough",s.strikethrough?1:0}}}};
+}
+}

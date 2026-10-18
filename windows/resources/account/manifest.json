@@ -1,0 +1,105 @@
+{
+  "format": "endfield-account-gauge-assets",
+  "images": [
+    {
+      "bytes": 12000,
+      "contentsCenter": [
+        0.48333333333333334,
+        0,
+        0.03333333333333333,
+        1
+      ],
+      "file": "wallet-back.rgba",
+      "frame": [
+        0,
+        6,
+        168,
+        30
+      ],
+      "gravity": "resize",
+      "height": 50,
+      "name": "wallet-back",
+      "sha256": "553164225aec76006254053f7cd24b7028628110a1b23e2795f42fc01eb91f7f",
+      "width": 60
+    },
+    {
+      "bytes": 12000,
+      "contentsCenter": [
+        0.4666666666666667,
+        0,
+        0.06666666666666667,
+        1
+      ],
+      "file": "wallet-deco.rgba",
+      "frame": [
+        0,
+        6,
+        168,
+        30
+      ],
+      "gravity": "resize",
+      "height": 50,
+      "name": "wallet-deco",
+      "sha256": "0dd747088b0d383da189b1630b134a2665bdbb80b4e7154327babc1bbcbd512c",
+      "width": 60
+    },
+    {
+      "bytes": 25600,
+      "contentsCenter": [
+        0,
+        0,
+        1,
+        1
+      ],
+      "file": "item-ap.rgba",
+      "frame": [
+        3,
+        -6,
+        54,
+        54
+      ],
+      "gravity": "resizeAspect",
+      "height": 80,
+      "name": "item-ap",
+      "sha256": "7b86163904d67f26d924669548b003a6e65c6ec3fd4f32c3756ee0d6f43575ad",
+      "width": 80
+    },
+    {
+      "bytes": 12000,
+      "contentsCenter": [
+        0.48333333333333334,
+        0,
+        0.03333333333333333,
+        1
+      ],
+      "file": "wallet-silhouette.rgba",
+      "frame": [
+        0,
+        6,
+        168,
+        30
+      ],
+      "gravity": "resize",
+      "height": 50,
+      "name": "wallet-silhouette",
+      "sha256": "d73ec9f8f56bfcbfdaea7ab041c3489b0289e51e2d962c4888b5eb619ddb35cc",
+      "width": 60
+    }
+  ],
+  "notice": "Original-game wallet sprites, sanity icon and HarmonyOS Sans SC Medium SDF numeral subset, unchanged ownership; prepared by the unchanged Mac gauge artwork code.",
+  "numerals": {
+    "file": "account-numerals.json",
+    "sha256": "e645664e177f258995cdf027011ef3f7a6c9795dc19eca0a887c8d5843673c68",
+    "source": "Resources/WatchSource/Scene/account-numerals.json"
+  },
+  "pixelFormat": "premultiplied-RGBA8-sRGB-top-left",
+  "schemaVersion": 1,
+  "sourceCommit": "ca04f142185c7de40acd8523bdb563195d90a1d1",
+  "sourcePins": {
+    "Resources/WatchSource/Scene/account-numerals.json": "e645664e177f258995cdf027011ef3f7a6c9795dc19eca0a887c8d5843673c68",
+    "Resources/WatchSource/Scene/sprites/source-textures/bg_walletbar_1--cfe92272--8572312840272182184.png": "9aac8d0d5eedf04aa3e279cef1496f335113bcbb076c7cbe56c528154fd02220",
+    "Resources/WatchSource/Scene/sprites/source-textures/bg_walletbar_2--cfe92272--7683125525266349835.png": "f243988a5778a6d1e027dc955156c88ca0be93bc79b9401a60f9bd6275f69ea3",
+    "Resources/WatchSource/Scene/sprites/source-textures/item_ap--2524b69d--8210737671276829403.png": "3ec3b2a364c3a77cc701d8d7837297f51cbbbfc880b89bb59df331bc5669f158",
+    "Sources/HUDAccountGauge.swift": "45b8bf6832846eb007e160c40282dd96e48641987306ae21c0163fca8d09f863"
+  }
+}
