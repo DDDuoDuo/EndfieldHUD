@@ -5,9 +5,15 @@ detailed verification record is [`windows/README.md`](README.md); the
 requirements and the current status are in
 [`WINDOWS-MIGRATION.md`](../WINDOWS-MIGRATION.md). Every release candidate
 below was a private test build on the development laptop with its own test
-data folder; none is a published release.
+data folder; RC 138 is the build published as Windows 1.2.0.
 
 ## Unreleased
+
+## Windows 1.2.0 — 2026-10-17
+
+The first published Windows version, on the shared EndfieldHUD 1.2.0 release
+(Windows 11, 64-bit): the setup, a portable ZIP and their checksums sit next to
+the macOS downloads. It is release candidate 138 below.
 
 ## RC 138 — checkpoint 138
 

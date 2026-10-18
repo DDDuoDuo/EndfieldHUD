@@ -4766,6 +4766,8 @@ release candidate 137 (*Tester confirmation* above). New items:
 
 ## Checkpoint 138 (2026-10-17)
 
+**Published.** Published on 2026-10-17 as extra downloads on the existing [EndfieldHUD 1.2.0 release](https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/v1.2.0) (tag `v1.2.0`, still Latest; the macOS downloads, title and update feed unchanged): `EndfieldHUD-1.2.0-build18-windows-x64-setup.exe` (30,310,672 bytes, SHA-256 `53d9982e3664f5ede96752d81c670fdc32fd98faa147c0f72acc2d1ef2bc1aa9`), `EndfieldHUD-1.2.0-build18-windows-x64-portable.zip` (30,188,110 bytes, SHA-256 `b16f77c5dfa1c7e7cfe2ed96697347b880932a25507f6c8cb823ffec2a9a9341`) and `EndfieldHUD-1.2.0-build18-windows-x64-SHA256SUMS.txt`, the laptop-validated checkpoint 138 build (code at `9c75665`). The release description gained one Windows bullet and one Windows install note. The Windows sources go to `main` through pull request #5.
+
 Checkpoint 137 was pushed with its validation and the tester's confirmation
 at `23a9102`. This entry records the owner's release decisions of 2026-10-17
 and covers the two commits after checkpoint 137 that follow from them,
