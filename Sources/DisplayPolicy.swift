@@ -3,6 +3,8 @@ enum DisplayMode: String, CaseIterable {
     // Keep this saved raw value compatible with earlier releases. The mode now
     // presents both connecting and disconnecting external power.
     case whenChargingStarts
+    /// "Don't display" (the Windows "never"): power changes present nothing.
+    case never
 }
 
 /// The view controller owns the hide deadline; the policy only decides when a
@@ -20,7 +22,7 @@ enum DisplayPolicy {
         previous: BatterySnapshot?,
         mode: DisplayMode
     ) -> DisplayAction {
-        guard snapshot.hasBattery else { return .hide }
+        guard snapshot.hasBattery, mode != .never else { return .hide }
         if mode == .always { return .showPersistent }
 
         // Starting the app must not manufacture a power-connection event.

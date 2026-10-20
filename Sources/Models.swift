@@ -79,6 +79,14 @@ struct AppConfiguration: Equatable {
     var centerLogoRevision: String? = nil
     var alertMetric: HUDChargeMetric = .battery
     var summonShortcut: SummonShortcut = .default
+    /// Off: the summon shortcut no longer opens the HUD (checklist 6).
+    var summonHotkeyEnabled = true
+    /// Redacts private content while recording or streaming (spec §3.26).
+    var recordingMode = false
+    /// A short terminal sequence on the first open of the day (spec §3.28).
+    var dailyBootLog = true
+    /// Low disk, memory pressure and overheating warnings (spec §3.29).
+    var facilityAlerts = true
 
     static let defaults = AppConfiguration(displayMode: .whenChargingStarts,
                                            displayDuration: 3, accentHex: "FAD41F")
@@ -187,7 +195,11 @@ final class ConfigurationStore {
             alertMetric: defaults.string(forKey: "alertMetric").flatMap(HUDChargeMetric.init(rawValue:)) ?? .battery,
             summonShortcut: defaults.data(forKey: "summonShortcut").flatMap {
                 try? JSONDecoder().decode(SummonShortcut.self, from: $0)
-            } ?? .default
+            } ?? .default,
+            summonHotkeyEnabled: Self.bool(defaults, "summonHotkeyEnabled", fallback: true),
+            recordingMode: Self.bool(defaults, "recordingMode", fallback: false),
+            dailyBootLog: Self.bool(defaults, "dailyBootLog", fallback: true),
+            facilityAlerts: Self.bool(defaults, "facilityAlerts", fallback: true)
         ).normalized
         L10n.language = configuration.language
     }
@@ -235,6 +247,10 @@ final class ConfigurationStore {
         defaults.set(next.centerLogoRevision, forKey: "centerLogoRevision")
         defaults.set(next.alertMetric.rawValue, forKey: "alertMetric")
         defaults.set(try? JSONEncoder().encode(next.summonShortcut), forKey: "summonShortcut")
+        defaults.set(next.summonHotkeyEnabled, forKey: "summonHotkeyEnabled")
+        defaults.set(next.recordingMode, forKey: "recordingMode")
+        defaults.set(next.dailyBootLog, forKey: "dailyBootLog")
+        defaults.set(next.facilityAlerts, forKey: "facilityAlerts")
         onChange?(next)
         Array(observers.values).forEach { $0(next) }
     }

@@ -222,7 +222,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if args.contains("--ui-test") && args.contains("--event-log-fixture") {
             EventLogHUDVerification.seed(overlay.eventLog)
         }
-        shortcut.start(shortcut: store.configuration.summonShortcut)
+        startSummonShortcut()
         hudSettings.refreshExternalStatus()
         let firstRun = !UserDefaults.standard.bool(forKey: "hasLaunched")
         if !args.contains("--login") && !args.contains("--no-onboarding") && (firstRun || args.contains("--settings")) {
@@ -302,7 +302,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         terminationReplyPending = false; terminating = false
         documentTerminationFinished = false; updateRestartInProgress = false
         overlay.cancelTerminationAfterDocumentFailure()
-        if diagnosticDomain == nil { shortcut.start(shortcut: store.configuration.summonShortcut) }
+        if diagnosticDomain == nil { startSummonShortcut() }
         NSApp.reply(toApplicationShouldTerminate: false)
     }
 
@@ -393,6 +393,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if let value = snapshot { updateMenu(value) }
         }
         if previous.applicationIcon != configuration.applicationIcon { updateApplicationIcon() }
+        if previous.summonHotkeyEnabled != configuration.summonHotkeyEnabled, !suspended { startSummonShortcut() }
         if !overlay.isSystemOverlayActive { HUDRuntimeAppearance.configuration = configuration }
         guard !suspended else { return }
         let value = snapshot ?? .unavailable
@@ -521,7 +522,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self, self.updateRestartInProgress, !self.terminationReplyPending, !self.focusTerminationPending, !self.focusTerminationFinished else { return }
             self.updateRestartInProgress = false; self.terminating = false
             self.overlay.cancelApplicationUpdate()
-            self.shortcut.start(shortcut: self.store.configuration.summonShortcut)
+            self.startSummonShortcut()
         }
         updater.presentUpdateUI = { [weak self] show in
             guard let self, !self.terminating else { return }
@@ -634,12 +635,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return overlay.toggleSystemOverlay(snapshot: snapshot ?? .unavailable, configuration: hudSettings.configuration)
     }
 
+    /// The summon hotkey follows its on/off switch (checklist 6). The menu bar
+    /// item still opens the HUD while it is off.
+    private func startSummonShortcut() {
+        if store.configuration.summonHotkeyEnabled { shortcut.start(shortcut: store.configuration.summonShortcut) }
+        else { shortcut.stop() }
+    }
+
     private func configureSystemOverlay() {
         overlay.settingsController = hudSettings
         HUDRuntimeAppearance.configuration = hudSettings.configuration
         SummonShortcut.active = hudSettings.configuration.summonShortcut
         hudSettings.onConfigurationChange = { [weak self] in self?.configurationChanged($0) }
-        hudSettings.onShortcutChange = { [weak self] in self?.shortcut.applyShortcut($0) }
+        hudSettings.onShortcutChange = { [weak self] candidate in
+            guard let self else { return nil }
+            // While hotkey opening is off a new shortcut is only validated and stored.
+            guard self.store.configuration.summonHotkeyEnabled else { return candidate.validationError }
+            return self.shortcut.applyShortcut(candidate)
+        }
         hudSettings.shortcutRegistrationStatusProvider = { [weak self] in
             guard let self, self.shortcut.status == .unavailable else { return nil }
             return self.shortcut.statusDescription
