@@ -183,6 +183,7 @@ final class HUDSourceWatchView: NSView {
     var isDesktopPointerLocked: (() -> Bool)?
     private lazy var desktopCenterID = document.scene.nodes.first { $0.name == "MiddleDecoNode" }?.id
     private var desktopPlaneCalibration: (bounds: CGRect, unitsPerPoint: Double)?
+    private var desktopContentScaleCache: (size: CGSize, value: CGFloat)?
     private var lastDesktopCenterWorld: simd_double4x4?
     private var lastDesktopCenterBounds: CGRect?
     private lazy var desktopStatusID = document.scene.nodes.first { $0.name == "BannerNode" && $0.path.contains("/RightBottomNode/") }?.id
@@ -2159,6 +2160,46 @@ final class HUDSourceWatchView: NSView {
         onDesktopBottomSilhouettes?(polygons)
     }
 
+    /// The design canvas's points per design unit before the HUD scale.
+    static func baseDesignScale(_ size: CGSize) -> CGFloat { max(0.1, min(size.width / 1100, size.height / 740, 1.15)) }
+
+    /// Windows' display adaptation (checklist 13), measured on the centre
+    /// plane: the factor by which the design canvas grows where the capped
+    /// design scale would leave the native layers smaller than their share of
+    /// the source shell. It keeps the reference display's (1470 × 956)
+    /// proportion of design points to source units and never goes below 1,
+    /// so displays where the content already covers the ring are unchanged.
+    func desktopContentScale(for size: CGSize) -> CGFloat {
+        if let cached = desktopContentScaleCache, cached.size == size { return cached.value }
+        func ratio(_ size: CGSize) -> Double? {
+            guard let pixels = try? restingPixelsPerUnit(screen: size) else { return nil }
+            return pixels / Double(Self.baseDesignScale(size))
+        }
+        var value: CGFloat = 1
+        if size.width > 0, size.height > 0, let here = ratio(size),
+           let reference = ratio(CGSize(width: 1470, height: 956)), reference > 0, (here / reference).isFinite {
+            value = CGFloat(min(3, max(1, here / reference)))
+        }
+        desktopContentScaleCache = (size, value)
+        return value
+    }
+
+    /// Screen points per source unit at the centre node in the deployed pose.
+    private func restingPixelsPerUnit(screen size: CGSize) throws -> Double? {
+        guard let id = desktopCenterID, size.width > 0, size.height > 0 else { return nil }
+        let viewport = CGRect(origin: .zero, size: size)
+        let neutral = try cameraModel.frame(screenSize: SIMD2(Double(size.width), Double(size.height)),
+                                            localRotation: cameraModel.rootRotation)
+        let pose = try document.animation.pose(entranceTime: document.animation.entrance.lastKeyTime,
+            ambientTime: nil, exitTime: nil, canvasResolution: neutral.layout.canvasSize)
+        guard let resting = try document.scene.resolve(overrides: pose.transforms)[id],
+              let origin = neutral.camera.project(.zero, world: neutral.worldRoot * resting.worldMatrix, viewport: viewport)?.point,
+              let step = neutral.camera.project(SIMD3(1, 0, 0), world: neutral.worldRoot * resting.worldMatrix, viewport: viewport)?.point
+        else { return nil }
+        let pixels = Double(hypot(step.x - origin.x, step.y - origin.y))
+        return pixels > 0.0001 ? pixels : nil
+    }
+
     func bottomButtonContains(_ point: CGPoint) -> Bool {
         desktopMapOcclusionEnabled && inputEnabled && playback.phase == .visible
             && desktopBottomHitPaths.contains { $0.contains(point) }
@@ -2172,17 +2213,9 @@ final class HUDSourceWatchView: NSView {
         if desktopPlaneCalibration?.bounds != bounds {
             // Calibrate once against the deployed source plane. Wrapper scale
             // and live gyro must remain in the projection, never normalized out.
-            let neutral = try cameraModel.frame(screenSize: SIMD2(Double(bounds.width), Double(bounds.height)),
-                                                localRotation: cameraModel.rootRotation)
-            let pose = try document.animation.pose(entranceTime: document.animation.entrance.lastKeyTime,
-                ambientTime: nil, exitTime: nil, canvasResolution: neutral.layout.canvasSize)
-            guard let resting = try document.scene.resolve(overrides: pose.transforms)[id],
-                  let origin = neutral.camera.project(.zero, world: neutral.worldRoot * resting.worldMatrix, viewport: bounds)?.point,
-                  let step = neutral.camera.project(SIMD3(1, 0, 0), world: neutral.worldRoot * resting.worldMatrix, viewport: bounds)?.point else { return }
-            let pixelsPerUnit = hypot(step.x - origin.x, step.y - origin.y)
-            guard pixelsPerUnit > 0.0001 else { return }
-            let designScale = max(0.1, min(bounds.width / 1100, bounds.height / 740, 1.15))
-            desktopPlaneCalibration = (bounds, Double(designScale / pixelsPerUnit))
+            guard let pixelsPerUnit = try restingPixelsPerUnit(screen: bounds.size) else { return }
+            let designScale = Self.baseDesignScale(bounds.size) * desktopContentScale(for: bounds.size)
+            desktopPlaneCalibration = (bounds, Double(designScale) / pixelsPerUnit)
         }
         guard let unit = desktopPlaneCalibration?.unitsPerPoint else { return }
         let corners = [SIMD3(-500 * unit, 320 * unit, 0), SIMD3(500 * unit, 320 * unit, 0),

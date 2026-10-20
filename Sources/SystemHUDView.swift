@@ -229,10 +229,8 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     private var designCanvases: [HUDModule: HUDDesignCanvas] = [:]
     private lazy var designStandIns = HUDAccessibilityStandIns(host: self)
     private lazy var designOverlayStandIns = HUDAccessibilityStandIns(host: self)
-    /// Windows' display adaptation (checklist 13): on displays where the capped
-    /// design scale leaves the box smaller than its share of the ring, grow it.
-    private var displayAdaptation: CGFloat = 1
-    private var designUnit: CGFloat { HUDDesignGeometry.baseUnit * displayAdaptation }
+    /// Content px → design units. The display adaptation is in the design scale.
+    private var designUnit: CGFloat { HUDDesignGeometry.baseUnit }
     private let notesCanvas: NotesCanvas
     private let notesWorkspace = CALayer()
     private let notesLayout = CALayer()
@@ -666,7 +664,10 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             self.notesCanvas.setWorkspaceBounds(self.bounds,
                 creationPoint: CGPoint(x: self.bounds.midX - 100, y: self.bounds.midY - 120))
             self.vignette.frame = self.backdrop.bounds
-            self.designScale = max(0.1, min(self.bounds.width / 1100, self.bounds.height / 740, 1.15)) * CGFloat(self.configuration.hudScale)
+            // As on Windows, the design canvas keeps its share of the source shell
+            // on displays where the capped scale would leave it too small (checklist 13).
+            let adaptation = self.usesSourceShell ? self.sourceWatch?.desktopContentScale(for: self.bounds.size) ?? 1 : 1
+            self.designScale = HUDSourceWatchView.baseDesignScale(self.bounds.size) * CGFloat(self.configuration.hudScale) * adaptation
             self.designOrigin = CGPoint(x: (self.bounds.width - 1000 * self.designScale) / 2,
                                         y: (self.bounds.height - 640 * self.designScale) / 2 - Self.verticalLift * self.designScale)
             let offset = CGPoint(x: self.bounds.width * CGFloat(self.configuration.hudOffsetX),
@@ -1990,6 +1991,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             refreshIdentityProfile()
             refreshAppNavigation(animated: false, presentations: items)
             addSubview(view, positioned: .below, relativeTo: nil)
+            needsLayout = true // The display adaptation is measured on the source shell.
         } catch { presentSourceFailure(String(describing: error)) }
     }
 
@@ -3103,7 +3105,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
 
     private func updateContentsScale() {
         let scale = (window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2) * designScale
-        updateDisplayAdaptation()
+        layoutDesignOverlay()
         designContext.update(unit: designUnit, renderScale: scale)
         shelfCanvas.updateRenderScale(scale)
         clipboardCanvas.updateRenderScale(scale)
@@ -3321,21 +3323,6 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             overlay.transform = CATransform3DMakeScale(designUnit, designUnit, 1)
         }
         moduleContent?.designUnit = designUnit
-    }
-    private func updateDisplayAdaptation() {
-        func base(_ width: Double, _ height: Double) -> Double { max(0.1, min(width / 1100, height / 740, 1.15)) }
-        var factor: CGFloat = 1
-        let size = SIMD2(Double(bounds.width), Double(bounds.height)), reference = SIMD2(1470.0, 956.0)
-        if usesSourceShell, size.x > 0, size.y > 0, let camera = sourceWatch?.cameraModel,
-           let here = try? camera.layout(screenSize: size), let ref = try? camera.layout(screenSize: reference),
-           here.canvasSize.x > 0, ref.canvasSize.x > 0 {
-            let proportional = base(reference.x, reference.y) * (size.x / here.canvasSize.x) / (reference.x / ref.canvasSize.x)
-            let value = max(1, proportional / base(size.x, size.y))
-            if value.isFinite { factor = CGFloat(min(value, 3)) }
-        }
-        guard abs(factor - displayAdaptation) > 0.0001 else { return }
-        displayAdaptation = factor
-        layoutDesignOverlay()
     }
     private func designInputStateChanged() {
         layoutDesignAccessibility()
