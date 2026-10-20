@@ -76,6 +76,7 @@ xcrun swiftc -swift-version 5 -Onone -whole-module-optimization -parse-as-librar
     "$PROJECT_DIR/Sources/HUDDesignFonts.swift" \
     "$PROJECT_DIR/Sources/HUDDesignTokens.swift" \
     "$PROJECT_DIR/Sources/HUDDesignText.swift" \
+    "$PROJECT_DIR/Sources/HUDDesignDrawing.swift" \
     "$PROJECT_DIR/Sources/HypergryphAccountModels.swift" \
     "$PROJECT_DIR/Sources/HypergryphAccountAPI.swift" \
     "$PROJECT_DIR/Sources/HypergryphAccountKeychain.swift" \

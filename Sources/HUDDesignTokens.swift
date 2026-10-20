@@ -122,3 +122,84 @@ enum HUDType {
     static let confirmCountdown = HUDTextStyle(size: 22, weight: .bold, color: HUDColor.yellow, tabular: true)
     static let microTag = HUDTextStyle(size: 5.5, weight: .bold, color: HUDColor.microTagText, lineHeight: 7 / 5.5, tracking: 0.08, uppercase: true)
 }
+
+/// Shared geometry (spec §1.4, §2.1, §2.3). Component-specific dimensions stay
+/// with their component; these are the ones layouts across modules agree on.
+enum HUDMetric {
+    /// The centre content box, in content-box px (the spec's stage px).
+    static let box = CGSize(width: 590, height: 510)
+    /// Module header: breadcrumb 14 + 6 + title row 30 + 10 + rule 9 + 12.
+    static let headerHeight: CGFloat = 81
+    static var bodyHeight: CGFloat { box.height - headerHeight }
+    static let rowHeight: CGFloat = 50
+    static let compactRowHeight: CGFloat = 44
+    static let rowGap: CGFloat = 6
+    static let rowChamfer: CGFloat = 11
+    static let buttonChamfer: CGFloat = 9
+    static let sliderLabelColumn: CGFloat = 170
+}
+
+/// Stacking inside the tilted plane (spec §1.5).
+enum HUDLayerOrder {
+    static let content: CGFloat = 0
+    static let dim: CGFloat = 15
+    static let confirmBar: CGFloat = 20
+    static let toast: CGFloat = 25
+    static let bootLog: CGFloat = 30
+    /// Inside the content box: menus and pop-overs, then the slider bubble.
+    static let menu: CGFloat = 30
+    static let bubble: CGFloat = 40
+}
+
+/// The spec's easings mapped to Core Animation (spec §0, §1.9).
+enum HUDEasing {
+    /// `E`, cubic-bezier(.2,.8,.2,1): the default motion.
+    static let standard = CAMediaTimingFunction(controlPoints: 0.2, 0.8, 0.2, 1)
+    /// `SNAP`, cubic-bezier(.2,.9,.1,1): toggle knob, confirm band, pop.
+    static let snap = CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.1, 1)
+    static let ease = CAMediaTimingFunction(controlPoints: 0.25, 0.1, 0.25, 1)
+    static let easeIn = CAMediaTimingFunction(controlPoints: 0.42, 0, 1, 1)
+    static let easeOut = CAMediaTimingFunction(controlPoints: 0, 0, 0.58, 1)
+    static let easeInOut = CAMediaTimingFunction(controlPoints: 0.42, 0, 0.58, 1)
+    static let linear = CAMediaTimingFunction(name: .linear)
+}
+
+/// Every duration is finite and short; Reduce Motion collapses all of them.
+enum HUDDuration {
+    static let hover: CFTimeInterval = 0.22
+    static let press: CFTimeInterval = 0.10
+    static let sheen: CFTimeInterval = 0.70
+    static let entrance: CFTimeInterval = 0.38
+    static let staggerStep: CFTimeInterval = 0.036
+    static let staggerBase: CFTimeInterval = 0.06
+    static let staggerCap = 14
+    static let leave: CFTimeInterval = 0.13
+    static let titleWipe: CFTimeInterval = 0.45
+    static let ruleWipe: CFTimeInterval = 0.42
+    static let ruleDelay: CFTimeInterval = 0.05
+    static let menuWipe: CFTimeInterval = 0.18
+    static let tabOn: CFTimeInterval = 0.20
+    static let knob: CFTimeInterval = 0.18
+    static let toggleLabel: CFTimeInterval = 0.14
+    static let caret: CFTimeInterval = 0.16
+    static let accentBar: CFTimeInterval = 0.14
+    static let thumb: CFTimeInterval = 0.12
+    static let bubbleFade: CFTimeInterval = 0.14
+    static let bubbleScale: CFTimeInterval = 0.18
+    static let bandIn: CFTimeInterval = 0.30
+    static let bandOut: CFTimeInterval = 0.18
+    static let confirmText: CFTimeInterval = 0.30
+    static let confirmTextDelay: CFTimeInterval = 0.12
+    static let pillDelay: CFTimeInterval = 0.16
+    static let pillStep: CFTimeInterval = 0.06
+    static let confirmCallback: CFTimeInterval = 0.12
+    static let dim: CFTimeInterval = 0.22
+    static let dimFilter: CFTimeInterval = 0.25
+    static let toastVisible: CFTimeInterval = 1.5
+    static let toastOut: CFTimeInterval = 0.25
+    static let pop: CFTimeInterval = 0.32
+    static let taskFlip: CFTimeInterval = 0.25
+    static let perspective: CFTimeInterval = 0.5
+    /// "Keep this UI scale?" reverts after this many seconds (spec §2.18).
+    static let scaleConfirmation: TimeInterval = 15
+}

@@ -160,15 +160,7 @@ final class HUDControlHighlightLayer: CALayer {
         case .rounded: return CGPath(roundedRect: rect, cornerWidth: 3, cornerHeight: 3, transform: nil)
         case .ellipse: return CGPath(ellipseIn: rect, transform: nil)
         case .cutCorner:
-            let corner: CGFloat = min(4, min(rect.width, rect.height) / 3)
-            let path = CGMutablePath()
-            path.move(to: CGPoint(x: rect.minX + corner, y: rect.minY))
-            path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
-            path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - corner))
-            path.addLine(to: CGPoint(x: rect.maxX - corner, y: rect.maxY))
-            path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
-            path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + corner))
-            path.closeSubpath(); return path
+            return HUDShape.chamfer(rect, cut: min(4, min(rect.width, rect.height) / 3), corners: [.topLeft, .bottomRight])
         }
     }
 }
