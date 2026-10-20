@@ -2,13 +2,12 @@ import AppKit
 import QuartzCore
 
 /// Where the redesigned centre sits on the HUD (spec §0, §1.4). The host draws
-/// in a 1000 × 640 design space with the disc centre at (500, 320). The demo
-/// is laid out against the ring: its white inner arcs are 853 px across in
-/// the capture and the box is 590 px wide (0.692 of it). On the reference
-/// display (1470 × 956 pt, 1.15 pt per design unit) those arcs are 245.4
-/// design units in radius, so one content px is 245.4 / 426.5 units.
+/// in a 1000 × 640 design space with the disc centre at (500, 320). The demo's
+/// stage is the deployed HUD on the reference display (1470 × 956 pt at 1.15 pt
+/// per design unit) captured 1920 px wide: its ring (426.5 px radius) and the
+/// shell's measure the same, so one content px is 1470 / (1920 × 1.15) units.
 enum HUDDesignGeometry {
-    static let baseUnit: CGFloat = 245.4 / 426.5
+    static let baseUnit: CGFloat = 1470 / (1920 * 1.15)
     static let discCentre = CGPoint(x: 500, y: 320)
     /// The box's top-left relative to the disc centre, in content px.
     static let boxOffset = CGPoint(x: -295, y: -305)
