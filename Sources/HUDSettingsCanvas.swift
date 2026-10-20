@@ -29,6 +29,7 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
     private var binders: [() -> Void] = []
     private var stagedLayout: (scale: Double?, x: Double?, y: Double?) = (nil, nil, nil)
     private var layoutPromptOpen = false
+    private var revertedScaleText: String?
     private var lastStatus: String?
     private var checkProgress: Int?
     private var checkTimer: DispatchWorkItem?
@@ -286,8 +287,8 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
         rows.append(toggleRow("motion", L10n.text("Reduce Motion", "减少动态效果"), \.reduceMotion, page))
         rows.append(toggleRow("lowPower", L10n.text("Low Power visual mode", "低功耗视觉模式"), \.lowPowerVisualMode, page))
         rows.append(toggleRow("recording", L10n.text("Recording mode", "录制模式"), \.recordingMode, page) { [weak self] on in
-            if on { self?.toast(icon: .rec, "Recording mode on", "录制模式已开启") }
-            else { self?.toast(icon: .eye, "Recording mode off", "录制模式已关闭") }
+            if on { self?.toast(icon: .rec, "Recording mode on", "私密内容已隐藏") }
+            else { self?.toast(icon: .eye, "Recording mode off", "私密内容已恢复") }
         })
         rows.append(toggleRow("bootLog", L10n.text("Daily boot log", "每日启动日志"), \.dailyBootLog, page))
         rows.append(toggleRow("facility", L10n.text("Facility alerts", "设施警报"), \.facilityAlerts, page))
@@ -317,17 +318,25 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
             guard module == .display else { return }
             layoutPromptOpen = true
             let position = controller.isPositionPreviewPending && !controller.isScalePreviewPending
+            let previous = HUDValueFormat.scale.string(controller.storedConfiguration.hudScale)
+            let requested = HUDValueFormat.scale.string(config.hudScale)
             confirm(HUDConfirmRequest(id: "layout",
                                       title: position ? L10n.text("Keep this position?", "保留此位置？") : L10n.text("Keep this UI scale?", "保留此缩放？"),
                                       countdown: remaining, confirmTitle: L10n.text("Keep", "保留"),
                                       cancelTitle: L10n.text("Revert", "恢复"), icon: .check),
-                    onConfirm: { [weak self] in self?.layoutPromptOpen = false; self?.controller.confirmLayout() },
+                    onConfirm: { [weak self] in
+                        self?.layoutPromptOpen = false; self?.controller.confirmLayout()
+                        if position { self?.toast(icon: .check, "Position kept", "已保留界面位置") }
+                        else { self?.toast(icon: .check, "UI scale kept", "已保留界面缩放", detail: requested) }
+                    },
                     onCancel: { [weak self] in self?.layoutPromptOpen = false; self?.controller.revertLayout() })
+            revertedScaleText = position ? nil : previous
         } else if layoutPromptOpen {
             // The preview ended without an answer: it reverted itself.
             layoutPromptOpen = false
             context.overlay.dismissConfirm()
-            toast(icon: .reset, "Scale reverted", "已恢复界面缩放")
+            if let previous = revertedScaleText { toast(icon: .reset, "UI scale reverted", "已恢复界面缩放", detail: previous) }
+            else { toast(icon: .reset, "Position reverted", "已恢复界面位置") }
         }
     }
 

@@ -45,13 +45,13 @@ xcrun swiftc -swift-version 5 -Onone -whole-module-optimization -parse-as-librar
     "$PROJECT_DIR/Sources/HUDSettingsController.swift" \
     "$PROJECT_DIR/Sources/LoginItemManager.swift" \
     "$PROJECT_DIR/Sources/HUDSettingsCanvas.swift" \
-    "$PROJECT_DIR/Sources/HUDQuitConfirmationView.swift" \
     "$PROJECT_DIR/Sources/HUDBackgroundViews.swift" \
     "$PROJECT_DIR/Sources/HUDSettingsInteraction.swift" \
     "$PROJECT_DIR/Sources/HUDRuntimeAppearance.swift" \
     "$PROJECT_DIR/Sources/HUDControlHighlightLayer.swift" \
     "$PROJECT_DIR/Sources/Localization.swift" \
     "$PROJECT_DIR/Sources/LocalizationCatalog.swift" \
+    "$PROJECT_DIR/Sources/LocalizationCatalogRedesign.swift" \
     "$PROJECT_DIR/Sources/OverlayGeometry.swift" \
     "$PROJECT_DIR/Sources/BatteryCapacity.swift" \
     "$PROJECT_DIR/Sources/BatteryMonitor.swift" \
@@ -291,7 +291,6 @@ xcrun swiftc -swift-version 5 -Onone -whole-module-optimization -parse-as-librar
     "$PROJECT_DIR/Tests/HUDChargeMetricTests.swift" \
     "$PROJECT_DIR/Tests/HUDCenterLogoTests.swift" \
     "$PROJECT_DIR/Tests/HUDSettingsCanvasTests.swift" \
-    "$PROJECT_DIR/Tests/HUDQuitConfirmationTests.swift" \
     "$PROJECT_DIR/Tests/HUDGitHubReleaseTests.swift" \
     "$PROJECT_DIR/Tests/HUDUpdateStateTests.swift" \
     "$PROJECT_DIR/Tests/LocalizationTests.swift" \

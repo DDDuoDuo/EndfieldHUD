@@ -27,7 +27,10 @@ enum LocalizationCatalog {
 
     // Keep source pairs intact: identical English labels can have different
     // meanings. This additive map preserves the existing four-language catalog.
-    static let koreanTranslations: [String: String] = [
+    static let koreanTranslations = coreKoreanTranslations.merging(redesignKoreanTranslations) { core, _ in core }
+    static let entries = coreEntries + redesignEntries.map(\.entry)
+
+    private static let coreKoreanTranslations: [String: String] = [
         "Next recovery\u{1F}下次回复": "다음 회복",
         "Full recovery\u{1F}全部回复": "완전 회복",
         "The sign-in page could not load. Retry to continue.\u{1F}登录页面未能载入，请重试。": "로그인 페이지를 불러오지 못했습니다. 다시 시도하세요.",
@@ -957,7 +960,7 @@ enum LocalizationCatalog {
         "PINS\u{1F}标记": "핀",
     ]
 
-    static let entries: [Entry] = [
+    private static let coreEntries: [Entry] = [
         Entry("Next recovery", "下次回复", "下次回復", "次の回復"),
         Entry("Full recovery", "全部回复", "全部回復", "全回復"),
         Entry("Account Linking", "账户绑定", "帳戶綁定", "アカウント連携"),

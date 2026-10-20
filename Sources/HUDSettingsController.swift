@@ -101,6 +101,9 @@ final class HUDSettingsController {
         return result
     }
 
+    /// The saved configuration, without an unconfirmed layout preview.
+    var storedConfiguration: AppConfiguration { store.configuration }
+
     var layoutConfirmationRemaining: Int? {
         guard let layoutDeadline else { return nil }
         return max(0, Int(ceil(layoutDeadline - clock())))

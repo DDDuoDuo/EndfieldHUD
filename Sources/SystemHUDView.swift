@@ -13,10 +13,9 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     static let exitDuration: TimeInterval = HUDChargeBadge.exitDuration
     var onClose: (() -> Void)?
     var onQuitConfirmed: (() -> Void)?
-    private var quitConfirmation: HUDQuitConfirmationView?
-    private var quitConfirmationPending = false
+    private var quitPromptOpen = false
     private var quitCommitted = false
-    private var allowsModuleInput: Bool { interactionEnabled && !transitioning && !quitConfirmationPending && !quitCommitted }
+    private var allowsModuleInput: Bool { interactionEnabled && !transitioning && !quitCommitted }
     var onOpenSystemStorage: (() -> Void)?
     var onOpenProjection: (() -> Void)?
     var onLaunchAppShortcut: ((UUID) -> Void)?
@@ -42,10 +41,9 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     var isPreparingSourceBackdrop: Bool { sourceWatch?.isPreparingBackdrop == true }
     var sourceFailureForVerification: String? { sourceWatchFailureReason }
     var legacyProgressHiddenForVerification: Bool { progress.isHidden }
+    /// The quit confirm bar is drawn on the core plane, so it follows the source tilt itself.
     var confirmationFollowsSourceForVerification: Bool {
-        guard let projection = sourceCenterProjection, let quitConfirmation, quitConfirmation.isPresented else { return false }
-        return CATransform3DEqualToTransform(quitConfirmation.cardTransformForVerification,
-            HUDMotionMath.centeredSourceTransform(projection, scale: designScale))
+        quitPromptOpen && designContext.overlay.layer.superlayer === corePlane.content
     }
     var clockIsInStatusPanelForVerification: Bool {
         usesSourceShell && !statusPanel.isHidden && clockPage.layer.superlayer === statusPanel
@@ -227,6 +225,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     private var moduleContent: HUDModuleContent!
     /// The redesigned centre (spec §1): shared services and converted modules.
     let designContext: HUDDesignContext
+    private let facilityAlerts: FacilityAlertMonitor?
     private var designCanvases: [HUDModule: HUDDesignCanvas] = [:]
     private lazy var designStandIns = HUDAccessibilityStandIns(host: self)
     private lazy var designOverlayStandIns = HUDAccessibilityStandIns(host: self)
@@ -462,11 +461,12 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
          reader: ReaderController = ReaderController(loadStore: { try ReaderStore(directory: ReaderStore.applicationDirectory()) }),
          mediaAssembly: MediaAssemblyController = MediaAssemblyController(), calendar: HUDCalendarController = .fixture(),
          minigame: OrbiPomSession = OrbiPomSession(), account: HypergryphAccountController? = nil,
-         initialConfiguration: AppConfiguration = .defaults,
+         facility: FacilityAlertMonitor? = nil, initialConfiguration: AppConfiguration = .defaults,
          initialSnapshot: BatterySnapshot = .unavailable, initialModule: HUDModule = .power) {
         var startupPhase = HUDStartupTrace.begin()
         let context = HUDDesignContext()
         designContext = context
+        facilityAlerts = facility
         accountCanvas = HUDAccountCanvas(context: context)
         batteryCanvas = BatteryCanvas(context: context)
         projectionCanvas = ProjectionCanvas(context: context)
@@ -788,7 +788,6 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         }
         if old.language != configuration.language {
             sourceWatch?.refreshDesktopLanguage()
-            quitConfirmation?.configure(dark: currentDark, accent: currentAccent)
             refreshIdentityProfile()
         }
         if layoutChanged, interactionEnabled, !HUDRuntimeAppearance.reduceMotion {
@@ -1096,10 +1095,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         if preservingPointerMotion {
             motion.startPointerFollowing(reducedMotion: HUDRuntimeAppearance.reduceMotion, initialPoint: currentPointerTarget())
         } else { motion.stop(freezePresentation: true) }
-        if quitConfirmationPending {
-            quitConfirmation?.dismiss(animated: false)
-            quitConfirmationPending = false
-        }
+        quitPromptOpen = false
         func remove(_ item: CALayer) {
             if preserveClickFeedback && item === actionFeedback { return }
             if preservingChargeAnimation && item === chargeBadge.layer { return }
@@ -1513,25 +1509,9 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     }
 
     private func followCurrentPointer() {
-        updateConfirmationTilt()
         guard let window, window.isVisible, !window.ignoresMouseEvents || transitioning,
               interactionEnabled || transitioning, !isModuleInputLocked else { return }
         motion.setParallax(normalizedPoint: currentPointerTarget())
-    }
-
-    private func updateConfirmationTilt() {
-        if usesSourceShell, let projection = sourceCenterProjection {
-            let transform = HUDMotionMath.centeredSourceTransform(projection, scale: designScale)
-            quitConfirmation?.setSourceTransform(transform)
-            return
-        }
-        guard let window else { return }
-        let point = convert(window.convertPoint(fromScreen: pointerLocationProvider()), from: nil)
-        let normalized = HUDMotionMath.normalizedPointer(location: point,
-            center: CGPoint(x: bounds.midX, y: bounds.midY),
-            radius: CGSize(width: bounds.width / 2, height: bounds.height / 2))
-        quitConfirmation?.setPointer(normalized, parallax: configuration.parallaxIntensity,
-                                     perspective: configuration.perspectiveIntensity)
     }
 
     private func updateHover(_ event: NSEvent) {
@@ -1653,7 +1633,6 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     /// dismisses the menu instead of activating whatever is behind it.
     override func hitTest(_ point: NSPoint) -> NSView? {
         let local = convert(point, from: superview)
-        if quitConfirmationPending { return super.hitTest(point) }
         if allowsModuleInput, accountGauge.isPopoverOpen, bounds.contains(local) { return self }
         if allowsModuleInput, designContext.overlay.capturesInput, bounds.contains(local) { return self }
         if let canvas = activeDesignCanvas {
@@ -1722,7 +1701,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     }
 
     override func mouseDown(with event: NSEvent) {
-        guard !quitConfirmationPending, !quitCommitted else { return }
+        guard !quitCommitted else { return }
         summonedDuringFileDrag = false
         // The controller can queue an outside-click dismissal while the finite
         // entrance finishes; controls remain disabled throughout the transition.
@@ -1775,6 +1754,9 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             window?.makeFirstResponder(self)
             return
         }
+        // A press on the sanity bar never closes the HUD, also while it is still
+        // opening or while the bar shows Work Mode time without a linked account.
+        if let gauge = accountGaugePoint(location), CGRect(origin: .zero, size: HUDAccountGauge.size).contains(gauge) { return }
         if notesWorkspaceIsInteractive, let local = notesWorkspacePoint(location),
            notesInteraction?.mouseDownInWorkspace(at: local, clickCount: event.clickCount) == true { return }
         if notesWorkspaceIsInteractive {
@@ -1856,7 +1838,6 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     }
 
     override func keyDown(with event: NSEvent) {
-        if quitConfirmation?.handleKey(event) == true { return }
         guard allowsModuleInput, !event.isARepeat else { return }
         let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
         if accountGauge.isPopoverOpen {
@@ -2017,7 +1998,6 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     private func applySourceCenterProjection(_ projection: CATransform3D) {
         guard usesSourceShell, designScale > 0 else { return }
         sourceCenterProjection = projection
-        updateConfirmationTilt()
         let local = HUDMotionMath.sourcePlaneTransform(projection, origin: designOrigin, scale: designScale)
         if let previous = motion.externalProjection, CATransform3DEqualToTransform(previous, local),
            (depthPlanes + [notesPlane]).allSatisfy({ CATransform3DEqualToTransform($0.spatial.transform, local) }) { return }
@@ -2719,47 +2699,39 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
 
     @objc private func closeFromIdentity() { presentQuitConfirmation() }
 
+    /// ⏻ asks with the confirm bar on the disc (spec §2.18), like every other
+    /// confirmation; Esc or Cancel keep the HUD, Enter or Quit quit.
     func presentQuitConfirmation() {
         guard allowsModuleInput, window != nil else { return }
         if accountGauge.isPopoverOpen { accountGauge.dismiss(); return }
-        quitConfirmationPending = true
-        updateButtonStates()
         clearControlHighlights()
         navigation.hover(nil); identityCard.resetInteraction(animated: true)
-        let prompt = quitConfirmation ?? HUDQuitConfirmationView(frame: bounds)
-        quitConfirmation = prompt
-        prompt.frame = bounds
-        prompt.autoresizingMask = [.width, .height]
-        prompt.configure(dark: currentDark, accent: currentAccent)
-        prompt.onPointerMove = { [weak self] in self?.followCurrentPointer() }
-        prompt.onCancel = { [weak self] in self?.cancelQuitConfirmation() }
-        prompt.onConfirm = { [weak self] in self?.confirmQuit() }
-        if prompt.superview == nil { addSubview(prompt, positioned: .above, relativeTo: nil) }
-        prompt.show()
-        updateConfirmationTilt()
+        quitPromptOpen = true
+        designContext.confirm(HUDConfirmRequest(id: "quit", title: L10n.text("Quit EndfieldHUD?", "退出 EndfieldHUD？"),
+                                                message: L10n.text("Notes, shelf files and settings are saved.", "便笺、暂存文件与设置均已保存。"),
+                                                confirmTitle: L10n.text("Quit", "退出"), danger: true, icon: .power),
+                              onConfirm: { [weak self] in self?.confirmQuit() },
+                              onCancel: { [weak self] in self?.quitPromptOpen = false; self?.window?.makeFirstResponder(self) })
+        window?.makeFirstResponder(self)
     }
 
     private func cancelQuitConfirmation() {
-        guard quitConfirmationPending, !quitCommitted else { return }
-        quitConfirmation?.dismiss(animated: true) { [weak self] in
-            guard let self, !self.quitCommitted else { return }
-            self.quitConfirmationPending = false
-            self.updateButtonStates()
-            if self.interactionEnabled { self.window?.makeFirstResponder(self) }
-        }
+        guard quitPromptOpen, !quitCommitted else { return }
+        designContext.overlay.decide(.cancel)
     }
 
     private func confirmQuit() {
-        guard quitConfirmationPending, !quitCommitted else { return }
+        guard quitPromptOpen, !quitCommitted else { return }
+        quitPromptOpen = false
         quitCommitted = true
-        // Accept synchronously so focus loss cannot cancel a queued quit while
-        // the confirmation fades. The owner's normal closing path removes it.
+        // Accept synchronously so focus loss cannot cancel a queued quit. The
+        // owner's normal closing path removes the HUD.
         onQuitConfirmed?()
     }
 
-    var quitConfirmationVisibleForVerification: Bool { quitConfirmationPending }
+    var quitConfirmationVisibleForVerification: Bool { quitPromptOpen }
     func answerQuitConfirmationForVerification(_ confirm: Bool) {
-        if confirm { confirmQuit() } else { cancelQuitConfirmation() }
+        designContext.overlay.decide(confirm ? .confirm : .cancel)
     }
 
     @objc private func scrollNavigation(_ sender: NSButton) {
@@ -3919,7 +3891,10 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             return
         }
         if allowsModuleInput, clockPoint(location) != nil {
-            let horizontal = -event.scrollingDeltaX * (event.hasPreciseScrollingDeltas ? 1 : 12)
+            // A trackpad switches styles with a sideways swipe; a mouse wheel's
+            // vertical notches do too (down like a leftward swipe), as on Windows.
+            let wheel = !event.hasPreciseScrollingDeltas && event.scrollingDeltaX == 0
+            let horizontal = -(wheel ? event.scrollingDeltaY : event.scrollingDeltaX) * (event.hasPreciseScrollingDeltas ? 1 : 12)
             if let direction = clockStyleArtwork.scroll(delta: horizontal, phase: event.phase,
                     momentum: event.momentumPhase, at: event.timestamp) {
                 selectClockStyle(configuration.clockStyle.advanced(direction))

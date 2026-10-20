@@ -141,6 +141,8 @@ final class OverlayController: NSObject {
     var onQuitAfterSystemClose: (() -> Void)?
     var initialModuleRequest: HUDModule?
     let workMode = WorkModeController()
+    /// Facility alerts outlive each HUD view, so a dismissed alert stays dismissed.
+    let facilityAlerts = FacilityAlertMonitor()
     private let profileStore: Result<UserProfileStore, Error>
     var workFocusStatusMessage: String? {
         didSet { systemView?.workFocusStatusMessage = workFocusStatusMessage }
@@ -409,6 +411,7 @@ final class OverlayController: NSObject {
             || self.configuration.placement != configuration.placement
             || self.configuration.customPosition != configuration.customPosition
         self.configuration = configuration.normalized
+        facilityAlerts.isEnabled = self.configuration.facilityAlerts
         projection?.update(configuration: self.configuration)
         indicator.set(snapshot: snapshot, configuration: self.configuration, preview: preview)
         systemView?.set(snapshot: snapshot, configuration: self.configuration)
@@ -853,7 +856,7 @@ final class OverlayController: NSObject {
                                      settings: settingsController, profile: profileStore, mapStore: mapStore,
                                      archive: archiveController, reader: readerController,
                                      mediaAssembly: mediaAssemblyController, calendar: calendarController, minigame: minigameSession, account: accountController,
-                                     initialConfiguration: configuration, initialSnapshot: snapshot ?? .unavailable,
+                                     facility: facilityAlerts, initialConfiguration: configuration, initialSnapshot: snapshot ?? .unavailable,
                                      initialModule: initialModuleRequest ?? lastSystemModule)
             HUDStartupTrace.end("open.fullNativeView", since: &startup)
             systemView = view
