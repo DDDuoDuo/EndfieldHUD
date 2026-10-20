@@ -153,6 +153,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             overlay.startCalendarReminders()
             HUDSourceWatchDocument.prewarmDesktop()
             HUDSourceMetalRenderer.prewarmDesktopResources()
+            HUDFontRegistry.prewarm()
         }
         overlay.onPositionEditFinished = { [weak self] position in
             guard let self = self else { return }

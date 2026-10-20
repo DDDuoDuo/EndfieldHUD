@@ -1,3 +1,6 @@
 # Preserve the pinned upstream JavaScript and license bytes on Windows checkouts.
 Resources/OrbiPom/matter-0.20.0.js -text
 Resources/OrbiPom/Matter-LICENSE.txt -text
+# The shared font folder holds unmodified upstream files whose sizes and
+# SHA-256 hashes are pinned in its manifest; never convert line endings.
+Resources/Fonts/** -text

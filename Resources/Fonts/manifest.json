@@ -1,0 +1,175 @@
+{
+  "schemaVersion": 2,
+  "about": "The one shared font folder of the macOS app (copied to EndfieldHUD.app/Contents/Resources/Fonts) and the Windows build (windows/CMakeLists.txt copies the files whose family lists windows). Every file is the unmodified upstream file. A 'cjk' family is used for the languages it lists; the macOS app registers the families of this manifest whose files exist, so adding a font is a file drop plus an entry here.",
+  "families": [
+    {
+      "family": "HarmonyOS Sans",
+      "role": "latin",
+      "version": "1.0",
+      "license": "HarmonyOS Sans Fonts License Agreement",
+      "licenseFile": "HarmonyOS-Sans-LICENSE.txt",
+      "platforms": [
+        "macos"
+      ],
+      "files": [
+        {
+          "file": "HarmonyOS_Sans_Light.ttf",
+          "bytes": 147552,
+          "sha256": "e63124785efe56484d5ff09eb03ff77db940dcc55cf1c8e98da1aa6dbdf03147",
+          "weight": 300,
+          "source": "Official HarmonyOS Sans package, folder HarmonyOS_Sans (https://developer.huawei.com/consumer/cn/design/resource/)"
+        },
+        {
+          "file": "HarmonyOS_Sans_Regular.ttf",
+          "bytes": 146616,
+          "sha256": "4f00c7e80329238d0b6fc58e5c829c4086432ba9fa1a8c5ca3da9a0442ce0452",
+          "weight": 400,
+          "source": "Official HarmonyOS Sans package, folder HarmonyOS_Sans (https://developer.huawei.com/consumer/cn/design/resource/)"
+        },
+        {
+          "file": "HarmonyOS_Sans_Medium.ttf",
+          "bytes": 146164,
+          "sha256": "f6b009d07d8d894d55eadeb7080b4916c3a2c83ff3ee60bbe851e6698d73bafd",
+          "weight": 500,
+          "source": "Official HarmonyOS Sans package, folder HarmonyOS_Sans (https://developer.huawei.com/consumer/cn/design/resource/)"
+        },
+        {
+          "file": "HarmonyOS_Sans_Bold.ttf",
+          "bytes": 145860,
+          "sha256": "7f973862c42353c9cc372dc2ae891d12c9ea5fe2a01b449adaf1eade9b469b47",
+          "weight": 700,
+          "source": "Official HarmonyOS Sans package, folder HarmonyOS_Sans (https://developer.huawei.com/consumer/cn/design/resource/)"
+        },
+        {
+          "file": "HarmonyOS_Sans_Black.ttf",
+          "bytes": 145696,
+          "sha256": "ef643b37b20c21d01edb5722934cff45ae885f0b03ca1864386463e12fb03e22",
+          "weight": 900,
+          "source": "Official HarmonyOS Sans package, folder HarmonyOS_Sans (https://developer.huawei.com/consumer/cn/design/resource/)"
+        },
+        {
+          "file": "HarmonyOS-Sans-LICENSE.txt",
+          "bytes": 32768,
+          "sha256": "b2ffec0e6269ee41c3b5fc0345ab37600b46d66ebea6c9c58ff37f517bdfa164",
+          "source": "Official HarmonyOS Sans package, folder HarmonyOS_Sans (https://developer.huawei.com/consumer/cn/design/resource/), LICENSE.txt"
+        }
+      ]
+    },
+    {
+      "family": "Noto Sans SC",
+      "role": "cjk",
+      "languages": [
+        "zh-Hans"
+      ],
+      "version": "2.004 (variable weight 100-900)",
+      "license": "OFL-1.1",
+      "licenseFile": "NotoSansSC-OFL.txt",
+      "upstreamCommit": "a85815a42757630ce188fdad368c2dfc444d4773",
+      "platforms": [
+        "macos",
+        "windows"
+      ],
+      "files": [
+        {
+          "file": "NotoSansSC.ttf",
+          "bytes": 17772300,
+          "sha256": "a3041811a78c361b1de50f953c805e0244951c21c5bd412f7232ef0d899af0da",
+          "source": "https://raw.githubusercontent.com/google/fonts/a85815a42757630ce188fdad368c2dfc444d4773/ofl/notosanssc/NotoSansSC%5Bwght%5D.ttf"
+        },
+        {
+          "file": "NotoSansSC-OFL.txt",
+          "bytes": 4388,
+          "sha256": "1c05c68c34f9708415aada51f17e1b0092d2cea709bf4a94cd38114f9e73d7d9",
+          "source": "https://raw.githubusercontent.com/google/fonts/a85815a42757630ce188fdad368c2dfc444d4773/ofl/notosanssc/OFL.txt"
+        }
+      ]
+    },
+    {
+      "family": "Noto Sans TC",
+      "role": "cjk",
+      "languages": [
+        "zh-Hant"
+      ],
+      "version": "2.004 (variable weight 100-900)",
+      "license": "OFL-1.1",
+      "licenseFile": "NotoSansTC-OFL.txt",
+      "upstreamCommit": "a85815a42757630ce188fdad368c2dfc444d4773",
+      "platforms": [
+        "macos",
+        "windows"
+      ],
+      "files": [
+        {
+          "file": "NotoSansTC.ttf",
+          "bytes": 11941968,
+          "sha256": "864727d210d54f2537bbe23b3a839436c3992af72de9322af5270897246bd44f",
+          "source": "https://raw.githubusercontent.com/google/fonts/a85815a42757630ce188fdad368c2dfc444d4773/ofl/notosanstc/NotoSansTC%5Bwght%5D.ttf"
+        },
+        {
+          "file": "NotoSansTC-OFL.txt",
+          "bytes": 4388,
+          "sha256": "1c05c68c34f9708415aada51f17e1b0092d2cea709bf4a94cd38114f9e73d7d9",
+          "source": "https://raw.githubusercontent.com/google/fonts/a85815a42757630ce188fdad368c2dfc444d4773/ofl/notosanstc/OFL.txt"
+        }
+      ]
+    },
+    {
+      "family": "Noto Sans JP",
+      "role": "cjk",
+      "languages": [
+        "ja"
+      ],
+      "version": "2.004 (variable weight 100-900)",
+      "license": "OFL-1.1",
+      "licenseFile": "NotoSansJP-OFL.txt",
+      "upstreamCommit": "a85815a42757630ce188fdad368c2dfc444d4773",
+      "platforms": [
+        "macos",
+        "windows"
+      ],
+      "files": [
+        {
+          "file": "NotoSansJP.ttf",
+          "bytes": 9589900,
+          "sha256": "c2f3b4d463500a2ddcd3849cded1fceeb9fd6d1c32e6cbecd568453ba50fc68f",
+          "source": "https://raw.githubusercontent.com/google/fonts/a85815a42757630ce188fdad368c2dfc444d4773/ofl/notosansjp/NotoSansJP%5Bwght%5D.ttf"
+        },
+        {
+          "file": "NotoSansJP-OFL.txt",
+          "bytes": 4388,
+          "sha256": "1c05c68c34f9708415aada51f17e1b0092d2cea709bf4a94cd38114f9e73d7d9",
+          "source": "https://raw.githubusercontent.com/google/fonts/a85815a42757630ce188fdad368c2dfc444d4773/ofl/notosansjp/OFL.txt"
+        }
+      ]
+    },
+    {
+      "family": "Noto Sans KR",
+      "role": "cjk",
+      "languages": [
+        "ko"
+      ],
+      "version": "2.004 (variable weight 100-900)",
+      "license": "OFL-1.1",
+      "licenseFile": "NotoSansKR-OFL.txt",
+      "upstreamCommit": "a85815a42757630ce188fdad368c2dfc444d4773",
+      "platforms": [
+        "macos",
+        "windows"
+      ],
+      "files": [
+        {
+          "file": "NotoSansKR.ttf",
+          "bytes": 10414588,
+          "sha256": "194018e6b2b293a7964f037b25c0249ce1418bc9ab3c971060a03aa57861e252",
+          "source": "https://raw.githubusercontent.com/google/fonts/a85815a42757630ce188fdad368c2dfc444d4773/ofl/notosanskr/NotoSansKR%5Bwght%5D.ttf"
+        },
+        {
+          "file": "NotoSansKR-OFL.txt",
+          "bytes": 4388,
+          "sha256": "1c05c68c34f9708415aada51f17e1b0092d2cea709bf4a94cd38114f9e73d7d9",
+          "source": "https://raw.githubusercontent.com/google/fonts/a85815a42757630ce188fdad368c2dfc444d4773/ofl/notosanskr/OFL.txt"
+        }
+      ]
+    }
+  ]
+}
