@@ -73,6 +73,9 @@ xcrun swiftc -swift-version 5 -Onone -whole-module-optimization -parse-as-librar
     "$PROJECT_DIR/Sources/PersonalProfileCanvas.swift" \
     "$PROJECT_DIR/Sources/HUDPersonalProfileInteraction.swift" \
     "$PROJECT_DIR/Sources/HUDRenderScale.swift" \
+    "$PROJECT_DIR/Sources/HUDDesignFonts.swift" \
+    "$PROJECT_DIR/Sources/HUDDesignTokens.swift" \
+    "$PROJECT_DIR/Sources/HUDDesignText.swift" \
     "$PROJECT_DIR/Sources/HypergryphAccountModels.swift" \
     "$PROJECT_DIR/Sources/HypergryphAccountAPI.swift" \
     "$PROJECT_DIR/Sources/HypergryphAccountKeychain.swift" \
