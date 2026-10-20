@@ -144,6 +144,8 @@ private final class NowPlayingWorkToken {
 /// Visible-only, event-driven service. No polling, subprocess, player launching,
 /// or persisted listening history. Artwork shares its
 /// serial worker and is separately coalesced, bounded and visibility-cancelled.
+/// A failed lyric lookup of the shown track is retried after its backoff by one
+/// visible-only wakeup, cancelled on a track change or when hidden.
 final class NowPlayingController {
     typealias Subscribe = (@escaping (NowPlayingSource?) -> Void) -> (() -> Void)
     private(set) var snapshot = NowPlayingSnapshot()
@@ -180,6 +182,14 @@ final class NowPlayingController {
         return loader
     }()
     var artworkImage: CGImage? { artworkLoader.image }
+    /// Decoded cover size in pixels: the drawn slot's longer side in points times
+    /// its backing scale (`NowPlayingArtworkLoader.pixelSize(points:scale:)`).
+    /// 720 px until the UI sets it. Covers are never decoded larger; a change
+    /// re-decodes the shown cover, which stays visible until replaced.
+    var artworkPixelSize: Int {
+        get { artworkLoader.pixelSize }
+        set { artworkLoader.setPixelSize(newValue) }
+    }
     private(set) var playerVolume: Double?
     private struct PendingSeek {
         let app: NowPlayingApplication
@@ -196,6 +206,12 @@ final class NowPlayingController {
     private var cancelSeekRollback: (() -> Void)?
     private let lyricsLoader: NowPlayingLyricsLoader
     private let catalog: NowPlayingCatalog?
+    /// Nil for offline fixture backends: nothing is fetched, so nothing is retried.
+    private let lyricsClock: (() -> TimeInterval)?
+    private let scheduleLyricsRetry: (TimeInterval, @escaping () -> Void) -> (() -> Void)
+    private var lyricsRetry: (due: TimeInterval, cancel: () -> Void)?
+    /// The retry time already woken for; a retry that could not start is not woken for again.
+    private var lyricsRetryServed: TimeInterval?
     private var warmSnapshot: NowPlayingSnapshot?
     private var warmVolume: Double?
     var lyrics: NowPlayingLyrics? {
@@ -211,14 +227,20 @@ final class NowPlayingController {
          deliver: ((@escaping () -> Void) -> Void)? = nil,
          artworkFetch: @escaping NowPlayingArtworkLoader.Fetch = NowPlayingArtworkDownload.fetch,
          lyricsFetch: NowPlayingLyricsLoader.Fetch? = nil,
-         scheduleSeekRollback: ((TimeInterval, @escaping () -> Void) -> (() -> Void))? = nil) {
+         scheduleSeekRollback: ((TimeInterval, @escaping () -> Void) -> (() -> Void))? = nil,
+         lyricsClock: (() -> TimeInterval)? = nil,
+         scheduleLyricsRetry: ((TimeInterval, @escaping () -> Void) -> (() -> Void))? = nil) {
         self.backend = backend; self.artworkFetch = artworkFetch
         self.catalog = backend is NowPlayingSystemBackend ? NowPlayingCatalog() : nil
-        self.scheduleSeekRollback = scheduleSeekRollback ?? { delay, action in
+        let schedule: (TimeInterval, @escaping () -> Void) -> (() -> Void) = { delay, action in
             let item = DispatchWorkItem(block: action)
             DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
             return { item.cancel() }
         }
+        self.scheduleSeekRollback = scheduleSeekRollback ?? schedule
+        self.scheduleLyricsRetry = scheduleLyricsRetry ?? schedule
+        let online = backend is NowPlayingSystemBackend || lyricsFetch != nil
+        self.lyricsClock = online ? lyricsClock ?? { ProcessInfo.processInfo.systemUptime } : nil
         self.applications = applications ?? Self.runningApplications
         self.subscribe = subscribe ?? Self.subscribeToChanges
         let queue = DispatchQueue(label: "EndfieldHUD.NowPlaying", qos: .userInitiated)
@@ -228,6 +250,8 @@ final class NowPlayingController {
         self.lyricsLoader = NowPlayingLyricsLoader(fetch: lyricsFetch ?? (backend is NowPlayingSystemBackend
             ? NowPlayingLyricsDownload.fetch : { _, completion in completion(nil); return {} }))
         self.lyricsLoader.onChange = { [weak self] in self?.notifyObservers() }
+        self.lyricsLoader.onRetry = { [weak self] in self?.updateLyricsRetry() }
+        self.lyricsLoader.clock = self.lyricsClock; self.catalog?.clock = self.lyricsClock
         self.catalog?.onChange = { [weak self] in self?.catalogChanged() }
     }
 
@@ -275,9 +299,11 @@ final class NowPlayingController {
         pendingCommand = nil; pendingVolume = nil; clearOptimisticSeek(); observedTrack = nil
         token?.cancel(); cancellation?(); cancellation = nil; backendCancellation?(); backendCancellation = nil
         snapshot = NowPlayingSnapshot(); artworkLoader.clear(); lyricsLoader.clear(); catalog?.clear(); playerVolume = nil
+        // Failures are not remembered across presentations: the next opening asks again.
+        lyricsLoader.forgetFailures(); catalog?.forgetFailures(); lyricsRetryServed = nil; updateLyricsRetry()
     }
 
-    deinit { token?.cancel(); cancellation?(); backendCancellation?(); cancelSeekRollback?() }
+    deinit { token?.cancel(); cancellation?(); backendCancellation?(); cancelSeekRollback?(); lyricsRetry?.cancel() }
 
     func select(_ source: NowPlayingSource) {
         guard active, applications().contains(where: { $0.source == source }) else { return }
@@ -509,11 +535,17 @@ final class NowPlayingController {
         if active, let app = snapshot.application, let track = snapshot.track {
             catalog?.request(application: app, track: track)
             artworkLoader.request(application: app, track: track)
-            if track.timedLyrics != nil { lyricsLoader.request(application: app, track: track) }
-            else if catalog?.isLoading != true && catalog?.lyrics == nil { lyricsLoader.request(application: app, track: track) }
-            else { lyricsLoader.clear() }
+            requestLyrics(application: app, track: track)
         } else { artworkLoader.clear(); lyricsLoader.clear(); catalog?.clear() }
-        notifyObservers()
+        updateLyricsRetry(); notifyObservers()
+    }
+    /// Embedded timed lyrics, then the NetEase catalog, then LRCLIB.
+    private func requestLyrics(application app: NowPlayingApplication, track: NowPlayingTrack) {
+        if track.timedLyrics != nil { lyricsLoader.request(application: app, track: track) }
+        else if catalog?.isLoading != true && catalog?.lyrics == nil { lyricsLoader.request(application: app, track: track) }
+        // A retried catalog lookup keeps LRCLIB's lyrics of the same track on
+        // screen until it has an answer of its own.
+        else if catalog?.isLoading != true || !lyricsLoader.holds(application: app, track: track) { lyricsLoader.clear() }
     }
     private func catalogChanged() {
         guard active, let app = snapshot.application, let track = snapshot.track else { return }
@@ -521,7 +553,32 @@ final class NowPlayingController {
         if track.timedLyrics != nil { lyricsLoader.request(application: app, track: track) }
         else if catalog?.isLoading == false, catalog?.lyrics == nil { lyricsLoader.request(application: app, track: track) }
         else if catalog?.lyrics != nil { lyricsLoader.clear() }
-        notifyObservers()
+        updateLyricsRetry(); notifyObservers()
+    }
+    /// One wakeup at the earliest retry of the shown track's failed lookups,
+    /// only while visible. Track changes and hiding replace or cancel it.
+    private func updateLyricsRetry() {
+        var due: TimeInterval?
+        if active, lyricsClock != nil, snapshot.application != nil, snapshot.track != nil {
+            due = [lyricsLoader.retryTime, catalog?.retryTime].compactMap { $0 }.min()
+            if due == lyricsRetryServed { due = nil }
+        }
+        guard due != lyricsRetry?.due else { return }
+        lyricsRetry?.cancel(); lyricsRetry = nil
+        guard let due, let clock = lyricsClock else { return }
+        // The scheduler calls back later on the main thread (never synchronously).
+        lyricsRetry = (due, scheduleLyricsRetry(max(0, due - clock())) { [weak self] in
+            guard let self, self.lyricsRetry?.due == due else { return }
+            self.lyricsRetry = nil
+            guard self.active, let app = self.snapshot.application, let track = self.snapshot.track else { return }
+            // An early wakeup waits for the rest; a due one asks again.
+            if clock() >= due {
+                self.lyricsRetryServed = due
+                self.catalog?.request(application: app, track: track)
+                self.requestLyrics(application: app, track: track)
+            }
+            self.updateLyricsRetry()
+        })
     }
     private func notifyObservers() { for observer in Array(observers.values) { observer() } }
 
