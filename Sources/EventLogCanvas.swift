@@ -62,7 +62,7 @@ final class EventLogCanvas: NSObject, HUDModuleContentFactory {
         return first..<max(first, end)
     }
 
-    init(store: SystemEventLog, reduceMotion: @escaping () -> Bool = { HUDRuntimeAppearance.reduceMotion }) {
+    init(context: HUDDesignContext, store: SystemEventLog, reduceMotion: @escaping () -> Bool = { HUDRuntimeAppearance.reduceMotion }) {
         self.store = store; self.reduceMotion = reduceMotion
         super.init()
         withoutActions {

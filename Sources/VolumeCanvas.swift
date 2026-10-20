@@ -139,7 +139,7 @@ final class VolumeCanvas: NSObject, HUDModuleContentFactory {
         return max(1, (count + capacity - 1) / capacity)
     }
 
-    init(controller: AudioDeviceController, perAppAudio: PerAppAudioController = .fixture()) {
+    init(context: HUDDesignContext, controller: AudioDeviceController, perAppAudio: PerAppAudioController = .fixture()) {
         self.controller = controller; self.perAppAudio = perAppAudio
         snapshot = controller.snapshot
         super.init()

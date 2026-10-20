@@ -115,7 +115,7 @@ final class WorkModeCanvas: NSObject, HUDModuleContentFactory {
         return actions
     }
 
-    init(controller: WorkModeController, reduceMotion: @escaping () -> Bool = { HUDRuntimeAppearance.reduceMotion }) {
+    init(context: HUDDesignContext, controller: WorkModeController, reduceMotion: @escaping () -> Bool = { HUDRuntimeAppearance.reduceMotion }) {
         self.controller = controller
         shouldReduceMotion = reduceMotion
         super.init()

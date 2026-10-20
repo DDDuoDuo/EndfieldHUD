@@ -39,7 +39,7 @@ final class OrbiPomCanvas: HUDModuleContentFactory {
     var isActive: Bool { active }
     var automaticallySchedulesFrames = true
 
-    init(session: OrbiPomSession, foregroundProvider: @escaping () -> Bool = { NSApp?.isActive ?? true }) {
+    init(context: HUDDesignContext, session: OrbiPomSession, foregroundProvider: @escaping () -> Bool = { NSApp?.isActive ?? true }) {
         self.session = session
         self.foregroundProvider = foregroundProvider
         layer.name = "orbipom.canvas"; layer.bounds = CGRect(x: 0, y: 0, width: 440, height: 440)

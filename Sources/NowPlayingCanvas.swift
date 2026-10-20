@@ -76,7 +76,7 @@ final class NowPlayingCanvas: NSObject, HUDModuleContentFactory {
     private var seekRect: CGRect { CGRect(x: 55, y: 379, width: 330, height: 18) }
     private var volumeRect: CGRect { CGRect(x: 371, y: volumeBounds.minY + 34, width: 25, height: 117) }
 
-    init(controller: NowPlayingController, audio: AudioDeviceController,
+    init(context: HUDDesignContext, controller: NowPlayingController, audio: AudioDeviceController,
          perAppAudio: PerAppAudioController, now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
          reduceMotion: @escaping () -> Bool = { HUDRuntimeAppearance.reduceMotion },
          scheduleDisplayUpdate: DisplaySchedule? = nil) {

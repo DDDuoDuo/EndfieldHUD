@@ -106,11 +106,12 @@ final class HUDMenu {
         fileprivate let text: HUDTextLayer
         fileprivate let mark = HUDLayer.plain("menu.item.mark")
 
-        init(item: Item, width: CGFloat, env: HUDDesignEnvironment) {
+        /// The control id is `menuID:itemID` (accessibility and verification).
+        init(item: Item, menuID: String, width: CGFloat, env: HUDDesignEnvironment) {
             self.item = item
             text = HUDTextLayer(item.title, style: HUDType.menuItem.colored(item.danger ? HUDColor.danger : HUDColor.menuText))
             text.language = item.language
-            super.init(id: item.id, label: item.title, env: env)
+            super.init(id: menuID + ":" + item.id, label: item.title, env: env)
             let bounds = CGRect(x: 0, y: 0, width: width, height: HUDMenu.rowHeight)
             HUDMotion.perform {
                 layer.bounds = bounds
@@ -187,7 +188,7 @@ final class HUDMenu {
                 separator.frame = CGRect(x: 10, y: y + 4, width: rowWidth - 20, height: 1); separator.backgroundColor = HUDColor.separator
                 content.addSublayer(separator); y += 9
             }
-            let row = Row(item: item, width: rowWidth, env: env)
+            let row = Row(item: item, menuID: id, width: rowWidth, env: env)
             row.menu = self
             row.layer.frame = CGRect(x: 0, y: y, width: rowWidth, height: Self.rowHeight)
             content.addSublayer(row.layer); rows.append(row)

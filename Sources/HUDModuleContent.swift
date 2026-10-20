@@ -59,6 +59,16 @@ final class HUDModuleContent {
         accent: NSColor(srgbRed: 0.85, green: 0.95, blue: 0.42, alpha: 1), contentsScale: 2)
     private var renderedLanguage = L10n.resolvedLanguage
     private let shouldReduceMotion: () -> Bool
+    /// Design units per content px of the redesigned box (HUDDesignGeometry).
+    var designUnit: CGFloat = HUDDesignGeometry.baseUnit {
+        didSet {
+            guard designUnit != oldValue else { return }
+            for screen in [current, incoming].compactMap({ $0 }) { if let content = screen.wrapper.sublayers?.first { place(content, for: screen.module) } }
+        }
+    }
+    /// Redesigned screens overflow the old viewport (Work Mode ring, Now
+    /// Playing cover, Personal ID art) and switch without the shutter mask.
+    func isDesignScreen(_ module: HUDModule) -> Bool { factories[module] is HUDDesignCanvas }
 
     init(powerLayer: CALayer, reduceMotion: @escaping () -> Bool = { HUDRuntimeAppearance.reduceMotion }) {
         self.powerLayer = powerLayer
@@ -79,11 +89,11 @@ final class HUDModuleContent {
 
     deinit { removeAnimations(in: layer) }
 
-    /// Power remains owned by the existing battery view and cannot be replaced.
+    /// Power stays the legacy battery layer unless a redesigned canvas replaces it.
     @discardableResult
     func register(_ factory: HUDModuleContentFactory, for module: HUDModule) -> Bool {
         precondition(Thread.isMainThread)
-        guard module != .power else { return false }
+        guard module != .power || factory is HUDDesignCanvas else { return false }
         factories[module] = factory
         for screen in [current, incoming].compactMap({ $0 }) where screen.module == module { rebuild(screen) }
         return true
@@ -132,8 +142,9 @@ final class HUDModuleContent {
         style = HUDModuleContentStyle(dark: dark, accent: color, contentsScale: scale)
         renderedLanguage = L10n.resolvedLanguage
         for screen in [current, incoming].compactMap({ $0 }) {
-            if repaint && screen.module != .power { rebuild(screen) }
-            applyScale(to: screen.wrapper)
+            if repaint && (screen.module != .power || factories[.power] != nil) { rebuild(screen) }
+            // Redesigned canvases scale their own box px (HUDDesignContext).
+            if !isDesignScreen(screen.module) { applyScale(to: screen.wrapper) }
         }
     }
 
@@ -174,6 +185,7 @@ final class HUDModuleContent {
     /// content's own entrance. Input waits only for the swap, not the stagger.
     private func beginDirectional(_ transition: HUDModuleSelectionState.Transition, next: Screen, content: HUDDirectionalContent) {
         (factories[transition.from] as? HUDDirectionalContent)?.prepareToLeave()
+        withoutActions { layer.masksToBounds = false }
         let offset = HUDShellPosition.entranceOffset(from: transition.from, to: transition.to)
         let unit = content.contentUnit
         let leave = HUDDesignEnvironment(reduceMotion: shouldReduceMotion)
@@ -214,6 +226,7 @@ final class HUDModuleContent {
         if current.module == module { chosen = current }
         else if let next = incoming, next.module == module { chosen = next }
         else { chosen = makeScreen(module) }
+        if previous != module, chosen !== current { (factories[previous] as? HUDDirectionalContent)?.prepareToLeave() }
         withoutActions {
             for child in layer.sublayers ?? [] { child.removeFromSuperlayer() }
             current = chosen
@@ -242,14 +255,14 @@ final class HUDModuleContent {
             // Keep an in-flight registration frontier attached when a theme or
             // language repaint replaces the actual content beneath it.
             for child in screen.wrapper.sublayers ?? [] where child.name != "module.registration" { child.removeFromSuperlayer() }
-            let content = screen.module == .power ? powerLayer
+            let content = screen.module == .power && factories[.power] == nil ? powerLayer
                 : factories[screen.module]!.makeContent(for: screen.module, style: style)
-            content.frame = Self.localContentFrame(screen.module)
+            place(content, for: screen.module)
             screen.wrapper.insertSublayer(content, at: 0)
             for child in screen.wrapper.sublayers ?? [] where child.name == "module.registration" {
                 (child as? CAShapeLayer)?.strokeColor = registrationColor.cgColor
             }
-            applyScale(to: content)
+            if !isDesignScreen(screen.module) { applyScale(to: content) }
         }
     }
 
@@ -260,6 +273,23 @@ final class HUDModuleContent {
             screen.wrapper.opacity = 1
             screen.wrapper.mask = nil
             screen.wrapper.sublayers?.filter { $0.name == "module.registration" }.forEach { $0.removeFromSuperlayer() }
+            if screen === current { layer.masksToBounds = !isDesignScreen(screen.module) }
+        }
+    }
+
+    /// Old canvases fill their content frame; a redesigned box keeps its
+    /// 590 × 510 px bounds and is scaled to design units at the disc.
+    private func place(_ content: CALayer, for module: HUDModule) {
+        withoutActions {
+            if isDesignScreen(module) {
+                let box = HUDDesignGeometry.boxRect(unit: designUnit)
+                content.anchorPoint = .zero
+                content.bounds = CGRect(origin: .zero, size: HUDMetric.box)
+                content.position = CGPoint(x: box.minX - Self.viewportFrame.minX, y: box.minY - Self.viewportFrame.minY)
+                content.transform = CATransform3DMakeScale(designUnit, designUnit, 1)
+            } else {
+                content.frame = Self.localContentFrame(module)
+            }
         }
     }
 

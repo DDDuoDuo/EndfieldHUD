@@ -229,7 +229,7 @@ final class StorageCanvas: NSObject, HUDModuleContentFactory {
         func animationDidStop(_ anim: CAAnimation, finished flag: Bool) { finish(flag) }
     }
 
-    init(controller: StorageController, reduceMotion: @escaping () -> Bool = { HUDRuntimeAppearance.reduceMotion }) {
+    init(context: HUDDesignContext, controller: StorageController, reduceMotion: @escaping () -> Bool = { HUDRuntimeAppearance.reduceMotion }) {
         self.controller = controller; self.reduceMotion = reduceMotion
         layer.name = "module.storage.canvas"; layer.frame = CGRect(x: 0, y: 0, width: 400, height: 334)
         heading = TelemetryArtwork.text("storage.heading", frame: CGRect(x: 12, y: 0, width: 376, height: 20), size: 15, parent: layer, weight: .semibold)

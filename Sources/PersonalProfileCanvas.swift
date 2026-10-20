@@ -153,7 +153,7 @@ final class PersonalProfileCanvas: NSObject, HUDModuleContentFactory {
         return count(layer) + count(backgroundLayer)
     }
 
-    init(store: UserProfileStore?, error: String? = nil,
+    init(context: HUDDesignContext, store: UserProfileStore?, error: String? = nil,
          workSeconds: @escaping () -> TimeInterval = { 0 },
          reduceMotion: @escaping () -> Bool = { HUDRuntimeAppearance.reduceMotion }) {
         self.store = store; self.workSeconds = workSeconds; self.errorMessage = error

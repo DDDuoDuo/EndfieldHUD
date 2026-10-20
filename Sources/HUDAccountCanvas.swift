@@ -72,7 +72,7 @@ final class HUDAccountCanvas: NSObject, HUDModuleContentFactory {
     var accessibleActions: [Control] { menu == nil ? mainControls : menuControls }
     var menuScrollOffset: CGFloat { menuOffset }
 
-    override init() {
+    init(context: HUDDesignContext) {
         super.init()
         layer.name = "account"; layer.bounds = CGRect(x: 0, y: 0, width: 400, height: 334)
         face.frame = layer.bounds; layer.addSublayer(face)

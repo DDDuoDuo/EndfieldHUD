@@ -32,7 +32,7 @@ final class ReaderCanvas: NSObject, HUDModuleContentFactory {
     private var lastWheelTurn: TimeInterval = 0
     private var releaseArtwork: DispatchWorkItem?
     private var renderScale: CGFloat = 2
-    init(controller: ReaderController) {
+    init(context: HUDDesignContext, controller: ReaderController) {
         self.controller = controller; super.init()
         layer.bounds = CGRect(x: 0, y: 0, width: 400, height: 440); layer.name = "reader"
         for item in [pageClip, controls, title, status, percent, rail, fill, thumb] {

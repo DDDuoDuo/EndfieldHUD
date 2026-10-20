@@ -16,7 +16,7 @@ final class HUDCalendarCanvas: NSObject, HUDModuleContentFactory {
     var eventsForSelectedDay: [HUDCalendarEvent] {
         controller.events.filter { $0.day == selectedDay }.sorted { $0.created == $1.created ? $0.id.uuidString < $1.id.uuidString : $0.created < $1.created }
     }
-    init(controller: HUDCalendarController) {
+    init(context: HUDDesignContext, controller: HUDCalendarController) {
         self.controller = controller; selectedDay = controller.today
         month = HUDCalendarDay(year: selectedDay.year, month: selectedDay.month, day: 1)
         super.init(); layer.bounds = CGRect(x: 0, y: 0, width: 400, height: 440); layer.name = "calendar"

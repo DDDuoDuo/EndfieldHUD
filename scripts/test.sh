@@ -46,7 +46,7 @@ xcrun swiftc -swift-version 5 -Onone -whole-module-optimization -parse-as-librar
     "$PROJECT_DIR/Sources/LoginItemManager.swift" \
     "$PROJECT_DIR/Sources/HUDSettingsCanvas.swift" \
     "$PROJECT_DIR/Sources/HUDQuitConfirmationView.swift" \
-    "$PROJECT_DIR/Sources/HUDScaleSafetyView.swift" \
+    "$PROJECT_DIR/Sources/HUDBackgroundViews.swift" \
     "$PROJECT_DIR/Sources/HUDSettingsInteraction.swift" \
     "$PROJECT_DIR/Sources/HUDRuntimeAppearance.swift" \
     "$PROJECT_DIR/Sources/HUDControlHighlightLayer.swift" \
@@ -77,6 +77,23 @@ xcrun swiftc -swift-version 5 -Onone -whole-module-optimization -parse-as-librar
     "$PROJECT_DIR/Sources/HUDDesignTokens.swift" \
     "$PROJECT_DIR/Sources/HUDDesignText.swift" \
     "$PROJECT_DIR/Sources/HUDDesignDrawing.swift" \
+    "$PROJECT_DIR/Sources/HUDDesignFormat.swift" \
+    "$PROJECT_DIR/Sources/HUDDesignIcons.swift" \
+    "$PROJECT_DIR/Sources/HUDDesignMotion.swift" \
+    "$PROJECT_DIR/Sources/HUDDesignControl.swift" \
+    "$PROJECT_DIR/Sources/HUDDesignBadges.swift" \
+    "$PROJECT_DIR/Sources/HUDDesignButtons.swift" \
+    "$PROJECT_DIR/Sources/HUDDesignRows.swift" \
+    "$PROJECT_DIR/Sources/HUDDesignHeader.swift" \
+    "$PROJECT_DIR/Sources/HUDDesignMenu.swift" \
+    "$PROJECT_DIR/Sources/HUDDesignSlider.swift" \
+    "$PROJECT_DIR/Sources/HUDDesignTabs.swift" \
+    "$PROJECT_DIR/Sources/HUDDesignCards.swift" \
+    "$PROJECT_DIR/Sources/HUDDesignOverlay.swift" \
+    "$PROJECT_DIR/Sources/HUDDesignScreen.swift" \
+    "$PROJECT_DIR/Sources/HUDDesignTextField.swift" \
+    "$PROJECT_DIR/Sources/FacilityAlertMonitor.swift" \
+    "$PROJECT_DIR/Sources/ArchiveClassification.swift" \
     "$PROJECT_DIR/Sources/HypergryphAccountModels.swift" \
     "$PROJECT_DIR/Sources/HypergryphAccountAPI.swift" \
     "$PROJECT_DIR/Sources/HypergryphAccountKeychain.swift" \
@@ -275,7 +292,6 @@ xcrun swiftc -swift-version 5 -Onone -whole-module-optimization -parse-as-librar
     "$PROJECT_DIR/Tests/HUDCenterLogoTests.swift" \
     "$PROJECT_DIR/Tests/HUDSettingsCanvasTests.swift" \
     "$PROJECT_DIR/Tests/HUDQuitConfirmationTests.swift" \
-    "$PROJECT_DIR/Tests/HUDScaleSafetyTests.swift" \
     "$PROJECT_DIR/Tests/HUDGitHubReleaseTests.swift" \
     "$PROJECT_DIR/Tests/HUDUpdateStateTests.swift" \
     "$PROJECT_DIR/Tests/LocalizationTests.swift" \

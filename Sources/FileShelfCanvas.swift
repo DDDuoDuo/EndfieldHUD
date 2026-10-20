@@ -84,7 +84,7 @@ final class FileShelfCanvas: NSObject, HUDModuleContentFactory {
         return items[start..<max(start, end)]
     }
 
-    init(store: FileShelfStore?, error: String? = nil,
+    init(context: HUDDesignContext, store: FileShelfStore?, error: String? = nil,
          reduceMotion: @escaping () -> Bool = { HUDRuntimeAppearance.reduceMotion }) {
         self.store = store
         self.reduceMotion = reduceMotion

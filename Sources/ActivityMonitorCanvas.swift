@@ -136,7 +136,7 @@ final class ActivityMonitorCanvas: NSObject, HUDModuleContentFactory {
     private var rows: [Row] = []
     private let heading: CATextLayer, subtitle: CATextLayer, footer: CATextLayer
 
-    init(controller: SystemActivityMonitor, apps: AppActivityMonitor = .fixture(),
+    init(context: HUDDesignContext, controller: SystemActivityMonitor, apps: AppActivityMonitor = .fixture(),
          reduceMotion: @escaping () -> Bool = { HUDRuntimeAppearance.reduceMotion },
          loadAppIcon: @escaping (URL) -> NSImage = { url in
              // NSWorkspace can share its cached image with another consumer.

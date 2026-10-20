@@ -70,7 +70,7 @@ final class ArchiveCanvas: HUDModuleContentFactory {
     var filtered: [ArchiveSummary] {
         controller.entries.filter { filtersUncategorized ? $0.categoryID == nil : (categoryID == nil || $0.categoryID == categoryID) }
     }
-    init(controller: ArchiveController) {
+    init(context: HUDDesignContext, controller: ArchiveController) {
         self.controller = controller; layer.name = "archive.canvas"; layer.bounds = CGRect(x: 0, y: 0, width: 400, height: 440)
         backdrop.name = "archive.backdrop"; backdrop.frame = layer.bounds; backdrop.cornerRadius = 4
         layer.addSublayer(backdrop)

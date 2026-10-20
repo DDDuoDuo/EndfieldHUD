@@ -57,7 +57,7 @@ final class WorldMapCanvas: NSObject, HUDModuleContentFactory {
     private static var cachedTerrain: Result<WorldMapTerrain, Error>?
     private static var cachedCountries: Result<WorldMapCountries, Error>?
 
-    init(store: WorldMapStore?, error: String? = nil, terrain: WorldMapTerrain? = nil, countries: WorldMapCountries? = nil,
+    init(context: HUDDesignContext, store: WorldMapStore?, error: String? = nil, terrain: WorldMapTerrain? = nil, countries: WorldMapCountries? = nil,
          loadsTerrain: Bool = true, reduceMotion: @escaping () -> Bool = { HUDRuntimeAppearance.reduceMotion },
          ambient: @escaping () -> Bool = { HUDRuntimeAppearance.ambientEnabled }) {
         self.store = store; message = error; self.terrain = terrain; self.countries = countries; self.loadsTerrain = loadsTerrain

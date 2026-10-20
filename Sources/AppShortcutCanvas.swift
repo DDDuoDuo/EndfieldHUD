@@ -52,7 +52,7 @@ final class AppShortcutCanvas: NSObject, HUDModuleContentFactory {
     private var ink: NSColor { NSColor(white: dark ? 0.94 : 0.12, alpha: 1) }
     private var muted: NSColor { NSColor(white: dark ? 0.65 : 0.35, alpha: 1) }
 
-    init(store: AppShortcutStore?, error: String? = nil,
+    init(context: HUDDesignContext, store: AppShortcutStore?, error: String? = nil,
          reduceMotion: @escaping () -> Bool = { HUDRuntimeAppearance.reduceMotion }) {
         self.store = store; self.errorMessage = error; items = store?.items ?? []
         shouldReduceMotion = reduceMotion

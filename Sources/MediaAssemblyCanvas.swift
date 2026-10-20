@@ -66,7 +66,7 @@ final class MediaAssemblyCanvas: NSObject, HUDModuleContentFactory {
     }
     private var editable: Bool { controller.document != nil && !controller.isBusy && !controller.isExporting }
     private var ink: NSColor { NSColor(white: dark ? 0.94 : 0.1, alpha: 1) }
-    init(controller: MediaAssemblyController) {
+    init(context: HUDDesignContext, controller: MediaAssemblyController) {
         self.controller = controller; super.init()
         layer.name = "mediaAssembly.canvas"; layer.bounds = CGRect(x: 0, y: 0, width: 440, height: 440)
         stage.frame = Self.previewRect; stage.masksToBounds = true; stage.cornerRadius = 4

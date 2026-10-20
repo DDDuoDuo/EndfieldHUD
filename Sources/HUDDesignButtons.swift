@@ -233,3 +233,45 @@ final class HUDPill: HUDControl {
     }
 
 }
+
+/// A colour swatch (spec §2.17 `.sws`; Notes, Projection, Settings): a square
+/// with a 1 px #111 ring; selected adds a 2 px #111 ring and a 3 px yellow one
+/// outside it. Without a colour it is the conic custom-colour circle.
+final class HUDSwatch: HUDControl {
+    let color: CGColor?
+    private let fill: CALayer
+    private let ring = HUDLayer.plain("swatch.ring")
+    var isSelected = false { didSet { if isSelected != oldValue { render() } } }
+
+    init(id: String, label: String, color: CGColor?, size: CGFloat = 24, env: HUDDesignEnvironment) {
+        self.color = color
+        if color == nil {
+            let wheel = HUDLayer.gradient("swatch.wheel")
+            wheel.type = .conic
+            wheel.startPoint = CGPoint(x: 0.5, y: 0.5); wheel.endPoint = CGPoint(x: 0.5, y: 0)
+            wheel.colors = [0xFF5A5A, 0xFFD84A, 0x7BE37B, 0x4AC6FF, 0xA77BFF, 0xFF5A5A].map { HUDColor.rgb($0) }
+            fill = wheel
+        } else { fill = HUDLayer.plain("swatch.fill") }
+        super.init(id: id, label: label, env: env)
+        let bounds = CGRect(x: 0, y: 0, width: size, height: size)
+        HUDMotion.perform {
+            layer.bounds = bounds
+            fill.frame = bounds; fill.backgroundColor = color
+            fill.borderWidth = 1; fill.borderColor = HUDColor.nearBlack
+            if color == nil { fill.cornerRadius = size / 2; fill.masksToBounds = true }
+            ring.frame = bounds.insetBy(dx: -5, dy: -5); ring.borderWidth = 3; ring.borderColor = HUDColor.yellow
+            ring.isHidden = true
+            let inner = HUDLayer.plain(); inner.frame = ring.bounds.insetBy(dx: 3, dy: 3)
+            inner.borderWidth = 2; inner.borderColor = HUDColor.nearBlack
+            ring.addSublayer(inner)
+            layer.addSublayer(fill); layer.addSublayer(ring)
+        }
+        setTarget(bounds)
+    }
+
+    private func render() { HUDMotion.perform { ring.isHidden = !isSelected } }
+    override func hoverChanged() {
+        HUDMotion.animate(layer, "transform.scale", to: isHovered && isEnabled ? 1.08 : 1, duration: HUDDuration.hover, env: env)
+    }
+    override var accessibilityRole: HUDAccessibilityItem.Role? { .tab(selected: isSelected) }
+}

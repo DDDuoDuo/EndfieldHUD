@@ -85,7 +85,7 @@ final class ClipboardCanvas: NSObject, HUDModuleContentFactory {
         L10n.text("\(items.count) / \(store.capacity) items · Click to copy", "\(items.count) / \(store.capacity) 项 · 点击复制")
     }
 
-    init(store: ClipboardStore, reduceMotion: @escaping () -> Bool = { HUDRuntimeAppearance.reduceMotion }) {
+    init(context: HUDDesignContext, store: ClipboardStore, reduceMotion: @escaping () -> Bool = { HUDRuntimeAppearance.reduceMotion }) {
         self.store = store; self.reduceMotion = reduceMotion
         super.init()
         withoutActions {

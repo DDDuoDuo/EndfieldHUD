@@ -99,7 +99,8 @@ final class HUDInteractionRouter {
 
     func control(at point: CGPoint, in root: CALayer) -> HUDControl? {
         controls.reversed().first { control in
-            control.isEnabled && control.layer.isVisible(in: root) && control.contains(control.layer.convert(point, from: root))
+            control.isEnabled && control.layer.isVisible(in: root) && control.layer.isUnclipped(point, in: root)
+                && control.contains(control.layer.convert(point, from: root))
         }
     }
 

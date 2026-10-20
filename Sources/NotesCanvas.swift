@@ -304,7 +304,7 @@ final class NotesCanvas: NSObject, HUDModuleContentFactory {
     private var border: NSColor { NSColor(white: dark ? 0.72 : 0.24, alpha: dark ? 0.28 : 0.24) }
     private let headerHeight: CGFloat = 24
 
-    init(store: NotesStore?, error: String? = nil, notesSelected: Bool = true,
+    init(context: HUDDesignContext, store: NotesStore?, error: String? = nil, notesSelected: Bool = true,
          textLayoutRangeBudget: Int = NotesCanvas.textLayoutRangeBudget,
          reduceMotion: @escaping () -> Bool = { HUDRuntimeAppearance.reduceMotion }) {
         self.reduceMotion = reduceMotion
