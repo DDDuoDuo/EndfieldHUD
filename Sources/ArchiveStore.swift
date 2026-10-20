@@ -6,10 +6,18 @@ enum ArchiveTemplate: String, Codable, CaseIterable {
     case journal, research
     var title: String { self == .journal ? L10n.text("Journal", "日记") : L10n.text("Q&A", "问答") }
 }
+enum ArchiveCategoryNameIssue: Equatable { case empty, tooLong, invalidCharacters, reserved, duplicate, unknownCategory }
+enum ArchiveCategoryRenameResult: Equatable { case renamed, unchanged, rejected(ArchiveCategoryNameIssue) }
 struct ArchiveCategory: Codable, Equatable, Identifiable {
+    /// Names typed in the rename field or proposed by Add (spec maxlength 24).
+    /// Older names up to 80 characters still load and stay unchanged.
+    static let maximumNameLength = 24
     var id = UUID()
     var name: String
     var created = Date()
+    /// The NEW badge: set when the category is added, cleared once the user opens it.
+    var isNew = false
+    private enum CodingKeys: String, CodingKey { case id, name, created }
     var isValid: Bool { !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && name.count <= 80
         && name.utf8.count <= 1024 && !name.contains("\0") && !name.contains("\n") && !name.contains("\r") && created.timeIntervalSince1970.isFinite }
     static func legacy(_ template: ArchiveTemplate) -> ArchiveCategory {
@@ -17,6 +25,24 @@ struct ArchiveCategory: Codable, Equatable, Identifiable {
             name: template == .journal ? "Journal" : "Q&A", created: Date(timeIntervalSince1970: 0))
     }
     static func nameKey(_ name: String) -> String { name.trimmingCharacters(in: .whitespacesAndNewlines).folding(options: [.caseInsensitive], locale: Locale(identifier: "en_US_POSIX")) }
+    /// The built-in All and Uncategorized filters, in every app language.
+    static func isReservedName(_ name: String) -> Bool {
+        let key = nameKey(name)
+        return AppLanguage.allCases.contains { language in
+            nameKey(L10n.text("All", "全部", language: language)) == key || nameKey(L10n.text("Uncategorized", "未分类", language: language)) == key
+        }
+    }
+    /// Validation for a new or renamed category, applied to the trimmed name.
+    static func nameIssue(_ name: String, among categories: [ArchiveCategory], excluding id: UUID? = nil) -> ArchiveCategoryNameIssue? {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return .empty }
+        if trimmed.count > maximumNameLength || trimmed.utf8.count > 1024 { return .tooLong }
+        if trimmed.unicodeScalars.contains(where: { [.control, .lineSeparator, .paragraphSeparator].contains($0.properties.generalCategory) }) { return .invalidCharacters }
+        if isReservedName(trimmed) { return .reserved }
+        let key = nameKey(trimmed)
+        if categories.contains(where: { $0.id != id && nameKey($0.name) == key }) { return .duplicate }
+        return nil
+    }
 }
 struct ArchiveEntry: Codable, Equatable, Identifiable {
     var id = UUID()
@@ -61,20 +87,25 @@ struct ArchiveSummary: Equatable, Identifiable {
     let mediaCount: Int
     let categoryID: UUID?
     let thumbnail: NotesMediaReference?
+    /// Classified tiles show the stamp and `[ CLASSIFIED ]`, never the title or
+    /// media. The controller withholds their thumbnails.
+    let isClassified: Bool
     init(id: UUID, template: ArchiveTemplate, title: String, date: Date, mediaCount: Int,
-         categoryID: UUID? = nil, thumbnail: NotesMediaReference? = nil) {
+         categoryID: UUID? = nil, thumbnail: NotesMediaReference? = nil, isClassified: Bool = false) {
         self.id = id; self.template = template; self.title = title; self.date = date; self.mediaCount = mediaCount
-        self.categoryID = categoryID; self.thumbnail = thumbnail
+        self.categoryID = categoryID; self.thumbnail = thumbnail; self.isClassified = isClassified
     }
 }
 enum ArchiveError: LocalizedError {
-    case invalid, unavailable, newerVersion, full
+    case invalid, unavailable, newerVersion, full, passwordMissing, keychainUnavailable
     var errorDescription: String? {
         switch self {
         case .invalid: return L10n.text("This archive could not be read. The original was preserved.", "无法读取档案，原始数据已保留。")
         case .unavailable: return L10n.text("The archive could not be saved.", "无法保存档案。")
         case .newerVersion: return L10n.text("This archive needs a newer app version.", "此档案需要更新版本的应用。")
         case .full: return L10n.text("The archive is full.", "档案库已满。")
+        case .passwordMissing: return L10n.text("This document's password is missing from the Keychain. It stays classified.", "钥匙串中缺少此文档的密码，文档仍保持机密。")
+        case .keychainUnavailable: return L10n.text("The Keychain could not be read. The document stays classified.", "无法读取钥匙串，文档仍保持机密。")
         }
     }
 }
@@ -87,19 +118,31 @@ final class ArchiveStore {
     static let maximumEntries = 2000
     static let maximumCategories = 100
     static let maximumSummaryThumbnailBytes = 16 * 1024 * 1024
+    /// Stored while no document is classified, so v1.2.0 (which accepts
+    /// version 2 and reads only named columns) keeps opening the archive.
+    static let sharedSchemaVersion: Int32 = 2
+    /// Stored exactly while a document is classified; v1.2.0 refuses it as
+    /// newer, so it can never show classified text or clear the flag.
+    static let classifiedSchemaVersion: Int32 = 3
     let directory: URL
+    /// Password verifiers for classified documents. Never the archive file.
+    let vault: ArchivePasswordVault
     private var database: OpaquePointer?
     private let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
-    init(directory: URL) { self.directory = directory }
+    /// Diagnostic processes never touch the Keychain unless a vault is injected.
+    init(directory: URL, vault: ArchivePasswordVault? = nil) {
+        self.directory = directory
+        self.vault = vault ?? (Self.isDiagnostic(CommandLine.arguments) ? ArchiveMemoryPasswordVault() : ArchiveKeychainVault())
+    }
     static func applicationDirectory() -> URL {
         directory(notesDirectory: NotesStore.applicationDirectory(), arguments: CommandLine.arguments)
     }
+    static func isDiagnostic(_ arguments: [String]) -> Bool {
+        arguments.contains { $0 == "--ui-test" || $0.hasSuffix("smoke-test") || $0.hasPrefix("--render-") }
+    }
     /// Keep the Notes process's random diagnostic root; never collapse it to /tmp/Archive.
     static func directory(notesDirectory: URL, arguments: [String]) -> URL {
-        let diagnostic = arguments.contains {
-            $0 == "--ui-test" || $0.hasSuffix("smoke-test") || $0.hasPrefix("--render-")
-        }
-        return (diagnostic ? notesDirectory : notesDirectory.deletingLastPathComponent())
+        (isDiagnostic(arguments) ? notesDirectory : notesDirectory.deletingLastPathComponent())
             .appendingPathComponent("Archive", isDirectory: true)
     }
     deinit { if let database { sqlite3_close(database) } }
@@ -118,7 +161,7 @@ final class ArchiveStore {
             defer { sqlite3_finalize(version) }
             guard sqlite3_step(version) == SQLITE_ROW else { throw ArchiveError.invalid }
             let value = sqlite3_column_int(version, 0)
-            guard value <= 2 else { throw ArchiveError.newerVersion }
+            guard value <= Self.classifiedSchemaVersion else { throw ArchiveError.newerVersion }
             guard value >= 0 else { throw ArchiveError.invalid }
             if value == 0 {
                 // Only initialize an empty database. Foreign/corrupt schemas are
@@ -128,10 +171,10 @@ final class ArchiveStore {
                 guard sqlite3_step(tables) == SQLITE_ROW, sqlite3_column_int(tables, 0) == 0 else { throw ArchiveError.invalid }
                 try execute("BEGIN IMMEDIATE")
                 do {
-                    try execute("CREATE TABLE categories(id TEXT PRIMARY KEY, name TEXT NOT NULL, created REAL NOT NULL)")
-                    try execute("CREATE TABLE entries(id TEXT PRIMARY KEY, template TEXT NOT NULL, title TEXT NOT NULL, date REAL NOT NULL, modified REAL NOT NULL, mediaCount INTEGER NOT NULL, payload BLOB NOT NULL, categoryID TEXT REFERENCES categories(id), thumbnail BLOB)")
+                    try execute("CREATE TABLE categories(id TEXT PRIMARY KEY, name TEXT NOT NULL, created REAL NOT NULL, viewed INTEGER NOT NULL DEFAULT 1)")
+                    try execute("CREATE TABLE entries(id TEXT PRIMARY KEY, template TEXT NOT NULL, title TEXT NOT NULL, date REAL NOT NULL, modified REAL NOT NULL, mediaCount INTEGER NOT NULL, payload BLOB NOT NULL, categoryID TEXT REFERENCES categories(id), thumbnail BLOB, classification TEXT)")
                     try execute("CREATE TABLE state(key TEXT PRIMARY KEY, value TEXT NOT NULL)")
-                    try execute("PRAGMA user_version=2")
+                    try execute("PRAGMA user_version=\(Self.sharedSchemaVersion)")
                     try execute("COMMIT")
                 } catch { try? execute("ROLLBACK"); throw error }
             } else {
@@ -141,14 +184,53 @@ final class ArchiveStore {
                     sqlite3_finalize(entries)
                     let state = try statement("SELECT key,value FROM state LIMIT 0")
                     sqlite3_finalize(state)
-                    if value == 2 {
+                    if value >= 2 {
                         let extra = try statement("SELECT categoryID,thumbnail FROM entries LIMIT 0"); sqlite3_finalize(extra)
                         let categories = try statement("SELECT id,name,created FROM categories LIMIT 0"); sqlite3_finalize(categories)
                     }
+                    if value >= 3 {
+                        let classification = try statement("SELECT classification FROM entries LIMIT 0"); sqlite3_finalize(classification)
+                        let viewed = try statement("SELECT viewed FROM categories LIMIT 0"); sqlite3_finalize(viewed)
+                    }
                 } catch { throw ArchiveError.invalid }
                 if value == 1 { try migrateVersionOne() }
+                try reconcileSchema()
             }
         } catch { sqlite3_close(db); database = nil; throw error }
+    }
+    /// Lazily widens a version-two archive with the classification key and
+    /// NEW-badge columns, keeping version 2. Both are NULL or defaulted, so
+    /// v1.2.0's named-column inserts and whole-row replaces still succeed;
+    /// such a replace can only clear a classification, and none exist at
+    /// version 2. Also restores "version 3 exactly while anything is
+    /// classified" if an earlier build or an outside edit broke it. Writes
+    /// nothing when the archive is already consistent.
+    private func reconcileSchema() throws {
+        func has(_ sql: String) -> Bool { guard let query = try? statement(sql) else { return false }; sqlite3_finalize(query); return true }
+        let hasClassification = has("SELECT classification FROM entries LIMIT 0"), hasViewed = has("SELECT viewed FROM categories LIMIT 0")
+        if hasClassification && hasViewed, try storedVersion() == classifiedTargetVersion() { return }
+        try execute("BEGIN IMMEDIATE")
+        do {
+            if !hasClassification { try execute("ALTER TABLE entries ADD COLUMN classification TEXT") }
+            if !hasViewed { try execute("ALTER TABLE categories ADD COLUMN viewed INTEGER NOT NULL DEFAULT 1") }
+            try syncStoredVersion(); try execute("COMMIT")
+        } catch { try? execute("ROLLBACK"); throw error }
+    }
+    private func storedVersion() throws -> Int32 {
+        let query = try statement("PRAGMA user_version"); defer { sqlite3_finalize(query) }
+        guard sqlite3_step(query) == SQLITE_ROW else { throw ArchiveError.unavailable }
+        return sqlite3_column_int(query, 0)
+    }
+    private func classifiedTargetVersion() throws -> Int32 {
+        let query = try statement("SELECT EXISTS(SELECT 1 FROM entries WHERE classification IS NOT NULL)"); defer { sqlite3_finalize(query) }
+        guard sqlite3_step(query) == SQLITE_ROW else { throw ArchiveError.unavailable }
+        return sqlite3_column_int(query, 0) != 0 ? Self.classifiedSchemaVersion : Self.sharedSchemaVersion
+    }
+    /// Call inside the transaction that changes a classification, so the
+    /// version and the flags commit or roll back together.
+    private func syncStoredVersion() throws {
+        let target = try classifiedTargetVersion()
+        if try storedVersion() != target { try execute("PRAGMA user_version=\(target)") }
     }
     /// Validate every original record before schema mutation, then backfill only
     /// small metadata. Original payload bytes, document IDs and selection survive.
@@ -179,7 +261,7 @@ final class ArchiveStore {
             try execute("CREATE TABLE categories(id TEXT PRIMARY KEY, name TEXT NOT NULL, created REAL NOT NULL)")
             try execute("ALTER TABLE entries ADD COLUMN categoryID TEXT REFERENCES categories(id)")
             try execute("ALTER TABLE entries ADD COLUMN thumbnail BLOB")
-            for template in templates { try insertCategory(ArchiveCategory.legacy(template)) }
+            for template in templates { try insertCategory(ArchiveCategory.legacy(template), schemaTwo: true) }
             let rows = try statement("SELECT id,payload FROM entries")
             do {
                 while true {
@@ -221,21 +303,24 @@ final class ArchiveStore {
         else { sqlite3_bind_null(query, index) }
     }
     func categories() throws -> [ArchiveCategory] {
-        try open(); let query = try statement("SELECT id,name,created FROM categories ORDER BY created,id LIMIT 101")
+        try open(); let query = try statement("SELECT id,name,created,viewed FROM categories ORDER BY created,id LIMIT 101")
         defer { sqlite3_finalize(query) }; var result: [ArchiveCategory] = []
         while true {
             let step = sqlite3_step(query); if step == SQLITE_DONE { break }
-            guard step == SQLITE_ROW, let id = UUID(uuidString: string(query, 0)), sqlite3_column_type(query, 2) != SQLITE_NULL else { throw ArchiveError.invalid }
-            let category = ArchiveCategory(id: id, name: string(query, 1), created: Date(timeIntervalSince1970: sqlite3_column_double(query, 2)))
+            guard step == SQLITE_ROW, let id = UUID(uuidString: string(query, 0)), sqlite3_column_type(query, 2) != SQLITE_NULL,
+                  sqlite3_column_type(query, 3) == SQLITE_INTEGER, (0...1).contains(sqlite3_column_int64(query, 3)) else { throw ArchiveError.invalid }
+            let category = ArchiveCategory(id: id, name: string(query, 1), created: Date(timeIntervalSince1970: sqlite3_column_double(query, 2)),
+                isNew: sqlite3_column_int64(query, 3) == 0)
             guard category.isValid, !result.contains(where: { ArchiveCategory.nameKey($0.name) == ArchiveCategory.nameKey(category.name) }) else { throw ArchiveError.invalid }
             result.append(category); guard result.count <= Self.maximumCategories else { throw ArchiveError.full }
         }
         return result
     }
-    private func insertCategory(_ value: ArchiveCategory) throws {
-        let query = try statement("INSERT INTO categories(id,name,created) VALUES(?,?,?)")
+    private func insertCategory(_ value: ArchiveCategory, schemaTwo: Bool = false) throws {
+        let query = try statement(schemaTwo ? "INSERT INTO categories(id,name,created) VALUES(?,?,?)" : "INSERT INTO categories(id,name,created,viewed) VALUES(?,?,?,?)")
         defer { sqlite3_finalize(query) }; bind(value.id.uuidString, 1, query); bind(value.name, 2, query)
         sqlite3_bind_double(query, 3, value.created.timeIntervalSince1970)
+        if !schemaTwo { sqlite3_bind_int(query, 4, value.isNew ? 0 : 1) }
         guard sqlite3_step(query) == SQLITE_DONE else { throw ArchiveError.unavailable }
     }
     func saveCategory(_ value: ArchiveCategory) throws {
@@ -252,6 +337,29 @@ final class ArchiveStore {
             }
             try execute("COMMIT")
         } catch { try? execute("ROLLBACK"); throw error }
+    }
+    /// Documents refer to categories by ID, so a rename re-tags all of them at
+    /// once. Repeating a completed rename is a no-op.
+    func renameCategory(_ id: UUID, to name: String) throws {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        try open(); try execute("BEGIN IMMEDIATE")
+        do {
+            let existing = try categories()
+            guard let current = existing.first(where: { $0.id == id }) else { throw ArchiveError.invalid }
+            if current.name != name {
+                guard ArchiveCategory.nameIssue(name, among: existing, excluding: id) == nil else { throw ArchiveError.invalid }
+                let query = try statement("UPDATE categories SET name=? WHERE id=?")
+                defer { sqlite3_finalize(query) }; bind(name, 1, query); bind(id.uuidString, 2, query)
+                guard sqlite3_step(query) == SQLITE_DONE else { throw ArchiveError.unavailable }
+            }
+            try execute("COMMIT")
+        } catch { try? execute("ROLLBACK"); throw error }
+    }
+    /// Clears the NEW badge. Unknown or removed categories are ignored.
+    func markCategoryViewed(_ id: UUID) throws {
+        try open(); let query = try statement("UPDATE categories SET viewed=1 WHERE id=?")
+        defer { sqlite3_finalize(query) }; bind(id.uuidString, 1, query)
+        guard sqlite3_step(query) == SQLITE_DONE else { throw ArchiveError.unavailable }
     }
     func thumbnail(for id: UUID) throws -> NotesMediaReference? {
         try open(); let query = try statement("SELECT thumbnail FROM entries WHERE id=?")
@@ -277,7 +385,7 @@ final class ArchiveStore {
     func summaries() throws -> [ArchiveSummary] {
         try open()
         let categories = Set(try self.categories().map(\.id))
-        let query = try statement("SELECT id,template,title,date,mediaCount,categoryID,thumbnail FROM entries ORDER BY modified DESC LIMIT 2001")
+        let query = try statement("SELECT id,template,title,date,mediaCount,categoryID,thumbnail,classification FROM entries ORDER BY modified DESC LIMIT 2001")
         defer { sqlite3_finalize(query) }
         var result: [ArchiveSummary] = [], thumbnailBytes = 0
         while true {
@@ -296,8 +404,10 @@ final class ArchiveStore {
             let bytes = Int(sqlite3_column_bytes(query, 6))
             if bytes > Self.maximumSummaryThumbnailBytes - thumbnailBytes { thumbnail = nil }
             else { thumbnailBytes += bytes }
+            let classified = try classificationKey(query, index: 7) != nil
             result.append(ArchiveSummary(id: id, template: template, title: title,
-                date: Date(timeIntervalSince1970: timestamp), mediaCount: Int(mediaCount), categoryID: category, thumbnail: thumbnail))
+                date: Date(timeIntervalSince1970: timestamp), mediaCount: Int(mediaCount), categoryID: category, thumbnail: thumbnail,
+                isClassified: classified))
             guard result.count <= Self.maximumEntries else { throw ArchiveError.full }
         }
         return result
@@ -334,7 +444,11 @@ final class ArchiveStore {
         sqlite3_finalize(count)
         guard step == SQLITE_ROW else { throw ArchiveError.unavailable }
         guard total < Self.maximumEntries else { throw ArchiveError.full }
-        let query = try statement("INSERT OR REPLACE INTO entries(id,template,title,date,modified,mediaCount,payload,categoryID,thumbnail) VALUES(?,?,?,?,?,?,?,?,?)")
+        // An upsert, not a replace: document saves never touch classification,
+        // so a stale editor snapshot cannot declassify a document.
+        let query = try statement("INSERT INTO entries(id,template,title,date,modified,mediaCount,payload,categoryID,thumbnail) VALUES(?,?,?,?,?,?,?,?,?) "
+            + "ON CONFLICT(id) DO UPDATE SET template=excluded.template,title=excluded.title,date=excluded.date,modified=excluded.modified,"
+            + "mediaCount=excluded.mediaCount,payload=excluded.payload,categoryID=excluded.categoryID,thumbnail=excluded.thumbnail")
         defer { sqlite3_finalize(query) }
         bind(entry.id.uuidString, 1, query); bind(entry.template.rawValue, 2, query); bind(entry.title, 3, query)
         sqlite3_bind_double(query, 4, entry.date.timeIntervalSince1970)
@@ -383,17 +497,130 @@ final class ArchiveStore {
             try execute("COMMIT")
         } catch { try? execute("ROLLBACK"); throw error }
     }
+    /// A classified document's Keychain verifier is removed after the row.
     func delete(_ id: UUID) throws {
         try open(); try execute("BEGIN IMMEDIATE")
+        let key: UUID?
         do {
+            // A malformed flag must not block deletion; it only skips cleanup.
+            key = (try? classificationRow(id))?.key ?? nil
             let query = try statement("DELETE FROM entries WHERE id=?")
             defer { sqlite3_finalize(query) }; bind(id.uuidString, 1, query)
             guard sqlite3_step(query) == SQLITE_DONE else { throw ArchiveError.unavailable }
             let selection = try statement("DELETE FROM state WHERE key='selection' AND value=?")
             defer { sqlite3_finalize(selection) }; bind(id.uuidString, 1, selection)
             guard sqlite3_step(selection) == SQLITE_DONE else { throw ArchiveError.unavailable }
+            if key != nil { try syncStoredVersion() }
             try execute("COMMIT")
         } catch { try? execute("ROLLBACK"); throw error }
+        if let key { removeVerifiers(of: id, known: key, keeping: nil) }
+    }
+
+    // MARK: Classification
+    // The row holds only a random key ID (NULL when unclassified); the salted
+    // PBKDF2 verifier lives in the vault under "<document>/<key>". Every new
+    // password gets a new key, so an item is never overwritten in place.
+
+    func isClassified(_ id: UUID) throws -> Bool { try open(); return try classificationRow(id).key != nil }
+    /// Reads the Keychain only for classified documents; never derives a key.
+    func classificationStatus(_ id: UUID) throws -> ArchiveClassificationStatus {
+        try open()
+        guard let key = try classificationRow(id).key else { return .unclassified }
+        do { _ = try storedVerifier(document: id, key: key); return .protected }
+        catch ArchiveError.passwordMissing { return .passwordMissing }
+        catch { return .keychainUnavailable }
+    }
+    /// Text is unchanged; only the flag and a new verifier are written.
+    func classify(_ id: UUID, password: String) throws {
+        guard ArchivePassword.issue(password) == nil else { throw ArchiveError.invalid }
+        try open(); try writeVerifier(id, password: password, replacing: false)
+    }
+    /// True for the right password, and for a document that is not classified.
+    /// Throws `.passwordMissing` or `.keychainUnavailable` instead of reporting a wrong password.
+    func verify(_ id: UUID, password: String) throws -> Bool {
+        try open()
+        let row = try classificationRow(id)
+        guard row.found else { throw ArchiveError.invalid }
+        guard let key = row.key else { return true }
+        return try storedVerifier(document: id, key: key).matches(password)
+    }
+    /// Idempotent. The text stays as it is; the verifier is deleted after commit.
+    func declassify(_ id: UUID) throws {
+        try open(); try execute("BEGIN IMMEDIATE")
+        let key: UUID?
+        do {
+            key = try classificationRow(id).key
+            // Back to version 2 with the last classified document, so v1.2.0
+            // can open the archive again; nothing it could misread remains.
+            if key != nil { try setClassification(id, key: nil); try syncStoredVersion() }
+            try execute("COMMIT")
+        } catch { try? execute("ROLLBACK"); throw error }
+        if let key { removeVerifiers(of: id, known: key, keeping: nil) }
+    }
+    /// The recovery path for a classified document without a readable
+    /// verifier: a new password keeps it classified; nil declassifies it.
+    /// Refused while the current verifier is readable. Callers must first
+    /// authenticate the Mac's owner (the controller does).
+    func recoverClassification(_ id: UUID, newPassword: String?) throws {
+        if let newPassword { guard ArchivePassword.issue(newPassword) == nil else { throw ArchiveError.invalid } }
+        let status = try classificationStatus(id)
+        guard status == .passwordMissing || status == .keychainUnavailable else { throw ArchiveError.invalid }
+        if let newPassword { try writeVerifier(id, password: newPassword, replacing: true) } else { try declassify(id) }
+    }
+    private func writeVerifier(_ id: UUID, password: String, replacing: Bool) throws {
+        // Derive before taking the write lock; this is the slow step.
+        let data = try ArchivePasswordVerifier.make(password: password).encoded()
+        let key = UUID(), account = ArchivePassword.account(document: id, key: key)
+        try execute("BEGIN IMMEDIATE")
+        var added = false, previous: UUID?
+        do {
+            let row = try classificationRow(id); previous = row.key
+            guard row.found, (row.key != nil) == replacing else { throw ArchiveError.invalid }
+            do { try vault.add(data, account: account) } catch { throw ArchiveError.keychainUnavailable }
+            added = true
+            try setClassification(id, key: key)
+            try syncStoredVersion() // The first classified document locks v1.2.0 out.
+            try execute("COMMIT")
+        } catch {
+            try? execute("ROLLBACK")
+            if added { try? vault.remove(account: account) }
+            throw error
+        }
+        removeVerifiers(of: id, known: previous, keeping: key)
+    }
+    private func storedVerifier(document id: UUID, key: UUID) throws -> ArchivePasswordVerifier {
+        let data: Data?
+        do { data = try vault.read(account: ArchivePassword.account(document: id, key: key)) } catch { throw ArchiveError.keychainUnavailable }
+        guard let data, let verifier = ArchivePasswordVerifier(data: data) else { throw ArchiveError.passwordMissing }
+        return verifier
+    }
+    /// Best effort after a commit: a leftover verifier is harmless and never
+    /// matched again, because the row names its own key.
+    private func removeVerifiers(of id: UUID, known: UUID?, keeping: UUID?) {
+        if let known, known != keeping { try? vault.remove(account: ArchivePassword.account(document: id, key: known)) }
+        let prefix = id.uuidString + "/", kept = keeping.map { ArchivePassword.account(document: id, key: $0) }
+        for account in (try? vault.accounts()) ?? [] where account.hasPrefix(prefix) && account != kept {
+            try? vault.remove(account: account)
+        }
+    }
+    private func classificationRow(_ id: UUID) throws -> (found: Bool, key: UUID?) {
+        let query = try statement("SELECT classification FROM entries WHERE id=?")
+        defer { sqlite3_finalize(query) }; bind(id.uuidString, 1, query)
+        let step = sqlite3_step(query); if step == SQLITE_DONE { return (false, nil) }
+        guard step == SQLITE_ROW else { throw ArchiveError.unavailable }
+        return (true, try classificationKey(query, index: 0))
+    }
+    private func classificationKey(_ query: OpaquePointer, index: Int32) throws -> UUID? {
+        if sqlite3_column_type(query, index) == SQLITE_NULL { return nil }
+        guard sqlite3_column_type(query, index) == SQLITE_TEXT, let key = UUID(uuidString: string(query, index)) else { throw ArchiveError.invalid }
+        return key
+    }
+    private func setClassification(_ id: UUID, key: UUID?) throws {
+        let query = try statement("UPDATE entries SET classification=? WHERE id=?")
+        defer { sqlite3_finalize(query) }
+        if let key { bind(key.uuidString, 1, query) } else { sqlite3_bind_null(query, 1) }
+        bind(id.uuidString, 2, query)
+        guard sqlite3_step(query) == SQLITE_DONE, sqlite3_changes(database) == 1 else { throw ArchiveError.unavailable }
     }
     func selection() throws -> UUID? {
         try open(); let query = try statement("SELECT value FROM state WHERE key='selection'")
@@ -416,6 +643,9 @@ final class ArchiveStore {
 /// Main-thread state with one serial utility worker. Dirty snapshots remain
 /// owned until SQLite acknowledges their exact revision, including while hidden.
 /// Only edits schedule a finite debounce; failed writes never spin in a retry loop.
+/// A classified document opens locked. A correct password unlocks it for one
+/// visit; leaving it, creating or deleting a document, or hiding the Archive
+/// (module switch or HUD close) locks it again. Locked documents reject edits.
 final class ArchiveController {
     typealias Executor = (@escaping () -> Void) -> Void
     private struct Pending { let entry: ArchiveEntry; let revision: UInt64 }
@@ -423,6 +653,7 @@ final class ArchiveController {
     let store: ArchiveStore
     private let work: Executor
     private let deliver: Executor
+    private let ownerAuthentication: ArchiveOwnerAuthenticating
     private var saveWork: DispatchWorkItem?
     private var dirty: [UUID: Pending] = [:]
     private var saving: [UUID: UInt64] = [:]
@@ -434,6 +665,18 @@ final class ArchiveController {
     private var categoryChanges: [UUID: UInt64] = [:]
     private var categoryRemovals: [UUID: Set<UUID>] = [:]
     private var removingCategories: Set<UUID> = []
+    // Renames and badge clears of committed categories. While a category's own
+    // creation is queued, they are folded into that draft instead.
+    private var categoryRenames: [UUID: String] = [:]
+    private var renamingCategories: Set<UUID> = []
+    private var viewedCategories: Set<UUID> = []
+    private var markingViewed: Set<UUID> = []
+    private var classified: Set<UUID> = []
+    private var verifierProblems: [UUID: ArchiveClassificationStatus] = [:]
+    private var classificationWork: Set<UUID> = []
+    private var unlocking: UUID?
+    private var unlockedID: UUID?
+    private var visit: UInt64 = 0
     private struct ThumbnailRequest { let token: UUID; var callbacks: [(NotesMediaReference?) -> Void] }
     private var thumbnailRequests: [UUID: ThumbnailRequest] = [:]
     private var summaryThumbnailBytes = 0
@@ -446,16 +689,20 @@ final class ArchiveController {
     private var generation = 0
     private(set) var entries: [ArchiveSummary] = []
     private(set) var categories: [ArchiveCategory] = []
+    /// The open document. While `isSelectedLocked`, its text and media are
+    /// still present for sizing the redaction bars, but must not be shown.
     private(set) var selected: ArchiveEntry?
     private(set) var error: String?
     var isBusy: Bool { operations > 0 }
-    var hasUnsavedChanges: Bool { !dirty.isEmpty || !dirtyCategories.isEmpty || !categoryRemovals.isEmpty || !deleting.isEmpty }
+    var hasUnsavedChanges: Bool {
+        !dirty.isEmpty || !dirtyCategories.isEmpty || !categoryRenames.isEmpty || !categoryRemovals.isEmpty || !deleting.isEmpty
+    }
     var onChange: (() -> Void)?
     var onEvent: ((String) -> Void)?
 
     /// Injection keeps race/failure tests deterministic and off the user's store.
     /// A supplied worker must preserve FIFO order, like the production queue.
-    init(store: ArchiveStore, work: Executor? = nil, deliver: Executor? = nil) {
+    init(store: ArchiveStore, work: Executor? = nil, deliver: Executor? = nil, ownerAuthentication: ArchiveOwnerAuthenticating? = nil) {
         self.store = store
         let queue = DispatchQueue(label: "EndfieldHUD.Archive", qos: .utility)
         self.work = work ?? { queue.async(execute: $0) }
@@ -464,41 +711,49 @@ final class ArchiveController {
         self.deliver = deliver ?? { operation in
             RunLoop.main.perform(inModes: [.common, .modalPanel], block: operation)
         }
+        self.ownerAuthentication = ownerAuthentication ?? ArchiveDeviceOwnerAuthentication()
     }
     func activate() {
         active = true
         invalidatePresentation(); let token = generation
         perform({ [store] in
-            let entries = try store.summaries(), id = try store.selection()
-            return (entries, try id.flatMap(store.entry), id, try store.categories())
+            let entries = try store.summaries(), id = try store.selection(), entry = try id.flatMap(store.entry)
+            return (entries, entry, id, try store.categories(), try entry.map { try store.classificationStatus($0.id) })
         }) { [self] result in
             guard generation == token else { return }
             switch result {
             case .success(let value):
+                classified = Set(value.0.filter(\.isClassified).map(\.id))
                 categories = value.3.filter { categoryRemovals[$0.id] == nil }
                 for category in dirtyCategories.values { upsertCategory(category) }
+                applyPendingCategoryEdits()
                 entries = boundedSummaries(value.0.filter { !deleting.contains($0.id) }.map(applyingCategoryRemovals))
                 for pending in dirty.values { upsertSummary(pending.entry) }
                 selected = value.2.flatMap { deleting.contains($0) ? nil : dirty[$0]?.entry ?? value.1.map(applyingCategoryRemovals) }
+                if let id = value.1?.id, let status = value.4 { record(status, for: id) }
                 readError = nil
             case .failure(let failure): readError = failure.localizedDescription
             }
             changed()
         }
     }
-    func deactivate() { active = false; flush(); invalidatePresentation(); selected = nil }
+    func deactivate() { active = false; relock(); flush(); invalidatePresentation(); selected = nil }
     func select(_ id: UUID?) {
         guard id.map({ !deleting.contains($0) }) ?? true else { return }
+        if id == nil || id != unlockedID { relock() }
         flush(); invalidatePresentation(); let token = generation
         let outgoing = selected
         if id == nil { selected = nil }
         changed()
         perform({ [store] in
-            let entry = try id.flatMap(store.entry); try store.select(id); return entry
+            let entry = try id.flatMap(store.entry); try store.select(id)
+            return (entry, try entry.map { try store.classificationStatus($0.id) })
         }) { [self] result in
             guard generation == token else { return }
             switch result {
-            case .success(let entry): selected = id.flatMap { dirty[$0]?.entry ?? entry.map(applyingCategoryRemovals) }; readError = nil
+            case .success(let value):
+                if let entry = value.0, let status = value.1 { record(status, for: entry.id) }
+                selected = id.flatMap { dirty[$0]?.entry ?? value.0.map(applyingCategoryRemovals) }; readError = nil
             case .failure(let failure):
                 // Even a disk failure must not discard the editable in-memory draft.
                 let retained = outgoing.flatMap { prior in selected?.id == prior.id ? selected : dirty[prior.id]?.entry ?? prior }
@@ -514,7 +769,7 @@ final class ArchiveController {
         guard entries.count < ArchiveStore.maximumEntries else { readError = ArchiveError.full.localizedDescription; changed(); return }
         // Do not accumulate unbounded full-size drafts while storage is failing.
         guard writeErrors.isEmpty && categoryErrors.isEmpty else { changed(); return }
-        flush(); invalidatePresentation()
+        relock(); flush(); invalidatePresentation()
         let entry = ArchiveEntry(template: template, categoryID: categoryID)
         unannouncedCreations.insert(entry.id)
         selected = entry; update(entry); flush(); changed()
@@ -522,16 +777,21 @@ final class ArchiveController {
             if case .failure(let failure) = result { readError = failure.localizedDescription; changed() }
         }
     }
+    /// Returns an existing category of the same normalized name instead of a
+    /// duplicate. A new category carries the NEW badge.
     @discardableResult func createCategory(named name: String) -> UUID? {
-        let value = ArchiveCategory(name: name.trimmingCharacters(in: .whitespacesAndNewlines))
+        let value = ArchiveCategory(name: name.trimmingCharacters(in: .whitespacesAndNewlines), isNew: true)
         guard value.isValid else { readError = ArchiveError.invalid.localizedDescription; changed(); return nil }
         if let existing = categories.first(where: { ArchiveCategory.nameKey($0.name) == ArchiveCategory.nameKey(value.name) }) { return existing.id }
+        return insertDraftCategory(value)
+    }
+    private func insertDraftCategory(_ value: ArchiveCategory) -> UUID? {
         guard categories.count + categoryRemovals.count < ArchiveStore.maximumCategories else { readError = ArchiveError.full.localizedDescription; changed(); return nil }
         guard writeErrors.isEmpty && categoryErrors.isEmpty else { changed(); return nil }
         dirtyCategories[value.id] = value; upsertCategory(value); flush(); changed(); return value.id
     }
     func moveSelected(to categoryID: UUID?) {
-        guard var entry = selected, entry.categoryID != categoryID,
+        guard var entry = selected, !isLocked(entry.id), entry.categoryID != categoryID,
               categoryID.map({ id in categories.contains { $0.id == id } }) ?? true else { return }
         entry.categoryID = categoryID; update(entry); categoryChanges[entry.id] = revision; flush(); changed()
     }
@@ -544,7 +804,7 @@ final class ArchiveController {
         if let entry = selected, entry.categoryID == id { affected.insert(entry.id) }
         categoryRemovals[id] = affected
         categories.removeAll { $0.id == id }; dirtyCategories.removeValue(forKey: id)
-        categoryErrors.removeValue(forKey: id)
+        categoryErrors.removeValue(forKey: id); categoryRenames.removeValue(forKey: id); viewedCategories.remove(id)
         for documentID in affected {
             if var entry = dirty[documentID]?.entry ?? (selected?.id == documentID ? selected : nil) {
                 entry.categoryID = nil; revision &+= 1; dirty[documentID] = Pending(entry: entry, revision: revision)
@@ -554,6 +814,178 @@ final class ArchiveController {
         entries = entries.map(applyingCategoryRemovals)
         flush(); changed()
     }
+
+    // MARK: Editable categories
+    // All and Uncategorized are filters (nil), not rows, so no call can rename
+    // or remove them; their names are reserved in every language.
+
+    /// The `+` action: appends "Category N" with the NEW badge.
+    @discardableResult func addCategory() -> UUID? { insertDraftCategory(ArchiveCategory(name: nextCategoryName(), isNew: true)) }
+    /// N starts at the number of custom categories plus one and skips names in use.
+    func nextCategoryName() -> String {
+        var number = categories.count + 1
+        while true {
+            let name = L10n.text("Category \(number)", "分类 \(number)")
+            if ArchiveCategory.nameIssue(name, among: categories) == nil || number > 2 * ArchiveStore.maximumCategories { return name }
+            number += 1
+        }
+    }
+    /// Live validation for the rename field; nil when the name can be committed.
+    func categoryNameIssue(_ name: String, renaming id: UUID? = nil) -> ArchiveCategoryNameIssue? {
+        ArchiveCategory.nameIssue(name, among: categories, excluding: id)
+    }
+    /// Commits a trimmed, valid, unique name at once; storage follows in order.
+    /// Documents refer to the category's ID, so they all follow the new name.
+    @discardableResult func renameCategory(_ id: UUID, to proposed: String) -> ArchiveCategoryRenameResult {
+        guard let index = categories.firstIndex(where: { $0.id == id }), categoryRemovals[id] == nil else { return .rejected(.unknownCategory) }
+        let name = proposed.trimmingCharacters(in: .whitespacesAndNewlines)
+        if name == categories[index].name { return .unchanged }
+        if let issue = ArchiveCategory.nameIssue(name, among: categories, excluding: id) { return .rejected(issue) }
+        var value = categories[index]; value.name = name; upsertCategory(value)
+        if dirtyCategories[id] != nil && !savingCategories.contains(id) { dirtyCategories[id]?.name = name }
+        else { categoryRenames[id] = name }
+        flush(); changed(); return .renamed
+    }
+    /// Clears the NEW badge; call when the user opens the category. A failed
+    /// write is not retried: at worst the badge returns after a relaunch.
+    func markCategoryViewed(_ id: UUID) {
+        guard let index = categories.firstIndex(where: { $0.id == id }), categories[index].isNew else { return }
+        categories[index].isNew = false
+        if dirtyCategories[id] != nil && !savingCategories.contains(id) { dirtyCategories[id]?.isNew = false }
+        else { viewedCategories.insert(id) }
+        flush(); changed()
+    }
+    private func applyPendingCategoryEdits() {
+        for (index, category) in categories.enumerated() {
+            if let name = categoryRenames[category.id] { categories[index].name = name }
+            if viewedCategories.contains(category.id) { categories[index].isNew = false }
+        }
+    }
+
+    // MARK: Classification
+
+    func isClassified(_ id: UUID) -> Bool { classified.contains(id) }
+    /// The open document's state, including a missing or unreadable verifier
+    /// (checked when the document is opened and on every unlock attempt).
+    var selectedClassification: ArchiveClassificationStatus {
+        guard let id = selected?.id, classified.contains(id) else { return .unclassified }
+        return verifierProblems[id] ?? .protected
+    }
+    /// The locked view replaces the editor while this is true.
+    var isSelectedLocked: Bool { selected.map { isLocked($0.id) } ?? false }
+    /// A classify, unlock, declassify or recovery request is running.
+    var isClassificationBusy: Bool { unlocking != nil || !classificationWork.isEmpty }
+    private func isLocked(_ id: UUID) -> Bool { classified.contains(id) && unlockedID != id }
+    private func relock() { unlockedID = nil; visit &+= 1 }
+
+    /// Saves the latest title and body first, then sets the flag and stores
+    /// the verifier. On success the document is locked (the sealing view).
+    func classifySelected(password: String, completion: ((Result<Void, Error>) -> Void)? = nil) {
+        guard let id = selected?.id, !deleting.contains(id), !classified.contains(id), !classificationWork.contains(id),
+              ArchivePassword.issue(password) == nil else { completion?(.failure(ArchiveError.invalid)); return }
+        flush() // FIFO: the pending document save commits before the flag.
+        classificationWork.insert(id); changed()
+        perform({ [store] in try store.classify(id, password: password) }) { [self] result in
+            classificationWork.remove(id)
+            if case .success = result {
+                classified.insert(id); verifierProblems.removeValue(forKey: id)
+                if unlockedID == id { relock() }
+                refreshSummary(id); onEvent?("classified")
+            }
+            changed(); completion?(result)
+        }
+    }
+    /// Verifies on the worker (about 85 ms). A missing or unreadable Keychain
+    /// item is reported as such, never as a wrong password.
+    func unlockSelected(password: String, completion: @escaping (ArchiveUnlockResult) -> Void) {
+        guard let id = selected?.id else { completion(.ignored); return }
+        guard isLocked(id) else { completion(.unlocked); return }
+        guard unlocking == nil, !classificationWork.contains(id) else { completion(.ignored); return }
+        let token = visit; unlocking = id; changed()
+        perform({ [store] in try store.verify(id, password: password) }) { [self] result in
+            unlocking = nil
+            let outcome: ArchiveUnlockResult
+            switch result {
+            case .success(let matches):
+                if matches { verifierProblems.removeValue(forKey: id) }
+                outcome = !matches ? .wrongPassword : visit == token && selected?.id == id ? .unlocked : .ignored
+                if outcome == .unlocked { unlockedID = id }
+            case .failure(let failure):
+                let problem = failure as? ArchiveError
+                if problem == .passwordMissing { verifierProblems[id] = .passwordMissing }
+                if problem == .keychainUnavailable { verifierProblems[id] = .keychainUnavailable }
+                outcome = problem == .passwordMissing ? .passwordMissing : .failed(failure.localizedDescription)
+            }
+            changed(); completion(outcome)
+        }
+    }
+    /// Back and Esc relock through `select(nil)`; this relocks in place.
+    func lockSelected() { relock(); flush(); changed() }
+    /// Only while unlocked in this visit. The text stays; the verifier is deleted.
+    func declassifySelected(completion: ((Result<Void, Error>) -> Void)? = nil) {
+        guard let id = selected?.id, classified.contains(id), unlockedID == id, !classificationWork.contains(id) else {
+            completion?(.failure(ArchiveError.invalid)); return
+        }
+        classificationWork.insert(id); changed()
+        perform({ [store] in try store.declassify(id) }) { [self] result in
+            classificationWork.remove(id)
+            if case .success = result { markDeclassified(id) }
+            changed(); completion?(result)
+        }
+    }
+    /// Re-reads the Keychain state of the open document, e.g. after the user
+    /// unlocks the login keychain.
+    func refreshSelectedClassification() {
+        guard let id = selected?.id, classified.contains(id) else { return }
+        perform({ [store] in try store.classificationStatus(id) }) { [self] result in
+            if case .success(let status) = result { record(status, for: id) }
+            changed()
+        }
+    }
+    /// The recovery path for `.passwordMissing` and `.keychainUnavailable`.
+    /// macOS first verifies the Mac's owner (Touch ID or login password); then a
+    /// new password keeps the document classified and unlocks this visit, or
+    /// nil declassifies it. The store refuses while a readable verifier exists.
+    func recoverSelectedClassification(newPassword: String?, completion: @escaping (Result<Void, Error>) -> Void) {
+        guard let id = selected?.id, classified.contains(id), verifierProblems[id] != nil,
+              !classificationWork.contains(id), unlocking == nil,
+              newPassword.map({ ArchivePassword.issue($0) == nil }) ?? true else { completion(.failure(ArchiveError.invalid)); return }
+        let token = visit; classificationWork.insert(id); changed()
+        let reason = L10n.text("restore access to a classified document", "恢复对机密文档的访问")
+        ownerAuthentication.authenticateOwner(reason: reason) { [weak self] approved in
+            self?.deliver { [weak self] in self?.finishRecovery(id, newPassword: newPassword, approved: approved, visit: token, completion: completion) }
+        }
+    }
+    private func finishRecovery(_ id: UUID, newPassword: String?, approved: Bool, visit token: UInt64, completion: @escaping (Result<Void, Error>) -> Void) {
+        guard approved, visit == token, selected?.id == id else {
+            classificationWork.remove(id); changed(); completion(.failure(CocoaError(.userCancelled))); return
+        }
+        perform({ [store] in try store.recoverClassification(id, newPassword: newPassword) }) { [self] result in
+            classificationWork.remove(id)
+            switch result {
+            case .success:
+                if newPassword == nil { markDeclassified(id) }
+                else {
+                    verifierProblems.removeValue(forKey: id); onEvent?("classificationRecovered")
+                    if visit == token && selected?.id == id { unlockedID = id }
+                }
+            case .failure: refreshSelectedClassification()
+            }
+            changed(); completion(result)
+        }
+    }
+    private func markDeclassified(_ id: UUID) {
+        classified.remove(id); verifierProblems.removeValue(forKey: id)
+        if unlockedID == id { unlockedID = nil }
+        refreshSummary(id); onEvent?("declassified")
+    }
+    private func record(_ status: ArchiveClassificationStatus, for id: UUID) {
+        if status == .unclassified { classified.remove(id) } else { classified.insert(id) }
+        if status == .passwordMissing || status == .keychainUnavailable { verifierProblems[id] = status }
+        else { verifierProblems.removeValue(forKey: id) }
+        refreshSummary(id)
+    }
+
     private func applyingCategoryRemovals(_ entry: ArchiveEntry) -> ArchiveEntry {
         var value = entry
         if let category = value.categoryID, categoryRemovals[category] != nil { value.categoryID = nil }
@@ -562,12 +994,13 @@ final class ArchiveController {
     private func applyingCategoryRemovals(_ summary: ArchiveSummary) -> ArchiveSummary {
         guard let category = summary.categoryID, categoryRemovals[category] != nil else { return summary }
         return ArchiveSummary(id: summary.id, template: summary.template, title: summary.title, date: summary.date,
-            mediaCount: summary.mediaCount, categoryID: nil, thumbnail: summary.thumbnail)
+            mediaCount: summary.mediaCount, categoryID: nil, thumbnail: summary.thumbnail, isClassified: summary.isClassified)
     }
     /// Visible thumbnail caches can recover descriptors omitted by the aggregate
     /// summary budget without decoding document bodies or opening media files.
+    /// Classified documents never yield a thumbnail.
     func loadThumbnail(for id: UUID, completion: @escaping (NotesMediaReference?) -> Void) {
-        guard active else { completion(nil); return }
+        guard active, !classified.contains(id) else { completion(nil); return }
         if let pending = dirty[id] { completion(pending.entry.media.first); return }
         if thumbnailRequests[id] != nil {
             guard thumbnailRequests[id]!.callbacks.count < 8 else { completion(nil); return }
@@ -577,7 +1010,7 @@ final class ArchiveController {
         let token = UUID(); thumbnailRequests[id] = ThumbnailRequest(token: token, callbacks: [completion])
         perform({ [store] in try store.thumbnail(for: id) }) { [self] result in
             guard thumbnailRequests[id]?.token == token, let request = thumbnailRequests.removeValue(forKey: id) else { return }
-            let value = active ? (try? result.get()) : nil
+            let value = active && !classified.contains(id) ? (try? result.get()) : nil
             request.callbacks.forEach { $0(value) }
         }
     }
@@ -591,7 +1024,7 @@ final class ArchiveController {
         categories.sort { $0.created == $1.created ? $0.id.uuidString < $1.id.uuidString : $0.created < $1.created }
     }
     func update(_ entry: ArchiveEntry) {
-        guard entry.isValid, selected?.id == entry.id, !deleting.contains(entry.id),
+        guard entry.isValid, selected?.id == entry.id, !deleting.contains(entry.id), !isLocked(entry.id),
               entry.categoryID.map({ id in categories.contains { $0.id == id } }) ?? true else { return }
         var entry = entry; entry.modified = Date(); selected = entry
         revision &+= 1; dirty[entry.id] = Pending(entry: entry, revision: revision)
@@ -602,17 +1035,44 @@ final class ArchiveController {
     }
     func flush() {
         saveWork?.cancel(); saveWork = nil
+        // Renames go first: they only target committed categories, and may free
+        // a name that a queued creation below then uses.
+        for (id, name) in categoryRenames where !renamingCategories.contains(id) && dirtyCategories[id] == nil && categoryRemovals[id] == nil {
+            renamingCategories.insert(id)
+            perform({ [store] in try store.renameCategory(id, to: name) }) { [self] result in
+                renamingCategories.remove(id)
+                guard categoryRemovals[id] == nil else { changed(); return }
+                switch result {
+                case .success:
+                    if categoryRenames[id] == name { categoryRenames.removeValue(forKey: id) }
+                    categoryErrors.removeValue(forKey: id); onEvent?("categoryRenamed")
+                    if categoryRenames[id] != nil { flush() }
+                case .failure(let failure): categoryErrors[id] = failure.localizedDescription
+                }
+                changed()
+            }
+        }
         // Queue categories before documents that refer to them, including retry.
         for (id, category) in dirtyCategories where !savingCategories.contains(id) && categoryRemovals[id] == nil {
             savingCategories.insert(id)
             perform({ [store] in try store.saveCategory(category) }) { [self] result in
                 savingCategories.remove(id)
                 switch result {
-                case .success: dirtyCategories.removeValue(forKey: id); categoryErrors.removeValue(forKey: id); onEvent?("categoryCreated")
-                case .failure(let failure): if categoryRemovals[id] == nil { categoryErrors[id] = failure.localizedDescription }
+                case .success:
+                    dirtyCategories.removeValue(forKey: id); categoryErrors.removeValue(forKey: id); onEvent?("categoryCreated")
+                    if categoryRenames[id] != nil || viewedCategories.contains(id) { flush() }
+                case .failure(let failure):
+                    if categoryRemovals[id] == nil { categoryErrors[id] = failure.localizedDescription }
+                    // The retry inserts the newest name and badge state directly.
+                    if let name = categoryRenames.removeValue(forKey: id) { dirtyCategories[id]?.name = name }
+                    if viewedCategories.remove(id) != nil { dirtyCategories[id]?.isNew = false }
                 }
                 changed()
             }
+        }
+        for id in viewedCategories where !markingViewed.contains(id) && dirtyCategories[id] == nil && categoryRemovals[id] == nil {
+            markingViewed.insert(id)
+            perform({ [store] in try store.markCategoryViewed(id) }) { [self] _ in markingViewed.remove(id); viewedCategories.remove(id) }
         }
         // Existing queued writes precede removal. Newer affected drafts are
         // written by this transaction, never independently before its outcome.
@@ -661,11 +1121,12 @@ final class ArchiveController {
         }
     }
     func retryPendingSaves() { readError = nil; flush(); changed() }
+    /// Locked documents cannot be deleted; unlock (or recover) first.
     func deleteSelected() {
-        guard let entry = selected, !deleting.contains(entry.id) else { return }
+        guard let entry = selected, !deleting.contains(entry.id), !isLocked(entry.id) else { return }
         let id = entry.id, unsaved = dirty.removeValue(forKey: entry.id)
         saveWork?.cancel(); saveWork = nil
-        deleting.insert(id); invalidatePresentation(); selected = nil
+        deleting.insert(id); relock(); invalidatePresentation(); selected = nil
         if let removed = entries.first(where: { $0.id == id }) { summaryThumbnailBytes -= thumbnailCost(removed.thumbnail) }
         entries.removeAll { $0.id == id }; changed()
         // FIFO guarantees any already queued save completes before DELETE.
@@ -674,7 +1135,8 @@ final class ArchiveController {
             deleting.remove(id)
             switch result {
             case .success:
-                writeErrors.removeValue(forKey: id); unannouncedCreations.remove(id); categoryChanges.removeValue(forKey: id); onEvent?("deleted")
+                writeErrors.removeValue(forKey: id); unannouncedCreations.remove(id); categoryChanges.removeValue(forKey: id)
+                classified.remove(id); verifierProblems.removeValue(forKey: id); onEvent?("deleted")
             case .failure(let failure):
                 if let unsaved { dirty[id] = unsaved }
                 upsertSummary(entry); writeErrors[id] = failure.localizedDescription
@@ -716,21 +1178,33 @@ final class ArchiveController {
     private func boundedSummaries(_ values: [ArchiveSummary]) -> [ArchiveSummary] {
         summaryThumbnailBytes = 0
         return values.map { value in
-            let cost = thumbnailCost(value.thumbnail)
-            let thumbnail = cost <= ArchiveStore.maximumSummaryThumbnailBytes - summaryThumbnailBytes ? value.thumbnail : nil
+            let isClassified = classified.contains(value.id), candidate = isClassified ? nil : value.thumbnail
+            let cost = thumbnailCost(candidate)
+            let thumbnail = cost <= ArchiveStore.maximumSummaryThumbnailBytes - summaryThumbnailBytes ? candidate : nil
             summaryThumbnailBytes += thumbnailCost(thumbnail)
             return ArchiveSummary(id: value.id, template: value.template, title: value.title, date: value.date,
-                mediaCount: value.mediaCount, categoryID: value.categoryID, thumbnail: thumbnail)
+                mediaCount: value.mediaCount, categoryID: value.categoryID, thumbnail: thumbnail, isClassified: isClassified)
         }
     }
     private func upsertSummary(_ entry: ArchiveEntry) {
         if let existing = entries.first(where: { $0.id == entry.id }) { summaryThumbnailBytes -= thumbnailCost(existing.thumbnail) }
         entries.removeAll { $0.id == entry.id }
-        let candidate = entry.media.first
+        let isClassified = classified.contains(entry.id), candidate = isClassified ? nil : entry.media.first
         let thumbnail = thumbnailCost(candidate) <= ArchiveStore.maximumSummaryThumbnailBytes - summaryThumbnailBytes ? candidate : nil
         summaryThumbnailBytes += thumbnailCost(thumbnail)
         entries.insert(ArchiveSummary(id: entry.id, template: entry.template, title: entry.title,
-            date: entry.date, mediaCount: entry.media.count, categoryID: entry.categoryID, thumbnail: thumbnail), at: 0)
+            date: entry.date, mediaCount: entry.media.count, categoryID: entry.categoryID, thumbnail: thumbnail, isClassified: isClassified), at: 0)
+    }
+    /// Re-derives one tile's classified flag and thumbnail in place.
+    private func refreshSummary(_ id: UUID) {
+        guard let index = entries.firstIndex(where: { $0.id == id }) else { return }
+        let old = entries[index], isClassified = classified.contains(id)
+        summaryThumbnailBytes -= thumbnailCost(old.thumbnail)
+        var thumbnail = isClassified ? nil : old.thumbnail ?? (selected?.id == id ? selected?.media.first : nil)
+        if thumbnailCost(thumbnail) > ArchiveStore.maximumSummaryThumbnailBytes - summaryThumbnailBytes { thumbnail = nil }
+        summaryThumbnailBytes += thumbnailCost(thumbnail)
+        entries[index] = ArchiveSummary(id: old.id, template: old.template, title: old.title, date: old.date,
+            mediaCount: old.mediaCount, categoryID: old.categoryID, thumbnail: thumbnail, isClassified: isClassified)
     }
     private func changed() { error = writeErrors.values.first ?? categoryErrors.values.first ?? readError; onChange?() }
 }
