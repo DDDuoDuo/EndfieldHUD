@@ -23,6 +23,11 @@ final class HUDControlHighlightLayer: CALayer {
     private var pressed = false
     private var color = NSColor.clear
     var accentOverride: NSColor? { didSet { setHighlighted(highlighted, pressed: pressed, force: true) } }
+    /// A target of a redesigned component: it draws nothing and reports its
+    /// state, so the component plays its own hover and press motion.
+    private var onStateChange: ((_ highlighted: Bool, _ pressed: Bool) -> Void)?
+    /// Containers (row plates) stay hovered while a nested control is hit.
+    private(set) var isContainer = false
     private static let pendingHosts = NSHashTable<NSView>.weakObjects()
 
     /// Canvas mutations may replace artwork without a new pointer event. One
@@ -86,10 +91,34 @@ final class HUDControlHighlightLayer: CALayer {
         return result
     }
 
+    /// An invisible hover/press target for a redesigned component.
+    @discardableResult
+    static func addTarget(to parent: CALayer, rect: CGRect, path: CGPath? = nil, container: Bool = false,
+                          onChange: @escaping (_ highlighted: Bool, _ pressed: Bool) -> Void) -> HUDControlHighlightLayer {
+        let result = HUDControlHighlightLayer()
+        result.name = "hud.control.target"
+        result.frame = rect
+        result.allowsGroupOpacity = false
+        result.controlPath = path ?? CGPath(rect: result.bounds, transform: nil)
+        result.isContainer = container
+        result.onStateChange = onChange
+        parent.addSublayer(result)
+        return result
+    }
+
+    /// Moves a target (layout change); the hit path follows the new bounds.
+    func setTarget(rect: CGRect, path: CGPath? = nil) {
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        frame = rect
+        controlPath = path ?? CGPath(rect: bounds, transform: nil)
+        CATransaction.commit()
+    }
+
     /// Point is in `root` coordinates. Clipped/hidden controls cannot light up;
     /// a nested small action takes priority over its encompassing object card.
     static func update(in root: CALayer, point: CGPoint?, pressed: Bool = false) {
         var candidates: [HUDControlHighlightLayer] = []
+        var containers: [(HUDControlHighlightLayer, Bool)] = []
         var hit: HUDControlHighlightLayer?
         func visit(_ item: CALayer, visible: Bool, pointVisible: Bool) {
             if item is HUDDecorativeContentLayer { return }
@@ -111,6 +140,10 @@ final class HUDControlHighlightLayer: CALayer {
                     } else if !mask.bounds.contains(p) { inside = false }
                 }
             }
+            if let feedback = item as? HUDControlHighlightLayer, feedback.isContainer {
+                containers.append((feedback, inside && feedback.enabled && local.map { feedback.controlPath.contains($0) } == true))
+                return
+            }
             if let feedback = item as? HUDControlHighlightLayer {
                 candidates.append(feedback)
                 if inside, feedback.enabled, let local, feedback.controlPath.contains(local),
@@ -123,6 +156,7 @@ final class HUDControlHighlightLayer: CALayer {
         }
         visit(root, visible: true, pointVisible: point != nil)
         for candidate in candidates { candidate.setHighlighted(candidate === hit, pressed: pressed) }
+        for (container, inside) in containers { container.setHighlighted(inside, pressed: pressed && inside && hit == nil) }
     }
 
     private func refreshColor() {
@@ -134,6 +168,12 @@ final class HUDControlHighlightLayer: CALayer {
     private func setHighlighted(_ value: Bool, pressed: Bool, force: Bool = false) {
         let changed = highlighted != value || self.pressed != (pressed && value)
         let colorChanged = !color.isEqual(accentOverride ?? HUDRuntimeAppearance.accent)
+        if let onStateChange {
+            guard changed || force else { return }
+            highlighted = value; self.pressed = pressed && value
+            onStateChange(highlighted, self.pressed)
+            return
+        }
         guard changed || colorChanged || force else { return }
         highlighted = value; self.pressed = pressed && value
         CATransaction.begin(); CATransaction.setDisableActions(true)

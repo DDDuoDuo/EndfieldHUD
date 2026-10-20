@@ -113,9 +113,11 @@ enum HUDArtwork {
     }
 
     /// The micro ENDFIELD tag (spec §2.2): black label, then a 44 × 7 dark hatch.
+    static var microTagSize: CGSize { CGSize(width: microTagLabelWidth + 44, height: 7) }
+    private static var microTagLabelWidth: CGFloat { HUDText.width("ENDFIELD", HUDType.microTag) + 8 }
+
     static func microTag(inverted: Bool = false, scale: CGFloat) -> CGImage? {
-        let labelWidth = HUDText.width("ENDFIELD", HUDType.microTag) + 8
-        let size = CGSize(width: labelWidth + 44, height: 7)
+        let labelWidth = microTagLabelWidth, size = microTagSize
         return image("microTag.\(inverted)", size: size, scale: scale) { ctx, size in
             ctx.setFillColor(inverted ? HUDColor.microTagText : HUDColor.microTagBlack)
             ctx.fill(CGRect(x: 0, y: 0, width: labelWidth, height: 7))
@@ -132,6 +134,24 @@ enum HUDArtwork {
                 ctx.setFillColor(color)
                 ctx.fill(CGRect(x: 0, y: size.height * CGFloat(index) / 3, width: size.width, height: size.height / 3))
             }
+        }
+    }
+
+    /// A light plate: a vertical gradient clipped to a chamfer, optionally with
+    /// the 1 px top highlight (rgba(255,255,255,.75)). Rows, light and primary
+    /// buttons, cards and the About hero share these cached rasters.
+    static func plate(_ colors: [CGColor], locations: [CGFloat]? = nil, size: CGSize, cut: CGFloat,
+                      corners: HUDShape.Corners = .topRight, highlight: Bool = false, scale: CGFloat) -> CGImage? {
+        let key = "plate.\(colors.map { $0.components?.map { String(format: "%.3f", $0) }.joined(separator: ",") ?? "" })"
+            + ".\(locations ?? []).\(cut).\(corners.rawValue).\(highlight)"
+        return image(key, size: size, scale: scale) { ctx, size in
+            let rect = CGRect(origin: .zero, size: size)
+            ctx.addPath(HUDShape.chamfer(rect, cut: cut, corners: corners)); ctx.clip()
+            if let gradient = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB), colors: colors as CFArray,
+                                         locations: locations ?? colors.indices.map { CGFloat($0) / CGFloat(max(1, colors.count - 1)) }) {
+                ctx.drawLinearGradient(gradient, start: .zero, end: CGPoint(x: 0, y: size.height), options: [])
+            }
+            if highlight { ctx.setFillColor(HUDColor.white(0.75)); ctx.fill(CGRect(x: 0, y: 0, width: size.width, height: 1)) }
         }
     }
 

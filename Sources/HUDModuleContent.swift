@@ -13,6 +13,18 @@ protocol HUDModuleContentFactory {
     func makeContent(for module: HUDModule, style: HUDModuleContentStyle) -> CALayer
 }
 
+/// Redesigned modules (spec §1.10) switch directionally instead of with the
+/// shutter: the old screen leaves for 130 ms, then this content enters with its
+/// header wipe and row stagger from the direction of its place on the shell.
+protocol HUDDirectionalContent: AnyObject {
+    /// Design points per content px, to move the outgoing screen in host units.
+    var contentUnit: CGFloat { get }
+    /// Plays the entrance from `offset` (content px); nothing when reduced.
+    func playEntrance(from offset: CGPoint)
+    /// Called just before the content leaves (close menus, end drags).
+    func prepareToLeave()
+}
+
 final class HUDModuleContent {
     static let transitionDuration: TimeInterval = 0.30
     static let viewportFrame = CGRect(x: 280, y: 100, width: 440, height: 440)
@@ -42,6 +54,7 @@ final class HUDModuleContent {
     private var current: Screen
     private var incoming: Screen?
     private var latestCompletion: (() -> Void)?
+    private var pendingSwap: DispatchWorkItem?
     private var style = HUDModuleContentStyle(dark: true,
         accent: NSColor(srgbRed: 0.85, green: 0.95, blue: 0.42, alpha: 1), contentsScale: 2)
     private var renderedLanguage = L10n.resolvedLanguage
@@ -99,6 +112,7 @@ final class HUDModuleContent {
     /// committed screen. No hidden incoming layer or transition survives.
     func cancel() {
         precondition(Thread.isMainThread)
+        pendingSwap?.cancel(); pendingSwap = nil
         state.cancel()
         latestCompletion = nil
         removeAnimations(in: layer)
@@ -127,6 +141,10 @@ final class HUDModuleContent {
         let next = makeScreen(transition.to)
         incoming = next
         onPresentationChange?(transition.from, transition.to, true)
+        if let directional = factories[transition.to] as? HUDDirectionalContent {
+            beginDirectional(transition, next: next, content: directional)
+            return
+        }
         let direction = Self.direction(from: transition.from, to: transition.to)
         let reveal = makeMask()
         let retract = makeMask()
@@ -152,9 +170,28 @@ final class HUDModuleContent {
         CATransaction.commit()
     }
 
+    /// Leave (.13 s, −0.6 × the new vector), swap after 130 ms, then the new
+    /// content's own entrance. Input waits only for the swap, not the stagger.
+    private func beginDirectional(_ transition: HUDModuleSelectionState.Transition, next: Screen, content: HUDDirectionalContent) {
+        (factories[transition.from] as? HUDDirectionalContent)?.prepareToLeave()
+        let offset = HUDShellPosition.entranceOffset(from: transition.from, to: transition.to)
+        let unit = content.contentUnit
+        let leave = HUDDesignEnvironment(reduceMotion: shouldReduceMotion)
+        HUDMotion.leave(current.wrapper, toward: CGPoint(x: offset.x * unit, y: offset.y * unit), env: leave, key: "module.leave")
+        let swap = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.withoutActions { self.layer.addSublayer(next.wrapper) }
+            self.finish(transition)
+            content.playEntrance(from: offset)
+        }
+        pendingSwap = swap
+        DispatchQueue.main.asyncAfter(deadline: .now() + HUDDuration.leave, execute: swap)
+    }
+
     private func finish(_ transition: HUDModuleSelectionState.Transition) {
         guard state.isTransitioning, state.generation == transition.generation,
               let next = incoming, next.module == transition.to else { return }
+        pendingSwap = nil
         // Sublayer removal otherwise adds Core Animation's default host
         // transition after the explicit mechanical wipe has already finished.
         withoutActions {
@@ -169,6 +206,7 @@ final class HUDModuleContent {
     }
 
     private func settle(on module: HUDModule, notify: Bool) {
+        pendingSwap?.cancel(); pendingSwap = nil
         let previous = current.module
         state.settle(on: module)
         removeAnimations(in: layer)
