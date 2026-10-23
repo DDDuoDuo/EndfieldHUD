@@ -1,99 +1,6 @@
 {
- "accessibility": {
-  "canvas": {
-   "new": {
-    "english": "Add event",
-    "japanese": "予定を追加",
-    "korean": "일정 추가",
-    "simplifiedChinese": "添加事项",
-    "traditionalChinese": "新增事項"
-   },
-   "nextMonth": {
-    "english": "Next month",
-    "japanese": "翌月",
-    "korean": "다음 달",
-    "simplifiedChinese": "下个月",
-    "traditionalChinese": "下個月"
-   },
-   "previousMonth": {
-    "english": "Previous month",
-    "japanese": "前月",
-    "korean": "이전 달",
-    "simplifiedChinese": "上个月",
-    "traditionalChinese": "上個月"
-   },
-   "reminders": {
-    "english": "Refresh reminders",
-    "japanese": "リマインダーを更新",
-    "korean": "알림 새로 고침",
-    "simplifiedChinese": "刷新提醒",
-    "traditionalChinese": "重新整理提醒"
-   }
-  },
-  "canvasDefault": "day:YYYY-MM-DD reads YYYY-MM-DD; any other action reads its own label",
-  "fields": {
-   "date": {
-    "english": "Date",
-    "japanese": "日付",
-    "korean": "날짜",
-    "simplifiedChinese": "日期",
-    "traditionalChinese": "日期"
-   },
-   "details": {
-    "english": "Details",
-    "japanese": "詳細",
-    "korean": "세부 사항",
-    "simplifiedChinese": "详情",
-    "traditionalChinese": "詳情"
-   },
-   "title": {
-    "english": "Title",
-    "japanese": "タイトル",
-    "korean": "제목",
-    "simplifiedChinese": "标题",
-    "traditionalChinese": "標題"
-   }
-  },
-  "menu": {
-   "cancelDelete": {
-    "english": "Cancel",
-    "japanese": "キャンセル",
-    "korean": "취소",
-    "simplifiedChinese": "取消",
-    "traditionalChinese": "取消"
-   },
-   "close": {
-    "english": "Close",
-    "japanese": "閉じる",
-    "korean": "닫기",
-    "simplifiedChinese": "关闭",
-    "traditionalChinese": "關閉"
-   },
-   "confirmDelete": {
-    "english": "Delete",
-    "japanese": "削除",
-    "korean": "삭제",
-    "simplifiedChinese": "删除",
-    "traditionalChinese": "刪除"
-   },
-   "delete": {
-    "english": "Delete",
-    "japanese": "削除",
-    "korean": "삭제",
-    "simplifiedChinese": "删除",
-    "traditionalChinese": "刪除"
-   },
-   "save": {
-    "english": "Save",
-    "japanese": "保存",
-    "korean": "저장",
-    "simplifiedChinese": "保存",
-    "traditionalChinese": "儲存"
-   }
-  }
- },
- "authority": "ca04f142185c7de40acd8523bdb563195d90a1d1",
- "contract": "errors: HUDCalendarError.errorDescription in Mac case order; permission: HUDCalendarController.reminderStatus. accessibility: HUDCalendarInteraction AX names (canvas buttons, CalendarEventMenu items, editor fields). Each row is the text Mac L10n renders per language from LocalizationCatalog (Korean falls back to English).",
+ "authority": "4fda15a03ba50675e0b12d69a83efdb6526c19f6",
+ "contract": "errors: HUDCalendarError.errorDescription in Mac case order; permission: HUDCalendarController.reminderStatus. Each row is the text Mac L10n renders per language from LocalizationCatalog.",
  "errors": [
   {
    "case": "invalidData",
@@ -183,10 +90,9 @@
   }
  },
  "sourcePins": {
-  "Sources/HUDCalendarController.swift": "3419ed670928716128e533746171b76d29c7ca97252070fea2d9311804e5f0c3",
-  "Sources/HUDCalendarInteraction.swift": "e2f82ed149ae3406a0a0fcd0197eb03ce8c7adc8645b0fda6264b8a023f87537",
+  "Sources/HUDCalendarController.swift": "7e68f0586e15ceb09d1e1ec1f763819cfb78cd999562017261fa9eb56e437d56",
   "Sources/HUDCalendarStore.swift": "37335abe7c88759c99ce32cad0f796f15bf096141f48003e69bd332ff0b4ea78",
-  "Sources/LocalizationCatalog.swift": "4898828e511be6bcbb6c10d17b11d521a59724d22ca6dd10866071644f00eb40",
-  "Sources/NotesFormattingControls.swift": "e24b74f7b3dbf3ff9df84c804b2a69a1edd97c87ce30af5b17e4e385e917eae1"
+  "Sources/LocalizationCatalog.swift": "7162d43a038a84e34cc94c6d432e659994fa087fcbcd7fb5f04c00de6ef067c3",
+  "Sources/LocalizationCatalogRedesign.swift": "6ef8779e0ef708581927ab11f44e8c122e868a5dc6e2ba76fae3647d608e5436"
  }
 }

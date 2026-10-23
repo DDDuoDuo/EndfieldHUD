@@ -123,7 +123,7 @@ n::AppNotificationIdentity testIdentity(const Owned& owned, const wchar_t* execu
     identity.activatorCLSID = "{5C487D23-3A24-491A-832E-8CF00D94D22B}";
     return identity;
 }
-n::CalendarScheduledNotification scheduled(std::string identifier) { return {std::move(identifier), "signature", "Title", "Today · 2026-10-12", 0}; }
+n::CalendarScheduledNotification scheduled(std::string identifier) { return {std::move(identifier), "signature", "Title", "Today 2026-10-12", 0}; }
 
 void installed(Owned& owned) {
     const auto identity = testIdentity(owned, L"EndfieldHUD.exe");
