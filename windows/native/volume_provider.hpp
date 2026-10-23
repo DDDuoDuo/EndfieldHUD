@@ -1,6 +1,7 @@
 #pragma once
-#include "native/volume_scene.hpp"
+#include "native/volume_snapshot.hpp"
 #include "native/audio_endpoint_snapshot.hpp"
+#include "native/system_services.hpp"
 
 namespace endfield::native {
 class AudioDefaultDeviceSelector;

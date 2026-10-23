@@ -1,6 +1,12 @@
 #pragma once
-#include "native/clipboard_scene.hpp"
+// The Clipboard canvas's view of the shared clipboard history
+// (modules/clipboard_canvas.hpp ClipboardActions over native/system_services.hpp
+// ClipboardHistory): ClipboardStore.items as ClipboardRecords (the 90-character
+// preview, the 96 px thumbnail as a memory image, createdAt and the meta-line
+// ClipboardDetails), the store's operations and statusMessage.
+#include "modules/clipboard_canvas.hpp"
 #include "native/layer_image_source.hpp"
+#include "native/system_services.hpp"
 #include "core/localization.hpp"
 #include <array>
 #include <memory>
@@ -45,16 +51,17 @@ struct ClipboardProviderStats {
 };
 class NativeClipboardProvider final {
 public:
-    static constexpr std::size_t maximumPreparedRows=14; // seven old + seven incoming
     explicit NativeClipboardProvider(ClipboardProviderSource);
     ~NativeClipboardProvider();
     NativeClipboardProvider(const NativeClipboardProvider&)=delete;
     NativeClipboardProvider&operator=(const NativeClipboardProvider&)=delete;
-    // Pass to the existing ClipboardPreview. Metadata and source action routes
-    // only; copied callbacks become harmless when this provider closes/dies.
-    ClipboardActions actions()const;
-    // Supply &images() in ClipboardPreview's LayerRasterOptions. This provider
-    // must outlive that preview and all content refreshes using its options.
+    // Give to the ClipboardCanvas. A snapshot builds a record once per history
+    // item (the preview, the grapheme count, the details) and publishes each
+    // image record's thumbnail into images() at {key, revision 1}; the canvas's
+    // owner rasterizes from images() (LayerRasterOptions::memoryImages), so this
+    // provider outlives that owner. Copied callbacks become harmless when this
+    // provider closes or dies.
+    modules::ClipboardActions actions()const;
     LayerImageSource&images()noexcept;
     // Caller may drop cached thumbnails after module publication detaches;
     // previously borrowed immutable snapshots remain alive and budgeted.
@@ -66,9 +73,17 @@ private:struct Impl;std::shared_ptr<Impl>impl_;
 #ifdef _WIN32
 // No start(), refresh(), OS clipboard access, or service lifetime ownership.
 // A caller-supplied formatter translates an HRESULT capture status if desired;
-// copy failure itself already uses ClipboardStrings::copyFailed in the canvas.
+// a failed copy falls back to the canvas's "Could not restore this item".
 ClipboardProviderSource clipboardProviderSource(SystemServices&,
     std::function<std::optional<std::string>(std::int32_t)> statusText={},
     std::function<void(ClipboardKind)> copied={});
+// SystemServicesOptions::clipboardOrigin for the Windows clipboard
+// (ClipboardStore.sourceApplication(of:) and totalSize): the source app is
+// the clipboard owner window's process, else the foreground window's, never
+// this process; its name is the executable's localized FileDescription (what
+// Task Manager shows), else the executable name. Files: the total size when
+// there are at most 64 and every one is a regular file (one attribute read
+// each), else none. Owner thread, after the clipboard lease closed.
+ClipboardOrigin windowsClipboardOrigin(const ClipboardPayload&);
 #endif
 }

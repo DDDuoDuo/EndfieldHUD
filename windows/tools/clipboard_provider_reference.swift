@@ -1,4 +1,7 @@
-// Isolated source expression oracle. No NSPasteboard, app, window, or user data.
+// Isolated source expression oracle (ClipboardStore.make's 90-character preview and
+// read's ClipboardDetails.characters). No NSPasteboard, app, window, or user data.
+// Run: swift windows/tools/clipboard_provider_reference.swift Sources/ClipboardStore.swift
+//      > windows/tests/fixtures/clipboard-provider-preview.json
 import Foundation
 import CryptoKit
 let sourceURL=URL(fileURLWithPath:CommandLine.arguments[1])
@@ -10,7 +13,7 @@ let inputs=["", "  first\tsecond\r\n third  ","A\u{00a0}B\u{202f}C\u{2003}D", "a
 let rows=inputs.map { preview -> [String:Any] in
     let flattened = preview.split(whereSeparator: \.isWhitespace).joined(separator: " ")
     let compact = flattened.count > 90 ? String(flattened.prefix(89)) + "…" : flattened
-    return ["input":preview,"preview":compact]
+    return ["input":preview,"preview":compact,"characters":preview.count]
 }
-let output:[String:Any]=["source":"Sources/ClipboardStore.swift","sourceSHA256":SHA256.hash(data:source).map{String(format:"%02x",$0)}.joined(),"expression":"make(_:preview:thumbnail:payload:)","rows":rows]
+let output:[String:Any]=["source":"Sources/ClipboardStore.swift","sourceSHA256":SHA256.hash(data:source).map{String(format:"%02x",$0)}.joined(),"expression":"make(_:preview:thumbnail:details:payload:), ClipboardDetails(characters: text.count)","rows":rows]
 FileHandle.standardOutput.write(try JSONSerialization.data(withJSONObject:output,options:[.sortedKeys,.prettyPrinted,.withoutEscapingSlashes]))

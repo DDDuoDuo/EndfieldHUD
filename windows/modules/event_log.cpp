@@ -1,6 +1,5 @@
 #include "modules/event_log.hpp"
 #include "core/data/json.hpp"
-#include "core/motion.hpp"
 #include <algorithm>
 #include <charconv>
 #include <cmath>
@@ -8,11 +7,6 @@
 #include <set>
 #include <stdexcept>
 
-#if defined(__clang__)
-#pragma clang fp contract(off)
-#elif defined(_MSC_VER)
-#pragma fp_contract(off)
-#endif
 namespace endfield::modules {
 namespace {
 void need(bool okay,const char*message){if(!okay)throw std::invalid_argument(message);}
@@ -156,52 +150,4 @@ EventLog::EventLog(std::size_t capacity,EventNameCompactor compactor):capacity_(
 void EventLog::record(std::string id,EventKind kind,double time,const EventMetadata&raw){need(std::isfinite(time),"Nonfinite event timestamp");SystemEvent next{canonicalID(id),kind,time,sanitizedEventMetadata(kind,raw,compactor_)};need(std::none_of(events_.begin(),events_.end(),[&](const auto&e){return e.id==next.id;}),"Duplicate caller event identity");events_.insert(events_.begin(),std::move(next));if(events_.size()>capacity_)events_.resize(capacity_);++revision_;}
 void EventLog::replace(std::span<const SystemEvent>input){need(input.size()<=maximumCapacity,"Incoming event snapshot exceeds source capacity");std::vector<SystemEvent>next;next.reserve(std::min(capacity_,input.size()));std::set<std::string>seen;for(const auto&e:input){if(!std::isfinite(e.createdAt))continue;auto id=canonicalID(e.id);if(!seen.insert(id).second)continue;next.push_back({std::move(id),e.kind,e.createdAt,sanitizedEventMetadata(e.kind,e.metadata,compactor_)});}std::stable_sort(next.begin(),next.end(),[](const auto&a,const auto&b){return a.createdAt>b.createdAt;});if(next.size()>capacity_)next.resize(capacity_);events_=std::move(next);++revision_;}
 void EventLog::clear(){events_.clear();++revision_;}
-namespace {void validateStrings(const EventLogStrings&s){for(const auto*text:{&s.heading,&s.clearLog,&s.all,&s.cancel,&s.clear,&s.confirm,&s.localHistory,&s.empty,&s.emptyCategory,&s.countSuffix})shortText(*text);for(const auto&text:s.categories)shortText(text);}}
-bool EventLogState::setStrings(EventLogStrings value){if(value==strings_)return false;validateStrings(value);strings_=std::move(value);rebuild();return true;}
-EventLogState::EventLogState(EventLogCallbacks callbacks,EventLogStrings strings,EventNameCompactor compactor):callbacks_(std::move(callbacks)),strings_(std::move(strings)),compactor_(std::move(compactor)){
-    need(bool(callbacks_.snapshot)&&bool(callbacks_.timestamp),"Event log needs injected snapshot and timestamp formatter");validateStrings(strings_);visible_.reserve(5);actions_.reserve(15);changes_.reserve(8);refresh();
-}
-void EventLogState::activate(){active_=true;refresh();}void EventLogState::deactivate(){active_=false;confirming_=false;change(ChangeKind::settle);rebuild();}
-void EventLogState::setReduceMotion(bool value){if(reduced_==value)return;reduced_=value;if(value)change(ChangeKind::settle);}
-void EventLogState::change(ChangeKind kind,double direction){
-    // Pending changes describe only the newest transaction. A new exchange
-    // settles the prior destination before its bounded page can be reused.
-    if(kind==ChangeKind::settle||kind==ChangeKind::exchange)changes_.clear();
-    else std::erase_if(changes_,[&](const auto&c){return c.kind==kind;});
-    changes_.push_back({kind,direction,active_&&!reduced_,kind==ChangeKind::selection?selected_.value_or(""):""});
-}
-double EventLogState::maximumOffset()const noexcept{return std::max(0.,double(filtered_.size())*55-198);}
-std::pair<std::size_t,std::size_t>EventLogState::visibleRange()const noexcept{const auto first=std::min(filtered_.size(),std::size_t(std::floor(offset_/55))),last=std::min(filtered_.size(),std::size_t(std::ceil((offset_+198)/55)));return {first,std::max(first,last)};}
-std::optional<core::Rect>EventLogState::rowRect(std::string_view id,bool clipped)const{for(std::size_t n=0;n<filtered_.size();++n)if(events_[filtered_[n]].id==id){core::Rect r{12,94+double(n)*55-offset_,369,51};if(clipped){const auto y=std::max(94.,r.y),end=std::min(292.,r.y+r.height);if(end-y<2)return {};r.y=y;r.height=end-y;}return r;}return {};}
-void EventLogState::refresh(){auto snapshot=callbacks_.snapshot();need(snapshot.events.size()<=EventLog::maximumCapacity,"Event snapshot exceeds source bounds");if(snapshot.status)shortText(*snapshot.status);
-    const auto first=std::size_t(std::floor(offset_/55));std::optional<std::string>anchor;if(offset_>0&&first<filtered_.size())anchor=events_[filtered_[first]].id;const auto remainder=std::fmod(offset_,55);
-    std::vector<SystemEvent>next;next.reserve(snapshot.events.size());std::set<std::string>seen;for(const auto&e:snapshot.events){need(std::isfinite(e.createdAt),"Invalid event snapshot timestamp");auto id=canonicalID(e.id);need(seen.insert(id).second,"Duplicate event snapshot identity");auto metadata=sanitizedEventMetadata(e.kind,e.metadata,compactor_);if(e.kind!=EventKind::overlayOpened&&e.kind!=EventKind::moduleOpened)next.push_back({std::move(id),e.kind,e.createdAt,std::move(metadata)});}
-    std::vector<std::size_t>filtered;filtered.reserve(next.size());for(std::size_t n=0;n<next.size();++n)if(!category_||eventCategory(next[n].kind)==*category_)filtered.push_back(n);
-    if(anchor)for(std::size_t n=0;n<filtered.size();++n)if(next[filtered[n]].id==*anchor){offset_=double(n)*55+remainder;break;}
-    events_=std::move(next);filtered_=std::move(filtered);storeStatus_=std::move(snapshot.status);offset_=std::clamp(offset_,0.,maximumOffset());if(selected_&&std::none_of(filtered_.begin(),filtered_.end(),[&](auto n){return events_[n].id==*selected_;}))selected_.reset();if(events_.empty())confirming_=false;rebuild();
-}
-void EventLogState::rebuild(bool){visible_.clear();actions_.clear();const auto add=[&](std::string id,std::string title,core::Rect r,bool framed){actions_.push_back({std::move(id),std::move(title),r,framed});};
-    for(unsigned n=0;n<8;++n)add("eventLog:category:"+std::string(n?categoryKeys[n-1]:"all"),n?strings_.categories[n-1]:strings_.all,{12+double(n%4)*95,42+double(n/4)*24,91,20},true);
-    if(confirming_){add("eventLog:cancelClear",strings_.cancel,{222,302,72,26},true);add("eventLog:confirmClear",strings_.clear,{301,302,87,26},true);}else if(!events_.empty())add("eventLog:clear",strings_.clearLog,{275,302,113,26},true);
-    const auto[first,end]=visibleRange();for(auto n=first;n<end;++n){const auto&e=events_[filtered_[n]];const auto rect=rowRect(e.id,false);auto timestamp=callbacks_.timestamp(e.createdAt);shortText(timestamp,128);auto detail=eventDetail(e,compactor_);visible_.push_back({e.id,std::move(timestamp),strings_.categories[static_cast<std::size_t>(eventCategory(e.kind))],std::string(eventKindTitle(e.kind)),std::move(detail),*rect,selected_==e.id});if(auto hit=rowRect(e.id)){const auto&r=visible_.back();std::string label=r.timestamp+". "+r.category+". "+r.title;if(!r.detail.empty())label+=". "+r.detail;add("eventLog:row:"+e.id,std::move(label),*hit,false);}}
-    status_=storeStatus_.value_or(std::to_string(filtered_.size())+strings_.countSuffix);++revision_;
-}
-std::optional<std::string_view>EventLogState::actionAt(core::Point p)const{for(const auto&a:actions_)if(a.rect.contains(p))return a.id;return {};}
-std::optional<std::string_view>EventLogState::feedbackActionAt(core::Point p)const{for(const auto&a:actions_){if(!a.rect.contains(p))continue;auto r=a.rect;if(a.id.starts_with("eventLog:row:")){const auto full=rowRect(std::string_view(a.id).substr(13),false);if(full)r=*full;}const double x=p.x-r.x,y=p.y-r.y,cut=std::min(4.,std::min(r.width,r.height)/3);if(x+y>=cut&&(r.width-x)+(r.height-y)>=cut)return a.id;}return {};}
-bool EventLogState::mouseDown(core::Point point){if(!std::isfinite(point.x)||!std::isfinite(point.y)||!bounds().contains(point))return false;if(auto id=actionAt(point))perform(*id);return true;}
-bool EventLogState::scroll(core::Point point,double delta){if(!viewport().contains(point)||!std::isfinite(delta))return false;setScroll(offset_+delta);return true;}
-void EventLogState::scrollBy(double delta){if(std::isfinite(delta))setScroll(offset_+delta);}
-void EventLogState::setScroll(double value){const auto next=std::clamp(value,0.,maximumOffset());if(next==offset_)return;offset_=next;rebuild(false);}
-void EventLogState::selectNext(int direction){if(filtered_.empty())return;std::size_t index=direction<0?filtered_.size()-1:0;if(selected_)for(std::size_t n=0;n<filtered_.size();++n)if(events_[filtered_[n]].id==*selected_){index=std::size_t(std::clamp(std::int64_t(n)+direction,std::int64_t(0),std::int64_t(filtered_.size()-1)));break;}selected_=events_[filtered_[index]].id;const double top=double(index)*55;if(top<offset_)offset_=top;else if(top+55>offset_+198)offset_=top+55-198;offset_=std::clamp(offset_,0.,maximumOffset());confirming_=false;rebuild();change(ChangeKind::selection);}
-bool EventLogState::cancelConfirmation(){if(!confirming_)return false;confirming_=false;rebuild();change(ChangeKind::confirmation,-1);return true;}
-void EventLogState::perform(std::string_view id){const std::string owned(id);id=owned;constexpr std::string_view categoryPrefix="eventLog:category:",rowPrefix="eventLog:row:";
-    if(id.starts_with(categoryPrefix)){auto key=id.substr(categoryPrefix.size());const auto next=eventCategoryFromKey(key);if(key!="all"&&!next)return;if(next==category_)return;const auto index=[](auto v){return v?int(*v)+1:0;};const auto direction=index(next)>index(category_)?1.:-1.;category_=next;selected_.reset();offset_=0;confirming_=false;refresh();change(ChangeKind::exchange,direction);return;}
-    if(id.starts_with(rowPrefix)){auto key=id.substr(rowPrefix.size());if(!uuid(key))return;auto canonical=canonicalID(key);if(!rowRect(canonical))return;selected_=std::move(canonical);confirming_=false;rebuild();change(ChangeKind::selection);return;}
-    if(id=="eventLog:clear"){if(events_.empty())return;confirming_=true;rebuild();change(ChangeKind::confirmation);}
-    else if(id=="eventLog:cancelClear")cancelConfirmation();
-    else if(id=="eventLog:confirmClear"){if(!confirming_)return;need(bool(callbacks_.clear),"Event clear callback is required");callbacks_.clear();confirming_=false;selected_.reset();offset_=0;refresh();change(ChangeKind::exchange,-1);change(ChangeKind::confirmation,-1);}
-}
-EventLogHandoffSample sampleEventLogHandoff(double direction,double elapsed){need(std::isfinite(direction)&&std::isfinite(elapsed),"Invalid event handoff clock");const double time=elapsed/.26;double progress{};
-    if(time>=1)progress=1;else if(time>0){const double x=static_cast<float>(time);constexpr double x1=static_cast<float>(.2),y1=static_cast<float>(.7),x2=static_cast<float>(.3),y2=1;constexpr double ax=1-3*x2+3*x1,bx=3*x2-6*x1,cx=3*x1,ay=1-3*y2+3*y1,by=3*y2-6*y1,cy=3*y1;auto t=x;for(unsigned n=0;n<8;++n){const auto error=((ax*t+bx)*t+cx)*t-x;if(std::abs(error)<1e-5)break;t-=error/((3*ax*t+2*bx)*t+cx);}progress=static_cast<float>(((ay*t+by)*t+cy)*t);}
-    const double sign=direction<0?-1:1,width=376*progress;EventLogHandoffSample sample{{sign>0?376-width:0,0,width,198},{sign>0?0:width,0,376-width,198},14*sign*(1-progress),-14*sign*progress,elapsed<.26};return sample;}
 } // namespace endfield::modules

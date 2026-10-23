@@ -1,105 +1,238 @@
+// The Clipboard canvas's view of the shared history (native/clipboard_provider):
+// ClipboardStore records (the 90-character preview and ClipboardDetails, Mac
+// expression oracle tools/clipboard_provider_reference.swift ->
+// tests/fixtures/clipboard-provider-preview.json), the store's operations,
+// statusMessage, the copied-kind report and the thumbnails published for the
+// canvas's owner. Synthetic history only; the Windows part reads attributes of
+// files it creates in its own temporary folder.
 #include "native/clipboard_provider.hpp"
-#ifdef _WIN32
-#include "native/clipboard_assets.hpp"
-#include <objbase.h>
-#endif
 #include <algorithm>
-#include <atomic>
-#include <cstdlib>
 #include <fstream>
 #include <iostream>
-#include <new>
 #include <stdexcept>
-namespace n=endfield::native;using Json=ehud::data::Json;
-namespace {unsigned checks{};std::atomic<bool>counting{};std::atomic<std::size_t>allocations{};}
-void*operator new(std::size_t n){if(counting)++allocations;if(auto*p=std::malloc(n?n:1))return p;throw std::bad_alloc();}void*operator new[](std::size_t n){return ::operator new(n);}void operator delete(void*p)noexcept{std::free(p);}void operator delete[](void*p)noexcept{std::free(p);}
-#if defined(__cpp_sized_deallocation)
-void operator delete(void*p,std::size_t)noexcept{std::free(p);}void operator delete[](void*p,std::size_t)noexcept{std::free(p);}
+#ifdef _WIN32
+#include <filesystem>
+#ifndef NOMINMAX
+#define NOMINMAX
 #endif
+#include <windows.h>
+#endif
+namespace n = endfield::native;
+namespace m = endfield::modules;
+using Json = ehud::data::Json;
 namespace {
-void check(bool b,const char*m){++checks;if(!b)throw std::runtime_error(m);}template<class F>void rejects(F f){bool threw{};try{f();}catch(const std::exception&){threw=true;}check(threw,"Invalid preparation rejected before cache mutation");}
-std::u16string utf16(std::string_view value){check(Json::validUtf8(value),"Owned oracle contains valid UTF8");std::u16string out;for(std::size_t n=0;n<value.size();){auto c=std::uint32_t(static_cast<unsigned char>(value[n++]));if(c>=128){const auto width=c<0xe0?2u:c<0xf0?3u:4u;c&=(1u<<(7-width))-1;for(unsigned k=1;k<width;++k)c=(c<<6)|(static_cast<unsigned char>(value[n++])&63);}if(c<65536)out.push_back(char16_t(c));else{c-=65536;out.push_back(char16_t(0xd800+(c>>10)));out.push_back(char16_t(0xdc00+(c&1023)));}}return out;}
+unsigned checks{};
+void check(bool b, const char* message) { ++checks; if (!b) throw std::runtime_error(message); }
+std::u16string utf16(std::string_view value) {
+    check(Json::validUtf8(value), "Owned oracle contains valid UTF-8");
+    std::u16string out;
+    for (std::size_t at = 0; at < value.size();) {
+        auto c = std::uint32_t(static_cast<unsigned char>(value[at++]));
+        if (c >= 128) { const auto width = c < 0xe0 ? 2u : c < 0xf0 ? 3u : 4u; c &= (1u << (7 - width)) - 1; for (unsigned k = 1; k < width; ++k) c = (c << 6) | (static_cast<unsigned char>(value[at++]) & 63); }
+        if (c < 65536) out.push_back(char16_t(c)); else { c -= 65536; out.push_back(char16_t(0xd800 + (c >> 10))); out.push_back(char16_t(0xdc00 + (c & 1023))); }
+    }
+    return out;
+}
 struct Fixture {
-    n::ClipboardHistory history{64};unsigned reads{},copies{},pins{},removes{},clears{};std::uint64_t copied{};bool failCopy{};std::optional<std::string>status;
-    n::ClipboardProviderSource source(){return {[this]() -> const n::ClipboardHistory& {++reads;return history;},[this](auto id){++copies;copied=id;return !failCopy;},[this](auto id){++removes;return history.erase(id);},[this](auto id,bool pinned){++pins;return history.pin(id,pinned);},[this]{++clears;const auto count=history.items().size();history.clear(true);return count!=history.items().size();},[this]{return status;}};}
-    std::uint64_t text(std::u16string text,n::ClipboardKind kind=n::ClipboardKind::text){n::ClipboardPayload p;p.kind=kind;p.text=std::move(text);check(history.ingest(std::move(p))==n::ClipboardInsertResult::inserted,"Owned text accepted once");return history.items().front().id;}
-    std::uint64_t image(unsigned value){auto b=std::make_shared<std::vector<std::uint8_t>>(44);auto put=[&](unsigned p,std::uint32_t v){for(unsigned k=0;k<4;++k)(*b)[p+k]=std::uint8_t(v>>(8*k));};put(0,40);put(4,1);put(8,1);(*b)[12]=1;(*b)[14]=32;(*b)[40]=std::uint8_t(value);(*b)[43]=255;
-        auto t=std::make_shared<n::ClipboardImageThumbnail>();t->encoded={n::ClipboardEncodedFormat::dib,b};t->sourceWidth=t->sourceHeight=t->width=t->height=1;t->rgba={std::uint8_t(value),30,20,255};n::ClipboardPayload p;p.kind=n::ClipboardKind::image;p.image_format=n::ClipboardImageFormat::dib;p.decodedImage=std::move(t);check(history.ingest(std::move(p))==n::ClipboardInsertResult::inserted,"Injected validated image accepted");return history.items().front().id;
+    n::ClipboardHistory history;
+    unsigned reads{}, copies{}, pins{}, removes{}, clears{};
+    std::uint64_t copied{}; bool failCopy{}; std::optional<std::string> status;
+    explicit Fixture(std::size_t capacity = 10) : history(capacity) {}
+    n::ClipboardProviderSource source() {
+        return {[this]() -> const n::ClipboardHistory& { ++reads; return history; },
+            [this](auto id) { ++copies; copied = id; return !failCopy; },
+            [this](auto id) { ++removes; return history.erase(id); },
+            [this](auto id, bool pinned) { ++pins; return history.pin(id, pinned); },
+            [this] { ++clears; const auto count = history.items().size(); history.clear(true); return count != history.items().size(); },
+            [this] { return status; }, {}};
+    }
+    std::uint64_t text(std::u16string value, n::ClipboardKind kind = n::ClipboardKind::text, n::ClipboardOrigin origin = {}) {
+        n::ClipboardPayload p; p.kind = kind; p.text = std::move(value);
+        check(history.ingest(std::move(p), false, std::move(origin)) == n::ClipboardInsertResult::inserted, "Owned text accepted once");
+        return history.items().front().id;
+    }
+    // A validated 1x1 DIB with its decoded thumbnail, as the capture stores it.
+    std::uint64_t image(unsigned value, unsigned width = 1, unsigned height = 1) {
+        auto bytes = std::make_shared<std::vector<std::uint8_t>>(44);
+        auto put = [&](unsigned at, std::uint32_t v) { for (unsigned k = 0; k < 4; ++k) (*bytes)[at + k] = std::uint8_t(v >> (8 * k)); };
+        put(0, 40); put(4, 1); put(8, 1); (*bytes)[12] = 1; (*bytes)[14] = 32; (*bytes)[40] = std::uint8_t(value); (*bytes)[43] = 255;
+        auto t = std::make_shared<n::ClipboardImageThumbnail>();
+        t->encoded = {n::ClipboardEncodedFormat::dib, bytes}; t->sourceWidth = width; t->sourceHeight = height; t->width = t->height = 1;
+        t->rgba = {std::uint8_t(value), 30, 20, 255};
+        n::ClipboardPayload p; p.kind = n::ClipboardKind::image; p.image_format = n::ClipboardImageFormat::dib; p.decodedImage = std::move(t);
+        check(history.ingest(std::move(p)) == n::ClipboardInsertResult::inserted, "Injected validated image accepted");
+        return history.items().front().id;
     }
 };
-void metadata(const std::filesystem::path&oracle){Fixture f;const auto first=f.text(u"  hello\tworld \r\n");n::NativeClipboardProvider provider(f.source());check(f.reads==0,"Constructing provider never reads clipboard or history");auto actions=provider.actions();n::ClipboardState state(actions);check(state.rows().size()==1&&state.rows()[0].preview=="hello world","Source whitespace flatten connected to real canvas metadata");check(provider.stats().previewBuilds==1,"First metadata event compacts once");for(unsigned n=0;n<10;++n)state.refresh();check(provider.stats().previewBuilds==1,"Unchanged history events retain compacted preview");
-    state.copyVisibleItem(0);check(f.copies==1&&f.copied==first&&state.copiedFeedback(),"Canvas copy targets same shared history item");f.failCopy=true;state.copyVisibleItem(0);check(state.status()==state.strings().copyFailed,"Copy failure remains original source feedback");f.failCopy=false;state.perform("clipboard:"+std::to_string(first)+":pin");check(f.pins==1&&f.history.find(first)->pinned&&state.rows()[0].pinned,"Pin mutates existing service payload identity");
-    n::ClipboardPayload files;files.kind=n::ClipboardKind::files;files.files={u"C:\\one\\first.txt",u"D:\\two\\한국어.png",u"C:/owned/third/",u"C:\\four"};check(f.history.ingest(std::move(files))==n::ClipboardInsertResult::inserted,"Owned file metadata accepted without file access");state.refresh();check(state.rows()[0].preview=="first.txt, 한국어.png, third (+1)","Source first3 filenames and remaining count preserved");state.perform("clipboard:clear");state.perform("clipboard:confirmClear");check(f.clears==1&&f.history.items().size()==1&&f.history.items()[0].pinned,"Source clear keeps pinned original payload");
-    f.status="injected capture status";state.refresh();check(state.status()==*f.status,"Owner-translated capture status is metadata only");f.status.reset();state.perform("clipboard:"+std::to_string(first)+":remove");check(f.removes==1&&f.history.items().empty(),"Delete routes to existing history");
-    std::ifstream file(oracle,std::ios::binary);check(bool(file),"Open isolated original-source preview oracle");const std::string bytes((std::istreambuf_iterator<char>(file)),{});const auto document=Json::parse(bytes,1024*1024);check(document["sourceSHA256"].string()=="3cee3eb251063751c33bb87b5d4b5585e6f51443b49c4190fdda0f5a144e73f0","Oracle pins unchanged original ClipboardStore");
-    for(const auto&test:document["rows"].array()){f.history.clear(false);const auto input=utf16(test["input"].string());if(input.empty()){continue;}f.text(input);state.refresh();check(state.rows().front().preview==test["preview"].string(),"Grapheme/whitespace compaction exactly matches original Swift");n::ClipboardImages artwork;artwork.text=n::ClipboardGameImage{Json::Object{{"asset","owned.png"},{"sha256",std::string(64,'a')}},"Operational_Manual_icon",50};const auto plan=n::prepareClipboardScene(state,{},artwork);check(!plan.rows.empty(),"Exact preview enters source presentation without byte-based truncation");}
-    const auto before=provider.stats();const auto reads=f.reads;const auto count=allocations.load();counting=true;for(unsigned n=0;n<1000;++n){state.visibleRange();state.rowRect(state.rows()[0].id);provider.stats();}counting=false;check(allocations==count&&f.reads==reads&&provider.stats().previewBuilds==before.previewBuilds,"Pointer/pose observation performs no history read, shaping, allocation, or decode");
-    provider.close();check(!actions.copy(first)&&!actions.togglePin(first)&&!actions.remove(first)&&!actions.clearUnpinned()&&actions.snapshot().rows.empty(),"Closed route callbacks cannot touch borrowed service");
-    n::ClipboardActions expired;{n::NativeClipboardProvider temporary(f.source());expired=temporary.actions();}const auto closedReads=f.reads;check(expired.snapshot().rows.empty()&&!expired.copy(1)&&!expired.togglePin(1)&&!expired.clearUnpinned()&&f.reads==closedReads,"Copied callbacks remain harmless after provider destruction");
+const m::ClipboardRecord* record(const m::ClipboardSnapshot& snapshot, std::uint64_t id) {
+    const auto found = std::find_if(snapshot.items.begin(), snapshot.items.end(), [&](const auto& r) { return r.id == id; });
+    return found == snapshot.items.end() ? nullptr : &*found;
+}
+// ClipboardStore.read / make as the canvas reads them, and the store's operations.
+void records(const char* oracle) {
+    Fixture f(64);
+    const auto first = f.text(u"  hello\tworld \r\n", n::ClipboardKind::text, {1790000000.5, u"Notepad", {}});
+    n::NativeClipboardProvider provider(f.source());
+    check(f.reads == 0, "Constructing the provider never reads the history");
+    auto actions = provider.actions();
+    auto snapshot = actions.snapshot();
+    check(snapshot.capacity == 64 && snapshot.items.size() == 1, "The snapshot carries the history capacity");
+    const auto& text = snapshot.items[0];
+    check(text.id == first && text.kind == m::ClipboardRecordKind::text && text.preview == "hello world" && !text.pinned && !text.thumbnail,
+        "A text record carries the flattened preview");
+    check(text.createdAt == 1790000000.5 && text.details.source == "Notepad" && text.details.characters == 15 && !text.details.format && !text.details.fileCount,
+        "A text record carries its capture time, source app and character count");
+    for (unsigned k = 0; k < 10; ++k) actions.snapshot();
+    check(provider.stats().previewBuilds == 1 && provider.stats().snapshots == 11, "Unchanged history reuses the built record");
+    // Store operations route to the same history item.
+    check(actions.copy(first) && f.copies == 1 && f.copied == first, "Copy targets the shared history item");
+    f.failCopy = true; check(!actions.copy(first) && f.copies == 2, "A failed copy reports failure"); f.failCopy = false;
+    check(actions.togglePin(first) && f.pins == 1 && f.history.find(first)->pinned && actions.snapshot().items[0].pinned, "Pin toggles the history item and the next snapshot");
+    check(actions.togglePin(first) && !f.history.find(first)->pinned && !actions.snapshot().items[0].pinned && provider.stats().previewBuilds == 1,
+        "Unpinning flips the cached record without rebuilding it");
+    f.history.pin(first, true);
+    // Files: the first three names and the remaining count; size only from the capture.
+    n::ClipboardPayload files; files.kind = n::ClipboardKind::files; files.files = {u"C:\\one\\first.txt", u"D:\\two\\한국어.png", u"C:/owned/third/", u"C:\\four"};
+    check(f.history.ingest(std::move(files), false, {5, {}, 4096}) == n::ClipboardInsertResult::inserted, "Owned file metadata accepted without file access");
+    snapshot = actions.snapshot();
+    const auto& listed = snapshot.items[0];
+    check(listed.kind == m::ClipboardRecordKind::files && listed.preview == "first.txt, 한국어.png, third (+1)", "The first three file names and the remaining count");
+    check(listed.details.fileCount == 4 && listed.details.byteCount == 4096 && !listed.details.source && !listed.details.characters, "File details carry the count and the captured size");
+    n::ClipboardPayload unsized; unsized.kind = n::ClipboardKind::files; unsized.files = {u"C:\\folder\\"};
+    check(f.history.ingest(std::move(unsized)) == n::ClipboardInsertResult::inserted && !actions.snapshot().items[0].details.byteCount, "Files without a captured size have none");
+    check(actions.clearUnpinned() && f.clears == 1 && f.history.items().size() == 1 && f.history.items()[0].pinned, "Clear keeps the pinned item");
+    f.status = "injected capture status";
+    check(actions.snapshot().status == f.status, "The capture status reaches the snapshot"); f.status.reset();
+    f.history.pin(first, false);
+    check(actions.remove(first) && f.removes == 1 && f.history.items().empty() && actions.snapshot().items.empty(), "Delete routes to the history");
+    check(!actions.remove(first) && f.removes == 1 && !actions.togglePin(first) && !actions.copy(first), "Unknown items are neither removed, pinned nor copied");
+    check(provider.stats().metadataRows == 0, "Removed items leave no cached record");
+    // The Mac expression oracle: grapheme/whitespace compaction and String.count.
+    std::ifstream file(oracle, std::ios::binary); check(bool(file), "Open the isolated ClipboardStore preview oracle");
+    const std::string bytes((std::istreambuf_iterator<char>(file)), {});
+    const auto document = Json::parse(bytes, 1024 * 1024);
+    check(document["sourceSHA256"].string() == "c871a86bb4b4268d7529fc685b28a1a4867fec55ce6fed5070834fb2c147d90a", "The oracle pins the Mac 1.3.0 ClipboardStore");
+    unsigned compared{};
+    for (const auto& row : document["rows"].array()) {
+        f.history.clear(false);
+        const auto input = utf16(row["input"].string());
+        if (input.empty()) continue; // the Mac never records an empty string
+        f.text(input);
+        const auto built = actions.snapshot().items.front();
+        check(built.preview == row["preview"].string(), "Grapheme/whitespace compaction matches ClipboardStore.make");
+        check(built.details.characters == std::int64_t(row["characters"].number()), "The character count matches String.count");
+        ++compared;
+    }
+    check(compared == 15, "Every non-empty oracle row compared");
+    provider.close();
+    check(!actions.copy(first) && !actions.togglePin(first) && !actions.remove(first) && !actions.clearUnpinned() && actions.snapshot().items.empty(),
+        "Callbacks of a closed provider cannot touch the borrowed history");
+    m::ClipboardActions expired;
+    { n::NativeClipboardProvider temporary(f.source()); expired = temporary.actions(); }
+    const auto reads = f.reads;
+    check(expired.snapshot().items.empty() && !expired.copy(1) && !expired.togglePin(1) && !expired.clearUnpinned() && f.reads == reads,
+        "Copied callbacks stay harmless after the provider is destroyed");
 }
 // SystemHUDView clipboardCanvas.onCopy: kind read before the copy, recorded
 // only after it succeeds; the owner turns it into Event Log clipboardCopied.
-void copiedEvents(){Fixture f;const auto link=f.text(u"https://example.com/a",n::ClipboardKind::url);const auto plain=f.text(u"synthetic body");std::vector<n::ClipboardKind>kinds;auto source=f.source();source.copied=[&](n::ClipboardKind kind){kinds.push_back(kind);};
-    n::NativeClipboardProvider provider(std::move(source));auto actions=provider.actions();
-    check(actions.copy(link)&&kinds.size()==1&&kinds[0]==n::ClipboardKind::url,"A successful copy reports the copied item's kind once");
-    f.failCopy=true;check(!actions.copy(plain)&&kinds.size()==1&&f.copies==2,"A failed copy records nothing");f.failCopy=false;
-    check(!actions.copy(999999)&&kinds.size()==1&&f.copies==2,"An unknown item is neither copied nor recorded");
-    check(actions.copy(plain)&&kinds.size()==2&&kinds[1]==n::ClipboardKind::text,"Each successful copy reports again");
-    check(n::clipboardEventKind(n::ClipboardKind::text)=="text"&&n::clipboardEventKind(n::ClipboardKind::url)=="url"&&n::clipboardEventKind(n::ClipboardKind::image)=="image"&&n::clipboardEventKind(n::ClipboardKind::files)=="files","Event kinds are the source ClipboardKind raw values");
-    provider.close();check(!actions.copy(plain)&&kinds.size()==2,"A closed provider records nothing");
+void copiedEvents() {
+    Fixture f; const auto link = f.text(u"https://example.com/a", n::ClipboardKind::url); const auto plain = f.text(u"synthetic body");
+    std::vector<n::ClipboardKind> kinds; auto source = f.source(); source.copied = [&](n::ClipboardKind kind) { kinds.push_back(kind); };
+    n::NativeClipboardProvider provider(std::move(source)); auto actions = provider.actions();
+    check(actions.copy(link) && kinds.size() == 1 && kinds[0] == n::ClipboardKind::url, "A successful copy reports the copied item's kind once");
+    f.failCopy = true; check(!actions.copy(plain) && kinds.size() == 1 && f.copies == 2, "A failed copy records nothing"); f.failCopy = false;
+    check(!actions.copy(999999) && kinds.size() == 1 && f.copies == 2, "An unknown item is neither copied nor recorded");
+    check(actions.copy(plain) && kinds.size() == 2 && kinds[1] == n::ClipboardKind::text, "Each successful copy reports again");
+    check(n::clipboardEventKind(n::ClipboardKind::text) == "text" && n::clipboardEventKind(n::ClipboardKind::url) == "url" && n::clipboardEventKind(n::ClipboardKind::image) == "image" && n::clipboardEventKind(n::ClipboardKind::files) == "files",
+        "Event kinds are the source ClipboardKind raw values");
+    provider.close(); check(!actions.copy(plain) && kinds.size() == 2, "A closed provider records nothing");
 }
 // ClipboardStore link rows: the preview is the ORIGINAL string (an explicit
-// URL type may come with any text), the kind is url, the copy reports url.
-void links(){Fixture f;n::ClipboardPayload p;p.kind=n::ClipboardKind::url;p.text=u"  Open the\tEndfield app ";p.url=u"x-endfield:open";
-    check(f.history.ingest(std::move(p))==n::ClipboardInsertResult::inserted,"An explicit link with its original string is accepted");const auto id=f.history.items().front().id;
-    std::vector<n::ClipboardKind>kinds;auto source=f.source();source.copied=[&](n::ClipboardKind kind){kinds.push_back(kind);};n::NativeClipboardProvider provider(std::move(source));auto actions=provider.actions();n::ClipboardState state(actions);state.refresh();
-    check(state.rows().size()==1&&state.rows().front().kind==n::ClipboardKind::url&&state.rows().front().preview=="Open the Endfield app","A link row previews its compacted original string, not the URL");
-    check(actions.copy(id)&&kinds==std::vector<n::ClipboardKind>{n::ClipboardKind::url},"Copying a link reports the url kind");
-    const auto derived=f.text(u"https://example.com/路径",n::ClipboardKind::url);check(f.history.find(derived)->payload.url==u"https://example.com/%E8%B7%AF%E5%BE%84","A synthetic link string gets its URL from the Mac string heuristic");provider.close();}
+// URL type may come with any text), the kind is url, no character count.
+void links() {
+    Fixture f; n::ClipboardPayload p; p.kind = n::ClipboardKind::url; p.text = u"  Open the\tEndfield app "; p.url = u"x-endfield:open";
+    check(f.history.ingest(std::move(p)) == n::ClipboardInsertResult::inserted, "An explicit link with its original string is accepted");
+    n::NativeClipboardProvider provider(f.source()); auto actions = provider.actions();
+    const auto snapshot = actions.snapshot();
+    check(snapshot.items.size() == 1 && snapshot.items[0].kind == m::ClipboardRecordKind::url && snapshot.items[0].preview == "Open the Endfield app" && !snapshot.items[0].details.characters,
+        "A link record previews its compacted original string, not the URL");
+    const auto derived = f.text(u"https://example.com/路径", n::ClipboardKind::url);
+    check(f.history.find(derived)->payload.url == u"https://example.com/%E8%B7%AF%E5%BE%84", "A synthetic link string gets its URL from the Mac string heuristic");
+    provider.close();
+}
 // ClipboardStore.statusMessage: CaptureError and pinned-cache messages in the
 // five languages; no status while capturing works or an image validates.
-void statuses(){namespace s=n::clipboard_status;using L=endfield::core::Language;
-    check(!n::clipboardStatusText(0,L::english)&&!n::clipboardStatusText(1,L::english)&&!n::clipboardStatusText(s::pending,L::korean),"Success and a pending image validation show no status");
-    check(n::clipboardStatusText(s::cacheFull,L::english)=="The cache is full of pinned items. Unpin or remove an item to capture more.","A cache full of pinned items uses the source message");
-    check(n::clipboardStatusText(s::textTooLarge,L::simplifiedChinese)=="已跳过超过 1 MB 的文本。","Oversized text uses the source message");
-    check(n::clipboardStatusText(s::imageTooLarge,L::japanese)=="64 MBを超える画像はスキップしました。","An image over 64 MB uses the catalog translation");
-    check(n::clipboardStatusText(s::imageDimensionsTooLarge,L::korean)=="1억 픽셀을 초과하는 이미지를 건너뛰었습니다.","An image over 100 megapixels uses the catalog translation");
-    check(n::clipboardStatusText(s::tooManyFiles,L::traditionalChinese)=="此檔案選擇過大，無法快取。","A file selection too large to cache uses the catalog translation");
-    const auto busy=std::int32_t(0x80070005u);check(n::clipboardStatusText(busy,L::english)=="Clipboard unavailable"&&n::clipboardStatusText(busy,L::simplifiedChinese)=="剪贴板不可用"&&n::clipboardStatusText(busy,L::korean)=="클립보드를 사용할 수 없습니다","Other failures keep the Windows-only notice in every language");
+void statuses() {
+    namespace s = n::clipboard_status; using L = endfield::core::Language;
+    check(!n::clipboardStatusText(0, L::english) && !n::clipboardStatusText(1, L::english) && !n::clipboardStatusText(s::pending, L::korean), "Success and a pending image validation show no status");
+    check(n::clipboardStatusText(s::cacheFull, L::english) == "The cache is full of pinned items. Unpin or remove an item to capture more.", "A cache full of pinned items uses the source message");
+    check(n::clipboardStatusText(s::textTooLarge, L::simplifiedChinese) == "已跳过超过 1 MB 的文本。", "Oversized text uses the source message");
+    check(n::clipboardStatusText(s::imageTooLarge, L::japanese) == "64 MBを超える画像はスキップしました。", "An image over 64 MB uses the catalog translation");
+    check(n::clipboardStatusText(s::imageDimensionsTooLarge, L::korean) == "1억 픽셀을 초과하는 이미지를 건너뛰었습니다.", "An image over 100 megapixels uses the catalog translation");
+    check(n::clipboardStatusText(s::tooManyFiles, L::traditionalChinese) == "此檔案選擇過大，無法快取。", "A file selection too large to cache uses the catalog translation");
+    const auto busy = std::int32_t(0x80070005u);
+    check(n::clipboardStatusText(busy, L::english) == "Clipboard unavailable" && n::clipboardStatusText(busy, L::simplifiedChinese) == "剪贴板不可用" && n::clipboardStatusText(busy, L::korean) == "클립보드를 사용할 수 없습니다",
+        "Other failures keep the Windows-only notice in every language");
 }
-void thumbnails(){Fixture f;std::vector<std::uint64_t>ids;for(unsigned k=0;k<40;++k)ids.push_back(f.image(k));n::NativeClipboardProvider provider(f.source());auto actions=provider.actions();auto snapshot=actions.snapshot();check(snapshot.rows.size()==40&&provider.stats().images.cachedImages==0,"History snapshots neither duplicate pixels nor eagerly prepare hidden thumbnails");
-    std::array<std::uint64_t,14>visible{};std::copy_n(ids.begin(),14,visible.begin());actions.prepareImageRows(visible);check(provider.stats().images.cachedImages==14&&provider.stats().imagePreparations==14,"Only current/outgoing visible rows prepared");const auto key=snapshot.rows.back().thumbnail["memoryImage"].string();auto borrowed=provider.images().acquire(key,1);check(borrowed&&borrowed->premultipliedBGRA().size()==4&&borrowed->premultipliedBGRA()[0]==20&&borrowed->premultipliedBGRA()[2]==0,"Prepared pixel uses source RGBA once as premultiplied BGRA");
-    const auto encoded=f.history.find(ids[0])->payload.decodedImage->encoded.bytes;actions.prepareImageRows(visible);check(provider.stats().imagePreparations==14&&f.history.find(ids[0])->payload.decodedImage->encoded.bytes==encoded,"Equal content preparation reuses pixels and original encoded allocation");
-    f.history.erase(ids[0]);actions.snapshot();actions.prepareImageRows(visible);check(provider.images().acquire(key,1)==borrowed,"Evicted history row keeps cached outgoing artwork until replacement");
-    for(std::size_t at=7;at+14<=ids.size();at+=7){std::copy_n(ids.begin()+static_cast<std::ptrdiff_t>(at),14,visible.begin());actions.prepareImageRows(visible);for(auto id:visible){const auto row=std::find_if(snapshot.rows.begin(),snapshot.rows.end(),[&](const auto&r){return r.id==id;});check(bool(provider.images().acquire(row->thumbnail["memoryImage"].string(),1)),"LRU retains every current and outgoing requested thumbnail");}}
-    check(provider.stats().images.cachedImages==24&&provider.stats().images.cachedBytes==96&&provider.stats().images.liveImages<=25,"Scrolling bounds active cache to24 without retaining all history pixels twice");
-    const auto before=provider.stats().images.publications;std::array<std::uint64_t,15>tooMany{};tooMany.fill(ids[1]);rejects([&]{actions.prepareImageRows(tooMany);});const std::array<std::uint64_t,1>zero{};rejects([&]{actions.prepareImageRows(zero);});check(provider.stats().images.publications==before,"Invalid late preparation cannot mutate image cache");
-    provider.clearImages();check(provider.stats().images.cachedImages==0&&borrowed->premultipliedBGRA()[0]==20,"Explicit clear preserves borrowed immutable old pixel lifetime");
-    std::array<std::uint64_t,2>same{ids[2],ids[2]};actions.prepareImageRows(same);check(provider.stats().images.cachedImages==1,"Duplicate requested rows publish one thumbnail");
-    unsigned prepares{};std::vector<std::uint64_t>forwarded;auto routed=actions;routed.prepareImageRows=[&](auto values){++prepares;forwarded.assign(values.begin(),values.end());actions.prepareImageRows(values);};n::ClipboardState state(routed);state.prepareImageRows(same);check(prepares==1&&forwarded==std::vector<std::uint64_t>(same.begin(),same.end()),"Canvas explicit content hook forwards exact old/incoming identities");
-    for(unsigned k=0;k<100;++k)state.visibleRange();check(prepares==1,"Idle and geometry queries never invoke preparation callback");
-    provider.close();actions.prepareImageRows(same);check(provider.stats().images.cachedImages==0&&borrowed->premultipliedBGRA()[0]==20,"Close disconnects source without invalidating existing pixel borrowers");
+// Image records: the 96 px thumbnail published once per record at {key, 1}
+// while the record lives (the Mac keeps ClipboardItem.thumbnail with it).
+void thumbnails() {
+    Fixture f; std::vector<std::uint64_t> ids; for (unsigned k = 0; k < 10; ++k) ids.push_back(f.image(k, 640 + k, 480));
+    n::NativeClipboardProvider provider(f.source()); auto actions = provider.actions();
+    check(provider.stats().images.cachedImages == 0, "Constructing the provider prepares nothing");
+    const auto snapshot = actions.snapshot();
+    check(snapshot.items.size() == 10 && provider.stats().images.cachedImages == 10 && provider.stats().imagePreparations == 10, "Each image record publishes its thumbnail once");
+    const auto* last = record(snapshot, ids[0]);
+    check(last && last->kind == m::ClipboardRecordKind::image && last->preview.empty() && last->thumbnail && last->thumbnail->kind == m::design::ImageSource::Kind::memory && last->thumbnail->revision == 1,
+        "An image record names its memory thumbnail");
+    check(last->details.format == "BMP" && last->details.pixelWidth == 640 && last->details.pixelHeight == 480 && !last->details.characters, "A DIB reports BMP and its source pixel size");
+    auto borrowed = provider.images().acquire(last->thumbnail->key, 1);
+    check(borrowed && borrowed->premultipliedBGRA().size() == 4 && borrowed->premultipliedBGRA()[0] == 20 && borrowed->premultipliedBGRA()[2] == 0, "The thumbnail is the capture's RGBA as premultiplied BGRA");
+    const auto encoded = f.history.find(ids[0])->payload.decodedImage->encoded.bytes;
+    for (unsigned k = 0; k < 5; ++k) actions.snapshot();
+    check(provider.stats().imagePreparations == 10 && provider.stats().previewBuilds == 10 && f.history.find(ids[0])->payload.decodedImage->encoded.bytes == encoded,
+        "Later snapshots neither republish nor copy the encoded image");
+    const auto key = last->thumbnail->key;
+    f.history.erase(ids[0]); actions.snapshot();
+    check(!provider.images().acquire(key, 1) && provider.stats().images.cachedImages == 9 && borrowed->premultipliedBGRA()[0] == 20,
+        "A removed record retires its thumbnail; a borrowed snapshot stays valid");
+    provider.clearImages(); check(provider.stats().images.cachedImages == 0, "Explicit cleanup drops the cached thumbnails");
+    provider.close(); check(actions.snapshot().items.empty() && provider.stats().images.cachedImages == 0, "Close disconnects the history");
 }
 #ifdef _WIN32
-struct Window {HWND hwnd{};Window(){WNDCLASSW wc{};wc.lpfnWndProc=DefWindowProcW;wc.hInstance=GetModuleHandleW(nullptr);wc.lpszClassName=L"OwnedClipboardProviderFixture";check(RegisterClassW(&wc)!=0,"Register owned hidden image bridge fixture");hwnd=CreateWindowExW(WS_EX_NOREDIRECTIONBITMAP,wc.lpszClassName,L"Owned fixture",WS_POPUP,0,0,400,334,nullptr,nullptr,wc.hInstance,nullptr);check(hwnd&&!IsWindowVisible(hwnd),"Clipboard bridge never shows a window");}~Window(){if(hwnd)DestroyWindow(hwnd);UnregisterClassW(L"OwnedClipboardProviderFixture",GetModuleHandleW(nullptr));}};
-void native(const std::filesystem::path&shader,const std::filesystem::path&assetRoot){
-    Fixture f;for(unsigned k=0;k<40;++k)f.image(100+k);n::NativeClipboardProvider provider(f.source());n::ClipboardState state(provider.actions());state.setReduceMotion(true);state.activate();
-    n::NativeClipboardAssets assets(assetRoot);Window window;n::Renderer renderer;renderer.initialize(window.hwnd,400,334,{n::Driver::warpForTests,shader,n::RenderTarget::offscreenForTests});renderer.setCamera(n::layerViewportProjection(400,334));n::LayerRasterizer raster;n::LayerRasterOptions options;options.assetRoot=assets.root();options.memoryImages=&provider.images();options.pixelsPerPoint=1;
-    n::NativeClipboardScene scene(state,raster,options,{},assets.images(),assets.revealSamples());n::LayerComposition composition;
-    // Composition dies before the scene on a failing assertion as well.
-    const auto frame=[&](double t){const bool changed=scene.syncContent(t);scene.updatePose({endfield::core::Matrix4{},1,t,{},{}});if(changed){composition.setEntries(renderer,scene.entries());composition.upload(renderer);scene.collectRetired(renderer);}scene.uploadAnimations(renderer);composition.present(renderer);renderer.draw(false);};
-    frame(0);const auto read=renderer.readback();const auto at=(std::size_t(55)*read.width+60)*4;check(read.pixels.size()>at+3&&read.pixels[at+3]>240&&read.pixels[at+2]>read.pixels[at]+40,"Real shared-history thumbnail paints through memory cache and source row artwork");
-    const auto prepared=provider.stats().imagePreparations,rasters=raster.stats().rasterizations,builds=scene.stats().builds;
-    for(unsigned k=0;k<120;++k){scene.syncContent(double(k+1)/120);scene.updatePose({endfield::core::Matrix4::translation(double(k)*.01,0),1,double(k+1)/120,{},{}});composition.present(renderer);}
-    check(provider.stats().imagePreparations==prepared&&raster.stats().rasterizations==rasters&&scene.stats().builds==builds,"120 numeric pointer poses do not prepare, reraster, or rebuild image rows");
-    for(unsigned k=0;k<12;++k){state.scrollBy(k%6<3?164:-164);frame(2+k);check(provider.stats().images.cachedImages<=24&&scene.stats().rows<=7&&scene.stats().retiredParts==0,"Scrolling retains bounded visible/outgoing thumbnails and retires detached old scene");}
-    const auto id=state.rows().front().id;f.history.erase(id);state.refresh();frame(20);check(!f.history.find(id)&&provider.stats().metadataRows==39,"History removal updates actual scene without stale provider payload ownership");
-    composition.detach(renderer);check(scene.releaseResources(renderer),"Detach publication before releasing native bridge resources");provider.clearImages();check(provider.stats().images.cachedImages==0&&!IsWindowVisible(window.hwnd),"Explicit image cleanup and hidden fixture remain isolated");renderer.reset();
+// ClipboardStore.totalSize: up to 64 regular files, one attribute read each.
+void origin() {
+    namespace fs = std::filesystem;
+    const auto root = fs::temp_directory_path() / ("ehud-clipboard-origin-" + std::to_string(GetCurrentProcessId()));
+    fs::remove_all(root); fs::create_directories(root / "folder");
+    struct Cleanup { fs::path path; ~Cleanup() { std::error_code ignored; fs::remove_all(path, ignored); } } cleanup{root};
+    const auto write = [&](const char* name, std::size_t size) { std::ofstream(root / name, std::ios::binary) << std::string(size, 'x'); return (root / name).u16string(); };
+    n::ClipboardPayload files; files.kind = n::ClipboardKind::files; files.files = {write("a.bin", 1000), write("b.bin", 2500)};
+    const auto sized = n::windowsClipboardOrigin(files);
+    check(sized.fileBytes == 3500u && sized.created == 0, "Regular files report their total size; the history stamps the time");
+    check(!sized.source || (!sized.source->empty() && *sized.source != u"clipboard_provider_tests"), "The source app is never this process");
+    files.files.push_back((root / "folder").u16string());
+    check(!n::windowsClipboardOrigin(files).fileBytes, "A folder in the selection leaves the size unknown");
+    files.files.assign(65, (root / "a.bin").u16string());
+    check(!n::windowsClipboardOrigin(files).fileBytes, "More than 64 files leave the size unknown");
+    files.files = {(root / "missing.bin").u16string()};
+    check(!n::windowsClipboardOrigin(files).fileBytes, "A missing file leaves the size unknown");
+    n::ClipboardPayload text; text.text = u"synthetic";
+    check(!n::windowsClipboardOrigin(text).fileBytes, "Text has no file size");
 }
 #endif
 }
+int main(int argc, char** argv) {
+    try {
+        check(argc == 2, "Pass the ClipboardStore preview oracle (clipboard-provider-preview.json)");
+        records(argv[1]); copiedEvents(); links(); statuses(); thumbnails();
 #ifdef _WIN32
-int wmain(int argc,wchar_t**argv){const auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);try{check(SUCCEEDED(hr)&&argc==4,"Pass preview oracle, HLSL, and original Clipboard assets");metadata(argv[1]);copiedEvents();links();statuses();thumbnails();native(argv[2],argv[3]);CoUninitialize();std::cout<<"PASS "<<checks<<" Clipboard provider/metadata/cache checks\n";return 0;}catch(const std::exception&e){counting=false;if(SUCCEEDED(hr))CoUninitialize();std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
-#else
-int main(int argc,char**argv){try{check(argc==2,"Pass original clipboard-provider-preview.json fixture");metadata(argv[1]);copiedEvents();links();statuses();thumbnails();std::cout<<"PASS "<<checks<<" Clipboard provider/metadata/cache checks\n";return 0;}catch(const std::exception&e){counting=false;std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
+        origin();
 #endif
+        std::cout << "PASS " << checks << " Clipboard provider checks\n";
+        return 0;
+    } catch (const std::exception& e) {
+        std::cerr << "FAIL after " << checks << ": " << e.what() << '\n';
+        return 1;
+    }
+}

@@ -86,7 +86,7 @@ private:
 // existing queue through `submit`, and its completion runs on the owner
 // thread (the queue's drain): the 64 px pixels are published into images()
 // at the plan's exact key and revision, and `changed` runs when a visible
-// row's artwork changed (the owner then calls VolumePreview::iconsChanged and
+// row's artwork changed (the owner then calls VolumeCanvas::iconsChanged and
 // asks for a frame). One job at a time; requests that change meanwhile are
 // submitted when it completes, and a full queue retries at
 // queueCapacityAvailable(). An answered request is never extracted again for

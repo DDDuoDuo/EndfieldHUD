@@ -30,15 +30,10 @@ EventLogOwner::~EventLogOwner(){if(impl_){impl_->alive=false;impl_->hooks={};}}
 void EventLogOwner::record(modules::SystemEvent event){auto i=impl_;i->requireThread();const auto time=i->now();if(!i->alive)return;i->store.record(std::move(event),time);i->changed();}
 void EventLogOwner::clear(){auto i=impl_;i->clear();}
 modules::EventLogSnapshot EventLogOwner::snapshot()const{return impl_->snapshot();}
-modules::EventLogCallbacks EventLogOwner::callbacks(std::function<std::string(double)>timestamp)const{
-    impl_->requireThread();need(bool(timestamp),"Event Log owner requires a caller timestamp formatter");
-    std::weak_ptr<Impl>route=impl_;
-    return {[route]{if(const auto i=route.lock())return i->snapshot();return modules::EventLogSnapshot{};},
-        [route]{if(const auto i=route.lock())i->clear();},std::move(timestamp)};
-}
-modules::EventNameCompactor EventLogOwner::nameCompactor()const{
+modules::EventLogCallbacks EventLogOwner::callbacks()const{
     impl_->requireThread();std::weak_ptr<Impl>route=impl_;
-    return [route](std::string_view value){if(const auto i=route.lock()){i->requireThread();if(i->alive)return i->names.compact(value);}return std::string{};};
+    return {[route]{if(const auto i=route.lock())return i->snapshot();return modules::EventLogSnapshot{};},
+        [route]{if(const auto i=route.lock())i->clear();}};
 }
 std::uint64_t EventLogOwner::revision()const{impl_->requireThread();return impl_->store.revision();}
 std::optional<double>EventLogOwner::saveDeadline()const{impl_->requireThread();return impl_->store.saveDeadline();}

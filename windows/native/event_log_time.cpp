@@ -1,6 +1,5 @@
 #include "native/event_log_time.hpp"
 #include <cmath>
-#include <cstdio>
 
 namespace endfield::native {
 namespace {
@@ -11,20 +10,15 @@ constexpr std::int64_t latestSeconds = 910692730085LL - 2 * 86400;
 }
 std::optional<std::int64_t> eventLogTimestampSeconds(double reference) noexcept {
     if (!std::isfinite(reference)) return {};
-    // CFDateFormatter: UDate = (at + kCFAbsoluteTimeIntervalSince1970) * 1000 + 0.5,
-    // then ICU floors the millisecond and the second.
-    const double milliseconds = std::floor((reference + 978307200.0) * 1000.0 + 0.5);
+    // Calendar.dateComponents: UDate = (at + kCFAbsoluteTimeIntervalSince1970) * 1000
+    // with no rounding (39.9995 s stays in its minute), then ICU floors the
+    // millisecond and the second.
+    const double milliseconds = std::floor((reference + 978307200.0) * 1000.0);
     if (!(milliseconds >= double(earliestSeconds) * 1000.0 && milliseconds <= double(latestSeconds) * 1000.0)) return {};
     const auto value = static_cast<std::int64_t>(milliseconds);
     auto seconds = value / 1000;
     if (value % 1000 < 0) --seconds;
     return seconds;
-}
-std::string formatEventLogCivil(unsigned month, unsigned day, unsigned hour, unsigned minute, unsigned second) {
-    if (month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 || minute > 59 || second > 59) return {};
-    char text[16]{};
-    std::snprintf(text, sizeof(text), "%02u-%02u %02u:%02u:%02u", month, day, hour, minute, second);
-    return text;
 }
 } // namespace endfield::native
 
@@ -37,7 +31,7 @@ std::string formatEventLogCivil(unsigned month, unsigned day, unsigned hour, uns
 
 namespace endfield::native {
 namespace {
-std::optional<std::string> convert(double reference, const DYNAMIC_TIME_ZONE_INFORMATION* zone) {
+std::optional<modules::EventLogCivilTime> convert(double reference, const DYNAMIC_TIME_ZONE_INFORMATION* zone) {
     const auto seconds = eventLogTimestampSeconds(reference);
     if (!seconds) return {};
     ULARGE_INTEGER ticks{};
@@ -49,18 +43,15 @@ std::optional<std::string> convert(double reference, const DYNAMIC_TIME_ZONE_INF
     // year (and honors "Adjust for daylight saving time automatically").
     const BOOL converted = zone ? SystemTimeToTzSpecificLocalTimeEx(zone, &utc, &local) : SystemTimeToTzSpecificLocalTime(nullptr, &utc, &local);
     if (!converted) return {};
-    auto text = formatEventLogCivil(local.wMonth, local.wDay, local.wHour, local.wMinute, local.wSecond);
-    if (text.empty()) return {};
-    return text;
+    return modules::EventLogCivilTime{local.wYear, local.wMonth, local.wDay, local.wHour, local.wMinute};
 }
 }
-std::string localEventLogTimestamp(double reference) {
+std::optional<modules::EventLogCivilTime> localEventLogTime(double reference) {
     DYNAMIC_TIME_ZONE_INFORMATION zone{};
     const bool known = GetDynamicTimeZoneInformation(&zone) != TIME_ZONE_ID_INVALID;
-    auto text = convert(reference, known ? &zone : nullptr);
-    return text ? std::move(*text) : std::string("--");
+    return convert(reference, known ? &zone : nullptr);
 }
-std::optional<std::string> eventLogTimestampInZone(double reference, std::wstring_view key) {
+std::optional<modules::EventLogCivilTime> eventLogTimeInZone(double reference, std::wstring_view key) {
     if (key.empty() || key.size() >= 128) return {};
     // One remembered zone per thread: consecutive lookups of the same key do
     // not enumerate the registry's zone list again.

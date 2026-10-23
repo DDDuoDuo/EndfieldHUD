@@ -124,21 +124,21 @@ void devices(){
 void volume(){
     Harness h;
     {std::lock_guard l(h.world->m);h.world->outputs={{speaker,L"Speakers",L"HDAUDIO",1u},{usb,L"USB Headset",L"USB",5u}};h.world->inputs={{mic,L"Microphone",L"HDAUDIO",4u}};h.world->defaultOutput=speaker;h.world->defaultInput=mic;}
-    unsigned received{};n::VolumeController controller(h.runtime->volume().snapshot(),h.runtime->volume().callbacks(),n::volumeStrings(c::Language::english));
-    h.runtime->volume().setReceiver([&](const n::VolumeSnapshot&s){++received;controller.receiveSnapshot(s);});
-    h.runtime->volume().setVisible(true);controller.setActive(true);
-    h.until([&]{return controller.snapshot().canSetVolume&&controller.snapshot().outputs.size()==2;},"Volume content arrives through the binding");
+    unsigned received{};n::VolumeSnapshot delivered=h.runtime->volume().snapshot();const auto callbacks=h.runtime->volume().callbacks();
+    h.runtime->volume().setReceiver([&](const n::VolumeSnapshot&s){++received;delivered=s;});
+    h.runtime->volume().setVisible(true);callbacks.setActive(true);
+    h.until([&]{return delivered.canSetVolume&&delivered.outputs.size()==2;},"Volume content arrives through the binding");
     check(h.seen.volume&&received>0,"drain() reports and delivers Volume content");
-    check(controller.snapshot().outputs[1].headphones&&!controller.snapshot().canSetDefaultOutput&&!controller.snapshot().canSetDefaultInput,"Headset traits reach the UI; default-device switching stays unavailable");
-    check(controller.setSlider("volume",.25),"Slider write accepted");
-    h.until([&]{return controller.snapshot().volume&&std::abs(*controller.snapshot().volume-.25)<1e-6;},"Readback reaches the controller");
+    check(delivered.outputs[1].headphones&&!delivered.canSetDefaultOutput&&!delivered.canSetDefaultInput,"Headset traits reach the UI; default-device switching stays unavailable");
+    check(callbacks.setVolume(delivered.outputID,.25),"Slider write accepted");
+    h.until([&]{return delivered.volume&&std::abs(*delivered.volume-.25)<1e-6;},"Readback reaches the Volume snapshot");
     {std::lock_guard l(h.world->m);h.world->defaultOutput=usb;}
     h.wake(&World::topologyWake);
-    h.until([&]{return controller.snapshot().outputID=="{0.0.0.00000000}.{usb}";},"Default output change reaches the Volume UI without polling");
+    h.until([&]{return delivered.outputID=="{0.0.0.00000000}.{usb}";},"Default output change reaches the Volume UI without polling");
     // Localized failure text follows the language without a new provider.
     check(h.runtime->setLanguage(c::Language::simplifiedChinese)&&!h.runtime->setLanguage(c::Language::simplifiedChinese),"Language changes once");
     check(!h.runtime->volume().callbacks().setVolume("{0.0.0.00000000}.{speaker}",.4),"A gesture bound to the previous output is refused");
-    check(controller.snapshot().status=="音频设备已更改，请重试。","The refusal shows the source localized device-changed message");
+    check(delivered.status=="音频设备已更改，请重试。","The refusal shows the source localized device-changed message");
     {std::lock_guard l(h.world->m);check(std::abs(h.world->master-.25f)<1e-6f,"The refused gesture never reached a device");}
     check(h.runtime->language()==c::Language::simplifiedChinese,"Language is retained");
     bool threw{};try{h.runtime->setLanguage(c::Language::system);}catch(const std::invalid_argument&){threw=true;}check(threw,"System must be resolved by the caller");
