@@ -6,13 +6,17 @@ import QuartzCore
 /// layer; it is never transformed. Only the small visible viewport is cached.
 final class HUDProjectedTextEditor: NSView {
     static let maximumPixels = 2_097_152
+    /// Offscreen previews draw in a window that never becomes key.
+    static var treatsWindowAsKeyForPreview = false
     let textView: HUDProjectedTextView
     let scrollView: NSScrollView
     let artwork = CALayer()
     private let glyphs = CALayer()
     private let caret = CALayer()
     private let scrollIndicator = CALayer()
-    private let placeholderLayer = CATextLayer()
+    /// The indicator hides while idle and shows while the text scrolls.
+    private lazy var scrollBar = HUDScrollBarVisibility(bar: scrollIndicator)
+    private let placeholderLayer = HUDStandardTextLayer()
     /// Placeholder is artwork only: it never enters the native text storage,
     /// selection, undo history or a saved document.
     var placeholder: String = "" { didSet { invalidateArtwork() } }
@@ -26,8 +30,8 @@ final class HUDProjectedTextEditor: NSView {
     private var disposed = false
     private(set) var captureCount = 0
     private(set) var retainedPixelCount = 0
+    /// The insertion point in text-view coordinates (from TextKit's layout).
     private var caretRect = CGRect.zero
-    private var caretVisible = false
     private var singleLine = false
     override var isFlipped: Bool { true }
 
@@ -66,6 +70,7 @@ final class HUDProjectedTextEditor: NSView {
         artwork.addSublayer(glyphs); artwork.addSublayer(caret)
         scrollIndicator.backgroundColor = NSColor.gray.withAlphaComponent(0.65).cgColor
         scrollIndicator.cornerRadius = 1.5; artwork.addSublayer(scrollIndicator); parent.addSublayer(artwork)
+        _ = scrollBar
         placeholderLayer.isWrapped = true; placeholderLayer.truncationMode = .end
         artwork.addSublayer(placeholderLayer)
         host.addSubview(self)
@@ -73,9 +78,18 @@ final class HUDProjectedTextEditor: NSView {
         for name in [NSText.didChangeNotification, NSTextView.didChangeSelectionNotification] {
             observers.append(center.addObserver(forName: name, object: textView, queue: .main) { [weak self] _ in self?.invalidateArtwork() })
         }
+        // The caret shows only in the key window (as AppKit's does): it hides
+        // when the HUD loses focus or closes, and shows again when it returns.
+        if let window = host.window {
+            for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification] {
+                observers.append(center.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
+                    self?.refreshCaret(restartBlink: true)
+                })
+            }
+        }
         observers.append(center.addObserver(forName: NSView.boundsDidChangeNotification,
             object: scrollView.contentView, queue: .main) { [weak self] _ in
-                self?.invalidateArtwork(); self?.refreshProjection()
+                self?.invalidateArtwork(); self?.refreshProjection(); self?.scrollBar.noteScroll()
         })
         invalidateArtwork()
     }
@@ -86,6 +100,7 @@ final class HUDProjectedTextEditor: NSView {
         guard !disposed else { return }; disposed = true
         observers.forEach(NotificationCenter.default.removeObserver); observers.removeAll()
         textView.projectionOwner = nil; glyphs.contents = nil; retainedPixelCount = 0
+        caret.removeAllAnimations(); caret.isHidden = true; scrollBar.reset()
         (scrollView as? HUDProjectedTextScrollView)?.projectedFrame = nil
         artwork.removeFromSuperlayer(); scrollView.removeFromSuperview(); removeFromSuperview()
     }
@@ -109,7 +124,7 @@ final class HUDProjectedTextEditor: NSView {
         textView.textContainer?.widthTracksTextView = false
         textView.textContainer?.maximumNumberOfLines = 1
         textView.textContainer?.containerSize = NSSize(width: logicalRect.width, height: logicalRect.height)
-        let font = textView.font ?? .systemFont(ofSize: 13)
+        let font = textView.font ?? HUDFontResolver.nsFont(size: 13)
         textView.textContainerInset = NSSize(width: 3, height: max(0, (logicalRect.height - font.ascender + font.descender - font.leading) / 2))
         resizeDocument()
     }
@@ -172,10 +187,10 @@ final class HUDProjectedTextEditor: NSView {
     private func updatePlaceholder(scale: CGFloat) {
         placeholderLayer.isHidden = !textView.string.isEmpty || placeholder.isEmpty
         guard !placeholderLayer.isHidden else { placeholderLayer.string = nil; return }
-        let font = textView.font ?? .systemFont(ofSize: 13)
+        let font = textView.font ?? HUDFontResolver.nsFont(size: 13)
         let inset = textView.textContainerInset
         placeholderLayer.frame = artwork.bounds.insetBy(dx: inset.width, dy: inset.height)
-        placeholderLayer.font = font; placeholderLayer.fontSize = font.pointSize
+        placeholderLayer.face = font; placeholderLayer.fontSize = font.pointSize
         placeholderLayer.foregroundColor = placeholderColor.cgColor
         placeholderLayer.contentsScale = scale
         placeholderLayer.alignmentMode = textView.alignment == .center ? .center : textView.alignment == .right ? .right : .left
@@ -220,14 +235,43 @@ final class HUDProjectedTextEditor: NSView {
         return screenRect(text: textView.convert(window.convertFromScreen(rect), from: nil))
     }
     var projectedScreenFrame: CGRect { screenRect(text: scrollView.contentView.bounds) }
-    func insertionPoint(_ rect: CGRect, color: NSColor, visible: Bool) {
-        caretRect = rect; caretVisible = visible
-        caret.backgroundColor = color.cgColor
-        CATransaction.begin(); CATransaction.setDisableActions(true); updateCaretLayer(); CATransaction.commit()
+    /// AppKit drew its (invisible) insertion point. AppKit draws it only in
+    /// the key window and, since macOS 14, without its blink phases, so the
+    /// projected caret follows the layout instead (`updateCaretLayer`).
+    func insertionPoint(_ rect: CGRect, color: NSColor, visible: Bool) { refreshCaret() }
+    /// Focus, key window or selection changed.
+    func refreshCaret(restartBlink: Bool = false) {
+        guard !disposed else { return }
+        CATransaction.begin(); CATransaction.setDisableActions(true); updateCaretLayer(restartBlink: restartBlink); CATransaction.commit()
     }
-    private func updateCaretLayer() {
+    /// The caret shows while the editor is first responder of the key window
+    /// with an empty selection. It blinks like AppKit's caret (a render-server
+    /// opacity animation, no timer), solid for a moment after every move, and
+    /// is removed with its animation whenever hidden. Reduce Motion keeps it solid.
+    private func updateCaretLayer(restartBlink: Bool = false) {
+        let window = textView.window
+        let shown = (window?.isKeyWindow == true || Self.treatsWindowAsKeyForPreview) && window?.firstResponder === textView
+            && textView.selectedRange().length == 0 && textView.isEditable
+        if shown, let rect = textView.insertionRect() {
+            // Moved (typing, arrows, a click): solid again, then blinking.
+            if rect != caretRect { caretRect = rect; caret.removeAnimation(forKey: Self.blinkKey) }
+            caret.backgroundColor = textView.insertionPointColor.cgColor
+        }
         caret.frame = caretRect.offsetBy(dx: -scrollView.contentView.bounds.minX, dy: -scrollView.contentView.bounds.minY)
-        caret.isHidden = !caretVisible || textView.selectedRange().length != 0
+        let wasHidden = caret.isHidden
+        caret.isHidden = !shown
+        guard shown else { caret.removeAnimation(forKey: Self.blinkKey); return }
+        guard restartBlink || wasHidden || caret.animation(forKey: Self.blinkKey) == nil else { return }
+        caret.removeAnimation(forKey: Self.blinkKey)
+        guard !HUDRuntimeAppearance.reduceMotion else { return }
+        let blink = CAKeyframeAnimation(keyPath: "opacity")
+        blink.values = [1, 1, 0, 0, 1]; blink.keyTimes = [0, 0.5, 0.58, 0.92, 1]
+        blink.duration = 1.06; blink.repeatCount = .infinity
+        caret.add(blink, forKey: Self.blinkKey)
+    }
+    private static let blinkKey = "hud.caret.blink"
+    var caretStateForTesting: (visible: Bool, blinking: Bool, frame: CGRect) {
+        (!caret.isHidden, caret.animation(forKey: Self.blinkKey) != nil, caret.frame)
     }
     func scroll(delta: CGFloat) {
         let clip = scrollView.contentView
@@ -268,6 +312,44 @@ class HUDProjectedTextView: NSTextView {
     }
     override func drawInsertionPoint(in rect: NSRect, color: NSColor, turnedOn flag: Bool) {
         projectionOwner?.insertionPoint(rect, color: color, visible: flag)
+    }
+    /// The insertion point of an empty selection in view coordinates, from
+    /// the layout: a line-high bar at the caret's glyph edge (the extra line
+    /// fragment after a final newline or in an empty text).
+    func insertionRect() -> CGRect? {
+        guard let manager = layoutManager, let container = textContainer else { return nil }
+        let text = string as NSString, index = min(selectedRange().location, text.length)
+        manager.ensureLayout(for: container)
+        let origin = textContainerOrigin, width: CGFloat = 1.5
+        let atEnd = index >= text.length
+        if text.length == 0 || (atEnd && manager.extraLineFragmentTextContainer != nil) {
+            let line = manager.extraLineFragmentRect
+            var x = line.minX
+            if text.length == 0 {
+                switch alignment {
+                case .right: x = line.maxX - width
+                case .center: x = line.midX - width / 2
+                default: break
+                }
+            }
+            return CGRect(x: x + origin.x, y: line.minY + origin.y, width: width, height: max(1, line.height))
+        }
+        let glyph = manager.glyphIndexForCharacter(at: atEnd ? text.length - 1 : index)
+        let line = manager.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+        let x = atEnd ? manager.boundingRect(forGlyphRange: NSRange(location: glyph, length: 1), in: container).maxX
+            : line.minX + manager.location(forGlyphAt: glyph).x
+        return CGRect(x: min(x, line.maxX - width) + origin.x, y: line.minY + origin.y, width: width, height: line.height)
+    }
+    // The window records the new first responder only after these return.
+    override func becomeFirstResponder() -> Bool {
+        let accepted = super.becomeFirstResponder()
+        if accepted { DispatchQueue.main.async { [weak self] in self?.projectionOwner?.refreshCaret(restartBlink: true) } }
+        return accepted
+    }
+    override func resignFirstResponder() -> Bool {
+        let accepted = super.resignFirstResponder()
+        if accepted { DispatchQueue.main.async { [weak self] in self?.projectionOwner?.refreshCaret() } }
+        return accepted
     }
     override func firstRect(forCharacterRange range: NSRange, actualRange: NSRangePointer?) -> NSRect {
         let native = super.firstRect(forCharacterRange: range, actualRange: actualRange)
@@ -319,5 +401,44 @@ class HUDProjectedTextView: NSTextView {
     }
     override func scrollWheel(with event: NSEvent) {
         projectionOwner?.scroll(event: event)
+    }
+    /// The standard editing shortcuts work without a menu bar (the HUD is an
+    /// accessory app, often not active): cut, copy, paste, select all, undo, redo.
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        guard window?.firstResponder === self, let key = event.charactersIgnoringModifiers?.lowercased() else {
+            return super.performKeyEquivalent(with: event)
+        }
+        switch (event.modifierFlags.intersection([.command, .shift, .option, .control]), key) {
+        case ([.command], "x"): cut(nil)
+        case ([.command], "c"): copy(nil)
+        case ([.command], "v"): paste(nil)
+        case ([.command], "a"): selectAll(nil)
+        case ([.command], "z"): if allowsUndo, undoManager?.canUndo == true { undoManager?.undo() }
+        case ([.command, .shift], "z"): if allowsUndo, undoManager?.canRedo == true { undoManager?.redo() }
+        default: return super.performKeyEquivalent(with: event)
+        }
+        return true
+    }
+    /// A right-click places the caret where it landed (outside a selection)
+    /// and opens a short editing menu at the pointer; AppKit's own would hit
+    /// test the unprojected text.
+    override func rightMouseDown(with event: NSEvent) {
+        guard let point = projectionOwner?.textPoint(event: event) else { return }
+        window?.makeFirstResponder(self)
+        let index = characterIndexForInsertion(at: point), selection = selectedRange()
+        if !(selection.length > 0 && index >= selection.location && index <= NSMaxRange(selection)) {
+            setSelectedRange(NSRange(location: index, length: 0))
+        }
+        projectionOwner?.invalidateArtwork()
+        if let menu = menu(for: event) { NSMenu.popUpContextMenu(menu, with: event, for: self) }
+    }
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let menu = NSMenu()
+        for (title, action) in [(L10n.text("Cut", "剪切"), #selector(cut(_:))), (L10n.text("Copy", "复制"), #selector(copy(_:))),
+                                (L10n.text("Paste", "粘贴"), #selector(paste(_:))), (L10n.text("Select All", "全选"), #selector(selectAll(_:)))] {
+            let item = NSMenuItem(title: title, action: action, keyEquivalent: ""); item.target = self
+            menu.addItem(item)
+        }
+        return menu
     }
 }

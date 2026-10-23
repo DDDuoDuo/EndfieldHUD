@@ -10,7 +10,7 @@
   <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.zh-TW.md">繁體中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a>
 </p>
 
-Mac에 *명일방주: 엔드필드*의 분위기를 조금 더해보세요. 단축키나 메뉴 막대에서 여러 레이어가 움직이는 HUD를 열고 메모, 파일, 음악, 게임 정보와 일상 도구를 이용할 수 있어요.
+Mac이나 Windows PC에 *명일방주: 엔드필드*의 분위기를 조금 더해보세요. 단축키나 메뉴 막대에서 여러 레이어가 움직이는 HUD를 열고 메모, 파일, 음악, 게임 정보와 일상 도구를 이용할 수 있어요.
 
 <a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/v1.2.0"><img src="docs/media/readme/release-v1.2.0.png" alt="v1.2.0 릴리스" width="326"></a>
 
@@ -25,6 +25,21 @@ Mac에 *명일방주: 엔드필드*의 분위기를 조금 더해보세요. 단�
 
 macOS가 앱 실행을 차단하면 **시스템 설정 → 개인정보 보호 및 보안 → 확인 없이 열기**에서 실행을 허용하세요. 아직 Apple 공증을 받지 않은 앱이에요.
 
+**Windows**
+
+[설치 프로그램(EXE) 다운로드](https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.2.0/EndfieldHUD-1.2.0-build18-windows-x64-setup.exe) · [포터블(ZIP) 다운로드](https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.2.0/EndfieldHUD-1.2.0-build18-windows-x64-portable.zip)
+
+0. EndfieldHUD가 이미 설치되어 있다면 **정보**에서 **업데이트 확인**을 누르거나, 새 버전 설치 프로그램으로 덮어 설치하세요. 데이터는 그대로 남아요.
+1. 설치 프로그램을 실행하세요. 현재 계정에만 설치되므로 관리자 권한이 필요 없고, 시작 메뉴에도 추가돼요.
+2. 로그인할 때 자동으로 실행하려면 **로그인 시 실행**을 체크한 채로 두세요. **설치**를 누른 다음 **EndfieldHUD 열기**를 누르세요.
+3. 아이콘은 메뉴 막대 대신 알림 영역(시스템 트레이)에 있어요. Mac과 마찬가지로 Ctrl + 백틱 (`)을 누르면 HUD가 열려요. **단축키**에서 키 조합을 바꿀 수 있어요.
+
+Windows SmartScreen에 **Windows의 PC 보호** 창이 뜨면 **추가 정보 → 실행**을 누르세요. 아직 코드 서명을 하지 않은 앱이에요.
+
+설치 없이 쓰고 싶다면 포터블 ZIP을 원하는 곳에 압축 해제하고 **EndfieldHUD.exe**를 실행하세요. 시작 메뉴 항목이 없고, 달력 미리 알림도 알림으로 뜨지 않아요.
+
+제거하려면 **설정 → 앱 → 설치된 앱 → EndfieldHUD → 제거**로 가세요. **EndfieldHUD 데이터도 삭제**를 체크하지 않으면 데이터는 그대로 남아요.
+
 옆쪽 버튼으로 섹션을 바꾸고, 오른쪽을 스크롤하면 더 많은 섹션을 볼 수 있어요. **Esc**를 누르면 먼저 편집에서 빠져나온 뒤 HUD가 닫혀요. HUD를 닫아도 앱은 계속 실행되며, 빨간 전원 버튼을 누르면 앱을 종료할 수 있어요.
 
 ![HUD 열기와 닫기](docs/media/readme/opening.gif)
@@ -32,6 +47,8 @@ macOS가 앱 실행을 차단하면 **시스템 설정 → 개인정보 보호 �
 <img src="docs/media/readme/en-02-requirements.png" alt="시스템 요구 사항" width="326">
 
 Apple silicon: **macOS 11 이상**. Intel: **macOS 10.15.4 이상**. 일부 도구에는 더 최신 시스템이나 지원되는 하드웨어가 필요해요.
+
+Windows PC: **Windows 11 64비트(x64)**. ARM64와 Windows 10은 지원하지 않아요. Direct3D 11을 지원하는 그래픽 카드와 약 64MiB의 디스크 공간이 필요해요.
 
 권한이 필요한 기능을 사용할 때 해당 권한을 허용하세요.
 

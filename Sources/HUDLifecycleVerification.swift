@@ -54,7 +54,7 @@ enum HUDLifecycleVerification {
                          "Fallback Map drawing and projected input must move back to the native origin together")
             overlay.selectSystemModule(.workMode, animated: false)
             precondition(overlay.systemReportGeometryMatchesSelectionForVerification
-                         && overlay.systemWorkModeDialDiameterForVerification == 430,
+                         && overlay.systemWorkModeDialDiameterForVerification == WorkModeDialGeometry.radius * 2,
                          "Fallback Work Mode retains its full ring and matching input geometry")
             overlay.selectSystemModule(.map, animated: false)
             precondition(host.legacyArtworkLayerCountForVerification == legacyLayerCount,
@@ -345,6 +345,16 @@ enum HUDLifecycleVerification {
             check(overlay.systemQuitConfirmationVisibleForVerification, "Final quit requires its own confirmation")
             closingSource = overlay.systemSourceWatchForVerification
             overlay.answerQuitConfirmationForVerification(true)
+            // The shared confirm bar plays its press and hands Confirm over
+            // after 120 ms, or at once with reduced motion (spec §2.18).
+            let handover = HUDRuntimeAppearance.reduceMotion ? 0 : HUDDuration.confirmCallback
+            check(acceptedQuits == (handover == 0 ? 1 : 0) && completedQuits == 0,
+                  "Confirm hands the quit over once, after the confirm bar's press")
+            overlay.answerQuitConfirmationForVerification(true)
+            later(handover + 0.04) { [self] in checkQuitRetraction() }
+        }
+
+        private func checkQuitRetraction() {
             check(acceptedQuits == 1 && overlay.systemPhase == .closing && completedQuits == 0,
                   "Confirm accepts once and starts closing without prematurely invoking quit")
             overlay.answerQuitConfirmationForVerification(true)

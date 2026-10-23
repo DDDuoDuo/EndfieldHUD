@@ -1,13 +1,24 @@
 import AppKit
 import QuartzCore
-import CoreText
 
-/// The same retained plates, detached frames and hover language as Notes and
-/// the personal-card menus. No native preferences/popover window is created.
-final class ProjectionToolbar: NotesRetainedMenu {
+/// The projection workspace's floating toolbar in the redesign's language:
+/// the menu panel (HUDPanelChrome) holding the centre page's swatches and the
+/// custom-colour swatch, the pen / eraser tools, the brush-width dropdown, the
+/// background tools, Clear all and Return. Its controls are routed by the
+/// workspace (pointer, hover pass, VoiceOver stand-ins); no native window.
+final class ProjectionToolbar {
+    let layer = HUDLayer.plain("projection.toolbar")
+    let env: HUDDesignEnvironment
+    private(set) var controls: [HUDControl] = []
+    /// Toolbar actions by id: color:RRGGBB, color:custom, pen, eraser, brush,
+    /// background, appearance, media, clear, close.
     var onAction: ((String) -> Void)?
-    init() { super.init(size: CGSize(width: 336, height: 42), dark: true) }
-    required init?(coder: NSCoder) { nil }
+    private var swatches: [(UInt32, HUDSwatch)] = []
+    private let custom: HUDSwatch
+    private let pen: HUDIconButton, eraser: HUDIconButton, background: HUDIconButton
+    private let brush: HUDDropdown
+    static let height: CGFloat = 46
+
     /// Leave room for both the menu bar and camera housing without placing
     /// controls at the opposite screen edge on an ordinary external display.
     static func topInset(safeAreaTop: CGFloat, visibleTop: CGFloat) -> CGFloat {
@@ -15,134 +26,67 @@ final class ProjectionToolbar: NotesRetainedMenu {
         let visible = visibleTop.isFinite ? max(0, visibleTop) : 0
         return max(64, max(safe, visible) + 24)
     }
-    func update(_ model: ProjectionModel) {
-        items = [
-            Item(id: "color", title: "", rect: CGRect(x: 6, y: 6, width: 30, height: 30), color: model.color,
-                 accessibilityTitle: L10n.text("Color", "颜色")),
-            Item(id: "brush", title: String(Int(model.brushWidth)), rect: CGRect(x: 40, y: 6, width: 34, height: 30),
-                 accessibilityTitle: L10n.text("Brush thickness", "画笔粗细")),
-            Item(id: "eraser", title: "◇", rect: CGRect(x: 78, y: 6, width: 30, height: 30), selected: model.erasing,
-                 accessibilityTitle: L10n.text("Eraser", "橡皮擦")),
-            Item(id: "clear", title: L10n.text("Clear all", "清空"), rect: CGRect(x: 112, y: 6, width: 54, height: 30)),
-            Item(id: "background", title: "▦", rect: CGRect(x: 170, y: 6, width: 30, height: 30), selected: model.backgroundEnabled,
-                 accessibilityTitle: L10n.text("Background", "背景")),
-            Item(id: "appearance", title: "◐", rect: CGRect(x: 204, y: 6, width: 30, height: 30),
-                 accessibilityTitle: L10n.text("Background appearance", "背景外观")),
-            Item(id: "media", title: "+", rect: CGRect(x: 238, y: 6, width: 30, height: 30),
-                 accessibilityTitle: L10n.text("Image/Video", "图片/视频")),
-            Item(id: "close", title: L10n.text("Return", "返回"), rect: CGRect(x: 272, y: 6, width: 58, height: 30),
-                 accessibilityTitle: L10n.text("Return", "返回"))
-        ]; paint()
-    }
-    override func paint() {
-        super.paint()
-        CATransaction.begin(); CATransaction.setDisableActions(true)
-        // Keep the common menu colors and detached backing, with a softer,
-        // compact face only for this floating toolbar.
-        for surface in artwork.sublayers ?? [] { surface.cornerRadius = 10 }
-        CATransaction.commit()
-    }
-    override func paintContent(on layer: CALayer) {
-        for child in layer.sublayers ?? [] {
-            if child is HUDControlHighlightLayer { child.removeFromSuperlayer() }
-            else if child is CATextLayer { child.removeFromSuperlayer() }
-            else { child.cornerRadius = 5 }
-        }
-        for item in items {
-            if item.color == nil {
-                let label = CALayer(); label.name = "projection.toolbar.label." + item.id; label.frame = item.rect
-                label.contents = Self.centeredGlyphs(item.title, size: item.rect.size, color: ink)
-                label.contentsScale = 2; layer.addSublayer(label)
+
+    init(env: HUDDesignEnvironment) {
+        self.env = env
+        custom = HUDSwatch(id: "color:custom", label: L10n.text("Custom color", "自定义颜色"), color: nil, size: 22, env: env)
+        pen = HUDIconButton(id: "pen", label: L10n.text("Pen", "画笔"), icon: .pen, env: env)
+        eraser = HUDIconButton(id: "eraser", label: L10n.text("Eraser", "橡皮擦"), icon: .eraser, env: env)
+        brush = HUDDropdown(id: "brush", label: L10n.text("Brush thickness", "画笔粗细"), value: "80 PX", size: .small, width: 84, env: env)
+        background = HUDIconButton(id: "background", label: L10n.text("Background", "背景"), icon: .grid, env: env)
+        let appearance = HUDIconButton(id: "appearance", label: L10n.text("Background appearance", "背景外观"), icon: .eye, env: env)
+        let media = HUDIconButton(id: "media", label: L10n.text("Image/Video", "图片/视频"), icon: .image, env: env)
+        let clear = HUDButton(id: "clear", title: L10n.text("Clear all", "清空"), icon: .trash, kind: .secondary, size: .small, env: env)
+        let close = HUDButton(id: "close", title: L10n.text("Return", "返回"), icon: .back, kind: .primary, size: .small, env: env)
+        let height = Self.height
+        var x: CGFloat = 12
+        func place(_ control: HUDControl) {
+            HUDMotion.perform {
+                control.layer.frame.origin = CGPoint(x: x, y: ((height - control.layer.bounds.height) / 2).rounded())
+                layer.addSublayer(control.layer)
             }
-            if item.enabled { HUDControlHighlightLayer.add(to: layer, rect: item.rect, shape: .rounded, framed: false) }
+            x += control.layer.bounds.width + 8
+            controls.append(control)
         }
-    }
-    /// Center actual ink bounds, including fallback CJK and symbol glyphs. A
-    /// CATextLayer's taller line box otherwise leaves visible space below ink.
-    private static func centeredGlyphs(_ text: String, size: CGSize, color: NSColor) -> CGImage? {
-        let scale: CGFloat = 2
-        guard let context = CGContext(data: nil, width: Int(size.width * scale), height: Int(size.height * scale), bitsPerComponent: 8,
-            bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
-        let line = CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: [
-            .font: NSFont.systemFont(ofSize: 10, weight: .semibold), .foregroundColor: color]))
-        let ink = CTLineGetBoundsWithOptions(line, .useGlyphPathBounds)
-        context.scaleBy(x: scale, y: scale)
-        context.textPosition = CGPoint(x: (size.width - ink.width) / 2 - ink.minX, y: (size.height - ink.height) / 2 - ink.minY)
-        CTLineDraw(line, context); return context.makeImage()
-    }
-    override func perform(_ id: String) { onAction?(id) }
-}
-
-/// A retained confirmation in the same menu plane; it never opens an alert.
-final class ProjectionClearConfirmation: NotesRetainedMenu {
-    var onConfirm: (() -> Void)?
-    init() {
-        super.init(size: CGSize(width: 260, height: 92), dark: true)
-        items = [Item(id: "close", title: L10n.text("Cancel", "取消"), rect: CGRect(x: 10, y: 48, width: 116, height: 32),
-                      accessibilityTitle: L10n.text("Cancel", "取消")),
-                 Item(id: "confirm", title: L10n.text("Clear all", "清空"), rect: CGRect(x: 134, y: 48, width: 116, height: 32), selected: true)]
-        paint()
-    }
-    required init?(coder: NSCoder) { nil }
-    override func paintContent(on layer: CALayer) {
-        text(L10n.text("Clear drawings and media?", "清空绘画和媒体？"), rect: CGRect(x: 12, y: 14, width: 236, height: 22), size: 12, parent: layer)
-    }
-    override func perform(_ id: String) { if id == "confirm" { onConfirm?() } else { super.perform(id) } }
-}
-
-final class ProjectionAdjustmentMenu: NotesRetainedMenu {
-    struct Value { let id: String; let title: String; var value: Double; let range: ClosedRange<Double> }
-    private(set) var values: [Value]
-    var onValue: ((String, Double) -> Void)?
-    private var draggingIndex: Int?
-    init(values: [Value]) {
-        self.values = values
-        super.init(size: CGSize(width: 260, height: 40 + CGFloat(values.count) * 62), dark: true)
-        refresh()
-    }
-    required init?(coder: NSCoder) { nil }
-    func rail(_ index: Int) -> CGRect { CGRect(x: 42, y: 63 + CGFloat(index) * 62, width: 170, height: 20) }
-    private func refresh() {
-        items = [Item(id: "close", title: "×", rect: CGRect(x: 227, y: 7, width: 23, height: 23))]
-        for (index, value) in values.enumerated() {
-            let y = 56 + CGFloat(index) * 62
-            items.append(Item(id: "minus:\(index)", title: "−", rect: CGRect(x: 8, y: y, width: 26, height: 30), accessibilityTitle: value.title + " −"))
-            items.append(Item(id: "plus:\(index)", title: "+", rect: CGRect(x: 224, y: y, width: 26, height: 30), accessibilityTitle: value.title + " +"))
-        }; paint()
-    }
-    override func paintContent(on layer: CALayer) {
-        for (index, value) in values.enumerated() {
-            text(value.title + "  " + String(Int(value.value.rounded())), rect: CGRect(x: 10, y: 35 + CGFloat(index) * 62, width: 236, height: 18), parent: layer)
-            let rect = rail(index), fraction = (value.value - value.range.lowerBound) / (value.range.upperBound - value.range.lowerBound)
-            let track = CALayer(); track.frame = CGRect(x: rect.minX, y: rect.midY, width: rect.width, height: 2)
-            track.backgroundColor = NSColor.white.withAlphaComponent(0.20).cgColor; layer.addSublayer(track)
-            let fill = CALayer(); fill.frame = CGRect(x: rect.minX, y: rect.midY, width: rect.width * fraction, height: 2)
-            fill.backgroundColor = HUDRuntimeAppearance.accent.cgColor; layer.addSublayer(fill)
-            let thumb = CALayer(); thumb.frame = CGRect(x: rect.minX + rect.width * fraction - 2.5, y: rect.midY - 3, width: 5, height: 8)
-            thumb.backgroundColor = NSColor.white.cgColor; layer.addSublayer(thumb)
+        func divider() {
+            let line = HUDLayer.plain("projection.toolbar.divider")
+            HUDMotion.perform { line.frame = CGRect(x: x + 2, y: (height - 22) / 2, width: 1, height: 22); line.backgroundColor = HUDColor.ringIcon }
+            layer.addSublayer(line)
+            x += 2 + 1 + 2 + 8
         }
+        for hex in ProjectionSettings.palette {
+            let name = String(format: "%06X", hex)
+            let swatch = HUDSwatch(id: "color:" + name, label: L10n.text("Pen color", "画笔颜色") + " #" + name, color: HUDColor.rgb(hex), size: 22, env: env)
+            swatches.append((hex, swatch)); place(swatch)
+        }
+        place(custom)
+        divider()
+        [pen, eraser].forEach(place); place(brush)
+        divider()
+        [background, appearance, media].forEach(place)
+        divider()
+        clear.place(at: .zero); place(clear)
+        close.place(at: .zero); place(close)
+        for control in controls { control.onActivate = { [weak self, unowned control] in self?.onAction?(control.id) } }
+        HUDPanelChrome.apply(to: layer, size: CGSize(width: x - 8 + 12, height: height))
+        env.applyScale(to: layer)
     }
-    override func mouseDown(with event: NSEvent) {
-        guard let point = eventPoint(event) else { return }
-        if let index = values.indices.first(where: { rail($0).insetBy(dx: -5, dy: -6).contains(point) }) {
-            draggingIndex = index; update(index, at: point)
-        } else { super.mouseDown(with: event) }
+
+    var contentSize: CGSize { layer.bounds.size }
+    func control(_ id: String) -> HUDControl? { controls.first { $0.id == id } }
+
+    /// In-place state from the session model (selection, tools, width).
+    func update(_ model: ProjectionModel) {
+        let color = NotesFormatBar.hex(model.color.cgColor)
+        var matched = false
+        for (hex, swatch) in swatches { swatch.isSelected = !model.erasing && hex == color; matched = matched || hex == color }
+        custom.isSelected = !model.erasing && !matched
+        pen.isOn = !model.erasing; eraser.isOn = model.erasing
+        background.isOn = model.backgroundEnabled
+        let width = "\(Int(model.brushWidth.rounded())) PX"
+        if brush.valueText != width { brush.setValue(width) }
     }
-    override func mouseDragged(with event: NSEvent) { if let index = draggingIndex, let point = eventPoint(event) { update(index, at: point) } }
-    override func mouseUp(with event: NSEvent) { draggingIndex = nil }
-    private func update(_ index: Int, at point: CGPoint) {
-        let fraction = min(1, max(0, (point.x - rail(index).minX) / rail(index).width))
-        setValue(values[index].range.lowerBound + fraction * (values[index].range.upperBound - values[index].range.lowerBound), index)
-    }
-    private func setValue(_ next: Double, _ index: Int) {
-        let value = min(values[index].range.upperBound, max(values[index].range.lowerBound, next))
-        guard values[index].value != value else { return }
-        values[index].value = value; onValue?(values[index].id, value); refresh()
-    }
-    override func perform(_ id: String) {
-        let pieces = id.split(separator: ":")
-        if pieces.count == 2, let index = Int(pieces[1]), values.indices.contains(index) {
-            setValue(values[index].value + (pieces[0] == "plus" ? 1 : -1), index)
-        } else { super.perform(id) }
-    }
+
+    /// The menu or pop-over this control opened (its dropdown caret / bar).
+    func setOpen(_ id: String?) { brush.isOpen = id == "brush" }
 }

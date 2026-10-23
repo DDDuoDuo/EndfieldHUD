@@ -160,3 +160,39 @@ final class HUDSubsectionHandoff {
         CATransaction.begin(); CATransaction.setDisableActions(true); body(); CATransaction.commit()
     }
 }
+
+/// Sub-navigation of redesigned modules (spec §1.10 `subnav`): tabs, sub-pages,
+/// months, pages and tracks. The current page leaves (.13 s, −0.6 × the
+/// vector), the next renders after 130 ms and enters with the row stagger from
+/// the vector: forward from the right, back from the left, or vertical.
+final class HUDPageSwap {
+    private var pending: DispatchWorkItem?
+    private var leaving: CALayer?
+    private var render: (() -> Void)?
+    var isTransitioning: Bool { pending != nil }
+
+    /// `render` builds and attaches the next page and plays its entrance.
+    func run(leaving page: CALayer?, offset: CGPoint, env: HUDDesignEnvironment, render: @escaping () -> Void) {
+        settle()
+        guard let page, !env.reducesMotion else {
+            HUDMotion.perform { page?.removeFromSuperlayer() }
+            render(); return
+        }
+        HUDMotion.leave(page, toward: offset, env: env, key: "hud.page.leave")
+        leaving = page; self.render = render
+        let work = DispatchWorkItem { [weak self] in self?.settle() }
+        pending = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + HUDDuration.leave, execute: work)
+    }
+
+    /// Completes a pending swap at once (another navigation, deactivation).
+    func settle() {
+        pending?.cancel(); pending = nil
+        if let page = leaving {
+            HUDMotion.perform { page.removeAnimation(forKey: "hud.page.leave"); page.removeFromSuperlayer() }
+        }
+        leaving = nil
+        let next = render; render = nil
+        next?()
+    }
+}

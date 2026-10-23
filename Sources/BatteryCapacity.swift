@@ -1,4 +1,5 @@
 import Foundation
+import IOKit.ps
 
 enum BatteryCapacityUnit: String {
     case milliampHours = "mAh"
@@ -49,6 +50,47 @@ struct BatteryCapacityReading: Equatable {
     }
 }
 
+/// The Battery screen's extra readings (spec §3.22), parsed from the same
+/// power-source report and AppleSmartBattery read as the capacity. Every
+/// reader rejects booleans, sentinels and physically implausible values, so
+/// unsupported hardware shows "—" instead of an invented number.
+enum BatteryDiagnosticsParsing {
+    /// AppleSmartBattery `CycleCount`.
+    static func cycleCount(_ value: Any?) -> Int? {
+        guard let number = integer(value), number <= 100_000 else { return nil }
+        return number
+    }
+
+    /// AppleSmartBattery `Temperature`, in hundredths of a degree Celsius.
+    static func temperatureCelsius(_ value: Any?) -> Double? {
+        guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() else { return nil }
+        let celsius = number.doubleValue / 100
+        return celsius.isFinite && (-40...150).contains(celsius) ? celsius : nil
+    }
+
+    /// IOPSCopyExternalPowerAdapterDetails `Watts`.
+    static func adapterWatts(_ details: [String: Any]?) -> Int? {
+        guard let number = integer(details?[kIOPSPowerAdapterWattsKey]), (1...1000).contains(number) else { return nil }
+        return number
+    }
+
+    /// IOPS `Time to Full Charge` / `Time to Empty`: minutes, −1 while macOS
+    /// is still calculating (nil here).
+    static func minutes(_ value: Any?) -> Int? {
+        guard let number = integer(value), number <= 100 * 60 else { return nil }
+        return number
+    }
+
+    private static func integer(_ value: Any?) -> Int? {
+        guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() else { return nil }
+        let value = number.doubleValue
+        guard value.isFinite, value >= 0, value <= 1_000_000, value.rounded(.towardZero) == value else { return nil }
+        return Int(value)
+    }
+}
+
+/// The one battery level rule for the whole HUD: above 70 % green, 20–70 %
+/// yellow, below 20 % red (the shell ring, the charge bar and the Battery page).
 enum BatteryLevelTone: Equatable {
     case green
     case yellow
@@ -56,7 +98,7 @@ enum BatteryLevelTone: Equatable {
 
     static func forPercentage(_ percentage: Int?) -> BatteryLevelTone? {
         guard let percentage = percentage, (0...100).contains(percentage) else { return nil }
-        if percentage > 50 { return .green }
+        if percentage > 70 { return .green }
         if percentage >= 20 { return .yellow }
         return .red
     }

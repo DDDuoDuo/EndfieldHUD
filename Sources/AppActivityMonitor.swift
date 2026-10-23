@@ -2,7 +2,7 @@ import AppKit
 import Darwin
 
 enum AppActivitySortKey: String, CaseIterable {
-    case name, cpu, memory, network, disk, upload, download, diskRead, diskWrite
+    case name, cpu, memory, network, disk, upload, download, diskRead, diskWrite, gpu, threads
 }
 
 struct AppActivityItem: Equatable {
@@ -19,6 +19,15 @@ struct AppActivityItem: Equatable {
     let diskReadBytesPerSecond: Double?
     let diskWriteBytesPerSecond: Double?
     let statusNotes: [String]
+    /// The app's processes' GPU load, 0–100 on its busiest GPU
+    /// (GPUActivityDeltas.percent). nil (shown as "—") while collecting a
+    /// baseline, for an incomplete app and on Macs whose GPU driver keeps no
+    /// per-process GPU time. Read only while the Apps panel is shown.
+    var gpuPercent: Double? = nil
+    /// Threads across the app's processes (PROC_PIDTASKINFO pti_threadnum),
+    /// current, no baseline. nil for an incomplete app or an unreadable
+    /// process. Read only while the Apps panel is shown.
+    var threads: Int? = nil
 }
 
 struct AppActivitySnapshot: Equatable {
@@ -45,6 +54,7 @@ struct AppActivityProcessReading: Equatable {
     let memoryBytes: UInt64
     let diskReadBytes: UInt64
     let diskWriteBytes: UInt64
+    var threads: Int? = nil
 }
 
 struct AppActivityNetworkRates: Equatable {
@@ -69,22 +79,29 @@ struct AppActivityRawSample {
     let network: AppActivityNetworkReading?
     let statusNotes: [String]
     var inventoryComplete = true
+    /// The catalog's processes' GPU clients; nil where unavailable.
+    var gpu: GPUActivityClientReading? = nil
 }
 
 enum AppActivityDerivation {
     static func snapshot(_ current: AppActivityRawSample, previous: AppActivityRawSample?) -> AppActivitySnapshot {
         let elapsed = previous.map { current.uptime - $0.uptime } ?? 0
         let intervalValid = elapsed.isFinite && elapsed > 0 && elapsed <= 5
+        // Grouped once by PID: each app then visits only its own processes.
+        let gpuDeltas = current.gpu.flatMap { now in previous?.gpu.flatMap { GPUActivityDerivation.deltas(now, since: $0) } }
         let items = current.apps.map { app -> AppActivityItem in
             let pids = Array(Set(current.members[app.id] ?? app.processIDs)).sorted()
             let readings = pids.compactMap { current.processes[$0] }
             let complete = current.inventoryComplete && !pids.isEmpty && readings.count == pids.count
             let priorPIDs = Set(previous?.members[app.id] ?? [])
             let sameMembership = Set(pids) == priorPIDs
-            var cpu: Double?, memory: UInt64?, read: Double?, write: Double?, upload: Double?, download: Double?
+            var cpu: Double?, memory: UInt64?, read: Double?, write: Double?, upload: Double?, download: Double?, gpu: Double?
+            var threads: Int?
             var notes: [String] = []
             if complete {
                 memory = SystemActivityDerivation.sum(readings.map(\.memoryBytes))
+                let counts = readings.compactMap(\.threads)
+                if counts.count == readings.count { threads = counts.reduce(0, +) }
                 if intervalValid, sameMembership, current.secondsPerCPUTick.isFinite, current.secondsPerCPUTick > 0 {
                     var ticks: [UInt64] = [], reads: [UInt64] = [], writes: [UInt64] = []
                     var valid = true
@@ -104,6 +121,13 @@ enum AppActivityDerivation {
                         write = SystemActivityDerivation.sum(writes).map { Double($0) / elapsed }
                     }
                 }
+                // GPU clients are keyed by registry entry, so a reused PID could
+                // not inherit old GPU time; still, like CPU, a reused PID (another
+                // start time) leaves the app unknown for one interval.
+                if intervalValid, sameMembership, let gpuDeltas,
+                   readings.allSatisfy({ previous?.processes[$0.pid]?.startID == $0.startID }) {
+                    gpu = gpuDeltas.percent(pids: pids)
+                }
                 if let network = current.network, current.uptime - network.uptime >= 0,
                    current.uptime - network.uptime <= 4,
                    readings.allSatisfy({ $0.startUptime <= network.intervalStart && !network.unknownPIDs.contains($0.pid) }) {
@@ -121,7 +145,8 @@ enum AppActivityDerivation {
             return AppActivityItem(id: app.id, name: app.name, bundleIdentifier: app.bundleIdentifier,
                 bundleURL: app.bundleURL, processIDs: pids, cpuPercent: cpu, memoryBytes: memory,
                 uploadBytesPerSecond: upload, downloadBytesPerSecond: download,
-                diskReadBytesPerSecond: read, diskWriteBytesPerSecond: write, statusNotes: notes)
+                diskReadBytesPerSecond: read, diskWriteBytesPerSecond: write, statusNotes: notes, gpuPercent: gpu,
+                threads: threads)
         }
         return AppActivitySnapshot(timestamp: current.timestamp, uptime: current.uptime, items: items, statusNotes: current.statusNotes)
     }
@@ -143,6 +168,8 @@ enum AppActivityDerivation {
             case .download: return item.downloadBytesPerSecond
             case .diskRead: return item.diskReadBytesPerSecond
             case .diskWrite: return item.diskWriteBytesPerSecond
+            case .gpu: return item.gpuPercent
+            case .threads: return item.threads.map(Double.init)
             }
         }
         return items.sorted { lhs, rhs in
@@ -164,8 +191,9 @@ protocol AppActivityBackend: AnyObject {
     func sample(apps: [AppActivityIdentity]) -> AppActivityRawSample
 }
 
-/// Application detail is opt-in via visibility: 1 Hz libproc readings and one
-/// 1 Hz nettop summary stream, both entirely stopped when that detail is hidden.
+/// Application detail is opt-in via visibility: 1 Hz libproc readings (usage,
+/// footprint, disk, thread count), one 1 Hz I/O Registry GPU client walk and
+/// one 1 Hz nettop summary stream, all entirely stopped when it is hidden.
 final class AppActivityMonitor {
     private(set) var snapshot = AppActivitySnapshot.empty
     private(set) var isActive = false
@@ -275,12 +303,13 @@ final class AppActivityMonitor {
     static func fixture(items suppliedItems: [AppActivityItem]? = nil) -> AppActivityMonitor {
         let monitor = AppActivityMonitor(catalog: { [] }, backend: FixtureBackend(), schedule: { _ in {} })
         monitor.fixedFixture = true
-        let items = [("Finder", "com.apple.finder", 2.4, 82_000_000), ("Safari", "com.apple.Safari", 18.6, 720_000_000),
-                     ("Music", "com.apple.Music", 4.1, 164_000_000)].enumerated().map { index, app in
+        let items = [("Finder", "com.apple.finder", 2.4, 82_000_000, 0.0, 11), ("Safari", "com.apple.Safari", 18.6, 720_000_000, 0.8, 60),
+                     ("Music", "com.apple.Music", 4.1, 164_000_000, 0.0, 16)].enumerated().map { index, app in
             AppActivityItem(id: app.1, name: app.0, bundleIdentifier: app.1, bundleURL: nil,
                 processIDs: [Int32(index + 100)], cpuPercent: app.2, memoryBytes: UInt64(app.3),
                 uploadBytesPerSecond: Double(index * 900), downloadBytesPerSecond: Double(index * 82_000),
-                diskReadBytesPerSecond: Double(index * 200_000), diskWriteBytesPerSecond: Double(index * 15_000), statusNotes: [])
+                diskReadBytesPerSecond: Double(index * 200_000), diskWriteBytesPerSecond: Double(index * 15_000), statusNotes: [],
+                gpuPercent: app.4, threads: app.5)
         }
         monitor.publish(AppActivitySnapshot(timestamp: Date(timeIntervalSince1970: 1_700_000_000), uptime: 1000, items: suppliedItems ?? items, statusNotes: []))
         return monitor
@@ -345,6 +374,7 @@ enum AppActivityCatalog {
 
 final class PublicAppActivityBackend: AppActivityBackend {
     private let network = AppActivityNetworkStream()
+    private let gpu = GPUActivitySampler()
     private var owners: [Int32: String] = [:]
     private var lastStarts: [Int32: UInt64] = [:]
     private var inventoryTime: TimeInterval = -.infinity
@@ -356,7 +386,7 @@ final class PublicAppActivityBackend: AppActivityBackend {
     }()
 
     func start() { inventoryTime = -.infinity; network.start() }
-    func stop() { network.stop(); owners.removeAll(); lastStarts.removeAll(); catalogIDs = []; inventoryTime = -.infinity }
+    func stop() { network.stop(); gpu.reset(); owners.removeAll(); lastStarts.removeAll(); catalogIDs = []; inventoryTime = -.infinity }
 
     func sample(apps: [AppActivityIdentity]) -> AppActivityRawSample {
         let now = ProcessInfo.processInfo.systemUptime
@@ -391,12 +421,14 @@ final class PublicAppActivityBackend: AppActivityBackend {
             members[owner, default: []].append(pid); readings[pid] = reading
         }
         lastStarts = lastStarts.filter { owners[$0.key] != nil }
+        let gpuClients = gpu.clients(pids: Set(owners.keys))
         let tick = ProcessInfo.processInfo.systemUptime
         var notes = inventoryAvailable ? [] : ["App helper inventory unavailable"]
         let traffic = network.read(at: tick)
         if traffic == nil { notes.append("Network: waiting for macOS per-process counters") }
         return AppActivityRawSample(timestamp: Date(), uptime: tick, apps: apps, members: members, processes: readings,
-            secondsPerCPUTick: Self.secondsPerTick, network: traffic, statusNotes: notes, inventoryComplete: inventoryAvailable)
+            secondsPerCPUTick: Self.secondsPerTick, network: traffic, statusNotes: notes, inventoryComplete: inventoryAvailable,
+            gpu: gpuClients)
     }
 
     static func owner(path: String, apps: [AppActivityIdentity]) -> String? {
@@ -417,7 +449,17 @@ final class PublicAppActivityBackend: AppActivityBackend {
         return AppActivityProcessReading(pid: pid, startID: usage.ri_proc_start_abstime,
             startUptime: Double(usage.ri_proc_start_abstime) * secondsPerTick,
             cpuTicks: cpu, memoryBytes: usage.ri_phys_footprint,
-            diskReadBytes: usage.ri_diskio_bytesread, diskWriteBytes: usage.ri_diskio_byteswritten)
+            diskReadBytes: usage.ri_diskio_bytesread, diskWriteBytes: usage.ri_diskio_byteswritten,
+            threads: threadCount(pid: pid))
+    }
+
+    /// The process's current thread count; nil when unreadable (protected,
+    /// exited, or a short read).
+    static func threadCount(pid: Int32) -> Int? {
+        var info = proc_taskinfo()
+        let size = Int32(MemoryLayout<proc_taskinfo>.size)
+        guard pid > 0, proc_pidinfo(pid, PROC_PIDTASKINFO, 0, &info, size) == size, info.pti_threadnum >= 0 else { return nil }
+        return Int(info.pti_threadnum)
     }
 
     private static func processIDs() -> [Int32]? {

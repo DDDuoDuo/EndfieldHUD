@@ -60,7 +60,8 @@ final class WorldMapPathGeometry {
         func append(_ closed: Bool) {
             guard points.count > 1 else { points.removeAll(keepingCapacity: true); return }
             if closed, points.last == points.first { points.removeLast() }
-            decoded.append(Ring(points: points, closed: closed)); points.removeAll(keepingCapacity: true)
+            // An exact copy: handing over the scratch buffer would make every later ring reallocate it at full capacity.
+            decoded.append(Ring(points: points.withUnsafeBufferPointer { Array($0) }, closed: closed)); points.removeAll(keepingCapacity: true)
         }
         // Both bundled datasets contain straight segments exclusively.
         path.applyWithBlock { pointer in

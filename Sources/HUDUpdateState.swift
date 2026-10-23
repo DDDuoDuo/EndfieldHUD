@@ -23,7 +23,7 @@ struct HUDUpdateState: Equatable {
         case .downloading: return L10n.text("Downloading…", "正在下载…")
         case .ready: return L10n.text("Ready to update", "更新已就绪")
         case .installing: return L10n.text("Restarting…", "正在重启…")
-        case .failed: return L10n.text("Check failed — retry", "检查失败 · 重试")
+        case .failed: return L10n.text("Check failed, retry", "检查失败，请重试")
         }
     }
 }

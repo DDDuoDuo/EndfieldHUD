@@ -56,6 +56,9 @@ struct NowPlayingLyrics: Equatable {
         return [current - 1, current, current + 1].map { lines.indices.contains($0) ? lines[$0].text : "" }
     }
 
+    /// Index of the line sung at `elapsed`; −1 before the first cue.
+    func currentIndex(at elapsed: Double) -> Int { elapsed.isFinite ? firstIndex(after: elapsed) - 1 : -1 }
+
     /// Schedule a local display update at the exact next cue, including blank
     /// instrumental cues. This never reads a player or scans the lyric document.
     func nextBoundary(after elapsed: Double) -> Double? {
@@ -71,16 +74,65 @@ struct NowPlayingLyrics: Equatable {
         }
         return low
     }
+
+    /// NetEase writes some cues as [mm:ss:cc] (or [mm:ss:ccc]): a colon where
+    /// LRC has the fraction point. Read literally they are hours:minutes:seconds,
+    /// about 60 times too late, so mostly the credit lines would show. NetEase's
+    /// own player reads them as [mm:ss.cc]. Only exactly that shape (two-digit
+    /// minutes and seconds) is rewritten, so other sources keep the hour form.
+    static func normalizingNetEaseStamps(_ lrc: String) -> String {
+        guard lrc.utf8.count <= 512 * 1024 else { return lrc }
+        var bytes = Array(lrc.utf8), changed = false
+        func digit(_ index: Int) -> Bool { index < bytes.count && (48...57).contains(bytes[index]) }
+        func byte(_ index: Int, _ value: Unicode.Scalar) -> Bool { index < bytes.count && bytes[index] == UInt8(ascii: value) }
+        for at in bytes.indices where bytes[at] == UInt8(ascii: "[") {
+            guard digit(at + 1), digit(at + 2), byte(at + 3, ":"), digit(at + 4), digit(at + 5), byte(at + 6, ":"),
+                  digit(at + 7), digit(at + 8) else { continue }
+            let end = digit(at + 9) ? at + 10 : at + 9
+            if byte(end, "]") { bytes[at + 6] = UInt8(ascii: "."); changed = true }
+        }
+        return changed ? String(decoding: bytes, as: UTF8.self) : lrc
+    }
 }
 
-/// At most two requests per distinct track, an eight-entry memory cache, and no
-/// retry/polling loop. Embedded timed lyrics take precedence over web lookups.
+/// Consecutive failed lookups per track (bounded like the caches) and the wait
+/// before the next attempt: 5, 15, 45 and 135 s, then every 300 s. Any answer,
+/// with or without lyrics, forgets the track.
+struct NowPlayingLyricsBackoff {
+    private var rows: [(key: NowPlayingArtworkKey, failures: Int)] = []
+    static func delay(failures: Int) -> TimeInterval {
+        min(300, 5 * pow(3, Double(min(5, max(1, failures)) - 1)))
+    }
+    /// Records one more failure for the track and returns its wait.
+    mutating func next(_ key: NowPlayingArtworkKey) -> TimeInterval {
+        if let index = rows.firstIndex(where: { $0.key == key }) {
+            rows[index].failures = min(5, rows[index].failures + 1); return Self.delay(failures: rows[index].failures)
+        }
+        rows.append((key, 1)); if rows.count > 8 { rows.removeFirst(rows.count - 8) }
+        return Self.delay(failures: 1)
+    }
+    mutating func forget(_ key: NowPlayingArtworkKey) { rows.removeAll { $0.key == key } }
+    mutating func removeAll() { rows.removeAll() }
+}
+
+/// At most two requests per lookup of a distinct track, an eight-entry memory
+/// cache and no polling. Embedded timed lyrics take precedence over web lookups.
+/// A lookup that got no answer (network error, timeout, server error) is a
+/// failure, never "no lyrics": with a clock it is retried once `retryTime` has
+/// passed (the owner wakes for it). Only a definitive answer is cached as missing.
 final class NowPlayingLyricsLoader {
     typealias Fetch = (URL, @escaping (Data?) -> Void) -> (() -> Void)
+    typealias Clock = () -> TimeInterval
     private(set) var lyrics: NowPlayingLyrics?
     var onChange: (() -> Void)?
-    private struct Entry { let key: NowPlayingArtworkKey; let lyrics: NowPlayingLyrics? }
+    /// A failed lookup set a new `retryTime`; the lyrics themselves did not change.
+    var onRetry: (() -> Void)?
+    /// Monotonic clock for retrying failures. Nil (offline fixtures only) keeps
+    /// a failure as the cached negative until `invalidateMissing`.
+    var clock: Clock? = { ProcessInfo.processInfo.systemUptime }
+    private struct Entry { let key: NowPlayingArtworkKey; let lyrics: NowPlayingLyrics?; let retryAt: TimeInterval? }
     private var cache: [Entry] = []
+    private var backoff = NowPlayingLyricsBackoff()
     private var desired: NowPlayingArtworkKey?
     private var embeddedSource: String?
     private var cancel: (() -> Void)?
@@ -88,6 +140,16 @@ final class NowPlayingLyricsLoader {
     private let fetch: Fetch
     init(fetch: @escaping Fetch) { self.fetch = fetch }
     deinit { cancel?() }
+
+    /// When the wanted track's failed lookup is retried (nil: no failure).
+    var retryTime: TimeInterval? {
+        guard clock != nil, let desired else { return nil }
+        return cache.first { $0.key == desired }?.retryAt
+    }
+    /// The wanted track's lyrics are shown (not loading, not missing).
+    func holds(application: NowPlayingApplication, track: NowPlayingTrack) -> Bool {
+        lyrics != nil && desired == NowPlayingArtworkKey(application: application, track: track, includeArtworkRevision: false)
+    }
 
     func request(application: NowPlayingApplication, track: NowPlayingTrack) {
         precondition(Thread.isMainThread)
@@ -97,16 +159,21 @@ final class NowPlayingLyricsLoader {
         // authoritative content must be considered before the same-key cache.
         if let text = track.timedLyrics, text != embeddedSource || desired != key {
             embeddedSource = text
-            if let embedded = NowPlayingLyrics(lrc: text) {
+            if let embedded = NowPlayingLyrics(lrc: application.source == .netease ? NowPlayingLyrics.normalizingNetEaseStamps(text) : text) {
                 generation += 1; cancel?(); cancel = nil; desired = key
                 save(embedded, key: key); return
             }
         }
-        guard desired != key else { return }
+        if desired == key {
+            // The wanted track's failed lookup starts over once its wait passed.
+            guard let index = cache.firstIndex(where: { $0.key == key }), isDue(cache[index]) else { return }
+            cache.remove(at: index)
+        }
         generation += 1; let generation = generation
         cancel?(); cancel = nil; desired = key; embeddedSource = track.timedLyrics
         if let index = cache.firstIndex(where: { $0.key == key }) {
-            let value = cache.remove(at: index); cache.append(value); assign(value.lyrics); return
+            let value = cache.remove(at: index)
+            if !isDue(value) { cache.append(value); assign(value.lyrics); return }
         }
         assign(nil)
         guard let url = Self.requestURL(for: track) else { save(nil, key: key); return }
@@ -116,6 +183,8 @@ final class NowPlayingLyricsLoader {
                 completed = true
                 guard let self, self.generation == generation, self.desired == key else { return }
                 self.cancel = nil
+                // A missing record (404), a record without timed lyrics and a
+                // failed request all fall back to the search.
                 if let result = data.flatMap(Self.decodeResponse) { self.save(result, key: key) }
                 else { self.searchFallback(track: track, key: key, expected: generation) }
             }
@@ -130,11 +199,22 @@ final class NowPlayingLyricsLoader {
             let apply = { [weak self] in
                 completed = true
                 guard let self, self.generation == expected, self.desired == key else { return }
-                self.cancel = nil; self.save(data.flatMap { Self.decodeSearch($0, track: track) }, key: key)
+                // No answer to the search (no body, a timeout or a refusal) is a
+                // failure, retried later; an answer without a match is final.
+                self.cancel = nil
+                if let data { self.save(Self.decodeSearch(data, track: track), key: key) } else { self.save(nil, key: key, failed: true) }
             }
             if Thread.isMainThread { apply() } else { DispatchQueue.main.async(execute: apply) }
         }
         if !completed, generation == expected { cancel = cancellation }
+    }
+    /// Drops failed lookups and their backoff (Now Playing hidden), so the next
+    /// opening asks again at once. Definitive answers stay cached.
+    func forgetFailures() {
+        backoff.removeAll()
+        let wanted = desired.map { key in cache.contains { $0.key == key && $0.retryAt != nil } } ?? false
+        cache.removeAll { $0.retryAt != nil }
+        if wanted { clear() }
     }
     func invalidateMissing(application: NowPlayingApplication, track: NowPlayingTrack) {
         let key = NowPlayingArtworkKey(application: application, track: track, includeArtworkRevision: false)
@@ -167,10 +247,17 @@ final class NowPlayingLyricsLoader {
         generation += 1; cancel?(); cancel = nil; desired = nil; embeddedSource = nil
         assign(nil)
     }
-    private func save(_ result: NowPlayingLyrics?, key: NowPlayingArtworkKey) {
-        cache.removeAll { $0.key == key }; cache.append(Entry(key: key, lyrics: result))
+    private func isDue(_ entry: Entry) -> Bool {
+        guard let retryAt = entry.retryAt, let clock else { return false }
+        return clock() >= retryAt
+    }
+    private func save(_ result: NowPlayingLyrics?, key: NowPlayingArtworkKey, failed: Bool = false) {
+        let retryAt = failed ? clock.map { $0() + backoff.next(key) } : nil
+        if retryAt == nil { backoff.forget(key) }
+        cache.removeAll { $0.key == key }; cache.append(Entry(key: key, lyrics: result, retryAt: retryAt))
         if cache.count > 8 { cache.removeFirst(cache.count - 8) }
         assign(result)
+        if retryAt != nil { onRetry?() }
     }
     private func assign(_ value: NowPlayingLyrics?) {
         guard lyrics != value else { return }

@@ -12,6 +12,8 @@ final class HUDIdentityCard {
     var powerRect: CGRect { closeRect }
     let profileRect = CGRect(x: 78, y: 564, width: 240, height: 82)
     private var details: UserProfile?
+    /// Recording mode (spec §3.26) hides the UID.
+    var uidRedacted = false { didSet { if uidRedacted != oldValue { renderProfile() } } }
     private var avatarImage: CGImage?
     private var avatarOrientation: Int32 = 1
     private var backgroundImage: CGImage?
@@ -208,7 +210,7 @@ final class HUDIdentityCard {
                                     fill: NSColor.black.withAlphaComponent(0.35)))
         var completed = progress; completed.size.width *= CGFloat(level) / 60
         foreground.addSublayer(shape(CGPath(roundedRect: completed, cornerWidth: 1.25, cornerHeight: 1.25, transform: nil), fill: gold))
-        text("UID: " + (details?.displayedUID ?? "—"), in: foreground, rect: CGRect(x: 84, y: 71, width: 120, height: 10), size: 6.7,
+        text("UID: " + (uidRedacted ? "[ " + L10n.text("REDACTED", "已隐藏") + " ]" : details?.displayedUID ?? "—"), in: foreground, rect: CGRect(x: 84, y: 71, width: 120, height: 10), size: 6.7,
              color: muted.withAlphaComponent(0.77), weight: .medium)
         for index in 0..<4 {
             let mark = CGRect(x: 216 + CGFloat(index) * 3.3, y: 73, width: 1.2, height: index.isMultiple(of: 2) ? 3.1 : 1.7)
@@ -297,10 +299,9 @@ final class HUDIdentityCard {
         let result = CAShapeLayer(); result.path = path; result.fillColor = fill?.cgColor; result.strokeColor = stroke?.cgColor
         result.lineWidth = width; result.lineJoin = .miter; result.contentsScale = contentsScale; return result
     }
-    private func text(_ value: String, in host: CALayer, rect: CGRect, size: CGFloat, color: NSColor, weight: NSFont.Weight, italic: Bool = false, alignment: CATextLayerAlignmentMode = .left) {
-        let item = CATextLayer(); item.frame = rect; item.string = value; item.fontSize = size
-        item.alignmentMode = alignment
-        item.font = italic ? NSFont(name: "HelveticaNeue-MediumItalic", size: size) ?? NSFont.systemFont(ofSize: size, weight: weight) : NSFont.systemFont(ofSize: size, weight: weight)
+    private func text(_ value: String, in host: CALayer, rect: CGRect, size: CGFloat, color: NSColor, weight: HUDFontWeight, italic: Bool = false, alignment: CATextLayerAlignmentMode = .left) {
+        let item = HUDStandardTextLayer(size: size, weight: weight); item.frame = rect; item.string = value
+        item.alignmentMode = alignment; item.oblique = italic
         item.foregroundColor = color.cgColor; item.truncationMode = .end
         item.contentsScale = HUDRenderScale.contentScale(for: item, baseScale: contentsScale); host.addSublayer(item)
     }

@@ -3,7 +3,7 @@ import Foundation
 /// These identifiers are saved in preferences. The alert's mode remains tied
 /// to power connection; selecting a metric only changes its compact readings.
 enum HUDChargeMetric: String, Codable, CaseIterable {
-    case battery, ram, cpu, network, disk
+    case battery, ram, cpu, network, disk, gpu
 
     var requiresTelemetry: Bool { self != .battery }
 
@@ -14,6 +14,7 @@ enum HUDChargeMetric: String, Codable, CaseIterable {
         case .cpu: return "CPU"
         case .network: return L10n.text("Network", "网络")
         case .disk: return L10n.text("Disk", "磁盘")
+        case .gpu: return "GPU"
         }
     }
 }
@@ -58,12 +59,13 @@ struct HUDChargeMetricReading: Equatable {
             return Self(primary: current, secondary: "/" + maximum, unit: "GB", trailing: percentage,
                         progress: fraction, accessibilityValue: metric.title + ": " + current + "/" + maximum + " GB, "
                             + (fraction == nil ? unavailable : percentage))
-        case .cpu:
-            let percent = telemetry?.cpuPercent.flatMap { $0.isFinite && (0...100).contains($0) ? $0 : nil }
+        case .cpu, .gpu:
+            let sample = metric == .cpu ? telemetry?.cpuPercent : telemetry?.gpuPercent
+            let percent = sample.flatMap { $0.isFinite && (0...100).contains($0) ? $0 : nil }
             let value = percent.map { decimal($0) + "%" } ?? "—"
-            return Self(primary: "CPU", secondary: "", unit: "", trailing: value,
+            return Self(primary: metric.title, secondary: "", unit: "", trailing: value,
                         progress: percent.map { $0 / 100 },
-                        accessibilityValue: "CPU: " + (percent == nil ? unavailable : value))
+                        accessibilityValue: metric.title + ": " + (percent == nil ? unavailable : value))
         case .network:
             return rates(first: telemetry?.uploadBytesPerSecond, second: telemetry?.downloadBytesPerSecond,
                          trailing: "↑/↓", firstName: L10n.text("Upload ", "上传 "),

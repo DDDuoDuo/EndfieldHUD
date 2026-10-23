@@ -20,11 +20,17 @@ final class ReaderController {
     private(set) var loading = false
     private(set) var error: String?
     private(set) var pages: [ReaderPage] = []
-    private(set) var current: ReaderPage?
+    /// The page on screen. It outlives deactivation, so a Reader shown again
+    /// (another module, the HUD closed and reopened) shows it at once while
+    /// the document reopens behind it.
+    private(set) var current: ReaderPage? { didSet { currentBook = current == nil ? nil : snapshot.selected } }
+    private var currentBook: UUID?
     private(set) var imageDetail: (view: ReaderImageView, page: ReaderPage)?
     private var detailRequest: ReaderImageView?, detailRendering = false, detailRevision = 0
     var book: ReaderBook? { books.first { $0.id == snapshot.selected } }
     var preferences: ReaderPreferences { preferencePreview ?? snapshot.preferences }
+    /// The E-Reader was last left reading its open book (persisted with the library).
+    var isReading: Bool { snapshot.reading }
     private var size = CGSize(width: 376, height: 334), dark = true
     private let queue = DispatchQueue(label: "EndfieldHUD.Reader", qos: .userInitiated)
     private let writer = DispatchQueue(label: "EndfieldHUD.Reader.library", qos: .utility)
@@ -54,10 +60,10 @@ final class ReaderController {
         guard active != value else { return }; active = value
         if value {
             if !libraryLoaded { loadLibrary() }
-            else if let book { open(book: book) } else { onChange?() }
+            else if let book { open(book: book) } else { current = nil; onChange?() }
         } else {
             generation += 1; gate.set(generation); resetImageDetail(); pending = nil; rendering = false; loading = false
-            pages = []; current = nil; history = []
+            pages = []; history = []
             let worker = worker; queue.async { worker.release() }; onChange?()
         }
     }
@@ -66,7 +72,7 @@ final class ReaderController {
         mutate({ _ in }) { [weak self] success in
             guard let self else { return }; self.libraryLoading = false; self.libraryLoaded = success
             if success, self.active, let book = self.book { self.open(book: book) }
-            else { self.loading = false; self.onChange?() }
+            else { self.loading = false; self.current = nil; self.onChange?() }
         }
     }
     func setLayout(size: CGSize, dark: Bool) {
@@ -107,7 +113,8 @@ final class ReaderController {
     }
     private func open(book: ReaderBook) {
         generation += 1; gate.set(generation); let token = generation, worker = worker, gate = gate
-        resetImageDetail(); pending = nil; rendering = false; loading = true; error = nil; pages = []; current = nil; history = []; onChange?()
+        if currentBook != book.id { current = nil }
+        resetImageDetail(); pending = nil; rendering = false; loading = true; error = nil; pages = []; history = []; onChange?()
         queue.async { [weak self] in
             let result = Result {
                 guard gate.allows(token) else { throw CocoaError(.userCancelled) }
@@ -122,6 +129,11 @@ final class ReaderController {
     func next() { if let next = current?.next { if let current { history.append(current.location); if history.count > 256 { history.removeFirst() } }; request(location: next) } }
     func previous() { if let previous = history.popLast() ?? current?.previous { request(location: previous) } }
     func jump(to location: ReaderLocation) { history = []; request(location: location) }
+    /// Remembers whether the Reader shows the open book (its Reading tab).
+    func setReading(_ value: Bool) {
+        guard libraryLoaded, value != snapshot.reading else { return }
+        mutate({ try $0.setReading(value) })
+    }
     func jump(progress: Double) { guard progress.isFinite else { return }; history = []; request(location: nil, progress: min(1, max(0, progress))) }
     func toggleBookmark() {
         guard let book, let current else { return }
@@ -138,6 +150,18 @@ final class ReaderController {
             self.onEvent?(.deleted)
             if selected, self.active { self.setActive(false); self.setActive(true) }
         }
+    }
+    /// Relink…: the chosen file replaces a moved book's reference; an open book reopens.
+    func relink(_ id: UUID, url: URL, completion: ((Bool) -> Void)? = nil) {
+        mutate({ try $0.relink(id, to: url) }) { [weak self] success in
+            guard let self else { return }
+            completion?(success)
+            if success, self.active, self.book?.id == id, let book = self.book { self.open(book: book) }
+        }
+    }
+    func removeBookmark(_ mark: UUID) {
+        guard let book else { return }
+        mutate({ try $0.removeBookmark(mark, book: book.id) }) { [weak self] success in if success { self?.onEvent?(.bookmarkChanged) } }
     }
     func setPreferences(_ value: ReaderPreferences) {
         guard value.isValid, value != preferences else { return }
@@ -194,14 +218,22 @@ final class ReaderController {
         pending = nil; rendering = true; loading = current == nil; error = nil; onChange?()
         let token = generation, worker = worker, preferences = preferences, size = size, dark = dark, gate = gate
         queue.async { [weak self] in
-            let result = Result { try worker.render(location: request.location, progress: request.progress, preferences: preferences, size: size, dark: dark, cancelled: { !gate.allows(token) }) }
+            let result = Result { try worker.render(location: request.location, progress: request.progress, preferences: preferences, size: size, dark: dark,
+                                                    ahead: preferences.vertical ? 2 : 1, cancelled: { !gate.allows(token) }) }
             RunLoop.main.perform(inModes: [.common, .modalPanel]) { [weak self] in
                 guard let self, self.active, self.generation == token else { return }
                 self.rendering = false
                 if self.pending != nil { self.startRender(); return }
                 self.loading = false
                 switch result {
-                case .success(let pages):
+                case .success(var pages):
+                    // Keep the page that really led here (scrolled or turned
+                    // from) over the fitted one before it: continuous reading
+                    // then joins both pages without repeating a line.
+                    if let anchor = pages.first, let exact = self.pages.first(where: { $0.next == anchor.location && $0.location != anchor.location }) {
+                        pages.removeAll { $0.location == anchor.previous && $0.location != anchor.location }
+                        pages.append(exact)
+                    }
                     self.pages = pages; self.current = pages.first
                     if let page = pages.first { self.saveProgress(page) }; self.onChange?()
                 case .failure(let error): self.fail(error)
@@ -269,8 +301,9 @@ final class ReaderController {
 
 private struct ReaderLibrarySnapshot {
     var books: [ReaderBook] = [], selected: UUID?, preferences = ReaderPreferences()
+    var reading = false
     init() {}
-    init(_ store: ReaderStore) { books = store.books; selected = store.selected; preferences = store.preferences }
+    init(_ store: ReaderStore) { books = store.books; selected = store.selected; preferences = store.preferences; reading = store.reading }
 }
 private final class ReaderLibraryWorker {
     private let load: () throws -> ReaderStore
@@ -286,7 +319,9 @@ private final class ReaderWorker {
     private var cache: [ReaderLocation: ReaderPage] = [:]
     private var preferences: ReaderPreferences?, size: CGSize?, dark: Bool?
     func release() { document = nil; cache = [:]; preferences = nil; size = nil; dark = nil }
-    func render(location: ReaderLocation?, progress: Double?, preferences: ReaderPreferences, size: CGSize, dark: Bool, cancelled: () -> Bool) throws -> [ReaderPage] {
+    /// The page at the anchor first, then `ahead` following pages and the one before.
+    func render(location: ReaderLocation?, progress: Double?, preferences: ReaderPreferences, size: CGSize, dark: Bool, ahead: Int = 1,
+                cancelled: () -> Bool) throws -> [ReaderPage] {
         guard !cancelled() else { throw CocoaError(.userCancelled) }
         guard let document else { throw ReaderError.unavailable }
         if self.preferences != preferences || self.size != size || self.dark != dark { cache = [:] }
@@ -298,7 +333,11 @@ private final class ReaderWorker {
             return try document.render(at: at, preferences: preferences, size: size, dark: dark)
         }
         let current = try page(anchor); var result = [current]
-        if let next = current.next, let neighbor = try? page(next) { result.append(neighbor) }
+        var last = current
+        for _ in 0..<max(1, ahead) {
+            guard let next = last.next, let neighbor = try? page(next) else { break }
+            result.append(neighbor); last = neighbor
+        }
         if let previous = current.previous, let neighbor = try? page(previous) { result.append(neighbor) }
         cache = Dictionary(result.map { ($0.location, $0) }, uniquingKeysWith: { first, _ in first })
         return result

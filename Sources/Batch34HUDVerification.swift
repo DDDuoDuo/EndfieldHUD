@@ -70,32 +70,11 @@ enum Batch34HUDVerification {
             check(controls.count == 4, "Four formatting controls share the text note")
             let button = controls.first { $0.id.hasSuffix(":formatSpecial") }!
             send(.leftMouseDown, workspace: CGPoint(x: button.rect.midX, y: button.rect.midY))
-            check(view.subviews.contains { $0 is NotesFormattingControls }, "Projected formatting action opens in-HUD controls")
+            check(view.subviews.contains { $0 is NotesDesktopPopup }, "Projected formatting action opens in-HUD controls")
+            // The redesigned centre lists Media's sources in its own menu (NotesCanvas).
             view.notesCanvasForVerification.perform(actionID: "tool:image")
-            guard let sourceMenu = view.subviews.compactMap({ $0 as? NotesMediaSourceChooser }).first,
-                  let sourceAction = sourceMenu.items.first(where: { $0.id == "finder" }) else {
-                fail("Add media opens the retained source chooser")
-            }
-            let menuReveal = sourceMenu.artwork.animation(forKey: "notes.controls.reveal")
-            let sourceTransform = sourceMenu.artwork.affineTransform()
-            let menuPoint = CGPoint(x: sourceMenu.artwork.position.x + sourceAction.rect.midX * sourceTransform.a,
-                                    y: sourceMenu.artwork.position.y + sourceAction.rect.midY * sourceTransform.d)
-            let coveringNote = CanvasNote(kind: .todo, items: [NoteChecklistItem(text: "Menu occlusion fixture")],
-                x: menuPoint.x - 80, y: menuPoint.y - 40, width: 240, height: 150, zIndex: 9999)
-            do { try view.installNoteForVerification(coveringNote) } catch { fail("Menu fixture insertion: \(error)") }
-            let notesWorkspace = view.notesCanvasForVerification.workspaceLayer
-            check(view.notesCanvasForVerification.contains(noteID: coveringNote.id, point: menuPoint),
-                  "A real checklist overlaps the media chooser's first action")
-            check(sourceMenu.artwork.superlayer === notesWorkspace
-                  && (notesWorkspace.sublayers ?? []).filter { $0.name != "notes.secondaryMenu" }
-                    .allSatisfy { $0.zPosition < sourceMenu.artwork.zPosition },
-                  "Media chooser artwork stays above the complete note workspace")
-            let projectedMenuPoint = view.projectNotesPointForVerification(menuPoint)
-            check(view.bounds.contains(projectedMenuPoint)
-                  && view.hitTest(view.convert(projectedMenuPoint, to: view.superview)) === sourceMenu,
-                  "Native projected hit testing resolves the menu before the overlapping checklist")
-            check((menuReveal != nil) == !HUDRuntimeAppearance.reduceMotion,
-                  "The native media chooser uses a finite reveal only when motion is enabled")
+            check(view.notesCanvasForVerification.isMenuOpen && !view.subviews.contains { $0 is NotesDesktopPopup },
+                  "Add media closes the desktop formatting controls and opens the centre's source menu")
             if let i = CommandLine.arguments.firstIndex(of: "--preview-directory"), CommandLine.arguments.indices.contains(i + 1) {
                 let directory = URL(fileURLWithPath: CommandLine.arguments[i + 1], isDirectory: true)
                 do {
@@ -104,21 +83,20 @@ enum Batch34HUDVerification {
                 } catch { fail("Notes menu preview: \(error)") }
             }
             overlay.selectSystemModule(.profile)
-            wait("profile editor", until: { self.overlay.systemSelectedModule == .profile && !self.overlay.isSwitchingSystemModule }) { [self] in
-                view.performProfileActionForVerification("profile:name")
-                testProjectedEditor(label: "profile") { [self] in leaveNotes(sourceMenu: sourceMenu, pinnedNote: drawingID!) }
+            wait("profile editor", until: { self.overlay.systemSelectedModule == .profile && !self.overlay.isSwitchingSystemModule
+                && self.view.designControlIDsForVerification(.profile).contains("profile:name") }) { [self] in
+                view.performDesignActionForVerification(.profile, "profile:name")
+                testProjectedEditor(label: "profile") { [self] in leaveNotes(pinnedNote: drawingID!) }
             }
         }
-        func leaveNotes(sourceMenu: NotesMediaSourceChooser, pinnedNote: UUID) {
+        func leaveNotes(pinnedNote: UUID) {
             overlay.selectSystemModule(.nowPlaying)
-            check(view.nowPlayingPresentationPreparedForVerification
-                  && view.nowPlayingInputEnabledForVerification == HUDRuntimeAppearance.reduceMotion,
+            let music = view.nowPlayingCanvasForVerification
+            check(music.isPresented && music.isActive == HUDRuntimeAppearance.reduceMotion,
                   "Incoming music prepares before animated navigation, or enables input immediately when motion is reduced")
             wait("Now Playing", until: { self.overlay.systemSelectedModule == .nowPlaying && !self.overlay.isSwitchingSystemModule }) { [self] in
-                check(!view.subviews.contains { $0 is NotesFormattingControls }, "Leaving Notes retires formatting controls")
-                check(sourceMenu.superview == nil && sourceMenu.artwork.superlayer == nil
-                      && sourceMenu.artwork.animationKeys() == nil,
-                      "Leaving Notes completely retires media-menu input, artwork and finite animations")
+                check(!view.subviews.contains { $0 is NotesDesktopPopup }, "Leaving Notes retires formatting controls")
+                check(!view.notesCanvasForVerification.isMenuOpen, "Leaving Notes closes the media menu")
                 check(view.visibleNotesForVerification == [pinnedNote], "Pinned drawing persists across module transition")
                 // The persistence check is complete. Notes use screen points
                 // while music uses a scaled HUD plane, so a retained pin can
@@ -136,6 +114,17 @@ enum Batch34HUDVerification {
             guard let editor = view.subviews.compactMap({ $0 as? HUDProjectedTextEditor }).first else {
                 fail("The " + label + " field has a shared projected editor")
             }
+            // A redesigned field holds its tilted plane still while it edits
+            // (HUDDesignCanvas.isInputLocked); the Notes editor keeps following
+            // the pointer tilt. The source camera stops with its next frame.
+            guard label != "notes" else { probeProjectedEditor(editor, label: label, holdsPlane: false, then: completion); return }
+            check(view.designCanvasForVerification(.profile)?.isInputLocked == true,
+                  "The " + label + " field holds its tilted plane still while it edits")
+            wait(label + " held plane", until: { self.view.sourceWatchForVerification?.pointerIsAnimatingForVerification == false }) { [self] in
+                probeProjectedEditor(editor, label: label, holdsPlane: true, then: completion)
+            }
+        }
+        func probeProjectedEditor(_ editor: HUDProjectedTextEditor, label: String, holdsPlane: Bool, then completion: @escaping () -> Void) {
             let text = editor.textView
             check(view.window?.firstResponder === text && editor.artwork.superlayer != nil,
                   "The " + label + " TextKit editor owns focus and retained HUD artwork")
@@ -147,17 +136,17 @@ enum Batch34HUDVerification {
             editor.resizeDocument(); editor.captureVisibleArtwork()
             var actual = NSRange()
             let before = text.firstRect(forCharacterRange: marked, actualRange: &actual)
-            let reduced = HUDRuntimeAppearance.reduceMotion
+            let stillPlane = HUDRuntimeAppearance.reduceMotion || holdsPlane
             let probeStarted = ProcessInfo.processInfo.systemUptime
             let screen = view.window!.screen!.frame
             overlay.systemPointerLocationProviderForVerification = { CGPoint(x: screen.minX + screen.width * 0.78,
                                                                              y: screen.minY + screen.height * 0.7) }
             view.setPointerForVerification(CGPoint(x: 0.56, y: -0.4))
             wait(label + " editing projection", until: {
-                // Reduced motion intentionally holds the projection still.
+                // Reduced motion and a held plane keep the projection still.
                 // Observe it through a short pointer-update interval instead
-                // of waiting for movement that accessibility suppresses.
-                if reduced { return ProcessInfo.processInfo.systemUptime - probeStarted >= 0.25 }
+                // of waiting for movement that is intentionally suppressed.
+                if stillPlane { return ProcessInfo.processInfo.systemUptime - probeStarted >= 0.25 }
                 var range = NSRange()
                 let after = text.firstRect(forCharacterRange: marked, actualRange: &range)
                 return abs(after.midX - before.midX) + abs(after.midY - before.midY) > 1
@@ -168,15 +157,22 @@ enum Batch34HUDVerification {
                     && abs(after.width - before.width) < 0.1 && abs(after.height - before.height) < 0.1
                 let valid = after.minX.isFinite && after.minY.isFinite
                     && after.width.isFinite && after.height.isFinite && after.width > 0 && after.height > 0
-                check(valid && (reduced ? stable : abs(after.midX - before.midX) + abs(after.midY - before.midY) > 1),
-                      "The " + label + " candidate rectangle follows pointer tilt, or remains stable with reduced motion")
+                check(valid && (stillPlane ? stable : abs(after.midX - before.midX) + abs(after.midY - before.midY) > 1),
+                      "The " + label + " candidate rectangle follows pointer tilt, or remains stable on a held plane or with reduced motion: \(before) -> \(after)")
                 check(view.window?.firstResponder === text && text.hasMarkedText() && text.markedRange() == marked
                       && text.selectedRange() == selected && text.string == draft,
                       "The " + label + " composition, selection and focus survive pointer updates")
                 check(editor.artwork.frame == editor.logicalRect && editor.scrollView.frame.size == editor.logicalRect.size,
                       "The " + label + " glyphs inherit HUD perspective without changing native layout dimensions")
                 let local = CGPoint(x: editor.logicalRect.midX, y: editor.logicalRect.midY)
-                let projected = label == "notes" ? view.projectNotesPointForVerification(local) : view.modulePointForVerification(local)
+                let projected: CGPoint
+                if label == "notes" { projected = view.projectNotesPointForVerification(local) }
+                else {
+                    guard let canvas = view.designCanvasForVerification(.profile), let plane = editor.artwork.superlayer else {
+                        fail("The " + label + " editor sits on the redesigned card")
+                    }
+                    projected = view.designBoxViewPointForVerification(canvas.root.convert(local, from: plane))
+                }
                 check(view.hitTest(view.convert(projected, to: view.superview)) === text,
                       "Native hit testing selects the " + label + " editor on its actual tilted plane")
                 check(editor.retainedPixelCount > 0 && editor.retainedPixelCount <= HUDProjectedTextEditor.maximumPixels,
@@ -197,41 +193,45 @@ enum Batch34HUDVerification {
         }
         func testPlayback() {
             let canvas = view.nowPlayingCanvasForVerification
+            func item(_ id: String) -> HUDAccessibilityItem? { canvas.accessibilityItems.first { $0.id == id } }
+            func press(_ id: String) { view.performDesignActionForVerification(.nowPlaying, id) }
+            func shown(_ box: CGRect) -> CGRect {
+                let a = view.designBoxViewPointForVerification(box.origin), b = view.designBoxViewPointForVerification(CGPoint(x: box.maxX, y: box.maxY))
+                return CGRect(x: min(a.x, b.x), y: min(a.y, b.y), width: abs(b.x - a.x), height: abs(b.y - a.y))
+            }
+            func centre(_ rect: CGRect) -> CGPoint { CGPoint(x: rect.midX, y: rect.midY) }
+            func seeks() -> Int { overlay.eventLog.events.filter { $0.kind == .playbackAction && $0.metadata["action"] == "seek" }.count }
+            let buttons = ["previous", "playPause", "next", "volume", "lyrics"]
             check(overlay.nowPlaying.snapshot.application?.source == .music, "Injected player supplies metadata without a real app")
             check(canvas.albumCoverAvailableForVerification, "Synthetic album cover is displayed without accessing a real media library")
-            check(canvas.panelFrameForVerification.size == CGSize(width: 330, height: 330), "Album art uses a larger uncropped 330-point square viewport")
+            check(canvas.panelFrameForVerification == CGRect(x: 55, y: -84, width: 480, height: 480) && !canvas.showsHeader,
+                  "The 480 px cover reaches above the box and the page has no module header")
+            let ids = view.designControlIDsForVerification(.nowPlaying)
+            check(Set(buttons + ["seek"]).isSubset(of: ids) && !ids.contains("refresh"),
+                  "Transport, seek, volume and lyrics are live controls without a refresh button")
             view.setChargeHoveredForVerification(true)
             let charge = view.chargeViewRectForVerification
-            check(canvas.accessibleActions.allSatisfy { action in
-                let p = view.modulePointForVerification(action.rect.origin)
-                let q = view.modulePointForVerification(CGPoint(x: action.rect.maxX, y: action.rect.maxY))
-                return !CGRect(x: min(p.x, q.x), y: min(p.y, q.y), width: abs(q.x - p.x), height: abs(q.y - p.y)).intersects(charge)
-            }, "Music controls stay clear of the actual expanded battery bar on the source HUD plane")
+            check(buttons.compactMap(item).allSatisfy { !shown($0.rect).intersects(charge) },
+                  "Music controls stay clear of the expanded battery capsule on the source HUD plane")
             view.setChargeHoveredForVerification(false)
-            let fixedRail = canvas.accessibleSliders[0].rect
-            let fixedActions = canvas.accessibleActions.map(\.rect)
-            let left = canvas.accessibleActions.filter { ["previous", "playPause", "next"].contains($0.id) }.map { $0.rect.maxX }.max()!
-            let right = canvas.accessibleActions.filter { ["volume", "lyrics"].contains($0.id) }.map { $0.rect.minX }.min()!
-            check(right - left >= 220 && !canvas.accessibleActions.contains { $0.id == "refresh" },
-                  "Bottom controls leave battery room without a music heading or refresh button")
-            canvas.perform(actionID: "volume")
-            check(canvas.capturesPointer && canvas.accessibleSliders.contains { $0.id == "appVolume" && $0.rect.height > $0.rect.width },
-                  "Volume is a vertical HUD secondary menu")
-            let fixedVolume = canvas.accessibleSliders.last!.rect
-            canvas.perform(actionID: "lyrics")
-            check(canvas.accessibleSliders[0].rect == fixedRail && canvas.accessibleActions.map(\.rect) == fixedActions
-                  && canvas.accessibleSliders.last!.rect == fixedVolume,
-                  "Hiding lyrics leaves the native seek, transport and volume menu positions unchanged")
-            canvas.perform(actionID: "lyrics")
-            check(canvas.accessibleSliders[0].rect == fixedRail && canvas.accessibleActions.map(\.rect) == fixedActions,
-                  "Showing lyrics also preserves every bottom control position")
-            canvas.dismissPopover()
+            let fixed = (buttons + ["seek"]).compactMap { item($0)?.rect }
+            press("volume")
+            check(canvas.isVolumeOpen && canvas.capturesPointer && item("appVolume").map { $0.rect.height > $0.rect.width } == true,
+                  "Volume opens a vertical pop-up that takes the next press")
+            let volume = item("appVolume")?.rect
+            press("lyrics")
+            check(!canvas.showsLyrics && (buttons + ["seek"]).compactMap { item($0)?.rect } == fixed && item("appVolume")?.rect == volume,
+                  "Hiding lyrics leaves the seek bar, buttons and volume pop-up in place")
+            press("lyrics")
+            check(canvas.showsLyrics && (buttons + ["seek"]).compactMap { item($0)?.rect } == fixed,
+                  "Showing lyrics also keeps every control in place")
+            sendBox(.leftMouseDown, point: centre(canvas.panelFrameForVerification)); sendBox(.leftMouseUp, point: centre(canvas.panelFrameForVerification))
+            check(!canvas.isVolumeOpen && overlay.nowPlaying.snapshot.track?.isPlaying != true,
+                  "The first press outside the pop-up only closes it")
             check(overlay.audio.isRunning && !canvas.progressClockActiveForVerification, "Shared audio starts; paused media has no clock")
             check(overlay.perAppAudio.sessions.isEmpty, "Opening Now Playing creates no audio tap")
-            let action = canvas.accessibleActions.first { $0.id == "playPause" }!
-            let playPoint = view.modulePointForVerification(CGPoint(x: action.rect.midX, y: action.rect.midY))
-            let navigationHit = String(describing: view.sourceWatchForVerification?.navigationTarget(at: playPoint))
-            let inputBefore = view.nowPlayingInputEnabledForVerification
+            guard let play = item("playPause")?.rect else { fail("Play is a visible control") }
+            let playPoint = view.designBoxViewPointForVerification(centre(play))
             check(view.hitTest(view.convert(playPoint, to: view.superview)) === view,
                   "Foreground music control owns native hit testing above source navigation")
             if let index = CommandLine.arguments.firstIndex(of: "--preview-directory"), CommandLine.arguments.indices.contains(index + 1) {
@@ -239,34 +239,33 @@ enum Batch34HUDVerification {
                 do { try view.writePNG(to: directory.appendingPathComponent("music-controls.png"), scale: 1, presentation: false, background: .black) }
                 catch { fail("Music control preview: \(error)") }
             }
-            sendModule(.leftMouseDown, point: CGPoint(x: action.rect.midX, y: action.rect.midY)); view.mouseUp(with: dummyUp())
+            sendBox(.leftMouseDown, point: centre(play)); sendBox(.leftMouseUp, point: centre(play))
             check(view.selectedModule == .nowPlaying && overlay.nowPlaying.snapshot.track?.isPlaying == true && canvas.progressClockActiveForVerification,
-                  "Native play starts visible progress (playing=\(overlay.nowPlaying.snapshot.track?.isPlaying == true), clock=\(canvas.progressClockActiveForVerification), inputBefore=\(inputBefore), input=\(view.nowPlayingInputEnabledForVerification), module=\(view.selectedModule), navigation=\(navigationHit), viewport=\(view.bounds.size), pins=\(view.visibleNotesForVerification.count))")
-            let seek = canvas.accessibleSliders.first { $0.id == "seek" }!
-            let start = CGPoint(x: seek.rect.minX + 2, y: seek.rect.midY), end = CGPoint(x: seek.rect.midX, y: seek.rect.midY)
-            let before = overlay.eventLog.events.filter { $0.kind == .playbackAction && $0.metadata["action"] == "seek" }.count
-            sendModule(.leftMouseDown, point: start)
-            for index in 0...20 { sendModule(.leftMouseDragged, point: CGPoint(x: start.x + (end.x - start.x) * CGFloat(index) / 20, y: start.y)) }
-            check(overlay.eventLog.events.filter { $0.kind == .playbackAction && $0.metadata["action"] == "seek" }.count == before,
-                  "Seek movement previews locally")
-            sendModule(.leftMouseUp, point: end)
-            check(overlay.eventLog.events.filter { $0.kind == .playbackAction && $0.metadata["action"] == "seek" }.count == before + 1,
-                  "Seek release emits one successful command")
+                  "A real press on Play starts playback and its visible progress clock")
+            view.keyDown(with: space()); check(overlay.nowPlaying.snapshot.track?.isPlaying == false, "Space pauses through the host's key route")
+            view.keyDown(with: space()); check(overlay.nowPlaying.snapshot.track?.isPlaying == true, "Space resumes playback")
+            guard let seek = item("seek")?.rect else { fail("The timeline is a visible control") }
+            let start = CGPoint(x: seek.minX + 2, y: seek.midY), end = CGPoint(x: seek.midX, y: seek.midY)
+            let before = seeks()
+            sendBox(.leftMouseDown, point: start)
+            for index in 0...20 { sendBox(.leftMouseDragged, point: CGPoint(x: start.x + (end.x - start.x) * CGFloat(index) / 20, y: start.y)) }
+            check(seeks() == before, "Seek movement previews locally")
+            sendBox(.leftMouseUp, point: end)
+            check(seeks() == before + 1, "Seek release emits one successful command")
             overlay.selectSystemModule(.volume)
             wait("audio handoff", until: { self.overlay.systemSelectedModule == .volume && !self.overlay.isSwitchingSystemModule }) { [self] in
-                check(!canvas.albumCoverAvailableForVerification, "Leaving Now Playing releases the displayed cover")
+                check(!canvas.isPresented && !canvas.albumCoverAvailableForVerification, "Leaving Now Playing releases the displayed cover")
                 check(overlay.audio.isRunning && !canvas.progressClockActiveForVerification, "Volume retains shared observation while playback clock stops")
                 overlay.selectSystemModule(.nowPlaying)
-                check(view.nowPlayingPresentationPreparedForVerification
-                      && view.nowPlayingInputEnabledForVerification == HUDRuntimeAppearance.reduceMotion
-                      && canvas.albumCoverAvailableForVerification,
+                check(canvas.isPresented && canvas.isActive == HUDRuntimeAppearance.reduceMotion && canvas.albumCoverAvailableForVerification,
                       "Returning restores cached music before animated input activation, or immediately with reduced motion")
                 wait("reverse audio handoff", until: { self.overlay.systemSelectedModule == .nowPlaying && !self.overlay.isSwitchingSystemModule }) { [self] in
-                    check(canvas.albumCoverAvailableForVerification, "Returning restores the cached album cover")
+                    check(canvas.isActive && canvas.albumCoverAvailableForVerification, "Returning restores the cached album cover")
                     check(overlay.audio.isRunning && canvas.progressClockActiveForVerification, "Reverse handoff keeps audio and restores progress")
                     overlay.closeSystemOverlay()
                     wait("close", until: { self.overlay.systemPhase == .closed }) { [self] in
-                        check(!canvas.progressClockActiveForVerification && !overlay.audio.isRunning, "Closing retires progress and shared audio observation")
+                        check(!canvas.isPresented && !canvas.progressClockActiveForVerification && !overlay.audio.isRunning,
+                              "Closing retires progress and shared audio observation")
                         check(overlay.lastClosedAnimationCount == 0 && !overlay.lastClosedSourceTimerActive, "All shell animation clocks retire")
                         reopenMusic()
                     }
@@ -278,17 +277,15 @@ enum Batch34HUDVerification {
             check(overlay.toggleSystemOverlay(snapshot: .unavailable, configuration: overlay.settingsController!.configuration),
                   "Music can be summoned as the initial section")
             view = NSApp.windows.compactMap { $0.contentView as? SystemHUDView }.first!
-            check(view.nowPlayingPresentationPreparedForVerification && !view.nowPlayingInputEnabledForVerification,
-                  "Music observation starts during HUD opening while playback input remains disabled")
-            check(view.nowPlayingPresentationStartCountForVerification == 1,
-                  "Opening starts music presentation once")
+            let music = view.nowPlayingCanvasForVerification
+            check(music.isPresented && !music.isActive, "Music observation starts during HUD opening while playback input remains disabled")
+            check(music.presentationStartCountForVerification == 1, "Opening starts music presentation once")
             wait("music reopening", until: { self.overlay.systemPhase == .open }) { [self] in
-                check(view.nowPlayingInputEnabledForVerification && view.nowPlayingPresentationStartCountForVerification == 1,
+                check(music.isActive && music.presentationStartCountForVerification == 1,
                       "Music input activates after opening without restarting observation")
                 overlay.closeSystemOverlay()
                 wait("music reclose", until: { self.overlay.systemPhase == .closed }) { [self] in
-                    check(!view.nowPlayingPresentationPreparedForVerification && !view.nowPlayingInputEnabledForVerification
-                          && !view.nowPlayingCanvasForVerification.progressClockActiveForVerification
+                    check(!music.isPresented && !music.isActive && !music.progressClockActiveForVerification
                           && !overlay.audio.isRunning && overlay.lastClosedAnimationCount == 0,
                           "Repeated close removes every music observation, control and animation")
                     cleanup(); print("PASS: \(count) batch 3/4 native HUD assertions; drawing, menus, playback, seek, cached presentation, audio handoff and reopen")
@@ -297,8 +294,12 @@ enum Batch34HUDVerification {
             }
         }
         func send(_ type: NSEvent.EventType, workspace: CGPoint) { deliver(type, point: view.projectNotesPointForVerification(workspace)) }
-        func sendModule(_ type: NSEvent.EventType, point: CGPoint) { deliver(type, point: view.modulePointForVerification(point)) }
-        func dummyUp() -> NSEvent { NSEvent.mouseEvent(with: .leftMouseUp, location: .zero, modifierFlags: [], timestamp: 1, windowNumber: view.window!.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 0)! }
+        func sendBox(_ type: NSEvent.EventType, point: CGPoint) { deliver(type, point: view.designBoxViewPointForVerification(point)) }
+        func space() -> NSEvent {
+            NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                             windowNumber: view.window!.windowNumber, context: nil, characters: " ", charactersIgnoringModifiers: " ",
+                             isARepeat: false, keyCode: 49)!
+        }
         func deliver(_ type: NSEvent.EventType, point: CGPoint) {
             check(view.bounds.contains(point), "Native projected fixture fits HUD")
             let event = NSEvent.mouseEvent(with: type, location: view.convert(point, to: nil), modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: view.window!.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1)!

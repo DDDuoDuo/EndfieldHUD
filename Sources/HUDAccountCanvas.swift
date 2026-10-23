@@ -6,7 +6,7 @@ import QuartzCore
 struct HUDAccountPresentation: Equatable {
     enum Region: String, CaseIterable {
         case china, global
-        var title: String { self == .china ? L10n.text("China", "国服") : L10n.text("Global", "国际服") }
+        var title: String { self == .china ? L10n.text("Mainland China", "国服") : L10n.text("Global", "国际服") }
     }
     enum HeaderMode: String, CaseIterable {
         case workMode, endfield, arknights, hidden
@@ -16,6 +16,20 @@ struct HUDAccountPresentation: Equatable {
             case .endfield: return L10n.text("Arknights: Endfield", "明日方舟：终末地")
             case .arknights: return L10n.text("Arknights", "明日方舟")
             case .hidden: return L10n.text("Hidden", "隐藏")
+            }
+        }
+    }
+    /// The personal-card fields an Endfield sync may write (spec §3.21 field chips).
+    enum SyncField: String, CaseIterable {
+        case name, tag, uid, awakening, levels, counts
+        var title: String {
+            switch self {
+            case .name: return L10n.text("Game name", "游戏名称")
+            case .tag: return L10n.text("# number", "# 编号")
+            case .uid: return "UID"
+            case .awakening: return L10n.text("Awakening date", "苏醒日期")
+            case .levels: return L10n.text("Levels", "等级")
+            case .counts: return L10n.text("Collection counts", "收集数量")
             }
         }
     }
@@ -34,271 +48,428 @@ struct HUDAccountPresentation: Equatable {
     var headerMode: HeaderMode = .workMode
     var syncProfile = false
     var syncAvatar = false
+    var syncFields = Set(SyncField.allCases)
     var lastSync = ""
     var isLinked = false
+    /// The stored credential expired: the linked view offers Reconnect.
+    var needsReconnect = false
+    /// The selected role's latest card; its sanity is projected each second.
+    var snapshot: HypergryphProfileSnapshot?
     var busy: Bool { status == .connecting || status == .refreshing }
 }
 
-final class HUDAccountCanvas: NSObject, HUDModuleContentFactory {
+/// Account (spec §3.21): the Hypergryph / Gryphline link per region. Linked:
+/// sanity and recovery plates, game role, header display, sync row and the
+/// field chips; offline: the NOT LINKED panel with Connect. Every action goes
+/// to the account controller (login window, Keychain, refresh) via `onAction`.
+final class HUDAccountCanvas: HUDDesignCanvas {
     enum Action: Equatable {
         case connect(HUDAccountPresentation.Region), refresh, disconnect
         case selectRegion(HUDAccountPresentation.Region), selectRole(String)
         case selectHeaderMode(HUDAccountPresentation.HeaderMode)
         case setSyncProfile(Bool), setSyncAvatar(Bool)
+        case setSyncField(HUDAccountPresentation.SyncField, Bool)
     }
-    struct Control {
-        let id: String, label: String
-        let rect: CGRect
-        var enabled = true
-    }
-    private enum Menu: Equatable { case region, role, header, disconnect }
-    private struct Choice { let id: String, title: String; let selected: Bool }
-    let layer = CALayer()
-    private let face = CALayer(), menuLayer = CALayer(), menuClip = CALayer(), menuRows = CALayer()
-    private var mainControls: [Control] = [], menuControls: [Control] = []
-    private var menu: Menu?, choices: [Choice] = [], selectedChoice = 0
-    private var menuRect = CGRect.zero, listRect = CGRect.zero
-    private var menuOffset: CGFloat = 0
-    private var active = false, needsRender = true
-    private var dark = true, scale: CGFloat = 2
-    private var accent = HUDRuntimeAppearance.accent
-    private var retiringMenu: CALayer?, retireWork: DispatchWorkItem?
     private(set) var presentation = HUDAccountPresentation()
-    private(set) var renderCount = 0
-    var onChange: (() -> Void)?
     var onAction: ((Action) -> Void)?
-    var isPopoverOpen: Bool { menu != nil }
-    var popoverBounds: CGRect? { menu == nil ? nil : menuRect }
-    var accessibleActions: [Control] { menu == nil ? mainControls : menuControls }
-    var menuScrollOffset: CGFloat { menuOffset }
+    /// What the page's layout depends on; anything else updates in place.
+    private struct Structure: Equatable {
+        let linked: Bool, region: HUDAccountPresentation.Region, reconnect: Bool, synced: Bool, language: AppLanguage
+    }
+    private var renderedStructure: Structure?
+    private var binders: [() -> Void] = []
+    private var sanity: SanityReadout?
+    private var clock: Timer?
+    private var awaitingRefresh = false, awaitingUnlink = false
+    /// Sanity is projected locally between network samples (tests inject time).
+    var now: () -> Date = Date.init
 
-    override init() {
-        super.init()
-        layer.name = "account"; layer.bounds = CGRect(x: 0, y: 0, width: 400, height: 334)
-        face.frame = layer.bounds; layer.addSublayer(face)
-        menuLayer.frame = layer.bounds; menuLayer.name = "account.secondaryMenu"; menuLayer.zPosition = 3_000_000
-        layer.addSublayer(menuLayer)
-    }
-    deinit { retireWork?.cancel() }
-    func makeContent(for module: HUDModule, style: HUDModuleContentStyle) -> CALayer {
-        dark = style.dark; scale = style.contentsScale; accent = style.accent
-        needsRender = true; render(); return layer
-    }
+    init(context: HUDDesignContext) { super.init(module: .account, context: context) }
+    deinit { clock?.invalidate() }
+
+    // MARK: Presentation
+
     func update(_ value: HUDAccountPresentation) {
-        guard presentation != value else { return }
-        let old = presentation; presentation = value; needsRender = true
-        if old.region != value.region || old.roles != value.roles || value.busy || !value.isLinked && menu == .disconnect {
-            dismissPopover(animated: false)
-        }
-        if active { render() }
-    }
-    func updateRenderScale(_ value: CGFloat) {
-        guard value.isFinite, scale != min(3, max(1, value)) else { return }
-        scale = min(3, max(1, value)); needsRender = true; if active { render() }
-    }
-    func setVisible(_ value: Bool) {
-        active = value
-        if value { if needsRender { render() } }
-        else { dismissPopover(animated: false); clearRetiringMenu() }
-    }
-    @discardableResult func mouseDown(at point: CGPoint) -> Bool {
-        if menu != nil {
-            if let control = menuControls.last(where: { $0.enabled && $0.rect.contains(point) }) { perform(control.id) }
-            else if !menuRect.contains(point) { dismissPopover() }
-            return true
-        }
-        guard layer.bounds.contains(point) else { return false }
-        if let control = mainControls.last(where: { $0.enabled && $0.rect.contains(point) }) { perform(control.id) }
-        return true
-    }
-    func perform(_ id: String) {
-        guard accessibleActions.contains(where: { $0.id == id && $0.enabled }) else { return }
-        switch id {
-        case "connect": onAction?(.connect(presentation.region))
-        case "refresh": onAction?(.refresh)
-        case "disconnect": show(.disconnect)
-        case "region": show(.region)
-        case "role": show(.role)
-        case "header": show(.header)
-        case "syncProfile": onAction?(.setSyncProfile(!presentation.syncProfile))
-        case "syncAvatar": onAction?(.setSyncAvatar(!presentation.syncAvatar))
-        case "menu:cancel": dismissPopover()
-        case "menu:disconnect": dismissPopover(); onAction?(.disconnect)
-        default:
-            if id.hasPrefix("region:"), let value = HUDAccountPresentation.Region(rawValue: String(id.dropFirst(7))) {
-                dismissPopover(); if value != presentation.region { onAction?(.selectRegion(value)) }
-            } else if id.hasPrefix("header:"), let value = HUDAccountPresentation.HeaderMode(rawValue: String(id.dropFirst(7))) {
-                dismissPopover(); if value != presentation.headerMode { onAction?(.selectHeaderMode(value)) }
-            } else if id.hasPrefix("role:") {
-                let value = String(id.dropFirst(5)); dismissPopover()
-                if value != presentation.selectedRoleID { onAction?(.selectRole(value)) }
+        guard value != presentation else { return }
+        let old = presentation
+        presentation = value
+        guard renderedLanguage != nil else { return }
+        if old.region != value.region || old.roles != value.roles || (value.busy && !old.busy) { closeMenu() }
+        if old.region != value.region {
+            // Each region keeps its own link: Global is forward (spec §3.21).
+            awaitingUnlink = false; awaitingRefresh = false
+            navigate(dx: value.region == .global ? 1 : -1)
+        } else if old.isLinked != value.isLinked {
+            navigate(dx: value.isLinked ? 1 : -1)
+            if value.isLinked { toast(icon: .link2, "Account linked", "账户已绑定", detail: value.region.title) }
+            else if awaitingUnlink { toast(icon: .x, "Disconnected", "已断开连接") }
+            awaitingUnlink = false; awaitingRefresh = false
+        } else if structure != renderedStructure { rerender() } else { binders.forEach { $0() } }
+        if awaitingRefresh, old.status == .refreshing, value.status != .refreshing {
+            awaitingRefresh = false
+            if value.status == .connected {
+                toast(icon: .refresh, "Sanity refreshed", "理智已刷新", detail: sanityPresentation.map { "\($0.current) / \($0.maximum)" })
             }
         }
-    }
-    @discardableResult func scroll(at point: CGPoint, delta: CGFloat) -> Bool {
-        guard menu != nil else { return false }
-        guard menuRect.contains(point), menu != .disconnect, delta.isFinite else { return true }
-        let next = min(max(0, CGFloat(choices.count) * 31 - listRect.height), max(0, menuOffset + min(250, max(-250, delta))))
-        guard next != menuOffset else { return true }
-        let old = (menuRows.presentation() ?? menuRows).position
-        menuOffset = next; layoutMenuRows()
-        if !HUDRuntimeAppearance.reduceMotion {
-            let move = CABasicAnimation(keyPath: "position"); move.fromValue = old; move.toValue = menuRows.position
-            move.duration = 0.08; move.timingFunction = CAMediaTimingFunction(name: .easeOut); menuRows.add(move, forKey: "account.menu.scroll")
+        if isActive, value.statusMessage != old.statusMessage, !value.statusMessage.isEmpty {
+            toast(icon: .warn, "Notice", "提示", detail: value.statusMessage)
         }
-        onChange?(); return true
+        updateClock()
     }
-    func moveMenuSelection(_ direction: Int) {
-        guard menu != nil, !choices.isEmpty else { return }
-        selectedChoice = min(choices.count - 1, max(0, selectedChoice + direction))
-        let top = CGFloat(selectedChoice) * 31
-        let desired = min(top, max(menuOffset, top + 28 - listRect.height))
-        _ = scroll(at: CGPoint(x: listRect.midX, y: listRect.midY), delta: desired - menuOffset)
+
+    private var structure: Structure {
+        Structure(linked: presentation.isLinked, region: presentation.region, reconnect: presentation.needsReconnect,
+                  synced: !presentation.lastSync.isEmpty, language: L10n.resolvedLanguage)
     }
-    func activateMenuSelection() {
-        guard menu != nil else { return }
-        if menu == .disconnect { perform("menu:cancel") }
-        else if choices.indices.contains(selectedChoice) { perform(choices[selectedChoice].id) }
+
+    private var sanityPresentation: HypergryphSanityPresentation? { presentation.snapshot?.sanityPresentation(at: now()) }
+
+    // MARK: Lifecycle
+
+    override func didActivate() { updateClock(); sanity?.render(sanityPresentation, at: now()) }
+    override func didDeactivate() { clock?.invalidate(); clock = nil; awaitingRefresh = false }
+    override func willLeave() { didDeactivate() }
+
+    /// The recovery countdowns are a live readout: one tick a second while
+    /// the linked page is on screen, none otherwise.
+    private func updateClock() {
+        let wanted = isActive && presentation.isLinked && presentation.snapshot?.stamina != nil
+        if !wanted { clock?.invalidate(); clock = nil; return }
+        guard clock == nil else { return }
+        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            self.sanity?.render(self.sanityPresentation, at: self.now())
+        }
+        timer.tolerance = 0.1
+        RunLoop.main.add(timer, forMode: .common)
+        clock = timer
     }
-    func dismissPopover(animated: Bool = true) {
-        guard menu != nil else { return }
-        clearRetiringMenu()
-        if animated && active && !HUDRuntimeAppearance.reduceMotion {
-            let old = CALayer(); old.frame = layer.bounds
-            // Move existing tiny layers, avoiding a bitmap of the HUD.
-            for piece in menuLayer.sublayers ?? [] { old.addSublayer(piece) }
-            layer.addSublayer(old); old.zPosition = menuLayer.zPosition; old.opacity = 0; retiringMenu = old
-            let fade = CABasicAnimation(keyPath: "opacity"); fade.fromValue = 1; fade.toValue = 0
-            let move = CABasicAnimation(keyPath: "transform.translation.y"); move.fromValue = 0; move.toValue = -5
-            let group = CAAnimationGroup(); group.animations = [fade, move]; group.duration = 0.14
-            group.timingFunction = CAMediaTimingFunction(name: .easeOut); old.add(group, forKey: "account.menu.close")
-            let work = DispatchWorkItem { [weak self, weak old] in
-                guard let self, self.retiringMenu === old else { return }; self.clearRetiringMenu()
+
+    // MARK: Pages
+
+    override func buildPage(_ page: HUDDesignPage) {
+        binders = []; sanity = nil
+        renderedStructure = structure
+        let p = presentation
+        var actions: [HUDControl] = []
+        if p.isLinked {
+            if p.needsReconnect {
+                let reconnect = HUDButton(id: "reconnect", title: L10n.text("Reconnect", "重新连接"), icon: .link2, kind: .primary, size: .small, env: env)
+                reconnect.place(at: .zero)
+                reconnect.onActivate = { [weak self] in guard let self else { return }; self.onAction?(.connect(self.presentation.region)) }
+                bind { [weak reconnect] p in reconnect?.isEnabled = !p.busy }
+                actions.append(reconnect)
             }
-            retireWork = work; DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
-        } else { menuLayer.sublayers?.forEach { $0.removeFromSuperlayer() } }
-        menu = nil; choices = []; menuControls = []; menuOffset = 0; onChange?()
-    }
-    private func clearRetiringMenu() { retireWork?.cancel(); retireWork = nil; retiringMenu?.removeFromSuperlayer(); retiringMenu = nil }
-    private func show(_ value: Menu) {
-        dismissPopover(animated: false); clearRetiringMenu(); menu = value; menuOffset = 0
-        switch value {
-        case .region:
-            choices = HUDAccountPresentation.Region.allCases.map { Choice(id: "region:" + $0.rawValue, title: $0.title, selected: $0 == presentation.region) }
-            menuRect = CGRect(x: 174, y: 112, width: 214, height: 76)
-        case .header:
-            choices = HUDAccountPresentation.HeaderMode.allCases.map { Choice(id: "header:" + $0.rawValue, title: $0.title, selected: $0 == presentation.headerMode) }
-            menuRect = CGRect(x: 148, y: 190, width: 240, height: 138)
-        case .role:
-            choices = presentation.roles.map { Choice(id: "role:" + $0.id, title: $0.subtitle.isEmpty ? $0.title : $0.title + " · " + $0.subtitle, selected: $0.id == presentation.selectedRoleID) }
-            menuRect = CGRect(x: 112, y: 151, width: 276, height: min(174, CGFloat(choices.count) * 31 + 14))
-        case .disconnect:
-            choices = []; menuRect = CGRect(x: 144, y: 80, width: 244, height: 88)
+            let disconnect = HUDButton(id: "disconnect", title: L10n.text("Disconnect", "解除绑定"), icon: .x, kind: .secondary, size: .small, env: env)
+            disconnect.place(at: .zero)
+            disconnect.onActivate = { [weak self] in self?.confirmDisconnect() }
+            bind { [weak disconnect] p in disconnect?.isEnabled = !p.busy }
+            actions.append(disconnect)
         }
-        selectedChoice = choices.firstIndex(where: \.selected) ?? 0
-        paintMenu()
-        if !HUDRuntimeAppearance.reduceMotion {
-            let fade = CABasicAnimation(keyPath: "opacity"); fade.fromValue = 0; fade.toValue = 1
-            let move = CABasicAnimation(keyPath: "transform.translation.y"); move.fromValue = -5; move.toValue = 0
-            let group = CAAnimationGroup(); group.animations = [fade, move]; group.duration = 0.16
-            group.timingFunction = CAMediaTimingFunction(name: .easeOut); menuLayer.add(group, forKey: "account.menu.open")
+        header.configure(crumbs: ["ACCOUNT"], code: "MOD-16", title: HUDModuleTitle("Account", "账户绑定"),
+                         counter: p.isLinked ? "LINKED" : "OFFLINE", showsBack: false, actions: actions)
+        let regions = HUDAccountPresentation.Region.allCases
+        let segmented = HUDSegmentedControl(id: "region", label: L10n.text("Region", "地区"), options: regions.map(\.title),
+                                            selectedIndex: regions.firstIndex(of: p.region) ?? 0, width: HUDMetric.box.width, env: env)
+        segmented.onChange = { [weak self] index in
+            guard let self, regions.indices.contains(index), regions[index] != self.presentation.region else { return }
+            self.onAction?(.selectRegion(regions[index]))
         }
-        onChange?()
+        bind { [weak segmented] p in
+            segmented?.select(regions.firstIndex(of: p.region) ?? 0, notify: false)
+            segmented?.segments.forEach { $0.isEnabled = !p.busy }
+        }
+        add(segmented.layer, at: CGPoint(x: 0, y: HUDMetric.headerHeight), to: page)
+        // The page retains the group: its segments only hold it weakly.
+        page.add(segmented); page.add(segmented.segments)
+        let top = HUDMetric.headerHeight + 30 + 10
+        if p.isLinked { buildLinked(page, top: top) } else { buildOffline(page, top: top) }
+        binders.forEach { $0() }
     }
-    private var ink: NSColor { NSColor(white: dark ? 0.95 : 0.12, alpha: 1) }
+
+    private func buildOffline(_ page: HUDDesignPage, top: CGFloat) {
+        let size = CGSize(width: HUDMetric.box.width, height: 250), reserved: CGFloat = 16 + 40
+        let panel = HUDEmptyState.make(title: L10n.text("NOT LINKED", "未绑定"), subtitle: L10n.text("Hypergryph account", "鹰角网络通行证"),
+                                       size: size, reserving: reserved, env: env)
+        let connect = HUDButton(id: "connect", title: L10n.text("Connect", "绑定账户"), icon: .link2, kind: .primary, size: .large, env: env)
+        let y = HUDEmptyState.textBottom(size: size, subtitle: true, reserving: reserved) + 16
+        connect.place(at: CGPoint(x: ((size.width - connect.preferredWidth) / 2).rounded(), y: y))
+        connect.onActivate = { [weak self] in guard let self else { return }; self.onAction?(.connect(self.presentation.region)) }
+        bind { [weak connect] p in connect?.isEnabled = !p.busy }
+        HUDMotion.perform { panel.addSublayer(connect.layer) }
+        add(panel, at: CGPoint(x: 0, y: top), to: page)
+        page.add(connect)
+    }
+
+    private func buildLinked(_ page: HUDDesignPage, top: CGFloat) {
+        // Hero: sanity (flex 1) and recovery (flex .8), gap 10.
+        let width = HUDMetric.box.width, sanityWidth = ((width - 10) / 1.8).rounded()
+        let readout = SanityReadout(sanityWidth: sanityWidth, recoveryWidth: width - 10 - sanityWidth, env: env)
+        readout.plate.onActivate = { [weak self] in self?.showRecovery() }
+        sanity = readout
+        bind { [weak self, weak readout] _ in if let self { readout?.render(self.sanityPresentation, at: self.now()) } }
+        add(readout.layer, at: CGPoint(x: 0, y: top), to: page)
+        page.add(readout.plate)
+        var y = top + readout.layer.bounds.height + 8
+        // Rows: game role, header display, sync with refresh.
+        let role = dropdown("role", L10n.text("Game role", "游戏角色"), width: 240) { [weak self] anchor in self?.openRoleMenu(anchor) }
+        bind { [weak role] p in
+            role?.setValue(p.roles.first { $0.id == p.selectedRoleID }?.title ?? L10n.text("Choose account", "选择账户"))
+            role?.isEnabled = !p.roles.isEmpty && !p.busy
+        }
+        let headerMode = dropdown("header", L10n.text("Header display", "顶部显示")) { [weak self] anchor in self?.openHeaderMenu(anchor) }
+        bind { [weak headerMode] p in headerMode?.setValue(p.headerMode.title) }
+        let refresh = HUDIconButton(id: "refresh", label: L10n.text("Refresh", "刷新"), icon: .refresh, env: env)
+        refresh.onActivate = { [weak self] in
+            guard let self, !self.presentation.busy else { return }
+            self.awaitingRefresh = true
+            self.onAction?(.refresh)
+        }
+        bind { [weak refresh] p in refresh?.isEnabled = !p.busy && !p.needsReconnect }
+        let sync = HUDToggle(id: "syncProfile", label: L10n.text("Sync personal profile", "同步个人名片"), isOn: presentation.syncProfile, env: env)
+        sync.onChange = { [weak self] on in self?.onAction?(.setSyncProfile(on)) }
+        bind { [weak sync] p in sync?.setOn(p.syncProfile, animated: true) }
+        let rows = [
+            row("role", L10n.text("Game role", "游戏角色"), [role.layer]),
+            row("header", L10n.text("Header display", "顶部显示"), [headerMode.layer]),
+            row("sync", L10n.text("Sync personal profile", "同步个人名片"), [refresh.layer, sync.layer],
+                sublabel: presentation.lastSync.isEmpty ? nil : presentation.lastSync)
+        ]
+        if let syncRow = rows.last { bind { [weak syncRow] p in if !p.lastSync.isEmpty { syncRow?.setSublabel(p.lastSync) } } }
+        for row in rows {
+            add(row.layer, at: CGPoint(x: 0, y: y), to: page)
+            page.add(row)
+            y += row.layer.bounds.height + HUDMetric.rowGap
+        }
+        page.add([role, headerMode, refresh, sync])
+        // Field chips: wrap, gap 6.
+        let chips = HUDLayer.plain("account.chips")
+        var chipControls: [AccountChip] = []
+        for field in HUDAccountPresentation.SyncField.allCases {
+            let chip = AccountChip(id: "field:" + field.rawValue, title: field.title, isOn: presentation.syncFields.contains(field), env: env)
+            chip.onToggle = { [weak self] on in self?.onAction?(.setSyncField(field, on)) }
+            bind { [weak chip] p in chip?.setOn(p.syncFields.contains(field)) }
+            chipControls.append(chip)
+        }
+        let avatar = AccountChip(id: "field:avatar", title: L10n.text("Avatar", "头像"), isOn: presentation.syncAvatar, env: env)
+        avatar.onToggle = { [weak self] on in self?.onAction?(.setSyncAvatar(on)) }
+        bind { [weak avatar] p in avatar?.setOn(p.syncAvatar) }
+        chipControls.append(avatar)
+        // A chip's check changes its width: the row wraps again in place.
+        let layout = { [weak chips] in
+            guard let chips else { return }
+            var x: CGFloat = 0, line: CGFloat = 0
+            HUDMotion.perform {
+                for chip in chipControls {
+                    let w = chip.layer.bounds.width
+                    if x > 0, x + w > width { x = 0; line += 24 + 6 }
+                    chip.layer.frame.origin = CGPoint(x: x, y: line)
+                    if chip.layer.superlayer !== chips { chips.addSublayer(chip.layer) }
+                    x += w + 6
+                }
+                chips.bounds.size = CGSize(width: width, height: line + 24)
+            }
+        }
+        chipControls.forEach { $0.onResize = layout }
+        layout()
+        add(chips, at: CGPoint(x: 0, y: y - HUDMetric.rowGap + 8), to: page)
+        page.add(chipControls)
+    }
+
+    private func confirmDisconnect() {
+        confirm(HUDConfirmRequest(id: "disconnect", title: L10n.text("Disconnect this account?", "解除此账户绑定？"),
+                                  message: presentation.region.title, confirmTitle: L10n.text("Disconnect", "解除绑定"),
+                                  danger: true, icon: .x)) { [weak self] in
+            guard let self, self.presentation.isLinked else { return }
+            self.awaitingUnlink = true
+            self.onAction?(.disconnect)
+        }
+    }
+
+    /// The sanity plate's press: next point and full recovery (Appendix C).
+    private func showRecovery() {
+        let value = sanityPresentation
+        let next = HUDAccountGauge.countdown(until: value?.nextRecoveryAt, at: now(), hours: true)
+        let full = HUDAccountGauge.countdown(until: value?.fullRecoveryAt, at: now(), hours: true)
+        context.toast(HUDToastRequest(icon: .bolt, title: L10n.text("Next \(next)", "下次回复 \(next)"),
+                                      caption: L10n.text("All recovered \(full)", "全部回复 \(full)")))
+    }
+
+    private func openRoleMenu(_ anchor: HUDControl) {
+        let p = presentation
+        let items = p.roles.map { HUDMenu.Item(id: $0.id, title: $0.subtitle.isEmpty ? $0.title : $0.title + " / " + $0.subtitle,
+                                               selected: $0.id == p.selectedRoleID) }
+        guard !items.isEmpty else { return }
+        openMenu(id: "role", items: items, anchor: anchor) { [weak self] item in
+            guard let self, item.id != self.presentation.selectedRoleID else { return }
+            self.onAction?(.selectRole(item.id))
+        }
+    }
+
+    private func openHeaderMenu(_ anchor: HUDControl) {
+        let items = HUDAccountPresentation.HeaderMode.allCases.map {
+            HUDMenu.Item(id: $0.rawValue, title: $0.title, selected: $0 == presentation.headerMode)
+        }
+        openMenu(id: "header", items: items, anchor: anchor) { [weak self] item in
+            guard let self, let mode = HUDAccountPresentation.HeaderMode(rawValue: item.id), mode != self.presentation.headerMode else { return }
+            self.onAction?(.selectHeaderMode(mode))
+        }
+    }
+
+    // MARK: Building helpers
+
+    private func bind(_ update: @escaping (HUDAccountPresentation) -> Void) {
+        binders.append { [weak self] in if let self { update(self.presentation) } }
+    }
+
+    private func add(_ layer: CALayer, at origin: CGPoint, to page: HUDDesignPage) {
+        HUDMotion.perform { layer.frame.origin = origin; page.layer.addSublayer(layer) }
+        page.stagger(layer)
+    }
+
+    private func row(_ id: String, _ title: String, _ cluster: [CALayer], sublabel: String? = nil) -> HUDRowPlate {
+        // A compact row has no room for a sublabel under the micro tag: the
+        // sync row with its last-sync time keeps the standard height.
+        let plate = HUDRowPlate(id: "row:" + id, title: title, sublabel: sublabel, variant: sublabel == nil ? .compact : .standard, env: env)
+        plate.setCluster(cluster)
+        return plate
+    }
+
+    private func dropdown(_ id: String, _ label: String, width: CGFloat? = nil, open: @escaping (HUDDropdown) -> Void) -> HUDDropdown {
+        let field = HUDDropdown(id: id, label: label, value: "", width: width, env: env)
+        field.onActivate = { [weak self, weak field] in
+            guard let self, let field else { return }
+            if self.isMenuOpen { self.closeMenu() } else { open(field) }
+        }
+        return field
+    }
+}
+
+/// The hero row's two dark stat plates (spec §3.21): SANITY with the 56 px
+/// numeral, `/ max` and 24 capacity cells; NEXT POINT and ALL RECOVERED. The
+/// values change in place every second.
+private final class SanityReadout {
+    let layer = HUDLayer.plain("account.hero")
+    let plate: HUDControl
+    private let number = HUDTextLayer(style: HUDType.numeral.sized(56))
+    private let maximum = HUDTextLayer(style: HUDType.label)
+    private let cells: HUDCells
+    private let next = HUDTextLayer(style: HUDType.statValue)
+    private let full = HUDTextLayer(style: HUDType.statValue)
+    private var rendered: (String, String, Int, String, String)?
+    private let env: HUDDesignEnvironment
+    static let height: CGFloat = 9 + 10 + 4 + 56 * 0.9 + 8 + 8 + 10
+
+    init(sanityWidth: CGFloat, recoveryWidth: CGFloat, env: HUDDesignEnvironment) {
+        self.env = env
+        let height = Self.height
+        let sanity = Self.statPlate(CGSize(width: sanityWidth, height: height), env: env)
+        let recovery = Self.statPlate(CGSize(width: recoveryWidth, height: height), env: env)
+        plate = HUDControl(id: "sanity", label: L10n.text("Sanity", "理智"), env: env, layer: sanity)
+        cells = HUDCells(count: 24, width: sanityWidth - 24, capacity: true, height: 8, env: env)
+        HUDMotion.perform {
+            layer.bounds = CGRect(x: 0, y: 0, width: sanityWidth + 10 + recoveryWidth, height: height)
+            sanity.frame.origin = .zero
+            recovery.frame.origin = CGPoint(x: sanityWidth + 10, y: 0)
+            let label = HUDTextLayer("SANITY", style: HUDType.label)
+            label.lineFrame = CGRect(x: 12, y: 9, width: sanityWidth - 24, height: 10)
+            cells.layer.frame.origin = CGPoint(x: 12, y: height - 10 - 8)
+            [label, number, maximum, cells.layer].forEach(sanity.addSublayer)
+            for (index, (title, value)) in [("NEXT POINT", next), ("ALL RECOVERED", full)].enumerated() {
+                let top: CGFloat = 9 + CGFloat(index) * (10 + 6 + 18 + 12)
+                let caption = HUDTextLayer(title, style: HUDType.label)
+                caption.lineFrame = CGRect(x: 12, y: top, width: recoveryWidth - 24, height: 10)
+                value.lineFrame = CGRect(x: 12, y: top + 16, width: recoveryWidth - 24, height: 18)
+                recovery.addSublayer(caption); recovery.addSublayer(value)
+            }
+            layer.addSublayer(sanity); layer.addSublayer(recovery)
+        }
+        plate.setTarget(sanity.bounds)
+        env.applyScale(to: layer)
+    }
+
+    /// The `.sp` plate: dark gradient, #343434 ring, grey L-corner.
+    private static func statPlate(_ size: CGSize, env: HUDDesignEnvironment) -> CALayer {
+        let plate = HUDLayer.plain("account.stat")
+        HUDMotion.perform {
+            plate.bounds = CGRect(origin: .zero, size: size)
+            plate.showArtwork(HUDArtwork.plate([HUDColor.tone(0x232323), HUDColor.tone(0x1B1B1B)], size: size, cut: 0, scale: env.renderScale),
+                              scale: env.renderScale)
+            plate.borderWidth = 1; plate.borderColor = HUDColor.ringTab
+            let corner = HUDLayer.shape()
+            corner.frame = CGRect(x: 0, y: 0, width: 8, height: 8)
+            corner.path = HUDShape.cornerMark(corner.bounds, length: 8, width: 2, corner: .topLeft)
+            corner.fillColor = HUDColor.tone(0x6A6A6A)
+            plate.addSublayer(corner)
+        }
+        return plate
+    }
+
+    func render(_ value: HypergryphSanityPresentation?, at date: Date) {
+        let current = value.map { String($0.current) } ?? "—"
+        let limit = "/ " + (value.map { String($0.maximum) } ?? "—")
+        let filled = value.map { $0.maximum > 0 ? Int((Double($0.current) / Double($0.maximum) * 24).rounded()) : 0 } ?? 0
+        let nextText = HUDAccountGauge.countdown(until: value?.nextRecoveryAt, at: date, hours: true)
+        let fullText = HUDAccountGauge.countdown(until: value?.fullRecoveryAt, at: date, hours: true)
+        let state = (current, limit, min(24, filled), nextText, fullText)
+        if let rendered, rendered == state { return }
+        let first = rendered == nil
+        rendered = state
+        HUDMotion.perform {
+            number.text = current
+            let width = ceil(number.preferredWidth)
+            number.lineFrame = CGRect(x: 12, y: 23, width: width + 1, height: 56 * 0.9)
+            maximum.text = limit
+            maximum.lineFrame = CGRect(x: 12 + width + 10, y: 23 + 56 * 0.9 - 8 - 10, width: ceil(maximum.preferredWidth) + 1, height: 10)
+            next.text = nextText
+            full.text = fullText
+        }
+        cells.set(filled: state.2, animated: !first)
+        plate.label = L10n.text("Sanity", "理智") + " " + current + " " + limit
+        env.applyScale(to: number); env.applyScale(to: maximum)
+    }
+}
+
+/// A field chip that toggles (spec §3.21): 24 px tall, yellow with a check
+/// when on, outlined when off.
+private final class AccountChip: HUDControl {
+    private(set) var isOn: Bool
+    var onToggle: ((Bool) -> Void)?
+    var onResize: (() -> Void)?
+    private let check = HUDIconLayer(.check, size: 10, color: HUDColor.nearBlack)
+    private let text: HUDTextLayer
+    private let title: String
+
+    init(id: String, title: String, isOn: Bool, env: HUDDesignEnvironment) {
+        self.isOn = isOn; self.title = title
+        text = HUDTextLayer(title, style: HUDType.chip)
+        super.init(id: id, label: title, env: env)
+        HUDMotion.perform { layer.addSublayer(check); layer.addSublayer(text) }
+        render()
+    }
+
+    func setOn(_ value: Bool) { guard value != isOn else { return }; isOn = value; render(); onResize?() }
+
     private func render() {
-        needsRender = false; renderCount += 1
-        CATransaction.begin(); CATransaction.setDisableActions(true)
-        face.sublayers?.forEach { $0.removeFromSuperlayer() }; mainControls = []
-        text("// " + L10n.text("Account", "账户绑定"), CGRect(x: 12, y: 8, width: 244, height: 24), size: 17, parent: face)
-        addButton("connect", presentation.busy ? L10n.text("Connecting…", "正在连接…") : presentation.isLinked ? L10n.text("Reconnect", "重新连接") : L10n.text("Connect", "绑定账户"), CGRect(x: 276, y: 7, width: 112, height: 28), enabled: !presentation.busy, strong: true)
-        let rule = CALayer(); rule.frame = CGRect(x: 12, y: 40, width: 376, height: 1); rule.backgroundColor = ink.withAlphaComponent(0.2).cgColor; face.addSublayer(rule)
-        let status: String
-        switch presentation.status {
-        case .disconnected: status = L10n.text("Not connected", "未绑定")
-        case .connecting: status = L10n.text("Connecting…", "正在连接…")
-        case .connected: status = presentation.accountName.isEmpty ? L10n.text("Connected", "已绑定") : presentation.accountName
-        case .refreshing: status = L10n.text("Syncing…", "正在同步…")
-        case .failed: status = L10n.text("Connection unavailable", "连接不可用")
+        HUDMotion.perform {
+            let width = ceil(text.preferredWidth)
+            var x: CGFloat = 7
+            check.isHidden = !isOn
+            if isOn { check.frame = CGRect(x: x, y: 7, width: 10, height: 10); x += 15 }
+            text.textStyle = HUDType.chip.colored(isOn ? HUDColor.nearBlack : HUDColor.tone(0xCFCFCF))
+            text.lineFrame = CGRect(x: x, y: 7.25, width: width + 1, height: 9.5)
+            layer.bounds = CGRect(x: 0, y: 0, width: x + width + 7, height: 24)
+            layer.backgroundColor = isOn ? HUDColor.yellow : HUDColor.clear
+            layer.borderWidth = isOn ? 0 : 1; layer.borderColor = HUDColor.tone(0x5A5A5A)
         }
-        text(status, CGRect(x: 12, y: 53, width: 295, height: 18), size: 12, parent: face)
-        addButton("refresh", "", CGRect(x: 321, y: 47, width: 28, height: 28), enabled: presentation.isLinked && !presentation.busy)
-        drawRefresh(in: CGRect(x: 326, y: 52, width: 18, height: 18), enabled: presentation.isLinked && !presentation.busy)
-        addButton("disconnect", "×", CGRect(x: 360, y: 47, width: 28, height: 28), enabled: presentation.isLinked && !presentation.busy, accessibility: L10n.text("Disconnect", "解除绑定"))
-        row(L10n.text("Region", "地区"), y: 83)
-        addButton("region", presentation.region.title + "  ▾", CGRect(x: 174, y: 81, width: 214, height: 28), enabled: !presentation.busy)
-        row(L10n.text("Game account", "游戏账户"), y: 122)
-        let role = presentation.roles.first { $0.id == presentation.selectedRoleID }
-        addButton("role", (role?.title ?? L10n.text("Choose account", "选择账户")) + "  ▾", CGRect(x: 174, y: 120, width: 214, height: 28), enabled: !presentation.roles.isEmpty && !presentation.busy)
-        row(L10n.text("Header display", "顶部显示"), y: 161)
-        addButton("header", presentation.headerMode.title + "  ▾", CGRect(x: 174, y: 159, width: 214, height: 28))
-        toggle("syncProfile", L10n.text("Sync personal profile", "同步个人名片"), y: 203, selected: presentation.syncProfile)
-        toggle("syncAvatar", L10n.text("Sync game avatar", "同步游戏头像"), y: 244, selected: presentation.syncAvatar)
-        if !presentation.lastSync.isEmpty { text(presentation.lastSync, CGRect(x: 12, y: 287, width: 376, height: 15), size: 9, color: ink.withAlphaComponent(0.55), parent: face) }
-        if !presentation.statusMessage.isEmpty { text(presentation.statusMessage, CGRect(x: 12, y: 309, width: 376, height: 17), size: 10, color: presentation.status == .failed ? .systemOrange : ink.withAlphaComponent(0.6), parent: face) }
-        if menu != nil { paintMenu() }
-        CATransaction.commit(); onChange?()
+        setTarget(layer.bounds)
+        env.applyScale(to: text)
     }
-    private func row(_ label: String, y: CGFloat) { text(label, CGRect(x: 12, y: y + 5, width: 150, height: 17), size: 11, parent: face) }
-    private func toggle(_ id: String, _ label: String, y: CGFloat, selected: Bool) {
-        row(label, y: y)
-        addButton(id, selected ? "✓" : "", CGRect(x: 360, y: y, width: 28, height: 28), enabled: !presentation.busy, strong: selected, accessibility: label)
+
+    override func activate() {
+        guard isEnabled else { return }
+        isOn.toggle(); render(); onResize?()
+        onToggle?(isOn)
     }
-    private func addButton(_ id: String, _ label: String, _ rect: CGRect, enabled: Bool = true, strong: Bool = false, accessibility: String? = nil) {
-        mainControls.append(Control(id: id, label: accessibility ?? (id == "refresh" ? L10n.text("Refresh", "刷新") : label), rect: rect, enabled: enabled))
-        button(label, rect, parent: face, enabled: enabled, strong: strong)
-    }
-    private func button(_ label: String, _ rect: CGRect, parent: CALayer, enabled: Bool = true, strong: Bool = false, selected: Bool = false, centered: Bool = true) {
-        let plate = CALayer(); plate.frame = rect
-        plate.backgroundColor = (strong ? accent : selected ? accent.withAlphaComponent(0.22) : ink.withAlphaComponent(0.07)).cgColor
-        plate.opacity = enabled ? 1 : 0.4; parent.addSublayer(plate)
-        HUDControlHighlightLayer.add(to: parent, rect: rect, shape: .cutCorner, enabled: enabled, framed: true)
-        text(label, CGRect(x: rect.minX + 7, y: rect.midY - 7, width: rect.width - 14, height: 16), size: 10,
-             color: (strong ? NSColor(white: 0.12, alpha: 1) : ink).withAlphaComponent(enabled ? 1 : 0.4), centered: centered, parent: parent)
-    }
-    private func paintMenu() {
-        guard let menu else { return }
-        CATransaction.begin(); CATransaction.setDisableActions(true)
-        menuLayer.sublayers?.forEach { $0.removeFromSuperlayer() }; menuControls = []
-        let shadow = CALayer(); shadow.frame = menuRect.offsetBy(dx: -3, dy: 4); shadow.backgroundColor = NSColor.black.withAlphaComponent(0.30).cgColor; menuLayer.addSublayer(shadow)
-        let plate = CALayer(); plate.frame = menuRect; plate.backgroundColor = NSColor(white: dark ? 0.08 : 0.92, alpha: 0.98).cgColor
-        plate.borderWidth = 0.7; plate.borderColor = accent.withAlphaComponent(0.7).cgColor; menuLayer.addSublayer(plate)
-        if menu == .disconnect {
-            text(L10n.text("Disconnect this account?", "解除此账户绑定？"), CGRect(x: menuRect.minX + 12, y: menuRect.minY + 13, width: 220, height: 20), size: 12, parent: menuLayer)
-            for (id, glyph, title, x) in [("menu:cancel", "×", L10n.text("Cancel", "取消"), menuRect.maxX - 80), ("menu:disconnect", "✓", L10n.text("Disconnect", "解除绑定"), menuRect.maxX - 40)] {
-                let rect = CGRect(x: x, y: menuRect.maxY - 40, width: 28, height: 28)
-                menuControls.append(Control(id: id, label: title, rect: rect)); button(glyph, rect, parent: menuLayer, strong: id == "menu:disconnect")
-            }
-        } else {
-            listRect = menuRect.insetBy(dx: 8, dy: 7)
-            menuClip.frame = listRect; menuClip.masksToBounds = true; menuLayer.addSublayer(menuClip)
-            menuRows.sublayers?.forEach { $0.removeFromSuperlayer() }; menuRows.anchorPoint = .zero
-            menuRows.bounds = CGRect(x: 0, y: 0, width: listRect.width, height: CGFloat(choices.count) * 31)
-            menuClip.addSublayer(menuRows)
-            for (index, choice) in choices.enumerated() { button(choice.title, CGRect(x: 2, y: CGFloat(index) * 31 + 2, width: listRect.width - 6, height: 26), parent: menuRows, selected: choice.selected, centered: false) }
-            layoutMenuRows()
-        }
-        CATransaction.commit()
-    }
-    private func layoutMenuRows() {
-        CATransaction.begin(); CATransaction.setDisableActions(true)
-        menuRows.position = CGPoint(x: 0, y: -menuOffset)
-        menuControls = choices.enumerated().compactMap { index, choice in
-            let rect = CGRect(x: listRect.minX + 2, y: listRect.minY + CGFloat(index) * 31 + 2 - menuOffset, width: listRect.width - 6, height: 26).intersection(listRect)
-            return rect.isEmpty || rect.isNull ? nil : Control(id: choice.id, label: choice.title, rect: rect)
-        }
-        CATransaction.commit()
-    }
-    private func drawRefresh(in rect: CGRect, enabled: Bool) {
-        let shape = CAShapeLayer(); shape.frame = rect; shape.fillColor = ink.withAlphaComponent(enabled ? 1 : 0.35).cgColor
-        let shaft = CGMutablePath(); shaft.addArc(center: CGPoint(x: 9, y: 9), radius: 6, startAngle: .pi / 3, endAngle: .pi * 65 / 36, clockwise: false)
-        let path = CGMutablePath(); path.addPath(shaft.copy(strokingWithWidth: 1.6, lineCap: .round, lineJoin: .round, miterLimit: 1))
-        path.move(to: CGPoint(x: 15.9, y: 8.2)); path.addLine(to: CGPoint(x: 11.4, y: 8.2)); path.addLine(to: CGPoint(x: 15.9, y: 3.7)); path.closeSubpath()
-        shape.path = path; face.addSublayer(shape)
-    }
-    private func text(_ value: String, _ rect: CGRect, size: CGFloat, color: NSColor? = nil, centered: Bool = false, parent: CALayer) {
-        let label = CATextLayer(); label.frame = rect; label.string = value; label.contentsScale = scale
-        label.font = NSFont.systemFont(ofSize: size, weight: .semibold); label.fontSize = size
-        label.foregroundColor = (color ?? ink).cgColor; label.truncationMode = .end; label.alignmentMode = centered ? .center : .left; parent.addSublayer(label)
-    }
+    override var accessibilityRole: HUDAccessibilityItem.Role? { .toggle(isOn) }
 }

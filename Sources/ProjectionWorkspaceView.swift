@@ -3,6 +3,9 @@ import QuartzCore
 
 /// A full-screen, event-driven drawing plane. Strokes and media references live
 /// in the session model; decoding and playback exist only while this view shows.
+/// Its chrome is the redesign's own: the toolbar panel, menus and pop-overs
+/// (HUDMenu / HUDPopover, the shared custom-colour picker) routed here like a
+/// centre page's, with VoiceOver stand-ins; nothing native but this view.
 final class ProjectionWorkspaceView: NSView, HUDControlFeedbackHost {
     let model: ProjectionModel
     var onClose: (() -> Void)?
@@ -11,11 +14,22 @@ final class ProjectionWorkspaceView: NSView, HUDControlFeedbackHost {
     var shelfChoices: (() -> [NotesShelfMediaChoice])?
     var shelfAccess: ((UUID) throws -> ShelfFileAccess)?
     private(set) var active = false
-    private(set) var secondaryMenu: NotesRetainedMenu?
-    private(set) var toolbar = ProjectionToolbar()
+    let env: HUDDesignEnvironment
+    /// The app's Reduce Motion for this workspace's controls (env reads it).
+    private final class MotionSetting { var reduced = false }
+    private let motion = MotionSetting()
+    let toolbar: ProjectionToolbar
+    /// The toolbar, the open menu or pop-over and the slider bubble.
+    private let chrome = HUDLayer.plain("projection.chrome")
+    private let router = HUDInteractionRouter()
+    private var standIns: HUDAccessibilityStandIns?
+    /// The open menu or pop-over: the action that opened it and its controls.
+    private var popup: (id: String, layer: CALayer, controls: [HUDControl], menu: HUDMenu?)?
+    var popupID: String? { popup?.id }
+    private var chromeTracking = false
     private let background = CALayer(), dots = CAShapeLayer(), strokes = HUDDecorativeContentLayer()
     private let mediaLayer = HUDDecorativeContentLayer(), cursor = CAShapeLayer(), liveStroke = CAShapeLayer()
-    private let message = CATextLayer()
+    private let message = HUDTextLayer(style: HUDTextStyle(size: 12, weight: .bold, color: HUDColor.onDarkTag, tracking: 0.04), alignment: .center)
     private var nodes: [UUID: ProjectionMediaNode] = [:]
     private var tracking: NSTrackingArea?
     private var pendingStroke: NotesDrawingStroke?
@@ -33,7 +47,6 @@ final class ProjectionWorkspaceView: NSView, HUDControlFeedbackHost {
     private(set) var completedImportCountForVerification = 0
     private let importQueue = DispatchQueue(label: "EndfieldHUD.Projection.Import", qos: .utility)
     private var openPanel: NSOpenPanel?
-    private var retiringMenu: CALayer?
     private var toolbarTopInset: CGFloat = 64
     private var dotSize = CGSize.zero
     private var lastBackgroundEnabled: Bool?
@@ -45,23 +58,33 @@ final class ProjectionWorkspaceView: NSView, HUDControlFeedbackHost {
 
     init(model: ProjectionModel, frame: CGRect, reduceMotion: Bool) {
         self.model = model; self.reduceMotion = reduceMotion
+        motion.reduced = reduceMotion
+        env = HUDDesignEnvironment(renderScale: 2, reduceMotion: { [motion] in motion.reduced || HUDRuntimeAppearance.reduceMotion })
+        toolbar = ProjectionToolbar(env: env)
         super.init(frame: frame)
         wantsLayer = true
         layer?.backgroundColor = NSColor.clear.cgColor
-        for item in [background, dots, mediaLayer, strokes, liveStroke, cursor, message, toolbar.artwork] {
+        for item in [background, dots, mediaLayer, strokes, liveStroke, cursor] {
             item.actions = ["position": NSNull(), "bounds": NSNull(), "contents": NSNull(), "opacity": NSNull(), "path": NSNull()]
             layer?.addSublayer(item)
+        }
+        HUDMotion.perform {
+            chrome.zPosition = 3_000_000; chrome.addSublayer(toolbar.layer); chrome.addSublayer(message)
+            layer?.addSublayer(chrome)
         }
         background.name = "projection.background"; dots.name = "projection.dots"
         strokes.name = "projection.strokes"; mediaLayer.name = "projection.media"
         cursor.fillColor = nil; cursor.lineWidth = 1; cursor.zPosition = 500_000
         liveStroke.fillColor = nil; liveStroke.lineCap = .round; liveStroke.lineJoin = .round
-        message.font = NSFont.systemFont(ofSize: 12, weight: .semibold); message.fontSize = 12
-        message.foregroundColor = NSColor.white.cgColor; message.alignmentMode = .center; message.contentsScale = 2
-        message.zPosition = 2_000_001
         toolbar.onAction = { [weak self] in self?.perform($0) }
-        toolbar.onCancel = { [weak self] in self?.onClose?() }
-        addSubview(toolbar)
+        let standIns = HUDAccessibilityStandIns(host: self)
+        standIns.onPerform = { [weak self] id in self?.performControl(id) }
+        standIns.onAdjust = { [weak self] id, value in
+            guard let slider = self?.router.controls.first(where: { $0.id == id }) as? HUDSlider else { return }
+            slider.setValue(value); slider.onChange?(value, true)
+        }
+        self.standIns = standIns
+        refreshRouter()
         registerForDraggedTypes([.fileURL])
         setAccessibilityRole(.group); setAccessibilityLabel(L10n.text("Projection", "投影"))
         layoutWorkspace()
@@ -79,25 +102,31 @@ final class ProjectionWorkspaceView: NSView, HUDControlFeedbackHost {
             importTicket?.cancel(); importTicket = nil
             openPanel?.cancel(nil); openPanel = nil
             pendingStroke = nil; gesture = nil; liveStroke.path = nil; cursor.path = nil
-            closeMenu(animated: false)
+            closePopup(animated: false); router.cancel(); chromeTracking = false
             nodes.values.forEach { $0.presentation.setVisible(false) }
             removeAnimations(layer)
         }
     }
     func update(configuration: AppConfiguration) {
-        reduceMotion = configuration.reduceMotion
+        reduceMotion = configuration.reduceMotion; motion.reduced = reduceMotion
         if reduceMotion { removeAnimations(layer) }
     }
     func dispose() {
         setActive(false); nodes.values.forEach { $0.presentation.dispose() }
         nodes.removeAll(); mediaLayer.sublayers?.forEach { $0.removeFromSuperlayer() }
-        unregisterDraggedTypes()
+        standIns?.update([]); unregisterDraggedTypes()
     }
     func updateScreenGeometry(_ screen: NSScreen) {
         let safe: CGFloat
         if #available(macOS 12.0, *) { safe = screen.safeAreaInsets.top } else { safe = 0 }
         toolbarTopInset = ProjectionToolbar.topInset(safeAreaTop: safe, visibleTop: screen.frame.maxY - screen.visibleFrame.maxY)
         layoutWorkspace()
+    }
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        let scale = window?.backingScaleFactor ?? 2
+        guard scale != env.renderScale else { return }
+        env.renderScale = scale; env.applyScale(to: chrome)
     }
     override func layout() { super.layout(); layoutWorkspace() }
     override func updateTrackingAreas() {
@@ -106,15 +135,19 @@ final class ProjectionWorkspaceView: NSView, HUDControlFeedbackHost {
         let next = NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self)
         addTrackingArea(next); tracking = next
     }
+    /// The toolbar's frame in view coordinates (= chrome coordinates).
+    var toolbarFrame: CGRect { toolbar.layer.frame }
     private func layoutWorkspace() {
         CATransaction.begin(); CATransaction.setDisableActions(true)
-        background.frame = bounds; dots.frame = bounds; strokes.frame = bounds; mediaLayer.frame = bounds
-        toolbar.frame.origin = CGPoint(x: max(6, (bounds.width - toolbar.contentSize.width) / 2), y: min(toolbarTopInset, max(6, bounds.height - toolbar.contentSize.height - 8)))
-        toolbar.artwork.position = toolbar.frame.origin; toolbar.layoutAccessibility()
-        message.frame = CGRect(x: max(10, bounds.midX - 280), y: toolbar.frame.maxY + 10, width: min(560, bounds.width - 20), height: 30)
+        background.frame = bounds; dots.frame = bounds; strokes.frame = bounds; mediaLayer.frame = bounds; chrome.frame = bounds
+        let size = toolbar.contentSize
+        toolbar.layer.frame = CGRect(origin: CGPoint(x: max(6, ((bounds.width - size.width) / 2).rounded()),
+                                                     y: min(toolbarTopInset, max(6, bounds.height - size.height - 8))), size: size)
+        message.lineFrame = CGRect(x: max(10, bounds.midX - 280), y: toolbarFrame.maxY + 18, width: min(560, bounds.width - 20), height: 12)
         for item in model.media { model.setFrame(item.frame, id: item.id, in: bounds) }
-        refreshBackground(); rebuildStrokes(); syncMedia(); positionMenu()
+        refreshBackground(); rebuildStrokes(); syncMedia(); positionPopup()
         CATransaction.commit()
+        updateAccessibility()
     }
     func refreshBackground() {
         CATransaction.begin(); CATransaction.setDisableActions(true)
@@ -174,7 +207,7 @@ final class ProjectionWorkspaceView: NSView, HUDControlFeedbackHost {
             let node: ProjectionMediaNode
             if let existing = nodes[item.id] { node = existing }
             else {
-                node = ProjectionMediaNode(item: item, host: self)
+                node = ProjectionMediaNode(item: item, host: self, env: env)
                 node.onAction = { [weak self] action in
                     guard let self, self.active else { return }
                     if action == "remove" { self.model.removeMedia(item.id); self.syncMedia(); self.onEvent?(.mediaRemoved) }
@@ -190,106 +223,194 @@ final class ProjectionWorkspaceView: NSView, HUDControlFeedbackHost {
             node.presentation.setVisible(bounds.intersects(item.frame))
         }
     }
+
+    // MARK: Actions
+
+    /// Toolbar actions (and the harness's): color:RRGGBB, color:custom (or
+    /// color), pen, eraser, brush, background, appearance, media, clear,
+    /// clear:confirm, close.
     func perform(_ action: String) {
         guard active else { return }
         window?.makeFirstResponder(self)
+        if action.hasPrefix("color:"), let hex = UInt32(action.dropFirst(6), radix: 16) {
+            setPen(color: hex); return
+        }
+        // A second press on the control that opened the menu or pop-over closes it.
+        if let popup, popup.id == action || (popup.id == "color" && action == "color:custom") { closePopup(); return }
         switch action {
         case "close": onClose?()
-        case "clear":
-            let confirmation = ProjectionClearConfirmation()
-            confirmation.onConfirm = { [weak self, weak confirmation] in
-                guard let self, self.active, let confirmation, self.secondaryMenu === confirmation else { return }
-                self.clearContent()
-            }
-            showMenu(confirmation)
-        case "color":
-            let chooser = NotesFormattingControls(kind: "color", dark: true, style: NotesTextStyle(color: NotesRGBA(model.color)))
-            chooser.onChange = { [weak self, weak chooser] change in
-                guard let self, self.active, let chooser, self.secondaryMenu === chooser, case .color(let color) = change else { return }
-                self.model.color = color; self.pendingMenuEvent = .brushChanged
-                self.toolbar.update(self.model); self.updateCursor()
-            }
-            showMenu(chooser)
-        case "brush":
-            let picker = ProjectionAdjustmentMenu(values: [.init(id: "brush", title: L10n.text("Brush thickness", "画笔粗细"), value: model.brushWidth, range: 1...80)])
-            picker.onValue = { [weak self, weak picker] _, value in
-                guard let self, self.active, let picker, self.secondaryMenu === picker else { return }; self.model.setBrushWidth(value); self.pendingMenuEvent = .brushChanged
-                self.toolbar.update(self.model); self.updateCursor()
-            }; showMenu(picker)
+        case "pen": model.erasing = false; toolbar.update(model); updateCursor(); onEvent?(.brushChanged)
         case "eraser": model.erasing.toggle(); toolbar.update(model); updateCursor(); onEvent?(.brushChanged)
         case "background": model.backgroundEnabled.toggle(); refreshBackground(); onEvent?(.backgroundChanged)
+        case "color", "color:custom":
+            let picker = NotesFormatBar.colorPicker(id: "penColor", title: L10n.text("PEN COLOR", "画笔颜色"),
+                                                    color: NotesFormatBar.hex(model.color.cgColor), env: env, bubbleHost: chrome) { [weak self] hex in
+                self?.setPen(color: hex, closing: false)
+            }
+            showPopover("color", picker.popover, controls: picker.controls, anchor: "color:custom")
+        case "brush":
+            let slider = adjustment("brush", L10n.text("Brush thickness", "画笔粗细"), value: Double(model.brushWidth), range: 1...80, format: .pixels) { [weak self] value in
+                guard let self else { return }
+                self.model.setBrushWidth(CGFloat(value)); self.pendingMenuEvent = .brushChanged
+                self.toolbar.update(self.model); self.updateCursor()
+            }
+            showPopover("brush", popover(L10n.text("BRUSH", "画笔"), [slider]), controls: [slider], anchor: "brush")
         case "appearance":
-            let picker = ProjectionAdjustmentMenu(values: [
-                .init(id: "darkness", title: L10n.text("Darkness", "背景深度"), value: model.darkness * 100, range: 0...100),
-                .init(id: "blur", title: L10n.text("Blur", "模糊"), value: model.blur * 100, range: 0...100)])
-            picker.onValue = { [weak self, weak picker] id, value in
-                guard let self, self.active, let picker, self.secondaryMenu === picker else { return }
-                if id == "darkness" { self.model.setDarkness(value / 100) } else { self.model.setBlur(value / 100) }
-                self.pendingMenuEvent = .backgroundChanged
-                self.refreshBackground()
-            }; showMenu(picker)
+            let darkness = adjustment("darkness", L10n.text("Darkness", "背景深度"), value: model.darkness * 100, range: 0...100, format: .percent) { [weak self] value in
+                self?.model.setDarkness(value / 100); self?.pendingMenuEvent = .backgroundChanged; self?.refreshBackground()
+            }
+            let blur = adjustment("blur", L10n.text("Blur", "模糊"), value: model.blur * 100, range: 0...100, format: .percent) { [weak self] value in
+                self?.model.setBlur(value / 100); self?.pendingMenuEvent = .backgroundChanged; self?.refreshBackground()
+            }
+            showPopover("appearance", popover(L10n.text("BACKGROUND", "背景"), [darkness, blur]), controls: [darkness, blur], anchor: "appearance")
         case "media":
-            let chooser = NotesMediaSourceChooser(dark: true)
-            chooser.onChoose = { [weak self, weak chooser] shelf in
-                guard let self, self.active, let chooser, self.secondaryMenu === chooser else { return }; self.closeMenu()
-                if shelf { self.chooseShelf() } else { self.chooseFinder() }
-            }; showMenu(chooser)
+            showMenu("media", items: [HUDMenu.Item(id: "finder", title: L10n.text("Choose in Finder", "从 Finder 选择")),
+                                      HUDMenu.Item(id: "shelf", title: L10n.text("Choose from Shelf", "从暂存架选择"))], anchor: "media") { [weak self] item in
+                guard let self else { return }
+                self.closePopup()
+                if item.id == "shelf" { self.chooseShelf() } else { self.chooseFinder() }
+            }
+        case "clear": showClearConfirmation()
+        case "clear:confirm": clearContent()
         default: break
         }
     }
+
+    private func setPen(color hex: UInt32, closing: Bool = true) {
+        if closing, popup?.id == "color" { closePopup() }
+        model.color = NotesFormatBar.color(hex); model.erasing = false
+        toolbar.update(model); updateCursor()
+        if popup?.id == "color" { pendingMenuEvent = .brushChanged } else { onEvent?(.brushChanged) }
+    }
+
+    /// One labelled slider row of a workspace pop-over (label above, slider below).
+    private func adjustment(_ id: String, _ title: String, value: Double, range: ClosedRange<Double>, format: HUDValueFormat,
+                            change: @escaping (Double) -> Void) -> HUDSlider {
+        let slider = HUDSlider(id: id, label: title, value: min(range.upperBound, max(range.lowerBound, value)),
+                               range: HUDSlider.Range(minimum: range.lowerBound, maximum: range.upperBound, step: 1),
+                               format: format, width: 236, dark: true, showsTicks: false, env: env)
+        slider.bubbleHost = chrome
+        slider.onChange = { value, _ in change(value) }
+        return slider
+    }
+
+    /// A pop-over of labelled sliders, 54 px a row.
+    private func popover(_ title: String, _ sliders: [HUDSlider]) -> HUDPopover {
+        let result = HUDPopover(title: title, width: 260, contentHeight: CGFloat(sliders.count) * 54 - 8, env: env)
+        HUDMotion.perform {
+            for (index, slider) in sliders.enumerated() {
+                let label = HUDTextLayer(slider.label, style: HUDTextStyle(size: 12, weight: .regular, color: HUDColor.tone(0xDDDDDD)))
+                label.lineFrame = CGRect(x: 0, y: CGFloat(index) * 54, width: 236, height: 12)
+                slider.layer.frame.origin = CGPoint(x: 0, y: CGFloat(index) * 54 + 16)
+                result.content.addSublayer(label); result.content.addSublayer(slider.layer)
+            }
+        }
+        env.applyScale(to: result.layer)
+        return result
+    }
+
+    private func showClearConfirmation() {
+        let result = HUDPopover(title: L10n.text("CLEAR ALL", "清空"), width: 280, contentHeight: 18 + 12 + HUDButton.Size.small.height, env: env)
+        let text = HUDTextLayer(L10n.text("Clear drawings and media?", "清空绘画和媒体？"), style: HUDTextStyle(size: 12.5, weight: .regular, color: HUDColor.menuText))
+        let cancel = HUDButton(id: "clear:cancel", title: L10n.text("Cancel", "取消"), kind: .secondary, size: .small, env: env)
+        let confirm = HUDButton(id: "clear:confirm", title: L10n.text("Clear all", "清空"), icon: .trash, kind: .primary, size: .small, env: env)
+        confirm.place(at: CGPoint(x: 256 - confirm.preferredWidth, y: 30))
+        cancel.place(at: CGPoint(x: confirm.layer.frame.minX - 8 - cancel.preferredWidth, y: 30))
+        cancel.onActivate = { [weak self] in self?.closePopup() }
+        confirm.onActivate = { [weak self] in self?.clearContent() }
+        HUDMotion.perform {
+            text.lineFrame = CGRect(x: 0, y: 2, width: 256, height: 12.5)
+            [text, cancel.layer, confirm.layer].forEach(result.content.addSublayer)
+        }
+        env.applyScale(to: result.layer)
+        showPopover("clear", result, controls: [cancel, confirm], anchor: "clear")
+    }
+
     private func clearContent() {
         let hadPendingWork = importing || pendingStroke != nil
         importGeneration += 1; importing = false
         importTicket?.cancel(); importTicket = nil
         let panel = openPanel; openPanel = nil; panel?.cancel(nil)
         pendingStroke = nil; gesture = nil; eraseChanged = false; lastEraserPoint = nil
-        liveStroke.path = nil; message.string = ""
+        liveStroke.path = nil; showMessage("")
         let changed = model.clearContent()
-        rebuildStrokes(); syncMedia(); closeMenu(); updateCursor()
+        rebuildStrokes(); syncMedia(); closePopup(); updateCursor()
         if changed || hadPendingWork { onEvent?(.cleared) }
     }
-    private func showMenu(_ next: NotesRetainedMenu) {
-        if secondaryMenu != nil { closeMenu() }
-        secondaryMenu = next
-        next.onCancel = { [weak self, weak next] in
-            guard let self, let next, self.secondaryMenu === next else { return }; self.closeMenu()
-        }
-        addSubview(next); layer?.addSublayer(next.artwork); next.artwork.zPosition = 3_000_000
-        positionMenu(); animate(next.artwork, opening: true)
-        window?.makeFirstResponder(next); updateCursor()
+
+    // MARK: Menus and pop-overs
+
+    private func showPopover(_ id: String, _ popover: HUDPopover, controls: [HUDControl], anchor: String) {
+        popover.onClose = { [weak self] in self?.closePopup() }
+        open(id, layer: popover.layer, controls: controls + (popover.close.map { [$0] } ?? []), menu: nil, anchor: anchor)
+        positionPopup()
+        if !reduceMotion { popover.playEntrance() }
     }
-    private func positionMenu() {
-        guard let menu = secondaryMenu else { return }
-        CATransaction.begin(); CATransaction.setDisableActions(true)
-        menu.frame.origin = CGPoint(x: min(bounds.maxX - menu.contentSize.width - 8, max(8, toolbar.frame.midX - menu.contentSize.width / 2)), y: toolbar.frame.maxY + 12)
-        menu.artwork.position = menu.frame.origin; menu.layoutAccessibility()
-        CATransaction.commit()
+
+    private func showMenu(_ id: String, items: [HUDMenu.Item], anchor: String, pick: @escaping (HUDMenu.Item) -> Void) {
+        let menu = HUDMenu(id: id, items: items, minimumWidth: 200, env: env)
+        menu.onPick = pick
+        menu.onClose = { [weak self] in self?.closePopup() }
+        open(id, layer: menu.layer, controls: menu.controls, menu: menu, anchor: anchor)
+        positionPopup()
+        if !reduceMotion { menu.playEntrance() }
     }
-    func closeMenu(animated: Bool = true) {
-        retiringMenu?.removeAllAnimations(); retiringMenu?.removeFromSuperlayer(); retiringMenu = nil
-        guard let previous = secondaryMenu else { return }
-        secondaryMenu = nil
+
+    private var popupAnchor: String?
+
+    private func open(_ id: String, layer: CALayer, controls: [HUDControl], menu: HUDMenu?, anchor: String) {
+        if popup != nil { closePopup(animated: false) }
+        popup = (id, layer, controls, menu); popupAnchor = anchor
+        HUDMotion.perform { layer.zPosition = 1; chrome.addSublayer(layer) }
+        toolbar.setOpen(id)
+        refreshRouter(); updateCursor(); refreshControlHighlights()
+    }
+
+    /// Below its toolbar control, kept on screen.
+    private func positionPopup() {
+        guard let popup else { return }
+        let anchor = popupAnchor.flatMap { toolbar.control($0) }.map { chrome.convert($0.rect(in: $0.layer), from: $0.layer) } ?? toolbarFrame
+        let size = popup.layer.bounds.size
+        let x = min(max(8, anchor.maxX - size.width), bounds.width - size.width - 8)
+        HUDMotion.perform { popup.layer.frame = CGRect(origin: CGPoint(x: popup.menu == nil ? x : min(anchor.minX, bounds.width - size.width - 8), y: toolbarFrame.maxY + 8), size: size) }
+    }
+
+    func closePopup(animated: Bool = true) {
+        guard let previous = popup else { return }
+        popup = nil; popupAnchor = nil
+        toolbar.setOpen(nil)
         if let event = pendingMenuEvent { pendingMenuEvent = nil; onEvent?(event) }
+        previous.controls.forEach { ($0 as? HUDSlider)?.cancelDrag(); $0.clearInteractionState() }
         if animated, active, !reduceMotion {
-            previous.detachInputKeepingArtwork(); retiringMenu = previous.artwork
-            animate(previous.artwork, opening: false)
-            CATransaction.begin(); CATransaction.setCompletionBlock { [weak self, weak artwork = previous.artwork] in
-                guard let self, let artwork, self.retiringMenu === artwork else { return }
-                artwork.removeFromSuperlayer(); self.retiringMenu = nil
-            }
-            let fade = CABasicAnimation(keyPath: "opacity"); fade.fromValue = 1; fade.toValue = 0; fade.duration = 0.14
-            previous.artwork.opacity = 0; previous.artwork.add(fade, forKey: "projection.menu.close")
+            let layer = previous.layer
+            CATransaction.begin()
+            CATransaction.setCompletionBlock { [weak layer] in layer?.removeFromSuperlayer() }
+            HUDMotion.animate(layer, "opacity", to: Float(0), duration: 0.14, timing: HUDEasing.ease, env: env, key: "projection.menu.close")
             CATransaction.commit()
-        } else { previous.removeFromSuperview() }
-        window?.makeFirstResponder(self); updateCursor()
+        } else { previous.layer.removeFromSuperlayer() }
+        refreshRouter(); window?.makeFirstResponder(self); updateCursor(); refreshControlHighlights()
     }
-    private func animate(_ target: CALayer, opening: Bool) {
-        guard !reduceMotion else { return }
-        let fade = CABasicAnimation(keyPath: "opacity"); fade.fromValue = opening ? 0 : 1; fade.toValue = opening ? 1 : 0
-        let slide = CABasicAnimation(keyPath: "transform.translation.y"); slide.fromValue = opening ? -5 : 0; slide.toValue = opening ? 0 : -5
-        let group = CAAnimationGroup(); group.animations = [fade, slide]; group.duration = 0.16
-        group.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut); target.add(group, forKey: "projection.menu")
+
+    private func refreshRouter() {
+        router.set(toolbar.controls + (popup?.controls ?? []))
+        updateAccessibility()
     }
+
+    private func updateAccessibility() {
+        standIns?.update(router.accessibilityItems(in: chrome))
+    }
+
+    /// Activates a chrome control by id (VoiceOver stand-ins, tests).
+    func performControl(_ id: String) {
+        guard active, let control = router.controls.first(where: { $0.id == id }) else { return }
+        control.activate()
+    }
+
+    /// The chrome (toolbar, menu or pop-over) under a point.
+    private func chromeContains(_ point: CGPoint) -> Bool {
+        toolbarFrame.contains(point) || popup?.layer.frame.contains(point) == true
+    }
+
     private func chooseFinder() {
         guard let window, !importing else { return }
         let panel = NSOpenPanel(); panel.canChooseDirectories = false; panel.allowsMultipleSelection = true
@@ -302,24 +423,27 @@ final class ProjectionWorkspaceView: NSView, HUDControlFeedbackHost {
         }
     }
     private func chooseShelf() {
-        let picker = NotesShelfMediaPicker(choices: shelfChoices?() ?? [], dark: true)
-        picker.onSelect = { [weak self, weak picker] id in
-            guard let self, self.active, let picker, self.secondaryMenu === picker else { return }; self.closeMenu()
+        let choices = shelfChoices?() ?? []
+        guard !choices.isEmpty else { showMessage(L10n.text("The shelf has no images or videos.", "暂存架中没有图片或视频。")); return }
+        showMenu("shelf", items: choices.map { HUDMenu.Item(id: $0.id.uuidString, title: $0.title, enabled: $0.isSupported && $0.isAvailable) },
+                 anchor: "media") { [weak self] item in
+            guard let self, let id = UUID(uuidString: item.id) else { return }
+            self.closePopup()
             do {
                 guard let access = try self.shelfAccess?(id) else { return }
                 self.importMedia(urls: [access.url], access: access)
-            } catch { self.showError(error.localizedDescription) }
-        }; showMenu(picker)
+            } catch { self.showMessage(error.localizedDescription) }
+        }
     }
     func importMedia(urls: [URL], at point: CGPoint? = nil, access: ShelfFileAccess? = nil) {
         guard active, !importing, !urls.isEmpty else { access?.close(); return }
         guard urls.count <= ProjectionModel.maximumMedia - model.media.count else {
-            access?.close(); showError(L10n.text("Projection supports up to 16 media items.", "投影最多可添加 16 个媒体。")); return
+            access?.close(); showMessage(L10n.text("Projection supports up to 16 media items.", "投影最多可添加 16 个媒体。")); return
         }
         importing = true; importGeneration += 1
         let ticket = ProjectionImportCancellation(); importTicket = ticket
         let token = importGeneration, destination = point ?? CGPoint(x: bounds.midX, y: bounds.midY)
-        message.string = L10n.text("Loading media…", "正在载入媒体…")
+        showMessage(L10n.text("Loading media…", "正在载入媒体…"))
         importQueue.async { [weak self, access, ticket] in
             defer { access?.close() }
             let result = Result { try urls.map { url in
@@ -330,37 +454,56 @@ final class ProjectionWorkspaceView: NSView, HUDControlFeedbackHost {
                 guard let self else { return }
                 self.completedImportCountForVerification += 1
                 guard self.active, self.importGeneration == token, !ticket.isCancelled else { return }
-                self.importing = false; self.importTicket = nil; self.message.string = ""
+                self.importing = false; self.importTicket = nil; self.showMessage("")
                 switch result {
                 case .success(let references):
                     for (index, reference) in references.enumerated() {
                         if self.model.addMedia(reference, at: CGPoint(x: destination.x + CGFloat(index) * 12, y: destination.y + CGFloat(index) * 12), in: self.bounds) != nil { self.onEvent?(.mediaAdded(reference.kind)) }
                     }
                     self.syncMedia()
-                case .failure(let error): self.showError(error.localizedDescription)
+                case .failure(let error): self.showMessage(error.localizedDescription)
                 }
             }
         }
     }
-    private func showError(_ text: String) { message.string = text }
+    private func showMessage(_ text: String) {
+        HUDMotion.perform { message.text = text }
+        env.applyScale(to: message)
+    }
+    var messageForVerification: String { message.text }
+    var popupControlsForVerification: [HUDControl] { popup?.controls ?? [] }
+    var popupLayerForVerification: CALayer? { popup?.layer }
+
+    // MARK: Input
 
     override func mouseMoved(with event: NSEvent) { pointer = convert(event.locationInWindow, from: nil); updateCursor(); refreshControlHighlights() }
     override func mouseEntered(with event: NSEvent) { mouseMoved(with: event) }
     override func mouseExited(with event: NSEvent) { pointer = nil; updateCursor(); refreshControlHighlights() }
-    override func rightMouseDown(with event: NSEvent) { perform("eraser") }
+    override func rightMouseDown(with event: NSEvent) { if popup == nil { perform("eraser") } }
     override func scrollWheel(with event: NSEvent) {
         guard active else { return }
+        let point = convert(event.locationInWindow, from: nil)
+        if let menu = popup?.menu, popup?.layer.frame.contains(point) == true {
+            menu.scroll(by: -event.scrollingDeltaY * (event.hasPreciseScrollingDeltas ? 1 : 12)); return
+        }
+        if chromeContains(point) { return }
         model.setBrushWidth(model.brushWidth + event.scrollingDeltaY * (event.hasPreciseScrollingDeltas ? 0.12 : 1))
         pendingBrushChange = true
         if event.phase.contains(.ended) || event.momentumPhase.contains(.ended) { commitBrushChange() }
-        toolbar.update(model); pointer = convert(event.locationInWindow, from: nil); updateCursor()
+        toolbar.update(model); pointer = point; updateCursor()
     }
     override func mouseDown(with event: NSEvent) {
         guard active else { return }
         window?.makeFirstResponder(self); let point = convert(event.locationInWindow, from: nil); pointer = point
-        if secondaryMenu != nil { closeMenu(); return }
+        if chromeContains(point) {
+            chromeTracking = true
+            router.pointerDown(at: point, in: chrome)
+            HUDControlHighlightLayer.update(in: chrome, point: point, pressed: true)
+            return
+        }
+        if popup != nil { closePopup(); return }
         commitBrushChange()
-        message.string = ""
+        showMessage("")
         for item in model.media.reversed() {
             guard let node = nodes[item.id] else { continue }
             let local = CGPoint(x: point.x - item.frame.minX, y: point.y - item.frame.minY)
@@ -381,6 +524,7 @@ final class ProjectionWorkspaceView: NSView, HUDControlFeedbackHost {
     }
     override func mouseDragged(with event: NSEvent) {
         guard active else { return }; let point = convert(event.locationInWindow, from: nil); pointer = point
+        if chromeTracking { router.pointerDragged(to: point, in: chrome); return }
         if let gesture {
             switch gesture {
             case .move(let id, let start, let frame): model.setFrame(frame.offsetBy(dx: point.x - start.x, dy: point.y - start.y), id: id, in: bounds)
@@ -403,19 +547,27 @@ final class ProjectionWorkspaceView: NSView, HUDControlFeedbackHost {
     }
     override func mouseUp(with event: NSEvent) {
         guard active else { return }
+        if chromeTracking {
+            chromeTracking = false
+            let point = convert(event.locationInWindow, from: nil)
+            HUDControlHighlightLayer.update(in: chrome, point: point)
+            router.pointerUp(at: point, in: chrome)
+            return
+        }
         gesture = nil
         if let stroke = pendingStroke {
             if model.append(stroke) {
                 let retained = strokeLayer(stroke); strokes.addSublayer(retained)
                 strokeLayers.append(retained); renderedStrokes.append(stroke); onEvent?(.strokeCompleted)
             }
-            else { showError(L10n.text("This drawing has reached the stroke limit.", "此画布已达到笔画数量上限。")) }
+            else { showMessage(L10n.text("This drawing has reached the stroke limit.", "此画布已达到笔画数量上限。")) }
         }
         if eraseChanged { onEvent?(.erased) }
         pendingStroke = nil; lastEraserPoint = nil; eraseChanged = false; liveStroke.path = nil
     }
     override func keyDown(with event: NSEvent) {
-        if event.keyCode == 53 { if secondaryMenu != nil { closeMenu() } else { onClose?() }; return }
+        if let menu = popup?.menu, menu.handleKey(keyCode: event.keyCode) { return }
+        if event.keyCode == 53 { if popup != nil { closePopup() } else { onClose?() }; return }
         super.keyDown(with: event)
     }
     private func normalized(_ point: CGPoint) -> NotesDrawingPoint {
@@ -428,7 +580,7 @@ final class ProjectionWorkspaceView: NSView, HUDControlFeedbackHost {
         liveStroke.strokeColor = stroke.color.color.cgColor; liveStroke.lineWidth = stroke.width
     }
     private func updateCursor() {
-        guard active, let pointer, bounds.contains(pointer), !toolbar.frame.contains(pointer), secondaryMenu?.frame.contains(pointer) != true else { cursor.path = nil; return }
+        guard active, let pointer, bounds.contains(pointer), !chromeContains(pointer) else { cursor.path = nil; return }
         let diameter = model.brushWidth
         cursor.path = CGPath(ellipseIn: CGRect(x: pointer.x - diameter / 2, y: pointer.y - diameter / 2, width: diameter, height: diameter), transform: nil)
         cursor.strokeColor = (model.erasing ? NSColor.white : model.color).cgColor
@@ -440,7 +592,7 @@ final class ProjectionWorkspaceView: NSView, HUDControlFeedbackHost {
         node.presentation.seek(to: min(1, max(0, (local - node.seekRect.minX) / max(1, node.seekRect.width))) * duration)
     }
     func refreshControlHighlights() {
-        if let layer { HUDControlHighlightLayer.update(in: layer, point: pointer) }
+        HUDControlHighlightLayer.update(in: chrome, point: pointer)
         for node in nodes.values {
             HUDControlHighlightLayer.update(in: node.root, point: pointer.map { CGPoint(x: $0.x - node.root.frame.minX, y: $0.y - node.root.frame.minY) })
         }
@@ -478,29 +630,37 @@ private final class ProjectionImportCancellation {
     func cancel() { lock.lock(); cancelled = true; lock.unlock() }
 }
 
+/// One media item on the plane: the redesign's dark panel with a hairline
+/// ring and the theme corner mark, its title, × and play / pause icons, and
+/// the theme-coloured progress rail of a video.
 private final class ProjectionMediaNode {
     let root = CALayer(), presentation: NotesMediaPresentation
-    let face = CALayer(), title = CATextLayer(), play = CATextLayer(), close = CATextLayer(), time = CATextLayer()
-    let rail = CALayer(), fill = CALayer(), thumb = CALayer(), resize = CAShapeLayer()
+    let face = HUDLayer.plain("projection.media.face"), corner = HUDLayer.shape("projection.media.corner")
+    let title: HUDTextLayer, time: HUDTextLayer
+    let play = HUDIconLayer(.play, size: 12, color: HUDColor.onDarkTag), close = HUDIconLayer(.x, size: 11, color: HUDColor.onDarkTag)
+    let rail = HUDLayer.plain(), fill = HUDLayer.plain(), thumb = HUDLayer.plain(), resize = HUDLayer.shape()
     var onAction: ((String) -> Void)?
+    private let env: HUDDesignEnvironment
     private let playButton = ProjectionMediaAXButton(), closeButton = ProjectionMediaAXButton()
     private var playHighlight: HUDControlHighlightLayer?, closeHighlight: HUDControlHighlightLayer?
-    private var hasLayout = false
+    private var hasLayout = false, shownPlaying: Bool?
     private(set) var headerRect = CGRect.zero, closeRect = CGRect.zero, playRect = CGRect.zero, seekRect = CGRect.zero, resizeRect = CGRect.zero
-    init(item: ProjectionMediaItem, host: NSView) {
+    init(item: ProjectionMediaItem, host: NSView, env: HUDDesignEnvironment) {
+        self.env = env
         presentation = NotesMediaPresentation(reference: item.reference, maximumDimension: 768)
+        title = HUDTextLayer(item.reference.displayName, style: HUDTextStyle(size: 10.5, weight: .bold, color: HUDColor.onDarkTag, tracking: 0.04))
+        time = HUDTextLayer(style: HUDTextStyle(size: 10, weight: .bold, color: HUDColor.rgb(0xD9D9D9), tabular: true), alignment: .right)
         root.actions = ["position": NSNull(), "bounds": NSNull()]
-        for layer in [face, presentation.layer, title, close, play, time, rail, fill, thumb, resize] { root.addSublayer(layer) }
-        for text in [title, close, play, time] {
-            text.font = NSFont.systemFont(ofSize: 10, weight: .semibold); text.fontSize = 10
-            text.foregroundColor = NSColor.white.cgColor; text.contentsScale = 2; text.truncationMode = .end
+        for layer in [face, presentation.layer, title, close, play, time, rail, fill, thumb, resize, corner] { root.addSublayer(layer) }
+        HUDMotion.perform {
+            // Media cards float over the dimmed desktop: dark in both themes.
+            face.backgroundColor = HUDColor.rgb(0x141414, 0.9)
+            face.borderWidth = 1; face.borderColor = HUDColor.rgb(0x3D3D3D)
+            corner.fillColor = HUDColor.yellow
+            rail.backgroundColor = HUDColor.white(0.2)
+            fill.backgroundColor = HUDColor.yellow; thumb.backgroundColor = HUDColor.white(1)
+            resize.fillColor = nil; resize.strokeColor = HUDColor.white(0.5); resize.lineWidth = 1
         }
-        title.string = item.reference.displayName; close.string = "×"; close.fontSize = 17
-        face.backgroundColor = NSColor(white: 0.06, alpha: 0.86).cgColor
-        face.borderColor = HUDRuntimeAppearance.accent.withAlphaComponent(0.5).cgColor; face.borderWidth = 0.7
-        rail.backgroundColor = NSColor.white.withAlphaComponent(0.2).cgColor
-        fill.backgroundColor = HUDRuntimeAppearance.accent.cgColor; thumb.backgroundColor = NSColor.white.cgColor
-        resize.fillColor = nil; resize.strokeColor = NSColor.white.withAlphaComponent(0.5).cgColor; resize.lineWidth = 1
         for button in [playButton, closeButton] { button.title = ""; button.isBordered = false; host.addSubview(button) }
         playButton.onPress = { [weak self] in self?.onAction?("play") }
         closeButton.onPress = { [weak self] in self?.onAction?("remove") }
@@ -517,37 +677,45 @@ private final class ProjectionMediaNode {
         }
         hasLayout = true
         root.frame = frame; face.frame = root.bounds
+        corner.frame = CGRect(x: -1, y: -1, width: 10, height: 10)
+        corner.path = HUDShape.cornerMark(corner.bounds, length: 10, width: 2, corner: .topLeft)
         let moving = presentation.reference.kind != .image
         headerRect = CGRect(x: 0, y: 0, width: frame.width, height: 24)
         closeRect = CGRect(x: frame.width - 23, y: 1, width: 22, height: 22)
-        title.frame = CGRect(x: 7, y: 6, width: frame.width - 38, height: 14); close.frame = closeRect
+        title.lineFrame = CGRect(x: 8, y: 7, width: frame.width - 40, height: 10.5)
+        close.position = CGPoint(x: closeRect.midX, y: closeRect.midY)
         presentation.layer.frame = CGRect(x: 5, y: 25, width: frame.width - 10, height: max(1, frame.height - (moving ? 58 : 30)))
         playRect = moving ? CGRect(x: 7, y: frame.height - 25, width: 22, height: 22) : .zero
-        play.frame = playRect; play.isHidden = !moving; play.fontSize = 15
+        play.position = CGPoint(x: playRect.midX, y: playRect.midY); play.isHidden = !moving
         playButton.frame = playRect.offsetBy(dx: frame.minX, dy: frame.minY); playButton.isHidden = !moving
         closeButton.frame = closeRect.offsetBy(dx: frame.minX, dy: frame.minY)
         playHighlight?.removeFromSuperlayer(); closeHighlight?.removeFromSuperlayer()
         playHighlight = moving ? HUDControlHighlightLayer.add(to: root, rect: playRect, shape: .cutCorner, framed: true) : nil
         closeHighlight = HUDControlHighlightLayer.add(to: root, rect: closeRect, shape: .cutCorner, framed: true)
         seekRect = CGRect(x: 37, y: frame.height - 20, width: max(1, frame.width - 108), height: 12)
-        time.frame = CGRect(x: frame.width - 62, y: frame.height - 21, width: 44, height: 16)
+        time.lineFrame = CGRect(x: frame.width - 62, y: frame.height - 18, width: 44, height: 10)
         rail.frame = CGRect(x: seekRect.minX, y: seekRect.midY, width: seekRect.width, height: 2)
         for layer in [rail, fill, thumb, time] { layer.isHidden = presentation.reference.kind != .video }
         resizeRect = CGRect(x: frame.width - 14, y: frame.height - 14, width: 14, height: 14)
         let path = CGMutablePath(); path.move(to: CGPoint(x: frame.width - 11, y: frame.height - 3)); path.addLine(to: CGPoint(x: frame.width - 3, y: frame.height - 11))
         path.move(to: CGPoint(x: frame.width - 6, y: frame.height - 3)); path.addLine(to: CGPoint(x: frame.width - 3, y: frame.height - 6)); resize.path = path
+        env.applyScale(to: root)
         refreshProgress(); CATransaction.commit()
     }
     func refreshProgress() {
         CATransaction.begin(); CATransaction.setDisableActions(true)
-        play.string = presentation.isPlaying ? "Ⅱ" : "▶"
-        playButton.setAccessibilityLabel(presentation.isPlaying ? L10n.text("Pause", "暂停") : L10n.text("Play", "播放"))
+        if shownPlaying != presentation.isPlaying {
+            shownPlaying = presentation.isPlaying
+            play.set(presentation.isPlaying ? .pause : .play, size: 12)
+            playButton.setAccessibilityLabel(presentation.isPlaying ? L10n.text("Pause", "暂停") : L10n.text("Play", "播放"))
+        }
         let seconds = presentation.currentTime, duration = presentation.reference.duration ?? 0
         let fraction = duration > 0 ? min(1, max(0, seconds / duration)) : 0
         fill.frame = CGRect(x: seekRect.minX, y: seekRect.midY, width: seekRect.width * fraction, height: 2)
         thumb.frame = CGRect(x: seekRect.minX + seekRect.width * fraction - 2.5, y: seekRect.midY - 3, width: 5, height: 8)
-        time.string = String(format: "%d:%02d", Int(seconds) / 60, Int(seconds) % 60)
-        if let error = presentation.error { title.string = error.localizedDescription }
+        let clock = String(format: "%d:%02d", Int(seconds) / 60, Int(seconds) % 60)
+        if time.text != clock { time.text = clock }
+        if let error = presentation.error, title.text != error.localizedDescription { title.text = error.localizedDescription }
         CATransaction.commit()
     }
     func dispose() { presentation.dispose(); root.removeFromSuperlayer(); playButton.removeFromSuperview(); closeButton.removeFromSuperview() }

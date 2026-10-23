@@ -41,10 +41,14 @@ struct ReaderBook: Codable, Equatable, Identifiable {
 /// Separate, small reference-only library. Validate before writes, refuse newer
 /// schemas and concurrent disk changes, and never modify the referenced books.
 final class ReaderStore {
-    private struct Archive: Codable { var version = 1; var books: [ReaderBook]; var selected: UUID?; var preferences: ReaderPreferences }
+    /// `reading` is optional, so libraries of earlier versions read unchanged
+    /// and earlier versions ignore it (they drop it on their next write).
+    private struct Archive: Codable { var version = 1; var books: [ReaderBook]; var selected: UUID?; var preferences: ReaderPreferences; var reading: Bool? }
     private(set) var books: [ReaderBook] = []
     private(set) var selected: UUID?
     private(set) var preferences = ReaderPreferences()
+    /// The E-Reader was last left on the open book (its Reading tab).
+    private(set) var reading = false
     private let url: URL
     private var persisted: Data?
     static let maximumBooks = 50
@@ -64,7 +68,8 @@ final class ReaderStore {
             let data = try read()
             guard let data, let archive = try? JSONDecoder().decode(Archive.self, from: data), archive.version == 1,
                   Self.valid(archive) else { throw ReaderError.invalidBook }
-            books = archive.books; selected = archive.selected; preferences = archive.preferences; persisted = data
+            books = archive.books; selected = archive.selected; preferences = archive.preferences; reading = archive.reading ?? false
+            persisted = data
         }
     }
     @discardableResult func add(url source: URL, title: String) throws -> ReaderBook {
@@ -98,19 +103,41 @@ final class ReaderStore {
             next[index].bookmarks.append(ReaderBookmark(location: next[index].location, progress: next[index].progress)) }
         try commit(books: next, selected: selected, preferences: preferences)
     }
+    /// Points a book at its moved file again (Relink…); progress and bookmarks stay.
+    func relink(_ id: UUID, to source: URL) throws {
+        guard let index = books.firstIndex(where: { $0.id == id }) else { throw ReaderError.unavailable }
+        guard source.isFileURL else { throw ReaderError.unsupported }
+        let access = source.startAccessingSecurityScopedResource(); defer { if access { source.stopAccessingSecurityScopedResource() } }
+        var next = books
+        do { next[index].bookmark = try source.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil); next[index].scoped = true }
+        catch { next[index].bookmark = try source.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil); next[index].scoped = false }
+        next[index].path = source.path
+        try commit(books: next, selected: selected, preferences: preferences)
+    }
+    /// Removes one bookmark of a book (the Marks list).
+    func removeBookmark(_ mark: UUID, book id: UUID) throws {
+        guard let index = books.firstIndex(where: { $0.id == id }) else { return }
+        var next = books
+        next[index].bookmarks.removeAll { $0.id == mark }
+        if next != books { try commit(books: next, selected: selected, preferences: preferences) }
+    }
     func setPreferences(_ value: ReaderPreferences) throws {
         guard value.isValid else { throw ReaderError.invalidBook }
         if value != preferences { try commit(books: books, selected: selected, preferences: value) }
     }
-    private func commit(books: [ReaderBook], selected: UUID?, preferences: ReaderPreferences) throws {
-        let archive = Archive(books: books, selected: selected, preferences: preferences)
+    func setReading(_ value: Bool) throws {
+        if value != reading { try commit(books: books, selected: selected, preferences: preferences, reading: value) }
+    }
+    private func commit(books: [ReaderBook], selected: UUID?, preferences: ReaderPreferences, reading: Bool? = nil) throws {
+        let reading = reading ?? self.reading
+        let archive = Archive(books: books, selected: selected, preferences: preferences, reading: reading ? true : nil)
         guard Self.valid(archive) else { throw ReaderError.invalidBook }
         guard try read() == persisted else { throw ReaderError.changedOnDisk }
         let data = try JSONEncoder().encode(archive)
         guard data.count <= 4 * 1024 * 1024 else { throw ReaderError.tooLarge }
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try data.write(to: url, options: .atomic)
-        self.books = books; self.selected = selected; self.preferences = preferences; persisted = data
+        self.books = books; self.selected = selected; self.preferences = preferences; self.reading = reading; persisted = data
     }
     private static func valid(_ value: Archive) -> Bool { value.books.count <= maximumBooks && value.books.allSatisfy(\.isValid)
         && Set(value.books.map(\.id)).count == value.books.count && value.preferences.isValid
