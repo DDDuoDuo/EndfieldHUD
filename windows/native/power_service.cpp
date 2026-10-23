@@ -11,6 +11,11 @@ modules::BatteryReading batteryReadingFromSnapshot(const BatterySnapshot& s) noe
     r.pluggedIn = s.ac_connected == true;
     r.charging = r.pluggedIn && s.charging == true;
     r.fullyCharged = r.pluggedIn && !r.charging && s.fully_charged == true;
+    // GetSystemPowerStatus BatteryLifeTime (seconds; unknown while plugged in
+    // or still estimating) as the Mac's minutesToEmpty. Windows reports no
+    // time to full (BatteryFullLifeTime is a full battery's life): minutesToFull
+    // stays empty (UNTIL FULL reads "—" while charging).
+    if (s.remaining_seconds) r.minutesToEmpty = modules::batteryMinutes(double(*s.remaining_seconds / 60));
     return r;
 }
 
@@ -31,7 +36,10 @@ struct PowerService::Impl {
         // Before the first device read, and whenever hardware gives no
         // matching absolute pair, the source's explicit percent pair is used.
         value.capacity = deviceRead ? decodeBatteryCapacity(reports, value.percentage) : modules::batteryCapacityPercent(value.percentage);
-        return value;
+        const auto diagnostics = decodeBatteryDiagnostics(reports);
+        value.cycleCount = diagnostics.cycleCount;
+        value.temperatureCelsius = diagnostics.temperatureCelsius;
+        return modules::gatedBatteryReading(std::move(value));
     }
     void publish() {
         if (!hasBase || stopped) return;
@@ -81,6 +89,7 @@ void PowerService::receive(modules::BatteryReading base) {
     if (i.stopped) return;
     base.capacity.reset();
     base.health.reset(); // no Windows condition category
+    base.cycleCount.reset(); base.temperatureCelsius.reset(); // from the device read (merged)
     i.base = std::move(base);
     i.hasBase = true;
     i.publish();

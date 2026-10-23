@@ -107,6 +107,9 @@ struct ActivityProcess {
     std::uint32_t pid{};std::uint64_t startID{},cpuTicks{},memoryBytes{};double startUptime{};
     // Absent Windows disk accounting is not fabricated from all-process I/O.
     std::optional<std::uint64_t>diskRead,diskWrite;
+    // The process's current thread count (AppActivityProcessReading.threads;
+    // Windows: the process snapshot's cntThreads); none when unreadable.
+    std::optional<std::uint32_t>threads;
 };
 struct ActivityAppNetwork {double uptime{},intervalStart{};std::map<std::uint32_t,std::array<double,2>>rates;std::set<std::uint32_t>unknownPIDs;};
 struct ActivityAppsRaw {
@@ -115,43 +118,42 @@ struct ActivityAppsRaw {
     std::optional<ActivityAppNetwork>network;bool inventoryComplete{true};std::vector<std::string>statusNotes;
     std::optional<ActivityGPUSample>gpu; // the catalog's processes only (Windows addition)
 };
-// gpuPercent: the total GPU load of the app's member processes (activityGPUPercent).
-struct ActivityApp {ActivityAppIdentity identity;std::optional<double>cpuPercent,upload,download,diskRead,diskWrite;std::optional<std::uint64_t>memoryBytes;std::vector<std::string>statusNotes;std::optional<double>gpuPercent;bool operator==(const ActivityApp&)const=default;};
+// gpuPercent: the total GPU load of the app's member processes (activityGPUPercent);
+// threads: the sum over its processes (AppActivityItem.threads), current, no
+// baseline; both none for an incomplete app (AppActivityMonitor.swift:99-130).
+struct ActivityApp {ActivityAppIdentity identity;std::optional<double>cpuPercent,upload,download,diskRead,diskWrite;std::optional<std::uint64_t>memoryBytes;std::vector<std::string>statusNotes;std::optional<double>gpuPercent;std::optional<std::uint64_t>threads;bool operator==(const ActivityApp&)const=default;};
 struct ActivityAppsSnapshot {double timestamp{},uptime{};std::vector<ActivityApp>items;std::vector<std::string>statusNotes;};
 ActivityAppsSnapshot deriveActivityApps(const ActivityAppsRaw&,const ActivityAppsRaw*previous=nullptr);
-enum class ActivitySort {name,cpu,memory,network,disk,upload,download,diskRead,diskWrite,gpu};
+// AppActivitySortKey (AppActivityMonitor.swift:4-6), raw values as the Mac names them.
+enum class ActivitySort {name,cpu,memory,network,disk,upload,download,diskRead,diskWrite,gpu,threads};
 std::string_view activitySortKey(ActivitySort)noexcept;
 // Source localizedStandardCompare is supplied by the platform, never replaced
 // with byte ordering for non-English names. Return negative/equal/positive.
 using ActivityNameCompare=std::function<int(std::string_view,std::string_view)>;
 void sortActivityApps(std::vector<ActivityApp>&,ActivitySort,bool descending,const ActivityNameCompare&);
 
-struct ActivityGraphTrace {
-    std::array<core::Point,60>points{};
-    // Source clip rectangles exclude every absent interval, including an
-    // isolated valid sample; do not draw a fabricated line through gaps.
-    std::array<core::Rect,59>coverage{};std::size_t coverageCount{};bool markerVisible{};core::Point marker{};
-};
-ActivityGraphTrace activityGraph(std::span<const std::optional<double>>values,double ceiling,std::span<const double>timestamps={},double width=165,double height=36);
-struct ActivityRowPlacement {std::size_t index{};core::Rect rect;};
-struct ActivityRows {std::array<ActivityRowPlacement,6>rows{};std::size_t count{};std::optional<core::Rect>scrollbar;};
+// The session's readings (SystemActivityMonitor.history/snapshot and the
+// AppActivityMonitor snapshot): the last historyLimit system samples, the
+// latest app sample kept sorted by the current sort. The canvas observes it
+// (onSystem/onApps, SystemActivityMonitor.observe) while it is active.
 class ActivityState final {
 public:
     static constexpr std::size_t historyLimit=60,maximumApps=256;
-    static constexpr core::Rect appsViewport(){return {12,84,376,226};}
     explicit ActivityState(ActivityNameCompare);
     void receive(ActivitySnapshot);void receiveApps(ActivityAppsSnapshot);
-    bool setApps(bool);bool sort(ActivitySort);bool scroll(core::Point,double delta);
-    bool showingApps()const noexcept{return apps_;}double scrollOffset()const noexcept{return offset_;}
-    double maximumOffset()const noexcept;ActivitySort sortKey()const noexcept{return sort_;}bool descending()const noexcept{return descending_;}
+    // AppActivityMonitor.setSort: re-sorts the current items; later samples
+    // keep the order. The canvas decides the key and direction.
+    void setSort(ActivitySort,bool descending);
+    ActivitySort sortKey()const noexcept{return sort_;}bool descending()const noexcept{return descending_;}
     const ActivitySnapshot&snapshot()const noexcept{return latest_;}
     std::span<const ActivitySnapshot>history()const noexcept{return {history_.data(),count_};}
     const ActivityAppsSnapshot&appSnapshot()const noexcept{return appSnapshot_;}
-    ActivityRows visibleRows()const noexcept;std::uint64_t revision()const noexcept{return revision_;}
+    std::uint64_t revision()const noexcept{return revision_;}
     std::uint64_t overviewRevision()const noexcept{return overviewRevision_;}
     std::uint64_t appsContentRevision()const noexcept{return appsRevision_;}
-    std::uint64_t placementRevision()const noexcept{return placementRevision_;}
-private:ActivityNameCompare compare_;ActivitySnapshot latest_;std::array<ActivitySnapshot,60>history_;std::size_t count_{};ActivityAppsSnapshot appSnapshot_;bool apps_{},descending_{true};ActivitySort sort_{ActivitySort::cpu};double offset_{};std::uint64_t revision_{},overviewRevision_{},appsRevision_{},placementRevision_{};
+    // Observers (UI thread, after each accepted sample).
+    std::function<void()>onSystem,onApps;
+private:ActivityNameCompare compare_;ActivitySnapshot latest_;std::array<ActivitySnapshot,60>history_;std::size_t count_{};ActivityAppsSnapshot appSnapshot_;bool descending_{true};ActivitySort sort_{ActivitySort::cpu};std::uint64_t revision_{},overviewRevision_{},appsRevision_{};
 };
 
 // Shared host clock/deadline policy. No OS timer, sampling, allocation, thread,

@@ -502,6 +502,13 @@ void readings(const Fixture& f) {
         const std::string name = !tone ? "none" : *tone == BatteryLevelTone::green ? "green" : *tone == BatteryLevelTone::yellow ? "yellow" : "red";
         check(name == row["tone"].string(), row["name"].string() + " level tone");
     }
+    // Mac 1.3.0 BatteryLevelTone (BatteryCapacity.swift:92-104): green above 70,
+    // yellow 20...70, red below 20; 51...70 % turned yellow (v1.2.0 green > 50).
+    for (const auto& [level, expected] : std::initializer_list<std::pair<unsigned, BatteryLevelTone>>{
+             {0, BatteryLevelTone::red}, {19, BatteryLevelTone::red}, {20, BatteryLevelTone::yellow}, {51, BatteryLevelTone::yellow},
+             {63, BatteryLevelTone::yellow}, {70, BatteryLevelTone::yellow}, {71, BatteryLevelTone::green}, {100, BatteryLevelTone::green}})
+        check(batteryLevelTone(level) == expected, "Level tone at " + std::to_string(level) + " %");
+    check(!batteryLevelTone(101) && !batteryLevelTone(std::nullopt), "No tone without a 0-100 percentage");
     for (auto language : {core::Language::english, core::Language::simplifiedChinese, core::Language::traditionalChinese,
                           core::Language::japanese, core::Language::korean}) {
         BatteryReading plugged, unplugged;

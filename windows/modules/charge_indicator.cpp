@@ -173,7 +173,7 @@ ChargeTelemetry chargeTelemetry(const ActivitySnapshot& sample) {
 }
 std::optional<BatteryLevelTone> batteryLevelTone(std::optional<unsigned> percentage) noexcept {
     if (!percentage || *percentage > 100) return std::nullopt;
-    if (*percentage > 50) return BatteryLevelTone::green;
+    if (*percentage > 70) return BatteryLevelTone::green;
     if (*percentage >= 20) return BatteryLevelTone::yellow;
     return BatteryLevelTone::red;
 }

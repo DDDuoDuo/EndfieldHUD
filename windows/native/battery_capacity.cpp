@@ -34,6 +34,19 @@ std::optional<modules::BatteryReading::Capacity> decodeBatteryCapacity(std::span
     return modules::batteryCapacityPercent(percentage);
 }
 
+BatteryDiagnostics decodeBatteryDiagnostics(std::span<const BatteryDeviceReport> reports) {
+    BatteryDiagnostics out;
+    for (const auto& report : reports) {
+        if (!(report.capabilities & BatteryDeviceReport::systemBattery) || (report.capabilities & BatteryDeviceReport::shortTerm)) continue;
+        if (report.cycleCount)
+            if (const auto cycles = modules::batteryCycleCount(report.cycleCount); cycles && (!out.cycleCount || *cycles > *out.cycleCount)) out.cycleCount = cycles;
+        if (report.temperatureDecikelvin)
+            if (const auto celsius = modules::batteryTemperatureCelsius((double(*report.temperatureDecikelvin) / 10 - 273.15) * 100);
+                celsius && (!out.temperatureCelsius || *celsius > *out.temperatureCelsius)) out.temperatureCelsius = celsius;
+    }
+    return out;
+}
+
 #ifdef _WIN32
 namespace {
 // GUID_DEVCLASS_BATTERY / GUID_DEVICE_BATTERY (devguid.h, batclass.h).
@@ -84,6 +97,12 @@ BatteryDeviceRead readBatteryDevices(std::size_t maximumDevices) {
         report.capabilities = information.Capabilities;
         report.designedCapacity = information.DesignedCapacity;
         report.fullChargedCapacity = information.FullChargedCapacity;
+        report.cycleCount = information.CycleCount;
+        // BatteryTemperature (tenths of a kelvin); many drivers do not report it.
+        ULONG temperature = 0;
+        query.InformationLevel = BatteryTemperature;
+        if (DeviceIoControl(battery.value, IOCTL_BATTERY_QUERY_INFORMATION, &query, sizeof query, &temperature, sizeof temperature,
+                            &bytes, nullptr) && bytes >= sizeof temperature && temperature) report.temperatureDecikelvin = temperature;
         BATTERY_WAIT_STATUS request{};
         request.BatteryTag = query.BatteryTag; // Timeout 0: the current status, no wait
         BATTERY_STATUS status{};

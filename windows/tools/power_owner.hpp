@@ -18,7 +18,7 @@ struct PowerOwnerCallbacks {
     // stamps the event ID/time and appends it to its Event Log store.
     std::function<void(modules::EventKind, const modules::EventMetadata&)> recordEvent;
     // Battery reading changed: refresh the tray status line/tooltip, the
-    // Power page (BatteryPreview::receive) and the HUD badge content.
+    // Power page (modules::BatteryCanvas::update) and the HUD badge content.
     std::function<void(const modules::BatteryReading&)> readingChanged;
     // Position editor confirmed: persist placement=custom, customScreenID,
     // customPositionX/Y through the settings queue.

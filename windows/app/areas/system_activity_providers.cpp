@@ -6,19 +6,12 @@
 #include "modules/activity_state.hpp"
 #include "native/activity_gpu.hpp"
 #include "native/activity_icons.hpp"
-#include "native/activity_scene.hpp"
-#include "native/clipboard_scene.hpp"
-#include "modules/activity_presentation.hpp"
-#include "modules/storage_presentation.hpp"
+#include "modules/telemetry_format.hpp"
 #include "native/clipboard_provider.hpp"
 #include "native/event_log_owner.hpp"
 #include "native/event_log_time.hpp"
 #include "native/storage_files.hpp"
 #include "native/system_services.hpp"
-#include "tools/activity_preview.hpp"
-#include "tools/clipboard_preview.hpp"
-#include "tools/event_log_preview.hpp"
-#include "tools/storage_preview.hpp"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -42,14 +35,6 @@ namespace endfield::providers {
 namespace {
 namespace fs = std::filesystem;
 namespace gpu = native;
-bool timestampShape(const std::string& text) {
-    if (text.size() != 14) return false;
-    for (std::size_t n = 0; n < text.size(); ++n) {
-        const char c = text[n];
-        if (n == 2 ? c != '-' : n == 5 ? c != ' ' : n == 8 || n == 11 ? c != ':' : (c < '0' || c > '9')) return false;
-    }
-    return true;
-}
 std::optional<gpu::ActivityIconPixels> syntheticIcon(const std::string& key, unsigned pixels) {
     if (key != "activity/coverage") return {}; // unavailable artwork stays icon-free
     gpu::ActivityIconPixels out;
@@ -182,7 +167,8 @@ public:
     explicit SystemProvidersCoverage(const app::ApplicationModuleContext& c)
         : host_(*c.host), utility_(*c.utility), root_(c.coverageRoot), clock_(c.clock ? c.clock() : 0),
           events_(root_, gpu::EventLogOwnerCallbacks{[this] { return clock_; }, [this] { ++eventChanges_; }}),
-          saves_(events_, utility_), icons_(utility_, syntheticIcon) {
+          saves_(events_, utility_), loads_(utility_, syntheticIcon), icons_(loads_.loader()) {
+        icons_.setScale(1.8); // 36 px icons (20 px x 1.8)
         // A private message-only window carries the services' coalesced notices.
         WNDCLASSW type{};
         type.lpfnWndProc = serviceWindow; type.hInstance = GetModuleHandleW(nullptr); type.lpszClassName = windowClass;
@@ -218,28 +204,35 @@ public:
         clipboard(step, cycle);
         powerStorm(step);
 
-        // EventLogCanvas timestamps: current Windows zone, MM-dd HH:mm:ss.
-        const auto local = gpu::localEventLogTimestamp(reference_);
+        // EventLogCanvas.time: Calendar.current fields in the current Windows zone.
+        const auto local = gpu::localEventLogTime(reference_);
         DYNAMIC_TIME_ZONE_INFORMATION zone{};
         const bool known = GetDynamicTimeZoneInformation(&zone) != TIME_ZONE_ID_INVALID;
-        step.check(timestampShape(local) && (!known || zone.DynamicDaylightTimeDisabled || gpu::eventLogTimestampInZone(reference_, zone.TimeZoneKeyName) == local),
-                   "Event Log rows format in the current time zone");
-        step.check(gpu::localEventLogTimestamp(std::numeric_limits<double>::quiet_NaN()) == "--", "An unrepresentable date has no invented time");
+        step.check(local && local->month >= 1 && local->month <= 12 && local->hour >= 0 && local->hour < 24
+                   && (!known || zone.DynamicDaylightTimeDisabled || gpu::eventLogTimeInZone(reference_, zone.TimeZoneKeyName) == local),
+                   "Event Log rows read their time in the current time zone");
+        step.check(!gpu::localEventLogTime(std::numeric_limits<double>::quiet_NaN()), "An unrepresentable date has no invented time");
 
-        // Activity icons: visible keys load on the shared executor, once.
-        const std::array<std::string_view, 2> keys{"activity/coverage", "activity/unavailable"};
-        const auto jobs = icons_.stats().jobs;
-        auto bound = icons_.bind(keys, 36);
+        // Activity app icons (ActivityAppIcons): a miss loads on the shared
+        // executor once, kept by app across cycles.
+        modules::ActivityApp shown, unavailable;
+        shown.identity = {"coverage", "Coverage", "activity/coverage", {1}};
+        unavailable.identity = {"unavailable", "Unavailable", "activity/unavailable", {2}};
+        using Kind = modules::ActivityAppIcons::Icon::Kind;
+        const auto batches = loads_.stats().batches;
+        auto icon = icons_.icon(shown);
         if (cycle == 0) {
-            step.check(bound.empty() && icons_.stats().jobs == jobs + 1, "Missing icons are requested, not drawn as placeholders");
+            const bool pending = icon.kind == Kind::pending && icons_.icon(unavailable).kind == Kind::pending;
+            icons_.schedule(); // the end of the pass: one batch for both
+            step.check(pending && loads_.stats().batches == batches + 1,
+                       "Missing icons are requested in one batch; their slots stay empty meanwhile");
             step.drain();
-            bound = icons_.bind(keys, 36);
+            icon = icons_.icon(shown);
         } else {
-            step.check(icons_.stats().jobs == jobs, "Cached icons never reload in later cycles");
+            step.check(loads_.stats().batches == batches, "Cached icons never reload in later cycles");
         }
-        const auto icon = bound.find("activity/coverage");
-        step.check(bound.size() == 1 && icon != bound.end() && icons_.images().acquire(icon->second.memoryKey, icon->second.revision),
-                   "A loaded icon is bound and resident; unavailable artwork stays icon-free");
+        step.check(icon.kind == Kind::image && icons_.icon(unavailable).kind == Kind::generic && loads_.images().acquire(icon.image.key, icon.image.revision),
+                   "A loaded icon is resident; unavailable artwork shows the generic tile");
 
         // Charge-metric telemetry over the shared sampling plan.
         modules::ActivityState state([](std::string_view a, std::string_view b) { return a.compare(b); });
@@ -255,7 +248,7 @@ public:
                    "Detaching returns to the 5 s session history");
 
         // Storage title and Clipboard status vocabulary.
-        step.check(gpu::storageVolumeTitle("", "Local Disk (C:)", "C:\\") == "Local Disk" && gpu::storageVolumeTitle("", "", "C:\\") == "Startup disk",
+        step.check(gpu::storageVolumeTitle("", "Local Disk (C:)", "C:\\", "Startup disk") == "Local Disk" && gpu::storageVolumeTitle("", "", "C:\\", "启动磁盘") == "启动磁盘",
                    "An unlabelled volume takes Explorer's name");
         step.check(!gpu::clipboardStatusText(gpu::clipboard_status::pending, core::Language::english) &&
                    gpu::clipboardStatusText(gpu::clipboard_status::tooManyFiles, core::Language::english) == "This file selection is too large to cache.",
@@ -263,24 +256,12 @@ public:
 
         additions(step, cycle);
         hostEventLog(step, cycle);
-        builtInMemory(step);
         ++steps_;
     }
 
 private:
-    // The user-reported reveal glitch, GPU usage and the Storage volume menu.
+    // GPU usage and the Storage disk list.
     void additions(app::ModuleCoverage& step, unsigned cycle) {
-        // Clipboard rows reveal and Activity sort: the authored shutter only grows.
-        for (const auto direction : {-1., 1.}) {
-            double left{1e9}, right{-1e9};
-            bool grows = true;
-            for (unsigned t = 0; t <= 26; ++t) {
-                const auto clip = gpu::clipboardRevealShutter(direction, t * .01), sort = gpu::activitySortShutter(direction, t * .01);
-                grows = grows && clip[2][4].x <= left + 1e-9 && clip[2][1].x >= right - 1e-9 && sort[3][4].x <= sort[3][1].x;
-                left = clip[2][4].x; right = clip[2][1].x;
-            }
-            step.check(grows && left == 0 && right == 376, "The Clipboard reveal and the Activity sort only ever grow their revealed rows");
-        }
         // GPU (Windows addition): the total load per app and overall, each
         // adapter's engine types summed and the busier adapter shown.
         modules::ActivityGPUSample before, after;
@@ -296,24 +277,21 @@ private:
         const auto overall = modules::activityGPUPercent(after, before), app = modules::activityGPUPercent(after, before, ten), other = modules::activityGPUPercent(after, before, twelve);
         step.check(overall && *overall >= 60 && *overall < 60.1 && app && std::abs(*app - 30) < 1e-9 && other && std::abs(*other - 40) < 1e-9,
                    "GPU: the total load (3D + Copy on the busier adapter), per app and overall");
-        modules::ActivityState state([](std::string_view a, std::string_view b) { return a.compare(b); });
-        modules::ActivitySnapshot sample;
-        sample.timestamp = sample.uptime = 1; sample.gpuPercent = 37.5;
-        state.receive(sample);
-        modules::ActivityAppearance appearance;
-        appearance.language = cycle % 2 ? core::Language::japanese : core::Language::simplifiedChinese;
-        const auto art = modules::prepareActivityArtwork(state, appearance);
-        step.check(art.overview["children"].array().size() == modules::ActivityArtwork::overviewRows && art.graphs[modules::ActivityArtwork::gpuRow].count == 1 &&
-                   gpu::activityGPUInstance("pid_4_luid_0x0_0x1_phys_0_eng_0_engtype_3D").has_value(), "Activity shows a GPU row and parses GPU engine instances");
-        step.check(modules::activityGPUCaption(appearance.language) == core::localized("TOTAL LOAD", "总负载", appearance.language) &&
-                   modules::activityGPUCaption(appearance.language) == (cycle % 2 ? "合計負荷" : "总负载"), "The GPU row reads Total Load in the HUD language");
-        // Storage: the volume menu lists the volumes with the chosen one marked.
-        const std::array<modules::StorageVolume, 2> volumes{modules::StorageVolume{"coverage-system", "C:\\", "System", false, true}, modules::StorageVolume{"coverage-data", "D:\\", "Data", true, false}};
-        modules::StorageAppearance storage;
-        storage.language = appearance.language;
-        const auto menu = modules::prepareStorageVolumeMenu(volumes, "coverage-data", storage);
-        step.check(menu.actions.size() == 2 && menu.actions[1].label == "Data (D:)" && gpu::orderStorageVolumes({volumes[1], volumes[0]}).front().id == "coverage-system",
-                   "Storage lists volumes startup first in its secondary menu");
+        const auto language = cycle % 2 ? core::Language::japanese : core::Language::simplifiedChinese;
+        step.check(gpu::activityGPUInstance("pid_4_luid_0x0_0x1_phys_0_eng_0_engtype_3D").has_value() && modules::telemetry::percent(37.5) == "37.5%" &&
+                   core::localized("TOTAL LOAD", "总负载", language) == (cycle % 2 ? "合計負荷" : "总负载"),
+                   "Activity parses GPU engine instances; the GPU row reads its total load like CPU (Total Load in the HUD language)");
+        // Storage: the startup disk first, internal before removable disks, then
+        // by name; a chosen eighth disk keeps the menu's last place.
+        const auto disk = [](std::string id, std::string name, bool removable, bool startup) {
+            return modules::StorageVolume{std::move(id), "C:\\", removable, startup, {std::move(name), 1000, 400, 0}};
+        };
+        std::vector<modules::StorageVolume> volumes{disk("data", "Data", true, false), disk("system", "System", false, true), disk("backup", "Backup", false, false)};
+        const auto ordered = gpu::orderStorageVolumes(volumes, [](std::string_view a, std::string_view b) { return a.compare(b); });
+        for (unsigned n = 0; n < 6; ++n) volumes.push_back(disk("extra" + std::to_string(n), "Extra " + std::to_string(n), false, false));
+        const auto limited = modules::limitedStorageVolumes(gpu::orderStorageVolumes(volumes, [](std::string_view a, std::string_view b) { return a.compare(b); }), std::string("data"));
+        step.check(ordered.size() == 3 && ordered[0].id == "system" && ordered[1].id == "backup" && ordered[2].id == "data" &&
+                   limited.size() == modules::storageVolumeLimit && limited.back().id == "data", "Storage lists disks startup first and keeps the chosen one");
     }
     void release() noexcept {
         try { if (clipboard_) clipboard_->close(); } catch (...) {}
@@ -341,6 +319,7 @@ private:
         const auto* link = front();
         step.check(link && link->payload.kind == gpu::ClipboardKind::url && link->payload.url == u"https://xn--fsqu00a.com/%E8%B7%AF%E5%BE%84/" + digit &&
                    link->payload.text == original, "An explicit URL type is captured as a link with its original string");
+        step.check(link && link->origin.created > 0, "A captured record carries its capture time (ClipboardItem.createdAt)");
         // ClipboardStore.copy through the Clipboard module's provider action.
         const auto actions = clipboard_->actions();
         reference_ = 812000000. + cycle;
@@ -400,29 +379,6 @@ private:
         step.check(pump() == 1 && powerReads_ == reads + 1 && batteryChanges_ == changes + 1 && services_.battery().percent == power_.battery_percent,
                    "A WM_POWERBROADCAST storm posts one notice and reads power once");
     }
-    // Memory: the built-in Clipboard, Event Log, Activity Monitor and Storage
-    // (when the host publishes them under their service keys), which the
-    // module cycle showed and then switched away from, keep their rasters
-    // inside the open HUD (switching back must not stall on a rebuild). Once
-    // the HUD has finished closing (HostEvent::overlayConcealed -> conceal())
-    // one that is not shown keeps no raster artwork; the next cycle shows it
-    // again with the same artwork (the cycles' raster usage repeats exactly).
-    void builtInMemory(app::ModuleCoverage& step) {
-        const auto released = [&](auto* preview, auto resident, const char* message) {
-            if (!preview) return;
-            const bool shown = !preview->entries().empty();
-            preview->conceal();
-            step.check(shown || resident(*preview) == 0, message);
-        };
-        released(host_.find<tools::ClipboardPreview>(tools::ClipboardPreview::serviceKey), [](const tools::ClipboardPreview& p) { return p.stats().residentPixelBytes; },
-                 "Once the HUD is closed the hidden built-in Clipboard keeps no raster artwork");
-        released(host_.find<tools::EventLogPreview>(tools::EventLogPreview::serviceKey), [](const tools::EventLogPreview& p) { return p.stats().residentPixelBytes; },
-                 "Once the HUD is closed the hidden built-in Event Log keeps no raster artwork");
-        released(host_.find<tools::ActivityPreview>(tools::ActivityPreview::serviceKey), [](const tools::ActivityPreview& p) { return p.stats().residentPixelBytes; },
-                 "Once the HUD is closed the hidden built-in Activity Monitor keeps no raster artwork");
-        released(host_.find<tools::StoragePreview>(tools::StoragePreview::serviceKey), [](const tools::StoragePreview& p) { return p.resources().pixelBytes; },
-                 "Once the HUD is closed the hidden built-in Storage page keeps no raster artwork");
-    }
     void hostEventLog(app::ModuleCoverage& step, unsigned cycle) {
         auto* log = host_.find<gpu::EventLogOwner>(gpu::eventLogOwnerServiceKey);
         if (!log) return; // published by the host (app/application.cpp constructAreas)
@@ -446,7 +402,8 @@ private:
     double clock_{}, reference_{812000000.};
     gpu::EventLogOwner events_;
     app::EventLogSaveQueue saves_;
-    gpu::ActivityIconProvider icons_;
+    gpu::ActivityIconLoads loads_;
+    modules::ActivityAppIcons icons_;
     std::shared_ptr<CoverageClipboard> board_ = std::make_shared<CoverageClipboard>();
     gpu::PowerStatus power_{1, 8, 60, 3600, 7200};
     unsigned powerReads_{}, batteryChanges_{};

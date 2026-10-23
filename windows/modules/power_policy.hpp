@@ -2,7 +2,7 @@
 #include "core/data/json.hpp"
 #include "core/localization.hpp"
 #include "core/scene.hpp"
-#include "modules/battery_presentation.hpp"
+#include "modules/battery_reading.hpp"
 #include "modules/charge_indicator.hpp"
 #include "modules/event_log.hpp"
 #include <array>

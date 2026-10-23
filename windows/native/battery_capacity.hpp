@@ -1,5 +1,5 @@
 #pragma once
-#include "modules/battery_presentation.hpp"
+#include "modules/battery_reading.hpp"
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -22,6 +22,11 @@ struct BatteryDeviceReport {
     std::uint32_t designedCapacity{unknownCapacity}, fullChargedCapacity{unknownCapacity};
     std::optional<std::uint32_t> remainingCapacity; // BATTERY_STATUS.Capacity when the status query succeeded
     std::uint32_t powerState{};
+    // The Battery page's diagnostics (MODS-468): BATTERY_INFORMATION.CycleCount
+    // (0 = no cycle counter) and the BatteryTemperature query in tenths of a
+    // kelvin when the driver supports it.
+    std::uint32_t cycleCount{};
+    std::optional<std::uint32_t> temperatureDecikelvin;
     bool operator==(const BatteryDeviceReport&) const = default;
 };
 // Aggregate system batteries (UPS/short-term devices excluded). Every battery
@@ -30,6 +35,13 @@ struct BatteryDeviceReport {
 // The design capacity is not a health estimate and is never substituted.
 std::optional<modules::BatteryReading::Capacity> decodeBatteryCapacity(
     std::span<const BatteryDeviceReport>, std::optional<unsigned> percentage);
+// The machine's batteries' cycle count and temperature for the Battery page
+// (the Mac AppleSmartBattery CycleCount / Temperature): system batteries only;
+// with several, the highest reading (each a real reading, never a sum or an
+// average); a driver without a cycle counter (0) or temperature gives none.
+// Values pass the BatteryDiagnosticsParsing bounds (modules/battery_reading).
+struct BatteryDiagnostics { std::optional<int> cycleCount; std::optional<double> temperatureCelsius; bool operator==(const BatteryDiagnostics&) const = default; };
+BatteryDiagnostics decodeBatteryDiagnostics(std::span<const BatteryDeviceReport>);
 // Windows exposes no OS battery-condition category (kIOPSBatteryHealth has no
 // equivalent), so health stays unavailable rather than computed from design.
 inline constexpr bool batteryHealthCategoryAvailable = false;
