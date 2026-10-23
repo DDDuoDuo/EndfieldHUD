@@ -45,18 +45,20 @@ struct NativeDesignTextMeasurer::Impl {
     }
     // The exact descriptor the leaf is painted from (modules::design::textNode):
     // one line, no truncation, its region, the standard faces.
-    LayerSourceTextMeasurement measure(std::vector<d::TextRun> runs, d::TextRegion region) {
+    // A line count (lineCount) breaks in `width` with the line budget and the
+    // last line's truncation of the painted block.
+    LayerSourceTextMeasurement measure(std::vector<d::TextRun> runs, d::TextRegion region, double width = measureWidth, int maximumLines = 1) {
         d::TextBlock block;
-        block.runs = std::move(runs); block.language = region; block.maximumLines = 1; block.truncates = false; block.minimumScale = 1;
+        block.runs = std::move(runs); block.language = region; block.maximumLines = maximumLines; block.truncates = width != measureWidth; block.minimumScale = 1;
         double height{};
         for (const auto& run : block.runs) height = std::max(height, run.style.size * std::max(1., run.style.lineHeight));
-        block.setLineFrame({0, 0, measureWidth, std::max(1., std::ceil(height))});
+        block.setLineFrame({0, 0, width, std::max(1., std::ceil(height * std::max(1, maximumLines)))});
         d::TextServices services;
         services.uppercase = uppercase; services.uiRegion = region; services.boxScale = 1;
         const auto node = d::textNode(measureID, block, services);
         need(node["text"].isObject(), "Design text node has no text descriptor");
         ++stats.measurements;
-        return raster.measureSourceText(measureID, node["text"], measureWidth, {});
+        return raster.measureSourceText(measureID, node["text"], width, {});
     }
 };
 NativeDesignTextMeasurer::NativeDesignTextMeasurer(LayerRasterizer& r) : impl_(std::make_unique<Impl>(r)) {}
@@ -81,6 +83,28 @@ double NativeDesignTextMeasurer::width(std::span<const d::TextRun> runs, d::Text
     const auto result = i.measure(std::move(kept), region).width;
     need(std::isfinite(result) && result >= 0, "Invalid measured design text width");
     i.widths.emplace(key, result);
+    i.remember(std::move(key), true);
+    return result;
+}
+// HUDText.lines(...).count: the raster's own breaking of the same block in
+// `width` (cached with the widths).
+std::size_t NativeDesignTextMeasurer::lineCount(std::span<const d::TextRun> runs, d::TextRegion region, double width, int maximumLines) {
+    auto& i = *impl_;
+    need(std::isfinite(width) && width > 0 && width < measureWidth && maximumLines >= 0, "Invalid design line count request");
+    i.revision();
+    std::string key(1, char(region));
+    key.push_back('\x1d'); append(key, width); append(key, double(maximumLines));
+    std::vector<d::TextRun> kept;
+    for (const auto& run : runs) {
+        need(std::isfinite(run.style.size) && run.style.size > 0 && std::isfinite(run.style.tracking) && std::isfinite(run.style.lineHeight), "Invalid design text style");
+        if (run.text.empty()) continue;
+        key.append(run.text); key.push_back('\x1f'); append(key, run.style); key.push_back('\x1e');
+        kept.push_back(run);
+    }
+    if (kept.empty()) return 0;
+    if (const auto it = i.widths.find(key); it != i.widths.end()) { ++i.stats.cacheHits; return std::size_t(it->second); }
+    const auto result = std::max<std::size_t>(1, i.measure(std::move(kept), region, width, maximumLines).lines);
+    i.widths.emplace(key, double(result));
     i.remember(std::move(key), true);
     return result;
 }

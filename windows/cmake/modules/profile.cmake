@@ -41,7 +41,7 @@ endif()
 # Native Win32 page: retained scene, projected editors, pickers, the UI Automation
 # peers of the projected controls (also over the Work Mode page) and the owner.
 if(WIN32 AND TARGET hud_profile)
-  add_library(hud_profile_native native/profile_scene.cpp native/profile_editor_field.cpp native/profile_image.cpp native/id_card_captions.cpp native/id_card_presenter.cpp native/profile_pickers.cpp native/profile_automation.cpp native/work_mode_automation.cpp tools/profile_preview.cpp tools/profile_owner.cpp)
+  add_library(hud_profile_native native/profile_scene.cpp native/profile_editor_field.cpp native/profile_image.cpp native/id_card_captions.cpp native/id_card_presenter.cpp native/profile_pickers.cpp native/profile_automation.cpp tools/profile_preview.cpp tools/profile_owner.cpp)
   target_include_directories(hud_profile_native PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
   target_compile_definitions(hud_profile_native PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
   target_link_libraries(hud_profile_native PUBLIC hud_profile hud_native hud_overlay_host PRIVATE windowscodecs ole32 oleaut32 comdlg32 uiautomationcore)
@@ -50,9 +50,9 @@ if(WIN32 AND TARGET hud_profile)
   endif()
   # Opt-in cold-start trace of the profile area's owner-thread work (timings
   # only, hidden WARP window, temporary data root); a diagnostic, not a test.
-  add_executable(profile_cold_start_probe tools/profile_cold_start_probe.cpp tools/work_mode_preview.cpp)
+  add_executable(profile_cold_start_probe tools/profile_cold_start_probe.cpp)
   target_compile_definitions(profile_cold_start_probe PRIVATE UNICODE _UNICODE NOMINMAX)
-  target_link_libraries(profile_cold_start_probe PRIVATE hud_profile_native windowscodecs ole32 psapi)
+  target_link_libraries(profile_cold_start_probe PRIVATE hud_profile_native hud_work_mode_canvas hud_design_native windowscodecs ole32 psapi)
   if(MSVC)
     target_compile_options(profile_cold_start_probe PRIVATE /W4 /permissive- /EHsc)
   endif()
@@ -96,14 +96,6 @@ if(WIN32 AND TARGET hud_profile)
       target_compile_options(profile_automation_tests PRIVATE /W4 /permissive- /EHsc)
     endif()
     add_test(NAME profile_automation_contracts COMMAND profile_automation_tests)
-    # The same projected-control peers over the Work Mode page (WorkModeCanvas.accessibleActions).
-    add_executable(work_mode_automation_tests tests/work_mode_automation_tests.cpp)
-    target_compile_definitions(work_mode_automation_tests PRIVATE UNICODE _UNICODE NOMINMAX)
-    target_link_libraries(work_mode_automation_tests PRIVATE hud_profile_native hud_module_strings uiautomationcore oleaut32 ole32)
-    if(MSVC)
-      target_compile_options(work_mode_automation_tests PRIVATE /W4 /permissive- /EHsc)
-    endif()
-    add_test(NAME work_mode_automation_contracts COMMAND work_mode_automation_tests)
     # The host's shell SourceScene (it carries the ID card textures) over the
     # packaged catalog: no CPU texture copy after upload, identical frames.
     if(ehud_app_inputs AND EXISTS "${ehud_app_inputs}/profile-outline-catalog.ehscene")

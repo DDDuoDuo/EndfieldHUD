@@ -2,9 +2,9 @@
 // Windows-only "Import macOS data…" flow (WINDOWS-MIGRATION.md section 7):
 // the portable state machine behind the import card of the macImport area
 // (app/areas/mac_import_module.hpp). The Mac app has no import feature, so
-// the card reuses the HUD confirmation style (HUDQuitConfirmationView card,
-// buttons and timings; app/areas/mac_import_card.hpp) and this flow supplies
-// its content in the five HUD languages:
+// the card is a design-library panel in the redesign style (app/areas/
+// mac_import_card.hpp) and this flow supplies its content in the five HUD
+// languages:
 //
 //   intro -> choosing (shared folder dialog) -> staging (bounded steps on the
 //   shared UtilityExecutor, progress) -> [replace: an earlier import exists]

@@ -70,6 +70,7 @@ bool Context::apply(const Appearance& next, double now) {
     if (next == appearance_) return false;
     const bool paletteChanged = env_.palette.apply(next.accentHex, next.light);
     const bool recordingChanged = next.recordingMode != env_.recordingMode;
+    const bool motionChanged = next.reduceMotion != env_.reduceMotion;
     const bool changed = paletteChanged || recordingChanged || next.language != env_.language
         || next.systemRegion != appearance_.systemRegion || next.reduceMotion != env_.reduceMotion;
     appearance_ = next;
@@ -83,6 +84,7 @@ bool Context::apply(const Appearance& next, double now) {
         for (Canvas* canvas : canvases) canvas->paletteChanged();
     }
     if (recordingChanged) for (Canvas* canvas : canvases) canvas->recordingModeChanged();
+    if (motionChanged) for (Canvas* canvas : canvases) canvas->reduceMotionChanged();
     return changed;
 }
 // update(unit:renderScale:) (:56-65).
@@ -147,7 +149,7 @@ void Page::restoreOffset(ScrollArea& area) {
 // ---------------------------------------------------------------------------
 Canvas::Canvas(core::Module module, Context& context)
     : module_(module), context_(&context), prefix_(core::moduleIdentifier(module)),
-      arena_(prefix_ + ".canvas", &context.env().deadlines) {
+      arena_(prefix_ + ".canvas", &context.env().deadlines), builder_{context.env(), arena_, set_} {
     root_ = &arena_.make("design.root");
     top_ = &arena_.make("design.top");
     root_->setAnchorPoint({0, 0});
@@ -256,11 +258,7 @@ void Canvas::completeSwap() {
     swapToken_ = 0; swapDeadline_.reset();
     finishLeave();
     install(std::move(pending_), true);
-    const auto clock = env().clock();
-    if (!clock.reduceMotion) {
-        if (showsHeader_ && currentHeader()) currentHeader()->playEntrance(clock);
-        motion::stagger(page_->staggered(), swapOffset_, clock);
-    }
+    playEntrance(swapOffset_, env().now);                // self.playEntrance(from:) (:330)
     notifyInput();
 }
 // settleSwap(concealed:) (:342-353).
@@ -330,6 +328,7 @@ void Canvas::install(std::unique_ptr<Page> next, bool swapHeader) {
         else bury(std::shared_ptr<Page>(std::move(old)));
     }
     ++structure_;
+    didInstall(*page_);
     refreshRouter();
     notifyInput();
 }
@@ -461,6 +460,7 @@ void Canvas::forgetFields(const Layer& subtree) {
 void Canvas::endEditing(bool commit) {
     for (TextField* field : std::vector<TextField*>(fields_)) if (field->editing()) field->endEditing(commit);
 }
+void Canvas::refreshTextFieldProjection() { for (TextField* field : fields_) field->refreshProjection(); }
 bool Canvas::editingText() const noexcept { return std::any_of(fields_.begin(), fields_.end(), [](TextField* f) { return f->editing(); }); }
 TextField* Canvas::editingField() const noexcept {
     const auto it = std::find_if(fields_.begin(), fields_.end(), [](TextField* f) { return f->editing(); });

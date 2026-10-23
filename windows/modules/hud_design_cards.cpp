@@ -345,8 +345,9 @@ const char* extensionName(ArchiveTile::Extension e) {
     }
     return "txt";
 }
+}
 // bracketPath (:428-437): two 9 px wide vertical brackets, 2 px, open toward the centre.
-PathBuilder bracketPath(Rect bounds, double inset) {
+PathBuilder ArchiveTile::bracketPath(Rect bounds, double inset) {
     const Rect r{bounds.x + inset, bounds.y + inset, bounds.width - 2 * inset, bounds.height - 2 * inset}; // CGRect.insetBy
     PathBuilder p;
     for (const bool left : {true, false}) {
@@ -354,7 +355,6 @@ PathBuilder bracketPath(Rect bounds, double inset) {
         p.rect({x, r.y, 9, 2}).rect({x, r.y + r.height - 2, 9, 2}).rect({left ? r.x : r.x + r.width - 2, r.y, 2, r.height});
     }
     return p;
-}
 }
 ArchiveTile::ArchiveTile(Builder& b, std::string id, int number, std::string title, Extension extension, std::optional<std::string> extensionLabel,
     std::optional<std::string> size, std::optional<std::string> date, double width, double wellHeight, bool redacted, Style style)

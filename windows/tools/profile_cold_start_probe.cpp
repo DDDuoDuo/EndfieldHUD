@@ -2,7 +2,8 @@
 // Wall milliseconds of what the profile area runs on the owner thread at
 // launch, when its record loads, when a returning user's large photo avatar
 // loads, on the first frames with another module and with Personal Profile
-// shown, and in the host's ID card presenter apply; then the process memory
+// shown, and in the host's ID card presenter apply, and the Work Mode page's
+// (design owner) frames and residency; then the process memory
 // (private bytes, threads) a returning user's photo avatar and photo
 // background keep resident, and the owner-thread cost of a portrait slider
 // step. Hidden HWND, WARP, a NEW temporary data root and a synthetic gradient
@@ -11,8 +12,11 @@
 //   profile_cold_start_probe <hud.hlsl> <resources/profile> <id_card-native-captions.json> [<shell catalog.ehscene>]
 // With the packaged shell catalog it also reports what the source shell's
 // SourceScene keeps resident after loading it (CPU bytes and private bytes).
+// The design headers first: rpcndr.h (through objbase) defines `small`.
+#include "tools/hud_design_owner.hpp"
+#include "modules/work_mode_canvas.hpp"
+#include "native/hud_design_text_metrics.hpp"
 #include "tools/profile_owner.hpp"
-#include "tools/work_mode_preview.hpp"
 #include "core/data/data_store.hpp"
 #include "core/data/file_io.hpp"
 #include "modules/id_card_artwork.hpp"
@@ -223,39 +227,36 @@ void run(const fs::path&shader,const fs::path&resources,const fs::path&captionFi
     }
     owner->release(renderer);owner.reset();quiesce();
     memory("memory.relaunch.released");
-    // 8. The Work Mode page (this area's scene and owner): what it keeps
-    // while shown, switched away inside the open HUD and once the HUD closed
-    // on another module, and its first frames.
+    // 8. The Work Mode page on the design library (the owner app/application.cpp
+    // constructWorkMode builds): what it keeps while shown, while a session runs
+    // (a one-second tick repaints the digits and at most one tick chunk),
+    // switched away inside the open HUD and once the HUD closed on another
+    // module, and its first frames.
     {
-        tools::WorkModePreviewOptions wo;wo.raster.pixelsPerPoint=2;wo.clipboard=nullptr;
-        tools::WorkModePreview page(w.hwnd,raster,nullptr,TF_CLIENTID_NULL,wo);page.resize(metrics);page.setAppearance({true,2,{250./255,212./255,31./255,1}});page.focus(true,time);
-        core::ModulePresentation modules(core::Module::workMode);
-        const auto paint=[&](double advance){time+=advance;const auto sample=modules.sample(time).presentation;chrome.module=sample.requested;
-            return timed([&]{page.update({},chrome,sample,1,time);page.upload(renderer);composition.setEntries(renderer,page.entries());composition.present(renderer);page.collected(renderer);});};
-        const auto rasterBase=raster.stats().resourceBytes;const auto rendererBase=renderer.stats().resourceBytes;
-        const auto sample=[&](const std::string&key){report[key+"RasterMB"]=megabytes(raster.stats().resourceBytes-rasterBase);report[key+"RendererMB"]=megabytes(renderer.stats().resourceBytes-rendererBase);
-            report[key+"PagePixelMB"]=megabytes(page.resources().scenePixelBytes);report[key+"GPU"]=page.resources().gpuResident;};
+        gpu::NativeDesignTextMeasurer measurer(raster);m::design::Context context(measurer,gpu::nativeUppercase());
+        m::WorkModeCanvas*workShown{};m::WorkModeController controller({[&]{if(workShown)workShown->controllerChanged();},{}});
+        tools::DesignOwnerOptions wo;wo.name="workMode";wo.raster.pixelsPerPoint=2;tools::DesignOwnerCore page(raster,context,std::move(wo));
+        m::WorkModeCanvasOptions co;co.clock=[&]{return time;};
+        auto canvas=std::make_unique<m::WorkModeCanvas>(context,controller,std::move(co));auto&workPage=*canvas;workShown=canvas.get();page.add(std::move(canvas));page.resize(metrics);
+        core::ModulePresentation modules(core::Module::workMode);modules.setDesignScreen(core::Module::workMode,true);
+        const auto center=core::source::DesktopChromeLayout::make(chrome,{},{}).designToScreen;
+        const auto paint=[&](double advance){return timed([&]{time+=advance;(void)context.advance(time);controller.wake(time);const auto presented=modules.sample(time).presentation;chrome.module=presented.requested;
+            page.update({center,chrome,presented,1.f,time,true});page.upload(renderer);composition.setEntries(renderer,page.entries(core::Module::workMode));composition.present(renderer);page.collected(renderer);});};
+        const auto rasterBase=raster.stats();const auto rendererBase=renderer.stats().resourceBytes;
+        const auto sample=[&](const std::string&key){const auto r=raster.stats();const auto scene=page.sceneStats(core::Module::workMode);
+            report[key+"RasterMB"]=megabytes(r.resourceBytes-rasterBase.resourceBytes);report[key+"RendererMB"]=megabytes(renderer.stats().resourceBytes-rendererBase);
+            report[key+"PagePixelMB"]=megabytes(scene?scene->residentPixelBytes:0);report[key+"Surfaces"]=double(scene?scene->surfaces:0);report[key+"RasterEntries"]=double(scene?scene->rasterEntries:0);};
         set("workMode.firstFrameMS",paint(1./60));for(unsigned n=0;n<30;++n)(void)paint(1./60);sample("workMode.shown");
-        modules.select(core::Module::notes,time);for(unsigned n=0;n<40;++n)(void)paint(1./60);sample("workMode.otherModule");
+        {const auto idleStart=raster.stats().rasterizations;double peak{};for(unsigned n=0;n<60;++n)peak=std::max(peak,paint(1./60));
+         report["workMode.idleRasterizations"]=double(raster.stats().rasterizations-idleStart);set("workMode.idlePeakFrameMS",peak);}
+        workPage.primaryAction();(void)paint(1./60);
+        {const auto runStart=raster.stats().rasterizations;double total{},peak{};for(unsigned n=0;n<180;++n){const double d=paint(1./60);total+=d;peak=std::max(peak,d);}
+         report["workMode.runningRasterizationsPerSecond"]=double(raster.stats().rasterizations-runStart)/3;set("workMode.runningFrameMS",total/180);set("workMode.runningPeakFrameMS",peak);}
+        workPage.reset();modules.select(core::Module::notes,time);for(unsigned n=0;n<40;++n)(void)paint(1./60);sample("workMode.otherModule");
         page.cancelInteraction(time);page.setOverlayVisible(false,time);(void)paint(1./60);sample("workMode.parked");
         page.setOverlayVisible(true,time);(void)paint(1./60);modules.select(core::Module::workMode,time);
         set("workMode.reshowFirstFrameMS",paint(1./60));for(unsigned n=0;n<30;++n)(void)paint(1./60);sample("workMode.reshown");
-        composition.detach(renderer);page.shutdown(time);page.release(renderer);
-        // What the source ring and ring base (440 pt circle strokes) would
-        // keep as rasters at this scale, against the GPU meshes that replace them.
-        gpu::LayerRasterizer local;gpu::LayerRasterOptions ro;ro.pixelsPerPoint=2;m::WorkModeController c;m::WorkModePresentation s(c);s.refresh(time);
-        const auto art=m::prepareWorkModeArtwork(s,{true,2,{250./255,212./255,31./255,1}});std::size_t rasterBytes{},meshBytes{};
-        std::vector<std::unique_ptr<gpu::LayerScene>>rings;std::array<std::vector<gpu::Vertex>,2>vertices;std::array<std::vector<std::uint32_t>,2>indices;
-        const auto textureBase=renderer.stats().resourceBytes;
-        for(const auto*part:{&art.ringBase,&art.ring}){
-            auto ring=std::make_unique<gpu::LayerScene>(local);ring->load(part->layers,ro);rasterBytes+=ring->report().pixelBytes;ring->uploadResources(renderer);rings.push_back(std::move(ring));}
-        const auto textureBytes=renderer.stats().resourceBytes-textureBase;for(auto&ring:rings)(void)ring->releaseResources(renderer);
-        const auto meshBase=renderer.stats().resourceBytes;
-        for(std::size_t n=0;n<2;++n){const auto*part=n?&art.ring:&art.ringBase;gpu::workModeRingMesh(part->layers["children"].array()[0]["shape"],2,vertices[n],indices[n]);
-            meshBytes+=vertices[n].size()*sizeof(gpu::Vertex)+indices[n].size()*sizeof(std::uint32_t);(void)renderer.setMesh("probe.ring."+std::to_string(n),1,{vertices[n],indices[n]});}
-        const auto meshGPU=renderer.stats().resourceBytes-meshBase;for(std::size_t n=0;n<2;++n)(void)renderer.removeMesh("probe.ring."+std::to_string(n));
-        report["workMode.ringRasterEquivalentMB"]=megabytes(rasterBytes);report["workMode.ringTextureEquivalentMB"]=megabytes(textureBytes);
-        report["workMode.ringMeshMB"]=megabytes(meshBytes);report["workMode.ringMeshGPUMB"]=megabytes(meshGPU);
+        composition.detach(renderer);page.release(renderer);workShown=nullptr;controller.shutdown(time);
     }
     executor.shutdown();
     std::cout<<report.encode()<<'\n';

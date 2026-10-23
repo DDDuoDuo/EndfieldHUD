@@ -113,7 +113,7 @@ std::optional<gpu::ContentFilter> DesignOverlayOwner::contentFilter(double now, 
     if (!std::isfinite(unit) || unit <= 0) return std::nullopt;
     return gpu::ContentFilter{begin, count, {}, core::ContentDimTrack::blurRadius * unit, core::ContentDimTrack::exposure, std::clamp(o.dimFilter(now), 0., 1.)};
 }
-// The quit card's slot (app/quit_confirmation.cpp): every capture chain first.
+// The v1.2.0 quit card's slot: every capture chain first.
 app::ModuleRouting DesignOverlayOwner::routing() const noexcept {
     app::ModuleRouting r;
     r.pointerCapture = 0; r.wheelCapture = 0; r.keyCapture = 0;
@@ -156,6 +156,13 @@ void DesignOverlayOwner::update(const app::ModuleFrame& frame) {
     i.scene.updatePose({boxWorld, frame.opacity, i.time, {}, {}});
     i.posed = true;
     i.composed = true;
+}
+void DesignOverlayOwner::prewarm(const app::ModuleFrame& frame) {
+    auto& i = *impl_;
+    i.clock(frame.time);
+    i.center = frame.center;
+    i.density = designDensity(core::source::designBoxWorld(frame.center), i.metrics.scale, i.density);
+    i.context.update(d::geometry::baseUnit, i.density / d::geometry::baseUnit, i.time);
 }
 bool DesignOverlayOwner::requiresFrames(double t) const {
     const auto& i = *impl_;

@@ -44,8 +44,13 @@ struct Press final : d::Control {
 struct FakeCanvas final : d::Canvas {
     FakeCanvas(d::Context& c, core::Module m) : Canvas(m, c) {}
     unsigned pressed{}, builds{}, leaves{}, keys{}, scrolls{};
+    d::ScrollArea* rows{};
     void buildPage(d::Page& page) override {
         ++builds;
+        // A long list whose bar is drawn (Event Log's log grows every cycle).
+        rows = &page.scrollArea("rows", {0, 300, 400, 100});
+        rows->setContentHeight(400);
+        rows->track().setValue(d::Channel::opacity, 1);
         auto& press = page.make<Press>("press");
         press.layer().setFrame({100, 200, 200, 50});
         press.layer().setContent(d::solid("plate", {0, 0, 200, 50}, d::rgb(0x2A2A2A)));
@@ -120,6 +125,16 @@ void run(const std::filesystem::path& shader) {
     };
     // --- pose, input, cursor -------------------------------------------------------------
     check(frame(sample(core::Module::clipboard), 0) > 0 && fake->builds == 1, "The shown canvas builds and composes");
+    {
+        // A thumb length change is a pose change: the thumb's one raster is stretched.
+        const auto& thumb = *fake->rows->track().children().front();
+        const auto rasterized = raster.stats().rasterizations;
+        const double before = d::thumbLength(thumb);
+        for (const double height : {200., 300., 500.}) { fake->rows->setContentHeight(height); frame(sample(core::Module::clipboard), 0); }
+        check(before == 25 && std::abs(d::thumbLength(thumb) - 20) < 1e-9 && raster.stats().rasterizations == rasterized,
+            "Growing content shortens the thumb without a new raster");
+        fake->rows->setContentHeight(400); frame(sample(core::Module::clipboard), 0);
+    }
     auto& core0 = owner.core();
     check(core0.inputModule() == core::Module::clipboard, "The requested, attached canvas takes input");
     const auto rect = core0.clientRect({100, 200, 200, 50});

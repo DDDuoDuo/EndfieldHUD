@@ -77,6 +77,13 @@ public:
     virtual double width(std::span<const TextRun>, TextRegion) = 0;
     virtual LineMetrics metrics(const TextStyle&, TextRegion, double scale = 1) = 0;
     double width(std::string_view text, const TextStyle& style, TextRegion region);
+    // HUDText.lines(_:width:maximumLines:truncate:).count: the lines greedy
+    // breaking gives the runs in `width` (at most maximumLines; 0 unlimited;
+    // the last allowed line takes the rest). Content heights that follow the
+    // text use it (Calendar's event plates, File Shelf, OrbiPom). The default
+    // is the width ratio (no break opportunities); the native measurer breaks
+    // exactly like the raster (LayerRasterizer::measureSourceText).
+    virtual std::size_t lineCount(std::span<const TextRun>, TextRegion, double width, int maximumLines);
 };
 
 // HUDTextLayer as a value: the one text leaf of the redesign. lineFrame is the
@@ -124,6 +131,8 @@ struct TextServices {
     double width(std::span<const TextRun>, std::optional<TextRegion> = {}) const;
     double width(std::string_view, const TextStyle&, std::optional<TextRegion> = {}) const;
     LineMetrics metrics(const TextStyle&, std::optional<TextRegion> = {}, double scale = 1) const;
+    // TextMeasurer::lineCount of the displayed runs (0 for no text).
+    std::size_t lineCount(std::span<const TextRun>, double width, int maximumLines, std::optional<TextRegion> = {}) const;
 };
 // HUDTextLayer.preferredWidth: single-line natural width at full size.
 double preferredWidth(const TextBlock&, const TextServices&);

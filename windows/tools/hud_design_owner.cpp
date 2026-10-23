@@ -105,6 +105,9 @@ struct DesignOwnerCore::Impl {
         s.canvas->prepareToLeave(time);
         s.canvas->setActive(false, time);
         s.active = false; s.input = false;
+        // SystemHUDView.deactivateModuleInput: a module switch closes the
+        // confirm bar and toast at once (spec §1.10), after the canvas left.
+        context.overlay().reset();
     }
     void cancel() {
         if (fields) fields->pointerUp();
@@ -116,7 +119,7 @@ struct DesignOwnerCore::Impl {
         s->canvas->pointerMoved(std::nullopt, false, time);
     }
     Slot* slot(core::Module m) const { for (const auto& s : slots) if (s->module == m) return s.get(); return nullptr; }
-    // Clipboard's policy (tools/clipboard_preview.hpp): a canvas that is not
+    // Clipboard's v1.2.0 policy (tools/clipboard_preview.hpp, removed in C1): a canvas that is not
     // shown when the HUD closes, or after the close finished, keeps no
     // artwork; the shown one keeps it so reopening on it only re-uploads; a
     // switch inside the open HUD only parks textures (collected). A park that
@@ -148,7 +151,12 @@ void DesignOwnerCore::resize(const app::ClientMetrics& m) {
     need(m.pixelWidth && m.pixelHeight && std::isfinite(m.scale) && m.scale > 0, "Invalid design owner viewport");
     impl_->metrics = m;
 }
-void DesignOwnerCore::setAppearance(const app::ModuleAppearance&, double t) { impl_->clock(t); } // applied to the Context once (DesignOverlayOwner)
+// The Context took the appearance once (DesignOverlayOwner); the module may react.
+void DesignOwnerCore::setAppearance(const app::ModuleAppearance& a, double t) {
+    auto& i = *impl_;
+    i.clock(t);
+    if (i.options.appearance) { i.bind(); i.options.appearance(a, i.time); }
+}
 void DesignOwnerCore::setOverlayVisible(bool value, double t) {
     auto& i = *impl_;
     i.clock(t);
@@ -162,7 +170,11 @@ void DesignOwnerCore::setOverlayVisible(bool value, double t) {
     for (auto& s : i.slots) if (s->active) i.leave(*s);
     i.parkHidden();
 }
-void DesignOwnerCore::overlayClosing(double t) { cancelInteraction(t); setOverlayVisible(false, t); }
+void DesignOwnerCore::overlayClosing(double t) {
+    cancelInteraction(t); setOverlayVisible(false, t);
+    auto& i = *impl_;
+    if (i.options.closing) { i.bind(); i.options.closing(i.time); }
+}
 void DesignOwnerCore::update(const app::ModuleFrame& frame) {
     auto& i = *impl_;
     i.clock(frame.time);
@@ -203,6 +215,7 @@ void DesignOwnerCore::update(const app::ModuleFrame& frame) {
             i.fields->setPose({p.contentWorld, camera, i.metrics.pixelWidth, i.metrics.pixelHeight, p.opacity, frame.focused, i.time, i.context.env().reduceMotion});
         }
     }
+    if (i.options.updated) { i.bind(); i.options.updated(frame); }
 }
 void DesignOwnerCore::prewarm(const app::ModuleFrame& frame) {
     auto& i = *impl_;
@@ -230,20 +243,33 @@ bool DesignOwnerCore::requiresFrames(double t) const {
 }
 std::optional<double> DesignOwnerCore::nextWakeTime(double t) const {
     const auto& i = *impl_;
-    if (!i.overlay) return std::nullopt;
     std::optional<double> next;
     const auto take = [&](std::optional<double> v) { if (v && std::isfinite(*v)) next = next ? std::min(*next, *v) : *v; };
+    if (i.options.nextWakeTime) take(i.options.nextWakeTime(t));   // the services run while the HUD is closed too
+    if (!i.overlay) return next;
     for (const auto& s : i.slots) if (s->shown) { take(s->canvas->nextWakeTime(t)); take(s->canvas->nextDeadline(t)); }
     if (i.fields) take(i.fields->nextWakeTime(t));
     return next;
 }
+// A canvas wakes at the time it reported (its next wake as of the owner's
+// last time, not re-asked at the new one: a once-a-second readout would
+// already name the following second), with the canvas clock advanced first
+// (Canvas::wake code reads now()).
 bool DesignOwnerCore::deadline(double t) {
     auto& i = *impl_;
+    const double before = i.time;
     i.clock(t);
-    if (!i.overlay) return false;
     bool woke{};
+    if (i.options.deadline) { i.bind(); woke = i.options.deadline(i.time); }
+    if (!i.overlay) return woke;
     for (auto& s : i.slots)
-        if (s->shown) if (const auto at = s->canvas->nextWakeTime(i.time); at && *at <= i.time) { i.bind(); s->canvas->wake(i.time); woke = true; }
+        if (s->shown) if (const auto at = s->canvas->nextWakeTime(before); at && *at <= i.time) {
+            i.bind();
+            auto& env = i.context.env();
+            env.now = std::max(env.now, i.time);
+            s->canvas->wake(i.time);
+            woke = true;
+        }
     return woke;
 }
 void DesignOwnerCore::upload(gpu::Renderer& r) {
@@ -302,8 +328,11 @@ bool DesignOwnerCore::capturesWheel() const { const auto* s = impl_->input(); re
 bool DesignOwnerCore::capturesKeys() const {
     const auto& i = *impl_;
     const auto* s = i.input();
-    return s && (s->canvas->capturesPointer() || (i.fields && i.fields->editing()));
+    return s && (s->canvas->capturesPointer() || s->canvas->capturesKeys() || (i.fields && i.fields->editing()));
 }
+// Only a canvas that records keys itself (Settings' shortcut capture) keeps
+// the host's key filters away; an editing field needs its TSF filter.
+bool DesignOwnerCore::suppressesKeyFilters() const { const auto* s = impl_->input(); return s && s->canvas->capturesKeys(); }
 bool DesignOwnerCore::pointer(const app::PointerEvent& e, double t) {
     auto& i = *impl_;
     i.clock(t);
@@ -419,12 +448,21 @@ bool DesignOwnerCore::finishEditing(double t) {
     for (auto& s : i.slots) if (s->canvas->editingText()) s->canvas->endEditing(true);
     return true;
 }
+bool DesignOwnerCore::flush(double t) {
+    auto& i = *impl_;
+    i.clock(t);
+    if (!i.options.flush) return true;
+    i.bind();
+    return i.options.flush(i.time);
+}
 bool DesignOwnerCore::hostEvent(const app::HostEvent& e, double t) {
     auto& i = *impl_;
     i.clock(t);
     // The close finished: canvases not shown keep no artwork (Clipboard).
     if (e.kind == app::HostEvent::Kind::overlayConcealed) i.parkHidden();
-    return false;
+    if (!i.options.hostEvent) return false;
+    i.bind();
+    return i.options.hostEvent(e, i.time);
 }
 std::optional<app::ModuleCursor> DesignOwnerCore::cursorAt(core::Point p) const {
     const auto& i = *impl_;
@@ -493,13 +531,18 @@ long DesignOwnerCore::automationFromPoint(double x, double y, IRawElementProvide
     return impl_->automation->fromPoint(x, y, out);
 }
 void DesignOwnerCore::automationDisconnect() noexcept { if (impl_->automation) impl_->automation->disconnect(); }
-std::optional<core::Module> DesignOwnerCore::automationModule() const noexcept { return std::nullopt; }
+// The UIA group is named after the canvas that takes input (Settings presents four modules).
+std::optional<core::Module> DesignOwnerCore::automationModule() const noexcept { return inputModule(); }
 app::ModuleResidency DesignOwnerCore::residency() const { return {}; }
 std::optional<core::Module> DesignOwnerCore::inputModule() const noexcept { const auto* s = impl_->input(); return s ? std::optional(s->module) : std::nullopt; }
 std::optional<core::Rect> DesignOwnerCore::clientRect(core::Rect box) const {
     const auto& i = *impl_;
     const auto* s = i.input();
     return s ? projected(s->projection, i.metrics.scale, box) : std::nullopt;
+}
+std::optional<gpu::NativeDesignSceneStats> DesignOwnerCore::sceneStats(core::Module module) const {
+    const auto* s = impl_->slot(module);
+    return s ? std::optional(s->scene->stats()) : std::nullopt;
 }
 std::optional<core::Point> DesignOwnerCore::boxPoint(core::Point logical) const {
     const auto* s = impl_->input();
@@ -529,7 +572,7 @@ bool DesignModuleOwner::pointerLocked() const { return core_->pointerLocked(); }
 bool DesignModuleOwner::capturesPointer() const { return core_->capturesPointer(); }
 bool DesignModuleOwner::capturesWheel() const { return core_->capturesWheel(); }
 bool DesignModuleOwner::capturesKeys() const { return core_->capturesKeys(); }
-bool DesignModuleOwner::suppressesKeyFilters() const { return false; }
+bool DesignModuleOwner::suppressesKeyFilters() const { return core_->suppressesKeyFilters(); }
 bool DesignModuleOwner::pointer(const app::PointerEvent& e, double t) { return core_->pointer(e, t); }
 bool DesignModuleOwner::wheel(const app::WheelEvent& e, double t) { return core_->wheel(e, t); }
 bool DesignModuleOwner::key(const app::KeyEvent& e, double t) { return core_->key(e, t); }
@@ -539,6 +582,7 @@ void DesignModuleOwner::focus(bool v, double t) { core_->focus(v, t); }
 void DesignModuleOwner::cancelInteraction(double t) { core_->cancelInteraction(t); }
 bool DesignModuleOwner::finishEditing(double t) { return core_->finishEditing(t); }
 bool DesignModuleOwner::hostEvent(const app::HostEvent& e, double t) { return core_->hostEvent(e, t); }
+bool DesignModuleOwner::flush(double t) { return core_->flush(t); }
 std::optional<app::ModuleCursor> DesignModuleOwner::cursorAt(core::Point p) const { return core_->cursorAt(p); }
 bool DesignModuleOwner::automationRefresh(IRawElementProviderFragmentRoot* r) { return core_->automationRefresh(r); }
 std::size_t DesignModuleOwner::automationCount() const { return core_->automationCount(); }

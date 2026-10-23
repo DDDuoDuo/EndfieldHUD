@@ -40,6 +40,8 @@ struct AccountLinkingOwnerOptions {
     // Work Mode snapshot for the wallet when unlinked / in Work Mode header mode.
     std::function<modules::hypergryph::WorkModeGaugeInput()> workMode;
     std::function<bool()> workModeRunning;
+    // The wallet without sanity data is a link to Work Mode (Mac 1.3.0).
+    std::function<void()> openWorkMode;
     core::Language language{core::Language::english};
     modules::hypergryph::CanvasStyle style;
     bool reduceMotion{};
@@ -110,6 +112,9 @@ public:
     bool key(const app::KeyEvent&,bool modified,double time);
     bool message(const app::NativeMessage&,double time); // serviceMessage: drain completions
     void cancelInteraction(double time);
+    // SystemHUDView.presentQuitConfirmation: an open recovery popover closes
+    // instead of the quit being asked; true when one was open.
+    bool dismissWalletPopover(double time);
     bool flush(double time);                            // shutdown barrier: the latest Account cache bytes are written
 
     // Personal Profile observer: an avatar change outside game sync turns

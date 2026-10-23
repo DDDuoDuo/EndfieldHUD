@@ -57,8 +57,8 @@ execute_process(COMMAND "${PREVIEW}" "${INPUTS}/runtime-compiled-animation" "${I
   --notes-assets "${INPUTS}/notes-controls-assets" --notes-assets-sha 9d2fcf0eead9eeeab1be4fdbb0e940a0e1e3eedf840ab9e4c63499e40ae70c00
   --notes-data "${WORK}/notes-data" --notes-format-assets "${resources}/notes-format"
   --shelf-assets "${resources}/shelf" --shelf-data "${WORK}/shelf-data" --shelf-mask "${resources}/shelf/reveal-mask.bin"
-  --clipboard-assets "${resources}/clipboard" --work-mode-fixture --volume-fixture --event-log-fixture --battery-fixture
-  --settings-assets "${resources}" ${media_arguments} --storage-assets "${resources}" --activity-assets "${resources}/activity"
+  --clipboard-fixture --work-mode-fixture --volume-fixture --event-log-fixture --battery-fixture --storage-fixture --activity-fixture
+  --settings-assets "${resources}" ${media_arguments}
   ${EXTRA} ${package_arguments}
   RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE errors TIMEOUT 500)
 if(NOT result EQUAL 0)

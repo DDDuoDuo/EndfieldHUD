@@ -40,6 +40,12 @@ double TextMeasurer::width(std::string_view text, const TextStyle& style, TextRe
     const TextRun run{std::string(text), style};
     return width(std::span(&run, 1), region);
 }
+std::size_t TextMeasurer::lineCount(std::span<const TextRun> runs, TextRegion region, double width, int maximumLines) {
+    if (runs.empty()) return 0;
+    const double natural = this->width(runs, region);
+    const auto lines = std::size_t(std::max(1.0, width > 0 ? std::ceil(natural / width) : 1.0));
+    return maximumLines > 0 ? std::min(lines, std::size_t(maximumLines)) : lines;
+}
 
 // HUDTextLayer (:97-208) as a value.
 TextBlock::TextBlock(std::string text, TextStyle style, TextAlignment a) : runs{TextRun{std::move(text), std::move(style)}}, alignment(a) {}
@@ -96,6 +102,13 @@ double TextServices::width(std::string_view text, const TextStyle& style, std::o
 LineMetrics TextServices::metrics(const TextStyle& style, std::optional<TextRegion> region, double scale) const {
     if (!measurer) throw std::logic_error("Design text needs a measurer");
     return measurer->metrics(style, region.value_or(uiRegion), scale);
+}
+std::size_t TextServices::lineCount(std::span<const TextRun> runs, double width, int maximumLines, std::optional<TextRegion> region) const {
+    std::vector<TextRun> shown;
+    for (const auto& r : runs) if (!r.text.empty()) shown.push_back({displayed(r), r.style});
+    if (shown.empty()) return 0;
+    if (!measurer) throw std::logic_error("Design text needs a measurer");
+    return measurer->lineCount(shown, region.value_or(uiRegion), width, maximumLines);
 }
 // HUDTextLayer.preferredWidth (:164).
 double preferredWidth(const TextBlock& b, const TextServices& s) { return s.width(b.runs, s.region(b)); }

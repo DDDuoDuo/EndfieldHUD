@@ -467,6 +467,9 @@ bool NotesPreview::dropMedia(std::span<const std::string>paths,core::Point logic
 bool NotesPreview::dropImage(std::span<const std::uint8_t>data,core::Point logical,double t){auto&i=*impl_;const Impl::TimeScope event(i,t);const auto point=dropPoint(logical);return point&&!data.empty()&&i.pasteImage(data,*point);}
 bool NotesPreview::showMediaError(std::string value,double t){auto&i=*impl_;const Impl::TimeScope event(i,t);return i.setMediaError(std::move(value));}
 void NotesPreview::select(core::Module m,double t){auto&i=*impl_;const Impl::TimeScope event(i,t);t=event.time;if(!i.finish()){i.pendingModule=m;return;}i.pendingModule.reset();const auto result=i.modules.select(m,t,true,i.preferences.reduceMotion);i.moduleInput=result.presentation.acceptsModuleInput;i.change(result.change,t);}
+void NotesPreview::setDesignScreen(core::Module m,bool design){impl_->modules.setDesignScreen(m,design);}
+void NotesPreview::beginEntrance(double t,std::optional<core::MotionPoint> offset){auto&i=*impl_;const Impl::TimeScope event(i,t);(void)i.modules.beginEntrance(event.time,i.preferences.reduceMotion,offset);}
+void NotesPreview::setCentreConcealed(bool concealed){impl_->modules.setConcealed(concealed);}
 core::Module NotesPreview::selected()const noexcept{return impl_->modules.requested();}
 const core::ModulePresentationSample&NotesPreview::modulePresentation()const noexcept{return impl_->moduleSample;}
 void NotesPreview::resize(const app::ClientMetrics&m){auto&i=*impl_;if(i.metrics==m)return;if(!i.finish()){i.pendingResize=m;return;}i.pendingResize.reset();i.metrics=m;i.workspace->setWorkspaceBounds({0,0,m.width,m.height},core::Point{m.width*.5-100,m.height*.5-120});}

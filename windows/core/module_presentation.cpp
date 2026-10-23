@@ -47,6 +47,7 @@ ModulePresentationUpdate ModulePresentation::snapshot(double time)const{
         next.shutter=ModuleTransitionStyle::shutterAt(elapsed,direction,true);
         next.registration=ModulePresentationRegistration{ModuleTransitionStyle::registrationAt(elapsed,direction),ModuleTransitionStyle::registrationOpacityAt(elapsed),ModuleTransitionStyle::registrationWhite(dark_)};
     }
+    if(concealed_){frame.current.opacity=0;if(frame.incoming)frame.incoming->opacity=0;}
     return result;
 }
 void ModulePresentation::attachCompletion(ModulePresentationUpdate&result){result.completedRequest=completion_;completion_.reset();}
@@ -79,8 +80,8 @@ ModulePresentationUpdate ModulePresentation::sample(double time){advance(time);r
 ModulePresentationUpdate ModulePresentation::complete(std::uint64_t generation,double time){
     advance(time);if(transition_&&generation==state_.generation())return run(time);return snapshot(time);
 }
-ModulePresentationUpdate ModulePresentation::beginEntrance(double time,bool reduceMotion){
-    advance(time);if(!transition_&&current_.attached&&isDesignScreen(current_.module)&&!reduceMotion)entrance_=ModuleEntrance{ShellPosition::entranceOffset(std::nullopt,current_.module),time,0};
+ModulePresentationUpdate ModulePresentation::beginEntrance(double time,bool reduceMotion,std::optional<MotionPoint> offset){
+    advance(time);if(!transition_&&current_.attached&&isDesignScreen(current_.module)&&!reduceMotion)entrance_=ModuleEntrance{offset.value_or(ShellPosition::entranceOffset(std::nullopt,current_.module)),time,0};
     return snapshot(time);
 }
 ModulePresentationUpdate ModulePresentation::settleOn(Module module,double time){

@@ -338,9 +338,9 @@ void SegmentedControl::renderSegments(bool animated) {
 // HUDButton (HUDDesignButtons.swift:21-121)
 // ---------------------------------------------------------------------------
 namespace {
-double buttonHeight(Button::Height h) noexcept { return h == Button::Height::small ? 26 : h == Button::Height::large ? 40 : 32; }
-double buttonPadding(Button::Height h) noexcept { return h == Button::Height::small ? 11 : h == Button::Height::large ? 22 : 16; }
-double buttonFont(Button::Height h) noexcept { return h == Button::Height::small ? 10.5 : h == Button::Height::large ? 13 : 12; }
+double buttonHeight(Button::Height h) noexcept { return h == Button::Height::compact ? 26 : h == Button::Height::large ? 40 : 32; }
+double buttonPadding(Button::Height h) noexcept { return h == Button::Height::compact ? 11 : h == Button::Height::large ? 22 : 16; }
+double buttonFont(Button::Height h) noexcept { return h == Button::Height::compact ? 10.5 : h == Button::Height::large ? 13 : 12; }
 }
 Button::Button(Builder& b, std::string id, std::string title, std::optional<Icon> icon, Kind kind, Height height)
     : Control(b.env, id, title, b.layer(id)), kind_(kind), height_(height), icon_(icon) {
@@ -373,7 +373,7 @@ void Button::setTitle(std::string value) {
 }
 double Button::preferredWidth() const {
     const double padding = buttonPadding(height_);
-    const double leading = kind_ == Kind::secondary ? (height_ == Height::small ? 20 : 22) : padding;
+    const double leading = kind_ == Kind::secondary ? (height_ == Height::compact ? 20 : 22) : padding;
     const auto& block = textOf(*text_);
     // An icon-only button has no gap after its icon (flex gap).
     return std::ceil(leading + (icon_ ? 15 + (block.text().empty() ? 0 : 8) : 0) + env().text.width(block.text(), block.style()) + padding);
@@ -412,7 +412,7 @@ void Button::layoutContents() {
         bar_->setValue(Channel::opacity, hover ? 0 : 1); arrow_->setValue(Channel::opacity, hover ? 1 : 0);
         break;
     }
-    const double leading = kind_ == Kind::secondary ? (height_ == Height::small ? 20 : 22) : padding;
+    const double leading = kind_ == Kind::secondary ? (height_ == Height::compact ? 20 : 22) : padding;
     double x = leading + std::round(std::max(0.0, (bounds.width - preferred) / 2));
     if (glyph_) { glyph_->setFrame({x, (h - 15) / 2, 15, 15}); x += 15 + 8; }
     setLine(*text_, {x, (h - font) / 2, bounds.width - x - padding + 2, font});
@@ -834,10 +834,10 @@ Dropdown::Dropdown(Builder& b, std::string id, std::string text, std::string val
     Height height, std::optional<double> width)
     : Control(b.env, id, std::move(text), b.layer(id)), builder_(&b), value_(value) {
     const auto& p = palette();
-    const TextStyle style = height == Height::small ? type::dropdownValue(p).sized(12) : type::dropdownValue(p);
-    const double h = height == Height::small ? 26 : 30;
+    const TextStyle style = height == Height::compact ? type::dropdownValue(p).sized(12) : type::dropdownValue(p);
+    const double h = height == Height::compact ? 26 : 30;
     const double natural = 12 + env().text.width(value, style, valueLanguage) + 14 + 9 + 10;
-    const double fieldWidth = width.value_or(height == Height::small ? std::max(96.0, natural) : 178);
+    const double fieldWidth = width.value_or(height == Height::compact ? std::max(96.0, natural) : 178);
     Layer& l = layer();
     l.setBounds({fieldWidth, h});
     setBorder(l, p.token(ThemeToken::control), p.token(ThemeToken::ringField), 1);

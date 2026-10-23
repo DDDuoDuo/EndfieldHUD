@@ -11,6 +11,7 @@
 #include "app/areas/calendar_reminder_module.hpp"
 #include "app/areas/update_service.hpp"
 #include "native/archive_password_vault.hpp"
+#include "native/storage_files.hpp"
 #include <cctype>
 #include "core/application_arguments.hpp"
 #include <algorithm>
@@ -259,7 +260,121 @@ Application::Impl::Impl(ApplicationOptions options)
 }
 Application::Impl::~Impl(){try{cleanup();}catch(...){}}
 
-void Application::Impl::registerModule(std::unique_ptr<ModuleOwner>&owner){registry.add(*owner);}
+// A design owner registered here gets the current client metrics first (its
+// projection needs them before the first frame) and marks its modules as
+// design screens.
+void Application::Impl::registerModule(std::unique_ptr<ModuleOwner>&owner){
+    if(dynamic_cast<const tools::DesignModuleOwner*>(owner.get()))owner->resize(metrics);
+    registry.add(*owner);markDesignScreens(*owner);}
+
+// ---------------------------------------------------------------------------
+// The design library host (LIBRARY-DESIGN.md sections 2, 8, 11; R5, R6, R10, R11)
+// Mac SystemHUDView init: one HUDDesignContext, built before every canvas,
+// its overlay layer on the core plane above the module host and the bottom
+// navigation (SystemHUDView.swift:366-372, 2176-2195). Here the
+// DesignOverlayOwner owns that Context, draws the overlay (modalEntries,
+// composed last), routes first in every capture chain (priority 0) while a
+// confirm bar shows, applies the appearance once per applied record
+// (setAppearance: accent, theme incl. Light, language, Reduce Motion and the
+// record's Recording mode) and runs the shared deadlines. Constructed right
+// after Notes (the design text fields borrow its TSF manager) and before
+// every design owner: registered first, it updates first in each frame, so
+// the render scale (designDensity) reaches the Context before any design
+// owner poses or rasterizes. Without the source chrome there is no centre
+// plane and no overlay (no design owner either).
+void Application::Impl::constructDesignOverlay(){
+    tools::DesignOverlayOptions o;
+    o.raster=rasterOptions;o.now=[this]{return areaClock();};o.changed=[this]{automationChanged();refresh(now());};o.window=host.hwnd();
+    // SystemHUDView.configureDesignContext: designContext.setRecordingMode(configuration.recordingMode).
+    o.recordingMode=[this]{return configuration.recordingMode();};
+    designOverlay=std::make_unique<tools::DesignOverlayOwner>(rasterizer,std::move(o));
+    auto&context=designOverlay->context();
+    // Content and input-state changes of any canvas or of the overlay: one
+    // coalesced frame; the routed event's own refresh recomputes demand and
+    // deadlines, and UI Automation re-lists (captures and peers changed).
+    context.invalidate=[this]{if(ready&&!stopping)host.invalidate();};
+    context.onInputStateChange=[this]{automationChanged();if(ready&&!stopping)host.invalidate();};
+    context.overlay().onChange=[this]{automationChanged();if(ready&&!stopping)host.invalidate();};
+    // A drag or an editor that needs a still plane began: the parallax locks
+    // now (the owners' pointerLocked() reports it).
+    context.onLockParallax=[this]{if(!ready||stopping)return;environment.pointerLocked=pointerLocked();session->setEnvironment(environment,now());};
+    // The design text fields' one clipboard: the system clipboard where the
+    // HUD can be shown; hidden runs never touch it (an in-memory one).
+    if(visibleMode())designClipboard=gpu::systemNotesClipboard();
+    designOverlay->resize(metrics);registry.add(*designOverlay);
+    moduleContrast=std::make_unique<ModuleContrast>(rasterizer,rasterOptions);
+}
+// SystemHUDView.moduleContrast (SystemHUDView.swift:2183-2189, 2615-2616): a
+// radial CAGradientLayer over HUDModuleContent.viewportFrame (280, 100, 440 x
+// 440 design units, centred on the disc centre 500, 320 = box px 295, 305)
+// on the core plane under the module host: black (Light: white) .58 at the
+// centre, .40 at 60 %, clear at the ellipse (startPoint .5/.5, endPoint 1/1).
+// It is a smooth ramp, so it is rasterized at a quarter of its box size and
+// scaled up (one 165 px surface instead of 661 px at density 1). Windows
+// 1.2.0 never drew it; the Map's resting plate cut-out of it is not ported
+// (the Map only cuts during a switch, MapPreview::transitionCut).
+Application::Impl::ModuleContrast::ModuleContrast(gpu::LayerRasterizer&r,const gpu::LayerRasterOptions&o)
+    :root(arena.make("root")),ramp(arena.make("ramp")),scene(r,o,"shell.contrast"){
+    namespace d=modules::design;
+    constexpr double quarter=4,side=440/d::geometry::baseUnit/quarter;
+    root.setFrame(d::metric::box);root.setPartRoot(true);
+    ramp.setBounds({side,side});ramp.setAnchorPoint({.5,.5});ramp.setPosition({295,305});ramp.setBaseTransform(d::Affine::scale(quarter,quarter));
+    ramp.setAnimatable();root.add(ramp);
+}
+// fadeModuleContrast(visible: usesSourceShell && selectedModule != .nowPlaying)
+// on every selection: .13 s linear (a CABasicAnimation without timing) from
+// the presented opacity, at once while the HUD is hidden or under Reduce
+// Motion; the end value and the fade start together (the flash fix).
+void Application::Impl::updateModuleContrast(const core::Matrix4&center,double time){
+    if(!moduleContrast||!designOverlay||!notes)return;
+    namespace d=modules::design;auto&c=*moduleContrast;
+    if(c.dark!=watchAppearance.dark){
+        c.dark=watchAppearance.dark;const auto ink=*c.dark?d::black:d::white;
+        const std::array colors{ink(.58),ink(.40),ink(0)};const std::array locations{0.,.60,1.};const auto size=c.ramp.bounds();
+        c.ramp.setContent(d::gradient("module.contrast",{0,0,size.width,size.height},colors,locations,{.5,.5},{1,1},d::GradientKind::radial));
+    }
+    const bool visible=notes->selected()!=core::Module::nowPlaying;
+    if(visible!=c.visible){c.visible=visible;
+        const d::motion::Clock clock{time,settings.reduceMotion||session->phase()==core::VisibilityPhase::concealed,nullptr};
+        d::motion::animate(c.ramp,d::Channel::opacity,visible?1.:0.,d::duration::leave,clock,d::easing::linear);}
+    (void)c.scene.syncContent(c.root,designOverlay->context().env().text,c.arena.revision(),1,time);
+    c.scene.updatePose({source::designBoxWorld(center),static_cast<float>(canvasOpacity(time)),time,{},{}});c.posed=true;
+}
+std::uint32_t Application::Impl::registerMessage(){
+    need(registeredMessages<areaMessageLimit,"Module areas and design owners registered too many messages");
+    return areaMessageFirst+registeredMessages++;
+}
+tools::DesignOwnerOptions Application::Impl::designOwnerOptions(std::string name,const ModuleRouting&routing){
+    need(bool(designOverlay),"Design owners need the shared design overlay");
+    tools::DesignOwnerOptions o;o.name=std::move(name);o.routing=routing;o.raster=rasterOptions;
+    o.now=[this]{return areaClock();};o.changed=[this]{automationChanged();refresh(now());};
+    auto&f=o.fields;f.window=host.hwnd();f.raster=rasterOptions;
+    // Notes' activated TSF manager (borrowed; Notes outlives every design owner).
+    if(notes){f.threadManager=notes->activatedTextManager();f.clientID=static_cast<std::uint32_t>(notes->textClient());}
+    // Editor change notices reach the owner's message() chain (its routing).
+    f.ownerMessage=registerMessage();
+    if(designClipboard){
+        auto clipboard=designClipboard;
+        f.clipboard.read=[clipboard]()->std::optional<std::u16string>{auto value=clipboard->readText(1u<<20);if(!value)return std::nullopt;return std::move(value->text);};
+        f.clipboard.write=[clipboard](std::u16string_view text){gpu::NotesClipboardText value;value.text=std::u16string(text);return clipboard->writeText(value);};
+    }else{
+        auto memory=std::make_shared<std::optional<std::u16string>>();
+        f.clipboard.read=[memory]{return *memory;};
+        f.clipboard.write=[memory](std::u16string_view text){*memory=std::u16string(text);return true;};
+    }
+    // The Mac's NSMenu at the pointer (Q5): a native popup where the HUD can
+    // be shown; hidden runs never open a menu.
+    if(visibleMode())f.editMenu=gpu::nativeEditMenu(host.hwnd(),[this]{return designOverlay?designOverlay->context().env().language:watchAppearance.language;});
+    else f.editMenu=[](core::Point,bool,bool,bool)->std::optional<modules::design::EditCommand>{return std::nullopt;};
+    return o;
+}
+// HUDModuleContent.register(design:): a module a design canvas presents is
+// entered directionally. Marked before the HUD first shows (construction).
+void Application::Impl::setDesignScreen(core::Module module){if(notes)notes->setDesignScreen(module,true);}
+void Application::Impl::markDesignScreens(const ModuleOwner&owner){
+    if(!dynamic_cast<const tools::DesignModuleOwner*>(&owner))return;
+    for(unsigned n=0;n<=static_cast<unsigned>(core::Module::profile);++n){const auto module=static_cast<core::Module>(n);if(owner.presents(module))setDesignScreen(module);}
+}
 // Startup trace openings: the frame stages (LiveProbe) of each traced opening
 // are recorded with it, unless live diagnostics own the probe.
 void Application::Impl::traceOpening(double time){
@@ -282,13 +397,6 @@ void Application::Impl::unregisterModule(std::unique_ptr<ModuleOwner>&owner)noex
 // clock like a click; the content event presents and runs the host refresh
 // (which also takes actions a press queued, e.g. the Reader's file chooser).
 native::ScreenReaderPeerHooks Application::Impl::peerHooks(){return {host.hwnd(),[this]{return areaClock();},[this]{automationChanged();refresh(now());}};}
-VolumeModuleHooks Application::Impl::screenHooks(){
-    VolumeModuleHooks hooks;hooks.clock=[this]{return areaClock();};hooks.changed=[this]{automationChanged();refresh(now());};
-    hooks.toScreen=[this](core::Rect r)->std::optional<core::Rect>{
-        POINT origin{};if(!ClientToScreen(static_cast<HWND>(host.hwnd()),&origin))return std::nullopt;
-        const double scale=metrics.scale;return core::Rect{origin.x+r.x*scale,origin.y+r.y*scale,r.width*scale,r.height*scale};};
-    return hooks;
-}
 
 void Application::Impl::construct(){
     // The closed HUD's graphics grace: production keeps the ten minutes,
@@ -347,7 +455,9 @@ void Application::Impl::construct(){
     baseNavigation=sessionNavigation; // saved app shortcuts join it (bindNavigation)
     session->setNavigation(std::move(sessionNavigation),0);
     if(args.settingsAssets.empty())nativeContent=std::make_unique<gpu::NativeWatchContent>(*contentCatalog,layers,rasterOptions);
-    else{const auto file=args.settingsAssets/"watch-appearance"/"manifest.json";const auto bytes=ehud::data::detail::readFile(file,1024*1024);need(bytes&&packet::sha256(std::span(reinterpret_cast<const std::uint8_t*>(bytes->data()),bytes->size()))=="1c623124d48d094e8897b89598bc6791a8d369bc51ef8bc87c928ef5915444de","Original desktop appearance pin differs");appearanceTemplates=std::make_unique<gpu::WatchAppearanceTemplates>(Json::parse(*bytes));auto ro=rasterOptions;ro.assetRoot=file.parent_path();nativeAppearance=std::make_unique<gpu::NativeWatchAppearance>(*appearanceTemplates,*scene,labelPlan->bindings(),layers,rasterizer,ro);}startup.mark("native-bindings-content-catalog");
+    else{const auto file=args.settingsAssets/"watch-appearance"/"manifest.json";const auto bytes=ehud::data::detail::readFile(file,1024*1024);need(bytes&&packet::sha256(std::span(reinterpret_cast<const std::uint8_t*>(bytes->data()),bytes->size()))=="92d8adf5f539567dee9e0df3d2baf4fbbb006efc969ef22b6616803b98b9540a","Original desktop appearance pin differs");appearanceTemplates=std::make_unique<gpu::WatchAppearanceTemplates>(Json::parse(*bytes));auto ro=rasterOptions;ro.assetRoot=file.parent_path();nativeAppearance=std::make_unique<gpu::NativeWatchAppearance>(*appearanceTemplates,*scene,labelPlan->bindings(),layers,rasterizer,ro);
+        // Mac 1.3.0: the left icons sit over their captions by their visible glyph (B2b).
+        nativeAppearance->setIconGlyphObserver([this](std::string_view id,core::Rect glyph){(void)labelPlan->setIconGlyph(id,glyph);});}startup.mark("native-bindings-content-catalog");
     labels=std::make_unique<gpu::WatchLabelPresentation>(*labelPlan,layers);for(const auto&id:labelPlan->buttonIDs())available.push_back({id,false,false});
     chromeContent.reading=source::DesktopClockReading{"12:34:56","WED Oct 7"};chromeContent.uppercaseShortcut="CTRL + `";chromeContent.localizedClose="Click outside to close";
     if(includesChrome){chromeBindings=source::DesktopChromeBindings::fromJson(chromeJSON["bindings"]);chromePlan=std::make_unique<source::DesktopChromeProjectionPlan>(*scene,*camera,*animation,*chromeBindings);chrome=std::make_unique<gpu::NativeChromePresentation>(*chromePlan,layers,chromeJSON,rasterOptions,rasterizer);
@@ -356,7 +466,7 @@ void Application::Impl::construct(){
     try{idCardLeaves=gpu::idCardCaptionLeaves(top["nativeLayers"]);}catch(const std::exception&){}
     metadata=Json{};legacyTop=Json{};legacyBottom=Json{};chromeJSON=Json{};package.reset();if(runtime)runtime->releaseSetupJSON();startup.mark("release-full-reference-json");
     if(!args.cursor.empty())cursor=gpu::SourceCursor::fromOriginalPNG(args.cursor);startup.mark("native-cursor");
-    configurationPending=!args.settingsAssets.empty()||!args.storageAssets.empty()||!args.activityAssets.empty()||args.reader||args.calendar||!args.mapGeography.empty();
+    configurationPending=!args.settingsAssets.empty()||args.storageFixture||args.nativeStorage||args.activityFixture||args.nativeActivity||args.reader||args.calendar||!args.mapGeography.empty();
     configuration.set("launchAtLogin",false);session->setSettings(settings,0);session->setEnvironment(environment,0);
     OverlayOptions windowOptions{!args.windowTitle.empty()?args.windowTitle:!args.dataRoot.empty()?L"EndfieldHUD Notes preview — temporary sample data":L"EndfieldHUD source shell feasibility — synthetic data",0,0,1280,800,{}};
     if(visibleMode()){
@@ -405,10 +515,11 @@ void Application::Impl::construct(){
     // they answer UI Automation hit tests last.
     constructNavigationAutomation();
     if(!args.notesAssets.empty())constructNotes();
+    if(notes&&chromePlan)constructDesignOverlay(); // before every design owner
     if(!args.shelfAssets.empty()&&notes)optional("file shelf",[&]{constructShelf();});
     materials->upload(renderer.sourceGraphics());publishNative();host.setCursor(cursor.handle());ready=true;startup.mark("initial-gpu-upload");
     environment.viewport={metrics.width,metrics.height};const auto start=visibleMode()?now():hostTime(args.benchmarkEpoch);session->setEnvironment(environment,start);
-    if(args.nativeClipboard||args.nativeActivity||args.reader||args.calendar||!args.mapGeography.empty()||args.eventLogFixture||args.nativeEventLog||!args.settingsAssets.empty()||!args.archiveAssets.empty()||!args.storageAssets.empty()||!args.modules.empty()){
+    if(args.nativeClipboard||args.nativeActivity||args.activityFixture||args.reader||args.calendar||!args.mapGeography.empty()||args.eventLogFixture||args.nativeEventLog||!args.settingsAssets.empty()||!args.archiveAssets.empty()||args.storageFixture||args.nativeStorage||!args.modules.empty()){
         const auto window=static_cast<HWND>(host.hwnd());utility=std::make_unique<UtilityExecutor>([window]{need(PostMessageW(window,utilityMessage,serviceGeneration,0)!=FALSE,"Post utility completion");},32,utilityIdleExit,"EndfieldHUD utility");
         attributeCompletions(*utility);
         // The Shelf reads item properties and writes Migration/relink.json on the
@@ -422,10 +533,10 @@ void Application::Impl::construct(){
     if(args.reader)optional("reader",[&]{constructReader();});
     if(args.calendar&&notes)optional("calendar",[&]{constructCalendar();});
     optional("system services",[&]{constructServices();});
-    if(!args.clipboardAssets.empty())optional("clipboard",[&]{constructClipboard();});
+    if(args.clipboardFixture||args.nativeClipboard)optional("clipboard",[&]{constructClipboard();});
     if(!args.archiveAssets.empty()&&notes&&mediaBroker)optional("archive",[&]{constructArchive();});
-    if(!args.storageAssets.empty())optional("storage",[&]{constructStorage();});
-    if(!args.activityAssets.empty())optional("activity",[&]{constructActivity();});
+    if(args.storageFixture||args.nativeStorage)optional("storage",[&]{constructStorage();});
+    if(args.activityFixture||args.nativeActivity)optional("activity",[&]{constructActivity();});
     if(args.eventLogFixture||args.nativeEventLog)optional("event log",[&]{constructEventLog();});
     if(args.batteryFixture||args.nativeBattery)optional("power",[&]{constructBattery();});
     if((args.workModeFixture||production())&&notes)optional("work mode",[&]{constructWorkMode();});
@@ -445,14 +556,12 @@ void Application::Impl::construct(){
     // An isolated data root (--data-root, the section 9 gate) never writes a startup entry.
     if(production()&&!args.isolatedDataRoot){std::wstring path(32768,L'\0');const auto length=GetModuleFileNameW(nullptr,path.data(),static_cast<DWORD>(path.size()));
         if(length&&length<path.size()){path.resize(length);loginItem=std::make_unique<LoginItemRegistration>(LoginItemLocation::production(fs::path(path)));}}
-    if(notes&&chromePlan){quitConfirmation=makeQuitConfirmation(rasterizer,QuitConfirmationCallbacks{
-        [this](double time){perform(lifecycle.requestQuit(),time);},[this](double time){refresh(time);}});quitConfirmation->resize(metrics);registry.add(*quitConfirmation);}
     if(notes)constructClockAutomation(); // SystemHUDView.layoutClockControls
     if(!production()){
         std::cout<<(archive?"Synthetic module preview with Archive, rich Notes and shared media; all files remain references in the explicit temporary data root. ESC finishes editing, then animates closing.\n":notes?"Synthetic shell with rich Notes, File Shelf and isolated Clipboard history; other modules and remaining Notes tools are not connected yet. ESC finishes editing, then animates closing.\n":"Synthetic source-shell feasibility only: no module bodies/providers; font substitutions and explicit source-content variant coverage remain. ESC animates closing.\n");
         if(activity)std::cout<<(args.nativeActivity?"Native Activity reads bounded Windows counters on the shared worker; per-app disk/network remain unavailable.\n":"Activity preview uses synthetic app and system readings only.\n");
         if(calendar)std::cout<<"Calendar preview keeps events in the explicit temporary root; notification delivery is injected and never contacts the OS notification center.\n";
-        if(storage)std::cout<<(args.moduleCoverage?"Storage coverage uses injected synthetic capacity/details and a no-op settings action.\n":"Development Storage preview: startup-volume capacity is read only while selected; Settings opens only on explicit click; no automatic folder scan.\n");
+        if(storage)std::cout<<(args.nativeStorage?"Native Storage reads the mounted disks on the shared worker while selected; Settings opens only on explicit click; no automatic folder scan.\n":"Storage preview uses injected synthetic capacity/details and a no-op settings action.\n");
     }
     // Without the Settings store the launch prewarm follows construction.
     if(production()&&!settingsSaves)(void)PostMessageW(static_cast<HWND>(host.hwnd()),prewarmMessage,serviceGeneration,0);
@@ -499,7 +608,7 @@ void Application::Impl::constructAreas(){
     // HUDCalendarController didBecomeActive -> refreshForSystemChange: a
     // consumed Calendar reminder click refreshes Calendar once.
     if(calendar){
-        calendarReminderRefresh=[this](double time){if(calendar)isolate(calendarModuleOwner,"system change",[&]{calendar->systemChanged(hostTime(time));updateCalendarWake();});};
+        calendarReminderRefresh=[this](double){if(calendar)isolate(calendarModuleOwner,"system change",[&]{calendarSystemChanged();updateCalendarWake();});};
         areaHost->publish<endfield::areas::CalendarReminderActivationSink>(endfield::areas::calendarReminderActivationKey,calendarReminderRefresh);
     }
     // Committing a Mac import needs every store closed: the accepted-quit
@@ -507,6 +616,17 @@ void Application::Impl::constructAreas(){
     if(production())areaHost->publish<DataRootRestart>(dataRootRestartService,restart);
     // Read-only Event Log for areas: systemProviders hidden coverage checks every host action hook's recorded vocabulary.
     if(eventOwner)areaHost->publish<gpu::EventLogOwner>(gpu::eventLogOwnerServiceKey,*eventOwner);
+    // The one design Context for redesigned area modules (ApplicationHost::designContext).
+    if(designOverlay)areaHost->publish<modules::design::Context>(tools::DesignOverlayOwner::contextServiceKey,designOverlay->context());
+    // The daily boot log's battery and calendar lines (SystemHUDView.bootLogLines;
+    // the facility area, native/facility_owner.hpp, reads them when the log starts).
+    bootLogSources.battery=[this]()->std::optional<modules::boot::BootLogBattery>{
+        if(!batteryReading.present||!batteryReading.percentage)return std::nullopt;
+        using Level=modules::boot::BootLogBattery::Level;const auto tone=modules::batteryLevelTone(batteryReading.percentage);
+        return modules::boot::BootLogBattery{int(*batteryReading.percentage),batteryReading.charging,tone==modules::BatteryLevelTone::green?Level::green:tone==modules::BatteryLevelTone::red?Level::red:Level::other};};
+    bootLogSources.eventsToday=[this](double){std::vector<std::string>out;if(!calendarState)return out;const auto today=calendarState->today();
+        for(const auto&event:calendarState->events())if(event.day==today)out.push_back(event.title);return out;};
+    areaHost->publish<modules::boot::BootLogSources>(modules::boot::bootLogSourcesKey,bootLogSources);
     for(auto&[name,factory]:args.modules){
         if(!factory)continue;
         // A gate run over an isolated root never touches the shared toast
@@ -532,7 +652,7 @@ void Application::Impl::constructAreas(){
             auto owner=factory(context);
             areaHost->constructing({});
             if(!owner){areaHost->abandon(name);absentModules.push_back(name);return;}
-            owner->resize(metrics);registry.add(*owner);externalModules.push_back({name,std::move(owner)});configurationPending=true;
+            owner->resize(metrics);registry.add(*owner);markDesignScreens(*owner);externalModules.push_back({name,std::move(owner)});configurationPending=true;
         };
         // Each area's construction is its own startup stage (the startup trace).
         const auto stage="area:"+name;
@@ -569,13 +689,24 @@ void Application::Impl::connectAreas(){
                 if(visibleMode()&&session->phase()==core::VisibilityPhase::concealed){
                     if(!idCardQueued&&PostMessageW(static_cast<HWND>(host.hwnd()),idCardMessage,serviceGeneration,0))idCardQueued=true;}
                 else host.invalidate();});
+            // The Recording-mode UID bar wipes in on the card's own plane (B2b).
+            idCard->setReveal([this](std::string_view id,std::optional<double>edge){(void)labelPlan->setRevealEdge(id,edge);});
         }});
     idCardLeaves.reset();idCardBaseline.reset();
+    // The daily boot log (native/facility_owner.hpp): the deploy entrance it
+    // defers, the concealed centre and its entrance from below at the end.
+    facilityOwner=serviceOwner(modules::boot::bootLogStageKey);
+    if(auto*stage=areaHost->find<modules::boot::BootLogStage>(modules::boot::bootLogStageKey)){
+        stage->deferEntrance=[this](bool defer){deferDeployEntrance=defer;};
+        stage->concealCentre=[this](bool conceal){if(notes)notes->setCentreConcealed(conceal);if(ready&&!stopping)host.invalidate();};
+        stage->enterCentre=[this](core::MotionPoint offset,double time){if(notes)notes->beginEntrance(hostTime(time),offset);if(ready&&!stopping)host.invalidate();};
+    }
     // Saved app shortcuts between Power and Add App (app_shortcut_navigation.hpp).
     if(auto*apps=appNavigation()){apps->setObserver([this]{navigationDirty=true;if(ready&&!stopping)host.invalidate();});navigationDirty=true;}
     // Mac toggleSystemOverlay/openSettingsModule refuse while the battery
     // position editor is open.
     if(auto*p=powerArea())p->setEditingObserver([this](bool editing){lifecycle.setEditingPosition(editing);});
+    lifecycle.setModuleRestore([this](core::Module last){return restorableModule(last);}); // reopen fallback (B2b)
     // Areas are constructed after Settings: the System page's area rows
     // ("Import macOS data…") appear now.
     if(settingsUI)settingsUI->refreshViews(areaClock());
@@ -630,7 +761,7 @@ void Application::Impl::concealed(double time){
 // open/close cycles).
 void Application::Impl::releaseConcealedGraphics(){
     if(!ready||stopping||!renderer.stats().initialized)return;
-    try{publishNative();(void)renderer.releaseFrameTargets();}
+    try{publishNative();if(moduleContrast&&moduleContrast->scene.park(renderer))moduleContrast->posed=false;(void)renderer.releaseFrameTargets();}
     catch(const std::exception&e){
         if(!production())throw;
         const auto line=std::string("EndfieldHUD could not release the closed HUD's graphics (")+typeid(e).name()+")\n";
@@ -687,7 +818,7 @@ void Application::Impl::prepareGraphics(bool anticipated){
 }
 void Application::Impl::systemChange(std::uint32_t message,double time){
     time=hostTime(time);if(message==WM_TIMECHANGE&&archiveDates)archiveDates->refreshSystemTimeZone();
-    if(calendar)isolate(calendarModuleOwner,"system change",[&]{calendar->systemChanged(hostTime(time));updateCalendarWake();});
+    if(calendar)isolate(calendarModuleOwner,"system change",[&]{calendarSystemChanged();updateCalendarWake();});
     if(message==WM_SETTINGCHANGE&&configuration.string("theme")=="system")configurationPending=true;
     if(message==WM_SETTINGCHANGE&&rasterizer.fontLanguage()!=textFontLanguage(settingsLanguage(configuration)))configurationPending=true;
     if(message==WM_SETTINGCHANGE)applyTrayIcon(); // ImmersiveColorSet: the taskbar theme inks the template
@@ -739,7 +870,7 @@ UtilityExecutor* Application::Impl::AreaHost::utility()noexcept{return impl_.uti
 native::SystemServices* Application::Impl::AreaHost::systemServices()noexcept{return impl_.systemServices.get();}
 native::AudioRuntime* Application::Impl::AreaHost::audio()noexcept{return impl_.audio.get();}
 native::NativeMediaRequestBroker* Application::Impl::AreaHost::mediaBroker()noexcept{return impl_.mediaBroker.get();}
-const modules::WorkModeController* Application::Impl::AreaHost::workMode()const noexcept{return impl_.workMode?&impl_.workMode->controller():nullptr;}
+const modules::WorkModeController* Application::Impl::AreaHost::workMode()const noexcept{return impl_.workMode.get();}
 core::ApplicationEventRecorder* Application::Impl::AreaHost::eventRecorder()noexcept{return impl_.eventRecorder.get();}
 void Application::Impl::AreaHost::requestFrame(){if(impl_.ready&&!impl_.stopping)impl_.host.invalidate();}
 void Application::Impl::AreaHost::recordEvent(modules::EventKind kind,modules::EventMetadata metadata){
@@ -778,10 +909,13 @@ void Application::Impl::AreaHost::cancelFileChoice(){
     if(impl_.pickerOwner!=PickerOwner::area)return;
     impl_.mediaPicker->cancel();impl_.pickerOwner=PickerOwner::none;impl_.finishAreaPicker({true,false,{}});
 }
-std::uint32_t Application::Impl::AreaHost::registerMessage(){
-    need(registeredMessages_<areaMessageLimit,"Module areas registered too many messages");
-    return areaMessageFirst+registeredMessages_++;
-}
+std::uint32_t Application::Impl::AreaHost::registerMessage(){return impl_.registerMessage();}
+modules::design::Context* Application::Impl::AreaHost::designContext()noexcept{return impl_.designOverlay?&impl_.designOverlay->context():nullptr;}
+bool Application::Impl::AreaHost::designOwnerOptions(tools::DesignOwnerOptions&out,std::string name,const ModuleRouting&routing){
+    if(!impl_.designOverlay)return false;out=impl_.designOwnerOptions(std::move(name),routing);return true;}
+void Application::Impl::AreaHost::setDesignScreen(core::Module module){impl_.setDesignScreen(module);}
+const ehud::data::ModuleLayout* Application::Impl::AreaHost::moduleLayout()const noexcept{return &impl_.moduleLayout;}
+std::uint64_t Application::Impl::AreaHost::moduleLayoutRevision()const noexcept{return impl_.moduleLayoutRevision;}
 void Application::Impl::AreaHost::publishService(std::string_view key,void*value,const std::type_info&type){
     const auto found=services_.find(key);
     if(!value){if(found!=services_.end())services_.erase(found);return;}
@@ -905,8 +1039,10 @@ void Application::Impl::constructReader(){
     options.shelfChoices=[this]{std::vector<modules::ReaderMenuChoice>choices;if(shelf)for(const auto&item:shelf->state().items()){
         if(!item.isDirectory&&!item.availabilityError&&modules::readerSupportedExtension(utf8(utf8Path(item.lastKnownPath).extension())))choices.push_back({item.id,item.name});
     }return choices;};
-    // SystemHUDView ReaderCanvas.onEvent: readerAction imported/deleted/bookmarked/settings/progress.
-    readerOwner->state().setEventObserver([this](std::string_view action){if(eventOwner&&!stopping)eventOwner->record({ehud::data::makeUUID(),modules::EventKind::readerAction,ehud::data::foundationNow(),{{"action",std::string(action)}}});});
+    // SystemHUDView ReaderCanvas.onEvent: readerAction imported/deleted/bookmarked/settings.
+    // Page turns ("progress") are too frequent for the log (Mac 1.3.0); older
+    // "progress" entries still read back.
+    readerOwner->state().setEventObserver([this](std::string_view action){if(action=="progress")return;if(eventOwner&&!stopping)eventOwner->record({ehud::data::makeUUID(),modules::EventKind::readerAction,ehud::data::foundationNow(),{{"action",std::string(action)}}});});
     reader=std::make_unique<tools::ReaderPreview>(readerOwner->state(),rasterizer,std::move(options));reader->resize(metrics);
     readerModuleOwner=readerModule(*reader,*readerOwner,rasterizer,[this](const WheelEvent&e,double time){if(readerTrace)readerTrace->record(true,time,reader->scrollSnapshot(),e.steps,e.linesPerStep);},peerHooks());
     registerModule(readerModuleOwner);
@@ -916,7 +1052,7 @@ void Application::Impl::constructCalendar(){
     need(bool(utility)&&bool(notes),"Calendar needs the shared module owner and executor");
     const auto start=visibleMode()?now():args.benchmarkEpoch;
     const auto window=static_cast<HWND>(host.hwnd());calendarRoute=utility->makeRoute();calendarTime=start;
-    calendarCivil=visibleMode()?std::make_unique<gpu::CalendarCivilContext>():std::make_unique<gpu::CalendarCivilContext>(u"UTC","en_US","en_US");
+    calendarCivil=visibleMode()?std::make_unique<gpu::CalendarCivilContext>():std::make_unique<gpu::CalendarCivilContext>(u"UTC","en_US");
     const auto text=gpu::nativeCalendarTextRules();calendarRepository=std::make_shared<modules::CalendarJSONRepository>(args.dataRoot/"Calendar",text);
     gpu::CalendarNotificationOptions notifications;notifications.language=watchAppearance.language;
     if(production()){
@@ -934,14 +1070,23 @@ void Application::Impl::constructCalendar(){
     state.changed=[this,window]{if(ready&&!stopping&&!calendarRefreshQueued){need(PostMessageW(window,calendarChangedMessage,serviceGeneration,0)!=FALSE,"Post Calendar revision");calendarRefreshQueued=true;}};
     state.event=[this](std::string_view action){if(eventOwner)eventOwner->record({ehud::data::makeUUID(),modules::EventKind::calendarAction,ehud::data::foundationNow(),{{"action",std::string(action)}}});};
     calendarState=std::make_unique<modules::CalendarState>(calendarRepository,std::move(executor),std::move(state));
-    tools::CalendarPreviewOptions options;options.text=text;options.raster.pixelsPerPoint=2;options.raster.paddingPoints=1;
-    calendar=std::make_unique<tools::CalendarPreview>(window,*calendarState,*calendarCivil,rasterizer,std::move(options),notes->activatedTextManager(),notes->textClient());calendar->resize(metrics);calendar->focus(focused,start);calendarState->startIfExisting();
-    CalendarModuleHooks hooks;
-    hooks.languageChanged=[this](core::Language language){if(calendarLanguage!=language){calendarLanguage=language;calendarNotifications->setLanguage(calendarLanguage);calendarState->refreshForSystemChange();updateCalendarWake();}};
-    hooks.afterUpdate=[this]{if(calendarWakeActive!=calendarState->active())updateCalendarWake();};
-    hooks.afterClosing=[this]{updateCalendarWake();};
-    hooks.flush=[this]{return flushCalendar();};
-    calendarModuleOwner=calendarModule(*calendar,std::move(hooks),peerHooks());registerModule(calendarModuleOwner);
+    // HUDCalendarCanvas over the design library: the state, civil formats and
+    // notifications stay the app's; the owner adds the language, wake and
+    // close reactions and the quit drain (DesignOwnerOptions services).
+    ModuleRouting routing;routing.pointerCapture=3;routing.pointer=4;routing.wheelCapture=3;routing.wheel=9;routing.keyCapture=2;routing.key=10;
+    routing.filterKey=4;routing.filterRequiresOwnerTarget=true;routing.message=1;routing.messageRetriesPendingModule=routing.messageRetriesPendingClose=true;
+    routing.finishEditing=2;routing.flush=2;routing.pointerPolicy={false,true,false};
+    auto ownerOptions=designOwnerOptions("calendar",routing);
+    ownerOptions.appearance=[this](const ModuleAppearance&a,double){if(calendarLanguage!=a.language){calendarLanguage=a.language;calendarNotifications->setLanguage(calendarLanguage);calendarState->refreshForSystemChange();updateCalendarWake();}};
+    ownerOptions.updated=[this](const ModuleFrame&){if(calendarWakeActive!=calendarState->active())updateCalendarWake();};
+    ownerOptions.closing=[this](double){updateCalendarWake();};
+    ownerOptions.flush=[this](double){return flushCalendar();};
+    auto core=std::make_unique<tools::DesignOwnerCore>(rasterizer,designOverlay->context(),std::move(ownerOptions));
+    modules::CalendarCanvasOptions canvasOptions;canvasOptions.formats=calendarCivil->formats();canvasOptions.text=text;
+    auto canvas=std::make_unique<modules::CalendarCanvas>(designOverlay->context(),*calendarState,std::move(canvasOptions));calendar=canvas.get();core->add(std::move(canvas));
+    calendarModuleOwner=std::make_unique<tools::DesignModuleOwner>(std::move(core));registerModule(calendarModuleOwner);
+    calendarModuleOwner->resize(metrics);calendarModuleOwner->setOverlayVisible(session->phase()!=core::VisibilityPhase::concealed,visibleMode()?now():hostTime(args.benchmarkEpoch));
+    calendarState->startIfExisting();
     startup.mark("isolated-calendar-owner");
 }
 void Application::Impl::constructServices(){
@@ -952,14 +1097,14 @@ void Application::Impl::constructServices(){
     const auto window=static_cast<HWND>(host.hwnd());systemServices=std::make_unique<gpu::SystemServices>();
     const auto status=systemServices->start(window,systemServiceMessage,[this,window](gpu::ServiceChange event){
         if(stopping)return;
-        if(event==gpu::ServiceChange::clipboard){clipboardDirty=true;
-            if(ready&&!clipboardRefreshQueued&&session->phase()!=core::VisibilityPhase::concealed&&notes&&notes->selected()==core::Module::clipboard){
-                need(PostMessageW(window,clipboardChangedMessage,serviceGeneration,0)!=FALSE,"Post Clipboard revision");clipboardRefreshQueued=true;
-            }}
+        // ClipboardStore's observer (ClipboardCanvas.storeChanged): every change,
+        // shown or not, coalesced into one posted notice.
+        if(event==gpu::ServiceChange::clipboard&&ready&&!clipboardRefreshQueued){
+            need(PostMessageW(window,clipboardChangedMessage,serviceGeneration,0)!=FALSE,"Post Clipboard revision");clipboardRefreshQueued=true;}
         // With the Power area its merged reading (battery-class mWh pair) feeds
         // the Power page through the published page sink instead.
-        if(event==gpu::ServiceChange::battery&&systemServices){bool changed{};if(!powerArea()&&battery)isolate(batteryModuleOwner,"battery",[&]{changed=battery->receive(systemServices->battery());});if(changed&&ready)host.invalidate();recordBattery();updateTrayMenu();}
-    },false,args.nativeClipboard?utility.get():nullptr);
+        if(event==gpu::ServiceChange::battery&&systemServices){bool changed{};if(!powerArea()&&battery)changed=updateBattery(gpu::batteryReadingFromSnapshot(systemServices->battery()),now());if(changed&&ready)host.invalidate();recordBattery();updateTrayMenu();}
+    },false,args.nativeClipboard?utility.get():nullptr,[&]{gpu::SystemServicesOptions o;if(args.nativeClipboard)o.clipboardOrigin=gpu::windowsClipboardOrigin;return o;}());
     need(SUCCEEDED(status),"Cannot start explicit Windows service preview");
     // ClipboardStore.statusMessage per capture status (none while an image
     // validates) and SystemHUDView clipboardCanvas.onCopy: Event Log
@@ -969,20 +1114,26 @@ void Application::Impl::constructServices(){
         [this](gpu::ClipboardKind kind){if(eventOwner&&!stopping)eventOwner->record({ehud::data::makeUUID(),modules::EventKind::clipboardCopied,ehud::data::foundationNow(),{{"kind",std::string(gpu::clipboardEventKind(kind))}}});}));
 }
 void Application::Impl::constructClipboard(){
-    clipboardAssets=std::make_unique<gpu::NativeClipboardAssets>(args.clipboardAssets);
-    gpu::ClipboardActions actions;
+    // Mac ClipboardCanvas over the shared clipboard history (native/clipboard_provider.hpp);
+    // hidden runs use synthetic records only (no clipboard of this machine).
+    if(!designOverlay)return;
+    const auto wallClock=[]{return std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count();};
+    modules::ClipboardActions actions;
     if(clipboardProvider)actions=clipboardProvider->actions();else{
-    auto synthetic=std::make_shared<gpu::ClipboardSnapshot>();synthetic->capacity=20;
-    for(unsigned n=0;n<12;++n)synthetic->rows.push_back({n+1,n==0,gpu::ClipboardKind::text,"临时剪贴板测试 · "+std::to_string(n+1)+" · EndfieldHUD",{}});
+    auto synthetic=std::make_shared<modules::ClipboardSnapshot>();synthetic->capacity=20;
+    for(unsigned n=0;n<12;++n){modules::ClipboardRecord r;r.id=n+1;r.pinned=n==0;r.preview="临时剪贴板测试 "+std::to_string(n+1)+" EndfieldHUD";r.createdAt=wallClock()-90.*n;
+        r.details.source="EndfieldHUD";r.details.characters=std::int64_t(r.preview.size());synthetic->items.push_back(std::move(r));}
     actions.snapshot=[synthetic]{return *synthetic;};
-    actions.copy=[synthetic](std::uint64_t id){return std::any_of(synthetic->rows.begin(),synthetic->rows.end(),[&](const auto&r){return r.id==id;});};
-    actions.togglePin=[synthetic](std::uint64_t id){for(auto&r:synthetic->rows)if(r.id==id){r.pinned=!r.pinned;return true;}return false;};
-    actions.remove=[synthetic](std::uint64_t id){return std::erase_if(synthetic->rows,[&](const auto&r){return r.id==id;})!=0;};
-    actions.clearUnpinned=[synthetic]{std::erase_if(synthetic->rows,[](const auto&r){return !r.pinned;});return true;};
+    actions.copy=[synthetic](std::uint64_t id){return std::any_of(synthetic->items.begin(),synthetic->items.end(),[&](const auto&r){return r.id==id;});};
+    actions.togglePin=[synthetic](std::uint64_t id){for(auto&r:synthetic->items)if(r.id==id){r.pinned=!r.pinned;return true;}return false;};
+    actions.remove=[synthetic](std::uint64_t id){return std::erase_if(synthetic->items,[&](const auto&r){return r.id==id;})!=0;};
+    actions.clearUnpinned=[synthetic]{return std::erase_if(synthetic->items,[](const auto&r){return !r.pinned;})!=0;};
     }
-    gpu::LayerRasterOptions ro;ro.pixelsPerPoint=2;ro.paddingPoints=1;ro.assetRoot=clipboardAssets->root();if(clipboardProvider)ro.memoryImages=&clipboardProvider->images();
-    clipboard=std::make_unique<tools::ClipboardPreview>(rasterizer,ro,std::move(actions),gpu::ClipboardStrings{},gpu::ClipboardAppearance{},clipboardAssets->images(),clipboardAssets->revealSamples());clipboard->resize(metrics);
-    clipboardModuleOwner=clipboardModule(*clipboard,*clipboardAssets,peerHooks());registerModule(clipboardModuleOwner);
+    ModuleRouting routing;routing.pointer=9;routing.wheel=5;routing.key=5;
+    auto options=designOwnerOptions("clipboard",routing);if(clipboardProvider)options.raster.memoryImages=&clipboardProvider->images();
+    auto core=std::make_unique<tools::DesignOwnerCore>(rasterizer,designOverlay->context(),std::move(options));
+    auto canvas=std::make_unique<modules::ClipboardCanvas>(designOverlay->context(),std::move(actions),wallClock);clipboardCanvas=canvas.get();core->add(std::move(canvas));
+    clipboardModuleOwner=std::make_unique<tools::DesignModuleOwner>(std::move(core));registerModule(clipboardModuleOwner);
 }
 void Application::Impl::constructArchive(){
     const auto window=static_cast<HWND>(host.hwnd());const auto start=visibleMode()?now():args.benchmarkEpoch;
@@ -1009,55 +1160,70 @@ void Application::Impl::constructArchive(){
     startup.mark("shared-media-archive-owner");
 }
 void Application::Impl::constructStorage(){
+    // Storage is a design canvas (modules/storage_canvas.hpp, Mac StorageCanvas)
+    // over the shared overlay's Context; without it the module stays absent.
+    if(!designOverlay)return;
+    tools::StorageServiceOptions options;options.utility=utility.get();
     // The original Storage Settings action (OverlayController
     // openStorageAfterClose): the HUD closes first, Windows Settings opens
     // once it is hidden (openPendingStorageSettings; hidden coverage counts it).
-    auto options=tools::makeStoragePreviewOptions(args.storageAssets,*utility,[this]{openStorageSettingsAfterClose(now());});
-    if(args.moduleCoverage){
-        // Replace ALL OS providers before constructing the owner.
+    options.openSettings=[this]{openStorageSettingsAfterClose(now());};
+    // The startup disk's fallback name in the HUD language (the Mac passes
+    // L10n.language to its worker).
+    options.startupName=[this]{return core::localized("Startup disk","启动磁盘",designOverlay?designOverlay->context().env().language:watchAppearance.language);};
+    if(!args.nativeStorage){
+        // Replace ALL OS providers before constructing the owner: one synthetic
+        // startup disk, no disk list (the Mac's injected readCapacity alone).
         storageFixture=std::make_shared<StorageFixture>();storageFixture->time=args.benchmarkEpoch;const auto fixture=storageFixture;
-        options.readCapacity=[fixture]()->std::optional<modules::StorageCapacity>{++fixture->capacityReads;return modules::StorageCapacity{"Synthetic startup volume",1000000000000LL,375000000000LL,fixture->time.load(std::memory_order_relaxed)};};
+        options.read=[fixture](const std::string&){++fixture->capacityReads;modules::StorageCapacityResult result;result.startup=modules::StorageCapacity{"Synthetic startup volume",1000000000000LL,375000000000LL,fixture->time.load(std::memory_order_relaxed)};return result;};
         options.scanDetails=[fixture](const modules::StorageScanCancellation&cancel){++fixture->detailScans;modules::StorageDetailsSnapshot result;if(!cancel.cancelled()){result.categories={{"documents","Synthetic Documents",123000000LL,false}};result.updatedAt=fixture->time.load(std::memory_order_relaxed);}return result;};
         options.completionClock=[fixture]{return fixture->time.load(std::memory_order_relaxed);};
+        options.clock=options.completionClock;
     }else{
-        // Storage volume choice (Windows addition, user request): remembered in the
-        // preference record as "storageVolume" (unknown keys survive the store;
-        // Restore Defaults clears it, which shows the startup volume).
+        // Every disk with its numbers on the shared executor (the source
+        // compares capacity dates with the owner's monotonic clock).
+        options.read=[](const std::string&startupName){return gpu::readWindowsStorage(OverlayHost::clockNow(),startupName,gpu::compareWindowsActivityNames);};
+        options.scanDetails=[](const modules::StorageScanCancellation&cancel){return gpu::scanWindowsStorageDetails(cancel,OverlayHost::clockNow());};
+        options.completionClock=OverlayHost::clockNow;options.clock=[this]{return now();};
+        // The disk choice (checklist A5): remembered in the preference record as
+        // "storageVolume" (unknown keys survive the store; Restore Defaults
+        // clears it, which shows the startup disk).
         options.loadVolume=[this]{const auto&value=std::as_const(configuration).fields["storageVolume"];return value.isString()?value.string():std::string{};};
         options.saveVolume=[this](const std::string&id){if(areaHost)(void)areaHost->updateSettings([&id](ehud::data::Settings&s){s.set("storageVolume",Json(id));});};
     }
-    storage=std::make_unique<tools::StoragePreview>(rasterizer,std::move(options));storage->resize(metrics);
-    storageModuleOwner=storageModule(*storage,StorageModuleHooks{
-        [this]{return storageFixture?storageFixture->time.load(std::memory_order_relaxed):now();},
-        [this]{return !closing&&session->phase()!=core::VisibilityPhase::concealed;}},peerHooks());
+    storage=std::make_unique<tools::StorageService>(std::move(options));
+    storageModuleOwner=storage->makeOwner(rasterizer,designOverlay->context(),designOwnerOptions("storage",tools::StorageService::routing()));
+    storageModuleOwner->resize(metrics);storageModuleOwner->setOverlayVisible(session->phase()!=core::VisibilityPhase::concealed,visibleMode()?now():hostTime(args.benchmarkEpoch));
     registerModule(storageModuleOwner);
-    startup.mark(args.moduleCoverage?"synthetic-storage-owner":"development-storage-capacity-owner");
+    startup.mark(args.nativeStorage?"native-storage-owner":"synthetic-storage-owner");
 }
 void Application::Impl::constructActivity(){
+    // Activity Monitor is a design canvas (modules/activity_canvas.hpp, Mac
+    // ActivityMonitorCanvas) over the shared overlay's Context.
+    if(!designOverlay)return;
     // Hidden coverage and ordinary isolated preview keep injected data.
-    gpu::NativeActivityAssets assets(args.activityAssets);
-    tools::ActivityPreviewOptions options;options.sortSamples=assets.sortSamples();
-    options.appearance.language=core::Language::simplifiedChinese;
+    tools::ActivityServiceOptions options;
     options.compareNames=[](std::string_view a,std::string_view b){return a.compare(b);};
     if(!args.nativeActivity){
-        options.initial.timestamp=1;options.initial.uptime=1;options.initial.cpuPercent=12;
+        options.initial.timestamp=1;options.initial.uptime=1;options.initial.cpuPercent=12;options.initial.gpuPercent=7;
         options.initial.memory=modules::ActivityMemory{4000000000ULL,16000000000ULL,{}};
         options.initial.download=400000;options.initial.upload=12000;
         options.initial.diskRead=150000;options.initial.diskWrite=34000;
+        options.apps.timestamp=1;options.apps.uptime=1;
         for(unsigned n=0;n<18;++n){modules::ActivityApp item;
             item.identity={"synthetic-"+std::to_string(n),"Synthetic App "+std::to_string(n+1),"",{100+n}};
-            item.cpuPercent=double(18-n);item.memoryBytes=200000000ULL+n*10000000ULL;
+            item.cpuPercent=double(18-n);item.memoryBytes=200000000ULL+n*10000000ULL;item.gpuPercent=double(n%5);item.threads=8+n;
             options.apps.items.push_back(std::move(item));}
     }else{
         options.compareNames=gpu::compareWindowsActivityNames;
-        options.iconExecutor=utility.get(); // visible-row icons on the shared executor
+        options.iconExecutor=utility.get(); // app-row icons on the shared executor
         options.demandChanged=[this](bool visible,bool apps,double time){
             if(stopping)return;const bool wasApps=activityPlan.appsActive();activityPlan.setVisible(visible,activityPlan.alertActive(),apps,time);
             if(activityCatalog&&wasApps!=activityPlan.appsActive())activityCatalog->invalidate();
             if(activityProbe)activityProbe->update(time);scheduleDeadline();
         };
     }
-    activity=std::make_unique<tools::ActivityPreview>(rasterizer,std::move(options));activity->resize(metrics);
+    activity=std::make_unique<tools::ActivityService>(std::move(options));
     if(args.nativeActivity){
         activityCatalog=std::make_shared<gpu::ActivityCatalogSampler>(gpu::windowsActivityCatalogReaders());
         activityDisk=std::make_shared<gpu::WindowsActivityDisk>();
@@ -1070,7 +1236,9 @@ void Application::Impl::constructActivity(){
         activityTelemetry=std::make_unique<modules::ActivityTelemetryLink>(activityPlan,activity->providerState());
         activityPlan.start(now()); // AppDelegate.swift:216 activity.start(): 5 s session history from launch
     }
-    activityModuleOwner=activityModule(*activity,peerHooks());registerModule(activityModuleOwner);
+    activityModuleOwner=activity->makeOwner(rasterizer,designOverlay->context(),designOwnerOptions("activityMonitor",tools::ActivityService::routing()));
+    activityModuleOwner->resize(metrics);activityModuleOwner->setOverlayVisible(session->phase()!=core::VisibilityPhase::concealed,visibleMode()?now():hostTime(args.benchmarkEpoch));
+    registerModule(activityModuleOwner);
     startup.mark(args.nativeActivity?"native-activity-owner":"synthetic-activity-owner");
 }
 void Application::Impl::constructEventLog(){
@@ -1089,36 +1257,66 @@ void Application::Impl::constructEventLog(){
             if(eventOwner&&!stopping)eventOwner->record({ehud::data::makeUUID(),kind,ehud::data::foundationNow(),std::move(metadata)});});
         recordDisplays();recordBattery();
     }
-    // EventLogCanvas.timestamp: en_US_POSIX "MM-dd HH:mm:ss" in the current
-    // Windows time zone; the synthetic fixture keeps its constant row text.
-    auto actions=args.eventLogFixture?eventOwner->callbacks([](double){return std::string("10-08 12:34:56");}):eventOwner->callbacks(gpu::localEventLogTimestamp);
-    eventLog=std::make_unique<tools::EventLogPreview>(rasterizer,gpu::LayerRasterOptions{},std::move(actions),modules::EventLogStrings{},modules::EventLogAppearance{},eventOwner->nameCompactor());eventLog->resize(metrics);
-    eventLogModuleOwner=eventLogModule(*eventLog,peerHooks());registerModule(eventLogModuleOwner);
+    // Mac EventLogCanvas: Calendar.current times in the current Windows time
+    // zone; the synthetic fixture reads UTC against a fixed "now" so its rows
+    // stay the same on every machine.
+    if(!designOverlay)return;
+    ModuleRouting routing;routing.pointer=13;routing.wheel=7;routing.key=7;
+    auto core=std::make_unique<tools::DesignOwnerCore>(rasterizer,designOverlay->context(),designOwnerOptions("eventLog",routing));
+    modules::EventLogLocalTime local=args.eventLogFixture?modules::EventLogLocalTime([](double r){return gpu::eventLogTimeInZone(r,L"UTC");}):modules::EventLogLocalTime(gpu::localEventLogTime);
+    std::function<double()>clock=args.eventLogFixture?std::function<double()>([]{return 812000060.;}):std::function<double()>([]{return ehud::data::foundationNow();});
+    auto canvas=std::make_unique<modules::EventLogCanvas>(designOverlay->context(),eventOwner->callbacks(),std::move(local),std::move(clock));eventLogCanvas=canvas.get();core->add(std::move(canvas));
+    eventLogModuleOwner=std::make_unique<tools::DesignModuleOwner>(std::move(core));registerModule(eventLogModuleOwner);
 }
 void Application::Impl::constructBattery(){
-    modules::BatteryReading value;value.present=true;value.percentage=63;
-    modules::BatteryAppearance appearance;appearance.language=core::Language::simplifiedChinese;
-    gpu::LayerRasterOptions options;options.pixelsPerPoint=2;
-    if(args.nativeBattery&&!args.batteryFixture)value={};
-    // Power page "Battery alert ›" opens Display > Battery alert (Mac openBatterySettings).
-    battery=std::make_unique<tools::BatteryPreview>(rasterizer,options,value,appearance,[this]{const auto t=now();if(settingsUI)isolate(settingsModuleOwner,"battery settings",[&]{settingsUI->showBatterySettings(hostTime(t));});selectModule(core::Module::display,t);});
-    batteryPageSink=[this](const modules::BatteryReading&r){return battery&&battery->receive(r);};
-    if(args.nativeBattery&&systemServices)battery->receive(systemServices->battery());
-    battery->resize(metrics);
-    batteryModuleOwner=batteryModule(*battery);registerModule(batteryModuleOwner);
+    // The Battery screen (Power) is a design canvas (modules/battery_canvas.hpp,
+    // Mac BatteryCanvas) over the shared overlay's Context.
+    if(!designOverlay)return;
+    auto canvas=std::make_unique<modules::BatteryCanvas>(designOverlay->context());
+    // The BAR READING plate opens Display > Battery alert (Mac openBatterySettings).
+    canvas->onOpenBatteryAlert=[this]{const auto t=now();if(settingsUI)isolate(settingsModuleOwner,"battery settings",[&]{settingsUI->showBatterySettings(hostTime(t));});selectModule(core::Module::display,t);};
+    battery=canvas.get();
+    if(args.batteryFixture||!args.nativeBattery){batteryReading.present=true;batteryReading.percentage=63;batteryReading.pluggedIn=true;batteryReading.charging=true;batteryReading.minutesToFull=42;batteryReading.cycleCount=318;}
+    // Every merged reading (the Power area's page sink, with the battery-class
+    // pair and diagnostics) and every alert-metric change reach the canvas.
+    batteryPageSink=[this](const modules::BatteryReading&r){return updateBattery(r,now());};
+    ModuleRouting routing;routing.pointer=14;routing.pointerPolicy={false,false,false};
+    auto options=designOwnerOptions("power",routing);
+    options.hostEvent=[this](const HostEvent&e,double t){return e.kind==HostEvent::Kind::settingsChanged&&updateBattery(batteryReading,t);};
+    auto core=std::make_unique<tools::DesignOwnerCore>(rasterizer,designOverlay->context(),std::move(options));core->add(std::move(canvas));
+    batteryModuleOwner=std::make_unique<tools::DesignModuleOwner>(std::move(core));
+    if(args.nativeBattery&&!args.batteryFixture&&systemServices)batteryReading=gpu::batteryReadingFromSnapshot(systemServices->battery());
+    (void)updateBattery(batteryReading,now());
+    batteryModuleOwner->resize(metrics);batteryModuleOwner->setOverlayVisible(session->phase()!=core::VisibilityPhase::concealed,visibleMode()?now():hostTime(args.benchmarkEpoch));
+    registerModule(batteryModuleOwner);
+}
+// BatteryCanvas.update(snapshot:configuration:): the reading and the alert
+// metric of the applied record (HUDChargeMetric); true when the page changed.
+bool Application::Impl::updateBattery(const modules::BatteryReading&reading,double time){
+    if(!battery)return false;batteryReading=reading;bool changed{};
+    isolate(batteryModuleOwner,"battery",[&]{const auto before=battery->contentRevision();
+        battery->update(reading,modules::ChargeAlertSettings::fromSettings(std::as_const(configuration).fields).metric,hostTime(time));changed=battery->contentRevision()!=before;});
+    return changed;
 }
 void Application::Impl::constructWorkMode(){
-    tools::WorkModePreviewOptions options;
-    // Lifetime hours belong to the personal profile: the Personal Profile area
-    // (app/areas/profile_module) observes this controller's absolute
-    // checkpoints (WorkModeController::listenCheckpoints) and is the single
-    // profile.json writer.
-    options.saveWorkSeconds=[](double){};
-    workMode=std::make_unique<tools::WorkModePreview>(static_cast<HWND>(host.hwnd()),rasterizer,notes->activatedTextManager(),notes->textClient(),std::move(options));
-    // The area clock: hidden coverage never moves the owner's time to the wall clock.
-    workMode->resize(metrics);workMode->focus(focused,areaClock());
-    // HUDWorkModeInteraction accessibility buttons under the HUD root.
-    workModeModuleOwner=workModeModule(*workMode,screenHooks());registerModule(workModeModuleOwner);
+    // The host's one Work Mode controller: the canvas presents it, the app keeps
+    // it running while the page is hidden or the HUD closed (its deadlines are
+    // the owner's service), and the Personal Profile area (app/areas/
+    // profile_module) observes its absolute checkpoints (WorkModeController::
+    // listenCheckpoints) and is the single profile.json writer.
+    workMode=std::make_unique<modules::WorkModeController>(modules::WorkModeHooks{[this]{if(workModeCanvas)workModeCanvas->controllerChanged();},{}});
+    (void)workMode->restoreTrackedWorkSeconds(0);
+    ModuleRouting routing;routing.pointer=15;routing.keyCapture=3;routing.key=8;routing.filterKey=2;routing.message=3;routing.messageRetriesPendingClose=true;routing.finishEditing=4;
+    auto options=designOwnerOptions("workMode",routing);
+    options.nextWakeTime=[this](double){return workMode->nextDeadline();};
+    options.deadline=[this](double t){const auto revision=workMode->notificationRevision();workMode->wake(t);return revision!=workMode->notificationRevision();};
+    auto core=std::make_unique<tools::DesignOwnerCore>(rasterizer,designOverlay->context(),std::move(options));
+    // The area clock: hidden coverage never moves the controller's time to the wall clock.
+    modules::WorkModeCanvasOptions canvasOptions;canvasOptions.clock=[this]{return areaClock();};
+    canvasOptions.hudVisible=[this]{return session&&session->phase()!=core::VisibilityPhase::concealed;};
+    auto canvas=std::make_unique<modules::WorkModeCanvas>(designOverlay->context(),*workMode,std::move(canvasOptions));workModeCanvas=canvas.get();core->add(std::move(canvas));
+    workModeModuleOwner=std::make_unique<tools::DesignModuleOwner>(std::move(core));registerModule(workModeModuleOwner);
+    workModeModuleOwner->resize(metrics);workModeModuleOwner->setOverlayVisible(session->phase()!=core::VisibilityPhase::concealed,visibleMode()?now():hostTime(args.benchmarkEpoch));
 }
 // Volume app-row icons (Mac VolumeCanvas.renderAppIcon from
 // NSWorkspace.icon of the app bundle): one bounded job at a time on the
@@ -1130,16 +1328,31 @@ gpu::VolumeQueuedIconProvider* Application::Impl::constructVolumeIcons(gpu::Volu
     volumeIconRoute=utility->makeRoute();
     auto submit=[this](std::function<void()>work,gpu::VolumeQueuedIconProvider::Done done){
         return utility&&utility->submit(volumeIconRoute,std::move(work),[done=std::move(done)](std::exception_ptr error){done(bool(error));});};
-    auto changed=[this]{bool redraw{};if(volume)isolate(volumeModuleOwner,"icons",[&]{redraw=volume->iconsChanged();});if(redraw&&ready&&!stopping)host.invalidate();};
+    auto changed=[this]{bool redraw{};if(volumeCanvas)isolate(volumeModuleOwner,"icons",[&]{redraw=volumeCanvas->iconsChanged();});if(redraw&&ready&&!stopping)host.invalidate();};
     volumeIcons=std::make_unique<gpu::VolumeQueuedIconProvider>(std::move(submit),std::move(changed),std::move(extractor));
     return volumeIcons.get();
 }
 void Application::Impl::constructVolume(){
-    tools::VolumePreviewOptions options;
+    // Mac VolumeCanvas over the shared AudioRuntime's Volume binding; hidden
+    // runs use a synthetic snapshot (no audio of this machine).
+    if(!designOverlay)return;
+    gpu::VolumeSnapshot initial;gpu::VolumeCallbacks actions;
+    // App-row icons: the rows in or next to the view name their apps; each
+    // process identity keeps one request token while it is listed.
+    gpu::VolumeQueuedIconProvider*icons{};modules::VolumeIconHooks iconHooks;
     const auto bindIcons=[&](gpu::VolumeQueuedIconProvider::Extractor extractor){
-        auto*icons=constructVolumeIcons(std::move(extractor));if(!icons)return;
-        options.memoryImages=&icons->images();
-        options.icons={[icons](std::span<const gpu::VolumeIconApplication>apps){return icons->setVisible(apps);},[icons]{return &icons->plan();},[icons]{(void)icons->hide();}};
+        icons=constructVolumeIcons(std::move(extractor));if(!icons)return;
+        auto tokens=std::make_shared<std::map<std::string,std::string,std::less<>>>();
+        iconHooks.show=[this,icons,tokens](std::span<const std::string>ids){if(!volumeCanvas)return;std::vector<gpu::VolumeIconApplication>apps;
+            const auto&listed=volumeCanvas->snapshot().applications;
+            for(const auto&id:ids){const auto app=std::find_if(listed.begin(),listed.end(),[&](const auto&a){return a.id==id;});if(app==listed.end())continue;
+                auto token=tokens->find(id);if(token==tokens->end())token=tokens->emplace(id,ehud::data::makeUUID()).first;apps.push_back({id,token->second,app->executable});}
+            if(tokens->size()>64)std::erase_if(*tokens,[&](const auto&entry){return std::none_of(listed.begin(),listed.end(),[&](const auto&a){return a.id==entry.first;});});
+            (void)icons->setVisible(apps);};
+        iconHooks.hide=[icons]{(void)icons->hide();};
+        // Only an exact successful instance icon is shown (the Mac's nil icon otherwise).
+        iconHooks.icon=[icons](std::string_view id)->std::optional<modules::design::ImageSource>{const auto*b=icons->plan().binding(id);
+            if(!b||!b->image||b->result<0||b->typeFallback)return std::nullopt;return modules::design::ImageSource{modules::design::ImageSource::Kind::memory,b->imageKey,{},b->revision};};
     };
     if(args.nativeVolume){
         // The shared AudioRuntime binding: Volume's vote (reveal/conceal and the
@@ -1149,10 +1362,8 @@ void Application::Impl::constructVolume(){
         need(bool(audio),"Volume needs the shared audio runtime");
         // The executables' own icon resources, opened by their file identity.
         bindIcons({});
-        options.strings=gpu::volumeStrings(settingsLanguage(configuration));
-        options.initial=audio->volume().snapshot();options.actions=audio->volume().callbacks();
-        volume=std::make_unique<tools::VolumePreview>(rasterizer,std::move(options));
-        audio->volume().setReceiver([this](const gpu::VolumeSnapshot&value){bool changed{};if(volume)isolate(volumeModuleOwner,"audio",[&]{changed=volume->receiveSnapshot(value);});if(changed&&ready&&!stopping)host.invalidate();});
+        initial=audio->volume().snapshot();actions=audio->volume().callbacks();
+        audio->volume().setReceiver([this](const gpu::VolumeSnapshot&value){if(volumeCanvas)isolate(volumeModuleOwner,"audio",[&]{volumeCanvas->receive(value);});if(ready&&!stopping)host.invalidate();});
     }else{
         auto sample=std::make_shared<gpu::VolumeSnapshot>();
         sample->outputs={{"test-speaker","测试扬声器"},{"test-headphones","测试耳机",true,false}};
@@ -1160,7 +1371,7 @@ void Application::Impl::constructVolume(){
         sample->volume=.45;sample->balance=0;sample->muted=false;
         sample->canSetVolume=sample->canSetMute=sample->canSetBalance=sample->canSetDefaultOutput=sample->canSetDefaultInput=true;
         // Five synthetic adjustable apps (no real audio): the three-row app
-        // list scrolls (maximum offset 5 x 31 - 95 = 60 points).
+        // list scrolls (maximum offset 5 x 60 - 6 - 174 = 120 px).
         sample->applicationActivitySupported=true;
         for(unsigned n=0;n<5;++n){sample->applications.push_back({std::to_string(9100+n)+":1","测试应用 "+std::to_string(n+1),9100u+n,true});
             // Synthetic executables (never opened): the icons come from the
@@ -1174,21 +1385,23 @@ void Application::Impl::constructVolume(){
             constexpr unsigned size=gpu::LayerImageSource::shelfRequestedPixels;p.width=p.height=size;p.result=S_OK;p.straightRGBA.assign(std::size_t(size)*size*4,0);
             for(unsigned y=8;y<size-8;++y)for(unsigned x=8;x<size-8;++x){auto*px=p.straightRGBA.data()+(std::size_t(y)*size+x)*4;px[0]=static_cast<std::uint8_t>(40*r.identity.objectID[0]);px[1]=160;px[2]=220;px[3]=255;}
             return p;});
-        options.initial=*sample;
-        const auto changed=[this,sample]{if(volume)volume->receiveSnapshot(*sample);};
-        options.actions.setVolume=[sample,changed](std::string_view id,double value){if(id!=sample->outputID)return false;sample->volume=value;changed();return true;};
-        options.actions.setBalance=[sample,changed](std::string_view id,double value){if(id!=sample->outputID)return false;sample->balance=value;changed();return true;};
-        options.actions.setMute=[sample,changed](std::string_view id,bool value){if(id!=sample->outputID)return false;sample->muted=value;changed();return true;};
-        options.actions.setDefaultOutput=[sample,changed](std::string_view id){if(std::none_of(sample->outputs.begin(),sample->outputs.end(),[&](const auto&d){return d.id==id;}))return false;sample->outputID=id;changed();return true;};
-        options.actions.setDefaultInput=[sample,changed](std::string_view id){if(std::none_of(sample->inputs.begin(),sample->inputs.end(),[&](const auto&d){return d.id==id;}))return false;sample->inputID=id;changed();return true;};
-        options.actions.setAppGain=[sample,changed](std::string_view id,double value){const auto app=std::find_if(sample->applications.begin(),sample->applications.end(),[&](const auto&a){return a.id==id;});
+        initial=*sample;
+        const auto changed=[this,sample]{if(volumeCanvas)volumeCanvas->receive(*sample);};
+        actions.setVolume=[sample,changed](std::string_view id,double value){if(id!=sample->outputID)return false;sample->volume=value;changed();return true;};
+        actions.setBalance=[sample,changed](std::string_view id,double value){if(id!=sample->outputID)return false;sample->balance=value;changed();return true;};
+        actions.setMute=[sample,changed](std::string_view id,bool value){if(id!=sample->outputID)return false;sample->muted=value;changed();return true;};
+        actions.setDefaultOutput=[sample,changed](std::string_view id){if(std::none_of(sample->outputs.begin(),sample->outputs.end(),[&](const auto&d){return d.id==id;}))return false;sample->outputID=id;changed();return true;};
+        actions.setDefaultInput=[sample,changed](std::string_view id){if(std::none_of(sample->inputs.begin(),sample->inputs.end(),[&](const auto&d){return d.id==id;}))return false;sample->inputID=id;changed();return true;};
+        actions.setAppGain=[sample,changed](std::string_view id,double value){const auto app=std::find_if(sample->applications.begin(),sample->applications.end(),[&](const auto&a){return a.id==id;});
             if(app==sample->applications.end())return false;app->state=gpu::VolumeAppState::active;app->gain=value;changed();return true;};
-        options.actions.stopApp=[sample,changed](std::string_view id){const auto app=std::find_if(sample->applications.begin(),sample->applications.end(),[&](const auto&a){return a.id==id;});
+        actions.stopApp=[sample,changed](std::string_view id){const auto app=std::find_if(sample->applications.begin(),sample->applications.end(),[&](const auto&a){return a.id==id;});
             if(app==sample->applications.end())return false;app->state=gpu::VolumeAppState::direct;app->gain.reset();changed();return true;};
-        volume=std::make_unique<tools::VolumePreview>(rasterizer,std::move(options));
     }
-    volume->resize(metrics);
-    volumeModuleOwner=volumeModule(*volume,screenHooks());registerModule(volumeModuleOwner);
+    ModuleRouting routing;routing.pointer=10;routing.wheel=6;routing.key=6;
+    auto options=designOwnerOptions("volume",routing);if(icons)options.raster.memoryImages=&icons->images();
+    auto core=std::make_unique<tools::DesignOwnerCore>(rasterizer,designOverlay->context(),std::move(options));
+    auto canvas=std::make_unique<modules::VolumeCanvas>(designOverlay->context(),std::move(initial),std::move(actions),std::move(iconHooks));volumeCanvas=canvas.get();core->add(std::move(canvas));
+    volumeModuleOwner=std::make_unique<tools::DesignModuleOwner>(std::move(core));registerModule(volumeModuleOwner);
 }
 void Application::Impl::constructSettings(){
     if(args.moduleCoverage&&!args.orbipomAssets.empty()){
@@ -1213,12 +1426,17 @@ void Application::Impl::createSettings(const ehud::data::Settings&loaded){
         const auto&saved=loaded.fields["orbipom.bestScore.v1"];if(saved.isNumber())gameBest=std::max<std::int64_t>(0,saved.integer());
         gameEnabled=true; // First selection prepares original art; only Start creates the VM.
     }
+    // Settings on the design library (tools/settings_preview.hpp): four
+    // canvases in one design owner, on the shared design Context.
+    if(designOverlay){
     tools::SettingsPreviewOptions options;options.initial=configuration;options.language=settingsLanguage(configuration);
-    const auto iconRoot=args.settingsAssets/"application-icons";const auto catalog=loadJSON(iconRoot/"manifest.json");
-    need(catalog["sourceCommit"].string()=="ca04f142185c7de40acd8523bdb563195d90a1d1","Settings icon source differs");
-    for(const auto&icon:catalog["icons"].array())if(icon["offered"].boolean()){options.icons.push_back({icon["id"].string(),icon["title"].string()});options.images.emplace(icon["id"].string(),Json::Object{{"asset",icon["app"]["file"]},{"sha256",icon["app"]["sha256"]}});}
-    options.raster.assetRoot=iconRoot;
-    options.viewHooks.displays=[](){std::vector<modules::SettingsDisplay>result;for(const auto&d:gpu::readConnectedDisplays()){const auto id=narrow(std::wstring_view(reinterpret_cast<const wchar_t*>(d.persistentID.data()),d.persistentID.size()));const auto name=narrow(std::wstring_view(reinterpret_cast<const wchar_t*>(d.name.data()),d.name.size()));if(!id.empty())result.push_back({id,name,std::to_string(d.bounds.right-d.bounds.left)+" × "+std::to_string(d.bounds.bottom-d.bounds.top)});}return result;};
+    // Icon roster (application-icons/) and the right-hand list glyphs (watch-appearance/).
+    options.resources=args.settingsAssets;options.appearance=appearanceTemplates.get();
+    // Center logo chooser: the presets, the ENDFIELD INDUSTRIES artwork, the managed store; decoded on the shared executor.
+    if(args.resources){options.logoPresets=args.resources("common.centerLogos");options.endfieldWordmark=args.resources("settings.endfieldWordmark");}
+    options.logoStore=args.dataRoot/"CenterLogo";
+    if(utility){const auto route=utility->makeRoute();options.submit=[this,route](std::function<void()>work,std::function<void(std::exception_ptr)>done){return utility->submit(route,std::move(work),std::move(done));};}
+    options.hooks.displays=[](){std::vector<modules::SettingsDisplay>result;for(const auto&d:gpu::readConnectedDisplays()){const auto id=narrow(std::wstring_view(reinterpret_cast<const wchar_t*>(d.persistentID.data()),d.persistentID.size()));const auto name=narrow(std::wstring_view(reinterpret_cast<const wchar_t*>(d.name.data()),d.name.size()));if(!id.empty())result.push_back({id,name});}return result;};
     options.callbacks.configurationChanged=[this](const auto&value){configuration=value;if(!args.orbipomAssets.empty())configuration.set("orbipom.bestScore.v1",gameBest);configurationPending=true;};
     options.callbacks.persist=[this](const auto&value){auto committed=value;if(!args.orbipomAssets.empty())committed.set("orbipom.bestScore.v1",gameBest);settingsSaves->save(committed);};
     options.callbacks.changed=[this]{if(ready&&!stopping)host.invalidate();};
@@ -1226,12 +1444,14 @@ void Application::Impl::createSettings(const ehud::data::Settings&loaded){
     // and registers nothing now. Otherwise RegisterHotKey must accept it,
     // unless the low-level hook path can deliver it on its own.
     options.callbacks.registerShortcut=[this](auto value)->std::optional<std::string>{
-        if(!tray)return core::localized("Shortcut unavailable","快捷键不可用",settingsLanguage(configuration));
+        // GlobalShortcutController.applyShortcut's refusal (the Hotkeys toast's detail).
+        const auto refused=[this]{return core::localized("That shortcut is already in use or unavailable. Choose another combination.","该快捷键已被占用或不可用，请选择其他组合。",settingsLanguage(configuration));};
+        if(!tray)return refused();
         if(!summonHotkeyEnabled()){updateTrayMenu();return {};}
         const bool registered=tray->setHotkey(gpu::TrayHotkey{value.modifiers,value.key});
         bool hooked=false;if(summonHook){const auto chord=SummonHotkeyHook::chord(value.key,value.modifiers);hooked=summonHook->start(chord,++summonHookGeneration);lastHookChord=hooked?std::optional(chord):std::nullopt;}
         if(registered||hooked){updateTrayMenu();return {};}
-        return core::localized("Shortcut unavailable","快捷键不可用",settingsLanguage(configuration));};
+        return refused();};
     // Recording a shortcut must see the current chord too: both paths pause.
     options.callbacks.shortcutCapture=[this](bool capture){if(!tray)return;applySummonShortcut(capture);};
     options.callbacks.launchAtLogin=[this](bool enabled)->std::optional<std::string>{
@@ -1248,32 +1468,32 @@ void Application::Impl::createSettings(const ehud::data::Settings&loaded){
     // closed. Without the area the row opens the GitHub releases page.
     options.callbacks.checkUpdates=[this]{const auto time=now();if(auto*u=updates()){std::optional<std::string>url;(void)isolateService(UpdateService::key,"update check",[&]{url=u->activate(hostTime(time));});if(url)openAfterClose(*url,time);}else openAfterClose(std::string(releasesURL),time);};
     options.callbacks.automaticUpdates=[this](bool enabled){if(auto*u=updates())(void)isolateService(UpdateService::key,"update preference",[&]{u->setAutomaticChecks(enabled,now());});};
-    options.about.repository=std::string(repositoryURL);
+    options.hooks.about.repository=std::string(repositoryURL);
 #if defined(EHUD_APP_VERSION_NAME)&&defined(EHUD_APP_BUILD_NUMBER)
-    options.about.version=std::string(EHUD_APP_VERSION_NAME)+" ("+EHUD_APP_BUILD_NUMBER+")"; // HUDAboutInformation: "<version> (<build>)"
+    options.hooks.about.version=std::string(EHUD_APP_VERSION_NAME)+" ("+EHUD_APP_BUILD_NUMBER+")"; // HUDAboutInformation: "<version> (<build>)"
 #endif
     // System page "Import macOS data…" (Windows only; the macImport area's entry).
-    options.viewHooks.macImportTitle=[this](core::Language l)->std::optional<std::string>{
+    options.hooks.macImportTitle=[this](core::Language l)->std::optional<std::string>{
         auto*e=areaHost?areaHost->find<MacImportEntry>(macImportEntryService):nullptr;if(!e)return std::nullopt;return e->title(l);};
-    options.viewHooks.macImport=[this]{if(auto*e=areaHost?areaHost->find<MacImportEntry>(macImportEntryService):nullptr)(void)isolateService(macImportEntryService,"mac import",[&]{(void)e->present(areaClock());});};
+    options.hooks.macImport=[this]{if(auto*e=areaHost?areaHost->find<MacImportEntry>(macImportEntryService):nullptr)(void)isolateService(macImportEntryService,"mac import",[&]{(void)e->present(areaClock());});};
     // Display > Theme color / Center logo (HUDSettingsInteraction.chooseColor,
     // chooseLogo; a logo selection invalidates a pending import).
-    // Windows-only Hotkeys toggle: switch opening by the summon shortcut off.
-    options.viewHooks.summonHotkeyToggle=true;
-    options.viewHooks.chooseColor=[this]{requestThemeColor();};
-    options.viewHooks.chooseLogo=[this]{chooseCenterLogo();};
-    options.viewHooks.logoSelection=[this]{++logoImportGeneration;};
-    settingsUI=std::make_unique<tools::SettingsPreview>(rasterizer,std::move(options));settingsUI->resize(metrics);settingsUI->setOverlayVisible(session->phase()!=core::VisibilityPhase::concealed,visibleMode()?now():hostTime(args.benchmarkEpoch));
+    options.hooks.chooseColor=[this]{requestThemeColor();};
+    options.hooks.chooseLogo=[this]{chooseCenterLogo();};
+    options.hooks.logoSelection=[this]{++logoImportGeneration;};
+    ModuleRouting routing;routing.pointerCapture=1;routing.pointer=2;routing.wheelCapture=1;routing.wheel=2;routing.keyCapture=1;routing.key=2;routing.pointerPolicy={false,true,false};
+    options.owner=designOwnerOptions("settings",routing);
+    settingsUI=std::make_unique<tools::SettingsPreview>(rasterizer,designOverlay->context(),std::move(options));
     refreshUpdateStatus();
-    settingsModuleOwner=settingsModule(*settingsUI,peerHooks());registerModule(settingsModuleOwner);
+    settingsModuleOwner=settingsUI->takeOwner();settingsModuleOwner->resize(metrics);settingsModuleOwner->setOverlayVisible(session->phase()!=core::VisibilityPhase::concealed,visibleMode()?now():hostTime(args.benchmarkEpoch));
+    registerModule(settingsModuleOwner);
+    }
     if(loginItem){
         // LoginItemManager.start(ensureEnabled:): only the saved preference
         // registers; a user-disabled startup entry is reported, never forced.
         std::optional<std::string>error;if(configuration.boolean("launchAtLogin"))error=loginItem->ensureEnabled(settingsLanguage(configuration));
-        refreshExternalStatus();if(error){loginStatus=*error;settingsUI->controller().setExternalStatus(loginStatus,shortcutStatus);}
+        refreshExternalStatus();if(error){loginStatus=*error;if(settingsUI)settingsUI->controller().setExternalStatus(loginStatus,shortcutStatus);}
     }
-    // The quit card stays the topmost modal layer above the Settings modal.
-    if(quitConfirmation){registry.remove(*quitConfirmation);registry.add(*quitConfirmation);}
     settingsLoaded=true;
     // A closed HUD presents no frame, so apply the loaded record now: the
     // saved summon shortcut, language and tray labels must not wait for the
@@ -1370,7 +1590,7 @@ void Application::Impl::recordBattery(){
 }
 void Application::Impl::refreshExternalStatus(){
     if(!loginItem)return;
-    loginStatus=LoginItemRegistration::statusDescription(loginItem->read(),settingsLanguage(configuration));
+    loginStatus=LoginItemRegistration::attentionDescription(loginItem->read(),settingsLanguage(configuration));
     if(settingsUI)settingsUI->controller().setExternalStatus(loginStatus,shortcutStatus);
 }
 void Application::Impl::updateTrayMenu(){
@@ -1408,7 +1628,7 @@ void Application::Impl::updateTrayMenu(){
     auto open=t("Open overlay","打开浮层");if(tray->hotkey())open+=L"\t"+wide(modules::settingsShortcutTitle(modules::settingsShortcut(configuration)));
     menu.push_back({gpu::TrayAction::openOverlay,std::move(open)});
     std::wstring work=t("Work Mode","工作模式");
-    if(workMode){using P=modules::WorkModePhase;const auto phase=workMode->controller().snapshot(now()).phase;
+    if(workMode){using P=modules::WorkModePhase;const auto phase=workMode->snapshot(now()).phase;
         const auto state=phase==P::running?core::localized("Active","进行中",language):phase==P::paused?core::localized("Paused","已暂停",language):phase==P::stopped?core::localized("Stopped","已停止",language):phase==P::completed?core::localized("Countdown complete","倒计时结束",language):std::string{};
         if(!state.empty())work+=L" · "+wide(state);}
     menu.push_back({gpu::TrayAction::workMode,std::move(work),bool(workMode)});
@@ -1522,6 +1742,11 @@ void Application::Impl::open(double time){
     // A game keeps the CPU and GPU busy: the shown HUD schedules ahead of it.
     if(visibleMode())presentationPriority.raise(&renderer);
     registry.forEach([&](ModuleOwner&o){o.setOverlayVisible(true,hostTime(time));},"open");
+    // SystemHUDView.animateEntrance: the first module of the session enters
+    // from the disc centre as the HUD deploys (a design screen only; never
+    // under Reduce Motion), unless today's boot log keeps the centre hidden.
+    if(notes&&!deferDeployEntrance)notes->beginEntrance(hostTime(time));
+    quitPromptOpen=false;
     automationChanged();
     if(audio)audio->volume().setVisible(true);
     if(visibleMode()&&headerClock.setActive(true,time))updateClock();
@@ -1646,7 +1871,7 @@ void Application::Impl::sessionEnding(SessionEnd phase,std::uint32_t reason){
         if(phase==SessionEnd::ending){
             sessionEnded=true;(void)lifecycle.forceClose();forceConceal(time);broadcast(HostEvent::Kind::quitting,time);
             if(archive)isolate(archiveModuleOwner,"session end",[&]{(void)archive->finishEditing(hostTime(time));});
-            if(calendar)isolate(calendarModuleOwner,"session end",[&]{(void)calendar->dismissMenu(false,hostTime(time));});
+            if(calendar)isolate(calendarModuleOwner,"session end",[&]{(void)calendarModuleOwner->finishEditing(hostTime(time));});
             if(workMode)isolate(workModeModuleOwner,"session end",[&]{workMode->shutdown(hostTime(time));});
         }
         (void)flushDocuments(time,false);
@@ -1675,11 +1900,12 @@ void Application::Impl::updateBackdrop(double time){
     backdropState.lowPower=settings.lowPower;backdropState.sourceOpacity=backdropOpacity(time);backdrop.update(backdropState);
 }
 bool Application::Impl::updateClock(){if(chrome){chromeContent.reading=headerClock.reading();if(workMode){
-        using P=modules::WorkModePhase;const auto phase=workMode->controller().snapshot(now()).phase;
+        using P=modules::WorkModePhase;const auto phase=workMode->snapshot(now()).phase;
         chromeContent.workPhase=phase==P::running?source::DesktopWorkPhase::running:phase==P::paused?source::DesktopWorkPhase::paused:source::DesktopWorkPhase::idle;
     }return chrome->setContent(chromeContent);}return false;}
 // Same existing one-shot host deadline, armed only at explicit Calendar
 // state/system events. Civil midnight uses date arithmetic across DST.
+void Application::Impl::calendarSystemChanged(){calendarCivil->refreshSystemContext();calendarState->refreshForSystemChange();}
 void Application::Impl::updateCalendarWake(){calendarWakeActive=calendarState&&calendarState->active();calendarNextWake.reset();if(!visibleMode()||!calendarState||!calendarState->loaded()||(!calendarState->active()&&calendarState->events().empty()))return;
     const auto zone=calendarCivil->timeZone();const auto utc=ehud::data::foundationNow();const auto tomorrow=zone.day(utc).advanced(1);if(!tomorrow)return;
     for(unsigned minute=0;minute<1440;++minute)if(const auto at=zone.timestamp(*tomorrow,minute/60,minute%60);at&&*at>utc){calendarNextWake=now()+(*at-utc);break;}
@@ -1699,11 +1925,16 @@ void Application::Impl::applyConfiguration(double time){
     const auto hex=configuration.string("accentHex");for(unsigned n=0;n<3;++n)watchAppearance.accentSRGB[n]=std::stoul(hex.substr(n*2,2),nullptr,16)/255.;
     const auto a=watchAppearance.accentSRGB;const auto effective=watchAppearance.dark?a:source::sourceBlackBlend(a,.35);const std::array<double,4>accent{effective[0],effective[1],effective[2],1};
     backdropState.dark=watchAppearance.dark;backdropState.blurAmount=configuration.number("blurAmount");backdropState.backgroundDarkness=configuration.number("backgroundDarkness");
+    // System > Modules (HUDModuleLayout): order and hidden set, re-read once
+    // per applied record (ApplicationHost::moduleLayout, the navigation).
+    if(auto layout=configuration.moduleLayout();layout!=moduleLayout){moduleLayout=std::move(layout);++moduleLayoutRevision;}
     bindNavigation(time);
     headerClock.setFormat(configuration.string("clockFormat")=="twelveHour"?modules::HUDClockFormat::twelveHour:modules::HUDClockFormat::twentyFourHour,time);
     const auto previousClockStyle=chromeContent.style;
     const auto clock=configuration.string("clockStyle");chromeContent.style=clock=="split"?source::DesktopClockStyle::split:clock=="dial"?source::DesktopClockStyle::dial:clock=="rail"?source::DesktopClockStyle::rail:clock=="stacked"?source::DesktopClockStyle::stacked:source::DesktopClockStyle::digital;
     chromeContent.localizedClose=core::localized("Click outside to close","点击外侧关闭",watchAppearance.language);chromeContent.uppercaseShortcut=summonHotkeyEnabled()?modules::settingsShortcutTitle(modules::settingsShortcut(configuration)):std::string{};
+    // The clock's status row shows Recording mode (B2b, HUDClockStyleArtwork.updateStatus).
+    chromeContent.recording=configuration.recordingMode();chromeContent.reduceMotion=settings.reduceMotion;
     if(chrome){chrome->setAppearance({watchAppearance.dark,watchAppearance.dark?a:source::sourceBlackBlend(a,.35)});updateClock();if(chromeContent.style!=previousClockStyle)clockStyleChanged(previousClockStyle,time);}
     updateCenterLogo(); // setDesktopCenterLogo(configuration.centerLogo, revision)
     if(tray&&settingsUI&&!settingsUI->controller().capturingShortcut()&&!quitRequested)applySummonShortcut(false);
@@ -1721,7 +1952,8 @@ core::FrameDemand Application::Impl::demand(double time){
     time=hostTime(time);
     if(projectionShown()){core::FrameDemand value;if(projectionCall("demand",[&]{value=projection->demand(hostTime(time));}))return value;}
     auto result=session->demand(time);
-    if(result.phase==core::VisibilityPhase::visible)result.finiteAnimation=result.finiteAnimation||(mediaBroker&&mediaBroker->requiresFrames())||registry.requiresFrames(time)||(chrome&&chrome->styleTransitionActive());
+    if(result.phase==core::VisibilityPhase::visible)result.finiteAnimation=result.finiteAnimation||(mediaBroker&&mediaBroker->requiresFrames())||registry.requiresFrames(time)||(chrome&&chrome->requiresFrames(time))||(idCard&&idCard->requiresFrames())||
+        (moduleContrast&&moduleContrast->posed&&moduleContrast->scene.requiresFrames(time));
     return result;
 }
 void Application::Impl::scheduleDeadline(){if(!liveScheduling()||!ready||stopping)return;std::optional<double>next;
@@ -1746,7 +1978,7 @@ void Application::Impl::refresh(double time){if(liveScheduling()&&ready&&!stoppi
     projectionDrop->scale=metrics.scale;
     if(projectionShown())(void)projectionCall("actions",[&]{while(auto action=projection->preview()->takeAction())projectionActions.push_back(std::move(*action));});
     if((!projectionActions.empty()||projectionTrayAction||projectionDisplayPending||projectionResizePending||(projectionShown()&&projection->dismissalComplete(time)))&&!projectionActionsQueued&&!projectionPainting){need(PostMessageW(static_cast<HWND>(host.hwnd()),projectionActionMessage,serviceGeneration,0)!=FALSE,"Post Projection actions");projectionActionsQueued=true;}
-    if(eventRecorder&&workMode)eventRecorder->receiveWork(workMode->controller().snapshot(hostTime(time)));
+    if(eventRecorder&&workMode)eventRecorder->receiveWork(workMode->snapshot(hostTime(time)));
     if(reader&&!readerActionQueued){std::optional<tools::ReaderImportAction>action;isolate(readerModuleOwner,"import",[&]{action=reader->takeImportAction();});
         if(action){pendingReaderAction=std::move(*action);need(PostMessageW(static_cast<HWND>(host.hwnd()),readerActionMessage,serviceGeneration,0)!=FALSE,"Post Reader import action");readerActionQueued=true;}}
     if(workMode)updateClock();host.setFrameDemand(demand(time));scheduleDeadline();host.invalidate();}}
@@ -1776,13 +2008,30 @@ void Application::Impl::publishNative(){
     if(notes){const auto&sample=notes->modulePresentation();
         const bool mapSwitch=map&&sample.incoming&&(sample.current.module==core::Module::map||sample.incoming->module==core::Module::map);
         const auto*cut=mapSwitch?map->transitionCut():nullptr;
+        // The centre's contrast backdrop under the module host (shown HUD only).
+        if(moduleContrast&&moduleContrast->posed&&session->phase()!=core::VisibilityPhase::concealed){(void)moduleContrast->scene.uploadAnimations(renderer);
+            for(const auto&e:moduleContrast->scene.entries()){ordered.push_back(e);if(cut&&!ordered.back().cut)ordered.back().cut=cut;}}
+        moduleEntryBegin=ordered.size();
         appendModule(sample.current.module,sample.current.module==core::Module::map?nullptr:cut);
         if(sample.incoming)appendModule(sample.incoming->module,sample.incoming->module==core::Module::map?nullptr:cut);}
-    // Core-plane layers (e.g. the Power charge badge) sit inside the canvas,
-    // below the floating Notes workspace (SystemHUDView view order).
+    else moduleEntryBegin=ordered.size();
+    moduleEntryCount=ordered.size()-moduleEntryBegin;
+    // SystemHUDView layer order above the module host: the shared overlay
+    // (dim 15 < confirm 20 < toast 25) is the core plane's last content; the
+    // charge plane is a later depth plane; the status panel (the header
+    // sanity wallet) and the facility banner (z 1000, with the boot log 30 of
+    // the overlay above the confirm bar) are the canvas's; the Notes
+    // workspace (pinned notes) is the view's own layer above the canvas, so
+    // pinned notes draw over the confirm bar while it still takes every
+    // press and key (its capture routes first, as SystemHUDView.mouseDown /
+    // keyDown ask the overlay before the notes workspace).
+    if(designOverlay)(void)registry.guard(*designOverlay,[&]{for(const auto&e:designOverlay->modalEntries())ordered.push_back(e);},"publish");
     registry.forEach([&](ModuleOwner&o){for(const auto&e:o.planeEntries())ordered.push_back(e);},"publish");
-    registry.forEach([&](ModuleOwner&o){for(const auto&e:o.floatingEntries())ordered.push_back(e);},"publish");
-    registry.forEach([&](ModuleOwner&o){for(const auto&e:o.modalEntries())ordered.push_back(e);},"publish");
+    registry.forEach([&](ModuleOwner&o){if(&o!=notesModuleOwner.get())for(const auto&e:o.floatingEntries())ordered.push_back(e);},"publish");
+    if(facilityOwner)(void)registry.guard(*facilityOwner,[&]{for(const auto&e:facilityOwner->modalEntries())ordered.push_back(e);},"publish");
+    if(notesModuleOwner)(void)registry.guard(*notesModuleOwner,[&]{for(const auto&e:notesModuleOwner->floatingEntries())ordered.push_back(e);},"publish");
+    // Windows-only modal cards (the Mac import) stay above everything.
+    registry.forEach([&](ModuleOwner&o){if(&o!=designOverlay.get()&&&o!=facilityOwner)for(const auto&e:o.modalEntries())ordered.push_back(e);},"publish");
     // A language event can leave equal captions/numbers in retained scenes.
     // Refresh only an older font generation; group carriers forward this to
     // their cached local text, while editor owners keep layout/TSF together.
@@ -1794,7 +2043,7 @@ void Application::Impl::publishNative(){
     // count alone cannot detect those resource-identity changes.
     if(!changed)changed=!composition.supplementalBindingsMatch(ordered);
     if(changed){composition.setEntries(renderer,ordered);published.clear();for(const auto&e:ordered)published.push_back({e.scene,e.scene->contentRevision(),e.scene->resourceRevision(),e.after.data(),e.after.size(),e.cut});
-        registry.forEach([&](ModuleOwner&o){o.collected(renderer);},"collect");if(archiveMedia)archiveMedia->collectRetired();if(mediaBroker)mediaBroker->collectRetired();}
+        registry.forEach([&](ModuleOwner&o){o.collected(renderer);},"collect");if(moduleContrast)(void)moduleContrast->scene.collectRetired(renderer);if(archiveMedia)archiveMedia->collectRetired();if(mediaBroker)mediaBroker->collectRetired();}
     publishedNotesRevision=notesRevision;
 }
 // The source shell's pose for one frame (present() and the launch prewarm):
@@ -1813,13 +2062,14 @@ const WatchSessionFrame* Application::Impl::poseShell(double time){
     {auto stage=probe.measure(LiveProbe::materials);materialPresentation->update(*sample->sourceFrame,parameters);}
     {auto stage=probe.measure(LiveProbe::nativeLabels);if(navigationDirty)bindNavigation(time);if(nativeContent)nativeContent->update(session->actions());
     for(auto&button:available){const auto found=session->actions().find(button.buttonID);button.enabled=found!=session->actions().end();button.expandFileShelfCaption=button.enabled&&nativeAppearance&&nativeAppearance->expandsFileShelfCaption(found->second,watchAppearance.language);}
+    if(idCard)(void)idCard->advance(time,settings.reduceMotion); // the UID bar's wipe (B2b)
     const core::Rect viewport{0,0,metrics.width,metrics.height};labels->update(*sample->sourceFrame,sample->camera,viewport,available);
     if(nativeAppearance){watchAppearance.selectedAction=notes?contentCatalog->actionForTarget(core::moduleIdentifier(notes->selected())).value_or(0):0;nativeAppearance->update(session->actions(),watchAppearance,labels->placements());}
     // Chrome samples once per visible second; opacity follows the same
     // ready/close timestamps as the source outer controller.
     const auto frameChrome=chromeSettings(notes?notes->selected():core::Module::power);
     // HUDClockPageViewport: the style push advances on this frame clock.
-    if(chrome){chrome->advanceStyleTransition(time);chrome->update(*sample->sourceFrame,sample->camera,frameChrome,static_cast<float>(canvasOpacity(time)));}
+    if(chrome){chrome->advance(time);chrome->update(*sample->sourceFrame,sample->camera,frameChrome,static_cast<float>(canvasOpacity(time)));}
     }
     return sample;
 }
@@ -1886,7 +2136,7 @@ bool Application::Impl::present(double time,bool submit){
     if(storageFixture)storageFixture->time.store(time,std::memory_order_relaxed);
     auto frameProbe=probe.measure(LiveProbe::frame);
     {auto stage=probe.measure(LiveProbe::prepare);applyConfiguration(time);
-    if(clipboardDirty&&clipboard&&notes&&notes->selected()==core::Module::clipboard){isolate(clipboardModuleOwner,"refresh",[&]{clipboard->refresh();});clipboardDirty=false;}}
+}
     // Backdrop COM calls can dispatch nested input. Finish them before
     // borrowing a source frame, then sample the current live event time.
     {auto stage=probe.measure(LiveProbe::backdrop);updateBackdrop(time);}time=visibleMode()?now():hostTime(time);
@@ -1905,6 +2155,7 @@ bool Application::Impl::present(double time,bool submit){
         registry.forEach([&](ModuleOwner&o){const auto begin=probe.enabled?Clock::now():Clock::time_point{};
             const ModuleFrame frame{*chromePlan->projection().center,noteChromeSettings,notes->modulePresentation(),opacity,hostTime(time),focused};o.update(frame);
             if(probe.enabled)probe.owner(o.name(),false,begin);},"frame");
+        updateModuleContrast(*chromePlan->projection().center,hostTime(time));
     }
     // A module switch that settled, or the active module's accept-input that
     // changed (its confirmation card shown or gone), changes which UI
@@ -1923,7 +2174,14 @@ bool Application::Impl::present(double time,bool submit){
         // A hidden Archive is not updated (its adapter builds it when shown).
         if(archiveMedia)isolate(archiveModuleOwner,"frame",[&]{if(archiveMedia->refresh(hostTime(time))&&archive&&notes&&chromePlan&&chromePlan->projection().center&&presentationShows(notes->modulePresentation(),core::Module::archive))archive->update(*chromePlan->projection().center,noteChromeSettings,notes->modulePresentation(),static_cast<float>(canvasOpacity(time)),hostTime(time));});}
     {auto stage=probe.measure(LiveProbe::materials);materials->flush(renderer.sourceGraphics());}
-    {auto stage=probe.measure(LiveProbe::publication);publishNative();composition.present(renderer);renderer.setCamera(gpu::layerViewportProjection(metrics.pixelWidth,metrics.pixelHeight)*core::Matrix4::scale(metrics.scale,metrics.scale,1));}
+    {auto stage=probe.measure(LiveProbe::publication);publishNative();composition.present(renderer);renderer.setCamera(gpu::layerViewportProjection(metrics.pixelWidth,metrics.pixelHeight)*core::Matrix4::scale(metrics.scale,metrics.scale,1));
+     // HUDCenterOverlay.setContentDimmed (D6): while a confirm bar or a toast
+     // dims the centre, the module content (the Mac moduleContent.layer: the
+     // current and incoming module entries) is blurred and darkened through
+     // the renderer; nothing (and no filter target) when no dim is needed.
+     if(designOverlay){std::optional<gpu::ContentFilter>filter;
+        (void)registry.guard(*designOverlay,[&]{const auto range=composition.drawRange(moduleEntryBegin,moduleEntryCount);filter=designOverlay->contentFilter(hostTime(time),range.first,range.second-range.first);},"content filter");
+        (void)renderer.setContentFilter(filter);}}
     if(submit){auto stage=probe.measure(LiveProbe::draw);renderer.draw(visibleMode());
         // A finished module switch: the outgoing module's native group targets
         // are no longer drawn and give their GPU memory back (created again and
@@ -1948,13 +2206,8 @@ void Application::Impl::importReaderReference(std::uint64_t generation,std::stri
 }
 void Application::Impl::activate(const WatchActivation&event){
     if(event.action==quitAction){
-        // SystemHUDView.presentQuitConfirmation: dims the HUD, follows its
-        // tilt and owns input until Cancel or Quit.
-        // SystemHUDView.allowsModuleInput: not during a module swap, a pending
-        // confirmation or an accepted quit.
-        if(quitConfirmation&&lifecycle.phase()==core::SystemOverlayPhase::open&&!quitRequested&&!quitConfirmation->presented()&&
-           !(notes&&notes->modulePresentation().transitioning)){const auto time=now();(void)registry.guard(*quitConfirmation,[&]{quitConfirmation->present(hostTime(time));},"quit confirmation");session->pointerMove(environment.pointer,time);refresh(time);}
-        else if(!quitConfirmation)perform(lifecycle.requestQuit(),now());
+        if(designOverlay)presentQuitConfirmation(now());
+        else perform(lifecycle.requestQuit(),now());
         return;
     }
     if(event.action==closeAction){perform(lifecycle.close(),now());return;}
@@ -1975,6 +2228,34 @@ void Application::Impl::activate(const WatchActivation&event){
     if(!production())std::cout<<"Source action: "<<entry->target<<'\n';
 }
 
+// SystemHUDView.presentQuitConfirmation (Mac 1.3.0; HUDQuitConfirmationView
+// is gone): the red power button asks on the shared confirm bar on the disc
+// ("Quit EndfieldHUD?" / "Notes, shelf files and settings are saved.", Quit,
+// the default Cancel, red, the power glyph). Esc / Cancel / a press outside
+// keep the HUD; Return / Quit accept once, after the bar's 120 ms press (at
+// once under Reduce Motion), then the normal closing plays and the ordered
+// quit runs once the HUD is hidden (finishQuit). Asked only while module
+// input is allowed (SystemHUDView.allowsModuleInput: the HUD open, no module
+// swap, no accepted quit); the bar's capture blocks everything else while it
+// shows. The bar is drawn on the centre plane, so it follows the tilt.
+void Application::Impl::presentQuitConfirmation(double time){
+    if(lifecycle.phase()!=core::SystemOverlayPhase::open||quitRequested||quitPromptOpen||(notes&&notes->modulePresentation().transitioning))return;
+    auto&context=designOverlay->context();if(context.overlay().capturesInput())return;
+    // An open sanity recovery popover is dismissed instead (the account area's QuitPreemption).
+    if(areaHost)if(auto*preempt=areaHost->find<QuitPreemption>(quitPreemptionService)){bool dismissed{};
+        if(isolateService(quitPreemptionService,"quit",[&]{dismissed=(*preempt)(hostTime(time));})&&dismissed){automationChanged();refresh(time);return;}}
+    quitPromptOpen=true;
+    modules::design::ConfirmRequest request;request.id="quit";
+    request.title=context.text("Quit EndfieldHUD?","退出 EndfieldHUD？");request.message=context.text("Notes, shelf files and settings are saved.","便笺、暂存文件与设置均已保存。");
+    request.confirmTitle=context.text("Quit","退出");request.danger=true;request.icon=modules::design::Icon::power;
+    (void)registry.guard(*designOverlay,[&]{context.confirm(std::move(request),
+        // confirmQuit: accepted synchronously, so focus loss cannot cancel it.
+        [this]{if(!quitPromptOpen||quitRequested)return;quitPromptOpen=false;perform(lifecycle.requestQuit(),now());},
+        [this]{quitPromptOpen=false;});},"quit confirmation");
+    // clearControlHighlights / navigation.hover(nil): the shell's hover ends under the bar.
+    session->pointerMove(environment.pointer,time);automationChanged();refresh(time);
+}
+
 // ---------------------------------------------------------------------------
 // Host routes into module areas
 // Source desktop navigation with the saved app shortcuts (AppShortcutNavigation
@@ -1983,17 +2264,18 @@ void Application::Impl::bindNavigation(double time){
     navigationDirty=false;if(!nativeAppearance)return;
     std::vector<gpu::WatchAppearanceEntry>entries;
     for(const auto&e:contentCatalog->entries())entries.push_back({e.action,e.target,moduleCaption(e.target,watchAppearance.language,e.title),"module:"+e.target,true});
-    auto navigation=baseNavigation;
+    // System > Modules: the visible right-hand modules in their order (B2b).
+    auto navigation=baseNavigation;navigation.rightActions=layoutRightActions(baseNavigation.rightActions);const auto right=navigation.rightActions;
     if(auto*apps=appNavigation()){
         try{
-            const auto plan=apps->plan(entries,baseNavigation.rightActions);
+            const auto plan=apps->plan(entries,right);
             std::vector<gpu::WatchAppearanceEntry>combined(plan.entries.begin(),plan.entries.end());
             navigation.rightActions.assign(plan.rightActions.begin(),plan.rightActions.end());
             entries=std::move(combined);
         }catch(const std::exception&e){
             if(!production())throw;
             const auto line=std::string("EndfieldHUD app shortcut navigation failed (")+typeid(e).name()+")\n";std::fputs(line.c_str(),stderr);OutputDebugStringA(line.c_str());
-            navigation=baseNavigation;
+            navigation=baseNavigation;navigation.rightActions=right;
         }
     }
     navigationEntries=entries; // the navigation's UI Automation names (application_navigation.cpp)
@@ -2083,7 +2365,7 @@ bool Application::Impl::dropHover(std::span<const std::string>paths,std::optiona
 // Read-only hit test of the drop route (UI thread, inside the COM callback).
 std::optional<std::string> Application::Impl::dropTarget(core::Point point)const{
     if(!notes||stopping||closing||quitRequested||!session->inputEnabled()||session->phase()!=core::VisibilityPhase::visible)return std::nullopt;
-    if(quitConfirmation&&quitConfirmation->presented())return std::nullopt;
+    if(designOverlay&&designOverlay->capturesPointer())return std::nullopt;
     // A navigation button: only the File Shelf entry takes files (isShelfNavigationDrop).
     if(const auto id=session->buttonAt(point)){
         const auto&actions=session->actions();const auto action=actions.find(*id);if(action==actions.end())return std::nullopt;
@@ -2141,6 +2423,9 @@ Application::Impl::AutomationInputs Application::Impl::automationInputs(){
     if(sample.incoming)value.incoming=sample.incoming->module;
     value.transitioning=sample.transitioning;value.moduleInput=sample.acceptsModuleInput;value.hudInput=session->inputEnabled();
     if(auto*owner=registry.presenter(sample.requested)){value.active=owner;(void)registry.guard(*owner,[&]{value.modal=owner->capturesPointer();},"automation");}
+    // The shared confirm bar (CenterOverlay) opened or closed: its pills are
+    // listed or gone (SystemHUDView: overlay.onChange -> layoutDesignAccessibility).
+    if(designOverlay)(void)registry.guard(*designOverlay,[&]{value.modal=value.modal||designOverlay->capturesPointer();},"automation");
     return value;
 }
 HudAutomationSource Application::Impl::automationSource(){
@@ -2209,7 +2494,7 @@ bool Application::Impl::restartDisplay(const std::string&reason,double time){
     // The session-end drain: no animation, editors committed, every save queue flushed.
     (void)lifecycle.forceClose();forceConceal(time);broadcast(HostEvent::Kind::quitting,time);
     if(archive)isolate(archiveModuleOwner,"device loss",[&]{(void)archive->finishEditing(hostTime(time));});
-    if(calendar)isolate(calendarModuleOwner,"device loss",[&]{(void)calendar->dismissMenu(false,hostTime(time));});
+    if(calendar)isolate(calendarModuleOwner,"device loss",[&]{calendarModuleOwner->cancelInteraction(hostTime(time));});
     (void)flushDocuments(time,false);
     if(summonHook)summonHook->stop();
     if(tray)tray->setHotkey({});

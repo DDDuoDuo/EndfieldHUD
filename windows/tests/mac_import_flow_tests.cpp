@@ -6,7 +6,10 @@
 #include "mac_import_test_support.hpp"
 #include "app/areas/mac_import_card.hpp"
 #include "app/areas/mac_import_flow.hpp"
+#include "modules/hud_design_page.hpp"
 #include "core/migration/mac_import_outcome.hpp"
+#include <cmath>
+#include <functional>
 #include <set>
 
 namespace {
@@ -108,12 +111,9 @@ void outcomeCodec() {
 
 void cardState() {
     a::MacImportCardState s;
-    s.setAppearance({true, 2, {250. / 255, 212. / 255, 31. / 255, 1}});
-    check(!s.pointerDown(0, 0) && !s.key(0x0D, false, 0), "A hidden card consumes nothing");
+    check(!s.key(0x0D, false, 0), "A hidden card consumes nothing");
     s.show(1);
-    check(s.presented() && s.focused() == 0 && s.requiresFrames(1.1) && !s.requiresFrames(1.25), "Reveal: Cancel focused, .20 s depth");
-    const auto reveal = s.pose(1.08);
-    check(reveal.opacity > 0 && reveal.opacity < 1 && reveal.travel > 0 && reveal.travel < 12 && s.pose(1.3).opacity == 1 && s.pose(1.3).travel == 0, "Source reveal timing");
+    check(s.presented() && s.focused() == 0 && s.showings() == 1 && s.opacity(1) == 1 && !s.requiresFrames(1), "Shown at rest with Cancel focused");
     check(*s.key(0x0D, false, 2) == a::MacImportCardAction::left, "Return activates the focused Cancel");
     check(*s.key(0x09, false, 2) == a::MacImportCardAction::none && s.focused() == 1 && *s.key(0x20, false, 2) == a::MacImportCardAction::right, "Tab moves to the confirm button");
     check(*s.key(0x0D, true, 2) == a::MacImportCardAction::none, "Repeated Return never confirms");
@@ -122,84 +122,91 @@ void cardState() {
     check(*s.key(0x1B, false, 2) == a::MacImportCardAction::escape, "Escape is reported for the flow to decide");
     s.setEnabled({true, false}, 3);
     check(s.focused() == 0, "Disabling the focused confirm button moves focus to Cancel");
-    check(*s.key(0x27, false, 3) == a::MacImportCardAction::none && s.focused() == 0, "A disabled button cannot take focus");
-    (void)s.pointerDown(1, 3);
-    check(*s.pointerUp(1, 3.05) == a::MacImportCardAction::none && !s.pressed(), "A disabled button cannot be clicked");
-    (void)s.pointerDown(0, 4);
-    check(*s.pointerUp(0, 4.05) == a::MacImportCardAction::left && s.feedbackAnimating(4.1), "Clicking Cancel answers left with .12 s feedback");
-    (void)s.pointerDown(0, 5);
-    check(*s.pointerUp(std::nullopt, 5.05) == a::MacImportCardAction::none, "Releasing outside the button cancels the click");
+    check(*s.key(0x27, false, 3) == a::MacImportCardAction::none && s.focused() == 0 && !s.focus(1, 3), "A disabled button cannot take focus");
     s.setEnabled({true, true}, 6);
-    (void)s.key(0x27, false, 6);
+    check(s.focus(1, 6) && s.focused() == 1, "A press or SetFocus moves the focus");
     s.resetFocus(6.5);
     check(s.focused() == 0, "A new step returns focus to Cancel");
     s.dismiss(true, 7);
-    check(s.presented() && s.dismissing() && *s.key(0x0D, false, 7.05) == a::MacImportCardAction::none, "Input stays consumed during the .14 s fade");
+    check(s.presented() && s.dismissing() && *s.key(0x0D, false, 7.05) == a::MacImportCardAction::none && !s.focus(1, 7.05), "Input stays consumed during the .14 s fade");
+    check(std::abs(s.opacity(7.07) - .5) < 1e-9 && s.requiresFrames(7.1), "The fade is numeric");
     check(!s.refresh(7.1) && s.refresh(7.14) && !s.presented(), "The fade completes after .14 s");
+    s.show(7.5);
+    check(s.showings() == 2, "Each showing from hidden plays the entrance");
+    s.dismiss(true, 7.6); s.show(7.65);
+    check(s.showings() == 2 && s.opacity(7.65) == 1, "Re-showing a fading card restores it without a new entrance");
     s.setReduceMotion(true, 8);
-    s.show(8);
-    check(s.pose(8).opacity == 1 && s.pose(8).travel == 0 && !s.requiresFrames(8), "Reduce Motion shows the card at rest");
     s.dismiss(true, 9);
     check(!s.presented(), "Reduce Motion hides at once");
 }
 
-void cardArtwork() {
-    a::MacImportCardState s;
-    const endfield::modules::SettingsAppearance appearance{true, 2, {250. / 255, 212. / 255, 31. / 255, 1}};
-    s.setAppearance(appearance);
-    s.show(0);
-    a::MacImportCardContent content;
-    content.title = "Review import"; content.message = "Ready."; content.buttons = {"Cancel", "Import"};
-    for (std::size_t n = 0; n < a::macImportCardRows; ++n) content.rows[n] = {"Row " + std::to_string(n), "Ready", a::MacImportTone::primary};
-    const endfield::core::Rect viewport{0, 0, 1280, 800};
-    const auto art = a::prepareMacImportCardArtwork(content, s, viewport, appearance, "import.test");
-    check(art.leaves.size() == a::macImportCardLeaves && art.layers["children"].array().size() == a::macImportCardLeaves && a::macImportCardLeaves == 38,
-          "The card keeps one fixed leaf structure");
-    std::set<std::string> ids;
-    for (const auto& leaf : art.leaves) { check(leaf.id.starts_with("import.test."), "Leaf identities carry the card prefix"); ids.insert(leaf.id); }
-    check(ids.size() == art.leaves.size(), "Leaf identities are unique");
-    const auto g = a::macImportCardGeometry(viewport);
-    check(g.card.width == 390 && g.card.height == a::macImportCardHeight && g.card.x == 445 && g.card.y == (800 - a::macImportCardHeight) / 2,
-          "Source confirmation width, centered in the viewport");
-    check(g.cancel.y + g.cancel.height + 21 == g.card.height && g.cancel.x == 23 && g.confirm.x + g.confirm.width == g.card.width - 23,
-          "Buttons keep the source 23 pt insets and 21 pt bottom margin");
-    check(g.rowTop + g.rowHeight * double(a::macImportCardRows) <= g.list.y + g.list.height && g.list.y + g.list.height < g.cancel.y, "Rows fit inside the list above the buttons");
-    check(a::macImportCardGeometry({0, 0, 200, 500}).card.width == 220, "Narrow viewports keep the 220 pt minimum");
-    const auto leaf = [&](const a::MacImportArtwork& w, a::MacImportLeaf l) -> const a::MacImportArtworkLeaf& { return w.leaves[static_cast<std::size_t>(l)]; };
-    // The frames UI Automation reports are the artwork's own leaf frames.
-    const auto frame = [&](a::MacImportLeaf l) {
-        const auto& node = art.layers["children"].array()[static_cast<std::size_t>(l)];
-        return endfield::core::Rect{node["position"].array()[0].number(), node["position"].array()[1].number(), node["bounds"].array()[2].number(), node["bounds"].array()[3].number()};
-    };
-    const auto same = [](endfield::core::Rect x, endfield::core::Rect y) { return x.x == y.x && x.y == y.y && x.width == y.width && x.height == y.height; };
-    check(same(frame(a::MacImportLeaf::title), g.title) && same(frame(a::MacImportLeaf::message), g.message) && same(frame(a::MacImportLeaf::track), g.bar) &&
-          same(frame(a::MacImportLeaf::detail), g.detail) && same(frame(a::MacImportLeaf::position), g.position), "Text and bar frames come from the geometry");
-    for (std::size_t n = 0; n < a::macImportCardRows; ++n) {
-        const auto label = frame(static_cast<a::MacImportLeaf>(static_cast<std::size_t>(a::MacImportLeaf::firstRow) + 2 * n));
-        const auto value = frame(static_cast<a::MacImportLeaf>(static_cast<std::size_t>(a::MacImportLeaf::firstRow) + 2 * n + 1));
-        const auto row = g.row(n);
-        check(row.x == label.x && row.y == label.y && row.height == label.height && row.x + row.width == value.x + value.width && value.y == row.y,
-              "A UIA row spans its label and value");
-    }
-    check(leaf(art, a::MacImportLeaf::track).opacity == 0 && leaf(art, a::MacImportLeaf::fill).opacity == 0 && leaf(art, a::MacImportLeaf::detail).opacity == 0,
-          "No progress bar or detail without content");
-    check(art.layers["children"].array()[static_cast<std::size_t>(a::MacImportLeaf::caption)]["text"]["string"].string() == "ENDFIELDHUD / SYSTEM", "Source caption");
-    check(a::prepareMacImportCardArtwork(content, s, viewport, appearance, "import.test").layers == art.layers, "Equal content prepares identical artwork");
-    content.progress = .5;
-    const auto progress = a::prepareMacImportCardArtwork(content, s, viewport, appearance, "import.test");
-    check(leaf(progress, a::MacImportLeaf::fill).opacity == 1 && std::abs(leaf(progress, a::MacImportLeaf::fill).local.values[0] - .5) < 1e-9 &&
-          progress.layers["children"].array()[static_cast<std::size_t>(a::MacImportLeaf::fill)] == art.layers["children"].array()[static_cast<std::size_t>(a::MacImportLeaf::fill)],
-          "Progress scales the retained fill without changing its artwork");
-    content.progress.reset();
-    content.detail = "The folder is not a complete export.";
-    const auto detail = a::prepareMacImportCardArtwork(content, s, viewport, appearance, "import.test");
-    check(leaf(detail, a::MacImportLeaf::detail).opacity == 1 && leaf(detail, a::MacImportLeaf::firstRow).opacity == 0, "A detail text replaces the list rows");
-    s.setEnabled({true, false}, 1);
-    const auto disabled = a::prepareMacImportCardArtwork(content, s, viewport, appearance, "import.test");
-    const auto& label = disabled.layers["children"].array()[static_cast<std::size_t>(a::MacImportLeaf::confirm)]["text"]["foregroundColor"]["sRGB"].array();
-    check(std::abs(label[3].number() - .35) < 1e-9, "A disabled button label is dimmed");
-}
+// Character-count widths: only text emission and layout need it here.
+struct Measurer final : endfield::modules::design::TextMeasurer {
+    double width(std::span<const endfield::modules::design::TextRun> runs, endfield::modules::design::TextRegion) override {
+        double w{}; for (const auto& r : runs) w += double(r.text.size()) * r.style.size * .5; return std::ceil(w * 2) / 2; }
+    endfield::modules::design::LineMetrics metrics(const endfield::modules::design::TextStyle& s, endfield::modules::design::TextRegion, double scale) override {
+        return {s.size * s.lineHeight * scale, .928 * s.size * scale, .244 * s.size * scale}; }
+};
 
+void cardPanel() {
+    namespace d = endfield::modules::design;
+    Measurer measurer;
+    d::Context context(measurer, [](std::string_view t) { std::string u(t); for (auto& c : u) if (c >= 'a' && c <= 'z') c = char(c - 32); return u; });
+    a::MacImportPanel panel(context.env());
+    a::MacImportCardContent content;
+    content.title = "Review import"; content.message = "Ready."; content.buttons = {"Cancel", "Import"}; content.position = "1 / 12";
+    for (std::size_t n = 0; n < a::macImportCardRows; ++n) content.rows[n] = {"Row " + std::to_string(n), "Ready", a::MacImportTone::primary};
+    panel.setContent(content);
+    const auto g = panel.geometry();
+    const auto same = [](endfield::core::Rect x, endfield::core::Rect y) { return x.x == y.x && x.y == y.y && x.width == y.width && x.height == y.height; };
+    check(same(g.card, {60, 39, a::macImportCardWidth, a::macImportCardHeight}) && same(panel.root().frame(), d::metric::box), "The panel is centred in the content box");
+    check(g.confirm.x + g.confirm.width == g.card.width - 22 && g.cancel.x + g.cancel.width + 10 == g.confirm.x && g.cancel.y == g.confirm.y &&
+          g.confirm.y + g.confirm.height + 16 == g.card.height, "Primary right, secondary before it, 22 / 16 px insets");
+    check(g.rowTop + g.rowHeight * double(a::macImportCardRows) <= g.list.y + g.list.height && g.list.y + g.list.height < g.cancel.y &&
+          g.bar.y + g.bar.height <= g.list.y && g.message.y + g.message.height <= g.bar.y, "Header, bar, list and buttons do not overlap");
+    const auto revision = panel.root().arena().revision();
+    panel.setContent(content);
+    check(panel.root().arena().revision() == revision, "Equal content changes nothing");
+    a::MacImportCardState state;
+    state.show(0);
+    content.progress = .5;
+    panel.setContent(content);
+    panel.pose(state, 0);
+    const auto progressRevision = panel.root().arena().revision();
+    content.progress = .75;
+    panel.setContent(content);
+    panel.pose(state, 0);
+    check(panel.root().arena().revision() == progressRevision, "Progress moves only pose numbers (no re-raster)");
+    // The panel's layers by id (arena prefix "macImport").
+    std::function<const d::Layer*(const d::Layer&, std::string_view)> find = [&](const d::Layer& l, std::string_view id) -> const d::Layer* {
+        if (l.id() == id) return &l;
+        for (const auto* child : l.children()) if (const auto* f = find(*child, id)) return f;
+        return nullptr;
+    };
+    const auto* fill = find(panel.root(), "macImport.fill");
+    const auto* ring = find(panel.root(), "macImport.cancel.focus");
+    const auto* caption = find(panel.root(), "macImport.caption");
+    check(fill && std::abs(fill->value(d::Channel::scaleX) - .75) < 1e-9 && fill->value(d::Channel::opacity) == 1, "The fill scales with the progress");
+    check(ring && ring->value(d::Channel::opacity) == 1 && find(panel.root(), "macImport.confirm.focus")->value(d::Channel::opacity) == 0, "The focus ring marks the focused button");
+    check(caption && d::textOf(*caption).text() == "ENDFIELDHUD / SYSTEM", "The system caption");
+    content.detail = "The folder is not a complete export.";
+    panel.setContent(content);
+    const auto* detail = find(panel.root(), "macImport.detail");
+    check(detail && !detail->hidden() && find(panel.root(), "macImport.row0")->hidden(), "A detail text replaces the list rows");
+    content.enabled = {true, false};
+    panel.setContent(content);
+    int activated = -1;
+    panel.onActivate = [&](int n) { activated = n; };
+    const auto confirm = panel.geometry().confirm;
+    const endfield::core::Point at{g.card.x + confirm.x + confirm.width / 2, g.card.y + confirm.y + confirm.height / 2};
+    (void)panel.router().pointerDown(at, panel.root()); panel.router().pointerUp(at, panel.root());
+    check(activated == -1, "A disabled button cannot be clicked");
+    const auto cancel = panel.geometry().cancel;
+    const endfield::core::Point left{g.card.x + cancel.x + cancel.width / 2, g.card.y + cancel.y + cancel.height / 2};
+    check(panel.router().pointerDown(left, panel.root()), "The cancel button takes the press");
+    panel.router().pointerUp(left, panel.root());
+    check(activated == 0, "Clicking Cancel answers left");
+}
 void introAndChoice() {
     Temporary t;
     const auto destination = t.root / "EndfieldHUD" / "v1";
@@ -453,7 +460,7 @@ int main() {
         strings();
         outcomeCodec();
         cardState();
-        cardArtwork();
+        cardPanel();
         introAndChoice();
         inProcessImport();
         restartHandoff();

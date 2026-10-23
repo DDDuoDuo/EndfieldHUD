@@ -89,8 +89,8 @@ struct ApplicationOptions {
     std::string cachePin;
     bool runtimeInput{}, warp{};
     // Module asset roots (empty: module not installed).
-    std::filesystem::path notesAssets, notesFormatAssets, shelfAssets, shelfMask, clipboardAssets,
-        residentIcons, settingsAssets, archiveAssets, storageAssets, activityAssets,
+    std::filesystem::path notesAssets, notesFormatAssets, shelfAssets, shelfMask,
+        residentIcons, settingsAssets, archiveAssets,
         mapGeography, mapPlayerAssets, orbipomAssets;
     std::string notesAssetsSHA;
     // Data: every store's explicit appRoot. Shelf may use a separate root.
@@ -98,7 +98,7 @@ struct ApplicationOptions {
     // Optional modules and providers.
     bool reader{}, calendar{}, projection{};
     bool nativeClipboard{}, nativeActivity{};            // OS readers (visible only)
-    bool volumeFixture{}, eventLogFixture{}, workModeFixture{}, batteryFixture{}; // synthetic previews
+    bool clipboardFixture{}, volumeFixture{}, eventLogFixture{}, workModeFixture{}, batteryFixture{}, storageFixture{}, activityFixture{}; // synthetic previews
     bool nativeVolume{}, nativeBattery{}, nativeEventLog{}, nativeStorage{}; // production providers
     // Hidden verification only.
     bool moduleCoverage{}, coverage{}, readerScrollTrace{}, sessionEndCoverage{};

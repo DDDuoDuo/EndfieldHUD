@@ -1,9 +1,9 @@
 #pragma once
 // One retained native scene for a design layer tree (a canvas's root, the
 // shared centre overlay, a module's floating panel). It generalizes
-// NativeSettingsScene (native/settings_scene.cpp: parts reused by byte-equal
+// the v1.2.0 NativeSettingsScene (removed in Phase B1: parts reused by byte-equal
 // JSON, compaction, feedback tracks, the generation budget check) and
-// Clipboard's row-local placement and lazy feedback (native/clipboard_scene.*)
+// Clipboard's row-local placement and lazy feedback (v1.2.0 native/clipboard_scene.*)
 // for every redesigned module; no module writes its own scene any more.
 //
 // Content (syncContent, content events only): when the canvas's

@@ -183,9 +183,10 @@ struct ModuleAppearance {
 enum class ModuleCursor : std::uint8_t {
     source, // the original Endfield cursor (SourceCursor)
     text,   // the system I-beam over an open projected text editor
-    // The redesign's grab cursors (Settings module grip, Map): custom drawn
-    // cursors (LIBRARY-DESIGN.md Q6/R9; the resources come with the host
-    // phase, which shows the source cursor for them until then).
+    // The redesign's grab cursors (Settings module grip, Map): original drawn
+    // cursors embedded in EndfieldHUD.exe (LIBRARY-DESIGN.md Q6/R9,
+    // app/overlay_host.hpp OverlayCursor); the source cursor where the
+    // process has none (the development harness).
     openHand, closedHand
 };
 // What an owner keeps resident outside the shared LayerRasterizer cache and
@@ -359,7 +360,9 @@ public:
     // projected text editor, where HUDProjectedTextView.projectedCursor
     // answers the system I-beam (the editor must be editable or selectable
     // and the logical client point must fall inside its projected field;
-    // the Mac has no resize or other per-control cursors). The host asks
+    // the Mac has no resize or other per-control cursors), and where a
+    // redesigned canvas asks for its grab hands (SystemHUDView.designCursor:
+    // the Settings > Modules grip, the Map; ModuleCursor). The host asks
     // from WM_SETCURSOR (each pointer move over the client area, and once
     // after a handled pointer or key event so an editor opened or closed
     // under a still pointer updates), in the pointer routing order:

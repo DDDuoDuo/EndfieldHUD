@@ -19,7 +19,8 @@ void applyPanelChrome(Builder&, Layer& panel, Size);
 class Menu final {
 public:
     // HUDMenu.Icon: the caller's cached artwork shown aspect-fit in `frame`
-    // (default inset 6) of a `size` tile; `fill` nullopt = the dark field.
+    // (default inset 6) of a `size` tile; `fill` nullopt = the dark field; an
+    // image with an empty key draws no artwork (the Mac's nil CGImage).
     struct IconTile {
         ImageSource image;
         Size size{40, 40};

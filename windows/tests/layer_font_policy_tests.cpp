@@ -25,9 +25,9 @@ void run(const std::filesystem::path&path){LayerRasterizer raster(path);LayerRas
     auto node=caption();const auto image=raster.rasterize("default",1,node,options);check(image->complete()&&image->fontSubstitutions.size()==1&&image->fontSubstitutions[0].selectedFamily=="HarmonyOS Sans"&&image->fontSubstitutions[0].cascadeFamily=="Noto Sans SC","Default source captions resolve to the standard face with the Simplified Chinese cascade");
     auto named=caption("Arial");const auto overridden=raster.rasterize("named-ui",1,named,options);check(overridden->fontSubstitutions.size()==1&&overridden->fontSubstitutions[0].selectedFamily=="HarmonyOS Sans","Source-authored public UI font is overridden by requested app typography");
     named["text"]["font"]["preserveUserFont"]=true;const auto explicitFont=raster.rasterize("user-choice",1,named,options);check(explicitFont->fontSubstitutions.empty(),"Explicit installed user font remains its selected family");
-    auto clock=caption();clock["text"]["preserveSourceFont"]=true;const auto clockImage=raster.rasterize("clock",1,clock,options);check(clockImage->fontSubstitutions[0].selectedFamily=="Segoe UI","Five-style clock preserve marker retains existing proportional fallback");
-    clock["text"]["font"]["familyName"]=".AppleSystemUIFontMonospaced";clock["text"]["font"]["symbolicTraits"]=1024;
-    check(raster.rasterize("clock-mono",1,clock,options)->fontSubstitutions[0].selectedFamily=="Consolas","Clock fixed-pitch fallback also remains unchanged");
+    // Mac 1.3.0: the clocks are standard text (HarmonyOS Sans, tabular), no preserved source face.
+    auto clock=caption();clock["text"]["font"]["familyName"]=".AppleSystemUIFontMonospaced";clock["text"]["font"]["symbolicTraits"]=1024;clock["text"]["tabularFigures"]=true;
+    check(raster.rasterize("clock",1,clock,options)->fontSubstitutions[0].selectedFamily=="HarmonyOS Sans","Clock text renders in the standard face");
     auto measure=raster.plainSystemTextAnalysis("note",12,options);check(measure->metrics().selectedFamily=="HarmonyOS Sans","Settled Notes uses the same private font as editing");
     const auto measured=raster.measureSourceText("caption",node["text"],420,options);auto docOptions=options;docOptions.plainTextDocument=true;
     const auto painted=raster.rasterize("document",1,node,docOptions);const auto handle=raster.textLayout("document",1);
@@ -43,7 +43,7 @@ void run(const std::filesystem::path&path){LayerRasterizer raster(path);LayerRas
     check(scene.report().fontSubstitutions[0].cascadeFamily=="Noto Sans KR"&&!scene.refreshTypography(),"Unchanged English/numeric scene leaves use Korean family and refresh once");
     const auto noteKR=measurer.measure("retained-note",1,"中文 한국어 123",200);check(noteKR!=note&&noteKR->font.fontSubstitutions.at(0).cascadeFamily=="Noto Sans KR"&&note->font.fontSubstitutions.at(0).cascadeFamily=="Noto Sans SC","Notes measurement generation changes without invalidating old borrowed measurement");
     const auto explicitKR=raster.rasterize("user-choice",1,named,options);check(explicitKR->fontSubstitutions.empty(),"Korean switch preserves an explicit document font");
-    check(raster.rasterize("clock-mono",1,clock,options)->fontSubstitutions[0].selectedFamily=="Consolas","Korean default does not override the clock exception");
+    {const auto koreanClock=raster.rasterize("clock-mono",1,clock,options);check(koreanClock->fontSubstitutions[0].selectedFamily=="HarmonyOS Sans"&&koreanClock->fontSubstitutions[0].cascadeFamily=="Noto Sans KR","The clock follows the UI region like all standard text");}
     auto staleOptions=docOptions;staleOptions.retainedPlainText=handle;bool staleRejected{};try{raster.rasterize("document",2,node,staleOptions);}catch(const std::exception&){staleRejected=true;}check(staleRejected,"An old glyph handle cannot be mixed with new-language viewport pixels");
     check(handle->layoutIdentity()!=0&&handle->documentHeight()>0&&handle->text().size()>0,"Old immutable glyph layout remains valid for its existing owner");
     const auto descriptors=raster.stats().typographyDescriptorBytes;check(descriptors>0&&descriptors<=LayerRasterizer::maximumTypographyDescriptorBytes,"Retained typography metadata is explicitly accounted and bounded");

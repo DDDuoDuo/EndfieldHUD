@@ -11,7 +11,7 @@
 //       ClipboardCanvas(design::Context& c, ClipboardModel& m) : Canvas(core::Module::clipboard, c), model_(m) {}
 //       void buildPage(design::Page& page) override {
 //           auto& clear = page.make<design::Button>("clipboard.clear", text("Clear", "清空"), design::Icon::trash,
-//               design::Button::Kind::secondary, design::Button::Height::small);
+//               design::Button::Kind::secondary, design::Button::Height::compact);
 //           clear.place({0, 0});
 //           clear.onActivate = [this] { confirmClear(); };          // capture the canvas, never the page
 //           header().configure({"CLIPBOARD"}, "MOD-03", title("Clipboard", "剪贴板缓存"), counter(), false, {&clear});
@@ -193,6 +193,9 @@ public:
     virtual void recordingModeChanged();        // default: re-render in place when rendered
     virtual void renderScaleChanged();          // default: re-render in place when rendered
     virtual void paletteChanged();              // default: close popups; active -> re-render now
+    // Reduce Motion changed (verbs already honour it; the Mac host calls a
+    // module's refreshMotionPreference for its live loops, Work Mode's blink).
+    virtual void reduceMotionChanged() {}
     // Presses and wheel inside this rect belong to the module rather than the
     // shell (box px); modules that overflow the box widen it.
     virtual Rect hitBounds() const { return metric::box; }
@@ -250,6 +253,8 @@ public:
     // Text fields (one edits at a time; others end with commit).
     void registerField(TextField&);
     void endEditing(bool commit);
+    // refreshTextFieldProjection: an editing field a re-render moved follows on screen.
+    void refreshTextFieldProjection();
     bool editingText() const noexcept;
     TextField* editingField() const noexcept;
     // Shared overlay: ends editing (commit) and cancels gestures first.
@@ -266,15 +271,30 @@ public:
     Deadlines::Token timerGroup();
     void after(double delay, Deadlines::Token group, std::function<void()>);
     void cancel(Deadlines::Token group);
+    // Components that outlive page builds (the Mac's lazy `var` text fields of
+    // Work Mode and Calendar, re-registered and re-added by every buildPage):
+    // made with this builder they live in the canvas's own arena, whose
+    // content changes the scene tracks like the page's.
+    Builder& canvasBuilder() noexcept { return builder_; }
+    // Runs after a built page is installed (in place, at once, or when a
+    // sub-page swap lands). The Mac builds the next page when the swap lands;
+    // here it is built when the swap starts (Q4), so a canvas-owned component
+    // shown on both pages (Calendar's fields) joins the new page here and
+    // leaves with the old one meanwhile.
+    virtual void didInstall(Page&) {}
 
     // --- Host-facing (tools/hud_design_owner.hpp) ---------------------------------
     // makeContent: reveal a settled page; rebuild a stale one (built for
-    // another language or palette generation).
-    void show(double now);
+    // another language or palette generation). Virtual like the Mac's
+    // makeContent(for:style:): a module re-syncs its model around it (Clipboard,
+    // Event Log, Volume) and calls Canvas::show.
+    virtual void show(double now);
     void setActive(bool, double now);           // deactivation forgets retained sub-page offsets
     // HUDDirectionalContent: the entrance after the module swap (header wipe +
-    // stagger from `offset` content px); nothing under Reduce Motion.
-    void playEntrance(Point offset, double now);
+    // stagger from `offset` content px); nothing under Reduce Motion. Virtual
+    // like the Mac's playEntrance(from:), which a sub-page swap also calls
+    // (Work Mode adds its title wipe).
+    virtual void playEntrance(Point offset, double now);
     // Before the content leaves: close popups, end editing WITH commit, cancel
     // gestures (sliders without commit), settle a pending swap concealed, willLeave.
     void prepareToLeave(double now);
@@ -292,12 +312,23 @@ public:
     bool containsControl(Point) const;          // a press here goes to the module before the shell
     bool capturesPointer() const noexcept { return menuOpen() || popoverOpen(); }
     bool dragging() const noexcept { return router_.tracking(); }
-    bool inputLocked() const noexcept { return dragging() || editingText(); } // freezes parallax
+    // HUDDesignCanvas.isInputLocked (freezes parallax): overridable like the
+    // Mac's (Settings adds shortcut recording, App Shortcuts its chooser).
+    virtual bool inputLocked() const { return dragging() || editingText(); }
+    // Keys belong to this canvas before the host's own key handling and key
+    // filters (SystemHUDView's Settings capture monitor while a shortcut records).
+    virtual bool capturesKeys() const { return false; }
     // Accessibility (LIB-81): items only while active and not swapping.
-    void accessibilityItems(std::vector<AccessibilityItem>&) const;
+    // Virtual like HUDDesignCanvas.accessibilityItems (Volume leaves out the
+    // app sliders scrolled out of its list).
+    virtual void accessibilityItems(std::vector<AccessibilityItem>&) const;
     bool performAccessibilityAction(std::string_view id, double now);
     bool adjustAccessibilitySlider(std::string_view id, double value, double now); // commits (value, true) when changed
     bool setAccessibilityText(std::string_view id, std::string_view text, double now);
+    // HUDDesignCanvas.refreshRouter: the router takes the page's controls
+    // again after a module added or removed some in place (Event Log's
+    // virtualised rows, EventLogCanvas.swift:338).
+    void refreshRouter();
     // Content generation for the native scene: bumps whenever any arena of
     // the canvas (page, header, menu, pop-over) changed content.
     std::uint64_t contentRevision() const noexcept;
@@ -308,8 +339,9 @@ private:
     core::Module module_;
     Context* context_;
     std::string prefix_;
-    LayerArena arena_;                          // root, top
+    LayerArena arena_;                          // root, top, canvas-owned components
     ControlSet set_;
+    Builder builder_;
     Layer *root_, *top_;
     // The shown header and the one a sub-page built at navigate time
     // configures until its swap lands (Q4: the next page is built when the
@@ -346,7 +378,6 @@ private:
     void install(std::unique_ptr<Page>, bool swapHeader);
     void completeSwap();
     std::vector<std::pair<std::string, double>> currentOffsets() const;
-    void refreshRouter();
     void cancelGestures();
     void finishLeave();
     void revealSettledPage();

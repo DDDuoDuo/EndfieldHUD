@@ -29,6 +29,7 @@ std::size_t utf16Length(std::string_view s) {
     }
     return units;
 }
+}
 // CharacterSet.newlines (LF, VT, FF, CR, NEL, LS, PS): each one becomes a space.
 std::string joinedLines(std::string_view s) {
     std::string out;
@@ -41,7 +42,6 @@ std::string joinedLines(std::string_view s) {
         out += char(c);
     }
     return out;
-}
 }
 
 TextField::TextField(Builder& b, std::string id, std::string label, std::string text, std::string placeholder, Size size, Options options)
@@ -139,6 +139,9 @@ void TextField::beginEditing(std::optional<std::pair<std::uint32_t, std::uint32_
     renderIdle();
     if (editingStateChanged) editingStateChanged(*this);
     if (onBegin) onBegin();
+}
+void TextField::refreshProjection() {
+    if (editing_ && host_) host_->reproject(*this, convert(textRect(), layer(), topmost(layer())));
 }
 std::optional<std::pair<std::uint32_t, std::uint32_t>> TextField::selectedRange() const {
     return editing_ && host_ ? host_->selection(*this) : std::nullopt;

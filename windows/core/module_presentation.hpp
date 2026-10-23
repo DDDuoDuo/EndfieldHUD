@@ -128,7 +128,13 @@ public:
     // SystemHUDView's deploy: the first module of a session plays its entrance
     // from the disc centre (ShellPosition::entranceOffset(nullopt, module)).
     // Only a settled, attached design screen and never under Reduce Motion.
-    ModulePresentationUpdate beginEntrance(double time,bool reduceMotion=false);
+    // `offset` replaces the disc-centre offset (finishBootLog: from below,
+    // ShellPosition::subpageOffset(0, 1)).
+    ModulePresentationUpdate beginEntrance(double time,bool reduceMotion=false,std::optional<MotionPoint> offset={});
+    // SystemHUDView.playsBootLogOnOpen (moduleContent.layer.opacity 0): every
+    // sampled surface is transparent until revealed; nothing else changes.
+    void setConcealed(bool concealed) noexcept {concealed_=concealed;}
+    bool concealed() const noexcept {return concealed_;}
     ModulePresentationUpdate select(Module module,double time,bool animated=true,bool reduceMotion=false,
                                     std::optional<std::uint64_t> completion={});
     ModulePresentationUpdate sample(double time);
@@ -151,7 +157,7 @@ private:
     std::optional<ModuleEntrance> entrance_; // Of current_.
     std::array<bool,24> design_{};
     std::uint64_t nextIdentity_{1};
-    bool dark_{true};
+    bool dark_{true},concealed_{};
     void advance(double time);
     void begin(const ModuleTransition&,double time);
     ModulePresentationUpdate snapshot(double time) const;

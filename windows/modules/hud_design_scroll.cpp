@@ -47,6 +47,18 @@ void ScrollBarDriver::sync(bool wasShown) {
     });
 }
 
+void placeThumb(Layer& thumb, double width, double top, double length, Color fill) {
+    constexpr double raster = 18;
+    if (thumb.bounds() != Size{width, raster}) {
+        thumb.setAnchorPoint({.5, 0});
+        thumb.setBounds({width, raster});
+        setBackground(thumb, fill);
+    }
+    thumb.setPosition({width / 2, top});
+    thumb.setValue(Channel::scaleY, length / raster);
+}
+double thumbLength(const Layer& thumb) noexcept { return thumb.bounds().height * thumb.value(Channel::scaleY); }
+
 ScrollArea::ScrollArea(Builder& b, std::string_view id, Rect frame)
     : env_(&b.env), id_(id), layer_(&b.layer(id)), content_(&b.layer(sub(id, "scroll.content"))),
       track_(&b.layer(sub(id, "scroll.track"))), thumb_(&b.layer(sub(id, "scroll.thumb"))), bar_(b.env, *track_, b.layers.token()) {
@@ -80,8 +92,7 @@ void ScrollArea::setOffset(double value) {
     strip_->rect = stripRect();
     const double thumbHeight = std::max(18.0, size.height * size.height / std::max(1.0, contentHeight_));
     const double fraction = scrollable ? offset_ / maximumOffset() : 0;
-    thumb_->setFrame({0, fraction * (size.height - thumbHeight), 4, thumbHeight});
-    if (thumbHeight_ != thumbHeight) { thumbHeight_ = thumbHeight; setBackground(*thumb_, env_->palette.accentInk()); }
+    placeThumb(*thumb_, 4, fraction * (size.height - thumbHeight), thumbHeight, env_->palette.accentInk());
 }
 // setOffset(_:animated:env:) (:438-451): content and thumb glide from where they are on screen.
 void ScrollArea::setOffset(double value, bool animated) {

@@ -92,6 +92,8 @@ public:
     bool selected() const noexcept { return selected_; }
     void playRemoval(std::function<void()> completion);
     void hoverChanged() override;
+    // HUDArchiveTile.bracketPath: the selection brackets (also Settings' icon tiles at inset 0).
+    static PathBuilder bracketPath(Rect bounds, double inset);
 private:
     bool selected_{}; Style style_; Builder* builder_;
     Layer *well_, *doc_, *poster_{}, *strip_, *label_, *brackets_, *bracketsRest_, *bracketsSelected_, *brighten_;

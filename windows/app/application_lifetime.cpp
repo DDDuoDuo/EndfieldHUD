@@ -20,10 +20,10 @@ void Application::Impl::cleanup(){if(cleaned)return;cleaned=true;ready=false;sto
     // GPU release in reverse registration order: Archive/Calendar/Work Mode
     // fields borrow Notes' activated TSF manager, so Notes releases last.
     if(renderer.stats().initialized)registry.releaseAll(renderer);
+    if(moduleContrast&&renderer.stats().initialized){try{(void)moduleContrast->scene.releaseResources(renderer);}catch(...){}}moduleContrast.reset();
     if(archiveMedia){try{archiveMedia->releaseResources(now());}catch(...){}}
     // Owners are destroyed in the established order after every GPU release.
     const auto drop=[&](std::unique_ptr<ModuleOwner>&adapter){unregisterModule(adapter);};
-    if(quitConfirmation){registry.remove(*quitConfirmation);quitConfirmation.reset();}
     if(clockAutomation){registry.remove(*clockAutomation);clockAutomation.reset();}
     if(navigationAutomation){registry.remove(*navigationAutomation);navigationAutomation.reset();}
     // Added module owners may borrow Notes' TSF manager: destroy them first,
@@ -32,16 +32,19 @@ void Application::Impl::cleanup(){if(cleaned)return;cleaned=true;ready=false;sto
     // connected to the profile area's feed: disconnect before the area goes.
     if(idCard){idCard->disconnect();idCard.reset();}
     areaPicker={};if(areaHost)areaHost->clearServices();
+    facilityOwner=nullptr;
     for(auto it=externalModules.rbegin();it!=externalModules.rend();++it){registry.remove(*it->owner);it->owner.reset();}externalModules.clear();
     // Area exports finished or were cancelled with their owners; the second
     // executor joins before the shared one (its completions post the same notice).
     if(longWork){longWork->waitIdle();longWork->drain();longWork.reset();}
     drop(archiveModuleOwner);archiveMedia.reset();archive.reset();
-    drop(calendarModuleOwner);calendar.reset();calendarState.reset();calendarNotifications.reset();if(utility&&calendarRoute)utility->invalidate(calendarRoute,false);calendarRepository.reset();calendarCivil.reset();calendarFixture.reset();
-    drop(settingsModuleOwner);settingsUI.reset();drop(batteryModuleOwner);battery.reset();drop(workModeModuleOwner);workMode.reset();drop(notesModuleOwner);notes.reset();
+    calendar=nullptr;drop(calendarModuleOwner);calendarState.reset();calendarNotifications.reset();if(utility&&calendarRoute)utility->invalidate(calendarRoute,false);calendarRepository.reset();calendarCivil.reset();calendarFixture.reset();
+    drop(settingsModuleOwner);settingsUI.reset();drop(batteryModuleOwner);battery=nullptr;workModeCanvas=nullptr;drop(workModeModuleOwner);workMode.reset();drop(notesModuleOwner);notes.reset();
     activityTelemetry.reset();activityPlan.stop();activityProbe.reset();
-    drop(shelfModuleOwner);shelf.reset();drop(clipboardModuleOwner);clipboard.reset();drop(volumeModuleOwner);volume.reset();if(utility&&volumeIconRoute)utility->invalidate(volumeIconRoute);volumeIcons.reset();drop(eventLogModuleOwner);eventLog.reset();drop(storageModuleOwner);storage.reset();drop(activityModuleOwner);activity.reset();
+    drop(shelfModuleOwner);shelf.reset();clipboardCanvas=nullptr;drop(clipboardModuleOwner);volumeCanvas=nullptr;drop(volumeModuleOwner);if(utility&&volumeIconRoute)utility->invalidate(volumeIconRoute);volumeIcons.reset();eventLogCanvas=nullptr;drop(eventLogModuleOwner);drop(storageModuleOwner);storage.reset();drop(activityModuleOwner);activity.reset();
     drop(readerModuleOwner);reader.reset();readerOwner.reset();drop(gameModuleOwner);game.reset();gameSession.reset();drop(mapModuleOwner);map.reset();mapStore.reset();if(utility&&mapLoadRoute)utility->invalidate(mapLoadRoute);
+    // The shared design Context outlives every design owner (they borrow it).
+    if(designOverlay){registry.remove(*designOverlay);designOverlay.reset();}designClipboard.reset();
     // Retire state routes before the shared file executor; accepted immutable
     // writes finish on its existing shutdown barrier, with callbacks dead.
     // The audio worker restores owned per-app levels and joins before the HWND
@@ -104,7 +107,7 @@ void Application::Impl::shutdownVisible(){
     ready=false;stopping=true;tray.reset();if(workMode)isolate(workModeModuleOwner,"shutdown",[&]{workMode->shutdown(now());});host.requestStop();if(mediaPicker)mediaPicker->cancel();
     if(!sessionEnded){
         if(archive){bool finished=true;isolate(archiveModuleOwner,"shutdown",[&]{finished=archive->finishEditing(now());});need(finished,"Archive text transaction is still active at shutdown");need(archiveService->flush(),"Archive changes could not be saved; draft retained until explicit shutdown failure");}
-        if(calendar){bool dismissed=true;isolate(calendarModuleOwner,"shutdown",[&]{dismissed=calendar->dismissMenu(false,now());});need(dismissed,"Calendar text transaction is still active at shutdown");}need(flushCalendar(),"Calendar changes could not be saved");
+        if(calendar){bool dismissed=true;isolate(calendarModuleOwner,"shutdown",[&]{dismissed=calendarModuleOwner->finishEditing(now());});need(dismissed,"Calendar text transaction is still active at shutdown");}need(flushCalendar(),"Calendar changes could not be saved");
         if(readerOwner)need(readerOwner->flush(),"Reader changes could not be saved");
         if(settingsSaves)need(settingsSaves->flush(),"Settings changes could not be saved");if(eventSaves)eventSaves->flush(now());
     }

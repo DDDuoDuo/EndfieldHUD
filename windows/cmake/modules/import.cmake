@@ -55,7 +55,7 @@ target_link_libraries(hud_mac_import_service PUBLIC hud_mac_import hud_utility)
 # five-language content, confirmation-style card state and artwork).
 add_library(hud_mac_import_flow app/areas/mac_import_flow.cpp app/areas/mac_import_card.cpp)
 target_include_directories(hud_mac_import_flow PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(hud_mac_import_flow PUBLIC hud_mac_import_service hud_settings hud_localization)
+target_link_libraries(hud_mac_import_flow PUBLIC hud_mac_import_service hud_design hud_localization)
 
 set(EHUD_MAC_IMPORT_TARGETS hud_mac_import_codec hud_mac_import hud_mac_import_service hud_mac_import_flow)
 if(TARGET hud_archive AND TARGET hud_shortcuts AND TARGET hud_calendar_civil)
@@ -88,7 +88,7 @@ endif()
 if(WIN32 AND TARGET hud_mac_import_native AND TARGET hud_module_registry)
   add_library(hud_mac_import_area STATIC app/areas/mac_import_module.cpp)
   target_include_directories(hud_mac_import_area PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-  target_link_libraries(hud_mac_import_area PUBLIC hud_module_registry hud_utility hud_mac_import_flow hud_mac_import_native hud_mac_import_automation
+  target_link_libraries(hud_mac_import_area PUBLIC hud_module_registry hud_utility hud_mac_import_flow hud_mac_import_native hud_mac_import_automation hud_design_native
     PRIVATE user32 uiautomationcore oleaut32 ole32)
   list(APPEND EHUD_MAC_IMPORT_TARGETS hud_mac_import_area)
   set_property(GLOBAL APPEND PROPERTY EHUD_APP_AREAS

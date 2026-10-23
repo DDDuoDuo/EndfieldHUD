@@ -536,7 +536,7 @@ void nodes() {
     check(tag["position"] == J(J::Array{3., 4.}) && tk.size() == 3 && tk[0]["backgroundColor"]["sRGB"].array()[0].number() == 0xE9 / 255. && tk[1]["text"]["language"].string() == "zh-Hans", "Inverted micro tag: E9E9E9 label, zh-Hans text");
     check(tk[1]["position"] == J(J::Array{4., 0.}) && tk[1]["text"]["string"].string() == "ENDFIELD" && tk[1]["text"]["truncation"].string() == "none" && tk[2]["position"].array()[0].number() == tag["bounds"].array()[2].number() - 44, "Text from x 4; the 44 px hatch tail");
 
-    // PartBuilder compaction (native/settings_scene.cpp compact()).
+    // PartBuilder compaction (the v1.2.0 Settings scene's compact()).
     d::PartBuilder part("row");
     part.add(d::solid("a", {0, 0, 10, 10}, d::white(1)));
     part.add(d::solid("b", {20, 5, 10, 10}, d::white(1)));

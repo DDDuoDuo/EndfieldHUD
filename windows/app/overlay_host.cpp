@@ -185,6 +185,12 @@ struct OverlayHost::Impl {
     // The shared system I-beam (never destroyed) and the cursor this host
     // last installed (either one), so a release never undoes another's.
     HCURSOR textCursor{LoadCursorW(nullptr, IDC_IBEAM)}, installed{};
+    // The executable's drawn grab hands (shared resources, never destroyed;
+    // null without them), at the system cursor size.
+    static HCURSOR resourceCursor(int id) {
+        return static_cast<HCURSOR>(LoadImageW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(id), IMAGE_CURSOR, 0, 0, LR_DEFAULTSIZE | LR_SHARED));
+    }
+    HCURSOR openHandCursor{resourceCursor(overlayOpenHandCursorResource)}, closedHandCursor{resourceCursor(overlayClosedHandCursorResource)};
     double timerDeadline{}, lastX{}, lastY{};
     // Display pacing, the frame waiting for the swap chain's admission and
     // the interval the frame deadline was planned with.
@@ -394,13 +400,17 @@ struct OverlayHost::Impl {
         if (handlers && handlers->cursorAt && GetCursorPos(&point) && ScreenToClient(target, &point))
             wanted = handlers->cursorAt(point.x / client.scale, point.y / client.scale);
         if (window != target) return false;
-        const HCURSOR chosen = wanted == OverlayCursor::text && textCursor ? textCursor : cursor;
+        HCURSOR chosen = cursor;
+        if (wanted == OverlayCursor::text && textCursor) chosen = textCursor;
+        else if (wanted == OverlayCursor::openHand && openHandCursor) chosen = openHandCursor;
+        else if (wanted == OverlayCursor::closedHand && closedHandCursor) chosen = closedHandCursor;
         if (!chosen) return false;
         SetCursor(chosen);
         installed = chosen;
         cursorOwned = true;
         ++counts.cursorSets;
         if (chosen == textCursor) ++counts.textCursorSets;
+        else if (chosen == openHandCursor || chosen == closedHandCursor) ++counts.handCursorSets;
         return true;
     }
     void postFrame() {
@@ -535,7 +545,7 @@ struct OverlayHost::Impl {
         const auto handlers = callbacks;
         // WM_WTSSESSION_CHANGE (0x02B1) arrives only after the owner registered
         // for session notifications (lock/disconnect suspend the HUD).
-        const bool ownerNotice=(message>=WM_APP&&message<=0xffff&&message!=frameMessage)||message==WM_HOTKEY||message==WM_POWERBROADCAST||message==WM_CLIPBOARDUPDATE||message==WM_TIMECHANGE||message==0x02B1;
+        const bool ownerNotice=(message>=WM_APP&&message<=0xffff&&message!=frameMessage)||message==WM_HOTKEY||message==WM_POWERBROADCAST||message==WM_CLIPBOARDUPDATE||message==WM_TIMECHANGE||message==WM_DEVICECHANGE||message==0x02B1;
         if(ownerNotice&&ready&&handlers&&handlers->appMessage){
             const auto result=handlers->appMessage({target,message,w,l});
             if(result)return static_cast<LRESULT>(*result);

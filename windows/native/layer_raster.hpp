@@ -183,9 +183,10 @@ struct LayerRasterEntryUsage {
 // family of the text's region (SC, TC, JP, KR, then the other three), and the
 // system fallback for anything else (emoji, symbols). The region is the
 // descriptor's `language`, a run's NSLanguage, else the UI region
-// (setDefaultFontLanguage), and is each run's locale. preserveSourceFont
-// (the source clocks) and preserveUserFont (Notes, Archive, Reader faces)
-// keep the requested family; the shared fonts' Mac names resolve to them.
+// (setDefaultFontLanguage), and is each run's locale. preserveUserFont
+// (Notes, Archive, Reader faces) keeps the requested family; the shared
+// fonts' Mac names resolve to them. (The clocks are standard text since Mac
+// 1.3.0: HarmonyOS Sans Bold with tabular figures.)
 // Italic in the shared fonts (no italic faces) slants by the Mac's 0.2 shear
 // (ObliqueShear, native/rich_text_paint.hpp), not DirectWrite's oblique.
 //

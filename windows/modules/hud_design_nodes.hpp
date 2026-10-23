@@ -107,7 +107,7 @@ void addShapeMask(Json& node, const PathBuilder& path);
 void addChildren(Json& node, Json::Array children);
 // Images: a pinned asset {asset, sha256}, a LayerImageSource memory image
 // {key, revision}, or a requiredSourceImage key the owner resolves before
-// the scene loads (native/settings_scene.cpp pattern). Gravity names are CA's.
+// the scene loads (the v1.2.0 Settings scene's pattern). Gravity names are CA's.
 struct ImageSource {
     enum class Kind : std::uint8_t { asset, memory, required } kind{Kind::required};
     std::string key, sha256; std::uint64_t revision{};
@@ -150,8 +150,8 @@ inline constexpr double centreBackdropRadius = 430;
 Json centreBackdropMask(std::string id);
 
 // ---------------------------------------------------------------------------
-// Part assembly (generalizes SettingsBuild + compact(): modules/
-// settings_presentation.cpp:174-179, native/settings_scene.cpp:10-15)
+// Part assembly (generalizes the v1.2.0 Settings page's SettingsBuild +
+// compact(), removed in Phase B1)
 // ---------------------------------------------------------------------------
 // A part is one LayerScene's source tree: a zero-bounds root whose children
 // are the part's SURFACES, each an id'd node rasterized as one image with its
@@ -180,7 +180,7 @@ public:
     // Adds one node (its position is its frame origin in part coordinates).
     void add(Json node, SurfaceRole = SurfaceRole::staticContent);
     // Consecutive static nodes become one "<part>.static.N" group surface
-    // (allowsGroupOpacity false), like native/settings_scene.cpp compact().
+    // (allowsGroupOpacity false), like the v1.2.0 Settings scene's compact().
     Part finish();
     std::size_t surfaceCount() const noexcept; // after compaction (raster budget planning)
 private:

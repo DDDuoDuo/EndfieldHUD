@@ -7,6 +7,11 @@
 //     unchanged Mac HUDApplicationIcon rendering), its 64 px frame is the
 //     pinned roster icon resources/application-icons/endfield-app.png, and
 //     Windows decodes every frame at its declared size.
+//   * Grab-hand cursors: RT_GROUP_CURSOR 101 / 102 (app/overlay_host.hpp)
+//     list exactly the frames of the committed resources/app/cursors
+//     open-hand.cur / closed-hand.cur (tools/hand_cursors.py), each RT_CURSOR
+//     its .cur frame behind the frame's hot spot, and Windows loads both at
+//     the standard cursor sizes with the palm-centre hot spot.
 //   * VERSIONINFO from windows/source-authority.json (release, build, commit),
 //     flagged prerelease/private and never debug.
 //   * One embedded application manifest with the same version, asInvoker,
@@ -191,6 +196,41 @@ void icon(const DataModule& module, const std::vector<Frame>& frames) {
     }
 }
 
+// The committed .cur files and their embedded copies (the resource compiler
+// stores each frame as its hot spot followed by the .cur frame's bytes).
+void cursors(const DataModule& module, const fs::path& source) {
+    check(module.count(RT_GROUP_CURSOR) == 2, "Exactly two cursor groups (the open and closed grab hands)");
+    for (const auto& [id, file] : {std::pair{101, "open-hand.cur"}, std::pair{102, "closed-hand.cur"}}) {
+        const auto bytes = read(source / "resources" / "app" / "cursors" / file, 1 << 20);
+        const std::string_view cur(bytes);
+        check(le16(cur, 0) == 0 && le16(cur, 2) == 2, std::string("Cursor file header: ") + file);
+        const auto count = le16(cur, 4);
+        const auto group = module.resource(MAKEINTRESOURCEW(id), RT_GROUP_CURSOR);
+        check(!group.empty() && le16(group, 2) == 2 && le16(group, 4) == count && group.size() == 6 + 14u * count, std::string("Cursor group lists every frame: ") + file);
+        for (std::size_t n = 0; n < count; ++n) {
+            const auto entry = 6 + 16 * n;
+            const unsigned size = std::uint8_t(cur[entry]) ? std::uint8_t(cur[entry]) : 256;
+            const auto hotX = le16(cur, entry + 4), hotY = le16(cur, entry + 6);
+            const auto length = le32(cur, entry + 8), offset = le32(cur, entry + 12);
+            check(std::size_t(offset) + length <= cur.size() && size >= 32, "Cursor frame in bounds");
+            const auto image = module.resource(MAKEINTRESOURCEW(le16(group, 6 + 14 * n + 12)), RT_CURSOR);
+            check(image.size() == length + 4 && le16(image, 0) == hotX && le16(image, 2) == hotY && image.substr(4) == cur.substr(offset, length),
+                  "Embedded cursor frame equals the committed one (" + std::to_string(size) + " px)");
+        }
+        for (const int size : {32, 48, 64}) {
+            const auto loaded = static_cast<HCURSOR>(LoadImageW(module.module, MAKEINTRESOURCEW(id), IMAGE_CURSOR, size, size, LR_DEFAULTCOLOR));
+            check(loaded != nullptr, std::string("Windows loads ") + file + " at " + std::to_string(size) + " px");
+            ICONINFO info{};
+            const bool described = GetIconInfo(loaded, &info) != FALSE;
+            if (info.hbmColor) DeleteObject(info.hbmColor);
+            if (info.hbmMask) DeleteObject(info.hbmMask);
+            DestroyCursor(loaded);
+            check(described && !info.fIcon && std::abs(int(info.xHotspot) - size / 2) <= size / 16 && std::abs(int(info.yHotspot) - size / 2) <= size / 16,
+                  "Cursor hot spot in the middle of the palm");
+        }
+    }
+}
+
 std::string versionString(const std::vector<std::uint8_t>& block, const wchar_t* name) {
     const auto query = std::wstring(L"\\StringFileInfo\\040904B0\\") + name;
     void* value{};
@@ -252,6 +292,7 @@ int wmain(int argc, wchar_t** argv) {
         portableExecutable(exe);
         const DataModule module(exe);
         icon(module, frames);
+        cursors(module, source);
         versionInfo(exe, version);
         manifest(module, version);
         std::cout << "EndfieldHUD executable: " << checks << " checks passed (" << frames.size() << " icon frames, version " << version.release << " build " << version.build << ")\n";

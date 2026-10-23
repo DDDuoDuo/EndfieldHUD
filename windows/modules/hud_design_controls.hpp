@@ -122,7 +122,7 @@ private:
 class Button final : public Control {
 public:
     enum class Kind : std::uint8_t { primary, secondary, light };
-    enum class Height : std::uint8_t { small, regular, large };
+    enum class Height : std::uint8_t { compact, regular, large }; // Mac .small (`small` is a Windows macro, rpcndr.h)
     Button(Builder&, std::string id, std::string title, std::optional<Icon> icon, Kind, Height = Height::regular);
     std::string title() const;
     void setTitle(std::string);
@@ -288,7 +288,7 @@ private:
 // image (the icon-grid choosers), the text stays the spoken value.
 class Dropdown final : public Control {
 public:
-    enum class Height : std::uint8_t { regular, small };
+    enum class Height : std::uint8_t { regular, compact }; // Mac .small (`small` is a Windows macro, rpcndr.h)
     Dropdown(Builder&, std::string id, std::string label, std::string value, std::optional<TextRegion> valueLanguage = {},
         Height = Height::regular, std::optional<double> width = {});
     const std::string& valueText() const noexcept { return value_; }

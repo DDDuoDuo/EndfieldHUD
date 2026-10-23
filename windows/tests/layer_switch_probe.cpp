@@ -4,7 +4,7 @@
 // leaving, their textures are parked (texels to system memory, no GPU wait)
 // and a switch back restores them as a plain upload. Measured through the real
 // owners of the modules that keep their artwork while switched away inside the
-// open HUD - Clipboard, Event Log, Media Assembly and Archive - published as
+// open HUD - Media Assembly and Archive - published as
 // the host publishes owners (app/application.cpp publishNative), with
 // animated switches at 60 Hz on a hidden window and WARP:
 //   - the first showing (raster and upload),
@@ -15,12 +15,9 @@
 //     parked copies dropped: the surfaces are painted again).
 // Each frame is timed (owner update, publication, draw). Synthetic rows,
 // events, documents and an empty editor only; temporary folders.
-#include "tools/clipboard_preview.hpp"
-#include "tools/event_log_preview.hpp"
 #include "tools/media_assembly_preview.hpp"
 #include "tools/archive_preview.hpp"
 #include "native/module_scene.hpp"
-#include "native/clipboard_assets.hpp"
 #include "native/layer_image_source.hpp"
 #include "native/media_assembly_codec.hpp"
 #include "native/archive_text_rules.hpp"
@@ -86,24 +83,6 @@ template<class Owner>void probe(const char*label,gpu::Renderer&renderer,gpu::Lay
     stage.finish();
 }
 
-void clipboard(gpu::Renderer&renderer,const std::filesystem::path&root){
-    gpu::NativeClipboardAssets assets(root);gpu::LayerRasterizer raster;gpu::LayerImageSource thumbnails;gpu::ClipboardSnapshot snapshot;snapshot.capacity=20;
-    for(std::uint64_t n=1;n<=8;++n){gpu::ClipboardRow row{n,n==1,n%2?gpu::ClipboardKind::text:gpu::ClipboardKind::url,n%2?"Synthetic clipboard text "+std::to_string(n):"https://fixture.invalid/"+std::to_string(n),{}};
-        if(n==3){row.kind=gpu::ClipboardKind::image;row.preview="Image · 8 × 8";row.thumbnail=Json::Object{{"memoryImage","fixture-thumbnail/3"},{"revision",1}};}snapshot.rows.push_back(std::move(row));}
-    std::vector<std::uint8_t>pixels(8*8*4);for(std::size_t k=0;k<pixels.size();k+=4){pixels[k]=200;pixels[k+1]=60;pixels[k+2]=30;pixels[k+3]=255;}
-    gpu::ClipboardActions actions{[&]{return snapshot;},[](auto){return true;},[](auto){return false;},[](auto){return false;},[]{return false;},
-        [&](std::span<const std::uint64_t>ids){for(const auto id:ids)if(id==3&&!thumbnails.acquire("fixture-thumbnail/3",1))(void)thumbnails.publish("fixture-thumbnail/3",1,8,8,pixels);}};
-    gpu::LayerRasterOptions options;options.pixelsPerPoint=2;options.paddingPoints=1;options.assetRoot=assets.root();options.memoryImages=&thumbnails;
-    tools::ClipboardPreview owner(raster,options,std::move(actions),{},{},assets.images());owner.resize({1280,800,96,1,1280,800});
-    probe("Clipboard",renderer,raster,owner,core::Module::clipboard);
-}
-void eventLog(gpu::Renderer&renderer){
-    gpu::LayerRasterizer raster;mod::EventLogSnapshot events;
-    for(unsigned k=1;k<=24;++k){char id[64];std::snprintf(id,sizeof(id),"00000000-0000-0000-0000-%012u",k);events.events.push_back({id,k%2?mod::EventKind::clipboardCopied:mod::EventKind::shelfAdded,1700000000.-k*60,k%2?mod::EventMetadata{{"kind","text"}}:mod::EventMetadata{{"filename","Synthetic.pdf"}}});}
-    mod::EventLogCallbacks callbacks{[&]{return events;},[]{},[](double){return std::string("11-14 22:13:19");}};
-    tools::EventLogPreview owner(raster,gpu::LayerRasterOptions{},std::move(callbacks));owner.resize({1280,800,96,1,1280,800});
-    probe("Event Log",renderer,raster,owner,core::Module::eventLog);
-}
 void mediaAssembly(gpu::Renderer&renderer,HWND hwnd,const std::filesystem::path&assets){
     gpu::LayerRasterizer raster;app::UtilityExecutor utility([]{});auto engine=std::make_shared<gpu::NativeMediaAssemblyEngine>(gpu::NativeMediaAssemblyEngine::Options{assets});unsigned ids{};
     tools::MediaAssemblyPreviewOptions options;options.raster.pixelsPerPoint=2;options.raster.assetRoot=assets;options.window=hwnd;options.changed=[]{};options.event=[](std::string_view){};
@@ -133,7 +112,7 @@ void archive(gpu::Renderer&renderer,HWND hwnd,const std::filesystem::path&fixtur
 int wmain(int argc,wchar_t**argv){try{check(argc==5,"Usage: layer_switch_probe shader resources archive-fixture media-assembly-resources");Com com;Window window;
     gpu::Renderer renderer;renderer.initialize(window.hwnd,1280,800,{gpu::Driver::warpForTests,argv[1],gpu::RenderTarget::offscreenForTests});
     const auto resources=std::filesystem::absolute(argv[2]);
-    clipboard(renderer,resources/"clipboard");eventLog(renderer);mediaAssembly(renderer,window.hwnd,std::filesystem::absolute(argv[4]).lexically_normal());archive(renderer,window.hwnd,std::filesystem::absolute(argv[3]),resources/"archive");
+    mediaAssembly(renderer,window.hwnd,std::filesystem::absolute(argv[4]).lexically_normal());archive(renderer,window.hwnd,std::filesystem::absolute(argv[3]),resources/"archive");
     renderer.reset();std::cout<<"Layer switch probe: "<<checks<<" checks passed\n";return 0;}
     catch(const std::exception&e){std::cerr<<"Layer switch probe failed after "<<checks<<" checks: "<<e.what()<<'\n';return 1;}}
 #else

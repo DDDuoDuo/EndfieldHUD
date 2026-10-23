@@ -70,6 +70,11 @@ struct TextFieldOptions {
     // is the rasterizer's Notes rich line mode.
     bool rich{};
 };
+// CharacterSet.newlines (LF, VT, FF, CR, NEL, LS, PS), each replaced by a
+// space: `components(separatedBy: .newlines).joined(separator: " ")`, the
+// single-line field rule (bounded) and Calendar's event plate details.
+std::string joinedLines(std::string_view);
+
 class TextField final : public Control {
 public:
     using Options = TextFieldOptions;
@@ -84,6 +89,9 @@ public:
     bool editing() const noexcept { return editing_; }
     void beginEditing(std::optional<std::pair<std::uint32_t, std::uint32_t>> selection = {});
     void endEditing(bool commit);                  // commit keeps the text; cancel restores the original
+    // refreshProjection (:237): the editing field moved (a re-render placed it
+    // elsewhere); the native editor follows (TextEditorHost::reproject).
+    void refreshProjection();
     std::optional<std::pair<std::uint32_t, std::uint32_t>> selectedRange() const;
     // Keys while editing, never while marked text exists (LIB-85): Esc ends
     // (restore + onCancel, or commit when escapeCommits); Return: single-line

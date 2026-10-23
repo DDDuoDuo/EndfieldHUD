@@ -48,6 +48,23 @@ struct DesignOwnerOptions {
     native::NativeDesignTextFieldOptions fields; // window, TSF, clipboard, edit menu (null manager: no fields)
     std::function<double()> now;              // the host clock (UIA actions, ScreenReaderPeerHooks::now)
     std::function<void()> changed;            // present a frame + automation refresh after a UIA action
+    // The module's own reactions to host notifications (after the core's
+    // own handling): an appearance event (the Context has already applied it:
+    // the overlay owner is registered first) and host events (displays,
+    // utility completions, ...). hostEvent's result is ModuleOwner::hostEvent's.
+    std::function<void(const app::ModuleAppearance&, double)> appearance;
+    std::function<bool(const app::HostEvent&, double)> hostEvent;
+    // The module's platform services beside its canvases that keep running
+    // while none shows (Work Mode's countdown, Calendar's reminders): a wake
+    // time and its deadline whatever the HUD's visibility (deadline's result:
+    // something visible changed), after each frame's update, after the close
+    // began, and the quit / session-end drain (ModuleRouting::flush; true
+    // when nothing is left).
+    std::function<std::optional<double>(double)> nextWakeTime;
+    std::function<bool(double)> deadline;
+    std::function<void(const app::ModuleFrame&)> updated;
+    std::function<void(double)> closing;
+    std::function<bool(double)> flush;
 };
 // Raster density of design surfaces (LIBRARY-DESIGN.md R11, Q8): physical
 // pixels per box px at the box centre (core::source::planeScale of boxWorld,
@@ -86,6 +103,7 @@ public:
     bool capturesPointer() const;
     bool capturesWheel() const;
     bool capturesKeys() const;
+    bool suppressesKeyFilters() const;
     bool pointer(const app::PointerEvent&, double);
     bool wheel(const app::WheelEvent&, double);
     bool key(const app::KeyEvent&, double);
@@ -95,6 +113,7 @@ public:
     void focus(bool, double);
     void cancelInteraction(double);
     bool finishEditing(double);                // commits an editing field before close
+    bool flush(double);                        // DesignOwnerOptions::flush
     bool hostEvent(const app::HostEvent&, double);
     std::optional<app::ModuleCursor> cursorAt(core::Point) const;
     bool automationRefresh(IRawElementProviderFragmentRoot*);
@@ -109,6 +128,9 @@ public:
     std::optional<core::Module> inputModule() const noexcept;   // the canvas accepting input now
     std::optional<core::Rect> clientRect(core::Rect box) const; // box px -> logical client (bounds of the quad)
     std::optional<core::Point> boxPoint(core::Point logicalClient) const;
+    // The retained scene of one presented canvas (resident pixels, parks,
+    // generations; hidden coverage and owner tests). Empty for another module.
+    std::optional<native::NativeDesignSceneStats> sceneStats(core::Module) const;
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
@@ -152,6 +174,7 @@ public:
     void focus(bool, double) override;
     void cancelInteraction(double) override;
     bool finishEditing(double) override;
+    bool flush(double) override;
     bool hostEvent(const app::HostEvent&, double) override;
     std::optional<app::ModuleCursor> cursorAt(core::Point) const override;
     bool automationRefresh(IRawElementProviderFragmentRoot*) override;

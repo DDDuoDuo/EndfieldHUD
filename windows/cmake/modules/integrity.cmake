@@ -2,15 +2,12 @@
 # windows/CMakeLists.txt). Tests use synthetic in-memory data and Mac-derived
 # fixtures only: no notification center, user calendar, settings or game data.
 
-# Display-time Calendar localization: the Mac HUDCalendarError/permission pairs
-# through the shared five-language catalog, plus the Windows wording for a
-# denied notification permission. Portable; the Windows owner links it.
+# Display-time Calendar localization: the Mac HUDCalendarError/reminder status
+# pairs through the shared five-language catalog, plus the Windows wording for
+# a denied notification permission. Portable; the Calendar canvas links it.
 add_library(hud_calendar_localization modules/calendar_localization.cpp)
 target_include_directories(hud_calendar_localization PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(hud_calendar_localization PUBLIC hud_calendar hud_localization)
-if(TARGET hud_calendar_preview)
-  target_link_libraries(hud_calendar_preview PUBLIC hud_calendar_localization)
-endif()
 
 if(BUILD_TESTING)
   # tools/calendar_localization_reference.py -> calendar-localization-source.json

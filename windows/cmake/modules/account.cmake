@@ -33,7 +33,8 @@ if(BUILD_TESTING)
   add_executable(hypergryph_account_sanity_gauge_tests tests/hypergryph_account_sanity_gauge_tests.cpp)
   target_link_libraries(hypergryph_account_sanity_gauge_tests PRIVATE hud_hypergryph_account)
   add_test(NAME hypergryph_account_sanity_gauge_contracts COMMAND hypergryph_account_sanity_gauge_tests
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/hypergryph-account-source.json ${CMAKE_CURRENT_SOURCE_DIR}/resources/account)
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/hypergryph-account-source.json ${CMAKE_CURRENT_SOURCE_DIR}/resources/account
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/shell-redesign-source.json)
   add_executable(hypergryph_account_canvas_tests tests/hypergryph_account_canvas_tests.cpp)
   target_link_libraries(hypergryph_account_canvas_tests PRIVATE hud_hypergryph_account)
   add_test(NAME hypergryph_account_canvas_contracts COMMAND hypergryph_account_canvas_tests

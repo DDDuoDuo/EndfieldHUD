@@ -255,7 +255,6 @@ void run(){
     check(raster.stats().textLayoutsCreated==before.textLayoutsCreated&&raster.stats().rasterizations==before.rasterizations,"Repeated caption frames reuse both final pixels and retained text layout");
     auto mono=text;mono["text"]["font"]["familyName"]=".AppleSystemUIFontMonospaced";mono["text"]["font"]["postScriptName"]=".AppleSystemUIFontMonospaced-Semibold";mono["text"]["font"]["symbolicTraits"]=17410;
     const auto monoImage=raster.rasterize("source-monospace",1,mono,options);check(!monoImage->fontSubstitutions.empty()&&monoImage->fontSubstitutions.front().selectedFamily=="HarmonyOS Sans","Application default typography overrides source monospace UI text");
-    auto clock=mono;clock["text"]["preserveSourceFont"]=true;const auto clockImage=raster.rasterize("source-clock-monospace",1,clock,options);check(clockImage->fontSubstitutions.front().selectedFamily=="Consolas","Clock marker preserves the existing fixed-pitch source fallback");
     auto proportional=text;proportional["text"]["font"]["familyName"]=".AppleSystemUIFont";proportional["text"]["font"]["postScriptName"]=".SFNS-Semibold";proportional["text"]["font"]["symbolicTraits"]=2;
     const auto proportionalImage=raster.rasterize("source-proportional",1,proportional,options);check(!proportionalImage->fontSubstitutions.empty()&&proportionalImage->fontSubstitutions.front().selectedFamily=="HarmonyOS Sans","Proportional source is not inferred as monospace from clock usage");
     auto demi=proportional;demi["text"]["font"]["postScriptName"]=".AppleSystemUIFontDemi";

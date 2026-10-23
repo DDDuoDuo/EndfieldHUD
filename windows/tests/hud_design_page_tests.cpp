@@ -475,7 +475,7 @@ public:
     d::Slider* slider{};
     void buildPage(d::Page& page) override {
         ++builds;
-        auto& action = page.make<d::Button>("fake.add", text("Add", "添加"), d::Icon::plus, d::Button::Kind::secondary, d::Button::Height::small);
+        auto& action = page.make<d::Button>("fake.add", text("Add", "添加"), d::Icon::plus, d::Button::Kind::secondary, d::Button::Height::compact);
         action.onActivate = [this] { events.push_back("add"); };
         header().configure(depth == 0 ? std::vector<std::string>{"CLIPBOARD"} : std::vector<std::string>{"CLIPBOARD", "DETAIL"}, "MOD-03",
             title("Clipboard", "剪贴板缓存"), d::format::pad2(rows), depth > 0, {&action});

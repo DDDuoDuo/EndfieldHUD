@@ -124,17 +124,16 @@ app::ApplicationOptions productionOptions(const app::PackagedResources& package,
     a.packet = package.packet; a.cache = package.cache; a.cachePin = package.cachePin;
     a.shader = package.shader; a.watchBlur = package.watchBlur; a.cursor = package.cursor;
     a.notesAssets = package.notesAssets; a.notesAssetsSHA = package.notesAssetsSHA; a.notesFormatAssets = package.notesFormatAssets;
-    a.shelfAssets = package.shelfAssets; a.shelfMask = package.shelfMask; a.clipboardAssets = package.clipboardAssets;
+    a.shelfAssets = package.shelfAssets; a.shelfMask = package.shelfMask;
     a.residentIcons = package.residentIcons; a.settingsAssets = package.settingsAssets; a.archiveAssets = package.archiveAssets;
-    a.storageAssets = package.storageAssets; a.activityAssets = package.activityAssets;
     a.mapGeography = package.mapGeography; a.mapPlayerAssets = package.mapPlayerAssets; a.orbipomAssets = package.orbipomAssets;
     a.dataRoot = a.shelfDataRoot = data;
     // Notes hosts module selection and the shared text services; without it
     // only the source shell (and the tray with Quit) can run.
     const bool modules = package.modules;
     a.reader = a.calendar = a.projection = modules;
-    a.nativeClipboard = modules && !a.clipboardAssets.empty();
-    a.nativeActivity = modules && !a.activityAssets.empty();
+    a.nativeClipboard = modules;
+    a.nativeActivity = a.nativeStorage = modules;
     a.nativeVolume = a.nativeBattery = a.nativeEventLog = modules;
     a.startup = arguments.startup;
     a.isolateModuleFailures = true;

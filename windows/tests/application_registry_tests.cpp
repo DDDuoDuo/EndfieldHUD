@@ -1,7 +1,6 @@
 // ModuleRegistry contracts: routing order, capture chains, failure isolation
 // and release order. Synthetic owners only; no window, renderer or GPU.
 #include "app/module_owner.hpp"
-#include "app/quit_confirmation_state.hpp"
 #include "native/renderer.hpp"
 #include <cmath>
 #include <functional>
@@ -224,47 +223,6 @@ void hostClock() {
     check(registry.hostTime(12) == 12 && registry.latestHostTime() == 12., "A later sample advances the host time");
     registry.remove(projection); registry.remove(later);
 }
-
-void quitState() {
-    app::QuitConfirmationState card;
-    card.setLanguage(core::Language::simplifiedChinese);
-    check(card.strings().title == "退出 EndfieldHUD？" && card.strings().confirm == "退出", "Localized quit content");
-    card.setLanguage(core::Language::english);
-    check(card.strings().title == "Quit EndfieldHUD?" && card.strings().message == "The application will quit after the HUD closes." &&
-          card.strings().cancel == "Cancel" && card.strings().confirmAccessibility == "Quit EndfieldHUD application", "Source quit content");
-    check(!card.key(0x1B, false, 0).has_value(), "Hidden card consumes nothing");
-    card.show(1);
-    check(card.presented() && card.focused() == 0 && card.pose(1).opacity == 0 && card.pose(1).travel == 12, "Reveal starts transparent and 12pt deep with Cancel focused");
-    check(card.pose(1.17).opacity == 1 && card.pose(1.25).travel == 0 && !card.requiresFrames(1.3), "Reveal settles after .16/.20 s");
-    check(card.key(0x0D, false, 1.4) == app::QuitAnswer::cancel, "Return activates focused Cancel");
-    card.dismiss(true, 1.4);
-    check(card.presented() && card.key(0x0D, false, 1.45) == app::QuitAnswer::none, "Input stays consumed during the .14 s fade");
-    check(!card.refresh(1.53) && card.refresh(1.54) && !card.presented(), "Fade completes after .14 s");
-    card.show(2);
-    check(card.key(0x27, false, 2.3) == app::QuitAnswer::none && card.focused() == 1, "Right focuses Quit");
-    check(card.key(0x0D, true, 2.31) == app::QuitAnswer::none, "Repeats are ignored");
-    check(card.key(0x09, false, 2.32) == app::QuitAnswer::none && card.focused() == 0, "Tab toggles focus");
-    check(card.key(0x09, false, 2.33) == app::QuitAnswer::none && card.focused() == 1, "Tab toggles back");
-    check(card.key(0x20, false, 2.4) == app::QuitAnswer::confirm && card.submitted(), "Space confirms the focused Quit");
-    check(card.key(0x1B, false, 2.5) == app::QuitAnswer::none && card.presented(), "A confirmed card ignores further input until teardown");
-    card.hideImmediately(3);
-    card.show(4);
-    check(card.pointerDown(1, 4.3) == app::QuitAnswer::none && card.pressed() == 1 && card.focused() == 1, "Press focuses its button");
-    check(card.pointerUp(0, 4.4) == app::QuitAnswer::none, "Release outside the pressed button does nothing");
-    check(card.pointerDown(0, 4.5) == app::QuitAnswer::none && card.pointerUp(0, 4.6) == app::QuitAnswer::cancel, "Click on Cancel");
-    card.hideImmediately(5);
-    card.setReduceMotion(true, 5);
-    card.show(6);
-    check(card.pose(6).opacity == 1 && !card.pose(6).animated, "Reduce Motion presents without animation");
-    card.dismiss(true, 6.1);
-    check(!card.presented(), "Reduce Motion dismisses immediately");
-    const auto art = app::prepareQuitConfirmationArtwork(card, {0, 0, 1280, 800}, card.appearance());
-    const auto& children = art.layers["children"].array();
-    check(children.size() == 9 && art.surfaces.size() == 9, "Card artwork: plate, line, two plates, title, message, caption, two labels");
-    const auto geometry = endfield::modules::SettingsSafety::geometry({0, 0, 1280, 800});
-    check(geometry.card.width == 390 && geometry.card.height == 190, "Shared source card geometry");
-    check(children[4]["text"]["string"].string() == "Quit EndfieldHUD?" && children[6]["text"]["string"].string() == "ENDFIELDHUD / SYSTEM", "Card text content");
-}
 } // namespace
 
 int main() {
@@ -273,11 +231,10 @@ int main() {
         isolation();
         broadcasts();
         hostClock();
-        quitState();
-        std::cout << "Module registry/quit confirmation: " << checks << " checks passed\n";
+        std::cout << "Module registry: " << checks << " checks passed\n";
         return 0;
     } catch (const std::exception& e) {
-        std::cerr << "Module registry/quit confirmation failed after " << checks << ": " << e.what() << '\n';
+        std::cerr << "Module registry failed after " << checks << ": " << e.what() << '\n';
         return 1;
     }
 }

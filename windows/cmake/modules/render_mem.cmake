@@ -3,17 +3,17 @@
 # texture storage.
 #
 # layer_switch_contracts: module switches inside the open HUD never paint
-# again. Through the real owners of Clipboard, Event Log, Media Assembly and
-# Archive, published as the host publishes owners (hidden window, WARP,
+# again. Through the real owners of Media Assembly and Archive, published as
+# the host publishes owners (hidden window, WARP,
 # synthetic data, temporary folders): the switch away parks the textures,
 # the switch back restores them (no repaint, identical pixels); it prints the
 # first showing, switch-away and switch-back frame times, the parked bytes
 # and, for comparison, the switch back after the ten-minute release.
-if(WIN32 AND BUILD_TESTING AND TARGET hud_activity_preview AND TARGET hud_storage_preview AND TARGET hud_media_assembly_preview
+if(WIN32 AND BUILD_TESTING AND TARGET hud_media_assembly_preview
    AND TARGET hud_archive_preview AND TARGET hud_native)
-  add_executable(layer_switch_probe tests/layer_switch_probe.cpp tools/clipboard_preview.cpp tools/event_log_preview.cpp)
+  add_executable(layer_switch_probe tests/layer_switch_probe.cpp)
   target_compile_definitions(layer_switch_probe PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
-  target_link_libraries(layer_switch_probe PRIVATE hud_activity_preview hud_activity_provider hud_storage_preview hud_storage_options
+  target_link_libraries(layer_switch_probe PRIVATE
     hud_media_assembly_preview hud_archive_preview hud_native hud_motion psapi ole32)
   if(MSVC)
     target_compile_options(layer_switch_probe PRIVATE /EHsc)

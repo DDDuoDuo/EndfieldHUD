@@ -12,16 +12,15 @@
 //   shell.cursor                           optional (system arrow cursor)
 //   notes.controls + common.notesFormat    Notes, which owns module selection and
 //                                          the shared text services: every HUD
-//                                          module below needs it
+//                                          module below needs it (Clipboard,
+//                                          Storage and Activity Monitor need
+//                                          nothing else)
 //   common.shelf                           File Shelf (with reveal-mask.bin)
-//   common.clipboard                       Clipboard
 //   common.applicationIcons +              System/Display/Hotkeys/About
 //   common.watchAppearance                 (Settings) and the Minigame
 //   common.applicationIcons                tray icon (independent of Notes, so
 //                                          Quit stays reachable)
 //   common.archive                         Archive
-//   common.storage                         Storage
-//   common.activity                        Activity Monitor
 //   map.geography + common.mapPlayer       Map
 //   orbipom (+ Settings)                   Minigame
 //
@@ -40,8 +39,8 @@ namespace endfield::app {
 struct PackagedResources {
     std::filesystem::path packet, cache, shader, watchBlur, cursor;
     std::string cachePin, notesAssetsSHA;
-    std::filesystem::path notesAssets, notesFormatAssets, shelfAssets, shelfMask, clipboardAssets, residentIcons,
-        settingsAssets, archiveAssets, storageAssets, activityAssets, mapGeography, mapPlayerAssets, orbipomAssets;
+    std::filesystem::path notesAssets, notesFormatAssets, shelfAssets, shelfMask, residentIcons,
+        settingsAssets, archiveAssets, mapGeography, mapPlayerAssets, orbipomAssets;
     bool shell{};   // the source shell can start
     bool modules{}; // Notes (and with it the module set) is available
     std::vector<std::string> unavailable; // packaged resource ids that are missing or damaged (sorted)

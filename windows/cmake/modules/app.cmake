@@ -37,9 +37,6 @@ if(BUILD_TESTING)
   endif()
 endif()
 
-add_library(hud_quit_confirmation_state app/quit_confirmation_state.cpp)
-target_include_directories(hud_quit_confirmation_state PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(hud_quit_confirmation_state PUBLIC hud_settings hud_localization)
 if(BUILD_TESTING)
   add_executable(system_overlay_state_tests tests/system_overlay_state_tests.cpp)
   target_link_libraries(system_overlay_state_tests PRIVATE hud_system_overlay hud_data)
@@ -57,10 +54,6 @@ if(BUILD_TESTING)
   target_link_libraries(application_event_recorder_tests PRIVATE hud_application_core)
   add_test(NAME application_event_recorder_contracts COMMAND application_event_recorder_tests
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/application_event_recorder_source.json")
-  add_executable(application_quit_tests tests/application_quit_tests.cpp)
-  target_link_libraries(application_quit_tests PRIVATE hud_quit_confirmation_state hud_data)
-  add_test(NAME application_quit_contracts COMMAND application_quit_tests
-    "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/application_quit_source.json")
   # Data layer regressions (core/data): Json is never relocated with memcpy
   # (libc++ 19), and ProfileStore normalizes a loaded record like the Mac
   # store (Mac oracle: tools/profile_reference.sh decode cases).
@@ -82,15 +75,13 @@ endif()
 # --- Application owner (Windows) -----------------------------------------------
 if(WIN32)
   set(EHUD_APP_DEFINITIONS _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
-  # Module-owner registry and the confirmation card are independent of the
-  # concrete module set, so other areas and tests can link them alone.
-  add_library(hud_module_registry app/module_registry.cpp app/quit_confirmation.cpp)
+  # The module-owner registry is independent of the concrete module set, so
+  # other areas and tests can link it alone.
+  add_library(hud_module_registry app/module_registry.cpp)
   target_include_directories(hud_module_registry PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
   target_compile_definitions(hud_module_registry PRIVATE ${EHUD_APP_DEFINITIONS})
-  target_link_libraries(hud_module_registry PUBLIC hud_quit_confirmation_state hud_native hud_overlay_host hud_settings hud_localization)
-  # The single application owner. The six module owners that CMakeLists.txt
-  # compiles directly into watch_session_preview are provided to the
-  # production executable by hud_application_module_sources below.
+  target_link_libraries(hud_module_registry PUBLIC hud_native hud_overlay_host hud_settings hud_localization)
+  # The single application owner.
   # The host memory census sources (application_memory, process_diagnostics)
   # join the owner only once they are in the tree: a checkout without them
   # (the host memory work is applied separately) must still configure.
@@ -110,12 +101,12 @@ if(WIN32)
   target_include_directories(hud_application PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
   target_compile_definitions(hud_application PRIVATE ${EHUD_APP_DEFINITIONS})
   target_link_libraries(hud_application PUBLIC hud_module_registry hud_system_overlay hud_application_core hud_single_instance
-    hud_battery hud_settings_save hud_archive_preview hud_archive_vault hud_storage_preview hud_activity_preview hud_activity_provider
+    hud_battery hud_settings_save hud_archive_preview hud_archive_vault hud_telemetry_owners hud_power_service hud_activity_provider
     hud_reader_preview hud_reader_import hud_projection_preview hud_shelf_preview hud_notes_preview
     hud_map_preview hud_map_store hud_map_assets hud_orbipom_presentation hud_orbipom_runtime
-    hud_calendar_preview hud_calendar_notifications
+    hud_work_mode_canvas hud_calendar_canvas hud_calendar_civil hud_calendar_notifications
     hud_clock hud_watch_session hud_watch_content hud_watch_runtime hud_overlay_host hud_services hud_backdrop
-    hud_shelf_icons hud_shelf_transfer hud_localization hud_display_center_logo hud_summon_hotkey windowsapp CoreMessaging dwmapi psapi advapi32 wtsapi32 uiautomationcore oleaut32 dxgi avrt)
+    hud_shelf_icons hud_shelf_transfer hud_localization hud_display_center_logo hud_summon_hotkey hud_design_native windowsapp CoreMessaging dwmapi psapi advapi32 wtsapi32 uiautomationcore oleaut32 dxgi avrt)
   add_library(hud_application_verification app/application_verification.cpp)
   target_compile_definitions(hud_application_verification PRIVATE ${EHUD_APP_DEFINITIONS})
   target_link_libraries(hud_application_verification PUBLIC hud_application)
@@ -192,12 +183,6 @@ if(WIN32)
   target_include_directories(hud_single_instance PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
   target_compile_definitions(hud_single_instance PRIVATE ${EHUD_APP_DEFINITIONS})
   target_link_libraries(hud_single_instance PUBLIC hud_application_core hud_localization user32 advapi32 bcrypt)
-  # The module owners CMakeLists.txt compiles directly into the preview.
-  add_library(hud_application_module_sources tools/clipboard_preview.cpp tools/volume_preview.cpp tools/event_log_preview.cpp
-    tools/work_mode_preview.cpp tools/battery_preview.cpp tools/settings_preview.cpp)
-  target_include_directories(hud_application_module_sources PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-  target_compile_definitions(hud_application_module_sources PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE)
-  target_link_libraries(hud_application_module_sources PUBLIC hud_native hud_notes_preview hud_battery hud_settings_save hud_overlay_host)
 
   # Version from the ported source authority; flagged prerelease/private.
   file(READ "${CMAKE_CURRENT_SOURCE_DIR}/source-authority.json" ehud_authority)
@@ -213,12 +198,14 @@ if(WIN32)
   # Settings > About (HUDAboutInformation): "<version> (<build>)".
   target_compile_definitions(hud_application PRIVATE "EHUD_APP_VERSION_NAME=\"${CMAKE_MATCH_1}.${CMAKE_MATCH_2}.${CMAKE_MATCH_3}\"" "EHUD_APP_BUILD_NUMBER=\"${EHUD_APP_BUILD}\"")
   set(EHUD_APP_ICON "${CMAKE_CURRENT_SOURCE_DIR}/resources/app/EndfieldHUD.ico")
+  set(EHUD_APP_OPEN_HAND_CURSOR "${CMAKE_CURRENT_SOURCE_DIR}/resources/app/cursors/open-hand.cur")
+  set(EHUD_APP_CLOSED_HAND_CURSOR "${CMAKE_CURRENT_SOURCE_DIR}/resources/app/cursors/closed-hand.cur")
   configure_file("${CMAKE_CURRENT_SOURCE_DIR}/app/EndfieldHUD.rc.in" "${CMAKE_CURRENT_BINARY_DIR}/EndfieldHUD.rc" @ONLY)
   configure_file("${CMAKE_CURRENT_SOURCE_DIR}/app/EndfieldHUD.manifest.in" "${CMAKE_CURRENT_BINARY_DIR}/EndfieldHUD.manifest" @ONLY)
 
   add_executable(EndfieldHUD WIN32 app/main.cpp "${CMAKE_CURRENT_BINARY_DIR}/EndfieldHUD.rc" "${CMAKE_CURRENT_BINARY_DIR}/EndfieldHUD.manifest")
   target_compile_definitions(EndfieldHUD PRIVATE ${EHUD_APP_DEFINITIONS})
-  target_link_libraries(EndfieldHUD PRIVATE hud_application hud_application_module_sources hud_single_instance hud_application_package shell32)
+  target_link_libraries(EndfieldHUD PRIVATE hud_application hud_single_instance hud_application_package shell32)
   # main.cpp rolls an interrupted Mac import activation back before the root
   # opens (core/migration/mac_import_work.hpp; target from cmake/modules/import.cmake).
   target_link_libraries(EndfieldHUD PRIVATE hud_mac_import)
@@ -233,7 +220,7 @@ if(WIN32)
   endif()
   add_dependencies(EndfieldHUD hud_private_fonts)
   # The shared audio worker, five-language Volume captions (audio area).
-  target_link_libraries(hud_application PUBLIC hud_audio_runtime hud_volume_strings)
+  target_link_libraries(hud_application PUBLIC hud_audio_runtime hud_volume_model)
 
   # --- Module areas (app/module_owner.hpp, "Adding a module area") ----------
   # Every area fragment registers, from any position in the sorted fragment
@@ -271,8 +258,8 @@ if(WIN32)
   endif()
   ehud_app_resource(shell.shader file "${CMAKE_CURRENT_SOURCE_DIR}/native/hud.hlsl" "shell/hud.hlsl")
   ehud_app_resource(shell.watchBlur file "${ehud_watch_blur}" "shell/watch-blur.json")
-  foreach(ehud_common IN ITEMS notesFormat:notes-format shelf:shelf clipboard:clipboard applicationIcons:application-icons
-          watchAppearance:watch-appearance archive:archive storage:storage activity:activity mapPlayer:map-player centerLogos:center-logos)
+  foreach(ehud_common IN ITEMS notesFormat:notes-format shelf:shelf applicationIcons:application-icons
+          watchAppearance:watch-appearance archive:archive mapPlayer:map-player centerLogos:center-logos)
     string(REPLACE ":" ";" ehud_common "${ehud_common}")
     list(GET ehud_common 0 ehud_common_id)
     list(GET ehud_common 1 ehud_common_folder)
@@ -379,13 +366,13 @@ if(WIN32)
       # Hidden module coverage plus the production lifecycle/quit flow.
       add_test(NAME application_owner_coverage COMMAND "${CMAKE_COMMAND}" "-DPREVIEW=$<TARGET_FILE:watch_session_preview>"
         "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/owner-coverage-work" "-DINPUTS=${ehud_app_inputs}" "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}"
-        "-DMAP=${EHUD_MAP_RESOURCE_DIR}" "-DORBIPOM=${EHUD_ORBIPOM_RESOURCE_DIR}" -DCHECKS=19 -DHOST_CHECKS=226 "-DPACKAGE=$<TARGET_FILE_DIR:EndfieldHUD>/resources"
+        "-DMAP=${EHUD_MAP_RESOURCE_DIR}" "-DORBIPOM=${EHUD_ORBIPOM_RESOURCE_DIR}" -DCHECKS=21 -DHOST_CHECKS=229 "-DPACKAGE=$<TARGET_FILE_DIR:EndfieldHUD>/resources"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/app/run_owner_coverage.cmake")
       set_tests_properties(application_owner_coverage PROPERTIES TIMEOUT 600)
       # Same owner ending through WM_QUERYENDSESSION/WM_ENDSESSION instead of Quit.
       add_test(NAME application_session_end_coverage COMMAND "${CMAKE_COMMAND}" "-DPREVIEW=$<TARGET_FILE:watch_session_preview>"
         "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/session-end-coverage-work" "-DINPUTS=${ehud_app_inputs}" "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}"
-        "-DMAP=${EHUD_MAP_RESOURCE_DIR}" "-DORBIPOM=${EHUD_ORBIPOM_RESOURCE_DIR}" -DCHECKS=15 -DHOST_CHECKS=222 -DEXTRA=--session-end-coverage
+        "-DMAP=${EHUD_MAP_RESOURCE_DIR}" "-DORBIPOM=${EHUD_ORBIPOM_RESOURCE_DIR}" -DCHECKS=15 -DHOST_CHECKS=225 -DEXTRA=--session-end-coverage
         "-DPACKAGE=$<TARGET_FILE_DIR:EndfieldHUD>/resources" -P "${CMAKE_CURRENT_SOURCE_DIR}/app/run_owner_coverage.cmake")
       set_tests_properties(application_session_end_coverage PROPERTIES TIMEOUT 600)
       # The same owner's memory and thread census (launch, every module,

@@ -391,7 +391,7 @@ void texts() {
     }
     check(u::detailText({}, Language::english).empty(), "No detail");
     // Mac HUDUpdateState/HUDUpdateController texts (catalog entries).
-    check(u::phaseTitle(u::Phase::idle, Language::english) == "Not checked yet" && u::phaseTitle(u::Phase::failed, Language::simplifiedChinese) == "检查失败 · 重试" &&
+    check(u::phaseTitle(u::Phase::idle, Language::english) == "Not checked yet" && u::phaseTitle(u::Phase::failed, Language::simplifiedChinese) == "检查失败，请重试" &&
           u::phaseTitle(u::Phase::ready, Language::japanese) == "更新準備完了", "Mac phase titles");
     u::Detail error{K::checkError, {u::CheckErrorKind::rateLimited, 0, {}}, {}, 0};
     check(u::detailText(error, Language::english) == "GitHub is limiting requests. Try again later.", "Mac rate-limit text");

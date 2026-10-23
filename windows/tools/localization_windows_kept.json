@@ -53,10 +53,6 @@
    ["Add image/video", "添加图片/视频", "app/application.cpp, tools/archive_preview.cpp"],
    ["SHELF · IMAGE/VIDEO", "暂存架 · 图片/视频", "tools/archive_options.cpp, tools/media_assembly_preview.cpp"]
   ],
-  "Calendar": [
-   ["Edit event", "编辑事项", "modules/calendar_presentation.hpp+.cpp (CalendarStrings)"],
-   ["No events", "暂无事项", "modules/calendar_presentation.hpp+.cpp (CalendarStrings)"]
-  ],
   "Reader": [
    ["Toggle bookmark", "切换书签", "modules/reader_accessibility.cpp"],
    ["Bookmarks", "书签", "modules/reader_presentation.hpp+.cpp (ReaderStrings)"],

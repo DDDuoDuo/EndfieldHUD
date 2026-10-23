@@ -21,24 +21,25 @@ if(WIN32)
   target_link_libraries(hud_audio_service PRIVATE ole32 uuid)
 endif()
 
-# Five-language Volume captions/errors and the UIA descriptor model.
-add_library(hud_volume_strings native/volume_strings.cpp native/volume_accessibility.cpp)
-target_include_directories(hud_volume_strings PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(hud_volume_strings PUBLIC hud_localization)
+# The Volume module's model (VolumeSnapshot, VolumeCallbacks, the endpoint
+# mapping) and the five-language failure text of the provider binding.
+add_library(hud_volume_model native/volume_snapshot.cpp native/volume_strings.cpp)
+target_include_directories(hud_volume_model PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(hud_volume_model PUBLIC hud_localization hud_data hud_services)
 if(WIN32)
-  target_link_libraries(hud_volume_strings PUBLIC hud_native)
-else()
-  # hud_native (which owns volume_scene.cpp on Windows) is Windows-only.
-  target_sources(hud_volume_strings PRIVATE native/volume_scene.cpp)
-  target_link_libraries(hud_volume_strings PUBLIC hud_data hud_scene hud_motion hud_services)
+  # volume_provider.cpp (in hud_native on Windows) reads the model.
+  target_link_libraries(hud_native PUBLIC hud_volume_model)
 endif()
 
 # Production owner: the one AudioService worker + the Volume provider binding
 # + localized failure text, Event Log device labels and Now Playing routes.
 add_library(hud_audio_runtime native/audio_runtime.cpp)
 target_include_directories(hud_audio_runtime PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(hud_audio_runtime PUBLIC hud_audio_service hud_volume_strings hud_localization)
-if(NOT WIN32)
+target_link_libraries(hud_audio_runtime PUBLIC hud_audio_service hud_volume_model hud_localization)
+if(WIN32)
+  # The provider binding (volume_provider.cpp) compiles into hud_native.
+  target_link_libraries(hud_audio_runtime PUBLIC hud_native)
+else()
   # hud_native (which owns volume_provider.cpp on Windows) is Windows-only.
   target_sources(hud_audio_runtime PRIVATE native/volume_provider.cpp)
   target_link_libraries(hud_audio_runtime PUBLIC hud_audio_default)
@@ -52,15 +53,7 @@ if(WIN32)
   target_link_libraries(hud_services PRIVATE xmllite shlwapi)
 endif()
 
-set(EHUD_AUDIO_TARGETS hud_audio_model hud_audio_service hud_volume_strings hud_audio_runtime)
-if(WIN32)
-  # UI Automation fragments for the projected Volume controls.
-  add_library(hud_volume_automation native/volume_automation.cpp)
-  target_include_directories(hud_volume_automation PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-  target_compile_definitions(hud_volume_automation PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
-  target_link_libraries(hud_volume_automation PUBLIC hud_volume_strings PRIVATE uiautomationcore oleaut32 ole32)
-  list(APPEND EHUD_AUDIO_TARGETS hud_volume_automation)
-endif()
+set(EHUD_AUDIO_TARGETS hud_audio_model hud_audio_service hud_volume_model hud_audio_runtime)
 
 foreach(target ${EHUD_AUDIO_TARGETS})
   if(MSVC)
@@ -95,16 +88,10 @@ if(BUILD_TESTING)
     target_compile_definitions(audio_service_tests PRIVATE UNICODE _UNICODE NOMINMAX)
     target_link_libraries(audio_service_tests PRIVATE hud_native)
   else()
-    target_sources(audio_service_tests PRIVATE native/volume_provider.cpp native/volume_scene.cpp)
-    target_link_libraries(audio_service_tests PRIVATE hud_audio_default hud_scene hud_motion)
+    target_sources(audio_service_tests PRIVATE native/volume_provider.cpp)
+    target_link_libraries(audio_service_tests PRIVATE hud_audio_default hud_volume_model)
   endif()
   add_test(NAME audio_service_contracts COMMAND audio_service_tests)
-
-  # Source: bash windows/tools/audio_reference.sh (HUDVolumeInteraction export).
-  add_executable(volume_accessibility_tests tests/volume_accessibility_tests.cpp)
-  target_link_libraries(volume_accessibility_tests PRIVATE hud_volume_strings hud_data)
-  add_test(NAME volume_accessibility_contracts COMMAND volume_accessibility_tests
-    "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/audio-endpoint-source.json")
 
   # The production audio owner over injected backends (votes, drain fan-out,
   # Event Log device labels, Now Playing routes, language, power, stop).
@@ -113,24 +100,6 @@ if(BUILD_TESTING)
   add_test(NAME audio_runtime_contracts COMMAND audio_runtime_tests)
 
   if(WIN32)
-    # Volume UI Automation fragments over a real controller (no window/audio).
-    add_executable(volume_automation_tests tests/volume_automation_tests.cpp)
-    target_compile_definitions(volume_automation_tests PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
-    target_link_libraries(volume_automation_tests PRIVATE hud_volume_automation uiautomationcore oleaut32 ole32)
-    add_test(NAME volume_automation_contracts COMMAND volume_automation_tests)
-
-    # Volume owner accessibility projection + UIA over the hidden owner.
-    add_executable(volume_preview_automation_tests tests/volume_preview_automation_tests.cpp tools/volume_preview.cpp)
-    target_compile_definitions(volume_preview_automation_tests PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
-    target_link_libraries(volume_preview_automation_tests PRIVATE hud_native hud_motion hud_services hud_shelf_icons hud_volume_automation uiautomationcore oleaut32 ole32)
-    add_test(NAME volume_preview_automation_contracts COMMAND volume_preview_automation_tests)
-
-    # Volume owner app-row icons over an injected icon plan (no Shell worker).
-    add_executable(volume_preview_icon_tests tests/volume_preview_icon_tests.cpp tools/volume_preview.cpp)
-    target_compile_definitions(volume_preview_icon_tests PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
-    target_link_libraries(volume_preview_icon_tests PRIVATE hud_native hud_motion hud_services hud_shelf_icons)
-    add_test(NAME volume_preview_icon_contracts COMMAND volume_preview_icon_tests)
-
     # Native contracts that never open COM/audio: factories are inert, the
     # undocumented default-device ABI is absent, and CompareStringEx ordering
     # matches the source ordering for the oracle names.
@@ -155,18 +124,11 @@ if(WIN32)
   endif()
 endif()
 
-# Make the audio owner, Volume strings and Volume UI Automation available to
-# the development preview and the production application owner (additive
-# links only; their sources are not changed here).
+# Make the audio owner and the Volume model available to the development
+# preview and the production application owner (additive links only).
 if(TARGET watch_session_preview)
-  target_link_libraries(watch_session_preview PRIVATE hud_audio_runtime hud_volume_strings)
-  if(TARGET hud_volume_automation)
-    target_link_libraries(watch_session_preview PRIVATE hud_volume_automation)
-  endif()
+  target_link_libraries(watch_session_preview PRIVATE hud_audio_runtime hud_volume_model)
 endif()
 if(TARGET hud_application)
-  target_link_libraries(hud_application PUBLIC hud_audio_runtime hud_volume_strings)
-  if(TARGET hud_volume_automation)
-    target_link_libraries(hud_application PUBLIC hud_volume_automation)
-  endif()
+  target_link_libraries(hud_application PUBLIC hud_audio_runtime hud_volume_model)
 endif()

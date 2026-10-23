@@ -28,7 +28,7 @@ std::array<float, 4> linearTint(const std::optional<d::Color>& c) {
 // A lazy surface keeps no bitmap while it does not show (Mac: a layer at
 // opacity 0 keeps no backing store): its leaf holds one transparent point
 // until it first shows and gets it back after fading out (Clipboard's lazy
-// feedback, native/clipboard_scene.cpp).
+// feedback, v1.2.0 native/clipboard_scene.cpp).
 Json placeholder(const std::string& id) {
     return Json::Object{{"id", id}, {"kind", "layer"}, {"bounds", Json::Array{0, 0, 1, 1}}, {"position", Json::Array{0, 0}}, {"anchorPoint", Json::Array{0, 0}},
         {"backgroundColor", Json::Object{{"sRGB", Json::Array{0, 0, 0, 0}}}}, {"children", Json::Array{}}};

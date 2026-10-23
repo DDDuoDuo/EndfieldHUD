@@ -112,7 +112,8 @@ private:
         setBackground(l, icon.fill.value_or(p.token(ThemeToken::control)));
         Layer& picture = b.layer(sub(id(), "menu.tile.icon"));
         picture.setFrame(icon.frame.value_or(Rect{6, 6, icon.size.width - 12, icon.size.height - 12}));
-        picture.setContent(image(picture.id(), localBounds(picture), icon.image, "resizeAspect", std::nullopt, true));
+        // HUDMenu.Icon.image is optional: an unreadable artwork (empty key) leaves the well empty.
+        if (!icon.image.key.empty()) picture.setContent(image(picture.id(), localBounds(picture), icon.image, "resizeAspect", std::nullopt, true));
         Layer& edge = b.layer(sub(id(), "menu.tile.edge"));
         edge.setFrame(bounds);
         setBorder(edge, std::nullopt, icon.fill ? black(.25) : p.token(ThemeToken::ringField), 1);
@@ -320,13 +321,11 @@ void Menu::setScroll(double value) {
     const double trackHeight = track_->bounds().height;
     const double thumbHeight = std::max(18.0, trackHeight * list_->bounds().height / std::max(1.0, contentHeight_));
     const double fraction = maximumScroll() > 0 ? offset_ / maximumScroll() : 0;
-    const bool resized = thumb_->bounds().height != thumbHeight;
-    thumb_->setFrame({0, fraction * (trackHeight - thumbHeight), 5, thumbHeight});
-    if (resized) setBackground(*thumb_, env_->palette.accentInk());
+    placeThumb(*thumb_, 5, fraction * (trackHeight - thumbHeight), thumbHeight, env_->palette.accentInk());
 }
 // The thumb centre follows the pointer: (y - thumb/2) / (track - thumb) (:441-445).
 void Menu::scrollTrack(double y) {
-    const double trackHeight = track_->bounds().height, thumbHeight = thumb_->bounds().height;
+    const double trackHeight = track_->bounds().height, thumbHeight = thumbLength(*thumb_);
     const double fraction = std::min(1.0, std::max(0.0, (y - thumbHeight / 2) / std::max(1.0, trackHeight - thumbHeight)));
     setScroll(fraction * maximumScroll());
 }

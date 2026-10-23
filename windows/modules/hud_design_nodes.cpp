@@ -325,7 +325,7 @@ std::size_t PartBuilder::surfaceCount() const noexcept {
     }
     return n;
 }
-// native/settings_scene.cpp group()/compact(): a static run is one group
+// The v1.2.0 Settings scene's group()/compact(): a static run is one group
 // surface whose bounds are the union of its nodes' frames (positions kept).
 Part PartBuilder::finish() {
     Part part{id_, frameNode(id_, {}), {}};

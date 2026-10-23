@@ -6,9 +6,9 @@
 //
 // AutomationTree below is the ONE implementation of the HUD's projected UIA
 // elements (focus, live regions, identity per id and role, property events):
-// it moved here from native/settings_automation.cpp (LIBRARY-DESIGN.md Q2),
-// which keeps its public API as a thin adapter over it until Phase B1 moves
-// Settings onto the design library. Its roles are the union of both users:
+// it moved here from the v1.2.0 Settings peers (LIBRARY-DESIGN.md Q2; that
+// adapter went with Settings' move onto the library in Phase B1). Its roles
+// are the union of both users:
 //   heading   Text with a heading level              (Settings)
 //   text      Text; a read-only Value when `valued`  (design readouts)
 //   status    Text with a polite live setting; a new text raises

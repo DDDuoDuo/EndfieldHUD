@@ -14,7 +14,7 @@ SDK="$(bash "$ROOT/windows/tools/mac_sdk.sh")"
 python3 - "$ROOT" "$OUTPUT" "$SDK" <<'PY'
 import hashlib,json,pathlib,platform,subprocess,sys
 root,out=map(pathlib.Path,sys.argv[1:3]);paths=sorted(p for folder in ('Sources','Resources') for p in (root/folder).rglob('*') if p.is_file())
-tools=['windows/tools/module_reference_layers.swift','windows/tools/hud_design_reference.swift','windows/tools/hud_design_reference.sh']
+tools=['windows/tools/module_reference_layers.swift','windows/tools/hud_design_reference_support.swift','windows/tools/hud_design_reference.swift','windows/tools/hud_design_reference.sh']
 (out/'provenance.json').write_text(json.dumps({'originals':{str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in paths},
  'oracle':{t:hashlib.sha256((root/t).read_bytes()).hexdigest() for t in tools},'modifications':[],
  'gitHead':subprocess.check_output(['git','-C',str(root),'rev-parse','HEAD'],text=True).strip(),
@@ -26,7 +26,7 @@ while IFS= read -r path; do SOURCES+=("$ROOT/$path"); done < <(cd "$ROOT"; find 
 if ! xcrun swiftc -swift-version 5 -Onone -g -whole-module-optimization -parse-as-library -module-name EndfieldHUDDesignReference -D HUD_WATCH_MOTION_PREVIEW \
  -sdk "$SDK" -module-cache-path "$CACHE" -framework Cocoa -framework IOKit -framework CoreAudio -framework Quartz -framework Carbon -framework ServiceManagement \
  -framework Metal -framework MetalKit -framework WebKit -framework Security -framework PDFKit -framework JavaScriptCore -lsqlite3 -lz \
- "${SOURCES[@]}" "$ROOT/windows/tools/module_reference_layers.swift" "$ROOT/windows/tools/hud_design_reference.swift" -o "$OUTPUT/hud-design-reference" >"$OUTPUT/compile.log" 2>&1; then
+ "${SOURCES[@]}" "$ROOT/windows/tools/module_reference_layers.swift" "$ROOT/windows/tools/hud_design_reference_support.swift" "$ROOT/windows/tools/hud_design_reference.swift" -o "$OUTPUT/hud-design-reference" >"$OUTPUT/compile.log" 2>&1; then
     grep -E 'error' "$OUTPUT/compile.log" | head -60 >&2; exit 1
 fi
 python3 - "$ROOT" "$OUTPUT" <<'PY'

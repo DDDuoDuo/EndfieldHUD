@@ -147,7 +147,7 @@ struct ProfileOwner::Impl:std::enable_shared_from_this<Impl> {
     void updateCard(){
         if(!card||!state||loadError)return;
         m::IdCardBinding::Input input;input.profile=&state->preview(); // a slider drag previews on the card
-        input.hudAccent=appearance.accentSRGB;input.language=appearance.language;
+        input.hudAccent=appearance.accentSRGB;input.language=appearance.language;input.uidRedacted=appearance.recordingMode;
         if(avatar){input.avatarImage=avatarName;input.avatarOrientation=avatar->orientation;}
         if(background)input.backgroundImage=backgroundName;
         if(!card->update(input))return;

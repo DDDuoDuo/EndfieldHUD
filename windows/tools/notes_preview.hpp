@@ -82,6 +82,19 @@ public:
     bool dropImage(std::span<const std::uint8_t> data,core::Point logical,double time);
     bool showMediaError(std::string,double time); // existing source status row; no dialog/throw-close
     void select(core::Module,double time);
+    // The module presentation this owner keeps for the HUD (HUDModuleContent):
+    // a redesigned module (a design-library canvas) is entered directionally
+    // (ModulePresentation::setDesignScreen; the host marks it before the HUD
+    // first shows), and the selected one enters from the disc centre as the
+    // HUD deploys (SystemHUDView.animateEntrance -> beginEntrance; nothing
+    // for other modules or under Reduce Motion).
+    void setDesignScreen(core::Module,bool design);
+    // `offset` (content px) replaces the disc-centre offset: the boot log's
+    // end enters from below (SystemHUDView.finishBootLog).
+    void beginEntrance(double time,std::optional<core::MotionPoint> offset={});
+    // SystemHUDView.playsBootLogOnOpen: the module host stays transparent
+    // while the daily boot log plays (ModulePresentation::setConcealed).
+    void setCentreConcealed(bool);
     core::Module selected()const noexcept;
     const core::ModulePresentationSample& modulePresentation()const noexcept;
     void resize(const app::ClientMetrics&);

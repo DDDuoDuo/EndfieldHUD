@@ -8,6 +8,7 @@
 #include <iostream>
 #include <wrl/client.h>
 #include <wtsapi32.h>
+#include <dbt.h>
 
 namespace endfield::app {
 OverlayCallbacks Application::Impl::callbacks(){
@@ -44,7 +45,14 @@ OverlayCursor Application::Impl::onCursor(core::Point p){
     if(!ready||stopping||!session->inputEnabled())return OverlayCursor::source;
     // The Projection workspace shares this window and keeps the source cursor.
     if(projectionShown())return OverlayCursor::source;
-    return cursorAt(p)==ModuleCursor::text?OverlayCursor::text:OverlayCursor::source;
+    switch(cursorAt(p)){
+    case ModuleCursor::text:return OverlayCursor::text;
+    // SystemHUDView.designCursor: the active canvas's grab hands.
+    case ModuleCursor::openHand:return OverlayCursor::openHand;
+    case ModuleCursor::closedHand:return OverlayCursor::closedHand;
+    case ModuleCursor::source:break;
+    }
+    return OverlayCursor::source;
 }
 // The pointer routing order: an exclusive capture (modal card or menu) answers
 // for every point; otherwise the first owner of the pointer chain that answers
@@ -97,7 +105,7 @@ bool Application::Impl::onPointer(const PointerEvent&e){
     using C=ModuleRegistry::Chain;
     // SystemHUDView.updateControlHighlights: the desktop clock's hover plate.
     if(e.kind==PointerKind::move||e.kind==PointerKind::leave)clockHover(e);
-    // Exclusive captures (modal Settings/quit card, Minigame rules, Calendar
+    // Exclusive captures (the design confirm bar, the modal Settings card, Minigame rules, Calendar
     // and Reader menus, Map drag, Archive selection) run before floating Notes.
     // A guarded failure inside routePointer leaves the chain to continue.
     if(registry.first(C::pointerCapture,[&](ModuleOwner&o,const ModuleRouting&r){return o.capturesPointer()&&routePointer(o,r.pointerPolicy,e,hostTime(time),p);},"pointer"))return true;
@@ -177,7 +185,7 @@ void Application::Impl::onFocus(bool value){
 
 void Application::Impl::onApplicationActive(bool active){
     if(ready)broadcast(active?HostEvent::Kind::applicationActivated:HostEvent::Kind::applicationDeactivated,now());
-    if(ready&&active&&calendar)isolate(calendarModuleOwner,"system change",[&]{calendar->systemChanged(now());updateCalendarWake();});
+    if(ready&&active&&calendar)isolate(calendarModuleOwner,"system change",[&]{calendarSystemChanged();updateCalendarWake();});
     if(ready&&active)refreshExternalStatus(); // AppDelegate refreshes login status on activation
     if(!ready||!visibleMode()||active||projectionHandoff.active()||closing||session->phase()==core::VisibilityPhase::concealed||!configuration.boolean("closeOnFocusLost"))return;
     // Source exempts its own file panels and active shelf drag/drop. Moving
@@ -214,7 +222,7 @@ void Application::Impl::onDeadline(double time){
     // so every later hand-off below takes the host time again.
     time=hostTime(time);
     bool artwork=projectionShown()&&projection->dismissalComplete(time);
-    if(calendarNextWake&&*calendarNextWake<=time){isolate(calendarModuleOwner,"midnight",[&]{calendar->systemChanged(hostTime(time));updateCalendarWake();});artwork=true;}
+    if(calendarNextWake&&*calendarNextWake<=time){isolate(calendarModuleOwner,"midnight",[&]{calendarSystemChanged();updateCalendarWake();});artwork=true;}
     if(graphicsIdleAt&&*graphicsIdleAt<=time)releaseIdleGraphics(time);
     // The tray icon was pointed at but no opening came: the device prepared
     // for it goes again (Renderer::discardPreparedDevice).
@@ -227,7 +235,7 @@ void Application::Impl::onDeadline(double time){
     time=hostTime(time);
     if(headerClock.wake(time)||workMode)artwork=updateClock()||artwork;
     if(workMode&&production())updateTrayMenu();
-    if(eventRecorder&&workMode)eventRecorder->receiveWork(workMode->controller().snapshot(hostTime(time)));
+    if(eventRecorder&&workMode)eventRecorder->receiveWork(workMode->snapshot(hostTime(time)));
     if(eventSaves){const FatalStage save("event log save");eventSaves->capture(hostTime(time));}syncActivityTelemetry(time);if(activityProbe)activityProbe->update(hostTime(time));
     time=hostTime(time);perform(lifecycle.advance(time),time);
     scheduleDeadline();if(artwork)refresh(time);
@@ -267,7 +275,7 @@ void Application::Impl::onFrame(double time){
         // Entries enabled only once opening completes (the Power navigation entry) re-read their state.
         automationChanged();refreshAutomation();if(stopping)return;}
     if(!active&&session->phase()==core::VisibilityPhase::concealed){
-        if(notes)notes->setMediaActive(false,hostTime(time));host.hide();if(quitConfirmation)(void)registry.guard(*quitConfirmation,[&]{quitConfirmation->hide(hostTime(time));},"close");concealed(time);
+        if(notes)notes->setMediaActive(false,hostTime(time));host.hide();concealed(time);
         core::SystemOverlayEffects closed;
         if(lifecycleClosing){const auto token=*lifecycleClosing;lifecycleClosing.reset();closed=lifecycle.didClose(token);}
         if(projectionHandoff.phase()==ProjectionHandoff::Phase::closingHUD){
@@ -312,7 +320,8 @@ void Application::Impl::utilityCompleted(){
     const FatalStage stage("utility completion");
     if(utility)utility->drain();if(centerLogoRetry)updateCenterLogo();if(longWork)longWork->drain();
     if(activityProbe)activityProbe->submitPending();syncActivityTelemetry(now());if(systemServices)systemServices->clipboard_queue_capacity_available();
-    if(storage)isolate(storageModuleOwner,"utility completion",[&]{storage->utilityCompleted(storageFixture?storageFixture->time.load(std::memory_order_relaxed):now());});
+    // Storage and Activity Monitor take their completions in the broadcast
+    // below (their design owners' hostEvent).
     if(archiveService)isolate(archiveModuleOwner,"utility completion",[&]{archiveService->queueCapacityAvailable();});
     if(readerOwner)isolate(readerModuleOwner,"utility completion",[&]{readerOwner->queueCapacityAvailable();});
     if(calendarState)isolate(calendarModuleOwner,"utility completion",[&]{calendarState->queueCapacityAvailable();calendarNotifications->queueCapacityAvailable();});
@@ -346,7 +355,7 @@ bool Application::Impl::backgroundPressCloses(core::Point client){
     if(!ready||stopping||closing||quitRequested||!notes)return false;
     const auto phase=session->phase();
     if(phase==core::VisibilityPhase::concealed||!(session->inputEnabled()||phase==core::VisibilityPhase::opening))return false;
-    if(quitConfirmation&&quitConfirmation->presented())return false;
+    if(designOverlay&&designOverlay->capturesPointer())return false;
     if(session->sourceControlAt(client,centerLogoMainID))return false;
     // A press over a shown owner control (ModuleOwner::covers, e.g. the header
     // sanity wallet at core design 562,2 168x42, almost entirely outside the
@@ -476,11 +485,12 @@ std::optional<std::intptr_t> Application::Impl::onAppMessage(const NativeMessage
             }catch(const std::exception&){reader->receiveImportError(action->generation,modules::readerTranslation(modules::readerWindowsOpenFailed,watchAppearance.language),hostTime(time));}});
             refresh(time);return 0;
         }
-        if(m.message==calendarChangedMessage){calendarRefreshQueued=false;updateCalendarWake();refresh(now());return 0;}
+        if(m.message==calendarChangedMessage){calendarRefreshQueued=false;updateCalendarWake();if(calendar)isolate(calendarModuleOwner,"calendar change",[&]{calendar->controllerChanged();});refresh(now());return 0;}
         if(m.message==mapChangedMessage){mapRefreshQueued=false;refresh(now());return 0;}
         if(m.message==readerChangedMessage){readerRefreshQueued=false;refresh(now());return 0;}
-        if(m.message==clipboardChangedMessage){clipboardRefreshQueued=false;if(clipboardDirty&&session->phase()!=core::VisibilityPhase::concealed&&notes&&notes->selected()==core::Module::clipboard)refresh(now());return 0;}
-        if(m.message==eventChangedMessage){eventRefreshQueued=false;if(eventLog)isolate(eventLogModuleOwner,"event log",[&]{eventLog->refresh();});refresh(now());return 0;}
+        if(m.message==clipboardChangedMessage){clipboardRefreshQueued=false;if(clipboardCanvas)isolate(clipboardModuleOwner,"clipboard",[&]{clipboardCanvas->storeChanged();});
+            if(session->phase()!=core::VisibilityPhase::concealed)refresh(now());return 0;}
+        if(m.message==eventChangedMessage){eventRefreshQueued=false;if(eventLogCanvas)isolate(eventLogModuleOwner,"event log",[&]{eventLogCanvas->storeChanged();});refresh(now());return 0;}
         if(m.message==archiveChangedMessage){archiveRefreshQueued=false;refresh(now());return 0;}
         if(m.message==sharedMediaMessage&&mediaBroker){const FatalStage mediaStage("shared media");const auto time=now();mediaBroker->accept(m.wParam,time);if(notes)notes->refreshSharedMedia(hostTime(time));if(archiveMedia)isolate(archiveModuleOwner,"shared media",[&]{archiveMedia->refresh(hostTime(time));});if(projectionShown())(void)projectionCall("media",[&]{projection->mediaChanged(hostTime(time));});refresh(time);return 0;}
         if(m.message==mediaPickerMessage&&mediaPicker){
@@ -531,6 +541,10 @@ std::optional<std::intptr_t> Application::Impl::onAppMessage(const NativeMessage
         else if(m.wParam==WTS_SESSION_UNLOCK||m.wParam==WTS_CONSOLE_CONNECT||m.wParam==WTS_REMOTE_CONNECT)resume(Suspension::session,now());
         return 0;
     }
+    // StorageController.volumesDidChange (NSWorkspace didMount / didUnmount):
+    // a volume arrived or was removed; default handling continues.
+    if(ready&&storage&&m.message==WM_DEVICECHANGE&&(m.wParam==DBT_DEVICEARRIVAL||m.wParam==DBT_DEVICEREMOVECOMPLETE)&&m.lParam&&reinterpret_cast<const DEV_BROADCAST_HDR*>(m.lParam)->dbch_devicetype==DBT_DEVTYP_VOLUME){
+        bool changed{};isolate(storageModuleOwner,"volumes",[&]{changed=storage->volumesChanged(now());});if(changed)refresh(now());}
     if(ready&&(m.message==WM_TIMECHANGE||m.message==WM_SETTINGCHANGE||(m.message==WM_POWERBROADCAST&&(m.wParam==PBT_APMRESUMEAUTOMATIC||m.wParam==PBT_APMRESUMESUSPEND)))){systemChange(m.message,now());return 0;}
     if(ready&&archive&&m.message==WM_APP+221&&m.wParam==archive->mediaRouteGeneration()){
         isolate(archiveModuleOwner,"media action",[&]{if(auto action=archive->takeMediaAction())try{using K=tools::ArchiveMediaAction::Kind;const auto time=now();

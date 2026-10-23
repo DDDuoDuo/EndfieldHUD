@@ -82,7 +82,7 @@ AccountLinkingOwner::AccountLinkingOwner(app::UtilityExecutor& executor,gpu::Lay
     AccountPreviewOptions m;m.raster=i.options.raster;m.style=i.options.style;m.language=i.options.language;m.reduceMotion=i.options.reduceMotion;
     i.module=std::make_unique<AccountPreview>(i.services->controller(),raster,m);
     AccountSanityGaugeOptions g;g.raster=i.options.raster;g.language=i.options.language;g.reduceMotion=i.options.reduceMotion;
-    g.workMode=i.options.workMode;g.workModeRunning=i.options.workModeRunning;
+    g.workMode=i.options.workMode;g.workModeRunning=i.options.workModeRunning;g.openWorkMode=i.options.openWorkMode;
     i.gauge=std::make_unique<AccountSanityGaugePreview>(i.services->controller(),raster,i.options.gaugeResources,g);
     i.ready=true;i.gauge->contentChanged(start);
 }
@@ -177,6 +177,7 @@ bool AccountLinkingOwner::message(const app::NativeMessage& m,double t) {
     if(m.message!=i.options.serviceMessage||(m.window&&m.window!=static_cast<void*>(i.window))) return false;
     i.advance(t);i.services->drain();return true;
 }
+bool AccountLinkingOwner::dismissWalletPopover(double t) {auto& i=*impl_;i.advance(t);if(!i.gauge||!i.gauge->model().popoverOpen())return false;(void)i.gauge->dismiss(i.time);return true;}
 void AccountLinkingOwner::cancelInteraction(double t) {auto& i=*impl_;i.advance(t);i.module->cancelInteraction(i.time);i.gauge->dismiss(i.time);}
 bool AccountLinkingOwner::flush(double t) {impl_->advance(t);return impl_->services->flush();}
 void AccountLinkingOwner::profileAvatarChanged(const std::optional<std::string>& filename) {impl_->services->controller().profileAvatarChanged(filename);}

@@ -67,12 +67,9 @@ Package production(const fs::path& root) {
     p.directory("notes.controls", "notes-controls", {{"notes-controls-assets.json", "{\"controls\":[]}"}, {"raster/a.png", "a"}});
     p.directory("common.notesFormat", "common/notes-format", {{"raster/wheel.png", "wheel"}});
     p.directory("common.shelf", "common/shelf", {{"reveal-mask.bin", std::string(64, '\x01')}, {"icons.json", "{}"}});
-    p.directory("common.clipboard", "common/clipboard", {{"artwork.json", "{}"}});
     p.directory("common.applicationIcons", "common/application-icons", {{"manifest.json", "{}"}, {"endfield-app.png", "icon"}});
     p.directory("common.watchAppearance", "common/watch-appearance", {{"manifest.json", "{}"}});
     p.directory("common.archive", "common/archive", {{"raster/archive.png", "archive"}});
-    p.directory("common.storage", "common/storage", {{"source-paths.json", "{}"}});
-    p.directory("common.activity", "common/activity", {{"sort-mask.bin", "mask"}});
     p.directory("common.mapPlayer", "common/map-player", {{"player.png", "player"}});
     p.directory("map.geography", "map", {{"Terrain.bin", std::string(128, '\x7f')}, {"Countries.bin", "countries"}});
     p.directory("orbipom", "orbipom/OrbiPom", {{"orbipom.js", "game"}});
@@ -91,10 +88,9 @@ void complete(const fs::path& root) {
     check(r.cachePin == sha("EHSCENE catalog") && r.notesAssetsSHA == sha("{\"controls\":[]}"), "Pins come from the verified manifest");
     check(r.notesAssets == root / "notes-controls" && r.notesFormatAssets == root / "common" / "notes-format", "Notes resources");
     check(r.shelfAssets == root / "common" / "shelf" && r.shelfMask == root / "common" / "shelf" / "reveal-mask.bin", "Shelf assets and original reveal samples");
-    check(r.settingsAssets == root / "common" && r.archiveAssets == root / "common" && r.storageAssets == root / "common",
-          "Settings, Archive and Storage read their folders below the shared common root");
-    check(r.clipboardAssets == root / "common" / "clipboard" && r.activityAssets == root / "common" / "activity" &&
-          r.residentIcons == root / "common" / "application-icons", "Per-module folders");
+    check(r.settingsAssets == root / "common" && r.archiveAssets == root / "common",
+          "Settings and Archive read their folders below the shared common root");
+    check(r.residentIcons == root / "common" / "application-icons", "Per-module folders");
     check(r.mapGeography == root / "map" && r.mapPlayerAssets == root / "common" / "map-player" && r.orbipomAssets == root / "orbipom", "Map and Minigame roots");
     const auto verified = locator.verifications();
     (void)app::resolvePackagedResources(locator);
@@ -110,12 +106,9 @@ void isolation(const fs::path& base) {
     struct Case { const char* id; const char* damage; std::vector<M> disabled; bool modules{true}, shell{true}, tray{true}; };
     const std::vector<Case> cases{
         {"common.shelf", "common/shelf/icons.json", {M::fileShelf}},
-        {"common.clipboard", "common/clipboard/artwork.json", {M::clipboard}},
         {"common.watchAppearance", "common/watch-appearance/manifest.json", {M::minigame, M::system, M::display, M::hotkeys, M::about}},
         {"common.applicationIcons", "common/application-icons/endfield-app.png", {M::minigame, M::system, M::display, M::hotkeys, M::about}, true, true, false},
         {"common.archive", "common/archive/raster/archive.png", {M::archive}},
-        {"common.storage", "common/storage/source-paths.json", {M::storage}},
-        {"common.activity", "common/activity/sort-mask.bin", {M::activityMonitor}},
         {"common.mapPlayer", "common/map-player/player.png", {M::map}},
         {"map.geography", "map/Terrain.bin", {M::map}},
         {"orbipom", "orbipom/OrbiPom/orbipom.js", {M::minigame}},
@@ -149,11 +142,11 @@ void isolation(const fs::path& base) {
         check(r.disabled == ordered, "Exactly the modules that read the resource are disabled" + what);
         check(r.notesAssets == root / "notes-controls" && !r.notesAssetsSHA.empty(), "Notes stays available" + what);
         check(r.shelfAssets.empty() == has(c.disabled, M::fileShelf) && r.shelfMask.empty() == has(c.disabled, M::fileShelf), "Shelf" + what);
-        check(r.clipboardAssets.empty() == has(c.disabled, M::clipboard), "Clipboard" + what);
         check(r.settingsAssets.empty() == has(c.disabled, M::system), "Settings" + what);
         check(r.archiveAssets.empty() == has(c.disabled, M::archive), "Archive" + what);
-        check(r.storageAssets.empty() == has(c.disabled, M::storage), "Storage" + what);
-        check(r.activityAssets.empty() == has(c.disabled, M::activityMonitor), "Activity" + what);
+        // Storage and Activity Monitor are design canvases with no packaged
+        // resource: no damage outside Notes and the shell turns them off.
+        check(!has(r.disabled, M::storage) && !has(r.disabled, M::activityMonitor), "Storage and Activity need only the module set" + what);
         check(r.mapGeography.empty() == has(c.disabled, M::map) && r.mapPlayerAssets.empty() == has(c.disabled, M::map), "Map needs geography and player art together" + what);
         check(r.orbipomAssets.empty() == has(c.disabled, M::minigame), "Minigame" + what);
         check(r.cursor.empty() == (std::string_view(c.id) == "shell.cursor"), "Cursor is optional" + what);
@@ -183,7 +176,7 @@ void policy(const fs::path& base) {
     check(!app::packagedResourceRequired("map.geography") && !app::packagedResourceRequired("orbipom") && app::packagedResourceRequired("common.shelf") &&
           app::packagedResourceRequired("shell.runtimeInput"), "Only external Map/Minigame inputs are optional");
     const auto ids = app::packagedResourceIDs();
-    check(std::adjacent_find(ids.begin(), ids.end()) == ids.end() && ids.size() == 17, "Every packaged resource id is listed once");
+    check(std::adjacent_find(ids.begin(), ids.end()) == ids.end() && ids.size() == 14, "Every packaged resource id is listed once");
     check(app::packagedModules().size() == 19 && !std::count(app::packagedModules().begin(), app::packagedModules().end(), M::nowPlaying),
           "Provided modules exclude areas that are not wired yet");
 }

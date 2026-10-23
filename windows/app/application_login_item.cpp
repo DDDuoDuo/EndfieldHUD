@@ -73,5 +73,8 @@ std::string LoginItemRegistration::statusDescription(const LoginItemStatus& stat
         return core::localized("Turned off in Windows Settings → Apps → Startup.", "已在 Windows 设置 → 应用 → 启动 中关闭。", language);
     return status.enabled() ? core::localized("Enabled", "已启用", language) : core::localized("Disabled", "已停用", language);
 }
+std::string LoginItemRegistration::attentionDescription(const LoginItemStatus& status, core::Language language) {
+    return status.disabledByUser && (status.registered || status.stale) ? statusDescription(status, language) : std::string();
+}
 } // namespace endfield::app
 #endif

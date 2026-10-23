@@ -165,6 +165,7 @@ struct CoverageWorld {
     std::vector<std::string> events;              // accountAction metadata, in order
     h::AccountProfileSink* externalSink{};        // a Personal Profile area attaching in coverage (observed only)
     unsigned externalAttaches{};
+    unsigned workModeOpens{};                     // presses on the wallet's Work Mode link (Mac 1.3.0)
     // The host's UIA group for this owner (one per registration, like the host's).
     Microsoft::WRL::ComPtr<IRawElementProviderFragmentRoot> automationGroup;
     // Staged WebView2 SDK licence and notices (empty without the loader).
@@ -214,6 +215,10 @@ public:
             const auto* work = host->workMode();
             return work && work->snapshot(clock()).phase == modules::WorkModePhase::running;
         };
+        // SystemHUDView: accountGauge.onOpenWorkMode = activateNavigationTarget(.module(.workMode)),
+        // also when Work Mode is hidden in System > Modules (hidden means no list entry only).
+        // Hidden coverage counts the request instead of leaving its Account step.
+        o.openWorkMode = w ? std::function<void()>([w] { ++w->workModeOpens; }) : std::function<void()>([host] { host->selectModule(core::Module::workMode); });
         const auto& appearance = host_.appearance();
         o.language = appearance.language;
         o.style = canvasStyle(appearance);
@@ -229,9 +234,13 @@ public:
         owner_ = std::make_unique<tools::AccountLinkingOwner>(*c.utility, c.rasterizer, std::move(o));
         if (const auto* work = host_.workMode()) workRevision_ = work->revision();
         host_.publish<AccountProfileLink>(AccountProfileLink::key, *this);
+        // The quit asks only once an open recovery popover is closed (Mac 1.3.0).
+        quitPreemption_ = [this](double time) { return owner_ && owner_->dismissWalletPopover(time); };
+        host_.publish<QuitPreemption>(quitPreemptionService, quitPreemption_);
     }
     ~AccountModule() override {
         host_.withdraw(AccountProfileLink::key);
+        host_.withdraw(quitPreemptionService);
         relay_.attach(nullptr);
         // The UIA peers borrow the owner; they are disconnected first.
         automation_.reset();
@@ -386,6 +395,7 @@ private:
     std::unique_ptr<CoverageWorld> world_;
     h::AccountProfileRelay relay_;
     std::unique_ptr<tools::AccountLinkingOwner> owner_;
+    QuitPreemption quitPreemption_;
     std::uint64_t workRevision_{};
     bool visible_{}; // setOverlayVisible / overlayClosing (hidden coverage's prewarm probe)
     std::unique_ptr<native::NativeAccountAutomation> automation_;
@@ -678,18 +688,38 @@ private:
                 // outside the displayed circle (radius 310 around 500,320), so
                 // an unconsumed press there is the host's background close.
                 // The shown wallet is a control whatever it shows: its press is
-                // consumed, and without sanity nothing opens or changes.
+                // consumed; without sanity data it is a link to Work Mode
+                // (Mac 1.3.0 HUDAccountGauge.opensWorkMode), never a popover.
                 namespace g = h::gauge_geometry;
                 const auto before = controller().presentation();
                 for (const core::Point local : {core::Point{g::bounds.width / 2, g::bounds.height / 2}, core::Point{g::bounds.width - 4, g::bounds.height / 2}}) {
-                    const auto client = owner_->gauge().clientPoint(local);
+                    const auto client = owner_->gauge().clientPoint(local);const auto opens = w.workModeOpens;
                     step.check(client && covers(*client) && d.press(*client) && !owner_->gauge().model().popoverOpen() && !capturesPointer() &&
-                               controller().presentation() == before, "A press on the unlinked wallet (Work Mode minutes) is consumed and opens nothing");
+                               controller().presentation() == before && w.workModeOpens == opens + 1 && owner_->gauge().model().opensWorkMode(),
+                               "A press on the unlinked wallet (Work Mode minutes) is consumed and opens Work Mode");
                 }
             }
             {
-                step.check(automationRefresh(d.group()) && automationCount() == d.canvas().accessibleActions().size(),
-                           "UIA lists the face's peers through the owner hooks; the unlinked wallet has none");
+                // Mac 1.3.0 SystemHUDView.layoutAccountGaugeControls: the bar without
+                // sanity data keeps its toggle button (HUDAccountGauge.accessibleActions:
+                // the Work Mode link), labelled with the bar's accessibility label, no value.
+                step.check(automationRefresh(d.group()) && automationCount() == d.canvas().accessibleActions().size() + 1,
+                           "UIA lists the face's peers through the owner hooks and the unlinked wallet's Work Mode link");
+                {
+                    const auto link = d.listed("wallet:toggle");
+                    VARIANT name;
+                    VariantInit(&name);
+                    const auto& label = owner_->gauge().model().accessibilityLabel();
+                    std::wstring expected(label.empty() ? 0 : MultiByteToWideChar(CP_UTF8, 0, label.data(), static_cast<int>(label.size()), nullptr, 0), L'\0');
+                    if (!expected.empty()) MultiByteToWideChar(CP_UTF8, 0, label.data(), static_cast<int>(label.size()), expected.data(), static_cast<int>(expected.size()));
+                    const bool named = link && SUCCEEDED(link->GetPropertyValue(UIA_NamePropertyId, &name)) && name.vt == VT_BSTR && name.bstrVal &&
+                                       !expected.empty() && std::wstring_view(name.bstrVal) == expected;
+                    VariantClear(&name);
+                    step.check(named && !d.valueText("wallet:toggle"), "The Work Mode link peer carries the wallet's label and no value");
+                    const auto opens = w.workModeOpens;
+                    step.check(d.invoke(d.peer("wallet:toggle")) == S_OK && w.workModeOpens == opens + 1 && !owner_->gauge().model().popoverOpen(),
+                               "Invoking the unlinked wallet's peer opens Work Mode, no popover");
+                }
                 step.check(d.invoke(d.peer("account:refresh")) == UIA_E_ELEMENTNOTENABLED && !automationWake_, "A disabled peer refuses Invoke and wakes nothing");
                 automationDisconnect();
                 step.check(automationCount() == 0, "Disconnecting removes every peer");
@@ -771,6 +801,12 @@ private:
         const auto toggle = d.gaugePoint("toggle");
         step.check(toggle && d.press(*toggle) && owner_->gauge().model().popoverOpen(), "The recovery popover opens");
         step.check(d.keyDown(VK_ESCAPE) && !owner_->gauge().model().popoverOpen(), "Escape closes it");
+        // The quit's preemption (SystemHUDView.presentQuitConfirmation): an
+        // open popover is dismissed instead; a shut one lets the quit ask.
+        if (const auto* preempt = host_.find<QuitPreemption>(quitPreemptionService)) {
+            step.check(toggle && d.press(*toggle) && owner_->gauge().model().popoverOpen() && (*preempt)(d.t += .05) &&
+                       !owner_->gauge().model().popoverOpen() && !(*preempt)(d.t += .05), "A quit closes the open recovery popover instead of asking");
+        } else step.check(false, "The quit preemption is published");
         {
             // The same controls through the ModuleOwner UIA hooks (Mac AX
             // press), under this owner's group as the host lists them.

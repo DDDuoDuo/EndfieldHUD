@@ -278,6 +278,10 @@ public:
     bool presents(core::Module module) const noexcept override { return module == core::Module::profile; }
     void resize(const app::ClientMetrics& metrics) override { owner_->resize(metrics); }
     void setAppearance(const app::ModuleAppearance& a, double t) override { appearance_ = a; owner_->setAppearance(profileAppearance(a), t); }
+    // HUDSourceWatchView.desktopUIDRedacted follows the applied record's Recording mode (B2b).
+    tools::ProfileOwnerAppearance profileAppearance(const app::ModuleAppearance& a) const {
+        auto value = profileAppearanceOf(a); value.recordingMode = host_.settings().recordingMode(); return value;
+    }
     void setOverlayVisible(bool visible, double t) override { owner_->setOverlayVisible(visible, t); }
     void overlayClosing(double t) override { owner_->overlayClosing(t); }
     void update(const app::ModuleFrame& f) override { owner_->update(f.center, f.chrome, f.presentation, f.opacity, f.time); }
@@ -449,7 +453,7 @@ private:
             UiaRaiseStructureChangedEvent(group.Get(), StructureChangeType_ChildrenInvalidated, nullptr, 0);
     }
 
-    static tools::ProfileOwnerAppearance profileAppearance(const app::ModuleAppearance& a) {
+    static tools::ProfileOwnerAppearance profileAppearanceOf(const app::ModuleAppearance& a) {
         return {resolved(a.language), a.dark, a.accentSRGB, 2, a.reduceMotion};
     }
     bool hiddenCoverage() const noexcept { return mode_ == app::ApplicationAreaMode::hiddenCoverage; }

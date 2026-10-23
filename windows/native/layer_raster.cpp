@@ -445,15 +445,15 @@ struct LayerRasterizer::Impl {
     ResolvedFont fontFamily(const Json& font,const Json& node,const LayerRasterOptions& options,LayerRasterImage& result){
         const auto family=string(font["familyName"],string(font["postScriptName"]));
         const auto postscript=string(font["postScriptName"]);
-        const bool clock=flag(node["text"]["preserveSourceFont"]),preserve=clock||flag(font["preserveUserFont"]);
+        const bool preserve=flag(font["preserveUserFont"]);
         const auto report=[&](const std::string&selected){
             LayerFontSubstitution substitution{string(node["id"],"unnamed"),family,postscript,selected,selected==standardFamily()?regionFamily(region(node["text"])):std::string{}};
             if(std::none_of(result.fontSubstitutions.begin(),result.fontSubstitutions.end(),[&](const auto&f){return f.node==substitution.node&&f.requestedFamily==family&&f.requestedFace==postscript&&f.selectedFamily==selected;}))result.fontSubstitutions.push_back(std::move(substitution));};
         const auto resolved=[&](std::wstring name,IDWriteFontCollection*collection,const std::string&selected){
             return ResolvedFont{std::move(name),collection,selected==standardFamily()&&collection==collectionOf(selected)};};
         // The standard faces (HarmonyOS Sans with the region's Noto cascade)
-        // replace every source UI face, as HUDFontResolver does on the Mac,
-        // while persisted user choices and the source clock styles stay explicit.
+        // replace every source UI face, as HUDFontResolver does on the Mac
+        // (the clocks too since Mac 1.3.0), while persisted user choices stay explicit.
         const auto requested=preserve?family:fallbackFamily(options);
         auto*collection=collectionOf(requested);
         UINT32 index{};BOOL exists=FALSE;auto selected=wide(requested);
@@ -477,7 +477,7 @@ struct LayerRasterizer::Impl {
             // proportional system fonts and unknown requests keep the caller's
             // normal fallback, without guessing from their role in the HUD.
             const bool fixedPitch=(static_cast<unsigned>(number(font["symbolicTraits"]))&(1u<<10))!=0||family=="Menlo"||family=="Monaco"||family=="SF Mono"||family==".AppleSystemUIFontMonospaced"||family.starts_with(".SFNSMono")||postscript.starts_with("Menlo-")||postscript.starts_with("SFMono-")||postscript.starts_with(".SFNSMono")||postscript.starts_with(".AppleSystemUIFontMonospaced-");
-            const std::string substitute=fixedPitch?options.monospaceFallbackFontFamily:clock?"Segoe UI":fallbackFamily(options);
+            const std::string substitute=fixedPitch?options.monospaceFallbackFontFamily:fallbackFamily(options);
             collection=collectionOf(substitute);
             selected=wide(substitute);checked(collection->FindFamilyName(selected.c_str(),&index,&exists),"Resolve explicit fallback font");
             if(!exists)invalid("Configured fallback font is not installed");
@@ -641,11 +641,11 @@ struct LayerRasterizer::Impl {
         }
     }
     // A descriptor's base format: the resolved face with its cascade and its
-    // region's locale (the five source clocks keep en-us), alignment and wrap.
+    // region's locale, alignment and wrap.
     ComPtr<IDWriteTextFormat> textFormat(const Json&descriptor,const ResolvedFont&family,double size,bool wrap,DWRITE_TEXT_ALIGNMENT alignment){
         const auto italic=(static_cast<unsigned>(number(descriptor["font"]["symbolicTraits"]))&1)!=0;
         ComPtr<IDWriteTextFormat> format;checked(text->CreateTextFormat(family.family.c_str(),family.collection,textWeight(descriptor,descriptor["font"],family.standard),
-            italic?DWRITE_FONT_STYLE_ITALIC:DWRITE_FONT_STYLE_NORMAL,DWRITE_FONT_STRETCH_NORMAL,static_cast<FLOAT>(size),flag(descriptor["preserveSourceFont"])?L"en-us":locale(region(descriptor)),format.GetAddressOf()),"Create source text format");
+            italic?DWRITE_FONT_STYLE_ITALIC:DWRITE_FONT_STYLE_NORMAL,DWRITE_FONT_STRETCH_NORMAL,static_cast<FLOAT>(size),locale(region(descriptor)),format.GetAddressOf()),"Create source text format");
         cascade(format.Get());checked(format->SetTextAlignment(alignment),"Set text alignment");
         checked(format->SetWordWrapping(wrap?DWRITE_WORD_WRAPPING_WRAP:DWRITE_WORD_WRAPPING_NO_WRAP),"Set text wrapping");
         return format;
@@ -856,7 +856,10 @@ struct LayerRasterizer::Impl {
         if(string(node["cornerCurve"],"circular")!="circular")issue(result,node,"continuous corner curve is not implemented");
         if(real(node["cornerRadius"])>0&&number(node["maskedCorners"],15)!=15)issue(result,node,"selective rounded corners are not implemented");
         const auto className=string(node["class"],"CALayer");
-        if(className!="CALayer"&&className!="CAShapeLayer"&&className!="CATextLayer"&&className!="CAGradientLayer")issue(result,node,"custom layer behavior is not implemented: "+className);
+        // HUDStandardTextLayer (Mac 1.3.0 shell text) is a CATextLayer whose
+        // face and line metrics the exported descriptor already carries
+        // (standard faces, the font's own ascender/descender, top-aligned).
+        if(className!="CALayer"&&className!="CAShapeLayer"&&className!="CATextLayer"&&className!="CAGradientLayer"&&className!="HUDStandardTextLayer")issue(result,node,"custom layer behavior is not implemented: "+className);
         if(!node["animationKeys"].isNull()&&!array(node["animationKeys"],1024).empty())issue(result,node,"model state only; presentation animation is owned by the scene");
         auto background=brush(target,node["backgroundColor"],paintOpacity);
         if(background){auto geometry=boundsGeometry(node);target->FillGeometry(geometry.Get(),background.Get());}

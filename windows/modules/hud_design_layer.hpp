@@ -35,7 +35,7 @@
 //    (record the substitution in the port report if it is visible).
 //  - Layers that show only on hover (sheen, tint flashes) are SurfaceRole::lazy:
 //    painted when they first show, released after they fade (Clipboard's
-//    lazy feedback, native/clipboard_scene.hpp).
+//    lazy feedback, v1.2.0 native/clipboard_scene.hpp).
 //  - Hit testing uses MODEL geometry (CALayer.convert uses the model tree),
 //    never sampled poses: hits are stable during motion, as on the Mac.
 #include "modules/hud_design_motion.hpp"

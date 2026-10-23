@@ -215,7 +215,7 @@ std::optional<core::Point> Application::Impl::clockPoint(core::Point client) con
 bool Application::Impl::clockAcceptsInput() const {
     return chrome && ready && !stopping && !closing && !quitRequested && notes && session->inputEnabled() &&
         session->phase() == core::VisibilityPhase::visible &&
-        !notes->modulePresentation().transitioning && !(quitConfirmation && quitConfirmation->presented());
+        !notes->modulePresentation().transitioning && !(designOverlay && designOverlay->capturesPointer());
 }
 void Application::Impl::setClockHovered(bool value) {
     if (!chrome || chromeContent.clockHovered == value) return;

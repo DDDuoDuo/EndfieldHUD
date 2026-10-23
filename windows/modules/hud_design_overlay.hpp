@@ -3,9 +3,8 @@
 // Sources/HUDDesignOverlay.swift (HUDConfirmRequest, HUDConfirmState,
 // HUDConfirmBar, HUDToastRequest, HUDToastState, HUDToast, HUDCenterOverlay).
 // LIB-59..67. One per HUD (in design::Context), shared by every redesigned
-// module; it replaces the separate quit card (app/quit_confirmation.*) and the
-// "Keep this UI scale?" card (modules/settings_safety.*), whose owners move to
-// confirm requests in Phase B.
+// module; it replaces the separate quit card and the "Keep this UI scale?"
+// card of v1.2.0, both confirm requests now (Phase B).
 //
 // Coordinates are content-box px; the overlay sits on the tilted plane like
 // the content box (boxWorld) but is composed ABOVE every module (the native

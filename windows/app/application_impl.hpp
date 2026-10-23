@@ -13,7 +13,6 @@
 #include "app/archive_service.hpp"
 #include "app/source_watch_session.hpp"
 #include "app/projection_handoff.hpp"
-#include "app/quit_confirmation.hpp"
 #include "app/application_login_item.hpp"
 #include "app/utility_executor.hpp"
 #include "app/hud_automation.hpp"
@@ -35,6 +34,9 @@
 #include "modules/hud_clock.hpp"
 #include "native/event_log_owner.hpp"
 #include "tools/notes_preview.hpp"
+#include "tools/hud_design_overlay_owner.hpp"
+#include "tools/hud_design_owner.hpp"
+#include "native/notes_clipboard.hpp"
 #include "tools/archive_options.hpp"
 #include "tools/archive_media_binding.hpp"
 #include "native/archive_text_rules.hpp"
@@ -42,13 +44,20 @@
 #include "native/watch_appearance.hpp"
 #include "core/source_color.hpp"
 #include "tools/shelf_preview.hpp"
-#include "tools/clipboard_preview.hpp"
-#include "tools/volume_preview.hpp"
-#include "tools/battery_preview.hpp"
-#include "tools/storage_options.hpp"
-#include "tools/activity_preview.hpp"
+#include "modules/clipboard_canvas.hpp"
+#include "modules/event_log_canvas.hpp"
+#include "modules/volume_canvas.hpp"
+#include "native/volume_icon_provider.hpp"
+#include "modules/battery_canvas.hpp"
+#include "modules/boot_log.hpp"
+#include "modules/power_policy.hpp"
+#include "native/power_service.hpp"
+#include "tools/storage_owner.hpp"
+#include "tools/activity_owner.hpp"
 #include "tools/reader_preview.hpp"
-#include "tools/calendar_preview.hpp"
+#include "modules/calendar_canvas.hpp"
+#include "modules/work_mode_canvas.hpp"
+#include "native/calendar_civil.hpp"
 #include "native/calendar_notifications.hpp"
 #include "tools/map_preview.hpp"
 #include "tools/orbipom_preview.hpp"
@@ -58,18 +67,13 @@
 #include "core/data/map_store.hpp"
 #include "tools/projection_workspace.hpp"
 #include "native/reader_owner.hpp"
-#include "native/activity_assets.hpp"
 #include "native/activity_provider.hpp"
 #include "native/activity_catalog.hpp"
 #include "native/activity_disk.hpp"
-#include "tools/event_log_preview.hpp"
-#include "tools/work_mode_preview.hpp"
-#include "native/clipboard_assets.hpp"
 #include "native/clipboard_provider.hpp"
 #include "native/shelf_file_picker.hpp"
 #include "native/volume_provider.hpp"
 #include "native/audio_runtime.hpp"
-#include "native/volume_strings.hpp"
 #include "native/watch_presentation.hpp"
 #include "native/chrome_presentation.hpp"
 #include "native/watch_content.hpp"
@@ -267,6 +271,11 @@ struct Application::Impl {
         void closeOverlay() override;
         void openLinkAfterClose(std::string) override;
         bool updateSettings(const std::function<void(ehud::data::Settings&)>&) override;
+        modules::design::Context* designContext() noexcept override;
+        bool designOwnerOptions(tools::DesignOwnerOptions&, std::string name, const ModuleRouting&) override;
+        void setDesignScreen(core::Module) override;
+        const ehud::data::ModuleLayout* moduleLayout() const noexcept override;
+        std::uint64_t moduleLayoutRevision() const noexcept override;
         bool chooseFiles(const ApplicationFileRequest&, std::function<void(ApplicationFileResult)>) override;
         void cancelFileChoice() override;
         std::uint32_t registerMessage() override;
@@ -288,7 +297,6 @@ struct Application::Impl {
         struct Service { void* value{}; const std::type_info* type{}; std::string publisher; };
         std::map<std::string, Service, std::less<>> services_;
         std::string constructing_;
-        std::uint32_t registeredMessages_{};
     };
 
     explicit Impl(ApplicationOptions);
@@ -372,6 +380,8 @@ struct Application::Impl {
     void updateBackdrop(double time);
     bool updateClock();
     void updateCalendarWake();
+    // HUDCalendarController.refreshForSystemChange after a clock, zone, locale or wake change.
+    void calendarSystemChanged();
     bool flushCalendar();
     void applyConfiguration(double time);
     core::FrameDemand demand(double time);
@@ -394,7 +404,6 @@ struct Application::Impl {
     void traceOpening(double time);
     void traceOpened(double time);
     native::ScreenReaderPeerHooks peerHooks();
-    VolumeModuleHooks screenHooks();
     void unregisterModule(std::unique_ptr<ModuleOwner>&) noexcept;
     // --- module areas and host broadcasts ---------------------------------------
     void constructAreas();
@@ -415,6 +424,12 @@ struct Application::Impl {
     void refreshUpdateStatus();
     AppShortcutNavigation* appNavigation() const noexcept;
     void bindNavigation(double time);
+    // System > Modules (HUDDesktopWatchNavigation.entries(shortcuts:layout:),
+    // HUDModuleLayout.restorable): the right-hand source actions in the
+    // layout's visible order without the hidden ones, and the module the HUD
+    // reopens on (application_navigation.cpp).
+    std::vector<std::uint64_t> layoutRightActions(std::span<const std::uint64_t> right) const;
+    core::Module restorableModule(core::Module) const;
     void syncActivityTelemetry(double time);
     void setProjectionActive(bool active, double time);
     // The HUD window's one OLE file-drop route (SystemHUDView.performDragOperation).
@@ -528,6 +543,39 @@ struct Application::Impl {
     void onDeadline(double time);
     void onFrame(double time);
 
+    // --- Redesigned modules: the design library host (B2a) -------------------------
+    // The shared centre overlay and the one design Context: constructed right
+    // after Notes (its TSF manager), before every design owner, so it is the
+    // first owner of every frame (the render scale reaches the Context before
+    // the design owners pose) and its pointer/wheel/key captures route first.
+    void constructDesignOverlay();
+    // DesignOwnerOptions of a built-in or area design owner (one shared set of
+    // text-field services; a private change message per owner).
+    tools::DesignOwnerOptions designOwnerOptions(std::string name, const ModuleRouting&);
+    // ModulePresentation::setDesignScreen through Notes' module presentation;
+    // registerModule / constructAreas mark tools::DesignModuleOwner modules.
+    void setDesignScreen(core::Module);
+    void markDesignScreens(const ModuleOwner&);
+    // SystemHUDView.presentQuitConfirmation (Mac 1.3.0): quit asks on the
+    // shared confirm bar; Quit accepts after the bar's 120 ms press.
+    void presentQuitConfirmation(double time);
+    // The private WM_APP ids (areas and design owners share one range).
+    std::uint32_t registerMessage();
+    // SystemHUDView.moduleContrast + fadeModuleContrast (SHELL-27): the
+    // centre's radial contrast backdrop on the core plane, below the module
+    // host; it fades over .13 s with the leaving module (none behind Now
+    // Playing). One design-scene surface (application.cpp).
+    struct ModuleContrast {
+        modules::design::LayerArena arena{"shell.contrast"};
+        modules::design::Layer& root;
+        modules::design::Layer& ramp;
+        gpu::NativeDesignScene scene;
+        std::optional<bool> dark;
+        bool visible{true}, posed{};
+        ModuleContrast(gpu::LayerRasterizer&, const gpu::LayerRasterOptions&);
+    };
+    void updateModuleContrast(const core::Matrix4& center, double time);
+
     // --- module construction ----------------------------------------------------
     void constructNotes();
     void constructShelf();
@@ -541,6 +589,7 @@ struct Application::Impl {
     void constructActivity();
     void constructEventLog();
     void constructBattery();
+    bool updateBattery(const modules::BatteryReading&,double time);
     void constructWorkMode();
     void constructVolume();
     gpu::VolumeQueuedIconProvider* constructVolumeIcons(gpu::VolumeQueuedIconProvider::Extractor);
@@ -609,19 +658,23 @@ struct Application::Impl {
     std::unique_ptr<tools::ShelfPreview> shelf;
     std::optional<ehud::data::ShelfFileAccess> pendingShelfReveal;
     std::optional<ehud::data::ShelfFileAccess> pendingShelfOpen; // the properties card's Open, after the HUD closed like Reveal
-    std::unique_ptr<gpu::NativeClipboardAssets> clipboardAssets;
-    std::unique_ptr<tools::ClipboardPreview> clipboard;
+    modules::ClipboardCanvas* clipboardCanvas{};        // owned by clipboardModuleOwner
     // Volume app-row icons on the shared utility queue; declared before the
     // Volume owner, which borrows its image cache (constructVolumeIcons).
     std::unique_ptr<gpu::VolumeQueuedIconProvider> volumeIcons;
     UtilityExecutor::Route volumeIconRoute{};
-    std::unique_ptr<tools::VolumePreview> volume;
-    std::unique_ptr<tools::EventLogPreview> eventLog;
-    std::unique_ptr<tools::WorkModePreview> workMode;
-    std::unique_ptr<tools::BatteryPreview> battery;
+    modules::VolumeCanvas* volumeCanvas{};              // owned by volumeModuleOwner
+    modules::EventLogCanvas* eventLogCanvas{};          // owned by eventLogModuleOwner
+    // Work Mode: the host's one controller (the Personal Profile and Account
+    // areas observe it) and its canvas, owned by workModeModuleOwner (a design owner).
+    std::unique_ptr<modules::WorkModeController> workMode;
+    modules::WorkModeCanvas* workModeCanvas{};
+    // The Battery canvas (Power), owned by batteryModuleOwner (a design owner).
+    modules::BatteryCanvas* battery{};
+    modules::BatteryReading batteryReading;
     std::unique_ptr<tools::SettingsPreview> settingsUI;
-    std::unique_ptr<tools::StoragePreview> storage;
-    std::unique_ptr<tools::ActivityPreview> activity;
+    std::unique_ptr<tools::StorageService> storage;
+    std::unique_ptr<tools::ActivityService> activity;
     gpu::LayerComposition composition;
     // Process/thread/GPU priority while the HUD is shown (restored concealed).
     PresentationPriority presentationPriority;
@@ -654,7 +707,7 @@ struct Application::Impl {
     std::shared_ptr<CalendarFixtureNotifications> calendarFixture;
     std::unique_ptr<gpu::NativeCalendarNotifications> calendarNotifications;
     std::unique_ptr<modules::CalendarState> calendarState;
-    std::unique_ptr<tools::CalendarPreview> calendar;
+    modules::CalendarCanvas* calendar{};      // owned by calendarModuleOwner (a design owner)
     UtilityExecutor::Route calendarRoute{};
     bool calendarRefreshQueued{};
     double calendarTime{};
@@ -667,7 +720,7 @@ struct Application::Impl {
     bool readerRefreshQueued{}, readerActionQueued{};
     double readerTime{};
     std::optional<tools::ReaderImportAction> pendingReaderAction, pendingReaderPicker;
-    bool clipboardDirty{}, clipboardRefreshQueued{};
+    bool clipboardRefreshQueued{};
     std::unique_ptr<EventLogSaveQueue> eventSaves;
     std::unique_ptr<SettingsSaveQueue> settingsSaves;
     std::unique_ptr<gpu::NativeShelfFilePicker> mediaPicker;
@@ -706,6 +759,28 @@ struct Application::Impl {
     std::function<void(ApplicationFileResult)> areaPicker; // pending area dialog completion
     std::optional<tools::ArchiveMediaAction> pendingArchivePicker;
     std::optional<core::Module> pendingModule;
+    // The design library's shared overlay (confirm bar, toast, content dim) and
+    // its Context; outlives every design owner (they borrow the Context).
+    std::unique_ptr<tools::DesignOverlayOwner> designOverlay;
+    std::shared_ptr<gpu::NotesClipboard> designClipboard; // the design text fields' one clipboard
+    std::unique_ptr<ModuleContrast> moduleContrast;      // the centre's contrast backdrop (SHELL-27)
+    bool quitPromptOpen{};                               // the quit request is on the confirm bar
+    std::uint32_t registeredMessages{};                  // registerMessage(): areas and design owners
+    // The applied record's System > Modules layout (ApplicationHost::moduleLayout).
+    ehud::data::ModuleLayout moduleLayout;
+    std::uint64_t moduleLayoutRevision{};
+    // SystemHUDView.animateEntrance: the first module of a session enters from
+    // the disc centre as the HUD deploys (ModulePresentation::beginEntrance),
+    // unless today's boot log keeps the centre hidden (B2c sets this before
+    // open() and plays the entrance itself when the log finishes).
+    bool deferDeployEntrance{};
+    // The daily boot log's battery and calendar lines (published for the
+    // facility area, native/facility_owner.hpp).
+    modules::boot::BootLogSources bootLogSources;
+    // The facility area (native/facility_owner.hpp): its modal entries (the
+    // banner, canvas z 1000, and the boot log, HUDLayerOrder.bootLog 30) are
+    // composed above the shared overlay. Address only; cleared with the areas.
+    ModuleOwner* facilityOwner{};
     // Module adapters (registration order = construction order).
     std::unique_ptr<ModuleOwner> notesModuleOwner, shelfModuleOwner, mapModuleOwner, readerModuleOwner, calendarModuleOwner,
         clipboardModuleOwner, archiveModuleOwner, storageModuleOwner, activityModuleOwner, eventLogModuleOwner,
@@ -813,6 +888,9 @@ struct Application::Impl {
     struct PublishedEntry{gpu::LayerScene*scene;std::uint64_t content,resources;const gpu::DrawObject*after;std::size_t count;const gpu::PlaneAlphaMask*cut;};
     std::vector<gpu::LayerCompositionEntry> ordered;
     std::vector<PublishedEntry> published;
+    // The published entries of the current and incoming modules (the Mac
+    // moduleContent.layer the confirm dim blurs and darkens) within `ordered`.
+    std::size_t moduleEntryBegin{}, moduleEntryCount{};
     std::vector<const ModuleOwner*> appendedOwners;
     std::uint64_t publishedNotesRevision{};
     // Session settings and environment.
@@ -842,7 +920,6 @@ struct Application::Impl {
     std::optional<std::int64_t> lifecycleOpening, lifecycleClosing;
     bool switchPresented{}; // the last drawn frame was inside a module switch (present())
     bool settingsLoaded{}, launchPending{};
-    std::unique_ptr<QuitConfirmationOwner> quitConfirmation; // red power button card
     std::unique_ptr<ModuleOwner> clockAutomation;            // the desktop clock's UIA buttons (no drawing, no input)
     // HUDSourceWatchView's accessibility buttons: one per bound desktop button,
     // the red power button, the profile card and the two scroll buttons.

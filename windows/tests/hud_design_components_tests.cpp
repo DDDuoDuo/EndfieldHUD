@@ -12,6 +12,7 @@
 #include "modules/hud_design_redaction.hpp"
 #include "modules/hud_design_scroll.hpp"
 #include "modules/hud_design_text_field.hpp"
+#include "tests/hud_design_oracle.hpp"
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -24,27 +25,12 @@
 #include <stdexcept>
 
 namespace d = endfield::modules::design;
-namespace { const d::CharacterRules& characters() { static const auto rules = d::portableCharacterRules(); return rules; } }
 using Json = ehud::data::Json;
 using d::Channel; using d::Color; using d::Point; using d::Rect;
 namespace {
+using namespace endfield::tests::design_oracle;
 unsigned checks{};
 void check(bool v, const std::string& what) { ++checks; if (!v) throw std::runtime_error(what); }
-bool near(double a, double b, double e = 1e-6) { return std::abs(a - b) <= e; }
-bool near(Rect a, Rect b, double e = 1e-6) { return near(a.x, b.x, e) && near(a.y, b.y, e) && near(a.width, b.width, e) && near(a.height, b.height, e); }
-bool near(Color a, Color b, double e = 1e-6) { return near(a.r, b.r, e) && near(a.g, b.g, e) && near(a.b, b.b, e) && near(a.a, b.a, e); }
-std::string str(Rect r) { std::ostringstream s; s << "(" << r.x << ", " << r.y << ", " << r.width << ", " << r.height << ")"; return s.str(); }
-
-// A deterministic stand-in for the native measurer: .55 em per character plus
-// the tracking after each one, rounded up to .5 px like HUDText.width.
-struct FakeMeasurer final : d::TextMeasurer {
-    double width(std::span<const d::TextRun> runs, d::TextRegion) override {
-        double w = 0;
-        for (const auto& r : runs) { const double n = double(characters().count(r.text)); w += n * r.style.size * (.55 + r.style.tracking); }
-        return std::ceil(w * 2) / 2;
-    }
-    d::LineMetrics metrics(const d::TextStyle& s, d::TextRegion, double) override { return {s.size * s.lineHeight, s.size * .8, s.size * .2}; }
-};
 double fakeWidth(std::string_view text, double size, double tracking = 0) { return std::ceil(double(characters().count(text)) * size * (.55 + tracking) * 2) / 2; }
 
 struct World {
@@ -71,7 +57,6 @@ std::optional<Color> colorKey(const d::Layer& l, std::string_view key) {
     const auto& a = (*n)[key]["sRGB"].array();
     return Color{a[0].number(), a[1].number(), a[2].number(), a[3].number()};
 }
-Color multiply(Color a, std::optional<Color> t) { if (!t) return a; return {a.r * t->r, a.g * t->g, a.b * t->b, a.a * t->a}; }
 // What the layer shows: its content colour times its model tint (a white-authored tinted surface shows the tint).
 std::optional<Color> fill(const d::Layer& l) { const auto c = colorKey(l, "backgroundColor"); return c ? std::optional(multiply(*c, l.tint())) : std::nullopt; }
 std::optional<Color> border(const d::Layer& l) { const auto c = colorKey(l, "borderColor"); return c ? std::optional(multiply(*c, l.tint())) : std::nullopt; }
@@ -234,7 +219,7 @@ void rows() {
     auto& custom = w.b.make<d::RowPlate>("custom", "Custom", std::nullopt, d::RowPlate::Variant::standard, "›", 590.0, 56.0);
     check(custom.layer().bounds().height == 56 && near(must(custom.layer(), "row.notch").frame(), {0, 9, 3, 38}), "Custom height 56");
     auto& toggle = w.b.make<d::Toggle>("row.toggle", "Toggle", true);
-    auto& button = w.b.make<d::Button>("row.button", "Open", std::nullopt, d::Button::Kind::secondary, d::Button::Height::small);
+    auto& button = w.b.make<d::Button>("row.button", "Open", std::nullopt, d::Button::Kind::secondary, d::Button::Height::compact);
     auto& cluster = w.b.make<d::RowPlate>("cluster", "Slider row");
     cluster.setCluster({&button.layer(), &toggle.layer()});
     cluster.setTitleInset(56);
@@ -332,7 +317,7 @@ void buttons() {
     w.move(std::nullopt);
     primary.setEnabled(false);
     check(model(primary.layer(), Channel::opacity) == .35, "Disabled .35");
-    auto& secondary = w.b.make<d::Button>("secondary", "Open", std::nullopt, K::secondary, H::small);
+    auto& secondary = w.b.make<d::Button>("secondary", "Open", std::nullopt, K::secondary, H::compact);
     secondary.place({0, 100});
     check(near(secondary.preferredWidth(), std::ceil(20 + fakeWidth("OPEN", 10.5, .08) + 11)) && secondary.layer().bounds().height == 26, "Secondary small: leading 20, padding 11, h 26");
     check(!secondary.target()->path && near(*fill(must(secondary.layer(), "button.plate")), w.env.palette.token(d::ThemeToken::secondaryButton)), "Secondary: flat plate, rect target");
@@ -344,7 +329,7 @@ void buttons() {
     auto& flex = w.b.make<d::Button>("flex", "Flex", d::Icon::check, K::light);
     flex.place({12, 30}, 220.0);
     check(near(flex.layer().bounds().width, 220) && near(must(flex.layer(), "button.icon").frame().x, 16 + std::round((220 - flex.preferredWidth()) / 2)), "Flex centres icon and title");
-    auto& iconOnly = w.b.make<d::Button>("plus", "", d::Icon::plus, K::primary, H::small);
+    auto& iconOnly = w.b.make<d::Button>("plus", "", d::Icon::plus, K::primary, H::compact);
     check(near(iconOnly.preferredWidth(), std::ceil(11 + 15 + 11)), "Icon-only: no gap after the icon");
 
     using S = d::IconButton::Style;
@@ -497,7 +482,7 @@ void menus() {
     check(near(model(caret, Channel::rotation), 3.14159265358979323846) && model(must(dropdown.layer(), "dropdown.bar"), Channel::scaleY) == 1, "Open: caret turned, bar kept");
     const auto popUp = items(dropdown, w.root);
     check(popUp.size() == 1 && popUp[0].role == d::AccessibilityRole::popUp && popUp[0].value == "简体中文", "popUp with the value");
-    auto& small = w.b.make<d::Dropdown>("small", "Sort", "Newest first", std::nullopt, d::Dropdown::Height::small);
+    auto& small = w.b.make<d::Dropdown>("small", "Sort", "Newest first", std::nullopt, d::Dropdown::Height::compact);
     check(near(small.layer().bounds().width, std::max(96.0, 12 + fakeWidth("Newest first", 12) + 33)) && small.layer().bounds().height == 26, "Small: natural width, 26");
     small.setArtwork(d::ImageSource{d::ImageSource::Kind::memory, "logo", {}, 1}, d::Size{80, 40}, 18);
     check(must(small.layer(), "dropdown.value").hidden() && near(must(small.layer(), "dropdown.artwork").frame().height, 18) && small.valueText() == "Newest first", "Artwork replaces the text, the value stays spoken");
@@ -740,7 +725,13 @@ void scrolling() {
     check(area.layer().masksToBounds() && area.track().hidden() && near(area.contentWidth(), 590) && area.maximumOffset() == 0, "Short content: no bar, full width");
     area.setContentHeight(900);
     check(!area.track().hidden() && near(area.contentWidth(), 580) && area.maximumOffset() == 600, "Long content: the bar takes 10 px");
-    check(near(must(area.layer(), "scroll.thumb").frame(), {0, 0, 4, 100}) && model(area.track(), Channel::opacity) == 0, "Thumb max(18, h^2 / content); hidden at rest");
+    const auto& thumb = must(area.layer(), "scroll.thumb");
+    const auto thumbContent = thumb.content();
+    check(near(thumb.frame().y, 0) && near(d::thumbLength(thumb), 100) && model(area.track(), Channel::opacity) == 0, "Thumb max(18, h^2 / content); hidden at rest");
+    // One 4 x 18 raster stretched: a length change never repaints it.
+    area.setContentHeight(1800);
+    check(near(d::thumbLength(thumb), 50) && thumb.bounds() == d::Size{4, 18} && thumb.content() == thumbContent, "A length change only rescales the thumb");
+    area.setContentHeight(900);
     check(area.scroll(120) && near(area.offset(), 120) && near(area.content().frame().y, -120) && near(must(area.layer(), "scroll.thumb").frame().y, 120.0 / 600 * 200), "scroll(by:) moves");
     check(area.bar().shown() && model(area.track(), Channel::opacity) == 1 && near(area.track().property[std::size_t(Channel::opacity)].duration, .15), "Scrolling shows the bar (.15 easeOut)");
     w.at(w.env.now + .5);
@@ -864,7 +855,7 @@ void header() {
         World w; w.env.language = language;
         d::ModuleHeader header(w.env, "clipboard");
         d::ControlSet page; d::LayerArena pageArena("page", &w.env.deadlines); d::Builder pb{w.env, pageArena, page};
-        auto& clear = pb.make<d::Button>("header.clear", "Clear", d::Icon::trash, d::Button::Kind::secondary, d::Button::Height::small);
+        auto& clear = pb.make<d::Button>("header.clear", "Clear", d::Icon::trash, d::Button::Kind::secondary, d::Button::Height::compact);
         auto& pin = pb.make<d::IconButton>("header.pin", "Pin", d::Icon::pin);
         w.host(header.layer());
         header.configure({"CLIPBOARD", "Detail"}, "MOD-03", d::ModuleTitle::make("Clipboard", "剪贴板缓存", language), "07", true, {&clear, &pin});
@@ -1074,212 +1065,6 @@ void emission() {
 // the comparison is on the pixels' description, not on the layer structure;
 // controls (hover, press, enabled, model rects, accessibility) compare 1:1.
 // ---------------------------------------------------------------------------
-struct RecordedMeasurer final : d::TextMeasurer {
-    std::map<std::string, double> widths; std::map<std::string, d::LineMetrics> metric; FakeMeasurer fallback; std::vector<std::string> misses;
-    static std::string number(double v) { std::ostringstream s; s.precision(10); s << (std::round(v * 1e6) / 1e6); return s.str(); }
-    static std::string key(std::span<const d::TextRun> runs, d::TextRegion region) {
-        std::string s(d::regionTag(region));
-        for (const auto& r : runs) if (!r.text.empty()) s += '|' + r.text + '|' + number(r.style.size) + '|' + std::to_string(int(d::resolved(r.style.weight))) + '|' + number(r.style.tracking) + '|' + (r.style.tabular ? "t" : "f");
-        return s;
-    }
-    static std::string metricKey(double size, int weight, double lineHeight, bool tabular, std::string_view language) {
-        return number(size) + '|' + std::to_string(weight) + '|' + number(lineHeight) + '|' + (tabular ? "t" : "f") + '|' + std::string(language);
-    }
-    double width(std::span<const d::TextRun> runs, d::TextRegion region) override {
-        const auto k = key(runs, region);
-        if (const auto it = widths.find(k); it != widths.end()) return it->second;
-        misses.push_back(k);
-        return fallback.width(runs, region);
-    }
-    d::LineMetrics metrics(const d::TextStyle& s, d::TextRegion region, double) override {
-        const auto it = metric.find(metricKey(s.size, int(d::resolved(s.weight)), s.lineHeight, s.tabular, d::regionTag(region)));
-        if (it != metric.end()) return it->second;
-        misses.push_back("metrics " + metricKey(s.size, int(d::resolved(s.weight)), s.lineHeight, s.tabular, d::regionTag(region)));
-        return fallback.metrics(s, region, 1);
-    }
-};
-// The fixture holds more than the shared parser's one million nodes in one
-// document: split it at the top level and parse each section (and each row of
-// the large arrays) on its own. Strings are skipped with their escapes.
-std::size_t skipValue(std::string_view t, std::size_t i) {
-    int depth = 0;
-    for (; i < t.size(); ++i) {
-        const char c = t[i];
-        if (c == '"') { for (++i; i < t.size() && t[i] != '"'; ++i) if (t[i] == '\\') ++i; if (depth == 0) return i + 1; continue; }
-        if (c == '{' || c == '[') ++depth;
-        else if (c == '}' || c == ']') { if (--depth == 0) return i + 1; if (depth < 0) return i; }
-        else if (depth == 0 && (c == ',')) return i;
-    }
-    return i;
-}
-std::vector<std::string_view> items(std::string_view array) {
-    std::vector<std::string_view> out;
-    std::size_t i = array.find('[') + 1;
-    while (i < array.size()) {
-        while (i < array.size() && (std::isspace(static_cast<unsigned char>(array[i])) || array[i] == ',')) ++i;
-        if (i >= array.size() || array[i] == ']') break;
-        const std::size_t end = skipValue(array, i);
-        out.push_back(array.substr(i, end - i)); i = end;
-    }
-    return out;
-}
-std::optional<Json> loadOracle(const char* path) {
-    if (!path || !std::filesystem::exists(path)) return std::nullopt;
-    std::ifstream in(path, std::ios::binary); std::ostringstream s; s << in.rdbuf();
-    const std::string text = s.str();
-    Json::Object root;
-    std::size_t i = text.find('{') + 1;
-    while (i < text.size()) {
-        const std::size_t keyStart = text.find('"', i);
-        if (keyStart == std::string::npos) break;
-        const std::size_t keyEnd = text.find('"', keyStart + 1);
-        const std::string key = text.substr(keyStart + 1, keyEnd - keyStart - 1);
-        std::size_t value = text.find(':', keyEnd) + 1;
-        while (std::isspace(static_cast<unsigned char>(text[value]))) ++value;
-        const std::size_t end = skipValue(text, value);
-        const std::string_view raw(text.data() + value, end - value);
-        const auto parse = [&](std::string_view part) {
-            try { return Json::parse(part, 64u * 1024 * 1024); }
-            catch (const std::exception&) { throw std::runtime_error("Oracle section " + key + " does not parse near: " + std::string(part.substr(0, 160))); }
-        };
-        if (key == "components") { Json::Array rows; for (const auto row : items(raw)) rows.push_back(parse(row)); root[key] = std::move(rows); }
-        else if (key == "text" || key == "layerDefaults") root[key] = parse(raw);
-        i = end + 1;
-    }
-    return Json(std::move(root));
-}
-Rect rectOf(const Json& a) { if (!a.isArray()) return {}; const auto& v = a.array(); return {v[0].number(), v[1].number(), v[2].number(), v[3].number()}; }
-std::optional<Color> rgbaOf(const Json& a) {
-    if (!a.isArray()) return std::nullopt;
-    const auto& v = a.array();
-    return Color{v[0].number(), v[1].number(), v[2].number(), v[3].number()};
-}
-using d::Affine;
-Rect bound(const Affine& m, Rect r) {
-    const Point c[4]{m.apply({r.x, r.y}), m.apply({r.x + r.width, r.y}), m.apply({r.x, r.y + r.height}), m.apply({r.x + r.width, r.y + r.height})};
-    double l = c[0].x, rr = c[0].x, t = c[0].y, b = c[0].y;
-    for (const auto& p : c) { l = std::min(l, p.x); rr = std::max(rr, p.x); t = std::min(t, p.y); b = std::max(b, p.y); }
-    return {l, t, rr - l, b - t};
-}
-Rect pathBounds(const Json& path) {
-    double l = 1e300, r = -1e300, t = 1e300, b = -1e300;
-    for (const auto& op : path.array()) for (const auto& p : op["points"].array()) {
-        const double x = p.array()[0].number(), y = p.array()[1].number();
-        l = std::min(l, x); r = std::max(r, x); t = std::min(t, y); b = std::max(b, y);
-    }
-    return l > r ? Rect{} : Rect{l, t, r - l, b - t};
-}
-struct Primitive {
-    std::string kind;          // fill, border, shape, gradient, artwork, text
-    Rect rect;                 // host coordinates
-    std::optional<Color> color;
-    std::string text;          // text: runs; border: width
-    std::vector<Color> colors; // text runs
-    double opacity{1};
-    std::string where;
-};
-std::string describe(const Primitive& p) {
-    std::ostringstream s;
-    s << p.kind << ' ' << str(p.rect) << " a=" << p.opacity;
-    if (p.color) s << " c=(" << p.color->r << ',' << p.color->g << ',' << p.color->b << ',' << p.color->a << ')';
-    if (!p.text.empty()) s << " '" << p.text << "'";
-    s << " @" << p.where;
-    return s.str();
-}
-// The Mac tree (ModuleReferenceLayerEncoder rows, defaults pruned).
-void macPrimitives(const Json& n, const Affine& parent, double opacity, std::vector<Primitive>& out, const std::string& path) {
-    const Rect bounds = rectOf(n["bounds"]), frame = rectOf(n["frame"]);
-    Point anchor{.5, .5};
-    if (n["anchorPoint"].isArray()) anchor = {n["anchorPoint"].array()[0].number(), n["anchorPoint"].array()[1].number()};
-    Affine transform;
-    if (n["transform"].isArray()) {
-        const auto& m = n["transform"].array();
-        transform = {m[0].array()[0].number(), m[0].array()[1].number(), m[1].array()[0].number(), m[1].array()[1].number(), m[3].array()[0].number(), m[3].array()[1].number()};
-    }
-    Point position{frame.x + anchor.x * frame.width, frame.y + anchor.y * frame.height};
-    if (n["position"].isArray()) position = {n["position"].array()[0].number(), n["position"].array()[1].number()};
-    const Affine local = Affine::translation(position.x, position.y) * transform * Affine::translation(-anchor.x * bounds.width - bounds.x, -anchor.y * bounds.height - bounds.y);
-    const Affine world = parent * local;
-    double alpha = opacity * (n.contains("opacity") ? n["opacity"].number() : 1);
-    if (n.contains("hidden") && n["hidden"].boolean()) alpha = 0;
-    const std::string where = path + "/" + (n["name"].isString() ? n["name"].string() : n["class"].isString() ? n["class"].string() : std::string("layer"));
-    const Rect box = bound(world, {bounds.x, bounds.y, bounds.width, bounds.height});
-    const std::string radius = n.contains("cornerRadius") && n["cornerRadius"].number() > 0 ? " r" + RecordedMeasurer::number(n["cornerRadius"].number()) : "";
-    if (const auto c = rgbaOf(n["backgroundColor"])) out.push_back({"fill", box, c, radius, {}, alpha, where});
-    if (n.contains("borderWidth") && n["borderWidth"].number() > 0) out.push_back({"border", box, rgbaOf(n["borderColor"]).value_or(Color{0, 0, 0, 1}), RecordedMeasurer::number(n["borderWidth"].number()) + radius, {}, alpha, where});
-    if (n["contents"].isObject() || n["hatch"].isObject()) out.push_back({"artwork", box, std::nullopt, {}, {}, alpha, where});
-    if (n["shape"].isObject() && n["shape"]["path"].isArray() && !n["target"].isObject()) {
-        const auto fill = rgbaOf(n["shape"]["fillColor"]);
-        if (fill) out.push_back({"shape", bound(world, pathBounds(n["shape"]["path"])), fill, {}, {}, alpha, where});
-    }
-    if (n["gradient"].isObject()) out.push_back({"gradient", box, std::nullopt, {}, {}, alpha, where});
-    if (n["icon"].isObject()) { out.push_back({"icon", box, rgbaOf(n["icon"]["color"]), {}, {}, alpha, where + ":" + (n["icon"]["name"].isString() ? n["icon"]["name"].string() : "")}); return; }
-    if (n["designText"].isObject()) {
-        const auto& t = n["designText"];
-        Primitive p{"text", bound(parent, rectOf(t["lineFrame"])), std::nullopt, {}, {}, alpha, where};
-        for (const auto& r : t["runs"].array()) { p.text += r["text"].string(); p.colors.push_back(*rgbaOf(r["style"]["color"])); }
-        p.text += " [" + t["alignment"].string() + " " + std::to_string(int(t["maximumLines"].number())) + "]";
-        if (!p.text.starts_with(" [")) out.push_back(std::move(p));
-    }
-    if (n["children"].isArray()) for (const auto& c : n["children"].array()) macPrimitives(c, world, alpha, out, where);
-}
-// A Windows content node subtree (anchor (0, 0) frame nodes, hud_design_nodes).
-void nodePrimitives(const Json& n, const Affine& parent, double alpha, std::optional<Color> tint, std::vector<Primitive>& out, const std::string& where, bool top) {
-    const Rect b = rectOf(n["bounds"]);
-    const auto& p = n["position"].array();
-    const Affine world = parent * Affine::translation(p[0].number(), p[1].number());
-    const Rect box = bound(world, {0, 0, b.width, b.height});
-    const auto colour = [&](const Json& c) { return c.isObject() ? std::optional(multiply(*rgbaOf(c["sRGB"]), tint)) : std::nullopt; };
-    // The Mac's cached HUDArtwork rasters (plates, the micro tag, hatches) are
-    // composite nodes here: one artwork primitive, their own innards skipped.
-    const auto ends = [](const Json& c, std::string_view suffix) { return c["id"].isString() && std::string_view(c["id"].string()).ends_with(suffix); };
-    // An iconNode (HUDIconLayer): its part shapes are one icon in the tint.
-    if (top && n["children"].isArray() && !n["children"].array().empty() && std::all_of(n["children"].array().begin(), n["children"].array().end(), [&](const Json& c) {
-            const std::string prefix = n["id"].string() + ".";
-            const std::string id = c["id"].isString() ? c["id"].string() : std::string();
-            return c["shape"].isObject() && id.starts_with(prefix) && id.size() > prefix.size()
-                && std::all_of(id.begin() + std::ptrdiff_t(prefix.size()), id.end(), [](char ch) { return ch >= '0' && ch <= '9'; }); })) {
-        const auto& part = n["children"].array()[0]["shape"];
-        out.push_back({"icon", box, colour(part["fillColor"].isObject() ? part["fillColor"] : part["strokeColor"]), {}, {}, alpha, where});
-        return;
-    }
-    bool microTag = false;
-    if (n["children"].isArray()) for (const auto& c : n["children"].array()) microTag = microTag || ends(c, ".hatch");
-    if (top && (n["mask"].isObject() || n["masksToBounds"].isBool() || microTag || n["contents"].isObject() || n["requiredSourceImage"].isString())) {
-        out.push_back({"artwork", box, std::nullopt, {}, {}, alpha, where});
-        if (microTag) return;
-        if (n["children"].isArray()) for (const auto& c : n["children"].array())
-            if (!ends(c, ".fill") && !ends(c, ".highlight")) nodePrimitives(c, world, alpha, tint, out, where, false);
-        return;
-    }
-    const std::string radius = n.contains("cornerRadius") && n["cornerRadius"].number() > 0 ? " r" + RecordedMeasurer::number(n["cornerRadius"].number()) : "";
-    if (const auto c = colour(n["backgroundColor"])) out.push_back({"fill", box, c, radius, {}, alpha, where});
-    if (n.contains("borderWidth") && n["borderWidth"].number() > 0) out.push_back({"border", box, colour(n["borderColor"]), RecordedMeasurer::number(n["borderWidth"].number()) + radius, {}, alpha, where});
-    if (n["shape"].isObject()) if (const auto c = colour(n["shape"]["fillColor"])) out.push_back({"shape", bound(world, pathBounds(n["shape"]["path"])), c, {}, {}, alpha, where});
-    if (n["gradient"].isObject()) out.push_back({"gradient", box, std::nullopt, {}, {}, alpha, where});
-    if (n["children"].isArray()) for (const auto& c : n["children"].array()) nodePrimitives(c, world, alpha, tint, out, where, false);
-}
-void layerPrimitives(const d::Layer& l, const d::Layer& host, double opacity, std::vector<Primitive>& out) {
-    double alpha = opacity * l.value(Channel::opacity);
-    if (l.hidden()) alpha = 0;
-    if (const auto& node = l.content()) nodePrimitives(*node, d::modelWorld(l, host), alpha, l.tint(), out, l.id(), true);
-    if (const auto* t = l.text()) {
-        const Affine parent = l.parent() ? d::modelWorld(*l.parent(), host) : Affine{};
-        Primitive p{"text", bound(parent, t->lineFrame), std::nullopt, {}, {}, alpha, l.id()};
-        for (const auto& r : t->runs) { p.text += r.text; p.colors.push_back(multiply(r.style.color, l.tint())); }
-        p.text += std::string(" [") + (t->alignment == d::TextAlignment::left ? "left" : t->alignment == d::TextAlignment::center ? "center" : "right") + " " + std::to_string(t->maximumLines) + "]";
-        if (!p.text.starts_with(" [")) out.push_back(std::move(p));
-    }
-    for (const auto* c : l.children()) layerPrimitives(*c, host, alpha, out);
-}
-bool same(const Primitive& a, const Primitive& b) {
-    const bool kinds = a.kind == b.kind || (a.kind == "artwork" && b.kind == "gradient") || (a.kind == "gradient" && b.kind == "artwork");
-    if (!kinds || !near(a.rect, b.rect, 2e-3) || std::abs(a.opacity - b.opacity) > 2e-3 || a.text != b.text) return false;
-    if (a.color && b.color && !near(*a.color, *b.color, 1.0 / 400)) return false;
-    if (a.colors.size() != b.colors.size()) return false;
-    for (std::size_t i = 0; i < a.colors.size(); ++i) if (!near(a.colors[i], b.colors[i], 1.0 / 400)) return false;
-    return true;
-}
 struct OracleRun {
     const Json& data;
     RecordedMeasurer& measurer;
@@ -1302,48 +1087,7 @@ struct OracleRun {
     }
     void compare(std::string label, const Json& expected, const d::Layer& layer, const d::Layer& host, std::span<d::Control* const> controls) {
         ++compared;
-        std::vector<Primitive> mac, ours;
-        macPrimitives(expected["layer"], Affine{}, 1, mac, "");
-        layerPrimitives(layer, host, 1, ours);
-        // Invisible primitives draw nothing. The sheen band is a mid-flight
-        // pass: the Mac's model rests at 0 under a running animation, ours at
-        // the end of the pass (hidden by the plate's alpha); motion contracts cover it.
-        // The custom swatch's conic wheel is 90 wedges here (no conic gradient in
-        // the rasterizer) and the oracle's grid tiles have no image: both are
-        // checked by geometry elsewhere, not as primitives.
-        const auto drop = [](const Primitive& p) {
-            return p.opacity <= 1e-3 || (p.color && p.color->a <= 1e-3) || p.where.find("sheen.band") != std::string::npos
-                || p.where.find("swatch.wheel") != std::string::npos || p.where.find("menu.tile.icon") != std::string::npos;
-        };
-        std::erase_if(mac, drop); std::erase_if(ours, drop);
-        std::vector<bool> used(ours.size());
-        for (const auto& m : mac) {
-            bool found = false;
-            for (std::size_t i = 0; i < ours.size() && !found; ++i) if (!used[i] && same(m, ours[i])) found = used[i] = true;
-            if (!found) failures.push_back(label + ": Mac draws " + describe(m));
-        }
-        for (std::size_t i = 0; i < ours.size(); ++i) if (!used[i]) failures.push_back(label + ": Windows draws " + describe(ours[i]));
-        if (!expected["controls"].isArray()) return;
-        const auto& theirs = expected["controls"].array();
-        if (theirs.size() != controls.size()) { failures.push_back(label + ": control count"); return; }
-        for (std::size_t i = 0; i < theirs.size(); ++i) {
-            const auto& t = theirs[i]; const auto& c = *controls[i];
-            if (t["label"].string() != c.label) failures.push_back(label + ": label of " + c.id() + " '" + c.label + "' vs '" + t["label"].string() + "'");
-            if (t["hovered"].boolean() != c.hovered() || t["pressed"].boolean() != c.pressed() || t["enabled"].boolean() != c.enabled())
-                failures.push_back(label + ": hover/press/enabled of " + c.id());
-            if (!near(rectOf(t["rect"]), c.rect(host), 2e-3)) failures.push_back(label + ": rect of " + c.id() + " " + str(c.rect(host)) + " vs " + str(rectOf(t["rect"])));
-            std::vector<d::AccessibilityItem> list; c.accessibilityItems(host, list);
-            const auto& items = t["accessibility"].array();
-            if (items.size() != list.size()) { failures.push_back(label + ": accessibility count of " + c.id()); continue; }
-            for (std::size_t k = 0; k < list.size(); ++k) {
-                const auto& e = items[k];
-                if (e["label"].string() != list[k].label || !near(rectOf(e["rect"]), list[k].rect, 2e-3) || e["enabled"].boolean() != list[k].enabled)
-                    failures.push_back(label + ": item " + list[k].id);
-                if (e.contains("on") && e["on"].boolean() != list[k].on) failures.push_back(label + ": item state " + list[k].id);
-                if (e.contains("value") && e["value"].string() != list[k].value) failures.push_back(label + ": item value " + list[k].id + " '" + list[k].value + "'");
-                if (e.contains("number") && !near(e["number"].number(), list[k].number)) failures.push_back(label + ": slider value " + list[k].id);
-            }
-        }
+        endfield::tests::design_oracle::compare(label, expected, layer, host, controls, failures);
     }
 };
 struct Theme { std::string_view accent; bool light; };
@@ -1355,29 +1099,8 @@ struct OracleWorld : World {
 };
 void oracle(const Json& data) {
     RecordedMeasurer recorded;
-    for (const auto& entry : data["text"]["widths"].array()) {
-        std::vector<d::TextRun> runs;
-        for (const auto& r : entry["runs"].array()) {
-            d::TextStyle s; s.size = r["size"].number(); s.weight = d::FontWeight(int(r["weight"].number())); s.tracking = r["tracking"].number(); s.tabular = r["tabular"].boolean();
-            runs.push_back({r.contains("displayed") ? r["displayed"].string() : r["text"].string(), s});
-        }
-        if (const auto region = d::regionFromTag(entry["language"].string())) recorded.widths[RecordedMeasurer::key(runs, *region)] = entry["width"].number();
-    }
-    // HUDArtwork.microTag measures ENDFIELD inside its raster (not recorded):
-    // recover it from the Mac's tag width (label + 8 + 44).
-    const std::function<std::optional<double>(const Json&)> tagWidth = [&](const Json& n) -> std::optional<double> {
-        if (n["name"].isString() && n["name"].string() == "row.tag") return rectOf(n["bounds"]).width - 52;
-        if (n["children"].isArray()) for (const auto& c : n["children"].array()) if (const auto w = tagWidth(c)) return w;
-        return std::nullopt;
-    };
-    for (const auto& row : data["components"].array()) if (const auto w = tagWidth(row["layer"])) {
-        const d::TextRun run{"ENDFIELD", d::type::microTag()};
-        recorded.widths[RecordedMeasurer::key(std::span(&run, 1), d::TextRegion::simplifiedChinese)] = *w;
-        break;
-    }
-    for (const auto& m : data["text"]["metrics"].array())
-        recorded.metric[RecordedMeasurer::metricKey(m["size"].number(), int(m["weight"].number()), m["lineHeight"].number(), m["tabular"].boolean(), m["language"].string())]
-            = {m["height"].number(), m["ascent"].number(), m["descent"].number()};
+    recordText(recorded, data["text"]);
+    for (const auto& row : data["components"].array()) if (recordMicroTag(recorded, row["layer"])) break;
     OracleRun run{data, recorded, {}};
     const std::vector<Theme> themes{{"FAD41F", false}, {"FAD41F", true}, {"22A6F2", false}, {"E5383B", false}, {"8CE03C", false}, {"22A6F2", true}};
     const auto hex = [](Theme t) { return std::string(t.accent); };
@@ -1447,11 +1170,11 @@ void oracle(const Json& data) {
         interact("toggle.off", theme, full, [](World& w) -> d::Control& { return w.b.make<d::Toggle>("toggle", "Ambient", false); }, toggleExtra);
         interact("toggle.on", theme, full, [](World& w) -> d::Control& { return w.b.make<d::Toggle>("toggle", "Ambient", true); });
         for (const auto [kind, kindName] : {std::pair{K::primary, "primary"}, std::pair{K::secondary, "secondary"}, std::pair{K::light, "light"}}) {
-            for (const auto [size, sizeName] : {std::pair{H::small, "small"}, std::pair{H::regular, "regular"}, std::pair{H::large, "large"}}) {
+            for (const auto [size, sizeName] : {std::pair{H::compact, "small"}, std::pair{H::regular, "regular"}, std::pair{H::large, "large"}}) {
                 if (!full && size != H::regular) continue;
                 interact(std::string("button.") + kindName + "." + sizeName, theme, full, [kind, size](World& w) -> d::Control& { return w.b.make<d::Button>("button", "Export", d::Icon::export_, kind, size); });
             }
-            if (full) interact(std::string("button.") + kindName + ".untitledIcon", theme, full, [kind](World& w) -> d::Control& { return w.b.make<d::Button>("button", "", d::Icon::plus, kind, H::small); });
+            if (full) interact(std::string("button.") + kindName + ".untitledIcon", theme, full, [kind](World& w) -> d::Control& { return w.b.make<d::Button>("button", "", d::Icon::plus, kind, H::compact); });
         }
         for (const auto [style, styleName] : {std::pair{S::dark, "dark"}, std::pair{S::on, "on"}, std::pair{S::light, "light"}, std::pair{S::back, "back"}}) {
             interact(std::string("iconButton.") + styleName, theme, full, [style](World& w) -> d::Control& { return w.b.make<d::IconButton>("icon", "Pin", d::Icon::pin, style); });
@@ -1471,7 +1194,7 @@ void oracle(const Json& data) {
                     return w.b.make<d::Slider>("slider", "Opacity", 62.0, d::Slider::Range{0, 100, 1}, d::ValueFormat::percent, 300.0, dark); }, sliderExtra);
         interact("dropdown.regular", theme, full, [](World& w) -> d::Control& { return w.b.make<d::Dropdown>("dropdown", "Language", "简体中文", d::TextRegion::simplifiedChinese); }, dropdownExtra);
         if (full) {
-            interact("dropdown.small", theme, full, [](World& w) -> d::Control& { return w.b.make<d::Dropdown>("dropdown", "Sort", "Newest first", std::nullopt, d::Dropdown::Height::small); });
+            interact("dropdown.small", theme, full, [](World& w) -> d::Control& { return w.b.make<d::Dropdown>("dropdown", "Sort", "Newest first", std::nullopt, d::Dropdown::Height::compact); });
             interact("dropdown.width", theme, full, [](World& w) -> d::Control& { return w.b.make<d::Dropdown>("dropdown", "Screen", "A very long display name that truncates", std::nullopt, d::Dropdown::Height::regular, 160.0); });
         }
         interact("taskCard", theme, full, [](World& w) -> d::Control& { return w.b.make<d::TaskCard>("task", "Calibrate the relay", false, true, false, 280.0); }, taskExtra);
@@ -1547,7 +1270,7 @@ void oracle(const Json& data) {
             OracleWorld w(recorded, theme);
             auto& row = w.b.make<d::RowPlate>("row", "Slider row", std::nullopt, d::RowPlate::Variant::slider);
             auto& toggle = w.b.make<d::Toggle>("row.toggle", "Toggle", true);
-            auto& button = w.b.make<d::Button>("row.button", "Open", std::nullopt, K::secondary, H::small);
+            auto& button = w.b.make<d::Button>("row.button", "Open", std::nullopt, K::secondary, H::compact);
             row.setCluster({&button.layer(), &toggle.layer()}); row.setTitleInset(56);
             w.host(row.layer());
             const std::vector<d::Control*> three{&row, &toggle, &button};
@@ -1763,7 +1486,7 @@ void oracle(const Json& data) {
             OracleWorld w(recorded, theme, language);
             d::ModuleHeader header(w.env, "header");
             d::LayerArena pageArena("page", &w.env.deadlines); d::ControlSet page; d::Builder pb{w.env, pageArena, page};
-            auto& action = pb.make<d::Button>("header.clear", endfield::core::localized("Clear", "清空", language), d::Icon::trash, K::secondary, H::small);
+            auto& action = pb.make<d::Button>("header.clear", endfield::core::localized("Clear", "清空", language), d::Icon::trash, K::secondary, H::compact);
             auto& pin = pb.make<d::IconButton>("header.pin", "Pin", d::Icon::pin);
             header.configure({"CLIPBOARD", "Detail"}, "MOD-03", d::ModuleTitle::make("Clipboard", "剪贴板缓存", language), "07", true, {&action, &pin});
             w.host(header.layer());

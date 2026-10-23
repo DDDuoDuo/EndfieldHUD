@@ -3,11 +3,11 @@
 //   - how the display adaptation of the centre plane enters the layout (its
 //     measure, DesktopChromeProjectionPlan::contentScale on the centre node
 //     of the deployed source shell, needs the packaged runtime: the app
-//     verification and map_occlusion_contracts check it on several displays);
-//   - the Windows-only Settings > Hotkeys toggle "Summon HUD with hotkey".
+//     verification and map_occlusion_contracts check it on several displays).
+// Settings > Hotkeys > "Open with hotkey" (summonHotkeyEnabled) is the Mac
+// row now: tests/settings_canvas_tests.cpp covers it.
 #include "app/summon_hotkey.hpp"
 #include "core/source_desktop_chrome.hpp"
-#include "modules/settings_presentation.hpp"
 #include <cmath>
 #include <fstream>
 #include <iostream>
@@ -113,36 +113,6 @@ void displayAdaptation(const ehud::data::Json& fixture) {
     check(DesktopClockArtworkPlan::footerText("CTRL + `", "Click outside to close") == "ESC / CTRL + ` / Click outside to close" &&
         DesktopClockArtworkPlan::footerText("", "Click outside to close") == "ESC / Click outside to close", "The footer names the shortcut only while opening by hotkey is on");
 }
-
-void settingsToggle() {
-    using namespace modules;
-    auto initial = ehud::data::Settings::defaults(); initial.set("launchAtLogin", false); initial.set("language", "english");
-    SettingsController controller(initial, {}, core::Language::english);
-    const auto rowIDs = [](const SettingsPresentation& s) { std::string ids; for (const auto& r : s.view().rows) ids += r.id + ","; return ids; };
-    {
-        SettingsPresentation plain(core::Module::hotkeys, controller, {});
-        plain.setReduceMotion(true, 0); plain.activate(0);
-        check(rowIDs(plain) == "capture,keyReset,", "Without the Windows hook the Hotkeys page is exactly the Mac page");
-    }
-    SettingsViewHooks hooks; hooks.summonHotkeyToggle = true;
-    SettingsPresentation page(core::Module::hotkeys, controller, {}, {}, hooks);
-    page.setReduceMotion(true, 0); page.activate(0);
-    check(rowIDs(page) == "capture,keyReset,summonHotkey,", "The Windows toggle follows the Mac rows");
-    const auto action = [&](std::string_view id) -> const SettingsAction* { for (const auto& a : page.view().actions) if (a.id == id) return &a; return nullptr; };
-    check(action("summonHotkey") && action("summonHotkey")->label == "Summon HUD with hotkey, On", "The toggle starts on and reads its state");
-    check(page.perform("summonHotkey", 1) && controller.committed().fields["summonHotkeyEnabled"] == ehud::data::Json(false) && !controller.committed().fields.contains("windowsSummonHotkeyDisabled"),
-        "Switching it off persists the Mac preference summonHotkeyEnabled (D2)");
-    page.refresh(2);
-    check(action("summonHotkey") && action("summonHotkey")->label == "Summon HUD with hotkey, Off", "The toggle reads Off");
-    check(page.perform("summonHotkey", 3) && controller.committed().summonHotkeyEnabled(), "Switching it on again");
-    page.perform("summonHotkey", 4);
-    controller.restoreDefaults();
-    check(controller.committed().summonHotkeyEnabled(), "Restore defaults switches opening by hotkey on again");
-    const std::string titles[]{settingsSummonToggleTitle(core::Language::english), settingsSummonToggleTitle(core::Language::simplifiedChinese),
-        settingsSummonToggleTitle(core::Language::traditionalChinese), settingsSummonToggleTitle(core::Language::japanese), settingsSummonToggleTitle(core::Language::korean)};
-    for (unsigned a = 0; a < 5; ++a) { check(!titles[a].empty() && ehud::data::Json::validUtf8(titles[a]), "Each language has a title"); for (unsigned b = 0; b < a; ++b) check(titles[a] != titles[b], "The five titles are translations"); }
-    check(settingsSummonToggleTitle(core::Language::system) == titles[0], "System resolves to English");
-}
 }
 
 int main(int argc, char** argv) {
@@ -151,8 +121,7 @@ int main(int argc, char** argv) {
         matcher();
         hookLifecycle();
         displayAdaptation(read(argv[1]));
-        settingsToggle();
-        std::cout << "PASS " << checks << " hotkey, display adaptation and Hotkeys toggle checks\n";
+        std::cout << "PASS " << checks << " hotkey and display adaptation checks\n";
         return 0;
     } catch (const std::exception& e) {
         std::cerr << "FAIL after " << checks << " checks: " << e.what() << '\n';

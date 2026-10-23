@@ -43,6 +43,14 @@ private:
     void sync(bool wasShown);
 };
 
+// A scroll thumb (HUDScrollArea / HUDMenu.Track: a plain accentInk fill,
+// max(18, ...) long): one fixed raster `width` x 18 anchored at its top and
+// stretched vertically, so a length change (content that grows) is a pose
+// change of the animatable layer, never a new raster. The Mac thumb has no
+// rounded ends, so the stretched fill draws the same pixels.
+void placeThumb(Layer& thumb, double width, double top, double length, Color fill);
+double thumbLength(const Layer& thumb) noexcept;             // the drawn length
+
 class ScrollArea final {
 public:
     static constexpr double stripWidth = 12, barWidth = 4, glide = .2;
@@ -83,7 +91,7 @@ private:
     Layer *layer_, *content_, *track_, *thumb_;
     ScrollBarDriver bar_;
     HitTarget* strip_{};
-    double offset_{}, contentHeight_{}, thumbHeight_{-1};
+    double offset_{}, contentHeight_{};
     Rect stripRect() const noexcept;
 };
 } // namespace endfield::modules::design

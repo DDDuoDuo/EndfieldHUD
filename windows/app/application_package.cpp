@@ -6,10 +6,10 @@
 namespace endfield::app {
 namespace {
 using M = core::Module;
-constexpr std::array<std::string_view, 17> ids{
+constexpr std::array<std::string_view, 14> ids{
     "shell.runtimeInput", "shell.catalog", "shell.shader", "shell.watchBlur", "shell.cursor",
-    "notes.controls", "common.notesFormat", "common.shelf", "common.clipboard", "common.applicationIcons",
-    "common.watchAppearance", "common.archive", "common.storage", "common.activity", "common.mapPlayer",
+    "notes.controls", "common.notesFormat", "common.shelf", "common.applicationIcons",
+    "common.watchAppearance", "common.archive", "common.mapPlayer",
     "map.geography", "orbipom"};
 constexpr std::array<M, 19> provided{
     M::notes, M::fileShelf, M::clipboard, M::volume, M::workMode, M::eventLog, M::map, M::projection, M::reader,
@@ -41,12 +41,9 @@ PackagedResources resolvePackagedResources(core::ResourceLocator& locator) {
     const auto notesControls = use("notes.controls", {"notes-controls-assets.json"});
     const auto notesFormat = use("common.notesFormat");
     const auto shelf = use("common.shelf", {"reveal-mask.bin"});
-    const auto clipboard = use("common.clipboard");
     const auto icons = use("common.applicationIcons", {"manifest.json"});
     const auto appearance = use("common.watchAppearance", {"manifest.json"});
     const auto archive = use("common.archive");
-    const auto storage = use("common.storage");
-    const auto activity = use("common.activity");
     const auto mapPlayer = use("common.mapPlayer");
     const auto geography = use("map.geography");
     const auto game = use("orbipom");
@@ -65,19 +62,13 @@ PackagedResources resolvePackagedResources(core::ResourceLocator& locator) {
         r.notesFormatAssets = notesFormat;
         if (!shelf.empty()) { r.shelfAssets = shelf; r.shelfMask = shelf / "reveal-mask.bin"; }
         else disabled.insert(M::fileShelf);
-        if (!clipboard.empty()) r.clipboardAssets = clipboard;
-        else disabled.insert(M::clipboard);
-        // Settings, Archive and Storage resolve their folders below the
+        // Settings and Archive resolve their folders below the
         // shared common/ root, exactly like the development layout.
         const bool settings = !icons.empty() && !appearance.empty();
         if (settings) r.settingsAssets = icons.parent_path();
         else disabled.insert({M::system, M::display, M::hotkeys, M::about});
         if (!archive.empty()) r.archiveAssets = archive.parent_path();
         else disabled.insert(M::archive);
-        if (!storage.empty()) r.storageAssets = storage.parent_path();
-        else disabled.insert(M::storage);
-        if (!activity.empty()) r.activityAssets = activity;
-        else disabled.insert(M::activityMonitor);
         if (!geography.empty() && !mapPlayer.empty()) { r.mapGeography = geography; r.mapPlayerAssets = mapPlayer; }
         else disabled.insert(M::map);
         // The Minigame runtime root contains OrbiPom/ (staged as orbipom/OrbiPom)

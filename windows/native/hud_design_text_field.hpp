@@ -1,8 +1,8 @@
 #pragma once
 // The native half of the design text field: modules::design::TextEditorHost
 // over NativeProjectedEditor (native/projected_editor.*, TSF through
-// native/projected_text_input.*), the pattern of native/calendar_editor_field.*
-// and native/profile_editor_field.*. Mac: Sources/HUDDesignTextField.swift
+// native/projected_text_input.*), the pattern of native/profile_editor_field.*.
+// Mac: Sources/HUDDesignTextField.swift
 // (begin/end editing) and Sources/HUDProjectedTextEditor.swift (caret, edit
 // shortcuts, right-click menu, auto-hiding indicator). LIB-84..91.
 //

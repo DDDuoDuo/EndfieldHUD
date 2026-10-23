@@ -4,6 +4,10 @@
 #include <winres.h>
 
 1 ICON "@EHUD_APP_ICON@"
+// The redesign's grab hands (original drawings, tools/hand_cursors.py); the
+// ids are app/overlay_host.hpp overlayOpenHandCursorResource / ...Closed...
+101 CURSOR "@EHUD_APP_OPEN_HAND_CURSOR@"
+102 CURSOR "@EHUD_APP_CLOSED_HAND_CURSOR@"
 
 VS_VERSION_INFO VERSIONINFO
  FILEVERSION @EHUD_APP_VERSION_COMMAS@

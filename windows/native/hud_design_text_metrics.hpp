@@ -25,6 +25,7 @@ public:
     ~NativeDesignTextMeasurer() override;
     double width(std::span<const modules::design::TextRun>, modules::design::TextRegion) override;
     modules::design::LineMetrics metrics(const modules::design::TextStyle&, modules::design::TextRegion, double scale = 1) override;
+    std::size_t lineCount(std::span<const modules::design::TextRun>, modules::design::TextRegion, double width, int maximumLines) override;
     struct Stats { std::uint64_t measurements{}, cacheHits{}, flushes{}; std::size_t entries{}; };
     Stats stats() const noexcept;
     // Bounded cache (oldest half dropped past `limit` entries).

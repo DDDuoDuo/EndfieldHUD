@@ -6,17 +6,17 @@
 // NativeDesignScene. Mac: HUDDesignContext + HUDCenterOverlay as SystemHUDView
 // hosts them (Sources/HUDDesignScreen.swift:25-97, Sources/HUDDesignOverlay.swift).
 //
-// It replaces the separate modal cards: the quit confirmation
-// (app/quit_confirmation.*) becomes a confirm request (Phase B2) and the
-// "Keep this UI scale?" card (modules/settings_safety.*) a countdown request
-// (Phase B1), both through this owner's confirm bar.
+// It replaces the separate modal cards: the quit confirmation (the v1.2.0
+// quit card is gone; app/application.cpp presentQuitConfirmation asks here)
+// and the "Keep this UI scale?" card (Settings > Display raises a countdown
+// request, modules/settings_canvas.cpp), both through this owner's confirm bar.
 //
 // ModuleOwner role: the overlay is placed like the content box on the centre
 // plane (core::source::DesktopChromeLayout::boxWorld of the frame, without the
 // switch motion) but composed ABOVE every module
 // (modalEntries); while CenterOverlay::capturesInput() it captures pointer,
 // wheel and keys (routing pointerCapture / wheelCapture / keyCapture 0, the
-// quit card's slot) and suppresses key filters; every event is consumed
+// v1.2.0 quit card's slot) and suppresses key filters; every event is consumed
 // (Esc / Return decide; presses go to the pills, or the outside press of a
 // twin-pill request). Appearance events are applied to the Context here once
 // (Context::apply); deadlines (120 ms confirm callback, 1.5 s toast, hides,
@@ -42,6 +42,8 @@ struct DesignOverlayOptions {
 };
 class DesignOverlayOwner final : public app::ModuleOwner {
 public:
+    // ApplicationHost service key of the published modules::design::Context.
+    static constexpr std::string_view contextServiceKey = "design.context";
     DesignOverlayOwner(native::LayerRasterizer&, DesignOverlayOptions);
     ~DesignOverlayOwner() override;
     modules::design::Context& context() noexcept;
@@ -66,6 +68,11 @@ public:
     void setOverlayVisible(bool, double) override;
     void overlayClosing(double) override;                     // CenterOverlay::reset
     void update(const app::ModuleFrame&) override;            // places the overlay on the current boxWorld
+    // Launch prewarm: the render scale of the first opening's frame reaches
+    // the Context (Context::update) before the design owners build their
+    // first pages, so the first opening does not re-render them; nothing is
+    // composed.
+    void prewarm(const app::ModuleFrame&) override;
     bool requiresFrames(double) const override;
     std::optional<double> nextWakeTime(double) const override;
     bool deadline(double) override;                           // Context::advance

@@ -1,6 +1,6 @@
 // Generated from the authoritative macOS LocalizationCatalog.swift + LocalizationCatalogRedesign.swift (merged as
 // the Mac merges them) and the Windows-kept v1.2.0 pairs of tools/localization_windows_kept.json; do not edit
-// translations here. Rows: 1283 Mac + 48 Windows-kept.
+// translations here. Rows: 1283 Mac + 46 Windows-kept.
 // Commit: 4fda15a03ba50675e0b12d69a83efdb6526c19f6 (Windows-kept rows: ca04f142185c7de40acd8523bdb563195d90a1d1)
 // SHA256: 7162d43a038a84e34cc94c6d432e659994fa087fcbcd7fb5f04c00de6ef067c3 6ef8779e0ef708581927ab11f44e8c122e868a5dc6e2ba76fae3647d608e5436
     {" (disconnected)","（未连接）","（未連接）","（未接続）"," (연결 해제됨)"},
@@ -459,7 +459,6 @@
     {"Edit #","修改 #","修改 #","#を編集","# 편집"},
     {"Edit app shortcut","编辑应用快捷方式","編輯應用程式捷徑","アプリのショートカットを編集","앱 바로가기 편집"},
     {"Edit checklist item","编辑待办事项","編輯待辦事項","チェックリストの項目を編集","체크리스트 항목 편집"},
-    {"Edit event","编辑事项","編輯事項","予定を編集","일정 편집"},
     {"Edit introduction","编辑个人介绍","編輯個人介紹","自己紹介を編集","소개 편집"},
     {"Edit item","编辑事项","編輯事項","項目を編集","항목 편집"},
     {"Edit name","修改名称","修改名稱","名前を編集","이름 편집"},
@@ -718,7 +717,6 @@
     {"No battery","未检测到电池","未偵測到電池","バッテリーが見つかりません","배터리 감지 안 됨"},
     {"No connected devices","无已连接设备","無已連接裝置","接続済みデバイスなし","연결된 기기 없음"},
     {"No device","无设备","無裝置","デバイスなし","기기 없음"},
-    {"No events","暂无事项","暫無事項","予定はありません","일정 없음"},
     {"No headphones or Bluetooth audio devices","未连接耳机或蓝牙音频设备","未連接耳機或藍牙音訊裝置","ヘッドフォンやBluetoothオーディオデバイスは接続されていません","헤드폰 또는 Bluetooth 오디오 기기 없음"},
     {"No internal battery","无内置电池","無內建電池","内蔵バッテリーなし","내장 배터리 없음"},
     {"No internal battery · Preview available","无内置电池 · 可预览效果","無內建電池 · 可預覽效果","内蔵バッテリーなし · プレビュー可能","내장 배터리 없음 · 미리 보기 가능"},

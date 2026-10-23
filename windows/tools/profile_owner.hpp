@@ -16,6 +16,7 @@ struct ProfileOwnerAppearance {
     std::array<double,3>accentSRGB{250./255,212./255,31./255}; // configured HUD accent
     double scale{2};                                           // page raster scale
     bool reduceMotion{};
+    bool recordingMode{}; // the shell card's UID turns into a redaction bar (Mac 1.3.0)
     bool operator==(const ProfileOwnerAppearance&)const=default;
 };
 enum class IdCardTextureKind {avatar,background,hover};
