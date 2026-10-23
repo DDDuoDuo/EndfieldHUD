@@ -11,12 +11,31 @@ struct HUDAccessibilityItem: Equatable {
         case menuItem(selected: Bool)
         case tab(selected: Bool)
         case slider(value: Double, minimum: Double, maximum: Double, step: Double, description: String)
+        /// A live readout (Activity rows, Battery plates): static text with a value.
+        case text(String)
     }
     let id: String
     let label: String
     let role: Role
     let rect: CGRect
     var enabled = true
+}
+
+/// A value VoiceOver reads as static text (live readouts, plates, settings
+/// values). Not a control: the router never hands it the pointer; its layer
+/// only supplies the frame.
+final class HUDReadout: HUDControl {
+    var value: String
+
+    init(id: String, label: String, value: String = "", frame: CGRect, env: HUDDesignEnvironment) {
+        self.value = value
+        super.init(id: id, label: label, env: env)
+        HUDMotion.perform { layer.frame = frame }
+    }
+
+    override func contains(_ point: CGPoint) -> Bool { false }
+    override func pointerDown(at point: CGPoint) -> Bool { false }
+    override var accessibilityRole: HUDAccessibilityItem.Role? { .text(value) }
 }
 
 /// One interactive element of the redesign. It owns its layer, receives hover
@@ -148,27 +167,35 @@ final class HUDAccessibilityStandIns: NSObject {
     private weak var host: NSView?
     private var buttons: [String: StandInButton] = [:]
     private var sliders: [String: StandInSlider] = [:]
+    private var layoutSize: CGSize?
 
     init(host: NSView) { self.host = host }
 
+    /// The accessibility frames follow the live plane on demand (projectedFrame).
+    /// A view frame is set only when its control's box rect or the host size
+    /// changes: moving AppKit views on every new pose would re-run the window's
+    /// cursor and tracking-region arbitration while the HUD is otherwise idle.
     func update(_ items: [HUDAccessibilityItem], help: String = "") {
         guard let host else { return }
+        let relayout = host.bounds.size != layoutSize
+        layoutSize = host.bounds.size
         var wantedButtons = Set<String>(), wantedSliders = Set<String>()
         for item in items {
-            let projected = project?(item.rect) ?? item.rect
             if case .slider(let value, let minimum, let maximum, let step, let description) = item.role {
                 wantedSliders.insert(item.id)
                 let slider = sliders[item.id] ?? makeSlider(item.id, in: host)
                 slider.isHidden = false; slider.isEnabled = item.enabled
                 slider.minValue = minimum; slider.maxValue = maximum; slider.doubleValue = value; slider.step = step
-                slider.frame = projected; slider.projectedFrame = screenFrame(item.rect)
+                if relayout || slider.boxRect != item.rect { slider.boxRect = item.rect; slider.frame = project?(item.rect) ?? item.rect }
+                slider.projectedFrame = screenFrame(item.rect)
                 slider.setAccessibilityLabel(item.label); slider.setAccessibilityHelp(description)
                 slider.setAccessibilityValueDescription(description)
             } else {
                 wantedButtons.insert(item.id)
                 let button = buttons[item.id] ?? makeButton(item.id, in: host)
                 button.isHidden = false; button.isEnabled = item.enabled
-                button.frame = projected; button.projectedFrame = screenFrame(item.rect)
+                if relayout || button.boxRect != item.rect { button.boxRect = item.rect; button.frame = project?(item.rect) ?? item.rect }
+                button.projectedFrame = screenFrame(item.rect)
                 button.setAccessibilityLabel(item.label); button.setAccessibilityHelp(help.isEmpty ? nil : help)
                 switch item.role {
                 case .toggle(let on):
@@ -182,6 +209,8 @@ final class HUDAccessibilityStandIns: NSObject {
                 case .tab(let selected):
                     button.setAccessibilityRole(.radioButton); button.setAccessibilitySubrole(NSAccessibility.Subrole(rawValue: "AXTabButton"))
                     button.setAccessibilityValue(NSNumber(value: selected ? 1 : 0))
+                case .text(let value):
+                    button.setAccessibilityRole(.staticText); button.setAccessibilitySubrole(nil); button.setAccessibilityValue(value)
                 case .button, .slider:
                     button.setAccessibilityRole(.button); button.setAccessibilitySubrole(nil); button.setAccessibilityValue(nil)
                 }
@@ -223,6 +252,7 @@ final class HUDAccessibilityStandIns: NSObject {
 
     private final class StandInButton: NSButton {
         var controlID = ""
+        var boxRect: CGRect?
         var projectedFrame: (() -> CGRect)?
         override func draw(_ dirtyRect: NSRect) {}
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
@@ -231,6 +261,7 @@ final class HUDAccessibilityStandIns: NSObject {
 
     private final class StandInSlider: NSSlider {
         var controlID = ""
+        var boxRect: CGRect?
         var step: Double = 1
         var projectedFrame: (() -> CGRect)?
         override func draw(_ dirtyRect: NSRect) {}

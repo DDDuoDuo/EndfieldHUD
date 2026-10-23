@@ -124,9 +124,13 @@ final class HUDTextLayer: CALayer {
     var lineFrame: CGRect = .zero {
         didSet {
             guard lineFrame != oldValue else { return }
+            framePadding = padding
             frame = lineFrame.insetBy(dx: -padding.width, dy: -padding.height)
         }
     }
+    /// The padding `lineFrame` was laid out with: runs set afterwards (a
+    /// larger style) must not shrink the box their text is fitted into.
+    private var framePadding: CGSize?
     private var padding: CGSize {
         let size = runs.map(\.style.size).max() ?? 12
         return CGSize(width: ceil(size * 0.25), height: ceil(size * 0.45))
@@ -141,6 +145,14 @@ final class HUDTextLayer: CALayer {
     override init(layer: Any) { super.init(layer: layer) }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
     override func action(forKey event: String) -> CAAction? { HUDLayer.action(forKey: event, of: self) }
+
+    /// Unlike CATextLayer, a drawn CALayer keeps its old bitmap when the
+    /// backing scale changes, and `.center` gravity then shows that bitmap at
+    /// old/new of its size: text shrank or grew after a display, space or
+    /// design-scale change. Redraw at the new resolution instead.
+    override var contentsScale: CGFloat {
+        didSet { if contentsScale != oldValue { setNeedsDisplay() } }
+    }
 
     convenience init(_ text: String = "", style: HUDTextStyle, alignment: Alignment = .left) {
         self.init()
@@ -158,7 +170,8 @@ final class HUDTextLayer: CALayer {
     }
 
     override func draw(in ctx: CGContext) {
-        let box = bounds.insetBy(dx: padding.width, dy: padding.height)
+        let inset = framePadding ?? padding
+        let box = bounds.insetBy(dx: inset.width, dy: inset.height)
         guard !runs.isEmpty, box.width > 0 else { return }
         let language = renderedLanguage.isEmpty ? resolvedLanguage : renderedLanguage
         var scale: CGFloat = 1
@@ -191,6 +204,154 @@ final class HUDTextLayer: CALayer {
             top += metrics.height
         }
         ctx.restoreGState()
+    }
+}
+
+/// CATextLayer text outside the redesigned centre (the shell's labels, the
+/// identity card, the Notes and Projection workspaces), set in the standard
+/// faces. `fontSize`, `weight`, `tabular` and `oblique` pick the cached font
+/// and its CJK cascade follows the UI language whenever the layer draws, so
+/// callers never assign `font` themselves. Strings, colour, alignment,
+/// wrapping and truncation keep CATextLayer's meaning.
+final class HUDStandardTextLayer: CATextLayer {
+    var weight: HUDFontWeight = .regular { didSet { if weight != oldValue { resolveFont() } } }
+    var tabular = false { didSet { if tabular != oldValue { resolveFont() } } }
+    /// Slanted as a synthesized italic.
+    var oblique = false { didSet { if oblique != oldValue { resolveFont() } } }
+    /// A face the user chose (an editor's own font) in place of the standard ones.
+    var face: NSFont? { didSet { if face != oldValue { resolveFont() } } }
+    override var fontSize: CGFloat { didSet { if fontSize != oldValue { resolveFont() } } }
+
+    override init() { super.init(); resolveFont() }
+    override init(layer: Any) { super.init(layer: layer) }
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    convenience init(size: CGFloat, weight: HUDFontWeight = .regular, tabular: Bool = false) {
+        self.init()
+        self.weight = weight; self.tabular = tabular; fontSize = size
+    }
+
+    override func display() {
+        resolveFont()
+        super.display()
+    }
+
+    /// A redraw (new text, a new render scale) never crossfades: the implicit
+    /// contents fade shows the old bitmap at the new contentsScale, twice its
+    /// size when the scale halves. Other properties keep their actions.
+    override func action(forKey event: String) -> CAAction? {
+        event == "contents" ? NSNull() : super.action(forKey: event)
+    }
+
+    private func resolveFont() {
+        let resolved = face ?? HUDFontResolver.font(size: fontSize, weight: weight, language: HUDTextLanguage.tag(),
+                                                    tabular: tabular, oblique: oblique)
+        if font !== resolved { font = resolved }
+    }
+
+    /// CATextLayer sets HarmonyOS Sans on CoreText's frame line height for the
+    /// face (1.44 em), which sinks text a quarter em below where the system
+    /// face sat and drops the second line of two-line captions. Lines here
+    /// use the faces' own ascent and descent, as AppKit measures them, top
+    /// aligned like CATextLayer.
+    override func draw(in ctx: CGContext) {
+        let text = drawnText()
+        guard text.length > 0, bounds.width > 0 else { return }
+        let typesetter = CTTypesetterCreateWithAttributedString(text)
+        // Unwrapped text still breaks at its own line separators.
+        let breakWidth = isWrapped ? Double(bounds.width) : 1e7
+        var lines: [(line: CTLine, start: Int, ascent: CGFloat, height: CGFloat)] = [], start = 0, top: CGFloat = 0
+        while start < text.length {
+            let count = max(1, CTTypesetterSuggestLineBreak(typesetter, start, breakWidth))
+            let strut = metrics(of: text, in: NSRange(location: start, length: count))
+            if let last = lines.last, top + strut.height > bounds.height + 0.5 {
+                // Out of room: like CATextLayer, the last line that fits ends truncated.
+                if truncationMode != .none {
+                    let rest = CTTypesetterCreateLine(typesetter, CFRange(location: last.start, length: text.length - last.start))
+                    lines[lines.count - 1].line = truncated(rest, text: text, force: true)
+                }
+                break
+            }
+            var line = CTTypesetterCreateLine(typesetter, CFRange(location: start, length: count))
+            if !isWrapped { line = truncated(line, text: text) }
+            lines.append((line, start, strut.ascent, strut.height))
+            top += strut.height; start += count
+        }
+        ctx.saveGState()
+        // Draw y-up whichever way Core Animation flipped this context: a
+        // flipped text matrix would drop a slanted face's own matrix.
+        if ctx.ctm.d < 0 { ctx.translateBy(x: 0, y: bounds.height); ctx.scaleBy(x: 1, y: -1) }
+        ctx.textMatrix = .identity
+        ctx.setShouldSmoothFonts(false)
+        ctx.setAllowsAntialiasing(true)
+        top = 0
+        for item in lines {
+            let width = CGFloat(CTLineGetTypographicBounds(item.line, nil, nil, nil) - CTLineGetTrailingWhitespaceWidth(item.line))
+            let x: CGFloat
+            switch alignmentMode {
+            case .center: x = (bounds.width - width) / 2
+            case .right: x = bounds.width - width
+            default: x = 0
+            }
+            ctx.textPosition = CGPoint(x: x, y: bounds.height - top - item.ascent)
+            CTLineDraw(item.line, ctx)
+            top += item.height
+        }
+        ctx.restoreGState()
+    }
+
+    /// The string with CATextLayer's defaults where runs leave them out. No
+    /// language tag: the cascade already picks the region's Noto, and
+    /// untagged text keeps CATextLayer's strict kana line breaks.
+    private func drawnText() -> NSAttributedString {
+        let result: NSMutableAttributedString
+        switch string {
+        case let attributed as NSAttributedString: result = NSMutableAttributedString(attributedString: attributed)
+        case let plain as String: result = NSMutableAttributedString(string: plain)
+        default: return NSAttributedString()
+        }
+        let color = NSAttributedString.Key(kCTForegroundColorAttributeName as String)
+        result.enumerateAttributes(in: NSRange(location: 0, length: result.length)) { attributes, range, _ in
+            if attributes[.font] == nil, let font { result.addAttribute(.font, value: font, range: range) }
+            if attributes[.foregroundColor] == nil, attributes[color] == nil {
+                result.addAttribute(color, value: foregroundColor ?? CGColor(gray: 1, alpha: 1), range: range)
+            }
+        }
+        return result
+    }
+
+    /// The line box of a range: the largest ascent and descent of the fonts
+    /// its runs name (fallback CJK glyphs sit inside the Latin face's box).
+    private func metrics(of text: NSAttributedString, in range: NSRange) -> (ascent: CGFloat, height: CGFloat) {
+        var ascent: CGFloat = 0, descent: CGFloat = 0, leading: CGFloat = 0
+        text.enumerateAttribute(.font, in: range) { value, _, _ in
+            guard let font = value as? NSFont else { return }
+            ascent = max(ascent, font.ascender); descent = max(descent, -font.descender); leading = max(leading, font.leading)
+        }
+        return (ascent, ascent + descent + leading)
+    }
+
+    /// `force` marks text that continues past the line even when it fits.
+    private func truncated(_ line: CTLine, text: NSAttributedString, force: Bool = false) -> CTLine {
+        let type: CTLineTruncationType
+        switch truncationMode {
+        case .start: type = .start
+        case .middle: type = .middle
+        case .end: type = .end
+        default: return line
+        }
+        guard force || CTLineGetTypographicBounds(line, nil, nil, nil) > Double(bounds.width) + 0.5 else { return line }
+        let attributes = text.attributes(at: max(0, CTLineGetStringRange(line).location), effectiveRange: nil)
+        let token = CTLineCreateWithAttributedString(NSAttributedString(string: "…", attributes: attributes))
+        return CTLineCreateTruncatedLine(line, Double(bounds.width), type, token) ?? line
+    }
+
+    /// Redraws every standard text layer under `root` after the UI language
+    /// changed, so text whose string stayed the same (names, numbers) also
+    /// takes the new region's CJK face.
+    static func languageChanged(in root: CALayer) {
+        if let text = root as? HUDStandardTextLayer { text.setNeedsDisplay() }
+        root.sublayers?.forEach(languageChanged)
     }
 }
 

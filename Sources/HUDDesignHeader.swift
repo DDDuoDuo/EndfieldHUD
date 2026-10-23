@@ -1,9 +1,9 @@
 import AppKit
 import QuartzCore
 
-/// A module's bilingual title. English UIs show the English title with the
-/// Simplified Chinese subtitle; zh, ja and ko flip it (CJK title, English
-/// subtitle), as the game does (spec §1.1, guide §4).
+/// A module's title. English UIs show the English title alone (no other
+/// language appears in English); zh, ja and ko show their title with the
+/// English subtitle, as the game does (spec §1.1, guide §4).
 struct HUDModuleTitle: Equatable {
     let english: String
     let simplifiedChinese: String
@@ -18,8 +18,7 @@ struct HUDModuleTitle: Equatable {
     func lines(for language: AppLanguage = L10n.resolvedLanguage) -> Lines {
         let resolved = language == .system ? L10n.resolvedLanguage : language
         guard resolved != .english, resolved != .system else {
-            return Lines(title: english, titleLanguage: nil,
-                         subtitle: simplifiedChinese, subtitleLanguage: HUDTextLanguage.simplifiedChinese)
+            return Lines(title: english, titleLanguage: nil, subtitle: "", subtitleLanguage: nil)
         }
         return Lines(title: localized, titleLanguage: HUDTextLanguage.tag(for: resolved), subtitle: english, subtitleLanguage: nil)
     }
@@ -59,16 +58,16 @@ final class HUDModuleHeader {
             titleGroup.addSublayer(title); titleGroup.addSublayer(subtitle)
             rule.anchorPoint = CGPoint(x: 0, y: 0.5)
             rule.frame = CGRect(x: 0, y: 60, width: Self.width, height: 9)
-            ruleLine.frame = CGRect(x: 0, y: 4, width: Self.width, height: 1); ruleLine.backgroundColor = HUDColor.white(0.22)
-            lead.frame = CGRect(x: 0, y: 3, width: 56, height: 3); lead.backgroundColor = HUDColor.yellow
+            ruleLine.frame = CGRect(x: 0, y: 4, width: Self.width, height: 1)
+            lead.frame = CGRect(x: 0, y: 3, width: 56, height: 3)
             ladder.frame = CGRect(x: Self.width - 46 - 90, y: 0, width: 90, height: 9)
-            ladder.path = HUDShape.tickLadder(width: 90, height: 9, pitch: 9); ladder.fillColor = HUDColor.white(0.35)
+            ladder.path = HUDShape.tickLadder(width: 90, height: 9, pitch: 9)
             counterPlate.backgroundColor = HUDColor.counterBackground
             [ruleLine, lead, ladder, counterPlate, counter].forEach(rule.addSublayer)
             tail.frame = CGRect(x: Self.width - 34, y: 3.5, width: 34, height: 7)
-            tail.showArtwork(HUDArtwork.hatch(.light, size: CGSize(width: 34, height: 7), scale: env.renderScale), scale: env.renderScale)
             codeText.alignment = .right
         }
+        applyPalette()
     }
 
     /// - crumbs: after `// HUD` (uppercased); the last is highlighted.
@@ -126,6 +125,21 @@ final class HUDModuleHeader {
         }
         setCounter(value)
         env.applyScale(to: layer)
+    }
+
+    /// Recolours the header after a theme colour or Theme change (the
+    /// breadcrumb path is rebuilt by `configure`).
+    func applyPalette() {
+        HUDMotion.perform {
+            ruleLine.backgroundColor = HUDColor.foreground(0.22)
+            lead.backgroundColor = HUDColor.yellow
+            ladder.fillColor = HUDColor.foreground(0.35)
+            counter.textStyle = HUDType.ruleCounter
+            codeText.textStyle = HUDType.breadcrumb
+            title.textStyle = HUDType.moduleTitle
+            subtitle.textStyle = HUDType.titleSubtitle
+            tail.showArtwork(HUDArtwork.hatch(.light, size: CGSize(width: 34, height: 7), scale: env.renderScale), scale: env.renderScale)
+        }
     }
 
     /// Live counters (TODO count, volume, pins, export %) change in place.

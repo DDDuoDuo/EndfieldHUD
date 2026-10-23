@@ -90,7 +90,8 @@ enum HUDArtwork {
 
     /// repeating-linear-gradient(-45deg, c 0 1px, transparent 1px 3.5px).
     static func hatch(_ kind: Hatch, size: CGSize, scale: CGFloat) -> CGImage? {
-        image("hatch.\(kind)", size: size, scale: scale) { ctx, size in
+        // The light hatch follows Theme: the key names it (the cache is also dropped on a change).
+        image("hatch.\(kind).\(kind == .light && HUDColor.isLight)", size: size, scale: scale) { ctx, size in
             drawHatch(kind, in: CGRect(origin: .zero, size: size), ctx: ctx)
         }
     }
@@ -99,7 +100,7 @@ enum HUDArtwork {
     static func drawHatch(_ kind: Hatch, in rect: CGRect, ctx: CGContext) {
         ctx.saveGState()
         ctx.clip(to: rect)
-        ctx.setFillColor(kind == .dark ? HUDColor.black(0.42) : HUDColor.white(0.14))
+        ctx.setFillColor(kind == .dark ? HUDColor.black(0.42) : HUDColor.foreground(0.14))
         let spacing = 3.5 * CGFloat(2).squareRoot(), thickness = CGFloat(2).squareRoot()
         var offset = rect.minX - rect.height
         while offset < rect.maxX + rect.height {
@@ -155,6 +156,14 @@ enum HUDArtwork {
         }
     }
 
+    /// Drops every cached raster once the HUD has closed and released its
+    /// layers. The images, and the render copies Core Animation attaches to
+    /// them, would otherwise outlive every page that showed them.
+    static func releaseCachedImages() {
+        lock.lock(); defer { lock.unlock() }
+        cache.removeAll()
+    }
+
     /// Draws `body` in a top-down space of `size` points at `scale`, cached.
     private static func image(_ name: String, size: CGSize, scale: CGFloat, body: (CGContext, CGSize) -> Void) -> CGImage? {
         let scale = max(1, min(8, scale.isFinite ? scale.rounded(.up) : 2))
@@ -185,6 +194,41 @@ enum HUDArtwork {
     }
 }
 
+/// A hatched panel (empty states) painted straight into its own backing
+/// store, with the pixels a cached `HUDArtwork.hatch` image of its size would
+/// have. Such panels are large and unique to their page: a shared CGImage
+/// would be held twice, by the cache and by Core Animation's render copy.
+final class HUDHatchLayer: CALayer {
+    let kind: HUDArtwork.Hatch
+    /// The rounded scale cached motifs use; `applyScale` leaves it alone.
+    let artworkScale: CGFloat
+
+    init(_ kind: HUDArtwork.Hatch, scale: CGFloat) {
+        self.kind = kind
+        artworkScale = max(1, min(8, scale.isFinite ? scale.rounded(.up) : 2))
+        super.init()
+        contentsScale = artworkScale
+        needsDisplayOnBoundsChange = true
+    }
+
+    override init(layer: Any) {
+        let source = layer as? HUDHatchLayer
+        kind = source?.kind ?? .light; artworkScale = source?.artworkScale ?? 2
+        super.init(layer: layer)
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    override func draw(in ctx: CGContext) {
+        ctx.saveGState()
+        // The motif is drawn top-down, whichever way Core Animation flipped this context.
+        if ctx.ctm.d > 0 { ctx.translateBy(x: 0, y: bounds.height); ctx.scaleBy(x: 1, y: -1) }
+        ctx.setAllowsAntialiasing(true); ctx.setShouldAntialias(true)
+        HUDArtwork.drawHatch(kind, in: CGRect(origin: .zero, size: bounds.size), ctx: ctx)
+        ctx.restoreGState()
+    }
+}
+
 extension CALayer {
     /// Shows a cached raster motif at its natural size without resampling.
     func showArtwork(_ image: CGImage?, scale: CGFloat) {
@@ -193,4 +237,28 @@ extension CALayer {
         contentsGravity = .resize
         magnificationFilter = .linear
     }
+}
+
+/// The full-centre backdrop that Personal ID's background art and the Map
+/// fill, in content-box px: a 430 px disc around the shell's disc centre,
+/// reaching past the content box on every side, opaque to 52 % of its radius
+/// and fading through 55 % at 74 % to nothing at the rim (the demo's
+/// radial-gradient(circle 430px, #000 0 52%, rgba(0,0,0,.55) 74%, transparent)).
+enum HUDCentreBackdrop {
+    static let centre = CGPoint(x: 295, y: 304)
+    static let radius: CGFloat = 430
+    static let frame = CGRect(x: centre.x - radius, y: centre.y - radius, width: 2 * radius, height: 2 * radius)
+    /// The ramp as a layer mask over `frame`, one shared image at half
+    /// resolution (the soft ramp spans some 200 px, so it scales up smoothly).
+    static let mask: CGImage? = {
+        let pixels = Int(radius), space = CGColorSpaceCreateDeviceGray()
+        guard let context = CGContext(data: nil, width: pixels, height: pixels, bitsPerComponent: 8, bytesPerRow: 0, space: space,
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
+              let ramp = CGGradient(colorsSpace: space, colors: [CGColor(gray: 0, alpha: 1), CGColor(gray: 0, alpha: 1),
+                                                                 CGColor(gray: 0, alpha: 0.55), CGColor(gray: 0, alpha: 0)] as CFArray,
+                                    locations: [0, 0.52, 0.74, 1]) else { return nil }
+        let middle = CGPoint(x: CGFloat(pixels) / 2, y: CGFloat(pixels) / 2)
+        context.drawRadialGradient(ramp, startCenter: middle, startRadius: 0, endCenter: middle, endRadius: CGFloat(pixels) / 2, options: [])
+        return context.makeImage()
+    }()
 }

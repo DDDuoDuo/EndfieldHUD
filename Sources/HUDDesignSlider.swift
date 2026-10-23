@@ -40,25 +40,28 @@ final class HUDSlider: HUDControl {
     private var trackWidth: CGFloat = 0
 
     init(id: String, label: String, value: Double, range: Range, format: HUDValueFormat, width: CGFloat,
-         dark: Bool = false, showsReadout: Bool = true, env: HUDDesignEnvironment) {
-        self.range = range; self.format = format; self.dark = dark
+         dark: Bool = false, showsReadout: Bool = true, showsTicks: Bool = true, env: HUDDesignEnvironment) {
+        // Light theme: the surfaces under a `dark` slider turn pale, so it
+        // takes the plate variant (dark thumb, accent core, ink readout).
+        self.range = range; self.format = format; self.dark = dark && !HUDColor.isLight
         self.value = range.clamp(value)
         super.init(id: id, label: label, env: env)
         trackWidth = max(40, width - (showsReadout ? Self.readoutWidth + 8 : 0))
         HUDMotion.perform {
             layer.bounds = CGRect(x: 0, y: 0, width: width, height: Self.height)
             track.frame = CGRect(x: 0, y: 11, width: trackWidth, height: 5)
-            track.backgroundColor = dark ? HUDColor.rgb(0x3A3A3A) : HUDColor.sliderTrack
-            if !dark { track.borderWidth = 1; track.borderColor = HUDColor.nearBlack }
+            track.backgroundColor = self.dark ? HUDColor.rgb(0x3A3A3A) : HUDColor.sliderTrack
+            if !self.dark { track.borderWidth = 1; track.borderColor = HUDColor.nearBlack }
             fill.startPoint = CGPoint(x: 0, y: 0.5); fill.endPoint = CGPoint(x: 1, y: 0.5)
             fill.colors = [HUDColor.yellowLow, HUDColor.yellow]
             zeroMark.backgroundColor = HUDColor.nearBlack; zeroMark.isHidden = range.zero == nil
             ticks.frame = CGRect(x: 0, y: 21, width: trackWidth, height: 4)
             ticks.path = HUDShape.ticks(count: 11, width: trackWidth, height: 4); ticks.fillColor = HUDColor.sliderTick
+            ticks.isHidden = !showsTicks
             thumb.bounds = CGRect(x: 0, y: 0, width: 9, height: 17)
-            thumb.backgroundColor = dark ? HUDColor.rgb(0xEDEDED) : HUDColor.counterBackground
+            thumb.backgroundColor = self.dark ? HUDColor.rgb(0xEDEDED) : HUDColor.counterBackground
             core.frame = CGRect(x: 3.5, y: 3, width: 2, height: 11)
-            core.backgroundColor = dark ? HUDColor.nearBlack : HUDColor.yellow
+            core.backgroundColor = self.dark ? HUDColor.nearBlack : HUDColor.yellow
             thumb.addSublayer(core)
             readout.isHidden = !showsReadout
             readout.lineFrame = CGRect(x: width - Self.readoutWidth, y: 9, width: Self.readoutWidth, height: 12)

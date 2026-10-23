@@ -18,6 +18,20 @@ final class HUDDesignTextField: HUDControl {
         var style = HUDType.field
         var placeholderColor = HUDColor.muted
         var inset = CGSize(width: 10, height: 0)
+        /// User-styled text (the Notes note): drawn and edited with these
+        /// attributes (any installed font, bold, italic, underline, colour,
+        /// paragraph style) instead of `style`; the idle text is top-aligned.
+        var attributes: [NSAttributedString.Key: Any]? = nil
+        /// Esc ends editing and keeps the text (a note) instead of restoring it.
+        var escapeCommits = false
+        /// A bare text area inside its own panel: no fill, ring or focus bar.
+        var plain = false
+        /// Replaces the yellow focus ring, bar and caret (Personal ID's card accent).
+        var accent: CGColor? = nil
+        /// Replaces the dark field fill (Personal ID's #212121 inline editor).
+        var background: CGColor? = nil
+        /// Right-aligned numbers (Personal ID levels and counters).
+        var alignment: HUDTextLayer.Alignment = .left
     }
 
     let options: Options
@@ -30,8 +44,15 @@ final class HUDDesignTextField: HUDControl {
     var onCommit: ((String) -> Void)?
     /// Esc: the edit is discarded and the previous text restored.
     var onCancel: (() -> Void)?
+    /// Return committed the edit (after onCommit): forms submit on it.
+    var onReturn: (() -> Void)?
+    /// Tab committed a single-line edit (after onCommit); true with Shift.
+    var onTab: ((Bool) -> Void)?
     weak var canvas: HUDDesignCanvas?
     private let idle = HUDTextLayer()
+    private let styledIdle = HUDStyledTextLayer()
+    /// The releasing click, while it activates the field (caret placement).
+    private var pressPoint: CGPoint?
     private var textView: HUDDesignNativeTextView?
     private var editor: HUDProjectedTextEditor?
     private var original = ""
@@ -43,11 +64,13 @@ final class HUDDesignTextField: HUDControl {
     init(id: String, label: String, text: String, placeholder: String = "", size: CGSize, options: Options = Options(),
          env: HUDDesignEnvironment) {
         self.options = options; self.text = text; self.placeholder = placeholder
-        frame = HUDFieldFrame(size: size, light: options.light)
+        frame = HUDFieldFrame(size: size, light: options.light, plain: options.plain)
+        if let accent = options.accent { frame.focusColor = accent }
         super.init(id: id, label: label, env: env, layer: frame.layer)
         HUDMotion.perform {
+            if let background = options.background { frame.layer.backgroundColor = background }
             idle.maximumLines = options.multiline ? 0 : 1
-            frame.layer.addSublayer(idle)
+            frame.layer.addSublayer(options.attributes == nil ? idle : styledIdle)
             frame.layer.masksToBounds = true
         }
         setTarget(frame.layer.bounds)
@@ -86,6 +109,17 @@ final class HUDDesignTextField: HUDControl {
 
     private func renderIdle() {
         let rect = textRect
+        if var attributes = options.attributes {
+            let shown = options.secure ? String(repeating: "•", count: text.count) : text
+            if shown.isEmpty { attributes[.foregroundColor] = NSColor(cgColor: options.placeholderColor) }
+            HUDMotion.perform {
+                styledIdle.isHidden = isEditing
+                styledIdle.frame = rect
+                styledIdle.text = NSAttributedString(string: shown.isEmpty ? placeholder : shown, attributes: attributes)
+                styledIdle.contentsScale = env.scale(for: styledIdle)
+            }
+            return
+        }
         HUDMotion.perform {
             idle.isHidden = isEditing
             let shown = options.secure ? String(repeating: "•", count: text.count) : text
@@ -97,7 +131,7 @@ final class HUDDesignTextField: HUDControl {
             let lineHeight = textStyle.size * max(1.2, textStyle.lineHeight)
             idle.lineFrame = options.multiline ? CGRect(x: rect.minX, y: rect.minY, width: rect.width, height: rect.height)
                 : CGRect(x: rect.minX, y: (rect.height - lineHeight) / 2, width: rect.width, height: lineHeight)
-            idle.alignment = .left
+            idle.alignment = options.alignment
         }
         if options.multiline {
             HUDMotion.perform { idle.maximumLines = max(1, Int(rect.height / (textStyle.size * 1.5))) }
@@ -127,9 +161,17 @@ final class HUDDesignTextField: HUDControl {
         let font = HUDText.font(textStyle, language: HUDTextLanguage.tag()) as NSFont
         view.font = font
         view.textColor = NSColor(cgColor: textStyle.color) ?? .white
-        view.insertionPointColor = options.light ? NSColor(cgColor: HUDColor.ink) ?? .black : NSColor(cgColor: HUDColor.yellow) ?? .yellow
-        view.selectedTextAttributes = [.backgroundColor: NSColor(cgColor: HUDColor.rgb(0xFFFA00, 0.35)) ?? .selectedTextBackgroundColor]
+        view.insertionPointColor = options.light ? NSColor(cgColor: HUDColor.ink) ?? .black : NSColor(cgColor: options.accent ?? HUDColor.accentInk) ?? .yellow
+        view.alignment = options.alignment == .right ? .right : options.alignment == .center ? .center : .left
+        view.selectedTextAttributes = [.backgroundColor: NSColor(cgColor: HUDColor.yellow.copy(alpha: 0.35) ?? HUDColor.yellow) ?? .selectedTextBackgroundColor]
         view.string = text
+        if let attributes = options.attributes {
+            view.font = attributes[.font] as? NSFont ?? font
+            view.textColor = attributes[.foregroundColor] as? NSColor ?? view.textColor
+            view.defaultParagraphStyle = attributes[.paragraphStyle] as? NSParagraphStyle
+            view.typingAttributes = attributes
+            view.textStorage?.setAttributes(attributes, range: NSRange(location: 0, length: view.textStorage?.length ?? 0))
+        }
         view.secure = options.secure
         view.delegate = delegateProxy
         view.setAccessibilityLabel(label)
@@ -157,7 +199,11 @@ final class HUDDesignTextField: HUDControl {
         if let selection, selection.location <= view.string.utf16.count {
             view.setSelectedRange(NSRange(location: selection.location, length: min(selection.length, view.string.utf16.count - selection.location)))
         } else if options.selectsAllOnBegin { view.selectAll(nil) }
-        else { view.setSelectedRange(NSRange(location: view.string.utf16.count, length: 0)) }
+        else if let press = pressPoint, frame.layer.bounds.contains(press) {
+            // A click places the caret where it landed, as a native field does.
+            let index = view.characterIndexForInsertion(at: CGPoint(x: press.x - textRect.minX, y: press.y - textRect.minY))
+            view.setSelectedRange(NSRange(location: min(index, view.string.utf16.count), length: 0))
+        } else { view.setSelectedRange(NSRange(location: view.string.utf16.count, length: 0)) }
         if options.secure { EnableSecureEventInput() }
         canvas.context.onLockParallax?()
         canvas.context.onInputStateChange?()
@@ -204,12 +250,14 @@ final class HUDDesignTextField: HUDControl {
     private func handleEditorKey(_ event: NSEvent) -> Bool {
         guard let view = textView, !view.hasMarkedText() else { return false }
         switch event.keyCode {
-        case 53: endEditing(commit: false); return true
+        case 53: endEditing(commit: options.escapeCommits); return true
         case 36, 76:
             let shift = event.modifierFlags.contains(.shift)
-            if !options.multiline || (options.returnCommits && !shift) { endEditing(commit: true); return true }
+            if !options.multiline || (options.returnCommits && !shift) { endEditing(commit: true); onReturn?(); return true }
             return false
-        case 48: if !options.multiline { endEditing(commit: true); return true }; return false
+        case 48:
+            guard !options.multiline else { return false }
+            endEditing(commit: true); onTab?(event.modifierFlags.contains(.shift)); return true
         default: return false
         }
     }
@@ -239,8 +287,41 @@ final class HUDDesignTextField: HUDControl {
     }
 
     override func pointerDown(at point: CGPoint) -> Bool { isEnabled && !isEditing }
+    override func pointerUp(at point: CGPoint) { pressPoint = point; super.pointerUp(at: point); pressPoint = nil }
     override var accessibilityRole: HUDAccessibilityItem.Role? { isEditing ? nil : .button }
     var idleTextForTesting: String { idle.text }
+    var editorForTesting: HUDProjectedTextEditor? { editor }
+}
+
+/// The idle face of a field with `Options.attributes`: the text laid out by
+/// TextKit exactly as its editor lays it out (zero padding, the field's
+/// width), drawn once per change, top-aligned and clipped to the field.
+private final class HUDStyledTextLayer: CALayer {
+    var text = NSAttributedString() { didSet { if !text.isEqual(to: oldValue) { setNeedsDisplay() } } }
+
+    override init() { super.init(); needsDisplayOnBoundsChange = true; isOpaque = false; masksToBounds = true }
+    override init(layer: Any) { super.init(layer: layer) }
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+    override func action(forKey event: String) -> CAAction? { HUDLayer.action(forKey: event, of: self) }
+    /// A drawn layer keeps its old bitmap when the backing scale changes; redraw sharp.
+    override var contentsScale: CGFloat { didSet { if contentsScale != oldValue { setNeedsDisplay() } } }
+
+    override func draw(in ctx: CGContext) {
+        guard text.length > 0, bounds.width > 0 else { return }
+        let storage = NSTextStorage(attributedString: text), manager = NSLayoutManager()
+        let container = NSTextContainer(size: CGSize(width: bounds.width, height: .greatestFiniteMagnitude))
+        container.lineFragmentPadding = 0
+        manager.addTextContainer(container); storage.addLayoutManager(manager)
+        ctx.saveGState()
+        if ctx.ctm.d > 0 { ctx.translateBy(x: 0, y: bounds.height); ctx.scaleBy(x: 1, y: -1) }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: true)
+        let glyphs = manager.glyphRange(for: container)
+        manager.drawBackground(forGlyphRange: glyphs, at: .zero)
+        manager.drawGlyphs(forGlyphRange: glyphs, at: .zero)
+        NSGraphicsContext.restoreGraphicsState()
+        ctx.restoreGState()
+    }
 }
 
 /// NSTextView's delegate must be an NSObject; HUDControl is not.

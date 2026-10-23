@@ -47,19 +47,21 @@ final class HUDButton: HUDControl {
         brighten.fillColor = HUDColor.white(0.07); brighten.opacity = 0
         if let icon { let glyph = HUDIconLayer(icon, size: 15, color: color); iconLayer = glyph; layer.addSublayer(glyph) }
         layer.addSublayer(text)
-        if kind == .secondary { bar.fillColor = HUDColor.yellow; layer.addSublayer(bar) }
+        if kind == .secondary { bar.fillColor = HUDColor.accentInk; layer.addSublayer(bar) }
         if kind == .primary { corner.backgroundColor = HUDColor.nearBlack; layer.addSublayer(corner) }
         layoutContents()
     }
 
     var preferredWidth: CGFloat {
         let leading = kind == .secondary ? (size == .small ? 20 : 22) : size.padding
-        return ceil(leading + (icon == nil ? 0 : 15 + 8) + HUDText.width(title, text.textStyle) + size.padding)
+        // An icon-only button has no gap after its icon (flex gap).
+        return ceil(leading + (icon == nil ? 0 : 15 + (title.isEmpty ? 0 : 8)) + HUDText.width(title, text.textStyle) + size.padding)
     }
 
-    /// Sizes the button to its content at `origin`.
-    func place(at origin: CGPoint) {
-        HUDMotion.perform { layer.frame = CGRect(x: origin.x, y: origin.y, width: preferredWidth, height: size.height) }
+    /// Sizes the button to its content at `origin`; a larger `width` stretches
+    /// it (flex: 1) with the icon and title centred.
+    func place(at origin: CGPoint, width: CGFloat? = nil) {
+        HUDMotion.perform { layer.frame = CGRect(x: origin.x, y: origin.y, width: max(preferredWidth, width ?? 0), height: size.height) }
         layoutContents()
     }
 
@@ -86,7 +88,7 @@ final class HUDButton: HUDControl {
                 bar.path = Self.barPath(arrow: isHovered && isEnabled)
             }
             let leading = kind == .secondary ? (size == .small ? 20 : 22) : size.padding
-            var x = leading
+            var x = leading + max(0, (bounds.width - preferredWidth) / 2).rounded()
             if let iconLayer { iconLayer.frame = CGRect(x: x, y: (bounds.height - 15) / 2, width: 15, height: 15); x += 15 + 8 }
             text.lineFrame = CGRect(x: x, y: (bounds.height - size.fontSize) / 2, width: bounds.width - x - size.padding + 2, height: size.fontSize)
             layer.opacity = isEnabled ? 1 : 0.35
@@ -147,15 +149,18 @@ final class HUDIconButton: HUDControl {
 
     var isOn = false { didSet { if isOn != oldValue { applyStyle() } } }
 
+    /// Swaps the glyph in place (Volume's mute button shows `mute` while muted).
+    func setIcon(_ icon: HUDIcon) { HUDMotion.perform { glyph.set(icon, size: glyph.bounds.width) } }
+
     private func applyStyle() {
         let hovered = isHovered && isEnabled
         let (fill, ring, icon): (CGColor, CGColor, CGColor)
         switch (style, isOn) {
-        case (.back, _): (fill, ring, icon) = (hovered ? HUDColor.white(1) : HUDColor.clear, HUDColor.rgb(0xDDDDDD),
-                                               hovered ? HUDColor.nearBlack : HUDColor.white(1))
+        case (.back, _): (fill, ring, icon) = (hovered ? HUDColor.foreground(1) : HUDColor.clear, HUDColor.tone(0xDDDDDD),
+                                               hovered ? HUDColor.tone(0x111111) : HUDColor.foreground(1))
         case (_, true): (fill, ring, icon) = (HUDColor.yellow, HUDColor.clear, HUDColor.nearBlack)
         case (.light, _): (fill, ring, icon) = (HUDColor.lightButton[0], HUDColor.rgb(0xB9BAB5), HUDColor.counterBackground)
-        default: (fill, ring, icon) = (HUDColor.iconButton, hovered ? HUDColor.rgb(0x888888) : HUDColor.ringIcon, HUDColor.textOnDark)
+        default: (fill, ring, icon) = (HUDColor.iconButton, hovered ? HUDColor.tone(0x888888) : HUDColor.ringIcon, HUDColor.textOnDark)
         }
         let duration = style == .back ? 0.12 : HUDDuration.hover
         HUDMotion.animate(plate, "backgroundColor", to: fill, duration: duration, timing: HUDEasing.ease, env: env)
@@ -185,9 +190,10 @@ final class HUDPill: HUDControl {
 
     init(id: String, title: String, icon: HUDIcon, kind: Kind, env: HUDDesignEnvironment) {
         self.kind = kind
-        let foreground = kind == .cancel ? HUDColor.rgb(0xECECEC) : HUDColor.rgb(0x161616)
+        // On the confirm band: light theme inverts the neutrals with the band.
+        let foreground = kind == .cancel ? HUDColor.tone(0xECECEC) : HUDColor.tone(0x161616)
         text = HUDTextLayer(title, style: HUDType.pill.colored(foreground))
-        glyph = HUDIconLayer(icon, size: 14, color: kind == .cancel ? HUDColor.rgb(0x2A2A2A) : HUDColor.white(1))
+        glyph = HUDIconLayer(icon, size: 14, color: kind == .cancel ? HUDColor.tone(0x2A2A2A) : (kind == .danger ? HUDColor.white(1) : HUDColor.foreground(1)))
         super.init(id: id, label: title, env: env)
         let width = max(150, 16 + 22 + 8 + HUDText.width(title, HUDType.pill) + 10 + 28 + 5)
         let bounds = CGRect(x: 0, y: 0, width: width, height: 38)
@@ -196,17 +202,17 @@ final class HUDPill: HUDControl {
             if kind != .cancel {
                 outer.frame = bounds.insetBy(dx: -3, dy: -3); outer.cornerRadius = 22
                 outer.borderWidth = 1
-                outer.borderColor = kind == .danger ? HUDColor.rgb(0xE5383B, 0.9) : HUDColor.rgb(0xE2E0E1, 0.9)
+                outer.borderColor = kind == .danger ? HUDColor.rgb(0xE5383B, 0.9) : HUDColor.tone(0xE2E0E1, 0.9)
                 let gap = HUDLayer.plain(); gap.frame = CGRect(x: 1, y: 1, width: outer.bounds.width - 2, height: outer.bounds.height - 2)
-                gap.cornerRadius = 21; gap.borderWidth = 2; gap.borderColor = HUDColor.rgb(0x1D1D1D)
+                gap.cornerRadius = 21; gap.borderWidth = 2; gap.borderColor = HUDColor.tone(0x1D1D1D)
                 outer.addSublayer(gap); layer.addSublayer(outer)
             }
             plate.frame = bounds; plate.cornerRadius = 19
-            plate.backgroundColor = kind == .cancel ? HUDColor.rgb(0x4A4A4A, 0.9) : HUDColor.rgb(0xE2E0E1)
+            plate.backgroundColor = kind == .cancel ? HUDColor.tone(0x4A4A4A, 0.9) : HUDColor.tone(0xE2E0E1)
             layer.addSublayer(plate)
             let glyphRect = CGRect(x: bounds.width - 5 - 28, y: 5, width: 28, height: 28)
             glyphPlate.frame = glyphRect; glyphPlate.cornerRadius = 14
-            glyphPlate.backgroundColor = kind == .cancel ? HUDColor.rgb(0xEDEDED) : (kind == .danger ? HUDColor.red : HUDColor.rgb(0x1B1B1B))
+            glyphPlate.backgroundColor = kind == .cancel ? HUDColor.tone(0xEDEDED) : (kind == .danger ? HUDColor.red : HUDColor.tone(0x1B1B1B))
             glyph.position = CGPoint(x: 14, y: 14); glyphPlate.addSublayer(glyph)
             let labelWidth = HUDText.width(title, HUDType.pill)
             let labelX = glyphRect.minX - 10 - labelWidth
@@ -220,8 +226,8 @@ final class HUDPill: HUDControl {
 
     override func hoverChanged() {
         let on = isHovered && isEnabled
-        let fill: CGColor = kind == .cancel ? (on ? HUDColor.rgb(0x606060, 0.95) : HUDColor.rgb(0x4A4A4A, 0.9))
-                                            : (on ? HUDColor.white(1) : HUDColor.rgb(0xE2E0E1))
+        let fill: CGColor = kind == .cancel ? (on ? HUDColor.tone(0x606060, 0.95) : HUDColor.tone(0x4A4A4A, 0.9))
+                                            : (on ? HUDColor.foreground(1) : HUDColor.tone(0xE2E0E1))
         HUDMotion.animate(plate, "backgroundColor", to: fill, duration: 0.12, timing: HUDEasing.ease, env: env)
         HUDMotion.animate(line, "opacity", to: Float(on ? 0.75 : 0.4), duration: HUDDuration.hover, timing: HUDEasing.ease, env: env)
         HUDMotion.animate(glyphPlate, "transform", to: NSValue(caTransform3D: on
@@ -274,4 +280,70 @@ final class HUDSwatch: HUDControl {
         HUDMotion.animate(layer, "transform.scale", to: isHovered && isEnabled ? 1.08 : 1, duration: HUDDuration.hover, env: env)
     }
     override var accessibilityRole: HUDAccessibilityItem.Role? { .tab(selected: isSelected) }
+}
+
+/// A drag handle in the grip motif (two columns of three 2 px dots; TODO cards,
+/// the Modules list): a drag past 3 px reports its start, each move and the
+/// release in the grip's coordinates; a press without a drag activates it.
+/// Without a label it stays out of VoiceOver, whose users get the owner's move
+/// actions instead.
+final class HUDDragGrip: HUDControl {
+    enum Phase { case began, moved, ended }
+    var onDrag: ((Phase, CGPoint) -> Void)?
+    private let dots = HUDLayer.shape("grip.dots")
+    private var start: CGPoint?
+    private(set) var isDragging = false
+
+    init(id: String, label: String = "", size: CGSize, dotsAt origin: CGPoint, env: HUDDesignEnvironment) {
+        super.init(id: id, label: label, env: env)
+        let bounds = CGRect(origin: .zero, size: size)
+        HUDMotion.perform {
+            layer.bounds = bounds
+            dots.frame = CGRect(origin: origin, size: CGSize(width: 6, height: 10)); dots.path = Self.dots(columns: 2, rows: 3)
+            dots.fillColor = HUDColor.bracket
+            layer.addSublayer(dots)
+        }
+        setTarget(bounds)
+    }
+
+    /// The grip motif: 2 px squares 4 px apart (the desktop notes' titles use it too).
+    static func dots(columns: Int, rows: Int) -> CGPath {
+        let path = CGMutablePath()
+        for column in 0..<columns { for row in 0..<rows { path.addRect(CGRect(x: CGFloat(column) * 4, y: CGFloat(row) * 4, width: 2, height: 2)) } }
+        return path
+    }
+
+    override func hoverChanged() {
+        HUDMotion.animate(dots, "fillColor", to: isHovered || isDragging ? HUDColor.nearBlack : HUDColor.bracket,
+                          duration: HUDDuration.hover, timing: HUDEasing.ease, env: env)
+    }
+
+    override func pointerDown(at point: CGPoint) -> Bool {
+        guard isEnabled else { return false }
+        start = point; isDragging = false
+        return true
+    }
+
+    override func pointerDragged(to point: CGPoint) {
+        guard let start else { return }
+        if !isDragging {
+            guard hypot(point.x - start.x, point.y - start.y) > 3 else { return }
+            isDragging = true
+            onDrag?(.began, start)
+        }
+        onDrag?(.moved, point)
+    }
+
+    override func pointerUp(at point: CGPoint) {
+        defer { start = nil; isDragging = false; hoverChanged() }
+        if isDragging { onDrag?(.ended, point) } else if contains(point) { activate() }
+    }
+
+    override func clearInteractionState() {
+        if isDragging, let start { onDrag?(.ended, start) }
+        start = nil; isDragging = false
+        super.clearInteractionState()
+    }
+
+    override var accessibilityRole: HUDAccessibilityItem.Role? { label.isEmpty ? nil : .button }
 }

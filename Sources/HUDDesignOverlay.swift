@@ -12,6 +12,13 @@ struct HUDConfirmRequest: Equatable {
     var cancelTitle: String = L10n.text("Cancel", "取消")
     var danger = false
     var icon: HUDIcon? = nil
+    /// `.alert` is a red band with white text (Settings' facility-alert easter egg).
+    var style: Style = .standard
+    /// The upper pill confirms too and looks like Confirm (two identical
+    /// answers); Esc or a press outside the bar still cancels.
+    var cancelPillConfirms = false
+
+    enum Style: Equatable { case standard, alert }
 
     var glyph: HUDIcon { icon ?? (danger ? .trash : .check) }
 }
@@ -43,8 +50,9 @@ struct HUDConfirmState: Equatable {
 }
 
 /// The projected band across the lower disc (spec §2.18): edge-faded charcoal,
-/// hairlines, pixel steps, a yellow (or red) double-bar marker, title and
-/// description on the left, Cancel above Confirm on the right.
+/// hairlines, a yellow (or red) double-bar marker, title and description on
+/// the left, Cancel above Confirm on the right. The spec's pixel-step blocks
+/// on the top edge are left out at the owner's request.
 final class HUDConfirmBar {
     static let size = CGSize(width: 620, height: 112)
     let layer = HUDLayer.plain("confirm")
@@ -54,6 +62,9 @@ final class HUDConfirmBar {
     private let marker = HUDLayer.gradient("confirm.marker")
     private let title = HUDTextLayer(style: HUDType.confirmTitle)
     private let message = HUDTextLayer(style: HUDType.confirmDescription)
+    /// The charcoal band of the standard style, restored after an alert.
+    private var standardBand: [Any]?
+    private var hairlines: [CAGradientLayer] = []
     private(set) var pills: [HUDPill] = []
     var onDecision: ((HUDConfirmState.Decision) -> Void)?
 
@@ -64,24 +75,14 @@ final class HUDConfirmBar {
             layer.bounds = bounds; layer.zPosition = HUDLayerOrder.confirmBar
             band.frame = bounds
             band.startPoint = CGPoint(x: 0, y: 0.5); band.endPoint = CGPoint(x: 1, y: 0.5)
-            let charcoal = HUDColor.rgb(0x181818, 0.97)
-            band.colors = [HUDColor.rgb(0x181818, 0), charcoal, charcoal, HUDColor.rgb(0x181818, 0)]
             band.locations = [0, 0.06, 0.94, 1]
             for y in [CGFloat(0), bounds.height - 1] {
                 let hairline = HUDLayer.gradient()
                 hairline.frame = CGRect(x: bounds.width * 0.05, y: y, width: bounds.width * 0.9, height: 1)
                 hairline.startPoint = CGPoint(x: 0, y: 0.5); hairline.endPoint = CGPoint(x: 1, y: 0.5)
-                hairline.colors = [HUDColor.white(0), HUDColor.white(0.22), HUDColor.white(0.22), HUDColor.white(0)]
                 hairline.locations = [0, 0.2, 0.8, 1]
-                band.addSublayer(hairline)
+                band.addSublayer(hairline); hairlines.append(hairline)
             }
-            let steps = HUDLayer.shape()
-            steps.frame = CGRect(x: bounds.width * 0.62, y: -10, width: 40, height: 10)
-            let path = CGMutablePath()
-            path.addRect(CGRect(x: 0, y: 5, width: 10, height: 5)); path.addRect(CGRect(x: 10, y: 0, width: 10, height: 10))
-            path.addRect(CGRect(x: 25, y: 5, width: 5, height: 5))
-            steps.path = path; steps.fillColor = HUDColor.rgb(0x202020)
-            band.addSublayer(steps)
             marker.frame = CGRect(x: 0, y: 1.5, width: 12, height: 18)
             marker.startPoint = CGPoint(x: 0, y: 0.5); marker.endPoint = CGPoint(x: 1, y: 0.5)
             marker.locations = [0, 0.6, 0.6, 0.75, 0.75, 1]
@@ -90,30 +91,62 @@ final class HUDConfirmBar {
             layer.addSublayer(band); layer.addSublayer(column)
             layer.isHidden = true
         }
+        applyPalette()
+    }
+
+    /// The standard band in the current Theme (light: a pale band with dark
+    /// ink); `configure` takes it for every request that is not an alert.
+    func applyPalette() {
+        let charcoal = HUDColor.tone(0x181818, 0.97)
+        standardBand = [HUDColor.tone(0x181818, 0), charcoal, charcoal, HUDColor.tone(0x181818, 0)]
+        HUDMotion.perform {
+            band.colors = standardBand
+            for hairline in hairlines {
+                hairline.colors = [HUDColor.foreground(0), HUDColor.foreground(0.22), HUDColor.foreground(0.22), HUDColor.foreground(0)]
+            }
+        }
     }
 
     func configure(_ request: HUDConfirmRequest) {
         pills.forEach { $0.layer.removeFromSuperlayer() }
-        let cancel = HUDPill(id: request.id + ":cancel", title: request.cancelTitle, icon: .x, kind: .cancel, env: env)
-        let confirm = HUDPill(id: request.id + ":confirm", title: request.confirmTitle, icon: request.glyph,
-                              kind: request.danger ? .danger : .confirm, env: env)
-        cancel.onActivate = { [weak self] in self?.onDecision?(.cancel) }
+        let kind: HUDPill.Kind = request.danger ? .danger : .confirm
+        let twin = request.cancelPillConfirms
+        let cancel = HUDPill(id: request.id + ":cancel", title: request.cancelTitle, icon: twin ? request.glyph : .x,
+                             kind: twin ? kind : .cancel, env: env)
+        let confirm = HUDPill(id: request.id + ":confirm", title: request.confirmTitle, icon: request.glyph, kind: kind, env: env)
+        cancel.onActivate = { [weak self] in self?.onDecision?(twin ? .confirm : .cancel) }
         confirm.onActivate = { [weak self] in self?.onDecision?(.confirm) }
         pills = [cancel, confirm]
-        let tone = request.danger ? HUDColor.red : HUDColor.yellow
+        let alert = request.style == .alert
+        let tone = alert ? HUDColor.white(1) : request.danger ? HUDColor.red : HUDColor.accentInk
         HUDMotion.perform {
+            if alert {
+                let red = HUDColor.red.copy(alpha: 0.97) ?? HUDColor.red
+                band.colors = [HUDColor.red.copy(alpha: 0) ?? HUDColor.clear, red, red, HUDColor.red.copy(alpha: 0) ?? HUDColor.clear]
+            } else {
+                band.colors = standardBand
+            }
+            title.textStyle = alert ? HUDType.confirmTitle.colored(HUDColor.white(1)) : HUDType.confirmTitle
             marker.colors = [tone, tone, HUDColor.clear, HUDColor.clear, tone, tone]
             let columnWidth = Self.size.width - 46 - 34 - 16 - max(cancel.layer.bounds.width, confirm.layer.bounds.width)
             column.frame.size.width = columnWidth
             title.text = request.title
-            title.lineFrame = CGRect(x: 22, y: 0, width: columnWidth - 22, height: 17 * 1.25)
+            // Without a description the title may wrap, up to three lines; one
+            // too long for three (wide twin pills) steps down to 14 px and four.
+            var titleLines = request.message.isEmpty && request.countdown == nil ? 3 : 1
+            if titleLines == 3, title.preferredWidth > (columnWidth - 22) * 2.7 {
+                var small = title.textStyle; small.size = 14; title.textStyle = small
+                titleLines = 4
+            }
+            title.maximumLines = titleLines
+            title.lineFrame = CGRect(x: 22, y: 0, width: columnWidth - 22, height: title.textStyle.size * 1.25 * CGFloat(titleLines))
             if let countdown = request.countdown {
                 message.runs = [HUDText.Run("\(countdown)", HUDType.confirmCountdown)]
                 message.lineFrame = CGRect(x: 0, y: 21.25 + 8, width: columnWidth, height: 22)
                 message.maximumLines = 1
             } else {
                 message.text = request.message
-                message.textStyle = HUDType.confirmDescription
+                message.textStyle = alert ? HUDType.confirmDescription.colored(HUDColor.white(0.9)) : HUDType.confirmDescription
                 message.maximumLines = 2
                 message.lineFrame = CGRect(x: 0, y: 21.25 + 8, width: columnWidth, height: 36)
             }
@@ -201,6 +234,8 @@ final class HUDToast {
     private let title = HUDTextLayer(style: HUDType.toastTitle, alignment: .center)
     private let caption = HUDTextLayer(style: HUDType.toastCaption, alignment: .center)
     private let underline = HUDLayer.plain("toast.underline")
+    private let corner = HUDLayer.shape()
+    private var ticks: [CALayer] = []
 
     init(env: HUDDesignEnvironment) {
         self.env = env
@@ -209,23 +244,34 @@ final class HUDToast {
             layer.bounds = CGRect(origin: .zero, size: Self.size); layer.zPosition = HUDLayerOrder.toast; layer.isHidden = true
             line.frame = CGRect(x: 0, y: 44, width: width, height: 1)
             line.startPoint = CGPoint(x: 0, y: 0.5); line.endPoint = CGPoint(x: 1, y: 0.5)
-            line.colors = [HUDColor.white(0), HUDColor.white(0.65), HUDColor.white(0.65), HUDColor.white(0)]
             line.locations = [0, 0.3, 0.7, 1]
             for x in [width * 0.2, width * 0.8] {
-                let tick = HUDLayer.plain(); tick.frame = CGRect(x: x, y: -3, width: 1, height: 7); tick.backgroundColor = HUDColor.white(1)
-                line.addSublayer(tick)
+                let tick = HUDLayer.plain(); tick.frame = CGRect(x: x, y: -3, width: 1, height: 7)
+                line.addSublayer(tick); ticks.append(tick)
             }
             box.frame = CGRect(x: width / 2 - 30, y: 14, width: 60, height: 60)
-            box.backgroundColor = HUDColor.microTagBlack; box.borderWidth = 1; box.borderColor = HUDColor.rgb(0x4A4A4A)
-            let corner = HUDLayer.shape(); corner.frame = CGRect(x: 48, y: 0, width: 12, height: 12)
+            box.borderWidth = 1
+            corner.frame = CGRect(x: 48, y: 0, width: 12, height: 12)
             let path = CGMutablePath(); path.addLines(between: [.zero, CGPoint(x: 12, y: 0), CGPoint(x: 12, y: 12)]); path.closeSubpath()
-            corner.path = path; corner.fillColor = HUDColor.yellow
-            glyph.color = HUDColor.white(1)
+            corner.path = path
             box.addSublayer(glyph); box.addSublayer(corner)
             title.lineFrame = CGRect(x: 0, y: 88, width: width, height: 14)
             caption.lineFrame = CGRect(x: 0, y: 110, width: width, height: 11.5)
-            underline.frame = CGRect(x: width / 2 - 11, y: 130, width: 22, height: 2); underline.backgroundColor = HUDColor.yellow
+            underline.frame = CGRect(x: width / 2 - 11, y: 130, width: 22, height: 2)
             [line, box, title, caption, underline].forEach(layer.addSublayer)
+        }
+        applyPalette()
+    }
+
+    /// Recolours the toast after a theme colour or Theme change.
+    func applyPalette() {
+        HUDMotion.perform {
+            line.colors = [HUDColor.foreground(0), HUDColor.foreground(0.65), HUDColor.foreground(0.65), HUDColor.foreground(0)]
+            ticks.forEach { $0.backgroundColor = HUDColor.foreground(1) }
+            box.backgroundColor = HUDColor.tone(0x161616); box.borderColor = HUDColor.tone(0x4A4A4A)
+            corner.fillColor = HUDColor.accentInk; underline.backgroundColor = HUDColor.accentInk
+            glyph.color = HUDColor.foreground(1)
+            title.textStyle = HUDType.toastTitle; caption.textStyle = HUDType.toastCaption
         }
     }
 
@@ -272,7 +318,6 @@ final class HUDCenterOverlay {
     let env: HUDDesignEnvironment
     let confirmBar: HUDConfirmBar
     let toast: HUDToast
-    private let shade = HUDLayer.plain("center.shade")
     private let dim = HUDLayer.gradient("center.dim")
     private(set) var confirmState = HUDConfirmState()
     private(set) var toastState = HUDToastState()
@@ -283,7 +328,28 @@ final class HUDCenterOverlay {
     private let schedule: (TimeInterval, DispatchWorkItem) -> Void
     /// Called when the overlay's input state changes (stand-ins, input locks).
     var onChange: (() -> Void)?
+    /// The module content behind the confirm bar, blurred while a confirm is
+    /// open (the host's view must use Core Image filters).
+    weak var blurTarget: CALayer?
+    private static let blurRadius: CGFloat = 1.5
+    /// brightness(.5) halves the sRGB values; the exposure works in linear
+    /// light, where that is about −2.2 EV (checked on screen against the
+    /// radial dim's share of the darkening).
+    private static let darkening: CGFloat = -2.2
     let router = HUDInteractionRouter()
+    /// Presses outside the bar, which cancel a request whose pills both confirm.
+    private lazy var outside: HUDControl = {
+        let control = OutsidePress(id: "confirm.outside", env: env, layer: layer)
+        control.bar = confirmBar.layer
+        control.onActivate = { [weak self] in _ = self?.decide(.cancel) }
+        return control
+    }()
+
+    private final class OutsidePress: HUDControl {
+        weak var bar: CALayer?
+        override func contains(_ point: CGPoint) -> Bool { bar.map { !$0.frame.contains(point) } ?? false }
+        override var accessibilityRole: HUDAccessibilityItem.Role? { nil }
+    }
 
     init(env: HUDDesignEnvironment,
          schedule: @escaping (TimeInterval, DispatchWorkItem) -> Void = { DispatchQueue.main.asyncAfter(deadline: .now() + $0, execute: $1) }) {
@@ -292,20 +358,29 @@ final class HUDCenterOverlay {
         toast = HUDToast(env: env)
         HUDMotion.perform {
             layer.bounds = CGRect(origin: .zero, size: HUDMetric.box)
-            shade.frame = layer.bounds; shade.backgroundColor = HUDColor.black(0.5); shade.opacity = 0
             // The 850 px dim circle centred on the disc (stage 975, 575 → box 295, 305).
             dim.type = .radial
             dim.frame = CGRect(x: 295 - 425, y: 305 - 425, width: 850, height: 850)
             dim.startPoint = CGPoint(x: 0.5, y: 0.5); dim.endPoint = CGPoint(x: 1, y: 1)
-            dim.colors = [HUDColor.black(0.62), HUDColor.black(0.62), HUDColor.black(0)]
             dim.locations = [0, 0.821, 0.99]
             dim.opacity = 0; dim.zPosition = HUDLayerOrder.dim
             // Stage (665, 640) and (675, 460) relative to the box at (680, 270).
             confirmBar.layer.frame = CGRect(origin: CGPoint(x: -15, y: 370), size: HUDConfirmBar.size)
             toast.layer.frame = CGRect(origin: CGPoint(x: -5, y: 190), size: HUDToast.size)
-            [shade, dim, confirmBar.layer, toast.layer].forEach(layer.addSublayer)
+            [dim, confirmBar.layer, toast.layer].forEach(layer.addSublayer)
         }
         confirmBar.onDecision = { [weak self] in _ = self?.decide($0) }
+        applyDim()
+    }
+
+    /// The theme colour or Theme changed.
+    func applyPalette() { toast.applyPalette(); confirmBar.applyPalette(); applyDim() }
+
+    /// The dim behind the confirm bar: black in dark, a pale veil in light.
+    private func applyDim() {
+        HUDMotion.perform {
+            dim.colors = [HUDColor.tone(0x000000, 0.62), HUDColor.tone(0x000000, 0.62), HUDColor.tone(0x000000, 0)]
+        }
     }
 
     var isConfirming: Bool { confirmState.isOpen }
@@ -316,7 +391,7 @@ final class HUDCenterOverlay {
         confirmState.present(request)
         confirmHandlers = (onConfirm, onCancel)
         confirmBar.configure(request)
-        router.set(confirmBar.pills)
+        router.set((request.cancelPillConfirms ? [outside] : []) + confirmBar.pills)
         confirmBar.show()
         setDimmed(true)
         onChange?()
@@ -404,12 +479,39 @@ final class HUDCenterOverlay {
         completion?()
     }
 
-    /// Radial dim and the content's brightness .5 (.22 / .25 s E).
+    /// Radial dim (.22 s E), the content's brightness .5 and blur (.25 s E).
     private func setDimmed(_ on: Bool) {
         guard on != dimmed else { return }
         dimmed = on
         HUDMotion.animate(dim, "opacity", to: Float(on ? 1 : 0), duration: HUDDuration.dim, env: env)
-        HUDMotion.animate(shade, "opacity", to: Float(on ? 1 : 0), duration: HUDDuration.dimFilter, env: env)
+        setContentDimmed(on)
+    }
+
+    /// The demo's `#center.dimmed{filter: brightness(.5) blur(1.5px)}` on the
+    /// module content itself, so empty areas stay clear (no darkened box).
+    /// The filters exist only while a confirm needs them: added at their
+    /// neutral values, eased in, and removed once eased out.
+    private func setContentDimmed(_ on: Bool) {
+        guard let target = blurTarget else { return }
+        if on, target.filters == nil {
+            guard let blur = CIFilter(name: "CIGaussianBlur"), let dark = CIFilter(name: "CIExposureAdjust") else { return }
+            blur.setDefaults(); blur.name = "confirmBlur"; blur.setValue(0, forKey: kCIInputRadiusKey)
+            dark.setDefaults(); dark.name = "confirmDim"; dark.setValue(0, forKey: kCIInputEVKey)
+            HUDMotion.perform { target.filters = [blur, dark] }
+        }
+        guard target.filters != nil else { return }
+        CATransaction.begin()
+        if !on {
+            CATransaction.setCompletionBlock { [weak self, weak target] in
+                guard self?.dimmed == false else { return }
+                HUDMotion.perform { target?.filters = nil }
+            }
+        }
+        HUDMotion.animate(target, "filters.confirmBlur.inputRadius", to: on ? Self.blurRadius : 0,
+                          duration: HUDDuration.dimFilter, env: env)
+        HUDMotion.animate(target, "filters.confirmDim.inputEV", to: on ? Self.darkening : 0,
+                          duration: HUDDuration.dimFilter, env: env)
+        CATransaction.commit()
     }
 
     var isDimmed: Bool { dimmed }
@@ -417,7 +519,7 @@ final class HUDCenterOverlay {
     /// Everything off at once (HUD close).
     func reset() {
         dismissConfirm(); clearToast()
-        HUDMotion.perform { dim.opacity = 0; shade.opacity = 0 }
+        HUDMotion.perform { dim.opacity = 0; blurTarget?.filters = nil }
         dimmed = false
     }
 }

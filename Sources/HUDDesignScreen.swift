@@ -64,6 +64,18 @@ final class HUDDesignContext {
         registeredCanvases.forEach { $0.renderScaleChanged() }
     }
 
+    private var paletteGeneration = HUDColor.paletteGeneration
+
+    /// The theme colour changed (`HUDColor.applyAccent`): the shared overlay
+    /// recolours, the active canvas rebuilds its page now and every other
+    /// built canvas rebuilds when it is next shown.
+    func refreshPalette() {
+        guard paletteGeneration != HUDColor.paletteGeneration else { return }
+        paletteGeneration = HUDColor.paletteGeneration
+        overlay.applyPalette()
+        registeredCanvases.forEach { $0.paletteChanged() }
+    }
+
     func setRecordingMode(_ on: Bool) {
         guard on != recordingMode else { return }
         recordingMode = on
@@ -135,13 +147,23 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
     var env: HUDDesignEnvironment { context.env }
     /// The content box (590 × 510 px); the host scales it to design units.
     let root = HUDLayer.plain("design.root")
-    let header: HUDModuleHeader
+    /// The shared header, made with the canvas's first page: most canvases
+    /// of an opening are never shown, so they build no header layers.
+    private(set) lazy var header: HUDModuleHeader = {
+        let header = HUDModuleHeader(env: context.env)
+        HUDMotion.perform { root.insertSublayer(header.layer, below: top); header.layer.isHidden = !showsHeader }
+        return header
+    }()
     /// Menus and pop-overs (z 30) and the slider bubble (z 40).
     let top = HUDLayer.plain("design.top")
     private(set) var page = HUDDesignPage()
     private let router = HUDInteractionRouter()
     private(set) var isActive = false
     private(set) var renderedLanguage: AppLanguage?
+    /// `HUDColor.paletteGeneration` of the installed page.
+    private var renderedPalette = HUDColor.paletteGeneration
+    /// The installed page was built for another language or theme colour.
+    private var isStale: Bool { renderedLanguage != L10n.resolvedLanguage || renderedPalette != HUDColor.paletteGeneration }
     /// False for modules without the shared header (Now Playing).
     var showsHeader = true { didSet { HUDMotion.perform { header.layer.isHidden = !showsHeader } } }
     private var swapWork: DispatchWorkItem?
@@ -158,20 +180,21 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
     var isEditingText: Bool { textFields.contains { $0.isEditing } }
     /// The host freezes parallax while this is true.
     var isInputLocked: Bool { isDragging || isEditingText }
+    /// A native panel (file chooser, colour wheel) is open; the HUD stays up meanwhile.
+    var isPresentingPanel: Bool { false }
     /// Presses and wheel inside this rect belong to the module rather than the
     /// shell (box px). Modules that overflow the box widen it.
     var hitBounds: CGRect { CGRect(origin: .zero, size: HUDMetric.box) }
 
     init(module: HUDModule, context: HUDDesignContext) {
         self.module = module; self.context = context
-        header = HUDModuleHeader(env: context.env)
         super.init()
         context.register(self)
         HUDMotion.perform {
             root.bounds = CGRect(origin: .zero, size: HUDMetric.box)
             root.masksToBounds = false
             top.frame = root.bounds; top.zPosition = HUDLayerOrder.menu
-            root.addSublayer(page.layer); root.addSublayer(header.layer); root.addSublayer(top)
+            root.addSublayer(page.layer); root.addSublayer(top)
         }
     }
 
@@ -200,15 +223,24 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
     /// Wheel before the page's scroll areas (zoom surfaces). Delta is box px, +down.
     func handleScroll(at point: CGPoint, delta: CGPoint, event: NSEvent?) -> Bool { false }
     func handleMagnify(at point: CGPoint, magnification: CGFloat) -> Bool { false }
+    /// The pointer this module shows at a box point; nil keeps the HUD's own.
+    func cursor(at point: CGPoint?) -> NSCursor? { nil }
     /// Recording mode changed (spec §3.26); the default re-renders in place.
     func recordingModeChanged() { if renderedLanguage != nil { rerender() } }
     /// The backing scale changed; the default re-renders in place.
     func renderScaleChanged() { if renderedLanguage != nil { rerender() } }
+    /// The theme colour changed: the active module rebuilds at once, the
+    /// others when next shown (`makeContent` / `setActive`).
+    func paletteChanged() {
+        closePopups()
+        if isActive, renderedLanguage != nil { rerender() }
+    }
 
     // MARK: HUDModuleContentFactory, HUDDirectionalContent
 
     func makeContent(for module: HUDModule, style: HUDModuleContentStyle) -> CALayer {
-        if renderedLanguage != L10n.resolvedLanguage { rerender() }
+        revealSettledPage()
+        if isStale { rerender() }
         return root
     }
 
@@ -224,20 +256,26 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
         closePopups()
         endEditing(commit: true)
         cancelGestures()
-        settleSwap()
+        settleSwap(concealed: true)
         willLeave()
     }
 
     // MARK: Activation
 
+    /// Scroll offsets of pages left by sub-navigation, and those the page
+    /// being navigated to restores.
+    private var retainedOffsets: [String: CGFloat] = [:], pendingOffsets: [String: CGFloat] = [:]
+
     func setActive(_ active: Bool) {
         guard active != isActive else { return }
         isActive = active
         if active {
-            if renderedLanguage != L10n.resolvedLanguage { rerender() }
+            revealSettledPage()
+            if isStale { rerender() }
             didActivate()
         } else {
-            closePopups(); endEditing(commit: true); cancelGestures(); settleSwap()
+            closePopups(); endEditing(commit: true); cancelGestures(); settleSwap(concealed: true)
+            retainedOffsets = [:]
             didDeactivate()
         }
         context.onInputStateChange?()
@@ -246,9 +284,15 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
     // MARK: Rendering
 
     /// In-place re-render (spec §1.10): no entrance, scroll offsets kept.
+    /// During a sub-page swap the page has already left: the re-rendered one
+    /// stays hidden until the swap lands its own page with the entrance.
     func rerender() {
-        let offsets = Dictionary(page.scrollAreas.map { ($0.id, $0.area.offset) }, uniquingKeysWith: { a, _ in a })
-        install(makePage(restoring: offsets))
+        install(makePage(restoring: currentOffsets))
+        if swapWork != nil { HUDMotion.hold(page.layer, key: Self.holdKey) }
+    }
+
+    private var currentOffsets: [String: CGFloat] {
+        Dictionary(page.scrollAreas.map { ($0.id, $0.area.offset) }, uniquingKeysWith: { a, _ in a })
     }
 
     /// Sub-navigation (spec §1.10 `subnav`): the box content leaves .13 s
@@ -257,31 +301,66 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
     func navigate(dx: CGFloat, dy: CGFloat = 0) {
         let offset = HUDShellPosition.subpageOffset(dx: dx, dy: dy)
         closePopups(); endEditing(commit: true); cancelGestures()
-        settleSwap()
-        guard !env.reducesMotion, root.superlayer != nil else { install(makePage(restoring: [:])); return }
-        let old = page.layer
-        leavingPage = old
-        HUDMotion.leave(old, toward: offset, env: env, key: "hud.page.leave")
-        if showsHeader { HUDMotion.leave(header.layer, toward: offset, env: env, key: "hud.header.leave") }
-        router.set([])
+        // Going back (dx < 0) returns each scroll area to where it was left.
+        retainedOffsets.merge(currentOffsets) { _, new in new }
+        pendingOffsets = dx < 0 ? retainedOffsets : [:]
+        guard !env.reducesMotion, root.superlayer != nil else {
+            if let work = swapWork { work.cancel(); swapWork = nil; finishLeave() }
+            install(makePage(restoring: pendingOffsets)); return
+        }
+        // A swap in flight (Q / E pressed again) is retargeted and lands on
+        // time: settling it would show the next page at full opacity only to
+        // send it out again.
+        if let work = swapWork { work.cancel() } else {
+            let old = page.layer
+            leavingPage = old
+            HUDMotion.leave(old, toward: offset, env: env, key: "hud.page.leave")
+            if showsHeader { HUDMotion.leave(header.layer, toward: offset, env: env, key: "hud.header.leave") }
+            router.set([])
+            swapDeadline = .now() + HUDDuration.leave
+        }
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
+            // One commit (see HUDModuleContent's swap): the header restored by
+            // finishLeave and the new page must not show before their entrance.
+            CATransaction.begin()
             self.swapWork = nil
             self.finishLeave()
-            self.install(self.makePage(restoring: [:]))
+            self.install(self.makePage(restoring: self.pendingOffsets))
             self.playEntrance(from: offset)
             self.context.onInputStateChange?()
+            CATransaction.commit()
         }
         swapWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + HUDDuration.leave, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: swapDeadline, execute: work)
     }
 
-    /// Completes a pending sub-navigation at once.
-    func settleSwap() {
+    /// Completes a pending sub-navigation at once. `concealed` is for a module
+    /// that leaves or stops being active: the new page and the header had
+    /// already left, so they stay hidden until the module shows again
+    /// (makeContent, setActive) instead of popping in while it leaves.
+    func settleSwap(concealed: Bool = false) {
         guard let work = swapWork else { return }
         work.cancel(); swapWork = nil
+        CATransaction.begin()
         finishLeave()
-        install(makePage(restoring: [:]))
+        install(makePage(restoring: pendingOffsets))
+        if concealed {
+            HUDMotion.hold(page.layer, key: Self.holdKey)
+            if showsHeader { HUDMotion.hold(header.layer, key: Self.holdKey) }
+        }
+        CATransaction.commit()
+    }
+
+    private static let holdKey = "hud.page.hold"
+    private var swapDeadline = DispatchTime.now()
+
+    private func revealSettledPage() {
+        guard swapWork == nil else { return }
+        HUDMotion.perform {
+            page.layer.removeAnimation(forKey: Self.holdKey)
+            if showsHeader { header.layer.removeAnimation(forKey: Self.holdKey) }
+        }
     }
 
     private func finishLeave() {
@@ -304,6 +383,10 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
 
     private func install(_ next: HUDDesignPage) {
         renderedLanguage = L10n.resolvedLanguage
+        if renderedPalette != HUDColor.paletteGeneration {
+            renderedPalette = HUDColor.paletteGeneration
+            if showsHeader { header.applyPalette() }
+        }
         let old = page
         page = next
         HUDMotion.perform {
@@ -461,6 +544,12 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
 
     func pointerMoved(at point: CGPoint?) { if isActive { handlePointerMoved(at: point) } }
 
+    /// An enabled control is drawn under this point; the host gives such a
+    /// press to the module before the shell's cards and navigation beneath it.
+    func containsControl(atBox point: CGPoint) -> Bool {
+        isActive && swapWork == nil && router.control(at: point, in: root) != nil
+    }
+
     /// Wheel: an open menu, then the module's zoom surfaces, then scroll areas.
     func scroll(at point: CGPoint, delta: CGPoint, event: NSEvent? = nil) -> Bool {
         guard isActive else { return false }
@@ -541,16 +630,14 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
 
     func toast(_ request: HUDToastRequest, completion: (() -> Void)? = nil) { context.toast(request, completion: completion) }
 
-    /// The result toast in the game's bilingual pattern (Appendix C): English
-    /// UIs show the English title over the Simplified Chinese caption; other
-    /// UIs show their own title over the English one. `detail` (a key
-    /// combination, a file name) replaces the caption.
+    /// The result toast (Appendix C). Outside English it keeps the game's
+    /// bilingual pattern: the UI-language title over the English caption.
+    /// English UIs show the English title alone (no other language appears in
+    /// English). `detail` (a key combination, a file name) is the caption.
     func toast(icon: HUDIcon, _ english: L10n.Text, _ chinese: L10n.Text, detail: String? = nil) {
         let isEnglish = L10n.resolvedLanguage == .english
-        let title = isEnglish ? english.value : L10n.text(english, chinese)
-        let caption = detail ?? (isEnglish ? chinese.value : english.value)
-        let language = detail == nil && isEnglish ? HUDTextLanguage.simplifiedChinese : nil
-        context.toast(HUDToastRequest(icon: icon, title: title, caption: caption, captionLanguage: language))
+        let caption = detail ?? (isEnglish ? "" : english.value)
+        context.toast(HUDToastRequest(icon: icon, title: L10n.text(english, chinese), caption: caption))
     }
 
     // MARK: Helpers for subclasses

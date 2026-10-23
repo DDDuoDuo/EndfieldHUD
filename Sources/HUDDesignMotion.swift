@@ -26,8 +26,8 @@ final class HUDDesignEnvironment {
 }
 
 private extension CALayer {
-    /// Cached raster motifs carry the scale they were drawn at.
-    var isArtwork: Bool { contents != nil && !(self is HUDTextLayer) }
+    /// Cached raster motifs (and hatch panels) carry the scale they were drawn at.
+    var isArtwork: Bool { self is HUDHatchLayer || contents != nil && !(self is HUDTextLayer) }
 }
 
 /// The motion system (spec §1.9). Every animation is explicit, finite and keyed
@@ -99,6 +99,16 @@ enum HUDMotion {
         group.animations = animations; group.duration = HUDDuration.leave; group.timingFunction = HUDEasing.ease
         group.fillMode = .forwards; group.isRemovedOnCompletion = false
         layer.add(group, forKey: key)
+    }
+
+    /// Keeps a layer transparent until the caller removes `key` (a page that
+    /// has left and must not return before its entrance). Not motion, so it
+    /// also applies with Reduce Motion.
+    static func hold(_ layer: CALayer, key: String) {
+        let hold = CABasicAnimation(keyPath: "opacity")
+        hold.fromValue = 0; hold.toValue = 0; hold.duration = 1
+        hold.fillMode = .forwards; hold.isRemovedOnCompletion = false
+        layer.add(hold, forKey: key)
     }
 
     enum WipeOrigin { case left, top, centerX }

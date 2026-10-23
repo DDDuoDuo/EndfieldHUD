@@ -23,8 +23,8 @@ final class HUDTabs {
             if compact { text.textStyle = HUDTextStyle(size: 11, weight: .medium, color: HUDColor.tabText) }
             super.init(id: id, label: title, env: env)
             HUDMotion.perform {
-                hoverFill.backgroundColor = HUDColor.white(0.06); hoverFill.opacity = 0
-                underline.backgroundColor = HUDColor.yellow; underline.isHidden = true
+                hoverFill.backgroundColor = HUDColor.foreground(0.06); hoverFill.opacity = 0
+                underline.backgroundColor = HUDColor.accentInk; underline.isHidden = true
                 dot.backgroundColor = HUDColor.orange; dot.isHidden = true
                 dot.bounds = CGRect(x: 0, y: 0, width: 7, height: 7)
                 dot.setValue(CGFloat.pi / 4, forKeyPath: "transform.rotation.z")
@@ -63,7 +63,7 @@ final class HUDTabs {
             let on = isHovered && isEnabled
             HUDMotion.animate(hoverFill, "opacity", to: Float(on ? 1 : 0), duration: HUDDuration.hover, timing: HUDEasing.ease, env: env)
             HUDMotion.animate(layer, "transform.translation.y", to: on ? -1 : 0, duration: HUDDuration.hover, env: env)
-            HUDMotion.perform { text.color = on ? HUDColor.white(1) : HUDColor.tabText }
+            HUDMotion.perform { text.color = on ? HUDColor.foreground(1) : HUDColor.tabText }
         }
         override func activate() { guard isEnabled else { return }; bar?.select(index, notify: true) }
         override var accessibilityRole: HUDAccessibilityItem.Role? { .tab(selected: bar?.selectedIndex == index) }
@@ -85,12 +85,17 @@ final class HUDTabs {
                                               compact: compact, env: env) }
         HUDMotion.perform {
             layer.bounds = CGRect(x: 0, y: 0, width: width, height: 34)
-            layer.backgroundColor = HUDColor.tabBar; layer.borderWidth = 1; layer.borderColor = HUDColor.ringTab
+            layer.backgroundColor = HUDColor.tabBar
+            // A layer's own border draws above its sublayers and would cross the
+            // raised active tab; this frame sits beneath the tabs instead.
+            let frame = HUDLayer.plain("tabs.frame")
+            frame.frame = layer.bounds; frame.borderWidth = 1; frame.borderColor = HUDColor.ringTab
+            layer.addSublayer(frame)
             if keycaps {
                 for (index, key) in ["Q", "E"].enumerated() {
                     let cell = HUDLayer.plain("tabs.keycap")
                     cell.frame = CGRect(x: index == 0 ? 6.5 : width - 21.5, y: 9.5, width: 15, height: 15)
-                    cell.borderWidth = 1; cell.borderColor = HUDColor.rgb(0x6A6A6A)
+                    cell.borderWidth = 1; cell.borderColor = HUDColor.tone(0x6A6A6A)
                     let text = HUDTextLayer(key, style: HUDType.tabKeycap, alignment: .center)
                     text.lineFrame = CGRect(x: 0, y: 3, width: 15, height: 9)
                     cell.addSublayer(text); layer.addSublayer(cell)
@@ -115,7 +120,7 @@ final class HUDTabs {
                 if tab.index > 0, tab.index != selectedIndex, tab.index - 1 != selectedIndex {
                     let line = HUDLayer.plain("tabs.separator")
                     line.frame = CGRect(x: inset + width * CGFloat(tab.index), y: 10, width: 1, height: 14)
-                    line.backgroundColor = HUDColor.rgb(0x4A4A4A)
+                    line.backgroundColor = HUDColor.tone(0x4A4A4A)
                     layer.addSublayer(line); separators.append(line)
                 }
             }

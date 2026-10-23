@@ -25,11 +25,12 @@ final class HUDRowPlate: HUDControl {
     let cluster = HUDLayer.plain("row.cluster")
     private var clusterItems: [CALayer] = []
 
+    /// - height: overrides the variant's height (App Shortcuts rows are 56).
     init(id: String, title text: String, sublabel detail: String? = nil, variant: Variant = .standard,
-         width: CGFloat = HUDMetric.box.width, env: HUDDesignEnvironment) {
+         width: CGFloat = HUDMetric.box.width, height customHeight: CGFloat? = nil, env: HUDDesignEnvironment) {
         self.variant = variant
         super.init(id: id, label: text, env: env)
-        let height = variant.height
+        let height = customHeight ?? variant.height
         let bounds = CGRect(x: 0, y: 0, width: width, height: height)
         HUDMotion.perform {
             layer.bounds = bounds
@@ -55,6 +56,8 @@ final class HUDRowPlate: HUDControl {
     }
 
     func setTitle(_ text: String) { label = text; title.text = text; layoutContents() }
+    /// Room left of the label for a leading handle or glyph (System > Modules).
+    var titleInset: CGFloat = 0 { didSet { if titleInset != oldValue { layoutContents() } } }
     func setSublabel(_ text: String?) { sublabel.text = text ?? ""; sublabel.isHidden = text == nil; layoutContents() }
     /// The label's line box in row coordinates (for redaction or tests).
     var titleFrame: CGRect { title.lineFrame }
@@ -85,8 +88,9 @@ final class HUDRowPlate: HUDControl {
             let column = 3 + labelHeight + (sublabel.isHidden ? 0 : 1 + subHeight)
             let top = contentTop + (contentHeight - column) / 2 + 3
             let right = variant == .slider ? 18 + HUDMetric.sliderLabelColumn : clusterLeft(in: bounds) - 14
-            title.lineFrame = CGRect(x: 18, y: top, width: max(10, right - 18), height: labelHeight)
-            sublabel.lineFrame = CGRect(x: 18, y: top + labelHeight + 1, width: max(10, right - 18), height: subHeight)
+            let left = 18 + titleInset
+            title.lineFrame = CGRect(x: left, y: top, width: max(10, right - left), height: labelHeight)
+            sublabel.lineFrame = CGRect(x: left, y: top + labelHeight + 1, width: max(10, right - left), height: subHeight)
             if variant.isNav {
                 chevron.lineFrame = CGRect(x: bounds.width - 12 - 20, y: contentTop + contentHeight / 2 - 8, width: 20, height: 16)
             }
@@ -119,8 +123,14 @@ final class HUDRowPlate: HUDControl {
         sheen.play(on, env: env)
     }
 
+    /// A static row VoiceOver reads as text with this value (Event Log rows).
+    var readout: String?
+
     override func pointerDown(at point: CGPoint) -> Bool { variant.isNav && isEnabled }
-    override var accessibilityRole: HUDAccessibilityItem.Role? { variant.isNav ? .button : nil }
+    override var accessibilityRole: HUDAccessibilityItem.Role? {
+        if variant.isNav { return .button }
+        return readout.map { .text($0) }
+    }
 }
 
 /// Segmented OFF | ON switch (spec §2.4). The knob slides with SNAP; the label
@@ -209,7 +219,10 @@ final class HUDSegmentedControl: HUDControl {
             }
         }
         override func hoverChanged() { owner?.renderSegments(animated: true) }
-        override func activate() { guard isEnabled else { return }; owner?.select(index, notify: true) }
+        override func activate() {
+            guard isEnabled, let owner else { return }
+            if owner.selectedIndex == index { owner.onReselect?(index) } else { owner.select(index, notify: true) }
+        }
         override var accessibilityRole: HUDAccessibilityItem.Role? { .tab(selected: owner?.selectedIndex == index) }
     }
 
@@ -217,6 +230,8 @@ final class HUDSegmentedControl: HUDControl {
     private(set) var selectedIndex: Int
     let yellow: Bool
     var onChange: ((Int) -> Void)?
+    /// A press on the already selected segment (Work Mode's Custom reopens its editor).
+    var onReselect: ((Int) -> Void)?
 
     init(id: String, label: String, options: [String], selectedIndex: Int, width: CGFloat, yellow: Bool = false,
          env: HUDDesignEnvironment) {
@@ -256,7 +271,7 @@ final class HUDSegmentedControl: HUDControl {
             HUDMotion.animate(segment.layer, "backgroundColor", to: fill, duration: duration, timing: HUDEasing.ease, env: env)
             HUDMotion.animate(segment.layer, "borderColor", to: ring, duration: duration, timing: HUDEasing.ease, env: env)
             HUDMotion.perform {
-                segment.text.color = selected ? HUDColor.nearBlack : (hovered ? HUDColor.white(1) : HUDColor.segmentedText)
+                segment.text.color = selected ? HUDColor.nearBlack : (hovered ? HUDColor.foreground(1) : HUDColor.segmentedText)
                 segment.bar.isHidden = !selected || yellow
             }
         }

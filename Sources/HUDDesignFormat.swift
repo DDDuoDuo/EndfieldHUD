@@ -50,6 +50,8 @@ enum HUDFormat {
 /// Slider and readout formatters (spec §1.8 `FMT`).
 enum HUDValueFormat: Equatable {
     case scale, percent, signedPercent, balance, seconds, pixels, page, signed, integer, clock
+    /// Two decimals (Media Assembly tool values).
+    case decimal
 
     func string(_ value: Double) -> String {
         let rounded = Int(value.rounded())
@@ -64,6 +66,7 @@ enum HUDValueFormat: Equatable {
         case .signed: return rounded > 0 ? "+\(rounded)" : "\(rounded)"
         case .integer: return "\(rounded)"
         case .clock: return HUDFormat.clock(seconds: rounded)
+        case .decimal: return String(format: "%.2f", value)
         }
     }
 }

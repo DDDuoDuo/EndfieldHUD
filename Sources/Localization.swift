@@ -4,6 +4,36 @@ import Foundation
 /// Other languages live in LocalizationCatalog. Interpolated values are retained
 /// separately, so user names, versions and counts never become lookup keys.
 /// UI callers use the current preference; workers pass a captured language.
+/// The user's preferred languages, read once for many lookups.
+/// `Locale.preferredLanguages` reads the preferences on every call, and the
+/// UI resolves the system language for every string, font and caption: thousands
+/// of times per HUD open and on every projected frame. A reading serves for a
+/// second; a system locale change drops it at once.
+enum SystemLanguages {
+    struct Reading {
+        let identifiers: [String]
+        let language: AppLanguage
+        let time: TimeInterval
+    }
+    private static let lock = NSLock()
+    private static var cached: Reading?
+    private static let localeObserver = NotificationCenter.default.addObserver(
+        forName: NSLocale.currentLocaleDidChangeNotification, object: nil, queue: nil) { _ in invalidate() }
+
+    static var current: Reading {
+        _ = localeObserver
+        let now = ProcessInfo.processInfo.systemUptime
+        lock.lock(); defer { lock.unlock() }
+        if let cached, now - cached.time < 1 { return cached }
+        let identifiers = Locale.preferredLanguages
+        let reading = Reading(identifiers: identifiers, language: L10n.resolveLanguage(preferredLanguages: identifiers), time: now)
+        cached = reading
+        return reading
+    }
+
+    static func invalidate() { lock.lock(); cached = nil; lock.unlock() }
+}
+
 enum L10n {
     static var language: AppLanguage = .system
 
@@ -39,7 +69,7 @@ enum L10n {
     }
 
     private static func resolve(_ selection: AppLanguage) -> AppLanguage {
-        selection == .system ? resolveLanguage(preferredLanguages: Locale.preferredLanguages) : selection
+        selection == .system ? SystemLanguages.current.language : selection
     }
 
     static func text(_ english: Text, _ simplifiedChinese: Text, language selection: AppLanguage? = nil) -> String {

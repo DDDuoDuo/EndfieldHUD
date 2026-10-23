@@ -7,7 +7,7 @@ enum HUDIcon: String, CaseIterable {
     case check, x, power, plus, minus, copy, text, link, link2, image, file, refresh, reset, rotate
     case play, pause, prev, next, vol, mute, trash, folder, open, ext, export, todo, pen, eraser
     case timer, watch, devices, apps, bolt, back, left, right, mirror, lyric, bookmark, gear
-    case eye, eyeoff, user, help, grid, lock, unlock, warn, rec
+    case eye, eyeoff, user, help, grid, lock, unlock, warn, rec, pin
 
     struct Part {
         enum Mode: Equatable { case stroke(CGFloat, square: Bool), fill }
@@ -75,6 +75,7 @@ enum HUDIcon: String, CaseIterable {
         case .unlock: return [s(rect(4, 10, 16, 11) + "M8 10V7a4 4 0 0 1 7.5-2")]
         case .warn: return [f("M12 2L23 21H1Z"), Part(svg: "M12 9v6M12 17.5v1", mode: .stroke(2.6, square: false), color: HUDColor.nearBlack)]
         case .rec: return [f(circle(12, 12, 6))]
+        case .pin: return [s("M7 3h10M9.5 3v6.5L6 14h12l-3.5-4.5V3M12 14v7", 2.4)]
         }
     }
 
