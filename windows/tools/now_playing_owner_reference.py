@@ -43,7 +43,7 @@ rotatedPNG=png[:33]+chunk(b'eXIf',tiff(6))+png[33:]
 import base64
 rows=[{'name':name,'base64':base64.b64encode(b).decode(),'sha256':hashlib.sha256(b).hexdigest()} for name,b in [('straight-alpha-png',png),('oriented-png',rotatedPNG)]+[('oriented-tiff-'+str(n),tiff(n)) for n in range(1,9)]+[('malformed',b'not an image')]]
 (out/'oracle.swift').write_text(source);(out/'input.json').write_text(json.dumps(rows));env=os.environ.copy();env.pop('SDKROOT',None)
-sdk=subprocess.check_output(['bash',str(root/'scripts/build.sh'),'--print-sdk'],text=True,env=env).strip();subprocess.run(['/usr/bin/swiftc','-sdk',sdk,'-module-cache-path',str(root/'build/windows-module-reference/.compiler/module-cache'),str(out/'oracle.swift'),'-o',str(out/'oracle')],check=True,env=env);subprocess.run([str(out/'oracle'),str(out/'input.json'),str(out/'output.json')],check=True)
+sdk=subprocess.check_output(['bash',str(root/'windows/tools/mac_sdk.sh')],text=True,env=env).strip();subprocess.run(['/usr/bin/swiftc','-sdk',sdk,'-module-cache-path',str(root/'build/windows-module-reference/.compiler/module-cache'),str(out/'oracle.swift'),'-o',str(out/'oracle')],check=True,env=env);subprocess.run([str(out/'oracle'),str(out/'input.json'),str(out/'output.json')],check=True)
 result=json.loads((out/'output.json').read_text());
 for row in result['images']: row['encodedHex']=base64.b64decode(row.pop('base64')).hex()
 result.update(schemaVersion=1,sourceCommit=commit,sourcePins={p:hashlib.sha256((root/p).read_bytes()).hexdigest() for p in paths});dest=root/'windows/tests/fixtures/now-playing-owner-source.json';dest.write_text(json.dumps(result,ensure_ascii=False,separators=(',',':'))+'\n');print(dest,len(dest.read_bytes()),hashlib.sha256(dest.read_bytes()).hexdigest())

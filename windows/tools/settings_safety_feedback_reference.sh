@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 OUT="$1";CACHE="$2"
 [[ ! -e "$OUT" && -d "$CACHE" ]]
 mkdir -p "$OUT";OUT="$(cd "$OUT" && pwd)";CACHE="$(cd "$CACHE" && pwd)"
-SDK="$(bash "$ROOT/scripts/build.sh" --print-sdk)"
+SDK="$(bash "$ROOT/windows/tools/mac_sdk.sh")"
 shasum -a 256 "$ROOT/Sources/HUDQuitConfirmationView.swift" > "$OUT/source.sha256"
 xcrun swiftc -swift-version 5 -O -sdk "$SDK" -module-cache-path "$CACHE" -framework Cocoa -framework QuartzCore "$ROOT/Sources/HUDQuitConfirmationView.swift" "$ROOT/windows/tools/settings_safety_feedback_reference.swift" -o "$OUT/reference"
 python3 - "$OUT" <<'PY'

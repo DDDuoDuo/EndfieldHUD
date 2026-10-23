@@ -148,7 +148,7 @@ compiler.mkdir()
 (compiler / 'main.swift').write_text(swift)
 env = os.environ.copy()
 env.pop('SDKROOT', None)
-sdk = subprocess.check_output(['bash', str(root / 'scripts/build.sh'), '--print-sdk'], text=True, env=env).strip()
+sdk = subprocess.check_output(['bash', str(root / 'windows/tools/mac_sdk.sh')], text=True, env=env).strip()
 subprocess.run(['xcrun', 'swiftc', '-O', '-swift-version', '5', '-parse-as-library', '-sdk', sdk, '-module-cache-path', str(compiler / 'module-cache'),
                 str(root / 'Sources/SystemEventRecorder.swift'), str(compiler / 'main.swift'), '-o', str(compiler / 'reference')], check=True, env=env)
 target = out / 'application_event_recorder_source.json'

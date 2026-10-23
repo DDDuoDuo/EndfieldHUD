@@ -9,7 +9,7 @@ OUTPUT="$1"; CACHE="$2"
 [[ ! -e "$OUTPUT" && ! -L "$OUTPUT" && -d "$CACHE" ]]
 mkdir -p "$OUTPUT"
 OUTPUT="$(cd "$OUTPUT" && pwd)"; CACHE="$(cd "$CACHE" && pwd)"
-SDK="$(bash "$ROOT/scripts/build.sh" --print-sdk)"
+SDK="$(bash "$ROOT/windows/tools/mac_sdk.sh")"
 python3 - "$ROOT" "$OUTPUT" "$SDK" <<'PY'
 import hashlib,json,pathlib,subprocess,sys
 root,out=map(pathlib.Path,sys.argv[1:3]); source=root/'Sources/HUDSubsectionTransition.swift'

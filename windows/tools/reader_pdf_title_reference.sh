@@ -26,7 +26,7 @@ tools = ['windows/tools/reader_pdf_title_reference.swift', 'windows/tools/reader
     'scope': 'Unchanged ReaderDocument PDF title (PDFKit documentAttributes title, else the file name) of synthetic one-page PDFs'},
     indent=2, sort_keys=True) + '\n')
 PY
-SDK="$(bash "$ROOT/scripts/build.sh" --print-sdk 2>/dev/null | tail -1)"
+SDK="$(bash "$ROOT/windows/tools/mac_sdk.sh")"
 CACHE="$ROOT/build/windows-module-reference/.compiler/module-cache"
 xcrun swiftc -swift-version 5 -Onone -whole-module-optimization -parse-as-library -module-name EndfieldReaderPDFTitleReference -sdk "$SDK" -module-cache-path "$CACHE" \
   -framework Cocoa -framework PDFKit -lz "$OUT/.compiler/ReaderStore.swift" "$OUT/.compiler/ReaderDocument.swift" "$OUT/.compiler/ReaderZIP.swift" "$OUT/.compiler/ReaderEPUB.swift" \

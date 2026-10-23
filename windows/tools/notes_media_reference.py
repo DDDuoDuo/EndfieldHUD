@@ -82,7 +82,7 @@ print("PASS detached original Notes media oracle: \(rows.count) cases")
         raise SystemExit("Refusing to replace an existing media oracle")
     path = output / "original-notes-media.swift"
     path.write_text(swift)
-    sdk = subprocess.check_output(["bash", str(root / "scripts/build.sh"), "--print-sdk"], text=True).strip()
+    sdk = subprocess.check_output(["bash", str(root / "windows/tools/mac_sdk.sh")], text=True).strip()
     cache = root / "build/windows-shell-packet-live-closure/.compiler/module-cache"
     subprocess.run(["xcrun", "swiftc", "-O", "-sdk", sdk, "-module-cache-path", str(cache), str(path), "-o", str(output / "original-notes-media")], check=True)
     subprocess.run([str(output / "original-notes-media"), str(output / "reference.json")], check=True)

@@ -21,7 +21,7 @@ report={'sourceAndResourceSHA256':{str(p.relative_to(root)):hashlib.sha256(p.rea
         'productionSourceModified':False,'SystemHUDViewConstructed':False}
 (out/'provenance.json').write_text(json.dumps(report,indent=2,sort_keys=True)+'\n')
 PY
-SDK="$(bash "$ROOT/scripts/build.sh" --print-sdk)"
+SDK="$(bash "$ROOT/windows/tools/mac_sdk.sh")"
 SOURCES=()
 while IFS= read -r path; do SOURCES+=("$ROOT/$path"); done < <(cd "$ROOT" && rg --files Sources -g '*.swift' | sed '/\/main.swift$/d;/\/HUDSourceWatchView.swift$/d' | LC_ALL=C sort)
 if ! xcrun swiftc -swift-version 5 -Onone -whole-module-optimization -parse-as-library \

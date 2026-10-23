@@ -35,7 +35,7 @@ try JSONSerialization.data(withJSONObject:result,options:[.sortedKeys]).write(to
 # Apple's Python launcher can inject its own (newer) SDKROOT. Let the
 # repository choose the SDK that matches its selected Swift compiler.
 selection_env=os.environ.copy();selection_env.pop('SDKROOT',None)
-sdk=subprocess.check_output(['bash',str(root/'scripts/build.sh'),'--print-sdk'],text=True,env=selection_env).strip()
+sdk=subprocess.check_output(['bash',str(root/'windows/tools/mac_sdk.sh')],text=True,env=selection_env).strip()
 subprocess.run(['xcrun','swiftc','-sdk',sdk,'-module-cache-path',str(out/'module-cache'),str(out/'oracle.swift'),'-o',str(out/'oracle')],check=True)
 subprocess.run([str(out/'oracle'),str(out/'input.json'),str(out/'output.json')],check=True)
 data=json.loads((out/'output.json').read_text());data['authority']='ca04f142185c7de40acd8523bdb563195d90a1d1'

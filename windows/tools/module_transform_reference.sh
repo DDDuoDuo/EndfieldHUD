@@ -11,7 +11,7 @@ CACHE="$2"
 mkdir -p "$OUTPUT"
 OUTPUT="$(cd "$OUTPUT" && pwd)"
 CACHE="$(cd "$CACHE" && pwd)"
-SDK="$(bash "$ROOT/scripts/build.sh" --print-sdk)"
+SDK="$(bash "$ROOT/windows/tools/mac_sdk.sh")"
 python3 - "$ROOT" "$OUTPUT" "$SDK" <<'PY'
 import hashlib,json,pathlib,platform,re,subprocess,sys
 root,out=map(pathlib.Path,sys.argv[1:3]); source=root/'Sources/HUDModuleContent.swift'; data=source.read_text()

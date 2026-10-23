@@ -8,7 +8,7 @@ OUTPUT="$1";CACHE="$2"
 [[ ! -e "$OUTPUT" && ! -L "$OUTPUT" && -d "$CACHE" ]]
 mkdir -p "$OUTPUT";OUTPUT="$(cd "$OUTPUT" && pwd)";CACHE="$(cd "$CACHE" && pwd)"
 git -C "$ROOT" diff --quiet ca04f142185c7de40acd8523bdb563195d90a1d1 -- Sources/HUDApplicationIcon.swift Sources/EndfieldGameIcon.swift
-SDK="$(bash "$ROOT/scripts/build.sh" --print-sdk)"
+SDK="$(bash "$ROOT/windows/tools/mac_sdk.sh")"
 xcrun swiftc -O -swift-version 5 -parse-as-library -sdk "$SDK" -module-cache-path "$CACHE" \
  "$ROOT/Sources/HUDApplicationIcon.swift" "$ROOT/Sources/EndfieldGameIcon.swift" \
  "$ROOT/windows/tools/application_executable_icon.swift" -o "$OUTPUT/reference" >"$OUTPUT/compile.log" 2>&1

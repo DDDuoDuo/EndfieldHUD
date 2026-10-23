@@ -29,7 +29,7 @@ for stem in ['ReaderZIP','ReaderEPUB','ReaderStore','ReaderDocument']:
  assert (out/'.compiler'/f'{stem}.swift').read_bytes()[:len(b)]==b
 (out/'provenance.json').write_text(json.dumps({'sourceAuthority':pin,'sourceSHA256':{f'Sources/{s}.swift':hashlib.sha256((root/'Sources'/f'{s}.swift').read_bytes()).hexdigest() for s in ['ReaderZIP','ReaderEPUB','ReaderStore','ReaderDocument']},'exporterSHA256':{p:hashlib.sha256((root/p).read_bytes()).hexdigest() for p in ['windows/tools/reader_format_reference.swift','windows/tools/reader_format_reference.sh']},'privateAccessShimSHA256':hashlib.sha256((shim+documentShim).encode()).hexdigest(),'scope':'Unchanged original XML parser and TXT document initialization; detached temporary synthetic files only; no windows, application activation, network resolver or user stores'},indent=2,sort_keys=True)+'\n')
 PY
-SDK="$(bash "$ROOT/scripts/build.sh" --print-sdk)"
+SDK="$(bash "$ROOT/windows/tools/mac_sdk.sh")"
 CACHE="$ROOT/build/windows-module-reference/.compiler/module-cache"
 xcrun swiftc -swift-version 5 -Onone -whole-module-optimization -parse-as-library -module-name EndfieldReaderFormatsReference -sdk "$SDK" -module-cache-path "$CACHE" -framework Cocoa -framework PDFKit -lz "$OUT/.compiler/ReaderStore.swift" "$OUT/.compiler/ReaderDocument.swift" "$OUT/.compiler/ReaderZIP.swift" "$OUT/.compiler/ReaderEPUB.swift" "$ROOT/windows/tools/reader_format_reference.swift" -o "$OUT/.compiler/reader-format-reference" >"$OUT/.compiler/compile.log" 2>&1
 "$OUT/.compiler/reader-format-reference" "$OUT"

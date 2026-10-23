@@ -29,7 +29,7 @@ for stem in paths:
     assert (out/'.compiler'/f'{stem}.swift').read_bytes()[:len(b)]==b
 (out/'provenance.json').write_text(json.dumps({'sourceAuthority':pin,'sourceSHA256':{f'Sources/{s}.swift':hashlib.sha256((root/'Sources'/f'{s}.swift').read_bytes()).hexdigest() for s in paths},'exporterSHA256':{p:hashlib.sha256((root/p).read_bytes()).hexdigest() for p in ['windows/tools/reader_reference.swift','windows/tools/reader_reference.sh']},'privateAccessShimSHA256':{s:hashlib.sha256(x.encode()).hexdigest() for s,x in shims.items()},'scope':'Original ReaderCanvas/Store state and geometry; detached synthetic controller; dependency shims explicit'},sort_keys=True,indent=2)+'\n')
 PY
-SDK="$(bash "$ROOT/scripts/build.sh" --print-sdk)"
+SDK="$(bash "$ROOT/windows/tools/mac_sdk.sh")"
 CACHE="$ROOT/build/windows-module-reference/.compiler/module-cache"
 mkdir -p "$CACHE"
 if ! xcrun swiftc -swift-version 5 -Onone -whole-module-optimization -parse-as-library -module-name EndfieldReaderReference -sdk "$SDK" -module-cache-path "$CACHE" -framework Cocoa -framework PDFKit -lz "$OUT/.compiler/ReaderStore.swift" "$OUT/.compiler/ReaderDocument.swift" "$OUT/.compiler/ReaderEPUB.swift" "$OUT/.compiler/ReaderZIP.swift" "$OUT/.compiler/ReaderController.swift" "$OUT/.compiler/ReaderCanvas.swift" "$ROOT/windows/tools/reader_reference.swift" -o "$OUT/.compiler/reader-reference" >"$OUT/.compiler/compile.log" 2>&1;then tail -80 "$OUT/.compiler/compile.log" >&2;exit 1;fi

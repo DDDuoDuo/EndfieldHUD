@@ -1,0 +1,73 @@
+{
+ "comment": ["Windows-kept localization pairs: v1.2.0 Mac catalog pairs that Mac 1.3.0 pruned (unused there) while",
+  "Windows modules that are not redesigned yet still call them through core::localized or a module string table.",
+  "tools/build_localization_catalog.py adds them, with the five languages of the Mac catalog at \"base\", to the",
+  "generated core/localization_catalog.inc. Each row: English, Simplified Chinese (the lookup pair), Windows callers.",
+  "Drop a row (or a whole group) in the change that removes its last Windows caller; the generator names rows",
+  "that have none left."],
+ "base": "ca04f142185c7de40acd8523bdb563195d90a1d1",
+ "pairs": {
+  "Account": [
+   ["China", "国服", "modules/hypergryph_account_controller.cpp"],
+   ["Connecting…", "正在连接…", "modules/hypergryph_account_canvas.cpp"],
+   ["Not connected", "未绑定", "modules/hypergryph_account_canvas.cpp"],
+   ["Connected", "已绑定", "modules/hypergryph_account_canvas.cpp"],
+   ["Syncing…", "正在同步…", "modules/hypergryph_account_canvas.cpp"],
+   ["Connection unavailable", "连接不可用", "modules/hypergryph_account_canvas.cpp"],
+   ["Game account", "游戏账户", "modules/hypergryph_account_canvas.cpp"],
+   ["Sync game avatar", "同步游戏头像", "modules/hypergryph_account_canvas.cpp"]
+  ],
+  "Minigame": [
+   ["Partial SP charge can decay while idle.", "闲置时，未充满的技力进度可能衰减。", "modules/orbipom_presentation.cpp"],
+   ["Move to aim; click or press Space to drop.", "移动鼠标瞄准，点击或按空格投放。", "modules/orbipom_presentation.cpp"],
+   ["Merge matching levels. Two level-11 OrbiPoms disappear when merged.", "相同等级相碰即可合成；两个11级山团团合成后消失。", "modules/orbipom_presentation.cpp"],
+   ["Points by source level: 1 / 3 / 6 / 10 / 15 / 21 / 28 / 36 / 45 / 55 / 66.", "各等级合成得分：1／3／6／10／15／21／28／36／45／55／66。", "modules/orbipom_presentation.cpp"],
+   ["12 merges grant 1 SP, up to 3. Spend 6 SP to charge Swap.", "每合成12次获得1点技力，最多3点；累计消耗6点技力可使用交换。", "modules/orbipom_presentation.cpp"],
+   ["Eliminate (1 SP): select one target. Wind (2 SP) lifts the stack; Shake (3 SP) shakes it.", "消除（1技力）：选择一个目标。风场（2技力）托起堆叠；震动（3技力）摇动堆叠。", "modules/orbipom_presentation.cpp"],
+   ["Select a skill, then click the board to confirm. Swap needs two different targets.", "选择技能后点击游戏区确认；交换需要选择两个不同目标。", "modules/orbipom_presentation.cpp"],
+   ["A settled overflow above the red line starts a 5-second countdown.", "静止的山团团超过红线时，会开始5秒倒计时。", "modules/orbipom_presentation.cpp"],
+   ["P pauses. Escape cancels a selected skill.", "按P暂停，按Esc取消已选择的技能。", "modules/orbipom_presentation.cpp"],
+   ["Merge! OrbiPom!", "融合！山团团！", "modules/orbipom_presentation.cpp"],
+   ["Score", "得分", "modules/orbipom_presentation.cpp"],
+   ["Best", "最高分", "modules/orbipom_presentation.cpp"],
+   ["Play again", "再来一局", "modules/orbipom_accessibility.cpp, modules/orbipom_presentation.cpp"],
+   ["Pause / resume", "暂停 / 继续", "modules/orbipom_accessibility.cpp"],
+   ["Confirm", "确认", "modules/orbipom_accessibility.cpp"]
+  ],
+  "Media Assembly": [
+   ["GIF · Export first frame", "GIF · 导出首帧", "modules/media_assembly_menu.cpp"]
+  ],
+  "Archive": [
+   ["Delete category", "删除分类", "tools/archive_preview.cpp"],
+   ["Documents will move to Uncategorized.", "档案将移至未分类。", "tools/archive_options.cpp"],
+   ["Remove this category?", "删除此分类？", "tools/archive_options.cpp"],
+   ["New category", "新建分类", "tools/archive_options.cpp"],
+   ["Create category", "创建分类", "tools/archive_preview.cpp"],
+   ["Move to category", "移至分类", "tools/archive_preview.cpp"],
+   ["Play / Pause", "播放 / 暂停", "tools/archive_preview.cpp"],
+   ["Date", "日期", "tools/archive_preview.cpp"],
+   ["Documents", "档案", "tools/archive_options.cpp, tools/archive_preview.cpp"],
+   ["Create a document", "新建档案", "tools/archive_options.cpp"],
+   ["New document", "新建档案", "tools/archive_preview.cpp"],
+   ["Delete this document?", "删除此档案？", "tools/archive_options.cpp"],
+   ["Add image/video", "添加图片/视频", "app/application.cpp, tools/archive_preview.cpp"],
+   ["SHELF · IMAGE/VIDEO", "暂存架 · 图片/视频", "tools/archive_options.cpp, tools/media_assembly_preview.cpp"]
+  ],
+  "Calendar": [
+   ["Edit event", "编辑事项", "modules/calendar_presentation.hpp+.cpp (CalendarStrings)"],
+   ["No events", "暂无事项", "modules/calendar_presentation.hpp+.cpp (CalendarStrings)"]
+  ],
+  "Reader": [
+   ["Toggle bookmark", "切换书签", "modules/reader_accessibility.cpp"],
+   ["Bookmarks", "书签", "modules/reader_presentation.hpp+.cpp (ReaderStrings)"],
+   ["Reading", "阅读设置", "modules/reader_presentation.hpp+.cpp (ReaderStrings)"],
+   ["Margins", "页边距", "modules/reader_presentation.hpp+.cpp (ReaderStrings)"],
+   ["Open a book to begin reading.", "打开书籍开始阅读。", "modules/reader_presentation.hpp+.cpp (ReaderStrings)"],
+   ["Loading book…", "正在载入书籍…", "modules/reader_presentation.hpp+.cpp (ReaderStrings)"]
+  ],
+  "Now Playing": [
+   ["Adjusts the playing app's existing audio route.", "调整当前播放应用的现有音频路由。", "modules/now_playing_accessibility.cpp"],
+   ["No single adjustable audio process. Use Volume controls.", "未找到单一可调整音频进程，请使用音量控制。", "modules/now_playing_accessibility.cpp"]
+  ]
+ }
+}

@@ -23,7 +23,7 @@ paths=['Sources/VolumeCanvas.swift','Sources/HUDVolumeInteraction.swift','Source
 tools=['windows/tools/volume_reference.swift','windows/tools/volume_reference.sh','windows/tools/module_reference_layers.swift']
 (out/'provenance.json').write_text(json.dumps({'sourceAuthority':pin,'sourceSHA256':{p:hashlib.sha256((root/p).read_bytes()).hexdigest() for p in paths},'exporterSHA256':{p:hashlib.sha256((root/p).read_bytes()).hexdigest() for p in tools},'input':'synthetic fixtures only; CFFIXED_USER_HOME injected','windowsCreated':False,'audioBackend':'AudioDeviceController(snapshot:) + PerAppAudioController.fixture()'},indent=2,sort_keys=True)+'\n')
 PY
-SDK="$(bash "$ROOT/scripts/build.sh" --print-sdk)"
+SDK="$(bash "$ROOT/windows/tools/mac_sdk.sh")"
 SOURCES=()
 while IFS= read -r path; do SOURCES+=("$ROOT/$path"); done < <(rg --files Sources -g '*.swift' | sed '/\/main.swift$/d' | LC_ALL=C sort)
 if ! xcrun swiftc -swift-version 5 -Onone -whole-module-optimization -parse-as-library \

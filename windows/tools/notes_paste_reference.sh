@@ -63,7 +63,7 @@ func finish(_ editor: FixtureEditor) -> NotesRichText? {
 generated+='\n'+(root/'windows/tools/notes_paste_reference.swift').read_text()
 (work/'fixture.swift').write_text(generated)
 PY
-SDK="$(bash "$ROOT/scripts/build.sh" --print-sdk)"
+SDK="$(bash "$ROOT/windows/tools/mac_sdk.sh")"
 xcrun swiftc -swift-version 5 -O -parse-as-library -module-name EndfieldNotesPasteReference -sdk "$SDK" -module-cache-path "$WORK/cache" \
     -framework Cocoa "$ROOT/Sources/NotesRichText.swift" "$WORK/fixture.swift" -o "$WORK/reference" >"$WORK/compile.log" 2>&1 || { tail -60 "$WORK/compile.log" >&2; exit 1; }
 CFFIXED_USER_HOME="$WORK/home" TMPDIR="$WORK/tmp/" "$WORK/reference" >"$WORK/out.json"

@@ -28,7 +28,7 @@ shim=b'''\n// Build-only access to original private classes; original prefix unc
 assert (build/'HUDArchiveInteraction.swift').read_bytes()[:len(data)]==data
 (out/'provenance.json').write_text(json.dumps({'sourceAuthority':pin,'sourceSHA256':{p:hashlib.sha256((root/p).read_bytes()).hexdigest() for p in paths},'exporterSHA256':{p:hashlib.sha256((root/p).read_bytes()).hexdigest() for p in tools},'privateAccessShimSHA256':hashlib.sha256(shim).hexdigest(),'input':'synthetic fixture SQLite only; temporary CFFIXED_USER_HOME','windowsCreated':False,'mediaOpened':False},indent=2,sort_keys=True)+'\n')
 PY
-SDK="$(bash "$ROOT/scripts/build.sh" --print-sdk)"
+SDK="$(bash "$ROOT/windows/tools/mac_sdk.sh")"
 SOURCES=()
 while IFS= read -r path; do
     if [[ "$path" == Sources/HUDArchiveInteraction.swift ]]; then SOURCES+=("$BUILD/HUDArchiveInteraction.swift"); else SOURCES+=("$ROOT/$path"); fi

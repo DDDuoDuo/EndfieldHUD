@@ -4,7 +4,7 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 OUTPUT="${1:-$ROOT/build/storage-state-reference}"
 mkdir -p "$OUTPUT"
 [[ ! -e "$OUTPUT/storage-state.json" ]] || { echo 'Oracle already exists' >&2; exit 1; }
-SDK="$(bash "$ROOT/scripts/build.sh" --print-sdk)"
+SDK="$(bash "$ROOT/windows/tools/mac_sdk.sh")"
 # This tiny standalone compile uses the retained shared module cache.
 CACHE="$ROOT/build/windows-shell-packet-live-closure/.compiler/module-cache"
 xcrun swiftc -swift-version 5 -O -parse-as-library -sdk "$SDK" -module-cache-path "$CACHE" \

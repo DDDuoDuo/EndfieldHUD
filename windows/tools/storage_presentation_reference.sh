@@ -29,7 +29,7 @@ value={'sourceBaseline':'ca04f142185c7de40acd8523bdb563195d90a1d1',
 assert value['sourcesUnmodified'], 'Authoritative source pin changed'
 (out/'provenance.json').write_text(json.dumps(value,indent=2,sort_keys=True)+'\n')
 PY
-SDK="$(bash "$ROOT/scripts/build.sh" --print-sdk)"
+SDK="$(bash "$ROOT/windows/tools/mac_sdk.sh")"
 SOURCES=()
 while IFS= read -r path; do SOURCES+=("$ROOT/$path"); done < <(rg --files Sources -g '*.swift' | sed '/\/main.swift$/d' | LC_ALL=C sort)
 if ! xcrun swiftc -swift-version 5 -Onone -whole-module-optimization -parse-as-library \

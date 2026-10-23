@@ -47,7 +47,7 @@ try JSONSerialization.data(withJSONObject: ["clocks": clocks, "volumes": volumes
 (out / 'input.json').write_text(json.dumps({'clocks': clocks, 'volumes': volumes}, ensure_ascii=False))
 env = os.environ.copy()
 env.pop('SDKROOT', None)
-sdk = subprocess.check_output(['bash', str(root / 'scripts/build.sh'), '--print-sdk'], text=True, env=env).strip()
+sdk = subprocess.check_output(['bash', str(root / 'windows/tools/mac_sdk.sh')], text=True, env=env).strip()
 subprocess.run(['/usr/bin/swiftc', '-sdk', sdk, '-module-cache-path', str(root / 'build/windows-module-reference/.compiler/module-cache'),
                 str(out / 'oracle.swift'), '-o', str(out / 'oracle')], check=True, env=env)
 for name in ['output', 'repeat']:

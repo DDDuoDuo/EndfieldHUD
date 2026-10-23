@@ -18,7 +18,7 @@ mask=canvas[canvas.index('        let mask = CAGradientLayer();'):canvas.index('
 constants=geometry[geometry.index('    static let size'):geometry.index('    static func constrained')]
 (out/'source_mask.swift').write_text('import AppKit\nimport QuartzCore\nenum WorldMapGeometry {\n'+constants+'}\nfunc sourceMapMask()->CAGradientLayer {\nlet layer=CALayer();layer.bounds=CGRect(origin:.zero,size:WorldMapGeometry.size)\n'+mask+'\nreturn mask\n}\n')
 env=os.environ.copy();env.pop('SDKROOT',None)
-sdk=subprocess.check_output(['bash',str(root/'scripts/build.sh'),'--print-sdk'],text=True,env=env).strip()
+sdk=subprocess.check_output(['bash',str(root/'windows/tools/mac_sdk.sh')],text=True,env=env).strip()
 subprocess.run(['/usr/bin/swiftc','-sdk',sdk,'-module-cache-path',str(root/'build/windows-module-reference/.compiler/module-cache'),str(root/source_files[0]),str(root/'windows/tools/map_player_reference.swift'),str(out/'source_mask.swift'),'-o',str(out/'oracle')],check=True,env=env)
 subprocess.run([str(out/'oracle'),str(root/'Resources'),str(out)],check=True)
 report=json.loads((out/'output.json').read_text())

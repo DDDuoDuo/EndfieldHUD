@@ -12,7 +12,7 @@ if fixture.exists():
     assert expected['sourceSHA256']==hashlib.sha256(source.read_bytes()).hexdigest()
 out.mkdir(parents=True,exist_ok=True)
 env=os.environ.copy();env.pop('SDKROOT',None)
-sdk=subprocess.check_output(['bash',str(root/'scripts/build.sh'),'--print-sdk'],text=True,env=env).strip()
+sdk=subprocess.check_output(['bash',str(root/'windows/tools/mac_sdk.sh')],text=True,env=env).strip()
 subprocess.run(['xcrun','swiftc','-sdk',sdk,'-module-cache-path',str(root/'build/windows-module-reference/.compiler/module-cache'),str(root/'windows/tools/map_screen_reference.swift'),'-o',str(out/'oracle')],check=True,env=env)
 subprocess.run([str(out/'oracle'),str(out)],check=True)
 actual=json.loads((out/'output.json').read_text());actual['sourceSHA256']=hashlib.sha256(source.read_bytes()).hexdigest()

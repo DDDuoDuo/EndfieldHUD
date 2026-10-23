@@ -58,7 +58,7 @@ deadlines=[{'track':base,'now':10,'lyrics':cue},{'track':base,'now':10,'lyrics':
 data={'schemaVersion':1,'sourceCommit':authority,'sourcePins':{p:hashlib.sha256((root/p).read_bytes()).hexdigest() for p in paths},'tracks':[{'input':t,'times':times} for t in tracks],'lyrics':[{'input':s,'times':[-1,0,1,1.25,2,3,4.5,10000,'nan']} for s in lyrics],'identities':identities,'seek':seek,'deadlines':deadlines}
 (out/'input.json').write_text(json.dumps(data,ensure_ascii=False))
 env=os.environ.copy();env.pop('SDKROOT',None)
-sdk=subprocess.check_output(['bash',str(root/'scripts/build.sh'),'--print-sdk'],text=True,env=env).strip()
+sdk=subprocess.check_output(['bash',str(root/'windows/tools/mac_sdk.sh')],text=True,env=env).strip()
 subprocess.run(['/usr/bin/swiftc','-sdk',sdk,'-module-cache-path',str(root/'build/windows-module-reference/.compiler/module-cache'),str(out/'oracle.swift'),'-o',str(out/'oracle')],check=True,env=env)
 subprocess.run([str(out/'oracle'),str(out/'input.json'),str(out/'now-playing-source.json')],check=True)
 value=(out/'now-playing-source.json').read_bytes()

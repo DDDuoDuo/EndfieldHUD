@@ -9,7 +9,7 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 OUTPUT="$1"; CACHE="$2"
 [[ ! -e "$OUTPUT" && ! -L "$OUTPUT" && -d "$CACHE" ]]
 mkdir -p "$OUTPUT";OUTPUT="$(cd "$OUTPUT" && pwd)";CACHE="$(cd "$CACHE" && pwd)"
-SDK="$(bash "$ROOT/scripts/build.sh" --print-sdk)"
+SDK="$(bash "$ROOT/windows/tools/mac_sdk.sh")"
 python3 -I - "$ROOT" "$OUTPUT" <<'PY'
 import hashlib,json,pathlib,sys
 root,out=map(pathlib.Path,sys.argv[1:]);names=['SystemEventLog','EventLogCanvas','HUDModule','HUDControlHighlightLayer','HUDSubsectionTransition','HUDRenderScale','HUDSectionHeading']

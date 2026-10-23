@@ -12,7 +12,7 @@ mkdir -p "$OUTPUT"
 OUTPUT="$(cd "$OUTPUT" && pwd)"
 BUILD="$OUTPUT/.compiler"
 mkdir -p "$BUILD/module-cache"
-SDK="$(bash "$ROOT/scripts/build.sh" --print-sdk)"
+SDK="$(bash "$ROOT/windows/tools/mac_sdk.sh")"
 python3 "$ROOT/windows/tools/export_shell_packet_instrument.py" "$ROOT" "$BUILD"
 cp "$BUILD/instrumentation.json" "$OUTPUT/instrumentation.json"
 python3 - "$ROOT" "$OUTPUT" <<'PY'

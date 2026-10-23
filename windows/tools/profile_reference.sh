@@ -12,7 +12,7 @@ mkdir -p "$BUILD/module-cache"; BUILD="$(cd "$BUILD" && pwd)"
 FIXTURE_HOME="$(mktemp -d "${TMPDIR:-/tmp}/endfield-profile-reference.XXXXXX")"
 trap 'rm -rf "$FIXTURE_HOME"' EXIT
 cd "$ROOT"
-SDK="$(bash "$ROOT/scripts/build.sh" --print-sdk)"
+SDK="$(bash "$ROOT/windows/tools/mac_sdk.sh")"
 SOURCES=()
 while IFS= read -r path; do SOURCES+=("$ROOT/$path"); done < <(find Sources -type f -name '*.swift' ! -name main.swift | LC_ALL=C sort)
 if ! xcrun swiftc -swift-version 5 -Onone -whole-module-optimization -parse-as-library \

@@ -14,7 +14,7 @@ mkdir -p "$1/.compiler"
 OUT="$(cd "$1" && pwd)"
 PIN='ca04f142185c7de40acd8523bdb563195d90a1d1'
 (cd "$ROOT" && git diff --quiet "$PIN" -- Sources Resources) || { echo 'Mac Sources/Resources differ from the pinned authority' >&2; exit 1; }
-SDK="$(bash "$ROOT/scripts/build.sh" --print-sdk)"
+SDK="$(bash "$ROOT/windows/tools/mac_sdk.sh")"
 SOURCES=()
 while IFS= read -r path; do SOURCES+=("$ROOT/$path"); done < <(cd "$ROOT"; git ls-files 'Sources/*.swift' | sed '/\/main.swift$/d' | LC_ALL=C sort)
 if ! xcrun swiftc -swift-version 5 -Onone -parse-as-library -module-name EndfieldAccountReference -D HUD_WATCH_MOTION_PREVIEW \

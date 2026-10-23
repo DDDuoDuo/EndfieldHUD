@@ -64,7 +64,7 @@ provenance = {'baselineRequested':'ca04f14', 'gitHead':subprocess.check_output([
               'compiler':subprocess.check_output(['xcrun','swiftc','--version'],text=True).strip()}
 (output/'provenance.json').write_text(json.dumps(provenance, indent=2, sort_keys=True)+'\n')
 PY
-SDK="$(bash "$ROOT/scripts/build.sh" --print-sdk)"
+SDK="$(bash "$ROOT/windows/tools/mac_sdk.sh")"
 SOURCES=()
 while IFS= read -r path; do SOURCES+=("$ROOT/$path"); done < <(rg --files Sources -g '*.swift' | sed '/\/main.swift$/d' | LC_ALL=C sort)
 if ! xcrun swiftc -swift-version 5 -Onone -whole-module-optimization -parse-as-library \

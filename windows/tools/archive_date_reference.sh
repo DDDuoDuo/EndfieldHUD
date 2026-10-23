@@ -16,7 +16,7 @@ block=src[start:end]
 (out/'ArchiveCanvas.swift').write_bytes(b'import Foundation\nfinal class ArchiveCanvas {\n'+block+b'\n}\n')
 (out/'provenance.json').write_text(json.dumps({'sourceCommit':'ca04f142185c7de40acd8523bdb563195d90a1d1','sourcePath':'Sources/ArchiveCanvas.swift','sourceSHA256':hashlib.sha256(src).hexdigest(),'methodsSHA256':hashlib.sha256(block).hexdigest(),'isolation':'Foundation only, synthetic dates, process-local time zones; no app data, window or system setting changes'},indent=2)+'\n')
 PY
-SDK="$(bash "$ROOT/scripts/build.sh" --print-sdk)"
+SDK="$(bash "$ROOT/windows/tools/mac_sdk.sh")"
 xcrun swiftc -O -swift-version 5 -parse-as-library -sdk "$SDK" \
  -module-cache-path "$ROOT/build/windows-module-reference/.compiler/module-cache" \
  "$OUTPUT/ArchiveCanvas.swift" "$ROOT/windows/tools/archive_date_reference.swift" -o "$OUTPUT/reference"

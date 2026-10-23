@@ -248,7 +248,7 @@ doc = {'plist': {'values': [{'name': n, 'value': v} for n, v in values], 'raw': 
 sources = sorted(p for p in (root / 'Sources').glob('*.swift') if p.name != 'main.swift')
 # The pinned Swift 6.1 toolchain needs the macOS 15.5 SDK (as map_store_reference.py).
 pinned = Path('/Library/Developer/CommandLineTools/SDKs/MacOSX15.5.sdk')
-sdk = str(pinned) if pinned.exists() else subprocess.run(['bash', str(root / 'scripts/build.sh'), '--print-sdk'], capture_output=True, text=True, check=True).stdout.strip().splitlines()[-1]
+sdk = str(pinned) if pinned.exists() else subprocess.run(['bash', str(root / 'windows/tools/mac_sdk.sh')], capture_output=True, text=True, check=True).stdout.strip().splitlines()[-1]
 cache = build / 'module-cache'
 cache.mkdir(parents=True, exist_ok=True)
 exe = build / 'mac-import-reference'

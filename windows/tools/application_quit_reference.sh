@@ -8,7 +8,7 @@ OUT="$1";CACHE="$2"
 [[ ! -e "$OUT" && -d "$CACHE" ]]
 mkdir -p "$OUT";OUT="$(cd "$OUT" && pwd)";CACHE="$(cd "$CACHE" && pwd)"
 git -C "$ROOT" diff --quiet ca04f142185c7de40acd8523bdb563195d90a1d1 -- Sources/HUDQuitConfirmationView.swift
-SDK="$(bash "$ROOT/scripts/build.sh" --print-sdk)"
+SDK="$(bash "$ROOT/windows/tools/mac_sdk.sh")"
 xcrun swiftc -swift-version 5 -O -sdk "$SDK" -module-cache-path "$CACHE" -framework Cocoa -framework QuartzCore "$ROOT/Sources/HUDQuitConfirmationView.swift" "$ROOT/windows/tools/application_quit_reference.swift" -o "$OUT/reference"
 python3 -I - "$OUT" "$ROOT" <<'PY'
 import hashlib,json,os,pathlib,subprocess,sys,tempfile

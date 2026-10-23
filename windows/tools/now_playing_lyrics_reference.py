@@ -312,7 +312,7 @@ out.mkdir(parents=True, exist_ok=True)
 (out / 'oracle.swift').write_text(source)
 (out / 'input.json').write_text(json.dumps(data, ensure_ascii=False))
 env = os.environ.copy(); env.pop('SDKROOT', None)
-sdk = subprocess.check_output(['bash', str(root / 'scripts/build.sh'), '--print-sdk'], text=True, env=env).strip().splitlines()[-1]
+sdk = subprocess.check_output(['bash', str(root / 'windows/tools/mac_sdk.sh')], text=True, env=env).strip().splitlines()[-1]
 subprocess.run(['/usr/bin/swiftc', '-sdk', sdk, '-module-cache-path', str(out / 'module-cache'),
                 str(out / 'oracle.swift'), '-o', str(out / 'oracle')], check=True, env=env)
 for name in ['output', 'repeat']:

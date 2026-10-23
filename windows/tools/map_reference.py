@@ -93,7 +93,7 @@ try JSONSerialization.data(withJSONObject:["pinBoundary":boundary,"geometry":res
 ''')
 env = os.environ.copy()
 env.pop('SDKROOT', None)
-sdk = subprocess.check_output(['bash', str(root/'scripts/build.sh'), '--print-sdk'], env=env, text=True).strip()
+sdk = subprocess.check_output(['bash', str(root/'windows/tools/mac_sdk.sh')], env=env, text=True).strip()
 cache = root/'build/windows-module-reference/.compiler/module-cache'
 subprocess.run(['xcrun', 'swiftc', '-sdk', sdk, '-module-cache-path', str(cache),
                 *[str(root/p) for p in source_paths[:2]], str(output/'main.swift'), '-o', str(output/'oracle')], check=True)

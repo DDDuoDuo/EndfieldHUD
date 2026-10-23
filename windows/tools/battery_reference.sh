@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 OUTPUT="$1"; CACHE="$2"
 [[ ! -e "$OUTPUT" && ! -L "$OUTPUT" && -d "$CACHE" ]]
 mkdir -p "$OUTPUT"; OUTPUT="$(cd "$OUTPUT" && pwd)"; CACHE="$(cd "$CACHE" && pwd)"
-SDK="$(bash "$ROOT/scripts/build.sh" --print-sdk)"
+SDK="$(bash "$ROOT/windows/tools/mac_sdk.sh")"
 python3 "$ROOT/windows/tools/battery_reference.py" "$ROOT" "$OUTPUT"
 xcrun swiftc -swift-version 5 -O -parse-as-library -sdk "$SDK" -module-cache-path "$CACHE" -framework AppKit -framework QuartzCore -framework IOKit -framework CryptoKit \
  "$ROOT/Sources/BatteryMonitor.swift" "$ROOT/Sources/BatteryCapacity.swift" "$ROOT/Sources/HUDControlHighlightLayer.swift" \
