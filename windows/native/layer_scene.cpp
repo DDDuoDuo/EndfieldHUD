@@ -227,8 +227,16 @@ void LayerScene::setPlacements(std::span<const LayerPlacement> placements){
         need(p.surface<surfaces_.size()&&!supplied[p.surface],"Invalid or repeated native surface index");supplied[p.surface]=true;
         need(p.world.finite()&&std::isfinite(p.opacity)&&p.opacity>=0&&p.opacity<=1&&p.masks.size()<=8,"Invalid native surface placement");
         for(const auto&m:p.masks)need(m.worldToLocal.finite()&&std::isfinite(m.bounds.x)&&std::isfinite(m.bounds.y)&&std::isfinite(m.bounds.width)&&std::isfinite(m.bounds.height)&&m.bounds.width>0&&m.bounds.height>0&&std::isfinite(m.cornerRadius)&&m.cornerRadius>=0&&m.cornerRadius<=std::min(m.bounds.width,m.bounds.height)*.5,"Invalid native surface mask");
+        for(const auto v:p.linearTint)need(std::isfinite(v)&&v>=0&&v<=65504,"Invalid native surface tint");need(p.linearTint[3]<=1,"Invalid native surface tint alpha");
+        if(const auto&a=p.alphaMask)need(!a->textureID.empty()&&a->worldToLocal.finite()&&std::isfinite(a->bounds.x)&&std::isfinite(a->bounds.y)&&std::isfinite(a->bounds.width)&&std::isfinite(a->bounds.height)&&a->bounds.width>0&&a->bounds.height>0,"Invalid native surface alpha mask");
     }
-    for(const auto&p:placements){auto&d=surfaces_[p.surface].draw;d.world=p.world;d.opacity=p.opacity;d.masks.assign(p.masks.begin(),p.masks.end());}
+    // Same texture IDs reuse their string storage: numeric frames allocate nothing.
+    for(const auto&p:placements){auto&d=surfaces_[p.surface].draw;d.world=p.world;d.opacity=p.opacity;d.masks.assign(p.masks.begin(),p.masks.end());d.linearTint=p.linearTint;
+        if(!p.alphaMask)d.alphaMask.reset();else if(d.alphaMask){d.alphaMask->worldToLocal=p.alphaMask->worldToLocal;d.alphaMask->bounds=p.alphaMask->bounds;if(d.alphaMask->textureID!=p.alphaMask->textureID)d.alphaMask->textureID=p.alphaMask->textureID;}else d.alphaMask=p.alphaMask;}
+}
+PlaneAlphaMask LayerScene::surfaceAlphaMask(std::size_t index,const Matrix& world)const{
+    need(index<surfaces_.size()&&world.finite(),"Invalid native alpha-mask surface");const auto&s=surfaces_[index];
+    return {core::source::inverseSourceMatrix(world),s.image->bounds,s.draw.textureID};
 }
 void LayerScene::setGroupShutter(std::optional<PlaneShutter> shutter){
     if(shutter)validatePlaneShutter(*shutter);
@@ -241,13 +249,15 @@ Matrix LayerScene::validatePreparation(const Matrix& placement)const{
     need(placement.finite(),"Invalid native layer placement");const auto inverse=core::source::inverseSourceMatrix(placement);
     if(groupShutter_)need((groupShutter_->worldToLocal*inverse).finite(),"Invalid projected native shutter matrix");
     if(groupAlphaMask_)need((groupAlphaMask_->worldToLocal*inverse).finite(),"Invalid projected native alpha-mask matrix");
-    for(const auto&surface:surfaces_){need((placement*surface.draw.world).finite(),"Invalid projected native world matrix");for(const auto&mask:surface.draw.masks)need((mask.worldToLocal*inverse).finite(),"Invalid projected native mask matrix");}
+    for(const auto&surface:surfaces_){need((placement*surface.draw.world).finite(),"Invalid projected native world matrix");for(const auto&mask:surface.draw.masks)need((mask.worldToLocal*inverse).finite(),"Invalid projected native mask matrix");
+        if(surface.draw.alphaMask)need((surface.draw.alphaMask->worldToLocal*inverse).finite(),"Invalid projected native alpha-mask matrix");}
     return inverse;
 }
 void LayerScene::prepare(const Matrix& placement,const Matrix& inverse){
     for(std::size_t i=0;i<surfaces_.size();++i){const auto&source=surfaces_[i].draw;auto&draw=draws_[i];draw.world=placement*source.world;draw.opacity=source.opacity;draw.masks.resize(source.masks.size());
         draw.shutter=groupShutter_;if(draw.shutter)draw.shutter->worldToLocal=groupShutter_->worldToLocal*inverse;
-        draw.alphaMask=groupAlphaMask_;if(draw.alphaMask)draw.alphaMask->worldToLocal=groupAlphaMask_->worldToLocal*inverse;
+        // A surface's own alpha clip wins over the group's.
+        const auto&alpha=source.alphaMask?source.alphaMask:groupAlphaMask_;draw.alphaMask=alpha;if(draw.alphaMask)draw.alphaMask->worldToLocal=alpha->worldToLocal*inverse;draw.linearTint=source.linearTint;
         for(std::size_t j=0;j<draw.masks.size();++j){draw.masks[j]=source.masks[j];draw.masks[j].worldToLocal=source.masks[j].worldToLocal*inverse;}}
 }
 std::span<const DrawObject> LayerScene::prepareDraws(const Matrix& placement){
@@ -319,9 +329,10 @@ void LayerComposition::setEntries(Renderer& renderer,std::span<const LayerCompos
         throw;
     }
     // All old references are now gone. Do not clear the renderer list when
-    // retiring one scene: siblings share the same publication point.
+    // retiring one scene: siblings share the same publication point. A scene
+    // a borrowing NativeLayerGroup now draws keeps its resources for it.
     for(const auto&old:scenes_)if(!unique.contains(old.scene)){
-        old.scene->compositionOwner_=nullptr;(void)old.scene->release(renderer,false);
+        old.scene->compositionOwner_=nullptr;if(!old.scene->groupOwner_)(void)old.scene->release(renderer,false);
     }
     for(const auto&entry:next){entry.scene->compositionOwner_=this;entry.scene->collectRetiredResources(renderer);}
     scenes_=std::move(next);draws_=std::move(nextDraws);inverseTransforms_=std::move(nextInverse);stagedAfter_=std::move(nextStage);
@@ -399,6 +410,10 @@ void LayerComposition::present(Renderer& renderer,std::span<const Matrix> transf
         }
     }
     renderer.setDrawList(draws_);
+}
+std::pair<std::size_t,std::size_t> LayerComposition::drawRange(std::size_t first,std::size_t count)const{
+    need(first<=scenes_.size()&&count<=scenes_.size()-first,"Composition entry range exceeds the published entries");
+    if(!count)return {0,0};const auto&last=scenes_[first+count-1];return {scenes_[first].begin,last.begin+last.count+last.after.size()};
 }
 void LayerComposition::detach(Renderer& renderer){
     need(!renderer_||renderer_==&renderer,"Detach native composition through its renderer owner");

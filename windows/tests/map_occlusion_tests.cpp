@@ -44,7 +44,7 @@ Shell rest(const s::WatchRuntimeInput&runtime,const s::WatchAnimation&animation,
     Shell shell;shell.frame=runtime.camera().frame({viewport.width,viewport.height},runtime.camera().rootRotation());
     const auto pose=animation.pose(animation.entrance().lastKeyTime,{},{},shell.frame.layout.canvasSize);shell.nodes=s::SourceLayout(runtime.scene()).resolve({},pose.transforms);
     s::DesktopChromeProjectionPlan plan(runtime.scene(),runtime.camera(),animation,s::DesktopChromeBindings::fromJson(runtime.chrome()["bindings"]));
-    shell.contentScale=s::desktopContentScale(runtime.camera(),viewport);(void)plan.update(shell.nodes,shell.frame,viewport,shell.contentScale);
+    shell.contentScale=plan.contentScale(viewport);(void)plan.update(shell.nodes,shell.frame,viewport,shell.contentScale);
     check(plan.projection().center.has_value(),"The source centre plane projects at rest");shell.center=*plan.projection().center;return shell;
 }
 

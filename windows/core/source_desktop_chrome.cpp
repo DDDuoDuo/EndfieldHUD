@@ -31,16 +31,6 @@ double prefixNumber(std::string_view value){
 }
 }
 double desktopBaseDesignScale(Rect v){return std::max(.1,std::min({v.width/1100,v.height/740,1.15}));}
-double desktopContentScale(const SourceCamera&camera,Rect v){
-    require(std::isfinite(v.width)&&std::isfinite(v.height)&&v.width>0&&v.height>0,"Invalid desktop content viewport");
-    // Points per source canvas unit here and on the reference display. The
-    // canvas covers the screen, so this is the ring's size in points.
-    const auto here=camera.layout({v.width,v.height}),reference=camera.layout({desktopReferenceViewport.width,desktopReferenceViewport.height});
-    const double pointsHere=v.width/here.canvasSize[0],pointsReference=desktopReferenceViewport.width/reference.canvasSize[0];
-    const double proportional=desktopBaseDesignScale(desktopReferenceViewport)*pointsHere/pointsReference;
-    const double factor=std::max(1.,proportional/desktopBaseDesignScale(v));
-    require(std::isfinite(factor)&&factor>=1,"Invalid desktop content scale");return factor;
-}
 DesktopChromeLayout DesktopChromeLayout::make(const DesktopChromeSettings&s,const Matrix4&center,const Matrix4&status){
     require(std::isfinite(s.viewport.x)&&std::isfinite(s.viewport.y)&&std::isfinite(s.viewport.width)&&std::isfinite(s.viewport.height)&&s.viewport.width>0&&s.viewport.height>0&&std::isfinite(s.hudScale)&&s.hudScale>0&&std::isfinite(s.hudOffset[0])&&std::isfinite(s.hudOffset[1])&&std::isfinite(s.contentScale)&&s.contentScale>0&&center.finite()&&status.finite(),"Invalid desktop chrome placement");
     DesktopChromeLayout o;o.designScale=desktopBaseDesignScale(s.viewport)*s.hudScale*s.contentScale;
@@ -55,7 +45,18 @@ DesktopChromeLayout DesktopChromeLayout::make(const DesktopChromeSettings&s,cons
     o.statusToScreen=status*Matrix4::translation(86.28,8);
     o.statusLocal=Matrix4::scale(1/scale,1/scale)*Matrix4::translation(-o.designOrigin.x,-o.designOrigin.y)*o.statusToScreen;
     const auto content=moduleContentFrame(s.module);o.moduleLocalToScreen=center*Matrix4::translation(500,o.reportCenterY)*Matrix4::scale(o.reportScale,o.reportScale)*Matrix4::translation(content.x-500,content.y-320);
-    return o;
+    o.boxWorld=designBoxWorld(center);return o;
+}
+double planeScale(const Matrix4&m,Point p){
+    const auto&v=m.values;const double w=v[3]*p.x+v[7]*p.y+v[15];require(std::isfinite(w)&&std::abs(w)>1e-12,"Plane point is not projected");
+    const double x=(v[0]*p.x+v[4]*p.y+v[12])/w,y=(v[1]*p.x+v[5]*p.y+v[13])/w;
+    // Jacobian of the homography: d(x,y)/d(local).
+    const double ax=(v[0]-x*v[3])/w,ay=(v[1]-y*v[3])/w,bx=(v[4]-x*v[7])/w,by=(v[5]-y*v[7])/w;
+    return std::sqrt(std::abs(ax*by-ay*bx));
+}
+Matrix4 designBoxWorld(const Matrix4&center,double unit){
+    require(std::isfinite(unit)&&unit>0&&center.finite(),"Invalid design box placement");const auto box=DesignBox::rect(unit);
+    return center*Matrix4::translation(box.x,box.y)*Matrix4::scale(unit,unit);
 }
 DesktopChromeBindings DesktopChromeBindings::fromJson(const Json&j){require(j.isObject()&&j["centerNodeID"].isString()&&j["statusNodeID"].isString(),"Missing exact desktop chrome source bindings");return {j["centerNodeID"].string(),j["statusNodeID"].string()};}
 DesktopChromeProjectionPlan::DesktopChromeProjectionPlan(const SceneDefinition&s,const SourceCamera&c,const WatchAnimation&a,DesktopChromeBindings ids):scene_(&s),camera_(&c),animation_(&a){
@@ -68,11 +69,7 @@ bool DesktopChromeProjectionPlan::update(std::span<const ResolvedNode>nodes,cons
     const auto centerWorld=camera.worldRoot*nodes[center_].worldMatrix;const auto vp=camera.projection*camera.view;
     if(!centerWorld_||*centerWorld_!=centerWorld||centerViewport_!=viewport||centerScale_!=contentScale){
         if(calibrationViewport_!=viewport||calibrationScale_!=contentScale){
-            const auto neutral=camera_->frame({viewport.width,viewport.height},camera_->rootRotation());
-            const auto pose=animation_->pose(animation_->entrance().lastKeyTime,{},{},neutral.layout.canvasSize);
-            const auto resolved=SourceLayout(*scene_).resolve({},pose.transforms);const auto world=neutral.worldRoot*resolved[center_].worldMatrix;
-            const auto origin=projectNativePoint({0,0,0},world,neutral.projection*neutral.view,viewport),step=projectNativePoint({1,0,0},world,neutral.projection*neutral.view,viewport);
-            if(origin&&step){const auto pixels=std::hypot(step->x-origin->x,step->y-origin->y);if(pixels>.0001){result_.unitsPerPoint=desktopBaseDesignScale(viewport)*contentScale/pixels;calibrationViewport_=viewport;calibrationScale_=contentScale;}}
+            if(const auto pixels=restingPointsPerUnit(viewport)){result_.unitsPerPoint=desktopBaseDesignScale(viewport)*contentScale / *pixels;calibrationViewport_=viewport;calibrationScale_=contentScale;}
         }
         if(calibrationViewport_==viewport&&calibrationScale_==contentScale){const auto unit=result_.unitsPerPoint;const auto p=corners({Vec3{-500*unit,320*unit,0},Vec3{500*unit,320*unit,0},Vec3{500*unit,-320*unit,0},Vec3{-500*unit,-320*unit,0}},centerWorld,vp,viewport);
             if(p){const auto matrix=nativeProjectiveTextTransform(*p,{1000,640});changed|=result_.center!=matrix;result_.center=matrix;centerWorld_=centerWorld;centerViewport_=viewport;centerScale_=contentScale;}}
@@ -82,6 +79,22 @@ bool DesktopChromeProjectionPlan::update(std::span<const ResolvedNode>nodes,cons
             const auto p=corners({Vec3{r.origin[0],r.origin[1]+r.size[1],0},Vec3{r.origin[0]+r.size[0],r.origin[1]+r.size[1],0},Vec3{r.origin[0]+r.size[0],r.origin[1],0},Vec3{r.origin[0],r.origin[1],0}},world,vp,viewport);
             if(p&&r.size[0]>0&&r.size[1]>0){const auto matrix=nativeProjectiveTextTransform(*p,{528.28,122});changed|=result_.status!=matrix;result_.status=matrix;statusWorld_=world;statusRect_=status.rect;statusViewport_=viewport;}}
     }return changed;
+}
+std::optional<double> DesktopChromeProjectionPlan::restingPointsPerUnit(Rect viewport){
+    require(std::isfinite(viewport.width)&&std::isfinite(viewport.height)&&viewport.width>0&&viewport.height>0,"Invalid desktop content viewport");
+    for(const auto&entry:resting_)if(entry&&entry->viewport==viewport)return entry->points;
+    const auto neutral=camera_->frame({viewport.width,viewport.height},camera_->rootRotation());
+    const auto pose=animation_->pose(animation_->entrance().lastKeyTime,{},{},neutral.layout.canvasSize);
+    const auto resolved=SourceLayout(*scene_).resolve({},pose.transforms);const auto world=neutral.worldRoot*resolved[center_].worldMatrix;
+    const auto origin=projectNativePoint({0,0,0},world,neutral.projection*neutral.view,viewport),step=projectNativePoint({1,0,0},world,neutral.projection*neutral.view,viewport);
+    std::optional<double> points;if(origin&&step){const auto pixels=std::hypot(step->x-origin->x,step->y-origin->y);if(pixels>.0001)points=pixels;}
+    resting_[restingNext_]=Resting{viewport,points};restingNext_=(restingNext_+1)%resting_.size();return points;
+}
+double DesktopChromeProjectionPlan::contentScale(Rect viewport){
+    const auto ratio=[&](Rect v)->std::optional<double>{const auto points=restingPointsPerUnit(v);if(!points)return {};return *points/desktopBaseDesignScale(v);};
+    const auto here=ratio(viewport),reference=ratio(desktopReferenceViewport);
+    if(!here||!reference||!(*reference>0)||!std::isfinite(*here / *reference))return 1;
+    return std::clamp(*here / *reference,1.,3.);
 }
 DesktopClockArtworkPlan::DesktopClockArtworkPlan(){artwork_.seconds.fontSize=22;artwork_.seconds.alignment=ChromeTextAlignment::center;artwork_.seconds.font=ChromeFontRole::monospacedDigitSystem;artwork_.seconds.semibold=true;artwork_.instrument.reserve(64);artwork_.hands.reserve(4);artwork_.selection.reserve(2);}
 Rect DesktopClockArtworkPlan::indicatorRect(unsigned index){require(index<5,"Invalid clock style index");return {14+double(index)*64,124,56,18};}

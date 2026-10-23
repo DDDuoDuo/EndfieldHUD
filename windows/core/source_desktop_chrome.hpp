@@ -11,28 +11,30 @@ struct DesktopChromeSettings {
     double hudScale{1};Vec2 hudOffset{};
     Module module{Module::power};
     bool sourceShell{true};
-    // Windows display adaptation (desktopContentScale), multiplying the design
-    // scale of the design canvas and of the centre plane. 1 is the exact Mac.
+    // The display adaptation (DesktopChromeProjectionPlan::contentScale),
+    // multiplying the design scale of the design canvas and of the centre
+    // plane. 1 is the reference display.
     double contentScale{1};
 };
 // SystemHUDView.designScale before the HUD scale: min(width / 1100,
 // height / 740, 1.15) points per design point, at least .1.
 double desktopBaseDesignScale(Rect viewport);
-// Windows display adaptation. SystemHUDView caps its design scale at 1.15
-// points, while the source watch grows with the screen (UICanvasScaleHelper:
-// the source canvas spans the width below 16:9 and the height above). On the
-// reference Mac display (1470 x 956 points, MacBook Air, where the cap
-// applies) the capped centre content covers the centre ring; on a larger
-// Windows display the same cap leaves it visibly smaller than the ring. This
-// factor keeps the reference proportion of design points to source canvas
-// units at any display, and never goes below the Mac's own scale (>= 1), so
-// every display where the Mac content already covers the ring is unchanged.
-double desktopContentScale(const SourceCamera&,Rect viewport);
 inline constexpr Rect desktopReferenceViewport{0,0,1470,956};
+// The redesigned 590 x 510 px content box on the centre plane (DesignBox):
+// center · T(500 − 295u, 320 − 305u) · S(u), box px to screen. The display
+// adaptation is already inside `center` (its calibration), so the box keeps
+// its share of the ring with no extra term. Not clipped (LIB-100).
+Matrix4 designBoxWorld(const Matrix4& sourceCenter,double unit=DesignBox::baseUnit);
+// Screen length of one local unit at `local` on a projective plane (the
+// geometric mean of the homography's two axis scales there), e.g. the output
+// pixels of ContentDimTrack::blurRadius design units at the disc centre.
+double planeScale(const Matrix4& world,Point local);
 struct DesktopChromeLayout {
+    // reportScale/reportCenterY: the v1.2.0 placement of unported (shutter)
+    // modules only; design screens use boxWorld (the Mac 1.3 host has none).
     double designScale{},reportScale{};Point designOrigin,canvasPosition;double reportCenterY{};
     Rect header{270,2,600,74},footer{0,0,1000,640},footerText{275,622,450,18};
-    Matrix4 designToScreen,centerSpatial,statusLocal,statusToScreen,moduleLocalToScreen;
+    Matrix4 designToScreen,centerSpatial,statusLocal,statusToScreen,moduleLocalToScreen,boxWorld;
     static DesktopChromeLayout make(const DesktopChromeSettings&,const Matrix4& sourceCenter,const Matrix4& sourceStatus);
 };
 struct DesktopChromeBindings {
@@ -50,10 +52,25 @@ class DesktopChromeProjectionPlan final {
 public:
     DesktopChromeProjectionPlan(const SceneDefinition&,const SourceCamera&,const WatchAnimation&,DesktopChromeBindings);
     // contentScale (DesktopChromeSettings::contentScale) multiplies the
-    // calibrated design scale of the centre plane; 1 is the exact Mac.
+    // calibrated design scale of the centre plane; 1 is the reference display.
     bool update(std::span<const ResolvedNode>,const CameraFrame&,Rect viewport,double contentScale=1);
     const DesktopChromeProjection& projection()const noexcept{return result_;}
+    // The display adaptation (checklist B13, originated on Windows; the Mac's
+    // HUDSourceWatchView.desktopContentScale(for:) since f2c5d80, measured on
+    // the centre plane): SystemHUDView caps its design scale at 1.15 points
+    // while the source watch grows with the screen, so the whole design canvas
+    // grows by clamp(ratio(here) / ratio(1470 x 956), 1, 3), ratio = resting
+    // points per source unit at the centre node (deployed pose, neutral
+    // camera) / desktopBaseDesignScale. 1 wherever the Mac content already
+    // covers the ring and when the plane cannot be measured. Content event
+    // only (a resolve per new size; the last sizes are cached, as the Mac's).
+    double contentScale(Rect viewport);
+    // Points per source unit at the centre node in the deployed pose under the
+    // neutral camera (the centre calibration's measure); nullopt off-screen.
+    std::optional<double> restingPointsPerUnit(Rect viewport);
 private:
+    struct Resting {Rect viewport;std::optional<double> points;};
+    std::array<std::optional<Resting>,4> resting_;std::size_t restingNext_{};
     const SceneDefinition* scene_;const SourceCamera* camera_;const WatchAnimation* animation_;
     std::size_t center_{},status_{};DesktopChromeProjection result_;
     std::optional<Rect> calibrationViewport_,centerViewport_,statusViewport_;double calibrationScale_{1},centerScale_{1};

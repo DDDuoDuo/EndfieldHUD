@@ -143,6 +143,28 @@ struct DrawObject {
     // Root/default linear groups and nested weighted inputs reject it.
     NativeBlend blend{NativeBlend::sourceOver};
 };
+// Sources/HUDDesignOverlay.swift HUDCenterOverlay.setContentDimmed (LIB-64,
+// SHELL-29): while a confirm bar or a toast dims the centre, the module
+// content - the root draws [begin, begin + count), the host's current and
+// incoming module entries (LayerComposition::drawRange) - gets Core Image's
+// CIGaussianBlur and CIExposureAdjust. It is drawn into an offscreen linear
+// target covering `bounds` (output pixels; empty = the whole output; content
+// outside it is not drawn) grown by the blur's reach at full strength (3
+// sigma: blurred edges stay soft into transparency), blurred in two
+// separable passes and composited back in its paint order, its linear RGB
+// multiplied by 2^(exposure x amount) (alpha unchanged). `amount` (0..1, the
+// eased dim) scales sigma and EV together, as the Mac eases inputRadius and
+// inputEV with one curve. Nothing else is filtered: the shell, the overlay
+// and the radial dim draw as before. The range is clamped to the published
+// list. Not here: the easing (the overlay drives amount per frame).
+struct ContentFilter {
+    std::size_t begin{},count{};
+    core::Rect bounds;
+    double blurSigma{}; // output pixels at amount 1 (inputRadius is a standard deviation)
+    double exposure{};  // EV at amount 1
+    double amount{1};
+    bool operator==(const ContentFilter&)const=default;
+};
 // Checks retained numeric/identity data with the exact GPU-uniform rules,
 // without querying or allocating device resources. Resource existence remains
 // the owning Renderer publication check.
@@ -194,6 +216,10 @@ struct RendererStats {
     std::uint64_t nativePasses{},nativePassesSkipped{};
     // updateTexture(): rectangles replaced in place and their texel bytes.
     std::uint64_t textureRegionUploads{},textureRegionBytes{};
+    // setContentFilter(): root passes drawn through the filter, its two
+    // offscreen targets (created, and their bytes while they exist).
+    std::uint64_t contentFilterPasses{},contentFilterTargetAllocations{};
+    std::size_t contentFilterBytes{};
     // Admissions a message loop took from the frame latency object
     // (presentationAdmitted) instead of a blocking frame-start wait, and
     // presents made without any admission (each one may queue a frame ahead
@@ -415,6 +441,11 @@ public:
     // recreate from their retained model. Invalid data fails before any upload.
     void setDrawList(std::span<const DrawObject> objects);
     void setCamera(const core::Matrix4 &viewProjection);
+    // Numeric per frame (ContentFilter above); invalid values reject before
+    // mutation. An amount of 0 draws the content directly; nullopt also
+    // releases the filter's targets (no cost while not dimmed). Returns
+    // whether anything changed.
+    bool setContentFilter(std::optional<ContentFilter>);
     // false is a test-only render without presentation, required for readback.
     // offscreenForTests explicitly disables all composition/presentation APIs;
     // it uses the same shader pipeline in noninteractive Windows CI sessions.

@@ -13,17 +13,29 @@ struct ModuleRegistrationPlacement {
 };
 struct ModuleSurfacePose {
     std::uint64_t surfaceIdentity{};
+    // A design screen's contentWorld is its box px to screen (boxWorld plus
+    // the switch motion); an unported module's is its v1.2.0 content frame.
     core::Matrix4 hostWorld,wrapperWorld,contentWorld;
     PlaneMask hostClip;
+    // The host's masksToBounds for this sample (ModulePresentationSurface::
+    // hostClip). Design owners pass hostMasks(); unported owners that pass
+    // hostClip directly keep the v1.2.0 clip, also during a directional leave.
+    bool hostClipped{true};
     std::optional<PlaneShutter> shutter;
     std::optional<ModuleRegistrationPlacement> registration;
     float opacity{1};
+    bool attached{true}; // false: prepare only, draw and hit nothing (opacity is 0).
+    std::span<const PlaneMask> hostMasks()const noexcept{return hostClipped?std::span<const PlaneMask>(&hostClip,1):std::span<const PlaneMask>();}
 };
 struct ModuleSurfaceStats {std::uint64_t bindings{},updates{},unchangedUpdates{},placementUpdates{};};
 
 // Projection-only adapter for one already loaded, module-local LayerScene.
-// The content root must be normalized to (0,0); its authored module frame is
-// applied here. Borrowed scene lifetime and GPU resource ownership stay with
+// The content root must be normalized to (0,0); its authored module frame (or,
+// for a design screen, the 590 x 510 px box at DesignBox, Sources/
+// HUDModuleContent.swift place) is applied here. The directional leave's plane
+// offset moves the wrapper before any placement, so an unported screen leaving
+// toward a design screen keeps its own v1.2.0 report placement meanwhile (the
+// Mac 1.3 host has no report scale to switch). Borrowed scene lifetime and GPU resource ownership stay with
 // the caller. No renderer/publication/raster/timer/provider is owned or invoked.
 // The caller MUST render pose().registration last above this wrapper's content,
 // using its host clip and shutter. This adapter alone is not a complete source

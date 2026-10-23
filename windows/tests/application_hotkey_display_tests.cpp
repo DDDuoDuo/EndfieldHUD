@@ -1,9 +1,9 @@
 // Host contracts of the RC 128 user reports, without global input or user data:
 //   - the summon chord recogniser of the low-level hook path (pure decisions);
-//   - the Windows display adaptation of the centre plane (desktopContentScale)
-//     on the source camera fixture: the exact Mac scale on the reference Mac
-//     display and wherever the Mac content already covers the ring, and the
-//     reference proportion on larger displays;
+//   - how the display adaptation of the centre plane enters the layout (its
+//     measure, DesktopChromeProjectionPlan::contentScale on the centre node
+//     of the deployed source shell, needs the packaged runtime: the app
+//     verification and map_occlusion_contracts check it on several displays);
 //   - the Windows-only Settings > Hotkeys toggle "Summon HUD with hotkey".
 #include "app/summon_hotkey.hpp"
 #include "core/source_desktop_chrome.hpp"
@@ -96,25 +96,14 @@ void hookLifecycle() {
 void displayAdaptation(const ehud::data::Json& fixture) {
     using namespace core;
     using namespace core::source;
-    const SourceCamera camera(fixture["runtimeRoot"]);
+    (void)fixture;
     // (windef.h defines near/far as macros.)
     const auto equal = [](double a, double b) { return std::abs(a - b) <= 1e-9 * std::max(1., std::abs(b)); };
-    check(equal(desktopBaseDesignScale(desktopReferenceViewport), 1.15) && desktopContentScale(camera, desktopReferenceViewport) == 1,
-        "The reference Mac display (1470 x 956) keeps the exact Mac design scale");
-    for (const Rect v : {Rect{0, 0, 1280, 800}, Rect{0, 0, 1280. / 1.5, 800. / 1.5}, Rect{0, 0, 1440, 900}})
-        check(desktopContentScale(camera, v) == 1, "Displays where the Mac content already covers the ring keep the Mac scale (" + std::to_string(v.width) + ")");
-    // 2560 x 1600 at 150 %: the source canvas spans the width (aspect < 16:9).
-    check(equal(desktopContentScale(camera, {0, 0, 2560. / 1.5, 1600. / 1.5}), (2560. / 1.5) / 1470), "A 2560 x 1600 display at 150 % grows the centre content with the ring (x1.161)");
-    check(equal(desktopContentScale(camera, {0, 0, 1920, 1080}), 1920. / 1470), "1920 x 1080 grows it with the ring width");
-    // Wider than 16:9: the canvas spans the height (1350 canvas units).
-    const double wide = 1.15 * (1440. / 1350.) / (1470. / 2400.) / 1.15;
-    check(std::abs(desktopContentScale(camera, {0, 0, 3440, 1440}) / wide - 1) < 1e-5, "An ultra-wide display grows it with the ring height");
-    // 1280 x 720 (1920 x 1080 at 150 %): the Mac's own height limit shrinks it below the reference proportion.
-    check(equal(desktopContentScale(camera, {0, 0, 1280, 720}), 1.15 * 1280. / 1470 / (720. / 740)), "A small 16:9 display is lifted to the reference proportion");
+    check(equal(desktopBaseDesignScale(desktopReferenceViewport), 1.15), "The reference Mac display (1470 x 956) has the Mac's capped design scale");
     DesktopChromeSettings settings{{0, 0, 2560. / 1.5, 1600. / 1.5}, 1.1, {}, Module::clipboard, true};
     check(settings.contentScale == 1, "Chrome settings default to the exact Mac scale");
     const auto mac = DesktopChromeLayout::make(settings, Matrix4{}, Matrix4{});
-    settings.contentScale = desktopContentScale(camera, settings.viewport);
+    settings.contentScale = (2560. / 1.5) / 1470; // The laptop's factor (x1.161).
     const auto adapted = DesktopChromeLayout::make(settings, Matrix4{}, Matrix4{});
     check(equal(mac.designScale, 1.15 * 1.1) && equal(adapted.designScale, 1.15 * 1.1 * settings.contentScale), "The design scale multiplies the Mac scale, HUD scale and adaptation");
     check(equal(adapted.reportScale, mac.reportScale) && equal(adapted.reportCenterY, mac.reportCenterY), "Module placement inside the plane is unchanged");
@@ -141,14 +130,14 @@ void settingsToggle() {
     check(rowIDs(page) == "capture,keyReset,summonHotkey,", "The Windows toggle follows the Mac rows");
     const auto action = [&](std::string_view id) -> const SettingsAction* { for (const auto& a : page.view().actions) if (a.id == id) return &a; return nullptr; };
     check(action("summonHotkey") && action("summonHotkey")->label == "Summon HUD with hotkey, On", "The toggle starts on and reads its state");
-    check(page.perform("summonHotkey", 1) && controller.committed().fields["windowsSummonHotkeyDisabled"].isBool() && controller.committed().fields["windowsSummonHotkeyDisabled"].boolean(),
-        "Switching it off persists the Windows preference");
+    check(page.perform("summonHotkey", 1) && controller.committed().fields["summonHotkeyEnabled"] == ehud::data::Json(false) && !controller.committed().fields.contains("windowsSummonHotkeyDisabled"),
+        "Switching it off persists the Mac preference summonHotkeyEnabled (D2)");
     page.refresh(2);
     check(action("summonHotkey") && action("summonHotkey")->label == "Summon HUD with hotkey, Off", "The toggle reads Off");
-    check(page.perform("summonHotkey", 3) && !controller.committed().fields["windowsSummonHotkeyDisabled"].boolean(), "Switching it on again");
+    check(page.perform("summonHotkey", 3) && controller.committed().summonHotkeyEnabled(), "Switching it on again");
     page.perform("summonHotkey", 4);
     controller.restoreDefaults();
-    check(!controller.committed().fields["windowsSummonHotkeyDisabled"].isBool(), "Restore defaults switches opening by hotkey on again (no saved override)");
+    check(controller.committed().summonHotkeyEnabled(), "Restore defaults switches opening by hotkey on again");
     const std::string titles[]{settingsSummonToggleTitle(core::Language::english), settingsSummonToggleTitle(core::Language::simplifiedChinese),
         settingsSummonToggleTitle(core::Language::traditionalChinese), settingsSummonToggleTitle(core::Language::japanese), settingsSummonToggleTitle(core::Language::korean)};
     for (unsigned a = 0; a < 5; ++a) { check(!titles[a].empty() && ehud::data::Json::validUtf8(titles[a]), "Each language has a title"); for (unsigned b = 0; b < a; ++b) check(titles[a] != titles[b], "The five titles are translations"); }

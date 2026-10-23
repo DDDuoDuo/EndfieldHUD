@@ -18,6 +18,14 @@ struct LayerPlacement {
     core::Matrix4 world;
     float opacity{1};
     std::span<const PlaneMask> masks;
+    // The renderer's multiply (DrawObject::linearTint): a white-authored
+    // surface recoloured numerically (the design library's animated colours,
+    // linear light, straight alpha in [3]).
+    std::array<float,4> linearTint{1,1,1,1};
+    // Clip by another surface's alpha (surfaceAlphaMask: the row sheen inside
+    // its chamfered plate), in this scene's world like `masks`. It wins over
+    // the scene's group alpha mask for this surface.
+    std::optional<PlaneAlphaMask> alphaMask;
 };
 // Model-layer bridge above the original material pass. Local content is cached
 // once; the exported projective placement stays in GPU object matrices. This
@@ -54,6 +62,11 @@ public:
     // Resolve source IDs once when a binding plan changes, then supply numeric
     // indices on the animation path. Content and local raster bounds stay fixed.
     std::optional<std::size_t> surfaceIndex(std::string_view sourceID) const noexcept;
+    // Surface `index` as an alpha clip for another surface (LayerPlacement::
+    // alphaMask): its resident texture and texture edges in its local points,
+    // reached through the inverse of `world`, the placement world this frame
+    // gives that surface. The texture is this scene's (upload it first).
+    PlaneAlphaMask surfaceAlphaMask(std::size_t index,const core::Matrix4& world) const;
     // Borrow the exact immutable DirectWrite layout used for this retained
     // text leaf. Missing/non-text/grouped surfaces return null. Content-event
     // access only; no new layout, rasterization or resource upload is performed.
@@ -179,6 +192,10 @@ public:
     void detach(Renderer&);
     std::span<const DrawObject> draws()const noexcept{return draws_;}
     std::size_t sceneCount()const noexcept{return scenes_.size();}
+    // The published draw indices [first, second) of the entries [firstEntry,
+    // firstEntry + entryCount) of the last setEntries, their `after` records
+    // included: e.g. the module content Renderer::setContentFilter dims.
+    std::pair<std::size_t,std::size_t> drawRange(std::size_t firstEntry,std::size_t entryCount)const;
 private:
     struct Entry {LayerScene* scene{};std::uint64_t structureRevision{},resourceRevision{};std::size_t begin{},count{};
         std::span<const DrawObject> after;std::size_t stageBegin{};const PlaneAlphaMask* cut{};};

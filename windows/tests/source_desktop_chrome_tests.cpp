@@ -49,6 +49,17 @@ void synthetic(){
     check(DesktopClockArtworkPlan::footerText("CTRL+SPACE","CLICK OUTSIDE TO CLOSE")=="ESC / CTRL+SPACE / CLICK OUTSIDE TO CLOSE","Footer preserves actual shortcut separators");
     close(DesktopChromeTiming::opacity(true,.2),0,"Opening native fade starts at source delay");close(DesktopChromeTiming::opacity(true,.44),1,"Opening native fade ends at source time");close(DesktopChromeTiming::opacity(false,.35,.73),.73,"Closing retains captured current opacity");close(DesktopChromeTiming::opacity(false,.41,.73),0,"Closing native fade completes");close(DesktopChromeTiming::opacity(true,0,1,true),1,"Reduced-motion entrance is immediate");
     check(DesktopChromeTiming::styleMovesForward(4,0)&&!DesktopChromeTiming::styleMovesForward(0,4),"Clock style wrap direction matches source");
+    // HUDDesignGeometry: box px -> design units at the disc, then the centre plane.
+    const auto center=Matrix4::translation(40,-12)*Matrix4::scale(1.3,1.1);const double u=1470./(1920*1.15);
+    const auto box=designBoxWorld(center);const auto a=project(box,{0,0}),b=project(box,{590,510}),c=project(center,{500-295*u,320-305*u}),d=project(center,{500+295*u,320+205*u});
+    close(a.x,c.x,"Box origin X on the plane");close(a.y,c.y,"Box origin Y on the plane");close(b.x,d.x,"Box corner X on the plane");close(b.y,d.y,"Box corner Y on the plane");
+    const auto disc=project(box,{295,305}),centre=project(center,{500,320});close(disc.x,centre.x,"Box px (295, 305) is the disc centre");close(disc.y,centre.y,"Box px (295, 305) is the disc centre (Y)");
+    DesktopChromeSettings settings{{0,0,1470,956},1,{},Module::notes,true};check(DesktopChromeLayout::make(settings,center,{}).boxWorld==box,"The layout carries the one box placement");
+    bool rejected=false;try{(void)designBoxWorld(center,0);}catch(const std::invalid_argument&){rejected=true;}check(rejected,"A non-positive unit is rejected");
+    close(planeScale(center,{500,320}),std::sqrt(1.3*1.1),"Plane scale of an affine plane");close(planeScale(box,{295,305}),std::sqrt(1.3*1.1)*u,"Box px scale at the disc");
+    const auto tilted=nativeProjectiveTextTransform({Point{40,30},Point{1060,42},Point{1015,680},Point{25,640}},{1000,640});const double h=1e-5;
+    const auto p0=project(tilted,{500,320}),px=project(tilted,{500+h,320}),py=project(tilted,{500,320+h});
+    close(planeScale(tilted,{500,320}),std::sqrt(std::abs((px.x-p0.x)*(py.y-p0.y)-(px.y-p0.y)*(py.x-p0.x)))/h,"Plane scale of a projective plane matches its local area scale",1e-6);
 }
 void oracle(const Json&data,const Json&packet){
     DesktopClockArtworkPlan art;

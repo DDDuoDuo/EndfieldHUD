@@ -550,7 +550,22 @@ struct Renderer::Impl {
     ComPtr<ID3D11RenderTargetView> outputView, linearView;
     ComPtr<ID3D11ShaderResourceView> linearResource;
     ComPtr<ID3D11VertexShader> sceneVS, compositeVS;
-    ComPtr<ID3D11PixelShader> scenePS,encodedInputPS,encodedOutputPS,encodedBothPS,alphaPS,alphaEncodedOutputPS,compositePS,mediaPS;
+    ComPtr<ID3D11PixelShader> scenePS,encodedInputPS,encodedOutputPS,encodedBothPS,alphaPS,alphaEncodedOutputPS,compositePS,mediaPS,contentBlurPS,contentDimPS;
+    // Renderer::setContentFilter: the filter, and while one is set its two
+    // offscreen linear targets (content, then the horizontal blur), allocated
+    // in 64-pixel steps so a moving plane reuses them, and its constants.
+    struct ContentFilterTargets {
+        std::optional<ContentFilter> value;
+        ComPtr<ID3D11Texture2D> content,blurred;
+        ComPtr<ID3D11RenderTargetView> contentView,blurredView;
+        ComPtr<ID3D11ShaderResourceView> contentResource,blurredResource;
+        ComPtr<ID3D11Buffer> constants;
+        unsigned width{},height{};
+        std::size_t bytes()const noexcept{return std::size_t(width)*height*16;}
+        void release()noexcept{content.Reset();blurred.Reset();contentView.Reset();blurredView.Reset();contentResource.Reset();blurredResource.Reset();constants.Reset();width=height=0;}
+    } contentFilter;
+    bool filtering()const noexcept{return contentFilter.value&&contentFilter.value->amount>0&&contentFilter.value->count>0;}
+    void renderFilteredRoot();
     ComPtr<ID3D11InputLayout> layout;
     ComPtr<ID3D11Buffer> cameraBuffer;
     ComPtr<ID3D11BlendState> overBlend, screenBlend, weightedBlend, replaceBlend;
@@ -648,7 +663,10 @@ struct Renderer::Impl {
         for(const auto&[id,group]:groups){(void)id;if(group.get()==replaced)continue;
             require(group->draws.size()<=Renderer::maximumObjects-count,"Aggregate native group draw count exceeds limits");count+=group->draws.size();}
     }
-    void renderNativeDraws(std::span<const Draw>,ID3D11RenderTargetView*,ID3D11Buffer*,unsigned,unsigned,bool,NativeGroupColorSpace=NativeGroupColorSpace::linear);
+    // origin: the viewport's top-left in the target (negative to draw the
+    // part of a full-size pass that lands in a smaller offscreen target).
+    void renderNativeDraws(std::span<const Draw>,ID3D11RenderTargetView*,ID3D11Buffer*,unsigned,unsigned,bool,NativeGroupColorSpace=NativeGroupColorSpace::linear,
+        bool clear=true,float originX=0,float originY=0);
     bool meshReferenced(const Mesh* mesh)const{
         for(const auto&draw:draws)if(draw.mesh==mesh)return true;
         for(const auto&[id,group]:groups){(void)id;for(const auto&draw:group->draws)if(draw.mesh==mesh)return true;}return false;
@@ -949,6 +967,8 @@ struct Renderer::Impl {
         checked(device->CreateVertexShader(vs.bytes, vs.size, nullptr, &compositeVS), "Create presentation vertex shader");
         checked(device->CreatePixelShader(ps.bytes, ps.size, nullptr, &compositePS), "Create presentation pixel shader");
         if(mediaVideo){ps=programs.get("MediaConvertPS","ps_5_0");checked(device->CreatePixelShader(ps.bytes,ps.size,nullptr,&mediaPS),"Create same-device media conversion shader");}
+        ps=programs.get("ContentBlurPS","ps_5_0");checked(device->CreatePixelShader(ps.bytes,ps.size,nullptr,&contentBlurPS),"Create content blur shader");
+        ps=programs.get("ContentDimPS","ps_5_0");checked(device->CreatePixelShader(ps.bytes,ps.size,nullptr,&contentDimPS),"Create content dim shader");
         D3D11_BUFFER_DESC camera{};
         camera.ByteWidth = 64; camera.Usage = D3D11_USAGE_DYNAMIC;
         camera.BindFlags = D3D11_BIND_CONSTANT_BUFFER; camera.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
@@ -1005,6 +1025,7 @@ struct Renderer::Impl {
         for (auto& draw : draws) draw.constants.Reset();
         white.view.Reset(); white.resource.Reset();
         sceneVS.Reset(); compositeVS.Reset(); scenePS.Reset(); encodedInputPS.Reset(); encodedOutputPS.Reset(); encodedBothPS.Reset(); alphaPS.Reset(); alphaEncodedOutputPS.Reset(); compositePS.Reset(); mediaPS.Reset();
+        contentBlurPS.Reset(); contentDimPS.Reset(); counters.contentFilterBytes = 0; contentFilter.release();
         layout.Reset(); cameraBuffer.Reset(); overBlend.Reset(); screenBlend.Reset(); weightedBlend.Reset(); replaceBlend.Reset();
         raster.Reset(); noDepth.Reset(); nearestSampler.Reset(); linearSampler.Reset(); gpuIdleQuery.Reset();
         outputView.Reset(); backBuffer.Reset(); linearView.Reset(); linearResource.Reset(); linearTarget.Reset();
@@ -1045,6 +1066,7 @@ bool Renderer::Impl::suspendDevice() {
         group->target.Reset(); textures.find(group->output.textureID)->second.view.Reset();
         group->released = true; counters.releasedTargetBytes += group->bytes;
     }
+    counters.contentFilterBytes = 0; contentFilter.release();
     if (source) (void)source->releaseTargets();
     // System-memory copies, in batches of about 32 MiB: every GPU copy of a
     // batch is issued before its first map waits for the GPU.
@@ -1520,10 +1542,91 @@ void Renderer::setCamera(const core::Matrix4 &viewProjection) {
     auto next = matrix(viewProjection);
     if (next != r.cameraValues) { r.cameraValues = next; r.cameraDirty = true; r.touch(); }
 }
+bool Renderer::setContentFilter(std::optional<ContentFilter> filter) {
+    require(impl_ != nullptr, "Renderer is not initialized"); auto &r = *impl_; r.thread();
+    if (filter) {
+        const auto &f = *filter; const auto &b = f.bounds;
+        require(std::isfinite(f.blurSigma) && f.blurSigma >= 0 && f.blurSigma <= 64 && std::isfinite(f.exposure) && std::abs(f.exposure) <= 16 &&
+            std::isfinite(f.amount) && f.amount >= 0 && f.amount <= 1 && f.count <= Renderer::maximumObjects && f.begin <= Renderer::maximumObjects &&
+            std::isfinite(b.x) && std::isfinite(b.y) && std::isfinite(b.width) && std::isfinite(b.height) && b.width >= 0 && b.height >= 0, "Invalid content filter");
+    }
+    if (filter == r.contentFilter.value) return false;
+    // Only a visible change draws the root pass again (amount 0 and no
+    // filter both draw the content directly).
+    const bool before = r.filtering(); r.contentFilter.value = filter;
+    if (before || r.filtering()) r.touch();
+    // No cost while not dimmed: the targets go with the filter.
+    if (!filter) { r.counters.contentFilterBytes = 0; r.contentFilter.release(); }
+    return true;
+}
+// The root pass with its module content range filtered (setContentFilter):
+// the draws before the range, the range through the offscreen blur and
+// exposure, then the draws after it, all on the one linear target in their
+// published order. Allocates only when the region outgrows the targets.
+void Renderer::Impl::renderFilteredRoot() {
+    auto &r = *this; auto &state = r.contentFilter; const auto &f = *state.value;
+    const std::span<const Draw> all(r.draws);
+    const auto end = std::min(all.size(), f.begin + std::min(f.count, all.size())), begin = std::min(f.begin, end);
+    r.renderNativeDraws(all.first(begin), r.linearView.Get(), r.cameraBuffer.Get(), r.width, r.height, false);
+    const auto after = [&] { r.renderNativeDraws(all.subspan(end), r.linearView.Get(), r.cameraBuffer.Get(), r.width, r.height, false, NativeGroupColorSpace::linear, false); };
+    // The region: the bounds (or the output) grown by the reach of the full
+    // blur, so the softened edge is never cut. Clamped to the output.
+    const double reach = std::ceil(3 * f.blurSigma);
+    const bool whole = f.bounds.width <= 0 || f.bounds.height <= 0;
+    const auto left = whole ? 0. : std::clamp(std::floor(f.bounds.x) - reach, 0., double(r.width)), top = whole ? 0. : std::clamp(std::floor(f.bounds.y) - reach, 0., double(r.height));
+    const auto right = whole ? double(r.width) : std::clamp(std::ceil(f.bounds.x + f.bounds.width) + reach, left, double(r.width));
+    const auto bottom = whole ? double(r.height) : std::clamp(std::ceil(f.bounds.y + f.bounds.height) + reach, top, double(r.height));
+    const auto x0 = unsigned(left), y0 = unsigned(top), w = unsigned(right - left), h = unsigned(bottom - top);
+    if (!w || !h || begin == end) { after(); return; }
+    if (state.width < w || state.height < h) {
+        const auto aw = std::min(r.width, (w + 63) / 64 * 64), ah = std::min(r.height, (h + 63) / 64 * 64);
+        r.counters.contentFilterBytes = 0; state.release();
+        D3D11_TEXTURE2D_DESC description{}; description.Width = aw; description.Height = ah;
+        description.MipLevels = description.ArraySize = description.SampleDesc.Count = 1;
+        description.Format = DXGI_FORMAT_R16G16B16A16_FLOAT; description.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+        checked(r.device->CreateTexture2D(&description, nullptr, &state.content), "Create content filter target");
+        checked(r.device->CreateRenderTargetView(state.content.Get(), nullptr, &state.contentView), "Bind content filter target");
+        checked(r.device->CreateShaderResourceView(state.content.Get(), nullptr, &state.contentResource), "Bind content filter input");
+        checked(r.device->CreateTexture2D(&description, nullptr, &state.blurred), "Create content blur target");
+        checked(r.device->CreateRenderTargetView(state.blurred.Get(), nullptr, &state.blurredView), "Bind content blur target");
+        checked(r.device->CreateShaderResourceView(state.blurred.Get(), nullptr, &state.blurredResource), "Bind content blur input");
+        D3D11_BUFFER_DESC constants{}; constants.ByteWidth = 32; constants.Usage = D3D11_USAGE_DYNAMIC;
+        constants.BindFlags = D3D11_BIND_CONSTANT_BUFFER; constants.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+        checked(r.device->CreateBuffer(&constants, nullptr, &state.constants), "Create content filter constants");
+        state.width = aw; state.height = ah; r.counters.contentFilterBytes = state.bytes(); ++r.counters.contentFilterTargetAllocations;
+    }
+    // The content as the root pass would draw it, shifted into the region.
+    r.renderNativeDraws(all.subspan(begin, end - begin), state.contentView.Get(), r.cameraBuffer.Get(), r.width, r.height, false,
+        NativeGroupColorSpace::linear, true, -float(x0), -float(y0));
+    const double sigma = f.blurSigma * f.amount;
+    const float taps = sigma > .001 ? float(std::min(64., std::ceil(3 * sigma))) : 0.f;
+    const float inverse = sigma > .001 ? float(1 / (2 * sigma * sigma)) : 0.f, gain = float(std::exp2(f.exposure * f.amount));
+    const auto pass = [&](std::array<float, 8> values, ID3D11RenderTargetView *target, ID3D11ShaderResourceView *source, ID3D11PixelShader *shader,
+                          ID3D11BlendState *blend, D3D11_VIEWPORT viewport) {
+        D3D11_MAPPED_SUBRESOURCE mapped{};
+        checked(r.context->Map(state.constants.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped), "Update content filter constants");
+        std::memcpy(mapped.pData, values.data(), sizeof(values)); r.context->Unmap(state.constants.Get(), 0);
+        r.context->OMSetRenderTargets(1, &target, nullptr); r.context->RSSetViewports(1, &viewport);
+        r.context->OMSetBlendState(blend, nullptr, UINT_MAX);
+        r.context->IASetInputLayout(nullptr); r.context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        r.context->VSSetShader(r.compositeVS.Get(), nullptr, 0); r.context->PSSetShader(shader, nullptr, 0);
+        auto *buffer = state.constants.Get(); r.context->PSSetConstantBuffers(2, 1, &buffer);
+        r.context->PSSetShaderResources(0, 1, &source); r.context->Draw(3, 0); ++r.counters.drawCalls;
+        ID3D11ShaderResourceView *empty{}; r.context->PSSetShaderResources(0, 1, &empty); r.context->OMSetRenderTargets(0, nullptr, nullptr);
+    };
+    // Horizontal over the whole allocation (rows past the region feed the
+    // vertical taps), then vertical with the exposure over the region only.
+    pass({1, 0, 0, 0, inverse, taps, 1, 0}, state.blurredView.Get(), state.contentResource.Get(), r.contentBlurPS.Get(), r.replaceBlend.Get(),
+         {0, 0, float(state.width), float(state.height), 0, 1});
+    pass({0, 1, float(x0), float(y0), inverse, taps, gain, 0}, r.linearView.Get(), state.blurredResource.Get(), r.contentDimPS.Get(), r.overBlend.Get(),
+         {float(x0), float(y0), float(w), float(h), 0, 1});
+    ++r.counters.contentFilterPasses;
+    after();
+}
 void Renderer::Impl::renderNativeDraws(std::span<const Draw>objects,ID3D11RenderTargetView*passTarget,
-    ID3D11Buffer*passCamera,unsigned pixelWidth,unsigned pixelHeight,bool group,NativeGroupColorSpace colorSpace){
+    ID3D11Buffer*passCamera,unsigned pixelWidth,unsigned pixelHeight,bool group,NativeGroupColorSpace colorSpace,bool clearTarget,float originX,float originY){
     auto&r=*this;
-    const D3D11_VIEWPORT viewport{0, 0, static_cast<float>(pixelWidth), static_cast<float>(pixelHeight), 0, 1};
+    const D3D11_VIEWPORT viewport{originX, originY, static_cast<float>(pixelWidth), static_cast<float>(pixelHeight), 0, 1};
     r.context->RSSetViewports(1, &viewport); r.context->RSSetState(r.raster.Get());
     r.context->OMSetDepthStencilState(r.noDepth.Get(), 0);
     ID3D11ShaderResourceView *emptyResources[2]{};
@@ -1531,7 +1634,7 @@ void Renderer::Impl::renderNativeDraws(std::span<const Draw>objects,ID3D11Render
     auto *linear = passTarget;
     r.context->OMSetRenderTargets(1, &linear, nullptr);
     constexpr float clear[4]{};
-    r.context->ClearRenderTargetView(linear, clear);
+    if (clearTarget) r.context->ClearRenderTargetView(linear, clear);
     r.context->OMSetBlendState(r.overBlend.Get(), nullptr, UINT_MAX);
     r.context->IASetInputLayout(r.layout.Get());
     r.context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
@@ -1600,7 +1703,8 @@ void Renderer::draw(bool present) {
         r.invalidate(&r.textures.find(group->output.textureID)->second);
     }
     if(r.linearRevision!=r.nativeRevision){
-        r.renderNativeDraws(r.draws,r.linearView.Get(),r.cameraBuffer.Get(),r.width,r.height,false);
+        if(r.filtering())r.renderFilteredRoot();
+        else r.renderNativeDraws(r.draws,r.linearView.Get(),r.cameraBuffer.Get(),r.width,r.height,false);
         r.linearRevision=r.nativeRevision;++r.counters.nativePasses;
     }else ++r.counters.nativePassesSkipped;
     r.counters.nativePassSeconds+=qpcNow()-nativeBegin;
@@ -1808,6 +1912,8 @@ std::size_t Renderer::releaseFrameTargets() {
             group->target.Reset(); r.textures.find(group->output.textureID)->second.view.Reset();
             group->released = true; group->dirty = true; released += group->bytes;
         }
+        // The content filter's targets: created again by its next filtered pass.
+        released += r.contentFilter.bytes(); r.counters.contentFilterBytes = 0; r.contentFilter.release();
     } catch (const RendererError&) { reset(); throw; }
     r.counters.releasedTargetBytes += released; ++r.counters.frameTargetReleases;
     // The original shell pass's own full-size attachment and depth/stencil

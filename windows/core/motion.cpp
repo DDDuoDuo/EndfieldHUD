@@ -206,6 +206,69 @@ double ModuleTransitionStyle::registrationOpacityAt(double elapsed) {
     return 0;
 }
 
+double DesignMotion::staggerDelay(int index) noexcept {
+    return staggerBase + std::min(std::max(0, index), staggerCap) * staggerStep;
+}
+DesignMotionSample DesignMotion::enterAt(double elapsed, MotionPoint offset, double opacity, double delay,
+                                         bool reduceMotion, double duration, CubicTiming timing) noexcept {
+    const double local = elapsed - delay;
+    if (reduceMotion || !(duration > 0) || !std::isfinite(local) || local >= duration) return {opacity, {}};
+    const double eased = timing.value(local / duration), moved = 1 - timing.value(eased);
+    return {opacity * std::min(1.0, eased / .6), {offset.x * moved, offset.y * moved}};
+}
+DesignMotionSample DesignMotion::leaveAt(double elapsed, MotionPoint offset, double fromOpacity, bool reduceMotion) noexcept {
+    if (reduceMotion) return {fromOpacity, {}};
+    const double eased = DesignEasing::ease.value(std::isfinite(elapsed) ? elapsed / leave : 1);
+    return {fromOpacity * (1 - eased), {-.6 * offset.x * eased, -.6 * offset.y * eased}};
+}
+bool ContentDimTrack::set(bool dimmed, double time, bool reduceMotion) {
+    const double next = dimmed ? 1 : 0;
+    if (next == target_ || !std::isfinite(time)) return false;
+    from_ = reduceMotion ? next : amount(time); target_ = next; start_ = time;
+    return true;
+}
+double ContentDimTrack::amount(double time) const noexcept {
+    if (!std::isfinite(time) || from_ == target_) return target_;
+    return from_ + (target_ - from_) * DesignEasing::standard.value((time - start_) / duration);
+}
+MotionPoint ShellPosition::position(Module module) {
+    switch (module) {
+    case Module::system: return {417, 396};
+    case Module::display: return {376, 520};
+    case Module::hotkeys: return {357, 655};
+    case Module::about: return {380, 784};
+    case Module::notes: return {1444, 416};
+    case Module::fileShelf: return {1550, 413};
+    case Module::clipboard: return {1485, 520};
+    case Module::archive: return {1592, 515};
+    case Module::mediaAssembly: return {1485, 621};
+    case Module::minigame: return {1593, 616};
+    case Module::nowPlaying: return {1442, 730};
+    case Module::volume: return {1552, 725};
+    case Module::projection: return {1381, 837};
+    case Module::reader: return {1490, 833};
+    case Module::workMode: return {1330, 945};
+    case Module::calendar: return {1440, 945};
+    case Module::map: return {1290, 1050};
+    case Module::eventLog: return {1400, 1050};
+    case Module::profile: return {540, 900};
+    case Module::account: return {1360, 1150};
+    case Module::power: return {960, 805};
+    case Module::addApp: return {1320, 1250};
+    case Module::storage: return {837, 906};
+    case Module::activityMonitor: return {1100, 900};
+    }
+    throw std::invalid_argument("Unknown module shell position");
+}
+MotionPoint ShellPosition::entranceOffset(std::optional<Module> previous, Module next) {
+    return offset(previous ? position(*previous) : discCentre, position(next));
+}
+MotionPoint ShellPosition::offset(MotionPoint from, MotionPoint to) noexcept {
+    const double dx = to.x - from.x, dy = to.y - from.y, length = std::hypot(dx, dy);
+    if (!(length > .001)) return {};
+    return {dx / length * travel, dy / length * travel};
+}
+
 double DesktopScrollMotion::presentationPosition(double position, double hiddenLength) {
     if (!std::isfinite(position)) return 1;
     const double limit = std::isfinite(hiddenLength) && hiddenLength > 0

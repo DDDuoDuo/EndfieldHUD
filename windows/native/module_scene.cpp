@@ -21,7 +21,7 @@ bool sameRegistration(const std::optional<ModuleRegistrationPlacement>&a,const s
         a->hostClip.worldToLocal==b->hostClip.worldToLocal&&a->hostClip.bounds==b->hostClip.bounds&&sameShutter(a->shutter,b->shutter);
 }
 bool samePose(const ModuleSurfacePose&a,const ModuleSurfacePose&b){return a.surfaceIdentity==b.surfaceIdentity&&a.hostWorld==b.hostWorld&&a.wrapperWorld==b.wrapperWorld&&a.contentWorld==b.contentWorld&&
-    a.opacity==b.opacity&&sameShutter(a.shutter,b.shutter)&&sameRegistration(a.registration,b.registration);}
+    a.opacity==b.opacity&&a.hostClipped==b.hostClipped&&a.attached==b.attached&&sameShutter(a.shutter,b.shutter)&&sameRegistration(a.registration,b.registration);}
 void validMask(const PlaneMask& mask){
     gpuMatrix(mask.worldToLocal);const auto&r=mask.bounds;
     need(std::isfinite(r.x)&&std::isfinite(r.y)&&std::isfinite(r.width)&&std::isfinite(r.height)&&r.width>0&&r.height>0,"Invalid retained module content mask");
@@ -52,14 +52,24 @@ bool NativeModuleSurface::update(const Matrix4&center,const core::source::Deskto
     need(bound_&&scene_->contentRevision()==sceneRevision_&&scene_->draws().size()==base_.size(),"Rebind module local content after structural LayerScene reload");
     need(surface.module==module_&&sameRect(surface.contentFrame,core::moduleLocalContentFrame(module_)),"Module surface/frame differs from its retained local content");
     need(std::isfinite(surface.opacity)&&surface.opacity>=0&&surface.opacity<=1&&std::isfinite(canvasOpacity)&&canvasOpacity>=0&&canvasOpacity<=1,"Invalid module presentation opacity");
+    need(std::isfinite(surface.planeOffset.x)&&std::isfinite(surface.planeOffset.y),"Invalid module leave offset");
     (void)core::moduleIdentifier(settings.module);
-    const auto layout=core::source::DesktopChromeLayout::make(settings,center,{});
-    const auto prefix=center*Matrix4::translation(500,layout.reportCenterY)*Matrix4::scale(layout.reportScale,layout.reportScale);
+    // Unported screens keep the v1.2.0 host placement of the requested module
+    // (settings.module), or their own while a design screen is requested.
+    auto hostSettings=settings;if(surface.keepsOwnPlacement)hostSettings.module=module_;
+    const auto layout=core::source::DesktopChromeLayout::make(hostSettings,center,{});
+    const auto moved=center*Matrix4::translation(surface.planeOffset.x,surface.planeOffset.y);
+    // Mac 1.3 module host: the 440 viewport centred on the disc, identity transform.
+    const auto host=surface.designScreen?center*Matrix4::translation(500,320):center*Matrix4::translation(500,layout.reportCenterY)*Matrix4::scale(layout.reportScale,layout.reportScale);
+    const auto prefix=surface.designScreen?moved*Matrix4::translation(500,320):moved*Matrix4::translation(500,layout.reportCenterY)*Matrix4::scale(layout.reportScale,layout.reportScale);
     const auto transform=core::sampleModuleTransform(surface.transform);
-    ModuleSurfacePose next;next.surfaceIdentity=surface.identity;next.opacity=static_cast<float>(surface.opacity*canvasOpacity);
-    next.hostWorld=prefix*Matrix4::translation(-220,-220);
+    ModuleSurfacePose next;next.surfaceIdentity=surface.identity;next.opacity=surface.attached?static_cast<float>(surface.opacity*canvasOpacity):0.f;
+    next.hostClipped=surface.hostClip;next.attached=surface.attached;
+    next.hostWorld=host*Matrix4::translation(-220,-220);
     next.wrapperWorld=prefix*transform*Matrix4::translation(-220,-220);
-    next.contentWorld=prefix*transform*Matrix4::translation(surface.contentFrame.x-220,surface.contentFrame.y-220);
+    if(surface.designScreen){const auto box=core::DesignBox::rect();
+        next.contentWorld=prefix*transform*Matrix4::translation(box.x-500,box.y-320)*Matrix4::scale(core::DesignBox::baseUnit,core::DesignBox::baseUnit);}
+    else next.contentWorld=prefix*transform*Matrix4::translation(surface.contentFrame.x-220,surface.contentFrame.y-220);
     gpuMatrix(next.hostWorld);gpuMatrix(next.wrapperWorld);gpuMatrix(next.contentWorld);
     next.hostClip={core::source::inverseSourceMatrix(next.hostWorld),{0,0,440,440}};validMask(next.hostClip);
     const auto inverseContent=core::source::inverseSourceMatrix(next.contentWorld);gpuMatrix(inverseContent);
@@ -71,7 +81,7 @@ bool NativeModuleSurface::update(const Matrix4&center,const core::source::Deskto
     for(std::size_t i=0;i<base_.size();++i){const auto&base=base_[i];auto&placement=placements_[i];
         placement.world=next.contentWorld*base.world;gpuMatrix(placement.world);placement.opacity=base.opacity*next.opacity;
         for(std::size_t j=0;j<base.maskCount;++j){masks_[i][j]=base.masks[j];masks_[i][j].worldToLocal=base.masks[j].worldToLocal*inverseContent;validMask(masks_[i][j]);}
-        masks_[i][base.maskCount]=next.hostClip;
+        masks_[i][base.maskCount]=next.hostClip;placement.masks=std::span(masks_[i].data(),base.maskCount+(next.hostClipped?1:0));
     }
     ++stats_.updates;
     scene_->setPlacements(placements_);scene_->setGroupShutter(next.shutter);

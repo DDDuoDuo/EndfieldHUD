@@ -1,4 +1,5 @@
 #include "native/layer_scene.hpp"
+#include "core/source_camera.hpp"
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -318,6 +319,32 @@ void releasedPixels(Renderer& renderer,HWND window,const std::filesystem::path& 
         rows.detach(renderer);check(rows.releaseResources(renderer),"The page releases");
     }
 }
+// LIBRARY-DESIGN.md R4: a white-authored surface recoloured by its placement
+// tint, and the row sheen clipped by its rounded plate's alpha (no rect leak
+// into the corner); numeric frames allocate nothing.
+void tintAndAlphaClip(Renderer&renderer,LayerRasterizer&raster,const LayerRasterOptions&options){
+    const Json plate=Json::Object{{"id","plate"},{"kind","layer"},{"class","CALayer"},{"bounds",Json::Array{0,0,16,16}},{"position",Json::Array{8,8}},{"anchorPoint",Json::Array{0,0}},
+        {"cornerRadius",8},{"masksToBounds",true},{"backgroundColor",Json::Object{{"sRGB",Json::Array{0,0,0,1}}}}};
+    const Json sheen=Json::Object{{"id","sheen"},{"kind","layer"},{"class","CALayer"},{"bounds",Json::Array{0,0,32,32}},{"position",Json::Array{0,0}},{"anchorPoint",Json::Array{0,0}},
+        {"backgroundColor",Json::Object{{"sRGB",Json::Array{1,1,1,1}}}}};
+    LayerScene scene(raster);scene.load(root({plate,sheen}),options);scene.upload(renderer);renderer.draw(false);
+    auto image=renderer.readback();pixel(image,2,2,{255,255,255,255});pixel(image,16,16,{255,255,255,255});
+    const auto plateIndex=*scene.surfaceIndex("plate"),sheenIndex=*scene.surfaceIndex("sheen");
+    const auto plateWorld=scene.draws()[plateIndex].world,sheenWorld=scene.draws()[sheenIndex].world;
+    LayerPlacement placement{sheenIndex,sheenWorld,1,{},{1,0,0,1},scene.surfaceAlphaMask(plateIndex,plateWorld)};
+    scene.setPlacements(std::span(&placement,1));scene.present(renderer);renderer.draw(false);image=renderer.readback();
+    pixel(image,16,16,{0,0,255,255});pixel(image,2,2,{0,0,0,0});
+    pixel(image,9,9,{0,0,0,0}); // The sheen is red (tinted) inside the plate, absent outside it and in its rounded corner.
+    // The plate moves: the clip follows it numerically.
+    const auto moved=endfield::core::Matrix4::translation(4,0)*plateWorld;std::array placements{LayerPlacement{plateIndex,moved,1,{}},LayerPlacement{sheenIndex,sheenWorld,1,{},{0,1,0,1},scene.surfaceAlphaMask(plateIndex,moved)}};
+    scene.setPlacements(placements);scene.present(renderer);renderer.draw(false);image=renderer.readback();pixel(image,26,16,{0,255,0,255});pixel(image,10,16,{0,0,0,0});
+    const auto before=renderer.stats();const auto r0=raster.stats();allocations=0;counting=true;
+    try{for(unsigned i=0;i<120;++i){placements[1].linearTint={float(i%2),1,0,1};placements[1].alphaMask->worldToLocal=endfield::core::source::inverseSourceMatrix(moved);scene.setPlacements(placements);(void)scene.prepareDraws();}}catch(...){counting=false;throw;}counting=false;
+    check(allocations==0,"120 tint and alpha-clip frames allocate nothing");check(raster.stats().rasterizations==r0.rasterizations&&renderer.stats().textureUploads==before.textureUploads,"Tints and clips never repaint");
+    placements[1].alphaMask->textureID.clear();rejects([&]{scene.setPlacements(placements);},"An alpha clip without a texture rejects");
+    placements[1].alphaMask.reset();placements[1].linearTint={1,1,1,1.5f};rejects([&]{scene.setPlacements(placements);},"A tint alpha above 1 rejects");
+    scene.detach(renderer);check(scene.releaseResources(renderer),"The tinted scene releases");
+}
 void run(const std::filesystem::path& shader){
     Window window;Renderer renderer;renderer.initialize(window.hwnd,32,32,{Driver::warpForTests,shader,RenderTarget::offscreenForTests});
     renderer.setCamera(layerViewportProjection(32,32));LayerRasterizer raster;LayerRasterOptions options;options.pixelsPerPoint=1;options.paddingPoints=1;
@@ -394,6 +421,7 @@ void run(const std::filesystem::path& shader){
     }
     check(raster.stats().entries==0,"Scene destruction releases its final local raster");
     composition(renderer,raster,options);
+    tintAndAlphaClip(renderer,raster,options);
     supplementalComposition(renderer,raster,options);
     retainedResourceComposition(renderer,raster,options);
     roundedComposition(renderer,raster,options);
