@@ -2,7 +2,8 @@
 // Media Assembly module area (app/module_owner.hpp, "Adding a module area").
 // cmake/modules/media_assembly.cmake registers the factory below, builds this
 // adapter into hud_media_assembly_area and declares its runtime inputs:
-//   resource "mediaAssembly.assets"   the pinned resources/media-assembly folder
+//   resource "mediaAssembly.assets"   resources/media-assembly: the shared
+//                                     Resources/MediaAssembly staged verbatim
 //   fixture  "mediaAssembly.sourceAssets" / "mediaAssembly.movie"
 //                                     hidden coverage only (no staged package /
 //                                     the pinned owned silent movie)

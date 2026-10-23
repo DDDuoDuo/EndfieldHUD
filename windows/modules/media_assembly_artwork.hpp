@@ -12,9 +12,10 @@ struct MediaAssemblyAppearance {
 };
 struct MediaAssemblyImageReference {std::string path,sha256;};
 struct MediaAssemblyArtworkAssets {
-    // Index zero is the source None filter and intentionally has no image.
-    std::array<MediaAssemblyImageReference,15>filters;
-    std::array<MediaAssemblyImageReference,24>stickers;
+    // In catalog (allCases) order. Index zero is the source None filter and
+    // intentionally has no image.
+    std::array<MediaAssemblyImageReference,mediaAssemblyFilterCount>filters;
+    std::array<MediaAssemblyImageReference,mediaAssemblyStickerCount>stickers;
 };
 enum class MediaAssemblyPaintGroup {stage,stickers,overlay,drawer,selection,transport};
 enum class MediaAssemblyPaintRole {artwork,tint,rim,sticker,inlineItem};

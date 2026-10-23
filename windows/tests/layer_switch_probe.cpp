@@ -130,10 +130,10 @@ void archive(gpu::Renderer&renderer,HWND hwnd,const std::filesystem::path&fixtur
     probe("Archive",renderer,raster,owner,core::Module::archive);
 }
 }
-int wmain(int argc,wchar_t**argv){try{check(argc==4,"Usage: layer_switch_probe shader resources archive-fixture");Com com;Window window;
+int wmain(int argc,wchar_t**argv){try{check(argc==5,"Usage: layer_switch_probe shader resources archive-fixture media-assembly-resources");Com com;Window window;
     gpu::Renderer renderer;renderer.initialize(window.hwnd,1280,800,{gpu::Driver::warpForTests,argv[1],gpu::RenderTarget::offscreenForTests});
     const auto resources=std::filesystem::absolute(argv[2]);
-    clipboard(renderer,resources/"clipboard");eventLog(renderer);mediaAssembly(renderer,window.hwnd,resources/"media-assembly");archive(renderer,window.hwnd,std::filesystem::absolute(argv[3]),resources/"archive");
+    clipboard(renderer,resources/"clipboard");eventLog(renderer);mediaAssembly(renderer,window.hwnd,std::filesystem::absolute(argv[4]).lexically_normal());archive(renderer,window.hwnd,std::filesystem::absolute(argv[3]),resources/"archive");
     renderer.reset();std::cout<<"Layer switch probe: "<<checks<<" checks passed\n";return 0;}
     catch(const std::exception&e){std::cerr<<"Layer switch probe failed after "<<checks<<" checks: "<<e.what()<<'\n';return 1;}}
 #else

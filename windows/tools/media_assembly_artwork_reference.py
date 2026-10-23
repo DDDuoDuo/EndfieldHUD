@@ -8,11 +8,15 @@ from pathlib import Path
 import ast,hashlib,json,subprocess
 root=Path(__file__).resolve().parents[2]
 commit='ca04f142185c7de40acd8523bdb563195d90a1d1'
+# The Windows layout is still the v1.2.0 Canvas; its catalogue (filters,
+# stickers, titles, pixel sizes) is the Mac 1.3.0 model, whose only change is
+# the PhotoMode 1.6 filter and six stickers inserted mid-list.
+modelCommit='4fda15a03ba50675e0b12d69a83efdb6526c19f6'
 out=root/'build/media-assembly-artwork-reference';out.mkdir(exist_ok=True)
 program=ast.parse((root/'windows/tools/media_assembly_presentation_reference.py').read_text())
 values={n.targets[0].id:ast.literal_eval(n.value) for n in program.body if isinstance(n,ast.Assign) and len(n.targets)==1 and isinstance(n.targets[0],ast.Name) and n.targets[0].id in ('stubs','driver')}
 names=['MediaAssemblyModel.swift','MediaAssemblyViewport.swift','MediaAssemblyCanvas.swift','MediaAssemblyControls.swift','HUDControlHighlightLayer.swift']
-source={n:subprocess.check_output(['git','show',commit+':Sources/'+n],cwd=root).decode() for n in names}
+source={n:subprocess.check_output(['git','show',(modelCommit if n=='MediaAssemblyModel.swift' else commit)+':Sources/'+n],cwd=root).decode() for n in names}
 stubs=values['stubs'];start=stubs.index('enum MediaAssemblyAssetCatalog');end=stubs.index('struct MediaAssemblyDocument',start)
 stubs=stubs[:start]+r'''
 import ImageIO
@@ -68,8 +72,8 @@ try JSONSerialization.data(withJSONObject:value,options:[.sortedKeys]).write(to:
 '''
 (out/'main.swift').write_text(main)
 subprocess.run(['xcrun','swiftc','-O','-sdk','/Library/Developer/CommandLineTools/SDKs/MacOSX15.5.sdk','-module-cache-path',str(root/'build/windows-module-reference/.compiler/module-cache'),*[str(out/n) for n in ('stubs.swift','viewport.swift','canvas.swift','feedback.swift','main.swift')],'-o',str(out/'oracle')],check=True)
-subprocess.run([str(out/'oracle'),str(out/'raw.json'),str(root/'windows/resources/media-assembly')],check=True)
-value=json.loads((out/'raw.json').read_text());value['sourceCommit']=commit;value['sourcePins']={k:hashlib.sha256(v.encode()).hexdigest() for k,v in source.items()};value['scope']='Actual source Canvas paint leaves, original feedback and packaged assets, both themes. Inert controller only; no windows, player, user data or decoder service.'
+subprocess.run([str(out/'oracle'),str(out/'raw.json'),str(root/'Resources/MediaAssembly')],check=True)
+value=json.loads((out/'raw.json').read_text());value['sourceCommit']=commit;value['modelCommit']=modelCommit;value['sourcePins']={k:hashlib.sha256(v.encode()).hexdigest() for k,v in source.items()};value['scope']='Actual source Canvas paint leaves, original feedback and packaged assets, both themes. Inert controller only; no windows, player, user data or decoder service.'
 # Intern repeated source leaves rather than shipping 128 duplicate layer trees.
 leaves=[];intern={}
 for row in value['cases']:

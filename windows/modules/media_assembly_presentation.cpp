@@ -115,10 +115,10 @@ MediaAssemblyRequest MediaAssemblyPresentation::perform(std::string_view id,cons
     else if(id=="rotate")p.rotationQuarterTurns=(p.rotationQuarterTurns+1)%4;
     else if(id=="mirror")p.mirrored=!p.mirrored;
     else if(id=="deleteSticker"){if(selected_.empty())return consumed();std::erase_if(p.stickers,[&](const auto&s){return s.id==selected_;});selected_.clear();}
-    else if(id.starts_with("filter:")){const auto catalog=mediaAssemblyFilters();bool found=false;for(std::size_t i=0;i<catalog.size();++i)if(id.substr(7)==catalog[i].id){p.filter=static_cast<MediaAssemblyFilter>(i);found=true;break;}if(!found)return consumed();}
+    else if(id.starts_with("filter:")){const auto filter=mediaAssemblyFilter(id.substr(7));if(!filter)return consumed();p.filter=*filter;}
     else if(id.starts_with("sticker:")){
-        if(v.document->video||p.stickers.size()>=16||newID.empty())return consumed();const auto catalog=mediaAssemblyStickers();bool found=false;
-        for(std::size_t i=0;i<catalog.size();++i)if(id.substr(8)==catalog[i].id){MediaAssemblySticker s;s.id=std::move(newID);s.kind=static_cast<MediaAssemblyStickerKind>(i);selected_=s.id;p.stickers.push_back(std::move(s));drawer_.reset();found=true;break;}if(!found)return consumed();
+        if(v.document->video||p.stickers.size()>=16||newID.empty())return consumed();const auto kind=mediaAssemblySticker(id.substr(8));if(!kind)return consumed();
+        MediaAssemblySticker s;s.id=std::move(newID);s.kind=*kind;selected_=s.id;p.stickers.push_back(std::move(s));drawer_.reset();
     }else return consumed();return adjustment(std::move(p));
 }
 MediaAssemblyRequest MediaAssemblyPresentation::parameter(std::string_view id,double value,const MediaAssemblyView&v)const{

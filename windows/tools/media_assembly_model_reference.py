@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
-"""Run unchanged original Mac model/viewport methods on synthetic values only."""
+"""Run unchanged original Mac model/viewport methods on synthetic values only.
+
+The viewport is the v1.2.0 one Windows still ports; the model (filter and
+sticker catalogue, titles, pixel sizes) is the Mac 1.3.0 one, whose only change
+is the PhotoMode 1.6 filter and six stickers inserted mid-list."""
 from pathlib import Path
 import argparse, hashlib, json, subprocess, tempfile
 
 COMMIT = "ca04f142185c7de40acd8523bdb563195d90a1d1"
+MODEL_COMMIT = "4fda15a03ba50675e0b12d69a83efdb6526c19f6"
 DRIVER = r'''
 func p(_ p:CGPoint)->[Double]{[p.x,p.y]}
 func r(_ r:CGRect)->[Double]{[r.minX,r.minY,r.width,r.height]}
@@ -51,15 +56,15 @@ for duration in [0.0,0.049,0.05,0.1,0.333333333333,12.345,600,86400] {
   ranges.append(row)
  }}
 }
-let output:[String:Any]=["sourceCommit":"ca04f142185c7de40acd8523bdb563195d90a1d1","trajectories":trajectories,"transforms":transforms,"clamps":clamps,"rotations":rotations,"stickers":stickerRows,"filters":MediaAssemblyFilter.allCases.map{value in ["id":value.rawValue,"english":value.title,"chinese":L10n.chinese{value.title}]},"ranges":ranges]
+let output:[String:Any]=["sourceCommit":"ca04f142185c7de40acd8523bdb563195d90a1d1","modelCommit":"4fda15a03ba50675e0b12d69a83efdb6526c19f6","trajectories":trajectories,"transforms":transforms,"clamps":clamps,"rotations":rotations,"stickers":stickerRows,"filters":MediaAssemblyFilter.allCases.map{value in ["id":value.rawValue,"english":value.title,"chinese":L10n.chinese{value.title}]},"ranges":ranges]
 FileHandle.standardOutput.write(try JSONSerialization.data(withJSONObject:output,options:[.sortedKeys,.prettyPrinted]))
 '''
 
 def main():
     parser=argparse.ArgumentParser();parser.add_argument("output",type=Path);args=parser.parse_args()
     repo=Path(__file__).resolve().parents[2]
-    def source(name):return subprocess.check_output(["git","show",f"{COMMIT}:Sources/{name}"],cwd=repo).decode()
-    model=source("MediaAssemblyModel.swift");viewport=source("MediaAssemblyViewport.swift")
+    def source(name,commit=COMMIT):return subprocess.check_output(["git","show",f"{commit}:Sources/{name}"],cwd=repo).decode()
+    model=source("MediaAssemblyModel.swift",MODEL_COMMIT);viewport=source("MediaAssemblyViewport.swift")
     # Only unrelated document/file/engine ownership is outside this model test.
     prefix=model[:model.index("struct MediaAssemblyDocument {")]
     glue='''\nimport Foundation\nenum L10n {static var zh=false;static func text(_ en:String,_ cn:String)->String{zh ? cn:en};static func chinese(_ body:()->String)->String{zh=true;defer{zh=false};return body()}}\nenum MediaAssemblyError:Error{case invalidAdjustment}\n'''
@@ -68,7 +73,7 @@ def main():
         src.write_text(prefix+"\n"+viewport+glue+DRIVER)
         subprocess.run(["/usr/bin/swiftc","-O","-sdk","/Library/Developer/CommandLineTools/SDKs/MacOSX15.5.sdk","-module-cache-path",str(repo/"build/windows-module-reference/.compiler/module-cache"),str(src),"-o",str(exe)],check=True)
         result=subprocess.check_output([str(exe)])
-    data=json.loads(result);assert data["sourceCommit"]==COMMIT
+    data=json.loads(result);assert data["sourceCommit"]==COMMIT and data["modelCommit"]==MODEL_COMMIT
     args.output.parent.mkdir(parents=True,exist_ok=True);args.output.write_bytes(result+b"\n")
     print(json.dumps({"fixture":str(args.output),"bytes":len(result)+1,"sha256":hashlib.sha256(result+b"\n").hexdigest(),"sourceModelSHA256":hashlib.sha256(model.encode()).hexdigest(),"sourceViewportSHA256":hashlib.sha256(viewport.encode()).hexdigest()}))
 

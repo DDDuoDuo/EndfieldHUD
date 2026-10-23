@@ -9,9 +9,13 @@ import hashlib, json, subprocess, sys
 
 root=Path(__file__).resolve().parents[2]
 commit='ca04f142185c7de40acd8523bdb563195d90a1d1'
+# The Windows layout is still the v1.2.0 Canvas; its catalogue (filters,
+# stickers, titles, pixel sizes) is the Mac 1.3.0 model, whose only change is
+# the PhotoMode 1.6 filter and six stickers inserted mid-list.
+modelCommit='4fda15a03ba50675e0b12d69a83efdb6526c19f6'
 out=root/'build/media-assembly-presentation-reference';out.mkdir(exist_ok=True)
 names=['MediaAssemblyModel.swift','MediaAssemblyViewport.swift','MediaAssemblyCanvas.swift','MediaAssemblyControls.swift']
-source={n:subprocess.check_output(['git','show',commit+':Sources/'+n],cwd=root).decode() for n in names}
+source={n:subprocess.check_output(['git','show',(modelCommit if n=='MediaAssemblyModel.swift' else commit)+':Sources/'+n],cwd=root).decode() for n in names}
 stubs=r'''import AppKit
 import AVFoundation
 protocol HUDModuleContentFactory {}
@@ -99,6 +103,6 @@ let data=try JSONSerialization.data(withJSONObject:["cases":rows],options:[.sort
 (out/'main.swift').write_text(driver)
 subprocess.run(['/usr/bin/swiftc','-O','-sdk','/Library/Developer/CommandLineTools/SDKs/MacOSX15.5.sdk','-module-cache-path',str(root/'build/windows-module-reference/.compiler/module-cache'),str(out/'stubs.swift'),str(out/'viewport.swift'),str(out/'canvas.swift'),str(out/'main.swift'),'-o',str(out/'oracle')],check=True)
 subprocess.run([str(out/'oracle'),str(out/'raw.json')],check=True)
-value=json.loads((out/'raw.json').read_text());value['sourceCommit']=commit;value['sourcePins']={n:hashlib.sha256(v.encode()).hexdigest() for n,v in source.items()}
+value=json.loads((out/'raw.json').read_text());value['sourceCommit']=commit;value['modelCommit']=modelCommit;value['sourcePins']={n:hashlib.sha256(v.encode()).hexdigest() for n,v in source.items()}
 value['scope']='Original canvas input and model layout, inert controller/asset/feedback adapters; no native raster or Windows owner claim.'
 dest=Path(sys.argv[1]);dest.write_text(json.dumps(value,ensure_ascii=False,separators=(',',':'))+'\n');print(dest,len(dest.read_bytes()),hashlib.sha256(dest.read_bytes()).hexdigest())

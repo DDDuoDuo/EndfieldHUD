@@ -19,6 +19,6 @@ if(WIN32 AND BUILD_TESTING AND TARGET hud_activity_preview AND TARGET hud_storag
     target_compile_options(layer_switch_probe PRIVATE /EHsc)
   endif()
   add_test(NAME layer_switch_contracts COMMAND layer_switch_probe "${CMAKE_CURRENT_SOURCE_DIR}/native/hud.hlsl"
-    "${CMAKE_CURRENT_SOURCE_DIR}/resources" "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/archive-source-v1.json")
+    "${CMAKE_CURRENT_SOURCE_DIR}/resources" "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/archive-source-v1.json" "${EHUD_MEDIA_ASSEMBLY_RESOURCE_DIR}")
   set_tests_properties(layer_switch_contracts PROPERTIES TIMEOUT 300)
 endif()

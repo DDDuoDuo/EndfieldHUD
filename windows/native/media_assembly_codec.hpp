@@ -68,7 +68,7 @@ struct MediaAssemblyCodecCapabilities {
 class NativeMediaAssemblyEngine final:public modules::MediaAssemblyEngine {
 public:
     struct Options {
-        std::filesystem::path assetRoot;          // windows/resources/media-assembly (pinned catalog)
+        std::filesystem::path assetRoot;          // Resources/MediaAssembly (pinned provenance)
         std::function<void()>beforeCommit;        // synthetic tests only
         std::function<void(double)>videoFrameHook; // synthetic tests only: called per exported frame time
         // Device for one explicit video export job (created on the worker,

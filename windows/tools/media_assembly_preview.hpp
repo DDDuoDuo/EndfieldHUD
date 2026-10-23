@@ -29,7 +29,7 @@ template<class Request>bool attachMediaAssemblyFrameFilter(Request&request,std::
     else{(void)request;(void)filter;return false;}
 }
 struct MediaAssemblyPreviewOptions {
-    // assetRoot must be windows/resources/media-assembly (pinned catalog).
+    // assetRoot must be the Resources/MediaAssembly folder (pinned provenance).
     native::LayerRasterOptions raster;
     modules::MediaAssemblyAppearance appearance;
     bool reduceMotion{};

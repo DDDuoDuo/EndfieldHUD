@@ -63,7 +63,7 @@ struct Owner {
         if(!visible)return;const auto actions=p.actions(view(),c::Language::english);check(actions.size()==j["actions"].array().size(),"Original action count");for(std::size_t i=0;i<actions.size();++i){const auto&v=actions[i];const auto&e=j["actions"].array()[i];check(v.id==e["id"].string()&&v.title==e["title"].string(),"Original button identity and title");compare(v.rect,e["rect"]);check(v.enabled==e["enabled"].boolean(),"Original enabled state");}
     }
 };
-void source(const J&f){check(f["sourceCommit"].string()=="ca04f142185c7de40acd8523bdb563195d90a1d1","Pinned authoritative Mac source");Owner o;for(const auto&entry:f["cases"].array()){o.operation(entry["operation"]);o.compareState(entry["state"]);++row;}}
+void source(const J&f){check(f["sourceCommit"].string()=="ca04f142185c7de40acd8523bdb563195d90a1d1"&&f["modelCommit"].string()=="4fda15a03ba50675e0b12d69a83efdb6526c19f6","Pinned authoritative Mac source (v1.2.0 Canvas, 1.3.0 catalogue)");Owner o;for(const auto&entry:f["cases"].array()){o.operation(entry["operation"]);o.compareState(entry["state"]);++row;}}
 void lifecycle(){Owner o;o.d=m::MediaAssemblyDocumentInfo{"warm",false,{1920,1080},120};o.p.synchronize(o.view());o.p.zoom(3,{220,198},o.view());auto view=o.view();
     allocations=0;counting=true;for(unsigned i=0;i<10000;++i){o.p.scroll({250,250},i%2?1:-1,i%2?2:-2,false,view);o.p.zoom(i%2?1.001:1/1.001,{250,250},view);}counting=false;check(allocations==0,"Warm view pan/zoom allocates nothing and produces no edit request");
     o.apply(o.p.perform("stickers",o.view()));for(unsigned i=0;i<17;++i)o.apply(o.p.perform("sticker:sticker_1",o.view(),std::to_string(i)));check(o.a.stickers.size()==16,"Source bound rejects seventeenth sticker");

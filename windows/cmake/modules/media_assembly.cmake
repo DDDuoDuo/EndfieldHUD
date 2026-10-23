@@ -2,6 +2,21 @@
 # windows/CMakeLists.txt, so existing libraries (hud_media_assembly_model,
 # hud_media_assembly_assets, hud_native, ...) are available here.
 
+# The shared PhotoMode folder (EHUD_MEDIA_ASSEMBLY_RESOURCE_DIR, CMakeLists.txt)
+# holds exactly provenance.json and the files it lists, with their pins
+# (cmake/media_assembly_resources.cmake); Windows builds refuse to configure
+# otherwise, and the staging contract below runs on every platform.
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/media_assembly_resources.cmake")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${EHUD_MEDIA_ASSEMBLY_RESOURCE_DIR}/provenance.json" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/media_assembly_resources.cmake")
+if(WIN32)
+  ehud_media_assembly_check("${EHUD_MEDIA_ASSEMBLY_RESOURCE_DIR}" ehud_media_assembly_files)
+endif()
+if(BUILD_TESTING)
+  add_test(NAME media_assembly_resources_contracts COMMAND "${CMAKE_COMMAND}" "-DSOURCE=${EHUD_MEDIA_ASSEMBLY_RESOURCE_DIR}"
+    "-DSTAGE_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/app/stage_resources.cmake" "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/media-assembly-resources-check"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/media_assembly_resources.cmake")
+endif()
+
 # Portable MediaAssemblyEngine.apply port: geometry, colour chain and stickers.
 add_library(hud_media_assembly_processor modules/media_assembly_processor.cpp)
 target_include_directories(hud_media_assembly_processor PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
@@ -10,7 +25,7 @@ if(BUILD_TESTING)
   add_executable(media_assembly_processor_tests tests/media_assembly_processor_tests.cpp)
   target_link_libraries(media_assembly_processor_tests PRIVATE hud_media_assembly_processor hud_data hud_reader_zlib)
   add_test(NAME media_assembly_processor_contracts COMMAND media_assembly_processor_tests
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/media-assembly-processor-source.json ${CMAKE_CURRENT_SOURCE_DIR}/resources/media-assembly
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/media-assembly-processor-source.json ${EHUD_MEDIA_ASSEMBLY_RESOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/media-assembly-highlight-shadow-fit.json ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/media-assembly-icc-source.json
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/media-assembly-video-colour-source.json)
 endif()
@@ -67,7 +82,7 @@ if(WIN32)
     add_executable(media_assembly_gpu_tests tests/media_assembly_gpu_tests.cpp)
     target_compile_definitions(media_assembly_gpu_tests PRIVATE UNICODE _UNICODE NOMINMAX)
     target_link_libraries(media_assembly_gpu_tests PRIVATE hud_media_assembly_gpu d3d11 dxgi)
-    add_test(NAME media_assembly_gpu_contracts COMMAND media_assembly_gpu_tests ${CMAKE_CURRENT_SOURCE_DIR}/resources/media-assembly)
+    add_test(NAME media_assembly_gpu_contracts COMMAND media_assembly_gpu_tests ${EHUD_MEDIA_ASSEMBLY_RESOURCE_DIR})
   endif()
 
   # WIC still/GIF decode, Media Foundation movie frames and MP4 export, WIC
@@ -81,7 +96,7 @@ if(WIN32)
     add_executable(media_assembly_codec_tests tests/media_assembly_codec_tests.cpp)
     target_compile_definitions(media_assembly_codec_tests PRIVATE UNICODE _UNICODE NOMINMAX)
     target_link_libraries(media_assembly_codec_tests PRIVATE hud_media_assembly_codec hud_data windowscodecs mfplat mfreadwrite mfuuid ole32 d3d11)
-    add_test(NAME media_assembly_codec_contracts COMMAND media_assembly_codec_tests ${CMAKE_CURRENT_SOURCE_DIR}/resources/media-assembly
+    add_test(NAME media_assembly_codec_contracts COMMAND media_assembly_codec_tests ${EHUD_MEDIA_ASSEMBLY_RESOURCE_DIR}
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/media-assembly-icc-source.json ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/media-assembly-video-colour-source.json
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/media-assembly-jpeg-source.json)
   endif()
@@ -110,16 +125,18 @@ if(WIN32)
     add_executable(media_assembly_preview_tests tests/media_assembly_preview_tests.cpp)
     target_compile_definitions(media_assembly_preview_tests PRIVATE UNICODE _UNICODE NOMINMAX)
     target_link_libraries(media_assembly_preview_tests PRIVATE hud_media_assembly_preview hud_media_assembly_accessibility hud_packet windowscodecs ole32 oleaut32 uiautomationcore d3d11 dxgi)
-    add_test(NAME media_assembly_preview_contracts COMMAND media_assembly_preview_tests ${CMAKE_CURRENT_SOURCE_DIR}/native/hud.hlsl ${CMAKE_CURRENT_SOURCE_DIR}/resources/media-assembly ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/notes-owned-silent.mp4)
+    add_test(NAME media_assembly_preview_contracts COMMAND media_assembly_preview_tests ${CMAKE_CURRENT_SOURCE_DIR}/native/hud.hlsl ${EHUD_MEDIA_ASSEMBLY_RESOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/notes-owned-silent.mp4)
   endif()
 endif()
 
 # --- Module area (app/module_owner.hpp, "Adding a module area") --------------
 # The ModuleOwner adapter and factory over MediaAssemblyPreview, linked into
 # EndfieldHUD.exe and the hidden coverage harness by app.cmake's generated
-# area table. Runtime input: the pinned resources/media-assembly package
-# folder. Hidden coverage without a staged package uses the same folder from
-# the source tree, plus the pinned owned silent movie (read-only copy).
+# area table. Runtime input: resources/media-assembly, the shared
+# Resources/MediaAssembly folder staged verbatim (provenance.json and its 60
+# listed files, pinned again in resources.json). Hidden coverage without a
+# staged package uses that shared folder, plus the pinned owned silent movie
+# (read-only copy).
 if(WIN32)
   add_library(hud_media_assembly_area STATIC app/areas/media_assembly_module.cpp)
   target_include_directories(hud_media_assembly_area PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
@@ -132,12 +149,12 @@ if(WIN32)
   set_property(GLOBAL APPEND PROPERTY EHUD_APP_AREAS
     "mediaAssembly|hud_media_assembly_area|app/areas/media_assembly_module.hpp|endfield::areas::mediaAssemblyModule")
   if(COMMAND ehud_app_resource)
-    ehud_app_resource(mediaAssembly.assets directory "${CMAKE_CURRENT_SOURCE_DIR}/resources/media-assembly" "media-assembly")
+    ehud_app_resource(mediaAssembly.assets directory "${EHUD_MEDIA_ASSEMBLY_RESOURCE_DIR}" "media-assembly")
   else()
     set_property(GLOBAL APPEND PROPERTY EHUD_APP_RESOURCE_SPECS
-      "mediaAssembly.assets|directory|${CMAKE_CURRENT_SOURCE_DIR}/resources/media-assembly|media-assembly")
+      "mediaAssembly.assets|directory|${EHUD_MEDIA_ASSEMBLY_RESOURCE_DIR}|media-assembly")
   endif()
   set_property(GLOBAL APPEND PROPERTY EHUD_APP_AREA_FIXTURES
-    "mediaAssembly.sourceAssets|${CMAKE_CURRENT_SOURCE_DIR}/resources/media-assembly"
+    "mediaAssembly.sourceAssets|${EHUD_MEDIA_ASSEMBLY_RESOURCE_DIR}"
     "mediaAssembly.movie|${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/notes-owned-silent.mp4")
 endif()
