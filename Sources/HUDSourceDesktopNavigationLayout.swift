@@ -2,15 +2,42 @@ import Foundation
 import CoreGraphics
 import simd
 
+/// Every desktop button icon is drawn in a 32-point box. Glyphs are sized
+/// optically, not by their longest side: a wide or tall glyph keeps the same
+/// bounding area as a square one (23 × 23) within 28 × 28, so round,
+/// wide and narrow artwork read as one size on both sides of the HUD.
 enum HUDSourceDesktopIconLayout {
+    static let box: CGFloat = 32
+    static func glyphSize(_ size: CGSize) -> CGSize {
+        guard size.width > 0, size.height > 0, size.width.isFinite, size.height.isFinite else { return CGSize(width: 26, height: 26) }
+        let scale = min(28 / max(size.width, size.height), 23 / (size.width * size.height).squareRoot())
+        return CGSize(width: size.width * scale, height: size.height * scale)
+    }
+    /// The glyph's frame in the 32-point box (top-down), centred.
+    static func glyphFrame(_ size: CGSize) -> CGRect {
+        let fitted = glyphSize(size)
+        return CGRect(x: (box - fitted.width) / 2, y: (box - fitted.height) / 2, width: fitted.width, height: fitted.height)
+    }
     static func path(_ source: CGPath) -> CGPath {
         let bounds = source.boundingBoxOfPath
         guard !bounds.isEmpty, bounds.width.isFinite, bounds.height.isFinite else { return source }
-        let scale = 26 / max(bounds.width, bounds.height)
+        let scale = glyphSize(bounds.size).width / bounds.width
         var transform = CGAffineTransform(a: scale, b: 0, c: 0, d: scale,
             tx: 16 - bounds.midX * scale, ty: 16 - bounds.midY * scale)
         return source.copy(using: &transform) ?? source
     }
+    /// A tinted artwork trimmed to its visible bounds, made once per name and tint.
+    static func trimmed(_ name: String, tint: CGColor, source: () -> CGImage?) -> CGImage? {
+        let key = (name + ":" + (tint.components ?? []).map { String(describing: $0) }.joined(separator: ":")) as NSString
+        if let cached = trimmedCache.object(forKey: key) { return (cached as! CGImage) }
+        guard let artwork = source() else { return nil }
+        let result = image(artwork)
+        trimmedCache.setObject(result, forKey: key)
+        return result
+    }
+    private static let trimmedCache: NSCache<NSString, AnyObject> = {
+        let cache = NSCache<NSString, AnyObject>(); cache.countLimit = 96; return cache
+    }()
     /// Remove transparent padding once when artwork is bound. All icon images
     /// then fit the same visible box, irrespective of source canvas dimensions.
     static func image(_ source: CGImage) -> CGImage {

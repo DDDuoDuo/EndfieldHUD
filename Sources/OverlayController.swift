@@ -24,9 +24,8 @@ final class OverlayController: NSObject {
     private var mediaAssemblyDocuments: MediaAssemblyController?
     private var calendarDocuments: HUDCalendarController?
     private lazy var accountController: HypergryphAccountController = {
-        let isolated = CommandLine.arguments.contains(where: { $0 == "--ui-test" || $0.hasSuffix("smoke-test") || $0.hasPrefix("--render-") })
         let controller = HypergryphAccountController(profile: try? profileStore.get(), fileURL: HypergryphAccountController.applicationFile(),
-            vault: isolated ? HypergryphMemoryCredentialVault() : HypergryphAccountKeychain())
+            vault: Self.isDiagnosticRun ? HypergryphMemoryCredentialVault() : HypergryphAccountKeychain())
         controller.onEvent = { [weak self] action in self?.eventLog.record(kind: .accountAction, metadata: ["action": action]) }
         return controller
     }()
@@ -143,6 +142,9 @@ final class OverlayController: NSObject {
     let workMode = WorkModeController()
     /// Facility alerts outlive each HUD view, so a dismissed alert stays dismissed.
     let facilityAlerts = FacilityAlertMonitor()
+    /// UI tests, smoke tests and renders: no live system alerts, real
+    /// keychain or day-stamped preferences.
+    static let isDiagnosticRun = CommandLine.arguments.contains { $0 == "--ui-test" || $0.hasSuffix("smoke-test") || $0.hasPrefix("--render-") }
     private let profileStore: Result<UserProfileStore, Error>
     var workFocusStatusMessage: String? {
         didSet { systemView?.workFocusStatusMessage = workFocusStatusMessage }
@@ -178,13 +180,14 @@ final class OverlayController: NSObject {
     var systemWorkModeDialDiameterForVerification: CGFloat { systemView?.workModeDialDiameterForVerification ?? 0 }
     var systemWorkModeAnimationCount: Int { systemView?.workModeAnimationCount ?? 0 }
     var systemTelemetryAnimationCount: Int { systemView?.telemetryAnimationCount ?? 0 }
-    func performStorageActionForVerification(_ id: String) { systemView?.performStorageActionForVerification(id) }
-    func performActivityActionForVerification(_ id: String) { systemView?.performActivityActionForVerification(id) }
     func addAppShortcutForVerification(_ url: URL) throws -> AppShortcut {
         let store = try appShortcutStore.get()
         return try store.save(candidate: store.inspect(url: url), name: "Launch test", iconPreset: .original)
     }
-    func performAppShortcutActionForVerification(_ id: String) { systemView?.performAppShortcutActionForVerification(id) }
+    func performDesignActionForVerification(_ module: HUDModule, _ id: String) {
+        systemView?.performDesignActionForVerification(module, id)
+    }
+    func designControlIDsForVerification(_ module: HUDModule) -> [String] { systemView?.designControlIDsForVerification(module) ?? [] }
     func activateAppNavigationForVerification(_ id: UUID) { systemView?.activateAppNavigationForVerification(id) }
     var appNavigationTargetsForVerification: [HUDNavigationTarget] { systemView?.appNavigationTargetsForVerification ?? [] }
     var systemAppLaunchErrorForVerification: String? { appLaunchError }
@@ -339,6 +342,9 @@ final class OverlayController: NSObject {
         root = PositionCanvas(frame: NSRect(origin: .zero, size: size))
         indicator = ChargeIndicatorView(frame: NSRect(origin: .zero, size: size))
         super.init()
+        // The centre's fonts register off the main thread while the HUD is
+        // still closed, so its first opening does not wait for them.
+        HUDFontRegistry.prewarm()
         if let profile = try? profileStore.get() {
             workMode.restoreTrackedWorkSeconds(profile.profile.accumulatedWorkSeconds)
             workMode.onTrackedWorkSecondsChanged = { [weak profile] seconds in
@@ -411,7 +417,7 @@ final class OverlayController: NSObject {
             || self.configuration.placement != configuration.placement
             || self.configuration.customPosition != configuration.customPosition
         self.configuration = configuration.normalized
-        facilityAlerts.isEnabled = self.configuration.facilityAlerts
+        facilityAlerts.isEnabled = self.configuration.facilityAlerts && !Self.isDiagnosticRun
         projection?.update(configuration: self.configuration)
         indicator.set(snapshot: snapshot, configuration: self.configuration, preview: preview)
         systemView?.set(snapshot: snapshot, configuration: self.configuration)
@@ -628,9 +634,12 @@ final class OverlayController: NSObject {
                 self.projection?.onClose = { [weak self] in self?.returnFromProjection() }
                 self.projection?.onEvent = { [weak self] event in self?.recordProjectionEvent(event) }
             }
+            // The centre page's pen colour, width and background are the workspace's.
+            if let model = self.projection?.model { ProjectionSettings.shared.attach(model) }
             self.projectionScreenID = HUDDisplayPolicy.displayID(for: screen)
             self.projection?.update(configuration: self.configuration)
             self.projection?.present(on: screen)
+            if ProjectionSettings.shared.takeMediaInsertRequest() { self.projection?.workspace?.perform("media") }
             self.projectionHandoff = false
             self.onSystemActivityChange?()
         }
@@ -685,8 +694,8 @@ final class OverlayController: NSObject {
         switch event {
         case .strokeCompleted: action = "drawingEdited"
         case .erased: action = "erased"
-        case .brushChanged: action = "brushChanged"
-        case .backgroundChanged: action = "backgroundChanged"
+        case .brushChanged: action = "brushChanged"; ProjectionSettings.shared.capture()
+        case .backgroundChanged: action = "backgroundChanged"; ProjectionSettings.shared.capture()
         case .cleared: action = "cleared"
         case .mediaAdded: action = "mediaAdded"
         case .mediaRemoved: action = "mediaRemoved"
@@ -857,7 +866,7 @@ final class OverlayController: NSObject {
                                      archive: archiveController, reader: readerController,
                                      mediaAssembly: mediaAssemblyController, calendar: calendarController, minigame: minigameSession, account: accountController,
                                      facility: facilityAlerts, initialConfiguration: configuration, initialSnapshot: snapshot ?? .unavailable,
-                                     initialModule: initialModuleRequest ?? lastSystemModule)
+                                     initialModule: initialModuleRequest ?? configuration.moduleLayout.restorable(lastSystemModule))
             HUDStartupTrace.end("open.fullNativeView", since: &startup)
             systemView = view
             view.sourceWatchForVerification?.backdropPreparationForVerification = systemBackdropPreparationForVerification
@@ -928,6 +937,7 @@ final class OverlayController: NSObject {
             armTransitionDeadline(after: HUDSourceWatchView.backdropPreparationTimeout + SystemHUDView.entranceDuration + 0.2) { [weak self] in
                 self?.finishSystemOpening(token)
             }
+            view.playsBootLogOnOpen = consumeDailyBootLog()
             view.animateEntrance(ready: { [weak self, weak view] in
                 guard let self, let view, self.systemView === view,
                       self.systemState.phase == .opening, self.systemState.generation == token else { return }
@@ -1064,6 +1074,18 @@ final class OverlayController: NSObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
+    /// The boot log plays on the first open of each day (spec §3.28), unless it
+    /// is turned off or motion is reduced. Diagnostic runs never touch the date.
+    private func consumeDailyBootLog() -> Bool {
+        guard configuration.dailyBootLog, !HUDRuntimeAppearance.reduceMotion, !Self.isDiagnosticRun else { return false }
+        let parts = Calendar.current.dateComponents([.year, .month, .day], from: Date())
+        let today = String(format: "%04d-%02d-%02d", parts.year ?? 0, parts.month ?? 0, parts.day ?? 0)
+        let key = "dailyBootLogLastDay"
+        guard UserDefaults.standard.string(forKey: key) != today else { return false }
+        UserDefaults.standard.set(today, forKey: key)
+        return true
+    }
+
     private func finishSystemOpening(_ token: Int) {
         guard systemState.phase == .opening, systemState.generation == token else { return }
         transitionDeadline?.cancel()
@@ -1175,13 +1197,19 @@ final class OverlayController: NSObject {
                 return
             }
             self.closedHeapCleanupInFlight = true
+            // The centre's shared rasters served only the released pages; the
+            // next open redraws the few its first screen shows.
+            HUDArtwork.releaseCachedImages()
             // Frame construction leaves reusable malloc pages after the views
             // are released. Return only free pages once, off the main thread;
             // live shader/document/image caches remain ready for the next open.
+            // The map's decoded geography is dropped first (it decodes again,
+            // off the main thread, while the next map deploys).
             DispatchQueue.global(qos: .utility).async { [weak self, ticket] in
                 let elapsed: Double?
                 if ticket.begin() {
                     let began = CACurrentMediaTime()
+                    WorldMapSurface.releaseSharedData()
                     _ = malloc_zone_pressure_relief(nil, 0)
                     elapsed = (CACurrentMediaTime() - began) * 1000
                 } else { elapsed = nil }

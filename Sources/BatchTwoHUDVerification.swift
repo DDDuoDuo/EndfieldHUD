@@ -81,7 +81,9 @@ enum BatchTwoHUDVerification {
             }
             check(view.bounds.contains(point), "Clock indicator \(style.index + 1) is inside the native window")
             let button = view.subviews.compactMap { $0 as? HUDClockActionButton }.first { $0.styleIndex == style.index }
-            check(button != nil && button!.frame.contains(point) && !button!.isHidden && button!.isEnabled,
+            // The accessibility frame is projected on demand; the view frame follows once the camera settles.
+            let geometry = button.flatMap { button in view.window.map { view.convert($0.convertFromScreen(button.accessibilityFrame()), from: nil) } }
+            check(button != nil && geometry?.contains(point) == true && !button!.isHidden && button!.isEnabled,
                   "Projected clock pointer and native accessibility geometry agree")
             click(at: point)
             // Sample the finite track before the asynchronous state wait: it
@@ -130,23 +132,23 @@ enum BatchTwoHUDVerification {
                     && !overlay.notesForVerification.contains { $0.id == pin }
             }) { [self] in
                 overlay.selectSystemModule(.profile)
-                waitUntil("Profile module for popup input", condition: { [self] in
+                waitUntil("Profile module for menu input", condition: { [self] in
                     overlay.systemSelectedModule == .profile && !overlay.isSwitchingSystemModule
+                        && view.designControlIDsForVerification(.profile).contains("profile:menu")
                 }) { [self] in
-                    view.performProfileActionForVerification("profile:menu")
-                    check(view.profilePopoverOpenForVerification, "The retained profile popover opens")
+                    view.performDesignActionForVerification(.profile, "profile:menu")
+                    check(profileMenuOpen && view.designControlIDsForVerification(.profile).contains("profile.more:name"),
+                          "The profile ⋯ menu opens with its edit rows")
                     guard let currentPoint = view.clockPointForVerification(CGPoint(x: rect.midX, y: rect.midY)) else {
                         fail("Clock projection disappeared during profile navigation")
                     }
                     scrollClock(at: currentPoint)
-                    check(view.profilePopoverOpenForVerification && view.clockStyleForVerification == style,
-                          "An open profile popover consumes clock scrolling")
+                    check(profileMenuOpen && view.clockStyleForVerification == style,
+                          "An open profile menu consumes clock scrolling")
                     click(at: currentPoint)
-                    waitUntil("profile popup dismissing outside", condition: { [self] in
-                        !view.profilePopoverOpenForVerification
-                    }) { [self] in
+                    waitUntil("profile menu dismissing outside", condition: { [self] in !profileMenuOpen }) { [self] in
                         check(overlay.systemSelectedModule == .profile && !overlay.isSwitchingSystemModule,
-                              "The first clock-area click dismisses the profile popover without opening Work Mode")
+                              "The first clock-area click dismisses the profile menu without opening Work Mode")
                         checkRetainedShell()
                         scrollClock(at: currentPoint)
                         waitUntil("uncovered clock scrolling", condition: { [self] in
@@ -173,18 +175,22 @@ enum BatchTwoHUDVerification {
                 check(overlay.systemCenterContentCount == 1, "Clock body switches only the retained center to Work Mode")
                 checkRetainedShell()
                 overlay.selectSystemModule(.power)
-                waitUntil("Power module", condition: { [self] in
+                waitUntil("Battery module", condition: { [self] in
                     overlay.systemSelectedModule == .power && !overlay.isSwitchingSystemModule
-                        && view.powerSettingsPointForVerification != nil
+                        && view.designControlIDsForVerification(.power).contains("battery.reading")
                 }) { [self] in
-                    click(at: view.powerSettingsPointForVerification!)
-                    waitUntil("Power battery-settings shortcut", condition: { [self] in
-                        overlay.systemSelectedModule == .display && !overlay.isSwitchingSystemModule
-                            && !view.settingsIsTransitioningForVerification
-                            && view.settingsActionIDsForVerification.contains("metric")
+                    guard let plate = view.designCanvasForVerification(.power)?.accessibilityItems.first(where: { $0.id == "battery.reading" }) else {
+                        fail("The Battery page has no BAR READING plate")
+                    }
+                    check(plate.label.hasPrefix("Battery alert, ") && plate.label.hasSuffix(HUDChargeMetric.battery.title),
+                          "The BAR READING plate is the battery-alert link for the current reading")
+                    click(at: view.designBoxViewPointForVerification(CGPoint(x: plate.rect.midX, y: plate.rect.midY)))
+                    waitUntil("Battery alert shortcut", condition: { [self] in
+                        overlay.systemSelectedModule == .display && !overlay.isSwitchingSystemModule && displaySettled
+                            && view.designControlIDsForVerification(.display).contains("metric")
                     }) { [self] in
-                        check(view.settingsActionIDsForVerification.contains("back"),
-                              "The Power shortcut opens the Battery subsection with its parent navigation")
+                        check(view.designControlIDsForVerification(.display).contains("back"),
+                              "The BAR READING plate opens Display > Battery alert with its parent navigation")
                         checkRetainedShell()
                         checkLogo(index: 0)
                     }
@@ -238,22 +244,21 @@ enum BatchTwoHUDVerification {
             let choices: [HUDChargeMetric] = [.ram, .cpu, .network, .disk, .battery]
             guard index < choices.count else { checkHoveredMetric(); return }
             let metric = choices[index]
-            view.performSettingsActionForVerification("metric")
+            view.performDesignActionForVerification(.display, "metric")
             waitUntil("reading chooser", condition: { [self] in
                 checkRestingBadge()
-                return !view.settingsIsTransitioningForVerification
-                    && view.settingsActionIDsForVerification.contains("metric:" + metric.rawValue)
+                return displaySettled && view.designControlIDsForVerification(.display).contains("metric:" + metric.rawValue)
             }) { [self] in
-                view.performSettingsActionForVerification("metric:" + metric.rawValue)
+                view.performDesignActionForVerification(.display, "metric:" + metric.rawValue)
                 checkRestingBadge()
                 waitUntil("reading \(metric.rawValue)", condition: { [self] in
                     checkRestingBadge()
-                    return !view.settingsIsTransitioningForVerification
-                        && overlay.settingsController?.configuration.alertMetric == metric
+                    return displaySettled && overlay.settingsController?.configuration.alertMetric == metric
                         && readingLabelMatches(metric)
                 }) { [self] in
-                    check(view.settingsActionIDsForVerification.contains("metric"),
-                          "Reading selection returns to Battery settings")
+                    check(view.designCanvasForVerification(.display)?.isMenuOpen == false
+                          && view.designControlIDsForVerification(.display).contains("metric"),
+                          "Reading selection closes its menu and returns to Battery settings")
                     checkRetainedShell()
                     checkMetric(index: index + 1)
                 }
@@ -308,7 +313,7 @@ enum BatchTwoHUDVerification {
                 check(!overlay.lastClosedSourceTimerActive && overlay.lastClosedSourcePhase == .concealed,
                       "The source renderer's display clock is stopped while the HUD is hidden")
                 cleanup()
-                print("PASS: \(assertions) batch-two HUD assertions; projected five-style clock clicks; Work Mode body action; Power settings shortcut; source logo swaps/restoration; badge metric lifecycle; clean close")
+                print("PASS: \(assertions) batch-two HUD assertions; projected five-style clock clicks; pinned-note and profile-menu clock occlusion; Work Mode body action; Battery BAR READING alert link; source logo swaps/restoration; badge metric lifecycle; clean close")
                 BatchTwoHUDVerification.session = nil
                 NSApp.terminate(nil)
             }
@@ -347,6 +352,9 @@ enum BatchTwoHUDVerification {
                   "The native wheel fixture hits the projected clock with a horizontal delta")
             view.scrollWheel(with: event)
         }
+
+        private var profileMenuOpen: Bool { view.designCanvasForVerification(.profile)?.isMenuOpen == true }
+        private var displaySettled: Bool { view.designCanvasForVerification(.display).map { $0.isActive && !$0.isTransitioning } == true }
 
         private func checkRetainedShell() {
             check(overlay.systemShellIdentity == originalShell && view.sourceWatchForVerification.map(ObjectIdentifier.init) == originalSource,

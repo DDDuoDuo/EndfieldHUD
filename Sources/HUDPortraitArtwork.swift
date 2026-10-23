@@ -80,6 +80,29 @@ enum HUDPortraitArtwork {
                                 cost: output.bytesPerRow * output.height)
         return output
     }
+    /// The whole oriented portrait for a well that pans and zooms it with a
+    /// layer transform (Personal ID): drawn once per zoom step, sharp up to
+    /// `zoom`, at most 2048 px. `fill` is its aspect-fill size in well sides,
+    /// so the visible region matches `crop` for the same zoom and offset.
+    static func panningImage(_ image: CGImage, side: CGFloat, zoom: Double, contentsScale: CGFloat,
+                             orientation: Int32 = 1) -> (image: CGImage, fill: CGSize)? {
+        let orientation = (1...8).contains(orientation) ? orientation : 1
+        let source = CIImage(cgImage: image).oriented(forExifOrientation: orientation)
+        let extent = source.extent
+        guard side.isFinite, side > 0, extent.width > 0, extent.height > 0 else { return nil }
+        let fill = CGSize(width: max(1, extent.width / extent.height), height: max(1, extent.height / extent.width))
+        let scale = contentsScale.isFinite ? min(8, max(1, contentsScale)) : 2
+        let magnification = CGFloat(zoom.isFinite ? min(20, max(1, zoom)) : 1)
+        let longSide = min(2048, side * max(fill.width, fill.height) * magnification * scale * 1.35)
+        let factor = min(1, longSide / max(extent.width, extent.height))
+        let width = max(1, Int((extent.width * factor).rounded())), height = max(1, Int((extent.height * factor).rounded()))
+        let origin = source.transformed(by: CGAffineTransform(translationX: -extent.minX, y: -extent.minY))
+        let scaled = factor < 1 ? origin.applyingFilter("CILanczosScaleTransform", parameters: [kCIInputScaleKey: factor, kCIInputAspectRatioKey: 1])
+                                : origin
+        guard let output = renderContext.createCGImage(scaled, from: CGRect(x: 0, y: 0, width: width, height: height)) else { return nil }
+        return (output, fill)
+    }
+
     static func crop(imageSize: CGSize, targetSize: CGSize, zoom: Double, offset: CGPoint) -> CGRect {
         guard imageSize.width.isFinite, imageSize.height.isFinite,
               targetSize.width.isFinite, targetSize.height.isFinite,

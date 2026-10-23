@@ -46,8 +46,11 @@ final class OrbiPomSession {
         runtime?.setPaused(effectivePause)
         if effectivePause { saveBest() }
     }
+    /// The best score including the current game; reads the stored snapshot
+    /// only, so it never starts the runtime or evaluates script.
+    var bestSoFar: Int { max(bestScore, snapshot.score, snapshot.highScore) }
     func saveBest() {
-        let next = max(bestScore, snapshot.score, snapshot.highScore)
+        let next = bestSoFar
         guard next != bestScore else { return }; bestScore = next
         defaults?.set(next, forKey: Self.bestScoreKey)
     }

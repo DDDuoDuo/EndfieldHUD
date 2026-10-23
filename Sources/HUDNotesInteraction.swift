@@ -2,16 +2,17 @@ import AppKit
 import QuartzCore
 import UniformTypeIdentifiers
 
-/// Native text input is temporary and lives inside the existing HUD. All
-/// settled artwork stays in the projected Notes layer and shares its wipe.
+/// The desktop notes' native input: editors, formatting menus, media import
+/// and accessibility stand-ins of the workspace cards. Native text input is
+/// temporary and lives inside the existing HUD; settled artwork stays in the
+/// projected notes plane. The centre screen routes through NotesCanvas (a
+/// HUDDesignCanvas); its Media button hands its sources to this bridge.
 final class HUDNotesInteraction: NSObject, NSTextViewDelegate {
     private let canvas: NotesCanvas
+    private var workspace: NotesWorkspace { canvas.workspace }
     private weak var host: NSView?
-    var project: ((CGRect) -> CGRect)?
     var workspaceProject: ((CGRect) -> CGRect)?
-    var unproject: ((CGPoint) -> CGPoint?)?
     var workspaceUnproject: ((CGPoint) -> CGPoint?)?
-    var moduleToWorkspace: ((CGRect) -> CGRect)?
     var onLock: (() -> Void)?
     var onToggle: (() -> Void)?
     var isDark: (() -> Bool)?
@@ -24,11 +25,10 @@ final class HUDNotesInteraction: NSObject, NSTextViewDelegate {
     private var editorScroll: NSScrollView?
     private var projectedEditor: HUDProjectedTextEditor?
     private var chooser: NSOpenPanel?
-    private var formatting: NotesFormattingControls?
+    private var formatting: NotesDesktopPopup?
     private var formattingNoteID: UUID?
-    private var mediaSourceChooser: NotesMediaSourceChooser?
-    private var shelfPicker: NotesShelfMediaPicker?
-    private var mediaSourcePoint: CGPoint?
+    /// Takes the first press outside an open formatting menu while editing.
+    private let forwarder = NotesPressForwarder()
     private var retiringMenuArtwork: CALayer?
     private let importQueue = DispatchQueue(label: "EndfieldCharge.NotesMediaImport", qos: .utility)
     private var importGeneration = 0
@@ -40,31 +40,36 @@ final class HUDNotesInteraction: NSObject, NSTextViewDelegate {
     private var dialogGeneration = 0
     var isPresentingPanel: Bool { chooser != nil }
     var isInputLocked: Bool { dragging || externalDrag || chooser != nil }
-    var capturesPointer: Bool { formatting != nil || mediaSourceChooser != nil || shelfPicker != nil }
+    var capturesPointer: Bool { formatting != nil }
 
+    /// While a note is edited, the first press outside its formatting menu
+    /// only closes the menu: it goes to a view that leaves the editor focused.
     func hitTestMenu(at hostPoint: CGPoint) -> NSView? {
-        let menus: [NotesRetainedMenu] = [formatting, mediaSourceChooser, shelfPicker].compactMap { $0 }
-        return menus.reversed().compactMap { $0.hitTest(hostPoint) }.first
+        if let view = formatting?.hitTest(hostPoint) { return view }
+        guard let host, formatting != nil, editor != nil else { return nil }
+        return forwarder.target(in: host)
     }
 
     /// The host routes its first background click here before invoking a module.
     /// Native child controls receive clicks inside their projected menu frames.
     @discardableResult func dismissMenuIfOutside(at hostPoint: CGPoint) -> Bool {
-        let menus: [NotesRetainedMenu] = [formatting, mediaSourceChooser, shelfPicker].compactMap { $0 }
-        guard !menus.isEmpty, !menus.contains(where: { $0.hitTest(hostPoint) != nil }) else { return false }
+        guard let formatting, formatting.hitTest(hostPoint) == nil else { return false }
         closeFormatting()
-        dismiss(mediaSourceChooser); mediaSourceChooser = nil
-        dismiss(shelfPicker); shelfPicker = nil
         return true
     }
 
     init(canvas: NotesCanvas, host: NSView) {
         self.canvas = canvas; self.host = host
         super.init()
-        canvas.onEdit = { [weak self] in self?.beginEditing($0) }
-        canvas.onChooseImage = { [weak self] in self?.chooseMediaSource(at: $0) }
-        canvas.onFormat = { [weak self] in self?.showFormatting(noteID: $0, kind: $1) }
-        canvas.onChange = { [weak self] in self?.refreshActions() }
+        let workspace = canvas.workspace
+        workspace.onEdit = { [weak self] in self?.beginEditing($0) }
+        workspace.onFormat = { [weak self] in self?.showFormatting(noteID: $0, kind: $1) }
+        workspace.onChange = { [weak self] in self?.refreshActions() }
+        // Media closes the desktop editor and its menus first, as any centre press does.
+        let presentSources = workspace.onChooseImage
+        workspace.onChooseImage = { [weak self] point in self?.finishEditing(); presentSources?(point) }
+        canvas.onChooseFiles = { [weak self] in self?.chooseImages(at: $0) }
+        canvas.onChooseShelf = { [weak self] in self?.onChooseShelfMedia?($0) }
     }
     deinit {
         pendingImport?.cancel()
@@ -82,12 +87,11 @@ final class HUDNotesInteraction: NSObject, NSTextViewDelegate {
         // animation governs the entire workspace and owns its teardown.
         active = false
         finishEditing()
-        closeFormatting(); dismiss(mediaSourceChooser); mediaSourceChooser = nil
-        dismiss(shelfPicker); shelfPicker = nil
+        closeFormatting()
         retiringMenuArtwork?.removeAllAnimations(); retiringMenuArtwork?.removeFromSuperlayer(); retiringMenuArtwork = nil
         importGeneration += 1
         pendingImport?.cancel(); pendingImport = nil
-        canvas.cancelInteraction()
+        workspace.cancelInteraction()
         dragging = false; externalDrag = false; active = false
         dialogGeneration += 1
         let panel = chooser
@@ -96,69 +100,63 @@ final class HUDNotesInteraction: NSObject, NSTextViewDelegate {
         buttons.values.forEach { $0.isHidden = true }; mediaSliders.values.forEach { $0.isHidden = true }
     }
 
-    @discardableResult func mouseDown(at point: CGPoint, clickCount: Int) -> Bool {
-        guard active else { return false }
-        finishEditing()
-        guard canvas.mouseDown(at: point, clickCount: clickCount) else { return false }
-        onLock?()
-        dragging = canvas.isDragging
-        if editor == nil { host?.window?.makeFirstResponder(host) }
-        return true
-    }
-
     @discardableResult func mouseDownInWorkspace(at point: CGPoint, clickCount: Int) -> Bool {
-        guard active, canvas.containsWorkspacePoint(point) else { return false }
-        if let action = canvas.formatAction(at: point) { onLock?(); canvas.perform(actionID: action); return true }
+        guard active, workspace.containsWorkspacePoint(point) else { return false }
+        if let action = workspace.formatAction(at: point) { onLock?(); workspace.perform(actionID: action); return true }
         finishEditing(); onLock?()
-        guard canvas.mouseDownInWorkspace(at: point, clickCount: clickCount) else { return false }
-        dragging = canvas.isDragging
+        guard workspace.mouseDownInWorkspace(at: point, clickCount: clickCount) else { return false }
+        dragging = workspace.isDragging
         if editor == nil { host?.window?.makeFirstResponder(host) }
         return true
     }
 
-    func mouseDraggedInWorkspace(to point: CGPoint) { mouseDragged(to: point) }
+    /// The host sends every drag here while `NotesCanvas.isDragging`, which
+    /// includes a drag on a centre control (a long menu's scroll bar): that
+    /// one goes back to the canvas at the event's content-box point.
+    func mouseDraggedInWorkspace(to point: CGPoint) {
+        guard !dragging, canvas.isActive, let host, let event = NSApp.currentEvent,
+              let box = canvas.context.unproject?(host.convert(event.locationInWindow, from: nil)) else { mouseDragged(to: point); return }
+        canvas.pointerDragged(to: box)
+    }
 
     func layoutAccessibility() { refreshActions() }
 
-    private func projectRect(_ rect: CGRect, space: NotesCoordinateSpace) -> CGRect {
-        if space == .workspace { return workspaceProject?(rect) ?? rect }
-        return project?(rect) ?? rect
-    }
+    private func projectRect(_ rect: CGRect) -> CGRect { workspaceProject?(rect) ?? rect }
 
     func mouseDragged(to point: CGPoint) {
         guard active, dragging else { return }
-        canvas.mouseDragged(to: point)
+        workspace.mouseDragged(to: point)
     }
 
     func mouseUp() {
         guard dragging else { return }
-        canvas.mouseUp(); dragging = false
+        workspace.mouseUp(); dragging = false
         refreshActions()
     }
 
-    func setVisible(_ visible: Bool) { canvas.setVisible(visible) }
-    func mouseMoved(at point: CGPoint?) { canvas.mouseMoved(at: active ? point : nil) }
+    func setVisible(_ visible: Bool) { workspace.setVisible(visible) }
+    func mouseMoved(at point: CGPoint?) { workspace.mouseMoved(at: active ? point : nil) }
     @discardableResult func rightMouseDown(at point: CGPoint) -> Bool {
         guard active else { return false }
-        return canvas.rightMouseDown(at: point)
+        return workspace.rightMouseDown(at: point)
     }
 
     /// Native editor wheel events are handled by its NSScrollView. A bubbled
     /// event over that same card must not save/destroy it or move its backdrop.
     @discardableResult func scroll(at point: CGPoint, delta: CGFloat) -> Bool {
         guard active else { return false }
-        if let request, canvas.contains(noteID: request.noteID, point: point) { return true }
-        return canvas.scroll(at: point, delta: delta)
+        if let request, workspace.contains(noteID: request.noteID, point: point) { return true }
+        return workspace.scroll(at: point, delta: delta)
     }
 
     func keyDown(_ event: NSEvent) -> Bool {
         guard active else { return false }
         let modifiers = event.modifierFlags.intersection([.command, .control, .option, .shift])
         if modifiers.isEmpty && (event.keyCode == 51 || event.keyCode == 117) {
-            guard canvas.hasSelection else { return false }
-            canvas.deleteSelection(); return true
+            guard workspace.hasSelection else { return false }
+            workspace.deleteSelection(); return true
         }
-        if canvas.notesSelected && modifiers == [.command] && event.charactersIgnoringModifiers?.lowercased() == "v" {
+        if workspace.notesSelected && modifiers == [.command] && event.charactersIgnoringModifiers?.lowercased() == "v" {
             return importPasteboard(.general, at: CGPoint(x: 110, y: 75))
         }
         return false
@@ -169,7 +167,7 @@ final class HUDNotesInteraction: NSObject, NSTextViewDelegate {
         finishEditing()
         onLock?()
         request = next
-        canvas.setEditing(next)
+        workspace.setEditing(next)
         let rect = next.rect
         let scale: CGFloat = 1
         editorScale = scale
@@ -181,10 +179,12 @@ final class HUDNotesInteraction: NSObject, NSTextViewDelegate {
         text.allowsUndo = true
         text.isAutomaticQuoteSubstitutionEnabled = false
         text.isAutomaticDashSubstitutionEnabled = false
-        let initialFont = NSFont.systemFont(ofSize: max(1, next.fontSize * scale))
+        let initialFont = HUDFontResolver.nsFont(size: max(1, next.fontSize * scale))
         text.font = initialFont
         text.textColor = isDark?() == true ? .white : .black
-        text.insertionPointColor = text.textColor ?? .white
+        // The redesign's caret and selection: the theme colour.
+        text.insertionPointColor = NSColor(cgColor: isDark?() == true ? HUDColor.yellow : HUDColor.nearBlack) ?? .white
+        text.selectedTextAttributes = [.backgroundColor: NSColor(cgColor: HUDColor.yellow)?.withAlphaComponent(0.35) ?? .selectedTextBackgroundColor]
         text.drawsBackground = false
         text.textContainerInset = .zero
         text.textContainer?.lineFragmentPadding = 0
@@ -204,8 +204,8 @@ final class HUDNotesInteraction: NSObject, NSTextViewDelegate {
         text.typingAttributes = [.font: initialFont, .paragraphStyle: paragraph, .foregroundColor: isDark?() == true ? NSColor.white : NSColor.black]
         text.string = next.text
         if let rich = next.richText {
-            text.textStorage?.setAttributedString(rich.attributed(next.text, scale: scale,
-                defaultColor: isDark?() == true ? .white : .black))
+            text.textStorage?.setAttributedString(HUDStandardRichText.displayed(rich.attributed(next.text, scale: scale,
+                defaultColor: isDark?() == true ? .white : .black)))
         }
         if next.richText == nil, (text.textStorage?.length ?? 0) > 0 {
             text.textStorage?.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: (text.string as NSString).length))
@@ -215,13 +215,16 @@ final class HUDNotesInteraction: NSObject, NSTextViewDelegate {
         text.setAccessibilityHelp(L10n.text("Escape or Command-Return saves. Text notes support multiple lines.", "按 Esc 或 Command-Return 保存。文字便笺支持多行。"))
         text.onFinish = { [weak self] in self?.finishEditing() }
         text.onToggle = { [weak self] in self?.onToggle?() }
-        let projected = HUDProjectedTextEditor(textView: text, rect: rect, host: host,
-            parent: next.space == .workspace ? canvas.workspaceLayer : canvas.layer)
-        projected.project = { [weak self] in self?.projectRect($0, space: next.space) ?? $0 }
+        text.onEscape = { [weak self] in
+            guard let self, self.formatting != nil else { return false }
+            self.closeFormatting(); return true
+        }
+        text.onFormatShortcut = { [weak self] change in self?.applyFormat(change) }
+        let projected = HUDProjectedTextEditor(textView: text, rect: rect, host: host, parent: workspace.workspaceLayer)
+        projected.project = { [weak self] in self?.projectRect($0) ?? $0 }
         projected.unproject = { [weak self] point in
             guard let self else { return nil }
-            let inverse = next.space == .workspace ? self.workspaceUnproject : self.unproject
-            return inverse == nil ? point : inverse?(point)
+            return self.workspaceUnproject == nil ? point : self.workspaceUnproject?(point)
         }
         let scroll = projected.scrollView
         editor = text; editorScroll = scroll; projectedEditor = projected
@@ -242,7 +245,9 @@ final class HUDNotesInteraction: NSObject, NSTextViewDelegate {
         let offset = (editorScroll?.contentView.bounds.minY ?? 0) / scale
         var rich: NotesRichText?
         if request.itemID == nil, let storage = editor.textStorage {
-            let captured = NotesRichText.capture(storage, scale: scale, defaultColor: isDark?() == true ? .white : .black)
+            // Runs in the standard faces are stored as before: no family.
+            let captured = NotesRichText.capture(HUDStandardRichText.stored(storage), scale: scale,
+                                                 defaultColor: isDark?() == true ? .white : .black)
             let system = NSFont.systemFont(ofSize: 12).fontName
             let plain = captured.runs.allSatisfy { run in
                 let style = run.style
@@ -253,8 +258,8 @@ final class HUDNotesInteraction: NSObject, NSTextViewDelegate {
         }
         editor.delegate = nil
         projectedEditor?.dispose(); projectedEditor = nil; editorScroll = nil
-        canvas.finishEditing(request, text: text, scrollOffset: offset, richText: rich)
-        canvas.setEditing(nil)
+        workspace.finishEditing(request, text: text, scrollOffset: offset, richText: rich)
+        workspace.setEditing(nil)
         if host?.window?.firstResponder === editor { host?.window?.makeFirstResponder(host) }
         refreshActions()
     }
@@ -265,39 +270,66 @@ final class HUDNotesInteraction: NSObject, NSTextViewDelegate {
     private func layoutEditor() {
         guard let projectedEditor else { return }
         projectedEditor.setAppearance(
-            background: isDark?() == true ? NSColor(white: 0.12, alpha: 1) : NSColor(white: 0.96, alpha: 1),
-            border: HUDRuntimeAppearance.accent)
+            background: NSColor(cgColor: isDark?() == true ? HUDColor.field : HUDColor.plateHigh) ?? .black,
+            border: NSColor(cgColor: HUDColor.yellow) ?? .yellow, radius: 0)
         projectedEditor.refreshProjection()
     }
 
+    /// The press being handled lands on the edited note's format buttons
+    /// (AppKit gives the HUD view focus before the press opens the menu).
+    private func pressOpensFormatting() -> Bool {
+        guard let host, let request, let event = NSApp.currentEvent, event.window === host.window, event.type == .leftMouseDown,
+              let point = workspaceUnproject?(host.convert(event.locationInWindow, from: nil)) else { return false }
+        return workspace.contains(noteID: request.noteID, point: point) && workspace.formatAction(at: point) != nil
+    }
+
     func textDidChange(_ notification: Notification) { resizeEditorDocument() }
+    /// Focus moving elsewhere (another field, the centre) saves and closes the
+    /// editor, so no caret stays behind; its own formatting menu keeps it open,
+    /// and a press on its format buttons gives the focus back afterwards.
+    func textDidEndEditing(_ notification: Notification) {
+        guard let editor, notification.object as? NSTextView === editor else { return }
+        let formats = pressOpensFormatting()
+        DispatchQueue.main.async { [weak self, weak editor] in
+            guard let self, let editor, self.editor === editor, let window = editor.window else { return }
+            let responder = window.firstResponder as? NSView
+            if responder === editor { return }
+            if let responder, let formatting = self.formatting, responder === formatting || responder.isDescendant(of: formatting) { return }
+            if formats, responder === self.host { window.makeFirstResponder(editor); return }
+            self.finishEditing()
+        }
+    }
     func textViewDidChangeSelection(_ notification: Notification) {
         guard let editor else { return }
         let color = editor.typingAttributes[.foregroundColor] as? NSColor ?? (isDark?() == true ? .white : .black)
-        canvas.setEditingColor(color)
+        workspace.setEditingColor(color)
     }
 
     private func resizeEditorDocument() { projectedEditor?.resizeDocument() }
 
     private func showFormatting(noteID: UUID, kind: String) {
-        guard active, let host else { return }
+        guard active, let host, let kind = NotesDesktopPopup.Kind(rawValue: kind) else { return }
+        // A second press on the button that opened it closes it.
+        if formattingNoteID == noteID, formatting?.kind == kind { closeFormatting(); return }
         closeFormatting()
+        let drawing = workspace.noteKind(for: noteID) == .drawing, ink: NSColor = isDark?() == true ? .white : .black
         var style = NotesTextStyle()
-        if canvas.noteKind(for: noteID) == .drawing { style.color = NotesRGBA(canvas.currentDrawingColor) }
-        if let editor {
-            style = NotesFormattingEditor.style(in: editor, scale: editorScale,
-                defaultColor: isDark?() == true ? .white : .black)
-        }
-        let controls = NotesFormattingControls(kind: kind, dark: isDark?() == true, style: style)
-        formatting = controls; formattingNoteID = noteID
-        controls.onClose = { [weak self] in self?.closeFormatting() }
-        controls.onChange = { [weak self] change in
+        if drawing { style.color = NotesRGBA(workspace.currentDrawingColor) }
+        if let editor { style = NotesFormattingEditor.style(in: editor, scale: editorScale, defaultColor: ink) }
+        let popup = NotesDesktopPopup(kind: kind, style: style, defaultColor: ink,
+                                      colorTitle: drawing ? L10n.text("PEN COLOR", "画笔颜色") : L10n.text("TEXT COLOR", "文字颜色"),
+                                      env: workspace.env)
+        popup.takesFocus = editor == nil
+        formatting = popup; formattingNoteID = noteID
+        popup.onClose = { [weak self] in self?.closeFormatting() }
+        popup.onChange = { [weak self] change in
             guard let self else { return }
-            if self.canvas.noteKind(for: noteID) == .drawing {
-                if case .color(let color) = change { self.canvas.setDrawingColor(color) }
+            if drawing {
+                if case .color(let color) = change { self.workspace.setDrawingColor(color) }
             } else { self.applyFormat(change) }
         }
-        host.addSubview(controls); layoutFormatting(); reveal(controls)
+        host.addSubview(popup); layoutFormatting(); popup.playEntrance()
+        HUDControlHighlightLayer.requestRefresh(on: host)
     }
 
     private func closeFormatting() {
@@ -307,13 +339,13 @@ final class HUDNotesInteraction: NSObject, NSTextViewDelegate {
     }
 
     private func layoutFormatting() {
-        guard let controls = formatting, let id = formattingNoteID, let note = canvas.noteRect(for: id) else { return }
+        guard let controls = formatting, let id = formattingNoteID, let note = workspace.noteRect(for: id) else { return }
         let logical = controls.contentSize
-        let workspace = canvas.workspaceBounds
-        let source = CGRect(x: min(workspace.maxX - logical.width, max(workspace.minX, note.minX)),
-            y: min(workspace.maxY - logical.height, max(workspace.minY, note.maxY + 4)),
+        let bounds = workspace.workspaceBounds
+        let source = CGRect(x: min(bounds.maxX - logical.width, max(bounds.minX, note.minX)),
+            y: min(bounds.maxY - logical.height, max(bounds.minY, note.maxY + 4)),
             width: logical.width, height: logical.height)
-        positionMenu(controls, source: source, space: .workspace)
+        positionPopup(controls, source: source)
     }
 
     /// Apply only to the selection (or future typing), retaining all unrelated
@@ -343,26 +375,8 @@ final class HUDNotesInteraction: NSObject, NSTextViewDelegate {
             resizeEditorDocument()
         }
         NotesFormattingEditor.apply(change, to: editor, scale: editorScale)
-        if case .color(let color) = change { canvas.setEditingColor(color) }
+        if case .color(let color) = change { workspace.setEditingColor(color) }
         resizeEditorDocument()
-    }
-
-    private func chooseMediaSource(at point: CGPoint) {
-        guard active, let host else { return }
-        finishEditing(); closeFormatting(); dismiss(mediaSourceChooser)
-        dismiss(shelfPicker); shelfPicker = nil
-        let chooser = NotesMediaSourceChooser(dark: isDark?() == true)
-        mediaSourceChooser = chooser; mediaSourcePoint = point
-        chooser.onChoose = { [weak self] shelf in
-            guard let self else { return }
-            self.dismiss(self.mediaSourceChooser); self.mediaSourceChooser = nil
-            if shelf { self.onChooseShelfMedia?(point) }
-            else { self.chooseImages(at: point) }
-        }
-        chooser.onCancel = { [weak self] in self?.dismiss(self?.mediaSourceChooser); self?.mediaSourceChooser = nil }
-        host.addSubview(chooser)
-        layoutMediaMenus()
-        reveal(chooser)
     }
 
     func importMedia(urls: [URL], at point: CGPoint) {
@@ -390,107 +404,60 @@ final class HUDNotesInteraction: NSObject, NSTextViewDelegate {
                 switch result {
                 case .success(let references):
                     for (index, reference) in references.enumerated() {
-                        _ = self.canvas.importMedia(reference: reference,
+                        _ = self.workspace.importMedia(reference: reference,
                             at: CGPoint(x: point.x + CGFloat(index % 4) * 12, y: point.y + CGFloat(index % 4) * 12))
                     }
-                case .failure(let error): self.canvas.reportImportError(error)
+                case .failure(let error): self.workspace.reportImportError(error)
                 }
             }
         }
     }
 
+    /// The host lists the File Shelf for the Media button's "Choose from Shelf".
     func presentShelfMedia(choices: [NotesShelfMediaChoice], at point: CGPoint, onSelect: @escaping (UUID) -> Void) {
-        guard active, let host else { return }
-        finishEditing(); closeFormatting(); dismiss(shelfPicker)
-        dismiss(mediaSourceChooser); mediaSourceChooser = nil
-        let picker = NotesShelfMediaPicker(choices: choices, dark: isDark?() == true)
-        shelfPicker = picker
-        picker.onCancel = { [weak self] in self?.dismiss(self?.shelfPicker); self?.shelfPicker = nil }
-        picker.onSelect = { [weak self] id in
-            guard let self, self.active else { return }
-            self.dismiss(self.shelfPicker); self.shelfPicker = nil
-            onSelect(id)
-        }
-        host.addSubview(picker)
-        layoutMediaMenus()
-        reveal(picker)
+        guard active else { return }
+        finishEditing()
+        canvas.presentShelfMedia(choices: choices, onSelect: onSelect)
     }
 
-    private func layoutMediaMenus() {
-        if let source = mediaSourceChooser {
-            let size = source.contentSize
-            let rect = CGRect(x: 96, y: 212, width: size.width, height: size.height)
-            positionMenu(source, source: moduleToWorkspace?(rect) ?? rect, space: .workspace)
+    /// The pop-over's artwork lies on the notes plane at `source` (workspace
+    /// coordinates); its input surface covers the same rect projected.
+    private func positionPopup(_ popup: NotesDesktopPopup, source: CGRect) {
+        popup.frame = projectRect(source); popup.bounds = CGRect(origin: .zero, size: source.size)
+        popup.hostToLocal = { [weak self] point in
+            guard let self else { return nil }
+            guard let inverse = self.workspaceUnproject else { return CGPoint(x: point.x - source.minX, y: point.y - source.minY) }
+            return inverse(point).map { CGPoint(x: $0.x - source.minX, y: $0.y - source.minY) }
         }
-        if let picker = shelfPicker {
-            let size = picker.contentSize
-            let rect = CGRect(x: 30, y: 28, width: size.width, height: size.height)
-            positionMenu(picker, source: moduleToWorkspace?(rect) ?? rect, space: .workspace)
+        popup.projectLocal = { [weak self] rect in self?.projectRect(rect.offsetBy(dx: source.minX, dy: source.minY)) ?? rect }
+        let parent = workspace.workspaceLayer, origin = workspace.workspaceBounds.origin
+        HUDMotion.perform {
+            if popup.chrome.superlayer !== parent { parent.addSublayer(popup.chrome) }
+            popup.chrome.position = CGPoint(x: source.minX - origin.x, y: source.minY - origin.y)
         }
+        popup.layoutAccessibility()
     }
 
-    private func positionMenu(_ menu: NotesRetainedMenu, source: CGRect, space: NotesCoordinateSpace) {
-        let projected = projectRect(source, space: space)
-        let size = menu.contentSize
-        let sx = source.width / max(1, size.width), sy = source.height / max(1, size.height)
-        menu.frame = projected; menu.bounds = CGRect(origin: .zero, size: size)
-        menu.hostToLocal = { [weak self, weak menu] point in
-            guard let self, let menu else { return nil }
-            let inverse = space == .workspace ? self.workspaceUnproject : self.unproject
-            if let inverse {
-                guard let logical = inverse(point) else { return nil }
-                return CGPoint(x: (logical.x - source.minX) / sx, y: (logical.y - source.minY) / sy)
-            }
-            return CGPoint(x: (point.x - menu.frame.minX) * size.width / max(1, menu.frame.width),
-                           y: (point.y - menu.frame.minY) * size.height / max(1, menu.frame.height))
-        }
-        menu.projectLocal = { [weak self] rect in
-            self?.projectRect(rect.applying(CGAffineTransform(scaleX: sx, y: sy))
-                .offsetBy(dx: source.minX, dy: source.minY), space: space) ?? rect
-        }
-        let parent = space == .workspace ? canvas.workspaceLayer : canvas.layer
-        CATransaction.begin(); CATransaction.setDisableActions(true)
-        if menu.artwork.superlayer !== parent { parent.addSublayer(menu.artwork) }
-        menu.artwork.position = source.origin; menu.artwork.bounds = CGRect(origin: .zero, size: size)
-        menu.artwork.setAffineTransform(CGAffineTransform(scaleX: sx, y: sy))
-        CATransaction.commit()
-        menu.layoutAccessibility()
-    }
-
-    private func reveal(_ view: NSView) {
-        guard !HUDRuntimeAppearance.reduceMotion, let layer = (view as? NotesRetainedMenu)?.artwork ?? view.layer else { return }
-        let movement = CABasicAnimation(keyPath: "transform.translation.y")
-        movement.fromValue = 6; movement.toValue = 0
-        let fade = CABasicAnimation(keyPath: "opacity"); fade.fromValue = 0; fade.toValue = 1
-        let group = CAAnimationGroup(); group.animations = [movement, fade]; group.duration = 0.14
-        group.timingFunction = CAMediaTimingFunction(name: .easeOut)
-        layer.add(group, forKey: "notes.controls.reveal")
-    }
-
-    private func dismiss(_ menu: NotesRetainedMenu?) {
-        guard let menu else { return }
+    /// Input stops at once; the artwork finishes a short fade on the plane.
+    private func dismiss(_ popup: NotesDesktopPopup?) {
+        guard let popup else { return }
+        popup.cancelInteraction()
         retiringMenuArtwork?.removeAllAnimations(); retiringMenuArtwork?.removeFromSuperlayer(); retiringMenuArtwork = nil
-        guard active, !HUDRuntimeAppearance.reduceMotion, menu.artwork.superlayer != nil else {
-            menu.artwork.removeAllAnimations(); menu.removeFromSuperview(); return
-        }
-        let layer = menu.artwork, opacity = layer.presentation()?.opacity ?? layer.opacity
-        menu.detachInputKeepingArtwork()
-        layer.removeAllAnimations(); retiringMenuArtwork = layer
-        CATransaction.begin(); CATransaction.setDisableActions(true)
+        popup.removeFromSuperview()
+        let layer = popup.chrome
+        guard active, !workspace.env.reducesMotion, layer.superlayer != nil else { layer.removeAllAnimations(); layer.removeFromSuperlayer(); return }
+        retiringMenuArtwork = layer
+        CATransaction.begin()
         CATransaction.setCompletionBlock { [weak self, weak layer] in
             layer?.removeFromSuperlayer()
             if self?.retiringMenuArtwork === layer { self?.retiringMenuArtwork = nil }
         }
-        layer.opacity = 0
-        let fade = CABasicAnimation(keyPath: "opacity"); fade.fromValue = opacity; fade.toValue = 0
-        let movement = CABasicAnimation(keyPath: "transform.translation.y"); movement.fromValue = 0; movement.toValue = 4
-        let group = CAAnimationGroup(); group.animations = [fade, movement]; group.duration = 0.12
-        group.timingFunction = CAMediaTimingFunction(name: .easeIn)
-        layer.add(group, forKey: "notes.controls.dismiss")
+        HUDMotion.animate(layer, "opacity", to: Float(0), duration: 0.14, timing: HUDEasing.ease, env: workspace.env, key: "notes.controls.dismiss")
         CATransaction.commit()
     }
 
-    private func chooseImages(at point: CGPoint) {
+    /// Media → Choose in Finder: images and videos become desktop notes at `point`.
+    func chooseImages(at point: CGPoint) {
         guard active, chooser == nil, let window = host?.window else { return }
         finishEditing(); onLock?()
         let panel = NSOpenPanel()
@@ -525,7 +492,7 @@ final class HUDNotesInteraction: NSObject, NSTextViewDelegate {
         let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true, .urlReadingContentsConformToTypes: ["public.image", "public.movie"]]) as? [URL] ?? []
         if !urls.isEmpty { importMedia(urls: urls, at: point); return true }
         for type in [NSPasteboard.PasteboardType.png, .tiff] {
-            if let data = pasteboard.data(forType: type) { return canvas.importImage(data: data, at: point) }
+            if let data = pasteboard.data(forType: type) { return workspace.importImage(data: data, at: point) }
         }
         return false
     }
@@ -541,8 +508,7 @@ final class HUDNotesInteraction: NSObject, NSTextViewDelegate {
         defer { HUDControlHighlightLayer.requestRefresh(on: host) }
         layoutEditor()
         layoutFormatting()
-        layoutMediaMenus()
-        let sliders = canvas.mediaSeekActions
+        let sliders = workspace.mediaSeekActions
         let wantedSliders = Set(sliders.map(\.id))
         for id in Array(mediaSliders.keys) where !wantedSliders.contains(id) { mediaSliders.removeValue(forKey: id)?.removeFromSuperview() }
         for action in sliders {
@@ -551,15 +517,16 @@ final class HUDNotesInteraction: NSObject, NSTextViewDelegate {
             if let existing = mediaSliders[action.id] { slider = existing }
             else {
                 slider = HUDNotesSeekSlider(frame: .zero)
-                slider.readValue = { [weak canvas] in canvas?.mediaPosition(for: id) ?? 0 }
-                slider.maximum = { [weak canvas] in canvas?.mediaDuration(for: id) ?? 0 }
-                slider.onChange = { [weak canvas] in canvas?.seekMedia(id: id, to: $0) }
+                let workspace = self.workspace
+                slider.readValue = { [weak workspace] in workspace?.mediaPosition(for: id) ?? 0 }
+                slider.maximum = { [weak workspace] in workspace?.mediaDuration(for: id) ?? 0 }
+                slider.onChange = { [weak workspace] in workspace?.seekMedia(id: id, to: $0) }
                 host.addSubview(slider); mediaSliders[action.id] = slider
             }
             slider.isHidden = false; slider.setAccessibilityLabel(action.label)
-            slider.frame = projectRect(action.rect, space: .workspace)
+            slider.frame = projectRect(action.rect)
         }
-        let actions = canvas.accessibleActions
+        let actions = workspace.accessibleActions
         let wanted = Set(actions.map(\.id))
         for id in Array(buttons.keys) where !wanted.contains(id) {
             buttons.removeValue(forKey: id)?.removeFromSuperview()
@@ -574,15 +541,15 @@ final class HUDNotesInteraction: NSObject, NSTextViewDelegate {
                 button.title = ""; button.isBordered = false
                 button.projectedFrame = { [weak self, weak host, weak button] in
                     guard let self, let host, let button, let window = host.window else { return .zero }
-                    return window.convertToScreen(host.convert(self.projectRect(button.sourceRect, space: button.sourceSpace), to: nil))
+                    return window.convertToScreen(host.convert(self.projectRect(button.sourceRect), to: nil))
                 }
                 host.addSubview(button)
                 buttons[action.id] = button
             }
             button.isHidden = false
-            button.sourceRect = action.rect; button.sourceSpace = action.space
+            button.sourceRect = action.rect
             if button.accessibilityLabel() != action.label { button.setAccessibilityLabel(action.label) }
-            let frame = projectRect(action.rect, space: action.space)
+            let frame = projectRect(action.rect)
             if button.frame != frame { button.frame = frame }
         }
     }
@@ -591,7 +558,7 @@ final class HUDNotesInteraction: NSObject, NSTextViewDelegate {
         guard active else { return }
         if !sender.actionID.contains(":format") { finishEditing() }
         onLock?()
-        canvas.perform(actionID: sender.actionID)
+        workspace.perform(actionID: sender.actionID)
     }
 }
 
@@ -629,7 +596,6 @@ private final class HUDNotesActionButton: NSButton {
     override func draw(_ dirtyRect: NSRect) {}
     var actionID = ""
     var sourceRect = CGRect.zero
-    var sourceSpace: NotesCoordinateSpace = .workspace
     var projectedFrame: (() -> CGRect)?
     // Mouse input is handled against the projected canvas, including dragging.
     // These native actions expose the same controls to keyboard/VoiceOver.
@@ -641,15 +607,25 @@ private final class HUDNoteTextView: HUDProjectedTextView {
     var multiline = true
     var onFinish: (() -> Void)?
     var onToggle: (() -> Void)?
+    /// Escape closes an open formatting menu first (true when it did).
+    var onEscape: (() -> Bool)?
+    var onFormatShortcut: ((NotesFormatChange) -> Void)?
     override func keyDown(with event: NSEvent) {
         let flags = event.modifierFlags.intersection([.command, .option, .control, .shift])
         // Return/Escape belongs to the IME while it is composing Chinese text.
         if !hasMarkedText() {
+            if event.keyCode == 53, onEscape?() == true { return }
             if event.keyCode == 53 || ((event.keyCode == 36 || event.keyCode == 76) && (!multiline || flags == [.command])) {
                 onFinish?(); return
             }
             if SummonShortcut.active.matches(event: event) { onToggle?(); return }
         }
         super.keyDown(with: event)
+    }
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if window?.firstResponder === self, isRichText, !hasMarkedText(), let onFormatShortcut, let change = NotesFormatChange(shortcut: event) {
+            onFormatShortcut(change); return true
+        }
+        return super.performKeyEquivalent(with: event)
     }
 }

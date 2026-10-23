@@ -15,6 +15,7 @@ enum MediaAssemblyFilter: String, Codable, CaseIterable {
     case special4 = "sp_filter_4"
     case special5 = "sp_filter_5"
     case special6 = "sp_filter_6"
+    case special7 = "sp_filter_7"
     case filter1 = "filter_1"
     case filter2 = "filter_2"
     case filter3 = "filter_3"
@@ -32,6 +33,7 @@ enum MediaAssemblyFilter: String, Codable, CaseIterable {
         case .special4: return L10n.text("Film", "胶片")
         case .special5: return L10n.text("Hope", "希望色彩")
         case .special6: return L10n.text("Blood Memory", "血忆")
+        case .special7: return L10n.text("Wuling Impression", "武陵印象")
         case .filter1: return L10n.text("Bright", "明亮")
         case .filter2: return L10n.text("Cool", "冷调")
         case .filter3: return L10n.text("Fresh", "清新")
@@ -50,6 +52,7 @@ enum MediaAssemblyStickerKind: String, Codable, CaseIterable {
     case sticker4 = "sticker_bp_4"
     case sticker5 = "sticker_bp_5"
     case sticker6 = "sticker_bp_6"
+    case sticker29 = "sticker_bp_7"
     case sticker7 = "sticker_1"
     case sticker8 = "sticker_2"
     case sticker9 = "sticker_3"
@@ -66,8 +69,13 @@ enum MediaAssemblyStickerKind: String, Codable, CaseIterable {
     case sticker20 = "sticker_activity_3"
     case sticker21 = "sticker_activity_4"
     case sticker22 = "sticker_channel_v1d3d6_1"
+    case sticker30 = "sticker_activity_5"
+    case sticker31 = "sticker_channel_v1d6_1"
     case sticker27 = "sticker_birthday_2026"
     case sticker28 = "sticker_giftpack_1"
+    case sticker32 = "sticker_giftpack_3"
+    case sticker33 = "sticker_giftpack_4"
+    case sticker34 = "sticker_giftpack_5"
     var title: String {
         switch self {
         case .sticker1: return L10n.text("Memory", "记忆")
@@ -76,6 +84,7 @@ enum MediaAssemblyStickerKind: String, Codable, CaseIterable {
         case .sticker4: return L10n.text("Sword Anchor", "剑桩")
         case .sticker5: return L10n.text("Sea Sentinel", "永镇蚀海")
         case .sticker6: return L10n.text("Dreamcatcher", "捕梦")
+        case .sticker29: return L10n.text("Line Aggelos", "线形墨魉")
         case .sticker7: return L10n.text("Endfield", "终末地")
         case .sticker8: return L10n.text("Union", "联盟工团")
         case .sticker9: return L10n.text("High Voltage", "高压")
@@ -92,14 +101,22 @@ enum MediaAssemblyStickerKind: String, Codable, CaseIterable {
         case .sticker20: return L10n.text("Contingency Contract", "危机合约")
         case .sticker21: return L10n.text("Dawn", "启明")
         case .sticker22: return L10n.text("Safety Helmet", "工业安全帽")
+        case .sticker30: return L10n.text("Hazard Cleared", "除危记号")
+        case .sticker31: return L10n.text("Great Wall", "长城")
         case .sticker27: return L10n.text("First Birthday", "第一年的生日")
         case .sticker28: return L10n.text("Suppressor", "抑制器")
+        case .sticker32: return L10n.text("Look Around", "左右看看")
+        case .sticker33: return L10n.text("Serious Stare", "严肃凝视")
+        case .sticker34: return L10n.text("Uh-Oh…", "哦吼……")
         }
     }
     var pixelSize: CGSize {
-        // Source PNG canvas sizes, including transparent margins.
-        let edge = self == .sticker21 ? 324 : 320
-        return CGSize(width: edge, height: edge)
+        // Source PNG canvas sizes, including transparent margins (the 1.6 additions ship at 640).
+        switch self {
+        case .sticker21: return CGSize(width: 324, height: 324)
+        case .sticker29, .sticker30, .sticker31, .sticker32, .sticker33, .sticker34: return CGSize(width: 640, height: 640)
+        default: return CGSize(width: 320, height: 320)
+        }
     }
 }
 struct MediaAssemblySticker: Codable, Equatable, Identifiable {

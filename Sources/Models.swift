@@ -87,6 +87,8 @@ struct AppConfiguration: Equatable {
     var dailyBootLog = true
     /// Low disk, memory pressure and overheating warnings (spec §3.29).
     var facilityAlerts = true
+    /// Order and visibility of the right-hand list (System > Modules).
+    var moduleLayout = HUDModuleLayout()
 
     static let defaults = AppConfiguration(displayMode: .whenChargingStarts,
                                            displayDuration: 3, accentHex: "FAD41F")
@@ -128,6 +130,34 @@ struct AppConfiguration: Equatable {
         return NSColor(srgbRed: CGFloat((value >> 16) & 255) / 255,
                        green: CGFloat((value >> 8) & 255) / 255,
                        blue: CGFloat(value & 255) / 255, alpha: 1)
+    }
+}
+
+/// Choices added after v1.2.0 that its decoders do not know ("Don't display",
+/// the GPU reading). v1.2.0 shares these defaults, so the original key keeps the
+/// value v1.2.0 falls back to anyway and the new choice lives under its own key.
+/// It applies only while the original key still holds that fallback, so a
+/// different choice made in v1.2.0 wins.
+enum ReleaseFallback {
+    static let displayModeKey = "displayModeExtension", alertMetricKey = "alertMetricExtension"
+    static func displayMode(_ value: DisplayMode) -> DisplayMode { value == .never ? .whenChargingStarts : value }
+    static func alertMetric(_ value: HUDChargeMetric) -> HUDChargeMetric { value == .gpu ? .battery : value }
+
+    static func save(_ value: AppConfiguration, to defaults: UserDefaults) {
+        let mode = displayMode(value.displayMode), metric = alertMetric(value.alertMetric)
+        if mode == value.displayMode { defaults.removeObject(forKey: displayModeKey) }
+        else { defaults.set(value.displayMode.rawValue, forKey: displayModeKey) }
+        if metric == value.alertMetric { defaults.removeObject(forKey: alertMetricKey) }
+        else { defaults.set(value.alertMetric.rawValue, forKey: alertMetricKey) }
+    }
+
+    static func restore(_ value: AppConfiguration, from defaults: UserDefaults) -> AppConfiguration {
+        var result = value
+        if let mode = defaults.string(forKey: displayModeKey).flatMap(DisplayMode.init(rawValue:)),
+           displayMode(mode) == result.displayMode { result.displayMode = mode }
+        if let metric = defaults.string(forKey: alertMetricKey).flatMap(HUDChargeMetric.init(rawValue:)),
+           alertMetric(metric) == result.alertMetric { result.alertMetric = metric }
+        return result
     }
 }
 
@@ -201,6 +231,8 @@ final class ConfigurationStore {
             dailyBootLog: Self.bool(defaults, "dailyBootLog", fallback: true),
             facilityAlerts: Self.bool(defaults, "facilityAlerts", fallback: true)
         ).normalized
+        configuration = ReleaseFallback.restore(configuration, from: defaults)
+        configuration.moduleLayout = HUDModuleLayout(defaults: defaults)
         L10n.language = configuration.language
     }
 
@@ -209,7 +241,7 @@ final class ConfigurationStore {
         guard next != configuration else { return }
         configuration = next
         L10n.language = next.language
-        defaults.set(next.displayMode.rawValue, forKey: "displayMode")
+        defaults.set(ReleaseFallback.displayMode(next.displayMode).rawValue, forKey: "displayMode")
         defaults.set(next.displayDuration, forKey: "displayDuration")
         defaults.set(next.accentHex, forKey: "accentHex")
         defaults.set(next.theme.rawValue, forKey: "theme")
@@ -245,12 +277,14 @@ final class ConfigurationStore {
         defaults.set(next.clockStyle.rawValue, forKey: "clockStyle")
         defaults.set(next.centerLogo.rawValue, forKey: "centerLogo")
         defaults.set(next.centerLogoRevision, forKey: "centerLogoRevision")
-        defaults.set(next.alertMetric.rawValue, forKey: "alertMetric")
+        defaults.set(ReleaseFallback.alertMetric(next.alertMetric).rawValue, forKey: "alertMetric")
         defaults.set(try? JSONEncoder().encode(next.summonShortcut), forKey: "summonShortcut")
         defaults.set(next.summonHotkeyEnabled, forKey: "summonHotkeyEnabled")
         defaults.set(next.recordingMode, forKey: "recordingMode")
         defaults.set(next.dailyBootLog, forKey: "dailyBootLog")
         defaults.set(next.facilityAlerts, forKey: "facilityAlerts")
+        ReleaseFallback.save(next, to: defaults)
+        next.moduleLayout.save(to: defaults)
         onChange?(next)
         Array(observers.values).forEach { $0(next) }
     }

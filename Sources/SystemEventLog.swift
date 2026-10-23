@@ -97,7 +97,7 @@ private enum SystemEventSettingsMetadata {
         "clockStyle": ["digital": "Digital", "split": "Split", "dial": "Dial", "rail": "Rail", "stacked": "Stacked"],
         "centerLogo": ["endfield": "Endfield", "rhodesIsland": "Rhodes Island", "babel": "Babel", "rhineLab": "Rhine Lab",
                        "custom": "Custom", "customImported": "Custom artwork imported"],
-        "alertMetric": ["battery": "Battery", "ram": "RAM", "cpu": "CPU", "network": "Network", "disk": "Disk"],
+        "alertMetric": ["battery": "Battery", "ram": "RAM", "cpu": "CPU", "network": "Network", "disk": "Disk", "gpu": "GPU"],
     ]
     static let cropTargets = ["background": "Background", "thumbnail": "Thumbnail", "both": "Background and thumbnail"]
 }

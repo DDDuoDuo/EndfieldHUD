@@ -1,474 +1,620 @@
 import AppKit
 import QuartzCore
 
-/// Stable data-series colors keep paired metrics recognizable across themes.
-/// Navigation and controls continue to use the configured HUD accent.
-enum ActivityGraphPalette {
-    static let yellow = NSColor(srgbRed: 0.98, green: 0.83, blue: 0.12, alpha: 1)
-    static let blue = NSColor(srgbRed: 0.31, green: 0.73, blue: 0.96, alpha: 1)
-}
-
-final class ActivityMonitorCanvas: NSObject, HUDModuleContentFactory {
-    let layer = CALayer()
-    var onChange: (() -> Void)?
-    var accessibleActions: [TelemetryCanvasAction] {
-        var result = [TelemetryCanvasAction(id: "activity:overview", label: L10n.text("Overview", "概览"), rect: CGRect(x: 12, y: 25, width: 82, height: 23)),
-                      TelemetryCanvasAction(id: "activity:apps", label: L10n.text("Apps", "应用"), rect: CGRect(x: 100, y: 25, width: 82, height: 23))]
-        if isShowingApps {
-            for column in appColumns {
-                let direction = column.key == sortKey
-                    ? (sortDescending ? L10n.text(", descending", "，降序") : L10n.text(", ascending", "，升序")) : ""
-                result.append(TelemetryCanvasAction(id: "activity:sort:" + column.key.rawValue,
-                    label: L10n.text("Sort by ", "排序：") + column.title + direction,
-                    rect: column.frame.insetBy(dx: 0, dy: -5)))
-            }
-        }
-        return result
-    }
-    var animationCount: Int {
-        TelemetryArtwork.animationCount(layer) + (pageTransition?.animationCount ?? 0)
-            + (sortTransition?.animationCount ?? 0)
-    }
-    var accessibilityStatus: String {
-        if isShowingApps {
-            return apps.snapshot.items.map { item in
-                let ram = "RAM " + TelemetryArtwork.bytes(item.memoryBytes.map(Double.init))
-                let fields: [String] = [item.name, "CPU " + appCPU(item.cpuPercent), ram,
-                 "↑ " + TelemetryArtwork.rate(item.uploadBytesPerSecond), "↓ " + TelemetryArtwork.rate(item.downloadBytesPerSecond),
-                 L10n.text("Read ", "读取 ") + TelemetryArtwork.rate(item.diskReadBytesPerSecond),
-                 L10n.text("Write ", "写入 ") + TelemetryArtwork.rate(item.diskWriteBytesPerSecond)]
-                return fields.joined(separator: ", ")
-            }.joined(separator: "; ")
-        }
-        let value = controller.snapshot
-        let values = ["CPU " + TelemetryArtwork.percent(value.cpuPercent),
-            L10n.text("RAM ", "RAM ") + TelemetryArtwork.bytes(value.memoryUsedBytes.map { Double($0) }) + " / " + TelemetryArtwork.bytes(value.memoryTotalBytes.map { Double($0) }),
-            L10n.text("Upload ", "上传 ") + TelemetryArtwork.rate(value.uploadBytesPerSecond),
-            L10n.text("Download ", "下载 ") + TelemetryArtwork.rate(value.downloadBytesPerSecond),
-            L10n.text("Disk read ", "磁盘读取 ") + TelemetryArtwork.rate(value.diskReadBytesPerSecond),
-            L10n.text("Disk write ", "磁盘写入 ") + TelemetryArtwork.rate(value.diskWriteBytesPerSecond)]
-        return values.joined(separator: "; ")
-    }
-    private final class Row {
-        let layer: CALayer
-        let tick = CALayer()
-        let title: CATextLayer, subtitle: CATextLayer, primary: CATextLayer, secondary: CATextLayer, tertiary: CATextLayer
-        let graph: TelemetryGraph
-        init(index: Int, parent: CALayer, colors: [NSColor]) {
-            layer = TelemetryArtwork.plate(CGRect(x: 12, y: 60 + CGFloat(index) * 60, width: 376, height: 54), parent: parent, name: "activity.row.\(index)")
-            tick.frame = CGRect(x: 0, y: 12, width: 2, height: 30); tick.backgroundColor = colors[0].cgColor; layer.addSublayer(tick)
-            title = TelemetryArtwork.text("activity.title.\(index)", frame: CGRect(x: 9, y: 10, width: 70, height: 16), size: 11, parent: layer, weight: .semibold)
-            subtitle = TelemetryArtwork.text("activity.subtitle.\(index)", frame: CGRect(x: 9, y: 31, width: 70, height: 12), size: 8.5, parent: layer)
-            graph = TelemetryGraph(name: "activity.graph.\(index)", frame: CGRect(x: 85, y: 9, width: 165, height: 36), colors: colors)
-            layer.addSublayer(graph.layer)
-            primary = TelemetryArtwork.text("activity.value.\(index)", frame: CGRect(x: 262, y: 6, width: 104, height: 19), size: index < 2 ? 14 : 11.5, parent: layer, weight: .medium, alignment: .right)
-            secondary = TelemetryArtwork.text("activity.secondary.\(index)", frame: CGRect(x: 259, y: 27, width: 107, height: 14), size: 10, parent: layer, alignment: .right)
-            tertiary = TelemetryArtwork.text("activity.tertiary.\(index)", frame: CGRect(x: 257, y: 41, width: 109, height: 11), size: 8, parent: layer, alignment: .right)
-        }
-    }
+/// Activity Monitor (spec §3.25): Overview keeps the v1.2.0 row layout (name,
+/// live graph, value) in the new style with GPU first; Apps is a sortable
+/// table. SystemActivityMonitor keeps the session's history at all times;
+/// this canvas asks for 1 Hz samples (and app readings, on Apps) only while
+/// it is the active module, and updates every value in place.
+final class ActivityMonitorCanvas: HUDDesignCanvas {
+    /// The redesigned canvas has no telemetry-owned loops; the host's
+    /// diagnostics still ask (SystemHUDView.telemetryAnimationCount).
+    var animationCount: Int { 0 }
     private let controller: SystemActivityMonitor
     private let apps: AppActivityMonitor
+    private var observer: UUID?
     private var appObserver: UUID?
     private(set) var isShowingApps = false
-    private(set) var scrollOffset: CGFloat = 0
-    private var sortKey: AppActivitySortKey = .cpu
-    private var sortDescending = true
-    private let overviewLayer = CALayer()
-    private let appLayer = CALayer()
-    private var pageTransition: HUDSubsectionHandoff!
-    private var sortTransition: HUDSubsectionTransition!
-    private let appRows = CALayer()
-    private let appEmpty = CATextLayer()
-    private let appScrollBar = CALayer()
-    private var appRowPool: [AppRow] = []
-    private var controls: [(CALayer, CATextLayer)] = []
-    private var appHeaders: [CATextLayer] = []
-    private let appHeaderRule = CALayer()
-    private var iconCache: [String: NSImage] = [:]
-    private var pendingIcons: Set<String> = []
-    private let iconWorker = DispatchQueue(label: "EndfieldHUD.activity.icons", qos: .utility)
-    private let loadAppIcon: (URL) -> NSImage
-    private var appliedScale: CGFloat?
-    private(set) var appRowContentUpdateCount = 0
-    private(set) var appRenderCount = 0
-    static let appsViewport = CGRect(x: 12, y: 84, width: 376, height: 226)
-    private struct AppColumn {
-        let key: AppActivitySortKey
-        let title: String
-        let frame: CGRect
-    }
-    private var appColumns: [AppColumn] {
-        let values: [(AppActivitySortKey, String, CGFloat, CGFloat)] = [
-            (.name, L10n.text("App", "应用"), 12, 128), (.cpu, "CPU", 146, 45),
-            (.memory, L10n.text("RAM", "RAM"), 195, 52),
-            (.network, L10n.text("Network", "网络"), 251, 65), (.disk, L10n.text("Disk", "磁盘"), 317, 65)
-        ]
-        return values.map { AppColumn(key: $0.0, title: $0.1, frame: CGRect(x: $0.2, y: 61, width: $0.3, height: 15)) }
-    }
-    private final class AppRow {
-        let plate: CALayer
-        let icon = CALayer()
-        let name: CATextLayer, cpu: CATextLayer, memory: CATextLayer
-        let upload: CATextLayer, download: CATextLayer, read: CATextLayer, write: CATextLayer
-        var representedItem: AppActivityItem?
-        var language: AppLanguage?
-        var dark: Bool?
-        var accent: NSColor?
-        init(_ index: Int, parent: CALayer) {
-            plate = TelemetryArtwork.plate(.zero, parent: parent, name: "activity.app.\(index)")
-            icon.frame = CGRect(x: 7, y: 13, width: 18, height: 18); icon.contentsGravity = .resizeAspect; plate.addSublayer(icon)
-            name = TelemetryArtwork.text("activity.app.name.\(index)", frame: CGRect(x: 31, y: 12, width: 100, height: 28), size: 10, parent: plate, weight: .medium, wrapped: true)
-            cpu = TelemetryArtwork.text("activity.app.cpu.\(index)", frame: CGRect(x: 134, y: 14, width: 45, height: 18), size: 10, parent: plate, alignment: .right)
-            memory = TelemetryArtwork.text("activity.app.memory.\(index)", frame: CGRect(x: 183, y: 14, width: 52, height: 18), size: 10, parent: plate, alignment: .right)
-            upload = TelemetryArtwork.text("activity.app.upload.\(index)", frame: CGRect(x: 239, y: 7, width: 65, height: 15), size: 8.5, parent: plate, alignment: .right)
-            download = TelemetryArtwork.text("activity.app.download.\(index)", frame: CGRect(x: 239, y: 26, width: 65, height: 15), size: 8.5, parent: plate, alignment: .right)
-            read = TelemetryArtwork.text("activity.app.read.\(index)", frame: CGRect(x: 305, y: 7, width: 65, height: 15), size: 8.5, parent: plate, alignment: .right)
-            write = TelemetryArtwork.text("activity.app.write.\(index)", frame: CGRect(x: 305, y: 26, width: 65, height: 15), size: 8.5, parent: plate, alignment: .right)
-        }
-    }
-    private let reduceMotion: () -> Bool
-    private var observer: UUID?
-    private var active = false
-    private var hasVisibleSample = false
-    private var lastTimestamp: Date?
-    private var dark = true
-    private var scale: CGFloat = 2
-    private var rows: [Row] = []
-    private let heading: CATextLayer, subtitle: CATextLayer, footer: CATextLayer
+    private(set) var sortKey: AppActivitySortKey = .cpu
+    private(set) var sortDescending = true
+    private var rows: [ActivityRow] = []
+    private var table: AppTable?
+    /// App icons outlive the Apps page (kept across visits and sorts).
+    private let icons = ActivityAppIcons()
+    /// The tab being left: the next page's active tab opens from it (`tabOn`).
+    private var leavingTab: Int?
 
-    init(context: HUDDesignContext, controller: SystemActivityMonitor, apps: AppActivityMonitor = .fixture(),
-         reduceMotion: @escaping () -> Bool = { HUDRuntimeAppearance.reduceMotion },
-         loadAppIcon: @escaping (URL) -> NSImage = { url in
-             // NSWorkspace can share its cached image with another consumer.
-             // Configure only our own copy before handing it to the main queue.
-             let icon = NSWorkspace.shared.icon(forFile: url.path).copy() as! NSImage
-             icon.size = NSSize(width: 32, height: 32)
-             return icon
-         }) {
-        self.controller = controller; self.apps = apps; self.reduceMotion = reduceMotion
-        self.loadAppIcon = loadAppIcon
-        layer.name = "module.activityMonitor.canvas"; layer.frame = CGRect(x: 0, y: 0, width: 400, height: 334)
-        heading = TelemetryArtwork.text("activity.heading", frame: CGRect(x: 12, y: 0, width: 376, height: 20), size: 15, parent: layer, weight: .semibold)
-        subtitle = TelemetryArtwork.text("activity.caption", frame: CGRect(x: 12, y: 24, width: 376, height: 13), size: 9, parent: layer)
-        footer = TelemetryArtwork.text("activity.footer", frame: CGRect(x: 12, y: 296, width: 376, height: 33), size: 9, parent: layer, wrapped: true)
-        super.init()
-        overviewLayer.name = "activity.overview"; overviewLayer.frame = layer.bounds; layer.addSublayer(overviewLayer)
-        rows = [Row(index: 0, parent: overviewLayer, colors: [ActivityGraphPalette.yellow]), Row(index: 1, parent: overviewLayer, colors: [ActivityGraphPalette.blue]),
-                Row(index: 2, parent: overviewLayer, colors: [ActivityGraphPalette.yellow, ActivityGraphPalette.blue]), Row(index: 3, parent: overviewLayer, colors: [ActivityGraphPalette.yellow, ActivityGraphPalette.blue])]
-        buildAppRows()
-        let viewport = CGRect(x: 8, y: 54, width: 384, height: 258)
-        pageTransition = HUDSubsectionHandoff(first: overviewLayer, second: appLayer, viewport: viewport)
-        sortTransition = HUDSubsectionTransition(content: appRows, viewport: appRows.bounds)
-        render(animated: false)
+    init(context: HUDDesignContext, controller: SystemActivityMonitor, apps: AppActivityMonitor = .fixture()) {
+        self.controller = controller; self.apps = apps
+        super.init(module: .activityMonitor, context: context)
     }
+
     deinit {
         if let observer { controller.removeObserver(observer) }
-        if let appObserver { apps.removeObserver(appObserver) }; if active { controller.deactivate(); apps.deactivate() }
-        TelemetryArtwork.removeAnimations(layer)
+        if let appObserver { apps.removeObserver(appObserver) }
+        if isActive { controller.deactivate(); apps.deactivate() }
     }
-    func makeContent(for module: HUDModule, style: HUDModuleContentStyle) -> CALayer {
-        dark = style.dark; scale = style.contentsScale; render(animated: false); return layer
-    }
-    func activate() {
-        guard !active else { return }
-        active = true; hasVisibleSample = false
-        observer = controller.observe { [weak self] value in
-            guard let self, self.active else { return }
-            let animate = self.hasVisibleSample && self.lastTimestamp != value.timestamp && !self.reduceMotion()
-            self.lastTimestamp = value.timestamp; self.hasVisibleSample = true
-            if !self.isShowingApps { self.render(animated: animate); self.onChange?() }
+
+    // MARK: Lifecycle
+
+    override func didActivate() {
+        if observer == nil {
+            observer = controller.observe { [weak self] _ in
+                guard let self, !self.isShowingApps else { return }
+                self.updateOverview()
+            }
+        }
+        if appObserver == nil {
+            appObserver = apps.observe { [weak self] _ in
+                guard let self, self.isShowingApps else { return }
+                self.updateApps()
+            }
         }
         controller.activate()
-        appObserver = apps.observe { [weak self] _ in
-            guard let self, self.active, self.isShowingApps else { return }
-            self.renderApps(); self.onChange?()
-        }
-        if isShowingApps { apps.activate() }
-        // The selected monitor's immediate observer delivery already rendered
-        // the current snapshot before either sampler was activated.
+        if isShowingApps { apps.setSort(sortKey, descending: sortDescending); apps.activate() }
     }
-    func deactivate() {
-        active = false; hasVisibleSample = false
-        if let observer { controller.removeObserver(observer) }; observer = nil
-        if let appObserver { apps.removeObserver(appObserver) }; appObserver = nil
-        apps.deactivate(); controller.deactivate(); TelemetryArtwork.removeAnimations(layer)
-        pageTransition.settle(); sortTransition.settle()
+
+    override func didDeactivate() { stopReading() }
+    override func willLeave() { stopReading() }
+
+    private func stopReading() {
+        if let observer { controller.removeObserver(observer) }
+        if let appObserver { apps.removeObserver(appObserver) }
+        observer = nil; appObserver = nil
+        controller.deactivate(); apps.deactivate()
     }
-    func updateRenderScale(_ value: CGFloat) {
-        scale = value.isFinite ? min(8, max(1, value)) : 2
-        TelemetryArtwork.withoutActions { applyRenderScaleIfNeeded() }
-        if reduceMotion() {
-            TelemetryArtwork.removeAnimations(layer)
-            pageTransition.settle(); sortTransition.settle()
-        }
-    }
-    @discardableResult func mouseDown(at point: CGPoint) -> Bool {
-        guard point.x.isFinite, point.y.isFinite, layer.bounds.contains(point) else { return false }
-        if let action = accessibleActions.first(where: { $0.rect.contains(point) }) { perform(actionID: action.id) }
-        return true
-    }
+
+    // MARK: Actions
+
+    /// `activity:overview`, `activity:apps` and `activity:sort:<key>`.
     func perform(actionID: String) {
-        guard active, accessibleActions.contains(where: { $0.id == actionID }) else { return }
-        var changedSort = false
-        if actionID.hasPrefix("activity:sort:"), let key = AppActivitySortKey(rawValue: String(actionID.dropFirst("activity:sort:".count))) {
-            sortDescending = key == sortKey ? !sortDescending : key != .name
-            sortKey = key; scrollOffset = 0; apps.setSort(key, descending: sortDescending)
-            changedSort = true
-        } else if actionID == "activity:apps" || actionID == "activity:overview" {
+        if actionID == "activity:overview" || actionID == "activity:apps" {
             let next = actionID == "activity:apps"
             guard next != isShowingApps else { return }
-            isShowingApps = next
-            if next { apps.setSort(sortKey, descending: sortDescending); apps.activate() } else { apps.deactivate() }
-            render(animated: false)
-            sortTransition.settle()
-            pageTransition.select(next ? 1 : 0, direction: next ? 1 : -1, animated: !reduceMotion())
-            onChange?(); return
-        }
-        if changedSort {
-            // setSort publishes synchronously to our observer, which already
-            // updated the retained rows and accessibility once for this action.
-            // A user-requested reordering moves only the rows. Live samples
-            // continue updating directly without restarting an action effect.
-            pageTransition.settle()
-            sortTransition.reveal(direction: sortDescending ? 1 : -1, animated: !reduceMotion())
+            page.tabs?.select(next ? 1 : 0, notify: true)
+        } else if actionID.hasPrefix("activity:sort:"),
+                  let key = AppActivitySortKey(rawValue: String(actionID.dropFirst("activity:sort:".count))) {
+            sort(by: key)
         }
     }
-    func cancelDetail() -> Bool {
-        guard active, isShowingApps else { return false }; perform(actionID: "activity:overview"); return true
+
+    private func showApps(_ next: Bool, direction: CGFloat) {
+        guard next != isShowingApps else { return }
+        leavingTab = isShowingApps ? 1 : 0
+        isShowingApps = next
+        if next {
+            apps.setSort(sortKey, descending: sortDescending)
+            if isActive { apps.activate() }
+        } else { apps.deactivate() }
+        navigate(dx: direction)
     }
-    @discardableResult func scroll(at point: CGPoint, delta: CGFloat) -> Bool {
-        guard active, isShowingApps, Self.appsViewport.contains(point), delta.isFinite else { return false }
-        let next = min(max(0, CGFloat(apps.snapshot.items.count) * 49 - Self.appsViewport.height), max(0, scrollOffset + delta))
-        guard next != scrollOffset else { return true }
-        scrollOffset = next
-        renderAppRows()
-        // Only the clipped rows move. Header actions and the complete accessible
-        // status have not changed, so do not rebuild them for every scroll tick.
+
+    /// Spec §3.25: the active column flips; a new one starts descending,
+    /// except App (A–Z). The rows then re-stagger in from below.
+    private func sort(by key: AppActivitySortKey) {
+        guard isShowingApps, let table else { return }
+        sortDescending = key == sortKey ? !sortDescending : key != .name
+        sortKey = key
+        apps.setSort(key, descending: sortDescending)
+        updateApps()
+        HUDMotion.stagger(table.visibleRows.map(\.plate.layer), from: CGPoint(x: 0, y: 12), env: env)
+    }
+
+    override func handleScroll(at point: CGPoint, delta: CGPoint, event: NSEvent?) -> Bool {
+        guard isShowingApps, let table, table.area.layer.frame.contains(point) else { return false }
+        if table.area.scroll(by: delta.y) {
+            table.bind(sortKey: sortKey)
+            HUDControlHighlightLayer.requestRefresh(on: context.host)
+        }
         return true
     }
 
-    private func appCPU(_ value: Double?) -> String {
-        guard let value, value.isFinite, value >= 0 else { return "—" }
-        return String(format: "%.1f%%", value)
+    // MARK: Pages
+
+    override func buildPage(_ page: HUDDesignPage) {
+        rows = []; table = nil
+        let selected = isShowingApps ? 1 : 0
+        let tabs = HUDTabs(id: "activityTabs", titles: [(L10n.text("Overview", "概览"), nil), (L10n.text("Apps", "应用"), nil)],
+                           selectedIndex: leavingTab ?? selected, width: HUDMetric.box.width, env: env)
+        tabs.select(selected, notify: false)
+        leavingTab = nil
+        tabs.onSelect = { [weak self] index, direction in self?.showApps(index == 1, direction: direction) }
+        HUDMotion.perform { tabs.layer.frame.origin = CGPoint(x: 0, y: HUDMetric.headerHeight); page.layer.addSublayer(tabs.layer) }
+        page.add(tabs.controls); page.tabs = tabs; page.stagger(tabs.layer)
+        if isShowingApps { buildApps(page) } else { buildOverview(page) }
+        env.applyScale(to: page.layer)
     }
 
-    private func buildAppRows() {
-        appLayer.frame = layer.bounds; appLayer.name = "activity.apps"
-        layer.addSublayer(appLayer)
-        appRows.name = "activity.apps.rows"; appRows.frame = Self.appsViewport; appRows.masksToBounds = true; appLayer.addSublayer(appRows)
-        for (index, column) in appColumns.enumerated() {
-            _ = HUDControlHighlightLayer.add(to: appLayer, rect: column.frame.insetBy(dx: 0, dy: -5))
-            appHeaders.append(TelemetryArtwork.text("activity.apps.header.\(index)", frame: column.frame, size: 9, parent: appLayer,
-                                                    weight: .medium, alignment: index == 0 ? .left : .right))
-        }
-        appHeaderRule.name = "activity.apps.header.rule"; appHeaderRule.frame = CGRect(x: 12, y: 80, width: 376, height: 0.5)
-        appLayer.addSublayer(appHeaderRule)
-        for index in 0..<6 { appRowPool.append(AppRow(index, parent: appRows)) }
-        appEmpty.frame = CGRect(x: 20, y: 172, width: 360, height: 42); appEmpty.fontSize = 12
-        appEmpty.alignmentMode = .center; appEmpty.isWrapped = true; appLayer.addSublayer(appEmpty)
-        appScrollBar.name = "activity.apps.scrollbar"; appRows.addSublayer(appScrollBar)
-        for index in 0..<2 {
-            let plate = TelemetryArtwork.plate(.zero, parent: layer, name: "activity.control.\(index)")
-            plate.frame = accessibleActions[index].rect
-            _ = HUDControlHighlightLayer.add(to: plate, rect: plate.bounds)
-            let text = TelemetryArtwork.text("activity.control.label.\(index)", frame: .zero, size: 9.5, parent: plate, weight: .medium, alignment: .center)
-            controls.append((plate, text))
-        }
-    }
-
-    private func renderTabs() {
-        let actions = accessibleActions.prefix(2)
-        for (index, pair) in controls.enumerated() {
-            guard index < actions.count else { pair.0.isHidden = true; continue }
-            let action = actions[index]
-            pair.0.isHidden = false; pair.0.frame = action.rect
-            let selected = action.id == (isShowingApps ? "activity:apps" : "activity:overview")
-            pair.0.backgroundColor = (selected ? TelemetryArtwork.yellow : NSColor(white: dark ? 0.23 : 0.85, alpha: 1)).cgColor
-            pair.1.foregroundColor = (selected || !dark ? NSColor(white: 0.1, alpha: 1) : TelemetryArtwork.rowText).cgColor
-            Self.setText(action.label, on: pair.1)
-            let frame = pair.0.bounds.insetBy(dx: 3, dy: 5)
-            if pair.1.frame != frame { pair.1.frame = frame }
-        }
-    }
-
-    private func renderApps() {
-        guard isShowingApps else { return }
-        appRenderCount += 1
-        TelemetryArtwork.withoutActions {
-            renderTabs()
-            let items = apps.snapshot.items
-            let maximum = max(0, CGFloat(items.count) * 49 - Self.appsViewport.height)
-            scrollOffset = min(maximum, max(0, scrollOffset))
-            for (column, text) in zip(appColumns, appHeaders) {
-                let selected = column.key == sortKey
-                Self.setText(column.title + (selected ? (sortDescending ? " ↓" : " ↑") : ""), on: text)
-                text.foregroundColor = (selected ? TelemetryArtwork.primary(dark) : TelemetryArtwork.muted(dark)).cgColor
-            }
-            appHeaderRule.backgroundColor = TelemetryArtwork.muted(dark).withAlphaComponent(0.35).cgColor
-            appEmpty.isHidden = !items.isEmpty
-            Self.setText(L10n.text("No app readings available", "暂无应用读数"), on: appEmpty)
-            appEmpty.foregroundColor = TelemetryArtwork.muted(dark).cgColor
-            renderAppRows()
-
-            let livePaths = Set(items.compactMap { $0.bundleURL?.path }); iconCache = iconCache.filter { livePaths.contains($0.key) }
-            appScrollBar.isHidden = maximum == 0
-            if maximum > 0 { appScrollBar.backgroundColor = TelemetryArtwork.yellow.cgColor }
-        }
-    }
-
-    /// Scrolling changes positions every event, but text, colors and icons only
-    /// when a pooled row represents different data. Repeated assignment to
-    /// CATextLayer.string otherwise asks Core Animation to rerasterize it.
-    private func renderAppRows() {
-        guard isShowingApps else { return }
-        TelemetryArtwork.withoutActions {
-            let items = apps.snapshot.items
-            let maximum = max(0, CGFloat(items.count) * 49 - Self.appsViewport.height)
-            scrollOffset = min(maximum, max(0, scrollOffset))
-            let first = Int(floor(scrollOffset / 49))
-            let accent = TelemetryArtwork.yellow
-            for (offset, row) in appRowPool.enumerated() {
-                let index = first + offset
-                guard index < items.count else { row.plate.isHidden = true; continue }
-                let item = items[index]
-                if row.plate.isHidden { row.plate.isHidden = false }
-                let frame = CGRect(x: 0, y: CGFloat(index) * 49 - scrollOffset, width: 374, height: 45)
-                if row.plate.frame != frame { row.plate.frame = frame }
-                if row.dark != dark || row.accent?.isEqual(accent) != true {
-                    row.dark = dark; row.accent = accent
-                    TelemetryArtwork.stylePlate(row.plate, dark: dark)
-                    row.name.foregroundColor = TelemetryArtwork.rowText.cgColor
-                    for label in [row.cpu, row.upload, row.read] { label.foregroundColor = accent.cgColor }
-                    for label in [row.memory, row.download, row.write] { label.foregroundColor = TelemetryArtwork.cyan.cgColor }
-                }
-                if row.representedItem != item || row.language != L10n.language {
-                    appRowContentUpdateCount += 1
-                    let identityChanged = row.representedItem?.bundleURL != item.bundleURL
-                        || row.representedItem?.id != item.id
-                    row.representedItem = item; row.language = L10n.language
-                    Self.setText(item.name, on: row.name)
-                    Self.setText(appCPU(item.cpuPercent), on: row.cpu)
-                    Self.setText(TelemetryArtwork.bytes(item.memoryBytes.map { Double($0) }), on: row.memory)
-                    Self.setText("↑ " + TelemetryArtwork.rate(item.uploadBytesPerSecond), on: row.upload)
-                    Self.setText("↓ " + TelemetryArtwork.rate(item.downloadBytesPerSecond), on: row.download)
-                    Self.setText(L10n.text("R ", "读 ") + TelemetryArtwork.rate(item.diskReadBytesPerSecond), on: row.read)
-                    Self.setText(L10n.text("W ", "写 ") + TelemetryArtwork.rate(item.diskWriteBytesPerSecond), on: row.write)
-                    if identityChanged { row.icon.contents = item.bundleURL.flatMap { iconCache[$0.path] } }
-                }
-            }
-            if maximum > 0 {
-                let height = max(20, Self.appsViewport.height * Self.appsViewport.height / (CGFloat(items.count) * 49))
-                let frame = CGRect(x: 374, y: (Self.appsViewport.height - height) * scrollOffset / maximum, width: 2, height: height)
-                if appScrollBar.frame != frame { appScrollBar.frame = frame }
-            }
-        }
-        requestVisibleIcons()
-    }
-
-    private static func setText(_ value: String, on layer: CATextLayer) {
-        if layer.string as? String != value { layer.string = value }
-    }
-
-    private func applyRenderScaleIfNeeded() {
-        guard appliedScale != scale else { return }
-        appliedScale = scale
-        TelemetryArtwork.scale(layer, scale)
-    }
-
-    /// Launch Services may touch the application bundle when an icon is first
-    /// requested. Its documented thread-safe lookup never runs in a click or
-    /// scroll callback. At most eight pending requests and the current app list
-    /// are retained; completion only touches the row still showing that bundle.
-    private func requestVisibleIcons() {
-        guard active, isShowingApps else { return }
-        for row in appRowPool where !row.plate.isHidden {
-            guard let url = row.representedItem?.bundleURL else { continue }
-            if let cached = iconCache[url.path] {
-                // A request may finish while the panel is hidden. Bind that
-                // result on reentry even if the sampled metrics are unchanged.
-                if row.icon.contents as? NSImage !== cached {
-                    TelemetryArtwork.withoutActions { row.icon.contents = cached }
-                }
-                continue
-            }
-            guard pendingIcons.count < 8, pendingIcons.insert(url.path).inserted else { continue }
-            let path = url.path, loader = loadAppIcon
-            iconWorker.async { [weak self] in
-                let icon = loader(url)
-                DispatchQueue.main.async { [weak self] in
-                    guard let self else { return }
-                    self.pendingIcons.remove(path)
-                    guard self.apps.snapshot.items.contains(where: { $0.bundleURL?.path == path }) else {
-                        self.requestVisibleIcons(); return
-                    }
-                    self.iconCache[path] = icon
-                    if self.active, self.isShowingApps {
-                        TelemetryArtwork.withoutActions {
-                            for row in self.appRowPool where row.representedItem?.bundleURL?.path == path {
-                                row.icon.contents = icon
-                            }
-                        }
-                        self.requestVisibleIcons()
-                    }
-                }
-            }
-        }
-    }
-
-    private func render(animated: Bool) {
-        // The hidden overview is refreshed when selected again. Updating all
-        // graph paths while entering Apps only delayed its handoff animation.
-        if isShowingApps {
-            TelemetryArtwork.withoutActions {
-                heading.string = HUDSectionHeading.text(HUDModule.activityMonitor.title)
-                heading.foregroundColor = TelemetryArtwork.primary(dark).cgColor
-                renderApps(); applyRenderScaleIfNeeded()
-            }
-            return
-        }
-        let value = controller.snapshot, history = Array(controller.history.suffix(60))
-        func finitePeak(_ values: [Double?]) -> Double { max(1, values.compactMap { $0 }.filter { $0.isFinite && $0 >= 0 }.max().map { $0 * 1.12 } ?? 1) }
-        let cpu = history.map(\.cpuPercent)
-        let memory: [Double?] = history.map { sample in
-            guard let used = sample.memoryUsedBytes, let total = sample.memoryTotalBytes, total > 0 else { return nil }
-            return Double(used) / Double(total) * 100
-        }
-        let upload = history.map(\.uploadBytesPerSecond), download = history.map(\.downloadBytesPerSecond)
-        let read = history.map(\.diskReadBytesPerSecond), write = history.map(\.diskWriteBytesPerSecond)
-        TelemetryArtwork.withoutActions {
-            heading.string = HUDSectionHeading.text(HUDModule.activityMonitor.title); heading.foregroundColor = TelemetryArtwork.primary(dark).cgColor
-            subtitle.string = ""; subtitle.isHidden = true; footer.string = ""; footer.isHidden = true
-            renderTabs()
-            subtitle.foregroundColor = TelemetryArtwork.muted(dark).cgColor
-            let labels = ["CPU", L10n.text("RAM", "RAM"), L10n.text("Network", "网络"), L10n.text("Disk I/O", "磁盘 I/O")]
-            let captions = [L10n.text("TOTAL LOAD", "总负载"), L10n.text("USED / TOTAL", "已用 / 总计"), L10n.text("UP / DOWN", "上传 / 下载"), L10n.text("READ / WRITE", "读取 / 写入")]
+    private func buildOverview(_ page: HUDDesignPage) {
+        header.configure(crumbs: ["ACTIVITY"], code: "SYS-11", title: HUDModuleTitle("Activity", "活动监视器"),
+                         counter: "LIVE", showsBack: false)
+        rows = ActivityRow.Metric.allCases.map { ActivityRow(metric: $0, env: env) }
+        HUDMotion.perform {
             for (index, row) in rows.enumerated() {
-                let colors = index == 1 ? [ActivityGraphPalette.blue] : index >= 2
-                    ? [ActivityGraphPalette.yellow, ActivityGraphPalette.blue] : [ActivityGraphPalette.yellow]
-                row.tick.backgroundColor = colors[0].cgColor
-                row.graph.setColors(colors)
-                TelemetryArtwork.stylePlate(row.layer, dark: dark)
-                row.title.string = labels[index]; row.subtitle.string = captions[index]
-                row.title.foregroundColor = TelemetryArtwork.rowText.cgColor; row.subtitle.foregroundColor = TelemetryArtwork.rowMuted.cgColor
-                row.primary.foregroundColor = (index == 1 ? ActivityGraphPalette.blue : ActivityGraphPalette.yellow).cgColor
-                row.secondary.foregroundColor = (index >= 2 ? ActivityGraphPalette.blue : TelemetryArtwork.rowMuted).cgColor
-                row.tertiary.foregroundColor = TelemetryArtwork.rowMuted.cgColor
-                row.tertiary.string = ""
+                row.layer.frame.origin = CGPoint(x: 0, y: 125 + CGFloat(index) * (ActivityRow.size.height + HUDMetric.rowGap))
+                page.layer.addSublayer(row.layer)
             }
-            rows[0].primary.string = TelemetryArtwork.percent(value.cpuPercent)
-            rows[0].secondary.string = "0–100%"
-            rows[1].primary.string = TelemetryArtwork.bytes(value.memoryUsedBytes.map { Double($0) })
-            rows[1].secondary.string = "/ " + TelemetryArtwork.bytes(value.memoryTotalBytes.map { Double($0) })
-            rows[1].tertiary.string = L10n.text("Compressed ", "压缩 ") + TelemetryArtwork.bytes(value.memoryCompressedBytes.map { Double($0) })
-            rows[2].primary.string = "↑ " + TelemetryArtwork.rate(value.uploadBytesPerSecond)
-            rows[2].secondary.string = "↓ " + TelemetryArtwork.rate(value.downloadBytesPerSecond)
-            rows[3].primary.string = L10n.text("R ", "读 ") + TelemetryArtwork.rate(value.diskReadBytesPerSecond)
-            rows[3].secondary.string = L10n.text("W ", "写 ") + TelemetryArtwork.rate(value.diskWriteBytesPerSecond)
-            rows[0].graph.update(series: [cpu], ceiling: 100, animated: animated, timestamps: history.map(\.uptime))
-            rows[1].graph.update(series: [memory], ceiling: 100, animated: animated, timestamps: history.map(\.uptime))
-            rows[2].graph.update(series: [upload, download], ceiling: finitePeak(upload + download), animated: animated, timestamps: history.map(\.uptime))
-            rows[3].graph.update(series: [read, write], ceiling: finitePeak(read + write), animated: animated, timestamps: history.map(\.uptime))
-            applyRenderScaleIfNeeded()
         }
+        rows.forEach { page.add($0); page.stagger($0.layer) }
+        updateOverview()
+    }
+
+    private func updateOverview() {
+        guard !rows.isEmpty else { return }
+        let history = Array(controller.history.suffix(ActivityGraph.samples))
+        let value = controller.snapshot
+        for row in rows { row.update(history: history, latest: value) }
+    }
+
+    private func buildApps(_ page: HUDDesignPage) {
+        header.configure(crumbs: ["ACTIVITY"], code: "SYS-11", title: HUDModuleTitle("Activity", "活动监视器"),
+                         counter: HUDFormat.pad2(apps.snapshot.items.count), showsBack: false)
+        let columns = AppTable.columns.map { column in
+            SortColumn(key: column.key, title: column.title, frame: CGRect(x: column.x, y: 133, width: column.width, height: 10),
+                       alignment: column.key == .name ? .left : .right, env: env)
+        }
+        let head = HUDLayer.plain("activity.columns")
+        HUDMotion.perform {
+            head.frame = CGRect(x: 0, y: 0, width: HUDMetric.box.width, height: HUDMetric.box.height)
+            columns.forEach { head.addSublayer($0.layer) }
+            page.layer.addSublayer(head)
+        }
+        for column in columns {
+            column.onActivate = { [weak self] in self?.sort(by: column.key) }
+            page.add(column)
+        }
+        let area = page.scrollArea(id: "apps", frame: CGRect(x: 0, y: 155, width: HUDMetric.box.width, height: 330))
+        let table = AppTable(area: area, columns: columns, icons: icons, env: env)
+        self.table = table
+        icons.onLoad = { [weak table] ids in table?.showIcons(ids) }
+        page.stagger(head)
+        table.update(items: apps.snapshot.items, waiting: apps.snapshot.timestamp == .distantPast,
+                     sortKey: sortKey, descending: sortDescending)
+        page.restoreOffset(of: area)
+        table.bind(sortKey: sortKey)
+        table.rows.forEach { page.add($0.plate); page.add($0.readout) }
+        table.visibleRows.forEach { page.stagger($0.plate.layer) }
+        table.onRowsAdded = { [weak self] added in
+            guard let self, self.table === table else { return }
+            added.forEach { self.page.add($0.plate); self.page.add($0.readout) }
+            self.refreshRouter()
+        }
+    }
+
+    private func updateApps() {
+        guard let table else { return }
+        let snapshot = apps.snapshot
+        header.setCounter(HUDFormat.pad2(snapshot.items.count))
+        table.update(items: snapshot.items, waiting: snapshot.timestamp == .distantPast, sortKey: sortKey, descending: sortDescending)
+        table.bind(sortKey: sortKey)
+    }
+}
+
+/// The Overview graph (spec §3.25): the last 44 samples across the row's
+/// graph box with the #2e2e2e grid, a .35 (secondary .25) area and a 1.6 px
+/// line per series. Missing readings break the trace; they never become a
+/// fabricated zero or a line across the gap.
+final class ActivityGraph {
+    static let samples = 44
+    static let size = CGSize(width: 296, height: 44)
+    let layer = HUDLayer.configure(HUDDecorativeContentLayer(), "activity.graph")
+    private var traces: [(area: CAShapeLayer, line: CAShapeLayer)] = []
+
+    /// `colors` from back to front: the secondary series first.
+    init(colors: [(color: CGColor, areaOpacity: Float)]) {
+        HUDMotion.perform {
+            layer.frame = CGRect(origin: .zero, size: Self.size)
+            let grid = HUDLayer.shape("activity.graph.grid")
+            grid.frame = layer.bounds
+            let path = CGMutablePath()
+            for index in 1...4 {
+                path.addRect(CGRect(x: (Self.size.width * CGFloat(index) / 5).rounded() - 0.5, y: 0, width: 1, height: Self.size.height))
+            }
+            path.addRect(CGRect(x: 0, y: Self.size.height / 2 - 0.5, width: Self.size.width, height: 1))
+            grid.path = path; grid.fillColor = HUDColor.tone(0x2E2E2E)
+            layer.addSublayer(grid)
+            for entry in colors {
+                let area = HUDLayer.shape(), line = HUDLayer.shape()
+                area.frame = layer.bounds; line.frame = layer.bounds
+                area.fillColor = entry.color; area.opacity = entry.areaOpacity
+                line.fillColor = nil; line.strokeColor = entry.color; line.lineWidth = 1.6
+                line.lineJoin = .round; line.lineCap = .round
+                layer.addSublayer(area); layer.addSublayer(line)
+                traces.append((area, line))
+            }
+        }
+    }
+
+    /// Values in 0–100, oldest first, matching the init's series order.
+    func update(_ series: [[Double?]]) {
+        HUDMotion.perform {
+            for (trace, values) in zip(traces, series) {
+                let paths = Self.paths(values, size: Self.size)
+                trace.area.path = paths.area; trace.line.path = paths.line
+            }
+        }
+    }
+
+    /// The newest sample sits at the right edge; fewer than 44 samples leave
+    /// the left of the box empty. y = h − v × .42 (v 0–100) as in the demo.
+    static func paths(_ values: [Double?], size: CGSize) -> (area: CGPath, line: CGPath) {
+        let window = Array(values.suffix(samples))
+        let area = CGMutablePath(), line = CGMutablePath()
+        var run: [CGPoint] = []
+        func flush() {
+            defer { run = [] }
+            guard run.count > 1, let first = run.first, let last = run.last else { return }
+            line.addLines(between: run)
+            area.addLines(between: [CGPoint(x: first.x, y: size.height)] + run + [CGPoint(x: last.x, y: size.height)])
+            area.closeSubpath()
+        }
+        let offset = samples - window.count
+        for (index, value) in window.enumerated() {
+            guard let value, value.isFinite else { flush(); continue }
+            let x = size.width * CGFloat(offset + index) / CGFloat(samples - 1)
+            let y = size.height - CGFloat(min(100, max(0, value))) * 0.42 * size.height / 44
+            run.append(CGPoint(x: x, y: y))
+        }
+        flush()
+        return (area, line)
+    }
+}
+
+/// One Overview row (spec §3.25): dark chamfered plate, colour bar, name and
+/// caption, the live graph and a single- or two-line readout.
+final class ActivityRow: HUDControl {
+    enum Metric: Int, CaseIterable { case gpu, cpu, ram, network, disk }
+    static let size = CGSize(width: HUDMetric.box.width, height: 64)
+    let metric: Metric
+    private let brighten = HUDLayer.shape("activity.row.brighten")
+    private let sheen = HUDSheen(alpha: 0.07)
+    private let graph: ActivityGraph
+    private let primary: HUDTextLayer
+    private let secondary: HUDTextLayer
+    private(set) var readoutLines: [String] = []
+
+    /// Read when the row is built: the accent follows the theme colour, and
+    /// both take their light-surface variants in the light theme.
+    private static var yellow: CGColor { HUDColor.accentInk }
+    private static var cyan: CGColor { HUDColor.legible(HUDColor.cyan) }
+
+    init(metric: Metric, env: HUDDesignEnvironment) {
+        self.metric = metric
+        let color = metric == .ram || metric == .network ? Self.cyan : Self.yellow
+        let secondaryColor = metric == .network ? Self.yellow : Self.cyan
+        graph = ActivityGraph(colors: (metric.rawValue >= 3 ? [(secondaryColor, Float(0.25))] : []) + [(color, Float(0.35))])
+        let two = metric.rawValue >= 3
+        let top = HUDTextStyle(size: two ? 14 : 19, weight: .regular, color: two ? Self.yellow : color,
+                               lineHeight: two ? 1.45 : 1.1, tabular: true)
+        let bottom = two ? top.colored(Self.cyan) : HUDTextStyle(size: 10.5, weight: .regular, color: HUDColor.steel, lineHeight: 1.5)
+        primary = HUDTextLayer(style: top, alignment: .right)
+        secondary = HUDTextLayer(style: bottom, alignment: .right)
+        let names: [String] = ["GPU", "CPU", L10n.text("RAM", "RAM"), L10n.text("Network", "网络"), L10n.text("Disk I/O", "磁盘 I/O")]
+        let captions = [L10n.text("TOTAL LOAD", "总负载"), L10n.text("TOTAL LOAD", "总负载"), L10n.text("USED / TOTAL", "已用 / 总计"),
+                        L10n.text("UP / DOWN", "上传 / 下载"), L10n.text("READ / WRITE", "读取 / 写入")]
+        super.init(id: "activity.row.\(metric.rawValue)", label: names[metric.rawValue], env: env)
+        let bounds = CGRect(origin: .zero, size: Self.size)
+        let shape = HUDShape.chamfer(bounds, cut: HUDMetric.rowChamfer)
+        HUDMotion.perform {
+            layer.bounds = bounds
+            let plate = HUDLayer.plain("activity.row.plate")
+            plate.frame = bounds
+            plate.showArtwork(HUDArtwork.plate([HUDColor.tone(0x232323), HUDColor.tone(0x1A1A1A)], size: bounds.size,
+                                               cut: HUDMetric.rowChamfer, scale: env.renderScale), scale: env.renderScale)
+            // The inset ring follows the box; the chamfer clips its corner.
+            let ring = HUDLayer.shape("activity.row.ring")
+            let edge = CGMutablePath(), cut = HUDMetric.rowChamfer
+            edge.move(to: CGPoint(x: bounds.maxX - cut, y: 0.5)); edge.addLine(to: CGPoint(x: 0.5, y: 0.5))
+            edge.addLine(to: CGPoint(x: 0.5, y: bounds.maxY - 0.5)); edge.addLine(to: CGPoint(x: bounds.maxX - 0.5, y: bounds.maxY - 0.5))
+            edge.addLine(to: CGPoint(x: bounds.maxX - 0.5, y: cut))
+            ring.frame = bounds; ring.path = edge; ring.fillColor = nil
+            ring.strokeColor = HUDColor.ringTab; ring.lineWidth = 1
+            brighten.frame = bounds; brighten.path = shape; brighten.fillColor = HUDColor.foreground(0.025); brighten.opacity = 0
+            sheen.setShape(shape, bounds: bounds)
+            let bar = HUDLayer.plain("activity.row.bar")
+            bar.frame = CGRect(x: 0, y: 10, width: 3, height: bounds.height - 20); bar.backgroundColor = color
+            let name = HUDTextLayer(names[metric.rawValue], style: HUDTextStyle(size: 15, weight: .medium, color: HUDColor.tone(0xF2F2F2),
+                                                                                  lineHeight: 1.15))
+            name.lineFrame = CGRect(x: 18, y: 15.5, width: 118, height: 17.25)
+            let caption = HUDTextLayer(captions[metric.rawValue], style: HUDTextStyle(size: 9.5, weight: .regular, color: HUDColor.steel,
+                                                                                        tracking: 0.1, uppercase: true))
+            caption.lineFrame = CGRect(x: 18, y: 37.75, width: 118, height: 9.5)
+            graph.layer.frame.origin = CGPoint(x: 148, y: 10)
+            if two {
+                primary.lineFrame = CGRect(x: 456, y: 11.7, width: 120, height: 20.3)
+                secondary.lineFrame = CGRect(x: 456, y: 32, width: 120, height: 20.3)
+            } else {
+                primary.lineFrame = CGRect(x: 456, y: 13.6, width: 120, height: 20.9)
+                secondary.lineFrame = CGRect(x: 456, y: 34.5, width: 120, height: 15.75)
+            }
+            [plate, ring, brighten, sheen.layer, bar, name, caption, graph.layer, primary, secondary].forEach(layer.addSublayer)
+        }
+        setTarget(bounds, path: shape)
+    }
+
+    /// Paths and readouts from the retained history (oldest first) and the latest sample.
+    func update(history: [SystemActivitySnapshot], latest value: SystemActivitySnapshot) {
+        func peak(_ series: [[Double?]]) -> Double {
+            max(1000, (series.flatMap { $0 }.compactMap { $0 }.filter { $0.isFinite && $0 >= 0 }.max() ?? 0) * 1.12)
+        }
+        func scaled(_ values: [Double?], _ ceiling: Double) -> [Double?] { values.map { $0.map { $0 / ceiling * 100 } } }
+        let lines: [String]
+        switch metric {
+        case .gpu, .cpu:
+            let path: KeyPath<SystemActivitySnapshot, Double?> = metric == .gpu ? \.gpuPercent : \.cpuPercent
+            graph.update([history.map { $0[keyPath: path] }])
+            lines = [TelemetryFormat.percent(value[keyPath: path]), "0–100%"]
+        case .ram:
+            graph.update([history.map { sample in
+                guard let used = sample.memoryUsedBytes, let total = sample.memoryTotalBytes, total > 0 else { return nil }
+                return Double(used) / Double(total) * 100
+            }])
+            lines = [TelemetryFormat.bytes(value.memoryUsedBytes.map { Double($0) }),
+                     "/ " + TelemetryFormat.bytes(value.memoryTotalBytes.map { Double($0) })]
+        case .network:
+            let up = history.map(\.uploadBytesPerSecond), down = history.map(\.downloadBytesPerSecond)
+            let ceiling = peak([up, down])
+            graph.update([scaled(up, ceiling), scaled(down, ceiling)])
+            lines = ["↑ " + TelemetryFormat.rate(value.uploadBytesPerSecond), "↓ " + TelemetryFormat.rate(value.downloadBytesPerSecond)]
+        case .disk:
+            let read = history.map(\.diskReadBytesPerSecond), write = history.map(\.diskWriteBytesPerSecond)
+            let ceiling = peak([read, write])
+            graph.update([scaled(write, ceiling), scaled(read, ceiling)])
+            lines = [L10n.text("R ", "读 ") + TelemetryFormat.rate(value.diskReadBytesPerSecond),
+                     L10n.text("W ", "写 ") + TelemetryFormat.rate(value.diskWriteBytesPerSecond)]
+        }
+        guard lines != readoutLines else { return }
+        readoutLines = lines
+        HUDMotion.perform { primary.text = lines[0]; secondary.text = lines[1] }
+        env.applyScale(to: primary); env.applyScale(to: secondary)
+    }
+
+    override func hoverChanged() {
+        let on = isHovered && isEnabled
+        HUDMotion.animate(layer, "transform.translation.x", to: on ? 2 : 0, duration: HUDDuration.hover, env: env)
+        HUDMotion.animate(brighten, "opacity", to: Float(on ? 1 : 0), duration: HUDDuration.hover, timing: HUDEasing.ease, env: env)
+        sheen.play(on, env: env)
+    }
+
+    override func pointerDown(at point: CGPoint) -> Bool { false }
+    override var accessibilityRole: HUDAccessibilityItem.Role? { .text(readoutLines.joined(separator: ", ")) }
+}
+
+/// An Apps column header (spec §3.25): steel, the active one yellow with ▼/▲.
+final class SortColumn: HUDControl {
+    let key: AppActivitySortKey
+    private let title: String
+    private let text: HUDTextLayer
+    private(set) var isActiveColumn = false
+    private(set) var isDescending = true
+
+    init(key: AppActivitySortKey, title: String, frame: CGRect, alignment: HUDTextLayer.Alignment, env: HUDDesignEnvironment) {
+        self.key = key; self.title = title
+        text = HUDTextLayer(title, style: HUDTextStyle(size: 10, weight: .regular, color: HUDColor.steel, tracking: 0.08, uppercase: true),
+                            alignment: alignment)
+        super.init(id: "activity:sort:" + key.rawValue, label: title, env: env)
+        HUDMotion.perform {
+            layer.frame = frame.insetBy(dx: 0, dy: -8)
+            text.lineFrame = CGRect(x: 0, y: 8, width: frame.width, height: frame.height)
+            layer.addSublayer(text)
+        }
+        setTarget(layer.bounds)
+    }
+
+    func render(active: Bool, descending: Bool) {
+        isActiveColumn = active; isDescending = descending
+        HUDMotion.perform {
+            text.runs = [HUDText.Run(title + (active ? (descending ? " ▼" : " ▲") : ""),
+                                     text.textStyle.colored(active ? HUDColor.accentInk : HUDColor.steel))]
+        }
+        label = L10n.text("Sort by ", "排序：") + title
+            + (active ? (descending ? L10n.text(", descending", "，降序") : L10n.text(", ascending", "，升序")) : "")
+        env.applyScale(to: text)
+    }
+}
+
+/// The Apps table body: a scroll area of light rows (spec §3.25) virtualised
+/// over a small pool, so a long app list never means hundreds of layers for
+/// the hover pass. Rows are rebound to items by index on samples and scrolls.
+final class AppTable {
+    struct Column { let key: AppActivitySortKey; let title: String; let x: CGFloat; let width: CGFloat }
+    static var columns: [Column] { [Column(key: .name, title: L10n.text("App", "应用"), x: 18, width: 274),
+                          Column(key: .gpu, title: "GPU", x: 300, width: 60),
+                          Column(key: .cpu, title: "CPU", x: 368, width: 60),
+                          Column(key: .memory, title: L10n.text("RAM", "RAM"), x: 436, width: 66),
+                          Column(key: .threads, title: L10n.text("Threads", "线程"), x: 510, width: 62)] }
+    static let rowHeight: CGFloat = 40
+    static var pitch: CGFloat { rowHeight + HUDMetric.rowGap }
+    static let rowWidth: CGFloat = 584
+
+    final class Row {
+        let plate: HUDRowPlate
+        let readout: HUDReadout
+        /// The app's own icon, or the generic tile for an app without one.
+        fileprivate let icon = HUDLayer.plain("activity.app.icon")
+        fileprivate let tile = HUDLayer.plain("activity.app.tile")
+        fileprivate let name: HUDTextLayer
+        fileprivate let numbers: [HUDTextLayer]
+        fileprivate var item: AppActivityItem?
+        fileprivate var sortKey: AppActivitySortKey?
+        /// The app whose icon the row shows (rebinding to another app swaps it).
+        fileprivate var iconID: String?
+
+        init(index: Int, env: HUDDesignEnvironment) {
+            plate = HUDRowPlate(id: "activity.app.\(index)", title: "", variant: .compact, width: AppTable.rowWidth,
+                                height: AppTable.rowHeight, env: env)
+            readout = HUDReadout(id: "activity.app.\(index).readout", label: "", frame: plate.layer.bounds, env: env)
+            name = HUDTextLayer(style: HUDTextStyle(size: 13.5, weight: .medium, color: HUDColor.ink))
+            numbers = AppTable.columns.dropFirst().map { _ in
+                HUDTextLayer(style: HUDTextStyle(size: 11.5, weight: .bold, color: HUDColor.rgb(0x555555), tabular: true), alignment: .right)
+            }
+            HUDMotion.perform {
+                let frame = CGRect(x: 18, y: 11, width: ActivityAppIcons.side, height: ActivityAppIcons.side)
+                icon.frame = frame; icon.contentsGravity = .resizeAspect; icon.isHidden = true
+                tile.frame = frame; tile.backgroundColor = HUDColor.rgb(0x1B1B1B); tile.isHidden = true
+                let glyph = HUDIconLayer(.apps, size: 12, color: HUDColor.yellow)
+                glyph.position = CGPoint(x: frame.width / 2, y: frame.height / 2); tile.addSublayer(glyph)
+                name.lineFrame = CGRect(x: 46, y: 14.25, width: 246, height: 13.5)
+                for (column, number) in zip(AppTable.columns.dropFirst(), numbers) {
+                    number.lineFrame = CGRect(x: column.x, y: 15.25, width: column.width, height: 11.5)
+                }
+                ([tile, icon, name] + numbers + [readout.layer]).forEach(plate.layer.addSublayer)
+            }
+        }
+
+        /// Sets the icon when the row shows another app or its icon arrived;
+        /// a pending icon leaves the slot empty until it does.
+        fileprivate func showIcon(_ value: ActivityAppIcons.Icon, id: String) {
+            iconID = value == .pending ? nil : id
+            HUDMotion.perform {
+                if case .image(let image) = value { icon.contents = image } else { icon.contents = nil }
+                icon.isHidden = icon.contents == nil
+                tile.isHidden = value != .generic
+            }
+        }
+
+        fileprivate func show(_ item: AppActivityItem, sortKey: AppActivitySortKey, icons: ActivityAppIcons, env: HUDDesignEnvironment) {
+            if iconID != item.id { showIcon(icons.icon(for: item), id: item.id) }
+            guard item != self.item || sortKey != self.sortKey else { return }
+            self.item = item; self.sortKey = sortKey
+            let values = [TelemetryFormat.percent(item.gpuPercent), TelemetryFormat.percent(item.cpuPercent, limit: nil),
+                          TelemetryFormat.memory(item.memoryBytes), item.threads.map { String($0) } ?? TelemetryFormat.missing]
+            HUDMotion.perform {
+                name.text = item.name
+                for (index, number) in numbers.enumerated() {
+                    let sorted = AppTable.columns[index + 1].key == sortKey
+                    number.runs = [HUDText.Run(values[index], number.textStyle.colored(sorted ? HUDColor.nearBlack : HUDColor.rgb(0x555555)))]
+                }
+            }
+            readout.label = item.name
+            readout.value = zip(AppTable.columns.dropFirst().map(\.title), values).map { $0 + " " + $1 }.joined(separator: ", ")
+            env.applyScale(to: plate.layer)
+        }
+    }
+
+    let area: HUDScrollArea
+    private let columns: [SortColumn]
+    private let icons: ActivityAppIcons
+    private let env: HUDDesignEnvironment
+    private(set) var rows: [Row] = []
+    private(set) var items: [AppActivityItem] = []
+    private var empty: CALayer?
+    /// New pooled rows need routing (hover, accessibility).
+    var onRowsAdded: (([Row]) -> Void)?
+    static let poolSize = Int((330 / pitch).rounded(.up)) + 1
+
+    init(area: HUDScrollArea, columns: [SortColumn], icons: ActivityAppIcons, env: HUDDesignEnvironment) {
+        self.area = area; self.columns = columns; self.icons = icons; self.env = env
+        icons.scale = env.renderScale
+    }
+
+    var visibleRows: [Row] { rows.filter { !$0.plate.layer.isHidden } }
+
+    func update(items next: [AppActivityItem], waiting: Bool, sortKey: AppActivitySortKey, descending: Bool) {
+        items = next
+        columns.forEach { $0.render(active: $0.key == sortKey, descending: descending) }
+        area.setContentHeight(max(0, CGFloat(items.count) * Self.pitch - HUDMetric.rowGap))
+        let wanted = min(Self.poolSize, items.count)
+        if rows.count < wanted {
+            let added = (rows.count..<wanted).map { Row(index: $0, env: env) }
+            HUDMotion.perform { added.forEach { area.content.addSublayer($0.plate.layer) } }
+            rows += added
+            onRowsAdded?(added)
+        }
+        let showsEmpty = items.isEmpty && !waiting
+        if showsEmpty, empty == nil {
+            let state = HUDEmptyState.bilingual("NO APP READINGS", "暂无应用读数", size: CGSize(width: HUDMetric.box.width, height: 250), env: env)
+            HUDMotion.perform { state.frame.origin = .zero; area.content.addSublayer(state) }
+            empty = state
+        } else if !showsEmpty, let state = empty {
+            HUDMotion.perform { state.removeFromSuperlayer() }; empty = nil
+        }
+    }
+
+    /// Places the pool over the visible slice of `items`.
+    func bind(sortKey: AppActivitySortKey) {
+        let first = max(0, Int(floor(area.offset / Self.pitch)))
+        HUDMotion.perform {
+            for (offset, row) in rows.enumerated() {
+                let index = first + offset
+                guard index < items.count else { row.plate.layer.isHidden = true; continue }
+                row.plate.layer.isHidden = false
+                let origin = CGPoint(x: 0, y: CGFloat(index) * Self.pitch)
+                if row.plate.layer.frame.origin != origin { row.plate.layer.frame.origin = origin }
+            }
+        }
+        for (offset, row) in rows.enumerated() where first + offset < items.count {
+            row.show(items[first + offset], sortKey: sortKey, icons: icons, env: env)
+        }
+    }
+
+    /// Icons that finished loading go to the visible rows showing their apps.
+    func showIcons(_ ids: Set<String>) {
+        for row in rows where !row.plate.layer.isHidden {
+            guard let item = row.item, ids.contains(item.id), row.iconID != item.id else { continue }
+            row.showIcon(icons.icon(for: item), id: item.id)
+        }
+    }
+}
+
+/// App icons for the Apps table, rasterised once at the row's 20 px (× the
+/// render scale) and kept by app (an item's bundle path). A telemetry tick
+/// only looks them up: a miss is queued and loaded on a later main-queue
+/// pass, a few at a time, with the system icon of the app's bundle (the
+/// catalog already resolved helpers to their outer app, so no bundle walk).
+/// An app without a bundle or an icon gets the generic tile.
+final class ActivityAppIcons {
+    enum Icon: Equatable { case image(CGImage), generic, pending }
+    static let side: CGFloat = 20
+    /// Bundles resolved per main-queue pass, so no pass stalls a frame.
+    static let batch = 4
+    static let capacity = 256
+    var scale: CGFloat = 1 { didSet { if scale != oldValue { images.removeAll(); queue.removeAll() } } }
+    /// Called with the ids whose icons just loaded.
+    var onLoad: ((Set<String>) -> Void)?
+    /// nil: resolved without an icon (generic).
+    private var images: [String: CGImage?] = [:]
+    private var queue: [(id: String, url: URL)] = []
+    private var scheduled = false
+    private(set) var loadCount = 0
+
+    func icon(for item: AppActivityItem) -> Icon {
+        guard let url = item.bundleURL else { return .generic }
+        if let cached = images[item.id] { return cached.map(Icon.image) ?? .generic }
+        if !queue.contains(where: { $0.id == item.id }) { queue.append((item.id, url)) }
+        schedule()
+        return .pending
+    }
+
+    private func schedule() {
+        guard !scheduled, !queue.isEmpty else { return }
+        scheduled = true
+        DispatchQueue.main.async { [weak self] in self?.load() }
+    }
+
+    private func load() {
+        scheduled = false
+        let next = queue.prefix(Self.batch)
+        queue.removeFirst(next.count)
+        if images.count + next.count > Self.capacity { images.removeAll(keepingCapacity: true) }
+        for entry in next {
+            images[entry.id] = raster(NSWorkspace.shared.icon(forFile: entry.url.path))
+            loadCount += 1
+        }
+        onLoad?(Set(next.map(\.id)))
+        schedule()
+    }
+
+    /// One bitmap at the row's size: Core Animation never rescales a large icon representation.
+    private func raster(_ image: NSImage) -> CGImage? {
+        let pixels = Int((Self.side * max(1, scale)).rounded(.up))
+        guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let ctx = CGContext(data: nil, width: pixels, height: pixels, bitsPerComponent: 8, bytesPerRow: 0, space: space,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        NSGraphicsContext.saveGraphicsState(); defer { NSGraphicsContext.restoreGraphicsState() }
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: false)
+        NSGraphicsContext.current?.imageInterpolation = .high
+        image.draw(in: NSRect(x: 0, y: 0, width: pixels, height: pixels))
+        return ctx.makeImage()
     }
 }

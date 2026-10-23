@@ -442,26 +442,17 @@ final class FacilityAlertMonitor {
     }
 }
 
-/// Documented system interfaces only: statfs, the memorystatus sysctl, Mach VM
+/// Documented system interfaces only: volume resource values, the memorystatus sysctl, Mach VM
 /// statistics, ProcessInfo's thermal state and one AppleSmartBattery property.
 enum FacilitySystemReader {
     static let worker = DispatchQueue(label: "EndfieldCharge.facility.samples", qos: .utility)
 
-    /// The startup Data filesystem, as Storage reads it: f_bavail is the free
-    /// capacity of the shared APFS container.
+    /// The Storage page's startup-disk figure (Finder's: free plus purgeable
+    /// space), so the alert and the page always agree. Worker thread.
     static func readDisk() -> FacilityDiskReading? {
-        let dataPath = "/System/Volumes/Data"
-        let path = FileManager.default.fileExists(atPath: dataPath) ? dataPath : "/"
-        var statistics = statfs()
-        guard statfs(path, &statistics) == 0,
-              let blocks = Int64(exactly: statistics.f_blocks),
-              let free = Int64(exactly: statistics.f_bavail) else { return nil }
-        let total = blocks.multipliedReportingOverflow(by: Int64(statistics.f_bsize))
-        let available = free.multipliedReportingOverflow(by: Int64(statistics.f_bsize))
-        guard !total.overflow, !available.overflow else { return nil }
-        let name = (try? URL(fileURLWithPath: path).resourceValues(forKeys: [.volumeNameKey]).volumeName)
-            ?? FileManager.default.displayName(atPath: "/")
-        return FacilityDiskReading(volumeName: name, totalBytes: total.partialValue, availableBytes: available.partialValue)
+        guard let capacity = StorageController.readStartupCapacity() else { return nil }
+        return FacilityDiskReading(volumeName: capacity.volumeName, totalBytes: capacity.totalBytes,
+                                   availableBytes: capacity.availableBytes)
     }
 
     static func readMemoryPressure() -> FacilityMemoryPressure? {

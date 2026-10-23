@@ -2,7 +2,7 @@ import AppKit
 import QuartzCore
 
 /// The four left-navigation screens of the redesign (spec §3.1–§3.5):
-/// System, Display (with its Battery alert, Center logo, App icon pages),
+/// System (with its Modules page), Display (with its Battery alert and App icon pages),
 /// Hotkeys and About. Preferences and platform side effects belong to
 /// HUDSettingsController; this canvas only presents and edits them.
 final class HUDSettingsCanvas: HUDDesignCanvas {
@@ -15,13 +15,13 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
     private var displays: [HUDDisplayDescriptor] = []
     private var observer: UUID?
     private var screenObserver: NSObjectProtocol?
-    private enum Section: Equatable { case main, battery, logos, icons, credits }
+    private enum Section: Equatable { case main, battery, icons, credits, modules }
     private var section: Section = .main
     /// What the current page's layout depends on; anything else updates the
     /// existing controls in place (toggles keep their knob animation).
     private struct Structure: Equatable {
-        let section: Section, language: AppLanguage, displays: [HUDDisplayDescriptor]
-        let capturing: Bool, logo: HUDCenterLogo, logoRevision: String?, icon: HUDApplicationIcon, accent: String
+        let section: Section, language: AppLanguage, languageSetting: AppLanguage, displays: [HUDDisplayDescriptor]
+        let capturing: Bool, icon: HUDApplicationIcon, accent: String
         let updatePhase: HUDUpdateState.Phase, latest: String?
     }
     private var renderedStructure: Structure?
@@ -30,13 +30,20 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
     private var stagedLayout: (scale: Double?, x: Double?, y: Double?) = (nil, nil, nil)
     private var layoutPromptOpen = false
     private var revertedScaleText: String?
-    private var lastStatus: String?
+    private var lastStatus: String?, lastStatusLanguage: AppLanguage?
     private var checkProgress: Int?
     private var checkTimer: DispatchWorkItem?
     private var updateCells: HUDCells?
     private var updateText: HUDTextLayer?
+    private weak var updateSpoken: HUDReadout?
     private var updateStamp: CALayer?
     private var keycaps: HUDKeycapGroup?
+    /// System > Modules: one row per right-hand module, keyed by module.
+    private struct ModuleRow { let plate: HUDRowPlate, grip: HUDDragGrip, glyph: CALayer, toggle: HUDToggle, up: HUDIconButton, down: HUDIconButton }
+    private var moduleRows: [HUDModule: ModuleRow] = [:]
+    private weak var modulesScroll: HUDScrollArea?
+    /// The row being dragged: its grab offset and the slot it would drop into.
+    private var moduleDrag: (module: HUDModule, grab: CGFloat, slot: Int)?
     var isCapturingShortcut: Bool { module == .hotkeys && controller.isCapturingShortcut }
     private var config: AppConfiguration { controller.configuration }
     var customLogoRevision: String? { config.centerLogoRevision }
@@ -87,8 +94,8 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
     override func willLeave() { didDeactivate() }
 
     private var structure: Structure {
-        Structure(section: section, language: L10n.resolvedLanguage, displays: displays, capturing: isCapturingShortcut,
-                  logo: config.centerLogo, logoRevision: config.centerLogoRevision, icon: config.applicationIcon,
+        Structure(section: section, language: L10n.resolvedLanguage, languageSetting: config.language, displays: displays, capturing: isCapturingShortcut,
+                  icon: config.applicationIcon,
                   accent: config.accentHex, updatePhase: module == .about ? controller.updateState.phase : .idle,
                   latest: module == .about ? controller.updateState.latestVersion : nil)
     }
@@ -98,9 +105,10 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
         if structure != renderedStructure { rerender() } else { binders.forEach { $0() } }
         guard isActive else { return }
         updateLayoutPrompt()
-        let status = currentStatus
-        if let status, status != lastStatus { toast(icon: .warn, "Notice", "提示", detail: status) }
-        lastStatus = status
+        // A language change re-localizes the same status: only a new one toasts.
+        let status = currentStatus, language = L10n.resolvedLanguage
+        if let status, status != lastStatus, language == lastStatusLanguage { toast(icon: .warn, "Notice", "提示", detail: status) }
+        lastStatus = status; lastStatusLanguage = language
     }
 
     private var currentStatus: String? {
@@ -136,11 +144,12 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
 
     override func buildPage(_ page: HUDDesignPage) {
         binders = []; updateCells = nil; updateText = nil; updateStamp = nil; keycaps = nil
+        moduleRows = [:]; modulesScroll = nil; moduleDrag = nil
         renderedStructure = structure
         switch (module, section) {
+        case (.system, .modules): buildModules(page)
         case (.system, _): buildSystem(page)
         case (.display, .battery): buildBattery(page)
-        case (.display, .logos): buildLogos(page)
         case (.display, .icons): buildIcons(page)
         case (.display, _): buildDisplay(page)
         case (.hotkeys, _): buildHotkeys(page)
@@ -179,7 +188,16 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
             screen?.setValue(HUDDisplayPolicy.selectionTitle(configuration: self.config, displays: self.displays))
         }
         rows.append(row("screen", L10n.text("Display", "显示器"), [screen], page))
-        rows.append(toggleRow("batteryEnabled", L10n.text("Battery alerts", "电池提醒"), \.batteryAlertsEnabled, page))
+        // Battery alerts live on Display > Battery alert (its Display method).
+        let shown = HUDChip(modulesCount, variant: .dark, env: env)
+        let modulesTitle = L10n.text("Modules", "模块")
+        let modules = navRow("modules", modulesTitle, page, cluster: [shown.layer]) { [weak self] in self?.go(.modules, forward: true) }
+        modules.label = modulesTitle + ", " + modulesCount
+        binders.append { [weak self, weak shown, weak modules] in
+            guard let self else { return }
+            shown?.setTitle(self.modulesCount); modules?.label = modulesTitle + ", " + self.modulesCount
+        }
+        rows.append(modules)
         let restore = HUDButton(id: "restore", title: L10n.text("Restore", "恢复"), icon: .reset, kind: .secondary, size: .small, env: env)
         restore.place(at: .zero)
         restore.onActivate = { [weak self] in self?.confirmRestore() }
@@ -226,6 +244,159 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
         }
     }
 
+    // MARK: Modules (System > Modules)
+
+    private var modulesCount: String {
+        let layout = config.moduleLayout
+        return "\(layout.visible.count) / \(layout.order.count)"
+    }
+    private static let modulePitch = HUDMetric.rowHeight + HUDMetric.rowGap
+
+    /// Order and visibility of the right-hand list: drag a row by its grip
+    /// (the others reflow) or use its move buttons; the switch shows or hides it.
+    private func buildModules(_ page: HUDDesignPage) {
+        let layout = config.moduleLayout, width = rowWidth(page)
+        let scroll = page.scrollArea(id: "modules", frame: CGRect(x: 0, y: HUDMetric.headerHeight, width: HUDMetric.box.width, height: HUDMetric.bodyHeight))
+        modulesScroll = scroll
+        var plates: [HUDRowPlate] = []
+        for module in layout.order {
+            let title = module.title
+            let grip = HUDDragGrip(id: "grip:" + module.rawValue, size: CGSize(width: 20, height: 30), dotsAt: CGPoint(x: 7, y: 10), env: env)
+            grip.onDrag = { [weak self] phase, point in self?.dragModule(module, phase, at: point) }
+            let up = HUDIconButton(id: "up:" + module.rawValue, label: title + ", " + L10n.text("Move up", "上移"),
+                                   icon: .left, style: .light, side: 26, iconSize: 13, env: env)
+            let down = HUDIconButton(id: "down:" + module.rawValue, label: title + ", " + L10n.text("Move down", "下移"),
+                                     icon: .right, style: .light, side: 26, iconSize: 13, env: env)
+            // The back/forward chevrons, turned to point up and down.
+            HUDMotion.perform {
+                up.layer.setAffineTransform(CGAffineTransform(rotationAngle: .pi / 2))
+                down.layer.setAffineTransform(CGAffineTransform(rotationAngle: .pi / 2))
+            }
+            up.onActivate = { [weak self] in self?.moveModule(module, by: -1) }
+            down.onActivate = { [weak self] in self?.moveModule(module, by: 1) }
+            let toggle = HUDToggle(id: "show:" + module.rawValue, label: title, isOn: !layout.isHidden(module), env: env)
+            toggle.onChange = { [weak self] on in self?.controller.update { $0.moduleLayout.setHidden(module, !on) } }
+            let plate = row("module:" + module.rawValue, title, [up.layer, down.layer, toggle.layer], page, controls: [grip, up, down, toggle])
+            let glyph = HUDNavigationEntry.glyphLayer(for: module, side: 24, ink: NSColor(white: 0.12, alpha: 1), scale: env.renderScale)
+            HUDMotion.perform {
+                plate.titleInset = 56
+                let middle = 10 + (plate.layer.bounds.height - 18) / 2 + 1
+                grip.layer.position = CGPoint(x: 26, y: middle)
+                glyph.position = CGPoint(x: 54, y: middle)
+                plate.layer.addSublayer(glyph); plate.layer.addSublayer(grip.layer)
+            }
+            moduleRows[module] = ModuleRow(plate: plate, grip: grip, glyph: glyph, toggle: toggle, up: up, down: down)
+            plates.append(plate)
+        }
+        let restore = HUDButton(id: "modulesReset", title: L10n.text("Restore", "恢复"), icon: .reset, kind: .secondary, size: .small, env: env)
+        restore.place(at: .zero)
+        restore.onActivate = { [weak self] in self?.confirmModulesReset() }
+        plates.append(row("modulesReset", L10n.text("Restore default layout", "恢复默认布局"), [restore.layer], page, controls: [restore]))
+        scroll.setContentHeight(stack(plates, in: scroll.content, page: page, top: 0, width: width))
+        page.restoreOffset(of: scroll)
+        renderModuleStates()
+        binders.append { [weak self, weak restore] in
+            guard let self else { return }
+            self.renderModuleStates()
+            restore?.isEnabled = !self.config.moduleLayout.isDefault
+            // A drag in progress owns the positions until it drops.
+            if self.moduleDrag == nil { self.layoutModuleRows(self.config.moduleLayout.order, animated: true) }
+        }
+        restore.isEnabled = !layout.isDefault
+        header.configure(crumbs: ["SYSTEM", "MODULES"], code: "SYS-01", title: HUDModuleTitle("Modules", "模块"),
+                         counter: HUDFormat.pad2(layout.order.count), showsBack: true)
+        wireBack(page) { [weak self] in self?.go(.main, forward: false) }
+    }
+
+    /// Switches, move buttons and the hidden rows' dimmed glyph and title.
+    private func renderModuleStates() {
+        let layout = config.moduleLayout
+        for (index, module) in layout.order.enumerated() {
+            guard let row = moduleRows[module] else { continue }
+            let hidden = layout.isHidden(module)
+            row.toggle.setOn(!hidden, animated: true)
+            // The last visible module cannot be hidden.
+            row.toggle.isEnabled = layout.canSetHidden(module, true)
+            row.up.isEnabled = index > 0
+            row.down.isEnabled = index < layout.order.count - 1
+            HUDMotion.animate(row.glyph, "opacity", to: Float(hidden ? 0.35 : 1), duration: HUDDuration.hover, timing: HUDEasing.ease, env: env)
+        }
+    }
+
+    /// Places each row at its slot of `order`; the dragged row follows the pointer instead.
+    private func layoutModuleRows(_ order: [HUDModule], animated: Bool) {
+        for (index, module) in order.enumerated() where module != moduleDrag?.module {
+            guard let plate = moduleRows[module]?.plate.layer else { continue }
+            let y = CGFloat(index) * Self.modulePitch + plate.bounds.height / 2
+            guard plate.position.y != y else { continue }
+            if animated { HUDMotion.animate(plate, "position.y", to: y, duration: 0.24, timing: HUDEasing.snap, env: env) }
+            else { HUDMotion.perform { plate.position.y = y } }
+        }
+    }
+
+    private func moveModule(_ module: HUDModule, by offset: Int) {
+        guard let index = config.moduleLayout.order.firstIndex(of: module) else { return }
+        controller.update { $0.moduleLayout.move(module, to: index + offset) }
+        guard let scroll = modulesScroll, let next = config.moduleLayout.order.firstIndex(of: module) else { return }
+        // Keep the moved row in view.
+        let rect = CGRect(x: 0, y: CGFloat(next) * Self.modulePitch, width: 1, height: HUDMetric.rowHeight)
+        let target = rect.minY < scroll.offset ? rect.minY
+            : (rect.maxY > scroll.offset + scroll.layer.bounds.height ? rect.maxY - scroll.layer.bounds.height : scroll.offset)
+        if target != scroll.offset { scroll.setOffset(target, animated: true, env: env) }
+    }
+
+    private func dragModule(_ module: HUDModule, _ phase: HUDDragGrip.Phase, at point: CGPoint) {
+        guard let scroll = modulesScroll, let row = moduleRows[module] else { return }
+        let plate = row.plate.layer, order = config.moduleLayout.order
+        let y = scroll.content.convert(point, from: row.grip.layer).y
+        switch phase {
+        case .began:
+            guard let index = order.firstIndex(of: module) else { return }
+            moduleDrag = (module, y - plate.frame.minY, index)
+            HUDMotion.perform { plate.zPosition = 10 }
+            HUDMotion.animate(plate, "opacity", to: Float(0.92), duration: HUDDuration.hover, env: env)
+        case .moved:
+            guard var drag = moduleDrag, drag.module == module else { return }
+            // Near an edge the list follows the pointer (on pointer events only).
+            let shown = y - scroll.offset, edge: CGFloat = 36
+            if shown < edge { scroll.scroll(by: -min(12, edge - shown)) }
+            else if shown > scroll.layer.bounds.height - edge { scroll.scroll(by: min(12, shown - scroll.layer.bounds.height + edge)) }
+            let top = min(CGFloat(order.count - 1) * Self.modulePitch, max(0, y - drag.grab))
+            HUDMotion.perform { plate.removeAnimation(forKey: "hud.position.y"); plate.position.y = top + plate.bounds.height / 2 }
+            let slot = min(order.count - 1, max(0, Int((top / Self.modulePitch).rounded())))
+            guard slot != drag.slot else { return }
+            drag.slot = slot; moduleDrag = drag
+            var preview = order.filter { $0 != module }
+            preview.insert(module, at: slot)
+            layoutModuleRows(preview, animated: true)
+        case .ended:
+            guard let drag = moduleDrag, drag.module == module else { return }
+            moduleDrag = nil
+            HUDMotion.animate(plate, "opacity", to: Float(1), duration: HUDDuration.hover, env: env)
+            controller.update { $0.moduleLayout.move(module, to: drag.slot) }
+            layoutModuleRows(config.moduleLayout.order, animated: true)
+            HUDMotion.perform { plate.zPosition = 0 }
+        }
+    }
+
+    private func confirmModulesReset() {
+        confirm(HUDConfirmRequest(id: "modulesReset", title: L10n.text("Restore default layout?", "恢复默认布局？"),
+                                  message: L10n.text("All modules are shown in their original order.", "所有模块按原顺序显示。"),
+                                  confirmTitle: L10n.text("Restore", "恢复"), icon: .reset)) { [weak self] in
+            self?.controller.update { $0.moduleLayout = HUDModuleLayout() }
+            self?.toast(icon: .reset, "Layout restored", "已恢复默认布局")
+        }
+    }
+
+    override func cursor(at point: CGPoint?) -> NSCursor? {
+        if moduleDrag != nil { return .closedHand }
+        guard isActive, section == .modules, let point else { return nil }
+        return moduleRows.values.contains { row in
+            row.grip.layer.isVisible(in: root) && row.grip.layer.isUnclipped(point, in: root)
+                && row.grip.contains(row.grip.layer.convert(point, from: root))
+        } ? .openHand : nil
+    }
+
     private func buildDisplay(_ page: HUDDesignPage) {
         let c = config
         let scroll = page.scrollArea(id: "display", frame: CGRect(x: 0, y: HUDMetric.headerHeight, width: HUDMetric.box.width, height: 416))
@@ -269,29 +440,43 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
         binders.append { [weak self, weak format] in
             guard let self else { return }; format?.select(formats.firstIndex(of: self.config.clockFormat) ?? 0, notify: false)
         }
+        page.add(format) // The segments hold their group weakly.
         rows.append(row("clockFormat", L10n.text("Time format", "时间格式"), [format.layer], page, controls: format.segments))
-        let styleReadout = readout(clockStyleText)
-        let cycle = HUDIconButton(id: "clockStyle", label: L10n.text("Next clock style", "下一个时钟样式"), icon: .right, style: .light, env: env)
-        cycle.onActivate = { [weak self] in self?.controller.update { $0.clockStyle = $0.clockStyle.advanced(1) } }
-        binders.append { [weak self, weak styleReadout] in guard let self else { return }; self.setReadout(styleReadout, self.clockStyleText) }
-        rows.append(row("clockStyle", L10n.text("Clock style", "时钟样式"), [styleReadout, cycle.layer], page, controls: [cycle]))
-        rows.append(navRow("centerLogo", L10n.text("Center logo", "中心标志"), page) { [weak self] in self?.go(.logos, forward: true) })
+        // The style's number and name in full; the menu lists all five.
+        let style = dropdown("clockStyle", L10n.text("Clock style", "时钟样式"), clockStyleTitle(c.clockStyle)) { [weak self] anchor in
+            guard let self else { return }
+            let items = HUDClockStyle.allCases.map { HUDMenu.Item(id: $0.rawValue, title: self.clockStyleTitle($0), selected: $0 == self.config.clockStyle) }
+            self.openMenu(id: "clockStyle", items: items, anchor: anchor) { item in
+                guard let value = HUDClockStyle(rawValue: item.id) else { return }
+                self.controller.update { $0.clockStyle = value }
+            }
+        }
+        binders.append { [weak self, weak style] in guard let self else { return }; style?.setValue(self.clockStyleTitle(self.config.clockStyle)) }
+        rows.append(row("clockStyle", L10n.text("Clock style", "时钟样式"), [style], page))
+        rows.append(logoRow(page))
         rows.append(navRow("appIcon", L10n.text("App / menu bar icon", "应用 / 菜单栏图标"), page) { [weak self] in self?.go(.icons, forward: true) })
         rows.append(paletteRow(page))
         let reading = HUDChip(c.alertMetric.title.uppercased(), variant: .dark, env: env)
-        binders.append { [weak self, weak reading] in guard let self else { return }; reading?.setTitle(self.config.alertMetric.title.uppercased()) }
-        rows.append(navRow("battery", L10n.text("Battery alert", "电池提醒"), page, cluster: [reading.layer]) { [weak self] in
+        let batteryTitle = L10n.text("Battery alert", "电池提醒")
+        let batteryRow = navRow("battery", batteryTitle, page, cluster: [reading.layer]) { [weak self] in
             self?.go(.battery, forward: true)
-        })
+        }
+        batteryRow.label = batteryTitle + ", " + c.alertMetric.title // The chip's reading, spoken.
+        binders.append { [weak self, weak reading, weak batteryRow] in
+            guard let self else { return }
+            reading?.setTitle(self.config.alertMetric.title.uppercased()); batteryRow?.label = batteryTitle + ", " + self.config.alertMetric.title
+        }
+        rows.append(batteryRow)
         rows.append(toggleRow("ambient", L10n.text("Ambient animation", "持续环境动画"), \.ambientAnimation, page))
         rows.append(toggleRow("motion", L10n.text("Reduce Motion", "减少动态效果"), \.reduceMotion, page))
         rows.append(toggleRow("lowPower", L10n.text("Low Power visual mode", "低功耗视觉模式"), \.lowPowerVisualMode, page))
-        rows.append(toggleRow("recording", L10n.text("Recording mode", "录制模式"), \.recordingMode, page) { [weak self] on in
+        rows.append(toggleRow("recording", L10n.text("Recording mode", "录制模式"), \.recordingMode, page, changed: { [weak self] on in
             if on { self?.toast(icon: .rec, "Recording mode on", "私密内容已隐藏") }
             else { self?.toast(icon: .eye, "Recording mode off", "私密内容已恢复") }
-        })
+        }))
         rows.append(toggleRow("bootLog", L10n.text("Daily boot log", "每日启动日志"), \.dailyBootLog, page))
-        rows.append(toggleRow("facility", L10n.text("Facility alerts", "设施警报"), \.facilityAlerts, page))
+        rows.append(toggleRow("facility", L10n.text("Facility alerts", "设施警报"), \.facilityAlerts, page,
+                              confirmOff: { [weak self] commit in self?.confirmFacilityOff(commit) }))
         let height = stack(rows, in: scroll.content, page: page, top: 0, width: HUDMetric.box.width - 10)
         scroll.setContentHeight(height)
         page.restoreOffset(of: scroll)
@@ -299,7 +484,18 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
                          counter: HUDFormat.pad2(rows.count), showsBack: false)
     }
 
-    private var clockStyleText: String { HUDFormat.pad2(config.clockStyle.index + 1) + " / " + HUDFormat.pad2(HUDClockStyle.allCases.count) }
+    /// Switching the facility alerts off asks first, in red: both answers
+    /// shut the "defence system" down; only Esc or a press outside keeps it.
+    private func confirmFacilityOff(_ commit: @escaping () -> Void) {
+        let answer = L10n.text("Disable Shipwide Defense System", "关闭全舰防御系统")
+        confirm(HUDConfirmRequest(id: "facilityOff", title: L10n.text("Are you sure you want to disable the Shipwide Defense System?", "是否关闭全舰防御系统？"),
+                                  confirmTitle: answer, cancelTitle: answer, icon: .power, style: .alert, cancelPillConfirms: true),
+                onConfirm: commit)
+    }
+
+    private func clockStyleTitle(_ style: HUDClockStyle) -> String {
+        HUDFormat.pad2(style.index + 1) + "  " + style.title
+    }
 
     private func stagePosition(x: Double?, y: Double?, final: Bool) {
         if let x { stagedLayout.x = x }
@@ -337,6 +533,7 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
             context.overlay.dismissConfirm()
             if let previous = revertedScaleText { toast(icon: .reset, "UI scale reverted", "已恢复界面缩放", detail: previous) }
             else { toast(icon: .reset, "Position reverted", "已恢复界面位置") }
+            lastStatus = currentStatus // This toast already reports the controller's restore status.
         }
     }
 
@@ -371,17 +568,19 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
         }
         binders.append { [weak self, weak reading] in guard let self else { return }; reading?.setValue(self.config.alertMetric.title) }
         rows.append(row("metric", L10n.text("Reading", "显示数据"), [reading], page))
-        let method = dropdown("method", L10n.text("Display method", "显示方式"), methodTitle(c.displayMode)) { [weak self] anchor in
+        let method = dropdown("method", L10n.text("Display method", "显示方式"), methodTitle(shownDisplayMode)) { [weak self] anchor in
             guard let self else { return }
             let modes: [DisplayMode] = [.whenChargingStarts, .always, .never]
-            let items = modes.map { HUDMenu.Item(id: $0.rawValue, title: self.methodTitle($0), selected: $0 == self.config.displayMode) }
+            let items = modes.map { HUDMenu.Item(id: $0.rawValue, title: self.methodTitle($0), selected: $0 == self.shownDisplayMode) }
             self.openMenu(id: "method", items: items, anchor: anchor) { item in
-                guard let value = DisplayMode(rawValue: item.id), value != self.config.displayMode else { return }
-                self.controller.update { $0.displayMode = value }
+                guard let value = DisplayMode(rawValue: item.id), value != self.shownDisplayMode else { return }
+                // This menu is now the only alert switch: any choice also lifts
+                // an "alerts off" saved by the former System toggle (or v1.2.0).
+                self.controller.update { $0.displayMode = value; $0.batteryAlertsEnabled = true }
                 if value == .never { self.toast(icon: .eye, "Bar hidden", "不再自动显示") }
             }
         }
-        binders.append { [weak self, weak method] in guard let self else { return }; method?.setValue(self.methodTitle(self.config.displayMode)) }
+        binders.append { [weak self, weak method] in guard let self else { return }; method?.setValue(self.methodTitle(self.shownDisplayMode)) }
         rows.append(row("method", L10n.text("Display method", "显示方式"), [method], page))
         rows.append(sliderRow("duration", L10n.text("Display duration", "显示时长"), value: c.displayDuration,
                               range: HUDSlider.Range(minimum: 1, maximum: 60, step: 1), format: .seconds, page: page,
@@ -412,25 +611,72 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
         wireBack(page) { [weak self] in self?.go(.main, forward: false) }
     }
 
-    private func buildLogos(_ page: HUDDesignPage) {
-        var rows: [HUDRowPlate] = []
-        for logo in HUDCenterLogo.allCases {
-            let selected = config.centerLogo == logo && (logo != .custom || config.centerLogoRevision != nil)
-            let mark = HUDChip(selected ? L10n.text("In use", "使用中") : "", variant: selected ? .yellow : .outline, env: env)
-            mark.layer.isHidden = !selected
-            rows.append(navRow("logo:" + logo.rawValue, logo.title, page, chevron: logo == .custom ? "↗" : "›", cluster: [mark.layer]) { [weak self] in
-                guard let self else { return }
-                if logo == .custom { self.onChooseLogo?(); return }
-                self.onLogoSelection?()
-                self.controller.update { $0.centerLogo = logo }
-            })
+    /// Alerts switched off (the former System toggle, also in v1.2.0) read as Don't display.
+    private var shownDisplayMode: DisplayMode { config.batteryAlertsEnabled ? config.displayMode : .never }
+
+    // MARK: Center logo (an icon grid; the field shows the logo in use)
+
+    private static let logoTile = CGSize(width: 120, height: 44), logoFieldHeight: CGFloat = 16
+    /// Chooser and field rasters by logo, custom revision, size and scale.
+    private static var logoRasters: [String: CGImage] = [:]
+
+    private func logoRow(_ page: HUDDesignPage) -> HUDRowPlate {
+        let title = L10n.text("Center logo", "中心标志")
+        let field = dropdown("centerLogo", title, config.centerLogo.title) { [weak self] anchor in self?.openLogoMenu(anchor) }
+        let show = { [weak self, weak field] in
+            guard let self, let field else { return }
+            field.setValue(self.config.centerLogo.title)
+            field.setArtwork(self.logoArtwork(self.config.centerLogo, fitting: CGSize(width: 130, height: Self.logoFieldHeight)),
+                             height: Self.logoFieldHeight)
         }
-        let scroll = page.scrollArea(id: "logos", frame: CGRect(x: 0, y: HUDMetric.headerHeight, width: HUDMetric.box.width, height: HUDMetric.bodyHeight))
-        scroll.setContentHeight(stack(rows, in: scroll.content, page: page, top: 0, width: HUDMetric.box.width - 10))
-        page.restoreOffset(of: scroll)
-        header.configure(crumbs: ["DISPLAY", "CENTER LOGO"], code: "SYS-02", title: HUDModuleTitle("Center logo", "中心标志"),
-                         counter: HUDFormat.pad2(rows.count), showsBack: true)
-        wireBack(page) { [weak self] in self?.go(.main, forward: false) }
+        show()
+        binders.append(show)
+        return row("centerLogo", title, [field], page)
+    }
+
+    /// The four preset logos as tiles (a full grid: an imported logo has no
+    /// tile, the field shows it), then the custom-logo import.
+    private func openLogoMenu(_ anchor: HUDDropdown) {
+        let box = CGRect(origin: .zero, size: Self.logoTile).insetBy(dx: 8, dy: 8)
+        var items: [HUDMenu.Item] = HUDCenterLogo.allCases.compactMap { logo in
+            // The presets stay offered even if their artwork is unreadable.
+            guard logo != .custom else { return nil }
+            let image = logoArtwork(logo, fitting: box.size)
+            return HUDMenu.Item(id: logo.rawValue, title: logo.title, selected: config.centerLogo == logo,
+                                icon: HUDMenu.Icon(image: image, size: Self.logoTile, frame: box))
+        }
+        items.append(HUDMenu.Item(id: "import", title: L10n.text("Choose custom logo", "选择自定义图标")))
+        openMenu(id: "logo", items: items, anchor: anchor) { [weak self] item in
+            guard let self else { return }
+            if item.id == "import" { self.onChooseLogo?(); return }
+            guard let logo = HUDCenterLogo(rawValue: item.id) else { return }
+            self.onLogoSelection?()
+            self.controller.update { $0.centerLogo = logo }
+        }
+    }
+
+    /// The logo as the centre shows it (trimmed, with its glow), drawn once at `size`.
+    private func logoArtwork(_ logo: HUDCenterLogo, fitting size: CGSize) -> CGImage? {
+        let revision = logo == .custom ? customLogoRevision : nil
+        let key = "\(logo.rawValue):\(revision ?? ""):\(size.width)x\(size.height)@\(env.renderScale)"
+        if let cached = Self.logoRasters[key] { return cached }
+        guard let source = logo == .endfield ? Self.endfieldWordmark() : logo.image(revision: revision),
+              let presented = HUDCenterLogoPresentation.image(source),
+              let image = HUDMenu.Icon.raster(presented, fitting: size, scale: env.renderScale) else { return nil }
+        // Only the current custom revision stays.
+        if logo == .custom { Self.logoRasters = Self.logoRasters.filter { !$0.key.hasPrefix("custom:") || $0.key.hasPrefix("custom:\(revision ?? ""):") } }
+        Self.logoRasters[key] = image
+        return image
+    }
+
+    /// The default ENDFIELD INDUSTRIES lettering: the band of the supplied
+    /// artwork the centre shows (the triangle artwork falls outside it).
+    private static func endfieldWordmark() -> CGImage? {
+        guard let url = HUDResources.url(for: "EndfieldIndustriesSource.png"),
+              let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return nil }
+        let unit = CGFloat(image.width) / 430
+        return image.cropping(to: CGRect(x: 0, y: 142 * unit, width: CGFloat(image.width), height: 83 * unit).integral)
     }
 
     private func buildIcons(_ page: HUDDesignPage) {
@@ -530,6 +776,9 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
         let hero = aboutHero(about)
         HUDMotion.perform { hero.frame.origin = CGPoint(x: 0, y: HUDMetric.headerHeight); page.layer.addSublayer(hero) }
         page.stagger(hero)
+        let spokenHero = HUDReadout(id: "value:hero", label: about.name, value: about.version, frame: hero.bounds, env: env)
+        HUDMotion.perform { hero.addSublayer(spokenHero.layer) }
+        page.add(spokenHero)
         let strip = HUDLayer.plain("about.updates")
         let cells = HUDCells(count: 4, width: HUDMetric.box.width - 14 - 130, capacity: false, height: 10, env: env)
         let status = HUDTextLayer(style: HUDTextStyle(size: 10.5, weight: .bold, color: HUDColor.rgb(0xD0D0D0), tracking: 0.1, uppercase: true),
@@ -542,7 +791,10 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
             page.layer.addSublayer(strip)
         }
         page.stagger(strip)
-        updateCells = cells; updateText = status
+        let spoken = HUDReadout(id: "value:updates", label: L10n.text("Updates", "更新"), frame: strip.bounds, env: env)
+        HUDMotion.perform { strip.addSublayer(spoken.layer) }
+        page.add(spoken)
+        updateCells = cells; updateText = status; updateSpoken = spoken
         renderUpdateStrip(animated: false)
         let scroll = page.scrollArea(id: "about", frame: CGRect(x: 0, y: strip.frame.maxY + 10, width: HUDMetric.box.width,
                                                                 height: HUDMetric.box.height - strip.frame.maxY - 10))
@@ -563,18 +815,20 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
             let open = linkButton("latestRelease", L10n.text("Latest GitHub release", "GitHub 最新版本"), url)
             latestCluster.append(open.layer); latestControls.append(open)
         }
-        rows.append(row("latestRelease", L10n.text("Latest GitHub release", "GitHub 最新版本"), latestCluster, page, controls: latestControls))
+        let latestRow = row("latestRelease", L10n.text("Latest GitHub release", "GitHub 最新版本"), latestCluster, page, controls: latestControls)
+        spokenValue("latestRelease", on: latestRow, update.latestVersion ?? "—", page)
+        rows.append(latestRow)
         let automatic = HUDToggle(id: "automaticUpdates", label: L10n.text("Install updates automatically", "自动安装更新"),
                                   isOn: update.automaticallyInstalls, env: env)
         automatic.onChange = { [weak self] _ in self?.controller.toggleAutomaticUpdates() }
         binders.append { [weak self, weak automatic] in guard let self else { return }; automatic?.setOn(self.controller.updateState.automaticallyInstalls, animated: true) }
         rows.append(row("automaticUpdates", L10n.text("Install updates automatically", "自动安装更新"), [automatic.layer], page, controls: [automatic]))
-        rows.append(row("author", L10n.text("Author", "作者"), [readout(about.author)], page))
+        rows.append(valueRow("author", L10n.text("Author", "作者"), about.author, page))
         if let repository = about.repositoryURL {
             let open = linkButton("github", "GitHub", repository)
             rows.append(row("github", "GitHub", [open.layer], page, controls: [open]))
         }
-        rows.append(row("license", L10n.text("License", "许可证"), [readout(about.licenseName)], page))
+        rows.append(valueRow("license", L10n.text("License", "许可证"), about.licenseName, page))
         rows.append(navRow("credits", L10n.text("Credits", "致谢"), page) { [weak self] in self?.go(.credits, forward: true) })
         scroll.setContentHeight(stack(rows, in: scroll.content, page: page, top: 0, width: HUDMetric.box.width - 10))
         page.restoreOffset(of: scroll)
@@ -670,6 +924,7 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
         cells.set(filled: filled, animated: animated)
         HUDMotion.perform { text.text = label; text.isHidden = label.isEmpty }
         let showStamp = checkProgress == nil && state.phase == .current
+        updateSpoken?.value = showStamp ? L10n.text("Up to date", "已是最新") : label
         if showStamp, updateStamp == nil, let strip = cells.layer.superlayer {
             let stamp = HUDBadge.stamp(L10n.text("Up to date", "已是最新"), env: env)
             HUDMotion.perform {
@@ -716,7 +971,7 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
     }
 
     private func rowWidth(_ page: HUDDesignPage) -> CGFloat {
-        module == .display && section == .main ? HUDMetric.box.width - 10 : HUDMetric.box.width
+        (module == .display && section == .main) || section == .modules ? HUDMetric.box.width - 10 : HUDMetric.box.width
     }
 
     private func navRow(_ id: String, _ title: String, _ page: HUDDesignPage, chevron: String = "›", cluster: [CALayer] = [],
@@ -728,11 +983,18 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
         return plate
     }
 
+    /// `confirmOff` asks before switching off: the switch stays on until it
+    /// calls its argument, which saves the change.
     private func toggleRow(_ id: String, _ title: String, _ key: WritableKeyPath<AppConfiguration, Bool>, _ page: HUDDesignPage,
-                           changed: ((Bool) -> Void)? = nil) -> HUDRowPlate {
+                           confirmOff: ((@escaping () -> Void) -> Void)? = nil, changed: ((Bool) -> Void)? = nil) -> HUDRowPlate {
         let toggle = HUDToggle(id: id, label: title, isOn: config[keyPath: key], env: env)
-        toggle.onChange = { [weak self] on in
+        toggle.onChange = { [weak self, weak toggle] on in
             guard let self else { return }
+            if !on, let confirmOff {
+                toggle?.setOn(true, animated: true)
+                confirmOff { [weak self] in self?.controller.update { $0[keyPath: key] = false } }
+                return
+            }
             self.controller.update { $0[keyPath: key] = on }
             changed?(self.config[keyPath: key])
         }
@@ -779,6 +1041,22 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
     }
 
     /// `[ value ]` readout with grey brackets (spec §2.7), min-width 0.
+    /// A row with a bracketed value, which VoiceOver reads as the row's text.
+    private func valueRow(_ id: String, _ title: String, _ value: String, _ page: HUDDesignPage) -> HUDRowPlate {
+        let plate = row(id, title, [readout(value)], page)
+        spokenValue(id, on: plate, value, page)
+        return plate
+    }
+
+    /// Exposes a row's drawn value to VoiceOver over the whole plate.
+    @discardableResult
+    private func spokenValue(_ id: String, on plate: HUDRowPlate, _ value: String, _ page: HUDDesignPage) -> HUDReadout {
+        let spoken = HUDReadout(id: "value:" + id, label: plate.label, value: value, frame: plate.layer.bounds, env: env)
+        HUDMotion.perform { plate.layer.addSublayer(spoken.layer) }
+        page.add(spoken)
+        return spoken
+    }
+
     private func readout(_ value: String) -> HUDTextLayer {
         let text = HUDTextLayer(style: HUDType.readout, alignment: .right)
         setReadout(text, value)
@@ -789,7 +1067,8 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
         guard let layer else { return }
         HUDMotion.perform {
             layer.runs = [HUDText.Run("[ ", HUDType.readoutBracket), HUDText.Run(value, HUDType.readout), HUDText.Run(" ]", HUDType.readoutBracket)]
-            layer.bounds.size = CGSize(width: ceil(layer.preferredWidth) + 2, height: 12)
+            // Only the line frame: it pads the bounds for the glyphs. Setting the
+            // bounds first shrank an unchanged value's box and truncated it.
             layer.lineFrame = CGRect(x: 0, y: 0, width: ceil(layer.preferredWidth) + 2, height: 12)
         }
         env.applyScale(to: layer)
@@ -873,3 +1152,4 @@ final class HUDIconTile: HUDControl {
     }
     override var accessibilityRole: HUDAccessibilityItem.Role? { .tab(selected: isSelected) }
 }
+

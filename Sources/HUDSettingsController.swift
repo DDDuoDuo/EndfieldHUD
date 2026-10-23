@@ -33,7 +33,7 @@ struct HUDAboutInformation {
                           url: URL(string: "https://www.bilibili.com/video/BV1DBaP6yEHs/")),
                 HUDCredit(name: "QinAnze / 氰氨锗", role: L10n.text("Inspiration", "灵感来源"),
                           url: URL(string: "https://github.com/QinAnze/zmd-charge")),
-                HUDCredit(name: "Ronit Singh · FineTune", role: L10n.text("Audio architecture reference", "音频架构参考"),
+                HUDCredit(name: "Ronit Singh / FineTune", role: L10n.text("Audio architecture reference", "音频架构参考"),
                           url: URL(string: "https://github.com/ronitsingh10/FineTune"))
             ])
     }
@@ -85,7 +85,7 @@ final class HUDSettingsController {
     var onCheckForUpdates: (() -> Void)?
     var onAutomaticUpdatesChange: ((Bool) -> Void)?
     private(set) var updateState = HUDUpdateState()
-    var loginStatusProvider: (() -> String)?
+    var loginStatusProvider: (() -> String?)?
     /// Return nil while available, or the platform's current registration error.
     var shortcutRegistrationStatusProvider: (() -> String?)?
     private(set) var status: String?

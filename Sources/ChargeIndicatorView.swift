@@ -18,10 +18,12 @@ final class ChargeIndicatorView: NSView {
     private let body = CALayer()
     private let emblem = CAShapeLayer()
     private let bolt = CAShapeLayer()
-    private let bannerEnglish = CATextLayer()
-    private let bannerTitle = CATextLayer()
-    private let capacityLabel = CATextLayer()
-    private let percentageLabel = CATextLayer()
+    // Their attributed strings name the standard faces; the layers set them
+    // on the faces' own line metrics.
+    private let bannerEnglish = HUDStandardTextLayer()
+    private let bannerTitle = HUDStandardTextLayer()
+    private let capacityLabel = HUDStandardTextLayer()
+    private let percentageLabel = HUDStandardTextLayer()
     private let ringContainer = CALayer()
     private let ringTrack = CAShapeLayer()
     private let ringProgress = CAShapeLayer()
@@ -325,7 +327,7 @@ final class ChargeIndicatorView: NSView {
     }
     private var levelColor: NSColor {
         if metric != .battery {
-            return metricProgress == nil && (metric == .ram || metric == .cpu)
+            return metricProgress == nil && [.ram, .cpu, .gpu].contains(metric)
                 ? foreground.withAlphaComponent(0.45) : configuration.accentColor
         }
         switch snapshot.levelTone {
@@ -347,32 +349,32 @@ final class ChargeIndicatorView: NSView {
             let localizedMode = self.snapshot.isChargeMode ? L10n.text("CHARGE MODE", "超充模式")
                 : L10n.text("POWER MODE", "电源模式")
             let title = NSAttributedString(string: "// " + englishMode, attributes: [
-                .font: NSFont.systemFont(ofSize: 7.5, weight: .medium),
+                .font: HUDFontResolver.nsFont(size: 7.5, weight: .medium),
                 .foregroundColor: self.foreground.withAlphaComponent(0.55), .kern: 0.2
             ])
             self.bannerEnglish.string = title
             // Keep the original bilingual styling and capsule geometry while
             // fitting longer English and Japanese titles without clipping.
-            var titleFont = NSFont.systemFont(ofSize: 20, weight: .semibold)
+            var titleFont = HUDFontResolver.nsFont(size: 20, weight: .semibold)
             while titleFont.pointSize > 10,
                   (localizedMode as NSString).size(withAttributes: [.font: titleFont]).width > Self.bannerTitleWidth - 2 {
-                titleFont = NSFont.systemFont(ofSize: titleFont.pointSize - 0.5, weight: .semibold)
+                titleFont = HUDFontResolver.nsFont(size: titleFont.pointSize - 0.5, weight: .semibold)
             }
             self.bannerTitle.string = NSAttributedString(string: localizedMode, attributes: [
                 .font: titleFont, .foregroundColor: self.foreground
             ])
             func metricLine(scale: CGFloat) -> NSAttributedString {
                 let line = NSMutableAttributedString(string: reading.primary, attributes: [
-                    .font: NSFont.monospacedDigitSystemFont(ofSize: 12.5 * scale, weight: .semibold),
+                    .font: HUDFontResolver.nsFont(size: 12.5 * scale, weight: .semibold, tabular: true),
                     .foregroundColor: self.foreground
                 ])
                 line.append(NSAttributedString(string: reading.secondary, attributes: [
-                    .font: NSFont.monospacedDigitSystemFont(ofSize: 9.5 * scale, weight: .medium),
+                    .font: HUDFontResolver.nsFont(size: 9.5 * scale, weight: .medium, tabular: true),
                     .foregroundColor: self.foreground.withAlphaComponent(0.47)
                 ]))
                 if !reading.unit.isEmpty {
                     line.append(NSAttributedString(string: " " + reading.unit, attributes: [
-                        .font: NSFont.systemFont(ofSize: 7.5 * scale, weight: .medium),
+                        .font: HUDFontResolver.nsFont(size: 7.5 * scale, weight: .medium),
                         .foregroundColor: self.foreground.withAlphaComponent(0.47)
                     ]))
                 }
@@ -382,10 +384,10 @@ final class ChargeIndicatorView: NSView {
             var line = metricLine(scale: scale)
             while line.size().width > 143 && scale > 0.6 { scale -= 0.05; line = metricLine(scale: scale) }
             self.capacityLabel.string = line
-            var valueFont = NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .semibold)
+            var valueFont = HUDFontResolver.nsFont(size: 13, weight: .semibold, tabular: true)
             while valueFont.pointSize > 9,
                   (reading.trailing as NSString).size(withAttributes: [.font: valueFont]).width > 40 {
-                valueFont = NSFont.monospacedDigitSystemFont(ofSize: valueFont.pointSize - 0.5, weight: .semibold)
+                valueFont = HUDFontResolver.nsFont(size: valueFont.pointSize - 0.5, weight: .semibold, tabular: true)
             }
             self.percentageLabel.string = NSAttributedString(string: reading.trailing, attributes: [
                 .font: valueFont,

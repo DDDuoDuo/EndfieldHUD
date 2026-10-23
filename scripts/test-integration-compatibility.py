@@ -414,6 +414,93 @@ ALLOWED_SCHEMA_EXTENSIONS["Sources/HUDModule.swift"]["reverse"][0:0] = [('    ca
 ALLOWED_SCHEMA_EXTENSIONS["Sources/SystemEventLog.swift"]["fields"] += ["accountAction"]
 ALLOWED_SCHEMA_EXTENSIONS["Sources/SystemEventLog.swift"]["reverse"][0:0] = [('    case accountAction\n', ''), ('        case .accountAction: return .display\n', ''), ('        case .accountAction: return "Account changed"\n', ''), ('        if kind == .accountAction, let action = metadata["action"], let title = ["linked":"Account linked", "unlinked":"Account unlinked", "synced":"Profile refreshed", "settings":"Account settings changed"][action] { fields.append(title) }\n', ''), ('        case .accountAction: oneOf("action", ["linked", "unlinked", "synced", "settings"])\n', '')]
 
+# Mac redesign. v1.2.0 keeps running beside this build on the same defaults and
+# files, so each addition also stays readable by v1.2.0: new switches use new
+# keys; "Don't display" and the GPU reading keep v1.2.0's fallback under the
+# original keys with the new choice beside them; a whole-world map zoom keeps
+# v1.2.0's 2.1 floor in the camera with the wider zoom in an optional field.
+# Reverse these before every earlier addition.
+ALLOWED_SCHEMA_EXTENSIONS["Sources/Models.swift"]["fields"] += [
+    "summonHotkeyEnabled", "recordingMode", "dailyBootLog", "facilityAlerts", "displayModeExtension", "alertMetricExtension"]
+ALLOWED_SCHEMA_EXTENSIONS["Sources/Models.swift"]["reverse"][0:0] = [
+    ('    /// Off: the summon shortcut no longer opens the HUD (checklist 6).\n    var summonHotkeyEnabled = true\n    /// Redacts private content while recording or streaming (spec §3.26).\n    var recordingMode = false\n    /// A short terminal sequence on the first open of the day (spec §3.28).\n    var dailyBootLog = true\n    /// Low disk, memory pressure and overheating warnings (spec §3.29).\n    var facilityAlerts = true\n',
+     ''),
+    ('/// Choices added after v1.2.0 that its decoders do not know ("Don\'t display",\n/// the GPU reading). v1.2.0 shares these defaults, so the original key keeps the\n/// value v1.2.0 falls back to anyway and the new choice lives under its own key.\n/// It applies only while the original key still holds that fallback, so a\n/// different choice made in v1.2.0 wins.\nenum ReleaseFallback {\n    static let displayModeKey = "displayModeExtension", alertMetricKey = "alertMetricExtension"\n    static func displayMode(_ value: DisplayMode) -> DisplayMode { value == .never ? .whenChargingStarts : value }\n    static func alertMetric(_ value: HUDChargeMetric) -> HUDChargeMetric { value == .gpu ? .battery : value }\n\n    static func save(_ value: AppConfiguration, to defaults: UserDefaults) {\n        let mode = displayMode(value.displayMode), metric = alertMetric(value.alertMetric)\n        if mode == value.displayMode { defaults.removeObject(forKey: displayModeKey) }\n        else { defaults.set(value.displayMode.rawValue, forKey: displayModeKey) }\n        if metric == value.alertMetric { defaults.removeObject(forKey: alertMetricKey) }\n        else { defaults.set(value.alertMetric.rawValue, forKey: alertMetricKey) }\n    }\n\n    static func restore(_ value: AppConfiguration, from defaults: UserDefaults) -> AppConfiguration {\n        var result = value\n        if let mode = defaults.string(forKey: displayModeKey).flatMap(DisplayMode.init(rawValue:)),\n           displayMode(mode) == result.displayMode { result.displayMode = mode }\n        if let metric = defaults.string(forKey: alertMetricKey).flatMap(HUDChargeMetric.init(rawValue:)),\n           alertMetric(metric) == result.alertMetric { result.alertMetric = metric }\n        return result\n    }\n}\n\n',
+     ''),
+    ('            } ?? .default,\n            summonHotkeyEnabled: Self.bool(defaults, "summonHotkeyEnabled", fallback: true),\n            recordingMode: Self.bool(defaults, "recordingMode", fallback: false),\n            dailyBootLog: Self.bool(defaults, "dailyBootLog", fallback: true),\n            facilityAlerts: Self.bool(defaults, "facilityAlerts", fallback: true)\n',
+     '            } ?? .default\n'),
+    ('        configuration = ReleaseFallback.restore(configuration, from: defaults)\n',
+     ''),
+    ('ReleaseFallback.displayMode(next.displayMode).rawValue, forKey: "displayMode")',
+     'next.displayMode.rawValue, forKey: "displayMode")'),
+    ('ReleaseFallback.alertMetric(next.alertMetric).rawValue, forKey: "alertMetric")',
+     'next.alertMetric.rawValue, forKey: "alertMetric")'),
+    ('        defaults.set(next.summonHotkeyEnabled, forKey: "summonHotkeyEnabled")\n        defaults.set(next.recordingMode, forKey: "recordingMode")\n        defaults.set(next.dailyBootLog, forKey: "dailyBootLog")\n        defaults.set(next.facilityAlerts, forKey: "facilityAlerts")\n        ReleaseFallback.save(next, to: defaults)\n',
+     ''),
+]
+# Round 2 (System > Modules): the right-hand module order and hidden set live
+# under two new keys, hudModuleOrder and hudHiddenModules, that v1.2.0 never
+# reads; the default layout writes neither. Reverse before every earlier addition.
+ALLOWED_SCHEMA_EXTENSIONS["Sources/Models.swift"]["fields"] += ["moduleLayout"]
+ALLOWED_SCHEMA_EXTENSIONS["Sources/Models.swift"]["reverse"][0:0] = [
+    ('    /// Order and visibility of the right-hand list (System > Modules).\n    var moduleLayout = HUDModuleLayout()\n', ''),
+    ('        configuration.moduleLayout = HUDModuleLayout(defaults: defaults)\n', ''),
+    ('        next.moduleLayout.save(to: defaults)\n', ''),
+]
+ALLOWED_SCHEMA_EXTENSIONS["Sources/WorldMapStore.swift"]["fields"] += ["WorldMapViewport.minZoom=1", "Archive.wideZoom"]
+ALLOWED_SCHEMA_EXTENSIONS["Sources/WorldMapStore.swift"]["reverse"][0:0] = [
+    ("    /// The redesigned map zooms out to the whole world (1×, spec §3.18).\n    static let minZoom = 1.0\n    /// v1.2.0's floor. That release refuses a saved camera below it, so the\n    /// archive keeps this zoom in `viewport` and the wider one beside it.\n    static let legacyMinZoom = 2.1\n",
+     '    static let minZoom = 2.1\n'),
+    ('    private struct Archive: Codable {\n        let version: Int; let pins: [MapPin]; let viewport: WorldMapViewport\n        /// A zoom below `legacyMinZoom` (absent otherwise). v1.2.0 ignores it\n        /// and drops it on its next save, which leaves `legacyMinZoom`.\n        var wideZoom: Double? = nil\n\n        static func current(pins: [MapPin], viewport: WorldMapViewport) -> Archive {\n            guard viewport.zoom < WorldMapViewport.legacyMinZoom else { return Archive(version: 4, pins: pins, viewport: viewport) }\n            var stored = viewport; stored.zoom = WorldMapViewport.legacyMinZoom\n            return Archive(version: 4, pins: pins, viewport: stored, wideZoom: viewport.zoom)\n        }\n        /// The saved camera: `wideZoom` applies while `viewport` still holds the floor it replaced.\n        var camera: WorldMapViewport {\n            guard version >= 4, let wideZoom, wideZoom.isFinite, wideZoom >= WorldMapViewport.minZoom,\n                  wideZoom < WorldMapViewport.legacyMinZoom, viewport.zoom == WorldMapViewport.legacyMinZoom else { return viewport }\n            var value = viewport; value.zoom = wideZoom\n            return value\n        }\n    }\n',
+     '    private struct Archive: Codable { let version: Int; let pins: [MapPin]; let viewport: WorldMapViewport }\n'),
+    ('                viewport = archive.camera\n',
+     '                viewport = archive.viewport\n'),
+    ('Archive.current(pins: nextPins, viewport: nextViewport)',
+     'Archive(version: 4, pins: nextPins, viewport: nextViewport)'),
+]
+# The centre's own TODO list and note are a separate centre.json beside the
+# notes database, which v1.2.0 never opens; the database itself is unchanged.
+ALLOWED_SCHEMA_EXTENSIONS["Sources/NotesStore.swift"]["fields"] += ["NotesStore.directoryURL"]
+ALLOWED_SCHEMA_EXTENSIONS["Sources/NotesStore.swift"]["reverse"][0:0] = [
+    ("    /// The folder of this store; the centre's own TODO list and note live beside it.\n    var directoryURL: URL { directory }\n\n",
+     ''),
+]
+# One closed value for the GPU charge reading in settings events.
+ALLOWED_SCHEMA_EXTENSIONS["Sources/SystemEventLog.swift"]["fields"] += ["displaySettingsChanged.alertMetric.gpu"]
+ALLOWED_SCHEMA_EXTENSIONS["Sources/SystemEventLog.swift"]["reverse"][0:0] = [
+    ('"network": "Network", "disk": "Disk", "gpu": "GPU"],',
+     '"network": "Network", "disk": "Disk"],'),
+]
+# The session-only clipboard cache records what its list shows under each item
+# (source app, size); capture, deduplication, limits and copy-back are unchanged.
+ALLOWED_SCHEMA_EXTENSIONS["Sources/ClipboardStore.swift"] = {
+    "fields": ["ClipboardItem.details", "ClipboardStore.sourceApplication"],
+    "tests": ["Tests/ClipboardStoreTests.swift"],
+    "reverse": [
+        ("    /// The list's meta line (source app, size); never the contents.\n    var details = ClipboardDetails()\n",
+         ''),
+        ('/// What the Clipboard list shows under a record (spec §3.8), captured with it.\nstruct ClipboardDetails: Equatable {\n    /// The app that put the record on the clipboard, when it is known.\n    var source: String?\n    /// Characters of a text record.\n    var characters: Int?\n    /// Image records: the pasteboard format (PNG, TIFF) and pixel size.\n    var format: String?\n    var pixelWidth: Int?\n    var pixelHeight: Int?\n    /// File records: how many items, and the total size when all are regular files.\n    var fileCount: Int?\n    var byteCount: Int64?\n}\n\n',
+         ''),
+        ('    /// Names the app that owns new clipboard contents (tests inject it).\n    var sourceApplication: (NSPasteboard) -> String? = ClipboardStore.sourceApplication(of:)\n',
+         ''),
+        ('            guard var item = try read(from: pasteboard) else { return false }\n',
+         '            guard let item = try read(from: pasteboard) else { return false }\n'),
+        ('            item.details.source = sourceApplication(pasteboard)\n',
+         ''),
+        ('            return make(.files, preview: preview, details: ClipboardDetails(fileCount: urls.count, byteCount: Self.totalSize(urls)),\n                        payload: .files(ClipboardFileReferences(urls)))\n',
+         '            return make(.files, preview: preview, payload: .files(ClipboardFileReferences(urls)))\n'),
+        ('            return make(.image, preview: L10n.text("Image", "图像") + " · \\(width) × \\(height)", thumbnail: thumbnail,\n                        details: ClipboardDetails(format: type == .png ? "PNG" : "TIFF", pixelWidth: width, pixelHeight: height),\n                        payload: .image(type, data))\n',
+         '            return make(.image, preview: L10n.text("Image", "图像") + " · \\(width) × \\(height)",\n                        thumbnail: thumbnail, payload: .image(type, data))\n'),
+        ('        return make(.text, preview: text, details: ClipboardDetails(characters: text.count), payload: .text(text))\n',
+         '        return make(.text, preview: text, payload: .text(text))\n'),
+        ('    private func make(_ kind: ClipboardKind, preview: String, thumbnail: CGImage? = nil, details: ClipboardDetails = ClipboardDetails(),\n                      payload: ClipboardPayload) -> ClipboardItem {\n',
+         '    private func make(_ kind: ClipboardKind, preview: String, thumbnail: CGImage? = nil, payload: ClipboardPayload) -> ClipboardItem {\n'),
+        ('                             preview: compact, thumbnail: thumbnail, details: details, payload: payload)\n    }\n\n    /// Total size of up to 64 regular files (one metadata read each); nil for\n    /// folders, packages, larger selections or unreadable items.\n    private static func totalSize(_ urls: [URL]) -> Int64? {\n        guard urls.count <= 64 else { return nil }\n        var total: Int64 = 0\n        for url in urls {\n            guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),\n                  values.isRegularFile == true, let size = values.fileSize else { return nil }\n            total += Int64(size)\n        }\n        return total\n    }\n\n    /// The nspasteboard.org source marker when the copying app declares one,\n    /// otherwise the frontmost app (never this one).\n    static func sourceApplication(of pasteboard: NSPasteboard) -> String? {\n        let marker = NSPasteboard.PasteboardType("org.nspasteboard.source")\n        if pasteboard.types?.contains(marker) == true, let bundleID = pasteboard.string(forType: marker), !bundleID.isEmpty {\n            if let name = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first?.localizedName { return name }\n            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) { return FileManager.default.displayName(atPath: url.path) }\n        }\n        guard let app = NSWorkspace.shared.frontmostApplication, app.processIdentifier != ProcessInfo.processInfo.processIdentifier else { return nil }\n        return app.localizedName\n',
+         '                             preview: compact, thumbnail: thumbnail, payload: payload)\n'),
+    ],
+}
+
+
 def contract_data(name, data):
     if name == "Sources/Models.swift":
         # Add one language without exempting earlier language values.
@@ -439,7 +526,9 @@ def check(root, baseline):
                        "Sources/AppActivityMonitor.swift", "Sources/SystemActivityMonitor.swift",
                        "Sources/Localization.swift", "Sources/HUDSettingsController.swift",
                        "Sources/LoginItemManager.swift", "Sources/BatteryMonitor.swift",
-                       "Sources/SystemEventRecorder.swift", "Sources/DisplayPolicy.swift"}
+                       "Sources/SystemEventRecorder.swift", "Sources/DisplayPolicy.swift",
+                       "Sources/BatteryCapacity.swift", "Sources/StorageController.swift",
+                       "Sources/HUDUpdateState.swift", "Sources/WorldMapPathGeometry.swift"}
     for name, update in updates.items():
         if name not in allowed_updates or update.get("baselineSha256") != baseline["files"].get(name) or not update.get("reason"):
             failures.append(f"Invalid reviewed behavior update: {name}")

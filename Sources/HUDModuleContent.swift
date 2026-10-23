@@ -34,7 +34,7 @@ final class HUDModuleContent {
     var onPresentationChange: ((HUDModule, HUDModule, Bool) -> Void)?
     var selectedModule: HUDModule { state.selectedModule }
     var isTransitioning: Bool { state.isTransitioning }
-    var registeredModuleCount: Int { factories.count + 1 } // Existing live Power screen.
+    var registeredModuleCount: Int { factories.count }
     var contentLayerCount: Int { layer.sublayers?.count ?? 0 }
     var activeContentLayer: CALayer? { current.wrapper.sublayers?.first }
     func isPresenting(_ module: HUDModule) -> Bool {
@@ -49,7 +49,6 @@ final class HUDModuleContent {
     }
 
     private var state = HUDModuleSelectionState()
-    private let powerLayer: CALayer
     private var factories: [HUDModule: HUDModuleContentFactory] = [:]
     private var current: Screen
     private var incoming: Screen?
@@ -70,17 +69,22 @@ final class HUDModuleContent {
     /// Playing cover, Personal ID art) and switch without the shutter mask.
     func isDesignScreen(_ module: HUDModule) -> Bool { factories[module] is HUDDesignCanvas }
 
-    init(powerLayer: CALayer, reduceMotion: @escaping () -> Bool = { HUDRuntimeAppearance.reduceMotion }) {
-        self.powerLayer = powerLayer
+    /// The module the host selects before the content first shows. Until that
+    /// selection, the Power placeholder is not built when its canvas registers
+    /// or the style changes: its page would be thrown away unseen.
+    private var pendingInitialModule: HUDModule?
+
+    /// Power starts empty until its Battery canvas registers (the host does so
+    /// before the HUD first shows); every other module starts as a placeholder.
+    init(initialModule: HUDModule? = nil, reduceMotion: @escaping () -> Bool = { HUDRuntimeAppearance.reduceMotion }) {
         shouldReduceMotion = reduceMotion
+        pendingInitialModule = initialModule == .power ? nil : initialModule
         current = Screen(module: .power)
         withoutActions {
             layer.name = "module.host"
             layer.frame = Self.viewportFrame
             layer.masksToBounds = true
             layer.allowsGroupOpacity = false
-            current.wrapper.addSublayer(powerLayer)
-            powerLayer.frame = Self.localContentFrame(.power)
             layer.addSublayer(current.wrapper)
         }
         let placeholder = HUDPlaceholderContentFactory()
@@ -95,14 +99,17 @@ final class HUDModuleContent {
         precondition(Thread.isMainThread)
         guard module != .power || factory is HUDDesignCanvas else { return false }
         factories[module] = factory
-        for screen in [current, incoming].compactMap({ $0 }) where screen.module == module { rebuild(screen) }
+        for screen in [current, incoming].compactMap({ $0 }) where screen.module == module && isWanted(screen) { rebuild(screen) }
         return true
     }
+
+    private func isWanted(_ screen: Screen) -> Bool { pendingInitialModule.map { $0 == screen.module } ?? true }
 
     /// A newer request replaces the pending destination and completion. Only the
     /// final requested screen calls back, after all necessary swaps have settled.
     func select(module: HUDModule, animated: Bool, completion: (() -> Void)? = nil) {
         precondition(Thread.isMainThread)
+        pendingInitialModule = nil
         latestCompletion = completion
         guard animated, !shouldReduceMotion() else {
             settle(on: module, notify: true)
@@ -115,6 +122,7 @@ final class HUDModuleContent {
     /// Commit the most recent request immediately, including a queued request.
     func settle() {
         precondition(Thread.isMainThread)
+        pendingInitialModule = nil
         settle(on: state.requestedModule, notify: true)
     }
 
@@ -142,7 +150,7 @@ final class HUDModuleContent {
         style = HUDModuleContentStyle(dark: dark, accent: color, contentsScale: scale)
         renderedLanguage = L10n.resolvedLanguage
         for screen in [current, incoming].compactMap({ $0 }) {
-            if repaint && (screen.module != .power || factories[.power] != nil) { rebuild(screen) }
+            if repaint && (screen.module != .power || factories[.power] != nil) && isWanted(screen) { rebuild(screen) }
             // Redesigned canvases scale their own box px (HUDDesignContext).
             if !isDesignScreen(screen.module) { applyScale(to: screen.wrapper) }
         }
@@ -189,15 +197,26 @@ final class HUDModuleContent {
         let offset = HUDShellPosition.entranceOffset(from: transition.from, to: transition.to)
         let unit = content.contentUnit
         let leave = HUDDesignEnvironment(reduceMotion: shouldReduceMotion)
+        // A screen skipped below was never attached: there is nothing to leave.
+        let shown = current.wrapper.superlayer != nil
         HUDMotion.leave(current.wrapper, toward: CGPoint(x: offset.x * unit, y: offset.y * unit), env: leave, key: "module.leave")
         let swap = DispatchWorkItem { [weak self] in
             guard let self else { return }
-            self.withoutActions { self.layer.addSublayer(next.wrapper) }
+            // One commit for the whole swap. A top-level explicit transaction
+            // reaches the screen at once, so the attached screen would show at
+            // full opacity while the completion activates the module (often
+            // several frames), and only then hide its rows for the entrance.
+            CATransaction.begin()
+            // A module clicked during the leave supersedes this one, which is
+            // skipped rather than shown only to leave again.
+            let superseded = self.state.pendingModule != nil
+            if !superseded { self.withoutActions { self.layer.addSublayer(next.wrapper) } }
             self.finish(transition)
-            content.playEntrance(from: offset)
+            if !superseded { content.playEntrance(from: offset) }
+            CATransaction.commit()
         }
         pendingSwap = swap
-        DispatchQueue.main.asyncAfter(deadline: .now() + HUDDuration.leave, execute: swap)
+        DispatchQueue.main.asyncAfter(deadline: .now() + (shown ? HUDDuration.leave : 0), execute: swap)
     }
 
     private func finish(_ transition: HUDModuleSelectionState.Transition) {
@@ -255,8 +274,7 @@ final class HUDModuleContent {
             // Keep an in-flight registration frontier attached when a theme or
             // language repaint replaces the actual content beneath it.
             for child in screen.wrapper.sublayers ?? [] where child.name != "module.registration" { child.removeFromSuperlayer() }
-            let content = screen.module == .power && factories[.power] == nil ? powerLayer
-                : factories[screen.module]!.makeContent(for: screen.module, style: style)
+            guard let content = factories[screen.module]?.makeContent(for: screen.module, style: style) else { return }
             place(content, for: screen.module)
             screen.wrapper.insertSublayer(content, at: 0)
             for child in screen.wrapper.sublayers ?? [] where child.name == "module.registration" {
@@ -486,11 +504,9 @@ private struct HUDPlaceholderContentFactory: HUDModuleContentFactory {
     }
 
     private func label(_ text: String, frame: CGRect, size: CGFloat, color: NSColor, parent: CALayer, scale: CGFloat) {
-        let layer = CATextLayer()
+        let layer = HUDStandardTextLayer(size: size, weight: .medium)
         layer.frame = frame
         layer.string = text
-        layer.font = NSFont.systemFont(ofSize: size, weight: .medium)
-        layer.fontSize = size
         layer.foregroundColor = color.cgColor
         layer.alignmentMode = .center
         layer.truncationMode = .end

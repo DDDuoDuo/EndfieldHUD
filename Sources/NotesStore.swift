@@ -174,6 +174,9 @@ final class NotesStore {
 
     deinit { if let database { sqlite3_close_v2(database) } }
 
+    /// The folder of this store; the centre's own TODO list and note live beside it.
+    var directoryURL: URL { directory }
+
     func upsert(_ note: CanvasNote) throws {
         let note = NotesGeometry.constrained(note)
         guard note.createdAt.timeIntervalSinceReferenceDate.isFinite,

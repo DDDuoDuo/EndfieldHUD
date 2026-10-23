@@ -22,15 +22,18 @@ final class HUDAccountGauge {
     private var tooltipContentKeys = [String](repeating: "", count: 4)
     var onRefresh: (() -> Void)?
     var onChange: (() -> Void)?
+    /// Opens the Work Mode module when the bar shows Work Mode time.
+    var onOpenWorkMode: (() -> Void)?
     private(set) var isPopoverOpen = false
     private(set) var value = ""
     private(set) var accessibilityLabel = ""
     private(set) var updateCount = 0
     private var renderScale: CGFloat = 0
     static let size = CGSize(width: 168, height: 42)
-    // Expand left from the wallet's right edge, away from the adjacent clock.
-    static let popoverRect = CGRect(x: size.width - 224, y: 40, width: 224, height: 65)
-    static let refreshRect = CGRect(x: 195, y: 19, width: 23, height: 25)
+    /// The recovery menu grows left from the wallet's right edge, away from
+    /// the adjacent clock, to fit its labels and values (`Layout`).
+    private(set) var popoverRect = Layout.frame(width: Layout.minimumWidth)
+    private var refreshRect: CGRect { Layout.refresh(width: popoverRect.width) }
     // Mirror the heading's x=270 inset around the 1,000-point HUD plane.
     static let headerPosition = CGPoint(x: 292, y: 0)
     static var sourceNumberFont: String? { Numerals.font.map { $0.family + " " + $0.style } }
@@ -39,12 +42,15 @@ final class HUDAccountGauge {
     private(set) var tooltipRasterCount = 0
     private(set) var nextRecoveryText = "", fullRecoveryText = ""
     var canOpen: Bool { presentation != nil && !layer.isHidden }
+    /// Without sanity data the bar shows Work Mode time and acts as a link to Work Mode.
+    var opensWorkMode: Bool { presentation == nil && !layer.isHidden }
+    var isInteractive: Bool { canOpen || opensWorkMode }
     var accessibleActions: [Action] {
-        guard canOpen else { return [] }
+        guard isInteractive else { return [] }
         var actions = [Action(id: "toggle", label: accessibilityLabel, rect: CGRect(origin: .zero, size: Self.size), enabled: true)]
         if isPopoverOpen {
             actions.append(Action(id: "refresh", label: L10n.text("Refresh", "刷新"),
-                rect: Self.refreshRect.offsetBy(dx: Self.popoverRect.minX, dy: Self.popoverRect.minY),
+                rect: refreshRect.offsetBy(dx: popoverRect.minX, dy: popoverRect.minY),
                 enabled: presentation?.refreshAvailable == true && presentation?.isRefreshing != true))
         }
         return actions
@@ -69,20 +75,19 @@ final class HUDAccountGauge {
             feedback.useAlphaSilhouette(silhouette,
                 contentsCenter: CGRect(x: 29.0 / 60, y: 0, width: 2.0 / 60, height: 1))
         }
+        // One neutral hover whatever the bar shows (sanity or the Work Mode link).
         feedback.accentOverride = NSColor(white: 0.75, alpha: 1)
-        popover.name = "hud.account.stamina.recovery"; popover.frame = Self.popoverRect
+        popover.name = "hud.account.stamina.recovery"; popover.frame = popoverRect
         popover.backgroundColor = NSColor(white: 0.065, alpha: 0.98).cgColor
         popover.cornerRadius = 4; popover.isHidden = true; popover.zPosition = 10
         layer.addSublayer(popover)
-        for (item, frame) in [(nextLabel, CGRect(x: 9, y: 6, width: 99, height: 25)),
-                              (fullLabel, CGRect(x: 9, y: 33, width: 99, height: 25)),
-                              (nextValue, CGRect(x: 109, y: 6, width: 83, height: 25)),
-                              (fullValue, CGRect(x: 109, y: 33, width: 83, height: 25))] {
-            item.frame = frame; item.contentsGravity = .resize; item.actions = ["contents": NSNull()]; popover.addSublayer(item)
+        for (item, name) in [(nextLabel, "next.label"), (fullLabel, "full.label"), (nextValue, "next.value"), (fullValue, "full.value")] {
+            item.name = "hud.account.stamina.recovery." + name; item.contentsGravity = .resize; item.actions = ["contents": NSNull()]; popover.addSublayer(item)
         }
         refresh.name = "hud.account.stamina.refresh"
         refresh.bounds = CGRect(x: 0, y: 0, width: 22, height: 22)
-        refresh.position = CGPoint(x: Self.refreshRect.midX, y: Self.refreshRect.midY)
+        let refreshFrame = Layout.refresh(width: Layout.minimumWidth)
+        refresh.position = CGPoint(x: refreshFrame.midX, y: refreshFrame.midY)
         refresh.fillColor = NSColor(white: 0.9, alpha: 1).cgColor
         // Same centered, filled clockwise-arrow geometry as Storage refresh.
         let shaft = CGMutablePath(), center = CGPoint(x: 11, y: 11), radius: CGFloat = 6.2
@@ -96,14 +101,14 @@ final class HUDAccountGauge {
         path.addLine(to: CGPoint(x: 18.05, y: 5.3)); path.closeSubpath()
         refresh.path = path
         popover.addSublayer(refresh)
-        refreshFeedback = HUDControlHighlightLayer.add(to: popover, rect: Self.refreshRect, shape: .rounded)
+        refreshFeedback = HUDControlHighlightLayer.add(to: popover, rect: refreshFrame, shape: .rounded)
         refreshFeedback.accentOverride = NSColor(white: 0.75, alpha: 1)
     }
 
     func update(value next: String, accessibilityLabel label: String, visible: Bool, accent: NSColor, scale: CGFloat,
                 sanity: HypergryphSanityPresentation? = nil, at date: Date = Date()) {
         let scale = scale.isFinite ? min(3, max(1, scale)) : 2
-        let next = String(next.prefix(24)), wasAvailable = canOpen
+        let next = String(next.prefix(24)), wasAvailable = canOpen, wasLink = opensWorkMode
         presentation = sanity; self.date = date
         if value != next || accessibilityLabel != label || layer.isHidden == visible || renderScale != scale {
             CATransaction.begin(); CATransaction.setDisableActions(true)
@@ -117,33 +122,43 @@ final class HUDAccountGauge {
         }
         if !canOpen { dismiss(animated: false) }
         if isPopoverOpen { renderTooltip() }
-        if wasAvailable != canOpen { onChange?() }
+        if wasAvailable != canOpen || wasLink != opensWorkMode { onChange?() }
     }
 
     func perform(_ id: String) {
+        if opensWorkMode { if id == "toggle" { onOpenWorkMode?() }; return }
         guard canOpen else { return }
         if id == "toggle" { setOpen(!isPopoverOpen) }
         else if id == "refresh", isPopoverOpen, presentation?.refreshAvailable == true,
                 presentation?.isRefreshing != true { onRefresh?() }
     }
     @discardableResult func mouseDown(at point: CGPoint?) -> Bool {
-        guard canOpen else { return false }
+        guard isInteractive else { return false }
         if let point, CGRect(origin: .zero, size: Self.size).contains(point) { perform("toggle"); return true }
         if isPopoverOpen {
-            if let point, Self.popoverRect.contains(point) {
-                if Self.refreshRect.offsetBy(dx: Self.popoverRect.minX, dy: Self.popoverRect.minY).contains(point) { perform("refresh") }
+            if let point, popoverRect.contains(point) {
+                if refreshRect.offsetBy(dx: popoverRect.minX, dy: popoverRect.minY).contains(point) { perform("refresh") }
             } else { dismiss() }
             return true
         }
         return false
     }
     func hover(at point: CGPoint?) {
-        HUDControlHighlightLayer.update(in: layer, point: canOpen ? point : nil)
+        HUDControlHighlightLayer.update(in: layer, point: isInteractive ? point : nil)
     }
     func dismiss(animated: Bool = true) { setOpen(false, animated: animated) }
     private func setOpen(_ value: Bool, animated: Bool = true) {
         guard isPopoverOpen != value else {
-            if !value && !animated { popover.removeAllAnimations(); popover.isHidden = true; hover(at: nil) }
+            guard !value && !animated else { return }
+            // Runs on every clock tick: touch the layer only when a close is
+            // still showing, so a tick opens no implicit transaction.
+            if !popover.isHidden || popover.animationKeys() != nil {
+                CATransaction.begin(); CATransaction.setDisableActions(true)
+                popover.removeAllAnimations(); popover.isHidden = true
+                CATransaction.commit()
+            }
+            // The Work Mode link keeps its hover across the clock's updates.
+            if !isInteractive { hover(at: nil) }
             return
         }
         isPopoverOpen = value
@@ -168,7 +183,8 @@ final class HUDAccountGauge {
     }
     private func renderTooltip() {
         guard let presentation else { return }
-        let colon = L10n.isCJK ? "：" : ":"
+        let fullWidthColon = [.simplifiedChinese, .traditionalChinese, .japanese].contains(L10n.resolvedLanguage)
+        let colon = fullWidthColon ? "：" : ":"
         let first = L10n.text("Next recovery", "下次回复") + colon
         let second = L10n.text("Full recovery", "全部回复") + colon
         nextRecoveryText = Self.countdown(until: presentation.nextRecoveryAt, at: date, hours: false)
@@ -176,12 +192,25 @@ final class HUDAccountGauge {
         let key = [first, second, nextRecoveryText, fullRecoveryText, String(Double(renderScale)), String(presentation.refreshAvailable), String(presentation.isRefreshing)].joined(separator: "|")
         guard key != renderedTooltip else { return }
         renderedTooltip = key; tooltipRenderCount += 1
+        // English labels are the source glyphs; other languages take the
+        // standard faces (HarmonyOS Sans, the region's Noto for CJK).
+        let sourceLabels = !L10n.isCJK
+        let layout = Layout(labels: [first, second].map { sourceLabels ? Numerals.width($0) ?? Layout.labelWidth($0) : Layout.labelWidth($0) },
+                            values: [nextRecoveryText, fullRecoveryText].map { Numerals.width($0) ?? Layout.labelWidth($0) })
         CATransaction.begin(); CATransaction.setDisableActions(true)
+        if popoverRect != layout.frame {
+            popoverRect = layout.frame; popover.frame = layout.frame
+            refresh.position = CGPoint(x: refreshRect.midX, y: refreshRect.midY)
+            refreshFeedback.frame.origin = refreshRect.origin
+        }
         for (index, pair) in [(nextLabel, first), (fullLabel, second), (nextValue, nextRecoveryText), (fullValue, fullRecoveryText)].enumerated() {
-            let (item, text) = pair, contentKey = text + "|" + String(Double(renderScale))
+            let (item, text) = pair, frame = layout.cell(index)
+            let contentKey = text + "|" + String(Double(renderScale)) + "|" + String(Double(frame.width))
+            if item.frame != frame { item.frame = frame }
             guard tooltipContentKeys[index] != contentKey else { continue }
-            item.contents = Numerals.render(text, in: item.bounds.size, scale: renderScale, preferredSize: 14.4, rightAligned: false)
-                ?? localizedText(text, size: item.bounds.size, scale: renderScale)
+            let source = index >= 2 || sourceLabels
+            item.contents = (source ? Numerals.render(text, in: frame.size, scale: renderScale, preferredSize: Layout.textSize, rightAligned: false) : nil)
+                ?? Layout.renderLabel(text, in: frame.size, scale: renderScale)
             item.contentsScale = renderScale; tooltipContentKeys[index] = contentKey; tooltipRasterCount += 1
         }
         refresh.contentsScale = renderScale
@@ -189,15 +218,67 @@ final class HUDAccountGauge {
         refresh.opacity = enabled ? 1 : 0.38; refreshFeedback.setEnabled(enabled)
         CATransaction.commit(); onChange?()
     }
-    private func localizedText(_ text: String, size: CGSize, scale: CGFloat) -> CGImage? {
-        // The source SC atlas lacks several JP/TW/KR glyphs. Keep translations
-        // legible using native locale fallback; numbers remain original glyphs.
-        let image = NSImage(size: size)
-        image.lockFocus()
-        (text as NSString).draw(in: CGRect(x: 0, y: 3, width: size.width, height: size.height),
-            withAttributes: [.font: NSFont.systemFont(ofSize: 14.4, weight: .medium), .foregroundColor: NSColor(white: 0.92, alpha: 1)])
-        image.unlockFocus(); return image.cgImage(forProposedRect: nil, context: nil, hints: nil)
+
+    /// The recovery menu: two rows of label and value, the refresh button at
+    /// the right. Columns take their measured text; the menu widens (up to
+    /// `maximumWidth`) before labels shrink, so nothing leaves the panel.
+    private struct Layout {
+        static let textSize: CGFloat = 14.4
+        static let minimumWidth: CGFloat = 224, maximumWidth: CGFloat = 300
+        static let height: CGFloat = 65, rowHeight: CGFloat = 25, rows: [CGFloat] = [6, 33]
+        static let leading: CGFloat = 10, columnGap: CGFloat = 14, refreshGap: CGFloat = 10, trailing: CGFloat = 6
+        static let refreshSize = CGSize(width: 23, height: 25)
+        /// The source numerals shrink unless their cell is 2 px wider than the text.
+        static let slack: CGFloat = 2
+        /// Room for the longest countdowns ("00:00", "000:00:00") so the menu
+        /// keeps its width while they count down.
+        static let valueTemplate = "000:00:00"
+        let frame: CGRect, labelWidth: CGFloat, valueWidth: CGFloat
+
+        init(labels: [CGFloat], values: [CGFloat]) {
+            let value = ceil(max(values.max() ?? 0, Numerals.width(Self.valueTemplate) ?? Self.labelWidth(Self.valueTemplate))) + Self.slack
+            let fixed = Self.leading + Self.columnGap + Self.refreshGap + Self.refreshSize.width + Self.trailing
+            let width = min(Self.maximumWidth, max(Self.minimumWidth, fixed + ceil(labels.max() ?? 0) + Self.slack + value))
+            frame = Self.frame(width: width)
+            valueWidth = value
+            labelWidth = width - fixed - value
+        }
+
+        static func frame(width: CGFloat) -> CGRect {
+            CGRect(x: HUDAccountGauge.size.width - width, y: 40, width: width, height: height)
+        }
+        static func refresh(width: CGFloat) -> CGRect {
+            CGRect(origin: CGPoint(x: width - trailing - refreshSize.width, y: 19), size: refreshSize)
+        }
+        /// Label, label, value, value.
+        func cell(_ index: Int) -> CGRect {
+            let y = Self.rows[index % 2]
+            return index < 2 ? CGRect(x: Self.leading, y: y, width: labelWidth, height: Self.rowHeight)
+                : CGRect(x: Self.leading + labelWidth + Self.columnGap, y: y, width: valueWidth, height: Self.rowHeight)
+        }
+
+        private static var style: HUDTextStyle { HUDTextStyle(size: textSize, weight: .medium, color: NSColor(white: 0.92, alpha: 1).cgColor) }
+        static func labelWidth(_ text: String) -> CGFloat { HUDText.width(text, style) }
+
+        /// One line in the standard faces, shrunk to fit and centred on its
+        /// ink like the source numerals beside it.
+        static func renderLabel(_ text: String, in size: CGSize, scale: CGFloat) -> CGImage? {
+            let natural = labelWidth(text)
+            let fit = natural > size.width ? max(0.6, size.width / natural) : 1
+            let language = HUDTextLanguage.tag()
+            let line = CTLineCreateWithAttributedString(HUDText.attributed([HUDText.Run(text, style)], language: language, scale: fit))
+            let width = Int(ceil(size.width * scale)), height = Int(ceil(size.height * scale))
+            guard width > 0, height > 0, let space = CGColorSpace(name: CGColorSpace.sRGB),
+                  let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                          space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+            context.scaleBy(x: scale, y: scale)
+            let ink = CTLineGetBoundsWithOptions(line, .useGlyphPathBounds)
+            context.textPosition = CGPoint(x: 0, y: (size.height - ink.height) / 2 - ink.minY)
+            CTLineDraw(line, context)
+            return context.makeImage()
+        }
     }
+
     static var sourceArtworkAvailable: Bool { Artwork.icon != nil && Artwork.background != nil && Artwork.decoration != nil }
     /// The source wallet uses HarmonyOS Sans SC Medium, not a monospaced
     /// macOS font. Its compact original SDF glyphs cover the wallet and tooltip. Keep
@@ -229,6 +310,14 @@ final class HUDAccountGauge {
                   }) else { return nil }
             return value
         }()
+
+        /// Advance width at `preferredSize`; nil when a glyph is not in the source set.
+        static func width(_ text: String, preferredSize: Double = 14.4) -> CGFloat? {
+            guard let font, !text.isEmpty else { return nil }
+            let glyphs = text.compactMap { character in font.glyphs.first { $0.character == String(character) } }
+            guard glyphs.count == text.count else { return nil }
+            return CGFloat(glyphs.reduce(0) { $0 + $1.advance } * preferredSize / font.pointSize)
+        }
 
         static func render(_ text: String, in size: CGSize, scale: CGFloat, preferredSize: Double = 18, rightAligned: Bool = true) -> CGImage? {
             guard let font, !text.isEmpty else { return nil }

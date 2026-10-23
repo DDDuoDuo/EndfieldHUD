@@ -61,6 +61,14 @@ final class HUDSourceWatchView: NSView {
     private var desktopProfileImageKeys: [String: ProfileKey] = [:]
     private var desktopProfileBackgroundArtwork: CGImage?
     private var desktopProfileInput: (UserProfile, NSImage?, NSImage?, Int32)?
+    /// Recording mode (spec §3.26): the profile card's UID becomes a hatched
+    /// redaction bar on the card's own tilted label.
+    var desktopUIDRedacted = false {
+        didSet {
+            guard desktopUIDRedacted != oldValue, let input = desktopProfileInput else { return }
+            setDesktopProfile(input.0, avatar: input.1, background: input.2, avatarOrientation: input.3)
+        }
+    }
     var onQuit: (() -> Void)?
     private var lastAcceptedClick: [HUDSourceID: TimeInterval] = [:]
     private var accessibilityButtons: [HUDSourceID: HUDSourceWatchAccessibilityButton] = [:]
@@ -78,12 +86,20 @@ final class HUDSourceWatchView: NSView {
     private var desktopNavigation: HUDSourceDesktopNavigationLayout?
     private var desktopBindings: [HUDSourceID: Int] = [:]
     private var desktopBindingPosition: Double?
-    private var desktopLabels: [HUDSourceID: (container: CALayer, text: CATextLayer, clip: CAShapeLayer)] = [:]
+    private var desktopLabels: [HUDSourceID: (container: CALayer, text: HUDStandardTextLayer, clip: CAShapeLayer)] = [:]
     private var desktopLabelButtons: [HUDSourceID: HUDSourceID] = [:]
     private var desktopIcons: [HUDSourceID: (container: CALayer, content: CALayer, vector: CAShapeLayer, image: CALayer, clip: CAShapeLayer)] = [:]
+    /// Each bound icon's visible glyph in its 32-point box (left-side spacing).
+    private var desktopIconGlyphs: [HUDSourceID: CGRect] = [:]
     private static var desktopReportIconArtwork: CGImage?
     private var desktopIconIDs: [HUDSourceID: HUDSourceID] = [:]
     private lazy var desktopRightButtonIDs = Set(desktopButtons.filter { $0.path.contains("/RightBottomNode/") }.map(\.nodeID))
+    /// The four left buttons (System, Display, Hotkeys, About) and their captions.
+    private lazy var desktopLeftLabelIDs: [HUDSourceID: HUDSourceID] = Dictionary(uniqueKeysWithValues:
+        document.buttons.prefix(4).compactMap { button in button.label.map { (button.nodeID, $0.nodeID) } })
+    /// Left icons share one box; each glyph's visible bottom sits this far
+    /// above the top of its caption (captions are top-aligned in their box).
+    static let desktopLeftIconSide = 80.0, desktopLeftIconGap = 5.0
     private struct DesktopLabelClip {
         let points: [CGPoint]
         let path: CGPath?
@@ -146,6 +162,8 @@ final class HUDSourceWatchView: NSView {
     private(set) var maximumFrameBuildSeconds: TimeInterval = 0
     var onUnhandledKey: ((NSEvent) -> Void)?
     var onPointerMove: (() -> Void)?
+    /// A centre module's own pointer at a host point (the map's grab hand); nil keeps the source cursor.
+    var designCursor: ((CGPoint) -> NSCursor?)?
     /// Maps the shared native design plane to the same rendered center camera.
     var onDesktopCenterPlane: ((CATransform3D) -> Void)?
     /// Source bottom-card contours in this view's coordinates, after the
@@ -189,6 +207,15 @@ final class HUDSourceWatchView: NSView {
     private lazy var desktopStatusID = document.scene.nodes.first { $0.name == "BannerNode" && $0.path.contains("/RightBottomNode/") }?.id
     private var lastDesktopStatusProjection: (world: simd_double4x4, rect: HUDSourceRect, bounds: CGRect)?
     var pointerIsAnimatingForVerification: Bool { gyro.isAnimating }
+    /// Preview captures only: holds the shell hover on the profile card as if
+    /// the pointer rested there, without moving the pointer or the camera.
+    var holdsProfileHoverForVerification = false {
+        didSet {
+            hoverHeldForVerification = holdsProfileHoverForVerification ? document.desktopProfileCard?.scene.rootID : nil
+            lastHitQuery = nil; refreshPlaybackScheduling()
+        }
+    }
+    private var hoverHeldForVerification: HUDSourceID?
     private var lastReportedPointerPoint: CGPoint?
     var selectedDesktopModule: HUDModule = .power {
         didSet { if selectedDesktopModule != oldValue { updateDesktopSelection(previousModule: oldValue) } }
@@ -1056,7 +1083,8 @@ final class HUDSourceWatchView: NSView {
             // motion. A sparse ambient frame has identical hit geometry.
             let interactive = inputEnabled && playback.phase == .visible && isOnScreen
             let nextHover: HUDSourceID?
-            if let previous = lastHitQuery, previous.point == pointerPoint,
+            if let held = hoverHeldForVerification { nextHover = held }
+            else if let previous = lastHitQuery, previous.point == pointerPoint,
                previous.presentation == frameBuilder.presentationRevision, previous.interactive == interactive {
                 nextHover = hovered
             } else if interactive, let pointerPoint, bounds.contains(pointerPoint) {
@@ -1258,6 +1286,10 @@ final class HUDSourceWatchView: NSView {
                 renderedCursor.hide(); return true
             }
             hit = view.superview
+        }
+        if let module = designCursor?(host.convert(windowPoint, from: nil)) {
+            if event != nil || NSCursor.current !== module { module.set() }
+            renderedCursor.hide(); return true
         }
         if previousCursor == nil { previousCursor = NSCursor.current === cursor ? .arrow : NSCursor.current }
         // cursorUpdate is AppKit's arbitration point, before mouse delivery.
@@ -1796,46 +1828,46 @@ final class HUDSourceWatchView: NSView {
                 }
                 let ink = entry.target.module?.group == .bottom ? NSColor.white : NSColor(white: 0.12, alpha: 1)
                 iconLayers.vector.fillColor = ink.cgColor; iconLayers.vector.strokeColor = ink.cgColor
-                let sourceImage: CGImage?
+                // Every artwork is trimmed to its visible bounds once (cached)
+                // and sized optically in the 32-point box, so all buttons of a
+                // side show one icon size whatever the source padding.
+                let artwork: CGImage?
                 if isReport {
-                    sourceImage = reportArtwork
+                    artwork = HUDSourceDesktopIconLayout.trimmed("report", tint: ink.cgColor) { reportArtwork }
                 } else if let shortcut = entry.shortcut {
                     iconLayers.vector.path = HUDSourceDesktopIconLayout.path(AppShortcutArtwork.path(for: shortcut.iconPreset, in: iconLayers.content.bounds))
                     iconLayers.vector.lineWidth = 32 / 17
                     iconLayers.vector.fillColor = nil
-                    sourceImage = AppShortcutArtwork.image(for: shortcut.iconPreset, original: shortcut.icon,
-                        size: 96, color: ink)
+                    artwork = shortcut.iconPreset == .original && shortcut.icon != nil
+                        ? AppShortcutArtwork.image(for: .original, original: shortcut.icon, size: 96, color: ink).map(HUDSourceDesktopIconLayout.image)
+                        : AppShortcutArtwork.trimmedImage(for: shortcut.iconPreset, color: ink)
                 } else {
-                    iconLayers.vector.path = HUDSourceDesktopIconLayout.path(HUDNavigationEntry.iconPath(for: entry.target.module ?? .addApp))
+                    let module = entry.target.module ?? .addApp
+                    iconLayers.vector.path = HUDSourceDesktopIconLayout.path(HUDNavigationEntry.iconPath(for: module))
                     iconLayers.vector.lineWidth = 0
-                    sourceImage = HUDNavigationEntry.gameIcon(for: entry.target.module)?.cgImage(size: 96, tint: ink)
+                    artwork = HUDNavigationEntry.gameIcon(for: module).flatMap { icon in
+                        HUDSourceDesktopIconLayout.trimmed("module." + module.rawValue, tint: ink.cgColor) { icon.cgImage(size: 96, tint: ink) }
+                    }
                 }
-                // Report retains its full authored canvas, size and padding.
-                iconLayers.image.contents = isReport ? sourceImage : sourceImage.map(HUDSourceDesktopIconLayout.image)
-                iconLayers.image.transform = CATransform3DIdentity
-                // Keep the cached Report bitmap's transparent margin around
-                // its original 84px canvas without changing the glyph size or
-                // the authored button/hit geometry.
-                let artworkInset: CGFloat = 32 * 12 / 84
-                iconLayers.image.frame = isReport
-                    ? iconLayers.content.bounds.insetBy(dx: -artworkInset, dy: -artworkInset)
-                    : iconLayers.content.bounds.insetBy(dx: 3, dy: 3)
-                let artworkScale: CGFloat = (entry.target.module == .workMode || entry.target.module == .storage) ? 0.9 : 1
-                iconLayers.vector.transform = CATransform3DMakeScale(artworkScale, artworkScale, 1)
-                iconLayers.image.transform = CATransform3DMakeScale(artworkScale, artworkScale, 1)
+                iconLayers.image.contents = artwork
+                iconLayers.image.transform = CATransform3DIdentity; iconLayers.vector.transform = CATransform3DIdentity
+                let glyph = artwork.map { HUDSourceDesktopIconLayout.glyphFrame(CGSize(width: $0.width, height: $0.height)) }
+                    ?? iconLayers.vector.path?.boundingBoxOfPath ?? iconLayers.content.bounds
+                iconLayers.image.frame = glyph
+                desktopIconGlyphs[iconID] = glyph
                 iconLayers.image.isHidden = iconLayers.image.contents == nil
                 iconLayers.vector.isHidden = !iconLayers.image.isHidden
             }
             guard let label = button.label else { continue }
-            let layers: (container: CALayer, text: CATextLayer, clip: CAShapeLayer)
+            let layers: (container: CALayer, text: HUDStandardTextLayer, clip: CAShapeLayer)
             if let existing = desktopLabels[label.nodeID] { layers = existing }
             else {
-                let container = CALayer(), text = CATextLayer(), clip = CAShapeLayer()
+                let container = CALayer(), text = HUDStandardTextLayer(), clip = CAShapeLayer()
                 container.name = "desktop.watch.label." + label.nodeID.rawValue
                 container.zPosition = 10; container.masksToBounds = false
                 container.addSublayer(text); container.mask = clip
                 text.anchorPoint = .zero; text.position = .zero
-                text.font = NSFont.systemFont(ofSize: 22, weight: .medium); text.fontSize = 22
+                text.weight = .medium; text.fontSize = 22
                 text.actions = ["contents": NSNull(), "bounds": NSNull(), "position": NSNull()]
                 text.alignmentMode = .center; text.truncationMode = .end
                 text.foregroundColor = NSColor(white: 0.12, alpha: 1).cgColor
@@ -1868,7 +1900,7 @@ final class HUDSourceWatchView: NSView {
         guard desktopMode, let card = document.desktopProfileCard else { return }
         desktopProfileInput = (profile, avatar, background, avatarOrientation)
         let accent = profile.resolvedAccent(fallback: HUDRuntimeAppearance.accent).usingColorSpace(.sRGB) ?? .white
-        let key = ProfileKey(strings: [profile.name, profile.displayedUID, L10n.text("Authority", "权限等级"), L10n.text("MAX", "满级")],
+        let key = ProfileKey(strings: [profile.name, desktopUIDRedacted ? "" : profile.displayedUID, L10n.text("Authority", "权限等级"), L10n.text("MAX", "满级")],
             values: [Double(profile.permissionLevel), profile.avatarZoom, profile.avatarOffsetX, profile.avatarOffsetY,
                 profile.thumbnailOffsetX, profile.thumbnailOffsetY, profile.thumbnailZoom, Double(avatarOrientation),
                 Double(accent.redComponent), Double(accent.greenComponent), Double(accent.blueComponent)],
@@ -1876,17 +1908,17 @@ final class HUDSourceWatchView: NSView {
         guard desktopProfileKey != key else { return }
         desktopProfileKey = key
         let level = min(60, max(1, profile.permissionLevel))
-        let captions = ["managerName": profile.name, "managerNumber": "UID: " + profile.displayedUID,
+        let captions = ["managerName": profile.name, "managerNumber": desktopUIDRedacted ? "UID:" : "UID: " + profile.displayedUID,
             "managerLevel": String(level), "managerLevelLabel": L10n.text("Authority", "权限等级"),
             "progressTxt": level == 60 ? L10n.text("MAX", "满级") : ""]
         CATransaction.begin(); CATransaction.setDisableActions(true)
         for (binding, caption) in captions {
             guard let id = card.node(binding), let component = document.component("UIText", on: id),
                   let rect = document.scene.node(id)?.transform.rect else { continue }
-            let layers: (container: CALayer, text: CATextLayer, clip: CAShapeLayer)
+            let layers: (container: CALayer, text: HUDStandardTextLayer, clip: CAShapeLayer)
             if let existing = desktopLabels[id] { layers = existing }
             else {
-                let container = CALayer(), text = CATextLayer(), clip = CAShapeLayer()
+                let container = CALayer(), text = HUDStandardTextLayer(), clip = CAShapeLayer()
                 container.name = "desktop.profile." + binding; container.zPosition = 10
                 container.addSublayer(text); container.mask = clip; layer?.addSublayer(container)
                 text.anchorPoint = .zero; text.position = .zero
@@ -1894,10 +1926,11 @@ final class HUDSourceWatchView: NSView {
                 layers = (container, text, clip); desktopLabels[id] = layers
             }
             var size = CGFloat(component["m_fontSize"].float(16))
-            while size > 10 && (caption as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: size, weight: .medium)]).width > CGFloat(rect.sizeDelta.x) { size -= 0.5 }
-            layers.text.string = caption; layers.text.font = NSFont.systemFont(ofSize: size, weight: .medium); layers.text.fontSize = size
+            while size > 10 && (caption as NSString).size(withAttributes: [.font: HUDFontResolver.nsFont(size: size, weight: .medium)]).width > CGFloat(rect.sizeDelta.x) { size -= 0.5 }
+            layers.text.string = caption; layers.text.weight = .medium; layers.text.fontSize = size
             layers.text.alignmentMode = ["managerLevelLabel", "progressTxt"].contains(binding) ? .right : .left
             layers.text.foregroundColor = (binding == "progressTxt" ? accent : .white).cgColor
+            if binding == "managerNumber" { updateUIDRedaction(on: layers.text, fontSize: size, label: CGSize(width: CGFloat(rect.sizeDelta.x), height: CGFloat(rect.sizeDelta.y))) }
             desktopProfileLabelIDs.insert(id); desktopLabelButtons[id] = card.scene.rootID
         }
         CATransaction.commit()
@@ -2056,14 +2089,14 @@ final class HUDSourceWatchView: NSView {
             let bottom = target?.module?.group == .bottom
             let right = desktopLabelButtons[labelID].flatMap { actionsByID[$0]?.source.path.contains("/RightBottomNode/") } ?? false
             var size: CGFloat = bottom ? 20 : right ? 22 : 26
-            let weight: NSFont.Weight = selected ? .bold : .medium
+            let weight: HUDFontWeight = selected ? .bold : .medium
             if target?.module == .fileShelf && L10n.isChinese { size = min(size, 20) }
             if let rect = document.scene.node(labelID)?.transform.rect,
                let caption = layers.text.string as? String {
                 let area = desktopCaptionSize(CGSize(width: rect.sizeDelta.x, height: rect.sizeDelta.y), target: target)
                 let width = max(1, area.width - 2), height = max(1, area.height - 2)
                 while size > 10 {
-                    let font = NSFont.systemFont(ofSize: size, weight: weight)
+                    let font = HUDFontResolver.nsFont(size: size, weight: weight)
                     let measured: CGSize
                     if layers.text.isWrapped {
                         measured = (caption as NSString).boundingRect(with: CGSize(width: width, height: .greatestFiniteMagnitude),
@@ -2073,7 +2106,7 @@ final class HUDSourceWatchView: NSView {
                     size -= 0.5
                 }
             }
-            layers.text.font = NSFont.systemFont(ofSize: size, weight: weight)
+            layers.text.weight = weight
             layers.text.fontSize = size
             layers.text.foregroundColor = (bottom ? (desktopDark ? NSColor.white : NSColor(white: 0.12, alpha: 1)) : selected
                 ? HUDRuntimeAppearance.accent.blended(withFraction: 0.5, of: .black) ?? .black
@@ -2160,6 +2193,19 @@ final class HUDSourceWatchView: NSView {
         onDesktopBottomSilhouettes?(polygons)
     }
 
+    /// The bar sits after "UID:" on the label, so it inherits the card's projection.
+    private func updateUIDRedaction(on text: CATextLayer, fontSize: CGFloat, label: CGSize) {
+        text.sublayers?.filter { $0.name == HUDRedaction.barName }.forEach { $0.removeFromSuperlayer() }
+        guard desktopUIDRedacted else { return }
+        let prefix = ("UID: " as NSString).size(withAttributes: [.font: HUDFontResolver.nsFont(size: fontSize, weight: .medium)]).width
+        let height = (fontSize * 1.1).rounded(), width = max(24, min(label.width - prefix, fontSize * 7.5))
+        let environment = HUDDesignEnvironment(renderScale: max(2, window?.backingScaleFactor ?? 2))
+        let bar = HUDRedaction.bar(size: CGSize(width: width, height: height), env: environment)
+        bar.frame.origin = CGPoint(x: prefix, y: (label.height - height) / 2)
+        text.addSublayer(bar)
+        HUDRedaction.playEntrance(in: [bar], env: environment)
+    }
+
     /// The design canvas's points per design unit before the HUD scale.
     static func baseDesignScale(_ size: CGSize) -> CGFloat { max(0.1, min(size.width / 1100, size.height / 740, 1.15)) }
 
@@ -2185,7 +2231,18 @@ final class HUDSourceWatchView: NSView {
     }
 
     /// Screen points per source unit at the centre node in the deployed pose.
+    /// It depends only on the shared document and the screen size, so every
+    /// opening's new view reuses it (each costs a full scene resolve).
+    private static var restingPixelsCache: [String: Double?] = [:]
     private func restingPixelsPerUnit(screen size: CGSize) throws -> Double? {
+        let key = "\(ObjectIdentifier(document).hashValue) \(size.width)x\(size.height)"
+        if let cached = Self.restingPixelsCache[key] { return cached }
+        let value = try measureRestingPixelsPerUnit(screen: size)
+        if Self.restingPixelsCache.count > 16 { Self.restingPixelsCache.removeAll() }
+        Self.restingPixelsCache[key] = value
+        return value
+    }
+    private func measureRestingPixelsPerUnit(screen size: CGSize) throws -> Double? {
         guard let id = desktopCenterID, size.width > 0, size.height > 0 else { return nil }
         let viewport = CGRect(origin: .zero, size: size)
         let neutral = try cameraModel.frame(screenSize: SIMD2(Double(size.width), Double(size.height)),
@@ -2320,10 +2377,20 @@ final class HUDSourceWatchView: NSView {
                 if !layers.container.isHidden { layers.container.isHidden = true }
                 continue
             }
-            let world = simd_mul(camera.worldRoot, node.worldMatrix)
+            var world = simd_mul(camera.worldRoot, node.worldMatrix)
             let right = desktopRightButtonIDs.contains(buttonID)
-            let w = right ? 80.0 : rect.size.x, h = right ? 80.0 : rect.size.y
-            let x = rect.origin.x + (rect.size.x - w) / 2, y = rect.origin.y + (rect.size.y - h) / 2
+            var w = right ? 80.0 : rect.size.x, h = right ? 80.0 : rect.size.y
+            var x = rect.origin.x + (rect.size.x - w) / 2, y = rect.origin.y + (rect.size.y - h) / 2
+            if let labelID = desktopLeftLabelIDs[buttonID], let label = frame.node(labelID), let labelRect = label.rect,
+               let glyph = desktopIconGlyphs[iconID] {
+                // In the caption's plane: one box size, centred over the
+                // caption, the glyph's visible bottom a fixed gap above it (y up).
+                // The authored caption keeps its place in its button.
+                world = simd_mul(camera.worldRoot, label.worldMatrix)
+                w = Self.desktopLeftIconSide; h = w
+                x = labelRect.origin.x + labelRect.size.x / 2 - w / 2
+                y = labelRect.origin.y + labelRect.size.y + Self.desktopLeftIconGap - Double(glyph.minY) * w / Double(HUDSourceDesktopIconLayout.box)
+            }
             let corners = [SIMD3(x,y+h,0), SIMD3(x+w,y+h,0), SIMD3(x+w,y,0), SIMD3(x,y,0)].compactMap {
                 camera.camera.project($0, world: world, viewport: bounds)?.point
             }

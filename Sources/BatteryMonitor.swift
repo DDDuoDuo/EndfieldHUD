@@ -12,6 +12,15 @@ struct BatterySnapshot: Equatable {
     let capacity: BatteryCapacityReading?
     /// Optional category reported by macOS, never a calculated health percent.
     let healthCategory: String?
+    /// Battery screen readings (spec §3.22), from the same power-source report
+    /// and AppleSmartBattery read as the capacity; nil where macOS reports none.
+    let cycleCount: Int?
+    let temperatureCelsius: Double?
+    /// The connected adapter's rating, only while on external power.
+    let adapterWatts: Int?
+    /// macOS's own estimates in minutes; nil while it is still calculating.
+    let minutesToFull: Int?
+    let minutesToEmpty: Int?
 
     var levelTone: BatteryLevelTone? { BatteryLevelTone.forPercentage(percentage) }
     /// The user-facing alert denotes connection to external power immediately,
@@ -21,7 +30,8 @@ struct BatterySnapshot: Equatable {
 
     init(percentage: Int?, isPluggedIn: Bool, isCharging: Bool,
          isFullyCharged: Bool, hasBattery: Bool, capacity: BatteryCapacityReading? = nil,
-         healthCategory: String? = nil) {
+         healthCategory: String? = nil, cycleCount: Int? = nil, temperatureCelsius: Double? = nil,
+         adapterWatts: Int? = nil, minutesToFull: Int? = nil, minutesToEmpty: Int? = nil) {
         self.percentage = percentage
         self.isPluggedIn = isPluggedIn
         self.isCharging = isCharging
@@ -29,6 +39,11 @@ struct BatterySnapshot: Equatable {
         self.hasBattery = hasBattery
         self.capacity = hasBattery ? capacity : nil
         self.healthCategory = hasBattery ? Self.normalizedHealthCategory(healthCategory) : nil
+        self.cycleCount = hasBattery ? cycleCount : nil
+        self.temperatureCelsius = hasBattery ? temperatureCelsius : nil
+        self.adapterWatts = isPluggedIn ? adapterWatts : nil
+        self.minutesToFull = hasBattery ? minutesToFull : nil
+        self.minutesToEmpty = hasBattery ? minutesToEmpty : nil
     }
 
     static let unavailable = BatterySnapshot(
@@ -83,8 +98,25 @@ struct BatterySnapshot: Equatable {
             // macOS can also publish "Check Battery" in BatteryHealth itself;
             // preserve nonempty OS strings instead of assuming Good/Fair/Poor.
             healthCategory: normalizedHealthCategory(description[kIOPSBatteryHealthConditionKey])
-                ?? normalizedHealthCategory(description[kIOPSBatteryHealthKey])
+                ?? normalizedHealthCategory(description[kIOPSBatteryHealthKey]),
+            minutesToFull: BatteryDiagnosticsParsing.minutes(description[kIOPSTimeToFullChargeKey]),
+            minutesToEmpty: BatteryDiagnosticsParsing.minutes(description[kIOPSTimeToEmptyKey])
         )
+    }
+
+    /// The same reading with the AppleSmartBattery registry values (capacity,
+    /// cycles, temperature) and the external adapter's rating applied.
+    func applyingRegistry(_ properties: [String: Any], adapter: [String: Any]?) -> BatterySnapshot {
+        guard hasBattery else { return self }
+        return BatterySnapshot(
+            percentage: percentage, isPluggedIn: isPluggedIn, isCharging: isCharging,
+            isFullyCharged: isFullyCharged, hasBattery: true,
+            capacity: BatteryCapacityReading.fromRegistry(properties, percentage: percentage),
+            healthCategory: healthCategory,
+            cycleCount: BatteryDiagnosticsParsing.cycleCount(properties["CycleCount"]),
+            temperatureCelsius: BatteryDiagnosticsParsing.temperatureCelsius(properties["Temperature"]),
+            adapterWatts: BatteryDiagnosticsParsing.adapterWatts(adapter),
+            minutesToFull: minutesToFull, minutesToEmpty: minutesToEmpty)
     }
 
     private static func normalizedHealthCategory(_ value: Any?) -> String? {
@@ -223,26 +255,22 @@ final class BatteryMonitor {
         }
         let snapshot = BatterySnapshot.fromPowerSources(descriptions)
         guard snapshot.hasBattery else { return snapshot }
-        return BatterySnapshot(
-            percentage: snapshot.percentage,
-            isPluggedIn: snapshot.isPluggedIn,
-            isCharging: snapshot.isCharging,
-            isFullyCharged: snapshot.isFullyCharged,
-            hasBattery: true,
-            capacity: BatteryCapacityReading.fromRegistry(readCapacityProperties(), percentage: snapshot.percentage),
-            healthCategory: snapshot.healthCategory
-        )
+        // The adapter's small details dictionary exists only on external power.
+        let adapter = snapshot.isPluggedIn
+            ? IOPSCopyExternalPowerAdapterDetails()?.takeRetainedValue() as? [String: Any] : nil
+        return snapshot.applyingRegistry(readCapacityProperties(), adapter: adapter)
     }
 
     private static func readCapacityProperties() -> [String: Any] {
         // Zero is the default IOKit main port on all supported macOS versions.
-        // The public registry API reads only four numeric properties, without
+        // The public registry API reads only six numeric properties, without
         // collecting battery identifiers or loading the full registry payload.
         let service = IOServiceGetMatchingService(0, IOServiceMatching("AppleSmartBattery"))
         guard service != 0 else { return [:] }
         defer { IOObjectRelease(service) }
         var properties: [String: Any] = [:]
-        for key in ["AppleRawCurrentCapacity", "AppleRawMaxCapacity", "CurrentCapacity", "MaxCapacity"] {
+        for key in ["AppleRawCurrentCapacity", "AppleRawMaxCapacity", "CurrentCapacity", "MaxCapacity",
+                    "CycleCount", "Temperature"] {
             if let value = IORegistryEntryCreateCFProperty(service, key as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() {
                 properties[key] = value
             }

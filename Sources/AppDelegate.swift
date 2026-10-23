@@ -153,7 +153,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             overlay.startCalendarReminders()
             HUDSourceWatchDocument.prewarmDesktop()
             HUDSourceMetalRenderer.prewarmDesktopResources()
-            HUDFontRegistry.prewarm()
         }
         overlay.onPositionEditFinished = { [weak self] position in
             guard let self = self else { return }
@@ -435,6 +434,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updateApplicationIcon()
         item.button?.setAccessibilityLabel("EndfieldHUD")
         let menu = NSMenu()
+        // Native menu chrome; its titles in the HUD's faces for this language.
+        menu.font = HUDFontResolver.nsFont(size: NSFont.menuFont(ofSize: 0).pointSize)
         batteryMenuItem.isEnabled = false
         batteryMenuItem.menu?.removeItem(batteryMenuItem)
         menu.addItem(batteryMenuItem)
@@ -537,11 +538,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func updateUpdateMenu(_ state: HUDUpdateState) {
         updateMenuItem.title = state.hasUpdate
-            ? L10n.text("Update available", "发现新版本") + ((state.updateVersion ?? state.latestVersion).map { " · " + $0 } ?? "") + "…"
+            ? L10n.text("Update available", "发现新版本") + ((state.updateVersion ?? state.latestVersion).map { " " + $0 } ?? "") + "…"
             : (state.phase == .checking ? L10n.text("Checking for updates…", "正在检查更新…") : L10n.text("Check for Updates…", "检查更新…"))
         updateMenuItem.isEnabled = !terminating
         updateMenuItem.setAccessibilityHelp(state.detail ?? state.title)
-        statusItem?.button?.toolTip = state.hasUpdate ? "EndfieldHUD · " + state.title : "EndfieldHUD"
+        statusItem?.button?.toolTip = state.hasUpdate ? "EndfieldHUD — " + state.title : "EndfieldHUD"
         if let button = statusItem?.button {
             button.wantsLayer = true
             let key = "EndfieldHUD.updateBadge"
@@ -570,7 +571,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .stopped: state = L10n.text("Stopped", "已停止")
         case .completed: state = L10n.text("Countdown complete", "倒计时结束")
         }
-        let title = L10n.text("Work Mode", "工作模式") + (state.isEmpty ? "" : " · " + state)
+        let title = L10n.text("Work Mode", "工作模式") + (state.isEmpty ? "" : " — " + state)
         if workMenuItem.title != title { workMenuItem.title = title }
     }
 
@@ -590,7 +591,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func updateMenu(_ value: BatterySnapshot) {
         let percent = value.percentage.map { "\($0)%" } ?? L10n.text("Unknown charge", "电量未知")
         let state = value.isCharging ? L10n.text("Charging", "正在充电") : (value.isPluggedIn ? L10n.text("Power connected", "已连接电源") : L10n.text("On battery", "使用电池"))
-        let description = value.hasBattery ? "\(percent) · \(state)" : L10n.text("No internal battery · Preview available", "无内置电池 · 可预览效果")
+        let description = value.hasBattery ? "\(percent) — \(state)" : L10n.text("No internal battery — preview available", "无内置电池，可预览效果")
         batteryMenuItem.title = description
         statusItem?.button?.toolTip = "EndfieldHUD — \(description)"
     }
@@ -667,8 +668,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             catch { self.loginRegistrationError = error.localizedDescription; return error.localizedDescription }
         }
         hudSettings.loginStatusProvider = { [weak self] in
-            guard let self else { return "" }
-            return self.loginRegistrationError ?? self.loginManager.statusDescription
+            // Only what needs attention: the toggle itself shows on or off.
+            guard let self else { return nil }
+            return self.loginRegistrationError ?? (self.loginManager.requiresApproval ? self.loginManager.statusDescription : nil)
         }
         loginManager.onStatusChange = { [weak self] in self?.hudSettings.refreshExternalStatus() }
         hudSettings.onEditBatteryPosition = { [weak self] in
@@ -1193,12 +1195,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
 
+            // A redesigned section swaps in after the .13 s leave, then plays its
+            // header wipe and capped list stagger (spec §1.10). Input does not
+            // wait for that entrance; the zero-finite-track assertion does.
+            let designEntrance = HUDDuration.leave + HUDMotion.staggerDelay(HUDDuration.staggerCap) + HUDDuration.entrance
             func verifyRapidRequests() {
                 for module in [HUDModule.notes, .clipboard, .storage, .about, .volume] {
                     overlay.selectSystemModule(module)
                     checkSharedPresentation(stable: reduced)
                 }
-                later(HUDModuleContent.transitionDuration * 2 + 0.3) { [self] in
+                later(max(HUDModuleContent.transitionDuration * 2, designEntrance) + 0.3) { [self] in
                     checkSharedPresentation(stable: true)
                     check(overlay.systemSelectedModule == .volume, "Only the latest queued destination may settle")
                     verifyCancellation()
@@ -1216,7 +1222,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // the end of the section swap. Allow its finite 0.24s layout
                 // transition to finish before asserting zero settled tracks.
                 let contentSettle: TimeInterval = module == .nowPlaying ? 0.5 : 0.25
-                later(max(HUDModuleContent.transitionDuration, HUDNavigation.selectionTransitionDuration) + contentSettle) { [self] in
+                later(max(HUDModuleContent.transitionDuration, HUDNavigation.selectionTransitionDuration, designEntrance) + contentSettle) { [self] in
                     checkSharedPresentation(stable: true)
                     check(overlay.systemSelectedModule == module, "Each requested section must become the selected screen")
                     visit(index + 1)

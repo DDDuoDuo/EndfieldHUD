@@ -88,12 +88,25 @@ enum HUDSourceProfileArtwork {
         return result
     }
 
+    /// Coverage below this is the card sprite's near-transparent padding
+    /// (alpha 1–8 of 255, mostly a 20 px band left of the card), not the card.
+    static let hoverCoverageThreshold: UInt8 = 10
+
     /// A normal-alpha hover plate carries a 5% interior wash and a stronger
     /// outer edge. The source ColorTint controls its finite enter/exit fade.
+    /// It covers exactly the visible card: the padding is invisible in the grey
+    /// card, but tinted with the accent and blended in linear light it showed
+    /// as a highlight band outside the card, mostly along its left edge.
     static func hoverArtwork(_ artwork: CGImage, accent: NSColor) throws -> CGImage {
         let context = try bitmapContext(width: artwork.width, height: artwork.height)
         let bounds = CGRect(x: 0, y: 0, width: artwork.width, height: artwork.height)
         context.draw(artwork, in: bounds)
+        guard let data = context.data else { throw Failure.cannotRender }
+        let pixels = data.assumingMemoryBound(to: UInt8.self)
+        for index in stride(from: 0, to: context.bytesPerRow * artwork.height, by: 4)
+        where pixels[index + 3] < hoverCoverageThreshold {
+            pixels[index] = 0; pixels[index + 1] = 0; pixels[index + 2] = 0; pixels[index + 3] = 0
+        }
         context.setBlendMode(.sourceIn)
         context.setFillColor(accent.withAlphaComponent(0.38).cgColor); context.fill(bounds)
         let sx = bounds.width / 530, sy = bounds.height / 204

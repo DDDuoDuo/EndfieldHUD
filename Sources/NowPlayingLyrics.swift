@@ -56,6 +56,9 @@ struct NowPlayingLyrics: Equatable {
         return [current - 1, current, current + 1].map { lines.indices.contains($0) ? lines[$0].text : "" }
     }
 
+    /// Index of the line sung at `elapsed`; −1 before the first cue.
+    func currentIndex(at elapsed: Double) -> Int { elapsed.isFinite ? firstIndex(after: elapsed) - 1 : -1 }
+
     /// Schedule a local display update at the exact next cue, including blank
     /// instrumental cues. This never reads a player or scans the lyric document.
     func nextBoundary(after elapsed: Double) -> Double? {
