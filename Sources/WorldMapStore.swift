@@ -33,7 +33,11 @@ struct MapPin: Codable, Equatable, Identifiable {
 }
 
 struct WorldMapViewport: Codable, Equatable {
-    static let minZoom = 2.1
+    /// The redesigned map zooms out to the whole world (1×, spec §3.18).
+    static let minZoom = 1.0
+    /// v1.2.0's floor. That release refuses a saved camera below it, so the
+    /// archive keeps this zoom in `viewport` and the wider one beside it.
+    static let legacyMinZoom = 2.1
     static let maxZoom = 128.0
     static let defaultZoom = 3.0
     static let defaultCenterX = (114.0579 + 180) / 360
@@ -80,7 +84,25 @@ final class WorldMapStore {
     private let fileURL: URL
     private var persistedData: Data?
     private let fileManager = FileManager.default
-    private struct Archive: Codable { let version: Int; let pins: [MapPin]; let viewport: WorldMapViewport }
+    private struct Archive: Codable {
+        let version: Int; let pins: [MapPin]; let viewport: WorldMapViewport
+        /// A zoom below `legacyMinZoom` (absent otherwise). v1.2.0 ignores it
+        /// and drops it on its next save, which leaves `legacyMinZoom`.
+        var wideZoom: Double? = nil
+
+        static func current(pins: [MapPin], viewport: WorldMapViewport) -> Archive {
+            guard viewport.zoom < WorldMapViewport.legacyMinZoom else { return Archive(version: 4, pins: pins, viewport: viewport) }
+            var stored = viewport; stored.zoom = WorldMapViewport.legacyMinZoom
+            return Archive(version: 4, pins: pins, viewport: stored, wideZoom: viewport.zoom)
+        }
+        /// The saved camera: `wideZoom` applies while `viewport` still holds the floor it replaced.
+        var camera: WorldMapViewport {
+            guard version >= 4, let wideZoom, wideZoom.isFinite, wideZoom >= WorldMapViewport.minZoom,
+                  wideZoom < WorldMapViewport.legacyMinZoom, viewport.zoom == WorldMapViewport.legacyMinZoom else { return viewport }
+            var value = viewport; value.zoom = wideZoom
+            return value
+        }
+    }
     private struct Version: Decodable { let version: Int }
     private static let diagnosticDirectory = FileManager.default.temporaryDirectory
         .appendingPathComponent("EndfieldHUD-WorldMap-\(ProcessInfo.processInfo.processIdentifier)-\(UUID().uuidString)", isDirectory: true)
@@ -101,7 +123,7 @@ final class WorldMapStore {
             if let data = try readArchive() {
                 let archive = try Self.decode(data)
                 pins = archive.pins
-                viewport = archive.viewport
+                viewport = archive.camera
                 persistedData = data
                 // Upgrade only old starting cameras once, preserving custom
                 // views and every pin. Schema 4 lets users later choose either
@@ -165,7 +187,7 @@ final class WorldMapStore {
             guard try readArchive() == persistedData else { throw WorldMapStoreError.changedOnDisk }
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.sortedKeys]
-            let data = try encoder.encode(Archive(version: 4, pins: nextPins, viewport: nextViewport))
+            let data = try encoder.encode(Archive.current(pins: nextPins, viewport: nextViewport))
             guard data.count <= Self.maximumArchiveBytes else { throw WorldMapStoreError.invalidRecord }
             try data.write(to: fileURL, options: [.atomic])
             // Update memory only after the atomic replacement succeeds.

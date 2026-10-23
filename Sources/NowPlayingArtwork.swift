@@ -28,17 +28,36 @@ private final class NowPlayingArtworkToken {
 }
 
 /// Main-thread coordinator: one job plus one replaceable desired track, two
-/// decoded thumbnails (including negative results), and no timer or disk cache.
+/// decoded covers (including negative results), and no timer or disk cache.
+/// Covers are decoded at the size they are drawn (`pixelSize`, the slot's
+/// pixels), never larger, so a Retina slot never enlarges a small thumbnail.
 final class NowPlayingArtworkLoader {
     typealias Resolve = (NowPlayingApplication, NowPlayingTrack, @escaping () -> Bool) throws -> NowPlayingArtworkPayload?
     typealias Fetch = (URL, @escaping (Data?) -> Void) -> (() -> Void)
     static let maximumBytes = 8 * 1_024 * 1_024
     static let maximumPixels = 32_000_000
-    static let thumbnailSize = 512
+    /// The decode size until the UI passes its slot's: covers stay sharp in the
+    /// 330-point slot at 2x (660 px) without decoding far beyond it.
+    static let defaultPixelSize = 720
+    /// Bounds of a requested decode side; 2048 px is 16 MiB of decoded pixels.
+    static let minimumPixelSize = 64
+    static let maximumPixelSize = 2_048
+    /// A drawn slot's longer side in pixels: points times the layer's backing
+    /// scale, rounded up, within the decode bounds.
+    static func pixelSize(points: CGFloat, scale: CGFloat) -> Int {
+        let pixels = Double(points * scale)
+        guard pixels.isFinite, pixels > 0 else { return defaultPixelSize }
+        return boundedPixelSize(Int(min(Double(maximumPixelSize), (pixels - 1e-6).rounded(.up))))
+    }
+    static func boundedPixelSize(_ pixels: Int) -> Int { min(maximumPixelSize, max(minimumPixelSize, pixels)) }
     private(set) var image: CGImage?
+    /// The longest decoded side requested for the drawn cover. Change it with
+    /// `setPixelSize`.
+    private(set) var pixelSize: Int
     var onChange: (() -> Void)?
     private struct Request { let key: NowPlayingArtworkKey; let app: NowPlayingApplication; let track: NowPlayingTrack }
-    private struct Entry { let key: NowPlayingArtworkKey; let image: CGImage? }
+    /// `pixels`: the decode size this entry stands for.
+    private struct Entry { let key: NowPlayingArtworkKey; let image: CGImage?; let pixels: Int }
     private var cache: [Entry] = []
     private var desired: Request?
     private var token: NowPlayingArtworkToken?
@@ -51,8 +70,9 @@ final class NowPlayingArtworkLoader {
 
     init(resolve: @escaping Resolve, work: @escaping (@escaping () -> Void) -> Void,
          deliver: @escaping (@escaping () -> Void) -> Void,
-         fetch: @escaping Fetch = NowPlayingArtworkDownload.fetch) {
+         fetch: @escaping Fetch = NowPlayingArtworkDownload.fetch, pixelSize: Int = NowPlayingArtworkLoader.defaultPixelSize) {
         self.resolve = resolve; self.work = work; self.deliver = deliver; self.fetch = fetch
+        self.pixelSize = Self.boundedPixelSize(pixelSize)
     }
     deinit { token?.cancel(); cancelFetch?() }
     var cachedImageCountForVerification: Int { cache.filter { $0.image != nil }.count }
@@ -69,6 +89,18 @@ final class NowPlayingArtworkLoader {
             let entry = cache.remove(at: index); cache.append(entry); image = entry.image
         }
         onChange?(); cancellation?(); startLatestIfNeeded()
+    }
+    /// The drawn slot's size in pixels (see `pixelSize(points:scale:)`). The shown
+    /// cover, if decoded for another size, is decoded again for this one and
+    /// stays visible until its replacement is ready; other cached covers of
+    /// another size are dropped rather than kept at a size nothing draws.
+    func setPixelSize(_ value: Int) {
+        precondition(Thread.isMainThread)
+        let value = Self.boundedPixelSize(value)
+        guard value != pixelSize else { return }
+        pixelSize = value
+        cache.removeAll { $0.image != nil && $0.image !== image && !fits($0) }
+        startLatestIfNeeded()
     }
     func provideArtworkURL(_ url: URL, application: NowPlayingApplication, track: NowPlayingTrack) {
         precondition(Thread.isMainThread)
@@ -100,48 +132,67 @@ final class NowPlayingArtworkLoader {
         let cancellation = cancelFetch; cancelFetch = nil; image = nil
         cancellation?()
     }
+    /// Whether an entry serves the current size: a missing cover, one decoded
+    /// for this size, or one already at its own full size within it (smaller
+    /// than its request, so a new decode could not be sharper).
+    private func fits(_ entry: Entry) -> Bool {
+        guard let image = entry.image, entry.pixels != pixelSize else { return true }
+        let side = max(image.width, image.height)
+        return side < entry.pixels && side <= pixelSize
+    }
     private func startLatestIfNeeded() {
-        guard token == nil, let request = desired, !cache.contains(where: { $0.key == request.key }) else { return }
+        guard token == nil, let request = desired, !cache.contains(where: { $0.key == request.key && fits($0) }) else { return }
         let token = NowPlayingArtworkToken(); self.token = token
-        let resolve = self.resolve, deliver = self.deliver
+        let resolve = self.resolve, deliver = self.deliver, pixels = pixelSize
         let supplement = supplements.first { $0.0 == request.key }?.1
         work { [weak self] in
-            guard !token.cancelled else { deliver { [weak self] in self?.finish(request, token: token, image: nil) }; return }
+            guard !token.cancelled else { deliver { [weak self] in self?.finish(request, token: token, image: nil, pixels: pixels) }; return }
             let payload = (try? resolve(request.app, request.track, { token.cancelled })) ?? supplement.map(NowPlayingArtworkPayload.remote)
             if case .embedded(let data) = payload {
-                let image = token.cancelled ? nil : Self.decode(data)
-                deliver { [weak self] in self?.finish(request, token: token, image: image) }
+                let image = token.cancelled ? nil : Self.decode(data, pixelSize: pixels)
+                deliver { [weak self] in self?.finish(request, token: token, image: image, pixels: pixels) }
             } else if case .remote(let url) = payload, Self.isAllowedRemoteURL(url), !token.cancelled {
-                deliver { [weak self] in self?.download(url, request: request, token: token) }
-            } else { deliver { [weak self] in self?.finish(request, token: token, image: nil) } }
+                deliver { [weak self] in self?.download(Self.remoteURL(url, pixels: pixels), request: request, token: token, pixels: pixels) }
+            } else { deliver { [weak self] in self?.finish(request, token: token, image: nil, pixels: pixels) } }
         }
     }
-    private func download(_ url: URL, request: Request, token: NowPlayingArtworkToken) {
-        guard self.token === token, !token.cancelled, desired?.key == request.key else { finish(request, token: token, image: nil); return }
+    private func download(_ url: URL, request: Request, token: NowPlayingArtworkToken, pixels: Int) {
+        guard self.token === token, !token.cancelled, desired?.key == request.key else { finish(request, token: token, image: nil, pixels: pixels); return }
         let deliver = self.deliver, work = self.work
         let cancellation = fetch(url) { [weak self] data in
-            guard !token.cancelled else { deliver { [weak self] in self?.finish(request, token: token, image: nil) }; return }
+            guard !token.cancelled else { deliver { [weak self] in self?.finish(request, token: token, image: nil, pixels: pixels) }; return }
             work { [weak self] in
-                let image = token.cancelled ? nil : data.flatMap(Self.decode)
-                deliver { [weak self] in self?.finish(request, token: token, image: image) }
+                let image = token.cancelled ? nil : data.flatMap { Self.decode($0, pixelSize: pixels) }
+                deliver { [weak self] in self?.finish(request, token: token, image: image, pixels: pixels) }
             }
         }
         // An injected transport can complete synchronously. Do not retain its
         // cancellation callback if that completion already retired the job.
         if self.token === token { cancelFetch = cancellation }
     }
-    private func finish(_ request: Request, token: NowPlayingArtworkToken, image: CGImage?) {
+    private func finish(_ request: Request, token: NowPlayingArtworkToken, image: CGImage?, pixels: Int) {
         guard self.token === token else { return }
         self.token = nil; cancelFetch = nil
         if !token.cancelled, desired?.key == request.key {
-            cache.removeAll { $0.key == request.key }; cache.append(Entry(key: request.key, image: image))
+            let shown = cache.first { $0.key == request.key }?.image
+            cache.removeAll { $0.key == request.key }
+            if image == nil, let shown {
+                // A failed decode for a new size keeps the cover already shown,
+                // which then stands for this size: no gap and no repeated attempt.
+                cache.append(Entry(key: request.key, image: shown, pixels: pixelSize))
+            } else {
+                cache.append(Entry(key: request.key, image: image, pixels: pixels))
+                self.image = image; onChange?()
+            }
             if cache.count > 2 { cache.removeFirst(cache.count - 2) }
-            self.image = image; onChange?()
         }
         startLatestIfNeeded()
     }
 
-    static func decode(_ data: Data) -> CGImage? {
+    /// First frame scaled down (never up) so its longer side is at most
+    /// `pixelSize`; a smaller image keeps its own size.
+    static func decode(_ data: Data, pixelSize: Int = defaultPixelSize) -> CGImage? {
+        let limit = boundedPixelSize(pixelSize)
         guard !data.isEmpty, data.count <= maximumBytes,
               let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
               let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
@@ -149,12 +200,21 @@ final class NowPlayingArtworkLoader {
               let height = (properties[kCGImagePropertyPixelHeight] as? NSNumber)?.intValue,
               width > 0, height > 0, width <= 8_192, height <= 8_192, width * height <= maximumPixels else { return nil }
         let options: [CFString: Any] = [kCGImageSourceCreateThumbnailFromImageAlways: true,
-            kCGImageSourceCreateThumbnailWithTransform: true, kCGImageSourceThumbnailMaxPixelSize: thumbnailSize,
+            kCGImageSourceCreateThumbnailWithTransform: true, kCGImageSourceThumbnailMaxPixelSize: limit,
             kCGImageSourceShouldCacheImmediately: true]
         guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary),
-              image.width <= thumbnailSize, image.height <= thumbnailSize else { return nil }
+              image.width <= limit, image.height <= limit else { return nil }
         return image
     }
+
+    /// NetEase's image CDN serves any requested square: ask for at least the
+    /// drawn size (`NowPlayingCatalog.coverPixels(forDrawn:)`) instead of a small
+    /// player thumbnail. Other CDNs' URLs name a fixed image and stay unchanged.
+    static func remoteURL(_ url: URL, pixels: Int) -> URL {
+        guard let host = url.host?.lowercased(), netEaseHosts.contains(host) else { return url }
+        return NowPlayingCatalog.coverURL(url.absoluteString, pixels: NowPlayingCatalog.coverPixels(forDrawn: pixels)) ?? url
+    }
+    private static let netEaseHosts: Set<String> = ["p1.music.126.net", "p2.music.126.net", "p3.music.126.net", "p4.music.126.net"]
 
     /// Known Spotify/NetEase image CDNs only; arbitrary web/local URLs from a
     /// scripting reply are never fetched. Redirects are disallowed separately.
@@ -165,7 +225,7 @@ final class NowPlayingArtworkLoader {
               let host = parts.host?.lowercased(), !host.hasSuffix(".") else { return false }
         return host == "i.scdn.co" || host == "mosaic.scdn.co"
             || host == "image-cdn.spotifycdn.com"
-            || ["p1.music.126.net", "p2.music.126.net", "p3.music.126.net", "p4.music.126.net"].contains(host)
+            || netEaseHosts.contains(host)
     }
 
     /// Synthetic art for isolated diagnostics only, never a fallback album cover.

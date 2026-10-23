@@ -3,6 +3,13 @@
   "sourcePackage": "Endfield-PhotoMode-Assets-20261004",
   "sourceManifestVersion": "2954fa80-23c1-1579-2b22-4ecfd6d70418",
   "lookupContract": "Original 32-cube encoded RGB lookup component; red-fastest, then green, then blue. RGB8 / 255 reconstructs every original Float32 CUBE node exactly. No scene-dependent HDR/bloom/particle replay.",
+  "additionalSourcePackages": [
+    {
+      "sourcePackage": "Endfield-PhotoMode-1.6-New-20261020",
+      "sourceManifestSha256": "a286082625a1b4f5e43ed7d35bc359e5de6bee585d0b0a100759b3aacbd5273b",
+      "scope": "Only catalog IDs added since the previous package."
+    }
+  ],
   "files": [
     {
       "file": "luts/sp_filter_1.rgb8",
@@ -54,6 +61,16 @@
       "source": "filters/tables/current/T_photomode_filter_advanced_bloodnexus_01_lut.cube",
       "sourceSha256": "49e061f5f6e8f469d85d6ad305597befd1a02035886045f160632620bbfc5717",
       "sha256": "ed3aece4e8c247565dee769993aa9905d465344aa8cae731d652a26172a03080",
+      "bytes": 98304,
+      "dimension": 32,
+      "exactFloat32RoundTrip": true
+    },
+    {
+      "file": "luts/sp_filter_7.rgb8",
+      "sourcePackage": "Endfield-PhotoMode-1.6-New-20261020",
+      "source": "filters/tables/current/T_photomode_filter_advanced_wuling_01_lut.cube",
+      "sourceSha256": "b28687b4f43bf993cc7af95184b88258b56f46df144de63ddc419d038404a33c",
+      "sha256": "387f278a943fb3c23dbc09bf3b989cac6a27aa2ad9848990778e4097d71e1fab",
       "bytes": 98304,
       "dimension": 32,
       "exactFloat32RoundTrip": true
@@ -177,6 +194,15 @@
       "bytes": 81351,
       "width": 320,
       "height": 320
+    },
+    {
+      "file": "stickers/sticker_bp_7.png",
+      "sourcePackage": "Endfield-PhotoMode-1.6-New-20261020",
+      "source": "stickers/sticker_bp_7.png",
+      "sha256": "a25f40731edf60ba165cf040795b7bce0e917bcbd2c9456aee4c48c4f55682ae",
+      "bytes": 92165,
+      "width": 640,
+      "height": 640
     },
     {
       "file": "stickers/sticker_1.png",
@@ -307,6 +333,24 @@
       "height": 320
     },
     {
+      "file": "stickers/sticker_activity_5.png",
+      "sourcePackage": "Endfield-PhotoMode-1.6-New-20261020",
+      "source": "stickers/sticker_activity_5.png",
+      "sha256": "9c8bcf5d592e2a805316914d1ab81fc270c46d28946c2a32146b66b8a30d1a38",
+      "bytes": 201298,
+      "width": 640,
+      "height": 640
+    },
+    {
+      "file": "stickers/sticker_channel_v1d6_1.png",
+      "sourcePackage": "Endfield-PhotoMode-1.6-New-20261020",
+      "source": "stickers/sticker_channel_v1d6_1.png",
+      "sha256": "8bd8a891c35e555dbab3525b4adefaef568bca63c75f8fdfd2589df1209ada2c",
+      "bytes": 22343,
+      "width": 640,
+      "height": 640
+    },
+    {
       "file": "stickers/sticker_birthday_2026.png",
       "source": "stickers/sticker_birthday_2026.png",
       "sha256": "ce8dc46477e353189bdd84448fb96549c1a5ffb03d4d7eed2f5e2bddc6710278",
@@ -321,6 +365,33 @@
       "bytes": 119458,
       "width": 320,
       "height": 320
+    },
+    {
+      "file": "stickers/sticker_giftpack_3.png",
+      "sourcePackage": "Endfield-PhotoMode-1.6-New-20261020",
+      "source": "stickers/sticker_giftpack_3.png",
+      "sha256": "66e3134acbf497ae6f10d33ea6141fcdd2957bc21f9755aa22e7f3f07539a96e",
+      "bytes": 68400,
+      "width": 640,
+      "height": 640
+    },
+    {
+      "file": "stickers/sticker_giftpack_4.png",
+      "sourcePackage": "Endfield-PhotoMode-1.6-New-20261020",
+      "source": "stickers/sticker_giftpack_4.png",
+      "sha256": "c166d9b8a8cbf428801ac63530c2c78ec83add3e9c0a7acc8fbb041754b38763",
+      "bytes": 84491,
+      "width": 640,
+      "height": 640
+    },
+    {
+      "file": "stickers/sticker_giftpack_5.png",
+      "sourcePackage": "Endfield-PhotoMode-1.6-New-20261020",
+      "source": "stickers/sticker_giftpack_5.png",
+      "sha256": "112975b876522f8739d13d0e7a620b356b821cc8260113c8f2cc010082e657bf",
+      "bytes": 107873,
+      "width": 640,
+      "height": 640
     },
     {
       "file": "filter-icons/sp_filter_1.png",
@@ -367,6 +438,15 @@
       "source": "filter-icons/sp_filter_6.png",
       "sha256": "5c0a1682fb9effcff94e60a49adf90cbcb2fe1c116509b34b96cb0d04d1fa0c0",
       "bytes": 25566,
+      "width": 168,
+      "height": 168
+    },
+    {
+      "file": "filter-icons/sp_filter_7.png",
+      "sourcePackage": "Endfield-PhotoMode-1.6-New-20261020",
+      "source": "filter-icons/sp_filter_7.png",
+      "sha256": "834c354463724fdd4338351929b4c04b160faf404b54dd016503196167754721",
+      "bytes": 34555,
       "width": 168,
       "height": 168
     },

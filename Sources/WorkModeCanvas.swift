@@ -1,526 +1,568 @@
 import AppKit
 import QuartzCore
 
-struct WorkModeCanvasAction {
-    let id: String
-    let label: String
-    let rect: CGRect
-}
-
+/// The giant ring of Work Mode (spec §3.16): a 620 px square centred on the
+/// disc, outside the content box (box px; the ring's own centre is (310, 310)).
 enum WorkModeDialGeometry {
-    static let canvas = CGRect(x: 0, y: 0, width: 440, height: 440)
-    static let center = CGPoint(x: 220, y: 220)
-    static let radius: CGFloat = 215
+    static let frame = CGRect(x: -15, y: -5, width: 620, height: 620)
+    static let center = CGPoint(x: 310, y: 310)
+    static let radius: CGFloat = 310
+    static let arcRadius: CGFloat = 252
+    static let tickCount = 120
 
-    /// This explicit path starts at twelve o'clock and advances toward three
-    /// o'clock in the HUD's flipped coordinates. Reducing strokeEnd therefore
-    /// moves the remaining arc's endpoint counter-clockwise: top, left, bottom,
-    /// right, top. An ellipse's unspecified start point cannot guarantee this.
-    static func countdownPath() -> CGPath {
+    /// Countdown: remaining / total, full at the start; stopwatch: the
+    /// position of the second hand. Both follow the displayed seconds.
+    static func fraction(_ value: WorkModeSnapshot) -> CGFloat {
+        switch value.kind {
+        case .countdown:
+            guard value.duration > 0 else { return 0 }
+            return CGFloat(min(1, max(0, Double(value.displayedSeconds) / value.duration)))
+        case .stopwatch: return CGFloat(value.displayedSeconds % 60) / 60
+        }
+    }
+
+    /// Ticks k with k / 120 < fraction are lit.
+    static func litTicks(_ fraction: CGFloat) -> Int {
+        min(tickCount, max(0, Int((fraction * CGFloat(tickCount) - 0.000_001).rounded(.up))))
+    }
+
+    /// Filled quads for ticks `range` (a stroked SVG line with butt caps):
+    /// r 292 inward to 268 (every 10th, 4 wide) or 278 (2.4 wide).
+    static func ticks(_ range: Range<Int>) -> CGPath {
         let path = CGMutablePath()
-        path.addArc(center: center, radius: radius, startAngle: -.pi / 2,
-                    endAngle: 3 * .pi / 2, clockwise: false)
+        for k in range {
+            let angle = CGFloat(k) / CGFloat(tickCount) * 2 * .pi - .pi / 2, major = k % 10 == 0
+            let inner: CGFloat = major ? 268 : 278, half: CGFloat = (major ? 4 : 2.4) / 2
+            let u = CGPoint(x: cos(angle), y: sin(angle)), n = CGPoint(x: -u.y, y: u.x)
+            func point(_ r: CGFloat, _ side: CGFloat) -> CGPoint {
+                CGPoint(x: center.x + u.x * r + n.x * side, y: center.y + u.y * r + n.y * side)
+            }
+            path.addLines(between: [point(292, -half), point(292, half), point(inner, half), point(inner, -half)])
+            path.closeSubpath()
+        }
         return path
     }
-
-    static func remainingFraction(_ value: WorkModeSnapshot) -> Double {
-        guard value.duration > 0 else { return 0 }
-        return min(1, max(0, value.remaining / value.duration))
-    }
 }
 
-/// Retained dial and labels; one-second notifications change the timer string
-/// only. Core Animation advances the ring independently of AppKit drawing.
-final class WorkModeCanvas: NSObject, HUDModuleContentFactory {
-    let layer = CALayer()
-    let controller: WorkModeController
-    var onChange: (() -> Void)?
-    var onEditDuration: ((CGRect) -> Void)?
-    var onRequestFocusAccess: (() -> Void)?
-    private let heading = CATextLayer()
-    private let digits = CATextLayer()
-    private let clockClip = CALayer()
-    private let stateLabel = CATextLayer()
-    private let ringBase = CAShapeLayer()
-    private let ring = CAShapeLayer()
-    private let controls = CALayer()
-    private let configurationControls = CALayer()
-    private let focusStatus = CATextLayer()
-    private let focusAccessPlate = CAShapeLayer()
-    private var focusAccessAvailable = false
-    private var actionLayers: [String: CALayer] = [:]
-    private let shouldReduceMotion: () -> Bool
-    private var layoutExpanded: Bool?
-    private var layoutGeneration = 0
-    private var configurationInteractive = true
-    static let layoutTransitionDuration: TimeInterval = 0.44
-    private var observer: UUID?
-    private var active = false
-    private var dark = true
-    private var scale: CGFloat = 2
-    private var renderedRevision = -1
-    private var animationRevision = -1
-    private var reducedMotion = false
-    private var error: String?
-    private var lastTimeText = ""
-    private var yellow: NSColor { HUDRuntimeAppearance.accent }
-    private var primary: NSColor { NSColor(white: dark ? 0.94 : 0.11, alpha: 1) }
-    private var muted: NSColor { NSColor(white: dark ? 0.64 : 0.42, alpha: 1) }
-    private var ink: NSColor { NSColor(white: 0.13, alpha: 1) }
+/// The ring's layers, built once per page. `set(_:animated:)` moves the
+/// progress arc (.6 s E), the lit ticks and the travelling marker in place.
+private final class WorkModeRing {
+    let layer = HUDLayer.plain("workMode.ring")
+    private let arc = HUDLayer.shape("workMode.arc")
+    private let dim = HUDLayer.shape("workMode.ticks")
+    private let lit = HUDLayer.shape("workMode.ticks.lit")
+    /// Rotates about the ring centre; its triangle sits at 12 o'clock.
+    private let orbit = HUDLayer.plain("workMode.marker")
+    private let env: HUDDesignEnvironment
+    private var litCount = -1
 
-    var durationEditorRect: CGRect { CGRect(x: 64, y: 184, width: 312, height: 68) }
-    var accessibilityStatus: String {
-        if let error { return error }
-        let value = controller.snapshot
-        let status = (value.kind == .countdown ? L10n.text("Countdown", "倒计时") : L10n.text("Stopwatch", "秒表"))
-            + ", " + value.timeText + ", " + phaseTitle(value.phase)
-        if !focusStatus.isHidden, let message = focusStatus.string as? String { return status + ". " + message }
-        return status
-    }
-
-    var accessibleActions: [WorkModeCanvasAction] {
-        let value = controller.snapshot
-        var actions = value.isActive || !configurationInteractive ? [] : configurationActions(value)
-        let verbs: [(String, String)]
-        switch value.phase {
-        case .running: verbs = [("pause", L10n.text("Pause", "暂停")), ("reset", L10n.text("Reset", "重置"))]
-        case .paused: verbs = [("resume", L10n.text("Resume", "继续")), ("reset", L10n.text("Reset", "重置"))]
-        case .idle, .stopped, .completed: verbs = [("start", L10n.text("Start", "开始")), ("reset", L10n.text("Reset", "重置"))]
+    init(fraction: CGFloat, env: HUDDesignEnvironment) {
+        self.env = env
+        let g = WorkModeDialGeometry.self, c = g.center
+        func circle(_ radius: CGFloat, _ color: CGColor, _ width: CGFloat, dash: [NSNumber]? = nil) -> CAShapeLayer {
+            let shape = HUDLayer.shape("workMode.circle")
+            shape.frame = CGRect(origin: .zero, size: g.frame.size)
+            shape.path = CGPath(ellipseIn: CGRect(x: c.x - radius, y: c.y - radius, width: radius * 2, height: radius * 2), transform: nil)
+            shape.fillColor = nil; shape.strokeColor = color; shape.lineWidth = width; shape.lineDashPattern = dash
+            return shape
         }
-        // Leave the bottom of the full-size dial available for the shared
-        // charge badge and two persistent center navigation buttons.
-        let width = (240 - CGFloat(verbs.count - 1) * 8) / CGFloat(verbs.count)
-        for (index, verb) in verbs.enumerated() {
-            actions.append(WorkModeCanvasAction(id: "work:" + verb.0, label: verb.1,
-                rect: CGRect(x: 100 + CGFloat(index) * (width + 8), y: 296, width: width, height: 30)))
+        func triangle(_ points: [CGPoint]) -> CAShapeLayer {
+            let shape = HUDLayer.shape("workMode.triangle")
+            shape.frame = CGRect(origin: .zero, size: g.frame.size)
+            let path = CGMutablePath(); path.addLines(between: points); path.closeSubpath()
+            shape.path = path; shape.fillColor = HUDColor.accentInk
+            return shape
         }
-        if focusAccessAvailable && !focusStatus.isHidden {
-            actions.append(WorkModeCanvasAction(id: "work:focusAccess", label: L10n.text("Open Accessibility Settings", "打开辅助功能设置"), rect: focusStatus.frame))
-        }
-        return actions
-    }
-
-    private func configurationActions(_ value: WorkModeSnapshot) -> [WorkModeCanvasAction] {
-        var actions = [
-            WorkModeCanvasAction(id: "work:countdown", label: L10n.text("Countdown", "倒计时"), rect: CGRect(x: 94, y: 86, width: 122, height: 27)),
-            WorkModeCanvasAction(id: "work:stopwatch", label: L10n.text("Stopwatch", "秒表"), rect: CGRect(x: 224, y: 86, width: 122, height: 27))
-        ]
-        if value.kind == .countdown {
-            for (index, minutes) in [5, 30, 60].enumerated() {
-                actions.append(WorkModeCanvasAction(id: "work:preset:\(minutes)", label: L10n.text("\(minutes) min", "\(minutes) 分"),
-                    rect: CGRect(x: 94 + CGFloat(index) * 65, y: 127, width: 57, height: 25)))
+        HUDMotion.perform {
+            layer.frame = g.frame
+            layer.addSublayer(circle(304, HUDColor.foreground(0.18), 1))
+            layer.addSublayer(circle(g.arcRadius, HUDColor.tone(0x2A2A2A), 10))
+            arc.frame = layer.bounds
+            let progress = CGMutablePath()
+            // Starts at 12 o'clock and runs clockwise in the HUD's flipped space.
+            progress.addArc(center: c, radius: g.arcRadius, startAngle: -.pi / 2, endAngle: 3 * .pi / 2, clockwise: false)
+            arc.path = progress; arc.fillColor = nil; arc.strokeColor = HUDColor.accentInk; arc.lineWidth = 10; arc.lineCap = .butt
+            layer.addSublayer(arc)
+            layer.addSublayer(circle(232, HUDColor.foreground(0.12), 1, dash: [2, 7]))
+            dim.frame = layer.bounds; dim.fillColor = HUDColor.tone(0x3D3D3D)
+            lit.frame = layer.bounds; lit.fillColor = HUDColor.accentInk
+            layer.addSublayer(dim); layer.addSublayer(lit)
+            let style = HUDTextStyle(size: 11, weight: .regular, color: HUDColor.steel)
+            let metrics = HUDText.metrics(style)
+            for (quarter, label) in ["00", "15", "30", "45"].enumerated() {
+                let angle = CGFloat(quarter) * .pi / 2 - .pi / 2
+                let text = HUDTextLayer(label, style: style, alignment: .center)
+                // SVG text: y is the baseline, 4 px below the r 322 point.
+                let baseline = c.y + sin(angle) * 322 + 4
+                text.lineFrame = CGRect(x: c.x + cos(angle) * 322 - 15, y: baseline - metrics.baseline, width: 30, height: 11)
+                layer.addSublayer(text)
             }
-            actions.append(WorkModeCanvasAction(id: "work:custom", label: L10n.text("Custom", "自定"), rect: CGRect(x: 289, y: 127, width: 57, height: 25)))
+            orbit.bounds = layer.bounds; orbit.position = c
+            let top = c.y - g.arcRadius
+            orbit.addSublayer(triangle([CGPoint(x: c.x, y: top - 17), CGPoint(x: c.x + 9, y: top - 2), CGPoint(x: c.x - 9, y: top - 2)]))
+            layer.addSublayer(orbit)
+            layer.addSublayer(triangle([CGPoint(x: c.x, y: 4), CGPoint(x: c.x + 7, y: 14), CGPoint(x: c.x - 7, y: 14)]))
         }
-        return actions
+        set(fraction, animated: false)
     }
 
-    init(controller: WorkModeController, reduceMotion: @escaping () -> Bool = { HUDRuntimeAppearance.reduceMotion }) {
+    private(set) var fraction: CGFloat = -1
+
+    func set(_ value: CGFloat, animated: Bool) {
+        let shown = arc.presentation()?.strokeEnd ?? arc.strokeEnd
+        fraction = value
+        let count = WorkModeDialGeometry.litTicks(value)
+        if count != litCount {
+            litCount = count
+            HUDMotion.perform {
+                dim.path = WorkModeDialGeometry.ticks(count..<WorkModeDialGeometry.tickCount)
+                lit.path = WorkModeDialGeometry.ticks(0..<count)
+            }
+        }
+        // A stopwatch minute wraps forward: jump instead of rewinding the arc.
+        let animate = animated && !env.reducesMotion && value >= shown - 0.5 && abs(value - shown) > 0.0001
+        orbit.removeAnimation(forKey: "hud.workMode.marker")
+        HUDMotion.perform { orbit.transform = CATransform3DMakeRotation(value * 2 * .pi, 0, 0, 1) }
+        guard animate else {
+            arc.removeAnimation(forKey: "hud.strokeEnd")
+            HUDMotion.perform { arc.strokeEnd = value }
+            return
+        }
+        HUDMotion.animate(arc, "strokeEnd", to: value, duration: Self.transition, env: env)
+        let turn = CABasicAnimation(keyPath: "transform.rotation.z")
+        turn.fromValue = shown * 2 * .pi; turn.toValue = value * 2 * .pi
+        turn.duration = Self.transition; turn.timingFunction = HUDEasing.standard
+        orbit.add(turn, forKey: "hud.workMode.marker")
+    }
+
+    static let transition: CFTimeInterval = 0.6
+}
+
+/// Work Mode (spec §3.16): no module header; the giant ring around a column
+/// of title, Countdown / Stopwatch tabs, state label, 112 px timer, presets or
+/// laps and the actions. The controller owns the session (Focus, tracked work
+/// time that feeds Personal ID, event records); this canvas presents it. The
+/// one-second tick only changes the digits, the ring and a label in place;
+/// phase, mode, preset, lap and editor changes re-render the page in place.
+final class WorkModeCanvas: HUDDesignCanvas {
+    let controller: WorkModeController
+    var onRequestFocusAccess: (() -> Void)?
+    private struct Lap: Equatable { let number: Int, seconds: Int }
+    private struct Structure: Equatable {
+        let kind: WorkModeKind, phase: WorkModePhase, duration: TimeInterval
+        let laps: [Lap], editingCustom: Bool, focus: String?, focusAccess: Bool
+    }
+    private var observer: UUID?
+    private var renderedStructure: Structure?
+    private var lastPhase: WorkModePhase
+    private var laps: [Lap] = []
+    private var lapCount = 0
+    private(set) var isEditingCustom = false
+    private var applying = false
+    private(set) var focusMessage: String?
+    private var focusNeedsAccess = false
+    private var ring: WorkModeRing?
+    private weak var timerText: HUDTextLayer?
+    private weak var stateDot: CALayer?
+    private weak var titleGroup: CALayer?
+    private weak var primary: HUDButton?
+    /// The tabs hold their bar weakly; a locked bar is not the page's `tabs`.
+    private var kindTabs: HUDTabs?
+    private lazy var customField = makeCustomField()
+
+    override var hitBounds: CGRect { WorkModeDialGeometry.frame.union(super.hitBounds) }
+    /// Kept for the verification build; the ring's arc transition.
+    static var layoutTransitionDuration: TimeInterval { WorkModeRing.transition }
+
+    static var timerStyle: HUDTextStyle {
+        HUDTextStyle(size: 112, weight: .light, color: HUDColor.tone(0xF6F6F6), lineHeight: 0.9, tracking: -0.03, tabular: true)
+    }
+    static let presets: [TimeInterval] = [5 * 60, 30 * 60, 60 * 60]
+
+    init(context: HUDDesignContext, controller: WorkModeController) {
         self.controller = controller
-        shouldReduceMotion = reduceMotion
-        super.init()
-        layer.name = "module.workMode.canvas"
-        layer.frame = WorkModeDialGeometry.canvas
-        layer.allowsGroupOpacity = false
-        heading.name = "workMode.heading"
-        heading.frame = CGRect(x: 130, y: 53, width: 180, height: 20)
-        configure(heading, size: 13, weight: .semibold)
-        heading.alignmentMode = .center
-        layer.addSublayer(heading)
-        for shape in [ringBase, ring] {
-            shape.frame = layer.bounds
-            shape.path = WorkModeDialGeometry.countdownPath()
-            shape.fillColor = nil; shape.lineWidth = 4; shape.lineCap = .butt
-            layer.addSublayer(shape)
-        }
-        ringBase.lineWidth = 1.5
-        ring.name = "workMode.ring"
-        ringBase.name = "workMode.ringBase"
-        digits.name = "workMode.clock"
-        clockClip.name = "workMode.clockViewport"
-        clockClip.frame = CGRect(x: 48, y: 180, width: 344, height: 77)
-        clockClip.masksToBounds = true
-        layer.addSublayer(clockClip)
-        digits.frame = clockClip.bounds
-        configure(digits, size: 60, weight: .medium)
-        digits.font = NSFont.monospacedDigitSystemFont(ofSize: 60, weight: .medium)
-        digits.alignmentMode = .center
-        clockClip.addSublayer(digits)
-        stateLabel.name = "workMode.phase"
-        stateLabel.frame = CGRect(x: 89, y: 261, width: 262, height: 30)
-        configure(stateLabel, size: 11, weight: .medium)
-        stateLabel.alignmentMode = .center
-        stateLabel.isWrapped = true
-        layer.addSublayer(stateLabel)
-        controls.frame = layer.bounds; controls.allowsGroupOpacity = false
-        controls.name = "workMode.controls"
-        layer.addSublayer(controls)
-        configurationControls.frame = layer.bounds
-        configurationControls.name = "workMode.configuration"
-        layer.addSublayer(configurationControls)
-        focusStatus.name = "workMode.focusStatus"
-        focusStatus.frame = CGRect(x: 60, y: 25, width: 320, height: 24)
-        configure(focusStatus, size: 9.5, weight: .regular)
-        focusStatus.alignmentMode = .center
-        focusStatus.isWrapped = true
-        focusStatus.isHidden = true
-        focusAccessPlate.frame = focusStatus.frame
-        focusAccessPlate.path = cutCorner(focusAccessPlate.bounds)
-        focusAccessPlate.lineWidth = 0.8
-        focusAccessPlate.isHidden = true
-        layer.addSublayer(focusAccessPlate)
-        HUDControlHighlightLayer.add(to: focusAccessPlate, rect: focusAccessPlate.bounds, shape: .cutCorner, framed: true)
-        layer.addSublayer(focusStatus)
-        observer = controller.observe { [weak self] in
-            guard let self, self.active else { return }
-            self.refresh()
-        }
-        refresh(force: true, animateLayout: false)
+        lastPhase = controller.snapshot.phase
+        super.init(module: .workMode, context: context)
+        showsHeader = false
+        observer = controller.observe { [weak self] in self?.controllerChanged() }
     }
 
     deinit {
         if let observer { controller.removeObserver(observer) }
-        // The session belongs to the controller; the visible ticker and
-        // compositor tracks belong to this canvas and must end with it.
-        if active { controller.setVisible(false) }
-        removeFeedback(); settleLayout(); ring.removeAllAnimations()
+        // The session belongs to the controller; the visible ticker ends with this view.
+        if isActive { controller.setVisible(false) }
     }
 
-    func makeContent(for module: HUDModule, style: HUDModuleContentStyle) -> CALayer {
-        dark = style.dark; scale = style.contentsScale
-        refresh(force: true, animateLayout: false)
-        return layer
-    }
+    // MARK: Host interface
 
-    func activate() {
-        guard !active else { return }
-        active = true
-        controller.setVisible(true)
-        refresh(force: true, animateLayout: false)
-    }
-    func deactivate() {
-        active = false
-        removeFeedback()
-        settleLayout()
-        ring.removeAllAnimations()
-        animationRevision = -1
-        controller.setVisible(false)
-        withoutActions { self.updateRing(self.controller.snapshot, force: false) }
-    }
-
-    func updateRenderScale(_ value: CGFloat) {
-        let next = value.isFinite ? min(8, max(1, value)) : 2
-        guard next != scale else { return }
-        scale = next
-        if active { refresh(force: true) }
-    }
-
-    /// Real Focus errors are supplied by the app owner. Normal operation has no
-    /// Focus badge, button, or implied system state, and never retimes the clock.
+    /// Real Focus failures from the app owner: a toast when one appears and a
+    /// warning button beside the state label (it opens Accessibility settings
+    /// when that permission is missing). Normal operation shows nothing.
     func setFocusStatusMessage(_ value: String?, needsAccessibilityPermission: Bool = false) {
-        let message = value?.trimmingCharacters(in: .whitespacesAndNewlines)
-        withoutActions {
-            focusAccessAvailable = needsAccessibilityPermission && message?.isEmpty == false
-            focusStatus.string = message
-            focusStatus.isHidden = message?.isEmpty != false
-            updateFocusStatusAppearance()
-        }
-        onChange?()
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let message = trimmed?.isEmpty == false ? trimmed : nil
+        let appeared = message != nil && message != focusMessage
+        focusMessage = message
+        focusNeedsAccess = needsAccessibilityPermission && message != nil
+        if appeared, isActive, let message { toast(icon: .warn, "Focus mode", "专注模式", detail: message) }
+        refresh(animated: false)
     }
 
-    private func updateFocusStatusAppearance() {
-        focusStatus.foregroundColor = (focusAccessAvailable ? yellow : muted).cgColor
-        focusAccessPlate.isHidden = !focusAccessAvailable
-        focusAccessPlate.fillColor = muted.withAlphaComponent(0.08).cgColor
-        focusAccessPlate.strokeColor = yellow.withAlphaComponent(0.5).cgColor
-    }
-
+    /// Reduce Motion changed: settle the arc and the blink.
     func refreshMotionPreference() {
-        animationRevision = -1
-        if shouldReduceMotion() { removeFeedback(); settleLayout() }
-        refresh()
+        guard renderedLanguage != nil else { return }
+        rerender(); applyBlink()
     }
 
-    @discardableResult func mouseDown(at point: CGPoint) -> Bool {
-        guard point.x.isFinite, point.y.isFinite, layer.bounds.contains(point) else { return false }
-        if let action = accessibleActions.first(where: { $0.rect.contains(point) }) { perform(actionID: action.id) }
+    // MARK: Lifecycle
+
+    override func makeContent(for module: HUDModule, style: HUDModuleContentStyle) -> CALayer {
+        let content = super.makeContent(for: module, style: style)
+        refresh(animated: false)
+        return content
+    }
+
+    override func didActivate() {
+        controller.setVisible(true)
+        refresh(animated: false)
+        applyBlink()
+    }
+
+    override func didDeactivate() {
+        controller.setVisible(false)
+        stateDot?.removeAnimation(forKey: "workMode.blink")
+        if isEditingCustom, !customField.isEditing { isEditingCustom = false; customField.setInvalid(false) }
+    }
+
+    override func willLeave() { stateDot?.removeAnimation(forKey: "workMode.blink") }
+
+    /// The flick of the inner title; the column staggers in (the ring has no entrance).
+    override func playEntrance(from offset: CGPoint) {
+        super.playEntrance(from: offset)
+        if let titleGroup { HUDMotion.wipe(titleGroup, from: .left, duration: HUDDuration.titleWipe, fadeFrom: 0, env: env) }
+    }
+
+    override func recordingModeChanged() {}
+
+    // MARK: State
+
+    private var structure: Structure {
+        let value = controller.snapshot
+        return Structure(kind: value.kind, phase: value.phase, duration: value.duration, laps: laps,
+                         editingCustom: isEditingCustom, focus: focusMessage, focusAccess: focusNeedsAccess)
+    }
+
+    private func controllerChanged() {
+        let value = controller.snapshot
+        let finished = lastPhase == .running && value.phase == .completed
+        lastPhase = value.phase
+        // The countdown keeps its deadline while the module is hidden; the toast
+        // appears whenever the HUD is on screen.
+        if finished, context.host?.window?.isVisible == true { toast(icon: .timer, "Session complete", "专注结束") }
+        if !applying { refresh(animated: true) }
+    }
+
+    /// Structure changes re-render in place; anything else updates the digits,
+    /// the ring and the primary button's label.
+    private func refresh(animated: Bool) {
+        guard renderedLanguage != nil, !isTransitioning else { return }
+        if structure != renderedStructure { rerender(); applyBlink(); return }
+        let value = controller.snapshot
+        HUDMotion.perform { timerText?.text = Self.timeText(value) }
+        ring?.set(WorkModeDialGeometry.fraction(value), animated: animated && isActive)
+        if let primary { primary.label = primary.title + ", " + accessibilityStatus(value) }
+    }
+
+    /// Runs a controller action without the observer re-rendering mid-way.
+    private func apply(_ change: () -> Void) {
+        applying = true; change(); applying = false
+        lastPhase = controller.snapshot.phase
+    }
+
+    /// The FOCUS ON square blinks only while the countdown or stopwatch runs.
+    private func applyBlink() {
+        guard let dot = stateDot else { return }
+        dot.removeAnimation(forKey: "workMode.blink")
+        guard isActive, controller.snapshot.phase == .running, !env.reducesMotion else { return }
+        let blink = CAKeyframeAnimation(keyPath: "opacity")
+        blink.values = [1, 0.2, 1]; blink.keyTimes = [0, 0.5, 1]
+        blink.duration = 1.6; blink.repeatCount = .infinity; blink.timingFunction = HUDEasing.easeInOut
+        dot.add(blink, forKey: "workMode.blink")
+    }
+
+    static func timeText(_ value: WorkModeSnapshot) -> String { HUDFormat.clock(seconds: value.displayedSeconds) }
+
+    private func accessibilityStatus(_ value: WorkModeSnapshot) -> String {
+        (value.kind == .countdown ? L10n.text("Countdown", "倒计时") : L10n.text("Stopwatch", "秒表")) + " " + Self.timeText(value)
+    }
+
+    /// `5 min` for whole minutes, `1:30` otherwise.
+    static func durationTitle(_ seconds: TimeInterval) -> String {
+        let value = Int(seconds.rounded())
+        if value % 60 == 0 { let minutes = value / 60; return L10n.text("\(minutes) min", "\(minutes) 分") }
+        return HUDFormat.clock(seconds: value)
+    }
+
+    // MARK: Page
+
+    override func buildPage(_ page: HUDDesignPage) {
+        let value = controller.snapshot
+        renderedStructure = structure
+        let ring = WorkModeRing(fraction: WorkModeDialGeometry.fraction(value), env: env)
+        self.ring = ring
+        HUDMotion.perform { page.layer.addSublayer(ring.layer) }
+        buildTitle(page)
+        buildTabs(page, value)
+        buildState(page, value)
+        let timer = HUDTextLayer(Self.timeText(value), style: Self.timerStyle, alignment: .center)
+        timer.minimumScale = 0.5
+        HUDMotion.perform { timer.lineFrame = CGRect(x: 115, y: 218, width: 360, height: 112 * 0.9); page.layer.addSublayer(timer) }
+        timerText = timer
+        page.stagger(timer)
+        let slotBottom: CGFloat
+        if value.kind == .countdown { buildPresets(page, value); slotBottom = 331 + 30 }
+        else { slotBottom = 331 + buildLaps(page) }
+        buildActions(page, value, top: slotBottom + 12)
+        page.back = isEditingCustom ? { [weak self] in self?.closeCustom() } : nil
+    }
+
+    private func buildTitle(_ page: HUDDesignPage) {
+        let lines = HUDModuleTitle("Work Mode", "工作模式").lines()
+        let titleStyle = HUDType.moduleTitle.sized(20)
+        let title = HUDTextLayer(lines.title, style: titleStyle), subtitle = HUDTextLayer(lines.subtitle, style: HUDType.titleSubtitle)
+        title.language = lines.titleLanguage; subtitle.language = lines.subtitleLanguage
+        let titleWidth = title.preferredWidth, subtitleWidth = subtitle.preferredWidth
+        let titleMetrics = HUDText.metrics(titleStyle, language: lines.titleLanguage ?? HUDTextLanguage.tag())
+        let subMetrics = HUDText.metrics(HUDType.titleSubtitle, language: lines.subtitleLanguage ?? HUDTextLanguage.tag())
+        let width = titleWidth + (lines.subtitle.isEmpty ? 0 : 12 + subtitleWidth)
+        let group = HUDLayer.plain("workMode.title")
+        HUDMotion.perform {
+            group.frame = CGRect(x: (295 - width / 2).rounded(), y: 118, width: width + 2, height: 20)
+            title.lineFrame = CGRect(x: 0, y: 10 - titleMetrics.height / 2, width: titleWidth + 1, height: titleMetrics.height)
+            let baseline = title.lineFrame.minY + titleMetrics.baseline
+            subtitle.lineFrame = CGRect(x: titleWidth + 12, y: baseline - subMetrics.baseline, width: subtitleWidth + 1, height: subMetrics.height)
+            group.addSublayer(title); group.addSublayer(subtitle)
+            page.layer.addSublayer(group)
+        }
+        titleGroup = group
+    }
+
+    private func buildTabs(_ page: HUDDesignPage, _ value: WorkModeSnapshot) {
+        let tabs = HUDTabs(id: "workMode.kind", titles: [(L10n.text("Countdown", "倒计时"), .timer), (L10n.text("Stopwatch", "秒表"), .watch)],
+                           selectedIndex: value.kind == .countdown ? 0 : 1, width: 270, keycaps: false, env: env)
+        HUDMotion.perform { tabs.layer.frame.origin = CGPoint(x: 160, y: 150); page.layer.addSublayer(tabs.layer) }
+        // A running or paused session keeps its mode: switching would end it.
+        let locked = value.isActive
+        for (index, tab) in tabs.tabs.enumerated() where index != tabs.selectedIndex {
+            tab.isEnabled = !locked
+            HUDMotion.perform { tab.layer.opacity = locked ? 0.35 : 1 }
+        }
+        tabs.onSelect = { [weak self] index, direction in self?.chooseKind(index == 0 ? .countdown : .stopwatch, direction: direction) }
+        page.add(tabs.controls)
+        kindTabs = tabs
+        if !locked { page.tabs = tabs }
+        page.stagger(tabs.layer)
+    }
+
+    private func buildState(_ page: HUDDesignPage, _ value: WorkModeSnapshot) {
+        let group = HUDLayer.plain("workMode.state")
+        let text = HUDTextLayer(value.isActive ? L10n.text("Focus on", "专注中") : L10n.text("Standby", "待机"), style: HUDType.label)
+        let dot = HUDLayer.plain("workMode.state.dot")
+        var alert: HUDIconButton?
+        if let focusMessage {
+            let button = HUDIconButton(id: "workMode.focus", label: focusNeedsAccess ? L10n.text("Open Accessibility Settings", "打开辅助功能设置") : focusMessage,
+                                       icon: .warn, side: 22, iconSize: 12, env: env)
+            button.onActivate = { [weak self] in self?.focusAlertPressed() }
+            alert = button
+        }
+        let textWidth = ceil(text.preferredWidth)
+        let width = 7 + 8 + textWidth + (alert == nil ? 0 : 10 + 22)
+        HUDMotion.perform {
+            group.frame = CGRect(x: (295 - width / 2).rounded(), y: 196, width: width, height: 10)
+            dot.frame = CGRect(x: 0, y: 1.5, width: 7, height: 7)
+            dot.backgroundColor = value.isActive ? HUDColor.green : HUDColor.tone(0x666666)
+            text.lineFrame = CGRect(x: 15, y: 0, width: textWidth + 1, height: 10)
+            [dot, text].forEach(group.addSublayer)
+            if let alert { alert.layer.frame = CGRect(x: width - 22, y: -6, width: 22, height: 22); group.addSublayer(alert.layer) }
+            page.layer.addSublayer(group)
+        }
+        if let alert { page.add(alert) }
+        stateDot = dot
+        page.stagger(group)
+    }
+
+    private func buildPresets(_ page: HUDDesignPage, _ value: WorkModeSnapshot) {
+        if isEditingCustom {
+            let field = customField
+            register(field)
+            HUDMotion.perform { field.layer.frame.origin = CGPoint(x: 145, y: 331); page.layer.addSublayer(field.layer) }
+            page.stagger(field.layer)
+            return
+        }
+        let options = Self.presets.map { Self.durationTitle($0) } + [L10n.text("Custom", "自定")]
+        let selected = Self.presets.firstIndex(of: value.duration) ?? Self.presets.count
+        let presets = HUDSegmentedControl(id: "workMode.preset", label: L10n.text("Duration", "时长"), options: options,
+                                          selectedIndex: selected, width: 300, yellow: true, env: env)
+        presets.onChange = { [weak self] index in self?.pickPreset(index) }
+        presets.onReselect = { [weak self] index in if index == Self.presets.count { self?.openCustom() } }
+        HUDMotion.perform { presets.layer.frame.origin = CGPoint(x: 145, y: 331); page.layer.addSublayer(presets.layer) }
+        // The page keeps the group alive: its segments only hold it weakly.
+        page.add(presets); page.add(presets.segments); page.stagger(presets.layer)
+    }
+
+    /// Up to three laps, newest first; the slot is at least 42 px tall.
+    private func buildLaps(_ page: HUDDesignPage) -> CGFloat {
+        let group = HUDLayer.plain("workMode.laps")
+        let style = HUDTextStyle(size: 12.5, weight: .regular, color: HUDColor.tone(0xBBBBBB), lineHeight: 1.6, tabular: true)
+        let height = max(42, CGFloat(laps.count) * 20)
+        HUDMotion.perform {
+            group.frame = CGRect(x: 115, y: 331, width: 360, height: height)
+            for (index, lap) in laps.enumerated() {
+                let line = HUDTextLayer("#" + HUDFormat.pad2(lap.number) + "   " + HUDFormat.clock(seconds: lap.seconds), style: style, alignment: .center)
+                line.lineFrame = CGRect(x: 0, y: CGFloat(index) * 20, width: 360, height: 20)
+                group.addSublayer(line)
+            }
+            page.layer.addSublayer(group)
+        }
+        page.stagger(group)
+        return height
+    }
+
+    private func buildActions(_ page: HUDDesignPage, _ value: WorkModeSnapshot, top: CGFloat) {
+        let running = value.phase == .running
+        // Resume names a partly elapsed countdown; a paused stopwatch's Start continues it.
+        let resumes = value.kind == .countdown && value.phase == .paused
+        let title = running ? L10n.text("Pause", "暂停") : (resumes ? L10n.text("Resume", "继续") : L10n.text("Start", "开始"))
+        let primary = HUDButton(id: "workMode.primary", title: title, icon: running ? .pause : .play, kind: .primary, size: .large, env: env)
+        primary.place(at: .zero, width: 150)
+        primary.label = title + ", " + accessibilityStatus(value)
+        primary.onActivate = { [weak self] in self?.primaryAction() }
+        // Countdown: Reset. Stopwatch: Lap while it runs (unavailable before
+        // it starts), Reset once paused, so a stopwatch can always be cleared.
+        let lap = value.kind == .stopwatch && (running || value.phase == .idle)
+        let secondary = HUDButton(id: lap ? "workMode.lap" : "workMode.reset", title: lap ? L10n.text("Lap", "计次") : L10n.text("Reset", "重置"),
+                                  icon: lap ? .plus : .reset, kind: .secondary, size: .large, env: env)
+        secondary.place(at: .zero)
+        secondary.isEnabled = !lap || running
+        secondary.onActivate = { [weak self] in if lap { self?.recordLap() } else { self?.reset() } }
+        let group = HUDLayer.plain("workMode.actions")
+        let width = primary.layer.bounds.width + 8 + secondary.layer.bounds.width
+        HUDMotion.perform {
+            group.frame = CGRect(x: (295 - width / 2).rounded(), y: top, width: width, height: 40)
+            primary.layer.frame.origin = .zero
+            secondary.layer.frame.origin = CGPoint(x: primary.layer.bounds.width + 8, y: 0)
+            group.addSublayer(primary.layer); group.addSublayer(secondary.layer)
+            page.layer.addSublayer(group)
+        }
+        page.add([primary, secondary]); page.stagger(group)
+        self.primary = primary
+    }
+
+    // MARK: Actions
+
+    private func chooseKind(_ kind: WorkModeKind, direction: CGFloat) {
+        let value = controller.snapshot
+        guard !value.isActive, value.kind != kind else { return }
+        apply {
+            if kind == .countdown { _ = controller.chooseCountdown(seconds: value.duration) } else { controller.chooseStopwatch() }
+        }
+        laps = []; lapCount = 0; isEditingCustom = false
+        navigate(dx: direction)
+    }
+
+    /// 5 / 30 / 60 set the total and stop; Custom opens the minutes field.
+    private func pickPreset(_ index: Int) {
+        guard Self.presets.indices.contains(index) else { openCustom(); return }
+        apply { _ = controller.chooseCountdown(seconds: Self.presets[index]) }
+        refresh(animated: true)
+    }
+
+    func openCustom() {
+        guard controller.snapshot.kind == .countdown else { return }
+        let duration = Int(controller.snapshot.duration.rounded())
+        customField.setText(duration % 60 == 0 ? String(duration / 60) : WorkModeDuration.editText(controller.snapshot.duration))
+        customField.setInvalid(false)
+        isEditingCustom = true
+        rerender()
+        customField.beginEditing()
+    }
+
+    /// Bare minutes or min:sec (0:01–1440:00). An invalid entry shakes and
+    /// stays open; the same duration closes without restarting a session.
+    func commitCustom(_ text: String) {
+        guard isEditingCustom else { return }
+        guard let seconds = WorkModeDuration.parse(text) else { customField.setInvalid(true, shake: true); return }
+        isEditingCustom = false
+        let current = controller.snapshot
+        if current.kind == .countdown && current.duration == seconds { refresh(animated: false); return }
+        apply { _ = controller.chooseCountdown(seconds: seconds) }
+        refresh(animated: true)
+        toast(icon: .timer, "Custom \(Self.durationTitle(seconds))", "自定义 \(Self.durationTitle(seconds))")
+    }
+
+    private func closeCustom() {
+        guard isEditingCustom else { return }
+        isEditingCustom = false
+        customField.setInvalid(false)
+        refresh(animated: false)
+    }
+
+    private func makeCustomField() -> HUDDesignTextField {
+        var options = HUDDesignTextField.Options()
+        options.maximumLength = 7; options.selectsAllOnBegin = true
+        let field = HUDDesignTextField(id: "workMode.custom", label: L10n.text("Custom countdown: minutes and seconds", "自定义倒计时：分和秒"),
+                                       text: "", placeholder: L10n.text("Minutes", "分钟"), size: CGSize(width: 300, height: 30),
+                                       options: options, env: env)
+        field.onCommit = { [weak self] in self?.commitCustom($0) }
+        field.onCancel = { [weak self] in self?.closeCustom() }
+        return field
+    }
+
+    /// Start (a finished countdown restarts from its total), Pause, Resume.
+    func primaryAction() {
+        let value = controller.snapshot
+        apply {
+            switch value.phase {
+            case .running: controller.pause()
+            case .paused: controller.resume()
+            case .idle, .stopped, .completed:
+                if value.kind == .stopwatch { laps = []; lapCount = 0 }
+                controller.start()
+            }
+        }
+        refresh(animated: true)
+    }
+
+    func recordLap() {
+        let value = controller.snapshot
+        guard value.kind == .stopwatch, value.phase == .running else { return }
+        lapCount += 1
+        laps = Array(([Lap(number: lapCount, seconds: value.displayedSeconds)] + laps).prefix(3))
+        refresh(animated: false)
+    }
+
+    func reset() {
+        apply { controller.reset() }
+        laps = []; lapCount = 0
+        refresh(animated: true)
+    }
+
+    private func focusAlertPressed() {
+        if focusNeedsAccess { onRequestFocusAccess?() }
+        else if let focusMessage { toast(icon: .warn, "Focus mode", "专注模式", detail: focusMessage) }
+    }
+
+    /// Space or Return: Start, Pause or Resume.
+    override func handleExtraKey(_ event: NSEvent) -> Bool {
+        guard [49, 36, 76].contains(event.keyCode), event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty else { return false }
+        primaryAction()
         return true
     }
 
-    func perform(actionID: String) {
-        guard accessibleActions.contains(where: { $0.id == actionID }) else { return }
-        if actionID == "work:focusAccess" {
-            if active && !shouldReduceMotion() {
-                let highlight = CABasicAnimation(keyPath: "opacity")
-                highlight.fromValue = 0.55; highlight.toValue = 1; highlight.duration = 0.16
-                focusAccessPlate.add(highlight, forKey: "workFeedback.focusAccess")
-            }
-            onRequestFocusAccess?()
-            return
-        }
-        let previous = controller.snapshot
-        let revision = controller.revision
-        error = nil
-        switch actionID {
-        case "work:countdown":
-            if controller.snapshot.kind != .countdown { _ = controller.chooseCountdown(seconds: controller.snapshot.duration) }
-        case "work:stopwatch":
-            if controller.snapshot.kind != .stopwatch { controller.chooseStopwatch() }
-        case "work:custom": onEditDuration?(durationEditorRect)
-        case "work:start": controller.start()
-        case "work:pause": controller.pause()
-        case "work:resume": controller.resume()
-        case "work:reset": controller.reset()
-        default:
-            if actionID.hasPrefix("work:preset:"), let minutes = Double(actionID.dropFirst("work:preset:".count)),
-               [5.0, 30, 60].contains(minutes) { _ = controller.chooseCountdown(seconds: minutes * 60) }
-        }
-        if controller.revision == revision { refresh() }
-        animateAction(actionID, from: previous, changed: controller.revision != revision)
-    }
+    // MARK: Testing
 
-    @discardableResult func setCustomDuration(_ text: String) -> Bool {
-        if controller.snapshot.isActive {
-            // A native field opened before an external Start cannot reconfigure
-            // an active session. Re-entering its existing value is harmless.
-            return controller.snapshot.kind == .countdown && WorkModeDuration.parse(text) == controller.snapshot.duration
-        }
-        guard let seconds = WorkModeDuration.parse(text) else {
-            error = L10n.text("Use 0:01–1440:00 (min:sec)", "输入 0:01–1440:00（分:秒）")
-            refresh(); return false
-        }
-        error = nil
-        // Inspecting or re-entering the current duration must not reset an
-        // active session; a changed duration intentionally prepares a new one.
-        let current = controller.snapshot
-        if current.kind == .countdown && current.duration == seconds {
-            refresh()
-            return true
-        }
-        let changed = controller.chooseCountdown(seconds: seconds)
-        if changed { animateAction("work:custom", from: current, changed: true) }
-        return changed
-    }
-
-    /// Cancelling the native editor clears its validation message without
-    /// changing the timer's duration, elapsed time, phase, or deadline.
-    func cancelCustomEditing() {
-        guard error != nil else { return }
-        error = nil
-        refresh()
-    }
-
-    private func refresh(force: Bool = false, animateLayout: Bool = true) {
-        let value = controller.snapshot
-        if !active || controller.isSuspended || shouldReduceMotion() { removeFeedback() }
-        withoutActions {
-            if self.lastTimeText != value.timeText || force {
-                self.lastTimeText = value.timeText; self.digits.string = value.timeText
-            }
-            self.stateLabel.string = self.error ?? self.phaseTitle(value.phase)
-            if force || self.renderedRevision != self.controller.revision {
-                self.renderedRevision = self.controller.revision
-                self.heading.string = HUDSectionHeading.text(HUDModule.workMode.title)
-                self.heading.foregroundColor = self.primary.cgColor
-                self.digits.foregroundColor = self.primary.cgColor
-                self.stateLabel.foregroundColor = self.muted.cgColor
-                self.ringBase.strokeColor = self.muted.withAlphaComponent(0.25).cgColor
-                self.ring.strokeColor = self.yellow.cgColor
-                self.updateFocusStatusAppearance()
-                for text in [self.heading, self.digits, self.stateLabel, self.focusStatus] {
-                    text.contentsScale = HUDRenderScale.contentScale(for: text, baseScale: self.scale)
-                }
-                self.renderControls(value)
-            }
-            self.updateRing(value, force: force)
-        }
-        updateLayout(expanded: value.isActive, animated: animateLayout && active && !controller.isSuspended && !shouldReduceMotion())
-        onChange?()
-    }
-
-    private func updateRing(_ value: WorkModeSnapshot, force: Bool) {
-        let reduce = shouldReduceMotion()
-        let animate = active && !controller.isSuspended && value.phase == .running && !reduce
-        ring.lineWidth = value.kind == .countdown ? 4 : 2.5
-        if !animate {
-            ring.removeAllAnimations()
-            ring.strokeEnd = value.kind == .countdown ? WorkModeDialGeometry.remainingFraction(value) : 0.045
-            let angle = value.kind == .countdown ? 0 : value.progress * 2 * .pi
-            ring.transform = CATransform3DMakeRotation(angle, 0, 0, 1)
-            animationRevision = -1; reducedMotion = reduce
-            return
-        }
-        guard force || animationRevision != controller.revision || reducedMotion != reduce else { return }
-        ring.removeAllAnimations()
-        animationRevision = controller.revision; reducedMotion = reduce
-        if value.kind == .countdown {
-            ring.transform = CATransform3DIdentity
-            ring.strokeEnd = 0
-            let animation = CABasicAnimation(keyPath: "strokeEnd")
-            animation.fromValue = WorkModeDialGeometry.remainingFraction(value); animation.toValue = 0
-            animation.duration = max(0.001, value.remaining)
-            animation.timingFunction = CAMediaTimingFunction(name: .linear)
-            ring.add(animation, forKey: "workMode.countdown")
-        } else {
-            ring.strokeEnd = 0.045
-            let angle = value.progress * 2 * .pi
-            ring.transform = CATransform3DMakeRotation(angle, 0, 0, 1)
-            let animation = CABasicAnimation(keyPath: "transform.rotation.z")
-            animation.fromValue = angle; animation.toValue = angle + 2 * .pi
-            animation.duration = 60; animation.repeatCount = .infinity
-            animation.timingFunction = CAMediaTimingFunction(name: .linear)
-            ring.add(animation, forKey: "workMode.stopwatch")
-        }
-    }
-
-    /// Configuration opacity and clock geometry have independent finite tracks.
-    /// Their model values always describe the destination, so removal, hiding,
-    /// or reduced-motion changes settle without a delayed layout callback.
-    private func updateLayout(expanded: Bool, animated: Bool) {
-        let changed = layoutExpanded != expanded
-        let hasAnimations = [configurationControls, clockClip, stateLabel].contains {
-            ($0.animationKeys() ?? []).contains { $0.hasPrefix("workLayout.") }
-        }
-        guard changed || (!animated && hasAnimations) else { return }
-        let hadLayout = layoutExpanded != nil
-        layoutExpanded = expanded
-        layoutGeneration += 1
-        let token = layoutGeneration
-        let fromOpacity = configurationControls.presentation()?.opacity ?? configurationControls.opacity
-        let fromPosition = clockClip.presentation()?.position ?? clockClip.position
-        let fromTransform = clockClip.presentation()?.transform ?? clockClip.transform
-        let fromStatePosition = stateLabel.presentation()?.position ?? stateLabel.position
-        for item in [configurationControls, clockClip, stateLabel] {
-            for key in item.animationKeys() ?? [] where key.hasPrefix("workLayout.") { item.removeAnimation(forKey: key) }
-        }
-        let shouldAnimate = animated && hadLayout && changed
-        configurationInteractive = !expanded && !shouldAnimate
-        withoutActions {
-            configurationControls.opacity = expanded ? 0 : 1
-            clockClip.position = CGPoint(x: 220, y: expanded ? 166 : 218.5)
-            clockClip.transform = expanded ? CATransform3DMakeScale(1.28, 1.28, 1) : CATransform3DIdentity
-            digits.contentsScale = HUDRenderScale.contentScale(for: digits, baseScale: scale)
-            stateLabel.position = CGPoint(x: 220, y: expanded ? 244 : 276)
-        }
-        guard shouldAnimate else { return }
-        CATransaction.begin()
-        CATransaction.setCompletionBlock { [weak self] in
-            DispatchQueue.main.async { [weak self] in
-                guard let self, self.active, self.layoutGeneration == token, !self.controller.snapshot.isActive else { return }
-                self.configurationInteractive = true
-                self.onChange?()
-            }
-        }
-        addLayoutAnimation(configurationControls, keyPath: "opacity", from: fromOpacity, to: configurationControls.opacity)
-        addLayoutAnimation(clockClip, keyPath: "position", from: NSValue(point: fromPosition), to: NSValue(point: clockClip.position))
-        addLayoutAnimation(clockClip, keyPath: "transform", from: NSValue(caTransform3D: fromTransform), to: NSValue(caTransform3D: clockClip.transform))
-        addLayoutAnimation(stateLabel, keyPath: "position", from: NSValue(point: fromStatePosition), to: NSValue(point: stateLabel.position))
-        CATransaction.commit()
-    }
-
-    private func addLayoutAnimation(_ item: CALayer, keyPath: String, from: Any, to: Any) {
-        let animation = CABasicAnimation(keyPath: keyPath)
-        animation.fromValue = from; animation.toValue = to
-        animation.duration = Self.layoutTransitionDuration
-        animation.timingFunction = CAMediaTimingFunction(controlPoints: 0.22, 0.68, 0.24, 1)
-        item.add(animation, forKey: "workLayout." + keyPath)
-    }
-
-    private func settleLayout() {
-        updateLayout(expanded: controller.snapshot.isActive, animated: false)
-    }
-
-    private func renderControls(_ value: WorkModeSnapshot) {
-        controls.sublayers?.forEach { $0.removeFromSuperlayer() }
-        configurationControls.sublayers?.forEach { $0.removeFromSuperlayer() }
-        actionLayers.removeAll(keepingCapacity: true)
-        let topActions = configurationActions(value)
-        let topIDs = Set(topActions.map(\.id))
-        for action in topActions + accessibleActions.filter({ !topIDs.contains($0.id) && $0.id != "work:focusAccess" }) {
-            let selected = (action.id == "work:countdown" && value.kind == .countdown)
-                || (action.id == "work:stopwatch" && value.kind == .stopwatch)
-                || (action.id.hasPrefix("work:preset:") && Double(action.id.dropFirst("work:preset:".count)).map { $0 * 60 == value.duration } == true)
-                || (action.id == "work:custom" && ![300.0, 1800, 3600].contains(value.duration))
-            let primaryAction = action.id == "work:start" || action.id == "work:resume"
-            let group = CALayer(); group.frame = action.rect; group.allowsGroupOpacity = false
-            group.name = "workMode.button." + action.id
-            (topIDs.contains(action.id) ? configurationControls : controls).addSublayer(group)
-            actionLayers[action.id] = group
-            let plate = CAShapeLayer(); plate.frame = group.bounds
-            plate.path = cutCorner(group.bounds)
-            plate.fillColor = (primaryAction ? yellow : NSColor(white: dark ? 0.78 : 0.91, alpha: 1)).cgColor
-            plate.strokeColor = (selected ? yellow : NSColor(white: dark ? 0.94 : 0.4, alpha: 0.5)).cgColor
-            plate.lineWidth = selected ? 1.5 : 0.6
-            group.addSublayer(plate)
-            HUDControlHighlightLayer.add(to: group, rect: group.bounds, shape: .cutCorner, framed: true)
-            let text = CATextLayer(); text.frame = group.bounds.insetBy(dx: 4, dy: 5)
-            text.name = "workMode.control." + action.id
-            configure(text, size: action.id.hasPrefix("work:preset:") ? 10.5 : 11, weight: .semibold)
-            text.string = action.label; text.alignmentMode = .center; text.foregroundColor = ink.cgColor
-            text.contentsScale = HUDRenderScale.contentScale(for: text, baseScale: scale)
-            group.addSublayer(text)
-        }
-    }
-
-    private func animateAction(_ actionID: String, from previous: WorkModeSnapshot, changed: Bool) {
-        guard active, !controller.isSuspended, !shouldReduceMotion() else { return }
-        let current = controller.snapshot
-        var visibleAction = actionID
-        if actionLayers[visibleAction] == nil {
-            visibleAction = current.phase == .running ? "work:pause" : "work:start"
-        }
-        if let button = actionLayers[visibleAction] {
-            let expand = CABasicAnimation(keyPath: "transform")
-            expand.fromValue = NSValue(caTransform3D: CATransform3DMakeScale(0.985, 0.985, 1))
-            expand.toValue = NSValue(caTransform3D: CATransform3DIdentity)
-            expand.duration = 0.18
-            expand.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            button.add(expand, forKey: "workFeedback.expand")
-        }
-        guard changed else { return }
-        // The clock indexes mechanically through a clipped viewport. No
-        // opacity animation is used, so the large glyphs remain crisp.
-        let direction: CGFloat = current.kind != previous.kind
-            ? (current.kind == .countdown ? -1 : 1)
-            : (current.duration < previous.duration ? -1 : 1)
-        let travel = CABasicAnimation(keyPath: "transform")
-        travel.fromValue = NSValue(caTransform3D: CATransform3DMakeTranslation(10 * direction, 11, -12))
-        travel.toValue = NSValue(caTransform3D: CATransform3DIdentity)
-        travel.duration = 0.22
-        travel.timingFunction = CAMediaTimingFunction(name: .easeOut)
-        digits.add(travel, forKey: "workFeedback.clockIndex")
-    }
-
-    private func removeFeedback() {
-        func remove(_ item: CALayer) {
-            for key in item.animationKeys() ?? [] where key.hasPrefix("workFeedback.") { item.removeAnimation(forKey: key) }
-            item.sublayers?.forEach(remove)
-        }
-        remove(layer)
-    }
-
-    private func phaseTitle(_ phase: WorkModePhase) -> String {
-        switch phase {
-        case .idle: return L10n.text("Ready", "就绪")
-        case .running: return "RUNNING"
-        case .paused: return "PAUSED"
-        case .stopped: return L10n.text("Stopped", "已结束")
-        case .completed: return L10n.text("Completed", "已完成")
-        }
-    }
-    private func configure(_ text: CATextLayer, size: CGFloat, weight: NSFont.Weight) {
-        // CATextLayer can render its backing contents after our disabled-actions
-        // transaction commits; keep those deferred text updates instantaneous.
-        text.actions = ["contents": NSNull()]
-        text.font = NSFont.systemFont(ofSize: size, weight: weight); text.fontSize = size
-        text.truncationMode = .end
-        text.contentsScale = HUDRenderScale.contentScale(for: text, baseScale: scale)
-    }
-    private func cutCorner(_ rect: CGRect) -> CGPath {
-        let p = CGMutablePath(); p.move(to: CGPoint(x: rect.minX + 4, y: rect.minY))
-        p.addLine(to: CGPoint(x: rect.maxX, y: rect.minY)); p.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - 4))
-        p.addLine(to: CGPoint(x: rect.maxX - 4, y: rect.maxY)); p.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
-        p.addLine(to: CGPoint(x: rect.minX, y: rect.minY + 4)); p.closeSubpath(); return p
-    }
-    private func withoutActions(_ body: () -> Void) { CATransaction.begin(); CATransaction.setDisableActions(true); body(); CATransaction.commit() }
+    var lapTextsForTesting: [String] { laps.map { "#" + HUDFormat.pad2($0.number) + "   " + HUDFormat.clock(seconds: $0.seconds) } }
+    var timerTextForTesting: String? { timerText?.text }
+    var ringFractionForTesting: CGFloat? { ring?.fraction }
+    var customFieldForTesting: HUDDesignTextField { customField }
 }

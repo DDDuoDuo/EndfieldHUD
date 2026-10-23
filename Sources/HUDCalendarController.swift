@@ -77,7 +77,7 @@ final class HUDCalendarNativeNotifications: HUDCalendarNotificationScheduling {
                 let signature = reminder.signature + "|" + calendarIdentity + "|" + language.rawValue
                 if existing[reminder.identifier]?.content.userInfo["calendarSignature"] as? String == signature { continue }
                 let content = UNMutableNotificationContent(); content.title = reminder.title
-                content.body = (reminder.previousDay ? L10n.text("Tomorrow", "明天", language: language) : L10n.text("Today", "今天", language: language)) + " · " + reminder.day.string
+                content.body = (reminder.previousDay ? L10n.text("Tomorrow", "明天", language: language) : L10n.text("Today", "今天", language: language)) + " " + reminder.day.string
                 content.sound = .default; content.userInfo = ["calendarSignature": signature, "calendarEventID": reminder.eventID.uuidString]
                 let trigger: UNNotificationTrigger
                 if reminder.catchUp { trigger = UNTimeIntervalNotificationTrigger(timeInterval: max(1, reminder.date.timeIntervalSinceNow), repeats: false) }

@@ -284,13 +284,13 @@ final class HypergryphAccountLogin: NSObject, NSWindowDelegate, WKNavigationDele
         let content = NSView(frame: panel.contentView!.bounds)
         content.autoresizingMask = [.width, .height]; panel.contentView = content
         let title = NSTextField(labelWithString: L10n.text("Connect through the official website", "通过官方网站关联"))
-        title.font = .systemFont(ofSize: 20, weight: .semibold)
+        title.font = HUDFontResolver.nsFont(size: 20, weight: .semibold)
         let detail = NSTextField(wrappingLabelWithString: L10n.text(
             "Sign in to the official website in a private session. EndfieldHUD will save only this community session in this Mac’s Keychain to read your game profile. Your password and passport token are not collected. This is an unofficial integration.",
             "在独立会话中登录官方网站。EndfieldHUD 仅将此次社区会话保存在本机钥匙串，用于读取游戏资料，不收集密码或通行证令牌。这是非官方关联功能。"))
-        detail.textColor = .secondaryLabelColor
+        detail.font = HUDFontResolver.nsFont(size: 13); detail.textColor = .secondaryLabelColor
         let site = NSTextField(labelWithString: HypergryphAccountLoginPolicy.siteURL(region).absoluteString)
-        site.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
+        site.font = HUDFontResolver.nsFont(size: 13)
         let button = HypergryphAccountAuthButton(title: L10n.text("Continue to official sign-in", "继续前往官方登录"),
             primary: true, target: self, action: #selector(beginOfficialLogin))
         let cancel = HypergryphAccountAuthButton(title: L10n.text("Cancel", "取消"), primary: false, target: self, action: #selector(cancelAction))
@@ -341,6 +341,7 @@ final class HypergryphAccountLogin: NSObject, NSWindowDelegate, WKNavigationDele
         let status = NSTextField(labelWithString: HypergryphAccountLoginPolicy.siteURL(region).absoluteString)
         status.frame = NSRect(x: 18, y: host.bounds.height - 30, width: host.bounds.width - 224, height: 20)
         status.autoresizingMask = [.width, .minYMargin]; status.textColor = .secondaryLabelColor
+        status.font = HUDFontResolver.nsFont(size: 13)
         host.addSubview(status); statusLabel = status
         let retry = HypergryphAccountAuthButton(title: L10n.text("Retry", "重试"), primary: false, target: self, action: #selector(retryPage))
         retry.frame = NSRect(x: host.bounds.width - 194, y: host.bounds.height - 37, width: 86, height: 32)
@@ -572,7 +573,7 @@ final class HypergryphAccountLogin: NSObject, NSWindowDelegate, WKNavigationDele
 /// website and its own login/captcha buttons are never restyled or intercepted.
 final class HypergryphAccountAuthButton: NSButton {
     private let plate = CAShapeLayer()
-    private let label = CATextLayer()
+    private let label = HUDStandardTextLayer(size: 13, weight: .bold)
     private var feedback: HUDControlHighlightLayer?
     private var tracking: NSTrackingArea?
     private let primary: Bool
@@ -586,7 +587,7 @@ final class HypergryphAccountAuthButton: NSButton {
         super.init(frame: .zero)
         self.title = title; self.target = target; self.action = action
         setButtonType(.momentaryPushIn); isBordered = false; focusRingType = .none
-        font = .systemFont(ofSize: 13, weight: .bold)
+        font = HUDFontResolver.nsFont(size: 13, weight: .bold)
         wantsLayer = true; layer?.masksToBounds = false
         layer?.addSublayer(plate); layer?.addSublayer(label)
         setAccessibilityLabel(title)
@@ -608,7 +609,7 @@ final class HypergryphAccountAuthButton: NSButton {
         // The text remains above the finite highlight tint.
         label.removeFromSuperlayer(); layer.addSublayer(label)
         label.frame = CGRect(x: 10, y: (bounds.height - 18) / 2, width: max(0, bounds.width - 20), height: 18)
-        label.string = title; label.font = font; label.fontSize = 13; label.alignmentMode = .center
+        label.string = title; label.alignmentMode = .center
         label.contentsScale = window?.backingScaleFactor ?? 2
         let rgb = accent.usingColorSpace(.deviceRGB)
         let darkAccent = rgb.map { $0.redComponent * 0.2126 + $0.greenComponent * 0.7152 + $0.blueComponent * 0.0722 < 0.36 } ?? false

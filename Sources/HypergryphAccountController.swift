@@ -21,6 +21,42 @@ final class HypergryphAccountController {
         var syncProfile = false
         var syncAvatar = false
         var records: [String: RegionRecord] = [:]
+        /// Personal-card fields the sync leaves alone (Account field chips);
+        /// absent in older caches, where every field syncs.
+        var unsyncedFields: [String]? = nil
+
+        /// v1.2.0 reads this file too and syncs every field of an enabled sync.
+        /// While fields are left out, the file tells it "off" (so it cannot
+        /// overwrite them) and keeps the real switch in `partialSyncProfile`.
+        /// v1.2.0 drops both newer keys when it saves, leaving its own choice.
+        private enum CodingKeys: String, CodingKey {
+            case version, region, header, syncProfile, syncAvatar, records, unsyncedFields, partialSyncProfile
+        }
+        private var excludesFields: Bool { unsyncedFields?.isEmpty == false }
+        init() {}
+        init(from decoder: Decoder) throws {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            version = try values.decode(Int.self, forKey: .version)
+            region = try values.decode(HypergryphAccountRegion.self, forKey: .region)
+            header = try values.decode(String.self, forKey: .header)
+            syncProfile = try values.decode(Bool.self, forKey: .syncProfile)
+            syncAvatar = try values.decode(Bool.self, forKey: .syncAvatar)
+            records = try values.decode([String: RegionRecord].self, forKey: .records)
+            unsyncedFields = try values.decodeIfPresent([String].self, forKey: .unsyncedFields)
+            if excludesFields, try values.decodeIfPresent(Bool.self, forKey: .partialSyncProfile) == true { syncProfile = true }
+        }
+        func encode(to encoder: Encoder) throws {
+            var values = encoder.container(keyedBy: CodingKeys.self)
+            let partial = syncProfile && excludesFields
+            try values.encode(version, forKey: .version)
+            try values.encode(region, forKey: .region)
+            try values.encode(header, forKey: .header)
+            try values.encode(syncProfile && !partial, forKey: .syncProfile)
+            try values.encode(syncAvatar, forKey: .syncAvatar)
+            try values.encode(records, forKey: .records)
+            try values.encodeIfPresent(unsyncedFields, forKey: .unsyncedFields)
+            if partial { try values.encode(true, forKey: .partialSyncProfile) }
+        }
     }
     var onEvent: ((String) -> Void)?
     private var manualRefreshPending = false
@@ -77,6 +113,12 @@ final class HypergryphAccountController {
     var gameSyncActive: Bool { cache.syncProfile && record.linked && selectedRole?.game == .endfield }
     var selectedRole: HypergryphRole? { record.roles.first { $0.id == record.selectedRoleID } }
     var selectedSnapshot: HypergryphProfileSnapshot? { record.selectedRoleID.flatMap { record.snapshots[$0] } }
+    /// The personal-card fields an enabled Endfield sync writes.
+    var syncFields: Set<HUDAccountPresentation.SyncField> {
+        Set(HUDAccountPresentation.SyncField.allCases).subtracting((cache.unsyncedFields ?? []).compactMap { .init(rawValue: $0) })
+    }
+    /// The fields the sync currently owns; the card editor locks them.
+    var gameSyncedFields: Set<HUDAccountPresentation.SyncField> { gameSyncActive ? syncFields : [] }
     var hasActiveRequest: Bool { busy || pendingDisconnects[region] != nil }
 
     static func applicationFile() -> URL? {
@@ -145,9 +187,11 @@ final class HypergryphAccountController {
         result.statusMessage = record.requiresReconnect ? L10n.text("Sign in again to continue syncing.", "请重新登录以继续同步。") : statusMessage
         result.status = isPresentingLogin ? .connecting : hasActiveRequest ? .refreshing : !result.statusMessage.isEmpty ? .failed : record.linked ? .connected : .disconnected
         result.roles = record.roles.map { .init(id: $0.id,
-            title: ($0.game == .endfield ? "Endfield" : "Arknights") + " · " + ($0.name ?? $0.roleID), subtitle: $0.serverName ?? "") }
+            title: ($0.game == .endfield ? "Endfield" : "Arknights") + " / " + ($0.name ?? $0.roleID), subtitle: $0.serverName ?? "") }
         result.selectedRoleID = record.selectedRoleID
         result.headerMode = headerMode; result.syncProfile = cache.syncProfile; result.syncAvatar = cache.syncAvatar
+        result.syncFields = syncFields; result.needsReconnect = record.linked && record.requiresReconnect
+        result.snapshot = selectedSnapshot
         result.accountName = selectedSnapshot?.name ?? selectedRole?.name ?? ""
         if let snapshot = selectedSnapshot {
             result.lastSync = L10n.text("Updated ", "更新于 ") + Self.dateFormatter.string(from: snapshot.observedAt)
@@ -172,7 +216,7 @@ final class HypergryphAccountController {
         if record.linked, game != nil {
             let stamina = sanityPresentation()
             let value = stamina.map { "\($0.current) / \($0.maximum)" } ?? "— / —"
-            return (value, headerMode.title + " · " + L10n.text("Sanity", "理智") + " " + value, true)
+            return (value, headerMode.title + ", " + L10n.text("Sanity", "理智") + " " + value, true)
         }
         let remaining = work.kind == .countdown ? max(0, Int(ceil(work.remaining / 60))) : max(0, Int(work.elapsed / 60))
         let total = max(0, Int(ceil(work.duration / 60)))
@@ -193,6 +237,11 @@ final class HypergryphAccountController {
             avatarURL = nil; applyProfile(); onEvent?("settings"); changed(save: true); nextRefresh = .distantPast; tick()
         case .selectHeaderMode(let mode): cache.header = mode.rawValue; onEvent?("settings"); changed(save: true); nextRefresh = .distantPast; tick()
         case .setSyncProfile(let enabled): cache.syncProfile = enabled; if enabled { applyProfile() }; onEvent?("settings"); changed(save: true)
+        case .setSyncField(let field, let enabled):
+            var unsynced = Set(cache.unsyncedFields ?? [])
+            if enabled { unsynced.remove(field.rawValue) } else { unsynced.insert(field.rawValue) }
+            cache.unsyncedFields = unsynced.isEmpty ? nil : unsynced.sorted()
+            if enabled { applyProfile() }; onEvent?("settings"); changed(save: true)
         case .setSyncAvatar(let enabled): cache.syncAvatar = enabled; avatarURL = nil
             if enabled { applyAvatar() } else { avatar?.cancel(); avatar = nil }; onEvent?("settings"); changed(save: true)
         }
@@ -436,21 +485,27 @@ final class HypergryphAccountController {
     }
     private func applyProfile() {
         guard cache.syncProfile, record.linked, let snapshot = selectedSnapshot, snapshot.role.game == .endfield, let profile else { return }
-        let identity = snapshot.personalProfileIdentity
+        let identity = snapshot.personalProfileIdentity, fields = syncFields
         do { try profile.update { value in
-            value.gamePlayerID = snapshot.role.roleID
-            value.playerIDOverride = nil
-            if let name = identity.name { value.name = name }
-            if let tag = identity.tag { value.tag = tag }
-            if let date = snapshot.createdAt {
+            if fields.contains(.uid) {
+                value.gamePlayerID = snapshot.role.roleID
+                value.playerIDOverride = nil
+            }
+            if fields.contains(.name), let name = identity.name { value.name = name }
+            if fields.contains(.tag), let tag = identity.tag { value.tag = tag }
+            if fields.contains(.awakening), let date = snapshot.createdAt {
                 value.awakeningDate = date
                 value.hasManualAwakeningDate = false
             }
-            if let level = snapshot.level { value.permissionLevel = level }
-            if let level = snapshot.worldLevel { value.explorationLevel = level }
-            if let count = snapshot.operatorCount { value.operatorsCount = count }
-            if let count = snapshot.weaponCount { value.weaponsCount = count }
-            if let count = snapshot.documentCount { value.archivesCount = count }
+            if fields.contains(.levels) {
+                if let level = snapshot.level { value.permissionLevel = level }
+                if let level = snapshot.worldLevel { value.explorationLevel = level }
+            }
+            if fields.contains(.counts) {
+                if let count = snapshot.operatorCount { value.operatorsCount = count }
+                if let count = snapshot.weaponCount { value.weaponsCount = count }
+                if let count = snapshot.documentCount { value.archivesCount = count }
+            }
         } } catch { statusMessage = L10n.text("The personal profile could not be saved.", "无法保存个人名片。") }
     }
     private func applyAvatar() {

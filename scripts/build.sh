@@ -119,9 +119,10 @@ ditto "$PROJECT_DIR/Resources/WorldMap" "$STAGED_APP/Contents/Resources/WorldMap
 rm -rf "$STAGED_APP/Contents/Resources/MediaAssembly"
 ditto "$PROJECT_DIR/Resources/MediaAssembly" "$STAGED_APP/Contents/Resources/MediaAssembly"
 ditto "$PROJECT_DIR/Resources/OrbiPom" "$STAGED_APP/Contents/Resources/OrbiPom"
-  ditto "$PROJECT_DIR/Resources/Watch" "$STAGED_APP/Contents/Resources/Watch"
-  python3 "$PROJECT_DIR/scripts/package-watch-resources.py" stage \
-        "$PROJECT_DIR/Resources/WatchSource" "$STAGED_APP/Contents/Resources/WatchSource"
+ditto "$PROJECT_DIR/Resources/Watch" "$STAGED_APP/Contents/Resources/Watch"
+ditto "$PROJECT_DIR/Resources/Fonts" "$STAGED_APP/Contents/Resources/Fonts"
+python3 "$PROJECT_DIR/scripts/package-watch-resources.py" stage \
+    "$PROJECT_DIR/Resources/WatchSource" "$STAGED_APP/Contents/Resources/WatchSource"
 "$PROJECT_DIR/scripts/embed-sparkle.sh" "$STAGED_APP" "$SPARKLE_DIR"
 "$PROJECT_DIR/scripts/embed-now-playing.sh" "$STAGED_APP" "$SELECTED_SDK" "${ARCHITECTURES[@]}"
 # Imported images can carry owner-only permissions. A release must remain

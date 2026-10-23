@@ -124,6 +124,6 @@ private final class ProjectionPanel: NSPanel {
     }
     override func cancelOperation(_ sender: Any?) {
         guard let workspace = contentView?.subviews.last as? ProjectionWorkspaceView else { return }
-        if workspace.secondaryMenu != nil { workspace.closeMenu() } else { workspace.onClose?() }
+        if workspace.popupID != nil { workspace.closePopup() } else { workspace.onClose?() }
     }
 }

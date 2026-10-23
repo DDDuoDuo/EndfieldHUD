@@ -1,201 +1,476 @@
 import AppKit
 import QuartzCore
 
-/// Retained cover, lyrics and controls in the HUD plane. Routine metadata and
-/// transport updates never rebuild the panel or replay a whole-panel reveal.
-/// One visible-only deadline advances progress at whole seconds and lyrics at
-/// their own cue boundaries. It interpolates locally without sampling a player.
-final class NowPlayingCanvas: NSObject, HUDModuleContentFactory {
-    let layer = CALayer()
-    var onChange: (() -> Void)?
+/// Now Playing (spec §3.12): the v1.2.0 player, larger. There is no module
+/// header: the 480 px cover reaches above the box with the title shade on it,
+/// three centred lyric lines and the timeline sit under it, and one button row
+/// runs level with the shell's battery chip (transport on the left, volume and
+/// lyrics on the right). Metadata, transport and lyric changes update the page
+/// in place; another track re-enters from the right (from the left after
+/// Previous). Player observation follows the host's presentation, which starts
+/// while the HUD reveals; one visible-only deadline advances the readouts at
+/// whole seconds and lyric cues, and the bar interpolates on the compositor in
+/// between without sampling a player.
+final class NowPlayingCanvas: HUDDesignCanvas {
+    typealias DisplaySchedule = (TimeInterval, @escaping () -> Void) -> (() -> Void)
+    /// Successful transport commands (the Event Log records them).
     var onEvent: ((NowPlayingEvent) -> Void)?
-    var isDragging: Bool { draggedSlider != nil }
+    private(set) var isPresented = false
+    private(set) var presentationStartCountForVerification = 0
+    private(set) var isVolumeOpen = false
+    private(set) var showsLyrics = true
     var isRequestingPermission: Bool { controller.isRequestingPermission }
     var progressClockActiveForVerification: Bool { cancelClock != nil }
     var albumCoverAvailableForVerification: Bool { controller.artworkImage != nil }
-    func tickForVerification() { tick() }
+    var panelFrameForVerification: CGRect { Layout.cover }
+    /// The permission prompt keeps the HUD up while it has focus.
+    override var isPresentingPanel: Bool { isPresented && isRequestingPermission }
+    override var hitBounds: CGRect { Layout.hitBounds }
+    override var capturesPointer: Bool { super.capturesPointer || isVolumeOpen }
+
+    private enum Layout {
+        /// Centred and 480 px (the demo's 420 enlarged): it reaches 84 px above
+        /// the box, still clear of the shell's charge readout over it.
+        static let cover = CGRect(x: 55, y: -84, width: 480, height: 480)
+        /// Lyrics and the timeline span the cover's width under it.
+        static let lyrics = CGRect(x: 55, y: 400, width: 480, height: 60)
+        static let timeline = CGRect(x: 55, y: 464, width: 480, height: 34)
+        /// Previous, play and next with a 10 px gap, top 516. The spec's left
+        /// −6 moves 30 px out so Next clears the shell's charge capsule
+        /// (≈325 px wide, centred under the box) by 6 px, as in v1.2.0.
+        static let transport = CGRect(x: -36, y: 516, width: 162, height: 54)
+        /// Volume and lyrics, 8 px apart, right −6 and top 527.
+        static let extras = CGRect(x: 528, y: 527, width: 68, height: 30)
+        static let popup = CGRect(x: 518, y: 364, width: 44, height: 150)
+        /// The cover above and the button row below the box.
+        static let hitBounds = CGRect(x: -36, y: -84, width: 632, height: 654)
+    }
+
     private let controller: NowPlayingController
     private let audio: AudioDeviceController
     private let perAppAudio: PerAppAudioController
     private let now: () -> TimeInterval
-    private let reduceMotion: () -> Bool
-    private var observer: UUID?
-    private var audioObserver: UUID?
-    private var routeObserver: UUID?
-    private var active = false
-    private var dark = true
-    private var scale: CGFloat = 2
-    typealias DisplaySchedule = (TimeInterval, @escaping () -> Void) -> (() -> Void)
     private let scheduleDisplayUpdate: DisplaySchedule
+    private var observers: (player: UUID?, audio: UUID?, routes: UUID?) = (nil, nil, nil)
+    private struct Structure: Equatable { let language: AppLanguage; let playing: Bool }
+    private var renderedStructure: Structure?
+    /// Source and title of the track on the page; another one is a track change.
+    private var shownTrack: String?
+    /// Previous enters from the left; anything else (Next, the end of a track) from the right.
+    private var pendingDirection: (dx: CGFloat, until: TimeInterval)?
     private var cancelClock: (() -> Void)?
     private var clockDeadline: TimeInterval?
     private var clockGeneration = 0
     private var requestedEndRefresh = false
-    private var trackIdentity = ""
-    private var draggedSlider: String?
-    private var dragValue: Double?
-    private var draggedApplication: NowPlayingApplication?
-    private var draggedAudioID: UInt32?
-    private var draggedTrack: NowPlayingTrack?
-    private let content = CALayer()
-    private let panel = CALayer()
-    private let titleLabel = CATextLayer(), artistLabel = CATextLayer(), durationLabel = CATextLayer()
-    private let emptyLabel = CATextLayer()
-    private let metadataShade = CAGradientLayer()
-    private let progressRail = CALayer()
-    private let coverPlaceholder = CAShapeLayer()
-    private let lyricsLabels = [CATextLayer(), CATextLayer(), CATextLayer()]
-    private let lyricsViewport = CALayer()
-    private var lastLyricPosition: TimeInterval?
-    private let controls = CALayer()
-    private var buttonLayers: [String: NowPlayingButtonArtwork] = [:]
-    private let volumeMenu = CALayer(), volumeBacking = CALayer(), volumeFace = CALayer()
-    private let volumeRail = CALayer(), volumeFill = CALayer(), volumeHandle = CALayer()
-    private let volumeLabel = CATextLayer()
-    private var showVolume = false
-    private var showLyrics = true
-    private var lastLyricsVisible = false
-    private var rendered = false
-    var capturesPointer: Bool { showVolume }
-    private var lyricsVisible: Bool { showLyrics && controller.lyrics?.hasContent == true }
-    // Reserve lyric space even while hidden. Transport, seek and volume input
-    // must never jump beneath the pointer when lyric visibility changes.
-    private let controlY: CGFloat = 406
-    private var volumeBounds: CGRect { CGRect(x: 357, y: controlY - 188, width: 53, height: 180) }
-    var panelFrameForVerification: CGRect { panel.frame }
+    private var lyricsVisible = false
+    /// Gestures belong to the player (and track) on which they began.
+    private var seekGesture: (application: NowPlayingApplication?, track: NowPlayingTrack)?
+    private var volumeGesture: (application: NowPlayingApplication?, audioID: UInt32?)?
+    private var displayedArt: CGImage?
+    // Elements of the current page, updated in place between rebuilds.
+    private var art: CALayer?
+    private var placeholder: CALayer?
+    private var titleText: HUDTextLayer?
+    private var artistText: HUDTextLayer?
+    private var elapsedText: HUDTextLayer?
+    private var durationText: HUDTextLayer?
+    private var lyricWindow: NowPlayingLyricWindow?
+    private var seek: NowPlayingSeekBar?
+    private var playButton: NowPlayingPlayButton?
+    private var previousButton: HUDIconButton?
+    private var nextButton: HUDIconButton?
+    private var volumeButton: HUDIconButton?
+    private var lyricsButton: HUDIconButton?
+    private var popup: NowPlayingVolumePopup?
+    private var trackReadout: NowPlayingTrackReadout?
 
-    private let albumCover = CALayer()
-    private var displayedCover: CGImage?
-    private let progressFill = CALayer()
-    private let progressHandle = CALayer()
-    private let elapsedLabel = CATextLayer()
-    private var snapshot: NowPlayingSnapshot { controller.snapshot }
-    private var accent: NSColor { HUDRuntimeAppearance.accent }
-    private var primary: NSColor { NSColor(white: dark ? 0.94 : 0.12, alpha: 1) }
-    private var muted: NSColor { NSColor(white: dark ? 0.60 : 0.40, alpha: 1) }
-    private var seekRect: CGRect { CGRect(x: 55, y: 379, width: 330, height: 18) }
-    private var volumeRect: CGRect { CGRect(x: 371, y: volumeBounds.minY + 34, width: 25, height: 117) }
-
-    init(controller: NowPlayingController, audio: AudioDeviceController,
+    init(context: HUDDesignContext, controller: NowPlayingController, audio: AudioDeviceController,
          perAppAudio: PerAppAudioController, now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
-         reduceMotion: @escaping () -> Bool = { HUDRuntimeAppearance.reduceMotion },
          scheduleDisplayUpdate: DisplaySchedule? = nil) {
-        self.controller = controller; self.audio = audio; self.perAppAudio = perAppAudio; self.now = now; self.reduceMotion = reduceMotion
+        self.controller = controller; self.audio = audio; self.perAppAudio = perAppAudio; self.now = now
         self.scheduleDisplayUpdate = scheduleDisplayUpdate ?? { delay, action in
             let timer = Timer(timeInterval: delay, repeats: false) { _ in action() }
             timer.tolerance = min(0.01, delay * 0.1)
             RunLoop.main.add(timer, forMode: .common)
             return { timer.invalidate() }
         }
-        super.init()
-        withoutActions {
-            layer.name = "module.nowPlaying.canvas"; layer.frame = CGRect(x: 0, y: 0, width: 440, height: 440)
-            for (index, label) in ([titleLabel, artistLabel, emptyLabel, elapsedLabel, durationLabel, volumeLabel] + lyricsLabels).enumerated() {
-                label.name = "nowPlaying.text.\(index)"
-                label.actions = ["contents": NSNull()]
-            }
-            albumCover.actions = ["contents": NSNull()]
-            content.frame = layer.bounds; content.allowsGroupOpacity = false; layer.addSublayer(content)
-            albumCover.name = "nowPlaying.albumCover"; albumCover.contentsGravity = .resizeAspectFill
-            albumCover.masksToBounds = true; albumCover.cornerRadius = 2
-            panel.name = "nowPlaying.panel"; panel.anchorPoint = .zero; panel.masksToBounds = true; panel.cornerRadius = 4
-            content.addSublayer(panel)
-            metadataShade.name = "nowPlaying.metadataShade"
-            for item in [albumCover, coverPlaceholder, metadataShade, titleLabel, artistLabel, emptyLabel] { panel.addSublayer(item) }
-            lyricsViewport.name = "nowPlaying.lyrics"; lyricsViewport.masksToBounds = true
-            for label in lyricsLabels { lyricsViewport.addSublayer(label) }
-            for item in [lyricsViewport, progressRail, progressFill, progressHandle, elapsedLabel, durationLabel, controls, volumeMenu] { content.addSublayer(item) }
-            for id in ["lyrics", "previous", "playPause", "next", "volume"] {
-                let artwork = NowPlayingButtonArtwork(); artwork.layer.name = "nowPlaying.control." + id; buttonLayers[id] = artwork; controls.addSublayer(artwork.layer)
-            }
-            volumeMenu.name = "nowPlaying.volume.popover"; volumeMenu.isHidden = true
-            for item in [volumeBacking, volumeFace, volumeRail, volumeFill, volumeHandle, volumeLabel] { volumeMenu.addSublayer(item) }
-            progressFill.name = "nowPlaying.progress.fill"; progressHandle.name = "nowPlaying.progress.handle"
-        }
+        super.init(module: .nowPlaying, context: context)
+        showsHeader = false
         controller.onEvent = { [weak self] event in self?.onEvent?(event) }
-        observer = controller.observe { [weak self] in self?.refresh() }
-        audioObserver = audio.observe { [weak self] in self?.refresh() }
-        routeObserver = perAppAudio.observe { [weak self] in self?.refresh() }
-    }
-    deinit {
-        cancelClock?()
-        if let observer { controller.removeObserver(observer) }
-        if let audioObserver { audio.removeObserver(audioObserver) }
-        if let routeObserver { perAppAudio.removeObserver(routeObserver) }
-        if active { controller.deactivate(); audio.stop() }
-    }
-    func makeContent(for module: HUDModule, style: HUDModuleContentStyle) -> CALayer {
-        dark = style.dark; scale = style.contentsScale; repaint(); return layer
-    }
-    func updateRenderScale(_ value: CGFloat) {
-        let next = value.isFinite ? min(8, max(1, value)) : 2
-        guard next != scale else { return }; scale = next
-        if active { repaint() }
-    }
-    func activate() {
-        guard !active else { return }; active = true
-        audio.start(); controller.activate(); refresh()
-    }
-    func deactivate() {
-        guard active else { return }; active = false
-        stopClock(); cancelDrag(); showVolume = false; volumeMenu.isHidden = true
-        controller.deactivate(); audio.stop()
-        content.removeAllAnimations(); progressFill.removeAllAnimations(); progressHandle.removeAllAnimations()
-        removeAnimations(in: content)
-        // Keep the already decoded thumbnail for the outgoing HUD plane. It
-        // shares the bounded artwork cache and is replaced on the next repaint;
-        // no decoder, observer or animation remains active while hidden.
-        lastLyricPosition = nil
+        observers = (controller.observe { [weak self] in self?.refresh() }, audio.observe { [weak self] in self?.refresh() },
+                     perAppAudio.observe { [weak self] in self?.refresh() })
     }
 
-    var accessibilityStatus: String {
-        guard let track = snapshot.track else { return "No music playing" }
-        return [track.title, track.artist, track.album].filter { !$0.isEmpty }.joined(separator: " · ")
+    deinit {
+        cancelClock?()
+        if let id = observers.player { controller.removeObserver(id) }
+        if let id = observers.audio { audio.removeObserver(id) }
+        if let id = observers.routes { perAppAudio.removeObserver(id) }
+        if isPresented { controller.deactivate(); audio.stop() }
     }
-    var accessibleActions: [VolumeCanvasAction] {
-        // In-flight reads retain usable controls. A refresh is not a disabled,
-        // faded copy of the entire player.
-        let enabled = snapshot.track != nil
-        let transportEnabled = enabled && snapshot.failure == nil
-        return [
-            VolumeCanvasAction(id: "lyrics", label: L10n.text("Lyrics", "歌词"), rect: CGRect(x: 404, y: controlY, width: 30, height: 30), enabled: enabled),
-            VolumeCanvasAction(id: "previous", label: L10n.text("Previous track", "上一首"), rect: CGRect(x: 2, y: controlY, width: 30, height: 30), enabled: transportEnabled),
-            VolumeCanvasAction(id: "playPause", label: snapshot.track?.isPlaying == true ? L10n.text("Pause", "暂停") : L10n.text("Play", "播放"), rect: CGRect(x: 38, y: controlY - 3, width: 36, height: 36), enabled: transportEnabled),
-            VolumeCanvasAction(id: "next", label: L10n.text("Next track", "下一首"), rect: CGRect(x: 78, y: controlY, width: 30, height: 30), enabled: transportEnabled),
-            VolumeCanvasAction(id: "volume", label: L10n.text("App volume", "应用音量"), rect: CGRect(x: 368, y: controlY, width: 30, height: 30), enabled: enabled)]
+
+    // MARK: Presentation
+
+    /// Player observation and the shared audio watch run from the start of the
+    /// HUD's reveal, so the cover is ready when the page enters, until it hides.
+    func setPresented(_ value: Bool) {
+        guard value != isPresented else { return }
+        isPresented = value
+        if value {
+            presentationStartCountForVerification += 1
+            audio.start(); controller.activate(); refresh()
+        } else {
+            stopClock(); closeVolume(); seek?.cancelDrag()
+            requestedEndRefresh = false
+            // Nothing keeps running on the hidden page (bar runs, lyric slides, fades).
+            Self.removeAnimations(in: page.layer)
+            controller.deactivate(); audio.stop()
+        }
     }
-    var accessibleSliders: [VolumeCanvasSlider] {
-        let track = snapshot.track
-        let current = draggedSlider == "seek" ? dragValue : track?.elapsed(at: now())
-        let seek = VolumeCanvasSlider(id: "seek", label: L10n.text("Playback position", "播放进度"), rect: seekRect,
-            value: current, minimum: 0, maximum: track?.duration ?? 1,
-            enabled: track?.supportsSeeking == true && track?.duration != nil && track?.position != nil && snapshot.failure == nil)
-        let available = volumeAvailable
-        let volume = VolumeCanvasSlider(id: "appVolume", label: L10n.text("Playing app volume", "当前播放应用音量"), rect: volumeRect,
-            value: controller.playerVolume ?? currentSession?.gain ?? (available ? 1 : nil), minimum: 0, maximum: 1,
-            enabled: available, help: volumeHelp)
-        return showVolume ? [seek, volume] : [seek]
+
+    override func recordingModeChanged() {}
+
+    override func renderScaleChanged() { closeVolume(); super.renderScaleChanged() }
+
+    override func closePopups() { super.closePopups(); closeVolume() }
+
+    private static func removeAnimations(in layer: CALayer) {
+        layer.removeAllAnimations(); layer.sublayers?.forEach(removeAnimations)
     }
+
+    private var structure: Structure { Structure(language: L10n.resolvedLanguage, playing: controller.snapshot.track != nil) }
+
+    private func refresh() {
+        guard isPresented else { return }
+        let snapshot = controller.snapshot
+        if let gesture = seekGesture, gesture.application != snapshot.application
+            || snapshot.track.map({ !$0.hasSameIdentity(as: gesture.track) }) ?? true { seek?.cancelDrag() }
+        if let gesture = volumeGesture, gesture.application != snapshot.application { popup?.clearInteractionState(); volumeGesture = nil }
+        let identity = snapshot.track.map { (snapshot.application?.source.rawValue ?? "") + "\u{1F}" + $0.title }
+        if identity != shownTrack { requestedEndRefresh = false }
+        if let duration = snapshot.track?.duration, let elapsed = snapshot.track?.elapsed(at: now()), elapsed < duration - 1 {
+            requestedEndRefresh = false
+        }
+        let previous = shownTrack
+        shownTrack = identity
+        guard renderedLanguage != nil else { return }
+        if structure != renderedStructure { closeVolume(); rerender() }
+        else if identity != previous, isActive, root.superlayer != nil { navigate(dx: takeDirection()) }
+        else if identity != previous { rerender() }
+        else { update(animated: true) }
+    }
+
+    private func takeDirection() -> CGFloat {
+        defer { pendingDirection = nil }
+        guard let pending = pendingDirection, pending.until > now() else { return 1 }
+        return pending.dx
+    }
+
+    // MARK: Page
+
+    override func buildPage(_ page: HUDDesignPage) {
+        renderedStructure = structure
+        controller.artworkPixelSize = NowPlayingArtworkLoader.pixelSize(points: Layout.cover.width, scale: env.renderScale)
+        isVolumeOpen = false; popup = nil; volumeGesture = nil; displayedArt = nil; lyricsVisible = false
+        let track = controller.snapshot.track
+        let cover = buildCover(track)
+        let lyrics = NowPlayingLyricWindow(frame: Layout.lyrics, env: env)
+        lyricWindow = lyrics
+        let timeline = buildTimeline()
+        let transport = HUDLayer.plain("nowPlaying.transport"), extras = HUDLayer.plain("nowPlaying.extras")
+        let previous = HUDIconButton(id: "previous", label: L10n.text("Previous track", "上一首"), icon: .prev, round: true, big: true, env: env)
+        let play = NowPlayingPlayButton(env: env)
+        let next = HUDIconButton(id: "next", label: L10n.text("Next track", "下一首"), icon: .next, round: true, big: true, env: env)
+        let volume = HUDIconButton(id: "volume", label: L10n.text("App volume", "应用音量"), icon: .vol, env: env)
+        let lyricsToggle = HUDIconButton(id: "lyrics", label: L10n.text("Lyrics", "歌词"), icon: .lyric, env: env)
+        previous.onActivate = { [weak self] in self?.previousTrack() }
+        play.onActivate = { [weak self] in self?.controller.perform(.playPause) }
+        next.onActivate = { [weak self] in self?.nextTrack() }
+        volume.onActivate = { [weak self] in self?.toggleVolume() }
+        lyricsToggle.onActivate = { [weak self] in self?.toggleLyrics() }
+        HUDMotion.perform {
+            transport.frame = Layout.transport; extras.frame = Layout.extras
+            previous.layer.frame.origin = CGPoint(x: 0, y: 5)
+            play.layer.frame.origin = CGPoint(x: 54, y: 0)
+            next.layer.frame.origin = CGPoint(x: 118, y: 5)
+            volume.layer.frame.origin = .zero
+            lyricsToggle.layer.frame.origin = CGPoint(x: 38, y: 0)
+            [previous.layer, play.layer, next.layer].forEach(transport.addSublayer)
+            [volume.layer, lyricsToggle.layer].forEach(extras.addSublayer)
+            [cover, lyrics.layer, timeline, transport, extras].forEach(page.layer.addSublayer)
+        }
+        [cover, lyrics.layer, timeline, transport, extras].forEach(page.stagger)
+        let readout = NowPlayingTrackReadout(cover: cover, track: track, env: env)
+        trackReadout = readout
+        page.add(readout)
+        if let seek { page.add(seek) }
+        page.add([previous, play, next, volume, lyricsToggle])
+        previousButton = previous; playButton = play; nextButton = next; volumeButton = volume; lyricsButton = lyricsToggle
+        lyrics.setLyrics(track == nil ? nil : controller.lyrics)
+        update(animated: false)
+    }
+
+    /// The cover (spec §3.12 Cover): art with the title shade, or the hatched
+    /// nothing-playing plate. The ring also stands in for missing artwork.
+    private func buildCover(_ track: NowPlayingTrack?) -> CALayer {
+        let cover = HUDLayer.plain("nowPlaying.cover")
+        let size = Layout.cover.size, bounds = CGRect(origin: .zero, size: size)
+        let ring = HUDLayer.plain("nowPlaying.cover.ring")
+        HUDMotion.perform {
+            cover.frame = Layout.cover; cover.masksToBounds = true
+            cover.backgroundColor = HUDColor.counterBackground
+            ring.bounds = CGRect(x: 0, y: 0, width: 72, height: 72); ring.cornerRadius = 36
+            ring.borderWidth = 2; ring.borderColor = HUDColor.rgb(0x999999, 0.4)
+        }
+        guard let track else {
+            let hatch = HUDLayer.shape("nowPlaying.cover.hatch")
+            let label = HUDTextLayer(L10n.text("No music playing", "未在播放音乐"), style: HUDType.label, alignment: .center)
+            HUDMotion.perform {
+                hatch.frame = bounds; hatch.path = Self.hatch(size); hatch.fillColor = HUDColor.white(0.14)
+                // 72 px ring, 14 px gap and the 10 px label, centred as one block.
+                ring.position = CGPoint(x: size.width / 2, y: (size.height - 96) / 2 + 36)
+                label.lineFrame = CGRect(x: 0, y: (size.height - 96) / 2 + 86, width: size.width, height: 10)
+                [hatch, ring, label].forEach(cover.addSublayer)
+            }
+            art = nil; placeholder = nil; titleText = nil; artistText = nil
+            return cover
+        }
+        let image = HUDLayer.plain("nowPlaying.cover.art")
+        let shade = HUDLayer.gradient("nowPlaying.cover.shade")
+        let title = HUDTextLayer(track.title, style: HUDTextStyle(size: 21, weight: .bold, color: HUDColor.white(1), lineHeight: 1.2))
+        let artist = HUDTextLayer(track.artist, style: HUDTextStyle(size: 14, weight: .regular, color: HUDColor.white(0.8), lineHeight: 1.2))
+        HUDMotion.perform {
+            image.frame = bounds; image.contentsGravity = .resizeAspectFill
+            ring.position = CGPoint(x: size.width / 2, y: size.height / 2)
+            shade.frame = CGRect(x: 0, y: size.height - 116, width: size.width, height: 116)
+            shade.colors = [HUDColor.black(0), HUDColor.black(0.76), HUDColor.black(0.9)]
+            shade.locations = [0, 0.3, 1]
+            title.lineFrame = CGRect(x: 20, y: size.height - 38 - 21 * 1.2, width: size.width - 40, height: 21 * 1.2)
+            artist.lineFrame = CGRect(x: 20, y: size.height - 16 - 14 * 1.2, width: size.width - 40, height: 14 * 1.2)
+            [image, ring, shade, title, artist].forEach(cover.addSublayer)
+        }
+        art = image; placeholder = ring; titleText = title; artistText = artist
+        return cover
+    }
+
+    /// The dark seek bar with the elapsed and total times under it (spec §3.12 Seek).
+    private func buildTimeline() -> CALayer {
+        let group = HUDLayer.plain("nowPlaying.timeline")
+        let bar = NowPlayingSeekBar(width: Layout.timeline.width, env: env)
+        bar.bubbleHost = top
+        bar.onScrub = { [weak self] value in self?.scrub(to: value) }
+        bar.onRelease = { [weak self] value in self?.endScrub(at: value) }
+        let style = HUDTextStyle(size: 10.5, weight: .medium, color: HUDColor.tone(0x999999), lineHeight: 1.2, tabular: true)
+        let elapsed = HUDTextLayer(style: style), total = HUDTextLayer(style: style, alignment: .right)
+        HUDMotion.perform {
+            group.frame = Layout.timeline
+            bar.layer.frame.origin = .zero
+            // Times: margin-top −2 under the 22 px bar.
+            elapsed.lineFrame = CGRect(x: 0, y: 20, width: 200, height: 10.5 * 1.2)
+            total.lineFrame = CGRect(x: Layout.timeline.width - 200, y: 20, width: 200, height: 10.5 * 1.2)
+            [bar.layer, elapsed, total].forEach(group.addSublayer)
+        }
+        seek = bar; elapsedText = elapsed; durationText = total
+        return group
+    }
+
+    /// Hatch-L (spec §1.6) as one vector path: 1 px stripes 3.5 px apart at −45°.
+    private static func hatch(_ size: CGSize) -> CGPath {
+        let path = CGMutablePath(), spacing = 3.5 * CGFloat(2).squareRoot(), thickness = CGFloat(2).squareRoot()
+        var offset = -size.height
+        while offset < size.width {
+            path.addLines(between: [CGPoint(x: offset, y: size.height), CGPoint(x: offset + thickness, y: size.height),
+                                    CGPoint(x: offset + thickness + size.height, y: 0), CGPoint(x: offset + size.height, y: 0)])
+            path.closeSubpath()
+            offset += spacing
+        }
+        return path
+    }
+
+    // MARK: In-place updates
+
+    private func update(animated: Bool) {
+        let snapshot = controller.snapshot, track = snapshot.track
+        let transport = track != nil && snapshot.failure == nil
+        let playLabel = playButton?.label
+        playButton?.isPlaying = track?.isPlaying == true
+        [playButton, previousButton, nextButton].forEach { $0?.isEnabled = transport }
+        volumeButton?.isEnabled = track != nil; volumeButton?.isOn = isVolumeOpen
+        lyricsButton?.isEnabled = track != nil; lyricsButton?.isOn = showsLyrics
+        HUDMotion.perform {
+            if let track { titleText?.text = track.title; artistText?.text = track.artist; trackReadout?.track = track }
+            durationText?.text = Self.time(track?.duration)
+        }
+        showArt(controller.artworkImage, animated: animated)
+        seek?.isEnabled = canSeek
+        lyricWindow?.setLyrics(track == nil ? nil : controller.lyrics)
+        setLyricsVisible(showsLyrics && track != nil && controller.lyrics?.hasContent == true, animated: animated)
+        renderPopup()
+        updateClock(animated: animated)
+        if playButton?.label != playLabel { context.onInputStateChange?() }
+    }
+
+    private var canSeek: Bool {
+        guard let track = controller.snapshot.track else { return false }
+        return track.supportsSeeking && track.duration != nil && track.position != nil && controller.snapshot.failure == nil
+    }
+
+    /// Art cross-fades (.2 s ease-in-out) whenever the decoded cover changes.
+    private func showArt(_ image: CGImage?, animated: Bool) {
+        guard let art, image !== displayedArt else { return }
+        displayedArt = image
+        if animated, !env.reducesMotion, art.superlayer != nil {
+            let fade = CATransition()
+            fade.type = .fade; fade.duration = 0.2; fade.timingFunction = HUDEasing.easeInOut
+            art.add(fade, forKey: "hud.art.fade")
+        }
+        HUDMotion.perform { art.contents = image; placeholder?.isHidden = image != nil }
+    }
+
+    /// The whole lyric block fades (.24 s) when lyrics are toggled, arrive or end.
+    private func setLyricsVisible(_ visible: Bool, animated: Bool) {
+        guard let layer = lyricWindow?.layer, visible != lyricsVisible || !animated else { return }
+        lyricsVisible = visible
+        HUDMotion.animate(layer, "opacity", to: Float(visible ? 1 : 0), duration: animated ? 0.24 : 0, timing: HUDEasing.ease, env: env)
+    }
+
+    private var displayedElapsed: Double? {
+        if let seek, seek.isDragging { return seek.value }
+        return controller.snapshot.track?.elapsed(at: now())
+    }
+
+    private func updateClock(animated: Bool) {
+        let elapsed = displayedElapsed
+        HUDMotion.perform { elapsedText?.text = Self.time(elapsed) }
+        lyricWindow?.show(at: elapsed ?? 0, animated: animated && lyricsVisible)
+        reconcileClock()
+    }
+
+    /// One deadline at the next whole second or lyric cue while playing; the
+    /// bar runs on to that moment on the compositor, so a tick never snaps it.
+    private func reconcileClock() {
+        let current = now(), track = controller.snapshot.track
+        let duration = track?.duration ?? 0, dragging = seek?.isDragging == true
+        guard isPresented, let track, let elapsed = track.elapsed(at: current), elapsed.isFinite else {
+            stopClock(); if !dragging { seek?.show(0, duration: duration) }; return
+        }
+        guard track.isPlaying, track.duration.map({ elapsed < $0 }) ?? true else {
+            stopClock(); if !dragging { seek?.show(elapsed, duration: duration) }; return
+        }
+        var delay = floor(elapsed) + 1 - elapsed
+        if lyricsVisible, !dragging, let cue = controller.lyrics?.nextBoundary(after: elapsed) { delay = min(delay, cue - elapsed) }
+        if let end = track.duration { delay = min(delay, end - elapsed) }
+        // Millisecond cue clusters coalesce into a bounded display cadence.
+        delay = max(1.0 / 30.0, delay)
+        var deadline = current + delay
+        if let existing = clockDeadline, cancelClock != nil, abs(existing - deadline) < 0.0005 { deadline = existing }
+        else {
+            stopClock()
+            clockDeadline = deadline
+            let generation = clockGeneration
+            cancelClock = scheduleDisplayUpdate(delay) { [weak self] in
+                guard let self, self.clockGeneration == generation, self.isPresented else { return }
+                self.cancelClock = nil; self.clockDeadline = nil
+                self.tick()
+            }
+        }
+        if !dragging { seek?.show(elapsed, duration: duration, toward: track.elapsed(at: deadline), over: deadline - current) }
+    }
+
+    private func stopClock() {
+        clockGeneration &+= 1
+        cancelClock?(); cancelClock = nil; clockDeadline = nil
+    }
+
+    private func tick() {
+        guard isPresented else { return }
+        updateClock(animated: true)
+        // At the end the player moves on by itself; read the next track once.
+        if !requestedEndRefresh, let track = controller.snapshot.track, let duration = track.duration,
+           (track.elapsed(at: now()) ?? 0) >= duration {
+            requestedEndRefresh = true; controller.refresh()
+        }
+    }
+
+    static func time(_ value: Double?) -> String {
+        guard let value, value.isFinite, value >= 0 else { return "—:—" }
+        return HUDFormat.clock(seconds: Int(min(value, 604_800)))
+    }
+
+    // MARK: Transport
+
+    /// Previous restarts the track after its first 3 s (in place); otherwise
+    /// it goes to the previous track, which enters from the left.
+    private func previousTrack() {
+        guard let track = controller.snapshot.track else { return }
+        if let elapsed = track.elapsed(at: now()), elapsed > 3, canSeek {
+            controller.perform(.seek(0))
+        } else {
+            pendingDirection = (-1, now() + 5)
+            controller.perform(.previous)
+        }
+    }
+
+    private func nextTrack() {
+        pendingDirection = (1, now() + 5)
+        controller.perform(.next)
+    }
+
+    private func toggleLyrics() {
+        showsLyrics.toggle()
+        update(animated: true)
+    }
+
+    /// Dragging previews the time and lyrics locally; release seeks once.
+    private func scrub(to value: Double) {
+        if seekGesture == nil, let track = controller.snapshot.track {
+            seekGesture = (controller.snapshot.application, track)
+            stopClock()
+        }
+        HUDMotion.perform { elapsedText?.text = Self.time(value) }
+        lyricWindow?.show(at: value, animated: lyricsVisible)
+    }
+
+    private func endScrub(at value: Double?) {
+        let gesture = seekGesture
+        seekGesture = nil
+        let snapshot = controller.snapshot
+        if let value, let gesture, gesture.application == snapshot.application,
+           snapshot.track?.hasSameIdentity(as: gesture.track) == true {
+            controller.perform(.seek(value))
+        }
+        update(animated: true)
+    }
+
+    private func skip(by seconds: Double) {
+        guard canSeek, let duration = controller.snapshot.track?.duration, let elapsed = displayedElapsed else { return }
+        controller.perform(.seek(min(duration, max(0, elapsed + seconds))))
+    }
+
+    // MARK: Volume pop-up
+
     private var currentOutput: AudioDeviceInfo? { audio.snapshot.outputs.first { $0.id == audio.snapshot.defaultOutputID } }
+
+    /// The audio process of the playing app: only an unambiguous match, never
+    /// an unrelated process or one of several helpers (the Volume module
+    /// lists those individually).
     private var audioApplication: AudioApplicationInfo? {
-        guard let app = snapshot.application else { return nil }
+        guard let app = controller.snapshot.application else { return nil }
         var candidates = audio.snapshot.availableApplications.isEmpty ? audio.snapshot.activeApplications : audio.snapshot.availableApplications
         for session in perAppAudio.sessions where !candidates.contains(where: { $0.id == session.processID }) {
             candidates.append(AudioApplicationInfo(id: session.processID, pid: session.pid, name: session.name,
                 isRunningOutput: false, applicationURL: session.applicationURL, icon: session.icon))
         }
-        let matches = candidates.filter { candidate in
-            let same = candidate.pid == app.pid || candidate.applicationURL?.standardizedFileURL == app.bundleURL.standardizedFileURL
-            return same
-        }
-        // Never adjust an unrelated process or silently choose one of several
-        // helpers. The existing Volume page exposes their individual routes.
+        let matches = candidates.filter { $0.pid == app.pid || $0.applicationURL?.standardizedFileURL == app.bundleURL.standardizedFileURL }
         return matches.count == 1 ? matches[0] : nil
     }
+
     private var currentSession: PerAppAudioSession? {
         guard let app = audioApplication else { return nil }
         return perAppAudio.sessions.first { $0.processID == app.id && $0.pid == app.pid }
     }
+
+    /// The player's own volume when it exposes one, else a per-app route.
     private var volumeAvailable: Bool {
         if controller.playerVolume != nil { return true }
         guard let app = audioApplication else { return false }
@@ -203,355 +478,415 @@ final class NowPlayingCanvas: NSObject, HUDModuleContentFactory {
         guard let output = currentOutput else { return false }
         return perAppAudio.availability(application: app, output: output) == nil
     }
-    private var volumeHelp: String {
-        if controller.playerVolume != nil { return L10n.text("Playing app volume", "当前播放应用音量") }
-        if let session = currentSession { return session.error ?? L10n.text("Adjusts the playing app's existing audio route.", "调整当前播放应用的现有音频路由。") }
-        if let app = audioApplication, let output = currentOutput {
-            return perAppAudio.availability(application: app, output: output)
-                ?? L10n.text("Adjust to enable a temporary audio route; macOS may request System Audio Recording access", "调整即可启用临时音频路由；macOS 可能请求系统音频录制权限")
-        }
-        return L10n.text("No single adjustable audio process. Use Volume controls.", "未找到单一可调整音频进程，请使用音量控制。")
+
+    private var volumeValue: Double? {
+        controller.playerVolume ?? currentSession?.gain ?? (volumeAvailable ? 1 : nil)
     }
 
-    /// These retained controls are painted above the source shell. Only their
-    /// actual faces claim input; transparent space still exposes navigation.
-    func containsControl(at point: CGPoint) -> Bool {
-        active && (accessibleActions.contains { $0.rect.contains(point) }
-                   || accessibleSliders.contains { $0.rect.contains(point) })
-    }
-
-    @discardableResult func mouseDown(at point: CGPoint) -> Bool {
-        guard active, point.x.isFinite, point.y.isFinite, layer.bounds.contains(point) else { return false }
-        if showVolume, !volumeBounds.contains(point), !accessibleActions.contains(where: { $0.id == "volume" && $0.rect.contains(point) }) {
-            dismissPopover(); return true
-        }
-        if let slider = accessibleSliders.first(where: { $0.rect.contains(point) }) {
-            if slider.enabled {
-                draggedSlider = slider.id; draggedApplication = snapshot.application; draggedTrack = snapshot.track
-                draggedAudioID = audioApplication?.id; moveSlider(to: point)
-            }
-            return true
-        }
-        if let action = accessibleActions.first(where: { $0.rect.contains(point) }), action.enabled { perform(actionID: action.id) }
-        return true
-    }
-    func mouseDragged(to point: CGPoint) { if active { moveSlider(to: point) } }
-    func mouseUp() {
-        guard let id = draggedSlider else { return }
-        let value = dragValue
-        let unchanged = snapshot.application == draggedApplication && draggedTrackIsCurrent
-        cancelDrag()
-        if id == "seek", unchanged, let value { controller.perform(.seek(value)) }
-    }
-    private func cancelDrag() { draggedSlider = nil; dragValue = nil; draggedApplication = nil; draggedAudioID = nil; draggedTrack = nil }
-    private var draggedTrackIsCurrent: Bool {
-        guard let current = snapshot.track, let original = draggedTrack else { return false }
-        return current.hasSameIdentity(as: original)
-    }
-    private func moveSlider(to point: CGPoint) {
-        guard point.x.isFinite, point.y.isFinite, let id = draggedSlider,
-              snapshot.application == draggedApplication, let slider = accessibleSliders.first(where: { $0.id == id }), slider.enabled else { return }
-        let position = id == "appVolume" ? (slider.rect.maxY - point.y) / slider.rect.height : (point.x - slider.rect.minX) / slider.rect.width
-        let fraction = Double(min(1, max(0, position)))
-        let value = slider.minimum + fraction * (slider.maximum - slider.minimum)
-        dragValue = value
-        if id == "seek" { updateProgress(animated: false) }
-        else if audioApplication?.id == draggedAudioID { _ = setSlider(id: id, value: value) }
-    }
-    @discardableResult func setSlider(id: String, value: Double) -> Bool {
-        guard active, value.isFinite, let slider = accessibleSliders.first(where: { $0.id == id }), slider.enabled else { return false }
-        let bounded = min(slider.maximum, max(slider.minimum, value))
-        if id == "seek" { controller.perform(.seek(bounded)); return true }
-        guard id == "appVolume" else { return false }
+    @discardableResult private func setAppVolume(_ value: Double) -> Bool {
+        guard isPresented, value.isFinite, volumeAvailable else { return false }
+        let bounded = min(1, max(0, value))
         if controller.playerVolume != nil { return controller.setPlayerVolume(bounded) }
         guard let app = audioApplication else { return false }
         if let session = currentSession {
+            // Back at 100% a failed route is retired instead of retried.
             if session.state == .failed, bounded == 1 { perAppAudio.stop(processID: app.id); return true }
             return perAppAudio.setGain(bounded, processID: app.id)
         }
+        // Untouched direct playback stays untouched at 100%.
         if bounded == 1 { return true }
         guard let output = currentOutput else { return false }
         return perAppAudio.start(application: app, output: output, initialGain: bounded)
     }
-    func perform(actionID: String) {
-        guard active, accessibleActions.contains(where: { $0.id == actionID && $0.enabled }) else { return }
-        cancelDrag()
-        if let source = NowPlayingSource(rawValue: actionID) { controller.select(source) }
-        else {
-            switch actionID {
-            case "connect": controller.connect()
-            case "playPause": controller.perform(.playPause)
-            case "previous": controller.perform(.previous)
-            case "next": controller.perform(.next)
-            case "volume": showVolume.toggle(); repaint(); onChange?()
-            case "lyrics": showLyrics.toggle(); repaint(); reconcileTimer(); onChange?()
-            default: return
-            }
+
+    private func toggleVolume() { isVolumeOpen ? closeVolume() : openVolume() }
+
+    private func openVolume() {
+        guard !isVolumeOpen, controller.snapshot.track != nil else { return }
+        super.closePopups()
+        let panel = NowPlayingVolumePopup(env: env)
+        panel.onChange = { [weak self] value, final in self?.adjustVolume(value, final: final) }
+        HUDMotion.perform {
+            panel.layer.frame = Layout.popup; panel.layer.zPosition = 5
+            page.layer.addSublayer(panel.layer)
+        }
+        env.applyScale(to: panel.layer)
+        page.add(panel)
+        popup = panel; isVolumeOpen = true
+        renderPopup()
+        volumeButton?.isOn = true
+        HUDMotion.wipe(panel.layer, from: .top, duration: HUDDuration.menuWipe, fadeFrom: 0.4, env: env)
+        refreshRouter(); context.onInputStateChange?()
+    }
+
+    private func closeVolume() {
+        guard isVolumeOpen else { return }
+        isVolumeOpen = false; volumeGesture = nil
+        if let popup {
+            popup.clearInteractionState()
+            page.remove(popup)
+            HUDMotion.perform { popup.layer.removeFromSuperlayer() }
+        }
+        popup = nil
+        volumeButton?.isOn = false
+        refreshRouter(); context.onInputStateChange?()
+    }
+
+    private func adjustVolume(_ value: Double, final: Bool) {
+        if volumeGesture == nil { volumeGesture = (controller.snapshot.application, audioApplication?.id) }
+        if let gesture = volumeGesture, gesture.application == controller.snapshot.application, gesture.audioID == audioApplication?.id {
+            setAppVolume(value)
+        }
+        if final { volumeGesture = nil; renderPopup() }
+    }
+
+    private func renderPopup() {
+        guard let popup, !popup.isDragging else { return }
+        popup.isEnabled = volumeAvailable
+        popup.show(volumeValue)
+    }
+
+    // MARK: Input
+
+    /// A press outside the pop-up and its button only closes the pop-up (spec §1.12).
+    @discardableResult
+    override func pointerDown(at point: CGPoint, event: NSEvent? = nil) -> Bool {
+        if isVolumeOpen, isActive, !isTransitioning, !isMenuOpen, !isPopoverOpen, !Layout.popup.contains(point),
+           !(volumeButton.map { $0.rect(in: root).contains(point) } ?? false) {
+            closeVolume(); return true
+        }
+        return super.pointerDown(at: point, event: event)
+    }
+
+    /// Space plays or pauses, ← / → seek 5 s, Esc closes the volume pop-up.
+    override func handleKey(_ event: NSEvent) -> Bool {
+        guard event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty else { return false }
+        switch event.keyCode {
+        case 53:
+            guard isVolumeOpen else { return false }
+            closeVolume()
+        case 49:
+            guard playButton?.isEnabled == true else { return false }
+            controller.perform(.playPause)
+        case 123, 124:
+            guard canSeek else { return false }
+            skip(by: event.keyCode == 123 ? -5 : 5)
+        default: return false
+        }
+        return true
+    }
+
+    override func adjustAccessibilitySlider(_ id: String, value: Double) {
+        switch id {
+        case "seek": if canSeek { controller.perform(.seek(value)) }
+        case "appVolume": setAppVolume(value / 100)
+        default: super.adjustAccessibilitySlider(id, value: value)
         }
     }
 
-    private func refresh() {
-        guard active else { return }
-        if draggedApplication != nil,
-           draggedApplication != snapshot.application || (draggedSlider == "seek" && !draggedTrackIsCurrent) { cancelDrag() }
-        let identity = "\(snapshot.application?.source.rawValue ?? ""): \(snapshot.track?.title ?? ""):\(snapshot.track?.album ?? "")"
-        if identity != trackIdentity { trackIdentity = identity; requestedEndRefresh = false }
-        if let duration = snapshot.track?.duration, let elapsed = snapshot.track?.elapsed(at: now()), elapsed < duration - 1 { requestedEndRefresh = false }
-        repaint(); reconcileTimer(); onChange?()
+    /// Previous, play / pause, next, volume or lyrics, as a press would.
+    func perform(actionID: String) { performAccessibilityAction(actionID) }
+
+    /// Buttons and sliders of the page (box px), for the UI verification run.
+    var accessibleActions: [HUDAccessibilityItem] { controlItems.filter { $0.role == .button } }
+    var accessibleSliders: [HUDAccessibilityItem] { controlItems.filter { if case .slider = $0.role { return true }; return false } }
+    private var controlItems: [HUDAccessibilityItem] {
+        page.controls.filter { $0.layer.isVisible(in: root) }.flatMap { $0.accessibilityItems(in: root) }
     }
-    private func reconcileTimer() {
-        let current = now()
-        guard active, let track = snapshot.track, track.isPlaying,
-              let elapsed = track.elapsed(at: current), elapsed.isFinite,
-              track.duration.map({ elapsed < $0 }) ?? true else {
-            stopClock(); progressFill.removeAllAnimations(); progressHandle.removeAllAnimations(); return
-        }
-        var delay = floor(elapsed) + 1 - elapsed
-        if lyricsVisible, draggedSlider != "seek", let boundary = controller.lyrics?.nextBoundary(after: elapsed) {
-            delay = min(delay, boundary - elapsed)
-        }
-        if let duration = track.duration { delay = min(delay, duration - elapsed) }
-        // Pathological millisecond cue clusters coalesce into a bounded local
-        // display cadence. Normal cues fire at their exact subsecond deadline.
-        delay = max(1.0 / 30.0, delay)
-        let deadline = current + delay
-        if let existing = clockDeadline, cancelClock != nil, abs(existing - deadline) < 0.0005 { return }
-        stopClock()
-        clockDeadline = deadline
-        let generation = clockGeneration
-        cancelClock = scheduleDisplayUpdate(delay) { [weak self] in
-            guard let self, self.clockGeneration == generation, self.active else { return }
-            self.cancelClock = nil; self.clockDeadline = nil
-            self.tick()
-        }
-    }
-    private func stopClock() {
-        clockGeneration &+= 1
-        cancelClock?(); cancelClock = nil; clockDeadline = nil
-    }
-    private func tick() {
-        guard active else { return }
-        updateProgress(animated: true); updateLyrics(); onChange?()
-        if !requestedEndRefresh, let track = snapshot.track, let duration = track.duration,
-           (track.elapsed(at: now()) ?? 0) >= duration {
-            requestedEndRefresh = true; controller.refresh()
-        }
-        reconcileTimer()
-    }
-    private func updateProgress(animated: Bool) {
-        let value = draggedSlider == "seek" ? dragValue : snapshot.track?.elapsed(at: now())
-        let duration = snapshot.track?.duration ?? 0
-        let fraction = duration > 0 ? min(1, max(0, (value ?? 0) / duration)) : 0
-        let width = seekRect.width * fraction
-        let interpolates = animated && draggedSlider == nil && !reduceMotion()
-            && snapshot.track?.isPlaying == true && duration > 0
-        let destination = interpolates ? min(seekRect.width, width + seekRect.width / duration) : width
-        withoutActions {
-            // Preview and refreshed metadata take effect immediately. An old
-            // interpolation must never keep overriding their model geometry.
-            progressFill.removeAnimation(forKey: "nowPlaying.progress")
-            progressHandle.removeAnimation(forKey: "nowPlaying.progress")
-            progressFill.anchorPoint = CGPoint(x: 0, y: 0.5)
-            progressFill.bounds = CGRect(x: 0, y: 0, width: destination, height: 2)
-            progressFill.position = CGPoint(x: seekRect.minX, y: seekRect.midY)
-            progressHandle.position = CGPoint(x: seekRect.minX + destination, y: seekRect.midY)
-            elapsedLabel.string = Self.time(value)
-        }
-        // Retained compositor interpolation; the timer never queries a player.
-        // Its destination is also the model value, so timer tolerance cannot
-        // make a completed animation snap backwards to the prior second.
-        if interpolates {
-            let motion = CABasicAnimation(keyPath: "bounds.size.width")
-            motion.fromValue = width; motion.toValue = destination; motion.duration = 1; motion.timingFunction = CAMediaTimingFunction(name: .linear)
-            progressFill.add(motion, forKey: "nowPlaying.progress")
-            let handle = CABasicAnimation(keyPath: "position.x"); handle.fromValue = seekRect.minX + width; handle.toValue = seekRect.minX + destination
-            handle.duration = 1; handle.timingFunction = motion.timingFunction; progressHandle.add(handle, forKey: "nowPlaying.progress")
-        }
-    }
-    func dismissPopover() {
-        guard showVolume else { return }
-        showVolume = false; repaint(); onChange?()
-    }
-    private func repaint() {
-        let animateLyricsVisibility = rendered && lastLyricsVisible != lyricsVisible && active && !reduceMotion()
-        let oldLyricsOpacity = lyricsViewport.presentation()?.opacity ?? lyricsViewport.opacity
-        withoutActions {
-            panel.frame = CGRect(x: 55, y: 0, width: 330, height: 330)
-            panel.backgroundColor = nil; panel.borderColor = nil; panel.borderWidth = 0; panel.cornerRadius = 0
-            albumCover.frame = panel.bounds
-            albumCover.cornerRadius = 0; albumCover.contentsScale = scale
-            if displayedCover !== controller.artworkImage {
-                crossfade(albumCover)
-                displayedCover = controller.artworkImage; albumCover.contents = displayedCover
-            }
-            coverPlaceholder.path = CGPath(ellipseIn: CGRect(x: 135, y: 113, width: 60, height: 60), transform: nil)
-            coverPlaceholder.fillColor = nil; coverPlaceholder.strokeColor = muted.withAlphaComponent(0.32).cgColor
-            coverPlaceholder.lineWidth = 2; coverPlaceholder.isHidden = displayedCover != nil
-            // Legibility belongs to the metadata area only; the artwork and
-            // surrounding HUD retain their original colors and transparency.
-            metadataShade.frame = CGRect(x: 0, y: 250, width: 330, height: 80)
-            metadataShade.colors = [NSColor.black.withAlphaComponent(0).cgColor,
-                                    NSColor.black.withAlphaComponent(0.76).cgColor, NSColor.black.withAlphaComponent(0.90).cgColor]
-            metadataShade.locations = [0, 0.30, 1]; metadataShade.startPoint = CGPoint(x: 0.5, y: 0)
-            metadataShade.endPoint = CGPoint(x: 0.5, y: 1); metadataShade.isHidden = snapshot.track == nil
-            configureText(titleLabel, CGRect(x: 14, y: 279, width: 302, height: 21), 14, .white)
-            titleLabel.font = NSFont.systemFont(ofSize: 14, weight: .semibold)
-            replaceMetadata(titleLabel, with: snapshot.track?.title ?? "")
-            configureText(artistLabel, CGRect(x: 14, y: 303, width: 302, height: 16), 10, NSColor.white.withAlphaComponent(0.80))
-            replaceMetadata(artistLabel, with: snapshot.track?.artist ?? "")
-            configureText(emptyLabel, CGRect(x: 20, y: 184, width: 290, height: 23), 13, primary)
-            emptyLabel.string = "No music playing"; emptyLabel.alignmentMode = .center
-            emptyLabel.isHidden = snapshot.track != nil
-            for action in accessibleActions {
-                buttonLayers[action.id]?.update(action, dark: dark, accent: accent,
-                    selected: (action.id == "lyrics" && showLyrics) || (action.id == "volume" && showVolume),
-                    playing: snapshot.track?.isPlaying == true, scale: scale)
-            }
-            progressRail.frame = CGRect(x: seekRect.minX, y: seekRect.midY - 1, width: seekRect.width, height: 2)
-            progressRail.backgroundColor = primary.withAlphaComponent(0.2).cgColor
-            progressFill.backgroundColor = accent.cgColor
-            progressHandle.bounds = CGRect(x: 0, y: 0, width: 5, height: 8); progressHandle.backgroundColor = primary.cgColor
-            progressHandle.opacity = snapshot.track?.duration == nil ? 0 : 1
-            configureText(elapsedLabel, CGRect(x: seekRect.minX, y: 390, width: 70, height: 11), 9, muted)
-            configureText(durationLabel, CGRect(x: seekRect.maxX - 74, y: 390, width: 74, height: 11), 9, muted)
-            durationLabel.string = Self.time(snapshot.track?.duration); durationLabel.alignmentMode = .right
-            lyricsViewport.frame = CGRect(x: 55, y: 331, width: 330, height: 48)
-            lyricsViewport.isHidden = false; lyricsViewport.opacity = lyricsVisible ? 1 : 0
-            for (index, label) in lyricsLabels.enumerated() {
-                configureText(label, CGRect(x: 0, y: CGFloat(index) * 16, width: 330, height: 16), 10, primary)
-                label.alignmentMode = .center; label.opacity = index == 1 ? 1 : 0.36
-            }
-            updateLyrics(); updateProgress(animated: false); renderVolume()
-        }
-        if animateLyricsVisibility {
-            let fade = CABasicAnimation(keyPath: "opacity"); fade.fromValue = oldLyricsOpacity; fade.toValue = lyricsViewport.opacity
-            fade.duration = 0.24; fade.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-            lyricsViewport.add(fade, forKey: "nowPlaying.lyrics.visibility")
-        }
-        if reduceMotion() { removeAnimations(in: content) }
-        lastLyricsVisible = lyricsVisible; rendered = true
-    }
-    private func updateLyrics() {
-        let elapsed = draggedSlider == "seek" ? dragValue : snapshot.track?.elapsed(at: now())
-        let lines = controller.lyrics?.window(at: elapsed ?? 0) ?? ["", "", ""]
-        let previous = lyricsLabels.map { $0.string as? String ?? "" }
-        let animate = active && rendered && lyricsVisible && !reduceMotion() && previous != lines && previous.contains { !$0.isEmpty }
-        withoutActions {
-            for (index, label) in lyricsLabels.enumerated() {
-                let value = lines.indices.contains(index) ? lines[index] : ""
-                if label.string as? String != value { label.string = value }
-                if animate {
-                    let movement = CABasicAnimation(keyPath: "transform.translation.y")
-                    movement.fromValue = (elapsed ?? 0) >= (lastLyricPosition ?? 0) ? 7 : -7; movement.toValue = 0
-                    let fade = CABasicAnimation(keyPath: "opacity"); fade.fromValue = label.opacity * 0.88; fade.toValue = label.opacity
-                    let group = CAAnimationGroup(); group.animations = [movement, fade]; group.duration = 0.20
-                    group.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-                    label.add(group, forKey: "nowPlaying.lyrics.change")
-                } else if !lyricsVisible || reduceMotion() { label.removeAnimation(forKey: "nowPlaying.lyrics.change") }
-            }
-        }
-        lastLyricPosition = elapsed
-    }
-    private func replaceMetadata(_ label: CATextLayer, with value: String) {
-        guard label.string as? String != value else { return }
-        if (label.string as? String)?.isEmpty == false { crossfade(label) }
-        label.string = value
-    }
-    private func crossfade(_ item: CALayer) {
-        guard active, rendered, !reduceMotion() else { return }
-        let transition = CATransition(); transition.type = .fade; transition.duration = 0.20
-        transition.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        item.add(transition, forKey: kCATransition)
-    }
-    private func removeAnimations(in item: CALayer) {
-        item.removeAllAnimations(); item.sublayers?.forEach { removeAnimations(in: $0) }
-    }
-    private func renderVolume() {
-        let destination: Float = showVolume ? 1 : 0
-        let previous = volumeMenu.presentation()?.opacity ?? volumeMenu.opacity
-        let changed = volumeMenu.opacity != destination
-        volumeMenu.isHidden = false; volumeMenu.opacity = destination
-        if changed, active, !reduceMotion() {
-            let fade = CABasicAnimation(keyPath: "opacity"); fade.fromValue = previous; fade.toValue = destination
-            fade.duration = 0.16; volumeMenu.add(fade, forKey: "nowPlaying.popover.visibility")
-        }
-        guard showVolume else { return }
-        volumeMenu.frame = volumeBounds
-        let rect = volumeMenu.bounds
-        let sliderRect = volumeRect.offsetBy(dx: -volumeBounds.minX, dy: -volumeBounds.minY)
-        volumeBacking.frame = rect.offsetBy(dx: -3, dy: 4); volumeBacking.backgroundColor = NSColor.black.withAlphaComponent(0.3).cgColor
-        volumeFace.frame = rect; volumeFace.backgroundColor = NSColor(white: dark ? 0.08 : 0.92, alpha: 0.98).cgColor
-        volumeFace.borderWidth = 0.7; volumeFace.borderColor = accent.withAlphaComponent(0.7).cgColor
-        let value = controller.playerVolume ?? currentSession?.gain ?? (volumeAvailable ? 1 : 0)
-        volumeRail.frame = CGRect(x: sliderRect.midX - 1, y: sliderRect.minY, width: 2, height: sliderRect.height)
-        volumeRail.backgroundColor = primary.withAlphaComponent(0.19).cgColor
-        volumeFill.frame = CGRect(x: sliderRect.midX - 1, y: sliderRect.maxY - sliderRect.height * value, width: 2, height: sliderRect.height * value)
-        volumeFill.backgroundColor = accent.withAlphaComponent(0.85).cgColor
-        volumeHandle.frame = CGRect(x: sliderRect.midX - 4, y: volumeFill.frame.minY - 3.5, width: 8, height: 7)
-        volumeHandle.backgroundColor = accent.cgColor; volumeHandle.borderWidth = 0.6; volumeHandle.borderColor = primary.withAlphaComponent(0.65).cgColor
-        volumeHandle.opacity = volumeAvailable ? 1 : 0.35
-        configureText(volumeLabel, CGRect(x: rect.minX + 3, y: rect.minY + 10, width: rect.width - 6, height: 18), 10, primary)
-        volumeLabel.alignmentMode = .center; volumeLabel.string = volumeAvailable ? "\(Int((value * 100).rounded()))%" : "—"
-    }
-    private func configureText(_ label: CATextLayer, _ rect: CGRect, _ size: CGFloat, _ color: NSColor) {
-        label.frame = rect; label.font = NSFont.systemFont(ofSize: size); label.fontSize = size; label.foregroundColor = color.cgColor
-        label.contentsScale = HUDRenderScale.contentScale(for: label, baseScale: scale); label.truncationMode = .end
-    }
-    static func time(_ value: Double?) -> String {
-        guard let value, value.isFinite, value >= 0 else { return "—:—" }
-        let seconds = Int(min(value, 604_800)); return String(format: "%d:%02d", seconds / 60, seconds % 60)
-    }
-    private func withoutActions(_ action: () -> Void) { CATransaction.begin(); CATransaction.setDisableActions(true); action(); CATransaction.commit() }
 }
 
-/// Fixed layer identities keep transport events from flashing or reallocating
-/// the player. Transport uses the original simple rounded faces; menu artwork
-/// remains consistent with Personal Card.
-private final class NowPlayingButtonArtwork {
-    let layer = CALayer()
-    private let face = CALayer(), glyph = CAShapeLayer()
-    private var feedback: HUDControlHighlightLayer?
-    private var previousSize = CGSize.zero
-    init() {
-        layer.allowsGroupOpacity = false
-        layer.addSublayer(face); layer.addSublayer(glyph)
+/// The track for VoiceOver (title / artist / album, or nothing playing) on
+/// the cover; it never takes a press.
+private final class NowPlayingTrackReadout: HUDControl {
+    var track: NowPlayingTrack?
+    init(cover: CALayer, track: NowPlayingTrack?, env: HUDDesignEnvironment) {
+        self.track = track
+        super.init(id: "track", label: HUDModule.nowPlaying.title, env: env, layer: cover)
     }
-    func update(_ action: VolumeCanvasAction, dark: Bool, accent: NSColor, selected: Bool, playing: Bool, scale: CGFloat) {
-        let oldPosition = layer.presentation()?.position ?? layer.position
-        let moved = layer.frame != .zero && layer.frame.origin != action.rect.origin
-        layer.frame = action.rect; layer.opacity = action.enabled ? 1 : 0.35
-        face.frame = layer.bounds; face.cornerRadius = action.id == "playPause" ? action.rect.width / 2 : 3
-        face.backgroundColor = (selected ? accent.withAlphaComponent(0.16) : NSColor(white: dark ? 0.96 : 0.10, alpha: 0.07)).cgColor
-        face.borderColor = (selected ? accent : NSColor(white: dark ? 0.65 : 0.3, alpha: 0.42)).cgColor
-        face.borderWidth = 0
-        let path = CGMutablePath(), center = CGPoint(x: action.rect.width / 2, y: action.rect.height / 2)
-        glyph.frame = layer.bounds
-            if action.id == "lyrics" {
-                for row in 0..<3 { path.addRect(CGRect(x: 7, y: 8 + row * 6, width: row == 1 ? 16 : 11, height: 2)) }
-            } else if action.id == "volume" {
-                path.move(to: CGPoint(x: 6, y: 11)); path.addLine(to: CGPoint(x: 11, y: 11)); path.addLine(to: CGPoint(x: 17, y: 6))
-                path.addLine(to: CGPoint(x: 17, y: 24)); path.addLine(to: CGPoint(x: 11, y: 19)); path.addLine(to: CGPoint(x: 6, y: 19)); path.closeSubpath()
-                let wave = CGMutablePath(); wave.addArc(center: CGPoint(x: 17, y: 15), radius: 7, startAngle: -.pi / 3, endAngle: .pi / 3, clockwise: false)
-                path.addPath(wave.copy(strokingWithWidth: 1.5, lineCap: .round, lineJoin: .round, miterLimit: 1))
-            } else if action.id == "playPause" && playing {
-                path.addRect(CGRect(x: center.x - 6, y: center.y - 8, width: 4, height: 16)); path.addRect(CGRect(x: center.x + 2, y: center.y - 8, width: 4, height: 16))
-            } else {
-                let direction: CGFloat = action.id == "previous" ? -1 : 1
-                path.move(to: CGPoint(x: center.x - direction * 5, y: center.y - 7))
-                path.addLine(to: CGPoint(x: center.x + direction * 7, y: center.y)); path.addLine(to: CGPoint(x: center.x - direction * 5, y: center.y + 7)); path.closeSubpath()
-                if action.id != "playPause" { path.addRect(CGRect(x: center.x + direction * 8 - 1, y: center.y - 7, width: 2, height: 14)) }
+    override func contains(_ point: CGPoint) -> Bool { false }
+    override var accessibilityRole: HUDAccessibilityItem.Role? {
+        .text(track.map { [$0.title, $0.artist, $0.album].filter { !$0.isEmpty }.joined(separator: " / ") }
+              ?? L10n.text("No music playing", "未在播放音乐"))
+    }
+}
+
+/// The three-line lyric window (spec §3.12 Lyrics): line k sits in the middle
+/// slot at 14 px, its neighbours at 12.5 px and .36, the rest hidden. Only
+/// k ± 2 have layers; a cue change slides them one slot (.22 s ease-in-out)
+/// and eases opacity and size.
+private final class NowPlayingLyricWindow {
+    static let lineHeight: CGFloat = 20
+    static var regular: HUDTextStyle { HUDTextStyle(size: 12.5, weight: .regular, color: HUDColor.tone(0xF0F0F0)) }
+    static var current: HUDTextStyle { HUDTextStyle(size: 14, weight: .medium, color: HUDColor.tone(0xF0F0F0)) }
+    let layer = HUDLayer.plain("nowPlaying.lyrics")
+    private let env: HUDDesignEnvironment
+    private var lyrics: NowPlayingLyrics?
+    private var index: Int?
+    private var rows: [Int: HUDTextLayer] = [:]
+
+    init(frame: CGRect, env: HUDDesignEnvironment) {
+        self.env = env
+        HUDMotion.perform { layer.frame = frame; layer.masksToBounds = true; layer.opacity = 0 }
+    }
+
+    func setLyrics(_ next: NowPlayingLyrics?) {
+        guard next != lyrics else { return }
+        lyrics = next; index = nil
+        HUDMotion.perform { rows.values.forEach { $0.removeFromSuperlayer() } }
+        rows = [:]
+    }
+
+    func show(at elapsed: Double, animated: Bool) {
+        guard let lyrics else { return }
+        let next = lyrics.currentIndex(at: elapsed)
+        guard next != index else { return }
+        let previous = index
+        index = next
+        let slide = animated && !env.reducesMotion && previous.map { abs($0 - next) <= 2 } == true
+        let wanted = ((next - 2)...(next + 2)).filter { lyrics.lines.indices.contains($0) }
+        for (line, row) in rows where !wanted.contains(line) {
+            HUDMotion.perform { row.removeFromSuperlayer() }
+            rows[line] = nil
+        }
+        for line in wanted {
+            let existing = rows[line]
+            let row = existing ?? HUDTextLayer(lyrics.lines[line].text, style: Self.regular, alignment: .center)
+            let distance = abs(line - next)
+            let style = distance == 0 ? Self.current : Self.regular
+            let opacity: Float = distance == 0 ? 1 : (distance == 1 ? 0.36 : 0)
+            // Where the line was before this cue (a new row starts there, hidden).
+            let fromY = existing.map { ($0.presentation() ?? $0).position.y }
+                ?? previous.map { Self.lineHeight * CGFloat(line - $0 + 1) + Self.lineHeight / 2 }
+            let fromOpacity = existing.map { ($0.presentation() ?? $0).opacity } ?? 0
+            let fromSize = existing?.textStyle.size ?? style.size
+            HUDMotion.perform {
+                row.textStyle = style
+                row.lineFrame = CGRect(x: 0, y: Self.lineHeight * CGFloat(line - next + 1), width: layer.bounds.width, height: Self.lineHeight)
+                row.opacity = opacity
+                if existing == nil { layer.addSublayer(row) }
             }
-        glyph.path = path; glyph.fillColor = NSColor(white: dark ? 0.94 : 0.12, alpha: 1).cgColor
-        glyph.contentsScale = scale
-        if previousSize != layer.bounds.size {
-            feedback?.removeFromSuperlayer()
-            feedback = HUDControlHighlightLayer.add(to: layer, rect: layer.bounds, shape: action.id == "playPause" ? .ellipse : .rounded, enabled: action.enabled, framed: false)
-            previousSize = layer.bounds.size
-        }
-        feedback?.setEnabled(action.enabled)
-        if moved && !HUDRuntimeAppearance.reduceMotion {
-            let motion = CABasicAnimation(keyPath: "position"); motion.fromValue = NSValue(point: oldPosition); motion.toValue = NSValue(point: layer.position)
-            motion.duration = 0.24; motion.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut); layer.add(motion, forKey: "nowPlaying.control.move")
+            if existing == nil { env.applyScale(to: row); rows[line] = row }
+            guard slide, let fromY else { continue }
+            add(row, "position.y", from: fromY, to: row.position.y)
+            add(row, "opacity", from: fromOpacity, to: opacity)
+            if fromSize != style.size { add(row, "transform.scale", from: fromSize / style.size, to: 1) }
         }
     }
+
+    private func add(_ row: CALayer, _ keyPath: String, from: Any, to: Any) {
+        let motion = CABasicAnimation(keyPath: keyPath)
+        motion.fromValue = from; motion.toValue = to
+        motion.duration = 0.22; motion.timingFunction = HUDEasing.easeInOut
+        row.add(motion, forKey: "hud.lyric." + keyPath)
+    }
+}
+
+/// The Now Playing timeline (spec §3.12 Seek): the dark slider at 22 px with
+/// a 3 px track, a 13 px thumb and no ladder. Dragging previews (the bubble
+/// shows mm:ss); release commits once. Between clock ticks the bar runs on
+/// linearly on the compositor.
+private final class NowPlayingSeekBar: HUDControl {
+    let width: CGFloat
+    private let track = HUDLayer.plain("seek.track")
+    private let fill = HUDLayer.gradient("seek.fill")
+    private let thumb = HUDLayer.plain("seek.thumb")
+    private var bubble: HUDSliderBubble?
+    weak var bubbleHost: CALayer?
+    private(set) var value: Double = 0
+    private(set) var duration: Double = 0
+    private(set) var isDragging = false
+    var onScrub: ((Double) -> Void)?
+    /// The released value, or nil when the gesture was interrupted.
+    var onRelease: ((Double?) -> Void)?
+
+    init(width: CGFloat, env: HUDDesignEnvironment) {
+        self.width = width
+        super.init(id: "seek", label: L10n.text("Playback position", "播放进度"), env: env)
+        HUDMotion.perform {
+            layer.bounds = CGRect(x: 0, y: 0, width: width, height: 22)
+            track.frame = CGRect(x: 0, y: 8, width: width, height: 3); track.backgroundColor = HUDColor.ringField
+            fill.anchorPoint = CGPoint(x: 0, y: 0.5)
+            fill.bounds = CGRect(x: 0, y: 0, width: 0, height: 3); fill.position = CGPoint(x: 0, y: 9.5)
+            fill.startPoint = CGPoint(x: 0, y: 0.5); fill.endPoint = CGPoint(x: 1, y: 0.5)
+            fill.colors = [HUDColor.legible(HUDColor.yellowLow), HUDColor.accentInk]
+            thumb.bounds = CGRect(x: 0, y: 0, width: 9, height: 13); thumb.position = CGPoint(x: 0, y: 9.5)
+            thumb.backgroundColor = HUDColor.tone(0xEDEDED)
+            let core = HUDLayer.plain("seek.core")
+            core.frame = CGRect(x: 3.5, y: 3, width: 2, height: 7); core.backgroundColor = HUDColor.tone(0x111111)
+            thumb.addSublayer(core)
+            [track, fill, thumb].forEach(layer.addSublayer)
+        }
+        setTarget(CGRect(x: -5, y: -3, width: width + 10, height: 28))
+    }
+
+    deinit { bubble?.layer.removeFromSuperlayer() }
+
+    private func x(_ seconds: Double) -> CGFloat {
+        duration > 0 ? CGFloat(min(1, max(0, seconds / duration))) * width : 0
+    }
+
+    /// Shows `seconds`; while playing the bar runs on to `destination` over `interval`.
+    func show(_ seconds: Double, duration total: Double, toward destination: Double? = nil, over interval: TimeInterval = 0) {
+        guard !isDragging else { return }
+        value = seconds; duration = max(0, total)
+        place(x(seconds), toward: destination.map(x), over: interval)
+    }
+
+    private func place(_ start: CGFloat, toward end: CGFloat? = nil, over interval: TimeInterval = 0) {
+        fill.removeAnimation(forKey: "hud.seek.progress"); thumb.removeAnimation(forKey: "hud.seek.progress")
+        let target = end ?? start
+        HUDMotion.perform { fill.bounds.size.width = target; thumb.position.x = target }
+        guard target != start, interval > 0, !env.reducesMotion, layer.superlayer != nil else { return }
+        for (item, keyPath) in [(fill as CALayer, "bounds.size.width"), (thumb, "position.x")] {
+            let run = CABasicAnimation(keyPath: keyPath)
+            run.fromValue = start; run.toValue = target
+            run.duration = interval; run.timingFunction = HUDEasing.linear
+            item.add(run, forKey: "hud.seek.progress")
+        }
+    }
+
+    override func pointerDown(at point: CGPoint) -> Bool {
+        guard isEnabled, duration > 0 else { return false }
+        isDragging = true
+        scrub(to: point)
+        showBubble()
+        return true
+    }
+    override func pointerDragged(to point: CGPoint) { if isDragging { scrub(to: point) } }
+    override func pointerUp(at point: CGPoint) {
+        guard isDragging else { return }
+        isDragging = false; bubble?.setVisible(false)
+        onRelease?(value)
+    }
+    /// An interrupted drag (track change, module change) ends without a seek.
+    func cancelDrag() {
+        guard isDragging else { return }
+        isDragging = false; bubble?.setVisible(false)
+        onRelease?(nil)
+    }
+    override func clearInteractionState() { super.clearInteractionState(); cancelDrag() }
+
+    private func scrub(to point: CGPoint) {
+        value = Double(min(1, max(0, point.x / width))) * duration
+        place(x(value))
+        updateBubble()
+        onScrub?(value)
+    }
+
+    private func showBubble() {
+        guard let host = bubbleHost else { return }
+        let bubble = self.bubble ?? HUDSliderBubble(env: env)
+        self.bubble = bubble
+        if bubble.layer.superlayer !== host { HUDMotion.perform { host.addSublayer(bubble.layer) } }
+        updateBubble()
+        bubble.setVisible(true)
+    }
+
+    private func updateBubble() {
+        guard isDragging, let bubble, let host = bubbleHost else { return }
+        bubble.show(NowPlayingCanvas.time(value), anchor: host.convert(CGPoint(x: x(value), y: 2), from: layer))
+    }
+
+    override var accessibilityRole: HUDAccessibilityItem.Role? {
+        .slider(value: value, minimum: 0, maximum: max(1, duration), step: 5, description: NowPlayingCanvas.time(duration > 0 ? value : nil))
+    }
+}
+
+/// The vertical volume pop-up (spec §3.12): `70%` label, 6 px track, yellow
+/// fill from the bottom and a 16 × 6 knob. A press or drag sets 1 − y / height.
+private final class NowPlayingVolumePopup: HUDControl {
+    static let track = CGRect(x: 19, y: 30, width: 6, height: 106)
+    private let text = HUDTextLayer(style: HUDTextStyle(size: 10, weight: .bold, color: HUDColor.textOnDark, tabular: true), alignment: .center)
+    private let fill = HUDLayer.plain("volume.fill")
+    private let knob = HUDLayer.plain("volume.knob")
+    private(set) var value: Double?
+    private(set) var isDragging = false
+    /// (value 0…1, final): final on release.
+    var onChange: ((Double, Bool) -> Void)?
+
+    init(env: HUDDesignEnvironment) {
+        super.init(id: "appVolume", label: L10n.text("Playing app volume", "当前播放应用音量"), env: env)
+        let bounds = CGRect(x: 0, y: 0, width: 44, height: 150)
+        HUDMotion.perform {
+            layer.bounds = bounds
+            layer.backgroundColor = HUDColor.panel; layer.borderWidth = 1; layer.borderColor = HUDColor.ringMenu
+            layer.shadowColor = HUDColor.black(1); layer.shadowOpacity = 0.6; layer.shadowRadius = 20
+            layer.shadowOffset = CGSize(width: 0, height: 18); layer.shadowPath = CGPath(rect: bounds, transform: nil)
+            text.lineFrame = CGRect(x: 0, y: 9, width: bounds.width, height: 10)
+            let rail = HUDLayer.plain("volume.track")
+            rail.frame = Self.track; rail.backgroundColor = HUDColor.separator
+            fill.backgroundColor = HUDColor.accentInk
+            knob.bounds = CGRect(x: 0, y: 0, width: 16, height: 6); knob.backgroundColor = HUDColor.textOnDark
+            [text, rail, fill, knob].forEach(layer.addSublayer)
+        }
+        setTarget(bounds)
+    }
+
+    func show(_ next: Double?) {
+        value = next
+        let height = Self.track.height * CGFloat(min(1, max(0, next ?? 0)))
+        HUDMotion.perform {
+            text.text = next.map { "\(Int(($0 * 100).rounded()))%" } ?? "—"
+            fill.frame = CGRect(x: Self.track.minX, y: Self.track.maxY - height, width: Self.track.width, height: height)
+            knob.position = CGPoint(x: Self.track.midX, y: Self.track.maxY - height)
+            knob.isHidden = next == nil
+        }
+    }
+
+    override func pointerDown(at point: CGPoint) -> Bool {
+        guard isEnabled else { return false }
+        isDragging = true; select(at: point)
+        return true
+    }
+    override func pointerDragged(to point: CGPoint) { if isDragging { select(at: point) } }
+    override func pointerUp(at point: CGPoint) {
+        guard isDragging else { return }
+        isDragging = false
+        onChange?(value ?? 0, true)
+    }
+    override func clearInteractionState() { super.clearInteractionState(); isDragging = false }
+    override func enabledChanged() { HUDMotion.perform { fill.opacity = isEnabled ? 1 : 0.35; knob.opacity = isEnabled ? 1 : 0.35 } }
+
+    private func select(at point: CGPoint) {
+        let next = (Double(min(1, max(0, 1 - (point.y - Self.track.minY) / Self.track.height))) * 100).rounded() / 100
+        show(next)
+        onChange?(next, false)
+    }
+
+    override var accessibilityRole: HUDAccessibilityItem.Role? {
+        .slider(value: (value ?? 0) * 100, minimum: 0, maximum: 100, step: 2, description: text.text)
+    }
+}
+
+/// The yellow 54 px play / pause circle (spec §3.12 Transport): hover scales
+/// it 1.06 and brightens it, a press pushes it to .95.
+private final class NowPlayingPlayButton: HUDControl {
+    private let face = HUDLayer.gradient("play.face")
+    private let brighten = HUDLayer.plain("play.brighten")
+    private let glyph = HUDIconLayer(.play, size: 22, color: HUDColor.nearBlack)
+    var isPlaying = false {
+        didSet {
+            guard isPlaying != oldValue else { return }
+            HUDMotion.perform { glyph.set(isPlaying ? .pause : .play, size: 22) }
+            label = isPlaying ? L10n.text("Pause", "暂停") : L10n.text("Play", "播放")
+        }
+    }
+
+    init(env: HUDDesignEnvironment) {
+        super.init(id: "playPause", label: L10n.text("Play", "播放"), env: env)
+        let bounds = CGRect(x: 0, y: 0, width: 54, height: 54)
+        HUDMotion.perform {
+            layer.bounds = bounds
+            face.frame = bounds; face.cornerRadius = 27
+            face.colors = HUDColor.primaryButton; face.locations = [0, 0.5, 1]
+            brighten.frame = bounds; brighten.cornerRadius = 27; brighten.backgroundColor = HUDColor.white(0.06); brighten.opacity = 0
+            glyph.position = CGPoint(x: 27, y: 27)
+            [face, brighten, glyph].forEach(layer.addSublayer)
+        }
+        setTarget(bounds, path: CGPath(ellipseIn: bounds, transform: nil))
+    }
+
+    override func hoverChanged() { applyHoverMotion(hoverScale: 1.06, pressScale: 0.95, brighten: brighten) }
+    override func pressChanged() { applyHoverMotion(hoverScale: 1.06, pressScale: 0.95, brighten: brighten) }
+    override func enabledChanged() { HUDMotion.perform { layer.opacity = isEnabled ? 1 : 0.35 }; hoverChanged() }
 }

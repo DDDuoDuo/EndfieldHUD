@@ -45,13 +45,13 @@ xcrun swiftc -swift-version 5 -Onone -whole-module-optimization -parse-as-librar
     "$PROJECT_DIR/Sources/HUDSettingsController.swift" \
     "$PROJECT_DIR/Sources/LoginItemManager.swift" \
     "$PROJECT_DIR/Sources/HUDSettingsCanvas.swift" \
-    "$PROJECT_DIR/Sources/HUDQuitConfirmationView.swift" \
-    "$PROJECT_DIR/Sources/HUDScaleSafetyView.swift" \
+    "$PROJECT_DIR/Sources/HUDBackgroundViews.swift" \
     "$PROJECT_DIR/Sources/HUDSettingsInteraction.swift" \
     "$PROJECT_DIR/Sources/HUDRuntimeAppearance.swift" \
     "$PROJECT_DIR/Sources/HUDControlHighlightLayer.swift" \
     "$PROJECT_DIR/Sources/Localization.swift" \
     "$PROJECT_DIR/Sources/LocalizationCatalog.swift" \
+    "$PROJECT_DIR/Sources/LocalizationCatalogRedesign.swift" \
     "$PROJECT_DIR/Sources/OverlayGeometry.swift" \
     "$PROJECT_DIR/Sources/BatteryCapacity.swift" \
     "$PROJECT_DIR/Sources/BatteryMonitor.swift" \
@@ -71,8 +71,32 @@ xcrun swiftc -swift-version 5 -Onone -whole-module-optimization -parse-as-librar
     "$PROJECT_DIR/Sources/HUDPortraitArtwork.swift" \
     "$PROJECT_DIR/Sources/UserProfileStore.swift" \
     "$PROJECT_DIR/Sources/PersonalProfileCanvas.swift" \
-    "$PROJECT_DIR/Sources/HUDPersonalProfileInteraction.swift" \
     "$PROJECT_DIR/Sources/HUDRenderScale.swift" \
+    "$PROJECT_DIR/Sources/HUDStartupTrace.swift" \
+    "$PROJECT_DIR/Sources/HUDDesignFonts.swift" \
+    "$PROJECT_DIR/Sources/HUDDesignTokens.swift" \
+    "$PROJECT_DIR/Sources/HUDDesignText.swift" \
+    "$PROJECT_DIR/Sources/HUDDesignDrawing.swift" \
+    "$PROJECT_DIR/Sources/HUDDesignFormat.swift" \
+    "$PROJECT_DIR/Sources/HUDDesignIcons.swift" \
+    "$PROJECT_DIR/Sources/HUDDesignMotion.swift" \
+    "$PROJECT_DIR/Sources/HUDDesignControl.swift" \
+    "$PROJECT_DIR/Sources/HUDDesignBadges.swift" \
+    "$PROJECT_DIR/Sources/HUDDesignButtons.swift" \
+    "$PROJECT_DIR/Sources/HUDDesignRows.swift" \
+    "$PROJECT_DIR/Sources/HUDDesignHeader.swift" \
+    "$PROJECT_DIR/Sources/HUDDesignMenu.swift" \
+    "$PROJECT_DIR/Sources/HUDDesignSlider.swift" \
+    "$PROJECT_DIR/Sources/HUDDesignTabs.swift" \
+    "$PROJECT_DIR/Sources/HUDDesignCards.swift" \
+    "$PROJECT_DIR/Sources/HUDDesignOverlay.swift" \
+    "$PROJECT_DIR/Sources/HUDDesignScreen.swift" \
+    "$PROJECT_DIR/Sources/HUDDesignTextField.swift" \
+    "$PROJECT_DIR/Sources/HUDDesignRedaction.swift" \
+    "$PROJECT_DIR/Sources/ProjectionSettings.swift" \
+    "$PROJECT_DIR/Sources/ProjectionCanvas.swift" \
+    "$PROJECT_DIR/Sources/FacilityAlertMonitor.swift" \
+    "$PROJECT_DIR/Sources/ArchiveClassification.swift" \
     "$PROJECT_DIR/Sources/HypergryphAccountModels.swift" \
     "$PROJECT_DIR/Sources/HypergryphAccountAPI.swift" \
     "$PROJECT_DIR/Sources/HypergryphAccountKeychain.swift" \
@@ -80,10 +104,8 @@ xcrun swiftc -swift-version 5 -Onone -whole-module-optimization -parse-as-librar
     "$PROJECT_DIR/Sources/HypergryphAvatarLoader.swift" \
     "$PROJECT_DIR/Sources/HypergryphAccountController.swift" \
     "$PROJECT_DIR/Sources/HUDAccountCanvas.swift" \
-    "$PROJECT_DIR/Sources/HUDAccountInteraction.swift" \
     "$PROJECT_DIR/Sources/HUDAccountGauge.swift" \
     "$PROJECT_DIR/Sources/HUDModule.swift" \
-    "$PROJECT_DIR/Sources/HUDSectionHeading.swift" \
     "$PROJECT_DIR/Sources/HUDSubsectionTransition.swift" \
     "$PROJECT_DIR/Sources/HUDModuleContent.swift" \
     "$PROJECT_DIR/Sources/HUDNavigationTarget.swift" \
@@ -103,25 +125,19 @@ xcrun swiftc -swift-version 5 -Onone -whole-module-optimization -parse-as-librar
     "$PROJECT_DIR/Sources/MediaAssemblyController.swift" \
     "$PROJECT_DIR/Sources/MediaAssemblyCanvas.swift" \
     "$PROJECT_DIR/Sources/MediaAssemblyControls.swift" \
-    "$PROJECT_DIR/Sources/HUDMediaAssemblyInteraction.swift" \
     "$PROJECT_DIR/Sources/OrbiPomRuntime.swift" \
-    "$PROJECT_DIR/Sources/OrbiPomArtwork.swift" \
     "$PROJECT_DIR/Sources/OrbiPomSession.swift" \
     "$PROJECT_DIR/Sources/OrbiPomCanvas.swift" \
-    "$PROJECT_DIR/Sources/HUDOrbiPomInteraction.swift" \
     "$PROJECT_DIR/Sources/HUDCalendarStore.swift" \
     "$PROJECT_DIR/Sources/HUDCalendarController.swift" \
     "$PROJECT_DIR/Sources/HUDCalendarCanvas.swift" \
-    "$PROJECT_DIR/Sources/HUDCalendarInteraction.swift" \
     "$PROJECT_DIR/Sources/ReaderStore.swift" \
     "$PROJECT_DIR/Sources/ReaderZIP.swift" \
     "$PROJECT_DIR/Sources/ReaderEPUB.swift" \
     "$PROJECT_DIR/Sources/ReaderDocument.swift" \
     "$PROJECT_DIR/Sources/ReaderController.swift" \
     "$PROJECT_DIR/Sources/ReaderCanvas.swift" \
-    "$PROJECT_DIR/Sources/ReaderInteraction.swift" \
     "$PROJECT_DIR/Sources/ArchiveCanvas.swift" \
-    "$PROJECT_DIR/Sources/HUDArchiveInteraction.swift" \
     "$PROJECT_DIR/Sources/ProjectionControls.swift" \
     "$PROJECT_DIR/Sources/ProjectionWorkspaceView.swift" \
     "$PROJECT_DIR/Sources/ProjectionController.swift" \
@@ -134,8 +150,8 @@ xcrun swiftc -swift-version 5 -Onone -whole-module-optimization -parse-as-librar
     "$PROJECT_DIR/Sources/NowPlayingAccessibility.swift" \
     "$PROJECT_DIR/Sources/NowPlayingAdapter.swift" \
     "$PROJECT_DIR/Sources/NowPlayingCanvas.swift" \
-    "$PROJECT_DIR/Sources/HUDNowPlayingInteraction.swift" \
     "$PROJECT_DIR/Sources/NotesCanvas.swift" \
+    "$PROJECT_DIR/Sources/NotesWorkspace.swift" \
     "$PROJECT_DIR/Sources/HUDProjectedTextEditor.swift" \
     "$PROJECT_DIR/Sources/HUDRenderedCursor.swift" \
     "$PROJECT_DIR/Sources/HUDNotesInteraction.swift" \
@@ -146,34 +162,29 @@ xcrun swiftc -swift-version 5 -Onone -whole-module-optimization -parse-as-librar
     "$PROJECT_DIR/Sources/AppShortcutLauncher.swift" \
     "$PROJECT_DIR/Sources/AppShortcutArtwork.swift" \
     "$PROJECT_DIR/Sources/AppShortcutCanvas.swift" \
-    "$PROJECT_DIR/Sources/HUDAppShortcutInteraction.swift" \
     "$PROJECT_DIR/Sources/ClipboardStore.swift" \
     "$PROJECT_DIR/Sources/ClipboardWatcher.swift" \
     "$PROJECT_DIR/Sources/ClipboardCanvas.swift" \
-    "$PROJECT_DIR/Sources/HUDClipboardInteraction.swift" \
     "$PROJECT_DIR/Sources/AudioDeviceController.swift" \
     "$PROJECT_DIR/Sources/PerAppAudioController.swift" \
     "$PROJECT_DIR/Sources/PerAppAudioEngine.swift" \
     "$PROJECT_DIR/Sources/PerAppAudioPCM.swift" \
     "$PROJECT_DIR/Sources/VolumeCanvas.swift" \
-    "$PROJECT_DIR/Sources/HUDVolumeInteraction.swift" \
     "$PROJECT_DIR/Sources/SystemActivityMonitor.swift" \
     "$PROJECT_DIR/Sources/AppActivityMonitor.swift" \
     "$PROJECT_DIR/Sources/ActivityMonitorCanvas.swift" \
+    "$PROJECT_DIR/Sources/BatteryCanvas.swift" \
     "$PROJECT_DIR/Sources/SystemStorageSettings.swift" \
     "$PROJECT_DIR/Sources/StorageController.swift" \
     "$PROJECT_DIR/Sources/TelemetryCanvases.swift" \
-    "$PROJECT_DIR/Sources/HUDTelemetryInteraction.swift" \
     "$PROJECT_DIR/Sources/WorkModeController.swift" \
     "$PROJECT_DIR/Sources/WorkModeFocusController.swift" \
     "$PROJECT_DIR/Sources/ControlCenterWorkModeFocusExecutor.swift" \
     "$PROJECT_DIR/Sources/WorkModeCanvas.swift" \
-    "$PROJECT_DIR/Sources/HUDWorkModeInteraction.swift" \
     "$PROJECT_DIR/Sources/SystemEventLog.swift" \
     "$PROJECT_DIR/Sources/SystemEventRecorder.swift" \
     "$PROJECT_DIR/Sources/AudioTopologyWatcher.swift" \
     "$PROJECT_DIR/Sources/EventLogCanvas.swift" \
-    "$PROJECT_DIR/Sources/HUDEventLogInteraction.swift" \
     "$PROJECT_DIR/Sources/WorldMapStore.swift" \
     "$PROJECT_DIR/Sources/WorldMapPinArtwork.swift" \
     "$PROJECT_DIR/Sources/WorldMapGeometry.swift" \
@@ -183,8 +194,8 @@ xcrun swiftc -swift-version 5 -Onone -whole-module-optimization -parse-as-librar
     "$PROJECT_DIR/Sources/WorldMapLayerCoordinates.swift" \
     "$PROJECT_DIR/Sources/WorldMapRasterController.swift" \
     "$PROJECT_DIR/Sources/WorldMapRasterPainter.swift" \
+    "$PROJECT_DIR/Sources/WorldMapSurface.swift" \
     "$PROJECT_DIR/Sources/WorldMapCanvas.swift" \
-    "$PROJECT_DIR/Sources/HUDWorldMapInteraction.swift" \
     "$PROJECT_DIR/Tests/HUDMotionTests.swift" \
     "$PROJECT_DIR/Tests/HUDCanvasLifecycleTests.swift" \
     "$PROJECT_DIR/Tests/HUDDeploymentFlickerTests.swift" \
@@ -217,6 +228,7 @@ xcrun swiftc -swift-version 5 -Onone -whole-module-optimization -parse-as-librar
     "$PROJECT_DIR/Tests/HUDNavigationTests.swift" \
     "$PROJECT_DIR/Tests/NotesStoreTests.swift" \
     "$PROJECT_DIR/Tests/NotesCanvasTests.swift" \
+    "$PROJECT_DIR/Tests/NotesWorkspaceTests.swift" \
     "$PROJECT_DIR/Tests/HUDProjectedTextEditorTests.swift" \
     "$PROJECT_DIR/Tests/HUDRenderedCursorTests.swift" \
     "$PROJECT_DIR/Tests/HUDNotesInteractionTests.swift" \
@@ -270,8 +282,6 @@ xcrun swiftc -swift-version 5 -Onone -whole-module-optimization -parse-as-librar
     "$PROJECT_DIR/Tests/HUDChargeMetricTests.swift" \
     "$PROJECT_DIR/Tests/HUDCenterLogoTests.swift" \
     "$PROJECT_DIR/Tests/HUDSettingsCanvasTests.swift" \
-    "$PROJECT_DIR/Tests/HUDQuitConfirmationTests.swift" \
-    "$PROJECT_DIR/Tests/HUDScaleSafetyTests.swift" \
     "$PROJECT_DIR/Tests/HUDGitHubReleaseTests.swift" \
     "$PROJECT_DIR/Tests/HUDUpdateStateTests.swift" \
     "$PROJECT_DIR/Tests/LocalizationTests.swift" \

@@ -92,7 +92,7 @@ from pathlib import Path
 import sys
 
 source_root, bundle_root = map(Path, sys.argv[1:])
-for directory in ('AppIconSources/Factions', 'AppIconSources/EndfieldWiki', 'AppIconSources/CenterLogos', 'WorldMap', 'MediaAssembly', 'OrbiPom'):
+for directory in ('AppIconSources/Factions', 'AppIconSources/EndfieldWiki', 'AppIconSources/CenterLogos', 'WorldMap', 'MediaAssembly', 'OrbiPom', 'Fonts'):
     source, bundle = source_root / directory, bundle_root / directory
     def files(root):
         if not root.is_dir():
@@ -114,7 +114,22 @@ for directory in ('AppIconSources/Factions', 'AppIconSources/EndfieldWiki', 'App
     for relative, path in expected.items():
         if path.read_bytes() != actual[relative].read_bytes():
             sys.exit(f'Stale bundled resource: {directory}/{relative}')
-print('Verified exact recursive resource trees, including Media Assembly subdirectories.')
+# The shared font folder ships unmodified upstream files: every file of its
+# manifest must match the recorded size and SHA-256, and nothing else may ship.
+import hashlib, json
+fonts = bundle_root / 'Fonts'
+manifest = json.loads((fonts / 'manifest.json').read_text())
+listed = {'manifest.json'}
+for family in manifest['families']:
+    for entry in family['files']:
+        data = (fonts / entry['file']).read_bytes()
+        if len(data) != entry['bytes'] or hashlib.sha256(data).hexdigest() != entry['sha256']:
+            sys.exit(f"Bundled font file differs from its manifest: Fonts/{entry['file']}")
+        listed.add(entry['file'])
+unlisted = sorted(path.name for path in fonts.iterdir() if path.name not in listed)
+if unlisted:
+    sys.exit(f'Bundled fonts not listed in Fonts/manifest.json: {unlisted}')
+print('Verified exact recursive resource trees, including Media Assembly subdirectories and the font manifest.')
 PY
 python3 "$PROJECT_DIR/scripts/package-watch-resources.py" verify \
     "$PROJECT_DIR/Resources/WatchSource" "$RESOURCES/WatchSource"

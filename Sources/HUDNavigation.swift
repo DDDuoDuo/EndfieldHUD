@@ -193,34 +193,47 @@ final class HUDNavigation {
         if let target { entries.first { $0.target == target }?.setHovered(true) }
     }
 
+    /// Right-hand modules hidden in System > Modules keep their entry here,
+    /// off screen, so showing them again reuses the same layers.
+    private var parkedEntries: [HUDModule: HUDNavigationEntry] = [:]
+
     /// Only app entries are inserted/removed. Existing module and app layers
     /// survive edits, reordering and reflow so pointer depth is uninterrupted.
-    func updateAppShortcuts(_ shortcuts: [HUDAppShortcutPresentation], animated: Bool = true) {
+    /// Right-hand modules follow `layout`; hidden ones are parked.
+    func updateAppShortcuts(_ shortcuts: [HUDAppShortcutPresentation], animated: Bool = true,
+                            layout: HUDModuleLayout = HUDRuntimeAppearance.configuration.moduleLayout) {
         var seen = Set<UUID>()
         let shortcuts = shortcuts.filter { seen.insert($0.id).inserted }
         let previousTargets = rightEntries.map(\.target)
         let previousByTarget = Dictionary(uniqueKeysWithValues: entries.map { ($0.target, $0) })
+        let shown = layout.visible.filter { $0.group == .right }
         let appEntries = shortcuts.enumerated().map { index, shortcut -> HUDNavigationEntry in
             let target = HUDNavigationTarget.appShortcut(shortcut.id)
             let entry = previousByTarget[target] ?? HUDNavigationEntry(target: target,
-                rect: Self.rightRect(index: Self.rightModules.count - 1 + index, offset: rightScrollOffset),
+                rect: Self.rightRect(index: shown.count + index, offset: rightScrollOffset),
                 prepareArtwork: isArtworkPrepared)
             entry.clipRect = rightViewport
             entry.updateShortcut(shortcut)
             entry.update(dark: dark, accent: accent, contentsScale: contentsScale)
             return entry
         }
-        let modules = entries.filter { $0.module != nil }
-        let right = Self.rightModules.filter { $0 != .addApp }.compactMap { module in
-            modules.first { $0.module == module }
-        } + appEntries + modules.filter { $0.module == .addApp }
+        let modules = entries.filter { $0.module != nil } + parkedEntries.values
+        let right = shown.compactMap { module in modules.first { $0.module == module } }
+            + appEntries + modules.filter { $0.module == .addApp }
         let wanted = Set(right.map(\.target))
         if let hoveredTarget, !wanted.contains(hoveredTarget), hoveredTarget.group == .right { hoverTarget(nil) }
-        for entry in entries where entry.module == nil && !wanted.contains(entry.target) {
+        for entry in entries where entry.group == .right && !wanted.contains(entry.target) {
             entry.cancelAnimations(); entry.layer.removeFromSuperlayer()
+            if let module = entry.module { parkedEntries[module] = entry }
         }
         entries = right + modules.filter { $0.group != .right }
-        for entry in right where entry.layer.superlayer !== rightClip { rightClip.addSublayer(entry.layer) }
+        for (index, entry) in right.enumerated() where entry.layer.superlayer !== rightClip {
+            if let module = entry.module, parkedEntries.removeValue(forKey: module) != nil {
+                // A module shown again appears in its new slot, not where it was hidden.
+                entry.setGeometry(rect: Self.rightRect(index: index, offset: rightScrollOffset), rotation: 0, animated: false, spring: false)
+            }
+            rightClip.addSublayer(entry.layer)
+        }
         if previousTargets != right.map(\.target) {
             scrollAnimationGeneration += 1
             isScrollGestureActive = false; ownsMomentum = false; suppressesMomentum = false
@@ -462,7 +475,7 @@ final class HUDNavigation {
     private func interruptScrollAnimation() {
         scrollAnimationGeneration += 1
         let previousOffset = rightScrollOffset
-        if let first = entries.first(where: { $0.module == Self.rightModules[0] }),
+        if let first = rightEntries.first,
            first.layer.animation(forKey: "navigation.position") != nil, let shown = first.layer.presentation() {
             rightScrollOffset = Self.rightRect(index: 0, offset: 0).midY - shown.position.y
         }
@@ -563,8 +576,8 @@ final class HUDNavigationEntry {
     private let bottomTechnical = CAShapeLayer()
     private let icon = CAShapeLayer()
     private let appIcon = CALayer()
-    private let title = CATextLayer()
-    private let subtitle = CATextLayer()
+    private let title = HUDStandardTextLayer(size: 12, weight: .bold)
+    private let subtitle = HUDStandardTextLayer(size: 10, weight: .bold)
     private let outline: CGPath
     private let labelSize: CGFloat
     private var dark = true
@@ -694,7 +707,6 @@ final class HUDNavigationEntry {
             title.alignmentMode = .left
             subtitle.frame = CGRect(x: 57, y: 34, width: rect.width - 71, height: 17)
             subtitle.fontSize = 10
-            subtitle.font = NSFont.systemFont(ofSize: 10, weight: .bold)
             subtitle.alignmentMode = .left
         } else if group == .bottom {
             iconSize = module == .storage ? 30 : 24
@@ -1079,14 +1091,13 @@ final class HUDNavigationEntry {
         }
         if shortcut != nil { title.frame = CGRect(x: 7, y: 39, width: rect.width - 14, height: 30) }
         if japanese && group == .right && !hasTwoLines && shortcut == nil {
-            let width = (text as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: size, weight: .bold)]).width
+            let width = (text as NSString).size(withAttributes: [.font: HUDFontResolver.nsFont(size: size, weight: .bold)]).width
             if width > title.frame.width { size *= title.frame.width / width }
         }
         title.truncationMode = shortcut == nil ? .none : .end
         title.isWrapped = hasTwoLines || bottomWrapped || shortcut != nil
         title.string = text
         title.fontSize = size
-        title.font = NSFont.systemFont(ofSize: size, weight: .bold)
     }
 
     private func applyColors() {
@@ -1168,6 +1179,24 @@ final class HUDNavigationEntry {
         // precise action glyphs where the source category has no equivalent.
         default: return nil
         }
+    }
+
+    /// The right-hand list's glyph for `module` as one `side`-px layer, the
+    /// game artwork where the list uses it, else the vector (System > Modules).
+    static func glyphLayer(for module: HUDModule, side: CGFloat, ink: NSColor, scale: CGFloat) -> CALayer {
+        let frame = CGRect(x: 0, y: 0, width: side, height: side)
+        if let image = gameIcon(for: module)?.cgImage(size: 96, tint: ink) {
+            let layer = HUDLayer.plain("module.glyph")
+            layer.frame = frame; layer.contentsGravity = .resizeAspect; layer.contentsScale = scale
+            layer.contents = HUDSourceDesktopIconLayout.image(image)
+            return layer
+        }
+        let shape = HUDLayer.shape("module.glyph")
+        shape.frame = frame; shape.fillColor = ink.cgColor; shape.fillRule = .evenOdd; shape.contentsScale = scale
+        // The desktop layout fits every vector into the same 26 px of a 32 px box.
+        var transform = CGAffineTransform(scaleX: side / 32, y: side / 32)
+        shape.path = HUDSourceDesktopIconLayout.path(iconPath(for: module)).copy(using: &transform)
+        return shape
     }
 
     fileprivate func contains(_ point: CGPoint) -> Bool {

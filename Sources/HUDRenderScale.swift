@@ -6,6 +6,6 @@ import QuartzCore
 enum HUDRenderScale {
     static func contentScale(for layer: CALayer, baseScale: CGFloat) -> CGFloat {
         let base = baseScale.isFinite ? min(4, max(1, baseScale)) : 2
-        return layer is CATextLayer ? min(4, ceil(base * 1.35)) : base
+        return layer is CATextLayer || layer is HUDTextLayer ? min(4, ceil(base * 1.35)) : base
     }
 }

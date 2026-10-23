@@ -53,6 +53,36 @@ preserve_legacy_executable() {
     fi
 }
 
+# Install the current Info.plist (capability purpose strings), icon and
+# resources into a staged or existing development bundle, then sign it.
+install_resources() {
+    local APP_PATH="$1" RESOURCES_PATH="$1/Contents/Resources"
+    cp "$PROJECT_DIR/Resources/Info.plist" "$APP_PATH/Contents/Info.plist"
+    for LOCALIZATION in en zh-Hans zh-Hant ja ko; do
+        ditto "$PROJECT_DIR/Resources/$LOCALIZATION.lproj" "$RESOURCES_PATH/$LOCALIZATION.lproj"
+    done
+    cp "$PROJECT_DIR/Resources/EndfieldIndustriesSource.png" "$RESOURCES_PATH/"
+    cp "$ICON_CACHE" "$RESOURCES_PATH/AppIcon.icns"
+    ditto "$PROJECT_DIR/Resources/AppIconSources" "$RESOURCES_PATH/AppIconSources"
+    # Prepared cells replace the full atlas in the running app. Keep the original in source.
+    if [ -d "$RESOURCES_PATH/AppIconSources/Factions" ]; then rm -f "$RESOURCES_PATH/AppIconSources/FactionAtlas.png"; fi
+    ditto "$PROJECT_DIR/Resources/WorldMap" "$RESOURCES_PATH/WorldMap"
+    rm -rf "$RESOURCES_PATH/MediaAssembly"
+    ditto "$PROJECT_DIR/Resources/MediaAssembly" "$RESOURCES_PATH/MediaAssembly"
+    ditto "$PROJECT_DIR/Resources/OrbiPom" "$RESOURCES_PATH/OrbiPom"
+    ditto "$PROJECT_DIR/Resources/Watch" "$RESOURCES_PATH/Watch"
+    # The shared font folder (fonts, licences and manifest) is replaced whole.
+    rm -rf "$RESOURCES_PATH/Fonts"
+    ditto "$PROJECT_DIR/Resources/Fonts" "$RESOURCES_PATH/Fonts"
+    python3 "$PROJECT_DIR/scripts/package-watch-resources.py" stage \
+        "$PROJECT_DIR/Resources/WatchSource" "$RESOURCES_PATH/WatchSource"
+    cp "$PROJECT_DIR/CREDITS.md" "$RESOURCES_PATH/CREDITS.md"
+    preserve_legacy_executable "$APP_PATH"
+    CODE_SIGN_IDENTITY=- "$PROJECT_DIR/scripts/embed-sparkle.sh" "$APP_PATH" "$SPARKLE_DIR"
+    CODE_SIGN_IDENTITY=- "$PROJECT_DIR/scripts/embed-now-playing.sh" "$APP_PATH" "$SELECTED_SDK" "$HOST_ARCH"
+    codesign --force --sign - --entitlements "$PROJECT_DIR/Resources/EndfieldHUD.entitlements" "$APP_PATH"
+}
+
 SOURCES=("$PROJECT_DIR"/Sources/*.swift)
 DIAGNOSTIC_FLAGS=()
 if [ "${DEV_CURSOR_DIAGNOSTICS:-0}" = 1 ]; then
@@ -101,54 +131,13 @@ if [ ! -d "$DEV_APP" ]; then
         cp "$PROJECT_DIR/CREDITS.md" "$STAGED_APP/Contents/Resources/CREDITS.md"
     fi
     mv "$DEV_STAGE/$APP_NAME" "$STAGED_APP/Contents/MacOS/$APP_NAME"
-    cp "$PROJECT_DIR/Resources/Info.plist" "$STAGED_APP/Contents/Info.plist"
-    for LOCALIZATION in en zh-Hans zh-Hant ja ko; do
-        ditto "$PROJECT_DIR/Resources/$LOCALIZATION.lproj" "$STAGED_APP/Contents/Resources/$LOCALIZATION.lproj"
-    done
-    cp "$PROJECT_DIR/Resources/EndfieldIndustriesSource.png" "$STAGED_APP/Contents/Resources/"
-    cp "$ICON_CACHE" "$STAGED_APP/Contents/Resources/AppIcon.icns"
-    ditto "$PROJECT_DIR/Resources/AppIconSources" "$STAGED_APP/Contents/Resources/AppIconSources"
-    # Prepared cells replace the full atlas in the running app. Keep the original in source.
-    if [ -d "$STAGED_APP/Contents/Resources/AppIconSources/Factions" ]; then rm -f "$STAGED_APP/Contents/Resources/AppIconSources/FactionAtlas.png"; fi
-    ditto "$PROJECT_DIR/Resources/WorldMap" "$STAGED_APP/Contents/Resources/WorldMap"
-    rm -rf "$STAGED_APP/Contents/Resources/MediaAssembly"
-    ditto "$PROJECT_DIR/Resources/MediaAssembly" "$STAGED_APP/Contents/Resources/MediaAssembly"
-    ditto "$PROJECT_DIR/Resources/OrbiPom" "$STAGED_APP/Contents/Resources/OrbiPom"
-    ditto "$PROJECT_DIR/Resources/Watch" "$STAGED_APP/Contents/Resources/Watch"
-    python3 "$PROJECT_DIR/scripts/package-watch-resources.py" stage \
-        "$PROJECT_DIR/Resources/WatchSource" "$STAGED_APP/Contents/Resources/WatchSource"
-    cp "$PROJECT_DIR/CREDITS.md" "$STAGED_APP/Contents/Resources/CREDITS.md"
-    preserve_legacy_executable "$STAGED_APP"
-    CODE_SIGN_IDENTITY=- "$PROJECT_DIR/scripts/embed-sparkle.sh" "$STAGED_APP" "$SPARKLE_DIR"
-    CODE_SIGN_IDENTITY=- "$PROJECT_DIR/scripts/embed-now-playing.sh" "$STAGED_APP" "$SELECTED_SDK" "$HOST_ARCH"
-    codesign --force --sign - --entitlements "$PROJECT_DIR/Resources/EndfieldHUD.entitlements" "$STAGED_APP"
+    install_resources "$STAGED_APP"
     mv "$STAGED_APP" "$DEV_APP"
 else
     # The temporary binary is on the same volume, so rename replaces the
     # executable atomically. A failed compile leaves the existing app intact.
     mv -f "$DEV_STAGE/$APP_NAME" "$DEV_APP/Contents/MacOS/$APP_NAME"
-    # Keep new capability purpose strings in step with the development binary.
-    cp "$PROJECT_DIR/Resources/Info.plist" "$DEV_APP/Contents/Info.plist"
-    for LOCALIZATION in en zh-Hans zh-Hant ja ko; do
-        ditto "$PROJECT_DIR/Resources/$LOCALIZATION.lproj" "$DEV_APP/Contents/Resources/$LOCALIZATION.lproj"
-    done
-    cp "$PROJECT_DIR/Resources/EndfieldIndustriesSource.png" "$DEV_APP/Contents/Resources/"
-    cp "$ICON_CACHE" "$DEV_APP/Contents/Resources/AppIcon.icns"
-    ditto "$PROJECT_DIR/Resources/AppIconSources" "$DEV_APP/Contents/Resources/AppIconSources"
-    # Prepared cells replace the full atlas in the running app. Keep the original in source.
-    if [ -d "$DEV_APP/Contents/Resources/AppIconSources/Factions" ]; then rm -f "$DEV_APP/Contents/Resources/AppIconSources/FactionAtlas.png"; fi
-    ditto "$PROJECT_DIR/Resources/WorldMap" "$DEV_APP/Contents/Resources/WorldMap"
-    rm -rf "$DEV_APP/Contents/Resources/MediaAssembly"
-    ditto "$PROJECT_DIR/Resources/MediaAssembly" "$DEV_APP/Contents/Resources/MediaAssembly"
-    ditto "$PROJECT_DIR/Resources/OrbiPom" "$DEV_APP/Contents/Resources/OrbiPom"
-    ditto "$PROJECT_DIR/Resources/Watch" "$DEV_APP/Contents/Resources/Watch"
-    python3 "$PROJECT_DIR/scripts/package-watch-resources.py" stage \
-        "$PROJECT_DIR/Resources/WatchSource" "$DEV_APP/Contents/Resources/WatchSource"
-    cp "$PROJECT_DIR/CREDITS.md" "$DEV_APP/Contents/Resources/CREDITS.md"
-    preserve_legacy_executable "$DEV_APP"
-    CODE_SIGN_IDENTITY=- "$PROJECT_DIR/scripts/embed-sparkle.sh" "$DEV_APP" "$SPARKLE_DIR"
-    CODE_SIGN_IDENTITY=- "$PROJECT_DIR/scripts/embed-now-playing.sh" "$DEV_APP" "$SELECTED_SDK" "$HOST_ARCH"
-    codesign --force --sign - --entitlements "$PROJECT_DIR/Resources/EndfieldHUD.entitlements" "$DEV_APP"
+    install_resources "$DEV_APP"
 fi
 
 # Use the bundle verifier's native architecture, signature, weak-link and

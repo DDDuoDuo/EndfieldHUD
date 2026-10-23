@@ -1,7 +1,7 @@
 {
   "format": "EndfieldHUD.Windows.ThirdPartyNotices",
   "schema": 1,
-  "about": "Every third-party component compiled into EndfieldHUD.exe, EndfieldHUD-Setup.exe or uninstall.exe, or shipped in fonts/ or resources/. packaging/third_party_notices.cmake renders THIRD-PARTY-NOTICES.txt from this list (installed next to EndfieldHUD.exe, in the setup and the portable zip); packaging_third_party_notices_contracts fails when a shipped component has no entry or its licence text is missing. 'paths' are the component's files in windows/ (every windows/third_party folder, bundled font and licence file must be covered); 'texts' are reproduced in full; 'macOriginal' is the Mac copy a text must equal when the repository root is present; 'vendoredOriginal' is the vendored file whose embedded notice the first text must reproduce. A source file that embeds Unicode Character Database data (a Unicode licence notice or a note that it holds generated Unicode tables) must be named in the paths of a component under the Unicode licence.",
+  "about": "Every third-party component compiled into EndfieldHUD.exe, EndfieldHUD-Setup.exe or uninstall.exe, or shipped in fonts/ or resources/. packaging/third_party_notices.cmake renders THIRD-PARTY-NOTICES.txt from this list (installed next to EndfieldHUD.exe, in the setup and the portable zip); packaging_third_party_notices_contracts fails when a shipped component has no entry or its licence text is missing. 'paths' are the component's files relative to windows/ (the bundled fonts are in the repository's shared ../Resources/Fonts folder; every windows/third_party folder, bundled font and licence file must be covered); 'texts' are reproduced in full; 'macOriginal' is the Mac copy a text must equal when the repository root is present; 'vendoredOriginal' is the vendored file whose embedded notice the first text must reproduce. A source file that embeds Unicode Character Database data (a Unicode licence notice or a note that it holds generated Unicode tables) must be named in the paths of a component under the Unicode licence.",
   "preamble": [
     "EndfieldHUD is an unofficial fan project by DDDuoDuo (https://github.com/DDDuoDuo/EndfieldHUD). Its original code is licensed under the MIT License. EndfieldHUD.exe, EndfieldHUD Setup, the uninstaller and the files in the fonts and resources folders include the third-party components listed below. Each keeps its own licence, reproduced in full where it has one.",
     "Arknights, Arknights: Endfield, their artwork, branding and extracted game resources belong to HYPERGRYPH and their respective owners. They are excluded from EndfieldHUD's MIT License. EndfieldHUD is not affiliated with or endorsed by HYPERGRYPH."
@@ -54,9 +54,29 @@
       "url": "https://github.com/google/fonts/tree/a85815a42757630ce188fdad368c2dfc444d4773/ofl/notosanssc",
       "license": "OFL-1.1",
       "use": "The HUD's bundled text font, loaded privately (never installed into Windows).",
-      "ships": ["fonts/NotoSansSC.ttf", "fonts/NotoSansSC-OFL.txt"],
-      "paths": ["assets/fonts/NotoSansSC.ttf", "assets/fonts/NotoSansSC-OFL.txt", "assets/fonts/manifest.json"],
-      "texts": ["assets/fonts/NotoSansSC-OFL.txt"]
+      "ships": ["fonts/NotoSansSC.ttf", "fonts/NotoSansSC-OFL.txt", "fonts/manifest.json"],
+      "paths": ["../Resources/Fonts/NotoSansSC.ttf", "../Resources/Fonts/NotoSansSC-OFL.txt", "../Resources/Fonts/manifest.json"],
+      "texts": ["../Resources/Fonts/NotoSansSC-OFL.txt"]
+    },
+    {
+      "name": "Noto Sans TC",
+      "version": "2.004, variable weight (google/fonts commit a85815a42757630ce188fdad368c2dfc444d4773)",
+      "url": "https://github.com/google/fonts/tree/a85815a42757630ce188fdad368c2dfc444d4773/ofl/notosanstc",
+      "license": "OFL-1.1",
+      "use": "The HUD's bundled Traditional Chinese text font, loaded privately (never installed into Windows).",
+      "ships": ["fonts/NotoSansTC.ttf", "fonts/NotoSansTC-OFL.txt"],
+      "paths": ["../Resources/Fonts/NotoSansTC.ttf", "../Resources/Fonts/NotoSansTC-OFL.txt"],
+      "texts": ["../Resources/Fonts/NotoSansTC-OFL.txt"]
+    },
+    {
+      "name": "Noto Sans JP",
+      "version": "2.004, variable weight (google/fonts commit a85815a42757630ce188fdad368c2dfc444d4773)",
+      "url": "https://github.com/google/fonts/tree/a85815a42757630ce188fdad368c2dfc444d4773/ofl/notosansjp",
+      "license": "OFL-1.1",
+      "use": "The HUD's bundled Japanese text font, loaded privately (never installed into Windows).",
+      "ships": ["fonts/NotoSansJP.ttf", "fonts/NotoSansJP-OFL.txt"],
+      "paths": ["../Resources/Fonts/NotoSansJP.ttf", "../Resources/Fonts/NotoSansJP-OFL.txt"],
+      "texts": ["../Resources/Fonts/NotoSansJP-OFL.txt"]
     },
     {
       "name": "Noto Sans KR",
@@ -65,8 +85,8 @@
       "license": "OFL-1.1",
       "use": "The HUD's bundled Korean text font, loaded privately (never installed into Windows).",
       "ships": ["fonts/NotoSansKR.ttf", "fonts/NotoSansKR-OFL.txt"],
-      "paths": ["assets/fonts/NotoSansKR.ttf", "assets/fonts/NotoSansKR-OFL.txt"],
-      "texts": ["assets/fonts/NotoSansKR-OFL.txt"]
+      "paths": ["../Resources/Fonts/NotoSansKR.ttf", "../Resources/Fonts/NotoSansKR-OFL.txt"],
+      "texts": ["../Resources/Fonts/NotoSansKR-OFL.txt"]
     },
     {
       "name": "Matter.js",

@@ -10,7 +10,24 @@ struct ClipboardItem: Identifiable {
     var kind: ClipboardKind
     var preview: String
     var thumbnail: CGImage?
+    /// The list's meta line (source app, size); never the contents.
+    var details = ClipboardDetails()
     fileprivate let payload: ClipboardPayload
+}
+
+/// What the Clipboard list shows under a record (spec §3.8), captured with it.
+struct ClipboardDetails: Equatable {
+    /// The app that put the record on the clipboard, when it is known.
+    var source: String?
+    /// Characters of a text record.
+    var characters: Int?
+    /// Image records: the pasteboard format (PNG, TIFF) and pixel size.
+    var format: String?
+    var pixelWidth: Int?
+    var pixelHeight: Int?
+    /// File records: how many items, and the total size when all are regular files.
+    var fileCount: Int?
+    var byteCount: Int64?
 }
 
 fileprivate final class ClipboardFileReferences {
@@ -56,6 +73,8 @@ final class ClipboardStore {
     private(set) var capacity: Int
     private(set) var statusMessage: String?
     private var observers: [UUID: () -> Void] = [:]
+    /// Names the app that owns new clipboard contents (tests inject it).
+    var sourceApplication: (NSPasteboard) -> String? = ClipboardStore.sourceApplication(of:)
     private static let maximumTextBytes = 1_048_576
     private static let maximumImageBytes = 64 * 1_048_576
     private static let maximumRetainedBytes = 128 * 1_048_576
@@ -117,7 +136,7 @@ final class ClipboardStore {
             .union(pasteboard.pasteboardItems?.flatMap { $0.types.map(\.rawValue) } ?? [])
         guard Self.ignoredTypes.isDisjoint(with: declared) else { return false }
         do {
-            guard let item = try read(from: pasteboard) else { return false }
+            guard var item = try read(from: pasteboard) else { return false }
             if let index = items.firstIndex(where: { $0.payload.matches(item.payload) }) {
                 let existing = items.remove(at: index)
                 items.insert(existing, at: 0)
@@ -126,6 +145,7 @@ final class ClipboardStore {
                 if changed { notify() }
                 return true
             }
+            item.details.source = sourceApplication(pasteboard)
             var next = items
             var bytes = next.reduce(item.payload.byteCount) { $0 + $1.payload.byteCount }
             while next.count >= capacity || bytes > Self.maximumRetainedBytes {
@@ -176,7 +196,8 @@ final class ClipboardStore {
             }
             let names = urls.prefix(3).map(\.lastPathComponent).joined(separator: ", ")
             let preview = urls.count > 3 ? names + " (+\(urls.count - 3))" : names
-            return make(.files, preview: preview, payload: .files(ClipboardFileReferences(urls)))
+            return make(.files, preview: preview, details: ClipboardDetails(fileCount: urls.count, byteCount: Self.totalSize(urls)),
+                        payload: .files(ClipboardFileReferences(urls)))
         }
         for type: NSPasteboard.PasteboardType in [.png, .tiff] {
             guard pasteboard.types?.contains(type) == true, let data = pasteboard.data(forType: type) else { continue }
@@ -193,8 +214,9 @@ final class ClipboardStore {
                 kCGImageSourceCreateThumbnailWithTransform: true, kCGImageSourceThumbnailMaxPixelSize: 96,
                 kCGImageSourceShouldCacheImmediately: true]
             guard let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { continue }
-            return make(.image, preview: L10n.text("Image", "图像") + " · \(width) × \(height)",
-                        thumbnail: thumbnail, payload: .image(type, data))
+            return make(.image, preview: L10n.text("Image", "图像") + " · \(width) × \(height)", thumbnail: thumbnail,
+                        details: ClipboardDetails(format: type == .png ? "PNG" : "TIFF", pixelWidth: width, pixelHeight: height),
+                        payload: .image(type, data))
         }
         if let explicit = pasteboard.string(forType: .URL), let url = Self.parsedURL(explicit, explicit: true) {
             let original = pasteboard.string(forType: .string) ?? explicit
@@ -206,7 +228,7 @@ final class ClipboardStore {
         if text.utf8.count <= 2048, let url = Self.parsedURL(text, explicit: false) {
             return make(.url, preview: text, payload: .url(url, text))
         }
-        return make(.text, preview: text, payload: .text(text))
+        return make(.text, preview: text, details: ClipboardDetails(characters: text.count), payload: .text(text))
     }
 
     private static func parsedURL(_ text: String, explicit: Bool) -> URL? {
@@ -220,11 +242,37 @@ final class ClipboardStore {
         return nil
     }
 
-    private func make(_ kind: ClipboardKind, preview: String, thumbnail: CGImage? = nil, payload: ClipboardPayload) -> ClipboardItem {
+    private func make(_ kind: ClipboardKind, preview: String, thumbnail: CGImage? = nil, details: ClipboardDetails = ClipboardDetails(),
+                      payload: ClipboardPayload) -> ClipboardItem {
         let flattened = preview.split(whereSeparator: \.isWhitespace).joined(separator: " ")
         let compact = flattened.count > 90 ? String(flattened.prefix(89)) + "…" : flattened
         return ClipboardItem(id: UUID(), isPinned: false, createdAt: Date(), kind: kind,
-                             preview: compact, thumbnail: thumbnail, payload: payload)
+                             preview: compact, thumbnail: thumbnail, details: details, payload: payload)
+    }
+
+    /// Total size of up to 64 regular files (one metadata read each); nil for
+    /// folders, packages, larger selections or unreadable items.
+    private static func totalSize(_ urls: [URL]) -> Int64? {
+        guard urls.count <= 64 else { return nil }
+        var total: Int64 = 0
+        for url in urls {
+            guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
+                  values.isRegularFile == true, let size = values.fileSize else { return nil }
+            total += Int64(size)
+        }
+        return total
+    }
+
+    /// The nspasteboard.org source marker when the copying app declares one,
+    /// otherwise the frontmost app (never this one).
+    static func sourceApplication(of pasteboard: NSPasteboard) -> String? {
+        let marker = NSPasteboard.PasteboardType("org.nspasteboard.source")
+        if pasteboard.types?.contains(marker) == true, let bundleID = pasteboard.string(forType: marker), !bundleID.isEmpty {
+            if let name = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first?.localizedName { return name }
+            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) { return FileManager.default.displayName(atPath: url.path) }
+        }
+        guard let app = NSWorkspace.shared.frontmostApplication, app.processIdentifier != ProcessInfo.processInfo.processIdentifier else { return nil }
+        return app.localizedName
     }
 
     private func setStatus(_ value: String?) {

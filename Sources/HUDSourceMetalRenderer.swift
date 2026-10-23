@@ -1573,6 +1573,12 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
     /// Encoded linear-premultiplied sRGB RGB cannot be declared as CGImage's
     /// encoded-space premultiplied RGB. The matte retains every raw RGB byte,
     /// including additive color, while diagnostics preserve the original alpha.
+    /// Development captures only (the preview harness): `alpha` skips the
+    /// black matte (light theme previews), `blank` drops the shell entirely
+    /// (masks of the centre content for pixel comparisons).
+    enum PreviewCapture { case blackMatte, alpha, blank }
+    static var previewCapture = PreviewCapture.blackMatte
+
     func copyDrawableImage() throws -> CGImage {
         guard renderedFrameGeneration == submittedFrameGeneration else {
             throw Failure.message("Current source frame has no newly rendered Metal drawable")
@@ -1598,8 +1604,15 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
         drawableReadbackReport = try HUDSourceDrawableReadback.analyze(rawBGRA: rawData,
             width: texture.width, height: texture.height, rowBytes: rowBytes)
         drawableReadbackBGRA = rawData
-        let data = try HUDSourceDrawableReadback.blackMatteEncodedBGRA(rawBGRA: rawData,
-            width: texture.width, height: texture.height, rowBytes: rowBytes)
+        // Offscreen previews of the light theme keep the drawable's alpha, so
+        // the shell composites over the backdrop as it does on screen.
+        let data: Data
+        switch Self.previewCapture {
+        case .blackMatte: data = try HUDSourceDrawableReadback.blackMatteEncodedBGRA(rawBGRA: rawData, width: texture.width,
+                                                                                     height: texture.height, rowBytes: rowBytes)
+        case .alpha: data = rawData
+        case .blank: data = Data(count: rawData.count)
+        }
         guard let provider = CGDataProvider(data: data as CFData),
               let image = CGImage(width: texture.width, height: texture.height, bitsPerComponent: 8, bitsPerPixel: 32,
                                   bytesPerRow: rowBytes, space: CGColorSpace(name: CGColorSpace.sRGB)!,

@@ -11,6 +11,11 @@ struct ReaderPage {
     let image: CGImage
     let summary: String
     let isIllustration: Bool
+    /// PDF page count (page numbers); nil for reflowed EPUB and TXT text.
+    var pageCount: Int? = nil
+    /// Text pages: page pt from the text's top (the top margin) to its last
+    /// line's bottom, so a continuous column joins pages without a gap.
+    var textHeight: CGFloat? = nil
 }
 
 /// Owned exclusively by the controller's one worker. PDFKit documents, ZIP file
@@ -100,9 +105,9 @@ final class ReaderDocument {
         guard let context = CGContext(data: nil, width: Int(dimensions.width), height: Int(dimensions.height), bitsPerComponent: 8,
             bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { throw ReaderError.tooLarge }
         context.scaleBy(x: dimensions.width / size.width, y: dimensions.height / size.height)
-        context.setFillColor(NSColor(white: dark ? 0.07 : 0.95, alpha: 1).cgColor); context.fill(CGRect(origin: .zero, size: size))
+        context.setFillColor(dark ? NSColor(white: 0.07, alpha: 1).cgColor : Self.paper); context.fill(CGRect(origin: .zero, size: size))
         let rect = CGRect(origin: .zero, size: size).insetBy(dx: preferences.margin, dy: preferences.margin)
-        var next: ReaderLocation?, summary = "", illustration = false
+        var next: ReaderLocation?, summary = "", illustration = false, textHeight: CGFloat?
         let imageView = imageView.clamped(to: size)
         func applyImageView() {
             // Rasterize only the visible viewport at every zoom. The fixed
@@ -150,6 +155,13 @@ final class ReaderDocument {
                 let visible = CTFrameGetVisibleStringRange(frame).length
                 guard visible > 0 else { throw ReaderError.invalidBook }
                 CTFrameDraw(frame, context)
+                let lines = CTFrameGetLines(frame) as? [CTLine] ?? []
+                if let last = lines.last {
+                    var origin = CGPoint.zero, descent: CGFloat = 0
+                    CTFrameGetLineOrigins(frame, CFRange(location: lines.count - 1, length: 1), &origin)
+                    CTLineGetTypographicBounds(last, nil, &descent, nil)
+                    textHeight = min(rect.height, max(1, rect.height - origin.y + descent))
+                }
                 let end = location.character + visible
                 next = end < string.length ? ReaderLocation(section: location.section, block: location.block, character: end) : advance(location, blockCount: contents.count)
                 portion = Double(location.character) / Double(max(1, string.length))
@@ -159,7 +171,8 @@ final class ReaderDocument {
         }
         guard let image = context.makeImage() else { throw ReaderError.invalidBook }
         return ReaderPage(location: location, next: next, previous: try previous(location, preferences: preferences, size: size),
-                          progress: progress, image: image, summary: summary, isIllustration: illustration)
+                          progress: progress, image: image, summary: summary, isIllustration: illustration, pageCount: pdf?.pageCount,
+                          textHeight: textHeight)
     }
     private func advance(_ location: ReaderLocation, blockCount: Int) -> ReaderLocation? {
         if location.block + 1 < blockCount { return ReaderLocation(section: location.section, block: location.block + 1) }
@@ -197,8 +210,11 @@ final class ReaderDocument {
         let paragraph = NSMutableParagraphStyle(); paragraph.lineSpacing = preferences.lineSpacing
         paragraph.baseWritingDirection = .natural
         return NSAttributedString(string: value, attributes: [.font: NSFont(name: preferences.fontName, size: preferences.fontSize) ?? .systemFont(ofSize: preferences.fontSize),
-            .foregroundColor: NSColor(white: dark ? 0.92 : 0.08, alpha: 1), .paragraphStyle: paragraph])
+            .foregroundColor: dark ? NSColor(white: 0.92, alpha: 1) : NSColor(cgColor: paperInk) ?? .black, .paragraphStyle: paragraph])
     }
+    /// The light tone is the reader's paper page (spec §3.15): #EFEDE6 with #222 text.
+    static let paper = CGColor(srgbRed: 0xEF / 255.0, green: 0xED / 255.0, blue: 0xE6 / 255.0, alpha: 1)
+    static let paperInk = CGColor(srgbRed: 0x22 / 255.0, green: 0x22 / 255.0, blue: 0x22 / 255.0, alpha: 1)
     private static func fit(_ size: CGSize, in bounds: CGRect) -> CGRect {
         let ratio = min(bounds.width / max(1, size.width), bounds.height / max(1, size.height))
         return CGRect(x: bounds.midX - size.width * ratio / 2, y: bounds.midY - size.height * ratio / 2, width: size.width * ratio, height: size.height * ratio)

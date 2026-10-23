@@ -1208,10 +1208,30 @@ if(WIN32)
   endif()
   # All preview/test executables share one private font package. Fonts are not
   # installed into Windows and are not duplicated for individual test targets.
-  set(hud_font_files NotoSansSC.ttf NotoSansKR.ttf NotoSansSC-OFL.txt NotoSansKR-OFL.txt manifest.json)
+  # The files live once in the repository's shared Resources/Fonts folder, also
+  # used by the macOS app. Its manifest.json is the list: every file of a family
+  # whose "platforms" include "windows" ships in fonts/, with the manifest.
+  set(hud_shared_font_source_dir "${CMAKE_CURRENT_SOURCE_DIR}/../Resources/Fonts")
+  file(READ "${hud_shared_font_source_dir}/manifest.json" hud_font_manifest)
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${hud_shared_font_source_dir}/manifest.json")
+  set(hud_font_files manifest.json)
+  string(JSON hud_font_family_count LENGTH "${hud_font_manifest}" families)
+  math(EXPR hud_font_family_last "${hud_font_family_count} - 1")
+  foreach(hud_font_family RANGE ${hud_font_family_last})
+    string(JSON hud_font_platforms GET "${hud_font_manifest}" families ${hud_font_family} platforms)
+    if(NOT hud_font_platforms MATCHES "\"windows\"")
+      continue()
+    endif()
+    string(JSON hud_font_file_count LENGTH "${hud_font_manifest}" families ${hud_font_family} files)
+    math(EXPR hud_font_file_last "${hud_font_file_count} - 1")
+    foreach(hud_font_position RANGE ${hud_font_file_last})
+      string(JSON hud_font_file GET "${hud_font_manifest}" families ${hud_font_family} files ${hud_font_position} file)
+      list(APPEND hud_font_files "${hud_font_file}")
+    endforeach()
+  endforeach()
   set(hud_font_sources)
   foreach(file IN LISTS hud_font_files)
-    list(APPEND hud_font_sources "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/${file}")
+    list(APPEND hud_font_sources "${hud_shared_font_source_dir}/${file}")
   endforeach()
   add_custom_command(OUTPUT "${hud_shared_fonts}/.ready"
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${hud_shared_fonts}"

@@ -321,6 +321,40 @@ foreach(relative IN LISTS candidates)
   endif()
 endforeach()
 
+# The shared font folder ../Resources/Fonts (also the macOS app's) is outside
+# windows/: its manifest lists the families that ship in fonts/ ("platforms"
+# include "windows"), and every file of those families needs a component.
+set(shared_fonts "${SOURCE}/../Resources/Fonts")
+if(NOT EXISTS "${shared_fonts}/manifest.json")
+  ehud_notices_fail("../Resources/Fonts/manifest.json (the shared font folder) is missing")
+else()
+  file(READ "${shared_fonts}/manifest.json" font_manifest)
+  ehud_notices_count("${font_manifest}" font_families families)
+  if(font_families EQUAL 0)
+    ehud_notices_fail("../Resources/Fonts/manifest.json lists no font families")
+  else()
+    math(EXPR font_family_last "${font_families} - 1")
+    foreach(family RANGE ${font_family_last})
+      ehud_notices_field("${font_manifest}" platforms families ${family} platforms)
+      if(NOT platforms MATCHES "\"windows\"")
+        continue()
+      endif()
+      ehud_notices_count("${font_manifest}" font_files families ${family} files)
+      if(font_files EQUAL 0)
+        continue()
+      endif()
+      math(EXPR font_file_last "${font_files} - 1")
+      foreach(position RANGE ${font_file_last})
+        ehud_notices_field("${font_manifest}" font_file families ${family} files ${position} file)
+        ehud_notices_covered("../Resources/Fonts/${font_file}" ok)
+        if(NOT ok OR NOT EXISTS "${shared_fonts}/${font_file}")
+          ehud_notices_fail("../Resources/Fonts/${font_file} ships in fonts/ but is missing or not covered by third-party-notices.json")
+        endif()
+      endforeach()
+    endforeach()
+  endif()
+endif()
+
 # Code ported or adapted from other projects: comments naming a licence, a
 # copyright, an upstream notice or an algorithm reference.
 file(GLOB_RECURSE sources RELATIVE "${SOURCE}" "${SOURCE}/*.c" "${SOURCE}/*.cpp" "${SOURCE}/*.h" "${SOURCE}/*.hpp" "${SOURCE}/*.hlsl"
