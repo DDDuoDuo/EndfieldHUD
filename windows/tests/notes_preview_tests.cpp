@@ -932,7 +932,7 @@ void preferencesPreview(HWND hwnd,gpu::Renderer&renderer,const gpu::NativeNotesC
     const auto before=raster.stats().rasterizations;check(f.preview->applyPreferences(p,f.time)&&raster.stats().rasterizations==before,"Unchanged preferences do not rebuild Notes artwork or save text again");
     raster.setDefaultFontLanguage(gpu::LayerFontLanguage::korean);
     check(f.preview->applyPreferences(p,f.time),"A default-font change is applied even when all note preference values are equal");f.frame();
-    bool koreanFont{};for(const auto&e:f.preview->entries())for(const auto&font:e.scene->report().fontSubstitutions)koreanFont|=font.selectedFamily=="Noto Sans KR";
+    bool koreanFont{};for(const auto&e:f.preview->entries())for(const auto&font:e.scene->report().fontSubstitutions)koreanFont|=font.cascadeFamily=="Noto Sans KR";
     check(koreanFont&&raster.stats().rasterizations>before&&savedNotes(f.root.path).front().text==original.text+"!","Existing Notes repaint with Korean glyphs while preserving saved content");
     const auto koreanRaster=raster.stats().rasterizations;check(f.preview->applyPreferences(p,f.time)&&raster.stats().rasterizations==koreanRaster,"Settled Korean preferences add no repeated raster work");
     f.preview->select(core::Module::power,f.time);f.frame();check(!f.preview->modulePresentation().transitioning&&f.preview->selected()==core::Module::power,"Reduced-motion module selection settles synchronously on the caller clock");f.release();

@@ -101,9 +101,15 @@ void run(HWND hwnd,gpu::Renderer&renderer){
     for(const auto acp:{0u,11u,27u}){
         FLOAT x{},y{};DWRITE_HIT_TEST_METRICS hit{};ok(paintedLayout->HitTestTextPosition(acp,FALSE,&x,&y,&hit),"Read exact painted Notes caret hit");
         const auto actual=editor->layout().bounds({acp,acp});const double height=std::max(1.,double(hit.height));
-        const double left=std::max(0.,double(x)),top=std::max(0.,double(y));
-        const double right=std::min(style.width,double(x)+1),bottom=std::min(style.height,double(y)+height);
-        check(actual&&right>left&&bottom>top&&std::abs(actual->bounds.x-left)<1e-5&&std::abs(actual->bounds.y-top)<1e-5&&std::abs(actual->bounds.width-(right-left))<1e-5&&std::abs(actual->bounds.height-(bottom-top))<1e-5,"Workspace caret geometry is the clipped hit region of the same painted layout");
+        // A document layout reports document coordinates, never clipped to
+        // the viewport (the editor placement clips): the caret of the first
+        // line starts above the document top when the face's OS/2 hit ascent
+        // exceeds the hhea baseline of the uniform Notes line (HarmonyOS Sans
+        // 1.056 vs .928 em). Other layouts clip to their viewport.
+        const bool document=editor->layout().painted()->isDocumentLayout();
+        const double left=document?double(x):std::max(0.,double(x)),top=document?double(y):std::max(0.,double(y));
+        const double right=document?double(x)+1:std::min(style.width,double(x)+1),bottom=document?double(y)+height:std::min(style.height,double(y)+height);
+        check(actual&&right>left&&bottom>top&&std::abs(actual->bounds.x-left)<1e-5&&std::abs(actual->bounds.y-top)<1e-5&&std::abs(actual->bounds.width-(right-left))<1e-5&&std::abs(actual->bounds.height-(bottom-top))<1e-5,"Workspace caret geometry is the hit region of the same painted layout");
     }
     // Diagnostic only: equivalent isolated settled leaf descriptors currently
     // omit font ascender/descender metadata. This records whether a fallback

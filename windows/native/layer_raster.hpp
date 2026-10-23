@@ -19,12 +19,13 @@ class PaintedTextLayout;
 class LayerImageSource;
 class LayerRasterizer;
 namespace detail { struct LayerRasterRecipe; }
-enum class LayerFontLanguage { simplifiedChinese, korean };
 struct LayerRasterOptions {
     double pixelsPerPoint{2};
     double paddingPoints{1};
     std::filesystem::path assetRoot;
-    std::string fallbackFontFamily{"Noto Sans SC"};
+    // The family that replaces source UI faces. Empty: the standard faces
+    // (HarmonyOS Sans with the text region's Noto Sans cascade).
+    std::string fallbackFontFamily;
     // The caller owns the root's placement, perspective, opacity and mask.
     // Child placement/opacity/masks are part of the local retained content.
     bool includeRootOpacity{false}, includeRootMask{false};
@@ -47,7 +48,9 @@ struct LayerRasterOptions {
     bool operator==(const LayerRasterOptions&) const = default;
 };
 struct LayerRasterIssue { std::string node, feature; };
-struct LayerFontSubstitution { std::string node, requestedFamily, requestedFace, selectedFamily; };
+// cascadeFamily: for the standard face, the Noto family its Han, Kana and
+// Hangul come from (the text's region); empty for any other face.
+struct LayerFontSubstitution { std::string node, requestedFamily, requestedFace, selectedFamily, cascadeFamily; };
 struct LayerPlainTextMetrics {
     double fontSize{},ascent{},descent{},leading{},lineHeight{};
     std::string selectedFamily;
@@ -80,9 +83,17 @@ private:
 // Content-event caption measurement using the exact paint font resolver and
 // source line spacing. No image/cache entry is created, and no layout survives
 // this call. Font substitution is explicit in the result.
+// A line-box descriptor (`lineHeight`) measures HUDTextLayer.preferredWidth:
+// width is its natural one-line width at full size (rounded up to .5) and
+// height its lines x fontSize x scale x lineHeight at the given width; scale
+// is the minimumScale shrink its raster applies at that width. ascent and
+// descent are the primary face's (HUDText.metrics: the strut, hhea for the
+// standard face) at fontSize x scale, for any descriptor and empty strings.
 struct LayerSourceTextMeasurement {
     double width{},height{};
     std::vector<LayerFontSubstitution> fontSubstitutions;
+    double scale{1};std::size_t lines{};
+    double ascent{},descent{};
 };
 struct LayerRasterImage {
     core::Rect bounds; // texture edges in the input root's local point space
@@ -164,6 +175,38 @@ struct LayerRasterEntryUsage {
 // The implemented source convention is geometryFlipped=false with implicit
 // flipped drawing content (the current Mac desktop leaves). Output rows are
 // already top-left. Other explicit CA flip conventions are reported, not guessed.
+//
+// Fonts (Sources/HUDDesignFonts.swift): every source UI face (and every face
+// not preserved) renders in the standard faces: HarmonyOS Sans for Latin
+// letters and digits at the Mac's five weights (300/400/500/700/900; 600
+// renders Bold, 800 and up Black), Han, Kana and Hangul from the Noto Sans
+// family of the text's region (SC, TC, JP, KR, then the other three), and the
+// system fallback for anything else (emoji, symbols). The region is the
+// descriptor's `language`, a run's NSLanguage, else the UI region
+// (setDefaultFontLanguage), and is each run's locale. preserveSourceFont
+// (the source clocks) and preserveUserFont (Notes, Archive, Reader faces)
+// keep the requested family; the shared fonts' Mac names resolve to them.
+// Italic in the shared fonts (no italic faces) slants by the Mac's 0.2 shear
+// (ObliqueShear, native/rich_text_paint.hpp), not DirectWrite's oblique.
+//
+// Text descriptor keys beyond the captured CATextLayer ones:
+// - language: "zh-Hans" | "zh-Hant" | "ja" | "ko" (HUDTextLayer.language);
+// - fontWeight: CSS 100-900, over the weight the font names;
+// - tabularFigures: OpenType tnum; tracking: em, letter-spacing after every
+//   character (tracking x size); both also run attributes, with fontSize,
+//   fontWeight and NSLanguage (runs keep the descriptor's tracking in em);
+// - lineHeight: a multiple of fontSize, which makes the leaf a HUDTextLayer
+//   line box: bounds are the CSS line box (the raster pads it by ceil(.25 x
+//   size) x ceil(.45 x size) for overhangs), lines are centred vertically,
+//   their baselines centred by HarmonyOS Sans' hhea strut; then also
+//   maximumLines (1 by default; 0 unlimited; n: the last line takes the
+//   rest), minimumScale (one-line shrink-to-fit, decided at raster time) and
+//   truncation "end" by default. Uppercasing is the caller's.
+// Layer keys: gradient type "radial" (CAGradientLayer: an ellipse centred on
+// startPoint reaching endPoint) besides "axial"; shadowOpacity/Color/Radius/
+// Offset/Path (CALayer defaults) baked into the raster as Direct2D's shadow
+// of a Gaussian 0.9 x shadowRadius. Conic gradients, filters and the rest
+// stay reported as unsupported.
 class LayerRasterizer final {
 public:
     // The shared application cache contains shell labels plus every module's
@@ -178,16 +221,27 @@ public:
     static constexpr std::size_t maximumTypographyDescriptorBytes = 32 * 1024 * 1024;
     LayerRasterizer();
     // Private, application-only fonts; never installs into the user's OS.
-    // Default constructor uses <executable-directory>/fonts. The directory
-    // must contain both pinned NotoSansSC.ttf and NotoSansKR.ttf.
+    // Default constructor uses <executable-directory>/fonts. The directory's
+    // manifest.json (the shared Resources/Fonts manifest) lists the families:
+    // those for "windows" whose files are present load, each file at its
+    // pinned size (the Latin faces also at their SHA-256); a missing or
+    // unreadable manifest or a file of another size throws.
     explicit LayerRasterizer(const std::filesystem::path&fontDirectory);
     ~LayerRasterizer();
-    // Event-only default typography. Existing immutable images/layouts remain
-    // valid until owners replace them; no font install, raster, or frame timer.
+    // Event-only UI region: the cascade of untagged text (one font fallback
+    // per revision). Existing immutable images/layouts remain valid until
+    // owners replace them; no font install, raster, or frame timer.
     bool setDefaultFontLanguage(LayerFontLanguage);
     LayerFontLanguage fontLanguage() const;
     std::uint64_t fontRevision() const;
+    // The standard face (HarmonyOS Sans; Segoe UI without its files).
     std::string_view defaultFontFamily() const;
+    // The loaded shared families in manifest order (HarmonyOS Sans, Noto Sans
+    // SC, TC, JP, KR): the font menus list them first, as the Mac's do.
+    std::span<const std::string> bundledFontFamilies() const;
+    // A region's CJK family: its Noto Sans, or the Windows system family that
+    // stands in when its file is absent.
+    std::string regionFontFamily(LayerFontLanguage) const;
     // Creating-thread/configuration-event only; owned immutable references are
     // safe to retain beyond this rasterizer's lifetime. No analysis/raster work.
     LayerFontResources retainedFontResources() const;
@@ -210,13 +264,15 @@ public:
     // Exact root-text leaf only. Null means missing/wrong revision, no painted
     // text layout, or a tree surface; never returns guessed child hit geometry.
     std::shared_ptr<const PaintedTextLayout> textLayout(const std::string& sourceID,std::uint64_t expectedRevision)const;
-    // Source NSFont.systemFont (regular). Same installed-family resolver/factory
-    // as source caption painting; actual substitution and selected font metrics
-    // are returned rather than guessed from average character widths.
+    // Source NSFont.systemFont (regular), drawn in the standard face as Mac
+    // 1.3.0 Notes measures it (HUDFontResolver.nsFont, its hhea metrics). Same
+    // resolver/factory as source caption painting; actual substitution and
+    // selected font metrics are returned rather than guessed.
     std::unique_ptr<LayerPlainTextAnalysis> plainSystemTextAnalysis(const std::string& sourceID,double fontSize,
         const LayerRasterOptions& options={});
     // One creating-thread enumeration shared by all menu owners. The returned
-    // sorted UTF-8 catalog is stable until this rasterizer is destroyed.
+    // sorted UTF-8 catalog (installed families and bundledFontFamilies()) is
+    // stable until this rasterizer is destroyed.
     const std::vector<std::string>& installedFontFamilies();
     LayerSourceTextMeasurement measureSourceText(const std::string& sourceID,
         const ehud::data::Json& textDescriptor,double width,

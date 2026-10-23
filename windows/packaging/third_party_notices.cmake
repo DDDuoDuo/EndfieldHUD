@@ -32,9 +32,20 @@ if(CMAKE_SCRIPT_MODE_FILE)
   cmake_minimum_required(VERSION 3.25)
 endif()
 
-# Text with LF line ends and no trailing blank space.
+# Text with LF line ends and no trailing blank space. A text padded with NUL
+# bytes ends before them: the HarmonyOS Sans licence ships as 3357 bytes of
+# text NUL-padded to 32768, and the notices are UTF-8 text.
 function(ehud_notices_text path out)
-  file(READ "${path}" text)
+  file(READ "${path}" hex HEX)
+  string(REGEX REPLACE "(00)+$" "" kept "${hex}")
+  string(LENGTH "${hex}" all_digits)
+  string(LENGTH "${kept}" kept_digits)
+  if(kept_digits LESS all_digits)
+    math(EXPR kept_bytes "${kept_digits} / 2")
+    file(READ "${path}" text LIMIT ${kept_bytes})
+  else()
+    file(READ "${path}" text)
+  endif()
   string(REPLACE "\r\n" "\n" text "${text}")
   string(REGEX REPLACE "[ \t\n]+$" "" text "${text}")
   set(${out} "${text}" PARENT_SCOPE)

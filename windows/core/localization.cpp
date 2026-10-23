@@ -27,6 +27,16 @@ Language resolveLanguage(std::span<const std::string_view> preferred){
 }
 bool isChinese(Language l)noexcept{return l==Language::simplifiedChinese||l==Language::traditionalChinese;}
 bool isCJK(Language l)noexcept{return l!=Language::system&&l!=Language::english;}
+std::string_view regionTag(TextRegion r)noexcept{return r==TextRegion::traditionalChinese?"zh-Hant":r==TextRegion::japanese?"ja":r==TextRegion::korean?"ko":"zh-Hans";}
+std::optional<TextRegion>regionFromTag(std::string_view tag)noexcept{for(const auto r:textRegions)if(regionTag(r)==tag)return r;return{};}
+std::optional<TextRegion>regionNaming(Language l)noexcept{switch(l){
+    case Language::simplifiedChinese:return TextRegion::simplifiedChinese;case Language::traditionalChinese:return TextRegion::traditionalChinese;
+    case Language::japanese:return TextRegion::japanese;case Language::korean:return TextRegion::korean;
+    case Language::english:case Language::system:break;}return{};}
+TextRegion firstRegion(std::span<const std::string_view> preferred){
+    for(const auto id:preferred)if(const auto r=regionNaming(resolveLanguage(std::span(&id,1))))return *r;
+    return TextRegion::simplifiedChinese;}
+TextRegion regionFor(Language l,TextRegion systemRegion)noexcept{return regionNaming(l).value_or(systemRegion);}
 std::span<const TranslationEntry> translationCatalog()noexcept{return entries;}
 const TranslationEntry*translationEntry(std::string_view english,std::string_view simplified)noexcept{
     const auto found=std::lower_bound(std::begin(entries),std::end(entries),std::pair{english,simplified},[](const auto&e,const auto&key){return e.english<key.first||(e.english==key.first&&e.simplifiedChinese<key.second);});
