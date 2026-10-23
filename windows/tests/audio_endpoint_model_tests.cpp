@@ -99,7 +99,7 @@ void text(){
     check(!n::audioWide("\xC0\x80")&&!n::audioWide("\xED\xA0\x80")&&!n::audioWide("\xFF"),"Overlong, surrogate and invalid UTF-8 are rejected");
 }
 void bounds(){
-    n::AudioEndpointSnapshot s;s.outputs={{L"a",L"A"}};s.defaultOutputID=L"a";s.volume=.5f;s.balance=-1;
+    n::AudioEndpointSnapshot s;s.outputs={{L"a",L"A"}};s.defaultOutputID=L"a";s.volume=.5f;s.balance=-1.f;
     check(n::validAudioEndpointSnapshot(s),"Valid snapshot accepted");
     auto bad=s;bad.outputs.push_back({L"a",L"Again"});check(!n::validAudioEndpointSnapshot(bad),"Repeated endpoint identity rejected");
     bad=s;bad.volume=std::nanf("");check(!n::validAudioEndpointSnapshot(bad),"Nonfinite volume rejected");

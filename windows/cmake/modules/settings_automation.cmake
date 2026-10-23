@@ -13,6 +13,9 @@ if(WIN32 AND TARGET hud_local_automation AND TARGET hud_native)
   target_include_directories(hud_settings_automation PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
   target_compile_definitions(hud_settings_automation PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
   target_link_libraries(hud_settings_automation PUBLIC hud_local_automation hud_native hud_overlay_host PRIVATE uiautomationcore oleaut32 ole32 user32)
+  # The UIA element implementation is the design library's AutomationTree
+  # (native/hud_design_automation.cpp; LIBRARY-DESIGN.md Q2).
+  target_link_libraries(hud_settings_automation PUBLIC hud_design_native)
   if(MSVC)
     target_compile_options(hud_settings_automation PRIVATE /W4 /permissive- /EHsc)
   endif()

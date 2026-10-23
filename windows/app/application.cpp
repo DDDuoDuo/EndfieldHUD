@@ -10,6 +10,7 @@
 #include "app/areas/projection_automation.hpp"
 #include "app/areas/calendar_reminder_module.hpp"
 #include "app/areas/update_service.hpp"
+#include "native/archive_password_vault.hpp"
 #include <cctype>
 #include "core/application_arguments.hpp"
 #include <algorithm>
@@ -51,6 +52,11 @@ std::string utf8(const fs::path&value){const auto bytes=value.u8string();return 
 fs::path utf8Path(std::string_view value){return fs::path(std::u8string(reinterpret_cast<const char8_t*>(value.data()),value.size()));}
 std::string narrow(std::wstring_view value){if(value.empty())return {};const auto count=WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,value.data(),static_cast<int>(value.size()),nullptr,0,nullptr,nullptr);need(count>0,"Invalid Windows text");std::string out(count,'\0');need(WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,value.data(),static_cast<int>(value.size()),out.data(),count,nullptr,nullptr)==count,"Windows text conversion failed");return out;}
 core::Language settingsLanguage(const ehud::data::Settings&value){const auto language=core::languageFromSetting(value.string("language")).value_or(core::Language::system);if(language!=core::Language::system)return language;wchar_t name[LOCALE_NAME_MAX_LENGTH]{};if(!GetUserDefaultLocaleName(name,LOCALE_NAME_MAX_LENGTH))return core::Language::english;const auto text=narrow(name);const std::array<std::string_view,1>preferred{text};return core::resolveLanguage(preferred);}
+// HUDTextLanguage.tag(for:): the CJK region of the standard faces. English
+// uses the first CJK language the user prefers (gpu::preferredSystemRegion),
+// Simplified Chinese when there is none; re-read on every configuration and
+// WM_SETTINGCHANGE.
+gpu::LayerFontLanguage textFontLanguage(core::Language language){return core::regionFor(language,gpu::preferredSystemRegion());}
 double now(){return OverlayHost::clockNow();}
 double milliseconds(Clock::time_point start){return std::chrono::duration<double,std::milli>(Clock::now()-start).count();}
 namespace {
@@ -683,6 +689,7 @@ void Application::Impl::systemChange(std::uint32_t message,double time){
     time=hostTime(time);if(message==WM_TIMECHANGE&&archiveDates)archiveDates->refreshSystemTimeZone();
     if(calendar)isolate(calendarModuleOwner,"system change",[&]{calendar->systemChanged(hostTime(time));updateCalendarWake();});
     if(message==WM_SETTINGCHANGE&&configuration.string("theme")=="system")configurationPending=true;
+    if(message==WM_SETTINGCHANGE&&rasterizer.fontLanguage()!=textFontLanguage(settingsLanguage(configuration)))configurationPending=true;
     if(message==WM_SETTINGCHANGE)applyTrayIcon(); // ImmersiveColorSet: the taskbar theme inks the template
     if(message==WM_SETTINGCHANGE&&visibleMode()){BOOL animations=TRUE;if(SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION,0,&animations,0)&&systemAnimationsOff!=(animations==FALSE))configurationPending=true;}
     if(message==WM_TIMECHANGE)broadcast(HostEvent::Kind::timeChanged,time);
@@ -980,7 +987,8 @@ void Application::Impl::constructClipboard(){
 void Application::Impl::constructArchive(){
     const auto window=static_cast<HWND>(host.hwnd());const auto start=visibleMode()?now():args.benchmarkEpoch;
     const auto changed=[this,window]{if(ready&&!stopping&&!archiveRefreshQueued){need(PostMessageW(window,archiveChangedMessage,serviceGeneration,0)!=FALSE,"Post Archive revision");archiveRefreshQueued=true;}};
-    archiveService=std::make_unique<ArchiveService>(args.dataRoot/"Archive",*utility,gpu::nativeArchiveTextRules(),changed);
+    // Classified documents' verifiers: current-user DPAPI files beside the archive (D5).
+    archiveService=std::make_unique<ArchiveService>(args.dataRoot/"Archive",*utility,gpu::nativeArchiveTextRules(),changed,std::make_shared<native::DpapiArchivePasswordVault>((args.dataRoot/"Archive"/"Classified").lexically_normal()));
     archiveDates=std::make_shared<gpu::ArchiveDateFormatter>();
     // The first Archive frame already uses the current language, theme and
     // accent (the archive adapter's setAppearance mapping).
@@ -1685,7 +1693,7 @@ void Application::Impl::applyConfiguration(double time){
     if(visibleMode()){BOOL animations=TRUE;if(SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION,0,&animations,0))systemAnimationsOff=animations==FALSE;}
     settings={configuration.boolean("reduceMotion")||systemAnimationsOff,configuration.boolean("ambientAnimation"),configuration.boolean("lowPowerVisualMode"),configuration.number("parallaxIntensity"),configuration.number("perspectiveIntensity"),configuration.number("hudScale"),{configuration.number("hudOffsetX"),configuration.number("hudOffsetY")}};
     session->setSettings(settings,time);watchAppearance.language=settingsLanguage(configuration);if(audio)audio->setLanguage(watchAppearance.language);
-    rasterizer.setDefaultFontLanguage(watchAppearance.language==core::Language::korean?gpu::LayerFontLanguage::korean:gpu::LayerFontLanguage::simplifiedChinese);
+    rasterizer.setDefaultFontLanguage(textFontLanguage(watchAppearance.language));
     watchAppearance.dark=configuration.string("theme")!="light";
     if(configuration.string("theme")=="system"){DWORD light=0,size=sizeof(light);if(RegGetValueW(HKEY_CURRENT_USER,L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",L"AppsUseLightTheme",RRF_RT_REG_DWORD,nullptr,&light,&size)==ERROR_SUCCESS)watchAppearance.dark=light==0;}
     const auto hex=configuration.string("accentHex");for(unsigned n=0;n<3;++n)watchAppearance.accentSRGB[n]=std::stoul(hex.substr(n*2,2),nullptr,16)/255.;

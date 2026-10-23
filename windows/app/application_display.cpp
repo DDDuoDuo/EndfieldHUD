@@ -350,7 +350,7 @@ void Application::Impl::clockStyleChanged(source::DesktopClockStyle previous, do
 
 // --- Display adaptation ---------------------------------------------------------
 void Application::Impl::updateContentScale() {
-    contentScale = camera && metrics.width > 0 && metrics.height > 0 ? source::desktopContentScale(*camera, {0, 0, metrics.width, metrics.height}) : 1;
+    contentScale = chromePlan && metrics.width > 0 && metrics.height > 0 ? chromePlan->contentScale({0, 0, metrics.width, metrics.height}) : 1;
 }
 source::DesktopChromeSettings Application::Impl::chromeSettings(core::Module module) const {
     source::DesktopChromeSettings value{{0, 0, metrics.width, metrics.height}, settings.hudScale, settings.hudOffset, module, true};
@@ -360,8 +360,7 @@ source::DesktopChromeSettings Application::Impl::chromeSettings(core::Module mod
 
 // --- Summon shortcut --------------------------------------------------------------
 bool Application::Impl::summonHotkeyEnabled() const {
-    const auto& disabled = configuration.fields["windowsSummonHotkeyDisabled"];
-    return !(disabled.isBool() && disabled.boolean());
+    return configuration.summonHotkeyEnabled();
 }
 // RegisterHotKey and the low-level hook both follow the preference; while a
 // shortcut is being recorded (capturing) neither may take the chord.

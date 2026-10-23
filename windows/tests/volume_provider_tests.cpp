@@ -14,7 +14,7 @@ struct Graph {
     std::wstring lastEndpoint;
     Graph(){audio.available=true;audio.paused=false;audio.outputs={{L"out-一",L"Speakers",false,false},{L"out-b",L"Headphones",true,false}};audio.inputs={{L"in-a",L"Microphone",false,false}};
         audio.defaultOutputID=L"out-一";audio.defaultInputID=L"in-a";
-        audio.volume=.75f;audio.muted=false;audio.balance=0;audio.canSetVolume=audio.canSetMute=audio.canSetBalance=true;audio.applicationsSupported=true;audio.applicationsPaused=false;
+        audio.volume=.75f;audio.muted=false;audio.balance=0.f;audio.canSetVolume=audio.canSetMute=audio.canSetBalance=true;audio.applicationsSupported=true;audio.applicationsPaused=false;
         audio.applications.push_back({"pid:42:creation:1",L"Owned Test App",42,true,gpu::AudioApplicationRouteState::direct,{},{},{},{}});
     }
     void changed(){if(binding)binding->receive(gpu::ServiceChange::audio);}
@@ -87,7 +87,7 @@ void selection(){Graph graph;gpu::VolumeProviderBinding binding(graph.access(tru
 void lifetime(){Graph graph;gpu::VolumeCallbacks retained;{
     auto binding=std::make_unique<gpu::VolumeProviderBinding>(graph.access());graph.binding=binding.get();retained=binding->callbacks();binding->setVisible(true);retained.setActive(true);
     unsigned called{};binding->setReceiver([&,guard=std::make_shared<unsigned>(17)](const auto&){++called;graph.binding=nullptr;binding.reset();check(*guard==17,"Receiver capture survives owner teardown inside delivery");});
-    graph.audio.volume=.1;graph.binding->receive(gpu::ServiceChange::audio);check(!binding&&called==1&&graph.activation==2,"Binding teardown from notification releases vote and cancels route safely");
+    graph.audio.volume=.1f;graph.binding->receive(gpu::ServiceChange::audio);check(!binding&&called==1&&graph.activation==2,"Binding teardown from notification releases vote and cancels route safely");
     }
     const auto writes=graph.volume;check(!retained.setVolume("out-一",.3)&&!retained.setMute("out-一",true)&&!retained.stopApp("any"),"Copied callbacks expire after binding destruction");retained.setActive(true);retained.stopAllApps();check(graph.volume==writes&&graph.activation==2,"Expired callbacks cannot revive borrowed native service");
     Graph other;gpu::VolumeProviderBinding closed(other.access());other.binding=&closed;auto callbacks=closed.callbacks();closed.setVisible(true);callbacks.setActive(true);closed.close();closed.close();check(other.activation==2&&!callbacks.setDefaultInput("in-a"),"Explicit close is terminal and idempotent before service destruction");

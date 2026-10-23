@@ -182,7 +182,11 @@ struct ModuleAppearance {
 // The pointer cursor an owner asks for (ModuleOwner::cursorAt).
 enum class ModuleCursor : std::uint8_t {
     source, // the original Endfield cursor (SourceCursor)
-    text    // the system I-beam over an open projected text editor
+    text,   // the system I-beam over an open projected text editor
+    // The redesign's grab cursors (Settings module grip, Map): custom drawn
+    // cursors (LIBRARY-DESIGN.md Q6/R9; the resources come with the host
+    // phase, which shows the source cursor for them until then).
+    openHand, closedHand
 };
 // What an owner keeps resident outside the shared LayerRasterizer cache and
 // the Renderer's own textures (ModuleOwner::residency): decoded images and

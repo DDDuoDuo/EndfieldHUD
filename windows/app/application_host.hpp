@@ -70,8 +70,8 @@ public:
     // --data-root, the section 9 performance gate): no startup entry, no
     // shared notification identity, no restart registration.
     virtual bool isolatedDataRoot() const noexcept { return false; }
-    // The Windows display adaptation of the design canvas and centre plane
-    // (core/source_desktop_chrome.hpp desktopContentScale): ModuleFrame::chrome
+    // The display adaptation of the design canvas and centre plane (core/
+    // source_desktop_chrome.hpp DesktopChromeProjectionPlan::contentScale): ModuleFrame::chrome
     // carries it per frame; an area sizing a rest pose outside a frame (e.g.
     // a raster density) multiplies its DesktopChromeSettings with it. 1 on
     // the reference Mac display and wherever the Mac content covers the ring.

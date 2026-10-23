@@ -47,6 +47,12 @@
 // disconnected and answer UIA_E_ELEMENTNOTAVAILABLE. Calls arrive on the UI
 // thread (ProviderOptions_UseComThreading). Refresh on content events only,
 // never per frame; it allocates only while it rebuilds the list.
+//
+// Implementation: a thin adapter over native::AutomationTree
+// (native/hud_design_automation.hpp), the one implementation of the HUD's
+// projected UIA elements, which this file's element code moved into
+// (LIBRARY-DESIGN.md Q2). Phase B1 moves Settings onto the design library
+// and deletes this adapter.
 #include "core/scene.hpp"
 #ifdef _WIN32
 #include <cstddef>
@@ -65,7 +71,6 @@ struct IRawElementProviderFragment;
 struct IRawElementProviderFragmentRoot;
 
 namespace endfield::native {
-class SettingsAutomationElement;
 struct SettingsAutomationNode {
     enum class Role : std::uint8_t { heading, text, status, button, link, toggle, slider, list, item, dialog };
     enum class Space : std::uint8_t { page, card }; // page canvas or confirmation card points
@@ -135,7 +140,6 @@ public:
     SettingsAutomationStats stats() const noexcept;
     struct State;
 private:
-    friend class SettingsAutomationElement;
     std::shared_ptr<State> state_;
 };
 } // namespace endfield::native

@@ -1190,11 +1190,11 @@ int Application::Impl::runHiddenVerification(){
                             present(time+.6,true);time+=1;uia.disconnectOwners();uia.shutdown();}
                     }
                 }
-                // Display adaptation (core/source_desktop_chrome.hpp desktopContentScale):
+                // Display adaptation (core/source_desktop_chrome.hpp DesktopChromeProjectionPlan::contentScale):
                 // on the reference Mac display the centre plane is the exact Mac
                 // layout (factor 1); on larger displays the centre content keeps the
                 // reference proportion to the source's main ring, in the ring's plane.
-                if(chromeBindings&&camera&&animation){
+                if(chromeBindings&&chromePlan&&camera&&animation){
                     source::SourceLayout sourceLayout(*scene);
                     const auto findRing=[&](std::string_view name)->std::optional<std::size_t>{for(const auto&n:scene->nodes())if(n.name==name&&std::string_view(n.path).find("/MiddleDecoNode/")!=std::string_view::npos)return sourceLayout.nodeIndex(n.id);return std::nullopt;};
                     const auto mainRing=findRing("MainRing"),blueRing=findRing("Mid_Blue");
@@ -1216,13 +1216,13 @@ int Application::Impl::runHiddenVerification(){
                                 const auto c=source::projectNativePoint({r.origin[0],r.origin[1]+r.size[1]*.5,0},world,vp,viewport),d=source::projectNativePoint({r.origin[0]+r.size[0],r.origin[1]+r.size[1]*.5,0},world,vp,viewport);
                                 need(c&&d,"A centre ring projects at the probe display");return std::hypot(d->x-c->x,d->y-c->y);};
                             return Measure{std::hypot(b.x-a.x,b.y-a.y),width(*mainRing),width(*blueRing)};};
-                        const auto reference=source::desktopReferenceViewport;const auto referenceFactor=source::desktopContentScale(*camera,reference);
+                        const auto reference=source::desktopReferenceViewport;const auto referenceFactor=chromePlan->contentScale(reference);
                         hostCheck(referenceFactor==1,"The reference Mac display keeps the exact Mac design scale");
-                        hostCheck(contentScale==source::desktopContentScale(*camera,{0,0,metrics.width,metrics.height}),"The host planes use the display adaptation of the HUD window");
+                        hostCheck(contentScale==chromePlan->contentScale({0,0,metrics.width,metrics.height}),"The host planes use the display adaptation of the HUD window");
                         const auto referenceMeasure=measureDisplay(reference,1);const double referenceRatio=referenceMeasure.content/referenceMeasure.mainRing;
                         Json::Array displays;
                         for(const core::Rect v:{core::Rect{0,0,2560./1.5,1600./1.5},core::Rect{0,0,1920,1080},core::Rect{0,0,1536,864},core::Rect{0,0,1920,1200},core::Rect{0,0,2560,1440},core::Rect{0,0,3440,1440},core::Rect{0,0,1280,800}}){
-                            const auto factor=source::desktopContentScale(*camera,v);const auto adapted=measureDisplay(v,factor),mac=measureDisplay(v,1);
+                            const auto factor=chromePlan->contentScale(v);hostCheck(factor>=1&&factor<=3,"The display adaptation stays within the Mac's 1-3 clamp");const auto adapted=measureDisplay(v,factor),mac=measureDisplay(v,1);
                             const bool larger=source::desktopBaseDesignScale(v)*factor>source::desktopBaseDesignScale(v)+1e-9;
                             hostCheck(factor>=1&&(!larger||std::abs(adapted.content/adapted.mainRing/referenceRatio-1)<.01),
                                 "On a "+std::to_string(int(std::lround(v.width)))+" x "+std::to_string(int(std::lround(v.height)))+" point display the centre content keeps the reference Mac proportion to the main ring");

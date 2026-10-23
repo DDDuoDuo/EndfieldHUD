@@ -140,7 +140,7 @@ void run(HWND hwnd,const wchar_t* shader){
     const auto beforeFont=renderer.stats();const auto outputIdentity=menuGroup.draws()[0].textureID;const auto outputPose=menuGroup.draws()[0].world;
     raster.setDefaultFontLanguage(gpu::LayerFontLanguage::korean);const auto carrier=menuGroup.entry().scene;check(carrier->refreshTypography(),"Published empty group carrier refreshes its borrowed local text");composition.upload(renderer);composition.present(renderer);renderer.draw(false);
     check(menuGroup.draws()[0].textureID==outputIdentity&&menuGroup.draws()[0].world==outputPose&&renderer.stats().nativeGroupTargetAllocations==beforeFont.nativeGroupTargetAllocations,"Typography event preserves group output identity, pose, and bounded target");
-    check(std::any_of(menu.scene().report().fontSubstitutions.begin(),menu.scene().report().fontSubstitutions.end(),[](const auto&f){return f.selectedFamily=="Noto Sans KR";}),"Unchanged grouped menu captions use the new Korean default face");
+    check(std::any_of(menu.scene().report().fontSubstitutions.begin(),menu.scene().report().fontSubstitutions.end(),[](const auto&f){return f.cascadeFamily=="Noto Sans KR";}),"Unchanged grouped menu captions use the new Korean default face");
     const auto stableFont=raster.stats();allocations=0;counting=true;for(unsigned n=0;n<120;++n)carrier->refreshTypography();counting=false;check(allocations==0&&raster.stats().rasterizations==stableFont.rasterizations,"Equal group font generation performs no raster or allocation");
     composition.detach(renderer);check(menuGroup.releaseResources(renderer),"Actual Notes menu retires after its borrowed output detaches");check(renderer.stats().resourceBytes==0,"Actual menu leaves no retained GPU resources");renderer.reset();
 }

@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <functional>
 #include <iostream>
@@ -280,8 +281,15 @@ void singleLineField(Renderer&renderer,HWND hwnd){
     ComPtr<IDWriteFontFamily>fontFamily;ok(fonts->GetFontFamily(index,fontFamily.GetAddressOf()),"Read painted family metrics");DWRITE_FONT_WEIGHT weight{};DWRITE_FONT_STYLE slant{};FLOAT em{};
     ok(layout->GetFontWeight(0,&weight),"Read actual painted weight");ok(layout->GetFontStyle(0,&slant),"Read actual painted slant");ok(layout->GetFontSize(0,&em),"Read actual painted em");ComPtr<IDWriteFont>font;ok(fontFamily->GetFirstMatchingFont(weight,DWRITE_FONT_STRETCH_NORMAL,slant,font.GetAddressOf()),"Read selected field font");
     DWRITE_FONT_METRICS fontMetrics{};font->GetMetrics(&fontMetrics);check(fontMetrics.designUnitsPerEm>0,"Selected font metrics have a valid em");
-    const Point inset{3,std::max(0.,(style.height-(double(fontMetrics.ascent)+fontMetrics.descent+fontMetrics.lineGap)*em/fontMetrics.designUnitsPerEm)*.5)};
-    const auto painted=editor.layout().painted();check(painted->contentInset()==inset&&painted->documentWidth()==style.width&&painted->documentHeight()==style.height,"Source field uses three-point inset, selected-font centering and fixed visible height");
+    // configureSingleLine centres NSFont's line (ascender - descender + leading),
+    // which CoreText reads from the face's hhea table, not the OS/2 Windows
+    // metrics DWRITE_FONT_METRICS reports (HarmonyOS Sans: .928/.244/0 em, not 1.056/.271).
+    ComPtr<IDWriteFontFace>face;ok(font->CreateFontFace(face.GetAddressOf()),"Read selected field face");const void*table{};UINT32 tableSize{};void*tableContext{};BOOL hasTable{};
+    ok(face->TryGetFontTable(DWRITE_MAKE_OPENTYPE_TAG('h','h','e','a'),&table,&tableSize,&tableContext,&hasTable),"Read selected field hhea");check(hasTable&&tableSize>=10,"Selected field face has hhea line metrics");
+    const auto*hhea=static_cast<const unsigned char*>(table);const auto s16=[&](unsigned at){return double(static_cast<std::int16_t>((hhea[at]<<8)|hhea[at+1]));};
+    const double hheaLine=s16(4)-s16(6)+std::max(0.,s16(8));face->ReleaseFontTable(tableContext);
+    const Point inset{3,std::max(0.,(style.height-hheaLine*em/fontMetrics.designUnitsPerEm)*.5)};
+    const auto painted=editor.layout().painted();check(painted->contentInset().x==inset.x&&std::abs(painted->contentInset().y-inset.y)<1e-9&&painted->documentWidth()==style.width&&painted->documentHeight()==style.height,"Source field uses three-point inset, selected-font centering and fixed visible height");
     DWRITE_TEXT_METRICS metrics{};ok(layout->GetMetrics(&metrics),"Inspect same field logical extent");check(layout->GetMaxWidth()==306&&layout->GetTextAlignment()==DWRITE_TEXT_ALIGNMENT_CENTER,"Finite field container preserves source centered alignment");
     const auto actual=readPaintedMetrics(editor.layout());const auto caret=editor.layout().bounds({0,0})->bounds;
     check(std::abs(caret.x-actual.caret.x-inset.x)<.0001&&std::abs(caret.y-actual.caret.y-inset.y)<.0001,"Caret uses the exact painted glyph inset and baseline");

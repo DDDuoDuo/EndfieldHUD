@@ -483,8 +483,8 @@ struct Application::Impl {
     // module, Windows content scale).
     source::DesktopChromeSettings chromeSettings(core::Module) const;
     // --- Summon shortcut (Settings > Hotkeys; app/summon_hotkey.hpp) --------------
-    // RegisterHotKey plus the low-level hook path, both off when the Windows
-    // preference windowsSummonHotkeyDisabled is set (the tray still opens).
+    // RegisterHotKey plus the low-level hook path, both off when the
+    // preference summonHotkeyEnabled is false (the tray still opens).
     bool summonHotkeyEnabled() const;
     void applySummonShortcut(bool capturing);
     std::unique_ptr<SummonHotkeyHook> summonHook;

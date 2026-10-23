@@ -36,6 +36,11 @@ struct ProjectedEditorPose {
     core::Matrix4 localToScreen,screenToClip; // exactly the matrices used by caller Renderer
     unsigned pixelWidth{},pixelHeight{};
     float opacity{1};bool visible{true},ownerFocused{},caretVisible{true};
+    // The caret's blink phase (modules::design::CaretBlink, Mac
+    // HUDProjectedTextEditor's opacity keyframes): multiplies the caret
+    // surface only. A change of nothing else is numeric: no TSF placement,
+    // raster or layout work (LIBRARY-DESIGN.md R8).
+    float caretOpacity{1};
 };
 // Reusable bounded plain/rich document with a fixed visible raster viewport.
 // Caller-owned Document, dedicated EMPTY LayerScene/rasterizer, HWND and shared

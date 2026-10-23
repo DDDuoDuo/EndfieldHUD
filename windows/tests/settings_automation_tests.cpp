@@ -565,7 +565,7 @@ void run(const std::filesystem::path& shader) {
         check(value(capture) == "Ctrl + Alt + F8" && !boolean(capture, UIA_HasKeyboardFocusPropertyId) && !find(binding, "capture:cancel"), "The recorder's value follows the recorded chord");
         check(invoke(capture) == S_OK && invoke(find(binding, "capture:cancel")) == S_OK && captures == std::vector<bool>({true, false, true, false}) && value(capture) == "Ctrl + Alt + F8",
               "Cancel shortcut recording stops recording like its click");
-        check(toggle(summon) == S_OK && owner.controller().configuration().fields["windowsSummonHotkeyDisabled"].boolean() && toggled(summon) == ToggleState_Off, "Toggling the hotkey switch saves it");
+        check(toggle(summon) == S_OK && !owner.controller().configuration().summonHotkeyEnabled() && toggled(summon) == ToggleState_Off, "Toggling the hotkey switch saves it");
         check(toggle(summon) == S_OK && toggled(summon) == ToggleState_On, "Toggling it again turns opening by hotkey back on");
         check(visualOrder(), "Hotkeys follows the visual order");
         frame();
