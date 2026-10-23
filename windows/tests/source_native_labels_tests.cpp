@@ -68,6 +68,30 @@ void synthetic(){
     check(!plan.placements()[0].visible&&plan.placements()[2].visible,"Disjoint mask hides only the masked native content");(void)clipBefore;
     NativeLabelPlan right(scene,{{"right-icon","icon","button",NativeLabelKind::icon,false,true}});button.masks={};right.update(nodes,alpha,std::span(&button,1),camera,viewport);
     close(right.placements()[0].world.values[0],250,1e-12,"Right navigation icon uses80source units over its32point raster");
+    // Mac 1.3.0 left icons: an 80-unit box in the caption's plane, centred over
+    // the caption, the glyph's visible bottom 5 units above its top (y up).
+    NativeLabelPlan left(scene,{{"text","caption","button",NativeLabelKind::caption,false,false},{"left-icon","icon","button",NativeLabelKind::icon,false,false,"caption"}});
+    left.update(nodes,alpha,std::span(&button,1),camera,viewport);const auto authored=left.placements()[1].world;
+    check(!left.setIconGlyph("text",{4.5,4.5,23,23})&&left.setIconGlyph("left-icon",{4.5,4.5,23,23})&&!left.setIconGlyph("left-icon",{4.5,4.5,23,23}),"Only a left icon takes a glyph, once per change");
+    check(left.update(nodes,alpha,std::span(&button,1),camera,viewport)&&left.placements()[1].world!=authored,"A new glyph reprojects the left icon");
+    {const auto&caption=left.placements()[0].world;const auto&icon=left.placements()[1].world;const double perUnit=caption.values[0]; // content units are source units
+     close(icon.values[0],80*perUnit/32,1e-9,"The left icon box is 80 source units over its 32-point raster");
+     close(icon.values[12],caption.values[12]+(1-40)*perUnit,1e-9,"The box is centred over the caption");
+     close(icon.values[13],caption.values[13]-(5-4.5*80/32+80)*caption.values[5],1e-9,"The glyph's bottom sits 5 units above the caption's top");}
+    check(left.setIconGlyph("left-icon",{2,7,28,18})&&left.update(nodes,alpha,std::span(&button,1),camera,viewport),"A wider glyph moves the box");
+    close(left.placements()[1].world.values[13],left.placements()[0].world.values[13]-(5-7*80/32.+80)*left.placements()[0].world.values[5],1e-9,"The visible bottom keeps the gap for any glyph height");
+    // A wipe from the left (HUDMotion.wipe): one more plane, the surface's own, clips x > edge.
+    {const auto planes=left.placements()[0].masks.size();
+     check(left.setRevealEdge("text",.5)&&!left.setRevealEdge("text",.5)&&!left.setRevealEdge("missing",.5),"A reveal edge applies once per change, to a known surface");
+     check(left.update(nodes,alpha,std::span(&button,1),camera,viewport)&&left.placements()[0].masks.size()==planes+1,"The reveal adds one plane mask");
+     const auto&m=left.placements()[0].masks.back();const auto&w=left.placements()[0].world;
+     const auto local=[&](double x,double y){const auto&v=m.worldToLocal.values;const auto px=w.values[12]+w.values[0]*x+w.values[4]*y,py=w.values[13]+w.values[1]*x+w.values[5]*y;
+         const double h=v[3]*px+v[7]*py+v[15];return Point{(v[0]*px+v[4]*py+v[12])/h,(v[1]*px+v[5]*py+v[13])/h};};
+     const auto inside=[&](Point p){return p.x>=m.bounds.x&&p.x<=m.bounds.x+m.bounds.width&&p.y>=m.bounds.y&&p.y<=m.bounds.y+m.bounds.height;};
+     check(inside(local(.25,.5))&&!inside(local(.75,.5)),"Content left of the edge shows, right of it is clipped");
+     allocations=0;countAllocations=true;for(unsigned n=0;n<60;++n){left.setRevealEdge("text",.01*n);left.update(nodes,alpha,std::span(&button,1),camera,viewport);}countAllocations=false;
+     check(allocations==0,"A running wipe allocates nothing per frame");
+     check(left.setRevealEdge("text",std::nullopt)&&left.update(nodes,alpha,std::span(&button,1),camera,viewport)&&left.placements()[0].masks.size()==planes,"The finished wipe removes its mask");}
     const std::array<Point,4> subject{{{0,0},{10,0},{10,10},{0,10}}}, tilted{{{3,-2},{8,2},{5,12},{0,8}}};
     auto clipped=nativeClipPolygon(subject,tilted);check(clipped.size()>4,"Intersection retains additional vertices instead of reducing to a rectangle");
     for(const auto point:clipped)check(point.x>=0&&point.x<=10&&point.y>=0&&point.y<=10,"Convex clip remains within viewport");

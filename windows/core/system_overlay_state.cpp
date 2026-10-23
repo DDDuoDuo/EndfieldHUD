@@ -80,9 +80,9 @@ void SystemOverlayLifecycle::perform(SystemOverlayAction action, SystemOverlayEf
     switch (action.kind) {
     case SystemOverlayAction::Kind::none: return;
     case SystemOverlayAction::Kind::open: {
-        // initialModule: initialModuleRequest ?? lastSystemModule; then the
-        // request is consumed by this presentation only.
-        const auto initial = initialModuleRequest_.value_or(lastSystemModule_);
+        // initialModule: initialModuleRequest ?? moduleLayout.restorable(
+        // lastSystemModule); then the request is consumed by this presentation only.
+        const auto initial = initialModuleRequest_.value_or(moduleRestore_ ? moduleRestore_(lastSystemModule_) : lastSystemModule_);
         view_ = initial;
         interaction_ = false;
         initialModuleRequest_.reset();

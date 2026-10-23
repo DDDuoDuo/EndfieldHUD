@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string_view>
 
@@ -111,6 +112,12 @@ public:
     SystemOverlayEffects cancelTermination();
     void prepareForDocumentTermination() noexcept;
 
+    // Mac 1.3.0 OverlayController: the HUD reopens on
+    // configuration.moduleLayout.restorable(lastSystemModule): a module hidden
+    // in System > Modules is not restored, the first visible one stands in. An
+    // explicit initial module request (tray Settings/About/Work Mode) is not
+    // filtered. Without a rule the last module reopens unchanged.
+    void setModuleRestore(std::function<Module(Module)> rule) { moduleRestore_ = std::move(rule); }
     void setSuspended(bool value) noexcept { suspended_ = value; }
     void setEditingPosition(bool value) noexcept { editingPosition_ = value; }
     void setAppLaunchInFlight(bool value) noexcept { appLaunchInFlight_ = value; }
@@ -141,6 +148,7 @@ private:
     std::array<Timer, maximumPendingSelections> timers_{};
     std::size_t timerCount_{};
     std::uint64_t timerSerial_{};
+    std::function<Module(Module)> moduleRestore_;
 
     bool appToggle(SystemOverlayEffects&);
     bool overlayToggle(SystemOverlayEffects&);

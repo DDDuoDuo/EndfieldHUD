@@ -61,6 +61,9 @@ std::vector<NativeLabelBinding> nativeLabelBindingsFromExport(const SceneDefinit
         const Node* label=nullptr;for(const auto& n:scene.nodes())if(n.path.starts_with(button->path+"/")&&n.name=="BtnName"){label=&n;break;}
         require(label!=nullptr,"Missing supplemental native caption");append({button->id,button->path,{label->id},true});
     }
+    // The four left buttons (System, Display, Hotkeys, About) and their captions.
+    std::map<std::string,std::string,std::less<>> leftCaptions;
+    for(std::size_t i=0;i<std::min<std::size_t>(4,buttons.size());++i)if(!buttons[i].labels.empty())leftCaptions.emplace(buttons[i].id,buttons[i].labels.front());
     std::map<std::string,std::size_t,std::less<>> iconButtons;
     for(std::size_t i=0;i<buttons.size();++i){const auto& b=buttons[i];const Node* icon=nullptr;
         for(const auto& n:scene.nodes())if(n.path.starts_with(b.path+"/")&&(b.bottom?(n.path.find("/IconShadow/")!=std::string::npos&&bottomIconName(n.name)):(n.name=="Icon"||n.name=="Icon01"))){icon=&n;break;}
@@ -85,6 +88,7 @@ std::vector<NativeLabelBinding> nativeLabelBindingsFromExport(const SceneDefinit
             binding.kind=NativeLabelKind::icon;binding.sourceNodeID=name.substr(std::string_view("desktop.watch.icon.").size());
             const auto it=iconButtons.find(binding.sourceNodeID);require(it!=iconButtons.end(),"Exported icon differs from the Mac's authored first-node selection");
             const auto& button=buttons[it->second];binding.buttonID=button.id;binding.rightButton=button.path.find("/RightBottomNode/")!=std::string::npos;
+            if(const auto left=leftCaptions.find(button.id);left!=leftCaptions.end())binding.captionNodeID=left->second;
         }else if(name.starts_with("desktop.profile.")){
             require(profileRoot.has_value()&&profileBindings.contains(name),"Exported profile caption has no explicit binding");
             binding.sourceNodeID=text(profileBindings[name]);binding.buttonID=*profileRoot;binding.profileViewportClip=true;
@@ -102,12 +106,30 @@ NativeLabelPlan::NativeLabelPlan(const SceneDefinition& scene,std::vector<Native
     for(const auto& b:bindings_){require(!b.surfaceID.empty()&&surfaces.insert(b.surfaceID).second,"Invalid or duplicate native surface identity");
         const auto node=indices.find(b.sourceNodeID),button=indices.find(b.buttonID);require(node!=indices.end()&&button!=indices.end(),"Native binding references a missing source node");
         auto [entry,inserted]=buttons.emplace(b.buttonID,buttonIDs_.size());if(inserted)buttonIDs_.push_back(b.buttonID);
-        compiled_.push_back({node->second,button->second,entry->second});relevant.insert(node->second);relevant.insert(button->second);
+        std::optional<std::size_t> caption;
+        if(!b.captionNodeID.empty()){require(b.kind==NativeLabelKind::icon,"Only an icon sits in a caption's plane");const auto label=indices.find(b.captionNodeID);require(label!=indices.end(),"Left icon caption node is missing");caption=label->second;relevant.insert(label->second);}
+        compiled_.push_back({node->second,button->second,entry->second,caption,std::nullopt,std::nullopt});relevant.insert(node->second);relevant.insert(button->second);
         NativeLabelPlacement output;output.surfaceID=b.surfaceID;output.masks.reserve(8);output.clippedPolygon.reserve(64);placements_.push_back(std::move(output));
     }
     relevantNodes_.assign(relevant.begin(),relevant.end());previousNodes_.resize(relevantNodes_.size());previousButtons_.resize(buttonIDs_.size());clips_.resize(buttonIDs_.size());
     for(auto& b:previousButtons_)b.masks.reserve(maximumButtonMasks);for(auto& c:clips_){c.masks.reserve(8);c.polygon.reserve(64);}
     staged_=placements_;for(auto& p:staged_){p.masks.reserve(8);p.clippedPolygon.reserve(64);}scratchA_.reserve(64);scratchB_.reserve(64);
+}
+bool NativeLabelPlan::setIconGlyph(std::string_view surfaceID,Rect glyph){
+    require(std::isfinite(glyph.x)&&std::isfinite(glyph.y)&&std::isfinite(glyph.width)&&std::isfinite(glyph.height),"Invalid icon glyph frame");
+    for(std::size_t i=0;i<bindings_.size();++i){
+        if(bindings_[i].surfaceID!=surfaceID||!compiled_[i].caption)continue;
+        if(compiled_[i].glyph==glyph)return false;compiled_[i].glyph=glyph;initialized_=false;return true;
+    }
+    return false;
+}
+bool NativeLabelPlan::setRevealEdge(std::string_view surfaceID,std::optional<double> edge){
+    require(!edge||std::isfinite(*edge),"Invalid reveal edge");
+    for(std::size_t i=0;i<bindings_.size();++i){
+        if(bindings_[i].surfaceID!=surfaceID)continue;
+        if(compiled_[i].reveal==edge)return false;compiled_[i].reveal=edge;initialized_=false;return true;
+    }
+    return false;
 }
 bool NativeLabelPlan::update(std::span<const ResolvedNode> nodes,std::span<const double> alpha,std::span<const NativeLabelButtonState> buttons,const CameraFrame& camera,const Rect& viewport){
     require(nodes.size()==scene_->nodes().size()&&(alpha.empty()||alpha.size()==nodes.size())&&buttons.size()==buttonIDs_.size(),"Native projection input order/length mismatch");
@@ -140,9 +162,16 @@ bool NativeLabelPlan::update(std::span<const ResolvedNode> nodes,std::span<const
         if(active&&n.rect&&button.actionBound){const auto& r=*n.rect;Vec2 size=r.size;
             if(b.kind==NativeLabelKind::caption&&button.expandFileShelfCaption){size[0]=std::max(size[0],124.);size[1]=std::max(size[1],56.);}
             if(b.kind==NativeLabelKind::icon&&b.rightButton)size={80,80};
-            if(size[0]>0&&size[1]>0){const double x=r.origin[0]+(r.size[0]-size[0])/2,y=r.origin[1]+(r.size[1]-size[1])/2;
+            double x=r.origin[0]+(r.size[0]-size[0])/2,y=r.origin[1]+(r.size[1]-size[1])/2;auto nodeWorld=n.worldMatrix;
+            // HUDSourceWatchView.updateDesktopLabels (Mac 1.3.0): a left icon is
+            // built in its caption's plane, one 80-unit box centred over the
+            // caption, the glyph's visible bottom 5 units above it (y up); the
+            // authored caption keeps its place.
+            if(c.caption&&c.glyph&&nodes[*c.caption].rect){const auto& label=*nodes[*c.caption].rect;nodeWorld=nodes[*c.caption].worldMatrix;size={leftIconSide,leftIconSide};
+                x=label.origin[0]+label.size[0]/2-leftIconSide/2;y=label.origin[1]+label.size[1]+leftIconGap-c.glyph->y*leftIconSide/iconBox;}
+            if(size[0]>0&&size[1]>0){
                 const std::array<Vec3,4> local{{{x,y+size[1],0},{x+size[0],y+size[1],0},{x+size[0],y,0},{x,y,0}}};
-                const auto world=camera.worldRoot*n.worldMatrix;std::array<Point,4> points;bool validPoints=true;++projected;
+                const auto world=camera.worldRoot*nodeWorld;std::array<Point,4> points;bool validPoints=true;++projected;
                 for(unsigned k=0;k<4;++k){const auto p=projectNativePoint(local[k],world,viewProjection,viewport);if(!p){validPoints=false;break;}points[k]=*p;}
                 const auto& clip=clips_[c.button];
                 if(validPoints&&(b.profileViewportClip||!clip.polygon.empty())){
@@ -150,7 +179,10 @@ bool NativeLabelPlan::update(std::span<const ResolvedNode> nodes,std::span<const
                     out.world=nativeProjectiveTextTransform(points,contentSize);out.contentBounds={0,0,contentSize[0],contentSize[1]};out.visible=out.world.finite();
                     if(out.visible){out.opacity=static_cast<float>(alpha.empty()?1:alpha[c.node]);
                         if(b.profileViewportClip){out.masks.push_back({{},viewport});out.clippedPolygon.assign(viewportPoints.begin(),viewportPoints.end());}
-                        else{out.masks.assign(clip.masks.begin(),clip.masks.end());out.clippedPolygon.assign(clip.polygon.begin(),clip.polygon.end());}}
+                        else{out.masks.assign(clip.masks.begin(),clip.masks.end());out.clippedPolygon.assign(clip.polygon.begin(),clip.polygon.end());}
+                        // The wipe's growing mask: the surface's own plane, x up to the edge.
+                        if(c.reveal&&out.masks.size()<maximumButtonMasks+1){
+                            try{out.masks.push_back({inverseSourceMatrix(out.world),{-1e6,-1e6,*c.reveal+1e6,2e6}});}catch(const std::invalid_argument&){}}}
                 }
             }
         }

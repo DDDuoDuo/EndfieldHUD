@@ -86,5 +86,11 @@ std::optional<core::source::SourceDesktopFrameSettings>IdCardPresenter::apply(){
     if(next==applied_)return std::nullopt;
     applied_=std::move(next);++stats_.settingsChanges;return applied_;
 }
+void IdCardPresenter::setReveal(std::function<void(std::string_view,std::optional<double>)>reveal){reveal_=std::move(reveal);revealed_.reset();if(reveal_)reveal_(captions_.leaves().surfaceIDs[1],std::nullopt);}
+bool IdCardPresenter::advance(double time,bool reduceMotion){
+    const bool running=captions_.advance(time,reduceMotion);const auto edge=captions_.revealEdge();
+    if(edge!=revealed_){revealed_=edge;if(reveal_)reveal_(captions_.leaves().surfaceIDs[1],edge);}
+    return running;
+}
 }
 #endif

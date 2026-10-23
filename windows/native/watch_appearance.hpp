@@ -57,6 +57,11 @@ public:
  // on equal action/appearance/bounds frames. Failure requires retry before draw.
  bool update(const WatchContentCatalog::Actions&,const WatchAppearance&,
   std::span<const core::source::NativeLabelPlacement>);
+ // Each icon surface painted reports its visible glyph in the 32-point box
+ // (the template's image frame: HUDSourceDesktopIconLayout.glyphFrame of the
+ // trimmed artwork, or the vector glyph's bounds), for the left icons'
+ // placement (NativeLabelPlan::setIconGlyph). Content events only.
+ void setIconGlyphObserver(std::function<void(std::string_view surfaceID,core::Rect glyph)>);
  WatchAppearanceStats stats()const noexcept;
 private:struct Impl;std::unique_ptr<Impl>impl_;
 };

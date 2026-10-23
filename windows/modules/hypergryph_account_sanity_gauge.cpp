@@ -118,6 +118,11 @@ const AccountNumerals::Glyph* AccountNumerals::glyph(char32_t c) const {
     for(const auto& g:glyphs_) if(g.character==c) return &g;
     return nullptr;
 }
+std::optional<double> AccountNumerals::width(std::string_view text,double preferredSize) const {
+    const auto list=scalars(text);if(list.empty()) return std::nullopt;double advance=0;
+    for(const auto c:list) {const auto* g=glyph(c);if(!g) return std::nullopt;advance+=g->advance;}
+    return advance*preferredSize/pointSize_;
+}
 bool AccountNumerals::covers(std::string_view text) const {
     const auto list=scalars(text);if(list.empty()) return false;
     return std::all_of(list.begin(),list.end(),[&](char32_t c){return glyph(c)!=nullptr;});
@@ -199,6 +204,18 @@ GaugeImage composeHighlight(const GaugeAssets& a,double scale) {
     }
     return mask;
 }
+GaugePopoverLayout GaugePopoverLayout::make(std::array<double,2> labels,std::array<double,2> values,double templateWidth) {
+    for(const auto v:{labels[0],labels[1],values[0],values[1],templateWidth}) need(std::isfinite(v)&&v>=0,"Gauge popover widths are finite");
+    GaugePopoverLayout out;
+    const double value=std::ceil(std::max({values[0],values[1],templateWidth}))+slack;
+    const double fixed=leading+columnGap+refreshGap+refreshWidth+trailing;
+    const double width=std::min(maximumWidth,std::max(minimumWidth,fixed+std::ceil(std::max(labels[0],labels[1]))+slack+value));
+    out.frame=frameFor(width);out.valueWidth=value;out.labelWidth=width-fixed-value;return out;
+}
+core::Rect GaugePopoverLayout::cell(unsigned index) const noexcept {
+    const double y=rows[index%2];
+    return index<2?core::Rect{leading,y,labelWidth,rowHeight}:core::Rect{leading+labelWidth+columnGap,y,valueWidth,rowHeight};
+}
 std::string gaugeCountdown(std::optional<Time> deadline,Time date,bool hours) {
     if(!deadline) return "—";
     const double remaining=*deadline-date;
@@ -221,9 +238,10 @@ std::string prefixGaugeValue(std::string_view text,std::size_t count) {
 }
 
 bool SanityGaugeModel::canOpen() const noexcept {return sanity_.has_value()&&!hidden_;}
+bool SanityGaugeModel::opensWorkMode() const noexcept {return !sanity_.has_value()&&!hidden_;}
 SanityGaugeModel::Changes SanityGaugeModel::update(std::string value,std::string label,bool visible,double scale,std::optional<SanityPresentation> sanity,Time date,core::Language language) {
     Changes changes;scale=std::isfinite(scale)?std::min(3.0,std::max(1.0,scale)):2;
-    value=prefixGaugeValue(value,24);const bool wasAvailable=canOpen();
+    value=prefixGaugeValue(value,24);const bool wasAvailable=canOpen(),wasLink=opensWorkMode();
     sanity_=std::move(sanity);date_=date;
     if(language_!=language) {language_=language;}
     if(value_!=value||label_!=label||hidden_==visible||scale_!=scale) {
@@ -233,22 +251,34 @@ SanityGaugeModel::Changes SanityGaugeModel::update(std::string value,std::string
     }
     if(!canOpen()) changes.popover|=dismiss();
     if(open_) changes.tooltip=renderTooltip();
-    if(wasAvailable!=canOpen()) changes.availability=true;
+    if(wasAvailable!=canOpen()||wasLink!=opensWorkMode()) changes.availability=true;
     return changes;
 }
 bool SanityGaugeModel::renderTooltip() {
     if(!sanity_) return false;
-    const auto colon=core::isCJK(language_)?"：":":";
+    // Mac 1.3.0: the full-width colon only for 简体中文, 繁體中文 and 日本語;
+    // Korean takes ":" like English.
+    using L=core::Language;
+    const auto colon=language_==L::simplifiedChinese||language_==L::traditionalChinese||language_==L::japanese?"：":":";
     const auto first=core::localized("Next recovery","下次回复",language_)+colon,second=core::localized("Full recovery","全部回复",language_)+colon;
     const auto next=gaugeCountdown(sanity_->nextRecoveryAt,date_,false),full=gaugeCountdown(sanity_->fullRecoveryAt,date_,true);
     char scaleText[32];std::snprintf(scaleText,sizeof scaleText,"%.17g",scale_);
     const auto key=first+"|"+second+"|"+next+"|"+full+"|"+scaleText+"|"+(sanity_->refreshAvailable?"1":"0")+"|"+(sanity_->isRefreshing?"1":"0");
     if(key==renderedKey_) return false;
     renderedKey_=key;++tooltipRenders_;
-    tooltip_.text={first,second,next,full};tooltip_.refreshEnabled=sanity_->refreshAvailable&&!sanity_->isRefreshing;
+    // English labels are the source glyphs; other languages take the
+    // standard faces (HarmonyOS Sans, the region's Noto for CJK).
+    const bool sourceLabels=!core::isCJK(language_);
+    const auto numerals=[&](std::string_view text){return widths.numerals?widths.numerals(text):std::nullopt;};
+    const auto standard=[&](std::string_view text){return widths.standard?widths.standard(text):0.0;};
+    const auto label=[&](std::string_view text){if(sourceLabels)if(const auto w=numerals(text)) return *w;return standard(text);};
+    const auto value=[&](std::string_view text){if(const auto w=numerals(text)) return *w;return standard(text);};
+    tooltip_.layout=GaugePopoverLayout::make({label(first),label(second)},{value(next),value(full)},value(GaugePopoverLayout::valueTemplate));
+    tooltip_.text={first,second,next,full};tooltip_.refreshEnabled=sanity_->refreshAvailable&&!sanity_->isRefreshing;tooltip_.sourceLabels=sourceLabels;
     return true;
 }
 bool SanityGaugeModel::perform(std::string_view id) {
+    if(opensWorkMode()) {if(id!="toggle") return false;if(onOpenWorkMode) {auto callback=onOpenWorkMode;callback();}return true;}
     if(!canOpen()) return false;
     if(id=="toggle") {open_=!open_;if(open_) renderTooltip();return true;}
     if(id=="refresh"&&open_&&sanity_->refreshAvailable&&!sanity_->isRefreshing) {if(onRefresh) {auto callback=onRefresh;callback();}return true;}
@@ -256,9 +286,10 @@ bool SanityGaugeModel::perform(std::string_view id) {
 }
 bool SanityGaugeModel::mouseDown(std::optional<core::Point> point) {
     using namespace gauge_geometry;
-    if(!canOpen()) return false;
+    if(!isInteractive()) return false;
     if(point&&inside(bounds,*point)) {perform("toggle");return true;}
     if(open_) {
+        const auto popover=popoverRect(),refresh=tooltip_.layout.refresh();
         if(point&&inside(popover,*point)) {
             const core::Rect r{refresh.x+popover.x,refresh.y+popover.y,refresh.width,refresh.height};
             if(inside(r,*point)) perform("refresh");
@@ -269,7 +300,8 @@ bool SanityGaugeModel::mouseDown(std::optional<core::Point> point) {
 }
 std::optional<std::string_view> SanityGaugeModel::hover(std::optional<core::Point> point) const {
     using namespace gauge_geometry;
-    if(!canOpen()||!point) return std::nullopt;
+    if(!isInteractive()||!point) return std::nullopt;
+    const auto popover=popoverRect(),refresh=tooltip_.layout.refresh();
     // HUDControlHighlightLayer: smallest enabled control path under the pointer.
     const auto rounded=[](core::Rect r,core::Point p,double radius){
         if(!inside(r,p)) return false;const double x=std::clamp(p.x,r.x+radius,r.x+r.width-radius),y=std::clamp(p.y,r.y+radius,r.y+r.height-radius);
@@ -281,8 +313,9 @@ std::optional<std::string_view> SanityGaugeModel::hover(std::optional<core::Poin
 bool SanityGaugeModel::dismiss() {if(!open_) return false;open_=false;return true;}
 std::vector<GaugeAction> SanityGaugeModel::accessibleActions(core::Language language) const {
     using namespace gauge_geometry;
-    if(!canOpen()) return {};
+    if(!isInteractive()) return {};
     std::vector<GaugeAction> actions{{"toggle",label_,bounds,true}};
+    const auto popover=popoverRect(),refresh=tooltip_.layout.refresh();
     if(open_) actions.push_back({"refresh",core::localized("Refresh","刷新",language),{refresh.x+popover.x,refresh.y+popover.y,refresh.width,refresh.height},
         sanity_->refreshAvailable&&!sanity_->isRefreshing});
     return actions;

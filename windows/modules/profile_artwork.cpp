@@ -93,7 +93,11 @@ ProfileImage idCardHoverArtwork(const ProfileImage&source,std::array<double,3>ac
     const std::array<unsigned,3>sc{static_cast<unsigned>(std::lround(accent[0]*.38*255)),static_cast<unsigned>(std::lround(accent[1]*.38*255)),static_cast<unsigned>(std::lround(accent[2]*.38*255))};
     const double keep=std::lround(.05/.38*255)/255.;
     for(unsigned y=0;y<out.height;++y)for(unsigned x=0;x<out.width;++x){
-        auto*p=&out.rgba[(std::size_t(y)*out.width+x)*4];const unsigned da=p[3];
+        auto*p=&out.rgba[(std::size_t(y)*out.width+x)*4];
+        // HUDSourceProfileArtwork.hoverCoverageThreshold (Mac 1.3.0): the
+        // sprite's near-transparent padding (alpha 1-8, a band left of the
+        // card) is cleared first, so the accent never lights it outside the card.
+        const unsigned da=p[3]<hoverCoverageThreshold?0:p[3];
         // sourceIn: accent .38 wherever the artwork has alpha.
         for(unsigned c=0;c<3;++c)p[c]=static_cast<std::uint8_t>(mul(sc[c],da));p[3]=static_cast<std::uint8_t>(mul(sa,da));
         // destinationIn by .05/.38 inside the antialiased rounded panel.

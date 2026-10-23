@@ -110,14 +110,30 @@ void run(const fs::path&executable){
            "Native Clipboard requires explicit visible mode");
     reject(executable,temp,++index,{L"--visible",L"--native-clipboard"},
            "Native Clipboard requires explicit visible mode");
-    reject(executable,temp,++index,{L"--visible",L"--module-coverage",L"--native-clipboard",L"--notes-assets",assets,L"--clipboard-assets",assets},
+    reject(executable,temp,++index,{L"--visible",L"--module-coverage",L"--native-clipboard",L"--notes-assets",assets},
            "Native Clipboard requires explicit visible mode");
     reject(executable,temp,++index,{L"--visible",L"--native-clipboard",L"--native-clipboard"},
            "Duplicate native Clipboard mode");
+    reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--clipboard-fixture"},
+           "Clipboard fixture requires the shared module owner");
+    reject(executable,temp,++index,{L"--clipboard-fixture",L"--clipboard-fixture"},
+           "Duplicate Clipboard fixture");
+    reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--activity-fixture"},
+           "Activity fixture requires the shared module owner");
+    reject(executable,temp,++index,{L"--activity-fixture",L"--activity-fixture"},
+           "Duplicate Activity fixture");
+    reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--storage-fixture"},
+           "Storage fixture requires the shared module owner");
+    reject(executable,temp,++index,{L"--storage-fixture",L"--storage-fixture"},
+           "Duplicate Storage fixture");
+    reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--native-storage"},
+           "Native Storage requires explicit visible mode");
+    reject(executable,temp,++index,{L"--visible",L"--native-storage"},
+           "Native Storage requires explicit visible mode");
+    reject(executable,temp,++index,{L"--visible",L"--native-storage",L"--native-storage"},
+           "Duplicate native Storage mode");
     reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--activity-assets",assets},
-           "Activity needs the shared module owner");
-    reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--activity-assets",assets,L"--activity-assets",assets},
-           "Duplicate Activity assets");
+           "Unknown or incomplete preview argument");
     reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--archive-assets",archiveAssets},
            "Archive needs explicit Notes assets and a new shared test data root");
     reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--archive-assets",archiveAssets,

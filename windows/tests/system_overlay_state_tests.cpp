@@ -188,6 +188,18 @@ void contracts() {
     check(after.size() == 1 && after[0].kind == core::SystemOverlayEffect::Kind::close, "Queued close follows the opening");
     auto finished = visible.didClose(visible.generation());
     check(finished.size() == 1 && finished[0].kind == core::SystemOverlayEffect::Kind::terminate, "Tray Quit terminates after the close");
+    // Mac 1.3.0 reopen fallback: moduleLayout.restorable(lastSystemModule);
+    // an explicit initial module (tray About) is never filtered.
+    core::SystemOverlayLifecycle layout;
+    layout.setModuleRestore([](core::Module m) { return m == core::Module::map ? core::Module::notes : m; });
+    auto restored = layout.toggle();
+    check(restored.size() == 1 && restored[0].module == core::Module::notes && layout.lastModule() == core::Module::map,
+          "A hidden last module reopens on the first visible one");
+    (void)layout.didOpen(layout.generation());(void)layout.toggle();(void)layout.didClose(layout.generation());
+    check(layout.lastModule() == core::Module::notes, "The stand-in becomes the last module once shown");
+    layout.setModuleRestore([](core::Module) { return core::Module::notes; });
+    auto requested = layout.openSettingsModule(core::Module::about);
+    check(requested.size() == 1 && requested[0].module == core::Module::about, "An explicit initial module request is not filtered");
     bool rejected{};
     try { (void)visible.advance(std::nan("")); } catch (const std::invalid_argument&) { rejected = true; }
     check(rejected, "Nonfinite caller clocks reject instead of spinning");

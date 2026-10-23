@@ -16,10 +16,23 @@ struct AccountSanityGaugePreview::Impl {
     h::HypergryphAccountController& controller;std::shared_ptr<const h::GaugeAssets> assets;h::SanityGaugeModel model;gpu::NativeSanityGaugeScene scene;
     AccountSanityGaugeOptions options;app::ClientMetrics metrics;core::Projection projection;bool overlayVisible{},posed{};double time{};
     gpu::Renderer* renderer{}; // the host's, from upload() (conceal() parks through it)
+    gpu::LayerRasterizer* raster;
     Impl(h::HypergryphAccountController& c,gpu::LayerRasterizer& r,std::shared_ptr<const h::GaugeAssets> a,AccountSanityGaugeOptions o)
-        :controller(c),assets(a),scene(a,r,o.raster),options(std::move(o)) {
+        :controller(c),assets(a),scene(a,r,o.raster),options(std::move(o)),raster(&r) {
         // Mac: accountGauge.onRefresh = { accountController.refresh(manual: true) }.
         model.onRefresh=[this]{controller.refresh(true);refresh();};
+        // Mac 1.3.0: accountGauge.onOpenWorkMode = activateNavigationTarget(.module(.workMode)).
+        model.onOpenWorkMode=[this]{if(options.openWorkMode) {auto open=options.openWorkMode;open();}};
+        // HUDAccountGauge.Layout measures the menu's text: the source numerals'
+        // advances, else HUDText.width (standard faces, 14.4 medium, the UI
+        // region; a line-box measurement, rounded up to .5). Content events only.
+        model.widths.numerals=[this](std::string_view text){return assets->numerals.width(text,h::GaugePopoverLayout::textSize);};
+        model.widths.standard=[this](std::string_view text){
+            const auto region=core::regionFor(options.language,raster->fontLanguage());
+            const auto descriptor=ehud::data::Json::Object{{"string",std::string(text)},{"fontSize",h::GaugePopoverLayout::textSize},{"fontWeight",500},
+                {"lineHeight",1},{"maximumLines",1},{"language",std::string(core::regionTag(region))}};
+            return raster->measureSourceText("account.gauge.label",descriptor,1e6,options.raster).width;
+        };
     }
     void advance(double t) {need(std::isfinite(t),"Gauge owner needs a finite clock");time=std::max(time,t);}
     double scale() const {return std::clamp(metrics.scale>0?metrics.scale:2,1.0,3.0);}
@@ -30,6 +43,9 @@ struct AccountSanityGaugePreview::Impl {
     void refresh() {
         const auto value=controller.gaugeValue(work());
         model.update(value.value,value.accessibilityLabel,value.visible,scale(),controller.sanityPresentation(),controller.now(),options.language);
+        // HUDAccountGauge.setOpen: a bar that takes no input drops its hover;
+        // the Work Mode link keeps it across the clock's updates.
+        if(!model.isInteractive()) scene.setHover(std::nullopt,time,options.reduceMotion);
         scene.sync(model,options.language,time,options.reduceMotion);
     }
     std::optional<core::Point> local(core::Point p) const {
@@ -88,11 +104,12 @@ bool AccountSanityGaugePreview::pointer(const app::PointerEvent& e,double t) {
     if((e.kind==app::PointerKind::down||e.kind==app::PointerKind::doubleClick)&&e.button==app::PointerButton::left) {
         if(!i.overlayVisible) return false; // a closing or hidden HUD takes no press (allowsModuleInput)
         // HUDAccountGauge.mouseDown: the wallet with sanity toggles its
-        // recovery popover; an open popover takes every press.
+        // recovery popover; without sanity data (Work Mode minutes, or a
+        // linked game with no snapshot yet, "— / —") it opens Work Mode; an
+        // open popover takes every press.
         if(i.model.mouseDown(q)) {i.scene.sync(i.model,i.options.language,i.time,i.options.reduceMotion);i.scene.setHover(i.model.hover(q),i.time,i.options.reduceMotion);return true;}
-        // A wallet without sanity (Work Mode minutes, or a linked game with
-        // no snapshot yet) has no popover, but the press is still the shown
-        // wallet's (covers()): consumed, nothing opens.
+        // SystemHUDView's sanity-bar rectangle guard: a press inside the shown
+        // wallet never reaches the HUD close (covers()).
         return i.scene.visible()&&q&&i.inWallet(*q);
     }
     return i.model.popoverOpen()&&e.kind!=app::PointerKind::up;

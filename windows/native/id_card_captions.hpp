@@ -33,11 +33,24 @@ class NativeIdCardCaptions final {
 public:
     NativeIdCardCaptions(LayerScene&labels,IdCardCaptionLeaves,LayerRasterOptions);
     bool update(const modules::IdCardBinding&);
+    // HUDRedaction.playEntrance (Mac 1.3.0): each repaint of the UID caption
+    // with its Recording-mode bar wipes the bar in from the left (rdIn, .35 s,
+    // the standard E curve: a mask growing from the bar's left edge). The
+    // caption is revealed up to revealEdge() (caption-local x; the "UID:"
+    // text lies left of the bar); nullopt shows it whole. advance() starts a
+    // wipe the content event asked for on the next frame; Reduce Motion
+    // shows the bar at once. True while a wipe runs.
+    bool advance(double time,bool reduceMotion);
+    std::optional<double> revealEdge()const noexcept{return edge_;}
+    bool wiping()const noexcept{return wipeStart_.has_value()||wipePending_;}
+    static constexpr double wipeDuration=.35;
     const IdCardCaptionLeaves&leaves()const noexcept{return leaves_;}
     IdCardCaptionStats stats()const noexcept{return stats_;}
 private:
     LayerScene*labels_;IdCardCaptionLeaves leaves_;LayerRasterOptions options_;
     std::array<modules::IdCardCaption,5>painted_{};std::array<bool,5>paintedValid_{};
+    std::optional<modules::IdCardBinding::Redaction>paintedRedaction_; // the UID caption's Recording-mode bar
+    bool wipePending_{};std::optional<double>wipeStart_,edge_;
     std::uint64_t seenRevision_{},nextRevision_{};bool seen_{};IdCardCaptionStats stats_;
 };
 }

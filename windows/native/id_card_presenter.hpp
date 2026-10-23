@@ -102,6 +102,13 @@ public:
     // the next apply() returns the new baseline plus the card. An equal
     // baseline is a no-op; the caller presents a frame (apply runs there).
     void setBaseline(core::source::SourceDesktopFrameSettings);
+    // The UID bar's wipe (NativeIdCardCaptions::advance) on the frame clock,
+    // after apply(): `reveal` (the host's NativeLabelPlan::setRevealEdge)
+    // receives the UID caption surface's edge whenever it moves. True while
+    // the wipe runs (the host keeps presenting frames).
+    void setReveal(std::function<void(std::string_view surfaceID,std::optional<double> edge)>);
+    bool advance(double time,bool reduceMotion);
+    bool requiresFrames()const noexcept{return captions_.wiping();}
     const core::source::SourceDesktopFrameSettings&baseline()const noexcept{return baseline_;}
     const std::optional<std::string>&highlightNode()const noexcept{return highlight_;}
     const core::source::SourceDesktopFrameSettings&settings()const noexcept{return applied_;}
@@ -115,6 +122,7 @@ private:
     IdCardFeed*feed_{};std::function<void()>changed_;std::uint64_t seen_{};bool dirty_{},replaced_[3]{};std::uint64_t textureRevision_[3]{};
     std::uint64_t cardRevision_{};
     IdCardPresenterStats stats_;
+    std::function<void(std::string_view,std::optional<double>)>reveal_;std::optional<double>revealed_;
 };
 }
 #endif

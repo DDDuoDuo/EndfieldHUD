@@ -34,14 +34,15 @@ namespace core=endfield::core;
 namespace {
 void need(bool value,const char*message){if(!value)throw std::runtime_error(message);}
 std::string utf8(const fs::path&value){const auto bytes=value.u8string();return {reinterpret_cast<const char*>(bytes.data()),bytes.size()};}
-struct Options {bool startupTraceCold{};double idleTraceSeconds{30},idleTraceRefresh{165};std::optional<double>idleTraceGrace,idleTraceClosed;fs::path idleTrace,memoryTrace,package,startupTrace,contentionTrace,packet,cache,shader,chrome,cursor,report,snapshots,watchBlur,notesAssets,notesData,notesFormatAssets,shelfAssets,shelfData,shelfMask,clipboardAssets,liveDiagnostics,residentIcons,settingsAssets,archiveAssets,storageAssets,activityAssets,mapGeography,mapPlayerAssets,orbipomAssets;std::string pin,notesAssetsSHA;bool visible{},warp{},runtimeInput{},coverage{},moduleCoverage{},sessionEndCoverage{},nativeClipboard{},nativeActivity{},readerScrollTrace{},readerModule{},calendarModule{},projectionModule{},volumeFixture{},eventLogFixture{},workModeFixture{},batteryFixture{};std::uint32_t benchmarkWidth{1280},benchmarkHeight{800};double benchmarkEpoch{};};
+struct Options {bool startupTraceCold{};double idleTraceSeconds{30},idleTraceRefresh{165};std::optional<double>idleTraceGrace,idleTraceClosed;fs::path idleTrace,memoryTrace,package,startupTrace,contentionTrace,packet,cache,shader,chrome,cursor,report,snapshots,watchBlur,notesAssets,notesData,notesFormatAssets,shelfAssets,shelfData,shelfMask,liveDiagnostics,residentIcons,settingsAssets,archiveAssets,mapGeography,mapPlayerAssets,orbipomAssets;std::string pin,notesAssetsSHA;bool visible{},warp{},runtimeInput{},coverage{},moduleCoverage{},sessionEndCoverage{},nativeClipboard{},clipboardFixture{},nativeActivity{},activityFixture{},nativeStorage{},storageFixture{},readerScrollTrace{},readerModule{},calendarModule{},projectionModule{},volumeFixture{},eventLogFixture{},workModeFixture{},batteryFixture{};std::uint32_t benchmarkWidth{1280},benchmarkHeight{800};double benchmarkEpoch{};};
 Options options(int argc,wchar_t**argv){
-    need(argc>=5,"Usage: watch_session_preview packet-root compiled-scene hud.hlsl --benchmark new-report.json | --visible --watch-blur original-watch-blur.json [--chrome chrome.json] [--cursor-png original.png] [--compiled-sha sha256] [--snapshots new-directory] [--warp] [--runtime-input] [--benchmark-size width height] [--benchmark-epoch seconds] [--coverage] [--storage-assets common-resources (development preview)]");
+    need(argc>=5,"Usage: watch_session_preview packet-root compiled-scene hud.hlsl --benchmark new-report.json | --visible --watch-blur original-watch-blur.json [--chrome chrome.json] [--cursor-png original.png] [--compiled-sha sha256] [--snapshots new-directory] [--warp] [--runtime-input] [--benchmark-size width height] [--benchmark-epoch seconds] [--coverage] [--storage-fixture | --native-storage (visible)] [--activity-fixture | --native-activity (visible)]");
     Options o;o.packet=fs::absolute(argv[1]);o.cache=fs::absolute(argv[2]);o.shader=fs::absolute(argv[3]);
     for(int i=4;i<argc;++i){const std::wstring_view arg=argv[i];
         if(arg==L"--archive-assets"&&i+1<argc){need(o.archiveAssets.empty(),"Duplicate Archive assets");o.archiveAssets=fs::absolute(argv[++i]);}
-        else if(arg==L"--activity-assets"&&i+1<argc){need(o.activityAssets.empty(),"Duplicate Activity assets");o.activityAssets=fs::absolute(argv[++i]);}
-        else if(arg==L"--storage-assets"&&i+1<argc){need(o.storageAssets.empty(),"Duplicate Storage assets");o.storageAssets=fs::absolute(argv[++i]);}
+        else if(arg==L"--activity-fixture"){need(!o.activityFixture,"Duplicate Activity fixture");o.activityFixture=true;}
+        else if(arg==L"--storage-fixture"){need(!o.storageFixture,"Duplicate Storage fixture");o.storageFixture=true;}
+        else if(arg==L"--native-storage"){need(!o.nativeStorage,"Duplicate native Storage mode");o.nativeStorage=true;}
         else if(arg==L"--settings-assets"&&i+1<argc){need(o.settingsAssets.empty(),"Duplicate Settings assets");o.settingsAssets=fs::absolute(argv[++i]);}
         else if(arg==L"--visible"){need(!o.visible,"Duplicate visible mode");o.visible=true;}
         else if(arg==L"--live-diagnostics"&&i+1<argc){need(o.liveDiagnostics.empty(),"Duplicate live diagnostic output");o.liveDiagnostics=fs::absolute(argv[++i]);}
@@ -75,7 +76,7 @@ Options options(int argc,wchar_t**argv){
         else if(arg==L"--cursor-png"&&i+1<argc){need(o.cursor.empty(),"Duplicate cursor image");o.cursor=fs::absolute(argv[++i]);}
         else if(arg==L"--watch-blur"&&i+1<argc){need(o.watchBlur.empty(),"Duplicate original WatchBlur source");o.watchBlur=fs::absolute(argv[++i]);}
         else if(arg==L"--notes-assets"&&i+1<argc){need(o.notesAssets.empty(),"Duplicate Notes assets");o.notesAssets=fs::absolute(argv[++i]);}
-        else if(arg==L"--clipboard-assets"&&i+1<argc){need(o.clipboardAssets.empty(),"Duplicate Clipboard assets");o.clipboardAssets=fs::absolute(argv[++i]);}
+        else if(arg==L"--clipboard-fixture"){need(!o.clipboardFixture,"Duplicate Clipboard fixture");o.clipboardFixture=true;}
         else if(arg==L"--notes-format-assets"&&i+1<argc){need(o.notesFormatAssets.empty(),"Duplicate Notes format assets");o.notesFormatAssets=fs::absolute(argv[++i]);}
         else if(arg==L"--notes-data"&&i+1<argc){need(o.notesData.empty(),"Duplicate Notes fixture data");o.notesData=fs::absolute(argv[++i]);}
         else if(arg==L"--notes-assets-sha"&&i+1<argc){need(o.notesAssetsSHA.empty(),"Duplicate Notes asset pin");o.notesAssetsSHA=utf8(argv[++i]);}
@@ -99,8 +100,9 @@ Options options(int argc,wchar_t**argv){
             else{need(value>=20&&value<=1000,"Idle trace refresh is 20...1000 Hz");o.idleTraceRefresh=value;}}
         else need(false,"Unknown or incomplete preview argument");
     }
-    need(!o.nativeClipboard||(o.visible&&!o.moduleCoverage&&!o.coverage&&!o.clipboardAssets.empty()&&!o.notesAssets.empty()),"Native Clipboard requires explicit visible mode and module assets; hidden tests never access the clipboard");
-    need(!o.nativeActivity||(o.visible&&!o.moduleCoverage&&!o.coverage&&!o.activityAssets.empty()&&!o.notesAssets.empty()),"Native Activity requires explicit visible mode and module assets; hidden tests never enumerate applications");
+    need(!o.nativeClipboard||(o.visible&&!o.moduleCoverage&&!o.coverage&&!o.clipboardFixture&&!o.notesAssets.empty()),"Native Clipboard requires explicit visible mode and module assets; hidden tests never access the clipboard");
+    need(!o.nativeActivity||(o.visible&&!o.moduleCoverage&&!o.coverage&&!o.activityFixture&&!o.notesAssets.empty()),"Native Activity requires explicit visible mode and module assets; hidden tests never enumerate applications");
+    need(!o.nativeStorage||(o.visible&&!o.moduleCoverage&&!o.coverage&&!o.storageFixture&&!o.notesAssets.empty()),"Native Storage requires explicit visible mode and module assets; hidden tests never read disks");
     need(o.notesAssets.empty()==o.notesData.empty()&&o.notesAssets.empty()==o.notesAssetsSHA.empty(),"Notes preview requires assets, independent SHA and a new data root together");
     need(o.visible||o.notesAssets.empty()||o.moduleCoverage,"Hidden module integration requires explicit --module-coverage");
     need(!o.moduleCoverage||(!o.visible&&!o.notesAssets.empty()),"Module coverage requires hidden mode and fresh isolated Notes data");
@@ -123,7 +125,7 @@ Options options(int argc,wchar_t**argv){
     need(!o.batteryFixture||!o.notesAssets.empty(),"Battery fixture requires shared module ownership");
     need(!o.workModeFixture||!o.notesAssets.empty(),"Work Mode fixture needs shared module/text ownership");
     need(o.settingsAssets.empty()||!o.notesAssets.empty(),"Settings needs the shared module owner");
-    need(o.activityAssets.empty()||!o.notesAssets.empty(),"Activity needs the shared module owner");
+    need(!o.activityFixture||!o.notesAssets.empty(),"Activity fixture requires the shared module owner");
     need(!o.projectionModule||(o.visible&&!o.notesAssets.empty()&&!o.notesFormatAssets.empty()),"Projection needs the visible shared HUD and source controls");
     need(o.orbipomAssets.empty()||(!o.notesAssets.empty()&&!o.settingsAssets.empty()),"Minigame needs the shared module owner and an isolated Settings store");
     need(o.mapGeography.empty()==o.mapPlayerAssets.empty(),"Map needs geography and player assets together");
@@ -131,10 +133,10 @@ Options options(int argc,wchar_t**argv){
     need(!o.readerModule||!o.notesAssets.empty(),"Reader needs the shared module owner and a new temporary data root");
     need(!o.calendarModule||!o.notesAssets.empty(),"Calendar needs the shared module owner and a new temporary data root");
     need(!o.readerScrollTrace||(o.visible&&o.readerModule&&!o.notesData.empty()),"Reader trace requires explicit visible isolated Reader data");
-    need(o.storageAssets.empty()||!o.notesAssets.empty(),"Development Storage preview requires shared module ownership");
+    need(!o.storageFixture||!o.notesAssets.empty(),"Storage fixture requires the shared module owner");
     need(o.archiveAssets.empty()||!o.notesAssets.empty(),"Archive needs explicit Notes assets and a new shared test data root");
     need(!o.volumeFixture||!o.notesAssets.empty(),"Volume fixture requires the shared module owner");
-    need(o.clipboardAssets.empty()||!o.notesAssets.empty(),"Clipboard needs the shared module owner");
+    need(!o.clipboardFixture||!o.notesAssets.empty(),"Clipboard fixture requires the shared module owner");
     need(o.shelfAssets.empty()||!o.notesAssets.empty(),"Shelf uses the shared Notes module transition owner");
     if(!o.report.empty())need(!fs::exists(o.report),"Benchmark output already exists");
     need(o.snapshots.empty()||!o.visible,"Owned-target snapshots are hidden benchmark only");
@@ -247,12 +249,12 @@ app::ApplicationOptions applicationOptions(const Options&o){
     a.mode=o.visible?app::ApplicationMode::visiblePreview:app::ApplicationMode::hiddenBenchmark;
     a.packet=o.packet;a.cache=o.cache;a.shader=o.shader;a.chrome=o.chrome;a.cursor=o.cursor;a.watchBlur=o.watchBlur;a.cachePin=o.pin;
     a.runtimeInput=o.runtimeInput;a.warp=o.warp;
-    a.notesAssets=o.notesAssets;a.notesFormatAssets=o.notesFormatAssets;a.shelfAssets=o.shelfAssets;a.shelfMask=o.shelfMask;a.clipboardAssets=o.clipboardAssets;
-    a.residentIcons=o.residentIcons;a.settingsAssets=o.settingsAssets;a.archiveAssets=o.archiveAssets;a.storageAssets=o.storageAssets;a.activityAssets=o.activityAssets;
+    a.notesAssets=o.notesAssets;a.notesFormatAssets=o.notesFormatAssets;a.shelfAssets=o.shelfAssets;a.shelfMask=o.shelfMask;
+    a.residentIcons=o.residentIcons;a.settingsAssets=o.settingsAssets;a.archiveAssets=o.archiveAssets;
     a.mapGeography=o.mapGeography;a.mapPlayerAssets=o.mapPlayerAssets;a.orbipomAssets=o.orbipomAssets;a.notesAssetsSHA=o.notesAssetsSHA;
     a.dataRoot=o.notesData;a.shelfDataRoot=o.shelfData;
     a.reader=o.readerModule;a.calendar=o.calendarModule;a.projection=o.projectionModule;
-    a.nativeClipboard=o.nativeClipboard;a.nativeActivity=o.nativeActivity;
+    a.nativeClipboard=o.nativeClipboard;a.clipboardFixture=o.clipboardFixture;a.nativeActivity=o.nativeActivity;a.activityFixture=o.activityFixture;a.nativeStorage=o.nativeStorage;a.storageFixture=o.storageFixture;
     a.volumeFixture=o.volumeFixture;a.eventLogFixture=o.eventLogFixture;a.workModeFixture=o.workModeFixture;a.batteryFixture=o.batteryFixture;
     a.moduleCoverage=o.moduleCoverage;a.coverage=o.coverage;a.readerScrollTrace=o.readerScrollTrace;a.sessionEndCoverage=o.sessionEndCoverage;
     a.report=o.report;a.snapshots=o.snapshots;a.liveDiagnostics=o.liveDiagnostics;a.startupTrace=o.startupTrace;a.startupTraceWithoutPrewarm=o.startupTraceCold;a.contentionTrace=o.contentionTrace;a.memoryTrace=o.memoryTrace;a.idleTrace=o.idleTrace;a.idleTraceSeconds=o.idleTraceSeconds;a.idleTraceRefreshRate=o.idleTraceRefresh;a.idleTraceClosedSeconds=o.idleTraceClosed;if(o.idleTraceGrace)a.closedGraphicsGrace=*o.idleTraceGrace;

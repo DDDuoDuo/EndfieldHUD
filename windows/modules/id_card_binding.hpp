@@ -13,7 +13,7 @@
 namespace endfield::modules {
 // The bottom-left source personal card (desktop-profile-card.json). Node IDs
 // and authored text metrics are resolved once from the selected card.
-struct IdCardCaptionSource {std::string binding,nodeID;double sourceFontSize{16},width{};bool operator==(const IdCardCaptionSource&)const=default;};
+struct IdCardCaptionSource {std::string binding,nodeID;double sourceFontSize{16},width{},height{};bool operator==(const IdCardCaptionSource&)const=default;};
 struct IdCardSource {
     // managerName, managerNumber, managerLevel, managerLevelLabel, progressTxt
     std::array<IdCardCaptionSource,5>captions;
@@ -48,7 +48,15 @@ public:
         const ehud::data::Profile*profile{};std::array<double,3>hudAccent{250./255,212./255,31./255};core::Language language{core::Language::english};
         std::optional<std::string>avatarImage,backgroundImage; // decoded image identities (managed filenames)
         int avatarOrientation{1};
+        // Recording mode (HUDSourceWatchView.desktopUIDRedacted, Mac 1.3.0):
+        // the caption reads "UID:" and a hatched bar stands in for the UID.
+        bool uidRedacted{};
     };
+    // HUDRedaction.bar on the managerNumber caption: after the measured "UID: "
+    // prefix, round(size x 1.1) high, max(24, min(label width - prefix,
+    // size x 7.5)) wide, centred in the label; labelled when at least 70 wide.
+    struct Redaction {double x{},y{},width{},height{};bool labelled{};std::string label;std::array<double,3>yellow{};bool operator==(const Redaction&)const=default;};
+    const std::optional<Redaction>&redaction()const noexcept{return redaction_;}
     bool update(const Input&);
     const IdCardSource&source()const noexcept{return source_;}
     std::span<const IdCardCaption>captions()const noexcept{return captions_;}
@@ -68,7 +76,8 @@ public:
     ehud::data::Json captionLayer(const ehud::data::Json&exportedLeaf,std::size_t caption)const;
 private:
     IdCardSource source_;IdCardMeasure measure_;
-    struct Key {std::array<std::string,4>strings;std::array<double,11>values{};std::optional<std::string>avatar,background;bool operator==(const Key&)const=default;};
+    struct Key {std::array<std::string,4>strings;std::array<double,11>values{};std::optional<std::string>avatar,background;bool redacted{};std::array<double,3>yellow{};bool operator==(const Key&)const=default;};
+    std::optional<Redaction>redaction_;
     std::optional<Key>key_;std::optional<std::array<double,8>>avatarKey_,backgroundKey_;std::optional<std::string>avatarImage_,backgroundImage_;
     std::array<IdCardCaption,5>captions_;int level_{60};std::array<double,3>accent_{};
     std::uint64_t revision_{},avatarRevision_{},backgroundRevision_{},hoverRevision_{};

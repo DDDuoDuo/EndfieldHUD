@@ -25,6 +25,9 @@ ProfileImage profilePremultiplied(const ProfileImage&);
 // themedBackgroundArtwork: replace the yellow edge chroma by the accent.
 ProfileImage idCardThemedArtwork(const ProfileImage&source,std::array<double,3>accent);
 // hoverArtwork: accent .38 inside the silhouette, .05 inside the rounded panel.
+// Pixels below hoverCoverageThreshold alpha (the sprite's padding band) are
+// cleared first (Mac 1.3.0 SHELL-48), so the hover covers only the card.
+inline constexpr unsigned hoverCoverageThreshold=10;
 ProfileImage idCardHoverArtwork(const ProfileImage&source,std::array<double,3>accent);
 // compositedBackground: the photo dimmed .48 inside the panel (20,22)-(507,182)
 // of the 530x204 sprite, keeping the artwork's alpha silhouette.

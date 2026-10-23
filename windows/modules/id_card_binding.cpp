@@ -2,6 +2,7 @@
 #include "modules/profile_state.hpp"
 #include "core/data/file_io.hpp"
 #include "core/shell_packet.hpp"
+#include "core/source_desktop_chrome.hpp"
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
@@ -26,6 +27,7 @@ IdCardSource idCardSourceFromCardJson(const Json&card){
         for(const auto&component:n["components"].array())
             if(component["script"].isString()&&component["script"].string()=="UIText"&&component["data"]["m_fontSize"].isNumber())caption.sourceFontSize=component["data"]["m_fontSize"].number();
         const auto&size=n["transform"]["raw"]["m_SizeDelta"];need(size["x"].isNumber(),"Missing source caption width");caption.width=size["x"].number();
+        caption.height=size["y"].isNumber()?size["y"].number():0;
     }
     source.levelSlider=bound("levelSlider")["id"].string();source.headFrame=bound("headFrameImg")["id"].string();source.playerHead=bound("playerHead")["id"].string();
     source.accentNodes={source.levelSlider,source.headFrame};
@@ -71,18 +73,28 @@ bool IdCardBinding::update(const Input&input){
     need(input.language!=core::Language::system,"Resolve the card language once in the application owner");
     const auto accent=profileAccent(p,input.hudAccent);
     const auto authority=core::localized("Authority","权限等级",input.language),maximum=core::localized("MAX","满级",input.language);
-    Key key{{p.name,p.displayedUID(),authority,maximum},{static_cast<double>(p.permissionLevel),p.avatarZoom,p.avatarOffsetX,p.avatarOffsetY,
-        p.thumbnailOffsetX,p.thumbnailOffsetY,p.thumbnailZoom,static_cast<double>(input.avatarOrientation),accent[0],accent[1],accent[2]},input.avatarImage,input.backgroundImage};
+    // The profile key drops the UID while redacted (Mac 1.3.0), so the card
+    // re-renders on the toggle; the bar's label takes the HUD's yellow.
+    Key key{{p.name,input.uidRedacted?std::string{}:p.displayedUID(),authority,maximum},{static_cast<double>(p.permissionLevel),p.avatarZoom,p.avatarOffsetX,p.avatarOffsetY,
+        p.thumbnailOffsetX,p.thumbnailOffsetY,p.thumbnailZoom,static_cast<double>(input.avatarOrientation),accent[0],accent[1],accent[2]},input.avatarImage,input.backgroundImage,
+        input.uidRedacted,input.uidRedacted?input.hudAccent:std::array<double,3>{}};
     if(key_==key)return false;
     key_=std::move(key);
     level_=std::clamp(p.permissionLevel,1,60);accent_=accent;
-    const std::array<std::string,5>texts{p.name,"UID: "+p.displayedUID(),std::to_string(level_),authority,level_==60?maximum:std::string{}};
+    const std::array<std::string,5>texts{p.name,input.uidRedacted?std::string("UID:"):"UID: "+p.displayedUID(),std::to_string(level_),authority,level_==60?maximum:std::string{}};
     for(std::size_t i=0;i<texts.size();++i){
         auto&caption=captions_[i];const auto&metrics=source_.captions[i];
         double size=metrics.sourceFontSize;
         // Source: step down 0.5 pt from the authored size until it fits, never below 10.
         while(size>10&&measure_(texts[i],size)>metrics.width)size-=.5;
         caption={texts[i],size,i>=3,i==4?std::array<double,4>{accent[0],accent[1],accent[2],1}:std::array<double,4>{1,1,1,1}};
+    }
+    // HUDSourceWatchView.updateUIDRedaction: the bar after "UID: " on the caption.
+    redaction_.reset();
+    if(input.uidRedacted){
+        const auto size=captions_[1].fontSize;const auto&label=source_.captions[1];const double prefix=measure_("UID: ",size);
+        Redaction r;r.height=std::round(size*1.1);r.width=std::max(24.,std::min(label.width-prefix,size*7.5));r.x=prefix;r.y=(label.height-r.height)/2;
+        r.labelled=r.width>=70;r.label="[ "+core::localized("REDACTED","已隐藏",input.language)+" ]";r.yellow=input.hudAccent;redaction_=std::move(r);
     }
     ++revision_;
     const std::array<double,8>avatar{136,136,p.avatarOffsetX,p.avatarOffsetY,p.avatarZoom,static_cast<double>(input.avatarOrientation),0,0};
@@ -106,17 +118,34 @@ Json IdCardBinding::captionLayer(const Json&leaf,std::size_t index)const{
     need(leaf.isObject()&&leaf["text"].isObject(),"Exported profile caption is a text leaf");
     const auto&c=captions_[index];auto result=leaf;auto&text=result["text"];
     text["string"]=c.text;text["fontSize"]=c.fontSize;text["alignment"]=c.rightAligned?"right":"left";
-    if(text.contains("font")&&std::as_const(text)["font"].isObject()){
-        // NSFont.systemFont(ofSize:weight:.medium) line metrics scale with the
-        // point size; the exported leaf carries them for its authored size.
-        auto&font=text["font"];const Json&read=font;
-        const double previous=read["pointSize"].isNumber()?read["pointSize"].number():0;
-        if(previous>0&&std::isfinite(previous))for(const char*metric:{"ascender","descender","leading"})
-            if(read[metric].isNumber())font[metric]=read[metric].number()*c.fontSize/previous;
-        font["pointSize"]=c.fontSize;
-    }
+    // Mac 1.3.0 (SHELL-43): the card's labels are HUDStandardTextLayer,
+    // HarmonyOS Sans medium with the face's own line metrics (the exported
+    // leaf carried the v1.2.0 system font).
+    text["font"]=core::source::standardFaceFont(c.fontSize);text["fontWeight"]=500;
     text["foregroundColor"]=Json::Object{{"sRGB",Json::Array{c.color[0],c.color[1],c.color[2],c.color[3]}}};
     if(text.contains("runs"))text["runs"]=Json::Array{};
+    result["children"]=Json::Array{};
+    if(index==1&&redaction_){
+        // HUDRedaction.bar: #141414 with a 1 px black border, clipped, #2B2B2B
+        // 3 px stripes every 6 px at -45 deg, and the 8 pt bold yellow label
+        // (tracking .2, never truncated) when the bar is at least 70 wide.
+        const auto&r=*redaction_;const auto id=(leaf["id"].isString()?leaf["id"].string():std::string("desktop.profile.managerNumber"))+"/redaction";
+        const auto rgb=[](double v,double a=1){return Json::Object{{"sRGB",Json::Array{v,v,v,a}}};};
+        Json::Array stripes;const double period=6*std::sqrt(2.),band=3*std::sqrt(2.);
+        for(double x=-r.height-period;x<r.width+period;x+=period){
+            // One point per command (a braced single Json::Array would copy it).
+            const auto command=[&](const char*op,double px,double py){Json::Array points;points.push_back(Json::Array{px,py});stripes.push_back(Json::Object{{"op",op},{"points",std::move(points)}});};
+            command("move",x,r.height);command("line",x+band,r.height);command("line",x+band+r.height,0);command("line",x+r.height,0);
+            stripes.push_back(Json::Object{{"op","close"},{"points",Json::Array{}}});
+        }
+        Json::Array children{Json::Object{{"id",id+"/stripes"},{"kind","shape"},{"bounds",Json::Array{0,0,r.width,r.height}},{"position",Json::Array{0,0}},{"anchorPoint",Json::Array{0,0}},
+            {"children",Json::Array{}},{"shape",Json::Object{{"path",std::move(stripes)},{"fillColor",rgb(0x2B/255.)},{"strokeColor",Json{}},{"lineWidth",1},{"fillRule","non-zero"}}}}};
+        if(r.labelled)children.push_back(Json::Object{{"id",id+"/label"},{"kind","text"},{"bounds",Json::Array{0,0,r.width,8}},{"position",Json::Array{0,(r.height-8)/2}},{"anchorPoint",Json::Array{0,0}},{"children",Json::Array{}},
+            {"text",Json::Object{{"string",r.label},{"fontSize",8},{"fontWeight",700},{"tracking",.2},{"lineHeight",1},{"maximumLines",1},{"truncation","none"},{"alignment","center"},
+                {"foregroundColor",Json::Object{{"sRGB",Json::Array{r.yellow[0],r.yellow[1],r.yellow[2],1}}}},{"runs",Json::Array{}}}}});
+        result["children"]=Json::Array{Json::Object{{"id",id},{"kind","layer"},{"bounds",Json::Array{0,0,r.width,r.height}},{"position",Json::Array{r.x,r.y}},{"anchorPoint",Json::Array{0,0}},
+            {"backgroundColor",rgb(0x14/255.)},{"borderWidth",1},{"borderColor",rgb(0)},{"masksToBounds",true},{"children",std::move(children)}}};
+    }
     return result;
 }
 }
