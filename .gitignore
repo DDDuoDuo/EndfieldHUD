@@ -21,6 +21,11 @@ xcuserdata/
 __pycache__/
 *.pyc
 
+# Build, test and release tooling stays on this Mac. The Windows build packs
+# the game artwork with the Mac packager, so that one script stays public.
+/scripts/*
+!/scripts/package-watch-resources.py
+
 # Local development records; retained on this Mac.
 /Tests/
 /tests/
