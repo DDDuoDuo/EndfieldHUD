@@ -47,13 +47,13 @@ def walk(layer):
 manifest = read('modules.json')
 check(manifest['schemaVersion'] == 1, 'schema')
 finite(manifest)
-expected = {('notes','default'), ('profile','default')} | {(m,s) for m in ('system','display','hotkeys','about') for s in ('top','bottom')}
+expected = {('notes','default'), ('profile','default')}  # Settings: tools/settings_reference.*
 check({(e['module'],e['state']) for e in manifest['entries']} == expected, 'actual source state coverage')
-check(len(manifest['entries']) == 10, 'no duplicate entries')
+check(len(manifest['entries']) == 2, 'no duplicate entries')
 check(manifest['isolation'] == {
     'windowCreated':False, 'systemHUDViewCreated':False, 'temporaryStoresOnly':True,
     'isolatedPreferencesSuite':True, 'liveProvidersCreated':False, 'clipboardAccessed':False,
-    'nativeCursorSetCount':0, 'profileActivated':False, 'settingsTimersScheduled':0}, 'isolation contract')
+    'nativeCursorSetCount':0, 'profileActivated':False}, 'isolation contract')
 check(manifest['sourceDerivedAttachment']['fullSystemHUDViewPlacementVerified'] is False, 'honest placement boundary')
 check(manifest['sourceDerivedAttachment'] == read('attachment.json'), 'attachment evidence')
 check(manifest['sourceDerivedAttachment']['reportScale'] == .86, 'actual current report scale')

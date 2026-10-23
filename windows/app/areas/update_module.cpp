@@ -184,6 +184,8 @@ public:
     modules::SettingsUpdateStatus settingsStatus(core::Language l) const override {
         const auto& st = updater_->state();
         modules::SettingsUpdateStatus s;
+        static_assert(int(u::Phase::idle) == int(modules::SettingsUpdatePhase::idle) && int(u::Phase::failed) == int(modules::SettingsUpdatePhase::failed));
+        s.phase = static_cast<modules::SettingsUpdatePhase>(st.phase); // same order as HUDUpdateState.Phase
         s.title = u::phaseTitle(st.phase, l);
         s.detail = u::detailText(st.detail, l);
         s.latestVersion = st.latestVersion;
@@ -384,6 +386,10 @@ void UpdatesArea::coverage(app::ModuleCoverage& step) {
               "Windows updates: the resolved hand-off leaves no download or result behind");
         *setupExit_ = std::nullopt;
         launches_.clear();
+        // Every later cycle's About step finds the offered update (cycle 1
+        // ends on it too), so repeated cycles show the same About page.
+        serveRelease(sums);
+        discover();
     } else if (step.cycle == 1) {
         serveRelease(sums);
         discover();

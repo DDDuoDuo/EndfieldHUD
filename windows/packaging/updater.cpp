@@ -178,7 +178,7 @@ std::string phaseTitle(Phase p, core::Language l) {
     case Phase::downloading: return core::localized("Downloading…", "正在下载…", l);
     case Phase::ready: return core::localized("Ready to update", "更新已就绪", l);
     case Phase::installing: return core::localized("Restarting…", "正在重启…", l);
-    case Phase::failed: return core::localized("Check failed — retry", "检查失败 · 重试", l);
+    case Phase::failed: return core::localized("Check failed, retry", "检查失败，请重试", l); // HUDUpdateState.title (SHELL-89)
     }
     return {};
 }

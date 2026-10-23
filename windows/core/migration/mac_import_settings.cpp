@@ -503,6 +503,10 @@ MacSettingsImport mapMacSettings(const PlistValue& domainValue, const MacImportT
         if (oneOf(std::string_view(key), knownKeys) || key == "hasLaunched") continue;
         if (key == "HUDUpdateAutomaticallyInstall" || key == "HUDUpdateLastNotifiedRelease" || key.starts_with("SU"))
             report(out, key, MacSettingOutcome::excluded, "macOS updater state does not transfer");
+        else if (key == "storageVolumeIdentifier")
+            // StorageController's disk choice names a Mac volume UUID; Windows
+            // remembers its own volume path under "storageVolume".
+            report(out, key, MacSettingOutcome::excluded, "A Mac disk identity does not name a Windows volume");
         else report(out, key, MacSettingOutcome::notImported, "Unknown key preserved in the archived original preferences");
     }
     return out;

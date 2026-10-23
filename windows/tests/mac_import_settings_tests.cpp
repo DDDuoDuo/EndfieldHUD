@@ -132,6 +132,7 @@ void outcomes() {
     {
         const auto custom = map({{"hudSettingsSchemaVersion", P::integer(1)}, {"summonShortcut", P::data(R"({"keyCode":4,"modifiers":3})")}, {"launchAtLogin", P::boolean(false)},
                                  {"HUDUpdateAutomaticallyInstall", P::boolean(true)}, {"SUFeedURL", P::string("https://example.invalid")}, {"futureKey", P::integer(3)},
+                                 {"storageVolumeIdentifier", P::string("5A1E0C3D-0000-4000-8000-000000000001")},
                                  {"centerLogo", P::string("custom")}, {"centerLogoRevision", P::string("9b2d1c3a-1111-4222-8333-444455556666")}});
         check(custom.customShortcutUntranslated && !custom.settings.fields.contains("windowsSummonShortcut") && find(custom, "summonShortcut", m::MacSettingOutcome::untranslated),
               "Custom Mac key codes are never copied as Windows virtual keys");
@@ -139,6 +140,8 @@ void outcomes() {
         check(!custom.launchAtLogin && find(custom, "HUDUpdateAutomaticallyInstall", m::MacSettingOutcome::excluded) && find(custom, "SUFeedURL", m::MacSettingOutcome::excluded) &&
               find(custom, "futureKey", m::MacSettingOutcome::notImported), "Updater keys are excluded and unknown keys are only archived");
         check(!custom.settings.fields.contains("HUDUpdateAutomaticallyInstall") && !custom.settings.fields.contains("futureKey"), "Excluded and unknown keys never enter the Windows record");
+        check(find(custom, "storageVolumeIdentifier", m::MacSettingOutcome::excluded) && !custom.settings.fields.contains("storageVolumeIdentifier") &&
+              !custom.settings.fields.contains("storageVolume"), "The Mac's Storage disk choice is not imported (Windows keeps its own storageVolume)");
         check(custom.centerLogoRevision == std::optional<std::string>("9B2D1C3A-1111-4222-8333-444455556666"), "Custom center-logo revision is canonical and handed to the logo step");
     }
     {   // Swift.max/min keep the second argument's sign for equal zeros.

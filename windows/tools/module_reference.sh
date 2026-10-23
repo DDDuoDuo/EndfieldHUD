@@ -42,7 +42,7 @@ attachment = {
     'sourcePath': 'Sources/SystemHUDView.swift', 'sourceSHA256': hashlib.sha256(source.read_bytes()).hexdigest(),
     'sourceExcerpts': {'reportScale': scale, 'reportCenterY': center, 'reportRect': rect, 'projectNotesRect': notes_project,
                        'notesLayout': 'self.designScale = max(0.1, min(' + notes_layout},
-    'exportedModules': ['notes','profile','system','display','hotkeys','about'],
+    'exportedModules': ['notes','profile'],
     'desktopMode': True, 'reportScale': 0.86, 'reportCenter': [500,285], 'designCenter': [500,320],
     'moduleLocalToDesign': 'add contentFrame origin',
     'designToReport': 'x=500+(x-500)*0.86; y=285+(y-320)*0.86',

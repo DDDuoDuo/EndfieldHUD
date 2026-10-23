@@ -163,6 +163,17 @@ m::CenterLogoBitmap decodeCenterLogoPreset(const std::filesystem::path& director
     return oriented(pixels(s, w, h), s.orientation);
 }
 
+m::CenterLogoBitmap decodeCenterLogoWordmark(const std::filesystem::path& file) {
+    const auto bytes = ehud::data::detail::readFile(file, m::centerLogoMaximumManagedBytes);
+    if (!bytes) throw std::runtime_error("The ENDFIELD INDUSTRIES artwork is missing");
+    const std::span<const std::uint8_t> raw(reinterpret_cast<const std::uint8_t*>(bytes->data()), bytes->size());
+    if (core::packet::sha256(raw) != "dd5468819ce5cff39cc5d8063ca3248b4f57a2addc0d8d97b5384c8871cd3db3")
+        throw std::runtime_error("The ENDFIELD INDUSTRIES artwork differs from its pin");
+    const Apartment com;
+    auto s = open(*bytes);
+    return m::centerLogoWordmark(pixels(s, s.width, s.height));
+}
+
 std::optional<m::CenterLogoBitmap> decodeCenterLogoRevision(const std::filesystem::path& directory, std::string_view revision) {
     const auto valid = m::centerLogoRevision(revision);
     if (!valid) return std::nullopt;

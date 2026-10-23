@@ -18,6 +18,11 @@ namespace endfield::native {
 // SOURCE.json bundledSHA256 before decoding. Throws on a missing or damaged
 // file; the caller keeps the packet logo. The thumbnail is bounded to 768 px.
 modules::CenterLogoBitmap decodeCenterLogoPreset(const std::filesystem::path& presetDirectory, modules::CenterLogoChoice);
+// HUDSettingsCanvas.endfieldWordmark: the packaged ENDFIELD INDUSTRIES
+// artwork (Resources/EndfieldIndustriesSource.png, verified against its pin)
+// cropped to the lettering band (modules::centerLogoWordmark). Throws on a
+// missing or damaged file.
+modules::CenterLogoBitmap decodeCenterLogoWordmark(const std::filesystem::path& file);
 // HUDCenterLogoStore.image(revision:): <directory>\<REVISION>.png, a regular
 // file of 1 byte...4 MiB whose image is at most 768 px per side; nullopt
 // otherwise (missing, replaced or damaged files show the packet logo).

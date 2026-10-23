@@ -1,8 +1,10 @@
 #pragma once
 #include "core/data/data_store.hpp"
 #include "core/localization.hpp"
+#include <array>
 #include <functional>
 #include <optional>
+#include <vector>
 
 namespace endfield::modules {
 // Windows identity is additive; the imported Mac summonShortcut is untouched.
@@ -14,7 +16,11 @@ struct SettingsShortcut {
 std::optional<std::string> validateSettingsShortcut(SettingsShortcut,core::Language);
 std::string settingsShortcutTitle(SettingsShortcut);
 SettingsShortcut settingsShortcut(const ehud::data::Settings&);
+// HUDUpdateState.Phase (Sources/HUDUpdateState.swift), the order of
+// packaging/updater.hpp Phase: the About page's update strip reads it.
+enum class SettingsUpdatePhase:std::uint8_t{idle,checking,current,available,downloading,ready,installing,failed};
 struct SettingsUpdateStatus {
+    SettingsUpdatePhase phase{SettingsUpdatePhase::idle};
     std::string title,detail,latestVersion,releaseURL;
     bool automaticallyInstalls{},canCheck{},canSetAutomatic{};
     // The toggle's label (Windows: "Check for updates daily", supplied by the
@@ -22,6 +28,14 @@ struct SettingsUpdateStatus {
     std::string automaticTitle;
     bool operator==(const SettingsUpdateStatus&)const=default;
 };
+// HUDAboutInformation (Sources/HUDSettingsController.swift): the version is
+// "<version> (<build>)"; the repository is an https github.com page or empty.
+struct SettingsCredit {std::string name,role,url;};
+struct SettingsAbout {std::string name="EndfieldHUD",version="Development",author="DDDuoDuo",license="MIT",repository;};
+// HUDAboutInformation.current's credits in `language` (roles localized).
+std::vector<SettingsCredit> settingsCredits(core::Language);
+// HUDSettingsController.presetAccentHexes.
+inline constexpr std::array<std::string_view,5> settingsPresetAccents{"FAD41F","6EDFE8","A8E58B","C9A2FF","FF8F78"};
 struct SettingsCallbacks {
     // Callbacks do not synchronously reenter/destroy this controller. persist
     // queues the immutable record in the host executor; report later storage
@@ -66,12 +80,17 @@ public:
     const SettingsUpdateStatus&updateStatus()const noexcept{return updates_;}
     void editBatteryPosition();void openLink(std::string_view);void checkUpdates();void toggleAutomaticUpdates();
     std::uint64_t revision()const noexcept{return revision_;}
+    // HUDSettingsController.addObserver / removeObserver: every publish (after
+    // SettingsCallbacks::changed) notifies the observers registered then; an
+    // observer may remove itself or another from inside the notification.
+    std::uint64_t addObserver(std::function<void()>);
+    void removeObserver(std::uint64_t)noexcept;
 private:
     struct Layout {double scale,x,y;bool operator==(const Layout&)const=default;};
     ehud::data::Settings committed_,effective_;SettingsCallbacks callbacks_;core::Language language_;
     std::optional<Layout>preview_;std::optional<double>deadline_;std::optional<int>lastRemaining_;
     std::string status_,shortcutError_,shortcutRegistration_,login_;SettingsUpdateStatus updates_;
-    bool capturing_{};std::uint64_t revision_{1};
+    bool capturing_{};std::uint64_t revision_{1},observerSerial_{};std::vector<std::pair<std::uint64_t,std::function<void()>>>observers_;
     static Layout layout(const ehud::data::Settings&);static void applyLayout(ehud::data::Settings&,Layout);
     static ehud::data::Settings normalize(ehud::data::Settings);
     void preview(Layout,double);void clearPreview();void applyPersistent(ehud::data::Settings,bool shortcutApplied=false,bool forceShortcut=false);void publish();

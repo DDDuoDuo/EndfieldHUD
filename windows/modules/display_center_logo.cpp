@@ -34,6 +34,16 @@ std::optional<CenterLogoChoice> centerLogoChoice(std::string_view value) noexcep
     return std::nullopt;
 }
 std::string_view centerLogoIdentifier(CenterLogoChoice choice) noexcept { return identifiers[static_cast<std::size_t>(choice)]; }
+std::string centerLogoTitle(CenterLogoChoice choice, core::Language language) {
+    switch (choice) {
+    case CenterLogoChoice::endfield: return "Endfield";
+    case CenterLogoChoice::rhodesIsland: return core::localized("Rhodes Island", "罗德岛", language);
+    case CenterLogoChoice::babel: return core::localized("Babel", "巴别塔", language);
+    case CenterLogoChoice::rhineLab: return core::localized("Rhine Lab", "莱茵生命", language);
+    case CenterLogoChoice::custom: return core::localized("Custom", "自定", language);
+    }
+    return {};
+}
 std::string_view centerLogoPresetFile(CenterLogoChoice choice) noexcept {
     switch (choice) {
     case CenterLogoChoice::rhodesIsland: return "rhodesIsland.png";
@@ -137,6 +147,49 @@ std::optional<CenterLogoArtwork> centerLogoArtwork(const CenterLogoBitmap& image
     return out;
 }
 
+CenterLogoBitmap centerLogoChooserImage(const CenterLogoArtwork& art, double width, double height, double scale, unsigned maximumSide) {
+    need(art.width > 0 && art.height > 0 && art.texturePixels.size() == std::size_t(art.width) * art.height * 4, "Invalid center logo artwork");
+    need(std::isfinite(width) && std::isfinite(height) && width > 0 && height > 0 && maximumSide > 0, "Invalid center logo chooser size");
+    const double ratio = std::min(width / art.width, height / art.height);
+    const double pixels = std::max(1., std::min(8., std::isfinite(scale) ? std::ceil(scale) : 2.));
+    double w = std::max(1., std::round(art.width * ratio * pixels)), h = std::max(1., std::round(art.height * ratio * pixels));
+    if (const double over = std::max(w, h) / maximumSide; over > 1) { w = std::max(1., std::round(w / over)); h = std::max(1., std::round(h / over)); }
+    CenterLogoBitmap out{unsigned(w), unsigned(h), std::vector<std::uint8_t>(std::size_t(w) * std::size_t(h) * 4)};
+    const double sx = double(art.width) / w, sy = double(art.height) / h;
+    for (unsigned y = 0; y < out.height; ++y)
+        for (unsigned x = 0; x < out.width; ++x) {
+            // The source area this pixel covers, weighted by coverage (box filter), premultiplied.
+            const double x0 = x * sx, x1 = (x + 1) * sx, y0 = y * sy, y1 = (y + 1) * sy;
+            std::array<double, 4> sum{};
+            double area = 0;
+            for (unsigned v = unsigned(y0); v < std::min<unsigned>(art.height, unsigned(std::ceil(y1))); ++v)
+                for (unsigned u = unsigned(x0); u < std::min<unsigned>(art.width, unsigned(std::ceil(x1))); ++u) {
+                    const double weight = (std::min(x1, u + 1.) - std::max(x0, double(u))) * (std::min(y1, v + 1.) - std::max(y0, double(v)));
+                    if (weight <= 0) continue;
+                    const auto* p = &art.texturePixels[(std::size_t(art.height - 1 - v) * art.width + u) * 4]; // bottom-origin rows
+                    const double a = p[3] / 255.;
+                    for (unsigned k = 0; k < 3; ++k) sum[k] += weight * a * p[k];
+                    sum[3] += weight * p[3];
+                    area += weight;
+                }
+            auto* o = &out.rgba[(std::size_t(y) * out.width + x) * 4];
+            if (area <= 0 || sum[3] <= 0) { std::fill_n(o, 4, std::uint8_t{}); continue; }
+            const double a = sum[3] / area;
+            for (unsigned k = 0; k < 3; ++k) o[k] = std::uint8_t(std::clamp(std::lround(sum[k] / area * 255. / a), 0l, 255l));
+            o[3] = std::uint8_t(std::clamp(std::lround(a), 0l, 255l));
+        }
+    return out;
+}
+CenterLogoBitmap centerLogoWordmark(const CenterLogoBitmap& source) {
+    need(source.width > 0 && source.height > 0 && source.rgba.size() == std::size_t(source.width) * source.height * 4, "Invalid center logo bitmap");
+    const double unit = double(source.width) / 430;
+    const auto top = unsigned(std::clamp(std::floor(142 * unit), 0., double(source.height)));
+    const auto bottom = unsigned(std::clamp(std::ceil(225 * unit), double(top), double(source.height)));
+    need(bottom > top, "The ENDFIELD INDUSTRIES source is too short");
+    CenterLogoBitmap out{source.width, bottom - top, {}};
+    out.rgba.assign(source.rgba.begin() + std::ptrdiff_t(std::size_t(top) * source.width * 4), source.rgba.begin() + std::ptrdiff_t(std::size_t(bottom) * source.width * 4));
+    return out;
+}
 std::string centerLogoErrorText(CenterLogoError error, core::Language language, std::string_view detail) {
     switch (error) {
     case CenterLogoError::invalidImage: return core::localized("Choose a readable image file.", "请选择可读取的图片文件。", language);
