@@ -3,7 +3,7 @@
 User-facing changes to the macOS app, newest first. The Windows version keeps
 its own changelog on its development branch.
 
-## Unreleased
+## 1.3.0 — unreleased
 
 ### Redesigned centre
 

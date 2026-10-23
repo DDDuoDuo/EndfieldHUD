@@ -3039,7 +3039,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         if playsBootLogOnOpen, !HUDRuntimeAppearance.reduceMotion {
             playsBootLogOnOpen = false
             withoutActions { moduleContent.layer.opacity = 0 }
-            bootLog.play(bootLogLines(), version: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.2.0")
+            bootLog.play(bootLogLines(), version: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.3.0")
             updateButtonStates()
         } else {
             if playsBootLogOnOpen { playsBootLogOnOpen = false }
