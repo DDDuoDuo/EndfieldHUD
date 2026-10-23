@@ -105,8 +105,8 @@ void run(const std::filesystem::path&shader,const std::filesystem::path&resource
     check(preview.pointer({app::PointerKind::down,app::PointerButton::left,outside.x,outside.y,0},time)&&!state.popover(),"Outside click dismisses the popover");
     preview.pointer({app::PointerKind::up,app::PointerButton::left,outside.x,outside.y,0},time);paint();
     // An account lock closes a field that became read-only, without saving.
-    click(30,125);click(60,153);type(u"Locked");state.setSyncLocked(true);preview.stateChanged(time);
-    check(!preview.editing()&&state.profile().name=="Zed\U0001F600","Sync lock cancels a now read-only edit");state.setSyncLocked(false);preview.stateChanged(time);
+    click(30,125);click(60,153);type(u"Locked");state.setSyncLocked(ehud::data::ProfileSyncFields::all());preview.stateChanged(time);
+    check(!preview.editing()&&state.profile().name=="Zed\U0001F600","Sync lock cancels a now read-only edit");state.setSyncLocked(ehud::data::ProfileSyncFields{});preview.stateChanged(time);
     // Work hours refresh at the scheduled deadline only.
     live=7200;const auto due=*preview.nextWakeTime();preview.wake(due-.01);check(state.shownHours()=="1.00","No early work refresh");
     preview.wake(due);check(state.shownHours()=="2.00","Work hours refresh at the deadline");paint();
@@ -127,7 +127,7 @@ void run(const std::filesystem::path&shader,const std::filesystem::path&resource
     check(commits==commitsBeforeZoom+1&&state.profile().avatarZoom>savedZoom,"Zoom drag saves once on release");
     key(VK_ESCAPE);
     auto backdrop=std::make_shared<gpu::ProfileDecodedImage>();backdrop->image={64,36,std::vector<std::uint8_t>(64*36*4,200),false};
-    auto withBackground=state.profile();withBackground.backgroundFilename="00000000-0000-4000-8000-000000000002.png";state.refresh(withBackground,false);preview.stateChanged(time);
+    auto withBackground=state.profile();withBackground.backgroundFilename="00000000-0000-4000-8000-000000000002.png";state.refresh(withBackground,{});preview.stateChanged(time);
     preview.setBackground(backdrop,time);paint(.3);check(preview.artwork().backdrop.photo&&preview.artwork().contrast.has_value(),"Background photo switches the card to its backdrop palette");
     preview.setAvatar(nullptr,time);paint();check(portraitNode()["children"].array()[0]["contents"].isNull(),"Removing the avatar restores the silhouette");
     // Leaving the module fades the background section and releases input.

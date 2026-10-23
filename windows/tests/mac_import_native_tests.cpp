@@ -1,6 +1,9 @@
 #include "mac_import_test_support.hpp"
 #include "core/migration/mac_import_native.hpp"
 #include "modules/archive_repository.hpp"
+#include "modules/reader_repository.hpp"
+#include "core/data/map_store.hpp"
+#include "core/data/notes_centre_store.hpp"
 #include "native/app_shortcut_text.hpp"
 #include "native/archive_text_rules.hpp"
 #include <cmath>
@@ -285,21 +288,44 @@ void golden(const fs::path& fixture) {
     const d::SettingsStore settings(destination);
     for (const auto& [key, value] : expected["settings"].object()) {
         const auto& actual = settings.value().fields[key];
-        check(value.isNumber() ? actual.isNumber() && actual.number() == value.number() : actual == value, "Golden setting " + key);
+        if (value.isObject() && key != "summonShortcut") check(d::decodeProjectionSettings(actual) == d::decodeProjectionSettings(value), "Golden setting " + key);
+        else check(value.isNumber() ? actual.isNumber() && actual.number() == value.number() : actual == value, "Golden setting " + key);
     }
     // Both date epochs: Archive SQL columns hold Unix seconds, its JSON BLOBs and
     // Notes created_at hold Foundation seconds since 2001.
     const auto foundation = expected["foundationDate"].number();
     mod::ArchiveSQLiteRepository archive(destination / "Archive", endfield::native::nativeArchiveTextRules());
     const auto summaries = archive.summaries();
-    check(summaries.size() == 1 && summaries[0].date == foundation && archive.entry(summaries[0].id)->date == foundation, "Archive document date is the Mac Foundation-epoch value");
+    const auto journal = std::find_if(summaries.begin(), summaries.end(), [](const auto& e) { return e.type == mod::ArchiveTemplate::journal; });
+    check(summaries.size() == 2 && journal != summaries.end() && journal->date == foundation && archive.entry(journal->id)->date == foundation, "Archive document date is the Mac Foundation-epoch value");
+    // Mac 1.3.0: a classified document arrives classified and locked; its
+    // Keychain verifier never transfers, so it follows the Mac's own
+    // "password missing" path (recovery sets a new password on this PC).
+    const auto secret = std::find_if(summaries.begin(), summaries.end(), [](const auto& e) { return e.isClassified; });
+    auto vault = std::make_shared<mod::ArchiveMemoryPasswordVault>();
+    mod::ArchiveSQLiteRepository classified(destination / "Archive", endfield::native::nativeArchiveTextRules(), vault);
+    check(secret != summaries.end() && classified.classificationStatus(secret->id) == mod::ArchiveClassificationStatus::passwordMissing &&
+          classified.entry(secret->id)->body == "Locked, not encrypted", "The imported classified document is passwordMissing, text kept");
+    check(classified.categories().size() == 1 && classified.categories().front().isNew, "The NEW badge survives the import");
     sqlite3* db{};
     check(sqlite3_open_v2((destination / "Archive" / "archive.sqlite").string().c_str(), &db, SQLITE_OPEN_READONLY, nullptr) == SQLITE_OK, "Open imported Archive read-only");
     sqlite3_stmt* statement{};
-    sqlite3_prepare_v2(db, "SELECT date FROM entries", -1, &statement, nullptr);
+    sqlite3_prepare_v2(db, "SELECT date FROM entries WHERE template='journal'", -1, &statement, nullptr);
     check(sqlite3_step(statement) == SQLITE_ROW && std::abs(sqlite3_column_double(statement, 0) - (foundation + 978307200.0)) < 1e-3, "Archive SQL date column is Unix seconds");
     sqlite3_finalize(statement);
+    sqlite3_prepare_v2(db, "PRAGMA user_version", -1, &statement, nullptr);
+    check(sqlite3_step(statement) == SQLITE_ROW && sqlite3_column_int64(statement, 0) == 3, "The classified archive keeps user_version 3");
+    sqlite3_finalize(statement);
     sqlite3_close(db);
+    {   // 1.3.0 centre.json, Reader reading and the map's wide camera arrive intact.
+        const d::NotesCentreStore centre(destination);
+        const auto& c = centre.document();
+        check(centre.loadIssue() == d::NotesCentreStore::LoadIssue::none && c.tasks.size() == 2 && c.flagged.size() == 2 && c.tab == d::NotesCentreDocument::Tab::text &&
+              c.isFolded && c.richText && c.richText->runs.size() == 2 && c.doneCount() == 1 && c.hasDot(), "The centre TODO list, TEXT note, tab, fold and dots import");
+        check(mod::ReaderJSONRepository(destination / "Reader").load().reading, "The Reader reopens in the book (reading: true)");
+        const d::MapStore map(destination);
+        check(map.value().viewport.zoom == 1.5, "The map's wide camera (wideZoom) imports");
+    }
     const auto notes = d::NotesStore(destination).notes();
     check(!notes.empty() && notes.front().createdAt == foundation, "Notes created_at keeps the exact Foundation-epoch double");
     check(notes.size() == 5 && std::count_if(notes.begin(), notes.end(), [](const auto& n) { return n.kind == d::NoteKind::drawing; }) == 1 &&

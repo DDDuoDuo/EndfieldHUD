@@ -725,7 +725,7 @@ private:
             step.check(owner_->gauge().model().value() == d.expectedGauge() && owner_->gauge().model().canOpen() &&
                        d.expectedGauge().find(" / 135") != std::string::npos, "The header wallet shows Arknights sanity");
             // Profile sync before the profile exists, then attach (replay).
-            step.check(d.click("syncProfile") && controller().cache().syncProfile && controller().gameSyncActive() && relay_.pending() && relay_.locked() == true,
+            step.check(d.click("syncProfile") && controller().cache().syncProfile && controller().gameSyncActive() && relay_.pending() && relay_.locked() == ehud::data::ProfileSyncFields::all(),
                        "Enabling sync keeps the update until the personal profile attaches");
             relay_.attach(&w.profileSink);
             const auto& profile = w.profileStore.value();

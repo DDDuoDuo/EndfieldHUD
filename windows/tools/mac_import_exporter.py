@@ -40,7 +40,8 @@ DOMAIN = 'io.github.endfieldcharge.EndfieldCharge'
 UUID = r'[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}'
 # Relative store files (and managed-image folders) exactly as the Mac app writes them.
 JSON_STORES = ['Profile/profile.json', 'FileShelf/shelf.json', 'Reader/library.json', 'Calendar/calendar.json',
-               'WorldMap/map.json', 'AppShortcuts/shortcuts.json', 'EventLog/events.json', 'Account/profile-cache.json']
+               'WorldMap/map.json', 'AppShortcuts/shortcuts.json', 'EventLog/events.json', 'Account/profile-cache.json',
+               'Notes/centre.json']  # 1.3.0: the centre TODO list and text note (NotesCentreStore)
 SQLITE_STORES = ['Notes/notes.sqlite3', 'Archive/archive.sqlite']
 IMAGE_FOLDERS = {'Notes/Images': re.compile('^' + UUID + r'\.png$'),
                  'Profile/Images': re.compile('^' + UUID + r'\.(png|image)$'),

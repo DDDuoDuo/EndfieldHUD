@@ -128,7 +128,7 @@ void run(const std::filesystem::path&shader,const std::filesystem::path&resource
     owner->setSlider(m::ProfileField::backgroundOffsetX,40,time);check(crops.size()==1,"Other geometry is not a crop event");
     owner->setSlider(m::ProfileField::backgroundZoom,3,time);check(crops.size()==2&&crops.back()=="background","profileCropChanged {background}");
     // 6. Account sync: lock, game fields, game avatar.
-    owner->setSyncLocked(true,time);
+    owner->setSyncLocked(ehud::data::ProfileSyncFields::all(),time);
     owner->acceptFromGame([](m::PersonalProfile&p){p.gamePlayerID="1234567890123";p.name="Synced";p.permissionLevel=42;},time);
     check(owner->state()->syncLocked()&&!owner->state()->canEdit(m::ProfileField::name)&&owner->state()->profile().name=="Synced","Game fields apply under the sync lock");
     check(owner->card()->captions()[1].text=="UID: 1234567890123"&&owner->card()->captions()[0].text=="Synced"&&owner->card()->captions()[4].text.empty(),"Card shows the synced UID, never a # number");
@@ -235,7 +235,7 @@ void run(const std::filesystem::path&shader,const std::filesystem::path&resource
     // 10. An account update before the record loads is applied once it does.
     {
         Temporary fresh;seed(fresh.root,0);m::WorkModeController idle;tools::ProfileOwnerOptions f=o;f.appRoot=fresh.root;f.loaded={};
-        tools::ProfileOwner early(w.hwnd,executor,raster,imageSource,idle,f);early.setSyncLocked(true,0);
+        tools::ProfileOwner early(w.hwnd,executor,raster,imageSource,idle,f);early.setSyncLocked(ehud::data::ProfileSyncFields::all(),0);
         early.acceptFromGame([](m::PersonalProfile&p){p.gamePlayerID="77";p.name="Early";},0);early.start(0);settle();
         check(early.state()->profile().name=="Early"&&early.card()->captions()[1].text=="UID: 77"&&early.flush(0)&&ehud::data::ProfileStore(fresh.root).value().name=="Early","A queued account update lands after the load");
     }

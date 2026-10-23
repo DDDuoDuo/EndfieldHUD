@@ -44,6 +44,24 @@ Json encodeRichText(const RichText&,std::u16string_view);
 // sparse like the source model (omitted ranges use TextStyle()). A clipboard
 // copy of a rich selection; valid for that selection's text.
 RichText richTextSlice(std::span<const TextRun>,text::Range);
+// What a run without fontName / color means; the same payload format, but
+// three stores read it differently (Mac 1.3.0). Desktop notes: the system face
+// (HUDStandardRichText shows it in the standard faces and stores it back as
+// "no family", HUDDesignFonts.swift:253-310) and the appearance's white/black
+// ink. Archive bodies (ArchiveCanvas.swift:1268-1365) and the centre TEXT note
+// (NotesCanvas.swift:543, ArchiveRichText): HarmonyOS Sans with the regional
+// Noto cascade, names starting with "." included, and the #EEEEEE HUD ink
+// (its Light-theme tone); a run set to that ink stores no colour. Display and
+// capture of the face/ink belong to the owners; this records the contract.
+enum class RichTextFace {system,hud};
+enum class RichTextInk {appearance,hud};
+struct RichTextDefaults {
+    RichTextFace face{RichTextFace::system};RichTextInk ink{RichTextInk::appearance};
+    static constexpr RichTextDefaults desktopNotes()noexcept{return {RichTextFace::system,RichTextInk::appearance};}
+    static constexpr RichTextDefaults archive()noexcept{return {RichTextFace::hud,RichTextInk::hud};}
+    static constexpr RichTextDefaults centre()noexcept{return {RichTextFace::hud,RichTextInk::hud};}
+    bool operator==(const RichTextDefaults&)const=default;
+};
 
 enum class FormatKind {font,size,color,bold,italic,underline,strikethrough};
 struct FormatChange {
@@ -122,6 +140,14 @@ public:
     // theme ink: AppKit distinguishes an sRGB white from NSColor.white. Only
     // null is theme-relative; native capture/font resolution belongs to owner.
     std::optional<RichText> richText()const;
+    // ArchiveRichText.capture (ArchiveCanvas.swift:1349-1358), used by the
+    // Archive body and the centre TEXT note: one run per attribute range over
+    // the WHOLE text, adjacent equal runs merged, default-styled ranges kept
+    // as runs (TextStyle{}: 12 pt, no name/colour/traits). In those stores a
+    // gap draws in the document's base style (bodyStyle / centre `style`, 14
+    // pt), so dropping a 12 pt default run as richText() does would resize it.
+    // "."-prefixed names are cleared like richText(). Empty text: no runs.
+    RichText coveringRichText()const;
     RichDocumentStats stats()const noexcept;
 private:
     struct Impl;std::unique_ptr<Impl>impl_;

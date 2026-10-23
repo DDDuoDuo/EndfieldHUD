@@ -17,7 +17,7 @@ void AccountProfileRelay::applyGameProfile(const GameProfileUpdate& update) {
     pending_.reset();
     sink_->applyGameProfile(update);
 }
-void AccountProfileRelay::setProfileSyncLocked(bool locked) {
+void AccountProfileRelay::setProfileSyncLocked(ehud::data::ProfileSyncFields locked) {
     locked_=locked;
     if(sink_) sink_->setProfileSyncLocked(locked);
 }

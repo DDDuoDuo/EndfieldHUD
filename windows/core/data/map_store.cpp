@@ -18,7 +18,12 @@ void setNumber(Json&j,const char*key,double value){if(!j[key].isNumber()||j[key]
 Json document(const m::MapSnapshot&value,const Json&preserved){
     need(preserved.isObject());if(preserved.contains("version")){need(preserved["version"].isNumber());const auto v=preserved["version"].integer();if(v>4)throw StoreError(StoreErrorCode::newerVersion,"This map was saved by a newer version of EndfieldHUD.");need(v>=1);}
     Json root=preserved;root["version"]=4;
-    Json viewport=root["viewport"].isObject()?root["viewport"]:Json::Object{};setNumber(viewport,"centerX",value.viewport.centerX);setNumber(viewport,"centerY",value.viewport.centerY);setNumber(viewport,"zoom",value.viewport.zoom);root["viewport"]=std::move(viewport);
+    // Archive.current (WorldMapStore.swift:93-97): a camera below v1.2.0's
+    // floor stores the floor in viewport and the real zoom as wideZoom; any
+    // other camera removes wideZoom, so a carried value never goes stale.
+    const bool wide=value.viewport.zoom<m::MapViewport::legacyMinimumZoom;
+    Json viewport=root["viewport"].isObject()?root["viewport"]:Json::Object{};setNumber(viewport,"centerX",value.viewport.centerX);setNumber(viewport,"centerY",value.viewport.centerY);setNumber(viewport,"zoom",wide?m::MapViewport::legacyMinimumZoom:value.viewport.zoom);root["viewport"]=std::move(viewport);
+    if(wide)setNumber(root,"wideZoom",value.viewport.zoom);else root.erase("wideZoom");
     std::map<std::string,const Json*,std::less<>>old;
     if(preserved["pins"].isArray())for(const auto&row:preserved["pins"].array())if(row.isObject()&&row["id"].isString())old.emplace(canonical(row["id"].string()),&row);
     Json::Array pins;pins.reserve(value.pins.size());for(const auto&p:value.pins){const auto found=old.find(p.id);Json row=found==old.end()?Json::Object{}:*found->second;row["id"]=p.id;setNumber(row,"x",p.x);setNumber(row,"y",p.y);setNumber(row,"createdAt",p.createdAt);row["style"]=styleName(p.style);pins.push_back(std::move(row));}root["pins"]=std::move(pins);return root;
@@ -27,6 +32,12 @@ Json document(const m::MapSnapshot&value,const Json&preserved){
 MapArchive decodeMapArchive(std::string_view bytes){try{
     auto raw=Json::parse(bytes,MapStore::maximumArchiveBytes);need(raw.isObject()&&raw["version"].isNumber());const auto version=raw["version"].integer();if(version>4)throw StoreError(StoreErrorCode::newerVersion,"This map was saved by a newer version of EndfieldHUD.");need(version>=1&&raw["pins"].isArray()&&raw["pins"].array().size()<=m::MapState::maximumPins&&raw["viewport"].isObject());
     m::MapSnapshot value;const auto&view=raw["viewport"];value.viewport={number(view["centerX"]),number(view["centerY"]),number(view["zoom"])};value.pins.reserve(raw["pins"].array().size());
+    // Archive.camera (WorldMapStore.swift:99-104): wideZoom applies only to a
+    // version-4 archive whose viewport still holds exactly the 2.1 floor, and
+    // only when it is finite and within [1, 2.1); otherwise it is ignored
+    // (it stays in preserved until the next write replaces or removes it).
+    need(raw["wideZoom"].isNull()||raw["wideZoom"].isNumber()); // Codable Double?: any other type fails the archive
+    if(const auto&wide=raw["wideZoom"];version>=4&&wide.isNumber()&&value.viewport.zoom==m::MapViewport::legacyMinimumZoom){const auto zoom=wide.number();if(std::isfinite(zoom)&&zoom>=m::MapViewport::minimumZoom&&zoom<m::MapViewport::legacyMinimumZoom)value.viewport.zoom=zoom;}
     for(const auto&row:raw["pins"].array()){need(row.isObject()&&row["id"].isString());value.pins.push_back({row["id"].string(),number(row["x"]),number(row["y"]),number(row["createdAt"]),style(row["style"])});}
     value=m::migrateMapSnapshot(std::move(value),static_cast<unsigned>(version));return {std::move(value),std::move(raw),static_cast<unsigned>(version)};
 }catch(const StoreError&){throw;}catch(...){throw StoreError(StoreErrorCode::invalid,invalid);}}

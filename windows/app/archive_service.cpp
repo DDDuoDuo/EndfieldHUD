@@ -11,8 +11,8 @@ struct ArchiveService::Impl:std::enable_shared_from_this<Impl> {
     UtilityExecutor::Route route;bool alive{true};
     std::filesystem::path appRoot; // the data root above Archive/: Migration/relink.json
     const std::thread::id owner=std::this_thread::get_id();
-    Impl(std::filesystem::path directory,UtilityExecutor&e,modules::ArchiveTextRules rules,std::function<void()>notify)
-      :executor(e),changed(std::move(notify)),repository(std::make_shared<modules::ArchiveSQLiteRepository>(directory,std::move(rules))),route(e.makeRoute()),appRoot(directory.parent_path()){}
+    Impl(std::filesystem::path directory,UtilityExecutor&e,modules::ArchiveTextRules rules,std::function<void()>notify,std::shared_ptr<modules::ArchivePasswordVault>vault)
+      :executor(e),changed(std::move(notify)),repository(std::make_shared<modules::ArchiveSQLiteRepository>(directory,std::move(rules),std::move(vault))),route(e.makeRoute()),appRoot(directory.parent_path()){}
     void onOwner()const{if(std::this_thread::get_id()!=owner)throw std::logic_error("Archive service belongs to its owner thread");}
     void initialize(modules::ArchiveTextRules rules){
         const std::weak_ptr<Impl>weak=shared_from_this();
@@ -33,8 +33,8 @@ struct ArchiveService::Impl:std::enable_shared_from_this<Impl> {
         state->setRelinkLedger(std::move(ledger));
     }
 };
-ArchiveService::ArchiveService(std::filesystem::path directory,UtilityExecutor&executor,modules::ArchiveTextRules rules,std::function<void()>changed){
-    impl_=std::make_shared<Impl>(std::move(directory),executor,rules,std::move(changed));
+ArchiveService::ArchiveService(std::filesystem::path directory,UtilityExecutor&executor,modules::ArchiveTextRules rules,std::function<void()>changed,std::shared_ptr<modules::ArchivePasswordVault>vault){
+    impl_=std::make_shared<Impl>(std::move(directory),executor,rules,std::move(changed),std::move(vault));
     try{impl_->initialize(std::move(rules));}catch(...){executor.invalidate(impl_->route,false);throw;}
 }
 ArchiveService::~ArchiveService(){auto self=impl_;self->alive=false;self->executor.invalidate(self->route,false);self->state.reset();}

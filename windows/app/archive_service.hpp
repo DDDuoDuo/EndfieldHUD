@@ -8,10 +8,13 @@ namespace endfield::app {
 // Construction is lazy and reads no files. All repository operations share the
 // existing FIFO utility queue; there is no independent worker, timer or poll.
 // The UI consumes state() and its saveDeadline() through its existing host clock.
+// The vault holds classified documents' password verifiers (production: the
+// native DpapiArchivePasswordVault under <Archive>\Classified; diagnostics and
+// fixtures: ArchiveMemoryPasswordVault or none).
 class ArchiveService final {
 public:
     ArchiveService(std::filesystem::path archiveDirectory,UtilityExecutor&,
-        modules::ArchiveTextRules,std::function<void()>changed={});
+        modules::ArchiveTextRules,std::function<void()>changed={},std::shared_ptr<modules::ArchivePasswordVault> ={});
     ~ArchiveService();
     ArchiveService(const ArchiveService&)=delete;
     ArchiveService&operator=(const ArchiveService&)=delete;

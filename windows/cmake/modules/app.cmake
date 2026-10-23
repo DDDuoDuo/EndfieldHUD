@@ -110,7 +110,7 @@ if(WIN32)
   target_include_directories(hud_application PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
   target_compile_definitions(hud_application PRIVATE ${EHUD_APP_DEFINITIONS})
   target_link_libraries(hud_application PUBLIC hud_module_registry hud_system_overlay hud_application_core hud_single_instance
-    hud_battery hud_settings_save hud_archive_preview hud_storage_preview hud_activity_preview hud_activity_provider
+    hud_battery hud_settings_save hud_archive_preview hud_archive_vault hud_storage_preview hud_activity_preview hud_activity_provider
     hud_reader_preview hud_reader_import hud_projection_preview hud_shelf_preview hud_notes_preview
     hud_map_preview hud_map_store hud_map_assets hud_orbipom_presentation hud_orbipom_runtime
     hud_calendar_preview hud_calendar_notifications

@@ -17,15 +17,15 @@ public:
     void attach(AccountProfileSink*);
     AccountProfileSink* attached() const noexcept {return sink_;}
     void applyGameProfile(const GameProfileUpdate&) override;   // forwards (throws as the sink does) or keeps it pending
-    void setProfileSyncLocked(bool) override;                   // forwards and remembers
+    void setProfileSyncLocked(ehud::data::ProfileSyncFields) override; // forwards and remembers
     std::optional<std::string> importGameAvatar(const std::vector<std::uint8_t>&) override; // throws without a sink
     const std::optional<GameProfileUpdate>& pending() const noexcept {return pending_;}
-    std::optional<bool> locked() const noexcept {return locked_;}
+    std::optional<ehud::data::ProfileSyncFields> locked() const noexcept {return locked_;}
     unsigned replayFailures() const noexcept {return failures_;}
 private:
     AccountProfileSink* sink_{};
     std::optional<GameProfileUpdate> pending_;
-    std::optional<bool> locked_;
+    std::optional<ehud::data::ProfileSyncFields> locked_;
     unsigned failures_{};
 };
 }

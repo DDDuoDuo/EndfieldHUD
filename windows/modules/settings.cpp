@@ -62,7 +62,7 @@ void SettingsController::applyPersistent(Settings candidate,bool shortcutApplied
     if(candidate.boolean("launchAtLogin")!=previous.boolean("launchAtLogin")){const auto error=callbacks_.launchAtLogin?callbacks_.launchAtLogin(candidate.boolean("launchAtLogin")):std::optional(tr(language_,"Unavailable","不可用"));if(error){candidate.set("launchAtLogin",previous.boolean("launchAtLogin"));status_=*error;}}
     candidate=normalize(std::move(candidate));if(candidate!=committed_&&callbacks_.persist)callbacks_.persist(candidate);committed_=std::move(candidate);publish();
 }
-void SettingsController::restoreDefaults(){clearPreview();endShortcutCapture();auto defaults=Settings::defaults();putShortcut(defaults,{});applyPersistent(std::move(defaults),false,true);}
+void SettingsController::restoreDefaults(){clearPreview();endShortcutCapture();auto defaults=Settings::restoredDefaults(committed_);putShortcut(defaults,{});applyPersistent(std::move(defaults),false,true);}
 void SettingsController::close(){revertLayout();endShortcutCapture();}
 std::optional<std::string>SettingsController::setShortcut(SettingsShortcut key){auto error=validateSettingsShortcut(key,language_);if(!error)error=callbacks_.registerShortcut?callbacks_.registerShortcut(key):std::optional(tr(language_,"Unavailable","不可用"));if(error){bounded(*error);shortcutError_=status_=*error;publish();return error;}auto candidate=effective_;putShortcut(candidate,key);applyLayout(candidate,layout(committed_));applyPersistent(std::move(candidate),true);return shortcutStatus().empty()?std::nullopt:std::optional(shortcutStatus());}
 void SettingsController::beginShortcutCapture(){if(capturing_)return;capturing_=true;shortcutError_.clear();if(callbacks_.shortcutCapture)callbacks_.shortcutCapture(true);publish();}

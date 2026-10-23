@@ -58,6 +58,7 @@ std::string describe(const h::AccountAction& a) {
         case K::selectRole: return "selectRole:"+a.roleID;
         case K::selectHeaderMode: return "selectHeaderMode:"+std::string(h::headerModeName(a.headerMode));
         case K::setSyncProfile: return std::string("setSyncProfile:")+(a.enabled?"true":"false");
+        case K::setSyncField: return "setSyncField:"+std::string(ehud::data::profileSyncFieldName(a.syncField))+(a.enabled?":true":":false");
         case K::setSyncAvatar: return std::string("setSyncAvatar:")+(a.enabled?"true":"false");
     }
     return {};

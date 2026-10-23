@@ -43,7 +43,14 @@ void compare(const std::string& name, const m::MacSettingsImport& result, const 
     const auto& f = result.settings.fields;
     for (const auto& [key, value] : expected.object()) {
         const auto& actual = f[key];
-        if (key == "summonShortcut") {
+        if (key == "moduleOrder" || key == "moduleHidden") {
+            // HUDModuleLayout after normalization (Mac 1.3.0).
+            const auto layout = result.settings.moduleLayout();
+            const auto& list = key == "moduleOrder" ? layout.order : layout.hidden;
+            bool same = value.array().size() == list.size();
+            for (std::size_t i = 0; same && i < list.size(); ++i) same = value.array()[i].string() == list[i];
+            check(same, name + ": " + key + " matches HUDModuleLayout");
+        } else if (key == "summonShortcut") {
             check(actual["keyCode"].integer() == value["keyCode"].integer() && actual["modifiers"].integer() == value["modifiers"].integer(), name + ": summonShortcut matches ConfigurationStore");
         } else if (value.isNull()) check(actual.isNull(), name + ": " + key + " is nil like ConfigurationStore");
         else if (value.isBool()) check(actual.isBool() && actual.boolean() == value.boolean(), name + ": " + key + " Boolean matches");
@@ -74,6 +81,16 @@ void oracle(const std::filesystem::path& path) {
             const auto* bestKey = document.root.find("orbipom.bestScore.v1");
             if (bestKey) check(result.settings.fields["orbipom.bestScore.v1"].integer() == expected["bestScore"].integer(), name + ": OrbiPom best score coerced like integerForKey:");
             else check(!result.settings.fields.contains("orbipom.bestScore.v1") && expected["bestScore"].integer() == 0, name + ": absent best score is not invented");
+            {   // ProjectionSettings(defaults:) (Mac 1.3.0): nil colour = the theme colour.
+                const auto& pen = expected["projection"];
+                const auto actual = result.settings.projection();
+                check(actual.color.value_or(static_cast<std::uint32_t>(pen["themeColor"].integer())) == static_cast<std::uint32_t>(pen["color"].integer()) &&
+                      hex(actual.width) == pen["width"].string() && actual.erasing == pen["erasing"].boolean() && actual.background == pen["background"].boolean(),
+                      name + ": projection.settings.v1 reads like ProjectionSettings");
+                check(document.root.find("projection.settings.v1") || !result.settings.fields.contains("projection.settings.v1"), name + ": no pen record is invented");
+            }
+            check(!result.settings.fields.contains("dailyBootLogLastDay") && !result.settings.fields.contains("displayModeExtension") && !result.settings.fields.contains("alertMetricExtension"),
+                  name + ": the boot-log day and the Mac extension keys never enter the Windows record");
             if (document.root.find("hasLaunched")) check(result.hasLaunched == std::optional<bool>(expected["hasLaunched"].boolean()), name + ": first-launch flag coerced like boolForKey:");
             else check(!result.hasLaunched, name + ": absent first-launch flag is not invented");
             check(!result.settings.fields.contains("hasLaunched"), name + ": first-launch flag stays outside the preference record");

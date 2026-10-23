@@ -266,21 +266,26 @@ ProfileState::ProfileState(PersonalProfile p,ProfileTextRules rules,ProfileDateR
     if(language_==core::Language::system)throw std::invalid_argument("Resolve the profile language once in the application owner");
     validatePersonalProfile(profile_,text_);actions_.reserve(16);sliders_.reserve(7);shownHours_=formattedHours();rebuild();
 }
-bool ProfileState::canEdit(ProfileField f)const noexcept{return !locked_||f==ProfileField::introduction||f==ProfileField::birthday||profileGeometryField(f);}
+bool ProfileState::canEdit(ProfileField f)const noexcept{
+    using S=ehud::data::ProfileSyncField;using F=ProfileField;
+    switch(f){case F::name:return !locked_.contains(S::name);case F::tag:return !locked_.contains(S::tag);case F::playerID:return !locked_.contains(S::uid);
+        case F::awakeningDate:return !locked_.contains(S::awakening);case F::permissionLevel:case F::explorationLevel:return !locked_.contains(S::levels);
+        case F::operatorsCount:case F::weaponsCount:case F::archivesCount:return !locked_.contains(S::counts);default:return true;}
+}
 std::array<double,3>ProfileState::accent()const noexcept{return profileAccent(preview_,hudAccent_);}
 void ProfileState::adopt(PersonalProfile next){
     auto preview=next;
     if(dragged_)applyGeometry(*dragged_,geometry(*dragged_,preview_),preview);
     profile_=std::move(next);preview_=std::move(preview);++revision_;++geometryRevision_;rebuild();
 }
-void ProfileState::refresh(PersonalProfile p,bool locked){
+void ProfileState::refresh(PersonalProfile p,ehud::data::ProfileSyncFields locked){
     p=normalizedProfile(std::move(p),text_);validatePersonalProfile(p,text_);
     if(p.uid!=profile_.uid)throw ProfileError(ProfileFailure::record);
     const bool lockChanged=locked!=locked_;locked_=locked;
     if(!sameProfileValues(p,profile_)||p.originalFields!=profile_.originalFields)adopt(std::move(p));
     else if(lockChanged){++revision_;rebuild();}
 }
-void ProfileState::setSyncLocked(bool v){if(v==locked_)return;locked_=v;++revision_;rebuild();}
+void ProfileState::setSyncLocked(ehud::data::ProfileSyncFields v){if(v==locked_)return;locked_=v;++revision_;rebuild();}
 void ProfileState::setLanguage(core::Language language){
     if(language==core::Language::system)throw std::invalid_argument("Resolve the profile language once in the application owner");
     if(language==language_)return;language_=language;++revision_;rebuild();

@@ -88,4 +88,13 @@ void oracle(const fs::path&path){const auto raw=ehud::data::detail::readFile(pat
  for(const auto&row:root["storeCases"].array()){const auto&library=row["library"];const auto encoded=m::encodeReaderLibrary(m::decodeReaderLibrary(library));if(encoded!=library)std::cerr<<"Store snapshot mismatch: "<<row["name"].string()<<"\noriginal="<<library.encode()<<"\nencoded="<<encoded.encode()<<'\n';check(encoded==library,"Actual original ReaderStore encoded snapshots roundtrip exactly");}
 }
 }
-int main(int argc,char**argv){try{check(argc<=2,"Optional argument is compact original Reader JSON oracle");model();repository();state();viewport();continuousScrolling();delayedRecovery();if(argc==2)oracle(argv[1]);std::cout<<"PASS "<<checks<<" Reader foundation checks\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
+// Mac 1.3.0 `reading` (ReaderStore.swift:44-46, 71, 131-132), hand-written:
+// optional Bool, written only as true, never kept among the unknown fields.
+void readingFlag(){m::ReaderLibrary l;l.books={book(1)};l.selected=id(1);auto j=m::encodeReaderLibrary(l);check(!j.contains("reading"),"A new Windows library never writes reading");
+ auto mac=j;mac["reading"]=true;const auto opened=m::decodeReaderLibrary(mac);check(opened.reading&&!opened.originalFields.contains("reading")&&m::encodeReaderLibrary(opened)==mac,"A Mac 1.3.0 library with reading:true imports and round-trips once");
+ auto off=opened;off.reading=false;check(!m::encodeReaderLibrary(off).contains("reading"),"Leaving the book removes the key (false is key-less)");
+ mac["reading"]=nullptr;check(!m::decodeReaderLibrary(mac).reading,"null reads as nil (false)");mac["reading"]=false;check(!m::decodeReaderLibrary(mac).reading&&!m::encodeReaderLibrary(m::decodeReaderLibrary(mac)).contains("reading"),"An explicit false reads and is dropped on write");
+ mac["reading"]="yes";rejects([&]{m::decodeReaderLibrary(mac);},"A non-Boolean reading is undecodable like Swift's Bool?");
+ // Windows 1.2.0 kept unknown root keys in originalFields; such a carried copy never doubles or goes stale.
+ mac["reading"]=true;auto carried=m::decodeReaderLibrary(mac);carried.reading=false;carried.originalFields["reading"]=true;check(!m::encodeReaderLibrary(carried).contains("reading"),"The flag alone decides the key");}
+int main(int argc,char**argv){try{check(argc<=2,"Optional argument is compact original Reader JSON oracle");model();readingFlag();repository();state();viewport();continuousScrolling();delayedRecovery();if(argc==2)oracle(argv[1]);std::cout<<"PASS "<<checks<<" Reader foundation checks\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}

@@ -112,7 +112,7 @@ void profileTests() {
     check(edited["profile"]["awakeningDate"].encode()=="812345678.12500001","Unchanged imported date token retains original precision");
     check(edited["profile"]["futureField"].encode()=="18446744073709551615"&&edited["futureEnvelope"].string()=="opaque","Unknown profile/envelope fields preserved");
     profile=imported.value();profile.uid="1234567890";rejects(StoreErrorCode::invalid,[&]{imported.update(profile);},"Original local UID cannot be replaced");
-    imported.setProfileSyncLocked(true);profile=imported.value();profile.name="Manual";
+    imported.setProfileSyncLocked(ehud::data::ProfileSyncFields::all());profile=imported.value();profile.name="Manual";
     rejects(StoreErrorCode::invalid,[&]{imported.update(profile);},"Synced profile name locked");
     profile=imported.value();profile.playerIDOverride="custom";rejects(StoreErrorCode::invalid,[&]{imported.update(profile);},"Synced UID override locked");
     profile=imported.value();profile.awakeningDate+=86400;rejects(StoreErrorCode::invalid,[&]{imported.update(profile);},"Synced awakening date locked");
@@ -120,7 +120,7 @@ void profileTests() {
     check(imported.update(profile),"Birthday and introduction remain editable while synced");
     profile=imported.value();profile.name="Official";profile.tag="5678";profile.gamePlayerID="1234567890123456789";profile.playerIDOverride.reset();
     check(imported.updateFromGame(profile),"Official profile sync bypasses local field lock");check(imported.value().uid==uid,"Official sync preserves original local UID");
-    imported.setProfileSyncLocked(false);profile=imported.value();profile.name="Local again";check(imported.update(profile),"Disabling sync unlocks without restoring old fields");
+    imported.setProfileSyncLocked(ehud::data::ProfileSyncFields{});profile=imported.value();profile.name="Local again";check(imported.update(profile),"Disabling sync unlocks without restoring old fields");
     ProfileStore concurrent(temporary.path);profile=imported.value();profile.introduction="Latest";imported.update(profile);
     auto stale=concurrent.value();stale.introduction="Stale";rejects(StoreErrorCode::changedOnDisk,[&]{concurrent.update(stale);},"Concurrent profile edit rejected");
     profile=imported.value();profile.avatarFilename="../../escape.png";rejects(StoreErrorCode::invalid,[&]{imported.update(profile);},"Managed image path traversal rejected");

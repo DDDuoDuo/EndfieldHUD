@@ -91,8 +91,8 @@ void state(const Json&row){
     m::ProfileState s(profile(row["profile"]),n::nativeProfileTextRules(),n::nativeProfileDateRules(u"Asia/Shanghai"),io,language);
     const auto perform=[&](std::initializer_list<const char*>ids){for(const auto*id:ids)s.perform(id);};
     if(name=="identity")perform({"profile:menu"});
-    else if(name=="lockedIdentity"){s.setSyncLocked(true);perform({"profile:menu"});}
-    else if(name=="locked")s.setSyncLocked(true);
+    else if(name=="lockedIdentity"){s.setSyncLocked(ehud::data::ProfileSyncFields::all());perform({"profile:menu"});}
+    else if(name=="locked")s.setSyncLocked(ehud::data::ProfileSyncFields::all());
     else if(name=="portrait")perform({"profile:menu","profile:portraitMenu"});
     else if(name=="background"||name=="chineseBackground")perform({"profile:backgroundMenu"});
     else if(name=="theme")perform({"profile:backgroundMenu","profile:themeMenu"});

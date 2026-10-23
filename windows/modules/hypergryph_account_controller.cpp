@@ -74,7 +74,7 @@ struct HypergryphAccountController::Impl:std::enable_shared_from_this<Impl> {
     std::map<Region,Time> nextRefreshDates,lastAttemptDates;std::map<Region,int> failureCounts;
     std::string statusMessage;
     RequestHandle avatar;std::optional<std::string> avatarURL,knownAvatarFilename;bool applyingGameAvatar{};
-    std::optional<bool> lastLock;
+    std::optional<ehud::data::ProfileSyncFields> lastLock;
 
     Impl(AccountService& a,AccountCredentialVault& v,AccountWorkQueue& q,AccountCacheFile* f,AccountProfileSink* p,AccountLoginPresenter* l,AccountAvatarLoader* av,AccountControllerOptions o)
         :api(a),vault(v),queue(q),file(f),profile(p),login(l),avatarLoader(av),options(std::move(o)) {}
@@ -99,13 +99,14 @@ struct HypergryphAccountController::Impl:std::enable_shared_from_this<Impl> {
     bool isPresentingLogin() const {return loginActive&&login&&login->isPresenting();}
     bool hasActiveRequest() const {return busy||pendingDisconnects.count(region());}
     bool gameSyncActive() const {const auto* role=selectedRole();return cache.syncProfile&&record().linked&&role&&role->game==Game::endfield;}
+    ehud::data::ProfileSyncFields gameSyncedFields() const {return gameSyncActive()?accountSyncFields(cache):ehud::data::ProfileSyncFields{};}
     int advanceRevision(Region r) {const int value=accountRevisions[r]+1;accountRevisions[r]=value;return value;}
     void changed(bool save=false) {
         if(save&&writesAllowed&&file) {
             try {file->write(encodeCacheBytes(cache));}
             catch(const std::exception&) {statusMessage=t("Profile cache could not be saved.","无法保存账户缓存。");}
         }
-        const bool lock=gameSyncActive();
+        const auto lock=gameSyncedFields();
         if(profile&&lastLock!=lock) {lastLock=lock;profile->setProfileSyncLocked(lock);}
         if(options.changed) {auto callback=options.changed;callback();}
     }
@@ -134,10 +135,13 @@ struct HypergryphAccountController::Impl:std::enable_shared_from_this<Impl> {
     void applyProfile() {
         const auto* snapshot=selectedSnapshot();
         if(!cache.syncProfile||!record().linked||!snapshot||snapshot->role.game!=Game::endfield||!profile) return;
-        const auto identity=snapshot->personalIdentity();
-        GameProfileUpdate update;update.gamePlayerID=snapshot->role.roleID;update.name=identity.name;update.tag=identity.tag;
-        update.awakeningDate=snapshot->createdAt;update.permissionLevel=snapshot->level;update.explorationLevel=snapshot->worldLevel;
-        update.operatorsCount=snapshot->operatorCount;update.weaponsCount=snapshot->weaponCount;update.archivesCount=snapshot->documentCount;
+        // 1.3.0 applyProfile: only the sync's fields (HypergryphAccountController.swift:486-508).
+        const auto identity=snapshot->personalIdentity();const auto fields=accountSyncFields(cache);using F=ehud::data::ProfileSyncField;
+        GameProfileUpdate update;if(fields.contains(F::uid)) update.gamePlayerID=snapshot->role.roleID;
+        if(fields.contains(F::name)) update.name=identity.name;if(fields.contains(F::tag)) update.tag=identity.tag;
+        if(fields.contains(F::awakening)) update.awakeningDate=snapshot->createdAt;
+        if(fields.contains(F::levels)) {update.permissionLevel=snapshot->level;update.explorationLevel=snapshot->worldLevel;}
+        if(fields.contains(F::counts)) {update.operatorsCount=snapshot->operatorCount;update.weaponsCount=snapshot->weaponCount;update.archivesCount=snapshot->documentCount;}
         try {profile->applyGameProfile(update);} catch(const std::exception&) {statusMessage=t("The personal profile could not be saved.","无法保存个人名片。");}
     }
     void applyAvatar() {
@@ -351,6 +355,8 @@ struct HypergryphAccountController::Impl:std::enable_shared_from_this<Impl> {
             }
             case K::selectHeaderMode: cache.header=std::string(headerModeName(a.headerMode));event("settings");changed(true);nextRefreshDates[region()]=distantPast;tick();break;
             case K::setSyncProfile: cache.syncProfile=a.enabled;if(a.enabled) applyProfile();event("settings");changed(true);break;
+            // Disabling a field only unlocks it; the card keeps its value.
+            case K::setSyncField: setAccountSyncField(cache,a.syncField,a.enabled);if(a.enabled) applyProfile();event("settings");changed(true);break;
             case K::setSyncAvatar:
                 cache.syncAvatar=a.enabled;avatarURL.reset();
                 if(a.enabled) applyAvatar();else {if(auto av=std::move(avatar)) av->cancel();avatar.reset();}
@@ -375,7 +381,7 @@ HypergryphAccountController::HypergryphAccountController(AccountService& api,Acc
     // A previously enabled sync stays authoritative after an update: reuse the
     // cached snapshot without a startup network or credential read.
     i.applyProfile();
-    const bool lock=i.gameSyncActive();
+    const auto lock=i.gameSyncedFields();
     if(profile) {i.lastLock=lock;profile->setProfileSyncLocked(lock);}
 }
 HypergryphAccountController::~HypergryphAccountController() {
@@ -435,6 +441,7 @@ AccountPresentation HypergryphAccountController::presentation() const {
     p.status=i.isPresentingLogin()?S::connecting:i.hasActiveRequest()?S::refreshing:!p.statusMessage.empty()?S::failed:p.isLinked?S::connected:S::disconnected;
     for(const auto& r:i.record().roles) p.roles.push_back({r.id(),std::string(r.game==Game::endfield?"Endfield":"Arknights")+" · "+r.name.value_or(r.roleID),r.serverName.value_or("")});
     p.selectedRoleID=i.record().selectedRoleID;p.headerMode=i.headerMode();p.syncProfile=i.cache.syncProfile;p.syncAvatar=i.cache.syncAvatar;
+    p.syncFields=accountSyncFields(i.cache);p.needsReconnect=i.record().linked&&i.record().requiresReconnect;
     const auto* snapshot=i.selectedSnapshot();const auto* role=i.selectedRole();
     p.accountName=snapshot&&snapshot->name?*snapshot->name:role&&role->name?*role->name:"";
     if(snapshot&&i.options.localDate) {
@@ -476,6 +483,8 @@ Region HypergryphAccountController::region() const noexcept {return impl_->cache
 const RegionRecord& HypergryphAccountController::record() const {return impl_->record();}
 AccountPresentation::HeaderMode HypergryphAccountController::headerMode() const noexcept {return impl_->headerMode();}
 bool HypergryphAccountController::gameSyncActive() const {return impl_->gameSyncActive();}
+ehud::data::ProfileSyncFields HypergryphAccountController::syncFields() const noexcept {return accountSyncFields(impl_->cache);}
+ehud::data::ProfileSyncFields HypergryphAccountController::gameSyncedFields() const {return impl_->gameSyncedFields();}
 bool HypergryphAccountController::hasActiveRequest() const {return impl_->hasActiveRequest();}
 bool HypergryphAccountController::isPresentingLogin() const {return impl_->isPresentingLogin();}
 bool HypergryphAccountController::isPresentingAccountPanel() const {return impl_->isPresentingLogin()||impl_->pendingCredentialCommits>0;}

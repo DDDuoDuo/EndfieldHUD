@@ -100,10 +100,12 @@ public:
     const PersonalProfile&preview()const noexcept{return preview_;}
     bool canEdit(ProfileField)const noexcept;
     const ProfileTextRules&text()const noexcept{return text_;}
-    bool syncLocked()const noexcept{return locked_;}
+    // The card fields the account sync owns (Mac gameSyncedFields); canEdit
+    // refuses exactly those. ProfileSyncFields::all() locks the whole card.
+    ehud::data::ProfileSyncFields syncLocked()const noexcept{return locked_;}
     // A store/account change. A slider drag keeps its in-memory value.
-    void refresh(PersonalProfile,bool syncLocked);
-    void setSyncLocked(bool);
+    void refresh(PersonalProfile,ehud::data::ProfileSyncFields syncLocked);
+    void setSyncLocked(ehud::data::ProfileSyncFields);
     void setLanguage(core::Language);core::Language language()const noexcept{return language_;}
     // WM_TIMECHANGE/WM_SETTINGCHANGE: a new immutable zone snapshot. The stored
     // instants are unchanged; only the shown yyyy/MM/dd and later parsing move.
@@ -155,7 +157,7 @@ public:
 private:
     PersonalProfile profile_,preview_;ProfileTextRules text_;ProfileDateRules dates_;ProfilePersistence persistence_;core::Language language_;
     std::array<double,3>hudAccent_{250./255,212./255,31./255};
-    bool locked_{},active_{},hidden_{};std::optional<ProfilePopover>popover_;std::optional<ProfileField>dragged_,selected_;
+    ehud::data::ProfileSyncFields locked_{};bool active_{},hidden_{};std::optional<ProfilePopover>popover_;std::optional<ProfileField>dragged_,selected_;
     std::optional<ProfileRequest>request_;std::optional<std::string>error_;std::vector<ProfileAction>actions_;std::vector<ProfileSlider>sliders_;
     std::optional<double>workDeadline_;std::string shownHours_;
     std::uint64_t revision_{1},geometryRevision_{1},workRevision_{1},opens_{},dismissals_{},visibilityToggles_{};

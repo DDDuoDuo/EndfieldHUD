@@ -28,7 +28,7 @@ struct ProfileService::Impl:std::enable_shared_from_this<Impl> {
         explicit Worker(std::filesystem::path path):root(std::move(path)){}
         void initialize(){if(!store)store=std::make_unique<ProfileStore>(root);}
     };
-    struct Pending {PersonalProfile value;bool fromGame{},locked{};std::set<std::string>obsolete;};
+    struct Pending {PersonalProfile value;bool fromGame{};ehud::data::ProfileSyncFields locked{};std::set<std::string>obsolete;};
     app::UtilityExecutor&executor;ProfileServiceCallbacks callbacks;std::filesystem::path root;std::shared_ptr<Worker>worker;
     app::UtilityExecutor::Route route;const std::thread::id owner=std::this_thread::get_id();
     ProfileServiceStatus state;std::optional<PersonalProfile>accepted;std::shared_ptr<const Pending>latest;std::set<std::string>obsolete;
@@ -37,7 +37,7 @@ struct ProfileService::Impl:std::enable_shared_from_this<Impl> {
         :executor(e),callbacks(std::move(cb)),root(path),worker(std::make_shared<Worker>(std::move(path))),route(e.makeRoute()){}
     void onOwner()const{if(std::this_thread::get_id()!=owner)throw std::logic_error("Profile service owner-thread operation");}
     void notify(){if(alive&&callbacks.changed)callbacks.changed();}
-    PersonalProfile accept(const PersonalProfile&value,bool locked,bool fromGame){
+    PersonalProfile accept(const PersonalProfile&value,ehud::data::ProfileSyncFields locked,bool fromGame){
         onOwner();
         if(!state.loaded)throw ProfileError(ProfileFailure::unavailable);
         if(accepted&&sameProfileValues(*accepted,value)&&accepted->originalFields==value.originalFields&&
@@ -109,13 +109,13 @@ ProfileService::ProfileService(std::filesystem::path root,app::UtilityExecutor&e
 }
 ProfileService::~ProfileService(){auto i=impl_;i->alive=false;i->executor.invalidate(i->route,false);}
 void ProfileService::start(){auto i=impl_;i->onOwner();i->started=true;i->pump();}
-PersonalProfile ProfileService::accept(const PersonalProfile&value,bool locked){return impl_->accept(value,locked,false);}
-PersonalProfile ProfileService::acceptFromGame(const PersonalProfile&value,bool locked){return impl_->accept(value,locked,true);}
-ProfilePersistence ProfileService::persistence(std::function<bool()>locked,std::function<double()>workSeconds){
+PersonalProfile ProfileService::accept(const PersonalProfile&value,ehud::data::ProfileSyncFields locked){return impl_->accept(value,locked,false);}
+PersonalProfile ProfileService::acceptFromGame(const PersonalProfile&value,ehud::data::ProfileSyncFields locked){return impl_->accept(value,locked,true);}
+ProfilePersistence ProfileService::persistence(std::function<ehud::data::ProfileSyncFields()>locked,std::function<double()>workSeconds){
     ProfilePersistence io;const std::weak_ptr<Impl>weak=impl_;
     io.commit=[weak,locked=std::move(locked)](const PersonalProfile&value){
         const auto i=weak.lock();if(!i||!i->alive)throw ProfileError(ProfileFailure::unavailable);
-        return i->accept(value,locked&&locked(),false);
+        return i->accept(value,locked?locked():ehud::data::ProfileSyncFields{},false);
     };
     io.workSeconds=std::move(workSeconds);return io;
 }

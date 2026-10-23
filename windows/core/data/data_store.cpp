@@ -9,6 +9,7 @@
 #include <random>
 #include <set>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace ehud::data {
@@ -191,6 +192,27 @@ void validateSettings(const Settings& value) {
     choice("clockFormat",{"twentyFourHour","twelveHour"});choice("placement",{"topCenter","custom"});
     for(const auto key:{"hudDisplayUUID","hudDisplayName","centerLogoRevision"}) require(f[key].isNull() || (f[key].isString()&&clean(f[key].string(),1024)),"Invalid optional setting");
     if(!f["customScreenID"].isNull()) require(f["customScreenID"].isNumber()&&f["customScreenID"].integer()>=0&&f["customScreenID"].integer()<=4294967295LL,"Invalid legacy display identity");
+    // D3: absent = default; present = an array of module names (unknown and
+    // repeated names stay valid and are dropped on read, as on the Mac).
+    for(const auto key:{"hudModuleOrder","hudHiddenModules"}) if(f.contains(key)) {
+        require(f[key].isArray()&&f[key].array().size()<=64,"Invalid module layout setting");
+        for(const auto& name:f[key].array()) require(name.isString()&&clean(name.string(),256),"Invalid module layout setting");
+    }
+}
+std::vector<std::string> strings(const Json& value) {
+    std::vector<std::string> out;if(!value.isArray()) return out;
+    for(const auto& item:value.array()) if(item.isString()) out.push_back(item.string());
+    return out;
+}
+bool configurableModule(std::string_view name) {return std::find(ModuleLayout::configurable.begin(),ModuleLayout::configurable.end(),name)!=ModuleLayout::configurable.end();}
+bool contains(const std::vector<std::string>& list,std::string_view name) {return std::find(list.begin(),list.end(),name)!=list.end();}
+// D2 downgrade mirror: while the summon hotkey is off the record also carries
+// windowsSummonHotkeyDisabled: true, so Windows 1.2.0 keeps the same intent;
+// while it is on the legacy key is removed (absent = on for 1.2.0).
+Json persisted(const Settings& value) {
+    auto fields=value.fields;
+    if(value.summonHotkeyEnabled()) fields.erase("windowsSummonHotkeyDisabled");else fields["windowsSummonHotkeyDisabled"]=true;
+    return fields;
 }
 }
 std::string makeUUID() {
@@ -219,9 +241,91 @@ Settings Settings::defaults() {
         {"openOnActiveDisplay",true},{"hudDisplayUUID",nullptr},{"hudDisplayName",nullptr},{"launchAtLogin",true},
         {"batteryAlertsEnabled",true},{"devicePopupEnabled",true},{"lowPowerVisualMode",false},{"applicationIcon","endfield"},
         {"clockFormat","twentyFourHour"},{"clockStyle","digital"},{"centerLogo","endfield"},{"centerLogoRevision",nullptr},{"alertMetric","battery"},
-        {"summonShortcut",Json::Object{{"keyCode",50},{"modifiers",1}}}
+        {"summonShortcut",Json::Object{{"keyCode",50},{"modifiers",1}}},
+        {"summonHotkeyEnabled",true},{"recordingMode",false},{"dailyBootLog",true},{"facilityAlerts",true}
     };return result;
 }
+Settings Settings::restoredDefaults(const Settings& current) {
+    auto result=defaults();
+    for(const auto key:{"orbipom.bestScore.v1","projection.settings.v1","dailyBootLogLastDay","storageVolume"}) if(current.fields.contains(key)) result.fields[key]=current.fields[key];
+    return result;
+}
+namespace {
+bool flag(const Json& fields,std::string_view key,bool fallback) {const auto& value=fields[key];return value.isBool()?value.boolean():fallback;}
+}
+bool Settings::summonHotkeyEnabled() const {return flag(fields,"summonHotkeyEnabled",true);}
+bool Settings::recordingMode() const {return flag(fields,"recordingMode",false);}
+bool Settings::dailyBootLog() const {return flag(fields,"dailyBootLog",true);}
+bool Settings::facilityAlerts() const {return flag(fields,"facilityAlerts",true);}
+std::optional<std::string> Settings::dailyBootLogLastDay() const {const auto& value=fields["dailyBootLogLastDay"];if(!value.isString()) return {};return value.string();}
+bool Settings::consumeDailyBootLog(std::string_view today) {
+    if(dailyBootLogLastDay()==today) return false;
+    set("dailyBootLogLastDay",std::string(today));return true;
+}
+ModuleLayout ModuleLayout::normalized(std::vector<std::string> order,std::vector<std::string> hidden) {
+    ModuleLayout value;value.order.clear();
+    for(auto& name:order) if(configurableModule(name)&&!contains(value.order,name)) value.order.push_back(std::move(name));
+    for(const auto name:configurable) if(!contains(value.order,name)) value.order.emplace_back(name);
+    for(const auto& name:value.order) if(contains(hidden,name)) value.hidden.push_back(name);
+    if(value.hidden.size()==configurable.size()) value.hidden.erase(value.hidden.begin());
+    return value;
+}
+std::vector<std::string> ModuleLayout::visible() const {std::vector<std::string> out;for(const auto& name:order) if(!contains(hidden,name)) out.push_back(name);return out;}
+std::string ModuleLayout::restorable(std::string_view module) const {return isHidden(module)?visible().front():std::string(module);}
+bool ModuleLayout::isDefault() const {return hidden.empty()&&std::equal(order.begin(),order.end(),configurable.begin(),configurable.end());}
+bool ModuleLayout::isHidden(std::string_view module) const {return contains(hidden,module);}
+bool ModuleLayout::canSetHidden(std::string_view module,bool value) const {return !value||!configurableModule(module)||isHidden(module)||visible().size()>1;}
+bool ModuleLayout::setHidden(std::string_view module,bool value) {
+    if(!configurableModule(module)||!canSetHidden(module,value)) return false;
+    if(value&&!isHidden(module)) {std::vector<std::string> next;for(const auto& name:order) if(contains(hidden,name)||name==module) next.push_back(name);hidden=std::move(next);}
+    else if(!value) hidden.erase(std::remove(hidden.begin(),hidden.end(),module),hidden.end());
+    return true;
+}
+bool ModuleLayout::move(std::string_view module,std::ptrdiff_t index) {
+    const auto found=std::find(order.begin(),order.end(),module);if(found==order.end()) return false;
+    const auto from=found-order.begin(),to=std::clamp<std::ptrdiff_t>(index,0,static_cast<std::ptrdiff_t>(order.size())-1);if(to==from) return false;
+    auto moved=std::move(*found);order.erase(found);order.insert(order.begin()+to,std::move(moved));
+    std::vector<std::string> next;for(const auto& name:order) if(contains(hidden,name)) next.push_back(name);hidden=std::move(next);return true;
+}
+// HUDModuleLayout(defaults:): an absent order is the default order; a present
+// one is read as given (a non-array reads as empty, so the default order).
+ModuleLayout Settings::moduleLayout() const {
+    return ModuleLayout::normalized(fields.contains("hudModuleOrder")?strings(fields["hudModuleOrder"]):std::vector<std::string>(ModuleLayout::configurable.begin(),ModuleLayout::configurable.end()),strings(fields["hudHiddenModules"]));
+}
+void Settings::setModuleLayout(const ModuleLayout& layout) {
+    const auto value=ModuleLayout::normalized(layout.order,layout.hidden);
+    if(std::equal(value.order.begin(),value.order.end(),ModuleLayout::configurable.begin(),ModuleLayout::configurable.end())) fields.erase("hudModuleOrder");
+    else {Json::Array names;for(const auto& name:value.order) names.emplace_back(name);fields["hudModuleOrder"]=std::move(names);}
+    if(value.hidden.empty()) fields.erase("hudHiddenModules");
+    else {Json::Array names;for(const auto& name:value.hidden) names.emplace_back(name);fields["hudHiddenModules"]=std::move(names);}
+}
+std::string Settings::batteryAlertMethod() const {
+    if(!flag(fields,"batteryAlertsEnabled",true)) return "never";
+    const auto& mode=fields["displayMode"];return mode.isString()?mode.string():std::string("whenChargingStarts");
+}
+void Settings::setBatteryAlertMethod(std::string method) {set("displayMode",std::move(method));set("batteryAlertsEnabled",true);}
+ProjectionSettings decodeProjectionSettings(const Json& stored) {
+    ProjectionSettings value;if(!stored.isObject()) return value;
+    // NSNumber.uint32Value: integers wrap to their low 32 bits, reals truncate.
+    if(const auto& color=stored["color"];color.isNumber()) {
+        const auto real=color.number();std::int64_t whole{};
+        if(std::isfinite(real)&&std::trunc(real)==real&&std::abs(real)<9.2e18) whole=color.integer();
+        else if(std::isfinite(real)&&std::abs(real)<9.2e18) whole=static_cast<std::int64_t>(std::trunc(real));
+        value.color=static_cast<std::uint32_t>(static_cast<std::uint64_t>(whole))&0xFFFFFFu;
+    } else if(color.isBool()) value.color=color.boolean()?1u:0u;
+    if(const auto& width=stored["width"];width.isNumber()&&std::isfinite(width.number())) value.width=std::clamp(width.number(),1.,80.);
+    value.erasing=stored["erasing"].isBool()&&stored["erasing"].boolean();
+    value.background=!stored["background"].isBool()||stored["background"].boolean();
+    return value;
+}
+Json encodeProjectionSettings(const ProjectionSettings& value) {
+    Json::Object out{{"width",std::isfinite(value.width)?std::clamp(value.width,1.,80.):12.},{"erasing",value.erasing},{"background",value.background}};
+    if(value.color) out["color"]=static_cast<std::int64_t>(*value.color&0xFFFFFFu);
+    return out;
+}
+ProjectionSettings Settings::projection() const {return decodeProjectionSettings(fields["projection.settings.v1"]);}
+void Settings::setProjection(const ProjectionSettings& value) {set("projection.settings.v1",encodeProjectionSettings(value));}
+std::int64_t Settings::orbipomBestScore() const {const auto& value=fields["orbipom.bestScore.v1"];return value.isNumber()?std::max<std::int64_t>(0,value.integer()):0;}
 std::string Settings::string(std::string_view key) const {return fields[key].string();}
 double Settings::number(std::string_view key) const {return fields[key].number();}
 bool Settings::boolean(std::string_view key) const {return fields[key].boolean();}
@@ -230,19 +334,28 @@ SettingsStore::SettingsStore(const std::filesystem::path& root) {
     detail::validateRoot(root);path_=root/"settings.json";value_=Settings::defaults();persisted_=detail::readFile(path_,jsonLimit);
     if(persisted_) {
         try {envelope_=parseRecord(*persisted_);version(envelope_);require(envelope_["settings"].isObject(),"Missing saved settings");
-            for(const auto& [key,value]:envelope_["settings"].object()) value_.fields[key]=value;validateSettings(value_);
+            for(const auto& [key,value]:envelope_["settings"].object()) value_.fields[key]=value;
+            // D2: the Mac summonHotkeyEnabled is the switch. A record without it
+            // (Windows 1.2.0) takes it from windowsSummonHotkeyDisabled (opposite
+            // polarity); when both exist the Mac key wins. The legacy key never
+            // lives in memory: persisted() writes it back as a mirror.
+            if(const auto& saved=std::as_const(envelope_)["settings"];saved.contains("windowsSummonHotkeyDisabled")) {
+                if(const auto& legacy=saved["windowsSummonHotkeyDisabled"];!saved.contains("summonHotkeyEnabled")&&legacy.isBool()) value_.fields["summonHotkeyEnabled"]=!legacy.boolean();
+                value_.fields.erase("windowsSummonHotkeyDisabled");
+            }
+            validateSettings(value_);
             if(envelope_.contains("hasLaunched")){require(envelope_["hasLaunched"].isBool(),"Invalid first-launch marker");launched_=envelope_["hasLaunched"].boolean();}
         } catch(const StoreError&) {throw;} catch(const std::exception&) {throw StoreError(StoreErrorCode::invalid,"Saved settings are invalid; the original was preserved");}
     }
 }
 bool SettingsStore::markLaunched() {
     if(launched_) return false;
-    auto envelope=envelope_;envelope["version"]=1;envelope["settings"]=value_.fields;envelope["hasLaunched"]=true;const auto bytes=encodeRecord(envelope);
+    auto envelope=envelope_;envelope["version"]=1;envelope["settings"]=persisted(value_);envelope["hasLaunched"]=true;const auto bytes=encodeRecord(envelope);
     detail::replaceFile(path_,persisted_,bytes,jsonLimit);envelope_=std::move(envelope);persisted_=bytes;launched_=true;return true;
 }
 bool SettingsStore::update(const Settings& value) {
     validateSettings(value);if(value==value_ && persisted_) return false;
-    auto envelope=envelope_;envelope["version"]=1;envelope["settings"]=value.fields;const auto bytes=encodeRecord(envelope);
+    auto envelope=envelope_;envelope["version"]=1;envelope["settings"]=persisted(value);const auto bytes=encodeRecord(envelope);
     detail::replaceFile(path_,persisted_,bytes,jsonLimit);value_=value;envelope_=std::move(envelope);persisted_=bytes;return true;
 }
 Profile Profile::defaults() {
@@ -287,10 +400,14 @@ bool ProfileStore::updateFromGame(const Profile& value) {
 }
 bool ProfileStore::commit(const Profile& value,bool fromGame) {
     require(value.uid==value_.uid,"The original local UID cannot change");validateProfile(value);
-    if(syncLocked_&&!fromGame) require(value.name==value_.name&&value.tag==value_.tag&&value.gamePlayerID==value_.gamePlayerID&&
-        value.playerIDOverride==value_.playerIDOverride&&value.awakeningDate==value_.awakeningDate&&value.hasManualAwakeningDate==value_.hasManualAwakeningDate&&
-        value.permissionLevel==value_.permissionLevel&&value.explorationLevel==value_.explorationLevel&&value.operatorsCount==value_.operatorsCount&&
-        value.weaponsCount==value_.weaponsCount&&value.archivesCount==value_.archivesCount,"Synced game profile fields cannot be edited locally");
+    // Only the fields the account sync owns are locked (Mac gameSyncedFields).
+    using F=ProfileSyncField;const auto locked=[&](F f){return !fromGame&&syncLocked_.contains(f);};
+    require((!locked(F::name)||value.name==value_.name)&&(!locked(F::tag)||value.tag==value_.tag)&&
+        (!locked(F::uid)||(value.gamePlayerID==value_.gamePlayerID&&value.playerIDOverride==value_.playerIDOverride))&&
+        (!locked(F::awakening)||(value.awakeningDate==value_.awakeningDate&&value.hasManualAwakeningDate==value_.hasManualAwakeningDate))&&
+        (!locked(F::levels)||(value.permissionLevel==value_.permissionLevel&&value.explorationLevel==value_.explorationLevel))&&
+        (!locked(F::counts)||(value.operatorsCount==value_.operatorsCount&&value.weaponsCount==value_.weaponsCount&&value.archivesCount==value_.archivesCount)),
+        "Synced game profile fields cannot be edited locally");
     if(value==value_ && persisted_) return false;
     const auto fields=encodeProfile(value);auto envelope=envelope_;envelope["version"]=1;envelope["profile"]=fields;
     const auto bytes=encodeRecord(envelope);detail::replaceFile(path_,persisted_,bytes,jsonLimit);

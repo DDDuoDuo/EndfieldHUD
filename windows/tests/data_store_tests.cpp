@@ -223,6 +223,133 @@ void settingsSchema() {
     writeSettings(Json::Object{{"displayMode", 3}});
     rejects([&] { SettingsStore invalid(root.path); }, "A non-string display method is still invalid");
 }
+// Mac 1.3.0 AppConfiguration keys (Sources/Models.swift:82-91, 228-232,
+// 281-287), HUDModuleLayout (HUDNavigationTarget.swift:88-144),
+// ProjectionSettings (ProjectionSettings.swift:31-41, 98-101) and decisions
+// D2/D3. Hand-written records; no Mac oracle exists for these keys.
+void settingsVersion130() {
+    Temporary root;
+    const auto writeSettings = [&](const Json& settings) {
+        const auto bytes = Json(Json::Object{{"version", 1}, {"settings", settings}}).encode();
+        std::ofstream file(root.path / "settings.json", std::ios::binary | std::ios::trunc);
+        file.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        check(bool(file), "Write the synthetic settings record");
+    };
+    const auto defaults = Settings::defaults();
+    check(defaults.summonHotkeyEnabled() && !defaults.recordingMode() && defaults.dailyBootLog() && defaults.facilityAlerts() &&
+          !defaults.fields.contains("hudModuleOrder") && !defaults.fields.contains("hudHiddenModules") && !defaults.dailyBootLogLastDay() &&
+          defaults.moduleLayout().isDefault() && defaults.projection() == ProjectionSettings{} && defaults.orbipomBestScore() == 0,
+          "The 1.3.0 defaults: hotkey on, recording off, boot log on, facility alerts on, default layout, pen 12/theme colour");
+    // A Windows 1.2.0 record (no 1.3.0 keys) reads with the Mac defaults.
+    writeSettings(Json::Object{{"theme", "light"}, {"storageVolume", "\\\\?\\Volume{1}\\"}});
+    {
+        const SettingsStore older(root.path);
+        check(older.value().summonHotkeyEnabled() && older.value().dailyBootLog() && older.value().facilityAlerts() && !older.value().recordingMode() &&
+              older.value().moduleLayout().isDefault(), "A Windows 1.2.0 record reads the 1.3.0 defaults");
+    }
+    // D2: windowsSummonHotkeyDisabled migrates (opposite polarity), never lives
+    // in memory, and is written back as a mirror for Windows 1.2.0 readers.
+    writeSettings(Json::Object{{"windowsSummonHotkeyDisabled", true}});
+    {
+        SettingsStore migrated(root.path);
+        check(!migrated.value().summonHotkeyEnabled() && !migrated.value().fields.contains("windowsSummonHotkeyDisabled"), "A disabled Windows hotkey becomes summonHotkeyEnabled=false");
+        auto next = migrated.value();next.set("recordingMode", true);
+        check(migrated.update(next), "The migrated record saves");
+    }
+    {
+        const auto envelope = Json::parse(*detail::readFile(root.path / "settings.json", 1024 * 1024));
+        check(envelope["settings"]["windowsSummonHotkeyDisabled"] == Json(true) && envelope["settings"]["summonHotkeyEnabled"] == Json(false) &&
+              envelope["settings"]["recordingMode"] == Json(true), "While off, the record mirrors windowsSummonHotkeyDisabled: true");
+    }
+    // A Windows 1.2.0-style reader (application_display.cpp at 1.2.0: on unless
+    // windowsSummonHotkeyDisabled is true) sees the state this build saved.
+    const auto legacyEnabled = [&] { const auto envelope = Json::parse(*detail::readFile(root.path / "settings.json", 1024 * 1024));
+        const auto& disabled = envelope["settings"]["windowsSummonHotkeyDisabled"]; return !(disabled.isBool() && disabled.boolean()); };
+    check(!legacyEnabled(), "Windows 1.2.0 reads the hotkey as off");
+    {
+        SettingsStore store(root.path);auto next = store.value();
+        check(!next.fields.contains("windowsSummonHotkeyDisabled") && !next.summonHotkeyEnabled(), "The mirror reloads as the Mac key only");
+        next.set("summonHotkeyEnabled", true);check(store.update(next), "Switch the hotkey back on");
+        const auto envelope = Json::parse(*detail::readFile(root.path / "settings.json", 1024 * 1024));
+        check(!envelope["settings"].contains("windowsSummonHotkeyDisabled") && envelope["settings"]["summonHotkeyEnabled"] == Json(true) && legacyEnabled(),
+              "While on, the legacy key is removed and Windows 1.2.0 reads it as on");
+        next.set("summonHotkeyEnabled", false);store.update(next);check(!legacyEnabled(), "Off again: mirrored again");
+        check(store.markLaunched() && !legacyEnabled(), "The first-run marker write keeps the mirror");
+    }
+    writeSettings(Json::Object{{"windowsSummonHotkeyDisabled", true}, {"summonHotkeyEnabled", true}});
+    check(SettingsStore(root.path).value().summonHotkeyEnabled(), "A saved summonHotkeyEnabled wins over a stale Windows key");
+    writeSettings(Json::Object{{"windowsSummonHotkeyDisabled", false}});
+    check(SettingsStore(root.path).value().summonHotkeyEnabled(), "An enabled Windows hotkey stays enabled");
+    // D3: layout keys absent = default; string arrays validated; unknown names dropped on read.
+    writeSettings(Json::Object{{"hudModuleOrder", Json::Array{"map", "notes", "map", "teleporter"}}, {"hudHiddenModules", Json::Array{"notes", "addApp"}}});
+    {
+        const SettingsStore store(root.path);
+        const auto layout = store.value().moduleLayout();
+        check(layout.order.size() == 17 && layout.order[0] == "map" && layout.order[1] == "notes" && layout.order[2] == "fileShelf" &&
+              layout.hidden == std::vector<std::string>{"notes"} && layout.visible().front() == "map" && layout.restorable("notes") == "map" &&
+              layout.restorable("clock") == "clock", "Unknown/repeated names drop, missing modules append, Add App is not configurable");
+        check(store.value().fields["hudModuleOrder"].array().size() == 4, "The stored arrays round-trip verbatim until the layout changes");
+    }
+    writeSettings(Json::Object{{"hudModuleOrder", "notes"}});
+    rejects([&] { SettingsStore invalid(root.path); }, "A non-array module order is invalid");
+    writeSettings(Json::Object{{"hudHiddenModules", Json::Array{1}}});
+    rejects([&] { SettingsStore invalid(root.path); }, "A non-string hidden module is invalid");
+    {
+        Settings value = Settings::defaults();
+        ModuleLayout layout;
+        for (const auto name : ModuleLayout::configurable) check(layout.setHidden(name, true) == (name != ModuleLayout::configurable.back()), "Hiding stops at the last visible module");
+        check(layout.visible() == std::vector<std::string>{"power"} && !layout.canSetHidden("power", true), "One module always stays visible");
+        auto all = ModuleLayout::normalized({}, std::vector<std::string>(ModuleLayout::configurable.begin(), ModuleLayout::configurable.end()));
+        check(all.hidden.size() == 16 && !all.isHidden("notes"), "All hidden: the first of the order is shown again");
+        layout = {};check(layout.move("power", -4) && layout.order.front() == "power" && !layout.move("power", 0) && layout.move("notes", 99) && layout.order.back() == "notes", "Moves clamp and report no-ops");
+        value.setModuleLayout(layout);
+        check(value.fields["hudModuleOrder"].array().size() == 17 && !value.fields.contains("hudHiddenModules"), "A changed order is stored in full; no hidden key");
+        layout.setHidden("reader", true);layout.setHidden("archive", true);value.setModuleLayout(layout);
+        check(value.fields["hudHiddenModules"] == Json(Json::Array{"archive", "reader"}), "Hidden modules are stored in list order");
+        value.setModuleLayout(ModuleLayout{});
+        check(!value.fields.contains("hudModuleOrder") && !value.fields.contains("hudHiddenModules"), "The default layout leaves no keys behind");
+    }
+    // Daily boot log: consumed once per local day; Restore Defaults keeps the day.
+    {
+        Settings value = Settings::defaults();
+        check(value.consumeDailyBootLog("2026-10-22") && !value.consumeDailyBootLog("2026-10-22") && value.consumeDailyBootLog("2026-10-23") &&
+              value.dailyBootLogLastDay() == std::optional<std::string>("2026-10-23"), "The boot log plays on the first open of each day");
+        value.set("orbipom.bestScore.v1", std::int64_t{42});value.set("storageVolume", "C:");value.set("recordingMode", true);
+        value.setProjection({0x22A6F2, 30, true, false});
+        const auto restored = Settings::restoredDefaults(value);
+        check(restored.dailyBootLogLastDay() == value.dailyBootLogLastDay() && restored.orbipomBestScore() == 42 && restored.string("storageVolume") == "C:" &&
+              restored.projection() == value.projection() && !restored.recordingMode(), "Restore Defaults resets AppConfiguration and keeps the keys outside it");
+    }
+    // Battery alert method: false shows as Don't display; any choice turns alerts back on.
+    {
+        Settings value = Settings::defaults();
+        value.set("batteryAlertsEnabled", false);value.set("displayMode", "always");
+        check(value.batteryAlertMethod() == "never", "batteryAlertsEnabled=false shows as Don't display");
+        value.setBatteryAlertMethod("always");
+        check(value.batteryAlertMethod() == "always" && value.boolean("batteryAlertsEnabled"), "Choosing a method turns battery alerts back on");
+    }
+    // projection.settings.v1 read rules.
+    {
+        check(decodeProjectionSettings(Json::Object{{"color", std::int64_t{0x1FFFA00}}, {"width", 200.}, {"erasing", true}}) == ProjectionSettings{0xFFFA00, 80, true, true},
+              "Colour masked, width clamped to 80, background defaults to true");
+        check(decodeProjectionSettings(Json::Object{{"color", "red"}, {"width", .2}, {"background", false}}) == ProjectionSettings{std::nullopt, 1, false, false},
+              "A non-number colour keeps the theme colour; width clamps to 1");
+        check(decodeProjectionSettings(Json("x")) == ProjectionSettings{}, "A non-dictionary takes every default");
+        const ProjectionSettings pen{0xE5383B, 24, false, true};
+        check(decodeProjectionSettings(encodeProjectionSettings(pen)) == pen && encodeProjectionSettings(pen)["color"].integer() == 0xE5383B, "The pen round-trips");
+    }
+    // Every 1.3.0 key survives a store round trip, and a Windows 1.2.0-style
+    // reader (keys outside its defaults round-trip verbatim) keeps them.
+    {
+        writeSettings(Json::Object{});
+        SettingsStore store(root.path);auto next = store.value();
+        next.set("recordingMode", true);next.set("facilityAlerts", false);next.set("dailyBootLog", false);next.consumeDailyBootLog("2026-10-22");
+        ModuleLayout layout;layout.move("map", 0);layout.setHidden("volume", true);next.setModuleLayout(layout);next.setProjection({0x8CE03C, 6, false, true});
+        check(store.update(next), "Save every 1.3.0 key");
+        const SettingsStore reloaded(root.path);
+        check(reloaded.value() == next && reloaded.value().moduleLayout() == next.moduleLayout(), "Every 1.3.0 key reloads unchanged");
+    }
+}
 }
 
 int main(int argc, char** argv) {
@@ -231,6 +358,7 @@ int main(int argc, char** argv) {
         oracle(argv[1]);
         edges();
         settingsSchema();
+        settingsVersion130();
         std::cout << checks << " profile store normalization checks passed; temporary roots only\n";
         return 0;
     } catch (const std::exception& e) {

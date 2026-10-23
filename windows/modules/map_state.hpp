@@ -17,7 +17,11 @@ struct MapPin {
     bool operator==(const MapPin&)const=default;
 };
 struct MapViewport {
-    static constexpr double minimumZoom=2.1,maximumZoom=128,defaultZoom=3;
+    // Mac 1.3.0 WorldMapViewport (WorldMapStore.swift:35-44): the map zooms
+    // out to the whole world (1x); 2.1 is v1.2.0's floor, which that release
+    // still requires in a saved viewport (core/data/map_store keeps it there
+    // and stores a wider camera beside it as wideZoom).
+    static constexpr double minimumZoom=1,legacyMinimumZoom=2.1,maximumZoom=128,defaultZoom=3;
     double centerX{(114.0579+180)/360},centerY{(90-22.5431)/180},zoom{defaultZoom};
     bool operator==(const MapViewport&)const=default;
 };

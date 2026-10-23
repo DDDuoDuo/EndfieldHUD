@@ -386,7 +386,7 @@ void reconnectAfterImport(const std::filesystem::path& resources,const std::file
             const auto& record=controller.record();
             check(record.linked&&record.requiresReconnect&&record.roles.size()==imported.roles&&record.snapshots.size()==2,"The restarted owner reads the imported roles and snapshots");
         }
-        check(store.profileSyncLocked()==imported.profileSyncLocked,"The profile lock is the one the import reported");
+        check(bool(store.profileSyncLocked())==imported.profileSyncLocked,"The profile lock is the one the import reported");
         // The face and wallet as the HUD shows them after the restart.
         owner.resize({1280,800,96,1,1280,800});owner.setOverlayVisible(true,clock);
         core::source::DesktopChromeSettings settings;settings.viewport={0,0,1280,800};settings.module=core::Module::account;core::ModulePresentation modules(core::Module::account);
@@ -424,7 +424,7 @@ void reconnectAfterImport(const std::filesystem::path& resources,const std::file
         check(!community.requests().empty()&&community.requests().front().path=="/api/v1/game/player/binding"&&!community.rejected(),"Syncing resumes with the bindings");
         for(const auto& r:community.requests())
             check(r.header("cred")==std::optional<std::string>(accepted.session->cred)&&r.header("sign")&&r.header("sign")->size()==32,"Every request carries the new signed credential");
-        check(store.profileSyncLocked()==imported.profileSyncLocked,"The profile lock survives the new sign-in");
+        check(bool(store.profileSyncLocked())==imported.profileSyncLocked,"The profile lock survives the new sign-in");
         for(const auto& c:owner.accessibleControls()) if(c.id=="account:connect") check(c.label=="Reconnect"&&c.notice!="Sign in again to continue syncing.","The sign-in request leaves the face");
         check(owner.flush(clock),"The flush writes the reconnected cache");
         const auto written=h::decodeCacheBytes(*gpu::readBoundedFile(cacheFile,h::maximumCacheBytes));

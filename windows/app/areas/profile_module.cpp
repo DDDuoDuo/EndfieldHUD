@@ -173,7 +173,7 @@ struct CoverageClipboard final : gpu::NotesClipboard {
 
 // HypergryphAccountController's profile side over the single profile owner
 // (never a second ProfileStore writer): official game fields are applied to
-// the current record as an account write, the lock mirrors gameSyncActive and
+// the current record as an account write, the lock mirrors gameSyncedFields and
 // the game avatar becomes the managed avatar synchronously.
 class ProfileAccountSink final : public modules::hypergryph::AccountProfileSink {
 public:
@@ -181,7 +181,7 @@ public:
     void applyGameProfile(const modules::hypergryph::GameProfileUpdate& update) override {
         owner_.acceptFromGame([update](m::PersonalProfile& p) { modules::hypergryph::applyGameProfileUpdate(p, update); }, host_.now());
     }
-    void setProfileSyncLocked(bool locked) override { owner_.setSyncLocked(locked, host_.now()); }
+    void setProfileSyncLocked(ehud::data::ProfileSyncFields locked) override { owner_.setSyncLocked(locked, host_.now()); }
     std::optional<std::string> importGameAvatar(const std::vector<std::uint8_t>& png) override { return owner_.importGameAvatar(png, host_.now()); }
 private:
     tools::ProfileOwner& owner_;
@@ -703,7 +703,7 @@ void ProfileArea::coverageModule(app::ModuleCoverage& step) {
             if (owner_->state()->popover()) step.check(owner_->perform("profile:popoverClose", t), "The identity popover closes");
         }
         // 3. Official sync: the card shows the synced UID, never a # tag.
-        sink_->setProfileSyncLocked(true);
+        sink_->setProfileSyncLocked(ehud::data::ProfileSyncFields::all());
         modules::hypergryph::GameProfileUpdate update;
         update.gamePlayerID = "1234567890123";
         update.permissionLevel = 42;

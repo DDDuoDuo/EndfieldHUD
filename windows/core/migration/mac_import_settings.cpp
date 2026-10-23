@@ -142,14 +142,16 @@ std::int64_t saturatedTruncation(double value) {
 template<std::size_t N> bool oneOf(std::string_view value, const std::array<std::string_view, N>& choices) {
     return std::find(choices.begin(), choices.end(), value) != choices.end();
 }
-constexpr std::array<std::string_view, 2> displayModes{"always", "whenChargingStarts"};
+// Mac 1.3.0 enums: DisplayMode.never (DisplayPolicy.swift:6-7) and
+// HUDChargeMetric.gpu decode from any key that holds them.
+constexpr std::array<std::string_view, 3> displayModes{"always", "whenChargingStarts", "never"};
 constexpr std::array<std::string_view, 3> themes{"dark", "light", "system"};
 constexpr std::array<std::string_view, 2> placements{"topCenter", "custom"};
 constexpr std::array<std::string_view, 6> languages{"system", "english", "simplifiedChinese", "traditionalChinese", "japanese", "korean"};
 constexpr std::array<std::string_view, 2> clockFormats{"twentyFourHour", "twelveHour"};
 constexpr std::array<std::string_view, 5> clockStyles{"digital", "split", "dial", "rail", "stacked"};
 constexpr std::array<std::string_view, 5> centerLogos{"endfield", "rhodesIsland", "babel", "rhineLab", "custom"};
-constexpr std::array<std::string_view, 5> alertMetrics{"battery", "ram", "cpu", "network", "disk"};
+constexpr std::array<std::string_view, 6> alertMetrics{"battery", "ram", "cpu", "network", "disk", "gpu"};
 // Every HUDApplicationIcon raw value, including retired saved preferences.
 constexpr std::array<std::string_view, 61> applicationIcons{
     "endfield", "battery", "originium", "orundum", "perlica", "rhodesIsland", "babel", "rhineLab", "blacksteel", "penguinLogistics", "ddd",
@@ -166,13 +168,14 @@ constexpr std::array<std::string_view, 4> applicationIconsTail{"gameOroberyl", "
 bool applicationIcon(std::string_view value) {
     return oneOf(value, applicationIcons) || oneOf(value, applicationIconsTail) || value == "gameStrength";
 }
-constexpr std::array<std::string_view, 35> knownKeys{
+constexpr std::array<std::string_view, 46> knownKeys{
     "hudSettingsSchemaVersion", "displayMode", "displayDuration", "accentHex", "theme", "scale", "placement", "customScreenID",
     "customPositionX", "customPositionY", "language", "hudScale", "hudOffsetX", "hudOffsetY", "parallaxIntensity",
     "perspectiveIntensity", "backgroundDarkness", "blurAmount", "reduceMotion", "ambientAnimation", "closeOnFocusLost",
     "openOnActiveDisplay", "hudDisplayUUID", "hudDisplayName", "launchAtLogin", "batteryAlertsEnabled", "devicePopupEnabled",
     "lowPowerVisualMode", "applicationIcon", "clockFormat", "clockStyle", "centerLogo", "centerLogoRevision", "alertMetric",
-    "summonShortcut"};
+    "summonShortcut", "summonHotkeyEnabled", "recordingMode", "dailyBootLog", "facilityAlerts", "hudModuleOrder", "hudHiddenModules",
+    "displayModeExtension", "alertMetricExtension", "projection.settings.v1", "dailyBootLogLastDay", "orbipom.bestScore.v1"};
 struct Shortcut { std::uint32_t keyCode{50}; std::uint64_t modifiers{1}; bool operator==(const Shortcut&) const = default; };
 bool shortcutValid(const Shortcut& s) {
     if (s.modifiers & ~std::uint64_t{15}) return false;
@@ -433,6 +436,58 @@ MacSettingsImport mapMacSettings(const PlistValue& domainValue, const MacImportT
         }
         if (d.object("summonShortcut") && decoded && shortcutValid(*decoded) && shortcut == Shortcut{}) report(out, "summonShortcut", MacSettingOutcome::imported);
     }
+    // ReleaseFallback.restore (Models.swift:154-161): the 1.3.0 choice in the
+    // extension key applies only while the original key still holds the value
+    // v1.2.0 falls back to, so a later v1.2.0 choice wins.
+    auto extension = [&](const char* key, const char* base, auto choices, std::string_view newer, std::string_view fallback) {
+        if (!d.object(key)) return;
+        const auto value = d.string(key);
+        if (!value || !oneOf(*value, choices)) { report(out, key, MacSettingOutcome::invalidFallback, "Unknown value; ignored like the Mac"); return; }
+        const auto released = *value == newer ? fallback : std::string_view(*value);
+        if (f[base].string() != released) { report(out, key, MacSettingOutcome::notImported, "Ignored: the original key was changed by an earlier version"); return; }
+        f[base] = *value;
+        report(out, key, MacSettingOutcome::imported, std::string("Applied to ") + base);
+    };
+    extension("displayModeExtension", "displayMode", displayModes, "never", "whenChargingStarts");
+    extension("alertMetricExtension", "alertMetric", alertMetrics, "gpu", "battery");
+    // AppConfiguration 1.3.0 switches (Models.swift:228-232, Self.bool: absent = fallback).
+    flag("summonHotkeyEnabled", true);
+    flag("recordingMode", false);
+    flag("dailyBootLog", true);
+    flag("facilityAlerts", true);
+    {   // HUDModuleLayout(defaults:) (HUDNavigationTarget.swift:107-111): stringArray(forKey:)
+        // is nil unless every element is a string; unknown names are dropped.
+        const auto names = [&](const char* key) {
+            std::vector<std::string> out;
+            const auto* value = d.object(key);
+            if (!value || !value->isArray()) return out;
+            for (const auto& item : value->arrayValue()) { if (!item.isString()) return std::vector<std::string>{}; out.push_back(item.stringValue()); }
+            return out;
+        };
+        auto order = d.object("hudModuleOrder") ? names("hudModuleOrder") : std::vector<std::string>(data::ModuleLayout::configurable.begin(), data::ModuleLayout::configurable.end());
+        const auto layout = data::ModuleLayout::normalized(std::move(order), names("hudHiddenModules"));
+        out.settings.setModuleLayout(layout);
+        for (const auto key : {"hudModuleOrder", "hudHiddenModules"}) report(out, key, d.object(key) ? MacSettingOutcome::normalized : MacSettingOutcome::defaulted, "Module order and visibility (System > Modules)");
+    }
+    if (const auto* pen = d.object("projection.settings.v1")) {
+        // ProjectionSettings.init (ProjectionSettings.swift:31-41): dictionary
+        // values as NSNumber (uint32Value / doubleValue) and Bool.
+        if (pen->isDictionary()) {
+            Json stored = Json::Object{};
+            if (const auto* color = pen->find("color"); color && (color->isNumber() || color->isBoolean()))
+                // uint32Value keeps the low 32 bits of the two's-complement integer.
+                stored["color"] = color->isInteger() ? Json(static_cast<std::int64_t>((color->integerValue().negative ? 0 - color->integerValue().magnitude : color->integerValue().magnitude) & 0xFFFFFFFFu))
+                    : color->isBoolean() ? Json(std::int64_t{color->booleanValue() ? 1 : 0}) : Json(color->realValue());
+            if (const auto* width = pen->find("width"); width && (width->isNumber() || width->isBoolean())) stored["width"] = numberDouble(*width);
+            for (const auto key : {"erasing", "background"}) if (const auto* value = pen->find(key)) {
+                if (value->isBoolean()) stored[key] = value->booleanValue();
+                else if (value->isInteger() && !value->integerValue().negative && value->integerValue().magnitude <= 1) stored[key] = value->integerValue().magnitude == 1;
+            }
+            out.settings.setProjection(data::decodeProjectionSettings(stored));
+            report(out, "projection.settings.v1", MacSettingOutcome::imported, "Projection pen colour, width, eraser and background");
+        } else report(out, "projection.settings.v1", MacSettingOutcome::invalidFallback, "Not a dictionary; the pen defaults are used");
+    }
+    if (d.object("dailyBootLogLastDay")) report(out, "dailyBootLogLastDay", MacSettingOutcome::excluded, "The day the boot log last played stays per device");
     if (d.object("orbipom.bestScore.v1")) {
         f["orbipom.bestScore.v1"] = std::max<std::int64_t>(0, d.integerValue("orbipom.bestScore.v1"));
         report(out, "orbipom.bestScore.v1", MacSettingOutcome::imported);
@@ -445,7 +500,7 @@ MacSettingsImport mapMacSettings(const PlistValue& domainValue, const MacImportT
     }
     for (const auto& entry : d.root().dictionaryValue()) {
         const auto& key = entry.key;
-        if (oneOf(std::string_view(key), knownKeys) || key == "orbipom.bestScore.v1" || key == "hasLaunched") continue;
+        if (oneOf(std::string_view(key), knownKeys) || key == "hasLaunched") continue;
         if (key == "HUDUpdateAutomaticallyInstall" || key == "HUDUpdateLastNotifiedRelease" || key.starts_with("SU"))
             report(out, key, MacSettingOutcome::excluded, "macOS updater state does not transfer");
         else report(out, key, MacSettingOutcome::notImported, "Unknown key preserved in the archived original preferences");

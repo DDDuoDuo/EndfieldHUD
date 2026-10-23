@@ -69,5 +69,11 @@ void writeOwnerOnlyFile(const std::filesystem::path&,const std::string& bytes);
 bool restrictToOwner(const std::filesystem::path&);
 std::optional<std::string> readBoundedFile(const std::filesystem::path&,std::size_t maximum);
 bool ownerOnly(const std::filesystem::path&);
+// Current-user DPAPI (CRYPTPROTECT_UI_FORBIDDEN, the caller's entropy, no
+// machine scope), shared by the account vault and the Archive password vault
+// (native/archive_password_vault.hpp). unprotect throws when the blob cannot
+// be decrypted for this user; the plaintext buffer is wiped by the caller.
+std::string protectForCurrentUser(std::string_view plain,std::string_view entropy,const wchar_t* description);
+std::string unprotectForCurrentUser(std::string_view blob,std::string_view entropy);
 #endif
 }

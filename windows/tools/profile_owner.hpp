@@ -125,11 +125,11 @@ public:
     // Shared services.
     void queueCapacityAvailable();
     void workModeCheckpoint(double absoluteControllerTotal); // WorkModeHooks::trackedWorkSecondsChanged
-    // Account owner (AccountProfileSink): the lock mirrors gameSyncActive; an
+    // Account owner (AccountProfileSink): the lock mirrors gameSyncedFields; an
     // update applies the game fields to the current record as an account write.
     // Before the profile loads the latest update waits; after a failed load it
     // throws ProfileError(unavailable), like a missing store.
-    void setSyncLocked(bool,double time);
+    void setSyncLocked(ehud::data::ProfileSyncFields,double time);
     void acceptFromGame(std::function<void(modules::PersonalProfile&)>apply,double time);
     // AccountProfileSink::importGameAvatar: the downsampled PNG becomes the
     // managed avatar synchronously (source importImage on the main thread) and

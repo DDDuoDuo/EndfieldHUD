@@ -10,6 +10,7 @@
 #include <ctime>
 #include <cstdlib>
 #include <deque>
+#include <filesystem>
 #include <iostream>
 #include <memory>
 #include <vector>
@@ -93,9 +94,9 @@ struct MemoryFile:h::AccountCacheFile {
     void write(const std::string& value) override {if(fail) throw std::runtime_error("write");bytes=value;}
 };
 struct ProfileSink:h::AccountProfileSink {
-    ehud::data::Profile profile;bool locked{};int lockChanges{};
+    ehud::data::Profile profile;ehud::data::ProfileSyncFields locked{};int lockChanges{};
     void applyGameProfile(const h::GameProfileUpdate& u) override {h::applyGameProfileUpdate(profile,u);}
-    void setProfileSyncLocked(bool v) override {locked=v;++lockChanges;}
+    void setProfileSyncLocked(ehud::data::ProfileSyncFields v) override {locked=v;++lockChanges;}
     std::optional<std::string> importGameAvatar(const std::vector<std::uint8_t>&) override {throw std::runtime_error("no avatar in trace");}
     Json fields() const {
         return Json::Object{{"name",profile.name},{"tag",profile.tag},{"gamePlayerID",optJson(profile.gamePlayerID)},{"playerIDOverride",optJson(profile.playerIDOverride)},
@@ -181,7 +182,7 @@ void replay(const Json& oracle) {
                   same(s->fullRecoveryAt,es["full"])&&s->isRefreshing==es["refreshing"].boolean()&&s->refreshAvailable==es["available"].boolean()&&h::gameName(s->game)==es["game"].string(),label+": sanity");
         }
         check(controller->hasActiveRequest()==after["active"].boolean()&&controller->isPresentingAccountPanel()==after["panel"].boolean()&&controller->gameSyncActive()==after["gameSync"].boolean(),label+": request/panel/sync state");
-        check(sink.locked==controller->gameSyncActive(),label+": profile sync lock mirrors gameSyncActive");
+        check(sink.locked==controller->gameSyncedFields()&&bool(sink.locked)==controller->gameSyncActive(),label+": profile sync lock mirrors gameSyncActive");
         check(sameJson(Json(api->calls),after["calls"]),label+": service calls "+Json(api->calls).encode()+" vs "+after["calls"].encode());
         check(api->cancels==after["cancels"].integer(),label+": cancellations");
         Json::Array eventList;for(const auto& e:events) eventList.emplace_back(e);
@@ -379,6 +380,95 @@ void importCache() {
     const auto decoded=h::decodeCache(json);check(decoded&&h::encodeCache(*decoded)==json,"Unknown additive cache fields survive a rewrite");
     check(bytes.find("cred")==std::string::npos&&bytes.find("signingToken")==std::string::npos,"Cache never contains credentials");
 }
+// 1.3.0 per-field sync. Hand-written caches follow the Mac Cache codec
+// (Sources/HypergryphAccountController.swift:24-59) and .setSyncField (:240-244).
+void perFieldSync() {
+    using F=ehud::data::ProfileSyncField;using Fields=ehud::data::ProfileSyncFields;
+    const auto all=Fields::all();
+    // A Mac 1.3.0 cache with a partial sync: the file says syncProfile false and
+    // keeps the real switch in partialSyncProfile (encode(to:) L47-58).
+    const auto mac=Json::parse(R"({"header":"endfield","partialSyncProfile":true,"records":{},"region":"mainland","syncAvatar":false,"syncProfile":false,"unsyncedFields":["counts","name"],"version":1})");
+    auto decoded=h::decodeCache(mac);
+    check(decoded&&decoded->syncProfile&&decoded->unsyncedFields==std::vector<std::string>{"counts","name"}&&decoded->extra==Json(Json::Object{}),
+          "A partial Mac cache reads as sync on with its excluded fields, nothing left in extra");
+    check(h::accountSyncFields(*decoded)==all.without(F::counts).without(F::name),"The sync owns every field the cache does not exclude");
+    check(h::encodeCache(*decoded)==mac,"Mac 1.3.0 partial cache in -> Windows -> out is the same document");
+    // v1.2.0 caches have neither key: every field syncs and none is written.
+    const auto old=Json::parse(R"({"header":"endfield","records":{},"region":"mainland","syncAvatar":false,"syncProfile":true,"version":1})");
+    decoded=h::decodeCache(old);
+    check(decoded&&decoded->syncProfile&&!decoded->unsyncedFields&&h::accountSyncFields(*decoded)==all&&h::encodeCache(*decoded)==old,"A v1.2.0 cache syncs every field and round-trips unchanged");
+    // partialSyncProfile is read (and type-checked) only while fields are excluded.
+    for(const auto* text:{R"({"header":"endfield","partialSyncProfile":true,"records":{},"region":"mainland","syncAvatar":false,"syncProfile":false,"version":1})",
+                          R"({"header":"endfield","partialSyncProfile":"stale","records":{},"region":"mainland","syncAvatar":false,"syncProfile":false,"unsyncedFields":null,"version":1})"}) {
+        decoded=h::decodeCache(Json::parse(text));
+        check(decoded&&!decoded->syncProfile&&!decoded->unsyncedFields&&h::encodeCache(*decoded)==Json::parse(R"({"header":"endfield","records":{},"region":"mainland","syncAvatar":false,"syncProfile":false,"version":1})"),
+              "A stale partialSyncProfile without excluded fields is ignored and never written back");
+    }
+    decoded=h::decodeCache(Json::parse(R"({"header":"endfield","partialSyncProfile":true,"records":{},"region":"mainland","syncAvatar":false,"syncProfile":false,"unsyncedFields":[],"version":1})"));
+    check(decoded&&!decoded->syncProfile&&decoded->unsyncedFields&&decoded->unsyncedFields->empty()&&!h::encodeCache(*decoded).contains("partialSyncProfile")&&
+          h::encodeCache(*decoded)["unsyncedFields"].array().empty(),"An empty list excludes nothing (Mac encodeIfPresent keeps a decoded [])");
+    for(const auto* text:{R"({"header":"endfield","records":{},"region":"mainland","syncAvatar":false,"syncProfile":true,"unsyncedFields":"name","version":1})",
+                          R"({"header":"endfield","records":{},"region":"mainland","syncAvatar":false,"syncProfile":true,"unsyncedFields":[1],"version":1})",
+                          R"({"header":"endfield","partialSyncProfile":"yes","records":{},"region":"mainland","syncAvatar":false,"syncProfile":false,"unsyncedFields":["name"],"version":1})"})
+        check(!h::decodeCache(Json::parse(text)),"A malformed unsyncedFields/partialSyncProfile fails the whole cache like Swift's decoder");
+    // setSyncField: Set semantics, sorted, nil when empty, unknown strings kept.
+    h::AccountCache edit;edit.unsyncedFields=std::vector<std::string>{"zzFuture","name","name"};
+    h::setAccountSyncField(edit,F::tag,false);check(edit.unsyncedFields==std::vector<std::string>{"name","tag","zzFuture"},"Disabling a field inserts it, sorted, keeping unknown values");
+    check(h::accountSyncFields(edit)==all.without(F::name).without(F::tag),"Unknown values are ignored for syncing");
+    h::setAccountSyncField(edit,F::name,true);h::setAccountSyncField(edit,F::tag,true);check(edit.unsyncedFields==std::vector<std::string>{"zzFuture"},"Enabling removes only that field");
+    edit.unsyncedFields.reset();h::setAccountSyncField(edit,F::uid,false);h::setAccountSyncField(edit,F::uid,true);
+    check(!edit.unsyncedFields&&!h::encodeCache(edit).contains("unsyncedFields"),"An emptied list is stored absent");
+    // Controller over a linked Endfield cache that excludes name and counts.
+    double now=800000000;FakeAPI api;api.now=[&]{return now;};FakeVault vault;ManualQueue queue;MemoryFile file;ProfileSink sink;
+    sink.profile.uid="1234567890";sink.profile.name="Local";sink.profile.tag="4321";sink.profile.playerIDOverride="MANUAL";sink.profile.operatorsCount=5;sink.profile.permissionLevel=3;
+    h::Role role;role.region=h::Region::mainland;role.game=h::Game::endfield;role.bindingUID="1";role.roleID="4000500060";role.serverID="3";
+    h::Snapshot snapshot;snapshot.role=role;snapshot.observedAt=now-10;snapshot.name="Endmin#1234";snapshot.level=41;snapshot.worldLevel=5;snapshot.createdAt=-200;
+    snapshot.operatorCount=70;snapshot.weaponCount=80;snapshot.documentCount=90;
+    h::AccountCache cache;cache.syncProfile=true;cache.unsyncedFields=std::vector<std::string>{"counts","name"};
+    h::RegionRecord record;record.linked=true;record.roles={role};record.selectedRoleID=role.id();record.snapshots[role.id()]=snapshot;cache.records["mainland"]=record;
+    file.bytes=h::encodeCacheBytes(cache);
+    h::AccountControllerOptions o;o.now=[&]{return now;};o.localDate=utc;std::vector<std::string> events;o.onEvent=[&](std::string_view e){events.emplace_back(e);};
+    h::HypergryphAccountController c(api,vault,queue,&file,&sink,nullptr,nullptr,o);
+    const auto expected=all.without(F::counts).without(F::name);
+    check(c.gameSyncActive()&&c.syncFields()==expected&&c.gameSyncedFields()==expected&&sink.locked==expected&&c.presentation().syncFields==expected,
+          "A partial sync locks only the fields it owns");
+    check(sink.profile.name=="Local"&&sink.profile.operatorsCount==5&&sink.profile.tag=="1234"&&sink.profile.gamePlayerID==std::optional<std::string>("4000500060")&&
+          !sink.profile.playerIDOverride&&sink.profile.permissionLevel==41&&sink.profile.awakeningDate==-200,"applyProfile writes only the synced fields");
+    h::AccountAction a;a.kind=h::AccountAction::Kind::setSyncField;a.syncField=F::name;a.enabled=true;c.perform(a);
+    auto saved=Json::parse(*file.bytes);
+    check(sink.profile.name=="Endmin"&&sink.profile.operatorsCount==5&&sink.locked==all.without(F::counts)&&events.back()=="settings"&&
+          !saved["syncProfile"].boolean()&&saved["partialSyncProfile"].boolean()&&saved["unsyncedFields"]==Json(Json::Array{"counts"}),
+          "Enabling a field applies it, saves the partial state v1.2.0 reads as off and logs Account settings changed");
+    a.syncField=F::uid;a.enabled=false;c.perform(a);sink.profile.playerIDOverride="EDITED";
+    check(c.gameSyncedFields()==all.without(F::counts).without(F::uid)&&sink.profile.gamePlayerID==std::optional<std::string>("4000500060"),"Disabling a field only unlocks it; nothing is restored");
+    for(const auto field:{F::uid,F::counts}) {h::AccountAction on;on.kind=h::AccountAction::Kind::setSyncField;on.syncField=field;on.enabled=true;c.perform(on);}
+    saved=Json::parse(*file.bytes);
+    check(saved["syncProfile"].boolean()&&!saved.contains("partialSyncProfile")&&!saved.contains("unsyncedFields")&&sink.locked==all&&sink.profile.operatorsCount==70&&
+          !sink.profile.playerIDOverride,"With every field synced again the file is a plain v1.2.0 sync-on cache");
+    h::AccountAction off;off.kind=h::AccountAction::Kind::setSyncProfile;off.enabled=false;c.perform(off);
+    check(sink.locked==Fields{}&&!c.gameSyncActive(),"Sync off unlocks every field");
+    // Mac import of the partial cache: sync counts as on; both keys travel.
+    cache.records["mainland"].linked=true;const auto macBytes=h::encodeCacheBytes(cache);
+    const auto imported=ehud::migration::importMacAccountCache(macBytes);
+    const auto restored=h::decodeCacheBytes(imported.bytes);
+    check(imported.profileSyncLocked&&restored&&restored->syncProfile&&restored->unsyncedFields==cache.unsyncedFields&&restored->records.at("mainland").requiresReconnect,
+          "The Mac import reads a partial sync as on and keeps the excluded fields");
+    auto broken=Json::parse(macBytes);broken["unsyncedFields"]="name";bool refused{};
+    try {(void)ehud::migration::importMacAccountCache(broken.encode());} catch(const std::exception&) {refused=true;}
+    check(refused,"A malformed unsyncedFields fails the account import like the Mac decoder");
+    // ProfileStore: only locked fields refuse local edits.
+    const auto root=std::filesystem::canonical(std::filesystem::temp_directory_path())/("ehud-account-sync-"+ehud::data::makeUUID());std::filesystem::create_directories(root);
+    {
+        ehud::data::ProfileStore store(root);store.setProfileSyncLocked(Fields{}.with(F::name).with(F::counts));
+        auto p=store.value();p.tag="9999";p.permissionLevel=12;p.playerIDOverride="OWN";check(store.update(p),"Unlocked fields stay editable under a partial lock");
+        bool nameRefused{},countRefused{};
+        p=store.value();p.name="Manual";try {store.update(p);} catch(const ehud::data::StoreError&) {nameRefused=true;}
+        p=store.value();p.weaponsCount=1;try {store.update(p);} catch(const ehud::data::StoreError&) {countRefused=true;}
+        p=store.value();p.name="Official";p.weaponsCount=2;
+        check(nameRefused&&countRefused&&store.updateFromGame(p)&&store.value().name=="Official","Locked fields refuse local edits; the account write still applies");
+    }
+    std::error_code ignored;std::filesystem::remove_all(root,ignored);
+}
 }
 // The Mac import, then the restart the host performs for it (DataRootRestart:
 // every owner is destroyed, the import commits, a fresh run reads the root).
@@ -434,7 +524,7 @@ void macImportRestart(const Json& oracle) {
               "The header wallet shows the cached sanity exactly as before the import");
     const auto s=restarted->sanityPresentation(),r=reference->sanityPresentation();
     check(s&&r&&s->current==r->current&&s->maximum==r->maximum&&s->nextRecoveryAt==r->nextRecoveryAt&&s->fullRecoveryAt==r->fullRecoveryAt,"Sanity recovery projects identically");
-    check(restarted->gameSyncActive()==imported.profileSyncLocked&&sink.locked==imported.profileSyncLocked,"The profile lock is the one the import reported");
+    check(restarted->gameSyncActive()==imported.profileSyncLocked&&bool(sink.locked)==imported.profileSyncLocked,"The profile lock is the one the import reported");
     restarted->setVisible(true,true);restarted->tick();now+=3600;restarted->tick();queue.pump();
     check(api.calls.empty()&&api.pending.empty()&&!restarted->hasActiveRequest(),"Nothing is requested without a Windows credential");
     check(file.bytes==std::optional<std::string>(imported.bytes),"Reading the import rewrites nothing");
@@ -450,7 +540,7 @@ int main(int argc,char** argv) {
         check(argc==2,"Pass tests/fixtures/hypergryph-account-source.json");
         const auto bytes=ehud::data::detail::readFile(argv[1],4*1024*1024);check(bytes.has_value(),"Read bounded account oracle");
         const auto fixture=Json::parse(*bytes,4*1024*1024);
-        replay(fixture["controller"]);lifecycle();guardWake();vaultWording();avatarSync();avatarPolicy(fixture["avatar"]);identitySync();importCache();
+        replay(fixture["controller"]);lifecycle();guardWake();vaultWording();avatarSync();avatarPolicy(fixture["avatar"]);identitySync();importCache();perFieldSync();
         macImportRestart(fixture["controller"]);
         std::cout<<"PASS "<<checks<<" Hypergryph account controller checks\n";return 0;
     } catch(const std::exception& e) {std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}

@@ -46,11 +46,12 @@ public:
     ProfileService&operator=(const ProfileService&)=delete;
     void start();
     // ProfilePersistence::commit target for local edits (sync lock applied).
-    PersonalProfile accept(const PersonalProfile&,bool syncLocked);
+    // syncLocked = the account's gameSyncedFields (ProfileStore refuses local edits of them).
+    PersonalProfile accept(const PersonalProfile&,ehud::data::ProfileSyncFields syncLocked);
     // Official account sync: bypasses the local lock for synced fields.
-    PersonalProfile acceptFromGame(const PersonalProfile&,bool syncLocked);
+    PersonalProfile acceptFromGame(const PersonalProfile&,ehud::data::ProfileSyncFields syncLocked);
     // A ready-made ProfileState persistence adapter for this service.
-    ProfilePersistence persistence(std::function<bool()>syncLocked,std::function<double()>workSeconds);
+    ProfilePersistence persistence(std::function<ehud::data::ProfileSyncFields()>syncLocked,std::function<double()>workSeconds);
     void queueCapacityAvailable();
     void retry();
     bool flush();

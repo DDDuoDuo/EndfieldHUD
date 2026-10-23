@@ -28,7 +28,7 @@ struct ProfileOwner::Impl:std::enable_shared_from_this<Impl> {
     std::unique_ptr<m::ProfileState>state;std::unique_ptr<ProfilePreview>page;
     m::WorkModeProfileHours hours;m::ProfileCropRecorder crops;std::optional<m::IdCardBinding>card;
     ProfileOwnerAppearance appearance;std::optional<app::ClientMetrics>metrics;
-    bool overlay{true},focused{true},locked{},alive{true},started{},cropBaseline{};
+    bool overlay{true},focused{true},alive{true},started{},cropBaseline{};ehud::data::ProfileSyncFields locked{};
     double time{};std::optional<std::string>loadError;
     std::optional<std::function<void(m::PersonalProfile&)>>pendingGame;
     // Managed images currently referenced by the committed record.
@@ -86,7 +86,7 @@ struct ProfileOwner::Impl:std::enable_shared_from_this<Impl> {
     void loaded(const m::PersonalProfile&p){
         const std::weak_ptr<Impl>weak=shared_from_this();
         state=std::make_unique<m::ProfileState>(p,text,dates,service->persistence(
-            [weak]{const auto i=weak.lock();return i&&i->locked;},
+            [weak]{const auto i=weak.lock();return i?i->locked:ehud::data::ProfileSyncFields{};},
             [weak]{const auto i=weak.lock();return i?i->hours.totalSeconds(i->work,i->time):0.;}),appearance.language);
         state->setSyncLocked(locked);state->setHudAccent(appearance.accentSRGB);
         // The read-only Work Mode controller may already hold the launch
@@ -317,7 +317,7 @@ void ProfileOwner::workModeCheckpoint(double total){
     // caption itself keeps the source 30 s refresh.
     if(i->state&&!i->loadError)i->sync();
 }
-void ProfileOwner::setSyncLocked(bool v,double t){
+void ProfileOwner::setSyncLocked(ehud::data::ProfileSyncFields v,double t){
     auto i=impl_;i->advance(t);if(i->locked==v)return;i->locked=v;
     if(i->state&&!i->loadError){i->state->setSyncLocked(v);i->external();}
 }

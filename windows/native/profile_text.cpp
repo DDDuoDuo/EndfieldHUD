@@ -12,14 +12,16 @@
 #include <unicode/uchar.h>
 #include <unicode/udat.h>
 #include <unicode/ustring.h>
+#include <unicode/utext.h>
 #include <unicode/uversion.h>
 #endif
 namespace endfield::native {
 namespace {
 constexpr double referenceEpoch=978307200.;
 void need(bool b,const char*m){if(!b)throw std::invalid_argument(m);}
+void bounded(std::string_view s){need(s.size()<=32768&&ehud::data::Json::validUtf8(s),"Profile text exceeds retained payload safety bound or is not UTF8");}
 std::u16string utf16(std::string_view s){
-    need(s.size()<=32768&&ehud::data::Json::validUtf8(s),"Profile text exceeds retained payload safety bound or is not UTF8");
+    bounded(s);
     if(s.empty())return {};
     UErrorCode e=U_ZERO_ERROR;int32_t n{};u_strFromUTF8(nullptr,0,&n,s.data(),static_cast<int32_t>(s.size()),&e);
     need(e==U_BUFFER_OVERFLOW_ERROR||U_SUCCESS(e),"Cannot size Profile UTF16");
@@ -39,11 +41,16 @@ std::string utf8(std::u16string_view s){
 bool newline(char16_t c){return (c>=10&&c<=13)||c==0x85||c==0x2028||c==0x2029;}
 bool whitespace(char16_t c){return c==9||c==0x20||c==0xa0||c==0x1680||(c>=0x2000&&c<=0x200b)||c==0x202f||c==0x205f||c==0x3000;}
 struct Breaks{UBreakIterator*p{};~Breaks(){if(p)ubrk_close(p);}};
-// Characters counted and the UTF16 end of the first maximum extended grapheme clusters.
-std::pair<std::size_t,std::size_t>boundary(std::u16string_view s,std::size_t maximum){
+struct Text{UText*p{};~Text(){if(p)utext_close(p);}};
+// Characters counted and the UTF-8 end of the first maximum extended grapheme
+// clusters. The iterator walks the UTF-8 itself (UText): no UTF-16 copy, and
+// it stops after `maximum` clusters. Its offsets are int32 (2 GiB).
+std::pair<std::size_t,std::size_t>boundary(std::string_view s,std::size_t maximum){
     if(s.empty())return {0,0};
-    UErrorCode e=U_ZERO_ERROR;Breaks b{ubrk_open(UBRK_CHARACTER,"",reinterpret_cast<const UChar*>(s.data()),static_cast<int32_t>(s.size()),&e)};
-    need(U_SUCCESS(e)&&b.p,"Cannot segment Profile Characters");
+    need(s.size()<=static_cast<std::size_t>(std::numeric_limits<int32_t>::max()),"Text exceeds the segmentation range");
+    UErrorCode e=U_ZERO_ERROR;Text t{utext_openUTF8(nullptr,s.data(),static_cast<int64_t>(s.size()),&e)};need(U_SUCCESS(e)&&t.p,"Cannot read text for Characters");
+    Breaks b{ubrk_open(UBRK_CHARACTER,"",nullptr,0,&e)};need(U_SUCCESS(e)&&b.p,"Cannot segment Characters");
+    ubrk_setUText(b.p,t.p,&e);need(U_SUCCESS(e),"Cannot segment Characters");
     std::size_t count{};int32_t end=ubrk_first(b.p);
     while(count<maximum){const auto next=ubrk_next(b.p);if(next==UBRK_DONE)return {count,s.size()};end=next;++count;}
     return {count,static_cast<std::size_t>(end)};
@@ -57,8 +64,8 @@ struct Formatter{UDateFormat*p{};~Formatter(){if(p)udat_close(p);}};
 }
 modules::ProfileTextRules nativeProfileTextRules(){
     modules::ProfileTextRules rules;
-    rules.characters=[](std::string_view s){return boundary(utf16(s),std::numeric_limits<std::size_t>::max()).first;};
-    rules.prefix=[](std::string_view s,std::size_t n){const auto v=utf16(s);return utf8(std::u16string_view(v).substr(0,boundary(v,n).second));};
+    rules.characters=[](std::string_view s){bounded(s);return boundary(s,std::numeric_limits<std::size_t>::max()).first;};
+    rules.prefix=[](std::string_view s,std::size_t n){bounded(s);return std::string(s.substr(0,boundary(s,n).second));};
     rules.trim=[](std::string_view s,bool lines){
         const auto v=utf16(s);std::size_t begin{},end=v.size();
         while(begin<end&&(whitespace(v[begin])||(lines&&newline(v[begin]))))++begin;
@@ -80,6 +87,8 @@ modules::ProfileTextRules nativeProfileTextRules(){
     };
     return rules;
 }
+std::size_t graphemeCount(std::string_view s){need(ehud::data::Json::validUtf8(s),"Text is not UTF8");return boundary(s,std::numeric_limits<std::size_t>::max()).first;}
+std::string_view graphemePrefix(std::string_view s,std::size_t n){need(ehud::data::Json::validUtf8(s),"Text is not UTF8");return s.substr(0,boundary(s,n).second);}
 modules::ProfileDateRules nativeProfileDateRules(std::u16string zone){
     if(zone.empty()){
         std::array<UChar,256>out{};UErrorCode e=U_ZERO_ERROR;const auto n=ucal_getDefaultTimeZone(out.data(),static_cast<int32_t>(out.size()),&e);

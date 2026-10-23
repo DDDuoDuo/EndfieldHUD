@@ -40,7 +40,7 @@ std::string prefixCharacters(std::string_view text,std::size_t count) {
 std::size_t characterCount(std::string_view text) {return clusters(text).size();}
 void applyGameProfileUpdate(ehud::data::Profile& p,const GameProfileUpdate& u) {
     auto next=p;
-    next.gamePlayerID=u.gamePlayerID;next.playerIDOverride.reset();
+    if(u.gamePlayerID) {next.gamePlayerID=*u.gamePlayerID;next.playerIDOverride.reset();}
     if(u.name) next.name=*u.name;
     if(u.tag) next.tag=*u.tag;
     if(u.awakeningDate) {next.awakeningDate=*u.awakeningDate;next.hasManualAwakeningDate=false;}
@@ -66,7 +66,7 @@ void ProfileStoreAccountSink::applyGameProfile(const GameProfileUpdate& update) 
     auto profile=store_->value();applyGameProfileUpdate(profile,update);
     if(store_->updateFromGame(profile)&&changed_) changed_();
 }
-void ProfileStoreAccountSink::setProfileSyncLocked(bool locked) {
+void ProfileStoreAccountSink::setProfileSyncLocked(ehud::data::ProfileSyncFields locked) {
     if(store_->profileSyncLocked()==locked) return;
     store_->setProfileSyncLocked(locked);if(changed_) changed_();
 }

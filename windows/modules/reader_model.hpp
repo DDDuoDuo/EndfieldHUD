@@ -52,6 +52,10 @@ struct ReaderBook {
 struct ReaderLibrary {
     std::vector<ReaderBook>books;std::optional<std::string>selected;
     ReaderPreferences preferences;
+    // Mac 1.3.0 ReaderStore `reading` (ReaderStore.swift:44-46, 71, 131-132):
+    // the Reader reopens in the selected book. Written only as true and
+    // omitted when false; v1.2.0 ignores it (and drops it on its next write).
+    bool reading{};
     ReaderJson originalFields{ReaderJson::Object{}};
     bool operator==(const ReaderLibrary&)const=default;
 };

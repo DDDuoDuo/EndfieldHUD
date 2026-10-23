@@ -259,5 +259,11 @@ std::optional<RichText>RichDocument::richText()const{
     for(auto r:i.styled){if(r.style.fontName&&r.style.fontName->starts_with('.'))r.style.fontName.reset();append(rich.runs,std::move(r));}
     if(!i.initiallyRich&&rich.runs.empty())return {};need(rich.validFor(i.value),"Captured Notes formatting is invalid; input is not truncated");return rich;
 }
+RichText RichDocument::coveringRichText()const{
+    const auto&i=*impl_;RichText rich;rich.extra=i.rootExtra;rich.runs.reserve(i.styled.size()*2+1);
+    segments(i.styled,{0,static_cast<std::uint32_t>(i.value.size())},[&](auto start,auto length,const auto&style,const auto&extra){TextRun run{start,length,style,extra};if(run.style.fontName&&run.style.fontName->starts_with('.'))run.style.fontName.reset();
+        if(!rich.runs.empty()&&rich.runs.back().style==run.style&&rich.runs.back().extra==run.extra)rich.runs.back().length+=length;else rich.runs.push_back(std::move(run));});
+    need(rich.validFor(i.value),"Captured Notes formatting is invalid; input is not truncated");return rich;
+}
 RichDocumentStats RichDocument::stats()const noexcept{const auto&i=*impl_;std::size_t changes{};for(const auto&g:i.pending)changes+=g.changes.size();for(const auto&g:i.composing)changes+=g.changes.size();return {i.undo.size(),i.redo.size(),i.historyBytes,changes,i.snapshot.has_value()||i.preparedSnapshot.has_value()};}
 } // namespace endfield::core::notes

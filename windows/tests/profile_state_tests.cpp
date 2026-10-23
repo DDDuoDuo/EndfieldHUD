@@ -141,7 +141,7 @@ void scenario(const Json&fixture){
         else if(op=="nudge")result=s.nudgeSlider(number(row["direction"]));
         else if(op=="dismiss")s.dismissPopover();
         else if(op=="commit")result=s.commit(*m::profileField(row["field"].string()),row["text"].string());
-        else if(op=="lock")s.setSyncLocked(row["value"].boolean());
+        else if(op=="lock")s.setSyncLocked(row["value"].boolean()?ehud::data::ProfileSyncFields::all():ehud::data::ProfileSyncFields{});
         else if(op=="live"){f.live=number(row["value"]);s.refreshWork();}
         else if(op=="setWork")result=s.setWorkSeconds(number(row["value"]));
         else if(op=="customColor")s.setCustomColor(number(row["r"]),number(row["g"]),number(row["b"]));
@@ -164,10 +164,10 @@ void labels(const Json&fixture){
             {"background",{"profile:backgroundMenu"}},{"theme",{"profile:backgroundMenu","profile:themeMenu"}},{"hidden",{"profile:visibility"}},
             {"birthday",{"profile:visibility","profile:toggleDateLabel"}}};
         for(const auto&[state,steps]:sequence){for(const auto&id:steps)s.perform(id);drain(s,requests);compareState(s,requests,states[state],name+" "+state);s.dismissPopover();}
-        s.setSyncLocked(true);s.perform("profile:menu");compareState(s,requests,states["lockedIdentity"],name+" locked identity");
+        s.setSyncLocked(ehud::data::ProfileSyncFields::all());s.perform("profile:menu");compareState(s,requests,states["lockedIdentity"],name+" locked identity");
         s.commit(m::ProfileField::tag,"a b");compareState(s,requests,states["tagError"],name+" tag error");
         s.commit(m::ProfileField::birthday,"x");compareState(s,requests,states["birthdayError"],name+" birthday error");
-        s.setSyncLocked(false);
+        s.setSyncLocked(ehud::data::ProfileSyncFields{});
         s.commit(m::ProfileField::awakeningDate,"x");compareState(s,requests,states["awakeningError"],name+" awakening error");
         s.commit(m::ProfileField::name,"");compareState(s,requests,states["nameError"],name+" name error");
         s.commit(m::ProfileField::permissionLevel,"4");compareState(s,requests,states["cleared"],name+" cleared error");
@@ -238,6 +238,13 @@ void native(){
     const auto text=n::nativeProfileTextRules();
     check(text.characters("é̂")==1&&text.characters("👍🏽🇯🇵")==2&&text.characters("가각")==2&&text.characters("각")==1,"Extended grapheme clusters, not UTF16 or bytes");
     check(text.prefix("😀😀😀",2)=="😀😀"&&m::profileEditorText(m::ProfileField::tag,"#😀12345678901",text)=="😀123456789","Editor keeps Character limits and drops one # Character");
+    // The same segmentation without Profile's payload bound (the design
+    // library's CharacterRules): 100,001 clusters in 300,004 bytes.
+    std::string longText;for(unsigned k=0;k<100000;++k)longText+="e\xcc\x81";longText+="👍🏽";
+    bool bounded{};try{(void)text.characters(longText);}catch(const std::invalid_argument&){bounded=true;}
+    check(bounded&&text.characters(std::string(32768,'x'))==32768,"Profile keeps its 32 KiB payload bound");
+    check(n::graphemeCount(longText)==100001&&n::graphemePrefix(longText,99999).size()==99999*3&&n::graphemePrefix(longText,100000)==std::string_view(longText).substr(0,300000)&&n::graphemePrefix(longText,200000)==longText&&n::graphemeCount("")==0,
+        "Grapheme count and prefix work on text of any length");
     check(m::profileEditorText(m::ProfileField::tag,"#́x",text)=="#́x","A # with a combining mark is not the source # prefix");
     check(m::profileEditorText(m::ProfileField::introduction,std::string(151,'x'),text).size()==150,"Biography limit");
     check(m::swiftInteger("+7")==7&&!m::swiftInteger("+-7")&&!m::swiftInteger("9223372036854775808")&&m::swiftInteger("-9223372036854775808")==std::numeric_limits<std::int64_t>::min(),"Swift Int grammar");

@@ -103,12 +103,12 @@ void run(const std::filesystem::path&shader){
     // 7. Background plane: photo + shade group with source fades; geometry moves are numeric.
     std::vector<std::uint8_t>pixels(64*36*4);for(unsigned y=0;y<36;++y)for(unsigned x=0;x<64;++x){auto*p=&pixels[(y*64+x)*4];p[0]=static_cast<std::uint8_t>(x*4);p[1]=static_cast<std::uint8_t>(y*7);p[2]=200;p[3]=255;}
     scene.setBackdropImage(gpu::NativeProfileBackdropImage{1,64,36,pixels});
-    auto p=s.profile();p.backgroundFilename="00000000-0000-4000-8000-000000000002.png";s.refresh(p,false);
+    auto p=s.profile();p.backgroundFilename="00000000-0000-4000-8000-000000000002.png";s.refresh(p,{});
     m::ProfileContents contents;contents.background=true;contents.backgroundPixels={64,36};change={};change.update=m::profileUpdateAnimation(s,before,s.profile());sync(change,contents);
     frame(time+=.3,place);check(scene.entries().size()==4&&scene.stats().groupDraws>=1,"Background group registered below the card");
     const auto shot=renderer.readback();const auto at=[&](unsigned x,unsigned y){return &shot.pixels[std::size_t(y)*shot.rowBytes+x*4];};
     check(at(250+200,20+167)[3]>0,"Background photo is visible at its center");check(at(250-100+1,20+167)[3]<20,"Background fades at its left edge");
-    const auto backdropRasters=raster.stats().rasterizations;p=s.profile();p.backgroundOffsetX=120;p.backgroundZoom=2;s.refresh(p,false);
+    const auto backdropRasters=raster.stats().rasterizations;p=s.profile();p.backgroundOffsetX=120;p.backgroundZoom=2;s.refresh(p,{});
     change={};change.backdropMoved=true;sync(change,contents);frame(time+=.01,place);check(scene.requiresFrames(time),"Committed background geometry eases for 0.18 s");frame(time+=.2,place);
     check(raster.stats().rasterizations==backdropRasters,"Background offset/zoom never re-rasterizes");
     // 8. Parking (HUDModuleContent drops a screen once it is no longer

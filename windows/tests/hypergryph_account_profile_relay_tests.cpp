@@ -17,11 +17,11 @@ std::size_t checks{};
 void check(bool value,const char* why) {++checks;if(!value) throw std::runtime_error(why);}
 
 struct Sink:h::AccountProfileSink {
-    ehud::data::Profile profile;std::optional<bool> locked;int applies{},locks{},imports{};bool failApply{};std::vector<std::string> order;
+    ehud::data::Profile profile;std::optional<ehud::data::ProfileSyncFields> locked;int applies{},locks{},imports{};bool failApply{};std::vector<std::string> order;
     void applyGameProfile(const h::GameProfileUpdate& u) override {
         order.push_back("apply");if(failApply) throw std::runtime_error("profile unavailable");h::applyGameProfileUpdate(profile,u);++applies;
     }
-    void setProfileSyncLocked(bool v) override {order.push_back("lock");locked=v;++locks;}
+    void setProfileSyncLocked(ehud::data::ProfileSyncFields v) override {order.push_back("lock");locked=v;++locks;}
     std::optional<std::string> importGameAvatar(const std::vector<std::uint8_t>& png) override {++imports;return "game-"+std::to_string(png.size())+".png";}
 };
 struct NoService:h::AccountService {
@@ -55,22 +55,22 @@ std::string importedCache(double now) {
 void relayAlone() {
     h::AccountProfileRelay relay;Sink first,second;
     h::GameProfileUpdate update;update.gamePlayerID="4000500060";update.name="Endmin";update.tag="1234";update.permissionLevel=41;
-    relay.applyGameProfile(update);relay.setProfileSyncLocked(true);
-    check(relay.pending()==update&&relay.locked()==true&&!relay.attached(),"Before a profile exists the latest update and lock wait");
+    relay.applyGameProfile(update);relay.setProfileSyncLocked(ehud::data::ProfileSyncFields::all());
+    check(relay.pending()==update&&relay.locked()==ehud::data::ProfileSyncFields::all()&&!relay.attached(),"Before a profile exists the latest update and lock wait");
     bool threw=false;try {(void)relay.importGameAvatar({1,2,3});} catch(const std::runtime_error&) {threw=true;}
     check(threw,"An avatar import without the personal profile fails like an unavailable profile");
     relay.attach(&first);
     check(first.order==std::vector<std::string>{"apply","lock"}&&first.profile.gamePlayerID==std::optional<std::string>("4000500060")&&first.profile.name=="Endmin"&&
-          first.locked==true&&!relay.pending(),"Attaching replays the update, then the lock (controller construction order)");
-    update.permissionLevel=42;relay.applyGameProfile(update);relay.setProfileSyncLocked(false);
-    check(first.applies==2&&first.profile.permissionLevel==42&&first.locked==false&&!relay.pending(),"An attached relay forwards immediately");
+          first.locked==ehud::data::ProfileSyncFields::all()&&!relay.pending(),"Attaching replays the update, then the lock (controller construction order)");
+    update.permissionLevel=42;relay.applyGameProfile(update);relay.setProfileSyncLocked(ehud::data::ProfileSyncFields{});
+    check(first.applies==2&&first.profile.permissionLevel==42&&first.locked==ehud::data::ProfileSyncFields{}&&!relay.pending(),"An attached relay forwards immediately");
     check(relay.importGameAvatar({1,2,3,4})==std::optional<std::string>("game-4.png")&&first.imports==1,"Avatar imports reach the attached profile");
     first.failApply=true;threw=false;try {relay.applyGameProfile(update);} catch(const std::runtime_error&) {threw=true;}
     check(threw,"A failed save propagates to the controller (its Mac status text)");
-    relay.attach(nullptr);update.permissionLevel=43;relay.applyGameProfile(update);relay.setProfileSyncLocked(true);
+    relay.attach(nullptr);update.permissionLevel=43;relay.applyGameProfile(update);relay.setProfileSyncLocked(ehud::data::ProfileSyncFields::all());
     check(first.applies==2&&first.locks==2&&relay.pending()==update,"A detached relay never touches the old sink");
     second.failApply=true;relay.attach(&second);
-    check(relay.replayFailures()==1&&relay.pending()==update&&second.locked==true,"A failed replay keeps the update pending and still applies the lock");
+    check(relay.replayFailures()==1&&relay.pending()==update&&second.locked==ehud::data::ProfileSyncFields::all(),"A failed replay keeps the update pending and still applies the lock");
     second.failApply=false;relay.attach(&second);
     check(second.applies==1&&second.profile.permissionLevel==43&&!relay.pending(),"A later attach replays the kept update");
     threw=false;try {relay.attach(&relay);} catch(const std::invalid_argument&) {threw=true;}
@@ -82,15 +82,15 @@ void controllerBeforeProfile() {
     h::AccountProfileRelay relay;
     h::AccountControllerOptions o;o.now=[now]{return now;};
     h::HypergryphAccountController controller(service,vault,queue,&file,&relay,nullptr,nullptr,o);
-    check(controller.gameSyncActive()&&relay.pending()&&relay.locked()==true,"The controller applies its cached snapshot before the profile area exists");
+    check(controller.gameSyncActive()&&relay.pending()&&relay.locked()==ehud::data::ProfileSyncFields::all(),"The controller applies its cached snapshot before the profile area exists");
     // The Personal Profile area attaches later (sorted area construction).
     Sink profile;profile.profile.playerIDOverride="MANUAL";profile.profile.name="Local";relay.attach(&profile);
     check(profile.profile.gamePlayerID==std::optional<std::string>("4000500060")&&!profile.profile.playerIDOverride&&profile.profile.name=="Endmin"&&
-          profile.profile.tag=="1234"&&profile.profile.permissionLevel==41&&profile.locked==true,
+          profile.profile.tag=="1234"&&profile.profile.permissionLevel==41&&profile.locked==ehud::data::ProfileSyncFields::all(),
           "Attach replays the imported snapshot and keeps the profile locked while reconnecting");
     // Turning sync off unlocks without restoring old values.
     h::AccountAction off;off.kind=h::AccountAction::Kind::setSyncProfile;off.enabled=false;controller.perform(off);
-    check(profile.locked==false&&profile.profile.name=="Endmin"&&service.calls==0,"Disabling sync only unlocks; no request is sent");
+    check(profile.locked==ehud::data::ProfileSyncFields{}&&profile.profile.name=="Endmin"&&service.calls==0,"Disabling sync only unlocks; no request is sent");
 }
 }
 

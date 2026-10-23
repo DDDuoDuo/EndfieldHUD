@@ -121,6 +121,19 @@ bool ownerOnly(const std::filesystem::path& path) {
     return true;
 }
 
+std::string protectForCurrentUser(std::string_view plain,std::string_view salt,const wchar_t* description) {
+    DATA_BLOB input{static_cast<DWORD>(plain.size()),reinterpret_cast<BYTE*>(const_cast<char*>(plain.data()))};
+    DATA_BLOB extra{static_cast<DWORD>(salt.size()),reinterpret_cast<BYTE*>(const_cast<char*>(salt.data()))},output{};
+    if(!CryptProtectData(&input,description,&extra,nullptr,nullptr,CRYPTPROTECT_UI_FORBIDDEN,&output)) fail("Data could not be protected for this user");
+    std::string blob(reinterpret_cast<const char*>(output.pbData),output.cbData);LocalFree(output.pbData);return blob;
+}
+std::string unprotectForCurrentUser(std::string_view blob,std::string_view salt) {
+    DATA_BLOB input{static_cast<DWORD>(blob.size()),reinterpret_cast<BYTE*>(const_cast<char*>(blob.data()))};
+    DATA_BLOB extra{static_cast<DWORD>(salt.size()),reinterpret_cast<BYTE*>(const_cast<char*>(salt.data()))},output{};
+    if(!CryptUnprotectData(&input,nullptr,&extra,nullptr,nullptr,CRYPTPROTECT_UI_FORBIDDEN,&output)) fail("Data could not be decrypted for this user");
+    std::string plain(reinterpret_cast<const char*>(output.pbData),output.cbData);
+    SecureZeroMemory(output.pbData,output.cbData);LocalFree(output.pbData);return plain;
+}
 DpapiAccountVault::DpapiAccountVault(std::filesystem::path directory):directory_(std::move(directory)) {
     if(directory_.empty()||!directory_.is_absolute()||directory_.lexically_normal()!=directory_) fail("An explicit absolute account directory is required");
 }
@@ -128,12 +141,8 @@ std::filesystem::path DpapiAccountVault::path(h::Region region) const {return di
 std::optional<h::Credentials> DpapiAccountVault::load(h::Region region) {
     const auto bytes=readBoundedFile(path(region),maximumBlobBytes);if(!bytes) return std::nullopt;
     if(bytes->size()<=sizeof magic||!std::equal(magic,magic+sizeof magic,bytes->begin())) fail("Account credential record is not recognized");
-    const auto salt=entropy(region);
-    DATA_BLOB input{static_cast<DWORD>(bytes->size()-sizeof magic),reinterpret_cast<BYTE*>(const_cast<char*>(bytes->data()+sizeof magic))};
-    DATA_BLOB extra{static_cast<DWORD>(salt.size()),reinterpret_cast<BYTE*>(const_cast<char*>(salt.data()))},output{};
-    if(!CryptUnprotectData(&input,nullptr,&extra,nullptr,nullptr,CRYPTPROTECT_UI_FORBIDDEN,&output)) fail("Account credential could not be decrypted for this user");
-    std::string plain(reinterpret_cast<const char*>(output.pbData),output.cbData);
-    SecureZeroMemory(output.pbData,output.cbData);LocalFree(output.pbData);
+    std::string plain;
+    try {plain=unprotectForCurrentUser(std::string_view(*bytes).substr(sizeof magic),entropy(region));} catch(const std::exception&) {fail("Account credential could not be decrypted for this user");}
     std::optional<h::Credentials> result;
     try {
         const auto value=Json::parse(plain,maximumBlobBytes);
@@ -148,14 +157,11 @@ void DpapiAccountVault::save(const h::Credentials& credentials,h::Region region)
     Json::Object object{{"cred",credentials.cred},{"signingToken",credentials.signingToken}};
     if(credentials.deviceID) object["deviceID"]=*credentials.deviceID;
     auto plain=Json(std::move(object)).encode(maximumBlobBytes);
-    const auto salt=entropy(region);static const wchar_t description[]=L"EndfieldHUD community session";
-    DATA_BLOB input{static_cast<DWORD>(plain.size()),reinterpret_cast<BYTE*>(plain.data())};
-    DATA_BLOB extra{static_cast<DWORD>(salt.size()),reinterpret_cast<BYTE*>(const_cast<char*>(salt.data()))},output{};
-    const bool ok=CryptProtectData(&input,description,&extra,nullptr,nullptr,CRYPTPROTECT_UI_FORBIDDEN,&output)!=FALSE;
+    std::string blob;bool ok=true;
+    try {blob=protectForCurrentUser(plain,entropy(region),L"EndfieldHUD community session");} catch(const std::exception&) {ok=false;}
     h::wipe(plain);
     if(!ok) fail("Account credential could not be protected");
-    std::string record(magic,magic+sizeof magic);record.append(reinterpret_cast<const char*>(output.pbData),output.cbData);
-    LocalFree(output.pbData);
+    std::string record(magic,magic+sizeof magic);record.append(blob);
     if(record.size()>maximumBlobBytes) fail("Account credential record is too large");
     writeOwnerOnlyFile(path(region),record);
 }

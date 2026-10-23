@@ -40,7 +40,7 @@ struct HeldLock {
 struct Owner {
     Temporary temporary;app::UtilityExecutor executor{[]{},4};
     std::optional<m::PersonalProfile>loaded;unsigned loads{},changes{},saveFailures{};std::optional<m::ProfileFailure>loadFailure,saveFailure;
-    std::unique_ptr<m::ProfileService>service;std::unique_ptr<m::ProfileState>state;bool locked{};double live{};
+    std::unique_ptr<m::ProfileService>service;std::unique_ptr<m::ProfileState>state;ehud::data::ProfileSyncFields locked{};double live{};
     m::ProfileTextRules text=n::nativeProfileTextRules();m::ProfileDateRules dates=n::nativeProfileDateRules(u"UTC");
     Owner(){make();}
     void make(){
@@ -66,7 +66,7 @@ m::PersonalProfile seed(const Temporary&t,double work){
 void lifecycle(){
     Owner o;
     check(!std::filesystem::exists(o.temporary.root)&&!o.executor.stats().started,"Construction performs no filesystem or worker work");
-    rejects([&]{o.service->accept(m::PersonalProfile{},false);},"Edits wait for the worker load");
+    rejects([&]{o.service->accept(m::PersonalProfile{},ehud::data::ProfileSyncFields{});},"Edits wait for the worker load");
     rejects([]{app::UtilityExecutor e([]{},1);m::ProfileService invalid(std::filesystem::path("relative"),e);},"Explicit absolute root only");
     o.open();
     check(o.loads==1&&std::filesystem::exists(o.temporary.root/"Profile"/"profile.json"),"First launch commits a new local identity like UserProfileStore");
@@ -90,11 +90,11 @@ void editsAndCoalescing(){
 }
 void syncLocks(){
     Owner o;seed(o.temporary,0);o.open();auto&s=*o.state;
-    o.locked=true;s.setSyncLocked(true);
+    o.locked=ehud::data::ProfileSyncFields::all();s.setSyncLocked(ehud::data::ProfileSyncFields::all());
     check(!s.commit(m::ProfileField::name,"Manual"),"Locked identity is not editable");
     check(s.commit(m::ProfileField::birthday,"2/29"),"Birthday stays editable while synced");
     auto synced=s.profile();synced.name="Official";synced.tag="5678";synced.gamePlayerID="1234567890123456789";synced.playerIDOverride.reset();
-    o.service->acceptFromGame(synced,true);s.refresh(synced,true);
+    o.service->acceptFromGame(synced,ehud::data::ProfileSyncFields::all());s.refresh(synced,ehud::data::ProfileSyncFields::all());
     check(s.commit(m::ProfileField::introduction,"Edited after sync"),"Local edit coalesces after the account record");
     check(o.service->flush(),"Coalesced account+local record is written as an account update");
     const auto file=saved(o.temporary)["profile"];
@@ -199,7 +199,7 @@ void loadFailures(){
         Owner o;write(o.temporary.root/"Profile"/"profile.json",R"({"version":2,"profile":{}})");const auto bytes=read(o.temporary.root/"Profile"/"profile.json");
         o.service->start();check(!o.service->flush()&&o.loadFailure==m::ProfileFailure::newerVersion&&!o.loaded,"Newer record is not opened");
         check(read(o.temporary.root/"Profile"/"profile.json")==bytes,"Newer record preserved byte for byte");
-        rejects([&]{o.service->accept(m::PersonalProfile{},false);},"No persistence after a failed load");
+        rejects([&]{o.service->accept(m::PersonalProfile{},ehud::data::ProfileSyncFields{});},"No persistence after a failed load");
     }
     {
         Owner o;write(o.temporary.root/"Profile"/"profile.json","{not json");o.service->start();

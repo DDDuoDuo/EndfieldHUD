@@ -15,8 +15,9 @@ struct SettingsCredit {std::string name,role,url;};
 struct SettingsAbout {std::string name="EndfieldHUD",version="Development",author="DDDuoDuo",license="MIT",repository;std::vector<SettingsCredit>credits;};
 // macImportTitle/macImport: the Windows-only System row "Import macOS data…"
 // (shown while the title hook returns a title in the current language).
-// summonHotkeyToggle: the Windows-only Hotkeys toggle "Summon HUD with
-// hotkey" (preference windowsSummonHotkeyDisabled; absent = on).
+// summonHotkeyToggle: the Hotkeys toggle "Summon HUD with hotkey" (the Mac
+// preference summonHotkeyEnabled; absent = on; ehud::data::Settings migrates
+// the Windows 1.2.0 windowsSummonHotkeyDisabled once).
 struct SettingsViewHooks {std::function<std::vector<SettingsDisplay>()>displays;std::function<void()>chooseColor,chooseLogo,logoSelection;
     std::function<std::optional<std::string>(core::Language)>macImportTitle;std::function<void()>macImport;bool summonHotkeyToggle{};};
 // The toggle's title in the five app languages (System resolves to English).

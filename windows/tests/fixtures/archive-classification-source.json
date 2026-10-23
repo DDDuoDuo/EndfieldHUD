@@ -1,0 +1,185 @@
+{
+ "account": "B0000000-0000-4000-8000-000000000001/C0000000-0000-4000-8000-0000000000AA",
+ "derived": [
+  {
+   "issue": null,
+   "password": "correct horse",
+   "record": "{\"algorithm\":\"PBKDF2-HMAC-SHA256\",\"iterations\":600000,\"key\":\"cooIEqd8lks8qs1myRV2tIPba+Ln1HLLMg9hCv10OzU=\",\"salt\":\"AwoRGB8mLTQ7QklQV15lbA==\",\"version\":1}"
+  },
+  {
+   "issue": null,
+   "password": "pásswörd",
+   "record": "{\"algorithm\":\"PBKDF2-HMAC-SHA256\",\"iterations\":600000,\"key\":\"rWqIWbJ0KRTMQv6W+83\\/v\\/8P+Z7vc9avQaU6lxE3kWs=\",\"salt\":\"AwoRGB8mLTQ7QklQV15lbA==\",\"version\":1}"
+  },
+  {
+   "issue": null,
+   "password": "pásswörd",
+   "record": "{\"algorithm\":\"PBKDF2-HMAC-SHA256\",\"iterations\":600000,\"key\":\"rWqIWbJ0KRTMQv6W+83\\/v\\/8P+Z7vc9avQaU6lxE3kWs=\",\"salt\":\"AwoRGB8mLTQ7QklQV15lbA==\",\"version\":1}"
+  },
+  {
+   "issue": null,
+   "password": "档案密码",
+   "record": "{\"algorithm\":\"PBKDF2-HMAC-SHA256\",\"iterations\":600000,\"key\":\"JquSKELJi52AovRvn\\/R92iSAHur2S7ZoeVEo7GVjy34=\",\"salt\":\"AwoRGB8mLTQ7QklQV15lbA==\",\"version\":1}"
+  },
+  {
+   "issue": null,
+   "password": "👩🏽‍💻🚀🚀🚀",
+   "record": "{\"algorithm\":\"PBKDF2-HMAC-SHA256\",\"iterations\":600000,\"key\":\"rvXA8DvCh+pKFzJanxnrEDqcMJLmI8avZY5EQ2d0Imc=\",\"salt\":\"AwoRGB8mLTQ7QklQV15lbA==\",\"version\":1}"
+  },
+  {
+   "issue": null,
+   "password": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "record": "{\"algorithm\":\"PBKDF2-HMAC-SHA256\",\"iterations\":600000,\"key\":\"kGxZQWr0d0tTEUMqDlXbv5gqZX8YNv9ldobo7xg+TaU=\",\"salt\":\"AwoRGB8mLTQ7QklQV15lbA==\",\"version\":1}"
+  }
+ ],
+ "duplicateRejected": true,
+ "issues": [
+  {
+   "confirmation": null,
+   "issue": "tooShort",
+   "password": "abc"
+  },
+  {
+   "confirmation": null,
+   "issue": null,
+   "password": "abcd"
+  },
+  {
+   "confirmation": null,
+   "issue": "tooShort",
+   "password": "👩🏽‍💻👩🏽‍💻👩🏽‍💻"
+  },
+  {
+   "confirmation": null,
+   "issue": null,
+   "password": "👩🏽‍💻👩🏽‍💻👩🏽‍💻👩🏽‍💻"
+  },
+  {
+   "confirmation": null,
+   "issue": "tooShort",
+   "password": "ééé"
+  },
+  {
+   "confirmation": null,
+   "issue": null,
+   "password": "éééé"
+  },
+  {
+   "confirmation": null,
+   "issue": null,
+   "password": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  },
+  {
+   "confirmation": null,
+   "issue": "tooLong",
+   "password": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  },
+  {
+   "confirmation": null,
+   "issue": "tooLong",
+   "password": "éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé"
+  },
+  {
+   "confirmation": "abd",
+   "issue": "tooShort",
+   "password": "abc"
+  },
+  {
+   "confirmation": "abce",
+   "issue": "mismatch",
+   "password": "abcd"
+  },
+  {
+   "confirmation": "abcd",
+   "issue": null,
+   "password": "abcd"
+  },
+  {
+   "confirmation": "",
+   "issue": "tooShort",
+   "password": ""
+  }
+ ],
+ "limits": {
+  "maximumBytes": 1024,
+  "maximumIterations": 10000000,
+  "minimumIterations": 600000,
+  "minimumLength": 4
+ },
+ "records": [
+  {
+   "accepted": true,
+   "record": "{\"algorithm\":\"PBKDF2-HMAC-SHA256\",\"iterations\":600000,\"key\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\",\"salt\":\"AAAAAAAAAAAAAAAAAAAAAA==\",\"version\":1}"
+  },
+  {
+   "accepted": false,
+   "record": "{\"algorithm\":\"PBKDF2-HMAC-SHA256\",\"iterations\":599999,\"key\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\",\"salt\":\"AAAAAAAAAAAAAAAAAAAAAA==\",\"version\":1}"
+  },
+  {
+   "accepted": false,
+   "record": "{\"algorithm\":\"PBKDF2-HMAC-SHA256\",\"iterations\":10000001,\"key\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\",\"salt\":\"AAAAAAAAAAAAAAAAAAAAAA==\",\"version\":1}"
+  },
+  {
+   "accepted": false,
+   "record": "{\"algorithm\":\"PBKDF2-HMAC-SHA256\",\"iterations\":10000000,\"key\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\",\"salt\":\"AAAAAAAAAAAAAAAAAAAAAA==\",\"version\":2}"
+  },
+  {
+   "accepted": false,
+   "record": "{\"algorithm\":\"PBKDF2-HMAC-SHA1\",\"iterations\":600000,\"key\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\",\"salt\":\"AAAAAAAAAAAAAAAAAAAAAA==\",\"version\":1}"
+  },
+  {
+   "accepted": false,
+   "record": "{\"algorithm\":\"PBKDF2-HMAC-SHA256\",\"iterations\":600000,\"key\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==\",\"salt\":\"AAAAAAAAAAAAAAAAAAAAAA==\",\"version\":1}"
+  },
+  {
+   "accepted": false,
+   "record": "{\"algorithm\":\"PBKDF2-HMAC-SHA256\",\"iterations\":600000,\"key\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\",\"salt\":\"AAAAAAAAAAAAAAAAAAAA\",\"version\":1}"
+  },
+  {
+   "accepted": true,
+   "record": "{\"algorithm\":\"PBKDF2-HMAC-SHA256\",\"iterations\":600000,\"key\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\",\"salt\":\"AAAAAAAAAAAAAAAAAAAAAA==\",\"version\":1,\"future\":true}"
+  },
+  {
+   "accepted": false,
+   "record": "{\"algorithm\":\"PBKDF2-HMAC-SHA256\",\"iterations\":\"600000\",\"key\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\",\"salt\":\"AAAAAAAAAAAAAAAAAAAAAA==\",\"version\":1}"
+  },
+  {
+   "accepted": true,
+   "record": "{\"algorithm\":\"PBKDF2-HMAC-SHA256\",\"iterations\":600000.0,\"key\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\",\"salt\":\"AAAAAAAAAAAAAAAAAAAAAA==\",\"version\":1}"
+  },
+  {
+   "accepted": false,
+   "record": "{\"algorithm\":\"PBKDF2-HMAC-SHA256\",\"iterations\":-1,\"key\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\",\"salt\":\"AAAAAAAAAAAAAAAAAAAAAA==\",\"version\":1}"
+  },
+  {
+   "accepted": false,
+   "record": "{\"algorithm\":\"PBKDF2-HMAC-SHA256\",\"iterations\":600000,\"key\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\",\"salt\":\"AAAAAAAAAAAAAAAAAAAAAA==\",\"version\":1                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                }"
+  },
+  {
+   "accepted": false,
+   "record": "{\"iterations\":600000,\"key\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\",\"salt\":\"AAAAAAAAAAAAAAAAAAAAAA==\",\"version\":1}"
+  },
+  {
+   "accepted": true,
+   "record": "{\"algorithm\":\"PBKDF2-HMAC-SHA256\",\"iterations\":600000,\"key\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\",\"salt\":\"AAAAAAAAAAAAAAAAAAAAAA==\",\"version\":1.0}"
+  },
+  {
+   "accepted": true,
+   "record": "{\"algorithm\":\"PBKDF2-HMAC-SHA256\",\"iterations\":600000,\"key\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB=\",\"salt\":\"AAAAAAAAAAAAAAAAAAAAAA==\",\"version\":1}"
+  },
+  {
+   "accepted": false,
+   "record": "{\"algorithm\":\"PBKDF2-HMAC-SHA256\",\"iterations\":600000,\"key\":\"AAAAAAAAAAAA AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\",\"salt\":\"AAAAAAAAAAAAAAAAAAAAAA==\",\"version\":1}"
+  },
+  {
+   "accepted": false,
+   "record": "not json"
+  }
+ ],
+ "salt": "AwoRGB8mLTQ7QklQV15lbA==",
+ "source": {
+  "generator": "windows/tools/archive_classification_reference.py",
+  "path": "Sources/ArchiveClassification.swift",
+  "sha256": "88808ef5932057b86f54f6feed80425729f516e30fceeaba93592bccff26c57a"
+ }
+}

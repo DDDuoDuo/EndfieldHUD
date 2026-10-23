@@ -40,7 +40,7 @@ add_library(hud_mac_import
   core/migration/mac_import_outcome.cpp
   core/migration/mac_import_work.cpp)
 target_include_directories(hud_mac_import PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(hud_mac_import PUBLIC hud_mac_import_codec hud_data hud_reader hud_calendar hud_event_log hud_map_store)
+target_link_libraries(hud_mac_import PUBLIC hud_mac_import_codec hud_data hud_reader hud_calendar hud_event_log hud_map_store hud_notes_centre)
 if(WIN32)
   target_link_libraries(hud_mac_import PRIVATE winsqlite3)
 else()

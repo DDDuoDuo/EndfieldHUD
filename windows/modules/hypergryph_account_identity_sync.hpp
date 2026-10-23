@@ -5,8 +5,9 @@
 // Personal-profile sync for the selected Endfield snapshot (Mac applyProfile +
 // UserProfileStore.update normalization). The original local UID is never
 // changed; gamePlayerID is set and playerIDOverride cleared; name/# and the
-// awakening date come from the game; levels and counts are copied. Disabling
-// sync only unlocks editing: nothing is restored.
+// awakening date come from the game; levels and counts are copied, each only
+// when the update carries it (1.3.0 per-field sync). Disabling sync or a field
+// only unlocks editing: nothing is restored.
 namespace endfield::modules::hypergryph {
 // Applies the update and the Mac normalizedEditableValues rules that it can
 // affect (name/tag trimmed and limited to 20/10 characters; permission 1...60;
@@ -25,7 +26,7 @@ public:
     using Changed=std::function<void()>;
     ProfileStoreAccountSink(ehud::data::ProfileStore&,ImportAvatar={},Changed={});
     void applyGameProfile(const GameProfileUpdate&) override;
-    void setProfileSyncLocked(bool) override;
+    void setProfileSyncLocked(ehud::data::ProfileSyncFields) override;
     std::optional<std::string> importGameAvatar(const std::vector<std::uint8_t>&) override;
 private:
     ehud::data::ProfileStore* store_;ImportAvatar import_;Changed changed_;
