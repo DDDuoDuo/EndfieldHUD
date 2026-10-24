@@ -10,8 +10,6 @@
 namespace endfield::modules {
 namespace {
 void need(bool v,const char*m){if(!v)throw std::invalid_argument(m);}
-bool contains(core::Rect r,core::Point p){return p.x>=r.x&&p.y>=r.y&&p.x<r.x+r.width&&p.y<r.y+r.height;}
-std::optional<core::Rect>intersect(core::Rect a,core::Rect b){const auto x=std::max(a.x,b.x),y=std::max(a.y,b.y),right=std::min(a.x+a.width,b.x+b.width),bottom=std::min(a.y+a.height,b.y+b.height);if(right<=x||bottom<=y)return {};return core::Rect{x,y,right-x,bottom-y};}
 // The stored attachment list still holds the Mac media object `mac`: the
 // same bookmark and last known path (other metadata may be re-encoded).
 bool holdsMacMedia(const ArchiveEntry&e,const ArchiveJson&mac){for(const auto&m:e.media){if(!m.isObject()||m.contains("referencePlatform"))continue;if(mac["bookmark"].isString()?m["bookmark"]==mac["bookmark"]&&m["lastKnownPath"]==mac["lastKnownPath"]:m==mac)return true;}return false;}
@@ -35,14 +33,13 @@ struct ArchiveState::Impl:std::enable_shared_from_this<Impl> {
     std::optional<std::string>readError,error;std::optional<double>deadline,lastTime;
     std::optional<std::string>pendingCreatedSelection;std::uint64_t selectionRevision{},savingSelection{};bool selectionFailed{};
     std::map<std::string,Thumbnail,std::less<>>thumbnailRequests;
-    std::vector<ArchiveStateEvent>events;std::vector<std::size_t>filtered;
+    std::vector<ArchiveStateEvent>events;
     // 1.3.0: renames and badge clears of committed categories (folded into a
     // queued creation instead), and the classification lock model.
     std::map<std::string,std::string,std::less<>>categoryRenames;std::set<std::string,std::less<>>renamingCategories,viewedCategories,markingViewed;
     std::set<std::string,std::less<>>classified,classificationWork;std::map<std::string,ArchiveClassificationStatus,std::less<>>verifierProblems;
     std::optional<std::string>unlocking,unlockedID;std::uint64_t visit{};OwnerAuthentication ownerAuthentication;
-    std::optional<std::string>categoryID;bool uncategorized{};double galleryScroll{},categoryScroll{};
-    Impl(std::shared_ptr<ArchiveRepository>s,ArchiveExecutor e,ArchiveTextRules r):store(std::move(s)),executor(std::move(e)),rules(std::move(r)){need(store&&executor.submit&&rules.characters&&rules.trimmed&&rules.categoryNameKey,"Archive requires repository, FIFO executor and Unicode rules");filtered.reserve(archiveMaximumEntries);}
+    Impl(std::shared_ptr<ArchiveRepository>s,ArchiveExecutor e,ArchiveTextRules r):store(std::move(s)),executor(std::move(e)),rules(std::move(r)){need(store&&executor.submit&&rules.characters&&rules.trimmed&&rules.categoryNameKey,"Archive requires repository, FIFO executor and Unicode rules");}
     void onThread()const{need(std::this_thread::get_id()==thread,"Archive state belongs to its creating thread");need(alive,"Archive state is detached");}
     bool categoryExists(const std::optional<std::string>&id)const{return !id||std::any_of(categories.begin(),categories.end(),[&](const auto&c){return c.id==*id;});}
     bool isLocked(std::string_view id)const{return classified.contains(id)&&unlockedID!=id;}
@@ -64,13 +61,7 @@ struct ArchiveState::Impl:std::enable_shared_from_this<Impl> {
     // (a host sample taken before a nested callback handed a later one) is
     // the latest time. Only non-finite time fails.
     double at(double t){need(std::isfinite(t),"Archive state requires a finite owner clock");if(lastTime&&t<*lastTime)t=*lastTime;lastTime=t;return t;}
-    void changed(){error=!writeErrors.empty()?std::optional(writeErrors.begin()->second):!categoryErrors.empty()?std::optional(categoryErrors.begin()->second):readError;++revision;rebuildFiltered();}
-    void rebuildFiltered(){filtered.clear();for(std::size_t i=0;i<entries.size();++i)if(uncategorized?!entries[i].categoryID:(!categoryID||entries[i].categoryID==categoryID))filtered.push_back(i);
-        if(categoryID&&!categoryExists(categoryID)){categoryID.reset();uncategorized=true;galleryScroll=0;filtered.clear();for(std::size_t i=0;i<entries.size();++i)if(!entries[i].categoryID)filtered.push_back(i);}
-        galleryScroll=std::clamp(galleryScroll,0.,galleryMaximum());categoryScroll=std::clamp(categoryScroll,0.,categoryMaximum());++collectionRevision;
-    }
-    double galleryMaximum()const{return std::max(0.,double((filtered.size()+1)/2)*122-9-357);}
-    double categoryMaximum()const{return std::max(0.,double(categories.size()+2)*34-7-238);}
+    void changed(){error=!writeErrors.empty()?std::optional(writeErrors.begin()->second):!categoryErrors.empty()?std::optional(categoryErrors.begin()->second):readError;++revision;++collectionRevision;}
     void invalidate(){++generation;auto previous=std::move(thumbnailRequests);thumbnailRequests.clear();for(auto&[id,r]:previous){(void)id;for(auto&callback:r.callbacks)callback({});}}
     template<class T,class Action,class Completion>bool perform(Action action,Completion completion){
         auto self=shared_from_this();auto result=std::make_shared<std::optional<T>>();auto delivered=std::make_shared<bool>(false);++operations;
@@ -271,18 +262,5 @@ bool ArchiveState::deleteCategory(std::string_view value){auto&i=*impl_;i.onThre
 void ArchiveState::loadThumbnail(std::string id,std::function<void(std::optional<ArchiveJson>)>callback){auto&i=*impl_;i.onThread();need(ehud::data::validUUID(id)&&bool(callback),"Invalid Archive thumbnail request");if(!i.active||i.classified.contains(id)){callback({});return;}if(i.dirty.contains(id)){callback(archiveSummary(i.dirty.at(id).entry).thumbnail);return;}if(i.thumbnailRequests.contains(id)){auto&callbacks=i.thumbnailRequests.at(id).callbacks;if(callbacks.size()>=8)callback({});else callbacks.push_back(std::move(callback));return;}if(i.thumbnailRequests.size()>=32){callback({});return;}const auto token=++i.thumbnailToken;i.thumbnailRequests[id]={token,{std::move(callback)}};
     const bool accepted=i.perform<std::optional<ArchiveJson>>([store=i.store,id]{return store->thumbnail(id);},[self=impl_,id,token](auto failure,auto result){const auto found=self->thumbnailRequests.find(id);if(found==self->thumbnailRequests.end()||found->second.token!=token)return;auto callbacks=std::move(found->second.callbacks);self->thumbnailRequests.erase(found);std::optional<ArchiveJson>value;if(!failure&&self->active&&!self->classified.contains(id)&&result)value=std::move(*result);if(value)validateArchiveMedia(*value);for(auto&callback:callbacks)callback(value);});if(!accepted){auto callbacks=std::move(i.thumbnailRequests.at(id).callbacks);i.thumbnailRequests.erase(id);for(auto&c:callbacks)c({});}
 }
-bool ArchiveState::setFilter(std::optional<std::string>category,bool uncategorized){auto&i=*impl_;i.onThread();need(!category||ehud::data::validUUID(*category),"Invalid Archive category filter");need(!category||!uncategorized,"Ambiguous Archive category filter");if(!i.categoryExists(category))return false;if(i.categoryID==category&&i.uncategorized==uncategorized)return false;i.categoryID=std::move(category);i.uncategorized=uncategorized;i.galleryScroll=0;i.changed();return true;}
-const std::optional<std::string>&ArchiveState::categoryID()const noexcept{return impl_->categoryID;}bool ArchiveState::filtersUncategorized()const noexcept{return impl_->uncategorized;}
-std::span<const std::size_t>ArchiveState::filteredIndices()const noexcept{return impl_->filtered;}
-double ArchiveState::galleryScroll()const noexcept{return impl_->galleryScroll;}double ArchiveState::categoryScroll()const noexcept{return impl_->categoryScroll;}double ArchiveState::galleryMaximum()const noexcept{return impl_->galleryMaximum();}double ArchiveState::categoryMaximum()const noexcept{return impl_->categoryMaximum();}
-std::optional<core::Rect>ArchiveState::galleryThumb()const noexcept{const auto&i=*impl_;const auto max=i.galleryMaximum();if(i.selected||max<=0)return {};const auto height=std::max(24.,357*357/(357+max));return core::Rect{380,49+(357-height)*i.galleryScroll/max,8,height};}
-bool ArchiveState::setGalleryScroll(double value){auto&i=*impl_;i.onThread();if(i.selected||!std::isfinite(value))return false;const auto next=std::clamp(value,0.,i.galleryMaximum());if(next==i.galleryScroll)return false;i.galleryScroll=next;++i.collectionRevision;return true;}
-bool ArchiveState::scroll(core::Point point,double delta){auto&i=*impl_;i.onThread();if(i.selected||!std::isfinite(delta)||delta==0)return false;if(contains(categoriesRect(),point)){const auto next=std::clamp(i.categoryScroll+delta,0.,i.categoryMaximum());if(next==i.categoryScroll)return false;i.categoryScroll=next;++i.collectionRevision;return true;}if(contains(galleryRect(),point)||contains(galleryScrollerRect(),point))return setGalleryScroll(i.galleryScroll+delta);return false;}
-std::vector<ArchiveGalleryRow>ArchiveState::galleryRows()const{const auto&i=*impl_;std::vector<ArchiveGalleryRow>out;if(i.selected)return out;const auto first=std::min(i.filtered.size(),static_cast<std::size_t>(std::floor(i.galleryScroll/122))*2),last=std::min(i.filtered.size(),static_cast<std::size_t>(std::ceil((i.galleryScroll+357)/122))*2);out.reserve(last-first);
-    for(std::size_t n=first;n<last;++n){const core::Rect local{double(n%2)*143,double(n/2)*122-i.galleryScroll,132,113};const auto hit=intersect({local.x+101,local.y+49,132,113},galleryRect());if(hit&&hit->height>=2)out.push_back({i.entries[i.filtered[n]].id,local,*hit,i.filtered[n]});}return out;
-}
-std::vector<ArchiveCategoryRow>ArchiveState::categoryRows()const{const auto&i=*impl_;std::vector<ArchiveCategoryRow>out;if(i.selected)return out;const auto count=i.categories.size()+2,first=std::min(count,static_cast<std::size_t>(std::floor(i.categoryScroll/34))),last=std::min(count,static_cast<std::size_t>(std::ceil((i.categoryScroll+238)/34)));out.reserve(last-first);
-    for(std::size_t n=first;n<last;++n){const core::Rect local{0,double(n)*34-i.categoryScroll,75,27};const auto hit=intersect({14,local.y+49,75,27},categoriesRect());if(hit&&hit->height>=2){const std::string_view id=n==0?std::string_view("all"):n==1?std::string_view("uncategorized"):std::string_view(i.categories[n-2].id);const bool selected=n==0?!i.categoryID&&!i.uncategorized:n==1?i.uncategorized:i.categoryID&&*i.categoryID==id;out.push_back({id,local,*hit,n,selected});}}return out;
-}
-core::Rect ArchiveState::bodyRect()const noexcept{return {24,111,352,impl_->selected&&!impl_->selected->media.empty()?147.:264.};}
+const ArchiveTextRules&ArchiveState::textRules()const noexcept{return impl_->rules;}
 } // namespace endfield::modules

@@ -1,7 +1,6 @@
 #pragma once
 #include "modules/archive_classification.hpp"
 #include "core/localization.hpp"
-#include "core/scene.hpp"
 #include <exception>
 #include <memory>
 
@@ -56,9 +55,8 @@ struct ArchiveRelinkLedger {
     std::function<void(std::string_view entryID,const ArchiveJson* macMedia)>removed;
     std::function<void(ArchiveRepository&)>reconcile;
 };
-struct ArchiveGalleryRow {std::string_view id;core::Rect local,hit;std::size_t index{};};
-struct ArchiveCategoryRow {std::string_view id;core::Rect local,hit;std::size_t index{};bool selected{};};
-// Source ArchiveController + ArchiveCanvas collection semantics. Content stays
+// Source ArchiveController semantics (the 1.3.0 ArchiveCanvas keeps its own
+// filter, scroll and layout: modules/archive_canvas.hpp). Content stays
 // lazy: summaries and <=100 categories are retained; only selected/dirty entry
 // bodies are loaded. Accepted saves can finish after facade destruction, without
 // invoking an abandoned UI callback; borrowed execution routes must be retired
@@ -166,26 +164,12 @@ public:
     void queueCapacityAvailable();
     std::optional<double>saveDeadline()const noexcept;
     bool flushIfDue(double ownerTime);
-    // Caller confirms using the source menu before invoking these methods.
+    // The caller asks first (the canvas's confirm bar).
     bool deleteSelected();bool deleteCategory(std::string_view);
     void loadThumbnail(std::string id,std::function<void(std::optional<ArchiveJson>)>);
-    bool setFilter(std::optional<std::string>categoryID,bool uncategorized=false);
-    const std::optional<std::string>&categoryID()const noexcept;bool filtersUncategorized()const noexcept;
-    std::span<const std::size_t>filteredIndices()const noexcept;
-    double galleryScroll()const noexcept;double categoryScroll()const noexcept;
-    double galleryMaximum()const noexcept;double categoryMaximum()const noexcept;
-    std::optional<core::Rect>galleryThumb()const noexcept;
-    bool scroll(core::Point,double delta);bool setGalleryScroll(double);
-    std::vector<ArchiveGalleryRow>galleryRows()const;std::vector<ArchiveCategoryRow>categoryRows()const;
-    static constexpr core::Rect bounds(){return {0,0,400,440};}
-    static constexpr core::Rect galleryRect(){return {101,49,275,357};}
-    static constexpr core::Rect galleryScrollerRect(){return {380,49,8,357};}
-    static constexpr core::Rect categoriesRect(){return {14,49,75,238};}
-    static constexpr core::Rect titleRect(){return {24,48,352,30};}
-    static constexpr core::Rect dateRect(){return {24,81,180,23};}
-    core::Rect bodyRect()const noexcept;
-    static constexpr core::Rect mediaRect(){return {24,268,250,93};}
-    static constexpr core::Rect seekRect(){return {24,367,250,12};}
+    // The Unicode rules the state validates with (the password and category
+    // name rules of the canvas use the same).
+    const ArchiveTextRules& textRules()const noexcept;
 private:struct Impl;std::shared_ptr<Impl>impl_;
 };
 } // namespace endfield::modules

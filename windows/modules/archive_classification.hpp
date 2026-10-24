@@ -1,5 +1,6 @@
 #pragma once
 #include "modules/archive_model.hpp"
+#include "core/localization.hpp"
 #include <map>
 #include <mutex>
 
@@ -29,10 +30,18 @@ enum class ArchivePasswordIssue {tooShort,tooLong,mismatch};
 enum class ArchiveClassificationErrorCode {passwordMissing,vaultUnavailable,cancelled};
 class ArchiveClassificationError final:public std::runtime_error {
 public:
-    explicit ArchiveClassificationError(ArchiveClassificationErrorCode);
+    explicit ArchiveClassificationError(ArchiveClassificationErrorCode); // what(): the English text below
     ArchiveClassificationErrorCode code()const noexcept{return code_;}
 private:ArchiveClassificationErrorCode code_;
 };
+// The user-visible text (DOCS-311). The Mac pairs name the Keychain ("This
+// document's password is missing from the Keychain. It stays classified." /
+// "The Keychain could not be read. The document stays classified."); the
+// Windows verifiers live in the current user's DPAPI-protected store
+// (native/archive_password_vault.hpp), so Windows names that instead, in
+// five explicit languages (no Mac catalog pair exists for this wording).
+// cancelled is never shown (a cancelled or denied owner prompt is silent).
+std::string archiveClassificationErrorText(ArchiveClassificationErrorCode,core::Language);
 
 // ArchivePassword (ArchiveClassification.swift:35-49): at least 4 Characters
 // (rules.characters, grapheme clusters), at most 1024 UTF-8 bytes, checked in
