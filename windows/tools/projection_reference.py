@@ -6,6 +6,9 @@ root=Path(__file__).resolve().parents[2]
 out=Path(sys.argv[1]) if len(sys.argv)>1 else root/'build/projection-reference'
 out.mkdir(parents=True,exist_ok=True)
 paths=['Sources/ProjectionModel.swift','Sources/ProjectionControls.swift']
+# Mac 1.3.0: the unchanged constrain and ProjectionToolbar.topInset methods.
+AUTHORITY='4fda15a03ba50675e0b12d69a83efdb6526c19f6'
+subprocess.run(['git','-C',str(root),'diff','--quiet',AUTHORITY,'--']+paths,check=True)
 sources={p:(root/p).read_text() for p in paths}
 def method(s,name):
  start=s.index(name);brace=s.index('{',start);depth=1;i=brace+1
@@ -38,7 +41,7 @@ selection_env=os.environ.copy();selection_env.pop('SDKROOT',None)
 sdk=subprocess.check_output(['bash',str(root/'windows/tools/mac_sdk.sh')],text=True,env=selection_env).strip()
 subprocess.run(['xcrun','swiftc','-sdk',sdk,'-module-cache-path',str(out/'module-cache'),str(out/'oracle.swift'),'-o',str(out/'oracle')],check=True)
 subprocess.run([str(out/'oracle'),str(out/'input.json'),str(out/'output.json')],check=True)
-data=json.loads((out/'output.json').read_text());data['authority']='ca04f142185c7de40acd8523bdb563195d90a1d1'
+data=json.loads((out/'output.json').read_text());data['authority']=AUTHORITY
 data['sourceSHA256']={p:hashlib.sha256((root/p).read_bytes()).hexdigest() for p in paths}
 data['scope']='Exact original constrain/topInset methods; no media decoding, UI, input or user data.'
 (root/'windows/tests/fixtures/projection-model-source.json').write_text(json.dumps(data,ensure_ascii=False,separators=(',',':'))+'\n')

@@ -28,7 +28,7 @@ constexpr std::array<std::pair<m::ReaderErrorCode, const char*>, 7> errors{{{m::
     {m::ReaderErrorCode::unavailable, "unavailable"}, {m::ReaderErrorCode::encrypted, "encrypted"}, {m::ReaderErrorCode::changedOnDisk, "changedOnDisk"}}};
 
 void source(const J& root) {
-    check(root["source"]["authority"].string() == "ca04f142185c7de40acd8523bdb563195d90a1d1", "Fixture comes from the pinned Mac authority");
+    check(root["source"]["authority"].string() == "4fda15a03ba50675e0b12d69a83efdb6526c19f6", "Fixture comes from the pinned Mac 1.3.0 authority");
     for (const auto& [code, key] : errors) {
         const auto& row = root["errors"][key];
         const auto pair = m::readerErrorText(code);
@@ -40,32 +40,17 @@ void source(const J& root) {
         check(m::readerImportFailure(std::make_exception_ptr(m::ReaderError(code)), L::japanese) == row["japanese"].string(),
               "A typed import failure shows its source description (ReaderController.fail)");
     }
-    const auto& captions = root["captions"];
-    for (const auto& [language, name] : languages) {
-        const auto s = m::readerStrings(language);
-        const auto text = [&](const char* field) { return captions[field][name].string(); };
-        check(s.open == text("open") && s.library == text("library") && s.reading == text("reading") && s.bookmarks == text("bookmarks"),
-              "Toolbar captions are the source ReaderCanvas actions");
-        check(s.title == text("title") && s.empty == text("empty") && s.loading == text("loading"), "Title, empty and loading text follow ReaderCanvas");
-        check(s.chooseShelf == text("chooseShelf") && s.shelfTitle == text("shelfTitle"), "Shelf chooser and menu titles follow the source");
-        check(s.font == text("font") && s.fontSize == text("fontSize") && s.lineSpacing == text("lineSpacing") && s.margin == text("margin") &&
-              s.horizontal == text("horizontal") && s.vertical == text("vertical"), "Reading settings follow ReaderSettingsMenu");
-        check(s.chooseFile == m::readerTranslation(m::readerWindowsChooseFile, language) && s.chooseFile != text("chooseFile"),
-              "Windows replaces the Finder chooser row with File Explorer in every language");
-        check(s.language == language, "The captions carry their resolved language");
-        check(s.relink == m::readerTranslation(m::readerWindowsRelink, language) && s.relink.ends_with("…"),
-              "Relink… (Windows only: Mac bookmarks need no relink) follows the import card's wording in every language");
-    }
-    check(m::readerTranslation(m::readerWindowsRelink, L::traditionalChinese) == "重新連結…" && m::readerTranslation(m::readerWindowsRelink, L::korean) == "다시 연결…",
-          "The relink caption uses the import card's terms");
-    check(m::ReaderStrings{}.language == L::english && m::ReaderStrings::simplifiedChinese().language == L::simplifiedChinese,
-          "Default captions are English; the Chinese source captions say so");
-    auto english = m::readerStrings(L::english);
-    english.chooseFile = m::ReaderStrings{}.chooseFile;
-    check(english == m::ReaderStrings{}, "English captions other than the Windows chooser are the Mac defaults");
-    auto chinese = m::readerStrings(L::simplifiedChinese);
-    chinese.chooseFile = m::ReaderStrings::simplifiedChinese().chooseFile;
-    check(chinese == m::ReaderStrings::simplifiedChinese(), "Simplified Chinese captions are the Mac source pairs");
+    // Every pair the redesigned canvas shows renders the Mac catalog row
+    // (modules/reader_canvas.cpp passes these pairs to core::localized).
+    const auto& captions = root["captions"].array();
+    check(captions.size() == 36, "Every ReaderCanvas pair is exported");
+    const std::string argument = root["source"]["argument"].string();
+    const std::string_view arguments[]{argument};
+    for (const auto& row : captions)
+        for (const auto& [language, name] : languages)
+            check(core::localized(row["template"].string(), row["templateSimplifiedChinese"].string(), language,
+                      row["template"].string().find("{0}") == std::string::npos ? std::span<const std::string_view>{} : std::span<const std::string_view>(arguments)) == row[name].string(),
+                  "Reader captions render the Mac 1.3.0 catalog row in all five languages");
     check(m::readerTranslation(m::readerWindowsOpenFailed, L::system) == "Unable to open selected files" &&
           m::readerImportFailure(std::make_exception_ptr(std::runtime_error("C:\\private\\path.pdf")), L::korean) == "선택한 파일을 열 수 없습니다" &&
           m::readerImportFailure({}, L::traditionalChinese) == "無法開啟所選檔案", "Untyped import failures show the Windows notice, never their own text");
@@ -125,7 +110,7 @@ struct Source : m::ReaderDocumentSource {
         if (index > 0) p.previous = m::ReaderLocation{index - 1};
         return p;
     }
-    std::vector<m::ReaderPage> render(std::optional<m::ReaderLocation> location, std::optional<double>, const m::ReaderPreferences&, core::Point, bool,
+    std::vector<m::ReaderPage> render(std::optional<m::ReaderLocation> location, std::optional<double>, const m::ReaderPreferences&, core::Point, bool, int,
                                       const std::function<bool()>&) override {
         const int at = location ? static_cast<int>(location->section) : 0;
         std::vector<m::ReaderPage> out{page(at)};
@@ -152,8 +137,9 @@ m::ReaderBook macBook(unsigned n) {
     return b;
 }
 
-// Library "Relink…" (Windows only) and the Migration/relink.json hooks: rows
-// change after the confirmed write that contains the relink or removal.
+// Relink… (Mac 1.3.0: any book; the selection stays, no event) and the
+// Migration/relink.json hooks: rows change after the confirmed write that
+// contains the relink or removal.
 void relink() {
     auto repo = std::make_shared<Repository>();
     repo->value.books = {macBook(1), macBook(2), book(3)};
@@ -168,30 +154,31 @@ void relink() {
     state.setRelinkLedger({[&](const m::ReaderLibrary& library) { ++reconciled; check(library.books.size() == 3, "Reconcile sees the loaded library"); },
                            [&](const std::string& book, const std::string& path) { ledger.push_back("resolved " + book + " " + path); },
                            [&](const std::string& book) { ledger.push_back("dismissed " + book); }});
-    check(!state.relink(id(1), "C:\\Owned-reader-fixture\\relinked.epub"), "Nothing relinks before the library loads");
+    check(!state.relink(id(1), "C:\\Owned-reader-fixture\\relinked.epub", {}), "Nothing relinks before the library loads");
     state.setActive(true);
     q.drain();
     check(reconciled == 1 && ledger.empty() && state.library().preferences.fontName == "Georgia", "The load reconciles once and keeps the imported font name");
     const auto path = std::string("C:\\Owned-reader-fixture\\relinked.epub");
     bool unknown{};
-    try { state.relink(id(77), path); } catch (const m::ReaderError& e) { unknown = e.code() == m::ReaderErrorCode::unavailable; }
+    try { state.relink(id(77), path, {}); } catch (const m::ReaderError& e) { unknown = e.code() == m::ReaderErrorCode::unavailable; }
     check(unknown, "Relinking an unknown book is refused as unavailable");
     repo->fail = true;
-    check(state.relink(id(2), path), "Relink the second imported book");
+    bool completed{}, success{};
+    check(state.relink(id(2), path, [&](bool ok) { completed = true; success = ok; }), "Relink the second imported book");
     q.drain();
-    check(ledger.empty() && log.empty() && state.hasUnsavedChanges(), "A failed library write resolves no ledger row and reports nothing");
+    check(ledger.empty() && log.empty() && state.hasUnsavedChanges() && completed && !success, "A failed library write resolves no ledger row, reports nothing and completes false");
     repo->fail = false;
     state.retryPendingWrites();
     q.drain();
-    check(ledger == std::vector<std::string>{"resolved " + id(2) + " " + path} && log.front() == "imported", "The retried durable write resolves the row once and reports the import");
+    check(ledger == std::vector<std::string>{"resolved " + id(2) + " " + path} && log.empty(), "The retried durable write resolves the row once and logs nothing (the Mac logs no relink)");
     const auto& saved = repo->value.books[1];
     check(saved.id == id(2) && saved.platform == m::ReaderReferencePlatform::windows && saved.windowsPath == path && saved.title == "Imported 2" &&
           saved.bookmarks == macBook(2).bookmarks && saved.originalFields == macBook(2).originalFields && saved.path.empty() && saved.bookmarkBase64.empty() &&
-          repo->value.selected == id(2), "The relinked book keeps id, title, bookmarks and unknown fields, drops the Mac locator and is selected");
-    check(state.book() && state.book()->id == id(2) && state.current(), "The relinked book opens");
+          repo->value.selected == id(1), "The relinked book keeps id, title, bookmarks and unknown fields and drops the Mac locator; the selection stays");
+    check(state.book() && state.book()->id == id(1), "Relinking another book leaves the open one");
     ledger.clear();
     log.clear();
-    check(!state.relink(id(2), path) && ledger.empty(), "Relinking to the same file again changes nothing");
+    check(!state.relink(id(2), path, {}) && ledger.empty(), "Relinking to the same file again changes nothing");
     q.drain();
     check(state.remove(id(3)), "Remove a Windows book");
     q.drain();

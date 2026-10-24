@@ -1,21 +1,26 @@
 #!/usr/bin/env python3
-"""Export the original Mac Reader captions and errors in five languages.
+"""Export the Mac 1.3.0 Reader errors and captions in five languages.
 
-Reads the unchanged Mac sources at the pinned authority:
-  * Sources/ReaderZIP.swift               ReaderError.errorDescription pairs
-  * Sources/ReaderCanvas.swift            toolbar actions, title/loading/empty text
-  * Sources/ReaderInteraction.swift       Library/Bookmarks/Shelf menu titles and
-                                          the Reading settings menu items
-  * Sources/NotesFormattingControls.swift the Open chooser ("Choose in Finder",
-                                          "Choose from Shelf") Reader presents
-  * Sources/LocalizationCatalog.swift     Entry rows (zh-Hant, ja) and the Korean map
-and writes, for every source pair, the text Mac L10n.text renders in English,
-Simplified Chinese, Traditional Chinese, Japanese and Korean (the catalog row;
-Korean falls back to English exactly like LocalizationCatalog.Entry.korean).
+Reads the unchanged Mac sources at the pinned authority (Mac 1.3.0):
+  * Sources/ReaderZIP.swift                  ReaderError.errorDescription pairs
+  * Sources/ReaderCanvas.swift               every pair the redesigned E-Reader
+                                             shows: L10n.text (tabs, buttons, menus,
+                                             confirm bar, settings pop-over,
+                                             accessibility labels), the result
+                                             toasts and the module title
+  * Sources/LocalizationCatalog.swift        the core Entry rows and Korean map
+  * Sources/LocalizationCatalogRedesign.swift the redesign R(...) rows
+and writes, for every pair, the text Mac L10n.text renders in English,
+Simplified Chinese, Traditional Chinese, Japanese and Korean: the first
+catalog Entry of the pair (core rows first, then the redesign rows, as
+LocalizationCatalog.entries), the Korean map merged core-first, Korean falling
+back to English like LocalizationCatalog.Entry.korean. Interpolated Swift
+strings ("Bookmark \\(n)") are templates ("Bookmark {0}"); the export renders
+them with the argument "Q".
 
 Self-checks: the files equal the authority commit, every ReaderError case has
-exactly one pair, every caption is found exactly where the source draws it and
-every pair has exactly one catalog Entry.
+exactly one pair, ReaderCanvas has the expected number of distinct pairs, and
+every pair has a catalog Entry.
 
 No app, defaults, window, network or user data is touched.
 Usage: reader_localization_reference.py NEW-output.json
@@ -27,25 +32,38 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[2]
-AUTHORITY = "ca04f142185c7de40acd8523bdb563195d90a1d1"
-ZIP, CANVAS, INTERACTION = "Sources/ReaderZIP.swift", "Sources/ReaderCanvas.swift", "Sources/ReaderInteraction.swift"
-CHOOSER, CATALOG = "Sources/NotesFormattingControls.swift", "Sources/LocalizationCatalog.swift"
-PINS = [ZIP, CANVAS, INTERACTION, CHOOSER, CATALOG]
+AUTHORITY = "4fda15a03ba50675e0b12d69a83efdb6526c19f6"
+ZIP, CANVAS = "Sources/ReaderZIP.swift", "Sources/ReaderCanvas.swift"
+CATALOG, REDESIGN = "Sources/LocalizationCatalog.swift", "Sources/LocalizationCatalogRedesign.swift"
+PINS = [ZIP, CANVAS, CATALOG, REDESIGN]
 CASES = ["unsupported", "invalidArchive", "tooLarge", "invalidBook", "unavailable", "encrypted", "changedOnDisk"]
 LITERAL = r'"((?:[^"\\]|\\.)*)"'
 PAIR = r'L10n\.text\(' + LITERAL + r', ' + LITERAL + r'\)'
+ARGUMENT = "Q"
+EXPECTED = 36  # distinct pairs: L10n.text, the result toasts and the module title
 
 
 def decode(literal):
-    def escape(match):
-        body = match.group(1)
-        if body.startswith("u{"):
-            return chr(int(body[2:-1], 16))
+    """A Swift string literal; interpolations become {0}, {1}, ... in order."""
+    out, index, count = [], 0, 0
+    while index < len(literal):
+        c = literal[index]
+        if c != "\\":
+            out.append(c); index += 1; continue
+        nxt = literal[index + 1]
+        if nxt == "(":
+            depth, end = 1, index + 2
+            while depth:
+                depth += {"(": 1, ")": -1}.get(literal[end], 0); end += 1
+            out.append("{%d}" % count); count += 1; index = end; continue
+        if nxt == "u":
+            end = literal.index("}", index)
+            out.append(chr(int(literal[index + 3:end], 16))); index = end + 1; continue
         simple = {'"': '"', "\\": "\\", "n": "\n", "t": "\t", "0": "\0"}
-        if body not in simple:
-            raise SystemExit(f"Unsupported Swift escape \\{body}")
-        return simple[body]
-    return re.sub(r'\\(u\{[0-9A-Fa-f]+\}|.)', escape, literal)
+        if nxt not in simple:
+            raise SystemExit(f"Unsupported Swift escape \\{nxt}")
+        out.append(simple[nxt]); index += 2
+    return "".join(out)
 
 
 def section(text, start, end):
@@ -53,12 +71,8 @@ def section(text, start, end):
     return text[begin:text.index(end, begin)]
 
 
-def one(text, prefix, name):
-    """The single L10n pair that follows `prefix` (a literal source fragment)."""
-    found = re.findall(re.escape(prefix) + PAIR, text)
-    if len(found) != 1:
-        raise SystemExit(f"Reader caption {name} changed: {len(found)} matches for {prefix!r}")
-    return decode(found[0][0]), decode(found[0][1])
+def render(template):
+    return re.sub(r"\{\d+\}", ARGUMENT, template)
 
 
 def main():
@@ -68,7 +82,7 @@ def main():
     if output.exists():
         raise SystemExit("Choose a new output path; source fixtures are immutable")
     subprocess.run(["git", "-C", str(ROOT), "diff", "--quiet", AUTHORITY, "--"] + PINS, check=True)
-    zipped, canvas, interaction, chooser, catalog = ((ROOT / p).read_text(encoding="utf-8") for p in PINS)
+    zipped, canvas, catalog, redesign = ((ROOT / p).read_text(encoding="utf-8") for p in PINS)
 
     errors = section(zipped, "enum ReaderError", "\n}\n")
     pairs = {}
@@ -79,57 +93,44 @@ def main():
     if list(pairs) != CASES:
         raise SystemExit(f"ReaderError cases changed: {list(pairs)}")
 
-    # Where the source draws each ReaderStrings caption.
-    settings_menu = section(interaction, "final class ReaderSettingsMenu", "\n}\n")
-    captions = {
-        "open": one(canvas, 'Action(id: "open", label: ', "open"),
-        "library": one(canvas, 'Action(id: "library", label: ', "library"),
-        "reading": one(canvas, 'Action(id: "settings", label: ', "reading"),
-        "bookmarks": one(canvas, 'Action(id: "bookmarks", label: ', "bookmarks"),
-        "title": one(canvas, "controller.book?.title ?? ", "title"),
-        "loading": one(canvas, "controller.loading ? ", "loading"),
-        "empty": one(canvas, "var accessibilityText: String { controller.error ?? controller.current?.summary ?? ", "empty"),
-        "chooseFile": one(chooser, 'Item(id: "finder", title: ', "chooseFile"),
-        "chooseShelf": one(chooser, 'Item(id: "shelf", title: ', "chooseShelf"),
-        "shelfTitle": one(section(interaction, "private func showShelf()", "\n    }\n"), "ReaderListMenu(choices: choices, title: ", "shelfTitle"),
-        "font": one(settings_menu, 'Item(id: "font", title: ', "font"),
-        "fontSize": one(settings_menu, '("size", ', "fontSize"),
-        "lineSpacing": one(settings_menu, '("spacing", ', "lineSpacing"),
-        "margin": one(settings_menu, '("margin", ', "margin"),
-        "horizontal": one(settings_menu, 'Item(id: "horizontal", title: ', "horizontal"),
-        "vertical": one(settings_menu, 'Item(id: "vertical", title: ', "vertical"),
-    }
-    library_menu = re.findall(r'ReaderListMenu\(choices: choices, title: ' + PAIR + r', allowsDelete: true\)', interaction)
-    bookmark_menu = re.findall(r'title: ' + PAIR + r', width: 240\)', interaction)
-    if [tuple(map(decode, x)) for x in library_menu] != [captions["library"]] or [tuple(map(decode, x)) for x in bookmark_menu] != [captions["bookmarks"]]:
-        raise SystemExit("Reader Library/Bookmarks menu titles no longer equal their toolbar captions")
-    if captions["loading"][0] != "Loading book…" or captions["chooseFile"][0] != "Choose in Finder":
-        raise SystemExit("Reader loading or Finder chooser caption changed")
+    captions = []
+    sources = (PAIR, r'toast\(icon: \.\w+, ' + LITERAL + r', ' + LITERAL, r'HUDModuleTitle\(' + LITERAL + r', ' + LITERAL + r'\)')
+    for pattern in sources:
+        for english, simplified in re.findall(pattern, canvas):
+            pair = (decode(english), decode(simplified))
+            if pair not in captions:
+                captions.append(pair)
+    if len(captions) != EXPECTED:
+        raise SystemExit(f"ReaderCanvas pairs changed: {len(captions)}")
 
+    # LocalizationCatalog.entries = coreEntries + redesignEntries (first match wins).
     rows = {}
     for english, simplified, traditional, japanese in re.findall(
-            r'Entry\(' + LITERAL + r', ' + LITERAL + r', ' + LITERAL + r', ' + LITERAL + r'\)', catalog):
-        rows.setdefault((decode(english), decode(simplified)), []).append((decode(traditional), decode(japanese)))
+            r'Entry\(' + LITERAL + r',\s*' + LITERAL + r',\s*' + LITERAL + r',\s*' + LITERAL + r'\)', catalog):
+        rows.setdefault((decode(english), decode(simplified)), (decode(traditional), decode(japanese)))
     korean = {}
-    for key, value in re.findall(LITERAL + r': ' + LITERAL, section(catalog, "static let koreanTranslations", "\n    ]\n")):
+    for key, value in re.findall(LITERAL + r': ' + LITERAL, section(catalog, "private static let coreKoreanTranslations", "\n    ]\n")):
         english, separator, simplified = decode(key).partition("\x1f")
         if not separator:
             raise SystemExit("Korean catalog key lacks the U+001F separator")
-        korean[(english, simplified)] = decode(value)
+        korean.setdefault((english, simplified), decode(value))
+    for english, simplified, traditional, japanese, ko in re.findall(
+            r'R\(' + LITERAL + r',\s*' + LITERAL + r',\s*' + LITERAL + r',\s*' + LITERAL + r',\s*' + LITERAL + r'\)', redesign):
+        pair = (decode(english), decode(simplified))
+        rows.setdefault(pair, (decode(traditional), decode(japanese)))
+        korean.setdefault(pair, decode(ko))
 
     def languages(pair):
-        found = rows.get(pair, [])
-        if len(found) != 1:
-            raise SystemExit(f"Expected exactly one catalog Entry for {pair}, found {len(found)}")
-        traditional, japanese = found[0]
-        return {"english": pair[0], "simplifiedChinese": pair[1], "traditionalChinese": traditional,
-                "japanese": japanese, "korean": korean.get(pair, pair[0])}
+        if pair not in rows:
+            raise SystemExit(f"No catalog Entry for {pair}")
+        traditional, japanese = rows[pair]
+        return {"english": render(pair[0]), "simplifiedChinese": render(pair[1]), "traditionalChinese": render(traditional),
+                "japanese": render(japanese), "korean": render(korean.get(pair, pair[0]))}
 
     result = {
-        "source": {"authority": AUTHORITY, "files": PINS},
+        "source": {"authority": AUTHORITY, "files": PINS, "argument": ARGUMENT},
         "errors": {name: languages(pairs[name]) for name in CASES},
-        "captions": {name: languages(pair) for name, pair in captions.items()},
-        "windowsReplacement": {"chooseFile": "Choose in Finder names a Mac app; Windows shows the File Explorer chooser row"},
+        "captions": [dict(languages(pair), template=pair[0], templateSimplifiedChinese=pair[1]) for pair in captions],
     }
     output.write_text(json.dumps(result, ensure_ascii=False, indent=1, sort_keys=True) + "\n", encoding="utf-8")
 

@@ -108,5 +108,6 @@ core::FrameDemand ProjectionWorkspace::demand(double time)const {const auto&i=*i
 ProjectionPreview*ProjectionWorkspace::preview()const noexcept{return impl_->view.get();}
 ProjectionMediaBinding*ProjectionWorkspace::media()const noexcept{return impl_->media.get();}
 const m::ProjectionModel&ProjectionWorkspace::model()const noexcept{return impl_->model;}
+m::ProjectionModel&ProjectionWorkspace::model()noexcept{return impl_->model;}
 }
 #endif

@@ -36,6 +36,9 @@ public:
     ProjectionPreview*preview()const noexcept;
     ProjectionMediaBinding*media()const noexcept;
     const modules::ProjectionModel&model()const noexcept;
+    // The session model (ProjectionSettings attaches to it, the centre page
+    // clears it while the workspace is closed).
+    modules::ProjectionModel&model()noexcept;
     ProjectionWorkspaceTiming timing()const noexcept;
 private:
     struct Impl;std::unique_ptr<Impl>impl_;

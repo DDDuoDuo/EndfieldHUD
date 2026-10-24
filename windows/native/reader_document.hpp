@@ -35,8 +35,10 @@ public:
     void open(const modules::ReaderBook&,const modules::ReaderCancel&)override;
     NativeReaderInfo info()const; // executor job only; title is source prefix200 graphemes
     NativeReaderStats stats()const; // executor job only; no filesystem/raster operation
+    // The anchor page, `ahead` following pages, then the one before (Mac 1.3.0
+    // ReaderWorker.render(ahead:)); the cache keeps exactly these pages.
     std::vector<modules::ReaderPage>render(std::optional<modules::ReaderLocation>,std::optional<double>,
-        const modules::ReaderPreferences&,core::Point,bool,const modules::ReaderCancel&)override;
+        const modules::ReaderPreferences&,core::Point,bool,int ahead,const modules::ReaderCancel&)override;
     modules::ReaderPage detail(modules::ReaderLocation,const modules::ReaderPreferences&,
         core::Point,bool,modules::ReaderImageView,const modules::ReaderCancel&)override;
     void release()override;

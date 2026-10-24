@@ -35,6 +35,7 @@
 // animation; and the frames, timer wakes and CPU time of the open and the
 // closed idle workspace.
 #include "tools/projection_workspace.hpp"
+#include "tools/hud_design_overlay_owner.hpp"
 #include "app/presentation_priority.hpp"
 #include <windows.h>
 #include <dwmapi.h>
@@ -217,7 +218,8 @@ int run(const wchar_t*shader,const std::filesystem::path&resources,const Options
         t::ProjectionWorkspace projection(host,renderer,raster,backdrop,broker,{.98,.83,.12,1},.5,.5);
         struct Unroute {t::ProjectionWorkspace*&value;~Unroute(){value=nullptr;}} unroute{shown};
         t::ProjectionPreviewOptions preview;
-        preview.raster.assetRoot=resources/"notes-format";preview.raster.pixelsPerPoint=2;preview.raster.paddingPoints=1;
+        t::DesignOverlayOptions designOptions;designOptions.raster.pixelsPerPoint=2;designOptions.window=window;t::DesignOverlayOwner overlay(raster,designOptions);
+        preview.raster.assetRoot=resources/"notes-format";preview.raster.pixelsPerPoint=2;preview.raster.paddingPoints=1;preview.design=&overlay.context().env();
         t::ProjectionMediaBindingOptions binding;
         binding.resolve=[](const auto&)->n::NotesImageAccess{throw std::runtime_error("Unexpected media read");};
         binding.errorText=[](HRESULT){return std::string("Synthetic error");};

@@ -1,5 +1,6 @@
 #ifdef _WIN32
 #include "tools/projection_workspace.hpp"
+#include "tools/hud_design_overlay_owner.hpp"
 #include <windows.h>
 #include <dwmapi.h>
 #include <DispatcherQueue.h>
@@ -23,12 +24,14 @@ void run(const wchar_t*shader){
  renderer.initialize(host.hwnd(),1280,800,{n::Driver::warpForTests,shader,n::RenderTarget::composition});
  const BOOL off=FALSE;hr(DwmSetWindowAttribute(static_cast<HWND>(host.hwnd()),DWMWA_USE_HOSTBACKDROPBRUSH,&off,sizeof(off)));
  n::DesktopBackdrop backdrop;backdrop.initialize(host.hwnd(),{1280,800,true,false,.75,.63,0},{false});n::LayerRasterizer raster;
+ // The HUD's design environment (palette, measurer) the workspace chrome takes.
+ t::DesignOverlayOptions designOptions;designOptions.raster.pixelsPerPoint=2;t::DesignOverlayOwner overlay(raster,designOptions);
  const n::NotesImageRoute route{static_cast<HWND>(host.hwnd()),WM_APP+250,1};
  n::NativeNotesImageDecoder decoder([](const auto&)->n::NotesImageAccess{throw std::runtime_error("No document read authorized in empty workspace fixture");},route);
  n::NativeNotesImagePlayback images(decoder);n::NativeMediaRequestBroker broker(decoder,images,route);
  {
   t::ProjectionWorkspace workspace(host,renderer,raster,backdrop,broker,{.98,.83,.12,1},.5,.5);
-  t::ProjectionPreviewOptions options;options.raster.pixelsPerPoint=2;
+  t::ProjectionPreviewOptions options;options.raster.pixelsPerPoint=2;options.design=&overlay.context().env();
   t::ProjectionMediaBindingOptions media;media.resolve=[](const auto&)->n::NotesImageAccess{throw std::runtime_error("Unexpected media read");};media.errorText=[](HRESULT){return std::string("Synthetic error");};
   for(unsigned cycle=0;cycle<3;++cycle){const double start=double(cycle)*2;
    workspace.show(options,media,start,false);
@@ -62,14 +65,14 @@ void run(const wchar_t*shader){
    const auto brush=std::find_if(peers.begin(),peers.end(),[](const auto&e){return e.id=="projection.toolbar:brush";});check(brush!=peers.end(),"The toolbar lists its brush button");
    const double scale=host.metrics().scale;const a::PointerEvent hover{a::PointerKind::move,a::PointerButton::none,(brush->rect.x+brush->rect.width/2)/scale,(brush->rect.y+brush->rect.height/2)/scale};
    check(workspace.pointer(hover,sample+.5),"A toolbar hover inside the callback is handled at its later time");
-   check(workspace.preview()->perform("projection.toolbar:brush",sample+.6)&&workspace.preview()->menuOpen(),"A UI Automation invoke inside the callback opens the brush menu at its later time");
+   check(workspace.preview()->perform("projection.toolbar:media",sample+.6)&&workspace.preview()->menuOpen()&&workspace.preview()->popupID()==std::optional<std::string>("media"),"A UI Automation invoke inside the callback opens the media menu at its later time");
    check(workspace.key({a::KeyKind::down,VK_DOWN},sample+.62),"A key inside the callback moves the menu focus at its later time");
    check(workspace.demand(sample).finiteAnimation&&workspace.preview()->requiresFrames(sample),"Frame demand with the earlier host sample is the opening menu's demand at the latest time");
    workspace.mediaChanged(sample);check(workspace.render(sample,false),"A frame with the earlier host sample presents at the latest time");
    workspace.media()->sync(sample);workspace.media()->refresh(sample);
    check(workspace.pointer(hover,sample)&&workspace.wheel({hover.x,hover.y,1},sample)&&workspace.key({a::KeyKind::down,VK_UP},sample),"Input with the earlier host sample is handled at the latest time");
    workspace.cancelInteraction(sample);workspace.preview()->update(sample);check(workspace.preview()->menuOpen(),"The menu opened inside the callback stays open");
-   check(workspace.demand(sample+.7).finiteAnimation&&!workspace.demand(sample+.8).finiteAnimation,"The menu opening runs its .16 seconds from the later time, not from the earlier sample");
+   check(workspace.demand(sample+.7).finiteAnimation&&!workspace.demand(sample+.8).finiteAnimation,"The menu opening runs its .18 s wipe from the later time, not from the earlier sample");
    workspace.dismiss(sample,false);check(workspace.dismissalDeadline()&&std::abs(*workspace.dismissalDeadline()-(sample+.78))<.00001&&!workspace.dismissalComplete(sample+.7)&&workspace.dismissalComplete(sample+.79),"A dismissal with the earlier host sample starts at the latest time");
    workspace.render(sample,false);workspace.close(sample);check(!workspace.presented()&&renderer.stats().textures==0&&renderer.stats().meshes==0,"Close with the earlier host sample releases every resource");}
   check(host.stats().timerArms==0&&!host.stats().visible,"Entire workspace fixture uses no independent timer or visible window");

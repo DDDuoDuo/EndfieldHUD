@@ -1,6 +1,7 @@
 #include "app/areas/projection_automation.hpp"
 #include "app/areas/notes_automation_binding.hpp"
 #include "app/application_host.hpp"
+#include "modules/hud_design_page.hpp"
 #include "modules/projection_interaction.hpp"
 #include "modules/projection_model.hpp"
 #include "native/layer_raster.hpp"
@@ -64,7 +65,8 @@ private:
         {
             mod::ProjectionModel model({.98,.83,.12,1},.5,.5);const auto metrics=host_.metrics();
             mod::ProjectionInteraction interaction(model,{metrics.width,metrics.height});
-            tools::ProjectionPreviewOptions options;options.raster.pixelsPerPoint=2;options.raster.paddingPoints=1;options.language=core::Language::english;
+            auto*context=host_.designContext();require(context!=nullptr,"Projection's chrome needs the shared design context");
+            tools::ProjectionPreviewOptions options;options.raster.pixelsPerPoint=2;options.raster.paddingPoints=1;options.language=core::Language::english;options.design=&context->env();
             tools::ProjectionPreview projection(model,interaction,raster_,std::move(options));
             projection.resize(metrics);projection.setActive(true,clock_());projection.update(clock_());
             // The live order of the RC that died opening Projection: the workspace
@@ -73,22 +75,22 @@ private:
             // time instead of failing.
             const double later=clock_()+1;projection.update(later);
             fixture_=&projection;
-            step.check(binding_.refresh(nullptr)&&binding_.count()==8,"The eight ProjectionToolbar buttons are listed");
+            step.check(binding_.refresh(nullptr)&&binding_.count()==15,"The fifteen ProjectionToolbar controls are listed (Mac 1.3.0: six swatches, custom, pen, eraser, brush, background, appearance, media, clear, return)");
             const auto find=[&](std::string_view id)->std::optional<std::size_t>{for(std::size_t n=0;n<binding_.count();++n)if(binding_.provider()->element(n)->id==id)return n;return std::nullopt;};
             const auto eraser=find("projection.toolbar:eraser");step.check(eraser&&binding_.provider()->element(*eraser)->label=="Eraser","The eraser button carries its source accessibility title");
             const auto invoke=[&](std::size_t index){ComPtr<IRawElementProviderFragment>fragment;if(FAILED(binding_.child(index,&fragment))||!fragment)return false;ComPtr<IInvokeProvider>button;return SUCCEEDED(fragment.As(&button))&&SUCCEEDED(button->Invoke());};
             step.check(invoke(*eraser)&&model.erasing(),"Invoking the eraser button toggles erasing as a click does");
-            binding_.refresh(nullptr);const auto brush=find("projection.toolbar:brush");step.check(brush&&invoke(*brush)&&projection.menuOpen(),"Invoking brush thickness opens its menu");
-            step.check(projection.requiresFrames(clock_())&&projection.requiresFrames(later+.15)&&!projection.requiresFrames(later+.17),"An invoke with the earlier clock opens the menu at the latest time");
-            binding_.refresh(nullptr);const auto plus=find("projection.menu:plus:0");const auto width=model.brushWidth();
-            step.check(plus&&binding_.provider()->element(*plus)->label=="Brush thickness +","The menu lists its source plus button");
-            step.check(invoke(*plus)&&model.brushWidth()==width+1&&projection.menuOpen(),"Its plus button widens the brush and keeps the menu");
+            binding_.refresh(nullptr);const auto brush=find("projection.toolbar:brush");step.check(brush&&invoke(*brush)&&projection.menuOpen()&&projection.popupID()==std::optional<std::string>("brush"),"Invoking brush thickness opens its pop-over");
+            step.check(projection.requiresFrames(clock_())&&projection.requiresFrames(later+.15)&&!projection.requiresFrames(later+.3),"An invoke with the earlier clock opens the pop-over at the latest time");
+            binding_.refresh(nullptr);const auto slider=find("projection.menu:brush");const auto width=model.brushWidth();
+            step.check(slider&&binding_.provider()->element(*slider)->label=="Brush thickness"&&binding_.provider()->element(*slider)->role==gpu::NotesAutomationRole::slider,"The pop-over lists its brush slider (no -/+ buttons in 1.3.0)");
+            {ComPtr<IRawElementProviderFragment>fragment;ComPtr<IRangeValueProvider>range;step.check(SUCCEEDED(binding_.child(*slider,&fragment))&&fragment&&SUCCEEDED(fragment.As(&range))&&SUCCEEDED(range->SetValue(width+1))&&model.brushWidth()==width+1&&projection.menuOpen(),"Setting the slider widens the brush and keeps the pop-over");}
             // Hit testing in screen pixels finds the topmost control.
-            const auto*close=binding_.provider()->element(*find("projection.menu:close"));POINT origin{};ClientToScreen(window_,&origin);
+            const auto*close=binding_.provider()->element(*find("projection.menu:popover.close"));POINT origin{};ClientToScreen(window_,&origin);
             ComPtr<IRawElementProviderFragment>hit;step.check(SUCCEEDED(binding_.fromPoint(origin.x+close->rect.x+close->rect.width/2,origin.y+close->rect.y+close->rect.height/2,&hit))&&hit,"A screen point inside the menu's close button hits a peer");
-            ComPtr<IRawElementProviderSimple>simple;VARIANT value;VariantInit(&value);step.check(SUCCEEDED(hit.As(&simple))&&SUCCEEDED(simple->GetPropertyValue(UIA_AutomationIdPropertyId,&value))&&value.vt==VT_BSTR&&std::wstring_view(value.bstrVal)==wide("projection.menu:close"),"The hit peer is that close button");VariantClear(&value);
-            step.check(invoke(*find("projection.menu:close"))&&!projection.menuOpen(),"Invoking close dismisses the menu");
-            binding_.refresh(nullptr);step.check(binding_.count()==8,"The closed menu's peers leave the group");
+            ComPtr<IRawElementProviderSimple>simple;VARIANT value;VariantInit(&value);step.check(SUCCEEDED(hit.As(&simple))&&SUCCEEDED(simple->GetPropertyValue(UIA_AutomationIdPropertyId,&value))&&value.vt==VT_BSTR&&std::wstring_view(value.bstrVal)==wide("projection.menu:popover.close"),"The hit peer is that close button");VariantClear(&value);
+            step.check(invoke(*find("projection.menu:popover.close"))&&!projection.menuOpen(),"Invoking close dismisses the pop-over");
+            binding_.refresh(nullptr);step.check(binding_.count()==15,"The closed pop-over's peers leave the group");
             // A canvas drag in the host's Projection order (each event, then
             // pointerLocked() for the capture request): every point reaches
             // the stroke and the release commits it (live RC 128 drew nothing).

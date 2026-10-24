@@ -48,6 +48,7 @@
 // session: DXGI_ERROR_NOT_CURRENTLY_AVAILABLE) the test exits 77, which ctest
 // reports as skipped. Run it from an Interactive scheduled task.
 #include "tools/projection_workspace.hpp"
+#include "tools/hud_design_overlay_owner.hpp"
 #include <windows.h>
 #include <dwmapi.h>
 #include <DispatcherQueue.h>
@@ -143,6 +144,8 @@ void run(const wchar_t*shader,const std::filesystem::path&resources){
     const BOOL off=FALSE;hr(DwmSetWindowAttribute(window,DWMWA_USE_HOSTBACKDROPBRUSH,&off,sizeof(off)));
     n::DesktopBackdrop backdrop;backdrop.initialize(window,{metrics.pixelWidth,metrics.pixelHeight,true,false,.5,.5,0},{false});
     n::LayerRasterizer raster;
+    // The HUD's design environment the workspace chrome takes (palette, measurer).
+    t::DesignOverlayOptions designOptions;designOptions.raster.pixelsPerPoint=2;designOptions.window=window;t::DesignOverlayOwner overlay(raster,designOptions);
     const n::NotesImageRoute mediaRoute{window,WM_APP+250,1};
     n::NativeNotesImageDecoder decoder([](const auto&)->n::NotesImageAccess{throw std::runtime_error("The drawing route reads no media");},mediaRoute);
     n::NativeNotesImagePlayback images(decoder);n::NativeMediaRequestBroker broker(decoder,images,mediaRoute);
@@ -151,7 +154,7 @@ void run(const wchar_t*shader,const std::filesystem::path&resources){
         t::ProjectionWorkspace projection(host,renderer,raster,backdrop,broker,{.98,.83,.12,1},.5,.5);
         struct Unroute {t::ProjectionWorkspace*&value;~Unroute(){value=nullptr;}} unroute{shown}; // before the workspace closes
         t::ProjectionPreviewOptions options;
-        options.raster.assetRoot=resources/"notes-format";options.raster.pixelsPerPoint=2;options.raster.paddingPoints=1;
+        options.raster.assetRoot=resources/"notes-format";options.raster.pixelsPerPoint=2;options.raster.paddingPoints=1;options.design=&overlay.context().env();
         options.event=[&](const t::ProjectionPreviewEvent&e){events.emplace_back(t::projectionEventAction(e));};
         t::ProjectionMediaBindingOptions binding;
         binding.resolve=[](const auto&)->n::NotesImageAccess{throw std::runtime_error("Unexpected media read");};
@@ -205,11 +208,12 @@ void run(const wchar_t*shader,const std::filesystem::path&resources){
         rightClick(centre);check(projection.model().erasing(),"A right click on the canvas switches to erasing");
         rightClick(centre);check(!projection.model().erasing(),"A second right click restores the pen");
         const double initialWidth=projection.model().brushWidth();
+        // Mac 1.3.0: the wheel's change is committed with the next canvas press (a wheel has no phase end).
         wheel(centre,1);check(projection.model().brushWidth()==initialWidth+1,"A wheel detent over the canvas widens the brush");
-        click(control("projection.toolbar:brush"));check(projection.preview()->menuOpen(),"The brush button opens its menu");paint(.3);
-        click(control("projection.menu:plus:0"));check(projection.model().brushWidth()==initialWidth+2,"The menu's plus widens the brush again");
-        click(control("projection.menu:close"));check(!projection.preview()->menuOpen(),"Its close button dismisses the menu");paint(.3);
-        check(events==std::vector<std::string>(6,"brushChanged"),"Every brush change is recorded as brushChanged, as in the live Event Log");
+        click(control("projection.toolbar:brush"));check(projection.preview()->menuOpen(),"The brush button opens its pop-over");paint(.3);
+        check(projection.preview()->setAutomationValue("projection.menu:brush",initialWidth+2,later())&&projection.model().brushWidth()==initialWidth+2,"The pop-over's slider widens the brush again");
+        click(control("projection.menu:popover.close"));check(!projection.preview()->menuOpen(),"Its close button dismisses the pop-over");paint(.3);
+        check(events==std::vector<std::string>(5,"brushChanged"),"Every brush change is recorded as brushChanged, as in the live Event Log (the wheel's waits for the next press)");
         check(!projection.model().erasing()&&projection.model().drawing().strokes().empty()&&!projection.preview()->pointerLocked()&&GetCapture()!=window,"The pen is selected, nothing is drawn and no capture is held");
 
         // One stroke: press, four drag events with the button held, release.
@@ -227,7 +231,7 @@ void run(const wchar_t*shader,const std::filesystem::path&resources){
         expect(strokes.size()==1&&strokes.front().points.size()==path.size()&&strokes.front().width==initialWidth+2&&strokes.front().color==projection.model().color(),
             "Releasing commits the stroke with every point and the changed brush (committed strokes: "+std::to_string(strokes.size())+", points: "+std::to_string(strokes.empty()?0:strokes.front().points.size())+")");
         expect(!projection.preview()->pointerLocked()&&GetCapture()!=window,"The release ends the gesture and the capture");
-        expect(events.size()==7&&events.back()=="drawingEdited","The stroke is recorded as drawingEdited (projectionAction rows: "+std::to_string(events.size())+")");
+        expect(events.size()==7&&events[5]=="brushChanged"&&events.back()=="drawingEdited","The press commits the wheel's brush change and the stroke is recorded as drawingEdited (projectionAction rows: "+std::to_string(events.size())+")");
 
         // The readback, again without the brush cursor.
         send(WM_MOUSELEAVE,0,{});
