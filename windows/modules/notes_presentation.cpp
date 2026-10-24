@@ -9,8 +9,6 @@
 namespace endfield::modules {
 namespace {
 using Rect=core::Rect;
-NotesColor white(double w,double a=1){return {w,w,w,a};}
-NotesColor alpha(NotesColor c,double a){c[3]=a;return c;}
 bool colorValid(const NotesColor& c){return std::all_of(c.begin(),c.end(),[](double v){return std::isfinite(v)&&v>=0&&v<=1;});}
 void colorCheck(const NotesColor& c){if(!colorValid(c))throw std::invalid_argument("Invalid Notes straight-sRGB color");}
 bool boundary(std::string_view s,std::size_t i){return i<=s.size()&&(i==s.size()||(static_cast<unsigned char>(s[i])&0xc0)!=0x80);}
@@ -37,8 +35,13 @@ void validate(const NotesMeasuredText& m,std::string_view expected,double width)
 NotesCardPlacement makePlacement(const NotesState& s,const NotesState::Card& c){return {s.workspaceBounds(),c.rect,c.localRect,s.workspaceProjection(),c.layerOrder,c.visible};}
 bool same(const NotesCardPlacement& a,const NotesCardPlacement& b){return a.workspaceBounds==b.workspaceBounds&&a.workspaceRect==b.workspaceRect&&a.localRect==b.localRect&&a.projection.values==b.projection.values&&a.layerOrder==b.layerOrder&&a.visible==b.visible;}
 }
-NotesPalette NotesPalette::source(bool dark,NotesColor accent){
-    colorCheck(accent);return {white(dark?.94:.11),white(dark?.65:.37),white(dark?.72:.24,dark?.28:.24),white(dark?.105:.92),white(dark?.16:.82),white(dark?.18:.82),accent};
+NotesPalette NotesPalette::source(bool dark,NotesColor yellow){
+    colorCheck(yellow);const auto hex=[](unsigned v){return NotesColor{double(v>>16&255)/255,double(v>>8&255)/255,double(v&255)/255,1};};
+    return {hex(dark?0xEEEEEE:0x111111),hex(dark?0x8A8A8A:0x6C6D68),hex(dark?0x3A3A3A:0xB3B4AF),hex(dark?0x1C1C1C:0xE4E5E0),hex(dark?0x262626:0xD3D4CF),yellow,hex(dark?0x252525:0xB3B4AF)};
+}
+std::vector<NotesPathPoint> notesChamfer(Rect r,double cut){
+    const double n=std::max(0.,std::min({cut,r.width/2,r.height/2}));
+    return {{true,{r.x,r.y}},{false,{r.x+r.width-n,r.y}},{false,{r.x+r.width,r.y+n}},{false,{r.x+r.width,r.y+r.height}},{false,{r.x,r.y+r.height},true}};
 }
 NotesCardPresentation::NotesCardPresentation(std::string id):noteID_(std::move(id)){
     if(!ehud::data::validUUID(noteID_))throw std::invalid_argument("Invalid Notes presentation identity");
@@ -57,13 +60,13 @@ bool NotesCardPresentation::updateContent(const NotesState& state,const NotesPre
     std::optional<NotesMediaLayout> mediaLayout;
     if(image){const auto&m=*input.media;mediaLayout.emplace(w,h,m.kind,m.duration,m.legacyManagedImage);
         if(m.legacyManagedImage&&note->media)throw std::invalid_argument("Modern media cannot use legacy image layout");
-        for(const auto*value:{&m.strings.loading,&m.strings.play,&m.strings.pause,&m.strings.playAction,&m.strings.pauseAction,&m.strings.unavailable})if(!ehud::data::Json::validUtf8(*value))throw std::invalid_argument("Invalid media label");
+        for(const auto*value:{&m.strings.loading,&m.strings.playAction,&m.strings.pauseAction,&m.strings.unavailable})if(!ehud::data::Json::validUtf8(*value))throw std::invalid_argument("Invalid media label");
         if(m.status.localizedError&&!ehud::data::Json::validUtf8(*m.status.localizedError))throw std::invalid_argument("Invalid media status");
         if(editing)throw std::invalid_argument("Media cannot host a text editor");
     }
     const Rect viewport=image?mediaLayout->geometry().content:drawing?NotesDrawing::viewport({w,h}):todo?Rect{5,27,w-10,std::max(1.,h-55)}:Rect{9,29,w-18,std::max(1.,h-(editing?58.:37.))};
     if((!image&&!drawing&&(todo?!input.checklist:!input.measured))||!std::isfinite(input.scrollOffset))throw std::invalid_argument("Notes requires finite measured content/scroll offset");
-    const auto& p=input.palette;for(const auto* c:{&p.primary,&p.muted,&p.border,&p.card,&p.header,&p.formatPlate,&p.accent})colorCheck(*c);
+    const auto& p=input.palette;for(const auto* c:{&p.primary,&p.muted,&p.border,&p.card,&p.header,&p.accent,&p.rail})colorCheck(*c);
     if(input.editingColor)colorCheck(*input.editingColor);if(input.drawingColor)colorCheck(*input.drawingColor);
     const auto& strings=input.strings;
     for(const auto* s:{&strings.textTitle,&strings.placeholder,&strings.pin,&strings.unpin,&strings.remove,&strings.edit,&strings.select,&strings.grow,&strings.shrink,&strings.todoTitle,&strings.itemPlaceholder,&strings.addItem,&strings.checkItem,&strings.uncheckItem,&strings.editItem,&strings.moveUp,&strings.moveDown,&strings.removeItem,&strings.addItemAction,&strings.imageTitle,&strings.drawingTitle,&strings.drawingColor})if(!ehud::data::Json::validUtf8(*s))throw std::invalid_argument("Invalid Notes localized string");
@@ -76,35 +79,40 @@ bool NotesCardPresentation::updateContent(const NotesState& state,const NotesPre
     const double maximum=std::max(0.,contentHeight-viewport.height);
     const double offset=std::min(maximum,std::max(0.,input.scrollOffset));
     // New artwork is staged in full; invalid data never damages retained pixels.
-    std::vector<NotesLayer> layers;std::vector<NotesAction> actions;std::vector<NotesHighlight> highlights;
+    std::vector<NotesLayer> layers;std::vector<NotesAction> actions;std::vector<NotesControl> controls;
     const std::string prefix="note/"+noteID_+"/";
-    layers.reserve(44);actions.reserve(10);highlights.reserve(6);
+    layers.reserve(40);actions.reserve(10);controls.reserve(16);
     auto add=[&](std::string id,std::size_t parent,Rect frame,NotesLayerKind kind=NotesLayerKind::layer)->std::size_t{
         NotesLayer l;l.id=prefix+id;l.parent=parent;l.kind=kind;l.frame=frame;l.bounds={0,0,frame.width,frame.height};layers.push_back(std::move(l));return layers.size()-1;};
     auto text=[&](std::string id,std::size_t parent,Rect frame,std::string value,double size,NotesColor color,bool bold=false,bool trunc=true){
         const auto i=add(std::move(id),parent,frame,NotesLayerKind::text);layers[i].text={std::move(value),size,bold,trunc,color,{}};return i;};
-    auto shape=[&](std::string id,std::size_t parent,Rect frame,std::vector<NotesPathPoint> points,NotesColor stroke,bool rounded=true){
-        const auto i=add(std::move(id),parent,frame,NotesLayerKind::shape);auto& s=layers[i].shape;s.points=std::move(points);s.stroke=stroke;s.roundCaps=rounded;s.roundJoins=rounded;return i;};
-    const auto root=add("card",NotesLayer::noParent,{0,0,w,h});layers[root].name="notes.note."+noteID_;layers[root].background=p.card;layers[root].border=card->selected?p.accent:p.border;layers[root].borderWidth=card->selected?1.1:.65;layers[root].cornerRadius=3;layers[root].masksToBounds=true;layers[root].allowsGroupOpacity=false;
-    const auto head=add("header",root,{0,0,w,24});layers[head].background=p.header;
-    text("header/title",head,{7,6,w-56,14},"⠿  "+(image?strings.imageTitle:drawing?strings.drawingTitle:todo?strings.todoTitle:strings.textTitle),9,p.muted,true);
-    shape("header/pin",head,{w-41,6,12,12},{{true,{3,1}},{false,{9,1}},{true,{4,1}},{false,{4,5}},{false,{2,7}},{false,{10,7}},{false,{8,5}},{false,{8,1}},{true,{6,7}},{false,{6,12}}},card->pinned?p.accent:p.muted);
-    shape("header/delete",head,{w-17,8,7,7},{{true,{0,0}},{false,{7,7}},{true,{7,0}},{false,{0,7}}},p.muted);
+    auto shape=[&](std::string id,std::size_t parent,Rect frame,std::vector<NotesPathPoint> points,std::optional<NotesColor> fill,std::optional<NotesColor> stroke){
+        const auto i=add(std::move(id),parent,frame,NotesLayerKind::shape);auto& s=layers[i].shape;s.points=std::move(points);s.fill=fill;s.stroke=stroke;return i;};
+    // The redesign's dark note box (render :1158-1191): the card face in the
+    // top-right chamfer with a 1 px ring (the theme colour when selected), the
+    // title strip chamfered 7.5 inside it, the selection bar and the grip dots.
+    const auto root=shape("card",NotesLayer::noParent,{0,0,w,h},notesChamfer({.5,.5,w-1,h-1},8),p.card,card->selected?p.accent:p.border);
+    layers[root].name="notes.note."+noteID_;layers[root].masksToBounds=true;layers[root].allowsGroupOpacity=false;
+    const auto head=shape("header",root,{0,0,w,24},notesChamfer({1,1,w-2,22},7.5),p.header,std::nullopt);
+    if(card->selected){const auto bar=add("header/bar",head,{1,1,2,22});layers[bar].background=p.accent;}
+    {std::vector<NotesPathPoint> dots;for(int row=0;row<3;++row)for(int column=0;column<2;++column){const double x=column*4.,y=row*4.;
+        dots.insert(dots.end(),{{true,{x,y}},{false,{x+2,y}},{false,{x+2,y+2}},{false,{x,y+2},true}});}
+     shape("header/grip",head,{7,6,8,12},std::move(dots),p.muted,std::nullopt);}
     const auto view=add("viewport",root,viewport);layers[view].name="notes.content.viewport";layers[view].masksToBounds=true;
     const auto content=add("content",view,{0,0,viewport.width,viewport.height});layers[content].name="notes.content.scroll";layers[content].bounds.y=offset;
-    auto highlight=[&](std::string verb,std::size_t parent,Rect rect){
-        const auto group=add("highlight/"+verb,parent,rect);layers[group].name="hud.control.highlight";layers[group].allowsGroupOpacity=false;
-        const Rect local{0,0,rect.width,rect.height};const auto tint=add("highlight/"+verb+"/tint",group,local,NotesLayerKind::shape);layers[tint].shape.kind=NotesPathKind::roundedRect;layers[tint].shape.radius=3;layers[tint].shape.fill=alpha(p.accent,.30);layers[tint].opacity=0;
-        const auto rim=add("highlight/"+verb+"/rim",group,local,NotesLayerKind::shape);layers[rim].shape.kind=NotesPathKind::roundedRect;layers[rim].shape.radius=3;layers[rim].shape.stroke=p.accent;layers[rim].shape.lineWidth=.9;layers[rim].opacity=0;
-        highlights.push_back({"note:"+noteID_+":"+verb,tint,rim,0,true});
-    };
-    if(todo){const auto[first,last]=input.checklist->visibleRows(offset);for(auto index=first;index<last;++index){const auto&r=input.checklist->rows()[index];const auto base="todo/"+r.itemID;
+    // Controls: frames are card-local; each one's action has the same rect.
+    auto control=[&](std::string verb,std::string label,NotesControlKind kind,NotesControlGlyph glyph,Rect frame,double iconSize=0,std::string caption={}){
+        NotesControl c;c.id="note:"+noteID_+":"+verb;c.label=std::move(label);c.kind=kind;c.glyph=glyph;c.frame=frame;c.iconSize=iconSize;c.text=std::move(caption);controls.push_back(std::move(c));return controls.size()-1;};
+    auto action=[&](std::string verb,const std::string& label,Rect r,bool ax=false){actions.push_back({"note:"+noteID_+":"+verb,std::move(verb),label,r,ax});};
+    if(todo){const auto&list=*input.checklist;const auto[first,last]=list.visibleRows(offset);for(auto index=first;index<last;++index){const auto&r=list.rows()[index];const auto base="todo/"+r.itemID;
         const auto row=add(base,content,{0,r.origin,viewport.width,r.height});layers[row].name="notes.todo.row."+r.itemID;
-        const auto check=add(base+"/check",row,{5,4,12,12},NotesLayerKind::shape);layers[check].shape.kind=NotesPathKind::roundedRect;layers[check].shape.radius=2;layers[check].shape.stroke=r.checked?p.accent:p.muted;if(r.checked){layers[check].shape.fill=p.accent;const auto tick=shape(base+"/tick",check,{0,0,12,12},{{true,{2.5,6}},{false,{5,9}},{false,{10,3}}},white(.1),false);layers[tick].shape.lineWidth=1.4;}
-        shape(base+"/up",row,{w-58,7,7,5},{{true,{0,5}},{false,{3.5,0}},{false,{7,5}}},index?p.muted:p.border);
-        shape(base+"/down",row,{w-40,7,7,5},{{true,{0,0}},{false,{3.5,5}},{false,{7,0}}},index+1<input.checklist->rows().size()?p.muted:p.border);
-        shape(base+"/remove",row,{w-22,6,7,7},{{true,{0,0}},{false,{7,7}},{true,{7,0}},{false,{0,7}}},p.muted);
-        highlight("check:"+r.itemID,row,{0,0,21,22});highlight("up:"+r.itemID,row,{w-63,0,17,22});highlight("down:"+r.itemID,row,{w-45,0,17,22});highlight("remove:"+r.itemID,row,{w-27,0,17,22});
+        // The row's check (the format plate: the theme colour with a tick when
+        // done) at (3.5, 4) in the row, and its three buttons (rowControls).
+        const double y=viewport.y+r.origin-offset;
+        {const auto i=control("check:"+r.itemID,strings.checkItem,NotesControlKind::formatToggle,NotesControlGlyph::check,{viewport.x+3.5,y+4,14,14});controls[i].on=r.checked;controls[i].inViewport=true;}
+        for(const auto&b:list.rowControls(index,offset)){const auto i=control(b.verb+":"+r.itemID,b.verb=="up"?strings.moveUp:b.verb=="down"?strings.moveDown:strings.removeItem,NotesControlKind::iconButton,
+                b.verb=="up"?NotesControlGlyph::up:b.verb=="down"?NotesControlGlyph::down:NotesControlGlyph::x,b.frame,b.verb=="remove"?7:8);controls[i].inViewport=true;
+            controls[i].enabled=b.verb=="up"?index>0:b.verb=="down"?index+1<list.rows().size():true;}
         if(editing&&state.editing()->itemID==r.itemID)continue;
         const auto&display=*r.display;auto firstLine=std::lower_bound(display.lines.begin(),display.lines.end(),offset-r.origin-3,[](const auto&l,double y){return l.y+l.height<=y;});
         const auto lastLine=std::lower_bound(firstLine,display.lines.end(),offset+viewport.height-r.origin-3,[](const auto&l,double y){return l.y<y;});
@@ -122,61 +130,57 @@ bool NotesCardPresentation::updateContent(const NotesState& state,const NotesPre
         }
     }
     }
-    const auto thumb=add("scrollThumb",view,{});layers[thumb].name="notes.content.scrollThumb";layers[thumb].cornerRadius=1;layers[thumb].hidden=maximum<=0;
-    if(maximum>0){const double height=std::max(10.,viewport.height*viewport.height/contentHeight);layers[thumb].frame={viewport.width-2,offset/maximum*(viewport.height-height),2,height};layers[thumb].bounds={0,0,2,height};layers[thumb].background=alpha(p.muted,.5);}
-    auto action=[&](std::string verb,const std::string& label,Rect r,bool ax=false){actions.push_back({"note:"+noteID_+":"+verb,std::move(verb),label,r,ax});};
-    action("select",strings.select,{0,0,w,h},true);action("pin",card->pinned?strings.unpin:strings.pin,{w-46,2,21,20});action("delete",strings.remove,{w-24,2,21,20});if(todo){const NotesChecklistStrings labels{strings.checkItem,strings.uncheckItem,strings.editItem,strings.moveUp,strings.moveDown,strings.removeItem,strings.addItemAction};auto rows=input.checklist->actions(offset,labels);actions.insert(actions.end(),std::make_move_iterator(rows.begin()),std::make_move_iterator(rows.end()));
-        const auto footer=text("footer",root,{10,h-24,w-24,19},strings.addItem,10.5,p.primary);layers[footer].text.medium=true;
+    // The thumb (drawn with the controls) and the card's actions.
+    NotesThumb thumb;thumb.scrollable=maximum>0;
+    if(maximum>0){const double height=std::max(10.,viewport.height*viewport.height/contentHeight);thumb.frame={viewport.width-3,offset/maximum*(viewport.height-height),3,height};}
+    action("select",strings.select,{0,0,w,h},true);
+    // Pin and delete in the title strip (actions :1084-1085).
+    {const auto i=control("pin",card->pinned?strings.unpin:strings.pin,NotesControlKind::iconButton,NotesControlGlyph::pin,{w-44,3,18,18},10);controls[i].on=card->pinned;action("pin",controls[i].label,controls[i].frame);}
+    {const auto i=control("delete",strings.remove,NotesControlKind::iconButton,NotesControlGlyph::x,{w-23,3,18,18},9);action("delete",controls[i].label,controls[i].frame);}
+    if(todo){const NotesChecklistStrings labels{strings.checkItem,strings.uncheckItem,strings.editItem,strings.moveUp,strings.moveDown,strings.removeItem,strings.addItemAction};auto rows=input.checklist->actions(offset,labels);actions.insert(actions.end(),std::make_move_iterator(rows.begin()),std::make_move_iterator(rows.end()));
+        // "+ Add item" is a format plate with the label glyph (:1269-1271).
+        control("add",strings.addItemAction,NotesControlKind::formatToggle,NotesControlGlyph::label,{5,h-25,w-24,20},0,strings.addItem);
     }else if(!image&&!drawing)action("edit",strings.edit,viewport);
     if(image){const auto&m=*input.media;if(m.legacyManagedImage){if(m.legacyUnavailable){const auto label=text("media/unavailable",root,{10,40,w-20,35},m.strings.unavailable,11,p.muted,false,false);layers[label].text.wrapped=true;}}
         else {auto footer=mediaLayout->footer(m.status,p,m.strings);footer.id=prefix+footer.id;footer.parent=root;layers.push_back(std::move(footer));
+            const bool message=NotesMediaLayout::showsMessage(m.status);
             // A failed reference's footer row chooses the file again (labelled
             // by its source error text); it has no playback to toggle.
             if(m.relinkable&&m.status.state==NotesMediaState::failed&&m.status.localizedError)actions.push_back({"note:"+noteID_+":relinkMedia","relinkMedia",*m.status.localizedError,{8,h-23,std::max(1.,w-18),18}});
-            else if(const auto playback=mediaLayout->playbackAction(noteID_,m.status,m.strings))actions.push_back(*playback);
-            if(mediaLayout->geometry().hasSeek){const auto rail=add("media/rail",root,mediaLayout->geometry().rail);layers[rail].background=mediaLayout->progressColors(p)[0];}
+            else if(const auto playback=mediaLayout->playbackAction(noteID_,m.status,m.strings)){actions.push_back(*playback);
+                const bool playing=m.status.state==NotesMediaState::playing;
+                const auto i=control("mediaPlayback",playback->label,NotesControlKind::iconButton,playing?NotesControlGlyph::pause:NotesControlGlyph::play,playback->localRect,9);controls[i].hidden=message;}
+            if(mediaLayout->geometry().hasSeek&&!message){const auto rail=add("media/rail",root,mediaLayout->geometry().rail);layers[rail].background=mediaLayout->progressColors(p)[0];}
         }
     }
+    // The editing tools of a text note (:1089-1095): 20 px plates on a 24 px
+    // pitch from x 5 at h - 25: A↕, Aa, the colour chip (the caret colour,
+    // else primary) and B; a selected drawing's pen colour chip at (5, h - 25).
     static constexpr std::array<const char*,4> verbs{"formatSize","formatFont","formatColor","formatSpecial"};
-    static constexpr std::array<const char*,4> symbols{"A↕","Aa","","B"};
-    if(editing&&!todo)for(std::size_t i=0;i<verbs.size();++i){const Rect rect{6+double(i)*22,h-25,20,20};action(verbs[i],strings.format[i],rect);
-        const auto plate=add("format/"+std::string(verbs[i]),root,rect);layers[plate].borderWidth=.5;layers[plate].border=p.border;layers[plate].background=p.formatPlate;
-        if(i==2){const auto swatch=add("format/formatColor/swatch",plate,{4,4,12,12});layers[swatch].background=input.editingColor.value_or(p.primary);}
-        else text("format/"+std::string(verbs[i])+"/label",plate,{2,3,16,15},symbols[i],10,p.primary);
-    }
-    if(drawing&&card->selected){const Rect rect{6,h-24,20,20};action("formatColor",strings.drawingColor,rect);
-        const auto plate=add("format/formatColor",root,rect);layers[plate].borderWidth=.5;layers[plate].border=p.border;layers[plate].background=p.formatPlate;
-        const auto swatch=add("format/formatColor/swatch",plate,{4,4,12,12});layers[swatch].background=input.drawingColor.value_or(NotesColor{.98,.83,.12,1});
-    }
-    // Highlights are card siblings AFTER formatting plates and BEFORE the grip.
-    // Ancestor card clipping must also be retained if split into GPU surfaces.
-    for(const auto& a:actions)if(!a.accessibilityOnly&&a.verb!="edit"&&a.verb.find(':')==std::string::npos)highlight(a.verb,root,a.localRect);
-    shape("resizeGrip",root,{0,0,w,h},{{true,{w-7,h-3}},{false,{w-3,h-7}},{true,{w-11,h-3}},{false,{w-3,h-11}}},card->selected?p.accent:p.muted,false);
+    if(editing&&!todo)for(std::size_t i=0;i<verbs.size();++i){const Rect rect{5+double(i)*24,h-25,20,20};action(verbs[i],strings.format[i],rect);
+        const auto glyph=i==0||i==1?NotesControlGlyph::label:i==2?NotesControlGlyph::chip:NotesControlGlyph::bold;
+        const auto c=control(verbs[i],strings.format[i],NotesControlKind::formatToggle,glyph,rect,0,i==0?"A↕":i==1?"Aa":"");
+        if(i==2)controls[c].chip=input.editingColor.value_or(p.primary);}
+    if(drawing&&card->selected){const Rect rect{5,h-25,20,20};action("formatColor",strings.drawingColor,rect);
+        const auto c=control("formatColor",strings.drawingColor,NotesControlKind::formatToggle,NotesControlGlyph::chip,rect);controls[c].chip=input.drawingColor.value_or(NotesColor{.98,.83,.12,1});}
+    // The resize grip (:1279-1291): two 1 px lines, the theme colour when selected.
+    {const auto i=shape("resizeGrip",root,{0,0,w,h},{{true,{w-7,h-3}},{false,{w-3,h-7}},{true,{w-11,h-3}},{false,{w-3,h-11}}},std::nullopt,card->selected?p.accent:p.muted);layers[i].shape.roundCaps=false;layers[i].shape.roundJoins=false;}
     if(card->selected){action("grow",strings.grow,{w-16,h-16,16,16},true);action("shrink",strings.shrink,{w-33,h-16,16,16},true);}
+    // The title strip's caption (:1187-1191).
+    NotesTitle title{image?strings.imageTitle:drawing?strings.drawingTitle:todo?strings.todoTitle:strings.textTitle,{20,7.5,std::max(10.,w-76),9.5}};
     const auto newPlacement=makePlacement(state,*card);const auto changedPlacement=!initialized_||!same(placement_,newPlacement);
-    layers_=std::move(layers);actions_=std::move(actions);highlights_=std::move(highlights);
+    layers_=std::move(layers);actions_=std::move(actions);controls_=std::move(controls);title_=std::move(title);thumb_=thumb;
     editor_=std::nullopt;if(editing){if(todo){const auto&request=*state.editing();if(!request.itemID)throw std::invalid_argument("Checklist requires a row editor");editor_=NotesEditorLeaf{{request.rect.x-card->rect.x,request.rect.y-card->rect.y,request.rect.width,request.rect.height},request.scrollOffset,11,false};}
         else editor_=NotesEditorLeaf{viewport,offset,12,true};}
     editingItem_=editing?state.editing()->itemID:std::nullopt;checklist_=input.checklist;
     media_=input.media;drawing_=drawing;palette_=input.palette;measured_=input.measured;placement_=newPlacement;viewport_=viewport;scrollOffset_=offset;
     width_=w;height_=h;selected_=card->selected;pinned_=card->pinned;editing_=editing;initialized_=true;
-    feedback_.reset();pressed_=false;reduceMotion_=false;++contentRevision_;++feedbackRevision_;if(changedPlacement)++placementRevision_;return true;
+    ++contentRevision_;if(changedPlacement)++placementRevision_;return true;
 }
 bool NotesCardPresentation::updatePlacement(const NotesState& state){
     const auto c=state.card(noteID_);if(!initialized_||!c)throw std::logic_error("Notes content must exist before placement");
     const bool editing=state.editing()&&state.editing()->noteID==noteID_;
     if(c->rect.width!=width_||c->rect.height!=height_||c->selected!=selected_||c->pinned!=pinned_||editing!=editing_||(editing?state.editing()->itemID:std::nullopt)!=editingItem_)throw std::logic_error("Notes appearance changed; refresh content before placement");
     const auto next=makePlacement(state,*c);if(same(placement_,next))return false;placement_=next;++placementRevision_;return true;
-}
-bool NotesCardPresentation::setFeedback(std::optional<std::string_view> verb,bool pressed,bool reduceMotion){
-    if(!initialized_)throw std::logic_error("Notes content must exist before feedback");
-    std::optional<std::size_t> chosen;
-    if(verb){for(std::size_t i=0;i<highlights_.size();++i){const auto& id=highlights_[i].actionID;const auto pos=5+noteID_.size();if(std::string_view(id).substr(pos+1)==*verb){chosen=i;break;}}
-        if(!chosen)throw std::invalid_argument("Notes control has no source highlight");}
-    pressed=pressed&&chosen.has_value();if(feedback_==chosen&&pressed_==pressed&&reduceMotion_==reduceMotion)return false;
-    for(std::size_t i=0;i<highlights_.size();++i){auto& h=highlights_[i];const bool selected=chosen&&*chosen==i;const double tint=selected?(pressed?1.:.62):0.,rim=selected?1.:0.;
-        const bool changed=layers_[h.tintLayer].opacity!=tint||layers_[h.rimLayer].opacity!=rim;h.duration=changed&&!reduceMotion?(selected&&pressed?.06:.14):0;
-        layers_[h.tintLayer].opacity=tint;layers_[h.rimLayer].opacity=rim;}
-    feedback_=chosen;pressed_=pressed;reduceMotion_=reduceMotion;++feedbackRevision_;return true;
 }
 } // namespace endfield::modules

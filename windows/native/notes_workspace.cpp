@@ -36,14 +36,14 @@ std::string utf8(std::u16string_view s){
     std::string out(static_cast<std::size_t>(n),'\0');need(WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,reinterpret_cast<const wchar_t*>(s.data()),static_cast<int>(s.size()),out.data(),n,nullptr,nullptr)==n,"Incomplete Notes UTF-8 conversion");return out;
 }
 void validateStyle(const NativeNotesWorkspaceStyle&s){
-    for(const auto*c:{&s.palette.primary,&s.palette.muted,&s.palette.border,&s.palette.card,&s.palette.header,&s.palette.formatPlate,&s.palette.accent,&s.editor.background,&s.editor.border,&s.selectionColor,&s.compositionColor,&s.eraserColor})for(double v:*c)need(std::isfinite(v)&&v>=0&&v<=1,"Invalid Notes workspace color");
+    for(const auto*c:{&s.palette.primary,&s.palette.muted,&s.palette.border,&s.palette.card,&s.palette.header,&s.palette.accent,&s.palette.rail,&s.editor.background,&s.editor.border,&s.selectionColor,&s.compositionColor,&s.caretColor,&s.editorTextColor,&s.eraserColor})for(double v:*c)need(std::isfinite(v)&&v>=0&&v<=1,"Invalid Notes workspace color");
     need(s.editor.background[3]==1,"Source Notes editor backing must be opaque");
     for(const auto*t:{&s.strings.textTitle,&s.strings.placeholder,&s.strings.pin,&s.strings.unpin,&s.strings.remove,&s.strings.edit,&s.strings.select,&s.strings.grow,&s.strings.shrink,&s.strings.todoTitle,&s.strings.itemPlaceholder,&s.strings.addItem,&s.strings.checkItem,&s.strings.uncheckItem,&s.strings.editItem,&s.strings.moveUp,&s.strings.moveDown,&s.strings.removeItem,&s.strings.addItemAction,&s.strings.imageTitle,&s.strings.drawingTitle,&s.strings.drawingColor})need(ehud::data::Json::validUtf8(*t),"Invalid Notes localized text");
     for(const auto&t:s.strings.format)need(ehud::data::Json::validUtf8(t),"Invalid Notes format label");
-    for(const auto*t:{&s.media.loading,&s.media.play,&s.media.pause,&s.media.playAction,&s.media.pauseAction,&s.media.unavailable})need(ehud::data::Json::validUtf8(*t),"Invalid localized media text");
+    for(const auto*t:{&s.media.loading,&s.media.playAction,&s.media.pauseAction,&s.media.unavailable})need(ehud::data::Json::validUtf8(*t),"Invalid localized media text");
     for(const auto&t:s.mediaErrors)need(!t.empty()&&ehud::data::Json::validUtf8(t),"Invalid localized media error");
 }
-bool sameStyle(const NativeNotesWorkspaceStyle&a,const NativeNotesWorkspaceStyle&b){return a.palette==b.palette&&a.strings==b.strings&&a.editor.background==b.editor.background&&a.editor.border==b.editor.border&&a.selectionColor==b.selectionColor&&a.compositionColor==b.compositionColor&&a.eraserColor==b.eraserColor&&a.media.loading==b.media.loading&&a.media.play==b.media.play&&a.media.pause==b.media.pause&&a.media.playAction==b.media.playAction&&a.media.pauseAction==b.media.pauseAction&&a.media.unavailable==b.media.unavailable&&a.mediaErrors==b.mediaErrors;}
+bool sameStyle(const NativeNotesWorkspaceStyle&a,const NativeNotesWorkspaceStyle&b){return a.palette==b.palette&&a.strings==b.strings&&a.editor.background==b.editor.background&&a.editor.border==b.editor.border&&a.selectionColor==b.selectionColor&&a.compositionColor==b.compositionColor&&a.caretColor==b.caretColor&&a.editorTextColor==b.editorTextColor&&a.eraserColor==b.eraserColor&&a.media==b.media&&a.mediaErrors==b.mediaErrors;}
 void validMotion(const mod::NotesMotionSample&s){need(std::isfinite(s.x)&&std::isfinite(s.y)&&std::abs(s.x)<=1'000'000&&std::abs(s.y)<=1'000'000&&std::isfinite(s.scale)&&s.scale>0&&s.scale<=1024&&std::isfinite(s.opacity)&&s.opacity>=0&&s.opacity<=1,"Invalid Notes card motion sample");}
 }
 struct NativeNotesWorkspace::Impl {
@@ -69,7 +69,8 @@ struct NativeNotesWorkspace::Impl {
         NativeNotesCardToken token{};std::size_t tokenIndex{tokenCapacity};mod::NotesMotionSample motion;
         core::Matrix4 effectiveWorkspace;core::Projection hitProjection;
         std::size_t ordinal{};bool initialized{};double scrollOffset{};std::optional<mod::NotesColor> editingColor;
-        explicit Slot(std::string id):presentation(std::move(id)){}
+        std::uint64_t key{}; // NativeNotesCardObserver identity (unique for the workspace's lifetime)
+        explicit Slot(std::string id,std::uint64_t serial):presentation(std::move(id)),key(serial){}
     };
     struct Field {
         std::string id;std::optional<std::string>itemID;double initialScrollOffset{};
@@ -91,7 +92,7 @@ struct NativeNotesWorkspace::Impl {
     std::array<Slot*,tokenCapacity>tokenSlots{};
     std::vector<Slot*> active;std::vector<LayerCompositionEntry>entries;
     std::unique_ptr<Field>field;std::optional<Drag>drag;std::optional<NativeNotesWorkspacePose>pose;
-    core::Projection projection;std::optional<double>lastTime;std::uint64_t synchronized{},fontRevision{},compositionRevision{},measureRevision{},motionSerial{},presentationGeneration{1};UINT_PTR generation{};
+    core::Projection projection;std::optional<double>lastTime;std::uint64_t synchronized{},fontRevision{},compositionRevision{},measureRevision{},motionSerial{},presentationGeneration{1},slotSerial{};UINT_PTR generation{};
     NativeNotesWorkspaceStats stats;
     std::vector<std::shared_ptr<Media>>mediaAssets;std::vector<Slot*>mediaSlots;
     std::vector<NotesImagePlaybackRequest>mediaRequests;std::vector<NotesVideoRequest>videoRequests;
@@ -270,7 +271,7 @@ struct NativeNotesWorkspace::Impl {
         const bool content=force||(media&&s.paintedMedia!=media->content)||s.media!=media||s.editingColor!=editingColor||!s.initialized||s.measurement!=measurement||s.checklist!=checklist||s.rect.width!=c->rect.width||s.rect.height!=c->rect.height||s.selected!=c->selected||s.pinned!=c->pinned||s.editing!=edit;
         bool moved{};if(content){mod::NotesPresentationInput input;input.palette=style.palette;input.strings=style.strings;if(measurement)input.measured=measurement->presentationText(measurement);input.checklist=checklist;input.scrollOffset=s.scrollOffset;input.editingColor=editingColor;input.drawingColor=drawingColor;if(media)input.media=media->content;s.presentation.updateContent(state,input);
             if(!s.native)s.native=std::make_unique<NativeNotesCardScene>(s.presentation,raster,options.raster,style.editor);
-            s.native->syncContent();if(media&&media->videoRequest){s.mediaProgress.emplace(mod::NotesMediaLayout(c->rect.width,c->rect.height,mod::NotesMediaKind::video,media->content->duration));}else s.mediaProgress.reset();s.measurement=measurement;s.checklist=checklist;s.media=media;s.paintedMedia=media?media->content:nullptr;if(media){mediaUploadPending=true;progress(s,false);}++stats.cardContentUpdates;++compositionRevision;
+            s.native->syncContent();if(options.cards.content)options.cards.content(s.key,s.presentation);if(media&&media->videoRequest){s.mediaProgress.emplace(mod::NotesMediaLayout(c->rect.width,c->rect.height,mod::NotesMediaKind::video,media->content->duration));}else s.mediaProgress.reset();s.measurement=measurement;s.checklist=checklist;s.media=media;s.paintedMedia=media?media->content:nullptr;if(media){mediaUploadPending=true;progress(s,false);}++stats.cardContentUpdates;++compositionRevision;
             if(!edit)s.scrollOffset=s.presentation.scrollOffset();
         }else if(s.presentation.updatePlacement(state)){moved=true;++stats.cardPlacementUpdates;}
         s.rect=c->rect;s.selected=c->selected;s.pinned=c->pinned;s.visible=c->visible;s.editing=edit;s.ordinal=ordinal;s.editingColor=editingColor;s.initialized=true;return content||moved;
@@ -289,7 +290,7 @@ struct NativeNotesWorkspace::Impl {
             auto*s=find(n.id);const bool shown=state.notesSelected()||n.isPinned;const bool visible=shown&&admit[ordinal];
             // A shown note beneath the budget gives its artwork up (retired after publication).
             if(shown&&!visible){++culled;if(s){if(brushSlot==s){brushSlot->drawingScene->setBrush({},drawingWidth,style.palette.primary);brushSlot=nullptr;brushPhysical.reset();}const auto it=slots.find(n.id);unregister(*it->second);retiredCards.push_back(std::move(it->second));slots.erase(it);s=nullptr;changed=true;}++ordinal;continue;}
-            if(!s&&visible){auto fresh=std::make_unique<Slot>(n.id);s=fresh.get();slots.emplace(n.id,std::move(fresh));issueToken(*s);changed=true;}
+            if(!s&&visible){auto fresh=std::make_unique<Slot>(n.id,++slotSerial);s=fresh.get();slots.emplace(n.id,std::move(fresh));issueToken(*s);changed=true;}
             if(s)changed=refresh(*s,n,ordinal,force)||changed;++ordinal;
         }
         for(auto it=slots.begin();it!=slots.end();)if(!state.note(it->first)){if(brushSlot==it->second.get()){brushSlot->drawingScene->setBrush({},drawingWidth,style.palette.primary);brushSlot=nullptr;brushPhysical.reset();}measurer.remove(it->first);if(it->second->deleted)deletingCards.push_back(std::move(it->second));else{unregister(*it->second);retiredCards.push_back(std::move(it->second));}it=slots.erase(it);changed=true;}else ++it;
@@ -317,7 +318,8 @@ struct NativeNotesWorkspace::Impl {
             s->hitProjection=core::Projection::viewport(p.screenToClip*s->effectiveWorkspace,p.pixelWidth,p.pixelHeight);
             if(s->mediaProgress)s->native->setMediaProgress(s->mediaProgress->sample(p.time));
             if(field&&field->id==s->presentation.noteID())s->native->setEditorScrollIndicator(indicatorThumb(*s));
-            changed=s->native->updatePose(s->effectiveWorkspace,p.opacity*static_cast<float>(m.opacity),p.time,(s->outgoing||s->deleted)?std::optional<bool>(true):std::nullopt)||changed;if(s->drawingScene)changed=s->drawingScene->updatePose(s->effectiveWorkspace*core::Matrix4::translation(s->rect.x,s->rect.y),p.opacity*static_cast<float>(m.opacity))||changed;}
+            changed=s->native->updatePose(s->effectiveWorkspace,p.opacity*static_cast<float>(m.opacity),p.time,(s->outgoing||s->deleted)?std::optional<bool>(true):std::nullopt)||changed;
+            if(options.cards.posed){const bool shown=s->outgoing||s->deleted||s->presentation.placement().visible;options.cards.posed(s->key,s->effectiveWorkspace*core::Matrix4::translation(s->rect.x,s->rect.y),shown?p.opacity*static_cast<float>(m.opacity):0.f,p.time);}if(s->drawingScene)changed=s->drawingScene->updatePose(s->effectiveWorkspace*core::Matrix4::translation(s->rect.x,s->rect.y),p.opacity*static_cast<float>(m.opacity))||changed;}
         if(field){auto*s=find(field->id);need(s&&s->native->externalEditorSlot(),"Notes field has no matching card slot");const auto r=s->native->externalEditorSlot()->localRect;
             ProjectedEditorPose e;e.localToScreen=s->effectiveWorkspace*core::Matrix4::translation(s->rect.x+r.x,s->rect.y+r.y);e.screenToClip=p.screenToClip;e.pixelWidth=p.pixelWidth;e.pixelHeight=p.pixelHeight;e.opacity=p.opacity*static_cast<float>(s->motion.opacity);e.visible=s->visible&&!s->outgoing&&!s->deleted&&e.opacity>0;e.ownerFocused=p.ownerFocused&&e.visible;e.caretVisible=p.caretVisible;changed=field->native->setPose(e)||changed;
         }
@@ -343,7 +345,7 @@ struct NativeNotesWorkspace::Impl {
         auto next=draft?std::make_unique<Field>(n.id,draft->document,draft->initialRevision,raster):std::make_unique<Field>(n.id,std::move(value),std::move(rich),capacity,raster,std::move(itemID));next->generation=generation+1;next->initialScrollOffset=offset;
         if(draft)next->initialScrollOffset=find(n.id)?find(n.id)->scrollOffset:0;
         else{const auto end=static_cast<std::uint32_t>(next->document.text().size());next->document.setSelection({{end,end},text::ActiveEnd::end,false});}
-        ProjectedEditorStyle e;e.width=width;e.height=height;e.fontSize=fontSize;e.lineHeight=measured->font.lineHeight;e.baseline=measured->font.ascent;e.fontFamily=measured->font.selectedFamily;e.fontFace="";e.cornerRadius=3;e.textColor=style.palette.primary;e.caretColor=style.palette.primary;e.selectionColor=style.selectionColor;e.compositionColor=style.compositionColor;
+        ProjectedEditorStyle e;e.width=width;e.height=height;e.fontSize=fontSize;e.lineHeight=measured->font.lineHeight;e.baseline=measured->font.ascent;e.fontFamily=measured->font.selectedFamily;e.fontFace="";e.cornerRadius=0;e.textColor=style.editorTextColor;e.caretColor=style.caretColor;e.selectionColor=style.selectionColor;e.compositionColor=style.compositionColor;
         const auto fieldRaster=notesRasterOptions(options.raster,width,height); // a large viewport rasters at a bounded density
         if(chunked){try{next->native=std::make_unique<NativeNotesEditor>(std::make_unique<NativeNotesLongEditor>(hwnd,*next->rich,next->scene,raster,std::move(e),fieldRaster,options.ownerMessage,next->generation,ProjectedEditorTextMode::rich,options.longEditor));}
             catch(const NativeNotesLongParagraphError&){throw NativeNotesEditorCapacityError{};}}
@@ -398,7 +400,7 @@ bool NativeNotesWorkspace::setStyle(NativeNotesWorkspaceStyle style){auto&i=*imp
     // A theme/localization event does not end the owner's sampled closing
     // transition. Stage replacement identities with their outgoing holds even
     // when NotesState already marks those unpinned cards target-hidden.
-    decltype(i.slots) replacements;for(const auto&[id,s]:i.slots){auto next=std::make_unique<Impl::Slot>(id);next->outgoing=s->outgoing;next->motion=s->motion;next->token=s->token;next->tokenIndex=s->tokenIndex;next->measurement=s->measurement;next->rowMeasurements=s->rowMeasurements;next->checklist=s->checklist;next->media=s->media;replacements.emplace(id,std::move(next));}
+    decltype(i.slots) replacements;for(const auto&[id,s]:i.slots){auto next=std::make_unique<Impl::Slot>(id,++i.slotSerial);next->outgoing=s->outgoing;next->motion=s->motion;next->token=s->token;next->tokenIndex=s->tokenIndex;next->measurement=s->measurement;next->rowMeasurements=s->rowMeasurements;next->checklist=s->checklist;next->media=s->media;replacements.emplace(id,std::move(next));}
     i.finishRequired();
     // Finishing may have captured a newer editor offset than the staged
     // replacement. The settled refresh below clamps it to the h-37 viewport.
@@ -465,9 +467,16 @@ void NativeNotesWorkspace::uploadMedia(Renderer&r){auto&i=*impl_;i.check();
     i.mediaUploadPending=false;if(bindingChanged)++i.compositionRevision;if(entryShapeChanged)i.rebuildEntries();if(i.pose)i.applyPose(*i.pose);
 }
 std::span<const LayerCompositionEntry>NativeNotesWorkspace::entries()const noexcept{return impl_->entries;}
+void NativeNotesWorkspace::compose(std::vector<LayerCompositionEntry>&out,const std::function<void(std::uint64_t,std::vector<LayerCompositionEntry>&)>&decorate)const{
+    const auto&i=*impl_;for(auto*s:i.active){if(auto*plate=s->native->plateScene())out.push_back({plate,s->native->plateAfterDraws()});if(auto*frame=s->native->frameScene())out.push_back({frame,s->native->frameAfterDraws()});if(auto*lines=s->native->linesScene())out.push_back({lines,{}});
+        out.push_back({&s->native->scene(),s->media?s->native->mediaDraws():std::span<const DrawObject>{}});if(s->drawingScene)for(const auto&e:s->drawingScene->entries())out.push_back(e);
+        if(decorate)decorate(s->key,out);if(!s->deleted&&i.field&&i.field->id==s->presentation.noteID())out.push_back({&i.field->scene,s->native->externalEditorAfterDraws()});}
+}
+void NativeNotesWorkspace::announceCards(){auto&i=*impl_;i.check();if(!i.options.cards.content)return;for(auto&[id,s]:i.slots)if(s->initialized&&s->native)i.options.cards.content(s->key,s->presentation);if(i.pose)i.applyPose(*i.pose);}
+std::optional<std::uint64_t>NativeNotesWorkspace::cardKey(std::string_view id)const noexcept{const auto*s=impl_->find(id);return s?std::optional<std::uint64_t>(s->key):std::nullopt;}
 std::uint64_t NativeNotesWorkspace::compositionRevision()const noexcept{return impl_->compositionRevision;}
 bool NativeNotesWorkspace::collectRetired(Renderer&r){auto&i=*impl_;i.check();for(auto it=i.retiredFields.begin();it!=i.retiredFields.end();)if((*it)->scene.releaseResources(r))it=i.retiredFields.erase(it);else ++it;
-    for(auto it=i.retiredCards.begin();it!=i.retiredCards.end();)if((*it)->native->releaseResources(r)&&(*it)->native->releaseMedia(r)&&(*it)->native->releaseEditorIndicator(r)&&(!(*it)->drawingScene||(*it)->drawingScene->releaseResources(r)))it=i.retiredCards.erase(it);else ++it;
+    for(auto it=i.retiredCards.begin();it!=i.retiredCards.end();)if((*it)->native->releaseResources(r)&&(*it)->native->releaseMedia(r)&&(*it)->native->releaseEditorIndicator(r)&&(!(*it)->drawingScene||(*it)->drawingScene->releaseResources(r))){if(i.options.cards.removed)i.options.cards.removed((*it)->key);it=i.retiredCards.erase(it);}else ++it;
     // A closed editor's indicator quad retires once its card is republished
     // without it (best effort: a still-published quad is retried next time).
     for(auto&[id,s]:i.slots){if(!s->native->externalEditorSlot())(void)s->native->releaseEditorIndicator(r);(void)s->native->collectRetired(r);}
@@ -624,7 +633,6 @@ bool NativeNotesWorkspace::editorAt(core::Point client)const noexcept{const auto
         return text::placementContains(i.field->native->placement(),client);}
     return false;
 }
-bool NativeNotesWorkspace::setFeedback(std::string_view id,std::optional<std::string_view>verb,bool pressed,bool reduced,double time){auto&i=*impl_;i.check();need(std::isfinite(time),"Invalid Notes feedback clock");if(i.lastTime)time=std::max(time,*i.lastTime);auto*s=i.find(id);if(!s||!s->visible)return false;const bool changed=s->native->setFeedback(verb,pressed,reduced,time);i.lastTime=time;if(i.pose)i.pose->time=time;return changed;}
 bool NativeNotesWorkspace::scrollAt(core::Point point,double delta){
     auto&i=*impl_;i.check();
     if(!std::isfinite(point.x)||!std::isfinite(point.y)||!std::isfinite(delta)||!std::isfinite(point.y+delta))return false;

@@ -14,9 +14,4 @@ struct NotesMotionSample {
 NotesMotionSample notesSectionMotion(bool appearing,core::MotionPoint direction,double elapsed,bool reduceMotion=false);
 NotesMotionSample notesCardMotion(bool appearing,double elapsed,bool reduceMotion=false);
 NotesMotionSample notesMutationMotion(double elapsed,bool reduceMotion=false);
-NotesMotionSample notesToolbarMotion(double elapsed,bool reduceMotion=false);
-NotesMotionSample notesDeletionMenuMotion(double elapsed,bool reduceMotion=false);
-// Dismiss begins at captured presentation opacity; it detaches input at once
-// while retaining only the artwork until active becomes false.
-NotesMotionSample notesMenuMotion(bool appearing,double elapsed,double capturedOpacity=1,bool reduceMotion=false);
 } // namespace endfield::modules

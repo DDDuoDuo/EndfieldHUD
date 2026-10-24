@@ -29,7 +29,7 @@ class LongDocumentCoverage final:public app::ModuleOwner {
 public:
     explicit LongDocumentCoverage(const app::ApplicationModuleContext& c):host_(*c.host),window_(static_cast<HWND>(c.window)),raster_(c.rasterizer),
         manager_(static_cast<ITfThreadMgr*>(c.textManager)),client_(static_cast<TfClientId>(c.textClient)),clock_(c.clock),root_(c.coverageRoot),
-        controls_(c.resource?c.resource("notes.controls"):std::filesystem::path{}),formats_(c.resource?c.resource("common.notesFormat"):std::filesystem::path{}){message_=host_.registerMessage();}
+        formats_(c.resource?c.resource("common.notesFormat"):std::filesystem::path{}){message_=host_.registerMessage();}
     std::string_view name()const noexcept override{return "notesLongDocument";}
     // The fixture field's own text-service notices use a private message.
     app::ModuleRouting routing()const noexcept override{app::ModuleRouting r;r.message=60;return r;}
@@ -82,20 +82,18 @@ public:
     }
 private:
     // UI Automation of a real Notes owner (tools::NotesPreview) on the HUD
-    // window: the projected controls as peers (native/notes_automation.hpp),
-    // invoked through COM exactly as a client would, plus the immediate
-    // placement of a menu opened between frames (a burst click lands on it).
+    // window: the cards' actions as peers (native/notes_automation.hpp),
+    // invoked through COM exactly as a client would.
     // A fresh synthetic store under the area's coverage root; no TSF.
     void automation(app::ModuleCoverage& step){
-        if(controls_.empty()||!clock_)return; // development preview without the staged package
+        if(formats_.empty()||!clock_)return; // development preview without the staged package
         using Microsoft::WRL::ComPtr;const auto rasterBefore=raster_.stats().entries;const auto root=root_/("automation-"+std::to_string(cycles_));
-        const gpu::NativeNotesControlsAssets assets(controls_,{EHUD_NOTES_CONTROLS_SHA,EHUD_NOTES_CONTROLS_COMMIT});
         const std::string textID="0000000C-0000-4000-8000-0000000000A1",todoID="0000000C-0000-4000-8000-0000000000A2",itemID="0000000C-0000-4000-8000-0000000000A3",drawID="0000000C-0000-4000-8000-0000000000A4";
         const std::vector<data::Note> notes{{.id=textID,.kind=data::NoteKind::text,.text="hello world",.x=80,.y=80,.width=240,.height=145,.createdAt=1},
             {.id=todoID,.kind=data::NoteKind::todo,.items={{.id=itemID,.text="first"}},.x=400,.y=80,.width=220,.height=150,.createdAt=2},
             {.id=drawID,.kind=data::NoteKind::drawing,.x=80,.y=260,.width=300,.height=240,.createdAt=3,.drawing=std::string(R"({"version":1,"strokes":[]})")}};
         {
-            tools::NotesPreview preview(window_,raster_,root,assets,false,formats_,notes);const auto metrics=host_.metrics();preview.resize(metrics);
+            tools::NotesPreview preview(window_,raster_,root,false,formats_,notes);const auto metrics=host_.metrics();preview.resize(metrics);
             core::source::DesktopChromeSettings settings;settings.viewport={0,0,metrics.width,metrics.height};settings.module=core::Module::notes;settings.sourceShell=true;
             const auto design=core::source::DesktopChromeLayout::make(settings,{},{}).designToScreen;const auto frame=[&]{preview.update(design,settings,1,clock_(),true);};frame();
             unsigned changes{};auto peers=preview.automation(nullptr,clock_,[&]{++changes;});
@@ -103,7 +101,6 @@ private:
             const auto index=[&](std::string_view id){for(std::size_t n=0;n<peers->size();++n)if(peers->element(n)->id==id)return n;return peers->size();};
             const auto invoke=[&](std::string_view id){ComPtr<IRawElementProviderFragment>f;if(FAILED(peers->child(index(id),&f))||!f)return false;ComPtr<IInvokeProvider>b;return SUCCEEDED(f.As(&b))&&SUCCEEDED(b->Invoke());};
             peers->refresh();
-            step.check(find("tool:text")&&find("tool:todo")&&find("tool:image")&&find("tool:drawing"),"The Notes toolbar is listed while Notes is selected");
             const auto*select=find("note:"+textID+":select");step.check(select&&select->label.ends_with(": hello world")&&select->rect.width>0,"A text card's select peer carries the source noteLabel");
             const auto check="note:"+todoID+":check:"+itemID;const auto*row=find(check);step.check(row&&row->label.ends_with(" first"),"A checklist row's check peer names its item");
             const auto before=row->label;step.check(invoke(check)&&changes==1,"Invoking the check peer runs the owner's check action");
@@ -114,23 +111,6 @@ private:
             step.check(editor&&editor->role==gpu::NotesAutomationRole::edit&&editor->text=="hello world"&&editor->selected&&peers->stats().focusEvents>=1,"The open field is an Edit peer with its draft and the HUD's focus");
             {ComPtr<IRawElementProviderFragment>f;ComPtr<IValueProvider>v;step.check(SUCCEEDED(peers->child(index(editorID),&f))&&SUCCEEDED(f.As(&v))&&SUCCEEDED(v->SetValue(L"replaced draft")),"The Edit peer accepts a new value");}
             peers->refresh();step.check(find(editorID)&&find(editorID)->text=="replaced draft","The draft is replaced as one edit");
-            if(!formats_.empty()){
-                // A menu opened by an event is placed at once: a click queued
-                // before the next frame lands on its row instead of dismissing it.
-                step.check(invoke("note:"+textID+":formatSize"),"The font size peer opens its menu");peers->refresh();
-                const gpu::NotesAutomationElement*value{};for(std::size_t n=0;n<peers->size()&&!value;++n)if(peers->element(n)->id.starts_with("notes.format:value:")&&!peers->element(n)->selected)value=peers->element(n);
-                step.check(value&&find("notes.format:close"),"The open menu lists its rows and close button");const std::string valueID=value->id;
-                const app::PointerEvent down{app::PointerKind::down,app::PointerButton::left,(value->rect.x+value->rect.width/2)/metrics.scale,(value->rect.y+value->rect.height/2)/metrics.scale,MK_LBUTTON};
-                step.check(preview.pointer(down,clock_()),"A click in the same burst reaches the open menu");
-                const app::PointerEvent up{app::PointerKind::up,app::PointerButton::left,down.x,down.y,0};preview.pointer(up,clock_());
-                peers->refresh();step.check(find("notes.format:close")&&find(valueID)&&find(valueID)->selected,"The menu stays open with the clicked size selected");
-                // Its scroll bar (a Windows addition) is a slider over the first shown row.
-                {const auto*scroll=find("notes.format:scroll");step.check(scroll&&scroll->role==gpu::NotesAutomationRole::slider&&scroll->maximum>0&&scroll->largeChange==7,"The size menu lists its scroll bar as a slider");
-                 const auto maximum=scroll->maximum;const auto last="notes.format:value:"+std::to_string(static_cast<std::size_t>(maximum)+6);ComPtr<IRawElementProviderFragment>f;ComPtr<IRangeValueProvider>range;
-                 step.check(SUCCEEDED(peers->child(index("notes.format:scroll"),&f))&&SUCCEEDED(f.As(&range))&&SUCCEEDED(range->SetValue(maximum)),"Its range value scrolls the menu");
-                 peers->refresh();step.check(find(last)&&!find("notes.format:value:0")&&find("notes.format:scroll")->value==maximum,"The last size rows are listed after scrolling to the end");}
-                step.check(preview.key({app::KeyKind::down,VK_ESCAPE},clock_(),tools::NotesKeyModifiers{}),"Escape closes the menu");peers->refresh();step.check(!find("notes.format:close"),"The closed menu's peers leave the group");
-            }
             step.check(preview.finish(),"The field commits");frame();
             // Delete through the card's peers: the confirmation is a peer pair.
             step.check(invoke("note:"+textID+":delete"),"The delete peer asks for confirmation");frame();peers->refresh();
@@ -157,7 +137,7 @@ private:
         step.check(raster_.stats().entries==rasterBefore,"The automation fixture leaves the shared raster cache as it was");
     }
     app::ApplicationHost& host_;HWND window_{};gpu::LayerRasterizer& raster_;ITfThreadMgr* manager_{};TfClientId client_{TF_CLIENTID_NULL};std::uint32_t message_{};unsigned cycles_{};
-    std::function<double()> clock_;std::filesystem::path root_,controls_,formats_;
+    std::function<double()> clock_;std::filesystem::path root_,formats_;
 };
 }
 std::unique_ptr<app::ModuleOwner> notesLongDocumentCoverage(const app::ApplicationModuleContext& context){

@@ -28,7 +28,7 @@ struct Root {std::filesystem::path path=std::filesystem::absolute(std::filesyste
 struct Fixture {
     HWND window;gpu::Renderer&renderer;gpu::LayerRasterizer raster;Root root;std::unique_ptr<tools::NotesPreview>preview;gpu::LayerComposition composition;
     core::source::DesktopChromeSettings settings;core::Matrix4 design,camera{gpu::layerViewportProjection(1280,800)};double time{};
-    Fixture(HWND hwnd,gpu::Renderer&r,const gpu::NativeNotesControlsAssets&assets):window(hwnd),renderer(r){settings.viewport={0,0,1280,800};settings.module=core::Module::notes;settings.sourceShell=true;design=core::source::DesktopChromeLayout::make(settings,{},{}).designToScreen;preview=std::make_unique<tools::NotesPreview>(window,raster,root.path,assets,false);preview->resize({1280,800,96,1,1280,800});frame();}
+    Fixture(HWND hwnd,gpu::Renderer&r,const std::filesystem::path&formats):window(hwnd),renderer(r){settings.viewport={0,0,1280,800};settings.module=core::Module::notes;settings.sourceShell=true;design=core::source::DesktopChromeLayout::make(settings,{},{}).designToScreen;preview=std::make_unique<tools::NotesPreview>(window,raster,root.path,false,formats);preview->resize({1280,800,96,1,1280,800});frame();}
     ~Fixture(){if(!preview)return;try{composition.detach(renderer);preview->release(renderer);}catch(...){renderer.reset();}preview.reset();}
     // Application::Impl::present: owner update, then publishNative (upload,
     // entries, the composition) and the composition's present.
@@ -62,9 +62,8 @@ std::size_t drag(Fixture&f,const data::Note&note,unsigned frames,unsigned perFra
     f.tick();(void)f.preview->pointer({app::PointerKind::up,app::PointerButton::left,samples.back().x,samples.back().y,0},f.time);f.frame();
     return samples.size();
 }
-void run(HWND hwnd,gpu::Renderer&renderer,const gpu::NativeNotesControlsAssets&assets){Fixture f(hwnd,renderer,assets);
-    const auto*tool=f.draw("tool:drawing");check(tool&&tool->opacity>0,"Drawing toolbar is rendered");const auto at=f.project(tool->world,{46,15.5});
-    f.tick();check(f.preview->pointer({app::PointerKind::down,app::PointerButton::left,at.x,at.y,MK_LBUTTON},f.time),"Toolbar press");f.frame();f.tick();f.preview->pointer({app::PointerKind::up,app::PointerButton::left,at.x,at.y,0},f.time);f.frame();
+void run(HWND hwnd,gpu::Renderer&renderer,const std::filesystem::path&formats){Fixture f(hwnd,renderer,formats);
+    f.tick();check(f.preview->tool("tool:drawing",f.time),"The centre Drawing tool creates a drawing");f.frame();
     for(unsigned k=0;k<40;++k){f.tick(.01);f.frame();}
     auto note=f.drawing();
     // 1000 Hz on a 165 Hz display: six samples per frame along a wave across
@@ -90,9 +89,8 @@ void run(HWND hwnd,gpu::Renderer&renderer,const gpu::NativeNotesControlsAssets&a
     report("eraser, first quarter",eraseEarly);report("eraser, last quarter",eraseLate);
     f.frame();f.composition.detach(renderer);f.preview->release(renderer);f.preview.reset();
 }
-std::string ascii(const wchar_t*value){std::string out;for(;*value;++value){check(*value<=127,"Explicit pins are ASCII");out.push_back(static_cast<char>(*value));}return out;}
 }
-int wmain(int argc,wchar_t**argv){const auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);if(FAILED(hr))return 1;int result{};try{check(argc==5,"Pass shader, source Notes controls bundle, manifest SHA, source commit");Window window;gpu::NativeNotesControlsAssets assets(std::filesystem::absolute(argv[2]),{ascii(argv[3]),ascii(argv[4])});gpu::Renderer renderer;renderer.initialize(window.value,1280,800,{gpu::Driver::warpForTests,argv[1],gpu::RenderTarget::offscreenForTests});run(window.value,renderer,assets);renderer.reset();std::cout<<"Notes drawing probe finished\n";}catch(const std::exception&e){std::cerr<<"Notes drawing probe failed: "<<e.what()<<'\n';result=1;}CoUninitialize();return result;}
+int wmain(int argc,wchar_t**argv){const auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);if(FAILED(hr))return 1;int result{};try{check(argc==3,"Pass shader and the Notes format resources");Window window;const auto formats=std::filesystem::absolute(argv[2]);gpu::Renderer renderer;renderer.initialize(window.value,1280,800,{gpu::Driver::warpForTests,argv[1],gpu::RenderTarget::offscreenForTests});run(window.value,renderer,formats);renderer.reset();std::cout<<"Notes drawing probe finished\n";}catch(const std::exception&e){std::cerr<<"Notes drawing probe failed: "<<e.what()<<'\n';result=1;}CoUninitialize();return result;}
 #else
 int main(){return 0;}
 #endif

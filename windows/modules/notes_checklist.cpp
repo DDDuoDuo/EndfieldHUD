@@ -37,7 +37,19 @@ std::vector<NotesAction>NotesChecklistLayout::actions(double offset,const NotesC
     auto append=[&](std::string verb,std::string label,core::Rect bounds){bounds=intersection(bounds,viewport_);if(bounds.width>1&&bounds.height>1)out.push_back({prefix+verb,std::move(verb),std::move(label),bounds,false});};
     for(auto index=first;index<last;++index){const auto&r=rows_[index];const auto y=viewport_.y+r.origin-offset;const auto suffix=":"+r.itemID;
         append("check"+suffix,(r.checked?strings.uncheck:strings.check)+" "+r.text->text,{5,y,21,22});append("editItem"+suffix,strings.edit+" "+r.text->text,textRect(index,offset));
-        append("up"+suffix,strings.up,{width_-58,y,17,22});append("down"+suffix,strings.down,{width_-40,y,17,22});append("remove"+suffix,strings.remove,{width_-22,y,17,22});}
-    out.push_back({prefix+"add","add",strings.add,{7,height_-26,width_-29,21},false});return out;
+        for(const auto&control:rowControls(index,offset))append(control.verb+suffix,control.verb=="up"?strings.up:control.verb=="down"?strings.down:strings.remove,control.frame);}
+    out.push_back({prefix+"add","add",strings.add,{5,height_-25,width_-24,20},false});return out;
+}
+// makeChecklistControls (NotesWorkspace.swift:1438-1463): the row's move up /
+// move down / delete icon buttons, 16 x 16 at row x = w - 63 / 45 / 27 - 4.5,
+// y 3 (the row lies in the viewport, 5 px in). DOCS-210: the Mac draws them
+// 5 px left of its own hit rects (card x w - 58 / 40 / 22, 17 x 22, centred
+// 5 px to the right), against its comment that they are centred in them; the
+// check of the same function is centred. Here the hit and accessibility
+// rects ARE the drawn buttons (the Mac's drawing), so hover, press and the
+// rect a screen reader reports agree.
+std::array<NotesChecklistLayout::RowControl,3>NotesChecklistLayout::rowControls(std::size_t row,double offset)const{
+    need(row<rows_.size(),"TODO row exceeds current index");offset=clampOffset(offset);const auto y=viewport_.y+rows_[row].origin-offset+3;
+    return {{{"up",{viewport_.x+width_-63-4.5,y,16,16}},{"down",{viewport_.x+width_-45-4.5,y,16,16}},{"remove",{viewport_.x+width_-27-4.5,y,16,16}}}};
 }
 } // namespace endfield::modules

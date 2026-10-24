@@ -7,8 +7,9 @@ namespace endfield::modules {
 enum class NotesMediaKind {image,gif,video};
 enum class NotesMediaState {hidden,loading,ready,playing,paused,failed};
 struct NotesMediaStrings {
-    std::string loading{"Loading media…"},play{"▶ Play"},pause{"Ⅱ Pause"};
+    std::string loading{"Loading media…"};
     std::string playAction{"Play"},pauseAction{"Pause"},unavailable{"Image unavailable"};
+    bool operator==(const NotesMediaStrings&)const=default;
 };
 // Sources/NotesMedia.swift NotesMediaError, in source order. Failed media show
 // the error's description in their footer and in the Notes status row.
@@ -45,9 +46,17 @@ struct NotesMediaProgressPose {
     core::Rect fill,handle; // local card coordinates, with the source anchor applied
     double fraction{};bool active{};
 };
-// NotesCanvas image/video local artwork and geometry. Common card/header/grip
-// remain NotesCardPresentation's responsibility. Input is explicit decoded
-// metadata; this class does not inspect files, hold pixels or own playback.
+// NotesWorkspace image/video local artwork and geometry (Mac 1.3.0,
+// :1300-1355; DOCS-207, DOCS-208). Common card/header/grip remain
+// NotesCardPresentation's responsibility. The footer line (8, h - 23, w - 18,
+// 18, 10 regular primary, end truncation) shows only a message: the error's
+// description or "Loading media…"; while one shows, the playback button
+// (5, h - 25, 20 x 20) and the seek rail, fill and handle are hidden. The
+// seek rect (31, h - 25, max(1, w - 50), 20) is the hit and the accessibility
+// slider rect; the rail is 4 px tall centred on it (sliderTrack #252525 /
+// plateLow), the fill 4 px of the theme yellow, the handle 4 x 12 in primary.
+// Input is explicit decoded metadata; this class does not inspect files,
+// hold pixels or own playback.
 class NotesMediaLayout final {
 public:
     NotesMediaLayout(double cardWidth,double cardHeight,NotesMediaKind,
@@ -60,8 +69,9 @@ public:
     double seekSeconds(double localCardX)const;
     NotesLayer footer(const NotesMediaStatus&,const NotesPalette&,const NotesMediaStrings& = {})const;
     std::optional<NotesAction> playbackAction(std::string_view noteID,const NotesMediaStatus&,const NotesMediaStrings& = {})const;
-    // Source rail/fill/handle colors: replacing muted alpha with .3 (not
-    // multiplying it); output has no timer and needs no image rasterization.
+    // True while the footer shows a message (playback and seek hidden).
+    static bool showsMessage(const NotesMediaStatus&)noexcept;
+    // Rail, fill and handle colours; no timer, no image rasterization.
     std::array<NotesColor,3> progressColors(const NotesPalette&)const noexcept;
     static unsigned decodeDimension(int requested=512)noexcept;
     static double normalizedFrameDelay(std::optional<double>)noexcept;

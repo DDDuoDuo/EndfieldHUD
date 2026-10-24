@@ -3,6 +3,7 @@
 #define NOMINMAX
 #endif
 #include "tools/notes_preview.hpp"
+#include "tools/hud_design_overlay_owner.hpp"
 #include "app/utility_executor.hpp"
 #include "core/data/data_store.hpp"
 #include "core/data/file_io.hpp"
@@ -133,13 +134,13 @@ struct Fixture final {
     bool released{};
 
     Fixture(HWND hwnd, gpu::Renderer& r, gpu::LayerRasterizer& raster,
-            const gpu::NativeNotesControlsAssets& assets,const std::filesystem::path&formatRoot={},std::span<const data::Note>initialNotes={}) : renderer(r), ownerWindow(hwnd) {
+            const std::filesystem::path& formats,std::span<const data::Note>initialNotes={}) : renderer(r), ownerWindow(hwnd) {
         settings.viewport = {0, 0, 1280, 800};
         settings.module = core::Module::notes;
         settings.sourceShell = true;
         design = source::DesktopChromeLayout::make(settings, {}, {}).designToScreen;
         published.reserve(132);
-        preview = std::make_unique<tools::NotesPreview>(hwnd, raster, root.path, assets, false,formatRoot,initialNotes);
+        preview = std::make_unique<tools::NotesPreview>(hwnd, raster, root.path, false,formats,initialNotes);
         preview->resize({1280, 800, 96, 1, 1280, 800});
         frame();
     }
@@ -249,9 +250,9 @@ struct Fixture final {
 core::Point pinPoint(const data::Note& note) { return {note.x + note.width - 35.5, note.y + 12}; }
 core::Point deletePoint(const data::Note& note) { return {note.x + note.width - 13.5, note.y + 12}; }
 core::Point confirmationPoint(const data::Note& note, bool confirm) {
-    // Actual NotesCanvas/NotesState rule: 25pt buttons at (right-59, top+27)
-    // and +31pt. These fixture cards are away from the workspace clamp edges.
-    return {note.x + note.width - 59 + (confirm ? 31 : 0) + 12.5, note.y + 27 + 12.5};
+    // NotesWorkspace.deletionActions (Mac 1.3.0): 25pt buttons at (right-61,
+    // top+27) and +31pt. These fixture cards are away from the workspace clamp edges.
+    return {note.x + note.width - 61 + (confirm ? 31 : 0) + 12.5, note.y + 27 + 12.5};
 }
 std::string cardID(const data::Note& note) { return "note/" + note.id + "/card"; }
 
@@ -381,9 +382,9 @@ struct EditorQueueRoute final {
     void resetCounts() { frames = notifications = keys = 0; }
 };
 
-void postedEditorFrames(HWND hwnd, gpu::Renderer& renderer, const gpu::NativeNotesControlsAssets& assets) {
+void postedEditorFrames(HWND hwnd, gpu::Renderer& renderer, const std::filesystem::path& formats) {
     gpu::LayerRasterizer raster;
-    Fixture f(hwnd, renderer, raster, assets); // activateTextServices=false
+    Fixture f(hwnd, renderer, raster, formats); // activateTextServices=false
     const auto focus = GetFocus(), active = GetActiveWindow(), capture = GetCapture();
     const auto note = savedNotes(f.root.path).front();
     check(f.pointer(app::PointerKind::doubleClick, {note.x + 30, note.y + 45}),
@@ -439,29 +440,11 @@ void postedEditorFrames(HWND hwnd, gpu::Renderer& renderer, const gpu::NativeNot
     f.release();
 }
 
-void reentrantClock(HWND hwnd, gpu::Renderer& renderer, const gpu::NativeNotesControlsAssets& assets) {
+void reentrantClock(HWND hwnd, gpu::Renderer& renderer, const std::filesystem::path& formats) {
     gpu::LayerRasterizer raster;
-    Fixture f(hwnd, renderer, raster, assets);
+    Fixture f(hwnd, renderer, raster, formats);
     const auto nativeCapture = GetCapture();
     auto note = savedNotes(f.root.path).front();
-    const auto* tool = f.draw("tool:text");
-    check(tool != nullptr, "Capture clock regression uses the actual Notes toolbar");
-    const auto toolbar = f.project(tool->world, {46, 15.5});
-    f.pointer(app::PointerKind::move, toolbar, app::PointerButton::none);
-    f.tick(.2);
-    // Outer mouse-up clears pressed state but keeps a hovered toolbar. The
-    // nested capture notification removes hover at a later QPC timestamp.
-    const double outer = f.time;
-    f.preview->pointer({app::PointerKind::up, app::PointerButton::left, toolbar.x, toolbar.y, 0}, outer);
-    {
-        CaptureRoute nested(hwnd, *f.preview, outer + .001);
-        nested.send();
-    }
-    check(f.preview->requiresFrames(outer), "Older outer refresh preserves the capture-loss fade instead of rejecting its timestamp");
-    f.frame(); // an already-started older frame resumes after the newer input
-    f.tick(.3);
-    check(!f.preview->requiresFrames(outer), "A stale demand query cannot restart a settled feedback animation");
-
     const core::Point header{note.x + 32, note.y + 12};
     check(f.pointer(app::PointerKind::down, header) && f.preview->pointerLocked(), "Clock regression starts an actual card drag");
     const double beforeMove = f.time;
@@ -497,9 +480,9 @@ void reentrantClock(HWND hwnd, gpu::Renderer& renderer, const gpu::NativeNotesCo
     f.release();
 }
 
-void scrollPreview(HWND hwnd, gpu::Renderer& renderer, const gpu::NativeNotesControlsAssets& assets) {
+void scrollPreview(HWND hwnd, gpu::Renderer& renderer, const std::filesystem::path& formats) {
     gpu::LayerRasterizer raster;
-    Fixture f(hwnd, renderer, raster, assets);
+    Fixture f(hwnd, renderer, raster, formats);
     const auto note = savedNotes(f.root.path).front();
     const core::Point body{note.x + 30, note.y + 45};
     auto wheel = [&](double steps) {
@@ -537,9 +520,9 @@ void scrollPreview(HWND hwnd, gpu::Renderer& renderer, const gpu::NativeNotesCon
     f.release();
 }
 
-void run(HWND hwnd, gpu::Renderer& renderer, const gpu::NativeNotesControlsAssets& assets) {
+void run(HWND hwnd, gpu::Renderer& renderer, const std::filesystem::path& formats) {
     gpu::LayerRasterizer raster;
-    Fixture fixture(hwnd, renderer, raster, assets);
+    Fixture fixture(hwnd, renderer, raster, formats);
     schema(fixture.root.path);
     auto records = savedNotes(fixture.root.path);
     check(records.size() == 1 && data::validUUID(records[0].id), "Preview creates exactly one synthetic plain-text note");
@@ -552,8 +535,9 @@ void run(HWND hwnd, gpu::Renderer& renderer, const gpu::NativeNotesControlsAsset
     check(initial && coordinatesNear(initial->world.values[12], 180) && coordinatesNear(initial->world.values[13], 245) &&
         coordinatesNear(initial->world.values[0], 1) && coordinatesNear(initial->world.values[5], 1),
         "Design-to-screen center calibration yields the same unscaled Notes workspace plane");
-    check(fixture.composition.sceneCount() == 3 && fixture.matching("projected-editor-glyphs") == 0,
-        "Initial toolbar, card and popup carrier share one composition without a duplicate editor");
+    const auto initialScenes = fixture.composition.sceneCount();
+    check(initialScenes >= 1 && fixture.matching("projected-editor-glyphs") == 0,
+        "The initial card shares one composition without a duplicate editor");
     check(!fixture.preview->requiresFrames(fixture.time), "Settled initial Notes starts no permanent frame demand");
     check(!fixture.key(app::KeyKind::character, 'x'), "Keyboard input outside editing does not alter a note");
     renderer.draw(false);
@@ -583,7 +567,7 @@ void run(HWND hwnd, gpu::Renderer& renderer, const gpu::NativeNotesControlsAsset
     }
     check(fixture.key(app::KeyKind::down, VK_HOME, tools::NotesKeyModifiers{true, false, false, false}),
         "Explicit Ctrl+Home moves the source end-selected editor to the insertion test start");
-    check(fixture.composition.sceneCount() == 4 && fixture.matching("projected-editor-glyphs", true) == 1,
+    check(fixture.composition.sceneCount() == initialScenes + 1 && fixture.matching("projected-editor-glyphs", true) == 1,
         "Entering edit publishes one actual glyph surface after its card");
     check(fixture.matching("external-editor-border", true) == 1,
         "Source editor border publishes once after selection, glyphs and caret");
@@ -601,7 +585,7 @@ void run(HWND hwnd, gpu::Renderer& renderer, const gpu::NativeNotesControlsAsset
     records = savedNotes(fixture.root.path);
     check(records.size() == 1 && records[0].text == edited && records[0].createdAt == original.createdAt &&
         records[0].id == original.id, "Editor finish persists exact new Unicode and unchanged original metadata");
-    check(fixture.composition.sceneCount() == 3 && fixture.matching("projected-editor-glyphs") == 0,
+    check(fixture.composition.sceneCount() == initialScenes && fixture.matching("projected-editor-glyphs") == 0,
         "Leaving edit replaces one combined list before retiring its field");
 
     // A normal pointer-down posts selectionChange. Dispatch that WM_APP before
@@ -687,11 +671,8 @@ void run(HWND hwnd, gpu::Renderer& renderer, const gpu::NativeNotesControlsAsset
     fixture.preview->select(core::Module::notes, fixture.time);
     fixture.tick(core::ModuleTransitionStyle::duration + .01);
 
-    const auto* tool = fixture.draw("tool:text");
-    check(tool && tool->opacity > 0, "Source-prepared Text toolbar plate is retained after returning to Notes");
-    const auto createPoint = fixture.project(tool->world, {46, 15.5});
-    check(fixture.pointer(app::PointerKind::down, createPoint), "Original toolbar creates a new text panel through actual input");
-    fixture.pointer(app::PointerKind::up, createPoint);
+    // The centre's add bar (NotesCanvas "tool:text", modules/notes_canvas) creates the desktop note.
+    check(fixture.preview->tool("tool:text", fixture.time), "The centre's Text tool creates a new text panel");
     fixture.tick(.22);
     records = savedNotes(fixture.root.path);
     check(records.size() == 2 && fixture.matching("projected-editor-glyphs", true) == 1,
@@ -723,7 +704,7 @@ void run(HWND hwnd, gpu::Renderer& renderer, const gpu::NativeNotesControlsAsset
     check(fixture.draw(secondCard) && fixture.draw(secondCard)->opacity > 0,
         "Removed row retains outgoing artwork until the original finite delete animation completes");
     fixture.tick(.22);
-    check(!fixture.draw(secondCard) && fixture.composition.sceneCount() == 3,
+    check(!fixture.draw(secondCard) && fixture.composition.sceneCount() == initialScenes,
         "Deletion completion safely removes only the outgoing scene from the shared publication");
     fixture.pointer(app::PointerKind::move, pinPoint(original), app::PointerButton::none);
     fixture.tick(.20);
@@ -778,11 +759,11 @@ void run(HWND hwnd, gpu::Renderer& renderer, const gpu::NativeNotesControlsAsset
     fixture.release();
     check(raster.stats().entries == 0, "Teardown removes every preview-owned raster entry");
 }
-void editingRecovery(HWND hwnd,gpu::Renderer&renderer,const gpu::NativeNotesControlsAssets&assets){
+void editingRecovery(HWND hwnd,gpu::Renderer&renderer,const std::filesystem::path&formats){
     const tools::NotesKeyModifiers control{true,false,false,false};
     {
         gpu::LayerRasterizer raster;data::Note note;note.text="原有中文😀";note.x=180;note.y=245;note.width=240;note.height=145;
-        const std::array initial{note};Fixture f(hwnd,renderer,raster,assets,{},initial);
+        const std::array initial{note};Fixture f(hwnd,renderer,raster,formats,initial);
         check(f.pointer(app::PointerKind::doubleClick,{note.x+30,note.y+45}),"Owner opens explicit short Unicode fixture");
         check(f.key(app::KeyKind::character,'x'),"Owner receives an ordinary plain edit");
         check(f.key(app::KeyKind::down,'Z',control),"Owner routes Ctrl+Z through shared history");
@@ -796,7 +777,7 @@ void editingRecovery(HWND hwnd,gpu::Renderer&renderer,const gpu::NativeNotesCont
     }
     {
         gpu::LayerRasterizer raster;data::Note note;note.text=std::string(65537,'a');note.x=180;note.y=245;note.width=240;note.height=145;
-        const std::array initial{note};Fixture f(hwnd,renderer,raster,assets,{},initial);
+        const std::array initial{note};Fixture f(hwnd,renderer,raster,formats,initial);
         check(f.draw(cardID(note))&&!f.draw("projected-editor-glyphs"),"Imported text beyond editor capacity remains a readable settled card");
         check(f.pointer(app::PointerKind::doubleClick,{note.x+30,note.y+45}),"Oversized editor request is consumed by its existing card owner");
         check(f.preview->mediaError().has_value()&&!f.draw("projected-editor-glyphs")&&f.preview->selected()==core::Module::notes,"Capacity refusal displays recoverable status without dismissing HUD or publishing partial editor");
@@ -825,16 +806,46 @@ void editingRecovery(HWND hwnd,gpu::Renderer&renderer,const gpu::NativeNotesCont
 // Source HUDNotesInteraction.keyDown: Delete/Backspace on the selected note
 // asks for confirmation, only while Notes holds input; owner actions reach the
 // sink with source names.
-void deletionKeys(HWND hwnd,gpu::Renderer&renderer,const gpu::NativeNotesControlsAssets&assets){
-    gpu::LayerRasterizer raster;Fixture f(hwnd,renderer,raster,assets);const auto original=savedNotes(f.root.path).front();
+void deletionKeys(HWND hwnd,gpu::Renderer&renderer,const std::filesystem::path&formats){
+    gpu::LayerRasterizer raster;Fixture f(hwnd,renderer,raster,formats);const auto original=savedNotes(f.root.path).front();
     std::vector<std::string> actions;f.preview->setActionSink([&](std::string_view a){actions.emplace_back(a);});
     check(f.pointer(app::PointerKind::doubleClick,{original.x+30,original.y+45})&&f.key(app::KeyKind::down,VK_END)&&f.key(app::KeyKind::character,'!')&&f.key(app::KeyKind::down,VK_ESCAPE),"Edit and finish the sample note");f.tick(.2);
     check(actions==std::vector<std::string>{"editedText"},"Finishing a changed note raises editedText through the owner sink");
     check(f.pointer(app::PointerKind::down,{original.x+30,original.y+12})&&(f.pointer(app::PointerKind::up,{original.x+30,original.y+12}),true),"Select the note by its header");f.tick(.05);
     check(!f.key(app::KeyKind::down,VK_BACK,tools::NotesKeyModifiers{true,false,false,false}),"A modified Backspace is not a note deletion");
-    check(f.key(app::KeyKind::down,VK_DELETE)&&f.preview->requiresFrames(f.time),"Delete on the selected note opens the deletion confirmation");f.tick(.3);
+    check(f.key(app::KeyKind::down,VK_DELETE),"Delete on the selected note is consumed");f.tick(.3);
+    {std::vector<gpu::NotesAutomationElement> peers;f.preview->automationElements(peers);
+     check(std::any_of(peers.begin(),peers.end(),[&](const auto&e){return e.id=="note:"+original.id+":cancelDelete";}),"Delete on the selected note opens the deletion confirmation");}
     check(savedNotes(f.root.path).size()==1,"The confirmation, not the key, deletes");
     f.preview->select(core::Module::power,f.time);f.tick(1);check(!f.key(app::KeyKind::down,VK_DELETE),"Another module keeps Delete for its own fields");
+    f.release();
+}
+// The redesign controls on the shared design Context (tools/notes_desktop_
+// controls, tools/notes_desktop_popup): each card's buttons and title, the
+// deletion confirmation and the format pop-ups are drawn on the notes plane;
+// presses stay the workspace's actions. Hidden WARP target, synthetic store.
+void desktopControls(HWND hwnd,gpu::Renderer&renderer,const std::filesystem::path&formats){
+    gpu::LayerRasterizer raster;tools::DesignOverlayOptions o;o.raster.pixelsPerPoint=1;o.window=hwnd;tools::DesignOverlayOwner overlay(raster,o);
+    Fixture f(hwnd,renderer,raster,formats);const auto original=savedNotes(f.root.path).front();
+    const auto drawn=[&](std::string_view part){return std::any_of(f.composition.draws().begin(),f.composition.draws().end(),[&](const auto&d){return d.sourceID.find(part)!=std::string::npos&&d.opacity>0;});};
+    check(!drawn("notes.card."),"Without the shared Context no redesign control is drawn");
+    f.preview->setDesignContext(&overlay.context());f.tick(.05);
+    check(drawn("notes.card."),"Each shown card draws its redesign buttons and title on the notes plane");
+    // The two-step deletion: the confirmation rises under the delete button; cancel keeps the note.
+    check(f.pointer(app::PointerKind::down,deletePoint(original))&&(f.pointer(app::PointerKind::up,deletePoint(original)),true),"The card's delete button asks for confirmation");f.tick(.3);
+    check(drawn("notes.deletion"),"The confirmation's two icon buttons are drawn");
+    check(f.pointer(app::PointerKind::down,confirmationPoint(original,false))&&(f.pointer(app::PointerKind::up,confirmationPoint(original,false)),true),"Cancel takes the press");f.tick(.3);
+    check(!drawn("notes.deletion")&&savedNotes(f.root.path).size()==1,"Cancel hides the confirmation and keeps the note");
+    // A format button of the edited note opens its pop-up; a second press closes it.
+    check(f.pointer(app::PointerKind::doubleClick,{original.x+30,original.y+45}),"Open the note for editing");f.tick(.05);
+    const core::Point size{original.x+5+10,original.y+original.height-25+10};
+    check(f.pointer(app::PointerKind::down,size)&&(f.pointer(app::PointerKind::up,size),true),"The font size button opens its menu");f.tick(.3);
+    check(drawn("notes.desk."),"The size menu is drawn on the notes plane");
+    std::vector<gpu::NotesAutomationElement> peers;f.preview->automationElements(peers);
+    check(std::any_of(peers.begin(),peers.end(),[](const auto&e){return e.id.starts_with("notes.desk:");}),"The open pop-up's controls are UI Automation peers");
+    check(f.pointer(app::PointerKind::down,size)&&(f.pointer(app::PointerKind::up,size),true),"A second press on the button closes the menu");f.tick(.3);
+    check(!drawn("notes.desk."),"The closed menu leaves the plane after its fade");
+    check(f.key(app::KeyKind::down,VK_ESCAPE),"Escape finishes the edit");f.tick(.3);
     f.release();
 }
 // Stands in for the system clipboard: every copy and paste crosses the real
@@ -847,8 +858,8 @@ struct SyntheticClipboard final:gpu::NotesClipboard{
     bool writeText(const gpu::NotesClipboardText&v)override{++writes;data=gpu::makeNotesClipboardData(v);return true;}
 };
 std::u16string wide(std::string_view s){std::u16string out(static_cast<std::size_t>(MultiByteToWideChar(CP_UTF8,0,s.data(),static_cast<int>(s.size()),nullptr,0)),u'\0');MultiByteToWideChar(CP_UTF8,0,s.data(),static_cast<int>(s.size()),reinterpret_cast<wchar_t*>(out.data()),static_cast<int>(out.size()));return out;}
-void clipboardKeys(HWND hwnd,gpu::Renderer&renderer,const gpu::NativeNotesControlsAssets&assets){
-    gpu::LayerRasterizer raster;Fixture f(hwnd,renderer,raster,assets);const auto original=savedNotes(f.root.path).front();const auto text=wide(original.text);
+void clipboardKeys(HWND hwnd,gpu::Renderer&renderer,const std::filesystem::path&formats){
+    gpu::LayerRasterizer raster;Fixture f(hwnd,renderer,raster,formats);const auto original=savedNotes(f.root.path).front();const auto text=wide(original.text);
     auto clipboard=std::make_shared<SyntheticClipboard>();f.preview->setClipboard(clipboard);const tools::NotesKeyModifiers control{true,false,false,false},shift{false,true,false,false};
     // Source Command-V with Notes selected and no field: media files only.
     check(!f.key(app::KeyKind::down,'V',control)&&clipboard->fileReads==1&&clipboard->textReads==0,"With no field open, Ctrl+V looks only for pasted media files");
@@ -871,8 +882,8 @@ void clipboardKeys(HWND hwnd,gpu::Renderer&renderer,const gpu::NativeNotesContro
 }
 // Source double-click word and triple-click paragraph selection inside an
 // open field, and Windows word keys, through the owner's pointer/key routes.
-void wordSelection(HWND hwnd,gpu::Renderer&renderer,const gpu::NativeNotesControlsAssets&assets){
-    gpu::LayerRasterizer raster;Fixture f(hwnd,renderer,raster,assets);const auto original=savedNotes(f.root.path).front();const auto text=wide(original.text);const core::Point at{original.x+30,original.y+45};
+void wordSelection(HWND hwnd,gpu::Renderer&renderer,const std::filesystem::path&formats){
+    gpu::LayerRasterizer raster;Fixture f(hwnd,renderer,raster,formats);const auto original=savedNotes(f.root.path).front();const auto text=wide(original.text);const core::Point at{original.x+30,original.y+45};
     check(f.pointer(app::PointerKind::doubleClick,at)&&(f.pointer(app::PointerKind::up,at),true),"A double-click opens the note");
     check(f.pointer(app::PointerKind::doubleClick,at)&&(f.pointer(app::PointerKind::up,at),true)&&f.key(app::KeyKind::character,'Z')&&f.key(app::KeyKind::down,VK_ESCAPE),"A double-click inside the field selects a word, which typing replaces");f.tick(.2);
     const auto edited=wide(savedNotes(f.root.path).front().text);std::size_t a{};while(a<edited.size()&&a<text.size()&&edited[a]==text[a])++a;
@@ -893,8 +904,8 @@ std::vector<std::uint8_t> bitmapFile(int width,int height){
     file.bfType=0x4d42;file.bfOffBits=sizeof(file)+sizeof(info);file.bfSize=static_cast<DWORD>(file.bfOffBits+std::size_t(width)*height*4);
     std::vector<std::uint8_t> out(file.bfSize,0x80);std::memcpy(out.data(),&file,sizeof(file));std::memcpy(out.data()+sizeof(file),&info,sizeof(info));return out;
 }
-void imagePaste(HWND hwnd,gpu::Renderer&renderer,const gpu::NativeNotesControlsAssets&assets){
-    gpu::LayerRasterizer raster;Fixture f(hwnd,renderer,raster,assets);const auto original=savedNotes(f.root.path).front();
+void imagePaste(HWND hwnd,gpu::Renderer&renderer,const std::filesystem::path&formats){
+    gpu::LayerRasterizer raster;Fixture f(hwnd,renderer,raster,formats);const auto original=savedNotes(f.root.path).front();
     auto clipboard=std::make_shared<SyntheticClipboard>();f.preview->setClipboard(clipboard);const tools::NotesKeyModifiers control{true,false,false,false};
     clipboard->files={"C:\\owned-synthetic\\notes.txt"};clipboard->image=bitmapFile(300,150);
     check(f.key(app::KeyKind::down,'V',control),"Ctrl+V skips non-media files and pastes the image data");f.tick(.3);
@@ -917,18 +928,14 @@ void imagePaste(HWND hwnd,gpu::Renderer&renderer,const gpu::NativeNotesControlsA
     f.preview->select(core::Module::power,f.time);f.tick(1);check(!f.preview->dropPoint({400,300}),"Another module does not take Notes drops");
     f.release();
 }
-void preferencesPreview(HWND hwnd,gpu::Renderer&renderer,const gpu::NativeNotesControlsAssets&assets){
-    gpu::LayerRasterizer raster;Fixture f(hwnd,renderer,raster,assets);const auto original=savedNotes(f.root.path).front();
+void preferencesPreview(HWND hwnd,gpu::Renderer&renderer,const std::filesystem::path&formats){
+    gpu::LayerRasterizer raster;Fixture f(hwnd,renderer,raster,formats);const auto original=savedNotes(f.root.path).front();
     check(f.pointer(app::PointerKind::doubleClick,{original.x+30,original.y+45}),"Preference event begins a real isolated Notes draft");
     check(f.key(app::KeyKind::down,VK_END)&&f.key(app::KeyKind::character,'!'),"Unsaved text changes use the existing projected editor");
     check(savedNotes(f.root.path).front().text==original.text,"A draft is not saved by ordinary key input");
-    tools::NotesPreviewPreferences p;p.dark=false;p.reduceMotion=true;p.workspace.palette=endfield::modules::NotesPalette::source(false,{.15,.7,.4,1});p.workspace.editor={{.96,.96,.96,1},p.workspace.palette.accent};p.workspace.compositionColor=p.workspace.palette.primary;p.workspace.strings.textTitle="TEXT · CUSTOM";p.workspace.strings.placeholder="Custom localized placeholder";p.controls.heading="CUSTOM NOTES";p.controls.tools={"A","B","C","D"};
+    tools::NotesPreviewPreferences p;p.dark=false;p.reduceMotion=true;p.workspace.palette=endfield::modules::NotesPalette::source(false,{.15,.7,.4,1});p.workspace.editor={{.96,.96,.96,1},p.workspace.palette.accent};p.workspace.compositionColor=p.workspace.palette.primary;p.workspace.strings.textTitle="TEXT · CUSTOM";p.workspace.strings.placeholder="Custom localized placeholder";
     check(f.preview->applyPreferences(p,f.time),"Event-only appearance changes accept caller-localized labels and source colors");f.frame();
     check(!f.draw("projected-editor-glyphs")&&savedNotes(f.root.path).front().text==original.text+"!","Appearance replacement saves the dirty editor without truncating its document");
-    bool heading{};for(const auto&e:f.preview->entries())if(auto text=e.scene->paintedTextLayout("notes.controls/heading"))heading=text->text()==u"// CUSTOM NOTES";
-    // The literal header is source artwork; verify it through a retained painted
-    // layout rather than reconstructing any text-width algorithm in this test.
-    check(heading,"Caller-localized toolbar heading reaches actual retained text artwork");
     const auto before=raster.stats().rasterizations;check(f.preview->applyPreferences(p,f.time)&&raster.stats().rasterizations==before,"Unchanged preferences do not rebuild Notes artwork or save text again");
     raster.setDefaultFontLanguage(gpu::LayerFontLanguage::korean);
     check(f.preview->applyPreferences(p,f.time),"A default-font change is applied even when all note preference values are equal");f.frame();
@@ -937,29 +944,31 @@ void preferencesPreview(HWND hwnd,gpu::Renderer&renderer,const gpu::NativeNotesC
     const auto koreanRaster=raster.stats().rasterizations;check(f.preview->applyPreferences(p,f.time)&&raster.stats().rasterizations==koreanRaster,"Settled Korean preferences add no repeated raster work");
     f.preview->select(core::Module::power,f.time);f.frame();check(!f.preview->modulePresentation().transitioning&&f.preview->selected()==core::Module::power,"Reduced-motion module selection settles synchronously on the caller clock");f.release();
 }
-void formattingPreview(HWND hwnd,gpu::Renderer&renderer,const gpu::NativeNotesControlsAssets&assets,const std::filesystem::path&formatRoot){
-    gpu::LayerRasterizer raster;Fixture f(hwnd,renderer,raster,assets,formatRoot);
+void formattingPreview(HWND hwnd,gpu::Renderer&renderer,const std::filesystem::path&formats){
+    gpu::LayerRasterizer raster;tools::DesignOverlayOptions o;o.raster.pixelsPerPoint=1;o.window=hwnd;tools::DesignOverlayOwner overlay(raster,o);
+    Fixture f(hwnd,renderer,raster,formats);f.preview->setDesignContext(&overlay.context());
     auto note=savedNotes(f.root.path).front();
     check(f.pointer(app::PointerKind::doubleClick,{note.x+30,note.y+45}),"Combined owner enters rich Notes editing");
-    // Follow the real toolbar/owner route, not just the standalone menu.
-    const core::Point fontButton{note.x+38,note.y+note.height-15};
+    // The redesign's Aa button (29, h - 25, 20 x 20) opens the font menu under the card.
+    const core::Point fontButton{note.x+39,note.y+note.height-15};
     check(f.pointer(app::PointerKind::down,fontButton),"Font toolbar press stays inside Notes owner");
-    f.pointer(app::PointerKind::up,fontButton);f.tick(.2);
+    f.pointer(app::PointerKind::up,fontButton);f.tick(.3);
     check(f.preview->selected()==core::Module::notes&&f.draw("projected-editor-glyphs"),"Opening font chooser keeps current module and editor");
-    const core::Point firstFont{note.x+22,note.y+note.height+4+18};
-    check(f.preview->covers(firstFont),"Projected font menu shields the underlying HUD");
-    check(f.pointer(app::PointerKind::down,firstFont),"Font choice stays inside menu");
-    check(f.pointer(app::PointerKind::up,firstFont),"Font choice release stays inside menu");f.tick(.2);
-    check(f.draw("projected-editor-glyphs")&&f.preview->selected()==core::Module::notes,"Font selection retains editor and module");
-    for(unsigned n=0;n<48;++n){
-        const core::Point wheelPoint{note.x+60,note.y+note.height+4+75};
-        f.time+=.01;check(f.preview->wheel({wheelPoint.x,wheelPoint.y,n<32?-1.:1.,false,0,3},f.time),"Combined font chooser consumes every scrolling step");f.frame();
-        if(n%4==0){f.pointer(app::PointerKind::move,firstFont,app::PointerButton::none);check(f.pointer(app::PointerKind::down,firstFont),"Scrolled font item remains actionable");f.pointer(app::PointerKind::up,firstFont);}
-        check(f.preview->selected()==core::Module::notes&&f.draw("projected-editor-glyphs"),"Font scrolling never dismisses editor or module");
-    }
-    check(f.key(app::KeyKind::down,VK_ESCAPE),"First Escape closes formatting menu rather than HUD");f.tick(.2);
+    // Rows counted from the checked family (scrolled to the fourth row, so it and the next show).
+    const auto row=[&](std::size_t n)->std::optional<core::Point>{std::vector<gpu::NotesAutomationElement> peers;f.preview->automationElements(peers);std::optional<std::size_t> k;
+        for(const auto&e:peers){if(!e.id.starts_with("notes.desk:")||e.role==gpu::NotesAutomationRole::slider)continue;if(!k&&e.selected)k=0;else if(k)++*k;
+            if(k&&*k==n)return core::Point{e.rect.x+e.rect.width/2,e.rect.y+e.rect.height/2};}return std::nullopt;};
+    check(std::any_of(f.composition.draws().begin(),f.composition.draws().end(),[](const auto&d){return d.sourceID.find("notes.desk.")!=std::string::npos;}),"The font menu is drawn on the notes plane");
+    const auto first=row(0);check(first.has_value(),"The open font menu lists its rows");
+    check(f.preview->covers(*first),"The open font menu shields the underlying HUD");
+    for(unsigned n=0;n<24;++n){f.time+=.01;check(f.preview->wheel({first->x,first->y,n<16?-1.:1.,false,0,3},f.time),"The font menu consumes every scrolling step");f.frame();
+        check(f.preview->selected()==core::Module::notes&&f.draw("projected-editor-glyphs"),"Font scrolling never dismisses editor or module");}
+    check(f.key(app::KeyKind::down,VK_ESCAPE),"First Escape closes formatting menu rather than HUD");f.tick(.3);
     check(f.draw("projected-editor-glyphs"),"Menu dismissal preserves text editing");
-    check(f.key(app::KeyKind::down,VK_ESCAPE),"Second Escape completes editing rather than HUD");f.tick(.2);
+    check(f.pointer(app::PointerKind::down,fontButton)&&(f.pointer(app::PointerKind::up,fontButton),true),"The font menu opens again");f.tick(.3);
+    const auto pick=row(1);check(pick.has_value()&&f.pointer(app::PointerKind::down,*pick)&&(f.pointer(app::PointerKind::up,*pick),true),"A family pick applies and closes the menu");f.tick(.3);
+    check(!row(0)&&f.draw("projected-editor-glyphs"),"The pick closed the menu and kept the editor");
+    check(f.key(app::KeyKind::down,VK_ESCAPE),"Escape completes editing rather than HUD");f.tick(.2);
     check(!f.draw("projected-editor-glyphs"),"Finishing edits retires editor only");
     check(savedNotes(f.root.path).front().text==note.text,"Selecting font does not alter note text");
     f.release();
@@ -968,7 +977,7 @@ void formattingPreview(HWND hwnd,gpu::Renderer&renderer,const gpu::NativeNotesCo
 
 // The Mac import relink ledger beside an existing data root (production
 // persistent mode): loading the owner reconciles it with the stored notes.
-void relinkLedger(HWND hwnd,gpu::Renderer&renderer,const gpu::NativeNotesControlsAssets&assets){
+void relinkLedger(HWND hwnd,gpu::Renderer&renderer,const std::filesystem::path&formats){
     namespace mig=ehud::migration;TempRoot root;std::filesystem::create_directories(root.path/"Migration");
     data::Note relinked;relinked.id="0000000C-0000-4000-8000-000000000001";relinked.kind=data::NoteKind::image;relinked.x=180;relinked.y=245;relinked.width=240;relinked.height=145;
     relinked.media=data::makeWindowsMediaReference("C:\\Synthetic\\photo.png","photo.png",4,3); // relinked; the ledger write was lost
@@ -977,7 +986,7 @@ void relinkLedger(HWND hwnd,gpu::Renderer&renderer,const gpu::NativeNotesControl
     const auto item=[&](std::string record){mig::MacRelinkItem i;i.id=data::makeUUID();i.store=std::string(mig::relinkNotesMedia);i.recordID=std::move(record);i.displayName="photo.heic";i.lastKnownPath="/Users/someone/photo.heic";i.kind="image";i.macReference=mac;return i;};
     data::detail::replaceFile(root.path/"Migration"/"relink.json",std::nullopt,mig::MacRelinkLedger::encode({item(relinked.id),item("0000000C-0000-4000-8000-000000000002"),item(text.id)}),mig::MacRelinkLedger::maximumBytes);
     gpu::LayerRasterizer raster;const std::array initial{relinked,text};
-    {tools::NotesPreview preview(hwnd,raster,root.path,assets,false,{},initial,{},true);
+    {tools::NotesPreview preview(hwnd,raster,root.path,false,formats,initial,{},true);
      const auto rows=mig::MacRelinkLedger(root.path).items();
      check(rows.size()==3&&rows[0].state==mig::RelinkState::resolved&&rows[0].windowsPath==std::optional<std::string>("C:\\Synthetic\\photo.png"),"Loading the owner resolves a relinked note whose ledger write was lost");
      check(rows[1].state==mig::RelinkState::dismissed&&rows[2].state==mig::RelinkState::dismissed,"A deleted note's row and a note without media are dismissed");
@@ -985,7 +994,7 @@ void relinkLedger(HWND hwnd,gpu::Renderer&renderer,const gpu::NativeNotesControl
     check(savedNotes(root.path).size()==2,"Reconciling the ledger never changes the stored notes");
     // Once the host hands over the shared UtilityExecutor, a deletion's ledger
     // write runs on it (after the record write), not on the owner thread.
-    {app::UtilityExecutor executor([]{});gpu::LayerRasterizer shared;const std::array one{text};Fixture f(hwnd,renderer,shared,assets,{},one);
+    {app::UtilityExecutor executor([]{});gpu::LayerRasterizer shared;const std::array one{text};Fixture f(hwnd,renderer,shared,formats,one);
      std::filesystem::create_directories(f.root.path/"Migration");
      data::detail::replaceFile(f.root.path/"Migration"/"relink.json",std::nullopt,mig::MacRelinkLedger::encode({item(text.id)}),mig::MacRelinkLedger::maximumBytes);
      f.preview->setUtilityExecutor(&executor);const auto accepted=executor.stats().accepted;
@@ -998,33 +1007,26 @@ void relinkLedger(HWND hwnd,gpu::Renderer&renderer,const gpu::NativeNotesControl
 }
 int wmain(int argc, wchar_t** argv) {
     try {
-        check(argc == 5 || argc == 6, "Pass HUD shader, prepared Notes bundle root, pinned manifest SHA and pinned source commit");
-        const auto ascii = [](const wchar_t* value) {
-            std::string result;
-            for (; *value; ++value) {
-                check(*value <= 127, "Fixture build pins are ASCII");
-                result.push_back(static_cast<char>(*value));
-            }
-            return result;
-        };
+        check(argc == 3, "Pass HUD shader and the Notes format resources (resources/notes-format)");
         Apartment apartment;
         Window window;
-        const gpu::NativeNotesControlsAssets assets(std::filesystem::absolute(argv[2]), {ascii(argv[3]), ascii(argv[4])});
+        const auto formats = std::filesystem::absolute(argv[2]);
         gpu::Renderer renderer;
         renderer.initialize(window.hwnd, 1280, 800,
             {gpu::Driver::warpForTests, argv[1], gpu::RenderTarget::offscreenForTests});
-        postedEditorFrames(window.hwnd, renderer, assets);
-        reentrantClock(window.hwnd, renderer, assets);
-        scrollPreview(window.hwnd, renderer, assets);
-        run(window.hwnd, renderer, assets);
-        editingRecovery(window.hwnd,renderer,assets);
-        preferencesPreview(window.hwnd,renderer,assets);
-        deletionKeys(window.hwnd,renderer,assets);
-        clipboardKeys(window.hwnd,renderer,assets);
-        wordSelection(window.hwnd,renderer,assets);
-        imagePaste(window.hwnd,renderer,assets);
-        relinkLedger(window.hwnd,renderer,assets);
-        if(argc==6)formattingPreview(window.hwnd,renderer,assets,std::filesystem::absolute(argv[5]));
+        postedEditorFrames(window.hwnd, renderer, formats);
+        reentrantClock(window.hwnd, renderer, formats);
+        scrollPreview(window.hwnd, renderer, formats);
+        run(window.hwnd, renderer, formats);
+        editingRecovery(window.hwnd,renderer,formats);
+        preferencesPreview(window.hwnd,renderer,formats);
+        deletionKeys(window.hwnd,renderer,formats);
+        clipboardKeys(window.hwnd,renderer,formats);
+        wordSelection(window.hwnd,renderer,formats);
+        imagePaste(window.hwnd,renderer,formats);
+        relinkLedger(window.hwnd,renderer,formats);
+        formattingPreview(window.hwnd,renderer,formats);
+        desktopControls(window.hwnd,renderer,formats);
         renderer.reset();
         std::cout << "Native Notes preview integration: " << checks << " checks passed\n";
         return 0;

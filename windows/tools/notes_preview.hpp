@@ -1,15 +1,25 @@
 #pragma once
 #include "app/overlay_host.hpp"
-#include "native/notes_controls_assets.hpp"
 #include "native/notes_workspace.hpp"
 #include "core/source_desktop_chrome.hpp"
 #include "core/module_presentation.hpp"
-#include "tools/notes_media_menu.hpp"
+#include "core/localization.hpp"
 #include "core/data/file_shelf_store.hpp"
+#include "modules/notes_shelf_choice.hpp"
 #include <functional>
 
 namespace endfield::app { class UtilityExecutor; }
+namespace endfield::modules { class NotesCanvas; }
+namespace endfield::modules::design { class Context; }
 namespace endfield::tools {
+// What the Media sources ask the host to do (HUDNotesInteraction
+// chooseImages / onChooseShelfMedia / the shelf pick), posted as
+// mediaActionMessage: the native file chooser, the File Shelf list, one
+// File Shelf item; at the workspace insertion point.
+struct NotesMediaAction {
+    enum class Kind {chooseLocal,chooseShelf,useShelf};Kind kind;
+    core::Point workspacePoint;std::string itemID;
+};
 struct NotesKeyModifiers {bool control{},shift{},alt{},system{};};
 struct NotesPreviewMediaOptions {
     native::NativeMediaRequestBroker* broker{};
@@ -17,11 +27,22 @@ struct NotesPreviewMediaOptions {
 };
 struct NotesPreviewPreferences {
     native::NativeNotesWorkspaceStyle workspace;
-    modules::NotesControlsStrings controls;
+    core::Language language{core::Language::english};
+    // The Windows file browser's menu title (the Mac's "Choose in Finder").
+    std::string chooseFile{core::chooseInFileExplorer.english};
     bool dark{true},reduceMotion{};
+    bool operator==(const NotesPreviewPreferences&)const=default;
 };
-// Notes module owner. Its scenes enter the caller's one composition and
-// existing frame clock; it never opens an account or service.
+// Notes module owner: the desktop notes (native/notes_workspace.hpp) with
+// their redesign controls, deletion confirmation and formatting pop-ups
+// (tools/notes_desktop_controls.hpp, tools/notes_desktop_popup.hpp), the
+// module selection (core::ModulePresentation) and the one activated TSF
+// manager every editor borrows. The redesigned centre (modules/
+// notes_canvas.hpp) is a design canvas its own owner presents; this owner
+// creates the desktop notes it asks for (tool), runs its Media sources and
+// reports creations and status to it (setCentre). Its scenes enter the
+// caller's one composition and existing frame clock; it never opens an
+// account or service.
 //
 // Development fixture (persistentDataRoot=false, the default): dataRoot must
 // be a NEW absolute directory; it is created here and seeded with one sample
@@ -32,11 +53,25 @@ struct NotesPreviewPreferences {
 // and initialNotes, when given, are upserted into it.
 class NotesPreview final {
 public:
-    NotesPreview(HWND,native::LayerRasterizer&,const std::filesystem::path& dataRoot,
-        const native::NativeNotesControlsAssets&,bool activateTextServices,
+    // formatAssets: resources/notes-format (the colour wheel raster of the
+    // formatting pop-ups).
+    NotesPreview(HWND,native::LayerRasterizer&,const std::filesystem::path& dataRoot,bool activateTextServices,
         const std::filesystem::path& formatAssets={},std::span<const ehud::data::Note> initialNotes={},
         NotesPreviewMediaOptions media={},bool persistentDataRoot=false);
     ~NotesPreview();
+    // The shared design Context (the desktop controls and pop-ups are drawn
+    // on its environment), handed over once the design overlay exists; null
+    // draws no controls. Before any card is shown.
+    void setDesignContext(modules::design::Context*);
+    // The centre canvas (its owner outlives this call; clear it first).
+    void setCentre(modules::NotesCanvas*);
+    // NotesWorkspace.perform(actionID: "tool:text|todo|image|drawing"): the
+    // centre's add bar; "tool:image" finishes desktop editing and asks the
+    // centre for a source (NotesCanvas.presentMediaSources).
+    bool tool(std::string_view action,double time);
+    // The centre Media menu's sources (posted as NotesMediaAction).
+    void chooseFiles(core::Point workspace);
+    void chooseShelf(core::Point workspace);
     // The shared UtilityExecutor, handed over once by the host after
     // construction: the Mac import relink ledger writes that follow Notes'
     // own record writes (a relinked media note resolves its row, a deleted
@@ -53,6 +88,8 @@ public:
     std::optional<NotesMediaAction>takeMediaAction(UINT_PTR generation);
     bool importMedia(std::span<const std::string> explicitPaths,core::Point,double time);
     bool importMedia(ehud::data::ShelfFileAccess,core::Point,double time);
+    // The File Shelf's items: the centre's Media menu (NotesCanvas.
+    // presentShelfMedia), or under the card of a media relink (Windows).
     void presentShelfMedia(std::vector<modules::NotesShelfChoice>,core::Point,double time);
     bool setMediaActive(bool,double time,bool preserveArtwork=false);
     std::optional<double>nextWakeTime()const;
@@ -80,7 +117,10 @@ public:
     std::optional<core::Point> dropPoint(core::Point logical)const;
     bool dropMedia(std::span<const std::string> paths,core::Point logical,double time);
     bool dropImage(std::span<const std::uint8_t> data,core::Point logical,double time);
-    bool showMediaError(std::string,double time); // existing source status row; no dialog/throw-close
+    // A workspace problem (an import, a limit, a busy picker): the centre's
+    // "Notice" toast with "Could not save: " + the message, once per distinct
+    // message (NotesWorkspace.statusMessage; no dialog/throw-close).
+    bool showMediaError(std::string,double time);
     void select(core::Module,double time);
     // The module presentation this owner keeps for the HUD (HUDModuleContent):
     // a redesigned module (a design-library canvas) is entered directionally
@@ -105,10 +145,10 @@ public:
     bool covers(core::Point logicalClientPoint)const;
     // The pointer cursor (ModuleOwner::cursorAt): the I-beam over the open
     // field where a press places the caret (NativeNotesWorkspace::editorAt),
-    // as HUDProjectedTextView.projectedCursor; none while a formatting,
-    // media-source or Shelf menu is open (HUDNotesInteraction.capturesPointer
-    // hit-tests only the menus) or over the deletion confirmation. No
-    // allocation, state change, OS or clock call.
+    // as HUDProjectedTextView.projectedCursor; none while a formatting pop-up
+    // is open (HUDNotesInteraction.capturesPointer hit-tests only the pop-up)
+    // or over the deletion confirmation. No allocation, state change, OS or
+    // clock call.
     bool textCursorAt(core::Point logicalClient)const noexcept;
     bool pointer(const app::PointerEvent&,double time);
     bool wheel(const app::WheelEvent&,double time);
@@ -119,20 +159,19 @@ public:
     bool message(const app::NativeMessage&,std::optional<double> time={});
     void focus(bool);
     // UI Automation (native/notes_automation.hpp): the source HUDNotesInteraction
-    // accessibility views over the projected HUD - the toolbar while Notes is
-    // selected ("tool:text"...), every shown card's NotesCanvas.accessibleActions
-    // ("note:<id>:<verb>"), the deletion confirmation, the video seek sliders,
-    // the open field ("notes:editor:...") and the open retained menu
-    // ("notes.format:<item>", "notes.format:wheel", "notes.media:<item>").
+    // accessibility views over the projected HUD - every shown card's
+    // NotesWorkspace.accessibleActions ("note:<id>:<verb>"), the deletion
+    // confirmation, the video seek sliders, the open field
+    // ("notes:editor:...") and the open formatting pop-up's controls
+    // ("notes.desk:<control id>": buttons, toggles, the brightness slider).
     // Physical client rectangles; nothing without a pose or while the owner
     // accepts no input. Content events only (allocates).
     void automationElements(std::vector<native::NotesAutomationElement>&)const;
-    // HUDNotesInteraction.activateAction -> NotesCanvas.perform(actionID:)
-    // and NotesRetainedMenu.perform(id), through the same owner paths as
-    // pointer input. False for an unknown, hidden or disabled id.
+    // HUDNotesInteraction.activateAction -> NotesWorkspace.perform(actionID:)
+    // and the pop-up's stand-ins, through the same owner paths as pointer
+    // input. False for an unknown, hidden or disabled id.
     bool perform(std::string_view id,double time);
-    // Seek slider (note id, seconds), the color wheel (0...166) or the font/size
-    // menu scroll bar ("notes.format:scroll", first shown row).
+    // Seek slider (note id, seconds) or the colour pop-over's brightness.
     bool setAutomationValue(std::string_view id,double value,double time);
     // Replaces the open field's draft (one undo group; a long value promotes
     // a short field like a paste). False for another id or while composing.

@@ -23,8 +23,13 @@ public:NativeNotesEditorCapacityError():std::length_error("Notes text exceeds th
 };
 struct NativeNotesWorkspaceStyle {
     modules::NotesPalette palette;modules::NotesStrings strings;
+    // HUDNotesInteraction.beginEditing / layoutEditor (Mac 1.3.0, DOCS-133):
+    // the editor plate HUDColor.field #1D1D1D / plateHigh, its border the
+    // theme yellow, square; the caret the theme yellow (Light: #111); the
+    // selection the theme yellow at .35; the text white / black.
     NativeNotesExternalEditorAppearance editor;
     std::array<double,4> selectionColor{.2,.4,.7,.5},compositionColor{1,1,1,1};
+    std::array<double,4> caretColor{1,1,1,1},editorTextColor{1,1,1,1};
     // Detached original AppKit DarkAqua systemRed; light owners supply59/255,48/255.
     std::array<double,4> eraserColor{1,69./255.,58./255.,1};
     // Source media footer captions and NotesMediaError descriptions (source
@@ -34,8 +39,22 @@ struct NativeNotesWorkspaceStyle {
     std::array<std::string,6> mediaErrors{"The saved media reference is invalid.","The original media file is unavailable. Choose it again to restore access.",
         "This file is not a supported image or playable video.","Choose an image below 128 MB and 64 megapixels.","Choose a GIF with no more than 2,000 frames.","This media could not be decoded."};
 };
+// The cards' redesign controls (pin, delete, the editing tools, the footer
+// buttons, the TODO rows' buttons, the title and the scroll thumb:
+// modules::NotesCardPresentation::controls() / title() / thumb()) are drawn
+// by the owner on the design library over each card (tools/
+// notes_desktop_controls.hpp). `card` is a retained card's identity for the
+// workspace's lifetime: content after its presentation changed, posed every
+// frame (card-local points to the screen; opacity 0 hides it), removed once
+// its artwork left every publication.
+struct NativeNotesCardObserver {
+    std::function<void(std::uint64_t card,const modules::NotesCardPresentation&)> content;
+    std::function<void(std::uint64_t card,const core::Matrix4& cardToScreen,float opacity,double time)> posed;
+    std::function<void(std::uint64_t card)> removed;
+};
 struct NativeNotesWorkspaceOptions {
     LayerRasterOptions raster;
+    NativeNotesCardObserver cards;
     // Explicit current adapter capacities, not limits on persisted Notes data.
     // maximumEditorUnits bounds the single-layout field (checklist rows and short
     // notes). Text notes longer than chunkedEditorUnits open in the paragraph-
@@ -170,6 +189,12 @@ public:
     // previous call into their retained texture (in place).
     void uploadMedia(Renderer&);
     std::span<const LayerCompositionEntry> entries()const noexcept;
+    // entries() with the owner's drawing of each card (its controls) right
+    // after the card's own scenes and before its open field, in paint order.
+    void compose(std::vector<LayerCompositionEntry>&,const std::function<void(std::uint64_t card,std::vector<LayerCompositionEntry>&)>& decorate)const;
+    std::optional<std::uint64_t> cardKey(std::string_view noteID)const noexcept;
+    // Every retained card's content again (an observer attached its drawing late).
+    void announceCards();
     std::uint64_t compositionRevision()const noexcept;
     // Call AFTER composition replacement. An attached scene rejects retirement
     // and stays alive; false likewise retains any still-published GPU assets.
@@ -263,7 +288,6 @@ public:
     // measured line index and rebuilds only viewport-bounded card artwork;
     // no text measurement, persistence, timer or full-document bitmap.
     bool scrollAt(core::Point physicalClientPoint,double physicalDeltaY);
-    bool setFeedback(std::string_view noteID,std::optional<std::string_view> verb,bool pressed,bool reduceMotion,double time);
     // UI Automation peers (native/notes_automation.hpp) appended to `out`:
     // NotesCanvas.accessibleActions for every shown card in layer order
     // (bottom first): "select" over the card labelled by the source noteLabel

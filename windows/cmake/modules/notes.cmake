@@ -15,6 +15,58 @@ if(BUILD_TESTING)
   add_test(NAME notes_drawing_ink_contracts COMMAND notes_drawing_ink_tests)
   list(APPEND EHUD_NOTES_TARGETS notes_drawing_ink_tests)
 endif()
+# The redesign's shared rich-text format bar, format toggle and colour
+# pop-over (modules/notes_format_bar.hpp): the Notes centre TEXT note, the
+# Archive editor, the desktop notes' format pop-ups and Projection's pen colour.
+# The desktop cards' redesign controls (modules/notes_card_controls.hpp) build
+# on the same toggles.
+add_library(hud_notes_format modules/notes_format_bar.cpp modules/notes_card_controls.cpp)
+target_include_directories(hud_notes_format PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(hud_notes_format PUBLIC hud_design hud_notes_rich hud_notes PRIVATE hud_desktop_content)
+if(MSVC)
+  target_compile_options(hud_notes_format PRIVATE /W4 /permissive- /EHsc)
+else()
+  target_compile_options(hud_notes_format PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+list(APPEND EHUD_NOTES_TARGETS hud_notes_format)
+# The Notes centre on the redesign (modules/notes_canvas.hpp): TEXT / TODO
+# tabs over Notes/centre.json, Hide/Show and the add bar that creates the
+# desktop notes through the Notes owner.
+add_library(hud_notes_canvas modules/notes_canvas.cpp)
+target_include_directories(hud_notes_canvas PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+# The TEXT note is ArchiveBodyArea with ArchiveRichText (hud_archive_canvas).
+target_link_libraries(hud_notes_canvas PUBLIC hud_notes_format hud_notes_centre hud_archive_canvas)
+if(MSVC)
+  target_compile_options(hud_notes_canvas PRIVATE /W4 /permissive- /EHsc)
+else()
+  target_compile_options(hud_notes_canvas PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+list(APPEND EHUD_NOTES_TARGETS hud_notes_canvas)
+if(BUILD_TESTING)
+  # The Mac oracle (tools/notes_reference.sh): every scene node by node.
+  add_executable(notes_canvas_tests tests/notes_canvas_tests.cpp)
+  target_link_libraries(notes_canvas_tests PRIVATE hud_notes_canvas)
+  add_test(NAME notes_canvas_contracts COMMAND notes_canvas_tests "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/notes-canvas-source.json")
+  list(APPEND EHUD_NOTES_TARGETS notes_canvas_tests)
+endif()
+# The centre's owner (tools/notes_centre_owner.hpp): the canvas over the owner
+# core, Notes/centre.json and the TEXT note's body editor, routed through
+# tools/design_body_route.hpp (shared with the Archive body: it lives beside
+# the editor in hud_archive_owner). The desktop notes owner is
+# hud_notes_preview. app/application.cpp constructs it (constructNotesCentre).
+if(WIN32 AND TARGET hud_archive_owner)
+  target_sources(hud_archive_owner PRIVATE tools/design_body_route.cpp)
+endif()
+if(WIN32 AND TARGET hud_archive_owner AND TARGET hud_notes_preview)
+  add_library(hud_notes_centre_owner tools/notes_centre_owner.cpp)
+  target_include_directories(hud_notes_centre_owner PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+  target_compile_definitions(hud_notes_centre_owner PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
+  target_link_libraries(hud_notes_centre_owner PUBLIC hud_notes_canvas hud_archive_owner hud_notes_preview hud_design_native)
+  list(APPEND EHUD_NOTES_TARGETS hud_notes_centre_owner)
+  if(TARGET hud_application)
+    target_link_libraries(hud_application PUBLIC hud_notes_centre_owner)
+  endif()
+endif()
 # Portable Mac-to-Windows font name table for imported rich runs
 # (core/notes_font_names.hpp); part of the rich text model library.
 target_sources(hud_notes_rich PRIVATE core/notes_font_names.cpp)
@@ -125,28 +177,20 @@ if(WIN32)
     add_test(NAME notes_text_navigation_contracts COMMAND notes_text_navigation_tests)
     list(APPEND EHUD_NOTES_TARGETS notes_text_navigation_tests)
 
-    # The Notes owner suites that need the Mac-exported Notes controls bundle
-    # (app.cmake's runtime inputs). They build in CMakeLists.txt; registering
-    # them here runs the production Notes owner, its menus, TODO/drawing/media
-    # import and the movie fixtures in every configured test run.
-    set(ehud_notes_controls "${ehud_app_inputs}/notes-controls-assets")
-    set(ehud_notes_pins 9d2fcf0eead9eeeab1be4fdbb0e940a0e1e3eedf840ab9e4c63499e40ae70c00 ca04f142185c7de40acd8523bdb563195d90a1d1)
+    # The Notes owner suites (they build in CMakeLists.txt): the production
+    # Notes owner, its redesign controls and pop-ups, TODO/drawing/media
+    # import and the movie fixtures, with the colour wheel of resources/notes-format.
+    set(ehud_notes_format "${CMAKE_CURRENT_SOURCE_DIR}/resources/notes-format")
     set(ehud_notes_movie "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/notes-owned-silent.mp4")
-    if(ehud_app_inputs AND EXISTS "${ehud_notes_controls}")
-      foreach(suite notes_preview notes_media_import notes_checklist_preview notes_media_menu notes_drawing_preview)
-        if(TARGET ${suite}_tests)
-          add_test(NAME ${suite}_contracts COMMAND ${suite}_tests "${CMAKE_CURRENT_SOURCE_DIR}/native/hud.hlsl" "${ehud_notes_controls}" ${ehud_notes_pins})
-          set_tests_properties(${suite}_contracts PROPERTIES TIMEOUT 300)
-        endif()
-      endforeach()
-      if(TARGET notes_format_host_tests)
-        add_test(NAME notes_format_host_contracts COMMAND notes_format_host_tests "${CMAKE_CURRENT_SOURCE_DIR}/native/hud.hlsl" "${ehud_notes_controls}" ${ehud_notes_pins} "${CMAKE_CURRENT_SOURCE_DIR}/resources/notes-format")
-        set_tests_properties(notes_format_host_contracts PROPERTIES TIMEOUT 300)
+    foreach(suite notes_preview notes_media_import notes_checklist_preview notes_drawing_preview)
+      if(TARGET ${suite}_tests)
+        add_test(NAME ${suite}_contracts COMMAND ${suite}_tests "${CMAKE_CURRENT_SOURCE_DIR}/native/hud.hlsl" "${ehud_notes_format}")
+        set_tests_properties(${suite}_contracts PROPERTIES TIMEOUT 300)
       endif()
-      if(TARGET notes_video_import_tests)
-        add_test(NAME notes_video_import_contracts COMMAND notes_video_import_tests "${CMAKE_CURRENT_SOURCE_DIR}/native/hud.hlsl" "${ehud_notes_controls}" ${ehud_notes_pins} "${ehud_notes_movie}")
-        set_tests_properties(notes_video_import_contracts PROPERTIES TIMEOUT 300)
-      endif()
+    endforeach()
+    if(TARGET notes_video_import_tests)
+      add_test(NAME notes_video_import_contracts COMMAND notes_video_import_tests "${CMAKE_CURRENT_SOURCE_DIR}/native/hud.hlsl" "${ehud_notes_format}" "${ehud_notes_movie}")
+      set_tests_properties(notes_video_import_contracts PROPERTIES TIMEOUT 300)
     endif()
     if(TARGET notes_video_poster_tests)
       # The Media Assembly area's pinned CoreMedia 709 oracle (BT.709 posters).
@@ -164,7 +208,7 @@ endif()
 # carrying the samples Windows coalesced) through the production Notes owner
 # in a hidden window on WARP; prints the samples kept and the CPU per move and
 # per frame (rasters, texture creations, in-place regions). Usage:
-#   notes_drawing_probe <native/hud.hlsl> <notes-controls-assets> <sha> <commit>
+#   notes_drawing_probe <native/hud.hlsl> <resources/notes-format>
 if(WIN32 AND BUILD_TESTING AND TARGET hud_notes_preview)
   add_executable(notes_drawing_probe tests/notes_drawing_probe.cpp)
   target_compile_definitions(notes_drawing_probe PRIVATE UNICODE _UNICODE NOMINMAX)
@@ -189,9 +233,7 @@ endif()
 if(WIN32 AND BUILD_TESTING AND TARGET hud_notes_preview)
   add_library(hud_notes_coverage_area STATIC app/areas/notes_coverage.cpp)
   target_include_directories(hud_notes_coverage_area PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-  # The staged Notes controls package is verified against the same build pins.
-  target_compile_definitions(hud_notes_coverage_area PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX
-    EHUD_NOTES_CONTROLS_SHA="9d2fcf0eead9eeeab1be4fdbb0e940a0e1e3eedf840ab9e4c63499e40ae70c00" EHUD_NOTES_CONTROLS_COMMIT="ca04f142185c7de40acd8523bdb563195d90a1d1")
+  target_compile_definitions(hud_notes_coverage_area PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
   target_link_libraries(hud_notes_coverage_area PUBLIC hud_module_registry hud_native hud_notes_preview PRIVATE uiautomationcore oleaut32 ole32)
   list(APPEND EHUD_NOTES_TARGETS hud_notes_coverage_area)
   set_property(GLOBAL APPEND PROPERTY EHUD_APP_AREAS

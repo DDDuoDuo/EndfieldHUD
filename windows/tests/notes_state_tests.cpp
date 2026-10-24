@@ -91,7 +91,7 @@ void pinDeleteAndClose(){
     check(!s.createText(c,0)&&!s.requestDeletion(b),"Other module cannot add or interact with hidden notes");
     check(s.topNote({20,20})==a,"Pinned card remains hit-testable outside Notes");
     check(s.requestDeletion(a)&&s.deletionControls().has_value(),"Pinned card keeps delete confirmation on other tabs");
-    const auto controls=*s.deletionControls();check(controls[0]==State::Rect{111,37,25,25}&&controls[1]==State::Rect{142,37,25,25},"Confirmation source geometry sits beneath header delete control");
+    const auto controls=*s.deletionControls();check(controls[0]==State::Rect{109,37,25,25}&&controls[1]==State::Rect{140,37,25,25},"Confirmation sits beneath the header delete button (x w - 61, Mac 1.3.0 deletionActions)");
     f.failDelete=true;check(!s.confirmDeletion(a)&&s.note(a)&&s.pendingDeletion()==a,"Failed delete preserves note, selection and confirmation");
     f.failDelete=false;check(s.confirmDeletion(a)&&!s.note(a)&&!s.pendingDeletion()&&!s.selection(),"Delete mutates UI only after persistence succeeds");
     s.setPresentation(true);s.select(b);s.beginGesture(b,{0,0},State::Gesture::move);s.dragTo({10,10});const auto count=f.writes;

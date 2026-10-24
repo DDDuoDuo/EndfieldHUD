@@ -23,10 +23,10 @@ NotesMediaLayout::NotesMediaLayout(double w,double h,NotesMediaKind kind,std::op
     need(!legacy||kind==NotesMediaKind::image,"Legacy managed artwork is image-only");
     geometry_.legacy=legacy;
     geometry_.content={5,29,w-10,legacy?h-35:std::max(1.,h-56)};
-    geometry_.footer={8,h-23,kind==NotesMediaKind::video?65:w-18,18};
-    geometry_.playback={6,h-24,66,19};geometry_.hasPlayback=!legacy&&kind!=NotesMediaKind::image;
-    geometry_.seek={78,h-25,std::max(1.,w-97),20};geometry_.hasSeek=!legacy&&kind==NotesMediaKind::video&&duration.has_value();
-    geometry_.rail={geometry_.seek.x,geometry_.seek.y+9,geometry_.seek.width,2};
+    geometry_.footer={8,h-23,w-18,18};
+    geometry_.playback={5,h-25,20,20};geometry_.hasPlayback=!legacy&&kind!=NotesMediaKind::image;
+    geometry_.seek={31,h-25,std::max(1.,w-50),20};geometry_.hasSeek=!legacy&&kind==NotesMediaKind::video&&duration.has_value();
+    geometry_.rail={geometry_.seek.x,geometry_.seek.y+geometry_.seek.height*.5-2,geometry_.seek.width,4};
 }
 core::Rect NotesMediaLayout::fittedImage(unsigned w,unsigned h)const{
     need(w&&h&&w<=65536&&h<=65536,"Invalid decoded media dimensions");const auto&r=geometry_.content;
@@ -42,14 +42,14 @@ NotesLayer NotesMediaLayout::footer(const NotesMediaStatus&s,const NotesPalette&
     result.frame=geometry_.footer;result.bounds={0,0,result.frame.width,result.frame.height};result.text.fontSize=10;result.text.truncateEnd=true;result.text.color=p.primary;
     if(s.localizedError)result.text.text=*s.localizedError;
     else if(s.state==NotesMediaState::loading)result.text.text=strings.loading;
-    else if(kind_!=NotesMediaKind::image)result.text.text=s.state==NotesMediaState::playing?strings.pause:strings.play;
     return result;
 }
+bool NotesMediaLayout::showsMessage(const NotesMediaStatus&s)noexcept{return s.localizedError.has_value()||s.state==NotesMediaState::loading;}
 std::optional<NotesAction>NotesMediaLayout::playbackAction(std::string_view id,const NotesMediaStatus&s,const NotesMediaStrings&strings)const{
     if(!geometry_.hasPlayback)return {};need(!id.empty(),"Media action requires note identity");
     return NotesAction{"note:"+std::string(id)+":mediaPlayback","mediaPlayback",s.state==NotesMediaState::playing?strings.pauseAction:strings.playAction,geometry_.playback};
 }
-std::array<NotesColor,3>NotesMediaLayout::progressColors(const NotesPalette&p)const noexcept{auto rail=p.muted;rail[3]=.3;return {rail,p.accent,p.primary};}
+std::array<NotesColor,3>NotesMediaLayout::progressColors(const NotesPalette&p)const noexcept{return {p.rail,p.accent,p.primary};}
 unsigned NotesMediaLayout::decodeDimension(int n)noexcept{return static_cast<unsigned>(std::clamp(n,32,768));}
 double NotesMediaLayout::normalizedFrameDelay(std::optional<double>v)noexcept{return !v||!std::isfinite(*v)||*v<=0?.1:std::clamp(*v,.04,600.);}
 NotesMediaProgress::NotesMediaProgress(const NotesMediaLayout&layout){if(layout.geometry().hasSeek){seek_=layout.geometry().seek;duration_=*layout.duration();}}
@@ -63,7 +63,7 @@ void NotesMediaProgress::update(double time,std::optional<double>preview,bool an
 NotesMediaProgressPose NotesMediaProgress::sample(double now)const{
     need(std::isfinite(now),"Nonfinite media progress clock");if(!duration_)return {};
     const double width=from_+(to_-from_)*std::clamp(now-start_,0.,1.),mid=seek_.y+seek_.height*.5;
-    return {{seek_.x,mid-1,width,2},{seek_.x+width-2.5,mid-4,5,8},width/seek_.width,active_&&now<start_+1};
+    return {{seek_.x,mid-2,width,4},{seek_.x+width-2,mid-6,4,12},width/seek_.width,active_&&now<start_+1};
 }
 bool NotesMediaProgress::needsFrame(double now)const{need(std::isfinite(now),"Nonfinite media progress clock");return active_&&now<start_+1;}
 } // namespace endfield::modules

@@ -13,12 +13,11 @@ unsigned checks{};void check(bool v,const char*s){++checks;if(!v)throw std::runt
 struct Window {HWND hwnd{};ATOM atom{};Window(){WNDCLASSW w{};w.lpfnWndProc=DefWindowProcW;w.hInstance=GetModuleHandleW(nullptr);w.lpszClassName=L"EndfieldOwnedMovieImport";atom=RegisterClassW(&w);check(atom!=0,"Register owned movie-import fixture");hwnd=CreateWindowExW(WS_EX_NOREDIRECTIONBITMAP|WS_EX_TOOLWINDOW,w.lpszClassName,L"Hidden silent movie import",WS_POPUP,0,0,1280,800,nullptr,nullptr,w.hInstance,nullptr);check(hwnd&&!IsWindowVisible(hwnd),"Movie fixture stays hidden");}~Window(){if(hwnd)DestroyWindow(hwnd);if(atom)UnregisterClassW(reinterpret_cast<LPCWSTR>(static_cast<ULONG_PTR>(atom)),GetModuleHandleW(nullptr));}};
 struct Temp {std::filesystem::path path=std::filesystem::temp_directory_path()/("endfield-owned-movie-import-"+d::makeUUID());Temp(){check(std::filesystem::create_directory(path),"Create new owned temporary data root");}~Temp(){std::error_code error;std::filesystem::remove_all(path,error);}};
 std::string utf8(const std::filesystem::path&p){const auto bytes=p.u8string();return {reinterpret_cast<const char*>(bytes.data()),bytes.size()};}
-std::string ascii(const wchar_t*p){std::string s;for(;*p;++p){check(*p>0&&*p<128,"Build pins are ASCII");s.push_back(static_cast<char>(*p));}return s;}
-void run(const std::filesystem::path&shader,const n::NativeNotesControlsAssets&assets,const std::filesystem::path&fixture){
+void run(const std::filesystem::path&shader,const std::filesystem::path&formats,const std::filesystem::path&fixture){
     std::ifstream input(fixture,std::ios::binary);std::array<std::uint8_t,1701>bytes{};input.read(reinterpret_cast<char*>(bytes.data()),static_cast<std::streamsize>(bytes.size()));check(input&&input.peek()==std::char_traits<char>::eof()&&c::packet::sha256(bytes)=="0de10d53a6946351f127b78b738c68658708cd91e932164d110ca6ec2f8579cf","Only pinned authored 64x64 silent red/blue H.264 fixture is accepted");
     Window window;Temp temp;const auto file=temp.path/L"owned-silent.mp4",store=temp.path/L"synthetic-notes";{std::ofstream output(file,std::ios::binary);output.write(reinterpret_cast<const char*>(bytes.data()),static_cast<std::streamsize>(bytes.size()));check(bool(output),"Write tiny movie only beneath owned temporary root");}
     n::Renderer renderer;renderer.initialize(window.hwnd,1280,800,{n::Driver::hardware,shader,n::RenderTarget::offscreenForTests,true});const auto camera=n::layerViewportProjection(1280,800);renderer.setCamera(camera);n::LayerRasterizer raster;n::LayerComposition composition;
-    t::NotesPreview notes(window.hwnd,raster,store,assets,false);
+    t::NotesPreview notes(window.hwnd,raster,store,false,formats);
     // Composition borrows scene pointers. Detach before NotesPreview destruction
     // on assertion/codec failures as well, otherwise teardown masks the failure
     // with a use-after-free in LayerComposition's destructor.
@@ -38,7 +37,7 @@ void run(const std::filesystem::path&shader,const n::NativeNotesControlsAssets&a
     cleanup.release();check(renderer.stats().mediaLiveBytes==0&&!IsWindowVisible(window.hwnd)&&renderer.stats().presents==0,"Full movie path tears down offscreen without user data, audio, native picker or capture");
 }
 }
-int wmain(int argc,wchar_t**argv){const auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);if(FAILED(hr))return 1;int result{};try{check(argc==6,"Pass shader, Notes assets, manifest SHA, source commit, silent MP4");n::NativeNotesControlsAssets assets(std::filesystem::absolute(argv[2]),{ascii(argv[3]),ascii(argv[4])});run(argv[1],assets,argv[5]);std::cout<<"PASS "<<checks<<" full Notes silent movie import/seek/play checks\n";}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';result=1;}CoUninitialize();return result;}
+int wmain(int argc,wchar_t**argv){const auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);if(FAILED(hr))return 1;int result{};try{check(argc==4,"Pass shader, the Notes format resources and the silent MP4");run(argv[1],std::filesystem::absolute(argv[2]),argv[3]);std::cout<<"PASS "<<checks<<" full Notes silent movie import/seek/play checks\n";}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';result=1;}CoUninitialize();return result;}
 #else
 int main(){return 0;}
 #endif

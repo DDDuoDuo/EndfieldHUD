@@ -67,6 +67,10 @@ enum class FormatKind {font,size,color,bold,italic,underline,strikethrough};
 struct FormatChange {
     FormatKind kind{FormatKind::bold};
     std::string fontName;double fontSize{12};RGBA color;
+    // font / color only: store NO font name / colour (Archive and the centre
+    // TEXT note: the default HarmonyOS face, the #EEEEEE ink; ArchiveRichText.
+    // apply, ArchiveCanvas.swift:1407, :1415). fontName / color are ignored.
+    bool clears{};
 };
 struct HistoryBudget {
     std::size_t maximumGroups{256},maximumBytes{16*1024*1024};

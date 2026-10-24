@@ -11,18 +11,19 @@ namespace endfield::native {
 // (LayerRasterizer::maximumPixels) and 8192-pixel sides. Unchanged otherwise.
 LayerRasterOptions notesRasterOptions(LayerRasterOptions,double width,double height)noexcept;
 struct NativeNotesSceneStats {
-    std::uint64_t contentUpdates{},placementUpdates{},feedbackChanges{};
+    std::uint64_t contentUpdates{},placementUpdates{};
     std::uint64_t frameLoads{}; // large-card plate/header scene loads
     std::uint64_t lineLoads{};  // large text card body-line scene loads
 };
 struct NativeNotesExternalEditorAppearance {
     modules::NotesColor background,border;
-    // Source HUDNotesInteraction: opaque .12 dark / .96 light; accent border.
+    // HUDNotesInteraction.layoutEditor (Mac 1.3.0): opaque HUDColor.field
+    // #1D1D1D / plateHigh #E4E5E0, the theme yellow border, radius 0.
     // Caller supplies appearance explicitly rather than guessing it from text.
 };
 struct NativeNotesExternalEditorSlot {
     core::Rect localRect; // relative to card, NOT the center module
-    double cornerRadius{3},borderWidth{1};
+    double cornerRadius{},borderWidth{1};
     // Actual editor glyph/selection clip must honor this radius. The card
     // backing alone does not establish rounded editor-clip parity.
 };
@@ -46,9 +47,6 @@ public:
     // Content event only. true means caller must replace/upload its combined
     // list before presenting; no resource is retired while still referenced.
     bool syncContent();
-    // Source feedback targets use the caller's current monotonic time and the
-    // exact .06 pressed/.14 hover easeOut. No JSON/raster/resource update here.
-    bool setFeedback(std::optional<std::string_view> verb,bool pressed,bool reduceMotion,double time);
     // The matrix maps saved workspace logical points to owner logical points.
     // The caller's final renderer camera applies physical DPI exactly once.
     // Ordinary pointer/closing/move samples allocate nothing after syncContent.

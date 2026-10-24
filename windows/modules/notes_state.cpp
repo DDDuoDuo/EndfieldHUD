@@ -223,7 +223,9 @@ bool NotesState::confirmDeletion(std::string_view id){
 }
 std::optional<std::array<NotesState::Rect,2>> NotesState::deletionControls()const noexcept {
     if(!pendingDeletion_||!visible(*pendingDeletion_))return {};const auto r=card(*pendingDeletion_)->rect;
-    const auto x=std::min(workspace_.x+workspace_.width-56,std::max(workspace_.x,r.x+r.width-59));
+    // deletionActions (NotesWorkspace.swift:1478-1489): beneath the header's
+    // delete button, w - 61 in 1.3.0 (v1.2.0: w - 59).
+    const auto x=std::min(workspace_.x+workspace_.width-56,std::max(workspace_.x,r.x+r.width-61));
     const auto y=std::min(workspace_.y+workspace_.height-25,std::max(workspace_.y,r.y+27));
     return std::array<Rect,2>{{{x,y,25,25},{x+31,y,25,25}}};
 }
