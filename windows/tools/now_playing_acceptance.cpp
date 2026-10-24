@@ -557,7 +557,7 @@ struct NowPlayingProbe::Impl {
             emit({{"event", "playbackAction"}, {"action", std::string(event.action)},
                 {"source", std::string(m::nowPlayingSourceKey(event.source))}});
         };
-        session = std::make_unique<NowPlayingSession>(service, utility, m::NowPlayingAppearance{}, [] {}, std::move(so));
+        session = std::make_unique<NowPlayingSession>(service, utility, [] {}, std::move(so));
     }
     ~Impl() {
         try {
@@ -628,14 +628,14 @@ struct NowPlayingProbe::Impl {
             // What the HUD presents (a window-title player's length and
             // position are completed by the owner: catalog length, bar
             // fraction), whenever that changes.
-            const auto& shown = session->presentation();
-            if (const auto& t = shown.input().track) {
+            const auto& shown = session->input();
+            if (const auto& t = shown.track) {
                 const auto key = std::to_string(t->position.has_value()) + std::to_string(t->duration.value_or(-1)) + std::to_string(t->isPlaying) +
                                  std::to_string(t->sampledAt) + std::to_string(t->position.value_or(-1));
                 if (key != presentedKey) {
                     presentedKey = key;
                     emit({{"event", "presented"}, {"position", optionalNumber(t->position)}, {"duration", optionalNumber(t->duration)}, {"playing", t->isPlaying},
-                        {"elapsed", shown.elapsedText()}, {"total", shown.durationText()}});
+                        {"elapsed", m::nowPlayingTime(m::nowPlayingElapsed(shown, t->sampledAt))}, {"total", m::nowPlayingTime(t->duration)}});
                 }
             }
         }
@@ -652,7 +652,7 @@ struct NowPlayingProbe::Impl {
             if (std::find(list.begin(), list.end(), name) == list.end() && list.size() < 8) list.push_back(name);
         }
         completed(s);
-        const auto& in = session->presentation().input();
+        const auto& in = session->input();
         const bool presenting = s.fresh && s.media.session && s.media.track && in.track && !in.failed;
         follow(presenting ? application : std::string());
         if (!presenting) return;

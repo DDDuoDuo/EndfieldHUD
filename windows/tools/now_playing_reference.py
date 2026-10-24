@@ -5,30 +5,31 @@ import hashlib,json,os,subprocess,sys
 root=Path(__file__).resolve().parents[2]
 out=Path(sys.argv[1]).resolve() if len(sys.argv)>1 else root/'build/now-playing-reference'
 destination=Path(sys.argv[2]).resolve() if len(sys.argv)>2 else None
-authority='ca04f142185c7de40acd8523bdb563195d90a1d1'
-paths=['Sources/NowPlayingController.swift','Sources/NowPlayingLyrics.swift','Sources/NowPlayingCanvas.swift','Sources/NowPlayingArtwork.swift']
+authority='4fda15a03ba50675e0b12d69a83efdb6526c19f6'  # Mac 1.3.0 (origin/main)
+paths=['Sources/NowPlayingController.swift','Sources/NowPlayingLyrics.swift','Sources/NowPlayingCanvas.swift','Sources/NowPlayingArtwork.swift','Sources/HUDDesignFormat.swift']
 texts={}
 for path in paths:
     b=(root/path).read_bytes();assert b==subprocess.check_output(['git','show',authority+':'+path],cwd=root)
     texts[path]=b.decode()
 def between(text,start,end):return text[text.index(start):text.index(end,text.index(start))]
 controller=texts[paths[0]];canvas=texts[paths[2]]
-source='import Foundation\n'+between(controller,'struct NowPlayingTrack:','\nenum NowPlayingFailure:')+'\n'+between(texts[paths[1]],'struct NowPlayingLyricLine:','\n/// At most two requests')
+source='import Foundation\n'+between(controller,'struct NowPlayingTrack:','\nenum NowPlayingFailure:')+'\n'+between(texts[paths[1]],'struct NowPlayingLyricLine:','\n/// Consecutive failed lookups')
 source+='\nstruct SourceSeek { struct PendingSeek { let value:Double; let sampledAt:Double }\n'+between(controller,'    private func acknowledges(','    private func armSeekRollback()')+'\nfunc test(_ track:NowPlayingTrack,_ value:Double,_ now:Double)->Bool { acknowledges(track,seek:PendingSeek(value:value,sampledAt:now)) }\n}\n'
 source+='''
+enum HUDFormat {
+'''+between(texts[paths[4]],'    static func pad2(','    /// en-US thousands separators')+'''}
 final class SourceCanvas {
-    struct Snapshot { var track:NowPlayingTrack? }; struct Controller { var lyrics:NowPlayingLyrics? }
-    final class Layer { func removeAllAnimations() {} }
-    var active=true,lyricsVisible=true
-    var draggedSlider:String?
-    var snapshot=Snapshot(),controller=Controller(),progressFill=Layer(),progressHandle=Layer()
-    var clockDeadline:Double?,cancelClock:(()->Void)?,clockGeneration=0,time=0.0
-    func now()->Double { time }
-    func stopClock(){clockDeadline=nil;cancelClock=nil;clockGeneration += 1}
-    func tick(){}
-    func scheduleDisplayUpdate(_ delay:Double,_ action:@escaping()->Void)->()->Void { {} }
-    func test()->Double? { reconcileTimer();return clockDeadline }
-'''+between(canvas,'    private func reconcileTimer()','    private func stopClock()')+between(canvas,'    static func time(_ value:','    private func withoutActions(')+'}\n'
+    struct Snapshot { var track:NowPlayingTrack? }; struct Controller { var snapshot=Snapshot(); var lyrics:NowPlayingLyrics? }
+    final class Seek { var isDragging=false; func show(_ seconds:Double,duration total:Double,toward destination:Double?=nil,over interval:TimeInterval=0) {} }
+    var isPresented=true,lyricsVisible=true
+    var seek:Seek?=Seek()
+    var controller=Controller()
+    var clockDeadline:TimeInterval?,cancelClock:(()->Void)?,clockGeneration=0,time=0.0
+    func now()->TimeInterval { time }
+    func tick() {}
+    func scheduleDisplayUpdate(_ delay:TimeInterval,_ action:@escaping()->Void)->()->Void { {} }
+    func test()->Double? { reconcileClock();return clockDeadline }
+'''+between(canvas,'    private func reconcileClock()','    private func tick()')+between(canvas,'    static func time(_ value:','    // MARK: Transport')+'}\n'
 source+=r'''
 func number(_ value:Any?)->Double? { if let v=value as? NSNumber {return v.doubleValue};switch value as? String {case "nan":return .nan;case "inf":return .infinity;case "-inf":return -.infinity;default:return nil} }
 func field(_ value:Double?)->Any {value.flatMap{$0.isFinite ? $0:nil}.map{$0 as Any} ?? NSNull()}
@@ -39,11 +40,11 @@ result["tracks"]=(input["tracks"] as! [[String:Any]]).map { row -> [String:Any] 
  var row=row;let t=track(row["input"] as! [String:Any]);row["expected"]=["title":t.title,"artist":t.artist,"album":t.album,"duration":field(t.duration),"position":field(t.position),"playing":t.isPlaying,"sampledAt":t.sampledAt,"identifier":t.identifier as Any? ?? NSNull(),"artworkRevision":t.artworkRevision as Any? ?? NSNull(),"elapsed":(row["times"] as! [Any]).map{field(t.elapsed(at:number($0)!))},"formatted":(row["times"] as! [Any]).map{SourceCanvas.time(number($0))}];return row
 }
 result["lyrics"]=(input["lyrics"] as! [[String:Any]]).map { row -> [String:Any] in
- var row=row;let l=NowPlayingLyrics(lrc:row["input"] as! String);row["expected"]=l.map{l in ["lines":l.lines.map{["time":$0.time,"text":$0.text] as [String:Any]},"windows":(row["times"] as! [Any]).map{l.window(at:number($0)!)},"boundaries":(row["times"] as! [Any]).map{field(l.nextBoundary(after:number($0)!))}]} as Any? ?? NSNull();return row
+ var row=row;let l=NowPlayingLyrics(lrc:row["input"] as! String);row["expected"]=l.map{l in ["lines":l.lines.map{["time":$0.time,"text":$0.text] as [String:Any]},"windows":(row["times"] as! [Any]).map{l.window(at:number($0)!)},"boundaries":(row["times"] as! [Any]).map{field(l.nextBoundary(after:number($0)!))},"currentIndices":(row["times"] as! [Any]).map{l.currentIndex(at:number($0)!)},"hasContent":l.hasContent]} as Any? ?? NSNull();return row
 }
 result["identities"]=(input["identities"] as! [[String:Any]]).map { row -> [String:Any] in var row=row;row["expected"]=track(row["a"] as! [String:Any]).hasSameIdentity(as:track(row["b"] as! [String:Any]));return row }
 result["seek"]=(input["seek"] as! [[String:Any]]).map { row -> [String:Any] in var row=row;row["expected"]=SourceSeek().test(track(row["track"] as! [String:Any]),number(row["requested"])!,number(row["sampledAt"])!);return row }
-result["deadlines"]=(input["deadlines"] as! [[String:Any]]).map { row -> [String:Any] in var row=row;let c=SourceCanvas();c.snapshot.track=track(row["track"] as! [String:Any]);c.controller.lyrics=(row["lyrics"] as? String).flatMap{NowPlayingLyrics(lrc:$0)};c.time=number(row["now"])!;c.active=row["active"] as? Bool ?? true;c.lyricsVisible=row["lyricsVisible"] as? Bool ?? true;c.draggedSlider=(row["seeking"] as? Bool ?? false) ? "seek":nil;row["expected"]=field(c.test());return row }
+result["deadlines"]=(input["deadlines"] as! [[String:Any]]).map { row -> [String:Any] in var row=row;let c=SourceCanvas();c.controller.snapshot.track=track(row["track"] as! [String:Any]);c.controller.lyrics=(row["lyrics"] as? String).flatMap{NowPlayingLyrics(lrc:$0)};c.time=number(row["now"])!;c.isPresented=row["active"] as? Bool ?? true;c.lyricsVisible=row["lyricsVisible"] as? Bool ?? true;c.seek?.isDragging=row["seeking"] as? Bool ?? false;row["expected"]=field(c.test());return row }
 try JSONSerialization.data(withJSONObject:result,options:[.sortedKeys]).write(to:URL(fileURLWithPath:CommandLine.arguments[2]))
 '''
 out.mkdir(parents=True,exist_ok=True);(out/'oracle.swift').write_text(source)

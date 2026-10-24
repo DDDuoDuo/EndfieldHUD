@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run the unchanged source lyrics/catalog code against synthetic inputs.
 
-Compiles Sources/NowPlayingLyrics.swift and Sources/NowPlayingCatalog.swift
+Compiles the Mac 1.3.0 Sources/NowPlayingLyrics.swift and Sources/NowPlayingCatalog.swift
 verbatim, plus exact slices of the source Track/Application/ArtworkKey types,
 the artwork URL allow-list and the controller's lyric precedence methods. A
 scripted in-memory fetch replaces URLSession: no network request is made.
@@ -13,7 +13,7 @@ import hashlib, json, os, subprocess, sys
 root = Path(__file__).resolve().parents[2]
 out = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else root / 'build/scratch-nowplaying-lyrics-reference'
 destination = Path(sys.argv[2]).resolve() if len(sys.argv) > 2 else root / 'windows/tests/fixtures/now-playing-lyrics-source.json'
-authority = 'ca04f142185c7de40acd8523bdb563195d90a1d1'
+authority = '4fda15a03ba50675e0b12d69a83efdb6526c19f6'  # Mac 1.3.0 (origin/main)
 paths = ['Sources/NowPlayingController.swift', 'Sources/NowPlayingLyrics.swift', 'Sources/NowPlayingCatalog.swift', 'Sources/NowPlayingArtwork.swift']
 texts = {}
 for path in paths:
@@ -33,7 +33,9 @@ source += between(controller, 'enum NowPlayingSource:', '\nenum NowPlayingFailur
 source += between(artwork, 'struct NowPlayingArtworkKey:', '\nprivate final class NowPlayingArtworkToken') + '\n'
 source += lyrics.replace('import Foundation\n', '', 1) + '\n'
 source += catalog.replace('import Foundation\n', '', 1) + '\n'
-source += 'enum SourceArtworkURL {\n' + between(artwork, '    static func isAllowedRemoteURL(', '    /// Synthetic art for isolated') + '}\n'
+source += 'enum SourceArtworkURL {\n' + between(artwork, "    /// NetEase's image CDN serves any requested square", '    /// Synthetic art for isolated') + '}\n'
+# The loader's static size rules only (NowPlayingCatalog.coverURL / coverPixels read its bounds).
+source += 'enum NowPlayingArtworkLoader {\n' + between(artwork, '    static let maximumBytes = 8 * 1_024 * 1_024', '    private(set) var image: CGImage?') + '}\n'
 source += '''
 final class ArtworkStub {
     var provided: [String] = []
@@ -48,10 +50,21 @@ final class SourceController {
     let artworkLoader = ArtworkStub()
     let lyricsLoader: NowPlayingLyricsLoader
     let catalog: NowPlayingCatalog?
-    init(fetch: @escaping NowPlayingLyricsLoader.Fetch, catalog enabled: Bool) {
+    // NowPlayingController.updateLyricsRetry reads these; the scheduler never fires (retries are
+    // driven by the scenario's own steps re-showing the track once its clock passed the due time).
+    let lyricsClock: (() -> TimeInterval)?
+    var lyricsRetryServed: TimeInterval?
+    var lyricsRetry: (due: TimeInterval, cancel: () -> Void)?
+    var scheduled: [TimeInterval] = []
+    func scheduleLyricsRetry(_ delay: TimeInterval, _ action: @escaping () -> Void) -> () -> Void { scheduled.append(delay); return {} }
+    /// `clock` nil: the offline fixture rule (a failure stays the cached negative), as before 1.3.0.
+    init(fetch: @escaping NowPlayingLyricsLoader.Fetch, catalog enabled: Bool, clock: (() -> TimeInterval)?) {
         lyricsLoader = NowPlayingLyricsLoader(fetch: fetch)
         catalog = enabled ? NowPlayingCatalog(fetch: fetch) : nil
+        lyricsClock = clock
+        lyricsLoader.clock = clock; catalog?.clock = clock
         lyricsLoader.onChange = { [weak self] in self?.notifyObservers() }
+        lyricsLoader.onRetry = { [weak self] in self?.updateLyricsRetry() }
         catalog?.onChange = { [weak self] in self?.catalogChanged() }
     }
     func update() { changed() }
@@ -124,13 +137,35 @@ result["matches"] = (input["matches"] as! [[String: Any]]).map { row -> [String:
     return row
 }
 result["covers"] = (input["covers"] as! [String]).map { ["input": $0, "expected": optional(NowPlayingCatalog.coverURL($0)?.absoluteString)] }
+result["sizedCovers"] = (input["sizedCovers"] as! [[String: Any]]).map { row -> [String: Any] in
+    var row = row; row["expected"] = optional(NowPlayingCatalog.coverURL(row["input"] as! String, pixels: (row["pixels"] as! NSNumber).intValue)?.absoluteString); return row
+}
+result["coverPixels"] = (input["coverPixels"] as! [NSNumber]).map { ["drawn": $0, "expected": NowPlayingCatalog.coverPixels(forDrawn: $0.intValue)] as [String: Any] }
+result["remoteCovers"] = (input["remoteCovers"] as! [[String: Any]]).map { row -> [String: Any] in
+    var row = row; row["expected"] = SourceArtworkURL.remoteURL(URL(string: row["url"] as! String)!, pixels: (row["pixels"] as! NSNumber).intValue).absoluteString; return row
+}
+result["pixelSizes"] = (input["pixelSizes"] as! [[String: Any]]).map { row -> [String: Any] in
+    var row = row
+    let scale: CGFloat = (row["scale"] as? String) == "nan" ? .nan : CGFloat(number(row["scale"])!)
+    row["expected"] = NowPlayingArtworkLoader.pixelSize(points: CGFloat(number(row["points"])!), scale: scale); return row
+}
+result["stamps"] = (input["stamps"] as! [[String: Any]]).map { row -> [String: Any] in
+    var row = row
+    let text = (row["input"] as? String) ?? String(repeating: row["repeat"] as! String, count: (row["count"] as! NSNumber).intValue)
+    let output = NowPlayingLyrics.normalizingNetEaseStamps(text)
+    if row["input"] != nil { row["expected"] = output } else { row["unchanged"] = output == text; row["bytes"] = output.utf8.count }
+    return row
+}
+result["backoff"] = (1...7).map { ["failures": $0, "expected": NowPlayingLyricsBackoff.delay(failures: $0)] as [String: Any] }
 result["catalogLyrics"] = (input["catalogLyrics"] as! [String]).map { ["body": $0, "expected": lines(NowPlayingCatalog.decodeLyrics(Data($0.utf8)))] as [String: Any] }
 result["allowedLyrics"] = (input["allowedLyrics"] as! [String]).map { ["url": $0, "expected": NowPlayingLyricsDownload.isAllowedURL(URL(string: $0)!)] as [String: Any] }
 result["allowedArtwork"] = (input["allowedArtwork"] as! [String]).map { ["url": $0, "expected": SourceArtworkURL.isAllowedRemoteURL(URL(string: $0)!)] as [String: Any] }
 result["scenarios"] = (input["scenarios"] as! [[String: Any]]).map { scenario -> [String: Any] in
     var scenario = scenario
     let script = Script(); script.immediate = scenario["immediate"] as? Bool ?? false
-    let owner = SourceController(fetch: { script.fetch($0, $1) }, catalog: scenario["catalog"] as? Bool ?? true)
+    var time: TimeInterval = 0
+    let clocked = scenario["clock"] as? Bool ?? false
+    let owner = SourceController(fetch: { script.fetch($0, $1) }, catalog: scenario["catalog"] as? Bool ?? true, clock: clocked ? { time } : nil)
     scenario["steps"] = (scenario["steps"] as! [[String: Any]]).map { step -> [String: Any] in
         var step = step
         switch step["op"] as! String {
@@ -141,11 +176,17 @@ result["scenarios"] = (input["scenarios"] as! [[String: Any]]).map { scenario ->
         case "hide": owner.hide()
         case "invalidate": owner.invalidate(); owner.update()
         case "complete": script.completions[step["index"] as! Int](body(step["body"]))
+        case "advance": time += number(step["seconds"])!
+        case "forget": owner.lyricsLoader.forgetFailures(); owner.catalog?.forgetFailures()
         default: fatalError("unknown step")
         }
         step["expected"] = ["urls": script.urls, "cancelled": script.cancelled, "lyrics": lines(owner.lyrics),
                             "catalogArtwork": optional(owner.catalog?.artwork?.absoluteString),
                             "catalogLoading": owner.catalog?.isLoading ?? false, "provided": owner.artworkLoader.provided] as [String: Any]
+        if clocked {
+            step["retry"] = ["time": time, "lyrics": optional(owner.lyricsLoader.retryTime), "catalog": optional(owner.catalog?.retryTime),
+                             "scheduled": owner.scheduled] as [String: Any]
+        }
         return step
     }
     return scenario
@@ -255,6 +296,15 @@ allowed_artwork = ['https://p1.music.126.net/a.jpg?param=600y600', 'https://P2.M
                    'https://image-cdn.spotifycdn.com/x', 'https://p1.music.126.net./a.jpg', 'https://u@i.scdn.co/x', 'https://i.scdn.co/x#f',
                    'https://evil.scdn.co/x', 'https://p1.music.126.net/' + 'a' * 2100]
 
+sized_covers = [{'input': 'http://p1.music.126.net/AbC==/109951163.jpg', 'pixels': n} for n in (50, 64, 600, 800, 960, 2048, 3000)]
+sized_covers += [{'input': 'https://p4.music.126.net/x/y.png?param=130y130', 'pixels': 960}, {'input': 'https://i.scdn.co/image/ab67', 'pixels': 960}]
+cover_pixels = [100, 800, 801, 960, 2048, 4000, 0, -5]
+remote_covers = [{'url': u, 'pixels': n} for u in ('https://p1.music.126.net/a.jpg?param=130y130', 'https://P2.MUSIC.126.NET/a.jpg', 'https://i.scdn.co/image/ab67')
+                 for n in (720, 960, 4000)]
+pixel_sizes = [{'points': 480, 'scale': s} for s in (1, 1.5, 2, 2.75, 0, 'nan', 3.999, 4.2675, 8)] + [{'points': 330, 'scale': 2}, {'points': 1, 'scale': 1}]
+stamps = [{'input': x} for x in ('[00:12:34]Line', '[01:02:345]Line', '[00:12.34]Already', '[1:02:03]Hours', '[001:02:03]Three', '[00:12:3]Short', '[00:12:3456]Long',
+                                 '[00:12:34]A\n[00:15:67]B[00:16:00]C', '[ti:x][00:01:02', '[00:aa:00]x', '[００:12:34]wide', '')]
+stamps += [{'repeat': '[00:12:34]', 'count': 52429}, {'repeat': '[00:12:34]', 'count': 52428}]  # 524290 bytes (> 512 KiB): unchanged; 524280: rewritten
 T = lambda **kw: {**base, **kw}
 lrc_body = lambda text: json.dumps({'syncedLyrics': text})
 net_search = search([song()])
@@ -303,11 +353,31 @@ scenarios = [
                                                                {'op': 'invalidate'}]},
     {'name': 'injected backend has no catalog', 'catalog': False, 'steps': [{'op': 'show', 'source': 'netease', 'track': base},
                                                                            {'op': 'complete', 'index': 0, 'body': lrc_body('[00:01] Only lrclib')}]},
+    # B9-B10 (1.3.0): a lookup without an answer is a failure retried after its backoff (5, 15 s ...), never "no lyrics".
+    {'name': 'lrclib failure retries after backoff', 'clock': True, 'steps': [
+        {'op': 'show', 'source': 'spotify', 'track': base}, {'op': 'complete', 'index': 0, 'body': None}, {'op': 'complete', 'index': 1, 'body': None},
+        {'op': 'advance', 'seconds': 4.9}, {'op': 'show', 'source': 'spotify', 'track': base}, {'op': 'advance', 'seconds': .1},
+        {'op': 'show', 'source': 'spotify', 'track': base}, {'op': 'complete', 'index': 2, 'body': None}, {'op': 'complete', 'index': 3, 'body': None},
+        {'op': 'advance', 'seconds': 15}, {'op': 'show', 'source': 'spotify', 'track': base}, {'op': 'complete', 'index': 4, 'body': lrc_body(synced)},
+        {'op': 'show', 'source': 'spotify', 'track': base}]},
+    {'name': 'lrclib answer without a match is final', 'clock': True, 'steps': [
+        {'op': 'show', 'source': 'spotify', 'track': base}, {'op': 'complete', 'index': 0, 'body': None}, {'op': 'complete', 'index': 1, 'body': '[]'},
+        {'op': 'advance', 'seconds': 600}, {'op': 'show', 'source': 'spotify', 'track': base}]},
+    {'name': 'netease refusal is a catalog failure, lrclib meanwhile', 'clock': True, 'steps': [
+        {'op': 'show', 'source': 'netease', 'track': base}, {'op': 'complete', 'index': 0, 'body': json.dumps({'code': -460, 'message': 'Cheating'})},
+        {'op': 'complete', 'index': 1, 'body': lrc_body('[00:01] Lrclib')}, {'op': 'advance', 'seconds': 5}, {'op': 'show', 'source': 'netease', 'track': base},
+        {'op': 'complete', 'index': 2, 'body': net_search}, {'op': 'complete', 'index': 3, 'body': net_lyric}]},
+    {'name': 'netease embedded stamps are normalized', 'steps': [{'op': 'show', 'source': 'netease', 'track': T(lyrics='[00:01:50] Colon stamp\n[00:03:00] Next')},
+                                                                 {'op': 'show', 'source': 'spotify', 'track': T(title='Other', lyrics='[00:01:50] Hours stamp')}]},
+    {'name': 'hidden forgets failures', 'clock': True, 'steps': [
+        {'op': 'show', 'source': 'spotify', 'track': base}, {'op': 'complete', 'index': 0, 'body': None}, {'op': 'complete', 'index': 1, 'body': None},
+        {'op': 'forget'}, {'op': 'show', 'source': 'spotify', 'track': base}]},
 ]
 data = {'schemaVersion': 1, 'sourceCommit': authority, 'sourcePins': {p: hashlib.sha256((root / p).read_bytes()).hexdigest() for p in paths},
         'normalized': normalized, 'artists': artists, 'scores': scores, 'urls': [{'track': t} for t in url_tracks],
         'lyricsURLs': [1, 1901371647, 9007199254740993, -1, 0], 'responses': responses, 'searches': search_rows, 'matches': match_rows,
-        'covers': covers, 'catalogLyrics': catalog_lyrics, 'allowedLyrics': allowed_lyrics, 'allowedArtwork': allowed_artwork, 'scenarios': scenarios}
+        'covers': covers, 'sizedCovers': sized_covers, 'coverPixels': cover_pixels, 'remoteCovers': remote_covers, 'pixelSizes': pixel_sizes, 'stamps': stamps,
+        'catalogLyrics': catalog_lyrics, 'allowedLyrics': allowed_lyrics, 'allowedArtwork': allowed_artwork, 'scenarios': scenarios}
 out.mkdir(parents=True, exist_ok=True)
 (out / 'oracle.swift').write_text(source)
 (out / 'input.json').write_text(json.dumps(data, ensure_ascii=False))

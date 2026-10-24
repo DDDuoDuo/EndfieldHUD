@@ -1,6 +1,5 @@
 #pragma once
 #include "core/scene.hpp"
-#include <array>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -64,6 +63,11 @@ public:
     // board survives hiding and reopening); the memory trace reads its size.
     std::size_t residentBytes()const{return runtime_?runtime_->residentBytes():0;}
     bool manuallyPaused()const noexcept{return manual_;}
+    // OrbiPomSession.bestSoFar (MODS-228): the best including the current
+    // game, from the stored snapshot only (never creates the runtime or runs
+    // script); saveBest commits it. The Personal ID plate and the canvas's
+    // BEST read it.
+    std::int64_t bestSoFar()const noexcept;
     bool start(std::optional<std::uint32_t> seed={});void advance(double seconds);
     void setManuallyPaused(bool);void pause(bool);void saveBest();
     void move(core::Point);void pointerUp(core::Point);bool drop();bool activate(OrbiPomSkill);void cancelSkill();
@@ -71,33 +75,5 @@ private:
     OrbiPomSessionCallbacks callbacks_;std::unique_ptr<OrbiPomRuntimePort>runtime_;
     OrbiPomSnapshot idle_;std::optional<std::string>error_;std::int64_t best_{};
     bool manual_{},recordedFinish_{};
-};
-inline constexpr core::Rect orbiPomBoard{87,88,253,308},orbiPomPlayArea{87,55,253,341};
-core::Point orbiPomWorld(core::Point)noexcept;
-struct OrbiPomPlacement {core::Point center;double size{},angle{},opacity{};bool operator==(const OrbiPomPlacement&)const=default;};
-OrbiPomPlacement orbiPomPlacement(const OrbiPomBody&)noexcept;
-enum class OrbiPomAction {start,pause,restart,cancelRestart,confirmRestart,cancelSkill,clear,wind,shake,swap,rules};
-struct OrbiPomActionHit {OrbiPomAction action{};core::Rect rect;bool enabled{};};
-struct OrbiPomActions {std::array<OrbiPomActionHit,8>items{};std::size_t count{};};
-enum class OrbiPomKey {escape,space,left,right,down,up,pause,clear,wind,shake,swap};
-// Borrowed session survives canvas/HUD recreation. Host routes shared frame
-// cadence only while requiresFrames(); hide/foreground loss resets its elapsed
-// baseline. Menus/rendering/accessibility use the same fixed actions and state.
-class OrbiPomState final {
-public:
-    explicit OrbiPomState(OrbiPomSession&);~OrbiPomState();
-    OrbiPomState(const OrbiPomState&)=delete;OrbiPomState&operator=(const OrbiPomState&)=delete;
-    void setPresented(bool);void setActive(bool);void setForeground(bool);void setRulesPresented(bool);
-    bool active()const noexcept{return active_;}bool presented()const noexcept{return presented_;}
-    bool rulesPresented()const noexcept{return rules_;}bool restartConfirmation()const noexcept{return restart_;}
-    bool requiresFrames()const noexcept;bool boardDimmed()const noexcept;
-    OrbiPomActions actions()const noexcept;
-    bool perform(OrbiPomAction);void advance(double seconds);
-    void move(core::Point);bool down(core::Point);void up(std::optional<core::Point>);
-    bool key(OrbiPomKey,bool repeated=false,bool commandControlOrAlt=false);
-    core::Point keyboardPoint()const noexcept{return keyboard_;}
-private:
-    OrbiPomSession&session_;bool presented_{},active_{},foreground_{true},rules_{},restart_{},pointerDown_{};
-    core::Point keyboard_{115,120};void reconcile();bool shouldRun()const noexcept;
 };
 }

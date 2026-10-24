@@ -175,7 +175,7 @@ std::vector<std::pair<std::string,std::string>>nowPlayingAccessibleAttributes(st
 // The catalog cover an image source shows: the source itself or a URL it
 // embeds (NetEase's orpheus://cache/?http://p3.music.126.net/...jpg?...),
 // accepted by nowPlayingCatalogCoverURL (p1-p4.music.126.net, https,
-// param=600y600). nullopt for any other source.
+// param=800y800). nullopt for any other source.
 std::optional<std::string>nowPlayingPlayerArtworkURL(std::string_view source);
 // Whether a player bar shows the track of its window title: one of the bar's
 // texts (trimmed) is the title of the window's "Title - Artist" caption

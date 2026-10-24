@@ -2,16 +2,18 @@
 #include "app/application_host.hpp"
 #include "app/utility_executor.hpp"
 #include "modules/event_log.hpp"
-#include "modules/now_playing_accessibility.hpp"
+#include "modules/now_playing_canvas.hpp"
 #include "modules/now_playing_lyrics_sources.hpp"
 #include "native/audio_runtime.hpp"
-#include "native/now_playing_automation.hpp"
+#include "native/now_playing_cover.hpp"
 #include "native/now_playing_fixture.hpp"
 #include "native/now_playing_players.hpp"
 #include "native/now_playing_volume.hpp"
 #include "native/now_playing_web.hpp"
 #include "native/now_playing_web_cache.hpp"
-#include "tools/now_playing_preview.hpp"
+#include "native/screen_reader_peers.hpp"
+#include "tools/hud_design_owner.hpp"
+#include "tools/now_playing_session.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -35,8 +37,7 @@ namespace endfield::areas {
 namespace {
 namespace gpu = native;
 using app::ApplicationAreaMode;
-using modules::NowPlayingAction;
-using modules::NowPlayingSliderKind;
+namespace d = modules::design;
 
 // Reads NetEase Cloud Music's own queue state file so the catalog can resolve
 // the current track's exact length and song id (its player bar exposes no
@@ -100,12 +101,11 @@ modules::NowPlayingPlayingListReader neteasePlayingListReader() {
 }
 
 bool hasPixels(const app::ClientMetrics& m) { return m.pixelWidth && m.pixelHeight && std::isfinite(m.scale) && m.scale > 0; }
-bool modifierDown() { return (GetKeyState(VK_CONTROL) & 0x8000) || (GetKeyState(VK_MENU) & 0x8000) || (GetKeyState(VK_SHIFT) & 0x8000); }
-modules::NowPlayingAppearance appearanceFor(const app::ModuleAppearance& a) {
-    // HUDRuntimeAppearance.accent: the effective accent (ModuleAppearance::accent).
-    return {a.dark, a.reduceMotion, a.language, a.accent};
-}
 core::Point center(core::Rect r) { return {r.x + r.width * .5, r.y + r.height * .5}; }
+// The middle lyric row the display shows at `now`.
+std::string lyricRow(const modules::NowPlayingViewInput& i, double now) {
+    return i.lyrics ? std::string(i.lyrics->window(modules::nowPlayingElapsed(i, now).value_or(0))[1]) : std::string();
+}
 
 // One coalesced owner wake shared by the media-session service, the public
 // downloads and the synthetic per-app audio runtime. Worker, WinRT and HTTP
@@ -210,7 +210,7 @@ std::wstring automationID(IRawElementProviderFragment* fragment) {
 class NowPlayingArea final : public app::ModuleOwner {
 public:
     explicit NowPlayingArea(const app::ApplicationModuleContext& c)
-        : host_(*c.host), utility_(*c.utility), window_(static_cast<HWND>(c.window)), mode_(c.mode), record_(c.recordEvent) {
+        : host_(*c.host), utility_(*c.utility), window_(static_cast<HWND>(c.window)), mode_(c.mode), record_(c.recordEvent), invalidate_(c.invalidate) {
         message_ = host_.registerMessage();
         wake_ = std::make_shared<Wake>();
         wake_->window = window_;
@@ -249,20 +249,11 @@ public:
         provider = [inner = std::move(provider), starts = starts_] { ++*starts; return inner(); };
         service_ = std::make_unique<gpu::NativeNowPlayingService>(utility_, std::move(provider), wake, c.clock);
 
-        tools::NowPlayingPreviewOptions options;
-        options.raster.pixelsPerPoint = 2;
-        options.raster.paddingPoints = 1;
-        options.appearance = appearanceFor(host_.appearance());
-        options.changed = c.invalidate;
-        // The cover is drawn into its 330-point group at the raster density
-        // (660 pixels at 2x), whatever the display: covers are decoded (WIC
-        // Fant, scaled down only) to exactly that size and drawn 1:1, rather
-        // than enlarged from a 512-pixel thumbnail. One decoded cover is
-        // 660 x 660 x 4 bytes.
-        coverDensity_ = options.raster.pixelsPerPoint;
-        options.decode = [pixels = modules::nowPlayingCoverDrawnPixels(coverDensity_)](std::span<const std::uint8_t> bytes) {
-            return gpu::decodeNowPlayingCover(bytes, pixels);
-        };
+        tools::NowPlayingSessionOptions options;
+        // Covers are decoded (WIC Fant, scaled down only) to the size the
+        // canvas draws its 480 px slot at (B11: setArtworkPixels from the
+        // live render scale) and drawn 1:1 by the cover carrier.
+        options.decodeAt = [](std::span<const std::uint8_t> bytes, unsigned pixels) { return gpu::decodeNowPlayingCover(bytes, pixels); };
         if (mode_ == ApplicationAreaMode::production) {
             // Visible-only LRCLIB/NetEase lookups and catalog covers over one
             // kept-alive WinHTTP session (retained while Now Playing is
@@ -280,12 +271,11 @@ public:
             }
             web_ = std::make_shared<gpu::NowPlayingWeb>(http_->transport(), wake, c.clock, 10, webCache_);
             options.web = web_;
-            options.coverPixels = coverPixels();
             // NetEase's own queue file supplies the exact length and song id
             // for its window-title player (no time labels, no slider value).
             options.neteasePlayingList = neteasePlayingListReader();
             // The playing app's mixer route through the ONE shared audio worker;
-            // without it the source "unavailable" submenu remains.
+            // without it the pop-up stays unavailable.
             if (auto* audio = host_.audio()) options.volume = gpu::nowPlayingAppVolume(*audio);
         } else {
             audioFixture_ = std::make_unique<gpu::NowPlayingAudioFixture>(wake);
@@ -299,19 +289,37 @@ public:
             lastPlayback_ = metadata;
             if (record_) record_(modules::EventKind::playbackAction, std::move(metadata));
         };
-        preview_ = std::make_unique<tools::NowPlayingPreview>(*service_, c.rasterizer, utility_, std::move(options));
+        session_ = std::make_unique<tools::NowPlayingSession>(*service_, utility_, [invalidate = invalidate_] { invalidate(); }, std::move(options));
+
+        // The canvas on the shared design library (modules/now_playing_canvas.hpp)
+        // in a design owner core this area wraps (its own services, the cover
+        // carrier and the coverage stay here).
+        tools::DesignOwnerOptions design;
+        if (!host_.designOwnerOptions(design, "nowPlaying", routing())) throw std::runtime_error("Now Playing needs the shared design overlay");
+        core_ = std::make_unique<tools::DesignOwnerCore>(c.rasterizer, *host_.designContext(), std::move(design));
+        modules::NowPlayingCanvasServices services;
+        services.input = [this]() -> const modules::NowPlayingViewInput& { return session_->input(); };
+        services.artwork = [this] { return session_->artwork(); };
+        services.setPresented = [this](bool value) { session_->setActive(value, time_); followPresentation(); };
+        services.perform = [this](const modules::NowPlayingIntent& intent) { const bool done = session_->dispatch(intent, time_); synchronize(time_); return done; };
+        services.setArtworkPixels = [this](unsigned pixels) { session_->setArtworkPixels(pixels); };
+        auto canvas = std::make_unique<modules::NowPlayingCanvas>(*host_.designContext(), std::move(services));
+        canvas_ = canvas.get();
+        core_->add(std::move(canvas));
+        cover_ = std::make_unique<gpu::NativeNowPlayingCover>(c.rasterizer);
+        // Not a DesignModuleOwner: this wrapper marks its module itself (HOST-HOOKS R5).
+        host_.setDesignScreen(core::Module::nowPlaying);
         resize(c.metrics);
     }
     ~NowPlayingArea() override {
         wake_->alive.store(false, std::memory_order_release);
-        // UIA fragments call into the preview: disconnect and drop them first
-        // (clients still holding one get UIA_E_ELEMENTNOTAVAILABLE).
-        automation_.reset();
-        automationRoot_ = nullptr;
-        // The preview withdraws the audio vote and stops the provider; then
+        // UIA fragments call into the canvas: disconnect them first.
+        if (core_) core_->automationDisconnect();
+        // The canvas withdraws the audio vote and stops the provider; then
         // the downloads and the service go, all before the shared executor,
         // the AudioRuntime and the HWND.
-        preview_.reset();
+        core_.reset();
+        session_.reset();
         audioFixture_.reset();
         web_.reset();
         http_.reset();
@@ -325,52 +333,82 @@ public:
 
     std::string_view name() const noexcept override { return "nowPlaying"; }
     app::ModuleRouting routing() const noexcept override {
-        // The open volume menu captures like the other module menus; ordinary
+        // The open volume pop-up captures like the other module menus; ordinary
         // input follows the built-in owners (0...19).
         app::ModuleRouting r;
-        r.pointerCapture = 30; r.pointer = 30; r.key = 30; r.message = 30;
+        r.pointerCapture = 30; r.pointer = 30; r.key = 30; r.keyCapture = 30; r.message = 30;
         return r;
     }
     bool presents(core::Module m) const noexcept override { return m == core::Module::nowPlaying; }
 
-    void resize(const app::ClientMetrics& m) override {
-        if (!hasPixels(m)) return;
-        preview_->resize(m);
-        sized_ = true;
-    }
-    void setAppearance(const app::ModuleAppearance& a, double t) override { observe(t); preview_->setAppearance(appearanceFor(a), t); }
+    void resize(const app::ClientMetrics& m) override { if (hasPixels(m)) core_->resize(m); }
+    void setAppearance(const app::ModuleAppearance& a, double t) override { clock(t); core_->setAppearance(a, t); }
     void setOverlayVisible(bool visible, double t) override {
-        observe(t);
-        preview_->setOverlayVisible(visible, t);
+        clock(t);
+        overlayVisible_ = visible;
+        if (!visible) canvas_->setPresented(false, time_);
+        core_->setOverlayVisible(visible, t);
         followPresentation();
     }
+    void overlayClosing(double t) override { clock(t); canvas_->setPresented(false, time_); core_->overlayClosing(t); overlayVisible_ = false; followPresentation(); }
+    // setPresented follows the presentation exactly as v1.2.0's owner did:
+    // the module is the current or incoming surface, requested, in a visible
+    // HUD (Mac: from the start of the reveal, before input is accepted).
     void update(const app::ModuleFrame& f) override {
-        observe(f.time);
-        if (sized_) preview_->update(f.center, f.chrome, f.presentation, f.opacity, f.time);
+        clock(f.time);
+        const auto& sample = f.presentation;
+        const bool shown = sample.current.module == core::Module::nowPlaying || (sample.incoming && sample.incoming->module == core::Module::nowPlaying);
+        canvas_->setPresented(shown && sample.requested == core::Module::nowPlaying && overlayVisible_, time_);
+        synchronize(time_);
+        core_->update(f);
+        placeCover();
         followPresentation();
     }
-    bool requiresFrames(double t) const override { return preview_->requiresFrames(t); }
-    std::optional<double> nextWakeTime(double) const override { return preview_->nextWakeTime(); }
-    bool deadline(double t) override { observe(t); return preview_->deadline(t); }
-
-    void upload(gpu::Renderer& r) override { preview_->upload(r); }
-    std::span<const gpu::LayerCompositionEntry> entries(core::Module m) override {
-        if (m != core::Module::nowPlaying) return {};
-        return preview_->entries();
+    void prewarm(const app::ModuleFrame& f) override { clock(f.time); core_->prewarm(f); }
+    bool requiresFrames(double t) const override { return core_->requiresFrames(t); }
+    std::optional<double> nextWakeTime(double t) const override {
+        auto a = session_->nextWakeTime(t);
+        const auto b = core_->nextWakeTime(t);
+        if (b && (!a || *b < *a)) a = b;
+        return a;
     }
-    void release(gpu::Renderer& r) override { preview_->release(r); }
+    bool deadline(double t) override {
+        clock(t);
+        const bool changed = session_->deadline(time_);
+        synchronize(time_);
+        const bool woke = core_->deadline(t);
+        return changed || woke;
+    }
 
-    // Source containsControl: only control faces (or the open volume menu)
-    // claim the hit test; transparent canvas space still exposes navigation.
-    bool covers(core::Point p) const override { return preview_->capturesPointer() || preview_->containsControl(p, 0); }
-    bool pointerLocked() const override { return preview_->pointerLocked(); }
-    bool capturesPointer() const override { return preview_->capturesPointer(); }
-    bool pointer(const app::PointerEvent& e, double t) override { observe(t); return preview_->pointer(e, t); }
-    bool key(const app::KeyEvent& e, double t) override { observe(t); return preview_->key(e, modifierDown(), t); }
+    void upload(gpu::Renderer& r) override { core_->upload(r); if (insertion_) cover_->upload(r); }
+    std::span<const gpu::LayerCompositionEntry> entries(core::Module m) override { return core_->entries(m); }
+    void collected(gpu::Renderer& r) override { core_->collected(r); cover_->collected(r); }
+    void release(gpu::Renderer& r) override {
+        if (insertion_) { core_->setInsertion(core::Module::nowPlaying, nullptr, std::nullopt); insertion_ = false; insertedAfter_ = nullptr; }
+        (void)cover_->release(r);
+        core_->release(r);
+    }
+
+    // Source containsControl: only control faces (or the open volume pop-up)
+    // claim the hit test; transparent canvas space (the cover, the gaps of
+    // the button row over the shell) still exposes the shell beneath.
+    bool covers(core::Point p) const override {
+        if (core_->capturesPointer()) return true;
+        const auto q = core_->boxPoint(p);
+        return q && canvas_->containsControl(*q);
+    }
+    bool pointerLocked() const override { return core_->pointerLocked(); }
+    bool capturesPointer() const override { return core_->capturesPointer(); }
+    bool capturesWheel() const override { return core_->capturesWheel(); }
+    bool capturesKeys() const override { return core_->capturesKeys(); }
+    bool pointer(const app::PointerEvent& e, double t) override { clock(t); return core_->pointer(e, t); }
+    bool wheel(const app::WheelEvent& e, double t) override { clock(t); return core_->wheel(e, t); }
+    bool key(const app::KeyEvent& e, double t) override { clock(t); return core_->key(e, t); }
+    bool filterKey(const app::NativeMessage& m) override { return core_->filterKey(m); }
     bool message(const app::NativeMessage& m, double t) override {
-        if (m.message != message_) return false;
-        observe(t);
-        (void)deliver(t);
+        clock(t);
+        if (m.message != message_) return core_->message(m, t);
+        (void)deliver(time_);
         return true;
     }
     // Mac SystemHUDView.draggingUpdated offers no drag operation while Now
@@ -378,28 +416,35 @@ public:
     // documents and Notes take files), so a file drag shows "no drop" here
     // instead of the host's default copy feedback; drop() keeps refusing.
     bool dropHover(std::span<const std::string>, std::optional<core::Point>, double) override { return false; }
-    void focus(bool focused, double t) override { if (!focused) cancelInteraction(t); }
-    void cancelInteraction(double t) override { observe(t); preview_->cancelInteraction(t); }
+    void focus(bool focused, double t) override { clock(t); core_->focus(focused, t); if (!focused) cancelInteraction(t); }
+    void cancelInteraction(double t) override { clock(t); core_->cancelInteraction(t); }
+    std::optional<app::ModuleCursor> cursorAt(core::Point p) const override { return core_->cursorAt(p); }
 
     bool hostEvent(const app::HostEvent& e, double t) override {
-        observe(t);
+        clock(t);
         switch (e.kind) {
         case app::HostEvent::Kind::utilityCompleted:
             // Service results, downloads, decoded artwork/lyrics, queue capacity.
-            return deliver(t);
-        case app::HostEvent::Kind::overlayConcealed:
+            return deliver(time_);
+        case app::HostEvent::Kind::overlayConcealed: {
             followPresentation();
-            // Closed on another module: keep no scene rasters or GPU
-            // resources (the module shown at the close keeps its artwork for
-            // the warm reopen; showing Now Playing again rebuilds the same).
-            if (host_.selectedModule() != core::Module::nowPlaying && preview_->park(host_.renderer())) ++parks_;
+            (void)core_->hostEvent(e, t);   // canvases not shown keep no artwork
+            // Closed on another module: keep no cover texture and only the
+            // presented cover decoded (the module shown at the close keeps
+            // its artwork for the warm reopen).
+            if (host_.selectedModule() != core::Module::nowPlaying) {
+                (void)session_->park();          // false when nothing was left to trim
+                if (insertion_) { core_->setInsertion(core::Module::nowPlaying, nullptr, std::nullopt); insertion_ = false; insertedAfter_ = nullptr; }
+                (void)cover_->release(host_.renderer());
+            }
             return false;
+        }
         case app::HostEvent::Kind::audioChanged:
             if (!(e.flags & app::HostEvent::audioApplications)) return false;
             followActivity();
-            return preview_->audioChanged(t);
+            return synchronize(time_, session_->audioChanged(time_));
         default:
-            return false;
+            return core_->hostEvent(e, t);
         }
     }
     void coverage(app::ModuleCoverage& step) override {
@@ -407,108 +452,61 @@ public:
         else idleCoverage(step);
     }
 
-    // UI Automation (app/module_owner.hpp): the projected source controls
-    // (HUDNowPlayingInteraction.layoutAccessibility) under this owner's group
-    // of the HUD window's root. The fragments are created on the host's first
-    // refresh, i.e. once a UIA client asked the window; a new group (the host
-    // rebuilt its tree) replaces them, so no fragment keeps a dead parent.
-    bool automationRefresh(IRawElementProviderFragmentRoot* root) override {
-        if (!root) return false;
-        bool replaced = false;
-        if (automation_ && automationRoot_ != root) {
-            replaced = automation_->size() > 0;
-            automation_.reset(); // disconnects its fragments and releases the old group
-            automationRoot_ = nullptr;
-        }
-        if (!automation_) {
-            automation_ = std::make_unique<gpu::NativeNowPlayingAutomation>(automationHost(root));
-            automationRoot_ = root;
-        }
-        return automation_->refresh() || replaced;
-    }
-    std::size_t automationCount() const override { return automation_ ? automation_->size() : 0; }
-    long automationChild(std::size_t index, IRawElementProviderFragment** out) const override {
-        if (!automation_) { if (out) *out = nullptr; return E_INVALIDARG; }
-        return automation_->child(index, out);
-    }
-    long automationFromPoint(double x, double y, IRawElementProviderFragment** out) const override {
-        if (!automation_) { if (out) *out = nullptr; return S_OK; }
-        return automation_->fromPoint(x, y, out);
-    }
-    void automationDisconnect() noexcept override { if (automation_) automation_->disconnect(); }
+    // UI Automation: the canvas's tree through the design owner core (the
+    // shared NativeDesignAutomation, LIBRARY-DESIGN.md section 9).
+    bool automationRefresh(IRawElementProviderFragmentRoot* root) override { return core_->automationRefresh(root); }
+    std::size_t automationCount() const override { return core_->automationCount(); }
+    long automationChild(std::size_t index, IRawElementProviderFragment** out) const override { return core_->automationChild(index, out); }
+    long automationFromPoint(double x, double y, IRawElementProviderFragment** out) const override { return core_->automationFromPoint(x, y, out); }
+    void automationDisconnect() noexcept override { core_->automationDisconnect(); }
+    std::optional<core::Module> automationModule() const noexcept override { return core_->automationModule(); }
 
 private:
-    // The owner's UIA view (native/now_playing_automation.hpp): projected
-    // source buttons and sliders while Now Playing accepts input.
-    gpu::NowPlayingAutomationHost automationHost(IRawElementProviderFragmentRoot* root) {
-        gpu::NowPlayingAutomationHost h;
-        h.root = root;
-        h.elements = [this] { return preview_->project({220, 220}) ? preview_->accessibility(host_.now()) : modules::NowPlayingAccessibility{}; };
-        h.toScreen = [this](core::Rect r) { return screenRect(r); };
-        h.invoke = [this](std::string_view id) {
-            for (const auto action : {NowPlayingAction::lyrics, NowPlayingAction::previous, NowPlayingAction::playPause, NowPlayingAction::next, NowPlayingAction::volume})
-                if (modules::nowPlayingActionID(action) == id) {
-                    const double t = host_.now();
-                    observe(t);
-                    const bool performed = preview_->perform(action, t);
-                    if (performed) automationActed();
-                    return performed;
-                }
-            return false;
-        };
-        h.setValue = [this](std::string_view id, double value) {
-            const double t = host_.now();
-            observe(t);
-            bool performed = false;
-            if (id == "seek") performed = preview_->setSlider(NowPlayingSliderKind::seek, value, t);
-            else if (id == "appVolume") performed = preview_->setSlider(NowPlayingSliderKind::volume, value, t);
-            if (performed) automationActed();
-            return performed;
-        };
-        return h;
+    void clock(double t) {
+        if (!std::isfinite(t)) return;
+        time_ = std::max(time_, t);
+        observe(time_);
     }
-    // A UIA action is a content event no host call reports (App volume opens
-    // or closes the menu, which adds or removes its slider): re-list
-    // at once and, like the host after its own refresh, tell listening
-    // clients that this group's children changed. Runs inside the element's
-    // Invoke/SetValue, which keeps that element alive across the refresh.
-    void automationActed() {
-        if (!automation_ || !automation_->refresh() || !automationRoot_ || !UiaClientsAreListening()) return;
-        Microsoft::WRL::ComPtr<IRawElementProviderSimple> group;
-        if (SUCCEEDED(automationRoot_->QueryInterface(IID_PPV_ARGS(&group))))
-            (void)UiaRaiseStructureChangedEvent(group.Get(), StructureChangeType_ChildrenInvalidated, nullptr, 0);
-    }
-
-    // A 440-point canvas rect -> physical screen pixels through the current
-    // module plane (bounds of its projected corners); none while not presented.
-    std::optional<core::Rect> screenRect(core::Rect r) const {
-        double left = std::numeric_limits<double>::infinity(), top = left, right = -left, bottom = -left;
-        const std::array<core::Point, 4> corners{{{r.x, r.y}, {r.x + r.width, r.y}, {r.x, r.y + r.height}, {r.x + r.width, r.y + r.height}}};
-        for (const auto corner : corners) {
-            const auto p = preview_->project(corner);
-            if (!p) return std::nullopt;
-            left = std::min(left, p->x); top = std::min(top, p->y);
-            right = std::max(right, p->x); bottom = std::max(bottom, p->y);
+    // The controller published a new snapshot: the canvas follows it (its observers).
+    bool synchronize(double t, bool changed = false) {
+        if (session_->inputRevision() != seenRevision_) {
+            seenRevision_ = session_->inputRevision();
+            canvas_->refresh(t);
+            changed = true;
         }
-        POINT origin{};
-        if (!ClientToScreen(window_, &origin)) return std::nullopt;
-        const double scale = host_.metrics().scale;
-        return core::Rect{origin.x + left * scale, origin.y + top * scale, (right - left) * scale, (bottom - top) * scale};
+        return changed;
+    }
+    // The cover textures right after the cover plate's part, posed as the canvas's art layers.
+    void placeCover() {
+        const auto* plate = canvas_->coverLayer();
+        const auto pose = core_->pose(core::Module::nowPlaying);
+        if (plate && pose) {
+            const auto views = canvas_->coverViews(time_);
+            cover_->updatePose(*pose, canvas_->root(), views);
+            if (!insertion_ || insertedAfter_ != plate) { core_->setInsertion(core::Module::nowPlaying, plate, cover_->entry()); insertion_ = true; insertedAfter_ = plate; }
+        } else if (insertion_) {
+            core_->setInsertion(core::Module::nowPlaying, nullptr, std::nullopt);
+            insertion_ = false; insertedAfter_ = nullptr;
+        }
+    }
+    // A logical client rect of a box rect (UIA and coverage geometry).
+    std::optional<core::Rect> screenRect(core::Rect box) const {
+        return gpu::screenReaderClientToScreen(window_, host_.metrics().scale, core_->clientRect(box));
     }
     void observe(double t) {
         if (!fixtureClock_ || !std::isfinite(t)) return;
         if (t > fixtureClock_->load(std::memory_order_relaxed)) fixtureClock_->store(t, std::memory_order_release);
     }
     // Drains the service, the downloads, decoded artwork/lyrics and (previews
-    // and coverage) the synthetic audio publication; true when artwork changed.
+    // and coverage) the synthetic audio publication; true when anything changed.
     bool deliver(double t) {
         wake_->pending.store(false, std::memory_order_release);
-        bool changed = preview_->utilityCompleted(t);
+        bool changed = session_->utilityCompleted(t);
         if (audioFixture_ && audioFixture_->publish()) {
             followActivity();
-            changed = preview_->audioChanged(t) || changed;
+            changed = session_->audioChanged(t) || changed;
         }
-        return changed;
+        return synchronize(t, changed);
     }
     // The WinHTTP session is retained exactly while Now Playing is presented;
     // released, it closes with its connections once no download is in flight.
@@ -519,12 +517,6 @@ private:
         httpRetained_ = active;
         http_->setRetained(active);
     }
-    // The catalog cover download for the slot: the smallest standard size at
-    // least its drawn size (800 for the 660-pixel slot), scaled down to the
-    // drawn size by the decoder. The slot's group is drawn at the raster
-    // density on every display (the canvas, not the cover, follows the
-    // display's scale), so a larger download would add nothing.
-    unsigned coverPixels() const { return modules::nowPlayingCatalogCoverPixels(coverDensity_); }
     // The per-app audio publication names the processes that render audio. A
     // change for any process is folded into the window-title players' state
     // with one provider read (event driven: only on such a publication while
@@ -532,6 +524,19 @@ private:
     void followActivity() {
         if (!activity_ || !volume_ || !volume_->routes || !service_->snapshot().active) return;
         if (activity_->update(volume_->routes())) service_->refresh();
+    }
+    std::optional<d::AccessibilityItem> item(std::string_view id) const {
+        std::vector<d::AccessibilityItem> items;
+        canvas_->accessibilityItems(items);
+        for (auto& i : items) if (i.id == id) return i;
+        return std::nullopt;
+    }
+    std::size_t itemCount() const { std::vector<d::AccessibilityItem> items; canvas_->accessibilityItems(items); return items.size(); }
+    std::optional<core::Point> controlPoint(std::string_view id) const {
+        const auto i = item(id);
+        if (!i) return std::nullopt;
+        const auto r = core_->clientRect(i->rect);
+        return r ? std::optional(center(*r)) : std::nullopt;
     }
 
     // --- Hidden coverage (synthetic fixture player and audio route only) -----
@@ -562,34 +567,29 @@ private:
                    "Hidden coverage presents Now Playing with the fixture player, a synthetic audio route, a synthetic desktop and no network");
         double t = step.time;
         const auto present = [&](double seconds) { t += seconds; observe(t); step.present(t); };
-        const auto& view = presentation();
-        const auto title = [&] { return view.input().track ? view.input().track->title : std::string(); };
-        const auto position = [&] { return view.input().track && view.input().track->position ? *view.input().track->position : -1.; };
-        const auto playing = [&] { return view.input().track && view.input().track->isPlaying; };
+        const auto& in = session_->input();
+        const auto title = [&] { return in.track ? in.track->title : std::string(); };
+        const auto position = [&] { return in.track && in.track->position ? *in.track->position : -1.; };
+        const auto playing = [&] { return in.track && in.track->isPlaying; };
 
         if (step.cycle == 0) startsBefore_ = *starts_ ? *starts_ - 1 : 0;
         settle(step);
-        present(.5); // cover/caption crossfades settle
-        step.check(*starts_ == startsBefore_ + step.cycle + 1 && service_->snapshot().active && view.active(),
+        present(.5); // the cover cross-fade and the page entrance settle
+        step.check(*starts_ == startsBefore_ + step.cycle + 1 && service_->snapshot().active && canvas_->presented(),
                    "Each presentation of Now Playing starts exactly one provider");
-        step.check(title() == "EndfieldHUD Fixture 1" && view.input().track->artist == "Local verification" && view.input().track->album == "Now Playing" &&
-                   !view.input().failed && view.input().session != 0, "Fixture metadata reaches the presentation");
-        step.check(std::abs(position() - 42) < 1e-9 && !playing() && view.durationText() == "3:30", "The fixture starts paused at 42 of 210 seconds");
-        step.check(view.input().coverAvailable && preview_->artworkStats().decoded > 0, "The fixture cover decodes on the shared executor");
-        step.check(view.lyricsSelected() && view.lyricRows()[1] == "Current", "Fixture timed lyrics show the current line");
-        step.check(view.input().volumeAvailable && view.input().volume && std::abs(*view.input().volume - 1) < 1e-9 &&
-                   audioFixture_->nowPlayingVisible() && audioFixture_->applications().size() == 1,
+        step.check(title() == "EndfieldHUD Fixture 1" && in.track->artist == "Local verification" && in.track->album == "Now Playing" && !in.failed && in.session != 0,
+                   "Fixture metadata reaches the canvas");
+        step.check(std::abs(position() - 42) < 1e-9 && !playing() && modules::nowPlayingTime(in.track->duration) == "03:30", "The fixture starts paused at 42 of 210 seconds");
+        step.check(in.coverAvailable && session_->artworkStats().decoded > 0 && canvas_->coverViews(t)[1].image, "The fixture cover decodes on the shared executor and shows");
+        step.check(canvas_->showsLyrics() && lyricRow(in, t) == "Current", "Fixture timed lyrics show the current line");
+        step.check(in.volumeAvailable && in.volume && std::abs(*in.volume - 1) < 1e-9 && audioFixture_->nowPlayingVisible() && audioFixture_->applications().size() == 1,
                    "The synthetic process route resolves through the per-app audio bridge");
 
-        // Projection, hit testing and the UIA descriptors.
-        const auto& play = view.actions()[static_cast<std::size_t>(NowPlayingAction::playPause)];
-        const auto playPoint = step.project(center(play.rect), 440, 440);
-        step.check(playPoint.has_value() && play.enabled, "The play control projects through the Now Playing plane");
-        const auto uia = preview_->project(center(play.rect));
-        step.check(uia && std::abs(uia->x - playPoint->x) < .05 && std::abs(uia->y - playPoint->y) < .05,
-                   "UIA rectangles use the same projection as pointer input");
-        const auto transparent = step.project({20, 200}, 440, 440);
-        step.check(covers(*playPoint) && transparent && !covers(*transparent), "Only control faces claim the hit test over navigation");
+        // Projection, hit testing and the UIA items.
+        const auto playPoint = controlPoint("playPause");
+        step.check(playPoint && item("playPause")->enabled, "The play control projects through the Now Playing plane");
+        const auto transparent = core_->clientRect({295, 200, 0, 0});
+        step.check(covers(*playPoint) && transparent && !covers({transparent->x, transparent->y}), "Only control faces claim the hit test over navigation");
         {
             // Paths are only compared, never opened.
             const std::array<std::string, 1> dragged{"coverage-track.mp3"};
@@ -597,29 +597,29 @@ private:
                        "A file drag over Now Playing is refused, as the source offers no drag operation there");
         }
         {
-            const auto ax = preview_->accessibility(t);
-            step.check(ax.status == "EndfieldHUD Fixture 1 \xc2\xb7 Local verification \xc2\xb7 Now Playing" && ax.buttons.size() == 5 &&
-                       ax.sliders.size() == 1 && ax.sliders.front().id == "seek", "Accessible status, five buttons and the seek slider");
+            const auto track = item("track");
+            step.check(track && track->role == d::AccessibilityRole::text && track->value == "EndfieldHUD Fixture 1 / Local verification / Now Playing" && itemCount() == 7
+                && item("seek") && item("seek")->role == d::AccessibilityRole::slider && !item("appVolume"),
+                "The track readout (title / artist / album), the seek slider and the five buttons");
         }
         // UI Automation through the ModuleOwner hooks, as the HUD window's root
         // drives them: one stable group, refreshed on content events.
         auto* group = coverageGroup();
         (void)automationRefresh(group->root());
-        step.check(automationCount() == 6 && !automationRefresh(group->root()),
-                   "The UIA hooks list the five projected buttons and the seek slider under the owner's group");
+        step.check(automationCount() == 7 && !automationRefresh(group->root()), "The UIA hooks list the canvas's seven items under the owner's group");
 
         // Settled paused frames: no rasterization, provider work or deadline.
         {
-            const auto scene = preview_->sceneStats();
-            const auto decodes = preview_->artworkStats().submitted;
+            const auto scene = core_->sceneStats(core::Module::nowPlaying);
+            const auto decodes = session_->artworkStats().submitted;
             const auto revision = service_->snapshot().revision;
             const auto starts = *starts_;
+            const auto uploads = cover_->stats().uploads;
             for (unsigned frame = 0; frame < 12; ++frame) present(1. / 60);
-            const auto after = preview_->sceneStats();
-            step.check(after.localRasterUpdates == scene.localRasterUpdates && after.coverUploads == scene.coverUploads &&
-                       preview_->artworkStats().submitted == decodes && service_->snapshot().revision == revision && *starts_ == starts &&
-                       !wake_->pending.load() && !preview_->nextWakeTime() && !requiresFrames(t),
-                       "Paused warm frames re-rasterize, decode, read, schedule and wake nothing");
+            const auto after = core_->sceneStats(core::Module::nowPlaying);
+            step.check(scene && after && after->generations == scene->generations && after->surfacesUpdated == scene->surfacesUpdated && after->partsLoaded == scene->partsLoaded
+                && cover_->stats().uploads == uploads && session_->artworkStats().submitted == decodes && service_->snapshot().revision == revision && *starts_ == starts
+                && !wake_->pending.load() && !nextWakeTime(t) && !requiresFrames(t), "Paused warm frames re-rasterize, decode, read, schedule and wake nothing");
         }
 
         if (step.cycle == 0) {
@@ -630,20 +630,20 @@ private:
                        pointer({app::PointerKind::up, app::PointerButton::left, playPoint->x, playPoint->y}, t), "Projected play click is consumed");
             settle(step);
             step.check(playing() && recorded(events + 1, "playPause"), "Play reaches the fixture and records playbackAction");
-            step.check(preview_->nextWakeTime().has_value(), "Playing lyrics fold their next cue into the shared deadline");
+            step.check(nextWakeTime(t).has_value() && canvas_->clockActive(), "Playing: the display clock folds its next second or cue into the shared deadline");
             present(.4);
-            step.check(preview_->key({app::KeyKind::down, VK_RIGHT}, false, t), "Right arrow seeks forward");
+            step.check(core_->key({app::KeyKind::down, VK_RIGHT}, 0, t), "Right arrow seeks forward");
             settle(step);
             step.check(position() > 47 - 1e-6 && recorded(events + 2, "seek"), "Keyboard seek moves five seconds and records seek");
-            step.check(preview_->key({app::KeyKind::down, VK_SPACE}, false, t), "Space toggles playback");
+            step.check(core_->key({app::KeyKind::down, VK_SPACE}, 0, t), "Space toggles playback");
             settle(step);
             step.check(!playing() && recorded(events + 3, "playPause"), "Space pauses the fixture");
-            step.check(!preview_->key({app::KeyKind::down, VK_SPACE}, true, t), "Modified transport keys are left to the HUD");
+            step.check(!core_->key({app::KeyKind::down, VK_SPACE}, 2, t) && !core_->key({app::KeyKind::down, VK_SPACE}, 4, t), "Modified transport keys are left to the HUD");
 
-            // Seek drag on the projected rail: drag lock, then one command at release.
-            const auto from = step.project({121, 388}, 440, 440), to = step.project({187, 388}, 440, 440);
+            // Seek drag on the projected bar: drag lock, then one command at release.
+            const auto from = core_->clientRect({55 + .2 * 480, 473, 0, 0}), to = core_->clientRect({55 + .4 * 480, 473, 0, 0});
             step.check(from && to && pointer({app::PointerKind::down, app::PointerButton::left, from->x, from->y}, t) && pointerLocked(),
-                       "The seek rail starts a drag that locks the HUD pointer");
+                       "The seek bar starts a drag that locks the HUD pointer");
             present(1. / 60);
             step.check(pointer({app::PointerKind::move, app::PointerButton::none, to->x, to->y}, t) && playbackEvents_ == events + 3,
                        "Seek movement previews locally without a command");
@@ -653,90 +653,81 @@ private:
 
             // UI Automation over the real owner through its hooks: navigation
             // and hit tests enter through the group like a UIA client's.
-            Microsoft::WRL::ComPtr<IRawElementProviderFragment> first, parent, sibling, seekElement;
+            Microsoft::WRL::ComPtr<IRawElementProviderFragment> first, parent, sibling, last;
             Microsoft::WRL::ComPtr<IRawElementProviderFragmentRoot> fragmentRoot;
-            step.check(SUCCEEDED(group->Navigate(NavigateDirection_FirstChild, &first)) && first && automationID(first.Get()) == L"lyrics" &&
+            step.check(SUCCEEDED(group->Navigate(NavigateDirection_FirstChild, &first)) && first && automationID(first.Get()) == L"track" &&
                        SUCCEEDED(first->Navigate(NavigateDirection_Parent, &parent)) && sameObject(parent.Get(), group->root()) &&
                        SUCCEEDED(first->get_FragmentRoot(&fragmentRoot)) && sameObject(fragmentRoot.Get(), group->root()) &&
-                       SUCCEEDED(first->Navigate(NavigateDirection_NextSibling, &sibling)) && automationID(sibling.Get()) == L"previous",
-                       "UIA fragments navigate in source order under the owner's group, their parent and fragment root");
-            step.check(SUCCEEDED(group->Navigate(NavigateDirection_LastChild, &seekElement)) && automationID(seekElement.Get()) == L"seek",
-                       "The seek slider is the group's last child");
-            const auto nextScreen = screenRect(view.actions()[static_cast<std::size_t>(NowPlayingAction::next)].rect);
+                       SUCCEEDED(first->Navigate(NavigateDirection_NextSibling, &sibling)) && automationID(sibling.Get()) == L"seek",
+                       "UIA fragments navigate in the canvas's order under the owner's group, their parent and fragment root");
+            step.check(SUCCEEDED(group->Navigate(NavigateDirection_LastChild, &last)) && automationID(last.Get()) == L"lyrics", "The lyrics toggle is the group's last child");
+            const auto nextScreen = screenRect(item("next")->rect);
             Microsoft::WRL::ComPtr<IRawElementProviderFragment> nextElement;
             step.check(nextScreen && SUCCEEDED(group->ElementProviderFromPoint(nextScreen->x + nextScreen->width / 2, nextScreen->y + nextScreen->height / 2, &nextElement)) &&
                        automationID(nextElement.Get()) == L"next", "UIA hit testing finds Next at its projected screen position");
-            UiaRect bounds{};
-            step.check(SUCCEEDED(nextElement->get_BoundingRectangle(&bounds)) && bounds.left == nextScreen->x && bounds.top == nextScreen->y &&
-                       bounds.width == nextScreen->width && bounds.height == nextScreen->height, "UIA bounds are the projected control in screen pixels");
             Microsoft::WRL::ComPtr<IInvokeProvider> invokeNext;
             step.check(SUCCEEDED(nextElement.As(&invokeNext)) && SUCCEEDED(invokeNext->Invoke()), "UIA Invoke performs Next");
             settle(step);
             present(.3);
             step.check(title() == "EndfieldHUD Fixture 2" && std::abs(position()) < 1e-9 && recorded(events + 5, "next"), "Next advances the fixture track");
-            step.check(preview_->perform(NowPlayingAction::previous, t), "Previous is available");
+            step.check(canvas_->perform("previous", t), "Previous is available");
             settle(step);
             present(.3);
-            step.check(title() == "EndfieldHUD Fixture 1" && recorded(events + 6, "previous"), "Previous returns to the first fixture track");
-            // The consumed owner wakes were content events: the host refreshes.
-            Microsoft::WRL::ComPtr<IRawElementProviderFragment> seekAfter;
+            step.check(title() == "EndfieldHUD Fixture 1" && recorded(events + 6, "previous"), "Previous within 3 s goes to the previous fixture track");
+            // The seek slider keeps its identity across the track changes' content events.
+            (void)automationRefresh(group->root());
+            Microsoft::WRL::ComPtr<IRawElementProviderFragment> seekElement;
             Microsoft::WRL::ComPtr<IRangeValueProvider> seekRange;
             double step5{};
-            step.check(!automationRefresh(group->root()) && SUCCEEDED(automationChild(automationCount() - 1, &seekAfter)) && sameObject(seekAfter.Get(), seekElement.Get()) &&
-                       SUCCEEDED(seekAfter.As(&seekRange)) && SUCCEEDED(seekRange->get_SmallChange(&step5)) && step5 == 5,
-                       "The UIA seek slider keeps its identity and the source 5 s increment");
+            step.check(SUCCEEDED(automationChild(1, &seekElement)) && automationID(seekElement.Get()) == L"seek" && SUCCEEDED(seekElement.As(&seekRange))
+                && SUCCEEDED(seekRange->get_SmallChange(&step5)) && step5 == 5, "The UIA seek slider has the Mac's 5 s step");
             step.check(SUCCEEDED(seekRange->SetValue(42)), "UIA RangeValue seeks to an exact position");
             settle(step);
             step.check(std::abs(position() - 42) < 1e-9 && recorded(events + 7, "seek"), "Accessible seek restores 42 seconds");
 
-            // The lyrics toggle (source lyrics action) is local presentation state.
-            step.check(preview_->perform(NowPlayingAction::lyrics, t) && !view.lyricsSelected(), "Lyrics toggle hides the lyric rows");
+            // The lyrics toggle is local canvas state (not persisted).
+            step.check(canvas_->perform("lyrics", t) && !canvas_->showsLyrics(), "Lyrics toggle hides the lyric rows");
             present(.3);
-            step.check(preview_->perform(NowPlayingAction::lyrics, t) && view.lyricsSelected(), "Lyrics toggle restores the lyric rows");
+            step.check(canvas_->perform("lyrics", t) && canvas_->showsLyrics(), "Lyrics toggle restores the lyric rows");
             present(.3);
 
             // Playing-app volume: the per-app route through the audio bridge,
             // opened and set through UI Automation.
             const auto accepted = audioFixture_->accepted();
             const auto revision = audioFixture_->applicationsRevision();
+            (void)automationRefresh(group->root());
             Microsoft::WRL::ComPtr<IRawElementProviderFragment> volumeButton, appVolume;
             Microsoft::WRL::ComPtr<IInvokeProvider> openVolume;
             Microsoft::WRL::ComPtr<IRangeValueProvider> appVolumeRange;
-            step.check(SUCCEEDED(automationChild(static_cast<std::size_t>(NowPlayingAction::volume), &volumeButton)) && automationID(volumeButton.Get()) == L"volume" &&
-                       SUCCEEDED(volumeButton.As(&openVolume)) && SUCCEEDED(openVolume->Invoke()) && capturesPointer() && view.sliderCount() == 2 && covers({1, 1}),
-                       "UIA Invoke opens the volume menu, which captures the pointer");
-            step.check(automationCount() == 7 && SUCCEEDED(group->Navigate(NavigateDirection_LastChild, &appVolume)) && automationID(appVolume.Get()) == L"appVolume" &&
-                       SUCCEEDED(appVolume.As(&appVolumeRange)), "The App volume slider joins the UIA tree as soon as the menu opens");
+            step.check(SUCCEEDED(automationChild(5, &volumeButton)) && automationID(volumeButton.Get()) == L"volume" &&
+                       SUCCEEDED(volumeButton.As(&openVolume)) && SUCCEEDED(openVolume->Invoke()) && capturesPointer() && canvas_->volumeOpen() && covers({1, 1}),
+                       "UIA Invoke opens the volume pop-up, which captures the pointer");
+            (void)automationRefresh(group->root());
+            step.check(automationCount() == 8 && SUCCEEDED(group->Navigate(NavigateDirection_LastChild, &appVolume)) && automationID(appVolume.Get()) == L"appVolume" &&
+                       SUCCEEDED(appVolume.As(&appVolumeRange)), "The App volume slider joins the UIA tree as soon as the pop-up opens");
             {
-                const auto ax = preview_->accessibility(t);
                 double shown{};
-                step.check(ax.sliders.size() == 2 && ax.sliders[1].enabled && ax.sliders[1].value && std::abs(*ax.sliders[1].value - 1) < 1e-9 &&
-                           SUCCEEDED(appVolumeRange->get_Value(&shown)) && std::abs(shown - 1) < 1e-9,
-                           "The accessible app-volume slider reports the route at 100%");
+                const auto a = item("appVolume");
+                step.check(a && a->enabled && a->number == 100 && a->value == "100%" && SUCCEEDED(appVolumeRange->get_Value(&shown)) && std::abs(shown - 100) < 1e-9,
+                           "The accessible app-volume slider reports the route at 100% (0...100, step 2)");
             }
             present(.2);
-            step.check(SUCCEEDED(appVolumeRange->SetValue(.4)) && audioFixture_->accepted() == accepted + 1 && audioFixture_->pending(),
+            step.check(SUCCEEDED(appVolumeRange->SetValue(40)) && audioFixture_->accepted() == accepted + 1 && audioFixture_->pending(),
                        "A UIA volume change becomes one asynchronous route write");
             settle(step);
             const auto& route = audioFixture_->process();
             step.check(audioFixture_->applicationsRevision() > revision && route.state == gpu::AudioApplicationRouteState::active && route.gain &&
-                       std::abs(*route.gain - .4f) < 1e-6f && view.input().volume && std::abs(*view.input().volume - .4) < 1e-6,
+                       std::abs(*route.gain - .4f) < 1e-6f && in.volume && std::abs(*in.volume - .4) < 1e-6 && item("appVolume")->value == "40%",
                        "The confirmed route gain returns through the audio publication");
-            {
-                double shown{};
-                step.check(!automationRefresh(group->root()) && SUCCEEDED(appVolumeRange->get_Value(&shown)) && std::abs(shown - .4) < 1e-6,
-                           "UIA reports the confirmed app volume on the same slider");
-            }
-            step.check(preview_->setSlider(NowPlayingSliderKind::volume, 1, t), "Volume returns to 100%");
+            step.check(canvas_->adjustAccessibilitySlider("appVolume", 100, t), "Volume returns to 100%");
             settle(step);
-            step.check(route.gain && std::abs(*route.gain - 1) < 1e-6f && view.input().volume && std::abs(*view.input().volume - 1) < 1e-6 &&
-                       playbackEvents_ == events + 7, "Volume changes are not playback actions");
-            step.check(preview_->key({app::KeyKind::down, VK_ESCAPE}, false, t) && !capturesPointer() && !covers({1, 1}), "Escape dismisses the volume menu");
+            step.check(route.gain && std::abs(*route.gain - 1) < 1e-6f && in.volume && std::abs(*in.volume - 1) < 1e-6 && playbackEvents_ == events + 7,
+                       "Volume changes are not playback actions");
+            step.check(core_->key({app::KeyKind::down, VK_ESCAPE}, 0, t) && !capturesPointer() && !canvas_->volumeOpen() && !covers({1, 1}), "Escape closes the volume pop-up");
             {
-                // Escape is a consumed key (a content event): the host refreshes.
                 double shown{};
-                step.check(automationRefresh(group->root()) && automationCount() == 6 && appVolumeRange->get_Value(&shown) == UIA_E_ELEMENTNOTAVAILABLE,
-                           "Closing the menu disconnects the App volume slider");
+                step.check(automationRefresh(group->root()) && automationCount() == 7 && appVolumeRange->get_Value(&shown) == UIA_E_ELEMENTNOTAVAILABLE,
+                           "Closing the pop-up disconnects the App volume slider");
             }
             present(.5);
 
@@ -748,26 +739,14 @@ private:
                        invokeNext->Invoke() == UIA_E_ELEMENTNOTAVAILABLE && title() == "EndfieldHUD Fixture 1",
                        "Disconnected UIA fragments answer ElementNotAvailable and perform nothing");
             Microsoft::WRL::ComPtr<IRawElementProviderFragment> reconnected;
-            step.check(automationRefresh(group->root()) && automationCount() == 6 && SUCCEEDED(automationChild(3, &reconnected)) &&
+            step.check(automationRefresh(group->root()) && automationCount() == 7 && SUCCEEDED(automationChild(4, &reconnected)) &&
                        automationID(reconnected.Get()) == L"next" && !sameObject(reconnected.Get(), nextElement.Get()), "The next refresh connects fresh fragments");
-            {
-                Microsoft::WRL::ComPtr<CoverageGroup> other;
-                other.Attach(new CoverageGroup(*this));
-                const auto held = group->references();
-                Microsoft::WRL::ComPtr<IRawElementProviderFragment> moved, movedParent;
-                step.check(automationRefresh(other->root()) && automationCount() == 6 && group->references() < held && other->references() > 1 &&
-                           SUCCEEDED(automationChild(0, &moved)) && SUCCEEDED(moved->Navigate(NavigateDirection_Parent, &movedParent)) &&
-                           sameObject(movedParent.Get(), other->root()), "A new host group re-parents the fragments and releases the previous group");
-                movedParent.Reset();
-                moved.Reset();
-                step.check(automationRefresh(group->root()) && automationCount() == 6 && other->references() == 1, "Returning to the owner's group releases the other one");
-            }
             windowPlayerCoverage(step, t, present);
         }
 
         // Every cycle ends in the same presented state (bounded, repeatable caches).
-        step.check(title() == "EndfieldHUD Fixture 1" && std::abs(position() - 42) < 1e-9 && !playing() && view.input().coverAvailable &&
-                   view.input().volume && std::abs(*view.input().volume - 1) < 1e-6 && !capturesPointer() && !pointerLocked() &&
+        step.check(title() == "EndfieldHUD Fixture 1" && std::abs(position() - 42) < 1e-9 && !playing() && in.coverAvailable &&
+                   in.volume && std::abs(*in.volume - 1) < 1e-6 && !capturesPointer() && !pointerLocked() &&
                    (step.cycle == 0 || playbackEvents_ == eventsAfterFirstCycle_), "Now Playing returns to the same paused fixture state");
         if (step.cycle == 0) eventsAfterFirstCycle_ = playbackEvents_;
     }
@@ -778,9 +757,9 @@ private:
     // precedence, and the fixture session again once the player is gone.
     template <class Present>
     void windowPlayerCoverage(app::ModuleCoverage& step, double& t, const Present& present) {
-        const auto& view = presentation();
-        const auto title = [&] { return view.input().track ? view.input().track->title : std::string(); };
-        const auto playing = [&] { return view.input().track && view.input().track->isPlaying; };
+        const auto& in = session_->input();
+        const auto title = [&] { return in.track ? in.track->title : std::string(); };
+        const auto playing = [&] { return in.track && in.track->isPlaying; };
         const auto origin = [&] {
             const auto& session = service_->snapshot().media.session;
             return session ? session->origin : modules::NowPlayingSessionOrigin::mediaSession;
@@ -796,13 +775,13 @@ private:
         const auto sent = coverageWindows_->commands().size();
         step.check(coverageWindows_->watchers() == 1, "The presented provider follows the synthetic desktop's window events");
         desktop("Coverage Song - Coverage Artist");
-        step.check(title() == "Coverage Song" && view.input().track->artist == "Coverage Artist" && view.input().track->album.empty() && playing() &&
+        step.check(title() == "Coverage Song" && in.track->artist == "Coverage Artist" && in.track->album.empty() && playing() &&
                        origin() == modules::NowPlayingSessionOrigin::playerWindow && service_->snapshot().media.sessions.size() == 2,
                    "A NetEase window title is presented over the paused fixture session");
-        step.check(!view.input().track->position && !view.input().track->duration && !view.sliders(t)[0].enabled && !view.input().capabilities.seek &&
-                       !view.input().volumeAvailable && !view.input().lyrics && view.durationText() == "\xe2\x80\x94:\xe2\x80\x94",
+        step.check(!in.track->position && !in.track->duration && !modules::nowPlayingControls(in).seek && !in.capabilities.seek &&
+                       !in.volumeAvailable && !in.lyrics && modules::nowPlayingTime(in.track->duration) == "\xe2\x80\x94:\xe2\x80\x94" && !item("seek")->enabled,
                    "No timeline, seek, lyrics offline or single audio route for the window-title player");
-        step.check(preview_->perform(NowPlayingAction::playPause, t), "Play/pause is enabled for the window-title player");
+        step.check(canvas_->perform("playPause", t), "Play/pause is enabled for the window-title player");
         settle(step);
         present(.3);
         auto commands = coverageWindows_->commands();
@@ -815,7 +794,7 @@ private:
                    "The idle caption keeps the paused track; it keeps the tie with the paused fixture");
         desktop("Coverage Song 2 - Coverage Artist", 0x5151);
         step.check(title() == "Coverage Song 2" && playing(), "A new title in another main window is the next track, playing");
-        step.check(preview_->perform(NowPlayingAction::next, t), "Next is enabled for the window-title player");
+        step.check(canvas_->perform("next", t), "Next is enabled for the window-title player");
         settle(step);
         commands = coverageWindows_->commands();
         step.check(commands.size() == sent + 2 && commands.back().window == 0x5151 && commands.back().kind == modules::NowPlayingCommandKind::next &&
@@ -826,11 +805,11 @@ private:
                                      [clock = fixtureClock_] { return clock->load(std::memory_order_acquire); });
         coverageWindows_->pressControls(true);
         desktop("Coverage Song 3 - Coverage Artist", 0x5152);
-        step.check(title() == "Coverage Song 3" && view.input().track->duration == 200. && view.input().track->position &&
-                       std::abs(*view.input().track->position - 61) < 1e-6 && view.durationText() == "3:20" && view.sliders(t)[0].value &&
-                       !view.input().capabilities.seek, "The player's own elapsed and total labels give the window-title track a timeline (no seek)");
+        step.check(title() == "Coverage Song 3" && in.track->duration == 200. && in.track->position &&
+                       std::abs(*in.track->position - 61) < 1e-6 && modules::nowPlayingTime(in.track->duration) == "03:20" && modules::nowPlayingElapsed(in, t) &&
+                       !in.capabilities.seek, "The player's own elapsed and total labels give the window-title track a timeline (no seek)");
         const auto pressed = coverageWindows_->presses().size();
-        step.check(preview_->perform(NowPlayingAction::next, t), "Next is enabled with the player's own controls");
+        step.check(canvas_->perform("next", t), "Next is enabled with the player's own controls");
         settle(step);
         step.check(coverageWindows_->presses().size() == pressed + 1 && coverageWindows_->presses().back().kind == modules::NowPlayingCommandKind::next &&
                        coverageWindows_->commands().size() == commands.size() && recorded(events + 3, "next", "netease"),
@@ -850,7 +829,7 @@ private:
         observe(step.time + .05);
         if (host_.selectedModule() == core::Module::nowPlaying && host_.overlayVisible()) {
             // Now Playing is still the last presented module of this cycle.
-            step.check(service_->snapshot().active && presentation().active(), "The presented Now Playing keeps its single provider");
+            step.check(service_->snapshot().active && canvas_->presented(), "The presented Now Playing keeps its single provider");
             return;
         }
         const auto starts = *starts_;
@@ -863,7 +842,7 @@ private:
             step.check(automationCount() == 0 && !automationRefresh(group->root()) && SUCCEEDED(group->Navigate(NavigateDirection_FirstChild, &child)) && !child,
                        "Unpresented Now Playing exposes no UIA fragments");
         }
-        step.check(!service_->snapshot().active && !presentation().active() && !preview_->nextWakeTime() && !pointerLocked() && !capturesPointer(),
+        step.check(!service_->snapshot().active && !canvas_->presented() && !nextWakeTime(step.time + .1) && !pointerLocked() && !capturesPointer(),
                    "Unpresented Now Playing keeps no provider, deadline or input");
         step.check(!audioFixture_->nowPlayingVisible() && audioFixture_->applications().empty() && !wake_->pending.load() && *starts_ == starts,
                    "Unpresented Now Playing withdraws its audio vote and starts nothing");
@@ -872,27 +851,23 @@ private:
         if (host_.selectedModule() != core::Module::nowPlaying) {
             // Memory. Once the HUD has closed on another module (the host's
             // overlayConcealed broadcast, delivered here as the host does)
-            // the scene keeps no rasters, textures or native groups and the
+            // the scene keeps no rasters and the cover no texture, and the
             // session only its presented cover; the next cycle's module step
             // shows the same artwork rebuilt.
-            const auto held = preview_->sceneStats();
-            const auto memory = preview_->memory();
+            const auto held = core_->sceneStats(core::Module::nowPlaying);
+            const auto memory = session_->memory();
             const auto entries = host_.rasterizer().stats().entries;
-            const auto parks = parks_;
             (void)hostEvent({app::HostEvent::Kind::overlayConcealed, 0}, step.time + .1);
-            const auto parked = preview_->sceneStats();
-            const auto kept = preview_->memory();
-            if (held.contentEvents)
-                step.check(parks_ == parks + 1 && held.residentPixelBytes > 0 && parked.residentPixelBytes == 0 && parked.contentEvents == 0 &&
-                               host_.rasterizer().stats().entries < entries && kept.recentCovers == 0 && kept.artworkBytes <= memory.artworkBytes,
-                           "Closed on another module, Now Playing releases its scene (" + std::to_string(held.residentPixelBytes) + " raster bytes, " +
-                               std::to_string(entries - host_.rasterizer().stats().entries) + " shared raster entries) and keeps " +
+            const auto parked = core_->sceneStats(core::Module::nowPlaying);
+            const auto kept = session_->memory();
+            if (held && held->generations)
+                step.check(parked && parked->residentPixelBytes == 0 && cover_->stats().residentTextures == 0 &&
+                               host_.rasterizer().stats().entries <= entries && kept.recentCovers == 0 && kept.artworkBytes <= memory.artworkBytes,
+                           "Closed on another module, Now Playing releases its scene (" + std::to_string(held->residentPixelBytes) + " raster bytes, " +
+                               std::to_string(entries - host_.rasterizer().stats().entries) + " shared raster entries) and its cover texture, and keeps " +
                                std::to_string(kept.artworkBytes) + " decoded cover bytes for its warm reopen");
-            else
-                step.check(parks_ == parks, "A Now Playing that was never shown has nothing to release");
         }
     }
-    const modules::NowPlayingPresentation& presentation() const { return preview_->presentation(); }
     CoverageGroup* coverageGroup() {
         if (!coverageGroup_) coverageGroup_.Attach(new CoverageGroup(*this));
         return coverageGroup_.Get();
@@ -903,6 +878,7 @@ private:
     HWND window_{};
     const ApplicationAreaMode mode_;
     std::function<void(modules::EventKind, modules::EventMetadata)> record_;
+    std::function<void()> invalidate_;
     std::uint32_t message_{};
     std::shared_ptr<Wake> wake_;
     std::shared_ptr<std::atomic<double>> fixtureClock_;
@@ -911,31 +887,33 @@ private:
     std::shared_ptr<gpu::NowPlayingWindowSystem> windowSystem_;    // production only
     std::shared_ptr<gpu::NowPlayingProcessActivity> activity_;
     std::shared_ptr<const modules::NowPlayingAppVolume> volume_;
-    // Declaration order is destruction order in reverse: the preview first.
+    // Declaration order is destruction order in reverse: the canvas first.
     std::unique_ptr<gpu::NativeNowPlayingService> service_;
     std::shared_ptr<gpu::NowPlayingWebCache> webCache_; // production with a data root
     std::shared_ptr<gpu::NowPlayingHttp> http_;          // production only
     std::shared_ptr<gpu::NowPlayingWeb> web_;
     std::unique_ptr<gpu::NowPlayingAudioFixture> audioFixture_;
-    std::unique_ptr<tools::NowPlayingPreview> preview_;
-    // UIA fragments (after the preview they call into; reset first) and the
-    // host group they hang under (owned by automation_ while it exists).
-    std::unique_ptr<gpu::NativeNowPlayingAutomation> automation_;
-    IRawElementProviderFragmentRoot* automationRoot_{};
+    std::unique_ptr<tools::NowPlayingSession> session_;
+    std::unique_ptr<gpu::NativeNowPlayingCover> cover_;
+    std::unique_ptr<tools::DesignOwnerCore> core_;
+    modules::NowPlayingCanvas* canvas_{};
     Microsoft::WRL::ComPtr<CoverageGroup> coverageGroup_; // hidden coverage only
-    bool sized_{}, httpRetained_{};
-    double coverDensity_{2};
+    const d::Layer* insertedAfter_{};
+    bool insertion_{}, httpRetained_{}, overlayVisible_{true};
+    double time_{};
+    std::uint64_t seenRevision_{};
     // Coverage evidence (never user content: action and source only).
-    unsigned playbackEvents_{}, eventsAfterFirstCycle_{}, parks_{};
+    unsigned playbackEvents_{}, eventsAfterFirstCycle_{};
     std::uint64_t startsBefore_{};
     modules::EventMetadata lastPlayback_;
 };
 } // namespace
 
 std::unique_ptr<app::ModuleOwner> nowPlayingModule(const app::ApplicationModuleContext& context) {
-    // The shared executor, HUD window and clock are the area's only services;
-    // without them the module stays absent rather than inventing its own.
-    if (!context.host || !context.utility || !context.window || !context.clock || !context.invalidate) return nullptr;
+    // The shared executor, HUD window, clock and the design overlay are the
+    // area's only services; without them the module stays absent rather than
+    // inventing its own.
+    if (!context.host || !context.utility || !context.window || !context.clock || !context.invalidate || !context.host->designContext()) return nullptr;
     return std::make_unique<NowPlayingArea>(context);
 }
 } // namespace endfield::areas

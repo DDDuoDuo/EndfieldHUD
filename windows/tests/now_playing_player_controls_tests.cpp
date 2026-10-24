@@ -213,8 +213,8 @@ void attributes(){
           "IAccessible2 object attributes: name:value pairs with backslash escapes");
     check(m::nowPlayingAccessibleAttributes("").empty()&&m::nowPlayingAccessibleAttributes("novalue;").size()==1,"Empty and value-less attributes");
     check(m::nowPlayingPlayerArtworkURL("orpheus://cache/?http://p3.music.126.net/A==/1.jpg?imageView=&thumbnail=60y60&type=webp")==
-              "https://p3.music.126.net/A==/1.jpg?param=600y600"&&
-          m::nowPlayingPlayerArtworkURL("http://p1.music.126.net/B==/2.jpg?param=60y60")=="https://p1.music.126.net/B==/2.jpg?param=600y600",
+              "https://p3.music.126.net/A==/1.jpg?param=800y800"&&
+          m::nowPlayingPlayerArtworkURL("http://p1.music.126.net/B==/2.jpg?param=60y60")=="https://p1.music.126.net/B==/2.jpg?param=800y800",
           "A player's image source names the catalog cover (embedded in its cache address, or direct)");
     check(!m::nowPlayingPlayerArtworkURL("orpheus://cache/?https://evil.example/x.jpg")&&!m::nowPlayingPlayerArtworkURL("file:///C:/x.jpg")&&
           !m::nowPlayingPlayerArtworkURL("data:image/png;base64,AAAA")&&!m::nowPlayingPlayerArtworkURL(""),"Any other image source is no cover");

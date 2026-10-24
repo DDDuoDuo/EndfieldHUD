@@ -1,3 +1,5 @@
+#include <algorithm>
+#include <cmath>
 // The production playing-app volume bridge (native::nowPlayingAppVolume over
 // the shared AudioRuntime) end to end with the Now Playing owner state: the
 // fixture player's session resolves the ONE per-app route whose worker-
@@ -78,16 +80,15 @@ struct Owner {
         t::NowPlayingSessionOptions options;options.volume=std::move(volume);
         options.decode=[](std::span<const std::uint8_t>){auto f=std::make_shared<n::NotesImageFrame>();f->width=f->height=1;f->straightRGBA={1,2,3,255};return n::NowPlayingImageResult{f};};
         options.playback=[this](const m::NowPlayingPlaybackEvent&e){playback.push_back(e);};
-        session=std::make_unique<t::NowPlayingSession>(service,queue,m::NowPlayingAppearance{},[]{},std::move(options));
+        session=std::make_unique<t::NowPlayingSession>(service,queue,[]{},std::move(options));
     }
     ~Owner(){session.reset();queue.shutdown();}
     void flush(){for(int k=0;k<8;++k){queue.waitIdle();queue.drain();session->utilityCompleted(now);}}
-    const m::NowPlayingViewInput&input()const{return session->presentation().input();}
+    const m::NowPlayingViewInput&input()const{return session->input();}
     bool volume(double value){
-        auto&view=session->presentation();
-        if(!view.capturesPointer()){(void)view.perform(m::NowPlayingAction::volume,now);session->presentationChanged(now);}
-        const auto intent=view.setSlider(m::NowPlayingSliderKind::volume,value,now);
-        return intent&&session->dispatch(*intent,now);
+        // The canvas's setAppVolume: only an adjustable route takes a value.
+        if(!input().volumeAvailable||!std::isfinite(value))return false;
+        return session->dispatch({m::NowPlayingIntentKind::volume,input().session,std::clamp(value,0.,1.)},now);
     }
 };
 

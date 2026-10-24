@@ -3,6 +3,7 @@
 // Synthetic metadata and injected in-memory responses only: no network.
 #include "modules/now_playing_lyrics_sources.hpp"
 #include "core/data/json.hpp"
+#include <limits>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -56,6 +57,14 @@ void urls(const Json&j){
     for(const auto&row:j["covers"].array())check(m::nowPlayingCatalogCoverURL(row["input"].string())==optionalText(row["expected"]),"Source cover URL rule: "+row["input"].string());
     for(const auto&row:j["allowedLyrics"].array())check(m::nowPlayingLyricsURLAllowed(row["url"].string())==row["expected"].boolean(),"Lyric download allow-list: "+row["url"].string());
     for(const auto&row:j["allowedArtwork"].array())check(m::nowPlayingArtworkURLAllowed(row["url"].string())==row["expected"].boolean(),"Artwork allow-list: "+row["url"].string());
+    // Mac 1.3.0 B11: sized catalog covers, the download for a drawn size, the
+    // drawn size of the 480 px slot, NetEase remote covers and the B10 backoff.
+    for(const auto&row:j["sizedCovers"].array())check(m::nowPlayingCatalogCoverURL(row["input"].string(),unsigned(row["pixels"].integer()))==optionalText(row["expected"]),"Sized cover URL: "+row["input"].string());
+    for(const auto&row:j["coverPixels"].array())check(m::nowPlayingCatalogCoverPixels(unsigned(std::max<std::int64_t>(0,row["drawn"].integer())))==unsigned(row["expected"].integer()),"coverPixels(forDrawn:)");
+    for(const auto&row:j["pixelSizes"].array())check(m::nowPlayingCoverPixelSize(row["points"].number(),row["scale"].isString()?std::numeric_limits<double>::quiet_NaN():row["scale"].number())==unsigned(row["expected"].integer()),"NowPlayingArtworkLoader.pixelSize");
+    for(const auto&row:j["remoteCovers"].array()){const auto url=row["url"].string();const auto pixels=m::nowPlayingCatalogCoverPixels(unsigned(row["pixels"].integer()));
+        check(m::nowPlayingCatalogCoverURL(url,pixels).value_or(url)==row["expected"].string(),"Remote cover sizing: "+url);}
+    for(const auto&row:j["backoff"].array())check(m::nowPlayingRetryDelay(unsigned(row["failures"].integer()))==row["expected"].number(),"NowPlayingLyricsBackoff.delay");
 }
 void decoders(const Json&j){
     for(const auto&row:j["responses"].array()){const auto b=bytes(row["body"].string());check(sameLines(m::nowPlayingDecodeLyricsResponse(view(b)),row["expected"]),"LRCLIB get decode: "+row["body"].string().substr(0,40));}
@@ -80,12 +89,18 @@ void scenarios(const Json&j){
         m::NowPlayingLyricsSources sources(script.fetch(),!scenario["catalog"].isBool()||scenario["catalog"].boolean());
         std::vector<std::string>provided;sources.onArtworkURL=[&](const std::string&url,const m::NowPlayingLyricsKey&){provided.push_back(url);};
         std::optional<m::NowPlayingTrack>current;std::optional<m::NowPlayingLyricsKey>key;unsigned step{};
+        // Clocked scenarios (Mac 1.3.0 B10 retries): a manual monotonic clock from 0.
+        double clock{};const bool clocked=scenario["clock"].isBool()&&scenario["clock"].boolean();
+        if(clocked)sources.setClock([&clock]{return clock;});
         for(const auto&row:scenario["steps"].array()){
             const auto op=row["op"].string();++step;
             if(op=="show"){current=track(row["track"]);const auto source=row["source"].string();
                 key=m::NowPlayingLyricsKey{source,sourceNamed(source),current->identifier,current->title,current->artist,current->album,current->duration};sources.update(key,current);}
             else if(op=="hide"){sources.hide();current.reset();key.reset();}
             else if(op=="invalidate"){sources.invalidateMissing();sources.update(key,current);}
+            else if(op=="advance")clock+=row["seconds"].number();
+            // forgetFailures on both loaders (the controller's deactivate): hide() here.
+            else if(op=="forget"){sources.hide();current.reset();key.reset();}
             else if(op=="complete"){const auto index=static_cast<std::size_t>(row["index"].integer());check(index<script.completions.size(),name+": fixture completes an issued request");
                 auto completion=script.completions[index];completion(row["body"].isNull()?nullptr:bytes(row["body"].string()));}
             const auto&e=row["expected"];const auto where=name+" step "+std::to_string(step)+" ("+op+")";
@@ -98,6 +113,12 @@ void scenarios(const Json&j){
             check(sources.catalogLoading()==e["catalogLoading"].boolean(),where+": identical catalog loading state");
             std::vector<std::string>expectedProvided;for(const auto&u:e["provided"].array())expectedProvided.push_back(u.string());
             check(provided==expectedProvided,where+": identical cover supplements");
+            if(clocked&&row["retry"].isObject()){
+                // The owner wakes at the earlier of the two retry times.
+                const auto&r=row["retry"];std::optional<double>due;
+                for(const auto*k:{"lyrics","catalog"})if(r[k].isNumber())due=due?std::min(*due,r[k].number()):r[k].number();
+                check(sources.retryTime()==due,where+": identical retry time");
+            }
         }
     }
 }
@@ -153,7 +174,7 @@ void deferredDecoding(){
     const auto kn=m::NowPlayingLyricsKey::make("cloudmusic.exe",a),ko=m::NowPlayingLyricsKey::make("cloudmusic.exe",b);
     catalog.request(kn,a);catalogNet.done.at(0)(bytes(search));
     check(catalog.isLoading()&&!catalog.artwork()&&catalogNet.urls.size()==1,"Catalog stays loading while its search decodes");
-    catalogJobs.run(0);check(catalog.isLoading()&&catalog.artwork()==std::optional<std::string>("https://p1.music.126.net/AbC==/1099.jpg?param=600y600")&&catalogNet.urls.size()==2,"The decoded match supplies the cover and asks for its lyrics");
+    catalogJobs.run(0);check(catalog.isLoading()&&catalog.artwork()==std::optional<std::string>("https://p1.music.126.net/AbC==/1099.jpg?param=800y800")&&catalogNet.urls.size()==2,"The decoded match supplies the cover and asks for its lyrics");
     catalogNet.done.at(1)(bytes(R"({"code":200,"lrc":{"lyric":"[00:01]Catalog"}})"));check(catalog.isLoading()&&!catalog.lyrics(),"Catalog lyrics wait for their decode");
     catalogJobs.run(1);check(!catalog.isLoading()&&catalog.lyrics()&&catalog.lyrics()->lines().front().text=="Catalog","Catalog finishes after the lyric decode");
     catalog.request(ko,b);catalogNet.done.at(2)(bytes(search));catalog.clear();catalogJobs.run(2);
@@ -172,7 +193,7 @@ void playingListParser(){
     ]})";
     const auto b=bytes(queue);
     const auto entry=m::nowPlayingNetEasePlayingListEntry(view(b),track("Synthetic Song","Example Artist"));
-    check(entry&&entry->identifier==2001&&entry->duration&&std::abs(*entry->duration-233.4)<1e-6&&entry->artwork==std::optional<std::string>("https://p3.music.126.net/Queue==/2001.jpg?param=600y600"),
+    check(entry&&entry->identifier==2001&&entry->duration&&std::abs(*entry->duration-233.4)<1e-6&&entry->artwork==std::optional<std::string>("https://p3.music.126.net/Queue==/2001.jpg?param=800y800"),
           "The queue entry matching the window title yields its song id, length and cover");
     const auto other=m::nowPlayingNetEasePlayingListEntry(view(b),track("Other Song","Example Artist"));
     check(other&&other->identifier==99&&other->duration&&std::abs(*other->duration-100.)<1e-6,"Another queued track resolves to its own id and length");
@@ -214,7 +235,7 @@ void playingListCatalog(){
     jobs.run(0);
     check(net.urls.size()==1&&net.urls[0]=="https://music.163.com/api/song/lyric?id=2001&lv=-1&kv=-1&tv=-1"&&catalog.duration()&&std::abs(*catalog.duration()-233.4)<1e-6,
           "The exact song id reads its own lyrics directly (no cloudsearch) and its length is kept");
-    check(catalog.artwork()==std::optional<std::string>("https://p3.music.126.net/Queue==/2001.jpg?param=600y600"),"The queue cover is exposed as the catalog cover");
+    check(catalog.artwork()==std::optional<std::string>("https://p3.music.126.net/Queue==/2001.jpg?param=800y800"),"The queue cover is exposed as the catalog cover");
     net.done.at(0)(bytes(R"({"code":200,"lrc":{"lyric":"[00:01]Exact"}})"));jobs.run(1);
     check(!catalog.isLoading()&&catalog.lyrics()&&catalog.lyrics()->lines().front().text=="Exact","The by-id lyrics finish the entry");
     catalog.request(kb,b);jobs.run(jobs.queued.size()-1);
@@ -273,7 +294,7 @@ void longPlayingList(){
     const auto entry=queue?m::nowPlayingNetEaseQueueEntry(*queue,wanted):std::nullopt;
     const auto matched=std::chrono::steady_clock::now();
     check(queue&&queue->rows.size()==6000,"A queue beyond 1 MiB is parsed (all 6000 rows)");
-    check(entry&&entry->identifier==4242&&entry->duration&&std::abs(*entry->duration-233.4)<1e-6&&entry->artwork==std::optional<std::string>("https://p3.music.126.net/Queue==/4242.jpg?param=600y600"),
+    check(entry&&entry->identifier==4242&&entry->duration&&std::abs(*entry->duration-233.4)<1e-6&&entry->artwork==std::optional<std::string>("https://p3.music.126.net/Queue==/4242.jpg?param=800y800"),
           "The current track near the end of a long queue resolves to its exact id, length and cover");
     check(m::nowPlayingNetEasePlayingListEntry(view(b),wanted)==entry,"The one-step lookup agrees with the parsed queue");
     std::cout<<"NetEase queue ("<<text.size()<<" bytes, 6000 rows): parse "<<std::chrono::duration<double,std::milli>(parsed-started).count()<<" ms, match "
@@ -417,7 +438,7 @@ int main(int argc,char**argv){
     try{
         check(argc==2,"Pass now-playing-lyrics-source.json");std::ifstream in(argv[1],std::ios::binary);check(bool(in),"Read original lyric source fixture");
         const auto j=Json::parse(std::string((std::istreambuf_iterator<char>(in)),{}),8*1024*1024);
-        check(j["sourceCommit"].string()=="ca04f142185c7de40acd8523bdb563195d90a1d1","Lyric source fixture is pinned to the authority commit");
+        check(j["sourceCommit"].string()=="4fda15a03ba50675e0b12d69a83efdb6526c19f6","Lyric source fixture is pinned to the authority commit (Mac 1.3.0)");
         matcher(j);urls(j);decoders(j);scenarios(j);windowsSources();deferredDecoding();playingListParser();playingListCatalog();decodeCost();
         longPlayingList();neteaseStamps();bodies();retries();
         std::cout<<"Now Playing lyrics sources: "<<checks<<" checks passed (original Swift oracle, injected responses only)\n";return 0;

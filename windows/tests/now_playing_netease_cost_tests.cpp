@@ -29,8 +29,6 @@
 #include "tools/now_playing_session.hpp"
 #include "native/now_playing_players.hpp"
 #include "native/now_playing_player_controls.hpp"
-#include "native/now_playing_scene.hpp"
-#include "native/layer_raster.hpp"
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -400,7 +398,7 @@ public:
         o.web = web;
         o.neteasePlayingList = [] { return queueFile(); };
         o.decode = [](std::span<const std::uint8_t>) { return n::NowPlayingImageResult{}; };
-        owner = std::make_unique<t::NowPlayingSession>(*service, q, m::NowPlayingAppearance{}, [] {}, std::move(o));
+        owner = std::make_unique<t::NowPlayingSession>(*service, q, [] {}, std::move(o));
     }
     ~Harness() {
         owner.reset();
@@ -478,14 +476,17 @@ public:
         check(false, "Synthetic Now Playing work settles");
     }
     double presented() const {
-        const auto value = owner->presentation().sliders(now)[0].value;
+        const auto value = m::nowPlayingElapsed(owner->input(), now);
         return value ? *value : -1;
     }
     bool presentedTimeKnown() const {
-        const auto& in = owner->presentation().input();
+        const auto& in = owner->input();
         return in.track && in.track->duration && in.track->position;
     }
-    std::string row() const { return std::string(owner->presentation().lyricRows()[1]); }
+    std::string row() const {
+        const auto& in = owner->input();
+        return in.lyrics ? std::string(in.lyrics->window(m::nowPlayingElapsed(in, now).value_or(0))[1]) : std::string();
+    }
 
     double now{10};
     SimPlayer player;
@@ -502,7 +503,7 @@ public:
     unsigned publishes{}, contentEvents{}, deadlines{};
 private:
     void observe() {
-        const auto revision = owner->presentation().contentRevision();
+        const auto revision = owner->inputRevision();
         if (revision != revision_) {
             contentEvents += static_cast<unsigned>(revision - revision_);
             revision_ = revision;
@@ -514,7 +515,7 @@ private:
 
 struct Accuracy {
     double worst{}, sum{};
-    unsigned samples{}, rows{}, rowMisses{}, animating{};
+    unsigned samples{}, rows{}, rowMisses{};
     void add(double error) {
         worst = std::max(worst, std::abs(error));
         sum += std::abs(error);
@@ -522,8 +523,7 @@ struct Accuracy {
     }
     std::string text() const {
         return "time error max " + fixed(worst * 1000, 0) + " ms, mean " + fixed(samples ? sum / samples * 1000 : 0, 0) + " ms over " + std::to_string(samples) +
-               " samples; lyric line " + std::to_string(rows - rowMisses) + "/" + std::to_string(rows) + "; animating (frames drawn) " +
-               fixed(samples ? 100. * animating / samples : 0, 0) + " % of the time";
+               " samples; lyric line " + std::to_string(rows - rowMisses) + "/" + std::to_string(rows);
     }
 };
 
@@ -536,7 +536,6 @@ void cadence() {
         if (!h.presentedTimeKnown()) return;
         const double truth = h.player.position(h.now);
         a.add(h.presented() - truth);
-        if (h.owner->presentation().requiresFrames(h.now)) ++a.animating;
         if (!SimPlayer::nearBoundary(truth, .35)) {
             ++a.rows;
             if (h.row() != SimPlayer::line(truth)) ++a.rowMisses;
@@ -544,9 +543,9 @@ void cadence() {
     };
     // Lock-in: the first readings, the queue's length and the lyrics.
     h.run(20);
-    check(h.presentedTimeKnown() && h.owner->presentation().input().track->duration == songs[0].length,
+    check(h.presentedTimeKnown() && h.owner->input().track->duration == songs[0].length,
           "The queue file's exact length turns NetEase's bar into time");
-    check(h.owner->presentation().input().lyrics && h.row() == SimPlayer::line(h.player.position(h.now)), "The song's own lyrics follow its bar");
+    check(h.owner->input().lyrics && h.row() == SimPlayer::line(h.player.position(h.now)), "The song's own lyrics follow its bar");
     // Steady playing, presented.
     Accuracy steady;
     const auto before = h.counts();
@@ -577,7 +576,7 @@ void cadence() {
     });
     const auto pause = h.counts() - pausedAt;
     std::cout << "open, paused (16 s): " << pause.perSecond(16) << "\n  " << paused.text() << "\n";
-    check(paused.worst < .5 && !h.owner->presentation().input().track->isPlaying, "Paused, the presented time stands at the bar's position");
+    check(paused.worst < .5 && !h.owner->input().track->isPlaying, "Paused, the presented time stands at the bar's position");
     check(pause.jobs <= 2 && pause.deadlines == 0, "Paused: no display tick and no periodic bar reading");
 
     // Playing again, then seeks inside NetEase (no event: only its bar shows them).
@@ -605,7 +604,7 @@ void cadence() {
     h.state->fire();
     std::optional<double> titled, timed;
     h.run(changeAt + 6, [&] {
-        const auto& in = h.owner->presentation().input();
+        const auto& in = h.owner->input();
         if (!titled && in.track && in.track->title == songs[1].title) titled = h.now - changeAt;
         if (titled && !timed && h.presentedTimeKnown() && in.track->duration == songs[1].length && std::abs(h.presented() - h.player.position(h.now)) < .3)
             timed = h.now - changeAt;
@@ -637,7 +636,7 @@ void cadence() {
     std::optional<double> back;
     const double openedAt = h.now;
     h.run(206, [&] {
-        if (!back && h.presentedTimeKnown() && h.owner->presentation().input().track->title == songs[h.player.song].title &&
+        if (!back && h.presentedTimeKnown() && h.owner->input().track->title == songs[h.player.song].title &&
             std::abs(h.presented() - h.player.position(h.now)) < .3)
             back = h.now - openedAt;
     });
@@ -656,7 +655,6 @@ void reference() {
     h.run(80, [&] {
         if (!h.presentedTimeKnown()) return;
         a.add(h.presented() - h.player.position(h.now));
-        if (h.owner->presentation().requiresFrames(h.now)) ++a.animating;
     });
     const auto open = h.counts() - before;
     std::cout << "reference media session, open, playing (60 s): " << open.perSecond(60) << "\n  " << a.text() << "\n";
@@ -1211,8 +1209,8 @@ private:
 
 // The production owner presented, then closed, on the real clock against the
 // stand-in (its own media session like NetEase's SMTC, the bar read across
-// processes, the queue's length and the song's lyrics), with the retained
-// scene's content synchronized on the UI thread as the preview does.
+// processes, the queue's length and the song's lyrics). The canvas's text
+// rasters are the design scene's (measured by the owner suites), not here.
 // `reference`: a well-behaved media session instead (its timeline drives the
 // time; no window-title player), for what a playing track costs anyway.
 void pipelineCost(StandIn& standIn, bool reference = false) {
@@ -1244,25 +1242,9 @@ void pipelineCost(StandIn& standIn, bool reference = false) {
     o.web = web;
     o.neteasePlayingList = [] { return queueFile(); };
     o.decode = [](std::span<const std::uint8_t>) { return n::NowPlayingImageResult{}; };
-    t::NowPlayingSession owner(service, q, m::NowPlayingAppearance{}, wake, std::move(o));
-    std::unique_ptr<n::LayerRasterizer> raster;
-    std::unique_ptr<n::NativeNowPlayingScene> scene;
-    try {
-        raster = std::make_unique<n::LayerRasterizer>();
-        n::LayerRasterOptions options;
-        options.pixelsPerPoint = 2;
-        options.paddingPoints = 1;
-        scene = std::make_unique<n::NativeNowPlayingScene>(owner.presentation(), *raster, options);
-    } catch (const std::exception& e) {
-        std::cout << "(retained scene not measured: " << e.what() << ")\n";
-    }
-    unsigned publishes{}, rasters{};
-    const auto content = [&] {
-        if (!scene) return;
-        const auto before = scene->stats().localRasterUpdates;
-        scene->syncContent(owner.artwork(), seconds());
-        rasters += static_cast<unsigned>(scene->stats().localRasterUpdates - before);
-    };
+    t::NowPlayingSession owner(service, q, wake, std::move(o));
+    unsigned publishes{};
+    const auto content = [] {};
     struct Window {
         double ui{}, process{}, player{}, seconds{};
         unsigned loops{};
@@ -1310,7 +1292,7 @@ void pipelineCost(StandIn& standIn, bool reference = false) {
     // Activation, the first walk (and probe), the queue's length and lyrics.
     unsigned warm{};
     loop(4, warm);
-    check(owner.presentation().input().track && owner.presentation().input().track->duration && owner.presentation().input().track->position,
+    check(owner.input().track && owner.input().track->duration && owner.input().track->position,
           "The presented stand-in has a time from its bar and the queue's length");
     const auto e0 = desktop->enumerations.load();
     const auto r0 = desktop->refreshes.load();
@@ -1318,7 +1300,6 @@ void pipelineCost(StandIn& standIn, bool reference = false) {
     const auto reader0 = desktop->reader().stats();
     const auto p0 = publishes;
     const auto w0 = wakes.load();
-    const auto raster0 = rasters;
     const auto open = measure(10);
     const auto reader1 = desktop->reader().stats();
     const auto per = [&](double v) { return fixed(v / open.seconds); };
@@ -1327,7 +1308,7 @@ void pipelineCost(StandIn& standIn, bool reference = false) {
               << fixed(open.process / 1e4, 3) << " %, stand-in " << fixed(open.player / 1e4, 3) << " %; per second: enumerations "
               << per(desktop->enumerations.load() - e0) << ", media reads " << per(state->reads.load() - s0) << ", bar readings "
               << per(static_cast<double>(reader1.readings - reader0.readings)) << " (refresh requests " << per(desktop->refreshes.load() - r0)
-              << "), owner wakes " << per(wakes.load() - w0) << ", publications " << per(publishes - p0) << ", text rasters " << per(rasters - raster0)
+              << "), owner wakes " << per(wakes.load() - w0) << ", publications " << per(publishes - p0)
               << ", UI loop wakes " << per(open.loops) << "\n";
     check(reference || reader1.readings > reader0.readings, "The bar is read while Now Playing is presented");
     owner.setActive(false, seconds());
@@ -1345,8 +1326,6 @@ void pipelineCost(StandIn& standIn, bool reference = false) {
     service.setActive(false);
     q.waitIdle();
     q.drain();
-    scene.reset();
-    raster.reset();
 }
 
 void live() {

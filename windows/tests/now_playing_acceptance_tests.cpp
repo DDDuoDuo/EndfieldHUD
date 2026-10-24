@@ -125,7 +125,7 @@ void replay(const char* fixture) {
     expect(spotify, C::current, V::pass);
     expect(spotify, C::source, V::pass, "Event Log source spotify");
     expect(spotify, C::metadata, V::pass, "title, artist, album");
-    expect(spotify, C::timeline, V::pass, "duration 3:00 with position");
+    expect(spotify, C::timeline, V::pass, "duration 03:00 with position");
     // The command at t=1 separates the first pair; 10 s -> 12 s remains.
     expect(spotify, C::progress, V::pass, "1 playing timeline update pair(s), max drift 0.00 s");
     expect(spotify, C::playback, V::pass, "followed playing and paused");
@@ -156,7 +156,7 @@ void replay(const char* fixture) {
     const auto& qq = row(b, "qqMusic");
     check(qq.application == "QQMusic.exe", "The QQ Music directory is not stored");
     expect(qq, C::metadata, V::pass, "title, artist, no album");
-    expect(qq, C::timeline, V::pass, "duration 4:00 with position");
+    expect(qq, C::timeline, V::pass, "duration 04:00 with position");
     expect(qq, C::controls, V::pass, "play pause");
     expect(qq, C::seek, V::gap, "the player does not allow seeking; the seek rail is disabled, as in the source");
     expect(qq, C::artwork, V::fail, "1 player thumbnail(s) could not be decoded");

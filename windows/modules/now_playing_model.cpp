@@ -96,11 +96,29 @@ std::array<std::string_view,3>NowPlayingLyrics::window(double elapsed)const noex
     const auto current=static_cast<std::ptrdiff_t>(firstAfter(elapsed))-1;for(std::ptrdiff_t i=0;i<3;++i){const auto index=current+i-1;if(index>=0&&static_cast<std::size_t>(index)<lines_.size())out[static_cast<std::size_t>(i)]=lines_[static_cast<std::size_t>(index)].text;}return out;
 }
 std::optional<double>NowPlayingLyrics::nextBoundary(double elapsed)const noexcept{if(!std::isfinite(elapsed))return {};const auto index=firstAfter(elapsed);return index<lines_.size()?std::optional(lines_[index].time):std::nullopt;}
-std::string nowPlayingTime(std::optional<double>value){if(!value||!std::isfinite(*value)||*value<0)return "—:—";const auto seconds=static_cast<unsigned>(std::min(*value,nowPlayingMaximumSeconds));return std::to_string(seconds/60)+":"+(seconds%60<10?"0":"")+std::to_string(seconds%60);}
-std::optional<double>nowPlayingDisplayDeadline(const NowPlayingTrack&track,double now,bool active,const NowPlayingLyrics*lyrics,bool lyricsVisible,bool seeking)noexcept{
-    if(!active||!track.isPlaying||!std::isfinite(now))return {};const auto elapsed=track.elapsed(now);if(!elapsed||!std::isfinite(*elapsed)||(track.duration&&*elapsed>=*track.duration))return {};
+std::ptrdiff_t NowPlayingLyrics::currentIndex(double elapsed)const noexcept{return std::isfinite(elapsed)?static_cast<std::ptrdiff_t>(firstAfter(elapsed))-1:-1;}
+bool NowPlayingLyrics::hasContent()const noexcept{return std::any_of(lines_.begin(),lines_.end(),[](const auto&l){return !l.text.empty();});}
+std::string nowPlayingTime(std::optional<double>value){if(!value||!std::isfinite(*value)||*value<0)return "—:—";const auto seconds=static_cast<unsigned>(std::min(*value,nowPlayingMaximumSeconds));const auto minutes=seconds/60,rest=seconds%60;return (minutes<10?"0":"")+std::to_string(minutes)+":"+(rest<10?"0":"")+std::to_string(rest);}
+std::optional<double>nowPlayingDisplayDeadline(const NowPlayingTrack&track,double now,bool active,const NowPlayingLyrics*lyrics,bool lyricsVisible,bool seeking,double rate)noexcept{
+    if(!active||!track.isPlaying||!std::isfinite(now)||!std::isfinite(rate)||rate<=0)return {};
+    std::optional<double>elapsed;if(track.position){const auto delta=std::max(0.,now-track.sampledAt)*rate;elapsed=std::min(track.duration.value_or(nowPlayingMaximumSeconds),*track.position+delta);}
+    if(!elapsed||!std::isfinite(*elapsed)||(track.duration&&*elapsed>=*track.duration))return {};
     auto delay=std::floor(*elapsed)+1-*elapsed;if(lyrics&&lyricsVisible&&!seeking)if(const auto boundary=lyrics->nextBoundary(*elapsed))delay=std::min(delay,*boundary-*elapsed);
-    if(track.duration)delay=std::min(delay,*track.duration-*elapsed);return now+std::max(1./30.,delay);
+    if(track.duration)delay=std::min(delay,*track.duration-*elapsed);return now+std::max(1./30.,delay/rate);
+}
+std::optional<double>nowPlayingElapsed(const NowPlayingViewInput&input,double now)noexcept{
+    if(!input.track||!input.track->position)return {};const auto&t=*input.track;
+    const auto delta=t.isPlaying&&std::isfinite(now)?std::max(0.,now-t.sampledAt)*input.playbackRate:0.;
+    return std::min(t.duration.value_or(nowPlayingMaximumSeconds),*t.position+delta);
+}
+NowPlayingControls nowPlayingControls(const NowPlayingViewInput&input)noexcept{
+    NowPlayingControls c;const bool track=bool(input.track),transport=track&&!input.failed,playing=track&&input.track->isPlaying;const auto&k=input.capabilities;
+    c.previous=transport&&k.previous;c.playPause=transport&&(k.toggle||(playing?k.pause:k.play));c.next=transport&&k.next;c.volume=c.lyrics=track;
+    c.seek=track&&input.track->supportsSeeking&&input.track->duration&&input.track->position&&!input.failed&&k.seek;return c;
+}
+unsigned nowPlayingCoverPixelSize(double points,double scale)noexcept{
+    const double pixels=points*scale;if(!std::isfinite(pixels)||pixels<=0)return nowPlayingDefaultCoverPixels;
+    return static_cast<unsigned>(std::clamp(std::ceil(std::min(double(nowPlayingMaximumCoverPixels),pixels)-1e-6),double(nowPlayingMinimumCoverPixels),double(nowPlayingMaximumCoverPixels)));
 }
 bool nowPlayingAcknowledgesSeek(const NowPlayingTrack&track,double requested,double sampledAt)noexcept{
     if(!track.position||!std::isfinite(requested)||!std::isfinite(sampledAt))return false;const auto advance=track.isPlaying?std::min(3.,std::max(0.,track.sampledAt-sampledAt)):0.;return std::abs(*track.position-std::min(track.duration.value_or(nowPlayingMaximumSeconds),requested+advance))<=1.25;

@@ -752,7 +752,7 @@ struct Owner {
         }
         o.playback = [this](const m::NowPlayingPlaybackEvent& e) { events.push_back(e); };
         o.decode = [](std::span<const std::uint8_t>) { return n::NowPlayingImageResult{}; };
-        owner = std::make_unique<t::NowPlayingSession>(service, q, m::NowPlayingAppearance{}, [] {}, std::move(o));
+        owner = std::make_unique<t::NowPlayingSession>(service, q, [] {}, std::move(o));
     }
     void flush() {
         for (unsigned k = 0; k < 4; ++k) {
@@ -761,7 +761,7 @@ struct Owner {
             owner->utilityCompleted(now);
         }
     }
-    const m::NowPlayingViewInput& input() const { return owner->presentation().input(); }
+    const m::NowPlayingViewInput& input() const { return owner->input(); }
 };
 // The owner's once-a-second re-anchor without a read of the previous reading
 // (NowPlayingProvider::refreshControls): a system whose readings notify (the
@@ -851,7 +851,7 @@ void composite() {
     check(o.factories == 1 && o.gsmtc->starts == 1 && o.desktop->watchers() == 1, "One activation starts GSMTC and subscribes to player windows");
     check(o.input().track && o.input().track->title == "晴天" && o.service.snapshot().media.session->origin == m::NowPlayingSessionOrigin::playerWindow &&
               o.gsmtc->reads == 0, "The window-title player is presented while GSMTC is still starting");
-    check(!o.owner->presentation().sliders(o.now)[0].enabled, "The seek rail is disabled for a window-title player");
+    check(!m::nowPlayingControls(o.owner->input()).seek, "The seek rail is disabled for a window-title player");
     o.gsmtc->started({});
     o.flush();
     check(o.gsmtc->reads == 1, "GSMTC becoming ready joins with one re-read");

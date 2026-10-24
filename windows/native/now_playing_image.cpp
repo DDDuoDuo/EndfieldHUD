@@ -10,28 +10,47 @@ namespace {
 bool valid(const NowPlayingImageResult&r){if(!r.image)return r.failure!=NowPlayingImageFailure::none;const auto&i=*r.image;return r.failure==NowPlayingImageFailure::none&&i.width&&i.height&&i.width<=modules::nowPlayingMaximumCoverPixels&&i.height<=modules::nowPlayingMaximumCoverPixels&&i.straightRGBA.size()==std::size_t(i.width)*i.height*4;}
 }
 struct NativeNowPlayingArtwork::Impl:std::enable_shared_from_this<Impl>{
- struct Entry{std::weak_ptr<const std::vector<std::uint8_t>>bytes;NowPlayingImageResult value;};
- app::UtilityExecutor&queue;std::function<void()>changed;Decoder decode;app::UtilityExecutor::Route route;const std::thread::id owner=std::this_thread::get_id();
+ // `pixels`: the decode size this entry stands for.
+ struct Entry{std::weak_ptr<const std::vector<std::uint8_t>>bytes;NowPlayingImageResult value;unsigned pixels{};};
+ app::UtilityExecutor&queue;std::function<void()>changed;SizedDecoder decode;app::UtilityExecutor::Route route;const std::thread::id owner=std::this_thread::get_id();
  Bytes desired;std::array<Entry,2>cache;NowPlayingImageResult value{{},NowPlayingImageFailure::unavailable};Stats counts;std::uint64_t generation{},published{};bool alive{true},inFlight{},pending{};
- Impl(app::UtilityExecutor&q,std::function<void()>c,Decoder d):queue(q),changed(std::move(c)),decode(std::move(d)),route(q.makeRoute()){if(!changed||!decode)throw std::invalid_argument("Now Playing artwork needs decoder and owner invalidation");}
+ unsigned pixels{modules::nowPlayingDefaultCoverPixels};
+ Impl(app::UtilityExecutor&q,std::function<void()>c,SizedDecoder d):queue(q),changed(std::move(c)),decode(std::move(d)),route(q.makeRoute()){if(!changed||!decode)throw std::invalid_argument("Now Playing artwork needs decoder and owner invalidation");}
  void check()const{if(std::this_thread::get_id()!=owner)throw std::logic_error("Now Playing artwork belongs to its owner thread");}
  void notify(){auto callback=changed;if(alive&&callback)callback();}
- bool submit(){check();if(!alive||inFlight||!pending||!desired)return false;const auto bytes=desired;const auto token=generation;const auto weak=weak_from_this();auto result=std::make_shared<NowPlayingImageResult>();const auto decoder=decode;
-  const bool accepted=queue.submit(route,[result,decoder,bytes]{*result=decoder(*bytes);if(!valid(*result))*result={{},NowPlayingImageFailure::decode};},[weak,result,bytes,token](std::exception_ptr error){if(auto self=weak.lock()){self->inFlight=false;++self->counts.decoded;if(error)*result={{},NowPlayingImageFailure::decode};
+ bool fits(const Entry&e)const noexcept{if(!e.value.image||e.pixels==pixels)return true;const auto side=std::max(e.value.image->width,e.value.image->height);return side<e.pixels&&side<=pixels;}
+ bool submit(){check();if(!alive||inFlight||!pending||!desired)return false;const auto bytes=desired;const auto token=generation;const auto size=pixels;const auto weak=weak_from_this();auto result=std::make_shared<NowPlayingImageResult>();const auto decoder=decode;
+  const bool accepted=queue.submit(route,[result,decoder,bytes,size]{*result=decoder(*bytes,size);if(!valid(*result))*result={{},NowPlayingImageFailure::decode};},[weak,result,bytes,token,size](std::exception_ptr error){if(auto self=weak.lock()){self->inFlight=false;++self->counts.decoded;if(error)*result={{},NowPlayingImageFailure::decode};
     // Two bounded immutable thumbnails/negative entries; encoded buffers are
     // weak keys, so retiring a provider does not retain up to16MiB of payloads.
-    if(self->alive&&token==self->generation&&self->desired==bytes){self->cache[1]=std::move(self->cache[0]);self->cache[0]={bytes,*result};self->value=*result;++self->published;self->notify();}else ++self->counts.discarded;
+    if(self->alive&&token==self->generation&&self->desired==bytes){
+     // A failed decode for a new size keeps the cover already shown (finish, :173-189).
+     if(!result->image&&self->value.image)*result=self->value;
+     self->cache[1]=std::move(self->cache[0]);self->cache[0]={bytes,*result,size};
+     if(self->value.image!=result->image||self->value.failure!=result->failure){self->value=*result;++self->published;self->notify();}
+    }else ++self->counts.discarded;
     if(self->alive)self->submit();
   }});if(!accepted){++counts.backpressure;return false;}inFlight=true;pending=false;++counts.submitted;return true;
  }
 };
-NativeNowPlayingArtwork::NativeNowPlayingArtwork(app::UtilityExecutor&q,std::function<void()>c,Decoder d):impl_(std::make_shared<Impl>(q,std::move(c),std::move(d))){}
+NativeNowPlayingArtwork::NativeNowPlayingArtwork(app::UtilityExecutor&q,std::function<void()>c,Decoder d)
+ :NativeNowPlayingArtwork(q,std::move(c),d?SizedDecoder([d=std::move(d)](std::span<const std::uint8_t>b,unsigned){return d(b);}):SizedDecoder{}){}
+NativeNowPlayingArtwork::NativeNowPlayingArtwork(app::UtilityExecutor&q,std::function<void()>c,SizedDecoder d):impl_(std::make_shared<Impl>(q,std::move(c),std::move(d))){}
 NativeNowPlayingArtwork::~NativeNowPlayingArtwork(){auto i=impl_;i->check();i->alive=false;i->changed={};i->desired.reset();i->pending=false;i->queue.invalidate(i->route);}
 bool NativeNowPlayingArtwork::request(Bytes bytes){auto i=impl_;i->check();if(bytes&&bytes->empty())bytes.reset();if(i->desired==bytes)return false;++i->generation;i->desired=std::move(bytes);i->pending=false;i->value={{},NowPlayingImageFailure::unavailable};++i->published;
  if(!i->desired)return true;if(i->desired->size()>modules::nowPlayingMaximumArtworkBytes){i->value.failure=NowPlayingImageFailure::invalidPayload;return true;}
- for(std::size_t n=0;n<i->cache.size();++n)if(i->cache[n].bytes.lock()==i->desired){i->value=i->cache[n].value;if(n)std::swap(i->cache[0],i->cache[n]);++i->counts.cacheHits;return true;}
+ for(std::size_t n=0;n<i->cache.size();++n)if(i->cache[n].bytes.lock()==i->desired&&i->fits(i->cache[n])){i->value=i->cache[n].value;if(n)std::swap(i->cache[0],i->cache[n]);++i->counts.cacheHits;return true;}
  i->pending=true;i->submit();return true;
 }
+bool NativeNowPlayingArtwork::setPixelSize(unsigned value){auto i=impl_;i->check();value=std::clamp(value,modules::nowPlayingMinimumCoverPixels,modules::nowPlayingMaximumCoverPixels);if(value==i->pixels)return false;i->pixels=value;
+ for(auto&e:i->cache)if(!i->fits(e)&&e.value.image!=i->value.image)e={};
+ if(!i->desired||i->value.failure==NowPlayingImageFailure::invalidPayload)return false;
+ const auto current=std::find_if(i->cache.begin(),i->cache.end(),[&](const auto&e){return e.bytes.lock()==i->desired&&e.value.image==i->value.image;});
+ if(current!=i->cache.end()&&i->fits(*current))return false;
+ // The shown cover stays until the re-decode for the new size is ready.
+ ++i->generation;i->pending=true;i->submit();return true;
+}
+unsigned NativeNowPlayingArtwork::pixelSize()const noexcept{return impl_->pixels;}
 void NativeNowPlayingArtwork::cancel(){auto i=impl_;i->check();++i->generation;i->desired.reset();i->pending=false;i->value={{},NowPlayingImageFailure::unavailable};++i->published;}
 bool NativeNowPlayingArtwork::submitPending(){return impl_->submit();}
 void NativeNowPlayingArtwork::trim(const std::shared_ptr<const NotesImageFrame>&keep){auto i=impl_;i->check();for(auto&e:i->cache)if(e.value.image&&e.value.image!=keep)e={};if(i->value.image&&i->value.image!=keep)i->value={{},NowPlayingImageFailure::unavailable};}
