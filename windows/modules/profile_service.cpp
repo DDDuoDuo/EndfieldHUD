@@ -111,13 +111,13 @@ ProfileService::~ProfileService(){auto i=impl_;i->alive=false;i->executor.invali
 void ProfileService::start(){auto i=impl_;i->onOwner();i->started=true;i->pump();}
 PersonalProfile ProfileService::accept(const PersonalProfile&value,ehud::data::ProfileSyncFields locked){return impl_->accept(value,locked,false);}
 PersonalProfile ProfileService::acceptFromGame(const PersonalProfile&value,ehud::data::ProfileSyncFields locked){return impl_->accept(value,locked,true);}
-ProfilePersistence ProfileService::persistence(std::function<ehud::data::ProfileSyncFields()>locked,std::function<double()>workSeconds){
+ProfilePersistence ProfileService::persistence(std::function<ehud::data::ProfileSyncFields()>locked){
     ProfilePersistence io;const std::weak_ptr<Impl>weak=impl_;
     io.commit=[weak,locked=std::move(locked)](const PersonalProfile&value){
         const auto i=weak.lock();if(!i||!i->alive)throw ProfileError(ProfileFailure::unavailable);
         return i->accept(value,locked?locked():ehud::data::ProfileSyncFields{},false);
     };
-    io.workSeconds=std::move(workSeconds);return io;
+    return io;
 }
 void ProfileService::queueCapacityAvailable(){auto i=impl_;i->onOwner();i->pump();}
 void ProfileService::retry(){auto i=impl_;i->onOwner();i->started=true;i->state.failed=false;i->state.error.reset();i->pump();}

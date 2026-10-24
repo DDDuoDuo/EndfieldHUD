@@ -19,7 +19,7 @@ void check(bool value,const char* why) {++checks;if(!value) throw std::runtime_e
 struct Sink:h::AccountProfileSink {
     ehud::data::Profile profile;std::optional<ehud::data::ProfileSyncFields> locked;int applies{},locks{},imports{};bool failApply{};std::vector<std::string> order;
     void applyGameProfile(const h::GameProfileUpdate& u) override {
-        order.push_back("apply");if(failApply) throw std::runtime_error("profile unavailable");h::applyGameProfileUpdate(profile,u);++applies;
+        order.push_back("apply");if(failApply) throw std::runtime_error("profile unavailable");h::applyGameProfileUpdate(profile,u,endfield::modules::design::portableCharacterRules());++applies;
     }
     void setProfileSyncLocked(ehud::data::ProfileSyncFields v) override {order.push_back("lock");locked=v;++locks;}
     std::optional<std::string> importGameAvatar(const std::vector<std::uint8_t>& png) override {++imports;return "game-"+std::to_string(png.size())+".png";}

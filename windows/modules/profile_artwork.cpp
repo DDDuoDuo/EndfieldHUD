@@ -215,6 +215,20 @@ ProfileImage resample(const ProfileImage&source,int orientation,core::Rect regio
     return out;
 }
 }
+ProfilePanningImage profilePanningImage(const ProfileImage&source,int orientation,double side,double zoom,double contentsScale){
+    bounded(source.width,source.height);need(source.rgba.size()==std::size_t(source.width)*source.height*4,"Profile portrait size");
+    need(std::isfinite(side)&&side>0,"Profile panning well");
+    if(orientation<1||orientation>8)orientation=1;
+    const bool swap=orientation>=5;
+    const double width=swap?source.height:source.width,height=swap?source.width:source.height;
+    const double fillWidth=std::max(1.,width/height),fillHeight=std::max(1.,height/width);
+    const double scale=std::isfinite(contentsScale)?std::clamp(contentsScale,1.,8.):2;
+    const double magnification=std::isfinite(zoom)?std::clamp(zoom,1.,20.):1;
+    const double longSide=std::min(2048.,side*std::max(fillWidth,fillHeight)*magnification*scale*1.35);
+    const double factor=std::min(1.,longSide/std::max(width,height));
+    const unsigned w=std::max(1u,static_cast<unsigned>(std::lround(width*factor))),h=std::max(1u,static_cast<unsigned>(std::lround(height*factor)));
+    return {resample(source,orientation,{0,0,width,height},w,h),fillWidth,fillHeight};
+}
 ProfileImage profileResampled(const ProfileImage&image,unsigned width,unsigned height){
     bounded(image.width,image.height);bounded(width,height);need(image.rgba.size()==std::size_t(image.width)*image.height*4,"Profile image size");
     return resample(image,1,{0,0,double(image.width),double(image.height)},width,height);

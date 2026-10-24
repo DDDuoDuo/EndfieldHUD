@@ -51,7 +51,7 @@ public:
     // Official account sync: bypasses the local lock for synced fields.
     PersonalProfile acceptFromGame(const PersonalProfile&,ehud::data::ProfileSyncFields syncLocked);
     // A ready-made ProfileState persistence adapter for this service.
-    ProfilePersistence persistence(std::function<ehud::data::ProfileSyncFields()>syncLocked,std::function<double()>workSeconds);
+    ProfilePersistence persistence(std::function<ehud::data::ProfileSyncFields()>syncLocked);
     void queueCapacityAvailable();
     void retry();
     bool flush();

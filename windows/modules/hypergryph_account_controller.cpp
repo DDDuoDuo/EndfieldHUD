@@ -38,7 +38,19 @@ std::string headerModeTitle(HeaderMode m,core::Language l) {
 }
 std::string_view regionChoiceName(AccountPresentation::RegionChoice r) noexcept {return r==AccountPresentation::RegionChoice::china?"china":"global";}
 std::string regionChoiceTitle(AccountPresentation::RegionChoice r,core::Language l) {
-    return r==AccountPresentation::RegionChoice::china?text(l,"China","国服"):text(l,"Global","国际服");
+    return r==AccountPresentation::RegionChoice::china?text(l,"Mainland China","国服"):text(l,"Global","国际服"); // Mac 1.3.0 (MODS-850)
+}
+std::string syncFieldTitle(ehud::data::ProfileSyncField f,core::Language l) {
+    using F=ehud::data::ProfileSyncField;
+    switch(f) {
+        case F::name: return text(l,"Game name","游戏名称");
+        case F::tag: return text(l,"# number","# 编号");
+        case F::uid: return "UID";
+        case F::awakening: return text(l,"Awakening date","苏醒日期");
+        case F::levels: return text(l,"Levels","等级");
+        case F::counts: return text(l,"Collection counts","收集数量");
+    }
+    return {};
 }
 std::string_view statusName(AccountPresentation::Status s) noexcept {
     switch(s) {using S=AccountPresentation::Status;case S::disconnected: return "disconnected";case S::connecting: return "connecting";
@@ -439,10 +451,11 @@ AccountPresentation HypergryphAccountController::presentation() const {
     p.statusMessage=i.record().requiresReconnect?i.t("Sign in again to continue syncing.","请重新登录以继续同步。"):i.statusMessage;
     using S=AccountPresentation::Status;
     p.status=i.isPresentingLogin()?S::connecting:i.hasActiveRequest()?S::refreshing:!p.statusMessage.empty()?S::failed:p.isLinked?S::connected:S::disconnected;
-    for(const auto& r:i.record().roles) p.roles.push_back({r.id(),std::string(r.game==Game::endfield?"Endfield":"Arknights")+" · "+r.name.value_or(r.roleID),r.serverName.value_or("")});
+    for(const auto& r:i.record().roles) p.roles.push_back({r.id(),std::string(r.game==Game::endfield?"Endfield":"Arknights")+" / "+r.name.value_or(r.roleID),r.serverName.value_or("")});
     p.selectedRoleID=i.record().selectedRoleID;p.headerMode=i.headerMode();p.syncProfile=i.cache.syncProfile;p.syncAvatar=i.cache.syncAvatar;
     p.syncFields=accountSyncFields(i.cache);p.needsReconnect=i.record().linked&&i.record().requiresReconnect;
     const auto* snapshot=i.selectedSnapshot();const auto* role=i.selectedRole();
+    if(snapshot) p.snapshot=*snapshot; // the selected role's latest card (the Account page projects its sanity)
     p.accountName=snapshot&&snapshot->name?*snapshot->name:role&&role->name?*role->name:"";
     if(snapshot&&i.options.localDate) {
         const auto f=i.options.localDate(snapshot->observedAt);char buffer[32];
@@ -469,7 +482,7 @@ GaugeValue HypergryphAccountController::gaugeValue(const WorkModeGaugeInput& wor
     if(i.record().linked&&headerGame(mode)) {
         const auto s=sanityPresentation();
         const auto value=s?std::to_string(s->current)+" / "+std::to_string(s->maximum):std::string("— / —");
-        return {value,headerModeTitle(mode,i.options.language)+" · "+i.t("Sanity","理智")+" "+value,true};
+        return {value,headerModeTitle(mode,i.options.language)+", "+i.t("Sanity","理智")+" "+value,true};
     }
     const auto clampInt=[](double v)->std::int64_t{if(!(v>0)) return 0;if(v>=9.2e18) return 9200000000000000000;return static_cast<std::int64_t>(v);};
     const double remaining=work.countdown?std::max(0.0,work.duration-work.elapsed):0;

@@ -20,6 +20,28 @@
 namespace endfield::native {
 namespace {
 namespace h=modules::hypergryph;namespace p=modules::hypergryph::login_policy;
+// Mac 1.3.0 HypergryphAccountLogin (MODS-875, checklist C15-17): the window's
+// own texts follow the HUD font standard (HUDFontResolver.nsFont: HarmonyOS
+// Sans; bold auth buttons; the site no longer monospaced); the official page
+// itself is never restyled. The login's Win32 controls draw with GDI, which
+// cannot take the DirectWrite cascade the HUD renders with (HarmonyOS Sans +
+// the region's Noto): the bundled HarmonyOS Sans faces (fonts/ beside the
+// executable, the rasterizer's directory) are registered for this process only
+// (AddFontResourceExW FR_PRIVATE, once, never installed) and named, and GDI
+// font linking supplies glyphs HarmonyOS Sans lacks. Without the files (a
+// damaged install, the stub-built tests) Segoe UI stands in.
+const wchar_t* loginFamily() {
+    static const bool registered=[]{
+        std::array<wchar_t,32768> path{};
+        const auto length=GetModuleFileNameW(nullptr,path.data(),static_cast<DWORD>(path.size()));
+        if(!length||length>=path.size()) return false;
+        const auto fonts=std::filesystem::path(std::wstring(path.data(),length)).parent_path()/L"fonts";
+        bool any=false;
+        for(const wchar_t* face:{L"HarmonyOS_Sans_Regular.ttf",L"HarmonyOS_Sans_Bold.ttf"}) any|=AddFontResourceExW((fonts/face).c_str(),FR_PRIVATE,nullptr)>0;
+        return any;
+    }();
+    return registered?L"HarmonyOS Sans":L"Segoe UI";
+}
 using Microsoft::WRL::Callback;using Microsoft::WRL::ComPtr;
 std::wstring wide(std::string_view text) {
     if(text.empty()) return {};const int n=MultiByteToWideChar(CP_UTF8,0,text.data(),int(text.size()),nullptr,0);
@@ -128,7 +150,7 @@ struct WebViewLoginPresenter::Impl:std::enable_shared_from_this<Impl> {
     struct Popup {HWND window{};ComPtr<ICoreWebView2Controller> controller;ComPtr<ICoreWebView2> view;};
     WebViewLoginOptions options;std::optional<h::LoginSession> session;std::size_t reported{};
     std::function<void(std::optional<h::LoginResult>,h::LoginFailure)> completion;
-    HWND window{},title{},detail{},site{},continueButton{},cancelButton{},status{},retry{},toolbarCancel{},download{},check{},note{};HFONT titleFont{},bodyFont{},monoFont{};
+    HWND window{},title{},detail{},site{},continueButton{},cancelButton{},status{},retry{},toolbarCancel{},download{},check{},note{};HFONT titleFont{},bodyFont{},siteFont{};
     // Physical pixels per point of the login window: the HUD's monitor at
     // creation, then each WM_DPICHANGED (fonts and layout follow it).
     double scale{1};
@@ -240,21 +262,24 @@ struct WebViewLoginPresenter::Impl:std::enable_shared_from_this<Impl> {
         return hwnd;
     }
     void makeFonts() {
-        for(HFONT* font:{&titleFont,&bodyFont,&monoFont,&buttonFont}) if(*font) {DeleteObject(*font);*font=nullptr;}
+        for(HFONT* font:{&titleFont,&bodyFont,&siteFont,&buttonFont}) if(*font) {DeleteObject(*font);*font=nullptr;}
         const auto px=[&](double v){return -int(std::lround(v*scale));};
-        titleFont=CreateFontW(px(20),0,0,0,FW_SEMIBOLD,0,0,0,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,L"Segoe UI");
-        bodyFont=CreateFontW(px(13),0,0,0,FW_NORMAL,0,0,0,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,L"Segoe UI");
-        monoFont=CreateFontW(px(13),0,0,0,FW_NORMAL,0,0,0,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,FIXED_PITCH,L"Consolas");
-        buttonFont=CreateFontW(px(13),0,0,0,FW_BOLD,0,0,0,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,L"Segoe UI");
+        // nsFont(20, .semibold) (semibold renders bold, HUDFontWeight), nsFont(13),
+        // the site in nsFont(13) too (no longer monospaced), nsFont(13, .bold).
+        const wchar_t* family=loginFamily();
+        titleFont=CreateFontW(px(20),0,0,0,FW_BOLD,0,0,0,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,family);
+        bodyFont=CreateFontW(px(13),0,0,0,FW_NORMAL,0,0,0,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,family);
+        siteFont=CreateFontW(px(13),0,0,0,FW_NORMAL,0,0,0,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,family);
+        buttonFont=CreateFontW(px(13),0,0,0,FW_BOLD,0,0,0,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,family);
     }
     // WM_DPICHANGED: the same point sizes at the new scale on every page control.
     void rescale(double next) {
         if(!window||!(next>0)||next==scale) return;
-        const HFONT previous[]{titleFont,bodyFont,monoFont,buttonFont};titleFont=bodyFont=monoFont=buttonFont=nullptr;
+        const HFONT previous[]{titleFont,bodyFont,siteFont,buttonFont};titleFont=bodyFont=siteFont=buttonFont=nullptr;
         scale=next;makeFonts();
         for(HWND child=GetWindow(window,GW_CHILD);child;child=GetWindow(child,GW_HWNDNEXT)) {
             const auto font=reinterpret_cast<HFONT>(SendMessageW(child,WM_GETFONT,0,0));
-            const HFONT replacement=font==previous[0]?titleFont:font==previous[2]?monoFont:font==previous[1]?bodyFont:font==previous[3]?buttonFont:nullptr;
+            const HFONT replacement=font==previous[0]?titleFont:font==previous[2]?siteFont:font==previous[1]?bodyFont:font==previous[3]?buttonFont:nullptr;
             if(replacement) SendMessageW(child,WM_SETFONT,reinterpret_cast<WPARAM>(replacement),TRUE);
         }
         for(HFONT font:previous) if(font) DeleteObject(font);
@@ -412,7 +437,7 @@ struct WebViewLoginPresenter::Impl:std::enable_shared_from_this<Impl> {
         const auto strings=h::LoginSession::strings(session->region(),options.language);
         title=control(L"STATIC",wide(strings.consentTitle),SS_CENTER,titleID,titleFont);
         detail=control(L"STATIC",wide(strings.consentDetail),SS_CENTER,detailID,bodyFont);
-        site=control(L"STATIC",wide(strings.site),SS_CENTER,siteID,monoFont);
+        site=control(L"STATIC",wide(strings.site),SS_CENTER,siteID,siteFont);
         continueButton=authButton(wide(strings.continueLabel),continueID);
         cancelButton=authButton(wide(strings.cancelLabel),cancelID);
     }
@@ -431,7 +456,7 @@ struct WebViewLoginPresenter::Impl:std::enable_shared_from_this<Impl> {
         const auto strings=h::LoginSession::strings(region,options.language);
         title=control(L"STATIC",wide(text.title),SS_CENTER,titleID,titleFont);
         detail=control(L"STATIC",wide(text.detail),SS_CENTER,detailID,bodyFont);
-        site=control(L"EDIT",wide(text.site),ES_CENTER|ES_READONLY|ES_AUTOHSCROLL|WS_TABSTOP,siteID,monoFont);
+        site=control(L"EDIT",wide(text.site),ES_CENTER|ES_READONLY|ES_AUTOHSCROLL|WS_TABSTOP,siteID,siteFont);
         download=authButton(wide(text.downloadLabel),downloadID);
         check=authButton(wide(text.checkLabel),checkID);
         cancelButton=authButton(wide(strings.cancelLabel),cancelID);
@@ -692,7 +717,7 @@ struct WebViewLoginPresenter::Impl:std::enable_shared_from_this<Impl> {
     void destroyWindow() {
         if(window) {DestroyWindow(window);window=nullptr;}
         status=retry=toolbarCancel=title=detail=site=continueButton=cancelButton=download=check=note=nullptr;lastFocus=nullptr;pageFocused=false;
-        for(HFONT* font:{&titleFont,&bodyFont,&monoFont,&buttonFont}) if(*font) {DeleteObject(*font);*font=nullptr;}
+        for(HFONT* font:{&titleFont,&bodyFont,&siteFont,&buttonFont}) if(*font) {DeleteObject(*font);*font=nullptr;}
         hovered=nullptr;
     }
     void finish(std::optional<h::LoginResult> result,h::LoginFailure failure) {

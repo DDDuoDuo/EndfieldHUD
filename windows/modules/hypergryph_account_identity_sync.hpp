@@ -1,5 +1,6 @@
 #pragma once
 #include "core/data/data_store.hpp"
+#include "modules/hud_design_control.hpp"
 #include "modules/hypergryph_account_controller.hpp"
 
 // Personal-profile sync for the selected Endfield snapshot (Mac applyProfile +
@@ -12,11 +13,11 @@ namespace endfield::modules::hypergryph {
 // Applies the update and the Mac normalizedEditableValues rules that it can
 // affect (name/tag trimmed and limited to 20/10 characters; permission 1...60;
 // exploration 1...7). Throws std::invalid_argument for values the Mac store
-// would reject (empty name, control characters, invalid tag).
-void applyGameProfileUpdate(ehud::data::Profile&,const GameProfileUpdate&);
-// String.prefix(n) on grapheme clusters (Extend/SpacingMark/ZWJ/Prepend joins).
-std::string prefixCharacters(std::string_view,std::size_t count);
-std::size_t characterCount(std::string_view);
+// would reject (empty name, control characters, invalid tag). Character
+// counts and prefixes are Swift Characters through the injected rules (the
+// design library's CharacterRules: ICU in production, Environment::characters;
+// no second grapheme segmentation here).
+void applyGameProfileUpdate(ehud::data::Profile&,const GameProfileUpdate&,const design::CharacterRules&);
 
 // Production sink over the shared ProfileStore. importAvatar is supplied by the
 // personal-profile owner (managed image import) and returns the new filename.
@@ -24,11 +25,11 @@ class ProfileStoreAccountSink final:public AccountProfileSink {
 public:
     using ImportAvatar=std::function<std::optional<std::string>(const std::vector<std::uint8_t>&)>;
     using Changed=std::function<void()>;
-    ProfileStoreAccountSink(ehud::data::ProfileStore&,ImportAvatar={},Changed={});
+    ProfileStoreAccountSink(ehud::data::ProfileStore&,design::CharacterRules,ImportAvatar={},Changed={});
     void applyGameProfile(const GameProfileUpdate&) override;
     void setProfileSyncLocked(ehud::data::ProfileSyncFields) override;
     std::optional<std::string> importGameAvatar(const std::vector<std::uint8_t>&) override;
 private:
-    ehud::data::ProfileStore* store_;ImportAvatar import_;Changed changed_;
+    ehud::data::ProfileStore* store_;design::CharacterRules characters_;ImportAvatar import_;Changed changed_;
 };
 }

@@ -26,6 +26,7 @@ struct AccountPresentation {
     bool syncProfile{},syncAvatar{};
     ehud::data::ProfileSyncFields syncFields{ehud::data::ProfileSyncFields::all()}; // Mac result.syncFields (field chips)
     bool needsReconnect{};                                                     // linked && requiresReconnect
+    std::optional<Snapshot> snapshot;                                          // the selected role's latest card (Mac presentation.snapshot)
     std::string lastSync;
     bool isLinked{};
     bool busy() const noexcept {return status==Status::connecting||status==Status::refreshing;}
@@ -37,6 +38,8 @@ std::string headerModeTitle(AccountPresentation::HeaderMode,core::Language);
 std::string_view regionChoiceName(AccountPresentation::RegionChoice) noexcept;
 std::string regionChoiceTitle(AccountPresentation::RegionChoice,core::Language);
 std::string_view statusName(AccountPresentation::Status) noexcept;
+// HUDAccountPresentation.SyncField.title (the Account field chips).
+std::string syncFieldTitle(ehud::data::ProfileSyncField,core::Language);
 
 struct AccountAction {
     enum class Kind {connect,refresh,disconnect,selectRegion,selectRole,selectHeaderMode,setSyncProfile,setSyncField,setSyncAvatar};

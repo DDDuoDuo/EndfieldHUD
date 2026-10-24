@@ -1,12 +1,17 @@
 #!/bin/bash
 set -euo pipefail
-# Actual-source Personal Profile oracle. Compiles the unchanged Mac Sources with
-# windows/tools/profile_reference.swift and drives PersonalProfileCanvas and
-# UserProfileStore against temporary directories in an isolated process home.
-# Usage: profile_reference.sh NEW_BUILD_DIR OUTPUT.json [PRESENTATION_OUTPUT.json [ARTWORK_OUTPUT.json]]
+# Actual-source v1.2.0 Personal Profile oracle (run it in a ca04f14 checkout:
+# the harness drives the v1.2.0 PersonalProfileCanvas API). Compiles the
+# unchanged Mac Sources with windows/tools/profile_reference.swift and drives
+# PersonalProfileCanvas and UserProfileStore against temporary directories in
+# an isolated process home. Its record rules (titles, decoding, dates, crop
+# events: tests/fixtures/profile-state-source.json) and the ID card artwork
+# (id_card-artwork-source.json) are unchanged in 1.3.0; the 1.3.0 page is
+# tools/profile_canvas_reference.*.
+# Usage: profile_reference.sh NEW_BUILD_DIR OUTPUT.json [ARTWORK_OUTPUT.json]
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-[[ ( $# -ge 2 && $# -le 4 ) && "$(uname -s)" == Darwin ]] || { echo 'Usage: profile_reference.sh NEW_BUILD_DIR OUTPUT.json [PRESENTATION_OUTPUT.json [ARTWORK_OUTPUT.json]]' >&2; exit 1; }
-BUILD="$1"; OUTPUT="$2"; PRESENTATION="${3:-}"; ARTWORK="${4:-}"
+[[ ( $# -ge 2 && $# -le 3 ) && "$(uname -s)" == Darwin ]] || { echo 'Usage: profile_reference.sh NEW_BUILD_DIR OUTPUT.json [ARTWORK_OUTPUT.json]' >&2; exit 1; }
+BUILD="$1"; OUTPUT="$2"; ARTWORK="${3:-}"
 [[ ! -e "$BUILD" && ! -L "$BUILD" ]] || { echo 'Build directory must be new' >&2; exit 1; }
 mkdir -p "$BUILD/module-cache"; BUILD="$(cd "$BUILD" && pwd)"
 FIXTURE_HOME="$(mktemp -d "${TMPDIR:-/tmp}/endfield-profile-reference.XXXXXX")"
@@ -26,11 +31,10 @@ if ! xcrun swiftc -swift-version 5 -Onone -whole-module-optimization -parse-as-l
     tail -60 "$BUILD/compile.log" >&2
     exit 1
 fi
-if [[ -n "$PRESENTATION" ]]; then
+if [[ -n "$ARTWORK" ]]; then
     mkdir -p "$BUILD/presentation"
     CFFIXED_USER_HOME="$FIXTURE_HOME" "$BUILD/profile-reference" "$BUILD/raw.json" "$BUILD/presentation"
-    python3 -I "$ROOT/windows/tools/profile_presentation_reference.py" "$ROOT" "$BUILD/presentation/presentation.json" "$PRESENTATION"
-    if [[ -n "$ARTWORK" ]]; then
+    if true; then
         python3 -I - "$ROOT" "$BUILD/presentation/artwork.json" "$ARTWORK" <<'PY'
 import hashlib, json, pathlib, sys
 root, source, output = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), pathlib.Path(sys.argv[3])

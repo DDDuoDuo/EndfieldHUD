@@ -16,10 +16,10 @@ add_library(hud_hypergryph_account
   modules/hypergryph_account_identity_sync.cpp
   modules/hypergryph_account_login.cpp
   modules/hypergryph_account_sanity_gauge.cpp
-  modules/hypergryph_account_canvas.cpp
+  modules/account_canvas.cpp
   modules/hypergryph_account_profile_relay.cpp)
 target_include_directories(hud_hypergryph_account PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(hud_hypergryph_account PUBLIC hud_data hud_localization hud_scene)
+target_link_libraries(hud_hypergryph_account PUBLIC hud_data hud_localization hud_scene hud_design)
 
 if(BUILD_TESTING)
   add_executable(hypergryph_account_api_tests tests/hypergryph_account_api_tests.cpp)
@@ -35,10 +35,12 @@ if(BUILD_TESTING)
   add_test(NAME hypergryph_account_sanity_gauge_contracts COMMAND hypergryph_account_sanity_gauge_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/hypergryph-account-source.json ${CMAKE_CURRENT_SOURCE_DIR}/resources/account
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/shell-redesign-source.json)
-  add_executable(hypergryph_account_canvas_tests tests/hypergryph_account_canvas_tests.cpp)
-  target_link_libraries(hypergryph_account_canvas_tests PRIVATE hud_hypergryph_account)
-  add_test(NAME hypergryph_account_canvas_contracts COMMAND hypergryph_account_canvas_tests
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/hypergryph-account-source.json)
+  # The redesigned Account page node by node against the Mac 1.3.0 oracle
+  # (tools/account_canvas_reference.sh -> tests/fixtures/account-canvas-source.json).
+  add_executable(account_canvas_tests tests/account_canvas_tests.cpp)
+  target_link_libraries(account_canvas_tests PRIVATE hud_hypergryph_account)
+  add_test(NAME account_canvas_contracts COMMAND account_canvas_tests
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/account-canvas-source.json)
   # Also the Mac import -> restart contract: the import tool's codec
   # (hud_mac_import_codec, cmake/modules/import.cmake) produces the cache a
   # fresh controller reads.
@@ -62,11 +64,10 @@ if(WIN32)
   target_include_directories(hud_hypergryph_account_native PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
   target_compile_definitions(hud_hypergryph_account_native PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
   target_link_libraries(hud_hypergryph_account_native PUBLIC hud_hypergryph_account hud_utility PRIVATE winhttp crypt32 advapi32 windowscodecs ole32)
-  # Account module face and header sanity gauge on the shared renderer.
+  # The header sanity gauge on the shared renderer (the Account page is a
+  # design canvas: modules/account_canvas, hosted by the owner below).
   add_library(hud_hypergryph_account_scene
-    native/hypergryph_account_canvas_scene.cpp
     native/hypergryph_account_sanity_gauge_scene.cpp
-    tools/account_preview.cpp
     tools/account_sanity_gauge_preview.cpp)
   target_include_directories(hud_hypergryph_account_scene PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
   target_compile_definitions(hud_hypergryph_account_scene PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
@@ -165,13 +166,13 @@ if(WIN32 AND ehud_webview2_loader)
 endif()
 
 if(WIN32)
-  # Production owner bundle: services + login + module face + header wallet,
-  # wrapped by the Application's ModuleOwner adapter.
-  # UI Automation peers (native/account_automation.*) ride with the owner.
-  add_library(hud_hypergryph_account_owner tools/account_linking_owner.cpp native/account_automation.cpp)
+  # Production owner bundle: services + login + the Account page (a design
+  # owner core) + header wallet, wrapped by the area's ModuleOwner; UI
+  # Automation is the library's AutomationTree (native/hud_design_automation).
+  add_library(hud_hypergryph_account_owner tools/account_linking_owner.cpp)
   target_include_directories(hud_hypergryph_account_owner PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
   target_compile_definitions(hud_hypergryph_account_owner PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
-  target_link_libraries(hud_hypergryph_account_owner PUBLIC hud_hypergryph_account_scene hud_hypergryph_account_native PRIVATE uiautomationcore oleaut32)
+  target_link_libraries(hud_hypergryph_account_owner PUBLIC hud_hypergryph_account_scene hud_hypergryph_account_native hud_design_native PRIVATE uiautomationcore oleaut32)
   if(TARGET hud_hypergryph_account_webview)
     target_link_libraries(hud_hypergryph_account_owner PRIVATE hud_hypergryph_account_webview)
   endif()

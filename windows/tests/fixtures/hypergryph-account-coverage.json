@@ -222,7 +222,7 @@
   "generator": "windows/tools/hypergryph_account_coverage_fixture.py",
   "source": "windows/tests/fixtures/hypergryph-account-source.json",
   "sourceAuthority": "ca04f142185c7de40acd8523bdb563195d90a1d1",
-  "sourceSHA256": "71238d6a641d00566009545be400a2f66967605b5fca7fa651c9688448af6718"
+  "sourceSHA256": "775665fda146832dc6c79d6a07c9e06233ab54d77a810c46408336f6d6322130"
  },
  "responses": {
   "/api/v1/game/endfield/card/detail": {

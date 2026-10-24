@@ -5,10 +5,12 @@
 #include "app/utility_executor.hpp"
 #include "core/data/data_store.hpp"
 #include "core/data/file_io.hpp"
+#include "modules/boot_log.hpp"
 #include "modules/hypergryph_account_identity_sync.hpp"
 #include "modules/hypergryph_account_profile_relay.hpp"
 #include "modules/work_mode.hpp"
-#include "native/account_automation.hpp"
+#include "native/hud_design_automation.hpp"
+#include "native/hud_design_text_metrics.hpp"
 #include "native/hypergryph_account_vault.hpp"
 #include "tools/account_linking_owner.hpp"
 #ifndef NOMINMAX
@@ -36,23 +38,19 @@ constexpr std::string_view gaugeResource = "account.gauge";
 constexpr std::string_view coverageFixture = "account.coverage";
 constexpr int route = 20; // after every built-in owner (0...19)
 
-h::CanvasStyle canvasStyle(const ModuleAppearance& a) {
-    h::CanvasStyle style;
-    style.dark = a.dark;
-    // Plates take the theme's accent (SystemHUDView "yellow": darkened in the
-    // light theme); HUDControlHighlightLayer feedback follows
-    // HUDRuntimeAppearance.accent, the configured accent itself.
-    style.accent = {a.accent[0], a.accent[1], a.accent[2], 1};
-    style.feedbackAccent = h::CanvasColor{a.accentSRGB[0], a.accentSRGB[1], a.accentSRGB[2], 1};
-    return style;
-}
-// HUDAccountInteraction / SystemHUDView handle unmodified keys only. This is
-// the HUD window's key dispatch: Win32 synchronizes the thread's GetKeyState
-// with the key message being dispatched. Off that dispatch (hidden coverage's
-// synthetic keys) a thread's GetKeyState follows the live keyboard of the
-// interactive session, so those callers pass the modifier state explicitly.
-bool modified(const KeyEvent& e) {
-    return e.alt || GetKeyState(VK_CONTROL) < 0 || GetKeyState(VK_SHIFT) < 0 || GetKeyState(VK_LWIN) < 0 || GetKeyState(VK_RWIN) < 0;
+// The modifier bits of DesignOwnerCore::key (1 Alt, 2 Ctrl, 4 Shift, 8 Win).
+// This is the HUD window's key dispatch: Win32 synchronizes the thread's
+// GetKeyState with the key message being dispatched. Off that dispatch
+// (hidden coverage's synthetic keys) a thread's GetKeyState follows the live
+// keyboard of the interactive session, so those callers pass the modifier
+// state explicitly.
+std::uint32_t modifiers(const KeyEvent& e) {
+    std::uint32_t bits{};
+    if (e.alt || GetKeyState(VK_MENU) < 0) bits |= 1;
+    if (GetKeyState(VK_CONTROL) < 0) bits |= 2;
+    if (GetKeyState(VK_SHIFT) < 0) bits |= 4;
+    if (GetKeyState(VK_LWIN) < 0 || GetKeyState(VK_RWIN) < 0) bits |= 8;
+    return bits;
 }
 h::WorkModeGaugeInput workModeInput(const modules::WorkModeController* work, double now) {
     const auto snapshot = work ? work->snapshot(now) : modules::WorkModeSnapshot{};
@@ -180,7 +178,7 @@ struct CoverageWorld {
     std::size_t referenceRequests{};
     CoverageWorld(AccountCoverageFixture value, const fs::path& directory)
         : fixture(std::move(value)), host(fixture.responses), avatar(host), login(host, fixture.nonce), wall(fixture.now),
-          profileStore(directory), profileSink(profileStore), root(directory) {}
+          profileStore(directory), profileSink(profileStore, native::nativeCharacterRules()), root(directory) {}
 };
 
 class AccountModule final : public ModuleOwner, public AccountProfileLink {
@@ -221,8 +219,11 @@ public:
         o.openWorkMode = w ? std::function<void()>([w] { ++w->workModeOpens; }) : std::function<void()>([host] { host->selectModule(core::Module::workMode); });
         const auto& appearance = host_.appearance();
         o.language = appearance.language;
-        o.style = canvasStyle(appearance);
+        o.accent = appearance.accentSRGB;
         o.reduceMotion = appearance.reduceMotion;
+        // The page on the HUD's one design Context (the factory checked it).
+        o.design = c.host->designContext();
+        (void)c.host->designOwnerOptions(o.page, std::string(areaName), routing());
         if (w) {
             o.officialLogin = false;
             o.wallClock = [w] { return w->wall; };
@@ -237,8 +238,22 @@ public:
         // The quit asks only once an open recovery popover is closed (Mac 1.3.0).
         quitPreemption_ = [this](double time) { return owner_ && owner_->dismissWalletPopover(time); };
         host_.publish<QuitPreemption>(quitPreemptionService, quitPreemption_);
+        // The daily boot log's SANITY line (SystemHUDView.bootLogLines :3073-3075):
+        // accountController.sanityPresentation() and the seconds from now to
+        // its next point, both on the controller's wall clock.
+        if (auto* sources = host_.find<modules::boot::BootLogSources>(modules::boot::bootLogSourcesKey))
+            sources->sanity = [this](double) -> std::optional<modules::boot::BootLogSanity> {
+                if (!owner_) return std::nullopt;
+                const auto& controller = owner_->controller();
+                const auto value = controller.sanityPresentation();
+                if (!value) return std::nullopt;
+                modules::boot::BootLogSanity line{int(value->current), int(value->maximum), std::nullopt};
+                if (value->nextRecoveryAt) line.nextIn = *value->nextRecoveryAt - controller.now();
+                return line;
+            };
     }
     ~AccountModule() override {
+        if (auto* sources = host_.find<modules::boot::BootLogSources>(modules::boot::bootLogSourcesKey)) sources->sanity = {};
         host_.withdraw(AccountProfileLink::key);
         host_.withdraw(quitPreemptionService);
         relay_.attach(nullptr);
@@ -262,20 +277,20 @@ public:
     }
     bool presents(core::Module m) const noexcept override { return m == core::Module::account; }
     void resize(const ClientMetrics& m) override { owner_->resize(m); }
-    void setAppearance(const ModuleAppearance& a, double t) override { owner_->setAppearance(a.language, canvasStyle(a), a.reduceMotion, t); }
+    void setAppearance(const ModuleAppearance& a, double t) override { owner_->setAppearance(a, t); }
     void setOverlayVisible(bool v, double t) override { visible_ = v; owner_->setOverlayVisible(v, t); }
     void overlayClosing(double t) override { visible_ = false; owner_->overlayClosing(t); }
     void update(const ModuleFrame& f) override {
         syncWorkMode(f.time);
         // The wallet follows the header chrome, which fades with the canvas.
-        owner_->update(f.center, f.chrome, f.presentation, f.opacity, f.opacity, f.time);
+        owner_->update(f, f.opacity);
     }
     // Launch prewarm: the first opening's header wallet (and the face when
     // that opening shows Account) is posed hidden, so the host's upload right
     // after this installs its artwork and the first opening frame does not.
     void prewarm(const ModuleFrame& f) override {
         (void)syncWorkMode(f.time);
-        owner_->prewarm(f.center, f.chrome, f.presentation, f.time);
+        owner_->prewarm(f);
         if (world_) world_->prewarm.prewarmed = true;
     }
     bool requiresFrames(double t) const override { return owner_->requiresFrames(t); }
@@ -290,12 +305,14 @@ public:
     void collected(native::Renderer& r) override { owner_->collected(r); }
     void release(native::Renderer& r) override { owner_->release(r); }
     bool covers(core::Point p) const override { return owner_->covers(p); }
+    bool pointerLocked() const override { return owner_->pointerLocked(); }
     bool capturesPointer() const override { return owner_->capturesPointer(); }
-    bool capturesWheel() const override { return owner_->capturesPointer(); }
+    bool capturesWheel() const override { return owner_->capturesWheel(); }
     bool capturesKeys() const override { return owner_->capturesKeys(); }
     bool pointer(const PointerEvent& e, double t) override { return owner_->pointer(e, t); }
     bool wheel(const WheelEvent& e, double t) override { return owner_->wheel(e, t); }
-    bool key(const KeyEvent& e, double t) override { return key(e, modified(e), t); }
+    bool key(const KeyEvent& e, double t) override { return key(e, modifiers(e), t); }
+    std::optional<ModuleCursor> cursorAt(core::Point p) const override { return owner_->cursorAt(p); }
     bool message(const NativeMessage& m, double t) override {
         if (m.message == message_ && (!m.window || m.window == window_)) automationWake_ = false;
         return owner_->message(m, t);
@@ -333,18 +350,20 @@ public:
     bool dropHover(std::span<const std::string>, std::optional<core::Point>, double) override { return false; }
 
     // --- UI Automation (ModuleOwner hooks) -------------------------------------
-    // The Mac's transparent AX buttons over the projected face and the header
-    // wallet (native/account_automation.hpp) under this owner's group of the
-    // HUD window's root provider (app/hud_automation.hpp). Created on the first
-    // refresh, i.e. only once a UIA client asked the HUD; refreshed on content
-    // events only.
+    // One AutomationTree (native/hud_design_automation.hpp) under this
+    // owner's group of the HUD window's root provider (app/hud_automation.hpp):
+    // the page's items while it takes input, then the wallet's stand-ins.
+    // Created on the first refresh, i.e. only once a UIA client asked the HUD;
+    // refreshed on content events only.
     bool automationRefresh(IRawElementProviderFragmentRoot* root) override {
+        bool rebuilt = false;
         if (!automation_ || automationRoot_ != root) {
+            rebuilt = automation_ != nullptr;
             automation_.reset();
-            automation_ = std::make_unique<native::NativeAccountAutomation>(automationHost(root));
+            automation_ = std::make_unique<native::AutomationTree>(automationHost(root));
             automationRoot_ = root;
         }
-        return automation_->refresh();
+        return automation_->refresh() || rebuilt;
     }
     std::size_t automationCount() const override { return automation_ ? automation_->size() : 0; }
     long automationChild(std::size_t index, IRawElementProviderFragment** out) const override {
@@ -364,16 +383,19 @@ public:
         if (!(scale > 0) || !ClientToScreen(static_cast<HWND>(window_), &origin)) return std::nullopt;
         return core::Rect{origin.x + r.x * scale, origin.y + r.y * scale, r.width * scale, r.height * scale};
     }
-    native::AccountAutomationHost automationHost(IRawElementProviderFragmentRoot* root) {
-        native::AccountAutomationHost view;
+    native::AutomationTreeHost automationHost(IRawElementProviderFragmentRoot* root) {
+        native::AutomationTreeHost view;
         view.root = root;
-        view.controls = [this] { return owner_->accessibleControls(); };
-        view.toScreen = [this](core::Rect r) { return screenRect(r); };
-        view.invoke = [this](std::string_view id) {
-            const bool done = owner_->performAccessible(id, host_.now());
-            if (done) wakeAfterAutomation();
-            return done;
+        view.nodes = [this] { return owner_->accessibleNodes(); };
+        view.toScreen = [this](core::Rect r, std::uint8_t space) -> std::optional<core::Rect> {
+            const auto client = owner_->accessibleClientRect(r, space);
+            return client ? screenRect(*client) : std::nullopt;
         };
+        view.invoke = [this](std::string_view id) { return owner_->performAccessible(id, host_.now()); };
+        view.focus = view.invoke;
+        view.setValue = [this](std::string_view id, double value) { return owner_->setAccessibleValue(id, value, host_.now()); };
+        view.expand = [this](std::string_view id, bool expand) { return owner_->expandAccessible(id, expand, host_.now()); };
+        view.changed = [this] { wakeAfterAutomation(); };
         return view;
     }
 
@@ -398,7 +420,7 @@ private:
     QuitPreemption quitPreemption_;
     std::uint64_t workRevision_{};
     bool visible_{}; // setOverlayVisible / overlayClosing (hidden coverage's prewarm probe)
-    std::unique_ptr<native::NativeAccountAutomation> automation_;
+    std::unique_ptr<native::AutomationTree> automation_;
     IRawElementProviderFragmentRoot* automationRoot_{}; // held (AddRef'd) by automation_
     bool automationWake_{};                             // a UIA press posted the registered message
 
@@ -413,7 +435,7 @@ private:
     }
     // The module's key route with the modifier state supplied: key() above
     // (the HUD dispatch) and hidden coverage's synthetic keys.
-    bool key(const KeyEvent& e, bool modifiersDown, double t) { return owner_->key(e, modifiersDown, t); }
+    bool key(const KeyEvent& e, std::uint32_t modifierBits, double t) { return owner_->key(e, modifierBits, t); }
 
     bool syncWorkMode(double t) {
         const auto* work = host_.workMode();
@@ -444,7 +466,17 @@ private:
         ModuleCoverage& step;
         CoverageWorld& w;
         double t;
-        void frame(double dt = .05) { t += dt; step.present(t); }
+        // One hidden frame, then the design Context's deadlines (page swaps,
+        // the confirm callback) on the coverage clock.
+        void frame(double dt = .05) { t += dt; step.present(t); if (auto* c = self.host_.designContext()) (void)c->advance(t); }
+        std::vector<std::string> pageIDs() const {
+            std::vector<modules::design::AccessibilityItem> items;
+            canvas().accessibilityItems(items);
+            std::vector<std::string> out;
+            for (const auto& i : items) out.push_back(i.id);
+            return out;
+        }
+        std::size_t pageItems() const { return pageIDs().size(); }
         // Utility completions, then the registered wake through the owners'
         // message chain, until the controller is idle.
         void settle() {
@@ -457,15 +489,20 @@ private:
             step.check(!w.host.queued() && !self.controller().hasActiveRequest() && !w.host.activeRequests(), "Account work settles on the coverage clock");
             frame();
         }
-        const h::AccountCanvasModel& canvas() const { return self.owner_->module().canvas(); }
+        modules::AccountCanvas& canvas() const { return self.owner_->canvas(); }
+        // An enabled control (page, header action or open menu row) by its
+        // accessibility item: its box rect.
         std::optional<core::Rect> control(std::string_view id) const {
-            for (const auto& c : canvas().accessibleActions()) if (c.id == id) return c.enabled ? std::optional(c.rect) : std::nullopt;
+            std::vector<modules::design::AccessibilityItem> items;
+            canvas().accessibilityItems(items);
+            for (const auto& c : items) if (c.id == id) return c.enabled ? std::optional(c.rect) : std::nullopt;
             return std::nullopt;
         }
+        // A box point in logical client coordinates through the live plane.
         core::Point canvasPoint(core::Point local) {
-            const auto p = step.project(local, h::AccountCanvasModel::bounds.width, h::AccountCanvasModel::bounds.height);
-            step.check(p.has_value(), "Account canvas points project through the module plane");
-            return *p;
+            const auto r = self.owner_->page().clientRect({local.x, local.y, 0, 0});
+            step.check(r.has_value(), "Account page points project through the module plane");
+            return {r->x, r->y};
         }
         bool press(core::Point p) {
             t += .05;
@@ -481,10 +518,10 @@ private:
         }
         // Synthetic keys carry their modifier state: never the live keyboard
         // of the interactive session the coverage happens to run in.
-        bool keyDown(std::uint32_t vk, bool modifiers = false) {
+        bool keyDown(std::uint32_t vk, std::uint32_t modifierBits = 0) {
             t += .05;
-            const bool handled = self.key({KeyKind::down, vk}, modifiers, t);
-            (void)self.key({KeyKind::up, vk}, modifiers, t);
+            const bool handled = self.key({KeyKind::down, vk}, modifierBits, t);
+            (void)self.key({KeyKind::up, vk}, modifierBits, t);
             frame();
             return handled;
         }
@@ -507,7 +544,7 @@ private:
         }
         Microsoft::WRL::ComPtr<IRawElementProviderFragment> peer(std::string_view id) {
             std::optional<core::Rect> client;
-            for (const auto& c : self.owner_->accessibleControls()) if (c.id == id) client = c.rect;
+            for (const auto& c : self.owner_->accessibleNodes()) if (c.id == id) client = self.owner_->accessibleClientRect(c.rect, c.space);
             step.check(client.has_value(), "The control has an accessibility peer");
             const auto screen = self.screenRect(*client);
             step.check(screen.has_value(), "The peer projects to screen pixels");
@@ -638,6 +675,9 @@ private:
         d.step.check(!w.login.isPresenting() && !w.login.session(), "The login session is disposed after sign-in");
     }
 
+    // The pinned wall clock's step between the link's fetch and the Arknights
+    // header's refresh of both cards (the controller's 5 s retry guard).
+    static constexpr double headerFetchDelay = 6;
     void checkSnapshots(Driver& d) {
         auto& w = *world_;
         const auto& record = controller().record();
@@ -657,7 +697,8 @@ private:
             const auto& stamina = expected["stamina"];
             d.step.check(s.stamina && s.stamina->current == stamina["current"].integer() && s.stamina->maximum == stamina["maximum"].integer() &&
                          s.stamina->fullRecoveryAt && std::abs(*s.stamina->fullRecoveryAt - std::strtod(stamina["fullRecoveryAt"].string().c_str(), nullptr)) < 1e-6 &&
-                         std::abs(s.observedAt - w.fixture.now) < 1e-6, "Snapshot stamina matches the Mac decode at the pinned clock");
+                         std::abs(s.observedAt - (w.fixture.now + headerFetchDelay)) < 1e-6,
+                         "Snapshot stamina matches the Mac decode at the pinned clock");
             if (expected.contains("level")) d.step.check(s.level == expected["level"].integer() && s.name == std::optional(expected["name"].string()), "Endfield card fields match");
         }
     }
@@ -703,8 +744,8 @@ private:
                 // Mac 1.3.0 SystemHUDView.layoutAccountGaugeControls: the bar without
                 // sanity data keeps its toggle button (HUDAccountGauge.accessibleActions:
                 // the Work Mode link), labelled with the bar's accessibility label, no value.
-                step.check(automationRefresh(d.group()) && automationCount() == d.canvas().accessibleActions().size() + 1,
-                           "UIA lists the face's peers through the owner hooks and the unlinked wallet's Work Mode link");
+                step.check(automationRefresh(d.group()) && automationCount() == d.pageItems() + 1 && d.listed("connect") && d.listed("region:0") && d.listed("region:1"),
+                           "UIA lists the page's items through the owner hooks and the unlinked wallet's Work Mode link");
                 {
                     const auto link = d.listed("wallet:toggle");
                     VARIANT name;
@@ -720,18 +761,18 @@ private:
                     step.check(d.invoke(d.peer("wallet:toggle")) == S_OK && w.workModeOpens == opens + 1 && !owner_->gauge().model().popoverOpen(),
                                "Invoking the unlinked wallet's peer opens Work Mode, no popover");
                 }
-                step.check(d.invoke(d.peer("account:refresh")) == UIA_E_ELEMENTNOTENABLED && !automationWake_, "A disabled peer refuses Invoke and wakes nothing");
                 automationDisconnect();
                 step.check(automationCount() == 0, "Disconnecting removes every peer");
             }
-            step.check(d.click("region") && d.canvas().menu() == h::AccountCanvasModel::Menu::region, "Region opens its shaped menu");
-            step.check(!d.keyDown(VK_ESCAPE, true) && d.canvas().menu() == h::AccountCanvasModel::Menu::region,
-                       "A modified Escape stays with host shortcuts and keeps the menu");
-            step.check(d.keyDown(VK_ESCAPE) && !d.canvas().isPopoverOpen(), "Escape closes only the menu");
-            step.check(d.click("header") && d.canvas().menu() == h::AccountCanvasModel::Menu::header && capturesPointer() && capturesKeys(),
-                       "The header-mode menu captures input");
-            step.check(d.click("header:arknights") && controller().headerMode() == h::AccountPresentation::HeaderMode::arknights &&
-                       !w.events.empty() && w.events.back() == "settings", "Choosing a header mode records accountAction settings");
+            // Mac 1.3.0 (HUDAccountHUDVerification L43-45, L86-89): the unlinked page
+            // offers only the region switch and Connect; Global while unlinked
+            // stays local and unlinked, each region keeping its own page.
+            step.check(d.pageIDs() == std::vector<std::string>{"region:0", "region:1", "connect"}, "The unlinked page lists exactly region:0, region:1 and connect");
+            step.check(d.click("region:1") && controller().presentation().region == h::AccountPresentation::RegionChoice::global &&
+                       !controller().presentation().isLinked && w.host.requests().empty(), "Selecting Global while unlinked stays unlinked and local");
+            d.settleAnimations();
+            step.check(d.click("region:0") && controller().presentation().region == h::AccountPresentation::RegionChoice::china && w.host.requests().empty(),
+                       "Mainland China comes back without a request");
             d.settleAnimations();
             step.check(d.click("connect") && w.login.isPresenting() && controller().isPresentingLogin(), "Connect opens the login host");
             fakeOfficialSite(d);
@@ -743,7 +784,25 @@ private:
             const auto& session = *w.fixture.messages.back().session;
             step.check(saved && saved->cred == session.cred && saved->signingToken == session.signingToken && saved->deviceID == session.deviceID,
                        "Credentials reach the vault through the shared utility queue");
-            step.check(w.host.requests().size() == 3 && !w.host.rejected(), "Bindings plus one card per header game; nothing else is requested");
+            step.check(w.host.requests().size() == 2 && !w.host.rejected(), "Bindings plus the selected Endfield role's card; nothing else is requested");
+            d.settleAnimations(); // the linked page slides in
+            // The linked page (verification L46-60): Disconnect, the region switch,
+            // the sanity plate, the rows and the field chips; no Connect.
+            for (const char* id : {"disconnect", "region:1", "sanity", "role", "header", "refresh", "syncProfile", "field:name", "field:avatar"})
+                step.check(d.control(id).has_value(), "The linked page has its control");
+            step.check(!d.control("connect"), "The linked page has no Connect");
+            // The header's automatic fetch honours the 5 s retry guard after the
+            // link's own fetch (refresh: lastAttempt, on the wall clock).
+            w.wall += headerFetchDelay;
+            step.check(d.click("header") && d.canvas().menuOpen() && capturesPointer() && capturesKeys(), "The header-mode menu captures input");
+            step.check(d.click("header:arknights") && controller().headerMode() == h::AccountPresentation::HeaderMode::arknights &&
+                       std::find(w.events.begin(), w.events.end(), "settings") != w.events.end(), "Choosing a header mode records accountAction settings");
+            d.settle();
+            // refresh (HypergryphAccountController.swift:372-386) fetches every role the
+            // presentation needs once the 5 s guard passed: the selected Endfield
+            // card again and the Arknights header's player info.
+            step.check(w.host.requests().size() == 4 && !w.host.rejected() && w.host.requests()[2].path == w.host.requests()[1].path &&
+                       w.host.requests()[3].path != w.host.requests()[1].path, "The Arknights header refreshes the needed cards once (Endfield and Arknights)");
             for (const auto& r : w.host.requests()) {
                 const auto sign = r.header("sign");
                 step.check(r.host == h::apiHost(w.fixture.region) && r.header("cred") == std::optional(session.cred) && r.header("dId") == session.deviceID &&
@@ -755,6 +814,7 @@ private:
             step.check(owner_->gauge().model().value() == d.expectedGauge() && owner_->gauge().model().canOpen() &&
                        d.expectedGauge().find(" / 135") != std::string::npos, "The header wallet shows Arknights sanity");
             // Profile sync before the profile exists, then attach (replay).
+            d.settleAnimations();
             step.check(d.click("syncProfile") && controller().cache().syncProfile && controller().gameSyncActive() && relay_.pending() && relay_.locked() == ehud::data::ProfileSyncFields::all(),
                        "Enabling sync keeps the update until the personal profile attaches");
             relay_.attach(&w.profileSink);
@@ -791,13 +851,32 @@ private:
         }
         // ---- Every cycle: menus and popover open and close without side effects.
         step.check(controller().presentation() == w.reference && owner_->gauge().model().value() == w.referenceGauge, "The linked account is unchanged between cycles");
-        step.check(d.click("role") && d.canvas().menu() == h::AccountCanvasModel::Menu::role, "The role menu opens");
-        const auto list = d.canvas().listRect();
-        const auto inside = d.canvasPoint({list.x + list.width / 2, list.y + list.height / 2});
+        // Mac 1.3.0 verification L120-146: the role menu lists role:<id> with the
+        // selection marked; the wheel and keys stay with it; the first press
+        // outside only closes it (the Region segment behind is not pressed).
+        step.check(d.click("role") && d.canvas().menuOpen(), "The role menu opens");
+        const auto& roles = controller().presentation().roles;
+        step.check(!roles.empty() && d.control("role:" + roles.front().id).has_value(), "The role menu lists role:<id> rows");
+        const auto row = *d.control("role:" + roles.front().id);
+        const auto inside = d.canvasPoint({row.x + row.width / 2, row.y + row.height / 2});
         step.check(wheel({inside.x, inside.y, -1, false, 0, 3}, d.t += .05), "An open menu consumes the wheel");
-        step.check(d.keyDown(VK_DOWN) && d.canvas().isPopoverOpen(), "Arrow keys move the menu selection");
-        step.check(d.press(d.canvasPoint({20, 300})) && !d.canvas().isPopoverOpen() && controller().presentation() == w.reference,
-                   "An outside click dismisses the menu without choosing");
+        step.check(d.keyDown(VK_DOWN) && d.canvas().menuOpen(), "Arrow keys move the menu selection");
+        const auto segment = *d.control("region:1");
+        step.check(d.press(d.canvasPoint({segment.x + segment.width / 2, segment.y + segment.height / 2})) && !d.canvas().menuOpen() &&
+                   controller().presentation() == w.reference, "The first press outside only closes the menu (the segment behind is not pressed)");
+        d.settleAnimations();
+        step.check(d.click("header") && d.canvas().menuOpen() && d.control("header:hidden").has_value(), "The header menu offers every mode");
+        step.check(d.keyDown(VK_ESCAPE) && !d.canvas().menuOpen() && controller().presentation() == w.reference, "Escape closes only the menu");
+        // Disconnect asks through the shared confirm bar (Mac verification L160-170);
+        // Esc cancels without an unlink.
+        step.check(d.click("disconnect"), "Disconnect is pressed");
+        const auto& confirmState = host_.designContext()->overlay().confirmState();
+        step.check(confirmState.isOpen() && confirmState.request()->id == "disconnect" && confirmState.request()->danger &&
+                   confirmState.request()->message == h::regionChoiceTitle(controller().presentation().region, host_.appearance().language),
+                   "Disconnect opens the confirm bar with the region as its message, danger");
+        (void)host_.designContext()->overlay().handleKey({VK_ESCAPE});
+        d.settleAnimations();
+        step.check(!confirmState.request() && controller().record().linked && controller().presentation() == w.reference, "Esc cancels without an unlink");
         const auto toggle = d.gaugePoint("toggle");
         step.check(toggle && d.press(*toggle) && owner_->gauge().model().popoverOpen(), "The recovery popover opens");
         step.check(d.keyDown(VK_ESCAPE) && !owner_->gauge().model().popoverOpen(), "Escape closes it");
@@ -812,8 +891,8 @@ private:
             // press), under this owner's group as the host lists them.
             auto* group = d.group();
             (void)automationRefresh(group);
-            const auto faceControls = d.canvas().accessibleActions().size();
-            step.check(automationCount() == faceControls + 1, "UIA lists the face and the wallet");
+            const auto faceControls = d.pageItems();
+            step.check(automationCount() == faceControls + 1, "UIA lists the page and the wallet");
             Microsoft::WRL::ComPtr<IRawElementProviderFragment> first, last, parent, fromGroup;
             Microsoft::WRL::ComPtr<IRawElementProviderFragmentRoot> fragmentRoot;
             step.check(automationChild(0, &first) == S_OK && first && SUCCEEDED(first->Navigate(NavigateDirection_Parent, &parent)) && sameObject(parent.Get(), group) &&
@@ -821,35 +900,23 @@ private:
                        "Fragments are children of the owner's group, which is also their fragment root");
             step.check(SUCCEEDED(group->QueryInterface(IID_PPV_ARGS(&parent))) && SUCCEEDED(parent->Navigate(NavigateDirection_FirstChild, &fromGroup)) &&
                        fromGroup.Get() == first.Get() && automationChild(automationCount(), &last) < 0 && !last, "The group's children are the owner's fragments in order");
-            const auto invokes = automation_->stats().invokes;
+            const auto invokes = automation_->stats().invokes, expansions = automation_->stats().expansions;
             const auto presented = controller().presentation();
-            step.check(d.focusedPeer().empty() && d.toggleState("account:syncProfile") == std::optional(presented.syncProfile) &&
-                       d.toggleState("account:syncAvatar") == std::optional(presented.syncAvatar) && !d.toggleState("account:connect"),
-                       "The face holds no keyboard focus; the sync toggles report their check marks through Toggle");
-            const auto help = d.helpText("account:connect");
-            step.check(!help.empty() && help.rfind(d.canvas().statusLine(), 0) == 0 && (presented.lastSync.empty() || help.find(presented.lastSync) != std::string::npos),
-                       "Reconnect carries the painted status line and last update as its help text");
-            const auto role = d.peer("account:role");
-            const auto moves = automation_->stats().focusMoves;
-            step.check(d.invoke(role) == S_OK && d.canvas().menu() == h::AccountCanvasModel::Menu::role && automationRefresh(group),
-                       "Invoking the role peer opens its menu; the host's refresh restructures the tree");
-            step.check(presented.selectedRoleID && d.focusedPeer() == "account:role:" + *presented.selectedRoleID && automation_->stats().focusMoves == moves + 1,
-                       "The open menu's current role holds the keyboard focus (announced once)");
-            const auto before = d.canvas().keyboardControl();
-            step.check(d.keyDown(VK_DOWN) && d.canvas().isPopoverOpen(), "Down moves the menu selection");
+            step.check(d.focusedPeer().empty() && d.toggleState("syncProfile") == std::optional(presented.syncProfile) &&
+                       d.toggleState("field:avatar") == std::optional(presented.syncAvatar) &&
+                       d.toggleState("field:levels") == std::optional(presented.syncFields.contains(ehud::data::ProfileSyncField::levels)) && !d.toggleState("disconnect"),
+                       "The page holds no keyboard focus; the sync toggle and field chips report their state through Toggle");
+            // The role dropdown is a pop-up button (ComboBox): ExpandCollapse presses it.
+            const auto role = d.peer("role");
+            Microsoft::WRL::ComPtr<IExpandCollapseProvider> expander;
+            step.check(SUCCEEDED(role.As(&expander)) && expander->Expand() == S_OK && d.canvas().menuOpen(), "Expanding the role pop-up opens its menu");
+            // (the expansion's input change may already have re-listed the tree)
             (void)automationRefresh(group);
-            const auto after = d.canvas().keyboardControl();
-            step.check(after && d.focusedPeer() == "account:" + *after && automation_->stats().focusMoves == moves + 1 + (after != before ? 1 : 0),
-                       "The keyboard focus follows the arrows");
-            Microsoft::WRL::ComPtr<IRawElementProviderSimple> stale;
-            VARIANT name;
-            VariantInit(&name);
-            step.check(SUCCEEDED(role.As(&stale)) && stale->GetPropertyValue(UIA_NamePropertyId, &name) == UIA_E_ELEMENTNOTAVAILABLE,
-                       "Peers hidden by the menu are disconnected");
-            step.check(d.keyDown(VK_ESCAPE) && !d.canvas().isPopoverOpen() && automationRefresh(group) && d.focusedPeer().empty(),
-                       "Escape closes the menu; the face peers return without a keyboard focus");
+            step.check(presented.selectedRoleID && d.listed("role:" + *presented.selectedRoleID), "The open role menu's rows are listed");
+            step.check(d.keyDown(VK_ESCAPE) && !d.canvas().menuOpen() && ((void)automationRefresh(group), automationCount() == faceControls + 1),
+                       "Escape closes the menu; its rows leave the tree");
             step.check(!d.valueText("wallet:toggle"), "The closed wallet's peer has no value");
-            step.check(d.invoke(d.peer("wallet:toggle")) == S_OK && owner_->gauge().model().popoverOpen() && automationRefresh(group) &&
+            step.check(d.invoke(d.peer("wallet:toggle")) == S_OK && owner_->gauge().model().popoverOpen() && ((void)automationRefresh(group), true) &&
                        automationCount() == faceControls + 2, "The wallet peer opens the popover and exposes its Refresh");
             const auto countdowns = owner_->gauge().accessibilityValue();
             step.check(countdowns && d.valueText("wallet:toggle") == countdowns && (host_.appearance().language != core::Language::english || countdowns->rfind("Next recovery ", 0) == 0),
@@ -857,7 +924,8 @@ private:
             step.check(d.keyDown(VK_ESCAPE) && !owner_->gauge().model().popoverOpen(), "Escape closes the popover");
             (void)automationRefresh(group);
             step.check(!d.valueText("wallet:toggle"), "Closing the popover clears the value");
-            step.check(automation_->stats().invokes == invokes + 2 && controller().presentation() == w.reference, "UIA presses change nothing else");
+            step.check(automation_->stats().invokes == invokes + 1 && automation_->stats().expansions == expansions + 1 && controller().presentation() == w.reference,
+                       "UIA presses change nothing else");
             // HUD concealed: every fragment disconnects; the next refresh
             // (HUD shown again) lists fresh ones under the same group.
             Microsoft::WRL::ComPtr<IRawElementProviderFragment> current;
@@ -875,10 +943,10 @@ private:
         {
             // A file drag over the face (synthetic paths; nothing is read).
             const std::string dragged[]{(w.root / "dragged.png").string()};
-            const auto over = d.canvasPoint({h::AccountCanvasModel::bounds.width / 2, h::AccountCanvasModel::bounds.height / 2});
+            const auto over = d.canvasPoint({modules::design::metric::boxWidth / 2, modules::design::metric::boxHeight / 2});
             step.check(!dropHover(dragged, over, d.t) && !dropHover(dragged, std::nullopt, d.t) && !drop(dragged, over, d.t) &&
-                       controller().presentation() == w.reference && !d.canvas().isPopoverOpen(),
-                       "A file dragged over the Account face is refused, as on the Mac (no drag operation, no drop)");
+                       controller().presentation() == w.reference && !d.canvas().menuOpen(),
+                       "A file dragged over the Account page is refused, as on the Mac (no drag operation, no drop)");
         }
         (void)pointer({PointerKind::leave, PointerButton::none, 0, 0}, d.t);
         d.settleAnimations();
@@ -908,17 +976,18 @@ private:
         {
             // The HUD finished closing on another module (the host's
             // overlayConcealed broadcast, delivered here as the host does): a
-            // face shown earlier parks its group target and leaf rasters; the
-            // next cycle shows it again with the same artwork (the cycles'
-            // raster usage repeats exactly).
-            const auto before = owner_->module().sceneStats();
+            // page shown earlier keeps no artwork (DesignOwnerCore's Clipboard
+            // policy); the next cycle shows it again with the same artwork
+            // (the cycles' raster usage repeats exactly).
+            const auto before = owner_->page().sceneStats(core::Module::account);
             (void)hostEvent({HostEvent::Kind::overlayConcealed, 0}, d.t);
-            const auto after = owner_->module().sceneStats();
+            const auto after = owner_->page().sceneStats(core::Module::account);
+            step.check(before && after, "The Account page's scene reports its residency");
             if (host_.selectedModule() != core::Module::account)
-                step.check(after.parks == before.parks + (before.surfaces || before.uploaded ? 1u : 0u) && after.surfaces == 0 && after.pixelBytes == 0 && !after.uploaded,
-                           "Once the HUD is closed on another module the Account face keeps no leaf raster or GPU target");
+                step.check(after->rasterEntries == 0 && after->residentPixelBytes == 0,
+                           "Once the HUD is closed on another module the Account page keeps no raster");
             else
-                step.check(after.parks == before.parks, "A face shown at the close stays resident");
+                step.check(after->parks == before->parks, "A page shown at the close stays resident");
             const auto gauge = owner_->gauge().sceneStats();
             step.check(!owner_->gauge().model().popoverOpen() && !gauge.popoverLoaded && !gauge.popoverUploaded,
                        "The shut recovery popover keeps no card once the HUD closed; the wallet stays");
@@ -983,6 +1052,9 @@ std::unique_ptr<ModuleOwner> buildAccountModule(const ApplicationModuleContext& 
     // Without the verified package (development previews) the area is absent.
     const auto resources = c.resource ? c.resource(gaugeResource) : fs::path{};
     if (resources.empty()) return nullptr;
+    // The page is a design canvas: without the HUD's design overlay (a host
+    // without Notes' chrome) the area is absent like other redesigned modules.
+    if (!c.host->designContext()) return nullptr;
     std::unique_ptr<CoverageWorld> world;
     if (c.mode == ApplicationAreaMode::developmentPreview) return nullptr; // never a real account in a development preview
     if (c.mode == ApplicationAreaMode::hiddenCoverage) {
@@ -992,7 +1064,10 @@ std::unique_ptr<ModuleOwner> buildAccountModule(const ApplicationModuleContext& 
         world->webview2License = c.resource("account.webview2License");
         world->webview2Notice = c.resource("account.webview2Notice");
     }
-    return std::make_unique<AccountModule>(c, resources, std::move(world));
+    auto owner = std::make_unique<AccountModule>(c, resources, std::move(world));
+    // Its own ModuleOwner (not DesignModuleOwner): mark the screen (HOST-HOOKS "Areas").
+    c.host->setDesignScreen(core::Module::account);
+    return owner;
 }
 } // namespace
 } // namespace endfield::app::areas

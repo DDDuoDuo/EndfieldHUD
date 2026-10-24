@@ -1,10 +1,16 @@
-// Production Personal Profile owner: worker load, Work Mode lifetime hours,
-// account sync, deferred pickers, managed images, crop events, the bottom-left
-// card binding and its worker-generated textures. Hidden HWND, WARP and a new
-// temporary data root only; pickers are injected (no dialog is shown).
+// Production Personal ID owner (tools/profile_owner.hpp) on the design library:
+// worker load, Work Mode lifetime hours, account sync and per-field locks, the
+// host chooser and the posted colour dialog, managed images, the portrait's
+// panning images on the worker, the owner-drawn background art (inserted after
+// the canvas's art slot, clipped by the box and the shared centre ramp), crop
+// events, the bottom-left card binding and its worker-generated textures, and
+// release. Hidden HWND, WARP and a new temporary data root only; the pickers
+// are injected (no dialog is shown).
 #include "tools/profile_owner.hpp"
+#include "tools/hud_design_overlay_owner.hpp"
 #include "core/data/file_io.hpp"
 #include "core/shell_packet.hpp"
+#include <chrono>
 #include <cmath>
 #include <fstream>
 #include <iostream>
@@ -14,11 +20,11 @@
 #include <wincodec.h>
 #include <wrl/client.h>
 namespace {
-using namespace endfield;namespace m=modules;namespace gpu=native;using J=ehud::data::Json;using Microsoft::WRL::ComPtr;
+using namespace endfield;namespace m=modules;namespace gpu=native;namespace d=modules::design;using J=ehud::data::Json;using Microsoft::WRL::ComPtr;
 unsigned checks{};
 void check(bool v,const std::string&why){++checks;if(!v)throw std::runtime_error(why);}
 template<class F>bool rejects(F f){try{f();}catch(const std::exception&){return true;}return false;}
-struct Window{HWND hwnd{};Window(){hwnd=CreateWindowExW(WS_EX_NOREDIRECTIONBITMAP|WS_EX_TOOLWINDOW,L"STATIC",L"Owned hidden Personal Profile production owner fixture",WS_POPUP,0,0,1280,800,nullptr,nullptr,GetModuleHandleW(nullptr),nullptr);check(hwnd&&!IsWindowVisible(hwnd),"Owner fixture remains hidden");}~Window(){if(hwnd)DestroyWindow(hwnd);}};
+struct Window{HWND hwnd{};Window(){hwnd=CreateWindowExW(WS_EX_NOREDIRECTIONBITMAP|WS_EX_TOOLWINDOW,L"STATIC",L"Owned hidden Personal ID production owner fixture",WS_POPUP,0,0,1280,800,nullptr,nullptr,GetModuleHandleW(nullptr),nullptr);check(hwnd&&!IsWindowVisible(hwnd),"Owner fixture remains hidden");}~Window(){if(hwnd)DestroyWindow(hwnd);}};
 struct Temporary{std::filesystem::path root=std::filesystem::canonical(std::filesystem::temp_directory_path())/("EndfieldHUD-Profile-Owner-"+ehud::data::makeUUID());Temporary(){std::filesystem::create_directories(root);}~Temporary(){std::error_code e;std::filesystem::remove_all(root,e);}};
 std::vector<std::uint8_t>read(const std::filesystem::path&p){const auto bytes=ehud::data::detail::readFile(p,64*1024*1024);check(bytes.has_value(),"Read owned fixture");return {bytes->begin(),bytes->end()};}
 // Synthetic PNG written only into the owned temporary folder.
@@ -32,13 +38,15 @@ void encode(const std::filesystem::path&path,UINT width,UINT height){
     for(UINT y=0;y<height;++y)for(UINT x=0;x<width;++x){auto*p=&pixels[std::size_t(y)*stride+x*3];p[0]=BYTE(x);p[1]=BYTE(y);p[2]=BYTE(x+y);}
     check(SUCCEEDED(frame->WritePixels(height,stride,UINT(pixels.size()),pixels.data()))&&SUCCEEDED(frame->Commit())&&SUCCEEDED(encoder->Commit()),"Fixture commit");
 }
+// Hidden WARP figures of the page (printed; Phase D compares them with v1.2.0).
+struct Perf {double firstFrameMS{},idleFrameMS{},pointerMoveMS{};std::size_t surfaces{},rasterEntries{},pixelBytes{};}perf;
 std::string digest(const m::ProfileImage&image){return core::packet::sha256(std::span<const std::uint8_t>(image.rgba));}
 // A fresh store invents its own local UID; the owned file is rewritten with a
 // fixed one, a known awakening instant and a stored lifetime.
 void seed(const std::filesystem::path&root,double work){
     const auto path=ehud::data::ProfileStore(root).path();
     const auto bytes=ehud::data::detail::readFile(path,1024*1024);check(bytes.has_value(),"Read the fresh owned record");
-    auto record=J::parse(*bytes);record["profile"]["uid"]="1000000000";record["profile"]["accumulatedWorkSeconds"]=work;
+    auto record=J::parse(*bytes);record["profile"]["uid"]="1000000000";record["profile"]["name"]="Endministrator";record["profile"]["accumulatedWorkSeconds"]=work;
     record["profile"]["awakeningDate"]=(1767225600.-978307200.)-3600; // 2025-12-31 23:00 UTC
     std::ofstream(path,std::ios::binary|std::ios::trunc)<<record.encode();
     check(ehud::data::ProfileStore(root).value().uid=="1000000000","Seeded record reads back");
@@ -46,205 +54,179 @@ void seed(const std::filesystem::path&root,double work){
 void run(const std::filesystem::path&shader,const std::filesystem::path&resources){
     Window w;Temporary t;seed(t.root,3600);
     gpu::Renderer renderer;renderer.initialize(w.hwnd,1280,800,{gpu::Driver::warpForTests,shader,gpu::RenderTarget::offscreenForTests});renderer.setCamera(gpu::layerViewportProjection(1280,800));
-    gpu::LayerRasterizer raster;gpu::LayerImageSource imageSource;
+    gpu::LayerRasterizer raster;
+    tools::DesignOverlayOptions overlayOptions;overlayOptions.raster.pixelsPerPoint=1;overlayOptions.window=w.hwnd;
+    tools::DesignOverlayOwner overlay(raster,overlayOptions);auto&context=overlay.context();
     app::UtilityExecutor executor([]{},8);
     const auto settle=[&]{for(int n=0;n<16;++n){executor.waitIdle();if(!executor.drain())break;}};
     std::unique_ptr<tools::ProfileOwner>owner;
     m::WorkModeController controller({{},[&](double total){if(owner)owner->workModeCheckpoint(total);}});
     // Injected host pickers and sinks.
-    std::optional<std::filesystem::path>nextImage;unsigned imageAsks{},colorAsks{};std::vector<std::array<double,3>>colorStarts;
+    tools::ProfileOwnerOptions::ImageCompletion chooser;unsigned imageAsks{},colorAsks{},cancels{};std::vector<std::array<double,3>>colorStarts;
     std::function<std::optional<std::array<double,3>>(const std::function<void(std::array<double,3>)>&)>colorScript;
-    std::vector<std::string>crops;std::vector<std::optional<std::string>>avatars;unsigned cardChanges{},changes{},loads{};
-    tools::ProfileOwnerOptions o;o.appRoot=t.root;o.resources=resources;o.timeZone=u"UTC";o.raster.pixelsPerPoint=1;
-    bool hideDuringPicker{};unsigned cancels{};
-    o.chooseImage=[&](m::ProfileImageKind){++imageAsks;if(hideDuringPicker)owner->setOverlayVisible(false,180);return nextImage;};
-    o.cancelPicker=[&]{++cancels;};
+    std::vector<std::string>crops;std::vector<std::optional<std::string>>avatars;unsigned cardChanges{},changes{},loads{};std::int64_t best{3262};
+    double time{};
+    tools::ProfileOwnerOptions o;o.appRoot=t.root;o.resources=resources;o.timeZone=u"UTC";
+    o.design.name="profile";o.design.raster.pixelsPerPoint=1;o.design.now=[&]{return time;};o.design.changed=[&]{++changes;};
+    o.design.routing.pointer=30;o.design.routing.key=30;o.design.routing.message=30;
+    o.requestImage=[&](m::ProfileImageKind,tools::ProfileOwnerOptions::ImageCompletion done){++imageAsks;chooser=std::move(done);return true;};
+    o.cancelPicker=[&]{++cancels;if(chooser){auto c=std::exchange(chooser,{});c(std::nullopt);}};
     o.chooseColor=[&](std::array<double,3>initial,const std::function<void(std::array<double,3>)>&live){++colorAsks;colorStarts.push_back(initial);return colorScript?colorScript(live):std::nullopt;};
+    o.minigameBest=[&]{return best;};
     o.cropChanged=[&](std::string_view target){crops.emplace_back(target);};o.avatarChanged=[&](const std::optional<std::string>&v){avatars.push_back(v);};
-    o.cardChanged=[&]{++cardChanges;};o.changed=[&]{++changes;};o.loaded=[&](const m::PersonalProfile&p){++loads;check(p.uid=="1000000000","Loaded callback receives the committed record");};
-    owner=std::make_unique<tools::ProfileOwner>(w.hwnd,executor,raster,imageSource,controller,o);
-    owner->resize({1280,800,96,1,1280,800});owner->setAppearance({core::Language::english,true,{0xFA/255.,0xD4/255.,0x1F/255.},1,false},0);owner->focus(true,0);
+    o.cardChanged=[&]{++cardChanges;};o.loaded=[&](const m::PersonalProfile&p){++loads;check(p.uid=="1000000000","Loaded callback receives the committed record");};
+    owner=std::make_unique<tools::ProfileOwner>(w.hwnd,executor,raster,context,controller,o);
+    auto&core=owner->core();auto&canvas=*owner->canvas();
+    const app::ModuleAppearance appearance{core::Language::english,true,{0xFA/255.,0xD4/255.,0x1F/255.,1},{0xFA/255.,0xD4/255.,0x1F/255.},false};
+    overlay.resize({1280,800,96,1,1280,800});core.resize({1280,800,96,1,1280,800});
+    overlay.setAppearance(appearance,0);core.setAppearance(appearance,0);core.focus(true,0);
     // 1. Work Mode counts before the profile is readable: retained, then added once.
     controller.chooseStopwatch(0);controller.start(0);controller.pause(120);
     check(!owner->loaded()&&!owner->state()&&!owner->card(),"Nothing is shown before the worker reads profile.json");
     owner->start(0);settle();
-    check(owner->loaded()&&loads==1&&owner->state()&&!owner->loadError(),"Worker load constructs the page state");
+    check(owner->loaded()&&loads==1&&owner->state()&&!owner->loadError()&&canvas.store()==owner->state(),"Worker load gives the canvas its store");
     check(owner->state()->profile().accumulatedWorkSeconds==3720,"Early Work Mode session lands once above the stored lifetime");
     const auto*card=owner->card();check(card&&card->captions()[0].text=="Endministrator"&&card->captions()[1].text=="UID: 1000000000"&&card->captions()[4].text=="MAX","Card captions bind the loaded record");
     check(cardChanges>0&&owner->cardTexture(tools::IdCardTextureKind::background)&&owner->cardTexture(tools::IdCardTextureKind::hover)&&!owner->cardTexture(tools::IdCardTextureKind::avatar),"Worker generates the background and hover; the silhouette avatar stays packet-bound");
     const auto artwork=m::loadProfileSourceArtwork(resources);
-    check(digest(owner->cardTexture(tools::IdCardTextureKind::background)->pixels)==artwork.defaultBackgroundSHA256&&owner->cardTexture(tools::IdCardTextureKind::background)->revision==card->backgroundRevision(),"No photo and the HUD accent reproduce the Mac packet background byte for byte");
+    check(digest(owner->cardTexture(tools::IdCardTextureKind::background)->pixels)==artwork.defaultBackgroundSHA256,"No photo and the HUD accent reproduce the Mac packet background byte for byte");
     controller.resume(120);controller.pause(180);check(owner->state()->profile().accumulatedWorkSeconds==3780,"Checkpoints after load persist the absolute lifetime");
     owner->workModeCheckpoint(10);check(owner->state()->profile().accumulatedWorkSeconds==3780,"A lower total never lowers the lifetime");
-    check(owner->flush(180)&&ehud::data::ProfileStore(t.root).value().accumulatedWorkSeconds==3780,"Flush drains the lifetime to profile.json");
-    // 2. The page: shown through the shared module presentation.
-    core::source::DesktopChromeSettings settings;settings.viewport={0,0,1280,800};settings.module=core::Module::profile;core::ModulePresentation modules(core::Module::profile);
-    gpu::LayerComposition composition;double time=180;
+    check(core.flush(180)&&ehud::data::ProfileStore(t.root).value().accumulatedWorkSeconds==3780,"Flush drains the lifetime to profile.json");
+    // 2. The page: a design screen shown through the shared module presentation.
+    core::source::DesktopChromeSettings settings;settings.viewport={0,0,1280,800};settings.module=core::Module::profile;
+    core::ModulePresentation modules(core::Module::profile);modules.setDesignScreen(core::Module::profile,true);
+    gpu::LayerComposition composition;time=180;std::vector<gpu::LayerCompositionEntry>all;
     const auto paint=[&](double advance=1./60){
-        time+=advance;const auto sample=modules.sample(time).presentation;settings.module=sample.requested;owner->update({},settings,sample,1,time);
-        owner->upload(renderer);composition.setEntries(renderer,owner->entries());composition.present(renderer);renderer.draw(false);owner->collected(renderer);
+        time+=advance;overlay.deadline(time);
+        const auto sample=modules.sample(time).presentation;settings.module=sample.requested;
+        overlay.update(app::ModuleFrame{core::Matrix4{},settings,sample,1,time,true});core.update(app::ModuleFrame{core::Matrix4{},settings,sample,1,time,true});
+        owner->upload(renderer);overlay.upload(renderer);
+        all.assign(core.entries(core::Module::profile).begin(),core.entries(core::Module::profile).end());
+        composition.setEntries(renderer,all);composition.present(renderer);renderer.draw(false);owner->collected(renderer);
     };
-    const auto pump=[&]{MSG msg;bool any{};while(PeekMessageW(&msg,w.hwnd,o.pickerMessage,o.pickerMessage,PM_REMOVE)){any=true;owner->message({msg.hwnd,msg.message,msg.wParam,msg.lParam},time);}return any;};
-    // A request while the page is closed never opens a picker.
-    check(owner->perform("profile:avatar",time)&&pump()&&imageAsks==0,"Picker requests need the active page");
-    // A page that was never shown builds nothing (no raster, no upload): Mac
-    // HUDModuleContent makes a screen's layers when its module is shown.
-    check(owner->page()&&!owner->page()->resources().built&&owner->page()->resources().sceneParts==0&&!owner->page()->resources().gpuResident&&
-          renderer.stats().textures==0&&renderer.stats().nativeGroups==0,"The hidden page builds and uploads nothing before it is first shown");
-    {core::ModulePresentation other(core::Module::notes);owner->prewarm(other.sample(time).presentation);
-     check(!owner->page()->resources().built&&owner->page()->resources().sceneParts==0,"A launch prewarm for another module builds nothing for the page");}
-    owner->prewarm(modules.sample(time).presentation);
-    check(owner->page()->resources().built&&owner->page()->resources().sceneParts>0&&!owner->page()->resources().gpuResident&&renderer.stats().textures==0,
-          "A launch prewarm for a first opening on Personal Profile builds the page without uploading it");
-    paint();paint(.5);check(!owner->entries().empty()&&owner->page()->active(),"Profile page is published");
-    check(owner->page()->resources().sceneParts>0&&owner->page()->resources().gpuResident,"The first show uploads the page");
-    check(owner->nextWakeTime(time).has_value(),"Active page schedules its work refresh on the shared clock");
-    // 3. Avatar picker: deferred out of page input, imported on the worker.
-    const auto photo=t.root/"portrait.png";encode(photo,300,200);nextImage=photo;
-    check(owner->perform("profile:avatar",time)&&imageAsks==0,"The picker never runs inside page input");
-    check(pump()&&imageAsks==1&&!owner->pickerOpen(),"The posted request runs the host picker once");
+    {core::ModulePresentation other(core::Module::notes);const auto sample=other.sample(time).presentation;core.prewarm(app::ModuleFrame{core::Matrix4{},settings,sample,0,time,true});
+     check(!core.sceneStats(core::Module::profile)||core.sceneStats(core::Module::profile)->parts==0,"A launch prewarm for another module builds nothing for the page");}
+    overlay.setOverlayVisible(true,time);core.setOverlayVisible(true,time);owner->setOverlayVisible(true,time);
+    using Clock=std::chrono::steady_clock;const auto ms=[](Clock::time_point a){return std::chrono::duration<double,std::milli>(Clock::now()-a).count();};
+    {const auto first=Clock::now();paint();perf.firstFrameMS=ms(first);}
+    paint(.5);
+    {double idle{},moves{};for(unsigned n=0;n<60;++n){const auto a=Clock::now();paint();idle+=ms(a);}perf.idleFrameMS=idle/60;
+     for(unsigned n=0;n<60;++n){const auto a=Clock::now();core.pointer({app::PointerKind::move,app::PointerButton::none,500.+n*3,300.+n},time);moves+=ms(a);paint();}perf.pointerMoveMS=moves/60;
+     core.pointer({app::PointerKind::leave,app::PointerButton::none,0,0},time);paint(.5);
+     if(const auto scene=core.sceneStats(core::Module::profile)){perf.surfaces=scene->surfaces;perf.rasterEntries=scene->rasterEntries;perf.pixelBytes=scene->residentPixelBytes;}}
+    check(!core.entries(core::Module::profile).empty()&&canvas.isActive(),"Personal ID is published as the active design page");
+    check(canvas.bestText()=="3,262"&&canvas.hoursText()=="1.05","The best plate reads the minigame best once per visit; the hours plate max(stored, live)/3600");
+    check(context.nextWakeTime().has_value()&&*context.nextWakeTime()<=time+30,"The 30 s hours refresh is a deadline on the shared clock (the overlay owner runs it)");
+    const auto frameImages=owner->stats();
+    // 3. Avatar chooser from the ⋯ menu: the host's queued dialog, imported on the worker.
+    const auto photo=t.root/"portrait.png";encode(photo,300,200);
+    check(canvas.perform("profile:menu",time)&&canvas.menuOpen()&&canvas.perform("profile.more:picture",time)&&imageAsks==1&&owner->pickerOpen()&&canvas.presentingPanel(),
+          "Change profile picture asks the host chooser once and holds the HUD");
+    {auto c=std::exchange(chooser,{});c(photo);}
+    check(!owner->pickerOpen()&&!canvas.presentingPanel(),"The chooser's answer closes it");
     settle();const auto avatarName=owner->state()->profile().avatarFilename;
     check(avatarName&&avatarName->ends_with(".image")&&std::filesystem::exists(t.root/"Profile"/"Images"/ *avatarName),"Chosen picture becomes the managed avatar");
     check(avatars.size()==1&&avatars.back()==avatarName,"The account owner hears about the manual avatar");
-    settle();paint();
+    check(context.overlay().toastState().current()&&context.overlay().toastState().current()->title=="Picture changed","A successful avatar import toasts Picture changed");
+    settle();paint();settle();paint();
     const auto*avatarTexture=owner->cardTexture(tools::IdCardTextureKind::avatar);
-    check(avatarTexture&&avatarTexture->pixels.width==368&&avatarTexture->pixels.height==368&&avatarTexture->revision==owner->card()->avatarRevision(),"Card avatar is the 136 pt crop at 2x with the source 1.35 oversampling");
-    nextImage.reset();owner->perform("profile:avatar",time);pump();settle();check(imageAsks==2&&owner->state()->profile().avatarFilename==avatarName,"A cancelled picker changes nothing");
-    // The HUD hiding while the chooser is open closes it; a late result is ignored.
-    nextImage=photo;hideDuringPicker=true;owner->perform("profile:avatar",time);pump();settle();hideDuringPicker=false;
-    check(imageAsks==3&&cancels==1&&!owner->pickerOpen()&&owner->state()->profile().avatarFilename==avatarName,"Deactivation cancels the open chooser and drops its result");
-    owner->setOverlayVisible(true,time);paint();paint(.5);check(owner->page()->active(),"Page is active again after the HUD reopens");
-    // 4. Colour picker: live updates, cancel restores, the result commits.
+    check(avatarTexture&&avatarTexture->pixels.width==368&&avatarTexture->pixels.height==368,"Card avatar is the 136 pt crop at 2x with the source 1.35 oversampling");
+    // 3b. The portrait: one panning image per zoom step on the worker.
+    {
+        const auto before=owner->stats();
+        check(before.portraitPublications>=1&&before.portraitJobs==before.portraitPublications&&before.portraitBytes>0,"The panning image was made on the worker and published");
+        check(canvas.perform("profile:menu",time)&&canvas.perform("profile.more:portrait",time)&&canvas.popoverOpen(),"Adjust portrait opens");
+        check(canvas.adjustAccessibilitySlider("profile:avatarZoom",2.5,time)&&owner->stats().portraitJobs==before.portraitJobs+1,"A zoom into the next step queues one worker image");
+        check(canvas.adjustAccessibilitySlider("profile:avatarZoom",2.8,time)&&owner->stats().portraitJobs==before.portraitJobs+1,"A zoom inside that step adds no job");
+        settle();paint();
+        check(owner->stats().portraitPublications==before.portraitPublications+1,"The step's image is published ("+std::to_string(before.portraitJobs)+"/"+std::to_string(before.portraitPublications)+" -> "+std::to_string(owner->stats().portraitJobs)+"/"+std::to_string(owner->stats().portraitPublications)+")");
+        canvas.closePopover();paint();
+    }
+    // 4. Colour dialog: posted (modal outside input), live updates, cancel restores, the result commits.
+    const auto pump=[&]{MSG msg;bool any{};while(PeekMessageW(&msg,w.hwnd,o.pickerMessage,o.pickerMessage,PM_REMOVE)){any=true;core.message({msg.hwnd,msg.message,msg.wParam,msg.lParam},time);}return any;};
     colorScript=[&](const std::function<void(std::array<double,3>)>&live){live({1,0,0});check(owner->state()->profile().themeColorHex=="FF0000"&&owner->card()->captions()[4].color[0]==1,"Live colour reaches the page and the card");return std::nullopt;};
-    owner->perform("profile:themeMenu",time);check(owner->perform("profile:themeCustom",time)&&pump()&&colorAsks==1,"Custom colour asks the host picker");
+    check(canvas.perform("profile:backgroundMenu",time)&&canvas.perform("theme:custom",time)&&colorAsks==0&&canvas.colorPanelOpen(),"Custom colour posts the dialog request");
+    check(pump()&&colorAsks==1&&!canvas.colorPanelOpen(),"The posted request runs the colour dialog once");
     check(!owner->state()->profile().themeColorHex&&std::abs(colorStarts.back()[0]-0xFA/255.)<1e-9,"Cancel restores the colour it started from (follow HUD)");
     const auto hoverBefore=owner->card()->hoverRevision();
     colorScript=[](const std::function<void(std::array<double,3>)>&){return std::array<double,3>{0,0,1};};
-    owner->perform("profile:themeCustom",time);pump();settle();
+    check(canvas.perform("theme:custom",time)&&pump(),"The colour dialog opens again");settle();
     check(owner->state()->profile().themeColorHex=="0000FF"&&owner->card()->captions()[4].color[2]==1&&owner->card()->hoverRevision()>hoverBefore,"Chosen colour commits and recolours the card");
-    check(owner->cardTexture(tools::IdCardTextureKind::hover)->revision==owner->card()->hoverRevision(),"Hover plate regenerates for the new accent");
-    // 5. Crop events on committed snapshots only.
-    owner->perform("profile:backgroundMenu",time);check(owner->setSlider(m::ProfileField::thumbnailZoom,2,time)&&crops==std::vector<std::string>{"thumbnail"},"profileCropChanged {thumbnail}");
-    owner->setSlider(m::ProfileField::backgroundOffsetX,40,time);check(crops.size()==1,"Other geometry is not a crop event");
-    owner->setSlider(m::ProfileField::backgroundZoom,3,time);check(crops.size()==2&&crops.back()=="background","profileCropChanged {background}");
-    // 6. Account sync: lock, game fields, game avatar.
-    owner->setSyncLocked(ehud::data::ProfileSyncFields::all(),time);
+    // 5. Crop events on committed snapshots only (the slider release saves once).
+    check(canvas.adjustAccessibilitySlider("profile:thumbnailZoom",2,time)&&crops==std::vector<std::string>{"thumbnail"},"profileCropChanged {thumbnail}");
+    canvas.adjustAccessibilitySlider("profile:backgroundOffsetX",40,time);check(crops.size()==1,"Other geometry is not a crop event");
+    canvas.adjustAccessibilitySlider("profile:backgroundZoom",3,time);check(crops.size()==2&&crops.back()=="background","profileCropChanged {background}");
+    // 6. Background art: imported, decoded, drawn by the owner after the art slot.
+    {
+        const auto art=t.root/"background.png";encode(art,400,300);
+        check(canvas.perform("theme:background",time)&&imageAsks==2,"Background asks the chooser");
+        {auto c=std::exchange(chooser,{});c(art);}
+        settle();paint();settle();paint();paint();
+        check(owner->state()->profile().backgroundFilename&&canvas.artBox()&&owner->stats().artResident&&owner->stats().rampResident&&owner->stats().artDraws>0,
+              "The art layers exist and the owner draws the photo through the shared ramp");
+        const auto uploads=owner->stats().artUploads,rasterizations=raster.stats().rasterizations;
+        check(canvas.adjustAccessibilitySlider("profile:backgroundZoom",5,time)&&canvas.adjustAccessibilitySlider("profile:backgroundWidth",800,time),"Art zoom and width commit");
+        for(unsigned n=0;n<20;++n)paint();
+        check(owner->stats().artUploads==uploads,"Moving the art changes numbers, never re-uploads the photo");
+        (void)rasterizations;
+        renderer.draw(false);
+        check(canvas.perform("theme:default",time)&&!owner->state()->profile().backgroundFilename,"Default removes the art");
+        paint();paint();check(!canvas.artBox()&&owner->stats().artDraws>0,"Without art the page has no art layers");
+        paint();check(!owner->stats().artResident,"The photo texture is released");
+        canvas.closePopover();paint();
+    }
+    // 7. Account sync: per-field locks, game fields, game avatar.
+    owner->setSyncLocked(ehud::data::ProfileSyncFields{}.with(ehud::data::ProfileSyncField::name).with(ehud::data::ProfileSyncField::uid),time);
     owner->acceptFromGame([](m::PersonalProfile&p){p.gamePlayerID="1234567890123";p.name="Synced";p.permissionLevel=42;},time);
-    check(owner->state()->syncLocked()&&!owner->state()->canEdit(m::ProfileField::name)&&owner->state()->profile().name=="Synced","Game fields apply under the sync lock");
-    check(owner->card()->captions()[1].text=="UID: 1234567890123"&&owner->card()->captions()[0].text=="Synced"&&owner->card()->captions()[4].text.empty(),"Card shows the synced UID, never a # number");
+    check(!canvas.canEdit(m::ProfileField::name)&&!canvas.canEdit(m::ProfileField::playerID)&&canvas.canEdit(m::ProfileField::permissionLevel)&&canvas.canEdit(m::ProfileField::introduction)&&
+          owner->state()->profile().name=="Synced","Game fields apply; only the synced fields lock");
+    check(owner->card()->captions()[1].text=="UID: 1234567890123"&&owner->card()->captions()[0].text=="Synced","Card shows the synced UID");
     check(rejects([&]{owner->acceptFromGame([](m::PersonalProfile&p){p.uid="999";},time);})&&owner->state()->profile().uid=="1000000000","The local UID is immutable");
     const auto gameAvatar=owner->importGameAvatar(read(photo),time);
-    check(owner->state()->profile().avatarFilename==gameAvatar&&avatars.back()==gameAvatar&&std::filesystem::exists(t.root/"Profile"/"Images"/gameAvatar),"Game avatar imports synchronously and is reported");
+    check(owner->state()->profile().avatarFilename==gameAvatar&&avatars.back()==gameAvatar,"Game avatar imports synchronously and is reported");
     check(rejects([&]{owner->importGameAvatar(std::vector<std::uint8_t>{1,2,3},time);})&&owner->state()->profile().avatarFilename==gameAvatar,"Invalid game avatar bytes throw and change nothing");
-    // 7. Time-zone change, deadline refresh, flush.
-    check(owner->state()->value(m::ProfileField::awakeningDate)=="2025/12/31","Awakening day in UTC");
-    owner->setTimeZone(u"Asia/Tokyo",time);check(owner->state()->value(m::ProfileField::awakeningDate)=="2026/01/01","Zone change re-renders the date");
-    controller.resume(time);const auto due=*owner->nextWakeTime(time);
-    check(owner->deadline(due+3600)&&owner->state()->shownHours()!="1.05","Shared-clock deadline refreshes the live hours");
-    controller.pause(due+3600);paint();
-    // 7b. Out-of-order owner times (the live Projection crash class): the host
-    // samples its time, a callback delivers a slightly later one, then calls
-    // still carry the earlier sample. The owner takes each at the latest time
-    // it saw: nothing fails, nothing refreshes twice, animations still settle
-    // and the lifetime never moves.
-    {
-        time=due+3600;paint();const double sampled=time,later=time+.05;
-        const auto lifetime=owner->state()->profile().accumulatedWorkSeconds;const auto shown=owner->state()->shownHours();
-        check(!owner->deadline(later)&&!owner->deadline(sampled)&&owner->state()->shownHours()==shown,"A deadline earlier than one already seen refreshes nothing");
-        owner->pointer({app::PointerKind::move,app::PointerButton::none,640,400},sampled);
-        check(owner->perform("profile:popoverClose",sampled)&&!owner->state()->popover()&&owner->perform("profile:backgroundMenu",sampled-.01)&&owner->state()->popover()==m::ProfilePopover::background,
-              "An earlier press opens the card theme menu");
-        paint(0);
-        check(owner->perform("profile:themeMenu",sampled)&&owner->state()->popover()==m::ProfilePopover::themeColor&&owner->perform("profile:popoverClose",sampled-.02)&&!owner->state()->popover(),
-              "Earlier presses move through and close the menus");
-        paint(0);paint(.5);
-        check(owner->page()->active()&&!owner->requiresFrames(time)&&owner->state()->profile().accumulatedWorkSeconds==lifetime,"The page settles after the latest time seen and the lifetime never moves");
-    }
-    // 7c. The page portrait is cropped on the shared worker (HUDPortraitArtwork
-    // at 55 pt): a zoom step queues one crop instead of cropping on the owner
-    // thread, a step while it runs waits for it, the finished crop is shown and
-    // the newest zoom is cropped next.
-    {
-        check(owner->perform("profile:portraitMenu",time)&&owner->state()->popover()==m::ProfilePopover::portrait,"Adjust portrait opens");
-        settle();paint();
-        const auto before=owner->page()->resources();
-        check(before.cropPublications>=1&&before.cropJobs>=1&&!before.cropPending&&before.retainedCropBytes>0&&before.retainedCropBytes<=256*256*4,
-              "The page portrait was cropped on the worker and published (at most 256 px kept)");
-        check(owner->setSlider(m::ProfileField::avatarZoom,2,time)&&owner->page()->resources().cropPending&&owner->page()->resources().cropJobs==before.cropJobs+1&&
-              owner->page()->resources().cropPublications==before.cropPublications,"A portrait zoom step queues one worker crop; the shown crop stays until it is ready");
-        check(owner->setSlider(m::ProfileField::avatarZoom,2.5,time)&&owner->page()->resources().cropJobs==before.cropJobs+1,"A step while a crop runs waits for it: one job at a time");
-        settle();paint();
-        const auto after=owner->page()->resources();
-        check(!after.cropPending&&after.cropJobs==before.cropJobs+2&&after.cropPublications==before.cropPublications+2,"The finished crop is shown, then the newest zoom is cropped and shown");
-        check(owner->perform("profile:popoverClose",time)&&!owner->state()->popover(),"Adjust portrait closes");paint();paint(.5);
-    }
-    // 7d. HUDModuleContent keeps only the shown screen. A switch inside the
-    // open HUD keeps the page; once the HUD closes while another module is
-    // shown the page releases its GPU resources (part textures, backdrop
-    // texture and group target) and its parts' rasters while the decoded
-    // images and the portrait crop stay; reopening on another module and
-    // content events while it is hidden build and upload nothing, and showing
-    // it again rebuilds the page without decoding or cropping again.
-    {
-        modules.select(core::Module::notes,time);for(unsigned n=0;n<40;++n)paint();
-        const auto open=owner->page()->resources();const auto rasters=raster.stats();const auto textures=renderer.stats().textures;
-        check(owner->entries().empty()&&open.built&&open.sceneParts>0&&open.scenePixelBytes>0&&open.gpuResident&&renderer.stats().nativeGroups==1,
-              "A module switch inside the open HUD keeps the page artwork");
-        owner->overlayClosing(time);paint();
-        const auto closed=owner->page()->resources();
-        check(!closed.gpuResident&&!closed.built&&closed.parks==open.parks+1&&closed.sceneParts==0&&closed.scenePixelBytes==0&&closed.retainedCropBytes==open.retainedCropBytes,
-              "Once the HUD closes on another module the page releases its GPU resources and rasters and keeps its portrait crop");
-        check(imageSource.stats().liveImages==0&&imageSource.stats().liveBytes==0,"Its published portrait and frame imagery leave the image source");
-        check(renderer.stats().textures<textures&&renderer.stats().nativeGroups==0&&raster.stats().entries<rasters.entries&&raster.stats().resourceBytes+open.scenePixelBytes<=rasters.resourceBytes,
-              "Its textures, backdrop group and raster entries leave the renderer and the shared rasterizer");
-        owner->conceal();check(owner->page()->resources().parks==closed.parks,"The host's later overlayConcealed finds nothing more to release");
-        const auto hidden=raster.stats();
-        owner->setOverlayVisible(true,time);paint();paint(.5);
-        owner->setTimeZone(u"Asia/Tokyo",time);paint(); // a content event while hidden
-        check(!owner->page()->resources().gpuResident&&!owner->page()->resources().built&&renderer.stats().nativeGroups==0&&raster.stats().rasterizations==hidden.rasterizations,
-              "Reopening on another module and content events while it is hidden build and upload nothing for the page");
-        modules.select(core::Module::profile,time);paint();
-        const auto shown=owner->page()->resources();
-        check(shown.built&&shown.gpuResident&&shown.sceneParts==open.sceneParts&&shown.sceneLoads>open.sceneLoads&&shown.cropJobs==closed.cropJobs&&shown.cropPublications==closed.cropPublications+1&&
-              imageSource.stats().liveImages==2,"Showing it again rebuilds the page from the kept images: the kept portrait crop is republished, none is cropped again");
-        for(unsigned n=0;n<40;++n)paint();
-        check(!owner->entries().empty()&&owner->page()->active()&&renderer.stats().nativeGroups==1,"The page is published again");
-        // The HUD closing while the page is shown keeps it (the next opening shows it at once).
-        owner->overlayClosing(time);paint();owner->conceal();
-        check(owner->page()->resources().gpuResident&&owner->page()->resources().built&&owner->page()->resources().parks==closed.parks,"Closing on Personal Profile keeps its artwork and GPU resources");
-        owner->setOverlayVisible(true,time);paint();paint(.5);check(owner->page()->active(),"The page is active again after the HUD reopens on it");
-    }
-    check(owner->flush(time),"Orderly flush");settle();
+    // 8. Time-zone change, flush, release.
+    check(m::profileValue(m::ProfileField::awakeningDate,owner->state()->profile(),owner->state()->dates())=="2025/12/31","Awakening day in UTC");
+    owner->setTimeZone(u"Asia/Tokyo",time);check(m::profileValue(m::ProfileField::awakeningDate,owner->state()->profile(),owner->state()->dates())=="2026/01/01","Zone change re-renders the date");
+    // Settled frames rasterize nothing.
+    for(unsigned n=0;n<30;++n)paint();
+    {const auto before=raster.stats().rasterizations;for(unsigned n=0;n<30;++n)paint();check(raster.stats().rasterizations==before&&!core.requiresFrames(time),"Settled page frames rasterize nothing and need no frames");}
+    check(core.flush(time),"Orderly flush");settle();
     const auto saved=ehud::data::ProfileStore(t.root).value();
-    check(saved.name=="Synced"&&saved.gamePlayerID=="1234567890123"&&saved.themeColorHex=="0000FF"&&saved.thumbnailZoom==2&&saved.avatarFilename==gameAvatar&&saved.accumulatedWorkSeconds>=3780+3600,"profile.json holds the final record");
+    check(saved.name=="Synced"&&saved.gamePlayerID=="1234567890123"&&saved.themeColorHex=="0000FF"&&saved.thumbnailZoom==1&&!saved.backgroundFilename&&saved.avatarFilename==gameAvatar,"profile.json holds the final record (Default reset the thumbnail)");
     check(!std::filesystem::exists(t.root/"Profile"/"Images"/ *avatarName),"The replaced manual avatar file is removed after the commit");
-    // 8. Closing the overlay drops pending requests; release frees every resource.
-    owner->perform("profile:avatar",time);owner->setOverlayVisible(false,time);pump();check(imageAsks==3,"Hiding the HUD cancels a pending picker");
-    composition.detach(renderer);owner->release(renderer);check(renderer.stats().textures==0&&renderer.stats().meshes==0,"Owner releases every GPU resource");
+    (void)frameImages;
+    core.overlayClosing(time);owner->setOverlayVisible(false,time);paint();
+    composition.detach(renderer);owner->release(renderer);overlay.release(renderer);check(renderer.stats().textures==0&&renderer.stats().meshes==0,"Owner releases every GPU resource");
     owner.reset();renderer.reset();
-    // 9. A record that cannot be read: source message, defaults, no writes, no card.
+    // 9. A record that cannot be read: the source message as the Notice toast, defaults, no writes, no card.
     {
         Temporary bad;std::filesystem::create_directories(bad.root/"Profile");{std::ofstream(bad.root/"Profile"/"profile.json")<<"{not json";}
         const auto before=read(bad.root/"Profile"/"profile.json");
         m::WorkModeController idle;tools::ProfileOwnerOptions b=o;b.appRoot=bad.root;b.loaded={};
-        tools::ProfileOwner failed(w.hwnd,executor,raster,imageSource,idle,b);failed.start(0);settle();
-        check(!failed.loaded()&&failed.loadError()&&failed.state()&&failed.state()->error()==failed.loadError()&&!failed.card(),"Unreadable record shows the source message without a card");
+        tools::ProfileOwner failed(w.hwnd,executor,raster,context,idle,b);failed.start(0);settle();
+        check(!failed.loaded()&&failed.loadError()&&!failed.state()&&!failed.card()&&!failed.canvas()->store()&&!failed.canvas()->canEdit(m::ProfileField::name),
+              "Unreadable record: no store, no card, no editing");
         check(rejects([&]{failed.acceptFromGame([](m::PersonalProfile&){},0);})&&rejects([&]{failed.importGameAvatar(read(photo),0);}),"Account writes report an unavailable store");
-        check(failed.flush(0)&&read(bad.root/"Profile"/"profile.json")==before,"The unreadable record is preserved byte for byte");
+        check(failed.core().flush(0)&&read(bad.root/"Profile"/"profile.json")==before,"The unreadable record is preserved byte for byte");
     }
     // 10. An account update before the record loads is applied once it does.
     {
         Temporary fresh;seed(fresh.root,0);m::WorkModeController idle;tools::ProfileOwnerOptions f=o;f.appRoot=fresh.root;f.loaded={};
-        tools::ProfileOwner early(w.hwnd,executor,raster,imageSource,idle,f);early.setSyncLocked(ehud::data::ProfileSyncFields::all(),0);
+        tools::ProfileOwner early(w.hwnd,executor,raster,context,idle,f);early.setSyncLocked(ehud::data::ProfileSyncFields::all(),0);
         early.acceptFromGame([](m::PersonalProfile&p){p.gamePlayerID="77";p.name="Early";},0);early.start(0);settle();
-        check(early.state()->profile().name=="Early"&&early.card()->captions()[1].text=="UID: 77"&&early.flush(0)&&ehud::data::ProfileStore(fresh.root).value().name=="Early","A queued account update lands after the load");
+        check(early.state()->profile().name=="Early"&&early.card()->captions()[1].text=="UID: 77"&&early.core().flush(0)&&ehud::data::ProfileStore(fresh.root).value().name=="Early","A queued account update lands after the load");
     }
     executor.shutdown();
 }
 }
 int wmain(int argc,wchar_t**argv){
     const auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);
-    try{check(SUCCEEDED(hr)&&argc==3,"Pass the shared shader and windows/resources/profile");run(argv[1],argv[2]);CoUninitialize();std::cout<<"PASS "<<checks<<" Personal Profile production owner checks\n";return 0;}
+    try{check(SUCCEEDED(hr)&&argc==3,"Pass the shared shader and windows/resources/profile");run(argv[1],argv[2]);CoUninitialize();
+        std::cout<<"Personal ID WARP: first page frame "<<perf.firstFrameMS<<" ms, idle frame "<<perf.idleFrameMS<<" ms, pointer move "<<perf.pointerMoveMS<<" ms; "
+                 <<perf.surfaces<<" surfaces, "<<perf.rasterEntries<<" raster entries, "<<perf.pixelBytes/1024<<" KiB resident\n";
+        std::cout<<"PASS "<<checks<<" Personal ID production owner checks\n";return 0;}
     catch(const std::exception&e){if(SUCCEEDED(hr))CoUninitialize();std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}
 }
 #else

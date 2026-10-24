@@ -40,7 +40,6 @@ import CryptoKit
         root["login"] = loginRows()
         root["avatar"] = avatarRows()
         root["controller"] = try controllerTrace()
-        root["canvas"] = try canvasTrace(output: output)
         root["gauge"] = try gaugeRows()
         try write(root, output.appendingPathComponent("reference.json"))
     }

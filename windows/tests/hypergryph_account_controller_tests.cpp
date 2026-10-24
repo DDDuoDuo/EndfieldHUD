@@ -16,6 +16,7 @@
 #include <vector>
 
 namespace h=endfield::modules::hypergryph;
+namespace d=endfield::modules::design;
 using ehud::data::Json;
 namespace {
 std::size_t checks{};
@@ -95,7 +96,7 @@ struct MemoryFile:h::AccountCacheFile {
 };
 struct ProfileSink:h::AccountProfileSink {
     ehud::data::Profile profile;ehud::data::ProfileSyncFields locked{};int lockChanges{};
-    void applyGameProfile(const h::GameProfileUpdate& u) override {h::applyGameProfileUpdate(profile,u);}
+    void applyGameProfile(const h::GameProfileUpdate& u) override {h::applyGameProfileUpdate(profile,u,d::portableCharacterRules());}
     void setProfileSyncLocked(ehud::data::ProfileSyncFields v) override {locked=v;++lockChanges;}
     std::optional<std::string> importGameAvatar(const std::vector<std::uint8_t>&) override {throw std::runtime_error("no avatar in trace");}
     Json fields() const {
@@ -165,14 +166,20 @@ void replay(const Json& oracle) {
         } else check(false,"unknown oracle op "+op);
         queue.pump();
         const auto& after=entry["after"];const auto p=controller->presentation();
-        Json::Array roles;for(const auto& r:p.roles) roles.push_back(Json::Object{{"id",r.id},{"title",r.title},{"subtitle",r.subtitle}});
+        // This trace is the v1.2.0 controller's (pinned oracle); Mac 1.3.0 only
+        // changed the two visible separators " · " -> " / " (role titles,
+        // MODS-872) and ", " (gauge label, MODS-873). Those are compared back
+        // in the v1.2.0 spelling here; the 1.3.0 strings themselves are checked
+        // against the 1.3.0 controller in account_canvas_tests.
+        const auto v120=[](std::string text,std::string_view now){const auto at=text.find(now);if(at!=std::string::npos) text.replace(at,now.size()," \xC2\xB7 ");return text;};
+        Json::Array roles;for(const auto& r:p.roles) roles.push_back(Json::Object{{"id",r.id},{"title",v120(r.title," / ")},{"subtitle",r.subtitle}});
         const Json presentation=Json::Object{{"region",std::string(h::regionChoiceName(p.region))},{"status",std::string(h::statusName(p.status))},{"statusMessage",p.statusMessage},
             {"accountName",p.accountName},{"roles",roles},{"selectedRoleID",optJson(p.selectedRoleID)},{"headerMode",std::string(h::headerModeName(p.headerMode))},
             {"syncProfile",p.syncProfile},{"syncAvatar",p.syncAvatar},{"lastSync",p.lastSync},{"isLinked",p.isLinked}};
         check(sameJson(presentation,after["presentation"]),label+": presentation "+presentation.encode()+" vs "+after["presentation"].encode());
         for(std::size_t n=0;n<work.size();++n) {
             const auto g=controller->gaugeValue(work[n]);const auto& e=after["gauge"].array()[n].array();
-            check(g.value==e[0].string()&&g.accessibilityLabel==e[1].string()&&g.visible==e[2].boolean(),label+": header gauge "+g.value+" | "+g.accessibilityLabel);
+            check(g.value==e[0].string()&&v120(g.accessibilityLabel,", ")==e[1].string()&&g.visible==e[2].boolean(),label+": header gauge "+g.value+" | "+g.accessibilityLabel);
         }
         const auto s=controller->sanityPresentation();const auto& es=after["sanity"];
         check(s.has_value()==!es.isNull(),label+": sanity presence");
@@ -361,11 +368,10 @@ void identitySync() {
     ehud::data::Profile p;p.uid="1234567890";p.name="Local";p.tag="4321";p.playerIDOverride="MANUAL";p.hasManualAwakeningDate=true;
     h::GameProfileUpdate u;u.gamePlayerID="9007199254740993";u.name="  Very long display name exceeding twenty  ";u.tag="0042";u.awakeningDate=-100;
     u.permissionLevel=99;u.explorationLevel=0;u.operatorsCount=3;
-    h::applyGameProfileUpdate(p,u);
+    h::applyGameProfileUpdate(p,u,d::portableCharacterRules());
     check(p.uid=="1234567890"&&p.gamePlayerID==std::optional<std::string>("9007199254740993")&&!p.playerIDOverride,"Original local UID preserved; decimal game UID never rounded; override cleared");
     check(p.name=="Very long display na"&&p.tag=="0042"&&p.permissionLevel==60&&p.explorationLevel==1&&p.awakeningDate==-100&&!p.hasManualAwakeningDate,"Mac normalization of synced fields");
-    check(h::prefixCharacters("e\xCC\x81\xCC\x81xyz",2)=="e\xCC\x81\xCC\x81x"&&h::characterCount("\r\n")==1,"Character prefix keeps combining clusters together");
-    h::GameProfileUpdate bad;bad.gamePlayerID="1";bad.tag="12 3";bool rejected{};try {h::applyGameProfileUpdate(p,bad);} catch(const std::invalid_argument&) {rejected=true;}
+    h::GameProfileUpdate bad;bad.gamePlayerID="1";bad.tag="12 3";bool rejected{};try {h::applyGameProfileUpdate(p,bad,d::portableCharacterRules());} catch(const std::invalid_argument&) {rejected=true;}
     check(rejected&&p.tag=="0042","Invalid synced values are rejected without partial changes");
 }
 void importCache() {

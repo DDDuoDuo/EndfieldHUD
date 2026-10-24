@@ -6,7 +6,7 @@
 // (design owner) frames and residency; then the process memory
 // (private bytes, threads) a returning user's photo avatar and photo
 // background keep resident, and the owner-thread cost of a portrait slider
-// step. Hidden HWND, WARP, a NEW temporary data root and a synthetic gradient
+// step (Personal ID on the design library: the canvas in its owner core). Hidden HWND, WARP, a NEW temporary data root and a synthetic gradient
 // photo only; prints one JSON object of timings and counts, never profile
 // content.
 //   profile_cold_start_probe <hud.hlsl> <resources/profile> <id_card-native-captions.json> [<shell catalog.ehscene>]
@@ -93,31 +93,37 @@ void run(const fs::path&shader,const fs::path&resources,const fs::path&captionFi
     set("launch.idCardSourceMS",timed([&]{(void)m::loadIdCardSource(resources);}));
     set("launch.idCardArtworkMS",timed([&]{(void)std::make_shared<const m::IdCardArtwork>(artwork.card);}));
     gpu::Renderer renderer;renderer.initialize(w.hwnd,1280,800,{gpu::Driver::warpForTests,shader,gpu::RenderTarget::offscreenForTests});renderer.setCamera(gpu::layerViewportProjection(1280,800));
-    gpu::LayerRasterizer raster;gpu::LayerImageSource images;app::UtilityExecutor executor([]{},32);m::WorkModeController work;
-    tools::ProfileOwnerOptions o;o.appRoot=t.root;o.resources=resources;
-    const app::ClientMetrics metrics{1280,800,96,1,1280,800};const tools::ProfileOwnerAppearance appearance{core::Language::english,true,{250./255,212./255,31./255},2,false};
+    gpu::LayerRasterizer raster;app::UtilityExecutor executor([]{},32);m::WorkModeController work;
+    gpu::NativeDesignTextMeasurer measurer(raster);m::design::Context context(measurer,gpu::nativeUppercase());context.env().characters=gpu::nativeCharacterRules();
+    double time{};
+    tools::ProfileOwnerOptions o;o.appRoot=t.root;o.resources=resources;o.design.name="profile";o.design.raster.pixelsPerPoint=2;o.design.now=[&]{return time;};
+    const app::ClientMetrics metrics{1280,800,96,1,1280,800};
+    const app::ModuleAppearance appearance{core::Language::english,true,{250./255,212./255,31./255,1},{250./255,212./255,31./255},false};
+    const auto open=[&](tools::ProfileOwner&owner,double at){owner.core().resize(metrics);owner.core().setAppearance(appearance,at);owner.core().setOverlayVisible(true,at);owner.setOverlayVisible(true,at);};
     double ownerThread{},longest{};
     const auto settle=[&](auto done){for(int n=0;n<256&&!done();++n){executor.waitIdle();const double d=timed([&]{executor.drain();});ownerThread+=d;longest=std::max(longest,d);}need(done(),"The probe's worker results arrive");};
     const auto measure=[&](const char*total,const char*peak,auto done){ownerThread=longest=0;settle(done);set(total,ownerThread);set(peak,longest);};
-    core::source::DesktopChromeSettings chrome;chrome.viewport={0,0,1280,800};gpu::LayerComposition composition;double time{};
+    core::source::DesktopChromeSettings chrome;chrome.viewport={0,0,1280,800};gpu::LayerComposition composition;
+    const auto designScreen=[](core::ModulePresentation&modules){modules.setDesignScreen(core::Module::profile,true);return &modules;};
     // One presented frame of the owner with the shared module presentation.
     const auto frame=[&](tools::ProfileOwner&owner,core::ModulePresentation&modules,double advance){
-        return timed([&]{time+=advance;const auto sample=modules.sample(time).presentation;chrome.module=sample.requested;owner.update({},chrome,sample,1,time);
-            owner.upload(renderer);composition.setEntries(renderer,owner.entries());composition.present(renderer);owner.collected(renderer);});
+        return timed([&]{time+=advance;(void)context.advance(time);const auto sample=modules.sample(time).presentation;chrome.module=sample.requested;
+            owner.core().update(app::ModuleFrame{core::Matrix4{},chrome,sample,1,time,true});
+            owner.upload(renderer);composition.setEntries(renderer,owner.core().entries(core::Module::profile));composition.present(renderer);owner.collected(renderer);});
     };
     // Frames after the HUD opens on another module, then Personal Profile opened.
     const auto frames=[&](tools::ProfileOwner&owner,const std::string&prefix){
-        core::ModulePresentation modules(core::Module::notes);
+        core::ModulePresentation modules(core::Module::notes);designScreen(modules);
         set((prefix+".firstFrameOtherModuleMS").c_str(),frame(owner,modules,1./60));set((prefix+".warmFrameOtherModuleMS").c_str(),frame(owner,modules,1./60));
         modules.select(core::Module::profile,time);double first{},peak{};
         for(unsigned n=0;n<36;++n){const double d=frame(owner,modules,1./60);if(!n)first=d;peak=std::max(peak,d);}
-        need(owner.page()&&owner.page()->active(),"Personal Profile is shown");
+        need(owner.canvas()->isActive(),"Personal ID is shown");
         set((prefix+".firstProfileFrameMS").c_str(),first);set((prefix+".profileOpeningPeakFrameMS").c_str(),peak);
         composition.detach(renderer);
     };
     // 2. A fresh record: owner construction (warm ICU), worker load, card textures, first frames.
     std::unique_ptr<tools::ProfileOwner>owner;
-    set("fresh.ownerMS",timed([&]{owner=std::make_unique<tools::ProfileOwner>(w.hwnd,executor,raster,images,work,o);owner->resize(metrics);owner->setAppearance(appearance,0);}));
+    set("fresh.ownerMS",timed([&]{owner=std::make_unique<tools::ProfileOwner>(w.hwnd,executor,raster,context,work,o);open(*owner,0);}));
     owner->start(0);measure("fresh.loadOwnerThreadMS","fresh.loadLongestDrainMS",[&]{return owner->loaded();});
     measure("fresh.cardOwnerThreadMS","fresh.cardLongestDrainMS",[&]{return owner->cardTexture(tools::IdCardTextureKind::background)&&owner->cardTexture(tools::IdCardTextureKind::hover);});
     frames(*owner,"fresh");
@@ -144,7 +150,7 @@ void run(const fs::path&shader,const fs::path&resources,const fs::path&captionFi
     // owner over the same record (the next launch).
     const auto png=photo(t.root/"photo.png",4000,3000);const auto stored=owner->importGameAvatar(png,time);
     measure("photo.firstOwnerThreadMS","photo.firstLongestDrainMS",[&]{return owner->cardTexture(tools::IdCardTextureKind::avatar)!=nullptr;});
-    need(owner->flush(time),"The probe record flushes");settle([&]{const auto*s=owner->serviceStatus();return s&&!s->busy&&!s->dirty;});
+    need(owner->core().flush(time),"The probe record flushes");settle([&]{const auto*s=owner->serviceStatus();return s&&!s->busy&&!s->dirty;});
     owner->release(renderer);owner.reset();
     {
         const auto decoded=gpu::decodeProfileImage(t.root/"Profile"/"Images"/stored,m::ProfileImageKind::avatar);
@@ -152,8 +158,8 @@ void run(const fs::path&shader,const fs::path&resources,const fs::path&captionFi
         // The resample the page used to run on the owner thread when the
         // decoded photo arrived (now on the worker, ProfileDecodedImage::working).
         m::ProfileImage working;set("photo.workingCopyMS",timed([&]{working=m::profileWorkingCopy(decoded.image);}));
-        // What the page and the card then crop from it (HUDPortraitArtwork at 55 pt and 136 pt, 2x).
-        set("photo.pagePortraitCropMS",timed([&]{(void)m::profileStraight(m::profileRenderedImage(working,decoded.orientation,{55,55},1,{0,0},2));}));
+        // What the page and the card then make from it (the page's panning image of zoom step 1 at 2x, the card's 136 pt crop).
+        set("photo.pagePanningImageMS",timed([&]{(void)m::profileStraight(m::profilePanningImage(working,decoded.orientation,82,1,2).image);}));
         set("photo.cardAvatarCropMS",timed([&]{(void)m::IdCardArtwork::avatar(working,decoded.orientation,1,{0,0});}));
     }
     // 5. The next launch of a returning user with that photo avatar and a
@@ -175,12 +181,12 @@ void run(const fs::path&shader,const fs::path&resources,const fs::path&captionFi
     const auto memory=[&](const std::string&key){
         const auto v=processMemory();report[key+"PrivateMB"]=v.privateMB;report[key+"Threads"]=v.threads;
         report[key+"RendererMB"]=megabytes(renderer.stats().resourceBytes);report[key+"RasterMB"]=megabytes(raster.stats().resourceBytes);
-        report[key+"ImageSourceMB"]=megabytes(images.stats().liveBytes+images.stats().cachedBytes);
-        if(owner&&owner->page()){const auto r=owner->page()->resources();
-            report[key+"PagePixelMB"]=megabytes(r.scenePixelBytes);report[key+"PageOwnedPhotoMB"]=megabytes(r.ownedPhotoBytes);report[key+"PageGPU"]=r.gpuResident;report[key+"PageBuilt"]=r.built;}
+        if(owner){const auto scene=owner->core().sceneStats(core::Module::profile);const auto stats=owner->stats();
+            report[key+"PagePixelMB"]=megabytes(scene?scene->residentPixelBytes:0);report[key+"PageRasterEntries"]=double(scene?scene->rasterEntries:0);
+            report[key+"PortraitMB"]=megabytes(stats.portraitBytes);report[key+"ArtGPU"]=stats.artResident;report[key+"ArtMB"]=megabytes(stats.artBytes);}
         return v;};
     const auto before=memory("memory.relaunch.before");
-    set("relaunch.ownerMS",timed([&]{owner=std::make_unique<tools::ProfileOwner>(w.hwnd,executor,raster,images,work,o);owner->resize(metrics);owner->setAppearance(appearance,time);}));
+    set("relaunch.ownerMS",timed([&]{owner=std::make_unique<tools::ProfileOwner>(w.hwnd,executor,raster,context,work,o);open(*owner,time);}));
     const auto relaunch=Clock::now();owner->start(time);
     measure("relaunch.loadOwnerThreadMS","relaunch.loadLongestDrainMS",[&]{return owner->loaded();});
     measure("relaunch.photoOwnerThreadMS","relaunch.photoLongestDrainMS",[&]{return owner->cardTexture(tools::IdCardTextureKind::avatar)!=nullptr&&owner->cardTexture(tools::IdCardTextureKind::background)!=nullptr;});
@@ -189,36 +195,39 @@ void run(const fs::path&shader,const fs::path&resources,const fs::path&captionFi
     const auto decoded=memory("memory.relaunch.decoded");
     report["memory.relaunch.decodedResidentMB"]=decoded.privateMB-before.privateMB;
     frames(*owner,"relaunch");
-    // The page's portrait crop and backdrop are published, then measured.
-    {core::ModulePresentation modules(core::Module::profile);for(unsigned n=0;n<3;++n){quiesce();(void)frame(*owner,modules,1./60);}composition.detach(renderer);}
+    // The page's portrait and the art are published, then measured.
+    {core::ModulePresentation modules(core::Module::profile);designScreen(modules);for(unsigned n=0;n<3;++n){quiesce();(void)frame(*owner,modules,1./60);}composition.detach(renderer);}
     const auto shown=memory("memory.relaunch.shown");
     report["memory.relaunch.photoProfileResidentMB"]=shown.privateMB-before.privateMB;
     // 6. Adjust portrait: one committed zoom step at a time (the slider's
     // accessible value or a nudge), owner-thread wall time per step; the
     // crop itself runs on the worker.
     {
-        core::ModulePresentation modules(core::Module::profile);(void)frame(*owner,modules,1./60);
-        need(owner->perform("profile:menu",time)&&owner->perform("profile:portraitMenu",time),"The portrait popover opens");(void)frame(*owner,modules,1./60);
+        core::ModulePresentation modules(core::Module::profile);designScreen(modules);(void)frame(*owner,modules,1./60);
+        auto&page=*owner->canvas();
+        need(page.perform("profile:menu",time)&&page.perform("profile.more:portrait",time),"The portrait popover opens");(void)frame(*owner,modules,1./60);
         double total{},slowest{};unsigned steps{};
-        for(unsigned n=1;n<=12;++n){const double d=timed([&]{need(owner->setSlider(m::ProfileField::avatarZoom,1+.25*n,time),"A portrait zoom step");});total+=d;slowest=std::max(slowest,d);++steps;(void)frame(*owner,modules,1./60);}
+        for(unsigned n=1;n<=12;++n){const double d=timed([&]{need(page.adjustAccessibilitySlider("profile:avatarZoom",1+.25*n,time),"A portrait zoom step");});total+=d;slowest=std::max(slowest,d);++steps;(void)frame(*owner,modules,1./60);}
         set("slider.avatarZoomStepOwnerMS",total/steps);set("slider.avatarZoomStepLongestMS",slowest);
         double drains{},drainPeak{};
         for(int n=0;n<256;++n){executor.waitIdle();const double d=timed([&]{(void)executor.drain();});drains+=d;drainPeak=std::max(drainPeak,d);if(!executor.stats().pending&&!executor.stats().running&&!executor.stats().completed)break;}
         set("slider.completionOwnerMS",drains);set("slider.completionLongestDrainMS",drainPeak);
         (void)frame(*owner,modules,1./60);
-        need(owner->perform("profile:popoverClose",time),"The portrait popover closes");(void)frame(*owner,modules,1./60);
-        if(const auto*page=owner->page()){const auto r=page->resources();report["slider.cropJobs"]=std::int64_t(r.cropJobs);report["slider.cropPublications"]=std::int64_t(r.cropPublications);}
+        page.closePopover();(void)frame(*owner,modules,1./60);
+        report["slider.portraitJobs"]=std::int64_t(owner->stats().portraitJobs);report["slider.portraitPublications"]=std::int64_t(owner->stats().portraitPublications);
         // 7. The HUD closes while another module is shown (HUDModuleContent
         // keeps only the shown screen): the page parks; showing it again
         // rebuilds it.
         modules.select(core::Module::notes,time);for(unsigned n=0;n<40;++n)(void)frame(*owner,modules,1./60);
         memory("memory.relaunch.otherModule");
-        owner->overlayClosing(time);(void)frame(*owner,modules,1./60);owner->conceal();quiesce();
+        owner->setOverlayVisible(false,time);owner->core().overlayClosing(time);(void)frame(*owner,modules,1./60);
+        (void)owner->core().hostEvent({app::HostEvent::Kind::overlayConcealed},time);quiesce();(void)frame(*owner,modules,1./60);
         memory("memory.relaunch.parked");
-        owner->setOverlayVisible(true,time);(void)frame(*owner,modules,1./60);
+        owner->core().setOverlayVisible(true,time);owner->setOverlayVisible(true,time);(void)frame(*owner,modules,1./60);
         // Rebuilding the parked page's artwork (what its next first frame
         // otherwise does before uploading), then the frames showing it.
-        {core::ModulePresentation wanted(core::Module::profile);const auto sample=wanted.sample(time).presentation;set("reshow.buildMS",timed([&]{owner->prewarm(sample);}));}
+        {core::ModulePresentation wanted(core::Module::profile);designScreen(wanted);const auto sample=wanted.sample(time).presentation;
+         set("reshow.buildMS",timed([&]{owner->core().prewarm(app::ModuleFrame{core::Matrix4{},chrome,sample,0,time,true});}));}
         modules.select(core::Module::profile,time);
         double first{},peak{};for(unsigned n=0;n<40;++n){const double d=frame(*owner,modules,1./60);if(!n)first=d;peak=std::max(peak,d);}
         set("reshow.firstProfileFrameMS",first);set("reshow.peakFrameMS",peak);
@@ -233,7 +242,7 @@ void run(const fs::path&shader,const fs::path&resources,const fs::path&captionFi
     // switched away inside the open HUD and once the HUD closed on another
     // module, and its first frames.
     {
-        gpu::NativeDesignTextMeasurer measurer(raster);m::design::Context context(measurer,gpu::nativeUppercase());
+        // The Work Mode page shares the probe's one design Context (the host's).
         m::WorkModeCanvas*workShown{};m::WorkModeController controller({[&]{if(workShown)workShown->controllerChanged();},{}});
         tools::DesignOwnerOptions wo;wo.name="workMode";wo.raster.pixelsPerPoint=2;tools::DesignOwnerCore page(raster,context,std::move(wo));
         m::WorkModeCanvasOptions co;co.clock=[&]{return time;};

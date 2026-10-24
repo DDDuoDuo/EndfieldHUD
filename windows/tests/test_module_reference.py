@@ -47,9 +47,9 @@ def walk(layer):
 manifest = read('modules.json')
 check(manifest['schemaVersion'] == 1, 'schema')
 finite(manifest)
-expected = {('notes','default'), ('profile','default')}  # Settings: tools/settings_reference.*
+expected = {('profile','default')}  # Settings: tools/settings_reference.*, Notes: tools/notes_reference.*
 check({(e['module'],e['state']) for e in manifest['entries']} == expected, 'actual source state coverage')
-check(len(manifest['entries']) == 2, 'no duplicate entries')
+check(len(manifest['entries']) == 1, 'no duplicate entries')
 check(manifest['isolation'] == {
     'windowCreated':False, 'systemHUDViewCreated':False, 'temporaryStoresOnly':True,
     'isolatedPreferencesSuite':True, 'liveProvidersCreated':False, 'clipboardAccessed':False,
@@ -80,7 +80,7 @@ for entry in manifest['entries']:
     for a in data['actions'] + data['sliders']:
         check(bool(a['id']) and bool(a['label']), 'source action identity/label')
         check(len(a['rect']) == 4 and a['rect'][2] > 0 and a['rect'][3] > 0, 'action positive geometry')
-        check(a['space'] in ('module-local','workspace-local'), 'action coordinate space')
+        check(a['space'] in ('module-local','workspace-local','content-box'), 'action coordinate space')
     for node in layers:
         check(len(node['transform']) == 4 and all(len(c) == 4 for c in node['transform']), 'transform shape')
         check(node['animationKeys'] == [], 'static model fixture contains animation')
@@ -88,11 +88,6 @@ for entry in manifest['entries']:
         if node['kind'] == 'shape' and node['shape']['path']:
             for command in node['shape']['path']:
                 check(command['op'] in ('move','line','quadratic','cubic','close'), 'path command')
-    if entry['module'] == 'notes':
-        texts = '\n'.join(node.get('text',{}).get('string','') for node in layers)
-        check('Neutral note' in texts and 'Compare geometry' in texts, 'neutral stored notes rendered by original canvas')
-        check(any(a['space'] == 'workspace-local' for a in data['actions']), 'workspace actions')
-        check(any(a['space'] == 'module-local' for a in data['actions']), 'toolbar actions')
     if entry['module'] == 'profile':
         texts = '\n'.join(node.get('text',{}).get('string','') for node in layers)
         check('Endministrator' in texts and '1000000000' in texts, 'neutral profile rendered by original canvas')

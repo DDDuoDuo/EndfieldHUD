@@ -42,6 +42,15 @@ void idCardMaskHover(ProfileImage&hoverTexture,const ProfileImage&backgroundText
 // Lanczos-scaled to ceil(target * clamp(scale,1,8) * 1.35) (<=1024) pixels in
 // linear light; samples outside the crop are clear, like Core Image's crop.
 ProfileImage profileRenderedImage(const ProfileImage&source,int orientation,core::Point target,double zoom,core::Point offset,double contentsScale);
+// HUDPortraitArtwork.panningImage (Mac 1.3.0, Personal ID): the whole
+// EXIF-oriented portrait for a `side` px well that pans and zooms it with a
+// layer transform, drawn once per zoom step, sharp up to `zoom`: long side
+// min(2048, side x max(fill) x zoom x clamp(scale, 1, 8) x 1.35), never
+// enlarged, Lanczos in linear light. `fill` is its aspect-fill size in well
+// sides (max(1, w/h), max(1, h/w)), so the visible region matches the card
+// crop for the same zoom and offset.
+struct ProfilePanningImage {ProfileImage image;double fillWidth{1},fillHeight{1};};
+ProfilePanningImage profilePanningImage(const ProfileImage&source,int orientation,double side,double zoom,double contentsScale);
 // A whole image redrawn at another size (CGContext.draw with high
 // interpolation), approximated by the same linear-light Lanczos filter.
 ProfileImage profileResampled(const ProfileImage&,unsigned width,unsigned height);
