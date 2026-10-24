@@ -87,7 +87,7 @@ struct AutomationTree::State {
     int focusedRuntime{}; // the node that last received the focus event (0: none)
     bool alive{true};     // false once the owning object is destroyed: the host is never called again
     std::optional<core::Rect> screen(const Node& n) const {
-        if (!alive || !host.toScreen) return std::nullopt;
+        if (!alive || !host.toScreen || n.offscreen) return std::nullopt;
         std::optional<core::Rect> out;
         try { out = host.toScreen(n.rect, n.space); } catch (...) { return std::nullopt; }
         if (!out || !std::isfinite(out->x) || !std::isfinite(out->y) || !std::isfinite(out->width) || !std::isfinite(out->height) || out->width <= 0 || out->height <= 0)
@@ -577,7 +577,7 @@ std::vector<AutomationNode> automationNodes(std::span<const d::AccessibilityItem
     out.reserve(items.size());
     for (const auto& item : items) {
         Node n;
-        n.id = item.id; n.name = item.label; n.help = item.help; n.value = item.value; n.rect = item.rect; n.enabled = item.enabled; n.on = item.on;
+        n.id = item.id; n.name = item.label; n.help = item.help; n.value = item.value; n.rect = item.rect; n.enabled = item.enabled; n.on = item.on; n.offscreen = item.offscreen;
         switch (item.role) {
         case d::AccessibilityRole::button: n.role = Role::button; break;
         case d::AccessibilityRole::toggle: n.role = Role::toggle; break;

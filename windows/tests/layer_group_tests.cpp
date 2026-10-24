@@ -1,7 +1,5 @@
 #include "native/layer_group.hpp"
 #include "native/layer_text_layout.hpp"
-#include "native/notes_controls_scene.hpp"
-#include "modules/notes_motion.hpp"
 #ifdef _WIN32
 #include <windows.h>
 #include <objbase.h>
@@ -120,29 +118,7 @@ void run(HWND hwnd,const wchar_t* shader){
         composition.detach(renderer);check(encodedGroup.releaseResources(renderer),"Encoded group retires through the original carrier lifetime");check(renderer.removeMesh(beam.meshID)&&renderer.removeTexture(beam.textureID),"Map beam assets release after group detachment");
         check(renderer.stats().resourceBytes==0,"Encoded group leaves no target or image behind");
     }
-    // Exercise the actual ported Notes secondary menu, including its shadow,
-    // overlapping plates, labels and last-painted border. A source root fade
-    // must multiply the completed group, not all these leaves individually.
-    renderer.resize(256,128);renderer.setCamera(gpu::layerViewportProjection(256,128));
-    endfield::modules::NotesControls controls;endfield::modules::NotesControlsInput input;input.kind=endfield::modules::NotesControlsKind::mediaSource;controls.update(input);
-    gpu::NativeNotesControlsScene menu(controls,raster,options);menu.syncContent();menu.updatePose({},1,0);
-    gpu::NativeLayerGroup menuGroup(menu.scene(),"notes-media-menu",1);menuGroup.uploadResources(renderer);menuGroup.setPose(core::Matrix4::translation(16,16),1);
-    composition.setEntries(renderer,std::array{menuGroup.entry()});composition.present(renderer);renderer.draw(false);const auto full=renderer.readback();
-    check(menuGroup.localCoverageBounds().x<0&&menuGroup.localCoverageBounds().height>controls.bounds().height,"Actual Notes shadow and border extend beyond the nominal menu rectangle");
-    for(float alpha:{.25f,.5f,.75f}){menuGroup.setPose(core::Matrix4::translation(16,16),alpha);composition.present(renderer);renderer.draw(false);const auto faded=renderer.readback();
-        for(std::size_t byte=0;byte<full.pixels.size();++byte)check(std::abs(int(faded.pixels[byte])-int(std::lround(full.pixels[byte]*alpha)))<=2,"Actual overlapping Notes menu fades as one retained image");
-    }
-    const auto menuBefore=renderer.stats();const auto menuRaster=raster.stats();allocations=0;counting=true;
-    try{for(unsigned frame=0;frame<120;++frame){const auto t=frame/600.;const auto fade=endfield::modules::notesMenuMotion(true,t);core::Matrix4 tilt=core::Matrix4::translation(16,16+fade.y);tilt.values[3]=frame*.0000001;
-        menuGroup.setPose(tilt,float(fade.opacity));composition.present(renderer);renderer.draw(false);
-    }}catch(...){counting=false;throw;}counting=false;
-    check(allocations==0&&renderer.stats().nativeGroupRenders==menuBefore.nativeGroupRenders&&raster.stats().rasterizations==menuRaster.rasterizations,"Source Notes menu entrance and pointer tilt retain one cached target without C++ allocation or artwork repaint");
-    const auto beforeFont=renderer.stats();const auto outputIdentity=menuGroup.draws()[0].textureID;const auto outputPose=menuGroup.draws()[0].world;
-    raster.setDefaultFontLanguage(gpu::LayerFontLanguage::korean);const auto carrier=menuGroup.entry().scene;check(carrier->refreshTypography(),"Published empty group carrier refreshes its borrowed local text");composition.upload(renderer);composition.present(renderer);renderer.draw(false);
-    check(menuGroup.draws()[0].textureID==outputIdentity&&menuGroup.draws()[0].world==outputPose&&renderer.stats().nativeGroupTargetAllocations==beforeFont.nativeGroupTargetAllocations,"Typography event preserves group output identity, pose, and bounded target");
-    check(std::any_of(menu.scene().report().fontSubstitutions.begin(),menu.scene().report().fontSubstitutions.end(),[](const auto&f){return f.cascadeFamily=="Noto Sans KR";}),"Unchanged grouped menu captions use the new Korean default face");
-    const auto stableFont=raster.stats();allocations=0;counting=true;for(unsigned n=0;n<120;++n)carrier->refreshTypography();counting=false;check(allocations==0&&raster.stats().rasterizations==stableFont.rasterizations,"Equal group font generation performs no raster or allocation");
-    composition.detach(renderer);check(menuGroup.releaseResources(renderer),"Actual Notes menu retires after its borrowed output detaches");check(renderer.stats().resourceBytes==0,"Actual menu leaves no retained GPU resources");renderer.reset();
+    renderer.reset();
 }
 }
 int wmain(int argc,wchar_t** argv){try{check(argc==2,"Pass native HUD shader path");check(SUCCEEDED(CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED)),"Fixture COM apartment initializes");

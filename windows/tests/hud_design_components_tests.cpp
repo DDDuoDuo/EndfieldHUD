@@ -541,6 +541,12 @@ void menus() {
     check(model(rail, Channel::opacity) == 0, "A wheel that does not move shows nothing");
     longMenu.setScroll(0); longMenu.scroll(1000);
     check(near(longMenu.scrollOffset(), 12 * 30 - 210) && model(rail, Channel::opacity) == 1, "Wheel scrolls to the end and shows the bar");
+    {
+        const auto rows = longMenu.controls();
+        const auto first = items(*rows[0], w.root), last = items(*rows[11], w.root);
+        check(first.size() == 1 && first[0].offscreen && last.size() == 1 && !last[0].offscreen,
+            "Rows scrolled out of a long menu stay listed, offscreen (UIA IsOffscreen, like a scrolled NSMenu's items)");
+    }
     w.at(w.env.now + 1.1);
     check(model(rail, Channel::opacity) == 0 && near(rail.property[std::size_t(Channel::opacity)].duration, .3), "The bar hides 1 s later (.30 easeIn)");
     auto* track = longMenu.controls().back();

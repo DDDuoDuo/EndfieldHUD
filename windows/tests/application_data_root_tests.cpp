@@ -14,7 +14,7 @@
 #include "native/file_shelf_files.hpp"
 #include "native/module_scene.hpp"
 #include "tools/notes_preview.hpp"
-#include "tools/shelf_preview.hpp"
+#include "tools/shelf_owner.hpp"
 #include <ole2.h>
 #include <algorithm>
 #include <array>
@@ -68,11 +68,11 @@ struct NotesRun {
     core::Matrix4 design, camera{gpu::layerViewportProjection(1280, 800)};
     double time{};
     bool released{};
-    NotesRun(HWND hwnd, gpu::Renderer& r, const fs::path& root, const gpu::NativeNotesControlsAssets& assets) : renderer(r) {
+    NotesRun(HWND hwnd, gpu::Renderer& r, const fs::path& root, const fs::path& formats) : renderer(r) {
         settings.viewport = {0, 0, 1280, 800}; settings.module = core::Module::notes; settings.sourceShell = true;
         design = source::DesktopChromeLayout::make(settings, {}, {}).designToScreen;
         // The production selection path of app/application.cpp.
-        preview = app::makeNotesOwner<tools::NotesPreview>(true, hwnd, raster, root, assets, false, fs::path{}, std::span<const data::Note>{}, tools::NotesPreviewMediaOptions{});
+        preview = app::makeNotesOwner<tools::NotesPreview>(true, hwnd, raster, root, false, formats, std::span<const data::Note>{}, tools::NotesPreviewMediaOptions{});
         preview->resize({1280, 800, 96, 1, 1280, 800});
         frame();
     }
@@ -98,7 +98,7 @@ struct NotesRun {
     }
 };
 
-void notes(HWND hwnd, gpu::Renderer& renderer, const gpu::NativeNotesControlsAssets& assets) {
+void notes(HWND hwnd, gpu::Renderer& renderer, const fs::path& formats) {
     Temp temp;
     const auto root = temp.root / "EndfieldHUD" / "v1";
     data::Note earlier; earlier.text = "Earlier run"; earlier.x = 180; earlier.y = 245; earlier.width = 240; earlier.height = 145;
@@ -107,13 +107,13 @@ void notes(HWND hwnd, gpu::Renderer& renderer, const gpu::NativeNotesControlsAss
     {
         gpu::LayerRasterizer raster;
         bool refused{};
-        try { tools::NotesPreview fixture(hwnd, raster, root, assets, false); } catch (const std::exception&) { refused = true; }
+        try { tools::NotesPreview fixture(hwnd, raster, root, false, formats); } catch (const std::exception&) { refused = true; }
         check(refused, "The development fixture entry point still refuses an existing root");
     }
     auto saved = savedNotes(root);
     check(saved.size() == 1 && saved.front().text == earlier.text, "The refused fixture left the root untouched");
     {
-        NotesRun run(hwnd, renderer, root, assets);
+        NotesRun run(hwnd, renderer, root, formats);
         saved = savedNotes(root);
         check(saved.size() == 1 && saved.front().id == earlier.id && saved.front().text == earlier.text, "Opening the persistent root writes no sample note");
         const tools::NotesKeyModifiers control{true, false, false, false};
@@ -126,7 +126,7 @@ void notes(HWND hwnd, gpu::Renderer& renderer, const gpu::NativeNotesControlsAss
     }
     {
         // Restart: the next run opens the same root and sees the edit.
-        NotesRun run(hwnd, renderer, root, assets);
+        NotesRun run(hwnd, renderer, root, formats);
         check(run.preview->diagnosticEditing(true, run.time + .1), "The restarted owner loaded the persisted note");
         check(run.preview->diagnosticEditing(false, run.time + .2), "The restarted editor finishes");
         saved = savedNotes(root);
@@ -136,13 +136,15 @@ void notes(HWND hwnd, gpu::Renderer& renderer, const gpu::NativeNotesControlsAss
     {
         // Fresh install: the versioned root is created, still without a sample.
         const auto fresh = temp.root / "Fresh" / "v1";
-        NotesRun run(hwnd, renderer, fresh, assets);
+        NotesRun run(hwnd, renderer, fresh, formats);
         check(fs::is_directory(fresh) && savedNotes(fresh).empty(), "A fresh persistent root starts empty");
         run.release();
     }
 }
 
-void shelf(HWND hwnd, gpu::Renderer& renderer, const gpu::NativeShelfAssets& assets, std::shared_ptr<const core::SubsectionMaskSampler> masks) {
+// The Shelf's service (tools/shelf_owner.hpp) opens its store when it is
+// constructed; its canvas reads that store (no rendering is needed here).
+void shelf(HWND hwnd) {
     Temp temp;
     const auto root = temp.root / "EndfieldHUD" / "v1";
     const auto earlierFile = temp.root / "earlier.txt", laterFile = temp.root / "later.txt";
@@ -154,63 +156,42 @@ void shelf(HWND hwnd, gpu::Renderer& renderer, const gpu::NativeShelfAssets& ass
         check(store.add(tokens) == 1, "An earlier run's reference is in the persistent root");
     }
     {
-        gpu::LayerRasterizer raster;
         bool refused{};
-        try { tools::ShelfPreview fixture(hwnd, raster, assets, {root, false, false, masks}); } catch (const std::exception&) { refused = true; }
+        try { tools::ShelfService fixture(hwnd, {root, false, false}); } catch (const std::exception&) { refused = true; }
         check(refused && savedShelf(root).size() == 1, "The development fixture entry point refuses an existing root and leaves it untouched");
     }
-    const auto run = [&](const fs::path& dataRoot, const std::function<void(tools::ShelfPreview&, double)>& body) {
-        gpu::LayerRasterizer raster; gpu::LayerComposition composition; core::ModulePresentation modules{core::Module::fileShelf};
-        tools::ShelfPreviewOptions options{dataRoot, false, false, masks};
+    const auto run = [&](const fs::path& dataRoot, const std::function<void(tools::ShelfService&)>& body) {
+        tools::ShelfServiceOptions options{dataRoot, false, false};
         app::persistentShelfRoot(options); // the production selection path of app/application.cpp
-        tools::ShelfPreview owner(hwnd, raster, assets, std::move(options));
-        owner.resize({1280, 800, 96, 1, 1280, 800});
-        source::DesktopChromeSettings settings{{0, 0, 1280, 800}, 1, {}, core::Module::fileShelf, true};
-        const auto center = source::DesktopChromeLayout::make(settings, {}, {}).designToScreen;
-        double time{};
-        bool released{};
-        struct Cleanup { gpu::Renderer& r; gpu::LayerComposition& c; tools::ShelfPreview& s; bool& done; ~Cleanup() { if (done) return; try { c.detach(r); s.release(r); } catch (...) { r.reset(); } } } cleanup{renderer, composition, owner, released};
-        const auto frame = [&] {
-            time += .02; const auto sample = modules.sample(time).presentation;
-            owner.update(center, settings, sample, 1, time); owner.upload(renderer); composition.setEntries(renderer, owner.entries()); owner.collected(renderer); composition.present(renderer);
-        };
-        frame();
-        body(owner, time);
-        frame();
-        composition.detach(renderer); owner.release(renderer); released = true;
+        tools::ShelfService service(hwnd, std::move(options));
+        body(service);
     };
-    run(root, [&](tools::ShelfPreview& owner, double time) {
-        check(owner.state().items().size() == 1 && owner.state().items().front().name == "earlier.txt", "The owner loads the earlier run's reference");
+    run(root, [&](tools::ShelfService& service) {
+        check(service.items().size() == 1 && service.items().front().name == "earlier.txt", "The service loads the earlier run's reference");
         const std::array paths{utf8(laterFile)};
-        check(owner.importFiles(paths, time), "The owner adds a reference to the persistent root");
+        check(service.importFiles(paths, 1), "The service adds a reference to the persistent root");
         check(savedShelf(root).size() == 2, "The new reference is saved");
     });
-    run(root, [&](tools::ShelfPreview& owner, double) {
-        const auto& items = owner.state().items();
+    run(root, [&](tools::ShelfService& service) {
+        const auto items = service.items();
         check(items.size() == 2 && std::any_of(items.begin(), items.end(), [](const auto& i) { return i.name == "later.txt"; }),
               "Both references survive the restart");
     });
     const auto fresh = temp.root / "Fresh" / "v1";
-    run(fresh, [&](tools::ShelfPreview& owner, double) { check(owner.state().items().empty() && fs::is_directory(fresh), "A fresh persistent root starts empty"); });
+    run(fresh, [&](tools::ShelfService& service) { check(service.items().empty() && fs::is_directory(fresh), "A fresh persistent root starts empty"); });
     for (const auto& file : {earlierFile, laterFile}) check(fs::exists(file), "References never move or delete the original files");
 }
 }
 
 int wmain(int argc, wchar_t** argv) {
     try {
-        check(argc == 7, "Usage: application_data_root_tests hud.hlsl notes-controls-assets notes-sha notes-commit shelf-assets reveal-mask.bin");
-        const auto ascii = [](const wchar_t* value) { std::string out; for (; *value; ++value) { check(*value <= 127, "Pins are ASCII"); out.push_back(static_cast<char>(*value)); } return out; };
+        check(argc == 3, "Usage: application_data_root_tests hud.hlsl notes-format");
         Ole ole;
         Window window;
         gpu::Renderer renderer;
         renderer.initialize(window.hwnd, 1280, 800, {gpu::Driver::warpForTests, argv[1], gpu::RenderTarget::offscreenForTests});
-        const gpu::NativeNotesControlsAssets notesAssets(fs::absolute(argv[2]), {ascii(argv[3]), ascii(argv[4])});
-        notes(window.hwnd, renderer, notesAssets);
-        const gpu::NativeShelfAssets shelfAssets(fs::absolute(argv[5]));
-        const auto bytes = data::detail::readFile(argv[6], 128 * 1024);
-        check(bytes.has_value(), "Original reveal samples exist");
-        auto masks = std::make_shared<core::SubsectionMaskSampler>(std::span(reinterpret_cast<const std::uint8_t*>(bytes->data()), bytes->size()), core::SubsectionMaskSampler::assetSHA256);
-        shelf(window.hwnd, renderer, shelfAssets, std::move(masks));
+        notes(window.hwnd, renderer, fs::absolute(argv[2]));
+        shelf(window.hwnd);
         check(!IsWindowVisible(window.hwnd), "The fixture never showed a window");
         renderer.reset();
         std::cout << "Persistent Notes and File Shelf roots: " << checks << " checks passed\n";

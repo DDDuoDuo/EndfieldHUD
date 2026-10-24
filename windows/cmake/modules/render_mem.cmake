@@ -9,16 +9,15 @@
 # the switch back restores them (no repaint, identical pixels); it prints the
 # first showing, switch-away and switch-back frame times, the parked bytes
 # and, for comparison, the switch back after the ten-minute release.
-if(WIN32 AND BUILD_TESTING AND TARGET hud_media_assembly_preview
-   AND TARGET hud_archive_preview AND TARGET hud_native)
+if(WIN32 AND BUILD_TESTING AND TARGET hud_media_assembly_owner AND TARGET hud_archive_owner AND TARGET hud_native)
   add_executable(layer_switch_probe tests/layer_switch_probe.cpp)
   target_compile_definitions(layer_switch_probe PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
   target_link_libraries(layer_switch_probe PRIVATE
-    hud_media_assembly_preview hud_archive_preview hud_native hud_motion psapi ole32)
+    hud_media_assembly_owner hud_archive_owner hud_native hud_motion psapi ole32)
   if(MSVC)
     target_compile_options(layer_switch_probe PRIVATE /EHsc)
   endif()
   add_test(NAME layer_switch_contracts COMMAND layer_switch_probe "${CMAKE_CURRENT_SOURCE_DIR}/native/hud.hlsl"
-    "${CMAKE_CURRENT_SOURCE_DIR}/resources" "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/archive-source-v1.json" "${EHUD_MEDIA_ASSEMBLY_RESOURCE_DIR}")
+    "${CMAKE_CURRENT_SOURCE_DIR}/resources" "${EHUD_MEDIA_ASSEMBLY_RESOURCE_DIR}")
   set_tests_properties(layer_switch_contracts PROPERTIES TIMEOUT 300)
 endif()

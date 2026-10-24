@@ -54,6 +54,10 @@ struct DesignOwnerOptions {
     // utility completions, ...). hostEvent's result is ModuleOwner::hostEvent's.
     std::function<void(const app::ModuleAppearance&, double)> appearance;
     std::function<bool(const app::HostEvent&, double)> hostEvent;
+    // The module's own private window messages (picker, icon worker, drop
+    // and utility notices the File Shelf posts to the HUD HWND), asked before
+    // the text fields'; true when handled (ModuleOwner::message).
+    std::function<bool(const app::NativeMessage&, double)> message;
     // The module's platform services beside its canvases that keep running
     // while none shows (Work Mode's countdown, Calendar's reminders): a wake
     // time and its deadline whatever the HUD's visibility (deadline's result:
@@ -65,6 +69,9 @@ struct DesignOwnerOptions {
     std::function<void(const app::ModuleFrame&)> updated;
     std::function<void(double)> closing;
     std::function<bool(double)> flush;
+    // Memory the module's services keep resident beside the scenes
+    // (ModuleOwner::residency: the minigame's VM heap); empty reports nothing.
+    std::function<app::ModuleResidency()> residency;
 };
 // Raster density of design surfaces (LIBRARY-DESIGN.md R11, Q8): physical
 // pixels per box px at the box centre (core::source::planeScale of boxWorld,
@@ -131,6 +138,17 @@ public:
     // The retained scene of one presented canvas (resident pixels, parks,
     // generations; hidden coverage and owner tests). Empty for another module.
     std::optional<native::NativeDesignSceneStats> sceneStats(core::Module) const;
+    // Owner-drawn media inside a canvas's scene (NativeDesignScene::setInsertion)
+    // and this frame's design pose of that canvas (boxWorld with the switch
+    // motion, module opacity, owner masks; nullopt while it is not drawn), so
+    // a module owner wrapping this core (Media Assembly) poses its records
+    // after update() exactly as the scene places its surfaces.
+    void setInsertion(core::Module, const modules::design::Layer* after, std::optional<native::LayerCompositionEntry>);
+    std::optional<native::NativeDesignScenePose> pose(core::Module) const;
+    // The context's one editor host follows this core: a module owner that
+    // drives its canvas directly (service completions, imports: Archive) calls
+    // it first, as every core entry point does.
+    void bindEditorHost();
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

@@ -21,7 +21,6 @@ void Application::Impl::cleanup(){if(cleaned)return;cleaned=true;ready=false;sto
     // fields borrow Notes' activated TSF manager, so Notes releases last.
     if(renderer.stats().initialized)registry.releaseAll(renderer);
     if(moduleContrast&&renderer.stats().initialized){try{(void)moduleContrast->scene.releaseResources(renderer);}catch(...){}}moduleContrast.reset();
-    if(archiveMedia){try{archiveMedia->releaseResources(now());}catch(...){}}
     // Owners are destroyed in the established order after every GPU release.
     const auto drop=[&](std::unique_ptr<ModuleOwner>&adapter){unregisterModule(adapter);};
     if(clockAutomation){registry.remove(*clockAutomation);clockAutomation.reset();}
@@ -37,12 +36,12 @@ void Application::Impl::cleanup(){if(cleaned)return;cleaned=true;ready=false;sto
     // Area exports finished or were cancelled with their owners; the second
     // executor joins before the shared one (its completions post the same notice).
     if(longWork){longWork->waitIdle();longWork->drain();longWork.reset();}
-    drop(archiveModuleOwner);archiveMedia.reset();archive.reset();
+    archive=nullptr;drop(archiveModuleOwner);
     calendar=nullptr;drop(calendarModuleOwner);calendarState.reset();calendarNotifications.reset();if(utility&&calendarRoute)utility->invalidate(calendarRoute,false);calendarRepository.reset();calendarCivil.reset();calendarFixture.reset();
-    drop(settingsModuleOwner);settingsUI.reset();drop(batteryModuleOwner);battery=nullptr;workModeCanvas=nullptr;drop(workModeModuleOwner);workMode.reset();drop(notesModuleOwner);notes.reset();
+    drop(settingsModuleOwner);settingsUI.reset();drop(batteryModuleOwner);battery=nullptr;workModeCanvas=nullptr;drop(workModeModuleOwner);workMode.reset();drop(notesCentreModuleOwner);drop(notesModuleOwner);notes.reset();
     activityTelemetry.reset();activityPlan.stop();activityProbe.reset();
     drop(shelfModuleOwner);shelf.reset();clipboardCanvas=nullptr;drop(clipboardModuleOwner);volumeCanvas=nullptr;drop(volumeModuleOwner);if(utility&&volumeIconRoute)utility->invalidate(volumeIconRoute);volumeIcons.reset();eventLogCanvas=nullptr;drop(eventLogModuleOwner);drop(storageModuleOwner);storage.reset();drop(activityModuleOwner);activity.reset();
-    drop(readerModuleOwner);reader.reset();readerOwner.reset();drop(gameModuleOwner);game.reset();gameSession.reset();drop(mapModuleOwner);map.reset();mapStore.reset();if(utility&&mapLoadRoute)utility->invalidate(mapLoadRoute);
+    reader=nullptr;drop(readerModuleOwner);readerOwner.reset();game=nullptr;drop(gameModuleOwner);gameSession.reset();map=nullptr;drop(mapModuleOwner);mapStore.reset();if(utility&&mapLoadRoute)utility->invalidate(mapLoadRoute);
     // The shared design Context outlives every design owner (they borrow it).
     if(designOverlay){registry.remove(*designOverlay);designOverlay.reset();}designClipboard.reset();
     // Retire state routes before the shared file executor; accepted immutable
@@ -55,7 +54,7 @@ void Application::Impl::cleanup(){if(cleaned)return;cleaned=true;ready=false;sto
     archiveService.reset();settingsSaves.reset();eventSaves.reset();utility.reset();activityCatalog.reset();activityDisk.reset();
     if(mediaBroker){try{mediaBroker->collectRetired();if(archiveMediaClient)mediaBroker->detachClient(archiveMediaClient);if(notesMediaClient)mediaBroker->detachClient(notesMediaClient);}catch(...){}mediaBroker.reset();}
     mediaVideos.reset();mediaImages.reset();if(mediaDecoder)mediaDecoder->stop();mediaDecoder.reset();
-    archiveDates.reset();backdrop.reset();renderer.reset();try{host.setCursor(nullptr);host.destroy();}catch(...){}
+    backdrop.reset();renderer.reset();try{host.setCursor(nullptr);host.destroy();}catch(...){}
 }
 
 int Application::Impl::runVisible(){
@@ -113,7 +112,7 @@ void Application::Impl::shutdownVisible(){
     }
     projectionHandoff.cancel();projectionDropRoute(false,now());releaseProjection();backdrop.reset();
     if(visibleMode())need(backdrop.stats().hostAttributeRestored,"Source preview could not restore its original host-backdrop flag");
-    if(readerTrace)readerTrace->save(args.dataRoot/"reader-scroll-trace.json");cleanup();if(backdropQueue)backdropQueue->finish();pendingShelfReveal.reset();pendingShelfOpen.reset();pendingStorageSettings=false;pendingLink.reset(); // A hand-off still pending at quit is dropped (OverlayController).
+    if(readerTrace)readerTrace->save(args.dataRoot/"reader-scroll-trace.json");cleanup();if(backdropQueue)backdropQueue->finish();pendingShelfReveal.reset();pendingStorageSettings=false;pendingLink.reset(); // A hand-off still pending at quit is dropped (OverlayController).
 }
 
 Application::Application(ApplicationOptions options):impl_(std::make_unique<Impl>(std::move(options))){}

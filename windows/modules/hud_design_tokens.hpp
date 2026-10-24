@@ -65,6 +65,9 @@ inline constexpr Hex standardAccent = 0xFAD41F;
 // newlines, drop every '#', exactly six hex digits (either case) else
 // standardAccent. Same rule as modules::ChargeAlertSettings::accentHex.
 Hex normalizedAccent(std::string_view accentHex) noexcept;
+// String.trimmingCharacters(in: .whitespacesAndNewlines) on UTF-8 (the same
+// White_Space set normalizedAccent trims): Notes' task titles.
+std::string trimmedWhitespace(std::string_view);
 // The HSB shift of HUDAccentPalette.shifted (:237-251): NSColor hue/
 // saturation/brightness (grey hue 0), h' = ((h x 360 + hue + 360) mod 360)/60,
 // s' = min(1, s x saturation), v' = min(1, v x brightness), textbook HSV->RGB

@@ -116,6 +116,8 @@ struct NativeDesignScene::Impl {
     bool synced{}, imagesDirty{}, posed{};
     double lastTime{};
     Matrix boxWorld;
+    const d::Layer* insertionAfter{};
+    std::optional<LayerCompositionEntry> insertion;
     NativeDesignSceneStats statistics;
     Impl(LayerRasterizer& r, LayerRasterOptions o, std::string p, DesignImages i) : raster(r), options(std::move(o)), prefix(std::move(p)), images(std::move(i)) {
         need(!prefix.empty() && prefix.size() <= 200, "Design scene needs a source prefix");
@@ -223,7 +225,11 @@ struct NativeDesignScene::Impl {
     }
     void refreshEntries() {
         entries.clear();
-        for (const auto& p : parts) if (p->scene) entries.push_back(p->group ? p->group->entry() : LayerCompositionEntry{p->scene.get(), {}});
+        for (const auto& p : parts) {
+            if (!p->scene) continue;
+            entries.push_back(p->group ? p->group->entry() : LayerCompositionEntry{p->scene.get(), {}});
+            if (insertion && p->root == insertionAfter) entries.push_back(*insertion);
+        }
     }
     void rebuildSlots() {
         slots.assign(artwork.bindings.size(), {none, none});
@@ -520,6 +526,14 @@ bool NativeDesignScene::park(Renderer& r) noexcept {
     ++i.statistics.parks;
     return true;
 }
+void NativeDesignScene::setInsertion(const d::Layer* after, std::optional<LayerCompositionEntry> entry) {
+    auto& i = *impl_;
+    need(!entry || (after && entry->scene), "A design insertion needs its part root and carrier scene");
+    i.insertionAfter = entry ? after : nullptr;
+    i.insertion = std::move(entry);
+    i.refreshEntries();
+}
+core::Matrix4 designMatrix(const d::Affine& a) noexcept { return matrix(a); }
 const core::Matrix4& NativeDesignScene::boxWorld() const noexcept { return impl_->boxWorld; }
 NativeDesignSceneStats NativeDesignScene::stats() const noexcept {
     const auto& i = *impl_;

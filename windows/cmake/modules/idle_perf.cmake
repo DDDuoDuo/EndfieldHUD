@@ -31,7 +31,7 @@ if(WIN32 AND BUILD_TESTING)
       target_compile_options(application_idle_probe PRIVATE /W4 /permissive- /EHsc)
     endif()
   endif()
-  if(TARGET watch_session_preview AND TARGET EndfieldHUD AND ehud_app_inputs AND EXISTS "${ehud_app_inputs}/notes-controls-assets"
+  if(TARGET watch_session_preview AND TARGET EndfieldHUD AND ehud_app_inputs AND EXISTS "${ehud_app_inputs}/runtime-compiled-animation/runtime-input.json"
      AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/app/run_idle_trace.cmake")
     add_test(NAME application_idle_trace COMMAND "${CMAKE_COMMAND}" "-DPREVIEW=$<TARGET_FILE:watch_session_preview>"
       "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/idle-trace-work" "-DINPUTS=${ehud_app_inputs}" "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}"

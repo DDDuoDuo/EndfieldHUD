@@ -94,6 +94,12 @@ public:
     void accessibilityItems(const Layer& root, std::vector<AccessibilityItem>& out) const override {
         if (label.empty()) return;
         auto entry = accessibilityItem(root, AccessibilityRole::menuItem); entry.on = item_.selected;
+        // A long menu's rows scrolled out of its list are offscreen (a partly shown row is not).
+        if (menu_->long_) {
+            const auto list = convert(localBounds(*menu_->list_), *menu_->list_, root);
+            const auto& r = entry.rect;
+            entry.offscreen = !(r.x < list.x + list.width && list.x < r.x + r.width && r.y < list.y + list.height && list.y < r.y + r.height);
+        }
         out.push_back(std::move(entry));
     }
     const Item& item() const noexcept { return item_; }

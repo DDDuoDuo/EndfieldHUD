@@ -371,6 +371,11 @@ void Button::setTitle(std::string value) {
     editText(*text_, [&](TextBlock& block) { block.setText(std::move(value)); });
     layoutContents();
 }
+void Button::setIcon(Icon icon) {
+    if (!glyph_ || icon_ == icon) return;
+    icon_ = icon;
+    design::setIcon(*glyph_, icon, 15, kind_ == Kind::secondary ? palette().token(ThemeToken::textOnDark) : (kind_ == Kind::light ? fixed::counterBackground : fixed::nearBlack));
+}
 double Button::preferredWidth() const {
     const double padding = buttonPadding(height_);
     const double leading = kind_ == Kind::secondary ? (height_ == Height::compact ? 20 : 22) : padding;
@@ -415,7 +420,8 @@ void Button::layoutContents() {
     const double leading = kind_ == Kind::secondary ? (height_ == Height::compact ? 20 : 22) : padding;
     double x = leading + std::round(std::max(0.0, (bounds.width - preferred) / 2));
     if (glyph_) { glyph_->setFrame({x, (h - 15) / 2, 15, 15}); x += 15 + 8; }
-    setLine(*text_, {x, (h - font) / 2, bounds.width - x - padding + 2, font});
+    // An icon-only button's empty line keeps a zero width (the rasterizer refuses negative rects; CA ignores them).
+    setLine(*text_, {x, (h - font) / 2, std::max(0.0, bounds.width - x - padding + 2), font});
     layer().setValue(Channel::opacity, enabled() ? 1 : .35);
     setTarget(bounds, kind_ == Kind::secondary ? std::nullopt : std::optional<PathBuilder>(chamfer(bounds, metric::buttonChamfer)));
 }
@@ -1150,6 +1156,11 @@ FieldFrame::FieldFrame(Builder& b, std::string_view id, Size size, bool light, b
     bar_->setFrame({0, 0, 3, size.height});
     layer_->add(*bar_);
     setState(State::normal);
+}
+void FieldFrame::setSize(Size size) {
+    layer_->setBounds(size);
+    bar_->setFrame({0, 0, 3, size.height});
+    setState(state_);
 }
 void FieldFrame::setState(State state) {
     state_ = state;

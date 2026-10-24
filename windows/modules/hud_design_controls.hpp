@@ -126,6 +126,7 @@ public:
     Button(Builder&, std::string id, std::string title, std::optional<Icon> icon, Kind, Height = Height::regular);
     std::string title() const;
     void setTitle(std::string);
+    void setIcon(Icon);                          // a titled-with-icon button swaps its glyph in place
     double preferredWidth() const;
     void place(Point origin, std::optional<double> width = {}); // flex width centres icon and title
     void hoverChanged() override;
@@ -364,6 +365,7 @@ public:
     FieldFrame(Builder&, std::string_view id, Size, bool light = false, bool plain = false);
     Layer& layer() const noexcept { return *layer_; }
     void setState(State);
+    void setSize(Size);                         // redraws in the current state
     State state() const noexcept { return state_; }
     std::optional<Color> focusColor;            // nullopt: accentInk
     std::optional<Color> background;            // Personal ID's #212121 inline editor

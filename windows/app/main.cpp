@@ -123,16 +123,15 @@ app::ApplicationOptions productionOptions(const app::PackagedResources& package,
     a.runtimeInput = true;
     a.packet = package.packet; a.cache = package.cache; a.cachePin = package.cachePin;
     a.shader = package.shader; a.watchBlur = package.watchBlur; a.cursor = package.cursor;
-    a.notesAssets = package.notesAssets; a.notesAssetsSHA = package.notesAssetsSHA; a.notesFormatAssets = package.notesFormatAssets;
-    a.shelfAssets = package.shelfAssets; a.shelfMask = package.shelfMask;
-    a.residentIcons = package.residentIcons; a.settingsAssets = package.settingsAssets; a.archiveAssets = package.archiveAssets;
+    a.notesFormatAssets = package.notesFormatAssets;
+    a.residentIcons = package.residentIcons; a.settingsAssets = package.settingsAssets;
     a.mapGeography = package.mapGeography; a.mapPlayerAssets = package.mapPlayerAssets; a.orbipomAssets = package.orbipomAssets;
     a.dataRoot = a.shelfDataRoot = data;
     // Notes hosts module selection and the shared text services; without it
     // only the source shell (and the tray with Quit) can run.
     const bool modules = package.modules;
     a.reader = a.calendar = a.projection = modules;
-    a.nativeClipboard = modules;
+    a.nativeClipboard = a.fileShelf = a.archive = modules;
     a.nativeActivity = a.nativeStorage = modules;
     a.nativeVolume = a.nativeBattery = a.nativeEventLog = modules;
     a.startup = arguments.startup;

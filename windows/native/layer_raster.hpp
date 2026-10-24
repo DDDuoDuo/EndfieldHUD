@@ -240,6 +240,10 @@ public:
     // The loaded shared families in manifest order (HarmonyOS Sans, Noto Sans
     // SC, TC, JP, KR): the font menus list them first, as the Mac's do.
     std::span<const std::string> bundledFontFamilies() const;
+    // The shared family a stored Mac font name names (HarmonyOS_Sans_Bold,
+    // NotoSansJP-Regular, "Noto Sans KR": the paint resolver's own rule);
+    // nullopt for any other name. The Archive / Notes font menus show it.
+    std::optional<std::string> bundledFamilyOf(std::string_view fontName) const;
     // A region's CJK family: its Noto Sans, or the Windows system family that
     // stands in when its file is absent.
     std::string regionFontFamily(LayerFontLanguage) const;

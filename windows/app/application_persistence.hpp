@@ -4,7 +4,7 @@
 // EndfieldHUD.exe opens the persistent versioned data root
 // (core/data/application_root.hpp) through the owners' persistent entry points
 //   NotesPreview(..., NotesPreviewMediaOptions, bool persistentDataRoot)
-//   ShelfPreviewOptions::persistentDataRoot
+//   ShelfServiceOptions::persistentDataRoot
 // which open the existing root as it is: no "must be new" check and no sample
 // note (a fresh install creates the root). Development previews and hidden
 // coverage keep the NEW-root fixture contract. Both entry points are required

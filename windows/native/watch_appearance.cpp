@@ -1,6 +1,7 @@
 #include "native/watch_appearance.hpp"
 #include "native/layer_image_source.hpp"
 #include "core/source_desktop_chrome.hpp"
+#include "modules/app_shortcut_artwork.hpp"
 #include <algorithm>
 #include <cmath>
 #include <set>
@@ -14,12 +15,17 @@ Json rgba(std::array<double,4>c){return Json::Object{{"sRGB",Json::Array{c[0],c[
 WatchAppearanceTemplates::WatchAppearanceTemplates(const Json&j){need(j["schemaVersion"].integer()==1&&j["captionTemplate"]["kind"].string()=="text"&&j["icons"].isObject()&&!j["icons"].object().empty()&&j["icons"].object().size()<=256,"Invalid source appearance template asset");caption_=j["captionTemplate"];for(const auto&[key,v]:j["icons"].object()){need(!key.empty()&&key.size()<=256&&Json::validUtf8(key)&&v["tree"].isObject()&&v["reportOnly"].isBool(),"Invalid original icon template");icons_.emplace(key,Icon{v["tree"],v["reportOnly"].boolean()});}}
 const Json&WatchAppearanceTemplates::icon(std::string_view key,bool reportSlot)const{const auto it=icons_.find(key);need(it!=icons_.end(),"Missing original source icon template");need(reportSlot||!it->second.reportOnly,"Original Report artwork cannot replace a different source icon slot");return it->second.tree;}
 Json WatchAppearanceTemplates::localIcon(std::string_view key,bool report,std::string_view id)const{need(!id.empty()&&id.size()<=4096&&Json::validUtf8(id),"Invalid local icon identity");auto result=icon(key,report);identify(result,std::string(id));return result;}
-Json WatchAppearanceTemplates::localOriginalIcon(std::string_view key,std::uint64_t revision,std::string_view id)const{
+Json WatchAppearanceTemplates::localOriginalIcon(std::string_view key,std::uint64_t revision,std::string_view id,std::optional<core::Rect> glyph)const{
  need(!key.empty()&&key.size()<=512&&Json::validUtf8(key)&&key.find('\0')==key.npos&&revision&&revision<=9007199254740991ULL,"Invalid original application image identity");
  auto result=localIcon("shortcut:original",false,id);auto children=result["children"].array();
  need(children.size()==2&&children[0]["kind"].string()=="shape"&&children[1]["kind"].string()=="layer","Original shortcut image template changed");
  children[0]["hidden"]=true;children[1]["hidden"]=false;
  children[1]["contents"]=Json::Object{{"memoryImage",std::string(key)},{"revision",static_cast<std::int64_t>(revision)}};
+ // Mac 1.3.0 (SHELL-41): the trimmed icon in its optical glyph frame
+ // (HUDSourceDesktopIconLayout.glyphFrame of its pixels) instead of the grid's 23 x 23.
+ if(glyph){need(std::isfinite(glyph->x)&&std::isfinite(glyph->y)&&glyph->width>0&&glyph->height>0,"Invalid original icon glyph frame");
+  children[1]["bounds"]=Json::Array{0,0,glyph->width,glyph->height};children[1]["frame"]=Json::Array{glyph->x,glyph->y,glyph->width,glyph->height};
+  children[1]["position"]=Json::Array{glyph->x+glyph->width/2,glyph->y+glyph->height/2};}
  result["children"]=std::move(children);return result;
 }
 // Mac 1.3.0 (SHELL-43): captions are HUDStandardTextLayer, HarmonyOS Sans
@@ -63,10 +69,11 @@ bool NativeWatchAppearance::update(const WatchContentCatalog::Actions&actions,co
  for(std::size_t n=0;n<i.surfaces.size();++n){auto&s=i.surfaces[n];const auto action=actions.find(s.binding.buttonID);if(action==actions.end())continue;const auto&item=i.entry(action->second);const auto&e=item.value;const auto place=std::find_if(placements.begin(),placements.end(),[&](const auto&p){return p.surfaceID==s.binding.surfaceID;});need(place!=placements.end(),"Missing current evaluated source label placement");const DesktopTextSize size{place->contentBounds.width,place->contentBounds.height};if(size.width<=0||size.height<=0){need(!place->visible,"Visible source label has empty bounds");continue;}
   const bool caption=s.binding.kind==NativeLabelKind::caption;LayerImageSource*images{};Impl::Key key{e.action,caption?item.captionRevision:item.iconRevision,caption&&e.module&&a.selectedAction==e.action,caption?a.language:core::Language::english,caption&&e.module&&(e.target=="storage"||e.target=="activityMonitor")&&a.dark,caption&&e.module&&a.selectedAction==e.action&&e.target!="storage"&&e.target!="activityMonitor"?a.accentSRGB:std::array<double,3>{},caption?size:DesktopTextSize{32,32}};if(s.rendered==key)continue;Json content;
   if(caption){DesktopCaptionRequest request{e.target,e.title,s.authored,a.language,e.module,s.binding.rightButton,key.selected,a.dark,a.accentSRGB};const auto measure=[&](std::string_view text,double pointSize,bool bold,double width,bool wrapped){Json descriptor=Json::Object{{"string",std::string(text)},{"fontSize",pointSize},{"font",standardFaceFont(pointSize,bold)},{"fontWeight",bold?700:500},{"wrapped",wrapped}};const auto result=i.raster.measureSourceText(s.binding.surfaceID,descriptor,width,i.options);return DesktopTextSize{result.width,result.height};};const auto plan=sourceDesktopCaption(request,measure);content=compileDesktopCaption(i.templates.captionTemplate(),plan,size,s.binding.surfaceID);++i.stats.captionsCompiled;
-  }else if(!e.originalImageKey.empty()&&e.originalImages->acquire(e.originalImageKey,e.originalImageRevision)){
-   // AppShortcutArtwork.image(for: .original, original:): the exact published
-   // snapshot (allocation-free revision lookup, content events only).
-   content=i.templates.localOriginalIcon(e.originalImageKey,e.originalImageRevision,s.binding.surfaceID);images=e.originalImages.get();++i.stats.iconsCompiled;++i.stats.originalImages;
+  }else if(const auto snapshot=e.originalImageKey.empty()?nullptr:e.originalImages->acquire(e.originalImageKey,e.originalImageRevision)){
+   // AppShortcutArtwork.image(for: .original, original:) trimmed
+   // (HUDSourceDesktopIconLayout.image, by the App shortcuts area): the exact
+   // published snapshot placed by its pixels (content events only).
+   content=i.templates.localOriginalIcon(e.originalImageKey,e.originalImageRevision,s.binding.surfaceID,modules::desktopIconGlyphFrame(snapshot->width(),snapshot->height()));images=e.originalImages.get();++i.stats.iconsCompiled;++i.stats.originalImages;
   }else{
    // A retired or evicted snapshot paints the source grid (Mac: a nil icon)
    // instead of failing the frame; its owner rebinds a new revision.

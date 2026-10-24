@@ -55,7 +55,7 @@ endif()
 # native/map_assets loadMapGeography: Terrain.bin and Countries.bin load in
 # separate Results as on the Mac, so a missing, altered or undecodable dataset
 # leaves the other one, keeps the Map and its pins and shows the source
-# message (tools/map_preview). The host's geography worker calls it.
+# message (tools/map_owner). The host's geography worker calls it.
 if(BUILD_TESTING AND TARGET hud_map_assets)
   add_executable(map_geography_load_tests tests/map_geography_load_tests.cpp)
   target_link_libraries(map_geography_load_tests PRIVATE hud_map_assets)
@@ -63,45 +63,18 @@ if(BUILD_TESTING AND TARGET hud_map_assets)
   list(APPEND EHUD_LOCAL_TARGETS map_geography_load_tests)
 endif()
 
-# --- Accessibility contracts for the shared UI Automation provider -------------
-# Source names, order and geometry of the Reader canvas/menus and of the Map
-# status, toolbar and pins (Calendar and the minigame have theirs in the
-# integrity fragment). Portable; the HUD's UIA root consumes them.
-add_library(hud_local_accessibility modules/reader_accessibility.cpp modules/map_accessibility.cpp)
-target_include_directories(hud_local_accessibility PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(hud_local_accessibility PUBLIC hud_reader_localization hud_map hud_localization)
-list(APPEND EHUD_LOCAL_TARGETS hud_local_accessibility)
-if(BUILD_TESTING)
-  # tools/reader_accessibility_reference.py -> reader-accessibility-source.json
-  add_executable(reader_accessibility_tests tests/reader_accessibility_tests.cpp)
-  target_link_libraries(reader_accessibility_tests PRIVATE hud_local_accessibility)
-  add_test(NAME reader_accessibility_contracts COMMAND reader_accessibility_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/reader-accessibility-source.json)
-  # tools/map_accessibility_reference.py -> map_accessibility_source.json
-  add_executable(map_accessibility_tests tests/map_accessibility_tests.cpp)
-  target_link_libraries(map_accessibility_tests PRIVATE hud_local_accessibility)
-  add_test(NAME map_accessibility_contracts COMMAND map_accessibility_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/map_accessibility_source.json)
-  list(APPEND EHUD_LOCAL_TARGETS reader_accessibility_tests map_accessibility_tests)
-endif()
-
 # --- UI Automation peers of the local modules ----------------------------------
 # One projected-peer provider (native/screen_reader_peers: Button/Edit/Text/
 # Group fragments under an owner's group of the HUD window's UIA root) and the
-# Reader, Map and minigame sources over their previews (canvas -> logical
-# client projection, accessible presses, the Map's 12 Hz gesture cadence; the
-# Calendar is a design owner with the design library's tree). The built-in owners of
+# minigame source over its preview (canvas -> logical client projection,
+# accessible presses; the Reader, Map and Calendar are design owners with the
+# design library's tree). The built-in owners of
 # app/application_modules.cpp forward their ModuleOwner automation hooks to it.
-if(TARGET hud_reader_preview)
-  target_link_libraries(hud_reader_preview PUBLIC hud_local_accessibility)
-endif()
-if(TARGET hud_map_preview)
-  target_link_libraries(hud_map_preview PUBLIC hud_local_accessibility)
-endif()
 if(WIN32)
-  add_library(hud_local_automation STATIC native/screen_reader_peers.cpp
-    tools/reader_automation.cpp tools/map_automation.cpp tools/orbipom_automation.cpp)
+  add_library(hud_local_automation STATIC native/screen_reader_peers.cpp)
   target_include_directories(hud_local_automation PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
   target_compile_definitions(hud_local_automation PRIVATE _WIN32_WINNT=0x0A00 UNICODE _UNICODE NOMINMAX)
-  target_link_libraries(hud_local_automation PUBLIC hud_reader_preview hud_map_preview hud_native hud_orbipom_accessibility
+  target_link_libraries(hud_local_automation PUBLIC hud_native
     PRIVATE uiautomationcore oleaut32 ole32 user32)
   list(APPEND EHUD_LOCAL_TARGETS hud_local_automation)
   if(TARGET hud_application)
@@ -116,25 +89,16 @@ if(WIN32)
     target_link_libraries(screen_reader_peers_tests PRIVATE hud_local_automation hud_module_registry uiautomationcore oleaut32 ole32 user32)
     add_test(NAME screen_reader_peers_contracts COMMAND screen_reader_peers_tests)
     list(APPEND EHUD_LOCAL_TARGETS screen_reader_peers_tests)
-    # The preview suites drive the same peers over the real owners.
-    foreach(test reader_preview_tests map_preview_tests orbipom_preview_tests)
-      if(TARGET ${test})
-        target_link_libraries(${test} PRIVATE hud_local_automation uiautomationcore oleaut32)
-      endif()
-    endforeach()
   endif()
 endif()
 
 # --- Reader display-time localization -----------------------------------------
-# Mac Reader captions/ReaderError pairs through the shared five-language
-# catalog plus the Windows-only chooser/picker/import rows. Portable; the
-# Windows Reader owner renders typed errors through it.
+# The Mac ReaderError pairs through the shared five-language catalog plus the
+# Windows-only picker/import rows. Portable; the Reader canvas and its owner
+# render typed errors through it.
 add_library(hud_reader_localization modules/reader_localization.cpp)
 target_include_directories(hud_reader_localization PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(hud_reader_localization PUBLIC hud_reader hud_localization)
-if(TARGET hud_reader_preview)
-  target_link_libraries(hud_reader_preview PUBLIC hud_reader_localization)
-endif()
 list(APPEND EHUD_LOCAL_TARGETS hud_reader_localization)
 if(BUILD_TESTING)
   # tools/reader_localization_reference.py -> reader-localization-source.json;

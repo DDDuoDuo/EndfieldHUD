@@ -64,12 +64,9 @@ Package production(const fs::path& root) {
     p.file("shell.shader", "shell/hud.hlsl", "float4 main() : SV_Target { return 1; }\n");
     p.file("shell.watchBlur", "shell/watch-blur.json", "{\"entrance\":[]}");
     p.file("shell.cursor", "shell/cursor.png", "PNG cursor");
-    p.directory("notes.controls", "notes-controls", {{"notes-controls-assets.json", "{\"controls\":[]}"}, {"raster/a.png", "a"}});
     p.directory("common.notesFormat", "common/notes-format", {{"raster/wheel.png", "wheel"}});
-    p.directory("common.shelf", "common/shelf", {{"reveal-mask.bin", std::string(64, '\x01')}, {"icons.json", "{}"}});
     p.directory("common.applicationIcons", "common/application-icons", {{"manifest.json", "{}"}, {"endfield-app.png", "icon"}});
     p.directory("common.watchAppearance", "common/watch-appearance", {{"manifest.json", "{}"}});
-    p.directory("common.archive", "common/archive", {{"raster/archive.png", "archive"}});
     p.directory("common.mapPlayer", "common/map-player", {{"player.png", "player"}});
     p.directory("map.geography", "map", {{"Terrain.bin", std::string(128, '\x7f')}, {"Countries.bin", "countries"}});
     p.directory("orbipom", "orbipom/OrbiPom", {{"orbipom.js", "game"}});
@@ -85,35 +82,31 @@ void complete(const fs::path& root) {
     check(r.shell && r.modules && r.unavailable.empty() && r.disabled.empty(), "A complete package enables the shell and every module");
     check(r.packet == root / "shell" / "runtime-input" && r.cache == root / "shell" / "catalog.ehscene" && r.shader == root / "shell" / "hud.hlsl" &&
           r.watchBlur == root / "shell" / "watch-blur.json" && r.cursor == root / "shell" / "cursor.png", "Shell resources resolve below the package");
-    check(r.cachePin == sha("EHSCENE catalog") && r.notesAssetsSHA == sha("{\"controls\":[]}"), "Pins come from the verified manifest");
-    check(r.notesAssets == root / "notes-controls" && r.notesFormatAssets == root / "common" / "notes-format", "Notes resources");
-    check(r.shelfAssets == root / "common" / "shelf" && r.shelfMask == root / "common" / "shelf" / "reveal-mask.bin", "Shelf assets and original reveal samples");
-    check(r.settingsAssets == root / "common" && r.archiveAssets == root / "common",
-          "Settings and Archive read their folders below the shared common root");
+    check(r.cachePin == sha("EHSCENE catalog"), "Pins come from the verified manifest");
+    check(r.notesFormatAssets == root / "common" / "notes-format", "Notes resources");
+    check(!has(r.disabled, M::fileShelf) && !has(r.disabled, M::archive), "The File Shelf and Archive need only the module set (no packaged resource)");
+    check(r.settingsAssets == root / "common", "Settings reads its folders below the shared common root");
     check(r.residentIcons == root / "common" / "application-icons", "Per-module folders");
     check(r.mapGeography == root / "map" && r.mapPlayerAssets == root / "common" / "map-player" && r.orbipomAssets == root / "orbipom", "Map and Minigame roots");
     const auto verified = locator.verifications();
     (void)app::resolvePackagedResources(locator);
     check(locator.verifications() == verified && verified == app::packagedResourceIDs().size(), "Each resource is hashed exactly once");
-    write(root / "common" / "shelf" / "stray.bin", "unlisted");
+    write(root / "common" / "map-player" / "stray.bin", "unlisted");
     write(root / "leftover" / "old.png", "unlisted");
     const auto stray = locator.unlistedFiles();
-    check(stray == std::vector<std::string>{"common/shelf/stray.bin", "leftover/old.png"}, "Unlisted files are reported by relative path");
+    check(stray == std::vector<std::string>{"common/map-player/stray.bin", "leftover/old.png"}, "Unlisted files are reported by relative path");
 }
 
 // Damage one resource at a time: only its modules are disabled.
 void isolation(const fs::path& base) {
     struct Case { const char* id; const char* damage; std::vector<M> disabled; bool modules{true}, shell{true}, tray{true}; };
     const std::vector<Case> cases{
-        {"common.shelf", "common/shelf/icons.json", {M::fileShelf}},
         {"common.watchAppearance", "common/watch-appearance/manifest.json", {M::minigame, M::system, M::display, M::hotkeys, M::about}},
         {"common.applicationIcons", "common/application-icons/endfield-app.png", {M::minigame, M::system, M::display, M::hotkeys, M::about}, true, true, false},
-        {"common.archive", "common/archive/raster/archive.png", {M::archive}},
         {"common.mapPlayer", "common/map-player/player.png", {M::map}},
         {"map.geography", "map/Terrain.bin", {M::map}},
         {"orbipom", "orbipom/OrbiPom/orbipom.js", {M::minigame}},
         {"shell.cursor", "shell/cursor.png", {}},
-        {"notes.controls", "notes-controls/raster/a.png", {}, false},
         {"common.notesFormat", "common/notes-format/raster/wheel.png", {}, false},
         {"shell.catalog", "shell/catalog.ehscene", {}, false, false},
         {"shell.runtimeInput", "shell/runtime-input/frames/top.bin", {}, false, false},
@@ -131,7 +124,7 @@ void isolation(const fs::path& base) {
         check(r.shell == c.shell && r.modules == c.modules, "Shell/module gate" + what);
         check(r.residentIcons.empty() != c.tray, "Tray icon follows only its own resource" + what);
         if (!c.modules) {
-            check(r.disabled.size() == app::packagedModules().size() && r.notesAssets.empty() && r.shelfAssets.empty() && r.settingsAssets.empty() &&
+            check(r.disabled.size() == app::packagedModules().size() && r.notesFormatAssets.empty() && r.settingsAssets.empty() &&
                   r.mapGeography.empty() && r.orbipomAssets.empty(), "Without Notes no module starts" + what);
             check(!c.shell || !r.residentIcons.empty(), "Without Notes the tray still carries Quit" + what);
             continue;
@@ -140,13 +133,11 @@ void isolation(const fs::path& base) {
         std::vector<M> ordered;
         for (const auto m : app::packagedModules()) if (has(expected, m)) ordered.push_back(m);
         check(r.disabled == ordered, "Exactly the modules that read the resource are disabled" + what);
-        check(r.notesAssets == root / "notes-controls" && !r.notesAssetsSHA.empty(), "Notes stays available" + what);
-        check(r.shelfAssets.empty() == has(c.disabled, M::fileShelf) && r.shelfMask.empty() == has(c.disabled, M::fileShelf), "Shelf" + what);
+        check(r.notesFormatAssets == root / "common" / "notes-format", "Notes stays available" + what);
         check(r.settingsAssets.empty() == has(c.disabled, M::system), "Settings" + what);
-        check(r.archiveAssets.empty() == has(c.disabled, M::archive), "Archive" + what);
-        // Storage and Activity Monitor are design canvases with no packaged
-        // resource: no damage outside Notes and the shell turns them off.
-        check(!has(r.disabled, M::storage) && !has(r.disabled, M::activityMonitor), "Storage and Activity need only the module set" + what);
+        // File Shelf, Archive, Storage and Activity Monitor are design canvases with
+        // no packaged resource: no damage outside Notes and the shell turns them off.
+        check(!has(r.disabled, M::fileShelf) && !has(r.disabled, M::archive) && !has(r.disabled, M::storage) && !has(r.disabled, M::activityMonitor), "File Shelf, Archive, Storage and Activity need only the module set" + what);
         check(r.mapGeography.empty() == has(c.disabled, M::map) && r.mapPlayerAssets.empty() == has(c.disabled, M::map), "Map needs geography and player art together" + what);
         check(r.orbipomAssets.empty() == has(c.disabled, M::minigame), "Minigame" + what);
         check(r.cursor.empty() == (std::string_view(c.id) == "shell.cursor"), "Cursor is optional" + what);
@@ -156,12 +147,13 @@ void isolation(const fs::path& base) {
 void policy(const fs::path& base) {
     // A resource whose owner-opened file is not part of it is unusable.
     {
-        const auto root = base / "no-mask";
+        const auto root = base / "no-manifest";
         auto package = production(root);
-        package.directory("common.shelf", "common/shelf", {{"icons.json", "{}"}});
+        package.directory("common.watchAppearance", "common/watch-appearance", {{"other.json", "{}"}});
         auto locator = package.open();
         const auto r = app::resolvePackagedResources(locator);
-        check(r.unavailable == std::vector<std::string>{"common.shelf"} && r.disabled == std::vector<M>{M::fileShelf}, "Shelf without its reveal samples is disabled");
+        check(r.unavailable == std::vector<std::string>{"common.watchAppearance"} && r.disabled == std::vector<M>{M::minigame, M::system, M::display, M::hotkeys, M::about},
+              "Settings without its appearance manifest is disabled");
     }
     // Optional external inputs absent from the package (no Map/Minigame build inputs).
     {
@@ -173,10 +165,10 @@ void policy(const fs::path& base) {
         const auto r = app::resolvePackagedResources(locator);
         check(r.modules && r.disabled == std::vector<M>{M::map, M::minigame}, "Absent optional inputs disable only Map and Minigame");
     }
-    check(!app::packagedResourceRequired("map.geography") && !app::packagedResourceRequired("orbipom") && app::packagedResourceRequired("common.shelf") &&
+    check(!app::packagedResourceRequired("map.geography") && !app::packagedResourceRequired("orbipom") && app::packagedResourceRequired("common.mapPlayer") &&
           app::packagedResourceRequired("shell.runtimeInput"), "Only external Map/Minigame inputs are optional");
     const auto ids = app::packagedResourceIDs();
-    check(std::adjacent_find(ids.begin(), ids.end()) == ids.end() && ids.size() == 14, "Every packaged resource id is listed once");
+    check(std::adjacent_find(ids.begin(), ids.end()) == ids.end() && ids.size() == 11, "Every packaged resource id is listed once");
     check(app::packagedModules().size() == 19 && !std::count(app::packagedModules().begin(), app::packagedModules().end(), M::nowPlaying),
           "Provided modules exclude areas that are not wired yet");
 }

@@ -82,6 +82,14 @@ void TextField::setText(std::string value) {
     renderIdle();
 }
 void TextField::setPlaceholder(std::string value) { placeholder_ = std::move(value); renderIdle(); }
+void TextField::setSize(Size size) {
+    const auto bounds = layer().bounds();
+    if (bounds.width == size.width && bounds.height == size.height) return;
+    frame_->setSize(size);
+    setTarget(localBounds(layer()));
+    renderIdle();
+    if (editing_) refreshProjection();
+}
 // setInvalid (:100-108): red state; the shake is additive x 0,-6,6,-6,6,0 over .32 s.
 void TextField::setInvalid(bool value, bool shake) {
     invalid_ = value;
@@ -116,7 +124,11 @@ void TextField::activate() {
 }
 // beginEditing(selection:) (:151-211).
 void TextField::beginEditing(std::optional<std::pair<std::uint32_t, std::uint32_t>> selection) {
-    if (!enabled() || editing_ || !host_) return;
+    if (!enabled() || editing_) return;
+    // The page may have been built while another owner's editors were bound:
+    // the edit runs on the editors bound now (the owner that took the press).
+    if (currentEditorHost) host_ = currentEditorHost();
+    if (!host_) return;
     if (willBeginEditing) willBeginEditing(*this);      // the canvas ends any other editing field (commit)
     original_ = text_;
     const Layer& root = topmost(layer());

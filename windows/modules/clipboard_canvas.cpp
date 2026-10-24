@@ -412,32 +412,8 @@ std::string ClipboardCanvas::age(double createdAt, double now, core::Language la
     if (hours < 24) return value("{0} H", "{0} 小时", hours);
     return value("{0} D", "{0} 天", hours / 24);
 }
-// ByteCountFormatter (.file, adaptive, en_US): 1000-based; bytes as words,
-// KB without fraction digits, MB with 1, GB and larger with 2; trailing
-// fraction zeros dropped; the shown digit rounds half up (1500 -> 2 KB,
-// 2500 -> 3 KB; Mac oracle clipboardFormat.fileSizes), and a value that
-// rounds to 1000 moves to the next unit (999,500 -> 1 MB).
-std::string ClipboardCanvas::fileSize(std::int64_t bytes) {
-    if (bytes == 0) return "Zero KB";
-    if (bytes == 1) return "1 byte";
-    if (bytes > -1000 && bytes < 1000) return std::to_string(bytes) + " bytes";
-    static constexpr std::array<const char*, 7> units{"KB", "MB", "GB", "TB", "PB", "EB", "ZB"};
-    static constexpr std::array<int, 7> digits{0, 1, 2, 2, 2, 2, 2};
-    double value = double(bytes) / 1000;
-    std::size_t unit = 0;
-    while (unit + 1 < units.size() && std::abs(value) >= 1000) { value /= 1000; ++unit; }
-    const double scale = std::pow(10.0, digits[unit]);
-    double shown = std::round(value * scale) / scale;
-    if (std::abs(shown) >= 1000 && unit + 1 < units.size()) { value /= 1000; ++unit; shown = std::round(value * std::pow(10.0, digits[unit])) / std::pow(10.0, digits[unit]); }
-    char text[64]{};
-    std::snprintf(text, sizeof(text), "%.*f", digits[unit], shown);
-    std::string out = text;
-    if (out.find('.') != std::string::npos) {
-        while (out.back() == '0') out.pop_back();
-        if (out.back() == '.') out.pop_back();
-    }
-    return out + " " + units[unit];
-}
+// ByteCountFormatter (.file): design::format::fileSize (shared with the File Shelf).
+std::string ClipboardCanvas::fileSize(std::int64_t bytes) { return d::format::fileSize(bytes); }
 
 // --- Test hooks ----------------------------------------------------------------------------
 std::vector<std::string> ClipboardCanvas::cardTitlesForTesting() const {

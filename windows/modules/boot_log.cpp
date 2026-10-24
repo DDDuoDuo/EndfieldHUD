@@ -91,7 +91,7 @@ BootLogLine BootLogLine::entry(std::string key, std::string value, Tone tone, st
     return {Kind::entry, std::move(key), std::move(value), tone, std::move(trailing)};
 }
 BootLogLine BootLogLine::entry(std::string key, std::string value) { return entry(std::move(key), std::move(value), Tone{}); }
-BootLogLine BootLogLine::sub(std::string text) { return {Kind::sub, std::move(text), {}, {}, {}}; }
+BootLogLine BootLogLine::sub(std::string line) { return {Kind::sub, std::move(line), {}, {}, {}}; }
 BootLogLine BootLogLine::footer(std::string status, std::string message) { return {Kind::footer, std::move(status), std::move(message), {Tone::Kind::good, {}}, {}}; }
 std::string BootLogLine::dotLeader(std::string_view key) {
     const auto dots = std::max<std::ptrdiff_t>(2, 22 - std::ptrdiff_t(key.size()));

@@ -98,6 +98,9 @@ struct AccessibilityItem {
     double number{}, minimum{}, maximum{1}, step{1}; // slider
     Rect rect;                     // content-box px
     bool enabled{true}, focused{};
+    // Scrolled out of its clipping list (a long menu's rows): still listed, like
+    // the rows of a scrolled NSMenu, but offscreen (UIA IsOffscreen, no hit).
+    bool offscreen{};
     bool operator==(const AccessibilityItem&) const = default;
 };
 

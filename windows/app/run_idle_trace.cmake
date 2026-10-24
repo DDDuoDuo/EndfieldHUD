@@ -46,7 +46,7 @@ if(PACKAGE)
   set(package_arguments --package "${PACKAGE}")
 endif()
 set(resources "${SOURCE}/resources")
-set(media_arguments --archive-assets "${resources}")
+set(media_arguments --archive)
 if(NO_SHARED_MEDIA)
   set(media_arguments "")
 endif()
@@ -54,9 +54,8 @@ execute_process(COMMAND "${PREVIEW}" "${INPUTS}/runtime-compiled-animation" "${I
   --runtime-input --module-coverage --reader --calendar
   --map-geography "${MAP}" --map-player-assets "${resources}/map-player" --orbipom-assets "${ORBIPOM}"
   --idle-trace "${WORK}/idle-trace.json" --idle-trace-seconds ${SECONDS} --idle-trace-grace ${GRACE} ${closed_arguments} --compiled-sha 64852432949d3354e50c43ebb983cfa5afcf5dae29a4512879aca974902a9ba8
-  --notes-assets "${INPUTS}/notes-controls-assets" --notes-assets-sha 9d2fcf0eead9eeeab1be4fdbb0e940a0e1e3eedf840ab9e4c63499e40ae70c00
   --notes-data "${WORK}/notes-data" --notes-format-assets "${resources}/notes-format"
-  --shelf-assets "${resources}/shelf" --shelf-data "${WORK}/shelf-data" --shelf-mask "${resources}/shelf/reveal-mask.bin"
+  --shelf-data "${WORK}/shelf-data"
   --clipboard-fixture --work-mode-fixture --volume-fixture --event-log-fixture --battery-fixture --storage-fixture --activity-fixture
   --settings-assets "${resources}" ${media_arguments}
   ${EXTRA} ${package_arguments}

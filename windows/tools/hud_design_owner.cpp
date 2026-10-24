@@ -138,6 +138,11 @@ DesignOwnerCore::~DesignOwnerCore() {
     auto& i = *impl_;
     if (i.context.editorHost() == i.fields.get()) i.context.setEditorHost(nullptr);
     i.automation.reset();
+    // The canvases go before their editor host: a field still editing (a
+    // failure left it open) ends its editor in ~TextField, which must not
+    // reach the editors the members' reverse order would already have freed.
+    i.fieldSlot = nullptr; i.captured = nullptr;
+    i.slots.clear();
 }
 void DesignOwnerCore::add(std::unique_ptr<d::Canvas> canvas) {
     auto& i = *impl_;
@@ -435,6 +440,7 @@ bool DesignOwnerCore::filterKey(const app::NativeMessage& m) {
 bool DesignOwnerCore::message(const app::NativeMessage& m, double t) {
     auto& i = *impl_;
     i.clock(t);
+    if (i.options.message) { i.bind(); if (i.options.message(m, i.time)) return true; }
     if (!i.fields || m.window != i.options.fields.window) return false;
     i.bind();
     return i.fields->message(m.message, m.wParam, m.lParam);
@@ -533,7 +539,7 @@ long DesignOwnerCore::automationFromPoint(double x, double y, IRawElementProvide
 void DesignOwnerCore::automationDisconnect() noexcept { if (impl_->automation) impl_->automation->disconnect(); }
 // The UIA group is named after the canvas that takes input (Settings presents four modules).
 std::optional<core::Module> DesignOwnerCore::automationModule() const noexcept { return inputModule(); }
-app::ModuleResidency DesignOwnerCore::residency() const { return {}; }
+app::ModuleResidency DesignOwnerCore::residency() const { return impl_->options.residency ? impl_->options.residency() : app::ModuleResidency{}; }
 std::optional<core::Module> DesignOwnerCore::inputModule() const noexcept { const auto* s = impl_->input(); return s ? std::optional(s->module) : std::nullopt; }
 std::optional<core::Rect> DesignOwnerCore::clientRect(core::Rect box) const {
     const auto& i = *impl_;
@@ -544,6 +550,17 @@ std::optional<gpu::NativeDesignSceneStats> DesignOwnerCore::sceneStats(core::Mod
     const auto* s = impl_->slot(module);
     return s ? std::optional(s->scene->stats()) : std::nullopt;
 }
+void DesignOwnerCore::setInsertion(core::Module module, const d::Layer* after, std::optional<gpu::LayerCompositionEntry> entry) {
+    auto* s = impl_->slot(module);
+    need(s != nullptr, "Design insertion for a module this owner does not present");
+    s->scene->setInsertion(after, std::move(entry));
+}
+std::optional<gpu::NativeDesignScenePose> DesignOwnerCore::pose(core::Module module) const {
+    const auto* s = impl_->slot(module);
+    if (!s || !s->pose) return std::nullopt;
+    return gpu::NativeDesignScenePose{s->pose->contentWorld, s->pose->opacity, impl_->time, s->pose->hostMasks(), s->pose->shutter};
+}
+void DesignOwnerCore::bindEditorHost() { impl_->bind(); }
 std::optional<core::Point> DesignOwnerCore::boxPoint(core::Point logical) const {
     const auto* s = impl_->input();
     return s ? impl_->local(*s, logical) : std::nullopt;

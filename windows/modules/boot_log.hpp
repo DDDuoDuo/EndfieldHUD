@@ -44,7 +44,7 @@ struct BootLogLine {
     static BootLogLine header(std::string title, std::string stamp);
     static BootLogLine entry(std::string key, std::string value, Tone tone, std::optional<std::string> trailing = {});
     static BootLogLine entry(std::string key, std::string value);   // the yellow value tone
-    static BootLogLine sub(std::string text);
+    static BootLogLine sub(std::string line);
     static BootLogLine footer(std::string status, std::string message);
     // KEY + ' ' + '.' x max(2, 22 - len(KEY)) + ' ' (keys are the fixed ASCII terminal keys).
     static std::string dotLeader(std::string_view key);

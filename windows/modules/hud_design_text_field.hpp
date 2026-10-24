@@ -85,6 +85,10 @@ public:
     const std::string& text() const noexcept { return text_; }
     void setText(std::string);                     // bounded (single line joins newlines with a space; maximumLength)
     void setPlaceholder(std::string);
+    // A new size keeps the text, the focus and the running editor (the Notes
+    // add field follows the width the Add button leaves it; the Mac makes a
+    // new field with the same draft when its width changes).
+    void setSize(Size);
     void setInvalid(bool, bool shake = false);     // shake: additive x 0,-6,6,-6,6,0 over .32 (not reduced)
     bool editing() const noexcept { return editing_; }
     void beginEditing(std::optional<std::pair<std::uint32_t, std::uint32_t>> selection = {});
@@ -114,6 +118,11 @@ public:
     std::optional<AccessibilityRole> accessibilityRole() const override; // edit; none while editing (the editor is the element)
     void accessibilityItems(const Layer& root, std::vector<AccessibilityItem>&) const override;
     void setEditorHost(TextEditorHost* host) noexcept { host_ = host; }
+    // The editor host a new edit begins on (the canvas: its Context's current
+    // one, which every owner entry point binds to its own editors), asked at
+    // each beginEditing; the field keeps that host until the edit ends. Unset:
+    // the host given by setEditorHost.
+    std::function<TextEditorHost*()> currentEditorHost;
     std::string idleText() const;                  // test hook (idleTextForTesting)
 private:
     TextField(Builder&, std::unique_ptr<FieldFrame>, std::string id, std::string label, std::string text, std::string placeholder, Options);

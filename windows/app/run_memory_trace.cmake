@@ -26,11 +26,10 @@ execute_process(COMMAND "${PREVIEW}" "${INPUTS}/runtime-compiled-animation" "${I
   --runtime-input --module-coverage --reader --calendar
   --map-geography "${MAP}" --map-player-assets "${resources}/map-player" --orbipom-assets "${ORBIPOM}"
   --memory-trace "${WORK}/memory-trace.json" --compiled-sha 64852432949d3354e50c43ebb983cfa5afcf5dae29a4512879aca974902a9ba8
-  --notes-assets "${INPUTS}/notes-controls-assets" --notes-assets-sha 9d2fcf0eead9eeeab1be4fdbb0e940a0e1e3eedf840ab9e4c63499e40ae70c00
   --notes-data "${WORK}/notes-data" --notes-format-assets "${resources}/notes-format"
-  --shelf-assets "${resources}/shelf" --shelf-data "${WORK}/shelf-data" --shelf-mask "${resources}/shelf/reveal-mask.bin"
+  --shelf-data "${WORK}/shelf-data"
   --clipboard-fixture --work-mode-fixture --volume-fixture --event-log-fixture --battery-fixture --storage-fixture --activity-fixture
-  --settings-assets "${resources}" --archive-assets "${resources}"
+  --settings-assets "${resources}" --archive
   ${EXTRA} ${package_arguments}
   RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE errors TIMEOUT 500)
 if(NOT result EQUAL 0)
@@ -102,6 +101,15 @@ foreach(index RANGE ${last})
   string(APPEND summary "\n  ${stage}: private ${private_mb} MiB, working set ${working_mb} MiB, heaps ${heap_mb} MiB, raster cache ${raster_mb} MiB (${entries} entries), renderer ${gpu_mb} MiB, ${threads} threads${pool_text}")
   set(private_${index} ${private})
   set(threads_${index} ${threads})
+  # Threads the process owns: the OS thread pool's elastic workers (WARP's
+  # rasterizer and other pool clients; they retire on the pool's idle timeout)
+  # are reported, not counted.
+  set(owned_${index} ${threads})
+  set(pool_${index} 0)
+  if(NOT no_pool)
+    math(EXPR owned_${index} "${threads} - ${pool_count}")
+    set(pool_${index} ${pool_count})
+  endif()
   set(entries_${index} ${entries})
   set(gpu_${index} ${gpu})
 endforeach()
@@ -112,12 +120,13 @@ endif()
 # Repeat lifecycle (WINDOWS-MIGRATION.md section 9): no growth across ten more
 # open/close cycles once caches settled. Stage 4 is closed, 5 after cycles.
 math(EXPR private_growth "${private_5} - ${private_4}")
-math(EXPR thread_growth "${threads_5} - ${threads_4}")
+math(EXPR thread_growth "${owned_5} - ${owned_4}")
+math(EXPR pool_growth "${pool_5} - ${pool_4}")
 if(private_growth GREATER 33554432)
   message(FATAL_ERROR "Private bytes grew by ${private_growth} across ten open/close cycles")
 endif()
 if(thread_growth GREATER 2)
-  message(FATAL_ERROR "Threads grew by ${thread_growth} across ten open/close cycles")
+  message(FATAL_ERROR "Threads grew by ${thread_growth} across ten open/close cycles (thread-pool workers: ${pool_growth} more)")
 endif()
 if(entries_5 GREATER entries_4 OR gpu_5 GREATER gpu_4)
   message(FATAL_ERROR "Retained raster entries (${entries_4} -> ${entries_5}) or renderer resources (${gpu_4} -> ${gpu_5}) grew across ten open/close cycles")

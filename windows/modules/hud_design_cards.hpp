@@ -19,6 +19,8 @@ namespace endfield::modules::design {
 class TaskCard final : public Control {
 public:
     static constexpr double height = 60, sideWidth = 168;
+    // HUDTaskCard.titleStyle: 14.5 medium #111, line height 1.15 (Notes' in-place title editor).
+    static const TextStyle& titleStyle();
     TaskCard(Builder&, std::string id, std::string title, bool done, bool attention, bool redacted, double width);
     bool done() const noexcept { return done_; }
     void toggle();                                 // setDone(!done, animated) then onToggle
@@ -94,11 +96,13 @@ public:
     void hoverChanged() override;
     // HUDArchiveTile.bracketPath: the selection brackets (also Settings' icon tiles at inset 0).
     static PathBuilder bracketPath(Rect bounds, double inset);
+    // HUDArchiveTile.docGlyph (:404-425): the 40 x 50 folded page (centred on
+    // its position), also the File Shelf properties card's preview.
+    static Layer& docGlyph(Builder&, std::string_view id, Extension, const std::optional<std::string>& label);
 private:
     bool selected_{}; Style style_; Builder* builder_;
     Layer *well_, *doc_, *poster_{}, *strip_, *label_, *brackets_, *bracketsRest_, *bracketsSelected_, *brighten_;
     void renderSelection(bool animated);
-    static Layer& docGlyph(Builder&, std::string_view id, Extension, const std::optional<std::string>& label);
     static Layer& classifiedStamp(Builder&, std::string_view id, Point center);
 };
 } // namespace endfield::modules::design

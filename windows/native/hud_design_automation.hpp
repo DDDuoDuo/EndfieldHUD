@@ -77,6 +77,7 @@ struct AutomationNode {
     bool focusable{};             // keyboard focusable
     bool valued{};                // text / button / link / group: expose `value` through a read-only Value
     bool secure{};                // edit: IsPassword
+    bool offscreen{};             // scrolled out of its list: IsOffscreen, no rectangle, no hit
     int level{};                  // heading: 1 page title, 2 section
     double number{}, minimum{}, maximum{1}, step{1}; // slider
     bool operator==(const AutomationNode&) const = default;

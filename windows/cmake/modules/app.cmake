@@ -101,9 +101,9 @@ if(WIN32)
   target_include_directories(hud_application PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
   target_compile_definitions(hud_application PRIVATE ${EHUD_APP_DEFINITIONS})
   target_link_libraries(hud_application PUBLIC hud_module_registry hud_system_overlay hud_application_core hud_single_instance
-    hud_battery hud_settings_save hud_archive_preview hud_archive_vault hud_telemetry_owners hud_power_service hud_activity_provider
-    hud_reader_preview hud_reader_import hud_projection_preview hud_shelf_preview hud_notes_preview
-    hud_map_preview hud_map_store hud_map_assets hud_orbipom_presentation hud_orbipom_runtime
+    hud_battery hud_settings_save hud_archive_vault hud_archive_options hud_telemetry_owners hud_power_service hud_activity_provider
+    hud_reader_canvas_owner hud_reader_import hud_projection_preview hud_shelf_owner hud_notes_preview
+    hud_map_owner hud_map_store hud_map_assets hud_orbipom_runtime
     hud_work_mode_canvas hud_calendar_canvas hud_calendar_civil hud_calendar_notifications
     hud_clock hud_watch_session hud_watch_content hud_watch_runtime hud_overlay_host hud_services hud_backdrop
     hud_shelf_icons hud_shelf_transfer hud_localization hud_display_center_logo hud_summon_hotkey hud_design_native windowsapp CoreMessaging dwmapi psapi advapi32 wtsapi32 uiautomationcore oleaut32 dxgi avrt)
@@ -163,7 +163,7 @@ if(WIN32)
 endif()
 
 # Runtime inputs exported on the Mac (runtime-compiled-animation,
-# profile-outline-catalog.ehscene, notes-controls-assets, source-cursor.png and
+# profile-outline-catalog.ehscene, source-cursor.png and
 # fixtures/watch-blur.json). Defaults to the folder that holds the map inputs.
 set(EHUD_APP_INPUT_DIR "" CACHE PATH "Mac-exported EndfieldHUD runtime inputs for EndfieldHUD.exe staging")
 set(ehud_app_inputs "${EHUD_APP_INPUT_DIR}")
@@ -254,12 +254,11 @@ if(WIN32)
     ehud_app_resource(shell.runtimeInput directory "${ehud_app_inputs}/runtime-compiled-animation" "shell/runtime-input")
     ehud_app_resource(shell.catalog file "${ehud_app_inputs}/profile-outline-catalog.ehscene" "shell/catalog.ehscene")
     ehud_app_resource(shell.cursor file "${ehud_app_inputs}/source-cursor.png" "shell/cursor.png")
-    ehud_app_resource(notes.controls directory "${ehud_app_inputs}/notes-controls-assets" "notes-controls")
   endif()
   ehud_app_resource(shell.shader file "${CMAKE_CURRENT_SOURCE_DIR}/native/hud.hlsl" "shell/hud.hlsl")
   ehud_app_resource(shell.watchBlur file "${ehud_watch_blur}" "shell/watch-blur.json")
-  foreach(ehud_common IN ITEMS notesFormat:notes-format shelf:shelf applicationIcons:application-icons
-          watchAppearance:watch-appearance archive:archive mapPlayer:map-player centerLogos:center-logos)
+  foreach(ehud_common IN ITEMS notesFormat:notes-format applicationIcons:application-icons
+          watchAppearance:watch-appearance mapPlayer:map-player centerLogos:center-logos)
     string(REPLACE ":" ";" ehud_common "${ehud_common}")
     list(GET ehud_common 0 ehud_common_id)
     list(GET ehud_common 1 ehud_common_folder)
@@ -346,21 +345,20 @@ if(WIN32)
     target_link_libraries(application_executable_tests PRIVATE hud_resource_locator version)
     add_dependencies(application_executable_tests EndfieldHUD)
     add_test(NAME application_executable_contracts COMMAND application_executable_tests "$<TARGET_FILE:EndfieldHUD>" "${CMAKE_CURRENT_SOURCE_DIR}")
-    if(ehud_app_inputs AND EXISTS "${ehud_app_inputs}/notes-controls-assets")
+    if(ehud_app_inputs AND EXISTS "${ehud_app_inputs}/runtime-compiled-animation/runtime-input.json")
       # Production Notes/File Shelf roots: the real owners on temporary roots
       # that already hold an earlier run's records, across a restart.
       add_executable(application_data_root_tests tests/application_data_root_tests.cpp)
       target_compile_definitions(application_data_root_tests PRIVATE ${EHUD_APP_DEFINITIONS})
-      target_link_libraries(application_data_root_tests PRIVATE hud_notes_preview hud_shelf_preview hud_overlay_host ole32)
+      target_link_libraries(application_data_root_tests PRIVATE hud_notes_preview hud_shelf_owner hud_overlay_host ole32)
       if(MSVC)
         target_compile_options(application_data_root_tests PRIVATE /W4 /permissive- /EHsc)
       endif()
       add_test(NAME application_data_root_contracts COMMAND application_data_root_tests "${CMAKE_CURRENT_SOURCE_DIR}/native/hud.hlsl"
-        "${ehud_app_inputs}/notes-controls-assets" 9d2fcf0eead9eeeab1be4fdbb0e940a0e1e3eedf840ab9e4c63499e40ae70c00 ca04f142185c7de40acd8523bdb563195d90a1d1
-        "${CMAKE_CURRENT_SOURCE_DIR}/resources/shelf" "${CMAKE_CURRENT_SOURCE_DIR}/resources/shelf/reveal-mask.bin")
+        "${CMAKE_CURRENT_SOURCE_DIR}/resources/notes-format")
       set_tests_properties(application_data_root_contracts PROPERTIES TIMEOUT 300)
     endif()
-    if(ehud_app_inputs AND EXISTS "${ehud_app_inputs}/notes-controls-assets" AND EXISTS "${ehud_watch_blur}")
+    if(ehud_app_inputs AND EXISTS "${ehud_app_inputs}/runtime-compiled-animation/runtime-input.json" AND EXISTS "${ehud_watch_blur}")
       # The production package staged from the configured inputs verifies.
       add_test(NAME endfieldhud_package_contracts COMMAND EndfieldHUD --verify-package)
       # Hidden module coverage plus the production lifecycle/quit flow.

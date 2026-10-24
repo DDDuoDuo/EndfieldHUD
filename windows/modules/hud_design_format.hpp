@@ -19,6 +19,8 @@ std::string clock(std::int64_t seconds);
 std::string grouped(std::int64_t);
 // "%.1f GB" below 1000, else "%.2f TB" (/1000, decimal): 82.4 GB, 1.86 TB.
 std::string storage(double gigabytes);
+// ByteCountFormatter .file (en_US): "Zero KB", "1 byte", "999 bytes", "2 KB", "48.2 MB", "1.23 GB".
+std::string fileSize(std::int64_t bytes);
 // yyyy.MM.dd (year unpadded), optionally " HH:mm": 2026.10.07 21:04.
 std::string dotted(int year, int month, int day, std::optional<std::pair<int, int>> hourMinute = {});
 // Uppercase English weekday (en_US_POSIX), 0 = Sunday: "MONDAY".

@@ -6,10 +6,10 @@
 namespace endfield::app {
 namespace {
 using M = core::Module;
-constexpr std::array<std::string_view, 14> ids{
+constexpr std::array<std::string_view, 11> ids{
     "shell.runtimeInput", "shell.catalog", "shell.shader", "shell.watchBlur", "shell.cursor",
-    "notes.controls", "common.notesFormat", "common.shelf", "common.applicationIcons",
-    "common.watchAppearance", "common.archive", "common.mapPlayer",
+    "common.notesFormat", "common.applicationIcons",
+    "common.watchAppearance", "common.mapPlayer",
     "map.geography", "orbipom"};
 constexpr std::array<M, 19> provided{
     M::notes, M::fileShelf, M::clipboard, M::volume, M::workMode, M::eventLog, M::map, M::projection, M::reader,
@@ -38,12 +38,9 @@ PackagedResources resolvePackagedResources(core::ResourceLocator& locator) {
     r.shader = use("shell.shader", {""});
     r.watchBlur = use("shell.watchBlur", {""});
     r.cursor = use("shell.cursor", {""});
-    const auto notesControls = use("notes.controls", {"notes-controls-assets.json"});
     const auto notesFormat = use("common.notesFormat");
-    const auto shelf = use("common.shelf", {"reveal-mask.bin"});
     const auto icons = use("common.applicationIcons", {"manifest.json"});
     const auto appearance = use("common.watchAppearance", {"manifest.json"});
-    const auto archive = use("common.archive");
     const auto mapPlayer = use("common.mapPlayer");
     const auto geography = use("map.geography");
     const auto game = use("orbipom");
@@ -52,23 +49,17 @@ PackagedResources resolvePackagedResources(core::ResourceLocator& locator) {
     if (r.shell) r.cachePin = locator.fileSHA256("shell.catalog", "").value_or("");
     // The tray stays available without Notes: it carries Quit.
     r.residentIcons = icons;
-    r.modules = r.shell && !notesControls.empty() && !notesFormat.empty();
+    r.modules = r.shell && !notesFormat.empty();
     std::set<M> disabled;
     if (!r.modules) {
         disabled.insert(provided.begin(), provided.end());
     } else {
-        r.notesAssets = notesControls;
-        r.notesAssetsSHA = locator.fileSHA256("notes.controls", "notes-controls-assets.json").value_or("");
         r.notesFormatAssets = notesFormat;
-        if (!shelf.empty()) { r.shelfAssets = shelf; r.shelfMask = shelf / "reveal-mask.bin"; }
-        else disabled.insert(M::fileShelf);
-        // Settings and Archive resolve their folders below the
-        // shared common/ root, exactly like the development layout.
+        // Settings resolves its folders below the shared common/ root,
+        // exactly like the development layout.
         const bool settings = !icons.empty() && !appearance.empty();
         if (settings) r.settingsAssets = icons.parent_path();
         else disabled.insert({M::system, M::display, M::hotkeys, M::about});
-        if (!archive.empty()) r.archiveAssets = archive.parent_path();
-        else disabled.insert(M::archive);
         if (!geography.empty() && !mapPlayer.empty()) { r.mapGeography = geography; r.mapPlayerAssets = mapPlayer; }
         else disabled.insert(M::map);
         // The Minigame runtime root contains OrbiPom/ (staged as orbipom/OrbiPom)

@@ -47,6 +47,31 @@ std::string grouped(std::int64_t v) {
 }
 // HUDFormat.storage (:24-26).
 std::string storage(double gigabytes) { return gigabytes >= 1000 ? fixed(gigabytes / 1000, 2) + " TB" : fixed(gigabytes, 1) + " GB"; }
+// ByteCountFormatter.string(fromByteCount:countStyle: .file), adaptive, en_US
+// (ClipboardStore meta lines, ShelfItem.sizeLabel): 1000-based; bytes as
+// words, KB without fraction digits, MB with 1, GB and larger with 2; trailing
+// fraction zeros dropped; the shown digit rounds half up (1500 -> 2 KB, 2500
+// -> 3 KB; Mac oracle clipboardFormat.fileSizes), and a value that rounds to
+// 1000 moves to the next unit (999,500 -> 1 MB).
+std::string fileSize(std::int64_t bytes) {
+    if (bytes == 0) return "Zero KB";
+    if (bytes == 1) return "1 byte";
+    if (bytes > -1000 && bytes < 1000) return std::to_string(bytes) + " bytes";
+    static constexpr std::array<const char*, 7> units{"KB", "MB", "GB", "TB", "PB", "EB", "ZB"};
+    static constexpr std::array<int, 7> digits{0, 1, 2, 2, 2, 2, 2};
+    double value = double(bytes) / 1000;
+    std::size_t unit = 0;
+    while (unit + 1 < units.size() && std::abs(value) >= 1000) { value /= 1000; ++unit; }
+    const double scale = std::pow(10.0, digits[unit]);
+    double shown = std::round(value * scale) / scale;
+    if (std::abs(shown) >= 1000 && unit + 1 < units.size()) { value /= 1000; ++unit; shown = std::round(value * std::pow(10.0, digits[unit])) / std::pow(10.0, digits[unit]); }
+    std::string out = fixed(shown, digits[unit]);
+    if (out.find('.') != std::string::npos) {
+        while (out.back() == '0') out.pop_back();
+        if (out.back() == '.') out.pop_back();
+    }
+    return out + " " + units[unit];
+}
 // HUDFormat.dotted (:29-33): the year unpadded ("\(c.year)").
 std::string dotted(int year, int month, int day, std::optional<std::pair<int, int>> hourMinute) {
     auto out = std::to_string(year) + "." + pad2(month) + "." + pad2(day);

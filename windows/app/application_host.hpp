@@ -95,6 +95,9 @@ public:
     virtual native::AudioRuntime* audio() noexcept = 0;            // the ONE audio worker (production Volume); hostEvent audioChanged
     virtual native::NativeMediaRequestBroker* mediaBroker() noexcept = 0; // shared image/video decode (Archive/Projection)
     virtual const modules::WorkModeController* workMode() const noexcept = 0;
+    // OrbiPomSession.bestSoFar (Personal ID's best plate, MODS-818): the live
+    // best while a game session exists, else the saved orbipom.bestScore.v1.
+    virtual std::int64_t minigameBest() const noexcept { return 0; }
     virtual core::ApplicationEventRecorder* eventRecorder() noexcept = 0; // system transitions into the Event Log (production)
 
     // --- Host actions ----------------------------------------------------------

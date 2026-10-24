@@ -187,6 +187,30 @@ public:
     virtual void handlePointerUp(Point) {}
     virtual bool handleRightPointerDown(Point) { return false; }
     virtual void handlePointerMoved(std::optional<Point>) {}
+    // Before every press, ahead of menus and the router (the Mac canvases'
+    // pointerDown overrides, e.g. ArchiveCanvas.swift:1184-1195): true consumes it.
+    virtual bool interceptPointerDown(Point, const PointerInput&) { return false; }
+    // A module editor besides the canvas's text fields (Archive's persistent
+    // body editor, ArchiveCanvas.swift:1145-1150): editingText() includes it
+    // and endEditing() ends it too, after the fields.
+    virtual bool editingOtherText() const { return false; }
+    virtual void endOtherEditing(bool /*commit*/) {}
+    // prepareToLeave and setActive(false) call this first, before they close
+    // popups and end editing (the Mac's overrides that run before super:
+    // ArchiveCanvas.swift:152-160 remembers the focused field and selection).
+    virtual void willEndInteraction() {}
+    // UIA actions on items that are not routed controls (Archive's documents
+    // scrolled out of the grid, ArchiveCanvas.swift:1227-1231) and text set on
+    // an editor that is not a TextField (its body): true when handled; tried
+    // before the router's controls.
+    virtual bool accessibilityAction(std::string_view /*id*/) { return false; }
+    virtual bool accessibilityText(std::string_view /*id*/, std::string_view /*value*/) { return false; }
+    // After a menu or pop-over closed, however it closed (pick, Esc, outside
+    // press, closePopups): the Mac canvases' closeMenu / closePopover
+    // overrides (ArchiveCanvas.swift:834-847 drops its pop-over fields and
+    // refreshes soon). The closed object's controls must not be used again.
+    virtual void didCloseMenu() {}
+    virtual void didClosePopover() {}
     virtual bool handleScroll(Point, Point /*delta*/) { return false; } // box px, + down; before scroll areas
     virtual bool handleMagnify(Point, double) { return false; }
     virtual std::optional<Cursor> cursor(std::optional<Point>) const { return std::nullopt; }
@@ -247,7 +271,11 @@ public:
     void closeMenu();
     void openPopover(std::unique_ptr<Popover>, const Control* anchor, std::optional<Rect> anchorRect, std::vector<Control*> controls);
     void closePopover();
-    void closePopups();
+    // Virtual like HUDDesignCanvas.closePopups (Now Playing also closes its
+    // volume pop-up, NowPlayingCanvas.swift:135); every internal caller
+    // (navigate, leave, deactivate, palette, openMenu / openPopover, confirm)
+    // dispatches to it.
+    virtual void closePopups();
     bool menuOpen() const noexcept { return menu_ != nullptr; }
     bool popoverOpen() const noexcept { return popover_ != nullptr; }
     // Text fields (one edits at a time; others end with commit).
@@ -276,6 +304,10 @@ public:
     // made with this builder they live in the canvas's own arena, whose
     // content changes the scene tracks like the page's.
     Builder& canvasBuilder() noexcept { return builder_; }
+    // An arena of the module's own (Media Assembly's stage, built again for a
+    // new palette) whose content the scene tracks like the canvas's; nullptr
+    // stops tracking. Create it with &env().deadlines for completions.
+    void trackArena(const LayerArena* arena) noexcept { tracked_ = arena; }
     // Runs after a built page is installed (in place, at once, or when a
     // sub-page swap lands). The Mac builds the next page when the swap lands;
     // here it is built when the swap starts (Q4), so a canvas-owned component
@@ -298,7 +330,9 @@ public:
     // Before the content leaves: close popups, end editing WITH commit, cancel
     // gestures (sliders without commit), settle a pending swap concealed, willLeave.
     void prepareToLeave(double now);
-    bool pointerDown(Point, const PointerInput&, double now);
+    // Virtual like HUDDesignCanvas.pointerDown(at:event:) (Media Assembly
+    // resets a tool slider on a double click first); overrides call it.
+    virtual bool pointerDown(Point, const PointerInput&, double now);
     void pointerDragged(Point, double now);
     void pointerUp(Point, double now);
     bool rightPointerDown(Point, double now);
@@ -310,7 +344,9 @@ public:
     bool magnify(Point, double magnification, double now);
     bool keyDown(const KeyInput&, double now);
     bool containsControl(Point) const;          // a press here goes to the module before the shell
-    bool capturesPointer() const noexcept { return menuOpen() || popoverOpen(); }
+    // Virtual like HUDDesignCanvas.capturesPointer (Now Playing's open volume
+    // pop-up captures too, NowPlayingCanvas.swift:29).
+    virtual bool capturesPointer() const { return menuOpen() || popoverOpen(); }
     bool dragging() const noexcept { return router_.tracking(); }
     // HUDDesignCanvas.isInputLocked (freezes parallax): overridable like the
     // Mac's (Settings adds shortcut recording, App Shortcuts its chooser).
@@ -323,7 +359,9 @@ public:
     // app sliders scrolled out of its list).
     virtual void accessibilityItems(std::vector<AccessibilityItem>&) const;
     bool performAccessibilityAction(std::string_view id, double now);
-    bool adjustAccessibilitySlider(std::string_view id, double value, double now); // commits (value, true) when changed
+    // Commits (value, true) when changed. Virtual like the Mac's (Media
+    // Assembly's sticker and crop-edge sliders are no controls).
+    virtual bool adjustAccessibilitySlider(std::string_view id, double value, double now);
     bool setAccessibilityText(std::string_view id, std::string_view text, double now);
     // HUDDesignCanvas.refreshRouter: the router takes the page's controls
     // again after a module added or removed some in place (Event Log's
@@ -364,7 +402,8 @@ private:
     bool active_{}, showsHeader_{true}, attached_{};
     std::optional<core::Language> renderedLanguage_;
     std::uint64_t renderedPalette_{}, pageSerial_{}, structure_{};
-    mutable std::array<std::uint64_t, 6> revisionKey_{};
+    const LayerArena* tracked_{};
+    mutable std::array<std::uint64_t, 8> revisionKey_{};
     mutable std::uint64_t revision_{};
     std::optional<double> swapDeadline_;
     Point swapOffset_;

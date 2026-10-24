@@ -78,8 +78,7 @@ void reject(const fs::path&executable,const Temporary&temp,unsigned index,
           "Argument validation finishes before source preparation or window creation");
 }
 void run(const fs::path&executable){
-    Temporary temp;const auto assets=(temp.root/L"absent Notes assets").wstring();
-    const auto archiveAssets=(temp.root/L"absent Archive assets").wstring();
+    Temporary temp;const auto assets=(temp.root/L"absent Notes format assets").wstring();
     const auto fresh=temp.root/L"new injected data";const auto report=temp.root/L"new report.json";
     const auto existing=temp.root/L"existing injected data";
     check(fs::create_directory(existing),"Existing-root rejection uses an owned directory only");
@@ -92,14 +91,14 @@ void run(const fs::path&executable){
     reject(executable,temp,++index,{L"--visible",L"--reader",L"--reader"},"Duplicate Reader mode");
     reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--calendar"},"Calendar needs the shared module owner");
     reject(executable,temp,++index,{L"--visible",L"--calendar",L"--calendar"},"Duplicate Calendar mode");
-    reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--calendar",L"--notes-assets",assets,
-           L"--notes-data",fresh.wstring()},"Notes preview requires assets, independent SHA and a new data root together");
-    reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--calendar",L"--notes-assets",assets,
-           L"--notes-assets-sha",L"synthetic-pin",L"--notes-data",fresh.wstring()},"Hidden module integration requires explicit --module-coverage");
-    reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--calendar",L"--module-coverage",L"--notes-assets",assets,
-           L"--notes-assets-sha",L"synthetic-pin",L"--notes-data",existing.wstring()},"Notes preview data root must be new");
-    reject(executable,temp,++index,{L"--visible",L"--calendar",L"--module-coverage",L"--notes-assets",assets,
-           L"--notes-assets-sha",L"synthetic-pin",L"--notes-data",fresh.wstring()},"Module coverage requires hidden mode and fresh isolated Notes data");
+    reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--calendar",L"--notes-format-assets",assets},
+           "Notes preview requires its format assets and a new data root together");
+    reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--calendar",L"--notes-format-assets",assets,
+           L"--notes-data",fresh.wstring()},"Hidden module integration requires explicit --module-coverage");
+    reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--calendar",L"--module-coverage",L"--notes-format-assets",assets,
+           L"--notes-data",existing.wstring()},"Notes preview data root must be new");
+    reject(executable,temp,++index,{L"--visible",L"--calendar",L"--module-coverage",L"--notes-format-assets",assets,
+           L"--notes-data",fresh.wstring()},"Module coverage requires hidden mode and fresh isolated Notes data");
     reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--native-activity"},
            "Native Activity requires explicit visible mode");
     reject(executable,temp,++index,{L"--visible",L"--native-activity"},
@@ -110,7 +109,7 @@ void run(const fs::path&executable){
            "Native Clipboard requires explicit visible mode");
     reject(executable,temp,++index,{L"--visible",L"--native-clipboard"},
            "Native Clipboard requires explicit visible mode");
-    reject(executable,temp,++index,{L"--visible",L"--module-coverage",L"--native-clipboard",L"--notes-assets",assets},
+    reject(executable,temp,++index,{L"--visible",L"--module-coverage",L"--native-clipboard",L"--notes-format-assets",assets},
            "Native Clipboard requires explicit visible mode");
     reject(executable,temp,++index,{L"--visible",L"--native-clipboard",L"--native-clipboard"},
            "Duplicate native Clipboard mode");
@@ -134,23 +133,22 @@ void run(const fs::path&executable){
            "Duplicate native Storage mode");
     reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--activity-assets",assets},
            "Unknown or incomplete preview argument");
-    reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--archive-assets",archiveAssets},
+    reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--archive"},
            "Archive needs explicit Notes assets and a new shared test data root");
-    reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--archive-assets",archiveAssets,
-           L"--archive-assets",archiveAssets},"Duplicate Archive assets");
-    reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--archive-assets"},
+    reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--archive",L"--archive"},"Duplicate Archive mode");
+    reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--archive-assets",assets},
            "Unknown or incomplete preview argument");
-    reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--notes-assets",assets,
-           L"--notes-data",fresh.wstring(),L"--archive-assets",archiveAssets},
-           "Notes preview requires assets, independent SHA and a new data root together");
-    reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--notes-assets",assets,
-           L"--notes-assets-sha",L"synthetic-pin",L"--notes-data",fresh.wstring(),L"--archive-assets",archiveAssets},
+    reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--notes-format-assets",assets,
+           L"--archive"},
+           "Notes preview requires its format assets and a new data root together");
+    reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--notes-format-assets",assets,
+           L"--notes-data",fresh.wstring(),L"--archive"},
            "Hidden module integration requires explicit --module-coverage");
-    reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--module-coverage",L"--notes-assets",assets,
-           L"--notes-assets-sha",L"synthetic-pin",L"--notes-data",existing.wstring(),L"--archive-assets",archiveAssets},
+    reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--module-coverage",L"--notes-format-assets",assets,
+           L"--notes-data",existing.wstring(),L"--archive"},
            "Notes preview data root must be new");
-    reject(executable,temp,++index,{L"--visible",L"--module-coverage",L"--notes-assets",assets,
-           L"--notes-assets-sha",L"synthetic-pin",L"--notes-data",fresh.wstring(),L"--archive-assets",archiveAssets},
+    reject(executable,temp,++index,{L"--visible",L"--module-coverage",L"--notes-format-assets",assets,
+           L"--notes-data",fresh.wstring(),L"--archive"},
            "Module coverage requires hidden mode and fresh isolated Notes data");
     reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--map-geography",assets},
            "Map needs geography and player assets together");
@@ -160,21 +158,21 @@ void run(const fs::path&executable){
     reject(executable,temp,++index,{L"--startup-trace",trace.wstring(),L"--startup-trace",trace.wstring()},"Duplicate startup trace output");
     reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--startup-trace-cold"},"A cold startup trace (without the launch prewarm) needs --startup-trace");
     reject(executable,temp,++index,{L"--visible",L"--startup-trace",trace.wstring()},"A startup trace replaces the module coverage report with a new output");
-    reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--startup-trace",trace.wstring(),L"--module-coverage",L"--notes-assets",assets,
-           L"--notes-assets-sha",L"synthetic-pin",L"--notes-data",fresh.wstring()},"A startup trace replaces the module coverage report with a new output");
-    reject(executable,temp,++index,{L"--startup-trace",existingReport.wstring(),L"--module-coverage",L"--notes-assets",assets,
-           L"--notes-assets-sha",L"synthetic-pin",L"--notes-data",fresh.wstring()},"A startup trace replaces the module coverage report with a new output");
+    reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--startup-trace",trace.wstring(),L"--module-coverage",L"--notes-format-assets",assets,
+           L"--notes-data",fresh.wstring()},"A startup trace replaces the module coverage report with a new output");
+    reject(executable,temp,++index,{L"--startup-trace",existingReport.wstring(),L"--module-coverage",L"--notes-format-assets",assets,
+           L"--notes-data",fresh.wstring()},"A startup trace replaces the module coverage report with a new output");
     // --memory-trace records the hidden module owner's memory and threads instead of its coverage report.
     const auto memory=temp.root/L"new memory trace.json";
     reject(executable,temp,++index,{L"--memory-trace",memory.wstring()},"A memory trace replaces the module coverage report with a new output");
     reject(executable,temp,++index,{L"--memory-trace",memory.wstring(),L"--memory-trace",memory.wstring()},"Duplicate memory trace output");
     reject(executable,temp,++index,{L"--visible",L"--memory-trace",memory.wstring()},"A memory trace replaces the module coverage report with a new output");
-    reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--memory-trace",memory.wstring(),L"--module-coverage",L"--notes-assets",assets,
-           L"--notes-assets-sha",L"synthetic-pin",L"--notes-data",fresh.wstring()},"A memory trace replaces the module coverage report with a new output");
-    reject(executable,temp,++index,{L"--startup-trace",trace.wstring(),L"--memory-trace",memory.wstring(),L"--module-coverage",L"--notes-assets",assets,
-           L"--notes-assets-sha",L"synthetic-pin",L"--notes-data",fresh.wstring()},"A memory trace replaces the module coverage report with a new output");
-    reject(executable,temp,++index,{L"--memory-trace",existingReport.wstring(),L"--module-coverage",L"--notes-assets",assets,
-           L"--notes-assets-sha",L"synthetic-pin",L"--notes-data",fresh.wstring()},"A memory trace replaces the module coverage report with a new output");
+    reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--memory-trace",memory.wstring(),L"--module-coverage",L"--notes-format-assets",assets,
+           L"--notes-data",fresh.wstring()},"A memory trace replaces the module coverage report with a new output");
+    reject(executable,temp,++index,{L"--startup-trace",trace.wstring(),L"--memory-trace",memory.wstring(),L"--module-coverage",L"--notes-format-assets",assets,
+           L"--notes-data",fresh.wstring()},"A memory trace replaces the module coverage report with a new output");
+    reject(executable,temp,++index,{L"--memory-trace",existingReport.wstring(),L"--module-coverage",L"--notes-format-assets",assets,
+           L"--notes-data",fresh.wstring()},"A memory trace replaces the module coverage report with a new output");
     reject(executable,temp,++index,{L"--memory-trace"},"Unknown or incomplete preview argument");
     reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--map-player-assets",assets},
            "Map needs geography and player assets together");
@@ -193,8 +191,8 @@ void run(const fs::path&executable){
     // The staged package is an existing directory and a hidden module coverage input only.
     reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--package",existing.wstring()},
            "The staged resource package is an existing hidden module coverage input");
-    reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--module-coverage",L"--notes-assets",assets,
-           L"--notes-assets-sha",L"synthetic-pin",L"--notes-data",fresh.wstring(),L"--package",(temp.root/L"absent package").wstring()},
+    reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--module-coverage",L"--notes-format-assets",assets,
+           L"--notes-data",fresh.wstring(),L"--package",(temp.root/L"absent package").wstring()},
            "The staged resource package is an existing hidden module coverage input");
     reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--package",existing.wstring(),L"--package",existing.wstring()},
            "Duplicate staged package");

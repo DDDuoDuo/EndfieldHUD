@@ -32,7 +32,7 @@ enum class Driver { hardware, warpForTests };
 // likewise keep 8-bit targets; linear groups keep half floats.
 enum class TextureColorSpace { sRGB, linear, encodedSRGB };
 enum class NativeGroupColorSpace { linear, encodedSRGB };
-enum class NativeBlend { sourceOver, screen, weightedAdd };
+enum class NativeBlend { sourceOver, screen };
 enum class TextureFilter { nearest, linear };
 enum class RenderTarget { composition, offscreenForTests };
 struct RendererOptions {
@@ -136,11 +136,8 @@ struct DrawObject {
     std::optional<PlaneShutter> shutter;
     std::optional<PlaneAlphaMask> alphaMask; // intersects ordinary masks/shutter
     std::optional<AngularMask> angularMask; // no texture or tessellation
-    // Screen and weightedAdd are supported only inside an encoded native group.
-    // weightedAdd is a bounded crossfade: every child must use it, at most two
-    // regular leaf draws, and their opacity weights sum to <=1. Their associated
-    // encoded RGBA contributions add before one normal output composition.
-    // Root/default linear groups and nested weighted inputs reject it.
+    // Screen is supported only inside an encoded native group (root/default
+    // linear groups reject it).
     NativeBlend blend{NativeBlend::sourceOver};
 };
 // Sources/HUDDesignOverlay.swift HUDCenterOverlay.setContentDimmed (LIB-64,

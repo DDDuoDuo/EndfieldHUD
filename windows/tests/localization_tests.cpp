@@ -24,9 +24,9 @@ int main(){try{
     check(renderTranslation("{x} {01}",args)==std::nullopt,"Missing zero index stays an error");
     check(renderTranslation("{x} {} {-1}",{})=="{x} {} {-1}","Non-numeric braces remain literal");
     // Mac 1.3.0: 830 core + 453 redesign rows (LocalizationCatalog.swift + LocalizationCatalogRedesign.swift), plus
-    // the 46 Windows-kept v1.2.0 pairs (tools/localization_windows_kept.json) the Mac pruned while Windows still
+    // the 9 Windows-kept v1.2.0 pairs (tools/localization_windows_kept.json) the Mac pruned while Windows still
     // calls them. Dropping a kept row changes this count.
-    const auto catalog=translationCatalog();check(catalog.size()==1283+46,"Full pinned five-language catalog");
+    const auto catalog=translationCatalog();check(catalog.size()==1283+1,"Full pinned five-language catalog");
     using Row=std::array<std::string_view,5>;
     const auto five=[&](const Row&r,const char*why){const auto*e=translationEntry(r[0],r[1]);check(e&&e->traditionalChinese==r[2]&&e->japanese==r[3]&&e->korean==r[4],why);};
     for(const auto&r:std::array<Row,6>{{
@@ -51,8 +51,10 @@ int main(){try{
         check(a&&b&&a!=b&&a->traditionalChinese==redesignHant&&b->traditionalChinese==coreHant,"Shared English keeps both contextual pairs");
     }
     // Windows-kept v1.2.0 pairs beside the Mac 1.3.0 pair that replaced them on the Mac.
-    five({"Score","得分","得分","スコア","점수"},"Kept minigame pair");five({"Score","计分","計分","スコア","점수"},"Redesign minigame pair");
-    five({"Reading","阅读设置","閱讀設定","読書設定","읽기 설정"},"Kept Reader pair");five({"Delete this document?","删除此档案？","刪除此檔案？","この文書を削除しますか？","이 문서를 삭제할까요?"},"Kept Archive pair");
+    five({"Mainland China","国服","中國伺服器","中国サーバー","중국 서버"},"Mac 1.3.0 region title (MODS-850)");five({"Add image/video","添加图片/视频","新增圖片/影片","画像・動画を追加","이미지/동영상 추가"},"Kept Archive pair");
+    // The redesigned minigame, Reader and Archive call the Mac 1.3.0 pairs only.
+    five({"Score","计分","計分","スコア","점수"},"Redesign minigame pair");
+    check(!translationEntry("Score","得分")&&!translationEntry("Reading","阅读设置")&&!translationEntry("Delete this document?","删除此档案？"),"Dropped kept pairs are gone");
     // The two translations Mac 1.3.0 changed in place (Media Assembly tabs); the singular keeps ステッカー.
     check(localized("Filters","滤镜",Language::japanese)=="フィルタ"&&localized("Stickers","贴纸",Language::japanese)=="スタンプ"&&
         localized("Sticker","贴纸",Language::japanese)=="ステッカー","Mac 1.3.0 Japanese tab titles");
@@ -68,6 +70,11 @@ int main(){try{
         const std::array originals{e.english,e.simplifiedChinese,e.traditionalChinese,e.japanese,e.korean};
         for(unsigned n=0;n<5;++n){const auto expected=renderTranslation(originals[n],values);check(expected.has_value(),"Original catalog has complete argument coverage");check(localized(e.english,e.simplifiedChinese,static_cast<Language>(n+1),values)==*expected,"Every original translation round-trips");}
     }
+    // The Windows-only File Explorer chooser row (Media Assembly, Reader, Archive, Notes, Projection).
+    for(unsigned n=0;n<6;++n){const auto label=translated(chooseInFileExplorer,static_cast<Language>(n));check(!label.empty()&&label.find("Finder")==std::string_view::npos,"The chooser names File Explorer");}
+    check(translated(chooseInFileExplorer,Language::simplifiedChinese)=="从文件资源管理器选择"&&translated(chooseInFileExplorer,Language::traditionalChinese)=="從檔案總管選擇"&&
+        translated(chooseInFileExplorer,Language::japanese)=="エクスプローラーで選択"&&translated(chooseInFileExplorer,Language::korean)=="파일 탐색기에서 선택"&&
+        translated(chooseInFileExplorer,Language::english)=="Choose in File Explorer","File Explorer label uses the Windows shell product name per language");
     check(localized("No music playing","No music playing",Language::japanese)=="No music playing","Keep source's fixed English music status");
     std::cout<<"Original localization: "<<checks<<" checks passed\n";return 0;
 }catch(const std::exception&e){std::cerr<<"Localization failed after "<<checks<<": "<<e.what()<<'\n';return 1;}}

@@ -5,7 +5,6 @@
 #include "app/application_impl.hpp"
 #include "app/process_diagnostics.hpp"
 #include "app/areas/calendar_reminder_module.hpp"
-#include "modules/archive_presentation.hpp"
 #include "native/display_center_logo.hpp"
 #include "native/module_scene.hpp" // NativeModuleSurface: coverage projection probes
 #include <algorithm>
@@ -462,7 +461,10 @@ int Application::Impl::runHiddenVerification(){
             // Coverage steps run on the one host time (ModuleRegistry::hostTime).
             auto&counts=areaCounts[area.name];double last=hostTime(std::max(begin,areaLatest));
             ModuleCoverage step;step.module=module;step.cycle=cycle;step.time=last;
-            step.present=[&](double at){need(at>=last,"Area coverage presents on a non-decreasing clock");last=at;present(at,true);};
+            // A host frame: the shared design deadlines due by then (sub-page
+            // swaps, toasts; the overlay owner runs the Context's), then the draw.
+            step.present=[&](double at){need(at>=last,"Area coverage presents on a non-decreasing clock");last=at;
+                if(designOverlay)if(const auto wake=designOverlay->nextWakeTime(at);wake&&*wake<=at)(void)designOverlay->deadline(at);present(at,true);};
             step.drain=[&]{drainUtility(last);};
             step.project=[&,module](core::Point local,double width,double height)->std::optional<core::Point>{
                 if(!module||!notes||!chromePlan||!chromePlan->projection().center||!(width>0)||!(height>0))return std::nullopt;
@@ -491,10 +493,10 @@ int Application::Impl::runHiddenVerification(){
             prewarm();
             hostCheck(prewarmed&&session->phase()==core::VisibilityPhase::concealed&&!session->currentFrame()&&!host.stats().visible&&!IsWindowVisible(static_cast<HWND>(host.hwnd())),
                 "The launch prewarm poses the first opening offscreen and conceals the HUD again");
-            // The Map adapter forwards the prewarm (MapPreview::prewarm): the first
-            // opening on Map only re-poses its built chrome; nothing is activated.
+            // The Map owner prewarms its canvas page and surface (MapOwner::prewarm):
+            // nothing is activated and no terrain is painted before the opening.
             if(map&&mapModuleOwner&&registry.enabled(*mapModuleOwner)&&notes->selected()==core::Module::map)
-                hostCheck(map->sceneStats().chromeBuilds>=1&&!map->state().active()&&!map->rasterStats().active,"The launch prewarm builds the Map without activating it");
+                hostCheck(map->sceneStats().pinBuilds>=1&&!map->state().active()&&!map->rasterStats().active,"The launch prewarm builds the Map without activating it");
             // An Archive that is not the first opening's module builds nothing at
             // the launch prewarm or in the opening's frames (no rasters attributed
             // to it): its view is built when Archive is first shown.
@@ -586,37 +588,38 @@ int Application::Impl::runHiddenVerification(){
                 std::size_t scrollChanges{},peakEntries{},peakBytes{};
                 try{selectModule(module,time);for(unsigned frame=0;frame<40;++frame)present(time+double(frame)/60,true);
                     if(module==core::Module::minigame&&game){
-                        need(gameSession&&game->state().active(),"Minigame shares the selected original module surface");
+                        // OrbiPomHUDVerification (Mac 1.3.0): showing the game starts the
+                        // original session on its clock; only the visible module's tick
+                        // (the owner's deadline) advances it; manual pause stops it.
+                        const auto tick=[&](double t){(void)gameModuleOwner->deadline(t);present(t,true);};
+                        need(gameSession&&game->isActive(),"Minigame shares the selected design module surface");
                         if(cycle==0){
-                            need(!gameSession->hasRuntime(),"Opening original Minigame artwork alone does not start physics");
-                            need(game->perform(endfield::modules::OrbiPomAction::start,time+.71),"Original Start action starts the single lazy runtime");
-                            need(gameSession->hasRuntime()&&gameSession->snapshot().isPlaying()&&!gameSession->error(),"Bundled unchanged game engine starts through the module owner");
+                            need(gameSession->hasRuntime()&&gameSession->snapshot().isPlaying()&&!gameSession->error()&&game->hasFrameTimer()&&!gameSession->manuallyPaused(),
+                                 "Showing the minigame starts the bundled unchanged engine on its clock");
                             need(gameSession->bestScore()==71&&gameSession->snapshot().highScore==71,"Original best-score key loads from the isolated shared preferences");
                             const auto began=gameSession->snapshot().simulationTime;
-                            for(unsigned n=0;n<30;++n)present(time+.72+double(n)/60,true);
-                            need(gameSession->snapshot().simulationTime>began,"Only shared presented HUD frames advance original physics");
-                            need(game->perform(endfield::modules::OrbiPomAction::pause,time+1.3),"Original pause control is available");
+                            for(unsigned n=0;n<30;++n)tick(time+.72+double(n)/60);
+                            need(gameSession->snapshot().simulationTime>began,"Only the visible minigame's tick advances original physics");
+                            game->perform("pause");
                             const auto stopped=gameSession->snapshot().simulationTime;
-                            present(time+1.5,true);present(time+1.7,true);
-                            need(gameSession->manuallyPaused()&&gameSession->snapshot().simulationTime==stopped,"Manual pause advances no game steps");
+                            tick(time+1.5);tick(time+1.7);
+                            need(gameSession->manuallyPaused()&&!game->hasFrameTimer()&&gameSession->snapshot().simulationTime==stopped,"Manual pause advances no game steps");
                             settingsUI->controller().restoreDefaults();need(settingsSaves->flush(),"Isolated settings reset saves through the shared executor");
                             const ehud::data::SettingsStore verified(args.dataRoot);
                             need(verified.value().fields["orbipom.bestScore.v1"].integer()==71&&gameSession->bestScore()==71,"Settings reset preserves saved game progress and the live session");
-                        }else need(gameSession->manuallyPaused(),"Returning to Minigame preserves manual pause");
+                        }else need(gameSession->manuallyPaused()&&!game->hasFrameTimer(),"Returning to Minigame preserves manual pause");
                     }
                     if(module==core::Module::map&&map){
-                        const auto drainMap=[&]{for(unsigned n=0;n<24;++n){utility->waitIdle();utility->drain();map->utilityCompleted(mapTime);if(const auto due=map->nextWakeTime()){mapTime=std::max(mapTime,*due)+.000001;map->deadline(mapTime);}present(mapTime,true);if(!utility->stats().running&&!utility->stats().pending&&!utility->stats().completed&&!map->nextWakeTime())break;}};
+                        const auto drainMap=[&]{for(unsigned n=0;n<24;++n){utility->waitIdle();utility->drain();map->utilityCompleted(mapTime);if(const auto due=map->nextWakeTime(mapTime)){mapTime=std::max(mapTime,*due)+.000001;map->deadline(mapTime);}present(mapTime,true);if(!utility->stats().running&&!utility->stats().pending&&!utility->stats().completed&&!map->nextWakeTime(mapTime))break;}};
                         mapTime=time+.7;drainMap();need(map->state().active()&&map->rasterStats().published>0,"Original bundled Map geography renders only after isolated selection");
-                        gpu::LayerScene probeGeometry(rasterizer);probeGeometry.load(Json::Object{{"bounds",Json::Array{0,0,440,440}},{"children",Json::Array{}}},{});gpu::NativeModuleSurface probePlane(probeGeometry,module);
-                        const auto ps=chromeSettings(module);probePlane.update(*chromePlan->projection().center,ps,notes->modulePresentation().current,1);
-                        const auto plane=core::Projection::viewport(gpu::layerViewportProjection(metrics.pixelWidth,metrics.pixelHeight)*core::Matrix4::scale(metrics.scale,metrics.scale)*probePlane.pose().contentWorld,metrics.pixelWidth,metrics.pixelHeight);
-                        const auto point=[&](core::Point p){const auto screen=plane.project(p);need(bool(screen),"Map input projects through the source440-point plane");return core::Point{screen->x/metrics.scale,screen->y/metrics.scale};};
-                        const auto center=point({220,220});const auto initialCount=map->state().pins().size();
+                        // The disc centre (box px) through the Map canvas's design plane.
+                        const auto point=[&](core::Point p){const auto r=map->core().clientRect({p.x,p.y,0,0});need(bool(r),"Map input projects through the design box plane");return core::Point{r->x,r->y};};
+                        const auto center=point(endfield::modules::MapCanvas::mapCenter);const auto initialCount=map->state().pins().size();
                         need(map->pointer({app::PointerKind::down,app::PointerButton::right,center.x,center.y},mapTime),"Original right-click adds a projected Map marker");map->pointer({app::PointerKind::up,app::PointerButton::right,center.x,center.y},mapTime);present(mapTime+.17,true);
                         need(map->state().pins().size()==initialCount+1&&mapStore->value().pins.size()==initialCount+1,"Marker writes only the explicitly isolated Map store");
                         need(map->pointer({app::PointerKind::down,app::PointerButton::right,center.x,center.y},mapTime),"Original marker right-click is consumed");present(mapTime+.17,true);need(map->state().pins().size()==initialCount,"Second right-click removes that marker");
-                        need(map->wheel({center.x,center.y,1,false,0,3},mapTime),"Map wheel reaches the native continuous camera owner");mapTime+=.181;map->deadline(mapTime);drainMap();need(map->state().viewport().zoom>3,"Wheel zoom preserves source sensitivity");
-                        need(map->perform(endfield::modules::MapAction::reset,{},mapTime),"Original reset action is available");drainMap();need(map->state().viewport().zoom==3,"Map reset preserves the authoritative3x default");
+                        need(map->wheel({center.x,center.y,1,false,0,3},mapTime),"Map wheel reaches the native continuous camera owner");mapTime+=.181;map->deadline(mapTime);drainMap();need(map->state().camera().zoom>3,"Wheel zoom preserves source sensitivity");
+                        need(map->perform("map.reset",mapTime),"The reset view action is available");drainMap();need(map->state().camera()==endfield::modules::MapSurfaceGeometry::constrained({}),"Map reset restores the default camera");
                         const auto before=rasterizer.stats();const auto accepted=utility->stats().accepted;const auto uploads=renderer.stats().textureUploads;const auto poseStart=mapTime;
                         for(unsigned n=0;n<12;++n)present(poseStart+.3+double(n)/60,true);
                         need(before.rasterizations==rasterizer.stats().rasterizations&&accepted==utility->stats().accepted&&uploads==renderer.stats().textureUploads,"Settled Map poses reuse geography, text and GPU textures");
@@ -624,26 +627,32 @@ int Application::Impl::runHiddenVerification(){
                     if(module==core::Module::reader&&reader){
                         const auto drainReader=[&]{for(unsigned n=0;n<8;++n){utility->waitIdle();utility->drain();readerOwner->queueCapacityAvailable();}present(readerTime,true);};
                         readerTime=time+.7;drainReader();need(readerOwner->state().active()&&readerOwner->state().loaded(),"Reader loads only its isolated library on selection");
-                        gpu::LayerScene probeGeometry(rasterizer);probeGeometry.load(Json::Object{{"bounds",Json::Array{0,0,400,440}},{"children",Json::Array{}}},{});gpu::NativeModuleSurface probePlane(probeGeometry,module);
-                        const auto ps=chromeSettings(module);probePlane.update(*chromePlan->projection().center,ps,notes->modulePresentation().current,1);
-                        const auto plane=core::Projection::viewport(gpu::layerViewportProjection(metrics.pixelWidth,metrics.pixelHeight)*core::Matrix4::scale(metrics.scale,metrics.scale)*probePlane.pose().contentWorld,metrics.pixelWidth,metrics.pixelHeight);
-                        const auto click=[&](core::Point local,double t){const auto p=plane.project(local);need(p.has_value(),"Reader action projects through source module plane");readerTime=t;need(reader->pointer({app::PointerKind::down,app::PointerButton::left,p->x/metrics.scale,p->y/metrics.scale},t),"Reader consumes its original projected control");reader->pointer({app::PointerKind::up,app::PointerButton::left,p->x/metrics.scale,p->y/metrics.scale},t+.001);present(t+.001,true);};
+                        // Mac 1.3.0 ReaderCanvas controls through the design canvas's own actions (BatchSixHUDVerification).
+                        auto&canvas=reader->canvas();
+                        // Tab and page swaps land on the Context's shared deadlines.
+                        const auto frames=[&](double t0,unsigned count){for(unsigned frame=0;frame<count;++frame){const double t=t0+double(frame)/60;(void)designOverlay->deadline(t);present(t,true);}};
+                        const auto press=[&](std::string_view id,double t){readerTime=t;if(!canvas.performAccessibilityAction(id,t)){std::string shown;for(const auto*c:static_cast<endfield::modules::design::Canvas&>(canvas).page().controls())shown+=" "+c->id();throw std::runtime_error("Reader control "+std::string(id)+" presses like its click (tab "+std::to_string(int(canvas.tab()))+(canvas.transitioning()?", swapping":"")+";"+shown+")");}present(t+.001,true);};
                         if(cycle<2){
                             // The only file opened in this hidden path is generated here.
                             const auto fixture=args.dataRoot/(cycle?"Reader fixture.pdf":"Reader fixture.txt");std::string text;
                             if(cycle)text=ownedReaderPDF();else for(unsigned n=0;n<500;++n)text+="EndfieldHUD 阅读器 · Temporary isolated sample " +std::to_string(n)+".\n";
                             ehud::data::detail::replaceFile(fixture,std::nullopt,text,128*1024);
-                            click({40,20},time+.72);present(time+.93,true);click({30,60},time+.94);auto action=reader->takeImportAction();
-                            need(action&&action->kind==endfield::tools::ReaderImportAction::Kind::chooseLocal,"Reader Open queues the existing native-picker route without opening a dialog in hidden coverage");
+                            press("readerTabs:0",time+.72);frames(time+.73,12);
+                            press("chooseFile",time+.94);auto action=reader->takeImportAction();
+                            need(action&&action->kind==endfield::tools::ReaderImportAction::Kind::chooseLocal,"Reader Choose file queues the existing native-picker route without opening a dialog in hidden coverage");
                             importReaderReference(action->generation,utf8(fixture),{},time+.95);readerTime=time+.96;drainReader();
+                            // The import switches to the Reading tab (handle(.imported)).
+                            frames(time+.97,20);
+                            need(canvas.tab()==modules::ReaderCanvas::Tab::reading,"An import lands on the Reading tab");
                         }
                         need(readerOwner->state().book()&&readerOwner->state().current()&&!readerOwner->state().error(),"Real TXT/PDF rendering publishes only the owned generated document");
                         need(readerOwner->state().current()->illustration==(cycle!=0),"Shared Reader provider replaces TXT with the generated PDF and retains it across module switches");
-                        need(readerOwner->state().library().preferences.fontName=="System","Fresh Reader follows shared SC/KR defaults without overwriting saved explicit fonts");
-                        click({268,20},time+1.02);readerTime=time+1.03;drainReader();
-                        const auto marks=readerOwner->state().book()->bookmarks.size();need(marks==(cycle==2?0u:1u),"Original bookmark control persists through the shared Reader owner");
+                        need(readerOwner->state().library().preferences.fontName=="Georgia","A fresh Reader library keeps the Mac default face (ReaderPreferences)");
+                        if(canvas.tab()!=modules::ReaderCanvas::Tab::reading){press("readerTabs:2",time+1.);frames(time+1.001,20);}
+                        press("bookmark",time+1.02);readerTime=time+1.03;drainReader();
+                        const auto marks=readerOwner->state().book()->bookmarks.size();need(marks==(cycle==2?0u:1u),"The bookmark control persists through the shared Reader owner");
                         present(time+1.5,true);const auto before=rasterizer.stats();const auto accepted=utility->stats().accepted;
-                        for(unsigned frame=0;frame<12;++frame)present(time+1.6+double(frame)/60,true);
+                        frames(time+1.6,12);
                         const auto after=rasterizer.stats();need(before.rasterizations==after.rasterizations&&before.textLayoutsCreated==after.textLayoutsCreated&&utility->stats().accepted==accepted,"Settled Reader frames reuse page pixels and never enqueue provider work");
                     }
                     if(module==core::Module::activityMonitor&&activity&&activity->canvas()){auto&canvas=*activity->canvas();
@@ -693,21 +702,24 @@ int Application::Impl::runHiddenVerification(){
                         utility->waitIdle();utility->drain();archiveService->queueCapacityAvailable();present(time+.7,true);
                         need(archiveService->state().active()&&!archiveService->state().error(),"Archive source activation loads its isolated database");
                         if(!cycle){
-                            gpu::LayerScene probeGeometry(rasterizer);probeGeometry.load(Json::Object{{"bounds",Json::Array{0,0,400,440}},{"children",Json::Array{}}},{});gpu::NativeModuleSurface probePlane(probeGeometry,module);
-                            const auto ps=chromeSettings(module);probePlane.update(*chromePlan->projection().center,ps,notes->modulePresentation().current,1);
-                            const auto plane=core::Projection::viewport(gpu::layerViewportProjection(metrics.pixelWidth,metrics.pixelHeight)*core::Matrix4::scale(metrics.scale,metrics.scale)*probePlane.pose().contentWorld,metrics.pixelWidth,metrics.pixelHeight);
-                            const auto click=[&](core::Point local,double t){const auto projected=plane.project(local);need(projected.has_value(),"Archive source input projects through the shared module plane");const auto x=projected->x/metrics.scale,y=projected->y/metrics.scale;need(archive->pointer({app::PointerKind::down,app::PointerButton::left,x,y},t),"Archive consumes its source action");archive->pointer({app::PointerKind::up,app::PointerButton::left,x,y},t);present(t,true);};
-                            click({29,316},time+.72); // Original '+' → category menu.
-                            const auto origin=endfield::modules::archiveCategoryMenuOrigin(false);click({origin.x+32,origin.y+57},time+.90);
+                            // The redesigned canvas (BatchSix testEditor): New files a
+                            // document at once and opens the editor; the title and the
+                            // body take generated text (UIA SetValue and typed
+                            // characters: no text service in hidden runs); the writes
+                            // drain through the shared utility executor.
+                            auto& canvas=archive->canvas();
+                            need(canvas.displayedPage().kind==modules::ArchiveCanvas::PageKind::list,"Archive opens on its list page");
+                            need(canvas.performAccessibilityAction("new",time+.72),"Archive New is an accessible control");present(time+.73,true);
                             utility->waitIdle();utility->drain();archiveService->queueCapacityAvailable();present(time+1.1,true);
-                            need(archiveService->state().selected().has_value(),"Original category chooser creates an Uncategorized document");
-                            click({50,64},time+1.12);need(archive->activeField()==std::optional<std::string>("title"),"Archive title uses the existing projected editor");
-                            // The generated key states its modifiers: off the HUD window's key
-                            // dispatch the thread's GetKeyState follows the live keyboard of the
-                            // interactive session, so a key held on the machine would make it a
-                            // modified, untyped key (README, App shortcuts item 3).
-                            need(archive->key({app::KeyKind::character,'A'},time+1.14,endfield::tools::ArchiveKeyModifiers{}),"Archive accepts generated plain fixture text");need(archive->finishEditing(time+1.16),"Hidden Archive field commits without a native text manager");need(archiveService->flush(),"Archive fixture writes finish through the shared utility executor");
-                            present(time+1.3,true);need(archiveService->state().selected()->title=="A","Archive persisted state retains generated title text");
+                            need(archiveService->state().selected().has_value()&&canvas.displayedPage().kind==modules::ArchiveCanvas::PageKind::editor,"New creates an Uncategorized document and opens it without a category menu");
+                            // The editor page lands on the Context's shared deadlines (the sub-page swap).
+                            double editorAt=time+1.1;for(unsigned n=0;n<40&&canvas.transitioning();++n){editorAt+=1./60;(void)designOverlay->deadline(editorAt);present(editorAt,true);}
+                            need(!canvas.transitioning(),"The Archive editor page lands");
+                            need(canvas.setAccessibilityText("title","A",editorAt+.02),"The Archive title takes generated text");
+                            need(canvas.performAccessibilityAction("body",editorAt+.03)&&canvas.bodyArea()&&canvas.bodyArea()->isFocused(),"The Archive body takes the focus");
+                            need(archive->key({app::KeyKind::character,'B'},editorAt+.04),"The Archive body accepts generated plain text");
+                            need(archive->finishEditing(editorAt+.06),"Hidden Archive editors commit without a native text manager");need(archiveService->flush(),"Archive fixture writes finish through the shared utility executor");
+                            present(editorAt+.2,true);need(archiveService->state().selected()->title=="A"&&archiveService->state().selected()->body=="B","Archive persisted state retains the generated title and body");
                         }
                     }
                     if(module==core::Module::clipboard&&clipboardCanvas){
@@ -722,7 +734,7 @@ int Application::Impl::runHiddenVerification(){
                     // own D3D device to an idle timer, which still runs at process
                     // exit (README checkpoint 124, "Found while integrating").
                     if(module==core::Module::reader&&reader&&cycle==0)
-                        peerProbe(core::Module::reader,readerModuleOwner.get(),{{"settings",[&]{return reader->capturesPointer();}},{"menu:close",[&]{return !reader->capturesPointer();}}});
+                        peerProbe(core::Module::reader,readerModuleOwner.get(),{{"settings",[&]{return reader->capturesPointer();}},{"settings",[&]{return !reader->capturesPointer();}}});
                     if(module==core::Module::workMode&&workMode&&workModeCanvas&&cycle==0){
                         // The custom duration field (a design text field): the I-beam over
                         // it while it edits, through the owner and the host's WM_SETCURSOR
@@ -751,6 +763,10 @@ int Application::Impl::runHiddenVerification(){
                         hostCheck(!custom.editing()&&!workModeModuleOwner->cursorAt(center)&&cursorAt(center)==ModuleCursor::source,"Closing the field restores the source cursor");
                         // Reopened through the Custom segment, the field is an Edit peer under
                         // the HUD root; SetValue commits it (MODS-734).
+                        // A direct canvas call is no owner entry point: the context's editor host
+                        // follows this owner first (as DesignOwnerCore's UIA invoke does), so the
+                        // rebuilt field registers with Work Mode's editors, not the last owner's.
+                        owner.core().bindEditorHost();
                         need(workModeCanvas->performAccessibilityAction("workMode.preset:3",workStart+.131)&&workModeCanvas->editingCustom(),"Work Mode reopens its custom duration field through the Custom segment");
                         present(workStart+.135,true);
                         {HudAutomation uia(host.hwnd(),automationSource());(void)uia.refresh();
@@ -908,7 +924,8 @@ int Application::Impl::runHiddenVerification(){
                 groupProbe(core::Module::fileShelf,shelfModuleOwner.get(),std::nullopt);
                 groupProbe(core::Module::archive,archiveModuleOwner.get(),std::nullopt);
                 groupProbe(core::Module::mediaAssembly,areaOwner("mediaAssembly"),std::nullopt);
-                groupProbe(core::Module::nowPlaying,areaOwner("nowPlaying"),std::size_t{6});
+                // Now Playing 1.3.0: track, seek, previous, play/pause, next, volume, lyrics.
+                groupProbe(core::Module::nowPlaying,areaOwner("nowPlaying"),std::size_t{7});
                 groupProbe(core::Module::account,areaOwner("account"),std::nullopt);
                 groupProbe(core::Module::profile,areaOwner("profile"),std::nullopt);
                 // The provider modules' Mac accessibility buttons (and the telemetry
@@ -1037,9 +1054,9 @@ int Application::Impl::runHiddenVerification(){
                 }
                 // Map, Calendar and the minigame (the Reader's ran in cycle 0).
                 const auto month=calendar?calendar->month():endfield::modules::CalendarDay{};
-                peerProbe(core::Module::map,mapModuleOwner.get(),{{"map:reset",[&]{return map->state().viewport().zoom==endfield::modules::MapViewport::defaultZoom;}}});
+                peerProbe(core::Module::map,mapModuleOwner.get(),{{"map.reset",[&]{return map->state().camera().zoom==endfield::modules::MapViewport::defaultZoom;}}});
                 peerProbe(core::Module::calendar,calendarModuleOwner.get(),{{"calendar.nextMonth",[&]{return calendar->month()!=month;}},{"calendar.previousMonth",[&]{return calendar->month()==month;}}});
-                peerProbe(core::Module::minigame,gameModuleOwner.get(),{{"rules",[&]{return game->state().rulesPresented();}},{"rules:close",[&]{return !game->state().rulesPresented();}}});
+                peerProbe(core::Module::minigame,gameModuleOwner.get(),{{"rules",[&]{return game->rulesPresented();}},{"popover.close",[&]{return !game->rulesPresented();}}});
                 // The Power navigation entry (powerCharge presents no module):
                 // its group is named Power and its help is the live reading.
                 if(auto*power=areaOwner("powerCharge");power&&registry.enabled(*power)&&powerArea()){
@@ -1270,7 +1287,7 @@ int Application::Impl::runHiddenVerification(){
             // tearDownSystemPresentation: the hand-offs the cycles requested open
             // once the HUD is hidden. Storage Settings reaches only the hidden
             // fixture, exactly once however often the cycles pressed it.
-            {const bool waiting=pendingStorageSettings;const auto launched=storageFixture?storageFixture->settingsRequests:0u;openAfterConcealed(time+.7);
+            {const bool waiting=pendingStorageSettings;const auto launched=storageFixture?storageFixture->settingsRequests:0u;openAfterConcealed();
              if(storageFixture&&waiting)hostCheck(!pendingStorageSettings&&storageFixture->settingsRequests==launched+1,"Storage Settings waited for the close and opens once the HUD is hidden");}
             // The production adapter forwards the HUD visibility and the end of
             // the close: a Volume that is not the shown module keeps no artwork.
@@ -1308,7 +1325,7 @@ int Application::Impl::runHiddenVerification(){
             if(designOverlay&&!quitButtons.empty()){
                 const auto settle=[&](double t){
                     if(lifecycleOpening&&!closing&&session->phase()==core::VisibilityPhase::visible){const auto token=*lifecycleOpening;lifecycleOpening.reset();perform(lifecycle.didOpen(token),t);}
-                    if(lifecycleClosing&&session->phase()==core::VisibilityPhase::concealed){const auto token=*lifecycleClosing;lifecycleClosing.reset();concealed(t);perform(lifecycle.didClose(token),t);openAfterConcealed(t);}
+                    if(lifecycleClosing&&session->phase()==core::VisibilityPhase::concealed){const auto token=*lifecycleClosing;lifecycleClosing.reset();concealed(t);perform(lifecycle.didClose(token),t);openAfterConcealed();}
                 };
                 // Frames at 60 Hz; the shared design deadlines (the confirm
                 // bar's 120 ms answer, its collapse) run between frames when

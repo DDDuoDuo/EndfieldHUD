@@ -85,6 +85,9 @@ struct NativeDesignSceneStats {
     std::size_t parts{}, surfaces{}, retiredParts{}, rasterEntries{}, residentPixelBytes{};
     std::size_t groups{}, groupTargets{};      // parts drawn through a group; group targets held (incl. awaiting collectRetired)
 };
+// A box-px affine (samplePoses, sampleLayer) as the plane matrix the scene
+// composes with boxWorld (owner-drawn records follow the same rule).
+core::Matrix4 designMatrix(const modules::design::Affine&) noexcept;
 class NativeDesignScene final {
 public:
     NativeDesignScene(LayerRasterizer&, LayerRasterOptions, std::string sourcePrefix, DesignImages = {});
@@ -111,6 +114,13 @@ public:
     // released; the next syncContent rebuilds them (Clipboard's park). False
     // when nothing was released or a part is still composed. Never throws.
     bool park(Renderer&) noexcept;
+    // An owner-drawn entry composed right after the part whose root is
+    // `after` (its direct or group entry): media the rasterizer cannot paint
+    // (Media Assembly's edited picture and playing video, between its stage
+    // grid and its stickers). The owner keeps the entry's carrier scene and
+    // draw records alive and resident until it replaces or clears it, and
+    // poses the records itself (numbers only); nullopt clears it.
+    void setInsertion(const modules::design::Layer* after, std::optional<LayerCompositionEntry>);
     // Accessors for the owner core (cursor and UIA project through these).
     const core::Matrix4& boxWorld() const noexcept;
     NativeDesignSceneStats stats() const noexcept;

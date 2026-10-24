@@ -410,6 +410,7 @@ void Canvas::closeMenu() {
     ++structure_;
     refreshRouter();
     notifyInput();
+    didCloseMenu();
 }
 void Canvas::openPopover(std::unique_ptr<Popover> popover, const Control* anchor, std::optional<Rect> anchorRect, std::vector<Control*> controls) {
     closePopups();
@@ -436,6 +437,7 @@ void Canvas::closePopover() {
     ++structure_;
     refreshRouter();
     notifyInput();
+    didClosePopover();
 }
 void Canvas::closePopups() { closeMenu(); closePopover(); }
 
@@ -443,6 +445,7 @@ void Canvas::closePopups() { closeMenu(); closePopover(); }
 void Canvas::registerField(TextField& field) {
     if (std::find(fields_.begin(), fields_.end(), &field) == fields_.end()) fields_.push_back(&field);
     field.setEditorHost(context_->editorHost());
+    field.currentEditorHost = [context = context_] { return context->editorHost(); };
     // One editing field per canvas (HUDDesignTextField.beginEditing :152-153).
     field.willBeginEditing = [this](TextField& self) {
         for (TextField* other : std::vector<TextField*>(fields_)) if (other != &self && other->editing()) other->endEditing(true);
@@ -459,9 +462,10 @@ void Canvas::forgetFields(const Layer& subtree) {
 }
 void Canvas::endEditing(bool commit) {
     for (TextField* field : std::vector<TextField*>(fields_)) if (field->editing()) field->endEditing(commit);
+    endOtherEditing(commit);
 }
 void Canvas::refreshTextFieldProjection() { for (TextField* field : fields_) field->refreshProjection(); }
-bool Canvas::editingText() const noexcept { return std::any_of(fields_.begin(), fields_.end(), [](TextField* f) { return f->editing(); }); }
+bool Canvas::editingText() const noexcept { return std::any_of(fields_.begin(), fields_.end(), [](TextField* f) { return f->editing(); }) || editingOtherText(); }
 TextField* Canvas::editingField() const noexcept {
     const auto it = std::find_if(fields_.begin(), fields_.end(), [](TextField* f) { return f->editing(); });
     return it == fields_.end() ? nullptr : *it;
@@ -509,6 +513,7 @@ void Canvas::setActive(bool active, double now) {
         if (stale()) rerender();
         didActivate();
     } else {
+        willEndInteraction();
         closePopups(); endEditing(true); cancelGestures(); settleSwap(true);
         retainedOffsets_.clear();
         didDeactivate();
@@ -526,6 +531,7 @@ void Canvas::playEntrance(Point offset, double now) {
 // prepareToLeave (:255-261).
 void Canvas::prepareToLeave(double now) {
     begin(now);
+    willEndInteraction();
     closePopups();
     endEditing(true);
     cancelGestures();
@@ -545,6 +551,7 @@ void Canvas::cancelGestures() {
 bool Canvas::pointerDown(Point point, const PointerInput& input, double now) {
     begin(now);
     if (!active_ || swapDeadline_) return false;
+    if (interceptPointerDown(point, input)) { notifyInput(); return true; }
     // The first press outside an open menu or pop-over only closes it; a press
     // on its anchor closes it too (the anchor toggles).
     if (menu_) {
@@ -598,7 +605,9 @@ bool Canvas::scroll(Point point, Point delta, double now) {
     begin(now);
     if (!active_) return false;
     if (menu_) {
+        const double before = menu_->scrollOffset();
         if (inside(menu_->layer().frame(), point)) menu_->scroll(delta.y);
+        if (menu_->scrollOffset() != before) notifyInput(); // rows scrolled in or out (UIA)
         return true;
     }
     if (popover_) return true;
@@ -624,7 +633,12 @@ bool Canvas::keyDown(const KeyInput& input, double now) {
     begin(now);
     if (!active_) return false;
     if (interceptKey(input)) return true;
-    if (menu_) return menu_->handleKey(input);
+    if (menu_) {
+        const double before = menu_->scrollOffset();
+        const bool handled = menu_->handleKey(input);
+        if (menu_ && menu_->scrollOffset() != before) notifyInput(); // rows scrolled in or out (UIA)
+        return handled;
+    }
     if (popover_) {
         if (input.virtualKey != key::escape) return false;
         closePopover();
@@ -654,6 +668,7 @@ void Canvas::accessibilityItems(std::vector<AccessibilityItem>& out) const {
 }
 bool Canvas::performAccessibilityAction(std::string_view id, double now) {
     begin(now);
+    if (accessibilityAction(id)) return true;
     for (Control* control : router_.controls()) if (control->id() == id) { control->activate(); return true; }
     return false;
 }
@@ -673,6 +688,7 @@ bool Canvas::adjustAccessibilitySlider(std::string_view id, double value, double
 // stand-ins have no text role): the text is set and committed.
 bool Canvas::setAccessibilityText(std::string_view id, std::string_view value, double now) {
     begin(now);
+    if (accessibilityText(id, value)) return true;
     for (Control* control : router_.controls()) {
         auto* field = control->id() == id ? dynamic_cast<TextField*>(control) : nullptr;
         if (!field || !field->enabled()) continue;
@@ -686,9 +702,10 @@ bool Canvas::setAccessibilityText(std::string_view id, std::string_view value, d
 // --- Native scene support ------------------------------------------------------------------
 std::uint64_t Canvas::contentRevision() const noexcept {
     const auto* header = currentHeader();
-    const std::array<std::uint64_t, 6> key{arena_.revision(), page_->layer().arena().revision(),
+    const std::array<std::uint64_t, 8> key{arena_.revision(), page_->layer().arena().revision(),
         header ? header->layer().arena().revision() : 0, menu_ ? menu_->layer().arena().revision() : 0,
-        popover_ ? popover_->layer().arena().revision() : 0, structure_};
+        popover_ ? popover_->layer().arena().revision() : 0, structure_,
+        std::uint64_t(reinterpret_cast<std::uintptr_t>(tracked_)), tracked_ ? tracked_->revision() : 0};
     if (key != revisionKey_) { revisionKey_ = key; ++revision_; }
     return revision_;
 }

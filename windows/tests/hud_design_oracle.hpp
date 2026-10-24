@@ -241,18 +241,21 @@ inline void nodePrimitives(const Json& n, const Affine& parent, double alpha, st
     if (n["gradient"].isObject()) out.push_back({"gradient", box, std::nullopt, {}, {}, alpha, where});
     if (n["children"].isArray()) for (const auto& c : n["children"].array()) nodePrimitives(c, world, alpha, tint, out, where, false);
 }
-inline void layerPrimitives(const d::Layer& l, const d::Layer& host, double opacity, std::vector<Primitive>& out) {
+// A tint colours the surface its animatable layer places: that layer's own
+// content and its static descendants drawn into it (samplePoses' placement).
+inline void layerPrimitives(const d::Layer& l, const d::Layer& host, double opacity, std::vector<Primitive>& out, std::optional<Color> inherited = std::nullopt) {
     double alpha = opacity * l.value(Channel::opacity);
     if (l.hidden()) alpha = 0;
-    if (const auto& node = l.content()) nodePrimitives(*node, d::modelWorld(l, host), alpha, l.tint(), out, l.id(), true);
+    const auto tint = l.animatable() ? l.tint() : inherited;
+    if (const auto& node = l.content()) nodePrimitives(*node, d::modelWorld(l, host), alpha, tint, out, l.id(), true);
     if (const auto* t = l.text()) {
         const Affine parent = l.parent() ? d::modelWorld(*l.parent(), host) : Affine{};
         Primitive p{"text", bound(parent, t->lineFrame), std::nullopt, {}, {}, alpha, l.id()};
-        for (const auto& r : t->runs) { p.text += r.text; p.colors.push_back(multiply(r.style.color, l.tint())); }
+        for (const auto& r : t->runs) { p.text += r.text; p.colors.push_back(multiply(r.style.color, tint)); }
         p.text += std::string(" [") + (t->alignment == d::TextAlignment::left ? "left" : t->alignment == d::TextAlignment::center ? "center" : "right") + " " + std::to_string(t->maximumLines) + "]";
         if (!p.text.starts_with(" [")) out.push_back(std::move(p));
     }
-    for (const auto* c : l.children()) layerPrimitives(*c, host, alpha, out);
+    for (const auto* c : l.children()) layerPrimitives(*c, host, alpha, out, tint);
 }
 inline bool same(const Primitive& a, const Primitive& b) {
     const bool kinds = a.kind == b.kind || (a.kind == "artwork" && b.kind == "gradient") || (a.kind == "gradient" && b.kind == "artwork");

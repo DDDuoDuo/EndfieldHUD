@@ -254,7 +254,7 @@ if(WIN32)
       # The real install tree staged, packed, installed and removed in
       # temporary folders (complete when the Mac-exported inputs are configured).
       set(ehud_release_complete OFF)
-      if(ehud_app_inputs AND EXISTS "${ehud_app_inputs}/notes-controls-assets")
+      if(ehud_app_inputs AND EXISTS "${ehud_app_inputs}/runtime-compiled-animation/runtime-input.json")
         set(ehud_release_complete ON)
       endif()
       add_test(NAME endfieldhud_release_contracts COMMAND "${CMAKE_COMMAND}" "-DBUILD=${CMAKE_BINARY_DIR}" "-DCONFIG=$<CONFIG>"

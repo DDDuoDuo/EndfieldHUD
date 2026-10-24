@@ -33,6 +33,9 @@ private:
 // names more images at once (App shortcuts) raises them for its own provider.
 struct LayerImageSourceLimits {
     std::size_t cachedImages{24},liveImages{48},liveBytes{8*1024*1024};
+    // Largest side of one image (default maximumDimension). Personal ID's
+    // portrait is one panning image of up to 2048 px (HUDPortraitArtwork.panningImage).
+    unsigned dimension{256};
 };
 struct LayerImageSourceStats {
     std::size_t cachedImages{},cachedBytes{},liveImages{},liveBytes{};

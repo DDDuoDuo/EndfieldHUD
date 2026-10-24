@@ -130,6 +130,7 @@ TaskCard::TaskCard(Builder& b, std::string id, std::string title, bool done, boo
     setTarget(bounds, std::nullopt, true);
     render(false);
 }
+const TextStyle& TaskCard::titleStyle() { return taskTitleStyle(); }
 std::vector<Control*> TaskCard::controls() { return {this, action_, delete_}; }
 void TaskCard::toggle() { setDone(!done_, true); if (onToggle) onToggle(done_); }
 void TaskCard::setDone(bool done, bool animated) { if (done != done_) { done_ = done; render(animated); } }

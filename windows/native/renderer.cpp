@@ -161,7 +161,7 @@ void shutterUniforms(ObjectUniform& result, const PlaneShutter& shutter) {
 }
 ObjectUniform uniforms(const DrawObject &object) {
     identity(object.sourceID);
-    require(object.blend==NativeBlend::sourceOver||object.blend==NativeBlend::screen||object.blend==NativeBlend::weightedAdd,"Unknown native blend operation");
+    require(object.blend==NativeBlend::sourceOver||object.blend==NativeBlend::screen,"Unknown native blend operation");
     require(object.masks.size() <= 8, "Too many plane masks");
     ObjectUniform result{};
     result.world = matrix(object.world);
@@ -217,18 +217,8 @@ ObjectUniform uniforms(const DrawObject &object) {
     return result;
 }
 void validateNativeBlends(std::span<const DrawObject>objects,bool localGroup,NativeGroupColorSpace colorSpace){
-    std::size_t weighted{};double sum{};
-    for(const auto&object:objects){
+    for(const auto&object:objects)
         require(object.blend==NativeBlend::sourceOver||(localGroup&&colorSpace==NativeGroupColorSpace::encodedSRGB),"Special blending requires an encoded source group");
-        if(object.blend==NativeBlend::weightedAdd){++weighted;sum+=object.opacity;}
-    }
-    if(weighted){
-        require(weighted==objects.size()&&weighted<=2,"Weighted crossfade requires at most two exclusively weighted leaves");
-        // Two normalized float weights may round a few ULPs above one. The
-        // bound prevents additive content from creating an unassociated/HDR
-        // result while allowing complementary scalar interpolation weights.
-        require(std::isfinite(sum)&&sum<=1.+2*std::numeric_limits<float>::epsilon(),"Weighted crossfade opacity sum exceeds one");
-    }
 }
 ComPtr<ID3DBlob> compile(const std::filesystem::path &path, const char *entry, const char *target) {
     ComPtr<ID3DBlob> program, errors;
@@ -568,7 +558,7 @@ struct Renderer::Impl {
     void renderFilteredRoot();
     ComPtr<ID3D11InputLayout> layout;
     ComPtr<ID3D11Buffer> cameraBuffer;
-    ComPtr<ID3D11BlendState> overBlend, screenBlend, weightedBlend, replaceBlend;
+    ComPtr<ID3D11BlendState> overBlend, screenBlend, replaceBlend;
     ComPtr<ID3D11RasterizerState> raster;
     ComPtr<ID3D11DepthStencilState> noDepth;
     ComPtr<ID3D11SamplerState> nearestSampler, linearSampler;
@@ -983,8 +973,6 @@ struct Renderer::Impl {
         checked(device->CreateBlendState(&blend, &overBlend), "Create linear premultiplied over blending");
         over.DestBlend=D3D11_BLEND_INV_SRC_COLOR;
         checked(device->CreateBlendState(&blend,&screenBlend),"Create encoded premultiplied screen blending");
-        over.DestBlend=over.DestBlendAlpha=D3D11_BLEND_ONE;
-        checked(device->CreateBlendState(&blend,&weightedBlend),"Create encoded premultiplied weighted addition");
         over.DestBlend=over.DestBlendAlpha=D3D11_BLEND_INV_SRC_ALPHA;
         over.BlendEnable = FALSE;
         checked(device->CreateBlendState(&blend, &replaceBlend), "Create output replacement blending");
@@ -1026,7 +1014,7 @@ struct Renderer::Impl {
         white.view.Reset(); white.resource.Reset();
         sceneVS.Reset(); compositeVS.Reset(); scenePS.Reset(); encodedInputPS.Reset(); encodedOutputPS.Reset(); encodedBothPS.Reset(); alphaPS.Reset(); alphaEncodedOutputPS.Reset(); compositePS.Reset(); mediaPS.Reset();
         contentBlurPS.Reset(); contentDimPS.Reset(); counters.contentFilterBytes = 0; contentFilter.release();
-        layout.Reset(); cameraBuffer.Reset(); overBlend.Reset(); screenBlend.Reset(); weightedBlend.Reset(); replaceBlend.Reset();
+        layout.Reset(); cameraBuffer.Reset(); overBlend.Reset(); screenBlend.Reset(); replaceBlend.Reset();
         raster.Reset(); noDepth.Reset(); nearestSampler.Reset(); linearSampler.Reset(); gpuIdleQuery.Reset();
         outputView.Reset(); backBuffer.Reset(); linearView.Reset(); linearResource.Reset(); linearTarget.Reset();
         if (context) { context->ClearState(); context->Flush(); }
@@ -1645,7 +1633,7 @@ void Renderer::Impl::renderNativeDraws(std::span<const Draw>objects,ID3D11Render
     auto*boundShader=r.scenePS.Get();auto boundBlend=NativeBlend::sourceOver;
     for (const auto &draw : objects) {
         if (draw.values.opacity == 0 || draw.values.tint[3] == 0) continue;
-        if(boundBlend!=draw.blend){r.context->OMSetBlendState(draw.blend==NativeBlend::screen?r.screenBlend.Get():draw.blend==NativeBlend::weightedAdd?r.weightedBlend.Get():r.overBlend.Get(),nullptr,UINT_MAX);boundBlend=draw.blend;}
+        if(boundBlend!=draw.blend){r.context->OMSetBlendState(draw.blend==NativeBlend::screen?r.screenBlend.Get():r.overBlend.Get(),nullptr,UINT_MAX);boundBlend=draw.blend;}
         const bool encodedOutput=colorSpace==NativeGroupColorSpace::encodedSRGB;
         auto*shader=draw.texture->alphaOnly?(encodedOutput?r.alphaEncodedOutputPS.Get():r.alphaPS.Get()):
             encodedOutput?(draw.texture->encodedSRGB?r.encodedBothPS.Get():r.encodedOutputPS.Get()):(draw.texture->encodedSRGB?r.encodedInputPS.Get():r.scenePS.Get());

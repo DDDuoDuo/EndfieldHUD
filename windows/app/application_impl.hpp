@@ -38,12 +38,13 @@
 #include "tools/hud_design_owner.hpp"
 #include "native/notes_clipboard.hpp"
 #include "tools/archive_options.hpp"
-#include "tools/archive_media_binding.hpp"
+#include "tools/archive_owner.hpp"
+#include "tools/notes_centre_owner.hpp"
 #include "native/archive_text_rules.hpp"
 #include "tools/settings_preview.hpp"
 #include "native/watch_appearance.hpp"
 #include "core/source_color.hpp"
-#include "tools/shelf_preview.hpp"
+#include "tools/shelf_owner.hpp"
 #include "modules/clipboard_canvas.hpp"
 #include "modules/event_log_canvas.hpp"
 #include "modules/volume_canvas.hpp"
@@ -54,13 +55,15 @@
 #include "native/power_service.hpp"
 #include "tools/storage_owner.hpp"
 #include "tools/activity_owner.hpp"
-#include "tools/reader_preview.hpp"
+#include "tools/reader_canvas_owner.hpp"
+#include "modules/projection_canvas.hpp"
+#include "modules/notes_format_bar.hpp"
 #include "modules/calendar_canvas.hpp"
 #include "modules/work_mode_canvas.hpp"
 #include "native/calendar_civil.hpp"
 #include "native/calendar_notifications.hpp"
-#include "tools/map_preview.hpp"
-#include "tools/orbipom_preview.hpp"
+#include "tools/map_owner.hpp"
+#include "modules/orbipom_canvas.hpp"
 #include "modules/orbipom_runtime.hpp"
 #include "native/map_assets.hpp"
 #include "modules/map_geography.hpp"
@@ -263,6 +266,7 @@ struct Application::Impl {
         native::AudioRuntime* audio() noexcept override;
         native::NativeMediaRequestBroker* mediaBroker() noexcept override;
         const modules::WorkModeController* workMode() const noexcept override;
+        std::int64_t minigameBest() const noexcept override;
         core::ApplicationEventRecorder* eventRecorder() noexcept override;
         void requestFrame() override;
         void recordEvent(modules::EventKind, modules::EventMetadata) override;
@@ -403,7 +407,6 @@ struct Application::Impl {
     void attributeCompletions(UtilityExecutor&);
     void traceOpening(double time);
     void traceOpened(double time);
-    native::ScreenReaderPeerHooks peerHooks();
     void unregisterModule(std::unique_ptr<ModuleOwner>&) noexcept;
     // --- module areas and host broadcasts ---------------------------------------
     void constructAreas();
@@ -453,10 +456,10 @@ struct Application::Impl {
     // hidden (OverlayController's afterSystemClose / openStorageAfterClose /
     // pendingShelfReveal), so nothing opens behind the shown HUD's topmost
     // band: Settings links, update pages and the login's runtime download
-    // (openAfterClose), Windows Storage Settings, the Shelf's Reveal and Open.
+    // (openAfterClose), Windows Storage Settings, the Shelf's Reveal.
     void openAfterClose(std::string url, double time);
     void openStorageSettingsAfterClose(double time);
-    void openAfterConcealed(double time);
+    void openAfterConcealed();
     void openPendingLink();
     void openPendingStorageSettings();
     bool hudClosed() const;
@@ -578,9 +581,13 @@ struct Application::Impl {
 
     // --- module construction ----------------------------------------------------
     void constructNotes();
+    void constructNotesCentre();
     void constructShelf();
     void constructMap();
     void constructReader();
+    void constructProjection();
+    // ProjectionCanvas.onOpen (Open projection / Insert media): the HUD / workspace handoff.
+    void openProjection(double time);
     void constructCalendar();
     void constructServices();
     void constructClipboard();
@@ -652,12 +659,9 @@ struct Application::Impl {
     gpu::Renderer renderer;
     gpu::DesktopBackdrop backdrop;
     ModuleRegistry registry;
-    std::unique_ptr<gpu::NativeNotesControlsAssets> notesAssets;
     std::unique_ptr<tools::NotesPreview> notes;
-    std::unique_ptr<gpu::NativeShelfAssets> shelfAssets;
-    std::unique_ptr<tools::ShelfPreview> shelf;
+    std::unique_ptr<tools::ShelfService> shelf;
     std::optional<ehud::data::ShelfFileAccess> pendingShelfReveal;
-    std::optional<ehud::data::ShelfFileAccess> pendingShelfOpen; // the properties card's Open, after the HUD closed like Reveal
     modules::ClipboardCanvas* clipboardCanvas{};        // owned by clipboardModuleOwner
     // Volume app-row icons on the shared utility queue; declared before the
     // Volume owner, which borrows its image cache (constructVolumeIcons).
@@ -694,11 +698,11 @@ struct Application::Impl {
     // Now Playing routes); null in development and hidden coverage.
     std::unique_ptr<gpu::AudioRuntime> audio;
     std::unique_ptr<modules::OrbiPomSession> gameSession;
-    std::unique_ptr<tools::OrbiPomPreview> game;
+    modules::OrbiPomCanvas* game{};             // owned by gameModuleOwner's design core
     std::int64_t gameBest{};
     bool gameEnabled{};
     std::unique_ptr<ehud::data::MapStore> mapStore;
-    std::unique_ptr<tools::MapPreview> map;
+    tools::MapOwner* map{}; // owned by mapModuleOwner
     UtilityExecutor::Route mapLoadRoute{};
     bool mapLoadRequested{}, mapRefreshQueued{};
     double mapTime{};
@@ -716,7 +720,7 @@ struct Application::Impl {
     core::Language calendarLanguage{core::Language::system};
     std::unique_ptr<gpu::ReaderOwner> readerOwner;
     std::unique_ptr<ReaderScrollTrace> readerTrace;
-    std::unique_ptr<tools::ReaderPreview> reader;
+    tools::ReaderCanvasOwner* reader{}; // owned by readerModuleOwner (constructReader)
     bool readerRefreshQueued{}, readerActionQueued{};
     double readerTime{};
     std::optional<tools::ReaderImportAction> pendingReaderAction, pendingReaderPicker;
@@ -731,6 +735,9 @@ struct Application::Impl {
     std::unique_ptr<gpu::NativeMediaRequestBroker> mediaBroker;
     gpu::NativeMediaRequestBroker::Client notesMediaClient{}, archiveMediaClient{};
     std::unique_ptr<tools::ProjectionWorkspace> projection;
+    // ProjectionSettings.shared (projection.settings.v1): the Projection page's
+    // values, attached to the workspace's session model at every presentation.
+    std::unique_ptr<modules::ProjectionPenSettings> projectionPen;
     ProjectionHandoff projectionHandoff;
     std::uintptr_t hudDisplay{}, previousApplication{};
     double projectionWorkTopPixels{};
@@ -741,11 +748,12 @@ struct Application::Impl {
     std::deque<tools::ProjectionPreviewAction> projectionActions;
     std::optional<gpu::TrayAction> projectionTrayAction;
     std::optional<tools::ProjectionPreviewAction> pendingProjectionPicker;
-    gpu::LayerImageSource archiveImages;
-    std::shared_ptr<gpu::ArchiveDateFormatter> archiveDates;
+    // Archive's gallery posters (256 px memory images): the canvas's LRU of 18
+    // plus its 12 wanted ones stay cached (tools/archive_media_binding.hpp).
+    gpu::LayerImageSource archiveImages{gpu::LayerImageSourceLimits{30, 48, 12 * 1024 * 1024}};
     std::unique_ptr<ArchiveService> archiveService;
-    std::unique_ptr<tools::ArchivePreview> archive;
-    std::unique_ptr<tools::ArchiveMediaBinding> archiveMedia;
+    tools::ArchiveOwner* archive{};   // archiveModuleOwner's owner (Archive on the design library)
+    std::optional<modules::ArchiveMediaRequest> pendingArchiveRequest; // the canvas's picker / Shelf request (archiveMediaMessage)
     gpu::ApplicationIcon applicationIcon;
     struct TrayIconArt {std::string id,file,sha256;bool templateArt{};};
     std::vector<TrayIconArt> trayIcons;
@@ -757,7 +765,7 @@ struct Application::Impl {
     enum class PickerOwner {none,notes,archive,reader,projection,area,logo};
     PickerOwner pickerOwner{PickerOwner::none};
     std::function<void(ApplicationFileResult)> areaPicker; // pending area dialog completion
-    std::optional<tools::ArchiveMediaAction> pendingArchivePicker;
+    std::optional<modules::ArchiveMediaRequest> pendingArchivePicker;
     std::optional<core::Module> pendingModule;
     // The design library's shared overlay (confirm bar, toast, content dim) and
     // its Context; outlives every design owner (they borrow the Context).
@@ -782,9 +790,9 @@ struct Application::Impl {
     // composed above the shared overlay. Address only; cleared with the areas.
     ModuleOwner* facilityOwner{};
     // Module adapters (registration order = construction order).
-    std::unique_ptr<ModuleOwner> notesModuleOwner, shelfModuleOwner, mapModuleOwner, readerModuleOwner, calendarModuleOwner,
+    std::unique_ptr<ModuleOwner> notesModuleOwner, notesCentreModuleOwner, shelfModuleOwner, mapModuleOwner, readerModuleOwner, calendarModuleOwner,
         clipboardModuleOwner, archiveModuleOwner, storageModuleOwner, activityModuleOwner, eventLogModuleOwner,
-        batteryModuleOwner, workModeModuleOwner, volumeModuleOwner, settingsModuleOwner, gameModuleOwner;
+        batteryModuleOwner, workModeModuleOwner, volumeModuleOwner, settingsModuleOwner, gameModuleOwner, projectionModuleOwner;
     // Factory-added module areas (registration order) and the factories that
     // returned null; the shared host they borrow outlives them.
     struct ExternalModule { std::string name; std::unique_ptr<ModuleOwner> owner; };
@@ -1001,7 +1009,7 @@ struct Application::Impl {
     bool diagnosticEditing{}, diagnosticFinished{};
     // Fixed WM_APP routes (unchanged from the preview) and the service generation.
     static constexpr UINT idCardMessage=WM_APP+234,prewarmMessage=WM_APP+240,themeColorMessage=WM_APP+239,hudDropMessage=WM_APP+236,restartDeclinedMessage=WM_APP+237,restartMessage=WM_APP+238,eventChangedMessage=WM_APP+194,utilityMessage=WM_APP+195,mediaPickerMessage=WM_APP+196,
-        sharedMediaMessage=WM_APP+223,archiveChangedMessage=WM_APP+224,systemServiceMessage=WM_APP+225,clipboardChangedMessage=WM_APP+226,
+        sharedMediaMessage=WM_APP+223,archiveChangedMessage=WM_APP+224,archiveMediaMessage=WM_APP+221,systemServiceMessage=WM_APP+225,clipboardChangedMessage=WM_APP+226,
         readerChangedMessage=WM_APP+227,readerActionMessage=WM_APP+228,projectionActionMessage=WM_APP+229,projectionDropMessage=WM_APP+230,
         mapChangedMessage=WM_APP+231,calendarChangedMessage=WM_APP+232,audioMessage=WM_APP+233,trayMessage=WM_APP+210,summonHookMessage=WM_APP+0x2C0;
     // ApplicationHost::registerMessage range for module areas.

@@ -1070,6 +1070,7 @@ LayerRasterizer::~LayerRasterizer()=default;
 bool LayerRasterizer::setDefaultFontLanguage(LayerFontLanguage language){auto&r=*impl_;r.onThread();if(std::find(core::textRegions.begin(),core::textRegions.end(),language)==core::textRegions.end())invalid("Invalid default font language");if(r.language==language)return false;if(r.fontRevision==std::numeric_limits<std::uint64_t>::max())invalid("Typography generation exhausted");
     auto cascade=r.cascadeFor(language);r.fallback=std::move(cascade);r.language=language;++r.fontRevision;return true;}
 std::span<const std::string> LayerRasterizer::bundledFontFamilies()const{impl_->onThread();return impl_->bundledNames;}
+std::optional<std::string> LayerRasterizer::bundledFamilyOf(std::string_view name)const{impl_->onThread();return impl_->bundledFace(name);}
 std::string LayerRasterizer::regionFontFamily(LayerFontLanguage language)const{impl_->onThread();return impl_->regionFamily(language);}
 LayerFontLanguage LayerRasterizer::fontLanguage()const{impl_->onThread();return impl_->language;}
 std::uint64_t LayerRasterizer::fontRevision()const{impl_->onThread();return impl_->fontRevision;}

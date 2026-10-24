@@ -73,12 +73,18 @@ Hex lightTone(Hex hex) noexcept {
 
 // HUDAccentPalette.init (:217-218): trim, drop '#', six characters that
 // UInt32(_:radix: 16) accepts (an optional sign, hex digits of either case).
-Hex normalizedAccent(std::string_view text) noexcept {
+namespace {
+std::string_view trimmedView(std::string_view text) noexcept {
     std::size_t begin = 0, end = text.size();
     while (const auto n = spaceAt(text, begin, false)) { if (begin + n > end) break; begin += n; }
     while (end > begin) { const auto n = spaceAt(text, end, true); if (!n || end - n < begin) break; end -= n; }
+    return text.substr(begin, end - begin);
+}
+}
+std::string trimmedWhitespace(std::string_view text) { return std::string(trimmedView(text)); }
+Hex normalizedAccent(std::string_view text) noexcept {
     std::string raw;
-    for (auto c : text.substr(begin, end - begin)) if (c != '#') raw.push_back(c);
+    for (auto c : trimmedView(text)) if (c != '#') raw.push_back(c);
     if (raw.size() != 6) return standardAccent;
     std::size_t at = 0; bool negative{};
     if (raw[0] == '+' || raw[0] == '-') { negative = raw[0] == '-'; at = 1; }
