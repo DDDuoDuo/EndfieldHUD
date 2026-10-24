@@ -36,6 +36,13 @@ modules::MediaAssemblyFileOperations mediaAssemblyFileOperations();
 bool mediaAssemblySamePath(const std::string&,const std::string&);
 
 using MediaAssemblyBitmap=modules::MediaAssemblyBitmap;
+// Source MediaAssemblyAssetCatalog.image(_:maximumDimension:): an
+// allow-listed PNG of the pinned folder at most `maximum` px on its longest
+// side (WIC Fant, CGImageSourceCreateThumbnailAtIndex's MaxPixelSize), its
+// bytes checked against the provenance hash first. The drawer's sticker
+// thumbnails decode at 96 px (not the 640 px source). Owner thread; throws
+// MediaAssemblyFailure(unavailable).
+MediaAssemblyBitmap mediaAssemblyThumbnail(const NativeMediaAssemblyAssets&,const MediaAssemblyAsset&,unsigned maximum);
 struct MediaAssemblyEngineStats {
     std::uint64_t opens{},previewDecodes{},previewCacheHits{},exports{},clears{};
     // Video export frames edited on the export job's GPU device vs the CPU

@@ -7,6 +7,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace endfield::modules {
@@ -84,13 +85,24 @@ struct MediaAssemblyAdjustments {
     std::optional<MediaAssemblyTimeRange>timeRange(double duration)const noexcept;
     bool operator==(const MediaAssemblyAdjustments&)const=default;
 };
+// Source MediaAssemblyHandle (Sources/MediaAssemblyViewport.swift:129): the
+// selected sticker's ↻, × and four corner squares (0 ⌜ 1 ⌝ 2 ⌞ 3 ⌟).
+struct MediaAssemblyHandle {
+    enum class Kind {rotate,remove,corner};
+    Kind kind{Kind::rotate};int corner{};
+    bool operator==(const MediaAssemblyHandle&)const=default;
+};
 // Only retained preview geometry: no decoder, renderer, store, clock or allocation
 // in pan/zoom/crop transforms. Image editing and output pixels are separate.
+// Source MediaAssemblyViewport (Sources/MediaAssemblyViewport.swift:6-127).
 class MediaAssemblyViewport final {
 public:
     double zoom()const noexcept{return zoom_;}core::Point pan()const noexcept{return pan_;}
     void reset()noexcept;core::Rect imageRect(core::Point imageSize,core::Rect viewport)const noexcept;
+    // Wheel and pinch: zooms keeping `at` still (1...20).
     void magnify(double factor,core::Point at,core::Point imageSize,core::Rect viewport)noexcept;
+    // The zoom buttons and keys (zoom(by:size:in:), :30-34): the pan is kept and clamped.
+    void zoomBy(double factor,core::Point imageSize,core::Rect viewport)noexcept;
     void move(core::Point delta,core::Point imageSize,core::Rect viewport)noexcept;
     static core::Rect stickerRect(const MediaAssemblySticker&,core::Rect image);
     static core::Point unrotate(core::Point,core::Point center,double degrees)noexcept;
@@ -98,8 +110,42 @@ public:
     static core::Point sourcePoint(core::Point,int quarterTurns,bool mirrored)noexcept;
     static core::Rect displayCrop(MediaAssemblyCrop,int quarterTurns,bool mirrored)noexcept;
     static MediaAssemblyCrop sourceCrop(core::Rect,int quarterTurns,bool mirrored)noexcept;
+    // A crop corner dragged to `to` (normalized display space): the box keeps
+    // at least .05 of each side; corners 0 ⌜ 1 ⌝ 2 ⌞ 3 ⌟ (:92-98).
+    static core::Rect dragCrop(core::Rect crop,int corner,core::Point to)noexcept;
+    // Top-left corners of the four 14 x 14 crop L-handles in the stage, offset
+    // -3 / -11 and clamped to 4 ... stage - 18 (:102-107).
+    static std::array<core::Point,4>cropHandleOrigins(core::Rect crop,core::Rect image,core::Point stageSize)noexcept;
+    // Handle centres in the selected sticker's unrotated frame (:111-115):
+    // ↻ (w/2, -25), × (w + 13, -13), corners just outside the outline.
+    static std::array<std::pair<MediaAssemblyHandle,core::Point>,6>handleCentres(core::Point size)noexcept;
+    // Corners within ±7 px, round handles within radius 11 (:117-126); no clamp to the stage.
+    static std::optional<MediaAssemblyHandle>handle(core::Point,core::Rect sticker,double rotation)noexcept;
 private:
     double zoom_{1};core::Point pan_;
     void clamp(core::Point imageSize,core::Rect viewport)noexcept;
+};
+// Source MediaAssemblyGeometry (:133-143): what a rendered preview shows (the
+// full frame while the crop tool shows the uncropped picture).
+struct MediaAssemblyGeometry {
+    int quarterTurns{};bool mirrored{};MediaAssemblyCrop crop;
+    static MediaAssemblyGeometry make(int quarterTurns,bool mirrored,MediaAssemblyCrop)noexcept; // turns normalized 0...3
+    static MediaAssemblyGeometry of(const MediaAssemblyAdjustments&,bool cropPreview)noexcept;
+    bool operator==(const MediaAssemblyGeometry&)const=default;
+};
+// Source MediaAssemblyPictureTransform (:148-179): the rotation and flips the
+// stage lays over the shown preview while a rotate / mirror edit renders.
+struct MediaAssemblyPictureTransform {
+    double angle{};                  // clockwise degrees, cumulative
+    double scaleX{1},scaleY{1};
+    bool swapsAxes()const noexcept;
+    bool isIdentity()const noexcept;
+    struct Delta {int turns{};bool reflected{};};
+    // R(t1)·M·R(-t0) = R(t1 + t0)·M: quarter turns, plus a horizontal
+    // reflection applied first when the mirror differs.
+    static Delta delta(const MediaAssemblyGeometry&shown,const MediaAssemblyGeometry&target)noexcept;
+    // The least turning (clockwise on a tie), then the fewest flipped axes.
+    MediaAssemblyPictureTransform nearest(int turns,bool reflected)const noexcept;
+    bool operator==(const MediaAssemblyPictureTransform&)const=default;
 };
 }

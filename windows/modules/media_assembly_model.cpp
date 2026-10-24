@@ -115,6 +115,7 @@ void MediaAssemblyViewport::magnify(double factor,P at,P size,R view)noexcept{
     if(!std::isfinite(factor)||factor<=0)return;const auto old=center(imageRect(size,view));const double next=std::clamp(zoom_*factor,1.,20.),ratio=next/zoom_;zoom_=next;
     const auto c=center(view);pan_={at.x-(at.x-old.x)*ratio-c.x,at.y-(at.y-old.y)*ratio-c.y};clamp(size,view);
 }
+void MediaAssemblyViewport::zoomBy(double factor,P size,R view)noexcept{if(!std::isfinite(factor)||factor<=0)return;zoom_=std::clamp(zoom_*factor,1.,20.);clamp(size,view);}
 void MediaAssemblyViewport::move(P delta,P size,R view)noexcept{if(!std::isfinite(delta.x)||!std::isfinite(delta.y))return;pan_.x+=delta.x;pan_.y+=delta.y;clamp(size,view);}
 void MediaAssemblyViewport::clamp(P size,R view)noexcept{const auto r=imageRect(size,view);const auto x=std::max(0.,(r.width-view.width)*.5),y=std::max(0.,(r.height-view.height)*.5);pan_.x=std::clamp(pan_.x,-x,x);pan_.y=std::clamp(pan_.y,-y,y);}
 R MediaAssemblyViewport::stickerRect(const MediaAssemblySticker&s,R image){const auto size=mediaAssemblyStickerPixelSize(s.kind);const double f=std::min(image.width,image.height)*s.size/std::max(size.x,size.y),w=size.x*f,h=size.y*f;return {image.x+image.width*s.x-w*.5,image.y+image.height*s.y-h*.5,w,h};}
@@ -123,4 +124,46 @@ P MediaAssemblyViewport::displayPoint(P p,int turns,bool mirror)noexcept{if(mirr
 P MediaAssemblyViewport::sourcePoint(P p,int turns,bool mirror)noexcept{switch((turns%4+4)%4){case 1:p={p.y,1-p.x};break;case 2:p={1-p.x,1-p.y};break;case 3:p={1-p.y,p.x};break;default:break;}if(mirror)p.x=1-p.x;return p;}
 R MediaAssemblyViewport::displayCrop(MediaAssemblyCrop crop,int turns,bool mirror)noexcept{return mapRect({crop.x,crop.y,crop.width,crop.height},[=](P p){return displayPoint(p,turns,mirror);});}
 MediaAssemblyCrop MediaAssemblyViewport::sourceCrop(R display,int turns,bool mirror)noexcept{const auto r=mapRect(display,[=](P p){return sourcePoint(p,turns,mirror);});const double x=std::clamp(r.x,0.,.99),y=std::clamp(r.y,0.,.99);return {x,y,std::min(std::max(.01,r.width),1-x),std::min(std::max(.01,r.height),1-y)};}
+R MediaAssemblyViewport::dragCrop(R crop,int corner,P to)noexcept{
+    const double u=std::clamp(to.x,0.,1.),v=std::clamp(to.y,0.,1.);double x0=crop.x,y0=crop.y,x1=crop.x+crop.width,y1=crop.y+crop.height;
+    if(corner%2==0)x0=std::min(u,x1-.05);else x1=std::max(u,x0+.05);
+    if(corner<2)y0=std::min(v,y1-.05);else y1=std::max(v,y0+.05);
+    return {x0,y0,x1-x0,y1-y0};
+}
+std::array<P,4>MediaAssemblyViewport::cropHandleOrigins(R crop,R image,P stage)noexcept{
+    std::array<P,4>out{};constexpr std::array<P,4>corners{{{0,0},{1,0},{0,1},{1,1}}};
+    for(std::size_t n=0;n<4;++n){const auto c=corners[n];
+        out[n]={std::min(stage.x-18,std::max(4.,image.x+(crop.x+c.x*crop.width)*image.width-(c.x>0?11:3))),std::min(stage.y-18,std::max(4.,image.y+(crop.y+c.y*crop.height)*image.height-(c.y>0?11:3)))};}
+    return out;
+}
+std::array<std::pair<MediaAssemblyHandle,P>,6>MediaAssemblyViewport::handleCentres(P s)noexcept{
+    using K=MediaAssemblyHandle::Kind;
+    return {{{{K::rotate,0},{s.x/2,-25}},{{K::remove,0},{s.x+13,-13}},{{K::corner,0},{-.5,-.5}},{{K::corner,1},{s.x+.5,-.5}},{{K::corner,2},{-.5,s.y+.5}},{{K::corner,3},{s.x+.5,s.y+.5}}}};
+}
+std::optional<MediaAssemblyHandle>MediaAssemblyViewport::handle(P point,R rect,double rotation)noexcept{
+    const auto local=unrotate(point,center(rect),rotation);const P p{local.x-rect.x,local.y-rect.y};
+    for(const auto&[handle,c]:handleCentres({rect.width,rect.height}))
+        if(handle.kind==MediaAssemblyHandle::Kind::corner?std::abs(p.x-c.x)<=7&&std::abs(p.y-c.y)<=7:std::hypot(p.x-c.x,p.y-c.y)<=11)return handle;
+    return std::nullopt;
+}
+MediaAssemblyGeometry MediaAssemblyGeometry::make(int turns,bool mirrored,MediaAssemblyCrop crop)noexcept{return {(turns%4+4)%4,mirrored,crop};}
+MediaAssemblyGeometry MediaAssemblyGeometry::of(const MediaAssemblyAdjustments&a,bool cropPreview)noexcept{return make(a.rotationQuarterTurns,a.mirrored,cropPreview?MediaAssemblyCrop{}:a.crop);}
+// Int((angle / 90).rounded()): Swift rounds half away from zero, as std::round.
+bool MediaAssemblyPictureTransform::swapsAxes()const noexcept{return static_cast<long long>(std::round(angle/90))%2!=0;}
+bool MediaAssemblyPictureTransform::isIdentity()const noexcept{return static_cast<long long>(std::round(angle/90))%4==0&&scaleX==1&&scaleY==1;}
+MediaAssemblyPictureTransform::Delta MediaAssemblyPictureTransform::delta(const MediaAssemblyGeometry&shown,const MediaAssemblyGeometry&target)noexcept{
+    if(shown.mirrored==target.mirrored)return {((target.quarterTurns-shown.quarterTurns)%4+4)%4,false};
+    return {(target.quarterTurns+shown.quarterTurns)%4,true};
+}
+MediaAssemblyPictureTransform MediaAssemblyPictureTransform::nearest(int turns,bool reflected)const noexcept{
+    const double base=double(turns)*90;
+    const std::array<std::array<double,3>,2>candidates=reflected?std::array<std::array<double,3>,2>{{{base,-1,1},{base+180,1,-1}}}:std::array<std::array<double,3>,2>{{{base,1,1},{base+180,-1,-1}}};
+    auto best=*this;double bestCost=std::numeric_limits<double>::infinity();
+    for(const auto&[degrees,sx,sy]:candidates){
+        const double below=degrees+360*std::floor((angle-degrees)/360),above=below+360,unwrapped=angle-below<above-angle?below:above;
+        const double cost=std::abs(unwrapped-angle)+(sx!=scaleX?45:0)+(sy!=scaleY?45:0);
+        if(cost<bestCost){bestCost=cost;best={unwrapped,sx,sy};}
+    }
+    return best;
+}
 }

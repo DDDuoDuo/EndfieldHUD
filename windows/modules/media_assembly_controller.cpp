@@ -90,28 +90,33 @@ void MediaAssemblyController::pump(){
     // completion retries it (no timer).
     if(!accepted)session_.returnPreview(taken);
 }
-bool MediaAssemblyController::exportTo(std::string destination,bool overwrite,std::string_view expected,double t){
+bool MediaAssemblyController::exportTo(std::string destination,bool overwrite,std::string_view expected,double t,ExportCompletion completion){
     checkTime(t);lastTime_=t;const auto document=session_.document();
-    if(session_.exporting()||session_.busy()||!document||(!expected.empty()&&expected!=document->id)){return false;}
-    flushEdited();const auto token=session_.beginExport(document->id);if(!token)return false;
+    const auto refuse=[&]{if(completion)completion(std::nullopt,MediaAssemblyError::unavailable);return false;};
+    if(session_.exporting()||session_.busy()||!document||(!expected.empty()&&expected!=document->id))return refuse();
+    flushEdited();const auto token=session_.beginExport(document->id);if(!token)return refuse();
     auto ticket=std::make_shared<MediaAssemblyExportTicket>();ticket_=ticket;exportToken_=token;progressDeadline_=t+progressInterval;
     MediaAssemblyExportRequest request{document,session_.adjustments(),std::move(destination),overwrite,callbacks_.uuid(),engine_->heicEncoder()};
     auto engine=engine_;auto target=std::make_shared<std::string>();const std::weak_ptr<Alive>alive=alive_;
     const auto&run=exportSubmit_?exportSubmit_:submit_;
+    auto done=std::make_shared<ExportCompletion>(std::move(completion));
     const bool accepted=run([engine,request,ticket,target]{
         struct Finish {MediaAssemblyExportTicket&t;~Finish(){t.finish();}}finish{*ticket};
         *target=engine->exportMedia(request,*ticket);
-    },[this,alive,ticket,token=*token,target,document](std::exception_ptr error){
-        const auto a=alive.lock();if(!a||!a->value||ticket_!=ticket)return;
+    },[this,alive,ticket,token=*token,target,document,done](std::exception_ptr error){
+        const auto a=alive.lock();if(!a||!a->value)return;
+        const auto failure=error?std::optional(mediaAssemblyErrorFrom(error,MediaAssemblyError::exportFailed)):std::nullopt;
+        // A superseded ticket still answers its caller (source: completion?(result)).
+        if(ticket_!=ticket){if(*done)(*done)(failure?std::nullopt:std::optional(*target),failure);return;}
         ticket_.reset();exportToken_.reset();progressDeadline_.reset();
-        if(error){session_.finishExport(token,mediaAssemblyErrorFrom(error,MediaAssemblyError::exportFailed));changed();return;}
+        if(failure){session_.finishExport(token,failure);changed();if(*done)(*done)(std::nullopt,failure);return;}
         session_.finishExport(token);lastExport_=*target;if(callbacks_.event)callbacks_.event("exported");
         // Atomic overwrite creates a new file identity. Reload the new source
         // instead of ever applying the edits twice, without "imported".
         if(engine_->samePath(*target,document->path))importPath(*target,nullptr,false,lastTime_);
-        changed();
+        changed();if(*done)(*done)(*target,std::nullopt);
     });
-    if(!accepted){ticket_.reset();exportToken_.reset();progressDeadline_.reset();session_.finishExport(*token,MediaAssemblyError::exportFailed);}
+    if(!accepted){ticket_.reset();exportToken_.reset();progressDeadline_.reset();session_.finishExport(*token,MediaAssemblyError::exportFailed);changed();if(*done)(*done)(std::nullopt,MediaAssemblyError::exportFailed);return false;}
     changed();return accepted;
 }
 void MediaAssemblyController::cancelExport(){if(ticket_)ticket_->cancel();}

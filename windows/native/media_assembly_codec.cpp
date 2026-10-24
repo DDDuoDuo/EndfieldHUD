@@ -1,4 +1,6 @@
 #include "native/media_assembly_codec.hpp"
+#include "core/data/file_io.hpp"
+#include "core/shell_packet.hpp"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -550,6 +552,20 @@ MediaAssemblyBitmap decodeSticker(IWICImagingFactory*wic,const std::filesystem::
 }
 }
 
+MediaAssemblyBitmap mediaAssemblyThumbnail(const NativeMediaAssemblyAssets&assets,const MediaAssemblyAsset&asset,unsigned maximum){
+    if(!maximum)throw m::MediaAssemblyFailure(m::MediaAssemblyError::unavailable,"thumbnail size");
+    const auto bytes=ehud::data::detail::readFile(assets.root()/mediaAssemblyPath(asset.path),NativeMediaAssemblyAssets::maximumAssetBytes);
+    if(!bytes||bytes->size()!=asset.bytes||core::packet::sha256({reinterpret_cast<const std::uint8_t*>(bytes->data()),bytes->size()})!=asset.sha256)
+        throw m::MediaAssemblyFailure(m::MediaAssemblyError::unavailable,"changed original Media Assembly artwork");
+    const auto wic=factory();ComPtr<IWICStream>stream;check(wic->CreateStream(&stream),m::MediaAssemblyError::unavailable);
+    check(stream->InitializeFromMemory(reinterpret_cast<BYTE*>(const_cast<char*>(bytes->data())),DWORD(bytes->size())),m::MediaAssemblyError::unavailable);
+    ComPtr<IWICBitmapDecoder>decoder;check(wic->CreateDecoderFromStream(stream.Get(),nullptr,WICDecodeMetadataCacheOnDemand,&decoder),m::MediaAssemblyError::unavailable);
+    ComPtr<IWICBitmapFrameDecode>frame;check(decoder->GetFrame(0,&frame),m::MediaAssemblyError::unavailable);UINT w{},h{};check(frame->GetSize(&w,&h),m::MediaAssemblyError::unavailable);
+    if(!w||!h)throw m::MediaAssemblyFailure(m::MediaAssemblyError::unavailable,"empty artwork");
+    const double scale=std::min(1.,double(maximum)/double(std::max(w,h)));
+    const unsigned tw=std::max(1u,unsigned(std::lround(w*scale))),th=std::max(1u,unsigned(std::lround(h*scale)));
+    return {tw,th,pixels(wic.Get(),ComPtr<IWICBitmapSource>(frame),nullptr,tw,th)};
+}
 std::string NativeMediaAssemblyEngine::exportMedia(const m::MediaAssemblyExportRequest&r,m::MediaAssemblyExportTicket&ticket){
     Apartment com;const auto ops=mediaAssemblyFileOperations();
     {std::lock_guard g(impl_->lock);++impl_->statistics.exports;}

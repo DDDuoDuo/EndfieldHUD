@@ -1,5 +1,4 @@
 #include "modules/media_assembly_controller.hpp"
-#include "modules/media_assembly_menu.hpp"
 #include <algorithm>
 #include <cmath>
 #include <deque>
@@ -155,20 +154,25 @@ void controller(){
     // Invalid edits report the source error and keep the previous edit.
     auto invalid=ctl.session().adjustments();invalid.levelsBlack=.5;invalid.levelsWhite=.49;check(!ctl.update(invalid,{},3)&&ctl.session().error()==m::MediaAssemblyError::invalidAdjustment,"Invalid edit is reported");
     // Export: stale panel refused, progress polled, success event.
-    check(!ctl.exportTo("C:/m/x.png",false,"doc-0",4),"Old document identity cannot export");
+    {std::optional<m::MediaAssemblyError>refused;check(!ctl.exportTo("C:/m/x.png",false,"doc-0",4,[&](const std::optional<std::string>&t,std::optional<m::MediaAssemblyError>e){check(!t,"No target");refused=e;})&&refused==m::MediaAssemblyError::unavailable,
+        "Old document identity cannot export; the completion answers at once (source completion?(.failure(unavailable)))");}
     a=ctl.session().adjustments();a.saturation=.5;ctl.update(a,{},4);
-    check(ctl.exportTo("C:/m/x.png",false,"doc-1",4)&&ctl.session().exporting()&&events.back()=="edited","Export flushes edited and starts");
+    std::vector<std::pair<std::optional<std::string>,std::optional<m::MediaAssemblyError>>>answers;int changesAtAnswer{};
+    const auto record=[&](const std::optional<std::string>&t,std::optional<m::MediaAssemblyError>e){answers.emplace_back(t,e);changesAtAnswer=changes;};
+    check(ctl.exportTo("C:/m/x.png",false,"doc-1",4,record)&&ctl.session().exporting()&&events.back()=="edited"&&answers.empty(),"Export flushes edited and starts");
     check(!ctl.closeDocument(4)&&!ctl.importPath("C:/m/b.mp4",nullptr,true,4),"Close/open refused while exporting");
     check(ctl.nextWakeTime()&&std::abs(*ctl.nextWakeTime()-4.25)<1e-9,"Progress is polled at 0.25 s only while exporting");
-    q.run();check(!ctl.session().exporting()&&ctl.session().progress()==1&&events.back()=="exported"&&ctl.lastExport()=="C:/m/x.png"&&!ctl.nextWakeTime(),"Exported");
+    {const auto before=changes;q.run();check(!ctl.session().exporting()&&ctl.session().progress()==1&&events.back()=="exported"&&ctl.lastExport()=="C:/m/x.png"&&!ctl.nextWakeTime(),"Exported");
+    check(answers.size()==1&&answers[0].first=="C:/m/x.png"&&!answers[0].second&&changesAtAnswer>before,"The completion answers once with the target, after the change notice");}
     // Overwrite the original: re-import without a second "imported".
     const auto importsBefore=std::count(events.begin(),events.end(),"imported");
     check(ctl.exportTo("C:/m/a.png",true,"doc-1",5),"Overwrite original starts");q.run();
     const auto reloaded=ctl.session().document()->id;
     check(std::count(events.begin(),events.end(),"imported")==importsBefore&&reloaded!="doc-1"&&ctl.session().document()->identity==disk.files["C:/m/a.png"],"Overwrite reloads the new file identity silently");
     // Failure keeps the original and reports the error.
-    engine->exportError=m::MediaAssemblyError::exportFailed;check(ctl.exportTo("C:/m/y.png",false,reloaded,6),"Export");q.run();
+    engine->exportError=m::MediaAssemblyError::exportFailed;check(ctl.exportTo("C:/m/y.png",false,reloaded,6,record),"Export");q.run();
     check(ctl.session().error()==m::MediaAssemblyError::exportFailed&&ctl.session().progress()==0,"Failure reported, progress cleared");engine->exportError.reset();
+    check(answers.size()==2&&!answers[1].first&&answers[1].second==m::MediaAssemblyError::exportFailed,"The completion answers a failure with its error");
     // Cancel while running.
     check(ctl.exportTo("C:/m/z.png",false,reloaded,7),"Export again");ctl.cancelExport();q.run();check(ctl.session().error()==m::MediaAssemblyError::cancelled&&!disk.files.contains("C:/m/z.png"),"Cancelled export leaves no output");
     // Close clears caches immediately and again behind queued work.
@@ -206,66 +210,8 @@ void deferred(){
     ctl.setDeferredPreviews(false,4);check(q.jobs.empty(),"Same mode is a no-op");
     m::MediaAssemblyPreviewImage none;check(!none.deferred(),"Empty images are not deferred");
 }
-void keys(){
-    m::MediaAssemblyPresentation p;m::MediaAssemblyAdjustments a;m::MediaAssemblyDocumentInfo d{"k",false,{1600,900},0};m::MediaAssemblyView v{&d,&a,{},false,false,false,0};p.synchronize(v);
-    auto apply=[&](m::MediaAssemblyRequest r){if(r.adjustments)a=*r.adjustments;v={&d,&a,{},false,false,false,v.currentTime};};
-    check(!p.key(m::MediaAssemblyKey::space,{},v).consumed,"Space ignored for pictures");check(!p.key(m::MediaAssemblyKey::escape,{},v).consumed&&!p.escapeUnwinds(v),"Escape with nothing to unwind reaches the HUD");
-    apply(p.perform("stickers",v));apply(p.perform("sticker:sticker_1",v,"s1"));check(a.stickers.size()==1&&p.selectedSticker()=="s1","Sticker selected");
-    apply(p.key(m::MediaAssemblyKey::right,{},v));check(std::abs(a.stickers[0].x-.51)<1e-12,"Arrow nudges 0.01");
-    apply(p.key(m::MediaAssemblyKey::up,{.shift=true},v));check(std::abs(a.stickers[0].y-.45)<1e-12,"Shift arrow nudges 0.05");
-    apply(p.key(m::MediaAssemblyKey::left,{.alt=true},v));check(a.stickers[0].rotation==-5,"Alt+Left rotates -5");
-    apply(p.key(m::MediaAssemblyKey::up,{.alt=true},v));check(std::abs(a.stickers[0].size-.21)<1e-12,"Alt+Up grows");
-    check(p.escapeUnwinds(v),"Selection unwinds before the HUD");auto r=p.key(m::MediaAssemblyKey::escape,{},v);check(r.consumed&&p.selectedSticker().empty(),"Escape deselects");
-    apply(p.pointerDown({220,198},v,c::Language::english,"unused"));p.pointerUp(v);
-    const auto zoom=p.viewport().zoom();check(p.key(m::MediaAssemblyKey::plus,{},v).consumed&&p.viewport().zoom()>zoom,"Plus zooms in");check(p.key(m::MediaAssemblyKey::minus,{},v).consumed&&p.viewport().zoom()==zoom,"Minus zooms out");
-    apply(p.perform("tools",v));apply(p.perform("adjust",v));check(p.tool().has_value(),"Tool opened");r=p.key(m::MediaAssemblyKey::escape,{},v);check(r.consumed&&!p.tool()&&p.drawer()==m::MediaAssemblyDrawer::tools,"Escape backs out of the tool");
-    // Sticker selected: Delete removes it.
-    apply(p.perform("stickers",v));apply(p.perform("sticker:sticker_2",v,"s2"));apply(p.key(m::MediaAssemblyKey::deleteBackward,{},v));check(a.stickers.size()==1&&p.selectedSticker().empty(),"Backspace deletes the selected sticker");
-    m::MediaAssemblyDocumentInfo movie{"mv",true,{1920,1080},60};m::MediaAssemblyAdjustments ma;m::MediaAssemblyView mv{&movie,&ma,{},false,false,false,20};p.synchronize(mv);
-    r=p.key(m::MediaAssemblyKey::space,{},mv);check(r.consumed&&r.command==m::MediaAssemblyCommand::play,"Space toggles video playback");
-    check(!p.key(m::MediaAssemblyKey::space,{.control=true},mv).consumed,"Modified space is not playback");
-    r=p.key(m::MediaAssemblyKey::left,{},mv);check(r.command==m::MediaAssemblyCommand::seek&&r.time==15,"Left seeks back 5 s");r=p.key(m::MediaAssemblyKey::right,{},mv);check(r.time==25,"Right seeks forward 5 s");
-    check(!p.key(m::MediaAssemblyKey::right,{.shift=true},mv).consumed,"Shift arrow without a sticker is not a seek");
-}
-void accessibility(){
-    m::MediaAssemblyPresentation p;m::MediaAssemblyAdjustments a;m::MediaAssemblyDocumentInfo d{"ax",true,{1920,1080},60};m::MediaAssemblyView v{&d,&a,{},false,false,false,12};p.synchronize(v);
-    auto apply=[&](m::MediaAssemblyRequest r){if(r.adjustments)a=*r.adjustments;};
-    auto find=[&](std::string_view id){const auto all=p.accessibility(v,c::Language::english,false);for(const auto&e:all)if(e.id==id)return e;throw std::runtime_error("Missing accessible element");};
-    check(find("closeMedia").name=="Close"&&find("open").role==m::MediaAssemblyAccessibleRole::button,"Projected buttons, Close for x");
-    const auto seek=find("seek");check(seek.name=="Playback position"&&seek.step==5&&seek.maximum==59.999&&seek.value==12,"Playback position slider");
-    auto r=p.setAccessibleValue("seek",100,v);check(r.command==m::MediaAssemblyCommand::seek&&r.time==59.999,"Seek value clamps to the range");
-    check(p.accessibility(v,c::Language::english,true).empty(),"Menus hide the projected controls");
-    apply(p.perform("tools",v));apply(p.perform("trim",v));const auto start=find("trimStart");check(start.maximum==59.95&&find("trimEnd").minimum==.05,"Trim sliders");
-    r=p.setAccessibleValue("trimStart",10,v);check(r.command==m::MediaAssemblyCommand::trim&&r.adjustments&&r.adjustments->trimStart==10,"Trim start via AX");
-    m::MediaAssemblyDocumentInfo photo{"ph",false,{1600,900},0};m::MediaAssemblyAdjustments pa;m::MediaAssemblyView pv{&photo,&pa,{},false,false,false,0};p.synchronize(pv);
-    auto papply=[&](m::MediaAssemblyRequest q){if(q.adjustments)pa=*q.adjustments;};
-    papply(p.perform("stickers",pv));papply(p.perform("sticker:sticker_1",pv,"s1"));
-    const auto all=p.accessibility(pv,c::Language::simplifiedChinese,false);check(std::count_if(all.begin(),all.end(),[](const auto&e){return e.id.starts_with("sticker")&&e.role==m::MediaAssemblyAccessibleRole::slider;})==4,"Four sticker sliders");
-    papply(p.setAccessibleValue("stickerRotation",45,pv));check(pa.stickers[0].rotation==45,"Sticker rotation via AX");
-    papply(p.perform("tools",pv));papply(p.perform("crop",pv));papply(p.setAccessibleValue("cropEdge2",.6,pv));check(std::abs(pa.crop.width-.6)<1e-12,"Crop X2 edge");
-    papply(p.perform("toolBack",pv));papply(p.perform("adjust",pv));const auto bright=p.accessibility(pv,c::Language::english,false);
-    check(std::any_of(bright.begin(),bright.end(),[](const auto&e){return e.id=="brightness"&&e.name=="Brightness";}),"Inline parameter sliders");papply(p.setAccessibleValue("brightness",.333,pv));check(std::abs(pa.brightness-.33)<1e-12,"Parameter value rounds to its step");
-}
-void menus(){
-    m::MediaAssemblyDocumentInfo png{"p",false,{10,10},0};png.kind=m::MediaAssemblyKind::image;
-    auto e=m::mediaAssemblyExportMenu(png,c::Language::english);check(e.heading=="Export"&&e.items.size()==3&&e.size.x==370&&e.size.y==104,"Export menu: close, Save As, Overwrite");
-    check(e.items[0].id=="close"&&e.items[0].rect==c::Rect{339,8,23,23}&&e.items[2].rect==c::Rect{8,69,354,26},"Source item geometry");
-    m::MediaAssemblyDocumentInfo gif{"g",false,{10,10},0};gif.kind=m::MediaAssemblyKind::gif;gif.frameCount=8;
-    e=m::mediaAssemblyExportMenu(gif,c::Language::simplifiedChinese);check(e.heading=="GIF · 导出首帧"&&e.items.size()==2&&e.size.y==75,"Animated GIF exports first frame, no overwrite");
-    gif.frameCount=1;check(m::mediaAssemblyExportMenu(gif,c::Language::english).heading=="Export"&&m::mediaAssemblyExportMenu(gif,c::Language::english).items.size()==2,"Still GIF has no overwrite either");
-    const auto o=m::mediaAssemblyOverwriteMenu(c::Language::english);check(o.heading=="Replace the original file?"&&o.items[1].id=="cancel"&&o.items[2].id=="confirm","Overwrite confirmation");
-    check(o.actionAt({20,50})=="cancel"&&o.actionAt({350,15})=="close"&&!o.actionAt({5,5}),"Menu hit testing");
-    // Placement under the trigger, clamped; flips above near the bottom.
-    check(m::mediaAssemblyMenuOrigin({350,7,78,28},{208,75})==c::Point{224,41},"Open chooser under its trigger");
-    check(m::mediaAssemblyMenuOrigin({350,371,78,28},{370,104})==c::Point{62,259},"Export menu flips above its trigger");
-    check(m::mediaAssemblyMenuOrigin({2,7,78,28},{370,75})==c::Point{8,41},"Left clamp");
-    check(m::mediaAssemblyMenuOrigin({350,7,78,28},{340,260})==c::Point{92,41},"Shelf picker under Open");
-    std::vector<m::MediaAssemblyAction>none;check(m::mediaAssemblyMenuAnchor(none,"export")==c::Rect{12,331,66,28},"Source fallback anchor");
-    check(m::MediaAssemblyMenuMotion::opacity(true,.08,false)==float(.5)&&m::MediaAssemblyMenuMotion::opacity(false,.16,false)==0&&m::MediaAssemblyMenuMotion::opacity(true,0,true)==1,"0.16 s fade");
-    const auto art=m::mediaAssemblyMenuArtwork(o,{});check(art["children"].array().size()==2+3*4+1,"Retained menu artwork leaves");
-}
 }
 int main(){
-    try{errors();documents();formats();ticket();commit();moved();controller();deferred();keys();accessibility();menus();std::cout<<"PASS "<<checks<<" Media Assembly controller checks\n";return 0;}
+    try{errors();documents();formats();ticket();commit();moved();controller();deferred();std::cout<<"PASS "<<checks<<" Media Assembly controller checks\n";return 0;}
     catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}
 }

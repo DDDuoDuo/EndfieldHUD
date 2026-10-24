@@ -83,9 +83,12 @@ public:
     bool seek(double,double time);
     bool setCropPreview(bool,double time);
     bool togglePlayback(double time);
-    // Source export(to:overwrite:expectedDocumentID:). A stale save panel can
-    // never export a replacement document.
-    bool exportTo(std::string destination,bool overwrite,std::string_view expectedDocumentID,double time);
+    // Source export(to:overwrite:expectedDocumentID:completion:). A stale save
+    // panel can never export a replacement document. The completion runs once,
+    // after the controller's own change notice (the written path, or the
+    // error; synchronously when the export cannot start).
+    using ExportCompletion=std::function<void(const std::optional<std::string>&target,std::optional<MediaAssemblyError>error)>;
+    bool exportTo(std::string destination,bool overwrite,std::string_view expectedDocumentID,double time,ExportCompletion={});
     void cancelExport();
     void report(MediaAssemblyError);
     // Host GPU previews: request deferred sources instead of CPU-edited

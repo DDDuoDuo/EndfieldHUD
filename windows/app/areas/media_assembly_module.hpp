@@ -7,16 +7,20 @@
 //   fixture  "mediaAssembly.sourceAssets" / "mediaAssembly.movie"
 //                                     hidden coverage only (no staged package /
 //                                     the pinned owned silent movie)
-// The owner is tools::MediaAssemblyPreview (source HUDMediaAssemblyInteraction
-// + MediaAssemblyCanvas) over the production NativeMediaAssemblyEngine, the
+// The owner is tools::MediaAssemblyOwner (the redesigned MediaAssemblyCanvas
+// in a DesignOwnerCore) over the production NativeMediaAssemblyEngine, the
 // renderer's same-device media path (GPU previews), the shared UtilityExecutor,
 // the shared media broker (playback), the Event Log and modal native dialogs
-// posted to the HUD HWND through a registered private message.
+// posted to the HUD HWND through a registered private message. It wraps the
+// core in its own ModuleOwner (the stage's picture records, the dialogs), so
+// the factory marks Media Assembly as a design screen itself. Without the
+// shared design Context (no overlay) the module is absent.
 //
 // ModuleOwner hooks beyond the shared events: drop() imports the first file
 // dropped on the HUD (source importFiles), and the UI Automation hooks expose
-// the projected source AX controls (native::NativeMediaAssemblyAccessibility)
-// under the owner's group of the HUD window's root provider.
+// the canvas's design controls and its sticker / crop sliders (the library's
+// tree, native::NativeDesignAutomation) under the owner's group of the HUD
+// window's root provider.
 //
 // Host services, published by the Application and looked up in the area
 // service directory by exact type when they are used (absent: the feature
