@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Small original-Swift Map math oracle; no app, window, store or real data.
 
-Compiles unchanged WorldMapGeometry.swift and WorldMapStore.swift. The store is
-never constructed. Reuses the existing shared source-oracle module cache.
+Compiles unchanged WorldMapGeometry.swift and WorldMapStore.swift (Mac 1.3.0:
+the zoom floor is 1). The store is never constructed. Reuses the existing
+shared source-oracle module cache. The redesigned canvas's surface maths and
+session are tools/map_canvas_reference.*.
 """
 from pathlib import Path
 import hashlib
@@ -82,14 +84,7 @@ for row in rows {
  for same in [false,true] {for interacting in [false,true] {for exact in [false,true] {controller.frameRevision=same ? 1 : 0;controller.interacting=interacting;controller.exactRequested=exact;decisions.append(controller.needsPaint)}}}
  raster.append(["camera":encode(v),"target":encode(target),"placement":[placement.position.x,placement.position.y,placement.scale],"geometry":OriginalPainter.geometry(WorldMapRasterRequest(viewport:v,contentsScale:2.2,padding:128)),"needsPaint":decisions])
 }
-let rect=CGRect(x:26,y:184,width:22,height:22)
-let edges=[[26.0,184.0],[48,184],[26,206],[48,206],[47.999,205.999]].map { ["point":$0,"contains":rect.contains(CGPoint(x:$0[0],y:$0[1]))] as [String:Any] }
-let intersections=[[48.0,184.0,18.0,18.0],[48.001,184,18,18],[25,206,1,1]].map { ["rect":$0,"intersects":rect.intersects(CGRect(x:$0[0],y:$0[1],width:$0[2],height:$0[3]))] as [String:Any] }
-let boundaryCamera=WorldMapViewport(centerX:0.5,centerY:0.5,zoom:163.0/55)
-let boundaryPoint=WorldMapGeometry.screen(x:0.375,y:0.5,viewport:boundaryCamera)
-let boundaryRect=CGRect(x:boundaryPoint.x-9,y:boundaryPoint.y-9,width:18,height:18)
-let boundary:[String:Any]=["camera":encode(boundaryCamera),"point":encode(boundaryPoint),"intersects":CGRect(x:26,y:212,width:22,height:22).intersects(boundaryRect)]
-try JSONSerialization.data(withJSONObject:["pinBoundary":boundary,"geometry":result,"raster":raster,"rectEdges":edges,"intersections":intersections],options:[.sortedKeys]).write(to:URL(fileURLWithPath:CommandLine.arguments[2]))
+try JSONSerialization.data(withJSONObject:["geometry":result,"raster":raster],options:[.sortedKeys]).write(to:URL(fileURLWithPath:CommandLine.arguments[2]))
 ''')
 env = os.environ.copy()
 env.pop('SDKROOT', None)
@@ -99,7 +94,7 @@ subprocess.run(['xcrun', 'swiftc', '-sdk', sdk, '-module-cache-path', str(cache)
                 *[str(root/p) for p in source_paths[:2]], str(output/'main.swift'), '-o', str(output/'oracle')], check=True)
 subprocess.run([str(output/'oracle'), str(output/'input.json'), str(output/'output.json')], check=True)
 data = json.loads((output/'output.json').read_text())
-data['authority'] = 'ca04f142185c7de40acd8523bdb563195d90a1d1'
+data['authority'] = subprocess.check_output(['git', '-C', str(root), 'rev-parse', 'HEAD'], text=True).strip()
 data['sourceSHA256'] = {p: hashlib.sha256((root/p).read_bytes()).hexdigest() for p in source_paths}
 data['scope'] = 'Unchanged Foundation map geometry plus extracted original placement/needsPaint/painter allocation math. No window, store initialization, file-provider or geographic raster.'
 fixture = root/'windows/tests/fixtures/map-source.json'

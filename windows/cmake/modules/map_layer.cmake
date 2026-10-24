@@ -1,13 +1,13 @@
 # Desktop Map occlusion (core/map_source_cutout.hpp; Mac HUDSourceWatchView
 # desktopMapOcclusion and SystemHUDView.applySourceMapOcclusion). Every module
 # canvas is composed above the source shell, as the Mac stacks its module
-# layers above HUDSourceWatchView; the Map alone is drawn 1.14x larger than its
-# plane and reaches over the Storage and Activity Monitor plates below the
-# circle. While the Map is posed on the source shell those plates stay above
-# it: the Map's feather mask is cut under their projected sprite-mesh
-# boundaries (native/map_scene) and presses inside them are left to the
-# navigation (tools/map_preview covers/pointer). The host hands the Map its
-# presented source frame (MapPreviewOptions::sourceFrame).
+# layers above HUDSourceWatchView; the redesigned Map fills the 860 px backdrop
+# disc and reaches over the Storage and Activity Monitor plates below it. While
+# the Map is presented (at rest and during its switches) those plates stay
+# above the whole module and its contrast: the host cut of their projected
+# sprite-mesh boundaries over the static box plane (native/map_scene) and
+# presses inside them left to the navigation (tools/map_owner covers/pointer).
+# The host hands the Map its presented source frame (MapOwnerOptions::sourceFrame).
 add_library(hud_map_cutout core/map_source_cutout.cpp)
 target_include_directories(hud_map_cutout PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(hud_map_cutout PUBLIC hud_source_motion)
@@ -25,26 +25,26 @@ set(ehud_map_layer_inputs "${EHUD_APP_INPUT_DIR}")
 if(NOT ehud_map_layer_inputs AND EHUD_MAP_RESOURCE_DIR)
   get_filename_component(ehud_map_layer_inputs "${EHUD_MAP_RESOURCE_DIR}" DIRECTORY)
 endif()
-if(WIN32 AND BUILD_TESTING AND TARGET hud_map_preview AND TARGET hud_watch_runtime
+if(WIN32 AND BUILD_TESTING AND TARGET hud_map_owner AND TARGET hud_watch_runtime
    AND EXISTS "${ehud_map_layer_inputs}/runtime-compiled-animation/runtime-input.json")
   add_executable(map_occlusion_tests tests/map_occlusion_tests.cpp)
   target_compile_definitions(map_occlusion_tests PRIVATE UNICODE _UNICODE NOMINMAX)
-  target_link_libraries(map_occlusion_tests PRIVATE hud_map_preview hud_watch_runtime)
+  target_link_libraries(map_occlusion_tests PRIVATE hud_map_owner hud_watch_runtime)
   add_test(NAME map_occlusion_contracts COMMAND map_occlusion_tests ${CMAKE_CURRENT_SOURCE_DIR}/native/hud.hlsl
     "${ehud_map_layer_inputs}/runtime-compiled-animation")
   set_tests_properties(map_occlusion_contracts PROPERTIES TIMEOUT 300)
 endif()
 # Pin pulse cadence: the pulse is ambient motion presented at the host's 30 Hz
 # ambient cadence (the Mac runs it as a compositor animation), while camera
-# moves, toolbar feedback and marker style transitions stay display-paced. A
+# moves, button motion and marker style transitions stay display-paced. A
 # scheduling contract through the host's FrameWakePlan/DisplayPacing, then a
 # short hidden trace on the real clock through the production OverlayHost
 # scheduling (offscreen, 165 Hz) with the CPU per window. A longer GPU trace:
 #   map_pulse_cadence_tests <native/hud.hlsl> --trace-seconds 5 --hardware
-if(WIN32 AND BUILD_TESTING AND TARGET hud_map_preview)
+if(WIN32 AND BUILD_TESTING AND TARGET hud_map_owner)
   add_executable(map_pulse_cadence_tests tests/map_pulse_cadence_tests.cpp)
   target_compile_definitions(map_pulse_cadence_tests PRIVATE UNICODE _UNICODE NOMINMAX)
-  target_link_libraries(map_pulse_cadence_tests PRIVATE hud_map_preview)
+  target_link_libraries(map_pulse_cadence_tests PRIVATE hud_map_owner)
   add_test(NAME map_pulse_cadence_contracts COMMAND map_pulse_cadence_tests ${CMAKE_CURRENT_SOURCE_DIR}/native/hud.hlsl)
   set_tests_properties(map_pulse_cadence_contracts PROPERTIES TIMEOUT 300)
 endif()

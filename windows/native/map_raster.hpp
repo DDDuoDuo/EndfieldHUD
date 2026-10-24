@@ -19,6 +19,10 @@ public:
     void setActive(bool,double time);
     void update(modules::MapViewport,bool animated,double time);
     void finishGesture(double time);
+    // The closed HUD keeps no terrain image (Mac 1.3.0 releases its whole view
+    // on close): the retained detail and backdrop go and any paint in flight
+    // is cancelled; the next activation paints both again on the worker.
+    void releaseImages(double time);
     // Shared deadline delivery, and explicit retry after another executor route
     // drains. A queue-full request retains only the latest camera, no retry loop.
     bool advance(double time);bool submitPending(double time);
