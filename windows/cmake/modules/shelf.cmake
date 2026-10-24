@@ -1,11 +1,26 @@
-# Temporary File Shelf area fragment (included after every target in
-# windows/CMakeLists.txt). The Shelf owner itself (tools/shelf_preview.cpp,
-# hud_shelf_preview) is a built-in production owner of app/application.cpp;
-# its libraries and original suites are declared in CMakeLists.txt. This
-# fragment adds what the Windows-only Shell services need, the hidden-coverage
-# area and the owner-level services suite. Tests use synthetic files in new
-# temporary directories, hidden windows and injected handlers only: no user
-# files, clipboard, Explorer window or preview handler of the user is touched.
+# File Shelf fragment (included after every target in windows/CMakeLists.txt).
+# The canvas is portable (modules/file_shelf_canvas.*, hud_file_shelf in
+# CMakeLists.txt: Mac 1.3.0 FileShelfCanvas on the design library). Its
+# platform service (tools/shelf_owner.*: the reference store, bookmark-like
+# identity renewal, the picker, OLE drops and the copy-only drag-out with Shell
+# drag images, the Shell icon worker, the properties reads on the shared
+# utility executor, the import-ledger relink, Event Log records) is a built-in
+# production owner of app/application.cpp, a tools::DesignModuleOwner. Tests
+# use synthetic files in new temporary directories, hidden windows and
+# injected handlers only: no user files, clipboard, Explorer window or picker
+# of the user is touched.
+
+# Portable contracts of the canvas (Swift-derived rules) and, node by node, the
+# Mac oracle: tools/file_shelf_reference.sh (unchanged Mac Sources, the real
+# FileShelfStore over synthetic files) -> tests/fixtures/file-shelf-source.json.
+if(BUILD_TESTING)
+  add_executable(file_shelf_canvas_tests tests/file_shelf_canvas_tests.cpp)
+  target_link_libraries(file_shelf_canvas_tests PRIVATE hud_file_shelf)
+  if(MSVC)
+    target_compile_options(file_shelf_canvas_tests PRIVATE /W4 /permissive- /EHsc)
+  endif()
+  add_test(NAME file_shelf_canvas_contracts COMMAND file_shelf_canvas_tests "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/file-shelf-source.json")
+endif()
 
 if(WIN32)
   # Shell type names (SHGetFileInfoW SHGFI_TYPENAME|SHGFI_USEFILEATTRIBUTES)
@@ -14,26 +29,25 @@ if(WIN32)
   # Outgoing Shell drag images (IDragSourceHelper::InitializeFromBitmap on a
   # DIB section) and incoming ones (IDropTargetHelper).
   target_link_libraries(hud_shelf_transfer PRIVATE gdi32 shell32)
-  # Ctrl+V paste (OleGetClipboard).
-  target_link_libraries(hud_shelf_preview PRIVATE ole32 shell32)
-  # The properties card (replaces the Quick Look preview): the item's
-  # properties are read on the shared utility worker (app/utility_executor)
-  # through the Windows property system (propsys) for dimensions and duration.
-  target_sources(hud_shelf_preview PRIVATE native/shelf_properties.cpp)
-  target_link_libraries(hud_shelf_preview PRIVATE hud_utility propsys)
-  # UI Automation peers of the Shelf (Mac HUDShelfActionButton) and the relink
-  # of Mac-imported Shelf items through the import ledger (core/migration).
-  target_sources(hud_shelf_preview PRIVATE native/shelf_automation.cpp)
-  target_link_libraries(hud_shelf_preview PRIVATE uiautomationcore oleaut32 hud_mac_import)
+
+  # The service and its owner: Ctrl+V paste (OleGetClipboard), the properties
+  # reads (native/shelf_properties.cpp) on the shared utility worker, the
+  # relink of Mac-imported items through the import ledger (core/migration).
+  add_library(hud_shelf_owner tools/shelf_owner.cpp native/shelf_properties.cpp)
+  target_compile_definitions(hud_shelf_owner PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
+  target_link_libraries(hud_shelf_owner PUBLIC hud_file_shelf hud_design_native hud_native hud_shelf_icons hud_shelf_transfer hud_shelf_files
+    PRIVATE hud_utility hud_mac_import ole32 shell32)
+  if(MSVC)
+    target_compile_options(hud_shelf_owner PRIVATE /W4 /permissive- /EHsc)
+  endif()
 
   # Hidden-coverage area (app/module_owner.hpp, "Adding a module area"): drives
-  # the production Shelf class with synthetic files in the harness, given the
-  # staged package's common.shelf artwork. Never linked into EndfieldHUD.exe,
-  # whose Shelf is the built-in owner.
+  # the production Shelf service with synthetic files in the harness. Never
+  # linked into EndfieldHUD.exe, whose Shelf is the built-in owner.
   add_library(hud_shelf_area STATIC app/areas/shelf_module.cpp)
   target_include_directories(hud_shelf_area PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
   target_compile_definitions(hud_shelf_area PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
-  target_link_libraries(hud_shelf_area PUBLIC hud_module_registry hud_shelf_preview hud_shelf_files hud_data PRIVATE hud_mac_import uiautomationcore oleaut32 user32)
+  target_link_libraries(hud_shelf_area PUBLIC hud_module_registry hud_shelf_owner hud_shelf_files hud_data PRIVATE hud_mac_import uiautomationcore oleaut32 user32)
   if(MSVC)
     target_compile_options(hud_shelf_area PRIVATE /W4 /permissive- /EHsc)
   endif()
@@ -41,55 +55,33 @@ if(WIN32)
     "fileShelfCoverage|hud_shelf_area|app/areas/shelf_module.hpp|endfield::shelf::shelfCoverageModule|coverage")
 
   if(BUILD_TESTING)
-    # Owner-level Shelf services: Event Log records (picker/paste/drop alike),
-    # stale-path relocation saved by refresh, the properties card (private and
-    # shared utility executors), virtual-file drops, localized platform text and
-    # error descriptions, the UI Automation peers and the relink of
-    # Mac-imported items through the import ledger API.
+    # Owner-level Shelf services through the design owner on a hidden window
+    # (WARP): Event Log records (picker, paste and drops alike), stale-path
+    # renewal saved by refresh, the properties card's reads (private and
+    # shared utility executors), virtual-file drops, the drop routes, the
+    # localized platform text and error descriptions, the UI Automation tree,
+    # the relink of Mac-imported items through the import ledger API, the drag
+    # payload, and what the Shelf keeps resident (icon worker only while
+    # shown, no artwork once the HUD closed on another module).
     add_executable(shelf_services_tests tests/shelf_services_tests.cpp)
     target_compile_definitions(shelf_services_tests PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
-    target_link_libraries(shelf_services_tests PRIVATE hud_shelf_preview hud_shelf_files hud_mac_import hud_utility ole32 shell32 uiautomationcore oleaut32)
+    target_link_libraries(shelf_services_tests PRIVATE hud_shelf_owner hud_shelf_files hud_mac_import hud_utility ole32 shell32 uiautomationcore oleaut32 psapi)
     if(MSVC)
       target_compile_options(shelf_services_tests PRIVATE /W4 /permissive- /EHsc)
     endif()
-    add_test(NAME shelf_services_contracts COMMAND shelf_services_tests "${CMAKE_CURRENT_SOURCE_DIR}/resources/shelf")
-    set_tests_properties(shelf_services_contracts PROPERTIES TIMEOUT 180)
+    add_test(NAME shelf_services_contracts COMMAND shelf_services_tests "${CMAKE_CURRENT_SOURCE_DIR}/native/hud.hlsl")
+    set_tests_properties(shelf_services_contracts PROPERTIES TIMEOUT 300)
 
-    # Properties of synthetic files, folders, a PNG and a WAV in a NEW
-    # temporary directory (sizes, times, child counts and its bound, image
-    # dimensions and duration through the property system, identity checks).
+    # Properties of synthetic files and folders in a NEW temporary directory
+    # (sizes, times, child counts without hidden entries and their bound,
+    # identity checks).
     add_executable(shelf_properties_tests tests/shelf_properties_tests.cpp native/shelf_properties.cpp)
     target_compile_definitions(shelf_properties_tests PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
-    target_link_libraries(shelf_properties_tests PRIVATE hud_shelf_files ole32 shell32 propsys windowscodecs)
+    target_link_libraries(shelf_properties_tests PRIVATE hud_shelf_files hud_file_shelf)
     if(MSVC)
       target_compile_options(shelf_properties_tests PRIVATE /W4 /permissive- /EHsc)
     endif()
     add_test(NAME shelf_properties_contracts COMMAND shelf_properties_tests)
     set_tests_properties(shelf_properties_contracts PROPERTIES TIMEOUT 120)
-
-    # Card removal frame by frame through the production owner, published as
-    # the HUD host publishes owners (WARP readback; optional PNG frames).
-    add_executable(shelf_removal_frames_tests tests/shelf_removal_frames_tests.cpp)
-    target_compile_definitions(shelf_removal_frames_tests PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
-    target_link_libraries(shelf_removal_frames_tests PRIVATE hud_shelf_preview ole32 windowscodecs)
-    if(MSVC)
-      target_compile_options(shelf_removal_frames_tests PRIVATE /W4 /permissive- /EHsc)
-    endif()
-    add_test(NAME shelf_removal_frames_contracts COMMAND shelf_removal_frames_tests "${CMAKE_CURRENT_SOURCE_DIR}/native/hud.hlsl" "${CMAKE_CURRENT_SOURCE_DIR}/resources/shelf" "${CMAKE_CURRENT_SOURCE_DIR}/resources/shelf/reveal-mask.bin")
-    set_tests_properties(shelf_removal_frames_contracts PROPERTIES TIMEOUT 180)
-
-    # What the Shelf keeps resident (memory audit) through the production
-    # owner, published like the host: no icon worker before the first shown
-    # Shelf, no artwork (rasters, textures) and no icon thread while another
-    # module is shown, a pixel-identical rebuild from cached icons, and a
-    # worker restart only for a missing icon. Prints the measured numbers.
-    add_executable(shelf_resources_tests tests/shelf_resources_tests.cpp)
-    target_compile_definitions(shelf_resources_tests PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
-    target_link_libraries(shelf_resources_tests PRIVATE hud_shelf_preview ole32 psapi)
-    if(MSVC)
-      target_compile_options(shelf_resources_tests PRIVATE /W4 /permissive- /EHsc)
-    endif()
-    add_test(NAME shelf_resources_contracts COMMAND shelf_resources_tests "${CMAKE_CURRENT_SOURCE_DIR}/native/hud.hlsl" "${CMAKE_CURRENT_SOURCE_DIR}/resources/shelf")
-    set_tests_properties(shelf_resources_contracts PROPERTIES TIMEOUT 180)
   endif()
 endif()

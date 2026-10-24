@@ -75,7 +75,7 @@ public:
     ~NativeShelfFilePicker(); // creating-thread lifetime; cancels its own dialog
     NativeShelfFilePicker(const NativeShelfFilePicker&)=delete;
     NativeShelfFilePicker&operator=(const NativeShelfFilePicker&)=delete;
-    // Safe inside FileShelfState's synchronous choose callback: queues only.
+    // Safe inside a canvas or store callback: queues only.
     // The owner calls handleMessage on the private showRequested notification,
     // after the state/store callback has returned, to enter the native modal UI.
     bool request();

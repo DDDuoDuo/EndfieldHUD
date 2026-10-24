@@ -5,28 +5,11 @@
 #ifdef _WIN32
 #include "native/file_shelf_files.hpp"
 #include <windows.h>
-#include <objbase.h>
-#include <propkey.h>
-#include <propsys.h>
-#include <propvarutil.h>
-#include <shobjidl.h>
-#include <wrl/client.h>
 #endif
 
 namespace endfield::native {
-std::string shelfDurationText(std::uint64_t value){
-    const auto seconds=value/10'000'000ull,hours=seconds/3600,minutes=seconds/60%60,rest=seconds%60;
-    const auto two=[](std::uint64_t n){return std::string(n<10?"0":"")+std::to_string(n);};
-    return hours?std::to_string(hours)+":"+two(minutes)+":"+two(rest):std::to_string(minutes)+":"+two(rest);
-}
-std::string shelfGroupedCount(std::uint64_t value){
-    auto digits=std::to_string(value);std::string out;out.reserve(digits.size()+digits.size()/3);
-    for(std::size_t n=0;n<digits.size();++n){if(n&&(digits.size()-n)%3==0)out.push_back(',');out.push_back(digits[n]);}
-    return out;
-}
 #ifdef _WIN32
 namespace {
-using Microsoft::WRL::ComPtr;
 [[noreturn]] void failure(const char*what,DWORD error){throw std::runtime_error(std::string(what)+" ("+std::to_string(error)+")");}
 std::wstring wide(std::string_view value){
     if(value.empty()||value.size()>32768)throw std::invalid_argument("Invalid Shelf properties path");
@@ -37,19 +20,6 @@ std::wstring extended(const std::wstring&path){auto out=path.starts_with(L"\\\\"
 struct Handle{HANDLE value{INVALID_HANDLE_VALUE};~Handle(){if(value!=INVALID_HANDLE_VALUE)CloseHandle(value);}};
 struct Find{HANDLE value{INVALID_HANDLE_VALUE};~Find(){if(value!=INVALID_HANDLE_VALUE)FindClose(value);}};
 template<class T>T info(HANDLE handle,FILE_INFO_BY_HANDLE_CLASS kind,const char*operation){T value{};if(!GetFileInformationByHandleEx(handle,kind,&value,DWORD(sizeof(value))))failure(operation,GetLastError());return value;}
-// COM for the property system on a worker that may have none (the shared
-// utility worker); a thread already in another apartment keeps it.
-struct Apartment{HRESULT result{CoInitializeEx(nullptr,COINIT_MULTITHREADED)};~Apartment(){if(SUCCEEDED(result))CoUninitialize();}};
-std::optional<std::uint32_t> uint32(IPropertyStore&store,const PROPERTYKEY&key){
-    PROPVARIANT value;PropVariantInit(&value);std::optional<std::uint32_t> out;ULONG number{};
-    if(SUCCEEDED(store.GetValue(key,&value))&&value.vt!=VT_EMPTY&&SUCCEEDED(PropVariantToUInt32(value,&number))&&number>0)out=number;
-    PropVariantClear(&value);return out;
-}
-std::optional<std::uint64_t> uint64(IPropertyStore&store,const PROPERTYKEY&key){
-    PROPVARIANT value;PropVariantInit(&value);std::optional<std::uint64_t> out;ULONGLONG number{};
-    if(SUCCEEDED(store.GetValue(key,&value))&&value.vt!=VT_EMPTY&&SUCCEEDED(PropVariantToUInt64(value,&number))&&number>0)out=number;
-    PropVariantClear(&value);return out;
-}
 }
 ShelfProperties readShelfProperties(const ehud::data::ShelfFileAccess&lease,ShelfPropertyOptions options){
     if(!lease.open()||!ehud::data::validWindowsFilePath(lease.metadata().windowsPath))throw std::invalid_argument("Shelf properties need an open, validated reference lease");
@@ -78,22 +48,10 @@ ShelfProperties readShelfProperties(const ehud::data::ShelfFileAccess&lease,Shel
     if(out.directory&&kind==ShelfObjectKind::ordinary&&!out.remote&&options.folderItemBound){
         WIN32_FIND_DATAW entry{};Find find;find.value=FindFirstFileExW((longPath+L"\\*").c_str(),FindExInfoBasic,&entry,FindExSearchNameMatch,nullptr,FIND_FIRST_EX_LARGE_FETCH);
         if(find.value!=INVALID_HANDLE_VALUE){std::uint64_t count{};bool complete{};
-            for(;;){const std::wstring_view name(entry.cFileName);if(name!=L"."&&name!=L".."&&++count>options.folderItemBound)break;
+            for(;;){const std::wstring_view name(entry.cFileName);if(name!=L"."&&name!=L".."&&!(entry.dwFileAttributes&FILE_ATTRIBUTE_HIDDEN)&&++count>options.folderItemBound)break;
                 if(!FindNextFileW(find.value,&entry)){complete=GetLastError()==ERROR_NO_MORE_FILES;break;}}
             if(complete)out.folderItems=count;}
         else if(GetLastError()==ERROR_FILE_NOT_FOUND)out.folderItems=0;
-    }
-    // Shell properties of a regular file: dimensions and duration.
-    if(options.propertyHandlers&&!out.directory&&!out.symbolicLink&&path.size()<MAX_PATH*8){
-        const Apartment apartment;
-        const auto flags=(out.cloudPlaceholder||out.remote)?GETPROPERTYSTOREFLAGS(GPS_FASTPROPERTIESONLY):GETPROPERTYSTOREFLAGS(GPS_BESTEFFORT|GPS_NO_OPLOCK);
-        ComPtr<IPropertyStore>store;
-        if((SUCCEEDED(apartment.result)||apartment.result==RPC_E_CHANGED_MODE)&&SUCCEEDED(SHGetPropertyStoreFromParsingName(path.c_str(),nullptr,flags,IID_PPV_ARGS(&store)))&&store){
-            const auto width=uint32(*store.Get(),PKEY_Image_HorizontalSize),height=uint32(*store.Get(),PKEY_Image_VerticalSize);
-            if(width&&height)out.dimensions=std::array<std::uint32_t,2>{*width,*height};
-            else{const auto frameWidth=uint32(*store.Get(),PKEY_Video_FrameWidth),frameHeight=uint32(*store.Get(),PKEY_Video_FrameHeight);if(frameWidth&&frameHeight)out.dimensions=std::array<std::uint32_t,2>{*frameWidth,*frameHeight};}
-            out.duration=uint64(*store.Get(),PKEY_Media_Duration);
-        }
     }
     return out;
 }
