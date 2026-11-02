@@ -186,6 +186,8 @@ if(WIN32)
   target_link_libraries(hud_single_instance PUBLIC hud_application_core hud_localization user32 advapi32 bcrypt)
 
   # Version from the ported source authority; flagged prerelease/private.
+  # A re-pinned authority reconfigures (versions, resource pin, boot log line).
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/source-authority.json")
   file(READ "${CMAKE_CURRENT_SOURCE_DIR}/source-authority.json" ehud_authority)
   string(JSON EHUD_APP_RELEASE GET "${ehud_authority}" release)
   string(JSON EHUD_APP_BUILD GET "${ehud_authority}" build)

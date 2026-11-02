@@ -1,7 +1,7 @@
 # Windows rebuild
 
 The previous Windows preview was rejected and removed from this build. This is
-a fresh port of the **macOS v1.2.0 build 18 application**, pinned in
+a fresh port of the **macOS 1.3.0 build 19 application**, pinned in
 [`source-authority.json`](source-authority.json). Current macOS `Sources/` and
 `Resources/` define the UI and behavior. The raw game scene alone is not the app.
 
@@ -943,7 +943,7 @@ unchanged HEAD fails them the same way:
   stays in colour) at the system small-icon size. It is rebuilt only on the
   preference or a theme change.
 - **Settings.**
-  - About shows `1.2.0 (18)` from `source-authority.json`. Its GitHub and
+  - About shows the release and build of `source-authority.json` (`1.3.0 (19)`). Its GitHub and
     credit links open after the HUD closes. The update row opens the GitHub
     releases page, and automatic installation is reported unavailable.
   - *Edit position* goes to the Power area's editor, and the Power page's

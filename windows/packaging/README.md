@@ -101,7 +101,7 @@ follows the app's saved language, or the Windows display language.
 | Program files | `%LOCALAPPDATA%\Programs\EndfieldHUD\` (`FOLDERID_UserProgramFiles`): `EndfieldHUD.exe`, `THIRD-PARTY-NOTICES.txt`, `fonts\`, `resources\` and `uninstall.exe`, with `EndfieldHUD.install.json` listing exactly what Setup wrote (the list uninstall removes) |
 | Start menu | `Programs\EndfieldHUD.lnk` with AppUserModelID `io.github.endfieldcharge.EndfieldCharge` and toast activator `{FF18639C-ADE8-4BA7-AC09-7F1216F9E200}` |
 | Toast activator | `HKCU\Software\Classes\CLSID\{…}\LocalServer32 = "<exe>" --notification-activation` |
-| Uninstall entry | `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\EndfieldHUD` (DisplayName, DisplayVersion `1.2.0.18`, Publisher, InstallLocation, DisplayIcon, UninstallString/QuietUninstallString, EstimatedSize, NoModify/NoRepair) |
+| Uninstall entry | `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\EndfieldHUD` (DisplayName, DisplayVersion `1.3.0.19`, Publisher, InstallLocation, DisplayIcon, UninstallString/QuietUninstallString, EstimatedSize, NoModify/NoRepair) |
 | Launch at login | `HKCU\…\Run\EndfieldHUD = "<exe>" --login` |
 | User data | `%LOCALAPPDATA%\EndfieldHUD\` is never touched, except for the two cases below |
 

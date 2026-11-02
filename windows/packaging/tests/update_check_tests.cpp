@@ -239,6 +239,13 @@ void windowsReleases() {
     r = windowsCheck(u::releaseFeed({shipped("v1.2.0", 18, "EndfieldHUD 1.2.0")}));
     check(r.kind == Kind::current && r.release->tag == "v1.2.0" && r.release->url == releasePage + "v1.2.0" && r.release->install->build == 18,
           "The shared v1.2.0 release with the Windows 1.2.0 (18) files is the running build: up to date");
+    // The 1.3.0 (19) build (source-authority.json) before its own release: the published v1.2.0 (18) and a newer
+    // Mac-only release offer nothing (HUDGitHubRelease "newer installed": current, naming the latest release).
+    for (const auto& feed : {u::releaseFeed({shipped("v1.2.0", 18, "EndfieldHUD 1.2.0")}), u::releaseFeed({macOnly("v1.3.1"), shipped("v1.2.0", 18, "EndfieldHUD 1.2.0")})}) {
+        r = windowsCheck(feed, "v1.3.0", 19);
+        check(r.kind == Kind::current && r.release->tag == "v1.2.0" && r.release->install->build == 18 && u::releaseDisplay(*r.release) == "1.2.0 (18)",
+              "A 1.3.0 (19) build treats the published v1.2.0 (18) as older and is offered nothing");
+    }
     r = windowsCheck(u::releaseFeed({shipped("v1.3.0", 30, "EndfieldHUD 1.3.0"), shipped("v1.2.0", 18)}));
     check(r.kind == Kind::available && r.release->tag == "v1.3.0" && r.release->url == releasePage + "v1.3.0" && u::releaseDisplay(*r.release) == "1.3.0 (30)" &&
           r.release->install->sums.url == "https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.3.0/EndfieldHUD-1.3.0-build30-windows-x64-SHA256SUMS.txt",

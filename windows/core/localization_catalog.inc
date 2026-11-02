@@ -1,7 +1,7 @@
 // Generated from the authoritative macOS LocalizationCatalog.swift + LocalizationCatalogRedesign.swift (merged as
 // the Mac merges them) and the Windows-kept v1.2.0 pairs of tools/localization_windows_kept.json; do not edit
 // translations here. Rows: 1283 Mac + 0 Windows-kept.
-// Commit: 4fda15a03ba50675e0b12d69a83efdb6526c19f6 (Windows-kept rows: ca04f142185c7de40acd8523bdb563195d90a1d1)
+// Commit: 81b6f66c61a1d252a3db503ff85ba8bb5565b65d (Windows-kept rows: ca04f142185c7de40acd8523bdb563195d90a1d1)
 // SHA256: 7162d43a038a84e34cc94c6d432e659994fa087fcbcd7fb5f04c00de6ef067c3 6ef8779e0ef708581927ab11f44e8c122e868a5dc6e2ba76fae3647d608e5436
     {" (disconnected)","（未连接）","（未連接）","（未接続）"," (연결 해제됨)"},
     {" Return to 100% to retry cleanup."," 回到 100% 可重试清理。"," 回到 100% 可重試清理。"," 100%に戻すと後処理を再試行します。"," 100%로 되돌려 정리를 다시 시도하세요."},

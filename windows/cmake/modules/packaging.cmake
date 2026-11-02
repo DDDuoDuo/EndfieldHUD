@@ -108,6 +108,7 @@ if(WIN32)
   # EndfieldHUD-Setup.exe (stub; the release step appends the payload) and
   # uninstall.exe, from one source with the version of source-authority.json.
   set(EHUD_APP_ICON "${CMAKE_CURRENT_SOURCE_DIR}/resources/app/EndfieldHUD.ico")
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/source-authority.json")
   file(READ "${CMAKE_CURRENT_SOURCE_DIR}/source-authority.json" ehud_packaging_authority)
   string(JSON EHUD_APP_RELEASE GET "${ehud_packaging_authority}" release)
   string(JSON EHUD_APP_BUILD GET "${ehud_packaging_authority}" build)
