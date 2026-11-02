@@ -5,14 +5,18 @@
 #include <memory>
 namespace endfield::native {
 struct ProjectionMediaAppearance {
-    modules::NotesColor accent{.98,.83,.12,1};bool playing{};double seconds{};
+    // accent: the runtime accent of the cut-corner control highlights
+    // (HUDControlHighlightLayer); yellow: HUDColor.yellow, the palette's
+    // accent family (#FFFA00 at the default #FAD41F accent), of the corner
+    // mark and the video progress fill (:659-661).
+    modules::NotesColor accent{.98,.83,.12,1};modules::design::Color yellow{modules::design::rgb(modules::design::authoredYellow)};bool playing{};double seconds{};
     std::optional<std::string> error;
 };
 // The Mac 1.3.0 ProjectionMediaNode face and overlay (ProjectionWorkspaceView
 // .swift:633-721): the dark #141414 .9 face with a 1 px #3D3D3D ring in both
-// themes, the theme-coloured corner mark, the 10.5 px bold #EEEEEE title
+// themes, the theme-yellow corner mark, the 10.5 px bold #EEEEEE title
 // (tracking .04), the x / play / pause icons, the 10 px bold #D9D9D9 tabular
-// time and the theme-coloured progress fill, in the design library's text
+// time and the theme-yellow progress fill, in the design library's text
 // and icon vocabulary (`text`: the HUD's text services). Decoded content
 // remains a borrowed provider draw between them. No image/codec or file access.
 struct ProjectionMediaArtwork {ehud::data::Json face,overlay;};

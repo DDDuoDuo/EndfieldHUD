@@ -118,6 +118,14 @@ void failuresAndOrder(){
     check(s.note(a)&&s.editing()&&s.unsaved().contains(a)&&s.error(),"Failed creation retains editable unsaved draft");s.finishEditing("keep pending text");
     check(s.note(a)->text=="keep pending text"&&s.unsaved().contains(a),"Failed edit preserves user text in retained draft");f.failWrite=false;s.beginEditing(a);s.finishEditing("keep pending text");
     check(s.unsaved().empty()&&!s.error()&&f.saved.at(a).text=="keep pending text","Successful retry clears unsaved error");
+    // DOCS-126: errorRevision advances whenever the Mac sets errorMessage from a store call (the owner's status).
+    {Fake k;State e({},k.adapter());e.createText(a,0);e.finishEditing("first");auto seen=e.errorRevision();k.failWrite=true;e.createText(b,1);
+     check(e.errorRevision()>seen&&e.error()==std::optional<std::string>("fixture disk full"),"A failed save advances the error revision with its message");seen=e.errorRevision();
+     e.finishEditing("still unsaved");check(e.errorRevision()>seen&&e.unsaved().contains(b),"Every failed save reports again (report(error))");seen=e.errorRevision();
+     k.failWrite=false;e.beginEditing(a);e.finishEditing("first, edited");check(e.errorRevision()==seen&&e.error(),"A save that leaves another note unsaved keeps the message");
+     e.beginEditing(b);e.finishEditing("saved now");check(e.errorRevision()>seen&&!e.error()&&e.unsaved().empty(),"The save that leaves nothing unsaved clears it (unsavedNoteIDs.isEmpty)");seen=e.errorRevision();
+     k.failDelete=true;check(e.requestDeletion(a)&&!e.confirmDeletion(a)&&e.errorRevision()>seen&&e.error()==std::optional<std::string>("fixture delete denied"),"A failed delete reports its message");seen=e.errorRevision();
+     k.failDelete=false;check(e.confirmDeletion(a)&&e.errorRevision()==seen&&e.error(),"A successful delete leaves the message (the Mac clears it only on a save)");}
     auto low=note(b);low.zIndex=9;auto high=note(c);high.zIndex=std::numeric_limits<std::int64_t>::max();Fake g;State old({high,low},g.adapter());old.select(b);
     check(old.note(c)->zIndex==1&&old.note(b)->zIndex==2&&g.writes==3,"Source z exhaustion compacts relative order then raises selection");
     rejects([&]{State bad({low,low},g.adapter());},"Duplicate initial note IDs reject");

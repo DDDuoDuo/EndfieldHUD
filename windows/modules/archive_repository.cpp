@@ -123,7 +123,7 @@ struct ArchiveSQLiteRepository::Impl {
     // lock), then add the item, set the key and the version in one transaction.
     void writeVerifier(std::string_view id,std::string_view password,bool replacing){
         if(!rules.canonical)throw StoreError(StoreErrorCode::unavailable,"Archive passwords need the installed canonical composition");
-        auto canonical=rules.canonical(password);const auto data=ArchivePasswordVerifier::make(canonical).encoded();std::fill(canonical.begin(),canonical.end(),'\0');
+        auto canonical=rules.canonical(password);const ArchiveWipe wiping{canonical};const auto data=ArchivePasswordVerifier::make(canonical).encoded();
         const auto key=makeUUID(),account=archivePasswordAccount(id,key);auto&store=requireVault();std::optional<std::string>previous;bool added{};
         try{transaction([&]{const auto row=classification(id);previous=row.key;need(row.found&&row.key.has_value()==replacing,"Archive classification state changed");
             try{store.add(account,data);}catch(...){throw ArchiveClassificationError(ArchiveClassificationErrorCode::vaultUnavailable);}added=true;
@@ -195,7 +195,7 @@ void ArchiveSQLiteRepository::classify(std::string_view id,std::string_view pass
 // document; a missing or unreadable verifier throws, never "wrong password".
 bool ArchiveSQLiteRepository::verify(std::string_view id,std::string_view password){need(ehud::data::validUUID(id),"Invalid Archive entry UUID");auto&i=*impl_;i.open();const auto row=i.classification(id);need(row.found,"Unknown Archive document");if(!row.key)return true;
     const auto verifier=i.storedVerifier(id,*row.key);if(password.size()>archivePasswordMaximumBytes||!ehud::data::Json::validUtf8(password))return false;
-    if(!i.rules.canonical)throw StoreError(StoreErrorCode::unavailable,"Archive passwords need the installed canonical composition");auto canonical=i.rules.canonical(password);const bool matches=verifier.matches(canonical);std::fill(canonical.begin(),canonical.end(),'\0');return matches;}
+    if(!i.rules.canonical)throw StoreError(StoreErrorCode::unavailable,"Archive passwords need the installed canonical composition");auto canonical=i.rules.canonical(password);const ArchiveWipe wiping{canonical};return verifier.matches(canonical);}
 // declassify (:408-420): idempotent; the text stays; back to version 2 with
 // the last classified document; the verifiers go after the commit.
 void ArchiveSQLiteRepository::declassify(std::string_view id){need(ehud::data::validUUID(id),"Invalid Archive entry UUID");auto&i=*impl_;i.open();std::optional<std::string>key;

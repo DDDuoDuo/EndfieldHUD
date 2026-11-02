@@ -193,6 +193,11 @@ struct NotesPreview::Impl {
     // centre toasts it once per distinct message (NotesCanvas.reportStatus;
     // the v1.2.0 orange centre status line is gone).
     bool setMediaError(std::optional<std::string> value){if(mediaError==value)return false;mediaError=std::move(value);reportStatus();return true;}
+    // Desktop text/TODO/drawing saves and deletes report like the Mac too
+    // (report(error); nil once no note is unsaved): the state's error joins
+    // the same status whenever its errorRevision advances (DOCS-126).
+    std::uint64_t seenErrorRevision{};
+    void syncSaveError(){if(state->errorRevision()==seenErrorRevision)return;seenErrorRevision=state->errorRevision();(void)setMediaError(state->error());}
     // The centre canvas is driven from this owner's events: its menus and
     // toasts start at this owner's time (the shared Context's clock).
     void centreClock(double time)const{if(design){auto&env=design->env();env.now=std::max(env.now,time);}}
@@ -308,7 +313,7 @@ struct NotesPreview::Impl {
         if(drawing){const auto c=workspace->drawingColor();f.style.color=core::notes::RGBA{c[0],c[1],c[2],c[3]};}
         else if(const auto selected=workspace->editor()?workspace->editor()->selectionStyle():std::nullopt)f.style=*selected;else return false;
         const auto fallback=raster.defaultFontFamily();
-        f.selectedFamily=std::string(gpu::notesSelectedFontFamily(f.style,fallback));
+        f.selectedFamily=!gpu::notesHasExplicitFont(f.style)?fallback:raster.fontFamilyOf(*f.style.fontName).value_or(*f.style.fontName);
         if(kind==NotesDesktopPopup::Kind::font){modules::ArchiveFontServices fonts;const auto bundled=raster.bundledFontFamilies();
             for(const auto&family:bundled)if(family!=fallback)fonts.bundledCJKFamilies.push_back(family);
             fonts.installedFamilies=[this]{return raster.installedFontFamilies();};f.families=modules::archive_rich_text::families(fonts);}
@@ -550,6 +555,7 @@ void NotesPreview::update(const Matrix&center,const core::source::DesktopChromeS
     i.desktop->poseDeletion(i.workspaceWorld,opacity,t);
     if(i.popup->open()){if(i.state->note(i.popup->noteID()))i.popup->place(i.noteRect(i.popup->noteID()),i.state->workspaceBounds());else i.closePopup(t);}
     i.popup->pose(i.workspaceWorld,opacity,t);
+    i.syncSaveError();
     i.hasPose=true;
 }
 bool NotesPreview::requiresFrames(double t)const{const auto&i=*impl_;t=i.queryTime(t);return i.modules.requiresFrames()||!i.tracks.empty()||i.workspace->requiresFrames(t)||i.desktop->requiresFrames(t)||i.popup->requiresFrames(t);}

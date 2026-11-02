@@ -28,6 +28,8 @@ struct ReaderCanvasOwner::Impl {
     std::shared_ptr<bool> alive = std::make_shared<bool>(true);
     std::optional<ReaderImportAction> action;
     std::uint64_t generation{}, relinkGeneration{}, shelfGeneration{};
+    // The import whose ReaderController.open(url:) ran (beginImport, not a relink).
+    std::uint64_t openingGeneration{};
     bool importPending{};
     std::optional<std::string> relinkBook;
     std::uint64_t seenRevision{};
@@ -138,6 +140,8 @@ bool ReaderCanvasOwner::beginImport(std::uint64_t g, std::string_view path, doub
     // importBook (:709-712): a chosen or dropped file is named by its file
     // name; a shelf entry by its title (the canvas named it); a relink not.
     if (i.relinkGeneration != g && i.shelfGeneration != g) i.canvas->importBegan(fileName(path), false);
+    // open(url:) clears the page (also of the book already open) and shows LOADING; Relink keeps it.
+    if (i.relinkGeneration != g && i.state().beginImport()) { i.openingGeneration = g; i.syncState(); }
     return true;
 }
 bool ReaderCanvasOwner::receiveImport(std::uint64_t g, modules::ReaderBook book, double t) {
@@ -160,7 +164,9 @@ bool ReaderCanvasOwner::receiveImport(std::uint64_t g, modules::ReaderBook book,
         }
         return i.state().addValidated(std::move(book));
     } catch (const modules::ReaderError& e) {
-        i.canvas->importFailed(modules::readerErrorMessage(e.code(), language));
+        // A refused store.add is the controller's error (its Notice toast and UNAVAILABLE).
+        if (std::exchange(i.openingGeneration, 0) == g) { i.canvas->importFailed({}); i.state().importFailed(std::current_exception()); }
+        else i.canvas->importFailed(modules::readerErrorMessage(e.code(), language));
     }
     return false;
 }
@@ -173,7 +179,10 @@ bool ReaderCanvasOwner::receiveImportError(std::uint64_t g, std::optional<std::s
     i.importPending = false;
     if (i.relinkGeneration == g) i.relinkBook.reset();
     i.canvas->panelClosed();
-    i.canvas->importFailed(error.value_or(std::string{}));
+    // After open(url:) the failure is the controller's fail(error): its error
+    // shows the Notice toast and UNAVAILABLE in the emptied page (:282, :131-133).
+    if (std::exchange(i.openingGeneration, 0) == g) { i.canvas->importFailed({}); i.state().importFailed(error ? std::make_exception_ptr(std::runtime_error(*error)) : nullptr); }
+    else i.canvas->importFailed(error.value_or(std::string{}));
     return true;
 }
 bool ReaderCanvasOwner::acceptsDrop(core::Point client) const {

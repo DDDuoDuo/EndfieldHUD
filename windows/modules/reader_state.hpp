@@ -100,6 +100,14 @@ public:
     // and preference previews remain responsive; failed structural writes stay
     // pending for explicit retry without pretending they reached durable data.
     bool addValidated(ReaderBook);bool select(std::string_view);bool remove(std::string_view);
+    // ReaderController.open(url:) (:83-86): a chosen, dropped or shelf file
+    // starts importing, so the open document, its pages, the history AND the
+    // kept page go (also when the file is the book already open) and the
+    // Reader shows LOADING until addValidated's write reopens the selected
+    // book; false while inactive (nothing changes). importFailed is the
+    // import's fail(error) (:282) / failed store write: loading stops and
+    // error() shows the failure (null: no error, the page stays empty).
+    bool beginImport();void importFailed(std::exception_ptr);
     // Set once by the owner before the first activation (owner thread).
     void setRelinkLedger(ReaderRelinkLedger);
     // The Mac 1.3.0 Relink… of ANY book (ReaderController.relink, ReaderStore

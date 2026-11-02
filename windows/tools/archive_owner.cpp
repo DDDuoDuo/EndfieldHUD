@@ -7,7 +7,6 @@
 #include "native/archive_owner_authentication.hpp"
 #include "native/hud_design_scene.hpp"
 #include "tools/design_body_route.hpp"
-#include "core/notes_font_names.hpp"
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
@@ -119,8 +118,7 @@ m::ArchiveFontServices archiveFontServices(gpu::LayerRasterizer& raster) {
     gpu::LayerRasterizer* r = &raster;
     fonts.installedFamilies = [r] { return r->installedFontFamilies(); };
     fonts.familyOf = [r](std::string_view name) -> std::optional<std::string> {
-        if (auto shared = r->bundledFamilyOf(name)) return shared;
-        if (const auto mapped = core::notes::notesWindowsFontFamily(name)) return std::string(*mapped);
+        if (auto family = r->fontFamilyOf(name)) return family;
         const auto& installed = r->installedFontFamilies();
         if (std::binary_search(installed.begin(), installed.end(), name, std::less<>{})) return std::string(name);
         return std::nullopt;

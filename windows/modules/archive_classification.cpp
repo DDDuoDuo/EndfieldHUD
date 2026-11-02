@@ -21,8 +21,6 @@ using ehud::data::StoreError;using ehud::data::StoreErrorCode;using J=ArchiveJso
 void need(bool value,const char*message){if(!value)throw StoreError(StoreErrorCode::invalid,message);}
 [[noreturn]]void unavailable(){throw StoreError(StoreErrorCode::unavailable,"The archive could not be saved.");}
 std::string upper(std::string_view value){std::string out(value);for(auto&c:out)if(c>='a'&&c<='z')c=static_cast<char>(c-'a'+'A');return out;}
-// Zeroes a password copy the optimizer may not elide (Mac: memset_s).
-void wipe(std::string&value)noexcept{volatile char*p=value.data();for(std::size_t i=0;i<value.size();++i)p[i]=0;value.clear();}
 bool randomBytes(std::string&out,std::size_t count){out.assign(count,'\0');
 #ifdef _WIN32
     return BCRYPT_SUCCESS(BCryptGenRandom(nullptr,reinterpret_cast<PUCHAR>(out.data()),static_cast<ULONG>(count),BCRYPT_USE_SYSTEM_PREFERRED_RNG));
@@ -35,6 +33,14 @@ bool randomBytes(std::string&out,std::size_t count){out.assign(count,'\0');
 // Swift JSONDecoder UInt32: an integral number token within 0...UInt32.max.
 std::optional<std::uint32_t>uint32(const J&value){if(!value.isNumber())return {};const auto token=value.encode(64);std::uint64_t n{};const auto r=std::from_chars(token.data(),token.data()+token.size(),n);if(r.ec==std::errc{}&&r.ptr==token.data()+token.size()&&n<=0xFFFFFFFFull)return static_cast<std::uint32_t>(n);
     const double d=value.number();if(std::isfinite(d)&&std::trunc(d)==d&&d>=0&&d<=4294967295.)return static_cast<std::uint32_t>(d);return {};}
+}
+// SecureZeroMemory is a volatile byte loop the optimizer may not elide (Mac: memset_s).
+void archiveWipe(std::string&value)noexcept{
+#ifdef _WIN32
+    SecureZeroMemory(value.data(),value.size());
+#else
+    volatile char*p=value.data();for(std::size_t i=0;i<value.size();++i)p[i]=0;
+#endif
 }
 ArchiveClassificationError::ArchiveClassificationError(ArchiveClassificationErrorCode code):std::runtime_error(archiveClassificationErrorText(code,core::Language::english)),code_(code){}
 std::string archiveClassificationErrorText(ArchiveClassificationErrorCode code,core::Language language){
@@ -53,7 +59,10 @@ std::optional<ArchivePasswordIssue>archivePasswordIssue(std::string_view passwor
     need(bool(rules.characters),"Archive passwords need the installed grapheme rules");
     if(!J::validUtf8(password)||rules.characters(password)<archivePasswordMinimumLength)return ArchivePasswordIssue::tooShort;
     if(password.size()>archivePasswordMaximumBytes)return ArchivePasswordIssue::tooLong;
-    if(confirmation&&*confirmation!=password)return ArchivePasswordIssue::mismatch;
+    // Swift `confirmation != password` is canonical equivalence: compare the NFC forms (bytes first).
+    if(confirmation&&*confirmation!=password){need(bool(rules.canonical),"Archive password confirmation needs the installed canonical composition");
+        auto first=rules.canonical(password);const ArchiveWipe wipingFirst{first};auto second=rules.canonical(*confirmation);const ArchiveWipe wipingSecond{second};
+        if(first!=second)return ArchivePasswordIssue::mismatch;}
     return {};
 }
 std::string archivePasswordAccount(std::string_view document,std::string_view key){need(ehud::data::validUUID(document)&&ehud::data::validUUID(key),"Invalid Archive verifier account");return upper(document)+"/"+upper(key);}
@@ -102,7 +111,7 @@ bool ArchivePasswordVerifier::matches(std::string_view password)const{
     if(!valid()||password.size()>archivePasswordMaximumBytes)return false;
     auto candidate=archivePBKDF2(password,salt,iterations,keyLength);if(!candidate||candidate->size()!=key.size())return false;
     unsigned char difference{};for(std::size_t i=0;i<key.size();++i)difference|=static_cast<unsigned char>((*candidate)[i]^key[i]);
-    wipe(*candidate);return difference==0;
+    archiveWipe(*candidate);return difference==0;
 }
 std::uint32_t ArchivePasswordVerifier::calibratedIterations(){
     static const std::uint32_t value=[]{

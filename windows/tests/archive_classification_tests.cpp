@@ -69,6 +69,15 @@ void vectors(){
     check(mod::ArchivePasswordVerifier::make("correct horse",600000).salt!=made.salt,"Every verifier draws a new salt");
     const auto text=made.encoded();check(text.starts_with("{\"algorithm\":\"PBKDF2-HMAC-SHA256\",\"iterations\":600000,\"key\":")&&text.ends_with(",\"version\":1}"),"Sorted-key record layout like JSONEncoder .sortedKeys");
     rejects([&]{(void)mod::ArchivePasswordVerifier::make("pw",599999);},"Iterations below the floor are refused",data::StoreErrorCode::invalid);
+    // DOCS-332: the password copy is zeroed in place on every exit, also when the derivation throws (Mac memset_s in a defer).
+    std::string copy="correct horse";mod::archiveWipe(copy);check(copy==std::string(13,'\0'),"archiveWipe zeroes every byte of the copy");
+    std::string thrown="p\xC3\xA1ssw\xC3\xB6rd";const auto size=thrown.size();
+    rejects([&]{const mod::ArchiveWipe wiping{thrown};(void)mod::ArchivePasswordVerifier::make(thrown,599999);},"A refused derivation still unwinds through the wipe",data::StoreErrorCode::invalid);
+    check(thrown==std::string(size,'\0'),"ArchiveWipe zeroes the copy when make throws");
+    // DOCS-331: Swift `!=` is canonical equivalence; differing spellings need the installed NFC.
+    auto bare=endfield::native::nativeArchiveTextRules();bare.canonical=nullptr;
+    check(!mod::archivePasswordIssue("abcd","abcd",bare),"Byte-equal confirmations need no normalization");
+    rejects([&]{(void)mod::archivePasswordIssue("p\xC3\xA1ss","pa\xCC\x81ss",bare);},"A differing spelling is never byte-compared without the canonical rule",data::StoreErrorCode::invalid);
 }
 void schema(){Temporary t;const auto rules=endfield::native::nativeArchiveTextRules();auto vault=std::make_shared<Vault>();
     // A Windows 1.2.0 / Mac v1.2.0 archive widens lazily and stays version 2.

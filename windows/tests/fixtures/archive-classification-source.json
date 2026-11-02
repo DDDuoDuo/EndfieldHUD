@@ -98,6 +98,31 @@
    "confirmation": "",
    "issue": "tooShort",
    "password": ""
+  },
+  {
+   "confirmation": "pásswörd",
+   "issue": null,
+   "password": "pásswörd"
+  },
+  {
+   "confirmation": "pásswörd",
+   "issue": null,
+   "password": "pásswörd"
+  },
+  {
+   "confirmation": "가각갂갃",
+   "issue": null,
+   "password": "가각갂갃"
+  },
+  {
+   "confirmation": "étès",
+   "issue": "mismatch",
+   "password": "étés"
+  },
+  {
+   "confirmation": "ÅÅÅÅ",
+   "issue": null,
+   "password": "ÅÅÅÅ"
   }
  ],
  "limits": {

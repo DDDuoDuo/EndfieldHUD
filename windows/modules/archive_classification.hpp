@@ -45,12 +45,20 @@ std::string archiveClassificationErrorText(ArchiveClassificationErrorCode,core::
 
 // ArchivePassword (ArchiveClassification.swift:35-49): at least 4 Characters
 // (rules.characters, grapheme clusters), at most 1024 UTF-8 bytes, checked in
-// that order before a mismatched confirmation. Derivation input is the NFC
-// form (rules.canonical) as UTF-8, so the same typed password derives the
-// same key. Requires rules.canonical.
+// that order before a mismatched confirmation. The confirmation compares like
+// Swift `!=` (canonical equivalence: the NFC forms, so a precomposed and a
+// combining spelling are no mismatch). Derivation input is the NFC form
+// (rules.canonical) as UTF-8, so the same typed password derives the same
+// key. Requires rules.canonical (only rules.characters without a confirmation).
 inline constexpr std::size_t archivePasswordMinimumLength=4,archivePasswordMaximumBytes=1024;
 std::optional<ArchivePasswordIssue>archivePasswordIssue(std::string_view password,const std::optional<std::string>&confirmation,const ArchiveTextRules&);
 std::string archivePasswordAccount(std::string_view document,std::string_view key); // uppercase "<DOC>/<KEY>"
+// Zeroes a password copy in place with a wipe the optimizer may not elide
+// (Mac: memset_s in a `defer`): SecureZeroMemory on Windows, a volatile loop
+// elsewhere. The size is kept. ArchiveWipe runs it on every exit of a scope,
+// including a throw (ArchivePasswordVerifier.derive :94-95).
+void archiveWipe(std::string&)noexcept;
+struct ArchiveWipe {std::string&value;explicit ArchiveWipe(std::string&v)noexcept:value(v){}~ArchiveWipe(){archiveWipe(value);}ArchiveWipe(const ArchiveWipe&)=delete;ArchiveWipe&operator=(const ArchiveWipe&)=delete;};
 
 // ArchivePasswordVerifier (:53-124). JSON with sorted keys:
 // {"algorithm":"PBKDF2-HMAC-SHA256","iterations":N,"key":"<base64 32 B>","salt":"<base64 16 B>","version":1}.

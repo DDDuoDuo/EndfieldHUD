@@ -820,6 +820,20 @@ void deletionKeys(HWND hwnd,gpu::Renderer&renderer,const std::filesystem::path&f
     f.preview->select(core::Module::power,f.time);f.tick(1);check(!f.key(app::KeyKind::down,VK_DELETE),"Another module keeps Delete for its own fields");
     f.release();
 }
+// DOCS-126, NotesWorkspace.save / report(error) (:956-966, :1590-1593): a
+// failed desktop note save sets the same status as a media error ("Could not
+// save: " + the store's message, the centre's Notice toast). Another SQLite
+// writer makes the store refuse the edit as changed on disk.
+void saveFailureStatus(HWND hwnd,gpu::Renderer&renderer,const std::filesystem::path&formats){
+    gpu::LayerRasterizer raster;Fixture f(hwnd,renderer,raster,formats);const auto original=savedNotes(f.root.path).front();
+    check(!f.preview->mediaError(),"A fresh desktop shows no status");
+    {const auto path=(f.root.path/"Notes"/"notes.sqlite3").u8string();sqlite3*db{};check(sqlite3_open_v2(reinterpret_cast<const char*>(path.c_str()),&db,SQLITE_OPEN_READWRITE|SQLITE_OPEN_FULLMUTEX,nullptr)==SQLITE_OK,"The fixture store opens for a second writer");
+     struct Close{sqlite3*db;~Close(){if(db)sqlite3_close_v2(db);}}close{db};check(sqlite3_exec(db,"CREATE TABLE synthetic_other_writer(x)",nullptr,nullptr,nullptr)==SQLITE_OK,"Another writer commits");}
+    check(f.pointer(app::PointerKind::doubleClick,{original.x+30,original.y+45})&&f.key(app::KeyKind::down,VK_END)&&f.key(app::KeyKind::character,'!')&&f.key(app::KeyKind::down,VK_ESCAPE),"Edit and finish the sample note");f.tick(.2);
+    check(f.preview->mediaError()==std::optional<std::string>("Notes changed in another instance; reopen before editing"),"A failed text save reaches the status (the Notice toast)");
+    check(savedNotes(f.root.path).front().text==original.text,"The refused edit is not stored");
+    f.release();
+}
 // The redesign controls on the shared design Context (tools/notes_desktop_
 // controls, tools/notes_desktop_popup): each card's buttons and title, the
 // deletion confirmation and the format pop-ups are drawn on the notes plane;
@@ -1021,6 +1035,7 @@ int wmain(int argc, wchar_t** argv) {
         editingRecovery(window.hwnd,renderer,formats);
         preferencesPreview(window.hwnd,renderer,formats);
         deletionKeys(window.hwnd,renderer,formats);
+        saveFailureStatus(window.hwnd,renderer,formats);
         clipboardKeys(window.hwnd,renderer,formats);
         wordSelection(window.hwnd,renderer,formats);
         imagePaste(window.hwnd,renderer,formats);

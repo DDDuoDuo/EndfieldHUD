@@ -64,10 +64,12 @@ public:
     std::optional<ReaderImportAction> takeImportAction();
     bool importRequestCurrent(std::uint64_t) const noexcept;
     // The chosen / dropped / shelf file starts validating (call only after an
-    // actual reference was selected).
+    // actual reference was selected): like ReaderController.open(url:) the
+    // page goes and the Reader shows LOADING (not for a Relink…).
     bool beginImport(std::uint64_t, std::string_view path, double);
     bool receiveImport(std::uint64_t, modules::ReaderBook, double);
-    // nullopt: the chooser was cancelled (nothing shows); otherwise the Notice toast.
+    // nullopt: the chooser was cancelled (nothing shows); otherwise the Notice
+    // toast, after beginImport as the state's error (UNAVAILABLE, no page).
     bool receiveImportError(std::uint64_t, std::optional<std::string>, double);
     // documentDropURLs(.reader) / ReaderCanvas.importFiles: a drop over the
     // active Reader's centre box while nothing captures the pointer.

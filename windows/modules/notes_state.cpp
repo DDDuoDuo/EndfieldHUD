@@ -82,9 +82,9 @@ void NotesState::setPresentation(bool selected){
 void NotesState::cancelInteraction(){writable();(void)endGesture();if(pendingDeletion_){pendingDeletion_.reset();++revision_;}}
 void NotesState::replace(const Note& item){if(auto* n=find(item.id))*n=item;else notes_.push_back(item);}
 bool NotesState::save(const Note& item){
-    try{Persisting guard(persisting_);persistence_.upsert(item);unsaved_.erase(item.id);if(unsaved_.empty())error_.reset();return true;}
-    catch(const std::exception& e){unsaved_.insert(item.id);error_=e.what();return false;}
-    catch(...){unsaved_.insert(item.id);error_="Notes persistence failed";return false;}
+    try{Persisting guard(persisting_);persistence_.upsert(item);unsaved_.erase(item.id);if(unsaved_.empty()){error_.reset();++errorRevision_;}return true;}
+    catch(const std::exception& e){unsaved_.insert(item.id);error_=e.what();++errorRevision_;return false;}
+    catch(...){unsaved_.insert(item.id);error_="Notes persistence failed";++errorRevision_;return false;}
 }
 std::int64_t NotesState::nextZ(){
     std::int64_t maximum=-1;if(!notes_.empty())maximum=std::max_element(notes_.begin(),notes_.end(),[](const auto& a,const auto& b){return a.zIndex<b.zIndex;})->zIndex;
@@ -155,7 +155,7 @@ bool NotesState::createMedia(std::string id,double createdAt,std::string referen
     std::int64_t maximum=notes_.empty()?-1:notes_.front().zIndex;for(const auto&n:notes_)maximum=std::max(maximum,n.zIndex);item.zIndex=maximum<std::numeric_limits<std::int64_t>::max()?maximum+1:maximum;item=constrained(std::move(item),workspace_);
     // Source import only publishes a note after the store accepted it. Unlike
     // editable text creation, a failed media import is not an unsaved draft.
-    try{Persisting guard(persisting_);persistence_.upsert(item);}catch(const std::exception&e){error_=e.what();++revision_;return false;}catch(...){error_="Notes media import failed";++revision_;return false;}
+    try{Persisting guard(persisting_);persistence_.upsert(item);}catch(const std::exception&e){error_=e.what();++errorRevision_;++revision_;return false;}catch(...){error_="Notes media import failed";++errorRevision_;++revision_;return false;}
     error_.reset();replace(item);(void)select(item.id);++revision_;return true;
 }
 bool NotesState::createManagedImage(std::string id,double createdAt,std::string imageName,unsigned pixelWidth,unsigned pixelHeight,Point point){
@@ -168,7 +168,7 @@ bool NotesState::createManagedImage(std::string id,double createdAt,std::string 
     const auto ratio=double(pixelHeight)/double(std::max(1u,pixelWidth));const auto width=std::min(210.,160/std::max(.1,ratio));
     Note item{.id=std::move(id),.kind=ehud::data::NoteKind::image,.x=point.x,.y=point.y,.width=width,.height=width*ratio+24,.createdAt=createdAt};item.imageName=std::move(imageName);
     std::int64_t maximum=-1;for(const auto&n:notes_)maximum=std::max(maximum,n.zIndex);item.zIndex=maximum<std::numeric_limits<std::int64_t>::max()?maximum+1:maximum;item=constrained(std::move(item),workspace_);
-    try{Persisting guard(persisting_);persistence_.upsert(item);}catch(const std::exception&e){error_=e.what();++revision_;return false;}catch(...){error_="Notes image import failed";++revision_;return false;}
+    try{Persisting guard(persisting_);persistence_.upsert(item);}catch(const std::exception&e){error_=e.what();++errorRevision_;++revision_;return false;}catch(...){error_="Notes image import failed";++errorRevision_;++revision_;return false;}
     error_.reset();replace(item);(void)select(item.id);++revision_;return true;
 }
 bool NotesState::replaceMedia(std::string_view id,std::string reference){
@@ -181,7 +181,7 @@ bool NotesState::replaceMedia(std::string_view id,std::string reference){
     (void)ehud::data::makeWindowsMediaReference(value["windowsPath"].string(),value["displayName"].string(),static_cast<int>(width),static_cast<int>(height),value["kind"].string(),value["duration"].isNull()?std::optional<double>{}:value["duration"].number(),static_cast<int>(frames));
     if(current->media==reference)return false;
     auto item=*current;item.media=std::move(reference);
-    try{Persisting guard(persisting_);persistence_.upsert(item);}catch(const std::exception&e){error_=e.what();++revision_;return false;}catch(...){error_="Notes media relink failed";++revision_;return false;}
+    try{Persisting guard(persisting_);persistence_.upsert(item);}catch(const std::exception&e){error_=e.what();++errorRevision_;++revision_;return false;}catch(...){error_="Notes media relink failed";++errorRevision_;++revision_;return false;}
     error_.reset();replace(item);++revision_;return true;
 }
 bool NotesState::addChecklistItem(std::string_view id,std::string childID){
@@ -215,8 +215,8 @@ bool NotesState::confirmDeletion(std::string_view id){
     writable();if(!visible(id)||!pendingDeletion_||*pendingDeletion_!=id)return false;
     const std::string owned(id);
     try{Persisting guard(persisting_);persistence_.remove(owned);}
-    catch(const std::exception& e){error_=e.what();++revision_;return false;}
-    catch(...){error_="Notes deletion failed";++revision_;return false;}
+    catch(const std::exception& e){error_=e.what();++errorRevision_;++revision_;return false;}
+    catch(...){error_="Notes deletion failed";++errorRevision_;++revision_;return false;}
     notes_.erase(std::remove_if(notes_.begin(),notes_.end(),[&](const auto& n){return n.id==owned;}),notes_.end());
     pendingDeletion_.reset();unsaved_.erase(owned);if(selected_==owned)selected_.reset();if(editing_&&editing_->noteID==owned)editing_.reset();
     if(drag_&&drag_->noteID==owned)drag_.reset();++revision_;return true;

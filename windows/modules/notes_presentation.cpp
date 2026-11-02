@@ -154,8 +154,10 @@ bool NotesCardPresentation::updateContent(const NotesState& state,const NotesPre
         }
     }
     // The editing tools of a text note (:1089-1095): 20 px plates on a 24 px
-    // pitch from x 5 at h - 25: A↕, Aa, the colour chip (the caret colour,
-    // else primary) and B; a selected drawing's pen colour chip at (5, h - 25).
+    // pitch from x 5 at h - 25: A↕, Aa, the colour chip (the editor's typing
+    // colour, which the workspace supplies while editing: the run's colour,
+    // else the editor text colour; primary without one) and B; a selected
+    // drawing's pen colour chip at (5, h - 25).
     static constexpr std::array<const char*,4> verbs{"formatSize","formatFont","formatColor","formatSpecial"};
     if(editing&&!todo)for(std::size_t i=0;i<verbs.size();++i){const Rect rect{5+double(i)*24,h-25,20,20};action(verbs[i],strings.format[i],rect);
         const auto glyph=i==0||i==1?NotesControlGlyph::label:i==2?NotesControlGlyph::chip:NotesControlGlyph::bold;

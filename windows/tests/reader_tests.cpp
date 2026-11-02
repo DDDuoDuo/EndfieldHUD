@@ -104,6 +104,23 @@ void controller(){
  repo->fail=true;relinked=true;check(state.relink(id(2),"C:\\Owned-reader-fixture\\again.pdf",[&](bool ok){relinked=ok;}),"A relink while writes fail");q.drain();check(!relinked,"A failed write reports false");repo->fail=false;state.retryPendingWrites();q.drain();
  // Opening another book drops the kept page; a failed library load too.
  check(state.select(id(2)),"Another book is selected");q.one();check(!state.current(),"Opening another book drops the kept page");q.drain();check(state.book()->id==id(2)&&state.current(),"Another book renders its own page");
+ // DOCS-740, ReaderController.open(url:) (:83-86): every import, also of the book already open, drops the page and reopens from LOADING.
+ events.clear();auto opened=source->opens;const auto same=*state.book();
+ check(state.beginImport()&&!state.current()&&state.loading()&&state.pages().empty()&&!state.error(),"An import clears the kept page and shows LOADING");
+ check(!state.addValidated(same)&&events==std::vector<std::string>{"imported"},"Re-importing the open, unchanged reference writes nothing and is reported at once");
+ q.drain();check(state.current()&&!state.loading()&&source->opens==opened+1&&source->opened==id(2),"The book already open reopens after its import");
+ events.clear();opened=source->opens;check(state.setReading(!state.reading())&&!q.jobs.empty(),"A library write is in flight");
+ check(state.beginImport()&&!state.addValidated(same)&&!state.current()&&events.empty(),"An unchanged import waits for the pending write");
+ q.drain();check(state.current()&&source->opens==opened+1&&events==std::vector<std::string>{"imported"},"The open book reopens with the write that was in flight");
+ auto renamed=same;renamed.title="Book 2 again";check(state.beginImport()&&state.addValidated(renamed)&&!state.current(),"A refreshed reference of the open book waits for its write without the old page");
+ q.drain();check(state.current()&&state.book()->title=="Book 2 again"&&!state.loading(),"The refreshed book reopens once durable");
+ repo->fail=true;renamed.title="Book 2 third";check(state.beginImport()&&state.addValidated(renamed),"An import whose write fails");q.drain();
+ check(!state.current()&&!state.loading()&&state.error(),"A failed import write stops LOADING and shows the error (Mac: loading = false)");
+ repo->fail=false;state.retryPendingWrites();q.drain();check(state.current()&&state.book()->title=="Book 2 third"&&!state.error(),"The retried import reopens the book");
+ check(state.beginImport(),"Another import starts");state.importFailed(std::make_exception_ptr(std::runtime_error("Synthetic import failure")));
+ check(!state.current()&&!state.loading()&&state.error()==std::optional<std::string>("Synthetic import failure"),"A failed import is the controller's fail(error): no page, UNAVAILABLE");
+ check(!state.select(id(2))&&(q.drain(),state.current()),"Selecting the open book again reopens it");
+ state.setActive(false);check(!state.beginImport()&&state.current(),"An inactive Reader starts no import and keeps its page");state.setActive(true);q.drain();
  auto failing=std::make_shared<Repository>();failing->value.books={book(1)};failing->value.selected=id(1);struct Broken:Repository{m::ReaderLibrary load()override{throw std::runtime_error("Synthetic load failure");}};auto broken=std::make_shared<Broken>();m::ReaderState bad(broken,q.executor(),source);bad.setActive(true);q.drain();check(bad.error()&&!bad.current(),"A failed library load shows no page");
 }
 }

@@ -260,6 +260,11 @@ struct NativeNotesWorkspace::Impl {
         auto layout=std::make_shared<mod::NotesChecklistLayout>(n.id,r.width,r.height,inputs);s.rowMeasurements=std::move(next);return layout;
     }
     mod::NotesPresentationInput presentationInput(const Slot&s)const{mod::NotesPresentationInput input;input.palette=style.palette;input.strings=style.strings;if(s.measurement)input.measured=s.measurement->presentationText(s.measurement);input.checklist=s.checklist;input.scrollOffset=s.scrollOffset;input.editingColor=s.editingColor;input.drawingColor=drawingColor;if(s.media)input.media=s.media->content;return input;}
+    // NotesWorkspace.editingColor while a field is open: the editor's typing
+    // colour on every selection change (HUDNotesInteraction
+    // .textViewDidChangeSelection), the run's explicit colour else the editor
+    // text colour (white / black), never primary (DOCS-206).
+    std::optional<mod::NotesColor> openEditingColor()const{if(!field)return {};if(field->rich)if(const auto c=field->rich->selectionStyle().color)return mod::NotesColor{c->red,c->green,c->blue,c->alpha};return style.editorTextColor;}
     bool refresh(Slot&s,const Note&n,std::size_t ordinal,bool force=false){
         const auto c=state.card(n.id);need(c.has_value(),"Notes card disappeared during content synchronization");presentationRecord(n);geometry(c->rect,field&&field->id==n.id);
         if(s.initialized&&s.visible!=c->visible){s.motion={};issueToken(s);}
@@ -267,7 +272,7 @@ struct NativeNotesWorkspace::Impl {
         const auto checklist=todo?measureChecklist(s,n,c->rect,force):std::shared_ptr<const mod::NotesChecklistLayout>{};
         if(drawing&&(!s.drawing||s.drawingPayload!=n.drawing)){auto value=std::make_shared<mod::NotesDrawing>(n.drawing?mod::NotesDrawing(*n.drawing):mod::NotesDrawing{});s.drawing=std::move(value);s.drawingPayload=n.drawing;s.drawingRevision=++drawingSerial;}
         if(drawing){if(!s.drawingScene)s.drawingScene=std::make_unique<NativeNotesDrawingScene>(raster,options.raster);(void)s.drawingScene->setCompleted(*s.drawing,s.drawingRevision,{c->rect.width,c->rect.height});}
-        std::optional<mod::NotesColor> editingColor;if(edit&&field->rich){const auto color=field->rich->selectionStyle().color;if(color)editingColor=mod::NotesColor{color->red,color->green,color->blue,color->alpha};}
+        const auto editingColor=edit?openEditingColor():std::nullopt;
         const bool content=force||(media&&s.paintedMedia!=media->content)||s.media!=media||s.editingColor!=editingColor||!s.initialized||s.measurement!=measurement||s.checklist!=checklist||s.rect.width!=c->rect.width||s.rect.height!=c->rect.height||s.selected!=c->selected||s.pinned!=c->pinned||s.editing!=edit;
         bool moved{};if(content){mod::NotesPresentationInput input;input.palette=style.palette;input.strings=style.strings;if(measurement)input.measured=measurement->presentationText(measurement);input.checklist=checklist;input.scrollOffset=s.scrollOffset;input.editingColor=editingColor;input.drawingColor=drawingColor;if(media)input.media=media->content;s.presentation.updateContent(state,input);
             if(!s.native)s.native=std::make_unique<NativeNotesCardScene>(s.presentation,raster,options.raster,style.editor);
@@ -571,8 +576,8 @@ bool NativeNotesWorkspace::mutateChecklistItem(std::string_view id,std::string_v
 std::optional<std::string_view>NativeNotesWorkspace::editingItemID()const noexcept{return impl_->field&&impl_->field->itemID?std::optional<std::string_view>(*impl_->field->itemID):std::nullopt;}
 NativeNotesFinishResult NativeNotesWorkspace::finishEditing(bool commit){return impl_->finish(commit);}
 bool NativeNotesWorkspace::syncEditor(){auto&i=*impl_;i.check();i.editorOwnership();if(!i.field)return false;bool changed=i.field->native->syncContent();if(changed){++i.compositionRevision;++i.stats.editorContentUpdates;}
-    auto*s=i.find(i.field->id);if(s){const auto c=i.field->rich?i.field->rich->selectionStyle().color:std::optional<core::notes::RGBA>{};const auto color=c?std::optional<mod::NotesColor>(mod::NotesColor{c->red,c->green,c->blue,c->alpha}):std::nullopt;
-        if(color!=s->editingColor){changed=i.refresh(*s,*i.state.note(i.field->id),s->ordinal)||changed;i.rebuildEntries();}}
+    auto*s=i.find(i.field->id);if(s){
+        if(i.openEditingColor()!=s->editingColor){changed=i.refresh(*s,*i.state.note(i.field->id),s->ordinal)||changed;i.rebuildEntries();}}
     if(changed&&i.pose)i.applyPose(*i.pose);return changed;
 }
 ProjectedEditorResult NativeNotesWorkspace::applyFormat(const core::notes::FormatChange&change){auto&i=*impl_;i.check();i.editorOwnership();if(!i.field)return{};auto result=i.field->native->applyFormat(change);if(result.changed)syncEditor();return result;}

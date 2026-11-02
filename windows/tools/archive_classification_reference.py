@@ -20,7 +20,10 @@ passwords = ['correct horse', 'pásswörd', 'pásswörd', '档案密码',
              '\U0001F469\U0001F3FD‍\U0001F4BB\U0001F680\U0001F680\U0001F680', 'x' * 1024]
 issues = [('abc', None), ('abcd', None), ('\U0001F469\U0001F3FD‍\U0001F4BB' * 3, None), ('\U0001F469\U0001F3FD‍\U0001F4BB' * 4, None),
           ('ééé', None), ('éééé', None), ('x' * 1024, None), ('x' * 1025, None),
-          ('é' * 600, None), ('abc', 'abd'), ('abcd', 'abce'), ('abcd', 'abcd'), ('', '')]
+          ('é' * 600, None), ('abc', 'abd'), ('abcd', 'abce'), ('abcd', 'abcd'), ('', ''),
+          # Swift == is canonical equivalence: precomposed and combining spellings match (DOCS-331).
+          ('p\u00e1ssw\u00f6rd', 'pa\u0301sswo\u0308rd'), ('pa\u0301sswo\u0308rd', 'p\u00e1ssw\u00f6rd'), ('\uac00\uac01\uac02\uac03', '\u1100\u1161\uac01\u1100\u1161\u11a9\uac03'),
+          ('e\u0301te\u0301s', '\u00e9t\u00e8s'), ('\u212b\u212b\u212b\u212b', '\u00c5\u00c5\u00c5\u00c5')]
 records = [
     '{"algorithm":"PBKDF2-HMAC-SHA256","iterations":600000,"key":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","salt":"AAAAAAAAAAAAAAAAAAAAAA==","version":1}',
     '{"algorithm":"PBKDF2-HMAC-SHA256","iterations":599999,"key":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","salt":"AAAAAAAAAAAAAAAAAAAAAA==","version":1}',
