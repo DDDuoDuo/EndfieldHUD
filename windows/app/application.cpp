@@ -1762,6 +1762,7 @@ void Application::Impl::perform(const core::SystemOverlayEffects&effects,double 
         case K::quitAccepted:quitRequested=true;if(summonHook)summonHook->stop();if(tray)tray->setHotkey({});broadcast(HostEvent::Kind::quitting,time);break;
         case K::terminate:finishQuit(time);break;
         case K::restartShortcut:if(tray)applySummonShortcut(false);break;
+        case K::shelfRetract:case K::shelfHide:case K::shelfRestore:case K::shelfClose:shelfDragEffect(e,time);break;
         }
     }
 }
@@ -1880,7 +1881,7 @@ void Application::Impl::forceConceal(double time){
         time=hostTime(time);host.capturePointer(false);environment.pointerLocked=false;session->setEnvironment(environment,time);
         closing=false;session->conceal(time);if(notes)notes->setMediaActive(false,hostTime(time));
     }
-    lifecycleOpening.reset();lifecycleClosing.reset();
+    lifecycleOpening.reset();lifecycleClosing.reset();shelfRetracting.reset();shelfRestoring.reset();
     host.hide();concealed(time);if(!stopping){host.setFrameDemand(demand(time));scheduleDeadline();}
 }
 bool Application::Impl::flushDocuments(double time,bool reopenOnFailure){

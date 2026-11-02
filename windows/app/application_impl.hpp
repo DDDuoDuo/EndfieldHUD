@@ -371,6 +371,11 @@ struct Application::Impl {
     void close(double time);
     void finishQuit(double time);
     void forceConceal(double time);
+    // The Shelf drag-out (application_events.cpp): the drag loop with the
+    // HUD's retract / hide / restore / concealed close around it.
+    bool shelfDragOut(const std::function<HRESULT(DWORD&)>& loop, double time);
+    void shelfDragEffect(const core::SystemOverlayEffect&, double time);
+    bool shelfDragFrame(double time, bool settled);
     void reopenAfterSaveFailure(core::Module, double time);
     void trayAction(gpu::TrayAction, bool hotkey, double time);
     void forwardedActivation(std::span<const std::string>);
@@ -926,6 +931,8 @@ struct Application::Impl {
     // System overlay lifecycle (Mac AppDelegate + OverlayController policy).
     core::SystemOverlayLifecycle lifecycle;
     std::optional<std::int64_t> lifecycleOpening, lifecycleClosing;
+    // The Shelf drag presentation's exit / entrance awaiting its end (drag tokens).
+    std::optional<std::int64_t> shelfRetracting, shelfRestoring;
     bool switchPresented{}; // the last drawn frame was inside a module switch (present())
     bool settingsLoaded{}, launchPending{};
     std::unique_ptr<ModuleOwner> clockAutomation;            // the desktop clock's UIA buttons (no drawing, no input)

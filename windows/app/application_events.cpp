@@ -188,10 +188,12 @@ void Application::Impl::onApplicationActive(bool active){
     if(ready&&active&&calendar)isolate(calendarModuleOwner,"system change",[&]{calendarSystemChanged();updateCalendarWake();});
     if(ready&&active)refreshExternalStatus(); // AppDelegate refreshes login status on activation
     if(!ready||!visibleMode()||active||projectionHandoff.active()||closing||session->phase()==core::VisibilityPhase::concealed||!configuration.boolean("closeOnFocusLost"))return;
-    // Source exempts its own file panels and active shelf drag/drop. Moving
-    // keyboard focus between owned windows is not an application switch.
+    // Source exempts its own file panels and active shelf drag/drop (the drag
+    // loop and its retract, hidden and restore presentation: hiding the
+    // window hands the foreground to another one). Moving keyboard focus
+    // between owned windows is not an application switch.
     const auto picker=mediaPicker?mediaPicker->stats():gpu::ShelfPickerStats{};
-    if(picker.queued||picker.presenting||(shelf&&shelf->preservesFocusOnLoss()))return;
+    if(picker.queued||picker.presenting||(shelf&&shelf->preservesFocusOnLoss())||lifecycle.shelfDragActive())return;
     perform(lifecycle.close(),now());
 }
 
@@ -274,6 +276,7 @@ void Application::Impl::onFrame(double time){
         if(memoryTrace&&production()&&memoryTrace->openings<8)recordMemory("opened-"+std::to_string(++memoryTrace->openings),false);
         // Entries enabled only once opening completes (the Power navigation entry) re-read their state.
         automationChanged();refreshAutomation();if(stopping)return;}
+    if(shelfDragFrame(time,!active)||stopping)return;
     if(!active&&session->phase()==core::VisibilityPhase::concealed){
         if(notes)notes->setMediaActive(false,hostTime(time));host.hide();concealed(time);
         core::SystemOverlayEffects closed;
@@ -293,6 +296,59 @@ void Application::Impl::onFrame(double time){
 // applications wait for the normal close to finish (the panel ordered out;
 // here the window hidden and out of the topmost band), then open in front of
 // the windows the HUD covered; a quit or forced close drops them.
+// OverlayController.performShelfDragAction on this host. The retract is the
+// presentation's own close (owners' overlayClosing, the source exit, the
+// module fade) without the lifecycle's: the HUD stays open for the drag's
+// end. When it ends the window hides and everything stays presented (no
+// overlayConcealed broadcast, no graphics release: the Mac keeps its view);
+// a cancelled drag opens that presentation again with the deploy entrance on
+// the same display (no new display choice, no opening trace); a delivered
+// one is concealed at once, without a second animation (forceConceal).
+// Frames run inside the OLE drag loop's nested dispatch, so the exit plays
+// and the window hides during the drag; should they not, the state resolves
+// on the frames after the loop returns.
+void Application::Impl::shelfDragEffect(const core::SystemOverlayEffect&e,double time){
+    using K=core::SystemOverlayEffect::Kind;
+    switch(e.kind){
+    case K::shelfRetract:shelfRestoring.reset();shelfRetracting=e.token;close(time);break;
+    case K::shelfHide:host.hide();presentationPriority.restore();break; // stopMotionForConcealment + orderOut
+    case K::shelfRestore:shelfRetracting.reset();shelfRestoring=e.token;prepareGraphics(false);open(time);if(visibleMode())host.show();refresh(time);break;
+    case K::shelfClose:shelfRetracting.reset();shelfRestoring.reset();forceConceal(time);break;
+    default:break;
+    }
+}
+// The retract's exit and the restore's entrance end on the frame the source
+// session settles (settled: nothing else animates). true while the drag
+// holds the HUD: retracting, hidden, restoring, or force-concealed until the
+// loop ends; the normal close's completion (concealed broadcast, hand-offs,
+// the development preview's quit) does not run then.
+bool Application::Impl::shelfDragFrame(double time,bool settled){
+    if(shelfRestoring&&!closing&&session->phase()==core::VisibilityPhase::visible){const auto token=*shelfRestoring;shelfRestoring.reset();
+        perform(lifecycle.shelfDragRestored(token),time);automationChanged();refreshAutomation();if(stopping)return true;}
+    if(shelfRetracting&&settled&&session->phase()==core::VisibilityPhase::concealed){const auto token=*shelfRetracting;shelfRetracting.reset();perform(lifecycle.shelfDragRetracted(token),time);}
+    return lifecycle.shelfDragActive();
+}
+// HUDFileShelfInteraction.beginOutgoingDrag through draggingSession(_:endedAt:):
+// the Shelf's input locks (the press that started the drag ends without a
+// click), the HUD retracts (OverlayController.onShelfDragSessionBegan) and
+// the loop runs: the copy-only OLE DoDragDrop with its Shell drag image, or
+// a hidden test's stand-in. After the loop returned (the source is no longer
+// in use) its end closes the hidden HUD when a destination accepted the copy
+// and otherwise brings it back (onShelfDragSessionEnded). true: delivered.
+bool Application::Impl::shelfDragOut(const std::function<HRESULT(DWORD&)>&loop,double time){
+    isolate(shelfModuleOwner,"drag",[&]{shelf->setNativeDragActive(true);});
+    host.capturePointer(false);environment.pointerLocked=false;session->setEnvironment(environment,time);
+    perform(lifecycle.beginShelfDrag(),time);
+    // Not ported: panel.ignoresMouseEvents during the exit (shelf_owner.hpp).
+    DWORD effect{};HRESULT result{E_FAIL};
+    try{result=loop(effect);}
+    catch(...){isolate(shelfModuleOwner,"drag",[&]{shelf->setNativeDragActive(false);});if(!stopping)perform(lifecycle.endShelfDrag(false),now());throw;}
+    isolate(shelfModuleOwner,"drag",[&]{shelf->setNativeDragActive(false);});
+    const bool delivered=result==DRAGDROP_S_DROP&&(effect&DROPEFFECT_COPY);
+    if(!stopping)perform(lifecycle.endShelfDrag(delivered),now());
+    return delivered;
+}
+
 void Application::Impl::openAfterConcealed(){
     // A Shelf "Reveal" selects the item in File Explorer.
     if(pendingShelfReveal&&visibleMode()&&!quitRequested){
@@ -571,7 +627,7 @@ std::optional<std::intptr_t> Application::Impl::onAppMessage(const NativeMessage
         }
     }
     if(ready&&shelf&&m.message==tools::ShelfService::actionMessage){
-        bool closeAfter{};
+        bool closeAfter{};std::unique_ptr<gpu::ShelfDragTransfer> drag;
         isolate(shelfModuleOwner,"action",[&]{if(auto action=shelf->takeAction())try{using K=tools::ShelfServiceAction::Kind;
             switch(action->kind){
             case K::choose:host.capturePointer(false);shelf->requestFiles();break;
@@ -582,10 +638,12 @@ std::optional<std::intptr_t> Application::Impl::onAppMessage(const NativeMessage
             // Open (FileShelfCanvas.open): the Shell's default verb now, outside
             // the canvas event; the HUD stays open, as on the Mac.
             case K::open:shelf->open(action->itemID,now());break;
-            // The OLE drag loop dispatches nested messages (frames, timers) with later times.
-            case K::drag:{auto transfer=shelf->prepareDrag(action->itemID);shelf->setNativeDragActive(true);host.capturePointer(false);environment.pointerLocked=false;session->setEnvironment(environment,now());DWORD effect{};const auto result=transfer->run(&effect);shelf->setNativeDragActive(false);if(result==DRAGDROP_S_DROP&&(effect&DROPEFFECT_COPY))closeAfter=true;break;}
+            // Every reference is resolved first (all or nothing); the loop runs below, outside the Shelf's isolation.
+            case K::drag:drag=shelf->prepareDrag(action->itemID);break;
             }
         }catch(const std::exception&e){shelf->setNativeDragActive(false);shelf->showError(e,now());}});
+        // The OLE drag loop dispatches nested messages (frames, timers) with later times.
+        if(drag)(void)shelfDragOut([&](DWORD&effect){return drag->run(&effect);},now());
         if(closeAfter)perform(lifecycle.close(),now());
         refresh(now());return 0;
     }

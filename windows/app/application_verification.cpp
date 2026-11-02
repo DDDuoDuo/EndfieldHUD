@@ -1325,6 +1325,7 @@ int Application::Impl::runHiddenVerification(){
             if(designOverlay&&!quitButtons.empty()){
                 const auto settle=[&](double t){
                     if(lifecycleOpening&&!closing&&session->phase()==core::VisibilityPhase::visible){const auto token=*lifecycleOpening;lifecycleOpening.reset();perform(lifecycle.didOpen(token),t);}
+                    if(shelfDragFrame(t,true))return;
                     if(lifecycleClosing&&session->phase()==core::VisibilityPhase::concealed){const auto token=*lifecycleClosing;lifecycleClosing.reset();concealed(t);perform(lifecycle.didClose(token),t);openAfterConcealed();}
                 };
                 // Frames at 60 Hz; the shared design deadlines (the confirm
@@ -1468,6 +1469,67 @@ int Application::Impl::runHiddenVerification(){
                         (void)onPointer({PointerKind::down,PointerButton::left,inside->x,inside->y});(void)onPointer({PointerKind::up,PointerButton::left,inside->x,inside->y});t=run(t,.4);
                         outsideCheck(lifecycle.phase()==core::SystemOverlayPhase::open&&!closing,"A press and release inside the displayed circle keep the HUD open");
                         if(readerModuleOwner)outsideCheck(registry.enabled(*readerModuleOwner),"A release over the HUD with the Reader hidden keeps the Reader owner working");}
+                }
+                // The Shelf drag-out (OverlayController shelfDragPresentation) through the
+                // host's own drag routine with a stand-in for the OLE loop - no DoDragDrop,
+                // no input: the stand-in presents frames as the loop's nested dispatch does,
+                // asks what the user might during a drag, and returns the drag's result.
+                if(shelf&&shelfModuleOwner&&registry.enabled(*shelfModuleOwner)){
+                    const auto dragCheck=[&](bool value,const char*why){need(value,why);++hostChecks;};
+                    using P=core::ShelfDragPresentationState::Phase;using L=core::SystemOverlayPhase;using V=core::VisibilityPhase;
+                    // The window itself only in a visible run (a hidden run never shows it).
+                    const auto shown=[&]{return !visibleMode()||host.stats().visible;};const auto unshown=[&]{return !visibleMode()||!host.stats().visible;};
+                    const auto onShelf=[&]{if(lifecycle.phase()!=L::open){perform(lifecycle.reopen(),t);t=run(t,1.2);}perform(lifecycle.selectModule(core::Module::fileShelf),t);t=run(t,.8);
+                        need(lifecycle.phase()==L::open&&lifecycle.interactionEnabled()&&notes->selected()==core::Module::fileShelf,"The Shelf is open before its drag");};
+                    const auto cancel=[](DWORD&effect){effect=DROPEFFECT_NONE;return HRESULT(DRAGDROP_S_CANCEL);};
+                    const auto copy=[](DWORD&effect){effect=DROPEFFECT_COPY;return HRESULT(DRAGDROP_S_DROP);};
+                    // Cancelled once hidden: the same presentation comes back with its entrance.
+                    onShelf();bool retracting{},hidden{};
+                    const bool cancelled=shelfDragOut([&](DWORD&effect){
+                        retracting=lifecycle.shelfDrag().phase()==P::retracting&&lifecycle.phase()==L::open&&!lifecycle.interactionEnabled()&&closing&&
+                            session->phase()==V::closing&&shelf->preservesFocusOnLoss()&&lifecycle.shelfDragActive();
+                        t=run(t,1.2);
+                        hidden=lifecycle.shelfDrag().phase()==P::hidden&&lifecycle.phase()==L::open&&session->phase()==V::concealed&&unshown();
+                        return cancel(effect);},t);
+                    dragCheck(retracting,"A drag-out disables the HUD's input and plays its exit without closing it");
+                    dragCheck(hidden,"The retracted HUD hides for the rest of the drag");
+                    dragCheck(!cancelled&&lifecycle.shelfDrag().phase()==P::restoring&&session->phase()==V::opening&&!closing&&shown()&&!shelf->preservesFocusOnLoss(),
+                        "A cancelled drag shows the HUD again with its entrance");
+                    t=run(t,1.2);
+                    dragCheck(!lifecycle.shelfDragActive()&&lifecycle.phase()==L::open&&lifecycle.interactionEnabled()&&session->phase()==V::visible&&
+                        notes->selected()==core::Module::fileShelf&&shelf->core()&&shelf->core()->inputModule()==core::Module::fileShelf,"The restored Shelf takes input again");
+                    // Delivered once hidden: closed without a second animation.
+                    const bool delivered=shelfDragOut([&](DWORD&effect){t=run(t,1.2);return copy(effect);},t);
+                    dragCheck(delivered&&lifecycle.phase()==L::closed&&session->phase()==V::concealed&&!closing&&unshown()&&!lifecycle.shelfDragActive()&&
+                        lifecycle.lastModule()==core::Module::fileShelf,"A delivered copy closes the hidden HUD without a second animation");
+                    t=run(t,.3);dragCheck(lifecycle.phase()==L::closed&&session->phase()==V::concealed,"The delivered drag's HUD stays closed");
+                    // Delivered or cancelled during the exit: the exit finishes first.
+                    onShelf();
+                    const bool fast=shelfDragOut([&](DWORD&effect){t=run(t,.05);return copy(effect);},t);
+                    dragCheck(fast&&lifecycle.phase()==L::open&&lifecycle.shelfDrag().phase()==P::retracting&&session->phase()==V::closing,"A fast delivery still finishes the exit");
+                    t=run(t,1.2);dragCheck(lifecycle.phase()==L::closed&&session->phase()==V::concealed&&!lifecycle.shelfDragActive(),"Then the HUD closes without a second animation");
+                    onShelf();
+                    (void)shelfDragOut([&](DWORD&effect){t=run(t,.05);return cancel(effect);},t);
+                    dragCheck(lifecycle.shelfDrag().phase()==P::retracting&&session->phase()==V::closing,"A fast cancellation still finishes the exit");
+                    t=run(t,2.4);dragCheck(lifecycle.phase()==L::open&&!lifecycle.shelfDragActive()&&session->phase()==V::visible&&lifecycle.interactionEnabled(),
+                        "Then the HUD comes back with its entrance");
+                    // The summon hotkey during the drag waits for it, then closes the hidden HUD.
+                    bool deferred{};
+                    (void)shelfDragOut([&](DWORD&effect){t=run(t,1.2);trayAction(gpu::TrayAction::openOverlay,true,t);
+                        deferred=lifecycle.closeAfterShelfDrag()&&lifecycle.phase()==L::open&&lifecycle.shelfDrag().phase()==P::hidden&&unshown();return cancel(effect);},t);
+                    dragCheck(deferred,"A summon during the drag waits for it");
+                    dragCheck(lifecycle.phase()==L::closed&&session->phase()==V::concealed&&unshown()&&!lifecycle.shelfDragActive(),
+                        "A cancelled drag with a summon pending closes the hidden HUD instead of bringing it back");
+                    // Sleep during the drag conceals at once; the drag's end completes the close.
+                    onShelf();bool held{};
+                    (void)shelfDragOut([&](DWORD&effect){t=run(t,.3);suspend(Suspension::system,t);
+                        held=lifecycle.phase()==L::open&&lifecycle.forceCloseAfterShelfDrag()&&session->phase()==V::concealed&&unshown()&&!closing;
+                        t=run(t,.5);held=held&&lifecycle.phase()==L::open&&session->phase()==V::concealed;resume(Suspension::system,t);return cancel(effect);},t);
+                    dragCheck(held,"A forced close during the drag conceals the HUD at once and holds its presentation until the drag ends");
+                    dragCheck(lifecycle.phase()==L::closed&&session->phase()==V::concealed&&!lifecycle.shelfDragActive()&&!lifecycle.forceCloseAfterShelfDrag(),
+                        "The drag's end completes the forced close without restoring");
+                    perform(lifecycle.reopen(),t);t=run(t,1.2);perform(lifecycle.selectModule(core::Module::notes),t);t=run(t,.8);
+                    dragCheck(lifecycle.phase()==L::open&&notes->selected()==core::Module::notes,"The HUD reopens normally after the drags");
                 }
                 // DataRootRestart through the host's own members (a gate opened
                 // for hidden coverage only): a failed save declines it.

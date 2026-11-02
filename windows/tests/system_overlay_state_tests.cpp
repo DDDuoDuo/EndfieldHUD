@@ -204,11 +204,154 @@ void contracts() {
     try { (void)visible.advance(std::nan("")); } catch (const std::invalid_argument&) { rejected = true; }
     check(rejected, "Nonfinite caller clocks reject instead of spinning");
 }
+// Sources/ShelfDragPresentationState.swift, compiled unchanged
+// (tools/shelf_drag_presentation_reference.py): every seeded transition.
+void shelfRaw(const Json& source) {
+    using A = core::ShelfDragPresentationState::Action::Kind;
+    core::ShelfDragPresentationState state;
+    std::size_t rows{};
+    for (const auto& row : source["raw"].array()) {
+        const auto& v = row.array();
+        if (v.size() == 1) { state = {}; continue; }
+        core::ShelfDragPresentationState::Action action;
+        int restored = -1;
+        switch (v[0].integer()) {
+        case 0: action = state.begin(); break;
+        case 1: action = state.ended(false); break;
+        case 2: action = state.ended(true); break;
+        case 3: action = state.didRetract(state.generation()); break;
+        // Stale tokens (generation -1 or +1 in the Swift run) change nothing.
+        case 4: action = state.didRetract(state.generation() - 1); break;
+        case 5: restored = state.didRestore(state.generation()) ? 1 : 0; break;
+        case 6: restored = state.didRestore(state.generation() + 1) ? 1 : 0; break;
+        default: state.reset(); break;
+        }
+        const int kind = action.kind == A::none ? 0 : action.kind == A::retract ? 1 : action.kind == A::hide ? 2 : action.kind == A::restore ? 3 : 4;
+        const auto where = ", row " + std::to_string(rows);
+        check(kind == v[1].integer(), "Shelf drag action kind" + where);
+        if (kind == 1 || kind == 3) check(action.token == v[2].integer(), "Shelf drag action token" + where);
+        check(restored == v[3].integer(), "Shelf drag didRestore result" + where);
+        check(static_cast<int>(state.phase()) == v[4].integer(), "Shelf drag phase" + where);
+        check(state.generation() == v[5].integer(), "Shelf drag generation" + where);
+        check(state.active() == (v[6].integer() != 0), "Shelf drag isActive" + where);
+        ++rows;
+    }
+    check(rows == 300 * 16, "Every seeded Shelf drag transition was replayed");
+}
+
+// OverlayController's Shelf drag-out policy (performShelfDragAction,
+// finishShelfDrag, finishConcealedShelfClose and the closeAfterShelfDrag /
+// forceCloseAfterShelfDrag deferrals) through the lifecycle's effects.
+void shelfDrag() {
+    using K = core::SystemOverlayEffect::Kind;
+    using P = core::ShelfDragPresentationState::Phase;
+    const auto opened = [](core::Module module) {
+        core::SystemOverlayLifecycle life;
+        (void)life.toggle(); (void)life.didOpen(life.generation()); (void)life.selectModule(module);
+        return life;
+    };
+    const auto only = [](const core::SystemOverlayEffects& e, K kind) { return e.size() == 1 && e[0].kind == kind; };
+    {   core::SystemOverlayLifecycle closed;
+        check(closed.beginShelfDrag().empty() && !closed.shelfDragging() && closed.endShelfDrag(false).empty(), "No drag presentation without a HUD");
+    }
+    {   // Cancelled after the HUD hid: the same presentation comes back with its entrance.
+        auto life = opened(core::Module::fileShelf);
+        const auto generation = life.generation();
+        const auto begun = life.beginShelfDrag();
+        check(only(begun, K::shelfRetract) && begun[0].module == core::Module::fileShelf && life.shelfDragging() && life.shelfDragActive() &&
+              life.shelfDrag().phase() == P::retracting && life.phase() == core::SystemOverlayPhase::open && !life.interactionEnabled(),
+              "A drag-out retracts the HUD without closing it and disables its input");
+        const auto token = begun[0].token;
+        check(life.beginShelfDrag().empty() && life.shelfDrag().phase() == P::retracting, "A second drag start plays nothing");
+        check(life.shelfDragRetracted(token - 1).empty() && life.shelfDrag().phase() == P::retracting, "A stale exit end changes nothing");
+        check(only(life.shelfDragRetracted(token), K::shelfHide) && life.shelfDrag().phase() == P::hidden, "The retracted HUD hides while the drag continues");
+        const auto back = life.endShelfDrag(false);
+        check(only(back, K::shelfRestore) && back[0].token == token && life.shelfDrag().phase() == P::restoring && !life.shelfDragging() && life.shelfDragActive(),
+              "A cancelled drag shows the HUD again with its entrance");
+        check(life.shelfDragRestored(token + 1).empty() && life.shelfDrag().phase() == P::restoring && !life.interactionEnabled(), "A stale entrance end changes nothing");
+        check(life.shelfDragRestored(token).empty() && !life.shelfDragActive() && life.interactionEnabled() &&
+              life.phase() == core::SystemOverlayPhase::open && life.generation() == generation && life.viewModule() == core::Module::fileShelf,
+              "The restored HUD takes input again on the same presentation");
+    }
+    {   // Delivered after the HUD hid: it closes without a second animation.
+        auto life = opened(core::Module::fileShelf);
+        const auto token = life.beginShelfDrag()[0].token;
+        (void)life.shelfDragRetracted(token);
+        const auto delivered = life.endShelfDrag(true);
+        check(only(delivered, K::shelfClose) && life.phase() == core::SystemOverlayPhase::closed && !life.viewModule() &&
+              life.lastModule() == core::Module::fileShelf && !life.shelfDragActive(), "A delivered copy closes the hidden HUD without a second animation");
+        check(life.shelfDragRetracted(token).empty() && life.shelfDragRestored(token).empty(), "Late drag completions after the close change nothing");
+    }
+    {   // A fast cancellation or delivery still finishes the exit animation first.
+        auto life = opened(core::Module::fileShelf);
+        auto token = life.beginShelfDrag()[0].token;
+        check(life.endShelfDrag(false).empty() && life.shelfDrag().phase() == P::retracting, "A fast cancellation still finishes the closing animation");
+        check(only(life.shelfDragRetracted(token), K::shelfRestore), "The cancelled drag restores once the exit ends");
+        check(life.shelfDragRestored(token).empty() && !life.shelfDragActive() && life.interactionEnabled(), "The restore completes");
+        token = life.beginShelfDrag()[0].token;
+        check(life.endShelfDrag(true).empty() && life.shelfDrag().phase() == P::retracting, "A fast delivery still finishes the closing animation");
+        check(only(life.shelfDragRetracted(token), K::shelfClose) && life.phase() == core::SystemOverlayPhase::closed, "The delivered drag closes once the exit ends");
+    }
+    {   // A summon or close during the drag waits for it, then never brings the HUD back.
+        auto life = opened(core::Module::fileShelf);
+        const auto token = life.beginShelfDrag()[0].token;
+        check(life.toggle().empty() && life.close().empty() && life.closeAfterShelfDrag() && life.phase() == core::SystemOverlayPhase::open,
+              "Summons and closes during the drag are deferred");
+        (void)life.shelfDragRetracted(token);
+        check(only(life.endShelfDrag(false), K::shelfClose) && life.phase() == core::SystemOverlayPhase::closed && !life.closeAfterShelfDrag(),
+              "A cancelled drag with a deferred close closes the hidden HUD instead of restoring it");
+        check(only(life.toggle(), K::open), "The next summon opens normally");
+    }
+    {   // A close asked during the restore plays the normal close once restored.
+        auto life = opened(core::Module::fileShelf);
+        const auto token = life.beginShelfDrag()[0].token;
+        (void)life.shelfDragRetracted(token); (void)life.endShelfDrag(false);
+        check(life.toggle().empty() && life.closeAfterShelfDrag(), "A summon during the restore is deferred");
+        const auto closing = life.shelfDragRestored(token);
+        check(only(closing, K::close) && life.phase() == core::SystemOverlayPhase::closing && !life.closeAfterShelfDrag(),
+              "The restored HUD then closes with the normal animation");
+        check(life.didClose(life.generation()).empty() && life.phase() == core::SystemOverlayPhase::closed, "That close completes normally");
+    }
+    {   // A forced close while the loop runs only conceals; the drag's end closes.
+        auto life = opened(core::Module::fileShelf);
+        const auto generation = life.generation();
+        const auto token = life.beginShelfDrag()[0].token;
+        check(life.forceClose().empty() && life.forceCloseAfterShelfDrag() && life.active() && life.generation() == generation && !life.interactionEnabled(),
+              "A forced close during the drag keeps the source's presentation until the drag ends");
+        (void)life.shelfDragRetracted(token);
+        const auto ended = life.endShelfDrag(true);
+        check(only(ended, K::shelfClose) && life.phase() == core::SystemOverlayPhase::closed && life.generation() == generation + 1 && !life.forceCloseAfterShelfDrag(),
+              "The drag's end completes the forced close");
+        auto restoring = opened(core::Module::fileShelf);
+        const auto again = restoring.beginShelfDrag()[0].token;
+        (void)restoring.forceClose(); (void)restoring.shelfDragRetracted(again);
+        check(only(restoring.endShelfDrag(true), K::shelfClose), "A forced close and a delivery need no restore");
+        auto late = opened(core::Module::fileShelf);
+        const auto third = late.beginShelfDrag()[0].token;
+        (void)late.forceClose();
+        check(only(late.endShelfDrag(false), K::shelfClose) && late.phase() == core::SystemOverlayPhase::closed, "A forced close and a cancellation never restore");
+        check(late.shelfDragRetracted(third).empty(), "The cancelled exit's end changes nothing afterwards");
+        auto after = opened(core::Module::fileShelf);
+        const auto fourth = after.beginShelfDrag()[0].token;
+        (void)after.shelfDragRetracted(fourth); (void)after.endShelfDrag(false);
+        check(after.forceClose().empty() && after.phase() == core::SystemOverlayPhase::closed && !after.shelfDragActive(),
+              "A forced close during the restore closes at once");
+    }
+    {   // Quit during the drag: the drain runs after the concealed close.
+        auto life = opened(core::Module::fileShelf);
+        const auto token = life.beginShelfDrag()[0].token;
+        const auto quit = life.requestTermination();
+        check(only(quit, K::quitAccepted) && life.phase() == core::SystemOverlayPhase::open && life.closeAfterShelfDrag(), "Tray Quit during the drag waits for it");
+        (void)life.shelfDragRetracted(token);
+        const auto ended = life.endShelfDrag(false);
+        check(ended.size() == 2 && ended[0].kind == K::shelfClose && ended[1].kind == K::terminate, "The drag's end closes the hidden HUD, then terminates");
+    }
+}
 } // namespace
 
 int main(int argc, char** argv) {
     try {
-        check(argc == 2, "Pass the explicit Mac lifecycle oracle");
+        check(argc == 3, "Pass the explicit Mac lifecycle and Shelf drag oracles");
         const auto bytes = ehud::data::detail::readFile(argv[1], 4 * 1024 * 1024);
         check(bytes.has_value(), "Read the bounded lifecycle oracle");
         const auto source = Json::parse(*bytes);
@@ -217,6 +360,12 @@ int main(int argc, char** argv) {
         raw(source);
         scripts(source);
         contracts();
+        const auto shelfBytes = ehud::data::detail::readFile(argv[2], 4 * 1024 * 1024);
+        check(shelfBytes.has_value(), "Read the bounded Shelf drag oracle");
+        const auto shelfSource = Json::parse(*shelfBytes);
+        check(shelfSource["provenance"]["compiledUnchanged"].array().size() == 1, "Unchanged ShelfDragPresentationState source");
+        shelfRaw(shelfSource);
+        shelfDrag();
         std::cout << "System overlay lifecycle: " << checks << " source/contract checks passed\n";
         return 0;
     } catch (const std::exception& e) {

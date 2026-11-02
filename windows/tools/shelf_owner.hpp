@@ -20,8 +20,16 @@
 //  - Open runs from the host's action message (ShellExecuteEx may pump
 //    messages, never inside a canvas event); the toast follows its result,
 //    and the HUD stays open as on the Mac.
-//  - The drag-out (DoDragDrop) keeps the HUD shown where the Mac retracts and
-//    hides it during the drag (OverlayController shelfDragPresentation).
+//  - The drag-out runs DoDragDrop on the HUD thread; around it the host
+//    retracts, hides and then closes or restores the HUD like the Mac
+//    (OverlayController shelfDragPresentation, Application::Impl::
+//    shelfDragOut). Until the exit animation ends the HUD window still takes
+//    the drag's hit test (the Mac panel's ignoresMouseEvents is not ported:
+//    an HTTRANSPARENT answer for OLE's same-thread WindowFromPoint could not
+//    be verified hidden), so a drop released over it during the exit is not
+//    delivered and the HUD comes back. The charge metric's 1 Hz sampling
+//    also continues while the HUD is hidden for a drag (no concealed
+//    broadcast: the artwork stays for the instant restore).
 #ifdef _WIN32
 #include "modules/event_log.hpp"
 #include "modules/file_shelf_canvas.hpp"

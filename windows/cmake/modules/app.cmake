@@ -41,7 +41,8 @@ if(BUILD_TESTING)
   add_executable(system_overlay_state_tests tests/system_overlay_state_tests.cpp)
   target_link_libraries(system_overlay_state_tests PRIVATE hud_system_overlay hud_data)
   add_test(NAME system_overlay_state_contracts COMMAND system_overlay_state_tests
-    "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/system_overlay_state_source.json")
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/system_overlay_state_source.json"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/shelf_drag_presentation_source.json")
   add_executable(application_root_tests tests/application_root_tests.cpp)
   target_link_libraries(application_root_tests PRIVATE hud_application_core)
   if(WIN32)
@@ -364,13 +365,13 @@ if(WIN32)
       # Hidden module coverage plus the production lifecycle/quit flow.
       add_test(NAME application_owner_coverage COMMAND "${CMAKE_COMMAND}" "-DPREVIEW=$<TARGET_FILE:watch_session_preview>"
         "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/owner-coverage-work" "-DINPUTS=${ehud_app_inputs}" "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}"
-        "-DMAP=${EHUD_MAP_RESOURCE_DIR}" "-DORBIPOM=${EHUD_ORBIPOM_RESOURCE_DIR}" -DCHECKS=21 -DHOST_CHECKS=229 "-DPACKAGE=$<TARGET_FILE_DIR:EndfieldHUD>/resources"
+        "-DMAP=${EHUD_MAP_RESOURCE_DIR}" "-DORBIPOM=${EHUD_ORBIPOM_RESOURCE_DIR}" -DCHECKS=21 -DHOST_CHECKS=244 "-DPACKAGE=$<TARGET_FILE_DIR:EndfieldHUD>/resources"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/app/run_owner_coverage.cmake")
       set_tests_properties(application_owner_coverage PROPERTIES TIMEOUT 600)
       # Same owner ending through WM_QUERYENDSESSION/WM_ENDSESSION instead of Quit.
       add_test(NAME application_session_end_coverage COMMAND "${CMAKE_COMMAND}" "-DPREVIEW=$<TARGET_FILE:watch_session_preview>"
         "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/session-end-coverage-work" "-DINPUTS=${ehud_app_inputs}" "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}"
-        "-DMAP=${EHUD_MAP_RESOURCE_DIR}" "-DORBIPOM=${EHUD_ORBIPOM_RESOURCE_DIR}" -DCHECKS=15 -DHOST_CHECKS=225 -DEXTRA=--session-end-coverage
+        "-DMAP=${EHUD_MAP_RESOURCE_DIR}" "-DORBIPOM=${EHUD_ORBIPOM_RESOURCE_DIR}" -DCHECKS=15 -DHOST_CHECKS=240 -DEXTRA=--session-end-coverage
         "-DPACKAGE=$<TARGET_FILE_DIR:EndfieldHUD>/resources" -P "${CMAKE_CURRENT_SOURCE_DIR}/app/run_owner_coverage.cmake")
       set_tests_properties(application_session_end_coverage PROPERTIES TIMEOUT 600)
       # The same owner's memory and thread census (launch, every module,
