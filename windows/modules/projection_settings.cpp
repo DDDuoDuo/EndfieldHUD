@@ -1,6 +1,7 @@
 #include "modules/projection_settings.hpp"
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
 namespace endfield::modules {
 // init(defaults:) (:31-41): a missing field keeps its default; the store
