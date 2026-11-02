@@ -27,7 +27,10 @@ section 6 table joins it as a built-in owner or a registered module area
 1.2.0, confirmed by the tester on 2026-10-17, and checkpoint 138 is its
 release build: the Windows files go onto the existing `v1.2.0` release, next
 to the Mac files. The build is not code-signed (see the checkpoint 137 and
-138 entries and `RELEASE-NOTES.md`).
+138 entries and `RELEASE-NOTES.md`). Checkpoint 139 ports the Mac 1.3.0
+(build 19) redesign: it is the release candidate for Windows 1.3.0 (build
+19), verified hidden on the laptop and not yet tried live or published (see
+its entry at the end).
 
 The fresh graphics path now also runs the original Mac material programs. A
 build-only exporter captures the current desktop shell's actual geometry,
@@ -599,7 +602,7 @@ corrected and independently rerun successfully, alongside 715 Notes-owner checks
 70 Archive-owner checks, and 29 native Settings-safety checks. Archive tilted
 frames no longer copy unchanged draw resources. Equal Settings colors retain
 their exact endpoint instead of producing a redundant dirty frame. The original
-source feedback oracle passes 3,860 comparisons.
+source feedback oracle passes 3,860 comparisons. *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `Settings-safety`; see checkpoint 139.*
 
 WM_ACTIVATEAPP now distinguishes switching applications from an owned text field
 or file dialog. The shell closes on application deactivation by default and a
@@ -1031,7 +1034,7 @@ the README is the host's verification log.
   set a player's internal volume (Mac AppleScript `sound volume`), so Windows
   adjusts the playing app's per-app mixer route. Zero or several matching
   processes keep the source "unavailable" submenu. Live acceptance is run by
-  the user (`now_playing_probe.exe --live` and the HUD).
+  the user (`now_playing_probe.exe --live` and the HUD). *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `now_playing_automation_contracts`; see checkpoint 139.*
 - **Personal Profile** (`profile`). Hidden coverage runs 6 steps and 73
   checks, with stable raster across cycles. New suite:
   `id_card_presenter_contracts`. Extended suites: `source_scene_contracts`
@@ -1110,7 +1113,7 @@ the README is the host's verification log.
   The installer owns the toast identity: `packaging/installer.cpp` registers
   the AUMID shortcut and the activator, so no separate setup helper ships.
   Reader, Map, Calendar and Minigame UIA descriptors exist but are not yet
-  listed under the HUD root.
+  listed under the HUD root. *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `reader_accessibility_contracts`, `map_accessibility_contracts`; see checkpoint 139.*
 - **Notes and Archive.** Cut, copy and paste in fields with the private rich
   format. Ctrl+V pastes media files and image data as managed `Notes/Images`
   PNGs. ICU word navigation and multi-click selection work. The editor shows a
@@ -1242,15 +1245,15 @@ coverage runs.
 | --- | --- | --- |
 | Area contract (prep) | `application_registry_contracts` (58), `application_data_root_contracts` (136), `application_persistence_contracts`, `data_store_contracts` (144), `json_contracts` (328), `watch_preview_argument_contracts` | Fragment registration and generation, broadcasts with failure isolation, persistent Notes/Shelf roots, Mac ProfileStore load normalization, the libc++ `Json` fix |
 | Media Assembly | The 14 `media_assembly_*` suites, `endfieldhud_package_contracts`, `endfieldhud_install_contracts` | Highlights/Shadows matches 720 Core Image samples (worst float error 2.4e-7); `sourceUnavailable` and the player re-check; packaged assets |
-| Now Playing | All `now_playing_*` suites, including the new `now_playing_runtime_volume_contracts` and `now_playing_automation_contracts` | Coverage: 6 steps, 95 checks; per-app volume over the real `AudioRuntime` with injected backends |
+| Now Playing | All `now_playing_*` suites, including the new `now_playing_runtime_volume_contracts` and `now_playing_automation_contracts` | Coverage: 6 steps, 95 checks; per-app volume over the real `AudioRuntime` with injected backends *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `now_playing_automation_contracts`; see checkpoint 139.* |
 | Personal Profile | 12 `profile_*`/`id_card_*` suites, including `id_card_presenter_contracts`; `source_scene_contracts`, `work_mode_contracts` | Coverage: 73 checks; runtime `desktop.profile.*` textures (CPU side); lifetime hours counted once |
 | Account Linking | 11 `hypergryph_account_*` suites | Coverage: 6 steps, 211 checks, against a fake official site and the Mac oracle envelopes; WebView2 pins checked at configure |
 | Power | `power_area_contracts` (118), `power_owner_contracts` (30), `charge_badge_preview_contracts` and the other charge/power suites | Badge, alert cadence on the shared timer, position editing, sleep/wake, always mode |
 | App shortcuts | 11 `app_shortcut_*` suites, including `app_shortcut_icons_contracts` | Close-first launch, relink of imported records, navigation plan, original icons |
 | Mac import UI | `mac_import_flow_contracts` (282), `mac_import_contracts` (753) and the plist, settings, reconcile, native, tool and exporter suites | Every card step; three coverage cycles including a synthetic restart handoff |
 | System providers | `event_log_time_contracts` (1,536 checks, 486 Mac oracle cases), `clipboard_provider_contracts`, `activity_{catalog,provider,preview,state}_contracts`, `storage_files_contracts` | Local Event Log times, clipboard statuses and copy events, Activity names/icons/telemetry |
-| Reader, Calendar, Map | `reader_pdf_title_contracts` (65 PDFKit cases), `reader_localization_contracts`, `reader_accessibility_contracts`, `map_accessibility_contracts`, `calendar_notification_identity_contracts`, `calendar_reminder_area_contracts` | PDF titles, five-language Reader errors, reminder identity lookup in a private registry subtree |
-| Notes, Archive, Projection | `notes_long_editor_contracts` (166,924), `notes_clipboard_contracts`, `notes_text_navigation_contracts`, `notes_store_capacity_contracts`, `notes_font_names_contracts`, `notes_media_relink_contracts`, `archive_preview_contracts`, `notes_workspace_owner_contracts` | Chunked long documents, clipboard codecs, word navigation, cards of any size, stores over 64 MiB |
+| Reader, Calendar, Map | `reader_pdf_title_contracts` (65 PDFKit cases), `reader_localization_contracts`, `reader_accessibility_contracts`, `map_accessibility_contracts`, `calendar_notification_identity_contracts`, `calendar_reminder_area_contracts` | PDF titles, five-language Reader errors, reminder identity lookup in a private registry subtree *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `reader_accessibility_contracts`, `map_accessibility_contracts`; see checkpoint 139.* |
+| Notes, Archive, Projection | `notes_long_editor_contracts` (166,924), `notes_clipboard_contracts`, `notes_text_navigation_contracts`, `notes_store_capacity_contracts`, `notes_font_names_contracts`, `notes_media_relink_contracts`, `archive_preview_contracts`, `notes_workspace_owner_contracts` | Chunked long documents, clipboard codecs, word navigation, cards of any size, stores over 64 MiB *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `archive_preview_contracts`; see checkpoint 139.* |
 | File Shelf | `file_shelf_files_contracts` (357), `file_shelf_transfer_contracts` (4,338), `shelf_file_preview_contracts` (530), `shelf_services_contracts` (112) | Identity relocation, generic preview, drag images, virtual-file refusal, Event Log records |
 | Packaging | `packaging_installer_contracts` (385), `packaging_format_contracts` (1,105), `endfieldhud_release_contracts`, `packaging_perf_*`, `packaging_ehudz01_contracts` (35), `packaging_identity_consistency` | Install, upgrade, rollback and uninstall in temporary folders and a private HKCU subtree; release staging; gate evaluation against a stand-in app |
 | Host | `application_root_contracts` and the 10 host checks in each coverage run | `--data-root`/`--toggle`, the UIA root over Volume, the Shelf navigation drop hit test, `DataRootRestart` in production only, the Import row, the long-work executor drain |
@@ -1359,7 +1362,7 @@ swap chain; `packet_export_contracts` needs the Mac `Sources/` tree).
   captures the pointer (the import card, an open menu), the root's hit test
   reaches only its controls. The Projection workspace is published as
   `projection.workspace` for the projection area, withdrawn before it is
-  destroyed, and the tree is marked changed on its show, close and input.
+  destroyed, and the tree is marked changed on its show, close and input. *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `NativeScreenReaderPeers`; see checkpoint 139.*
 - **Drag feedback over the HUD** (`ModuleOwner::dropHover`, Mac
   draggingUpdated). `ShelfDropTarget::Callbacks` gained an optional `hover`
   and `hoverWanted`: when a route wants feedback, `DragEnter` decodes the
@@ -1377,7 +1380,7 @@ swap chain; `packet_export_contracts` needs the Mac `Sources/` tree).
 - **Media broker:** `core::ScopedMediaRequest::frameFilter` carries
   `NotesVideoRequest::frameFilter` to the frame server, so frames played
   through the broker get Media Assembly's colour edits
-  (`media_assembly_preview_contracts` now asserts it).
+  (`media_assembly_preview_contracts` now asserts it). *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `media_assembly_preview_contracts`; see checkpoint 139.*
 - **Mac import:** `main.cpp` calls `recoverMacImportWork` before each run
   opens the root (`EndfieldHUD` links `hud_mac_import`). `wWinMain` calls
   `DisableProcessWindowsGhosting()` for the Shelf's watched preview thread.
@@ -1490,7 +1493,7 @@ checkpoints.
   removing the slider, disconnect and reconnect, re-rooting, nothing listed
   while unpresented. It now runs 6 steps / 115 checks, with raster usage
   identical in cycles 1-2. The Now Playing fragment skips itself in a
-  portable configure without ICU. Slot nowplaying: 25/25.
+  portable configure without ICU. Slot nowplaying: 25/25. *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `now_playing_automation_contracts`; see checkpoint 139.*
 - **Account Linking.** The area implements the `ModuleOwner` UI Automation
   hooks (peers under the area's group of the HUD root; a UIA press posts the
   area's registered message so the host refreshes). Without the WebView2
@@ -1518,7 +1521,7 @@ checkpoints.
   `id_card_presenter_contracts` (`setBaseline`), `profile_pickers_contracts`
   (titled picker), `work_mode_preview_contracts` (`perform`/`clientRect`).
   The profile area implements the UIA hooks (buttons, sliders, the editing
-  field's Edit peer) and requests the single-file image filter.
+  field's Edit peer) and requests the single-file image filter. *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `profile_automation_contracts`, `work_mode_automation_contracts`, `work_mode_preview_contracts`; see checkpoint 139.*
 - **App shortcuts.** Saved apps with the App icon preset show their original
   application icon in the right-side navigation; `WatchAppearanceEntry`
   shares the area's `LayerImageSource`; a released snapshot paints the source
@@ -1531,7 +1534,7 @@ checkpoints.
   launch error selects *+ Add App*; every opening starts a fresh *+ Add App*
   session that keeps only the last failed launch error. New suite
   `app_shortcut_automation_contracts`. Gaps: no packaged-app logos; a 20-icon
-  bound.
+  bound. *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `app_shortcut_automation_contracts`; see checkpoint 139.*
 - **Mac import** (commit `e38d18d`): private-folder sweep, recovery, card UI
   Automation and the restart path in coverage. `MacImportSession` marks and
   locks `<root>.import-<uuid>` (`import-work.json`) and journals the backup in
@@ -1575,7 +1578,7 @@ checkpoints.
   `screen_reader_peers_contracts`, which includes the unchanged HUD root;
   extended reader/map/calendar/orbipom preview contracts and
   `calendar_reminder_area_contracts`. Full slot: 44/44 local tests plus
-  `application_owner_coverage`. Commits `2d8aa16`, `1d6c219`, `5bc5d14`.
+  `application_owner_coverage`. Commits `2d8aa16`, `1d6c219`, `5bc5d14`. *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `screen_reader_peers`, `screen_reader_peers_contracts`; see checkpoint 139.*
 - **Notes, Archive, Projection.** UIA peers for Notes, Archive and Projection
   (Invoke, RangeValue, Value, focus). Font-menu dismissal root cause: a menu
   opened between frames was hit-tested before being positioned; the
@@ -1705,7 +1708,7 @@ synthetic data in temporary folders and private registry subtrees.
 | `application_owner_coverage` | 54 module results, 19 lifecycle checks, 81 host integration checks, 14 areas constructed, ID card connected. The minimum of 81 host checks is now enforced (`HOST_CHECKS`, `app/run_owner_coverage.cmake`). |
 | `application_session_end_coverage` | 15 lifecycle checks, 78 host checks (minimum enforced). |
 | Area slots, before the host stage | Media Assembly 19/19, Now Playing 25/25, Power 18/18, Personal Profile 23/23, App shortcuts 18/18, System providers 28/28, Reader/Map/Calendar/Minigame 44/44, Notes 64/64, packaging 13/13. Account, Mac import and Shelf passed their slots, including `application_owner_coverage`; their check counts are in the entries above. |
-| Mac, clang | The portable no-ICU configure generates. The `settings`, `settings_presentation`, `media_request_catalog`, `shelf_file_picker` and `display_center_logo` contracts pass there. `clipboard_url_contracts` passes against ICU 78 under AddressSanitizer. `packaging_update_check_contracts` passes under ASan/UBSan, and `mac_import_work_contracts` and the portable part of `file_shelf_files_contracts` (52 checks) pass too. |
+| Mac, clang | The portable no-ICU configure generates. The `settings`, `settings_presentation`, `media_request_catalog`, `shelf_file_picker` and `display_center_logo` contracts pass there. `clipboard_url_contracts` passes against ICU 78 under AddressSanitizer. `packaging_update_check_contracts` passes under ASan/UBSan, and `mac_import_work_contracts` and the portable part of `file_shelf_files_contracts` (52 checks) pass too. *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `settings_presentation`; see checkpoint 139.* |
 
 Not run in this batch: `windows.yml` on GitHub (so the `windows-2025` pin and
 its OS ICU check are untested there), the section 9 gate on the laptop
@@ -1755,18 +1758,18 @@ runs.
 
 | Area | Suites | Main evidence |
 | --- | --- | --- |
-| Host | Both coverage runs, `display_center_logo_contracts`, `shelf_file_picker_contracts`, `media_assembly_preview_contracts` | 81/78 host checks over the real HUD root. Center logo within 3 premultiplied levels of the Core Graphics oracle on the generated logo, and 8 on the presets. Applications-mode selection validation. Frames played through the broker carry the colour filter. |
-| UIA providers | `screen_reader_peers_contracts` (48), `power_automation_contracts` (32), `now_playing_automation_contracts`, `profile_automation_contracts`, `work_mode_automation_contracts`, `app_shortcut_automation_contracts`, `mac_import_automation_contracts` (69), `notes_automation_contracts`, `hypergryph_account_area_contracts` | Roles, patterns, navigation, hit tests, identity across refreshes, disconnect. Owner exceptions never cross COM. The local-module and account suites compile the unchanged `app/hud_automation.cpp` root. |
+| Host | Both coverage runs, `display_center_logo_contracts`, `shelf_file_picker_contracts`, `media_assembly_preview_contracts` | 81/78 host checks over the real HUD root. Center logo within 3 premultiplied levels of the Core Graphics oracle on the generated logo, and 8 on the presets. Applications-mode selection validation. Frames played through the broker carry the colour filter. *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `media_assembly_preview_contracts`; see checkpoint 139.* |
+| UIA providers | `screen_reader_peers_contracts` (48), `power_automation_contracts` (32), `now_playing_automation_contracts`, `profile_automation_contracts`, `work_mode_automation_contracts`, `app_shortcut_automation_contracts`, `mac_import_automation_contracts` (69), `notes_automation_contracts`, `hypergryph_account_area_contracts` | Roles, patterns, navigation, hit tests, identity across refreshes, disconnect. Owner exceptions never cross COM. The local-module and account suites compile the unchanged `app/hud_automation.cpp` root. *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `screen_reader_peers_contracts`, `now_playing_automation_contracts`, `profile_automation_contracts`, `work_mode_automation_contracts`, `app_shortcut_automation_contracts`; see checkpoint 139.* |
 | Media Assembly | The 14 `media_assembly_*` suites | Played-frame filter within 1 level of the CPU reference. GPU row bands equal a full render (0 levels), and the WARP export is within 1 level of the CPU. `compositeStickers` (23,611 checks). Moved originals followed by file ID. Laptop: 12 MP heavy edit 359 ms on the GPU vs 1,563 ms on the CPU. |
 | Now Playing | All `now_playing_*` suites | 6 steps / 115 coverage checks. COM boundary guard. |
 | Account Linking | `hypergryph_account_{webview,login,controller,platform,owner,area}_contracts` | Missing-runtime page and `runtimeUnavailable`. Text fit in five languages. Mac import restart contract. Cache restricted to the current user. 245 coverage checks. |
 | Power | `power_area_contracts` (153), `power_automation_contracts`, `charge_badge_preview_contracts` (40), `charge_indicator_scene_contracts` | Plane slot below pinned Notes. Mac hover rule. Exact 14-point banner set (the old scaled set fails the new assertion). |
-| Personal Profile | `profile_automation`, `work_mode_automation`, `work_mode_preview`, `profile_pickers`, `source_scene` and `id_card_presenter` contracts | 148 coverage checks. Registered runtime textures (CPU side). Lifetime counted once, with nonzero stopwatch time in cycle 0. |
-| App shortcuts | `app_shortcut_automation_contracts`, `app_shortcut_preview_contracts`, `watch_appearance_contracts` | Original navigation icons, with no allocations on unchanged frames. Drop, paste and hover. Fresh session on each opening. |
+| Personal Profile | `profile_automation`, `work_mode_automation`, `work_mode_preview`, `profile_pickers`, `source_scene` and `id_card_presenter` contracts | 148 coverage checks. Registered runtime textures (CPU side). Lifetime counted once, with nonzero stopwatch time in cycle 0. *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `profile_automation`, `work_mode_automation`, `work_mode_preview`; see checkpoint 139.* |
+| App shortcuts | `app_shortcut_automation_contracts`, `app_shortcut_preview_contracts`, `watch_appearance_contracts` | Original navigation icons, with no allocations on unchanged frames. Drop, paste and hover. Fresh session on each opening. *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `app_shortcut_automation_contracts`, `app_shortcut_preview_contracts`; see checkpoint 139.* |
 | Mac import | `mac_import_work_contracts` (846), `mac_import_automation_contracts` (69), `mac_import_flow_contracts` (295), `mac_import_contracts` (753), `mac_import_native_contracts` (251), `mac_import_reconcile_contracts` (11), `mac_import_tool_contracts` | Sweep classification, bounded sweep, pre-open recovery, activation journal. 1,021 macImport coverage checks, including the production restart path against a stand-in host service. |
 | System providers | `clipboard_url_contracts` (1,001; 246 Mac oracle strings), `clipboard_matches_contracts` (23,510; batch 5), `system_services_contracts`, `clipboard_provider_contracts` | Link parsing parity. Capture statuses. Suspension catch-up. A 10,000-message power storm posts one notice. Host-wired Event Log records checked through `eventLog.owner`. |
-| Reader, Map, Calendar, Minigame | `screen_reader_peers_contracts`, `reader_preview_contracts` (6,184), `map_preview_contracts` (74), `calendar_preview_contracts` (142), `orbipom_preview_contracts`, `calendar_reminder_area_contracts` (100) | Peers and presses, the Map's 12 Hz accessibility cadence, Calendar editor Value and focus, the reminder-click refresh sink. |
-| Notes, Archive, Projection | `notes_automation_contracts`, `notes_paste_import_contracts` (45 Mac oracle cases), `notes_clipboard_contracts`, `notes_format_host_contracts`, `notes_scene_contracts`, `notes_workspace_owner_contracts`, `archive_preview_contracts`, `projection_preview_contracts` | RTF/CF_HTML import and RTF export. Undo across promotion. The `queuedRowClick` reproduction fails without the fix. Large-card timings on WARP. |
+| Reader, Map, Calendar, Minigame | `screen_reader_peers_contracts`, `reader_preview_contracts` (6,184), `map_preview_contracts` (74), `calendar_preview_contracts` (142), `orbipom_preview_contracts`, `calendar_reminder_area_contracts` (100) | Peers and presses, the Map's 12 Hz accessibility cadence, Calendar editor Value and focus, the reminder-click refresh sink. *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `screen_reader_peers_contracts`, `reader_preview_contracts`, `map_preview_contracts`, `calendar_preview_contracts`, `orbipom_preview_contracts`; see checkpoint 139.* |
+| Notes, Archive, Projection | `notes_automation_contracts`, `notes_paste_import_contracts` (45 Mac oracle cases), `notes_clipboard_contracts`, `notes_format_host_contracts`, `notes_scene_contracts`, `notes_workspace_owner_contracts`, `archive_preview_contracts`, `projection_preview_contracts` | RTF/CF_HTML import and RTF export. Undo across promotion. The `queuedRowClick` reproduction fails without the fix. Large-card timings on WARP. *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `notes_format_host_contracts`, `archive_preview_contracts`; see checkpoint 139.* |
 | File Shelf | `shelf_preview_thread_contracts` (98), `shelf_file_preview_contracts` (591), `file_shelf_files_contracts` (383), `shelf_services_contracts` (365) | A hung out-of-process COM server is cancelled and its thread ends. Cloud placeholder classes. UIA peers. Relink ledger. |
 | Packaging | `packaging_update_check_contracts`, `packaging_update_platform_contracts`, `packaging_os_text_data_contracts`, `endfieldhud_release_contracts` | Mac HUDGitHubRelease oracle (59 tags, 36 URLs, 31 client scenarios). WinHTTP against a loopback server. Installed-copy check in a private HKCU subtree. Laptop OS text data: ICU 72.1, Unicode 15.1, tzdata 2022g. |
 
@@ -1959,7 +1962,7 @@ Applied area requests:
   (`native/shelf_file_preview.*` and `shelf_file_preview_contracts`), the
   process-wide `DisableProcessWindowsGhosting()` call and the startup read of
   the unused Core Animation reveal samples are removed (the packaged
-  `reveal-mask.bin` stays for `subsection_mask_contracts`).
+  `reveal-mask.bin` stays for `subsection_mask_contracts`). *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `subsection_mask_contracts`; see checkpoint 139.*
 - **Work Mode:** the open custom duration field is listed as the focused Edit
   peer with Value; SetValue replaces the draft and keeps the field open.
   Hidden coverage checks the role, keyboard focus, value and SetValue under
@@ -2011,7 +2014,7 @@ Found while integrating:
   `MapPreview::update` with the overlay hidden changed nothing (the module
   presentation at prewarm does not show Map, and activation redoes the work),
   so it was not kept: Map, Account and Power need their own prewarm entry
-  points (area work).
+  points (area work). *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `MapPreview`; see checkpoint 139.*
 - **Video colour in Notes, Archive and Projection** (investigation, no code
   change). On the Mac, a Notes video poster (`NotesMediaFactory.videoPoster`:
   `AVAssetImageGenerator`, preferred transform, 1600 px box) is a
@@ -2148,7 +2151,7 @@ Commits `454440a` and `3d74603`. Final slot: 18 of 18.
   nonzero stopwatch time.
 - The Profile and Work Mode scenes take an earlier owner time as the latest
   time seen (regressions in the `profile_scene`, `work_mode_scene`,
-  `work_mode_preview` and `profile_owner` contracts).
+  `work_mode_preview` and `profile_owner` contracts). *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `profile_scene`, `work_mode_scene`, `work_mode_preview`; see checkpoint 139.*
 - A large avatar's working copy is made on the worker, and portrait crops use
   an exact premultiplied-linear table. A 4000 × 3000 photo now costs 17 ms of
   UI-thread time instead of about 460 ms; a page crop takes 14 ms instead of
@@ -2218,13 +2221,13 @@ expects the clamped owner clock of `dadf151`.
 - Map: `loadMapGeography` loads `Terrain.bin` and `Countries.bin`
   separately. A failed dataset keeps the Map with its pins and shows the Mac
   message; `EndfieldHUD.exe` uses it since the host pass. Tests:
-  `map_geography_load_contracts` and `map_preview_contracts`.
+  `map_geography_load_contracts` and `map_preview_contracts`. *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `map_preview_contracts`; see checkpoint 139.*
 - Reader Library *Relink…* for imported Mac books and unavailable Windows
   books, over the Open picker route. It keeps the id, title, progress and
   bookmarks, and resolves, dismisses and reconciles `Migration/relink.json`
   rows through the import ledger API. Imported libraries keep their stored
   `fontName` (Georgia). Tests: `reader_localization`, `reader_preview`,
-  `reader_owner` and `reader_native` contracts.
+  `reader_owner` and `reader_native` contracts. *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `reader_preview`; see checkpoint 139.*
 - Final slot: 46 of 46 local suites plus `application_owner_coverage`.
 
 ### Notes, Projection and Archive
@@ -2263,7 +2266,7 @@ expects the clamped owner clock of `dadf151`.
   frame through the production owner, published like `publishNative`: no
   region is covered again and the frame is exactly settled at .26 s. The
   Clipboard reveal and the Activity sort mask use samples with the same
-  topology.
+  topology. *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `shelf_removal_frames_contracts`; see checkpoint 139.*
 - **Properties card** (`d61626e`, `200e513`). The eye button, double-click
   and Space open a `NotesRetainedMenu`-style card on the Shelf plane (it
   follows the tilt; .16 s fade; modal for pointer, keys and UIA; follows the
@@ -2283,7 +2286,7 @@ expects the clamped owner clock of `dadf151`.
   `shelf_file_picker` 130, all other Shelf suites,
   `application_owner_coverage` and `application_session_end_coverage`. Not
   verified: a real GPU and desktop, real media property handlers, OneDrive
-  placeholders, and Open in `EndfieldHUD.exe` (wired by the host pass).
+  placeholders, and Open in `EndfieldHUD.exe` (wired by the host pass). *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `shelf_removal_frames`, `shelf_scene`, `shelf_presentation`; see checkpoint 139.*
 
 ### Volume
 
@@ -2302,7 +2305,7 @@ requests follow the same row window. The Mac oracle comparison
 (`volume_reference_tests`) uses `VolumeLayout::source()`. Suites:
 `volume_scene_contracts` (list layout, native scrolling) and
 `volume_preview_contracts` (owner scrolling); the host pass adds the list to
-`EndfieldHUD.exe` coverage (`edbe0b7`).
+`EndfieldHUD.exe` coverage (`edbe0b7`). *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `volume_reference_tests`, `volume_scene_contracts`, `volume_preview_contracts`; see checkpoint 139.*
 
 ### Packaging: section 9 gate and first release notes (`2d2f1e2`)
 
@@ -2355,10 +2358,10 @@ or real audio session was involved.
 | --- | --- | --- | --- |
 | Projection crashed on opening (Media Assembly no longer did) | Owner times arrived out of order: an event nested in a host callback (the `WM_CAPTURECHANGED` after a Projection release, an owner reading the clock inside a callback) gave Projection a later time, then the host's earlier sample failed a strict check ("Projection controls require a finite monotonic owner clock"). The host now hands every owner one non-decreasing time (`ModuleRegistry::hostTime`, `0fcabbc`). Projection, Notes, Archive, Profile and Work Mode take an earlier time as the latest seen (`dab027e`, `3b059ec`), and Projection calls run isolated. The earlier Media Assembly crash was the same class in the Event Log store (`dadf151`). | `application_registry_contracts` replays both live orders; the Projection preview, media binding, controls scene and media scene suites; hidden coverage audits every area for an earlier time (none in a whole run) and invokes Projection through UIA with an earlier clock. | Open and use Projection (keys, UIA, media, dismissal). `projection_workspace_contracts`, which holds the same regression, needs a desktop session. |
 | The HUD did not close on presses at the sides | `SystemHUDView.mouseDown` ported: a left press that no source control or owner takes closes the HUD with the normal animation when it falls outside the circle of radius 310 around the design centre, through the live projection (`0fcabbc`). Inside the circle nothing happens; during the entrance the close waits for the opening. | 9 host checks in both coverage runs (sides, corners, the closing animation, the queued close, reopening, an inside press, the quit card keeping the press). | Sides, corners, the taskbar area, another monitor (closed through *Close when focus lost*). |
-| A glitch when removing Shelf items | The reveal drew Core Animation's measured path, which sweeps wedges over cards between its degenerate keyframes. Removal, Clear and additions now draw the authored shutter keyframes at Core Animation's key times (`9b91c0a`). | `shelf_removal_frames_contracts` renders an × removal frame by frame through the production owner: no region is covered again, and the frame settles exactly at .26 s. | The real GPU. Clipboard's reveal and Activity's sort transition use samples of the same topology and are unchanged. |
+| A glitch when removing Shelf items | The reveal drew Core Animation's measured path, which sweeps wedges over cards between its degenerate keyframes. Removal, Clear and additions now draw the authored shutter keyframes at Core Animation's key times (`9b91c0a`). | `shelf_removal_frames_contracts` renders an × removal frame by frame through the production owner: no region is covered again, and the frame settles exactly at .26 s. | The real GPU. Clipboard's reveal and Activity's sort transition use samples of the same topology and are unchanged. *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `shelf_removal_frames_contracts`; see checkpoint 139.* |
 | Now Playing did not recognize the song | NetEase Cloud Music's Win32 client publishes no media session (GSMTC listed none while it played on the laptop). Now Playing also reads the main window titles of NetEase Cloud Music, QQ Music and Kugou, like the Mac's accessibility fallback (`597df08`, `70ebabb`, `e8f4b1f`; process audio activity from host pass 2). | `now_playing_players_contracts` (157), `now_playing_acceptance_contracts` (323), `now_playing_probe_matrix`, 140 Now Playing coverage checks over a synthetic desktop. | Recognition, cover, lyrics and `WM_APPCOMMAND` transport in the user's player; `now_playing_probe --live --windows` for QQ Music and Kugou. Another player that publishes no session is still not found. |
-| Show a Shelf item's properties instead of a preview | A HUD secondary-menu card (name, type, size or item count, location, dates, dimensions, duration; Open and Reveal) read on the utility executor (`d61626e`, `200e513`; the shared executor and Open after the HUD closes from host pass 2). The Shell preview popup, its thread and its handler code were removed. | `shelf_properties_contracts`, `shelf_presentation_contracts` (1,754), `shelf_services_contracts` (568), `shelf_file_picker_contracts` (130), the `fileShelfCoverage` area. | Open in `EndfieldHUD.exe` (a production-only path), real media types, OneDrive placeholders, SMB shares. |
-| Volume scrolling stutters with more than two apps; show three | App rows are retained scenes that a scroll only moves; at most three rows (95 points), scrolled by wheel, row drag or scrollbar drag (`edbe0b7`). This deliberately differs from the Mac's two rows. | `volume_scene_contracts`, `volume_preview_contracts`; coverage with five synthetic apps (95-point list, 36-point detent, at most 3 text layouts while scrolling). | Wheel, touchpad and drag with real audio sessions. |
+| Show a Shelf item's properties instead of a preview | A HUD secondary-menu card (name, type, size or item count, location, dates, dimensions, duration; Open and Reveal) read on the utility executor (`d61626e`, `200e513`; the shared executor and Open after the HUD closes from host pass 2). The Shell preview popup, its thread and its handler code were removed. | `shelf_properties_contracts`, `shelf_presentation_contracts` (1,754), `shelf_services_contracts` (568), `shelf_file_picker_contracts` (130), the `fileShelfCoverage` area. | Open in `EndfieldHUD.exe` (a production-only path), real media types, OneDrive placeholders, SMB shares. *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `shelf_presentation_contracts`; see checkpoint 139.* |
+| Volume scrolling stutters with more than two apps; show three | App rows are retained scenes that a scroll only moves; at most three rows (95 points), scrolled by wheel, row drag or scrollbar drag (`edbe0b7`). This deliberately differs from the Mac's two rows. | `volume_scene_contracts`, `volume_preview_contracts`; coverage with five synthetic apps (95-point list, 36-point detent, at most 3 text layouts while scrolling). | Wheel, touchpad and drag with real audio sessions. *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `volume_scene_contracts`, `volume_preview_contracts`; see checkpoint 139.* |
 | The cold start is laggy | `hud.hlsl` compiled at build time and embedded; a launch prewarm poses and draws the first opening offscreen while the HUD is closed (`0fcabbc`); the charge badge rasterizes once for its resting size (`3d74603`); a large avatar's crop working copy is made on the worker (`f72c590`); an ID card change while closed is applied before the next opening (host pass 2). | Hidden traces: renderer start-up 312.8 → about 130 ms; launch to first frame 1,076 → about 920 ms; the first opening's first frame 68.6 → 29.0 ms of CPU (27–31 ms in four later WARP runs) and its second 17.1 → 5.1 ms; a warm opening's first frame 3–5 ms. | A production trace (`ENDFIELDHUD_STARTUP_TRACE=1`) or `package_perf_gate --desktop`. Unchanged: about 160–190 ms before the first startup stage, about 150 ms of area construction, and Map (about 16 ms), Account (about 2 ms) and Power (1–1.7 ms) work in the cold first frame. |
 
 ### Test runs
@@ -2370,7 +2373,7 @@ or real audio session was involved.
 | `application_session_end_coverage` | 15 lifecycle checks, at least 113 host checks (78 at checkpoint 124). |
 | Earlier host slots | Host pass 1 (`fff7dea`): 356 of 359. The user-reported host fixes (`0fcabbc`): 365 of 368. The same three environmental failures. |
 | Area slots (committed tree plus the area's files) | Media Assembly 19/19, Now Playing 28/28, Account 17/17, Power 18/18, Personal Profile 23/23, App shortcuts 19/19, Mac import 13/13, System providers 29/29, Reader/Map/Calendar/Minigame 46/46, Notes/Archive/Projection 65/65, Shelf 17/17, Volume 17/17, packaging 14/14. |
-| Mac, clang | The portable `now_playing_*` suites (ICU from Homebrew), `clipboard_matches_contracts` against ICU 78 under ASan/UBSan, `mac_import_relink_contracts`, `packaging_perf_gate_contracts` (56, ASan/UBSan), the portable Volume suite (142 checks), `shelf_scene_contracts`, `shelf_presentation_contracts`, `reader_localization_contracts` and `source_watch_session_contracts`; the no-ICU portable configure generates. |
+| Mac, clang | The portable `now_playing_*` suites (ICU from Homebrew), `clipboard_matches_contracts` against ICU 78 under ASan/UBSan, `mac_import_relink_contracts`, `packaging_perf_gate_contracts` (56, ASan/UBSan), the portable Volume suite (142 checks), `shelf_scene_contracts`, `shelf_presentation_contracts`, `reader_localization_contracts` and `source_watch_session_contracts`; the no-ICU portable configure generates. *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `shelf_scene_contracts`, `shelf_presentation_contracts`; see checkpoint 139.* |
 | GitHub Actions | One run, on `e17f3af` before batch 5's fixes (run 38116894941, `windows-2025`: ICU 72.1, Unicode 15.1, tzdata 2022g): 343 of 348 Windows suites. Its failures (the runner's 8.3 `%TEMP%`, a cp1252 read, a missing `<cmath>`) are fixed in local commits that no run has confirmed. |
 | Intermittent | `media_assembly_codec_contracts` failed once in a full host pass 2 run ("A moved original that is gone asks to be chosen again"), then passed in the next full run and three times alone. Unexplained. |
 
@@ -2435,18 +2438,18 @@ Changes since checkpoint 124:
 | Area | Suites | Main evidence |
 | --- | --- | --- |
 | Host | `application_registry_contracts`, both coverage runs, `overlay_host_contracts`, `source_watch_session_contracts`, `audio_session_worker_contracts`, `layer_raster_contracts`, the two notification identity suites | Both live crash orders. No earlier time handed to any area in a whole coverage run. Outside-press close. The cursor route and the hidden-window cursor contract. `GetFocus` on an open Notes editor. Navigation buttons, hit test and a UIA scroll press. Work Mode's Edit peer and SetValue. The Volume list. The Reader stays enabled after a release. Embedded shaders reported by the renderer. |
-| Projection, Notes, Archive | Projection preview, media binding, controls scene and media scene suites; `notes_scene_contracts`, `notes_workspace_owner_contracts`, `notes_text_navigation_contracts`, `notes_relink_ledger_contracts`, `archive_state_contracts`, `archive_preview_contracts` | Earlier owner times taken as the latest. Visual-line Home/End in both editor kinds. Ledger resolve, dismiss and reconcile. Large-card GPU rings: editing entry 242 → 76 ms on WARP. |
+| Projection, Notes, Archive | Projection preview, media binding, controls scene and media scene suites; `notes_scene_contracts`, `notes_workspace_owner_contracts`, `notes_text_navigation_contracts`, `notes_relink_ledger_contracts`, `archive_state_contracts`, `archive_preview_contracts` | Earlier owner times taken as the latest. Visual-line Home/End in both editor kinds. Ledger resolve, dismiss and reconcile. Large-card GPU rings: editing entry 242 → 76 ms on WARP. *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `archive_preview_contracts`; see checkpoint 139.* |
 | Media Assembly | the 14 `media_assembly_*` suites | 20 ICC profiles and 14 PNG chunk probes within 1 level of Core Image on the CPU, GPU and preview paths. Movie frames within 2 levels of the Mac preview (11 before). Exported video row order. GPU stills exact against the CPU (12 MP: 0.41 s against 0.80 s). The Highlights/Shadows fit reproduces its fixture byte for byte. |
 | Now Playing | `now_playing_players_contracts` (157), `now_playing_acceptance_contracts` (323), `now_playing_probe_matrix`, all `now_playing_*` through `now_playing_all` | The Mac-oracle title split on 35 headings. Composite precedence. The synthetic desktop in coverage (140 checks). |
 | Account | `hypergryph_account_webview_contracts` (489), `hypergryph_account_owner_contracts` | Mac panel geometry and per-monitor DPI. Drags refused. Startup costs printed, not asserted. |
 | Power | `charge_indicator_panel_contracts`, `charge_badge_preview_contracts`, `power_area_contracts` | The alert's UIA root and tooltips. No re-raster while opening or closing at 2× (counters). The Power caption. |
-| Personal Profile, Work Mode | `profile_image_contracts`, `id_card_artwork_contracts` (Mac oracle, unchanged), `profile_scene_contracts`, `work_mode_scene_contracts`, `work_mode_preview_contracts`, `profile_owner_contracts`, `work_mode_automation_contracts` | The working copy made on the worker (a 4000 × 3000 avatar: about 460 → 17 ms of UI-thread time on WARP). Out-of-order times. The I-beam rect. 158 profile coverage checks. |
-| App shortcuts | `app_shortcut_preview_contracts`, `app_shortcut_scene_contracts`, `app_shortcut_presentation_contracts`, `app_shortcut_relink_contracts` (17) | A wheel step 1.7–2.5 ms, small steps with no raster (about 25 ms before). The handoff mask in the host's frame order. A packaged relink resolves. |
+| Personal Profile, Work Mode | `profile_image_contracts`, `id_card_artwork_contracts` (Mac oracle, unchanged), `profile_scene_contracts`, `work_mode_scene_contracts`, `work_mode_preview_contracts`, `profile_owner_contracts`, `work_mode_automation_contracts` | The working copy made on the worker (a 4000 × 3000 avatar: about 460 → 17 ms of UI-thread time on WARP). Out-of-order times. The I-beam rect. 158 profile coverage checks. *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `profile_scene_contracts`, `work_mode_scene_contracts`, `work_mode_preview_contracts`, `work_mode_automation_contracts`; see checkpoint 139.* |
+| App shortcuts | `app_shortcut_preview_contracts`, `app_shortcut_scene_contracts`, `app_shortcut_presentation_contracts`, `app_shortcut_relink_contracts` (17) | A wheel step 1.7–2.5 ms, small steps with no raster (about 25 ms before). The handoff mask in the host's frame order. A packaged relink resolves. *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `app_shortcut_preview_contracts`, `app_shortcut_scene_contracts`, `app_shortcut_presentation_contracts`; see checkpoint 139.* |
 | Mac import | `mac_import_relink_contracts` (95), `mac_import_automation_contracts` (82), the other `mac_import_*` suites | The owner API under concurrency, a mid-call replacement and refusals. Focus events. 1,608 macImport coverage checks. |
 | System providers | `clipboard_matches_contracts` (23,510), `system_services_contracts` (11,375), `event_log_owner_contracts` (46) | 87 Mac-oracle paths, 9 lists, 43 string pairs. The clamped Event Log owner clock. |
-| Reader, Map | `reader_pdf_exit_contracts` (19), `map_geography_load_contracts`, `map_preview_contracts` (82), `reader_preview_contracts` (6,223), `reader_owner_contracts` (57), `reader_localization_contracts`, `reader_native_contracts` | Exit fault `0x87A` reproduced with the old renderer, exit 0 on the owned device. Each geography dataset fails alone. A relink keeps the book's id, title and bookmarks and updates the ledger. |
-| File Shelf | `shelf_removal_frames_contracts`, `shelf_scene_contracts` (115,987), `shelf_presentation_contracts` (1,754), `shelf_properties_contracts`, `shelf_services_contracts` (568), `shelf_file_picker_contracts` (130) | Removal frames. Properties of synthetic files (PNG dimensions, WAV duration). The modal card. The ledger on the worker. |
-| Volume | `volume_scene_contracts`, `volume_preview_contracts`, `volume_preview_icon_contracts` | No module reload or caption layout on scroll. Settled frames allocate, rasterize and upload nothing. |
+| Reader, Map | `reader_pdf_exit_contracts` (19), `map_geography_load_contracts`, `map_preview_contracts` (82), `reader_preview_contracts` (6,223), `reader_owner_contracts` (57), `reader_localization_contracts`, `reader_native_contracts` | Exit fault `0x87A` reproduced with the old renderer, exit 0 on the owned device. Each geography dataset fails alone. A relink keeps the book's id, title and bookmarks and updates the ledger. *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `map_preview_contracts`, `reader_preview_contracts`; see checkpoint 139.* |
+| File Shelf | `shelf_removal_frames_contracts`, `shelf_scene_contracts` (115,987), `shelf_presentation_contracts` (1,754), `shelf_properties_contracts`, `shelf_services_contracts` (568), `shelf_file_picker_contracts` (130) | Removal frames. Properties of synthetic files (PNG dimensions, WAV duration). The modal card. The ledger on the worker. *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `shelf_removal_frames_contracts`, `shelf_scene_contracts`, `shelf_presentation_contracts`; see checkpoint 139.* |
+| Volume | `volume_scene_contracts`, `volume_preview_contracts`, `volume_preview_icon_contracts` | No module reload or caption layout on scroll. Settled frames allocate, rasterize and upload nothing. *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `volume_scene_contracts`, `volume_preview_contracts`, `volume_preview_icon_contracts`; see checkpoint 139.* |
 | Packaging | `packaging_perf_gate_contracts` (56), `packaging_perf_probe_contracts`, `packaging_perf_gate_tool`, `packaging_perf_gate_render`, `endfieldhud_release_contracts`, `packaging_installer_contracts` (385 with an 8.3 `%TEMP%`) | Opening analysis and the refusal over SSH. The first-release notes rendered. |
 
 ### Corrections to the entries above
@@ -2615,15 +2618,15 @@ Cloud Music. No fix has been confirmed on the desktop.
 | Now Playing: NetEase transport ignored, slow covers, lyrics not following the song | Window-title players are read through their own on-screen controls (MSAA on the OS thread pool, the Mac NowPlayingAccessibility walk): elapsed, total, play state, previous/play/next, re-read on title, audio-activity or command changes; a CEF 91 page is asked for its tree once (IAccessible2). Commands press the player's own control, then its media-key hotkey (only while it is the single window-title player and the key is held), then `WM_APPCOMMAND`. Covers and lyrics come over one kept-alive WinHTTP session while presented, with a disk cache (`Caches\NowPlaying`, 256 entries / 16 MiB) and 500 px covers on the 150 % display. Kuwo, foobar2000, AIMP, PotPlayer and VLC are added; the process rendering audio ranks first (`7700973`). | `now_playing_players_contracts` (241), `now_playing_player_controls_contracts` (73, Mac oracle), `now_playing_control_reader_contracts` (in-process accessible objects), `now_playing_web_http_contracts` (108, loopback only), `now_playing_web_cache_contracts` (25), `now_playing_sources_session_contracts` (98); slot 31/31. | Everything with NetEase itself: its CEF tree, control names, `accDoDefaultAction`, media-key delivery (only hotkey ownership was observed), the real catalog over the system proxy. |
 | Notes: after a pen/eraser switch a stroke became a dot | The right press that toggles the eraser took the capture and its release was not consumed, so the next left press captured again; Windows answers that with `WM_CAPTURECHANGED` naming the same window, which ended the stroke. Notes now consumes the matching release (`d923aef`). | `notes_drawing_preview_contracts` through a hidden real `OverlayHost` with the host's capture policy (`tests/notes_host_capture.hpp`); it also checks the OS behaviour itself. Hidden coverage draws after two switches. | Drawing on the visible desktop (a hidden window cannot hold real capture through `OverlayHost::capturePointer`, so the harness calls `SetCapture` itself). |
 | Projection drew nothing | Projection asks for the capture after every event, so the first drag event re-captured and the same self-notice cancelled the stroke. `OverlayHost` now captures only when the window does not hold the capture and ignores a capture change naming itself (`5722753`). | `overlay_host_contracts` (taking the capture again reports no loss, a release exactly one; `5a2d3d3`), `projection_preview_contracts` under that policy, Projection coverage commits a 4-point stroke. `projection_capture_route_contracts` (`bf376aa`, the production route with a renderer readback) needs a desktop session: it was skipped (exit 77) in every SSH slot, so no pass is recorded here. | Drawing in Projection. |
-| Notes font and size menus | A Mac Shelf-picker-style scroll bar under the close button: draggable thumb, track press, wheel, and a UIA slider `notes.format:scroll`. Archive's formatting menus have it too; the Reader keeps its Mac face. A Windows addition (`d923aef`). | `notes_controls_contracts`, `notes_format_menu_contracts`, `archive_preview_contracts`, hidden coverage (slider SetValue). | Dragging on the real display. |
+| Notes font and size menus | A Mac Shelf-picker-style scroll bar under the close button: draggable thumb, track press, wheel, and a UIA slider `notes.format:scroll`. Archive's formatting menus have it too; the Reader keeps its Mac face. A Windows addition (`d923aef`). | `notes_controls_contracts`, `notes_format_menu_contracts`, `archive_preview_contracts`, hidden coverage (slider SetValue). | Dragging on the real display. *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `notes_controls_contracts`, `notes_format_menu_contracts`, `archive_preview_contracts`; see checkpoint 139.* |
 | Clipboard and Activity glitch | Clipboard's removal reveal and Activity's sort transition draw the authored shutter keyframes like the Shelf; `reveal-mask.bin` and `sort-mask.bin` are no longer read (`dab9539`). | `clipboard_reveal_frames_contracts` (269), `activity_reveal_frames_contracts` (486): no region covered again, both settle at .26 s. | The real GPU. |
-| Volume shook on a Headphones / Bluetooth ↔ App volume switch | The page motion turned about the canvas corner and started at the press. It now turns about the content centre (200,167) from the first presenting frame; only the detail page reloads (`e9e9a58`). | `volume_scene_contracts` (actionMotion), `volume_preview_contracts` (pageSwitch, frame by frame), owner coverage (10–14 frames, header kept, rows parked and revived). | The motion on the desktop. |
-| Centre content too small | Not a DPI error: the Mac caps its design scale at 1.15 while the ring grows with the screen, so on the laptop (1707 × 1067 points) the Mac formula fills 88.8 % of the blue ring. `desktopContentScale` keeps the reference MacBook's proportion (factor ×1.161 on the laptop, exactly 1 at 1470 × 956). A deliberate deviation from Mac-exact numbers on larger displays (`d5acbe9`, `e62a46f`). | Hidden coverage: 1.0307 of the blue ring at seven display sizes, the Mac layout at 1470 × 956. | The look on the real display. |
+| Volume shook on a Headphones / Bluetooth ↔ App volume switch | The page motion turned about the canvas corner and started at the press. It now turns about the content centre (200,167) from the first presenting frame; only the detail page reloads (`e9e9a58`). | `volume_scene_contracts` (actionMotion), `volume_preview_contracts` (pageSwitch, frame by frame), owner coverage (10–14 frames, header kept, rows parked and revived). | The motion on the desktop. *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `volume_scene_contracts`, `volume_preview_contracts`; see checkpoint 139.* |
+| Centre content too small | Not a DPI error: the Mac caps its design scale at 1.15 while the ring grows with the screen, so on the laptop (1707 × 1067 points) the Mac formula fills 88.8 % of the blue ring. `desktopContentScale` keeps the reference MacBook's proportion (factor ×1.161 on the laptop, exactly 1 at 1470 × 956). A deliberate deviation from Mac-exact numbers on larger displays (`d5acbe9`, `e62a46f`). | Hidden coverage: 1.0307 of the blue ring at seven display sizes, the Mac layout at 1470 × 956. | The look on the real display. *Since checkpoint 139 the centre follows the Mac 1.3.0's own large-display rule (`HUDSourceWatchView.desktopContentScale`, measured at the centre node, clamped 1–3), which adopted this enlargement; it is no longer a Windows deviation. See checkpoint 139.* |
 | GPU usage in Activity (request) | PDH `\GPU Engine(*)\Running Time`, busiest engine per app and overall (Task Manager's method): an Overview row ("TOP ENGINE", five languages) and an Apps column; collected only while Activity is visible, closed on hide (`dab9539`). *Superseded after checkpoint 130 (`cadb88e`): the row and column now show the total load, captioned TOTAL LOAD; see checkpoint 131. Superseded after checkpoint 131 (`b0dd0e5`): the overall GPU is now read with every system sample, hidden and closed alike, and the query stays open from the first sample at launch; see checkpoint 132.* | `activity_gpu_contracts` (617, including a live collection over the test process). | Figures against Task Manager with a game and two adapters. |
 | Clicking the Sanity bar closed the HUD | The shown wallet takes every press whatever it shows (`fe21a24`), and the host's background-press close asks `ModuleOwner::covers` first, also during the entrance (`5a2d3d3`). | Owner coverage presses the wallet open and during the entrance (re-projected on the animating plane); native and owner suites. | The press on the live display. |
 | Centre logo did not flicker | The ENDFIELD INDUSTRIES logo flickers like the Mac (opacity .22 at .05–.09 s, .38 at .20–.25 s, done at .46 s, glow at .78), never closes the HUD, honours Reduce Motion, and is a UIA button (`d5acbe9`). | Hidden coverage. | The animation on the display. |
 | Clock not scrollable | A mouse wheel over the clock switches styles (Mac 28-point threshold, one style per gesture); a style change pushes the inner page (.26 s ease-in-ease-out, 340 points, clipped) (`d5acbe9`). | Hidden coverage (half-way offsets and the end of the push). | The animation on the display. |
-| Storage: choose the disk (request) | A "C: ▾" secondary menu of fixed and removable volumes, read by volume id on the shared executor, persisted as `storageVolume` (`dab9539`, `5a2d3d3`). | `storage_volume_contracts` (27), `storage_automation_contracts` (23). | A USB volume and a restart. |
+| Storage: choose the disk (request) | A "C: ▾" secondary menu of fixed and removable volumes, read by volume id on the shared executor, persisted as `storageVolume` (`dab9539`, `5a2d3d3`). | `storage_volume_contracts` (27), `storage_automation_contracts` (23). | A USB volume and a restart. *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `storage_volume_contracts`; see checkpoint 139.* |
 | Summon hotkey failing in some apps | A low-level keyboard hook on its own thread recognises the chord (only the chord's key press is consumed, nothing is logged, other layouts match by physical key) and reinstalls itself on foreground changes; `RegisterHotKey` stays as the fallback. Settings › Hotkeys gains "Summon HUD with hotkey" (`windowsSummonHotkeyDisabled`, five languages) (`d5acbe9`, `b9b869b`, `577a707`). | `application_hotkey_display_contracts` (chord matcher; hook install, restart and stop on the laptop without injected input). | Delivery inside the games and apps where it failed. |
 | Lag while a game runs | While shown: ABOVE_NORMAL priority class, power throttling off, MMCSS "Games" for the render thread, GPU scheduling class HIGH and thread priority +7, all restored on close; a frame-latency waitable swap chain with a bounded 50 ms wait (`d5acbe9`, `577a707`). The HUD's D3D11 device runs without driver internal threading (`5a2d3d3`). | Contention trace below (offscreen, synthetic load). | The waitable swap chain (never created over SSH) and a real game under DWM. |
 | Footprint | See *Memory and threads*. | | `package_perf_gate --desktop` on the current build. |
@@ -2699,7 +2702,7 @@ HUD closed while another module was shown):
 | Area | Change | Measured |
 | --- | --- | --- |
 | Reader (`e99e0f8`) | A hidden Reader drops its page textures and parks its canvas group after the .35 s departure deadline (also with the HUD closed). PDF pages render on a WARP device without internal threads (hardware only as fallback), as the Mac renders them on the CPU. | Hidden, 1 px/pt: renderer bytes 3,728,128 → 5,040, textures 38 → 0. PDF census on the laptop, 40 show/hide cycles: threads with a PDF open 96 → 38, private 92.2 → 71.2 MB open and 84.4 → 66.0 MB after release, no growth (66.0–67.6 MB). |
-| Map (`e99e0f8`, forwarded in `5a2d3d3`) | `MapPreview::prewarm` builds the first opening at opacity 0 while closed. | First opening frame on WARP 13.0–17.2 → 0.07–0.21 ms; 27 → 0 first-frame uploads. After a close the host trace still finds 28 textures (22.9 MB, linear or encoded colour spaces at 8 B per texel) and 17.9 MB of CPU residency. |
+| Map (`e99e0f8`, forwarded in `5a2d3d3`) | `MapPreview::prewarm` builds the first opening at opacity 0 while closed. | First opening frame on WARP 13.0–17.2 → 0.07–0.21 ms; 27 → 0 first-frame uploads. After a close the host trace still finds 28 textures (22.9 MB, linear or encoded colour spaces at 8 B per texel) and 17.9 MB of CPU residency. *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `MapPreview`; see checkpoint 139.* |
 | Notes (`83dd37d`, `c9f04a5`) | A large card's body lines live in their own scene and its plate is a filled GPU mesh; the shared media decoder and Media Foundation start with the first job and stop after the last movie. | 1600 × 1000 pt card at 2 px/pt: 47 → 22 MB CPU, 94 → 44 MB GPU; closing the editor unchanged 5 rasters / 4.6 ms (was about 46 lines, 59 ms). 46 threads before and after building the media stack; 72 instead of 80 after one movie. |
 | Clipboard, Event Log, Activity, Storage (`a2829c0`, `7918420`, `244ba30`) | Release on close, Storage built only when shown, hover tints painted only while they show, one plate leaf per row. | At rest, CPU KiB: Clipboard 8686 → 5599, Event Log 7702 → 3490, Activity Apps 2461 → 2005, Storage 2100; 0 after a close. The PDH GPU query adds no thread; about 4.3 MB stays after the first Activity visit. *Superseded by `b0dd0e5` (checkpoint 132): the query is opened by the first system sample at launch and kept; on top of the disk query it adds about 760 KiB private bytes.* |
 | File Shelf (`ebcc801`, `15da40b`) | No icon thread before the Shelf shows or while it is hidden; tight static groups; release on close; resting highlights held as a transparent point. | Eight cards at 2 px/pt: 7,969 → 5,757 KiB of rasters (the before figure is from `ebcc801`, not re-measured). |
@@ -2720,7 +2723,7 @@ HUD closed while another module was shown):
 | Host pass, full MSVC x64 Release build | 391 of 394 suites before its last small edits; the three failures are the environmental ones of earlier checkpoints. After `5a2d3d3` and `3d972c7`, 23 of 23: the `application_*` suites, both owner coverage runs, `application_memory_trace`, `application_frame_targets_contracts`, `native_group_contracts`, `native_renderer_contracts`, `watch_preview_argument_contracts`, `audio_application_name_contracts` and the `endfieldhud_*` package, install and release suites. |
 | `application_owner_coverage` | 54 module results, at least 171 host checks (enforced; 117 at checkpoint 128), 14 areas constructed. `application_session_end_coverage`: at least 167 host checks (113 before). |
 | Area slots (committed tree plus the area's files) | Reader/Map/Calendar/Minigame 46/46, Notes/Archive/Projection 66/66, System providers 42/42, Shelf 17/17, Volume 19/19, Now Playing 31/31, Media Assembly 19/19, Personal Profile 24/24, Account 17/17, Power 18/18, App shortcuts 19/19, Mac import 13/13, packaging 14/14; each includes `application_owner_coverage`. Host UX: a full build and 52 related suites. The Projection capture route slot built its test and skipped it (no desktop session). |
-| Mac, clang | Portable `volume_scene_contracts` (1,026), `volume_reference_tests` (44,329, Mac oracle on the source form), `audio_application_name_contracts` (12), `packaging_perf_gate_contracts` (74, ASan/UBSan), the Mac import residency scenarios (before/after numbers in `windows/core/migration/README.md`), and the Shelf portable sources with `-Wall -Wextra -Wpedantic`. |
+| Mac, clang | Portable `volume_scene_contracts` (1,026), `volume_reference_tests` (44,329, Mac oracle on the source form), `audio_application_name_contracts` (12), `packaging_perf_gate_contracts` (74, ASan/UBSan), the Mac import residency scenarios (before/after numbers in `windows/core/migration/README.md`), and the Shelf portable sources with `-Wall -Wextra -Wpedantic`. *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `volume_scene_contracts`, `volume_reference_tests`; see checkpoint 139.* |
 | GitHub Actions | Run 38170093334 on the pushed `03723d7`: the Windows job passed 358 of 358 suites (ICU 72.1, Unicode 15.1, tzdata 2022g), confirming the 8.3 `%TEMP%` and cp1252 fixes. The portable GCC job stopped at three compile errors (`media_assembly_export.hpp` `<memory>`, `reader_pdf_title.cpp`, `reader_pdf_crypto.cpp` `<algorithm>`), fixed in `5a2d3d3` and not yet run on GitHub. |
 | The intermittent codec failure | Explained and fixed (`0a1d4b5`): a file deleted while another program holds it open keeps no name but opens by file ID from a hidden system folder, and the moved-original lookup found it there. The lookup now requires a linked, not delete-pending object whose current path reopens it; the contract holds a handle so the case occurs every run. 9 consecutive passes. |
 
@@ -2761,7 +2764,7 @@ Changes since checkpoint 128:
   swap chain, and `watch_session_preview --contention-trace` with
   `tools/application_contention_stress`. `b779995` lets `app.cmake` add the
   host memory sources only when they exist (HEAD briefly listed files that
-  were not in the tree).
+  were not in the tree). *Since checkpoint 139 the centre follows the Mac 1.3.0's own large-display rule (`HUDSourceWatchView.desktopContentScale`, measured at the centre node, clamped 1–3), which adopted this enlargement; it is no longer a Windows deviation. See checkpoint 139.*
 - **Pointer capture (`5722753`):** see the Projection row above.
 - **Build (`69c8816`):** scratch verification builds may omit developer
   symbols.
@@ -2809,17 +2812,17 @@ Changes since checkpoint 128:
 | Area | Suites | Main evidence |
 | --- | --- | --- |
 | Host | `application_frame_targets_contracts`, `application_memory_trace`, `application_utility_idle_contracts`, `application_hotkey_display_contracts`, `overlay_host_contracts`, both coverage runs | Identical pixels after a target release, only drawn groups restored, exact byte accounting; the closed HUD keeps no group target, released its frame targets and trimmed the driver; the idle exit (tested, off); the recapture regression; the provider UIA groups under the real root; the wallet press during the entrance; the Volume page switch and the Volume and Work Mode releases on close. |
-| Reader, Map | `reader_preview_contracts` (6,258), `map_preview_contracts` (99), `reader_pdf_exit_contracts`, `map_painter_contracts`, `reader_native_contracts` | Unplaced artwork never uploaded; parking; the prewarm; the PDF census (asserts that an open PDF starts no device threads); a later worker reuses the painter's caches. |
-| Notes, Archive, Projection | `notes_drawing_preview_contracts`, `projection_preview_contracts`, `notes_controls_contracts`, `notes_format_menu_contracts`, `archive_preview_contracts`, `notes_scene_contracts`, `notes_workspace_owner_contracts`, `notes_video_poster_contracts`, `notes_video_decode_contracts`, `notes_preview_contracts` | Strokes keep every point after tool switches under the real capture policy; the menu scroll bar; the lines scene and plate mesh; posters within 2 levels of the Media Assembly oracle (grey 128 reads 139); no engine or scratch texture left after playback; the ledger write queued on a real executor. |
-| System providers | `clipboard_reveal_frames_contracts`, `activity_reveal_frames_contracts`, `activity_gpu_contracts`, `storage_volume_contracts`, the four `*_resources_contracts` and `activity_counters_resources_contracts`, the four `*_automation_contracts` (71, 36, 37, 23) | Reveal frames; GPU parsing and collection; volume choice; release on close; peers with Mac labels and help, presses that act like clicks. |
-| File Shelf | `shelf_scene_contracts`, `shelf_resources_contracts` (50) | One paint per hover, release at the next content event, `settleHighlights`, a HUD closed mid-fade. |
-| Volume | `volume_scene_contracts` (1,482), `volume_preview_contracts` (665), `audio_application_name_contracts`, `audio_service_contracts` | The page motion; compact rasters equal to the source rasters pixel for pixel; lazy build and release; synthetic manifests (modern, 8.1, CDATA, DTD refused, over 4 MiB refused). |
-| Now Playing | the suites in the first table, `now_playing_preview_contracts` (41), `now_playing_acceptance_contracts` (323) | Readings and presses through a fixture window; the HTTP session lifetime (idle pooled connection closed 20.0 s after release); the cache under a temporary folder; parking. |
+| Reader, Map | `reader_preview_contracts` (6,258), `map_preview_contracts` (99), `reader_pdf_exit_contracts`, `map_painter_contracts`, `reader_native_contracts` | Unplaced artwork never uploaded; parking; the prewarm; the PDF census (asserts that an open PDF starts no device threads); a later worker reuses the painter's caches. *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `reader_preview_contracts`, `map_preview_contracts`; see checkpoint 139.* |
+| Notes, Archive, Projection | `notes_drawing_preview_contracts`, `projection_preview_contracts`, `notes_controls_contracts`, `notes_format_menu_contracts`, `archive_preview_contracts`, `notes_scene_contracts`, `notes_workspace_owner_contracts`, `notes_video_poster_contracts`, `notes_video_decode_contracts`, `notes_preview_contracts` | Strokes keep every point after tool switches under the real capture policy; the menu scroll bar; the lines scene and plate mesh; posters within 2 levels of the Media Assembly oracle (grey 128 reads 139); no engine or scratch texture left after playback; the ledger write queued on a real executor. *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `notes_controls_contracts`, `notes_format_menu_contracts`, `archive_preview_contracts`; see checkpoint 139.* |
+| System providers | `clipboard_reveal_frames_contracts`, `activity_reveal_frames_contracts`, `activity_gpu_contracts`, `storage_volume_contracts`, the four `*_resources_contracts` and `activity_counters_resources_contracts`, the four `*_automation_contracts` (71, 36, 37, 23) | Reveal frames; GPU parsing and collection; volume choice; release on close; peers with Mac labels and help, presses that act like clicks. *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `storage_volume_contracts`; see checkpoint 139.* |
+| File Shelf | `shelf_scene_contracts`, `shelf_resources_contracts` (50) | One paint per hover, release at the next content event, `settleHighlights`, a HUD closed mid-fade. *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `shelf_scene_contracts`, `shelf_resources_contracts`; see checkpoint 139.* |
+| Volume | `volume_scene_contracts` (1,482), `volume_preview_contracts` (665), `audio_application_name_contracts`, `audio_service_contracts` | The page motion; compact rasters equal to the source rasters pixel for pixel; lazy build and release; synthetic manifests (modern, 8.1, CDATA, DTD refused, over 4 MiB refused). *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `volume_scene_contracts`, `volume_preview_contracts`; see checkpoint 139.* |
+| Now Playing | the suites in the first table, `now_playing_preview_contracts` (41), `now_playing_acceptance_contracts` (323) | Readings and presses through a fixture window; the HTTP session lifetime (idle pooled connection closed 20.0 s after release); the cache under a temporary folder; parking. *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `now_playing_preview_contracts`; see checkpoint 139.* |
 | Media Assembly | the 14 `media_assembly_*` suites | The codec race (9 passes), residency, JPEG chroma within 3 levels, the 4:2:2 band seam. |
-| Personal Profile, Work Mode | `work_mode_scene_contracts`, `work_mode_preview_contracts`, `profile_scene_contracts`, `profile_owner_contracts`, `profile_shell_scene_contracts` | The ring mesh within 16/255 of an exact supersampled stroke (the Direct2D raster was off by up to 96/255); rebuilt pages paint byte for byte; profile coverage 6 steps, 162 checks, identical raster use in cycles 1 and 2. |
+| Personal Profile, Work Mode | `work_mode_scene_contracts`, `work_mode_preview_contracts`, `profile_scene_contracts`, `profile_owner_contracts`, `profile_shell_scene_contracts` | The ring mesh within 16/255 of an exact supersampled stroke (the Direct2D raster was off by up to 96/255); rebuilt pages paint byte for byte; profile coverage 6 steps, 162 checks, identical raster use in cycles 1 and 2. *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `work_mode_scene_contracts`, `work_mode_preview_contracts`, `profile_scene_contracts`; see checkpoint 139.* |
 | Account | `hypergryph_account_webview_contracts` (492), `hypergryph_account_platform_contracts` (118), `hypergryph_account_owner_contracts` (103), `hypergryph_account_native_contracts` (48), `hypergryph_account_area_contracts` (77) | The wallet takes presses; the card built and released; no WebView2 reference after a completed, cancelled or expired login; the WinHTTP session opened only by a request. |
 | Power | `charge_indicator_panel_contracts`, `charge_indicator_contracts`, `charge_indicator_scene_contracts`, `charge_badge_preview_contracts`, `power_area_contracts` | Create/park/rebuild per presentation; postponed entrance pixel-identical to a reference panel; device loss replaced once; 17 uploads at prewarm, none at reveal. |
-| App shortcuts | `app_shortcut_scene_contracts`, `app_shortcut_preview_contracts` | Mesh plates against full-size leaf rasters: straight edges and text within 1 level, 3-point corners up to 23 levels on single pixels; resident bounds asserted. |
+| App shortcuts | `app_shortcut_scene_contracts`, `app_shortcut_preview_contracts` | Mesh plates against full-size leaf rasters: straight edges and text within 1 level, 3-point corners up to 23 levels on single pixels; resident bounds asserted. *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `app_shortcut_scene_contracts`, `app_shortcut_preview_contracts`; see checkpoint 139.* |
 | Mac import | `mac_import_resident_contracts` (675), `mac_import_contracts` (758) | Heap and threads around seven scenarios; leftover blocks listed on failure. |
 | Packaging | `packaging_perf_gate_contracts` (74), `packaging_perf_probe_contracts`, `packaging_update_platform_contracts` (78), `packaging_perf_gate_tool`, `endfieldhud_release_contracts` | The footprint section against a stand-in app on the laptop (48 MiB held while open, attributed threads); the lazy WinHTTP session. |
 
@@ -3012,7 +3015,7 @@ Tests for both commits: `activity_gpu_contracts` (adapter 1 at 3D 50 % + Copy 10
 2 at 3D 25 % give 60 %; the live collection logs each adapter's load),
 `activity_state_contracts` (order, colours by metric, the caption in five
 languages), `activity_preview_contracts`, the Activity automation peers and
-the provider coverage step.
+the provider coverage step. *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `activity_preview_contracts`; see checkpoint 139.*
 
 **Now Playing with NetEase Cloud Music 3 (`666caa8`).** NetEase is now read
 through its own player bar, using Chromium accessibility on demand:
@@ -3221,7 +3224,7 @@ builds read them as Power changes / Battery. Tests (extended; the commit
 message lists none): `power_policy_contracts`, `power_area_contracts`,
 `power_owner_contracts`, `charge_indicator_contracts`,
 `charge_indicator_scene_contracts`, `data_store_contracts`,
-`settings_presentation_contracts`.
+`settings_presentation_contracts`. *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `settings_presentation_contracts`; see checkpoint 139.*
 
 **Activity GPU at all times (`b0dd0e5`).** The overall GPU reading is part
 of every system sample, on the host's one `ActivitySamplingPlan` deadline
@@ -3237,7 +3240,7 @@ per minute, 0.6–0.7 ms per collection, 245 KiB of kept buffers and
 `activity_gpu_contracts` (history fills with CPU from launch, shown, hidden
 and closed; one collection per sample; no allocation; one query across
 samples and HUD close; UTF-16 parsing), `activity_provider_contracts`,
-`activity_preview_contracts` and the Activity resource suites.
+`activity_preview_contracts` and the Activity resource suites. *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `activity_preview_contracts`; see checkpoint 139.*
 
 **NetEase Cloud Music 3 time and lyrics from its queue file (`ca14c77`).**
 Live on 3.1.41 (read-only accessibility probe) the bar's slider exposes no
@@ -3282,7 +3285,7 @@ the presented frame (`constructMap`). Tests: `map_cutout_contracts` (new),
 `map_occlusion_contracts` (new; the packaged shell on five displays, and at
 1280 × 800 all 11,012 sampled plate points show above the Map that covered
 them), `map_preview_contracts`. Build, owner and session-end coverage and
-every Map contract passed with the host change.
+every Map contract passed with the host change. *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `map_preview_contracts`; see checkpoint 139.*
 
 **Idle cost (`348b1ed`).** Measured hidden on the laptop (RTX 5060,
 offscreen 1280 × 800, production owner and frame scheduling):
@@ -3427,7 +3430,7 @@ hides), `map_occlusion_contracts` (the packaged shell on five displays;
 at 1280 × 800 the outgoing module covers 11,925 of 14,027 interior plate
 points without the cut and none with it on all 23 switch frames),
 `map_cutout_contracts`. Laptop slot for both Map commits: 16 of 16 Map
-suites and `application_owner_coverage`.
+suites and `application_owner_coverage`. *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `MapPreview`, `map_preview_contracts`; see checkpoint 139.*
 
 **Closed graphics device released after ten minutes (`3eecf89`).** The
 release from `348b1ed` never ran in production: Notes video playback took
@@ -3463,7 +3466,7 @@ opening, unused preparation discarded, production grace pinned at 600 s),
 `notes_video_playback_contracts`, `notes_video_decode_contracts`,
 `application_frame_targets_contracts`, `media_assembly_preview_contracts`;
 `watch_session_preview --idle-trace-grace` and `--idle-trace-closed`.
-Laptop slot: 28 of 28.
+Laptop slot: 28 of 28. *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `media_assembly_preview_contracts`; see checkpoint 139.*
 
 **Now Playing with NetEase's own media session (`f4baa93`).** A read-only
 probe on 3.1.41 with *开启 SMTC* on: the session (AUMID `cloudmusic.exe`)
@@ -3573,7 +3576,7 @@ which `validateRoot` rightly refuses; the test passes the lexically
 normalised root, and the production check is unchanged). Laptop slot: 16 of
 16 `mac_import`/OrbiPom suites; the resident suite still reports +0 B after
 every card hid on Windows. GitHub Actions is fully green on `0b106b4`: the
-Windows MSVC job and the Linux portable GCC 13 job.
+Windows MSVC job and the Linux portable GCC 13 job. *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `module_preferences_tests`, `orbipom_presentation_contracts`; see checkpoint 139.*
 
 **Section 9 gate on both sides of the ten-minute grace (`d628ef1`,
 `8815446`).** Since `3eecf89` the closed HUD keeps its graphics device for
@@ -3707,7 +3710,7 @@ come back, the document and the focused field are kept, *edited* recorded
 once, the slowest owner frame of the switch back within a 60 Hz frame:
 1.7–2.5 ms best of three), then closes the HUD during the stand-by and
 reopens it; `archive_media_binding_contracts` keeps the gallery's six
-posters through a switch away and back.
+posters through a switch away and back. *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `archive_preview_contracts`, `archive_media_binding_contracts`; see checkpoint 139.*
 
 **Volume app icons on the shared utility queue (`3e06120`).** The built-in
 Volume owner had no icon source (Mac VolumeCanvas.renderAppIcon), because
@@ -3825,7 +3828,7 @@ selection end on the next line. Affected: the Archive title and body, Notes
 text cards and checklist rows (the single-layout and the chunked editor;
 the workspace selected the card instead of routing such a press to the
 editor), Calendar details and the Profile introduction. Single-line fields
-already accepted any point and are unchanged.
+already accepted any point and are unchanged. *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `archive_preview_tests`; see checkpoint 139.*
 
 `core::text::insertionHit` is NSTextView's mouse insertion
 (`characterIndexForInsertionAtPoint`): right of a line its end, before the
@@ -3849,7 +3852,7 @@ centred lines; declined while text is marked),
 press in the field reaches the editor and lands where End/Home do) and
 `archive_preview_contracts` (the Ctrl+End workaround dropped: a press right
 of the reopened body's line or below it types at the end). The last three
-fail without the fix.
+fail without the fix. *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `archive_preview_contracts`; see checkpoint 139.*
 
 **Up and Down keep the goal column (`69b1934`).** Up/Down in both field
 editors hit-tested the line above or below with the rounded nearest hit at
@@ -3893,7 +3896,7 @@ and allocation-free, and `application_modules.cpp` asserts that the three
 previews provide them. Tests: `notes_text_navigation_contracts` (a grid
 over an edited card in both editors), `archive_preview_contracts`,
 `calendar_preview_contracts` (both without allocation) and
-`notes_preview_tests` (hidden, with the prepared bundle).
+`notes_preview_tests` (hidden, with the prepared bundle). *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `archive_preview_contracts`, `calendar_preview_contracts`; see checkpoint 139.*
 
 **Touchpad pinch in the Map, Reader and Media Assembly (`a91b0f6`).** The
 Mac handles `magnifyWithEvent` in `SystemHUDView.magnify` and offers the
@@ -3921,7 +3924,7 @@ magnification; plain, horizontal, zero and nonfinite wheels rejected),
 `map_preview_contracts` (a pinch on either plate leaves the Map; the zoom
 at the pointer under the gesture lock; one save at the deadline),
 `reader_preview_contracts` and `media_assembly_preview_contracts` (one
-detent scales by exp(.12); nothing outside the preview).
+detent scales by exp(.12); nothing outside the preview). *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `map_preview_contracts`, `reader_preview_contracts`, `media_assembly_preview_contracts`; see checkpoint 139.*
 
 **Clickable section-list scroll arrows (`9e750df`).** The UpLine/BottonLine
 arrows at the ends of the right-hand section list are the Mac's clickable
@@ -4550,7 +4553,7 @@ and 203 → 213).
 help) and one `NSSlider` per visible slider over the canvas, and the
 `HUDScaleSafetyView` card holds real buttons. `tools/settings_automation`
 lists the same controls as fragments (`native/settings_automation`) under a
-group named after the page that accepts input, in the page's visual order:
+group named after the page that accepts input, in the page's visual order: *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `HUDScaleSafetyView`, `settings_automation`; see checkpoint 139.*
 
 - headings (the page title at level 1, "Credits:" at level 2) and texts
   (About's rows, the restore question);
@@ -4587,7 +4590,7 @@ visible window, no input injection, no user data) and owner coverage (each
 page's group under the real root; *Close when focus lost* listed as a
 switch in its saved state, toggled through UI Automation like its click and
 back; the controls disconnected when the HUD conceals; host check minimums
-187 → 207 and 183 → 203).
+187 → 207 and 183 → 203). *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `settings_automation_contracts`; see checkpoint 139.*
 
 **Lists that follow a module switch (`acc4ae3`).** The host listed peers
 again only on content events, so a module whose peers depend on accepting
@@ -4666,9 +4669,9 @@ hook alone (games that block `RegisterHotKey`) holds the right.
 
 Laptop validation, first run (code at `acc4ae3`): 401 of 404 registered suites pass. `overlay_host_contracts` failed in the interactive session and again alone at *The shown HUD is in the topmost band, above normal application windows*. The failure was real: Windows refused the band to the test process, which held no right to set the foreground window while a game was in front; SSH runs have no foreground window, so the hidden slot runs had passed. Fixed in `08b1b0b` (above). `hypergryph_account_webview_contracts` (*Pin this thread's Shift state*) and `notes_preview_contracts` (*Delete on the selected note opens the deletion confirmation*) failed in the full run and passed alone: the keyboard state changed under them while the tester typed in a game.
 
-Laptop validation, second run (code at `08b1b0b`): a clean incremental Release build with **no compiler or linker warnings**. All **404** registered suites pass in the full interactive run, including `settings_automation_contracts` and `overlay_host_contracts`. Combined module coverage (10 of 14 module areas constructed; host checks 226 and 222) and hardware composition (2,058,114 checks) pass. The release build stages a complete package: `THIRD-PARTY-NOTICES.txt` lists 12 components, `SHA256SUMS` lists exactly the setup and the portable zip, and the size report gives 63.98 MiB installed (67,086,568 bytes, 324 files). `endfieldhud_release_contracts` took 372 s because zipping the symbols got little CPU beside the game.
+Laptop validation, second run (code at `08b1b0b`): a clean incremental Release build with **no compiler or linker warnings**. All **404** registered suites pass in the full interactive run, including `settings_automation_contracts` and `overlay_host_contracts`. Combined module coverage (10 of 14 module areas constructed; host checks 226 and 222) and hardware composition (2,058,114 checks) pass. The release build stages a complete package: `THIRD-PARTY-NOTICES.txt` lists 12 components, `SHA256SUMS` lists exactly the setup and the portable zip, and the size report gives 63.98 MiB installed (67,086,568 bytes, 324 files). `endfieldhud_release_contracts` took 372 s because zipping the symbols got little CPU beside the game. *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `settings_automation_contracts`; see checkpoint 139.*
 
-New registered test in this checkpoint: `settings_automation_contracts`.
+New registered test in this checkpoint: `settings_automation_contracts`. *Retired in checkpoint 139 with the Mac 1.3.0 redesign: `settings_automation_contracts`; see checkpoint 139.*
 
 Test builds: from release candidate 137, each test build on the laptop
 carries over the previous test build's test data, so the HUD no longer
@@ -4905,3 +4908,233 @@ Checkpoint 137's list still applies. New items:
   `https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/v1.2.0`.
 - Once a later `v` release carries Windows files: the in-place update from
   the published 1.2.0 (download, verification, install, data kept).
+
+## Checkpoint 139 (2026-11-02)
+
+**Not published.** Checkpoint 139 ports the Mac 1.3.0 (build 19, `29db662`)
+to Windows: it is the release candidate for Windows 1.3.0 (build 19). The
+code is at `177402d`, pushed to `codex/windows-migration`; this entry changes
+documentation only. It covers the 28 commits after checkpoint 138: the merge
+of `main` with the Mac 1.3.0 (`00f0c2c`); the 1.3.0 string catalog and the
+Mac oracles without the untracked build script (`f38e35f`); Phase A, the Mac
+1.3.0 data (`c68a483`), Media Assembly's assets from the shared `Resources`
+(`c9ae7cf`), the fonts (`1042e9f`), the directional module switch, the
+confirm-bar dim and the design box (`a324ee0`) and the design library
+(`8417764`); wave 1, Settings (`900d423`), the clock, sanity bar, side icons
+and ID card (`e36ae6d`), facility alerts, the boot log and Recording mode
+(`5c0cd97`), Clipboard, Event Log and Volume (`06f8e81`), Work Mode and
+Calendar (`7b75173`), Storage, Activity and Battery (`e63aae1`) and the host
+with the quit confirmation (`0290f8e`); wave 2, Notes (`337e2b6`), Archive
+(`63d0b99`), the Shelf (`4924c61`), the Reader and Projection (`512c5aa`),
+Media Assembly (`b6aad5e`), Now Playing and the minigame (`de7fb7c`), the Map
+(`f7fc6d7`), Personal ID, Account and App Shortcuts (`5d614e4`) and the host
+wiring (`143c9d8`); after the audit, the Shelf drag-out (`04a3588`), the DOCS
+fixes (`d578a39`), the remaining audit fixes (`81b6f66`), the account user
+agent (`ddcb71c`) and the source-authority pin (`177402d`). User-facing
+changes are in `CHANGELOG.md` (RC 139).
+
+### The owner's decisions (2026-10-23)
+
+- **"1.3.0 is the standard"**: Windows copies the Mac 1.3.0, including its
+  apparent side effects. Esc on Activity Monitor's Apps page closes the HUD
+  (Q1, MODS-402); an Event Log load error that exists before the page opens
+  is not shown, only one that appears while it is open (Q2, MODS-716); the
+  minigame's labels are English in every language (Q3, MODS-213). Only
+  clearly broken Mac behaviour (a crash, data loss, a misplaced hit area)
+  is reported instead of copied; the list is in `WINDOWS-MIGRATION.md`
+  section 11.
+- Lead decisions told to the owner: HarmonyOS Sans ships on Windows (D1;
+  the licence allows bundling unmodified copies, the notice is in
+  `THIRD-PARTY-NOTICES.txt` and `CREDITS.md`); the Mac key
+  `summonHotkeyEnabled` replaces `windowsSummonHotkeyDisabled`, migrated once
+  and mirrored for Windows 1.2.0 (D2); `hudModuleOrder` and
+  `hudHiddenModules` are absent while default (D3); no overheating alert on
+  Windows (D4); classified-document password checks in a current-user DPAPI
+  store under `<root>\Archive\Classified` (D5); the confirm-bar dim as on the
+  Mac, a 1.5-unit blur and −2.2 EV in linear light (D6); a fresh Reader
+  library defaults to Georgia like the Mac (Windows 1.2.0 chose Noto Sans SC
+  or KR); the HarmonyOS line metrics stay a recorded gap because the licence
+  forbids modifying the font.
+
+### What changed
+
+Every item of the four inventories (1091 IDs: LIB 152, SHELL 112, DOCS 359,
+MODS 468) was ported, recorded as a gap or found Mac-only; four read-only
+audits then checked each against the code, and every item they found missing
+was fixed except MODS-434 (a renamed disk), now a gap. The ledger is
+`build/windows-1.3/TRACKING.md` (local): 888 done (27 of them fixed after the
+audit), 91 already present, 37 gaps, 75 Mac-only.
+
+- **Design library** (`modules/hud_design_*`, `native/hud_design_*`,
+  `tools/hud_design_*`): the Mac `HUDDesign*` components (tokens and
+  palette with Light, nodes, text styles, motion, controls, page and
+  router, scroll areas with auto-hiding bars, menus and pop-overs, the
+  confirm bar and toasts, empty states, redaction), one overlay owner, one
+  UI Automation tree and the text fields (blinking caret, edit menu, undo).
+  641 component states match the Mac oracle
+  (`tests/fixtures/hud-design-source.json`, from
+  `tools/hud_design_reference.sh`) node by node.
+- **Every centre module and Settings** is a canvas on the library, checked
+  against Mac scenes: Settings 25 pages and 10 confirmations, Clipboard,
+  Event Log and Volume 35 scenes, Work Mode and Calendar 51 states,
+  Storage, Activity and Battery 40 states, Notes 11, Archive 22, Shelf 15
+  (and 19 selection steps), Reader and Projection 40, Media Assembly 48,
+  Now Playing 8, the minigame 11, the Map a full session (3,856 checks),
+  Personal ID 25, Account 20 and App Shortcuts 13.
+- **Rendering**: a separable blur and exposure pass for the confirm bar
+  (`Renderer::setContentFilter`, only while the bar eases), the Mac's
+  directional module switch, the 590 × 510 design box, the Mac 1.3.0
+  large-display rule, linear tint and alpha masks, and design text at the
+  Mac's 1.35× text scale in its own surfaces.
+- **Fonts**: manifest-driven HarmonyOS Sans and Noto Sans SC, TC, JP and KR
+  from the shared `Resources/Fonts`, per-run language, the Mac weights,
+  tabular digits and line-box keys (`layer_raster`, `font_resources`).
+- **Shell**: the five clocks and status row, the sanity bar rules, side
+  icons, module order and hidden modules, quit and *Keep this UI scale?* on
+  the confirm bar, Recording mode, the daily boot log, the facility monitor,
+  banner and tags, the profile hover fix and the Mac's tray texts.
+- **Shelf drag-out**: the Mac's drag presentation state in
+  `core::SystemOverlayLifecycle` (4,800 oracle transitions): the HUD plays
+  its exit and hides during a drag-out, stays closed after a delivered drop
+  and returns with its entrance after a cancel.
+- **Data**: the Mac 1.3.0 codecs (WINDOWS-MIGRATION.md section 7), the Mac
+  import of `Notes/centre.json`, classified Archive documents and the new
+  settings, and synthetic Windows 1.2.0 forward-compatibility tests.
+- **Per-opening resets**: `design::Canvas::resetSession()` on concealment
+  gives every module the state the Mac rebuilds at each HUD opening.
+- **Removed**: the 1.2.0 per-module scenes, presentations, previews and
+  automation adapters, the quit and scale-safety cards, the Settings safety
+  card, the screen-reader peer bridge, the Shelf subsection mask and the
+  `resources/clipboard`, `shelf`, `archive`, `activity` and `storage`
+  bundles (*Retired suites and tools* below).
+- **Version**: `source-authority.json` names the Mac 1.3.0 build 19 (its
+  `Sources` tree is the Mac's `29db662`; `Resources` add only the `windows`
+  platform for HarmonyOS Sans in `Resources/Fonts/manifest.json`), so the
+  build is 1.3.0 (19), the uninstall entry `1.3.0.19`, and the CI
+  source-authority check passes. Nothing is tagged or released.
+
+### Test runs
+
+Portable (Mac, AppleClang): 206 of 206 registered suites pass at `81b6f66`.
+
+Laptop (hidden slot, Release): a clean build of every target with no
+compiler or linker warnings; 339 of 341 registered suites pass at `81b6f66`
+and 338 of 341 at `177402d`. Both runs fail only
+`projection_composition_contracts` and `projection_workspace_contracts`,
+which need the interactive session (composition swap chains are refused
+over SSH), and skip `projection_capture_route_contracts`; at `177402d`
+`endfieldhud_release_contracts` also failed because `RELEASE-NOTES.md`
+still described Windows 1.2.0, which the rewrite in this entry answers (not
+yet rerun). Owner coverage passes with host check minimums 244 and 240. The
+release build stages a complete, unsigned 1.3.0 (19) package: 329 files,
+85.91 MiB installed (`EndfieldHUD.exe` 15.22, `fonts/` 48.17, `resources/`
+21.48 MiB), setup 42.40 MiB, portable zip 42.37 MiB, 15 notice components.
+
+341 registered suites (404 in checkpoint 138): the retired suites below went
+with their code, and the library, canvas, owner and oracle suites replace
+them.
+
+### Measurements (hidden, laptop, WARP 1280 × 800 unless noted)
+
+| What | Result |
+| --- | --- |
+| Switch back inside the open HUD (`layer_switch_contracts`, slowest frame) | Clipboard 4.7–5.0 ms (1.2.0: 8–10), Event Log 2.6–3.1 (6.6–6.9), Media Assembly 3.4–4.2 (3.2–3.7; 52–83 before `81b6f66`), Archive 1.7–1.9 (2.2–3.0). Switch away 2.0–3.4 ms (the leaving page stays visible, as in the Mac 1.3.0 switch). After the ten-minute release 16–33 ms (30–35). The cause of the 52–83 ms: re-applying unchanged text or nodes marked the content changed and re-emitted the whole scene twice; `Layer::setContent`/`setText` now ignore equal values, and the probe fails on a scene re-emit. |
+| Map reopen | Released on close like the Mac (closed CPU images 12.57 MiB → 0; group density capped at 1.5, at most 6.35 MiB). First frame 15.8 ms; the terrain is decoded on a worker and appears after about 330 ms (instant in 1.2.0, which kept it). Whether it lands inside the opening deploy is a live check. |
+| Raster memory, shared rasterizer after visiting every module (density 1/2) | 64.6 MB with text at box density (peak 82.5), 130.0 MB with the Mac's 1.35× text compacted into the plates (peak 166.1), 118.2 MB with text leaves in their own surfaces (peak 143.9; module rows 123.0). |
+| First show / idle per frame / raster entries | Work Mode 38 ms / 0.08 ms / 57; Calendar 60.6 / 0.29 / 157; Shelf 101 / 0.14 / 62 (switch back 3.3); Archive 31–36 / 0.10–0.15. |
+| Confirm-bar filter | About 5.2 ms per filtered frame, only while the bar eases; free when off. |
+| Fonts | HarmonyOS and the four Noto faces add about 0 private memory (mapped files). |
+
+**Text oversampling decision.** The Mac draws design text at 1.35× the box
+density (`HUDDesignTokens.textContentsScale`); Windows did not, so labels
+were softer (LIB-11, LIB-97). Text now rasterizes at that scale in its own
+surfaces, so plates stay at box density: 118 MB instead of 65 MB of rasters
+after visiting every module. Accepted as inherent to the Mac's text scale;
+the footprint is to be checked on the desktop at live acceptance.
+
+### Retired suites and tools
+
+The redesign replaced the 1.2.0 module scenes, so their suites, previews and
+oracles are gone; notes in place in the entries above point here.
+
+| Retired | Replaced by |
+| --- | --- |
+| `settings_presentation`, `settings_scene`, `settings_preview`, `settings_automation`, `settings_safety`, `settings_safety_feedback`, `settings_safety_scene`, `module_preferences`, `application_quit` suites; the quit and *Keep this UI scale?* cards; `tools/settings_automation`, the Settings safety card | `settings_canvas_contracts`, `settings_owner_contracts`, `hud_design_automation_contracts`, `hud_design_page_contracts`, owner coverage |
+| `clipboard_preview`, `clipboard_scene`, `clipboard_assets`, `event_log_scene`, `volume_preview`, `volume_preview_automation`, `volume_preview_icon`, `volume_scene`, `volume_accessibility`, `volume_automation`, `volume_reference`, `activity_clipboard_automation`, `activity_clipboard_reveal_frames` | `utility_canvases_contracts`, `event_log_owner_contracts`, the `volume_*` provider suites |
+| `work_mode_preview`, `work_mode_scene`, `work_mode_presentation`, `work_mode_automation`, `calendar_preview`, `calendar_scene`, `calendar_presentation`, `calendar_editor_text` | `work_mode_calendar_canvas_contracts`, `work_mode_calendar_owner_contracts` |
+| `activity_preview`, `activity_scene`, `storage_presentation`, `storage_scene`, `storage_options`, `storage_volume`, `battery_presentation`, `battery_preview` | `telemetry_canvas_contracts`, `telemetry_owner_contracts`, `storage_state_contracts` |
+| `notes_controls`, `notes_controls_assets`, `notes_controls_scene`, `notes_format_host`, `notes_format_menu`, `notes_media_menu`; the `notes.controls` bundle | `notes_canvas_contracts` and the `notes_*` editor suites |
+| `archive_preview`, `archive_scene`, `archive_presentation`, `archive_date`, `archive_editor_text`, `archive_media_binding`, `archive_options`; the `--archive-assets` flag | `archive_canvas_contracts`, `archive_owner_contracts`, `archive_classification_contracts`, `archive_password_vault_contracts` |
+| `shelf_preview`, `shelf_scene`, `shelf_presentation`, `shelf_removal_frames`, `shelf_resources`, `shelf_drop_routing`, `file_shelf_state`, `subsection_mask`, `subsection_transition` (and `core/subsection_*`, the Shelf subsection mask) | `file_shelf_canvas_contracts`, `shelf_services_contracts`, `system_overlay_state_contracts` |
+| `reader_preview`, `reader_scene`, `reader_presentation`, `reader_accessibility`, `reader_continuity`, `projection_controls_scene`, `projection_presentation` | `reader_projection_canvas_contracts`, `reader_owner_contracts`, `projection_preview_contracts` |
+| `media_assembly_preview`, `media_assembly_scene`, `media_assembly_presentation`, `media_assembly_artwork`, `media_assembly_motion`, `media_assembly_accessibility` | `media_assembly_canvas_contracts`, `media_assembly_owner_contracts` |
+| `now_playing_preview`, `now_playing_scene`, `now_playing_presentation`, `now_playing_accessibility`, `now_playing_automation`, `now_playing_blend`, `orbipom_preview`, `orbipom_scene`, `orbipom_presentation`, `orbipom_accessibility` | `now_playing_canvas_contracts`, `orbipom_canvas_contracts` |
+| `map_preview`, `map_accessibility`; `MapPreview` | `map_canvas_contracts`, `map_owner_contracts` (`tools/map_owner`) |
+| `profile_preview`, `profile_scene`, `profile_presentation`, `profile_automation`, `hypergryph_account_canvas`, `app_shortcut_preview`, `app_shortcut_scene`, `app_shortcut_presentation`, `app_shortcut_automation`, `app_shortcut_motion`, `app_shortcut_trace`, `app_shortcut_field_text` | `profile_canvas_contracts`, `profile_owner_contracts`, `account_canvas_contracts`, `app_shortcut_canvas_contracts` |
+| `screen_reader_peers` (`NativeScreenReaderPeers`, `ScreenReaderPeerSource`) | `hud_design_automation_contracts` (the library's automation tree) |
+
+### Corrections to the entries above
+
+- The suites, previews and oracles in the table above no longer exist; the
+  entries that cite them describe Windows 1.2.0.
+- Checkpoint 129's display adaptation (`desktopContentScale`) and section
+  11's open decision about it: the Mac 1.3.0 adopted the enlargement
+  (`f2c5d80`), so Windows now runs the Mac's own rule and the deviation is
+  gone.
+- The Windows additions of batches 5 and 6 and checkpoint 132 (three Volume
+  app rows, GPU in Activity, the Storage disk choice, the battery alert's
+  *Don't display* and GPU reading, the hotkey switch) are now Mac 1.3.0
+  features. The Mac stores the two battery values in
+  `displayModeExtension`/`alertMetricExtension`; Windows keeps them in
+  `displayMode`/`alertMetric` and maps the Mac pair on import.
+- The Notes and Archive font menus' scroll bar (`d923aef`) is now the
+  library menu's auto-hiding bar.
+- The Reader's default font is Georgia for a fresh library, as on the Mac;
+  batch 5's "automatic Noto Sans SC/KR default" no longer holds.
+- Archive no longer keeps a focused field's caret across a module switch
+  (checkpoint 134): its body editor ends editing when the page is left, as
+  on the Mac.
+
+### Open items
+
+- The release-notes check: rerun `endfieldhud_release_contracts` with the
+  rewritten `RELEASE-NOTES.md`.
+- The new platform gaps and Mac bugs not copied are in
+  `WINDOWS-MIGRATION.md` sections 6 and 11.
+- Follow-ups from the audits, not blocking: the generic design owner keeps
+  the shown canvas's rasters after a close (the Mac frees the whole centre;
+  the Map already does), `nativeUppercase` refuses text over 32 KiB, Map and
+  Personal ID each rasterize their own copy of the centre ramp, a missing
+  font manifest stops the font setup where the Mac falls back to the system
+  face, and the old three-line `NowPlayingLyrics::window()` is used only by
+  tests.
+- Publishing: the Windows files on the `v1.3.0` release once the Mac 1.3.0
+  release exists, after live acceptance (the maintainer checklist in
+  `RELEASE-NOTES.md`), and the pull request to `main` without the four
+  development documents.
+
+### Live acceptance still needed
+
+Checkpoint 138's list still applies. New, with the owner's go-ahead on the
+laptop desktop:
+
+- The interactive suites: `projection_composition_contracts`,
+  `projection_workspace_contracts`, `projection_latency_probe`,
+  `projection_capture_route_contracts`, `native_renderer_tests
+  --composition --hardware` (the blur pass on hardware) and
+  `map_pulse_cadence_tests --hardware`.
+- The Shelf drag-out (nine steps: a slow drag hides the HUD with its exit; a
+  drop copies and leaves it closed; a cancel restores it with its entrance,
+  selection and focus; a multi-selection pile; a quick drop during the exit,
+  where a release within about 0.4 s onto a window under the HUD may be
+  refused; the hotkey during the drag; *Close when focus is lost*; Reduce
+  Motion; about 0 % CPU while held). The `HTTRANSPARENT` hit-test change
+  that would remove the quick-drop limit could not be verified hidden and
+  was left out.
+- Visual parity with the Mac: the confirm-bar blur strength and darkening,
+  the Map terrain inside the opening deploy after a long close, the facility
+  banner and tags and the boot log on a real display, the fonts in all five
+  languages and the Notes caret (1.5 px gap).
+- The install over the published Windows 1.2.0 with the data kept, and
+  later the first in-place update from 1.2.0 through *Check for updates*.
+- The tester's module-by-module pass of the redesigned centre and shell.

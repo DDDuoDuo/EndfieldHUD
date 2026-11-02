@@ -20,13 +20,16 @@ changes. Only names in the Mac's managed-image format, `<UUID>.png` or
 reads the Keychain. Everything is written into a private
 `.<name>.partial-<random>` folder next to the output and renamed into place
 only when complete; a failed export removes it, so a half-written export never
-exists. The output folder uses mode 0700 and its files use 0600.
+exists. The output folder uses mode 0700 and its files use 0600. Since the
+Mac 1.3.0 the export also carries `Notes/centre.json` (the centre TEXT note and
+TODO list) when it exists; an Archive with a classified document is
+`user_version` 3, and its password checks stay in the Mac's Keychain.
 
 `manifest.json` has this shape:
 
 ```json
 {"format":"EndfieldHUD.macExport","version":1,"exportedAt":<unix>,
- "source":{"bundleIdentifier":"io.github.endfieldcharge.EndfieldCharge","appVersion":"1.2.0","build":"18"},
+ "source":{"bundleIdentifier":"io.github.endfieldcharge.EndfieldCharge","appVersion":"1.3.0","build":"19"},
  "files":[{"path":"EndfieldCharge/Notes/notes.sqlite3","bytes":12288,"sha256":"<hex>"}, ...],
  "sqlite":{"EndfieldCharge/Notes/notes.sqlite3":{"userVersion":2}},
  "preferences":"Preferences/io.github.endfieldcharge.EndfieldCharge.plist"}
@@ -364,7 +367,8 @@ records now calls the owner API:
 - Archive (the attachment's error text) saves the entry first, then resolves
   or dismisses on the same file queue only when the stored entry shows the
   change; deleting an entry dismisses all its rows, and the first load
-  reconciles once (`archive_state_contracts`, `archive_preview_contracts`).
+  reconciles once (`archive_state_contracts`; also `archive_preview_contracts`
+  until the Mac 1.3.0 port retired it in checkpoint 139).
 - Reader books are relinked from the Library (*Relink…*, for imported Mac
   books and unavailable Windows books). The library is saved first, then the
   book's row is resolved; removing an imported book dismisses its row, and

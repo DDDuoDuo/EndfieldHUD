@@ -43,21 +43,27 @@ staging is refused. With `-DEHUD_RELEASE_ALLOW_INCOMPLETE=ON` (CI) every
 artifact name gains `-incomplete`, and that setup refuses to install outside
 isolated tests.
 
-Measured on the test laptop (Release, `source-24ac9f5` inputs, 2026-10-10):
+Measured on the test laptop (Release 1.3.0 build 19, release candidate 139,
+2026-11-02):
 
 | Part | Size |
 | --- | ---: |
-| `EndfieldHUD.exe` | 11.85 MiB |
-| `fonts/` (5 files, bundled with their licences) | 26.89 MiB |
-| `resources/` (shell 14.03, media-assembly 2.64, common 1.65, map 1.36, profile 0.68, orbipom 0.52, account 0.11 MiB) | 21.03 MiB |
-| `uninstall.exe` | 0.94 MiB |
-| **Installed** (317 files) | **60.70 MiB** |
-| Setup download (LZMS) | 27.49 MiB |
-| Portable zip (deflate) | 27.27 MiB |
+| `EndfieldHUD.exe` | 15.22 MiB |
+| `fonts/` (15 files: HarmonyOS Sans in five weights and Noto Sans SC, TC, JP and KR, their licences and the manifest, from the shared `Resources/Fonts`) | 48.17 MiB |
+| `resources/` (shell 14.03, media-assembly 3.31, common 1.38, map 1.36, profile 0.68, orbipom 0.52, account 0.11, settings 0.04, licenses 0.01 MiB, `resources.json` 0.04 MiB) | 21.48 MiB |
+| `THIRD-PARTY-NOTICES.txt` | 0.04 MiB |
+| `uninstall.exe` | 1.01 MiB |
+| **Installed** (329 files) | **85.91 MiB** |
+| Setup download (LZMS) | 42.40 MiB |
+| Portable zip (deflate) | 42.37 MiB |
 
-The fonts are the largest dependency. The Visual C++ runtime is linked
-statically. The WebView2 runtime, used only for account sign-in, is a system
-component and is not bundled.
+Windows 1.2.0 (release candidate 138) installed 63.98 MiB; the growth is
+almost all the Mac 1.3.0 fonts (Windows 1.2.0 shipped Noto Sans SC and KR
+only). Media Assembly's assets are staged by name from the shared
+`Resources/MediaAssembly` (its `provenance.json` hash is checked at
+configure time). The fonts are the largest dependency. The Visual C++
+runtime is linked statically. The WebView2 runtime, used only for account
+sign-in, is a system component and is not bundled.
 
 ## Payload format (`package_format.hpp`)
 
@@ -263,8 +269,9 @@ polling loop is added.
 
 **Releases are shared with the Mac app.** The Windows files are extra assets
 of the regular release tags `v<SemVer>` (the Mac `HUDReleaseVersion` format,
-with its optional `v`): the Windows 1.2.0 files go onto the existing `v1.2.0`
-release, next to the Mac files. The checker reads the same GitHub release
+with its optional `v`): the Windows 1.2.0 files went onto the existing
+`v1.2.0` release, and the Windows 1.3.0 files go onto `v1.3.0`, next to the
+Mac files. The checker reads the same GitHub release
 list as the Mac app (`/repos/DDDuoDuo/EndfieldHUD/releases?per_page=100`). It
 still accepts `windows-v<SemVer>` tags for compatibility; the unchanged Mac
 `HUDReleaseVersion` rejects them, so such a release is never offered to a Mac
@@ -361,8 +368,9 @@ starts.
 ## Releases (`windows/RELEASE-NOTES.md`)
 
 The Windows files are published as extra assets of the regular `v<release>`
-GitHub release, next to the Mac files (for 1.2.0: the existing `v1.2.0`
-release). There is no separate Windows tag.
+GitHub release, next to the Mac files (for 1.2.0 the existing `v1.2.0`
+release; for 1.3.0 the `v1.3.0` release of the Mac 1.3.0). There is no
+separate Windows tag.
 
 `windows/RELEASE-NOTES.md` exists only on the development branch: the
 Windows sources reach the main branch without it. When it is absent,
@@ -414,8 +422,9 @@ The workflow runs two jobs:
 
 The Windows job is pinned to the `windows-2025` image rather than
 `windows-latest`. EndfieldHUD links the operating system's ICU, so
-`event_log_names_contracts` (grapheme breaks) and `archive_date_contracts`
-(time-zone rules) compare the image's `icu.dll` with their macOS oracles. The
+`event_log_names_contracts` (grapheme breaks) and, until the Mac 1.3.0 port
+retired it in checkpoint 139, `archive_date_contracts` (time-zone rules)
+compare the image's `icu.dll` with their macOS oracles. The
 windows-2022 image (build 20348) predates Unicode 15.1 Indic conjunct breaks
 and still applies Samoa daylight saving, so both suites failed there. Build
 26100 has the system binaries of the test laptop (build 26200: ICU 72.1 with

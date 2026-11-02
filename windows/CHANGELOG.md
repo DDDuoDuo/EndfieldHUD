@@ -9,6 +9,155 @@ data folder; RC 138 is the build published as Windows 1.2.0.
 
 ## Unreleased
 
+Windows 1.3.0 (build 19), the port of the Mac 1.3.0: release candidate 139
+below. It has passed the automated tests but has not yet been tried on the
+laptop's desktop, and nothing is published. Its files are meant for the
+shared `v1.3.0` release, next to the Mac 1.3.0 downloads.
+
+## RC 139 — checkpoint 139
+
+Everything the Mac 1.3.0 changed since 1.2.0, on Windows. Compared with
+Windows 1.2.0 (RC 138):
+
+### Redesigned centre
+
+- **Every centre module is rebuilt in the Endfield style**, as on the Mac
+  1.3.0: one shared set of headers, rows, toggles, menus, sliders, buttons,
+  tabs, cards, the confirm bar and toasts. Hover eases in and out, motion is
+  finite, and Reduce Motion (Windows' or the app's) settles everything at
+  once. Switching modules slides the old page out and brings the new one in
+  with staggered rows, without a flash.
+- **The Mac's fonts on Windows**: HarmonyOS Sans for Latin letters and
+  digits, and Noto Sans SC, TC, JP or KR for Chinese, Japanese and Korean,
+  picked by language. Windows 1.2.0 drew everything in Noto Sans SC or KR.
+  The fonts ship with EndfieldHUD, with their licences in
+  `THIRD-PARTY-NOTICES.txt`; the installed size grows from about 64 to
+  86 MiB, almost all of it fonts. Text is drawn at the Mac's 1.35× text
+  sharpness.
+- **Theme colour and Light theme**: the redesign follows the theme colour
+  (the default looks as before) and has its own Light variant.
+- **English shows English only**: no Chinese subtitles, captions or toast
+  lines in English. In the other languages, empty states show the bracketed
+  English title with the translation in small grey text below.
+- **Text fields**: the caret blinks and disappears when a field loses focus;
+  right-click shows Cut, Copy, Paste and Select All; Ctrl+Z undoes. This
+  includes long desktop notes and long Archive documents.
+- **Scroll bars** appear while scrolling or hovered and hide when idle.
+- **Confirmations** blur and darken the content behind them. Quitting with
+  the red power button, *Keep this UI scale?* (now 12 seconds) and the other
+  questions use the shared confirm bar instead of their own cards.
+- **Large displays**: the centre grows with the display by the Mac 1.3.0
+  rule, which replaces Windows 1.2.0's own enlargement.
+
+### Shell
+
+- **Top-right clock**: five redesigned styles that also switch with the
+  mouse wheel; a status row always shows WORK MODE and RECORDING MODE, lit
+  while active and grey otherwise.
+- **Sanity bar**: highlights on hover; a click never closes the HUD; without
+  sanity data it opens Work Mode; the recovery menu fits every language.
+- **Side buttons**: icons share one visible size on each side, with one gap
+  between icon and caption on the left.
+- **Recording mode** (Settings): the UID, notes, clipboard and shelf details
+  are hidden behind redaction bars; the ID card's bar wipes in.
+- **Daily boot log** (optional): a short terminal summary of the day the
+  first time the HUD opens each day.
+- **Facility alerts** (optional): low disk space (the figure Storage shows)
+  and high memory use (90 %, critical at 95 % or when Windows reports low
+  memory) raise a banner and a tag that open Storage or Activity Monitor.
+  Banners and tags take clicks even while a confirmation is open. Turning
+  the alerts off asks the red "Shipwide Defense System" question. Windows
+  has no overheating alert: it gives apps no temperature state.
+- **Modules** (Settings > System): reorder and hide the right-hand modules;
+  the HUD reopens on the first visible one.
+- **Open with hotkey** (Settings > Hotkeys) is the Mac's switch and replaces
+  *Summon HUD with hotkey*; your Windows 1.2.0 choice carries over, and
+  Windows 1.2.0 still reads it after a downgrade.
+- The footer always reads "CLICK OUTSIDE TO CLOSE" with the shortcut, and
+  the tray menu uses the Mac's wording.
+
+### Modules
+
+- **Notes**: TEXT and TODO tabs. TEXT has per-selection colour (presets or a
+  colour wheel), strikethrough and Ctrl+B / Ctrl+I / Ctrl+U, and keeps
+  editing while you format. TODO items can be edited, reordered by dragging
+  and flagged with an orange dot. The desktop notes are restyled with the
+  same controls and colour pop-over; a desktop note that cannot be saved or
+  deleted now says so.
+- **File Shelf**: clicking empty space deselects; removing an item says
+  "Removed from shelf". **Dragging an item out hides the HUD**, as on the
+  Mac: the HUD plays its closing and stays hidden while you drag; a drop
+  leaves it closed, a cancelled drag brings it back where it was. Releasing
+  within about 0.4 s onto a window under the fading HUD may be refused.
+- **Clipboard**: delete single entries; pinned entries stay on top and
+  cannot be deleted.
+- **Archive**: classified documents with a password, editable categories,
+  colour and strikethrough, and more room for text and media. The password
+  check is kept for your Windows account on this PC, and password recovery
+  asks for Windows Hello or your Windows password. Files are taken only when
+  dropped inside the centre.
+- **Media Assembly**: closing a file asks first; the Wuling Impression filter
+  and six new stickers; files are taken only when dropped inside the centre.
+- **Minigame**: a "How to play" panel, a centred board and a narrower side
+  column; a game starts when the module shows and Space pauses. Its labels
+  are in English in every language, as on the Mac (Windows 1.2.0 showed 技力
+  in Chinese).
+- **Now Playing**: a bigger, sharp cover. The NetEase lyric timing and the
+  lyric retries of Windows 1.2.0 are now the Mac's behaviour too.
+- **Volume**: smooth scrolling and dragging of the three app rows; the
+  orange dot shows only when an app's volume can be adjusted.
+- **Projection**: a custom pen colour and a restyled desktop toolbar; the
+  media card uses the theme yellow.
+- **E-Reader**: reopens in the book you were reading, gives the page much
+  more room, turns only the page in paged mode and scrolls continuously in
+  vertical mode; page turns are no longer written to the Event Log. A new
+  library starts with the Mac's default font, Georgia (Windows 1.2.0 picked
+  Noto Sans SC or KR). Importing the book that is open reloads it.
+- **Calendar**: click the month to pick a year and month.
+- **Map**: fills the whole centre disc with a faded edge, without place names.
+- **Personal ID**: the OrbiPom! MERGE! best score under the Work Mode hours;
+  the "…" button and the quotation marks are refined; photo zoom is 1–5×.
+- **Activity Monitor**: app icons. GPU load first, the *Storage* disk choice
+  and the battery alert's *Don't display* and GPU reading were Windows
+  additions in 1.2.0 and are now on the Mac as well.
+- **App Shortcuts and Center logo**: choose icons and logos from an icon
+  grid; redesigned icons for apps without an official one.
+- **Settings**: the Battery alerts switch moved to Display > Battery alert;
+  clock style names show in full.
+- **Each opening starts fresh**, as on the Mac: no Map pin selected,
+  Calendar on today, lists scrolled to the top.
+
+### Windows differences in this version
+
+- No overheating facility alert (above).
+- Battery: no time until full, adapter power or battery health; Windows
+  does not report them.
+- A disk renamed while EndfieldHUD runs shows its new name at the next
+  reading (within a minute) or after *Refresh*.
+- Updates: About keeps *Check for updates daily*; the Mac 1.3.0's *Install
+  updates automatically* is not offered, because the Windows builds are not
+  signed.
+- Classified Archive documents brought over from a Mac need a new password
+  on Windows: the Mac's password check stays in the Mac's Keychain.
+- Text lines use the fonts' Windows metrics, so the caret and the line
+  spacing of rich text can sit about 1.5 px differently from the Mac; the
+  HarmonyOS licence does not allow adjusting the font.
+
+### Performance (automated tests on the test laptop)
+
+- Switching back to a module inside the open HUD: Clipboard 4.7–5.0 ms
+  (8–10 ms in Windows 1.2.0), Event Log 2.6–3.1 ms (6.6–6.9), Archive
+  1.7–1.9 ms (2.2–3.0), Media Assembly 3.4–4.2 ms (3.2–3.7).
+- The Map frees its terrain images when the HUD closes, as on the Mac
+  (about 12.6 MiB less while closed); the next opening decodes them again,
+  in about a third of a second, while the opening animation plays.
+- The Mac's sharper text raises the text and artwork bitmaps after visiting
+  every module from about 65 to 118 MB.
+
+None of this has been tried on the laptop's desktop yet; the tester's live
+checks (the Shelf drag-out, the redesigned centre, the shell and each
+module) come next.
+
 ## Windows 1.2.0 — 2026-10-17
 
 The first published Windows version, on the shared EndfieldHUD 1.2.0 release
