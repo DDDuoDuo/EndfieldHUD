@@ -54,8 +54,12 @@ public:
     std::unique_ptr<DesignModuleOwner> makeOwner(native::LayerRasterizer&, modules::design::Context&, DesignOwnerOptions);
     static app::ModuleRouting routing() noexcept;
     // StorageController.volumesDidChange: WM_DEVICECHANGE volume arrival or
-    // removal (the Mac's mount / unmount / rename notifications). True when
-    // the shown page changed (the host presents a frame).
+    // removal (the Mac's mount / unmount notifications). True when the shown
+    // page changed (the host presents a frame). Not the Mac's
+    // didRenameVolumeNotification: Windows has no volume-label broadcast (a
+    // shell SHCNE_* notice comes only from Explorer, not from Disk Management,
+    // label or Set-Volume), so a relabelled disk shows its new name at the
+    // next 60 s read or Refresh (recorded gap, MODS-434).
     bool volumesChanged(double now);
     // Explicit model operation only (the canvas has no details control).
     bool requestDetails(bool refresh, double now);

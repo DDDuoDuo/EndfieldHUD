@@ -644,5 +644,13 @@ DesignAutomationStats NativeDesignAutomation::stats() const noexcept {
     accumulate(s, state_->retired);
     return s;
 }
+std::optional<core::Rect> screenReaderClientToScreen(void* window, double scale, const std::optional<core::Rect>& client) {
+    if (!client || !window || !std::isfinite(scale) || scale <= 0) return std::nullopt;
+    POINT origin{0, 0};
+    if (!ClientToScreen(static_cast<HWND>(window), &origin)) return std::nullopt;
+    const core::Rect out{origin.x + client->x * scale, origin.y + client->y * scale, client->width * scale, client->height * scale};
+    if (!std::isfinite(out.x) || !std::isfinite(out.y) || !std::isfinite(out.width) || !std::isfinite(out.height)) return std::nullopt;
+    return out;
+}
 } // namespace endfield::native
 #endif

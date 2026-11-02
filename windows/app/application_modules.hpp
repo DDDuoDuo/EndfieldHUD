@@ -6,7 +6,6 @@
 // every module object and keeps the established destruction order.
 #include "app/module_owner.hpp"
 #include "core/localization.hpp"
-#include "native/screen_reader_peers.hpp"
 #include <functional>
 #include <memory>
 #include <optional>

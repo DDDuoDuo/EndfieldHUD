@@ -197,6 +197,15 @@ void CalendarCanvas::didActivate() {
     refresh();
 }
 void CalendarCanvas::didDeactivate() { syncController(); }
+void CalendarCanvas::resetSession() {
+    if (isActive()) return;
+    selected_ = state_->today(); month_ = {selected_.year, selected_.month, 1};
+    editingID_.reset(); draft_ = {};
+    if (titleField_) { titleField_->setText({}); titleField_->setInvalid(false); }
+    if (detailsField_) detailsField_->setText({});
+    Canvas::resetSession();
+    refresh();
+}
 void CalendarCanvas::syncController() {
     const bool wanted = presented_ || isActive();
     if (wanted == controllerActive_) return;

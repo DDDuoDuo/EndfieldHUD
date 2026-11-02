@@ -97,7 +97,7 @@ public:
     // OverlayController builds a new SystemHUDView (and canvas) on every
     // opening: while inactive, the list returns to its top and no drop target
     // or relink survives (the committed records stay).
-    void resetSession();
+    void resetSession() override;
     // A published icon changed (the owner extracted, released or replaced
     // one): the rows re-render in place.
     void iconsChanged();

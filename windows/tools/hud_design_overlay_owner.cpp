@@ -4,7 +4,6 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
-#include "native/screen_reader_peers.hpp"
 #include "tools/hud_design_owner.hpp"
 #include <algorithm>
 #include <cmath>
@@ -113,10 +112,13 @@ std::optional<gpu::ContentFilter> DesignOverlayOwner::contentFilter(double now, 
     if (!std::isfinite(unit) || unit <= 0) return std::nullopt;
     return gpu::ContentFilter{begin, count, {}, core::ContentDimTrack::blurRadius * unit, core::ContentDimTrack::exposure, std::clamp(o.dimFilter(now), 0., 1.)};
 }
-// The v1.2.0 quit card's slot: every capture chain first.
+// The v1.2.0 quit card's slot: every capture chain first, except that the
+// facility banner and tags take their presses before the confirm bar
+// (SystemHUDView.mouseDown :1519-1529; the facility area's pointer capture is 0).
 app::ModuleRouting DesignOverlayOwner::routing() const noexcept {
     app::ModuleRouting r;
-    r.pointerCapture = 0; r.wheelCapture = 0; r.keyCapture = 0;
+    r.pointerCapture = 1; r.wheelCapture = 0; r.keyCapture = 0;
+    r.pointer = shellPressPriority; // observes the presses no module owner took (never consumes)
     return r;
 }
 void DesignOverlayOwner::resize(const app::ClientMetrics& m) {
@@ -206,7 +208,13 @@ bool DesignOverlayOwner::suppressesKeyFilters() const { return capturesPointer()
 bool DesignOverlayOwner::pointer(const app::PointerEvent& e, double t) {
     auto& i = *impl_;
     i.clock(t);
-    if (!capturesPointer()) return false;
+    if (!capturesPointer()) {
+        // A left press no module owner took goes to the shell (the clock, the
+        // logo, the navigation, empty space): SystemHUDView becomes first
+        // responder and an editing design field commits (LIB-85).
+        if ((e.kind == app::PointerKind::down || e.kind == app::PointerKind::doubleClick) && e.button == app::PointerButton::left) i.context.editorFocusMoved();
+        return false;
+    }
     auto& o = i.context.overlay();
     const auto q = i.local({e.x, e.y});
     const bool left = e.button == app::PointerButton::left;

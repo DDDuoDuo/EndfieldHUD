@@ -34,15 +34,29 @@ std::optional<TrimmedShortcutIcon> trimDesktopIcon(unsigned width, unsigned heig
 }
 
 std::optional<std::array<double, 3>> shortcutTileColor(unsigned width, unsigned height, std::span<const std::uint8_t> rgba) {
-    need(rgba.size() == std::size_t(width) * height * 4, "a straight RGBA icon");
-    double r = 0, g = 0, b = 0, a = 0;
-    for (std::size_t i = 0; i < rgba.size(); i += 4) {
-        const double alpha = rgba[i + 3];
-        r += rgba[i] * alpha; g += rgba[i + 1] * alpha; b += rgba[i + 2] * alpha; a += alpha;
+    need(width && height && rgba.size() == std::size_t(width) * height * 4, "a straight RGBA icon");
+    // The 8 x 8 premultiplied sample (one byte a channel): each cell the area
+    // average of the premultiplied pixels it covers, rounded; then the sums of
+    // the 64 cells as the Mac adds them.
+    std::array<double, 4> sum{};
+    for (unsigned cy = 0; cy < 8; ++cy) for (unsigned cx = 0; cx < 8; ++cx) {
+        const double x0 = cx * width / 8., x1 = (cx + 1) * width / 8., y0 = cy * height / 8., y1 = (cy + 1) * height / 8.;
+        std::array<double, 4> cell{};
+        double area = 0;
+        for (auto y = unsigned(y0); y < std::ceil(y1); ++y) {
+            const double wy = std::min(y + 1., y1) - std::max(double(y), y0);
+            for (auto x = unsigned(x0); x < std::ceil(x1); ++x) {
+                const double w = wy * (std::min(x + 1., x1) - std::max(double(x), x0));
+                const auto* p = &rgba[(std::size_t(y) * width + x) * 4];
+                for (unsigned k = 0; k < 3; ++k) cell[k] += w * ((p[k] * p[3] + 127u) / 255u);
+                cell[3] += w * p[3]; area += w;
+            }
+        }
+        for (unsigned k = 0; k < 4; ++k) sum[k] += std::floor(cell[k] / area + .5);
     }
-    if (!(a > 0)) return std::nullopt;
+    if (!(sum[3] > 0)) return std::nullopt;
     // Premultiplied sums divided by coverage; then darkened to at most 55 % luminance.
-    std::array<double, 3> rgb{r / a / 255 * .72, g / a / 255 * .72, b / a / 255 * .72};
+    std::array<double, 3> rgb{sum[0] / sum[3] * .72, sum[1] / sum[3] * .72, sum[2] / sum[3] * .72};
     const double luminance = .2126 * rgb[0] + .7152 * rgb[1] + .0722 * rgb[2];
     if (luminance > .55) for (auto& c : rgb) c *= .55 / luminance;
     return rgb;

@@ -45,6 +45,13 @@ struct LayerRasterOptions {
     // Attachment-free source Notes runs. Shares document viewport/scroll fields;
     // mutually exclusive with plainTextDocument.
     bool richTextDocument{};
+    // Text leaves keep their own CALayer contentsScale (the design library's
+    // textContentsScale: 1.35 x the box density, rounded up, at most 4;
+    // HUDRenderScale.contentScale, LIB-97): a raster holding such a leaf is
+    // painted at the largest one, never below pixelsPerPoint. Its bounds
+    // stay in points, so only the pixel count grows. Other callers' exported
+    // source JSON carries contentsScale on every layer: off by default.
+    bool textContentsScale{};
     bool operator==(const LayerRasterOptions&) const = default;
 };
 struct LayerRasterIssue { std::string node, feature; };

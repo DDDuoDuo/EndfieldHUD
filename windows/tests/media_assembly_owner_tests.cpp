@@ -177,7 +177,8 @@ void run(n::Renderer&r,HWND hwnd,const fs::path&assets){
     check(f.perform("open")&&f.perform("open:shelf")&&f.canvas().menuOpen(),"Shelf menu");check(f.perform("shelf:shelf-1")&&!f.canvas().menuOpen(),"Shelf row imports");
     f.settle();check(f.session().document()->name=="dropped.png"&&lease.use_count()==1,"Shelf lease released after open");
     // Drop imports the first file; close asks, fades the picture, then releases it.
-    const std::array<std::string,2>drops{n::mediaAssemblyUTF8(photo),n::mediaAssemblyUTF8(other)};check(owner.drop(drops,{},f.now),"Drop imports the first file");f.settle();f.frames(.5);check(f.session().document()->name=="Owned Photo.png","First dropped file");
+    const std::array<std::string,2>drops{n::mediaAssemblyUTF8(photo),n::mediaAssemblyUTF8(other)};{const auto below=f.client({295,560});check(below&&!owner.dropHover(drops,*below,f.now)&&!owner.drop(drops,*below,f.now),"A drop outside the centre is refused (SHELL-6, centreContains)");}
+    check(owner.dropHover(drops,f.stageCentre(),f.now)&&owner.drop(drops,f.stageCentre(),f.now),"Drop imports the first file");f.settle();f.frames(.5);check(f.session().document()->name=="Owned Photo.png","First dropped file");
     check(f.perform("close"),"Close");{const auto&request=f.overlay->context().overlay().confirmState().request();check(request&&request->id=="mediaClose"&&!request->danger&&request->message=="Owned Photo.png","Close of an unedited file asks with its name");}
     check(f.confirm("mediaClose"),"Confirm close");f.frames(.3);f.settle();for(int k=0;k<30;++k)f.frame(.01);
     check(!f.session().document()&&f.canvas().stage().isEmpty()&&owner.stats().retainedTextures==0,"The picture fades, then the preview texture is released ("+std::to_string(owner.stats().retainedTextures)+")");
@@ -204,7 +205,7 @@ void parity(n::Renderer&r,HWND hwnd,const fs::path&assets){
         unsigned ids{};t::MediaAssemblyOwnerOptions options;options.uuid=[&]{return "parity-"+std::to_string(++ids);};options.gpuPreview=useGpu;
         Fixture f(r,hwnd,assets,std::move(options));auto&owner=f.o();
         f.modules.select(c::Module::mediaAssembly,f.now);for(int k=0;k<40;++k)f.frame();f.drain();f.frame();
-        const std::array<std::string,1>drop{n::mediaAssemblyUTF8(photo)};check(owner.drop(drop,{},f.now),"Parity import");f.settle();f.frames(.6);
+        const std::array<std::string,1>drop{n::mediaAssemblyUTF8(photo)};check(owner.drop(drop,f.stageCentre(),f.now),"Parity import");f.settle();f.frames(.6);
         check(f.perform("tool:adjust"),"Parity adjust");
         for(const auto&[id,value]:std::array<std::pair<std::string_view,double>,5>{{{"parameter:exposure",.5},{"parameter:saturation",1.6},{"parameter:temperature",4000},{"parameter:highlights",.4},{"parameter:shadows",.6}}}){
             check(f.canvas().adjustAccessibilitySlider(id,value,f.now),"Parity edit "+std::string(id));f.settle();}
@@ -240,7 +241,7 @@ void residency(n::Renderer&r,HWND hwnd,const fs::path&assets){
                  <<", GPU processors "<<u.owner.gpuResidentBytes+u.owner.playbackResidentBytes<<", thumbnails "<<u.owner.thumbnailBytes<<", engine cache "<<u.cached<<", renderer textures+meshes "<<u.gpu.resourceBytes
                  <<" ("<<u.gpu.textures<<" textures) groups "<<u.gpu.nativeGroupBytes<<" media "<<u.gpu.mediaLiveBytes<<", shared rasterizer "<<u.raster.entries<<" entries + "<<u.raster.decodedImages<<" decoded images / "<<u.raster.resourceBytes<<" bytes\n";};
     f.modules.select(c::Module::mediaAssembly,f.now);for(int k=0;k<40;++k)f.frame();f.drain();f.frame();
-    const std::array<std::string,1>drop{n::mediaAssemblyUTF8(photo)};check(owner.drop(drop,{},f.now),"Residency import");f.settle();f.frames(.6);
+    const std::array<std::string,1>drop{n::mediaAssemblyUTF8(photo)};check(owner.drop(drop,f.stageCentre(),f.now),"Residency import");f.settle();f.frames(.6);
     check(f.perform("mediaTab:1")&&f.perform("filter:sp_filter_2"),"Residency filter");f.settle();f.frames(.4);check(f.perform("mediaTab:0"),"Tiles");for(int k=0;k<20;++k){f.frame();f.drain();}
     check(owner.stats().gpuActive&&owner.controller().previewImage()&&owner.controller().previewImage()->deferred()&&f.session().adjustments().filter!=m::MediaAssemblyFilter::none,
           "Residency: a filtered still edited on the renderer's device");
@@ -320,7 +321,7 @@ void playback(n::Renderer&r,HWND hwnd,const fs::path&assets,const fs::path&fixtu
     auto frame=[&](double step=.02){f.frame(step,[&]{if(probe&&probe->playing){probe->position+=step;probe->fresh=true;}pump();});broker.collectRetired();};
     auto settle=[&]{for(int k=0;k<6;++k){f.drain();frame();}};
     f.modules.select(c::Module::mediaAssembly,f.now);for(int k=0;k<30;++k)frame();f.drain();frame();
-    const std::array<std::string,1>drop{n::mediaAssemblyUTF8(movie)};check(owner.drop(drop,{},f.now),"Movie import");settle();for(int k=0;k<30;++k)frame();
+    const std::array<std::string,1>drop{n::mediaAssemblyUTF8(movie)};check(owner.drop(drop,f.stageCentre(),f.now),"Movie import");settle();for(int k=0;k<30;++k)frame();
     check(session.document()&&session.document()->video&&owner.controller().previewImage(),"Owned movie opened with a bounded poster");
     const double playStart=f.now;check(f.perform("play")&&session.wantsPlayback(),"Play routed to the shared broker");frame();
     check(engines.empty(),"The original is re-checked on the utility queue before a player exists (source makePlaybackItem)");f.drain();for(int k=0;k<10;++k)frame();
@@ -375,7 +376,13 @@ void playback(n::Renderer&r,HWND hwnd,const fs::path&assets,const fs::path&fixtu
     {const auto folder=temp.path/L"moved";fs::create_directory(folder);const auto moved=folder/L"renamed movie.mp4";
         const auto rename=[&](const fs::path&from,const fs::path&to){std::error_code e;for(int k=0;k<100;++k){fs::rename(from,to,e);if(!e)return true;f.drain();frame();}return false;};
         check(rename(movie,moved),"The owned movie is renamed into another folder");
-        const auto opened=engines.size();check(f.perform("play"),"Play the moved original");f.drain();for(int k=0;k<6;++k){frame();f.drain();}
+        // The re-check, the broker's open and the engine's ready notice run on
+        // worker threads: wait for the player itself (each round drains the
+        // utility queue and waits up to 50 ms for a posted notice), not a
+        // fixed frame count a busy machine can outrun.
+        const auto opened=engines.size();check(f.perform("play"),"Play the moved original");
+        const auto started=[&]{return engines.size()==opened+1&&probe->playing;};
+        for(int k=0;k<200&&!started();++k){f.drain();frame();if(!started())MsgWaitForMultipleObjects(0,nullptr,FALSE,50,QS_POSTMESSAGE);}
         check(engines.size()==opened+1&&probe->playing&&!session.error()&&n::mediaAssemblySamePath(probe->path,n::mediaAssemblyUTF8(moved)),"The player opens the moved original where it now is");
         check(f.perform("pause"),"Pause");for(int k=0;k<4;++k)frame();check(!probe->playing,"Paused again");
         check(rename(moved,movie),"The owned movie is moved back");fs::remove(folder);}

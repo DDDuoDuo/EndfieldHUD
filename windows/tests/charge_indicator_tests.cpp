@@ -578,6 +578,22 @@ void windowsGpu() {
     const auto content = prepareChargeIndicatorContent(appearance, reading, ChargeMetric::gpu, sample, false, measure);
     check(content.texts[2]["text"]["string"].string() == "GPU" && content.texts[3]["text"]["string"].string() == "37.5%" &&
           content.accessibility == "EndfieldHUD, GPU: 37.5%, On battery", "The bar's labels read GPU and its load");
+    // LIB-F20: the metric primary/secondary and the trailing value request tabular figures (nsFont(tabular: true));
+    // the caption, title and unit do not. LIB-F31: each label sits on HarmonyOS Sans' hhea metrics of its largest run.
+    const auto tabular = [](const Json& label) { std::vector<bool> flags; for (const auto& r : label["text"]["runs"].array()) flags.push_back(r["attributes"]["tabularFigures"].isBool() && r["attributes"]["tabularFigures"].boolean()); return flags; };
+    const auto battery = prepareChargeIndicatorContent(appearance, reading, ChargeMetric::battery, sample, false, measure);
+    check(tabular(battery.texts[0]) == std::vector<bool>{false} && tabular(battery.texts[1]) == std::vector<bool>{false} &&
+          tabular(battery.texts[3]) == std::vector<bool>{true}, "Only the values request tabular figures");
+    const auto line = tabular(battery.texts[2]);
+    check(line.size() >= 2 && line[0] && line[1] && (line.size() == 2 || !line[2]), "The metric line's value runs are tabular, its unit is not");
+    for (std::size_t i = 0; i < 4; ++i) {
+        double largest = 0;
+        for (const auto& r : battery.texts[i]["text"]["runs"].array()) largest = std::max(largest, number(r["attributes"]["NSFont"]["pointSize"]));
+        const auto& f = battery.texts[i]["text"]["font"];
+        near(number(f["ascender"]), .928 * largest, 1e-12, "Label ascender is the standard face's hhea ascender");
+        near(number(f["descender"]), -.244 * largest, 1e-12, "Label descender is the standard face's hhea descender");
+        near(number(f["leading"]), 0, 0, "Label has no line gap");
+    }
     // The read-only adapter from the shared Activity system sample.
     ActivitySnapshot activity;
     activity.cpuPercent = 21; activity.gpuPercent = 63.5; activity.memory = ActivityMemory{8, 16, std::nullopt};

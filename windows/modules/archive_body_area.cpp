@@ -94,7 +94,7 @@ void ArchiveBodyArea::placeIndicator() {
     if (!shown) return;
     track_->setFrame({std::max(0.0, text.x + text.width - 4), text.y, 3, text.height});
     const double thumb = std::max(16.0, text.height * text.height / std::max(1.0, text.height + overflow_));
-    d::placeThumb(*thumb_, 3, (text.height - thumb) * std::clamp(scrollOffset_, 0.0, overflow_) / overflow_, thumb, {.5, .5, .5, .65});
+    d::placeThumb(*thumb_, 3, (text.height - thumb) * std::clamp(scrollOffset_, 0.0, overflow_) / overflow_, thumb, {.5, .5, .5, .65}, 1.5);
 }
 void ArchiveBodyArea::focus(std::optional<core::text::Range> selection) {
     if (!attach()) return;

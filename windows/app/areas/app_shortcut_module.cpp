@@ -51,7 +51,7 @@ void need(bool value, const char* why) { if (!value) throw std::runtime_error(st
 // Windows-only texts (the Mac catalog names macOS and EndfieldCharge), in
 // the five source languages; every other text comes from the shared catalog.
 struct WindowsText { std::string_view english, simplified, traditional, japanese, korean; };
-constexpr std::array<WindowsText, 8> windowsTexts{{
+constexpr std::array<WindowsText, 7> windowsTexts{{
     {"Choose a Windows application (.exe) or its shortcut (.lnk).", "请选择 Windows 应用程序（.exe）或其快捷方式（.lnk）。", "請選擇 Windows 應用程式（.exe）或其捷徑（.lnk）。",
      "Windowsアプリ（.exe）またはそのショートカット（.lnk）を選択してください。", "Windows 앱(.exe) 또는 해당 바로가기(.lnk)를 선택하세요."},
     {"Open this shortcut to choose its Windows application.", "请打开此快捷方式，选择对应的 Windows 应用。", "請開啟此捷徑，選擇對應的 Windows 應用程式。",
@@ -61,7 +61,6 @@ constexpr std::array<WindowsText, 8> windowsTexts{{
     {"App shortcuts changed outside this window. Restart EndfieldHUD before editing.", "应用快捷方式已在外部更改，请重启 EndfieldHUD 后再编辑。", "應用程式捷徑已在外部更改，請重啟 EndfieldHUD 後再編輯。",
      "アプリのショートカットが外部で変更されました。EndfieldHUDを再起動してから編集してください。", "다른 창이나 앱에서 바로가기가 변경되었습니다. EndfieldHUD를 재시작한 후 편집하세요."},
     {"The application is unavailable.", "应用不可用。", "應用程式不可用。", "アプリを利用できません。", "앱을 사용할 수 없습니다."},
-    {"File picker is busy", "文件选择器正忙", "檔案選擇器忙碌中", "ファイル選択画面は使用中です", "파일 선택기가 사용 중입니다"},
     {"File picker is unavailable", "文件选择器不可用", "檔案選擇器無法使用", "ファイル選択画面を利用できません", "파일 선택기를 사용할 수 없습니다"},
     {"Applications", "应用程序", "應用程式", "アプリケーション", "응용 프로그램"},
 }};
@@ -315,7 +314,6 @@ public:
         if (!visible) {closing(t, false);return;}
         const bool opening = !overlayVisible_;
         overlayVisible_ = true;
-        if (opening) canvas_->resetSession(); // OverlayController creates SystemHUDView (and a fresh canvas) on every open
         core_->setOverlayVisible(true, t);
         // OverlayController.openSystemOverlay: the last failed launch's error
         // shows on every opening until a later launch is verified.
@@ -567,7 +565,7 @@ private:
         if (!host_.chooseFiles(chooserRequest(language_), [this, alive, generation](app::ApplicationFileResult result) {
                 if (const auto token = alive.lock(); token && *token) chosen(generation, std::move(result));
             })) {
-            canvas_->showError(text(language_, "File picker is busy", "文件选择器正忙"));
+            canvas_->showError(std::string(core::translated(core::filePickerBusy, language_)));
             return false;
         }
         chooser_ = generation;return true;

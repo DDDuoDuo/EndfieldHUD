@@ -281,6 +281,13 @@ void WorkModeCanvas::didDeactivate() {
     if (editingCustom_ && customField_ && !customField_->editing()) { editingCustom_ = false; customField_->setInvalid(false); }
 }
 void WorkModeCanvas::willLeave() { if (stateDot_) stateDot_->removeMotion(d::MotionSlot::effect); }
+void WorkModeCanvas::resetSession() {
+    if (isActive()) return;
+    const bool changed = !laps_.empty();
+    laps_.clear(); lapCount_ = 0;
+    Canvas::resetSession();
+    if (changed && renderedLanguage()) refresh(false);
+}
 // The flick of the inner title; the column staggers in (the ring has no entrance).
 void WorkModeCanvas::playEntrance(Point offset, double now) {
     Canvas::playEntrance(offset, now);

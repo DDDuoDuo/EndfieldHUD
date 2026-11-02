@@ -488,7 +488,11 @@ private:
                    "A removed source asks to be chosen again");
         writeSyntheticPNG(photo, 320, 200, 0);
         {   const std::array<std::string, 2> dropped{gpu::mediaAssemblyUTF8(photo), gpu::mediaAssemblyUTF8(shelfStill)};
-            step.check(drop(dropped, {}, run.t), "A drop imports its first file"); }
+            // SHELL-6 (documentDropURLs: centreContains): only inside the module's centre.
+            const auto inside = run.client({295, 255}), outside = run.client({295, d::metric::boxHeight + 40});
+            step.check(inside && outside && !dropHover(dropped, *outside, run.t) && !drop(dropped, *outside, run.t) && session.error() == mod::MediaAssemblyError::sourceUnavailable,
+                       "A drop outside the module's centre is refused");
+            step.check(dropHover(dropped, *inside, run.t) && drop(dropped, *inside, run.t), "A drop imports its first file"); }
         run.settle(); run.frames(.5);
         step.check(session.document() && session.document()->name == "Owned Photo.png" && !session.error() && state.events.imported == before.imported + 2,
                    "Choosing the original again restores editing");
@@ -506,7 +510,8 @@ private:
             const auto movie = coverageRoot_ / L"Owned movie.mp4";
             if (!fs::exists(movie)) fs::copy_file(movieFixture_, movie);
             const std::array<std::string, 1> dropped{gpu::mediaAssemblyUTF8(movie)};
-            step.check(drop(dropped, {}, run.t), "The owned movie is dropped"); run.settle(); run.frames(.5);
+            const auto inside = run.client({295, 255});
+            step.check(inside && drop(dropped, *inside, run.t), "The owned movie is dropped"); run.settle(); run.frames(.5);
             step.check(session.document() && session.document()->video && session.document()->duration > .3 && controller().previewImage(),
                        "The movie opens with a bounded poster frame");
             const auto* play = run.control("play"); const auto* trim = run.control("tool:trim");

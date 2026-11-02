@@ -247,7 +247,19 @@ inline void layerPrimitives(const d::Layer& l, const d::Layer& host, double opac
     double alpha = opacity * l.value(Channel::opacity);
     if (l.hidden()) alpha = 0;
     const auto tint = l.animatable() ? l.tint() : inherited;
+    const auto first = out.size();
     if (const auto& node = l.content()) nodePrimitives(*node, d::modelWorld(l, host), alpha, tint, out, l.id(), true);
+    // Layer::setClipsPresentedBounds (placeThumb): its own drawing is cut at
+    // its presented rectangle, the radius unstretched (the Mac's real frame).
+    if (l.clipsPresentedBounds()) {
+        const Rect clip = bound(d::modelWorld(l, host), {0, 0, l.bounds().width, l.bounds().height});
+        for (auto k = first; k < out.size(); ++k) {
+            auto& r = out[k].rect;
+            const double x0 = std::max(r.x, clip.x), y0 = std::max(r.y, clip.y), x1 = std::min(r.x + r.width, clip.x + clip.width), y1 = std::min(r.y + r.height, clip.y + clip.height);
+            r = x1 > x0 && y1 > y0 ? Rect{x0, y0, x1 - x0, y1 - y0} : Rect{};
+            if (l.presentedClipRadius() > 0 && out[k].text.empty()) out[k].text = " r" + RecordedMeasurer::number(l.presentedClipRadius());
+        }
+    }
     if (const auto* t = l.text()) {
         const Affine parent = l.parent() ? d::modelWorld(*l.parent(), host) : Affine{};
         Primitive p{"text", bound(parent, t->lineFrame), std::nullopt, {}, {}, alpha, l.id()};

@@ -39,6 +39,12 @@ public:
     std::function<hypergryph::Time()> wallClock;
     // HUDAccountCanvas.update (:92-118).
     void update(const Presentation&);
+    // The same while the HUD is closed: the Mac has no canvas then (it is
+    // built anew at the next opening), but the controller keeps reporting
+    // here. The page takes the presentation as that new canvas would show
+    // it: rebuilt or updated in place, with no slide, no toast, nothing
+    // awaited (no closed-HUD toast waits for the next opening).
+    void updateConcealed(const Presentation&);
     const Presentation& presentation() const noexcept { return presentation_; }
     // The projected sanity of the selected role (nullopt without stamina).
     std::optional<hypergryph::SanityPresentation> sanityPresentation() const;
@@ -50,6 +56,8 @@ public:
     void didActivate() override;
     void didDeactivate() override;
     void willLeave() override { didDeactivate(); }
+    // A new HUD session (the Mac's new HUDAccountCanvas, :83): no unlink awaited.
+    void resetSession() override;
     std::optional<double> nextWakeTime(double) const override;
     void wake(double now) override;
 private:

@@ -7,6 +7,7 @@
 // Settings > Hotkeys > "Open with hotkey" (summonHotkeyEnabled) is the Mac
 // row now: tests/settings_canvas_tests.cpp covers it.
 #include "app/summon_hotkey.hpp"
+#include "core/localization.hpp"
 #include "core/source_desktop_chrome.hpp"
 #include <cmath>
 #include <fstream>
@@ -110,8 +111,12 @@ void displayAdaptation(const ehud::data::Json& fixture) {
     bool rejected{};
     try { settings.contentScale = 0; (void)DesktopChromeLayout::make(settings, Matrix4{}, Matrix4{}); } catch (const std::exception&) { rejected = true; }
     check(rejected, "A non-positive adaptation is rejected");
-    check(DesktopClockArtworkPlan::footerText("CTRL + `", "Click outside to close") == "ESC / CTRL + ` / Click outside to close" &&
-        DesktopClockArtworkPlan::footerText("", "Click outside to close") == "ESC / Click outside to close", "The footer names the shortcut only while opening by hotkey is on");
+    // SHELL-37 (SystemHUDView.hintLabel :2654): the catalog row, the shortcut always named.
+    check(DesktopClockArtworkPlan::footerText("CTRL + `", localized("CLICK OUTSIDE TO CLOSE", "点击外侧关闭", Language::english)) == "ESC / CTRL + ` / CLICK OUTSIDE TO CLOSE",
+        "The footer names the shortcut and the uppercase catalog close text");
+    check(localized("CLICK OUTSIDE TO CLOSE", "点击外侧关闭", Language::traditionalChinese) == "點擊外側關閉" && localized("CLICK OUTSIDE TO CLOSE", "点击外侧关闭", Language::japanese) == "外側をクリックして閉じる"
+        && localized("CLICK OUTSIDE TO CLOSE", "点击外侧关闭", Language::korean) == "바깥쪽을 클릭하여 닫기" && localized("CLICK OUTSIDE TO CLOSE", "点击外侧关闭", Language::simplifiedChinese) == "点击外侧关闭",
+        "The close text comes from the catalog in all five languages");
 }
 }
 

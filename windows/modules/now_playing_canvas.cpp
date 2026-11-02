@@ -2,6 +2,7 @@
 #include "modules/now_playing_lyrics_sources.hpp"
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
 namespace endfield::modules {
 namespace d = design;
@@ -643,6 +644,12 @@ void NowPlayingCanvas::nextTrack() {
     if (services_.perform) services_.perform({NowPlayingIntentKind::next, input().session});
 }
 void NowPlayingCanvas::toggleLyrics() { showsLyrics_ = !showsLyrics_; update(true); }
+void NowPlayingCanvas::resetSession() {
+    if (isActive()) return;
+    const bool changed = !std::exchange(showsLyrics_, true);
+    Canvas::resetSession();
+    if (changed && renderedLanguage()) update(false);
+}
 // Dragging previews the time and lyrics locally; release seeks once.
 void NowPlayingCanvas::scrub(double value) {
     if (!seekGesture_ && input().track) { seekGesture_ = std::pair(input().session, *input().track); stopClock(); }

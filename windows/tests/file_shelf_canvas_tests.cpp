@@ -194,6 +194,10 @@ void canvasRules() {
     check(canvas.selectedIDs() == ids({"id4"}), "Ctrl-click toggles a tile off");
     press("file:5"); press("file:5", false, false, 2);
     check(canvas.selectedIDs() == ids({"id5"}), "A double-click keeps its tile selected");
+    // MODS-638: a new HUD session (the Mac's new FileShelfCanvas, :59-62) selects nothing.
+    canvas.setActive(false, w.now); canvas.resetSession();
+    check(canvas.selectedIDs().empty() && !canvas.focusID(), "A new HUD session starts with nothing selected");
+    canvas.setActive(true, w.now); press("file:5");
     // Empty space (:405-413).
     check(canvas.pointerDown({129, 300}, {{129, 300}}, w.now) && canvas.selectedIDs().empty(), "A press between tiles clears the selection");
     check(!canvas.pointerDown({500, 300}, {{500, 300}}, w.now), "Nothing selected: the press is not taken");
@@ -253,7 +257,7 @@ void canvasRules() {
     check(store.chooses == 0 && (canvas.perform("shelf:add"), store.chooses == 1), "Add opens the chooser");
     // Leaving: the chooser is cancelled through onDeactivate (:114-117).
     canvas.prepareToLeave(w.now); canvas.setActive(false, w.now);
-    check(store.deactivations == 1, "Deactivation tells the service");
+    check(store.deactivations == 2, "Deactivation tells the service (the second: the HUD-session check left once)");
 }
 
 void clearMotion() {

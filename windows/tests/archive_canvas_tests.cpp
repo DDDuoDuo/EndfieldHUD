@@ -305,6 +305,7 @@ void editor() {
         body->editorScrolled(0, 3 * h);
         check(!track->hidden() && near(d::thumbLength(*thumb), length) && near(track->frame().x, text.x + text.width - 4) && near(track->frame().width, 3) &&
             track->value(d::Channel::opacity) == 0, "Overflow places a max(16, h^2 / content) thumb at the text's right edge - 4, hidden at rest");
+        check(thumb->clipsPresentedBounds() && thumb->presentedClipRadius() == 1.5, "Its ends keep the Mac's 1.5 px radius however long it is (cornerRadius 1.5 :72)");
         body->editorScrolled(3 * h, 3 * h);
         check(track->value(d::Channel::opacity) == 1 && near(thumb->position().y, h - length), "A scroll shows it, the thumb at the end");
         w.advance(1.5);

@@ -7,6 +7,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 struct IDWriteFactory;
 struct IDWriteFontCollection;
@@ -18,12 +19,18 @@ class LayerRasterizer;
 // (tags, the UI-language decision, the first CJK preferred language, names)
 // live once in core/localization.hpp for the rasterizer and the design library.
 using LayerFontLanguage=core::TextRegion;
-// The user's preferred UI languages (GetUserPreferredUILanguages
-// MUI_LANGUAGE_NAME, the counterpart of Locale.preferredLanguages) -> the
-// first CJK region (core::firstRegion), zh-Hans when none (LIB-F14). The one
-// reader of that list; called on configuration and WM_SETTINGCHANGE only.
+// The user's preferred UI languages in order (GetUserPreferredUILanguages
+// MUI_LANGUAGE_NAME, the counterpart of Locale.preferredLanguages): the one
+// reader of that list, called on configuration, WM_SETTINGCHANGE and startup
+// dialogs only (never per draw). Not the regional format: dates and numbers
+// keep GetUserDefaultLocaleName (native/calendar_civil.cpp).
 #ifdef _WIN32
+std::vector<std::string> preferredUILanguages();
+// -> the first CJK region (core::firstRegion), zh-Hans when none (LIB-F14).
 core::TextRegion preferredSystemRegion();
+// -> the System UI language (core::resolveLanguage, L10n.resolveLanguage of
+// Locale.preferredLanguages): the first en/ja/ko/zh entry, English when none (LIB-L1).
+core::Language preferredSystemLanguage();
 #endif
 // HUDTextLanguage.systemFamily(for:): only when a region's Noto file is absent
 // from fonts/ (a damaged install; the package ships all four). Windows

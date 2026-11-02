@@ -5,8 +5,10 @@
 // after their fade, the scroll visibility window, release (textures parked)
 // and park (artwork dropped, repainted by the next sync), the tint bridge, an
 // allocation-free pose and group opacity while a part fades (one composite,
-// no target at rest). WARP on a hidden window; synthetic layers only.
+// no target at rest) and a stretched thumb's unstretched rounded ends. WARP
+// on a hidden window; synthetic layers only.
 #include "native/hud_design_scene.hpp"
+#include "modules/hud_design_scroll.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -257,6 +259,49 @@ void run(const std::filesystem::path& shader) {
         frame(1.7);
         published.detach(renderer);
         check(faded.releaseResources(renderer) && renderer.stats().nativeGroups == 0, "The faded scene releases everything");
+    }
+    // --- a stretched thumb keeps crisp, rounded ends (Layer::setClipsPresentedBounds) ----------
+    {
+        NativeDesignScene bars(raster, options, "design.thumb");
+        LayerComposition published;
+        d::LayerArena arena{"c"};
+        auto& root = arena.make("root");
+        root.setFrame({0, 0, 590, 510});
+        auto& thumb = arena.make("thumb"); thumb.setAnimatable(); thumb.setPartRoot(true); root.add(thumb);
+        // 20 wide, radius 10 (half-discs), the 18 px raster stretched to 100.
+        d::placeThumb(thumb, 20, 0, 100, d::white(1), 10);
+        thumb.setPosition({110, 200});
+        const auto frame = [&](double at) {
+            bars.syncContent(root, text, 1, 1, at);
+            bars.updatePose({core::Matrix4{}, 1, at, {}, {}});
+            bars.uploadAnimations(renderer);
+            published.setEntries(renderer, bars.entries());
+            published.present(renderer);
+            renderer.draw(false);
+            check(bars.collectRetired(renderer), "Thumb artwork retires after publication");
+        };
+        frame(2);
+        auto shot = renderer.readback();
+        const auto painted = raster.stats().rasterizations;
+        check(rgba(shot, 110, 205)[3] == 255 && rgba(shot, 101, 250)[3] == 255 && rgba(shot, 110, 296)[3] == 255, "The stretched body and the cap centres draw");
+        check(rgba(shot, 101, 201)[3] == 0 && rgba(shot, 118, 201)[3] == 0 && rgba(shot, 101, 298)[3] == 0 && rgba(shot, 118, 298)[3] == 0,
+            "The four corners stay round at the presented length (not the 18 px raster's)");
+        d::placeThumb(thumb, 20, 0, 200, d::white(1), 10);
+        thumb.setPosition({110, 200});
+        frame(2.1);
+        shot = renderer.readback();
+        check(raster.stats().rasterizations == painted && rgba(shot, 101, 398)[3] == 0 && rgba(shot, 101, 380)[3] == 255 && rgba(shot, 110, 396)[3] == 255,
+            "A longer thumb is a pose: no raster, the bottom cap moves with it unstretched");
+        // Eleven times stretched: the raster's soft texel edge would fade the
+        // last ~5 px; the fill reaches past it and the clip cuts a crisp end.
+        check(rgba(shot, 110, 399)[3] == 255 && rgba(shot, 110, 400)[3] == 0 && rgba(shot, 110, 200)[3] == 255 && rgba(shot, 110, 199)[3] == 0, "Both ends are crisp at the presented length");
+        d::placeThumb(thumb, 20, 0, 200, d::white(1));
+        thumb.setPosition({110, 200});
+        frame(2.2);
+        shot = renderer.readback();
+        check(rgba(shot, 100, 200)[3] == 255 && rgba(shot, 119, 399)[3] == 255 && rgba(shot, 119, 400)[3] == 0, "Without a radius the ends are square and crisp (the Mac scroll thumbs)");
+        published.detach(renderer);
+        check(bars.releaseResources(renderer), "The thumb scene releases everything");
     }
     check(!IsWindowVisible(window.hwnd) && renderer.stats().presents == 0, "The fixture never shows a window");
 }

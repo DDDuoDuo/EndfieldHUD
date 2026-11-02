@@ -210,10 +210,21 @@ void run(const std::filesystem::path& shader, const std::filesystem::path& notes
     h.modules.select(core::Module::archive, h.time); const double back = slowest();
     check(h.raster.stats().pixelRepaints == before.pixelRepaints, "The switch back paints nothing again (stand-by)");
     check(canvas.bodyArea() && canvas.bodyArea()->isFocused() && canvas.bodyArea()->document().selection().range == core::text::Range{2, 6}, "The body keeps its focus and selection across the switch (B14)");
+    // textDidEndEditing (ArchiveCanvas.swift:674-677): a press the shell or
+    // another owner takes ends the body's editing and flushes what was typed.
+    check(h.owner->key({app::KeyKind::character, std::uint32_t('!')}, h.time), "The focused body replaces its selection");
+    canvas.context().editorFocusMoved();
+    check(!canvas.bodyArea()->isFocused() && h.owner->state().selected()->body == "Bo!ext", "A press elsewhere blurs the body; the typed text is kept and flushed");
+    canvas.performAccessibilityAction("body", h.time);
+    check(canvas.bodyArea()->isFocused(), "The body takes the focus again");
     (void)shown;
     // A picture: the import inspection, the strip's preview record, the poster.
     const auto picture = h.temporary.root / "picture.png";
     std::filesystem::copy_file(notesFormat / "raster" / (std::string(m::notesColorWheelSHA256) + ".png"), picture);
+    // SHELL-6 (documentDropURLs: centreContains): the host routes a drop to
+    // Archive only inside the canvas's hitBounds.
+    const auto centre = h.owner->core().clientRect({295, 255, 0, 0}), below = h.owner->core().clientRect({295, 560, 0, 0});
+    check(centre && below && h.owner->acceptsDrop({centre->x, centre->y}) && !h.owner->acceptsDrop({below->x, below->y}), "Archive takes a drop inside its centre only");
     const auto request = h.owner->dropRequest(h.time);
     check(request.has_value(), "A drop on the open document is accepted");
     const std::array files{tools::ArchiveMediaImportFile{utf8(picture), "picture.png", {}}};

@@ -23,10 +23,9 @@ int main(){try{
     check(!renderTranslation("{999999999999999999999999999}",args),"Reject overflowing placeholder index");
     check(renderTranslation("{x} {01}",args)==std::nullopt,"Missing zero index stays an error");
     check(renderTranslation("{x} {} {-1}",{})=="{x} {} {-1}","Non-numeric braces remain literal");
-    // Mac 1.3.0: 830 core + 453 redesign rows (LocalizationCatalog.swift + LocalizationCatalogRedesign.swift), plus
-    // the 9 Windows-kept v1.2.0 pairs (tools/localization_windows_kept.json) the Mac pruned while Windows still
-    // calls them. Dropping a kept row changes this count.
-    const auto catalog=translationCatalog();check(catalog.size()==1283+1,"Full pinned five-language catalog");
+    // Mac 1.3.0: 830 core + 453 redesign rows (LocalizationCatalog.swift + LocalizationCatalogRedesign.swift); no
+    // Windows-kept v1.2.0 pair is left (tools/localization_windows_kept.json). Adding a kept row changes this count.
+    const auto catalog=translationCatalog();check(catalog.size()==1283,"Full pinned five-language catalog");
     using Row=std::array<std::string_view,5>;
     const auto five=[&](const Row&r,const char*why){const auto*e=translationEntry(r[0],r[1]);check(e&&e->traditionalChinese==r[2]&&e->japanese==r[3]&&e->korean==r[4],why);};
     for(const auto&r:std::array<Row,6>{{
@@ -51,7 +50,17 @@ int main(){try{
         check(a&&b&&a!=b&&a->traditionalChinese==redesignHant&&b->traditionalChinese==coreHant,"Shared English keeps both contextual pairs");
     }
     // Windows-kept v1.2.0 pairs beside the Mac 1.3.0 pair that replaced them on the Mac.
-    five({"Mainland China","国服","中國伺服器","中国サーバー","중국 서버"},"Mac 1.3.0 region title (MODS-850)");five({"Add image/video","添加图片/视频","新增圖片/影片","画像・動画を追加","이미지/동영상 추가"},"Kept Archive pair");
+    five({"Mainland China","国服","中國伺服器","中国サーバー","중국 서버"},"Mac 1.3.0 region title (MODS-850)");
+    // The shared media picker: Notes' Mac 1.3.0 title and button; the v1.2.0 title is gone (LIB-L4).
+    five({"Add image/video notes","添加图片/视频便笺","新增圖片／影片便箋","画像・動画メモを追加","이미지/동영상 메모 추가"},"Notes media picker title");
+    five({"Add media","添加媒体","新增媒體","メディアを追加","미디어 추가"},"Notes media picker button");check(!translationEntry("Add image/video","添加图片/视频"),"Pruned picker title is gone");
+    // Settings > Hotkeys registration status (GlobalShortcutController.statusDescription, LIB-L13): the Mac row with
+    // the notification area for the menu bar, in every language.
+    const std::array<std::string_view,1>chord{"Ctrl + `"};
+    check(renderTranslation(translated(summonShortcutUnavailable,Language::korean),chord)=="Ctrl + ` 사용 불가 또는 이미 사용 중입니다. 알림 영역에서 여세요."&&
+        renderTranslation(translated(summonShortcutUnavailable,Language::system),chord)=="Ctrl + ` is unavailable or in use. Open from the notification area."&&
+        !translationEntry(summonShortcutUnavailable.english,summonShortcutUnavailable.simplifiedChinese),"Hotkey status names the notification area");
+    for(unsigned n=0;n<6;++n)check(renderTranslation(translated(summonShortcutUnavailable,static_cast<Language>(n)),chord).has_value(),"Hotkey status renders its chord in every language");
     // The redesigned minigame, Reader and Archive call the Mac 1.3.0 pairs only.
     five({"Score","计分","計分","スコア","점수"},"Redesign minigame pair");
     check(!translationEntry("Score","得分")&&!translationEntry("Reading","阅读设置")&&!translationEntry("Delete this document?","删除此档案？"),"Dropped kept pairs are gone");
@@ -59,8 +68,21 @@ int main(){try{
     check(localized("Filters","滤镜",Language::japanese)=="フィルタ"&&localized("Stickers","贴纸",Language::japanese)=="スタンプ"&&
         localized("Sticker","贴纸",Language::japanese)=="ステッカー","Mac 1.3.0 Japanese tab titles");
     check(!translationEntry("Add frame","添加边框")&&!translationEntry("Document created","已新建档案"),"Pruned pairs without a Windows caller are gone");
-    check(localized("Add frame","添加边框",Language::traditionalChinese)=="添加边框"&&localized("Add frame","添加边框",Language::korean)=="Add frame",
-        "Uncatalogued pair: Simplified source for both Chinese, English otherwise");
+    check(localized("Add frame","添加边框",Language::simplifiedChinese)=="添加边框"&&localized("Add frame","添加边框",Language::korean)=="Add frame"&&
+        localized("Add frame","添加边框",Language::japanese)=="Add frame","Uncatalogued pair: Simplified source for zh-Hans, English for ja/ko");
+#ifdef EHUD_EXPECT_HANS_HANT
+    // L10n.text: zh-Hant shows the rendered Simplified text through Hans-Hant (LIB-L1). Expected values are
+    // Foundation's StringTransform("Hans-Hant") on macOS for the same strings; repeated calls hit the cache.
+    const std::array<std::string_view,1>place{"后台"};
+    for(unsigned n=0;n<2;++n)check(hansToHant("添加边框")=="添加邊框"&&hansToHant("发现 后台 只 干 云")=="發現 後台 只 乾 雲"&&
+        localized("Add frame","添加边框",Language::traditionalChinese)=="添加邊框"&&
+        localized("Synthetic {0} files","无法打开所选{0}",Language::traditionalChinese,place)=="無法打開所選後台","Uncatalogued zh-Hant pair is transliterated");
+    check(hansToHant("")==""&&hansToHant("EndfieldHUD 1.3")=="EndfieldHUD 1.3","Hans-Hant keeps empty and Latin text");
+#else
+    check(localized("Add frame","添加边框",Language::traditionalChinese)=="添加边框"&&!hansToHant("添加边框"),"Without ICU the Simplified text stands");
+#endif
+    // A catalogued pair keeps its own Traditional row, never a transliteration.
+    check(localized("Add images","添加图片",Language::traditionalChinese)=="新增圖片","Catalogued zh-Hant row wins");
     for(const auto&e:catalog){
         check(translationEntry(e.english,e.simplifiedChinese)==&e,"Lookup preserves contextual source pair");
         std::size_t count{};for(std::size_t p=0;p<e.english.size();++p)if(e.english[p]=='{'&&p+1<e.english.size()&&e.english[p+1]>='0'&&e.english[p+1]<='9'){
@@ -75,6 +97,12 @@ int main(){try{
     check(translated(chooseInFileExplorer,Language::simplifiedChinese)=="从文件资源管理器选择"&&translated(chooseInFileExplorer,Language::traditionalChinese)=="從檔案總管選擇"&&
         translated(chooseInFileExplorer,Language::japanese)=="エクスプローラーで選択"&&translated(chooseInFileExplorer,Language::korean)=="파일 탐색기에서 선택"&&
         translated(chooseInFileExplorer,Language::english)=="Choose in File Explorer","File Explorer label uses the Windows shell product name per language");
+    // Windows-only shared rows (file dialog notices and filter): five non-empty languages, English for System.
+    for(const auto*row:{&filePickerBusy,&selectedFilesUnopened,&imageFilesFilter}){
+        for(unsigned n=0;n<6;++n)check(!translated(*row,static_cast<Language>(n)).empty(),"Windows-only row in every language");
+        check(translated(*row,Language::system)==row->english&&!translationEntry(row->english,row->simplifiedChinese),"Windows-only rows stay out of the Mac catalog");}
+    check(translated(filePickerBusy,Language::korean)=="파일 선택기가 사용 중입니다"&&translated(imageFilesFilter,Language::japanese)=="画像"&&
+        translated(selectedFilesUnopened,Language::traditionalChinese)=="無法開啟所選檔案","Windows-only picker rows use the catalog's terms");
     check(localized("No music playing","No music playing",Language::japanese)=="No music playing","Keep source's fixed English music status");
     std::cout<<"Original localization: "<<checks<<" checks passed\n";return 0;
 }catch(const std::exception&e){std::cerr<<"Localization failed after "<<checks<<": "<<e.what()<<'\n';return 1;}}

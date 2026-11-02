@@ -21,7 +21,11 @@ namespace endfield::native {
 // .exe/.lnk through the caller's filter, or a packaged application chosen
 // in AppsFolder (where the dialog starts), returned as
 // "shell:AppsFolder\<AppUserModelID>"; links are not dereferenced.
-enum class ShelfPickerMode {mixedReferences,singleReaderFile,singleFile,applications};
+// media: several existing files, no folders and no extra action (the Mac
+// NSOpenPanel of Archive, Projection and Notes media); an empty title or
+// accept label keeps the dialog's own ("Open"), as a panel the Mac leaves
+// untitled (Archive, Projection); addSelection is unused.
+enum class ShelfPickerMode {mixedReferences,singleReaderFile,singleFile,applications,media};
 struct ShelfPickerLabels {
     std::string title{"Add to Temporary File Shelf"};
     std::string addReferences{"Add references"};

@@ -299,11 +299,44 @@ void run(){
     rejects([&]{raster.rasterize("one-too-many",1,layer("tiny",1,1),tiny);},"Retained source-ID count is bounded");
     raster.clear();
 }
+
+// LayerRasterOptions::textContentsScale (the design scene; HUDRenderScale.
+// contentScale, LIB-97): a raster holding a shown text leaf paints at the
+// leaf's contentsScale (capped at 4, never below pixelsPerPoint); without the
+// option, or for other layers, contentsScale is ignored. A released image
+// repaints at its own density.
+void textDensity(){
+    LayerRasterizer raster;LayerRasterOptions options;options.pixelsPerPoint=2;options.paddingPoints=1;
+    auto label=layer("label",100,20);label["class"]="CATextLayer";label["kind"]="text";label["contentsScale"]=3;
+    label["text"]=Json::Object{{"string","Endfield 设置 01"},{"fontSize",12},{"foregroundColor",rgba(1,1,1)},{"alignment","left"},{"wrapped",false},{"truncation","none"}};
+    const auto plain=raster.rasterize("density.plain",1,label,options);
+    check(plain->width==204&&plain->height==44,"Without the option a text leaf paints at pixelsPerPoint (its contentsScale is ignored)");
+    options.textContentsScale=true;
+    const auto before=raster.stats().rasterizations;
+    const auto text=raster.rasterize("density.text",1,label,options,LayerRasterRetention::releasable);
+    check(text->width==306&&text->height==66&&text->bounds.width==102&&text->bounds.height==22&&raster.stats().rasterizations==before+1,
+        "A text leaf paints at its contentsScale: 1.5 x the pixels per side, the same bounds in points");
+    check(raster.rasterize("density.text",1,label,options,LayerRasterRetention::releasable)==text&&raster.stats().rasterizations==before+1,"Unchanged content is a cache hit: no raster");
+    auto plate=layer("plate",120,40);plate["backgroundColor"]=rgba(.2,.2,.2);label["position"]=Json::Array{10,10};plate["children"]=Json::Array{label};
+    const auto mixed=raster.rasterize("density.mixed",1,plate,options);
+    check(mixed->width==366&&mixed->height==126,"A raster compacting text with its plate paints whole at the text density");
+    auto shape=plate;shape["children"]=Json::Array{};shape["contentsScale"]=3;
+    check(raster.rasterize("density.shape",1,shape,options)->width==244,"Only text leaves raise the density");
+    auto quiet=label;quiet["hidden"]=true;auto hidden=plate;hidden["children"]=Json::Array{quiet};
+    check(raster.rasterize("density.hidden",1,hidden,options)->width==244,"A hidden text leaf does not raise it");
+    auto capped=label;capped["contentsScale"]=9;capped["position"]=Json::Array{0,0};
+    check(raster.rasterize("density.capped",1,capped,options)->width==408,"The text density is capped at 4");
+    auto lower=label;lower["contentsScale"]=1;lower["position"]=Json::Array{0,0};
+    check(raster.rasterize("density.lower",1,lower,options)->width==204,"A text scale below the raster's own keeps pixelsPerPoint");
+    const auto painted=text->straightRGBA;check(nonzeroAlpha(*text)>50,"The dense label paints its glyphs");
+    check(raster.releasePixels("density.text",text),"The dense raster gives its pixels back");
+    std::vector<std::uint8_t> again;raster.repaint(*text,again);check(again==painted,"It repaints byte for byte at its own density");
+}
 }
 int main(){
     const auto status=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);
     if(FAILED(status)){std::cerr<<"Cannot initialize fixture COM: "<<status<<'\n';return 1;}
-    int result=0;try{run();memoryImages();releasable();std::cout<<"PASS "<<checks<<" local layer raster checks (owned WIC bitmaps, no window/capture)\n";}
+    int result=0;try{run();memoryImages();releasable();textDensity();std::cout<<"PASS "<<checks<<" local layer raster checks (owned WIC bitmaps, no window/capture)\n";}
     catch(const std::exception& error){std::cerr<<"FAIL after "<<checks<<" checks: "<<error.what()<<'\n';result=1;}
     CoUninitialize();return result;
 }

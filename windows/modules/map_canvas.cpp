@@ -62,6 +62,12 @@ void MapCanvas::didDeactivate() {
     apply(state_->setActive(false));
     if (onRelease) onRelease();
 }
+void MapCanvas::resetSession() {
+    if (isActive()) return;
+    messageShown_ = false;
+    apply(state_->deselect());
+    Canvas::resetSession();
+}
 void MapCanvas::reportError(const std::string& text) { toast(d::Icon::warn, "Notice", "提示", text); }
 void MapCanvas::stateChanged() { cameraChanged(); pinsChanged(); }
 

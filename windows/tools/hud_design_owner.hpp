@@ -28,7 +28,9 @@
 // policy: a canvas not shown when the HUD closes (or once the close finished,
 // overlayConcealed) keeps no artwork (NativeDesignScene::park); the shown one
 // keeps it so reopening on it only re-uploads; a switch inside the open HUD
-// only parks textures (releaseResources). Prewarm emits and rasterizes the
+// only parks textures (releaseResources). Once the close finished
+// (overlayConcealed) every canvas starts a new session (Canvas::resetSession:
+// the Mac rebuilds SystemHUDView and its canvases at every opening). Prewarm emits and rasterizes the
 // first page off the opening frame. The context's one editor host follows
 // the owner whose canvas runs (Context::setEditorHost before every canvas
 // call). No timer, thread or window of its own.
@@ -46,7 +48,7 @@ struct DesignOwnerOptions {
     native::LayerRasterOptions raster;        // pixelsPerPoint is replaced by the render scale
     native::DesignImages images;
     native::NativeDesignTextFieldOptions fields; // window, TSF, clipboard, edit menu (null manager: no fields)
-    std::function<double()> now;              // the host clock (UIA actions, ScreenReaderPeerHooks::now)
+    std::function<double()> now;              // the host clock (UIA actions)
     std::function<void()> changed;            // present a frame + automation refresh after a UIA action
     // The module's own reactions to host notifications (after the core's
     // own handling): an appearance event (the Context has already applied it:
@@ -135,6 +137,10 @@ public:
     std::optional<core::Module> inputModule() const noexcept;   // the canvas accepting input now
     std::optional<core::Rect> clientRect(core::Rect box) const; // box px -> logical client (bounds of the quad)
     std::optional<core::Point> boxPoint(core::Point logicalClient) const;
+    // SystemHUDView.centreContains: the point lands on the input canvas's
+    // centre content (its box with the overflow it claims, hitBounds); the
+    // document drop rule of Reader, Archive and Media Assembly.
+    bool centreContains(core::Point logicalClient) const;
     // The retained scene of one presented canvas (resident pixels, parks,
     // generations; hidden coverage and owner tests). Empty for another module.
     std::optional<native::NativeDesignSceneStats> sceneStats(core::Module) const;

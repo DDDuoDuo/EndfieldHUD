@@ -90,9 +90,9 @@ DesktopClockArtworkPlan::DesktopClockArtworkPlan(ClockTextWidth width):width_(st
 Rect DesktopClockArtworkPlan::indicatorRect(unsigned index){require(index<5,"Invalid clock style index");return {14+double(index)*64,124,56,18};}
 std::optional<unsigned>DesktopClockArtworkPlan::indicatorAt(Point p){for(unsigned i=0;i<5;++i)if(const auto r=indicatorRect(i);p.x>=r.x&&p.x<r.x+r.width&&p.y>=r.y&&p.y<r.y+r.height)return i;return {};}
 std::string_view DesktopClockArtworkPlan::workBadge(DesktopWorkPhase phase)noexcept{return phase==DesktopWorkPhase::running?"WORK MODE / ACTIVE":phase==DesktopWorkPhase::paused?"WORK MODE / PAUSED":"WORK MODE";}
+// SystemHUDView.hintLabel (:2654): "ESC / <SHORTCUT> / <close>", the shortcut
+// named even while opening by hotkey is off (Mac 1.3.0 has no such case).
 std::string DesktopClockArtworkPlan::footerText(std::string_view shortcut,std::string_view close){
-    // Windows: with opening by hotkey switched off there is no shortcut to name.
-    if(shortcut.empty())return "ESC / "+std::string(close);
     return "ESC / "+std::string(shortcut)+" / "+std::string(close);}
 double DesktopClockArtworkPlan::measure(const ChromeTextPlacement&t)const{
     if(t.text.empty())return 0;const auto w=width_(t.text,t.fontSize,t.weight,t.tabular);require(std::isfinite(w)&&w>=0,"Invalid measured clock text width");return w;}

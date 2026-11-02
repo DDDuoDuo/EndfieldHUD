@@ -274,6 +274,13 @@ void EventLogCanvas::didActivate() {
     refresh();
 }
 void EventLogCanvas::didDeactivate() { observing_ = false; }
+void EventLogCanvas::resetSession() {
+    if (isActive()) return;
+    const bool changed = filter_ != EventLogFilter::all || listOffset_ != 0;
+    filter_ = EventLogFilter::all; listOffset_ = 0; list_ = nullptr; listPage_ = nullptr;
+    Canvas::resetSession();
+    if (changed && renderedLanguage()) rerender();
+}
 // The store's failure appearing while the page is open shows once as a toast
 // (owner decision: copy the Mac; one already present at activation is the
 // baseline and stays silent, MODS-716).

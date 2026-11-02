@@ -100,6 +100,10 @@ public:
     void didActivate() override;
     void didDeactivate() override;
     void willLeave() override;
+    // A new HUD session (the Mac's new NotesCanvas, :102, :105, :112): an
+    // empty add-item field, the TEXT note reloaded from the document (caret
+    // at the end, no undo history, at its top), the storage notice again.
+    void resetSession() override;
     void recordingModeChanged() override;
     bool handleRightPointerDown(design::Point) override;
     // NotesCanvas.pointerDown (:638-650), before the canvas's own handling: a
@@ -159,6 +163,7 @@ private:
     bool save(const std::function<void(ehud::data::NotesCentreDocument&)>&);
     void saveNote();
     ArchiveBodyArea& noteEditor();
+    void loadNote(ArchiveBodyArea&);
     void attachNote();
     std::optional<std::string> taskID(design::Point) const;
     int builtSlot(const std::string& id) const;

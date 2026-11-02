@@ -103,6 +103,12 @@ public:
     void willLeave() override;
     void didActivate() override;
     void didDeactivate() override;
+    // A new HUD session (the Mac's new MediaAssemblyCanvas, :14-17, :36):
+    // the Adjust tab, and the open source taken as new (no tool, viewport
+    // reset, no sticker). Unlike the Mac, a crop tool open at the close does
+    // not leave the controller's crop preview on (the Mac's new canvas never
+    // turns it off: a Mac bug, not copied).
+    void resetSession() override;
     void recordingModeChanged() override {}
     bool pointerDown(design::Point, const design::PointerInput&, double now) override;
     bool handlePointerDown(design::Point, const design::PointerInput&) override;

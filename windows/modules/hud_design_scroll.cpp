@@ -47,13 +47,16 @@ void ScrollBarDriver::sync(bool wasShown) {
     });
 }
 
-void placeThumb(Layer& thumb, double width, double top, double length, Color fill) {
-    constexpr double raster = 18;
+void placeThumb(Layer& thumb, double width, double top, double length, Color fill, double cornerRadius) {
+    constexpr double raster = 18, overhang = 2;
     if (thumb.bounds() != Size{width, raster}) {
         thumb.setAnchorPoint({.5, 0});
         thumb.setBounds({width, raster});
-        setBackground(thumb, fill);
+        auto node = frameNode(thumb.id(), {0, 0, width, raster});
+        addChildren(node, {solid(thumb.id() + ".fill", {0, -overhang, width, raster + 2 * overhang}, fill)});
+        thumb.setContent(std::move(node));
     }
+    thumb.setClipsPresentedBounds(true, cornerRadius);
     thumb.setPosition({width / 2, top});
     thumb.setValue(Channel::scaleY, length / raster);
 }

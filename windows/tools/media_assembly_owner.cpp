@@ -115,6 +115,8 @@ struct MediaAssemblyOwner::Impl:std::enable_shared_from_this<Impl> {
         PostMessageW(options.window,options.dialogMessage,WPARAM(dialog->generation),0);return true;
     }
     bool input()const{return core&&core->inputModule()==core::Module::mediaAssembly;}
+    // SystemHUDView.documentDropURLs (:3494-3511): not exporting, no capture or panel, inside the centre (centreContains).
+    bool takesDrop(core::Point p)const{return input()&&!canvas->capturesPointer()&&!canvas->presentingPanel()&&!canvas->isExporting()&&core->centreContains(p);}
 
     // ---- pictures ----
     // The slots follow the stage's shown and previous preview: a new preview
@@ -454,11 +456,12 @@ bool MediaAssemblyOwner::hostEvent(const app::HostEvent&e,double t){
     if(e.kind==app::HostEvent::Kind::overlayConcealed){i.releaseVideo();i.releasePictures();i.dropProcessors();i.poseDraws();}
     return changed;
 }
-bool MediaAssemblyOwner::drop(std::span<const std::string>paths,core::Point,double t){
+bool MediaAssemblyOwner::drop(std::span<const std::string>paths,core::Point p,double t){
     auto&i=*impl_;i.clock(t);
-    if(!i.input()||paths.empty()||i.canvas->capturesPointer()||i.canvas->presentingPanel()||i.canvas->isExporting())return false;
+    if(paths.empty()||!i.takesDrop(p))return false;
     i.canvas->importFiles(paths,i.now());i.frame();return true;
 }
+bool MediaAssemblyOwner::dropHover(std::span<const std::string>paths,std::optional<core::Point>p,double t){impl_->clock(t);return !paths.empty()&&p&&impl_->takesDrop(*p);}
 std::optional<app::ModuleCursor>MediaAssemblyOwner::cursorAt(core::Point p)const{return impl_->core->cursorAt(p);}
 bool MediaAssemblyOwner::automationRefresh(IRawElementProviderFragmentRoot*r){return impl_->core->automationRefresh(r);}
 std::size_t MediaAssemblyOwner::automationCount()const{return impl_->core->automationCount();}

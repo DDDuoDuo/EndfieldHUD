@@ -3,7 +3,7 @@
 // Sources/OverlayController.swift :143-147, :420, :940, :1079-1088.
 #include "native/facility_owner.hpp"
 #ifdef _WIN32
-// The design library first: <windows.h> (also through screen_reader_peers.hpp)
+// The design library first: <windows.h> (through the later headers)
 // defines `small` (rpcndr.h), a design enumerator.
 #include "tools/hud_design_owner.hpp"
 #include "app/utility_executor.hpp"
@@ -16,7 +16,6 @@
 #include "native/hud_design_scene.hpp"
 #include "native/id_card_presenter.hpp"
 #include "native/layer_scene.hpp"
-#include "native/screen_reader_peers.hpp"
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -333,7 +332,9 @@ bool FacilityOwner::playsBootLogOnOpen() const noexcept { return impl_->playsBoo
 
 // The boot log takes every press and key while it plays (SHELL-3, SHELL-4:
 // before every other branch, the confirm bar's included); the banner and tag
-// routers come before the module chains.
+// routers come before the module chains and, while the confirm bar captures,
+// before it (mouseDown :1519-1529). The overlay's capture route is 1 so this
+// owner (built later, an area) answers first.
 app::ModuleRouting FacilityOwner::routing() const noexcept {
     app::ModuleRouting r;
     r.pointerCapture = 0; r.keyCapture = 0; r.pointer = 0;
@@ -451,7 +452,17 @@ bool FacilityOwner::covers(core::Point p) const {
     if (i.bootShows()) return true;
     return i.hit(p) != nullptr;
 }
-bool FacilityOwner::capturesPointer() const { return impl_->bootShows(); }
+// The boot log; a banner or tag press in progress; and, while the design
+// overlay captures input (the confirm bar), a showing banner or tag stack so
+// their presses come first (mouseDown :1519-1529: the banner and tag routers
+// run before `designContext.overlay.capturesInput`). pointer() answers false
+// off them, so the press falls through to the bar; moves keep the hover
+// (updateControlHighlights updates both layers with the bar open).
+bool FacilityOwner::capturesPointer() const {
+    const auto& i = *impl_;
+    if (i.bootShows() || i.tracking) return true;
+    return i.allowsInput() && i.context.overlay().capturesInput() && (i.bannerShows() || i.tagsShow());
+}
 bool FacilityOwner::capturesKeys() const { return impl_->bootShows(); }
 bool FacilityOwner::suppressesKeyFilters() const { return impl_->bootShows(); }
 // mouseDown (:1511-1524): the boot log skips on any press; then the banner

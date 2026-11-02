@@ -91,6 +91,9 @@ public:
     void didActivate() override;
     void didDeactivate() override;
     void willLeave() override;
+    // A new HUD session (the Mac's new OrbiPomCanvas, :42-43): the keyboard
+    // aim back at (115, 120), no skill remembered.
+    void resetSession() override;
     void didClosePopover() override;
     void handlePointerMoved(std::optional<design::Point>) override;
     bool handlePointerDown(design::Point, const design::PointerInput&) override;

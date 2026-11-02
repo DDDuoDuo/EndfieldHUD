@@ -1,6 +1,7 @@
 #pragma once
 #include "app/overlay_host.hpp"
 #include "native/notes_workspace.hpp"
+#include "native/hud_design_text_field.hpp"
 #include "core/source_desktop_chrome.hpp"
 #include "core/module_presentation.hpp"
 #include "core/localization.hpp"
@@ -110,6 +111,12 @@ public:
     // field open). Defaults to the system clipboard, touched only on those
     // keys; tests inject a synthetic one. Null disables clipboard keys.
     void setClipboard(std::shared_ptr<native::NotesClipboard>);
+    // The open field's right-click edit menu (HUDProjectedTextView.menu(for:);
+    // LIB-90): native/hud_design_text_field.hpp's DesignEditMenu, the native
+    // popup by default while text services run (none otherwise); tests inject
+    // a fake and never open a real menu. Null: the right press only places
+    // the caret.
+    void setEditMenu(native::DesignEditMenu);
     // Source SystemHUDView drop on the Notes canvas (notesDropPoint, then
     // importPasteboard at the unprojected drop point): image/movie files import
     // as media notes, otherwise image data becomes a managed image note.

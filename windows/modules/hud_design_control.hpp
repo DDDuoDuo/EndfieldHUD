@@ -220,8 +220,9 @@ Layer& makeText(Builder&, std::string_view id, std::string text, const TextStyle
 void setLine(Layer& textLayer, Rect lineFrame);
 // Reads a text layer's block without touching its revision (Layer::text() non-const marks content changed).
 const TextBlock& textOf(const Layer& textLayer);
+// An edit that leaves the block as it was changes nothing (no content event).
 template <class F> void editText(Layer& textLayer, F&& edit) {
-    TextBlock block = textLayer.text() ? *textLayer.text() : TextBlock{};
+    TextBlock block = textOf(textLayer);
     edit(block);
     textLayer.setText(std::move(block));
 }

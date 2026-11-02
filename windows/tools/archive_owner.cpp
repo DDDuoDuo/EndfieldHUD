@@ -201,6 +201,10 @@ std::optional<m::ArchiveMediaRequest> ArchiveOwner::dropRequest(double t) {
     if (!i.accepting()) return std::nullopt;
     return i.canvas->dropRequest();
 }
+bool ArchiveOwner::acceptsDrop(core::Point client) const {
+    const auto& i = *impl_;
+    return i.accepting() && i.service.state().selected() && !i.canvas->capturesPointer() && !i.canvas->presentingPanel() && i.core->centreContains(client);
+}
 bool ArchiveOwner::refreshMedia(double t) { auto& i = *impl_; i.enter(t); return i.media->refresh(i.time); }
 m::ArchiveCanvas& ArchiveOwner::canvas() noexcept { return *impl_->canvas; }
 const m::ArchiveState& ArchiveOwner::state() const noexcept { return impl_->service.state(); }

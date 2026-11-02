@@ -847,6 +847,75 @@ void lifetimes(RecordedMeasurer& measurer) {
 }
 }
 
+// HUDDesignTextField.textDidEndEditing (:281-286, LIB-85): once the first
+// responder leaves an editing field's text view the field commits.
+// Context::editorFocusMoved reports that move (a press another owner or the
+// shell took); the canvas that got the press keeps its own fields to
+// Canvas::pointerDown. Context::confirm (HUDDesignContext.confirm) commits
+// nothing itself; Canvas::confirm commits its own fields.
+struct FieldHost final : d::TextEditorHost {
+    int begins{}, ends{};
+    std::string typed{"typed"};
+    bool begin(const d::TextEditRequest&) override { ++begins; return true; }
+    void end(d::TextField&) override { ++ends; }
+    std::string text(const d::TextField&) const override { return typed; }
+    std::optional<std::pair<std::uint32_t, std::uint32_t>> selection(const d::TextField&) const override { return std::nullopt; }
+    bool hasMarkedText(const d::TextField&) const override { return false; }
+    void setText(d::TextField&, std::string_view) override {}
+    void reproject(d::TextField&, Rect) override {}
+};
+class FieldCanvas final : public d::Canvas {
+public:
+    using Canvas::Canvas;
+    d::TextField* field{};
+    std::vector<std::string> commits;
+    // A body editor (Archive body, Notes TEXT note): focused, and how often it ended.
+    bool bodyFocused{}; int bodyEnds{};
+    bool editingOtherText() const override { return bodyFocused; }
+    void endOtherEditing(bool commit) override { if (commit) ++bodyEnds; bodyFocused = false; }
+    void buildPage(d::Page& page) override {
+        auto& f = page.make<d::TextField>("field.name", "Name", "Endmin", "Name", d::Size{260, 34});
+        f.layer().setOrigin({20, 120}); page.layer().add(f.layer()); page.add(f);
+        registerField(f);
+        f.onCommit = [this](const std::string& t) { commits.push_back(t); };
+        field = &f;
+    }
+};
+void focusMoves(RecordedMeasurer& measurer) {
+    World w(measurer); w.appearance(Language::english);
+    FieldHost host; w.context.setEditorHost(&host);
+    FieldCanvas a(endfield::core::Module::system, w.context), b(endfield::core::Module::profile, w.context);
+    for (auto* c : {&a, &b}) { c->show(w.now); c->setActive(true, w.now); }
+    w.context.editorFocusMoved();
+    check(host.ends == 0 && a.commits.empty(), "Nothing editing: a focus move changes nothing");
+    a.field->beginEditing();
+    check(a.field->editing() && host.begins == 1, "The field edits");
+    w.context.editorFocusMoved(&a);
+    check(a.field->editing() && host.ends == 0, "The canvas that got the press keeps its own field (Canvas::pointerDown decides)");
+    host.typed = "Endministrator"; b.field->beginEditing();
+    check(a.field->editing() && b.field->editing(), "Two canvases may each hold an editing field");
+    w.context.editorFocusMoved(&b);
+    check(!a.field->editing() && b.field->editing() && a.commits == std::vector<std::string>{"Endministrator"} && a.field->text() == "Endministrator",
+        "A press another canvas took commits this canvas's field with the editor's text");
+    w.context.editorFocusMoved();
+    check(!b.field->editing() && host.ends == 2 && b.commits.size() == 1, "A press no canvas took commits every editing field");
+    a.field->beginEditing();
+    w.context.confirm(plainRequest(), [] {});
+    check(a.field->editing(), "HUDDesignContext.confirm itself commits nothing (only Canvas::confirm and the shell press do)");
+    w.context.overlay().reset();
+    a.confirm(plainRequest(), [] {});
+    check(!a.field->editing() && host.ends == 3, "Canvas::confirm commits its own field first");
+    w.context.overlay().reset();
+    // The body editors are text views too (ArchiveCanvas / NotesCanvas
+    // textDidEndEditing): a press elsewhere ends them with their save.
+    a.bodyFocused = b.bodyFocused = true; a.bodyEnds = b.bodyEnds = 0;
+    w.context.editorFocusMoved(&a);
+    check(a.bodyFocused && !b.bodyFocused && b.bodyEnds == 1 && a.bodyEnds == 0, "A press another canvas took ends this canvas's body editor, saving");
+    w.context.editorFocusMoved();
+    check(!a.bodyFocused && a.bodyEnds == 1 && b.bodyEnds == 1, "A press no canvas took ends every focused body editor once");
+    w.context.setEditorHost(nullptr);
+}
+
 int main(int argc, char** argv) {
     try {
         if (argc != 2) throw std::runtime_error("usage: hud_design_page_tests <hud-design-source.json>");
@@ -863,6 +932,7 @@ int main(int argc, char** argv) {
         confirmBars(measurer, overlay);
         canvasScript(measurer, canvas);
         lifetimes(measurer);
+        focusMoves(measurer);
         std::sort(measurer.misses.begin(), measurer.misses.end());
         measurer.misses.erase(std::unique(measurer.misses.begin(), measurer.misses.end()), measurer.misses.end());
         if (!measurer.misses.empty()) {

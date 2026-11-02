@@ -85,7 +85,12 @@ void rules() {
     // selectTab (:699-706): the TEXT tab shows the note and "01".
     canvas.selectTab(data::NotesCentreDocument::Tab::text, -1);
     check(store->document().tab == data::NotesCentreDocument::Tab::text && canvas.header().counterText() == "01" && canvas.formatBar(), "The TEXT tab shows the note and its bar");
-    canvas.setActive(false, w.now);
+    // MODS-638: a new HUD session builds the Mac's TEXT editor anew (:533-557): the note reloaded, the caret at its end.
+    check(canvas.noteArea() != nullptr, "The TEXT note has its editor");
+    canvas.noteArea()->document().setSelection({{0, 0}});
+    canvas.setActive(false, w.now); canvas.resetSession();
+    const auto length = std::uint32_t(canvas.noteArea()->document().text().size());
+    check(canvas.noteArea()->document().selection().range == endfield::core::text::Range{length, length}, "A new HUD session puts the caret at the note's end");
 }
 void unavailable() {
     FakeMeasurer measurer;
@@ -97,6 +102,12 @@ void unavailable() {
     // didActivate (:172-177): the storage notice toasts once.
     check(w.toast() == "Notice|Notes storage is unavailable.", "The storage notice toasts: " + w.toast());
     for (const auto* kind : {"text", "todo", "image", "drawing"}) check(!control(canvas, std::string("notes.new.") + kind)->enabled(), "Add buttons are disabled without storage");
+    canvas.setActive(false, w.now);
+    // MODS-638: the Mac builds a new NotesCanvas at every HUD open (:112): the notice once per session.
+    w.context.overlay().reset(); canvas.setActive(true, w.now);
+    check(w.toast().empty(), "Not again in the same session");
+    canvas.setActive(false, w.now); canvas.resetSession(); canvas.setActive(true, w.now);
+    check(w.toast() == "Notice|Notes storage is unavailable.", "A new HUD session tells the storage notice again");
     canvas.setActive(false, w.now);
 }
 

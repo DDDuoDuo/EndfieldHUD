@@ -83,6 +83,8 @@ public:
     // --- design::Canvas ---
     void buildPage(design::Page&) override;
     void recordingModeChanged() override {}   // no identity data (:131)
+    // A new HUD session (the Mac's new NowPlayingCanvas, :21): lyrics shown.
+    void resetSession() override;
     void renderScaleChanged() override;
     void closePopups() override;
     bool capturesPointer() const override { return Canvas::capturesPointer() || volumeOpen_; }

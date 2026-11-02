@@ -96,6 +96,9 @@ public:
     void didActivate() override;
     void didDeactivate() override;
     void willLeave() override;
+    // A new HUD session (the Mac's new WorkModeCanvas, :158-159): no laps
+    // shown (a running stopwatch keeps running in the controller).
+    void resetSession() override;
     void playEntrance(design::Point offset, double now) override;
     void recordingModeChanged() override {}       // nothing is redacted (:245)
     void reduceMotionChanged() override;          // refreshMotionPreference (:212-215)

@@ -237,7 +237,8 @@ std::string detailText(const Detail& d, core::Language l) {
 std::string trayTitle(const UpdateState& s, core::Language l) {
     if (s.hasUpdate()) {
         const auto& version = !s.updateVersion.empty() ? s.updateVersion : s.latestVersion;
-        return core::localized("Update available", "发现新版本", l) + (version.empty() ? std::string() : " · " + version) + "…";
+        // AppDelegate.updateUpdateMenu (:540-541): "Update available <version>…".
+        return core::localized("Update available", "发现新版本", l) + (version.empty() ? std::string() : " " + version) + "…";
     }
     return s.phase == Phase::checking ? core::localized("Checking for updates…", "正在检查更新…", l) : core::localized("Check for Updates…", "检查更新…", l);
 }

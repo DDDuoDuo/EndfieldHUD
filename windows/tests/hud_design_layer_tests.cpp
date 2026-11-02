@@ -8,6 +8,8 @@
 // (HUDDesignControl.swift isVisible :149-157, HUDDesignScreen.swift
 // isUnclipped :663-672), arena lifetime and the "animate a static layer
 // throws" rule. Portable; argv[1] is the optional L3 oracle fixture.
+#include "modules/hud_design_control.hpp"
+#include "modules/hud_design_scroll.hpp"
 #include "modules/hud_design_layer.hpp"
 #include <atomic>
 #include <cmath>
@@ -17,6 +19,7 @@
 #include <limits>
 #include <new>
 #include <numbers>
+#include <utility>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -92,6 +95,22 @@ void model() {
     check(l.contentRevision() == content + 1 && l.content() && !l.text(), "setContent bumps the content revision");
     l.setText(d::TextBlock("Row", d::type::rowLabel()));
     check(!l.content() && l.text() && l.contentRevision() == content + 3, "setText replaces content; the mutable accessor counts as a change");
+    // Re-applying the same drawing is no content event (a refresh in place
+    // must not re-emit the canvas: Media Assembly's switch back).
+    l.setContent(d::solid("plate", {0, 0, 100, 50}, d::white(1)));
+    r = arena.revision(); const auto same = l.contentRevision();
+    l.setContent(d::solid("plate", {0, 0, 100, 50}, d::white(1)));
+    check(arena.revision() == r && l.contentRevision() == same, "The same content again changes nothing");
+    l.setContent(d::solid("plate", {0, 0, 100, 50}, d::white(.5)));
+    check(arena.revision() > r && l.contentRevision() == same + 1, "Different content is a content event");
+    l.setText(d::TextBlock("Row", d::type::rowLabel()));
+    r = arena.revision(); const auto text = std::as_const(l).text() ? l.contentRevision() : 0;
+    l.setText(d::TextBlock("Row", d::type::rowLabel()));
+    d::editText(l, [](d::TextBlock&) {});
+    d::editText(l, [](d::TextBlock& block) { block.setText("Row"); });
+    check(arena.revision() == r && l.contentRevision() == text, "The same text again, or an edit that changes nothing, is no content event");
+    d::editText(l, [](d::TextBlock& block) { block.setText("Rows"); });
+    check(arena.revision() > r && l.contentRevision() == text + 1 && d::textOf(l).text() == "Rows", "A text edit is one content event");
     rejects([&] { l.setTint(d::white(1)); }, "A tint needs an animatable layer");
     rejects([&] { l.setContent(J::Object{}); }, "Content is one framed node");
     // setText: the frame follows the padded line box (HUDTextLayer.lineFrame :124-130).
@@ -310,6 +329,23 @@ void emission() {
     const auto& shell = lazy.parts[0].layers["children"].array()[1]["children"].array()[0];
     check(shell["anchorPoint"] == J(J::Array{.5, .5}) && shell["position"] == J(J::Array{20., 15.}) && near(shell["transform"].array()[0].array()[1].number(), 1) && near(shell["transform"].array()[1].array()[0].number(), -1), "Static CA transform in the encoder's column form");
     check(near(lazy.parts[0].surfaces[1].localBounds.x, 15) && near(lazy.parts[0].surfaces[1].localBounds.width, 10) && near(lazy.parts[0].surfaces[1].localBounds.height, 20), "The run's extent follows the transform");
+    // LIB-97: shown text leaves rasterize at the text density, so they never
+    // share a run with box-density drawing; consecutive labels share one.
+    d::LayerArena dense("t");
+    auto& card = dense.make("card"); card.setAnchorPoint({0, 0}); card.setFrame({0, 0, 200, 60});
+    card.setContent(d::solid("plate", {0, 0, 200, 60}, d::white(.1)));
+    auto& title = dense.make("title"); title.setAnchorPoint({0, 0}); title.setText(block);
+    auto& value = dense.make("value"); value.setAnchorPoint({0, 0}); value.setText(block);
+    auto& rule2 = dense.make("rule"); rule2.setAnchorPoint({0, 0}); rule2.setFrame({0, 58, 200, 2}); rule2.setContent(d::solid("r", {0, 0, 200, 2}, d::white(1)));
+    auto& ghost = dense.make("ghost"); ghost.setAnchorPoint({0, 0}); ghost.setText(block); ghost.setHidden(true);
+    card.add(title); card.add(value); card.add(rule2); card.add(ghost);
+    const auto split = d::emit(card, {&text, ""});
+    const auto& ids = split.parts[0].surfaces;
+    check(ids.size() == 3 && ids[0].id == "t.card.static.0" && ids[1].id == "t.card.static.1" && ids[2].id == "t.card.static.2", "Plate, the two labels, then the rule with the hidden label");
+    const auto& textRun = split.parts[0].layers["children"].array()[1]["children"].array();
+    check(textRun.size() == 2 && textRun[0]["id"].string() == "t.title" && textRun[1]["id"].string() == "t.value", "The labels share one run");
+    d::TextServices densest{&measurer, {}, d::TextRegion::simplifiedChinese, 4};
+    check(d::emit(card, {&densest, ""}).parts[0].surfaces.size() == 1, "No split where text and box densities agree");
     // Text without services, and the node budget.
     rejects([&] { d::emit(root, {}); }, "Text emission needs TextServices");
     d::LayerArena big("big");
@@ -373,6 +409,33 @@ void poses() {
     d::samplePoses(art, 5, out);
     check(!out[0].visible, "A placement detached since emission draws nothing");
     rejects([&] { std::vector<d::SurfacePose> wrong(2); d::samplePoses(art, 5, wrong); }, "One pose per binding");
+
+    // A presented clip (placeThumb: an 18 px raster stretched to its length):
+    // the layer's own surface is clipped to the rectangle of its presented
+    // size, so the 1.5 px rounded ends never stretch (Mac cornerRadius on the
+    // indicator's real frame, HUDProjectedTextEditor.swift:72, :183).
+    d::LayerArena bars("b");
+    auto& track = bars.make("track"); track.setAnchorPoint({0, 0}); track.setFrame({0, 0, 590, 510});
+    auto& thumb = bars.make("thumb"); thumb.setAnimatable(); track.add(thumb);
+    d::placeThumb(thumb, 3, 40, 54, d::white(.65), 1.5);
+    const auto bar = d::emit(track, {});
+    std::vector<d::SurfacePose> capped(bar.bindings.size());
+    d::samplePoses(bar, 0, capped);
+    check(bar.bindings.size() == 1 && capped[0].maskCount == 1 && near(d::thumbLength(thumb), 54), "One presented clip on the stretched thumb");
+    const auto& cap = capped[0].masks[0];
+    check(near(cap.bounds.x, -1.5) && near(cap.bounds.y, 0) && near(cap.bounds.width, 3) && near(cap.bounds.height, 54) && cap.cornerRadius == 1.5, "The presented 3 x 54 rectangle, radius 1.5 unscaled");
+    check(near(cap.world.apply({-1.5, 0}), {0, 40}) && near(cap.world.apply({1.5, 54}), {3, 94}) && near(capped[0].world.apply({0, 18}), {0, 94}),
+        "The mask frame is placed like the thumb without its stretch (top 40, bottom 94)");
+    d::placeThumb(thumb, 3, 0, 4, d::white(.65), 1.5);
+    d::samplePoses(bar, 0, capped);
+    check(near(capped[0].masks[0].bounds.height, 4) && capped[0].masks[0].cornerRadius == 1.5, "A short thumb keeps its radius (at most half its width)");
+    d::placeThumb(thumb, 3, 0, 54, d::white(.65));
+    d::samplePoses(bar, 0, capped);
+    check(capped[0].maskCount == 1 && capped[0].masks[0].cornerRadius == 0 && near(capped[0].masks[0].bounds.height, 54),
+        "The plain scroll thumbs stay square, clipped at their length (HUDScrollArea, HUDMenu.Track)");
+    check(thumb.content() && (*thumb.content())["children"].array().size() == 1 && (*thumb.content())["children"].array()[0]["bounds"] == J(J::Array{0., 0., 3., 22.}) &&
+        (*thumb.content())["children"].array()[0]["position"] == J(J::Array{0., -2.}), "The fill reaches 2 px past both ends of the 18 px raster (its texel edges fall outside the clip)");
+    rejects([&] { thumb.setClipsPresentedBounds(true, -1); }, "A presented clip radius is non-negative");
 }
 
 void hits() {

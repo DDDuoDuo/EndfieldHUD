@@ -108,7 +108,8 @@ public:
     // grey .65, 3 px at the text rect's right edge - 4, max(16, h^2 /
     // content) long, hidden without overflow) and shows it while the offset
     // moves (HUDScrollBarVisibility). The library's fixed stretched thumb
-    // raster draws it (Windows gap: square ends, the Mac's 1.5 px radius).
+    // raster draws it with the Mac's 1.5 px rounded ends kept unstretched
+    // (placeThumb capRadius).
     void editorScrolled(double offset, double overflow);
     void editorChanged();
     void editorSelectionChanged();

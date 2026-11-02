@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdio>
 #include <tuple>
+#include <utility>
 
 namespace endfield::modules {
 namespace d = design;
@@ -303,6 +304,12 @@ void ProfileCanvas::didDeactivate() {
     ++dialogGeneration_;
     if (colorPanel_ || chooser_) { colorPanel_ = false; chooser_.reset(); if (services_.dismissPanels) services_.dismissPanels(); }
     revertPreview(false);
+}
+void ProfileCanvas::resetSession() {
+    if (isActive()) return;
+    lastThemeHex_ = "C9A2FF";
+    if (std::exchange(textHidden_, false)) renderVisibility(false);
+    Canvas::resetSession();
 }
 // Timer(timeInterval: 30, repeats: true) while active (tolerance 5 s): one
 // module timer group, rescheduled in place.

@@ -174,6 +174,10 @@ void clipboardCanvas() {
     check(hasText(canvas.root(), "1 H"), "The age timer refreshes ages in place");
     canvas.setActive(false, w.now);
     check(!w.context.nextWakeTime(), "Deactivation cancels the age timer (no wake-up while hidden)");
+    // MODS-638: a new HUD session (the Mac's new ClipboardCanvas, :36, :38): All, no keyboard row.
+    canvas.selectFilter(m::ClipboardCanvas::Filter::text); (void)canvas.keyDown(keyOf(d::key::down), w.now);
+    canvas.resetSession();
+    check(canvas.filter() == m::ClipboardCanvas::Filter::all && !canvas.focusedID(), "A new HUD session shows All without a keyboard row");
     // A pin while shown slides the moved cards (:107-112).
     model.state.items.push_back(ClipboardModel::text(20, "Twenty")); model.state.items.push_back(ClipboardModel::text(21, "Twenty one"));
     canvas.storeChanged(); w.show(canvas);
@@ -264,6 +268,10 @@ void eventLogCanvas() {
     check(store.clears == 1 && canvas.header().counterText() == "00" && w.toasts()[0] == "Log cleared|" && !canvas.header().controls().back()->enabled(),
         "Confirming clears the store; Clear is disabled on an empty log");
     canvas.setActive(false, w.now);
+    // MODS-638: a new HUD session (the Mac's new EventLogCanvas, :220, :226) shows All.
+    check(canvas.filter() == m::EventLogFilter::timer, "Switching modules keeps the filter");
+    canvas.resetSession();
+    check(canvas.filter() == m::EventLogFilter::all && canvas.listOffsetForTesting() == 0, "A new HUD session shows All at the top");
     store.state.status = "This log uses a newer format; the original file is preserved.";
     canvas.storeChanged(); w.context.overlay().reset();
     check(w.toasts().empty(), "The store is observed only while active");
@@ -383,11 +391,25 @@ void volumeCanvas() {
     std::vector<d::AccessibilityItem> items; canvas.accessibilityItems(items);
     const auto offered = std::count_if(items.begin(), items.end(), [](const auto& i) { return i.id.rfind("app:", 0) == 0; });
     check(offered == 2, "Only app sliders inside the list are offered");
+    // MODS-248 (handleScroll :416-420): no guard while a tab swap runs; the wheel still glides the list.
+    {
+        const auto listPoint = centre(*control(canvas, "app:901"), canvas.root());
+        w.appearance(Language::english, false, false);   // the swap animates (no Reduce Motion)
+        static_cast<d::Tabs*>(canvas.page().tabs)->select(0, true); canvas.settleSwap();
+        static_cast<d::Tabs*>(canvas.page().tabs)->select(1, true);
+        check(canvas.transitioning() && canvas.scroll(listPoint, {0, 46}, w.now), "During the tab swap the wheel glides the app list");
+        canvas.settleSwap();
+        w.appearance(Language::english);
+    }
     // Unsupported (:286-295).
     model.state.applicationActivitySupported = false; model.state.applicationMessage.reset(); canvas.receive(model.state);
     check(canvas.listedApplications().empty() && !canvas.hasAdjustableApplication(), "Unsupported: no app is listed");
     canvas.setActive(false, w.now);
     check(model.writes.back() == "stop", "Deactivation stops the controller; routes survive (:67-70)");
+    // MODS-638: a new HUD session (the Mac's new VolumeCanvas, :15) shows Devices.
+    check(canvas.tab() == 1, "Switching modules keeps the tab");
+    canvas.resetSession();
+    check(canvas.tab() == 0 && control(canvas, "volume"), "A new HUD session shows Devices");
 }
 
 // --- The Mac oracle -------------------------------------------------------------------------------

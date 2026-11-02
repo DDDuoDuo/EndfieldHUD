@@ -145,7 +145,7 @@ private:
 };
 
 FileShelfCanvas::FileShelfCanvas(d::Context& context, FileShelfServices services, std::optional<std::string> error)
-    : Canvas(core::Module::fileShelf, context), services_(std::move(services)), pendingError_(std::move(error)) {
+    : Canvas(core::Module::fileShelf, context), services_(std::move(services)), pendingError_(error), storeError_(std::move(error)) {
     if (services_.available && services_.items) items_ = services_.items();
     clearTimer_ = timerGroup();
 }
@@ -178,6 +178,12 @@ void FileShelfCanvas::didDeactivate() {
 // No deadline runs while the HUD is hidden: a Clear still animating when the
 // shelf leaves finishes now (the Mac's asyncAfter fires 0.38 s after it began).
 void FileShelfCanvas::willLeave() { if (clearing_) { cancel(clearTimer_); finishClear(); } }
+void FileShelfCanvas::resetSession() {
+    if (isActive()) return;
+    selected_.clear(); focus_.reset(); anchor_.reset();
+    if (storeError_) pendingError_ = storeError_;
+    Canvas::resetSession();
+}
 void FileShelfCanvas::playEntrance(d::Point offset, double now) {
     Canvas::playEntrance(offset, now);
     if (card_) d::motion::enter(*card_, {24, 0}, clock(), .3);

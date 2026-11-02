@@ -125,8 +125,8 @@ void artworkOracle(const Json& data, const m::AppShortcutArtwork& art, const cha
     const auto t = m::trimDesktopIcon(96, 96, icon);
     check(t && t->width == unsigned(pattern["size"].array()[0].integer()) && t->height == unsigned(pattern["size"].array()[1].integer()), "The trim crop matches the Mac's");
     const auto c = m::shortcutTileColor(96, 96, icon); const auto mac = rgbaOf(pattern["average"]);
-    // The Mac resamples to 8 x 8 first (CoreGraphics, medium quality): the area average differs by its filter.
-    check(c && mac && near((*c)[0], mac->r, 4. / 255) && near((*c)[1], mac->g, 4. / 255) && near((*c)[2], mac->b, 4. / 255), "The tile colour matches the Mac's within its resampling");
+    // SHELL-108: the Mac's 8 x 8 premultiplied sample; CoreGraphics' filter rounds some cells by 1 of 255.
+    check(c && mac && near((*c)[0], mac->r, 1. / 255) && near((*c)[1], mac->g, 1. / 255) && near((*c)[2], mac->b, 1. / 255), "The tile colour is the Mac's 8 x 8 sample");
 }
 
 // --- Canvas rules (Swift-derived) -----------------------------------------------------------

@@ -188,10 +188,7 @@ bool ReaderCanvasOwner::receiveImportError(std::uint64_t g, std::optional<std::s
 bool ReaderCanvasOwner::acceptsDrop(core::Point client) const {
     const auto& i = *impl_;
     if (!i.canvas->acceptsImport() || i.core->capturesPointer() || i.canvas->panelOpen() || i.canvas->context().overlay().capturesInput()) return false;
-    const auto box = i.core->boxPoint(client);
-    if (!box) return false;
-    const auto bounds = i.canvas->hitBounds();
-    return box->x >= bounds.x && box->y >= bounds.y && box->x < bounds.x + bounds.width && box->y < bounds.y + bounds.height;
+    return i.core->centreContains(client);
 }
 std::optional<std::uint64_t> ReaderCanvasOwner::beginDrop(double t) {
     auto& i = *impl_;

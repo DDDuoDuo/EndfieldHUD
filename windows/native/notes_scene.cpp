@@ -227,7 +227,7 @@ struct NativeNotesCardScene::Impl {
     static bool release(Ring&ring,Renderer&r){
         if(!ring.resident)return true;need(ring.owner==&r,"Cannot retire another renderer's Notes border ring");if(!r.removeMesh(ring.mesh))return false;
         ring.resident=false;ring.uploaded=0;ring.owner=nullptr;return true;}
-    std::optional<core::Rect>indicator;std::string indicatorMesh;Renderer*indicatorOwner{};bool indicatorUploaded{};
+    std::optional<core::Rect>indicator;float indicatorOpacity{1};std::string indicatorMesh;Renderer*indicatorOwner{};bool indicatorUploaded{};
     std::optional<NativeNotesMediaSlot>mediaSlot;
     std::optional<modules::NotesMediaLayout>mediaLayout;
     modules::NotesMediaProgressPose mediaProgress;
@@ -460,7 +460,7 @@ bool NativeNotesCardScene::updatePose(const Matrix&workspace,float canvas,double
     if(i.editorSlot){for(std::size_t n=0;n<i.borderSurfaces.size();++n){const auto&frame=i.placements[i.borderSurfaces[n]];auto&after=i.afterDraws[n+1];after.world=frame.world;after.opacity=frame.opacity;after.masks.assign(frame.masks.begin(),frame.masks.end());}
         // The thumb sits inside the editor's rounded viewport (radius 3), under the border.
         auto&thumb=i.afterDraws[0];const auto&slot=*i.editorSlot;const auto t=i.indicator.value_or(core::Rect{});
-        thumb.world=world*Matrix::translation(t.x,t.y)*Matrix::scale(std::max(t.width,1e-6),std::max(t.height,1e-6),1);thumb.opacity=i.indicator?opacityValue:0;
+        thumb.world=world*Matrix::translation(t.x,t.y)*Matrix::scale(std::max(t.width,1e-6),std::max(t.height,1e-6),1);thumb.opacity=i.indicator?opacityValue*i.indicatorOpacity:0;
         thumb.masks[0]={inverse,slot.localRect,slot.cornerRadius};
         // A hidden thumb keeps a valid mask (the viewport) so the published draw stays well-formed.
         if(i.indicator)thumb.masks[1]={inverse,t,1.5};else thumb.masks[1]=thumb.masks[0];
@@ -507,8 +507,9 @@ std::span<const DrawObject>NativeNotesCardScene::frameAfterDraws()const noexcept
     if(ring)return {i.frameAfter.data(),backing?2u:1u};if(backing)return {i.frameAfter.data()+1,1};return {};}
 bool NativeNotesCardScene::uploadFrameBorder(Renderer&r){auto&i=*impl_;return i.frameActive&&Impl::upload(i.cardRing,r);}
 bool NativeNotesCardScene::uploadPlate(Renderer&r){auto&i=*impl_;return i.frameActive&&i.plateMesh.active&&Impl::upload(i.plateMesh,r);}
-bool NativeNotesCardScene::setEditorScrollIndicator(std::optional<core::Rect>thumb){auto&i=*impl_;if(thumb&&(!i.editorSlot||!std::isfinite(thumb->x)||!std::isfinite(thumb->y)||!std::isfinite(thumb->width)||!std::isfinite(thumb->height)||thumb->width<=0||thumb->height<=0))throw std::invalid_argument("Invalid Notes editor scroll indicator");
-    if(i.indicator==thumb)return false;i.indicator=thumb;i.posed=false;return true;}
+bool NativeNotesCardScene::setEditorScrollIndicator(std::optional<core::Rect>thumb,float opacity){auto&i=*impl_;if(thumb&&(!i.editorSlot||!std::isfinite(thumb->x)||!std::isfinite(thumb->y)||!std::isfinite(thumb->width)||!std::isfinite(thumb->height)||thumb->width<=0||thumb->height<=0))throw std::invalid_argument("Invalid Notes editor scroll indicator");
+    if(!std::isfinite(opacity)||opacity<0||opacity>1)throw std::invalid_argument("Invalid Notes editor scroll indicator opacity");
+    if(i.indicator==thumb&&i.indicatorOpacity==opacity)return false;i.indicator=thumb;i.indicatorOpacity=opacity;i.posed=false;return true;}
 bool NativeNotesCardScene::uploadEditorIndicator(Renderer&r){auto&i=*impl_;if(!i.editorSlot)return false;need(!i.indicatorOwner||i.indicatorOwner==&r,"Editor indicator quad belongs to a different renderer");
     // A large card's field border ring (re)uploads with it; a resized field replaces it.
     const bool ring=i.splitEditor&&Impl::upload(i.fieldRing,r);if(i.indicatorUploaded)return ring;

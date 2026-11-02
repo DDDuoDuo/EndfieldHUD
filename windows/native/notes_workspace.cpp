@@ -313,7 +313,7 @@ struct NativeNotesWorkspace::Impl {
         return core::Rect{viewport.x+std::max(0.,viewport.width-4),viewport.y+y,3,thumb};
     }
     bool applyPose(const NativeNotesWorkspacePose&p){
-        check();need(synchronized==state.revision(),"Synchronize Notes content before a frame pose");need(p.workspaceToScreen.finite()&&p.screenToClip.finite()&&p.pixelWidth>0&&p.pixelHeight>0&&std::isfinite(p.opacity)&&p.opacity>=0&&p.opacity<=1&&std::isfinite(p.time)&&(!lastTime||p.time>=*lastTime),"Invalid Notes workspace frame pose"); // updatePose clamps earlier frame times
+        check();need(synchronized==state.revision(),"Synchronize Notes content before a frame pose");need(p.workspaceToScreen.finite()&&p.screenToClip.finite()&&p.pixelWidth>0&&p.pixelHeight>0&&std::isfinite(p.opacity)&&p.opacity>=0&&p.opacity<=1&&std::isfinite(p.time)&&(!lastTime||p.time>=*lastTime)&&std::isfinite(p.caretOpacity)&&p.caretOpacity>=0&&p.caretOpacity<=1&&std::isfinite(p.indicatorOpacity)&&p.indicatorOpacity>=0&&p.indicatorOpacity<=1,"Invalid Notes workspace frame pose"); // updatePose clamps earlier frame times
         (void)core::source::inverseSourceMatrix(p.workspaceToScreen);const auto nextProjection=core::Projection::viewport(p.screenToClip*p.workspaceToScreen,p.pixelWidth,p.pixelHeight);
         bool changed{};for(auto*s:active){++stats.poseCardVisits;const auto&m=s->motion;const auto cx=s->rect.x+s->rect.width*.5,cy=s->rect.y+s->rect.height*.5;
             // Source CALayer card anchor is its center. Cancellation of the
@@ -322,11 +322,11 @@ struct NativeNotesWorkspace::Impl {
             s->effectiveWorkspace=m.x==0&&m.y==0&&m.scale==1?p.workspaceToScreen:p.workspaceToScreen*core::Matrix4::translation(cx+m.x,cy+m.y)*core::Matrix4::scale(m.scale,m.scale,m.scale)*core::Matrix4::translation(-cx,-cy);
             s->hitProjection=core::Projection::viewport(p.screenToClip*s->effectiveWorkspace,p.pixelWidth,p.pixelHeight);
             if(s->mediaProgress)s->native->setMediaProgress(s->mediaProgress->sample(p.time));
-            if(field&&field->id==s->presentation.noteID())s->native->setEditorScrollIndicator(indicatorThumb(*s));
+            if(field&&field->id==s->presentation.noteID())s->native->setEditorScrollIndicator(indicatorThumb(*s),p.indicatorOpacity);
             changed=s->native->updatePose(s->effectiveWorkspace,p.opacity*static_cast<float>(m.opacity),p.time,(s->outgoing||s->deleted)?std::optional<bool>(true):std::nullopt)||changed;
             if(options.cards.posed){const bool shown=s->outgoing||s->deleted||s->presentation.placement().visible;options.cards.posed(s->key,s->effectiveWorkspace*core::Matrix4::translation(s->rect.x,s->rect.y),shown?p.opacity*static_cast<float>(m.opacity):0.f,p.time);}if(s->drawingScene)changed=s->drawingScene->updatePose(s->effectiveWorkspace*core::Matrix4::translation(s->rect.x,s->rect.y),p.opacity*static_cast<float>(m.opacity))||changed;}
         if(field){auto*s=find(field->id);need(s&&s->native->externalEditorSlot(),"Notes field has no matching card slot");const auto r=s->native->externalEditorSlot()->localRect;
-            ProjectedEditorPose e;e.localToScreen=s->effectiveWorkspace*core::Matrix4::translation(s->rect.x+r.x,s->rect.y+r.y);e.screenToClip=p.screenToClip;e.pixelWidth=p.pixelWidth;e.pixelHeight=p.pixelHeight;e.opacity=p.opacity*static_cast<float>(s->motion.opacity);e.visible=s->visible&&!s->outgoing&&!s->deleted&&e.opacity>0;e.ownerFocused=p.ownerFocused&&e.visible;e.caretVisible=p.caretVisible;changed=field->native->setPose(e)||changed;
+            ProjectedEditorPose e;e.localToScreen=s->effectiveWorkspace*core::Matrix4::translation(s->rect.x+r.x,s->rect.y+r.y);e.screenToClip=p.screenToClip;e.pixelWidth=p.pixelWidth;e.pixelHeight=p.pixelHeight;e.opacity=p.opacity*static_cast<float>(s->motion.opacity);e.visible=s->visible&&!s->outgoing&&!s->deleted&&e.opacity>0;e.ownerFocused=p.ownerFocused&&e.visible;e.caretVisible=p.caretVisible;e.caretOpacity=p.caretOpacity;changed=field->native->setPose(e)||changed;
         }
         pose=p;lastTime=p.time;mediaTime=std::max(mediaTime,p.time);projection=nextProjection;return changed;
     }

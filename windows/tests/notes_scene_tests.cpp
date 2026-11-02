@@ -158,6 +158,11 @@ void editorIndicatorContracts(gpu::Renderer&renderer,gpu::LayerRasterizer&raster
     check(after[0].opacity==1&&after[0].masks[0].bounds==slot&&after[0].masks[1].bounds==thumb&&after[0].masks[1].cornerRadius==1.5,"The thumb is clipped by the rounded viewport and its own capsule");
     const auto p=at(218,100);check(image.pixels[p]>80&&image.pixels[p]<120&&std::abs(int(image.pixels[p])-int(image.pixels[p+1]))<=2&&std::abs(int(image.pixels[p+1])-int(image.pixels[p+2]))<=2,"Neutral translucent gray thumb paints over the backing");
     check(image.pixels[at(214,100)]<40&&image.pixels[at(218,85)]<40&&image.pixels[at(218,125)]<40,"Nothing paints outside the thumb");
+    // The owner's auto-hide (HUDScrollBarVisibility, LIB-91) multiplies the thumb: numbers only.
+    check(card.setEditorScrollIndicator(thumb,.25f)&&!card.setEditorScrollIndicator(thumb,.25f),"A new auto-hide opacity is a pose change; the same one is not");
+    card.updatePose({},1,1.5);check(after[0].opacity==.25f,"The thumb draws at the card opacity times its auto-hide opacity");
+    rejects([&]{card.setEditorScrollIndicator(thumb,1.5f);},"An auto-hide opacity outside 0...1 is rejected");
+    check(card.setEditorScrollIndicator(thumb,1)&&(card.updatePose({},1,1.6),after[0].opacity==1),"Shown again it draws at the card opacity");
     const auto rasterBefore=raster.stats().rasterizations;const auto uploads=renderer.stats().meshUploads;allocations=0;counting=true;
     try{for(unsigned frame=0;frame<120;++frame){auto moved=thumb;moved.y=slot.y+frame%50;card.setEditorScrollIndicator(moved);card.updatePose({},1,2+frame/60.);composition.present(renderer);}}catch(...){counting=false;throw;}counting=false;
     check(allocations==0&&raster.stats().rasterizations==rasterBefore&&renderer.stats().meshUploads==uploads,"Scrolling moves the thumb without allocation, raster or upload");

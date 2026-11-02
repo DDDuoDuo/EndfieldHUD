@@ -170,6 +170,15 @@ void ReaderCanvas::didDeactivate() {
     state_->setActive(false);
 }
 void ReaderCanvas::willLeave() { closePanel(); }
+void ReaderCanvas::resetSession() {
+    if (isActive()) return;
+    const bool changed = scrollOffset_ != 0 || !(imageView_ == ReaderImageView{});
+    imageBook_.reset(); imageView_ = {};
+    columnKey_.reset(); columnLocation_.reset(); scrollOffset_ = 0;
+    lastError_.reset();
+    Canvas::resetSession();
+    if (changed && renderedLanguage()) rerender();
+}
 
 // tab didSet (:19-21): any change settles the tab and remembers Reading.
 void ReaderCanvas::setTab(Tab next) {

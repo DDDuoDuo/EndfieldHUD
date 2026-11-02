@@ -66,7 +66,7 @@ void AppShortcutCanvas::reload(const ShortcutFile& file) {
 void AppShortcutCanvas::resetSession() {
     if (isActive()) return;
     dropTarget_ = false; relink_.reset();
-    if (renderedLanguage()) for (const auto& area : page().scrollAreas()) area->setOffset(0);
+    Canvas::resetSession();
 }
 void AppShortcutCanvas::iconsChanged() { if (renderedLanguage() && !editingText()) rerender(); }
 void AppShortcutCanvas::showError(std::string message) { toast(d::Icon::warn, "Notice", "提示", std::move(message)); }

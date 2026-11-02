@@ -360,7 +360,7 @@ private:
         request.acceptLabel = core::localized("Choose", "选择", language);
         request.selectionLabel = request.acceptLabel;
         request.singleFile = true;
-        request.filterName = core::localized("Images", "图片", language);
+        request.filterName = std::string(core::translated(core::imageFilesFilter, language));
         request.filterSpec = imageFilterSpec();
         return request;
     }
@@ -476,7 +476,7 @@ void ProfileArea::coverageModule(app::ModuleCoverage& step) {
             const auto& r = coverageRequest_;
             const auto spec = r ? ";" + r->filterSpec + ";" : std::string{};
             step.check(r && r->singleFile && r->title == core::localized("Choose profile picture", "选择头像", language) &&
-                       r->acceptLabel == core::localized("Choose", "选择", language) && r->filterName == core::localized("Images", "图片", language) &&
+                       r->acceptLabel == core::localized("Choose", "选择", language) && r->filterName == std::string(core::translated(core::imageFilesFilter, language)) &&
                        spec.find(";*.png;") != std::string::npos && spec.find(";*.jpg;") != std::string::npos && spec.find(";*.jpeg;") != std::string::npos &&
                        r->filterSpec.size() <= 4096,
                        "The chooser asks the shared dialog for one file through the localized Images filter of the installed decoders");

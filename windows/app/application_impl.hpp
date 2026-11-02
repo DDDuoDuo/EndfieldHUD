@@ -405,7 +405,7 @@ struct Application::Impl {
     void publishNative();
     bool pointerLocked();
     std::vector<modules::NotesShelfChoice> shelfChoices();
-    bool requestMediaPicker();
+    bool requestMediaPicker(bool notesMedia=false);
     void importReaderReference(std::uint64_t generation, std::string path, std::shared_ptr<void> lease, double time);
     void activate(const WatchActivation&);
     void registerModule(std::unique_ptr<ModuleOwner>&);

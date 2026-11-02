@@ -2,6 +2,7 @@
 #include "modules/hud_design_badges.hpp"
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
 namespace endfield::modules {
 namespace d = design;
@@ -57,6 +58,13 @@ void VolumeCanvas::didDeactivate() {
     gesture_.reset(); panOrigin_.reset();
     iconRequest_.clear();
     if (icons_.hide) icons_.hide();
+}
+void VolumeCanvas::resetSession() {
+    if (isActive()) return;
+    const bool changed = std::exchange(tab_, 0) != 0;
+    selectedSlider_ = nullptr;
+    Canvas::resetSession();
+    if (changed && renderedLanguage()) rerender();
 }
 void VolumeCanvas::show(double now) {
     if (renderedLanguage()) { env().now = now; changed(); }
@@ -432,9 +440,10 @@ bool VolumeCanvas::setGain(double value, const native::VolumeApplication& app) {
 }
 
 // --- Input (:415-440) ------------------------------------------------------------------
-// The wheel glides the app list (Windows A2) instead of jumping.
+// The wheel glides the app list (Windows A2) instead of jumping, also while a
+// tab swap runs (the Mac has no guard).
 bool VolumeCanvas::handleScroll(d::Point point, d::Point delta) {
-    if (!appList_ || transitioning()) return false;
+    if (!appList_) return false;
     const d::Rect frame = appList_->layer().frame();
     const bool inside = point.x >= frame.x && point.y >= frame.y && point.x < frame.x + frame.width && point.y < frame.y + frame.height;
     if (!inside || appList_->maximumOffset() <= 0) return false;

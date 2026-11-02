@@ -115,10 +115,13 @@ public:
     // published together once uploadEditorIndicator made both resident.
     std::span<const DrawObject> externalEditorAfterDraws()const noexcept;
     // Source HUDProjectedTextEditor scrollIndicator: card-local thumb of the
-    // open external editor, or nullopt without overflow. Numeric only (no
-    // raster); painted after the editor glyphs and before its border. The one
-    // reusable quad is uploaded explicitly and retired after unpublication.
-    bool setEditorScrollIndicator(std::optional<core::Rect> thumb);
+    // open external editor, or nullopt without overflow, and its auto-hide
+    // opacity (HUDScrollBarVisibility, sampled by the owner; LIB-91). Numeric
+    // only (no raster): one fixed unit quad stretched to the thumb, its ends
+    // rounded by the clip; painted after the editor glyphs and before its
+    // border. The one reusable quad is uploaded explicitly and retired after
+    // unpublication.
+    bool setEditorScrollIndicator(std::optional<core::Rect> thumb,float opacity=1);
     bool uploadEditorIndicator(Renderer&); // true when the after-draw list grew
     bool releaseEditorIndicator(Renderer&);
     const std::optional<NativeNotesExternalEditorSlot>& externalEditorSlot()const noexcept;

@@ -1,6 +1,6 @@
 // Generated from the authoritative macOS LocalizationCatalog.swift + LocalizationCatalogRedesign.swift (merged as
 // the Mac merges them) and the Windows-kept v1.2.0 pairs of tools/localization_windows_kept.json; do not edit
-// translations here. Rows: 1283 Mac + 1 Windows-kept.
+// translations here. Rows: 1283 Mac + 0 Windows-kept.
 // Commit: 4fda15a03ba50675e0b12d69a83efdb6526c19f6 (Windows-kept rows: ca04f142185c7de40acd8523bdb563195d90a1d1)
 // SHA256: 7162d43a038a84e34cc94c6d432e659994fa087fcbcd7fb5f04c00de6ef067c3 6ef8779e0ef708581927ab11f44e8c122e868a5dc6e2ba76fae3647d608e5436
     {" (disconnected)","（未连接）","（未連接）","（未接続）"," (연결 해제됨)"},
@@ -57,7 +57,6 @@
     {"Add event","添加事项","新增事項","予定を追加","일정 추가"},
     {"Add files","添加文件","新增檔案","ファイルを追加","파일 추가"},
     {"Add image notes","添加图片便笺","新增圖片便箋","画像メモを追加","이미지 메모 추가"},
-    {"Add image/video","添加图片/视频","新增圖片/影片","画像・動画を追加","이미지/동영상 추가"},
     {"Add image/video notes","添加图片/视频便笺","新增圖片／影片便箋","画像・動画メモを追加","이미지/동영상 메모 추가"},
     {"Add images","添加图片","新增圖片","画像を追加","이미지 추가"},
     {"Add item","添加事项","新增事項","項目を追加","항목 추가"},

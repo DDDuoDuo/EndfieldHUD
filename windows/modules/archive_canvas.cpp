@@ -487,7 +487,7 @@ void ArchiveCanvas::activateController() {
 // the canvas object, so it ends its session here.
 void ArchiveCanvas::endSession() {
     finishOpening(false);
-    unlocking_.reset(); pendingOpen_.reset(); sealing_.reset(); focusMemory_.reset(); keptCategoryOffset_.reset();
+    unlocking_.reset(); pendingOpen_.reset(); sealing_.reset(); focusMemory_.reset(); keptCategoryOffset_.reset(); reportedError_.reset();
     discardDocument();
     clearMedia();
     ++thumbnailGeneration_; metadataRequests_.clear(); thumbnailReferences_.clear(); posters_->clear();

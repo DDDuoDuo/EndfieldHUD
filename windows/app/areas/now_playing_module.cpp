@@ -11,7 +11,6 @@
 #include "native/now_playing_volume.hpp"
 #include "native/now_playing_web.hpp"
 #include "native/now_playing_web_cache.hpp"
-#include "native/screen_reader_peers.hpp"
 #include "tools/hud_design_owner.hpp"
 #include "tools/now_playing_session.hpp"
 #include <algorithm>

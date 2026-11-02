@@ -1,8 +1,8 @@
 // Contract suite of native/hud_design_automation (the one UIA element tree):
 // the design roles and patterns of LIBRARY-DESIGN.md section 9, identity per
 // id and role across refreshes, disconnection, disabled refusals, the
-// re-rooting of a re-registered group and the hit order. No UIA client, no
-// window, no input; the owner's actions are fakes that record what reached them.
+// re-rooting of a re-registered group, the hit order and the client-to-screen
+// projection. No UIA client, no visible window, no input; the owner's actions are fakes that record what reached them.
 #include "native/hud_design_automation.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -186,12 +186,25 @@ void run() {
     }
     check(group.refs == 1 && other.refs == 1, "The groups are released with the tree");
 }
+// screenReaderClientToScreen: a hidden window's client origin plus the scaled rect.
+void projection() {
+    const auto hwnd = CreateWindowExW(WS_EX_TOOLWINDOW, L"STATIC", L"Synthetic peer projection", WS_POPUP, 30, 40, 200, 100, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    check(hwnd && !IsWindowVisible(hwnd), "The projection fixture window stays hidden");
+    POINT origin{0, 0};
+    check(ClientToScreen(hwnd, &origin) != FALSE, "The fixture has a client origin");
+    const auto r = native::screenReaderClientToScreen(hwnd, 1.5, core::Rect{10, 20, 30, 40});
+    check(r && r->x == origin.x + 15 && r->y == origin.y + 30 && r->width == 45 && r->height == 60, "Logical client rects scale to physical pixels from the client origin");
+    check(!native::screenReaderClientToScreen(hwnd, 0, core::Rect{0, 0, 1, 1}) && !native::screenReaderClientToScreen(hwnd, 1, std::nullopt) &&
+          !native::screenReaderClientToScreen(nullptr, 1, core::Rect{0, 0, 1, 1}), "No window, scale or projection: no screen rect");
+    DestroyWindow(hwnd);
+}
 }
 int wmain() {
     const auto com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     try {
         check(SUCCEEDED(com), "COM apartment");
         run();
+        projection();
         CoUninitialize();
         std::cout << "HUD design automation: " << checks << " checks passed\n";
         return 0;

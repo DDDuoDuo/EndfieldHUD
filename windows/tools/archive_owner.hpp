@@ -78,6 +78,10 @@ public:
     // A HUD file drop on the open, unlocked document (<= 16): the request the
     // host imports; nullopt when the canvas refuses it.
     std::optional<modules::ArchiveMediaRequest> dropRequest(double time);
+    // SystemHUDView.documentDropURLs for Archive (:3494-3511): a document is
+    // selected, the canvas takes input, captures no pointer, shows no panel,
+    // and the logical client point is inside its centre (centreContains).
+    bool acceptsDrop(core::Point client) const;
     // After the root accepted / sampled the shared media broker.
     bool refreshMedia(double time);
     modules::ArchiveCanvas& canvas() noexcept;

@@ -482,7 +482,7 @@ std::optional<std::intptr_t> Application::Impl::onAppMessage(const NativeMessage
             if(!paths.empty()&&projectionShown()&&projectionHandoff.acceptsInput())(void)projectionCall("drop",[&]{if(const auto token=projection->preview()->prepareImportRequest()){
                 try{std::vector<tools::ProjectionImportFile>files;files.reserve(paths.size());for(auto&path:paths){auto title=utf8(utf8Path(path).filename());files.push_back({std::move(path),std::move(title),{}});}
                     projection->media()->beginImport(*token,files,projectionDrop->point,hostTime(time));
-                }catch(const std::exception&){projection->preview()->receiveImportError(*token,core::localized("Unable to open selected files","无法打开所选文件",watchAppearance.language),hostTime(time));}
+                }catch(const std::exception&){projection->preview()->receiveImportError(*token,std::string(core::translated(core::selectedFilesUnopened,watchAppearance.language)),hostTime(time));}
             }});
             refresh(time);return 0;
         }
@@ -510,13 +510,13 @@ std::optional<std::intptr_t> Application::Impl::onAppMessage(const NativeMessage
                     try{
                         if(action.kind==K::chooseLocal){
                             if(requestMediaPicker()){pickerOwner=PickerOwner::projection;pendingProjectionPicker=action;host.capturePointer(false);}
-                            else view->receiveImportError(action.generation,core::localized("File picker is busy","文件选择器正忙",watchAppearance.language),hostTime(time));
+                            else view->receiveImportError(action.generation,std::string(core::translated(core::filePickerBusy,watchAppearance.language)),hostTime(time));
                         }else if(action.kind==K::useShelf&&shelf){
                             auto lease=std::make_shared<ehud::data::ShelfFileAccess>(shelf->access(action.shelfID));need(lease->open()&&!lease->metadata().isDirectory,"Shelf Projection reference is unavailable");
                             const std::array files{tools::ProjectionImportFile{lease->metadata().windowsPath,lease->metadata().name,lease}};
                             projection->media()->beginImport(action.generation,files,{},hostTime(time));
                         }
-                    }catch(const std::exception&){view->receiveImportError(action.generation,core::localized("Unable to open selected files","无法打开所选文件",watchAppearance.language),hostTime(time));}});
+                    }catch(const std::exception&){view->receiveImportError(action.generation,std::string(core::translated(core::selectedFilesUnopened,watchAppearance.language)),hostTime(time));}});
             }
             if(projectionShown()&&projection->dismissalComplete(time))if(auto command=projectionHandoff.projectionClosed(projectionHandoff.generation()))projectionCommand(*command,time);
             refresh(time);return 0;
@@ -525,13 +525,13 @@ std::optional<std::intptr_t> Application::Impl::onAppMessage(const NativeMessage
             readerActionQueued=false;auto action=std::exchange(pendingReaderAction,{});const auto time=now();
             if(action&&reader)isolate(readerModuleOwner,"import",[&]{if(!reader->importRequestCurrent(action->generation))return;try {
                 if(action->kind==tools::ReaderImportAction::Kind::chooseLocal){
-                    if(pickerOwner!=PickerOwner::none||!mediaPicker)reader->receiveImportError(action->generation,modules::readerTranslation(modules::readerWindowsPickerBusy,watchAppearance.language),hostTime(time));
+                    if(pickerOwner!=PickerOwner::none||!mediaPicker)reader->receiveImportError(action->generation,modules::readerTranslation(core::filePickerBusy,watchAppearance.language),hostTime(time));
                     // Choose file, or Relink…'s message (Locate {0}) on the same single-book picker.
                     else {const auto&caption=action->caption;mediaPicker->setLabels({caption,caption,caption,gpu::ShelfPickerMode::singleReaderFile});
                         if(mediaPicker->request()){pickerOwner=PickerOwner::reader;pendingReaderPicker=*action;host.capturePointer(false);}
-                        else reader->receiveImportError(action->generation,modules::readerTranslation(modules::readerWindowsPickerBusy,watchAppearance.language),hostTime(time));}
+                        else reader->receiveImportError(action->generation,modules::readerTranslation(core::filePickerBusy,watchAppearance.language),hostTime(time));}
                 }else if(shelf){auto lease=std::make_shared<ehud::data::ShelfFileAccess>(shelf->access(action->shelfID));need(lease->open()&&!lease->metadata().isDirectory,"Shelf book reference is unavailable");importReaderReference(action->generation,lease->metadata().windowsPath,lease,time);}
-            }catch(const std::exception&){reader->receiveImportError(action->generation,modules::readerTranslation(modules::readerWindowsOpenFailed,watchAppearance.language),hostTime(time));}});
+            }catch(const std::exception&){reader->receiveImportError(action->generation,modules::readerTranslation(core::selectedFilesUnopened,watchAppearance.language),hostTime(time));}});
             refresh(time);return 0;
         }
         if(m.message==calendarChangedMessage){calendarRefreshQueued=false;updateCalendarWake();if(calendar)isolate(calendarModuleOwner,"calendar change",[&]{calendar->controllerChanged();});refresh(now());return 0;}
@@ -557,21 +557,21 @@ std::optional<std::intptr_t> Application::Impl::onAppMessage(const NativeMessage
                     finishAreaPicker(std::move(area));
                 }else if(owner==PickerOwner::projection&&projectionAction&&projectionShown()&&projection->preview()->importRequestCurrent(projectionAction->generation)){
                     (void)projectionCall("file dialog",[&]{auto*view=projection->preview();if(result->canceled())view->receiveImportError(projectionAction->generation,{},hostTime(time));
-                    else if(SUCCEEDED(result->result)){try{std::vector<tools::ProjectionImportFile>files;files.reserve(result->paths.size());for(const auto&path:result->paths)files.push_back({path,utf8(utf8Path(path).filename()),{}});projection->media()->beginImport(projectionAction->generation,files,{},hostTime(time));}catch(const std::exception&){view->receiveImportError(projectionAction->generation,core::localized("Unable to open selected files","无法打开所选文件",watchAppearance.language),hostTime(time));}}
-                    else view->receiveImportError(projectionAction->generation,core::localized("Unable to open selected files","无法打开所选文件",watchAppearance.language),hostTime(time));});
+                    else if(SUCCEEDED(result->result)){try{std::vector<tools::ProjectionImportFile>files;files.reserve(result->paths.size());for(const auto&path:result->paths)files.push_back({path,utf8(utf8Path(path).filename()),{}});projection->media()->beginImport(projectionAction->generation,files,{},hostTime(time));}catch(const std::exception&){view->receiveImportError(projectionAction->generation,std::string(core::translated(core::selectedFilesUnopened,watchAppearance.language)),hostTime(time));}}
+                    else view->receiveImportError(projectionAction->generation,std::string(core::translated(core::selectedFilesUnopened,watchAppearance.language)),hostTime(time));});
                 }else if(owner==PickerOwner::reader&&readerAction&&reader){
                     isolate(readerModuleOwner,"file dialog",[&]{if(!reader->importRequestCurrent(readerAction->generation))return;
                     if(result->canceled())reader->receiveImportError(readerAction->generation,{},hostTime(time));
                     else if(SUCCEEDED(result->result)&&result->paths.size()==1)importReaderReference(readerAction->generation,result->paths.front(),{},time);
-                    else reader->receiveImportError(readerAction->generation,modules::readerTranslation(modules::readerWindowsOpenFailed,watchAppearance.language),hostTime(time));});
+                    else reader->receiveImportError(readerAction->generation,modules::readerTranslation(core::selectedFilesUnopened,watchAppearance.language),hostTime(time));});
                 }else if(!result->canceled()&&owner==PickerOwner::notes&&notes&&!closing&&notes->selected()==core::Module::notes){
-                    if(SUCCEEDED(result->result))notes->importMedia(result->paths,mediaInsertionPoint,hostTime(time));else notes->showMediaError(core::localized("Unable to open selected files","无法打开所选文件",watchAppearance.language),hostTime(time));
+                    if(SUCCEEDED(result->result))notes->importMedia(result->paths,mediaInsertionPoint,hostTime(time));else notes->showMediaError(std::string(core::translated(core::selectedFilesUnopened,watchAppearance.language)),hostTime(time));
                 }else if(owner==PickerOwner::archive&&action&&archive){
                     // NSOpenPanel's completion: the files (or nothing, the panel closed) reach the canvas.
                     isolate(archiveModuleOwner,"file dialog",[&]{
                     if(result->canceled())archive->importFailed(*action,std::nullopt,hostTime(time));
                     else if(SUCCEEDED(result->result)){try{std::vector<tools::ArchiveMediaImportFile>files;files.reserve(result->paths.size());for(const auto&path:result->paths)files.push_back({path,utf8(utf8Path(path).filename()),{}});(void)archive->importFiles(*action,files,hostTime(time));}catch(const std::exception&e){archive->importFailed(*action,std::string(e.what()),hostTime(time));}}
-                    else archive->importFailed(*action,core::localized("Unable to open selected files","无法打开所选文件",watchAppearance.language),hostTime(time));});
+                    else archive->importFailed(*action,std::string(core::translated(core::selectedFilesUnopened,watchAppearance.language)),hostTime(time));});
                 }
             }refresh(now());return 0;
         }
@@ -603,14 +603,14 @@ std::optional<std::intptr_t> Application::Impl::onAppMessage(const NativeMessage
         isolate(archiveModuleOwner,"media request",[&]{if(auto request=std::exchange(pendingArchiveRequest,std::nullopt))try{using K=modules::ArchiveMediaRequest::Kind;const auto time=now();
             if(request->kind==K::shelf){need(shelf!=nullptr,"Shelf media reference is unavailable");auto lease=std::make_shared<ehud::data::ShelfFileAccess>(shelf->access(request->shelfItem));need(lease->open()&&!lease->metadata().isDirectory,"Shelf media reference is unavailable");
                 const std::array files{tools::ArchiveMediaImportFile{lease->metadata().windowsPath,lease->metadata().name,lease}};(void)archive->importFiles(*request,files,hostTime(time));}
-            else if(!requestMediaPicker())archive->importFailed(*request,core::localized("File picker is busy","文件选择器正忙",watchAppearance.language),hostTime(time));
+            else if(!requestMediaPicker())archive->importFailed(*request,std::string(core::translated(core::filePickerBusy,watchAppearance.language)),hostTime(time));
             else{pickerOwner=PickerOwner::archive;pendingArchivePicker=*request;host.capturePointer(false);}
         }catch(const std::exception&e){archive->importFailed(*request,std::string(e.what()),hostTime(now()));}});
         refresh(now());return 0;
     }
     if(ready&&notes&&m.message==tools::NotesPreview::mediaActionMessage){
         if(auto action=notes->takeMediaAction(m.wParam))try{using K=tools::NotesMediaAction::Kind;
-            if(action->kind==K::chooseLocal){mediaInsertionPoint=action->workspacePoint;if(!requestMediaPicker())notes->showMediaError(core::localized("File picker is busy","文件选择器正忙",watchAppearance.language),now());else{pickerOwner=PickerOwner::notes;host.capturePointer(false);}}
+            if(action->kind==K::chooseLocal){mediaInsertionPoint=action->workspacePoint;if(!requestMediaPicker(true))notes->showMediaError(std::string(core::translated(core::filePickerBusy,watchAppearance.language)),now());else{pickerOwner=PickerOwner::notes;host.capturePointer(false);}}
             else if(action->kind==K::chooseShelf){
                 notes->presentShelfMedia(shelfChoices(),action->workspacePoint,now());
             }else if(shelf)notes->importMedia(shelf->access(action->itemID),action->workspacePoint,now());

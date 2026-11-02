@@ -1019,6 +1019,146 @@ void relinkLedger(HWND hwnd,gpu::Renderer&renderer,const std::filesystem::path&f
      check(rows.size()==1&&rows[0].state==mig::RelinkState::dismissed,"The queued write dismisses the deleted note's row");
      f.release();}
 }
+// The open field's HUDProjectedTextEditor chrome (LIB-87 / LIB-91): the caret
+// blinks 1, 1, 0, 0, 1 over 1.06 s only in a focused field (solid after every
+// move, frames only during its two 80 ms ramps, one wake per ramp, solid and
+// wake-free under Reduce Motion), also in the paragraph-chunked long editor;
+// the scroll indicator shows while the text scrolls and hides 1 s later.
+void editorChrome(HWND hwnd,gpu::Renderer&renderer,const std::filesystem::path&formats){
+    gpu::LayerRasterizer raster;Fixture f(hwnd,renderer,raster,formats);const auto note=savedNotes(f.root.path).front();const core::Point body{note.x+30,note.y+45};
+    const auto opacity=[&](std::string_view id){const auto*d=f.draw(id);return d?double(d->opacity):-1.;};
+    const auto at=[&](double t){f.time=t;if(const auto wake=f.preview->nextWakeTime();wake&&*wake<=t)(void)f.preview->deadline(t);f.frame();};
+    const auto blinkAt=[](double origin,double fraction){return origin+fraction*1.06;};
+    check(f.pointer(app::PointerKind::doubleClick,body),"Open the sample note");const double shown=f.time;
+    check(opacity("projected-editor-caret")==1&&!f.preview->requiresFrames(f.time),"The caret appears solid; a still caret asks for no frames");
+    auto wake=f.preview->nextWakeTime();check(wake&&std::abs(*wake-blinkAt(shown,.5))<1e-9,"The idle caret sleeps until its first fade (.5 of 1.06 s)");
+    check(opacity("/editor-scroll-indicator-quad/thumb")<=0,"Opening at the top shows no scroll indicator");
+    at(blinkAt(shown,.54));const auto fading=opacity("projected-editor-caret");
+    check(std::abs(fading-.5)<.02&&f.preview->requiresFrames(f.time),"Halfway through the 80 ms fade the caret is half visible and asks for frames");
+    at(blinkAt(shown,.7));check(opacity("projected-editor-caret")==0&&!f.preview->requiresFrames(f.time),"Between the fades the caret is hidden without frames");
+    wake=f.preview->nextWakeTime();check(wake&&std::abs(*wake-blinkAt(shown,.92))<1e-9,"The next wake is the fade back in (.92)");
+    at(blinkAt(shown,.96));check(std::abs(opacity("projected-editor-caret")-.5)<.02,"The caret fades back in");
+    // A scroll shows the indicator (fade in .15 s), then it hides 1 s after the last scroll (fade out .30 s).
+    f.time+=.01;check(f.preview->wheel({body.x,body.y,-1,false,0,3},f.time),"The wheel scrolls the open field");f.frame();const double scrolled=f.time;
+    at(scrolled+.2);check(opacity("/editor-scroll-indicator-quad/thumb")==1,"Scrolling shows the indicator");
+    at(scrolled+.9);check(opacity("/editor-scroll-indicator-quad/thumb")==1,"It lingers for a second");
+    wake=f.preview->nextWakeTime();check(wake&&*wake<=scrolled+1+1e-9,"The hide is a wake, not a frame loop");
+    at(scrolled+1);at(scrolled+1.15);const auto hiding=opacity("/editor-scroll-indicator-quad/thumb");check(hiding>0&&hiding<1&&f.preview->requiresFrames(f.time),"Then it fades out with frames");
+    at(scrolled+1.4);check(opacity("/editor-scroll-indicator-quad/thumb")==0,"And stays hidden");
+    // A move (typing) makes the caret solid again and restarts the cycle.
+    f.tick(.3);check(f.key(app::KeyKind::character,'Q'),"Type into the field");const double typed=f.time;
+    check(opacity("projected-editor-caret")==1,"A caret move is solid at once (typing at the end also scrolls: the indicator fades in)");
+    wake=f.preview->nextWakeTime();check(wake&&*wake<=blinkAt(typed,.5)+1e-9,"The blink restarts from the move");
+    // The HUD in the background: no caret, no blink, no frames.
+    at(blinkAt(typed,.54));f.preview->update(f.workspace*f.design,f.settings,1,f.time,false);f.preview->upload(renderer);f.composition.present(renderer);
+    check(opacity("projected-editor-caret")==0&&!f.preview->requiresFrames(f.time),"An unfocused HUD hides the caret and stops the blink");
+    wake=f.preview->nextWakeTime();check(!wake||std::abs(*wake-blinkAt(typed,.58))>1e-6,"An unfocused HUD keeps no blink wake");
+    f.frame();check(opacity("projected-editor-caret")==1,"The caret is solid again when the HUD comes back");
+    // Reduce Motion: solid, no frames, no wakes.
+    tools::NotesPreviewPreferences p;p.reduceMotion=true;p.workspace.palette=endfield::modules::NotesPalette::source(true,{1,.83,.12,1});p.workspace.editor={{29./255,29./255,29./255,1},p.workspace.palette.accent};p.workspace.compositionColor=p.workspace.palette.primary;
+    check(f.preview->applyPreferences(p,f.time),"Reduce Motion is applied");f.frame();
+    check(f.pointer(app::PointerKind::doubleClick,body),"Reopen under Reduce Motion");const double reduced=f.time;
+    at(blinkAt(reduced,.54));wake=f.preview->nextWakeTime();
+    check(opacity("projected-editor-caret")==1&&!f.preview->requiresFrames(f.time)&&(!wake||*wake>=reduced+1-1e-9),"Reduce Motion keeps the caret solid without frames or blink wakes (only the indicator's hide)");
+    f.release();
+    // The paragraph-chunked long editor (past 4,096 units) blinks too.
+    data::Note longNote;longNote.x=180;longNote.y=245;longNote.width=240;longNote.height=145;
+    for(int line=0;line<120;++line)longNote.text+="Line "+std::to_string(line)+" of a long synthetic note for the chunked editor\n";
+    check(longNote.text.size()>4096,"The long fixture passes the chunking bound");
+    gpu::LayerRasterizer longRaster;Fixture g(hwnd,renderer,longRaster,formats,std::span<const data::Note>(&longNote,1));
+    check(g.pointer(app::PointerKind::doubleClick,{longNote.x+30,longNote.y+45})&&g.draw("notes-long-editor-caret"),"The long note opens in the chunked editor");const double longShown=g.time;
+    const auto longCaret=[&]{const auto*d=g.draw("notes-long-editor-caret");return d?double(d->opacity):-1.;};
+    const auto rasters=longRaster.stats().rasterizations;
+    g.time=blinkAt(longShown,.54);if(const auto w=g.preview->nextWakeTime();w&&*w<=g.time)(void)g.preview->deadline(g.time);g.frame();
+    check(std::abs(longCaret()-.5)<.02,"The long editor's caret fades (ProjectedEditorPose::caretOpacity)");
+    g.time=blinkAt(longShown,.7);g.frame();check(longCaret()==0&&longRaster.stats().rasterizations==rasters,"Its blink is numeric: no raster");
+    g.release();
+}
+// HUDProjectedTextView.rightMouseDown / menu(for:) (LIB-90) on the open
+// field, through an injected menu (no real menu ever opens): the caret moves
+// only for a click outside the selection, the menu offers Cut / Copy / Paste
+// / Select All by state and runs them through the field's clipboard paths; a
+// right press outside the field stays the canvas's.
+void editMenu(HWND hwnd,gpu::Renderer&renderer,const std::filesystem::path&formats){
+    gpu::LayerRasterizer raster;Fixture f(hwnd,renderer,raster,formats);const auto note=savedNotes(f.root.path).front();const auto text=wide(note.text);const core::Point body{note.x+30,note.y+45};
+    auto clipboard=std::make_shared<SyntheticClipboard>();f.preview->setClipboard(clipboard);const tools::NotesKeyModifiers control{true,false,false,false},shift{false,true,false,false};
+    struct Shown{core::Point at;bool cut,copy,paste;};std::vector<Shown> shown;std::optional<endfield::modules::design::EditCommand> answer;
+    f.preview->setEditMenu([&](core::Point at,bool cut,bool copy,bool paste){shown.push_back({at,cut,copy,paste});return answer;});
+    const auto right=[&](core::Point p){const bool handled=f.pointer(app::PointerKind::down,p,app::PointerButton::right);f.pointer(app::PointerKind::up,p,app::PointerButton::right);return handled;};
+    check(!right(body)&&shown.empty(),"Without an open field a right press is the canvas's (no menu)");
+    check(f.pointer(app::PointerKind::doubleClick,body)&&f.key(app::KeyKind::down,VK_HOME,control),"Open the note at its start");
+    for(int n=0;n<3;++n)f.key(app::KeyKind::down,VK_RIGHT,shift);
+    answer=endfield::modules::design::EditCommand::copy;const auto inside=f.caretPoint(1);
+    check(right(inside)&&shown.size()==1&&shown[0].cut&&shown[0].copy&&!shown[0].paste&&coordinatesNear(shown[0].at.x,inside.x)&&coordinatesNear(shown[0].at.y,inside.y),
+        "A right press in the selection opens the menu at the pointer: Cut and Copy offered, nothing to paste");
+    auto copied=clipboard->readText(gpu::notesClipboardMaximumUnits);check(copied&&copied->text==text.substr(0,3),"Copy takes the selection, which the press kept");
+    answer=endfield::modules::design::EditCommand::paste;
+    check(right(f.caretPoint(6))&&shown.size()==2&&!shown[1].cut&&!shown[1].copy&&shown[1].paste,"A press outside the selection moves the caret there first: only Paste is offered");
+    answer=std::nullopt;check(!right({note.x+30,note.y+12})&&shown.size()==2,"A right press on the card header is not the field's (a text card has no eraser)");
+    check(f.key(app::KeyKind::down,VK_ESCAPE),"Finish");f.tick(.2);
+    check(wide(savedNotes(f.root.path).front().text)==text.substr(0,6)+text.substr(0,3)+text.substr(6),"Paste inserted the copy at the clicked caret");
+    check(f.pointer(app::PointerKind::doubleClick,body),"Reopen");answer=endfield::modules::design::EditCommand::selectAll;
+    check(right(body)&&shown.size()==3,"Select All from the menu");
+    answer=endfield::modules::design::EditCommand::copy;check(right(f.caretPoint(2))&&shown.size()==4&&shown[3].copy,"A press inside the full selection keeps it");
+    copied=clipboard->readText(gpu::notesClipboardMaximumUnits);check(copied&&copied->text==text.substr(0,6)+text.substr(0,3)+text.substr(6),"Copy took the whole note");
+    answer=endfield::modules::design::EditCommand::cut;check(right(f.caretPoint(2))&&f.key(app::KeyKind::character,'Z'),"Cut, then type");
+    check(f.key(app::KeyKind::down,VK_ESCAPE),"Finish");f.tick(.2);check(savedNotes(f.root.path).front().text=="Z","Cut removed the selection");
+    f.release();
+}
+// LIB-85 (HUDDesignTextField.textDidEndEditing): a press that moves the first
+// responder commits an editing design field: a press Notes takes, and one no
+// module owner takes (the overlay owner observes it last in the pointer
+// chain, never consuming it). A press inside the field's own owner is the
+// canvas's (Canvas::pointerDown).
+struct FocusHost final:endfield::modules::design::TextEditorHost{
+    unsigned ends{};std::string typed;
+    bool begin(const endfield::modules::design::TextEditRequest&)override{return true;}
+    void end(endfield::modules::design::TextField&)override{++ends;}
+    std::string text(const endfield::modules::design::TextField&)const override{return typed;}
+    std::optional<std::pair<std::uint32_t,std::uint32_t>>selection(const endfield::modules::design::TextField&)const override{return std::nullopt;}
+    bool hasMarkedText(const endfield::modules::design::TextField&)const override{return false;}
+    void setText(endfield::modules::design::TextField&,std::string_view)override{}
+    void reproject(endfield::modules::design::TextField&,endfield::modules::design::Rect)override{}
+};
+struct FieldCanvas final:endfield::modules::design::Canvas{
+    using Canvas::Canvas;endfield::modules::design::TextField*field{};std::vector<std::string>commits;
+    void buildPage(endfield::modules::design::Page&page)override{
+        auto&f=page.make<endfield::modules::design::TextField>("name","Name","Endmin","Name",endfield::modules::design::Size{260,34});
+        page.layer().add(f.layer());page.add(f);registerField(f);f.onCommit=[this](const std::string&t){commits.push_back(t);};field=&f;}
+};
+void designFocus(HWND hwnd,gpu::Renderer&renderer,const std::filesystem::path&formats){
+    gpu::LayerRasterizer raster;tools::DesignOverlayOptions o;o.raster.pixelsPerPoint=1;o.window=hwnd;tools::DesignOverlayOwner overlay(raster,o);
+    Fixture f(hwnd,renderer,raster,formats);f.preview->setDesignContext(&overlay.context());const auto note=savedNotes(f.root.path).front();
+    FocusHost host;overlay.context().setEditorHost(&host);FieldCanvas canvas(core::Module::system,overlay.context());canvas.show(f.time);canvas.setActive(true,f.time);
+    host.typed="Endministrator";canvas.field->beginEditing();check(canvas.field->editing(),"The design field edits on the fake host");
+    check(!f.pointer(app::PointerKind::down,{1270,790})&&canvas.field->editing(),"A press Notes does not take moves nothing here");
+    check(f.pointer(app::PointerKind::down,{note.x+32,note.y+12})&&!canvas.field->editing()&&host.ends==1&&canvas.commits==std::vector<std::string>{"Endministrator"},
+        "A press Notes takes (a card) commits the editing design field");
+    f.pointer(app::PointerKind::up,{note.x+32,note.y+12});
+    const auto routing=overlay.routing();check(routing.pointer==tools::DesignOverlayOwner::shellPressPriority&&routing.pointer>99,"The overlay owner sits last in the pointer chain");
+    host.typed="Second";canvas.field->beginEditing();
+    check(!overlay.pointer({app::PointerKind::move,app::PointerButton::none,10,10,0},f.time)&&!overlay.pointer({app::PointerKind::down,app::PointerButton::right,10,10,0},f.time)&&canvas.field->editing(),
+        "Moves and right presses commit nothing");
+    check(!overlay.pointer({app::PointerKind::down,app::PointerButton::left,10,10,0},f.time)&&!canvas.field->editing()&&canvas.commits.back()=="Second",
+        "A left press no module owner took commits the field and stays unconsumed (the shell takes it)");
+    host.typed="Third";canvas.field->beginEditing();overlay.context().editorFocusMoved(&canvas);
+    check(canvas.field->editing(),"The canvas that got the press keeps its own field to Canvas::pointerDown");
+    canvas.field->endEditing(true);check(canvas.commits.back()=="Third"&&host.ends==3,"The field ends normally");
+    overlay.context().setEditorHost(nullptr);f.release();
+}
+// HUDNotesInteraction.textDidEndEditing (:287-300): a press on the centre
+// (no note, no pop-up) makes SystemHUDView first responder, so the open
+// desktop field saves and closes; the press itself stays the centre's
+// (Notes routes first and does not consume it). A format button keeps the
+// field (mouseDownInWorkspace opens its pop-up instead).
+void centrePressFinishes(HWND hwnd,gpu::Renderer&renderer,const std::filesystem::path&formats){
+    gpu::LayerRasterizer raster;Fixture f(hwnd,renderer,raster,formats);const auto note=savedNotes(f.root.path).front();const core::Point body{note.x+30,note.y+45};
+    check(f.pointer(app::PointerKind::doubleClick,body)&&f.key(app::KeyKind::down,VK_END)&&f.key(app::KeyKind::character,'!')&&f.preview->textCursorAt(body),"Open the note and type");
+    check(!f.pointer(app::PointerKind::down,{1270,790})&&!f.preview->textCursorAt(body),"A press on no note closes the field and stays unconsumed for the centre");
+    f.pointer(app::PointerKind::up,{1270,790});f.tick(.2);
+    check(savedNotes(f.root.path).front().text==note.text+"!","The closed field saved its text");
+    f.release();
+}
 int wmain(int argc, wchar_t** argv) {
     try {
         check(argc == 3, "Pass HUD shader and the Notes format resources (resources/notes-format)");
@@ -1042,6 +1182,10 @@ int wmain(int argc, wchar_t** argv) {
         relinkLedger(window.hwnd,renderer,formats);
         formattingPreview(window.hwnd,renderer,formats);
         desktopControls(window.hwnd,renderer,formats);
+        editorChrome(window.hwnd,renderer,formats);
+        editMenu(window.hwnd,renderer,formats);
+        designFocus(window.hwnd,renderer,formats);
+        centrePressFinishes(window.hwnd,renderer,formats);
         renderer.reset();
         std::cout << "Native Notes preview integration: " << checks << " checks passed\n";
         return 0;

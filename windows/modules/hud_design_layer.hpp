@@ -118,6 +118,16 @@ public:
     bool masksToBounds() const noexcept { return clips_; }
     void setMasksToBounds(bool, double cornerRadius = 0);
     double maskCornerRadius() const noexcept { return clipRadius_; }
+    // For a layer whose scale channels stand for a bounds change (placeThumb's
+    // fixed raster stretched to its length): its OWN surfaces are clipped to
+    // the rectangle of its presented size (bounds x scale) with an unscaled
+    // corner radius, so the ends stay crisp and a radius keeps its shape
+    // however far the raster stretches (CALayer.contentsCenter's unstretched
+    // cap insets). A pose mask, no raster; like every plane mask the clip is
+    // hard-edged (no coverage antialiasing).
+    void setClipsPresentedBounds(bool, double cornerRadius = 0);
+    bool clipsPresentedBounds() const noexcept { return presentedClip_; }
+    double presentedClipRadius() const noexcept { return presentedRadius_; }
 
     // --- Model channel values (end state) -----------------------------------
     double value(Channel) const noexcept;     // defaults: scale 1, opacity 1, others 0
@@ -126,6 +136,8 @@ public:
     void setTint(std::optional<Color>);       // immediate; animatable layers only (throws otherwise)
 
     // --- Content (this layer's own drawing, below its sublayers) -------------
+    // Setting what the layer already draws (equal node or block) is no
+    // content event: refreshes in place re-apply their state without a re-emit.
     void setContent(Json node);               // a node from hud_design_nodes (its frame = bounds)
     const std::optional<Json>& content() const noexcept { return content_; }
     void setText(TextBlock);                  // HUDTextLayer: frame follows block.layerFrame()
@@ -192,8 +204,8 @@ private:
     Size bounds_;
     Point position_, anchor_;
     Affine base_;
-    double z_{}, clipRadius_{};
-    bool hidden_{}, clips_{}, partRoot_{};
+    double z_{}, clipRadius_{}, presentedRadius_{};
+    bool hidden_{}, clips_{}, partRoot_{}, presentedClip_{};
     std::array<double, channelCount> model_{0, 0, 1, 1, 0, 1, 1};
     std::optional<Color> tint_;
     std::optional<Json> content_;
@@ -307,6 +319,9 @@ struct EmitOptions { const TextServices* text{}; std::string partPrefix; };
 //    surface named by its layer id, every other run "<part id>.static.N". A
 //    static layer cut by a boundary is emitted as shells "<id>", "<id>~1" ...
 //    (same frame, CA transform, model opacity, hidden and clip baked).
+//    Shown text leaves (oversampled: textContentsScale above the box
+//    density) never share a run with other drawing: consecutive ones form
+//    text runs, so only text rasterizes at the text density (LIB-97).
 //  - A run is one group node (allowsGroupOpacity false): bounds = the union of its
 //    frames (padded text, transformed shells; the placement's bounds when it
 //    clips, then with its masksToBounds/cornerRadius), position = its origin.

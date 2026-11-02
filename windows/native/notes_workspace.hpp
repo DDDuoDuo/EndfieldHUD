@@ -90,6 +90,12 @@ struct NativeNotesWorkspacePose {
     core::Matrix4 workspaceToScreen,screenToClip;
     unsigned pixelWidth{},pixelHeight{};float opacity{1};
     double time{};bool ownerFocused{},caretVisible{true};
+    // The open field's HUDProjectedTextEditor chrome, sampled by the owner on
+    // its clock: the caret's blink phase (modules::design::CaretBlink, LIB-87;
+    // ProjectedEditorPose::caretOpacity) and the scroll indicator's auto-hide
+    // opacity (modules::design::ScrollBarVisibility, LIB-91). Numbers only: a
+    // change repositions nothing and paints nothing.
+    float caretOpacity{1},indicatorOpacity{1};
 };
 struct NativeNotesWorkspaceHit {
     enum class Kind {body,resize,action,editor};

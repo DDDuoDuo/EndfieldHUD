@@ -52,7 +52,9 @@ std::string ownedReaderPDF(){
 std::string utf8(const fs::path&value){const auto bytes=value.u8string();return {reinterpret_cast<const char*>(bytes.data()),bytes.size()};}
 fs::path utf8Path(std::string_view value){return fs::path(std::u8string(reinterpret_cast<const char8_t*>(value.data()),value.size()));}
 std::string narrow(std::wstring_view value){if(value.empty())return {};const auto count=WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,value.data(),static_cast<int>(value.size()),nullptr,0,nullptr,nullptr);need(count>0,"Invalid Windows text");std::string out(count,'\0');need(WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,value.data(),static_cast<int>(value.size()),out.data(),count,nullptr,nullptr)==count,"Windows text conversion failed");return out;}
-core::Language settingsLanguage(const ehud::data::Settings&value){const auto language=core::languageFromSetting(value.string("language")).value_or(core::Language::system);if(language!=core::Language::system)return language;wchar_t name[LOCALE_NAME_MAX_LENGTH]{};if(!GetUserDefaultLocaleName(name,LOCALE_NAME_MAX_LENGTH))return core::Language::english;const auto text=narrow(name);const std::array<std::string_view,1>preferred{text};return core::resolveLanguage(preferred);}
+// System resolves the preferred UI-language list (gpu::preferredSystemLanguage,
+// L10n.resolveLanguage of Locale.preferredLanguages), not the regional format.
+core::Language settingsLanguage(const ehud::data::Settings&value){const auto language=core::languageFromSetting(value.string("language")).value_or(core::Language::system);return language!=core::Language::system?language:gpu::preferredSystemLanguage();}
 // HUDTextLanguage.tag(for:): the CJK region of the standard faces. English
 // uses the first CJK language the user prefers (gpu::preferredSystemRegion),
 // Simplified Chinese when there is none; re-read on every configuration and
@@ -458,7 +460,7 @@ void Application::Impl::construct(){
         // Mac 1.3.0: the left icons sit over their captions by their visible glyph (B2b).
         nativeAppearance->setIconGlyphObserver([this](std::string_view id,core::Rect glyph){(void)labelPlan->setIconGlyph(id,glyph);});}startup.mark("native-bindings-content-catalog");
     labels=std::make_unique<gpu::WatchLabelPresentation>(*labelPlan,layers);for(const auto&id:labelPlan->buttonIDs())available.push_back({id,false,false});
-    chromeContent.reading=source::DesktopClockReading{"12:34:56","WED Oct 7"};chromeContent.uppercaseShortcut="CTRL + `";chromeContent.localizedClose="Click outside to close";
+    chromeContent.reading=source::DesktopClockReading{"12:34:56","WED Oct 7"};chromeContent.uppercaseShortcut="CTRL + `";chromeContent.localizedClose="CLICK OUTSIDE TO CLOSE";
     if(includesChrome){chromeBindings=source::DesktopChromeBindings::fromJson(chromeJSON["bindings"]);chromePlan=std::make_unique<source::DesktopChromeProjectionPlan>(*scene,*camera,*animation,*chromeBindings);chrome=std::make_unique<gpu::NativeChromePresentation>(*chromePlan,layers,chromeJSON,rasterOptions,rasterizer);
         chrome->setContent(chromeContent);}startup.mark("chrome-artwork");
     // A packet without the exported profile captions keeps the packet card.
@@ -821,7 +823,10 @@ void Application::Impl::systemChange(std::uint32_t message,double time){
     time=hostTime(time);
     if(calendar)isolate(calendarModuleOwner,"system change",[&]{calendarSystemChanged();updateCalendarWake();});
     if(message==WM_SETTINGCHANGE&&configuration.string("theme")=="system")configurationPending=true;
-    if(message==WM_SETTINGCHANGE&&rasterizer.fontLanguage()!=textFontLanguage(settingsLanguage(configuration)))configurationPending=true;
+    // A system-language change re-applies the configuration when the System
+    // UI language or the text region moves (LIB-L16: a language change that
+    // keeps the region still re-localizes every module).
+    if(message==WM_SETTINGCHANGE){const auto language=settingsLanguage(configuration);if(watchAppearance.language!=language||rasterizer.fontLanguage()!=textFontLanguage(language))configurationPending=true;}
     if(message==WM_SETTINGCHANGE)applyTrayIcon(); // ImmersiveColorSet: the taskbar theme inks the template
     if(message==WM_SETTINGCHANGE&&visibleMode()){BOOL animations=TRUE;if(SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION,0,&animations,0)&&systemAnimationsOff!=(animations==FALSE))configurationPending=true;}
     if(message==WM_TIMECHANGE)broadcast(HostEvent::Kind::timeChanged,time);
@@ -958,7 +963,7 @@ void Application::Impl::constructNotes(){
     // OverlayController.lastSystemModule starts at Map. The fresh owner has
     // had no event yet, so its first selection completes before any opening.
     if(production())notes->select(core::Module::map,hostTime(endfield::app::now()-1));
-    mediaPicker=std::make_unique<gpu::NativeShelfFilePicker>(gpu::ShelfPickerRoute{static_cast<HWND>(host.hwnd()),mediaPickerMessage,serviceGeneration},gpu::ShelfPickerLabels{"添加图片/视频","添加","添加所选文件"});
+    mediaPicker=std::make_unique<gpu::NativeShelfFilePicker>(gpu::ShelfPickerRoute{static_cast<HWND>(host.hwnd()),mediaPickerMessage,serviceGeneration},gpu::ShelfPickerLabels{{},{},{},gpu::ShelfPickerMode::media});
     session->setHitFilter([this](std::string_view,core::Point p){return !registry.covers(p);},0);
     notesModuleOwner=notesModule(*notes,[this]{return areaClock();},[this]{automationChanged();refresh(now());});registerModule(notesModuleOwner);
     startup.mark("isolated-notes-owner");
@@ -1722,7 +1727,7 @@ void Application::Impl::updateTrayMenu(){
         const auto&b=systemServices->battery();
         const auto percent=b.percent?std::to_string(*b.percent)+"%":core::localized("Unknown charge","电量未知",language);
         const auto state=b.charging.value_or(false)?core::localized("Charging","正在充电",language):b.ac_connected.value_or(false)?core::localized("Power connected","已连接电源",language):core::localized("On battery","使用电池",language);
-        const auto text=b.present.value_or(false)?percent+" · "+state:core::localized("No internal battery · Preview available","无内置电池 · 可预览效果",language);
+        const auto text=b.present.value_or(false)?percent+" — "+state:core::localized("No internal battery — preview available","无内置电池，可预览效果",language);
         menu.push_back({gpu::TrayAction::none,wide(text),false});menu.push_back({gpu::TrayAction::none,{},false,false,true});
         // AppDelegate.updateMenu: "EndfieldHUD — <description>" tooltip.
         auto tip=L"EndfieldHUD \u2014 "+wide(text);
@@ -1733,7 +1738,7 @@ void Application::Impl::updateTrayMenu(){
     std::wstring work=t("Work Mode","工作模式");
     if(workMode){using P=modules::WorkModePhase;const auto phase=workMode->snapshot(now()).phase;
         const auto state=phase==P::running?core::localized("Active","进行中",language):phase==P::paused?core::localized("Paused","已暂停",language):phase==P::stopped?core::localized("Stopped","已停止",language):phase==P::completed?core::localized("Countdown complete","倒计时结束",language):std::string{};
-        if(!state.empty())work+=L" · "+wide(state);}
+        if(!state.empty())work+=L" \u2014 "+wide(state);} // AppDelegate.updateWorkMenu: "Work Mode — <state>"
     menu.push_back({gpu::TrayAction::workMode,std::move(work),bool(workMode)});
     menu.push_back({gpu::TrayAction::settings,t("Settings…","设置…"),bool(settingsUI)});
     if(power)menu.push_back({gpu::TrayAction::previewCharging,std::move(powerPreview),true});
@@ -1969,7 +1974,10 @@ void Application::Impl::sessionEnding(SessionEnd phase,std::uint32_t reason){
     // its decline runs now, on this UI thread, before the loop stops.
     declineRestart();runRestartDeclined();
     const auto time=now();const auto window=static_cast<HWND>(host.hwnd());
-    const auto reasonText=wide(core::localized("Saving EndfieldHUD data…","正在保存 EndfieldHUD 数据…",watchAppearance.language==core::Language::system?core::Language::english:watchAppearance.language));
+    // The shutdown-block reason Windows lists while the records save (no Mac
+    // counterpart): Windows-only text in the five source languages.
+    static constexpr core::TranslationEntry savingData{"Saving EndfieldHUD data…","正在保存 EndfieldHUD 数据…","正在儲存 EndfieldHUD 資料…","EndfieldHUD のデータを保存しています…","EndfieldHUD 데이터 저장 중…"};
+    const auto reasonText=wide(core::translated(savingData,watchAppearance.language));
     const bool blocked=ShutdownBlockReasonCreate(window,reasonText.c_str())!=FALSE;
     try{
         if(phase==SessionEnd::ending){
@@ -2036,7 +2044,9 @@ void Application::Impl::applyConfiguration(double time){
     headerClock.setFormat(configuration.string("clockFormat")=="twelveHour"?modules::HUDClockFormat::twelveHour:modules::HUDClockFormat::twentyFourHour,time);
     const auto previousClockStyle=chromeContent.style;
     const auto clock=configuration.string("clockStyle");chromeContent.style=clock=="split"?source::DesktopClockStyle::split:clock=="dial"?source::DesktopClockStyle::dial:clock=="rail"?source::DesktopClockStyle::rail:clock=="stacked"?source::DesktopClockStyle::stacked:source::DesktopClockStyle::digital;
-    chromeContent.localizedClose=core::localized("Click outside to close","点击外侧关闭",watchAppearance.language);chromeContent.uppercaseShortcut=summonHotkeyEnabled()?modules::settingsShortcutTitle(modules::settingsShortcut(configuration)):std::string{};
+    // SystemHUDView.hintLabel (:2654): the shortcut's name uppercased (key titles are ASCII), shown also
+    // while opening by hotkey is off; the close text is the catalog row.
+    chromeContent.localizedClose=core::localized("CLICK OUTSIDE TO CLOSE","点击外侧关闭",watchAppearance.language);chromeContent.uppercaseShortcut=modules::design::asciiUppercase(modules::settingsShortcutTitle(modules::settingsShortcut(configuration)));
     // The clock's status row shows Recording mode (B2b, HUDClockStyleArtwork.updateStatus).
     chromeContent.recording=configuration.recordingMode();chromeContent.reduceMotion=settings.reduceMotion;
     if(chrome){chrome->setAppearance({watchAppearance.dark,watchAppearance.dark?a:source::sourceBlackBlend(a,.35)});updateClock();if(chromeContent.style!=previousClockStyle)clockStyleChanged(previousClockStyle,time);}
@@ -2297,9 +2307,14 @@ bool Application::Impl::present(double time,bool submit){
     if(centerLogoRetire)retireCenterLogo();
     if(readerTrace&&reader&&notes&&notes->selected()==core::Module::reader)readerTrace->record(false,time,reader->scrollSnapshot(),0,0,std::chrono::duration<double,std::milli>(Clock::now()-traceFrameStart).count());return true;
 }
-bool Application::Impl::requestMediaPicker(){
+// The media NSOpenPanels (files only, several): Archive (ArchiveCanvas.swift
+// :1035) and Projection (ProjectionWorkspaceView.swift:416) set no title or
+// prompt (the dialog's own "Open"); Notes (HUDNotesInteraction.swift
+// :464-465) titles it "Add image/video notes" with an "Add media" button.
+bool Application::Impl::requestMediaPicker(bool notesMedia){
     if(pickerOwner!=PickerOwner::none||!mediaPicker)return false;
-    mediaPicker->setLabels({core::localized("Add image/video","添加图片/视频",watchAppearance.language),core::localized("Add","添加",watchAppearance.language),core::localized("Add selected files","添加所选文件",watchAppearance.language),gpu::ShelfPickerMode::mixedReferences});
+    const auto language=watchAppearance.language;
+    mediaPicker->setLabels({notesMedia?core::localized("Add image/video notes","添加图片/视频便笺",language):std::string{},notesMedia?core::localized("Add media","添加媒体",language):std::string{},{},gpu::ShelfPickerMode::media});
     return mediaPicker->request();
 }
 void Application::Impl::importReaderReference(std::uint64_t generation,std::string path,std::shared_ptr<void>lease,double time){
@@ -2478,7 +2493,7 @@ std::optional<std::string> Application::Impl::dropTarget(core::Point point)const
         for(const auto&area:externalModules)if(area.owner.get()==owner)return registry.enabled(*owner)?std::optional<std::string>("area"):std::nullopt;
     }
     if(selected==core::Module::reader&&reader&&reader->acceptsDrop(point))return std::string("reader");
-    if(selected==core::Module::archive&&archive&&archive->state().selected())return std::string("archive");
+    if(selected==core::Module::archive&&archive&&archive->acceptsDrop(point))return std::string("archive");
     if(selected==core::Module::notes&&notes->dropPoint(point))return std::string("notes");
     return std::nullopt;
 }

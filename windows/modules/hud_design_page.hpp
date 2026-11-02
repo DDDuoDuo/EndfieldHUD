@@ -81,9 +81,24 @@ public:
     void update(double unit, double windowScale, double now);
     double unit() const noexcept { return unit_; }
     double boxScale() const noexcept { return env_.text.boxScale; }
-    // Closes every canvas's menus and pop-overs, ends editing (commit) and
-    // drags, then presents the bar (HUDDesignContext.confirm).
+    // Closes every canvas's menus and pop-overs, then presents the bar
+    // (HUDDesignContext.confirm; Canvas::confirm commits its own editing
+    // first).
     void confirm(ConfirmRequest, std::function<void()> onConfirm, std::function<void()> onCancel = {});
+    // The keyboard focus left the design fields' text views
+    // (HUDDesignTextField.textDidEndEditing, :281-286: once the first
+    // responder is no longer the field's text view, the field commits). On
+    // the Mac any press in the HUD view outside an editing text view makes
+    // SystemHUDView (or another text view) first responder; on Windows every
+    // press reaches only the owner that takes it, so the owners report it
+    // here: a press a design owner takes (for every canvas but `except`, the
+    // canvas that got the press: it commits its own fields itself,
+    // Canvas::pointerDown), a press Notes takes, and a press no module owner
+    // takes (the shell's clock, logo, navigation; DesignOverlayOwner observes
+    // those last in the pointer chain). Each editing field commits
+    // (TextField::editorFocusLost) and a focused body editor blurs (its
+    // textDidEndEditing save); nothing else changes.
+    void editorFocusMoved(const Canvas* except = nullptr);
     void toast(ToastRequest, std::function<void()> completion = {});
     // L10n.text / core::localized in the context language.
     std::string text(std::string_view english, std::string_view simplifiedChinese,
@@ -281,6 +296,11 @@ public:
     // Text fields (one edits at a time; others end with commit).
     void registerField(TextField&);
     void endEditing(bool commit);
+    // The field's text view stopped being first responder: every editing
+    // field of this canvas commits (TextField::editorFocusLost; see
+    // Context::editorFocusMoved), and other text it edits ends
+    // (endOtherEditing(true): the body editors blur, saving).
+    void editorFocusLost();
     // refreshTextFieldProjection: an editing field a re-render moved follows on screen.
     void refreshTextFieldProjection();
     bool editingText() const noexcept;
@@ -322,6 +342,14 @@ public:
     // Event Log, Volume) and calls Canvas::show.
     virtual void show(double now);
     void setActive(bool, double now);           // deactivation forgets retained sub-page offsets
+    // The HUD closed (overlayConcealed): the Mac drops SystemHUDView and
+    // builds every canvas anew at the next opening (OverlayController
+    // .tearDownSystemPresentation `systemView = nil`), so what a canvas
+    // instance holds starts over. While inactive, retained offsets go and a
+    // scrolled page is built again at offset 0 (an unscrolled one stays);
+    // modules reset their own canvas state (selection, sub-page, tab,
+    // drafts) and call this.
+    virtual void resetSession();
     // HUDDirectionalContent: the entrance after the module swap (header wipe +
     // stagger from `offset` content px); nothing under Reduce Motion. Virtual
     // like the Mac's playEntrance(from:), which a sub-page swap also calls

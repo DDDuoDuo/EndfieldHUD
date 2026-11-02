@@ -43,11 +43,11 @@ endif()
 # --- L4 native (LIBRARY-DESIGN.md section 15): the design scene, the
 # DirectWrite measurer, the UIA tree (also Settings' elements, Q2), the
 # projected text field host, the owner core and the overlay owner. Uppercase
-# shares Profile's ICU rule (native/profile_text.cpp); UIA screen rects share
-# NativeScreenReaderPeers' client-to-screen helper. Suites run hidden: WARP,
+# shares Profile's ICU rule (native/profile_text.cpp); UIA screen rects come
+# from screenReaderClientToScreen (native/hud_design_automation). Suites run hidden: WARP,
 # an invisible window, fake TSF sinks, a fake edit menu, no input injection.
 if(WIN32 AND TARGET hud_design_native)
-  target_link_libraries(hud_design_native PUBLIC hud_profile hud_local_automation)
+  target_link_libraries(hud_design_native PUBLIC hud_profile)
   if(BUILD_TESTING)
     foreach(suite scene text_metrics automation text_field owner)
       add_executable(hud_design_${suite}_tests tests/hud_design_${suite}_tests.cpp)

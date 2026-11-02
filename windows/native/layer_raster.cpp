@@ -172,6 +172,16 @@ bool italicText(const Json&descriptor){
     if(descriptor["runs"].isArray())for(const auto&run:descriptor["runs"].array())if(run["attributes"].isObject()&&italic(run["attributes"]["NSFont"]))return true;
     return false;}
 bool containsText(const Json&node){if(node["text"].isObject())return true;if(node["children"].isArray())for(const auto&child:node["children"].array())if(containsText(child))return true;return false;}
+// The density a raster is painted at (LayerRasterOptions::textContentsScale):
+// the largest contentsScale of its shown text leaves, at most 4, never below
+// pixelsPerPoint. Measure, paint and repaint read it from the same layer, so
+// a released image paints again at its own density. Content events only.
+double rasterDensity(const Json&layer,const LayerRasterOptions&o){
+    if(!o.textContentsScale)return o.pixelsPerPoint;double density=o.pixelsPerPoint;
+    const auto visit=[&](const Json&node,unsigned depth,const auto&self)->void{if(depth>64||flag(node["hidden"]))return;
+        if(node["text"].isObject()&&node["contentsScale"].isNumber()&&std::isfinite(node["contentsScale"].number()))density=std::max(density,std::min(4.,node["contentsScale"].number()));
+        if(node["children"].isArray())for(const auto&child:node["children"].array())self(child,depth+1,self);};
+    visit(layer,0,visit);return density;}
 std::size_t retainedJsonBytes(const Json&v,unsigned depth=0){if(depth>128)invalid("Typography descriptor nesting exceeds limit");std::size_t result=sizeof(Json);auto add=[&](std::size_t n){if(n>LayerRasterizer::maximumTypographyDescriptorBytes-result)invalid("Typography descriptor exceeds limit");result+=n;};if(v.isString())add(v.string().capacity()+1);else if(v.isArray()){add(v.array().capacity()*sizeof(Json));for(const auto&a:v.array())add(retainedJsonBytes(a,depth+1));}else if(v.isObject())for(const auto&[k,a]:v.object()){add(sizeof(Json::Object::value_type)+4*sizeof(void*)+k.capacity()+1);add(retainedJsonBytes(a,depth+1));}return result;}
 // The same estimate (generous: array elements count twice), given up (false)
 // as soon as it exceeds `limit`: a local layer description is kept to repaint
@@ -964,9 +974,10 @@ struct LayerRasterizer::Impl {
     void measureRaster(const Json& layer,const LayerRasterOptions& options,LayerRasterImage& result){
         std::size_t visited=0;auto bounds=measure(layer,Matrix::Identity(),result,visited,0);
         bounds.x-=options.paddingPoints;bounds.y-=options.paddingPoints;bounds.width+=options.paddingPoints*2;bounds.height+=options.paddingPoints*2;
-        const double w=std::ceil(std::max(1.0/options.pixelsPerPoint,bounds.width)*options.pixelsPerPoint),h=std::ceil(std::max(1.0/options.pixelsPerPoint,bounds.height)*options.pixelsPerPoint);
+        const double density=rasterDensity(layer,options);
+        const double w=std::ceil(std::max(1.0/density,bounds.width)*density),h=std::ceil(std::max(1.0/density,bounds.height)*density);
         if(w>8192||h>8192||w*h>maximumPixels)invalid("Local raster exceeds its pixel limit");
-        result.width=static_cast<unsigned>(w);result.height=static_cast<unsigned>(h);bounds.width=w/options.pixelsPerPoint;bounds.height=h/options.pixelsPerPoint;result.bounds=bounds;
+        result.width=static_cast<unsigned>(w);result.height=static_cast<unsigned>(h);bounds.width=w/density;bounds.height=h/density;result.bounds=bounds;
     }
     // Paints a measured raster into a new premultiplied BGRA bitmap.
     ComPtr<IWICBitmap> paintRaster(const Json& layer,const LayerRasterOptions& options,LayerRasterImage& result,std::vector<ComPtr<IDWriteTextLayout>>& layouts){
@@ -976,7 +987,8 @@ struct LayerRasterizer::Impl {
         target->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);target->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
         target->BeginDraw();target->Clear(D2D1::ColorF(0.f,0.f,0.f,0.f));
         const auto&bounds=result.bounds;
-        const Matrix pixels=Matrix::Translation(static_cast<float>(-bounds.x),static_cast<float>(-bounds.y))*Matrix::Scale(static_cast<float>(options.pixelsPerPoint),static_cast<float>(options.pixelsPerPoint));
+        const auto density=static_cast<float>(rasterDensity(layer,options));
+        const Matrix pixels=Matrix::Translation(static_cast<float>(-bounds.x),static_cast<float>(-bounds.y))*Matrix::Scale(density,density);
         std::size_t visited=0;draw(target.Get(),layer,Matrix::Identity(),pixels,options,result,layouts,1,visited,0,true);
         checked(target->EndDraw(),"Complete local layer raster");
         return bitmap;

@@ -298,6 +298,11 @@ void OrbiPomCanvas::didDeactivate() {
     reconcileClock();
 }
 void OrbiPomCanvas::willLeave() { pointerPressed_ = false; stopClock(); session_->pause(true); }
+void OrbiPomCanvas::resetSession() {
+    if (isActive()) return;
+    keyboardPoint_ = {115, 120}; lastSkill_.reset();
+    Canvas::resetSession();
+}
 void OrbiPomCanvas::setForeground(bool value, double now) {
     env().now = std::max(env().now, now);
     foreground_ = value;

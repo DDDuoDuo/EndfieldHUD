@@ -51,10 +51,10 @@ void source(const J& root) {
             check(core::localized(row["template"].string(), row["templateSimplifiedChinese"].string(), language,
                       row["template"].string().find("{0}") == std::string::npos ? std::span<const std::string_view>{} : std::span<const std::string_view>(arguments)) == row[name].string(),
                   "Reader captions render the Mac 1.3.0 catalog row in all five languages");
-    check(m::readerTranslation(m::readerWindowsOpenFailed, L::system) == "Unable to open selected files" &&
+    check(m::readerTranslation(core::selectedFilesUnopened, L::system) == "Unable to open selected files" &&
           m::readerImportFailure(std::make_exception_ptr(std::runtime_error("C:\\private\\path.pdf")), L::korean) == "선택한 파일을 열 수 없습니다" &&
           m::readerImportFailure({}, L::traditionalChinese) == "無法開啟所選檔案", "Untyped import failures show the Windows notice, never their own text");
-    check(m::readerTranslation(m::readerWindowsPickerBusy, L::japanese) == "ファイル選択画面は使用中です", "The busy picker notice is localized");
+    check(m::readerTranslation(core::filePickerBusy, L::japanese) == "ファイル選択画面は使用中です", "The busy picker notice is localized");
 }
 
 // --- ReaderState: typed error and Event Log actions ---------------------------

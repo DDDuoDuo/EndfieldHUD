@@ -61,6 +61,15 @@
 // Renderer::setContentFilter over the range of module entries (A2), with the
 // amount from DesignOverlayOwner::contentDim; scenes draw as usual.
 //
+// Text density (HUDRenderScale.contentScale, LIB-11 / LIB-97): a surface
+// holding a text leaf rasterizes at the leaf's contentsScale
+// (textContentsScale of the box density: x 1.35, rounded up, at most 4;
+// LayerRasterOptions::textContentsScale), every other surface at the box
+// density. The scale is part of the leaf's JSON, so it changes only with the
+// density (which re-rasterizes every part anyway): unchanged content is
+// still reused byte for byte. emit keeps shown text leaves in runs of their
+// own, so a label never lifts its plate to the text density.
+//
 // No window, timer, provider, clipboard or second renderer; UI thread only.
 #include "modules/hud_design_layer.hpp"
 #ifdef _WIN32

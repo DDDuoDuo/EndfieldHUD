@@ -19,8 +19,12 @@
 // v1.2.0 quit card's slot) and suppresses key filters; every event is consumed
 // (Esc / Return decide; presses go to the pills, or the outside press of a
 // twin-pill request). Appearance events are applied to the Context here once
-// (Context::apply); deadlines (120 ms confirm callback, 1.5 s toast, hides,
-// scroll bars, module timers) are its nextWakeTime / deadline. The context is
+// (Context::apply). Last in the ordinary pointer chain it sees every press no
+// module owner took (the shell's clock, logo, navigation, empty space) and,
+// never consuming one, reports the focus move to the design fields
+// (Context::editorFocusMoved: on the Mac SystemHUDView becomes first
+// responder, so an editing field commits). Deadlines (120 ms confirm
+// callback, 1.5 s toast, hides, scroll bars, module timers) are its nextWakeTime / deadline. The context is
 // published for areas (ApplicationHost::publish(contextServiceKey, context)).
 // No timer, thread or window of its own.
 #include "modules/hud_design_page.hpp"
@@ -44,6 +48,10 @@ class DesignOverlayOwner final : public app::ModuleOwner {
 public:
     // ApplicationHost service key of the published modules::design::Context.
     static constexpr std::string_view contextServiceKey = "design.context";
+    // Its place in the ordinary (non-capture) pointer chain: after every
+    // module owner (built-in 0...19, areas 20...99), before the host's own
+    // shell presses (clock, logo, navigation).
+    static constexpr int shellPressPriority = 1000;
     DesignOverlayOwner(native::LayerRasterizer&, DesignOverlayOptions);
     ~DesignOverlayOwner() override;
     modules::design::Context& context() noexcept;

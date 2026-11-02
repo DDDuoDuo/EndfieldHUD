@@ -121,6 +121,7 @@ struct NativeDesignScene::Impl {
     NativeDesignSceneStats statistics;
     Impl(LayerRasterizer& r, LayerRasterOptions o, std::string p, DesignImages i) : raster(r), options(std::move(o)), prefix(std::move(p)), images(std::move(i)) {
         need(!prefix.empty() && prefix.size() <= 200, "Design scene needs a source prefix");
+        options.textContentsScale = true; // text leaves at textContentsScale (LIB-11, LIB-97)
         entries.reserve(64); retired.reserve(64); pool.reserve(64); draining.reserve(64);
     }
     void time(double now) const { need(std::isfinite(now) && now >= lastTime, "Design scene needs monotonic owner time"); }

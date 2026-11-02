@@ -477,6 +477,13 @@ void ActivityCanvas::didActivate() {
     reading_ = true;
     if (demand_) demand_(true, showingApps_, now());
 }
+void ActivityCanvas::resetSession() {
+    if (isActive()) return;
+    const bool changed = std::exchange(showingApps_, false) || sortKey_ != ActivitySort::cpu || !sortDescending_;
+    sortKey_ = ActivitySort::cpu; sortDescending_ = true;
+    Canvas::resetSession();
+    if (changed && renderedLanguage()) rerender();
+}
 void ActivityCanvas::stopReading() {
     if (observing_) { state_->onSystem = nullptr; state_->onApps = nullptr; observing_ = false; }
     if (reading_ && demand_) demand_(false, false, now());

@@ -507,8 +507,17 @@ void contracts() {
     check(w.hooks.back() == "editPosition", "Edit position hands over to the Power area");
     w.hide(M::display);
     check(w[M::display].section() == "battery", "Battery alert survives leaving Display");
+    // MODS-638: a new HUD session (the Mac's new HUDSettingsCanvas, :19)
+    // opens the main page with its list at the top (Canvas::resetSession).
+    w[M::display].resetSession();
+    check(w[M::display].section() == "main" && w[M::display].page().scrollAreas()[0]->offset() == 0, "A new HUD session opens Display on its main page at the top");
     w.show(M::display);
-    { const auto back = w[M::display].page().back; back(); }
+    (void)w[M::display].scroll({300, 300}, {0, 240}, w.now);
+    check(w[M::display].page().scrollAreas()[0]->offset() > 0, "The Display list scrolls again");
+    w.hide(M::display);
+    w[M::display].resetSession();
+    check(w[M::display].page().scrollAreas()[0]->offset() == 0, "A new HUD session builds a scrolled page at the top");
+    w.show(M::display);
     w.activate(M::display, "appIcon");
     w.activate(M::display, "appIcon:babel");
     check(committed().string("applicationIcon") == "babel", "An app icon tile picks the icon");

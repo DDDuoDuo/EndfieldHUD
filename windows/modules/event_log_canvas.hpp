@@ -55,6 +55,9 @@ public:
     void show(double now) override;               // makeContent (:243-247)
     void didActivate() override;
     void didDeactivate() override;
+    // A new HUD session (the Mac's new EventLogCanvas, :220, :226): the All
+    // filter, the list at its top.
+    void resetSession() override;
     void recordingModeChanged() override {}       // rows are not redacted (:260)
     bool handleScroll(design::Point, design::Point delta) override;
     bool handleKey(const design::KeyInput&) override;

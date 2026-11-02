@@ -221,8 +221,19 @@ void run(const std::filesystem::path& shader) {
     };
     const auto bannerCentre = client(bannerWorld, {270, 35});
     check(bannerCentre && owner->covers(*bannerCentre), "The banner covers its plate");
+    // SHELL-3 (mouseDown :1519-1529): the banner and tag routers run before
+    // the confirm bar. While a bar captures, this owner answers the capture
+    // chain first; a press off the banner and tags falls through to the bar.
+    check(!owner->capturesPointer() && owner->routing().pointerCapture < overlay.routing().pointerCapture, "The facility capture route precedes the overlay's");
+    unsigned confirmCancels{};
+    m::design::ConfirmRequest request; request.id = "test"; request.title = "Delete?"; request.confirmTitle = "Delete"; request.danger = true;
+    overlay.context().confirm(request, [] {}, [&] { ++confirmCancels; });
+    check(overlay.capturesPointer() && owner->capturesPointer(), "With the confirm bar up, a showing banner captures ahead of it");
+    check(!press({4, 790}, 2.25) && host.chosen.empty(), "A press off the banner and tags is left to the bar");
     check(press(*bannerCentre, 2.3), "The banner takes the press");
     check(!host.chosen.empty() && host.chosen.back() == c::Module::storage, "A banner click opens Storage");
+    overlay.context().overlay().reset();
+    check(confirmCancels == 0 && !overlay.capturesPointer() && !owner->capturesPointer(), "Without the bar (the module switch resets it) nothing captures");
     frame(2.7);
     check(!owner->banner().isShowing(), "The clicked banner left");
 

@@ -11,14 +11,16 @@
 #include <utility>
 #include <vector>
 namespace endfield::native {
-core::TextRegion preferredSystemRegion(){
+std::vector<std::string> preferredUILanguages(){
     ULONG count{},size{};std::vector<wchar_t> buffer;std::vector<std::string> names;
     if(GetUserPreferredUILanguages(MUI_LANGUAGE_NAME,&count,nullptr,&size)&&size){buffer.resize(size);
         if(GetUserPreferredUILanguages(MUI_LANGUAGE_NAME,&count,buffer.data(),&size))for(const wchar_t*at=buffer.data();*at;at+=std::wcslen(at)+1){
             const int n=WideCharToMultiByte(CP_UTF8,0,at,-1,nullptr,0,nullptr,nullptr);if(n<=1)continue;
             std::string name(static_cast<std::size_t>(n-1),'\0');WideCharToMultiByte(CP_UTF8,0,at,-1,name.data(),n,nullptr,nullptr);names.push_back(std::move(name));}}
-    const std::vector<std::string_view> preferred(names.begin(),names.end());return core::firstRegion(preferred);
+    return names;
 }
+core::TextRegion preferredSystemRegion(){const auto names=preferredUILanguages();const std::vector<std::string_view> preferred(names.begin(),names.end());return core::firstRegion(preferred);}
+core::Language preferredSystemLanguage(){const auto names=preferredUILanguages();const std::vector<std::string_view> preferred(names.begin(),names.end());return core::resolveLanguage(preferred);}
 struct LayerFontResources::Impl {
     Microsoft::WRL::ComPtr<IDWriteFactory>factory;
     Microsoft::WRL::ComPtr<IDWriteFontCollection>system,bundled;

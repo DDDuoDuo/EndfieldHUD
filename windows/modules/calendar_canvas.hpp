@@ -59,6 +59,9 @@ public:
     void didActivate() override;
     void didDeactivate() override;
     void willLeave() override;
+    // A new HUD session (the Mac's new HUDCalendarCanvas, :30-33, :13-16):
+    // today selected in its month, no event open, an empty draft and fields.
+    void resetSession() override;
     void recordingModeChanged() override {}   // calendar content is not redacted (:45)
     bool handleExtraKey(const design::KeyInput&) override;
 private:

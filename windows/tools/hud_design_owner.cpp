@@ -5,7 +5,6 @@
 #endif
 #include <windows.h>
 #include "native/module_scene.hpp"
-#include "native/screen_reader_peers.hpp"
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
@@ -370,6 +369,10 @@ bool DesignOwnerCore::pointer(const app::PointerEvent& e, double t) {
         i.pressed = true;
         const bool used = s->canvas->pointerDown(*q, input, i.time);
         if (used) i.captured = s; else i.pressed = false;
+        // The press this owner took moves the first responder away from any
+        // other canvas's editing field (Context::editorFocusMoved); a press it
+        // leaves reaches the overlay owner last in the chain.
+        if (used) i.context.editorFocusMoved(s->canvas.get());
         s->canvas->pointerMoved(q, i.pressed, i.time);
         return used;
     }
@@ -464,8 +467,14 @@ bool DesignOwnerCore::flush(double t) {
 bool DesignOwnerCore::hostEvent(const app::HostEvent& e, double t) {
     auto& i = *impl_;
     i.clock(t);
-    // The close finished: canvases not shown keep no artwork (Clipboard).
-    if (e.kind == app::HostEvent::Kind::overlayConcealed) i.parkHidden();
+    // The close finished: every canvas starts its next session as the Mac's
+    // new one would (Canvas::resetSession); canvases not shown keep no
+    // artwork (Clipboard).
+    if (e.kind == app::HostEvent::Kind::overlayConcealed) {
+        i.bind();
+        for (auto& s : i.slots) s->canvas->resetSession();
+        i.parkHidden();
+    }
     if (!i.options.hostEvent) return false;
     i.bind();
     return i.options.hostEvent(e, i.time);
@@ -564,6 +573,11 @@ void DesignOwnerCore::bindEditorHost() { impl_->bind(); }
 std::optional<core::Point> DesignOwnerCore::boxPoint(core::Point logical) const {
     const auto* s = impl_->input();
     return s ? impl_->local(*s, logical) : std::nullopt;
+}
+bool DesignOwnerCore::centreContains(core::Point logical) const {
+    const auto* s = impl_->input();
+    const auto q = s ? impl_->local(*s, logical) : std::nullopt;
+    return q && inside(s->canvas->hitBounds(), *q);
 }
 
 DesignModuleOwner::DesignModuleOwner(std::unique_ptr<DesignOwnerCore> core) : core_(std::move(core)) { need(core_ != nullptr, "Design module owner needs its core"); }

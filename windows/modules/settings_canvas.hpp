@@ -94,6 +94,9 @@ public:
     void didActivate()override;
     void didDeactivate()override;
     void willLeave()override{didDeactivate();}
+    // A new HUD session (the Mac's new HUDSettingsCanvas, :19): the main
+    // page, also after Display > Battery alert (kept across module switches).
+    void resetSession()override;
     bool interceptKey(const design::KeyInput&)override;
     std::optional<design::Cursor> cursor(std::optional<design::Point>)const override;
     bool inputLocked()const override;

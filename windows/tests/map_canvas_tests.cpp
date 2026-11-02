@@ -332,6 +332,10 @@ void lifecycle() {
     (void)canvas.rightPointerDown({250, 260}, 3);
     check(state.pins().empty() && context.overlay().toastState().current()->caption.starts_with("The saved map"), "Placing a pin without a store says why");
     context.overlay().clearToast();
+    // MODS-638: the next HUD session (a new WorldMapCanvas) tells the store error again.
+    canvas.setActive(false, 3.5); canvas.resetSession(); canvas.setActive(true, 3.6);
+    check(context.overlay().toastState().current() && context.overlay().toastState().current()->caption.starts_with("The saved map"), "A new HUD session shows the store notice once more");
+    context.overlay().clearToast(); canvas.setActive(false, 3.7);
     // The 0.18 s gesture hold: the wheel commits once input pauses.
     Store store;
     m::MapState saved({}, store.callbacks());
@@ -356,6 +360,14 @@ void lifecycle() {
     (void)held.performAccessibilityAction("map.zoomIn", 12);
     (void)held.performAccessibilityAction("map.reset", 12);
     check(saved.camera() == G::constrained({}), "Reset view restores the default camera");
+    // MODS-638 (WorldMapSurface.swift:46, MapInteractionHUDVerification.swift:309-311): reopening keeps the pins and the camera, without a selection.
+    (void)held.rightPointerDown({250, 260}, 13);
+    check(saved.pins().size() == 1 && saved.selection(), "A placed pin is selected");
+    const auto camera = saved.camera();
+    held.setActive(false, 14);
+    check(saved.selection().has_value(), "Switching modules inside the open HUD keeps the selection");
+    held.resetSession(); held.setActive(true, 15);
+    check(!saved.selection() && saved.pins().size() == 1 && saved.camera() == camera, "A new HUD session restores the pins and camera without a selection");
 }
 } // namespace
 

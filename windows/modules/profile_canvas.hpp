@@ -156,6 +156,9 @@ public:
     void didActivate() override;
     void didDeactivate() override;
     void willLeave() override { didDeactivate(); }
+    // A new HUD session (the Mac's new PersonalProfileCanvas, :94-95): the
+    // text shown, Follow HUD off restoring C9A2FF.
+    void resetSession() override;
     void didClosePopover() override;
     void recordingModeChanged() override;
     bool presentingPanel() const override { return chooser_ || colorPanel_; }

@@ -335,6 +335,11 @@ void behaviour() {
     canvas.perform("profile:toggleDateLabel", w.now);
     check(store->profile().showsBirthday, "The date kind is refused while the text is hidden");
     canvas.perform("profile:visibility", w.now);
+    // MODS-638: a new HUD session (the Mac's new PersonalProfileCanvas, :94) shows the text.
+    canvas.perform("profile:visibility", w.now);
+    canvas.setActive(false, w.now); canvas.resetSession();
+    check(!canvas.textHidden() && control(canvas, "profile:menu")->enabled(), "A new HUD session shows the text");
+    canvas.setActive(true, w.now);
     // A failed store save toasts (:230-233).
     o.refuseCommit = true;
     canvas.perform("profile:toggleDateLabel", w.now);

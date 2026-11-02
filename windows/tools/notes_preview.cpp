@@ -10,6 +10,8 @@
 #include "core/module_presentation.hpp"
 #include "core/source_camera.hpp"
 #include "core/data/file_io.hpp"
+#include "core/text_input.hpp"
+#include "modules/hud_design_motion.hpp"
 #include <algorithm>
 #include <atomic>
 #include <climits>
@@ -170,6 +172,9 @@ struct NotesPreview::Impl {
         popup->onChange=[this](const core::notes::FormatChange&c){formatted(c);};
         popup->onClose=[this]{closePopup(currentTime);};
         popup->onPick=[this](const std::string&item){picked(item);};
+        // The fields' right-click menu: the native popup while the host runs
+        // its text services (a visible HUD); none without (hidden fixtures).
+        if(tsf)editMenu=gpu::nativeEditMenu(hwnd,[this]{return language();});
         tracks.reserve(256);composed.reserve(132);
         moduleSample=modules.sample(0).presentation;
     }
@@ -388,6 +393,72 @@ struct NotesPreview::Impl {
     }
     void clearHover(double time){workspace->updateDrawingHover({});desktop->hover(std::nullopt,std::nullopt,false,time);desktop->scrollHover(std::nullopt,time);desktop->hoverDeletion(std::nullopt,false,time);popup->hover(std::nullopt,false,time);hoveredCard.reset();}
     void editSync(){workspace->syncEditor();}
+    // The open field's HUDProjectedTextEditor chrome, sampled into the
+    // workspace pose on this owner's clock. The caret (updateCaretLayer
+    // :257-275) shows only in a focused field of the foreground HUD and blinks
+    // with the design fields' modules::design::CaretBlink: solid again after
+    // every move (text or selection change) and when it reappears, solid
+    // under Reduce Motion, frames only during its two 80 ms ramps. The scroll
+    // indicator (scrollBar :16-18, :73, :92, :103) shows while the text
+    // scrolls (any offset change: wheel, typing, the restored offset of a new
+    // editor) and hides 1 s later (ScrollBarVisibility, reset with the editor).
+    mod::design::CaretBlink caretBlink;mod::design::ScrollBarVisibility editorBar;
+    UINT_PTR chromeField{};core::text::Selection caretSelection;std::uint64_t caretRevision{};double barOffset{},chromeTime{};bool caretShown{};
+    std::pair<float,float> editorChrome(double t){
+        const auto*document=workspace->editorDocument();auto*editor=workspace->editor();const bool reduce=preferences.reduceMotion;chromeTime=t;
+        if(!document||!editor){if(chromeField){chromeField=0;caretShown=false;editorBar.reset();}return {1.f,0.f};}
+        if(chromeField!=workspace->editorGeneration()){chromeField=workspace->editorGeneration();caretShown=false;editorBar.reset();barOffset=0;caretSelection=document->selection();caretRevision=document->revision();}
+        if(document->revision()!=caretRevision||document->selection()!=caretSelection){caretRevision=document->revision();caretSelection=document->selection();caretBlink.restart(t);}
+        if(focused&&!caretShown)caretBlink.restart(t);caretShown=focused;
+        if(const auto offset=editor->scrollOffset();offset!=barOffset){barOffset=offset;editorBar.noteScroll(t,reduce);}
+        return {static_cast<float>(caretBlink.opacity(t,reduce)),static_cast<float>(editorBar.opacity(t))};
+    }
+    bool editorChromeAnimating(double t)const{return chromeField&&((caretShown&&caretBlink.ramping(t,preferences.reduceMotion))||editorBar.animating(t));}
+    std::optional<double> editorChromeWake()const{
+        if(!chromeField)return std::nullopt;auto next=editorBar.nextDeadline();
+        if(caretShown)if(const auto change=caretBlink.nextChange(chromeTime,preferences.reduceMotion))next=next?std::min(*next,*change):*change;return next;}
+    // A ramp begins or the armed hide falls due: one frame (the ramp then asks for its own).
+    bool editorChromeDue(double t){
+        if(!chromeField)return false;bool due=editorBar.advance(t,preferences.reduceMotion);
+        if(caretShown)if(const auto change=caretBlink.nextChange(chromeTime,preferences.reduceMotion);change&&*change<=t)due=true;return due;}
+    // A press that moves the first responder (SystemHUDView or a note's text
+    // view) commits an editing design field (HUDDesignTextField.textDidEndEditing).
+    void focusMoved(){if(design)design->editorFocusMoved();}
+    // The Edit menu's Cut / Copy / Paste on the open field: the Ctrl+X/C/V
+    // keys and the field's right-click menu.
+    void clipboardCommand(unsigned key){gpu::ProjectedEditorResult result;
+        if(!clipboard||workspace->editorDocument()->composition())return;
+        if(key=='V'){if(const auto text=clipboard->readText(gpu::notesClipboardMaximumUnits))result=workspace->pasteIntoEditor(*text);}
+        else if(const auto copied=workspace->copyEditorSelection();copied&&clipboard->writeText(*copied)&&key=='X')result=workspace->deleteEditorSelection();
+        if(result.changed)editSync();}
+    // HUDProjectedTextView.rightMouseDown / menu(for:) (LIB-90): a right press
+    // on the open field (the text view is hit-tested before the canvas) makes
+    // it first responder, moves the caret where it landed unless that is
+    // inside the selection, then the short edit menu opens at the pointer:
+    // Cut / Copy / Paste / Select All, no Undo (the design fields' menu,
+    // DesignEditMenu; tests inject a fake). Elsewhere the press stays the
+    // canvas's (the drawing eraser).
+    gpu::DesignEditMenu editMenu;
+    bool fieldMenu(core::Point logical,core::Point physical){
+        auto*editor=workspace->editor();const auto*document=workspace->editorDocument();const auto hit=editor?workspace->hitTest(physical):std::nullopt;
+        if(!hit||hit->kind!=gpu::NativeNotesWorkspaceHit::Kind::editor)return false;
+        focusMoved();
+        if(!document->composition()){const auto r=document->selection().range;const auto at=core::text::projectedInsertion(*document,editor->geometry(),physical,editor->placement());
+            if(at&&!(r.start!=r.end&&*at>=std::min(r.start,r.end)&&*at<=std::max(r.start,r.end))&&editor->setSelectionFromHost({{*at,*at}}).changed)editSync();}
+        if(!editMenu)return true;
+        const auto r=document->selection().range;const bool selected=r.start!=r.end&&clipboard;
+        bool canPaste{};if(clipboard){const auto value=clipboard->readText(gpu::notesClipboardMaximumUnits);canPaste=value&&!value->text.empty();}
+        const auto chosen=editMenu(logical,selected,selected,canPaste);
+        // The menu's own loop may have closed the field (focus loss).
+        if(!chosen||!workspace->editor())return true;
+        switch(*chosen){
+        case mod::design::EditCommand::cut:clipboardCommand('X');break;
+        case mod::design::EditCommand::copy:clipboardCommand('C');break;
+        case mod::design::EditCommand::paste:clipboardCommand('V');break;
+        case mod::design::EditCommand::selectAll:if(workspace->editor()->command(gpu::ProjectedEditorCommand::selectAll).handled)editSync();break;
+        default:break;}
+        return true;
+    }
     bool beginField(std::string_view id,std::optional<std::string_view>item={}){
         try{const bool changed=item?workspace->beginEditingItem(id,*item):workspace->beginEditing(id);focusEditor();return changed;}
         catch(const gpu::NativeNotesEditorCapacityError&){setMediaError(windowsText(paragraphCapacity,language()));return false;}
@@ -451,7 +522,7 @@ struct NotesPreview::Impl {
             workspace->updateDrawingHover(p);const bool onConfirm=confirmAt(p,time,false);const auto hit=onConfirm?std::nullopt:workspace->hitTest(p);
             hoverCards(hit,p,(e.modifiers&MK_LBUTTON)!=0,time);return onConfirm||hit.has_value();
         }
-        if(e.kind==app::PointerKind::down&&e.button==app::PointerButton::right){rightPressed=workspace->toggleDrawingEraser(p);return rightPressed;}
+        if(e.kind==app::PointerKind::down&&e.button==app::PointerButton::right){rightPressed=fieldMenu({e.x,e.y},p)||workspace->toggleDrawingEraser(p);return rightPressed;}
         if((e.kind!=app::PointerKind::down&&e.kind!=app::PointerKind::doubleClick)||e.button!=app::PointerButton::left)return false;
         if(confirmAt(p,time,true))return true;
         if(const auto hit=workspace->hitTest(p)){
@@ -516,8 +587,8 @@ void NotesPreview::presentShelfMedia(std::vector<mod::NotesShelfChoice>choices,c
     std::vector<modules::design::Menu::Item>items;for(auto&c:choices){modules::design::Menu::Item item;item.id=c.id;item.title=c.title;item.enabled=c.supported&&c.available;items.push_back(std::move(item));}
     const auto id=*i.relinkNote;i.popupNote=id;i.popup->openMenu(id,"notes.shelf",std::move(items),260,i.noteRect(id),i.state->workspaceBounds(),event.time);}
 bool NotesPreview::setMediaActive(bool active,double t,bool preserve){auto&i=*impl_;const Impl::TimeScope event(i,t);i.mediaActive=active;if(!active){i.cancelImport();i.mediaAction.reset();i.closePopup(event.time);}return i.workspace->setMediaActive(active,event.time,preserve);}
-std::optional<double>NotesPreview::nextWakeTime()const{return impl_->workspace->mediaNextWakeTime();}
-bool NotesPreview::deadline(double t){auto&i=*impl_;const Impl::TimeScope event(i,t);return i.workspace->sampleMedia(event.time);}
+std::optional<double>NotesPreview::nextWakeTime()const{const auto&i=*impl_;auto wake=i.workspace->mediaNextWakeTime();if(const auto chrome=i.editorChromeWake())wake=wake?std::min(*wake,*chrome):*chrome;return wake;}
+bool NotesPreview::deadline(double t){auto&i=*impl_;const Impl::TimeScope event(i,t);const bool chrome=i.editorChromeDue(event.time);return i.workspace->sampleMedia(event.time)||chrome;}
 bool NotesPreview::applyPreferences(NotesPreviewPreferences p,double t){auto&i=*impl_;const Impl::TimeScope event(i,t);localizeMedia(p.workspace,p.language);if(i.samePreferences(p)&&i.workspace->fontRevision()==i.raster.fontRevision()){i.pendingPreferences.reset();return true;}if(!i.finish()){i.pendingPreferences=std::move(p);return false;}
     i.workspace->setStyle(p.workspace);i.modules.setDark(p.dark);i.preferences=std::move(p);i.pendingPreferences.reset();i.reportStatus();
     if(i.preferences.reduceMotion){for(const auto&track:i.tracks){if(track.kind==Impl::TrackKind::remove)i.workspace->settleDeletion(track.token);else{const std::array patch{gpu::NativeNotesCardMotion{track.token,{}}};i.workspace->setCardMotions(patch);}}i.tracks.clear();i.workspace->settleOutgoing(i.outgoingGeneration);const auto result=i.modules.settle(event.time);i.moduleSample=result.presentation;i.moduleInput=result.presentation.acceptsModuleInput;i.change(result.change,event.time);}return true;
@@ -546,7 +617,8 @@ void NotesPreview::update(const Matrix&center,const core::source::DesktopChromeS
     const auto layout=core::source::DesktopChromeLayout::make(settings,center,{});i.workspaceWorld=center*core::source::inverseSourceMatrix(layout.designToScreen);
     const auto camera=gpu::layerViewportProjection(i.metrics.pixelWidth,i.metrics.pixelHeight)*Matrix::scale(i.metrics.scale,i.metrics.scale);
     i.workspaceProjection=core::Projection::viewport(camera*i.workspaceWorld,i.metrics.pixelWidth,i.metrics.pixelHeight);
-    i.workspace->updatePose({i.workspaceWorld,camera,i.metrics.pixelWidth,i.metrics.pixelHeight,opacity,t,focused,true});
+    const auto[caretOpacity,indicatorOpacity]=i.editorChrome(t);
+    i.workspace->updatePose({i.workspaceWorld,camera,i.metrics.pixelWidth,i.metrics.pixelHeight,opacity,t,focused,true,caretOpacity,indicatorOpacity});
     i.moduleVisible=sample.presentation.current.module==core::Module::notes||(sample.presentation.incoming&&sample.presentation.incoming->module==core::Module::notes);
     // The deletion confirmation (renderDeletionControls) and the pop-up follow their note.
     const auto rects=i.state->deletionControls();i.confirmationVisible=rects.has_value();
@@ -558,7 +630,7 @@ void NotesPreview::update(const Matrix&center,const core::source::DesktopChromeS
     i.syncSaveError();
     i.hasPose=true;
 }
-bool NotesPreview::requiresFrames(double t)const{const auto&i=*impl_;t=i.queryTime(t);return i.modules.requiresFrames()||!i.tracks.empty()||i.workspace->requiresFrames(t)||i.desktop->requiresFrames(t)||i.popup->requiresFrames(t);}
+bool NotesPreview::requiresFrames(double t)const{const auto&i=*impl_;t=i.queryTime(t);return i.modules.requiresFrames()||!i.tracks.empty()||i.workspace->requiresFrames(t)||i.desktop->requiresFrames(t)||i.popup->requiresFrames(t)||i.editorChromeAnimating(t);}
 bool NotesPreview::diagnosticEditing(bool enabled,double t){auto&i=*impl_;const Impl::TimeScope event(i,t);if(!enabled)return i.finish();if(i.state->notes().empty())return false;i.beginField(i.state->notes().front().id);return i.workspace->editor()!=nullptr;}
 bool NotesPreview::pointerLocked()const{return impl_->state->dragging()||impl_->workspace->mediaSeeking()||impl_->workspace->drawingActive();}
 bool NotesPreview::covers(core::Point p)const{const auto&i=*impl_;if(!i.hasPose||!i.moduleInput)return false;p={p.x*i.metrics.scale,p.y*i.metrics.scale};
@@ -571,7 +643,12 @@ bool NotesPreview::textCursorAt(core::Point p)const noexcept{const auto&i=*impl_
     if(i.confirmationAt(p))return false;
     return i.workspace->editorAt(p);
 }
-bool NotesPreview::pointer(const app::PointerEvent&e,double t){return impl_->pointer(e,t);}
+// A left press Notes takes (a card, its field, the pop-up) moves the first
+// responder away from an editing design field (SystemHUDView / the note's
+// text view); the field menu's right press reports it itself.
+bool NotesPreview::pointer(const app::PointerEvent&e,double t){auto&i=*impl_;const bool handled=i.pointer(e,t);
+    if(handled&&(e.kind==app::PointerKind::down||e.kind==app::PointerKind::doubleClick)&&e.button==app::PointerButton::left)i.focusMoved();return handled;}
+void NotesPreview::setEditMenu(native::DesignEditMenu menu){impl_->editMenu=std::move(menu);}
 bool NotesPreview::wheel(const app::WheelEvent&e,double t){
     auto&i=*impl_;const Impl::TimeScope event(i,t);
     // The open pop-up's menu scrolls under the pointer (scrollWheel :623-625):
@@ -632,11 +709,7 @@ bool NotesPreview::key(const app::KeyEvent&e,double t,std::optional<NotesKeyModi
         core::notes::FormatChange c;c.kind=e.value=='B'?core::notes::FormatKind::bold:e.value=='I'?core::notes::FormatKind::italic:core::notes::FormatKind::underline;
         if(editor->applyFormat(c).handled)i.editSync();return true;}
     // Source Edit menu Cut/Copy/Paste (AppDelegate) on the open field.
-    if(e.kind==app::KeyKind::down&&keys.control&&!keys.shift&&!keys.alt&&!keys.system&&(e.value=='X'||e.value=='C'||e.value=='V')){
-        if(!i.clipboard||i.workspace->editorDocument()->composition())return true;
-        if(e.value=='V'){if(const auto text=i.clipboard->readText(gpu::notesClipboardMaximumUnits))result=i.workspace->pasteIntoEditor(*text);}
-        else if(const auto copied=i.workspace->copyEditorSelection();copied&&i.clipboard->writeText(*copied)&&e.value=='X')result=i.workspace->deleteEditorSelection();
-        if(result.changed)i.editSync();return true;}
+    if(e.kind==app::KeyKind::down&&keys.control&&!keys.shift&&!keys.alt&&!keys.system&&(e.value=='X'||e.value=='C'||e.value=='V')){i.clipboardCommand(e.value);return true;}
     // Original TODO fields finish on unconsumed Return; imported/pasted line
     // breaks still remain valid data. TSF receives keys before this owner.
     if((e.kind==app::KeyKind::down&&e.value==VK_RETURN&&(i.workspace->editingItemID()||(keys.control&&!keys.shift&&!keys.alt&&!keys.system)))||(i.workspace->editingItemID()&&(e.kind==app::KeyKind::character||e.kind==app::KeyKind::unicodeCharacter)&&(e.value=='\r'||e.value=='\n'))){

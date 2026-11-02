@@ -445,16 +445,22 @@ bool NativeNotesLongEditor::setStyle(const ProjectedEditorStyle& style){
     auto painted=style;painted.cornerRadius=i->style.cornerRadius;i->styleDirty|=painted!=i->style;i->style=style;i->poseReady=false;return true;
 }
 bool NativeNotesLongEditor::setPose(const ProjectedEditorPose& pose){
-    auto i=impl_;i->current();need(i->scene->contentRevision()==i->structureRevision,"Long editor scene structure was replaced");need(pose.localToScreen.finite()&&pose.screenToClip.finite()&&pose.pixelWidth>0&&pose.pixelHeight>0&&std::isfinite(pose.opacity)&&pose.opacity>=0&&pose.opacity<=1,"Invalid long editor pose");
+    auto i=impl_;i->current();need(i->scene->contentRevision()==i->structureRevision,"Long editor scene structure was replaced");need(pose.localToScreen.finite()&&pose.screenToClip.finite()&&pose.pixelWidth>0&&pose.pixelHeight>0&&std::isfinite(pose.opacity)&&pose.opacity>=0&&pose.opacity<=1&&std::isfinite(pose.caretOpacity)&&pose.caretOpacity>=0&&pose.caretOpacity<=1,"Invalid long editor pose");
     const auto inverse=core::source::inverseSourceMatrix(pose.localToScreen);
     const text::Placement placement{core::Projection::viewport(pose.screenToClip*pose.localToScreen,pose.pixelWidth,pose.pixelHeight),{0,0,i->style.width,i->style.height},{0,i->scroll},pose.visible,i->style.cornerRadius};
-    if(i->poseReady&&i->pose.localToScreen==pose.localToScreen&&i->pose.screenToClip==pose.screenToClip&&i->pose.pixelWidth==pose.pixelWidth&&i->pose.pixelHeight==pose.pixelHeight&&i->pose.opacity==pose.opacity&&i->pose.visible==pose.visible&&i->pose.ownerFocused==pose.ownerFocused&&i->pose.caretVisible==pose.caretVisible)return false;
+    if(i->poseReady&&i->pose.localToScreen==pose.localToScreen&&i->pose.screenToClip==pose.screenToClip&&i->pose.pixelWidth==pose.pixelWidth&&i->pose.pixelHeight==pose.pixelHeight&&i->pose.opacity==pose.opacity&&i->pose.visible==pose.visible&&i->pose.ownerFocused==pose.ownerFocused&&i->pose.caretVisible==pose.caretVisible){
+        if(i->pose.caretOpacity==pose.caretOpacity)return false;
+        // A blink frame (R8, as NativeProjectedEditor::setPose): only the
+        // caret leaf's opacity changes; no TSF placement, raster or layout.
+        auto&caret=i->placements[i->caretLeaf()];const auto selection=i->owner.selection();
+        caret.opacity=(pose.visible&&pose.ownerFocused&&pose.caretVisible&&selection.range.start==selection.range.end)?pose.opacity*pose.caretOpacity:0.f;
+        i->scene->setPlacements(i->placements);i->pose.caretOpacity=pose.caretOpacity;return true;}
     const auto placementResult=i->input->setPlacement(placement);if(!i->alive)return false;checked(placementResult,"Update long editor candidate plane");
     const auto selection=i->owner.selection();const bool selectionVisible=selection.range.start!=selection.range.end;
     for(std::size_t k=0;k<i->surfaces.size();++k){auto& out=i->placements[k];out.surface=i->surfaces[k];out.world=pose.localToScreen*i->originals[k].world;out.opacity=pose.visible?pose.opacity:0;
         if(k==i->caretLeaf())out.world=out.world*core::Matrix4::translation(i->caretRect.x,i->caretRect.y-i->scroll);
         else if(k>=1&&k<=i->slotCount()){const auto slot=k-1;out.world=out.world*core::Matrix4::translation(0,i->slotTranslate[slot]);if(i->slotEmpty[slot])out.opacity=0;}
-        if((k==i->selectionLeaf()&&!selectionVisible)||(k==i->compositionLeaf()&&!i->owner.composition())||(k==i->caretLeaf()&&(!pose.ownerFocused||!pose.caretVisible||selectionVisible)))out.opacity=0;
+        if((k==i->selectionLeaf()&&!selectionVisible)||(k==i->compositionLeaf()&&!i->owner.composition())||(k==i->caretLeaf()&&(!pose.ownerFocused||!pose.caretVisible||selectionVisible)))out.opacity=0;else if(k==i->caretLeaf())out.opacity*=pose.caretOpacity;
         for(std::size_t m=0;m<i->maskCounts[k];++m){i->masks[k][m]=i->originals[k].masks[m];i->masks[k][m].cornerRadius=i->style.cornerRadius;i->masks[k][m].worldToLocal=i->masks[k][m].worldToLocal*inverse;}out.masks={i->masks[k].data(),i->maskCounts[k]};}
     i->scene->setPlacements(i->placements);i->placement=placement;i->pose=pose;i->poseReady=i->poseSet=true;return true;
 }

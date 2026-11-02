@@ -63,35 +63,6 @@ if(BUILD_TESTING AND TARGET hud_map_assets)
   list(APPEND EHUD_LOCAL_TARGETS map_geography_load_tests)
 endif()
 
-# --- UI Automation peers of the local modules ----------------------------------
-# One projected-peer provider (native/screen_reader_peers: Button/Edit/Text/
-# Group fragments under an owner's group of the HUD window's UIA root) and the
-# minigame source over its preview (canvas -> logical client projection,
-# accessible presses; the Reader, Map and Calendar are design owners with the
-# design library's tree). The built-in owners of
-# app/application_modules.cpp forward their ModuleOwner automation hooks to it.
-if(WIN32)
-  add_library(hud_local_automation STATIC native/screen_reader_peers.cpp)
-  target_include_directories(hud_local_automation PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-  target_compile_definitions(hud_local_automation PRIVATE _WIN32_WINNT=0x0A00 UNICODE _UNICODE NOMINMAX)
-  target_link_libraries(hud_local_automation PUBLIC hud_native
-    PRIVATE uiautomationcore oleaut32 ole32 user32)
-  list(APPEND EHUD_LOCAL_TARGETS hud_local_automation)
-  if(TARGET hud_application)
-    target_link_libraries(hud_application PUBLIC hud_local_automation)
-  endif()
-  if(BUILD_TESTING)
-    # The HUD window's UIA root (app/hud_automation.cpp, unchanged host
-    # source) is compiled in to drive the peers under it through ModuleOwner
-    # hooks forwarded as the built-in owners forward them.
-    add_executable(screen_reader_peers_tests tests/screen_reader_peers_tests.cpp app/hud_automation.cpp)
-    target_compile_definitions(screen_reader_peers_tests PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
-    target_link_libraries(screen_reader_peers_tests PRIVATE hud_local_automation hud_module_registry uiautomationcore oleaut32 ole32 user32)
-    add_test(NAME screen_reader_peers_contracts COMMAND screen_reader_peers_tests)
-    list(APPEND EHUD_LOCAL_TARGETS screen_reader_peers_tests)
-  endif()
-endif()
-
 # --- Reader display-time localization -----------------------------------------
 # The Mac ReaderError pairs through the shared five-language catalog plus the
 # Windows-only picker/import rows. Portable; the Reader canvas and its owner

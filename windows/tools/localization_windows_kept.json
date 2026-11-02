@@ -6,9 +6,5 @@
   "Drop a row (or a whole group) in the change that removes its last Windows caller; the generator names rows",
   "that have none left."],
  "base": "ca04f142185c7de40acd8523bdb563195d90a1d1",
- "pairs": {
-  "Archive": [
-   ["Add image/video", "添加图片/视频", "app/application.cpp"]
-  ]
- }
+ "pairs": {}
 }

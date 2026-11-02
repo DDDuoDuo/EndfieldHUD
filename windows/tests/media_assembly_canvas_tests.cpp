@@ -178,6 +178,15 @@ void rules(d::TextMeasurer& measurer) {
     check(std::abs(number("crop.edge1") - shown.y) < 1e-9 && std::abs(number("crop.edge3") - (shown.y + shown.height)) < 1e-9, "Crop edges follow the turned picture (MODS-142)");
     check(c.adjustAccessibilitySlider("crop.edge0", .2, w.now) && std::abs(c.displayCropRect().x - .2) < 1e-9, "A crop edge slider moves that displayed edge");
     check(e.perform("cropDone"), "Crop done");
+    // MODS-638: a new HUD session (the Mac's new MediaAssemblyCanvas, :14-17,
+    // :36): the Adjust tab, no tool, the fitted stage, no sticker selected.
+    check(e.perform("mediaTab:2") && e.perform("zoomIn") && c.viewport().zoom() > 1, "Stickers, zoomed in");
+    c.setActive(false, w.now);
+    check(c.tab() == m::MediaAssemblyCanvas::Tab::stickers, "Switching modules keeps the tab");
+    c.resetSession();
+    check(c.tab() == m::MediaAssemblyCanvas::Tab::adjust && !c.tool() && c.viewport().zoom() == 1 && c.selectedSticker().empty() && e.controller->session().document(),
+        "A new HUD session shows Adjust on the fitted source");
+    c.setActive(true, w.now);
     // Close with edits asks on the shared confirm bar; Cancel keeps the source.
     check(e.perform("close") && w.context.overlay().confirmState().request() && w.context.overlay().confirmState().request()->id == "mediaClose", "Close asks first when edited");
     w.context.overlay().decide(d::ConfirmState::Decision::cancel);

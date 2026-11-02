@@ -60,6 +60,13 @@ void MediaAssemblyCanvas::didActivate() {
     refreshInPlace();
 }
 void MediaAssemblyCanvas::didDeactivate() { drag_.reset(); stage().setHovered(std::nullopt); stopExportTicker(); }
+void MediaAssemblyCanvas::resetSession() {
+    if (isActive()) return;
+    const bool changed = tab_ != Tab::adjust || tool_ || !selectedSticker_.empty() || viewport_.zoom() != 1 || viewport_.pan().x != 0 || viewport_.pan().y != 0;
+    tab_ = Tab::adjust;
+    Canvas::resetSession();
+    if (changed) sourceChanged();   // an untouched page stays (its artwork re-uploads at the next opening)
+}
 
 // MARK: Controller changes (:110-177)
 MediaAssemblyCanvas::Structure MediaAssemblyCanvas::structure() const {

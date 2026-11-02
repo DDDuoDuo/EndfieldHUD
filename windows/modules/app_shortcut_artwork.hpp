@@ -60,11 +60,15 @@ struct TrimmedShortcutIcon {
 inline constexpr unsigned trimmedIconSide = 96;
 std::optional<TrimmedShortcutIcon> trimDesktopIcon(unsigned width, unsigned height, std::span<const std::uint8_t> straightRGBA);
 
-// AppShortcutCanvas.averageColor (:296-314): the icon's premultiplied colour
-// sums over its coverage, x .72, then scaled down to a Rec. 709 luminance of
-// at most .55; nullopt without coverage (the canvas then uses #2A2A2A). The
-// Mac first resamples to 8 x 8 (CGContext, medium interpolation); this sums
-// every pixel (the same area average up to the resampler's filter).
+// AppShortcutCanvas.averageColor (:302-319): the icon drawn into an 8 x 8
+// premultiplied sRGB context (one byte a channel), the premultiplied colour
+// sums of its 64 cells over their coverage, x .72, then scaled down to a
+// Rec. 709 luminance of at most .55; nullopt without coverage (the canvas then
+// uses #2A2A2A). Each cell is the rounded area average of the pixels it
+// covers. CoreGraphics' medium-quality filter rounds a cell differently in
+// some cases (at most 1 of 255 per cell, measured on synthetic 96-pixel icons;
+// its fixed-point resampler is not documented), so the colour can differ from
+// the Mac's by under 1/255.
 std::optional<std::array<double, 3>> shortcutTileColor(unsigned width, unsigned height, std::span<const std::uint8_t> straightRGBA);
 
 // resources/app-shortcut/artwork.json (version 2).

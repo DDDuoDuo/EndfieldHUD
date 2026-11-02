@@ -46,9 +46,13 @@ private:
 // A scroll thumb (HUDScrollArea / HUDMenu.Track: a plain accentInk fill,
 // max(18, ...) long): one fixed raster `width` x 18 anchored at its top and
 // stretched vertically, so a length change (content that grows) is a pose
-// change of the animatable layer, never a new raster. The Mac thumb has no
-// rounded ends, so the stretched fill draws the same pixels.
-void placeThumb(Layer& thumb, double width, double top, double length, Color fill);
+// change of the animatable layer, never a new raster. The fill reaches past
+// the raster's ends and the layer clips to its presented length
+// (Layer::setClipsPresentedBounds), so the stretched texel edges never soften
+// the ends: square like the Mac thumbs, or rounded by `cornerRadius` without
+// stretching it (the Archive body indicator's cornerRadius 1.5,
+// HUDProjectedTextEditor.swift:72).
+void placeThumb(Layer& thumb, double width, double top, double length, Color fill, double cornerRadius = 0);
 double thumbLength(const Layer& thumb) noexcept;             // the drawn length
 
 class ScrollArea final {

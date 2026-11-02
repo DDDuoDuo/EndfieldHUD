@@ -60,7 +60,7 @@ std::string pathText(PCWSTR value){
     if(WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,value,static_cast<int>(units),out.data(),size,nullptr,nullptr)!=size)throw Failure{HRESULT_FROM_WIN32(GetLastError())};
     need(ehud::data::validWindowsFilePath(out),"Picker returned an unsupported filesystem path");return out;
 }
-void labels(const ShelfPickerLabels&value){for(const auto*token:{&value.title,&value.addReferences,&value.addSelection})need(!token->empty()&&token->size()<=4096&&ehud::data::Json::validUtf8(*token)&&token->find('\0')==std::string::npos,"Invalid Shelf picker localization");need(value.mode==ShelfPickerMode::mixedReferences||value.mode==ShelfPickerMode::singleReaderFile||value.mode==ShelfPickerMode::singleFile||value.mode==ShelfPickerMode::applications,"Invalid native picker mode");
+void labels(const ShelfPickerLabels&value){for(const auto*token:{&value.title,&value.addReferences,&value.addSelection})need((!token->empty()||value.mode==ShelfPickerMode::media)&&token->size()<=4096&&ehud::data::Json::validUtf8(*token)&&token->find('\0')==std::string::npos,"Invalid Shelf picker localization");need(value.mode==ShelfPickerMode::mixedReferences||value.mode==ShelfPickerMode::singleReaderFile||value.mode==ShelfPickerMode::singleFile||value.mode==ShelfPickerMode::applications||value.mode==ShelfPickerMode::media,"Invalid native picker mode");
     for(const auto*token:{&value.filterName,&value.filterSpec})need(token->size()<=4096&&ehud::data::Json::validUtf8(*token)&&token->find('\0')==std::string::npos,"Invalid native picker filter");
     need(value.mode==ShelfPickerMode::singleFile||value.mode==ShelfPickerMode::applications||(value.filterName.empty()&&value.filterSpec.empty()),"Picker filters belong to the single-file and applications modes");}
 void route(const ShelfPickerRoute&value){
@@ -137,7 +137,8 @@ public:
         if(text.mode==ShelfPickerMode::singleFile){options&=~FOS_ALLOWMULTISELECT;if(!text.filterSpec.empty())options|=FOS_STRICTFILETYPES;}
         if(text.mode==ShelfPickerMode::applications){options&=~(FOS_ALLOWMULTISELECT|FOS_PICKFOLDERS|FOS_FORCEFILESYSTEM);options|=FOS_ALLNONSTORAGEITEMS|FOS_NODEREFERENCELINKS|FOS_DONTADDTORECENT|FOS_NOCHANGEDIR;}
         checked(state_->dialog->SetOptions(options));
-        const auto title=wide(text.title),prompt=wide(text.addReferences),selection=wide(text.addSelection);checked(state_->dialog->SetTitle(title.c_str()));checked(state_->dialog->SetOkButtonLabel(prompt.c_str()));
+        const auto title=wide(text.title),prompt=wide(text.addReferences),selection=wide(text.addSelection);
+        if(!title.empty())checked(state_->dialog->SetTitle(title.c_str()));if(!prompt.empty())checked(state_->dialog->SetOkButtonLabel(prompt.c_str()));
         if(text.mode==ShelfPickerMode::singleReaderFile){
             const COMDLG_FILTERSPEC filters[]={{L"PDF / EPUB / TXT",L"*.pdf;*.epub;*.txt"}};
             checked(state_->dialog->SetFileTypes(1,filters));
@@ -146,7 +147,7 @@ public:
                 const COMDLG_FILTERSPEC filters[]={{name.c_str(),spec.c_str()}};checked(state_->dialog->SetFileTypes(1,filters));}
             // Packaged applications are listed in AppsFolder; the dialog starts there.
             if(text.mode==ShelfPickerMode::applications){ComPtr<IShellItem>apps;if(SUCCEEDED(SHGetKnownFolderItem(FOLDERID_AppsFolder,KF_FLAG_DEFAULT,nullptr,IID_PPV_ARGS(&apps)))&&apps)(void)state_->dialog->SetDefaultFolder(apps.Get());}
-        }else{ComPtr<IFileDialogCustomize>custom;checked(state_->dialog.As(&custom));checked(custom->AddPushButton(addSelectionControl,selection.c_str()));}
+        }else if(text.mode==ShelfPickerMode::mixedReferences){ComPtr<IFileDialogCustomize>custom;checked(state_->dialog.As(&custom));checked(custom->AddPushButton(addSelectionControl,selection.c_str()));}
         events_.Attach(new DialogEvents(state_));checked(state_->dialog->Advise(events_.Get(),&advice_));advised_=true;return S_OK;
     });}
     HRESULT show(HWND owner)override{return state_->dialog?state_->dialog->Show(owner):E_UNEXPECTED;}

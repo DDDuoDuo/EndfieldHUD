@@ -160,6 +160,11 @@ void Layer::setMasksToBounds(bool v, double radius) {
     if (v == clips_ && radius == clipRadius_) return;
     clips_ = v; clipRadius_ = radius; touch();
 }
+void Layer::setClipsPresentedBounds(bool v, double radius) {
+    need(std::isfinite(radius) && radius >= 0, "Presented clip radius must be finite and non-negative");
+    if (v == presentedClip_ && radius == presentedRadius_) return;
+    presentedClip_ = v; presentedRadius_ = radius; touch();
+}
 double Layer::value(Channel c) const noexcept { return model_[std::size_t(c)]; }
 void Layer::setValue(Channel c, double v) {
     finite(v, "Layer channel value must be finite");
@@ -176,11 +181,14 @@ void Layer::setTint(std::optional<Color> c) {
 }
 void Layer::setContent(Json node) {
     need(node.isObject() && node["bounds"].isArray() && node["position"].isArray(), "Layer content must be one framed node");
+    // The same drawing again is no content event (refreshes in place re-apply
+    // their state: the canvas must not re-emit for them).
+    if (content_ && *content_ == node) return;
     content_ = std::move(node); text_.reset(); ++contentRevision_; touch();
 }
 void Layer::setText(TextBlock block) {
     const auto frame = block.layerFrame();
-    text_ = std::make_unique<TextBlock>(std::move(block)); content_.reset(); ++contentRevision_; touch();
+    if (!text_ || *text_ != block) { text_ = std::make_unique<TextBlock>(std::move(block)); content_.reset(); ++contentRevision_; touch(); }
     setFrame(frame);
 }
 TextBlock* Layer::text() noexcept { if (text_) { ++contentRevision_; touch(); } return text_.get(); }
@@ -452,7 +460,9 @@ public:
     }
 private:
     struct Level { const Layer* layer; Json shell; Json::Array children; std::optional<Rect> extent; };
-    struct Run { const Layer* placement; SurfaceRole role; bool first{true}; std::vector<Level> levels; };
+    // text: the run holds oversampled text (it rasterizes at the text
+    // density); drawn: content nodes added since the run last closed.
+    struct Run { const Layer* placement; SurfaceRole role; bool first{true}; std::vector<Level> levels; bool text{}; std::size_t drawn{}; };
     const EmitOptions& options_;
     Artwork art_;
     std::vector<Json::Array> children_;
@@ -506,6 +516,26 @@ private:
             level.children.push_back(std::move(copy));
         }
     }
+    // LIB-97: the Mac oversamples only HUDTextLayers (contentsScale x 1.35);
+    // a raster holding a text leaf is painted at the text density
+    // (LayerRasterOptions::textContentsScale), so a shown text leaf never
+    // shares a surface with plates, rules or icons: consecutive text leaves
+    // compact into text runs, everything else into box-density runs. Hidden
+    // text paints nothing and stays with its neighbours. No split where the
+    // two densities agree (box density 4).
+    bool oversampled(const Layer& l, const Run& run) const {
+        if (!l.text() || l.hidden() || !options_.text) return false;
+        const double s = options_.text->boxScale;
+        if (!(textContentsScale(s) > layerContentsScale(s))) return false;
+        return std::none_of(run.levels.begin(), run.levels.end(), [](const Level& v) { return v.layer->hidden(); });
+    }
+    // Before `l`'s own drawing joins the run: closes it on a density change.
+    void density(const Layer& l, Run& run) {
+        if (!l.text() && !l.content()) return;
+        const bool text = oversampled(l, run);
+        if (run.drawn && run.text != text) close(run);
+        run.text = text; ++run.drawn;
+    }
     void fold(Run& run) {
         auto level = std::move(run.levels.back());
         run.levels.pop_back();
@@ -528,7 +558,7 @@ private:
         auto& root = run.levels.front();
         if (!root.children.empty()) surface(run, root);
         root.children = {}; root.extent.reset();
-        run.first = false;
+        run.first = false; run.drawn = 0;
         for (const auto* l : chain) run.levels.push_back({l, shell(*l), {}, {}});
     }
     void surface(Run& run, Level& root) {
@@ -557,6 +587,7 @@ private:
         if (p.animatable()) art_.animatable.push_back(&p);
         Run run{&p, p.animatable() ? p.role() : SurfaceRole::staticContent, true, {}};
         run.levels.push_back({&p, {}, {}, {}});
+        density(p, run);
         content(p, run.levels.front());
         for (const auto* child : paintOrder(p)) visit(*child, run);
         close(run);
@@ -571,6 +602,7 @@ private:
         }
         if (l.animatable()) { close(run); placement(l); return; }
         need(++depth_ <= maximumDepth, "Design layer tree is too deep");
+        density(l, run);
         run.levels.push_back({&l, shell(l), {}, {}});
         content(l, run.levels.back());
         for (const auto* child : paintOrder(l)) visit(*child, run);
@@ -598,6 +630,19 @@ Rect wipeRect(const Layer& l, double s) noexcept {
 void addMask(SurfacePose& pose, const Affine& world, Rect r, double radius) noexcept {
     if (pose.maskCount < pose.masks.size()) pose.masks[pose.maskCount++] = {world, r, radius};
 }
+// Layer::setClipsPresentedBounds: the rectangle of the layer's presented size,
+// in a frame placed like the layer but unscaled (world x T(anchor) x S^-1:
+// position, translation, base and rotation only), so its radius never stretches.
+void addPresentedMask(SurfacePose& pose, const Layer& layer, const Affine& world, double now) noexcept {
+    const double sx = layer.presented(Channel::scaleX, now), sy = layer.presented(Channel::scaleY, now);
+    if (!(std::abs(sx) > 1e-9) || !(std::abs(sy) > 1e-9)) return;   // degenerate: nothing drawn anyway
+    const auto b = layer.bounds(); const auto a = layer.anchorPoint();
+    const double x0 = -a.x * b.width * sx, x1 = (1 - a.x) * b.width * sx, y0 = -a.y * b.height * sy, y1 = (1 - a.y) * b.height * sy;
+    const Rect r{std::min(x0, x1), std::min(y0, y1), std::abs(x1 - x0), std::abs(y1 - y0)};
+    if (!(r.width > 0) || !(r.height > 0)) return;
+    addMask(pose, world * Affine::translation(a.x * b.width, a.y * b.height) * Affine::scale(1 / sx, 1 / sy), r,
+        std::min(layer.presentedClipRadius(), std::min(r.width, r.height) * .5));
+}
 }
 void samplePoses(const Artwork& art, double now, std::span<SurfacePose> out) {
     need(out.size() == art.bindings.size(), "One pose per surface binding");
@@ -618,6 +663,7 @@ void samplePoses(const Artwork& art, double now, std::span<SurfacePose> out) {
             opacity *= layer.presented(Channel::opacity, now);
             if (&layer != art.root) world = world * presentedLocal(layer, now);
             if (k > 0 && layer.masksToBounds()) addMask(pose, world, {0, 0, layer.bounds().width, layer.bounds().height}, layer.maskCornerRadius());
+            if (k == 0 && layer.clipsPresentedBounds()) addPresentedMask(pose, layer, world, now);
             if (layer.animatable()) {
                 const double w = std::clamp(layer.presented(Channel::wipe, now), 0.0, 1.0);
                 if (w < 1) { if (w <= 0) pose.visible = false; addMask(pose, world, wipeRect(layer, w), 0); }

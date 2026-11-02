@@ -13,7 +13,8 @@ xcrun swiftc -swift-version 5 -O -parse-as-library -sdk "$SDK" -module-cache-pat
  -framework AppKit -framework QuartzCore -framework IOKit -framework CryptoKit \
  "$ROOT/Sources/BatteryMonitor.swift" "$ROOT/Sources/BatteryCapacity.swift" "$ROOT/Sources/HUDChargeMetric.swift" \
  "$ROOT/Sources/ChargeIndicatorView.swift" "$ROOT/Sources/HUDChargeBadge.swift" "$ROOT/Sources/HUDDeploymentFlicker.swift" \
- "$ROOT/Sources/DisplayPolicy.swift" "$ROOT/Sources/OverlayGeometry.swift" "$ROOT/Sources/DeviceBatteryProvider.swift" \
+ "$ROOT/Sources/HUDDesignFonts.swift" "$ROOT/Sources/HUDDesignText.swift" "$ROOT/Sources/HUDDesignTokens.swift" "$ROOT/Sources/HUDResources.swift" "$ROOT/Sources/HUDStartupTrace.swift" \
+ "$ROOT/Sources/Localization.swift" "$ROOT/Sources/LocalizationCatalog.swift" "$ROOT/Sources/LocalizationCatalogRedesign.swift" "$ROOT/Sources/DisplayPolicy.swift" "$ROOT/Sources/OverlayGeometry.swift" "$ROOT/Sources/DeviceBatteryProvider.swift" \
  "$OUTPUT/ChargeReferenceFixture.swift" "$ROOT/windows/tools/module_reference_layers.swift" \
  "$ROOT/windows/tools/charge_indicator_reference.swift" -o "$OUTPUT/charge-reference" >"$OUTPUT/compile.log" 2>&1 \
  || { cat "$OUTPUT/compile.log" >&2; exit 1; }

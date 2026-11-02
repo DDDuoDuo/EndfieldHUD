@@ -227,6 +227,17 @@ struct Run {
 // ---------------------------------------------------------------------------
 // Work Mode
 // ---------------------------------------------------------------------------
+// A stand-in editor: the field edits with it, the typed text is its text.
+struct TypingHost final : d::TextEditorHost {
+    std::string typed;
+    bool begin(const d::TextEditRequest&) override { return true; }
+    void end(d::TextField&) override {}
+    std::string text(const d::TextField&) const override { return typed; }
+    std::optional<std::pair<std::uint32_t, std::uint32_t>> selection(const d::TextField&) const override { return std::nullopt; }
+    bool hasMarkedText(const d::TextField&) const override { return false; }
+    void setText(d::TextField&, std::string_view value) override { typed = value; }
+    void reproject(d::TextField&, d::Rect) override {}
+};
 struct WorkWorld {
     Harness harness;
     double now{1000};
@@ -398,6 +409,15 @@ void workMode(Run& run) {
         w.canvas->openCustom(); w.canvas->customField().setText("12");
         w.canvas->setActive(false, w.now);
         check(!w.canvas->editingCustom() && w.controller.snapshot(w.now).duration == 720, "Leaving closes the field; the same duration does not restart");
+        // A different duration typed before leaving lands (a commit, not a
+        // cancel): the field edits with a stand-in editor here.
+        TypingHost typing; w.harness.context.setEditorHost(&typing);
+        w.canvas->show(w.now); w.canvas->setActive(true, w.now);
+        w.canvas->openCustom(); w.canvas->customField().setText("25");
+        check(w.canvas->customField().editing() && w.controller.snapshot(w.now).duration == 720, "The typed duration waits in the editing field");
+        w.canvas->setActive(false, w.now);
+        check(!w.canvas->editingCustom() && w.controller.snapshot(w.now).duration == 1500, "Leaving commits the typed duration (MODS-734)");
+        w.harness.context.setEditorHost(nullptr);
     }
     {
         WorkWorld w(run.measurer);
@@ -407,6 +427,18 @@ void workMode(Run& run) {
         snap("stopwatchLaps", w);
         w.canvas->primaryAction(); snap("stopwatchPaused", w);
         w.canvas->reset(); snap("stopwatchReset", w);
+    }
+    {
+        // MODS-638: the laps live in the Mac canvas (:158-159), which a new
+        // HUD session builds anew; the stopwatch keeps running in the controller.
+        WorkWorld w(run.measurer);
+        w.press("workMode.kind:1"); w.canvas->settleSwap();
+        w.canvas->primaryAction(); w.advance(5);
+        w.canvas->recordLap(); w.advance(1); w.canvas->recordLap();
+        w.canvas->setActive(false, w.now);
+        check(w.canvas->lapTexts().size() == 2, "Switching modules keeps the laps");
+        w.canvas->resetSession();
+        check(w.canvas->lapTexts().empty() && w.controller.snapshot(w.now).phase == m::WorkModePhase::running, "A new HUD session shows no laps; the stopwatch runs on");
     }
     {
         WorkWorld w(run.measurer);
@@ -670,6 +702,20 @@ void calendar(Run& run) {
         check(std::none_of(w.state->events().begin(), w.state->events().end(), [](const auto& e) { return e.id == uuid(3); }), "Confirmed delete removes the event");
         const auto& deleted = w.harness.context.overlay().toastState().current();
         check(deleted && deleted->title == "Event deleted" && deleted->icon == d::Icon::trash, "Event deleted toast");
+    }
+    {
+        // MODS-638: the Mac builds a new HUDCalendarCanvas at every HUD open
+        // (:30-33, :13-16): today in its month, no event open, empty fields.
+        CalendarWorld w(run.measurer, run.data, true);
+        const auto today = w.canvas->selectedDay(); const auto month = w.canvas->month();
+        w.canvas->perform("nextMonth"); w.canvas->settleSwap();
+        w.canvas->titleField().setText("Synthetic draft");
+        w.canvas->perform("event:" + uuid(2));
+        w.canvas->setActive(false, 20);
+        check(!(w.canvas->month() == month) || w.canvas->editingID(), "Switching modules keeps the canvas state");
+        w.canvas->resetSession();
+        check(w.canvas->selectedDay() == today && w.canvas->month() == month && !w.canvas->editingID() && w.canvas->titleField().text().empty()
+            && w.canvas->detailsField().text().empty(), "A new HUD session starts on today with nothing open and no draft");
     }
     {
         CalendarWorld zh(run.measurer, run.data, true, m::CalendarPermission::authorized, L::simplifiedChinese);

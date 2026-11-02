@@ -182,6 +182,10 @@ public:
     void didActivate() override;
     void didDeactivate() override;
     void willLeave() override;
+    // A new HUD session (the Mac's new FileShelfCanvas, :59-62, :87, :111):
+    // nothing selected or focused, the grid at its top, the store's opening
+    // error shown again.
+    void resetSession() override;
     void playEntrance(design::Point, double now) override;
     void recordingModeChanged() override;
     void didInstall(design::Page&) override;      // the rerender override (:510-513)
@@ -213,7 +217,7 @@ private:
     FileShelfServices services_;
     std::vector<FileShelfItem> items_;
     std::set<std::string, std::less<>> selected_;
-    std::optional<std::string> focus_, anchor_, pendingError_;
+    std::optional<std::string> focus_, anchor_, pendingError_, storeError_;
     std::set<std::string, std::less<>> pendingReveal_;
     bool dropTarget_{}, clearing_{};
     std::map<std::string, ShelfFileProperties, std::less<>> properties_;

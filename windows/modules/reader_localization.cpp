@@ -37,6 +37,6 @@ std::string readerImportFailure(std::exception_ptr error, core::Language languag
         return readerErrorMessage(e.code(), language);
     } catch (...) {
     }
-    return readerTranslation(readerWindowsOpenFailed, language);
+    return readerTranslation(core::selectedFilesUnopened, language);
 }
 } // namespace endfield::modules

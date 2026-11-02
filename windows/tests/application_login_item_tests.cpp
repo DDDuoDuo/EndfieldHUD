@@ -49,6 +49,9 @@ void contracts() {
     const auto off = login.read();
     check(off.registered && off.disabledByUser && !off.enabled(), "User-disabled entry is detected");
     check(app::LoginItemRegistration::statusDescription(off, core::Language::english).find("Startup") != std::string::npos, "Status names the Windows Startup setting");
+    check(app::LoginItemRegistration::statusDescription(off, core::Language::japanese) == "Windows の設定 → アプリ → スタートアップ でオフになっています。" &&
+          app::LoginItemRegistration::statusDescription(off, core::Language::korean) == "Windows 설정 → 앱 → 시작 프로그램에서 꺼져 있습니다." &&
+          *login.setEnabled(true, core::Language::traditionalChinese) == "已在 Windows 設定 → 應用程式 → 啟動 中關閉。", "The Windows Startup notice is in all five languages");
     check(!login.ensureEnabled(core::Language::english) && login.read().disabledByUser, "Launch never overrides the user's choice");
     check(login.setEnabled(true, core::Language::english).has_value() && login.read().disabledByUser, "Explicit enable reports the user's choice instead of forcing it");
     approve(at, 0x02);

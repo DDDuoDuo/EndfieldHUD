@@ -34,7 +34,7 @@ std::optional<TextRegion> regionNaming(Language) noexcept;
 // HUDTextLanguage.firstRegion(in:): the first preferred language that
 // resolves (each alone, as L10n.resolveLanguage([identifier])) to a CJK
 // language, zh-Hans when there is none. Windows passes
-// GetUserPreferredUILanguages (native preferredSystemRegion, the one reader),
+// GetUserPreferredUILanguages (native preferredUILanguages, the one reader),
 // the counterpart of Locale.preferredLanguages.
 TextRegion firstRegion(std::span<const std::string_view> preferredLanguages);
 // HUDTextLanguage.tag(for:): the UI language decides; English and System use
@@ -53,11 +53,31 @@ constexpr std::string_view translated(const TranslationEntry& e,Language l) noex
 // Explorer chooser row that replaces "Choose in Finder" (Media Assembly; the
 // Reader, Archive and Notes media menus show the same five rows).
 inline constexpr TranslationEntry chooseInFileExplorer{"Choose in File Explorer","从文件资源管理器选择","從檔案總管選擇","エクスプローラーで選択","파일 탐색기에서 선택"};
+// The shared Windows file dialog's notices (Archive, Notes, Projection,
+// Reader, Settings center logo, App Shortcuts) and its image filter name
+// (center logo, profile pictures); the Mac's NSOpenPanel shows none of them.
+inline constexpr TranslationEntry filePickerBusy{"File picker is busy","文件选择器正忙","檔案選擇器忙碌中","ファイル選択画面は使用中です","파일 선택기가 사용 중입니다"};
+inline constexpr TranslationEntry selectedFilesUnopened{"Unable to open selected files","无法打开所选文件","無法開啟所選檔案","選択したファイルを開けません","선택한 파일을 열 수 없습니다"};
+inline constexpr TranslationEntry imageFilesFilter{"Images","图片","圖片","画像","이미지"};
+// GlobalShortcutController.statusDescription (.unavailable) with the
+// Windows place of the app's menu (the notification area, Setup's term)
+// for the Mac's menu bar; otherwise the Mac catalog row word for word.
+inline constexpr TranslationEntry summonShortcutUnavailable{"{0} is unavailable or in use. Open from the notification area.",
+    "{0} 不可用或已被占用，请从通知区域打开浮层。","{0} 不可用或已被佔用，請從通知區域開啟浮層。","{0}は利用できないか使用中です。通知領域から開いてください。",
+    "{0} 사용 불가 또는 이미 사용 중입니다. 알림 영역에서 여세요."};
 const TranslationEntry* translationEntry(std::string_view english,std::string_view simplified) noexcept;
 // Each numeric placeholder is rendered once. Inserted text is never rescanned.
 std::optional<std::string> renderTranslation(std::string_view,std::span<const std::string_view> arguments);
+// StringTransform("Hans-Hant") (Sources/Localization.swift L10n.text): ICU's
+// Simplified-to-Traditional transliterator, the system icu.dll on Windows
+// (bound on first use, never a load-time import) or the linked ICU of a
+// portable build. Results are cached (bounded); nullopt when the build or
+// the system has no ICU or no such transliterator.
+std::optional<std::string> hansToHant(std::string_view simplified);
 // Caller resolves System once on a preference/OS-language notification, not
-// every draw. Unknown source pairs return readable English (Chinese for zh).
+// every draw. Unknown source pairs return readable English, the Simplified
+// text for zh-Hans and its Hans-Hant transliteration for zh-Hant (the Mac's
+// fallback; the Simplified text where hansToHant has none).
 std::string localized(std::string_view english,std::string_view simplified,Language,
     std::span<const std::string_view> arguments={});
 }

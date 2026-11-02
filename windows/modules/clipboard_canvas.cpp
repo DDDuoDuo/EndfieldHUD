@@ -63,6 +63,13 @@ void ClipboardCanvas::scheduleAges() {
     after(30, ageTimer_, [this] { refreshAges(); scheduleAges(); });
 }
 void ClipboardCanvas::didDeactivate() { cancel(ageTimer_); }
+void ClipboardCanvas::resetSession() {
+    if (isActive()) return;
+    const bool changed = filter_ != Filter::all || focusedID_;
+    filter_ = Filter::all; focusedID_.reset();
+    Canvas::resetSession();
+    if (changed && renderedLanguage()) rerender();
+}
 void ClipboardCanvas::recordingModeChanged() {
     Canvas::recordingModeChanged();
     // `root.superlayer != nil`: the canvas is the shown module.

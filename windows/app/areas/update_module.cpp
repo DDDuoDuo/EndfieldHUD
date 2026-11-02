@@ -343,7 +343,7 @@ void UpdatesArea::coverage(app::ModuleCoverage& step) {
                   status.latestVersion == "1.2.1 (19)" && !automaticTitle(l).empty() && trayTitle(l).find("1.2.1 (19)") != std::string::npos,
                   "Windows updates: About and tray texts name the update in every language");
         }
-        expect(trayTitle(core::Language::english) == "Update available · 1.2.1 (19)…" && hasUpdate(), "Windows updates: the tray title follows the Mac menu");
+        expect(trayTitle(core::Language::english) == "Update available 1.2.1 (19)…" && hasUpdate(), "Windows updates: the tray title follows the Mac menu");
         // Consent 1: download and verify.
         routes_->forget();
         expect(!activate(t) && st.phase == u::Phase::downloading, "Windows updates: the About row click downloads the installable update");

@@ -146,8 +146,11 @@ public:
     // overlayConcealed: the closed HUD keeps no preview, texture or GPU processor.
     bool hostEvent(const app::HostEvent&,double)override;
     // Source importFiles (first file; ignored while exporting), routed only
-    // while the canvas takes input, captures no pointer and shows no panel.
+    // while the canvas takes input, captures no pointer and shows no panel,
+    // and only inside the canvas's centre (centreContains); dropHover answers
+    // the same rule (draggingUpdated: copy only where the drop is taken).
     bool drop(std::span<const std::string>,core::Point,double)override;
+    bool dropHover(std::span<const std::string>,std::optional<core::Point>,double)override;
     std::optional<app::ModuleCursor>cursorAt(core::Point)const override;
     bool automationRefresh(IRawElementProviderFragmentRoot*)override;
     std::size_t automationCount()const override;

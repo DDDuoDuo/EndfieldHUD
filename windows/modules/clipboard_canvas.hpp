@@ -93,6 +93,9 @@ public:
     void didActivate() override;
     void didDeactivate() override;
     void willLeave() override { didDeactivate(); }
+    // A new HUD session (the Mac's new ClipboardCanvas, :36, :38): the All
+    // filter, no keyboard row, the rows at their top.
+    void resetSession() override;
     void recordingModeChanged() override;
     bool handleKey(const design::KeyInput&) override;
     bool handleRightPointerDown(design::Point) override;

@@ -7,7 +7,6 @@
 #include "app/application_impl.hpp"
 #include "native/display_center_logo.hpp"
 #include "native/profile_pickers.hpp"
-#include "native/screen_reader_peers.hpp"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -135,7 +134,7 @@ void Application::Impl::chooseCenterLogo() {
     if (pickerOwner != PickerOwner::none || !mediaPicker || themeColorSession.open()) return;
     const auto l = settingsLanguage(configuration);
     mediaPicker->setLabels({core::localized("Center logo", "中心标志", l), core::localized("Open", "打开", l), core::localized("Open", "打开", l),
-        gpu::ShelfPickerMode::singleFile, core::localized("Images", "图片", l), narrow(gpu::profileImageFilterSpec())});
+        gpu::ShelfPickerMode::singleFile, std::string(core::translated(core::imageFilesFilter, l)), narrow(gpu::profileImageFilterSpec())});
     if (!mediaPicker->request()) return;
     const auto& stored = configuration.fields["centerLogoRevision"];
     pendingLogoImport = LogoImport{++logoImportGeneration, configuration.string("centerLogo"), stored.isString() ? stored.string() : std::string{}};
@@ -162,7 +161,7 @@ void Application::Impl::importCenterLogoFile(std::string path, LogoImport reques
         });
         refresh(time);
     });
-    if (!accepted) isolate(settingsModuleOwner, "center logo", [&] { settingsUI->showImportError(core::localized("File picker is busy", "文件选择器正忙", settingsLanguage(configuration)), areaClock()); });
+    if (!accepted) isolate(settingsModuleOwner, "center logo", [&] { settingsUI->showImportError(std::string(core::translated(core::filePickerBusy, settingsLanguage(configuration))), areaClock()); });
 }
 
 // --- Theme color -----------------------------------------------------------------
@@ -379,9 +378,12 @@ void Application::Impl::applySummonShortcut(bool capturing) {
         else { hooked = summonHook->start(chord, ++summonHookGeneration); changed = true; }
         lastHookChord = enabled && hooked ? std::optional(chord) : std::nullopt;
     }
-    // "Shortcut unavailable" only when neither path can deliver it.
+    // GlobalShortcutController.statusDescription (.unavailable) only when
+    // neither path can deliver it, with the chord's title (LIB-L13; the
+    // notification area for the Mac's menu bar).
     if (!capturing) {
-        auto status = enabled && !registered && !hooked ? core::localized("Shortcut unavailable", "快捷键不可用", watchAppearance.language) : std::string{};
+        const auto title = modules::settingsShortcutTitle(key);const std::array<std::string_view, 1> name{title};
+        auto status = enabled && !registered && !hooked ? core::renderTranslation(core::translated(core::summonShortcutUnavailable, watchAppearance.language), name).value_or(title) : std::string{};
         if (status != shortcutStatus) { shortcutStatus = std::move(status); if (settingsUI) settingsUI->controller().setExternalStatus(loginStatus, shortcutStatus); }
     }
     if (changed) updateTrayMenu();

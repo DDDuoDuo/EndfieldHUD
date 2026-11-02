@@ -257,6 +257,12 @@ void readerContracts() {
         need(*r.canvas, "next").activate(); r.sync();
         check(r.canvas->pageTurnSequence() == turns + 1 && r.state->current()->location.section == 1 && r.canvas->scrollOffset() == 0,
               "Next scrolls the column to the next page's top: that page becomes current at offset 0 (:547-561, :762-770)");
+        // MODS-638: a new HUD session (the Mac's new ReaderCanvas, :51) lays the column out from its top.
+        r.canvas->scroll({295, m::ReaderCanvas::pageFrame.y + 100}, {0, 30}, w.now); r.sync();
+        check(r.canvas->scrollOffset() > 0, "The wheel scrolls the column");
+        r.activate(false); r.canvas->resetSession();
+        check(r.canvas->scrollOffset() == 0 && r.canvas->imageView().zoom == 1, "A new HUD session starts the column at its top, unzoomed");
+        r.activate(true); r.sync();
         // Leaving the tab clears the reading flag; Library keeps the selection.
         tab(*r.canvas, 1); r.sync();
         check(!r.state->reading() && r.canvas->tab() == m::ReaderCanvas::Tab::library, "Another tab clears the reading flag (:20)");

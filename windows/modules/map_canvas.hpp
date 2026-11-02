@@ -65,6 +65,12 @@ public:
     void didActivate() override;
     void didDeactivate() override;
     void willLeave() override { didDeactivate(); }
+    // A new HUD session (the Mac's new WorldMapCanvas / WorldMapSurface):
+    // no pin selected (WorldMapSurface.swift:46; "Reopening restores ...
+    // without a selection", MapInteractionHUDVerification.swift:309-311) and
+    // the store-open notice shows again at the next activation (:23, :111).
+    // The camera is the saved one on both sides (saved when deactivated).
+    void resetSession() override;
     void recordingModeChanged() override {}  // nothing on the map is private (spec §3.26)
     // WorldMapCanvas.renderScaleChanged: no re-render (the scene re-rasterizes
     // the chrome at the new density; the owner moves the surface to it).

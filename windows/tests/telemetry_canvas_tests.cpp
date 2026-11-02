@@ -242,6 +242,10 @@ void activity() {
     check(canvas.header().counterText() == "00" && find(canvas.root(), "activity.apps.empty.1"), "No app readings: the bilingual empty state (MODS-418)");
     canvas.setActive(false, w.now);
     check(demand.back() == std::pair{false, false} && !state.onSystem && !state.onApps, "Leaving stops the readers and observers");
+    // MODS-638: a new HUD session (the Mac's new ActivityMonitorCanvas, :17-19).
+    check(canvas.isShowingApps() && canvas.sortKey() == m::ActivitySort::threads, "Switching modules keeps the tab and sort");
+    canvas.resetSession();
+    check(!canvas.isShowingApps() && canvas.sortKey() == m::ActivitySort::cpu && canvas.sortDescending(), "A new HUD session shows Overview sorted by CPU");
 }
 void activityState() {
     // Threads (AppActivityMonitor.swift:99-104) and the GPU gating (:124-130).

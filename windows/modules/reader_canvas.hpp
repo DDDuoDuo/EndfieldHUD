@@ -147,6 +147,9 @@ public:
     void didActivate() override;
     void didDeactivate() override;
     void willLeave() override;
+    // A new HUD session (the Mac's new ReaderCanvas, :36, :51): the
+    // illustration at zoom 1, the vertical column at its top, no error told.
+    void resetSession() override;
     bool presentingPanel() const override { return panelOpen_; }
     bool inputLocked() const override { return Canvas::inputLocked() || panelOpen_ || panStart_.has_value(); }
     bool handleKey(const design::KeyInput&) override;

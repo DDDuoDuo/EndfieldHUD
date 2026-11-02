@@ -12,6 +12,11 @@ void need(bool value,const char*message){if(!value)throw std::invalid_argument(m
 void finite(double time){need(std::isfinite(time),"Settings requires finite caller time");}
 void bounded(std::string_view text){need(text.size()<=16*1024&&Json::validUtf8(text),"Invalid bounded Settings status");}
 std::string tr(core::Language l,std::string_view en,std::string_view zh){return core::localized(en,zh,l);}
+// SummonShortcut.validationError's reserved-chord sentence without macOS
+// (Windows protects only its Control editing chords): Windows-only text in
+// the five source languages, worded as the Mac catalog row.
+constexpr core::TranslationEntry reservedEditingChord{"That combination is reserved for common editing commands.","该组合用于常见编辑命令，请选择其他快捷键。",
+    "該組合用於常見編輯命令，請選擇其他快速鍵。","この組み合わせは編集操作で使われます。別のショートカットを選択してください。","일반적인 편집 명령에 예약된 조합입니다."};
 std::string keyTitle(std::uint32_t key){
     if((key>='A'&&key<='Z')||(key>='0'&&key<='9'))return std::string(1,static_cast<char>(key));
     if(key>=0x70&&key<=0x87)return "F"+std::to_string(key-0x6f);
@@ -27,7 +32,7 @@ std::optional<std::string>validateSettingsShortcut(SettingsShortcut key,core::La
     // Windows editing commands are protected in their native Control form.
     // Reserved OS/registered chords still fail through the injected platform.
     if((key.modifiers==2||key.modifiers==6)&&std::string_view("ACFHNOPQSTVWXZ").find(static_cast<char>(key.key))!=std::string_view::npos&&key.key<=127)
-        return tr(language,"That combination is reserved for common editing commands.","该组合用于常见编辑命令，请选择其他快捷键。");
+        return std::string(core::translated(reservedEditingChord,language));
     return {};
 }
 std::vector<SettingsCredit>settingsCredits(core::Language l){return{{"Arknights: Endfield",tr(l,"Unofficial fan project","非官方同人项目"),{}},{"llynxxx",tr(l,"Inspiration","灵感来源"),"https://www.bilibili.com/video/BV1DBaP6yEHs/"},{"QinAnze / 氰氨锗",tr(l,"Inspiration","灵感来源"),"https://github.com/QinAnze/zmd-charge"},{"Ronit Singh / FineTune",tr(l,"Audio architecture reference","音频架构参考"),"https://github.com/ronitsingh10/FineTune"}};}

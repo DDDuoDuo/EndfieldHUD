@@ -206,11 +206,33 @@ void contracts() {
     auto unlinked = p; unlinked.isLinked = false; unlinked.roles.clear(); unlinked.snapshot.reset();
     canvas.update(unlinked);
     check(w.toast() == "Disconnected|", "The asked-for unlink toasts Disconnected (:105)");
+    // MODS-638: a new HUD session (the Mac's new HUDAccountCanvas, :83) awaits no unlink.
+    w.context.overlay().reset(); canvas.update(p); w.context.overlay().reset();
+    control(canvas, "disconnect")->activate(); w.context.overlay().decide(d::ConfirmState::Decision::confirm); w.advance(.2);
+    canvas.setActive(false, w.now); canvas.resetSession(); canvas.setActive(true, w.now);
+    canvas.update(unlinked);
+    check(w.toast() != "Disconnected|", "A new HUD session does not tell an unlink asked for in the last one");
+    actions.clear();
     // Status messages toast while active (:114-116).
     w.context.overlay().reset();
     auto failed = unlinked; failed.statusMessage = "Sign-in could not finish. Please try again.";
     canvas.update(failed);
     check(w.toast() == "Notice|Sign-in could not finish. Please try again.", "A new status message toasts Notice");
+    // The HUD closed (the Mac has no canvas then; a new one shows the state at
+    // the next opening): the controller's reports reach the page without a
+    // slide, a toast or an awaited refresh (updateConcealed).
+    w.context.overlay().reset();
+    canvas.setActive(false, w.now); canvas.resetSession();
+    canvas.updateConcealed(p);
+    check(w.toast().empty() && !canvas.transitioning() && control(canvas, "disconnect") && !control(canvas, "connect"),
+        "Linked while the HUD was closed: the linked page at once, no slide, no Account linked toast");
+    auto refreshed = p; refreshed.status = h::AccountPresentation::Status::refreshing;
+    canvas.updateConcealed(refreshed); canvas.updateConcealed(p);
+    check(w.toast().empty(), "A refresh finishing while the HUD is closed toasts nothing");
+    canvas.updateConcealed(failed); canvas.show(w.now); canvas.setActive(true, w.now);
+    check(w.toast().empty() && control(canvas, "connect") && !canvas.transitioning(), "Unlinked meanwhile: the next opening shows the unlinked page with no toast");
+    canvas.update(p);
+    check(w.toast() == "Account linked|Global", "Open again, linking toasts as before");
     // gaugeCountdown (HUDAccountGauge.countdown with hours).
     check(h::gaugeCountdown(std::nullopt, wall, true) == "—" && h::gaugeCountdown(wall + 360'000'009, wall, true) == "99999:59:59", "Countdown bounds");
 }

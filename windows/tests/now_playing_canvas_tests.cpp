@@ -166,7 +166,11 @@ void behaviour() {
     const auto before = control(canvas, "volume")->rect(canvas.root());
     control(canvas, "lyrics")->activate();
     check(!canvas.showsLyrics() && control(canvas, "volume")->rect(canvas.root()) == before, "Hiding the lyrics moves no control");
-    control(canvas, "lyrics")->activate();
+    // MODS-638: a new HUD session (the Mac's new NowPlayingCanvas, :21) shows the lyrics again.
+    canvas.setActive(false, w.now); canvas.resetSession();
+    check(canvas.showsLyrics(), "A new HUD session shows the lyrics");
+    canvas.setActive(true, w.now);
+    control(canvas, "lyrics")->activate(); control(canvas, "lyrics")->activate();
     // Hiding stops everything and cancels the presentation (:122-128).
     canvas.setPresented(false, w.now);
     check(ctl.presented.back() == false && !canvas.clockActive() && !canvas.nextWakeTime(w.now), "Hidden: no clock, controller deactivated");

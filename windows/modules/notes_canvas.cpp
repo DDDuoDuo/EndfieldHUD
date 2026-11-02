@@ -78,6 +78,14 @@ void NotesCanvas::didDeactivate() {
     saveNote();
     if (noteArea_) noteArea_->suspend();
 }
+void NotesCanvas::resetSession() {
+    if (isActive()) return;
+    saveNote();
+    reportedLoadProblem_ = false;
+    if (addField_) addField_->setText({});
+    if (noteArea_) loadNote(*noteArea_);
+    Canvas::resetSession();
+}
 void NotesCanvas::willLeave() { saveNote(); }
 void NotesCanvas::recordingModeChanged() {
     endEditing(true);
@@ -485,18 +493,11 @@ double NotesCanvas::buildNote(d::Page& page, d::Layer& content, double top, std:
 // when empty), the caret at the end.
 ArchiveBodyArea& NotesCanvas::noteEditor() {
     if (noteArea_) return *noteArea_;
-    const auto& doc = document();
     auto& area = canvasBuilder().make<ArchiveBodyArea>("notes.text", text("Edit text note", "编辑文字便笺"), text("Start writing", "开始书写"),
         std::uint32_t(2 * 1024 * 1024));
     area.setFramed(false);
     area.setHost(options_.noteEditor);
-    const auto base = doc.style.textStyle();
-    auto text16 = archiveUTF16(doc.text);
-    auto runs = archive_rich_text::loaded(text16, doc.richRuns(text16), base);
-    const auto typing = runs.runs.empty() ? base : runs.runs.back().style;
-    const auto length = std::uint32_t(text16.size());
-    area.load(std::move(text16), std::move(runs), typing);
-    area.document().setSelection({{length, length}});
+    loadNote(area);
     area.onChange = [this] { noteEdited_ = true; if (noteArea_) noteArea_->textChanged(); };
     area.onSelectionChange = [this] { if (formatBar_) formatBar_->show(noteFormatState()); };
     area.onEndEditing = [this] { saveNote(); };
@@ -510,6 +511,16 @@ ArchiveBodyArea& NotesCanvas::noteEditor() {
     area.onFormatShortcut = [this](core::notes::FormatKind kind) { core::notes::FormatChange change; change.kind = kind; applyFormat(change); };
     noteArea_ = &area;
     return area;
+}
+void NotesCanvas::loadNote(ArchiveBodyArea& area) {
+    const auto& doc = document();
+    const auto base = doc.style.textStyle();
+    auto text16 = archiveUTF16(doc.text);
+    auto runs = archive_rich_text::loaded(text16, doc.richRuns(text16), base);
+    const auto typing = runs.runs.empty() ? base : runs.runs.back().style;
+    const auto length = std::uint32_t(text16.size());
+    area.load(std::move(text16), std::move(runs), typing);
+    area.document().setSelection({{length, length}});
 }
 // attachNote (:561-565): projected while the TEXT tab is on screen and interactive.
 void NotesCanvas::attachNote() {

@@ -43,7 +43,7 @@ public:
     // Icons that arrived since the rows were built; true when one changed.
     bool iconsChanged();
     const native::VolumeSnapshot& snapshot() const noexcept { return snapshot_; }
-    int tab() const noexcept { return tab_; }   // 0 Devices, 1 App volume; kept across visits (spec 2.9)
+    int tab() const noexcept { return tab_; }   // 0 Devices, 1 App volume; kept across visits (spec 2.9) inside one HUD session
     // Rows the app list shows: three, or two while the status line takes the third.
     int visibleApplicationRows() const;
     double applicationScrollOffset() const noexcept;
@@ -61,6 +61,9 @@ public:
     void show(double now) override;               // makeContent (:72-75)
     void didActivate() override;
     void didDeactivate() override;
+    // A new HUD session (the Mac's new VolumeCanvas, :15, :23): Devices, no
+    // slider remembered for the arrow keys, the app list at its top.
+    void resetSession() override;
     void recordingModeChanged() override {}       // app names stay visible (:77)
     bool handleScroll(design::Point, design::Point delta) override;
     bool handleKey(const design::KeyInput&) override;

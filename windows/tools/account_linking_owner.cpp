@@ -31,11 +31,14 @@ struct AccountLinkingOwner::Impl {
     double now() {const double t=options.clock();if(std::isfinite(t)) time=std::max(time,t);return time;}
     void advance(double t) {need(std::isfinite(t),"Account owner needs a finite clock");time=std::max(time,t);}
     // The controller's presentation reaches the page (HUDAccountCanvas.update:
-    // in place, a rebuild or a slide; the canvas dedupes an equal one).
+    // in place, a rebuild or a slide; the canvas dedupes an equal one). While
+    // the HUD is closed the Mac has no canvas: no slide or toast then
+    // (AccountCanvas::updateConcealed).
     void syncPage(double t) {
         if(!canvas) return;
         auto& env=options.design->env();env.now=std::max(env.now,t);
-        canvas->update(services->controller().presentation());
+        if(overlay) canvas->update(services->controller().presentation());
+        else canvas->updateConcealed(services->controller().presentation());
     }
     // HypergryphAccountController.setVisible(window != nil && interaction, module == .account).
     void visibility() {services->controller().setVisible(overlay,selected);}

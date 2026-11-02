@@ -205,6 +205,12 @@ void SettingsCanvas::didDeactivate() {
     if (section_ != Section::main && (module() != core::Module::display || section_ != Section::battery)) section_ = Section::main;
     cancel(checkTimer_); checkProgress_.reset();
 }
+void SettingsCanvas::resetSession() {
+    if (isActive()) return;
+    const bool changed = std::exchange(section_, Section::main) != Section::main;
+    Canvas::resetSession();
+    if (changed && renderedLanguage()) rerender();
+}
 
 SettingsCanvas::Structure SettingsCanvas::structure() const {
     const bool about = module() == core::Module::about;

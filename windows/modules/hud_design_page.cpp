@@ -99,6 +99,11 @@ void Context::update(double unit, double windowScale, double now) {
     if (invalidate) invalidate();                        // the overlay re-emits at the new scale
     for (Canvas* canvas : std::vector<Canvas*>(canvases_)) canvas->renderScaleChanged();
 }
+// HUDDesignTextField.textDidEndEditing (:281-286) for every registered canvas
+// but the one the press reached.
+void Context::editorFocusMoved(const Canvas* except) {
+    for (Canvas* canvas : std::vector<Canvas*>(canvases_)) if (canvas != except) canvas->editorFocusLost();
+}
 // confirm (:85-89): every canvas closes its popups first.
 void Context::confirm(ConfirmRequest request, std::function<void()> onConfirm, std::function<void()> onCancel) {
     for (Canvas* canvas : std::vector<Canvas*>(canvases_)) canvas->closePopups();
@@ -464,6 +469,13 @@ void Canvas::endEditing(bool commit) {
     for (TextField* field : std::vector<TextField*>(fields_)) if (field->editing()) field->endEditing(commit);
     endOtherEditing(commit);
 }
+// The canvas's other editors (the Archive body, the Notes TEXT note) are text
+// views too: they end editing the same way (their textDidEndEditing flushes
+// or saves through the blur, ArchiveCanvas.swift:674-677, NotesCanvas.swift:606-609).
+void Canvas::editorFocusLost() {
+    for (TextField* field : std::vector<TextField*>(fields_)) if (field->editing()) field->editorFocusLost();
+    if (editingOtherText()) endOtherEditing(true);
+}
 void Canvas::refreshTextFieldProjection() { for (TextField* field : fields_) field->refreshProjection(); }
 bool Canvas::editingText() const noexcept { return std::any_of(fields_.begin(), fields_.end(), [](TextField* f) { return f->editing(); }) || editingOtherText(); }
 TextField* Canvas::editingField() const noexcept {
@@ -519,6 +531,15 @@ void Canvas::setActive(bool active, double now) {
         didDeactivate();
     }
     notifyInput();
+}
+// A scrolled page is built again at offset 0 (rows a module lays out for
+// the visible part follow the new offset); an unscrolled one stays.
+void Canvas::resetSession() {
+    if (active_) return;
+    retainedOffsets_.clear(); pendingOffsets_.clear();
+    if (!page_ || !renderedLanguage_) return;
+    const auto areas = page_->scrollAreas();
+    if (std::any_of(areas.begin(), areas.end(), [](const auto& area) { return area->offset() != 0; })) install(makePage({}, false), false);
 }
 // HUDDirectionalContent.playEntrance(from:) (:249-253).
 void Canvas::playEntrance(Point offset, double now) {

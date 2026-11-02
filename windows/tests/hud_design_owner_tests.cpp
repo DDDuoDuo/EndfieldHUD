@@ -181,7 +181,7 @@ void run(const std::filesystem::path& shader) {
     check(frame(sample(core::Module::clipboard), .5) > 0, "The prewarmed canvas shows");
     // --- the overlay owner: the quit card's slot ------------------------------------------------
     const auto routing = overlay.routing();
-    check(routing.pointerCapture == 0 && routing.wheelCapture == 0 && routing.keyCapture == 0, "The overlay routes first like the quit card");
+    check(routing.pointerCapture == 1 && routing.wheelCapture == 0 && routing.keyCapture == 0, "The overlay routes first like the quit card (the facility banner and tags press before it)");
     check(!overlay.capturesPointer() && !overlay.presented(), "At rest the overlay holds nothing");
     unsigned confirmed{}, cancelled{};
     d::ConfirmRequest request; request.id = "test"; request.title = "Delete?"; request.confirmTitle = "Delete"; request.danger = true;

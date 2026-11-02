@@ -403,7 +403,7 @@ void texts() {
     check(u::trayTitle(s, Language::english) == "Checking for updates…", "Tray title while checking");
     s.phase = u::Phase::available;
     s.latestVersion = "1.2.1 (19)";
-    check(u::trayTitle(s, Language::english) == "Update available · 1.2.1 (19)…" && u::trayTitle(s, Language::simplifiedChinese) == "发现新版本 · 1.2.1 (19)…",
+    check(u::trayTitle(s, Language::english) == "Update available 1.2.1 (19)…" && u::trayTitle(s, Language::simplifiedChinese) == "发现新版本 1.2.1 (19)…",
           "Tray title with an update");
 }
 

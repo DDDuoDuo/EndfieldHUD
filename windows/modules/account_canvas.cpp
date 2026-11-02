@@ -179,6 +179,16 @@ void AccountCanvas::update(const Presentation& value) {
         toast(d::Icon::warn, "Notice", "提示", value.statusMessage);
     updateClock();
 }
+void AccountCanvas::updateConcealed(const Presentation& value) {
+    awaitingUnlink_ = false; awaitingRefresh_ = false;
+    if (value == presentation_) return;
+    presentation_ = value;
+    if (!renderedLanguage()) return;
+    closeMenu();
+    if (structure() != renderedStructure_) rerender();
+    else for (const auto& binder : binders_) binder();
+    updateClock();
+}
 AccountCanvas::Structure AccountCanvas::structure() const {
     return {presentation_.isLinked, presentation_.region, presentation_.needsReconnect, !presentation_.lastSync.empty(), env().language};
 }
@@ -190,6 +200,11 @@ std::optional<AccountCanvas::SanityState> AccountCanvas::renderedSanity() const 
 // MARK: Lifecycle (:129-146)
 void AccountCanvas::didActivate() { updateClock(); if (sanity_) sanity_->render(sanityPresentation(), wallNow()); }
 void AccountCanvas::didDeactivate() { clockStart_.reset(); awaitingRefresh_ = false; }
+void AccountCanvas::resetSession() {
+    if (isActive()) return;
+    awaitingUnlink_ = false;
+    Canvas::resetSession();
+}
 // The recovery countdowns are a live readout: one tick a second while the
 // linked page is on screen, none otherwise (the Mac's 1 s repeating Timer,
 // tolerance .1: a wake each second from its start on the owner's clock).

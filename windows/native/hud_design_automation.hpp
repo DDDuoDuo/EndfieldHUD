@@ -51,12 +51,14 @@
 // NativeDesignAutomation is the design canvases' view of the tree: items
 // arrive in router order (the Mac's stand-in order), only while a canvas
 // accepts input (none while swapping); the overlay owner lists the confirm
-// bar's pills while it captures. NativeScreenReaderPeers stays for modules
-// not yet redesigned.
+// bar's pills while it captures. Every HUD module is a design canvas now:
+// the v1.2.0 projected peers (NativeScreenReaderPeers) are gone, and only
+// their client-to-screen helper lives on here (screenReaderClientToScreen).
 #include "modules/hud_design_control.hpp"
 #ifdef _WIN32
 #include <functional>
 #include <memory>
+#include <optional>
 
 struct IRawElementProviderFragment;
 struct IRawElementProviderFragmentRoot;
@@ -152,6 +154,10 @@ using DesignAutomationStats = AutomationTreeStats;
 // state, text and group values are read-only Values, a slider's help is its
 // description when the item has no help).
 std::vector<AutomationNode> automationNodes(std::span<const modules::design::AccessibilityItem>);
+// Logical client rect (an owner's projected box rect) -> physical screen
+// pixels from the window's client origin: the owners' DesignAutomationHost::
+// toScreen. None without a window, a positive scale or a rect.
+std::optional<core::Rect> screenReaderClientToScreen(void* window, double scale, const std::optional<core::Rect>& logicalClient);
 class NativeDesignAutomation final {
 public:
     explicit NativeDesignAutomation(DesignAutomationHost);

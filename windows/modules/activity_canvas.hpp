@@ -107,6 +107,9 @@ public:
     void didActivate() override;
     void didDeactivate() override { stopReading(); }
     void willLeave() override { stopReading(); }
+    // A new HUD session (the Mac's new ActivityMonitorCanvas, :17-19): the
+    // Overview tab, sorted by CPU descending, the app list at its top.
+    void resetSession() override;
     bool handleScroll(design::Point, design::Point delta) override;
 private:
     class Row;
