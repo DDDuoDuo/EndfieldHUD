@@ -329,7 +329,7 @@ bool Application::Impl::shelfDragFrame(double time,bool settled){
     if(shelfRestoring&&!closing&&session->phase()==core::VisibilityPhase::visible){const auto token=*shelfRestoring;shelfRestoring.reset();
         perform(lifecycle.shelfDragRestored(token),time);automationChanged();refreshAutomation();if(stopping)return true;}
     if(shelfRetracting&&settled&&session->phase()==core::VisibilityPhase::concealed){const auto token=*shelfRetracting;shelfRetracting.reset();
-        retractDesignDensity(); // the restore's deploy, as after a concealment
+        retractDesignDensity();designDensityRetracted=true; // the restore's deploy (or a delivered drag's concealment) starts from it
         perform(lifecycle.shelfDragRetracted(token),time);}
     return lifecycle.shelfDragActive();
 }

@@ -748,7 +748,8 @@ void Application::Impl::concealed(double time){
     if(automation)automation->disconnectOwners();
     broadcast(HostEvent::Kind::overlayConcealed,time);
     // The density the next opening deploys at: as the retract would have left it, then the deploy.
-    retractDesignDensity();
+    if(!designDensityRetracted)retractDesignDensity(); // (a delivered shelf drag's retract was modelled when it settled)
+    designDensityRetracted=false;
     releaseConcealedGraphics();
     // ENDFIELDHUD_MEMORY_TRACE: the first closings (the hidden run records its own stages).
     if(memoryTrace&&production()&&memoryTrace->closings<8)recordMemory("closed-"+std::to_string(++memoryTrace->closings),true);
@@ -1846,7 +1847,7 @@ void Application::Impl::selectModule(core::Module module,double time){
 }
 void Application::Impl::open(double time){
     time=hostTime(time);closing=false;canvasOpenedAt=time;session->open(time,0x5eed);
-    concealedBroadcast=false;
+    concealedBroadcast=false;designDensityRetracted=false;designDensityFrameTime.reset();
     // The swap chain and composition target released while the HUD stayed
     // closed come back before the first frame, which the message loop gates
     // on their new frame latency object. A released device is created on a
@@ -1884,7 +1885,9 @@ void Application::Impl::close(double time){
     // A close that interrupts the deploy: where RC 139's live measurement had stepped to by then (the retract starts there).
     designDensityAtClose.reset();
     if(designOverlay&&chromePlan&&!settings.reduceMotion&&session->phase()==core::VisibilityPhase::opening)
-        designDensityAtClose=replayDesignDensity(designDensityStart.value_or(2.),false,(time-canvasOpenedAt)/chromePlan->entranceSeconds());
+        // RC 139 measured on the frames: up to the deploy's last frame, posed at its eased clip time.
+        if(const double length=chromePlan->entranceSeconds();length>0&&designDensityFrameTime)
+            designDensityAtClose=replayDesignDensity(designDensityStart.value_or(2.),false,core::VisibilityClock::clipTime(std::max(0.,*designDensityFrameTime-canvasOpenedAt),length)/length);
     host.capturePointer(false);environment.pointerLocked=false;session->setEnvironment(environment,time);canvasCapturedOpacity=canvasOpacity(time);canvasClosedAt=time;closing=true;session->close(time);refresh(time);
 }
 void Application::Impl::forceConceal(double time){
@@ -2277,6 +2280,9 @@ double Application::Impl::replayDesignDensity(double start,bool exit,double frac
     const auto count=std::min<std::size_t>(planes.size(),std::size_t(std::floor(std::clamp(std::isfinite(fraction)?fraction:1.,0.,1.)*double(planes.size()-std::min<std::size_t>(planes.size(),1))))+1);
     double density=start;
     for(std::size_t k=0;k<count;++k)density=tools::designDensity(planes[k],metrics.scale,density);
+    // Part of the clip: its last plane exactly at `fraction` (one resolve).
+    if(fraction<1)if(const auto at=chromePlan->clipCenter({0,0,metrics.width,metrics.height},settings.hudOffset,settings.hudScale,contentScale,exit,std::clamp(fraction,0.,1.)*(exit?chromePlan->exitSeconds():chromePlan->entranceSeconds())))
+        density=tools::designDensity(source::designBoxWorld(*at),metrics.scale,density);
     return density;
 }
 // Outside the settled HUD the overlay holds the density the next settled HUD
@@ -2367,7 +2373,7 @@ bool Application::Impl::present(double time,bool submit){
         if(designOverlay){
             if(closing){if(!heldDesignDensity)heldDesignDensity=designOverlay->context().boxScale();designOverlay->holdDensity(heldDesignDensity);}
             // An opening keeps the density derived before it (a layout change mid-deploy: the settled HUD measures).
-            else if(session->phase()!=core::VisibilityPhase::visible){if(!heldDesignDensity)holdDesignDensity();else designOverlay->holdDensity(heldDesignDensity);}
+            else if(session->phase()!=core::VisibilityPhase::visible){if(!heldDesignDensity)holdDesignDensity();else designOverlay->holdDensity(heldDesignDensity);designDensityFrameTime=time;}
             else{heldDesignDensity.reset();designOverlay->holdDensity(std::nullopt);}}
         // Notes first: it owns the module presentation sample every other
         // owner reads in this same frame.

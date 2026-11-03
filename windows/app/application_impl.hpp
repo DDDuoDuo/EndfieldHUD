@@ -799,6 +799,8 @@ struct Application::Impl {
     // to it), and the hidden traces' stand-in for that placement (targetDisplay).
     bool placingForOpen{};
     std::optional<double> designDensityAtClose; // close(): RC 139's density where it cut a deploy short
+    bool designDensityRetracted{}; // a shelf drag's settled retract already derived the next start
+    std::optional<double> designDensityFrameTime; // the opening's last frame (close(): where a cut deploy got to)
     std::function<void()> placementForTest;
     std::shared_ptr<gpu::NotesClipboard> designClipboard; // the design text fields' one clipboard
     std::unique_ptr<ModuleContrast> moduleContrast;      // the centre's contrast backdrop (SHELL-27)
