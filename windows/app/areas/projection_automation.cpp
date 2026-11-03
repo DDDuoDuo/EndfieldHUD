@@ -67,7 +67,7 @@ private:
             mod::ProjectionInteraction interaction(model,{metrics.width,metrics.height});
             auto*context=host_.designContext();require(context!=nullptr,"Projection's chrome needs the shared design context");
             tools::ProjectionPreviewOptions options;options.raster.pixelsPerPoint=2;options.raster.paddingPoints=1;options.language=core::Language::english;options.design=&context->env();
-            tools::ProjectionPreview projection(model,interaction,raster_,std::move(options));
+            tools::ProjectionPreview projection(model,interaction,raster_,std::move(options),clock_());
             projection.resize(metrics);projection.setActive(true,clock_());projection.update(clock_());
             // The live order of the RC that died opening Projection: the workspace
             // already presented a later frame when a UI Automation invoke reads
