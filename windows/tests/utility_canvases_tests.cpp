@@ -334,6 +334,11 @@ void volumeCanvas() {
         auto update = model.state; update.volume = .6; update.canSetBalance = false; update.outputs[1].name = "Headset";
         canvas.receive(update);
         check(&canvas.page() == page && entering() && canvas.header().counterText() == "60", "A non-structural update keeps the entering page");
+        // The first read after launch adds the per-app support: the Devices
+        // page never reads it, so it stays (the dot follows by its binder).
+        update.applicationActivitySupported = false; canvas.receive(update);
+        update.applicationActivitySupported = true; canvas.receive(update);
+        check(&canvas.page() == page && entering(), "Per-app support arriving keeps the entering Devices page");
         canvas.receive(model.state);
         w.advance(2); w.appearance(Language::english);
     }

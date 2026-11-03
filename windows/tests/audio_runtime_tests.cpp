@@ -190,9 +190,8 @@ void volumeRevisit(){
 // The same through the Volume canvas, as DesignOwnerCore drives a module
 // switch (show, setActive, playEntrance; prepareToLeave, setActive(false)):
 // the page Volume shows when it enters keeps its staggered entrance through
-// the worker's first read, and the leaving page is not rebuilt. (The first
-// visit after launch builds the page before any read, so its first read adds
-// the per-app support, a Structure change, as the Mac's first start does.)
+// the worker's first read, and the leaving page is not rebuilt, from the
+// first switch after launch on.
 void volumePage(){
     namespace d=endfield::modules::design;
     Harness h;
@@ -212,8 +211,18 @@ void volumePage(){
     binding.setReceiver([&](const n::VolumeSnapshot&s){canvas.receive(s);if(page&&&canvas.page()!=page)++rebuilt;page=&canvas.page();});
     const auto enter=[&]{now+=1;canvas.show(now);canvas.setActive(true,now);canvas.playEntrance({0,24},now);page=&canvas.page();};
     const auto leave=[&]{now+=1;canvas.prepareToLeave(now);canvas.setActive(false,now);};
-    enter();
-    h.until([&]{return binding.snapshot().applicationActivitySupported&&binding.snapshot().canSetVolume;},"The first visit reads the devices");
+    // The first switch after launch: the page is built before anything was
+    // read (no devices, no level, no per-app support); the worker's first read
+    // fills it in place, so the page keeps its entrance.
+    rebuilt=0;enter();
+    {
+        const std::vector<d::Layer*>rows(canvas.page().staggered().begin(),canvas.page().staggered().end());
+        check(!binding.snapshot().applicationActivitySupported&&!binding.snapshot().canSetVolume&&canvas.header().counterText()=="00","The first page is built before the first read");
+        h.until([&]{return binding.snapshot().applicationActivitySupported&&binding.snapshot().canSetVolume;},"The first visit reads the devices");
+        check(rebuilt==0&&&canvas.page()==page&&rows.size()==5,"The first switch to Volume after launch keeps the page it entered with");
+        check(std::all_of(rows.begin(),rows.end(),[&](const d::Layer*row){return row->animating(now+.02);}),"Its tab bar and rows keep their staggered entrance");
+        check(canvas.header().counterText()=="50"&&canvas.snapshot().outputs.size()==1,"The read fills the level and the devices in place");
+    }
     leave();h.until([&]{return h.runtime->snapshot().paused;},"Volume left");
     for(unsigned visit=0;visit<3;++visit){
         rebuilt=0;
