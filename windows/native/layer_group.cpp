@@ -57,6 +57,7 @@ bool NativeLayerGroup::releaseTarget(Renderer& renderer){
     registered_=false;if(!local_)renderer_=nullptr;return true;
 }
 bool NativeLayerGroup::published()const noexcept{return carrier_.compositionOwner_!=nullptr;}
+void NativeLayerGroup::setRenderAhead(Renderer& renderer,bool ahead){if(registered_)(void)renderer.setNativeGroupRenderAhead(id_,ahead);}
 core::Rect NativeLayerGroup::localCoverageBounds()const{
     need(local_!=nullptr,"Native group has no local scene");
     // Called only while content is being installed. Local menu leaves share a

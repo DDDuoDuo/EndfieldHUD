@@ -529,7 +529,7 @@ struct Renderer::Impl {
         DrawObject output;
         std::vector<Draw> draws;
         std::vector<ObjectUniform> staged;
-        bool dirty{true},visibleFrame{};unsigned depth{1};
+        bool dirty{true},visibleFrame{},ahead{};unsigned depth{1}; // ahead: setNativeGroupRenderAhead
         bool released{}; // releaseFrameTargets(): target and sampled view dropped until drawn again
         std::string owner; // memory trace: the module owner that configured it
     };
@@ -1304,6 +1304,11 @@ bool Renderer::setWorkerTexture(std::string sourceID, std::uint64_t revision, co
     r.counters.resourceBytes = r.counters.resourceBytes - previousBytes + prepared->bytes; ++r.counters.textureUploads; ++r.counters.preparedTextureInstalls;
     return true;
 }
+bool Renderer::setNativeGroupRenderAhead(const std::string& id, bool ahead) {
+    require(impl_ != nullptr, "Renderer is not initialized"); auto &r = *impl_; r.thread();
+    const auto found = r.groups.find(id); if (found == r.groups.end()) return false;
+    found->second->ahead = ahead; return true;
+}
 bool Renderer::updateTexture(const std::string &sourceID, std::uint64_t revision, std::uint32_t x, std::uint32_t y, TextureData region) {
     require(impl_ != nullptr, "Renderer is not initialized"); auto &r = *impl_; r.thread();
     const auto found = r.textures.find(sourceID);
@@ -1758,7 +1763,11 @@ void Renderer::draw(bool present) {
     for(const auto&draw:r.draws)expose(draw);
     for(auto&[id,group]:r.groups){(void)id;if(group->visibleFrame&&group->depth==2)for(const auto&draw:group->draws)expose(draw);}
     const double nativeBegin=qpcNow();
-    for(unsigned depth=1;depth<=2;++depth)for(auto&[id,group]:r.groups){(void)id;if(group->depth!=depth||!group->dirty||!group->visibleFrame)continue;
+    // A group rendered ahead (setNativeGroupRenderAhead) fills its target while
+    // nothing shows it yet, two per frame; its first visible frame then only composites.
+    std::size_t ahead=0;
+    for(unsigned depth=1;depth<=2;++depth)for(auto&[id,group]:r.groups){(void)id;if(group->depth!=depth||!group->dirty)continue;
+        if(!group->visibleFrame&&(!group->ahead||ahead++>=2))continue;
         if(group->released)r.restoreGroupTarget(*group);
         r.renderNativeDraws(group->draws,group->target.Get(),group->camera.Get(),group->width,group->height,true,group->requested.colorSpace);
         group->dirty=false;++r.counters.nativeGroupRenders;r.touch();

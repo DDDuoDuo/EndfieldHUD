@@ -451,6 +451,11 @@ public:
     // In-use output cannot be removed. Group-held local resource references
     // likewise prevent direct mesh/texture removal until replaced/cleared.
     bool removeNativeGroup(const std::string& id);
+    // Renders the group's target while no published draw shows it yet (at
+    // most two such groups per draw()), e.g. while a fade-in waits at opacity
+    // 0, so its first visible frame only composites it. Default false: only
+    // groups a visible draw samples render. False when no such group exists.
+    bool setNativeGroupRenderAhead(const std::string& id, bool ahead);
     // Uploads changed object constants only here. Pointer/camera updates never
     // recreate mesh/texture/object buffers or run layout/bitmap generation.
     // Failure while updating existing uniforms resets the renderer; callers

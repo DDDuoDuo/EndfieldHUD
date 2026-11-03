@@ -436,7 +436,11 @@ void NativeDesignScene::updatePose(const NativeDesignScenePose& pose) {
             // reached it; sampleLayer then reports it invisible): the module's
             // fade-in takes the group either way.
             const bool prepared = pose.prepareFade && pose.opacity <= 0 && (g.visible || !(g.opacity > 0));
-            if ((prepared || (g.visible && opacity > 0 && opacity < 1 - 1e-4)) && g.world.inverse()) {
+            // While the module still fades in, a group already taken stays with
+            // its part until the part's own stagger shows it (no detach and
+            // attach again at the start of the fade).
+            const bool kept = p.group && pose.opacity < 1 - 1e-4 && !(g.opacity > 0);
+            if ((prepared || kept || (g.visible && opacity > 0 && opacity < 1 - 1e-4)) && g.world.inverse()) {
                 p.groupWorld = g.world;
                 p.groupOpacity = float(g.opacity);
                 p.wantsGroup = true;
@@ -485,7 +489,7 @@ bool NativeDesignScene::uploadAnimations(Renderer& r) {
             p.group = std::move(i.pool.back());
             i.pool.pop_back();
             i.place(p);
-            try { p.group->attach(r, *p.scene, i.density); attached = true; }
+            try { p.group->attach(r, *p.scene, i.density); attached = true; p.group->setRenderAhead(r, p.prepared); }
             catch (const std::invalid_argument&) { i.pool.push_back(std::move(p.group)); p.refused = true; i.place(p); continue; }
             catch (...) { i.pool.push_back(std::move(p.group)); i.place(p); throw; }
             ++i.statistics.groupSwitches;

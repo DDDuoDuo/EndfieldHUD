@@ -73,6 +73,9 @@ public:
     void attach(Renderer&,LayerScene& uploadedScene,double pixelsPerPoint,std::optional<core::Rect> coverage={});
     void detach()noexcept;
     bool releaseTarget(Renderer&);
+    // Borrowed mode, attached: render the target ahead of its first visible
+    // frame (Renderer::setNativeGroupRenderAhead).
+    void setRenderAhead(Renderer&,bool);
     bool attached()const noexcept{return local_!=nullptr;}
     bool holdsTarget()const noexcept{return registered_;}
     bool published()const noexcept;

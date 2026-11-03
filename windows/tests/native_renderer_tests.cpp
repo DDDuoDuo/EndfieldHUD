@@ -184,6 +184,19 @@ void textureStorage(Renderer& renderer,DrawObject& object){
         check(paintable&&renderer.setWorkerTexture("storage.paintable",1,paintable)&&renderer.updateTexture("storage.paintable",2,0,0,{1,1,clear}),"An updatable texture made on a worker is painted in place");
         renderer.clearDrawList();check(renderer.removeTexture("storage.direct")&&renderer.removeTexture("storage.prepared")&&renderer.removeTexture("storage.paintable"),"The prepared textures retire");
         prepared.reset();paintable.reset();}
+    {check(renderer.setTexture("storage.direct",1,{2,2,texels,TextureColorSpace::encodedSRGB,TextureFilter::nearest}),"A texture for the group installs");object.textureID="storage.direct";
+        // A group rendered ahead fills its target while its output is at opacity 0;
+        // the first visible frame then only composites it.
+        check(renderer.configureNativeGroup("storage.ahead",encodedTarget,std::span(&object,1)),"A group to render ahead installs");
+        auto ahead=renderer.nativeGroupOutput("storage.ahead");ahead.opacity=0;renderer.setDrawList(std::span(&ahead,1));
+        const auto renders=renderer.stats().nativeGroupRenders;renderer.draw(false);
+        check(renderer.stats().nativeGroupRenders==renders,"A group no visible draw samples does not render");
+        check(renderer.setNativeGroupRenderAhead("storage.ahead",true)&&!renderer.setNativeGroupRenderAhead("storage.missing",true),"Render-ahead names an existing group");
+        renderer.draw(false);check(renderer.stats().nativeGroupRenders==renders+1,"A group rendered ahead fills its target at opacity 0");
+        ahead.opacity=1;renderer.setDrawList(std::span(&ahead,1));renderer.draw(false);
+        check(renderer.stats().nativeGroupRenders==renders+1,"Its first visible frame only composites the target");
+        pixel(renderer.readback(),16,16,{25,50,100,128},1,"The target rendered ahead carries the same premultiplied bytes");
+        renderer.clearDrawList();check(renderer.removeNativeGroup("storage.ahead")&&renderer.removeTexture("storage.direct"),"The group and its texture retire");}
     object.textureID.clear();
     // White wherever it covers (alpha masks, white text): one byte per
     // texel, read as premultiplied white (a,a,a,a) in every color space -
