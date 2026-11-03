@@ -57,8 +57,13 @@ desktop. Everything else is as in RC 139 below.
   is pressed before the launch warm-up has run.
 - With Reduce Motion on, the text sharpness after a scaling change can
   differ slightly from RC 139's.
+- One unreproduced report: once, after a Work Mode countdown was started
+  or an Event Log tab switched, Work Mode, Event Log, Personal ID, Account
+  binding, the Sanity Bar and the power button lost their interface. The
+  tester could not make it happen again, and the hidden tests do not show
+  it.
 
-These three are fixed for the next release candidate.
+The first three are fixed for the next release candidate.
 
 ## RC 139 — checkpoint 139
 
