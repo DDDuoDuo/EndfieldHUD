@@ -1045,7 +1045,16 @@ int Application::Impl::runHiddenVerification(){
                     {"workMode.preset30",{1,24}},{"workMode.start",{1,24}},{"workMode.pause",{1,24}},{"workMode.resume",{1,24}},{"workMode.reset",{1,24}},
                     {"workMode.customOpen",{1,24}},{"workMode.customCommit",{1,24}},{"workMode.lap",{1,24}},
                     {"fileShelf.selectOne",{1,48}},{"fileShelf.selectAnother",{1,48}},{"fileShelf.ctrlToggle",{1,48}},{"fileShelf.shiftExtend",{0,48}},
-                    {"fileShelf.selectFromMany",{1,48}},{"fileShelf.deselect",{1,48}}};
+                    {"fileShelf.selectFromMany",{1,48}},{"fileShelf.deselect",{1,48}},
+                    // Add, remove and Clear lay the tiles out again (the Mac's pages): loose bounds.
+                    {"fileShelf.addOne",{1,200}},{"fileShelf.removeOne",{1,160}},{"fileShelf.removeThree",{1,160}},{"fileShelf.clear",{1,64}}};
+                // The most rasterizations on one frame after the action's (deterministic counts):
+                // later work comes a tile per frame (the other layout's tiles; an add at most 14
+                // measured, a selection 9), or as the page a Clear builds once its tiles faded
+                // (22), never as a burst moved off the click (every tile of a layout at once).
+                const std::map<std::string,std::int64_t,std::less<>> frameBounds{
+                    {"fileShelf.addOne",24},{"fileShelf.selectOne",16},{"fileShelf.selectAnother",16},{"fileShelf.ctrlToggle",16},{"fileShelf.shiftExtend",16},
+                    {"fileShelf.selectFromMany",16},{"fileShelf.deselect",16},{"fileShelf.removeOne",16},{"fileShelf.removeThree",16},{"fileShelf.clear",48}};
                 const bool enforceBounds=true;
                 const auto timeAction=[&](core::Module m,const char*name,const std::function<bool(double)>&act){
                     drainUtility(time);frameAt(time);time+=.05;
@@ -1053,15 +1062,17 @@ int Application::Impl::runHiddenVerification(){
                     const auto t0=Clock::now();const bool done=act(time);const double actionMs=milliseconds(t0);
                     const auto t1=Clock::now();frameAt(time);const double frameMs=milliseconds(t1);
                     const auto pages1=designContext.pagesBuilt();const auto raster1=rasterizer.stats();
-                    double settleMax=0;
-                    for(unsigned f=1;f<=15;++f){const double t=time+double(f)/15;const auto f0=Clock::now();frameAt(t);settleMax=std::max(settleMax,milliseconds(f0));}
+                    double settleMax=0;std::int64_t settleRasterMax=0;
+                    const auto settleFrame=[&](double t){const auto r0=rasterizer.stats().rasterizations;const auto f0=Clock::now();frameAt(t);
+                        settleMax=std::max(settleMax,milliseconds(f0));settleRasterMax=std::max(settleRasterMax,std::int64_t(rasterizer.stats().rasterizations-r0));};
+                    for(unsigned f=1;f<=15;++f)settleFrame(time+double(f)/15);
                     // Completions of the action's utility work (saves) arrive as the message loop would deliver them.
-                    time+=1;drainUtility(time);{const auto f0=Clock::now();frameAt(time+.01);settleMax=std::max(settleMax,milliseconds(f0));}
+                    time+=1;drainUtility(time);settleFrame(time+.01);
                     const auto pages2=designContext.pagesBuilt();const auto raster2=rasterizer.stats();
                     // Work Mode and the Shelf carry the regression bounds: their actions must run.
                     if(m==core::Module::workMode||m==core::Module::fileShelf)need(done,(std::string("The timed action ")+name+" ran").c_str());
                     timings.push_back(Json::Object{{"module",std::string(core::moduleIdentifier(m))},{"action",std::string(name)},{"ran",done},
-                        {"actionMs",actionMs},{"frameMs",frameMs},{"clickFrameMs",actionMs+frameMs},{"settleMaxFrameMs",settleMax},
+                        {"actionMs",actionMs},{"frameMs",frameMs},{"clickFrameMs",actionMs+frameMs},{"settleMaxFrameMs",settleMax},{"settleMaxFrameRasterizations",settleRasterMax},
                         {"pagesBuilt",std::int64_t(pages1-pages0)},{"rasterizations",std::int64_t(raster1.rasterizations-raster0.rasterizations)},
                         {"textLayouts",std::int64_t(raster1.textLayoutsCreated-raster0.textLayoutsCreated)},
                         {"secondPagesBuilt",std::int64_t(pages2-pages0)},{"secondRasterizations",std::int64_t(raster2.rasterizations-raster0.rasterizations)},
@@ -1073,6 +1084,10 @@ int Application::Impl::runHiddenVerification(){
                         timings.back()["withinBound"]=within;
                         if(enforceBounds)hostCheck(within,"The timed action "+key+" stays within its work bound ("+std::to_string(pages)+" of "+std::to_string(bound->second.first)+
                             " pages, "+std::to_string(rasters)+" of "+std::to_string(bound->second.second)+" rasterizations)");
+                    }
+                    if(const auto bound=frameBounds.find(key);bound!=frameBounds.end()){
+                        const bool within=settleRasterMax<=bound->second;timings.back()["settleWithinBound"]=within;
+                        if(enforceBounds)hostCheck(within,"The timed action "+key+" spreads its later work over frames ("+std::to_string(settleRasterMax)+" of "+std::to_string(bound->second)+" rasterizations on one frame)");
                     }
                     time+=.1;};
                 const auto skip=[&](core::Module m,const char*name){timings.push_back(Json::Object{{"module",std::string(core::moduleIdentifier(m))},{"action",std::string(name)},{"skipped",true}});};
