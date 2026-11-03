@@ -275,15 +275,16 @@ public:
     // every part whose artwork is unchanged instead of rasterizing the whole
     // page again (a Recording mode switch changes a few redacted labels).
     void rerenderKeepingIds();
-    // Shown: attached (show() .. prepareToLeave() / detach()) or active.
+    // Shown: attached (show() .. prepareToLeave()) or active.
     bool isShown() const noexcept { return attached_ || active_; }
-    // The owner stopped presenting a canvas it showed but never activated (an
-    // incoming screen a later switch skipped, or the HUD closed over it):
-    // not shown any more. Nothing to leave: no willLeave, no swap to settle.
-    void detach() noexcept { attached_ = false; }
     // A Recording mode change this canvas applies when next shown (show /
     // setActive re-render it, keeping its layer ids).
     void deferRecordingMode() noexcept { recordingStale_ = true; }
+    // True while buildPage runs for that deferred change alone: the Mac
+    // rebuilt this page at the switch, while it was hidden, so effects a
+    // build starts (Notes' redaction wipe) ran out unseen and must not play
+    // now that the page is shown.
+    bool recordingDeferred() const noexcept { return deferredBuild_; }
     // Sub-navigation (LIB-76): offset subpageOffset(dx, dy); closes popups,
     // ends editing (commit), cancels gestures; offsets of pages left are
     // retained and GOING BACK (dx < 0) restores them, forward starts at 0; the
@@ -450,7 +451,7 @@ private:
     std::vector<Control*> popoverControls_;
     std::vector<TextField*> fields_;
     Router router_;
-    bool active_{}, showsHeader_{true}, attached_{}, recordingStale_{}, keepIds_{};
+    bool active_{}, showsHeader_{true}, attached_{}, recordingStale_{}, keepIds_{}, deferredBuild_{};
     std::optional<core::Language> renderedLanguage_;
     std::uint64_t renderedPalette_{}, pageSerial_{}, structure_{};
     const LayerArena* tracked_{};

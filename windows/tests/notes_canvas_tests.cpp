@@ -92,6 +92,34 @@ void rules() {
     const auto length = std::uint32_t(canvas.noteArea()->document().text().size());
     check(canvas.noteArea()->document().selection().range == endfield::core::text::Range{length, length}, "A new HUD session puts the caret at the note's end");
 }
+// The redaction wipe of a build in Recording mode (:250): the shown Notes
+// rebuilds at the switch and wipes its bars in; a Notes page the switch found
+// hidden was rebuilt and wiped unseen on the Mac (HUDDesignScreen.swift:82),
+// so its late rebuild here, when shown, shows the bars at rest.
+void recordingWipe() {
+    FakeMeasurer measurer;
+    World w(measurer);
+    const auto apply = [&](bool recording) { d::Context::Appearance a; a.language = Language::english; a.recordingMode = recording; w.context.apply(a, w.now); };
+    apply(false);
+    auto store = storeOf(three());
+    m::NotesCanvas canvas(w.context, *store, {});
+    w.show(canvas);
+    const auto wiping = [&] {
+        bool any{};
+        const auto visit = [&](auto& self, const d::Layer& l) -> void { if (std::string_view(l.id()).ends_with(".redaction.bar") && l.animating(w.now)) any = true; for (const d::Layer* c : l.children()) self(self, *c); };
+        visit(visit, canvas.root());
+        return any;
+    };
+    apply(true);
+    check(wiping(), "Shown, Recording mode on rebuilds Notes and wipes its bars in");
+    w.now += 1;
+    check(!wiping(), "The wipe ends");
+    canvas.setActive(false, w.now); canvas.prepareToLeave(w.now);
+    apply(false); w.now += 1;
+    apply(true);
+    w.show(canvas);
+    check(!wiping(), "A Notes page the switch found hidden shows its bars at rest when shown");
+}
 void unavailable() {
     FakeMeasurer measurer;
     World w(measurer); w.appearance(Language::english);
@@ -246,7 +274,8 @@ void notesOracle(Oracle& o) {
 
 int main(int argc, char** argv) {
     try {
-        rules(); unavailable(); cardControls();
+        rules();
+        recordingWipe(); unavailable(); cardControls();
         if (const auto oracleData = loadOracle(argc > 1 ? argv[1] : nullptr, {"notes"}, {"text", "layerDefaults", "formatBar"})) {
             Oracle oracle(*oracleData);
             notesOracle(oracle);

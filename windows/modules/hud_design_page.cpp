@@ -226,11 +226,14 @@ ModuleTitle Canvas::title(std::string_view english, std::string_view simplifiedC
 bool Canvas::stale() const noexcept {
     return !renderedLanguage_ || *renderedLanguage_ != env().language || renderedPalette_ != env().palette.generation() || recordingStale_;
 }
-// Only a deferred Recording mode change: the page keeps its layer ids.
+// Only a deferred Recording mode change: the page keeps its layer ids, and
+// the build knows it applies that change late (recordingDeferred).
 void Canvas::rerenderIfStale() {
     if (!stale()) return;
-    if (renderedLanguage_ && *renderedLanguage_ == env().language && renderedPalette_ == env().palette.generation()) rerenderKeepingIds();
-    else rerender();
+    if (!renderedLanguage_ || *renderedLanguage_ != env().language || renderedPalette_ != env().palette.generation()) { rerender(); return; }
+    deferredBuild_ = true;
+    try { rerenderKeepingIds(); } catch (...) { deferredBuild_ = false; throw; }
+    deferredBuild_ = false;
 }
 
 // --- Rendering (:289-401) ----------------------------------------------------

@@ -205,9 +205,10 @@ void run(const std::filesystem::path& shader) {
     check(!overlay.requiresFrames(2.1), "A settled overlay asks for no frames");
     // --- Recording mode after a skipped switch (rc139 freeze) ---------------------------------
     // A directional switch shows its incoming screen unattached; a request that
-    // supersedes it drops that screen, never activated. It is not shown any
-    // more: a Recording mode switch builds only the shown canvas's page, and
-    // the skipped one builds once, when it is next shown.
+    // supersedes it drops that screen, never activated. It leaves (the Mac's
+    // next transition calls prepareToLeave on the skipped screen) and is not
+    // shown any more: a Recording mode switch builds only the shown canvas's
+    // page, and the skipped one builds once, when it is next shown.
     const auto skipping = [&](core::Module from, core::Module to, core::Module next) {
         auto s = sample(from);
         s.requested = next; s.transitioning = s.directional = true; s.acceptsModuleInput = false;
@@ -216,7 +217,9 @@ void run(const std::filesystem::path& shader) {
         return s;
     };
     frame(skipping(core::Module::clipboard, core::Module::volume, core::Module::notes), 2.2);
+    check(skipped->isShown() && skipped->leaves == 0, "The unattached incoming screen is shown");
     frame(sample(core::Module::clipboard), 2.3);
+    check(!skipped->isShown() && skipped->leaves == 1, "The skipped screen leaves when a superseding switch drops it");
     {
         const auto pages = context.pagesBuilt();
         const unsigned shown = fake->builds, skippedBuilds = skipped->builds;
@@ -224,19 +227,43 @@ void run(const std::filesystem::path& shader) {
         check(context.pagesBuilt() == pages + 1 && fake->builds == shown + 1 && skipped->builds == skippedBuilds,
             "After a skipped switch a Recording mode switch builds only the shown page");
         frame(sample(core::Module::volume), 2.5);
-        check(skipped->builds == skippedBuilds + 1 && skipped->leaves == 0, "The skipped canvas builds once when shown, with nothing to leave");
+        check(skipped->builds == skippedBuilds + 1 && skipped->leaves == 1, "The skipped canvas builds once when shown");
     }
-    // The HUD closing over an unattached incoming screen leaves it not shown too.
+    // The HUD closing over an unattached incoming screen: it leaves, and the
+    // closing frames (the swap still runs and lands) never show it again.
     frame(skipping(core::Module::volume, core::Module::clipboard, core::Module::clipboard), 2.6);
-    owner.setOverlayVisible(false, 2.7); overlay.setOverlayVisible(false, 2.7);
+    check(fake->isShown(), "The incoming Clipboard screen is shown");
     {
+        const unsigned leaves = fake->leaves;
+        owner.setOverlayVisible(false, 2.7); overlay.setOverlayVisible(false, 2.7);
+        check(!fake->isShown() && fake->leaves == leaves + 1, "Closing over the incoming screen leaves it");
+        frame(skipping(core::Module::volume, core::Module::clipboard, core::Module::clipboard), 2.72);
+        frame(sample(core::Module::clipboard), 2.76);   // the swap lands while the HUD closes
+        check(!fake->isShown() && !skipped->isShown() && fake->leaves == leaves + 1, "Closing frames show no canvas again");
         const auto pages = context.pagesBuilt();
         recording = false; overlay.setAppearance(appearance, 2.8);
         check(context.pagesBuilt() == pages, "Closed, a Recording mode switch builds no page");
         owner.setOverlayVisible(true, 2.9); overlay.setOverlayVisible(true, 2.9);
         const unsigned builds = fake->builds;
         frame(sample(core::Module::clipboard), 3);
-        check(fake->builds == builds + 1, "Reopened, the canvas shown again builds once in the new mode");
+        check(fake->builds == builds + 1 && fake->isActive(), "Reopened, the canvas shown again builds once in the new mode");
+    }
+    // A canvas prewarmed while closed that the first opening does not present
+    // leaves on that first frame; Recording mode switches then skip it.
+    owner.setOverlayVisible(false, 3.05); overlay.setOverlayVisible(false, 3.05);
+    owner.prewarm({center, chrome, sample(core::Module::volume, false), 0, 3.1});
+    check(skipped->isShown(), "Prewarm shows the canvas it builds");
+    owner.setOverlayVisible(true, 3.15); overlay.setOverlayVisible(true, 3.15);
+    {
+        const unsigned leaves = skipped->leaves;
+        frame(sample(core::Module::clipboard), 3.2);
+        check(!skipped->isShown() && skipped->leaves == leaves + 1, "The first opening on another module leaves the prewarmed canvas");
+        const auto pages = context.pagesBuilt();
+        const unsigned builds = skipped->builds;
+        recording = true; overlay.setAppearance(appearance, 3.3);
+        check(context.pagesBuilt() == pages + 1 && skipped->builds == builds, "A Recording mode switch then builds only the shown page");
+        frame(sample(core::Module::volume), 3.4);
+        check(skipped->builds == builds + 1, "The prewarmed canvas builds once when shown");
     }
     composition.detach(renderer);
     owner.release(renderer); overlay.release(renderer);
