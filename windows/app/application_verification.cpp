@@ -543,17 +543,32 @@ int Application::Impl::runAnimationTrace(){
     };
     const auto cycle=[&](const std::string&name){segment(name+"-open",true,.25);pump(1,{},{});segment(name+"-close",false,0);};
     if(args.animationTraceLaunchOpen){
-        segment("launch-open",true,.25);
+        need(!designDensityStart,"An opening before any prewarm starts from 2 (no first-pose start is latched)");
+        // With --animation-trace-dpi the launch opening lands on another display (the
+        // summon's placement), so a start measured on the creation display would show.
+        if(args.animationTraceDpi)placementForTest=[&]{host.setTestDpi(args.animationTraceDpi>=144?96:192);};
+        try{segment("launch-open",true,.25);}catch(...){placementForTest={};throw;}placementForTest={};
         // (Reduce Motion goes off while open so the closing animates in this hidden run.)
         if(args.animationTraceLaunchOpen==2){configuration.set("reduceMotion",false);configurationPending=true;applyConfiguration(clock());}
-        pump(1,{},{});segment("launch-close",false,0);pump(1.5,{},{});}
+        pump(1,{},{});segment("launch-close",false,0);pump(1.5,{},{});
+        if(args.animationTraceDpi){host.setTestDpi(args.animationTraceDpi);pump(.5,{},{});}}
     cycle("first");
     for(unsigned n=0;n<4;++n){pump(1.5,{},{});cycle("warm-"+std::to_string(n));}
     // A close that cuts the deploy short: the retract starts where RC 139's
     // measurement had stepped to, and the next opening settles at its density.
-    if(args.animationTraceDpi){pump(1.5,{},{});perform(lifecycle.toggle(),clock());host.show(false);host.setFrameDemand(demand(clock()));host.invalidate();pump(.3,{},{});
+    std::optional<double> cutRecorded,cutLive;std::int64_t cutSteps{};
+    if(args.animationTraceDpi){pump(1.5,{},{});
+        double cutAt=density();
+        const auto step=[&]{if(session->phase()!=core::VisibilityPhase::concealed){cutSteps+=density()!=cutAt;cutAt=density();}};
+        perform(lifecycle.toggle(),clock());host.show(false);host.setFrameDemand(demand(clock()));host.invalidate();cutAt=density();pump(.3,{},step);
         need(lifecycle.phase()==core::SystemOverlayPhase::opening,"The traced deploy is still running");
-        perform(lifecycle.close(true),clock());host.setFrameDemand(demand(clock()));host.invalidate();pump(10,closed,{});need(closed(),"The cut deploy closed");
+        perform(lifecycle.close(true),clock());step();
+        // close() records where RC 139's live measurement had stepped to (the retract starts there).
+        need(designDensityAtClose.has_value(),"The cut close records the deploy's density");cutRecorded=designDensityAtClose;cutLive=rc139Density;
+        std::cout<<"Animation trace cut: recorded "<<*cutRecorded<<", RC 139 live "<<cutLive.value_or(0)<<"\n";
+        need(!cutLive||*cutRecorded==*cutLive,"The cut close records RC 139's live density");
+        host.setFrameDemand(demand(clock()));host.invalidate();pump(10,closed,step);need(closed(),"The cut deploy closed");
+        need(cutSteps==0,"The design density holds through the cut deploy and its retract");
         pump(1.5,{},{});cycle("after-cut");}
     pump(closedGraphicsGrace()+1.5,{},{});need(renderer.deviceSuspended(),"The closed HUD's graphics are released after the grace");
     cycle("released");pump(1.5,{},{});cycle("after-released");
@@ -607,7 +622,7 @@ int Application::Impl::runAnimationTrace(){
     const Json report=Json::Object{{"schema",1},
         {"scope","EndfieldHUD hidden animation trace: every frame of the openings and closings on the real clock through the production frame scheduling; numbers, owner and module names only"},
         {"device",renderer.deviceInfo().name},{"refreshHz",args.idleTraceRefreshRate},{"closedGraphicsGraceSeconds",closedGraphicsGrace()},{"cyclesPerMillisecond",cyclesPerMS},
-        {"logicalWidth",metrics.width},{"logicalHeight",metrics.height},{"dpiScale",metrics.scale},{"contentScale",contentScale},{"densityReplayMilliseconds",replayMS},{"launchStartUnderDefaults",launchStartDefault},{"launchStart",launchStart},{"firstPoseRawUnderDefaults",firstRawDefault},{"firstPoseRaw",firstRaw},{"densityPlaneResolves",std::int64_t(designDensityResolves)},{"densityPlaneResolveMilliseconds",designDensityResolveMilliseconds},{"segments",std::move(segments)}};
+        {"logicalWidth",metrics.width},{"logicalHeight",metrics.height},{"dpiScale",metrics.scale},{"contentScale",contentScale},{"densityReplayMilliseconds",replayMS},{"launchStartUnderDefaults",launchStartDefault},{"launchStart",launchStart},{"cutRecorded",cutRecorded.value_or(0.)},{"cutLive",cutLive.value_or(0.)},{"cutSteps",cutSteps},{"firstPoseRawUnderDefaults",firstRawDefault},{"firstPoseRaw",firstRaw},{"densityPlaneResolves",std::int64_t(designDensityResolves)},{"densityPlaneResolveMilliseconds",designDensityResolveMilliseconds},{"segments",std::move(segments)}};
     const std::size_t bound=32*1024*1024;ehud::data::detail::replaceFile(args.animationTrace,std::nullopt,report.encode(bound),bound);
     std::cout<<"Wrote hidden animation trace\n";
     shutdownVisible();
