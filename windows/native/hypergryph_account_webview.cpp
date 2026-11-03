@@ -544,7 +544,8 @@ struct WebViewLoginPresenter::Impl:std::enable_shared_from_this<Impl> {
         retry=authButton(wide(strings.retryLabel),retryID);
         toolbarCancel=authButton(wide(strings.cancelLabel),toolbarCancelID);
         layout();diag();setStatus();
-        userData=privateProfileFolder(options.profileRoot);sweepStaleProfiles(options.profileRoot,userData);
+        userData=privateProfileFolder(options.profileRoot);
+        offThread([root=options.profileRoot,keep=userData]{sweepStaleProfiles(root,keep);});
         std::weak_ptr<Impl> weak=shared_from_this();const auto token=generation;
         const HRESULT hr=CreateCoreWebView2EnvironmentWithOptions(nullptr,userData.c_str(),nullptr,Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(
             [weak,token](HRESULT result,ICoreWebView2Environment* env)->HRESULT {
@@ -697,8 +698,11 @@ struct WebViewLoginPresenter::Impl:std::enable_shared_from_this<Impl> {
             std::weak_ptr<Impl> weak=shared_from_this();Retired entry{env,folder,{}};
             const auto key=env.Get();
             if(SUCCEEDED(env5->add_BrowserProcessExited(Callback<ICoreWebView2BrowserProcessExitedEventHandler>([weak,key,folder](ICoreWebView2Environment*,ICoreWebView2BrowserProcessExitedEventArgs*)->HRESULT {
-                std::error_code e;std::filesystem::remove_all(folder,e);
-                if(auto self=weak.lock()) {
+                const auto removeFolder=[folder]{std::error_code e;std::filesystem::remove_all(folder,e);};
+                auto self=weak.lock();
+                if(!self) removeFolder();
+                else {
+                    self->offThread(removeFolder);
                     auto& list=self->retired;
                     for(auto it=list.begin();it!=list.end();++it) if(it->environment.Get()==key) {
                         ComPtr<ICoreWebView2Environment5> registered;if(SUCCEEDED(it->environment.As(&registered))) registered->remove_BrowserProcessExited(it->token);
@@ -707,7 +711,12 @@ struct WebViewLoginPresenter::Impl:std::enable_shared_from_this<Impl> {
                 }
                 return S_OK;}).Get(),&entry.token))) {retired.push_back(std::move(entry));return;}
         }
-        std::error_code e;std::filesystem::remove_all(folder,e); // no browser was started, or best effort
+        offThread([folder]{std::error_code e;std::filesystem::remove_all(folder,e);}); // no browser was started, or best effort
+    }
+    // Profile file work (the sweep, the deletes) on options.fileWork, else here.
+    void offThread(std::function<void()> work) {
+        if(options.fileWork) try {if(options.fileWork(work)) return;} catch(...) {}
+        work();
     }
     void requestFinish(std::optional<h::LoginResult> result,h::LoginFailure failure) {
         if(finishing||!session||!session->presenting()) return;

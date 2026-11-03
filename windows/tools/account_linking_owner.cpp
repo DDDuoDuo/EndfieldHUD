@@ -21,6 +21,8 @@ void earliest(std::optional<double>& wake,std::optional<double> at) {if(at&&std:
 }
 struct AccountLinkingOwner::Impl {
     AccountLinkingOwnerOptions options;HWND window{};bool ready{},resized{},webView{},overlay{},selected{};double time{};
+    // The login's profile sweep and deletes (fire and forget, in order).
+    app::UtilityExecutor* executor{};app::UtilityExecutor::Route fileRoute{};
 #ifdef EHUD_HAS_WEBVIEW2
     std::unique_ptr<gpu::WebViewLoginPresenter> login;
 #endif
@@ -84,6 +86,8 @@ AccountLinkingOwner::AccountLinkingOwner(app::UtilityExecutor& executor,gpu::Lay
         gpu::WebViewLoginOptions l;l.owner=window;l.language=i.options.language;l.now=i.options.clock;l.accent=i.options.accent;
         l.scheduleChanged=[weak]{if(auto self=weak.lock();self&&self->options.invalidate) self->options.invalidate();};
         l.openLink=i.options.openLink;
+        i.executor=&executor;i.fileRoute=executor.makeRoute();
+        l.fileWork=[queue=&executor,route=i.fileRoute](std::function<void()> work){return queue->submit(route,std::move(work),[](std::exception_ptr){});};
         i.login=std::make_unique<gpu::WebViewLoginPresenter>(std::move(l));s.login=i.login.get();i.webView=true;
     }
 #endif
@@ -118,6 +122,8 @@ AccountLinkingOwner::~AccountLinkingOwner() {
 #ifdef EHUD_HAS_WEBVIEW2
     i.login.reset();
 #endif
+    // Accepted deletes still run; no completion calls back.
+    if(i.executor&&i.fileRoute) i.executor->invalidate(i.fileRoute,false);
 }
 void AccountLinkingOwner::resize(const app::ClientMetrics& m) {
     auto& i=*impl_;if(!m.pixelWidth||!m.pixelHeight||!(m.scale>0)) return;

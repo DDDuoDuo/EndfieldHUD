@@ -11,6 +11,7 @@
 #include "modules/account_canvas.hpp"
 #include "modules/hypergryph_account_sanity_gauge.hpp"
 #include "tests/hud_design_oracle.hpp"
+#include <algorithm>
 #include <cmath>
 #include <ctime>
 #include <deque>
@@ -191,6 +192,37 @@ void contracts() {
     check(actions == std::vector<std::string>{"connect:global"}, "Reconnect connects the region");
     actions.clear();
     canvas.update(p);
+    // The first sync and a sign-in requirement rebuild the page in place
+    // (:107): every part the change leaves alone keeps its id and bytes, so the
+    // scene rasterizes only the changed rows again (rc140: the whole page, a
+    // new layer-id serial per rebuild). The clock stands still meanwhile.
+    {
+        const d::TextServices& text = w.context.env().text;
+        const auto artwork = [&] {
+            std::vector<std::pair<std::string, std::string>> parts;
+            for (auto& part : d::emit(canvas.root(), {&text, "test."}).parts) parts.emplace_back(part.id, part.layers.encode());
+            return parts;
+        };
+        const auto changed = [](const auto& before, const auto& after) {
+            std::vector<std::string> out;
+            for (const auto& part : after) if (std::find(before.begin(), before.end(), part) == before.end()) out.push_back(part.first);
+            return out;
+        };
+        auto unsynced = p; unsynced.lastSync.clear();
+        canvas.update(unsynced); w.advance(1);
+        auto before = artwork();
+        canvas.update(p); w.advance(1);
+        auto after = artwork();
+        const auto synced = changed(before, after);
+        std::string names; for (const auto& id : synced) names += " " + id;
+        check(before.size() >= 6 && !synced.empty() && synced.size() <= 2, "The first sync re-emits only its changed rows (" + std::to_string(synced.size()) + " of " + std::to_string(after.size()) + " parts:" + names + ")");
+        canvas.update(reconnect); w.advance(1);
+        before = std::move(after); after = artwork();
+        const auto flipped = changed(before, after);
+        names.clear(); for (const auto& id : flipped) names += " " + id;
+        check(!flipped.empty() && flipped.size() <= 4, "A sign-in requirement re-emits only its changed rows (" + std::to_string(flipped.size()) + " of " + std::to_string(after.size()) + " parts:" + names + ")");
+        canvas.update(p); w.advance(1);
+    }
     // Chips (:245-277): a local toggle re-wraps and sends setSyncField.
     auto* levels = control(canvas, "field:levels");
     const double before = levels->layer().bounds().width;

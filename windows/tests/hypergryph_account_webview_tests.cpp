@@ -16,6 +16,7 @@
 #include <deque>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <random>
 #include <string>
@@ -635,6 +636,34 @@ void run() {
     }
     check(completions==26&&lastEnvironment->controllers[0]->closed&&!loginWindow(),"Destroying the presenter closes the browser without a completion");
     check(!std::filesystem::exists(w.userData),"Destroying the presenter removes its private profile");
+    {
+        // I. With fileWork (the app's utility worker) the sweep and the deletes
+        // leave the HUD thread: consent and the browser's exit only queue them,
+        // in order, each with nothing but its paths; running them later does
+        // what the synchronous calls did.
+        std::filesystem::create_directories(temp.path/L"EndfieldHUD-Login-stale2");std::ofstream(temp.path/L"EndfieldHUD-Login-stale2"/L"x")<<"stale";
+        std::vector<std::function<void()>> queued;bool accept{true};
+        auto q=o;q.fileWork=[&](std::function<void()> work){if(!accept) return false;queued.push_back(std::move(work));return true;};
+        const auto runQueued=[&]{auto work=std::move(queued);queued.clear();for(auto& task:work) task();};
+        {
+            n::WebViewLoginPresenter presenter(q);
+            presenter.present(h::Region::mainland,done);click(loginWindow(),101);
+            const std::filesystem::path profile=w.userData;
+            check(std::filesystem::is_directory(profile)&&queued.size()==1&&std::filesystem::exists(temp.path/L"EndfieldHUD-Login-stale2"),"Consent creates the profile and only queues the sweep");
+            runQueued();
+            check(std::filesystem::is_directory(profile)&&!std::filesystem::exists(temp.path/L"EndfieldHUD-Login-stale2")&&std::filesystem::exists(temp.path/L"unrelated"),"The queued sweep removes stale profiles only, never the new one");
+            w.pump();w.pump();presenter.cancel();
+            check(queued.empty()&&std::filesystem::exists(profile),"A cancelled login waits for the browser to exit");
+            lastEnvironment->exit();
+            check(queued.size()==1&&std::filesystem::exists(profile),"The browser's exit only queues the profile's delete");
+            runQueued();
+            check(!std::filesystem::exists(profile),"The queued delete removes the private profile");
+            // A refused task (a full queue) runs here at once, as before.
+            accept=false;presenter.present(h::Region::mainland,done);click(loginWindow(),101);
+            const std::filesystem::path second=w.userData;w.pump();w.pump();presenter.cancel();lastEnvironment->exit();
+            check(queued.empty()&&!std::filesystem::exists(second),"Refused file work runs on the calling thread");
+        }
+    }
     check(!IsWindowVisible(owner.hwnd),"Nothing was ever shown");
     lastEnvironment.Reset();world=nullptr;
 }
