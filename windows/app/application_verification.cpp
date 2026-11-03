@@ -596,6 +596,7 @@ int Application::Impl::runHiddenVerification(){
             const auto finish=at(23+static_cast<double>(points.size()));session->pointerMove({},finish);close(finish);present(finish+.7,true);
         }
         Json::Array moduleResults,areaModuleResults,areaPresentedModules;Json displayAdaptation,scrollArrow,recordingToggle,actionTiming;
+        double minigameShowFrameMs=-1,minigameShowWorstMs=-1; // the first showing of the minigame (its canvas, page and VM boot)
         // Module areas (app/module_owner.hpp): coverage steps and their checks.
         struct AreaCounts{unsigned steps{},checks{};};std::map<std::string,AreaCounts,std::less<>> areaCounts;
         double areaLatest{};
@@ -730,7 +731,8 @@ int Application::Impl::runHiddenVerification(){
             std::optional<gpu::LayerRasterStats> retainedCycle;
             for(unsigned cycle=0;cycle<3;++cycle)for(const auto module:modules){
                 std::size_t scrollChanges{},peakEntries{},peakBytes{};
-                try{selectModule(module,time);for(unsigned frame=0;frame<40;++frame)present(time+double(frame)/60,true);
+                try{selectModule(module,time);for(unsigned frame=0;frame<40;++frame){const auto f0=Clock::now();present(time+double(frame)/60,true);
+                    if(module==core::Module::minigame&&cycle==0){const double ms=milliseconds(f0);if(frame==0)minigameShowFrameMs=ms;minigameShowWorstMs=std::max(minigameShowWorstMs,ms);}}
                     if(module==core::Module::minigame&&game){
                         // OrbiPomHUDVerification (Mac 1.3.0): showing the game starts the
                         // original session on its clock; only the visible module's tick
@@ -1048,7 +1050,17 @@ int Application::Impl::runHiddenVerification(){
                     {"workMode.preset30",{1,24}},{"workMode.start",{1,24}},{"workMode.pause",{1,24}},{"workMode.resume",{1,24}},{"workMode.reset",{1,24}},
                     {"workMode.customOpen",{1,24}},{"workMode.customCommit",{1,24}},{"workMode.lap",{1,24}},
                     {"fileShelf.selectOne",{1,48}},{"fileShelf.selectAnother",{1,48}},{"fileShelf.ctrlToggle",{1,48}},{"fileShelf.shiftExtend",{0,48}},
-                    {"fileShelf.selectFromMany",{1,48}},{"fileShelf.deselect",{1,48}}};
+                    {"fileShelf.selectFromMany",{1,48}},{"fileShelf.deselect",{1,48}},
+                    // Group b4. Calendar (rc140: a selection to or from today loaded the whole month
+                    // part, 191-193 surfaces, 68-80 ms): the two cells and the events column, at most
+                    // 20 measured. Reopened pop-overs and menus, rows back in a list (rc140: the month
+                    // picker 61, How to play 16 large, the Font menu 456, Home 90, All 92): their kept
+                    // scenes, nothing rasterized. The Font menu's first opening: the rows near its
+                    // list only (48 measured). The reveal: the revealed text, the field and the button.
+                    {"calendar.daySelect",{1,24}},{"calendar.daySelectAgain",{1,24}},{"calendar.todayButton",{1,24}},{"calendar.dayOffToday",{1,24}},
+                    {"calendar.arrowRight",{1,24}},{"calendar.plateOpen",{1,32}},{"calendar.plateClose",{1,32}},{"calendar.monthPickerAgain",{0,4}},
+                    {"eventLog.filterAll",{1,40}},{"eventLog.home",{0,8}},{"reader.fontMenu",{0,64}},{"reader.fontMenuAgain",{0,4}},
+                    {"minigame.rulesAgain",{0,4}},{"archive.unlockReveal",{0,40}}};
                 const bool enforceBounds=true;
                 const auto timeAction=[&](core::Module m,const char*name,const std::function<bool(double)>&act){
                     drainUtility(time);frameAt(time);time+=.05;
@@ -1221,6 +1233,111 @@ int Application::Impl::runHiddenVerification(){
                         timeAction(core::Module::addApp,"dropTargetOff",[&](double){return dropHover({},std::nullopt)&&!dropHoverOwner;});
                     }
                     break;
+                }
+                // Group b4 (Calendar, Event Log, Classified Archive, E-Reader, OrbiPom): the
+                // freeze sweep's findings 17, 19, 20, 22, 25, 27, 42, 45 and 46.
+                {
+                    // One timed frame of a canvas's own deadline (a timer that lands later, not a press).
+                    const auto timeFrames=[&](core::Module m,const char*name,const std::function<bool()>&done,unsigned frames){
+                        const auto raster0=rasterizer.stats();const auto pages0=designContext.pagesBuilt();double worst=0,hit=0;std::int64_t rasters=0,pages=0;bool ran=false;
+                        for(unsigned f=1;f<=frames&&!ran;++f){const double t=time+double(f)/60;const auto r=rasterizer.stats();const auto p=designContext.pagesBuilt();const auto f0=Clock::now();frameAt(t);const double ms=milliseconds(f0);worst=std::max(worst,ms);
+                            if(done()){ran=true;hit=ms;rasters=std::int64_t(rasterizer.stats().rasterizations-r.rasterizations);pages=std::int64_t(designContext.pagesBuilt()-p);time=t;}}
+                        double settleMax=0;for(unsigned f=1;f<=15;++f){const auto f0=Clock::now();frameAt(time+double(f)/15);settleMax=std::max(settleMax,milliseconds(f0));}time+=1.1;
+                        timings.push_back(Json::Object{{"module",std::string(core::moduleIdentifier(m))},{"action",std::string(name)},{"ran",ran},{"actionMs",0.},{"frameMs",hit},{"clickFrameMs",hit},{"settleMaxFrameMs",settleMax},
+                            {"pagesBuilt",pages},{"rasterizations",rasters},{"textLayouts",std::int64_t(0)},{"secondPagesBuilt",std::int64_t(designContext.pagesBuilt()-pages0)},
+                            {"secondRasterizations",std::int64_t(rasterizer.stats().rasterizations-raster0.rasterizations)},{"secondTextLayouts",std::int64_t(rasterizer.stats().textLayoutsCreated-raster0.textLayoutsCreated)},{"framesBefore",worst}});};
+                    // Calendar: today and back off it (the today cell's ring), an arrow, the
+                    // add / open / save of a probe event and the month picker, twice.
+                    if(calendar&&calendarState&&calendarModuleOwner&&registry.enabled(*calendarModuleOwner)&&showModule(core::Module::calendar)){
+                        const auto M=core::Module::calendar;const auto today="calendar.day:"+calendarState->today().string();
+                        const auto otherDay=[&]{for(auto*x:calendar->page().controls())if(x->id().starts_with("calendar.day:")&&x->id()!=today){const auto d=modules::CalendarDay::parse(x->id().substr(13));
+                            if(d&&d->month==calendar->month().month&&d->year==calendar->month().year&&d->day!=calendarState->today().day&&d->day>3&&d->day<26)return x->id();}return std::string();};
+                        if(calendar->month().month!=calendarState->today().month||calendar->month().year!=calendarState->today().year){(void)press(M,"calendar.today",false,time);settleFor(20);}
+                        if(const auto day=otherDay();!day.empty()){(void)press(M,day,false,time);settleFor(10);}
+                        timeAction(M,"todayButton",[&](double t){return press(M,"calendar.today",false,t);});
+                        timeAction(M,"dayOffToday",[&](double t){const auto day=otherDay();return !day.empty()&&press(M,day,false,t);});
+                        timeAction(M,"arrowRight",[&](double t){return keyTo(M,dz::key::right,false,t);});
+                        const auto probeEvent=[&]{for(const auto&e:calendarState->events())if(e.title.starts_with("Freeze probe"))return e.id;return std::string();};
+                        timeAction(M,"addEvent",[&](double t){calendar->titleField().setText("Freeze probe");return press(M,"calendar.add",false,t);});
+                        // The hidden run pumps no messages: the change notice is delivered as its handler does.
+                        const auto delivered=[&]{const bool flushed=flushCalendar();calendarRefreshQueued=false;updateCalendarWake();calendar->controllerChanged();return flushed;};
+                        timeAction(M,"addSettles",[&](double){return delivered()&&!probeEvent().empty();});
+                        const auto id=probeEvent();
+                        if(!id.empty()){
+                            timeAction(M,"plateOpen",[&](double t){return press(M,"calendar.event:"+id,false,t);});
+                            timeAction(M,"plateClose",[&](double t){return press(M,"calendar.event:"+id,false,t);});
+                            (void)press(M,"calendar.event:"+id,false,time);settleFor(10);
+                            timeAction(M,"saveEvent",[&](double t){calendar->titleField().setText("Freeze probe saved");return press(M,"calendar.save",false,t);});
+                            timeAction(M,"saveSettles",[&](double){return delivered();});
+                            (void)calendarState->remove(id);need(delivered(),"The probe's Calendar event is removed");settleFor(10);
+                        }else skip(M,"plateOpen");
+                        timeAction(M,"monthPicker",[&](double t){return press(M,"calendar.monthPicker",false,t)&&calendar->popoverOpen();});
+                        calendar->closePopover();settleFor(15);
+                        timeAction(M,"monthPickerAgain",[&](double t){return press(M,"calendar.monthPicker",false,t)&&calendar->popoverOpen();});
+                        calendar->closePopover();settleFor(15);
+                    }
+                    // Event Log: a view down twice, the end and back to the top.
+                    if(eventLogCanvas&&eventLogModuleOwner&&registry.enabled(*eventLogModuleOwner)&&showModule(core::Module::eventLog)){
+                        const auto M=core::Module::eventLog;
+                        if(eventLogCanvas->listOffsetForTesting()!=0){(void)keyTo(M,dz::key::home,false,time);settleFor(10);}
+                        timeAction(M,"pageDown",[&](double t){return keyTo(M,dz::key::pageDown,false,t);});
+                        timeAction(M,"pageDownAgain",[&](double t){return keyTo(M,dz::key::pageDown,false,t);});
+                        timeAction(M,"end",[&](double t){return keyTo(M,dz::key::end,false,t);});
+                        timeAction(M,"home",[&](double t){return keyTo(M,dz::key::home,false,t);});
+                        timings.back()["listOffsetAfter"]=eventLogCanvas->listOffsetForTesting();
+                    }
+                    // Classified Archive: a probe document is classified, then unlocked with its
+                    // password: the reveal at the verification, then the editor at the wipe's end.
+                    if(archive&&archiveService&&archiveModuleOwner&&registry.enabled(*archiveModuleOwner)&&showModule(core::Module::archive)){
+                        const auto M=core::Module::archive;auto&canvas=archive->canvas();auto&state=archiveService->state();
+                        const auto flushArchive=[&]{for(unsigned n=0;n<16;++n){utility->waitIdle();utility->drain();archiveService->queueCapacityAvailable();}archiveRefreshQueued=false;archive->stateChanged(hostTime(time));};
+                        const auto land=[&]{for(unsigned n=0;n<90&&canvas.transitioning();++n)frameAt(time+=1./60);settleFor(20);};
+                        const std::string password="Freeze-Probe-2468";
+                        if(canvas.performAccessibilityAction("new",time)){flushArchive();land();}
+                        if(state.selected()&&canvas.displayedPage().kind==modules::ArchiveCanvas::PageKind::editor){
+                            auto entry=*state.selected();entry.title="Freeze probe";entry.body.clear();
+                            for(unsigned n=0;n<18;++n)entry.body+="Synthetic classified line "+std::to_string(n)+" of the freeze probe, never shown while locked.\n";
+                            entry.bodyRichText.reset();entry.titleRichText.reset();
+                            (void)state.update(std::move(entry),ehud::data::foundationNow(),time);state.flush();flushArchive();
+                            canvas.endEditing(true);state.classifySelected(password,{});flushArchive();settleFor(10);land();
+                        }
+                        if(state.isSelectedLocked()&&canvas.displayedPage().kind==modules::ArchiveCanvas::PageKind::locked&&canvas.setAccessibilityText("password",password,time)){
+                            timeAction(M,"unlockReveal",[&](double t){const bool pressed=canvas.performAccessibilityAction("unlock",t);utility->waitIdle();utility->drain();archiveService->queueCapacityAvailable();return pressed&&!state.isSelectedLocked();});
+                            timeFrames(M,"openingEnd",[&]{return canvas.displayedPage().kind==modules::ArchiveCanvas::PageKind::editor;},240);
+                            state.declassifySelected({});flushArchive();
+                        }else{skip(M,"unlockReveal");timings.back()["reason"]=std::string(!state.selected()?"no document":!state.isSelectedLocked()?"not classified":canvas.displayedPage().kind!=modules::ArchiveCanvas::PageKind::locked?"not on the locked page":"no password field");}
+                        if(state.selected()&&state.selected()->title=="Freeze probe"&&!state.isSelectedLocked()){(void)state.deleteSelected();flushArchive();}
+                        land();
+                    }
+                    // E-Reader: the Font dropdown of Reading settings, twice.
+                    if(reader&&readerModuleOwner&&registry.enabled(*readerModuleOwner)&&showModule(core::Module::reader)){
+                        const auto M=core::Module::reader;auto&canvas=reader->canvas();
+                        const auto openSettings=[&]{if(canvas.tab()!=modules::ReaderCanvas::Tab::reading){(void)canvas.performAccessibilityAction("readerTabs:2",time);settleFor(15);}
+                            if(!canvas.popoverOpen()){(void)canvas.performAccessibilityAction("settings",time);settleFor(10);}return canvas.popoverOpen();};
+                        if(openSettings()){
+                            timeAction(M,"fontMenu",[&](double t){return canvas.performAccessibilityAction("font",t)&&canvas.menuOpen();});
+                            canvas.closeMenu();settleFor(10);
+                            if(openSettings())timeAction(M,"fontMenuAgain",[&](double t){return canvas.performAccessibilityAction("font",t)&&canvas.menuOpen();});
+                            canvas.closePopups();settleFor(10);
+                        }else skip(M,"fontMenu");
+                    }
+                    // OrbiPom: How to play, twice; and the VM boot its first showing made.
+                    if(game&&gameSession&&gameModuleOwner&&registry.enabled(*gameModuleOwner)&&showModule(core::Module::minigame)){
+                        const auto M=core::Module::minigame;
+                        timeAction(M,"rules",[&](double){game->perform("rules");return game->rulesPresented();});
+                        game->closePopover();settleFor(10);
+                        timeAction(M,"rulesAgain",[&](double){game->perform("rules");return game->rulesPresented();});
+                        game->closePopover();settleFor(10);
+                        {modules::OrbiPomRuntime vm(modules::OrbiPomRuntimeOptions{args.orbipomAssets});const auto t0=Clock::now();vm.highScore(0);const double bootMs=milliseconds(t0);
+                            timings.push_back(Json::Object{{"module",std::string(core::moduleIdentifier(M))},{"action","vmBoot"},{"ran",!vm.error()},{"actionMs",bootMs},{"frameMs",0.},{"clickFrameMs",bootMs},{"settleMaxFrameMs",0.},
+                                {"pagesBuilt",std::int64_t(0)},{"rasterizations",std::int64_t(0)},{"textLayouts",std::int64_t(0)},{"secondPagesBuilt",std::int64_t(0)},{"secondRasterizations",std::int64_t(0)},{"secondTextLayouts",std::int64_t(0)}});}
+                        // The first showing (cycle 0): the frame that built the canvas and, before, booted the VM.
+                        std::int64_t ownerBoots=-1;if(const auto*vm=dynamic_cast<const modules::OrbiPomRuntime*>(gameSession->runtime()))ownerBoots=std::int64_t(vm->stats().ownerThreadBoots);
+                        timings.push_back(Json::Object{{"module",std::string(core::moduleIdentifier(M))},{"action","firstShow"},{"ran",minigameShowFrameMs>=0},{"actionMs",0.},{"frameMs",minigameShowFrameMs},{"clickFrameMs",minigameShowFrameMs},{"settleMaxFrameMs",minigameShowWorstMs},
+                            {"pagesBuilt",std::int64_t(0)},{"rasterizations",std::int64_t(0)},{"textLayouts",std::int64_t(0)},{"secondPagesBuilt",std::int64_t(0)},{"secondRasterizations",std::int64_t(0)},{"secondTextLayouts",std::int64_t(0)},{"ownerThreadBoots",ownerBoots}});
+                        timings.back()["withinBound"]=ownerBoots==0;if(enforceBounds)hostCheck(ownerBoots==0,"The minigame's first showing boots its VM off the HUD thread ("+std::to_string(ownerBoots)+" boots on it)");
+                        settleFor(4);
+                    }
                 }
                 actionTiming=std::move(timings);
             }
