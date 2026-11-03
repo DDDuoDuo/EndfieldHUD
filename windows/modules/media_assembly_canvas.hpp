@@ -91,6 +91,9 @@ public:
     bool closing() const noexcept { return closing_; }
     std::optional<double> exportShown() const noexcept { return exportShown_; }
     MediaAssemblyStage& stage();
+    // The stage if a page built it (no build: the Mac's lazy stage exists once
+    // the page needs it, so a HUD that never showed Media Assembly has none).
+    const MediaAssemblyStage* builtStage() const noexcept { return stage_.get(); }
     const std::vector<MediaAssemblyParameterRow*>& parameterRows() const noexcept { return parameterRows_; }
     design::Rect imageRect() const;
     design::Rect displayCropRect() const;

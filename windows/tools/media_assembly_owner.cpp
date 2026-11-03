@@ -123,7 +123,11 @@ struct MediaAssemblyOwner::Impl:std::enable_shared_from_this<Impl> {
     // reuses a slot whose preview left (same texture while the size holds);
     // a slot left without a preview gives its texture back.
     void syncSlots(){
-        const auto&shown=canvas->stage().image();const auto&previous=canvas->stage().previousImage();
+        // Read without building the stage: before Media Assembly's page needs it
+        // (the Mac's lazy stage) there is no preview to keep.
+        static const mod::MediaAssemblyStage::Image none;
+        const auto*stage=canvas->builtStage();
+        const auto&shown=stage?stage->image():none;const auto&previous=stage?stage->previousImage():none;
         const auto wanted=[&](const Slot&s){return s.image&&(s.image==shown||s.image==previous);};
         for(const auto*image:{&shown,&previous}){
             if(!*image||std::any_of(slots.begin(),slots.end(),[&](const Slot&s){return s.image==*image;}))continue;
@@ -490,7 +494,7 @@ MediaAssemblyOwnerStats MediaAssemblyOwner::stats()const noexcept{
     // CPU pixels the owner and the stage hold: shown previews (or their deferred sources) and the GPU source.
     std::vector<const void*>counted;
     const auto count=[&](const void*key,std::size_t bytes){if(!key||std::find(counted.begin(),counted.end(),key)!=counted.end())return;counted.push_back(key);s.previewPixelBytes+=bytes;};
-    for(const auto&image:{i.canvas->stage().image(),i.canvas->stage().previousImage()})if(image){
+    if(const auto*stage=i.canvas->builtStage())for(const auto&image:{stage->image(),stage->previousImage()})if(image){
         if(image->deferred())count(image->source.get(),image->source->straightRGBA.size());else count(image.get(),image->straightRGBA.size());}
     if(i.gpuSource)count(i.gpuSource.get(),i.gpuSource->straightRGBA.size());
     s.gpuResidentBytes=i.processor?i.processor->stats().residentBytes:0;s.playbackResidentBytes=i.playbackProcessor?i.playbackProcessor->stats().residentBytes:0;
