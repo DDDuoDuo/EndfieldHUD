@@ -77,7 +77,10 @@ struct NativeMapScene::Impl {
     double unitDensity()const{return groupDensity(boxDensity)*G::unitScale;}
     // Creates the host cut on the first presentation (one full texture), then
     // repaints in place only the texels under the old and new plates.
-    void applyHostCut(Renderer&r){if(!hostCutWanted)return;const auto side=hostCutSide;
+    void applyHostCut(Renderer&r){if(!hostCutResident)raster.requestWhiteTexture(hostCutSide);if(!hostCutWanted)return;const auto side=hostCutSide;
+        // White everywhere made on the raster's worker (NativeMapRaster::requestWhiteTexture): only the plates' texels are painted in below.
+        if(!hostCutResident)if(const auto white=raster.takeWhiteTexture(side);white&&r.preparedOnDevice(*white)){
+            r.setWorkerTexture(hostCutID,++hostCutRevision,white);hostCutResident=true;appliedHostCut={};++counts.hostCutUploads;counts.hostCutBytes=std::size_t(side)*side;}
         if(!hostCutResident){std::vector<std::uint8_t>pixels(std::size_t(side)*side*4,255);
             // Opaque white but under the plates (their texels rastered in the staging, then copied in).
             if(const auto region=modules::mapCutoutTexels(hostCut,mapHostCutScale,side,side);!region.empty()){const auto bytes=std::size_t(region.width)*region.height*4;
@@ -171,8 +174,12 @@ bool NativeMapScene::updatePose(const MapScenePose&p){auto&i=*impl_;i.clock(p.ti
 bool NativeMapScene::uploadResources(Renderer&r){auto&i=*impl_;need(i.ready&&(!i.owner||i.owner==&r),"Map must be synchronized and use its original renderer");if(i.uploaded&&!i.resourcesDirty){i.applyHostCut(r);return false;}i.owner=&r;r.setMesh(i.quadID,1,{mapQuad,mapIndices});i.meshResident=true;auto texture=[&](const std::string&id,std::uint64_t revision,TextureData data){r.setTexture(id,revision,data);if(std::find(i.residentTextures.begin(),i.residentTextures.end(),id)==i.residentTextures.end())i.residentTextures.push_back(id);};if(!i.shapes[0])i.loadShapes();
     for(unsigned n=0;n<4;++n)texture(i.shapeIDs[n],i.shapeRevision,{i.shapes[n]->width,i.shapes[n]->height,i.shapes[n]->straightRGBA,TextureColorSpace::encodedSRGB});const std::array images{i.player.halo,i.player.beam,i.player.glyph};for(unsigned n=0;n<3;++n)texture(i.playerIDs[n],1,{images[n]->width,images[n]->height,images[n]->straightRGBA,TextureColorSpace::encodedSRGB});
     texture(i.rampID,1,{i.ramp->width,i.ramp->height,i.ramp->straightRGBA,TextureColorSpace::sRGB});texture(i.scrimID,1,{1,i.scrim.rows,i.scrim.straightRGBA,TextureColorSpace::encodedSRGB});
-    if(i.detail&&i.uploadedDetail!=i.detail.get()){texture(i.prefix+"/detail",++i.imageRevision,{i.detail->width,i.detail->height,i.detail->straightRGBA,TextureColorSpace::encodedSRGB,TextureFilter::linear,false,i.detail->opaque});i.uploadedDetail=i.detail.get();++i.counts.imageUploads;}
-    if(i.backdrop&&i.uploadedBackdrop!=i.backdrop.get()){texture(i.prefix+"/backdrop",++i.imageRevision,{i.backdrop->width,i.backdrop->height,i.backdrop->straightRGBA,TextureColorSpace::encodedSRGB,TextureFilter::linear,false,i.backdrop->opaque});i.uploadedBackdrop=i.backdrop.get();++i.counts.imageUploads;}
+    // The worker's textures when it created them for these images on this device (NativeMapRaster::detailTexture).
+    const auto image=[&](const std::string&id,const MapPaintImage&source,const std::shared_ptr<const WorkerTexture>&prepared,bool current){
+        if(prepared&&current&&r.preparedOnDevice(*prepared)){r.setWorkerTexture(id,++i.imageRevision,prepared);if(std::find(i.residentTextures.begin(),i.residentTextures.end(),id)==i.residentTextures.end())i.residentTextures.push_back(id);++i.counts.preparedImages;}
+        else texture(id,++i.imageRevision,{source.width,source.height,source.straightRGBA,TextureColorSpace::encodedSRGB,TextureFilter::linear,false,source.opaque});};
+    if(i.detail&&i.uploadedDetail!=i.detail.get()){image(i.prefix+"/detail",*i.detail,i.raster.detailTexture(),i.raster.detail()==i.detail);i.uploadedDetail=i.detail.get();++i.counts.imageUploads;}
+    if(i.backdrop&&i.uploadedBackdrop!=i.backdrop.get()){image(i.prefix+"/backdrop",*i.backdrop,i.raster.backdropTexture(),i.raster.backdrop()==i.backdrop);i.uploadedBackdrop=i.backdrop.get();++i.counts.imageUploads;}
     i.carrier.uploadResources(r);const double density=i.unitDensity();
     for(auto&[id,m]:i.markers){(void)id;if(!m.wanted)continue;const R bounds=m.style==modules::MapPinStyle::player?R{-24,-106,48,132}:R{-24,-24,48,48};r.configureNativeGroup(m.groupID,{bounds,density,NativeGroupColorSpace::encodedSRGB},m.draws);m.output=r.nativeGroupOutput(m.groupID);m.configured=true;}
     i.structure();i.localDirty=true;i.local(i.time);const bool changed=r.configureNativeGroup(i.groupID,{mapSceneBounds,density,NativeGroupColorSpace::encodedSRGB},i.draws);const auto&out=r.nativeGroupOutput(i.groupID);

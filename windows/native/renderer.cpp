@@ -463,6 +463,21 @@ bool RendererParkedTexture::held()const noexcept{return impl_->held;}
 std::uint64_t RendererParkedTexture::revision()const noexcept{return impl_->revision;}
 std::size_t RendererParkedTexture::bytes()const noexcept{return impl_->bytes();}
 
+// A retained texture's device objects (Renderer::Impl::createRetainedTexture).
+struct CreatedTexture { ComPtr<ID3D11Texture2D> resource; ComPtr<ID3D11ShaderResourceView> view; std::size_t bytes{}; };
+// A texture a TextureFactory created on a worker (Renderer::textureFactory):
+// its device keeps it valid; setWorkerTexture takes it only on that device.
+class WorkerTexture {
+public:
+    ComPtr<ID3D11Device> device;
+    ComPtr<ID3D11ShaderResourceView> view;
+    ComPtr<ID3D11Texture2D> resource; // updatable: painted in place (updateTexture)
+    TextureColorSpace colorSpace{TextureColorSpace::sRGB};
+    TextureFilter filter{TextureFilter::linear};
+    std::uint32_t width{}, height{};
+    std::size_t bytes{};
+    bool alphaOnly{}, updatable{};
+};
 struct Renderer::Impl {
     struct NativeGroup;
     struct Mesh {
@@ -707,6 +722,26 @@ struct Renderer::Impl {
         return !input.opaque && detail::alphaOnlyTexels(input.straightRGBA, input.updatable);
     }
     Texture texture(TextureData input, std::uint64_t revision, bool alphaOnly) {
+        auto created = createRetainedTexture(device.Get(), input, alphaOnly);
+        Texture result;
+        result.view = std::move(created.view);
+        result.encodedSRGB = input.colorSpace == TextureColorSpace::encodedSRGB; result.alphaOnly = alphaOnly;
+        result.filter = input.filter; result.revision = revision; result.bytes = created.bytes;
+        if (input.updatable) { result.resource = std::move(created.resource); result.updatable = true; }
+        result.colorSpace = input.colorSpace; result.width = input.width; result.height = input.height;
+        return result;
+    }
+    // A texture created by a TextureFactory on another thread, installed as it is.
+    Texture texture(const WorkerTexture& prepared, std::uint64_t revision) {
+        Texture result;
+        result.view = prepared.view;
+        result.encodedSRGB = prepared.colorSpace == TextureColorSpace::encodedSRGB; result.alphaOnly = prepared.alphaOnly;
+        result.filter = prepared.filter; result.revision = revision; result.bytes = prepared.bytes;
+        if (prepared.updatable) { result.resource = prepared.resource; result.updatable = true; }
+        result.colorSpace = prepared.colorSpace; result.width = prepared.width; result.height = prepared.height;
+        return result;
+    }
+    static CreatedTexture createRetainedTexture(ID3D11Device* device, const TextureData& input, bool alphaOnly) {
         // Filtering must interpolate premultiplied values. Sampling straight
         // RGB/alpha and multiplying afterwards creates dark borders against
         // transparent texels. Conversion happens only on replacement. Every
@@ -731,14 +766,10 @@ struct Renderer::Impl {
         description.BindFlags = D3D11_BIND_SHADER_RESOURCE;
         D3D11_SUBRESOURCE_DATA pixels{};
         pixels.pSysMem = texels.data(); pixels.SysMemPitch = input.width * (alphaOnly ? 1 : 4);
-        ComPtr<ID3D11Texture2D> resource;
-        checked(device->CreateTexture2D(&description, &pixels, &resource), "Upload retained texture");
-        Texture result;
-        checked(device->CreateShaderResourceView(resource.Get(), nullptr, &result.view), "Create retained texture view");
-        result.encodedSRGB = input.colorSpace == TextureColorSpace::encodedSRGB; result.alphaOnly = alphaOnly;
-        result.filter = input.filter; result.revision = revision; result.bytes = texels.size();
-        if (input.updatable) { result.resource = resource; result.updatable = true; }
-        result.colorSpace = input.colorSpace; result.width = input.width; result.height = input.height;
+        CreatedTexture result;
+        checked(device->CreateTexture2D(&description, &pixels, &result.resource), "Upload retained texture");
+        checked(device->CreateShaderResourceView(result.resource.Get(), nullptr, &result.view), "Create retained texture view");
+        result.bytes = texels.size();
         return result;
     }
     // An updatable alpha-only texture painted with a region that is not
@@ -1232,6 +1263,45 @@ bool Renderer::setTexture(std::string sourceID, std::uint64_t revision, TextureD
     texture.owner = LayerRasterAttribution::current(); if (texture.owner.empty() && existing != r.textures.end()) texture.owner = std::move(existing->second.owner);
     auto updated=r.textures.insert_or_assign(std::move(sourceID), std::move(texture));r.invalidate(&updated.first->second);r.touch();if(updated.second)++r.resourceEpoch;
     r.counters.resourceBytes = r.counters.resourceBytes - previousBytes + nativeBytes; ++r.counters.textureUploads;
+    return true;
+}
+TextureFactory Renderer::textureFactory() const {
+    require(impl_ != nullptr, "Renderer is not initialized"); auto &r = *impl_; r.thread();
+    if (!r.device || r.suspended) return {};
+    // ID3D11Device creation methods are free-threaded (the device is not
+    // created D3D11_CREATE_DEVICE_SINGLETHREADED; the shared media device's
+    // multithread protection guards only the immediate context, untouched here).
+    return [device = r.device](const TextureData& input) -> std::shared_ptr<const WorkerTexture> {
+        require(input.width > 0 && input.height > 0 && input.width <= 8192 && input.height <= 8192 &&
+                std::uint64_t(input.width) * input.height * 4 == input.straightRGBA.size(), "Invalid prepared RGBA8 texture");
+        require(input.colorSpace == TextureColorSpace::sRGB || input.colorSpace == TextureColorSpace::linear || input.colorSpace == TextureColorSpace::encodedSRGB, "Invalid prepared texture color space");
+        auto prepared = std::make_shared<WorkerTexture>();
+        prepared->alphaOnly = Impl::alphaStorage(input);
+        auto created = Impl::createRetainedTexture(device.Get(), input, prepared->alphaOnly);
+        prepared->device = device; prepared->view = std::move(created.view); prepared->bytes = created.bytes;
+        if (input.updatable) { prepared->resource = std::move(created.resource); prepared->updatable = true; }
+        prepared->colorSpace = input.colorSpace; prepared->filter = input.filter; prepared->width = input.width; prepared->height = input.height;
+        return prepared;
+    };
+}
+bool Renderer::preparedOnDevice(const WorkerTexture& prepared) const noexcept {
+    return impl_ && !impl_->suspended && impl_->device && prepared.device.Get() == impl_->device.Get();
+}
+bool Renderer::setWorkerTexture(std::string sourceID, std::uint64_t revision, const std::shared_ptr<const WorkerTexture>& prepared) {
+    require(impl_ != nullptr, "Renderer is not initialized"); auto &r = *impl_; r.thread(); identity(sourceID);
+    require(prepared && preparedOnDevice(*prepared), "A prepared texture is installed on the device that created it");
+    const auto existing = r.textures.find(sourceID);
+    require(existing==r.textures.end()||(!existing->second.groupOwned&&!existing->second.mediaOwned),"Native group/media texture is managed by its owner");
+    if (existing != r.textures.end() && existing->second.revision == revision) return false;
+    require(existing != r.textures.end() || r.textures.size() < maximumTextures, "Retained texture count exceeds bounds");
+    const auto previousBytes = existing == r.textures.end() ? 0 : existing->second.bytes;
+    r.budget(previousBytes, prepared->bytes);
+    const auto begin = qpcNow();
+    auto texture = r.texture(*prepared, revision);
+    r.counters.textureUploadSeconds += qpcNow() - begin;
+    texture.owner = LayerRasterAttribution::current(); if (texture.owner.empty() && existing != r.textures.end()) texture.owner = std::move(existing->second.owner);
+    auto updated=r.textures.insert_or_assign(std::move(sourceID), std::move(texture));r.invalidate(&updated.first->second);r.touch();if(updated.second)++r.resourceEpoch;
+    r.counters.resourceBytes = r.counters.resourceBytes - previousBytes + prepared->bytes; ++r.counters.textureUploads; ++r.counters.preparedTextureInstalls;
     return true;
 }
 bool Renderer::updateTexture(const std::string &sourceID, std::uint64_t revision, std::uint32_t x, std::uint32_t y, TextureData region) {

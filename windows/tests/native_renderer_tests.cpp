@@ -18,6 +18,7 @@
 #include <iostream>
 #include <limits>
 #include <string>
+#include <thread>
 
 using namespace endfield::native;
 // Internal implementation seam: exercise the exact bytes supplied to D3D,
@@ -165,6 +166,24 @@ void textureStorage(Renderer& renderer,DrawObject& object){
         check(renderer.readback().pixels==converted,"An opaque texture created from its bytes presents exactly as the converted one");
         renderer.clearDrawList();check(renderer.removeTexture("storage.converted")&&renderer.removeTexture("storage.opaque"),"The opaque textures retire");
     }
+    // A texture created on another thread (textureFactory) installs without
+    // the UI thread's conversion and presents exactly as setTexture's.
+    {const auto factory=renderer.textureFactory();check(bool(factory),"The live device offers a texture factory");
+        std::shared_ptr<const WorkerTexture> prepared;std::thread worker([&]{prepared=factory({2,2,texels,TextureColorSpace::encodedSRGB,TextureFilter::nearest});});worker.join();
+        check(prepared&&renderer.preparedOnDevice(*prepared),"A texture made on a worker belongs to the live device");
+        const auto installs=renderer.stats().preparedTextureInstalls;
+        check(renderer.setTexture("storage.direct",1,{2,2,texels,TextureColorSpace::encodedSRGB,TextureFilter::nearest})&&renderer.setWorkerTexture("storage.prepared",1,prepared)&&
+              !renderer.setWorkerTexture("storage.prepared",1,prepared)&&renderer.stats().preparedTextureInstalls==installs+1,"A prepared texture installs once per revision");
+        check(renderer.stats().resourceBytes==before.resourceBytes+2*16&&renderer.textureRevision("storage.prepared")==std::optional<std::uint64_t>(1),"A prepared texture costs and reports like any other");
+        object.textureID="storage.direct";renderer.setDrawList(std::span(&object,1));renderer.draw(false);const auto direct=renderer.readback().pixels;
+        object.textureID="storage.prepared";renderer.setDrawList(std::span(&object,1));renderer.draw(false);
+        check(renderer.readback().pixels==direct,"A prepared texture presents exactly as setTexture's");
+        // An updatable one (the Map's white host cut) is then painted in place.
+        std::array<std::uint8_t,16> white{};white.fill(255);const std::array<std::uint8_t,4> clear{255,255,255,128};
+        std::shared_ptr<const WorkerTexture> paintable;std::thread painter([&]{paintable=factory({2,2,white,TextureColorSpace::sRGB,TextureFilter::linear,true});});painter.join();
+        check(paintable&&renderer.setWorkerTexture("storage.paintable",1,paintable)&&renderer.updateTexture("storage.paintable",2,0,0,{1,1,clear}),"An updatable texture made on a worker is painted in place");
+        renderer.clearDrawList();check(renderer.removeTexture("storage.direct")&&renderer.removeTexture("storage.prepared")&&renderer.removeTexture("storage.paintable"),"The prepared textures retire");
+        prepared.reset();paintable.reset();}
     object.textureID.clear();
     // White wherever it covers (alpha masks, white text): one byte per
     // texel, read as premultiplied white (a,a,a,a) in every color space -
