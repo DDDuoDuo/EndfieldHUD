@@ -106,6 +106,17 @@ struct NativeDesignScene::Impl {
     DesignImages images;
     std::vector<std::unique_ptr<Part>> parts;
     std::vector<std::unique_ptr<LayerScene>> retired;
+    // Parts that left the tree (a closed pop-over or menu, the rows a filter
+    // or a page of the list took away): the Mac rebuilds them as CALayers,
+    // cheaply; here showing them again rasterized them again (40-90 ms). Their
+    // scenes stay a few seconds while the canvas is shown, so the same part
+    // (id, resolved artwork and density) showing again takes its scene back.
+    // Bounded in surfaces and pixels; dropped like the retired scenes when
+    // they expire, when the canvas is not composed (releaseResources) or parks.
+    struct Kept { std::string id; Json full; double density{}; std::unique_ptr<LayerScene> scene; std::vector<std::uint8_t> painted; std::uint64_t paintRevision{}; double since{}; };
+    static constexpr double keptSeconds = 8;
+    static constexpr std::size_t keptSurfaces = 256, keptPixelBytes = 24 * 1024 * 1024;
+    std::vector<Kept> kept;
     d::Artwork artwork;
     std::vector<d::SurfacePose> poses;
     std::vector<std::pair<std::size_t, std::size_t>> slots;    // binding -> (part, surface of the part)
@@ -171,6 +182,24 @@ struct NativeDesignScene::Impl {
         for (auto& placement : p.placements) placement.alphaMask.reset(); // texture edges are taken again
     }
     void retire(Part& p) { dropGroup(p); if (p.scene) { retired.push_back(std::move(p.scene)); p.index.assign(p.surfaces.size(), none); } }
+    // A part that left the tree: kept (the newest first within the bounds).
+    void keep(Part& p, double now) {
+        dropGroup(p);
+        if (!p.scene) return;
+        for (auto& k : kept) if (k.id == p.id && k.scene) retired.push_back(std::move(k.scene));
+        kept.push_back({std::move(p.id), std::move(p.full), density, std::move(p.scene), std::move(p.painted), p.paintRevision, now});
+        trimKept(now);
+    }
+    void trimKept(double now) {
+        std::size_t surfaces{}, bytes{};
+        for (auto k = kept.rbegin(); k != kept.rend(); ++k) {
+            if (!k->scene) continue;
+            surfaces += k->scene->report().surfaces; bytes += k->scene->report().pixelBytes;
+            if (now - k->since > keptSeconds || surfaces > keptSurfaces || bytes > keptPixelBytes) retired.push_back(std::move(k->scene));
+        }
+        std::erase_if(kept, [](const Kept& k) { return !k.scene; });
+    }
+    void dropKept() { for (auto& k : kept) if (k.scene) retired.push_back(std::move(k.scene)); kept.clear(); }
     // The part draws directly again at once; the target goes after the next
     // publication (collectRetired).
     void dropGroup(Part& p) {
@@ -316,7 +345,7 @@ bool NativeDesignScene::syncContent(const d::Layer& root, const d::TextServices&
     // Plan the generation before touching anything: resolved JSON per part,
     // its predecessor (same id), reuse / per-surface update / load, and the
     // shared raster budget of what it would add.
-    struct Plan { std::unique_ptr<Impl::Part> part; Impl::Part* old{}; enum class Kind { reuse, update, load } kind{Kind::load}; std::vector<std::size_t> changed; };
+    struct Plan { std::unique_ptr<Impl::Part> part; Impl::Part* old{}; enum class Kind { reuse, update, load, kept } kind{Kind::load}; std::vector<std::size_t> changed; std::size_t kept{}; };
     std::vector<Plan> plans;
     plans.reserve(artwork.parts.size());
     std::vector<bool> used(i.parts.size());
@@ -344,6 +373,10 @@ bool NativeDesignScene::syncContent(const d::Layer& root, const d::TextServices&
                 for (std::size_t n = 0; n < p.surfaces.size(); ++n) if (before[n] != after[n]) plan.changed.push_back(n);
             }
         }
+        // Back in the tree unchanged since it left: its kept scene.
+        if (plan.kind == Plan::Kind::load && !plan.old && !densityChanged)
+            for (std::size_t k = 0; k < i.kept.size(); ++k)
+                if (i.kept[k].scene && i.kept[k].id == p.id && i.kept[k].density == pixelsPerPoint && i.kept[k].full == p.full) { plan.kind = Plan::Kind::kept; plan.kept = k; break; }
         plans.push_back(std::move(plan));
     }
     // Part roots and clips (model tree) decide the visibility window before
@@ -365,7 +398,7 @@ bool NativeDesignScene::syncContent(const d::Layer& root, const d::TextServices&
         }
     }
     for (auto& plan : plans) {
-        const bool resident = Impl::within(*plan.part, plan.old && plan.old->scene ? 2 : 1);
+        const bool resident = Impl::within(*plan.part, (plan.old && plan.old->scene) || plan.kind == Plan::Kind::kept ? 2 : 1);
         if (!resident) { plan.kind = Plan::Kind::load; continue; }
         if (plan.kind == Plan::Kind::load) needed += plan.part->needed();
     }
@@ -378,6 +411,15 @@ bool NativeDesignScene::syncContent(const d::Layer& root, const d::TextServices&
     for (auto& plan : plans) {
         auto& p = *plan.part;
         if (plan.kind == Plan::Kind::load) { if (plan.old) i.retire(*plan.old); continue; }
+        if (plan.kind == Plan::Kind::kept) {
+            auto& k = i.kept[plan.kept];
+            p.scene = std::move(k.scene);
+            p.painted = std::move(k.painted);
+            p.paintRevision = k.paintRevision;
+            i.bindScene(p);
+            ++i.statistics.partsKept;
+            continue;
+        }
         // Reused or updated: the retained scene moves to the new generation.
         p.scene = std::move(plan.old->scene);
         p.group = std::move(plan.old->group);
@@ -400,7 +442,9 @@ bool NativeDesignScene::syncContent(const d::Layer& root, const d::TextServices&
             break;
         }
     }
-    for (std::size_t n = 0; n < i.parts.size(); ++n) if (!used[n]) i.retire(*i.parts[n]);
+    std::erase_if(i.kept, [](const Impl::Kept& k) { return !k.scene; });
+    for (std::size_t n = 0; n < i.parts.size(); ++n) if (!used[n]) i.keep(*i.parts[n], now);
+    i.trimKept(now);
     std::vector<std::unique_ptr<Impl::Part>> next;
     next.reserve(plans.size());
     for (auto& plan : plans) next.push_back(std::move(plan.part));
@@ -426,6 +470,7 @@ void NativeDesignScene::updatePose(const NativeDesignScenePose& pose) {
     need(i.synced, "Synchronize the design scene before its pose");
     need(pose.boxWorld.finite() && std::isfinite(pose.opacity) && pose.opacity >= 0 && pose.opacity <= 1 && pose.ownerMasks.size() <= 4, "Invalid design scene pose");
     if (pose.shutter) validatePlaneShutter(*pose.shutter);
+    if (!i.kept.empty()) i.trimKept(pose.time);
     d::samplePoses(i.artwork, pose.time, i.poses);
     i.boxWorld = pose.boxWorld;
     i.inverseBox = core::source::inverseSourceMatrix(pose.boxWorld);
@@ -539,6 +584,7 @@ bool NativeDesignScene::releaseResources(Renderer& r) {
     auto& i = *impl_;
     for (const auto& p : i.parts) if (p->group && p->group->published()) return false; // still composed
     for (auto& p : i.parts) i.dropGroup(*p);
+    i.dropKept();
     if (std::exchange(i.entriesChanged, false)) i.refreshEntries();
     bool ok = collectRetired(r) && i.draining.empty();
     for (auto& p : i.parts) if (p->scene) ok = p->scene->releaseResources(r) && ok;
@@ -546,7 +592,7 @@ bool NativeDesignScene::releaseResources(Renderer& r) {
 }
 bool NativeDesignScene::park(Renderer& r) noexcept {
     auto& i = *impl_;
-    bool any = !i.retired.empty();
+    bool any = !i.retired.empty() || !i.kept.empty();
     for (const auto& p : i.parts) any |= bool(p->scene);
     if (!any) return false;
     // A composed part refuses (before anything is released): stay resident.
@@ -576,6 +622,8 @@ NativeDesignSceneStats NativeDesignScene::stats() const noexcept {
     for (const auto& g : i.draining) s.groupTargets += g->holdsTarget();
     s.groupTargets += s.groups;
     s.retiredParts = i.retired.size();
+    s.keptParts = i.kept.size();
+    for (const auto& k : i.kept) if (k.scene) s.residentPixelBytes += k.scene->report().pixelBytes;
     for (const auto& p : i.parts) {
         s.surfaces += p->surfaces.size();
         if (!p->scene) continue;

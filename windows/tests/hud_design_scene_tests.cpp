@@ -195,6 +195,29 @@ void run(const std::filesystem::path& shader) {
     check(scene.stats().partsLoaded > parked && !scene.entries().empty(), "The next sync rebuilds parked artwork");
     rejects([&] { scene.syncContent(tree.root, text, revision, 1, .1); }, "Time runs forward");
     rejects([&] { scene.syncContent(tree.root, text, revision, 5, .3); }, "Density stays within 1...4");
+    // --- kept parts: a part that left the tree (a closed pop-over, a row a filter
+    // took away) and shows again unchanged takes its scene back ---------------------
+    {
+        auto& row = *tree.rows[1];
+        row.removeFromParent(); ++revision; publish(.31);
+        check(scene.stats().keptParts == 1, "A part that leaves the tree is kept");
+        const auto loads0 = scene.stats().partsLoaded; const auto rasters0 = raster.stats().rasterizations;
+        tree.root.insert(row, 1); ++revision; publish(.32);
+        check(scene.stats().partsKept == 1 && scene.stats().partsLoaded == loads0 && raster.stats().rasterizations == rasters0 && scene.stats().keptParts == 0,
+            "Showing it again unchanged takes its scene back, without a raster");
+        row.removeFromParent(); ++revision; publish(.33);
+        row.setContent(d::solid("plate", {0, 0, 590, 50}, d::rgb(0x4A4A4A))); tree.root.insert(row, 1); ++revision; publish(.34);
+        check(scene.stats().partsKept == 1 && scene.stats().partsLoaded == loads0 + 1, "A part that changed meanwhile loads");
+        row.removeFromParent(); ++revision; publish(.35);
+        check(scene.stats().keptParts == 1, "Kept again");
+        scene.updatePose({core::Matrix4{}, 1, 9.4, {}, {}});
+        check(scene.stats().keptParts == 0 && scene.collectRetired(renderer), "Kept parts expire after a few seconds and release after publication");
+        tree.root.insert(row, 1); ++revision; publish(9.5);
+        row.removeFromParent(); ++revision; publish(9.6);
+        composition.setEntries(renderer, {}); composition.present(renderer);
+        check(scene.releaseResources(renderer) && scene.stats().keptParts == 0, "An uncomposed scene keeps no parts");
+        tree.root.insert(row, 1); ++revision; publish(9.7);
+    }
     composition.detach(renderer);
     check(scene.releaseResources(renderer), "Detached scene releases everything");
     detached = true;
