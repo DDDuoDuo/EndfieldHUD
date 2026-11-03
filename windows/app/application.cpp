@@ -2262,6 +2262,9 @@ bool Application::Impl::present(double time,bool submit){
     const auto noteChromeSettings=chromeSettings(notes?notes->selected():core::Module::power);
     if(notes&&chromePlan&&chromePlan->projection().center){
         auto stage=probe.measure(LiveProbe::notesPose);
+        // The design raster density is measured only on the settled HUD, never
+        // on the deploying or retracting centre plane (DesignOverlayOwner::holdDensity).
+        if(designOverlay)designOverlay->holdDensity(closing||session->phase()!=core::VisibilityPhase::visible);
         // Notes first: it owns the module presentation sample every other
         // owner reads in this same frame.
         const auto opacity=static_cast<float>(canvasOpacity(time));

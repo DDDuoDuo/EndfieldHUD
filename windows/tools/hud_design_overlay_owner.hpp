@@ -68,6 +68,15 @@ public:
     std::optional<native::ContentFilter> contentFilter(double now, std::size_t begin, std::size_t count) const;
     // The overlay draws something (bar, toast, dim or their hide motion).
     bool presented() const noexcept;
+    // While held, update() keeps the design raster density (designDensity)
+    // instead of measuring it on the frame's centre plane. The host holds it
+    // while the HUD deploys and retracts: that motion recedes and tilts the
+    // plane far past the hysteresis, and a step re-renders every built canvas
+    // and re-rasterizes the shown page in the middle of the animation (Mac:
+    // renderScale follows the layout only, never the deploy motion). The
+    // settled HUD measures again (its parallax stays within the hysteresis).
+    // prewarm() always measures.
+    void holdDensity(bool);
 
     std::string_view name() const noexcept override { return "designOverlay"; }
     app::ModuleRouting routing() const noexcept override;
