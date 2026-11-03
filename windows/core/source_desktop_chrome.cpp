@@ -79,6 +79,20 @@ std::optional<double> DesktopChromeProjectionPlan::restingPointsPerUnit(Rect vie
     std::optional<double> points;if(origin&&step){const auto pixels=std::hypot(step->x-origin->x,step->y-origin->y);if(pixels>.0001)points=pixels;}
     resting_[restingNext_]=Resting{viewport,points};restingNext_=(restingNext_+1)%resting_.size();return points;
 }
+std::optional<Matrix4> DesktopChromeProjectionPlan::clipCenter(Rect viewport,Vec2 hudOffset,double hudScale,double contentScale,bool exit,double time){
+    require(std::isfinite(viewport.width)&&std::isfinite(viewport.height)&&viewport.width>0&&viewport.height>0&&std::isfinite(hudOffset[0])&&std::isfinite(hudOffset[1])&&
+            std::isfinite(hudScale)&&hudScale>0&&std::isfinite(contentScale)&&contentScale>0&&std::isfinite(time)&&time>=0,"Invalid desktop chrome clip pose");
+    const auto pixels=restingPointsPerUnit(viewport);if(!pixels)return {};
+    // The calibration and the corners of update(), on the clip's pose.
+    const auto unit=desktopBaseDesignScale(viewport)*contentScale / *pixels;
+    const auto camera=camera_->desktopFrame({viewport.width,viewport.height},camera_->rootRotation(),hudOffset,hudScale);
+    const auto pose=exit?animation_->pose(animation_->entrance().lastKeyTime,{},std::min(time,exitSeconds()),camera.layout.canvasSize):animation_->pose(std::min(time,entranceSeconds()),{},{},camera.layout.canvasSize);
+    const auto resolved=SourceLayout(*scene_).resolve({},pose.transforms);const auto world=camera.worldRoot*resolved[center_].worldMatrix;
+    const auto p=corners({Vec3{-500*unit,320*unit,0},Vec3{500*unit,320*unit,0},Vec3{500*unit,-320*unit,0},Vec3{-500*unit,-320*unit,0}},world,camera.projection*camera.view,viewport);
+    if(!p)return {};return nativeProjectiveTextTransform(*p,{1000,640});
+}
+double DesktopChromeProjectionPlan::entranceSeconds()const noexcept{return animation_->entrance().lastKeyTime;}
+double DesktopChromeProjectionPlan::exitSeconds()const noexcept{return animation_->exit().lastKeyTime;}
 double DesktopChromeProjectionPlan::contentScale(Rect viewport){
     const auto ratio=[&](Rect v)->std::optional<double>{const auto points=restingPointsPerUnit(v);if(!points)return {};return *points/desktopBaseDesignScale(v);};
     const auto here=ratio(viewport),reference=ratio(desktopReferenceViewport);

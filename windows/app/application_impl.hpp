@@ -400,6 +400,8 @@ struct Application::Impl {
     void scheduleDeadline();
     void refresh(double time);
     bool present(double time, bool submit);
+    double replayDesignDensity(double start, bool exit); // the design density stepped through the retract or deploy
+    void holdDesignDensity();   // the settled density to the design overlay outside the settled HUD
     const WatchSessionFrame* poseShell(double time); // sampled source frame, materials, captions and chrome
     // Launch prewarm (Mac AppDelegate prewarmDesktop/prewarmDesktopResources):
     // once, while the HUD is still closed and idle after launch.
@@ -778,6 +780,13 @@ struct Application::Impl {
     // The design library's shared overlay (confirm bar, toast, content dim) and
     // its Context; outlives every design owner (they borrow the Context).
     std::unique_ptr<tools::DesignOverlayOwner> designOverlay;
+    // holdDesignDensity: the density the last retract left (where the next
+    // deploy starts), the held density and the layout it was derived for.
+    std::optional<double> designDensityStart, heldDesignDensity;
+    struct DesignDensityLayout { double width{}, height{}, scale{}, hudScale{}, contentScale{}; source::Vec2 hudOffset{}; double start{};
+        bool operator==(const DesignDensityLayout&) const = default; };
+    std::optional<DesignDensityLayout> designDensityLayout;
+    struct { std::optional<DesignDensityLayout> layout; std::vector<core::Matrix4> entrance, exit; } designDensityPlanes; // replayDesignDensity's planes
     std::shared_ptr<gpu::NotesClipboard> designClipboard; // the design text fields' one clipboard
     std::unique_ptr<ModuleContrast> moduleContrast;      // the centre's contrast backdrop (SHELL-27)
     bool quitPromptOpen{};                               // the quit request is on the confirm bar
