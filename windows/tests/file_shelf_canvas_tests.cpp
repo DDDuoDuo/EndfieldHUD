@@ -78,7 +78,7 @@ struct Store {
                 auto i = file("new-" + std::to_string(next++), p.substr(p.find_last_of('\\') + 1)); i.lastKnownPath = p; items.push_back(i);
             }
         };
-        s.remove = [this](std::string_view id) { std::erase_if(items, [&](const auto& i) { return i.id == id; }); };
+        s.remove = [this](std::span<const std::string> ids) { std::erase_if(items, [&](const auto& i) { return std::find(ids.begin(), ids.end(), i.id) != ids.end(); }); };
         s.clear = [this] { items.clear(); };
         s.describe = [](const std::exception& e, m::FileShelfServices::Failure) { return std::string("Described: ") + e.what(); };
         s.chooseFiles = [this] { ++chooses; };
@@ -323,6 +323,61 @@ void virtualisation() {
     check(canvas.scrollOffset() > 0 && control(canvas, "file:60"), "End scrolls to the bottom");
 }
 
+// The other layout's tiles (Windows: the scene rasterizes them ahead). After
+// the entrance the grid holds them, transparent, under the ids the other layout's
+// tiles take; a selection that opens or closes the card then shows tiles
+// whose artwork is byte-equal to parts the scene already holds, so only the
+// card, the selected tile and the grid's frame are new. They are never
+// routed, hovered or listed.
+void alternateLayout() {
+    FakeMeasurer measurer;
+    World w(measurer); w.appearance(Language::english);
+    Store store;
+    for (int n = 1; n <= 24; ++n) store.items.push_back(Store::file("id" + std::to_string(n), "Synthetic " + std::to_string(n) + ".txt"));
+    m::FileShelfCanvas canvas(w.context, store.services());
+    w.show(canvas);
+    check(canvas.alternateTileCountForTesting() == 0, "No such tile is built with the shown page");
+    for (int frame = 0; frame < 60; ++frame) w.advance(1.0 / 30);
+    check(canvas.alternateTileCountForTesting() == 5 * 3, "After the entrance the grid holds the 3-column layout's tiles, a tile per frame");
+    const d::TextServices& text = w.context.env().text;
+    using Parts = std::vector<std::pair<std::string, Json>>;
+    const auto artwork = [&] { Parts parts; for (auto& part : d::emit(canvas.root(), {&text, "t."}).parts) parts.emplace_back(part.id, std::move(part.layers)); return parts; };
+    const auto fresh = [](const Parts& before, const Parts& after) {
+        std::vector<std::string> out;
+        for (const auto& part : after) if (std::find(before.begin(), before.end(), part) == before.end()) out.push_back(part.first);
+        return out;
+    };
+    const auto describe = [](const std::vector<std::string>& ids) { std::string s; for (const auto& id : ids) s += " " + id; return s; };
+    const std::size_t controls = canvas.page().controls().size();
+    auto before = artwork();
+    canvas.click("id1"); w.advance(1);
+    check(canvas.columnsForTesting() == 3 && canvas.alternateTileCountForTesting() == 5 * 4, "Beside the card the grid holds the 4-column tiles, transparent");
+    auto added = fresh(before, artwork());
+    check(added.size() <= 5 && std::none_of(added.begin(), added.end(), [](const std::string& id) { return id.find("tile:3:id2") != std::string::npos; }),
+        "Opening the card shows tiles the scene already holds (new:" + describe(added) + ")");
+    before = artwork();
+    canvas.click("id1"); w.advance(1);
+    added = fresh(before, artwork());
+    check(canvas.columnsForTesting() == 4 && added.size() <= 4, "Closing it does the same (new:" + describe(added) + ")");
+    check(canvas.page().controls().size() == controls && !control(canvas, "tile:3:id2"), "Those tiles are no controls");
+    std::vector<d::AccessibilityItem> items; canvas.accessibilityItems(items);
+    check(std::count_if(items.begin(), items.end(), [](const auto& item) { return item.id.starts_with("file:"); }) == 20, "Accessibility lists only the shown tiles");
+    // One, another, Ctrl another, one from many, none; every tile of the other
+    // layout lies inside the grid's clip (the scene rasterizes scroll rows there).
+    check(canvas.alternatesInsideGridForTesting(), "The 4-column tiles lie inside the 3-column grid");
+    for (const auto& [id, toggle] : std::vector<std::pair<std::string, bool>>{{"id1", false}, {"id2", false}, {"id3", true}, {"id1", false}, {"id1", false}}) {
+        before = artwork();
+        canvas.click(id, toggle);
+        for (int frame = 0; frame < 30; ++frame) w.advance(1.0 / 30);
+        added = fresh(before, artwork());
+        check(added.size() <= 5, "Each selection shows tiles the scene already holds (" + id + (toggle ? " Ctrl" : "") + ", new:" + describe(added) + ")");
+    }
+    canvas.setActive(false, w.now);
+    check(canvas.alternateTileCountForTesting() > 0, "A switch to another module keeps them (the open HUD keeps the Shelf's rasters)");
+    canvas.resetSession();
+    check(canvas.alternateTileCountForTesting() == 0, "A new HUD session's Shelf starts without them");
+}
+
 // --- The Mac oracle -------------------------------------------------------------------
 struct Oracle {
     const Json& data;
@@ -495,7 +550,7 @@ void shelfOracle(Oracle& o) {
 
 int main(int argc, char** argv) {
     try {
-        formats(); canvasRules(); clearMotion(); relinkAndRecording(); virtualisation();
+        formats(); canvasRules(); clearMotion(); relinkAndRecording(); virtualisation(); alternateLayout();
         if (const auto data = loadOracle(argc > 1 ? argv[1] : nullptr, {"shelf"}, {"text", "layerDefaults", "rules", "formats", "kinds", "home"})) {
             Oracle oracle(*data);
             shelfOracle(oracle);

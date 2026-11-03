@@ -253,8 +253,11 @@ void services(HWND hwnd, gpu::Renderer& renderer) {
     shelf.refresh(hud.time); hud.pump();
     check(hud.item("Renamed report.txt") && hud.item("Renamed report.txt")->lastKnownPath == utf8(renamed) && !hud.item("Renamed report.txt")->availabilityError, "A renamed original is followed by identity");
     check(hud.item("Folder") && hud.item("Folder")->lastKnownPath == utf8(moved), "A moved folder is followed by identity");
-    { gpu::NativeFileShelfFiles files; data::FileShelfStore saved(temp.root / "metadata", files.platform());
-      check(std::any_of(saved.items().begin(), saved.items().end(), [&](const auto& r) { return r.windowsPath == utf8(renamed); }), "The renewed path is saved"); }
+    // The archive is saved on the service's utility worker: its completion arrives as the host's message loop delivers it.
+    const auto renewed = [&] { gpu::NativeFileShelfFiles files; data::FileShelfStore saved(temp.root / "metadata", files.platform());
+        return std::any_of(saved.items().begin(), saved.items().end(), [&](const auto& r) { return r.windowsPath == utf8(renamed); }); };
+    for (unsigned n = 0; n < 200 && !renewed(); ++n) { Sleep(5); hud.pump(); }
+    check(renewed(), "The renewed path is saved");
 
     // The properties card: its reads run on the utility worker, never the HUD thread.
     const auto folderID = hud.item("Folder")->id;
@@ -393,6 +396,9 @@ void resident(HWND hwnd, gpu::Renderer& renderer) {
     const auto shown = shelf.resources();
     check(shown.iconProvider && shown.iconRequests >= 1 && shown.sceneParts > 0 && shown.scenePixelBytes > 0, "The shown Shelf asks for its tiles' Shell icons (drag images) and holds its artwork");
     for (unsigned n = 0; n < 400 && shelf.resources().cachedIcons < 6; ++n) { Sleep(5); hud.pump(); }
+    // After the entrance the other layout's tiles are rasterized ahead, a tile
+    // per frame (FileShelfCanvas::buildAlternates); then the Shelf is idle.
+    for (unsigned n = 0; n < 90; ++n) hud.frame();
     const auto rasterized = hud.raster.stats().rasterizations;
     started = Clock::now(); for (unsigned n = 0; n < 30; ++n) hud.frame(); const double idle = ms(Clock::now() - started) / 30;
     const auto tile = hud.owner->core().clientRect({5, 86, 135, 124}); check(tile.has_value(), "A tile projects");

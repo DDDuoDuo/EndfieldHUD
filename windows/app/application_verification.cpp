@@ -1039,9 +1039,13 @@ int Application::Impl::runHiddenVerification(){
                 // Work Mode (rc140: the whole page, 47-63 surfaces, 45-78 ms): the state label
                 // and dot, the primary button, the tab lock, the custom field or the presets,
                 // a lap row and the custom toast rasterize again, at most 16 measured.
+                // The Shelf (rc140: 213-259 surfaces, 230-300 ms): the card (14 surfaces), the
+                // tiles whose selection changed, the drop ring; at most 34 measured.
                 const std::map<std::string,std::pair<std::int64_t,std::int64_t>,std::less<>> bounds{
                     {"workMode.preset30",{1,24}},{"workMode.start",{1,24}},{"workMode.pause",{1,24}},{"workMode.resume",{1,24}},{"workMode.reset",{1,24}},
-                    {"workMode.customOpen",{1,24}},{"workMode.customCommit",{1,24}},{"workMode.lap",{1,24}}};
+                    {"workMode.customOpen",{1,24}},{"workMode.customCommit",{1,24}},{"workMode.lap",{1,24}},
+                    {"fileShelf.selectOne",{1,48}},{"fileShelf.selectAnother",{1,48}},{"fileShelf.ctrlToggle",{1,48}},{"fileShelf.shiftExtend",{0,48}},
+                    {"fileShelf.selectFromMany",{1,48}},{"fileShelf.deselect",{1,48}}};
                 const bool enforceBounds=true;
                 const auto timeAction=[&](core::Module m,const char*name,const std::function<bool(double)>&act){
                     drainUtility(time);frameAt(time);time+=.05;
@@ -1100,10 +1104,18 @@ int Application::Impl::runHiddenVerification(){
                         {std::ofstream out(file,std::ios::binary);out<<"Synthetic freeze probe file "<<n<<"\n";}
                         const auto utf8=file.u8string();paths.emplace_back(reinterpret_cast<const char*>(utf8.data()),utf8.size());}
                     const std::vector<std::string> seed(paths.begin(),paths.end()-1),last(paths.end()-1,paths.end());
+                    // The archive saves an action hands to the utility worker (and makes at once, on this thread).
+                    std::int64_t savesQueued{},savesAtOnce{};
+                    const auto deferred=[&](const std::function<bool()>&act){const auto before=shelf->resources();const bool done=act();const auto after=shelf->resources();
+                        savesQueued=std::int64_t(after.savesQueued-before.savesQueued);savesAtOnce=std::int64_t(after.savesAtOnce-before.savesAtOnce);return done;};
+                    // One save per action, written by the utility worker (rc140: one durable save per
+                    // removed id on this thread, 19-60 ms).
+                    const auto noteSave=[&]{timings.back()["savesQueued"]=savesQueued;timings.back()["savesAtOnce"]=savesAtOnce;
+                        hostCheck(savesQueued==1&&savesAtOnce==0,"A Shelf change saves its archive once, on the utility worker ("+std::to_string(savesQueued)+" queued, "+std::to_string(savesAtOnce)+" at once)");};
                     if(showModule(M)){
                         need(shelf->importFiles(seed,hostTime(time)),"The probe's synthetic files are added to the Shelf");settleFor(30);
                         (void)keyTo(M,dz::key::home,false,time);settleFor(10);
-                        timeAction(M,"addOne",[&](double t){return shelf->importFiles(last,hostTime(t));});
+                        timeAction(M,"addOne",[&](double t){return deferred([&]{return shelf->importFiles(last,hostTime(t));});});noteSave();
                         (void)keyTo(M,dz::key::home,false,time);settleFor(10);
                         need(canvas->items().size()>=24,"The Shelf holds the probe's 24 synthetic files");
                         const auto selected=[&]{return canvas->selectedIDs().size();};
@@ -1115,9 +1127,9 @@ int Application::Impl::runHiddenVerification(){
                         timeAction(M,"selectFromMany",[&](double t){return press(M,"file:1",false,t)&&selected()==1;});
                         timeAction(M,"deselect",[&](double t){return press(M,"file:1",false,t)&&selected()==0;});
                         (void)press(M,"file:1",false,time);settleFor(10);
-                        timeAction(M,"removeOne",[&](double t){const auto before=canvas->items().size();return keyTo(M,dz::key::deleteForward,false,t)&&canvas->items().size()+1==before;});
+                        timeAction(M,"removeOne",[&](double t){const auto before=canvas->items().size();return deferred([&]{return keyTo(M,dz::key::deleteForward,false,t);})&&canvas->items().size()+1==before;});noteSave();
                         (void)press(M,"file:1",true,time);(void)press(M,"file:2",true,time);(void)press(M,"file:3",true,time);settleFor(10);
-                        timeAction(M,"removeThree",[&](double t){const auto before=canvas->items().size();return selected()==3&&keyTo(M,dz::key::deleteForward,false,t)&&canvas->items().size()+3==before;});
+                        timeAction(M,"removeThree",[&](double t){const auto before=canvas->items().size();return selected()==3&&deferred([&]{return keyTo(M,dz::key::deleteForward,false,t);})&&canvas->items().size()+3==before;});noteSave();
                         (void)press(M,"shelf.clear",false,time);settleFor(10);
                         timeAction(M,"clear",[&](double t){(void)t;return designContext.overlay().isConfirming()&&designContext.overlay().decide(dz::ConfirmState::Decision::confirm);});
                         settleFor(10);need(canvas->items().empty(),"The probe's Clear empties the Shelf");

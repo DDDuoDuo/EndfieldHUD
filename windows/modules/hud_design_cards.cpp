@@ -414,7 +414,10 @@ ArchiveTile::ArchiveTile(Builder& b, std::string id, int number, std::string tit
     brackets_ = &b.layer(sub(this->id(), "tile.brackets"));
     bracketsRest_ = &b.layer(sub(this->id(), "tile.brackets.rest"));
     bracketsSelected_ = &b.layer(sub(this->id(), "tile.brackets.selected"));
-    for (Layer* layer : {brackets_, bracketsRest_, bracketsSelected_}) { layer->setFrame(bounds); layer->setAnimatable(); }
+    // The brackets show while selected: no bitmap until then (lazy surfaces),
+    // so a grid that lays its tiles out again paints only what shows.
+    brackets_->setFrame(bounds); brackets_->setAnimatable();
+    for (Layer* layer : {bracketsRest_, bracketsSelected_}) { layer->setFrame(bounds); layer->setAnimatable(SurfaceRole::lazy); }
     setPath(*bracketsRest_, bracketPath(bounds, -5), palette().yellow());
     setPath(*bracketsSelected_, bracketPath(bounds, -4), palette().yellow());
     brackets_->add(*bracketsRest_); brackets_->add(*bracketsSelected_);

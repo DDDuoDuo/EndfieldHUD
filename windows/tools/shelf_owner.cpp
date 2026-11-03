@@ -160,6 +160,7 @@ struct ShelfService::Impl {
         // (FileShelfCanvas(store: nil, error:)), not a missing module.
         try { store = std::make_shared<data::FileShelfStore>(options.newDataRoot, files.platform(), relinkSlot.creation()); }
         catch (const data::StoreError& e) { storeError.emplace(e.code(), e.what()); }
+        if (store) store->setWriter([this](const data::FileShelfStore::Save& save) { return queueSave(save); });
         home = options.homeFolder ? *options.homeFolder : profileFolder();
         recordEvent = std::move(options.recordEvent);
         picker = std::make_unique<gpu::NativeShelfFilePicker>(gpu::ShelfPickerRoute{hwnd, pickerMessage, generation}, gpu::ShelfPickerLabels{"添加到文件暂存架", "添加引用", "添加引用"});
@@ -195,7 +196,9 @@ struct ShelfService::Impl {
     }
     ~Impl() {
         *alive = false;
-        if (utility && sharedRoute) utility->invalidate(sharedRoute);
+        if (store) store->setWriter({});
+        // Accepted saves still finish (on the executor's shutdown barrier at the latest).
+        if (utility && sharedRoute) utility->invalidate(sharedRoute, false);
         ownUtility.reset();
         dropState->enabled = false; dropState->inside = nullptr; dropState->external.reset();
         if (drop) drop->stop();
@@ -241,6 +244,30 @@ struct ShelfService::Impl {
             catch (...) {}
             if (shared) changed();
         });
+    }
+
+    // ---- Shelf archive saves (FileShelfStore::Save) ----
+    // The store publishes a change at once and its archive is replaced here,
+    // off the HUD thread: one route of one FIFO executor keeps the saves in
+    // order, each expecting the bytes of the one before (the Mac writes
+    // .atomic synchronously; the durable replace with its flush took
+    // milliseconds per save on this thread). A failed save returns the
+    // records to the archive on disk and shows the store's reason, as a
+    // synchronous failure does. A full queue waits for the earlier saves;
+    // the store then saves at once.
+    std::size_t savesQueued{};
+    std::uint64_t savesHanded{}, savesAtOnce{};
+    bool queueSave(const data::FileShelfStore::Save& save) {
+        const bool queued = submit([save] { data::FileShelfStore::write(save); }, [this, save](std::exception_ptr error) {
+            --savesQueued;
+            if (!store || !store->saveFinished(save, !error)) return;
+            if (auto* c = at(time)) c->storeChanged();
+            std::rethrow_exception(error); // submit's completion shows it (Failure::changing)
+        });
+        if (queued) { ++savesQueued; ++savesHanded; return true; }
+        if (auto* executor = utility ? utility : ownUtility.get()) executor->waitIdle();
+        ++savesAtOnce;
+        return false;
     }
 
     // ---- References and Mac-imported items ----
@@ -305,14 +332,15 @@ struct ShelfService::Impl {
             clear(); throw std::runtime_error("Shelf references could not be committed");
         }
     }
-    void removeReference(std::string_view id) {
-        if (const auto* item = pending(id)) {
-            std::vector<std::string> ids{item->recordID};
-            std::erase_if(pendingRelinks, [&](const auto& row) { return sameID(row.recordID, ids.front()); });
-            dismissRelinks(std::move(ids)); return;
-        }
-        need(bool(store), "File shelf storage is unavailable");
-        store->remove(id);
+    // Imported items awaiting relink leave the ledger; references leave the
+    // store in one save.
+    void removeReferences(std::span<const std::string> ids) {
+        std::vector<std::string> imported, references;
+        for (const auto& id : ids) if (const auto* item = pending(id)) imported.push_back(item->recordID); else references.push_back(id);
+        if (!references.empty()) { need(bool(store), "File shelf storage is unavailable"); (void)store->remove(std::span<const std::string>(references)); }
+        if (imported.empty()) return;
+        std::erase_if(pendingRelinks, [&](const auto& row) { return std::any_of(imported.begin(), imported.end(), [&](const auto& id) { return sameID(row.recordID, id); }); });
+        dismissRelinks(std::move(imported));
     }
     void clearReferences() {
         if (store) store->clear();
@@ -442,7 +470,7 @@ struct ShelfService::Impl {
         s.items = [this] { return items(); };
         s.refresh = [this] { if (store) store->refresh(); readRelinks(); };
         s.add = [this](std::span<const std::string> paths) { need(bool(store), "File shelf storage is unavailable"); (void)store->add(paths); };
-        s.remove = [this](std::string_view id) { removeReference(id); };
+        s.remove = [this](std::span<const std::string> ids) { removeReferences(ids); };
         s.clear = [this] { clearReferences(); };
         s.describe = [this](const std::exception& e, Failure failure) { return shelfErrorText(e, failure, language()); };
         // Add files is never a relink.
@@ -515,6 +543,8 @@ mod::FileShelfCanvas* ShelfService::canvas() const noexcept { return impl_->canv
 DesignOwnerCore* ShelfService::core() const noexcept { return impl_->canvas() ? impl_->ownerCore : nullptr; }
 void ShelfService::setUtility(app::UtilityExecutor* value) {
     auto& i = *impl_; if (value == i.utility) return;
+    // Queued saves finish (and report) before later ones go to another executor.
+    if (i.savesQueued) if (auto* old = i.utility ? i.utility : i.ownUtility.get()) { old->waitIdle(); old->drain(); }
     if (i.utility && i.sharedRoute) i.utility->invalidate(i.sharedRoute, false);
     i.utility = value; i.sharedRoute = 0;
 }
@@ -695,6 +725,7 @@ ShelfResourceStats ShelfService::resources() const {
     }
     if (i.icons) { const auto icons = i.icons->stats(); out.iconProvider = true; out.iconWorkers = icons.workers; out.iconWorkerStarts = icons.workerStarts; out.iconParks = icons.parks; out.iconRequests = icons.requests; }
     const auto cache = i.memoryImages.stats(); out.cachedIcons = cache.cachedImages; out.cachedIconBytes = cache.cachedBytes;
+    out.savesQueued = i.savesHanded; out.savesAtOnce = i.savesAtOnce;
     return out;
 }
 } // namespace endfield::tools

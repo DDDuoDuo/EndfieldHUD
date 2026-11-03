@@ -78,7 +78,8 @@ struct FileShelfServices {
     std::function<std::vector<FileShelfItem>()> items;
     std::function<void()> refresh;
     std::function<void(std::span<const std::string>)> add;
-    std::function<void(std::string_view)> remove;
+    // Every listed reference in one save (the Mac saves once per id).
+    std::function<void(std::span<const std::string>)> remove;
     std::function<void()> clear;
     enum class Failure : std::uint8_t { importing, changing, refreshing, action };
     std::function<std::string(const std::exception&, Failure)> describe;
@@ -204,6 +205,8 @@ public:
     // Testing (:725-728).
     std::optional<int> columnsForTesting() const noexcept { return layout_ ? std::optional(layout_->columns) : std::nullopt; }
     std::size_t builtTileCountForTesting() const noexcept { return tiles_.size(); }
+    std::size_t alternateTileCountForTesting() const;
+    bool alternatesInsideGridForTesting() const;
     bool hasPropertiesCardForTesting() const noexcept { return card_ != nullptr; }
     const std::map<std::string, ShelfFileProperties, std::less<>>& propertiesForTesting() const noexcept { return properties_; }
     bool clearingForTesting() const noexcept { return clearing_; }
@@ -236,6 +239,11 @@ private:
     std::set<std::string, std::less<>> renderedSelection_;
     std::optional<std::string> renderedCard_;
     design::Deadlines::Token clearTimer_{};
+    // The other layout's tiles (beside the card or without it), transparent
+    // in the grid of the current page (buildAlternates).
+    std::map<std::string, design::ArchiveTile*, std::less<>> alternates_;
+    bool alternatesReady_{};
+    design::Deadlines::Token alternateTimer_{};
 
     Structure structure() const;
     std::optional<std::string> cardID() const;
@@ -243,6 +251,12 @@ private:
     void refreshStore();
     void reloadItems();
     void syncTiles(design::Page&, double offset, bool routing);
+    static std::string tileID(const FileShelfItem&, int columns);
+    std::optional<GridLayout> alternateLayout() const;
+    bool buildAlternates(design::Page&, std::size_t limit);
+    void scheduleAlternates(double delay);
+    void fillAlternates();
+    void dropAlternates();
     void scrollGrid(double offset);
     void revealTile(std::string_view id);
     void buildCard(const FileShelfItem&, design::Page&, double top, bool replaying);
