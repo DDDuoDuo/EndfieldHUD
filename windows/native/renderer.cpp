@@ -704,7 +704,7 @@ struct Renderer::Impl {
     }
     // Whether a texture is stored alpha-only (texture()): one byte per texel.
     static bool alphaStorage(const TextureData& input) noexcept {
-        return detail::alphaOnlyTexels(input.straightRGBA, input.updatable);
+        return !input.opaque && detail::alphaOnlyTexels(input.straightRGBA, input.updatable);
     }
     Texture texture(TextureData input, std::uint64_t revision, bool alphaOnly) {
         // Filtering must interpolate premultiplied values. Sampling straight
@@ -715,10 +715,14 @@ struct Renderer::Impl {
         // decodes them before filtering), encoded textures premultiplied
         // encoded bytes (Core Animation's own representation). A texture
         // that is white wherever it covers keeps only its alpha (one byte).
-        std::vector<std::uint8_t> premultiplied(alphaOnly ? input.straightRGBA.size() / 4 : input.straightRGBA.size());
+        // An opaque sRGB or encoded texture keeps its bytes (TextureData::opaque).
+        const bool asIs = !alphaOnly && input.opaque && input.colorSpace != TextureColorSpace::linear;
+        std::vector<std::uint8_t> premultiplied(asIs ? 0 : alphaOnly ? input.straightRGBA.size() / 4 : input.straightRGBA.size());
         DXGI_FORMAT format = DXGI_FORMAT_A8_UNORM;
-        if (alphaOnly) detail::prepareTextureAlpha8(input.straightRGBA, premultiplied);
+        if (asIs) format = input.colorSpace == TextureColorSpace::sRGB ? DXGI_FORMAT_R8G8B8A8_UNORM_SRGB : DXGI_FORMAT_R8G8B8A8_UNORM;
+        else if (alphaOnly) detail::prepareTextureAlpha8(input.straightRGBA, premultiplied);
         else format = detail::prepareTexture8(input.straightRGBA, input.colorSpace, premultiplied);
+        const std::span<const std::uint8_t> texels = asIs ? input.straightRGBA : std::span<const std::uint8_t>(premultiplied);
         D3D11_TEXTURE2D_DESC description{};
         description.Width = input.width; description.Height = input.height;
         description.MipLevels = description.ArraySize = description.SampleDesc.Count = 1;
@@ -726,13 +730,13 @@ struct Renderer::Impl {
         description.Usage = input.updatable ? D3D11_USAGE_DEFAULT : D3D11_USAGE_IMMUTABLE;
         description.BindFlags = D3D11_BIND_SHADER_RESOURCE;
         D3D11_SUBRESOURCE_DATA pixels{};
-        pixels.pSysMem = premultiplied.data(); pixels.SysMemPitch = input.width * (alphaOnly ? 1 : 4);
+        pixels.pSysMem = texels.data(); pixels.SysMemPitch = input.width * (alphaOnly ? 1 : 4);
         ComPtr<ID3D11Texture2D> resource;
         checked(device->CreateTexture2D(&description, &pixels, &resource), "Upload retained texture");
         Texture result;
         checked(device->CreateShaderResourceView(resource.Get(), nullptr, &result.view), "Create retained texture view");
         result.encodedSRGB = input.colorSpace == TextureColorSpace::encodedSRGB; result.alphaOnly = alphaOnly;
-        result.filter = input.filter; result.revision = revision; result.bytes = premultiplied.size();
+        result.filter = input.filter; result.revision = revision; result.bytes = texels.size();
         if (input.updatable) { result.resource = resource; result.updatable = true; }
         result.colorSpace = input.colorSpace; result.width = input.width; result.height = input.height;
         return result;

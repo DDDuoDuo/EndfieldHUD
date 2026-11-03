@@ -65,6 +65,11 @@ struct TextureData {
     // identity while rectangles of its texels are replaced. Otherwise the
     // texture is immutable and every revision creates it again.
     bool updatable{};
+    // Every texel's alpha is 255 (the producer guarantees it, e.g. a bitmap
+    // painted over an opaque background): premultiplying keeps an opaque sRGB
+    // or encoded-sRGB texel's bytes, so such a texture is created from these
+    // bytes as they are, without the conversion copy (a linear one converts).
+    bool opaque{};
 };
 struct NativeGroupTarget {
     core::Rect localBounds;

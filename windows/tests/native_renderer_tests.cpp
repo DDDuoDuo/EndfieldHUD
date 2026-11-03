@@ -154,6 +154,18 @@ void textureStorage(Renderer& renderer,DrawObject& object){
     check(renderer.configureNativeGroup("storage.linear-group",linearTarget,std::span(&object,1))&&renderer.stats().nativeGroupBytes==groups.nativeGroupBytes+16*16*8,"A linear group keeps its half-float target");
     check(renderer.removeNativeGroup("storage.linear-group"),"The linear group retires");
     check(renderer.removeTexture("storage.encoded")&&renderer.removeTexture("storage.linear")&&!renderer.textureRevision("storage.encoded")&&renderer.stats().resourceBytes==before.resourceBytes,"Retired textures leave no bytes and no revision");
+    // An opaque texture (TextureData::opaque) is created from its own bytes: it
+    // presents exactly as the converted path does, in both 8-bit color spaces.
+    const std::array<std::uint8_t,16> opaqueTexels{200,100,50,255, 200,100,50,255, 200,100,50,255, 200,100,50,255};
+    for(const auto space:{TextureColorSpace::encodedSRGB,TextureColorSpace::sRGB}){
+        check(renderer.setTexture("storage.converted",1,{2,2,opaqueTexels,space,TextureFilter::nearest})&&renderer.setTexture("storage.opaque",1,{2,2,opaqueTexels,space,TextureFilter::nearest,false,true}),"Opaque textures install either way");
+        check(renderer.stats().resourceBytes==before.resourceBytes+2*16,"An opaque texture costs the same four bytes per texel");
+        object.textureID="storage.converted";renderer.setDrawList(std::span(&object,1));renderer.draw(false);const auto converted=renderer.readback().pixels;
+        object.textureID="storage.opaque";renderer.setDrawList(std::span(&object,1));renderer.draw(false);
+        check(renderer.readback().pixels==converted,"An opaque texture created from its bytes presents exactly as the converted one");
+        renderer.clearDrawList();check(renderer.removeTexture("storage.converted")&&renderer.removeTexture("storage.opaque"),"The opaque textures retire");
+    }
+    object.textureID.clear();
     // White wherever it covers (alpha masks, white text): one byte per
     // texel, read as premultiplied white (a,a,a,a) in every color space -
     // exactly its alpha, as color, as an alpha mask and in an encoded group.
