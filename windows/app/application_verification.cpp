@@ -421,12 +421,20 @@ int Application::Impl::runAnimationTrace(){
     double cyclesPerMS{};{const double s=OverlayHost::clockNow();const double c0=cycles();while(OverlayHost::clockNow()-s<.05){}cyclesPerMS=(cycles()-c0)/((OverlayHost::clockNow()-s)*1000);}
     const auto pageFaults=[]{PROCESS_MEMORY_COUNTERS m{};m.cb=sizeof m;return GetProcessMemoryInfo(GetCurrentProcess(),&m,sizeof m)?std::int64_t(m.PageFaultCount):std::int64_t{};};
     const auto snapshot=[&]{return Snapshot{renderer.stats(),renderer.sourceGraphicsStats(),rasterizer.stats(),session->frameStats(),session->stats()};};
+    // RC 139's design density, alongside: measured on every frame's live
+    // centre plane from the launch prewarm's first-pose measurement (the
+    // hysteresis path RC 139 took). The settled HUD must hold exactly it.
+    std::optional<double> rc139Density;
+    const auto density=[&]{return designOverlay?designOverlay->context().boxScale():0.;};
     const auto pump=[&](double duration,const std::function<bool()>&until,const std::function<void()>&onFrame){
         const double end=OverlayHost::clockNow()+duration;
         for(;;){const double left=end-OverlayHost::clockNow();if(left<=0||(until&&until()))return;
             const auto frames=host.stats().frames;
             need(host.pumpOnce(static_cast<std::uint32_t>(std::ceil(left*1000))),"The traced host stopped");
-            if(host.stats().frames!=frames&&onFrame)onFrame();}
+            if(host.stats().frames==frames)continue;
+            if(rc139Density&&chromePlan&&chromePlan->projection().center&&session->phase()!=core::VisibilityPhase::concealed)
+                rc139Density=tools::designDensity(core::source::designBoxWorld(*chromePlan->projection().center),metrics.scale,*rc139Density);
+            if(onFrame)onFrame();}
     };
     // Production selects Map at construction and applies the preference
     // record; the launch prewarm and the post-launch work finish first.
@@ -434,6 +442,10 @@ int Application::Impl::runAnimationTrace(){
     if(notes&&notes->selected()!=core::Module::map)notes->select(core::Module::map,t);
     configuration.set("ambientAnimation",true);configurationPending=true;applyConfiguration(t);
     prewarm();if(utility){utility->waitIdle();if(longWork)longWork->waitIdle();utilityCompleted();}
+    // RC 139's launch prewarm measured the held first pose (the entrance's start) from 2.
+    if(chromePlan&&metrics.width>0)if(const auto first=chromePlan->clipCenter({0,0,metrics.width,metrics.height},settings.hudOffset,settings.hudScale,contentScale,false,0))
+        rc139Density=tools::designDensity(core::source::designBoxWorld(*first),metrics.scale,2);
+    double replayMS{};{const auto begin=Clock::now();(void)replayDesignDensity(2,false);replayMS=milliseconds(begin);}
     pump(2,{},{});
     const double period=1000./args.idleTraceRefreshRate;
     constexpr std::array stageIds{LiveProbe::prepare,LiveProbe::backdrop,LiveProbe::sourcePose,LiveProbe::materials,LiveProbe::nativeLabels,LiveProbe::notesPose,LiveProbe::publication,LiveProbe::draw,LiveProbe::message};
@@ -446,6 +458,7 @@ int Application::Impl::runAnimationTrace(){
     // it completes (and `tail` seconds more, outside the statistics).
     const auto segment=[&](const std::string&name,bool opening,double tail){
         auto previous=snapshot();const auto first=previous;auto timings=probe.timings;auto owners=probe.owners;std::size_t ownerCount=probe.ownerCount;
+        const double densityBefore=density();std::int64_t densitySteps{};double densityAt=densityBefore;
         const double start=OverlayHost::clockNow();double at=start,busyAt=cycles();std::int64_t faultsAt=pageFaults();
         perform(lifecycle.toggle(),clock());if(opening)host.show(false);host.setFrameDemand(demand(clock()));host.invalidate();
         const double requestMS=(OverlayHost::clockNow()-start)*1000;
@@ -469,11 +482,17 @@ int Application::Impl::runAnimationTrace(){
                 {"layoutBuilds",std::int64_t(b.frame.layoutBuilds-a.frame.layoutBuilds)},{"localImageBuilds",std::int64_t(b.frame.localImageBuilds-a.frame.localImageBuilds)},
                 {"sourcePoses",std::int64_t(b.session.fullPoses-a.session.fullPoses)},{"pageFaults",f-faultsAt},
                 {"designDensity",designOverlay?designOverlay->context().boxScale():0.}});
+            // (The concealment may derive the next opening's density: nothing shows then.)
+            if(session->phase()!=core::VisibilityPhase::concealed){densitySteps+=density()!=densityAt;densityAt=density();}
             at=now;busyAt=c;faultsAt=f;previous=next;timings=probe.timings;owners=probe.owners;ownerCount=probe.ownerCount;
             if(finished()&&doneAt<0)doneAt=now;
         });
         if(!opening)pump(.05,{},{}); // the concealment's own work after the last frame
         need(finished(),opening?"The traced HUD opened":"The traced HUD closed");
+        // The design density never steps while the HUD opens or closes, and
+        // the settled HUD holds exactly the density RC 139 settled at.
+        need(densitySteps==0,"The design density holds through the opening or closing");
+        if(opening&&rc139Density)need(density()==*rc139Density,"The settled design density is RC 139's");
         double dropped=0;std::int64_t late{};for(const double i:intervals){dropped+=std::max(0.,std::round(i/period)-1);late+=i>1.5*period;}
         const auto last=snapshot();
         std::cout<<"Animation trace "<<name<<": "<<intervals.size()<<" frames, first "<<(intervals.empty()?0.:intervals.front())<<" ms, p95 "<<quantile(intervals,.95)<<" ms, max "<<quantile(intervals,1)<<" ms, late "<<late<<"\n";
@@ -482,13 +501,19 @@ int Application::Impl::runAnimationTrace(){
             {"busyP50",quantile(busy,.5)},{"busyP95",quantile(busy,.95)},{"busyMax",quantile(busy,1)},{"presentP95",quantile(present,.95)},
             {"lateFrames",late},{"droppedRefreshes",dropped},
             {"textureUploads",std::int64_t(last.renderer.textureUploads-first.renderer.textureUploads)},{"rasterizations",std::int64_t(last.raster.rasterizations-first.raster.rasterizations)},
-            {"deviceResumes",std::int64_t(last.renderer.deviceResumes-first.renderer.deviceResumes)},{"rows",std::move(rows)}});
+            {"deviceResumes",std::int64_t(last.renderer.deviceResumes-first.renderer.deviceResumes)},
+            {"densityBefore",densityBefore},{"density",density()},{"rc139Density",rc139Density.value_or(0.)},{"densitySteps",densitySteps},{"rows",std::move(rows)}});
     };
     const auto cycle=[&](const std::string&name){segment(name+"-open",true,.25);pump(1,{},{});segment(name+"-close",false,0);};
     cycle("first");
     for(unsigned n=0;n<4;++n){pump(1.5,{},{});cycle("warm-"+std::to_string(n));}
     pump(closedGraphicsGrace()+1.5,{},{});need(renderer.deviceSuspended(),"The closed HUD's graphics are released after the grace");
     cycle("released");pump(1.5,{},{});cycle("after-released");
+    // The display's DPI changes while the HUD is closed (a move to another
+    // display): the next openings deploy at the new settled density, no step.
+    if(args.animationTraceDpi){pump(1,{},{});const unsigned other=args.animationTraceDpi>=144?96:192;const double before=density();host.setTestDpi(other);pump(.5,{},{});
+        std::cout<<"Animation trace: DPI "<<args.animationTraceDpi<<" -> "<<other<<" while closed, density "<<before<<" -> "<<density()<<"\n";
+        cycle("dpi-changed-0");pump(1.5,{},{});cycle("dpi-changed-1");}
     // Each module: opened on Map, switched to it, closed, then two traced reopenings on it.
     if(args.animationTraceModules)for(const auto module:{core::Module::clipboard,core::Module::eventLog,core::Module::notes,core::Module::volume,core::Module::workMode,core::Module::system,
             core::Module::archive,core::Module::calendar,core::Module::activityMonitor,core::Module::storage,core::Module::fileShelf,core::Module::power,core::Module::profile,core::Module::nowPlaying}){
@@ -504,7 +529,7 @@ int Application::Impl::runAnimationTrace(){
     const Json report=Json::Object{{"schema",1},
         {"scope","EndfieldHUD hidden animation trace: every frame of the openings and closings on the real clock through the production frame scheduling; numbers, owner and module names only"},
         {"device",renderer.deviceInfo().name},{"refreshHz",args.idleTraceRefreshRate},{"closedGraphicsGraceSeconds",closedGraphicsGrace()},{"cyclesPerMillisecond",cyclesPerMS},
-        {"logicalWidth",metrics.width},{"logicalHeight",metrics.height},{"dpiScale",metrics.scale},{"contentScale",contentScale},{"segments",std::move(segments)}};
+        {"logicalWidth",metrics.width},{"logicalHeight",metrics.height},{"dpiScale",metrics.scale},{"contentScale",contentScale},{"densityReplayMilliseconds",replayMS},{"segments",std::move(segments)}};
     const std::size_t bound=32*1024*1024;ehud::data::detail::replaceFile(args.animationTrace,std::nullopt,report.encode(bound),bound);
     std::cout<<"Wrote hidden animation trace\n";
     shutdownVisible();

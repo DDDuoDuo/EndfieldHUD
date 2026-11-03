@@ -68,15 +68,17 @@ public:
     std::optional<native::ContentFilter> contentFilter(double now, std::size_t begin, std::size_t count) const;
     // The overlay draws something (bar, toast, dim or their hide motion).
     bool presented() const noexcept;
-    // While held, update() keeps the design raster density (designDensity)
-    // instead of measuring it on the frame's centre plane. The host holds it
-    // while the HUD deploys and retracts: that motion recedes and tilts the
-    // plane far past the hysteresis, and a step re-renders every built canvas
-    // and re-rasterizes the shown page in the middle of the animation (Mac:
-    // renderScale follows the layout only, never the deploy motion). The
-    // settled HUD measures again (its parallax stays within the hysteresis).
-    // prewarm() always measures.
-    void holdDensity(bool);
+    // A held density replaces the measurement (designDensity) of the frame's
+    // centre plane in update() and prewarm(), and applies at once (Context::
+    // update: every built canvas renders again now, even while the HUD is
+    // closed). The host holds, outside the settled HUD, the density the
+    // settled HUD will measure, derived from the layout (the deploy's planes,
+    // app/application.cpp holdDesignDensity): the deploy and retract recede
+    // and tilt the plane far past the hysteresis, and a step mid-animation
+    // re-rendered every canvas there (Mac: renderScale follows the layout
+    // only). nullopt: update() measures (the settled HUD; its parallax stays
+    // within the hysteresis).
+    void holdDensity(std::optional<double>);
 
     std::string_view name() const noexcept override { return "designOverlay"; }
     app::ModuleRouting routing() const noexcept override;

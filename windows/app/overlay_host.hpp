@@ -251,6 +251,10 @@ struct OverlayOptions {
     // Hidden benchmarks only: pace finite motion by this display refresh (Hz)
     // instead of the window's monitor, which a service session lacks. 0: the monitor.
     double refreshRate{};
+    // Hidden traces with offscreenScheduling only: the window's DPI instead of
+    // the session's (96 in a hidden session), and setTestDpi() changes it as
+    // WM_DPICHANGED would (metrics and the resize callback). 0: the real DPI.
+    unsigned testDpi{};
     // Hidden tests only: stand-ins for the two steps of show() and hide()
     // that the user would see, so a test drives the real show/hide path -
     // the topmost band included, applied to the real never-shown window -
@@ -348,6 +352,7 @@ public:
     void setDeadline(std::optional<double> monotonicSeconds);
     static double clockNow(); // use this epoch for frame/module deadlines
     void invalidate(); // many requests -> one deferred frame; hidden requests do nothing
+    void setTestDpi(unsigned dpi); // OverlayOptions::testDpi windows only
     // Borrowed HCURSOR; never destroyed, hidden, or periodically reasserted.
     // Set only in WM_SETCURSOR for this active window's own client hit. Child
     // controls/nonclient regions/default IME routing remain native. Where

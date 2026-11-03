@@ -2,6 +2,7 @@
 #ifdef _WIN32
 #include "core/source_camera.hpp"
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 #include <stdexcept>
@@ -59,6 +60,17 @@ const d::Layer* common(const d::Layer* a, const d::Layer* b) {
 }
 bool intersects(const core::Rect& a, const core::Rect& b) { return a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height; }
 core::Rect inflated(const core::Rect& r, double vertical) { return {r.x, r.y - vertical, r.width, r.height + 2 * vertical}; }
+// An entrance (stagger, wipe, pop, grow) on the layer or an ancestor up to
+// `root` is pending (its delay not over yet) or running: the layer is about to
+// show. A layer merely resting at opacity 0 (a hidden slider bubble) is not.
+bool entering(const d::Layer& layer, const d::Layer& root, double now) noexcept {
+    constexpr std::array slots{d::MotionSlot::enter, d::MotionSlot::wipe, d::MotionSlot::pop, d::MotionSlot::grow};
+    for (const d::Layer* l = &layer; l; l = l == &root ? nullptr : l->parent()) {
+        const auto& tracks = l->tracks();
+        for (const auto slot : slots) for (const auto& track : tracks.slots[std::size_t(slot)]) if (track.running(now)) return true;
+    }
+    return false;
+}
 }
 
 struct NativeDesignScene::Impl {
@@ -432,14 +444,16 @@ void NativeDesignScene::updatePose(const NativeDesignScenePose& pose) {
         if (p.scene && p.groupLayer && p.kept > 1) {
             const auto g = d::sampleLayer(*p.groupLayer, *i.root, pose.time);
             const double opacity = pose.opacity * g.opacity;
-            // Its own opacity may still be 0 (the entrance stagger has not
-            // reached it; sampleLayer then reports it invisible): the module's
-            // fade-in takes the group either way.
-            const bool prepared = pose.prepareFade && pose.opacity <= 0 && (g.visible || !(g.opacity > 0));
+            // Its own opacity may still be 0 while its entrance (a stagger, delay
+            // included) has not raised it yet: sampleLayer reports it invisible,
+            // and the module's fade-in takes the group either way. A part merely
+            // resting at opacity 0 takes none.
+            const bool waiting = !g.visible && !(g.opacity > 0) && entering(*p.groupLayer, *i.root, pose.time);
+            const bool prepared = pose.prepareFade && pose.opacity <= 0 && (g.visible || waiting);
             // While the module still fades in, a group already taken stays with
             // its part until the part's own stagger shows it (no detach and
             // attach again at the start of the fade).
-            const bool kept = p.group && pose.opacity < 1 - 1e-4 && !(g.opacity > 0);
+            const bool kept = p.group && pose.opacity < 1 - 1e-4 && waiting;
             if ((prepared || kept || (g.visible && opacity > 0 && opacity < 1 - 1e-4)) && g.world.inverse()) {
                 p.groupWorld = g.world;
                 p.groupOpacity = float(g.opacity);

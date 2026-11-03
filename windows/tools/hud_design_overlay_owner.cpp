@@ -59,7 +59,8 @@ struct DesignOverlayOwner::Impl {
     d::TextRegion region{gpu::preferredSystemRegion()};
     double density{2}, time{};
     std::uint64_t synced{}; // the overlay tree revision the scene holds
-    bool overlay{}, posed{}, composed{}, pressed{}, densityHeld{};
+    bool overlay{}, posed{}, composed{}, pressed{};
+    std::optional<double> held; // holdDensity
     Impl(gpu::LayerRasterizer& r, DesignOverlayOptions o)
         : raster(r), options(std::move(o)), measurer(r), context(measurer, gpu::nativeUppercase()), scene(r, options.raster, "design.overlay") {
         context.env().characters = gpu::nativeCharacterRules(); // grapheme clusters through ICU, never the portable approximation
@@ -103,7 +104,14 @@ d::Context& DesignOverlayOwner::context() noexcept { return impl_->context; }
 gpu::NativeDesignTextMeasurer& DesignOverlayOwner::measurer() noexcept { return impl_->measurer; }
 double DesignOverlayOwner::contentDim(double now) const noexcept { return impl_->context.overlay().dimFilter(now); }
 bool DesignOverlayOwner::presented() const noexcept { return impl_->composed; }
-void DesignOverlayOwner::holdDensity(bool held) { impl_->densityHeld = held; }
+void DesignOverlayOwner::holdDensity(std::optional<double> density) {
+    auto& i = *impl_;
+    need(!density || (std::isfinite(*density) && *density >= 1 && *density <= 4), "Invalid held design density");
+    i.held = density;
+    if (!density || *density == i.density) return;
+    i.density = *density;
+    i.context.update(d::geometry::baseUnit, i.density / d::geometry::baseUnit, std::max(i.time, i.context.env().now));
+}
 std::optional<gpu::ContentFilter> DesignOverlayOwner::contentFilter(double now, std::size_t begin, std::size_t count) const {
     const auto& i = *impl_;
     auto& o = i.context.overlay();
@@ -148,7 +156,7 @@ void DesignOverlayOwner::update(const app::ModuleFrame& frame) {
     // switch motion (DesktopChromeLayout::boxWorld).
     i.center = frame.center;
     const auto boxWorld = core::source::designBoxWorld(frame.center);
-    if (!i.densityHeld) i.density = designDensity(boxWorld, i.metrics.scale, i.density);
+    i.density = i.held ? *i.held : designDensity(boxWorld, i.metrics.scale, i.density);
     i.context.update(d::geometry::baseUnit, i.density / d::geometry::baseUnit, i.time);
     const auto camera = gpu::layerViewportProjection(i.metrics.pixelWidth, i.metrics.pixelHeight) * Matrix::scale(i.metrics.scale, i.metrics.scale);
     i.projection = core::Projection::viewport(camera * boxWorld, i.metrics.pixelWidth, i.metrics.pixelHeight);
@@ -164,7 +172,7 @@ void DesignOverlayOwner::prewarm(const app::ModuleFrame& frame) {
     auto& i = *impl_;
     i.clock(frame.time);
     i.center = frame.center;
-    i.density = designDensity(core::source::designBoxWorld(frame.center), i.metrics.scale, i.density);
+    i.density = i.held ? *i.held : designDensity(core::source::designBoxWorld(frame.center), i.metrics.scale, i.density);
     i.context.update(d::geometry::baseUnit, i.density / d::geometry::baseUnit, i.time);
 }
 bool DesignOverlayOwner::requiresFrames(double t) const {

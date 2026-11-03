@@ -69,6 +69,13 @@ public:
     // Points per source unit at the centre node in the deployed pose under the
     // neutral camera (the centre calibration's measure); nullopt off-screen.
     std::optional<double> restingPointsPerUnit(Rect viewport);
+    // The centre homography (as projection().center) on the entrance clip's
+    // pose at `time` seconds (the deploy) or, with `exit`, on the exit clip's
+    // (the retract), under the pointer-neutral camera with the HUD's offset
+    // and scale: the planes the opening and closing move the design box
+    // through, without ambient motion or parallax. nullopt off-screen.
+    std::optional<Matrix4> clipCenter(Rect viewport,Vec2 hudOffset,double hudScale,double contentScale,bool exit,double time);
+    double entranceSeconds()const noexcept;double exitSeconds()const noexcept;
 private:
     struct Resting {Rect viewport;std::optional<double> points;};
     std::array<std::optional<Resting>,4> resting_;std::size_t restingNext_{};
