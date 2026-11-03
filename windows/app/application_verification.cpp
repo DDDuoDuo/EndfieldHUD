@@ -1036,8 +1036,13 @@ int Application::Impl::runHiddenVerification(){
                 // the measurement in the commit that set them. The old code builds the
                 // same pages with new layer ids, so every part rasterizes again: Work
                 // Mode's 47-63 surfaces, the Shelf's 213-259.
-                const std::map<std::string,std::pair<std::int64_t,std::int64_t>,std::less<>> bounds{};
-                const bool enforceBounds=false;
+                // Work Mode (rc140: the whole page, 47-63 surfaces, 45-78 ms): the state label
+                // and dot, the primary button, the tab lock, the custom field or the presets,
+                // a lap row and the custom toast rasterize again, at most 16 measured.
+                const std::map<std::string,std::pair<std::int64_t,std::int64_t>,std::less<>> bounds{
+                    {"workMode.preset30",{1,24}},{"workMode.start",{1,24}},{"workMode.pause",{1,24}},{"workMode.resume",{1,24}},{"workMode.reset",{1,24}},
+                    {"workMode.customOpen",{1,24}},{"workMode.customCommit",{1,24}},{"workMode.lap",{1,24}}};
+                const bool enforceBounds=true;
                 const auto timeAction=[&](core::Module m,const char*name,const std::function<bool(double)>&act){
                     drainUtility(time);frameAt(time);time+=.05;
                     const auto raster0=rasterizer.stats();const auto pages0=designContext.pagesBuilt();
