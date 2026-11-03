@@ -40,14 +40,63 @@ void orderAndCoalesce(){
     check(saves.stats().queued==2&&saves.stats().written==2&&saves.stats().atOnce==0&&failures==0,"Two saves for three changes, all on the worker");
     saves.save("fourth");saves.flush();check(saves.idle()&&read(t.file())==std::optional<std::string>("fourth"),"flush returns once the file holds the latest bytes");
 }
-// A full executor saves at once, in order (nothing of this file runs then).
+// A full executor: the save waits (nothing is written on this thread) and goes to the
+// worker once a completion frees a slot; flush and teardown still write it.
 void fullQueue(){
     Temporary t;app::UtilityExecutor executor([]{},1);const auto other=executor.makeRoute();
     app::LatestFileSave saves(executor,t.file(),1<<20,std::nullopt);
     check(executor.submit(other,[]{},[](auto){}),"Another module takes the only slot");executor.waitIdle();
-    saves.save("at once");check(read(t.file())==std::optional<std::string>("at once")&&saves.stats().atOnce==1&&saves.stats().queued==0&&saves.idle(),"A save the executor cannot take is written here");
-    executor.drain();saves.save("queued");check(saves.stats().queued==1,"A free slot takes the next save");saves.flush();
-    check(read(t.file())==std::optional<std::string>("queued"),"It expects the bytes the save at once wrote");
+    saves.save("waits");saves.save("latest");
+    check(!read(t.file())&&saves.stats().atOnce==0&&saves.stats().queued==0&&!saves.idle(),"A save the executor cannot take waits; nothing is written here");
+    saves.queueCapacityAvailable();check(saves.stats().queued==0&&!saves.idle(),"It waits while the slot is held");
+    executor.drain();saves.queueCapacityAvailable();check(saves.stats().queued==1,"A freed slot takes the latest bytes");
+    executor.waitIdle();executor.drain();
+    check(read(t.file())==std::optional<std::string>("latest")&&saves.idle()&&saves.stats().written==1&&saves.stats().atOnce==0,"and the worker writes them");
+    check(executor.submit(other,[]{},[](auto){}),"The slot is taken again");executor.waitIdle();saves.save("flushed");saves.flush();
+    check(read(t.file())==std::optional<std::string>("flushed")&&saves.stats().atOnce==0&&saves.stats().queued==2&&saves.idle(),"flush lets the other work finish, then hands the save over");
+    // Work whose completion takes the slot again: flush writes here, expecting the bytes on disk.
+    std::function<void(std::exception_ptr)> again=[&](std::exception_ptr){(void)executor.submit(other,[]{},[](auto){});};
+    check(executor.submit(other,[]{},again),"Work that resubmits");executor.waitIdle();saves.save("at once");saves.flush();
+    check(read(t.file())==std::optional<std::string>("at once")&&saves.stats().atOnce==1&&saves.idle(),"A slot that never frees: flush writes here");
+    executor.waitIdle();executor.drain();
+    {
+        app::LatestFileSave last(executor,t.file(),1<<20,std::optional<std::string>("at once"));
+        check(executor.submit(other,[]{},[](auto){}),"The slot is taken once more");executor.waitIdle();last.save("teardown");check(!last.idle(),"The save waits");
+    }
+    check(read(t.file())==std::optional<std::string>("teardown"),"Teardown writes bytes that never had a slot");executor.drain();
+}
+// whenWritten: after the bytes carrying the change are on disk (a superseded save's with the
+// bytes that replace it); dropped by a failure or a discard; at once when nothing is pending.
+void written(){
+    Temporary t;app::UtilityExecutor executor([]{},8);unsigned failures{};std::vector<std::string> log;
+    app::LatestFileSave saves(executor,t.file(),1<<20,std::nullopt,[&](auto){++failures;});
+    const auto note=[&](const char*s){saves.whenWritten([&log,s]{log.push_back(s);});};
+    note("idle");check(log==std::vector<std::string>{"idle"},"Nothing pending: at once");
+    {const auto other=executor.makeRoute();Hold hold(executor,other);saves.save("a");note("a");saves.save("b");note("b");saves.save("c");note("c");check(log.size()==1,"None before its write");hold.release();}
+    executor.waitIdle();executor.drain();check(log==std::vector<std::string>{"idle","a"},"The running save's, once written");
+    executor.waitIdle();executor.drain();check(log==std::vector<std::string>{"idle","a","b","c"}&&read(t.file())==std::optional<std::string>("c"),"The superseded save's go with the bytes that carry them");
+    write(t.file(),"external");saves.save("fails");note("lost");saves.flush();check(failures==1&&log.size()==4,"A failed save drops them");
+    write(t.file(),"c");
+    {const auto other=executor.makeRoute();Hold hold(executor,other);saves.save("d");saves.save("e");note("discarded");saves.discardWaiting();hold.release();}
+    saves.flush();check(log.size()==4&&read(t.file())==std::optional<std::string>("d")&&failures==1,"discardWaiting drops them with the bytes");
+}
+// A full executor when a Map write fails: nothing is written inside the commit, so the
+// failure reaches the handler later and the map returns to the archive on disk.
+void fullQueueFailure(){
+    Temporary t;app::UtilityExecutor executor([]{},1);const auto other=executor.makeRoute();
+    data::MapStore store(t.root);m::MapState state(store.value(),{[&](const m::MapSnapshot&s){store.replace(s);},[]{return data::makeUUID();},[]{return 800000000.;}});
+    std::unique_ptr<app::LatestFileSave> saves;std::vector<std::string> reasons;
+    saves=std::make_unique<app::LatestFileSave>(executor,store.path(),data::MapStore::maximumArchiveBytes,store.persisted(),[&](std::exception_ptr e){
+        saves->discardWaiting();store.restore(saves->onDisk());(void)state.restore(store.value());reasons.push_back(reason(e));});
+    store.setWriter([&](std::string bytes){saves->save(std::move(bytes));});
+    (void)state.addPin({430,430});saves->flush();const auto saved=*read(store.path());write(store.path(),"{\"external\":true}");
+    check(executor.submit(other,[]{},[](auto){}),"Another module takes the only slot");executor.waitIdle();
+    const auto change=state.addPin({300,300});check(!change.error&&state.pins().size()==2,"The pin shows at once");
+    check(saves->stats().atOnce==0&&reasons.empty()&&!saves->idle(),"Its save waits for a slot: nothing is replaced (or fails) inside the commit");
+    executor.drain();saves->queueCapacityAvailable();check(saves->stats().queued==2,"A freed slot takes the save");executor.waitIdle();executor.drain();
+    check(reasons.size()==1&&reasons[0]=="Saved data changed in another instance","The failure reports the store's reason");
+    check(state.pins().size()==1&&store.value()==state.persisted()&&store.persisted()==saves->onDisk(),"The map returns to the archive on disk");
+    write(store.path(),saved);(void)state.addPin({300,300});saves->flush();check(reasons.size()==1&&data::MapStore(t.root).value().pins.size()==2,"A later pin saves against the archive on disk");
 }
 // A failed save reports the store's reason on the owner thread; the next one
 // again expects the bytes last known on disk (or nothing waits: discardWaiting).
@@ -131,4 +180,4 @@ void stores(){
     }
 }
 }
-int main(){try{orderAndCoalesce();fullQueue();failure();destruction();withheld();stores();std::cout<<"PASS "<<checks<<" latest-file-save checks; temporary fixtures only\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
+int main(){try{orderAndCoalesce();fullQueue();fullQueueFailure();written();failure();destruction();withheld();stores();std::cout<<"PASS "<<checks<<" latest-file-save checks; temporary fixtures only\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}

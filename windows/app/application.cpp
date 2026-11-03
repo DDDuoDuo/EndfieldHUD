@@ -1038,8 +1038,13 @@ void Application::Impl::constructMap(){
     options.clock=[this]{return visibleMode()?now():mapTime;};options.changed=changed;options.requestGeography=[this]{requestMapGeography();};
     // Source Event Log records only explicit marker-style/reset actions;
     // coordinates, pointer movement and navigation never become history.
-    options.pinStyleChanged=[this](modules::MapPinStyle style){if(eventOwner){const char*name=style==modules::MapPinStyle::yellow?"yellow":style==modules::MapPinStyle::green?"green":"player";eventOwner->record({ehud::data::makeUUID(),modules::EventKind::mapPinStyleChanged,foundationSeconds(),{{"style",name}}});}};
-    options.recentered=[this]{if(eventOwner)eventOwner->record({ehud::data::makeUUID(),modules::EventKind::mapRecentered,foundationSeconds(),{}});};
+    // The Mac records them after its commit wrote map.json: here once the write carrying the
+    // change is on disk (stamped at the click); a failed write records nothing.
+    const auto recordWhenSaved=[this](modules::EventKind kind,modules::EventMetadata metadata){
+        auto record=[this,kind,metadata=std::move(metadata),at=foundationSeconds()]{if(eventOwner)eventOwner->record({ehud::data::makeUUID(),kind,at,metadata});};
+        if(mapSaves)mapSaves->whenWritten(std::move(record));else record();};
+    options.pinStyleChanged=[recordWhenSaved](modules::MapPinStyle style){const char*name=style==modules::MapPinStyle::yellow?"yellow":style==modules::MapPinStyle::green?"green":"player";recordWhenSaved(modules::EventKind::mapPinStyleChanged,{{"style",name}});};
+    options.recentered=[recordWhenSaved]{recordWhenSaved(modules::EventKind::mapRecentered,{});};
     options.paint=[painter](const auto&request,const auto&cancel){return painter->paint(request,cancel);};options.releaseWorkerCaches=[painter]{painter->clear();};
     options.player=gpu::loadMapPlayerImages(args.mapPlayerAssets,{"72a2f41cbf39d04c3852a09e9505227630be6a4f1caa7e74fd1714ccb3b8b11b","0290f8eb3f1bf2f0329fd776e0556803c813ec37"});
     // HUDSourceWatchView desktop Map occlusion (core/map_source_cutout.hpp):
@@ -1906,6 +1911,14 @@ void Application::Impl::forceConceal(double time){
 bool Application::Impl::flushDocuments(double time,bool reopenOnFailure){
     // Archive, Calendar and Reader drains share the executor; then Settings.
     ModuleOwner*failed=registry.first(ModuleRegistry::Chain::flush,[&](ModuleOwner&o,const ModuleRouting&){return !o.flush(hostTime(time));},"flush");
+    // The saves the HUD thread handed to the shared executor, in order: the
+    // Notes centre (its draft handed by the flush above), the Map, then the
+    // Shelf's archive and every other accepted file write. A failure there
+    // shows its toast as on the edit and does not hold the quit (as before).
+    // They do not depend on a module that declined: a session end goes on.
+    if(auto*centre=dynamic_cast<tools::NotesCentreOwner*>(notesCentreModuleOwner.get()))isolate(notesCentreModuleOwner,"flush",[&]{centre->flushSaves();});
+    if(mapSaves)isolate(mapModuleOwner,"flush",[&]{mapSaves->flush();});
+    if(utility){utility->waitIdle();utility->drain();}
     if(failed){
         if(!production())std::cerr<<"Document flush declined by "<<failed->name()<<'\n';
         if(reopenOnFailure){
@@ -1914,13 +1927,6 @@ bool Application::Impl::flushDocuments(double time,bool reopenOnFailure){
         }
         return false;
     }
-    // The saves the HUD thread handed to the shared executor, in order: the
-    // Notes centre (its draft handed by the flush above), the Map, then the
-    // Shelf's archive and every other accepted file write. A failure there
-    // shows its toast as on the edit and does not hold the quit (as before).
-    if(auto*centre=dynamic_cast<tools::NotesCentreOwner*>(notesCentreModuleOwner.get()))isolate(notesCentreModuleOwner,"flush",[&]{centre->flushSaves();});
-    if(mapSaves)isolate(mapModuleOwner,"flush",[&]{mapSaves->flush();});
-    if(utility){utility->waitIdle();utility->drain();}
     // Flush only at an explicit shutdown boundary. A failed save retains its
     // record and restores the Settings UI instead of silently quitting.
     if(settingsSaves&&!settingsSaves->flush()){

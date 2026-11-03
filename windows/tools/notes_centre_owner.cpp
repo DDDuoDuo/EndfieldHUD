@@ -116,6 +116,7 @@ void NotesCentreOwner::setUtility(app::UtilityExecutor* executor) {
     i.store->setWriter([self](std::string bytes) { self->saves->save(std::move(bytes)); });
 }
 void NotesCentreOwner::flushSaves() { if (impl_->saves) impl_->saves->flush(); }
+void NotesCentreOwner::queueCapacityAvailable() { if (impl_->saves) impl_->saves->queueCapacityAvailable(); }
 NotesCentreOwner::SaveStats NotesCentreOwner::saves() const noexcept {
     const auto& i = *impl_;
     const auto writes = i.store->writes();

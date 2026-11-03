@@ -59,6 +59,8 @@ public:
     // quit / session-end barrier (after flush() handed the note's draft).
     void setUtility(app::UtilityExecutor*);
     void flushSaves();
+    // A utility completion freed queue capacity (a write a full executor could not take waits).
+    void queueCapacityAvailable();
     // Edits handed to the worker, and files replaced on this thread.
     struct SaveStats { std::uint64_t queued{}, atOnce{}; };
     SaveStats saves() const noexcept;

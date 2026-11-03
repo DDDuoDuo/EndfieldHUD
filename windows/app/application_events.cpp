@@ -378,6 +378,8 @@ void Application::Impl::utilityCompleted(){
     if(readerOwner)isolate(readerModuleOwner,"utility completion",[&]{readerOwner->queueCapacityAvailable();});
     if(calendarState)isolate(calendarModuleOwner,"utility completion",[&]{calendarState->queueCapacityAvailable();calendarNotifications->queueCapacityAvailable();});
     if(map)isolate(mapModuleOwner,"utility completion",[&]{if(notes&&notes->selected()==core::Module::map)requestMapGeography();map->utilityCompleted(visibleMode()?now():mapTime);});
+    if(auto*centre=dynamic_cast<tools::NotesCentreOwner*>(notesCentreModuleOwner.get()))isolate(notesCentreModuleOwner,"utility completion",[&]{centre->queueCapacityAvailable();});
+    if(mapSaves)isolate(mapModuleOwner,"utility completion",[&]{mapSaves->queueCapacityAvailable();});
     if(settingsSaves){settingsSaves->queueCapacityAvailable();if(settingsSaves->status().error&&settingsUI)isolate(settingsModuleOwner,"utility completion",[&]{settingsUI->controller().setStatus(*settingsSaves->status().error);});}
     if(volumeIcons)isolate(volumeModuleOwner,"utility completion",[&]{volumeIcons->queueCapacityAvailable();});
     if(eventSaves)eventSaves->retry();broadcast(HostEvent::Kind::utilityCompleted,now());
