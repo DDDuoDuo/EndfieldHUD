@@ -839,6 +839,65 @@ void recordingModeWork(RecordedMeasurer& measurer) {
     check(!hidden.deferredBuild, "A language rebuild is not a late Recording mode build (the Mac rebuilds it when shown too)");
 }
 
+// Kept layer ids (the owner's "slight freeze" on Work Mode start and Shelf
+// selection): every page that replaces another while the two are never in
+// the tree together takes its layer ids, so the scene finds unchanged parts
+// under the same ids. In place: any re-render. A sub-page swap: its pending
+// page and staging header, which enter the tree only when the leaving ones
+// left it. A render-scale change re-renders the shown canvas now and a built
+// one that is not shown once, when next shown (as Recording mode).
+void keptIds(RecordedMeasurer& measurer) {
+    World w(measurer); w.appearance(Language::english);
+    FakeCanvas shown(endfield::core::Module::clipboard, w.context), hidden(endfield::core::Module::fileShelf, w.context);
+    hidden.show(w.now); hidden.setActive(true, w.now); hidden.setActive(false, w.now); hidden.prepareToLeave(w.now);
+    shown.show(w.now); shown.setActive(true, w.now);
+    w.advance(1);
+    const d::TextServices& text = w.context.env().text;
+    const auto artwork = [&](const FakeCanvas& c) {
+        std::vector<std::pair<std::string, J>> parts;
+        for (auto& part : d::emit(c.root(), {&text, "test."}).parts) parts.emplace_back(part.id, std::move(part.layers));
+        return parts;
+    };
+    const auto ids = [&](const FakeCanvas& c) { std::vector<std::string> out; for (const auto& [id, layers] : artwork(c)) out.push_back(id); return out; };
+    const auto unique = [](std::vector<std::string> v) { std::sort(v.begin(), v.end()); return std::adjacent_find(v.begin(), v.end()) == v.end(); };
+    // In place: the same page again is byte-equal under the same ids; one more row adds its part, the others stay.
+    auto before = artwork(shown);
+    shown.rerender();
+    check(artwork(shown) == before, "An in-place re-render keeps every part id and byte");
+    shown.rows = 13; shown.rerender();
+    {
+        const auto after = artwork(shown);
+        std::size_t rows{}, kept{};
+        for (const auto& part : before) if (part.first.find(".fake.row.") != std::string::npos) { ++rows; kept += std::count(after.begin(), after.end(), part); }
+        check(after.size() > before.size() && rows >= 2 && kept == rows, "A changed page keeps the ids and bytes of every row it did not change (" + std::to_string(kept) + " of " + std::to_string(rows) + ")");
+    }
+    shown.rows = 12; shown.rerender(); w.advance(1);
+    before = artwork(shown);
+    // A sub-page swap: during it only the leaving page and header are in the tree, with no id twice.
+    const auto beforeIds = ids(shown);
+    const auto pages = w.context.pagesBuilt();
+    shown.navigate(1);
+    check(shown.transitioning() && ids(shown) == beforeIds && unique(ids(shown)), "During a swap the tree holds only the leaving page and header");
+    shown.rerender();
+    check(w.context.pagesBuilt() == pages + 2 && ids(shown) == beforeIds, "A re-render during a swap rebuilds only the pending page, outside the tree");
+    w.advance(.2);
+    check(!shown.transitioning() && ids(shown) == beforeIds && unique(ids(shown)), "The landed page and header take the leaving ones' layer ids");
+    w.advance(1);
+    check(artwork(shown) == before, "Once its entrance ended, the same page after a swap is byte-equal under the same ids");
+    // Render scale: the shown canvas now (its ids kept), the hidden one when next shown.
+    const int shownBuilds = shown.builds, hiddenBuilds = hidden.builds;
+    const auto scaled = w.context.pagesBuilt();
+    w.context.update(d::geometry::baseUnit, 3 / d::geometry::baseUnit, w.now);
+    check(shown.builds == shownBuilds + 1 && hidden.builds == hiddenBuilds && w.context.pagesBuilt() == scaled + 1, "A render-scale change builds only the shown page");
+    check(!shown.deferredBuild && unique(ids(shown)) && ids(shown) == beforeIds, "The shown page re-renders at the new scale under its ids");
+    hidden.show(w.now);
+    check(hidden.builds == hiddenBuilds + 1 && hidden.deferredBuild, "A built canvas re-renders once at the new scale when next shown (the Mac's ran unseen)");
+    hidden.prepareToLeave(w.now);
+    hidden.show(w.now);
+    check(hidden.builds == hiddenBuilds + 1, "Showing it again builds nothing");
+    hidden.prepareToLeave(w.now);
+}
+
 // Contracts that need no oracle: lifetimes, revisions, deadlines.
 void lifetimes(RecordedMeasurer& measurer) {
     World w(measurer); w.appearance(Language::english);
@@ -980,6 +1039,7 @@ int main(int argc, char** argv) {
         canvasScript(measurer, canvas);
         lifetimes(measurer);
         recordingModeWork(measurer);
+        keptIds(measurer);
         focusMoves(measurer);
         std::sort(measurer.misses.begin(), measurer.misses.end());
         measurer.misses.erase(std::unique(measurer.misses.begin(), measurer.misses.end()), measurer.misses.end());

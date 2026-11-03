@@ -236,10 +236,10 @@ public:
     virtual bool handleMagnify(Point, double) { return false; }
     virtual std::optional<Cursor> cursor(std::optional<Point>) const { return std::nullopt; }
     // Default: a rendered canvas re-renders in place (HUDDesignCanvas
-    // .recordingModeChanged, :229), keeping its page's layer ids
-    // (rerenderKeepingIds); one that is not shown re-renders when next shown.
+    // .recordingModeChanged, :229; .renderScaleChanged, :231) when shown; one
+    // that is not shown re-renders when next shown (deferRerender).
     virtual void recordingModeChanged();
-    virtual void renderScaleChanged();          // default: re-render in place when rendered
+    virtual void renderScaleChanged();
     virtual void paletteChanged();              // default: close popups; active -> re-render now
     // Reduce Motion changed (verbs already honour it; the Mac host calls a
     // module's refreshMotionPreference for its live loops, Work Mode's blink).
@@ -269,21 +269,24 @@ public:
     // In-place re-render (LIB-75): no entrance, every scroll area keeps its
     // offset by id; during a sub-page swap the new page stays held invisible
     // until the swap lands. Text fields that are not editing are dropped.
+    // The new page keeps the replaced page's layer ids unless that page holds
+    // an editing field (makePage), so the scene reuses every part whose
+    // artwork is unchanged instead of rasterizing the whole page again.
     void rerender();
-    // rerender, but the new page keeps the replaced page's layer ids when no
-    // swap is in flight and none of its fields edits: the scene then reuses
-    // every part whose artwork is unchanged instead of rasterizing the whole
-    // page again (a Recording mode switch changes a few redacted labels).
-    void rerenderKeepingIds();
+    // The same call (a re-render keeps ids wherever that is safe).
+    void rerenderKeepingIds() { rerender(); }
     // Shown: attached (show() .. prepareToLeave()) or active.
     bool isShown() const noexcept { return attached_ || active_; }
-    // A Recording mode change this canvas applies when next shown (show /
-    // setActive re-render it, keeping its layer ids).
-    void deferRecordingMode() noexcept { recordingStale_ = true; }
-    // True while buildPage runs for that deferred change alone: the Mac
-    // rebuilt this page at the switch, while it was hidden, so effects a
-    // build starts (Notes' redaction wipe) ran out unseen and must not play
-    // now that the page is shown.
+    // A change the Mac applies to every built page at once (Recording mode,
+    // render scale; a module's own broadcast) that this hidden canvas applies
+    // when next shown: show / setActive re-render it (recordingDeferred is
+    // true for that build). A shown canvas re-renders instead.
+    void deferRerender() noexcept { deferredStale_ = true; }
+    void deferRecordingMode() noexcept { deferRerender(); }
+    // True while buildPage runs for a deferred change alone (deferRerender):
+    // the Mac rebuilt this page at the change, while it was hidden, so
+    // effects a build starts (Notes' redaction wipe) ran out unseen and must
+    // not play now that the page is shown.
     bool recordingDeferred() const noexcept { return deferredBuild_; }
     // Sub-navigation (LIB-76): offset subpageOffset(dx, dy); closes popups,
     // ends editing (commit), cancels gestures; offsets of pages left are
@@ -451,7 +454,7 @@ private:
     std::vector<Control*> popoverControls_;
     std::vector<TextField*> fields_;
     Router router_;
-    bool active_{}, showsHeader_{true}, attached_{}, recordingStale_{}, keepIds_{}, deferredBuild_{};
+    bool active_{}, showsHeader_{true}, attached_{}, deferredStale_{}, deferredBuild_{};
     std::optional<core::Language> renderedLanguage_;
     std::uint64_t renderedPalette_{}, pageSerial_{}, structure_{};
     const LayerArena* tracked_{};

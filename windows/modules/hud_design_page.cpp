@@ -5,12 +5,18 @@
 //
 // Adaptations (recorded in the L3 report):
 //  - Q4: a sub-page swap builds the next page when it starts (navigate), not
-//    at the 130 ms swap, so its rasterization never lands on the swap frame.
-//    buildPage configures the canvas's header, so the next page configures a
-//    second (staging) header that replaces the leaving one when the swap
-//    lands: the leaving header keeps its content while it fades, exactly as
-//    on the Mac. A rerender during a swap rebuilds the pending page (the Mac
-//    installs a held page that the swap replaces; same pixels).
+//    at the 130 ms swap; the page enters the tree (and the scene) when the
+//    swap lands. buildPage configures the canvas's header, so the next page
+//    configures a second (staging) header that replaces the leaving one when
+//    the swap lands: the leaving header keeps its content while it fades,
+//    exactly as on the Mac. A rerender during a swap rebuilds the pending
+//    page (the Mac installs a held page that the swap replaces; same pixels).
+//  - Kept layer ids: the Mac rebuilds a page as CALayers, which is cheap.
+//    Here every part whose layer id is new rasterizes again, so a page that
+//    replaces another takes its layer ids (its serial) whenever the two are
+//    never in the tree together (makePage); the scene then reuses every part
+//    whose artwork is unchanged. The page and header slots of a sub-page swap
+//    share ids the same way. Same pages, same pixels; only the cost moves.
 //  - Swift keeps replaced objects alive while their callbacks run (ARC). Here
 //    replaced pages, closed menus and pop-overs are buried and destroyed by a
 //    deadline at the current time, never while one of their controls is on
@@ -175,24 +181,25 @@ Canvas::~Canvas() {
 }
 void Canvas::begin(double now) { env().now = now; }
 void Canvas::notifyInput() const { if (context_->onInputStateChange) context_->onInputStateChange(); }
-// HUDDesignCanvas.recordingModeChanged (:229) re-renders every built canvas
-// at once; on the Mac that rebuilds CALayers. Here a re-render is a new page
-// whose every part rasterizes again, so with every module built a switch
-// froze the HUD (rc139: ~15 pages built and ~190 surfaces rasterized on one
-// frame, 100-150 ms). The shown canvas re-renders now, keeping its layer ids
-// (only the redacted surfaces rasterize again); the others re-render the
-// same way when next shown (stale), as a palette change does (:232-237).
-// Same pages, shown with the same state.
+// HUDDesignCanvas.recordingModeChanged (:229) and renderScaleChanged (:231)
+// re-render every built canvas at once; on the Mac that rebuilds CALayers.
+// Here a page build measures its text and the scene rasterizes what changed,
+// so with every module built a switch froze the HUD (rc139: ~15 pages built
+// on one frame, 100-150 ms). The shown canvas re-renders now (keeping its
+// layer ids: only the changed surfaces rasterize again); the others
+// re-render the same way when next shown (deferRerender), as a palette
+// change does (:232-237). Same pages, shown with the same state.
 void Canvas::recordingModeChanged() {
     if (!renderedLanguage_) return;
-    if (isShown()) rerenderKeepingIds(); else deferRecordingMode();
+    if (isShown()) rerender(); else deferRerender();
 }
-void Canvas::rerenderKeepingIds() {
-    keepIds_ = true;
-    try { rerender(); } catch (...) { keepIds_ = false; throw; }
-    keepIds_ = false;
+void Canvas::renderScaleChanged() {
+    if (!renderedLanguage_) return;
+    if (isShown()) rerender(); else deferRerender();
 }
-void Canvas::renderScaleChanged() { if (renderedLanguage_) rerender(); }
+// refreshPalette (:232-237): the active canvas now (its layer ids kept, so
+// only the recoloured surfaces rasterize again), the others when next shown
+// (stale: built for another palette generation).
 void Canvas::paletteChanged() {
     closePopups();
     if (active_ && renderedLanguage_) rerender();
@@ -205,7 +212,10 @@ ModuleHeader& Canvas::header() {
     const std::size_t index = staging_ ? 1 - currentHeader_ : currentHeader_;
     auto& slot = headers_[index];
     if (!slot) {
-        slot = std::make_unique<ModuleHeader>(env(), prefix_ + ".header" + std::to_string(index));
+        // Both slots carry the same layer ids: the staging header enters the
+        // tree only in install, after the leaving one left it (as a page
+        // keeps the ids of the page it replaces).
+        slot = std::make_unique<ModuleHeader>(env(), prefix_ + ".header");
         slot->layer().setAnimatable();                   // leave and hold with the page
         slot->layer().setHidden(!showsHeader_);
         headerPalette_[index] = env().palette.generation();
@@ -224,15 +234,17 @@ ModuleTitle Canvas::title(std::string_view english, std::string_view simplifiedC
     return ModuleTitle::make(english, simplifiedChinese, env().language);
 }
 bool Canvas::stale() const noexcept {
-    return !renderedLanguage_ || *renderedLanguage_ != env().language || renderedPalette_ != env().palette.generation() || recordingStale_;
+    return !renderedLanguage_ || *renderedLanguage_ != env().language || renderedPalette_ != env().palette.generation() || deferredStale_;
 }
-// Only a deferred Recording mode change: the page keeps its layer ids, and
-// the build knows it applies that change late (recordingDeferred).
+// Built for another language or palette: the Mac rebuilds these pages when
+// shown too. Only a deferred change (Recording mode, render scale, a
+// module's deferRerender): the Mac rebuilt the page at the change, while it
+// was hidden, so the build knows it applies that change late (recordingDeferred).
 void Canvas::rerenderIfStale() {
     if (!stale()) return;
     if (!renderedLanguage_ || *renderedLanguage_ != env().language || renderedPalette_ != env().palette.generation()) { rerender(); return; }
     deferredBuild_ = true;
-    try { rerenderKeepingIds(); } catch (...) { deferredBuild_ = false; throw; }
+    try { rerender(); } catch (...) { deferredBuild_ = false; throw; }
     deferredBuild_ = false;
 }
 
@@ -317,9 +329,17 @@ void Canvas::finishLeave() {
 }
 // makePage(restoring:) (:375-382).
 std::unique_ptr<Page> Canvas::makePage(const std::vector<std::pair<std::string, double>>& offsets, bool staged) {
-    // Kept ids: the replaced page leaves the tree before the scene emits again
-    // (no swap holds it as the leaving page) and holds no editing field.
-    const bool keep = keepIds_ && !staged && page_ && !swapDeadline_ && !anyEditing(fields_, page_->layer());
+    // Kept ids: the new page takes the serial (so the layer ids) of the page
+    // it replaces, page_, whenever the two are never in the tree together:
+    //  - in place (no swap in flight): install removes page_ from the tree
+    //    before the scene emits again;
+    //  - staged (a swap's pending page): it stays outside the tree until
+    //    completeSwap or settleSwap install it, right after finishLeave took
+    //    the leaving page (page_ until then) out of the tree in the same call;
+    //    a rerender during the swap rebuilds it under the same serial.
+    // An install during a swap that is not its landing (resetSession) and a
+    // page_ holding an editing field (it lives on, retired) take a new serial.
+    const bool keep = page_ && (staged || !swapDeadline_) && !anyEditing(fields_, page_->layer());
     const std::uint64_t serial = keep ? page_->serial_ : ++pageSerial_;
     auto next = std::make_unique<Page>(*context_, prefix_ + ".page" + std::to_string(serial));
     next->serial_ = serial;
@@ -341,7 +361,7 @@ void Canvas::install(std::unique_ptr<Page> next, bool swapHeader) {
     const auto generation = env().palette.generation();
     renderedLanguage_ = env().language;
     renderedPalette_ = generation;
-    recordingStale_ = false;
+    deferredStale_ = false;
     if (swapHeader && headers_[1 - currentHeader_]) {
         if (auto* old = currentHeader()) {
             old->layer().removeMotion(MotionSlot::leave); old->layer().removeMotion(MotionSlot::hold);
