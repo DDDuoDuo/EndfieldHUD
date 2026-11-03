@@ -5192,11 +5192,26 @@ oracles are gone; notes in place in the entries above point here.
 Checkpoint 138's list still applies. New, with the owner's go-ahead on the
 laptop desktop:
 
-- The interactive suites: `projection_composition_contracts`,
-  `projection_workspace_contracts`, `projection_latency_probe`,
-  `projection_capture_route_contracts`, `native_renderer_tests
-  --composition --hardware` (the blur pass on hardware) and
-  `map_pulse_cadence_tests --hardware`.
+- ~~The interactive suites~~ passed on 2026-11-03 in the logged-on session
+  (slot built at `1a4c88c`, an Interactive scheduled task at Normal
+  priority launched without a console window; it started only after 55
+  minutes without input and with no full-screen app, and would have stopped
+  on any input): `projection_composition_contracts` (49 checks),
+  `projection_workspace_contracts` (54), `projection_capture_route_contracts`
+  (247), `native_renderer_tests --composition --hardware` (2,058,234; the
+  confirm-bar blur on the RTX 5060 at 1280 × 800, a 600 × 520 region,
+  0.064 ms against 0.032 unfiltered), `map_pulse_cadence_tests --hardware`
+  (1,862; 12 pins 62.5 → 6.2 ms CPU per second, 165 → 30 frames/s; low
+  power 23.6 frames/s, 9.4 ms/s) and `projection_latency_probe` (default
+  mode: window outside every monitor, posted moves). The probe: 1,141 of
+  1,150 samples kept, 166 fps while drawing at 165 Hz, input to Present
+  3.8 ms mean (p95 6.5), no frame queued ahead of the display, 0.027 ms CPU
+  per move and 0.64 ms per frame, 17.8 % of one core while drawing, finite
+  animation 166 fps, open idle 0 frames, closed idle 0 frames and 0.5 % CPU.
+  Its input-to-display figure (48.7 ms) is not comparable with 1.2.0's
+  21 ms: DWM showed the off-monitor window at about 15 Hz (18 frame
+  statistics in the stroke), so only `--sliver`, which shows one pixel
+  column at the screen edge, measures it.
 - The Shelf drag-out (nine steps: a slow drag hides the HUD with its exit; a
   drop copies and leaves it closed; a cancel restores it with its entrance,
   selection and focus; a multi-selection pile; a quick drop during the exit,
