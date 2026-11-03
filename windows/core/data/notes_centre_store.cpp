@@ -106,6 +106,7 @@ NotesCentreStore::NotesCentreStore(std::optional<std::filesystem::path> root,std
 bool NotesCentreStore::update(const std::function<void(NotesCentreDocument&)>& change){
     auto next=document_;change(next);if(next==document_||!next.valid())return false;
     document_=std::move(next);if(!path_||!writable_)return true;
-    const auto bytes=encodeNotesCentre(document_);detail::replaceFile(*path_,persisted_,bytes,notesCentreMaximumBytes);persisted_=bytes;return true;
+    auto bytes=encodeNotesCentre(document_);if(writer_){++writes_.handed;writer_(std::move(bytes));return true;}
+    ++writes_.atOnce;detail::replaceFile(*path_,persisted_,bytes,notesCentreMaximumBytes);persisted_=bytes;return true;
 }
 }

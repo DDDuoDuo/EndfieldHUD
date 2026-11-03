@@ -43,6 +43,12 @@ MapArchive decodeMapArchive(std::string_view bytes){try{
 }catch(const StoreError&){throw;}catch(...){throw StoreError(StoreErrorCode::invalid,invalid);}}
 std::string encodeMapArchive(const m::MapSnapshot&value,const Json&preserved){return document(canonicalSnapshot(value),preserved).encode(MapStore::maximumArchiveBytes);}
 MapStore::MapStore(std::filesystem::path root){detail::validateRoot(root);path_=std::move(root)/"WorldMap"/"map.json";persisted_=detail::readFile(path_,maximumArchiveBytes);if(!persisted_)return;auto archive=decodeMapArchive(*persisted_);document_=std::move(archive.preserved);value_=std::move(archive.snapshot);if(archive.sourceVersion<4)commit(value_);}
-void MapStore::commit(m::MapSnapshot next){auto nextDocument=document(next,document_);auto bytes=nextDocument.encode(maximumArchiveBytes);std::optional<std::string>expected(bytes);detail::replaceFile(path_,persisted_,bytes,maximumArchiveBytes);value_=std::move(next);document_=std::move(nextDocument);persisted_.swap(expected);}
+void MapStore::commit(m::MapSnapshot next){auto nextDocument=document(next,document_);auto bytes=nextDocument.encode(maximumArchiveBytes);std::optional<std::string>expected(bytes);
+    if(writer_){++writes_.handed;writer_(std::move(bytes));}else{++writes_.atOnce;detail::replaceFile(path_,persisted_,bytes,maximumArchiveBytes);}
+    value_=std::move(next);document_=std::move(nextDocument);persisted_.swap(expected);}
+// The constructor's reading of an archive this store wrote (or read): none is the empty map.
+void MapStore::restore(const std::optional<std::string>&onDisk){
+    if(!onDisk){value_={};document_=Json::Object{};persisted_.reset();return;}
+    auto archive=decodeMapArchive(*onDisk);value_=std::move(archive.snapshot);document_=std::move(archive.preserved);persisted_=onDisk;}
 bool MapStore::replace(const m::MapSnapshot&value){auto next=canonicalSnapshot(value);if(next==value_)return false;commit(std::move(next));return true;}
 }

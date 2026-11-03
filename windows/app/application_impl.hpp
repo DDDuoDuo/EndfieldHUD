@@ -10,6 +10,7 @@
 #include "app/overlay_host.hpp"
 #include "app/event_log_save_queue.hpp"
 #include "app/settings_save_queue.hpp"
+#include "app/latest_file_save.hpp"
 #include "app/archive_service.hpp"
 #include "app/source_watch_session.hpp"
 #include "app/projection_handoff.hpp"
@@ -712,6 +713,7 @@ struct Application::Impl {
     std::int64_t gameBest{};
     bool gameEnabled{};
     std::unique_ptr<ehud::data::MapStore> mapStore;
+    std::unique_ptr<LatestFileSave> mapSaves; // map.json on the utility worker (constructMap)
     tools::MapOwner* map{}; // owned by mapModuleOwner
     UtilityExecutor::Route mapLoadRoute{};
     bool mapLoadRequested{}, mapRefreshQueued{};

@@ -141,6 +141,11 @@ public:
     MapChange removePin(std::string_view id);
     MapChange activatePin(std::string_view id); // select, or cycle the selected one
     MapChange deselect();
+    // The host's deferred save of an earlier edit failed and its store went
+    // back to the archive on disk: the pins (and a selection whose pin is
+    // gone) follow it; the camera stays where it is, as after a gesture
+    // whose commit failed. No IO.
+    MapChange restore(MapSnapshot);
 private:
     MapSnapshot persisted_;MapPersistence persistence_;MapViewport camera_;
     std::optional<std::string>selected_;bool active_{},reduced_{},cameraAnimated_{};

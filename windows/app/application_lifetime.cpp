@@ -41,7 +41,7 @@ void Application::Impl::cleanup(){if(cleaned)return;cleaned=true;ready=false;sto
     drop(settingsModuleOwner);settingsUI.reset();drop(batteryModuleOwner);battery=nullptr;workModeCanvas=nullptr;drop(workModeModuleOwner);workMode.reset();drop(notesCentreModuleOwner);drop(notesModuleOwner);notes.reset();
     activityTelemetry.reset();activityPlan.stop();activityProbe.reset();
     drop(shelfModuleOwner);shelf.reset();clipboardCanvas=nullptr;drop(clipboardModuleOwner);volumeCanvas=nullptr;drop(volumeModuleOwner);if(utility&&volumeIconRoute)utility->invalidate(volumeIconRoute);volumeIcons.reset();eventLogCanvas=nullptr;drop(eventLogModuleOwner);drop(storageModuleOwner);storage.reset();drop(activityModuleOwner);activity.reset();
-    reader=nullptr;drop(readerModuleOwner);readerOwner.reset();game=nullptr;drop(gameModuleOwner);gameSession.reset();map=nullptr;drop(mapModuleOwner);mapStore.reset();if(utility&&mapLoadRoute)utility->invalidate(mapLoadRoute);
+    reader=nullptr;drop(readerModuleOwner);readerOwner.reset();game=nullptr;drop(gameModuleOwner);gameSession.reset();map=nullptr;drop(mapModuleOwner);mapSaves.reset();mapStore.reset();if(utility&&mapLoadRoute)utility->invalidate(mapLoadRoute);
     // The shared design Context outlives every design owner (they borrow it).
     if(designOverlay){registry.remove(*designOverlay);designOverlay.reset();}designClipboard.reset();
     // Retire state routes before the shared file executor; accepted immutable

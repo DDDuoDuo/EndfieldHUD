@@ -112,11 +112,25 @@ public:
     // A write failure throws StoreError but keeps the change, so the next edit
     // writes everything again. Call after each edit, never on a timer.
     bool update(const std::function<void(NotesCentreDocument&)>& change);
+    // Deferred writes (the owner's app::LatestFileSave): with a writer, update
+    // encodes the file as before and hands it over instead of replacing it
+    // here; the document has changed already, so a write that fails later
+    // leaves the store as a synchronous failure does. The writer starts from
+    // persisted(), the file as this store last read or wrote it.
+    using Writer=std::function<void(std::string)>;
+    void setWriter(Writer value){writer_=std::move(value);}
+    const std::optional<std::string>& persisted()const noexcept{return persisted_;}
+    bool writable()const noexcept{return path_&&writable_;}
+    // Files replaced on the calling thread, and handed to the writer.
+    struct Writes {std::uint64_t atOnce{},handed{};};
+    Writes writes()const noexcept{return writes_;}
 private:
     std::optional<std::filesystem::path> path_,setAside_;
     NotesCentreDocument document_;
     std::optional<std::string> persisted_;
     LoadIssue issue_{LoadIssue::none};
     bool writable_{};
+    Writer writer_;
+    Writes writes_;
 };
 }

@@ -78,6 +78,9 @@ public:
     // workspace.statusMessage changed: a "Notice" toast once per distinct
     // message, only while active (the v1.2.0 centre status line is gone).
     void reportStatus(const std::optional<std::string>&);
+    // A centre.json write that failed after the edit (the owner's deferred
+    // save): the toast a failing synchronous write shows.
+    void saveFailed(const std::string& reason);
 
     // --- Actions (accessibility, tests and the Mac's ...ForTesting) --------------
     void submitTask(const std::string& text);    // submitTaskForTesting

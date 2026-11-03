@@ -3,8 +3,9 @@
 // modules::NotesCanvas (Mac NotesCanvas.swift) over tools::DesignOwnerCore,
 // with the centre's platform services around it:
 //  - Notes/centre.json (ehud::data::NotesCentreStore, written after each
-//    edit; a store that cannot be opened runs the canvas memory-only with
-//    its storage notice, a set-aside file shows the Mac's notice);
+//    edit, on the shared utility executor once the host sets it; a store
+//    that cannot be opened runs the canvas memory-only with its storage
+//    notice, a set-aside file shows the Mac's notice);
 //  - the TEXT note's persistent rich editor (native/archive_body_editor.hpp,
 //    the editor the Archive body uses), routed before the canvas through
 //    tools/design_body_route.hpp and drawn after the note's part of the
@@ -22,6 +23,7 @@
 #include "tools/hud_design_owner.hpp"
 #include <filesystem>
 
+namespace endfield::app { class UtilityExecutor; }
 namespace endfield::tools {
 class NotesPreview;
 struct NotesCentreOwnerOptions {
@@ -50,6 +52,16 @@ public:
     const ehud::data::NotesCentreStore& store() const noexcept;
     DesignOwnerCore& core() noexcept;
     native::NativeArchiveBodyEditor& body() noexcept;
+    // centre.json's writes off the HUD thread (app::LatestFileSave on the
+    // host's utility executor), set once after construction; without it each
+    // edit replaces the file on this thread. A write that fails shows the
+    // canvas's "Could not save" toast when it finishes. flushSaves() is the
+    // quit / session-end barrier (after flush() handed the note's draft).
+    void setUtility(app::UtilityExecutor*);
+    void flushSaves();
+    // Edits handed to the worker, and files replaced on this thread.
+    struct SaveStats { std::uint64_t queued{}, atOnce{}; };
+    SaveStats saves() const noexcept;
     // ModuleOwner
     std::string_view name() const noexcept override;
     app::ModuleRouting routing() const noexcept override;

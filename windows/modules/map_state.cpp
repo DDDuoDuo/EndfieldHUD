@@ -131,6 +131,10 @@ MapChange MapState::activatePin(std::string_view id){
     auto next=persisted_;auto&pin=next.pins[found-persisted_.pins.begin()];pin.style=nextMapPinStyle(pin.style);const auto style=pin.style;
     if(!commit(std::move(next),change))return change;
     pinsChanged(change);styledPin_=std::string(id);++styleRevision_;change.styleChanged=style;return change;}
+MapChange MapState::restore(MapSnapshot s){
+    MapChange change;for(auto&pin:s.pins)pin.id=canonical(std::move(pin.id));if(s==persisted_)return change;
+    const bool pins=s.pins!=persisted_.pins;persisted_=std::move(s);if(selected_&&!selectedPin())selected_.reset();
+    if(pins)pinsChanged(change);return change;}
 MapChange MapState::deselect(){MapChange change;if(!selected_)return change;selected_.reset();pinsChanged(change);return change;}
 }
 

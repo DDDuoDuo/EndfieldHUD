@@ -530,6 +530,8 @@ void Application::Impl::construct(){
         // Notes' Mac import relink ledger writes (relinks, deletions) run on the
         // shared executor; the teardown destroys Notes before the executor.
         if(notes)notes->setUtilityExecutor(utility.get());
+        // Notes/centre.json is written on the shared executor (tools/notes_centre_owner.hpp).
+        if(auto*centre=dynamic_cast<tools::NotesCentreOwner*>(notesCentreModuleOwner.get()))isolate(notesCentreModuleOwner,"utility",[&]{centre->setUtility(utility.get());});
     }
     if(!args.mapGeography.empty())optional("map",[&]{constructMap();});
     if(args.reader)optional("reader",[&]{constructReader();});
@@ -1020,6 +1022,16 @@ void Application::Impl::constructMap(){
     if(mapStore){
         options.initial=mapStore->value();
         options.persistence.commit=[this](const auto&snapshot){mapStore->replace(snapshot);};
+        // map.json on the shared executor (app/latest_file_save.hpp; the durable replace took
+        // milliseconds of each pin, recenter and camera commit here). The pins and camera
+        // publish at once; a failed save returns them to the archive on disk and toasts the
+        // reason MapState's commit-before-publish shows (WorldMapSurface.onError).
+        mapSaves=std::make_unique<LatestFileSave>(*utility,mapStore->path(),ehud::data::MapStore::maximumArchiveBytes,mapStore->persisted(),[this](std::exception_ptr error){
+            std::string reason="The map could not be saved or opened.";try{std::rethrow_exception(error);}catch(const std::exception&e){reason=e.what();}catch(...){}
+            mapSaves->discardWaiting();mapStore->restore(mapSaves->onDisk());
+            if(map){auto&canvas=map->canvas();(void)canvas.state().restore(mapStore->value());canvas.stateChanged();canvas.reportError(reason);}
+        });
+        mapStore->setWriter([this](std::string bytes){mapSaves->save(std::move(bytes));});
         options.persistence.newID=[]{return ehud::data::makeUUID();};
         options.persistence.foundationNow=[]{return foundationSeconds();};
     }
@@ -1902,6 +1914,13 @@ bool Application::Impl::flushDocuments(double time,bool reopenOnFailure){
         }
         return false;
     }
+    // The saves the HUD thread handed to the shared executor, in order: the
+    // Notes centre (its draft handed by the flush above), the Map, then the
+    // Shelf's archive and every other accepted file write. A failure there
+    // shows its toast as on the edit and does not hold the quit (as before).
+    if(auto*centre=dynamic_cast<tools::NotesCentreOwner*>(notesCentreModuleOwner.get()))isolate(notesCentreModuleOwner,"flush",[&]{centre->flushSaves();});
+    if(mapSaves)isolate(mapModuleOwner,"flush",[&]{mapSaves->flush();});
+    if(utility){utility->waitIdle();utility->drain();}
     // Flush only at an explicit shutdown boundary. A failed save retains its
     // record and restores the Settings UI instead of silently quitting.
     if(settingsSaves&&!settingsSaves->flush()){
