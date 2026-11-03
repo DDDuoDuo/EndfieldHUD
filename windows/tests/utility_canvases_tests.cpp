@@ -319,6 +319,24 @@ void volumeCanvas() {
     w.show(canvas);
     check(model.writes == std::vector<std::string>{"start"}, "Activation starts the device controller (:61-65)");
     check(canvas.header().counterText() == "55" && canvas.hasAdjustableApplication(), "Counter pad2(volume); the dot rule (:151-158)");
+    // The module switch's entrance (playEntrance after the swap): a snapshot
+    // that keeps the page's Structure (:15-18) updates the controls in place
+    // (changed(), :103-114), so the staggered rows keep entering. Only a
+    // structural change (language, tab, listed apps, apps supported, status
+    // line) rebuilds the page, as on the Mac.
+    {
+        w.appearance(Language::english, false, false);   // motion on
+        canvas.playEntrance({0, 24}, w.now);
+        const d::Page* page = &canvas.page();
+        const std::vector<d::Layer*> rows(canvas.page().staggered().begin(), canvas.page().staggered().end());
+        const auto entering = [&] { return std::all_of(rows.begin(), rows.end(), [&](const d::Layer* row) { return row->animating(w.now + .02); }); };
+        check(rows.size() == 5 && entering(), "The tab bar and the four device rows enter staggered");
+        auto update = model.state; update.volume = .6; update.canSetBalance = false; update.outputs[1].name = "Headset";
+        canvas.receive(update);
+        check(&canvas.page() == page && entering() && canvas.header().counterText() == "60", "A non-structural update keeps the entering page");
+        canvas.receive(model.state);
+        w.advance(2); w.appearance(Language::english);
+    }
     // Devices rows (:195-205): y 125, 175, 225, 275.
     for (const auto& [id, y] : std::vector<std::pair<std::string, double>>{{"output", 125}, {"input", 175}, {"volume", 225}, {"balance", 275}}) {
         const auto* c = control(canvas, id);
