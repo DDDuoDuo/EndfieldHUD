@@ -53,6 +53,18 @@ void run(const std::filesystem::path&referencePath,const std::filesystem::path&p
     for(unsigned i=0;i<5;++i){content.style=static_cast<DesktopClockStyle>(i);content.clockHovered=i%2==1;content.workPhase=static_cast<DesktopWorkPhase>(i%3);bridge.setContent(content);check(layers.report().unsupported.empty(),"Each actual source clock instrument stays supported");
         // The measured fit: the time never overflows its column (HUDClockStyleArtwork.fit).
         const auto&art=bridge.clockArtwork();check(art.time.fontSize>=10&&art.time.frame.width>0&&art.workBadge.text.starts_with("WORK MODE")&&art.recordLabel.text=="RECORDING MODE","Each style lays out its time and the status row");}
+    // A style change (SystemHUDView: clockPage.transition right after it): the
+    // push rasterizes its two pages and the status panel without its page, once
+    // each; without a push the panel rasterizes once, with its page.
+    {
+        bridge.cancelStyleTransition();
+        const auto r0=raster.stats().rasterizations;
+        content.style=DesktopClockStyle::digital;check(bridge.setContent(content)&&raster.stats().rasterizations==r0,"A style change waits for the push before rasterizing the status panel");
+        check(bridge.beginStyleTransition(true,1)&&raster.stats().rasterizations==r0+3,("The push rasterizes two pages and the status panel once ("+std::to_string(raster.stats().rasterizations-r0)+")").c_str());
+        (void)bridge.advance(1.5);check(!bridge.styleTransitionActive()&&raster.stats().rasterizations==r0+4,"Its end gives the status panel its page back");
+        content.style=DesktopClockStyle::split;(void)bridge.setContent(content);bridge.cancelStyleTransition();
+        check(raster.stats().rasterizations==r0+5,"A style change without a push rasterizes the status panel once, with its page");
+    }
     // Recording mode: the dot blinks with the 1 Hz sample (no loop), Reduce Motion keeps it lit.
     content.recording=true;content.reading=DesktopClockReading{"14:25:17","TUE Oct 8"};check(bridge.setContent(content),"Recording mode recolours the status row");
     check(bridge.requiresFrames(10)&&bridge.advance(10)&&bridge.recordDotOpacity()==1,"An odd second starts the dot's fade on the next frame");
