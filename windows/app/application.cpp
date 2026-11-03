@@ -748,7 +748,7 @@ void Application::Impl::concealed(double time){
     if(automation)automation->disconnectOwners();
     broadcast(HostEvent::Kind::overlayConcealed,time);
     // The density the next opening deploys at: as the retract would have left it, then the deploy.
-    if(designOverlay&&chromePlan&&chromePlan->projection().center){designDensityStart=replayDesignDensity(designOverlay->context().boxScale(),true);heldDesignDensity.reset();holdDesignDensity();}
+    if(designOverlay&&chromePlan){const double settled=designOverlay->context().boxScale();designDensityStart=settings.reduceMotion?settled:replayDesignDensity(settled,true);heldDesignDensity.reset();holdDesignDensity();}
     releaseConcealedGraphics();
     // ENDFIELDHUD_MEMORY_TRACE: the first closings (the hidden run records its own stages).
     if(memoryTrace&&production()&&memoryTrace->closings<8)recordMemory("closed-"+std::to_string(++memoryTrace->closings),true);
@@ -1497,7 +1497,7 @@ void Application::Impl::constructSettings(){
         // A Settings UI failure must not cancel first-run launch or the HUD.
         try{createSettings(loaded);}catch(const std::exception&e){
             const auto line=std::string("EndfieldHUD module settings could not start (")+typeid(e).name()+")\n";std::fputs(line.c_str(),stderr);OutputDebugStringA(line.c_str());
-            settingsLoaded=true;if(launchPending){launchPending=false;perform(lifecycle.launch(args.startup,settingsSaves->status().launched,!args.persistLaunchMarker),now());reopenAfterLaunch(now());}
+            settingsLoaded=true;if(launchPending){launchPending=false;holdDesignDensity();perform(lifecycle.launch(args.startup,settingsSaves->status().launched,!args.persistLaunchMarker),now());reopenAfterLaunch(now());}
         }},[this]{refresh(now());}});settingsSaves->start();
     // Hidden integration owns no frame/message loop. This explicit test
     // preparation barrier drains the same asynchronous read before input.
@@ -1590,6 +1590,7 @@ void Application::Impl::createSettings(const ehud::data::Settings&loaded){
         launchPending=false;
         // AppDelegate first-run onboarding, after the preference record and its
         // launch marker are known. --login/--no-onboarding suppress it.
+        holdDesignDensity(); // before the launch opening (the prewarm may not have run)
         perform(lifecycle.launch(args.startup,settingsSaves->status().launched,!args.persistLaunchMarker),now());
         reopenAfterLaunch(now());
     }
@@ -1821,7 +1822,12 @@ void Application::Impl::openPresentation(core::Module initial,double time){
     // created on a worker while the display is chosen and the module selected.
     prepareGraphics(false);
     if(startupTrace&&session->phase()==core::VisibilityPhase::concealed)traceOpening(time);
-    if(production()&&session->phase()==core::VisibilityPhase::concealed)targetDisplay();
+    if(session->phase()==core::VisibilityPhase::concealed&&(production()||placementForTest)){
+        // The display placement may resize the window (WM_SIZE, WM_DPICHANGED)
+        // through an intermediate layout: the density is derived once, for the
+        // final one, and the opening's clock starts after it.
+        placingForOpen=true;try{if(placementForTest)placementForTest();else targetDisplay();}catch(...){placingForOpen=false;throw;}placingForOpen=false;
+        holdDesignDensity();if(visibleMode())time=hostTime(now());}
     if(notes&&notes->selected()!=initial)selectModule(initial,time);
     open(time);if(visibleMode())host.show();refresh(time);
 }
@@ -2032,7 +2038,10 @@ void Application::Impl::applyConfiguration(double time){
     // SPI_GETCLIENTAREAANIMATION), re-read on WM_SETTINGCHANGE; never saved.
     if(visibleMode()){BOOL animations=TRUE;if(SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION,0,&animations,0))systemAnimationsOff=animations==FALSE;}
     settings={configuration.boolean("reduceMotion")||systemAnimationsOff,configuration.boolean("ambientAnimation"),configuration.boolean("lowPowerVisualMode"),configuration.number("parallaxIntensity"),configuration.number("perspectiveIntensity"),configuration.number("hudScale"),{configuration.number("hudOffsetX"),configuration.number("hudOffsetY")}};
-    session->setSettings(settings,time);watchAppearance.language=settingsLanguage(configuration);if(audio)audio->setLanguage(watchAppearance.language);
+    session->setSettings(settings,time);
+    // A HUD scale, offset or Reduce Motion change while closed: the next opening's density (cached per layout).
+    if(session->phase()==core::VisibilityPhase::concealed)holdDesignDensity();
+    watchAppearance.language=settingsLanguage(configuration);if(audio)audio->setLanguage(watchAppearance.language);
     rasterizer.setDefaultFontLanguage(textFontLanguage(watchAppearance.language));
     watchAppearance.dark=configuration.string("theme")!="light";
     if(configuration.string("theme")=="system"){DWORD light=0,size=sizeof(light);if(RegGetValueW(HKEY_CURRENT_USER,L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",L"AppsUseLightTheme",RRF_RT_REG_DWORD,nullptr,&light,&size)==ERROR_SUCCESS)watchAppearance.dark=light==0;}
@@ -2239,35 +2248,45 @@ void Application::Impl::prewarm(){
 // `start` through the planes of the retract (exit) or deploy under the
 // pointer-neutral camera, as the live measurement of RC 139 stepped through
 // them frame by frame. Ambient motion and parallax stay within the hysteresis.
-// The planes depend on the layout only: resolved once per layout (about 45 ms
-// for both clips, while the HUD is closed or at the launch prewarm), stepped
-// through at no cost after.
+// The planes depend on the layout only (only the centre node's ancestry is
+// resolved per pose): kept for the last four layouts (displays), resolved on
+// a miss.
 double Application::Impl::replayDesignDensity(double start,bool exit){
     if(!chromePlan||!(metrics.width>0)||!(metrics.height>0))return start;
-    const DesignDensityLayout layout{metrics.width,metrics.height,metrics.scale,settings.hudScale,contentScale,settings.hudOffset,0};
-    if(designDensityPlanes.layout!=layout){
+    const DesignDensityLayout layout{metrics.width,metrics.height,metrics.scale,settings.hudScale,contentScale,settings.hudOffset,0,false};
+    auto found=std::find_if(designDensityPlanes.begin(),designDensityPlanes.end(),[&](const DesignDensityPlanes&p){return p.layout==layout;});
+    if(found==designDensityPlanes.end()){
+        const auto begin=Clock::now();
+        found=std::min_element(designDensityPlanes.begin(),designDensityPlanes.end(),[](const DesignDensityPlanes&a,const DesignDensityPlanes&b){return a.used<b.used;});
         const core::Rect viewport{0,0,metrics.width,metrics.height};constexpr unsigned samples=96;
-        for(const bool retract:{false,true}){auto&planes=retract?designDensityPlanes.exit:designDensityPlanes.entrance;planes.clear();
+        for(const bool retract:{false,true}){auto&planes=retract?found->exit:found->entrance;planes.clear();
             const double seconds=retract?chromePlan->exitSeconds():chromePlan->entranceSeconds();
             for(unsigned k=0;k<=samples;++k)if(const auto center=chromePlan->clipCenter(viewport,settings.hudOffset,settings.hudScale,contentScale,retract,seconds*k/samples))planes.push_back(source::designBoxWorld(*center));}
-        designDensityPlanes.layout=layout;}
+        found->layout=layout;++designDensityResolves;designDensityResolveMilliseconds+=milliseconds(begin);}
+    found->used=++designDensityUses;
     double density=start;
-    for(const auto&plane:exit?designDensityPlanes.exit:designDensityPlanes.entrance)density=tools::designDensity(plane,metrics.scale,density);
+    for(const auto&plane:exit?found->exit:found->entrance)density=tools::designDensity(plane,metrics.scale,density);
     return density;
 }
 // Outside the settled HUD the overlay holds the density the next settled HUD
 // will measure, so the deploy never steps it: from the density the last
 // retract left (or, before any opening, the launch prewarm's first-pose
-// measurement from 2, as RC 139), through the deploy at the current layout.
-// Again after a resize (display, DPI) or a layout change; cached otherwise.
-void Application::Impl::holdDesignDensity(){
-    if(!designOverlay||!chromePlan||!chromePlan->projection().center||!(metrics.width>0)||!(metrics.height>0))return;
+// measurement from 2, as RC 139), through the deploy at the current layout;
+// under Reduce Motion (no deploy plays) one step on the settled plane, as
+// RC 139's first visible frame took. Derived before every opening (launch,
+// concealment, a resize while closed, the summon's display placement), never
+// inside one; cached per layout.
+void Application::Impl::deriveDesignDensity(){
+    if(!designOverlay||!chromePlan||!(metrics.width>0)||!(metrics.height>0))return;
     const core::Rect viewport{0,0,metrics.width,metrics.height};
     if(!designDensityStart){designDensityStart=2.;if(const auto first=chromePlan->clipCenter(viewport,settings.hudOffset,settings.hudScale,contentScale,false,0))designDensityStart=tools::designDensity(source::designBoxWorld(*first),metrics.scale,2);}
-    const DesignDensityLayout layout{metrics.width,metrics.height,metrics.scale,settings.hudScale,contentScale,settings.hudOffset,*designDensityStart};
-    if(!heldDesignDensity||designDensityLayout!=layout){heldDesignDensity=replayDesignDensity(*designDensityStart,false);designDensityLayout=layout;}
-    designOverlay->holdDensity(heldDesignDensity);
+    const DesignDensityLayout layout{metrics.width,metrics.height,metrics.scale,settings.hudScale,contentScale,settings.hudOffset,*designDensityStart,settings.reduceMotion};
+    if(heldDesignDensity&&designDensityLayout==layout)return;
+    if(!settings.reduceMotion)heldDesignDensity=replayDesignDensity(*designDensityStart,false);
+    else{heldDesignDensity=*designDensityStart;if(const auto settled=chromePlan->clipCenter(viewport,settings.hudOffset,settings.hudScale,contentScale,false,chromePlan->entranceSeconds()))heldDesignDensity=tools::designDensity(source::designBoxWorld(*settled),metrics.scale,*designDensityStart);}
+    designDensityLayout=layout;
 }
+void Application::Impl::holdDesignDensity(){deriveDesignDensity();if(designOverlay&&heldDesignDensity)designOverlay->holdDensity(heldDesignDensity);}
 bool Application::Impl::present(double time,bool submit){
     const auto traceFrameStart=readerTrace?Clock::now():Clock::time_point{};
     // Frame start: the swap chain accepts this frame, so input and time are
@@ -2305,7 +2324,8 @@ bool Application::Impl::present(double time,bool submit){
         // the density it started with.
         if(designOverlay){
             if(closing){if(!heldDesignDensity)heldDesignDensity=designOverlay->context().boxScale();designOverlay->holdDensity(heldDesignDensity);}
-            else if(session->phase()!=core::VisibilityPhase::visible)holdDesignDensity();
+            // An opening keeps the density derived before it (a layout change mid-deploy: the settled HUD measures).
+            else if(session->phase()!=core::VisibilityPhase::visible){if(!heldDesignDensity)holdDesignDensity();else designOverlay->holdDensity(heldDesignDensity);}
             else{heldDesignDensity.reset();designOverlay->holdDensity(std::nullopt);}}
         // Notes first: it owns the module presentation sample every other
         // owner reads in this same frame.

@@ -401,7 +401,8 @@ struct Application::Impl {
     void refresh(double time);
     bool present(double time, bool submit);
     double replayDesignDensity(double start, bool exit); // the design density stepped through the retract or deploy
-    void holdDesignDensity();   // the settled density to the design overlay outside the settled HUD
+    void deriveDesignDensity(); // the settled density for the next opening (heldDesignDensity)
+    void holdDesignDensity();   // derive it and hold it in the design overlay
     const WatchSessionFrame* poseShell(double time); // sampled source frame, materials, captions and chrome
     // Launch prewarm (Mac AppDelegate prewarmDesktop/prewarmDesktopResources):
     // once, while the HUD is still closed and idle after launch.
@@ -783,10 +784,18 @@ struct Application::Impl {
     // holdDesignDensity: the density the last retract left (where the next
     // deploy starts), the held density and the layout it was derived for.
     std::optional<double> designDensityStart, heldDesignDensity;
-    struct DesignDensityLayout { double width{}, height{}, scale{}, hudScale{}, contentScale{}; source::Vec2 hudOffset{}; double start{};
+    struct DesignDensityLayout { double width{}, height{}, scale{}, hudScale{}, contentScale{}; source::Vec2 hudOffset{}; double start{}; bool reduceMotion{};
         bool operator==(const DesignDensityLayout&) const = default; };
     std::optional<DesignDensityLayout> designDensityLayout;
-    struct { std::optional<DesignDensityLayout> layout; std::vector<core::Matrix4> entrance, exit; } designDensityPlanes; // replayDesignDensity's planes
+    // replayDesignDensity's planes for the last four layouts (displays), and its resolutions and their time.
+    struct DesignDensityPlanes { std::optional<DesignDensityLayout> layout; std::vector<core::Matrix4> entrance, exit; std::uint64_t used{}; };
+    std::array<DesignDensityPlanes, 4> designDensityPlanes;
+    std::uint64_t designDensityUses{}, designDensityResolves{};
+    double designDensityResolveMilliseconds{};
+    // openPresentation's display placement in progress (onResize leaves the density
+    // to it), and the hidden traces' stand-in for that placement (targetDisplay).
+    bool placingForOpen{};
+    std::function<void()> placementForTest;
     std::shared_ptr<gpu::NotesClipboard> designClipboard; // the design text fields' one clipboard
     std::unique_ptr<ModuleContrast> moduleContrast;      // the centre's contrast backdrop (SHELL-27)
     bool quitPromptOpen{};                               // the quit request is on the confirm bar

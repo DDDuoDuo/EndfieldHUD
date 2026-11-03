@@ -72,7 +72,7 @@ void Application::Impl::onResize(const ClientMetrics&value){
     metrics=value;updateContentScale();registry.forEach([&](ModuleOwner&o){o.resize(value);},"resize");
     if(!ready||stopping)return;
     // A closed HUD's next opening deploys at the new display's settled density, applied now.
-    if(session->phase()==core::VisibilityPhase::concealed)holdDesignDensity();
+    if(session->phase()==core::VisibilityPhase::concealed&&!placingForOpen)holdDesignDensity();
     const auto time=now();environment.viewport={value.width,value.height};environment.onScreen=value.pixelWidth>0&&value.pixelHeight>0;session->setEnvironment(environment,time);
     if(environment.onScreen)try{renderer.resize(value.pixelWidth,value.pixelHeight);}catch(const std::exception&e){if(recoverDevice(e,time))return;throw;}
     if(projectionShown())(void)projectionCall("resize",[&]{projection->resize(value,projectionWorkTopPixels/value.scale);});automationChanged();refresh(time);
