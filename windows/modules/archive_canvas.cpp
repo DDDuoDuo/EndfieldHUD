@@ -208,12 +208,20 @@ public:
     static d::TextStyle titleStyle(const d::Palette& p) { return {18, d::FontWeight::bold, p.foreground(1), 1.3}; }
     static d::TextStyle lineStyle(const d::Palette& p) { return {13, d::FontWeight::regular, p.tone(0xDDDDDD), 1.45}; }
     LockedPanel(d::Builder& b, const std::string& title, const std::string& body, d::Size size, const std::function<std::string(std::string_view, std::string_view)>& t)
-        : builder_(&b), layer_(&b.layer("archive.classified")), passwordBar_(&b.layer("archive.passwordBar")), stamp_(&b.layer("archive.stamp")) {
+        : builder_(&b), layer_(&b.layer("archive.classified")), passwordBar_(&b.layer("archive.passwordBar")), stamp_(&b.layer("archive.stamp")),
+          revealed_(&b.layer("archive.revealed")) {
         auto& env = b.env;
         auto& l = *layer_;
         l.setBounds(size);
         d::setBorder(l, env.palette.tone(0x141414), env.palette.token(d::ThemeToken::separator));
         l.setMasksToBounds(true);
+        // The revealed text, under every bar: a part of its own, empty (so not
+        // drawn) while locked; the bars, stamp and password bar follow in the
+        // panel's next part, which the reveal leaves as it was (no reload of
+        // the panel at the verification).
+        revealed_->setFrame({0, 0, size.width, size.height});
+        revealed_->setPartRoot(true);
+        l.add(*revealed_);
         const double inner = size.width - 36;
         double y = 16;
         std::vector<std::string> lines{title};
@@ -282,16 +290,18 @@ public:
     }
     // Draws the title and lines beneath their bars (the demo's `.cl` text), so
     // the opening wipe uncovers the document. Only after unlocking (:1848-1862).
+    // Each line lies under its own bar only, so drawing them all below the
+    // bars paints what the Mac's per-bar insertion paints.
     void reveal() {
-        if (revealed_) return;
-        revealed_ = true;
+        if (shown_) return;
+        shown_ = true;
         const auto& palette = builder_->env.palette;
         for (std::size_t index = 0; index < bars_.size(); ++index) {
             const auto style = index == 0 ? titleStyle(palette) : lineStyle(palette);
             const auto bar = bars_[index]->frame();
             auto& text = d::makeText(*builder_, "archive.revealed." + std::to_string(index), texts_[index], style,
                 {bar.x + 3, bar.y + 1, layer_->bounds().width - 36, style.size * style.lineHeight});
-            layer_->insertBelow(text, *bars_[index]);
+            revealed_->add(text);
         }
     }
     // Each bar grows from its left edge .4 s E, 50 ms apart (:1864-1873).
@@ -325,10 +335,10 @@ public:
     }
 private:
     d::Builder* builder_;
-    d::Layer *layer_, *passwordBar_, *stamp_;
+    d::Layer *layer_, *passwordBar_, *stamp_, *revealed_;
     std::vector<d::Layer*> bars_;
     std::vector<std::string> texts_;
-    bool revealed_{};
+    bool shown_{};
     static void anchor(d::Layer& bar, double x) { const auto frame = bar.frame(); bar.setAnchorPoint({x, .5}); bar.setFrame(frame); }
 };
 
