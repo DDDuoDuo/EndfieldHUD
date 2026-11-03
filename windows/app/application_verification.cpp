@@ -451,7 +451,7 @@ int Application::Impl::runHiddenVerification(){
             }
             const auto finish=at(23+static_cast<double>(points.size()));session->pointerMove({},finish);close(finish);present(finish+.7,true);
         }
-        Json::Array moduleResults,areaModuleResults,areaPresentedModules;Json displayAdaptation,scrollArrow;
+        Json::Array moduleResults,areaModuleResults,areaPresentedModules;Json displayAdaptation,scrollArrow,recordingToggle;
         // Module areas (app/module_owner.hpp): coverage steps and their checks.
         struct AreaCounts{unsigned steps{},checks{};};std::map<std::string,AreaCounts,std::less<>> areaCounts;
         double areaLatest{};
@@ -817,6 +817,35 @@ int Application::Impl::runHiddenVerification(){
                     // Once per cycle every area also receives a module-less step.
                     for(auto&area:externalModules)runArea(area,std::nullopt,cycle,time+1.9);
                 }time=std::max(time,areaLatest);time+=2;
+            }
+            // Recording mode switched from Settings > Display once every module
+            // has been built (rc139: "a freeze when turning on and off recording
+            // mode"). Each switch is timed on this thread from the toggle's press
+            // through the frame that applies it and the frames that follow.
+            if(settingsUI&&designOverlay){
+                selectModule(core::Module::display,time);for(unsigned frame=0;frame<40;++frame)present(time+double(frame)/60,true);time+=1;
+                auto&display=settingsUI->canvas(core::Module::display);Json::Array toggles;
+                for(const char*id:{"recording","recording","recording","recording","bootLog","bootLog"}){
+                    const bool recordingBefore=configuration.recordingMode();
+                    const auto raster0=rasterizer.stats();const auto pages0=designOverlay->context().pagesBuilt();
+                    const auto t0=Clock::now();
+                    const bool pressed=display.performAccessibilityAction(id,time);
+                    const double pressMs=milliseconds(t0);
+                    const auto t1=Clock::now();present(time,true);const double frameMs=milliseconds(t1);
+                    const auto pages1=designOverlay->context().pagesBuilt();const auto raster1=rasterizer.stats();
+                    double settleMax=0;for(unsigned frame=1;frame<=60;++frame){const double t=time+double(frame)/60;if(const auto wake=designOverlay->nextWakeTime(t);wake&&*wake<=t)(void)designOverlay->deadline(t);const auto f0=Clock::now();present(t,true);settleMax=std::max(settleMax,milliseconds(f0));}
+                    need(pressed,"The Display switch presses like its click");
+                    if(std::string_view(id)=="recording"){need(configuration.recordingMode()!=recordingBefore,"The Recording mode switch changes the preference");
+                        // The work bound (rc139 froze ~100-150 ms: every built canvas re-rendered and
+                        // the shown page rasterized whole): one page, its changed surfaces, the toast.
+                        hostCheck(pages1-pages0<=1&&raster1.rasterizations-raster0.rasterizations<=48,"A Recording mode switch builds only the shown page and rasterizes only what changed ("+
+                            std::to_string(pages1-pages0)+" pages, "+std::to_string(raster1.rasterizations-raster0.rasterizations)+" rasterizations)");}
+                    toggles.push_back(Json::Object{{"switch",std::string(id)},{"recording",configuration.recordingMode()},{"pressMs",pressMs},{"frameMs",frameMs},{"settleMaxFrameMs",settleMax},
+                        {"pagesBuilt",std::int64_t(pages1-pages0)},{"rasterizations",std::int64_t(raster1.rasterizations-raster0.rasterizations)},{"textLayouts",std::int64_t(raster1.textLayoutsCreated-raster0.textLayoutsCreated)},
+                        {"settleRasterizations",std::int64_t(rasterizer.stats().rasterizations-raster1.rasterizations)}});
+                    time+=2;
+                }
+                recordingToggle=std::move(toggles);
             }
             // Host integration over the same owner: the restart service is
             // production-only, the System row of the macImport area, the UI
@@ -1632,7 +1661,7 @@ int Application::Impl::runHiddenVerification(){
             for(unsigned n=0;n<=static_cast<unsigned>(core::Module::profile);++n)if(area.owner->presents(static_cast<core::Module>(n)))presents.push_back(std::string(core::moduleIdentifier(static_cast<core::Module>(n))));
             areas.push_back(Json::Object{{"area",area.name},{"constructed",true},{"enabled",registry.enabled(*area.owner)},{"presents",std::move(presents)},{"coverageSteps",std::int64_t(counts.steps)},{"coverageChecks",std::int64_t(counts.checks)}});}
         for(const auto&name:absentModules)areas.push_back(Json::Object{{"area",name},{"constructed",false}});
-        report["areaCoverage"]=std::move(areas);report["areaModuleResults"]=std::move(areaModuleResults);report["areaPresentedModules"]=std::move(areaPresentedModules);
+        report["recordingToggle"]=std::move(recordingToggle);report["areaCoverage"]=std::move(areas);report["areaModuleResults"]=std::move(areaModuleResults);report["areaPresentedModules"]=std::move(areaPresentedModules);
         if(args.moduleCoverage)for(const auto&area:externalModules)need(areaCounts[area.name].steps>=3,"Every module area received its hidden coverage steps");
         ehud::data::detail::replaceFile(args.report,std::nullopt,report.encode(),8*1024*1024);std::cout<<"Wrote hidden source-shell benchmark report\n";
     shutdownVisible();

@@ -792,6 +792,49 @@ void canvasScript(RecordedMeasurer& measurer, const J& canvasRows) {
     check(lockCount > 0, "A tracked drag locks the parallax");
 }
 
+// A Recording mode switch (rc139: the HUD froze on every switch once every
+// module was built): only the shown canvas builds a page, and that page keeps
+// its layer ids, so the scene finds every unchanged part byte-equal under the
+// same id and rasterizes nothing again for it; a built canvas that is not
+// shown builds once, when next shown, in the new mode (as a palette change).
+void recordingModeWork(RecordedMeasurer& measurer) {
+    World w(measurer); w.appearance(Language::english);
+    FakeCanvas shown(endfield::core::Module::clipboard, w.context), hidden(endfield::core::Module::fileShelf, w.context), unbuilt(endfield::core::Module::notes, w.context);
+    hidden.show(w.now); hidden.setActive(true, w.now); hidden.setActive(false, w.now); hidden.prepareToLeave(w.now);
+    shown.show(w.now); shown.setActive(true, w.now);
+    w.advance(1);
+    const d::TextServices& text = w.context.env().text;
+    const auto artwork = [&](const FakeCanvas& c) {
+        std::vector<std::pair<std::string, J>> parts;
+        for (auto& part : d::emit(c.root(), {&text, "test."}).parts) parts.emplace_back(part.id, std::move(part.layers));
+        return parts;
+    };
+    for (const bool recording : {true, false}) {
+        const std::string mode = recording ? "on" : "off";
+        const auto before = artwork(shown);
+        const auto pages = w.context.pagesBuilt();
+        const int shownBuilds = shown.builds, hiddenBuilds = hidden.builds;
+        w.appearance(Language::english, "FAD41F", false, false, recording);
+        check(w.context.pagesBuilt() == pages + 1 && shown.builds == shownBuilds + 1, "Recording mode " + mode + ": the shown canvas re-renders in place, one page");
+        check(hidden.builds == hiddenBuilds && unbuilt.builds == 0 && !unbuilt.renderedLanguage(), "Recording mode " + mode + ": canvases not shown build nothing on the switch");
+        check(artwork(shown) == before, "Recording mode " + mode + ": unchanged artwork keeps its part ids and bytes (nothing rasterizes again)");
+        w.advance(1);
+        hidden.show(w.now); hidden.setActive(true, w.now);
+        check(hidden.builds == hiddenBuilds + 1 && w.context.pagesBuilt() == pages + 2, "Recording mode " + mode + ": a built canvas re-renders once, when next shown");
+        hidden.setActive(false, w.now); hidden.prepareToLeave(w.now);
+        hidden.show(w.now);
+        check(hidden.builds == hiddenBuilds + 1, "Recording mode " + mode + ": showing it again builds nothing");
+        hidden.prepareToLeave(w.now);
+        w.advance(1);
+    }
+    // A language change while a Recording mode change waits rebuilds (new ids) once.
+    w.appearance(Language::english, "FAD41F", false, false, true);
+    w.appearance(Language::japanese, "FAD41F", false, false, true);
+    const int builds = hidden.builds;
+    hidden.show(w.now);
+    check(hidden.builds == builds + 1 && hidden.renderedLanguage() == Language::japanese, "A waiting Recording mode change and a language change rebuild once when shown");
+}
+
 // Contracts that need no oracle: lifetimes, revisions, deadlines.
 void lifetimes(RecordedMeasurer& measurer) {
     World w(measurer); w.appearance(Language::english);
@@ -932,6 +975,7 @@ int main(int argc, char** argv) {
         confirmBars(measurer, overlay);
         canvasScript(measurer, canvas);
         lifetimes(measurer);
+        recordingModeWork(measurer);
         focusMoves(measurer);
         std::sort(measurer.misses.begin(), measurer.misses.end());
         measurer.misses.erase(std::unique(measurer.misses.begin(), measurer.misses.end()), measurer.misses.end());

@@ -88,6 +88,8 @@ void run(const std::filesystem::path& shader) {
     unsigned presented{};
     tools::DesignOverlayOptions overlayOptions;
     overlayOptions.raster.pixelsPerPoint = 1; overlayOptions.window = window.hwnd;
+    bool recording{};
+    overlayOptions.recordingMode = [&] { return recording; };
     tools::DesignOverlayOwner overlay(raster, overlayOptions);
     auto& context = overlay.context();
     tools::DesignOwnerOptions options;
@@ -99,6 +101,9 @@ void run(const std::filesystem::path& shader) {
     auto canvas = std::make_unique<FakeCanvas>(context, core::Module::clipboard);
     auto* fake = canvas.get();
     core->add(std::move(canvas));
+    auto volumeCanvas = std::make_unique<FakeCanvas>(context, core::Module::volume);
+    auto* skipped = volumeCanvas.get();
+    core->add(std::move(volumeCanvas));
     tools::DesignModuleOwner owner(std::move(core));
     check(owner.presents(core::Module::clipboard) && !owner.presents(core::Module::map) && owner.name() == "designTest", "The owner presents its canvases");
     const app::ClientMetrics metrics{1000, 640, 96, 1, 1000, 640};
@@ -198,6 +203,41 @@ void run(const std::filesystem::path& shader) {
     for (double t = .95; t < 2; t += .05) { overlay.deadline(t); frame(sample(core::Module::clipboard), t); }
     check(!overlay.capturesPointer() && !overlay.presented() && overlay.contentDim(2) == 0 && !overlay.contentFilter(2, 0, 4), "The bar collapses and the dim clears");
     check(!overlay.requiresFrames(2.1), "A settled overlay asks for no frames");
+    // --- Recording mode after a skipped switch (rc139 freeze) ---------------------------------
+    // A directional switch shows its incoming screen unattached; a request that
+    // supersedes it drops that screen, never activated. It is not shown any
+    // more: a Recording mode switch builds only the shown canvas's page, and
+    // the skipped one builds once, when it is next shown.
+    const auto skipping = [&](core::Module from, core::Module to, core::Module next) {
+        auto s = sample(from);
+        s.requested = next; s.transitioning = s.directional = true; s.acceptsModuleInput = false;
+        auto incoming = sample(to, false).current;
+        s.incoming = incoming;
+        return s;
+    };
+    frame(skipping(core::Module::clipboard, core::Module::volume, core::Module::notes), 2.2);
+    frame(sample(core::Module::clipboard), 2.3);
+    {
+        const auto pages = context.pagesBuilt();
+        const unsigned shown = fake->builds, skippedBuilds = skipped->builds;
+        recording = true; overlay.setAppearance(appearance, 2.4);
+        check(context.pagesBuilt() == pages + 1 && fake->builds == shown + 1 && skipped->builds == skippedBuilds,
+            "After a skipped switch a Recording mode switch builds only the shown page");
+        frame(sample(core::Module::volume), 2.5);
+        check(skipped->builds == skippedBuilds + 1 && skipped->leaves == 0, "The skipped canvas builds once when shown, with nothing to leave");
+    }
+    // The HUD closing over an unattached incoming screen leaves it not shown too.
+    frame(skipping(core::Module::volume, core::Module::clipboard, core::Module::clipboard), 2.6);
+    owner.setOverlayVisible(false, 2.7); overlay.setOverlayVisible(false, 2.7);
+    {
+        const auto pages = context.pagesBuilt();
+        recording = false; overlay.setAppearance(appearance, 2.8);
+        check(context.pagesBuilt() == pages, "Closed, a Recording mode switch builds no page");
+        owner.setOverlayVisible(true, 2.9); overlay.setOverlayVisible(true, 2.9);
+        const unsigned builds = fake->builds;
+        frame(sample(core::Module::clipboard), 3);
+        check(fake->builds == builds + 1, "Reopened, the canvas shown again builds once in the new mode");
+    }
     composition.detach(renderer);
     owner.release(renderer); overlay.release(renderer);
     check(!IsWindowVisible(window.hwnd) && renderer.stats().presents == 0, "The fixture never shows a window");

@@ -175,7 +175,23 @@ Canvas::~Canvas() {
 }
 void Canvas::begin(double now) { env().now = now; }
 void Canvas::notifyInput() const { if (context_->onInputStateChange) context_->onInputStateChange(); }
-void Canvas::recordingModeChanged() { if (renderedLanguage_) rerender(); }
+// HUDDesignCanvas.recordingModeChanged (:229) re-renders every built canvas
+// at once; on the Mac that rebuilds CALayers. Here a re-render is a new page
+// whose every part rasterizes again, so with every module built a switch
+// froze the HUD (rc139: ~15 pages built and ~190 surfaces rasterized on one
+// frame, 100-150 ms). The shown canvas re-renders now, keeping its layer ids
+// (only the redacted surfaces rasterize again); the others re-render the
+// same way when next shown (stale), as a palette change does (:232-237).
+// Same pages, shown with the same state.
+void Canvas::recordingModeChanged() {
+    if (!renderedLanguage_) return;
+    if (isShown()) rerenderKeepingIds(); else deferRecordingMode();
+}
+void Canvas::rerenderKeepingIds() {
+    keepIds_ = true;
+    try { rerender(); } catch (...) { keepIds_ = false; throw; }
+    keepIds_ = false;
+}
 void Canvas::renderScaleChanged() { if (renderedLanguage_) rerender(); }
 void Canvas::paletteChanged() {
     closePopups();
@@ -208,7 +224,13 @@ ModuleTitle Canvas::title(std::string_view english, std::string_view simplifiedC
     return ModuleTitle::make(english, simplifiedChinese, env().language);
 }
 bool Canvas::stale() const noexcept {
-    return !renderedLanguage_ || *renderedLanguage_ != env().language || renderedPalette_ != env().palette.generation();
+    return !renderedLanguage_ || *renderedLanguage_ != env().language || renderedPalette_ != env().palette.generation() || recordingStale_;
+}
+// Only a deferred Recording mode change: the page keeps its layer ids.
+void Canvas::rerenderIfStale() {
+    if (!stale()) return;
+    if (renderedLanguage_ && *renderedLanguage_ == env().language && renderedPalette_ == env().palette.generation()) rerenderKeepingIds();
+    else rerender();
 }
 
 // --- Rendering (:289-401) ----------------------------------------------------
@@ -292,7 +314,13 @@ void Canvas::finishLeave() {
 }
 // makePage(restoring:) (:375-382).
 std::unique_ptr<Page> Canvas::makePage(const std::vector<std::pair<std::string, double>>& offsets, bool staged) {
-    auto next = std::make_unique<Page>(*context_, prefix_ + ".page" + std::to_string(++pageSerial_));
+    // Kept ids: the replaced page leaves the tree before the scene emits again
+    // (no swap holds it as the leaving page) and holds no editing field.
+    const bool keep = keepIds_ && !staged && page_ && !swapDeadline_ && !anyEditing(fields_, page_->layer());
+    const std::uint64_t serial = keep ? page_->serial_ : ++pageSerial_;
+    auto next = std::make_unique<Page>(*context_, prefix_ + ".page" + std::to_string(serial));
+    next->serial_ = serial;
+    ++context_->pagesBuilt_;
     next->restored_ = offsets;
     std::erase_if(fields_, [](TextField* field) { return !field->editing(); });
     staging_ = staged;
@@ -310,6 +338,7 @@ void Canvas::install(std::unique_ptr<Page> next, bool swapHeader) {
     const auto generation = env().palette.generation();
     renderedLanguage_ = env().language;
     renderedPalette_ = generation;
+    recordingStale_ = false;
     if (swapHeader && headers_[1 - currentHeader_]) {
         if (auto* old = currentHeader()) {
             old->layer().removeMotion(MotionSlot::leave); old->layer().removeMotion(MotionSlot::hold);
@@ -514,7 +543,7 @@ void Canvas::show(double now) {
     begin(now);
     attached_ = true;
     revealSettledPage();
-    if (stale()) rerender();
+    rerenderIfStale();
 }
 void Canvas::setActive(bool active, double now) {
     begin(now);
@@ -522,7 +551,7 @@ void Canvas::setActive(bool active, double now) {
     active_ = active;
     if (active) {
         revealSettledPage();
-        if (stale()) rerender();
+        rerenderIfStale();
         didActivate();
     } else {
         willEndInteraction();
