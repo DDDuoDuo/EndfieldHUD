@@ -154,7 +154,11 @@ void run(n::Renderer&r,HWND hwnd,const fs::path&assets){
     check(!f.key(VK_ESCAPE),"Escape with nothing to unwind reaches the HUD");
     {const auto z=f.canvas().viewport().zoom();check(f.key(VK_OEM_PLUS)&&f.canvas().viewport().zoom()>z,"Plus zooms in");check(f.perform("zoomReset"),"Reset zoom");}
     // Stickers: add, nudge with arrows, turn with Alt, delete with Backspace.
-    check(f.perform("mediaTab:2")&&f.perform("sticker:sticker_1"),"Sticker");f.frame();check(f.session().adjustments().stickers.size()==1&&!f.canvas().selectedSticker().empty(),"Sticker added with an owner identity");
+    // The drawer's first build queues its 30 thumbnails on the utility worker and is built again with them.
+    {check(f.perform("mediaTab:2")&&owner.stats().thumbnailDecodes==0&&owner.stats().thumbnailBytes==0,"The drawer's first build decodes no sticker thumbnail on the HUD thread");
+    const auto pages=f.overlay->context().pagesBuilt();f.settle();
+    check(owner.stats().thumbnailDecodes==m::mediaAssemblyStickerCount&&owner.stats().thumbnailDecodesAtOnce==0&&f.overlay->context().pagesBuilt()>pages,"The utility worker decodes them; the drawer is built again with them");}
+    check(f.perform("sticker:sticker_1"),"Sticker");f.frame();check(f.session().adjustments().stickers.size()==1&&!f.canvas().selectedSticker().empty(),"Sticker added with an owner identity");
     const auto sx=f.session().adjustments().stickers[0].x;check(f.key(VK_RIGHT,4)&&std::abs(f.session().adjustments().stickers[0].x-sx-.05)<1e-9,"Shift+Right nudges 0.05");
     check(f.key(VK_RIGHT,1)&&f.session().adjustments().stickers[0].rotation==3,"Alt+Right turns 3 degrees");
     check(f.key(VK_RIGHT,5)&&f.session().adjustments().stickers[0].rotation==18,"Alt+Shift+Right turns 15 degrees");

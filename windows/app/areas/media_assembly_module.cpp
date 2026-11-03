@@ -447,19 +447,21 @@ private:
         if (timed) {
             using Clock = std::chrono::steady_clock;
             const auto ms = [](Clock::time_point since) { return std::chrono::duration<double, std::milli>(Clock::now() - since).count(); };
-            const auto raster0 = host_.rasterizer().stats(); const auto pages0 = context_.pagesBuilt(); const auto decodes0 = stats().thumbnailDecodes;
+            const auto raster0 = host_.rasterizer().stats(); const auto pages0 = context_.pagesBuilt(); const auto decodes0 = stats().thumbnailDecodesAtOnce;
             const auto t0 = Clock::now(); const bool done = canvas.performAccessibilityAction("mediaTab:2", run.t); const double actionMs = ms(t0);
             const auto t1 = Clock::now(); run.present(); const double frameMs = ms(t1);
-            const auto raster1 = host_.rasterizer().stats(); const auto pages1 = context_.pagesBuilt(); const auto decodes1 = stats().thumbnailDecodes;
+            const auto raster1 = host_.rasterizer().stats(); const auto pages1 = context_.pagesBuilt(); const auto decodes1 = stats().thumbnailDecodesAtOnce;
             double settle = 0;
             for (unsigned f = 1; f <= 15; ++f) { if (f == 1) step.drain(); const auto f0 = Clock::now(); run.present(1. / 15); settle = std::max(settle, ms(f0)); }
             const auto raster2 = host_.rasterizer().stats(); const auto pages2 = context_.pagesBuilt();
-            step.timing(ehud::data::Json::Object{{"module", "mediaAssembly"}, {"action", "stickersFirstVisit"}, {"ran", done}, {"actionMs", actionMs}, {"frameMs", frameMs},
+            step.timing(ehud::data::Json::Object{{"module", std::string("mediaAssembly")}, {"action", std::string("stickersFirstVisit")}, {"ran", done}, {"actionMs", actionMs}, {"frameMs", frameMs},
                 {"clickFrameMs", actionMs + frameMs}, {"settleMaxFrameMs", settle}, {"pagesBuilt", std::int64_t(pages1 - pages0)},
                 {"rasterizations", std::int64_t(raster1.rasterizations - raster0.rasterizations)}, {"textLayouts", std::int64_t(raster1.textLayoutsCreated - raster0.textLayoutsCreated)},
                 {"secondPagesBuilt", std::int64_t(pages2 - pages0)}, {"secondRasterizations", std::int64_t(raster2.rasterizations - raster0.rasterizations)},
                 {"secondTextLayouts", std::int64_t(raster2.textLayoutsCreated - raster0.textLayoutsCreated)}, {"thumbnailDecodesAtOnce", std::int64_t(decodes1 - decodes0)}});
             tabbed = done;
+            // rc140: all 30 read, hashed and decoded in the click's frame.
+            step.check(decodes1 == decodes0, "The first Stickers visit decodes no thumbnail on the HUD thread (" + std::to_string(decodes1 - decodes0) + " at once)");
         }
         step.check((timed ? tabbed : run.perform("mediaTab:2")) && canvas.tab() == mod::MediaAssemblyCanvas::Tab::stickers, "Stickers tab");
         step.check(run.perform("sticker:sticker_bp_1") && session.adjustments().stickers.size() == 1 && !canvas.selectedSticker().empty() &&
@@ -468,7 +470,7 @@ private:
         {   const auto x = session.adjustments().stickers[0].x;
             step.check(run.key(VK_RIGHT, 4) && std::abs(session.adjustments().stickers[0].x - x - .05) < 1e-9, "Shift+Right nudges the selected sticker by 0.05");
             step.check(run.key(VK_RIGHT, 1) && session.adjustments().stickers[0].rotation == 3, "Alt+Right turns it 3 degrees"); }
-        run.present();
+        step.drain(); run.present();
         step.check(stats().thumbnailBytes > 0 && stats().thumbnailBytes <= 30u * 96 * 96 * 4, "The drawer's sticker thumbnails are bounded 96 px decodes");
         step.check(run.key(VK_BACK) && session.adjustments().stickers.empty(), "Backspace deletes the selected sticker");
         run.settle();

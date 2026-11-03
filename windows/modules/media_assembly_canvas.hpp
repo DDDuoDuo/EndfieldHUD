@@ -78,6 +78,8 @@ public:
     bool perform(std::string_view id, double now);
     // The owner released the hidden editor's preview.
     void releasePreview() noexcept;
+    // The drawer's sticker thumbnails landed after the drawer was built without them.
+    void stickerThumbnailsChanged();
 
     // --- State (tests, owner) ---
     MediaAssemblyController& controller() const noexcept { return *controller_; }

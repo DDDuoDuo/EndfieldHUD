@@ -383,6 +383,13 @@ void MediaAssemblyCanvas::buildStickers(d::Page& page, d::Layer& panel, bool ena
     page.restoreOffset(scroll);
 }
 
+// The cells show them once they exist (the Mac decodes them in the build);
+// a drawer still behind its sub-page swap is rebuilt before it enters.
+void MediaAssemblyCanvas::stickerThumbnailsChanged() {
+    if (tab_ != Tab::stickers || !renderedLanguage()) return;
+    if (isShown()) rerender(); else deferRerender();
+}
+
 // MARK: Panel actions (:413-521)
 void MediaAssemblyCanvas::selectTab(Tab next, double direction) {
     if (next == tab_) return;
