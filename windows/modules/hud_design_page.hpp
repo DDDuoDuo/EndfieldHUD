@@ -275,12 +275,8 @@ public:
     // every part whose artwork is unchanged instead of rasterizing the whole
     // page again (a Recording mode switch changes a few redacted labels).
     void rerenderKeepingIds();
-    // Shown: attached (show() .. prepareToLeave() / detach()) or active.
+    // Shown: attached (show() .. prepareToLeave()) or active.
     bool isShown() const noexcept { return attached_ || active_; }
-    // The owner stopped presenting a canvas it showed but never activated (an
-    // incoming screen a later switch skipped, or the HUD closed over it):
-    // not shown any more. Nothing to leave: no willLeave, no swap to settle.
-    void detach() noexcept { attached_ = false; }
     // A Recording mode change this canvas applies when next shown (show /
     // setActive re-render it, keeping its layer ids).
     void deferRecordingMode() noexcept { recordingStale_ = true; }
