@@ -58,6 +58,8 @@ void Application::Impl::cleanup(){if(cleaned)return;cleaned=true;ready=false;sto
 }
 
 int Application::Impl::runVisible(){
+    // The design density for the first opening, derived before its clock starts.
+    holdDesignDensity();
     // Initialization must not consume the opening timeline while the HWND is
     // still hidden. Hotkey openings already use their actual event timestamp.
     const auto openingTime=now();

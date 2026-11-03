@@ -72,7 +72,7 @@ void Application::Impl::onResize(const ClientMetrics&value){
     metrics=value;updateContentScale();registry.forEach([&](ModuleOwner&o){o.resize(value);},"resize");
     if(!ready||stopping)return;
     // A closed HUD's next opening deploys at the new display's settled density, applied now.
-    if(session->phase()==core::VisibilityPhase::concealed)holdDesignDensity();
+    if(session->phase()==core::VisibilityPhase::concealed&&!placingForOpen)holdDesignDensity();
     const auto time=now();environment.viewport={value.width,value.height};environment.onScreen=value.pixelWidth>0&&value.pixelHeight>0;session->setEnvironment(environment,time);
     if(environment.onScreen)try{renderer.resize(value.pixelWidth,value.pixelHeight);}catch(const std::exception&e){if(recoverDevice(e,time))return;throw;}
     if(projectionShown())(void)projectionCall("resize",[&]{projection->resize(value,projectionWorkTopPixels/value.scale);});automationChanged();refresh(time);
@@ -328,7 +328,9 @@ void Application::Impl::shelfDragEffect(const core::SystemOverlayEffect&e,double
 bool Application::Impl::shelfDragFrame(double time,bool settled){
     if(shelfRestoring&&!closing&&session->phase()==core::VisibilityPhase::visible){const auto token=*shelfRestoring;shelfRestoring.reset();
         perform(lifecycle.shelfDragRestored(token),time);automationChanged();refreshAutomation();if(stopping)return true;}
-    if(shelfRetracting&&settled&&session->phase()==core::VisibilityPhase::concealed){const auto token=*shelfRetracting;shelfRetracting.reset();perform(lifecycle.shelfDragRetracted(token),time);}
+    if(shelfRetracting&&settled&&session->phase()==core::VisibilityPhase::concealed){const auto token=*shelfRetracting;shelfRetracting.reset();
+        retractDesignDensity();designDensityRetracted=true; // the restore's deploy (or a delivered drag's concealment) starts from it
+        perform(lifecycle.shelfDragRetracted(token),time);}
     return lifecycle.shelfDragActive();
 }
 // HUDFileShelfInteraction.beginOutgoingDrag through draggingSession(_:endedAt:):
