@@ -62,7 +62,7 @@ struct World {
 struct Port final : m::OrbiPomRuntimePort {
     m::OrbiPomSnapshot value; std::optional<std::string> failure;
     unsigned starts{}, advances{}, moves{}, ups{}, drops{}, activations{}, cancels{}, pauses{};
-    d::Point last{}; double advanced{};
+    d::Point last{}; double advanced{}; bool booting{};
     const m::OrbiPomSnapshot& snapshot() const noexcept override { return value; }
     const std::optional<std::string>& error() const noexcept override { return failure; }
     void start(std::optional<std::uint32_t>) override { ++starts; const auto high = value.highScore; value = {}; value.state = "playing"; value.highScore = high; value.previewVisible = true; }
@@ -74,11 +74,13 @@ struct Port final : m::OrbiPomRuntimePort {
     void cancelSkill() override { ++cancels; value.skill.reset(); value.skillPhase.reset(); }
     void pause(bool v) override { ++pauses; value.paused = v; }
     void highScore(std::int64_t h) override { value.highScore = h; }
+    bool ready() const noexcept override { return !booting; }
 };
 struct Game {
     Port* port{}; std::vector<m::OrbiPomEvent> events; std::vector<std::int64_t> saves;
     m::OrbiPomSession session;
-    explicit Game(std::int64_t best = 0) : session(best, {[this] { auto p = std::make_unique<Port>(); port = p.get(); return p; },
+    bool booting{};
+    explicit Game(std::int64_t best = 0) : session(best, {[this] { auto p = std::make_unique<Port>(); p->booting = booting; port = p.get(); return p; },
         [this](std::int64_t s) { saves.push_back(s); }, [this](m::OrbiPomEvent e) { events.push_back(e); }}) {}
 };
 
@@ -212,6 +214,30 @@ void lifecycle() {
     canvas.prepareToLeave(w.now); canvas.setActive(false, w.now);
     check(!w.context.overlay().confirmState().isOpen() && !canvas.restartConfirmation(), "Leaving dismisses the restart confirm");
     (void)t0;
+}
+
+// The first game's VM boots off the HUD thread (finding 45): the canvas waits
+// for it on its own wake, then starts exactly the game a ready VM starts.
+void bootingVM() {
+    FakeMeasurer measurer;
+    World w(measurer); w.appearance(Language::english);
+    Game g(71); g.booting = true;
+    C canvas(w.context, g.session);
+    w.show(canvas);
+    check(canvas.booting() && g.port && g.port->starts == 0 && !g.session.hasRuntime() && !canvas.hasFrameTimer() && g.events.empty(), "Showing a booting VM waits without starting or ticking");
+    check(canvas.nextWakeTime(w.now) && std::abs(*canvas.nextWakeTime(w.now) - (w.now + 1. / 60)) < 1e-9, "The canvas checks the boot every frame");
+    w.advance(1. / 60); canvas.wake(w.now);
+    check(canvas.booting() && g.port->starts == 0 && canvas.nextWakeTime(w.now) && std::abs(*canvas.nextWakeTime(w.now) - (w.now + 1. / 60)) < 1e-9, "An unfinished boot keeps waiting, a frame on");
+    canvas.prepareToLeave(w.now); canvas.setActive(false, w.now);
+    check(!canvas.nextWakeTime(w.now), "A hidden canvas does not wait for the boot");
+    g.port->booting = false; w.show(canvas);
+    check(!canvas.booting() && g.port->starts == 1 && g.session.snapshot().isPlaying() && canvas.hasFrameTimer() && g.events == std::vector{m::OrbiPomEvent::started},
+        "Showing again with the boot done starts the game");
+    Game later(71); later.booting = true;
+    C second(w.context, later.session);
+    w.show(second); later.port->booting = false; w.advance(1. / 60); second.wake(w.now);
+    check(!second.booting() && later.port->starts == 1 && later.session.snapshot().isPlaying() && second.hasFrameTimer() && later.session.snapshot().highScore == 71 && w.toast().empty(),
+        "The first wake after the boot starts the game without a toast, its clock running");
 }
 
 void board() {
@@ -398,6 +424,7 @@ int main(int argc, char** argv) {
     try {
         geometry();
         lifecycle();
+        bootingVM();
         board();
         if (const auto data = loadOracle(argc > 1 ? argv[1] : nullptr, {"minigame"}, {"text", "layerDefaults"})) {
             Oracle oracle(*data);

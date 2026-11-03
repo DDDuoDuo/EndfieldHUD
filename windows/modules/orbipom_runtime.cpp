@@ -8,6 +8,7 @@
 #include <fstream>
 #include <limits>
 #include <stdexcept>
+#include <system_error>
 #include <thread>
 #include <utility>
 
@@ -41,6 +42,38 @@ std::string sourceFile(const std::filesystem::path&root,const char*name,std::siz
     return result;
 }
 }
+namespace {
+// A VM booted by bootInto (on the owner thread, or off it for prepare()):
+// both scripts evaluated and the bridge's methods held, under its own
+// initialization budget until Impl::adopt takes it over.
+struct Boot {
+    JSRuntime*runtime{};JSContext*context{};JSValue bridge{JS_UNDEFINED};
+    std::array<JSValue,std::size_t(Method::count)>methods;
+    Clock::time_point deadline{};bool interrupted{};std::uint64_t interrupts{};double seconds{};std::optional<std::string>failure;
+    Boot(){methods.fill(JS_UNDEFINED);}
+    static int interrupt(JSRuntime*,void*opaque){auto&self=*static_cast<Boot*>(opaque);if(Clock::now()>=self.deadline){self.interrupted=true;++self.interrupts;return 1;}return 0;}
+};
+void bootInto(Boot&boot,const OrbiPomRuntimeOptions&options)noexcept{
+    const auto began=Clock::now();boot.deadline=began+std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(options.initializationSeconds));
+    const auto checked=[&](JSValueConst value){
+        if(!JS_IsException(value))return;
+        Value error(boot.context,JS_GetException(boot.context));
+        if(boot.interrupted)throw std::runtime_error("Original minigame simulation exceeded its command time budget.");
+        CString text(boot.context,error.value);throw std::runtime_error(text.bytes?std::string(text.bytes,std::min<std::size_t>(text.size,4096)):"Original minigame simulation failed (memory or stack limit).");
+    };
+    try{
+        const auto matter=sourceFile(options.resourceRoot,"matter-0.20.0.js",83318,"928d059868201b2c4c270818fda44e5d26c099e4df407043f018f9bbe2c598cf");
+        const auto game=sourceFile(options.resourceRoot,"orbipom.js",94724,"1c68da4d2165f3d6d45e8842ab4d7d6e766bb3d738e3ff19f32ca2dce64e4054");
+        boot.runtime=JS_NewRuntime();if(!boot.runtime)throw std::runtime_error("Could not create the original minigame VM");++liveVMs;
+        JS_SetMemoryLimit(boot.runtime,options.memoryBytes);JS_SetMaxStackSize(boot.runtime,options.stackBytes);JS_SetCanBlock(boot.runtime,false);JS_SetInterruptHandler(boot.runtime,Boot::interrupt,&boot);
+        boot.context=JS_NewContext(boot.runtime);if(!boot.context)throw std::runtime_error("Original minigame VM exceeded its initialization memory budget.");
+        for(const auto&item:std::array<std::pair<std::string_view,const char*>,2>{{{matter,"matter-0.20.0.js"},{game,"orbipom.js"}}}){Value result(boot.context,JS_Eval(boot.context,item.first.data(),item.first.size(),item.second,JS_EVAL_TYPE_GLOBAL));checked(result.value);}
+        Value global(boot.context,JS_GetGlobalObject(boot.context));boot.bridge=JS_GetPropertyStr(boot.context,global.value,"OrbiPom");checked(boot.bridge);if(!JS_IsObject(boot.bridge))throw std::runtime_error("Missing original offline minigame bridge");
+        for(std::size_t i=0;i<boot.methods.size();++i){boot.methods[i]=JS_GetPropertyStr(boot.context,boot.bridge,methodNames[i]);checked(boot.methods[i]);if(!JS_IsFunction(boot.context,boot.methods[i]))throw std::runtime_error("Incomplete original offline minigame bridge");}
+    }catch(const std::exception&e){boot.failure=e.what();}catch(...){boot.failure="Could not create the original minigame VM";}
+    boot.seconds=std::chrono::duration<double>(Clock::now()-began).count();
+}
+}
 struct OrbiPomRuntime::Impl {
     OrbiPomRuntimeOptions options;std::thread::id owner{std::this_thread::get_id()};
     JSRuntime*runtime{};JSContext*context{};JSValue bridge{JS_UNDEFINED};
@@ -48,6 +81,8 @@ struct OrbiPomRuntime::Impl {
     OrbiPomSnapshot published,scratch;std::optional<std::string>failure;
     OrbiPomRuntimeStats counters;std::int64_t requestedHighScore{};
     Clock::time_point deadline{};bool inCall{},interrupted{},faulted{};
+    // prepare(): the boot running off this thread, and whether it finished.
+    std::thread worker;std::unique_ptr<Boot>pending;std::atomic<bool>prepared{};
     explicit Impl(OrbiPomRuntimeOptions value):options(std::move(value)){
         methods.fill(JS_UNDEFINED);
         if(options.resourceRoot.empty()||options.memoryBytes<64*1024||options.memoryBytes>256*1024*1024||!options.snapshotBytes||options.snapshotBytes>options.memoryBytes||options.stackBytes<16*1024||options.stackBytes>256*1024||
@@ -112,21 +147,26 @@ struct OrbiPomRuntime::Impl {
     }
     Value call(Method method,std::span<const JSValue>arguments={}){if(arguments.size()>2)throw std::logic_error("Invalid minigame command arity");std::array<JSValue,2>argv{};std::copy(arguments.begin(),arguments.end(),argv.begin());++counters.calls;Value result(context,JS_Call(context,methods[std::size_t(method)],bridge,int(arguments.size()),argv.data()));checked(result.value);return result;}
     void refresh(){auto value=call(Method::snapshot);snapshot(value.value);}
+    // The first command boots the VM here unless prepare() booted it off this
+    // thread: then it waits for that boot and takes the VM over.
     bool boot(){
         if(runtime)return false;
-        Budget budget(*this,options.initializationSeconds);
-        const auto matter=sourceFile(options.resourceRoot,"matter-0.20.0.js",83318,"928d059868201b2c4c270818fda44e5d26c099e4df407043f018f9bbe2c598cf");
-        const auto game=sourceFile(options.resourceRoot,"orbipom.js",94724,"1c68da4d2165f3d6d45e8842ab4d7d6e766bb3d738e3ff19f32ca2dce64e4054");
-        runtime=JS_NewRuntime();if(!runtime)throw std::runtime_error("Could not create the original minigame VM");++liveVMs;++counters.boots;
-        JS_SetMemoryLimit(runtime,options.memoryBytes);JS_SetMaxStackSize(runtime,options.stackBytes);JS_SetCanBlock(runtime,false);JS_SetInterruptHandler(runtime,interrupt,this);
-        context=JS_NewContext(runtime);if(!context)throw std::runtime_error("Original minigame VM exceeded its initialization memory budget.");
-        for(const auto&item:std::array<std::pair<std::string_view,const char*>,2>{{{matter,"matter-0.20.0.js"},{game,"orbipom.js"}}}){Value result(context,JS_Eval(context,item.first.data(),item.first.size(),item.second,JS_EVAL_TYPE_GLOBAL));checked(result.value);}
-        Value global(context,JS_GetGlobalObject(context));bridge=JS_GetPropertyStr(context,global.value,"OrbiPom");checked(bridge);if(!JS_IsObject(bridge))throw std::runtime_error("Missing original offline minigame bridge");
-        for(std::size_t i=0;i<methods.size();++i){methods[i]=JS_GetPropertyStr(context,bridge,methodNames[i]);checked(methods[i]);if(!JS_IsFunction(context,methods[i]))throw std::runtime_error("Incomplete original offline minigame bridge");}
-        return true;
+        if(worker.joinable()){join();return true;}
+        Boot fresh;bootInto(fresh,options);++counters.ownerThreadBoots;adopt(fresh);return true;
+    }
+    void join(){worker.join();prepared.store(false,std::memory_order_relaxed);const auto fresh=std::move(pending);adopt(*fresh);}
+    // The VM moves to this thread: its stack limit and interrupt budget are
+    // this thread's from now on; a failed boot fails the command as here.
+    void adopt(Boot&fresh){
+        runtime=std::exchange(fresh.runtime,nullptr);context=std::exchange(fresh.context,nullptr);bridge=std::exchange(fresh.bridge,JS_UNDEFINED);
+        for(std::size_t n=0;n<methods.size();++n)methods[n]=std::exchange(fresh.methods[n],JS_UNDEFINED);
+        if(runtime){++counters.boots;JS_UpdateStackTop(runtime);JS_SetInterruptHandler(runtime,interrupt,this);}
+        counters.interrupts+=fresh.interrupts;counters.totalCommandSeconds+=fresh.seconds;counters.maximumCommandSeconds=std::max(counters.maximumCommandSeconds,fresh.seconds);
+        if(fresh.failure)throw std::runtime_error(*fresh.failure);
     }
     template<class F>bool command(F&&fn){thread();if(faulted)return false;try{boot();Budget budget(*this,options.commandSeconds);fn();return true;}catch(const std::exception&e){failure=e.what();faulted=true;return false;}}
     void close()noexcept{
+        if(worker.joinable()){try{join();}catch(...){}}
         if(!runtime)return;
         if(context){
             if(!faulted&&JS_IsFunction(context,methods[std::size_t(Method::destroy)])){try{Budget budget(*this,options.commandSeconds);auto result=call(Method::destroy);}catch(...) {}}
@@ -149,6 +189,10 @@ bool OrbiPomRuntime::activate(OrbiPomSkill skill){auto&i=*impl_;const auto index
 void OrbiPomRuntime::cancelSkill(){auto&i=*impl_;i.command([&]{{auto result=i.call(Method::cancelSkill);}i.refresh();});}
 void OrbiPomRuntime::pause(bool paused){auto&i=*impl_;i.command([&]{const std::array args{JS_NewBool(i.context,paused)};{auto result=i.call(Method::pause,args);}i.refresh();});}
 void OrbiPomRuntime::highScore(std::int64_t score){auto&i=*impl_;i.thread();i.requestedHighScore=score;i.command([&]{const std::array args{JS_NewInt64(i.context,score)};{auto result=i.call(Method::highScore,args);}i.refresh();});}
+void OrbiPomRuntime::prepare(){auto&i=*impl_;i.thread();if(i.runtime||i.faulted||i.worker.joinable())return;
+    // A thread that cannot start leaves the boot to the first command, as before.
+    try{auto boot=std::make_unique<Boot>();i.worker=std::thread([&i,raw=boot.get()]{bootInto(*raw,i.options);i.prepared.store(true,std::memory_order_release);});i.pending=std::move(boot);}catch(const std::system_error&){}}
+bool OrbiPomRuntime::ready()const noexcept{const auto&i=*impl_;return !i.worker.joinable()||i.prepared.load(std::memory_order_acquire);}
 OrbiPomRuntimeStats OrbiPomRuntime::stats()const{auto&i=*impl_;i.thread();auto result=i.counters;result.initialized=i.context!=nullptr;result.faulted=i.faulted;result.snapshotCapacityBytes=(i.published.bodies.capacity()+i.scratch.bodies.capacity())*sizeof(OrbiPomBody)+(i.published.selectedBodyIDs.capacity()+i.scratch.selectedBodyIDs.capacity())*sizeof(std::int64_t);if(i.runtime){JSMemoryUsage memory{};JS_ComputeMemoryUsage(i.runtime,&memory);result.heapBytes=std::size_t(std::max<std::int64_t>(0,memory.malloc_size));}return result;}
 std::size_t OrbiPomRuntime::residentBytes()const{const auto s=stats();return s.heapBytes+s.snapshotCapacityBytes;}
 std::string OrbiPomRuntime::evaluateForTesting(std::string_view script){auto&i=*impl_;std::string output;i.command([&]{Value result(i.context,JS_Eval(i.context,std::string(script).c_str(),script.size(),"isolated-orbipom-test",JS_EVAL_TYPE_GLOBAL));i.checked(result.value);Value json(i.context,JS_JSONStringify(i.context,result.value,JS_UNDEFINED,JS_UNDEFINED));i.checked(json.value);if(!JS_IsUndefined(json.value)){CString text(i.context,json.value);if(!text.bytes)throw std::runtime_error(i.exception());if(text.size>128*1024)throw std::runtime_error("Test result exceeds fixture budget");output.assign(text.bytes,text.size);}i.refresh();});return output;}

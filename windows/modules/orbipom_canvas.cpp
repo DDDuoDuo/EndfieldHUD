@@ -289,7 +289,12 @@ OrbiPomCanvas::~OrbiPomCanvas() {
 // --- Lifecycle and clock (:95-155) ----------------------------------------------------
 void OrbiPomCanvas::didActivate() {
     foreground_ = foregroundProvider_ ? foregroundProvider_() : true;
-    if (!session_->hasRuntime() || session_->snapshot().state == "idle") startGame(false);
+    // The first game's VM boots off this thread (178 KB of JavaScript, 10-25 ms
+    // that froze the first showing): the game starts on the frame that finds
+    // it ready (wake), still inside the module's entrance.
+    booting_ = (!session_->hasRuntime() || session_->snapshot().state == "idle") && !session_->prepare();
+    bootCheck_ = now() + 1. / 60;
+    if (!booting_ && (!session_->hasRuntime() || session_->snapshot().state == "idle")) startGame(false);
     lastSkillUses_ = session_->snapshot().skillUseCount; lastState_ = session_->snapshot().state;
     if (session_->error()) showError();
     reconcileClock();
@@ -334,11 +339,19 @@ void OrbiPomCanvas::reconcileClock() {
     render();
 }
 std::optional<double> OrbiPomCanvas::nextWakeTime(double) const {
+    if (booting_ && isActive()) return bootCheck_;
     if (!timer_) return std::nullopt;
     return *timer_ + timerInterval_;
 }
 void OrbiPomCanvas::wake(double now) {
     env().now = std::max(env().now, now);
+    if (booting_) {
+        bootCheck_ = now + 1. / 60;
+        if (!isActive() || !session_->prepare()) return;
+        booting_ = false;
+        if (!session_->hasRuntime() || session_->snapshot().state == "idle") startGame(false);
+        return;
+    }
     if (!timer_) return;
     const double elapsed = now - *timer_;
     timer_ = now;

@@ -68,6 +68,7 @@ public:
     bool restartConfirmation() const noexcept { return restartConfirmation_; }
     bool rulesPresented() const noexcept { return rulesPresented_; }
     bool hasFrameTimer() const noexcept { return timer_.has_value(); }
+    bool booting() const noexcept { return booting_; }
     std::size_t bodyLayerCount() const noexcept { return bodies_.size(); }
     // Harness: false keeps the clock from scheduling ticks (the Mac's
     // automaticallySchedulesFrames); tests then call advance themselves.
@@ -117,6 +118,8 @@ private:
     OrbiPomSession* session_;
     std::function<bool()> foregroundProvider_;
     bool foreground_{true}, lowPower_{}, restartConfirmation_{}, rulesPresented_{}, pointerPressed_{};
+    bool booting_{};                        // the first game waits for its VM's boot (didActivate, wake)
+    double bootCheck_{};                    // while booting: the next frame that checks the boot
     std::optional<double> timer_;           // the last tick (the Timer's lastTime) while the clock runs
     double timerInterval_{};
     design::Point keyboardPoint_{115, 120};

@@ -19,6 +19,7 @@
 #include <iterator>
 #include <map>
 #include <set>
+#include <thread>
 #include <tlhelp32.h>
 #include <psapi.h>
 #include <uiautomation.h>
@@ -737,6 +738,8 @@ int Application::Impl::runHiddenVerification(){
                         const auto tick=[&](double t){(void)gameModuleOwner->deadline(t);present(t,true);};
                         need(gameSession&&game->isActive(),"Minigame shares the selected design module surface");
                         if(cycle==0){
+                            // The first game's VM boots off this thread; the canvas starts it on its next tick.
+                            for(unsigned n=0;game->booting()&&!gameSession->prepare()&&n<10000;++n)std::this_thread::sleep_for(std::chrono::milliseconds(1));tick(time+.68);
                             need(gameSession->hasRuntime()&&gameSession->snapshot().isPlaying()&&!gameSession->error()&&game->hasFrameTimer()&&!gameSession->manuallyPaused(),
                                  "Showing the minigame starts the bundled unchanged engine on its clock");
                             need(gameSession->bestScore()==71&&gameSession->snapshot().highScore==71,"Original best-score key loads from the isolated shared preferences");
