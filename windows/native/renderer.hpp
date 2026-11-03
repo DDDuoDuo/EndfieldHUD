@@ -65,7 +65,15 @@ struct TextureData {
     // identity while rectangles of its texels are replaced. Otherwise the
     // texture is immutable and every revision creates it again.
     bool updatable{};
+    // Every texel's alpha is 255 (the producer guarantees it, e.g. a bitmap
+    // painted over an opaque background): premultiplying keeps an opaque sRGB
+    // or encoded-sRGB texel's bytes, so such a texture is created from these
+    // bytes as they are, without the conversion copy (a linear one converts).
+    bool opaque{};
 };
+// A texture created off the UI thread (Renderer::textureFactory), opaque here.
+class WorkerTexture;
+using TextureFactory = std::function<std::shared_ptr<const WorkerTexture>(const TextureData&)>;
 struct NativeGroupTarget {
     core::Rect localBounds;
     double pixelsPerPoint{1};
@@ -200,6 +208,7 @@ struct RendererStats {
     // CPU seconds inside draw() (Present excluded), setDrawList and setTexture
     // (restoreTexture included).
     double drawSeconds{},drawListSeconds{},textureUploadSeconds{};
+    std::uint64_t preparedTextureInstalls{}; // setWorkerTexture: textures created on a worker
     // parkTexture/restoreTexture: copies held now (textures and their bytes),
     // textures parked, restored, copies dropped (ten-minute release, clear,
     // reset, new device), and the CPU seconds parking and restoring took.
@@ -381,6 +390,16 @@ public:
     bool sourcePassEnabled()const noexcept;
     bool setMesh(std::string sourceID, std::uint64_t revision, MeshData mesh);
     bool setTexture(std::string sourceID, std::uint64_t revision, TextureData texture);
+    // The device's free-threaded resource creation for a worker: the function
+    // creates a texture (updatable or immutable) from TextureData on any thread (conversion
+    // and the driver's copy happen there; empty while no device exists or it
+    // is suspended). setWorkerTexture installs it like setTexture without
+    // that work on the UI thread, only on the device that created it
+    // (preparedOnDevice; otherwise use setTexture). A prepared texture keeps
+    // its device alive: holders drop it once installed or obsolete.
+    TextureFactory textureFactory() const;
+    bool preparedOnDevice(const WorkerTexture&) const noexcept;
+    bool setWorkerTexture(std::string sourceID, std::uint64_t revision, const std::shared_ptr<const WorkerTexture>&);
     // Replaces the texels of one rectangle of an updatable texture (created
     // by setTexture with TextureData::updatable) in place: same identity,
     // same GPU resource, no draw-list or group rebinding beyond marking the
@@ -432,6 +451,11 @@ public:
     // In-use output cannot be removed. Group-held local resource references
     // likewise prevent direct mesh/texture removal until replaced/cleared.
     bool removeNativeGroup(const std::string& id);
+    // Renders the group's target while no published draw shows it yet (at
+    // most two such groups per draw()), e.g. while a fade-in waits at opacity
+    // 0, so its first visible frame only composites it. Default false: only
+    // groups a visible draw samples render. False when no such group exists.
+    bool setNativeGroupRenderAhead(const std::string& id, bool ahead);
     // Uploads changed object constants only here. Pointer/camera updates never
     // recreate mesh/texture/object buffers or run layout/bitmap generation.
     // Failure while updating existing uniforms resets the renderer; callers

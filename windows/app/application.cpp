@@ -483,8 +483,8 @@ void Application::Impl::construct(){
         windowOptions.pixelHeight=static_cast<std::uint32_t>(bounds.bottom-bounds.top);
     }
     if(!visibleMode()){windowOptions.pixelWidth=args.benchmarkWidth;windowOptions.pixelHeight=args.benchmarkHeight;
-        // The idle trace schedules frames for its never-shown window at the traced display refresh.
-        if(!args.idleTrace.empty()){windowOptions.offscreenScheduling=true;windowOptions.refreshRate=args.idleTraceRefreshRate;}}
+        // The idle and animation traces schedule frames for their never-shown window at the traced display refresh.
+        if(realClockTrace()){windowOptions.offscreenScheduling=true;windowOptions.refreshRate=args.idleTraceRefreshRate;}}
     host.create(windowOptions,callbacks());metrics=host.metrics();updateContentScale();startup.mark("hidden-window");
     {gpu::RendererOptions rendererOptions{args.warp?gpu::Driver::warpForTests:gpu::Driver::hardware,args.shader,visibleMode()?gpu::RenderTarget::composition:gpu::RenderTarget::offscreenForTests,!args.dataRoot.empty()};
      // The HUD submits a few hundred quads per frame from one thread: the
@@ -2262,6 +2262,9 @@ bool Application::Impl::present(double time,bool submit){
     const auto noteChromeSettings=chromeSettings(notes?notes->selected():core::Module::power);
     if(notes&&chromePlan&&chromePlan->projection().center){
         auto stage=probe.measure(LiveProbe::notesPose);
+        // The design raster density is measured only on the settled HUD, never
+        // on the deploying or retracting centre plane (DesignOverlayOwner::holdDensity).
+        if(designOverlay)designOverlay->holdDensity(closing||session->phase()!=core::VisibilityPhase::visible);
         // Notes first: it owns the module presentation sample every other
         // owner reads in this same frame.
         const auto opacity=static_cast<float>(canvasOpacity(time));

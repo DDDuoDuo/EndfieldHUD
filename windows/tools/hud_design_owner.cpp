@@ -55,6 +55,7 @@ struct DesignOwnerCore::Impl {
         core::Projection projection;
         std::optional<gpu::ModuleSurfacePose> pose; // presented this frame (drawn and hit)
         bool shown{}, active{}, input{}, parkWanted{};
+        bool openedPose{};                          // posed since the HUD's opening (its first frame is past)
         std::optional<double> entrance;             // ModuleEntrance::start played
         std::uint64_t synced{};                     // canvas contentRevision the scene holds
         Slot(std::unique_ptr<d::Canvas> c, gpu::LayerRasterizer& r, const gpu::LayerRasterOptions& o, const DesignOwnerOptions& options)
@@ -166,7 +167,7 @@ void DesignOwnerCore::setOverlayVisible(bool value, double t) {
     i.clock(t);
     if (i.overlay == value) return;
     i.overlay = value;
-    if (value) { for (auto& s : i.slots) s->parkWanted = false; return; }
+    if (value) { for (auto& s : i.slots) { s->parkWanted = false; s->openedPose = false; } return; }
     i.cancel();
     i.pointer.reset();
     // The HUD closes: the shown canvas leaves (popups closed, editing
@@ -218,7 +219,11 @@ void DesignOwnerCore::update(const app::ModuleFrame& frame) {
         const auto& p = s.surface.pose();
         s.projection = core::Projection::viewport(camera * p.contentWorld, i.metrics.pixelWidth, i.metrics.pixelHeight);
         if (!attached) continue; // prepared, never drawn or hit
-        s.scene->updatePose({p.contentWorld, p.opacity, i.time, p.hostMasks(), p.shutter});
+        // The opening's delay (the canvas at opacity 0 while the HUD deploys):
+        // from its second frame the scene prepares the groups its fade-in
+        // draws through (the first frame carries the opening's own work).
+        s.scene->updatePose({p.contentWorld, p.opacity, i.time, p.hostMasks(), p.shutter, s.openedPose && i.overlay && frame.opacity <= 0});
+        s.openedPose = true;
         s.pose = p;
         s.parkWanted = false;
         if (s.active && i.fields) {

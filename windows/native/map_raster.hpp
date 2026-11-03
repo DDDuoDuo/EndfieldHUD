@@ -1,6 +1,7 @@
 #pragma once
 #include "native/map_painter.hpp"
 #include "app/utility_executor.hpp"
+#include "native/renderer.hpp"
 
 namespace endfield::native {
 // Event/deadline owner equivalent to WorldMapRasterController. Borrowed executor
@@ -31,6 +32,18 @@ public:
     const std::optional<modules::MapRasterFrame>&frame()const noexcept;
     std::shared_ptr<const MapPaintImage>detail()const noexcept;
     std::shared_ptr<const MapPaintImage>backdrop()const noexcept;
+    // The worker also creates the detail's and backdrop's GPU textures
+    // (Renderer::textureFactory, asked at each paint's submission), so the UI
+    // thread only installs them (Renderer::setWorkerTexture). Null without a
+    // factory, when creation failed or for another image; dropped with the images.
+    void setTextureFactory(std::function<TextureFactory()>);
+    std::shared_ptr<const WorkerTexture>detailTexture()const noexcept;
+    std::shared_ptr<const WorkerTexture>backdropTexture()const noexcept;
+    // An updatable white alpha texture of side x side texels made on the same
+    // worker (the Map's host cut before its plates are painted in, so its first
+    // presentation only repaints the plates' texels). take: once, then null.
+    void requestWhiteTexture(unsigned side);
+    std::shared_ptr<const WorkerTexture>takeWhiteTexture(unsigned side);
     struct Stats {std::uint64_t submitted{},completed{},published{},discarded{},failed{},backpressure{},cacheReleases{};bool painting{},waiting{},active{},interacting{};double cooldown{.125};};
     Stats stats()const noexcept;
 private:struct Impl;std::shared_ptr<Impl>impl_;

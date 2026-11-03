@@ -87,6 +87,11 @@ struct NativeDesignScenePose {
     double time{};
     std::span<const PlaneMask> ownerMasks;    // at most 4 (the host clip is OFF for design screens)
     std::optional<PlaneShutter> shutter;      // never for directional switches; kept for symmetry
+    // The host is about to fade the module in from opacity 0 (the opening's
+    // .20 s delay, core::source::DesktopChromeTiming): the parts that will fade
+    // through a group take it now, a few per frame while nothing shows, so the
+    // first visible frame of the fade allocates and renders no group target.
+    bool prepareFade{};
 };
 struct NativeDesignSceneStats {
     std::uint64_t generations{}, emits{}, partsReused{}, surfacesUpdated{}, partsLoaded{}, poses{}, lazyPaints{}, lazyReleases{};

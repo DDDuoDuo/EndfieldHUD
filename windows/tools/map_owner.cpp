@@ -1,4 +1,5 @@
 #include "tools/map_owner.hpp"
+#include <utility>
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -39,7 +40,7 @@ struct MapOwner::Impl {
     std::unique_ptr<gpu::NativeMapRaster> raster;
     std::unique_ptr<gpu::NativeMapScene> scene;
     app::ClientMetrics metrics;
-    bool alive{true}, ready{}, posed{}, rasterActive{}, overlay{true}, prewarming{}, releasePending{};
+    bool alive{true}, ready{}, posed{}, rasterActive{}, overlay{true}, prewarming{}, releasePending{}, textureFactory{};
     double time{};
     std::uint64_t cameraRevision{}, gestureRevision{}, playerBytes{};
     modules::MapColor accent{};
@@ -251,6 +252,8 @@ bool MapOwner::deadline(double t) {
 }
 void MapOwner::upload(gpu::Renderer& r) {
     auto& i = *impl_;
+    // The terrain's textures are created on the painter's worker (the renderer outlives the owner).
+    if (!std::exchange(i.textureFactory, true)) i.raster->setTextureFactory([&r] { return r.textureFactory(); });
     i.core->upload(r);
     i.cutValid = false;
     // Hidden on another module: the host cut goes once no published draw samples it.

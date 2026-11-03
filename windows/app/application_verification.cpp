@@ -14,6 +14,7 @@
 #include <map>
 #include <set>
 #include <tlhelp32.h>
+#include <psapi.h>
 #include <uiautomation.h>
 #include <wrl/client.h>
 
@@ -400,9 +401,120 @@ int Application::Impl::runIdleTrace(){
     return 0;
 }
 
+// watch_session_preview --animation-trace: the production owner with the
+// module coverage inputs, hidden, on the REAL clock through the production
+// frame scheduling (as --idle-trace: offscreen hardware renderer, finite
+// motion paced at idleTraceRefreshRate, the laptop's 165 Hz). Every frame of
+// the openings and closings is recorded: its interval, the main thread's busy
+// time (thread cycles), present()'s stages and owners, and what it uploaded,
+// rasterized or rendered. Openings: the session's first (after the launch
+// prewarm), four warm reopenings, one after the closed HUD's graphics were
+// released (the grace, --idle-trace-grace) and one after that; with
+// --animation-trace-modules also two reopenings on each of the listed modules.
+// Numbers and owner/module names only.
+int Application::Impl::runAnimationTrace(){
+    if(args.animationTrace.empty())throw std::logic_error("Animation trace requires its output");
+    const auto clock=[&]{const double t=hostTime(OverlayHost::clockNow());hiddenClock=std::max(hiddenClock,t);return t;};
+    diagnosticFinished=true;probe.enabled=true;
+    // Main-thread busy time: thread cycles, calibrated against the QPC clock.
+    const auto cycles=[]{ULONG64 c{};QueryThreadCycleTime(GetCurrentThread(),&c);return double(c);};
+    double cyclesPerMS{};{const double s=OverlayHost::clockNow();const double c0=cycles();while(OverlayHost::clockNow()-s<.05){}cyclesPerMS=(cycles()-c0)/((OverlayHost::clockNow()-s)*1000);}
+    const auto pageFaults=[]{PROCESS_MEMORY_COUNTERS m{};m.cb=sizeof m;return GetProcessMemoryInfo(GetCurrentProcess(),&m,sizeof m)?std::int64_t(m.PageFaultCount):std::int64_t{};};
+    const auto snapshot=[&]{return Snapshot{renderer.stats(),renderer.sourceGraphicsStats(),rasterizer.stats(),session->frameStats(),session->stats()};};
+    const auto pump=[&](double duration,const std::function<bool()>&until,const std::function<void()>&onFrame){
+        const double end=OverlayHost::clockNow()+duration;
+        for(;;){const double left=end-OverlayHost::clockNow();if(left<=0||(until&&until()))return;
+            const auto frames=host.stats().frames;
+            need(host.pumpOnce(static_cast<std::uint32_t>(std::ceil(left*1000))),"The traced host stopped");
+            if(host.stats().frames!=frames&&onFrame)onFrame();}
+    };
+    // Production selects Map at construction and applies the preference
+    // record; the launch prewarm and the post-launch work finish first.
+    double t=clock();
+    if(notes&&notes->selected()!=core::Module::map)notes->select(core::Module::map,t);
+    configuration.set("ambientAnimation",true);configurationPending=true;applyConfiguration(t);
+    prewarm();if(utility){utility->waitIdle();if(longWork)longWork->waitIdle();utilityCompleted();}
+    pump(2,{},{});
+    const double period=1000./args.idleTraceRefreshRate;
+    constexpr std::array stageIds{LiveProbe::prepare,LiveProbe::backdrop,LiveProbe::sourcePose,LiveProbe::materials,LiveProbe::nativeLabels,LiveProbe::notesPose,LiveProbe::publication,LiveProbe::draw,LiveProbe::message};
+    constexpr std::array stageNames{"prepare","backdrop","sourcePose","materials","nativeLabels","notesPose","publication","draw","message"};
+    const auto quantile=[](std::vector<double> v,double p){if(v.empty())return 0.;std::sort(v.begin(),v.end());return v[std::min(v.size()-1,static_cast<std::size_t>(std::ceil(p*double(v.size()))-1))];};
+    const auto opened=[&]{return lifecycle.phase()==core::SystemOverlayPhase::open;};
+    const auto closed=[&]{return lifecycle.phase()==core::SystemOverlayPhase::closed&&session->phase()==core::VisibilityPhase::concealed;};
+    Json::Array segments;
+    // One opening or closing as the summon hotkey asks for it, recorded until
+    // it completes (and `tail` seconds more, outside the statistics).
+    const auto segment=[&](const std::string&name,bool opening,double tail){
+        auto previous=snapshot();const auto first=previous;auto timings=probe.timings;auto owners=probe.owners;std::size_t ownerCount=probe.ownerCount;
+        const double start=OverlayHost::clockNow();double at=start,busyAt=cycles();std::int64_t faultsAt=pageFaults();
+        perform(lifecycle.toggle(),clock());if(opening)host.show(false);host.setFrameDemand(demand(clock()));host.invalidate();
+        const double requestMS=(OverlayHost::clockNow()-start)*1000;
+        double doneAt=-1;Json::Array rows;std::vector<double>intervals,busy,present;
+        const auto finished=[&]{return opening?opened():closed();};
+        pump(10,[&]{return doneAt>=0&&OverlayHost::clockNow()-doneAt>=tail;},[&]{
+            const double now=OverlayHost::clockNow();const double c=cycles();const auto f=pageFaults();const auto next=snapshot();
+            Json::Object stages;for(std::size_t n=0;n<stageIds.size();++n){const double ms=probe.timings[stageIds[n]].total-timings[stageIds[n]].total;if(ms>=.05)stages[stageNames[n]]=ms;}
+            std::vector<std::pair<double,std::string>> spent;
+            for(std::size_t n=0;n<probe.ownerCount;++n){const auto&o=probe.owners[n];double ms=o.update.total+o.upload.total;if(n<ownerCount)ms-=owners[n].update.total+owners[n].upload.total;if(ms>=.1)spent.emplace_back(ms,std::string(o.name));}
+            std::sort(spent.begin(),spent.end(),std::greater<>());Json::Object byOwner;for(std::size_t n=0;n<spent.size()&&n<6;++n)byOwner[spent[n].second]=spent[n].first;
+            const double interval=(now-at)*1000,cpu=(c-busyAt)/cyclesPerMS,presentMS=probe.timings[LiveProbe::frame].total-timings[LiveProbe::frame].total;
+            const bool after=doneAt>=0;
+            if(!after){intervals.push_back(interval);busy.push_back(cpu);present.push_back(presentMS);}
+            const auto&a=previous;const auto&b=next;
+            rows.push_back(Json::Object{{"atMS",(now-start)*1000},{"intervalMS",interval},{"busyMS",cpu},{"presentMS",presentMS},{"afterDone",after},{"stages",std::move(stages)},{"owners",std::move(byOwner)},
+                {"textureUploads",std::int64_t(b.renderer.textureUploads-a.renderer.textureUploads)},{"textureUploadMS",(b.renderer.textureUploadSeconds-a.renderer.textureUploadSeconds)*1000},
+                {"meshUploads",std::int64_t(b.renderer.meshUploads-a.renderer.meshUploads)},{"nativeGroupRenders",std::int64_t(b.renderer.nativeGroupRenders-a.renderer.nativeGroupRenders)},
+                {"drawListMS",(b.renderer.drawListSeconds-a.renderer.drawListSeconds)*1000},{"parkedRestores",std::int64_t(b.renderer.parkedRestores-a.renderer.parkedRestores)},
+                {"rasterizations",std::int64_t(b.raster.rasterizations-a.raster.rasterizations)},{"textLayouts",std::int64_t(b.raster.textLayoutsCreated-a.raster.textLayoutsCreated)},
+                {"layoutBuilds",std::int64_t(b.frame.layoutBuilds-a.frame.layoutBuilds)},{"localImageBuilds",std::int64_t(b.frame.localImageBuilds-a.frame.localImageBuilds)},
+                {"sourcePoses",std::int64_t(b.session.fullPoses-a.session.fullPoses)},{"pageFaults",f-faultsAt},
+                {"designDensity",designOverlay?designOverlay->context().boxScale():0.}});
+            at=now;busyAt=c;faultsAt=f;previous=next;timings=probe.timings;owners=probe.owners;ownerCount=probe.ownerCount;
+            if(finished()&&doneAt<0)doneAt=now;
+        });
+        if(!opening)pump(.05,{},{}); // the concealment's own work after the last frame
+        need(finished(),opening?"The traced HUD opened":"The traced HUD closed");
+        double dropped=0;std::int64_t late{};for(const double i:intervals){dropped+=std::max(0.,std::round(i/period)-1);late+=i>1.5*period;}
+        const auto last=snapshot();
+        std::cout<<"Animation trace "<<name<<": "<<intervals.size()<<" frames, first "<<(intervals.empty()?0.:intervals.front())<<" ms, p95 "<<quantile(intervals,.95)<<" ms, max "<<quantile(intervals,1)<<" ms, late "<<late<<"\n";
+        segments.push_back(Json::Object{{"segment",name},{"requestMS",requestMS},{"frames",std::int64_t(intervals.size())},{"durationMS",(doneAt>0?doneAt-start:0)*1000},
+            {"firstFrameMS",intervals.empty()?0.:intervals.front()},{"intervalP50",quantile(intervals,.5)},{"intervalP95",quantile(intervals,.95)},{"intervalP99",quantile(intervals,.99)},{"intervalMax",quantile(intervals,1)},
+            {"busyP50",quantile(busy,.5)},{"busyP95",quantile(busy,.95)},{"busyMax",quantile(busy,1)},{"presentP95",quantile(present,.95)},
+            {"lateFrames",late},{"droppedRefreshes",dropped},
+            {"textureUploads",std::int64_t(last.renderer.textureUploads-first.renderer.textureUploads)},{"rasterizations",std::int64_t(last.raster.rasterizations-first.raster.rasterizations)},
+            {"deviceResumes",std::int64_t(last.renderer.deviceResumes-first.renderer.deviceResumes)},{"rows",std::move(rows)}});
+    };
+    const auto cycle=[&](const std::string&name){segment(name+"-open",true,.25);pump(1,{},{});segment(name+"-close",false,0);};
+    cycle("first");
+    for(unsigned n=0;n<4;++n){pump(1.5,{},{});cycle("warm-"+std::to_string(n));}
+    pump(closedGraphicsGrace()+1.5,{},{});need(renderer.deviceSuspended(),"The closed HUD's graphics are released after the grace");
+    cycle("released");pump(1.5,{},{});cycle("after-released");
+    // Each module: opened on Map, switched to it, closed, then two traced reopenings on it.
+    if(args.animationTraceModules)for(const auto module:{core::Module::clipboard,core::Module::eventLog,core::Module::notes,core::Module::volume,core::Module::workMode,core::Module::system,
+            core::Module::archive,core::Module::calendar,core::Module::activityMonitor,core::Module::storage,core::Module::fileShelf,core::Module::power,core::Module::profile,core::Module::nowPlaying}){
+        const std::string id(core::moduleIdentifier(module));
+        const auto toggle=[&](const std::function<bool()>&until){perform(lifecycle.toggle(),clock());host.show(false);host.setFrameDemand(demand(clock()));host.invalidate();pump(10,until,{});};
+        pump(1,{},{});toggle(opened);
+        perform(lifecycle.selectModule(module),clock());host.setFrameDemand(demand(clock()));host.invalidate();pump(1.5,{},{});
+        const bool selected=notes&&notes->selected()==module;
+        toggle(closed);need(closed(),"The traced HUD closed");
+        if(!selected){std::cout<<"Animation trace: "<<id<<" not selectable\n";continue;}
+        for(unsigned n=0;n<2;++n){pump(1.5,{},{});cycle("module-"+id+"-"+std::to_string(n));}
+    }
+    const Json report=Json::Object{{"schema",1},
+        {"scope","EndfieldHUD hidden animation trace: every frame of the openings and closings on the real clock through the production frame scheduling; numbers, owner and module names only"},
+        {"device",renderer.deviceInfo().name},{"refreshHz",args.idleTraceRefreshRate},{"closedGraphicsGraceSeconds",closedGraphicsGrace()},{"cyclesPerMillisecond",cyclesPerMS},
+        {"logicalWidth",metrics.width},{"logicalHeight",metrics.height},{"dpiScale",metrics.scale},{"contentScale",contentScale},{"segments",std::move(segments)}};
+    const std::size_t bound=32*1024*1024;ehud::data::detail::replaceFile(args.animationTrace,std::nullopt,report.encode(bound),bound);
+    std::cout<<"Wrote hidden animation trace\n";
+    shutdownVisible();
+    return 0;
+}
+
 int Application::Impl::runHiddenVerification(){
     if(args.mode!=ApplicationMode::hiddenBenchmark)throw std::logic_error("Hidden verification requires the hidden benchmark mode");
     if(!args.idleTrace.empty())return runIdleTrace();
+    if(!args.animationTrace.empty())return runAnimationTrace();
     if(!args.startupTrace.empty())return runStartupTrace();
     if(!args.contentionTrace.empty())return runContentionTrace();
     if(!args.memoryTrace.empty())return runMemoryTrace();

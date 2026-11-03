@@ -164,6 +164,13 @@ struct ApplicationOptions {
     // laptop's 165 Hz display), which the hidden session lacks.
     std::filesystem::path idleTrace;
     double idleTraceSeconds{30}, idleTraceRefreshRate{165};
+    // Hidden animation trace (watch_session_preview --animation-trace): the
+    // same owner and scheduling as the idle trace, recording every frame of
+    // the openings and closings (first, warm, after the graphics release and,
+    // with animationTraceModules, on each design module). Numbers and owner/
+    // module names only.
+    std::filesystem::path animationTrace;
+    bool animationTraceModules{};
     // How long the idle trace keeps the HUD closed before each closed window
     // and before its first opening (unset: just past the grace, so they
     // measure the released device; shorter: a closed HUD that still keeps it).

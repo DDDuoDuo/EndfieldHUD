@@ -35,7 +35,7 @@ struct MapScenePose {core::Matrix4 world;float opacity{1};double time{};std::spa
 // hostCutUploads: creations and in-place region updates of the host cut;
 // hostCutBytes: its GPU bytes resident now (an A8 alpha mask; 0 when released). groupPixels: the
 // retained group target's pixels at the current density.
-struct MapSceneStats {std::uint64_t imageUploads{},pinBuilds{},poses{},localUpdates{},hostCutUploads{},densityChanges{};std::size_t visiblePins{},pulsingPins{},hostCutBytes{},cutoutMaskBytes{},groupPixels{};};
+struct MapSceneStats {std::uint64_t imageUploads{},preparedImages{},pinBuilds{},poses{},localUpdates{},hostCutUploads{},densityChanges{};std::size_t visiblePins{},pulsingPins{},hostCutBytes{},cutoutMaskBytes{},groupPixels{};};
 class NativeMapScene final {
 public:
     NativeMapScene(modules::MapState&,NativeMapRaster&,LayerRasterizer&,LayerRasterOptions,MapPlayerImages,MapAppearance={});

@@ -316,6 +316,7 @@ struct Application::Impl {
     int runStartupTrace();      // hidden --startup-trace: cold and warm openings on the synthetic clock
     int runContentionTrace();   // hidden --contention-trace: frame pacing at normal and raised priority
     int runIdleTrace();         // hidden --idle-trace: closed and open idle on the real clock (wake-ups, frames, CPU)
+    int runAnimationTrace();    // hidden --animation-trace: every frame of the openings and closings on the real clock
     void writeStartupTrace();   // production ENDFIELDHUD_STARTUP_TRACE: once, numbers only
     // --- memory trace (app/application_memory.cpp) --------------------------------
     int runMemoryTrace();       // hidden --memory-trace: launch, cold opening, every module, closing, cycles
@@ -350,7 +351,9 @@ struct Application::Impl {
     std::optional<double> preparedGraphicsUntil;
     // Frame scheduling runs on the live clock: visible modes and the hidden
     // idle trace (owner deadlines, content refreshes).
-    bool liveScheduling() const noexcept { return visibleMode() || !args.idleTrace.empty(); }
+    // The hidden idle and animation traces run on the real clock through the production scheduling.
+    bool realClockTrace() const noexcept { return !args.idleTrace.empty() || !args.animationTrace.empty(); }
+    bool liveScheduling() const noexcept { return visibleMode() || realClockTrace(); }
     Json memorySnapshot(std::string_view stage, bool threads);
     void recordMemory(std::string_view stage, bool threads); // production: also writes the report
     void writeMemoryTrace();

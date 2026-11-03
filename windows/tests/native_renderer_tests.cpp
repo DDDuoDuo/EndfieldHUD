@@ -18,6 +18,7 @@
 #include <iostream>
 #include <limits>
 #include <string>
+#include <thread>
 
 using namespace endfield::native;
 // Internal implementation seam: exercise the exact bytes supplied to D3D,
@@ -154,6 +155,49 @@ void textureStorage(Renderer& renderer,DrawObject& object){
     check(renderer.configureNativeGroup("storage.linear-group",linearTarget,std::span(&object,1))&&renderer.stats().nativeGroupBytes==groups.nativeGroupBytes+16*16*8,"A linear group keeps its half-float target");
     check(renderer.removeNativeGroup("storage.linear-group"),"The linear group retires");
     check(renderer.removeTexture("storage.encoded")&&renderer.removeTexture("storage.linear")&&!renderer.textureRevision("storage.encoded")&&renderer.stats().resourceBytes==before.resourceBytes,"Retired textures leave no bytes and no revision");
+    // An opaque texture (TextureData::opaque) is created from its own bytes: it
+    // presents exactly as the converted path does, in both 8-bit color spaces.
+    const std::array<std::uint8_t,16> opaqueTexels{200,100,50,255, 200,100,50,255, 200,100,50,255, 200,100,50,255};
+    for(const auto space:{TextureColorSpace::encodedSRGB,TextureColorSpace::sRGB}){
+        check(renderer.setTexture("storage.converted",1,{2,2,opaqueTexels,space,TextureFilter::nearest})&&renderer.setTexture("storage.opaque",1,{2,2,opaqueTexels,space,TextureFilter::nearest,false,true}),"Opaque textures install either way");
+        check(renderer.stats().resourceBytes==before.resourceBytes+2*16,"An opaque texture costs the same four bytes per texel");
+        object.textureID="storage.converted";renderer.setDrawList(std::span(&object,1));renderer.draw(false);const auto converted=renderer.readback().pixels;
+        object.textureID="storage.opaque";renderer.setDrawList(std::span(&object,1));renderer.draw(false);
+        check(renderer.readback().pixels==converted,"An opaque texture created from its bytes presents exactly as the converted one");
+        renderer.clearDrawList();check(renderer.removeTexture("storage.converted")&&renderer.removeTexture("storage.opaque"),"The opaque textures retire");
+    }
+    // A texture created on another thread (textureFactory) installs without
+    // the UI thread's conversion and presents exactly as setTexture's.
+    {const auto factory=renderer.textureFactory();check(bool(factory),"The live device offers a texture factory");
+        std::shared_ptr<const WorkerTexture> prepared;std::thread worker([&]{prepared=factory({2,2,texels,TextureColorSpace::encodedSRGB,TextureFilter::nearest});});worker.join();
+        check(prepared&&renderer.preparedOnDevice(*prepared),"A texture made on a worker belongs to the live device");
+        const auto installs=renderer.stats().preparedTextureInstalls;
+        check(renderer.setTexture("storage.direct",1,{2,2,texels,TextureColorSpace::encodedSRGB,TextureFilter::nearest})&&renderer.setWorkerTexture("storage.prepared",1,prepared)&&
+              !renderer.setWorkerTexture("storage.prepared",1,prepared)&&renderer.stats().preparedTextureInstalls==installs+1,"A prepared texture installs once per revision");
+        check(renderer.stats().resourceBytes==before.resourceBytes+2*16&&renderer.textureRevision("storage.prepared")==std::optional<std::uint64_t>(1),"A prepared texture costs and reports like any other");
+        object.textureID="storage.direct";renderer.setDrawList(std::span(&object,1));renderer.draw(false);const auto direct=renderer.readback().pixels;
+        object.textureID="storage.prepared";renderer.setDrawList(std::span(&object,1));renderer.draw(false);
+        check(renderer.readback().pixels==direct,"A prepared texture presents exactly as setTexture's");
+        // An updatable one (the Map's white host cut) is then painted in place.
+        std::array<std::uint8_t,16> white{};white.fill(255);const std::array<std::uint8_t,4> clear{255,255,255,128};
+        std::shared_ptr<const WorkerTexture> paintable;std::thread painter([&]{paintable=factory({2,2,white,TextureColorSpace::sRGB,TextureFilter::linear,true});});painter.join();
+        check(paintable&&renderer.setWorkerTexture("storage.paintable",1,paintable)&&renderer.updateTexture("storage.paintable",2,0,0,{1,1,clear}),"An updatable texture made on a worker is painted in place");
+        renderer.clearDrawList();check(renderer.removeTexture("storage.direct")&&renderer.removeTexture("storage.prepared")&&renderer.removeTexture("storage.paintable"),"The prepared textures retire");
+        prepared.reset();paintable.reset();}
+    {check(renderer.setTexture("storage.direct",1,{2,2,texels,TextureColorSpace::encodedSRGB,TextureFilter::nearest}),"A texture for the group installs");object.textureID="storage.direct";
+        // A group rendered ahead fills its target while its output is at opacity 0;
+        // the first visible frame then only composites it.
+        check(renderer.configureNativeGroup("storage.ahead",encodedTarget,std::span(&object,1)),"A group to render ahead installs");
+        auto ahead=renderer.nativeGroupOutput("storage.ahead");ahead.opacity=0;renderer.setDrawList(std::span(&ahead,1));
+        const auto renders=renderer.stats().nativeGroupRenders;renderer.draw(false);
+        check(renderer.stats().nativeGroupRenders==renders,"A group no visible draw samples does not render");
+        check(renderer.setNativeGroupRenderAhead("storage.ahead",true)&&!renderer.setNativeGroupRenderAhead("storage.missing",true),"Render-ahead names an existing group");
+        renderer.draw(false);check(renderer.stats().nativeGroupRenders==renders+1,"A group rendered ahead fills its target at opacity 0");
+        ahead.opacity=1;renderer.setDrawList(std::span(&ahead,1));renderer.draw(false);
+        check(renderer.stats().nativeGroupRenders==renders+1,"Its first visible frame only composites the target");
+        pixel(renderer.readback(),16,16,{25,50,100,128},1,"The target rendered ahead carries the same premultiplied bytes");
+        renderer.clearDrawList();check(renderer.removeNativeGroup("storage.ahead")&&renderer.removeTexture("storage.direct"),"The group and its texture retire");}
+    object.textureID.clear();
     // White wherever it covers (alpha masks, white text): one byte per
     // texel, read as premultiplied white (a,a,a,a) in every color space -
     // exactly its alpha, as color, as an alpha mask and in an encoded group.

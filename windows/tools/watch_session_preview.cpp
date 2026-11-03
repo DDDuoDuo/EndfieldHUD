@@ -34,7 +34,7 @@ namespace core=endfield::core;
 namespace {
 void need(bool value,const char*message){if(!value)throw std::runtime_error(message);}
 std::string utf8(const fs::path&value){const auto bytes=value.u8string();return {reinterpret_cast<const char*>(bytes.data()),bytes.size()};}
-struct Options {bool startupTraceCold{};double idleTraceSeconds{30},idleTraceRefresh{165};std::optional<double>idleTraceGrace,idleTraceClosed;fs::path idleTrace,memoryTrace,package,startupTrace,contentionTrace,packet,cache,shader,chrome,cursor,report,snapshots,watchBlur,notesData,notesFormatAssets,shelfData,liveDiagnostics,residentIcons,settingsAssets,mapGeography,mapPlayerAssets,orbipomAssets;std::string pin;bool visible{},warp{},runtimeInput{},coverage{},moduleCoverage{},sessionEndCoverage{},nativeClipboard{},clipboardFixture{},nativeActivity{},activityFixture{},nativeStorage{},storageFixture{},readerScrollTrace{},readerModule{},archiveModule{},calendarModule{},projectionModule{},volumeFixture{},eventLogFixture{},workModeFixture{},batteryFixture{};std::uint32_t benchmarkWidth{1280},benchmarkHeight{800};double benchmarkEpoch{};};
+struct Options {bool startupTraceCold{};double idleTraceSeconds{30},idleTraceRefresh{165};std::optional<double>idleTraceGrace,idleTraceClosed;fs::path idleTrace,animationTrace,memoryTrace,package,startupTrace,contentionTrace,packet,cache,shader,chrome,cursor,report,snapshots,watchBlur,notesData,notesFormatAssets,shelfData,liveDiagnostics,residentIcons,settingsAssets,mapGeography,mapPlayerAssets,orbipomAssets;std::string pin;bool animationTraceModules{},visible{},warp{},runtimeInput{},coverage{},moduleCoverage{},sessionEndCoverage{},nativeClipboard{},clipboardFixture{},nativeActivity{},activityFixture{},nativeStorage{},storageFixture{},readerScrollTrace{},readerModule{},archiveModule{},calendarModule{},projectionModule{},volumeFixture{},eventLogFixture{},workModeFixture{},batteryFixture{};std::uint32_t benchmarkWidth{1280},benchmarkHeight{800};double benchmarkEpoch{};};
 Options options(int argc,wchar_t**argv){
     need(argc>=5,"Usage: watch_session_preview packet-root compiled-scene hud.hlsl --benchmark new-report.json | --visible --watch-blur original-watch-blur.json [--chrome chrome.json] [--cursor-png original.png] [--compiled-sha sha256] [--snapshots new-directory] [--warp] [--runtime-input] [--benchmark-size width height] [--benchmark-epoch seconds] [--coverage] [--storage-fixture | --native-storage (visible)] [--activity-fixture | --native-activity (visible)]");
     Options o;o.packet=fs::absolute(argv[1]);o.cache=fs::absolute(argv[2]);o.shader=fs::absolute(argv[3]);
@@ -86,6 +86,10 @@ Options options(int argc,wchar_t**argv){
         else if(arg==L"--memory-trace"&&i+1<argc){need(o.memoryTrace.empty(),"Duplicate memory trace output");o.memoryTrace=fs::absolute(argv[++i]);}
         // Hidden only: closed and open idle of the same owner on the real clock (wake-ups, CPU and frames per window).
         else if(arg==L"--idle-trace"&&i+1<argc){need(o.idleTrace.empty(),"Duplicate idle trace output");o.idleTrace=fs::absolute(argv[++i]);}
+        // --animation-trace: every frame of the openings and closings (app/application.hpp
+        // animationTrace), on the idle trace's scheduling, refresh and grace options.
+        else if(arg==L"--animation-trace"&&i+1<argc){need(o.animationTrace.empty(),"Duplicate animation trace output");o.animationTrace=fs::absolute(argv[++i]);}
+        else if(arg==L"--animation-trace-modules"){need(!o.animationTraceModules,"Duplicate animation trace modules");o.animationTraceModules=true;}
         // --idle-trace-grace: the closed HUD's graphics grace (production: ten
         // minutes, app/application.hpp); --idle-trace-closed: how long the HUD
         // stays closed before the closed windows and the first opening.
@@ -109,9 +113,11 @@ Options options(int argc,wchar_t**argv){
     need(!o.startupTraceCold||!o.startupTrace.empty(),"A cold startup trace (without the launch prewarm) needs --startup-trace");
     need(o.contentionTrace.empty()||(o.report.empty()&&o.startupTrace.empty()&&o.memoryTrace.empty()&&!o.moduleCoverage&&!o.coverage&&!o.warp&&!fs::exists(o.contentionTrace)),"A contention trace is its own hidden hardware run with a new output");
     need(o.memoryTrace.empty()||(o.moduleCoverage&&o.report.empty()&&o.startupTrace.empty()&&!o.sessionEndCoverage&&!fs::exists(o.memoryTrace)),"A memory trace replaces the module coverage report with a new output");
-    need(!o.idleTrace.empty()||(!o.idleTraceGrace&&!o.idleTraceClosed),"The graphics grace and closed time are idle trace options");
+    need(!o.idleTrace.empty()||!o.animationTrace.empty()||(!o.idleTraceGrace&&!o.idleTraceClosed),"The graphics grace and closed time are idle trace options");
+    need(o.animationTrace.empty()||(o.moduleCoverage&&o.report.empty()&&o.startupTrace.empty()&&o.memoryTrace.empty()&&o.idleTrace.empty()&&!o.idleTraceClosed&&!o.sessionEndCoverage&&!fs::exists(o.animationTrace)),"An animation trace replaces the module coverage report with a new output");
+    need(!o.animationTraceModules||!o.animationTrace.empty(),"The animation trace modules option needs --animation-trace");
     need(o.idleTrace.empty()||(o.moduleCoverage&&o.report.empty()&&o.startupTrace.empty()&&o.memoryTrace.empty()&&!o.sessionEndCoverage&&!fs::exists(o.idleTrace)),"An idle trace replaces the module coverage report with a new output");
-    need(o.visible!=(!o.report.empty()||!o.startupTrace.empty()||!o.contentionTrace.empty()||!o.memoryTrace.empty()||!o.idleTrace.empty()),"Choose exactly one explicit visible or benchmark mode");need(!o.visible||!o.warp,"WARP is a hidden test mode only");
+    need(o.visible!=(!o.report.empty()||!o.startupTrace.empty()||!o.contentionTrace.empty()||!o.memoryTrace.empty()||!o.idleTrace.empty()||!o.animationTrace.empty()),"Choose exactly one explicit visible or benchmark mode");need(!o.visible||!o.warp,"WARP is a hidden test mode only");
     need(!o.visible||!o.watchBlur.empty(),"Visible preview requires the explicit source-pinned --watch-blur animation");
     need(!o.visible||(!o.coverage&&o.benchmarkEpoch==0&&o.benchmarkWidth==1280&&o.benchmarkHeight==800),"Coverage/epoch/size overrides are hidden-test only");
     need(o.liveDiagnostics.empty()||(o.visible&&!o.notesFormatAssets.empty()&&!fs::exists(o.liveDiagnostics)),"Live diagnostics require visible isolated Notes and a new output");
@@ -253,7 +259,7 @@ app::ApplicationOptions applicationOptions(const Options&o){
     a.nativeClipboard=o.nativeClipboard;a.clipboardFixture=o.clipboardFixture;a.nativeActivity=o.nativeActivity;a.activityFixture=o.activityFixture;a.nativeStorage=o.nativeStorage;a.storageFixture=o.storageFixture;
     a.volumeFixture=o.volumeFixture;a.eventLogFixture=o.eventLogFixture;a.workModeFixture=o.workModeFixture;a.batteryFixture=o.batteryFixture;
     a.moduleCoverage=o.moduleCoverage;a.coverage=o.coverage;a.readerScrollTrace=o.readerScrollTrace;a.sessionEndCoverage=o.sessionEndCoverage;
-    a.report=o.report;a.snapshots=o.snapshots;a.liveDiagnostics=o.liveDiagnostics;a.startupTrace=o.startupTrace;a.startupTraceWithoutPrewarm=o.startupTraceCold;a.contentionTrace=o.contentionTrace;a.memoryTrace=o.memoryTrace;a.idleTrace=o.idleTrace;a.idleTraceSeconds=o.idleTraceSeconds;a.idleTraceRefreshRate=o.idleTraceRefresh;a.idleTraceClosedSeconds=o.idleTraceClosed;if(o.idleTraceGrace)a.closedGraphicsGrace=*o.idleTraceGrace;
+    a.report=o.report;a.snapshots=o.snapshots;a.liveDiagnostics=o.liveDiagnostics;a.startupTrace=o.startupTrace;a.startupTraceWithoutPrewarm=o.startupTraceCold;a.contentionTrace=o.contentionTrace;a.memoryTrace=o.memoryTrace;a.idleTrace=o.idleTrace;a.animationTrace=o.animationTrace;a.animationTraceModules=o.animationTraceModules;a.idleTraceSeconds=o.idleTraceSeconds;a.idleTraceRefreshRate=o.idleTraceRefresh;a.idleTraceClosedSeconds=o.idleTraceClosed;if(o.idleTraceGrace)a.closedGraphicsGrace=*o.idleTraceGrace;
     a.benchmarkWidth=o.benchmarkWidth;a.benchmarkHeight=o.benchmarkHeight;a.benchmarkEpoch=o.benchmarkEpoch;
     // Development previews keep failures fatal so hidden coverage cannot pass
     // with a silently disabled module.
@@ -295,7 +301,7 @@ int wmain(int argc,wchar_t**argv){std::cout<<std::unitbuf;std::cerr<<std::unitbu
     int result{};
     {app::Application application(std::move(settings));result=args.visible?application.run():application.runHiddenVerification();}
     // A startup or memory trace runs no coverage steps: the coverage audits do not apply.
-    if(!args.startupTrace.empty()||!args.memoryTrace.empty()||!args.idleTrace.empty())return result;
+    if(!args.startupTrace.empty()||!args.memoryTrace.empty()||!args.idleTrace.empty()||!args.animationTrace.empty())return result;
     if(probe)need(probe->resize>0&&probe->appearance>0&&probe->opened>0&&probe->closed>0&&probe->updates>0&&probe->uploads>0&&probe->releases==1&&probe->contextResources,
         "A factory-added module owner did not receive its context and every shared lifecycle event");
     unsigned constructed{};
