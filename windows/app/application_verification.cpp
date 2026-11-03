@@ -594,7 +594,7 @@ int Application::Impl::runHiddenVerification(){
             }
             const auto finish=at(23+static_cast<double>(points.size()));session->pointerMove({},finish);close(finish);present(finish+.7,true);
         }
-        Json::Array moduleResults,areaModuleResults,areaPresentedModules;Json displayAdaptation,scrollArrow,recordingToggle,actionTiming;
+        Json::Array moduleResults,areaModuleResults,areaPresentedModules,areaTimings;Json displayAdaptation,scrollArrow,recordingToggle,actionTiming;
         // Module areas (app/module_owner.hpp): coverage steps and their checks.
         struct AreaCounts{unsigned steps{},checks{};};std::map<std::string,AreaCounts,std::less<>> areaCounts;
         double areaLatest{};
@@ -619,6 +619,7 @@ int Application::Impl::runHiddenVerification(){
             step.message=[&](std::uint32_t id,std::uintptr_t wParam,std::intptr_t lParam){
                 const NativeMessage m{host.hwnd(),id,wParam,lParam};
                 return registry.first(ModuleRegistry::Chain::message,[&](ModuleOwner&o,const ModuleRouting&){return o.message(m,hostTime(last));},"message")!=nullptr;};
+            step.timing=[&](Json row){areaTimings.push_back(std::move(row));};
             ++counts.steps;
             try{area.owner->coverage(step);}catch(const std::exception&e){throw std::runtime_error("Module area "+area.name+" coverage: "+e.what());}
             areaLatest=std::max(areaLatest,last);
@@ -1219,6 +1220,76 @@ int Application::Impl::runHiddenVerification(){
                     }
                     break;
                 }
+                // ---- Group b2: Shelf Open, Media Assembly (freeze sweep 9, 36-39) ----
+                // Work bounds of the second after each action (pages built, rasterizations).
+                // rc140 (new page ids on every rebuild): Media Assembly's import start, close
+                // and overwrite each rasterized the whole panel again, twice for close and
+                // more around an overwrite's reload.
+                const std::map<std::string,std::pair<std::int64_t,std::int64_t>,std::less<>> b2Bounds{};
+                const auto b2Bound=[&](const std::string&key){
+                    const auto bound=b2Bounds.find(key);if(bound==b2Bounds.end())return;auto&row=timings.back();
+                    const auto pages=row["secondPagesBuilt"].integer(),rasters=row["secondRasterizations"].integer();
+                    const bool within=pages<=bound->second.first&&rasters<=bound->second.second;row["withinBound"]=within;
+                    hostCheck(within,"The timed action "+key+" stays within its work bound ("+std::to_string(pages)+" of "+std::to_string(bound->second.first)+
+                        " pages, "+std::to_string(rasters)+" of "+std::to_string(bound->second.second)+" rasterizations)");};
+                const auto toast=[&]{const auto&t=designContext.overlay().toastState().current();return t?t->title:std::string();};
+                // A window of frames after an action that ends later (an export's progress display).
+                const auto timeWindow=[&](core::Module m,const char*name,double seconds,const std::function<bool()>&done){
+                    const auto raster0=rasterizer.stats();const auto pages0=designContext.pagesBuilt();double worst=0;bool finished=false;
+                    for(unsigned f=1;f<=unsigned(seconds*30)&&!finished;++f){const double t=time+double(f)/30;drainUtility(t);const auto f0=Clock::now();frameAt(t);worst=std::max(worst,milliseconds(f0));finished=done();}
+                    time+=seconds+.05;const auto raster1=rasterizer.stats();const auto pages1=designContext.pagesBuilt();
+                    timings.push_back(Json::Object{{"module",std::string(core::moduleIdentifier(m))},{"action",std::string(name)},{"ran",finished},
+                        {"actionMs",0.},{"frameMs",0.},{"clickFrameMs",0.},{"settleMaxFrameMs",worst},{"pagesBuilt",std::int64_t(0)},{"rasterizations",std::int64_t(0)},{"textLayouts",std::int64_t(0)},
+                        {"secondPagesBuilt",std::int64_t(pages1-pages0)},{"secondRasterizations",std::int64_t(raster1.rasterizations-raster0.rasterizations)},
+                        {"secondTextLayouts",std::int64_t(raster1.textLayoutsCreated-raster0.textLayoutsCreated)}});
+                    b2Bound(std::string(core::moduleIdentifier(m))+"."+name);};
+                // Shelf Open (hidden coverage opens through a synthetic Shell stand-in that takes
+                // 30 ms, never the Shell): the card's Open, then the host's action message.
+                if(shelf&&shelf->canvas()&&shelfModuleOwner&&registry.enabled(*shelfModuleOwner)&&!args.shelfDataRoot.empty()){
+                    const auto M=core::Module::fileShelf;auto*canvas=shelf->canvas();
+                    const auto file=args.shelfDataRoot.parent_path()/"freeze-probe-files"/"Synthetic open.txt";
+                    {std::ofstream out(file,std::ios::binary);out<<"Synthetic freeze probe file to open\n";}
+                    const auto utf8=file.u8string();const std::vector<std::string> one{std::string(reinterpret_cast<const char*>(utf8.data()),utf8.size())};
+                    if(showModule(M)&&shelf->importFiles(one,hostTime(time))){settleFor(20);
+                        // The Shelf's notices (an open's result) as the message loop delivers them.
+                        const auto pumpShelf=[&](double t){MSG msg{};while(PeekMessageW(&msg,static_cast<HWND>(host.hwnd()),tools::ShelfService::noticeMessage,tools::ShelfService::noticeMessage,PM_REMOVE))
+                            (void)shelf->message({host.hwnd(),msg.message,msg.wParam,msg.lParam},hostTime(t));};
+                        const auto id=canvas->items().empty()?std::string():canvas->items().front().id;
+                        timeAction(M,"open",[&](double t){if(id.empty()||!canvas->perform("shelf:"+id+":open"))return false;
+                            // The host's action message, handled here as its handler does (not through the wall-clock route).
+                            MSG posted{};(void)PeekMessageW(&posted,static_cast<HWND>(host.hwnd()),tools::ShelfService::actionMessage,tools::ShelfService::actionMessage,PM_REMOVE);
+                            auto action=shelf->takeAction();if(!action||action->kind!=tools::ShelfServiceAction::Kind::open)return false;
+                            shelf->open(action->itemID,hostTime(t));pumpShelf(t);return true;});
+                        for(unsigned n=0;n<200&&toast()!="Opened";++n){Sleep(5);pumpShelf(time);frameAt(time);time+=.005;}
+                        hostCheck(toast()=="Opened","A Shelf Open toasts once the Shell took the item");
+                        settleFor(60);(void)press(M,"shelf.clear",false,time);settleFor(10);
+                        if(designContext.overlay().isConfirming())(void)designContext.overlay().decide(dz::ConfirmState::Decision::confirm);settleFor(10);
+                    }else skip(M,"open");
+                }
+                // Media Assembly: import from the (synthetic) Shelf, close, import again,
+                // overwrite the original (the shared confirm bar) and its progress display.
+                for(auto&area:externalModules){
+                    if(area.name!="mediaAssembly"||!registry.enabled(*area.owner))continue;
+                    const auto M=core::Module::mediaAssembly;auto*c=showModule(M);
+                    if(!c){skip(M,"importShelf");break;}
+                    const auto perform=[&](std::string_view id,double t){return c->performAccessibilityAction(id,t);};
+                    const auto confirmIs=[&](std::string_view id){const auto&r=designContext.overlay().confirmState().request();return designContext.overlay().isConfirming()&&r&&r->id==id;};
+                    const auto hasControl=[&](std::string_view id){return findIn(*c,id)!=nullptr;};
+                    const auto exportEnabled=[&]{auto*x=findIn(*c,"export");return x&&x->enabled();};
+                    const auto importShelf=[&](double t){return perform("open",t)&&perform("open:shelf",t)&&perform("shelf:coverage-shelf-1",t);};
+                    if(hasControl("mediaTab:0"))(void)perform("mediaTab:0",time);settleFor(15);
+                    timeAction(M,"importShelf",[&](double t){return importShelf(t);});
+                    settleFor(30);need(exportEnabled(),"The probe's Shelf still opens in Media Assembly");
+                    timeAction(M,"closeConfirm",[&](double t){return perform("close",t)&&confirmIs("mediaClose")&&designContext.overlay().decide(dz::ConfirmState::Decision::confirm);});
+                    settleFor(30);need(!exportEnabled(),"The probe's close empties Media Assembly");
+                    (void)importShelf(time);settleFor(30);drainUtility(time);settleFor(30);need(exportEnabled(),"The probe's Shelf still opens again");
+                    timeAction(M,"overwriteConfirm",[&](double t){return perform("export",t)&&perform("export:overwrite",t)&&confirmIs("mediaOverwrite")&&designContext.overlay().decide(dz::ConfirmState::Decision::confirm);});
+                    timeWindow(M,"overwriteFinish",4,[&]{return toast()=="Exported";});
+                    settleFor(30);(void)perform("close",time);if(confirmIs("mediaClose"))(void)designContext.overlay().decide(dz::ConfirmState::Decision::confirm);settleFor(30);
+                    break;
+                }
+                // Rows the areas timed inside their own steps (Media Assembly's first Stickers visit).
+                for(auto&row:areaTimings){timings.push_back(row);b2Bound(row["module"].string()+"."+row["action"].string());}
                 actionTiming=std::move(timings);
             }
             // Host integration over the same owner: the restart service is

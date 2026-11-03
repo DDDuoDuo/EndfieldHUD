@@ -272,6 +272,10 @@ struct ModuleCoverage {
     // notice, but on the coverage clock; true when an owner consumed it. Do not
     // SendMessage to the HWND in coverage: the real route reads the wall clock.
     std::function<bool(std::uint32_t message, std::uintptr_t wParam, std::intptr_t lParam)> message;
+    // A timed action only the area can reach (a first visit inside its own
+    // step): one row of the report's actionTiming, with the host's keys
+    // (module, action, ran, the *Ms timings, pagesBuilt, rasterizations, ...).
+    std::function<void(ehud::data::Json)> timing;
 };
 
 class ModuleOwner {
