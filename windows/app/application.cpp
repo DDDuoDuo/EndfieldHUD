@@ -1822,12 +1822,14 @@ void Application::Impl::openPresentation(core::Module initial,double time){
     // created on a worker while the display is chosen and the module selected.
     prepareGraphics(false);
     if(startupTrace&&session->phase()==core::VisibilityPhase::concealed)traceOpening(time);
-    if(session->phase()==core::VisibilityPhase::concealed&&(production()||placementForTest)){
+    if(session->phase()==core::VisibilityPhase::concealed){
         // The display placement may resize the window (WM_SIZE, WM_DPICHANGED)
         // through an intermediate layout: the density is derived once, for the
-        // final one, and the opening's clock starts after it.
-        placingForOpen=true;try{if(placementForTest)placementForTest();else targetDisplay();}catch(...){placingForOpen=false;throw;}placingForOpen=false;
-        holdDesignDensity();if(visibleMode())time=hostTime(now());}
+        // final one and the settings the first frame applies, and the opening's
+        // clock starts after it.
+        const bool placing=production()||placementForTest;
+        if(placing){placingForOpen=true;try{if(placementForTest)placementForTest();else targetDisplay();}catch(...){placingForOpen=false;throw;}placingForOpen=false;}
+        holdOpeningDesignDensity();if(placing&&visibleMode())time=hostTime(now());}
     if(notes&&notes->selected()!=initial)selectModule(initial,time);
     open(time);if(visibleMode())host.show();refresh(time);
 }
@@ -2032,7 +2034,7 @@ void Application::Impl::updateCalendarWake(){calendarWakeActive=calendarState&&c
 }
 bool Application::Impl::flushCalendar(){if(!calendarState)return true;for(unsigned step=0;step<128;++step){calendarState->queueCapacityAvailable();calendarNotifications->queueCapacityAvailable();utility->waitIdle();utility->drain();const auto&status=calendarNotifications->status();if(!calendarState->hasPendingWork()&&!status.busy&&!status.pending)return !calendarState->hasPersistenceFailure();}return false;}
 void Application::Impl::applyConfiguration(double time){
-    if(!configurationPending)return;configurationPending=false;time=hostTime(time);
+    if(!configurationPending)return;configurationPending=false;configurationApplied=true;time=hostTime(time);
     // HUDRuntimeAppearance.reduceMotion: the preference or the system's
     // reduce-motion setting (Windows: "Animation effects" off,
     // SPI_GETCLIENTAREAANIMATION), re-read on WM_SETTINGCHANGE; never saved.
@@ -2279,12 +2281,37 @@ double Application::Impl::replayDesignDensity(double start,bool exit){
 void Application::Impl::deriveDesignDensity(){
     if(!designOverlay||!chromePlan||!(metrics.width>0)||!(metrics.height>0))return;
     const core::Rect viewport{0,0,metrics.width,metrics.height};
-    if(!designDensityStart){designDensityStart=2.;if(const auto first=chromePlan->clipCenter(viewport,settings.hudOffset,settings.hudScale,contentScale,false,0))designDensityStart=tools::designDensity(source::designBoxWorld(*first),metrics.scale,2);}
-    const DesignDensityLayout layout{metrics.width,metrics.height,metrics.scale,settings.hudScale,contentScale,settings.hudOffset,*designDensityStart,settings.reduceMotion};
+    // Before any opening: the first pose measured from 2 (RC 139's prewarm),
+    // kept only once the preference record applied (its HUD scale and offset);
+    // until then each derivation measures it again.
+    double start=2.;
+    if(designDensityStart)start=*designDensityStart;
+    else{if(const auto first=chromePlan->clipCenter(viewport,settings.hudOffset,settings.hudScale,contentScale,false,0))start=tools::designDensity(source::designBoxWorld(*first),metrics.scale,2);
+        if(configurationApplied)designDensityStart=start;}
+    const DesignDensityLayout layout{metrics.width,metrics.height,metrics.scale,settings.hudScale,contentScale,settings.hudOffset,start,settings.reduceMotion};
     if(heldDesignDensity&&designDensityLayout==layout)return;
-    if(!settings.reduceMotion)heldDesignDensity=replayDesignDensity(*designDensityStart,false);
-    else{heldDesignDensity=*designDensityStart;if(const auto settled=chromePlan->clipCenter(viewport,settings.hudOffset,settings.hudScale,contentScale,false,chromePlan->entranceSeconds()))heldDesignDensity=tools::designDensity(source::designBoxWorld(*settled),metrics.scale,*designDensityStart);}
+    if(!settings.reduceMotion)heldDesignDensity=replayDesignDensity(start,false);
+    else{heldDesignDensity=start;if(const auto settled=chromePlan->clipCenter(viewport,settings.hudOffset,settings.hudScale,contentScale,false,chromePlan->entranceSeconds()))heldDesignDensity=tools::designDensity(source::designBoxWorld(*settled),metrics.scale,start);}
     designDensityLayout=layout;
+}
+// The settings an opening's first frame applies (applyConfiguration in
+// present()): a HUD scale or offset changed while closed (a forced close
+// during the "Keep this UI scale?" countdown) takes effect then, and Reduce
+// Motion turned on while closed (the preference, or Windows animation effects
+// off, re-read here) collapses the deploy then. Turned off while closed, the
+// opening still starts without a deploy (the session opens with the old
+// flag), as in RC 139.
+WatchSessionSettings Application::Impl::openingDesignSettings(){
+    auto value=settings;if(!configurationPending)return value;
+    value.hudScale=configuration.number("hudScale");value.hudOffset={configuration.number("hudOffsetX"),configuration.number("hudOffsetY")};
+    bool systemOff=systemAnimationsOff;if(visibleMode()){BOOL animations=TRUE;if(SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION,0,&animations,0))systemOff=animations==FALSE;}
+    value.reduceMotion=settings.reduceMotion||configuration.boolean("reduceMotion")||systemOff;
+    return value;
+}
+void Application::Impl::holdOpeningDesignDensity(){
+    const auto applied=settings;settings=openingDesignSettings();
+    try{holdDesignDensity();}catch(...){settings=applied;throw;}
+    settings=applied;
 }
 void Application::Impl::holdDesignDensity(){deriveDesignDensity();if(designOverlay&&heldDesignDensity)designOverlay->holdDensity(heldDesignDensity);}
 bool Application::Impl::present(double time,bool submit){

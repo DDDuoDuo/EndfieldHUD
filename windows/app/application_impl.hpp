@@ -403,6 +403,8 @@ struct Application::Impl {
     double replayDesignDensity(double start, bool exit); // the design density stepped through the retract or deploy
     void deriveDesignDensity(); // the settled density for the next opening (heldDesignDensity)
     void holdDesignDensity();   // derive it and hold it in the design overlay
+    WatchSessionSettings openingDesignSettings(); // the settings an opening's first frame applies
+    void holdOpeningDesignDensity(); // holdDesignDensity under them (openPresentation)
     const WatchSessionFrame* poseShell(double time); // sampled source frame, materials, captions and chrome
     // Launch prewarm (Mac AppDelegate prewarmDesktop/prewarmDesktopResources):
     // once, while the HUD is still closed and idle after launch.
@@ -795,6 +797,7 @@ struct Application::Impl {
     // openPresentation's display placement in progress (onResize leaves the density
     // to it), and the hidden traces' stand-in for that placement (targetDisplay).
     bool placingForOpen{};
+    bool configurationApplied{}; // applyConfiguration ran once (production: the preference record)
     std::function<void()> placementForTest;
     std::shared_ptr<gpu::NotesClipboard> designClipboard; // the design text fields' one clipboard
     std::unique_ptr<ModuleContrast> moduleContrast;      // the centre's contrast backdrop (SHELL-27)
