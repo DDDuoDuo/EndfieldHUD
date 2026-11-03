@@ -1255,11 +1255,16 @@ int Application::Impl::runHiddenVerification(){
                         const auto pumpShelf=[&](double t){MSG msg{};while(PeekMessageW(&msg,static_cast<HWND>(host.hwnd()),tools::ShelfService::noticeMessage,tools::ShelfService::noticeMessage,PM_REMOVE))
                             (void)shelf->message({host.hwnd(),msg.message,msg.wParam,msg.lParam},hostTime(t));};
                         const auto id=canvas->items().empty()?std::string():canvas->items().front().id;
+                        const auto opens0=shelf->resources();
                         timeAction(M,"open",[&](double t){if(id.empty()||!canvas->perform("shelf:"+id+":open"))return false;
                             // The host's action message, handled here as its handler does (not through the wall-clock route).
                             MSG posted{};(void)PeekMessageW(&posted,static_cast<HWND>(host.hwnd()),tools::ShelfService::actionMessage,tools::ShelfService::actionMessage,PM_REMOVE);
                             auto action=shelf->takeAction();if(!action||action->kind!=tools::ShelfServiceAction::Kind::open)return false;
                             shelf->open(action->itemID,hostTime(t));pumpShelf(t);return true;});
+                        {const auto opens1=shelf->resources();const auto queued=std::int64_t(opens1.opensQueued-opens0.opensQueued),atOnce=std::int64_t(opens1.opensAtOnce-opens0.opensAtOnce);
+                            timings.back()["opensQueued"]=queued;timings.back()["opensAtOnce"]=atOnce;
+                            // rc140: the Shell's ShellExecuteEx on this thread, in the frame after the click.
+                            hostCheck(queued==1&&atOnce==0,"A Shelf Open hands the Shell its own thread ("+std::to_string(queued)+" queued, "+std::to_string(atOnce)+" at once)");}
                         for(unsigned n=0;n<200&&toast()!="Opened";++n){Sleep(5);pumpShelf(time);frameAt(time);time+=.005;}
                         hostCheck(toast()=="Opened","A Shelf Open toasts once the Shell took the item");
                         settleFor(60);(void)press(M,"shelf.clear",false,time);settleFor(10);

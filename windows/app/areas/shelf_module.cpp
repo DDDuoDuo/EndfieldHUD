@@ -9,6 +9,7 @@
 #include <uiautomation.h>
 #include <wrl/client.h>
 #include <algorithm>
+#include <atomic>
 #include <filesystem>
 #include <fstream>
 #include <stdexcept>
@@ -151,7 +152,7 @@ private:
     app::ClientMetrics metrics_;
     HWND window_{};
     std::vector<Record> events_;
-    unsigned opened_{};
+    std::atomic<unsigned> opened_{};
     bool released_{};
     native::LayerRasterizer raster_;
     std::unique_ptr<PrivateShelf> shelf_;
@@ -298,7 +299,9 @@ void ShelfCoverageArea::coverage(app::ModuleCoverage& step) {
     const auto open = shelf.takeAction();
     step.check(open && open->kind == tools::ShelfServiceAction::Kind::open && open->itemID == keptID, "Open is handed to the host's action message");
     shelf.open(open->itemID, next());
-    step.check(opened_ == step.cycle + 1, "The revalidated item opens through the Shell handoff");
+    // The Shell runs on Open's own thread; its result comes back as a notice.
+    for (unsigned n = 0; n < 2000 && shelf.opening(); ++n) { Sleep(1); pump(); }
+    step.check(!shelf.opening() && opened_ == step.cycle + 1, "The revalidated item opens through the Shell handoff");
 
     // Remove and clear: references only, with their Event Log records.
     events_.clear();

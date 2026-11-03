@@ -164,10 +164,11 @@ HRESULT shellReveal(const ehud::data::ShelfFileAccess&lease)noexcept{return prot
     const auto name=wide(lease.metadata().windowsPath);PIDLIST_ABSOLUTE raw{};checked(SHParseDisplayName(name.c_str(),nullptr,&raw,0,nullptr));
     struct PIDL {PIDLIST_ABSOLUTE value;~PIDL(){CoTaskMemFree(value);}}pidl{raw};need(pidl.value!=nullptr,"Cannot resolve a Shelf Explorer selection");return SHOpenFolderAndSelectItems(pidl.value,0,nullptr,0);
 });}
+// NOASYNC: the Shelf's Open calls this on a thread that ends right after.
 HRESULT shellOpen(const ehud::data::ShelfFileAccess&lease)noexcept{return protect([&]{
     const auto name=wide(lease.metadata().windowsPath);PIDLIST_ABSOLUTE raw{};checked(SHParseDisplayName(name.c_str(),nullptr,&raw,0,nullptr));
     struct PIDL {PIDLIST_ABSOLUTE value;~PIDL(){CoTaskMemFree(value);}}pidl{raw};need(pidl.value!=nullptr,"Cannot resolve a Shelf item to open");
-    SHELLEXECUTEINFOW info{};info.cbSize=sizeof(info);info.fMask=SEE_MASK_IDLIST|SEE_MASK_INVOKEIDLIST;info.lpIDList=pidl.value;info.nShow=SW_SHOWNORMAL;
+    SHELLEXECUTEINFOW info{};info.cbSize=sizeof(info);info.fMask=SEE_MASK_IDLIST|SEE_MASK_INVOKEIDLIST|SEE_MASK_NOASYNC;info.lpIDList=pidl.value;info.nShow=SW_SHOWNORMAL;
     if(ShellExecuteExW(&info))return S_OK;const auto error=GetLastError();return error==ERROR_CANCELLED?S_FALSE:HRESULT_FROM_WIN32(error);
 });}
 }
