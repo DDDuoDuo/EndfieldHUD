@@ -171,7 +171,7 @@ void DesignOwnerCore::setOverlayVisible(bool value, double t) {
     i.pointer.reset();
     // The HUD closes: the shown canvas leaves (popups closed, editing
     // committed, gestures cancelled); the others keep no artwork.
-    for (auto& s : i.slots) if (s->active) i.leave(*s);
+    for (auto& s : i.slots) if (s->active) i.leave(*s); else if (s->shown) { s->canvas->detach(); s->shown = false; }
     i.parkHidden();
 }
 void DesignOwnerCore::overlayClosing(double t) {
@@ -193,6 +193,7 @@ void DesignOwnerCore::update(const app::ModuleFrame& frame) {
         const bool active = i.overlay && attached && sample.requested == s.module;
         s.pose.reset();
         if (shown && !s.shown) { i.bind(); s.canvas->show(i.time); }
+        if (!shown && s.shown && !s.active) s.canvas->detach(); // shown, never activated, now skipped
         s.shown = shown != nullptr;
         if (active != s.active) {
             if (active) { i.bind(); s.canvas->setActive(true, i.time); s.active = true; }
