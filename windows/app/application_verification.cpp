@@ -442,8 +442,22 @@ int Application::Impl::runAnimationTrace(){
     // record; the launch prewarm and the post-launch work finish first.
     double t=clock();
     if(notes&&notes->selected()!=core::Module::map)notes->select(core::Module::map,t);
+    // With --animation-trace-dpi, the launch order of production: runVisible
+    // derives the density before the preference record exists, then the
+    // record applies a non-default HUD scale and offset.
+    double launchStartDefault{},launchStart{},firstRawDefault{},firstRaw{};
+    const auto firstPoseRaw=[&]{const auto c=chromePlan->clipCenter({0,0,metrics.width,metrics.height},settings.hudOffset,settings.hudScale,contentScale,false,0);
+        return c?core::source::planeScale(core::source::designBoxWorld(*c),{modules::design::metric::boxWidth/2,modules::design::metric::boxHeight/2})*metrics.scale:0.;};
+    if(args.animationTraceDpi){holdDesignDensity();
+        if(chromePlan&&metrics.width>0)if(const auto first=chromePlan->clipCenter({0,0,metrics.width,metrics.height},settings.hudOffset,settings.hudScale,contentScale,false,0))
+            launchStartDefault=tools::designDensity(core::source::designBoxWorld(*first),metrics.scale,2);
+        firstRawDefault=firstPoseRaw();
+        configuration.set("hudScale",1.8);configuration.set("hudOffsetX",.1);configuration.set("hudOffsetY",-.08);}
     configuration.set("ambientAnimation",true);configurationPending=true;applyConfiguration(t);
     prewarm();if(utility){utility->waitIdle();if(longWork)longWork->waitIdle();utilityCompleted();}
+    launchStart=designDensityStart.value_or(0.);if(args.animationTraceDpi)firstRaw=firstPoseRaw();
+    need(!args.animationTraceDpi||launchStart==tools::designDensity(core::source::designBoxWorld(*chromePlan->clipCenter({0,0,metrics.width,metrics.height},settings.hudOffset,settings.hudScale,contentScale,false,0)),metrics.scale,2),
+         "The launch start is measured under the applied preference record");
     // RC 139's launch prewarm measured the held first pose (the entrance's start) from 2.
     if(chromePlan&&metrics.width>0)if(const auto first=chromePlan->clipCenter({0,0,metrics.width,metrics.height},settings.hudOffset,settings.hudScale,contentScale,false,0))
         rc139Density=tools::designDensity(core::source::designBoxWorld(*first),metrics.scale,2);
@@ -546,6 +560,13 @@ int Application::Impl::runAnimationTrace(){
         need(placed("placed-cached",args.animationTraceDpi)==0,"A summon onto a cached display resolves no density planes");
         // A display never seen: its planes are resolved once on the summon (the cost is reported).
         (void)placed("placed-new",120);
+        // Settings changed while closed, applied by the opening's first frame
+        // (a forced close during "Keep this UI scale?"): the HUD scale and
+        // offset, then Reduce Motion turned on (that opening collapses; Reduce
+        // Motion goes off again while open so the closing animates).
+        pump(1,{},{});configuration.set("hudScale",1.);configuration.set("hudOffsetX",0.);configuration.set("hudOffsetY",0.);configurationPending=true;cycle("rescaled-while-closed");
+        pump(1,{},{});configuration.set("reduceMotion",true);configurationPending=true;segment("reduced-while-closed-open",true,.25);
+        configuration.set("reduceMotion",false);configurationPending=true;applyConfiguration(clock());pump(1,{},{});segment("reduced-while-closed-close",false,0);
         // Reduce Motion (no deploy or retract plays): the held density is one step
         // on the deployed plane (DesktopChromeProjectionPlan::clipCenter at the
         // entrance's end), where RC 139's first visible frame stepped on the
@@ -572,7 +593,7 @@ int Application::Impl::runAnimationTrace(){
     const Json report=Json::Object{{"schema",1},
         {"scope","EndfieldHUD hidden animation trace: every frame of the openings and closings on the real clock through the production frame scheduling; numbers, owner and module names only"},
         {"device",renderer.deviceInfo().name},{"refreshHz",args.idleTraceRefreshRate},{"closedGraphicsGraceSeconds",closedGraphicsGrace()},{"cyclesPerMillisecond",cyclesPerMS},
-        {"logicalWidth",metrics.width},{"logicalHeight",metrics.height},{"dpiScale",metrics.scale},{"contentScale",contentScale},{"densityReplayMilliseconds",replayMS},{"densityPlaneResolves",std::int64_t(designDensityResolves)},{"densityPlaneResolveMilliseconds",designDensityResolveMilliseconds},{"segments",std::move(segments)}};
+        {"logicalWidth",metrics.width},{"logicalHeight",metrics.height},{"dpiScale",metrics.scale},{"contentScale",contentScale},{"densityReplayMilliseconds",replayMS},{"launchStartUnderDefaults",launchStartDefault},{"launchStart",launchStart},{"firstPoseRawUnderDefaults",firstRawDefault},{"firstPoseRaw",firstRaw},{"densityPlaneResolves",std::int64_t(designDensityResolves)},{"densityPlaneResolveMilliseconds",designDensityResolveMilliseconds},{"segments",std::move(segments)}};
     const std::size_t bound=32*1024*1024;ehud::data::detail::replaceFile(args.animationTrace,std::nullopt,report.encode(bound),bound);
     std::cout<<"Wrote hidden animation trace\n";
     shutdownVisible();
