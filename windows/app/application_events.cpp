@@ -287,8 +287,8 @@ void Application::Impl::onFrame(double time){
         }
         if(!closed.empty()){perform(closed,time);if(stopping)return;}
         openAfterConcealed();
-        // A development preview quits with its window; the hidden idle trace keeps running closed.
-        if(!production()&&!tray&&!quitRequested&&args.idleTrace.empty())finishQuit(time);else if(!stopping)scheduleDeadline();
+        // A development preview quits with its window; the hidden idle and animation traces keep running closed.
+        if(!production()&&!tray&&!quitRequested&&!realClockTrace())finishQuit(time);else if(!stopping)scheduleDeadline();
     }
 }
 

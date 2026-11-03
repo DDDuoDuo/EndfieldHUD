@@ -483,8 +483,8 @@ void Application::Impl::construct(){
         windowOptions.pixelHeight=static_cast<std::uint32_t>(bounds.bottom-bounds.top);
     }
     if(!visibleMode()){windowOptions.pixelWidth=args.benchmarkWidth;windowOptions.pixelHeight=args.benchmarkHeight;
-        // The idle trace schedules frames for its never-shown window at the traced display refresh.
-        if(!args.idleTrace.empty()){windowOptions.offscreenScheduling=true;windowOptions.refreshRate=args.idleTraceRefreshRate;}}
+        // The idle and animation traces schedule frames for their never-shown window at the traced display refresh.
+        if(realClockTrace()){windowOptions.offscreenScheduling=true;windowOptions.refreshRate=args.idleTraceRefreshRate;}}
     host.create(windowOptions,callbacks());metrics=host.metrics();updateContentScale();startup.mark("hidden-window");
     {gpu::RendererOptions rendererOptions{args.warp?gpu::Driver::warpForTests:gpu::Driver::hardware,args.shader,visibleMode()?gpu::RenderTarget::composition:gpu::RenderTarget::offscreenForTests,!args.dataRoot.empty()};
      // The HUD submits a few hundred quads per frame from one thread: the
