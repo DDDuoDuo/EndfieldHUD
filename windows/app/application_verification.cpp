@@ -7,10 +7,16 @@
 #include "app/areas/calendar_reminder_module.hpp"
 #include "native/display_center_logo.hpp"
 #include "native/module_scene.hpp" // NativeModuleSurface: coverage projection probes
+#include "modules/hud_design_controls.hpp"
+#include "modules/notes_canvas.hpp"
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <functional>
 #include <iostream>
+#include <iterator>
 #include <map>
 #include <set>
 #include <tlhelp32.h>
@@ -588,7 +594,7 @@ int Application::Impl::runHiddenVerification(){
             }
             const auto finish=at(23+static_cast<double>(points.size()));session->pointerMove({},finish);close(finish);present(finish+.7,true);
         }
-        Json::Array moduleResults,areaModuleResults,areaPresentedModules;Json displayAdaptation,scrollArrow,recordingToggle;
+        Json::Array moduleResults,areaModuleResults,areaPresentedModules;Json displayAdaptation,scrollArrow,recordingToggle,actionTiming;
         // Module areas (app/module_owner.hpp): coverage steps and their checks.
         struct AreaCounts{unsigned steps{},checks{};};std::map<std::string,AreaCounts,std::less<>> areaCounts;
         double areaLatest{};
@@ -983,6 +989,220 @@ int Application::Impl::runHiddenVerification(){
                     time+=2;
                 }
                 recordingToggle=std::move(toggles);
+            }
+            // Action timing (the owner's "slight freeze" on Work Mode start/pause
+            // and Shelf selection, and the other in-place changes of a shown
+            // canvas): with every module built, each action runs through the path
+            // a click takes (the canvas's pointer calls in box px, which the owner
+            // makes after unprojecting), the owner's key route or the accessible
+            // invoke, on this thread. Timed: the action itself and the frame that
+            // applies it (scene sync and rasterization), then the worst frame of
+            // the following second (staged sub-page swaps land at 130 ms). Counted:
+            // pages built (Context::pagesBuilt), rasterizations and text layouts,
+            // for the action's frame and for the whole second.
+            if(designOverlay){
+                namespace dz=modules::design;
+                auto&designContext=designOverlay->context();
+                const auto frameAt=[&](double t){if(const auto wake=designOverlay->nextWakeTime(t);wake&&*wake<=t)onDeadline(t);present(t,true);};
+                const auto canvasOf=[&](core::Module m)->dz::Canvas*{for(auto*c:designContext.canvases())if(c->module()==m)return c;return nullptr;};
+                const auto findIn=[](dz::Canvas&c,std::string_view id)->dz::Control*{
+                    for(auto*x:c.page().controls())if(x->id()==id)return x;
+                    if(c.showsHeader())for(auto*x:c.header().controls())if(x->id()==id)return x;
+                    return nullptr;};
+                // The owner a press reaches binds the Context's editor host first (its text fields).
+                const auto bindOwner=[&](core::Module m,double t){auto*o=registry.presenter(m);if(!o)return;
+                    if(auto*design=dynamic_cast<tools::DesignModuleOwner*>(o)){design->core().bindEditorHost();return;}
+                    (void)o->pointer({PointerKind::move,PointerButton::none,metrics.width/2,metrics.height/2},hostTime(t));};
+                const auto press=[&](core::Module m,std::string_view id,bool toggle,double t)->bool{
+                    auto*c=canvasOf(m);if(!c)return false;auto*x=findIn(*c,id);if(!x||!x->enabled())return false;
+                    const auto r=x->rect(c->root());const dz::Point p{r.x+r.width/2,r.y+r.height/2};
+                    bindOwner(m,t);
+                    // Scrolled out of view or drawn transparent (Clipboard's row actions until
+                    // hovered): the accessible invoke, the call its click makes.
+                    if(!dz::isVisible(x->layer(),c->root())||!dz::isUnclipped(x->layer(),p,c->root()))return c->performAccessibilityAction(id,t);
+                    dz::PointerInput input;input.point=p;input.control=toggle;
+                    c->pointerMoved(p,false,t);const bool down=c->pointerDown(p,input,t);c->pointerMoved(p,true,t);c->pointerUp(p,t);c->pointerMoved(p,false,t);
+                    return down;};
+                const auto keyTo=[&](core::Module m,std::uint32_t virtualKey,bool shift,double t)->bool{
+                    auto*c=canvasOf(m);if(!c)return false;bindOwner(m,t);
+                    if(auto*design=dynamic_cast<tools::DesignModuleOwner*>(registry.presenter(m)))return design->core().key({KeyKind::down,virtualKey},shift?4u:0u,t);
+                    dz::KeyInput k;k.virtualKey=virtualKey;k.shift=shift;return c->keyDown(k,t);};
+                const auto showModule=[&](core::Module m)->dz::Canvas*{auto*o=registry.presenter(m);if(!o||!registry.enabled(*o))return nullptr;
+                    selectModule(m,time);for(unsigned f=0;f<30;++f)frameAt(time+double(f)/45);time+=1;
+                    auto*c=canvasOf(m);return c&&c->isActive()&&!c->transitioning()?c:nullptr;};
+                const auto settleFor=[&](unsigned frames){for(unsigned f=1;f<=frames;++f)frameAt(time+double(f)/30);time+=double(frames)/30+.05;drainUtility(time);frameAt(time);time+=.05;};
+                Json::Array timings;
+                // Work bounds over the action's second (pages built, rasterizations): see
+                // the measurement in the commit that set them. The old code builds the
+                // same pages with new layer ids, so every part rasterizes again: Work
+                // Mode's 47-63 surfaces, the Shelf's 213-259.
+                const std::map<std::string,std::pair<std::int64_t,std::int64_t>,std::less<>> bounds{};
+                const bool enforceBounds=false;
+                const auto timeAction=[&](core::Module m,const char*name,const std::function<bool(double)>&act){
+                    drainUtility(time);frameAt(time);time+=.05;
+                    const auto raster0=rasterizer.stats();const auto pages0=designContext.pagesBuilt();
+                    const auto t0=Clock::now();const bool done=act(time);const double actionMs=milliseconds(t0);
+                    const auto t1=Clock::now();frameAt(time);const double frameMs=milliseconds(t1);
+                    const auto pages1=designContext.pagesBuilt();const auto raster1=rasterizer.stats();
+                    double settleMax=0;
+                    for(unsigned f=1;f<=15;++f){const double t=time+double(f)/15;const auto f0=Clock::now();frameAt(t);settleMax=std::max(settleMax,milliseconds(f0));}
+                    // Completions of the action's utility work (saves) arrive as the message loop would deliver them.
+                    time+=1;drainUtility(time);{const auto f0=Clock::now();frameAt(time+.01);settleMax=std::max(settleMax,milliseconds(f0));}
+                    const auto pages2=designContext.pagesBuilt();const auto raster2=rasterizer.stats();
+                    // Work Mode and the Shelf carry the regression bounds: their actions must run.
+                    if(m==core::Module::workMode||m==core::Module::fileShelf)need(done,(std::string("The timed action ")+name+" ran").c_str());
+                    timings.push_back(Json::Object{{"module",std::string(core::moduleIdentifier(m))},{"action",std::string(name)},{"ran",done},
+                        {"actionMs",actionMs},{"frameMs",frameMs},{"clickFrameMs",actionMs+frameMs},{"settleMaxFrameMs",settleMax},
+                        {"pagesBuilt",std::int64_t(pages1-pages0)},{"rasterizations",std::int64_t(raster1.rasterizations-raster0.rasterizations)},
+                        {"textLayouts",std::int64_t(raster1.textLayoutsCreated-raster0.textLayoutsCreated)},
+                        {"secondPagesBuilt",std::int64_t(pages2-pages0)},{"secondRasterizations",std::int64_t(raster2.rasterizations-raster0.rasterizations)},
+                        {"secondTextLayouts",std::int64_t(raster2.textLayoutsCreated-raster0.textLayoutsCreated)}});
+                    const auto key=std::string(core::moduleIdentifier(m))+"."+name;
+                    if(const auto bound=bounds.find(key);bound!=bounds.end()){
+                        const auto pages=std::int64_t(pages2-pages0),rasters=std::int64_t(raster2.rasterizations-raster0.rasterizations);
+                        const bool within=pages<=bound->second.first&&rasters<=bound->second.second;
+                        timings.back()["withinBound"]=within;
+                        if(enforceBounds)hostCheck(within,"The timed action "+key+" stays within its work bound ("+std::to_string(pages)+" of "+std::to_string(bound->second.first)+
+                            " pages, "+std::to_string(rasters)+" of "+std::to_string(bound->second.second)+" rasterizations)");
+                    }
+                    time+=.1;};
+                const auto skip=[&](core::Module m,const char*name){timings.push_back(Json::Object{{"module",std::string(core::moduleIdentifier(m))},{"action",std::string(name)},{"skipped",true}});};
+                // Work Mode: the host's one controller, left by the cycles as a paused stopwatch.
+                if(workMode&&workModeCanvas&&showModule(core::Module::workMode)){
+                    const auto M=core::Module::workMode;
+                    if(workMode->snapshot(time).active()||workMode->snapshot(time).phase!=endfield::modules::WorkModePhase::idle){(void)press(M,"workMode.reset",false,time);settleFor(10);}
+                    if(workMode->snapshot(time).kind!=endfield::modules::WorkModeKind::countdown)timeAction(M,"countdownTab",[&](double t){return press(M,"workMode.kind:0",false,t);});
+                    timeAction(M,"preset30",[&](double t){return press(M,"workMode.preset:1",false,t)&&workMode->snapshot(time).duration==30*60;});
+                    timeAction(M,"start",[&](double t){return press(M,"workMode.primary",false,t)&&workMode->snapshot(time).phase==endfield::modules::WorkModePhase::running;});
+                    timeAction(M,"pause",[&](double t){return press(M,"workMode.primary",false,t)&&workMode->snapshot(time).phase==endfield::modules::WorkModePhase::paused;});
+                    timeAction(M,"resume",[&](double t){return press(M,"workMode.primary",false,t)&&workMode->snapshot(time).phase==endfield::modules::WorkModePhase::running;});
+                    timeAction(M,"reset",[&](double t){return press(M,"workMode.reset",false,t)&&workMode->snapshot(time).phase==endfield::modules::WorkModePhase::idle;});
+                    timeAction(M,"customOpen",[&](double t){return press(M,"workMode.preset:3",false,t)&&workModeCanvas->editingCustom();});
+                    timeAction(M,"customCommit",[&](double t){return workModeModuleOwner->key({KeyKind::down,VK_RETURN},hostTime(t))&&!workModeCanvas->editingCustom();});
+                    timeAction(M,"stopwatchTab",[&](double t){return press(M,"workMode.kind:1",false,t);});
+                    (void)press(M,"workMode.primary",false,time);settleFor(10);
+                    timeAction(M,"lap",[&](double t){return press(M,"workMode.lap",false,t)&&!workModeCanvas->lapTexts().empty();});
+                    (void)press(M,"workMode.primary",false,time);settleFor(4);(void)press(M,"workMode.reset",false,time);settleFor(10);
+                    timeAction(M,"countdownTab",[&](double t){return press(M,"workMode.kind:0",false,t);});
+                    need(workMode->snapshot(time).phase==endfield::modules::WorkModePhase::idle,"The timed Work Mode actions leave an idle countdown");
+                }
+                // File Shelf: synthetic files in this run's own data root (never a user file).
+                if(shelf&&shelf->canvas()&&shelfModuleOwner&&registry.enabled(*shelfModuleOwner)&&!args.shelfDataRoot.empty()){
+                    const auto M=core::Module::fileShelf;auto*canvas=shelf->canvas();
+                    const auto folder=args.shelfDataRoot.parent_path()/"freeze-probe-files";std::filesystem::create_directories(folder);
+                    std::vector<std::string> paths;
+                    for(unsigned n=1;n<=24;++n){char name[32];std::snprintf(name,sizeof name,"Synthetic %02u.txt",n);const auto file=folder/name;
+                        {std::ofstream out(file,std::ios::binary);out<<"Synthetic freeze probe file "<<n<<"\n";}
+                        const auto utf8=file.u8string();paths.emplace_back(reinterpret_cast<const char*>(utf8.data()),utf8.size());}
+                    const std::vector<std::string> seed(paths.begin(),paths.end()-1),last(paths.end()-1,paths.end());
+                    if(showModule(M)){
+                        need(shelf->importFiles(seed,hostTime(time)),"The probe's synthetic files are added to the Shelf");settleFor(30);
+                        (void)keyTo(M,dz::key::home,false,time);settleFor(10);
+                        timeAction(M,"addOne",[&](double t){return shelf->importFiles(last,hostTime(t));});
+                        (void)keyTo(M,dz::key::home,false,time);settleFor(10);
+                        need(canvas->items().size()>=24,"The Shelf holds the probe's 24 synthetic files");
+                        const auto selected=[&]{return canvas->selectedIDs().size();};
+                        timeAction(M,"selectOne",[&](double t){return press(M,"file:1",false,t)&&selected()==1;});
+                        timeAction(M,"selectAnother",[&](double t){return press(M,"file:2",false,t)&&selected()==1;});
+                        timeAction(M,"ctrlToggle",[&](double t){return press(M,"file:3",true,t)&&selected()==2;});
+                        // Neither platform has Select All: Shift+Down extends the range from the anchor (2 or more stay in place).
+                        timeAction(M,"shiftExtend",[&](double t){return keyTo(M,dz::key::down,true,t)&&selected()>2;});
+                        timeAction(M,"selectFromMany",[&](double t){return press(M,"file:1",false,t)&&selected()==1;});
+                        timeAction(M,"deselect",[&](double t){return press(M,"file:1",false,t)&&selected()==0;});
+                        (void)press(M,"file:1",false,time);settleFor(10);
+                        timeAction(M,"removeOne",[&](double t){const auto before=canvas->items().size();return keyTo(M,dz::key::deleteForward,false,t)&&canvas->items().size()+1==before;});
+                        (void)press(M,"file:1",true,time);(void)press(M,"file:2",true,time);(void)press(M,"file:3",true,time);settleFor(10);
+                        timeAction(M,"removeThree",[&](double t){const auto before=canvas->items().size();return selected()==3&&keyTo(M,dz::key::deleteForward,false,t)&&canvas->items().size()+3==before;});
+                        (void)press(M,"shelf.clear",false,time);settleFor(10);
+                        timeAction(M,"clear",[&](double t){(void)t;return designContext.overlay().isConfirming()&&designContext.overlay().decide(dz::ConfirmState::Decision::confirm);});
+                        settleFor(10);need(canvas->items().empty(),"The probe's Clear empties the Shelf");
+                    }
+                }
+                // Notes: the TODO list (add, tick), then back to the TEXT tab.
+                if(notesCentreModuleOwner&&registry.enabled(*notesCentreModuleOwner))if(auto*c=showModule(core::Module::notes)){
+                    const auto M=core::Module::notes;
+                    if(findIn(*c,"notes.tabs:1")&&!findIn(*c,"notes.addTask"))timeAction(M,"todoTab",[&](double t){return press(M,"notes.tabs:1",false,t);});
+                    timeAction(M,"todoAdd",[&](double t){auto*n=dynamic_cast<endfield::modules::NotesCanvas*>(canvasOf(M));auto*add=n?n->addField():nullptr;
+                        if(!add)return false;add->setText("Freeze probe task");return press(M,"notes.addTask",false,t);});
+                    timeAction(M,"todoTick",[&](double t){auto*c2=canvasOf(M);std::string toggle;
+                        for(auto*x:c2->page().controls())if(x->id().starts_with("task:")&&x->id().ends_with(":toggle"))toggle=x->id();
+                        return !toggle.empty()&&press(M,toggle,false,t);});
+                    timeAction(M,"textTab",[&](double t){return press(M,"notes.tabs:0",false,t);});
+                }
+                // Clipboard: pin and unpin the first record, a filter tab and back.
+                if(clipboardCanvas&&clipboardModuleOwner&&registry.enabled(*clipboardModuleOwner)&&showModule(core::Module::clipboard)){
+                    const auto M=core::Module::clipboard;
+                    if(findIn(*clipboardCanvas,"clip:0:pin")){
+                        timeAction(M,"pin",[&](double t){return press(M,"clip:0:pin",false,t);});
+                        // The pinned record leads the list: the same button unpins it.
+                        timeAction(M,"unpin",[&](double t){return press(M,"clip:0:pin",false,t);});
+                    }else skip(M,"pin");
+                    timeAction(M,"filterTab",[&](double t){return press(M,"clipboard.filter:1",false,t);});
+                    timeAction(M,"filterAll",[&](double t){return press(M,"clipboard.filter:0",false,t);});
+                }
+                // Calendar: two days of the shown month (cells 10 and 13 are always in it).
+                if(calendar&&calendarModuleOwner&&registry.enabled(*calendarModuleOwner)&&showModule(core::Module::calendar)){
+                    const auto M=core::Module::calendar;
+                    const auto day=[&](std::size_t index){std::vector<std::string> days;
+                        for(auto*x:calendar->page().controls())if(x->id().starts_with("calendar.day:"))days.push_back(x->id());
+                        return index<days.size()?days[index]:std::string();};
+                    timeAction(M,"daySelect",[&](double t){const auto id=day(10);return !id.empty()&&press(M,id,false,t);});
+                    timeAction(M,"daySelectAgain",[&](double t){const auto id=day(13);return !id.empty()&&press(M,id,false,t);});
+                }
+                // Event Log: a filter tab and back.
+                if(eventLogCanvas&&eventLogModuleOwner&&registry.enabled(*eventLogModuleOwner)&&showModule(core::Module::eventLog)){
+                    const auto M=core::Module::eventLog;
+                    timeAction(M,"filterTab",[&](double t){return press(M,"eventLog.filter:1",false,t);});
+                    timeAction(M,"filterAll",[&](double t){return press(M,"eventLog.filter:0",false,t);});
+                }
+                // Settings > Display: a theme swatch and back, then an app-icon tile and back.
+                if(settingsUI&&settingsModuleOwner&&registry.enabled(*settingsModuleOwner))if(auto*display=showModule(core::Module::display)){
+                    const auto M=core::Module::display;
+                    std::string current,other;
+                    for(auto*x:display->page().controls())if(x->id().starts_with("accent:")){
+                        if(auto*s=dynamic_cast<dz::Swatch*>(x);s&&s->selected())current=x->id();else if(other.empty())other=x->id();}
+                    if(!current.empty()&&!other.empty()){
+                        timeAction(M,"themeSwatch",[&](double t){return press(M,other,false,t);});
+                        timeAction(M,"themeSwatchBack",[&](double t){return press(M,current,false,t);});
+                    }else skip(M,"themeSwatch");
+                    if(findIn(*display,"appIcon")){
+                        timeAction(M,"iconsPage",[&](double t){return press(M,"appIcon",false,t);});
+                        std::vector<dz::AccessibilityItem> items;display->accessibilityItems(items);std::string chosen,tile;
+                        for(const auto&item:items)if(item.id.starts_with("appIcon:")){if(item.on)chosen=item.id;else if(tile.empty())tile=item.id;}
+                        if(!tile.empty()){
+                            timeAction(M,"appIconTile",[&](double t){return press(M,tile,false,t);});
+                            if(!chosen.empty()){(void)display->performAccessibilityAction(chosen,time);settleFor(15);}
+                        }
+                        timeAction(M,"iconsBack",[&](double t){return keyTo(M,dz::key::escape,false,t);});
+                    }else skip(M,"iconsPage");
+                }
+                // Personal Profile: the name's inline editor commits with Return (typed through the owner's key route).
+                if(auto*c=showModule(core::Module::profile)){
+                    const auto M=core::Module::profile;auto*owner=registry.presenter(M);
+                    const auto type=[&](std::string_view text,double t){for(const char ch:text)(void)owner->key({KeyKind::character,std::uint32_t(static_cast<unsigned char>(ch))},hostTime(t));};
+                    bindOwner(M,time);
+                    if(c->performAccessibilityAction("profile:name",time)&&c->editingField()){
+                        const std::string original=c->editingField()->text();
+                        timeAction(M,"fieldCommit",[&](double t){type("Freeze Probe",t);return owner->key({KeyKind::down,VK_RETURN},hostTime(t))&&!c->editingField();});
+                        bindOwner(M,time);
+                        if(!original.empty()&&c->performAccessibilityAction("profile:name",time)&&c->editingField()){type(original,time);(void)owner->key({KeyKind::down,VK_RETURN},hostTime(time));settleFor(15);}
+                    }else skip(M,"fieldCommit");
+                }
+                // App Shortcuts: one application dragged over + Add App and away (the drop-target ring).
+                for(auto&area:externalModules){
+                    if(area.name!="appShortcuts"||!registry.enabled(*area.owner)||!area.owner->presents(core::Module::addApp)||!chromePlan||!chromePlan->projection().center||!notes)continue;
+                    if(!showModule(core::Module::addApp))break;
+                    gpu::LayerScene probeGeometry(rasterizer);probeGeometry.load(Json::Object{{"bounds",Json::Array{0,0,400,334}},{"children",Json::Array{}}},{});gpu::NativeModuleSurface probePlane(probeGeometry,core::Module::addApp);
+                    const auto ps=chromeSettings(core::Module::addApp);probePlane.update(*chromePlan->projection().center,ps,notes->modulePresentation().current,1);
+                    const auto plane=core::Projection::viewport(gpu::layerViewportProjection(metrics.pixelWidth,metrics.pixelHeight)*core::Matrix4::scale(metrics.scale,metrics.scale)*probePlane.pose().contentWorld,metrics.pixelWidth,metrics.pixelHeight);
+                    if(const auto center=plane.project({200,167})){const core::Point p{center->x/metrics.scale,center->y/metrics.scale};
+                        const std::vector<std::string> application{"shell:AppsFolder\\Synthetic.FreezeProbe!App"};
+                        timeAction(core::Module::addApp,"dropTargetOn",[&](double){return dropHover(application,p);});
+                        timeAction(core::Module::addApp,"dropTargetOff",[&](double){return dropHover({},std::nullopt)&&!dropHoverOwner;});
+                    }
+                    break;
+                }
+                actionTiming=std::move(timings);
             }
             // Host integration over the same owner: the restart service is
             // production-only, the System row of the macImport area, the UI
@@ -1798,7 +2018,7 @@ int Application::Impl::runHiddenVerification(){
             for(unsigned n=0;n<=static_cast<unsigned>(core::Module::profile);++n)if(area.owner->presents(static_cast<core::Module>(n)))presents.push_back(std::string(core::moduleIdentifier(static_cast<core::Module>(n))));
             areas.push_back(Json::Object{{"area",area.name},{"constructed",true},{"enabled",registry.enabled(*area.owner)},{"presents",std::move(presents)},{"coverageSteps",std::int64_t(counts.steps)},{"coverageChecks",std::int64_t(counts.checks)}});}
         for(const auto&name:absentModules)areas.push_back(Json::Object{{"area",name},{"constructed",false}});
-        report["recordingToggle"]=std::move(recordingToggle);report["areaCoverage"]=std::move(areas);report["areaModuleResults"]=std::move(areaModuleResults);report["areaPresentedModules"]=std::move(areaPresentedModules);
+        report["recordingToggle"]=std::move(recordingToggle);report["actionTiming"]=std::move(actionTiming);report["areaCoverage"]=std::move(areas);report["areaModuleResults"]=std::move(areaModuleResults);report["areaPresentedModules"]=std::move(areaPresentedModules);
         if(args.moduleCoverage)for(const auto&area:externalModules)need(areaCounts[area.name].steps>=3,"Every module area received its hidden coverage steps");
         ehud::data::detail::replaceFile(args.report,std::nullopt,report.encode(),8*1024*1024);std::cout<<"Wrote hidden source-shell benchmark report\n";
     shutdownVisible();
