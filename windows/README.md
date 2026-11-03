@@ -5045,6 +5045,60 @@ them.
 | Confirm-bar filter | About 5.2 ms per filtered frame, only while the bar eases; free when off. |
 | Fonts | HarmonyOS and the four Noto faces add about 0 private memory (mapped files). |
 
+### Side by side with Windows 1.2.0 (hidden, laptop, RTX 5060)
+
+Windows 1.2.0 (`9c75665`) was built in a second slot with the same tools and
+run in the same jobs as this build, alternating, hidden at 1280 × 800 on the
+real GPU at BelowNormal priority with synthetic providers, two to six runs
+each. A game ran on the laptop throughout, so the absolute figures run high:
+compare the two columns, not the recorded 1.2.0 numbers above. The contention
+stress and `projection_latency_probe` were not run (one would disturb the
+game, the other needs the desktop).
+
+| What | Windows 1.2.0, same jobs | Windows 1.3.0 |
+| --- | --- | --- |
+| Open idle, ambient on | 1.40–1.76 ms per frame, 4.5–6.9 % of one core | 1.33–1.79 ms, 4.3–6.4 % |
+| Open idle with ambient off; closed past the grace | 0 frames; 0.05–0.70 wake-ups/s | 0 frames; 0.05–0.65/s |
+| Private MiB: launch idle / first opening / open after every module / closed / after 10 more cycles | 180–192 / 248–259 / 412–433 / 304–315 / 238–264 | 185–200 / 265–271 / 630–634 / 292–336 / 301–319 |
+| Threads, own and thread-pool | 48–53 | 50–54 |
+| First frame: cold / warm / session's first opening / reopening within the grace | 28–40 / 6–10 / 41–54 / 11–20 ms | 34–51 / 10–14 / 52–55 / 26–30 ms |
+| Launch prewarm, before any opening | 47–74 ms | 96–117 ms |
+| Switch back, real GPU: Clipboard / Event Log / Media Assembly / Archive | 5.0–9.6 / 3.1–4.5 / 1.6–3.3 / 1.3–2.7 ms | 4.1–11.9 / 4.9–7.2 / 3.9–7.6 / 1.7–2.8 ms |
+| First showing of a module | 33–118 ms | 53–210 ms |
+
+Map pulse, the Activity system sample and Notes drawing measured the same
+within their measurement steps.
+
+Fixed in this comparison: every design layer carried about 9.4 KiB of motion
+tracks inline, about 32 MiB over the 3,600 layers the built pages keep while
+the HUD is closed; the tracks are now created by a layer's first motion
+(`bb46585`; closed 324–361 → 292–336 MiB). Media Assembly's owner built its
+stage on the first opening frame, 15–20 ms, even when the module was not
+shown; it is now lazy, as on the Mac (`110a096`; the session's first opening
+82–109 → 52–55 ms, cold first frame 49–59 → 34–51 ms).
+
+Still above Windows 1.2.0:
+
+- Open after every module, +210 MiB: mostly the Mac's 1.35× text (raster
+  cache 121 against 45 MiB), given back on close. Accepted with the text
+  scale.
+- Closed after ten more cycles, +45 MiB: heap committed 242–254 against
+  157–163 MiB, with a live heap only about 10 MiB larger. The rest is freed
+  but still committed heap left by the design library copying JSON trees
+  while the HUD is open (about 750,000 small blocks after every module).
+  `HeapCompact` on close lowered the heap but not private bytes. Being fixed.
+- Launch prewarm, +45 ms once at launch. Being investigated.
+- First showing of a module, 2–3× slower: about half is rasterizing text at
+  1.35× in one surface per text element (Clipboard 54 textures against 29,
+  Event Log 85 against 38, Archive 25 against 6), a fifth is sampling the
+  entrance animation, a tenth is building JSON.
+- Switch back, about 1.5–2× slower, from the extra textures to restore; it
+  stays well inside a 60 Hz frame, though Event Log can pass one 165 Hz
+  frame (6 ms). The WARP figures in the first row of the table above beat
+  1.2.0's recorded numbers but not 1.2.0 measured beside them.
+- Warm first frame and reopening within the grace, +5–10 ms: the Map's
+  re-upload after its release on close (accepted, as on the Mac).
+
 **Text oversampling decision.** The Mac draws design text at 1.35× the box
 density (`HUDDesignTokens.textContentsScale`); Windows did not, so labels
 were softer (LIB-11, LIB-97). Text now rasterizes at that scale in its own
@@ -5097,6 +5151,8 @@ oracles are gone; notes in place in the entries above point here.
 
 ### Open items
 
+- The closed memory after repeated openings (+45 MiB) and the launch
+  prewarm (+45 ms) against Windows 1.2.0, in the side-by-side table above.
 - The release-notes check: rerun `endfieldhud_release_contracts` with the
   rewritten `RELEASE-NOTES.md`.
 - The new platform gaps and Mac bugs not copied are in

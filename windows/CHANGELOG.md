@@ -145,14 +145,20 @@ Windows 1.2.0 (RC 138):
 
 ### Performance (automated tests on the test laptop)
 
-- Switching back to a module inside the open HUD: Clipboard 4.7–5.0 ms
-  (8–10 ms in Windows 1.2.0), Event Log 2.6–3.1 ms (6.6–6.9), Archive
-  1.7–1.9 ms (2.2–3.0), Media Assembly 3.4–4.2 ms (3.2–3.7).
+- Measured beside Windows 1.2.0 in the same runs: the open HUD's idle
+  processor time is unchanged; switching back to a module takes about
+  2–12 ms, up to twice as long, and a module's first showing about
+  50–210 ms (35–120), mostly the sharper text.
+- Every design layer used to reserve about 9 KiB for animation even if it
+  never moved; that is now reserved on its first animation, about 32 MiB
+  less while the HUD is closed.
+- Media Assembly no longer builds its preview stage when the HUD opens on
+  another module, which takes 30–50 ms off the session's first opening.
 - The Map frees its terrain images when the HUD closes, as on the Mac
   (about 12.6 MiB less while closed); the next opening decodes them again,
   in about a third of a second, while the opening animation plays.
-- The Mac's sharper text raises the text and artwork bitmaps after visiting
-  every module from about 65 to 118 MB.
+- The Mac's sharper text raises the open HUD's memory after visiting every
+  module from about 420 to 630 MiB, given back when it closes.
 
 None of this has been tried on the laptop's desktop yet; the tester's live
 checks (the Shelf drag-out, the redesigned centre, the shell and each

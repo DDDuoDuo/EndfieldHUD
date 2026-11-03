@@ -253,13 +253,14 @@ Automated tests run every tool over sample data, but these have not been tried l
 
 ## Performance
 
-These figures come from automated runs on the test laptop with sample data, with the HUD drawing off-screen with Windows' software renderer. The on-screen performance check has not been run for this version, and other PCs will differ.
+These figures come from automated runs on the test laptop with sample data, with the HUD drawing off-screen; Windows 1.2.0 was measured beside this version in the same runs. The on-screen performance check has not been run for this version, and other PCs will differ.
 
-- **Switching modules:** switching back to a module inside the open HUD takes 4.7–5.0 ms for Clipboard (8–10 ms in Windows 1.2.0), 2.6–3.1 ms for Event Log (6.6–6.9 ms), 1.7–1.9 ms for Archive (2.2–3.0 ms) and 3.4–4.2 ms for Media Assembly (3.2–3.7 ms). Switching away takes 2.0–3.4 ms, because the page you leave stays visible while it slides out, as on the Mac. After the HUD has been closed for ten minutes the first switch back paints the page again (16–33 ms; 30–35 ms in 1.2.0).
+- **Switching modules:** switching back to a module inside the open HUD takes about 2–12 ms, up to about twice as long as Windows 1.2.0 because the sharper text has more pieces to restore, and still well within one frame at 60 Hz. The first time a module is shown in a session it takes about 50–210 ms (about 35–120 ms in 1.2.0), mostly drawing its text. Switching away takes a few milliseconds longer than before, because the page you leave stays visible while it slides out, as on the Mac.
+- **Idle:** the open HUD uses about the same processor time as Windows 1.2.0 (about 1.3–1.8 ms per frame with the ambient animation on, nothing with it off), and the closed HUD still draws nothing.
 - **Map:** the terrain images are freed when the HUD closes, as on the Mac (about 12.6 MiB while closed, now none). The next opening shows its first frame in about 16 ms and decodes the terrain in the background, in about a third of a second, while the opening animation plays.
-- **Text:** text is drawn at the Mac's 1.35× sharpness. After visiting every module, the HUD's text and artwork bitmaps take about 118 MB instead of about 65 MB at Windows 1.2.0's text sharpness. The bundled fonts add no measurable private memory.
+- **Text and memory:** text is drawn at the Mac's 1.35× sharpness. With every module visited, the open HUD uses about 630 MiB instead of about 420 MiB, mostly for that sharper text; most of it is given back when the HUD closes. The bundled fonts add no measurable private memory.
 - **Confirmations:** the blur behind a confirmation is drawn only while the bar fades in or out, about 5 ms per frame with the software renderer.
-- **Closed HUD:** as in Windows 1.2.0, nothing is drawn while the HUD is closed, and the graphics device is released after ten minutes closed. The automated closed-idle and memory traces pass their limits; the full set of Windows 1.2.0's idle and memory figures has not been measured again for this version.
+- **Closed HUD:** as in Windows 1.2.0, nothing is drawn while the HUD is closed, and the graphics device is released after ten minutes closed.
 
 ## Report a problem
 
