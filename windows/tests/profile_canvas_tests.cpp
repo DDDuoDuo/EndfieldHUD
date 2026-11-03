@@ -346,6 +346,48 @@ void behaviour() {
     check(w.toast() && w.toast()->title == "Notice", "A failed save toasts Notice");
     o.refuseCommit = false;
 }
+
+// The design scene's plan over two emissions (native/hud_design_scene.cpp
+// syncContent): a part whose JSON is unchanged is reused, one with the same
+// surfaces rasterizes only the changed ones, any other loads every surface.
+std::size_t rasterized(const d::Artwork& before, const d::Artwork& after) {
+    std::size_t count{};
+    for (const auto& p : after.parts) {
+        const auto old = std::find_if(before.parts.begin(), before.parts.end(), [&](const d::Part& q) { return q.id == p.id; });
+        if (old == before.parts.end() || old->surfaces != p.surfaces) { count += p.surfaces.size(); continue; }
+        if (old->layers == p.layers) continue;
+        const auto& a = old->layers["children"].array(); const auto& b = p.layers["children"].array();
+        for (std::size_t n = 0; n < b.size(); ++n) count += a[n] != b[n];
+    }
+    return count;
+}
+// A committed value, the date kind, the inline editor and the default
+// picture re-render the card under kept ids: only the elements they change
+// rasterize again (each its own part), not the whole card.
+void partsKept() {
+    FakeMeasurer measurer; World w(measurer); w.appearance(Language::english);
+    Owner o; o.avatar = true; auto store = o.store(sample());
+    m::ProfileCanvas canvas(w.context, o.text, o.dates, o.services());
+    canvas.setStore(store.get()); w.show(canvas);
+    const d::TextServices& text = w.context.env().text;
+    const auto artwork = [&] { return d::emit(canvas.root(), {&text, "test."}); };
+    auto before = artwork();
+    std::size_t surfaces{};
+    for (const auto& p : before.parts) surfaces += p.surfaces.size();
+    const auto step = [&](const char* what, std::size_t bound, const std::function<void()>& change) {
+        change();
+        auto after = artwork();
+        const auto count = rasterized(before, after);
+        check(count <= bound, std::string(what) + " rasterizes " + std::to_string(count) + " of " + std::to_string(surfaces) + " surfaces again (bound " + std::to_string(bound) + ")");
+        before = std::move(after);
+    };
+    step("A name commit", 4, [&] { store->update([](m::PersonalProfile& p) { p.name = "Freeze Probe"; }); });
+    step("A counter commit", 4, [&] { store->update([](m::PersonalProfile& p) { p.operatorsCount = 24; }); });
+    step("The date kind", 8, [&] { canvas.perform("profile:toggleDateLabel", w.now); });
+    step("Restore default picture", 4, [&] { o.avatar = false; canvas.perform("profile:menu", w.now); canvas.perform("profile.more:restore", w.now); });
+    step("The name's editor", 4, [&] { canvas.perform("profile:name", w.now); check(canvas.editingField() == m::ProfileField::name, "The name's editor opens"); });
+    check(surfaces > 30, "The card has its surfaces (" + std::to_string(surfaces) + ")");
+}
 }
 
 int main(int argc, char** argv) {
@@ -354,6 +396,7 @@ int main(int argc, char** argv) {
         if (argc > 1) data = loadOracle(argv[1], {"states"}, {"text", "layerDefaults", "valid", "limits", "sliders"});
         rules(data ? &*data : nullptr);
         behaviour();
+        partsKept();
         if (data) {
             Oracle oracle(*data);
             oracleScenes(oracle);
