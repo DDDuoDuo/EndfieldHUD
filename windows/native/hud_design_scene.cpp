@@ -76,7 +76,7 @@ struct NativeDesignScene::Impl {
         const d::Layer* groupLayer{};
         d::Affine groupWorld;
         float groupOpacity{1};
-        bool wantsGroup{}, refused{};
+        bool wantsGroup{}, refused{}, prepared{}; // prepared: wanted for the coming fade (NativeDesignScenePose::prepareFade)
         std::vector<std::size_t> index;     // part surface -> scene surface (none: no drawing)
         std::vector<std::uint8_t> lazy, painted, wanted;
         std::uint64_t paintRevision{};
@@ -426,14 +426,21 @@ void NativeDesignScene::updatePose(const NativeDesignScenePose& pose) {
         // Group opacity (CALayer opacity composites the subtree as one image):
         // a part of two or more drawn surfaces whose group layer (with the
         // module) is translucent is drawn through a group; at rest directly.
-        p.wantsGroup = false;
+        // A fade the host is about to start (prepareFade, the module still at
+        // opacity 0) wants the group already: it is attached while nothing shows.
+        p.wantsGroup = p.prepared = false;
         if (p.scene && p.groupLayer && p.kept > 1) {
             const auto g = d::sampleLayer(*p.groupLayer, *i.root, pose.time);
             const double opacity = pose.opacity * g.opacity;
-            if (g.visible && opacity > 0 && opacity < 1 - 1e-4 && g.world.inverse()) {
+            // Its own opacity may still be 0 (the entrance stagger has not
+            // reached it; sampleLayer then reports it invisible): the module's
+            // fade-in takes the group either way.
+            const bool prepared = pose.prepareFade && pose.opacity <= 0 && (g.visible || !(g.opacity > 0));
+            if ((prepared || (g.visible && opacity > 0 && opacity < 1 - 1e-4)) && g.world.inverse()) {
                 p.groupWorld = g.world;
                 p.groupOpacity = float(g.opacity);
                 p.wantsGroup = true;
+                p.prepared = prepared;
             }
         }
         if (!p.wantsGroup) { i.dropGroup(p); p.refused = false; }
@@ -449,6 +456,10 @@ bool NativeDesignScene::uploadAnimations(Renderer& r) {
     auto& i = *impl_;
     need(i.posed, "Pose the design scene before its upload");
     bool changed = std::exchange(i.entriesChanged, false);
+    // Groups taken ahead of a fade (prepareFade): a few per frame, so the
+    // invisible frames before the fade stay short too.
+    constexpr std::size_t preparedPerFrame = 2;
+    std::size_t prepared = 0;
     // A lazy surface paints its content once it shows (before this frame is
     // drawn) and gives it back after fading out.
     for (auto& part : i.parts) {
@@ -469,7 +480,7 @@ bool NativeDesignScene::uploadAnimations(Renderer& r) {
         // allocated now). The renderer's group limits may refuse it (a part
         // larger than its pixel budget): that fade draws directly.
         bool attached{};
-        if (p.wantsGroup && !p.group && !p.refused) {
+        if (p.wantsGroup && !p.group && !p.refused && (!p.prepared || prepared++ < preparedPerFrame)) {
             if (i.pool.empty()) i.pool.push_back(std::make_unique<NativeLayerGroup>(i.raster, i.prefix + ".group"));
             p.group = std::move(i.pool.back());
             i.pool.pop_back();
