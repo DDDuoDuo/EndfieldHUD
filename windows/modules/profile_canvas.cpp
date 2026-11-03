@@ -340,7 +340,9 @@ void ProfileCanvas::revertPreview(bool animated) {
 void ProfileCanvas::recordingModeChanged() {
     if (editing_ && editing_->field == ProfileField::playerID) editing_->text->endEditing(false);
     if (!renderedLanguage()) return;
-    rerenderWhenIdle();
+    // Not shown: re-rendered when next shown (Canvas::recordingModeChanged).
+    if (!isShown()) { deferRecordingMode(); return; }
+    if (editing_) needsRerender_ = true; else rerenderKeepingIds();   // rerenderWhenIdle
     if (env().recordingMode && refs_.uid) { Layer* uid = refs_.uid; d::redaction::playEntrance(std::span<Layer* const>(&uid, 1), clock()); }
 }
 

@@ -71,8 +71,9 @@ public:
     // Appearance event: palette (HUDColor.apply + refreshPalette: the overlay
     // recolours, the ACTIVE canvas closes its popups and re-renders now, the
     // others when next shown), language (stale pages rebuild when shown),
-    // Reduce Motion, Recording mode (every built canvas re-renders in place,
-    // recordingModeChanged). Returns true when anything visible changed.
+    // Reduce Motion, Recording mode (recordingModeChanged: a shown canvas
+    // re-renders in place now, a built one that is not shown when next
+    // shown). Returns true when anything visible changed.
     bool apply(const Appearance&, double now);
     const Appearance& appearance() const noexcept { return appearance_; }
     // Design units per content px (baseUnit; the display adaptation is in the
@@ -113,6 +114,9 @@ public:
     // needs a still plane began (onLockParallax).
     std::function<void()> onInputStateChange, onLockParallax, invalidate;
     std::span<Canvas* const> canvases() const noexcept { return canvases_; }
+    // Pages every canvas has built so far (makePage): the work bound of an
+    // appearance change.
+    std::uint64_t pagesBuilt() const noexcept { return pagesBuilt_; }
 private:
     friend class Canvas;
     Environment env_;
@@ -121,6 +125,7 @@ private:
     std::vector<Canvas*> canvases_;
     TextEditorHost* editorHost_{};
     double unit_{geometry::baseUnit};
+    std::uint64_t pagesBuilt_{};
     void registerCanvas(Canvas&);
     void unregisterCanvas(Canvas&) noexcept;
 };
@@ -174,6 +179,7 @@ private:
     std::vector<std::unique_ptr<ScrollArea>> scrolls_;
     std::vector<std::shared_ptr<void>> parts_;
     std::vector<std::pair<std::string, double>> restored_;
+    std::uint64_t serial_{};                   // the page's id serial (prefix ".page<serial>")
 };
 
 // HUDDesignCanvas (LIB-75..82): the redesigned module base.
@@ -229,7 +235,10 @@ public:
     virtual bool handleScroll(Point, Point /*delta*/) { return false; } // box px, + down; before scroll areas
     virtual bool handleMagnify(Point, double) { return false; }
     virtual std::optional<Cursor> cursor(std::optional<Point>) const { return std::nullopt; }
-    virtual void recordingModeChanged();        // default: re-render in place when rendered
+    // Default: a rendered canvas re-renders in place (HUDDesignCanvas
+    // .recordingModeChanged, :229), keeping its page's layer ids
+    // (rerenderKeepingIds); one that is not shown re-renders when next shown.
+    virtual void recordingModeChanged();
     virtual void renderScaleChanged();          // default: re-render in place when rendered
     virtual void paletteChanged();              // default: close popups; active -> re-render now
     // Reduce Motion changed (verbs already honour it; the Mac host calls a
@@ -261,6 +270,16 @@ public:
     // offset by id; during a sub-page swap the new page stays held invisible
     // until the swap lands. Text fields that are not editing are dropped.
     void rerender();
+    // rerender, but the new page keeps the replaced page's layer ids when no
+    // swap is in flight and none of its fields edits: the scene then reuses
+    // every part whose artwork is unchanged instead of rasterizing the whole
+    // page again (a Recording mode switch changes a few redacted labels).
+    void rerenderKeepingIds();
+    // Shown: attached (show() .. prepareToLeave()) or active.
+    bool isShown() const noexcept { return attached_ || active_; }
+    // A Recording mode change this canvas applies when next shown (show /
+    // setActive re-render it, keeping its layer ids).
+    void deferRecordingMode() noexcept { recordingStale_ = true; }
     // Sub-navigation (LIB-76): offset subpageOffset(dx, dy); closes popups,
     // ends editing (commit), cancels gestures; offsets of pages left are
     // retained and GOING BACK (dx < 0) restores them, forward starts at 0; the
@@ -427,7 +446,7 @@ private:
     std::vector<Control*> popoverControls_;
     std::vector<TextField*> fields_;
     Router router_;
-    bool active_{}, showsHeader_{true}, attached_{};
+    bool active_{}, showsHeader_{true}, attached_{}, recordingStale_{}, keepIds_{};
     std::optional<core::Language> renderedLanguage_;
     std::uint64_t renderedPalette_{}, pageSerial_{}, structure_{};
     const LayerArena* tracked_{};
@@ -449,6 +468,7 @@ private:
     void finishLeave();
     void revealSettledPage();
     bool stale() const noexcept;
+    void rerenderIfStale();
     void bury(std::shared_ptr<void>);
     void forgetFields(const Layer& subtree);
     void pruneRetired();
