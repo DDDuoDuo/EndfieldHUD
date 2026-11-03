@@ -748,7 +748,7 @@ void Application::Impl::concealed(double time){
     if(automation)automation->disconnectOwners();
     broadcast(HostEvent::Kind::overlayConcealed,time);
     // The density the next opening deploys at: as the retract would have left it, then the deploy.
-    if(designOverlay&&chromePlan){const double settled=designOverlay->context().boxScale();designDensityStart=settings.reduceMotion?settled:replayDesignDensity(settled,true);heldDesignDensity.reset();holdDesignDensity();}
+    retractDesignDensity();
     releaseConcealedGraphics();
     // ENDFIELDHUD_MEMORY_TRACE: the first closings (the hidden run records its own stages).
     if(memoryTrace&&production()&&memoryTrace->closings<8)recordMemory("closed-"+std::to_string(++memoryTrace->closings),true);
@@ -1881,6 +1881,10 @@ void Application::Impl::close(double time){
     clockSwipe=0;clockSwipeConsumed=false;clockSwipeTime=-1;if(chrome)chrome->cancelStyleTransition();
     registry.forEach([&](ModuleOwner&o){o.overlayClosing(hostTime(time));},"close");if(audio)audio->volume().setVisible(false);automationChanged();
     time=hostTime(time);
+    // A close that interrupts the deploy: where RC 139's live measurement had stepped to by then (the retract starts there).
+    designDensityAtClose.reset();
+    if(designOverlay&&chromePlan&&!settings.reduceMotion&&session->phase()==core::VisibilityPhase::opening)
+        designDensityAtClose=replayDesignDensity(designDensityStart.value_or(2.),false,(time-canvasOpenedAt)/chromePlan->entranceSeconds());
     host.capturePointer(false);environment.pointerLocked=false;session->setEnvironment(environment,time);canvasCapturedOpacity=canvasOpacity(time);canvasClosedAt=time;closing=true;session->close(time);refresh(time);
 }
 void Application::Impl::forceConceal(double time){
@@ -2034,7 +2038,7 @@ void Application::Impl::updateCalendarWake(){calendarWakeActive=calendarState&&c
 }
 bool Application::Impl::flushCalendar(){if(!calendarState)return true;for(unsigned step=0;step<128;++step){calendarState->queueCapacityAvailable();calendarNotifications->queueCapacityAvailable();utility->waitIdle();utility->drain();const auto&status=calendarNotifications->status();if(!calendarState->hasPendingWork()&&!status.busy&&!status.pending)return !calendarState->hasPersistenceFailure();}return false;}
 void Application::Impl::applyConfiguration(double time){
-    if(!configurationPending)return;configurationPending=false;configurationApplied=true;time=hostTime(time);
+    if(!configurationPending)return;configurationPending=false;time=hostTime(time);
     // HUDRuntimeAppearance.reduceMotion: the preference or the system's
     // reduce-motion setting (Windows: "Animation effects" off,
     // SPI_GETCLIENTAREAANIMATION), re-read on WM_SETTINGCHANGE; never saved.
@@ -2224,6 +2228,8 @@ void Application::Impl::prewarm(){
                 // The owners' first-update work (ModuleOwner::prewarm), on the first
                 // opening's module presentation while they are still closed.
                 if(notes&&chromePlan&&chromePlan->projection().center){
+                    // RC 139's owner prewarm measured the held first pose from 2: the first deploy starts there.
+                    if(!designDensityStart)designDensityStart=tools::designDensity(source::designBoxWorld(*chromePlan->projection().center),metrics.scale,2);
                     holdDesignDensity(); // the first opening's pages rasterize at the settled density
                     const auto prewarmChrome=chromeSettings(notes->selected());
                     registry.forEach([&](ModuleOwner&o){const ModuleFrame frame{*chromePlan->projection().center,prewarmChrome,notes->modulePresentation(),0.f,hostTime(time),false};o.prewarm(frame);},"prewarm");
@@ -2253,7 +2259,7 @@ void Application::Impl::prewarm(){
 // The planes depend on the layout only (only the centre node's ancestry is
 // resolved per pose): kept for the last four layouts (displays), resolved on
 // a miss.
-double Application::Impl::replayDesignDensity(double start,bool exit){
+double Application::Impl::replayDesignDensity(double start,bool exit,double fraction){
     if(!chromePlan||!(metrics.width>0)||!(metrics.height>0))return start;
     const DesignDensityLayout layout{metrics.width,metrics.height,metrics.scale,settings.hudScale,contentScale,settings.hudOffset,0,false};
     auto found=std::find_if(designDensityPlanes.begin(),designDensityPlanes.end(),[&](const DesignDensityPlanes&p){return p.layout==layout;});
@@ -2266,8 +2272,11 @@ double Application::Impl::replayDesignDensity(double start,bool exit){
             for(unsigned k=0;k<=samples;++k)if(const auto center=chromePlan->clipCenter(viewport,settings.hudOffset,settings.hudScale,contentScale,retract,seconds*k/samples))planes.push_back(source::designBoxWorld(*center));}
         found->layout=layout;++designDensityResolves;designDensityResolveMilliseconds+=milliseconds(begin);}
     found->used=++designDensityUses;
+    // Planes k / 96 of the clip, up to `fraction` of it.
+    const auto&planes=exit?found->exit:found->entrance;
+    const auto count=std::min<std::size_t>(planes.size(),std::size_t(std::floor(std::clamp(std::isfinite(fraction)?fraction:1.,0.,1.)*double(planes.size()-std::min<std::size_t>(planes.size(),1))))+1);
     double density=start;
-    for(const auto&plane:exit?found->exit:found->entrance)density=tools::designDensity(plane,metrics.scale,density);
+    for(std::size_t k=0;k<count;++k)density=tools::designDensity(planes[k],metrics.scale,density);
     return density;
 }
 // Outside the settled HUD the overlay holds the density the next settled HUD
@@ -2281,13 +2290,11 @@ double Application::Impl::replayDesignDensity(double start,bool exit){
 void Application::Impl::deriveDesignDensity(){
     if(!designOverlay||!chromePlan||!(metrics.width>0)||!(metrics.height>0))return;
     const core::Rect viewport{0,0,metrics.width,metrics.height};
-    // Before any opening: the first pose measured from 2 (RC 139's prewarm),
-    // kept only once the preference record applied (its HUD scale and offset);
-    // until then each derivation measures it again.
-    double start=2.;
-    if(designDensityStart)start=*designDensityStart;
-    else{if(const auto first=chromePlan->clipCenter(viewport,settings.hudOffset,settings.hudScale,contentScale,false,0))start=tools::designDensity(source::designBoxWorld(*first),metrics.scale,2);
-        if(configurationApplied)designDensityStart=start;}
+    // Where the next deploy starts: the last retract's end, or the launch
+    // prewarm's first-pose measurement from 2, or (an opening before any
+    // prewarm: first run, --settings, a device-loss reopen) 2, as RC 139's
+    // live measurement started from the overlay's initial density.
+    const double start=designDensityStart.value_or(2.);
     const DesignDensityLayout layout{metrics.width,metrics.height,metrics.scale,settings.hudScale,contentScale,settings.hudOffset,start,settings.reduceMotion};
     if(heldDesignDensity&&designDensityLayout==layout)return;
     if(!settings.reduceMotion)heldDesignDensity=replayDesignDensity(start,false);
@@ -2312,6 +2319,14 @@ void Application::Impl::holdOpeningDesignDensity(){
     const auto applied=settings;settings=openingDesignSettings();
     try{holdDesignDensity();}catch(...){settings=applied;throw;}
     settings=applied;
+}
+// A retract settled hidden (the concealment, a shelf drag's retract): the next
+// deploy starts where RC 139's measurement stepped to through it, from the
+// density held through it, or where a close cut the deploy short.
+void Application::Impl::retractDesignDensity(){
+    if(!designOverlay||!chromePlan)return;
+    const double from=designDensityAtClose.value_or(designOverlay->context().boxScale());designDensityAtClose.reset();
+    designDensityStart=settings.reduceMotion?from:replayDesignDensity(from,true);heldDesignDensity.reset();holdDesignDensity();
 }
 void Application::Impl::holdDesignDensity(){deriveDesignDensity();if(designOverlay&&heldDesignDensity)designOverlay->holdDensity(heldDesignDensity);}
 bool Application::Impl::present(double time,bool submit){

@@ -400,7 +400,8 @@ struct Application::Impl {
     void scheduleDeadline();
     void refresh(double time);
     bool present(double time, bool submit);
-    double replayDesignDensity(double start, bool exit); // the design density stepped through the retract or deploy
+    double replayDesignDensity(double start, bool exit, double fraction = 1); // the design density stepped through (part of) the retract or deploy
+    void retractDesignDensity(); // a retract settled hidden: where the next deploy starts
     void deriveDesignDensity(); // the settled density for the next opening (heldDesignDensity)
     void holdDesignDensity();   // derive it and hold it in the design overlay
     WatchSessionSettings openingDesignSettings(); // the settings an opening's first frame applies
@@ -797,7 +798,7 @@ struct Application::Impl {
     // openPresentation's display placement in progress (onResize leaves the density
     // to it), and the hidden traces' stand-in for that placement (targetDisplay).
     bool placingForOpen{};
-    bool configurationApplied{}; // applyConfiguration ran once (production: the preference record)
+    std::optional<double> designDensityAtClose; // close(): RC 139's density where it cut a deploy short
     std::function<void()> placementForTest;
     std::shared_ptr<gpu::NotesClipboard> designClipboard; // the design text fields' one clipboard
     std::unique_ptr<ModuleContrast> moduleContrast;      // the centre's contrast backdrop (SHELL-27)

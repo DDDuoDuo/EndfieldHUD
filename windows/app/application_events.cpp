@@ -328,7 +328,9 @@ void Application::Impl::shelfDragEffect(const core::SystemOverlayEffect&e,double
 bool Application::Impl::shelfDragFrame(double time,bool settled){
     if(shelfRestoring&&!closing&&session->phase()==core::VisibilityPhase::visible){const auto token=*shelfRestoring;shelfRestoring.reset();
         perform(lifecycle.shelfDragRestored(token),time);automationChanged();refreshAutomation();if(stopping)return true;}
-    if(shelfRetracting&&settled&&session->phase()==core::VisibilityPhase::concealed){const auto token=*shelfRetracting;shelfRetracting.reset();perform(lifecycle.shelfDragRetracted(token),time);}
+    if(shelfRetracting&&settled&&session->phase()==core::VisibilityPhase::concealed){const auto token=*shelfRetracting;shelfRetracting.reset();
+        retractDesignDensity(); // the restore's deploy, as after a concealment
+        perform(lifecycle.shelfDragRetracted(token),time);}
     return lifecycle.shelfDragActive();
 }
 // HUDFileShelfInteraction.beginOutgoingDrag through draggingSession(_:endedAt:):
