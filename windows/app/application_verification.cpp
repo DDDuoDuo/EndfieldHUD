@@ -4,6 +4,8 @@
 // explicit synthetic fixture in a new temporary data root; nothing is shown.
 #include "app/application_impl.hpp"
 #include "app/process_diagnostics.hpp"
+#include "core/source_layout.hpp"
+#include "core/source_native_labels.hpp"
 #include "app/areas/calendar_reminder_module.hpp"
 #include "native/display_center_logo.hpp"
 #include "native/module_scene.hpp" // NativeModuleSurface: coverage projection probes
@@ -446,6 +448,19 @@ int Application::Impl::runAnimationTrace(){
     if(chromePlan&&metrics.width>0)if(const auto first=chromePlan->clipCenter({0,0,metrics.width,metrics.height},settings.hudOffset,settings.hudScale,contentScale,false,0))
         rc139Density=tools::designDensity(core::source::designBoxWorld(*first),metrics.scale,2);
     double replayMS{};{const auto begin=Clock::now();(void)replayDesignDensity(2,false);replayMS=milliseconds(begin);}
+    // clipCenter resolves only the centre's ancestry with only its curves: it
+    // equals the full pose (WatchAnimation::pose) through the full layout.
+    if(chromePlan&&animation&&camera&&chromeBindings&&metrics.width>0){
+        const core::Rect viewport{0,0,metrics.width,metrics.height};const auto pixels=chromePlan->restingPointsPerUnit(viewport);need(pixels.has_value(),"The resting centre is measurable");
+        const double unit=source::desktopBaseDesignScale(viewport)*contentScale / *pixels;const source::SourceLayout layout(animation->scene());const auto centre=layout.nodeIndex(chromeBindings->centerNodeID);need(centre.has_value(),"The centre node exists");
+        const auto frame=camera->desktopFrame({viewport.width,viewport.height},camera->rootRotation(),settings.hudOffset,settings.hudScale);
+        for(const bool exit:{false,true})for(unsigned k=0;k<=12;++k){const double at=(exit?chromePlan->exitSeconds():chromePlan->entranceSeconds())*k/12;
+            const auto pose=exit?animation->pose(animation->entrance().lastKeyTime,{},at,frame.layout.canvasSize):animation->pose(at,{},{},frame.layout.canvasSize);
+            const auto world=frame.worldRoot*layout.resolve({},pose.transforms)[*centre].worldMatrix;std::array<core::Point,4> quad{};bool projected=true;
+            const std::array<source::Vec3,4> local{source::Vec3{-500*unit,320*unit,0},source::Vec3{500*unit,320*unit,0},source::Vec3{500*unit,-320*unit,0},source::Vec3{-500*unit,-320*unit,0}};
+            for(unsigned n=0;n<4;++n){const auto p=source::projectNativePoint(local[n],world,frame.projection*frame.view,viewport);if(!p){projected=false;break;}quad[n]=*p;}
+            const auto fast=chromePlan->clipCenter(viewport,settings.hudOffset,settings.hudScale,contentScale,exit,at);need(projected==fast.has_value(),"clipCenter projects as the full layout does");
+            if(fast){const auto full=source::nativeProjectiveTextTransform(quad,{1000,640});for(unsigned n=0;n<16;++n)need(std::abs(full.values[n]-fast->values[n])<=1e-9*std::max(1.,std::abs(full.values[n])),"clipCenter equals the full pose and layout");}}}
     pump(2,{},{});
     const double period=1000./args.idleTraceRefreshRate;
     constexpr std::array stageIds{LiveProbe::prepare,LiveProbe::backdrop,LiveProbe::sourcePose,LiveProbe::materials,LiveProbe::nativeLabels,LiveProbe::notesPose,LiveProbe::publication,LiveProbe::draw,LiveProbe::message};
@@ -459,9 +474,12 @@ int Application::Impl::runAnimationTrace(){
     const auto segment=[&](const std::string&name,bool opening,double tail){
         auto previous=snapshot();const auto first=previous;auto timings=probe.timings;auto owners=probe.owners;std::size_t ownerCount=probe.ownerCount;
         const double densityBefore=density();std::int64_t densitySteps{};double densityAt=densityBefore;
+        // Between the summon and the first frame: plane resolutions, rasterizations.
+        const auto resolvesBefore=designDensityResolves;const double resolveMSBefore=designDensityResolveMilliseconds;std::int64_t firstResolves=-1,firstRasterizations=-1;
         const double start=OverlayHost::clockNow();double at=start,busyAt=cycles();std::int64_t faultsAt=pageFaults();
         perform(lifecycle.toggle(),clock());if(opening)host.show(false);host.setFrameDemand(demand(clock()));host.invalidate();
         const double requestMS=(OverlayHost::clockNow()-start)*1000;
+        densityAt=density(); // a summon's display placement may derive it before the first frame, not after
         double doneAt=-1;Json::Array rows;std::vector<double>intervals,busy,present;
         const auto finished=[&]{return opening?opened():closed();};
         pump(10,[&]{return doneAt>=0&&OverlayHost::clockNow()-doneAt>=tail;},[&]{
@@ -474,6 +492,7 @@ int Application::Impl::runAnimationTrace(){
             const bool after=doneAt>=0;
             if(!after){intervals.push_back(interval);busy.push_back(cpu);present.push_back(presentMS);}
             const auto&a=previous;const auto&b=next;
+            if(firstResolves<0){firstResolves=std::int64_t(designDensityResolves-resolvesBefore);firstRasterizations=std::int64_t(b.raster.rasterizations-first.raster.rasterizations);}
             rows.push_back(Json::Object{{"atMS",(now-start)*1000},{"intervalMS",interval},{"busyMS",cpu},{"presentMS",presentMS},{"afterDone",after},{"stages",std::move(stages)},{"owners",std::move(byOwner)},
                 {"textureUploads",std::int64_t(b.renderer.textureUploads-a.renderer.textureUploads)},{"textureUploadMS",(b.renderer.textureUploadSeconds-a.renderer.textureUploadSeconds)*1000},
                 {"meshUploads",std::int64_t(b.renderer.meshUploads-a.renderer.meshUploads)},{"nativeGroupRenders",std::int64_t(b.renderer.nativeGroupRenders-a.renderer.nativeGroupRenders)},
@@ -502,7 +521,8 @@ int Application::Impl::runAnimationTrace(){
             {"lateFrames",late},{"droppedRefreshes",dropped},
             {"textureUploads",std::int64_t(last.renderer.textureUploads-first.renderer.textureUploads)},{"rasterizations",std::int64_t(last.raster.rasterizations-first.raster.rasterizations)},
             {"deviceResumes",std::int64_t(last.renderer.deviceResumes-first.renderer.deviceResumes)},
-            {"densityBefore",densityBefore},{"density",density()},{"rc139Density",rc139Density.value_or(0.)},{"densitySteps",densitySteps},{"rows",std::move(rows)}});
+            {"densityBefore",densityBefore},{"density",density()},{"rc139Density",rc139Density.value_or(0.)},{"densitySteps",densitySteps},
+            {"planeResolvesToFirstFrame",firstResolves},{"rasterizationsToFirstFrame",firstRasterizations},{"planeResolveMilliseconds",designDensityResolveMilliseconds-resolveMSBefore},{"rows",std::move(rows)}});
     };
     const auto cycle=[&](const std::string&name){segment(name+"-open",true,.25);pump(1,{},{});segment(name+"-close",false,0);};
     cycle("first");
@@ -513,7 +533,30 @@ int Application::Impl::runAnimationTrace(){
     // display): the next openings deploy at the new settled density, no step.
     if(args.animationTraceDpi){pump(1,{},{});const unsigned other=args.animationTraceDpi>=144?96:192;const double before=density();host.setTestDpi(other);pump(.5,{},{});
         std::cout<<"Animation trace: DPI "<<args.animationTraceDpi<<" -> "<<other<<" while closed, density "<<before<<" -> "<<density()<<"\n";
-        cycle("dpi-changed-0");pump(1.5,{},{});cycle("dpi-changed-1");}
+        cycle("dpi-changed-0");pump(1.5,{},{});cycle("dpi-changed-1");
+        // The summon places the HUD on another display (its DPI changes inside
+        // openPresentation, as targetDisplay's SetWindowPos would): back to a
+        // display whose planes are cached, the summon resolves none.
+        const auto placed=[&](const char*name,unsigned dpi){pump(1.5,{},{});placementForTest=[&,dpi]{host.setTestDpi(dpi);};
+            try{cycle(name);}catch(...){placementForTest={};throw;}placementForTest={};
+            // The opening is the second-to-last segment (its closing follows).
+            const auto&opening=segments[segments.size()-2];std::cout<<"Animation trace "<<name<<": "<<opening["planeResolvesToFirstFrame"].integer()<<" plane resolutions, "
+                <<opening["rasterizationsToFirstFrame"].integer()<<" rasterizations, request "<<opening["requestMS"].number()<<" ms, first frame "<<opening["firstFrameMS"].number()<<" ms\n";
+            return opening["planeResolvesToFirstFrame"].integer();};
+        need(placed("placed-cached",args.animationTraceDpi)==0,"A summon onto a cached display resolves no density planes");
+        // A display never seen: its planes are resolved once on the summon (the cost is reported).
+        (void)placed("placed-new",120);
+        // Reduce Motion (no deploy or retract plays): the held density is one step
+        // on the deployed plane (DesktopChromeProjectionPlan::clipCenter at the
+        // entrance's end), where RC 139's first visible frame stepped on the
+        // live settled plane. Both agree from every start on both displays.
+        for(const unsigned dpi:{args.animationTraceDpi,120u}){pump(1,{},{});host.setTestDpi(dpi);pump(.5,{},{});
+            segment("reduce-check-"+std::to_string(dpi)+"-open",true,.25);
+            const auto settled=chromePlan->clipCenter({0,0,metrics.width,metrics.height},settings.hudOffset,settings.hudScale,contentScale,false,chromePlan->entranceSeconds());
+            need(settled&&chromePlan->projection().center,"Both settled planes exist");
+            for(const double start:{1.,1.5,2.,2.5,3.})need(tools::designDensity(core::source::designBoxWorld(*settled),metrics.scale,start)==
+                tools::designDensity(core::source::designBoxWorld(*chromePlan->projection().center),metrics.scale,start),"Reduce Motion's settled step is RC 139's");
+            pump(1,{},{});segment("reduce-check-"+std::to_string(dpi)+"-close",false,0);}}
     // Each module: opened on Map, switched to it, closed, then two traced reopenings on it.
     if(args.animationTraceModules)for(const auto module:{core::Module::clipboard,core::Module::eventLog,core::Module::notes,core::Module::volume,core::Module::workMode,core::Module::system,
             core::Module::archive,core::Module::calendar,core::Module::activityMonitor,core::Module::storage,core::Module::fileShelf,core::Module::power,core::Module::profile,core::Module::nowPlaying}){
@@ -529,7 +572,7 @@ int Application::Impl::runAnimationTrace(){
     const Json report=Json::Object{{"schema",1},
         {"scope","EndfieldHUD hidden animation trace: every frame of the openings and closings on the real clock through the production frame scheduling; numbers, owner and module names only"},
         {"device",renderer.deviceInfo().name},{"refreshHz",args.idleTraceRefreshRate},{"closedGraphicsGraceSeconds",closedGraphicsGrace()},{"cyclesPerMillisecond",cyclesPerMS},
-        {"logicalWidth",metrics.width},{"logicalHeight",metrics.height},{"dpiScale",metrics.scale},{"contentScale",contentScale},{"densityReplayMilliseconds",replayMS},{"segments",std::move(segments)}};
+        {"logicalWidth",metrics.width},{"logicalHeight",metrics.height},{"dpiScale",metrics.scale},{"contentScale",contentScale},{"densityReplayMilliseconds",replayMS},{"densityPlaneResolves",std::int64_t(designDensityResolves)},{"densityPlaneResolveMilliseconds",designDensityResolveMilliseconds},{"segments",std::move(segments)}};
     const std::size_t bound=32*1024*1024;ehud::data::detail::replaceFile(args.animationTrace,std::nullopt,report.encode(bound),bound);
     std::cout<<"Wrote hidden animation trace\n";
     shutdownVisible();
