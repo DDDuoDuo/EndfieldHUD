@@ -9,10 +9,56 @@ data folder; RC 138 is the build published as Windows 1.2.0.
 
 ## Unreleased
 
-Windows 1.3.0 (build 19), the port of the Mac 1.3.0: release candidate 139
-below. It has passed the automated tests but has not yet been tried on the
-laptop's desktop, and nothing is published. Its files are meant for the
+Windows 1.3.0 (build 19), the port of the Mac 1.3.0: release candidate 140
+below, which fixes the three problems the tester found in release candidate
+139. It has passed the automated tests; release candidate 139 was tried on
+the laptop's desktop, release candidate 140 not yet, and nothing is
+published. Its files are meant for the
 shared `v1.3.0` release, next to the Mac 1.3.0 downloads.
+
+## RC 140 — checkpoint 140
+
+Fixes for the three problems the tester found in RC 139 on the laptop's
+desktop. Everything else is as in RC 139 below.
+
+### Fixes
+
+- **Switching to Volume keeps its transition.** The page slides in with its
+  staggered rows again, also the first time after launch. Volume's audio
+  readings used to rebuild the page partway through its entrance, and
+  closing the HUD on Volume rebuilt it during the close. Volume now keeps
+  what it last showed while you are elsewhere and fills new readings in
+  place. On the first visit after launch the Devices values fill in a few
+  milliseconds into the entrance.
+- **Turning Recording mode on or off no longer freezes the HUD.** With every
+  module visited, a switch took 100–150 ms: every module page was rebuilt and
+  the Settings page drawn again from scratch. Now only the page on screen is
+  rebuilt and only its changed labels are drawn again (about 30–65 ms on the
+  test laptop); the other pages catch up when they are next shown. A page
+  that a quick module switch skipped, or that the HUD closed over, no longer
+  counts as shown. Notes' redaction bars do not replay their wipe when Notes
+  catches up later, as on the Mac.
+- **Smoother opening and closing.** On the test laptop's 2560 × 1600 display
+  at 150 %, Map openings miss about 23.5 frames instead of about 27 (Windows
+  1.2.0: about 18), and frames over 15 ms are about a third fewer. The text
+  sharpness is no longer re-measured on the moving HUD (at 175 % and 200 %
+  that redrew every page partway through each opening and closing). Fade
+  layers are prepared and drawn during the opening's short delay instead of
+  all on the first visible frame. The Map creates its terrain images on its
+  worker thread instead of the frame that shows them. The look is unchanged.
+
+### Known issues in RC 140
+
+- Opening the HUD on a second display whose scaling or resolution differs
+  from the display it last closed on can stall the start of the opening
+  for about 45 ms while the text sharpness is worked out for that display.
+  A single display, like the test laptop's 150 % one, is not affected.
+- The same calculation can run inside the first opening frame if the hotkey
+  is pressed before the launch warm-up has run.
+- With Reduce Motion on, the text sharpness after a scaling change can
+  differ slightly from RC 139's.
+
+These three are fixed for the next release candidate.
 
 ## RC 139 — checkpoint 139
 

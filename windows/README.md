@@ -28,9 +28,10 @@ section 6 table joins it as a built-in owner or a registered module area
 release build: the Windows files go onto the existing `v1.2.0` release, next
 to the Mac files. The build is not code-signed (see the checkpoint 137 and
 138 entries and `RELEASE-NOTES.md`). Checkpoint 139 ports the Mac 1.3.0
-(build 19) redesign: it is the release candidate for Windows 1.3.0 (build
-19), verified hidden on the laptop and not yet tried live or published (see
-its entry at the end).
+(build 19) redesign; the tester tried it on the laptop's desktop and found
+three problems, which checkpoint 140 fixes. Checkpoint 140 is the release
+candidate for Windows 1.3.0 (build 19), verified hidden on the laptop and not
+yet tried live or published (see the entries at the end).
 
 The fresh graphics path now also runs the original Mac material programs. A
 build-only exporter captures the current desktop shell's actual geometry,
@@ -5227,3 +5228,123 @@ laptop desktop:
 - The install over the published Windows 1.2.0 with the data kept, and
   later the first in-place update from 1.2.0 through *Check for updates*.
 - The tester's module-by-module pass of the redesigned centre and shell.
+
+## Checkpoint 140 (2026-11-03)
+
+**Not published.** Checkpoint 140 fixes the three problems the tester found
+in release candidate 139 on the laptop's desktop: slight lag (low
+percentile frames) in the opening and closing, switching to Volume losing its
+transition, and a freeze when Recording mode is turned on or off. The code is
+at `1768ec4` on `codex/windows-migration`; it is still Windows 1.3.0
+(build 19). Three fix branches were merged with merge commits, and every fix
+went through an independent review in which a second reviewer tried to
+refute each finding; the confirmed findings were fixed before the merge.
+User-facing changes are in `CHANGELOG.md` (RC 140).
+
+### Volume (`490bc13`: `16163bb`, `c0379a2`, `e37372e`)
+
+- Cause: the audio binding (`native/volume_provider.cpp`) published a
+  snapshot without per-app support and with the controls off as soon as
+  Volume's audio vote was released, and the worker's first read after the
+  vote returned brought them back a few milliseconds into the entrance.
+  `applicationActivitySupported` is part of `VolumeCanvas`'s page
+  Structure, so each change rebuilt the page without its staggered entrance
+  (on leaving, on every switch back, and during a close on Volume).
+- Fix: the binding keeps the last live snapshot while its vote is released
+  and after it is granted until the worker reads again (writes stay refused
+  in that window; a refused vote or endpoints the worker could not open
+  still show their error), the way the Mac's `AudioDeviceController` keeps
+  its snapshot across `stop()` and `start()`. The page Structure keys
+  `applicationActivitySupported` only on the App volume tab, which is the
+  only page that reads it, so the first read after launch fills the Devices
+  page in place (the Mac rebuilds there; the owner asked for the fix).
+- Checks: `audio_runtime_contracts` drives the real `VolumeCanvas` over the
+  shared runtime with simulated endpoints through the first visit and three
+  revisits (no page rebuilt, the tab bar and rows keep their stagger);
+  `volume_provider_contracts` and `utility_canvases_contracts` gained the
+  binding and Structure cases. They fail on the old code.
+
+### Recording mode (`1364ce4`, `32cb13d`: `8704e3a`, `d9f3b62`, `79b11b1`, `79a1da8`, `ffe98ba`)
+
+- Cause: a Recording mode change re-rendered every built design canvas, as
+  the Mac does (`HUDDesignScreen.swift:82`, `:229`); here each re-render is a
+  new page with new layer ids, so the scene rasterized the shown Settings
+  page from scratch. One switch with every module built: 15 pages built,
+  188–203 rasterizations, a 103–146 ms frame.
+- Fix: the shown canvas re-renders keeping its page's layer ids, so only the
+  changed surfaces rasterize; a canvas that is not shown re-renders the same
+  way when next shown, as a palette change already did. A canvas the owner
+  showed but never activated (an incoming screen a later switch skipped, the
+  prewarmed launch module the first opening did not present, or the HUD
+  closing over it) now goes through `prepareToLeave`, as the Mac's next
+  transition leaves it, and a closed overlay never shows a slot again. Notes
+  skips its build-time redaction wipe on a deferred rebuild.
+- Result (hidden owner coverage on the laptop): 1 page and 6 rasterizations
+  (21 on the very first switch), a 27–67 ms frame; the following second of
+  frames stays under 5 ms. The Daily boot log switch on the same page takes
+  2–4 ms. The rest is the shown page's rebuild (4–8 ms), the Settings scene
+  sync (about 10 ms), the clock's status row (5–7 ms) and uploads.
+- Checks: `application_owner_coverage` switches Recording mode four times
+  after every module is built and fails if a switch builds more than one
+  page or rasterizes more than 48 surfaces; `hud_design_page_contracts`,
+  `hud_design_owner_contracts` (skipped switch, close between frames and the
+  swap landing, prewarm then another module) and `notes_canvas_contracts`
+  cover the rest. They fail on the old code.
+
+### Opening and closing (`3e6b7b5`, `1768ec4`: `2e7452e`, `0b7f852`, `5989cd4`, `11f3c8b`, `266cc8e`, `af2c207`, `f2f7c25`, `36fd360`, `2d96619`)
+
+- The design raster density was measured every frame on the moving centre
+  plane, so at 175 % and 200 % it stepped partway through each deploy and
+  retract and re-rendered every built canvas (37–58 ms frames). The held
+  density is now replayed from the layout's deploy and retract planes
+  (`DesktopChromeProjectionPlan::clipCenter`, the same rule and hysteresis),
+  so it settles exactly where RC 139 settled at 100, 150, 175 and 200 % and
+  never steps during an animation; a scaling change while closed applies
+  while nothing is shown.
+- The module's fade groups were all created and drawn on the first visible
+  frame of the fade. They are now taken from the opening's second frame and
+  drawn ahead at opacity 0, two per frame (`Renderer` render-ahead), only
+  for parts whose entrance is still coming.
+- The Map's terrain, backdrop and host-cut textures are created on the
+  painter's worker (the device is free-threaded; the UI thread installs
+  them if the device is unchanged), and opaque images skip the
+  premultiplying copy. The release at close stays, as on the Mac.
+- `watch_session_preview --animation-trace` (with `--animation-trace-modules`
+  and `--animation-trace-dpi`) records every frame of the openings and
+  closings and checks the density.
+- Hidden on the RTX 5060 at 2560 × 1600 with a 150 % DPI override, real
+  clock, 165 Hz pacing, 1.2.0 (`9c75665`) built with the same probe and run
+  in the same jobs (late frames per opening; first / p95 / max ms): Map warm
+  opening RC 139 26.8 (33.1 / 12.9 / 23.4), now 23.5 (29.0 / 11.9 / 18.3),
+  1.2.0 18.1 (19.6 / 10.8 / 21.4); module openings 19.9 → 21.6 (1.2.0 18.8,
+  within the ±3 run noise); Map frames over 15 ms 1.3 → 0.9 per opening
+  (1.2.0 0.2). The remaining excess is 9–15 ms frames 0.4–0.8 s into Map
+  openings: the Map owner's design page (0.70 against 0.25 ms per frame) and
+  publication (0.94 against 0.47 ms, more draws since text has its own
+  1.35× surfaces).
+
+### Known issues (to fix for the next release candidate)
+
+A verification review of `36fd360` confirmed three; the owner chose to test
+RC 140 without waiting for the fix:
+
+- Summoning onto a display whose layout differs from the one cached at the
+  last close resolves the density planes (about 45 ms) and re-renders the
+  canvases inside the hotkey handler, before the first deploy frame
+  (`openPresentation` → `placeOnDisplay` → WM_SIZE → `onResize` →
+  `holdDesignDensity`), possibly twice through an intermediate WM_SIZE.
+- If the hotkey beats the launch prewarm, or the layout changes during a
+  deploy, the planes are resolved inside an opening frame.
+- With Reduce Motion the replay assumes a retract and deploy that never play,
+  so the settled density after a scaling change can differ from RC 139's.
+
+### Verified
+
+- Portable: 206/206 suites at `1768ec4`.
+- Laptop, hidden, slot `w13` at `1768ec4`: `ALL_BUILD` with 0 errors and 0
+  warnings; 143/143 suites matching the application, design, canvas, Map,
+  renderer, layer, chrome, Volume, audio, Notes, Profile, data store and
+  Media Assembly areas.
+- Not yet: the tester's check of the three fixes on the desktop, with real
+  audio for Volume.
+
