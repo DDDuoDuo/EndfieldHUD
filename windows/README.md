@@ -5084,11 +5084,27 @@ Still above Windows 1.2.0:
   scale.
 - Closed after ten more cycles, +45 MiB: heap committed 242–254 against
   157–163 MiB, with a live heap only about 10 MiB larger. The rest is freed
-  but still committed heap left by the design library copying JSON trees
-  while the HUD is open (about 750,000 small blocks after every module).
-  `HeapCompact` on close lowered the heap but not private bytes. Being fixed.
-- Launch prewarm, +45 ms once at launch. Being investigated.
-- First showing of a module, 2–3× slower: about half is rasterizing text at
+  but still committed heap. `fff7a5e` stops the design library copying JSON
+  trees while it emits and loads (MSVC's `std::map` move is not `noexcept`,
+  so every growing `vector<Json>` deep-copied; allocations over a visit of
+  every module 4.39 → 2.01 million). In a second side-by-side run (no game
+  running): closed after the cycles 294–322 → 287–313 MiB private against
+  1.2.0's 262–266, pages actually committed to the heap 170–172 → 158–160
+  against 118–120; private bytes vary by about ±20 MiB between identical
+  runs. What remains is fragmentation, not live data (90 MiB allocated
+  against 1.2.0's 94): the larger peak while open (the 1.35× text surfaces
+  and each visited module's scene data), the canvas pages kept after a close
+  (the Mac frees its whole centre; freeing them here crashed, the canvases
+  keep raw pointers into their pages) and the Map's reload on every opening
+  (as on the Mac). Tried and reverted: `HeapCompact` (private bytes
+  unchanged) and the segment heap (first opening 45 MiB higher).
+- Launch prewarm, +20 ms once at launch (58–59 against 37–38 ms in the
+  second run, 63–67 before `fff7a5e`): almost all of it builds and paints
+  the launch module's centre page for the first opening. The Mac builds its
+  centre at opening; doing that here would move the cost into the first
+  opening (cold first frame about 24 → 45 ms), so it stays at launch.
+- First showing of a module, 2–3× slower (about 1.7× after `fff7a5e`:
+  the median module 39.2 → 36.0 ms against 27.4): about half is rasterizing text at
   1.35× in one surface per text element (Clipboard 54 textures against 29,
   Event Log 85 against 38, Archive 25 against 6), a fifth is sampling the
   entrance animation, a tenth is building JSON.
@@ -5151,8 +5167,10 @@ oracles are gone; notes in place in the entries above point here.
 
 ### Open items
 
-- The closed memory after repeated openings (+45 MiB) and the launch
-  prewarm (+45 ms) against Windows 1.2.0, in the side-by-side table above.
+- Against Windows 1.2.0 (side-by-side table above): about 25–40 MiB more
+  private memory closed after repeated openings, from heap fragmentation; a
+  real fix frees the canvas pages on close (the Mac does) or drops each
+  scene's retained JSON. The launch prewarm stays 20 ms longer by choice.
 - The release-notes check: rerun `endfieldhud_release_contracts` with the
   rewritten `RELEASE-NOTES.md`.
 - The new platform gaps and Mac bugs not copied are in

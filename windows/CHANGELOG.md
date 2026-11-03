@@ -154,6 +154,9 @@ Windows 1.2.0 (RC 138):
   less while the HUD is closed.
 - Media Assembly no longer builds its preview stage when the HUD opens on
   another module, which takes 30–50 ms off the session's first opening.
+- The redesigned centre no longer copies its drawing data over and over
+  while it builds a page: half as many memory allocations, and a module's
+  first showing about 12 % faster.
 - The Map frees its terrain images when the HUD closes, as on the Mac
   (about 12.6 MiB less while closed); the next opening decodes them again,
   in about a third of a second, while the opening animation plays.
