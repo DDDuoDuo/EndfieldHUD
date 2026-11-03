@@ -10,7 +10,7 @@ std::size_t checks{};void check(bool value,const char*message){++checks;if(!valu
 struct Graph {
     gpu::AudioEndpointSnapshot audio;gpu::VolumeProviderBinding*binding{};
     unsigned reads{},activation{},volume{},mute{},balance{},gain{},stop{},stopAll{},output{},input{};
-    bool otherOwner{},vote{},asynchronousGain{};std::int32_t error{};
+    bool otherOwner{},vote{},asynchronousGain{},deferVote{};std::int32_t error{},openError{};
     std::wstring lastEndpoint;
     Graph(){audio.available=true;audio.paused=false;audio.outputs={{L"out-一",L"Speakers",false,false},{L"out-b",L"Headphones",true,false}};audio.inputs={{L"in-a",L"Microphone",false,false}};
         audio.defaultOutputID=L"out-一";audio.defaultInputID=L"in-a";
@@ -18,9 +18,16 @@ struct Graph {
         audio.applications.push_back({"pid:42:creation:1",L"Owned Test App",42,true,gpu::AudioApplicationRouteState::direct,{},{},{},{}});
     }
     void changed(){if(binding)binding->receive(gpu::ServiceChange::audio);}
+    // The worker applies the vote (AudioService: paused and controls cleared
+    // without it; with it, the endpoints read or their open failure).
+    // `level` is the endpoint's level, read again when the controls return.
+    std::optional<float>level;
+    void apply(){const bool want=vote||otherOwner;audio.paused=!want||openError<0;audio.available=!audio.paused;audio.applicationsPaused=audio.paused;audio.error=openError;
+        if(audio.paused){if(audio.volume)level=audio.volume;audio.volume.reset();audio.canSetVolume=false;}else{audio.volume=level;audio.canSetVolume=true;}}
+    void settle(){apply();changed();}
     gpu::VolumeProviderAccess access(bool selectors=false){gpu::VolumeProviderAccess a;
         a.readSnapshot=[this]() -> const gpu::AudioEndpointSnapshot&{++reads;return audio;};
-        a.requestActive=[this](bool v){++activation;vote=v;audio.paused=!(vote||otherOwner);audio.available=!audio.paused;audio.applicationsPaused=audio.paused;changed();return error;};
+        a.requestActive=[this](bool v){++activation;vote=v;if(!deferVote){audio.paused=!(vote||otherOwner);audio.available=!audio.paused;audio.applicationsPaused=audio.paused;changed();}return error;};
         a.setVolume=[this](std::wstring_view endpoint,float v){++volume;lastEndpoint=endpoint;check(endpoint==audio.defaultOutputID,"Volume write carries the endpoint its gesture began on");if(error<0)return error;audio.volume=v;changed();return 0;};
         a.setMute=[this](std::wstring_view endpoint,bool v){++mute;lastEndpoint=endpoint;if(error<0)return error;audio.muted=v;changed();return 0;};
         a.setBalance=[this](std::wstring_view endpoint,float v){++balance;lastEndpoint=endpoint;if(error<0)return error;audio.balance=v;changed();return 0;};
@@ -43,8 +50,10 @@ void lifecycle(){Graph graph;gpu::VolumeProviderBinding binding(graph.access());
     for(unsigned i=0;i<1000;++i){binding.receive(gpu::ServiceChange::battery);binding.receive(gpu::ServiceChange::clipboard);callbacks.setActive(true);binding.setVisible(true);}
     check(graph.reads==baselineReads&&graph.activation==1&&deliveries==baselineDeliveries,"Unrelated events and repeated visibility produce no reads, publications, or wake requests");
     check(!binding.receive(gpu::ServiceChange::audio)&&deliveries==baselineDeliveries,"Equal audio snapshot produces no UI publication");
+    const auto shown=binding.snapshot();
     graph.otherOwner=true;binding.setVisible(false);check(!graph.vote&&!graph.audio.paused&&graph.activation==2,"Conceal releases this vote without pausing another owner's shared service");
-    check(!binding.snapshot().canSetVolume&&!binding.snapshot().applicationActivitySupported,"Hidden retained snapshot disables writes even while sibling keeps service active");
+    // AudioDeviceController.stop() keeps its snapshot; only the setters check isRunning.
+    check(binding.snapshot()==shown&&deliveries==baselineDeliveries,"Hidden binding keeps the snapshot it showed, even while a sibling keeps the service active");
     const auto hiddenReads=graph.reads;graph.changed();check(graph.reads==hiddenReads,"Hidden binding ignores shared audio events");
     check(!callbacks.setVolume("out-一",.2)&&graph.volume==0,"Stale hidden callbacks cannot mutate native audio");
     binding.setVisible(true);check(graph.activation==3&&binding.snapshot().canSetVolume,"Reopen restores selected module without a polling cycle");
@@ -101,6 +110,45 @@ void boundaries(){Graph graph;graph.audio.outputs.resize(513);bool rejected{};tr
     rejected=false;try{gpu::VolumeProviderBinding binding({});}catch(const std::invalid_argument&){rejected=true;}check(rejected,"Missing borrowed access cannot create a partially active provider");
 }
 }
+// Leaving Volume and coming back with the shared worker's asynchronous vote
+// (AudioRuntime): until the worker has read again the service snapshot is
+// paused with its controls cleared. The binding keeps the content Volume
+// showed meanwhile, as the Mac's controller keeps its snapshot across
+// stop()/start(), so the page's structure (applicationActivitySupported) never
+// flips and VolumeCanvas does not rebuild its page as it leaves or under the
+// entrance of the next switch to Volume. Failures still surface.
+void revisit(){Graph graph;graph.deferVote=true;graph.apply();gpu::VolumeProviderBinding binding(graph.access());graph.binding=&binding;auto callbacks=binding.callbacks();
+    std::vector<gpu::VolumeSnapshot>deliveries;binding.setReceiver([&](const auto&s){deliveries.push_back(s);});
+    binding.setVisible(true);callbacks.setActive(true);
+    check(!binding.snapshot().applicationActivitySupported&&deliveries.empty(),"The first visit waits for the worker's first read");
+    graph.settle();
+    const auto shown=binding.snapshot();
+    check(shown.applicationActivitySupported&&shown.canSetVolume&&shown.volume==.75&&deliveries.size()==1,"The first read shows the devices and the apps");
+    for(const bool conceal:{false,true}){
+        deliveries.clear();
+        if(conceal)binding.setVisible(false);else callbacks.setActive(false);
+        check(deliveries.empty()&&binding.snapshot()==shown,"Releasing the vote delivers nothing to the leaving page");
+        graph.settle();
+        check(graph.audio.paused&&deliveries.empty()&&binding.snapshot()==shown,"The worker's paused publication changes nothing shown");
+        check(!callbacks.setVolume("out-一",.2)&&graph.volume==0,"Writes stay refused while Volume is away");
+        if(conceal)binding.setVisible(true);else callbacks.setActive(true);
+        check(deliveries.empty()&&binding.snapshot()==shown,"Coming back shows the retained content until the worker reads");
+        check(!callbacks.setVolume("out-一",.2)&&graph.volume==0&&binding.snapshot().status==shown.status,"A write before the read is refused quietly");
+        graph.settle();
+        check(deliveries.empty()&&binding.snapshot()==shown,"An unchanged read publishes nothing");
+    }
+    // A change made while away is one in-place update with the first read.
+    callbacks.setActive(false);graph.settle();graph.level=.25f;deliveries.clear();
+    callbacks.setActive(true);check(deliveries.empty(),"Nothing before the read");
+    graph.settle();check(deliveries.size()==1&&deliveries[0].volume==.25&&deliveries[0].applicationActivitySupported,"The read updates the level; the structure stays");
+    // A refused vote and a worker that cannot open the endpoints still show their failure.
+    callbacks.setActive(false);graph.settle();deliveries.clear();
+    graph.error=-66;callbacks.setActive(true);
+    check(deliveries.size()==1&&deliveries[0].status&&deliveries[0].status->find("-66")!=std::string::npos&&deliveries[0].outputs==shown.outputs,"A refused vote shows its failure over the retained content");
+    graph.error=0;callbacks.setActive(false);graph.settle();callbacks.setActive(true);deliveries.clear();
+    graph.openError=-77;graph.settle();
+    check(graph.audio.paused&&!deliveries.empty()&&!binding.snapshot().canSetVolume&&binding.snapshot().status&&binding.snapshot().status->find("-77")!=std::string::npos,"A worker that could not open the endpoints shows the real paused state and its error");
+}
 void endpointTraits(){Graph graph;graph.audio.outputs.push_back({L"bt-1",L"Synthetic BT",true,true});gpu::VolumeProviderBinding binding(graph.access());graph.binding=&binding;binding.setVisible(true);binding.callbacks().setActive(true);
     const auto&out=binding.snapshot().outputs;check(out.size()==3&&out[2].bluetooth&&out[2].headphones&&!out[0].bluetooth&&out[1].headphones&&!out[1].bluetooth,"Explicit Bluetooth and headphone traits reach the snapshot");
     // Fixed/pass-through output: value stays visible, writes are refused before the provider.
@@ -118,4 +166,4 @@ void workerStatus(){
     graph.audio.commandError=0;graph.changed();check(!binding.snapshot().status,"A later successful command clears the asynchronous status");
     graph.audio.routesStoppedByDeviceChange=true;graph.changed();check(binding.snapshot().routingStopped,"Output change notice reaches the presentation snapshot");
 }
-int main(){try{lifecycle();commands();selection();lifetime();boundaries();endpointTraits();workerStatus();std::cout<<"PASS "<<checks<<" injected Volume provider checks (no native audio accessed)\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
+int main(){try{lifecycle();commands();selection();lifetime();boundaries();revisit();endpointTraits();workerStatus();std::cout<<"PASS "<<checks<<" injected Volume provider checks (no native audio accessed)\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
