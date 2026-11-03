@@ -593,6 +593,42 @@ void deferredWork() {
     check(w.context.overlay().toastState().current() && w.context.overlay().toastState().current()->title == "UI scale reverted", "Every deferred item ran safely");
 }
 
+// HUDSettingsCanvas.controllerChanged rebuilds every built canvas at once (a
+// CALayer rebuild); here a canvas that is not shown rebuilds when next shown,
+// with the same page, and a language pick builds the shown page once, when the
+// host's appearance brings the new language (the hook), never first in the old.
+void broadcastBuilds() {
+    using M = core::Module;
+    RecordedMeasurer measurer;
+    m::SettingsCanvasHooks hooks;
+    hooks.language = [](const Settings& s) { const auto l = core::languageFromSetting(s.string("language")).value_or(L::system); return l == L::system ? L::english : l; };
+    m::SettingsUpdateStatus update;
+    World w(measurer, hooks, update);
+    const auto leave = [&](M module) { w.hide(module); w[module].prepareToLeave(w.now); };
+    for (const auto module : {M::system, M::hotkeys, M::about}) { w.show(module); leave(module); }
+    w.show(M::display);
+    auto pages = w.context.pagesBuilt();
+    w.update([](Settings& s) { s.set("accentHex", "3399FF"); });
+    check(w.context.pagesBuilt() == pages + 1, "An accent pick builds only the shown Display page (" + std::to_string(w.context.pagesBuilt() - pages) + ")");
+    w.update([](Settings& s) { s.set("applicationIcon", "talos"); });
+    check(w.context.pagesBuilt() == pages + 2, "An app-icon pick builds only the shown page");
+    leave(M::display);
+    w.show(M::system);
+    check(w.context.pagesBuilt() == pages + 3, "A canvas built before the picks rebuilds once when next shown");
+    pages = w.context.pagesBuilt();
+    w.update([](Settings& s) { s.set("language", "simplifiedChinese"); });
+    check(w.context.pagesBuilt() == pages && w[M::system].renderedLanguage() == L::english, "A language pick builds nothing in the old language");
+    w.language = L::simplifiedChinese; w.appearance(); w.controller->setLanguage(L::simplifiedChinese);
+    check(w.context.pagesBuilt() == pages + 1 && w[M::system].renderedLanguage() == L::simplifiedChinese, "The host's new language builds the shown page once, in it");
+    w.update([](Settings& s) { s.set("language", "english"); });
+    w.language = L::english; w.appearance(); w.controller->setLanguage(L::english);
+    pages = w.context.pagesBuilt();
+    const auto title = [&] { return static_cast<d::Dropdown&>(w.control(M::system, "language")).valueText(); };
+    const auto shown = title();
+    w.update([](Settings& s) { s.set("language", "system"); });
+    check(w.context.pagesBuilt() == pages + 1 && title() != shown, "A pick that keeps the resolved language rebuilds the shown page at once (its dropdown)");
+}
+
 // Every L10n pair the canvas calls has its row in the generated catalog
 // (all five languages): read from the source text, as the Mac's l10n checks do.
 void catalogPairs(const char* source) {
@@ -635,6 +671,7 @@ int main(int argc, char** argv) {
         replay(*data, manifest);
         contracts();
         deferredWork();
+        broadcastBuilds();
         catalogPairs(argv[3]);
         std::cout << "Settings canvas: " << checks << " checks passed\n";
         return 0;

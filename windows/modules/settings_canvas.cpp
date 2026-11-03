@@ -219,11 +219,18 @@ SettingsCanvas::Structure SettingsCanvas::structure() const {
         about ? controller_->updateStatus().latestVersion : std::string()};
 }
 
-// controllerChanged (:103-112).
+// controllerChanged (:103-112). The Mac rebuilds every built canvas at once
+// (CALayers only); here a build measures its text and the shown page
+// rasterizes what changed, so a canvas that is not shown re-renders when next
+// shown (the same page), and a pick of another language renders the shown
+// page once, when the host's appearance brings that language (the same
+// frame: it is applied before the next scene sync).
 void SettingsCanvas::controllerChanged() {
     if (!renderedLanguage()) return;
-    if (structure() != renderedStructure_) rerender();
-    else { const auto binders = binders_; for (const auto& bind : binders) bind(); }
+    if (structure() != renderedStructure_) {
+        if (!isShown() || (hooks_.language && hooks_.language(config()) != env().language)) deferRerender();
+        else rerender();
+    } else { const auto binders = binders_; for (const auto& bind : binders) bind(); }
     if (!isActive()) return;
     updateLayoutPrompt();
     // A language change re-localizes the same status: only a new one toasts.

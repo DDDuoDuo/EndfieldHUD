@@ -58,6 +58,10 @@ struct SettingsCanvasHooks {
     // Windows only: System > Import macOS data… (title in a language, or none).
     std::function<std::optional<std::string>(core::Language)> macImportTitle;
     std::function<void()> macImport;
+    // The language the host applies with a record (its next appearance, the
+    // overlay's Context first): a change of it re-renders the shown page once,
+    // in that language, when it arrives, instead of first in the old one.
+    std::function<core::Language(const ehud::data::Settings&)> language;
     // HUDNavigationEntry.glyphLayer: the right-hand list's glyph of each module
     // as its 32 px source tree (resources/watch-appearance "module:<id>"),
     // asset paths relative to the owner's raster asset root.
