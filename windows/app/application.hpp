@@ -174,6 +174,8 @@ struct ApplicationOptions {
     // Its window's DPI (OverlayOptions::testDpi; 0: the session's), changed
     // once while the HUD is closed before its last openings.
     unsigned animationTraceDpi{};
+    // 1 or 2 (with Reduce Motion): the HUD opens at launch before any prewarm.
+    unsigned animationTraceLaunchOpen{};
     // How long the idle trace keeps the HUD closed before each closed window
     // and before its first opening (unset: just past the grace, so they
     // measure the released device; shorter: a closed HUD that still keeps it).

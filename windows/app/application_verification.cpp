@@ -453,14 +453,17 @@ int Application::Impl::runAnimationTrace(){
             launchStartDefault=tools::designDensity(core::source::designBoxWorld(*first),metrics.scale,2);
         firstRawDefault=firstPoseRaw();
         configuration.set("hudScale",1.8);configuration.set("hudOffsetX",.1);configuration.set("hudOffsetY",-.08);}
-    configuration.set("ambientAnimation",true);configurationPending=true;applyConfiguration(t);
-    prewarm();if(utility){utility->waitIdle();if(longWork)longWork->waitIdle();utilityCompleted();}
+    configuration.set("ambientAnimation",true);if(args.animationTraceLaunchOpen==2)configuration.set("reduceMotion",true);configurationPending=true;applyConfiguration(t);
+    // --animation-trace-launch open|open-reduced: the HUD opens at launch, before
+    // any prewarm (first run, --settings, a device-loss reopen).
+    if(!args.animationTraceLaunchOpen)prewarm();
+    if(utility){utility->waitIdle();if(longWork)longWork->waitIdle();utilityCompleted();}
     launchStart=designDensityStart.value_or(0.);if(args.animationTraceDpi)firstRaw=firstPoseRaw();
-    need(!args.animationTraceDpi||launchStart==tools::designDensity(core::source::designBoxWorld(*chromePlan->clipCenter({0,0,metrics.width,metrics.height},settings.hudOffset,settings.hudScale,contentScale,false,0)),metrics.scale,2),
-         "The launch start is measured under the applied preference record");
-    // RC 139's launch prewarm measured the held first pose (the entrance's start) from 2.
-    if(chromePlan&&metrics.width>0)if(const auto first=chromePlan->clipCenter({0,0,metrics.width,metrics.height},settings.hudOffset,settings.hudScale,contentScale,false,0))
-        rc139Density=tools::designDensity(core::source::designBoxWorld(*first),metrics.scale,2);
+    // RC 139's launch prewarm measured the held first pose from 2 (the overlay's
+    // initial density); without a prewarm its first opening measured live from 2.
+    if(args.animationTraceLaunchOpen)rc139Density=2.;
+    else if(chromePlan&&chromePlan->projection().center)rc139Density=tools::designDensity(core::source::designBoxWorld(*chromePlan->projection().center),metrics.scale,2);
+    need(!args.animationTraceDpi||args.animationTraceLaunchOpen||launchStart==rc139Density.value_or(-1),"The launch start is the prewarm's first-pose measurement under the applied preference record");
     double replayMS{};{const auto begin=Clock::now();(void)replayDesignDensity(2,false);replayMS=milliseconds(begin);}
     // clipCenter resolves only the centre's ancestry with only its curves: it
     // equals the full pose (WatchAnimation::pose) through the full layout.
@@ -539,8 +542,19 @@ int Application::Impl::runAnimationTrace(){
             {"planeResolvesToFirstFrame",firstResolves},{"rasterizationsToFirstFrame",firstRasterizations},{"planeResolveMilliseconds",designDensityResolveMilliseconds-resolveMSBefore},{"rows",std::move(rows)}});
     };
     const auto cycle=[&](const std::string&name){segment(name+"-open",true,.25);pump(1,{},{});segment(name+"-close",false,0);};
+    if(args.animationTraceLaunchOpen){
+        segment("launch-open",true,.25);
+        // (Reduce Motion goes off while open so the closing animates in this hidden run.)
+        if(args.animationTraceLaunchOpen==2){configuration.set("reduceMotion",false);configurationPending=true;applyConfiguration(clock());}
+        pump(1,{},{});segment("launch-close",false,0);pump(1.5,{},{});}
     cycle("first");
     for(unsigned n=0;n<4;++n){pump(1.5,{},{});cycle("warm-"+std::to_string(n));}
+    // A close that cuts the deploy short: the retract starts where RC 139's
+    // measurement had stepped to, and the next opening settles at its density.
+    if(args.animationTraceDpi){pump(1.5,{},{});perform(lifecycle.toggle(),clock());host.show(false);host.setFrameDemand(demand(clock()));host.invalidate();pump(.3,{},{});
+        need(lifecycle.phase()==core::SystemOverlayPhase::opening,"The traced deploy is still running");
+        perform(lifecycle.close(true),clock());host.setFrameDemand(demand(clock()));host.invalidate();pump(10,closed,{});need(closed(),"The cut deploy closed");
+        pump(1.5,{},{});cycle("after-cut");}
     pump(closedGraphicsGrace()+1.5,{},{});need(renderer.deviceSuspended(),"The closed HUD's graphics are released after the grace");
     cycle("released");pump(1.5,{},{});cycle("after-released");
     // The display's DPI changes while the HUD is closed (a move to another
