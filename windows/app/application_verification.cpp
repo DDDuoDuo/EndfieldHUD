@@ -588,7 +588,7 @@ int Application::Impl::runHiddenVerification(){
             }
             const auto finish=at(23+static_cast<double>(points.size()));session->pointerMove({},finish);close(finish);present(finish+.7,true);
         }
-        Json::Array moduleResults,areaModuleResults,areaPresentedModules;Json displayAdaptation,scrollArrow,recordingToggle;
+        Json::Array moduleResults,areaModuleResults,areaPresentedModules,pageVisibility;Json displayAdaptation,scrollArrow,recordingToggle;
         // Module areas (app/module_owner.hpp): coverage steps and their checks.
         struct AreaCounts{unsigned steps{},checks{};};std::map<std::string,AreaCounts,std::less<>> areaCounts;
         double areaLatest{};
@@ -955,6 +955,83 @@ int Application::Impl::runHiddenVerification(){
                     for(auto&area:externalModules)runArea(area,std::nullopt,cycle,time+1.9);
                 }time=std::max(time,areaLatest);time+=2;
             }
+            // RC 140 report (not reproduced): starting a Work Mode countdown or
+            // switching an Event Log tab hid Work Mode, Event Log, Personal ID,
+            // Account binding, the sanity wallet and Power. After both triggers,
+            // through the owners' pointer route, every module still has its
+            // enabled owner and visible draws (at least half of those before the
+            // triggers), and the shell's sanity wallet, red power button, ID card and
+            // clock are hit-tested where they are drawn. Run before and after the
+            // Recording mode switches below.
+            std::map<core::Module,std::size_t> pagesBefore;
+            const auto checkPages=[&](const char*pass){
+                if(!workModeCanvas||!eventLogCanvas||!workModeModuleOwner||!eventLogModuleOwner)return;
+                const auto began=Clock::now();
+                const auto frames=[&](double seconds){const unsigned n=unsigned(std::ceil(seconds*15));for(unsigned f=1;f<=n;++f){const double t=time+double(f)/15;
+                    if(designOverlay)if(const auto wake=designOverlay->nextWakeTime(t);wake&&*wake<=t)(void)designOverlay->deadline(t);present(t,true);}time+=double(n)/15+.001;};
+                // A design control pressed and released through its owner (DesignOwnerCore::pointer).
+                const auto click=[&](const std::unique_ptr<ModuleOwner>&owner,endfield::modules::design::Canvas&canvas,std::string_view id){
+                    const endfield::modules::design::Control*control{};for(const auto*c:canvas.page().controls())if(c->id()==id)control=c;
+                    need(control!=nullptr,("The "+std::string(id)+" control is on its page").c_str());
+                    const auto r=static_cast<tools::DesignModuleOwner&>(*owner).core().clientRect(control->rect(canvas.root()));need(r.has_value(),"The control projects");
+                    const double x=r->x+r->width/2,y=r->y+r->height/2;
+                    need(owner->pointer({PointerKind::down,PointerButton::left,x,y},time+.001),("The "+std::string(id)+" press reaches its owner").c_str());
+                    (void)owner->pointer({PointerKind::up,PointerButton::left,x,y},time+.003);time+=.004;};
+                // Each module's visible draws before the first triggers (the second pass reuses them).
+                const auto visibleDraws=[&](core::Module m){std::size_t n{};if(auto*o=registry.presenter(m))for(const auto&e:o->entries(m))if(e.scene)for(const auto&d:e.scene->draws())n+=d.opacity>.01f;return n;};
+                if(pagesBefore.empty())for(const auto module:modules){selectModule(module,time);frames(.4);pagesBefore[module]=visibleDraws(module);}
+                using Phase=endfield::modules::WorkModePhase;
+                selectModule(core::Module::workMode,time);frames(.5);
+                if(workMode->snapshot(time).phase!=Phase::idle){click(workModeModuleOwner,*workModeCanvas,"workMode.reset");frames(.2);}
+                if(workMode->snapshot(time).kind!=endfield::modules::WorkModeKind::countdown){click(workModeModuleOwner,*workModeCanvas,"workMode.kind:0");frames(.5);}
+                click(workModeModuleOwner,*workModeCanvas,"workMode.preset:1");frames(.2);
+                click(workModeModuleOwner,*workModeCanvas,"workMode.primary");
+                need(workMode->snapshot(time).phase==Phase::running&&workMode->snapshot(time).kind==endfield::modules::WorkModeKind::countdown,"The Work Mode countdown starts through its owner");
+                frames(.3);
+                selectModule(core::Module::eventLog,time);frames(.5);
+                click(eventLogModuleOwner,*eventLogCanvas,"eventLog.filter:1");frames(.5);
+                need(!eventLogCanvas->transitioning()&&eventLogCanvas->filter()==endfield::modules::EventLogFilter(1),"The Event Log tab switch lands");
+                // Event Log lists fewer rows on that tab: its own expectation is the landed page.
+                const auto tabDraws=visibleDraws(core::Module::eventLog);need(tabDraws>0,"The Event Log tab shows its page");
+                std::string parts;std::vector<core::Point>wallet;
+                for(const auto module:modules){
+                    const std::string id(core::moduleIdentifier(module));
+                    selectModule(module,time);frames(.4);
+                    need(registry.presenter(module)!=nullptr,("After a countdown and a tab switch "+id+" keeps its enabled owner").c_str());
+                    const auto draws=visibleDraws(module);
+                    const std::size_t expected=module==core::Module::eventLog?tabDraws:pagesBefore[module];
+                    if(expected>0)need(draws*2>=expected,("After a countdown and a tab switch "+id+" keeps its visible draws ("+std::to_string(expected)+" -> "+std::to_string(draws)+")").c_str());
+                    // The shell parts: what takes a press across a grid (owners, the clock, source buttons), and pixels drawn there.
+                    const auto*sample=session->currentFrame();need(sample&&sample->sourceFrame,"The shell has a source frame");
+                    const auto vp=sample->camera.projection*sample->camera.view;const core::Rect viewport{0,0,metrics.width,metrics.height};
+                    std::map<std::string,std::vector<core::Point>>hits;
+                    for(unsigned gy=0;gy<30;++gy)for(unsigned gx=0;gx<48;++gx){const core::Point p{(gx+.5)*metrics.width/48,(gy+.5)*metrics.height/30};
+                        if(auto*o=registry.first(ModuleRegistry::Chain::pointer,[&](ModuleOwner&owner,const ModuleRouting&){return owner.covers(p);},"page probe")){if(o->name()=="account"&&(module!=core::Module::account||std::find(wallet.begin(),wallet.end(),p)!=wallet.end()))hits["wallet"].push_back(p);continue;}
+                        if(clockPoint(p)){hits["clock"].push_back(p);continue;}
+                        const auto button=sample->sourceFrame->buttonAt(p,vp,viewport);if(!button)continue;
+                        if(quitButtons.contains(*button)){hits["power"].push_back(p);continue;}
+                        const auto action=session->actions().find(*button);if(action==session->actions().end())continue;
+                        for(const auto&entry:contentCatalog->entries())if(entry.action==action->second&&entry.target=="profile")hits["idCard"].push_back(p);}
+                    // On Account the page is the account owner's too: the wallet where it was on the other modules.
+                    if(module!=core::Module::account)wallet=hits["wallet"];
+                    const auto image=renderer.readback();
+                    for(const char*part:{"wallet","power","idCard","clock"}){const auto&points=hits[part];
+                        need(!points.empty(),("After a countdown and a tab switch on "+id+" the shell's "+part+" is hit-tested").c_str());
+                        // Drawn: a bright pixel (any channel >= 96) beside a point that hits it.
+                        bool drawn=false;for(const auto&p:points){const int cx=int(p.x*metrics.scale),cy=int(p.y*metrics.scale);
+                            for(int y=std::max(0,cy-6);y<=std::min(int(image.height)-1,cy+6)&&!drawn;++y)for(int x=std::max(0,cx-6);x<=std::min(int(image.width)-1,cx+6)&&!drawn;++x){
+                                const auto*q=&image.pixels[std::size_t(y)*image.rowBytes+std::size_t(x)*4];drawn=std::max({q[0],q[1],q[2]})>=96;}
+                            if(drawn)break;}
+                        need(drawn,("After a countdown and a tab switch on "+id+" the shell's "+part+" is drawn").c_str());}
+                    parts+=" "+id+"="+std::to_string(draws);
+                }
+                // Back to the state the coverage found: the first tab, Work Mode idle.
+                selectModule(core::Module::eventLog,time);frames(.4);click(eventLogModuleOwner,*eventLogCanvas,"eventLog.filter:0");frames(.5);
+                selectModule(core::Module::workMode,time);frames(.4);click(workModeModuleOwner,*workModeCanvas,"workMode.reset");frames(.2);
+                need(workMode->snapshot(time).phase==Phase::idle,"The countdown resets");
+                pageVisibility.push_back(Json::Object{{"pass",std::string(pass)},{"milliseconds",milliseconds(began)},{"visibleDraws",parts}});
+                time+=1;};
+            checkPages("built");
             // Recording mode switched from Settings > Display once every module
             // has been built (rc139: "a freeze when turning on and off recording
             // mode"). Each switch is timed on this thread from the toggle's press
@@ -984,6 +1061,7 @@ int Application::Impl::runHiddenVerification(){
                 }
                 recordingToggle=std::move(toggles);
             }
+            checkPages("afterRecording");
             // Host integration over the same owner: the restart service is
             // production-only, the System row of the macImport area, the UI
             // Automation root over the Volume fragments and the OLE drop
@@ -1798,7 +1876,7 @@ int Application::Impl::runHiddenVerification(){
             for(unsigned n=0;n<=static_cast<unsigned>(core::Module::profile);++n)if(area.owner->presents(static_cast<core::Module>(n)))presents.push_back(std::string(core::moduleIdentifier(static_cast<core::Module>(n))));
             areas.push_back(Json::Object{{"area",area.name},{"constructed",true},{"enabled",registry.enabled(*area.owner)},{"presents",std::move(presents)},{"coverageSteps",std::int64_t(counts.steps)},{"coverageChecks",std::int64_t(counts.checks)}});}
         for(const auto&name:absentModules)areas.push_back(Json::Object{{"area",name},{"constructed",false}});
-        report["recordingToggle"]=std::move(recordingToggle);report["areaCoverage"]=std::move(areas);report["areaModuleResults"]=std::move(areaModuleResults);report["areaPresentedModules"]=std::move(areaPresentedModules);
+        report["recordingToggle"]=std::move(recordingToggle);report["pageVisibility"]=std::move(pageVisibility);report["areaCoverage"]=std::move(areas);report["areaModuleResults"]=std::move(areaModuleResults);report["areaPresentedModules"]=std::move(areaPresentedModules);
         if(args.moduleCoverage)for(const auto&area:externalModules)need(areaCounts[area.name].steps>=3,"Every module area received its hidden coverage steps");
         ehud::data::detail::replaceFile(args.report,std::nullopt,report.encode(),8*1024*1024);std::cout<<"Wrote hidden source-shell benchmark report\n";
     shutdownVisible();
