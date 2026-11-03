@@ -47,6 +47,19 @@ struct VolumeProviderBinding::State {
     VolumeProviderAccess access;VolumeProviderErrorText format;VolumeSnapshot snapshot;
     std::shared_ptr<Receiver>receiver;std::optional<Failure>failure;
     bool visible{},selected{},requested{},closed{},busy{};
+    // The last snapshot Volume showed live. The Mac's AudioDeviceController
+    // keeps its snapshot across stop() and start() (only its setters check
+    // isRunning), and the worker's first read after start replaces it. While
+    // this vote is released, and after it is granted until the shared worker
+    // has read again (its snapshot still paused, controls cleared), the
+    // binding keeps presenting it: a snapshot without
+    // applicationActivitySupported or the endpoint controls made VolumeCanvas
+    // rebuild its page (a Structure change) as it left and again under the
+    // entrance of every switch back to Volume. Writes stay refused meanwhile;
+    // a refused vote or endpoints the worker could not open still show.
+    std::optional<VolumeSnapshot>shown;
+    bool awaiting(const AudioEndpointSnapshot&s)const{return shown&&requested&&s.paused&&!failed(s.error);}
+    bool retained(const AudioEndpointSnapshot&s)const{return shown&&(!requested||awaiting(s));}
     State(VolumeProviderAccess a,VolumeProviderErrorText f):access(std::move(a)),format(f?std::move(f):errorText){
         if(!access.readSnapshot||!access.requestActive)throw std::invalid_argument("Volume provider requires borrowed snapshot and activation operations");
         publish(false);
@@ -54,7 +67,13 @@ struct VolumeProviderBinding::State {
     std::string message(Failure f)const{auto text=format(f);if(text.size()>4096||!ehud::data::Json::validUtf8(text)||text.find('\0')!=std::string::npos)throw std::invalid_argument("Invalid Volume provider error text");return text;}
     bool publish(bool deliver=true){
         if(closed)return false;
-        const auto&s=access.readSnapshot();validate(s);auto next=volumeSnapshotFromEndpoints(s);
+        const auto&s=access.readSnapshot();validate(s);
+        if(retained(s)){
+            auto next=*shown;if(failure)next.status=message(*failure);
+            if(snapshot==next)return false;
+            snapshot=std::move(next);const auto callback=receiver;if(deliver&&callback)(*callback)(snapshot);return true;
+        }
+        auto next=volumeSnapshotFromEndpoints(s);
         const bool live=requested&&!s.paused;
         next.canSetVolume=next.canSetVolume&&live&&bool(access.setVolume);
         next.canSetMute=next.canSetMute&&live&&bool(access.setMute);
@@ -67,6 +86,7 @@ struct VolumeProviderBinding::State {
         else if(failed(s.inputError))next.status=message(volumeProviderFailure(s.inputError));
         else if(failed(s.commandError))next.status=message(volumeProviderFailure(s.commandError));
         if(failed(s.applicationError))next.applicationMessage=message(volumeProviderFailure(s.applicationError));
+        if(live)shown=next;
         if(failure)next.status=message(*failure);
         if(snapshot==next)return false;
         snapshot=std::move(next);const auto callback=receiver;if(deliver&&callback)(*callback)(snapshot);return true;
@@ -83,7 +103,8 @@ struct VolumeProviderBinding::State {
     bool ready(){return !closed&&!busy&&requested;}
     const AudioEndpointSnapshot*current(std::string_view id){
         if(!ready())return nullptr;const auto&s=access.readSnapshot();
-        if(s.paused||!s.available){reject(Kind::unavailable);return nullptr;}
+        // Before the worker's first read the retained page refuses quietly.
+        if(s.paused||!s.available){if(!awaiting(s))reject(Kind::unavailable);return nullptr;}
         if(!sameText(s.defaultOutputID,id)){reject(Kind::deviceChanged);return nullptr;}return &s;
     }
     template<class F>bool write(F&&f){
@@ -106,7 +127,7 @@ struct VolumeProviderBinding::State {
     }
     bool application(std::string_view id,double gain,bool stop){
         if(!ready())return false;const auto&s=access.readSnapshot();
-        if(s.paused||s.applicationsPaused||!s.applicationsSupported)return reject(Kind::unavailable);
+        if(s.paused||s.applicationsPaused||!s.applicationsSupported)return awaiting(s)?false:reject(Kind::unavailable);
         const auto found=std::find_if(s.applications.begin(),s.applications.end(),[&](const auto&a){return a.id==id;});
         if(found==s.applications.end()||(!found->available&&found->state==AudioApplicationRouteState::direct))return reject(Kind::deviceChanged);
         if(stop){if(!access.stopApp)return reject(Kind::unsupported);return write([&]{return access.stopApp(id);});}
@@ -114,7 +135,7 @@ struct VolumeProviderBinding::State {
         if(!access.setAppGain)return reject(Kind::unsupported);return write([&]{return access.setAppGain(id,static_cast<float>(gain));});
     }
     bool select(std::string_view id,bool input){
-        if(!ready())return false;const auto&s=access.readSnapshot();if(s.paused)return reject(Kind::unavailable);
+        if(!ready())return false;const auto&s=access.readSnapshot();if(s.paused)return awaiting(s)?false:reject(Kind::unavailable);
         const auto&operation=input?access.setDefaultInput:access.setDefaultOutput;if(!operation)return reject(Kind::unsupported);
         const auto&devices=input?s.inputs:s.outputs;const auto found=std::find_if(devices.begin(),devices.end(),[&](const auto&d){return sameText(d.id,id);});
         if(found==devices.end())return reject(Kind::deviceChanged);

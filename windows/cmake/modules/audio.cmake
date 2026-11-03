@@ -94,9 +94,11 @@ if(BUILD_TESTING)
   add_test(NAME audio_service_contracts COMMAND audio_service_tests)
 
   # The production audio owner over injected backends (votes, drain fan-out,
-  # Event Log device labels, Now Playing routes, language, power, stop).
+  # Event Log device labels, Now Playing routes, language, power, stop, and
+  # the Volume canvas leaving and entering over its binding).
   add_executable(audio_runtime_tests tests/audio_runtime_tests.cpp)
-  target_link_libraries(audio_runtime_tests PRIVATE hud_audio_runtime hud_data)
+  # The Volume canvas over the runtime's binding (a module switch's entrance).
+  target_link_libraries(audio_runtime_tests PRIVATE hud_audio_runtime hud_utility_canvases hud_data)
   add_test(NAME audio_runtime_contracts COMMAND audio_runtime_tests)
 
   if(WIN32)

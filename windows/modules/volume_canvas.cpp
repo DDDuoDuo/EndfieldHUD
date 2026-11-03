@@ -108,8 +108,13 @@ std::vector<const native::VolumeApplication*> VolumeCanvas::listedApplications()
         if (app.state != VolumeAppState::direct || (app.available && currentOutput())) out.push_back(&app);
     return out;
 }
+// The Mac keys `supported` on both tabs, but only the App volume page reads it
+// (the Devices page never does; the tabs' dot is a binder). Keyed on tab 1
+// only, the worker's first read after launch (which adds the per-app support)
+// fills the Devices page in place instead of rebuilding it under the entrance
+// of the first switch to Volume (an owner-requested fix; the Mac rebuilds).
 VolumeCanvas::Structure VolumeCanvas::structure() const {
-    Structure s{env().language, tab_, {}, snapshot_.applicationActivitySupported, tab_ == 1 && perAppStatus().has_value()};
+    Structure s{env().language, tab_, {}, tab_ == 1 && snapshot_.applicationActivitySupported, tab_ == 1 && perAppStatus().has_value()};
     if (tab_ == 1) for (const auto* app : listedApplications()) s.apps.push_back(app->id);
     return s;
 }
