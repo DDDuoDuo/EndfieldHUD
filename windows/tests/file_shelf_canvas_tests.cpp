@@ -376,6 +376,12 @@ void alternateLayout() {
     check(canvas.alternateTileCountForTesting() > 0, "A switch to another module keeps them (the open HUD keeps the Shelf's rasters)");
     canvas.resetSession();
     check(canvas.alternateTileCountForTesting() == 0, "A new HUD session's Shelf starts without them");
+    // Put back after its entrance a tile per frame, as when first built (the
+    // scene released their artwork): no frame rasterizes them all.
+    w.show(canvas);
+    std::size_t shown = 0, most = 0;
+    for (int frame = 0; frame < 60; ++frame) { w.advance(1.0 / 30); const auto now = canvas.alternateTileCountForTesting(); most = std::max(most, now - std::min(now, shown)); shown = now; }
+    check(shown == 5 * 3 && most == 1, "The next session puts them back a tile per frame (at most " + std::to_string(most) + " on one frame)");
 }
 
 // --- The Mac oracle -------------------------------------------------------------------

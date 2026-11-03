@@ -346,6 +346,8 @@ std::optional<FileShelfCanvas::GridLayout> FileShelfCanvas::alternateLayout() co
 }
 // Adds at most `limit` missing tiles of the other layout at the grid's
 // offset (as the other layout would restore it); true once none is missing.
+// A tile put back (the HUD reopened, a scroll) counts too: the scene
+// released its artwork when it left the tree.
 bool FileShelfCanvas::buildAlternates(d::Page& page, std::size_t limit) {
     if (!grid_) return true;
     const auto other = alternateLayout();
@@ -361,7 +363,7 @@ bool FileShelfCanvas::buildAlternates(d::Page& page, std::size_t limit) {
         const auto& value = items_[n];
         const auto id = tileID(value, other->columns);
         if (const auto it = alternates_.find(id); it != alternates_.end()) {
-            if (!it->second->layer().parent()) grid_->content().add(it->second->layer());
+            if (!it->second->layer().parent()) { if (added == limit) return false; grid_->content().add(it->second->layer()); ++added; }
             continue;
         }
         if (added == limit) return false;
