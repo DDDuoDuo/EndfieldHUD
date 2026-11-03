@@ -257,6 +257,27 @@ void run(const std::filesystem::path& shader) {
         shot = renderer.readback();
         check(similar(rgba(shot, 425, 125)[1], rgba(shot, 110, 110)[0]), "The dot fades with the module directly");
         frame(1.7);
+        // The opening's delay (prepareFade, the module at opacity 0): a part
+        // merely resting at opacity 0 (a hidden slider bubble) takes no group;
+        // one whose entrance is still pending (a delayed stagger) takes it.
+        const auto prepare = [&](double at) {
+            faded.syncContent(root, text, 1, 1, at);
+            faded.updatePose({core::Matrix4{}, 0.f, at, {}, {}, true});
+            faded.uploadAnimations(renderer);
+            published.setEntries(renderer, faded.entries());
+            published.present(renderer);
+            renderer.draw(false);
+            check(faded.collectRetired(renderer), "Prepared group targets go after the publication");
+        };
+        card.setValue(d::Channel::opacity, 0);
+        prepare(1.8);
+        check(faded.stats().groups == 0 && renderer.stats().nativeGroups == 0, "A part resting at opacity 0 takes no group ahead of the fade");
+        card.setValue(d::Channel::opacity, 1);
+        d::motion::enter(card, {0, 12}, d::motion::Clock{1.85, false, nullptr}, d::duration::entrance, .5);
+        prepare(1.9);
+        check(faded.stats().groups == 1 && renderer.stats().nativeGroups == 1, "A part whose delayed entrance has not begun takes its group ahead of the fade");
+        card.removeAllMotion();
+        frame(3);
         published.detach(renderer);
         check(faded.releaseResources(renderer) && renderer.stats().nativeGroups == 0, "The faded scene releases everything");
     }
