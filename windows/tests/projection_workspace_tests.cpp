@@ -38,7 +38,10 @@ void run(const wchar_t*shader){
    check(workspace.presented()&&!host.stats().visible&&backdrop.stats().foregroundAttached&&!renderer.sourcePassEnabled(),"Hidden workspace borrows one host/swapchain and suppresses retained HUD pass");
    check(backdrop.stats().panelOpacity==0&&workspace.demand(start).finiteAnimation,"Source entrance starts at final-window zero alpha");
    workspace.render(start+.09,false);check(std::abs(backdrop.stats().panelOpacity-c::CubicTiming{.25,.1,.25,1}.value(.5))<.00001,"Source panel animator curve applies once to whole composition");
-   workspace.render(start+.2,false);check(backdrop.stats().panelOpacity==1&&!workspace.demand(start+.2).finiteAnimation,"Empty settled workspace has no animation demand");
+   // Mac 1.3.0: the toolbar's HUDIconButtons fade in their first colours over .22 s
+   // (HUDDesignButtons.swift applyStyle) from the open, past the .18 s entrance.
+   workspace.render(start+.2,false);check(backdrop.stats().panelOpacity==1&&workspace.demand(start+.2).finiteAnimation,"The entrance has ended while the toolbar's .22 s first-colour fade still runs");
+   workspace.render(start+.22,false);check(!workspace.demand(start+.22).finiteAnimation,"Empty settled workspace has no animation demand");
    const auto before=raster.stats();const auto gpu=renderer.stats();
    for(unsigned k=0;k<30;++k)workspace.render(start+.21+double(k)*.01,false);
    check(raster.stats().rasterizations==before.rasterizations&&raster.stats().textLayoutsCreated==before.textLayoutsCreated&&renderer.stats().textureUploads==gpu.textureUploads&&renderer.stats().meshUploads==gpu.meshUploads,"Unchanged workspace frames allocate no local raster/texture/mesh work");

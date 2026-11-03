@@ -41,9 +41,12 @@ struct ProjectionPreview::Impl {
     app::ClientMetrics metrics{};R bounds{};M dpi;double topInset{64};std::optional<P>pointer;bool alive{true},active{},ready{},importing{};double now{},backgroundStart{},backgroundFrom{1},backgroundTarget{1};bool backgroundAnimating{};
     std::uint64_t liveRevision{1},mediaRevision{},preferencesRevision{},generation{1};P importPoint{};std::size_t importCount{};
     std::vector<std::unique_ptr<Media>>media;std::vector<n::LayerCompositionEntry>paint;std::deque<ProjectionPreviewAction>actions;std::vector<ProjectionPreviewEvent>events;
-    Impl(m::ProjectionModel&model_,m::ProjectionInteraction&interaction_,n::LayerRasterizer&r,ProjectionPreviewOptions o):model(model_),interaction(interaction_),raster(r),options(std::move(o)),plane(r,options.raster),ink(r,options.raster){
+    Impl(m::ProjectionModel&model_,m::ProjectionInteraction&interaction_,n::LayerRasterizer&r,ProjectionPreviewOptions o,double t):model(model_),interaction(interaction_),raster(r),options(std::move(o)),plane(r,options.raster),ink(r,options.raster){
         need(options.design&&options.design->text.measurer,"Projection's chrome needs the HUD design environment");media.reserve(32);paint.reserve(100);events.reserve(8);backgroundFrom=backgroundTarget=model.backgroundEnabled()?1:0;
-        chromeScene=std::make_unique<n::NativeDesignScene>(raster,options.raster,"projection.chrome",chromeImages());makeChrome();}
+        chromeScene=std::make_unique<n::NativeDesignScene>(raster,options.raster,"projection.chrome",chromeImages());
+        // The chrome is built at the owner's time (the Mac builds the workspace as it opens, so the
+        // toolbar buttons' .22 s first-colour fade runs from the open, not from time zero).
+        clock(t);makeChrome();}
     // Owner time never runs backwards: a time earlier than one already seen
     // (the host's sample taken before a nested callback, a direct media or
     // UI Automation call handed a later one) is the latest time, as the
@@ -121,7 +124,7 @@ struct ProjectionPreview::Impl {
         chromeScene->updatePose({dpi,1,now,{},std::nullopt});
     }
 };
-ProjectionPreview::ProjectionPreview(m::ProjectionModel&m,m::ProjectionInteraction&i,n::LayerRasterizer&r,ProjectionPreviewOptions o):impl_(std::make_shared<Impl>(m,i,r,std::move(o))){}ProjectionPreview::~ProjectionPreview(){if(impl_){impl_->alive=false;impl_->interaction.setActive(false);}}
+ProjectionPreview::ProjectionPreview(m::ProjectionModel&m,m::ProjectionInteraction&i,n::LayerRasterizer&r,ProjectionPreviewOptions o,double time):impl_(std::make_shared<Impl>(m,i,r,std::move(o),time)){}ProjectionPreview::~ProjectionPreview(){if(impl_){impl_->alive=false;impl_->interaction.setActive(false);}}
 void ProjectionPreview::resize(const app::ClientMetrics&metrics,double safe,double visible){auto p=impl_;need(std::isfinite(metrics.scale)&&metrics.scale>0&&metrics.pixelWidth&&metrics.pixelHeight,"Invalid Projection metrics");auto&i=*p;i.bounds={0,0,metrics.width,metrics.height};i.plane.resize({metrics.width,metrics.height},metrics.scale);i.metrics=metrics;i.dpi={};i.dpi.values[0]=i.dpi.values[5]=metrics.scale;i.interaction.resize({metrics.width,metrics.height});for(const auto&item:i.model.media())i.model.setFrame(item.frame,item.id,i.bounds);
     i.topInset=m::ProjectionToolbar::topInset(safe,visible);i.chrome->layout({metrics.width,metrics.height},i.topInset);i.ready=true;++i.liveRevision;i.update();}
 void ProjectionPreview::setActive(bool value,double t){auto p=impl_;auto&i=*p;t=i.clock(t);if(i.active==value)return;i.active=value;i.result(i.interaction.setActive(value));i.chrome->setActive(value);if(!value){++i.generation;i.importing=false;i.actions.clear();i.pointer.reset();for(auto&v:i.media)if(!v->dead)v->scene->setFeedback({},false,true,t);i.backgroundAnimating=false;++i.liveRevision;}i.update();i.notify();}bool ProjectionPreview::active()const noexcept{return impl_->active;}

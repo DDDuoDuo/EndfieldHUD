@@ -57,7 +57,7 @@ ProjectionWorkspace::~ProjectionWorkspace(){auto&i=*impl_;try{close(i.time);need
 void ProjectionWorkspace::show(ProjectionPreviewOptions options,ProjectionMediaBindingOptions binding,double time,bool showWindow){
     auto&i=*impl_;i.clock(time);time=i.time;need(!i.view&&!i.host.stats().visible,"Projection begins on the hidden shared host");
     i.metrics=i.host.metrics();i.reduced=options.reduceMotion;i.started=time;i.closing=false;i.blurEnabled.reset();i.blurAnimating=false;i.updateBlur();
-    i.view=std::make_unique<ProjectionPreview>(i.model,i.interaction,i.raster,std::move(options));
+    i.view=std::make_unique<ProjectionPreview>(i.model,i.interaction,i.raster,std::move(options),time);
     try{
         i.view->resize(i.metrics,0,i.visibleTop);i.media=std::make_unique<ProjectionMediaBinding>(*i.view,i.model,i.broker,i.client,i.renderer,std::move(binding));
         i.backdrop.update({i.metrics.pixelWidth,i.metrics.pixelHeight,true,false,i.model.blur(),0,1,true});

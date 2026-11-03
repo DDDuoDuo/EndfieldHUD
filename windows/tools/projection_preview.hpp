@@ -45,8 +45,10 @@ struct ProjectionPreviewOptions {
 // changes the brush only outside the chrome (DOCS-628, DOCS-629).
 class ProjectionPreview final {
 public:
+    // `time`: the owner clock at creation, when the chrome is built (its
+    // creation motion, such as the toolbar's first-colour fade, starts then).
     ProjectionPreview(modules::ProjectionModel&,modules::ProjectionInteraction&,
-        native::LayerRasterizer&,ProjectionPreviewOptions);
+        native::LayerRasterizer&,ProjectionPreviewOptions,double time);
     ~ProjectionPreview();
     void resize(const app::ClientMetrics&,double safeAreaTop=0,double visibleTop=0);
     void setActive(bool,double);bool active()const noexcept;

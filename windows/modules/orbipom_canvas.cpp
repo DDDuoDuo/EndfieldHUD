@@ -190,8 +190,10 @@ private:
     std::string costValue_;
     bool on_{};
     void renderPlate() {
-        const auto colors = on_ ? std::vector<d::Color>{palette().accent().primaryButton().begin(), palette().accent().primaryButton().end()}
-                                : std::vector<d::Color>{d::fixed::lightButton.begin(), d::fixed::lightButton.end()};
+        // primaryButton() returns its stops by value: one copy, so begin and end share it.
+        const auto primary = palette().accent().primaryButton();
+        const auto colors = on_ ? std::vector<d::Color>(primary.begin(), primary.end())
+                                : std::vector<d::Color>(d::fixed::lightButton.begin(), d::fixed::lightButton.end());
         plate_->setContent(d::plate(plate_->id(), d::localBounds(*plate_), colors, {}, 8));
     }
 };

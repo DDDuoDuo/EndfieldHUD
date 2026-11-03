@@ -13,6 +13,10 @@
 #elif defined(__APPLE__)
 #include <CommonCrypto/CommonKeyDerivation.h>
 #include <CommonCrypto/CommonRandom.h>
+#else
+#include "core/migration/mac_import_sha256.hpp"
+#include <cstring>
+#include <sys/random.h>
 #endif
 
 namespace endfield::modules {
@@ -27,9 +31,33 @@ bool randomBytes(std::string&out,std::size_t count){out.assign(count,'\0');
 #elif defined(__APPLE__)
     return CCRandomGenerateBytes(out.data(),count)==kCCSuccess;
 #else
-    return false;
+    return count<=256&&getentropy(out.data(),count)==0; // the kernel CSPRNG (16-byte salts)
 #endif
 }
+#if !defined(_WIN32)&&!defined(__APPLE__)
+void wipeBytes(void*bytes,std::size_t count)noexcept{volatile auto*p=static_cast<unsigned char*>(bytes);for(std::size_t i=0;i<count;++i)p[i]=0;}
+// RFC 8018 PBKDF2-HMAC-SHA256 for the portable build (Linux CI), where
+// neither CommonCrypto nor BCrypt exists: the shared FIPS 180-4 SHA-256
+// (core/migration/mac_import_sha256), keyed inner/outer states computed once
+// and copied per round, every intermediate wiped. Same bytes as the platform
+// derivations (archive-classification-source.json Mac records).
+std::optional<std::string>portablePBKDF2(std::string_view password,std::string_view salt,std::uint32_t iterations,std::size_t length){
+    using ehud::migration::Sha256;std::uint8_t key[64]{},pad[64];
+    if(password.size()>sizeof key){Sha256 h;h.update(password);auto digest=h.finish();std::memcpy(key,digest.data(),digest.size());wipeBytes(digest.data(),digest.size());wipeBytes(&h,sizeof h);}
+    else if(!password.empty())std::memcpy(key,password.data(),password.size());
+    Sha256 inner,outer;for(int i=0;i<64;++i)pad[i]=key[i]^0x36;inner.update(pad,64);for(int i=0;i<64;++i)pad[i]=key[i]^0x5c;outer.update(pad,64);wipeBytes(key,sizeof key);wipeBytes(pad,sizeof pad);
+    std::string out(length,'\0');std::array<std::uint8_t,32>u{},t{};
+    // HMAC of the bytes already in `round` (the inner state's message), finished into u.
+    const auto finish=[&](Sha256&round){auto first=round.finish();Sha256 second=outer;second.update(first.data(),first.size());u=second.finish();wipeBytes(first.data(),first.size());wipeBytes(&round,sizeof round);wipeBytes(&second,sizeof second);};
+    for(std::uint32_t block=1;std::size_t(block-1)*u.size()<length;++block){
+        const std::uint8_t index[4]{std::uint8_t(block>>24),std::uint8_t(block>>16),std::uint8_t(block>>8),std::uint8_t(block)};
+        Sha256 round=inner;round.update(salt);round.update(index,4);finish(round);t=u;
+        for(std::uint32_t i=1;i<iterations;++i){round=inner;round.update(u.data(),u.size());finish(round);for(std::size_t k=0;k<t.size();++k)t[k]^=u[k];}
+        const auto offset=std::size_t(block-1)*t.size();std::memcpy(out.data()+offset,t.data(),std::min(t.size(),length-offset));
+    }
+    wipeBytes(u.data(),u.size());wipeBytes(t.data(),t.size());wipeBytes(&inner,sizeof inner);wipeBytes(&outer,sizeof outer);return out;
+}
+#endif
 // Swift JSONDecoder UInt32: an integral number token within 0...UInt32.max.
 std::optional<std::uint32_t>uint32(const J&value){if(!value.isNumber())return {};const auto token=value.encode(64);std::uint64_t n{};const auto r=std::from_chars(token.data(),token.data()+token.size(),n);if(r.ec==std::errc{}&&r.ptr==token.data()+token.size()&&n<=0xFFFFFFFFull)return static_cast<std::uint32_t>(n);
     const double d=value.number();if(std::isfinite(d)&&std::trunc(d)==d&&d>=0&&d<=4294967295.)return static_cast<std::uint32_t>(d);return {};}
@@ -84,7 +112,7 @@ std::optional<std::string>archivePBKDF2(std::string_view password,std::string_vi
         reinterpret_cast<std::uint8_t*>(out.data()),length)!=kCCSuccess)return {};
     return out;
 #else
-    (void)password;(void)salt;return {};
+    return portablePBKDF2(password,salt,iterations,length);
 #endif
 }
 bool ArchivePasswordVerifier::valid()const noexcept{return version==1&&algorithm==algorithmName&&iterations>=minimumIterations&&iterations<=maximumIterations&&salt.size()==saltLength&&key.size()==keyLength;}
