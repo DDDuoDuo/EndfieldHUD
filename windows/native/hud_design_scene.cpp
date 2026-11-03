@@ -125,17 +125,20 @@ struct NativeDesignScene::Impl {
         entries.reserve(64); retired.reserve(64); pool.reserve(64); draining.reserve(64);
     }
     void time(double now) const { need(std::isfinite(now) && now >= lastTime, "Design scene needs monotonic owner time"); }
-    Json resting(const Part& p) const {
-        auto layers = p.full;
-        auto& nodes = const_cast<Json::Array&>(layers["children"].array());
-        for (std::size_t n = 0; n < nodes.size() && n < p.surfaces.size(); ++n) if (p.lazy[n] && !p.painted[n]) nodes[n] = placeholder(p.surfaces[n].id);
-        return layers;
-    }
-    // Loads (rasterizes) a part's resting layers into a new retained scene.
+    // Loads (rasterizes) a part's resting layers into a new retained scene:
+    // its lazy surfaces lend their content to the part for the load and hold
+    // their placeholder meanwhile (no copy of the part's tree).
     void load(Part& p) {
         auto scene = std::make_unique<LayerScene>(raster);
         std::fill(p.painted.begin(), p.painted.end(), std::uint8_t{});
-        scene->load(resting(p), options);
+        auto& nodes = const_cast<Json::Array&>(std::as_const(p.full)["children"].array());
+        std::vector<std::pair<std::size_t, Json>> lent; lent.reserve(p.surfaces.size()); // no growth while a node is out
+        const auto restore = [&] { for (auto& [n, node] : lent) nodes[n] = std::move(node); };
+        try {
+            for (std::size_t n = 0; n < nodes.size() && n < p.surfaces.size(); ++n) if (p.lazy[n]) { auto stand = placeholder(p.surfaces[n].id); lent.emplace_back(n, std::exchange(nodes[n], std::move(stand))); }
+            scene->load(p.full, options);
+        } catch (...) { restore(); throw; }
+        restore();
         need(scene->report().unsupported.empty(), "Design artwork contains unsupported features");
         p.scene = std::move(scene);
         ++statistics.partsLoaded;

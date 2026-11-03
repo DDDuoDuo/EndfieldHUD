@@ -578,8 +578,10 @@ private:
         Rect r = root.extent.value_or(Rect{});
         if (p.masksToBounds()) r = {0, 0, p.bounds().width, p.bounds().height};
         r.width = std::max(r.width, 1.0); r.height = std::max(r.height, 1.0);
-        Json group = Json::Object{{"id", id}, {"kind", "layer"}, {"bounds", rectJson(r)}, {"position", point({r.x, r.y})}, {"anchorPoint", point({0, 0})},
-            {"allowsGroupOpacity", false}, {"children", std::move(root.children)}};
+        Json::Object members; // emplaced: an initializer list would copy the run's whole tree
+        members.emplace("id", id); members.emplace("kind", "layer"); members.emplace("bounds", rectJson(r)); members.emplace("position", point({r.x, r.y}));
+        members.emplace("anchorPoint", point({0, 0})); members.emplace("allowsGroupOpacity", false); members.emplace("children", std::move(root.children));
+        Json group = std::move(members);
         if (p.masksToBounds()) { group["masksToBounds"] = true; if (p.maskCornerRadius() > 0) group["cornerRadius"] = p.maskCornerRadius(); }
         nodes_[part_] += countNodes(group, 1);
         need(nodes_[part_] <= maximumNodes, "A design part exceeds the rasterizer's node limit (split it with setPartRoot)");

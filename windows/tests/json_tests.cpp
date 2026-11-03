@@ -29,8 +29,8 @@ void check(bool value, const std::string& why) { ++checks; if (!value) throw std
 static_assert(!std::__libcpp_is_trivially_relocatable<Json>::value, "Json must not be trivially relocatable under libc++");
 static_assert(!std::__libcpp_is_trivially_relocatable<Json::Value>::value, "Json storage must not be trivially relocatable under libc++");
 #endif
-static_assert(std::is_nothrow_move_constructible_v<Json> == std::is_nothrow_move_constructible_v<Json::Value>,
-              "Json keeps the move semantics of its storage");
+// Containers move Json when they grow (MSVC's std::map storage alone would make them copy).
+static_assert(std::is_nothrow_move_constructible_v<Json> && std::is_nothrow_move_assignable_v<Json>, "Json moves never throw");
 
 Json object(int index) {
     return Json::Object{{"index", index}, {"name", "item " + std::to_string(index)},

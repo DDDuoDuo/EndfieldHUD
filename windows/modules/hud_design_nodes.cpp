@@ -83,8 +83,11 @@ Json PathBuilder::json() const {
     out.reserve(commands_.size());
     for (const auto& c : commands_) {
         Json::Array points;
+        points.reserve(opPoints[c.op]);
         for (std::uint8_t i = 0; i < opPoints[c.op]; ++i) points.push_back(point(c.points[i]));
-        out.push_back(Json::Object{{"op", opNames[c.op]}, {"points", std::move(points)}});
+        Json::Object command;
+        command.emplace("op", opNames[c.op]); command.emplace("points", std::move(points));
+        out.push_back(std::move(command));
     }
     return out;
 }
@@ -190,10 +193,14 @@ PathBuilder diagonalStripes(Size size, double band, double period) {
     return stripes(size, band, period, -size.height - period, size.width + period);
 }
 
-Json color(Color c) { return Json::Object{{"sRGB", Json::Array{c.r, c.g, c.b, c.a}}}; }
+// Members are emplaced: an initializer list copies every one (the node
+// builders run for every layer of every emitted page).
+Json color(Color c) { Json::Object n; n.emplace("sRGB", Json::Array{c.r, c.g, c.b, c.a}); return n; }
 Json frameNode(std::string id, Rect f, const char* kind) {
-    return Json::Object{{"id", std::move(id)}, {"kind", kind}, {"bounds", rect({0, 0, f.width, f.height})},
-        {"position", point({f.x, f.y})}, {"anchorPoint", point({0, 0})}, {"children", Json::Array{}}};
+    Json::Object n;
+    n.emplace("id", std::move(id)); n.emplace("kind", kind); n.emplace("bounds", rect({0, 0, f.width, f.height}));
+    n.emplace("position", point({f.x, f.y})); n.emplace("anchorPoint", point({0, 0})); n.emplace("children", Json::Array{});
+    return n;
 }
 Json solid(std::string id, Rect f, Color fill, double radius) {
     auto n = frameNode(std::move(id), f);

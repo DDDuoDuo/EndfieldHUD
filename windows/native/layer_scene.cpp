@@ -75,7 +75,10 @@ void LayerScene::append(const Json& node,const Matrix&parent,float parentOpacity
     const bool rasterGroup=!identity.empty()&&b.width>0&&b.height>0&&b.width*b.height<=1'048'576&&localContent2D(node,depth)&&anyDrawing(node,depth);
     if(rasterGroup||ownDrawing(node)){
         need(!identity.empty(),"Drawable native layer has no identity");
-        Json content=node;if(!rasterGroup)content["children"]=Json::Array{};
+        // A raster group paints the node as it is; a drawing parent paints
+        // itself without its separately projected children (no subtree copy).
+        Json own;if(!rasterGroup){Json::Object o;for(const auto&[key,value]:node.object())if(key!="children")o.emplace(key,value);o.emplace("children",Json::Array{});own=std::move(o);}
+        const Json& content=rasterGroup?node:own;
         auto settings=options;settings.includeRootOpacity=false;settings.includeRootMask=true;
         const auto id=namespace_+identity;
         rasterIDs_.push_back(id);
