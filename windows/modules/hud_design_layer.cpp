@@ -168,7 +168,7 @@ void Layer::setClipsPresentedBounds(bool v, double radius) {
 double Layer::value(Channel c) const noexcept { return model_[std::size_t(c)]; }
 void Layer::setValue(Channel c, double v) {
     finite(v, "Layer channel value must be finite");
-    property[std::size_t(c)] = {};
+    if (tracks_) tracks_->property[std::size_t(c)] = {};
     if (model_[std::size_t(c)] == v) return;
     model_[std::size_t(c)] = v; if (!animatable()) touch();
 }
@@ -176,7 +176,7 @@ void Layer::setValue(Channel c, double v) {
 // animatable layer places surfaces of its own.
 void Layer::setTint(std::optional<Color> c) {
     if (c && !animatable()) throw std::logic_error("A design tint needs an animatable layer: " + id_);
-    tintTrack = {};
+    if (tracks_) tracks_->tintTrack = {};
     tint_ = c;
 }
 void Layer::setContent(Json node) {
@@ -232,7 +232,11 @@ HitTarget& Layer::addTarget(Rect r, std::optional<PathBuilder> path, bool contai
 
 // Core Animation's order: the model, replaced by the last-added active
 // absolute track, plus the active additive tracks added after it.
+const Layer::Tracks& Layer::tracks() const noexcept { static const Tracks none{}; return tracks_ ? *tracks_ : none; }
+Layer::Tracks& Layer::editTracks() { if (!tracks_) tracks_ = std::make_unique<Tracks>(); return *tracks_; }
 double Layer::presented(Channel c, double now) const noexcept {
+    if (!tracks_) return model_[std::size_t(c)];
+    const auto& [property, slots, slotChannels, tintTrack, tintEffect] = *tracks_;
     const Track* absolute{};
     const auto consider = [&](const Track& t) { if (!t.additive && t.active(now) && (!absolute || t.serial > absolute->serial)) absolute = &t; };
     consider(property[std::size_t(c)]);
@@ -247,18 +251,21 @@ double Layer::presented(Channel c, double now) const noexcept {
     return v;
 }
 std::optional<Color> Layer::presentedTint(double now) const noexcept {
+    if (!tracks_) return tint_;
+    const auto& tintTrack = tracks_->tintTrack; const auto& tintEffect = tracks_->tintEffect;
     const ColorTrack* t{};
     if (tintTrack.active(now)) t = &tintTrack;
     if (tintEffect.active(now) && (!t || tintEffect.serial > t->serial)) t = &tintEffect;
     return t ? std::optional(t->sample(now)) : tint_;
 }
 bool Layer::animating(double now) const noexcept {
-    for (const auto& t : property) if (t.running(now)) return true;
-    for (const auto& slot : slots) for (const auto& t : slot) if (t.running(now)) return true;
-    return tintTrack.running(now) || tintEffect.running(now);
+    if (!tracks_) return false;
+    for (const auto& t : tracks_->property) if (t.running(now)) return true;
+    for (const auto& slot : tracks_->slots) for (const auto& t : slot) if (t.running(now)) return true;
+    return tracks_->tintTrack.running(now) || tracks_->tintEffect.running(now);
 }
-void Layer::removeMotion(MotionSlot s) noexcept { slots[std::size_t(s)] = {}; }
-void Layer::removeAllMotion() noexcept { property = {}; slots = {}; tintTrack = {}; tintEffect = {}; }
+void Layer::removeMotion(MotionSlot s) noexcept { if (tracks_) tracks_->slots[std::size_t(s)] = {}; }
+void Layer::removeAllMotion() noexcept { tracks_.reset(); }
 
 // ---------------------------------------------------------------------------
 // LayerArena
@@ -288,7 +295,7 @@ namespace motion {
 namespace {
 void requireAnimatable(const Layer& l) { if (!l.animatable()) throw std::logic_error("Animating a static design layer (mark it setAnimatable at build time): " + l.id()); }
 void requireTime(const Clock& c) { finite(c.now, "Motion needs a finite clock"); }
-Track& entry(Layer& l, MotionSlot s, std::size_t i, Channel c) { l.slotChannels[std::size_t(s)][i] = c; return l.slots[std::size_t(s)][i]; }
+Track& entry(Layer& l, MotionSlot s, std::size_t i, Channel c) { auto& m = l.editTracks(); m.slotChannels[std::size_t(s)][i] = c; return m.slots[std::size_t(s)][i]; }
 Track timed(Track t, double begin, double delay) { t.start = begin + delay; t.fillBackwards = delay > 0; t.serial = nextSerial(); return t; }
 }
 // HUDMotion.animate (:42-55).
@@ -297,7 +304,7 @@ void animate(Layer& l, Channel c, double to, double duration, const Clock& clock
     const double from = l.presented(c, clock.now);
     l.setValue(c, to); // also removes the channel's running "hud.<keyPath>" track
     if (clock.reduceMotion || !(duration > 0) || from == to) return;
-    l.property[std::size_t(c)] = timed(Track::basic(from, to, 0, duration, timing), clock.now, delay);
+    l.editTracks().property[std::size_t(c)] = timed(Track::basic(from, to, 0, duration, timing), clock.now, delay);
 }
 void animateTint(Layer& l, Color to, double duration, const Clock& clock, core::CubicTiming timing, double delay) {
     requireAnimatable(l); requireTime(clock);
@@ -307,7 +314,7 @@ void animateTint(Layer& l, Color to, double duration, const Clock& clock, core::
     ColorTrack t;
     t.values[0] = from; t.values[1] = to; t.keyTimes[1] = 1; t.keys = 2;
     t.start = clock.now + delay; t.duration = duration; t.timing = timing; t.fillBackwards = delay > 0; t.serial = nextSerial();
-    l.tintTrack = t;
+    l.editTracks().tintTrack = t;
 }
 // HUDMotion.enter (:58-75).
 void enter(Layer& l, Point offset, const Clock& clock, double duration, double delay, core::CubicTiming timing) {
@@ -396,8 +403,8 @@ void keyframes(Layer& l, Channel c, std::span<const double> values, std::span<co
     requireAnimatable(l); requireTime(clock);
     need(values.size() >= 2 && values.size() <= Track::maximumKeys && (keyTimes.empty() || keyTimes.size() == values.size()), "Keyframes need 2...6 values and matching key times");
     need(duration > 0 && repeat > 0, "Keyframes need a positive duration and repeat count");
-    auto& slot = l.slots[std::size_t(MotionSlot::effect)];
-    auto& channels = l.slotChannels[std::size_t(MotionSlot::effect)];
+    auto& slot = l.editTracks().slots[std::size_t(MotionSlot::effect)];
+    auto& channels = l.editTracks().slotChannels[std::size_t(MotionSlot::effect)];
     std::size_t at = slot.size();
     for (std::size_t i = 0; i < slot.size() && at == slot.size(); ++i) if (slot[i].present() && channels[i] == c) at = i;
     for (std::size_t i = 0; i < slot.size() && at == slot.size(); ++i) if (!slot[i].present()) at = i;
@@ -420,13 +427,13 @@ void colorKeyframes(Layer& l, std::span<const Color> values, std::span<const dou
     requireAnimatable(l); requireTime(clock);
     need(values.size() >= 2 && values.size() <= ColorTrack::maximumKeys && (keyTimes.empty() || keyTimes.size() == values.size()), "Colour keyframes need 2...3 values and matching key times");
     need(duration > 0 && repeat > 0, "Colour keyframes need a positive duration and repeat count");
-    l.tintEffect = {};
+    if (l.tracks().tintEffect.keys) l.editTracks().tintEffect = {};
     if (clock.reduceMotion) return;
     ColorTrack t;
     t.keys = std::uint8_t(values.size());
     for (std::size_t i = 0; i < values.size(); ++i) { t.values[i] = values[i]; t.keyTimes[i] = keyTimes.empty() ? double(i) / double(values.size() - 1) : keyTimes[i]; }
     t.start = clock.now + delay; t.duration = duration; t.timing = timing; t.repeat = repeat; t.fillBackwards = delay > 0; t.serial = nextSerial();
-    l.tintEffect = t;
+    l.editTracks().tintEffect = t;
 }
 // CATransaction completion blocks: the arena's token cancels them with it.
 void after(Layer& l, double time, const Clock&, std::function<void()> work) {

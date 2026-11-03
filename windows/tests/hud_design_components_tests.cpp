@@ -164,7 +164,7 @@ void controlBase() {
     check(model(lifted.layer(), Channel::translateY) == -1 && model(lifted.layer(), Channel::scaleX) == 1.06, "Hover lifts and scales");
     w.move(w.centre(lifted), true); d::applyHoverMotion(lifted, 1, 1.06, .94, nullptr);
     check(model(lifted.layer(), Channel::translateY) == 0 && model(lifted.layer(), Channel::scaleY) == .94, "Press drops the lift and pushes in");
-    check(near(lifted.layer().property[std::size_t(Channel::scaleY)].duration, .10), "The press scale runs .10 s");
+    check(near(lifted.layer().tracks().property[std::size_t(Channel::scaleY)].duration, .10), "The press scale runs .10 s");
     // Swift Character counts (String.count) used by redaction and fields.
     check(characters().count("Endministrator") == 14 && characters().count("管理员") == 3 && characters().count("é") == 1
         && characters().count("\U0001F1EF\U0001F1F5") == 1 && characters().count("\U0001F469‍\U0001F4BB") == 1 && characters().count("\r\n") == 1
@@ -193,7 +193,7 @@ void rows() {
     check(row.hovered() && model(row.layer(), Channel::translateX) == 3 && model(must(row.layer(), "row.brighten"), Channel::opacity) == 1, "Hover: +3 px and the brighten");
     const auto& notch = must(row.layer(), "row.notch");
     check(near(*notch.tint(), w.env.palette.yellowLow()) && near(model(notch, Channel::scaleY), 40.0 / 32), "Notch yellowLow, scaleY (h-10)/(h-18)");
-    check(near(notch.tintTrack.duration, .22) && notch.tintTrack.timing.x1 == d::easing::ease.x1, "The notch colour eases .22 s");
+    check(near(notch.tracks().tintTrack.duration, .22) && notch.tracks().tintTrack.timing.x1 == d::easing::ease.x1, "The notch colour eases .22 s");
     const auto& band = must(row.layer(), "sheen.band");
     check(model(band, Channel::opacity) == 1 && animating(band, w.env.now) && band.alphaClip() == &must(row.layer(), "row.plate"), "One sheen pass clipped to the plate");
     w.at(w.env.now + .71);
@@ -257,10 +257,10 @@ void toggles() {
     toggle.onActivate = [&] { order.push_back("activate"); };
     toggle.activate();
     check(toggle.isOn() && order == std::vector<std::string>{"change:on", "activate"}, "activate toggles, then onChange, then onActivate (:194-199)");
-    check(model(knob, Channel::translateX) == 42 && near(knob.property[std::size_t(Channel::translateX)].duration, .18)
-        && knob.property[std::size_t(Channel::translateX)].outer.y1 == d::easing::snap.y1, "Knob slides 42 px in .18 s SNAP");
+    check(model(knob, Channel::translateX) == 42 && near(knob.tracks().property[std::size_t(Channel::translateX)].duration, .18)
+        && knob.tracks().property[std::size_t(Channel::translateX)].outer.y1 == d::easing::snap.y1, "Knob slides 42 px in .18 s SNAP");
     check(near(*must(toggle.layer(), "toggle.knob.fill").tint(), w.env.palette.yellow()), "Knob turns yellow");
-    check(near(must(toggle.layer(), "toggle.on").tintTrack.duration, .14), "Labels change over .14 s");
+    check(near(must(toggle.layer(), "toggle.on").tracks().tintTrack.duration, .14), "Labels change over .14 s");
     toggle.setOn(false, false);
     check(model(knob, Channel::translateX) == 0, "setOn(animated: false) jumps");
     const auto item = items(toggle, w.root);
@@ -280,12 +280,12 @@ void toggles() {
     check(near(*border(must(s0, "segment.ring")), w.env.palette.token(d::ThemeToken::ringField)) && must(s0, "segment.bar").hidden(), "Rest: ringField");
     w.move(w.centre(*seg.segments()[0]));
     check(near(*must(s0, "segment.ring").tint(), w.env.palette.token(d::ThemeToken::muted)) && near(textColor(must(s0, "segment.text")), w.env.palette.foreground(1))
-        && near(must(s0, "segment.ring").tintTrack.duration, .22), "Hover: muted ring (.22 ease), white text");
+        && near(must(s0, "segment.ring").tracks().tintTrack.duration, .22), "Hover: muted ring (.22 ease), white text");
     std::vector<int> changes, reselects;
     seg.onChange = [&](int i) { changes.push_back(i); }; seg.onReselect = [&](int i) { reselects.push_back(i); };
     seg.segments()[2]->activate(); seg.segments()[2]->activate();
     check(seg.selectedIndex() == 2 && changes == std::vector<int>{2} && reselects == std::vector<int>{2}, "Select notifies; the selected segment reselects (:222-225)");
-    check(must(seg.segments()[2]->layer(), "segment.fill").tintTrack.keys == 0, "A selection change is not animated");
+    check(must(seg.segments()[2]->layer(), "segment.fill").tracks().tintTrack.keys == 0, "A selection change is not animated");
     check(!seg.contains({1, 1}) && seg.accessibilityRole() == std::nullopt, "The group is not a target");
     const auto tab = items(*seg.segments()[2], w.root);
     check(tab.size() == 1 && tab[0].role == d::AccessibilityRole::tab && tab[0].on, "Segments are tabs");
@@ -324,7 +324,7 @@ void buttons() {
     const auto& bar = must(secondary.layer(), "button.bar"); const auto& arrow = must(secondary.layer(), "button.bar.arrow");
     check(near(bar.frame(), {8, 7, 7, 12}) && model(bar, Channel::opacity) == 1 && model(arrow, Channel::opacity) == 0, "The 7 x 12 bar at (8, centred)");
     w.host(secondary.layer()); w.move(w.centre(secondary));
-    check(model(bar, Channel::opacity) == 0 && model(arrow, Channel::opacity) == 1 && near(arrow.property[std::size_t(Channel::opacity)].duration, .2)
+    check(model(bar, Channel::opacity) == 0 && model(arrow, Channel::opacity) == 1 && near(arrow.tracks().property[std::size_t(Channel::opacity)].duration, .2)
         && near(*must(secondary.layer(), "button.plate").tint(), w.env.palette.token(d::ThemeToken::secondaryButtonHover)), "Hover: bar -> ▶ (.2 ease), hover plate");
     auto& flex = w.b.make<d::Button>("flex", "Flex", d::Icon::check, K::light);
     flex.place({12, 30}, 220.0);
@@ -334,8 +334,8 @@ void buttons() {
 
     using S = d::IconButton::Style;
     auto& dark = w.b.make<d::IconButton>("icon", "Pin", d::Icon::pin);
-    check(must(dark.layer(), "icon.plate.ring").tintTrack.keys == 2 && near(must(dark.layer(), "icon.plate.ring").tintTrack.values[0], d::black(1))
-        && near(must(dark.layer(), "icon.plate").tintTrack.values[0], d::clear), "Creation fade: border from black, fill from no colour (HUDIconButton.init)");
+    check(must(dark.layer(), "icon.plate.ring").tracks().tintTrack.keys == 2 && near(must(dark.layer(), "icon.plate.ring").tracks().tintTrack.values[0], d::black(1))
+        && near(must(dark.layer(), "icon.plate").tracks().tintTrack.values[0], d::clear), "Creation fade: border from black, fill from no colour (HUDIconButton.init)");
     w.host(dark.layer()); dark.layer().setOrigin({300, 300});
     check(dark.layer().bounds().width == 30 && near(must(dark.layer(), "icon.glyph").bounds().width, 15) && !dark.target()->path, "Side 30, glyph 15, square");
     check(near(*fill(must(dark.layer(), "icon.plate")), w.env.palette.token(d::ThemeToken::iconButton)) && near(*border(must(dark.layer(), "icon.plate.ring")), w.env.palette.token(d::ThemeToken::ringIcon)),
@@ -349,13 +349,13 @@ void buttons() {
     check(near(*must(dark.layer(), "icon.plate").tint(), w.env.palette.yellow()) && must(dark.layer(), "icon.plate.ring").tint()->a == 0
         && near(*must(dark.layer(), "icon.glyph").tint(), d::fixed::nearBlack), "isOn: yellow, no ring, #111 glyph");
     auto& back = w.b.make<d::IconButton>("back", "Back", d::Icon::back, S::back);
-    check(near(must(back.layer(), "icon.plate.ring").tintTrack.duration, .12), "The back style fades in .12 s");
+    check(near(must(back.layer(), "icon.plate.ring").tracks().tintTrack.duration, .12), "The back style fades in .12 s");
     w.host(back.layer()); back.layer().setOrigin({100, 300});
     check(back.target()->path.has_value() && near(must(back.layer(), "icon.glyph").bounds().width, 14) && near(*border(must(back.layer(), "icon.plate.ring")), w.env.palette.tone(0xDDDDDD)),
         "Back: round, glyph 14, ring DDDDDD");
     w.move(w.centre(back));
     check(near(*must(back.layer(), "icon.plate").tint(), w.env.palette.foreground(1)) && near(*must(back.layer(), "icon.glyph").tint(), w.env.palette.tone(0x111111))
-        && near(must(back.layer(), "icon.plate").tintTrack.duration, .12) && model(back.layer(), Channel::scaleX) == 1, "Back hover: filled, .12 s, no scale");
+        && near(must(back.layer(), "icon.plate").tracks().tintTrack.duration, .12) && model(back.layer(), Channel::scaleX) == 1, "Back hover: filled, .12 s, no scale");
     auto& big = w.b.make<d::IconButton>("big", "Play", d::Icon::play, S::dark, true, true);
     check(big.layer().bounds().width == 44 && near(must(big.layer(), "icon.glyph").bounds().width, 20) && big.target()->path.has_value(), "Big 44 / 20, round");
     auto& tiny = w.b.make<d::IconButton>("tiny", "X", d::Icon::x, S::back, false, false, 24.0, 10.0);
@@ -477,7 +477,7 @@ void menus() {
     const auto& caret = must(dropdown.layer(), "dropdown.caret");
     check(near(caret.position().x, 178 - 14.5) && model(must(dropdown.layer(), "dropdown.bar"), Channel::scaleY) == 0, "Caret at w - 14.5; bar collapsed");
     w.move(w.centre(dropdown));
-    check(model(must(dropdown.layer(), "dropdown.bar"), Channel::scaleY) == 1 && model(caret, Channel::translateY) == 2 && near(caret.property[std::size_t(Channel::translateY)].duration, .16), "Hover: bar, caret 2 px down");
+    check(model(must(dropdown.layer(), "dropdown.bar"), Channel::scaleY) == 1 && model(caret, Channel::translateY) == 2 && near(caret.tracks().property[std::size_t(Channel::translateY)].duration, .16), "Hover: bar, caret 2 px down");
     w.move(std::nullopt); dropdown.setOpen(true);
     check(near(model(caret, Channel::rotation), 3.14159265358979323846) && model(must(dropdown.layer(), "dropdown.bar"), Channel::scaleY) == 1, "Open: caret turned, bar kept");
     const auto popUp = items(dropdown, w.root);
@@ -527,7 +527,7 @@ void menus() {
     const auto item = items(*rows[1], w.root);
     check(item[0].role == d::AccessibilityRole::menuItem && item[0].on, "Menu items with their selection");
     menu.playEntrance(w.env.clock());
-    check(menu.layer().slots[std::size_t(d::MotionSlot::wipe)][0].present() && near(menu.layer().slots[std::size_t(d::MotionSlot::fade)][0].values[0], .4), "Top-down wipe with a fade from .4");
+    check(menu.layer().tracks().slots[std::size_t(d::MotionSlot::wipe)][0].present() && near(menu.layer().tracks().slots[std::size_t(d::MotionSlot::fade)][0].values[0], .4), "Top-down wipe with a fade from .4");
 
     std::vector<Item> many;
     for (int i = 0; i < 12; ++i) many.push_back({"i" + std::to_string(i), "Display " + std::to_string(i), {}, i == 9});
@@ -548,7 +548,7 @@ void menus() {
             "Rows scrolled out of a long menu stay listed, offscreen (UIA IsOffscreen, like a scrolled NSMenu's items)");
     }
     w.at(w.env.now + 1.1);
-    check(model(rail, Channel::opacity) == 0 && near(rail.property[std::size_t(Channel::opacity)].duration, .3), "The bar hides 1 s later (.30 easeIn)");
+    check(model(rail, Channel::opacity) == 0 && near(rail.tracks().property[std::size_t(Channel::opacity)].duration, .3), "The bar hides 1 s later (.30 easeIn)");
     auto* track = longMenu.controls().back();
     track->pointerDown({2, 0});
     check(near(longMenu.scrollOffset(), 0) && model(rail, Channel::opacity) == 1, "A press at the top of the track scrolls to the start");
@@ -612,7 +612,7 @@ void tabs() {
     std::vector<std::pair<int, double>> selections;
     tabs.onSelect = [&](int i, double direction) { selections.emplace_back(i, direction); };
     tabs.controls()[2]->activate();
-    check(tabs.selectedIndex() == 2 && selections.back() == std::pair{2, 1.0} && must(hovered, "tab.fill").slots[std::size_t(d::MotionSlot::wipe)][0].present()
+    check(tabs.selectedIndex() == 2 && selections.back() == std::pair{2, 1.0} && must(hovered, "tab.fill").tracks().slots[std::size_t(d::MotionSlot::wipe)][0].present()
         && must(hovered, "tab.fill").wipeOrigin == d::WipeOrigin::centerX, "Selection wipes from the centre; +1 forward");
     tabs.cycle(1); tabs.cycle(1); tabs.cycle(-1);
     check(tabs.selectedIndex() == 3 && selections.back() == std::pair{3, -1.0} && selections[selections.size() - 2] == std::pair{0, 1.0}, "Q/E wrap around");
@@ -650,8 +650,8 @@ void badges() {
     keys.setRecording(true, "Press a shortcut");
     const auto& stripes = must(keys.layer(), "keys.scan.stripes");
     check(!must(keys.layer(), "keys.scan").hidden() && must(keys.layer(), "keys.caps").hidden() && near(*border(keys.layer()), w.env.palette.accentInk()), "Recording: accent ring, keys hidden");
-    check(std::isinf(stripes.slots[std::size_t(d::MotionSlot::effect)][0].repeat) && near(stripes.slots[std::size_t(d::MotionSlot::effect)][0].duration, 1)
-        && std::isinf(must(keys.layer(), "keys.cursor").slots[std::size_t(d::MotionSlot::effect)][0].repeat), "Scan 1 s and blink loops, infinite");
+    check(std::isinf(stripes.tracks().slots[std::size_t(d::MotionSlot::effect)][0].repeat) && near(stripes.tracks().slots[std::size_t(d::MotionSlot::effect)][0].duration, 1)
+        && std::isinf(must(keys.layer(), "keys.cursor").tracks().slots[std::size_t(d::MotionSlot::effect)][0].repeat), "Scan 1 s and blink loops, infinite");
     keys.setRecording(false, "");
     check(!stripes.animating(w.env.now) && !must(keys.layer(), "keys.cursor").animating(w.env.now) && must(keys.layer(), "keys.scan").hidden(), "Loops only while recording");
     w.env.reduceMotion = true; keys.setRecording(true, "Reduced");
@@ -706,15 +706,15 @@ void badges() {
         else check(near(*fill(on), w.env.palette.yellow()), "Filled segments are solid yellow");
         check(near(*fill(off), capacity ? w.env.palette.tone(0x2A2A2A) : w.env.palette.token(d::ThemeToken::iconButton)), "Empty cells");
         cells.set(7, std::nullopt, true, true, std::nullopt, 3);
-        check(cells.pulseCount(w.env.now) == 3 && near(must(cells.layer(), "cell.8.fill").tintEffect.start - w.env.now, .08) && near(must(cells.layer(), "cell.8.fill").tintEffect.duration, 2.4),
+        check(cells.pulseCount(w.env.now) == 3 && near(must(cells.layer(), "cell.8.fill").tracks().tintEffect.start - w.env.now, .08) && near(must(cells.layer(), "cell.8.fill").tracks().tintEffect.duration, 2.4),
             "The next 3 empty cells pulse, 80 ms apart, 2.4 s");
-        check(near(must(cells.layer(), "cell.7.fill").tintEffect.values[1], d::rgb(0x4D4A1C)), "Pulse mid 4D4A1C without a tone");
+        check(near(must(cells.layer(), "cell.7.fill").tracks().tintEffect.values[1], d::rgb(0x4D4A1C)), "Pulse mid 4D4A1C without a tone");
     }
     World lightCells(true);
     d::Cells pale(lightCells.b, "pale", 4, 100, true);
     pale.set(1, std::nullopt, true);
     const auto empty = lightCells.env.palette.tone(0x2A2A2A);
-    check(near(must(pale.layer(), "cell.1.fill").tintEffect.values[1], d::mixed(empty, lightCells.env.palette.yellowHigh(), .35)), "Light: the tone mixed 35 % into the empty cell");
+    check(near(must(pale.layer(), "cell.1.fill").tracks().tintEffect.values[1], d::mixed(empty, lightCells.env.palette.yellowHigh(), .35)), "Light: the tone mixed 35 % into the empty cell");
     w.env.reduceMotion = true;
     d::Cells reduced(w.b, "reduced", 4, 100, true);
     reduced.set(1, std::nullopt, true);
@@ -739,14 +739,14 @@ void scrolling() {
     check(near(d::thumbLength(thumb), 50) && thumb.bounds() == d::Size{4, 18} && thumb.content() == thumbContent, "A length change only rescales the thumb");
     area.setContentHeight(900);
     check(area.scroll(120) && near(area.offset(), 120) && near(area.content().frame().y, -120) && near(must(area.layer(), "scroll.thumb").frame().y, 120.0 / 600 * 200), "scroll(by:) moves");
-    check(area.bar().shown() && model(area.track(), Channel::opacity) == 1 && near(area.track().property[std::size_t(Channel::opacity)].duration, .15), "Scrolling shows the bar (.15 easeOut)");
+    check(area.bar().shown() && model(area.track(), Channel::opacity) == 1 && near(area.track().tracks().property[std::size_t(Channel::opacity)].duration, .15), "Scrolling shows the bar (.15 easeOut)");
     w.at(w.env.now + .5);
     check(area.bar().shown(), "Still shown .5 s later");
     w.at(w.env.now + .6);
-    check(!area.bar().shown() && model(area.track(), Channel::opacity) == 0 && near(area.track().property[std::size_t(Channel::opacity)].duration, .3), "Hidden 1 s after the last scroll (.30 easeIn)");
+    check(!area.bar().shown() && model(area.track(), Channel::opacity) == 0 && near(area.track().tracks().property[std::size_t(Channel::opacity)].duration, .3), "Hidden 1 s after the last scroll (.30 easeIn)");
     area.setOffset(10000, true);
     const auto& content = area.content();
-    check(near(area.offset(), 600) && content.slots[std::size_t(d::MotionSlot::effect)][0].present() && near(content.presented(Channel::translateY, w.env.now), 480), "Animated: glides from where it is (.2 s)");
+    check(near(area.offset(), 600) && content.tracks().slots[std::size_t(d::MotionSlot::effect)][0].present() && near(content.presented(Channel::translateY, w.env.now), 480), "Animated: glides from where it is (.2 s)");
     w.env.now += .3;
     check(near(content.presented(Channel::translateY, w.env.now), 0), "The glide lands");
     area.reveal({0, 100, 10, 40});
@@ -784,15 +784,15 @@ void cards() {
     check(!must(task.layer(), "task.attention").hidden() && near(must(task.layer(), "task.attention").position().x, 281), "Attention diamond at (w + 1, 1)");
     check(d::textOf(must(task.layer(), "task.count")).text() == "0/1" && model(must(task.layer(), "task.bar.fill"), Channel::scaleX) == .0001, "Open: 0/1, empty bar");
     w.move(w.centre(task));
-    check(model(controls[2]->layer(), Channel::opacity) == 1 && near(controls[2]->layer().property[std::size_t(Channel::opacity)].duration, .12) && items(task, w.root).empty(),
+    check(model(controls[2]->layer(), Channel::opacity) == 1 && near(controls[2]->layer().tracks().property[std::size_t(Channel::opacity)].duration, .12) && items(task, w.root).empty(),
         "Card hover fades the x in (.12)");
     w.move(w.centre(*controls[1]));
     check(near(*must(action, "task.action").tint(), d::white(1)), "Hovering the pill whitens it");
     bool toggled = false; task.onToggle = [&](bool done) { toggled = done; };
     controls[1]->activate();
-    check(task.done() && toggled && model(must(task.layer(), "task.body.done"), Channel::opacity) == 1 && near(must(task.layer(), "task.body.done").property[std::size_t(Channel::opacity)].duration, .25),
+    check(task.done() && toggled && model(must(task.layer(), "task.body.done"), Channel::opacity) == 1 && near(must(task.layer(), "task.body.done").tracks().property[std::size_t(Channel::opacity)].duration, .25),
         "Toggling flips the plates over .25 s");
-    check(model(must(task.layer(), "task.watermark"), Channel::translateX) == 0 && near(must(task.layer(), "task.watermark").property[std::size_t(Channel::translateX)].duration, .45)
+    check(model(must(task.layer(), "task.watermark"), Channel::translateX) == 0 && near(must(task.layer(), "task.watermark").tracks().property[std::size_t(Channel::translateX)].duration, .45)
         && model(must(task.layer(), "task.ring"), Channel::scaleX) == 1 && model(must(task.layer(), "task.bar.fill"), Channel::scaleX) == 1, "Watermark, ring and bar");
     check(d::textOf(must(task.layer(), "task.count")).text() == "1/1" && near(textColor(must(task.layer(), "task.title")), d::rgb(0xF2F2F2)) && must(task.layer(), "task.attention").hidden(),
         "Done: 1/1, light title, no diamond");
@@ -834,7 +834,7 @@ void cards() {
     check(model(must(tile.layer(), "tile.brackets"), Channel::opacity) == 0, "Brackets hidden");
     tile.setSelected(true);
     check(model(must(tile.layer(), "tile.brackets"), Channel::opacity) == 1 && model(must(tile.layer(), "tile.brackets.selected"), Channel::opacity) == 1
-        && model(must(tile.layer(), "tile.brackets.rest"), Channel::opacity) == 0 && near(must(tile.layer(), "tile.brackets.selected").property[std::size_t(Channel::opacity)].duration, .16),
+        && model(must(tile.layer(), "tile.brackets.rest"), Channel::opacity) == 0 && near(must(tile.layer(), "tile.brackets.selected").tracks().property[std::size_t(Channel::opacity)].duration, .16),
         "Selection: brackets in (.1) and the -4 inset cross-faded in over .16");
     check(near(*fill(must(tile.layer(), "tile.label")), d::fixed::counterBackground) && near(textColor(must(tile.layer(), "tile.label.text")), w.env.palette.yellow()), "Selected strip #151515, yellow label");
     w.move(w.centre(tile));
@@ -891,8 +891,8 @@ void header() {
         check(header.counterText() == "1,284", "setCounter in place");
         header.playEntrance(w.env.clock());
         const auto& group = must(header.layer(), "header.title"), &rule = must(header.layer(), "header.rule");
-        check(group.wipeOrigin == d::WipeOrigin::left && near(group.slots[std::size_t(d::MotionSlot::wipe)][0].duration, .45) && group.slots[std::size_t(d::MotionSlot::fade)][0].values[0] == 0
-            && near(rule.slots[std::size_t(d::MotionSlot::grow)][0].start - w.env.now, .05) && near(rule.anchorPoint().x, 0), "Title wipe .45 with fade; rule grows after .05");
+        check(group.wipeOrigin == d::WipeOrigin::left && near(group.tracks().slots[std::size_t(d::MotionSlot::wipe)][0].duration, .45) && group.tracks().slots[std::size_t(d::MotionSlot::fade)][0].values[0] == 0
+            && near(rule.tracks().slots[std::size_t(d::MotionSlot::grow)][0].start - w.env.now, .05) && near(rule.anchorPoint().x, 0), "Title wipe .45 with fade; rule grows after .05");
         header.configure({}, "SYS-01", d::ModuleTitle::make("System", "系统", language), "", false);
         check(!header.back() && header.crumbTexts() == std::vector<std::string>{"// HUD"} && clear.layer().parent() == nullptr && near(must(header.layer(), "header.title").frame().x, 0),
             "Reconfigured: no back, one crumb, actions removed");
@@ -930,7 +930,7 @@ void redaction() {
     check(d::redaction::wrapped("a\r\nb", 46, characters()) == std::vector<std::string>{"a", "", "b"}, "Every newline character separates (CharacterSet.newlines)");
     std::vector<d::Layer*> layers{&block};
     d::redaction::playEntrance(layers, w.env.clock());
-    check(block.children()[0]->slots[std::size_t(d::MotionSlot::wipe)][0].present() && near(block.children()[0]->slots[std::size_t(d::MotionSlot::wipe)][0].duration, .35), "rdIn wipes each bar .35 s");
+    check(block.children()[0]->tracks().slots[std::size_t(d::MotionSlot::wipe)][0].present() && near(block.children()[0]->tracks().slots[std::size_t(d::MotionSlot::wipe)][0].duration, .35), "rdIn wipes each bar .35 s");
 }
 
 // ---------------------------------------------------------------------------
@@ -983,8 +983,8 @@ void textFields() {
     host.accept = false; field.beginEditing();
     check(!field.editing(), "Without an editor the field stays idle"); host.accept = true;
     field.setInvalid(true, true);
-    check(field.frame().state() == d::FieldFrame::State::invalid && field.layer().slots[std::size_t(d::MotionSlot::effect)][0].additive
-        && near(field.layer().slots[std::size_t(d::MotionSlot::effect)][0].duration, .32), "Invalid + shake (additive, .32 s)");
+    check(field.frame().state() == d::FieldFrame::State::invalid && field.layer().tracks().slots[std::size_t(d::MotionSlot::effect)][0].additive
+        && near(field.layer().tracks().slots[std::size_t(d::MotionSlot::effect)][0].duration, .32), "Invalid + shake (additive, .32 s)");
     field.beginEditing(); field.editorChanged("x");
     check(field.frame().state() == d::FieldFrame::State::focused, "An edit clears the invalid state");
     field.endEditing(false);

@@ -221,7 +221,7 @@ Cells::Cells(Builder& b, std::string_view id, int count, double width, bool capa
     }
 }
 int Cells::pulseCount(double) const noexcept {
-    return int(std::count_if(cells_.begin(), cells_.end(), [](const Layer* cell) { return cell->tintEffect.keys != 0; }));
+    return int(std::count_if(cells_.begin(), cells_.end(), [](const Layer* cell) { return cell->tracks().tintEffect.keys != 0; }));
 }
 // set (:574-604): `pulse` is the pulse's mid colour (nullopt: 3A3826 with a
 // tone, else 4D4A1C; Light: the tone mixed 35 % into the pale empty cell);
@@ -246,7 +246,7 @@ void Cells::set(int filled, std::optional<Tone> tone, bool pulsing, bool animate
             if (!cell.tint()) { cell.setContent(solid(cell.id(), localBounds(cell), white(1))); cell.setTint(clear); }
             motion::animateTint(cell, on ? high : empty, animated ? (capacity_ ? .3 : .2) : 0, clock, easing::ease);
         }
-        cell.removeMotion(MotionSlot::effect); cell.tintEffect = {};
+        cell.removeMotion(MotionSlot::effect); if (cell.tracks().tintEffect.keys) cell.editTracks().tintEffect = {};
         if (!pulsing || on || clock.reduceMotion || index >= filled + pulseCount.value_or(count)) continue;
         const Color mid = p.isLight() ? mixed(empty, high, .35) : pulse.value_or(tone ? rgb(0x3A3826) : rgb(0x4D4A1C));
         const std::array<Color, 3> values{empty, mid, empty};

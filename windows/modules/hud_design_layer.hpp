@@ -185,10 +185,20 @@ public:
     // Presented value of a channel: the model, overridden by the last-added
     // active absolute track (Track::serial), plus every active additive track
     // added after it (Core Animation's application order).
-    std::array<Track, channelCount> property{};              // "hud.<keyPath>" absolute tracks
-    std::array<std::array<Track, 4>, std::size_t(MotionSlot::count)> slots{}; // channel per entry below (pop uses 4)
-    std::array<std::array<Channel, 4>, std::size_t(MotionSlot::count)> slotChannels{};
-    ColorTrack tintTrack{}, tintEffect{};
+    // The tracks (about 9.4 KiB) live outside the layer and are created by
+    // the first motion verb that stores one: most layers never animate, and
+    // every built page keeps its layers while the HUD is closed (Windows
+    // 1.3.0 hidden memory trace: some 3,600 layers after visiting every
+    // module, 32 MiB of inline tracks before). tracks() of a layer that never
+    // animated is an empty set; removeAllMotion() gives the storage back.
+    struct Tracks {
+        std::array<Track, channelCount> property{};              // "hud.<keyPath>" absolute tracks
+        std::array<std::array<Track, 4>, std::size_t(MotionSlot::count)> slots{}; // channel per entry below (pop uses 4)
+        std::array<std::array<Channel, 4>, std::size_t(MotionSlot::count)> slotChannels{};
+        ColorTrack tintTrack{}, tintEffect{};
+    };
+    const Tracks& tracks() const noexcept;
+    Tracks& editTracks();                                    // creates the storage
     WipeOrigin wipeOrigin{WipeOrigin::left};
     double presented(Channel, double now) const noexcept;    // model + tracks
     std::optional<Color> presentedTint(double now) const noexcept;
@@ -216,6 +226,7 @@ private:
     Layer* parent_{};
     std::vector<Layer*> children_;
     std::vector<std::unique_ptr<HitTarget>> targets_;
+    std::unique_ptr<Tracks> tracks_;
     bool decorative_{};
     void touch() noexcept;
 };

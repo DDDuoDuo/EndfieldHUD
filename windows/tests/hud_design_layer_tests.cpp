@@ -159,11 +159,11 @@ void verbs() {
     m::animate(row, C::translateX, 5, .22, {1, true, &deadlines});
     check(row.presented(C::translateX, 1) == 5 && !row.animating(1), "Reduce Motion: no track, the model jumps");
     m::animate(row, C::translateX, 5, .22, {2, false, &deadlines});
-    check(!row.property[std::size_t(C::translateX)].present(), "from == to makes no track");
+    check(!row.tracks().property[std::size_t(C::translateX)].present(), "from == to makes no track");
     m::animate(row, C::scaleY, .5, .1, {3, false, &deadlines}, d::easing::ease, .2);
     check(row.presented(C::scaleY, 3.1) == 1 && near(row.presented(C::scaleY, 3.25), 1 - .5 * d::easing::ease.value(.5)), "A delay fills backwards with the from value");
     row.setValue(C::scaleY, 1);
-    check(!row.property[std::size_t(C::scaleY)].present() && row.presented(C::scaleY, 3.25) == 1, "setValue is immediate and cancels the channel's track");
+    check(!row.tracks().property[std::size_t(C::scaleY)].present() && row.presented(C::scaleY, 3.25) == 1, "setValue is immediate and cancels the channel's track");
     // enter + a later absolute opacity animation: later-added wins (CA order).
     m::enter(row, {44, 0}, {10, false, &deadlines});
     check(row.presented(C::opacity, 10) == 0 && row.presented(C::translateX, 10) == 5 + 44, "stIn starts transparent and offset (additive to the model)");

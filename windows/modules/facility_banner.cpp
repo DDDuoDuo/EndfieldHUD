@@ -39,8 +39,8 @@ HazardStripes::HazardStripes(d::Builder& b, std::string_view id, d::Size size, d
     layer_->add(*band_);
 }
 bool HazardStripes::isRunning() const noexcept {
-    const auto& slot = band_->slots[std::size_t(d::MotionSlot::effect)];
-    const auto& channels = band_->slotChannels[std::size_t(d::MotionSlot::effect)];
+    const auto& slot = band_->tracks().slots[std::size_t(d::MotionSlot::effect)];
+    const auto& channels = band_->tracks().slotChannels[std::size_t(d::MotionSlot::effect)];
     for (std::size_t i = 0; i < slot.size(); ++i) if (slot[i].present() && channels[i] == Channel::translateX) return true;
     return false;
 }

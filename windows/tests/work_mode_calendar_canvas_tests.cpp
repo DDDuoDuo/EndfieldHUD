@@ -315,7 +315,7 @@ void ring(Run& run, const std::string& label, const Json& expected, WorkWorld& w
             label + ": the arc eases .6 s from the shown strokeEnd (:131)");
         const auto& turn = (*marker)["animations"].array()[0];
         check(near(turn["from"].number(), orbit->presented(Channel::rotation, w.now), 1e-9) && near(turn["to"].number(), orbit->value(Channel::rotation), 1e-9)
-            && orbit->property[std::size_t(Channel::rotation)].duration == .6, label + ": the marker turns .6 s E from the shown fraction (:132-135)");
+            && orbit->tracks().property[std::size_t(Channel::rotation)].duration == .6, label + ": the marker turns .6 s E from the shown fraction (:132-135)");
     }
 }
 void workExtras(Run& run, const std::string& label, const Json& e, WorkWorld& w) {
@@ -351,7 +351,7 @@ void workMode(Run& run) {
         w.advance(61.3); snap("countdownRunning", w);
         // The blink: opacity 1, .2, 1 at 0, .5, 1 over 1.6 s easeInOut, forever, only while running (:283-291).
         const auto* dot = findLayer(w.canvas->root(), "workMode.state.dot");
-        const auto& blink = dot->slots[std::size_t(d::MotionSlot::effect)][0];
+        const auto& blink = dot->tracks().slots[std::size_t(d::MotionSlot::effect)][0];
         check(blink.present() && blink.keys == 3 && blink.values[1] == .2 && blink.keyTimes[1] == .5 && blink.duration == 1.6 && std::isinf(blink.repeat)
             && same(blink.outer, d::easing::easeInOut), "The FOCUS ON square blinks 1 -> .2 -> 1 over 1.6 s (:287-290)");
         w.advance(1); snap("countdownTick", w);
@@ -393,7 +393,7 @@ void workMode(Run& run) {
         w.press("workMode.preset:3"); snap("customOpen", w);
         check(w.canvas->page().back != nullptr, "While the custom field shows, Esc / back closes it (:326)");
         w.canvas->commitCustom("abc"); snap("customInvalid", w);
-        const auto& shake = w.canvas->customField().layer().slots[std::size_t(d::MotionSlot::effect)][0];
+        const auto& shake = w.canvas->customField().layer().tracks().slots[std::size_t(d::MotionSlot::effect)][0];
         check(shake.present() && shake.additive && shake.duration == .32, "An invalid duration shakes the field (MODS-734)");
         w.canvas->commitCustom("0:04"); snap("customCommitted", w);
         w.canvas->openCustom(); w.canvas->commitCustom("4:00"); w.canvas->openCustom(); snap("customOpenMinutes", w);
