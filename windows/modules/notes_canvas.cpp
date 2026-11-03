@@ -166,7 +166,8 @@ void NotesCanvas::buildPage(d::Page& page) {
     addBar.setValue(Channel::translateY, addBarTop(folded) - addBarTop(false));
     if (!folded) for (d::Layer* layer : staggered) page.stagger(*layer);
     for (d::Layer* layer : addBar.children()) page.stagger(*layer);
-    if (env().recordingMode) { const std::array<d::Layer*, 1> redacted{&content}; d::redaction::playEntrance(redacted, clock()); }
+    // Not for a rebuild deferred while hidden: the Mac wiped that page at the switch, unseen.
+    if (env().recordingMode && !recordingDeferred()) { const std::array<d::Layer*, 1> redacted{&content}; d::redaction::playEntrance(redacted, clock()); }
     if (showsNote && isActive() && !folded) attachNote();
 }
 

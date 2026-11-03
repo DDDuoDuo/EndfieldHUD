@@ -280,6 +280,11 @@ public:
     // A Recording mode change this canvas applies when next shown (show /
     // setActive re-render it, keeping its layer ids).
     void deferRecordingMode() noexcept { recordingStale_ = true; }
+    // True while buildPage runs for that deferred change alone: the Mac
+    // rebuilt this page at the switch, while it was hidden, so effects a
+    // build starts (Notes' redaction wipe) ran out unseen and must not play
+    // now that the page is shown.
+    bool recordingDeferred() const noexcept { return deferredBuild_; }
     // Sub-navigation (LIB-76): offset subpageOffset(dx, dy); closes popups,
     // ends editing (commit), cancels gestures; offsets of pages left are
     // retained and GOING BACK (dx < 0) restores them, forward starts at 0; the
@@ -446,7 +451,7 @@ private:
     std::vector<Control*> popoverControls_;
     std::vector<TextField*> fields_;
     Router router_;
-    bool active_{}, showsHeader_{true}, attached_{}, recordingStale_{}, keepIds_{};
+    bool active_{}, showsHeader_{true}, attached_{}, recordingStale_{}, keepIds_{}, deferredBuild_{};
     std::optional<core::Language> renderedLanguage_;
     std::uint64_t renderedPalette_{}, pageSerial_{}, structure_{};
     const LayerArena* tracked_{};

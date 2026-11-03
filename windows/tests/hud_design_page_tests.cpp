@@ -470,11 +470,12 @@ class FakeCanvas final : public d::Canvas {
 public:
     using Canvas::Canvas;
     int depth{}, tab{}, rows{12}, builds{};
+    bool deferredBuild{};                   // recordingDeferred() during the last build
     std::vector<std::string> events, keys;
     d::Dropdown* dropdown{};
     d::Slider* slider{};
     void buildPage(d::Page& page) override {
-        ++builds;
+        ++builds; deferredBuild = recordingDeferred();
         auto& action = page.make<d::Button>("fake.add", text("Add", "添加"), d::Icon::plus, d::Button::Kind::secondary, d::Button::Height::compact);
         action.onActivate = [this] { events.push_back("add"); };
         header().configure(depth == 0 ? std::vector<std::string>{"CLIPBOARD"} : std::vector<std::string>{"CLIPBOARD", "DETAIL"}, "MOD-03",
@@ -818,9 +819,11 @@ void recordingModeWork(RecordedMeasurer& measurer) {
         check(w.context.pagesBuilt() == pages + 1 && shown.builds == shownBuilds + 1, "Recording mode " + mode + ": the shown canvas re-renders in place, one page");
         check(hidden.builds == hiddenBuilds && unbuilt.builds == 0 && !unbuilt.renderedLanguage(), "Recording mode " + mode + ": canvases not shown build nothing on the switch");
         check(artwork(shown) == before, "Recording mode " + mode + ": unchanged artwork keeps its part ids and bytes (nothing rasterizes again)");
+        check(!shown.deferredBuild, "Recording mode " + mode + ": the shown canvas's rebuild is the switch's own (build-time effects play)");
         w.advance(1);
         hidden.show(w.now); hidden.setActive(true, w.now);
         check(hidden.builds == hiddenBuilds + 1 && w.context.pagesBuilt() == pages + 2, "Recording mode " + mode + ": a built canvas re-renders once, when next shown");
+        check(hidden.deferredBuild && !hidden.recordingDeferred(), "Recording mode " + mode + ": that build knows it applies the switch late (the Mac's ran unseen), only while it builds");
         hidden.setActive(false, w.now); hidden.prepareToLeave(w.now);
         hidden.show(w.now);
         check(hidden.builds == hiddenBuilds + 1, "Recording mode " + mode + ": showing it again builds nothing");
@@ -833,6 +836,7 @@ void recordingModeWork(RecordedMeasurer& measurer) {
     const int builds = hidden.builds;
     hidden.show(w.now);
     check(hidden.builds == builds + 1 && hidden.renderedLanguage() == Language::japanese, "A waiting Recording mode change and a language change rebuild once when shown");
+    check(!hidden.deferredBuild, "A language rebuild is not a late Recording mode build (the Mac rebuilds it when shown too)");
 }
 
 // Contracts that need no oracle: lifetimes, revisions, deadlines.
