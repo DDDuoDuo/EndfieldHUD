@@ -81,6 +81,8 @@ private:
     std::array<std::optional<Resting>,4> resting_;std::size_t restingNext_{};
     const SceneDefinition* scene_;const SourceCamera* camera_;const WatchAnimation* animation_;
     std::size_t center_{},status_{};DesktopChromeProjection result_;
+    std::vector<const Node*> centerChain_; // the root ... the centre node (clipCenter resolves only these)
+    Clip entranceChain_,exitChain_;        // the entrance and exit curves that move those nodes
     std::optional<Rect> calibrationViewport_,centerViewport_,statusViewport_;double calibrationScale_{1},centerScale_{1};
     std::optional<Matrix4> centerWorld_,statusWorld_;std::optional<SourceRect> statusRect_;
 };

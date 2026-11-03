@@ -50,6 +50,12 @@ Matrix4 designBoxWorld(const Matrix4&center,double unit){
 DesktopChromeBindings DesktopChromeBindings::fromJson(const Json&j){require(j.isObject()&&j["centerNodeID"].isString()&&j["statusNodeID"].isString(),"Missing exact desktop chrome source bindings");return {j["centerNodeID"].string(),j["statusNodeID"].string()};}
 DesktopChromeProjectionPlan::DesktopChromeProjectionPlan(const SceneDefinition&s,const SourceCamera&c,const WatchAnimation&a,DesktopChromeBindings ids):scene_(&s),camera_(&c),animation_(&a){
     require(&a.scene()==&s,"Desktop chrome animation must use mounted source scene");SourceLayout layout(s);const auto center=layout.nodeIndex(ids.centerNodeID),status=layout.nodeIndex(ids.statusNodeID);require(center&&status,"Unknown desktop chrome source binding");center_=*center;status_=*status;
+    for(const Node*n=&s.nodes()[center_];n;n=n->parent?s.node(*n->parent):nullptr){require(centerChain_.size()<256,"Desktop chrome centre chain is too deep");centerChain_.insert(centerChain_.begin(),n);}
+    // Only the curves that move the centre's ancestry: clipCenter samples nothing else.
+    const auto chain=[&](const Clip&clip){Clip kept=clip;kept.curves.clear();
+        for(const auto&curve:clip.curves)for(const auto&id:curve.nodeIDs())if(std::any_of(centerChain_.begin(),centerChain_.end(),[&](const Node*n){return n->id==id;})){kept.curves.push_back(curve);break;}
+        return kept;};
+    entranceChain_=chain(a.entrance());exitChain_=chain(a.exit());
 }
 bool DesktopChromeProjectionPlan::update(std::span<const ResolvedNode>nodes,const CameraFrame&camera,Rect viewport,double contentScale){
     require(nodes.size()==scene_->nodes().size()&&nodes[center_].node==&scene_->nodes()[center_]&&nodes[status_].node==&scene_->nodes()[status_],"Desktop chrome node order changed");
@@ -86,8 +92,14 @@ std::optional<Matrix4> DesktopChromeProjectionPlan::clipCenter(Rect viewport,Vec
     // The calibration and the corners of update(), on the clip's pose.
     const auto unit=desktopBaseDesignScale(viewport)*contentScale / *pixels;
     const auto camera=camera_->desktopFrame({viewport.width,viewport.height},camera_->rootRotation(),hudOffset,hudScale);
-    const auto pose=exit?animation_->pose(animation_->entrance().lastKeyTime,{},std::min(time,exitSeconds()),camera.layout.canvasSize):animation_->pose(std::min(time,entranceSeconds()),{},{},camera.layout.canvasSize);
-    const auto resolved=SourceLayout(*scene_).resolve({},pose.transforms);const auto world=camera.worldRoot*resolved[center_].worldMatrix;
+    // WatchAnimation::pose (the entrance, then the exit over its last key) on the centre's curves only.
+    Pose pose;{auto&root=pose.transforms[scene_->rootID()];root.localScale=Vec3{1,1,1};root.anchoredPosition3D=Vec3{};root.anchorMin=Vec2{};root.anchorMax=Vec2{1,1};root.pivot=Vec2{.5,.5};root.sizeDelta=camera.layout.canvasSize;}
+    applyClip(entranceChain_,exit?entranceSeconds():std::min(time,entranceSeconds()),pose,*scene_);
+    if(exit)applyClip(exitChain_,std::min(time,exitSeconds()),pose,*scene_);
+    // Only the centre node's ancestry, as SourceLayout::resolve resolves it.
+    std::optional<SourceRect> rect;Matrix4 parent{};bool active=true;
+    for(const auto*n:centerChain_){const auto found=pose.transforms.find(n->id);const auto r=SourceLayout::resolveNode(*n,found==pose.transforms.end()?nullptr:&found->second,rect,parent,active);rect=r.rect;parent=r.worldMatrix;active=r.activeInHierarchy;}
+    const auto world=camera.worldRoot*parent;
     const auto p=corners({Vec3{-500*unit,320*unit,0},Vec3{500*unit,320*unit,0},Vec3{500*unit,-320*unit,0},Vec3{-500*unit,-320*unit,0}},world,camera.projection*camera.view,viewport);
     if(!p)return {};return nativeProjectiveTextTransform(*p,{1000,640});
 }
