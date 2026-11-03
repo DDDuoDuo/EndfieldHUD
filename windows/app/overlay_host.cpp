@@ -213,6 +213,7 @@ struct OverlayHost::Impl {
     // OverlayOptions::offscreenScheduling / refreshRate (hidden benchmarks).
     bool offscreen{};
     double fixedRefresh{};
+    bool testDpi{}; // OverlayOptions::testDpi
     // OverlayOptions::testVisibility / testForeground / testBand (hidden
     // tests); bandState is the stand-in band's answer.
     std::function<bool(bool, bool)> testVisibility;
@@ -810,6 +811,7 @@ void OverlayHost::create(const OverlayOptions& options, OverlayCallbacks callbac
     p.rethrow();
     const UINT dpi = GetDpiForWindow(window);
     p.client.dpi = dpi ? dpi : 96;
+    if (options.offscreenScheduling && options.testDpi) { if (options.testDpi < 48 || options.testDpi > 768) throw std::invalid_argument("Invalid test DPI"); p.client.dpi = options.testDpi; p.testDpi = true; }
     p.updateMetrics(); p.ready = true; p.refreshDisplayRate();
     const auto handlers = p.callbacks;
     const auto initialMetrics = p.client;
@@ -890,6 +892,11 @@ void OverlayHost::setFrameDemand(core::FrameDemand demand) {
     p.refreshSchedule();
 }
 void OverlayHost::invalidate() { auto& p = *impl_; p.requireThread(); p.rethrow(); p.postFrame(); }
+void OverlayHost::setTestDpi(unsigned dpi) {
+    auto& p = *impl_; p.requireThread(); p.rethrow();
+    if (!p.testDpi || dpi < 48 || dpi > 768) throw std::logic_error("Only a test-DPI hidden window changes its DPI");
+    p.client.dpi = dpi; p.updateMetrics();
+}
 void OverlayHost::capturePointer(bool capture) {
     auto&p=*impl_;p.requireThread();p.rethrow();
     // Owners may request the capture on every event of a gesture (Projection
