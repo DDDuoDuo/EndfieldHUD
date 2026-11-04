@@ -1,6 +1,7 @@
 #pragma once
 #include "core/data/data_store.hpp"
 #include "modules/map_state.hpp"
+#include <functional>
 
 namespace ehud::data {
 struct MapArchive {
@@ -31,13 +32,28 @@ public:
     // atomic replace; throws on an external change or failed write and retains
     // the previous in-memory snapshot. Equal snapshots perform no filesystem
     // operation. This small synchronous seam fits MapState::persistence.commit;
-    // measure native event latency before changing its transaction semantics.
+    // the HUD hands its writes to a writer (below): the replace took 12-24 ms
+    // of a pin or camera click on the HUD thread.
     bool replace(const endfield::modules::MapSnapshot&);
+    // Deferred writes (the host's app::LatestFileSave): with a writer, replace
+    // encodes the archive as before, hands it over and publishes the snapshot
+    // at once; the write runs later. The writer starts from persisted(), the
+    // archive as this store last read or wrote it. A deferred write that
+    // failed returns the store to the archive on disk (restore).
+    using Writer=std::function<void(std::string)>;
+    void setWriter(Writer value){writer_=std::move(value);}
+    const std::optional<std::string>&persisted()const noexcept{return persisted_;}
+    void restore(const std::optional<std::string>&onDisk);
+    // Archives replaced on the calling thread, and handed to the writer.
+    struct Writes {std::uint64_t atOnce{},handed{};};
+    Writes writes()const noexcept{return writes_;}
 private:
     std::filesystem::path path_;
     endfield::modules::MapSnapshot value_;
     Json document_{Json::Object{}};
     std::optional<std::string>persisted_;
+    Writer writer_;
+    Writes writes_;
     void commit(endfield::modules::MapSnapshot);
 };
 }

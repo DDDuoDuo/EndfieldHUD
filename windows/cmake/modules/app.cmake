@@ -104,7 +104,7 @@ if(WIN32)
   target_link_libraries(hud_application PUBLIC hud_module_registry hud_system_overlay hud_application_core hud_single_instance
     hud_battery hud_settings_save hud_archive_vault hud_archive_options hud_telemetry_owners hud_power_service hud_activity_provider
     hud_reader_canvas_owner hud_reader_import hud_projection_preview hud_shelf_owner hud_notes_preview
-    hud_map_owner hud_map_store hud_map_assets hud_orbipom_runtime
+    hud_map_owner hud_map_store hud_latest_save hud_map_assets hud_orbipom_runtime
     hud_work_mode_canvas hud_calendar_canvas hud_calendar_civil hud_calendar_notifications
     hud_clock hud_watch_session hud_watch_content hud_watch_runtime hud_overlay_host hud_services hud_backdrop
     hud_shelf_icons hud_shelf_transfer hud_localization hud_display_center_logo hud_summon_hotkey hud_design_native windowsapp CoreMessaging dwmapi psapi advapi32 wtsapi32 uiautomationcore oleaut32 dxgi avrt)

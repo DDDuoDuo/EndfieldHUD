@@ -1405,6 +1405,67 @@ int Application::Impl::runHiddenVerification(){
                     }
                     break;
                 }
+                // Freeze group b1: the Notes centre's and the Map's saves (centre.json, map.json; rc140
+                // replaced the file durably on this thread for each edit: 8-30 ms of a Notes action,
+                // 12-24 ms of a Map one, 0-4 ms once handed over). savesQueued: edits the action handed to the
+                // utility worker; savesAtOnce: files replaced on this thread from the frame before the click to
+                // the end of its settle second (its completions among them). A saving action hands its edit
+                // over and replaces nothing here.
+                {
+                    const bool enforceSaves=true;
+                    std::int64_t queued{},atOnce{};
+                    using Saves=std::function<std::pair<std::uint64_t,std::uint64_t>()>;
+                    const auto timeSaving=[&](core::Module m,const Saves&saves,const char*name,std::function<bool(double)> act){
+                        const auto before=saves().second;
+                        timeAction(m,name,[&](double t){const auto handed=saves().first;const bool done=act(t);queued=std::int64_t(saves().first-handed);return done;});
+                        atOnce=std::int64_t(saves().second-before);};
+                    const auto noteSaves=[&](bool expected){auto&row=timings.back();row["savesQueued"]=queued;row["savesAtOnce"]=atOnce;
+                        const bool within=row["ran"].boolean()&&(!expected||queued>=1)&&atOnce==0;row["withinBound"]=within&&(!row.contains("withinBound")||row["withinBound"].boolean());
+                        if(enforceSaves)hostCheck(within,"The timed action "+row["module"].string()+"."+row["action"].string()+" runs and saves on the utility worker ("+std::to_string(queued)+" handed, "+std::to_string(atOnce)+" at once)");};
+                    auto*centre=dynamic_cast<tools::NotesCentreOwner*>(notesCentreModuleOwner.get());
+                    if(centre&&registry.enabled(*centre))if(auto*c=showModule(core::Module::notes)){
+                        const auto M=core::Module::notes;auto*n=dynamic_cast<endfield::modules::NotesCanvas*>(c);using Tab=ehud::data::NotesCentreDocument::Tab;
+                        const Saves saves=[centre]{const auto s=centre->saves();return std::pair{s.queued,s.atOnce};};
+                        const auto timeSave=[&](const char*name,std::function<bool(double)> act){timeSaving(M,saves,name,std::move(act));noteSaves(true);};
+                        if(n->document().tab!=Tab::todo)timeSave("saveTodoTab",[&](double t){return press(M,"notes.tabs:1",false,t)&&n->document().tab==Tab::todo;});
+                        settleFor(15);
+                        timeSave("saveTick",[&](double t){std::string toggle;for(auto*x:c->page().controls())if(x->id().starts_with("task:")&&x->id().ends_with(":toggle"))toggle=x->id();
+                            const auto done=n->document().doneCount();return !toggle.empty()&&press(M,toggle,false,t)&&n->document().doneCount()!=done;});
+                        timeSave("saveHide",[&](double t){return press(M,"notes.fold",false,t)&&n->document().isFolded;});
+                        settleFor(15);
+                        timeSave("saveShow",[&](double t){return press(M,"notes.fold",false,t)&&!n->document().isFolded;});
+                        settleFor(15);
+                        timeSave("saveTextTab",[&](double t){return press(M,"notes.tabs:0",false,t)&&n->document().tab==Tab::text;});
+                        settleFor(15);
+                        // The format bar's bold on the whole (unfocused) note, after typing into it.
+                        if(auto*area=n->noteArea();area&&area->replace({0,0},u"Freeze probe note. ")){
+                            const auto before=n->document();endfield::core::notes::FormatChange bold;bold.kind=endfield::core::notes::FormatKind::bold;
+                            timeSaving(M,saves,"saveFormat",[&](double){n->applyFormat(bold);return true;});noteSaves(n->document()!=before);
+                        }else skip(M,"saveFormat");
+                    }
+                    if(map&&mapStore&&mapSaves&&mapModuleOwner&&registry.enabled(*mapModuleOwner))if(auto*c=showModule(core::Module::map)){
+                        const auto M=core::Module::map;const auto&state=map->state();
+                        const Saves saves=[&]{const auto s=mapStore->writes();return std::pair{s.handed,s.atOnce+mapSaves->stats().atOnce};};
+                        const auto timeSave=[&](const char*name,std::function<bool(double)> act){timeSaving(M,saves,name,std::move(act));noteSaves(true);};
+                        timeSave("addPin",[&](double t){const auto pins=state.pins().size();return press(M,"map.addPin",false,t)&&state.pins().size()==pins+1&&state.selection();});
+                        // Its Event Log entry waits for the write (the Mac records it after the commit wrote map.json).
+                        const auto styles=[&]{std::set<std::string> ids;if(eventOwner)for(const auto&e:eventOwner->snapshot().events)if(e.kind==modules::EventKind::mapPinStyleChanged)ids.insert(e.id);return ids;};
+                        const auto added=[&](const std::set<std::string>&before){return std::size_t(std::ranges::count_if(styles(),[&](const auto&id){return !before.contains(id);}));};
+                        const auto stylesBefore=styles();std::size_t atClick{};
+                        timeSave("pinStyle",[&](double t){const auto*pin=state.selectedPin();if(!pin)return false;const auto id=pin->id;const auto style=pin->style;
+                            const bool done=c->performAccessibilityAction("map.pin:"+id,t)&&state.selectedPin()&&state.selectedPin()->style!=style;atClick=added(stylesBefore);return done;});
+                        if(eventOwner){const auto after=added(stylesBefore);hostCheck(atClick==0&&after==1,"The Map's pin-style Event Log entry is recorded once its write finishes ("+std::to_string(atClick)+" at the click, "+std::to_string(after)+" after)");}
+                        timeSave("removePin",[&](double t){const auto pins=state.pins().size();return c->performAccessibilityAction("map.removePin",t)&&state.pins().size()+1==pins;});
+                        // A click on the terrain away from every pin (no selection): the camera moves there.
+                        timeSave("recenter",[&](double t){const auto camera=state.camera();const dz::Point p{modules::MapCanvas::mapCenter.x+70,modules::MapCanvas::mapCenter.y+50};
+                            bindOwner(M,t);dz::PointerInput input;input.point=p;c->pointerMoved(p,false,t);const bool down=c->pointerDown(p,input,t);c->pointerUp(p,t);c->pointerMoved(p,false,t);
+                            return down&&!(state.camera()==camera);});
+                        settleFor(15);
+                        timeSave("zoomIn",[&](double t){const auto zoom=state.camera().zoom;return press(M,"map.zoomIn",false,t)&&state.camera().zoom>zoom;});
+                        settleFor(15);
+                        timeSave("resetView",[&](double t){return press(M,"map.reset",false,t)&&state.camera()==modules::MapSurfaceGeometry::constrained({});});
+                    }
+                }
                 actionTiming=std::move(timings);
             }
             // Host integration over the same owner: the restart service is

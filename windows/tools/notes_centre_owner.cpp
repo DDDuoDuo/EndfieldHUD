@@ -2,6 +2,7 @@
 #ifdef _WIN32
 #include "tools/design_body_route.hpp"
 #include "tools/notes_preview.hpp"
+#include "app/latest_file_save.hpp"
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
@@ -20,6 +21,7 @@ struct NotesCentreOwner::Impl {
     NotesPreview& desktop;
     NotesCentreOwnerOptions options;
     std::unique_ptr<ehud::data::NotesCentreStore> store;
+    std::unique_ptr<app::LatestFileSave> saves; // after the canvas goes (it writes nothing then)
     std::unique_ptr<gpu::NativeArchiveBodyEditor> body;
     std::unique_ptr<DesignBodyRoute> route;
     std::unique_ptr<DesignOwnerCore> core;
@@ -99,6 +101,27 @@ m::NotesCanvas& NotesCentreOwner::canvas() noexcept { return *impl_->canvas; }
 const ehud::data::NotesCentreStore& NotesCentreOwner::store() const noexcept { return *impl_->store; }
 DesignOwnerCore& NotesCentreOwner::core() noexcept { return *impl_->core; }
 gpu::NativeArchiveBodyEditor& NotesCentreOwner::body() noexcept { return *impl_->body; }
+// The Mac writes centre.json .atomic after each edit, on the main thread; the
+// durable replace here took 10-20 ms of a tick, tab or fold click. The
+// document changes at once (as before); the file follows on the executor,
+// the latest edit's bytes waiting behind a running write.
+void NotesCentreOwner::setUtility(app::UtilityExecutor* executor) {
+    auto& i = *impl_;
+    if (i.saves || !executor || !i.store->writable()) return;
+    Impl* self = &i;
+    i.saves = std::make_unique<app::LatestFileSave>(*executor, *i.store->path(), ehud::data::notesCentreMaximumBytes, i.store->persisted(), [self](std::exception_ptr error) {
+        try { std::rethrow_exception(error); }
+        catch (const std::exception& e) { self->canvas->saveFailed(e.what()); }
+    });
+    i.store->setWriter([self](std::string bytes) { self->saves->save(std::move(bytes)); });
+}
+void NotesCentreOwner::flushSaves() { if (impl_->saves) impl_->saves->flush(); }
+void NotesCentreOwner::queueCapacityAvailable() { if (impl_->saves) impl_->saves->queueCapacityAvailable(); }
+NotesCentreOwner::SaveStats NotesCentreOwner::saves() const noexcept {
+    const auto& i = *impl_;
+    const auto writes = i.store->writes();
+    return {writes.handed, writes.atOnce + (i.saves ? i.saves->stats().atOnce : 0)};
+}
 
 std::string_view NotesCentreOwner::name() const noexcept { return impl_->core->options().name; }
 app::ModuleRouting NotesCentreOwner::routing() const noexcept { return impl_->core->options().routing; }
@@ -173,8 +196,8 @@ bool NotesCentreOwner::message(const app::NativeMessage& m, double t) {
 void NotesCentreOwner::focus(bool value, double t) { auto& i = *impl_; i.clock(t); i.focused = value; i.core->focus(value, t); i.body->setFocused(value); }
 void NotesCentreOwner::cancelInteraction(double t) { auto& i = *impl_; i.clock(t); i.route->cancel(); i.core->cancelInteraction(t); }
 bool NotesCentreOwner::finishEditing(double t) { return impl_->core->finishEditing(t); }
-// The quit / session-end drain: the note's draft is written (saveNote) with
-// the field commit; centre edits are written as they happen.
+// The quit / session-end drain: the note's draft is handed (saveNote) with
+// the field commit; the host then waits for the writes (flushSaves).
 bool NotesCentreOwner::flush(double t) { auto& i = *impl_; i.enter(t); (void)i.core->finishEditing(t); i.canvas->willLeave(); return true; }
 bool NotesCentreOwner::hostEvent(const app::HostEvent& e, double t) { auto& i = *impl_; i.clock(t); return i.core->hostEvent(e, t); }
 std::optional<app::ModuleCursor> NotesCentreOwner::cursorAt(core::Point p) const {

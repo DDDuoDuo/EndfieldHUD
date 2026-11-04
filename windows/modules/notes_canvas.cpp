@@ -625,11 +625,9 @@ d::Layer& NotesCanvas::buildAddBar(d::Page& page) {
 // --- Actions (:692-757) ----------------------------------------------------------------------------
 bool NotesCanvas::save(const std::function<void(Document&)>& change) {
     try { return store_->update(change); }
-    catch (const std::exception& error) {
-        toast(d::Icon::warn, "Notice", "提示", text("Could not save: ", "无法保存：") + error.what());
-        return false;
-    }
+    catch (const std::exception& error) { saveFailed(error.what()); return false; }
 }
+void NotesCanvas::saveFailed(const std::string& reason) { toast(d::Icon::warn, "Notice", "提示", text("Could not save: ", "无法保存：") + reason); }
 void NotesCanvas::selectTab(Document::Tab tab, double direction) {
     if (tab == document().tab) return;
     saveNote();
