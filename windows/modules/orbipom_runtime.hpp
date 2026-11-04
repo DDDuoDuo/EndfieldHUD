@@ -15,11 +15,12 @@ struct OrbiPomRuntimeOptions {
     double commandSeconds{.1},initializationSeconds{2};
 };
 struct OrbiPomRuntimeStats {
-    bool initialized{},faulted{};std::uint64_t boots{},calls{},advances{},interrupts{};
+    // ownerThreadBoots: boots a command made on the owner thread (no prepare() before it).
+    bool initialized{},faulted{};std::uint64_t boots{},ownerThreadBoots{},calls{},advances{},interrupts{};
     std::size_t heapBytes{},snapshotCapacityBytes{};double totalCommandSeconds{},maximumCommandSeconds{};
 };
 // Exact offline Matter0.20.0 + bundled original-controller bridge, executed by
-// pinned QuickJS-NG0.17.0. One lazy, creating-thread VM; no libc/OS/network
+// pinned QuickJS-NG0.17.0. One lazy, creating-thread VM (booted off it by prepare); no libc/OS/network
 // bindings, native timers, event loop, worker, image service or shader/device.
 // Commands publish typed snapshots without JSON encoding or per-body handles.
 // A limit/exception freezes the last complete snapshot and exposes an error;
@@ -35,6 +36,10 @@ public:
     void move(core::Point)override;void pointerUp(core::Point)override;
     bool drop()override;bool activate(OrbiPomSkill)override;
     void cancelSkill()override;void pause(bool)override;void highScore(std::int64_t)override;
+    // Boots the VM on a thread of its own (reading, verifying and evaluating
+    // both scripts, 10-25 ms); the first command waits for it and takes the VM
+    // over (its stack limit and budgets then belong to the owner thread).
+    void prepare()override;bool ready()const noexcept override;
     OrbiPomRuntimeStats stats()const;
     std::size_t residentBytes()const override; // heapBytes + snapshotCapacityBytes of stats()
 private:

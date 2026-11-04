@@ -70,8 +70,13 @@ public:
     // scene and this group as they were. detach: the scene leaves the group at
     // once (no GPU work); the target stays until releaseTarget, which is false
     // while the output is still published.
-    void attach(Renderer&,LayerScene& uploadedScene,double pixelsPerPoint,std::optional<core::Rect> coverage={});
+    // `more`: scenes drawn after it into the same target, in order (a long
+    // menu's panel and its row parts, one composite as CALayer group opacity
+    // over its subtree); the same conditions hold for each, and no insertion.
+    void attach(Renderer&,LayerScene& uploadedScene,double pixelsPerPoint,std::optional<core::Rect> coverage={},
+        std::span<LayerScene* const> more={});
     void detach()noexcept;
+    std::span<LayerScene* const> moreScenes()const noexcept{return more_;}
     bool releaseTarget(Renderer&);
     // Borrowed mode, attached: render the target ahead of its first visible
     // frame (Renderer::setNativeGroupRenderAhead).
@@ -81,6 +86,7 @@ public:
     bool published()const noexcept;
 private:
     LayerScene* local_{};LayerScene carrier_;std::string id_;double density_{};
+    std::vector<LayerScene*> more_;std::vector<std::array<std::uint64_t,2>> moreRevisions_; // borrowed: structure, resource
     NativeGroupColorSpace colorSpace_{NativeGroupColorSpace::linear};
     Renderer* renderer_{};std::uint64_t structureRevision_{},resourceRevision_{};
     bool registered_{},borrowed_{};core::Rect bounds_{};

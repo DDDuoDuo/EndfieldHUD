@@ -12,7 +12,7 @@ namespace {
 unsigned checks{};
 void check(bool value,const char*why){++checks;if(!value)throw std::runtime_error(why);}
 struct Port final:m::OrbiPomRuntimePort {
-    m::OrbiPomSnapshot value;std::optional<std::string>failure;unsigned starts{},advances{},moves{},ups{},drops{},activations{},cancels{},pauses{},hydrates{};P last{};bool finish{},failStart{};
+    m::OrbiPomSnapshot value;std::optional<std::string>failure;unsigned starts{},advances{},moves{},ups{},drops{},activations{},cancels{},pauses{},hydrates{};P last{};bool finish{},failStart{},booting{};unsigned prepares{};
     const m::OrbiPomSnapshot&snapshot()const noexcept override{return value;}
     const std::optional<std::string>&error()const noexcept override{return failure;}
     void start(std::optional<std::uint32_t>)override{++starts;const auto high=value.highScore;value={};value.state="playing";value.highScore=high;if(failStart)failure="Synthetic original-runtime error";}
@@ -24,6 +24,8 @@ struct Port final:m::OrbiPomRuntimePort {
     void cancelSkill()override{++cancels;value.skill.reset();value.skillPhase.reset();}
     void pause(bool valueIn)override{++pauses;value.paused=valueIn;}
     void highScore(std::int64_t high)override{++hydrates;value.highScore=high;}
+    void prepare()override{++prepares;}
+    bool ready()const noexcept override{return !booting;}
 };
 struct Fixture {
     Port*port{};unsigned creations{};std::vector<std::int64_t>saves;std::vector<m::OrbiPomEvent>events;
@@ -52,6 +54,14 @@ void session(){
     session.advance(std::numeric_limits<double>::quiet_NaN());session.advance(-1);session.advance(0);check(f.port->advances==calls,"Invalid elapsed time never reaches engine");session.move({NAN,1});session.pointerUp({1,INFINITY});check(f.port->moves==0&&f.port->ups==0,"Nonfinite pointer cannot reach original runtime");
     f.port->value.score=94;f.port->finish=true;session.advance(1./60);session.advance(1./60);check(f.events==std::vector{m::OrbiPomEvent::started,m::OrbiPomEvent::finished}&&f.saves.back()==94,"Finished transition commits once and only once");
     check(session.start(456)&&f.creations==1&&f.port->starts==2&&f.events.back()==m::OrbiPomEvent::restarted,"Restart reuses one VM and session best");
+    // prepare: the first game's runtime is made (and its boot started) ahead of
+    // start, which then uses it; nothing else reaches it meanwhile.
+    {Fixture p;m::OrbiPomSession early(7,{[&]{++p.creations;auto port=std::make_unique<Port>();port->booting=true;p.port=port.get();return port;},{},[&](auto event){p.events.push_back(event);}});
+        check(!early.prepare()&&p.creations==1&&p.port->prepares==1&&!early.hasRuntime()&&early.snapshot().state=="idle","Prepare makes the runtime and starts its boot, and start would wait");
+        early.pause(true);early.advance(1);early.move({1,2});check(p.port->pauses==0&&p.port->advances==0&&p.port->moves==0&&!early.prepare()&&p.creations==1&&p.port->prepares==1,"A prepared runtime takes no call before start, and prepares once");
+        p.port->booting=false;check(early.prepare()&&early.start(9)&&p.creations==1&&p.port->hydrates==1&&p.port->starts==1&&early.snapshot().highScore==7&&p.events==std::vector{m::OrbiPomEvent::started},"Start takes the prepared runtime over: one VM, the injected best, one started event");
+        check(early.prepare(),"A started session is ready");}
+    {m::OrbiPomSession none(0);check(none.prepare()&&!none.start()&&none.error(),"Without a runtime prepare is ready and start reports the missing runtime");}
     m::OrbiPomSession unavailable(-1);check(!unavailable.start()&&!unavailable.hasRuntime()&&unavailable.error()&&unavailable.bestScore()==0,"Missing actual physics runtime stays explicitly unavailable");
     Fixture failing;m::OrbiPomSession failure(0,{[&]{auto p=std::make_unique<Port>();p->failStart=true;failing.port=p.get();return p;},{},[&](auto event){failing.events.push_back(event);}});check(!failure.start()&&failure.hasRuntime()&&failure.error()&&failing.events.empty(),"Original runtime failure publishes no successful Start event");
 }

@@ -44,6 +44,10 @@ public:
     // Memory trace only (owner thread, never per frame): bytes the VM heap and
     // its retained snapshot buffers hold. Zero when not reported.
     virtual std::size_t residentBytes()const{return 0;}
+    // The VM's boot ahead of the first command, off the owner thread (a no-op
+    // here); ready(): a command would not wait for that boot.
+    virtual void prepare(){}
+    virtual bool ready()const noexcept{return true;}
 };
 enum class OrbiPomEvent {started,restarted,finished};
 struct OrbiPomSessionCallbacks {
@@ -59,6 +63,7 @@ public:
     const std::optional<std::string>&error()const noexcept{return error_;}
     std::int64_t bestScore()const noexcept{return best_;}
     bool hasRuntime()const noexcept{return bool(runtime_);}
+    const OrbiPomRuntimePort*runtime()const noexcept{return runtime_.get();} // diagnostics (the coverage's boot count)
     // The source keeps one VM for the app's lifetime once a game started (the
     // board survives hiding and reopening); the memory trace reads its size.
     std::size_t residentBytes()const{return runtime_?runtime_->residentBytes():0;}
@@ -68,11 +73,14 @@ public:
     // script); saveBest commits it. The Personal ID plate and the canvas's
     // BEST read it.
     std::int64_t bestSoFar()const noexcept;
+    // The first game's runtime, made and booted ahead of start (off the owner
+    // thread): true once start would not wait for that boot. Start uses it.
+    bool prepare();
     bool start(std::optional<std::uint32_t> seed={});void advance(double seconds);
     void setManuallyPaused(bool);void pause(bool);void saveBest();
     void move(core::Point);void pointerUp(core::Point);bool drop();bool activate(OrbiPomSkill);void cancelSkill();
 private:
-    OrbiPomSessionCallbacks callbacks_;std::unique_ptr<OrbiPomRuntimePort>runtime_;
+    OrbiPomSessionCallbacks callbacks_;std::unique_ptr<OrbiPomRuntimePort>runtime_,prepared_;
     OrbiPomSnapshot idle_;std::optional<std::string>error_;std::int64_t best_{};
     bool manual_{},recordedFinish_{};
 };

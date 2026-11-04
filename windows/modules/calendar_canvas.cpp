@@ -97,7 +97,11 @@ private:
         d::setBackground(layer(), state_.outside ? p.tone(0x181818) : today ? p.yellow() : p.tone(0x1F1F1F));
         const double width = selected ? 2 : (today ? 0 : 1);
         if (width > 0) d::setBorder(*ring_, std::nullopt, selected ? (today ? d::fixed::nearBlack : p.tone(0xEDEDED)) : p.token(d::ThemeToken::separator), width);
-        else ring_->clearContent();
+        // No ring paints nothing but keeps a drawn surface (a clear fill, as the
+        // scene's placeholder): today's cell keeps its surfaces, each with a
+        // scene index, whether it is selected, so a selection updates two cells
+        // in place instead of loading the month again (192 surfaces).
+        else d::setBackground(*ring_, d::clear);
     }
 };
 

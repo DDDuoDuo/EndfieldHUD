@@ -200,6 +200,7 @@ void calendar(Harness& h, const std::filesystem::path&) {
     auto canvas = std::make_unique<m::CalendarCanvas>(h.overlay->context(), state, std::move(co));
     auto& cal = *canvas; shown = canvas.get();
     auto owner = h.owner("calendar", std::move(canvas));
+    struct Forget { m::CalendarCanvas*& canvas; ~Forget() { canvas = nullptr; } } forget{shown}; // a failed check unwinds: no notice reaches the gone canvas
     h.modules.select(core::Module::calendar, h.time);
     const auto raster0 = h.raster.stats(); const auto gpu0 = h.renderer.stats().resourceBytes;
     const double first = h.frame(*owner);
@@ -219,6 +220,33 @@ void calendar(Harness& h, const std::filesystem::path&) {
     double swap{};
     for (unsigned n = 0; n < 90; ++n) swap += h.frame(*owner);
     check(cal.month() == m::CalendarDay{2026, 11, 1} && !owner->requiresFrames(h.time), "The month swap lands and settles");
+    // Back in today's month from another, its day 1 is selected and today's cell
+    // has no ring (and, its events removed, no diamond): Today then updates the
+    // two cells in place, not the whole month part again (about 192 rasterizations).
+    for (const char* id : {"C0000000-0000-4000-8000-000000000001", "C0000000-0000-4000-8000-000000000002"}) { (void)state.remove(id); drain(); h.settle(*owner, 10); drain(); }
+    check(state.events().size() == 2, "Today's synthetic events are removed");
+    check(cal.performAccessibilityAction("calendar.previousMonth", h.time), "Previous month through its accessible control");
+    for (unsigned n = 0; n < 90; ++n) h.frame(*owner);
+    check(cal.month() == m::CalendarDay{2026, 10, 1} && cal.selectedDay() == m::CalendarDay{2026, 10, 1}, "Back in October with its first day selected");
+    const auto beforeToday = h.raster.stats().rasterizations;
+    check(cal.performAccessibilityAction("calendar.today", h.time), "Today through its accessible control");
+    h.settle(*owner);
+    const auto todayRasters = h.raster.stats().rasterizations - beforeToday;
+    check(cal.selectedDay() == m::CalendarDay{2026, 10, 4} && todayRasters <= 40, "Today from day 1 of its month updates its cells in place");
+    // A closed pop-over's scene is kept a few seconds, and expires on an idle
+    // HUD too: the owner wakes at its expiry and releases it without a frame.
+    check(cal.performAccessibilityAction("calendar.monthPicker", h.time) && cal.popoverOpen(), "The month picker opens");
+    h.settle(*owner, 30);
+    cal.closePopover();
+    h.settle(*owner, 30);
+    const double closed = h.time;
+    const auto keptWhileIdle = owner->core().sceneStats(core::Module::calendar)->keptParts;
+    const auto wake = owner->nextWakeTime(h.time);
+    check(keptWhileIdle >= 1 && wake && *wake <= closed + 8, "The closed pop-over is kept, and the owner wakes at its expiry");
+    h.time = closed + 8.5;
+    (void)owner->deadline(h.time);
+    check(owner->core().sceneStats(core::Module::calendar)->keptParts == 0, "At the wake, without a frame, the kept pop-over is released");
+    h.settle(*owner, 10);
     h.modules.select(core::Module::notes, h.time);
     h.settle(*owner, 40);
     owner->overlayClosing(h.time); h.overlay->overlayClosing(h.time);
@@ -229,7 +257,7 @@ void calendar(Harness& h, const std::filesystem::path&) {
     std::cout << "PERF calendar firstFrameMs=" << first << " rasterEntriesShown=" << shownRaster.entries - raster0.entries
               << " rasterMBShown=" << double(shownRaster.resourceBytes - raster0.resourceBytes) / 1048576
               << " rendererMBShown=" << double(h.renderer.stats().resourceBytes - gpu0) / 1048576 << " idleFrameMs=" << idle / 60
-              << " monthSwapFrameMs=" << swap / 90 << '\n';
+              << " monthSwapFrameMs=" << swap / 90 << " todayRasterizations=" << todayRasters << '\n';
     owner->release(h.renderer);
     shown = nullptr;
 }

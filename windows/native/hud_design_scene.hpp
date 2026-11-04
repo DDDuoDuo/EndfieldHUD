@@ -96,7 +96,9 @@ struct NativeDesignScenePose {
 struct NativeDesignSceneStats {
     std::uint64_t generations{}, emits{}, partsReused{}, surfacesUpdated{}, partsLoaded{}, poses{}, lazyPaints{}, lazyReleases{};
     std::uint64_t groupSwitches{}, parks{};   // groupSwitches: group attaches and detaches
-    std::size_t parts{}, surfaces{}, retiredParts{}, rasterEntries{}, residentPixelBytes{};
+    std::uint64_t partsKept{};                // parts back in the tree that took their kept scene (no rasterization)
+    std::size_t parts{}, surfaces{}, retiredParts{}, keptParts{}, rasterEntries{}, residentPixelBytes{};
+    std::size_t keptPixelBytes{};             // of residentPixelBytes: the kept parts' (they expire a few seconds after leaving)
     std::size_t groups{}, groupTargets{};      // parts drawn through a group; group targets held (incl. awaiting collectRetired)
 };
 // A box-px affine (samplePoses, sampleLayer) as the plane matrix the scene
@@ -120,6 +122,13 @@ public:
     // group detached in updatePose).
     bool uploadAnimations(Renderer&);
     bool requiresFrames(double now) const;
+    // Kept parts (a closed pop-over's or menu's scenes) expire after a few
+    // seconds without a frame too: the owner wakes at nextKeptExpiry, and
+    // expireKept releases the expired ones at once (they left the tree at
+    // least one published frame before: no list holds them). True when one
+    // expired.
+    std::optional<double> nextKeptExpiry() const noexcept;
+    bool expireKept(double now, Renderer&);
     std::span<const LayerCompositionEntry> entries() const noexcept;
     bool collectRetired(Renderer&);
     bool releaseResources(Renderer&);

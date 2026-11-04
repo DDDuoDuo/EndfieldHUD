@@ -704,6 +704,51 @@ void calendar(Run& run) {
         check(deleted && deleted->title == "Event deleted" && deleted->icon == d::Icon::trash, "Event deleted toast");
     }
     {
+        // The month part keeps its surfaces (ids, roles, extents) whatever day is
+        // selected, today included, and with an event added: the scene then
+        // updates the changed cells in place instead of loading the whole month
+        // again (192 surfaces, about 70-90 ms on the click frame).
+        CalendarWorld w(run.measurer, run.data, true);
+        const auto month = [&] {
+            std::map<std::string, std::vector<d::PartSurface>> out;
+            for (auto& part : d::emit(w.canvas->root(), {&w.harness.context.env().text, "scene."}).parts)
+                if (part.id.find("calendar.month") != std::string::npos) out[part.id] = part.surfaces;
+            return out;
+        };
+        const auto rendered = month();
+        check(!rendered.empty() && w.canvas->selectedDay() == m::CalendarDay{2026, 10, 4}, "The month part is emitted with today selected");
+        w.canvas->perform("day:2026-10-15");
+        check(month() == rendered, "Selecting another day keeps the month part's surfaces (today's cell loses its ring in place)");
+        check(w.key(d::key::right), "Right moves the selected day");
+        check(month() == rendered, "An arrow keeps the month part's surfaces");
+        w.canvas->perform("today");
+        check(month() == rendered, "Today keeps the month part's surfaces (its cell takes the ring in place)");
+        w.canvas->perform("day:2026-10-20"); w.canvas->titleField().setText("Synthetic diamond"); w.canvas->perform("add"); w.queue.drain();
+        check(w.state->events().size() == 7 && month() == rendered, "A new event's diamond joins its cell's ring surface");
+    }
+    {
+        // A surface whose node draws nothing gets no scene surface (LayerScene:
+        // no contents, fill, border, text, shape or gradient below it), so no
+        // in-place update either. Today without an event (no diamond in its
+        // ring's surface) and without its ring still draws each surface.
+        CalendarWorld w(run.measurer, run.data, false);
+        const std::function<bool(const Json&)> draws = [&](const Json& j) {
+            if (!j["contents"].isNull() || !j["backgroundColor"].isNull() || (j["borderWidth"].isNumber() && j["borderWidth"].number() > 0)) return true;
+            if (j["kind"].isString() && (j["kind"].string() == "text" || j["kind"].string() == "shape" || j["kind"].string() == "gradient")) return true;
+            return j["children"].isArray() && std::any_of(j["children"].array().begin(), j["children"].array().end(), draws);
+        };
+        const auto drawn = [&] {
+            std::size_t surfaces{};
+            for (auto& part : d::emit(w.canvas->root(), {&w.harness.context.env().text, "scene."}).parts)
+                if (part.id.find("calendar.month") != std::string::npos)
+                    for (const auto& node : part.layers["children"].array()) { if (!draws(node)) return false; ++surfaces; }
+            return surfaces > 0;
+        };
+        check(w.state->events().empty() && drawn(), "Every month surface draws with today selected");
+        w.canvas->perform("day:2026-10-15");
+        check(drawn(), "Today's cell without its ring or an event still draws each of its surfaces (a scene index: Today updates it in place)");
+    }
+    {
         // MODS-638: the Mac builds a new HUDCalendarCanvas at every HUD open
         // (:30-33, :13-16): today in its month, no event open, empty fields.
         CalendarWorld w(run.measurer, run.data, true);

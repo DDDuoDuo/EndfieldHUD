@@ -195,6 +195,36 @@ void run(const std::filesystem::path& shader) {
     check(scene.stats().partsLoaded > parked && !scene.entries().empty(), "The next sync rebuilds parked artwork");
     rejects([&] { scene.syncContent(tree.root, text, revision, 1, .1); }, "Time runs forward");
     rejects([&] { scene.syncContent(tree.root, text, revision, 5, .3); }, "Density stays within 1...4");
+    // --- kept parts: a part that left the tree (a closed pop-over, a row a filter
+    // took away) and shows again unchanged takes its scene back ---------------------
+    {
+        auto& row = *tree.rows[1];
+        row.removeFromParent(); ++revision; publish(.31);
+        check(scene.stats().keptParts == 1, "A part that leaves the tree is kept");
+        const auto loads0 = scene.stats().partsLoaded; const auto rasters0 = raster.stats().rasterizations;
+        tree.root.insert(row, 1); ++revision; publish(.32);
+        check(scene.stats().partsKept == 1 && scene.stats().partsLoaded == loads0 && raster.stats().rasterizations == rasters0 && scene.stats().keptParts == 0,
+            "Showing it again unchanged takes its scene back, without a raster");
+        row.removeFromParent(); ++revision; publish(.33);
+        row.setContent(d::solid("plate", {0, 0, 590, 50}, d::rgb(0x4A4A4A))); tree.root.insert(row, 1); ++revision; publish(.34);
+        check(scene.stats().partsKept == 1 && scene.stats().partsLoaded == loads0 + 1, "A part that changed meanwhile loads");
+        row.removeFromParent(); ++revision; publish(.35);
+        check(scene.stats().keptParts == 1, "Kept again");
+        scene.updatePose({core::Matrix4{}, 1, 9.4, {}, {}});
+        check(scene.stats().keptParts == 0 && scene.collectRetired(renderer), "Kept parts expire after a few seconds and release after publication");
+        tree.root.insert(row, 1); ++revision; publish(9.5);
+        row.removeFromParent(); ++revision; publish(9.6);
+        // An idle HUD presents no frame (no pose): the owner wakes at the expiry.
+        const auto expiry = scene.nextKeptExpiry();
+        check(expiry && *expiry > 9.6 + 7 && !scene.expireKept(9.7, renderer) && scene.stats().keptParts == 1, "A kept part names its expiry and stays until then");
+        check(scene.expireKept(*expiry, renderer) && scene.stats().keptParts == 0 && !scene.nextKeptExpiry() && scene.stats().retiredParts == 0,
+            "At its expiry, without a pose, it is released at once (it was not published)");
+        tree.root.insert(row, 1); ++revision; publish(*expiry + .1);
+        row.removeFromParent(); ++revision; publish(*expiry + .2);
+        composition.setEntries(renderer, {}); composition.present(renderer);
+        check(scene.releaseResources(renderer) && scene.stats().keptParts == 0, "An uncomposed scene keeps no parts");
+        tree.root.insert(row, 1); ++revision; publish(*expiry + .3);
+    }
     composition.detach(renderer);
     check(scene.releaseResources(renderer), "Detached scene releases everything");
     detached = true;
@@ -213,7 +243,15 @@ void run(const std::filesystem::path& shader) {
         card.add(label);
         auto& solo = arena.make("solo"); // one surface: a group would change nothing
         solo.setFrame({400, 100, 50, 50}); solo.setPartRoot(true); solo.setContent(d::solid("dot", {0, 0, 50, 50}, d::rgb(0x00FF00)));
-        root.add(card); root.add(solo);
+        // A long menu's row: its text and its highlight plate resting lazily (a clear placeholder).
+        auto& lazyRow = arena.make("lazyRow");
+        lazyRow.setFrame({400, 300, 120, 40}); lazyRow.setPartRoot(true); lazyRow.setAnimatable();
+        lazyRow.setContent(d::solid("text", {0, 0, 120, 40}, d::rgb(0x0000FF)));
+        auto& lazyPlate = arena.make("lazyPlate");
+        lazyPlate.setFrame({0, 0, 120, 40}); lazyPlate.setContent(d::solid("plate", {0, 0, 120, 40}, d::white(1)));
+        lazyPlate.setAnimatable(d::SurfaceRole::lazy); lazyPlate.setValue(d::Channel::opacity, 0);
+        lazyRow.add(lazyPlate);
+        root.add(card); root.add(solo); root.add(lazyRow);
         const auto frame = [&](double at, float module = 1) {
             faded.syncContent(root, text, 1, 1, at);
             faded.updatePose({core::Matrix4{}, module, at, {}, {}});
@@ -257,6 +295,18 @@ void run(const std::filesystem::path& shader) {
         shot = renderer.readback();
         check(similar(rgba(shot, 425, 125)[1], rgba(shot, 110, 110)[0]), "The dot fades with the module directly");
         frame(1.7);
+        // A part with one painting surface and a resting lazy one draws directly
+        // in its fade (one surface: nothing to composite with), as the dot does.
+        lazyRow.setValue(d::Channel::opacity, .5);
+        frame(1.75);
+        check(faded.stats().groups == 0 && renderer.stats().nativeGroups == 0, "A fading part whose other surface is a resting lazy one takes no group");
+        { const auto px = rgba(renderer.readback(), 460, 320); check(px[2] > 0 && px[2] < 250 && px[0] < 10, "It fades directly (blue, no plate)"); }
+        lazyPlate.setValue(d::Channel::opacity, 1);
+        frame(1.76);
+        check(faded.stats().groups == 1 && faded.stats().lazyPaints == 1, "Its lazy surface shown, the fade groups it");
+        lazyPlate.setValue(d::Channel::opacity, 0); lazyRow.setValue(d::Channel::opacity, 1);
+        frame(1.77);
+        check(faded.stats().groups == 0, "At rest again it draws directly");
         // The opening's delay (prepareFade, the module at opacity 0): a part
         // merely resting at opacity 0 (a hidden slider bubble) takes no group;
         // one whose entrance is still pending (a delayed stagger) takes it.
@@ -280,6 +330,64 @@ void run(const std::filesystem::path& shader) {
         frame(3);
         published.detach(renderer);
         check(faded.releaseResources(renderer) && renderer.stats().nativeGroups == 0, "The faded scene releases everything");
+    }
+    // --- a long menu: its rows are parts of their own (rasterized near its list's
+    // viewport), its fade one image (Layer::setGroupsParts, CALayer group opacity) ------------
+    {
+        NativeDesignScene menus(raster, options, "design.menu");
+        LayerComposition published;
+        d::LayerArena arena{"m"};
+        auto& root = arena.make("root");
+        root.setFrame({0, 0, 590, 510});
+        auto& menu = arena.make("menu");
+        menu.setFrame({100, 100, 200, 160}); menu.setPartRoot(true); menu.setAnimatable(); menu.setGroupsParts(true);
+        menu.setContent(d::solid("panel", {0, 0, 200, 160}, d::rgb(0xFF0000)));
+        auto& list = arena.make("list");
+        list.setFrame({0, 10, 200, 100}); list.setMasksToBounds(true);
+        auto& content = arena.make("content");
+        content.setFrame({0, 0, 200, 400}); content.setAnimatable();
+        for (int n = 0; n < 8; ++n) {
+            auto& row = arena.make("row" + std::to_string(n));
+            row.setFrame({10, 50. * n, 180, 40}); row.setPartRoot(true);
+            row.setContent(d::solid("ink", {0, 0, 180, 40}, d::white(1)));
+            content.add(row);
+        }
+        list.add(content); menu.add(list);
+        auto& edge = arena.make("edge"); // after the rows: the menu part's continuation (its ring)
+        edge.setFrame({0, 150, 200, 10}); edge.setContent(d::solid("edge", {0, 0, 200, 10}, d::rgb(0x00FF00)));
+        menu.add(edge); root.add(menu);
+        const auto frame = [&](double at) {
+            menus.syncContent(root, text, 1, 1, at);
+            menus.updatePose({core::Matrix4{}, 1, at, {}, {}});
+            menus.uploadAnimations(renderer);
+            published.setEntries(renderer, menus.entries());
+            published.present(renderer);
+            renderer.draw(false);
+            check(menus.collectRetired(renderer), "Detached menu group targets go after the publication");
+        };
+        frame(1);
+        check(menus.stats().groups == 0 && menus.entries().size() == 6, "At rest the panel, the four resident rows and the ring draw directly");
+        menu.setValue(d::Channel::opacity, .5);
+        frame(1.1);
+        check(menus.stats().groups == 1 && renderer.stats().nativeGroups == 1 && menus.entries().size() == 3,
+            "Fading, one group draws the panel, the rows shown in the list and the ring (the rows outside it stay apart, clipped)");
+        auto shot = renderer.readback();
+        const auto ink = rgba(shot, 200, 130), panel = rgba(shot, 105, 105), ring = rgba(shot, 200, 255);
+        check(panel[0] > 0 && panel[1] == 0 && ring[1] > 0 && ring[0] == 0, "The panel and the ring fade to half");
+        check(similar(ink[0], ink[1]) && similar(ink[1], ink[2]) && similar(ink[0], panel[0]),
+            "Over the panel a row shows alone at half (one composite), not over a half panel (parts composited apart)");
+        // A scroll during the fade changes the rows shown: the group takes them again.
+        const auto switches = menus.stats().groupSwitches;
+        content.setValue(d::Channel::translateY, -100);
+        frame(1.2);
+        check(menus.stats().groups == 1 && menus.stats().groupSwitches == switches + 2, "Scrolled in the fade, the group draws the rows shown now");
+        menu.setValue(d::Channel::opacity, 1);
+        frame(1.5);
+        check(menus.stats().groups == 0 && renderer.stats().nativeGroups == 0 && menus.stats().groupTargets == 0, "Back at rest every part draws directly");
+        shot = renderer.readback();
+        check(rgba(shot, 200, 130) == std::array<int, 4>{255, 255, 255, 255}, "At rest a row draws at full opacity");
+        published.detach(renderer);
+        check(menus.releaseResources(renderer) && renderer.stats().nativeGroups == 0, "The menu scene releases everything");
     }
     // --- a stretched thumb keeps crisp, rounded ends (Layer::setClipsPresentedBounds) ----------
     {

@@ -11,9 +11,16 @@ int orbiPomEnergyCost(OrbiPomSkill s)noexcept{switch(s){case OrbiPomSkill::clear
 bool OrbiPomSnapshot::canUse(OrbiPomSkill s)const noexcept{return canAdvance()&&skillPhase!="casting"&&(s==OrbiPomSkill::swap?swapCharge>=6:energy>=orbiPomEnergyCost(s));}
 OrbiPomSession::OrbiPomSession(std::int64_t best,OrbiPomSessionCallbacks callbacks):callbacks_(std::move(callbacks)),best_(std::max<std::int64_t>(0,best)){}
 const OrbiPomSnapshot&OrbiPomSession::snapshot()const noexcept{return runtime_?runtime_->snapshot():idle_;}
+bool OrbiPomSession::prepare(){
+    if(runtime_)return true;
+    // A runtime that cannot be made is reported by start, as before.
+    try{if(!prepared_&&callbacks_.makeRuntime&&(prepared_=callbacks_.makeRuntime()))prepared_->prepare();}catch(const std::exception&){prepared_.reset();}
+    return !prepared_||prepared_->ready();
+}
 bool OrbiPomSession::start(std::optional<std::uint32_t>seed){
     const bool restarting=bool(runtime_);
     try{
+        if(!runtime_&&prepared_)runtime_=std::move(prepared_);
         if(!runtime_){if(!callbacks_.makeRuntime)throw std::runtime_error("Original OrbiPom simulation runtime is unavailable.");runtime_=callbacks_.makeRuntime();if(!runtime_)throw std::runtime_error("Original OrbiPom simulation runtime is unavailable.");}
         error_.reset();recordedFinish_=false;manual_=false;runtime_->highScore(best_);runtime_->start(seed);error_=runtime_->error();
     }catch(const std::exception&e){error_=e.what();runtime_.reset();return false;}
