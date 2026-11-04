@@ -238,6 +238,23 @@ void bootingVM() {
     w.show(second); later.port->booting = false; w.advance(1. / 60); second.wake(w.now);
     check(!second.booting() && later.port->starts == 1 && later.session.snapshot().isPlaying() && second.hasFrameTimer() && later.session.snapshot().highScore == 71 && w.toast().empty(),
         "The first wake after the boot starts the game without a toast, its clock running");
+    // A switch shows the incoming canvas during the current screen's .13 s
+    // leave: the boot starts there, and the game starts in didActivate (the
+    // Mac's synchronous start, no idle board on the first frames).
+    Game ahead(71); ahead.booting = true;
+    C third(w.context, ahead.session);
+    third.show(w.now);
+    check(ahead.port && ahead.port->starts == 0 && !ahead.session.hasRuntime() && !third.isActive(), "Showing the canvas ahead of its activation boots the VM, nothing started");
+    ahead.port->booting = false; w.advance(.13); third.setActive(true, w.now);
+    check(!third.booting() && ahead.port->starts == 1 && ahead.session.snapshot().isPlaying() && third.hasFrameTimer() && ahead.events == std::vector{m::OrbiPomEvent::started},
+        "Activated with the boot done, the game starts at once");
+    // Input before the boot ended starts the game first (waiting for the VM), so it is not lost.
+    Game early(71); early.booting = true;
+    C fourth(w.context, early.session);
+    w.show(fourth);
+    check(fourth.booting() && early.port->starts == 0, "Still booting at the activation");
+    fourth.perform("pause");
+    check(!fourth.booting() && early.port->starts == 1 && early.session.manuallyPaused() && early.session.snapshot().paused, "A press while booting starts the game, then acts on it");
 }
 
 void board() {

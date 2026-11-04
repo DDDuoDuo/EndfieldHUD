@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <utility>
 
 namespace endfield::modules {
 namespace d = design;
@@ -287,11 +288,16 @@ OrbiPomCanvas::~OrbiPomCanvas() {
 }
 
 // --- Lifecycle and clock (:95-155) ----------------------------------------------------
+void OrbiPomCanvas::show(double now) {
+    if (!session_->hasRuntime()) (void)session_->prepare();
+    Canvas::show(now);
+}
 void OrbiPomCanvas::didActivate() {
     foreground_ = foregroundProvider_ ? foregroundProvider_() : true;
     // The first game's VM boots off this thread (178 KB of JavaScript, 10-25 ms
-    // that froze the first showing): the game starts on the frame that finds
-    // it ready (wake), still inside the module's entrance.
+    // that froze the first showing) from show(): normally ready here, so the
+    // game starts as on the Mac; else on the frame that finds it ready (wake),
+    // still inside the module's entrance, or at the first input.
     booting_ = (!session_->hasRuntime() || session_->snapshot().state == "idle") && !session_->prepare();
     bootCheck_ = now() + 1. / 60;
     if (!booting_ && (!session_->hasRuntime() || session_->snapshot().state == "idle")) startGame(false);
@@ -347,9 +353,7 @@ void OrbiPomCanvas::wake(double now) {
     env().now = std::max(env().now, now);
     if (booting_) {
         bootCheck_ = now + 1. / 60;
-        if (!isActive() || !session_->prepare()) return;
-        booting_ = false;
-        if (!session_->hasRuntime() || session_->snapshot().state == "idle") startGame(false);
+        if (isActive() && session_->prepare()) finishBoot();
         return;
     }
     if (!timer_) return;
@@ -370,11 +374,16 @@ void OrbiPomCanvas::startGame(bool announceGame) {
     if (announceGame) toast(d::Icon::reset, "New game", "新的一局");
     reconcileClock();
 }
+void OrbiPomCanvas::finishBoot() {
+    if (!std::exchange(booting_, false)) return;
+    if (!session_->hasRuntime() || session_->snapshot().state == "idle") startGame(false);
+}
 void OrbiPomCanvas::showError() { toast(d::Icon::warn, "Notice", "提示", session_->error().value_or("")); }
 
 // --- Actions (:157-223) -----------------------------------------------------------------
 void OrbiPomCanvas::perform(std::string_view id) {
     if (!isActive()) return;
+    finishBoot();
     if (id == "start") startGame(false);
     else if (id == "pause") togglePause();
     else if (id == "rules") { if (rulesPresented_) closePopover(); else openRules(); }
@@ -495,6 +504,7 @@ void OrbiPomCanvas::handlePointerMoved(std::optional<Point> point) {
 }
 bool OrbiPomCanvas::handlePointerDown(Point point, const d::PointerInput&) {
     if (!contains(board, point)) return false;
+    finishBoot();
     pointerPressed_ = !restartConfirmation_;
     aim(point);
     return true;
@@ -511,6 +521,7 @@ void OrbiPomCanvas::handlePointerUp(Point point) {
 // arrows aim, 1-4 pick a skill, P pauses, Esc cancels a selected skill.
 bool OrbiPomCanvas::handleKey(const d::KeyInput& key) {
     if (key.commandModifiers()) return false;
+    finishBoot();
     const auto& s = session_->snapshot();
     switch (key.virtualKey) {
     case d::key::space: if (!key.repeat) togglePause(); return true;
