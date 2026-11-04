@@ -662,6 +662,21 @@ void run() {
             accept=false;presenter.present(h::Region::mainland,done);click(loginWindow(),101);
             const std::filesystem::path second=w.userData;w.pump();w.pump();presenter.cancel();lastEnvironment->exit();
             check(queued.empty()&&!std::filesystem::exists(second),"Refused file work runs on the calling thread");
+            // A sweep still queued when the next sign-in makes its folder (the
+            // worker busy deleting a large stale profile) leaves that folder,
+            // whose browser is starting, alone.
+            accept=true;presenter.present(h::Region::mainland,done);click(loginWindow(),101);
+            const std::filesystem::path third=w.userData;w.pump();w.pump();presenter.cancel();lastEnvironment->exit();
+            check(queued.size()==2&&std::filesystem::exists(third),"The first sign-in's sweep and delete wait in the queue");
+            presenter.present(h::Region::mainland,done);click(loginWindow(),101);
+            const std::filesystem::path fourth=w.userData;
+            check(fourth!=third&&queued.size()==3&&std::filesystem::is_directory(fourth),"The next sign-in makes its folder behind them");
+            {auto late=std::move(queued.front());queued.erase(queued.begin());late();}
+            check(std::filesystem::is_directory(fourth),"The late sweep leaves the live sign-in's folder");
+            runQueued();
+            check(!std::filesystem::exists(third)&&std::filesystem::is_directory(fourth),"Only the finished sign-in's folder is deleted");
+            w.pump();w.pump();presenter.cancel();lastEnvironment->exit();runQueued();
+            check(!std::filesystem::exists(fourth),"The second sign-in's folder goes once its browser exits");
         }
     }
     check(!IsWindowVisible(owner.hwnd),"Nothing was ever shown");
