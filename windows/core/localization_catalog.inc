@@ -1,8 +1,8 @@
 // Generated from the authoritative macOS LocalizationCatalog.swift + LocalizationCatalogRedesign.swift (merged as
 // the Mac merges them) and the Windows-kept v1.2.0 pairs of tools/localization_windows_kept.json; do not edit
-// translations here. Rows: 1283 Mac + 0 Windows-kept.
-// Commit: 81b6f66c61a1d252a3db503ff85ba8bb5565b65d (Windows-kept rows: ca04f142185c7de40acd8523bdb563195d90a1d1)
-// SHA256: 7162d43a038a84e34cc94c6d432e659994fa087fcbcd7fb5f04c00de6ef067c3 6ef8779e0ef708581927ab11f44e8c122e868a5dc6e2ba76fae3647d608e5436
+// translations here. Rows: 1284 Mac + 0 Windows-kept.
+// Commit: 3cc84d5424b847eb1bbb5a0fdd67d51a89f9595f (Windows-kept rows: ca04f142185c7de40acd8523bdb563195d90a1d1)
+// SHA256: 7162d43a038a84e34cc94c6d432e659994fa087fcbcd7fb5f04c00de6ef067c3 986cb5bedeb73de83cf73fd7e4ef17155687f7555c27eb995bb2462a5d53b039
     {" (disconnected)","（未连接）","（未連接）","（未接続）"," (연결 해제됨)"},
     {" Return to 100% to retry cleanup."," 回到 100% 可重试清理。"," 回到 100% 可重試清理。"," 100%に戻すと後処理を再試行します。"," 100%로 되돌려 정리를 다시 시도하세요."},
     {" used"," 已用"," 已用"," 使用中"," 사용 중"},
@@ -137,6 +137,7 @@
     {"BACKGROUND","背景","背景","背景","배경"},
     {"BATTERY","电池","電池","バッテリー","배터리"},
     {"BRUSH","画笔","畫筆","ブラシ","브러시"},
+    {"BUG Report/Suggestions","BUG报告及反馈","BUG回報及意見回饋","バグ報告・ご意見","버그 신고 및 제안"},
     {"Babel","巴别塔","巴別塔","バベル","바벨"},
     {"Back","返回","返回","戻る","뒤로"},
     {"Back to card theme","返回名片主题","返回名片主題","カードのテーマに戻る","카드 테마로 돌아가기"},

@@ -555,6 +555,12 @@ void contracts() {
     }
     w.activate(M::about, "github:open");
     check(w.links.back() == "https://github.com/DDDuoDuo/EndfieldHUD" && toastTitle() == "Opening GitHub" && toastCaption() == "DDDuoDuo/EndfieldHUD", "GitHub links toast their path");
+    // BUG Report/Suggestions (HUDSettingsCanvas.feedbackURL): the Google form in every language but Simplified Chinese.
+    w.activate(M::about, "feedback:open");
+    check(w.links.back() == m::settingsFeedbackURL(core::Language::english) && w.links.back().starts_with("https://docs.google.com/forms/") && toastTitle() == "Opening link" && toastCaption() == "docs.google.com",
+        "The feedback row opens the Google form and toasts its host");
+    check(m::settingsFeedbackURL(core::Language::simplifiedChinese) == "https://wj.qq.com/s2/28548057/ejeu/" && m::settingsFeedbackURL(core::Language::traditionalChinese) == m::settingsFeedbackURL(core::Language::english),
+        "Only Simplified Chinese opens the Tencent questionnaire");
     w.activate(M::about, "credits");
     w.activate(M::about, "credit:1:open");
     check(toastTitle() == "Opening link" && toastCaption() == "www.bilibili.com", "Other links toast their host");
