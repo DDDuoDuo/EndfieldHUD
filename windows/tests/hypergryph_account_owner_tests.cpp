@@ -278,11 +278,12 @@ void run(const std::filesystem::path& shader,const std::filesystem::path& resour
         // Showing Account again rebuilds the same artwork.
         owner.setOverlayVisible(true,clock+=.1);frame({});
         const auto again=*owner.page().sceneStats(core::Module::account);
-        if(!(again.surfaces==shown.surfaces&&again.rasterEntries==shown.rasterEntries&&again.residentPixelBytes==shown.residentPixelBytes&&
+        // (The parts the page's earlier changes left were kept a few seconds; the park dropped them.)
+        if(!(again.surfaces==shown.surfaces&&again.rasterEntries==shown.rasterEntries&&again.keptParts==0&&again.residentPixelBytes==shown.residentPixelBytes-shown.keptPixelBytes&&
              raster.stats().entries>rasterParked.entries&&!owner.gauge().sceneStats().popoverLoaded))
             throw std::runtime_error("Showing Account again rebuilds the same page (the shut popover stays unloaded): surfaces "+std::to_string(again.surfaces)+"/"+
                 std::to_string(shown.surfaces)+" entries "+std::to_string(again.rasterEntries)+"/"+std::to_string(shown.rasterEntries)+" bytes "+
-                std::to_string(again.residentPixelBytes)+"/"+std::to_string(shown.residentPixelBytes)+" raster "+std::to_string(raster.stats().entries)+"/"+
+                std::to_string(again.residentPixelBytes)+"/"+std::to_string(shown.residentPixelBytes)+" (kept "+std::to_string(shown.keptParts)+", "+std::to_string(shown.keptPixelBytes)+") raster "+std::to_string(raster.stats().entries)+"/"+
                 std::to_string(rasterParked.entries)+" popover "+std::to_string(owner.gauge().sceneStats().popoverLoaded));
         ++checks;
         // A close with Account shown keeps its page for the next opening.

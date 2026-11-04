@@ -696,7 +696,8 @@ NativeDesignSceneStats NativeDesignScene::stats() const noexcept {
     s.groupTargets += s.groups;
     s.retiredParts = i.retired.size();
     s.keptParts = i.kept.size();
-    for (const auto& k : i.kept) if (k.scene) s.residentPixelBytes += k.scene->report().pixelBytes;
+    for (const auto& k : i.kept) if (k.scene) s.keptPixelBytes += k.scene->report().pixelBytes;
+    s.residentPixelBytes += s.keptPixelBytes;
     for (const auto& p : i.parts) {
         s.surfaces += p->surfaces.size();
         if (!p->scene) continue;

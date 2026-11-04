@@ -98,6 +98,7 @@ struct NativeDesignSceneStats {
     std::uint64_t groupSwitches{}, parks{};   // groupSwitches: group attaches and detaches
     std::uint64_t partsKept{};                // parts back in the tree that took their kept scene (no rasterization)
     std::size_t parts{}, surfaces{}, retiredParts{}, keptParts{}, rasterEntries{}, residentPixelBytes{};
+    std::size_t keptPixelBytes{};             // of residentPixelBytes: the kept parts' (they expire a few seconds after leaving)
     std::size_t groups{}, groupTargets{};      // parts drawn through a group; group targets held (incl. awaiting collectRetired)
 };
 // A box-px affine (samplePoses, sampleLayer) as the plane matrix the scene
