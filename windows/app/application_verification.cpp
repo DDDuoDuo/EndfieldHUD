@@ -1058,7 +1058,7 @@ int Application::Impl::runHiddenVerification(){
                     // scenes, nothing rasterized. The Font menu's first opening: the rows near its
                     // list only (48 measured). The reveal: the revealed text, the field and the button.
                     {"calendar.daySelect",{1,24}},{"calendar.daySelectAgain",{1,24}},{"calendar.todayButton",{1,24}},{"calendar.dayOffToday",{1,24}},
-                    {"calendar.arrowRight",{1,24}},{"calendar.plateOpen",{1,32}},{"calendar.plateClose",{1,32}},{"calendar.monthPickerAgain",{0,4}},
+                    {"calendar.arrowRight",{1,24}},{"calendar.plateOpen",{1,32}},{"calendar.plateClose",{1,32}},{"calendar.monthPickerAgain",{0,4}},{"calendar.todayAfterMonths",{1,24}},
                     {"eventLog.filterAll",{1,40}},{"eventLog.home",{0,8}},{"reader.fontMenu",{0,64}},{"reader.fontMenuAgain",{0,4}},
                     {"minigame.rulesAgain",{0,4}},{"archive.unlockReveal",{0,40}}};
                 const bool enforceBounds=true;
@@ -1083,6 +1083,8 @@ int Application::Impl::runHiddenVerification(){
                         {"secondTextLayouts",std::int64_t(raster2.textLayoutsCreated-raster0.textLayoutsCreated)}});
                     const auto key=std::string(core::moduleIdentifier(m))+"."+name;
                     if(const auto bound=bounds.find(key);bound!=bounds.end()){
+                        // A bound holds only for an action that ran (a renamed control or a broken setup does nothing, within any bound).
+                        hostCheck(done,"The timed action "+key+" ran");
                         const auto pages=std::int64_t(pages2-pages0),rasters=std::int64_t(raster2.rasterizations-raster0.rasterizations);
                         const bool within=pages<=bound->second.first&&rasters<=bound->second.second;
                         timings.back()["withinBound"]=within;
@@ -1090,7 +1092,9 @@ int Application::Impl::runHiddenVerification(){
                             " pages, "+std::to_string(rasters)+" of "+std::to_string(bound->second.second)+" rasterizations)");
                     }
                     time+=.1;};
-                const auto skip=[&](core::Module m,const char*name){timings.push_back(Json::Object{{"module",std::string(core::moduleIdentifier(m))},{"action",std::string(name)},{"skipped",true}});};
+                const auto skip=[&](core::Module m,const char*name,std::string reason={}){timings.push_back(Json::Object{{"module",std::string(core::moduleIdentifier(m))},{"action",std::string(name)},{"skipped",true}});
+                    if(!reason.empty())timings.back()["reason"]=reason;
+                    const auto key=std::string(core::moduleIdentifier(m))+"."+name;hostCheck(!bounds.contains(key),"The timed action "+key+" ran (skipped"+(reason.empty()?std::string():": "+reason)+")");};
                 // Work Mode: the host's one controller, left by the cycles as a paused stopwatch.
                 if(workMode&&workModeCanvas&&showModule(core::Module::workMode)){
                     const auto M=core::Module::workMode;
@@ -1275,6 +1279,11 @@ int Application::Impl::runHiddenVerification(){
                         calendar->closePopover();settleFor(15);
                         timeAction(M,"monthPickerAgain",[&](double t){return press(M,"calendar.monthPicker",false,t)&&calendar->popoverOpen();});
                         calendar->closePopover();settleFor(15);
+                        // Back in today's month from another: day 1 selected, today's cell without its ring
+                        // (the month part loaded so). Today then selects it in place (rc140: the whole month).
+                        (void)press(M,"calendar.previousMonth",false,time);settleFor(30);(void)press(M,"calendar.nextMonth",false,time);settleFor(30);
+                        timeAction(M,"todayAfterMonths",[&](double t){const auto today=calendarState->today();
+                            return calendar->month().month==today.month&&calendar->month().year==today.year&&press(M,"calendar.today",false,t)&&calendar->selectedDay()==today;});
                     }
                     // Event Log: a view down twice, the end and back to the top.
                     if(eventLogCanvas&&eventLogModuleOwner&&registry.enabled(*eventLogModuleOwner)&&showModule(core::Module::eventLog)){
@@ -1305,7 +1314,7 @@ int Application::Impl::runHiddenVerification(){
                             timeAction(M,"unlockReveal",[&](double t){const bool pressed=canvas.performAccessibilityAction("unlock",t);utility->waitIdle();utility->drain();archiveService->queueCapacityAvailable();return pressed&&!state.isSelectedLocked();});
                             timeFrames(M,"openingEnd",[&]{return canvas.displayedPage().kind==modules::ArchiveCanvas::PageKind::editor;},240);
                             state.declassifySelected({});flushArchive();
-                        }else{skip(M,"unlockReveal");timings.back()["reason"]=std::string(!state.selected()?"no document":!state.isSelectedLocked()?"not classified":canvas.displayedPage().kind!=modules::ArchiveCanvas::PageKind::locked?"not on the locked page":"no password field");}
+                        }else skip(M,"unlockReveal",!state.selected()?"no document":!state.isSelectedLocked()?"not classified":canvas.displayedPage().kind!=modules::ArchiveCanvas::PageKind::locked?"not on the locked page":"no password field");
                         if(state.selected()&&state.selected()->title=="Freeze probe"&&!state.isSelectedLocked()){(void)state.deleteSelected();flushArchive();}
                         land();
                     }
@@ -1314,8 +1323,14 @@ int Application::Impl::runHiddenVerification(){
                         const auto M=core::Module::reader;auto&canvas=reader->canvas();
                         const auto openSettings=[&]{if(canvas.tab()!=modules::ReaderCanvas::Tab::reading){(void)canvas.performAccessibilityAction("readerTabs:2",time);settleFor(15);}
                             if(!canvas.popoverOpen()){(void)canvas.performAccessibilityAction("settings",time);settleFor(10);}return canvas.popoverOpen();};
+                        // Group attaches and detaches over the opening's second: the rows of the long menu draw
+                        // one painting surface each (their highlight plate rests lazily), so they take no group.
+                        const auto groupSwitches=[&]{const auto s=reader->core().sceneStats(M);return s?std::int64_t(s->groupSwitches):std::int64_t(0);};
                         if(openSettings()){
+                            const auto groups0=groupSwitches();
                             timeAction(M,"fontMenu",[&](double t){return canvas.performAccessibilityAction("font",t)&&canvas.menuOpen();});
+                            {const auto switches=groupSwitches()-groups0;timings.back()["groupSwitches"]=switches;
+                             if(enforceBounds)hostCheck(switches<=12,"The Font menu's opening attaches few groups ("+std::to_string(switches)+" switches of 12)");}
                             canvas.closeMenu();settleFor(10);
                             if(openSettings())timeAction(M,"fontMenuAgain",[&](double t){return canvas.performAccessibilityAction("font",t)&&canvas.menuOpen();});
                             canvas.closePopups();settleFor(10);
