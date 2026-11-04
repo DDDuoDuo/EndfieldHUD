@@ -361,9 +361,11 @@ std::size_t rasterized(const d::Artwork& before, const d::Artwork& after) {
     }
     return count;
 }
-// A committed value, the date kind, the inline editor and the default
-// picture re-render the card under kept ids: only the elements they change
-// rasterize again (each its own part), not the whole card.
+// The card fades (a module switch, the HUD opening and closing, the page
+// stagger) as one image, as CALayer group opacity composites it: its plate,
+// the art overlay and every value on it are one part of the scene, which
+// gives each part its own group opacity. The inline editor, never on the
+// card during a fade, is its own part: joining the card rasterizes only it.
 void partsKept() {
     FakeMeasurer measurer; World w(measurer); w.appearance(Language::english);
     Owner o; o.avatar = true; auto store = o.store(sample());
@@ -371,21 +373,27 @@ void partsKept() {
     canvas.setStore(store.get()); w.show(canvas);
     const d::TextServices& text = w.context.env().text;
     const auto artwork = [&] { return d::emit(canvas.root(), {&text, "test."}); };
+    const auto partOf = [](const d::Artwork& a, std::string_view surface) -> const d::Part* {
+        for (const auto& p : a.parts) for (const auto& s : p.surfaces) if (s.id.find(surface) != std::string::npos) return &p;
+        return nullptr;
+    };
+    const auto oneCard = [&](const d::Artwork& a, const char* when) {
+        const auto* card = partOf(a, "profile.plate");
+        const auto* overlay = partOf(a, "profile.overlay"); // with a background picture
+        check(card && partOf(a, "profile:name") == card && partOf(a, "profile:toggleDateLabel") == card && partOf(a, "profile:operatorsCount") == card && (!overlay || overlay == card),
+            std::string("The card's plate, overlay and values are one part ") + when);
+    };
     auto before = artwork();
+    oneCard(before, "at rest");
     std::size_t surfaces{};
     for (const auto& p : before.parts) surfaces += p.surfaces.size();
-    const auto step = [&](const char* what, std::size_t bound, const std::function<void()>& change) {
-        change();
-        auto after = artwork();
-        const auto count = rasterized(before, after);
-        check(count <= bound, std::string(what) + " rasterizes " + std::to_string(count) + " of " + std::to_string(surfaces) + " surfaces again (bound " + std::to_string(bound) + ")");
-        before = std::move(after);
-    };
-    step("A name commit", 4, [&] { store->update([](m::PersonalProfile& p) { p.name = "Freeze Probe"; }); });
-    step("A counter commit", 4, [&] { store->update([](m::PersonalProfile& p) { p.operatorsCount = 24; }); });
-    step("The date kind", 8, [&] { canvas.perform("profile:toggleDateLabel", w.now); });
-    step("Restore default picture", 4, [&] { o.avatar = false; canvas.perform("profile:menu", w.now); canvas.perform("profile.more:restore", w.now); });
-    step("The name's editor", 4, [&] { canvas.perform("profile:name", w.now); check(canvas.editingField() == m::ProfileField::name, "The name's editor opens"); });
+    canvas.perform("profile:name", w.now);
+    check(canvas.editingField() == m::ProfileField::name, "The name's editor opens");
+    const auto after = artwork();
+    const auto count = rasterized(before, after);
+    check(count <= 4, "The name's editor rasterizes " + std::to_string(count) + " of " + std::to_string(surfaces) + " surfaces (bound 4)");
+    check(partOf(after, "edit:name") && partOf(after, "edit:name") != partOf(after, "profile:name"), "The inline editor is its own part");
+    oneCard(after, "while editing");
     check(surfaces > 30, "The card has its surfaces (" + std::to_string(surfaces) + ")");
 }
 }

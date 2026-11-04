@@ -115,7 +115,7 @@ struct ProfileSideArena {
 class ProfileEditable final : public d::Control {
 public:
     ProfileEditable(d::Builder& b, std::string id, std::string label) : Control(b.env, id, std::move(label), b.layer(id)) {
-        layer().setAnimatable(); layer().setPartRoot(true); // a commit loads only its own value
+        layer().setAnimatable();
         ring_ = &b.layer(id + ".ring");
         ring_->setAnimatable(); ring_->setValue(d::Channel::opacity, 0); ring_->setZPosition(1);
         layer().add(*ring_);
@@ -441,11 +441,6 @@ void ProfileCanvas::buildPage(d::Page& page) {
     wrapper.setFrame({cardOrigin.x, cardOrigin.y, cardSize.width, cardSize.height});
     card.setFrame(box); card.setMasksToBounds(true);
     main.setFrame(box); main.setAnimatable();
-    // Parts (each loads alone when its surfaces change): the card, its text
-    // body and every element a commit, the date kind, the portrait, the art
-    // overlay or the inline editor changes; the card's other parts keep their
-    // ids (the art is the wrapper's own part before the card).
-    card.setPartRoot(true); main.setPartRoot(true);
     refs_.wrapper = &wrapper;
     if (services_.backgroundReady && services_.backgroundReady() && p.backgroundFilename) buildArt(page, wrapper);
     buildPlate(page, card, refs_.artBox != nullptr);
@@ -500,7 +495,7 @@ void ProfileCanvas::buildPlate(d::Page& page, Layer& card, bool art) {
     // overlayArtwork (:1205-1216): linear-gradient(90deg, rgba(0,0,0,.74) 0,
     // .52 52%, .08 100%) clipped to the chamfer, one raster per render scale.
     Layer& overlay = page.makeLayer("profile.overlay");
-    overlay.setFrame(box); overlay.setAnimatable(); overlay.setPartRoot(true);
+    overlay.setFrame(box); overlay.setAnimatable();
     const std::array<Color, 3> colors{d::black(.74), d::black(.52), d::black(.08)};
     const std::array<double, 3> locations{0, .52, 1};
     Json node = d::gradient(overlay.id(), box, colors, locations, {0, .5}, {1, .5});
@@ -524,7 +519,7 @@ void ProfileCanvas::buildIdentity(d::Page& page, Layer& main, std::vector<d::Con
     // Portrait well and the tinted frame.
     Layer& well = page.makeLayer("profile.well");
     Layer& frame = page.makeLayer("profile.frame");
-    well.setFrame(wellFrame); d::setBackground(well, d::rgb(0x383838, .85)); well.setMasksToBounds(true); well.setPartRoot(true);
+    well.setFrame(wellFrame); d::setBackground(well, d::rgb(0x383838, .85)); well.setMasksToBounds(true);
     frame.setFrame(avatarFrame);
     for (Layer* l : {&titleText, &subtitle, &well, &frame}) main.add(*l);
     refs_.frame = &frame; refs_.well = &well;
@@ -585,7 +580,7 @@ void ProfileCanvas::buildDateChip(d::Page& page, Layer& main, std::vector<d::Con
     Layer& chevrons = page.makeLayer("profile.date.chevrons");
     const double kindTextWidth = std::ceil(d::preferredWidth(d::textOf(kindText), env().text));
     const double kindWidth = 6 + 12 + 6 + kindTextWidth + 8;
-    kindLayer.setAnimatable(); kindLayer.setPartRoot(true); // vChg when the kind flips
+    kindLayer.setAnimatable();                         // vChg when the kind flips
     kindLayer.setFrame({138, 98, kindWidth, 20});
     d::setBackground(kindLayer, d::black(.73));
     chevrons.setFrame({6, 5, 12, 10});
@@ -921,6 +916,10 @@ void ProfileCanvas::beginEdit(ProfileField field) {
     auto& editor = page().make<d::TextField>("edit:" + std::string(profileFieldID(field)), profileFieldTitle(field, env().language), initial, "", size, options);
     editor.layer().setOrigin({rect.x, rect.y});
     editor.layer().setZPosition(d::order::menu);
+    // Its own part: joining the card does not load the card again. The card
+    // plate and everything on it stay one part, so a module or HUD fade
+    // composites them as one image (CALayer group opacity); the editor is
+    // never on the card during a fade (leaving ends editing first).
     editor.layer().setAnimatable(); editor.layer().setPartRoot(true);
     editor.layer().setValue(d::Channel::opacity, 0);
     refs_.card->add(editor.layer());
