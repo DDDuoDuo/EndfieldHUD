@@ -1586,6 +1586,8 @@ void Application::Impl::createSettings(const ehud::data::Settings&loaded){
     options.hooks.macImport=[this]{if(auto*e=areaHost?areaHost->find<MacImportEntry>(macImportEntryService):nullptr)(void)isolateService(macImportEntryService,"mac import",[&]{(void)e->present(areaClock());});};
     // Display > Theme color / Center logo (HUDSettingsInteraction.chooseColor,
     // chooseLogo; a logo selection invalidates a pending import).
+    options.hooks.language=[](const ehud::data::Settings&value){return settingsLanguage(value);};
+    options.hooks.reopensOn=[this](core::Module module){return (closing||session->phase()==core::VisibilityPhase::concealed)&&notes&&notes->selected()==module;};
     options.hooks.chooseColor=[this]{requestThemeColor();};
     options.hooks.chooseLogo=[this]{chooseCenterLogo();};
     options.hooks.logoSelection=[this]{++logoImportGeneration;};

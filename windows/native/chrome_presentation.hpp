@@ -143,7 +143,7 @@ private:
     std::array<LayerPlacement,2> transitionPlacements_;
     std::array<PlaneMask,1> transitionMask_{};
     core::source::Json currentPage_,outgoingPage_;
-    bool styleChangePending_{},statusWithoutPage_{};
+    bool styleChangePending_{},statusWithoutPage_{},statusStale_{}; // statusStale_: a style change waits for the push or its cancel
     std::optional<Transition> transition_;
     std::uint64_t transitionRevision_{};
     std::optional<core::Matrix4> transitionWorld_;

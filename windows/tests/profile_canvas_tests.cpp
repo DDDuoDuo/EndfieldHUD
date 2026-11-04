@@ -360,6 +360,55 @@ void hiddenScaleChange() {
     check(o.portraitSteps == std::vector<int>{1}, "A hidden Profile asks for its portrait at the new scale at once");
     w.show(canvas);
     check(o.portraitSteps.size() > 1, "Shown again, it re-renders at the new scale");
+
+// The design scene's plan over two emissions (native/hud_design_scene.cpp
+// syncContent): a part whose JSON is unchanged is reused, one with the same
+// surfaces rasterizes only the changed ones, any other loads every surface.
+std::size_t rasterized(const d::Artwork& before, const d::Artwork& after) {
+    std::size_t count{};
+    for (const auto& p : after.parts) {
+        const auto old = std::find_if(before.parts.begin(), before.parts.end(), [&](const d::Part& q) { return q.id == p.id; });
+        if (old == before.parts.end() || old->surfaces != p.surfaces) { count += p.surfaces.size(); continue; }
+        if (old->layers == p.layers) continue;
+        const auto& a = old->layers["children"].array(); const auto& b = p.layers["children"].array();
+        for (std::size_t n = 0; n < b.size(); ++n) count += a[n] != b[n];
+    }
+    return count;
+}
+// The card fades (a module switch, the HUD opening and closing, the page
+// stagger) as one image, as CALayer group opacity composites it: its plate,
+// the art overlay and every value on it are one part of the scene, which
+// gives each part its own group opacity. The inline editor, never on the
+// card during a fade, is its own part: joining the card rasterizes only it.
+void partsKept() {
+    FakeMeasurer measurer; World w(measurer); w.appearance(Language::english);
+    Owner o; o.avatar = true; auto store = o.store(sample());
+    m::ProfileCanvas canvas(w.context, o.text, o.dates, o.services());
+    canvas.setStore(store.get()); w.show(canvas);
+    const d::TextServices& text = w.context.env().text;
+    const auto artwork = [&] { return d::emit(canvas.root(), {&text, "test."}); };
+    const auto partOf = [](const d::Artwork& a, std::string_view surface) -> const d::Part* {
+        for (const auto& p : a.parts) for (const auto& s : p.surfaces) if (s.id.find(surface) != std::string::npos) return &p;
+        return nullptr;
+    };
+    const auto oneCard = [&](const d::Artwork& a, const char* when) {
+        const auto* card = partOf(a, "profile.plate");
+        const auto* overlay = partOf(a, "profile.overlay"); // with a background picture
+        check(card && partOf(a, "profile:name") == card && partOf(a, "profile:toggleDateLabel") == card && partOf(a, "profile:operatorsCount") == card && (!overlay || overlay == card),
+            std::string("The card's plate, overlay and values are one part ") + when);
+    };
+    auto before = artwork();
+    oneCard(before, "at rest");
+    std::size_t surfaces{};
+    for (const auto& p : before.parts) surfaces += p.surfaces.size();
+    canvas.perform("profile:name", w.now);
+    check(canvas.editingField() == m::ProfileField::name, "The name's editor opens");
+    const auto after = artwork();
+    const auto count = rasterized(before, after);
+    check(count <= 4, "The name's editor rasterizes " + std::to_string(count) + " of " + std::to_string(surfaces) + " surfaces (bound 4)");
+    check(partOf(after, "edit:name") && partOf(after, "edit:name") != partOf(after, "profile:name"), "The inline editor is its own part");
+    oneCard(after, "while editing");
+    check(surfaces > 30, "The card has its surfaces (" + std::to_string(surfaces) + ")");
 }
 }
 
@@ -369,6 +418,7 @@ int main(int argc, char** argv) {
         if (argc > 1) data = loadOracle(argv[1], {"states"}, {"text", "layerDefaults", "valid", "limits", "sliders"});
         rules(data ? &*data : nullptr);
         behaviour(); hiddenScaleChange();
+        partsKept();
         if (data) {
             Oracle oracle(*data);
             oracleScenes(oracle);

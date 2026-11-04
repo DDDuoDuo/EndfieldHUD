@@ -197,8 +197,13 @@ bool NativeChromePresentation::setContent(const DesktopChromeContent&content){
             if(transitionLayers_->updateLocalContent(id,++transitionRevision_,transitionPage(currentPage_,id),options_))changed=true;
             status=withoutPage(std::move(status));
         }
-        if(layers_->updateLocalContent(statusID_,++statusRevision_,status,options_)){changed=true;++stats_.statusRasterChanges;}
-        statusWithoutPage_=transition_.has_value();rasterizeDot();
+        // A style change the push may take next: the status panel waits for
+        // it (the push rasterizes it without its page, a cancel or the next
+        // placement with it), so it is not rasterized twice on that frame.
+        statusStale_=styleChangePending_&&!transition_;
+        if(statusStale_)changed=true;
+        else if(layers_->updateLocalContent(statusID_,++statusRevision_,status,options_)){changed=true;++stats_.statusRasterChanges;}
+        if(!statusStale_)statusWithoutPage_=transition_.has_value();rasterizeDot();
         // HUDClockStyleArtwork.update: each sample while recording fades the
         // dot from where it is to this second's opacity (on the next frame).
         if(content.recording&&!content.reduceMotion)blinkTarget_=artwork_.artwork().recordDotOpacity;
@@ -216,7 +221,7 @@ bool NativeChromePresentation::setAppearance(const DesktopChromeAppearance&a){
     if(transition_){transition_.reset();statusWithoutPage_=false;}
     styleChangePending_=false;outgoingPage_=Json{};
     auto reference=desktopChromeAppearanceReference(reference_,a);auto footer=reference["footer"]["children"].array()[0];
-    appearance_=a;auto status=panel(reference,content_&&content_->clockHovered);
+    appearance_=a;statusStale_=false;auto status=panel(reference,content_&&content_->clockHovered);
     if(content_){updateArtwork();status=statusContent(status,artwork_.artwork(),statusID_);footer["text"]["string"]=DesktopClockArtworkPlan::footerText(content_->uppercaseShortcut,content_->localizedClose);currentPage_=pageOf(status);}
     bool changed=layers_->updateLocalContent(headerID_,++headerRevision_,reference["header"],options_);
     changed=layers_->updateLocalContent(statusID_,++statusRevision_,status,options_)||changed;
@@ -225,7 +230,7 @@ bool NativeChromePresentation::setAppearance(const DesktopChromeAppearance&a){
 }
 bool NativeChromePresentation::update(const SourceWatchFrame&frame,const CameraFrame&camera,const DesktopChromeSettings&settings,float opacity){
     need(layers_->contentRevision()==sceneRevision_,"Recreate chrome bindings after structural LayerScene reload");
-    need(std::isfinite(opacity)&&opacity>=0&&opacity<=1,"Invalid source chrome canvas opacity");projection_->update(frame.resolved,camera,settings.viewport,settings.contentScale);const auto&projected=projection_->projection();
+    need(std::isfinite(opacity)&&opacity>=0&&opacity<=1,"Invalid source chrome canvas opacity");if(statusStale_)rasterizeStatus(true);projection_->update(frame.resolved,camera,settings.viewport,settings.contentScale);const auto&projected=projection_->projection();
     if(!projected.center||!projected.status)return false;
     const auto layout=DesktopChromeLayout::make(settings,*projected.center,*projected.status);const auto&dot=artwork_.artwork().recordDot;
     const std::array<Matrix4,4>worlds{*projected.center*Matrix4::translation(layout.header.x,layout.header.y),layout.designToScreen*Matrix4::translation(layout.footerText.x,layout.footerText.y),
@@ -241,12 +246,12 @@ void NativeChromePresentation::rasterizeStatus(bool withPage){
     if(!content_)return;auto status=statusContent(panel(reference_,content_->clockHovered),artwork_.artwork(),statusID_);
     if(!withPage)status=withoutPage(std::move(status));
     if(layers_->updateLocalContent(statusID_,++statusRevision_,status,options_))++stats_.statusRasterChanges;
-    statusWithoutPage_=!withPage;
+    statusWithoutPage_=!withPage;statusStale_=false;
 }
 bool NativeChromePresentation::beginStyleTransition(bool forward,double time){
     need(std::isfinite(time),"Clock style transition requires a finite frame time");
     need(layers_->contentRevision()==sceneRevision_,"Recreate chrome bindings after structural LayerScene reload");
-    if(!styleChangePending_||!content_||outgoingPage_.isNull()||currentPage_.isNull())return false;
+    if(!styleChangePending_||!content_||outgoingPage_.isNull()||currentPage_.isNull()){if(statusStale_)rasterizeStatus(true);return false;}
     styleChangePending_=false;
     const auto outID=transitionSurfaceID(false),inID=transitionSurfaceID(true);
     auto outgoing=transitionPage(outgoingPage_,outID),incoming=transitionPage(currentPage_,inID);outgoingPage_=Json{};
@@ -259,12 +264,12 @@ bool NativeChromePresentation::beginStyleTransition(bool forward,double time){
         (void)transitionLayers_->updateLocalContent(outID,++transitionRevision_,outgoing,options_);
         (void)transitionLayers_->updateLocalContent(inID,++transitionRevision_,incoming,options_);
     }
-    if(!statusWithoutPage_)rasterizeStatus(false);
+    if(statusStale_||!statusWithoutPage_)rasterizeStatus(false);
     transition_=Transition{forward,time,0};placeTransition();return true;
 }
 void NativeChromePresentation::cancelStyleTransition(){
     styleChangePending_=false;outgoingPage_=Json{};
-    if(!transition_)return;transition_.reset();rasterizeStatus(true);
+    if(!transition_){if(statusStale_)rasterizeStatus(true);return;}transition_.reset();rasterizeStatus(true);
 }
 bool NativeChromePresentation::advance(double time){
     need(std::isfinite(time),"Chrome animation requires a finite frame time");

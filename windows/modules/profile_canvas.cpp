@@ -923,7 +923,11 @@ void ProfileCanvas::beginEdit(ProfileField field) {
     auto& editor = page().make<d::TextField>("edit:" + std::string(profileFieldID(field)), profileFieldTitle(field, env().language), initial, "", size, options);
     editor.layer().setOrigin({rect.x, rect.y});
     editor.layer().setZPosition(d::order::menu);
-    editor.layer().setAnimatable();
+    // Its own part: joining the card does not load the card again. The card
+    // plate and everything on it stay one part, so a module or HUD fade
+    // composites them as one image (CALayer group opacity); the editor is
+    // never on the card during a fade (leaving ends editing first).
+    editor.layer().setAnimatable(); editor.layer().setPartRoot(true);
     editor.layer().setValue(d::Channel::opacity, 0);
     refs_.card->add(editor.layer());
     d::motion::animate(editor.layer(), d::Channel::opacity, 1, .14, clock(), d::easing::easeOut);
