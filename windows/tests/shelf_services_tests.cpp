@@ -301,15 +301,17 @@ void services(HWND hwnd, gpu::Renderer& renderer) {
     // The Shell runs on Open's own STA thread; its result comes back as a notice, then the toast.
     const auto settleOpen = [&] { for (unsigned n = 0; n < 2000 && shelf.opening(); ++n) { Sleep(1); hud.pump(); } check(!shelf.opening(), "An Open's result comes back"); };
     const auto held = [&] { std::lock_guard lock(shell.mutex); return opened.size(); };
+    const auto toasts = [&] { return hud.overlay->context().overlay().toastState().generation(); };
     {
+        const auto shown = toasts();
         const auto gate = CreateEventW(nullptr, TRUE, FALSE, nullptr); check(gate != nullptr, "Gate");
         { std::lock_guard lock(shell.mutex); shell.gate = gate; }
         const auto before = std::chrono::steady_clock::now();
         shelf.open(action->itemID, hud.time);
         const double returned = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - before).count();
         for (unsigned n = 0; n < 2000 && !held(); ++n) Sleep(1);
-        check(held() == 1 && shelf.opening() && hud.toast().empty() && returned < 1000, "Open returns while the Shell still holds the item (the HUD thread never waits for it)");
-        hud.pump(); check(shelf.opening() && hud.toast().empty(), "No toast before the Shell returns");
+        check(held() == 1 && shelf.opening() && toasts() == shown && returned < 1000, "Open returns while the Shell still holds the item (the HUD thread never waits for it)");
+        hud.pump(); check(shelf.opening() && toasts() == shown, "No toast before the Shell returns");
         { std::lock_guard lock(shell.mutex); shell.gate = nullptr; } SetEvent(gate);
         settleOpen(); CloseHandle(gate);
     }
@@ -317,7 +319,6 @@ void services(HWND hwnd, gpu::Renderer& renderer) {
     check(shell.thread != GetCurrentThreadId() && shelf.resources().opensQueued == 1 && shelf.resources().opensAtOnce == 0, "The Shell is called on Open's own thread, not the HUD's");
     // A failure is the canvas's notice; a choice the user cancelled (S_FALSE) shows nothing.
     { std::lock_guard lock(shell.mutex); shell.result = E_ACCESSDENIED; }
-    const auto toasts = [&] { return hud.overlay->context().overlay().toastState().generation(); };
     shelf.open(reportID, hud.time); settleOpen();
     check(hud.toast() == "Notice|This item could not be opened.", "A failed Open shows the notice");
     { std::lock_guard lock(shell.mutex); shell.result = S_FALSE; }
@@ -480,7 +481,7 @@ void openAfterShutdown(HWND hwnd, gpu::Renderer& renderer) {
         const auto id = hud.item("Late.txt")->id;
         hud.shelf->open(id, hud.time);
         check(WaitForSingleObject(entered, 10000) == WAIT_OBJECT_0 && hud.shelf->opening(), "The Shell holds the item");
-        hud.release(); hud.shelf.reset();
+        hud.pump(); hud.release(); hud.shelf.reset();
     }
     SetEvent(gate);
     check(WaitForSingleObject(returned, 10000) == WAIT_OBJECT_0, "The Shell returns after the shutdown");

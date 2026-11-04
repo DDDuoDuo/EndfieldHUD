@@ -1225,7 +1225,13 @@ int Application::Impl::runHiddenVerification(){
                 // rc140 (new page ids on every rebuild): Media Assembly's import start, close
                 // and overwrite each rasterized the whole panel again, twice for close and
                 // more around an overwrite's reload.
-                const std::map<std::string,std::pair<std::int64_t,std::int64_t>,std::less<>> b2Bounds{};
+                // Measured with kept ids: 29, 47, 94 and 73 rasterizations, 150 for the first
+                // Stickers visit, at most 2 pages each. 18 of close's and overwrite's are the
+                // confirm bar leaving; the rest is the stage's own picture, export gauge and
+                // empty state and the header, which the Mac redraws too (no panel part changes).
+                const std::map<std::string,std::pair<std::int64_t,std::int64_t>,std::less<>> b2Bounds{
+                    {"mediaAssembly.importShelf",{2,36}},{"mediaAssembly.closeConfirm",{2,56}},{"mediaAssembly.overwriteConfirm",{2,110}},
+                    {"mediaAssembly.overwriteFinish",{2,88}},{"mediaAssembly.stickersFirstVisit",{2,170}}};
                 const auto b2Bound=[&](const std::string&key){
                     const auto bound=b2Bounds.find(key);if(bound==b2Bounds.end())return;auto&row=timings.back();
                     const auto pages=row["secondPagesBuilt"].integer(),rasters=row["secondRasterizations"].integer();
@@ -1233,16 +1239,42 @@ int Application::Impl::runHiddenVerification(){
                     hostCheck(within,"The timed action "+key+" stays within its work bound ("+std::to_string(pages)+" of "+std::to_string(bound->second.first)+
                         " pages, "+std::to_string(rasters)+" of "+std::to_string(bound->second.second)+" rasterizations)");};
                 const auto toast=[&]{const auto&t=designContext.overlay().toastState().current();return t?t->title:std::string();};
+                // The HUD's language (the system's on the laptop).
+                const auto openedTitle=designContext.text("Opened","已打开"),exportedTitle=designContext.text("Exported","已覆盖原文件");
                 // A window of frames after an action that ends later (an export's progress display).
                 const auto timeWindow=[&](core::Module m,const char*name,double seconds,const std::function<bool()>&done){
                     const auto raster0=rasterizer.stats();const auto pages0=designContext.pagesBuilt();double worst=0;bool finished=false;
-                    for(unsigned f=1;f<=unsigned(seconds*30)&&!finished;++f){const double t=time+double(f)/30;drainUtility(t);const auto f0=Clock::now();frameAt(t);worst=std::max(worst,milliseconds(f0));finished=done();}
+                    double worstAt=0;std::int64_t worstRasters=0;
+                    for(unsigned f=1;f<=unsigned(seconds*30)&&!finished;++f){const double t=time+double(f)/30;drainUtility(t);const auto r0=rasterizer.stats();const auto f0=Clock::now();frameAt(t);const double ms=milliseconds(f0);
+                        if(ms>worst){worst=ms;worstAt=double(f)/30;worstRasters=std::int64_t(rasterizer.stats().rasterizations-r0.rasterizations);}finished=done();}
                     time+=seconds+.05;const auto raster1=rasterizer.stats();const auto pages1=designContext.pagesBuilt();
                     timings.push_back(Json::Object{{"module",std::string(core::moduleIdentifier(m))},{"action",std::string(name)},{"ran",finished},
                         {"actionMs",0.},{"frameMs",0.},{"clickFrameMs",0.},{"settleMaxFrameMs",worst},{"pagesBuilt",std::int64_t(0)},{"rasterizations",std::int64_t(0)},{"textLayouts",std::int64_t(0)},
                         {"secondPagesBuilt",std::int64_t(pages1-pages0)},{"secondRasterizations",std::int64_t(raster1.rasterizations-raster0.rasterizations)},
-                        {"secondTextLayouts",std::int64_t(raster1.textLayoutsCreated-raster0.textLayoutsCreated)}});
+                        {"secondTextLayouts",std::int64_t(raster1.textLayoutsCreated-raster0.textLayoutsCreated)},{"worstFrameAt",worstAt},{"worstFrameRasterizations",worstRasters}});
                     b2Bound(std::string(core::moduleIdentifier(m))+"."+name);};
+                // timeAction with the worst frame of the second named: when it came
+                // (seconds after the click; 1.01: the frame after the utility drain)
+                // and what it rasterized.
+                const auto timeDetailed=[&](core::Module m,const char*name,const std::function<bool(double)>&act){
+                    drainUtility(time);frameAt(time);time+=.05;
+                    const auto raster0=rasterizer.stats();const auto pages0=designContext.pagesBuilt();
+                    const auto t0=Clock::now();const bool done=act(time);const double actionMs=milliseconds(t0);
+                    const auto t1=Clock::now();frameAt(time);const double frameMs=milliseconds(t1);
+                    const auto pages1=designContext.pagesBuilt();const auto raster1=rasterizer.stats();
+                    double settleMax=0,worstAt=0;std::int64_t worstRasters=0;
+                    const auto timed=[&](double t,double at){const auto r0=rasterizer.stats();const auto f0=Clock::now();frameAt(t);const double ms=milliseconds(f0);
+                        if(ms>settleMax){settleMax=ms;worstAt=at;worstRasters=std::int64_t(rasterizer.stats().rasterizations-r0.rasterizations);}};
+                    for(unsigned f=1;f<=15;++f)timed(time+double(f)/15,double(f)/15);
+                    time+=1;drainUtility(time);timed(time+.01,1.01);
+                    const auto pages2=designContext.pagesBuilt();const auto raster2=rasterizer.stats();
+                    timings.push_back(Json::Object{{"module",std::string(core::moduleIdentifier(m))},{"action",std::string(name)},{"ran",done},
+                        {"actionMs",actionMs},{"frameMs",frameMs},{"clickFrameMs",actionMs+frameMs},{"settleMaxFrameMs",settleMax},
+                        {"pagesBuilt",std::int64_t(pages1-pages0)},{"rasterizations",std::int64_t(raster1.rasterizations-raster0.rasterizations)},
+                        {"textLayouts",std::int64_t(raster1.textLayoutsCreated-raster0.textLayoutsCreated)},
+                        {"secondPagesBuilt",std::int64_t(pages2-pages0)},{"secondRasterizations",std::int64_t(raster2.rasterizations-raster0.rasterizations)},
+                        {"secondTextLayouts",std::int64_t(raster2.textLayoutsCreated-raster0.textLayoutsCreated)},{"worstFrameAt",worstAt},{"worstFrameRasterizations",worstRasters}});
+                    b2Bound(std::string(core::moduleIdentifier(m))+"."+name);time+=.1;};
                 // Shelf Open (hidden coverage opens through a synthetic Shell stand-in that takes
                 // 30 ms, never the Shell): the card's Open, then the host's action message.
                 if(shelf&&shelf->canvas()&&shelfModuleOwner&&registry.enabled(*shelfModuleOwner)&&!args.shelfDataRoot.empty()){
@@ -1250,23 +1282,26 @@ int Application::Impl::runHiddenVerification(){
                     const auto file=args.shelfDataRoot.parent_path()/"freeze-probe-files"/"Synthetic open.txt";
                     {std::ofstream out(file,std::ios::binary);out<<"Synthetic freeze probe file to open\n";}
                     const auto utf8=file.u8string();const std::vector<std::string> one{std::string(reinterpret_cast<const char*>(utf8.data()),utf8.size())};
+                    // A confirm bar left open drops every toast (CenterOverlay::showToast).
+                    if(designContext.overlay().isConfirming())(void)designContext.overlay().decide(dz::ConfirmState::Decision::cancel);
                     if(showModule(M)&&shelf->importFiles(one,hostTime(time))){settleFor(20);
                         // The Shelf's notices (an open's result) as the message loop delivers them.
                         const auto pumpShelf=[&](double t){MSG msg{};while(PeekMessageW(&msg,static_cast<HWND>(host.hwnd()),tools::ShelfService::noticeMessage,tools::ShelfService::noticeMessage,PM_REMOVE))
                             (void)shelf->message({host.hwnd(),msg.message,msg.wParam,msg.lParam},hostTime(t));};
-                        const auto id=canvas->items().empty()?std::string():canvas->items().front().id;
+                        const auto id=canvas->items().empty()?std::string():canvas->items().front().id;bool sawOpened{};
                         const auto opens0=shelf->resources();
                         timeAction(M,"open",[&](double t){if(id.empty()||!canvas->perform("shelf:"+id+":open"))return false;
                             // The host's action message, handled here as its handler does (not through the wall-clock route).
                             MSG posted{};(void)PeekMessageW(&posted,static_cast<HWND>(host.hwnd()),tools::ShelfService::actionMessage,tools::ShelfService::actionMessage,PM_REMOVE);
                             auto action=shelf->takeAction();if(!action||action->kind!=tools::ShelfServiceAction::Kind::open)return false;
-                            shelf->open(action->itemID,hostTime(t));pumpShelf(t);return true;});
+                            shelf->open(action->itemID,hostTime(t));pumpShelf(t);sawOpened=toast()==openedTitle;return true;});
                         {const auto opens1=shelf->resources();const auto queued=std::int64_t(opens1.opensQueued-opens0.opensQueued),atOnce=std::int64_t(opens1.opensAtOnce-opens0.opensAtOnce);
                             timings.back()["opensQueued"]=queued;timings.back()["opensAtOnce"]=atOnce;
                             // rc140: the Shell's ShellExecuteEx on this thread, in the frame after the click.
                             hostCheck(queued==1&&atOnce==0,"A Shelf Open hands the Shell its own thread ("+std::to_string(queued)+" queued, "+std::to_string(atOnce)+" at once)");}
-                        for(unsigned n=0;n<200&&toast()!="Opened";++n){Sleep(5);pumpShelf(time);frameAt(time);time+=.005;}
-                        hostCheck(toast()=="Opened","A Shelf Open toasts once the Shell took the item");
+                        for(unsigned n=0;n<200&&!sawOpened;++n){Sleep(5);pumpShelf(time);frameAt(time);time+=.005;sawOpened=toast()==openedTitle;}
+                        hostCheck(sawOpened,"A Shelf Open toasts once the Shell took the item (shown: "+toast()+(designContext.overlay().isConfirming()?", confirming":"")+
+                            (canvas->isActive()?"":", inactive")+", "+std::to_string(canvas->items().size())+" items)");
                         settleFor(60);(void)press(M,"shelf.clear",false,time);settleFor(10);
                         if(designContext.overlay().isConfirming())(void)designContext.overlay().decide(dz::ConfirmState::Decision::confirm);settleFor(10);
                     }else skip(M,"open");
@@ -1283,13 +1318,13 @@ int Application::Impl::runHiddenVerification(){
                     const auto exportEnabled=[&]{auto*x=findIn(*c,"export");return x&&x->enabled();};
                     const auto importShelf=[&](double t){return perform("open",t)&&perform("open:shelf",t)&&perform("shelf:coverage-shelf-1",t);};
                     if(hasControl("mediaTab:0"))(void)perform("mediaTab:0",time);settleFor(15);
-                    timeAction(M,"importShelf",[&](double t){return importShelf(t);});
+                    timeDetailed(M,"importShelf",[&](double t){return importShelf(t);});
                     settleFor(30);need(exportEnabled(),"The probe's Shelf still opens in Media Assembly");
-                    timeAction(M,"closeConfirm",[&](double t){return perform("close",t)&&confirmIs("mediaClose")&&designContext.overlay().decide(dz::ConfirmState::Decision::confirm);});
+                    timeDetailed(M,"closeConfirm",[&](double t){return perform("close",t)&&confirmIs("mediaClose")&&designContext.overlay().decide(dz::ConfirmState::Decision::confirm);});
                     settleFor(30);need(!exportEnabled(),"The probe's close empties Media Assembly");
                     (void)importShelf(time);settleFor(30);drainUtility(time);settleFor(30);need(exportEnabled(),"The probe's Shelf still opens again");
-                    timeAction(M,"overwriteConfirm",[&](double t){return perform("export",t)&&perform("export:overwrite",t)&&confirmIs("mediaOverwrite")&&designContext.overlay().decide(dz::ConfirmState::Decision::confirm);});
-                    timeWindow(M,"overwriteFinish",4,[&]{return toast()=="Exported";});
+                    timeDetailed(M,"overwriteConfirm",[&](double t){return perform("export",t)&&perform("export:overwrite",t)&&confirmIs("mediaOverwrite")&&designContext.overlay().decide(dz::ConfirmState::Decision::confirm);});
+                    timeWindow(M,"overwriteFinish",4,[&]{return toast()==exportedTitle;});
                     settleFor(30);(void)perform("close",time);if(confirmIs("mediaClose"))(void)designContext.overlay().decide(dz::ConfirmState::Decision::confirm);settleFor(30);
                     break;
                 }

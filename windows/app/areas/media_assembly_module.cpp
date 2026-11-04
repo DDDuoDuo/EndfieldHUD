@@ -451,14 +451,19 @@ private:
             const auto t0 = Clock::now(); const bool done = canvas.performAccessibilityAction("mediaTab:2", run.t); const double actionMs = ms(t0);
             const auto t1 = Clock::now(); run.present(); const double frameMs = ms(t1);
             const auto raster1 = host_.rasterizer().stats(); const auto pages1 = context_.pagesBuilt(); const auto decodes1 = stats().thumbnailDecodesAtOnce;
-            double settle = 0;
-            for (unsigned f = 1; f <= 15; ++f) { if (f == 1) step.drain(); const auto f0 = Clock::now(); run.present(1. / 15); settle = std::max(settle, ms(f0)); }
+            double settle = 0, worstAt = 0; std::int64_t worstRasters = 0;
+            for (unsigned f = 1; f <= 15; ++f) {
+                if (f == 1) step.drain();
+                const auto r0 = host_.rasterizer().stats(); const auto f0 = Clock::now(); run.present(1. / 15); const double frame = ms(f0);
+                if (frame > settle) { settle = frame; worstAt = f / 15.; worstRasters = std::int64_t(host_.rasterizer().stats().rasterizations - r0.rasterizations); }
+            }
             const auto raster2 = host_.rasterizer().stats(); const auto pages2 = context_.pagesBuilt();
             step.timing(ehud::data::Json::Object{{"module", std::string("mediaAssembly")}, {"action", std::string("stickersFirstVisit")}, {"ran", done}, {"actionMs", actionMs}, {"frameMs", frameMs},
                 {"clickFrameMs", actionMs + frameMs}, {"settleMaxFrameMs", settle}, {"pagesBuilt", std::int64_t(pages1 - pages0)},
                 {"rasterizations", std::int64_t(raster1.rasterizations - raster0.rasterizations)}, {"textLayouts", std::int64_t(raster1.textLayoutsCreated - raster0.textLayoutsCreated)},
                 {"secondPagesBuilt", std::int64_t(pages2 - pages0)}, {"secondRasterizations", std::int64_t(raster2.rasterizations - raster0.rasterizations)},
-                {"secondTextLayouts", std::int64_t(raster2.textLayoutsCreated - raster0.textLayoutsCreated)}, {"thumbnailDecodesAtOnce", std::int64_t(decodes1 - decodes0)}});
+                {"secondTextLayouts", std::int64_t(raster2.textLayoutsCreated - raster0.textLayoutsCreated)}, {"thumbnailDecodesAtOnce", std::int64_t(decodes1 - decodes0)},
+                {"worstFrameAt", worstAt}, {"worstFrameRasterizations", worstRasters}});
             tabbed = done;
             // rc140: all 30 read, hashed and decoded in the click's frame.
             step.check(decodes1 == decodes0, "The first Stickers visit decodes no thumbnail on the HUD thread (" + std::to_string(decodes1 - decodes0) + " at once)");
