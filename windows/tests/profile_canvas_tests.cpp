@@ -360,6 +360,7 @@ void hiddenScaleChange() {
     check(o.portraitSteps == std::vector<int>{1}, "A hidden Profile asks for its portrait at the new scale at once");
     w.show(canvas);
     check(o.portraitSteps.size() > 1, "Shown again, it re-renders at the new scale");
+}
 
 // The design scene's plan over two emissions (native/hud_design_scene.cpp
 // syncContent): a part whose JSON is unchanged is reused, one with the same
