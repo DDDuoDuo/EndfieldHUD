@@ -602,6 +602,8 @@ void broadcastBuilds() {
     RecordedMeasurer measurer;
     m::SettingsCanvasHooks hooks;
     hooks.language = [](const Settings& s) { const auto l = core::languageFromSetting(s.string("language")).value_or(L::system); return l == L::system ? L::english : l; };
+    std::optional<M> reopens; // the module the closed HUD reopens on
+    hooks.reopensOn = [&reopens](M module) { return reopens == module; };
     m::SettingsUpdateStatus update;
     World w(measurer, hooks, update);
     const auto leave = [&](M module) { w.hide(module); w[module].prepareToLeave(w.now); };
@@ -627,6 +629,14 @@ void broadcastBuilds() {
     const auto shown = title();
     w.update([](Settings& s) { s.set("language", "system"); });
     check(w.context.pagesBuilt() == pages + 1 && title() != shown, "A pick that keeps the resolved language rebuilds the shown page at once (its dropdown)");
+    // The HUD closed on System: a change while closed builds the page it
+    // reopens on at once (not on the opening frame); the others defer.
+    leave(M::system); reopens = M::system;
+    pages = w.context.pagesBuilt();
+    w.update([](Settings& s) { s.set("applicationIcon", "babel"); });
+    check(w.context.pagesBuilt() == pages + 1, "A change while closed builds only the page the HUD reopens on (" + std::to_string(w.context.pagesBuilt() - pages) + ")");
+    reopens.reset(); w.show(M::system);
+    check(w.context.pagesBuilt() == pages + 1, "The reopened page builds nothing on the opening frame");
 }
 
 // Every L10n pair the canvas calls has its row in the generated catalog

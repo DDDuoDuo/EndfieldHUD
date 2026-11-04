@@ -224,11 +224,13 @@ SettingsCanvas::Structure SettingsCanvas::structure() const {
 // rasterizes what changed, so a canvas that is not shown re-renders when next
 // shown (the same page), and a pick of another language renders the shown
 // page once, when the host's appearance brings that language (the same
-// frame: it is applied before the next scene sync).
+// frame: it is applied before the next scene sync). The page the closed HUD
+// reopens on re-renders at the change, off the opening frame.
 void SettingsCanvas::controllerChanged() {
     if (!renderedLanguage()) return;
     if (structure() != renderedStructure_) {
-        if (!isShown() || (hooks_.language && hooks_.language(config()) != env().language)) deferRerender();
+        const bool shown = isShown() || (hooks_.reopensOn && hooks_.reopensOn(module()));
+        if (!shown || (hooks_.language && hooks_.language(config()) != env().language)) deferRerender();
         else rerender();
     } else { const auto binders = binders_; for (const auto& bind : binders) bind(); }
     if (!isActive()) return;
