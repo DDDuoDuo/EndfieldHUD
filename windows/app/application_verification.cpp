@@ -1255,13 +1255,15 @@ int Application::Impl::runHiddenVerification(){
                     b2Bound(std::string(core::moduleIdentifier(m))+"."+name);};
                 // timeAction with the worst frame of the second named: when it came
                 // (seconds after the click; 1.01: the frame after the utility drain)
-                // and what it rasterized.
-                const auto timeDetailed=[&](core::Module m,const char*name,const std::function<bool(double)>&act){
+                // and what it rasterized. `afterClick` runs between the click's frame
+                // and the second's (untimed).
+                const auto timeDetailed=[&](core::Module m,const char*name,const std::function<bool(double)>&act,const std::function<void()>&afterClick={}){
                     drainUtility(time);frameAt(time);time+=.05;
                     const auto raster0=rasterizer.stats();const auto pages0=designContext.pagesBuilt();
                     const auto t0=Clock::now();const bool done=act(time);const double actionMs=milliseconds(t0);
                     const auto t1=Clock::now();frameAt(time);const double frameMs=milliseconds(t1);
                     const auto pages1=designContext.pagesBuilt();const auto raster1=rasterizer.stats();
+                    if(afterClick)afterClick();
                     double settleMax=0,worstAt=0;std::int64_t worstRasters=0;
                     const auto timed=[&](double t,double at){const auto r0=rasterizer.stats();const auto f0=Clock::now();frameAt(t);const double ms=milliseconds(f0);
                         if(ms>settleMax){settleMax=ms;worstAt=at;worstRasters=std::int64_t(rasterizer.stats().rasterizations-r0.rasterizations);}};
@@ -1323,7 +1325,12 @@ int Application::Impl::runHiddenVerification(){
                     timeDetailed(M,"closeConfirm",[&](double t){return perform("close",t)&&confirmIs("mediaClose")&&designContext.overlay().decide(dz::ConfirmState::Decision::confirm);});
                     settleFor(30);need(!exportEnabled(),"The probe's close empties Media Assembly");
                     (void)importShelf(time);settleFor(30);drainUtility(time);settleFor(30);need(exportEnabled(),"The probe's Shelf still opens again");
-                    timeDetailed(M,"overwriteConfirm",[&](double t){return perform("export",t)&&perform("export:overwrite",t)&&confirmIs("mediaOverwrite")&&designContext.overlay().decide(dz::ConfirmState::Decision::confirm);});
+                    // The export runs for real on the long-work thread and the second's
+                    // progress polls read how far it got; waiting for it (its completion
+                    // still lands at the closing drain) makes every poll read 1, so the
+                    // second's work no longer depends on the machine's speed.
+                    timeDetailed(M,"overwriteConfirm",[&](double t){return perform("export",t)&&perform("export:overwrite",t)&&confirmIs("mediaOverwrite")&&designContext.overlay().decide(dz::ConfirmState::Decision::confirm);},
+                        [&]{if(longWork)longWork->waitIdle();});
                     timeWindow(M,"overwriteFinish",4,[&]{return toast()==exportedTitle;});
                     settleFor(30);(void)perform("close",time);if(confirmIs("mediaClose"))(void)designContext.overlay().decide(dz::ConfirmState::Decision::confirm);settleFor(30);
                     break;
