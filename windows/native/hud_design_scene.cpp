@@ -141,7 +141,7 @@ struct NativeDesignScene::Impl {
     const d::Layer* root{};
     std::uint64_t revision{};
     double density{};
-    bool synced{}, imagesDirty{}, posed{};
+    bool synced{}, imagesDirty{}, posed{}, keepsDeparted{};
     double lastTime{};
     Matrix boxWorld;
     const d::Layer* insertionAfter{};
@@ -476,7 +476,7 @@ bool NativeDesignScene::syncContent(const d::Layer& root, const d::TextServices&
         }
     }
     std::erase_if(i.kept, [](const Impl::Kept& k) { return !k.scene; });
-    for (std::size_t n = 0; n < i.parts.size(); ++n) if (!used[n]) i.keep(*i.parts[n], now);
+    for (std::size_t n = 0; n < i.parts.size(); ++n) if (!used[n]) { if (i.keepsDeparted) i.keep(*i.parts[n], now); else i.retire(*i.parts[n]); }
     i.trimKept(now);
     std::vector<std::unique_ptr<Impl::Part>> next;
     next.reserve(plans.size());
@@ -629,6 +629,7 @@ bool NativeDesignScene::requiresFrames(double now) const {
     i.time(now);
     return i.synced && d::requiresFrames(i.artwork, now);
 }
+void NativeDesignScene::keepDeparted(bool keep) noexcept { impl_->keepsDeparted = keep; }
 std::optional<double> NativeDesignScene::nextKeptExpiry() const noexcept {
     std::optional<double> next;
     for (const auto& k : impl_->kept) if (k.scene) next = std::min(next.value_or(k.since + Impl::keptSeconds), k.since + Impl::keptSeconds);

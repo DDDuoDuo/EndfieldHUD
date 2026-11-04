@@ -61,6 +61,7 @@ struct DesignOwnerCore::Impl {
         Slot(std::unique_ptr<d::Canvas> c, gpu::LayerRasterizer& r, const gpu::LayerRasterOptions& o, const DesignOwnerOptions& options)
             : canvas(std::move(c)), module(canvas->module()), geometry(r), surface(prepare(o), module) {
             scene = std::make_unique<gpu::NativeDesignScene>(r, o, options.name + "." + std::string(core::moduleIdentifier(module)), options.images);
+            scene->keepDeparted(true); // released at the close (hostEvent overlayConcealed)
         }
         gpu::LayerScene& prepare(const gpu::LayerRasterOptions& o) { geometry.load(blank(), o); return geometry; }
     };

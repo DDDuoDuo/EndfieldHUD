@@ -90,7 +90,7 @@ void run(const std::filesystem::path& shader) {
     renderer.setCamera(layerViewportProjection(590, 510));
     LayerRasterizer raster;
     LayerRasterOptions options; options.pixelsPerPoint = 1;
-    NativeDesignScene scene(raster, options, "design.test");
+    NativeDesignScene scene(raster, options, "design.test"); scene.keepDeparted(true);
     LayerComposition composition;
     d::TextServices text;
     Tree tree;
@@ -224,6 +224,15 @@ void run(const std::filesystem::path& shader) {
         composition.setEntries(renderer, {}); composition.present(renderer);
         check(scene.releaseResources(renderer) && scene.stats().keptParts == 0, "An uncomposed scene keeps no parts");
         tree.root.insert(row, 1); ++revision; publish(*expiry + .3);
+        // A scene whose owner keeps nothing (every scene but the module pages) retires a part that leaves at once.
+        scene.keepDeparted(false);
+        const auto kept0 = scene.stats().partsKept;
+        row.removeFromParent(); ++revision; publish(*expiry + .4);
+        check(scene.stats().keptParts == 0 && !scene.nextKeptExpiry(), "Without keepDeparted a part that leaves the tree is not kept");
+        const auto loads1 = scene.stats().partsLoaded;
+        tree.root.insert(row, 1); ++revision; publish(*expiry + .5);
+        check(scene.stats().partsKept == kept0 && scene.stats().partsLoaded == loads1 + 1, "Shown again it loads, as before kept parts");
+        scene.keepDeparted(true);
     }
     composition.detach(renderer);
     check(scene.releaseResources(renderer), "Detached scene releases everything");
@@ -334,7 +343,7 @@ void run(const std::filesystem::path& shader) {
     // --- a long menu: its rows are parts of their own (rasterized near its list's
     // viewport), its fade one image (Layer::setGroupsParts, CALayer group opacity) ------------
     {
-        NativeDesignScene menus(raster, options, "design.menu");
+        NativeDesignScene menus(raster, options, "design.menu"); menus.keepDeparted(true);
         LayerComposition published;
         d::LayerArena arena{"m"};
         auto& root = arena.make("root");

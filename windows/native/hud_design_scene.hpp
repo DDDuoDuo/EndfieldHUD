@@ -122,6 +122,11 @@ public:
     // group detached in updatePose).
     bool uploadAnimations(Renderer&);
     bool requiresFrames(double now) const;
+    // Parts that leave the tree are kept (a few seconds, a bounded size) for
+    // a quick return (a pop-over or menu opened again) only where the owner
+    // asks: the module pages (DesignOwnerCore), which also release them when
+    // the HUD closes. Every other scene retires them at once, as before.
+    void keepDeparted(bool) noexcept;
     // Kept parts (a closed pop-over's or menu's scenes) expire after a few
     // seconds without a frame too: the owner wakes at nextKeptExpiry, and
     // expireKept releases the expired ones at once (they left the tree at
