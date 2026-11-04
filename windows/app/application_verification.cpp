@@ -1051,13 +1051,11 @@ int Application::Impl::runHiddenVerification(){
                     // in it. Personal ID: the inline editor joins the card as its own part
                     // (rc140: the card's 66 surfaces); a commit or the date kind loads the
                     // card, one part so that it fades as one image (59-73 surfaces), built
-                    // once. The first switch of an opening (rc140: Calendar's 208 surfaces on
-                    // the switch frame): warmed while the HUD idled.
+                    // once.
                     {"display.themeSwatch",{2,48}},{"display.themeSwatchBack",{2,48}},{"display.appIconTile",{1,8}},
                     {"system.languagePick",{1,512}},{"system.languageBack",{1,512}},{"system.languageResolved",{1,512}},{"system.languageResolvedBack",{1,512}},
-                    {"profile.fieldCommit",{1,96}},{"profile.fieldBegin",{0,8}},{"profile.dateKind",{1,80}},{"profile.dateKindBack",{1,80}},
-                    {"calendar.firstSwitch",{1,24}}};
-                const bool enforceBounds=true;constexpr double idleWarmBoundMs=150;
+                    {"profile.fieldCommit",{1,96}},{"profile.fieldBegin",{0,8}},{"profile.dateKind",{1,80}},{"profile.dateKindBack",{1,80}}};
+                const bool enforceBounds=true;
                 const auto timeAction=[&](core::Module m,const char*name,const std::function<bool(double)>&act){
                     drainUtility(time);frameAt(time);time+=.05;
                     const auto raster0=rasterizer.stats();const auto pages0=designContext.pagesBuilt();
@@ -1296,35 +1294,16 @@ int Application::Impl::runHiddenVerification(){
                 }else timings.push_back(Json::Object{{"module","clock"},{"action","styleNext"},{"skipped",true}});
                 // The first switch of an opening to a module visited in an earlier
                 // one (its artwork was dropped at the close): Calendar, after the HUD
-                // closed on Personal ID and opened again, idle for three seconds. The
-                // File Shelf (synthetic files) visited before it warms too: neither
-                // module's show runs for it (the Shelf's resolves every file, Calendar's
-                // presents its controller), and no idle step carries a frame's work.
-                const bool shelfWarm=shelf&&shelf->canvas()&&shelfModuleOwner&&registry.enabled(*shelfModuleOwner)&&!args.shelfDataRoot.empty()&&calendar&&calendarModuleOwner&&registry.enabled(*calendarModuleOwner)&&showModule(core::Module::fileShelf);
-                if(shelfWarm){const auto folder=args.shelfDataRoot.parent_path()/"freeze-probe-files";std::filesystem::create_directories(folder);std::vector<std::string> paths;
-                    for(unsigned n=1;n<=12;++n){char name[32];std::snprintf(name,sizeof name,"Synthetic warm %02u.txt",n);const auto file=folder/name;
-                        {std::ofstream out(file,std::ios::binary);out<<"Synthetic warm-up probe file "<<n<<"\n";}
-                        const auto utf8=file.u8string();paths.emplace_back(reinterpret_cast<const char*>(utf8.data()),utf8.size());}
-                    need(shelf->importFiles(paths,hostTime(time)),"The warm-up probe's synthetic files are added to the Shelf");settleFor(30);}
+                // closed on Personal ID and opened again, idle for three seconds. It
+                // rasterizes its page on the switch frame, as in rc140 (Calendar: about
+                // 208 surfaces); recorded only, no bound.
                 if(calendar&&calendarModuleOwner&&registry.enabled(*calendarModuleOwner)&&showModule(core::Module::calendar)&&showModule(core::Module::profile)){
                     close(time);for(unsigned f=0;f<90&&session->phase()!=core::VisibilityPhase::concealed;++f)present(time+double(f)/60,true);
                     time+=1.6;concealed(time);time+=.5;
                     open(time);for(unsigned f=0;f<90;++f)frameAt(time+double(f)/60);time+=1.5;
                     // Idle after the entrance: the host's deadlines run when due, as its timer would wake them.
-                    const auto memory0=rasterizer.stats();const auto shelf0=shelfWarm?shelf->resources():tools::ShelfResourceStats{};
-                    double idleMax{};for(unsigned f=0;f<30;++f){const double t=time+double(f)/10;const auto d0=Clock::now();onDeadline(t);idleMax=std::max(idleMax,milliseconds(d0));frameAt(t);}time+=3.1;
-                    const auto memory1=rasterizer.stats();const auto shelf1=shelfWarm?shelf->resources():tools::ShelfResourceStats{};
+                    for(unsigned f=0;f<30;++f){const double t=time+double(f)/10;onDeadline(t);frameAt(t);}time+=3.1;
                     timeAction(core::Module::calendar,"firstSwitch",[&](double t){selectModule(core::Module::calendar,t);return notes->selected()==core::Module::calendar;});
-                    timings.back()["idleMaxDeadlineMs"]=idleMax;timings.back()["idleRasterizations"]=std::int64_t(memory1.rasterizations-memory0.rasterizations);
-                    timings.back()["idleResourceBytes"]=std::int64_t(memory1.resourceBytes)-std::int64_t(memory0.resourceBytes);
-                    // One idle step loads at most one whole part past its budget (Calendar's month grid: about 50 ms).
-                    if(enforceBounds)hostCheck(idleMax<=idleWarmBoundMs,"Each idle warm-up step stays within "+std::to_string(int(idleWarmBoundMs))+" ms ("+std::to_string(idleMax)+")");
-                    if(shelfWarm){const auto refreshes=std::int64_t(shelf1.storeRefreshes-shelf0.storeRefreshes);
-                        timings.back()["idleShelfRefreshes"]=refreshes;timings.back()["idleShelfWarmed"]=shelf1.scenePixelBytes>0;
-                        hostCheck(shelf1.scenePixelBytes>0&&refreshes==0,"The idle HUD warms the File Shelf without refreshing its store ("+std::to_string(refreshes)+" refreshes)");
-                        if(showModule(core::Module::fileShelf)){(void)press(core::Module::fileShelf,"shelf.clear",false,time);settleFor(10);
-                            need(designContext.overlay().isConfirming()&&designContext.overlay().decide(dz::ConfirmState::Decision::confirm),"The warm-up probe's Clear confirms");settleFor(30);}
-                        need(shelf->canvas()->items().empty(),"The warm-up probe's Clear empties the Shelf");}
                 }else skip(core::Module::calendar,"firstSwitch");
                 if(notes&&notes->selected()!=before)(void)showModule(before);}
                 actionTiming=std::move(timings);

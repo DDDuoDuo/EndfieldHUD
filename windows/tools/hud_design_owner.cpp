@@ -245,21 +245,6 @@ void DesignOwnerCore::prewarm(const app::ModuleFrame& frame) {
     s->canvas->show(i.time);
     i.sync(*s);
 }
-DesignOwnerCore::Warm DesignOwnerCore::warm(core::Module module, double t, std::size_t surfaces) {
-    auto& i = *impl_;
-    i.clock(t);
-    auto* s = i.slot(module);
-    if (!s || !i.overlay || s->shown || s->active || s->canvas->isShown()) return Warm::refused;
-    i.bind();
-    // Not shown: Calendar's show presents its controller (reminders
-    // rescheduled, the file saved), the File Shelf's resolves every file,
-    // OrbiPom's leave pauses its session; a switch runs them as on the Mac.
-    s->canvas->prepareContent(i.time);
-    s->scene->setLoadBudget(surfaces);
-    try { i.sync(*s); } catch (...) { s->scene->setLoadBudget(std::nullopt); throw; }
-    s->scene->setLoadBudget(std::nullopt);
-    return s->scene->loadsPending() ? Warm::partial : Warm::done;
-}
 bool DesignOwnerCore::requiresFrames(double t) const {
     const auto& i = *impl_;
     if (!i.overlay) return false;

@@ -84,8 +84,6 @@ struct ShelfResourceStats {
     // Archive saves handed to the utility worker, and saved at once on this
     // thread (a full queue), since the service started.
     std::uint64_t savesQueued{}, savesAtOnce{};
-    // Store refreshes (every file resolved, relinks read): the canvas's show.
-    std::uint64_t storeRefreshes{};
 };
 // Store / native failure text in the HUD language (Mac FileShelfStoreError
 // errorDescription, with Windows' own situations from modules::shelfText).

@@ -138,13 +138,6 @@ public:
     // Accessors for the owner core (cursor and UIA project through these).
     const core::Matrix4& boxWorld() const noexcept;
     NativeDesignSceneStats stats() const noexcept;
-    // A warm-up spread over idle deadlines: each syncContent loads parts
-    // (rasterizes them) until about `surfaces` surfaces were added, at least
-    // one part; the parts left load on later syncs, the content unchanged
-    // (the scroll path). nullopt (the default): every resident part loads.
-    void setLoadBudget(std::optional<std::size_t> surfaces) noexcept;
-    // A resident part (within the visibility window) waits for its load.
-    bool loadsPending() const noexcept;
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

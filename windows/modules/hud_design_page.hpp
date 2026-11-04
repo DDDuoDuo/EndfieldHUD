@@ -368,12 +368,6 @@ public:
     // makeContent(for:style:): a module re-syncs its model around it (Clipboard,
     // Event Log, Volume) and calls Canvas::show.
     virtual void show(double now);
-    // The page show() would reveal, built when stale, without showing the
-    // canvas: no module show() / willLeave() runs (nothing is presented,
-    // activated or saved) and isShown() stays false. The open HUD's idle
-    // warm-up (DesignOwnerCore::warm) rasterizes it ahead of the switch,
-    // whose show() then brings the model up to date as before.
-    void prepareContent(double now);
     void setActive(bool, double now);           // deactivation forgets retained sub-page offsets
     // The HUD closed (overlayConcealed): the Mac drops SystemHUDView and
     // builds every canvas anew at the next opening (OverlayController

@@ -256,7 +256,7 @@ struct ShelfService::Impl {
     // synchronous failure does. A full queue waits for the earlier saves;
     // the store then saves at once.
     std::size_t savesQueued{};
-    std::uint64_t savesHanded{}, savesAtOnce{}, refreshes{};
+    std::uint64_t savesHanded{}, savesAtOnce{};
     bool queueSave(const data::FileShelfStore::Save& save) {
         const bool queued = submit([save] { data::FileShelfStore::write(save); }, [this, save](std::exception_ptr error) {
             --savesQueued;
@@ -468,7 +468,7 @@ struct ShelfService::Impl {
         mod::FileShelfServices s;
         s.available = bool(store);
         s.items = [this] { return items(); };
-        s.refresh = [this] { ++refreshes; if (store) store->refresh(); readRelinks(); };
+        s.refresh = [this] { if (store) store->refresh(); readRelinks(); };
         s.add = [this](std::span<const std::string> paths) { need(bool(store), "File shelf storage is unavailable"); (void)store->add(paths); };
         s.remove = [this](std::span<const std::string> ids) { removeReferences(ids); };
         s.clear = [this] { clearReferences(); };
@@ -725,7 +725,7 @@ ShelfResourceStats ShelfService::resources() const {
     }
     if (i.icons) { const auto icons = i.icons->stats(); out.iconProvider = true; out.iconWorkers = icons.workers; out.iconWorkerStarts = icons.workerStarts; out.iconParks = icons.parks; out.iconRequests = icons.requests; }
     const auto cache = i.memoryImages.stats(); out.cachedIcons = cache.cachedImages; out.cachedIconBytes = cache.cachedBytes;
-    out.savesQueued = i.savesHanded; out.savesAtOnce = i.savesAtOnce; out.storeRefreshes = i.refreshes;
+    out.savesQueued = i.savesHanded; out.savesAtOnce = i.savesAtOnce;
     return out;
 }
 } // namespace endfield::tools

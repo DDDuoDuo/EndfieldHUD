@@ -193,28 +193,8 @@ void run(const std::filesystem::path& shader) {
     const auto parked = scene.stats().partsLoaded;
     publish(.23);
     check(scene.stats().partsLoaded > parked && !scene.entries().empty(), "The next sync rebuilds parked artwork");
-    // A warm-up spread over idle deadlines (setLoadBudget): a parked scene
-    // loads one budget of parts per sync, the rest on later syncs, and ends
-    // with every resident part of an unbudgeted sync.
-    {
-        composition.setEntries(renderer, {});
-        composition.present(renderer);
-        const auto whole = scene.stats().partsLoaded - parked;
-        check(scene.park(renderer) && scene.loadsPending(), "A parked scene waits for its loads");
-        const auto before = scene.stats().partsLoaded;
-        unsigned steps{};
-        for (double t = .231; scene.loadsPending() && steps < 64; t += .001, ++steps) {
-            scene.setLoadBudget(1);
-            scene.syncContent(tree.root, text, revision, 1, t);
-            scene.setLoadBudget(std::nullopt);
-            check(scene.stats().partsLoaded == before + std::min<std::size_t>(steps + 1, whole), "Each budgeted sync loads one part (at least one)");
-        }
-        check(!scene.loadsPending() && steps == whole && scene.stats().partsLoaded == before + whole, "Every resident part loaded over the budgeted syncs");
-        publish(.3);
-        check(scene.stats().partsLoaded == before + whole, "Then nothing loads again");
-    }
     rejects([&] { scene.syncContent(tree.root, text, revision, 1, .1); }, "Time runs forward");
-    rejects([&] { scene.syncContent(tree.root, text, revision, 5, .31); }, "Density stays within 1...4");
+    rejects([&] { scene.syncContent(tree.root, text, revision, 5, .3); }, "Density stays within 1...4");
     composition.detach(renderer);
     check(scene.releaseResources(renderer), "Detached scene releases everything");
     detached = true;
