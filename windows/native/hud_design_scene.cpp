@@ -643,6 +643,14 @@ bool NativeDesignScene::expireKept(double now, Renderer& r) {
         if (i.retired[n - 1]->releaseResources(r)) i.retired.erase(i.retired.begin() + std::ptrdiff_t(n - 1));
     return i.kept.size() != kept;
 }
+bool NativeDesignScene::releaseKept(Renderer& r) {
+    auto& i = *impl_;
+    const auto kept = i.kept.size(), before = i.retired.size();
+    i.dropKept();
+    for (auto n = i.retired.size(); n > before; --n)
+        if (i.retired[n - 1]->releaseResources(r)) i.retired.erase(i.retired.begin() + std::ptrdiff_t(n - 1));
+    return kept != 0;
+}
 std::span<const LayerCompositionEntry> NativeDesignScene::entries() const noexcept { return impl_->entries; }
 bool NativeDesignScene::collectRetired(Renderer& r) {
     auto& i = *impl_;

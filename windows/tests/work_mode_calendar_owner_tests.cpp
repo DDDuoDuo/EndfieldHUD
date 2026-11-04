@@ -247,6 +247,21 @@ void calendar(Harness& h, const std::filesystem::path&) {
     (void)owner->deadline(h.time);
     check(owner->core().sceneStats(core::Module::calendar)->keptParts == 0, "At the wake, without a frame, the kept pop-over is released");
     h.settle(*owner, 10);
+    // Closing the HUD on the Calendar with the pop-over open: the close closes
+    // it, and its frames keep its scene. No wake runs while the HUD is hidden,
+    // so the finished close releases it (the shown page stays).
+    check(cal.performAccessibilityAction("calendar.monthPicker", h.time) && cal.popoverOpen(), "The month picker opens again");
+    h.settle(*owner, 30);
+    owner->overlayClosing(h.time); h.overlay->overlayClosing(h.time);
+    h.settle(*owner, 20);
+    const auto closing = *owner->core().sceneStats(core::Module::calendar);
+    check(!cal.popoverOpen() && closing.keptParts >= 1 && closing.keptPixelBytes > 0, "Closing the HUD closes the pop-over, and the close's frames keep its scene");
+    (void)owner->hostEvent({app::HostEvent::Kind::overlayConcealed}, h.time);
+    const auto concealed = *owner->core().sceneStats(core::Module::calendar);
+    check(concealed.keptParts == 0 && concealed.keptPixelBytes == 0 && concealed.residentPixelBytes == closing.residentPixelBytes - closing.keptPixelBytes && concealed.surfaces == closing.surfaces,
+        "The finished close releases the kept pop-over and keeps the shown page");
+    h.overlay->setOverlayVisible(true, h.time); owner->setOverlayVisible(true, h.time);
+    h.settle(*owner, 20);
     h.modules.select(core::Module::notes, h.time);
     h.settle(*owner, 40);
     owner->overlayClosing(h.time); h.overlay->overlayClosing(h.time);

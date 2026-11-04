@@ -129,6 +129,10 @@ public:
     // expired.
     std::optional<double> nextKeptExpiry() const noexcept;
     bool expireKept(double now, Renderer&);
+    // The HUD finished closing: every kept part goes at once, whatever its
+    // expiry (no frame or wake runs while the HUD is hidden). True when one
+    // was kept.
+    bool releaseKept(Renderer&);
     std::span<const LayerCompositionEntry> entries() const noexcept;
     bool collectRetired(Renderer&);
     bool releaseResources(Renderer&);
