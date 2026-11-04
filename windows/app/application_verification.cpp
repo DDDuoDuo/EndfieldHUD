@@ -1048,14 +1048,16 @@ int Application::Impl::runHiddenVerification(){
                     {"fileShelf.selectFromMany",{1,48}},{"fileShelf.deselect",{1,48}},
                     // Group b3. Settings (rc140: every built Settings canvas, 4, rebuilt per
                     // click, 8 for a language): the shown page only, once; a language once,
-                    // in it. Personal ID (rc140: the card, 59-73 surfaces): the elements the
-                    // change touches. The first switch of an opening (rc140: Calendar's 208
-                    // surfaces on the switch frame): warmed while the HUD idled.
+                    // in it. Personal ID: the inline editor joins the card as its own part
+                    // (rc140: the card's 66 surfaces); a commit or the date kind loads the
+                    // card, one part so that it fades as one image (59-73 surfaces), built
+                    // once. The first switch of an opening (rc140: Calendar's 208 surfaces on
+                    // the switch frame): warmed while the HUD idled.
                     {"display.themeSwatch",{2,48}},{"display.themeSwatchBack",{2,48}},{"display.appIconTile",{1,8}},
                     {"system.languagePick",{1,512}},{"system.languageBack",{1,512}},{"system.languageResolved",{1,512}},{"system.languageResolvedBack",{1,512}},
-                    {"profile.fieldCommit",{1,24}},{"profile.fieldBegin",{0,8}},{"profile.dateKind",{1,16}},{"profile.dateKindBack",{1,16}},
+                    {"profile.fieldCommit",{1,96}},{"profile.fieldBegin",{0,8}},{"profile.dateKind",{1,80}},{"profile.dateKindBack",{1,80}},
                     {"calendar.firstSwitch",{1,24}}};
-                const bool enforceBounds=true;
+                const bool enforceBounds=true;constexpr double idleWarmBoundMs=150;
                 const auto timeAction=[&](core::Module m,const char*name,const std::function<bool(double)>&act){
                     drainUtility(time);frameAt(time);time+=.05;
                     const auto raster0=rasterizer.stats();const auto pages0=designContext.pagesBuilt();
@@ -1067,15 +1069,16 @@ int Application::Impl::runHiddenVerification(){
                     // Completions of the action's utility work (saves) arrive as the message loop would deliver them.
                     time+=1;drainUtility(time);{const auto f0=Clock::now();frameAt(time+.01);settleMax=std::max(settleMax,milliseconds(f0));}
                     const auto pages2=designContext.pagesBuilt();const auto raster2=rasterizer.stats();
-                    // Work Mode and the Shelf carry the regression bounds: their actions must run.
-                    if(m==core::Module::workMode||m==core::Module::fileShelf)need(done,(std::string("The timed action ")+name+" ran").c_str());
+                    // Work Mode, the Shelf and every bounded action carry the regression bounds:
+                    // they must run (a bound over an action that did nothing passes vacuously).
+                    const auto key=std::string(core::moduleIdentifier(m))+"."+name;
+                    if(m==core::Module::workMode||m==core::Module::fileShelf||bounds.contains(key))need(done,("The timed action "+key+" ran").c_str());
                     timings.push_back(Json::Object{{"module",std::string(core::moduleIdentifier(m))},{"action",std::string(name)},{"ran",done},
                         {"actionMs",actionMs},{"frameMs",frameMs},{"clickFrameMs",actionMs+frameMs},{"settleMaxFrameMs",settleMax},
                         {"pagesBuilt",std::int64_t(pages1-pages0)},{"rasterizations",std::int64_t(raster1.rasterizations-raster0.rasterizations)},
                         {"textLayouts",std::int64_t(raster1.textLayoutsCreated-raster0.textLayoutsCreated)},
                         {"secondPagesBuilt",std::int64_t(pages2-pages0)},{"secondRasterizations",std::int64_t(raster2.rasterizations-raster0.rasterizations)},
                         {"secondTextLayouts",std::int64_t(raster2.textLayoutsCreated-raster0.textLayoutsCreated)}});
-                    const auto key=std::string(core::moduleIdentifier(m))+"."+name;
                     if(const auto bound=bounds.find(key);bound!=bounds.end()){
                         const auto pages=std::int64_t(pages2-pages0),rasters=std::int64_t(raster2.rasterizations-raster0.rasterizations);
                         const bool within=pages<=bound->second.first&&rasters<=bound->second.second;
@@ -1198,7 +1201,7 @@ int Application::Impl::runHiddenVerification(){
                         if(!tile.empty()){
                             timeAction(M,"appIconTile",[&](double t){return press(M,tile,false,t);});
                             if(!chosen.empty()){(void)display->performAccessibilityAction(chosen,time);settleFor(15);}
-                        }
+                        }else skip(M,"appIconTile");
                         timeAction(M,"iconsBack",[&](double t){return keyTo(M,dz::key::escape,false,t);});
                     }else skip(M,"iconsPage");
                 }
@@ -1247,13 +1250,13 @@ int Application::Impl::runHiddenVerification(){
                     timeAction(M,"languageResolved",[&](double t){return pick(resolved,t);});
                     timings.back()["resolvedChanged"]=watchAppearance.language==core::languageFromSetting(resolved);
                     timeAction(M,"languageResolvedBack",[&](double t){return pick(original,t);});
-                }
+                }else skip(core::Module::system,"languagePick");
                 // Settings > Display: a binder-only change (a toggle) and back.
                 if(settingsUI&&settingsModuleOwner&&registry.enabled(*settingsModuleOwner))if(auto*display=showModule(core::Module::display);display&&findIn(*display,"bootLog")){
                     const auto M=core::Module::display;
                     timeAction(M,"bootLogToggle",[&](double t){return press(M,"bootLog",false,t);});
                     timeAction(M,"bootLogBack",[&](double t){return press(M,"bootLog",false,t);});
-                }
+                }else skip(core::Module::display,"bootLogToggle");
                 // Personal ID: the name's editor opening, the date kind and back.
                 if(auto*c=showModule(core::Module::profile)){
                     const auto M=core::Module::profile;auto*owner=registry.presenter(M);bindOwner(M,time);
@@ -1262,8 +1265,8 @@ int Application::Impl::runHiddenVerification(){
                     if(findIn(*c,"profile:toggleDateLabel")){
                         timeAction(M,"dateKind",[&](double t){return press(M,"profile:toggleDateLabel",false,t);});
                         timeAction(M,"dateKindBack",[&](double t){return press(M,"profile:toggleDateLabel",false,t);});
-                    }
-                }
+                    }else skip(M,"dateKind");
+                }else skip(core::Module::profile,"fieldBegin");
                 // The desktop clock: the next style through its indicator's route, then back.
                 if(chrome&&settingsUI){
                     constexpr std::array<std::string_view,5> styles{"digital","split","dial","rail","stacked"};
@@ -1275,31 +1278,54 @@ int Application::Impl::runHiddenVerification(){
                         const auto t1=Clock::now();frameAt(time);const double frameMs=milliseconds(t1);const auto raster1=rasterizer.stats();const bool pushed=chrome->styleTransitionActive();
                         double settleMax=0;for(unsigned f=1;f<=15;++f){const auto f0=Clock::now();frameAt(time+double(f)/15);settleMax=std::max(settleMax,milliseconds(f0));}
                         time+=1.1;const auto raster2=rasterizer.stats();
-                        // The push rasterizes its two pages and the status panel once (rc140: the panel twice).
-                        const bool within=!pushed||raster1.rasterizations-raster0.rasterizations<=3;
-                        if(enforceBounds)hostCheck(within,std::string("The clock style change ")+name+" rasterizes its two pages and the status panel once ("+std::to_string(raster1.rasterizations-raster0.rasterizations)+")");
-                        timings.push_back(Json::Object{{"module","clock"},{"action",std::string(name)},{"ran",settingsUI->controller().committed().string("clockStyle")==styles[style]},{"pushed",pushed},
+                        // The push rasterizes its two pages and the status panel once (rc140: the panel twice);
+                        // the open, interactive HUD pushes unless Reduce Motion is on (clockStyleChanged), and
+                        // without a push the panel rasterizes once, with its page.
+                        const bool ran=settingsUI->controller().committed().string("clockStyle")==styles[style];
+                        const bool pushes=!settings.reduceMotion&&session->inputEnabled()&&session->phase()==core::VisibilityPhase::visible;
+                        const auto rasters=raster1.rasterizations-raster0.rasterizations;
+                        const bool within=ran&&pushed==pushes&&rasters<=(pushed?3u:1u);
+                        if(enforceBounds)hostCheck(within,std::string("The clock style change ")+name+" applies"+(pushes?", pushes its two pages":"")+" and rasterizes the status panel once (applied "+
+                            std::to_string(ran)+", pushed "+std::to_string(pushed)+", "+std::to_string(rasters)+" rasterizations)");
+                        timings.push_back(Json::Object{{"module","clock"},{"action",std::string(name)},{"ran",ran},{"pushed",pushed},
                             {"actionMs",actionMs},{"frameMs",frameMs},{"clickFrameMs",actionMs+frameMs},{"settleMaxFrameMs",settleMax},{"pagesBuilt",std::int64_t{}},
                             {"rasterizations",std::int64_t(raster1.rasterizations-raster0.rasterizations)},{"textLayouts",std::int64_t(raster1.textLayoutsCreated-raster0.textLayoutsCreated)},
                             {"secondPagesBuilt",std::int64_t{}},{"secondRasterizations",std::int64_t(raster2.rasterizations-raster0.rasterizations)},{"secondTextLayouts",std::int64_t(raster2.textLayoutsCreated-raster0.textLayoutsCreated)},{"withinBound",within}});
                         time+=.1;};
                     timeClock("styleNext",(index+1)%5);timeClock("styleBack",index);
-                }
+                }else timings.push_back(Json::Object{{"module","clock"},{"action","styleNext"},{"skipped",true}});
                 // The first switch of an opening to a module visited in an earlier
                 // one (its artwork was dropped at the close): Calendar, after the HUD
-                // closed on Personal ID and opened again, idle for three seconds.
+                // closed on Personal ID and opened again, idle for three seconds. The
+                // File Shelf (synthetic files) visited before it warms too: neither
+                // module's show runs for it (the Shelf's resolves every file, Calendar's
+                // presents its controller), and no idle step carries a frame's work.
+                const bool shelfWarm=shelf&&shelf->canvas()&&shelfModuleOwner&&registry.enabled(*shelfModuleOwner)&&!args.shelfDataRoot.empty()&&calendar&&calendarModuleOwner&&registry.enabled(*calendarModuleOwner)&&showModule(core::Module::fileShelf);
+                if(shelfWarm){const auto folder=args.shelfDataRoot.parent_path()/"freeze-probe-files";std::filesystem::create_directories(folder);std::vector<std::string> paths;
+                    for(unsigned n=1;n<=12;++n){char name[32];std::snprintf(name,sizeof name,"Synthetic warm %02u.txt",n);const auto file=folder/name;
+                        {std::ofstream out(file,std::ios::binary);out<<"Synthetic warm-up probe file "<<n<<"\n";}
+                        const auto utf8=file.u8string();paths.emplace_back(reinterpret_cast<const char*>(utf8.data()),utf8.size());}
+                    need(shelf->importFiles(paths,hostTime(time)),"The warm-up probe's synthetic files are added to the Shelf");settleFor(30);}
                 if(calendar&&calendarModuleOwner&&registry.enabled(*calendarModuleOwner)&&showModule(core::Module::calendar)&&showModule(core::Module::profile)){
                     close(time);for(unsigned f=0;f<90&&session->phase()!=core::VisibilityPhase::concealed;++f)present(time+double(f)/60,true);
                     time+=1.6;concealed(time);time+=.5;
                     open(time);for(unsigned f=0;f<90;++f)frameAt(time+double(f)/60);time+=1.5;
                     // Idle after the entrance: the host's deadlines run when due, as its timer would wake them.
-                    const auto memory0=rasterizer.stats();
+                    const auto memory0=rasterizer.stats();const auto shelf0=shelfWarm?shelf->resources():tools::ShelfResourceStats{};
                     double idleMax{};for(unsigned f=0;f<30;++f){const double t=time+double(f)/10;const auto d0=Clock::now();onDeadline(t);idleMax=std::max(idleMax,milliseconds(d0));frameAt(t);}time+=3.1;
-                    const auto memory1=rasterizer.stats();
-                    timeAction(core::Module::calendar,"firstSwitch",[&](double t){selectModule(core::Module::calendar,t);return true;});
+                    const auto memory1=rasterizer.stats();const auto shelf1=shelfWarm?shelf->resources():tools::ShelfResourceStats{};
+                    timeAction(core::Module::calendar,"firstSwitch",[&](double t){selectModule(core::Module::calendar,t);return notes->selected()==core::Module::calendar;});
                     timings.back()["idleMaxDeadlineMs"]=idleMax;timings.back()["idleRasterizations"]=std::int64_t(memory1.rasterizations-memory0.rasterizations);
                     timings.back()["idleResourceBytes"]=std::int64_t(memory1.resourceBytes)-std::int64_t(memory0.resourceBytes);
-                }
+                    // One idle step loads at most one whole part past its budget (Calendar's month grid: about 50 ms).
+                    if(enforceBounds)hostCheck(idleMax<=idleWarmBoundMs,"Each idle warm-up step stays within "+std::to_string(int(idleWarmBoundMs))+" ms ("+std::to_string(idleMax)+")");
+                    if(shelfWarm){const auto refreshes=std::int64_t(shelf1.storeRefreshes-shelf0.storeRefreshes);
+                        timings.back()["idleShelfRefreshes"]=refreshes;timings.back()["idleShelfWarmed"]=shelf1.scenePixelBytes>0;
+                        hostCheck(shelf1.scenePixelBytes>0&&refreshes==0,"The idle HUD warms the File Shelf without refreshing its store ("+std::to_string(refreshes)+" refreshes)");
+                        if(showModule(core::Module::fileShelf)){(void)press(core::Module::fileShelf,"shelf.clear",false,time);settleFor(10);
+                            need(designContext.overlay().isConfirming()&&designContext.overlay().decide(dz::ConfirmState::Decision::confirm),"The warm-up probe's Clear confirms");settleFor(30);}
+                        need(shelf->canvas()->items().empty(),"The warm-up probe's Clear empties the Shelf");}
+                }else skip(core::Module::calendar,"firstSwitch");
                 if(notes&&notes->selected()!=before)(void)showModule(before);}
                 actionTiming=std::move(timings);
             }
