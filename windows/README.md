@@ -5359,7 +5359,7 @@ of every interactive action in the centre modules and the shell found 61
 click paths doing heavy work on the HUD thread
 (`build/windows-1.3`, not tracked); checkpoint 141 fixes them except those
 listed under known issues, and carries the opening and closing work that
-missed RC 140. The code is at `42645f1` on `codex/windows-migration`; it is
+missed RC 140. The code is at `981da19` on `codex/windows-migration`; it is
 still Windows 1.3.0 (build 19). Six fix branches were merged with merge
 commits; each went through its own review, and the merged result through a
 cross-group review in which two verifiers had to confirm each finding. User-facing changes are in `CHANGELOG.md` (RC 141).
@@ -5425,6 +5425,27 @@ cross-group review in which two verifiers had to confirm each finding. User-faci
   168 and 192 and `--animation-trace-launch` check every case against RC
   139's live measurement.
 
+### A stop at the end of an opening (`981da19`)
+
+- Found by the hidden animation trace (once on RC 140, once on `79cff60`):
+  `NativeLabelPlan::update` (`core/source_native_labels.cpp`) required each
+  label node's inherited alpha to lie in 0...1, and the entrance clip's
+  `RightBotton/Group9` fade (its last key at the clip's end, 0.75 s) sampled
+  through the eased `VisibilityClock::clipTime` and `ScalarCurve`'s Hermite
+  segment rounds to 1.0000000000000002 in the last microseconds of the
+  deploy. The exception is outside every module guard, so `wWinMain` wrote
+  `last-fatal.txt` and showed the error dialog: about 1 opening in 10,000,
+  in every build since `39db006` (Windows 1.2.0 included); Reduce Motion
+  lands exactly on the end.
+- Fix: the labels clamp the inherited alpha to 0...1 where they read it, as
+  Core Animation clamps the Mac's layer opacity
+  (`HUDSourceWatchView.swift`); NaN is still rejected. The frame batch and
+  the Map cutout already tolerated it, and the HUD's own fade curve never
+  exceeds 1. `source_watch_session_contracts` sweeps the last 20 µs of a
+  synthetic deploy (alpha above 1 in thousands of samples, every one
+  placed); `source_native_labels_contracts` checks the clamp and the NaN
+  rejection. Both fail on the old code.
+
 ### Results (hidden, laptop, owner coverage; ms vary by about ±30 %)
 
 Click frame / worst frame of the next second, then rasterizations in that
@@ -5446,8 +5467,27 @@ second, RC 140 → checkpoint 141:
 | Settings theme swatch | 155 ms, 5 pages | 48–66 ms, 2 pages |
 | Clipboard pin | 110 ms, 204 | 22–31 ms, 15 |
 
-Openings and closings, idle and memory against RC 140 on the same laptop:
-see the Verified section.
+Against RC 140 (`1768ec4`) on the same laptop, hidden, 165 Hz pacing, median
+[range]; no clear regression (raw traces in `build/windows-1.3`, not tracked):
+
+- Animation trace, late frames per run: default DPI 1181 [1104..1234] →
+  1193 [1094..1273] (n = 6; interleaved pairs 1185 → 1172); 144 DPI 1235
+  [1190..1374] → 1265 [1170..1397] (n = 6; interleaved 1234 → 1217). Uploads
+  and rasterizations per run are identical; per module within each other's
+  ranges.
+- Idle, 60 s open: ambient off 422 → 422 ms CPU, 267 frames, 4 deadlines;
+  ambient on 3875 → 3750 ms CPU, 1995 frames. Closed: no frame and no
+  deadline but the one graphics release, in both.
+- Memory after visiting all 21 modules: open 640.0 → 630.4 MB private,
+  closed +5 s 247.3 → 246.3, past the grace 190.4 → 188.6.
+- Ambiguous, within noise: the grace release's one deadline with ambient on
+  60.0 → 67.2 ms (ambient off 67.2 → 66.6); `application_memory_trace`'s
+  closed snapshot (simulated clock, software device) 287 → 324 MiB, back to
+  290 → 286 after the cycles and not seen on the real clock; Shelf
+  Shift-extend 13 → 30 ms, Event Log back to All 15 → 20 ms, Work Mode's
+  Countdown tab 12 → 17 ms against single RC 140 runs.
+- The intermittent "Invalid native source node state" that ended 1 of 13
+  trace runs on each build is the stop fixed in `981da19`.
 
 ### Known issues
 
@@ -5460,18 +5500,21 @@ see the Verified section.
   Mac's re-layout), the classified editor built at the end of the wipe.
 - Reopening the HUD while it is still closing keeps the on-screen density
   through the redeploy.
+- The small clicks and the memory-trace snapshot listed as ambiguous under
+  the results.
 - The unreproduced RC 140 report: `application_owner_coverage` now checks
   every page and the shell parts after a countdown and a tab switch
   (`66f219f`).
 
 ### Verified
 
-- Portable: 207/207 suites at `42645f1`.
-- Laptop, hidden, slot `w13`: `ALL_BUILD` with 0 errors and 0 warnings;
-  340/342 suites. `projection_composition_contracts` and
-  `projection_workspace_contracts` need the interactive session (they
-  pass on CI's runner); `now_playing_netease_cost_contracts` failed once
-  under load and passed alone (no Now Playing code changed).
+- Portable: 207/207 suites at `981da19`.
+- Laptop, hidden, slot `w13` at `981da19`: `ALL_BUILD` with 0 errors and 0
+  warnings; 340/342 suites. `projection_composition_contracts` and
+  `projection_workspace_contracts` need the interactive session (they pass
+  on CI's runner). `now_playing_netease_cost_contracts` failed once under
+  load at `4589400` and passed alone and in every later full run (no Now
+  Playing code changed).
 - CI run 41776351206 at `42645f1`: portable and Windows suites with the
   developer package.
 - Not yet: the tester's check on the desktop.

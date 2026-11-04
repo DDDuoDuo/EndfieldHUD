@@ -68,6 +68,12 @@ the desktop. Everything else is as in RC 140 below.
   sharpness after a scaling change matches RC 139's. A Shelf drag-out and a
   close that interrupts an opening start the next opening at the sharpness
   RC 139 used.
+- **The HUD no longer stops with an error at the end of an opening.** About
+  one opening in 10,000, a fade-in at its very end was rounded a hair above
+  fully opaque, a check rejected it, and the app closed with its error dialog.
+  The value is now held at fully opaque, as on the Mac. This has been in
+  every Windows build since 39db006 (7 October), Windows 1.2.0 included;
+  Reduce Motion was not affected.
 - Memory the HUD kept for menus, pop-overs, the File Shelf's prepared tiles
   and an unused minigame engine is released when the HUD finishes closing.
 
@@ -85,6 +91,12 @@ the desktop. Everything else is as in RC 140 below.
   opening a classified document's editor (40–150 ms in the hidden tests).
 - Reopening the HUD while it is still closing keeps the sharpness it had on
   screen until the opening finishes.
+- A few small clicks measured slightly slower than in one RC 140 run, within
+  the hidden tests' noise: extending a File Shelf selection with Shift
+  (about 13 → 30 ms), the Event Log's return to All (about 15 → 20 ms) and
+  Work Mode's Countdown tab (about 12 → 17 ms).
+- Openings, closings, the idle HUD and memory measured the same as RC 140 in
+  the hidden tests (memory after visiting every module slightly lower).
 - The unreproduced RC 140 report (modules losing their interface after a
   Work Mode countdown or an Event Log tab switch) was not seen again; the
   hidden tests now check every page after both.
