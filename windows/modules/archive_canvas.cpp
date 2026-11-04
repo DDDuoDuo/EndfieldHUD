@@ -218,7 +218,9 @@ public:
         // The revealed text, under every bar: a part of its own, empty (so not
         // drawn) while locked; the bars, stamp and password bar follow in the
         // panel's next part, which the reveal leaves as it was (no reload of
-        // the panel at the verification).
+        // the panel at the verification). The three still fade as one image
+        // (CALayer group opacity): the plate's group draws the others.
+        l.setGroupsParts(true);
         revealed_->setFrame({0, 0, size.width, size.height});
         revealed_->setPartRoot(true);
         l.add(*revealed_);
