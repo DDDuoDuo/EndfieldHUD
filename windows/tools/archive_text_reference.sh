@@ -24,7 +24,7 @@ shim=b'import Foundation\nenum ArchiveTemplate { case journal, research }\n'
 (build/'ArchiveCategory.swift').write_bytes(shim+block)
 (out/'provenance.json').write_text(json.dumps({'sourceAuthority':pin,'sourcePath':'Sources/ArchiveStore.swift','sourceSHA256':hashlib.sha256(source).hexdigest(),'sourceBlockSHA256':hashlib.sha256(block).hexdigest(),'canvasSHA256':hashlib.sha256((root/'Sources/ArchiveCanvas.swift').read_bytes()).hexdigest(),'exporterSHA256':{p:hashlib.sha256((root/p).read_bytes()).hexdigest() for p in ['windows/tools/archive_text_reference.swift','windows/tools/archive_text_reference.sh']},'windowsCreated':False,'input':'synthetic text; prohibited activation; temporary CFFIXED_USER_HOME'},indent=2,sort_keys=True)+'\n')
 PY
-SDK="$(bash "$ROOT/scripts/build.sh" --print-sdk)"
+SDK="$(bash "$ROOT/windows/tools/mac_sdk.sh")"
 xcrun swiftc -swift-version 5 -O -parse-as-library -sdk "$SDK" \
     -module-cache-path "$ROOT/build/windows-module-reference/.compiler/module-cache" \
     -framework Cocoa "$BUILD/ArchiveCategory.swift" "$ROOT/windows/tools/archive_text_reference.swift" \

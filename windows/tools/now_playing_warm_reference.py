@@ -27,6 +27,6 @@ let owners=[SourceWarm(),SourceWarm()]
 let rows=owners.enumerated().map{index,owner in owner.run(index==0)}
 try JSONSerialization.data(withJSONObject:rows,options:[.sortedKeys]).write(to:URL(fileURLWithPath:CommandLine.arguments[1]))
 '''
-(out/'oracle.swift').write_text(source);env=os.environ.copy();env.pop('SDKROOT',None);sdk=subprocess.check_output(['bash',str(root/'scripts/build.sh'),'--print-sdk'],text=True,env=env).strip();subprocess.run(['/usr/bin/swiftc','-sdk',sdk,'-module-cache-path',str(root/'build/windows-module-reference/.compiler/module-cache'),str(out/'oracle.swift'),'-o',str(out/'oracle')],check=True,env=env)
+(out/'oracle.swift').write_text(source);env=os.environ.copy();env.pop('SDKROOT',None);sdk=subprocess.check_output(['bash',str(root/'windows/tools/mac_sdk.sh')],text=True,env=env).strip();subprocess.run(['/usr/bin/swiftc','-sdk',sdk,'-module-cache-path',str(root/'build/windows-module-reference/.compiler/module-cache'),str(out/'oracle.swift'),'-o',str(out/'oracle')],check=True,env=env)
 for name in ['output','repeat']:subprocess.run([str(out/'oracle'),str(out/(name+'.json'))],check=True)
 assert (out/'output.json').read_bytes()==(out/'repeat.json').read_bytes();j={'schemaVersion':1,'sourceCommit':commit,'sourcePins':{path:hashlib.sha256(data).hexdigest()},'rows':json.loads((out/'output.json').read_text())};dest=root/'windows/tests/fixtures/now-playing-warm-source.json';dest.write_text(json.dumps(j,separators=(',',':'))+'\n');print(dest,len(dest.read_bytes()),hashlib.sha256(dest.read_bytes()).hexdigest())

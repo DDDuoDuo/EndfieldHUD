@@ -10,6 +10,11 @@ final class ModuleReferenceLayerEncoder {
     private var assets: [String: [String: Any]] = [:]
     private(set) var unsupported: [[String: String]] = []
     var rasterAssets: [[String: Any]] { assets.keys.sorted().compactMap { assets[$0] } }
+    /// Opt-in (tools/hud_design_reference.swift): a hook that encodes layer subclasses the generic
+    /// export cannot name here (returns true when it handled the class), and full animation records
+    /// (keyPath, values, timing, fill, additive, repeat, group children) instead of the metadata flag.
+    var layerHook: ((CALayer, String, inout [String: Any]) -> Bool)?
+    var recordsAnimations = false
 
     init(output: URL) throws {
         self.output = output
@@ -143,6 +148,7 @@ final class ModuleReferenceLayerEncoder {
             "magnificationFilter": layer.magnificationFilter.rawValue, "minificationFilterBias": layer.minificationFilterBias,
             "shouldRasterize": layer.shouldRasterize, "rasterizationScale": layer.rasterizationScale,
             "animationKeys": (layer.animationKeys() ?? []).sorted()]
+        let handled = layerHook?(layer, id, &row) ?? false
         if let shape = layer as? CAShapeLayer {
             row["kind"] = "shape"
             row["shape"] = ["path": path(shape.path), "fillColor": color(shape.fillColor), "strokeColor": color(shape.strokeColor),
@@ -159,7 +165,7 @@ final class ModuleReferenceLayerEncoder {
                 },
                 "locations": gradient.locations as Any? ?? NSNull(), "startPoint": Self.point(gradient.startPoint),
                 "endPoint": Self.point(gradient.endPoint), "type": gradient.type.rawValue]
-        } else if type(of: layer) != CALayer.self { flag(id, "layer subclass " + String(NSStringFromClass(type(of: layer)).split(separator: ".").last!), category: "unverified-layer-subclass") }
+        } else if type(of: layer) != CALayer.self, !handled { flag(id, "layer subclass " + String(NSStringFromClass(type(of: layer)).split(separator: ".").last!), category: "unverified-layer-subclass") }
         if let contents = layer.contents { row["contents"] = try raster(contents, id: id) }
         else { row["contents"] = NSNull() }
         if let mask = layer.mask { row["mask"] = try encode(mask, id: id + "/mask") }
@@ -169,7 +175,49 @@ final class ModuleReferenceLayerEncoder {
         if !(layer.filters ?? []).isEmpty { flag(id, "filters") }
         if !(layer.backgroundFilters ?? []).isEmpty { flag(id, "backgroundFilters") }
         if layer.compositingFilter != nil { flag(id, "compositingFilter") }
-        if !(layer.animationKeys() ?? []).isEmpty { flag(id, "model tree exported; presentation animations not sampled", category: "metadata-only-animation") }
+        if recordsAnimations {
+            let now = layer.convertTime(CACurrentMediaTime(), from: nil)
+            row["animations"] = (layer.animationKeys() ?? []).sorted().compactMap { key in layer.animation(forKey: key).map { animation(key, $0, now: now) } }
+        } else if !(layer.animationKeys() ?? []).isEmpty { flag(id, "model tree exported; presentation animations not sampled", category: "metadata-only-animation") }
+        return row
+    }
+    /// One animation as data; `delay` is beginTime relative to the layer's current time (ms resolution).
+    func animation(_ key: String?, _ a: CAAnimation, now: CFTimeInterval) -> [String: Any] {
+        func value(_ v: Any?) -> Any {
+            guard let v else { return NSNull() }
+            if let n = v as? NSNumber { return n.doubleValue }
+            if let array = v as? [Any] { return array.map { value($0) } }
+            if CFGetTypeID(v as CFTypeRef) == CGColor.typeID { return color((v as! CGColor)) }
+            if CFGetTypeID(v as CFTypeRef) == CGPath.typeID { return path((v as! CGPath)) }
+            if let n = v as? NSValue {
+                switch String(cString: n.objCType) {
+                case let t where t.hasPrefix("{CATransform3D"): return Self.transform(n.caTransform3DValue)
+                case let t where t.hasPrefix("{CGPoint"): return Self.point(n.pointValue)
+                case let t where t.hasPrefix("{CGSize"): return [n.sizeValue.width, n.sizeValue.height]
+                case let t where t.hasPrefix("{CGRect"): return Self.rect(n.rectValue)
+                default: return ["objCType": String(cString: n.objCType)]
+                }
+            }
+            return ["type": String(reflecting: type(of: v))]
+        }
+        func timing(_ f: CAMediaTimingFunction?) -> Any {
+            guard let f else { return NSNull() }
+            var one: [Float] = [0, 0], two: [Float] = [0, 0]
+            f.getControlPoint(at: 1, values: &one); f.getControlPoint(at: 2, values: &two)
+            return [one[0], one[1], two[0], two[1]].map(Double.init)
+        }
+        var row: [String: Any] = ["key": key as Any? ?? NSNull(), "class": String(describing: type(of: a)),
+            "duration": a.duration, "delay": a.beginTime > 0 ? ((a.beginTime - now) * 1000).rounded() / 1000 : 0,
+            "timeOffset": a.timeOffset, "speed": a.speed, "repeatCount": a.repeatCount, "repeatDuration": a.repeatDuration,
+            "autoreverses": a.autoreverses, "fillMode": a.fillMode.rawValue, "removedOnCompletion": a.isRemovedOnCompletion,
+            "timing": timing(a.timingFunction)]
+        if let p = a as? CAPropertyAnimation { row["keyPath"] = p.keyPath as Any? ?? NSNull(); row["additive"] = p.isAdditive; row["cumulative"] = p.isCumulative }
+        if let b = a as? CABasicAnimation { row["from"] = value(b.fromValue); row["to"] = value(b.toValue); row["by"] = value(b.byValue) }
+        if let k = a as? CAKeyframeAnimation {
+            row["values"] = value(k.values); row["keyTimes"] = value(k.keyTimes); row["calculationMode"] = k.calculationMode.rawValue
+            row["timingFunctions"] = (k.timingFunctions ?? []).map { timing($0) }
+        }
+        if let g = a as? CAAnimationGroup { row["children"] = (g.animations ?? []).map { animation(nil, $0, now: now) } }
         return row
     }
 }

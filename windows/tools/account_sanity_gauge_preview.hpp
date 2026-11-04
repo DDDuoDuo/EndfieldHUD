@@ -13,6 +13,9 @@ struct AccountSanityGaugeOptions {
     // Work Mode header mode. `running` lets the gauge wake at minute changes.
     std::function<modules::hypergryph::WorkModeGaugeInput()> workMode;
     std::function<bool()> workModeRunning;
+    // HUDAccountGauge.onOpenWorkMode (Mac 1.3.0): a press on the bar while it
+    // has no sanity data opens the Work Mode module through the host.
+    std::function<void()> openWorkMode;
 };
 // Header wallet owner (HUDAccountGauge at header position 292,0, i.e. design
 // point 562,2 on the core plane). Borrows the app-owned account controller and
@@ -34,7 +37,8 @@ public:
     bool requiresFrames(double time) const;
     // The shown wallet (whatever it shows) and an open popover: a left press
     // there is always consumed by pointer(), so it never falls through to the
-    // source shell or the host's outside-the-circle close.
+    // source shell or the host's outside-the-circle close (a bar without
+    // sanity data opens Work Mode, never closes the HUD).
     bool covers(core::Point logicalClientPoint) const;
     bool capturesPointer() const noexcept;   // open recovery popover consumes clicks
     bool pointer(const app::PointerEvent&,double time);

@@ -2,74 +2,53 @@
 #include "core/data/json.hpp"
 #include <algorithm>
 #include <atomic>
-#include <set>
 #include <stdexcept>
 #include <thread>
 
 namespace endfield::native {
 namespace {
 void need(bool value,const char*message){if(!value)throw std::invalid_argument(message);}
-bool validKey(std::string_view key){return !key.empty()&&key.size()<=512&&key.find('\0')==key.npos&&ehud::data::Json::validUtf8(key);}
 }
-struct ActivityIconProvider::Impl:std::enable_shared_from_this<Impl>{
-    struct Entry{std::string memoryKey;std::shared_ptr<const ActivityIconPixels>image;std::uint64_t used{};};
+LayerImageSourceLimits ActivityIconLoads::limits()noexcept{return {modules::ActivityAppIcons::capacity,modules::ActivityAppIcons::capacity+modules::ActivityAppIcons::batch*16,16*1024*1024};}
+struct ActivityIconLoads::Impl:std::enable_shared_from_this<Impl>{
     app::UtilityExecutor&executor;app::UtilityExecutor::Route route;ActivityIconLoader loader;const std::thread::id owner=std::this_thread::get_id();
-    LayerImageSource images;std::map<std::string,Entry,std::less<>>cache;std::vector<std::string>wanted;std::string prefix;
-    unsigned pixels{};std::uint64_t revision{},clock{},nextKey{};bool inFlight{},retry{};ActivityIconStats counts;
+    LayerImageSource images{ActivityIconLoads::limits()};std::string prefix;std::uint64_t nextKey{};bool inFlight{};ActivityIconStats counts;
     Impl(app::UtilityExecutor&e,ActivityIconLoader l):executor(e),route(e.makeRoute()),loader(std::move(l)){
-        need(bool(loader),"Activity icons require an explicit loader");static std::atomic<std::uint64_t>identity{};prefix="activity-icon-"+std::to_string(++identity)+"/";wanted.reserve(maximumPending);
+        need(bool(loader),"Activity icons require an explicit loader");static std::atomic<std::uint64_t>identity{};prefix="activity-icon-"+std::to_string(++identity)+"/";
     }
-    void thread()const{if(owner!=std::this_thread::get_id())throw std::logic_error("Activity icon provider belongs to its creating thread");}
-    void evict(){
-        // Least recently bound first; the bound visible rows are always newest.
-        while(cache.size()>maximumCached){auto oldest=cache.begin();for(auto it=cache.begin();it!=cache.end();++it)if(it->second.used<oldest->second.used)oldest=it;if(!oldest->second.memoryKey.empty())images.retire(oldest->second.memoryKey);cache.erase(oldest);}
+    void thread()const{if(owner!=std::this_thread::get_id())throw std::logic_error("Activity icon loads belong to their creating thread");}
+    bool load(std::vector<modules::ActivityAppIcons::Request>requests,modules::ActivityAppIcons::Done done){
+        thread();
+        auto keys=std::make_shared<std::vector<std::pair<std::string,unsigned>>>();for(const auto&r:requests)keys->push_back({r.key,r.pixels});
+        auto results=std::make_shared<std::vector<std::optional<ActivityIconPixels>>>(keys->size());const std::weak_ptr<Impl>weak=weak_from_this();
+        const bool accepted=executor.submit(route,[keys,results,load=loader]{
+            for(std::size_t n=0;n<keys->size();++n){const auto&[key,size]=(*keys)[n];try{auto value=load(key,size);if(value&&value->width==size&&value->height==size&&value->straightRGBA.size()==std::size_t(size)*size*4)(*results)[n]=std::move(value);}catch(const std::bad_alloc&){throw;}catch(...){}}
+        },[weak,results,done=std::move(done)](std::exception_ptr error){if(auto self=weak.lock())self->complete(*results,done,bool(error));});
+        if(!accepted){++counts.backpressure;return false;}
+        inFlight=true;++counts.batches;return true;
     }
-    void submit(){
-        if(inFlight||wanted.empty())return;
-        auto keys=std::make_shared<std::vector<std::string>>(wanted);auto results=std::make_shared<std::vector<std::optional<ActivityIconPixels>>>(keys->size());const auto size=pixels;const std::weak_ptr<Impl>weak=weak_from_this();
-        const bool accepted=executor.submit(route,[keys,results,size,load=loader]{
-            for(std::size_t n=0;n<keys->size();++n){try{auto value=load((*keys)[n],size);if(value&&value->width==size&&value->height==size&&value->straightRGBA.size()==std::size_t(size)*size*4)(*results)[n]=std::move(value);}catch(const std::bad_alloc&){throw;}catch(...){}}
-        },[weak,keys,results,size](std::exception_ptr error){if(auto self=weak.lock())self->complete(*keys,*results,size,bool(error));});
-        if(!accepted){retry=true;++counts.backpressure;return;}
-        retry=false;inFlight=true;wanted.clear();++counts.jobs;
-    }
-    void complete(const std::vector<std::string>&keys,std::vector<std::optional<ActivityIconPixels>>&results,unsigned size,bool failed){
-        thread();inFlight=false;
-        if(size==pixels&&!failed)for(std::size_t n=0;n<keys.size();++n){
-            Entry entry;entry.used=++clock;
-            if(results[n]){entry.memoryKey=prefix+std::to_string(++nextKey);entry.image=std::make_shared<const ActivityIconPixels>(std::move(*results[n]));++counts.loaded;}else ++counts.unavailable;
-            cache.insert_or_assign(keys[n],std::move(entry));
+    void complete(std::vector<std::optional<ActivityIconPixels>>&results,const modules::ActivityAppIcons::Done&done,bool failed){
+        thread();inFlight=false;std::vector<std::optional<modules::design::ImageSource>>out(results.size());
+        for(std::size_t n=0;n<results.size();++n){
+            if(failed||!results[n]){++counts.unavailable;continue;}
+            const auto&image=*results[n];const auto key=prefix+std::to_string(++nextKey);
+            if(!images.publish(key,1,image.width,image.height,image.straightRGBA)){++counts.unavailable;continue;}
+            out[n]=modules::design::ImageSource{modules::design::ImageSource::Kind::memory,key,{},1};++counts.loaded;
         }
-        evict();++revision;submit();
+        auto published=out;
+        if(!done||!done(std::move(out)))for(const auto&image:published)if(image)retire(*image);
     }
+    void retire(const modules::design::ImageSource&image){if(images.retire(image.key))++counts.retired;}
 };
-ActivityIconProvider::ActivityIconProvider(app::UtilityExecutor&executor,ActivityIconLoader loader):impl_(std::make_shared<Impl>(executor,std::move(loader))){}
-ActivityIconProvider::~ActivityIconProvider(){impl_->executor.invalidate(impl_->route);}
-ActivityIcons ActivityIconProvider::bind(std::span<const std::string_view>visible,unsigned pixels){
-    auto&i=*impl_;i.thread();need(visible.size()<=maximumVisible,"Activity binds icons for visible rows only");need(pixels>=16&&pixels<=LayerImageSource::maximumDimension,"Invalid Activity icon size");
-    if(pixels!=i.pixels){for(const auto&[_,entry]:i.cache)if(!entry.memoryKey.empty())i.images.retire(entry.memoryKey);i.cache.clear();i.wanted.clear();i.pixels=pixels;}
-    ActivityIcons out;
-    for(const auto key:visible){
-        if(!validKey(key))continue;
-        if(const auto found=i.cache.find(key);found!=i.cache.end()){
-            found->second.used=++i.clock;if(!found->second.image)continue; // unavailable: no icon, no repeated load
-            const auto&image=*found->second.image;
-            if(i.images.publish(found->second.memoryKey,1,image.width,image.height,image.straightRGBA))++i.counts.publications;
-            out.insert_or_assign(std::string(key),ActivityIcon{found->second.memoryKey,1});continue;
-        }
-        if(i.wanted.size()<maximumPending&&std::find(i.wanted.begin(),i.wanted.end(),key)==i.wanted.end()){i.wanted.emplace_back(key);++i.counts.requests;}
-    }
-    i.submit();return out;
+ActivityIconLoads::ActivityIconLoads(app::UtilityExecutor&executor,ActivityIconLoader loader):impl_(std::make_shared<Impl>(executor,std::move(loader))){}
+ActivityIconLoads::~ActivityIconLoads(){impl_->executor.invalidate(impl_->route);}
+modules::ActivityAppIcons::Loader ActivityIconLoads::loader(){
+    auto*i=impl_.get();
+    return {[i](std::vector<modules::ActivityAppIcons::Request>requests,modules::ActivityAppIcons::Done done){return i->load(std::move(requests),std::move(done));},
+            [i](const modules::design::ImageSource&image){i->retire(image);}};
 }
-void ActivityIconProvider::retain(std::span<const modules::ActivityApp>live){
-    auto&i=*impl_;i.thread();std::set<std::string_view>keys;for(const auto&app:live)keys.insert(app.identity.iconKey);
-    for(auto it=i.cache.begin();it!=i.cache.end();)if(keys.contains(it->first))++it;else{if(!it->second.memoryKey.empty())i.images.retire(it->second.memoryKey);it=i.cache.erase(it);}
-    std::erase_if(i.wanted,[&](const auto&key){return !keys.contains(key);});
-}
-std::uint64_t ActivityIconProvider::revision()const noexcept{return impl_->revision;}
-bool ActivityIconProvider::retryPending()const noexcept{return impl_->retry;}
-LayerImageSource&ActivityIconProvider::images()noexcept{return impl_->images;}
-ActivityIconStats ActivityIconProvider::stats()const{const auto&i=*impl_;i.thread();auto out=i.counts;out.cached=i.cache.size();out.pending=i.wanted.size();out.inFlight=i.inFlight;return out;}
+LayerImageSource&ActivityIconLoads::images()noexcept{return impl_->images;}
+ActivityIconStats ActivityIconLoads::stats()const{const auto&i=*impl_;i.thread();auto out=i.counts;out.images=i.images.stats().cachedImages;out.inFlight=i.inFlight;return out;}
 } // namespace endfield::native
 
 #ifdef _WIN32

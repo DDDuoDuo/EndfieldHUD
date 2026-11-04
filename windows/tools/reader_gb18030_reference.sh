@@ -6,7 +6,7 @@ mkdir -p "$1"
 OUT="$(cd "$1" && pwd)"
 PIN=ca04f142185c7de40acd8523bdb563195d90a1d1
 git -C "$ROOT" diff --quiet "$PIN" -- Sources/ReaderDocument.swift
-SDK="$(bash "$ROOT/scripts/build.sh" --print-sdk)"
+SDK="$(bash "$ROOT/windows/tools/mac_sdk.sh")"
 xcrun swiftc -O -sdk "$SDK" -module-cache-path "$ROOT/build/windows-module-reference/.compiler/module-cache" "$ROOT/windows/tools/reader_gb18030_reference.swift" -o "$OUT/reader-gb18030-reference"
 "$OUT/reader-gb18030-reference" "$OUT/reader_gb18030_table.hpp"
 python3 - "$ROOT" "$OUT" "$PIN" <<'PY'

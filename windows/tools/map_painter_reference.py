@@ -26,7 +26,7 @@ for name in ('terrain', 'countries'):
 shutil.copyfile(root / 'windows/tools/map_painter_reference.swift', output / 'main.swift')
 env = os.environ.copy()
 env.pop('SDKROOT', None)
-sdk = subprocess.check_output(['bash', str(root / 'scripts/build.sh'), '--print-sdk'], env=env, text=True).strip()
+sdk = subprocess.check_output(['bash', str(root / 'windows/tools/mac_sdk.sh')], env=env, text=True).strip()
 cache = root / 'build/windows-module-reference/.compiler/module-cache'
 subprocess.run(['xcrun', 'swiftc', '-sdk', sdk, '-module-cache-path', str(cache),
                 *[str(root / source) for source in fixture['sourcePins']],

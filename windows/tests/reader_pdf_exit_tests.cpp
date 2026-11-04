@@ -69,7 +69,7 @@ int child(const fs::path& fonts, const fs::path& book) {
             NativeReaderDocument document(resources);
             document.open(windowsReaderReference(ehud::data::makeUUID(), utf8(book), "Exit"), {});
             const auto prefs = ReaderPreferences::defaults("System");
-            const auto pages = document.render({}, {}, prefs, {376, 334}, true, {});
+            const auto pages = document.render({}, {}, prefs, {376, 334}, true,1,{});
             const auto zoomed = document.detail({}, prefs, {376, 334}, false, {4, {}}, {});
             const auto& pixels = *pages.front().pixels;
             const auto center = (std::size_t(pixels.height / 2) * pixels.width + pixels.width / 2) * 4;
@@ -149,7 +149,7 @@ int cycles(const fs::path& fonts, const fs::path& book, const fs::path& report, 
             const auto shown = std::chrono::steady_clock::now();
             job([&] {
                 document.open(windowsReaderReference(ehud::data::makeUUID(), utf8(book), "Cycles"), {});
-                const auto pages = document.render({}, {}, prefs, {376, 334}, true, {});
+                const auto pages = document.render({}, {}, prefs, {376, 334}, true,1,{});
                 check(pages.size() == 2 && pages.front().illustration && pages.front().pixels, "A show renders the PDF pages on its worker");
             });
             const auto showMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - shown).count();

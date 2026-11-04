@@ -48,9 +48,6 @@ def compact(node):
 
 for key in ('popoverEnabled', 'popoverDisabled', 'layer'):
     reference['gauge'][key] = compact(reference['gauge'][key])
-for state in reference['canvas']['states']:
-    if 'layers' in state:
-        state['layers'] = compact(state['layers'])
 unicode_sets = reference.pop('unicode')
 reference['unicode'] = unicode_sets
 reference['provenance'] = {'sourceAuthority': pin, 'sourceSHA256': {p: sha(p) for p in sources},

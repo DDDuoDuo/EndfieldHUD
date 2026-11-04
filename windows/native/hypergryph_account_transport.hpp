@@ -41,7 +41,9 @@ public:
     struct Options {
         std::function<void()> notify;          // thread-safe, posts one owner message
         std::function<double()> now;           // host frame clock (seconds)
-        std::wstring userAgent{L"EndfieldHUD/1.2.0 (Windows)"};
+        // Unversioned, like the update check's: the Mac sends the system's own agent, so no version
+        // here could go stale with a release.
+        std::wstring userAgent{L"EndfieldHUD (Windows)"};
         double requestTimeout{modules::hypergryph::requestTimeoutSeconds};
         double resourceTimeout{modules::hypergryph::resourceTimeoutSeconds};
         double imageTimeout{10};

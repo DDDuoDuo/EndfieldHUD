@@ -40,19 +40,19 @@ struct HeldLock {
 struct Owner {
     Temporary temporary;app::UtilityExecutor executor{[]{},4};
     std::optional<m::PersonalProfile>loaded;unsigned loads{},changes{},saveFailures{};std::optional<m::ProfileFailure>loadFailure,saveFailure;
-    std::unique_ptr<m::ProfileService>service;std::unique_ptr<m::ProfileState>state;bool locked{};double live{};
+    std::unique_ptr<m::ProfileService>service;std::unique_ptr<m::ProfileState>state;ehud::data::ProfileSyncFields locked{};double live{};
     m::ProfileTextRules text=n::nativeProfileTextRules();m::ProfileDateRules dates=n::nativeProfileDateRules(u"UTC");
     Owner(){make();}
     void make(){
         service=std::make_unique<m::ProfileService>(temporary.root,executor,m::ProfileServiceCallbacks{
             [this](const m::PersonalProfile&p){loaded=p;++loads;},
             [this](m::ProfileFailure f,std::string){loadFailure=f;},
-            [this](m::ProfileFailure f,std::string detail){saveFailure=f;++saveFailures;if(state)state->persistenceFailed(f,detail);},
+            [this](m::ProfileFailure f,std::string){saveFailure=f;++saveFailures;},
             [this]{++changes;}});
     }
     void open(){
         service->start();check(service->flush()&&loaded,"Worker load completes on the owner thread");
-        state=std::make_unique<m::ProfileState>(*loaded,text,dates,service->persistence([this]{return locked;},[this]{return live;}));
+        state=std::make_unique<m::ProfileState>(*loaded,text,dates,service->persistence([this]{return locked;}));
     }
     void settle(){executor.waitIdle();executor.drain();}
 };
@@ -63,10 +63,12 @@ m::PersonalProfile seed(const Temporary&t,double work){
     record["profile"]["futureField"]="opaque";record["futureEnvelope"]=data::Json::Object{{"kept",true}};
     write(store.path(),record.encode());return p;
 }
+// One inline edit's save (PersonalProfileCanvas.commit): true unless the store refused it.
+bool edit(m::ProfileState&s,const std::function<void(m::PersonalProfile&)>&change){try{(void)s.update(change);return true;}catch(const std::exception&){return false;}}
 void lifecycle(){
     Owner o;
     check(!std::filesystem::exists(o.temporary.root)&&!o.executor.stats().started,"Construction performs no filesystem or worker work");
-    rejects([&]{o.service->accept(m::PersonalProfile{},false);},"Edits wait for the worker load");
+    rejects([&]{o.service->accept(m::PersonalProfile{},ehud::data::ProfileSyncFields{});},"Edits wait for the worker load");
     rejects([]{app::UtilityExecutor e([]{},1);m::ProfileService invalid(std::filesystem::path("relative"),e);},"Explicit absolute root only");
     o.open();
     check(o.loads==1&&std::filesystem::exists(o.temporary.root/"Profile"/"profile.json"),"First launch commits a new local identity like UserProfileStore");
@@ -77,25 +79,25 @@ void lifecycle(){
 void editsAndCoalescing(){
     Owner o;seed(o.temporary,1000);o.open();auto&s=*o.state;
     check(s.profile().accumulatedWorkSeconds==1000,"Stored lifetime loads");
-    check(s.commit(m::ProfileField::name,"  管理员😀 ")&&o.service->flush(),"Local edit saves on the worker");
+    check(edit(s,[](m::PersonalProfile&p){p.name="  管理员😀 ";})&&o.service->flush(),"Local edit saves on the worker");
     auto file=saved(o.temporary);
     check(file["profile"]["name"].string()=="管理员😀"&&file["profile"]["futureField"].string()=="opaque"&&file["futureEnvelope"]["kept"].boolean(),"Unknown Mac fields survive an edit");
     const auto route=o.executor.makeRoute();check(o.executor.submit(route,[]{},[](auto){}),"Another module occupies the worker");
     const auto before=o.executor.stats().accepted;
-    for(int i=0;i<50;++i)check(s.commit(m::ProfileField::introduction,"Draft "+std::to_string(i)),"Optimistic edit accepted");
+    for(int i=0;i<50;++i)check(edit(s,[i](m::PersonalProfile&p){p.introduction="Draft "+std::to_string(i);}),"Optimistic edit accepted");
     check(o.service->status().dirty&&o.service->status().revision>=50,"Edits coalesce while the worker is busy");
     check(o.service->flush()&&saved(o.temporary)["profile"]["introduction"].string()=="Draft 49","Latest edit persisted");
     check(o.executor.stats().accepted-before<=3,"A burst becomes at most one queued save after the busy job");
-    const auto accepted=o.executor.stats().accepted;check(s.commit(m::ProfileField::introduction,"Draft 49")&&o.executor.stats().accepted==accepted,"Unchanged edit performs no IO");
+    const auto accepted=o.executor.stats().accepted;check(edit(s,[](m::PersonalProfile&p){p.introduction="Draft 49";})&&o.executor.stats().accepted==accepted,"Unchanged edit performs no IO");
 }
 void syncLocks(){
     Owner o;seed(o.temporary,0);o.open();auto&s=*o.state;
-    o.locked=true;s.setSyncLocked(true);
-    check(!s.commit(m::ProfileField::name,"Manual"),"Locked identity is not editable");
-    check(s.commit(m::ProfileField::birthday,"2/29"),"Birthday stays editable while synced");
+    o.locked=ehud::data::ProfileSyncFields::all();s.setSyncLocked(ehud::data::ProfileSyncFields::all());
+    check(!edit(s,[](m::PersonalProfile&p){p.name="Manual";}),"Locked identity is not editable");
+    check(edit(s,[](m::PersonalProfile&p){p.birthdayMonth=2;p.birthdayDay=29;}),"Birthday stays editable while synced");
     auto synced=s.profile();synced.name="Official";synced.tag="5678";synced.gamePlayerID="1234567890123456789";synced.playerIDOverride.reset();
-    o.service->acceptFromGame(synced,true);s.refresh(synced,true);
-    check(s.commit(m::ProfileField::introduction,"Edited after sync"),"Local edit coalesces after the account record");
+    o.service->acceptFromGame(synced,ehud::data::ProfileSyncFields::all());s.refresh(synced);
+    check(edit(s,[](m::PersonalProfile&p){p.introduction="Edited after sync";}),"Local edit coalesces after the account record");
     check(o.service->flush(),"Coalesced account+local record is written as an account update");
     const auto file=saved(o.temporary)["profile"];
     check(file["name"].string()=="Official"&&file["gamePlayerID"].string()=="1234567890123456789"&&file["uid"].string()=="1000000000"&&!file.contains("playerIDOverride"),"Synced identity keeps the original local UID");
@@ -106,10 +108,10 @@ void images(){
     Owner o;seed(o.temporary,0);o.open();auto&s=*o.state;
     const auto first=data::makeUUID()+".image",second=data::makeUUID()+".image",background=data::makeUUID()+".png";
     for(const auto&name:{first,second,background})write(o.service->imagePath(name),"synthetic bytes");
-    s.beginImageImport();check(s.imageImported(m::ProfileImageKind::avatar,first)&&o.service->flush(),"Avatar import commits");
-    s.beginImageImport();check(s.imageImported(m::ProfileImageKind::avatar,second)&&s.imageImported(m::ProfileImageKind::background,background)&&o.service->flush(),"Replacement commits");
+    check(s.imageImported(m::ProfileImageKind::avatar,first)&&o.service->flush(),"Avatar import commits");
+    check(s.imageImported(m::ProfileImageKind::avatar,second)&&s.imageImported(m::ProfileImageKind::background,background)&&o.service->flush(),"Replacement commits");
     check(!std::filesystem::exists(o.service->imagePath(first))&&std::filesystem::exists(o.service->imagePath(second))&&std::filesystem::exists(o.service->imagePath(background)),"Replaced avatar file is deleted after its replacement commits");
-    check(s.restoreImage(m::ProfileImageKind::avatar)&&s.restoreImage(m::ProfileImageKind::background)&&o.service->flush(),"Defaults restore");
+    check(s.removeImage(m::ProfileImageKind::avatar)&&s.removeImage(m::ProfileImageKind::background)&&o.service->flush(),"Defaults restore");
     check(!std::filesystem::exists(o.service->imagePath(second))&&!std::filesystem::exists(o.service->imagePath(background)),"Removed managed images are deleted");
     rejects([&]{(void)o.service->imagePath("../escape.png");},"Managed image names only");
 }
@@ -120,13 +122,13 @@ void workHours(){
     o.live=0;auto liveTotal=[&]{return hours.totalSeconds(controller,now);};
     check(hours.restored()&&liveTotal()==1000,"Idle controller restores the stored lifetime once");
     controller.chooseStopwatch(now);controller.start(now);now=60;
-    o.live=liveTotal();check(o.live==1060&&s.formattedHours()=="0.29","Profile page shows max(stored, live)");
+    o.live=liveTotal();check(o.live==1060,"The page's live total (it shows max(stored, live))");
     const auto jobs=o.executor.stats().accepted;
     controller.pause(now);check(o.service->flush()&&saved(o.temporary)["profile"]["accumulatedWorkSeconds"].number()==1060,"Pause persists the absolute total");
     controller.setVisible(false,now);controller.setVisible(true,now);check(o.service->flush()&&o.executor.stats().accepted==jobs+1,"A repeated checkpoint of the same total writes nothing");
     controller.resume(now);now=100;
     {HeldLock lock(o.temporary.root/"Profile"/"profile.json");controller.setVisible(false,now);o.settle();}
-    check(o.saveFailures==1&&o.service->status().failed&&o.service->status().dirty&&s.error(),"A failed checkpoint is reported once and stays dirty");
+    check(o.saveFailures==1&&o.service->status().failed&&o.service->status().dirty,"A failed checkpoint is reported once and stays dirty");
     check(saved(o.temporary)["profile"]["accumulatedWorkSeconds"].number()==1060,"The failed write left the record untouched");
     controller.setVisible(true,now);now=130;controller.shutdown(now);
     check(o.service->flush()&&saved(o.temporary)["profile"]["accumulatedWorkSeconds"].number()==1130,"The next checkpoint retries the absolute total without double counting");
@@ -199,7 +201,7 @@ void loadFailures(){
         Owner o;write(o.temporary.root/"Profile"/"profile.json",R"({"version":2,"profile":{}})");const auto bytes=read(o.temporary.root/"Profile"/"profile.json");
         o.service->start();check(!o.service->flush()&&o.loadFailure==m::ProfileFailure::newerVersion&&!o.loaded,"Newer record is not opened");
         check(read(o.temporary.root/"Profile"/"profile.json")==bytes,"Newer record preserved byte for byte");
-        rejects([&]{o.service->accept(m::PersonalProfile{},false);},"No persistence after a failed load");
+        rejects([&]{o.service->accept(m::PersonalProfile{},ehud::data::ProfileSyncFields{});},"No persistence after a failed load");
     }
     {
         Owner o;write(o.temporary.root/"Profile"/"profile.json","{not json");o.service->start();

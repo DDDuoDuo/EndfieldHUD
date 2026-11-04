@@ -1,6 +1,6 @@
 #pragma once
-#include "modules/archive_model.hpp"
-#include "core/scene.hpp"
+#include "modules/archive_classification.hpp"
+#include "core/localization.hpp"
 #include <exception>
 #include <memory>
 
@@ -20,6 +20,18 @@ public:
     virtual void deleteCategory(std::string_view,std::span<const ArchiveEntry>preservingDrafts)=0;
     virtual void remove(std::string_view)=0;
     virtual std::optional<ArchiveJson>thumbnail(std::string_view)=0;
+    // 1.3.0 (ArchiveStore.swift:202-224, 380-430). Defaults for repositories
+    // without these features: nothing is classified (status unclassified,
+    // verify true, declassify no-op); writes (rename, badge, classify,
+    // recovery) refuse with StoreError(unavailable).
+    virtual void renameCategory(std::string_view id,std::string_view name);
+    virtual void markCategoryViewed(std::string_view id);
+    virtual bool isClassified(std::string_view id);
+    virtual ArchiveClassificationStatus classificationStatus(std::string_view id);
+    virtual void classify(std::string_view id,std::string_view password);
+    virtual bool verify(std::string_view id,std::string_view password);
+    virtual void declassify(std::string_view id);
+    virtual void recoverClassification(std::string_view id,const std::optional<std::string>&newPassword);
 };
 struct ArchiveExecutor {
     // UtilityExecutor::submit-compatible. Work is FIFO; completion runs on the
@@ -43,9 +55,8 @@ struct ArchiveRelinkLedger {
     std::function<void(std::string_view entryID,const ArchiveJson* macMedia)>removed;
     std::function<void(ArchiveRepository&)>reconcile;
 };
-struct ArchiveGalleryRow {std::string_view id;core::Rect local,hit;std::size_t index{};};
-struct ArchiveCategoryRow {std::string_view id;core::Rect local,hit;std::size_t index{};bool selected{};};
-// Source ArchiveController + ArchiveCanvas collection semantics. Content stays
+// Source ArchiveController semantics (the 1.3.0 ArchiveCanvas keeps its own
+// filter, scroll and layout: modules/archive_canvas.hpp). Content stays
 // lazy: summaries and <=100 categories are retained; only selected/dirty entry
 // bodies are loaded. Accepted saves can finish after facade destruction, without
 // invoking an abandoned UI callback; borrowed execution routes must be retired
@@ -64,9 +75,12 @@ public:
     const std::optional<std::string>&error()const noexcept;
     std::uint64_t revision()const noexcept;std::uint64_t collectionRevision()const noexcept;
     // Source archiveAction names, in order: store results (created, deleted,
-    // categoryCreated/Deleted/Changed) and the interaction's own edited,
-    // mediaAdded and mediaRemoved (recordAction). The root drains them into
-    // the Event Log with the action name only, never document text.
+    // categoryCreated/Deleted/Changed, and since 1.3.0 categoryRenamed,
+    // classified, declassified, classificationRecovered) and the interaction's
+    // own edited, mediaAdded and mediaRemoved (recordAction). The root drains
+    // them into the Event Log with the action name only, never document text.
+    // (The Mac event-log allowlist still lacks the four 1.3.0 names, so the
+    // Mac logs them as a generic Archive row: DOCS-318, a decision for D7.)
     std::vector<ArchiveStateEvent>takeEvents();
     void recordAction(std::string name,std::string id);
     void setRelinkLedger(ArchiveRelinkLedger);
@@ -80,7 +94,65 @@ public:
     bool mediaRemoved(std::string entryID,ArchiveJson macMedia);
     void select(std::optional<std::string>);
     bool create(std::string id,double foundationDate,std::optional<std::string>categoryID={});
+    // Kept API (ArchiveController.createCategory): same-name returns the
+    // existing id; 80-Character load rule; the new category has the NEW badge.
     std::optional<std::string>createCategory(std::string id,std::string name,double foundationDate);
+
+    // --- Editable categories (Mac 1.3.0 ArchiveStore.swift:819-863) ---------
+    // The "+" action: "Category N" in `language` (N = custom categories + 1,
+    // skipping names nameIssue refuses, giving up after 200) with the NEW
+    // badge. Same limits as createCategory (100, refused while a write or
+    // category error is pending).
+    std::optional<std::string>addCategory(std::string id,double foundationDate,core::Language language);
+    std::string nextCategoryName(core::Language)const;
+    // Live validation for the rename field (nullopt: the name can be committed).
+    std::optional<ArchiveCategoryNameIssue>categoryNameIssue(std::string_view name,const std::optional<std::string>&renaming={})const;
+    // Commits a trimmed valid unique name in memory at once; storage follows
+    // in order (renames of committed categories are written first). `issue`
+    // is set when rejected (unknownCategory for an unknown/removed id).
+    struct RenameOutcome{ArchiveCategoryRenameResult result;std::optional<ArchiveCategoryNameIssue>issue;};
+    RenameOutcome renameCategory(std::string_view id,std::string_view name);
+    // Clears the NEW badge (call when the category filter is opened). A failed
+    // write is not retried: at worst the badge returns after a relaunch.
+    void markCategoryViewed(std::string_view id);
+
+    // --- Classified documents (Mac 1.3.0 ArchiveController lock model) ------
+    // A classified document opens locked; the right password unlocks it for
+    // one visit; leaving it (select of another/none), creating or deleting a
+    // document, lockSelected() or deactivate() locks it again. Locked
+    // documents reject update/moveSelected/deleteSelected. While locked,
+    // selected() still holds the text and media for sizing the redaction bars
+    // only: they must not be shown. Completions run on the owner thread with
+    // nullptr on success, else the store's error (ArchiveClassificationError
+    // passwordMissing/vaultUnavailable/cancelled or StoreError); a refused
+    // request completes at once with StoreError(invalid).
+    using Completion=std::function<void(std::exception_ptr)>;
+    bool isClassified(std::string_view id)const noexcept;
+    ArchiveClassificationStatus selectedClassification()const noexcept;
+    bool isSelectedLocked()const noexcept;
+    bool isClassificationBusy()const noexcept;
+    // Flushes first, so the latest title/body commit before the flag; success
+    // locks the document (the sealing view). Password rules: archivePasswordIssue.
+    void classifySelected(std::string password,Completion={});
+    // Verification on the file executor (about 80 ms). A missing or unreadable
+    // verifier is reported as passwordMissing / failed with its message, never
+    // as wrongPassword; ignored while another unlock or classification runs,
+    // or when the document was left meanwhile.
+    void unlockSelected(std::string password,std::function<void(ArchiveUnlockResult,std::string message)>);
+    void lockSelected();
+    void declassifySelected(Completion={}); // only while unlocked in this visit
+    void refreshSelectedClassification();   // re-reads the vault state
+    // Owner proof for recovery (Mac LAContext .deviceOwnerAuthentication;
+    // Windows: Windows Hello / the account password, injected by the native
+    // owner). Without one, recovery is refused. `reason` is the catalog pair
+    // "restore access to a classified document". The answer must be delivered
+    // on the owner thread (synchronously or later), exactly once.
+    using OwnerAuthentication=std::function<void(std::string reason,std::function<void(bool approved)>)>;
+    void setOwnerAuthentication(OwnerAuthentication);
+    // Only for a classified document whose verifier is missing or unreadable:
+    // a new password keeps it classified and unlocks this visit; nullopt
+    // declassifies it. Cancelled/denied/left -> ArchiveClassificationError(cancelled).
+    void recoverSelectedClassification(std::optional<std::string>newPassword,std::string reason,Completion);
     bool moveSelected(std::optional<std::string>categoryID,double modifiedDate,double ownerTime);
     // Explicit timestamp + owner animation clock are distinct. The source's
     // .35-second debounce is one deadline returned to the existing scheduler.
@@ -92,26 +164,12 @@ public:
     void queueCapacityAvailable();
     std::optional<double>saveDeadline()const noexcept;
     bool flushIfDue(double ownerTime);
-    // Caller confirms using the source menu before invoking these methods.
+    // The caller asks first (the canvas's confirm bar).
     bool deleteSelected();bool deleteCategory(std::string_view);
     void loadThumbnail(std::string id,std::function<void(std::optional<ArchiveJson>)>);
-    bool setFilter(std::optional<std::string>categoryID,bool uncategorized=false);
-    const std::optional<std::string>&categoryID()const noexcept;bool filtersUncategorized()const noexcept;
-    std::span<const std::size_t>filteredIndices()const noexcept;
-    double galleryScroll()const noexcept;double categoryScroll()const noexcept;
-    double galleryMaximum()const noexcept;double categoryMaximum()const noexcept;
-    std::optional<core::Rect>galleryThumb()const noexcept;
-    bool scroll(core::Point,double delta);bool setGalleryScroll(double);
-    std::vector<ArchiveGalleryRow>galleryRows()const;std::vector<ArchiveCategoryRow>categoryRows()const;
-    static constexpr core::Rect bounds(){return {0,0,400,440};}
-    static constexpr core::Rect galleryRect(){return {101,49,275,357};}
-    static constexpr core::Rect galleryScrollerRect(){return {380,49,8,357};}
-    static constexpr core::Rect categoriesRect(){return {14,49,75,238};}
-    static constexpr core::Rect titleRect(){return {24,48,352,30};}
-    static constexpr core::Rect dateRect(){return {24,81,180,23};}
-    core::Rect bodyRect()const noexcept;
-    static constexpr core::Rect mediaRect(){return {24,268,250,93};}
-    static constexpr core::Rect seekRect(){return {24,367,250,12};}
+    // The Unicode rules the state validates with (the password and category
+    // name rules of the canvas use the same).
+    const ArchiveTextRules& textRules()const noexcept;
 private:struct Impl;std::shared_ptr<Impl>impl_;
 };
 } // namespace endfield::modules

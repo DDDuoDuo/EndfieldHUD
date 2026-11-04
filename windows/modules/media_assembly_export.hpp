@@ -1,5 +1,5 @@
 #pragma once
-#include "modules/media_assembly_presentation.hpp"
+#include "modules/media_assembly_session.hpp"
 #include <functional>
 #include <memory>
 #include <mutex>

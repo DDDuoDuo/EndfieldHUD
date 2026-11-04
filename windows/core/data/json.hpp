@@ -25,6 +25,15 @@ public:
     Json(const char* value) : value_(std::string(value)) {}
     Json(Array value) : value_(std::move(value)) {}
     Json(Object value) : value_(std::move(value)) {}
+    // A move never throws: MSVC's std::map move allocates its sentinel and is
+    // not noexcept, so vector<Json> growth deep-copied every element (each
+    // design surface's tree again and again while it was emitted and loaded:
+    // millions of short-lived heap blocks per visit of every module). An
+    // allocation failure inside a move ends the process.
+    Json(const Json&) = default;
+    Json(Json&& other) noexcept : value_(std::move(other.value_)) {}
+    Json& operator=(const Json&) = default;
+    Json& operator=(Json&& other) noexcept { value_ = std::move(other.value_); return *this; }
     static Json parse(std::string_view text, std::size_t maximumBytes = 4 * 1024 * 1024);
     std::string encode(std::size_t maximumBytes = 4 * 1024 * 1024) const;
     static bool validUtf8(std::string_view text) noexcept;

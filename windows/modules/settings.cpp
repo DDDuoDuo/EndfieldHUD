@@ -12,6 +12,11 @@ void need(bool value,const char*message){if(!value)throw std::invalid_argument(m
 void finite(double time){need(std::isfinite(time),"Settings requires finite caller time");}
 void bounded(std::string_view text){need(text.size()<=16*1024&&Json::validUtf8(text),"Invalid bounded Settings status");}
 std::string tr(core::Language l,std::string_view en,std::string_view zh){return core::localized(en,zh,l);}
+// SummonShortcut.validationError's reserved-chord sentence without macOS
+// (Windows protects only its Control editing chords): Windows-only text in
+// the five source languages, worded as the Mac catalog row.
+constexpr core::TranslationEntry reservedEditingChord{"That combination is reserved for common editing commands.","该组合用于常见编辑命令，请选择其他快捷键。",
+    "該組合用於常見編輯命令，請選擇其他快速鍵。","この組み合わせは編集操作で使われます。別のショートカットを選択してください。","일반적인 편집 명령에 예약된 조합입니다."};
 std::string keyTitle(std::uint32_t key){
     if((key>='A'&&key<='Z')||(key>='0'&&key<='9'))return std::string(1,static_cast<char>(key));
     if(key>=0x70&&key<=0x87)return "F"+std::to_string(key-0x6f);
@@ -27,9 +32,10 @@ std::optional<std::string>validateSettingsShortcut(SettingsShortcut key,core::La
     // Windows editing commands are protected in their native Control form.
     // Reserved OS/registered chords still fail through the injected platform.
     if((key.modifiers==2||key.modifiers==6)&&std::string_view("ACFHNOPQSTVWXZ").find(static_cast<char>(key.key))!=std::string_view::npos&&key.key<=127)
-        return tr(language,"That combination is reserved for common editing commands.","该组合用于常见编辑命令，请选择其他快捷键。");
+        return std::string(core::translated(reservedEditingChord,language));
     return {};
 }
+std::vector<SettingsCredit>settingsCredits(core::Language l){return{{"Arknights: Endfield",tr(l,"Unofficial fan project","非官方同人项目"),{}},{"llynxxx",tr(l,"Inspiration","灵感来源"),"https://www.bilibili.com/video/BV1DBaP6yEHs/"},{"QinAnze / 氰氨锗",tr(l,"Inspiration","灵感来源"),"https://github.com/QinAnze/zmd-charge"},{"Ronit Singh / FineTune",tr(l,"Audio architecture reference","音频架构参考"),"https://github.com/ronitsingh10/FineTune"}};}
 std::string settingsShortcutTitle(SettingsShortcut key){std::string result;const auto append=[&](std::string_view part){if(!result.empty())result+=" + ";result+=part;};if(key.modifiers&2)append("Ctrl");if(key.modifiers&1)append("Alt");if(key.modifiers&4)append("Shift");if(key.modifiers&8)append("Win");const auto title=keyTitle(key.key);append(title.empty()?"Key "+std::to_string(key.key):title);return result;}
 SettingsShortcut settingsShortcut(const Settings&settings){const auto&value=settings.fields["windowsSummonShortcut"];if(value.isNull())return {};need(value.isObject()&&value["virtualKey"].isNumber()&&value["modifiers"].isNumber(),"Invalid Windows shortcut record");const auto key=value["virtualKey"].integer(),modifiers=value["modifiers"].integer();need(key>=0&&key<=255&&modifiers>=0&&modifiers<=15,"Invalid Windows shortcut values");SettingsShortcut result{static_cast<std::uint32_t>(key),static_cast<std::uint32_t>(modifiers)};need(!validateSettingsShortcut(result,core::Language::english),"Invalid stored Windows shortcut");return result;}
 SettingsController::Layout SettingsController::layout(const Settings&s){return {s.number("hudScale"),s.number("hudOffsetX"),s.number("hudOffsetY")};}
@@ -43,7 +49,12 @@ Settings SettingsController::normalize(Settings value){
     (void)settingsShortcut(value);return value;
 }
 SettingsController::SettingsController(Settings initial,SettingsCallbacks callbacks,core::Language language):committed_(normalize(std::move(initial))),effective_(committed_),callbacks_(std::move(callbacks)),language_(language){}
-void SettingsController::publish(){auto next=committed_;if(preview_)applyLayout(next,*preview_);const bool changed=next!=effective_;effective_=std::move(next);++revision_;if(changed&&callbacks_.configurationChanged)callbacks_.configurationChanged(effective_);if(callbacks_.changed)callbacks_.changed();}
+void SettingsController::publish(){auto next=committed_;if(preview_)applyLayout(next,*preview_);const bool changed=next!=effective_;effective_=std::move(next);++revision_;if(changed&&callbacks_.configurationChanged)callbacks_.configurationChanged(effective_);if(callbacks_.changed)callbacks_.changed();
+    // Array(observers.values): the ones registered now, each skipped once it was removed meanwhile.
+    std::vector<std::uint64_t>tokens;tokens.reserve(observers_.size());for(const auto&o:observers_)tokens.push_back(o.first);
+    for(const auto token:tokens){const auto found=std::find_if(observers_.begin(),observers_.end(),[&](const auto&o){return o.first==token;});if(found==observers_.end())continue;const auto observer=found->second;observer();}}
+std::uint64_t SettingsController::addObserver(std::function<void()>observer){need(bool(observer),"Settings observer must be callable");observers_.emplace_back(++observerSerial_,std::move(observer));return observerSerial_;}
+void SettingsController::removeObserver(std::uint64_t token)noexcept{std::erase_if(observers_,[&](const auto&o){return o.first==token;});}
 void SettingsController::clearPreview(){preview_.reset();deadline_.reset();lastRemaining_.reset();}
 void SettingsController::preview(Layout value,double time){finite(time);const auto deadline=time+confirmationDuration;need(std::isfinite(deadline),"Settings deadline overflow");if(value==layout(committed_)){revertLayout();return;}preview_=value;deadline_=deadline;lastRemaining_=12;status_.clear();publish();}
 void SettingsController::update(Settings candidate,double time){finite(time);const auto previousLayout=layout(effective_);const auto requested=layout(normalize(candidate));const bool changed=layout(candidate)!=previousLayout;applyLayout(candidate,layout(committed_));applyPersistent(std::move(candidate));if(changed)preview(requested,time);}
@@ -62,7 +73,7 @@ void SettingsController::applyPersistent(Settings candidate,bool shortcutApplied
     if(candidate.boolean("launchAtLogin")!=previous.boolean("launchAtLogin")){const auto error=callbacks_.launchAtLogin?callbacks_.launchAtLogin(candidate.boolean("launchAtLogin")):std::optional(tr(language_,"Unavailable","不可用"));if(error){candidate.set("launchAtLogin",previous.boolean("launchAtLogin"));status_=*error;}}
     candidate=normalize(std::move(candidate));if(candidate!=committed_&&callbacks_.persist)callbacks_.persist(candidate);committed_=std::move(candidate);publish();
 }
-void SettingsController::restoreDefaults(){clearPreview();endShortcutCapture();auto defaults=Settings::defaults();putShortcut(defaults,{});applyPersistent(std::move(defaults),false,true);}
+void SettingsController::restoreDefaults(){clearPreview();endShortcutCapture();auto defaults=Settings::restoredDefaults(committed_);putShortcut(defaults,{});applyPersistent(std::move(defaults),false,true);}
 void SettingsController::close(){revertLayout();endShortcutCapture();}
 std::optional<std::string>SettingsController::setShortcut(SettingsShortcut key){auto error=validateSettingsShortcut(key,language_);if(!error)error=callbacks_.registerShortcut?callbacks_.registerShortcut(key):std::optional(tr(language_,"Unavailable","不可用"));if(error){bounded(*error);shortcutError_=status_=*error;publish();return error;}auto candidate=effective_;putShortcut(candidate,key);applyLayout(candidate,layout(committed_));applyPersistent(std::move(candidate),true);return shortcutStatus().empty()?std::nullopt:std::optional(shortcutStatus());}
 void SettingsController::beginShortcutCapture(){if(capturing_)return;capturing_=true;shortcutError_.clear();if(callbacks_.shortcutCapture)callbacks_.shortcutCapture(true);publish();}

@@ -1,6 +1,7 @@
 #include "system_services.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <array>
 #include <cmath>
 #include <cstring>
@@ -618,7 +619,7 @@ bool ClipboardHistory::valid(const ClipboardPayload& value) noexcept {
         return value.image.empty()&&t.encoded.format==expected&&valid_image_metadata(t.sourceWidth,t.sourceHeight,value.image_bytes().size())&&t.width&&t.height&&t.width<=96&&t.height<=96&&t.rgba.size()==std::size_t(t.width)*t.height*4;}
     return true;
 }
-ClipboardInsertResult ClipboardHistory::ingest(ClipboardPayload payload, bool excluded) {
+ClipboardInsertResult ClipboardHistory::ingest(ClipboardPayload payload, bool excluded, ClipboardOrigin origin) {
     if (excluded) return ClipboardInsertResult::excluded;
     if (payload.kind == ClipboardKind::url && payload.url.empty() && utf8_bytes(payload.text) <= maximum_detected_url_bytes) {
         // Synthetic link without its URL: ClipboardStore.read's string path.
@@ -644,7 +645,8 @@ ClipboardInsertResult ClipboardHistory::ingest(ClipboardPayload payload, bool ex
     if (count >= capacity_ || retained > maximum_retained_bytes - bytes) return ClipboardInsertResult::full;
     items_.reserve(items_.size() + 1); // Allocation failure leaves old history intact.
     for (const auto index : evicted) items_.erase(items_.begin() + static_cast<std::ptrdiff_t>(index));
-    items_.insert(items_.begin(), ClipboardItem{next_id_++, false, std::move(payload)});
+    if (!(origin.created > 0)) origin.created = std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count();
+    items_.insert(items_.begin(), ClipboardItem{next_id_++, false, std::move(payload), std::move(origin)});
     retained_bytes_ = retained + bytes;
     return ClipboardInsertResult::inserted;
 }
@@ -677,11 +679,13 @@ void ClipboardHistory::clear(bool keep_pinned) {
 struct ClipboardCapture::Impl : std::enable_shared_from_this<Impl> {
     ClipboardHistory&history;Reader reader;Sequence sequence;Changed changed;std::unique_ptr<NativeClipboardImageProbe>probe;
     std::uint32_t expected{};unsigned next{};ClipboardCaptureState current{ClipboardCaptureState::idle};std::int32_t error{};bool alive{true};
+    ClipboardOrigin origin; // the read's origin, kept while its image validates
     Impl(ClipboardHistory&h,Reader r,Sequence s,Changed c):history(h),reader(std::move(r)),sequence(std::move(s)),changed(std::move(c)){}
     void status(ClipboardCaptureState value,std::int32_t native=0){const bool different=current!=value||error!=native;current=value;error=native;auto callback=changed;if(alive&&callback&&(different||value==ClipboardCaptureState::changed))callback(value,native);}
-    void accept(ClipboardPayload payload){if(!alive||sequence()!=expected){status(ClipboardCaptureState::stale);return;}const auto inserted=history.ingest(std::move(payload));switch(inserted){case ClipboardInsertResult::inserted:case ClipboardInsertResult::moved:status(ClipboardCaptureState::changed);break;case ClipboardInsertResult::full:status(ClipboardCaptureState::full);break;case ClipboardInsertResult::invalid:status(ClipboardCaptureState::invalid);break;default:status(ClipboardCaptureState::unchanged);break;}}
+    void accept(ClipboardPayload payload){if(!alive||sequence()!=expected){status(ClipboardCaptureState::stale);return;}const auto inserted=history.ingest(std::move(payload),false,origin);switch(inserted){case ClipboardInsertResult::inserted:case ClipboardInsertResult::moved:status(ClipboardCaptureState::changed);break;case ClipboardInsertResult::full:status(ClipboardCaptureState::full);break;case ClipboardInsertResult::invalid:status(ClipboardCaptureState::invalid);break;default:status(ClipboardCaptureState::unchanged);break;}}
     void readNext(){while(alive){if(!expected||sequence()!=expected){status(ClipboardCaptureState::stale);return;}auto result=reader(expected,next);if(result.state!=ClipboardReadState::busy&&result.sequence!=expected){status(ClipboardCaptureState::stale);return;}
         switch(result.state){case ClipboardReadState::busy:status(ClipboardCaptureState::busy,result.nativeError);return;case ClipboardReadState::stale:status(ClipboardCaptureState::stale);return;case ClipboardReadState::excluded:status(ClipboardCaptureState::excluded);return;case ClipboardReadState::empty:status(ClipboardCaptureState::empty);return;case ClipboardReadState::invalid:status(ClipboardCaptureState::invalid,result.nativeError);return;case ClipboardReadState::payload:break;}
+        origin=std::move(result.origin);
         if(result.payload.kind!=ClipboardKind::image){accept(std::move(result.payload));return;}
         if(result.nextImage<=next||result.nextImage>imageFormats.size()||result.payload.image_format!=imageFormats[result.nextImage-1]||result.payload.decodedImage){status(ClipboardCaptureState::invalid);return;}next=result.nextImage;
         const auto format=result.payload.image_format==ClipboardImageFormat::png?ClipboardEncodedFormat::png:result.payload.image_format==ClipboardImageFormat::tiff?ClipboardEncodedFormat::tiff:result.payload.image_format==ClipboardImageFormat::dib_v5?ClipboardEncodedFormat::dibV5:ClipboardEncodedFormat::dib;
@@ -956,6 +960,7 @@ public:
     BatterySnapshot battery;
     ClipboardHistory clipboard;
     std::unique_ptr<ClipboardCapture> clipboard_capture;
+    std::function<ClipboardOrigin(const ClipboardPayload&)> clipboard_origin; // SystemServicesOptions::clipboardOrigin
     bool clipboard_retry_available{};
     bool clipboard_suspended{}; // ClipboardWatcher.setSuspended (sleep/lock)
     HRESULT clipboard_error{E_PENDING};
@@ -1218,6 +1223,12 @@ public:
         // pending. Every later format read still verifies this exact sequence.
         clipboard_sequence.acknowledge(expected);return result;
     }
+    // A read with its origin, looked up once the lease above has closed.
+    ClipboardReadResult read_with_origin(std::uint32_t expected,unsigned firstImage){
+        auto result=read_capture(expected,firstImage);
+        if(result.state==ClipboardReadState::payload&&clipboard_origin)result.origin=clipboard_origin(result.payload);
+        return result;
+    }
     void capture_changed(ClipboardCaptureState state,std::int32_t native){
         HRESULT status=S_OK;
         switch(state){case ClipboardCaptureState::pending:status=E_PENDING;break;case ClipboardCaptureState::busy:status=native?static_cast<HRESULT>(native):HRESULT_FROM_WIN32(ERROR_BUSY);break;case ClipboardCaptureState::invalid:status=native?static_cast<HRESULT>(native):HRESULT_FROM_WIN32(ERROR_INVALID_DATA);break;case ClipboardCaptureState::full:status=HRESULT_FROM_WIN32(ERROR_NOT_ENOUGH_MEMORY);break;case ClipboardCaptureState::unavailable:status=HRESULT_FROM_WIN32(ERROR_NOT_SUPPORTED);break;case ClipboardCaptureState::stale:return;default:break;}
@@ -1231,11 +1242,11 @@ public:
         if(clipboard_capture){clipboard_retry_available=allow_retry;const auto state=clipboard_capture->begin(sequence);return state==ClipboardCaptureState::unchanged?S_FALSE:clipboard_error;}
         // Backward-compatible callers may omit a worker for text/files. Never
         // accept encoded images without successful asynchronous thumbnail decode.
-        auto result=read_capture(sequence,0);if(result.state==ClipboardReadState::busy){if(allow_retry&&route)route->post(clipboard_retry_event);return set_clipboard_error(static_cast<HRESULT>(result.nativeError));}
+        auto result=read_with_origin(sequence,0);if(result.state==ClipboardReadState::busy){if(allow_retry&&route)route->post(clipboard_retry_event);return set_clipboard_error(static_cast<HRESULT>(result.nativeError));}
         if(result.state==ClipboardReadState::stale)return S_FALSE;if(result.state==ClipboardReadState::invalid)return set_clipboard_error(static_cast<HRESULT>(result.nativeError));
         if(result.state!=ClipboardReadState::payload)return set_clipboard_error(S_OK);
         if(result.payload.kind==ClipboardKind::image)return set_clipboard_error(HRESULT_FROM_WIN32(ERROR_NOT_SUPPORTED));
-        const auto inserted=clipboard.ingest(std::move(result.payload));if(inserted==ClipboardInsertResult::invalid)return set_clipboard_error(HRESULT_FROM_WIN32(ERROR_INVALID_DATA));if(inserted==ClipboardInsertResult::full)return set_clipboard_error(HRESULT_FROM_WIN32(ERROR_NOT_ENOUGH_MEMORY));
+        const auto inserted=clipboard.ingest(std::move(result.payload),false,std::move(result.origin));if(inserted==ClipboardInsertResult::invalid)return set_clipboard_error(HRESULT_FROM_WIN32(ERROR_INVALID_DATA));if(inserted==ClipboardInsertResult::full)return set_clipboard_error(HRESULT_FROM_WIN32(ERROR_NOT_ENOUGH_MEMORY));
         const bool recovered=clipboard_error!=S_OK;clipboard_error=S_OK;if(inserted==ClipboardInsertResult::inserted||inserted==ClipboardInsertResult::moved||recovered)notify(ServiceChange::clipboard);return inserted==ClipboardInsertResult::inserted||inserted==ClipboardInsertResult::moved?S_OK:S_FALSE;
     }
     HRESULT set_clipboard_error(HRESULT status) {
@@ -1303,6 +1314,7 @@ HRESULT SystemServices::start(HWND owner, UINT notification_message, Changed cha
     try {
         impl_->owner = owner; impl_->thread = GetCurrentThreadId(); impl_->message = notification_message; impl_->changed = std::move(changed);
         impl_->board = options.clipboard ? std::move(options.clipboard) : windowsClipboardBackend();
+        impl_->clipboard_origin = std::move(options.clipboardOrigin);
         impl_->power_reader = std::move(options.power);
         impl_->route = std::make_shared<NotificationRoute>(); impl_->route->owner = owner; impl_->route->message = notification_message;
         impl_->route->token = next_route.fetch_add(1, std::memory_order_relaxed);
@@ -1319,7 +1331,7 @@ HRESULT SystemServices::start(HWND owner, UINT notification_message, Changed cha
             L"de.petermaurer.TransientPasteboardType", L"com.typeit4me.clipping"})
             impl_->excluded_formats.push_back(board.register_format(name));
         if(clipboard_executor){auto*state=impl_.get();impl_->clipboard_capture=std::make_unique<ClipboardCapture>(impl_->clipboard,*clipboard_executor,
-            [state](auto sequence,auto first){return state->read_capture(sequence,first);},[state]{return static_cast<std::uint32_t>(state->board->sequence());},
+            [state](auto sequence,auto first){return state->read_with_origin(sequence,first);},[state]{return static_cast<std::uint32_t>(state->board->sequence());},
             [state](auto value,auto error){state->capture_changed(value,error);});}
         impl_->clipboard_sequence.begin(board.sequence());
         const bool privacy_formats_ready = impl_->history_format &&

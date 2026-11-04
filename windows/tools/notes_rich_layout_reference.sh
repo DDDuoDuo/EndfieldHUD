@@ -107,7 +107,7 @@ value={'sourceBaseline':pin,'sourcesUnmodified':True,'sourceSHA256':{p:hashlib.s
  'fixtureOverrides':['detached NSTextView instead of private HUDNoteTextView host','caller-owned UndoManager; explicit grouping','resizeEditorDocument/invalidateArtwork host callbacks are no-ops','no NSWindow guard or projected capture executed']}
 (out/'provenance.json').write_text(json.dumps(value,indent=2,sort_keys=True)+'\n')
 PY
-SDK="$(bash "$ROOT/scripts/build.sh" --print-sdk)"
+SDK="$(bash "$ROOT/windows/tools/mac_sdk.sh")"
 if ! xcrun swiftc -swift-version 5 -O -parse-as-library -module-name EndfieldNotesRichLayoutReference \
     -sdk "$SDK" -module-cache-path "$CACHE" -framework Cocoa -framework CoreText -framework QuartzCore \
     "$ROOT/Sources/NotesRichText.swift" "$OUTPUT/.compiler/source-fixture.swift" \

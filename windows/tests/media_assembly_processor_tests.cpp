@@ -54,7 +54,6 @@ PNG png(const fs::path&path){
             cur[x]=std::uint8_t(v);}}
     return out;
 }
-const std::array<std::string_view,15>filterIDs{"none","sp_filter_1","sp_filter_2","sp_filter_3","sp_filter_4","sp_filter_5","sp_filter_6","filter_1","filter_2","filter_3","filter_4","filter_5","filter_6","filter_7","filter_8"};
 m::MediaAssemblyAdjustments adjustments(const J&j){
     m::MediaAssemblyAdjustments a;const auto&c=j["crop"];a.crop={c["x"].number(),c["y"].number(),c["width"].number(),c["height"].number()};
     a.rotationQuarterTurns=int(j["rotationQuarterTurns"].integer());a.mirrored=j["mirrored"].boolean();
@@ -63,14 +62,13 @@ m::MediaAssemblyAdjustments adjustments(const J&j){
     a.exposure=j["exposure"].number();for(std::size_t i=0;i<5;++i)a.curve[i]=j["curve"].array()[i].number();
     a.levelsBlack=j["levelsBlack"].number();a.levelsWhite=j["levelsWhite"].number();a.levelsGamma=j["levelsGamma"].number();a.trimStart=j["trimStart"].number();
     if(j.contains("trimEnd"))a.trimEnd=j["trimEnd"].number();
-    const auto f=std::find(filterIDs.begin(),filterIDs.end(),j["filter"].string());check(f!=filterIDs.end(),"Known source filter");a.filter=m::MediaAssemblyFilter(f-filterIDs.begin());
-    for(const auto&s:j["stickers"].array()){m::MediaAssemblySticker k;k.id=s["id"].string();const auto stickers=m::mediaAssemblyStickers();std::size_t index=stickers.size();
-        for(std::size_t i=0;i<stickers.size();++i)if(stickers[i].id==s["kind"].string())index=i;check(index<stickers.size(),"Known source sticker");
-        k.kind=m::MediaAssemblyStickerKind(index);k.x=s["x"].number();k.y=s["y"].number();k.size=s["size"].number();k.rotation=s["rotation"].number();a.stickers.push_back(k);}
+    const auto f=m::mediaAssemblyFilter(j["filter"].string());check(bool(f),"Known source filter");a.filter=*f;
+    for(const auto&s:j["stickers"].array()){m::MediaAssemblySticker k;k.id=s["id"].string();const auto kind=m::mediaAssemblySticker(s["kind"].string());check(bool(kind),"Known source sticker");
+        k.kind=*kind;k.x=s["x"].number();k.y=s["y"].number();k.size=s["size"].number();k.rotation=s["rotation"].number();a.stickers.push_back(k);}
     check(a.valid(),"Fixture adjustments are valid source values");return a;
 }
 struct Cubes {fs::path root;std::map<m::MediaAssemblyFilter,std::vector<std::uint8_t>>data;
-    std::span<const std::uint8_t>get(m::MediaAssemblyFilter f){if(f==m::MediaAssemblyFilter::none)return {};auto&v=data[f];if(v.empty())v=bytes(read(root/"luts"/(std::string(filterIDs[std::size_t(f)])+".rgb8")));return v;}};
+    std::span<const std::uint8_t>get(m::MediaAssemblyFilter f){if(f==m::MediaAssemblyFilter::none)return {};auto&v=data[f];if(v.empty())v=bytes(read(root/"luts"/(std::string(m::mediaAssemblyFilterItem(f).id)+".rgb8")));return v;}};
 
 void derivations(){
     // Exact derived formulas vs independently fitted source matrices.
@@ -232,7 +230,7 @@ void frames(const J&fixture,Cubes&cubes,const fs::path&root){
         std::vector<std::uint8_t>source(std::size_t(w)*h*4,255);
         for(unsigned y=0;y<h;++y)for(unsigned x=0;x<w;++x){auto*p=source.data()+(std::size_t(y)*w+x)*4;p[0]=std::uint8_t(x*255/(w-1));p[1]=std::uint8_t(y*255/(h-1));p[2]=std::uint8_t(((x*7+y*13)*5)%256);}
         const bool include=f["includeStickers"].boolean();std::vector<m::MediaAssemblyStickerArtwork>stickers;
-        if(include)for(const auto&s:a.stickers){if(!art.contains(s.kind)){auto image=png(root/"stickers"/(std::string(m::mediaAssemblyStickers()[std::size_t(s.kind)].id)+".png"));const auto size=m::mediaAssemblyStickerPixelSize(s.kind);check(image.width==unsigned(size.x)&&image.height==unsigned(size.y),"Sticker canvas matches the source pixelSize");art[s.kind]=m::mediaAssemblyPremultiply(image.rgba);decoded[s.kind]=std::move(image);}
+        if(include)for(const auto&s:a.stickers){if(!art.contains(s.kind)){auto image=png(root/"stickers"/(std::string(m::mediaAssemblyStickerItem(s.kind).id)+".png"));const auto size=m::mediaAssemblyStickerPixelSize(s.kind);check(image.width==unsigned(size.x)&&image.height==unsigned(size.y),"Sticker canvas matches the source pixelSize");art[s.kind]=m::mediaAssemblyPremultiply(image.rgba);decoded[s.kind]=std::move(image);}
             stickers.push_back({decoded[s.kind].width,decoded[s.kind].height,art[s.kind]});}
         const m::MediaAssemblyFrameProcessor processor(w,h,a,cubes.get(a.filter),include,stickers);
         check(processor.width()==unsigned(f["width"].integer())&&processor.height()==unsigned(f["height"].integer()),"Frame output extent matches original integral extent: "+f["name"].string());
@@ -326,7 +324,7 @@ void colourProfiles(const J&icc,Cubes&cubes){
     for(const auto&e:icc["edits"].array()){m::MediaAssemblyAdjustments a;
         for(const auto&[key,value]:e["adjustments"].object()){
             if(key=="saturation")a.saturation=value.number();else if(key=="exposure")a.exposure=value.number();
-            else if(key=="filter"){const auto f=std::find(filterIDs.begin(),filterIDs.end(),value.string());check(f!=filterIDs.end(),"Known ICC fixture filter");a.filter=m::MediaAssemblyFilter(f-filterIDs.begin());}
+            else if(key=="filter"){const auto f=m::mediaAssemblyFilter(value.string());check(bool(f),"Known ICC fixture filter");a.filter=*f;}
             else check(false,"Unknown ICC fixture adjustment "+key);}
         edits.emplace_back(e["name"].string(),a);}
     check(edits.size()==4&&edits[0].first=="identity","ICC fixture edits");
@@ -486,7 +484,7 @@ void performance(Cubes&cubes){
 }
 int main(int argc,char**argv){
     try{
-        if(argc!=6)throw std::runtime_error("usage: media_assembly_processor_tests <processor-source.json> <resources/media-assembly> <highlight-shadow-fit.json> <icc-source.json> <video-colour-source.json>");
+        if(argc!=6)throw std::runtime_error("usage: media_assembly_processor_tests <processor-source.json> <Resources/MediaAssembly> <highlight-shadow-fit.json> <icc-source.json> <video-colour-source.json>");
         const auto fixture=J::parse(read(argv[1]),8*1024*1024);
         check(fixture["sourceCommit"].string()=="ca04f142185c7de40acd8523bdb563195d90a1d1"&&!fixture["usesAppOrWindow"].boolean(),"Authoritative isolated oracle");
         Cubes cubes{argv[2],{}};

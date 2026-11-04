@@ -1,6 +1,6 @@
 #pragma once
 // Projection's UI Automation group (Mac ProjectionWorkspaceView: the AX group
-// "Projection" holding its ProjectionToolbar buttons, the open retained menu
+// "Projection" holding its ProjectionToolbar buttons, the open menu or pop-over
 // and each media card's play and remove buttons). Projection is a built-in
 // fullscreen workspace of the Application on the HUD window, not a module
 // owner, so this production area lists its controls under the window's one

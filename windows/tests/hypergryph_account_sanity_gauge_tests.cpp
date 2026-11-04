@@ -87,9 +87,11 @@ void behaviour(const Json& g,const h::GaugeAssets& assets) {
         check(handled==row["handled"].boolean()&&model.popoverOpen()==row["open"].boolean()&&refreshed==row["refreshed"].integer(),
               "Pointer routing matches Mac at "+std::to_string(p[0].number())+","+std::to_string(p[1].number()));
     }
+    // Mac 1.3.0: without sanity data the bar is a link to Work Mode (the
+    // v1.2.0 oracle's "nothing opens" no longer holds; see linkOracle).
     model.update("x","",true,2,std::nullopt,now,endfield::core::Language::english);
     const auto& c=g["closedWithoutSanity"];
-    check(model.popoverOpen()==c["open"].boolean()&&model.canOpen()==c["canOpen"].boolean()&&model.mouseDown(endfield::core::Point{90,20})==c["handled"].boolean(),"No sanity: nothing opens (Work Mode minutes)");
+    check(model.popoverOpen()==c["open"].boolean()&&model.canOpen()==c["canOpen"].boolean()&&model.opensWorkMode()&&model.mouseDown(endfield::core::Point{90,20}),"No sanity: the press is the Work Mode link, no popover");
     const auto& hidden=g["hiddenEmpty"];h::SanityGaugeModel fresh;
     (void)fresh.update("","",false,2,std::nullopt,now,endfield::core::Language::english);
     check(fresh.hidden()==hidden["hidden"].boolean()&&!fresh.canOpen()&&hidden["contents"].string()=="nil"&&fresh.value().empty()&&!assets.numerals.render(fresh.value(),121,30,2),"Hidden empty gauge keeps no contents (empty raster)");
@@ -98,8 +100,9 @@ void behaviour(const Json& g,const h::GaugeAssets& assets) {
         check(h::gaugeCountdown(offset?std::optional<double>(now+*offset):std::nullopt,now,row["hours"].boolean())==row["text"].string(),"Countdown text matches Mac: "+row["text"].string());
     }
     const auto& k=g["constants"];using namespace h::gauge_geometry;
-    check(k["size"].array()[0].number()==bounds.width&&k["size"].array()[1].number()==bounds.height&&k["popoverRect"].array()[0].number()==popover.x&&
-          k["refreshRect"].array()[0].number()==refresh.x&&k["headerPosition"].array()[0].number()==headerPosition.x&&headerOrigin.x+headerPosition.x+bounds.width==730,"Gauge geometry mirrors the ENDFIELDHUD heading");
+    using L=h::GaugePopoverLayout;
+    check(k["size"].array()[0].number()==bounds.width&&k["size"].array()[1].number()==bounds.height&&k["popoverRect"].array()[0].number()==L::frameFor(L::minimumWidth).x&&
+          k["refreshRect"].array()[0].number()==L::refreshFor(L::minimumWidth).x&&k["headerPosition"].array()[0].number()==headerPosition.x&&headerOrigin.x+headerPosition.x+bounds.width==730,"Gauge geometry mirrors the ENDFIELDHUD heading");
     // Retained rasters change only with value/scale; equal updates are free.
     h::SanityGaugeModel retained;
     check(retained.update("42 / 360","a",true,2,std::nullopt,now,endfield::core::Language::english).number,"First value rasterizes");
@@ -111,6 +114,58 @@ void behaviour(const Json& g,const h::GaugeAssets& assets) {
     ticking.update("42 / 360","x",true,2,s,now,endfield::core::Language::english);check(!ticking.nextTooltipChange(),"Closed popover schedules nothing");
     ticking.perform("toggle");check(ticking.nextTooltipChange()==now+.25,"Open popover wakes at the next visible countdown change");
     check(ticking.hover(endfield::core::Point{90,20})==std::optional<std::string_view>("toggle")&&ticking.hover(endfield::core::Point{144,64})==std::optional<std::string_view>("refresh")&&!ticking.hover(endfield::core::Point{.2,6.2}),"Hover targets the rounded wallet and popover refresh");
+}
+// Mac 1.3.0 oracle (windows/tools/shell_redesign_reference.sh): the recovery
+// menu sized to its text (224-300, growing left), the Korean ASCII colon and
+// the Work Mode link, with the Mac's HUDText widths for the standard faces.
+endfield::core::Language language(std::string_view name) {
+    using L=endfield::core::Language;
+    return name=="simplifiedChinese"?L::simplifiedChinese:name=="traditionalChinese"?L::traditionalChinese:name=="japanese"?L::japanese:name=="korean"?L::korean:L::english;
+}
+endfield::core::Rect rect(const Json& j) {const auto& a=j.array();return {a[0].number(),a[1].number(),a[2].number(),a[3].number()};}
+void same(endfield::core::Rect a,const Json& j,const std::string& why) {const auto b=rect(j);check(a.x==b.x&&a.y==b.y&&a.width==b.width&&a.height==b.height,why);}
+void menuOracle(const h::GaugeAssets& assets,const Json& shell) {
+    const double now=781000000;const auto& gauge=shell["gauge"];
+    for(const auto& row:gauge["menus"].array()) {
+        const auto where=row["language"].string()+" "+row["case"].string();std::size_t misses{};
+        h::SanityGaugeModel model;
+        model.widths.numerals=[&](std::string_view text){return assets.numerals.width(text,h::GaugePopoverLayout::textSize);};
+        model.widths.standard=[&](std::string_view text){const auto& w=row["standardWidths"];if(!w.contains(std::string(text))) {++misses;return 0.0;}return w[std::string(text)].number();};
+        const auto offset=[&](const char* key)->std::optional<double>{return row[key].isNull()?std::nullopt:std::optional<double>(now+row[key].number());};
+        h::SanityPresentation s{h::Game::endfield,42,360,now,offset("next"),offset("full"),false,true};
+        model.update("42 / 360","Sanity 42 of 360",true,2,s,now,language(row["language"].string()));
+        check(model.perform("toggle")&&model.popoverOpen(),"The recovery menu opens: "+where);
+        const auto& tip=model.tooltip();const auto& texts=row["texts"].array();
+        for(unsigned i=0;i<4;++i) check(tip.text[i]==texts[i].string(),"Menu text (colon rule): "+where+" "+tip.text[i]);
+        check(tip.sourceLabels==(row["language"].string()=="english"),"English labels use the source numerals, others the standard faces: "+where);
+        same(model.popoverRect(),row["popover"],"Menu frame sized to its text: "+where);
+        for(unsigned i=0;i<4;++i) same(tip.layout.cell(i),row["cells"].array()[i],"Menu cell "+std::to_string(i)+": "+where);
+        const auto actions=model.accessibleActions(language(row["language"].string()));const auto& expected=row["actions"].array();
+        check(actions.size()==expected.size(),"Menu accessible actions: "+where);
+        for(std::size_t i=0;i<actions.size();++i) {same(actions[i].rect,expected[i]["rect"],"Menu action rect: "+where);check(actions[i].id==expected[i]["id"].string()&&actions[i].enabled==expected[i]["enabled"].boolean(),"Menu action: "+where);
+            if(i) check(actions[i].label==expected[i]["label"].string(),"Refresh label: "+where);}
+        // The refresh button follows the menu's right edge (hover/press).
+        const auto r=tip.layout.refresh();const auto p=model.popoverRect();
+        check(model.hover(endfield::core::Point{p.x+r.x+r.width/2,p.y+r.y+r.height/2})==std::optional<std::string_view>("refresh"),"Refresh hover follows the menu width: "+where);
+        check(misses==0,"Every standard-face width is one the Mac measured: "+where);
+    }
+    const auto& link=gauge["link"];
+    h::SanityGaugeModel model;int opened{};model.onOpenWorkMode=[&]{++opened;};
+    model.update("12","Work Mode 12 minutes",true,2,std::nullopt,now,endfield::core::Language::english);
+    check(model.opensWorkMode()==link["opensWorkMode"].boolean()&&model.canOpen()==link["canOpen"].boolean()&&model.isInteractive()==link["isInteractive"].boolean(),"No sanity data: the shown bar is a Work Mode link");
+    const auto actions=model.accessibleActions(endfield::core::Language::english);
+    check(actions.size()==link["actions"].array().size()&&actions[0].id=="toggle"&&actions[0].label==link["actions"].array()[0]["label"].string(),"The link keeps its toggle accessibility action");
+    check(model.mouseDown(endfield::core::Point{90,20})==link["pressInside"]["handled"].boolean()&&opened==link["pressInside"]["opened"].integer()&&!model.popoverOpen(),"A press on the bar opens Work Mode, no popover");
+    check(model.mouseDown(endfield::core::Point{90,50})==link["pressOutside"]["handled"].boolean()&&!model.perform("refresh")&&opened==link["pressOutside"]["opened"].integer(),"Outside the bar and refresh do nothing");
+    check(model.perform("toggle")&&opened==link["toggleOpened"].integer(),"The accessibility toggle opens Work Mode");
+    check(model.hover(endfield::core::Point{90,20})==std::optional<std::string_view>("toggle"),"The link takes the neutral hover");
+    model.update("12","",false,2,std::nullopt,now,endfield::core::Language::english);
+    check(model.opensWorkMode()==link["hidden"]["opensWorkMode"].boolean()&&model.isInteractive()==link["hidden"]["isInteractive"].boolean()&&
+          model.mouseDown(endfield::core::Point{90,20})==link["hidden"]["handled"].boolean()&&!model.hover(endfield::core::Point{90,20}),"A hidden bar takes no input");
+    // The link flip reports an availability change (HUDAccountGauge.onChange).
+    h::SanityGaugeModel flip;check(flip.update("12","x",true,2,std::nullopt,now,endfield::core::Language::english).availability,"Showing the link changes availability");
+    h::SanityPresentation sanity{h::Game::endfield,42,360,now,now+60,now+600,false,true};
+    check(flip.update("42 / 360","x",true,2,sanity,now,endfield::core::Language::english).availability&&flip.canOpen()&&!flip.opensWorkMode(),"Sanity replaces the link");
 }
 void artwork(const h::GaugeAssets& assets,const Json& g) {
     for(const auto& render:g["renders"].array()) {
@@ -141,12 +196,13 @@ void artwork(const h::GaugeAssets& assets,const Json& g) {
 }
 int main(int argc,char** argv) {
     try {
-        check(argc==3,"Pass the account oracle fixture and windows/resources/account");
+        check(argc==4,"Pass the account oracle fixture, windows/resources/account and shell-redesign-source.json");
         const auto bytes=ehud::data::detail::readFile(argv[1],4*1024*1024);check(bytes.has_value(),"Read bounded account oracle");
         const auto fixture=Json::parse(*bytes,4*1024*1024);
         const auto assets=h::GaugeAssets::load(std::filesystem::absolute(argv[2]).lexically_normal());
         const auto& g=fixture["gauge"];
         numerals(assets,g);tooltips(assets,g);behaviour(g,assets);artwork(assets,g);
+        const auto shell=ehud::data::detail::readFile(argv[3],4*1024*1024);check(shell.has_value(),"Read the shell redesign oracle");menuOracle(assets,Json::parse(*shell,4*1024*1024));
         std::cout<<"PASS "<<checks<<" sanity gauge checks\n";return 0;
     } catch(const std::exception& e) {std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}
 }

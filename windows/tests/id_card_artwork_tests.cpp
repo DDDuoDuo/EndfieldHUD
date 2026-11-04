@@ -1,6 +1,7 @@
 #include "modules/id_card_artwork.hpp"
 #include "core/shell_packet.hpp"
 #include "core/data/json.hpp"
+#include <algorithm>
 #include <cmath>
 #include <fstream>
 #include <iostream>
@@ -49,6 +50,14 @@ int main(int argc,char**argv){
             const auto textureError=compare(m::idCardTexturePixels(composited).rgba,base64(row["texture"]["rgba"].string()),3);
             check(textureError.maximum<=24&&textureError.over*20<=composited.rgba.size(),"composited texture pixels follow the same composite");
         }
+        // HUDSourceProfileArtwork.hoverCoverageThreshold (SHELL-48): the
+        // oracle's synthetic alphas (0/140/200/255) never fall in the
+        // sprite's 1-9 padding band, so check the clear directly: below 10 the
+        // pixel stays empty, at 10 it takes the accent like the rest.
+        {const m::ProfileImage band{3,1,{255,255,255,5, 255,255,255,9, 255,255,255,10},false};
+         const auto lit=m::idCardHoverArtwork(band,{1,0,0});
+         check(std::all_of(lit.rgba.begin(),lit.rgba.begin()+8,[](std::uint8_t v){return v==0;})&&lit.rgba[11]>0&&lit.rgba[8]>0,
+             "Hover clears the sprite's near-transparent padding before the accent fill");}
         // Windows outline correction multiplies alpha only.
         m::ProfileImage hover{1,2,{10,20,30,200,1,2,3,255},false},background{1,2,{0,0,0,128,0,0,0,0},false};m::idCardMaskHover(hover,background);
         check(hover.rgba==std::vector<std::uint8_t>{10,20,30,100,1,2,3,0},"Hover outline mask keeps palette, multiplies coverage");

@@ -106,19 +106,16 @@ std::shared_ptr<const NowPlayingNetEaseQueue>nowPlayingNetEaseQueue(std::span<co
 std::optional<NowPlayingNetEaseEntry>nowPlayingNetEaseQueueEntry(const NowPlayingNetEaseQueue&,const NowPlayingTrack&);
 // Both steps at once (parses the file every call).
 std::optional<NowPlayingNetEaseEntry>nowPlayingNetEasePlayingListEntry(std::span<const std::uint8_t>,const NowPlayingTrack&);
-// p1-p4.music.126.net only; scheme forced to https and query to param=600y600.
-std::optional<std::string>nowPlayingCatalogCoverURL(std::string_view);
-// Windows: the same cover at `pixels` square (param=<pixels>y<pixels>,
-// 64...1024) instead of the source's 600, so a lookup downloads what the slot
-// draws (the NetEase image CDN scales to any requested square).
-std::optional<std::string>nowPlayingCatalogCoverURL(std::string_view,unsigned pixels);
-// The 330-point artwork slot in pixels at `pixelsPerPoint` (rounded up,
-// 64...nowPlayingMaximumCoverPixels): the size covers are decoded to.
-unsigned nowPlayingCoverDrawnPixels(double pixelsPerPoint)noexcept;
-// The catalog cover download for that slot: the smallest of
-// 200/300/400/500/600/800/1024 at least its drawn size (1024 at most), so the
-// decoder only ever scales the download down to the drawn size.
-unsigned nowPlayingCatalogCoverPixels(double pixelsPerPoint)noexcept;
+// NowPlayingCatalog.coverURL (Mac 1.3.0, B11, MODS-351): p1-p4.music.126.net
+// only; scheme forced to https and the query to param=<N>y<N>, N within
+// 64...2048 (NetEase's image CDN scales to any requested square), by default
+// nowPlayingCatalogDefaultCoverPixels (search matches carry 800 px covers).
+inline constexpr unsigned nowPlayingCatalogDefaultCoverPixels=800;
+std::optional<std::string>nowPlayingCatalogCoverURL(std::string_view,unsigned pixels=nowPlayingCatalogDefaultCoverPixels);
+// coverPixels(forDrawn:) (MODS-343): the download for a drawn slot of
+// `pixels`: 800, or the slot's own size when larger (2048 at most), so the
+// decoder only scales it down.
+unsigned nowPlayingCatalogCoverPixels(unsigned drawnPixels)noexcept;
 // Original-language lrc only; translated variants are ignored. NetEase also
 // stores some lines as [mm:ss:cc] (a colon before the hundredths); those
 // read as [mm:ss.cc] instead of hours:minutes:seconds, as NetEase shows them.

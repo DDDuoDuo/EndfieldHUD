@@ -3,6 +3,13 @@
 #include <cmath>
 
 namespace endfield::modules {
+std::string MediaAssemblyDocumentInfo::suggestedFilename()const{
+    std::string_view file=name.empty()?std::string_view(path):std::string_view(name);
+    if(const auto slash=file.find_last_of("/\\");slash!=std::string_view::npos)file.remove_prefix(slash+1);
+    // URL.deletingPathExtension: strip only a final non-leading extension.
+    if(const auto dot=file.rfind('.');dot!=std::string_view::npos&&dot>0)file=file.substr(0,dot);
+    return std::string(file)+"-edited."+(video?"mp4":"png");
+}
 MediaAssemblyView MediaAssemblySession::view()const noexcept{return {document_.get(),&adjustments_,preview_?core::Point{double(preview_->width),double(preview_->height)}:core::Point{},busy_,exportToken_.has_value(),playing_,currentTime_};}
 void MediaAssemblySession::stopPlayback()noexcept{playing_=wantsPlayback_=false;}
 void MediaAssemblySession::setActive(bool value){

@@ -26,7 +26,7 @@ template <class E = std::exception, class F> void rejects(F&& f, const std::stri
     check(thrown, what);
 }
 const std::string digest(64, 'a');
-const std::string commit = "ca04f142185c7de40acd8523bdb563195d90a1d1";
+const std::string commit = "81b6f66c61a1d252a3db503ff85ba8bb5565b65d";
 
 void reoffset(p::PayloadManifest& m) {
     std::uint64_t offset = 0;
@@ -34,7 +34,7 @@ void reoffset(p::PayloadManifest& m) {
 }
 p::PayloadManifest sample() {
     p::PayloadManifest m;
-    m.version = *p::parseProductVersion("v1.2.0", 18);
+    m.version = *p::parseProductVersion("v1.3.0", 19);
     m.commit = commit;
     std::uint64_t offset = 0;
     const auto add = [&](std::string path, std::uint64_t bytes, p::Encoding e, std::uint64_t stored) {
@@ -50,17 +50,17 @@ p::PayloadManifest sample() {
 }
 
 void versions() {
-    const auto v = p::parseProductVersion("v1.2.0", 18);
-    check(v && v->major == 1 && v->minor == 2 && v->patch == 0 && v->build == 18, "v-prefixed release parses");
-    check(v->release() == "1.2.0" && v->display() == "1.2.0 (18)" && v->dotted() == "1.2.0.18", "Version renderings");
-    check(p::parseProductVersion("1.2.0", 18) == v, "Release without v");
-    check(p::parseDottedVersion("1.2.0.18") == v, "Dotted uninstall version round-trips");
+    const auto v = p::parseProductVersion("v1.3.0", 19);
+    check(v && v->major == 1 && v->minor == 3 && v->patch == 0 && v->build == 19, "v-prefixed release parses");
+    check(v->release() == "1.3.0" && v->display() == "1.3.0 (19)" && v->dotted() == "1.3.0.19", "Version renderings");
+    check(p::parseProductVersion("1.3.0", 19) == v, "Release without v");
+    check(p::parseDottedVersion("1.3.0.19") == v, "Dotted uninstall version round-trips");
     for (const auto* bad : {"1.2", "1.2.0.1", "01.2.0", "1..0", "1.2.x", "", "v", "1.2.0 "})
         check(!p::parseProductVersion(bad, 18), std::string("Rejects release ") + bad);
     check(!p::parseProductVersion("1.2.0", 0) && !p::parseProductVersion("1.2.0", 1000000), "Build bounds");
-    check(*p::parseProductVersion("1.2.0", 19) > *v && *p::parseProductVersion("1.10.0", 1) > *p::parseProductVersion("1.9.9", 99),
+    check(*p::parseProductVersion("1.3.0", 20) > *v && *p::parseProductVersion("1.3.0", 19) > *p::parseProductVersion("1.2.0", 18) && *p::parseProductVersion("1.10.0", 1) > *p::parseProductVersion("1.9.9", 99),
           "Versions compare numerically, build last");
-    check(p::releaseArtifactStem(*v) == "EndfieldHUD-1.2.0-build18-windows-x64", "Artifact stem keeps the Windows namespace");
+    check(p::releaseArtifactStem(*v) == "EndfieldHUD-1.3.0-build19-windows-x64", "Artifact stem keeps the Windows namespace");
 }
 
 void paths() {

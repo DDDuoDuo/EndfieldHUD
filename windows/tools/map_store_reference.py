@@ -29,6 +29,11 @@ for key, number in [('centerX', 1), ('centerY', -1), ('zoom', 128), ('zoom', 2.1
     value = copy.deepcopy(base); value['viewport'][key] = number; add(value)
 value = copy.deepcopy(base); duplicate = copy.deepcopy(value['pins'][0]); duplicate['id'] = duplicate['id'].upper(); value['pins'].append(duplicate); add(value)
 value = copy.deepcopy(base); value['pins'][0].pop('createdAt'); add(value)
+# Mac 1.3.0 wideZoom (WorldMapStore.swift:87-105): applied, stale, out of range,
+# wrong version, wrong type, and a viewport below v1.2.0's floor.
+for version, zoom, wide in [(4, 2.1, 1.5), (4, 2.1, 1), (4, 2.1, 2.05), (4, 3, 1.5), (4, 2.1, .5), (4, 2.1, 2.1),
+                            (3, 2.1, 1.5), (4, 2.1, None), (4, 2.1, '1.5'), (4, 1.5, None), (4, .5, None)]:
+    value = copy.deepcopy(base); value['version'] = version; value['viewport']['zoom'] = zoom; value['wideZoom'] = wide; add(value)
 rows.append('{broken')
 (output / 'input.json').write_text(json.dumps(rows))
 (output / 'main.swift').write_text(r'''import Foundation
@@ -52,7 +57,20 @@ for (index,bytes) in inputs.enumerated() {
     } catch {row["accepted"]=false}
     cases.append(row)
 }
-let data=try JSONSerialization.data(withJSONObject:["cases":cases],options:[.sortedKeys])
+// Writer: the exact archive bytes the Mac saves for a camera (Archive.current),
+// from the base archive and from one holding a stale wideZoom.
+var writes:[[String:Any]]=[]
+for (index,start) in [inputs[0],inputs.first { $0.contains("\"wideZoom\":1.5") && $0.contains("\"zoom\":3") }!].enumerated() {
+    for zoom in [1.5,1.0,2.1,2.0999,4.0] {
+        let directory=own.appendingPathComponent("write-\(index)-\(zoom)",isDirectory:true)
+        try fm.createDirectory(at:directory,withIntermediateDirectories:true)
+        try Data(start.utf8).write(to:directory.appendingPathComponent("map.json"))
+        let store=try WorldMapStore(directory:directory)
+        var camera=store.viewport;camera.zoom=zoom;try store.setViewport(camera)
+        writes.append(["input":start,"zoom":zoom,"output":String(decoding:try Data(contentsOf:directory.appendingPathComponent("map.json")),as:UTF8.self)])
+    }
+}
+let data=try JSONSerialization.data(withJSONObject:["cases":cases,"writes":writes],options:[.sortedKeys])
 try data.write(to:URL(fileURLWithPath:CommandLine.arguments[2]))
 ''')
 source = root / 'Sources/WorldMapStore.swift'

@@ -4,22 +4,25 @@
 // application: the signed community client over WinHTTP, the DPAPI credential
 // vault and owner-only Account\profile-cache.json below the versioned data
 // root, the official WebView2 login (when the build has the SDK and the
-// Evergreen runtime is installed), the Account module face and the header
-// sanity / Work Mode wallet with its recovery popover. The wallet and popover
-// are composed through floatingEntries() above module content; the face is the
-// presented Module::account. Profile sync reaches the Personal Profile area
-// through AccountProfileLink (app/areas/account_profile_link.hpp).
+// Evergreen runtime is installed), the Account page (modules::AccountCanvas,
+// the Mac 1.3.0 HUDAccountCanvas, on the design library: a DesignOwnerCore
+// over the HUD's one design Context, marked as a design screen) and the
+// header sanity / Work Mode wallet with its recovery popover. The wallet and
+// popover are composed through floatingEntries() above module content; the
+// page is the presented Module::account. Profile sync reaches the Personal
+// Profile area through AccountProfileLink (app/areas/account_profile_link.hpp);
+// the daily boot log's SANITY line reads this area's controller
+// (modules::boot::BootLogSources::sanity).
 //
-// UI Automation: the ModuleOwner hooks list the Mac's transparent AX buttons
-// (native/account_automation.hpp: the active face, then the wallet and its
-// open popover) under this owner's group of the HUD window's root provider.
-// A UIA Invoke performs the click's action and posts the area's registered
-// message, so the host refreshes frames, deadlines and the tree exactly as
-// after a routed click. The sync toggles answer Toggle with their check
-// state; an open menu's keyboard selection (Up/Down, Return) is the UIA
-// keyboard focus the HUD root's GetFocus finds, announced as it moves; the
-// painted status line, last update and status message ride on
-// Connect/Reconnect as its help text, and a new status message is announced.
+// UI Automation: the ModuleOwner hooks list one AutomationTree
+// (native/hud_design_automation.hpp) under this owner's group of the HUD
+// window's root provider: the page's accessibility items while it takes input
+// (the Mac's HUDDesignCanvas.accessibilityItems: buttons, segments, pop-ups,
+// toggles, field chips, an open menu's rows), then the wallet's stand-ins
+// with the open popover's countdowns as the toggle's value. A UIA action
+// performs the click's action and posts the area's registered message, so the
+// host refreshes frames, deadlines and the tree exactly as after a routed
+// click.
 // Without the Evergreen WebView2 Runtime, Connect shows the localized
 // explanation page linking to Microsoft's download page
 // (native/hypergryph_account_webview.hpp); nothing is bundled or downloaded.

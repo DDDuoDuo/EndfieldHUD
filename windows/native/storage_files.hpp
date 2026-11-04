@@ -33,29 +33,40 @@ modules::StorageDetailsSnapshot scanStorageFolders(std::span<const StorageFolder
     const modules::StorageScanCancellation&,double date,StorageFileSystem&,
     std::optional<std::uint64_t>expectedVolume,StorageScanClock,
     modules::StorageScanLimits={});
-// StorageController's volumeNameKey title on Windows: the volume label when
+// StorageController's volume name on Windows (volumeLocalizedName ??
+// volumeName, Sources/StorageController.swift:165-170): the volume label when
 // it has one, else Explorer's localized display name of the root ("Local
-// Disk" for an unlabelled C:, without its " (C:)" drive suffix), else the
-// source "Startup disk" literal. Pure; the reader below supplies both names.
-std::string storageVolumeTitle(std::string_view label,std::string_view shellDisplayName,std::string_view root);
-// Volume choice (Windows addition). Pure menu order: the startup volume first,
-// then fixed before removable volumes, then by mount path (ASCII case
-// folded); entries without an id or root, with invalid UTF-8 or a repeated id
-// are dropped; at most modules::storageVolumeLimit remain.
-std::vector<modules::StorageVolume>orderStorageVolumes(std::vector<modules::StorageVolume>);
+// Disk" for an unlabelled C:, without its " (C:)" drive suffix), else
+// `fallback` (the startup disk: the localized "Startup disk" / 启动磁盘 of
+// the request's language, MODS-436; another disk: its drive, as the Mac
+// falls back to the mount point's last path component). Pure.
+std::string storageVolumeTitle(std::string_view label,std::string_view shellDisplayName,std::string_view root,std::string_view fallback);
+// localizedStandardCompare (Windows: CompareStringEx natural order; portable
+// tests inject a deterministic one). Negative/zero/positive.
+using StorageNameCompare=std::function<int(std::string_view,std::string_view)>;
+// StorageVolumeCatalog.volumes' rules (:79-102), pure: the startup disk first,
+// then internal (fixed, RAM disk) before external (removable) disks, then by
+// name (`compare`), then by mount path; one entry per id (the startup disk's,
+// else the first listed);
+// entries without an id or root, with invalid UTF-8 or a non-positive or
+// inconsistent capacity are left out. No limit here: the controller keeps
+// at most storageVolumeLimit with the current choice (limitedStorageVolumes).
+std::vector<modules::StorageVolume>orderStorageVolumes(std::vector<modules::StorageVolume>,const StorageNameCompare&);
 #ifdef _WIN32
 // Worker-thread functions only. Construction/resolution is intentionally inside
 // each request, not the UI path. No query enumerates the whole startup volume.
 // Windows synchronous filesystem calls cannot guarantee a deadline if a kernel
 // driver hangs; limits/cancellation are checked BETWEEN bounded metadata calls.
-std::optional<modules::StorageCapacity>readWindowsStartupCapacity(double date);
-std::optional<modules::StorageCapacity>readWindowsCapacityAt(std::string_view explicitPath,double date);
-// The fixed, removable and RAM-disk volumes that are mounted at a drive path
-// and have media, named like readWindowsCapacityAt (orderStorageVolumes).
-std::vector<modules::StorageVolume>listWindowsStorageVolumes();
-// The chosen volume's capacity by its GUID path id (removable volumes too);
-// the startup volume's for an empty id or a volume that is not mounted now.
-std::optional<modules::StorageCapacity>readWindowsVolumeCapacity(std::string_view volumeID,double date);
+// GetDiskFreeSpaceExW's free-to-caller figure is the one Explorer shows
+// (MODS-436: the Mac's "available for important usage").
+std::optional<modules::StorageCapacity>readWindowsStartupCapacity(double date,std::string_view startupName);
+std::optional<modules::StorageCapacity>readWindowsCapacityAt(std::string_view explicitPath,double date,std::string_view fallbackName);
+// One capacity read (StorageController.refreshCapacity's worker, :430-441,
+// with StorageVolumeCatalog.mountedVolumes, :126-137): every fixed, removable
+// and RAM-disk volume mounted at a drive path with media, with its numbers
+// (unreadable ones left out), ordered; plus the startup reader's capacity when
+// the list lacks the startup disk.
+modules::StorageCapacityResult readWindowsStorage(double date,std::string_view startupName,const StorageNameCompare&);
 std::unique_ptr<StorageFileSystem>makeWindowsStorageFileSystem();
 std::vector<StorageFolderScope>windowsStorageScopes();
 modules::StorageDetailsSnapshot scanWindowsStorageDetails(

@@ -1,10 +1,10 @@
 #pragma once
 #include "modules/map_state.hpp"
 #include <array>
+#include <vector>
 
 namespace endfield::modules {
 using MapColor=std::array<double,4>; // authored straight color components
-inline constexpr double mapDiameter=440,mapRadius=216,mapEdgeFeather=9;
 struct MapRasterFrame {MapViewport viewport;core::Rect screenRect;double pixelsPerPoint{};};
 struct MapImagePlacement {core::Point position;double scale{1};};
 MapImagePlacement mapRasterPlacement(const MapRasterFrame&,MapViewport)noexcept;
@@ -21,11 +21,17 @@ bool mapNeedsPaint(const MapRasterFrame*,MapViewport,bool sameDataRevision,
 double mapRenderScale(double requested,bool interacting)noexcept;
 double mapPaintCooldown(double elapsed)noexcept;
 
+// WorldMapSurface.updatePins (:428-464): the pins on the disc (out to its
+// 430 px rim, in the raster's unit space mapScreen) are drawn and fade with
+// it; while active (and not Reduce Motion, ambient motion on) up to 12 pulse,
+// the selected one first, then the newest; the others' ring .65 selected /
+// .25. The selected marker is drawn above the others.
 struct MapPinVisual {
     std::string_view id;core::Point position;MapPinStyle style{};MapColor color;
     bool selected{},pulses{};double staticHaloOpacity{};
 };
 struct MapPinVisuals {std::array<MapPinVisual,128>items{};std::size_t count{};};
+bool mapPinVisible(core::Point unitPoint)noexcept;
 MapPinVisuals mapPinVisuals(std::span<const MapPin>,MapViewport,
     std::optional<std::string_view>selected,bool active,bool reducedMotion,bool ambient);
 struct MapPulse {double scale{},opacity{};};
@@ -37,16 +43,9 @@ MapStyleTransition mapStyleTransition(double elapsed,bool reducedMotion=false);
 struct MapPlayerAsset {std::string_view path;core::Rect rect;double opacity;bool screenBlend;};
 std::array<MapPlayerAsset,3>mapPlayerAssets()noexcept;
 MapColor mapPinColor(MapPinStyle)noexcept;
-struct MapChromeGeometry {
-    core::Rect heading{122,37,196,17},status{115,55,210,13};
-    core::Rect coordinates{100,301,211,26},coordinateText{106,309,202,15};
-    core::Rect message{97,330,246,22};
-};
-struct MapChromeStyle {MapColor background,ink,plate,coordinateBackground;};
-MapChromeStyle mapChromeStyle(bool dark)noexcept;
-std::string_view mapActionSymbol(MapAction)noexcept;
-// Source paths and authored typography are preserved. User-facing labels are
-// supplied by the shared locale catalog; no new text engine/font resolver.
-struct MapChromeText {std::string heading,loading,pins;};
-std::string mapZoomStatus(MapViewport,std::size_t pins,bool terrainReady,bool loadsTerrain,const MapChromeText&);
+// The header scrim (WorldMapSurface.setHeaderScrim, :183-195): one cached
+// 1-px gray column from the square's top to `bottom` map px at gray .04
+// alpha .5, then fading to 0 over `feather` px; straight sRGB rows, top down.
+struct MapScrim {unsigned rows{};std::vector<std::uint8_t>straightRGBA;double height{};};
+MapScrim mapHeaderScrim(double bottom,double feather=32,double alpha=.5);
 }

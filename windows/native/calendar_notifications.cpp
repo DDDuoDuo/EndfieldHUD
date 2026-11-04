@@ -7,7 +7,6 @@
 #include <set>
 #include <thread>
 #ifdef _WIN32
-#include "modules/calendar_editor_text.hpp"
 #include <winrt/Windows.Data.Xml.Dom.h>
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.Foundation.Collections.h>
@@ -29,7 +28,7 @@ std::optional<std::string>calendarNotificationEvent(std::string_view args){try{c
 void cancelObsoleteCalendarNotifications(CalendarNotificationProvider&p,std::span<const std::string>keeping){need(keeping.size()<=60,"Calendar reminder plan exceeds source capacity");std::set<std::string,std::less<>>wanted;for(const auto&id:keeping){need(calendarNotificationKey(id).has_value(),"Invalid retained Calendar reminder identity");wanted.insert(id);}auto existing=scopedPending(p);for(const auto&v:existing)if(!wanted.contains(v.identifier))p.remove(v.identifier);}
 void reconcileCalendarNotifications(CalendarNotificationProvider&p,std::span<const m::CalendarReminder>reminders,const CalendarNotificationOptions&o){
  optionsValid(o);need(reminders.size()<=60,"Calendar reminder plan exceeds source capacity");std::map<std::string,CalendarScheduledNotification,std::less<>>wanted;
- for(const auto&r:reminders){const auto key=calendarNotificationKey(r.identifier);need(key&&key->group==std::string(m::calendarNotificationPrefix)+r.eventID&&key->tag==(r.previousDay?"before":"day")&&r.day.valid()&&std::isfinite(r.date)&&r.date>=-m::calendarFoundationToUnix&&r.date<253402300800.-m::calendarFoundationToUnix&&r.title.size()<=m::calendarMaximumBytes&&m::CalendarJson::validUtf8(r.title)&&r.title.find('\0')==std::string::npos,"Invalid Calendar reminder payload");const auto label=core::localized(r.previousDay?"Tomorrow":"Today",r.previousDay?"明天":"今天",o.language);CalendarScheduledNotification v{r.identifier,r.signature()+"|"+o.calendarIdentity+"|"+std::string(core::languageSetting(o.language)),r.title,label+" · "+r.day.string(),r.date,r.catchUp};need(wanted.emplace(r.identifier,std::move(v)).second,"Duplicate Calendar reminder identity");}
+ for(const auto&r:reminders){const auto key=calendarNotificationKey(r.identifier);need(key&&key->group==std::string(m::calendarNotificationPrefix)+r.eventID&&key->tag==(r.previousDay?"before":"day")&&r.day.valid()&&std::isfinite(r.date)&&r.date>=-m::calendarFoundationToUnix&&r.date<253402300800.-m::calendarFoundationToUnix&&r.title.size()<=m::calendarMaximumBytes&&m::CalendarJson::validUtf8(r.title)&&r.title.find('\0')==std::string::npos,"Invalid Calendar reminder payload");const auto label=core::localized(r.previousDay?"Tomorrow":"Today",r.previousDay?"明天":"今天",o.language);CalendarScheduledNotification v{r.identifier,r.signature()+"|"+o.calendarIdentity+"|"+std::string(core::languageSetting(o.language)),r.title,label+" "+r.day.string(),r.date,r.catchUp};need(wanted.emplace(r.identifier,std::move(v)).second,"Duplicate Calendar reminder identity");}
  auto pending=scopedPending(p);std::map<std::string,const CalendarScheduledNotification*,std::less<>>existing;for(const auto&v:pending)existing.try_emplace(v.identifier,&v);
  for(const auto&v:pending)if(!wanted.contains(v.identifier))p.remove(v.identifier);
  for(const auto&r:reminders){const auto old=existing.find(r.identifier);if(old==existing.end()&&r.wasScheduled)continue;const auto&next=wanted.at(r.identifier);if(old!=existing.end()&&old->second->signature==next.signature)continue;if(old!=existing.end())p.remove(r.identifier);p.add(next);}
@@ -58,8 +57,8 @@ bool NativeCalendarNotifications::flush(){auto i=impl_;i->check();while(i->alive
 #ifdef _WIN32
 namespace {namespace n=winrt::Windows::UI::Notifications;namespace x=winrt::Windows::Data::Xml::Dom;
 struct Apartment{Apartment(){winrt::init_apartment(winrt::apartment_type::multi_threaded);}~Apartment(){winrt::uninit_apartment();}};
-winrt::hstring wide(std::string_view v){return winrt::hstring(reinterpret_cast<const wchar_t*>(m::calendarEditorUTF16(v).c_str()));}
-std::string utf8(const winrt::hstring&v){return m::calendarEditorUTF8({reinterpret_cast<const char16_t*>(v.c_str()),v.size()});}
+winrt::hstring wide(std::string_view v){return winrt::to_hstring(v);} // payloads are validated UTF-8
+std::string utf8(const winrt::hstring&v){return winrt::to_string(v);}
 std::string xml(std::string_view v){std::string out;out.reserve(v.size());for(char c:v){switch(c){case '&':out+="&amp;";break;case '<':out+="&lt;";break;case '>':out+="&gt;";break;case '"':out+="&quot;";break;case '\'':out+="&apos;";break;default:out+=c;}}return out;}
 std::string processIdentity(){PWSTR id{};if(FAILED(GetCurrentProcessExplicitAppUserModelID(&id))||!id)return {};std::string value;try{value=utf8(winrt::hstring(id));}catch(...){value.clear();}CoTaskMemFree(id);return validAppNotificationID(value)?value:std::string{};}
 struct WinNotifications final:CalendarNotificationProvider {

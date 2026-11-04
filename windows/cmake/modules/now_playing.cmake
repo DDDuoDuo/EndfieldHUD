@@ -47,10 +47,16 @@ if(MSVC)
   target_compile_options(hud_now_playing_web PRIVATE /W4 /permissive- /EHsc)
 endif()
 
-# UIA descriptor model for projected buttons/sliders (host provider input).
-add_library(hud_now_playing_accessibility modules/now_playing_accessibility.cpp)
-target_include_directories(hud_now_playing_accessibility PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(hud_now_playing_accessibility PUBLIC hud_now_playing_presentation)
+# The canvas (Mac 1.3.0 NowPlayingCanvas on the design library). Portable;
+# the controller it reads is the session above (tools/now_playing_session.*).
+add_library(hud_now_playing_canvas modules/now_playing_canvas.cpp)
+target_include_directories(hud_now_playing_canvas PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(hud_now_playing_canvas PUBLIC hud_design hud_now_playing hud_now_playing_lyrics)
+if(MSVC)
+  target_compile_options(hud_now_playing_canvas PRIVATE /W4 /permissive- /EHsc)
+else()
+  target_compile_options(hud_now_playing_canvas PRIVATE -Wall -Wextra -Wpedantic)
+endif()
 
 # The existing session owner gains lyric sources, web, volume and Event Log.
 target_link_libraries(hud_now_playing_session PUBLIC hud_now_playing_lyrics hud_now_playing_web)
@@ -87,31 +93,11 @@ if(BUILD_TESTING)
   add_executable(now_playing_sources_session_tests tests/now_playing_sources_session_tests.cpp)
   target_link_libraries(now_playing_sources_session_tests PRIVATE hud_now_playing_session hud_event_log hud_data)
   add_test(NAME now_playing_sources_session_contracts COMMAND now_playing_sources_session_tests)
-  add_executable(now_playing_accessibility_tests tests/now_playing_accessibility_tests.cpp)
-  target_link_libraries(now_playing_accessibility_tests PRIVATE hud_now_playing_accessibility hud_data)
-  add_test(NAME now_playing_accessibility_contracts COMMAND now_playing_accessibility_tests)
-endif()
-
-if(TARGET hud_now_playing_preview)
-  target_link_libraries(hud_now_playing_preview PUBLIC hud_now_playing_accessibility)
-endif()
-
-# UI Automation fragments for the projected controls (Invoke/RangeValue/Value),
-# listed by the HUD window's UIA root provider.
-if(WIN32)
-  add_library(hud_now_playing_automation native/now_playing_automation.cpp)
-  target_include_directories(hud_now_playing_automation PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-  target_compile_definitions(hud_now_playing_automation PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
-  target_link_libraries(hud_now_playing_automation PUBLIC hud_now_playing_accessibility PRIVATE uiautomationcore oleaut32 ole32)
-  if(MSVC)
-    target_compile_options(hud_now_playing_automation PRIVATE /W4 /permissive- /EHsc)
-  endif()
-  if(BUILD_TESTING)
-    add_executable(now_playing_automation_tests tests/now_playing_automation_tests.cpp)
-    target_compile_definitions(now_playing_automation_tests PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
-    target_link_libraries(now_playing_automation_tests PRIVATE hud_now_playing_automation uiautomationcore oleaut32 ole32)
-    add_test(NAME now_playing_automation_contracts COMMAND now_playing_automation_tests)
-  endif()
+  # The canvas's Swift-derived rules and, node by node, the Mac oracle:
+  # tools/play_canvases_reference.sh -> tests/fixtures/play-canvases-source.json.
+  add_executable(now_playing_canvas_tests tests/now_playing_canvas_tests.cpp)
+  target_link_libraries(now_playing_canvas_tests PRIVATE hud_now_playing_canvas)
+  add_test(NAME now_playing_canvas_contracts COMMAND now_playing_canvas_tests "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/play-canvases-source.json")
 endif()
 
 # Source diagnostic fixture player (OverlayController diagnostic mode) and the
@@ -176,20 +162,18 @@ if(BUILD_TESTING)
     target_link_libraries(now_playing_control_reader_tests PRIVATE hud_now_playing_players hud_data oleacc ole32 oleaut32 user32)
     add_test(NAME now_playing_control_reader_contracts COMMAND now_playing_control_reader_tests)
     set_tests_properties(now_playing_control_reader_contracts PROPERTIES TIMEOUT 120)
-    if(TARGET hud_now_playing_scene)
-      # Cadence and cost of the NetEase path: the production owner against a
-      # simulated NetEase Cloud Music on a synthetic clock (reads per second
-      # presented, paused, closed; time and lyric accuracy), then the
-      # production bar reader against a hidden stand-in process of this
-      # executable (CPU per reading, per WinEvent, per enumeration, and the
-      # owner presented and closed on the real clock). No real player.
-      add_executable(now_playing_netease_cost_tests tests/now_playing_netease_cost_tests.cpp)
-      target_compile_definitions(now_playing_netease_cost_tests PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
-      target_link_libraries(now_playing_netease_cost_tests PRIVATE hud_now_playing_players hud_now_playing_session hud_now_playing_scene hud_data
-        oleacc ole32 oleaut32 user32)
-      add_test(NAME now_playing_netease_cost_contracts COMMAND now_playing_netease_cost_tests)
-      set_tests_properties(now_playing_netease_cost_contracts PROPERTIES TIMEOUT 300)
-    endif()
+    # Cadence and cost of the NetEase path: the production owner against a
+    # simulated NetEase Cloud Music on a synthetic clock (reads per second
+    # presented, paused, closed; time and lyric accuracy), then the
+    # production bar reader against a hidden stand-in process of this
+    # executable (CPU per reading, per WinEvent, per enumeration, and the
+    # owner presented and closed on the real clock). No real player.
+    add_executable(now_playing_netease_cost_tests tests/now_playing_netease_cost_tests.cpp)
+    target_compile_definitions(now_playing_netease_cost_tests PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
+    target_link_libraries(now_playing_netease_cost_tests PRIVATE hud_now_playing_players hud_now_playing_session hud_data
+      oleacc ole32 oleaut32 user32)
+    add_test(NAME now_playing_netease_cost_contracts COMMAND now_playing_netease_cost_tests)
+    set_tests_properties(now_playing_netease_cost_contracts PROPERTIES TIMEOUT 300)
   endif()
 endif()
 
@@ -250,12 +234,12 @@ endif()
 # desktop behind the same composite provider. app.cmake links this library into
 # EndfieldHUD.exe and watch_session_preview from the registration below.
 if(WIN32)
-  add_library(hud_now_playing_area STATIC app/areas/now_playing_module.cpp)
+  add_library(hud_now_playing_area STATIC app/areas/now_playing_module.cpp native/now_playing_cover.cpp)
   target_include_directories(hud_now_playing_area PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
   target_compile_definitions(hud_now_playing_area PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
   target_link_libraries(hud_now_playing_area PUBLIC hud_module_registry
-    PRIVATE hud_now_playing_preview hud_now_playing_fixture hud_now_playing_players hud_now_playing_volume hud_now_playing_web hud_now_playing_accessibility
-            hud_now_playing_automation hud_audio_runtime hud_event_log hud_utility user32 uiautomationcore oleaut32 ole32)
+    PRIVATE hud_now_playing_session hud_now_playing_canvas hud_design_native hud_now_playing_fixture hud_now_playing_players hud_now_playing_volume hud_now_playing_web
+            hud_audio_runtime hud_event_log hud_utility user32 uiautomationcore oleaut32 ole32)
   if(MSVC)
     target_compile_options(hud_now_playing_area PRIVATE /W4 /permissive- /EHsc)
   endif()
@@ -267,10 +251,10 @@ endif()
 # library (cmake --build ... --target now_playing_all), so a verification run
 # names them without listing each.
 add_custom_target(now_playing_all)
-foreach(now_playing_target now_playing_model_tests now_playing_blend_tests now_playing_presentation_tests now_playing_scene_tests
-    now_playing_service_tests now_playing_receipt_tests now_playing_image_tests now_playing_session_tests now_playing_preview_tests
+foreach(now_playing_target now_playing_model_tests now_playing_canvas_tests
+    now_playing_service_tests now_playing_receipt_tests now_playing_image_tests now_playing_session_tests
     now_playing_warm_tests now_playing_lyrics_sources_tests now_playing_web_tests now_playing_web_cache_tests now_playing_web_http_tests now_playing_volume_tests
-    now_playing_sources_session_tests now_playing_accessibility_tests now_playing_automation_tests now_playing_fixture_tests
+    now_playing_sources_session_tests now_playing_fixture_tests
     now_playing_runtime_volume_tests now_playing_acceptance_tests now_playing_players_tests now_playing_player_controls_tests now_playing_control_reader_tests now_playing_netease_cost_tests now_playing_probe
     hud_now_playing_area)
   if(TARGET ${now_playing_target})

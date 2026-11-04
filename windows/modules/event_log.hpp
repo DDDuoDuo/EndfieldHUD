@@ -1,6 +1,6 @@
 #pragma once
-#include "core/scene.hpp"
 #include <array>
+#include <cstdint>
 #include <functional>
 #include <map>
 #include <optional>
@@ -48,52 +48,15 @@ public:
     std::uint64_t revision()const noexcept{return revision_;}
 private:std::size_t capacity_;EventNameCompactor compactor_;std::vector<SystemEvent>events_;std::uint64_t revision_{};
 };
+// Calendar.current fields of a Foundation-epoch date in the user's time zone
+// (EventLogCanvas.time; the host's converter: native/event_log_time.hpp).
+struct EventLogCivilTime {
+    int year{}, month{}, day{}, hour{}, minute{};
+    bool operator==(const EventLogCivilTime&) const = default;
+};
+using EventLogLocalTime = std::function<std::optional<EventLogCivilTime>(double foundationReference)>;
 struct EventLogSnapshot {std::vector<SystemEvent>events;std::optional<std::string>status;};
-// Formatter receives the source Date value; native owner supplies local
-// MM-dd HH:mm:ss formatting, not a per-frame OS clock read.
-struct EventLogCallbacks {std::function<EventLogSnapshot()>snapshot;std::function<void()>clear;std::function<std::string(double)>timestamp;};
-// Only the heading and clear label are localized in the original canvas. Other
-// original literal English strings are injectable, never auto-translated here.
-struct EventLogStrings {
-    std::string heading="事件日志",clearLog="清空日志",all="All",cancel="Cancel",clear="Clear",confirm="Clear all saved events?",localHistory="Local history",empty="No events yet",emptyCategory="No events in this category",countSuffix=" events";
-    std::array<std::string,7>categories{"Navigation","Clipboard","Files","Work","Power","Audio","Display"};
-    bool operator==(const EventLogStrings&) const = default;
-};
-struct EventLogAction {std::string id,label;core::Rect rect;bool framed{};};
-struct EventLogRow {std::string id,timestamp,category,title,detail;core::Rect rect;bool selected{};};
-class EventLogState final {
-public:
-    enum class ChangeKind{settle,exchange,selection,confirmation};
-    struct Change{ChangeKind kind;double direction{1};bool animated{};std::string selected;};
-    static constexpr core::Rect bounds(){return {0,0,400,334};}
-    static constexpr core::Rect viewport(){return {12,94,376,198};}
-    explicit EventLogState(EventLogCallbacks,EventLogStrings={},EventNameCompactor={});
-    void activate();void deactivate();void refresh();void setReduceMotion(bool);
-    bool setStrings(EventLogStrings); // no snapshot read, filtering or selection change
-    bool mouseDown(core::Point);bool scroll(core::Point,double);void scrollBy(double);
-    void selectNext(int);bool cancelConfirmation();void perform(std::string_view);
-    std::optional<core::Rect>rowRect(std::string_view,bool clipped=true)const;
-    std::optional<std::string_view>actionAt(core::Point)const;std::optional<std::string_view>feedbackActionAt(core::Point)const;
-    std::pair<std::size_t,std::size_t>visibleRange()const noexcept;
-    std::span<const EventLogRow>visibleRows()const noexcept{return visible_;}
-    std::span<const EventLogAction>actions()const noexcept{return actions_;}
-    std::span<const Change>pendingChanges()const noexcept{return changes_;}void acknowledgeChanges()noexcept{changes_.clear();}
-    const EventLogStrings&strings()const noexcept{return strings_;}
-    const std::string&status()const noexcept{return status_;}
-    std::optional<EventCategory>category()const noexcept{return category_;}
-    const std::optional<std::string>&selected()const noexcept{return selected_;}
-    bool active()const noexcept{return active_;}bool reduceMotion()const noexcept{return reduced_;}bool confirmingClear()const noexcept{return confirming_;}
-    std::size_t itemCount()const noexcept{return events_.size();}std::size_t filteredCount()const noexcept{return filtered_.size();}
-    double scrollOffset()const noexcept{return offset_;}double maximumOffset()const noexcept;
-    std::uint64_t revision()const noexcept{return revision_;}
-private:
-    EventLogCallbacks callbacks_;EventLogStrings strings_;EventNameCompactor compactor_;
-    std::vector<SystemEvent>events_;std::vector<std::size_t>filtered_;std::vector<EventLogRow>visible_;std::vector<EventLogAction>actions_;std::vector<Change>changes_;
-    std::optional<EventCategory>category_;std::optional<std::string>selected_;std::optional<std::string>storeStatus_;std::string status_;double offset_{};std::uint64_t revision_{};bool active_{},reduced_{},confirming_{};
-    void rebuild(bool all=true);void change(ChangeKind,double=1);void setScroll(double);
-};
-// Exact finite rectangular HUDSubsectionHandoff geometry; masks share one edge.
-// Local viewport here is {0,0,376,198}. Host clips remain independent.
-struct EventLogHandoffSample {core::Rect incoming,outgoing;double incomingX{},outgoingX{};bool active{};};
-EventLogHandoffSample sampleEventLogHandoff(double direction,double elapsed);
+// SystemEventLog as the Event Log canvas reads it (modules/event_log_canvas.hpp):
+// the current records and store status, and Clear. Native: EventLogOwner::callbacks.
+struct EventLogCallbacks {std::function<EventLogSnapshot()>snapshot;std::function<void()>clear;};
 }

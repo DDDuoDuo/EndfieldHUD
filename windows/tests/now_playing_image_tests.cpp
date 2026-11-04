@@ -16,15 +16,16 @@ void failuresAndLifetime(){Q q([]{});unsigned notices{},decodes{};auto bad=bytes
  art=std::make_unique<n::NativeNowPlayingArtwork>(q,[&]{art.reset();},[](auto){return n::NowPlayingImageResult{frame(5)};});art->request(good);flush(q);check(!art,"Completion may destroy the owner safely");
 }
 void invalidResult(){Q q([]{});auto b=bytes(7);n::NativeNowPlayingArtwork art(q,[]{},[](auto){auto i=frame(1);i->width=513;return n::NowPlayingImageResult{i};});art.request(b);flush(q);check(!art.result().image&&art.result().failure==n::NowPlayingImageFailure::decode,"Injected decoder cannot publish an invalid/oversize frame");check(n::decodeNowPlayingImage({}).failure==n::NowPlayingImageFailure::invalidPayload,"Empty source bytes fail before platform codec");}
-// Windows decodes covers to the slot's drawn size (up to 1024 pixels) rather
-// than the source's 512-pixel thumbnail; anything larger is still rejected.
+// Covers are decoded to the slot's drawn size (up to 2048 pixels, Mac 1.3.0
+// NowPlayingArtworkLoader.maximumPixelSize) rather than a 512-pixel
+// thumbnail; anything larger is still rejected.
 void coverBound(){Q q([]{});
  const auto sized=[](unsigned w){auto i=std::make_shared<n::NotesImageFrame>();i->width=w;i->height=1;i->straightRGBA.assign(std::size_t(w)*4,255);return i;};
  auto a=bytes(11),b=bytes(12);
  n::NativeNowPlayingArtwork wide(q,[]{},[&](auto){return n::NowPlayingImageResult{sized(endfield::modules::nowPlayingMaximumCoverPixels)};});wide.request(a);flush(q);
- check(wide.result().image&&wide.result().image->width==1024,"A cover up to 1024 pixels per side (the drawn-size bound) is accepted");
+ check(wide.result().image&&wide.result().image->width==2048,"A cover up to 2048 pixels per side (the drawn-size bound) is accepted");
  n::NativeNowPlayingArtwork over(q,[]{},[&](auto){return n::NowPlayingImageResult{sized(endfield::modules::nowPlayingMaximumCoverPixels+1)};});over.request(b);flush(q);
- check(!over.result().image&&over.result().failure==n::NowPlayingImageFailure::decode,"Beyond 1024 pixels a decoder cannot publish a frame");
+ check(!over.result().image&&over.result().failure==n::NowPlayingImageFailure::decode,"Beyond 2048 pixels a decoder cannot publish a frame");
  check(n::decodeNowPlayingCover({},660).failure==n::NowPlayingImageFailure::invalidPayload,"The sized decode rejects empty bytes before the codec");
 }
 #ifdef _WIN32

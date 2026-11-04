@@ -1,6 +1,8 @@
 #include "native/id_card_captions.hpp"
 #ifdef _WIN32
 #include "native/layer_scene.hpp"
+#include "core/source_desktop_chrome.hpp"
+#include <algorithm>
 #include <cmath>
 #include <stdexcept>
 
@@ -8,11 +10,6 @@ namespace endfield::native {
 namespace {
 using Json=ehud::data::Json;
 void need(bool v,const char*m){if(!v)throw std::invalid_argument(m);}
-// NSFont.systemFont(ofSize:weight:.medium) as the exporter encodes it.
-Json mediumFont(double size){
-    return Json::Object{{"familyName",".AppleSystemUIFont"},{"postScriptName",".AppleSystemUIFontMedium"},{"pointSize",size},
-        {"symbolicTraits",0},{"ascender",size*.966796875},{"descender",size*-.2109375},{"leading",0}};
-}
 }
 IdCardCaptionLeaves idCardCaptionLeaves(const Json&layers){
     need(layers.isObject()&&layers["children"].isArray()&&layers["children"].array().size()<=1024,"Invalid exported native layer root");
@@ -35,10 +32,19 @@ IdCardCaptionLeaves idCardCaptionLeaves(const Json&layers){
 modules::IdCardMeasure nativeIdCardMeasure(LayerRasterizer&raster,LayerRasterOptions options){
     return [&raster,options=std::move(options)](std::string_view text,double size){
         need(std::isfinite(size)&&size>0,"Invalid ID card caption size");
-        const Json descriptor=Json::Object{{"string",std::string(text)},{"fontSize",size},{"font",mediumFont(size)},{"wrapped",false}};
+        // HUDFontResolver.nsFont(size:weight:.medium) (Mac 1.3.0): the face the caption is painted in.
+        const Json descriptor=Json::Object{{"string",std::string(text)},{"fontSize",size},{"font",core::source::standardFaceFont(size)},{"fontWeight",500},{"wrapped",false}};
         // Unbounded single line, like NSString.size(withAttributes:).
         return raster.measureSourceText("desktop.profile.measure",descriptor,1e9,options).width;
     };
+}
+bool NativeIdCardCaptions::advance(double time,bool reduceMotion){
+    need(std::isfinite(time),"ID card wipe needs a finite frame time");
+    if(wipePending_){wipePending_=false;if(reduceMotion||!paintedRedaction_){edge_.reset();return false;}wipeStart_=time;}
+    if(!wipeStart_)return false;
+    const auto&bar=*paintedRedaction_;const double t=(time-*wipeStart_)/wipeDuration;
+    if(!(t<1)){wipeStart_.reset();edge_.reset();return false;}
+    edge_=bar.x+bar.width*core::DesignEasing::standard.value(std::max(0.,t));return true;
 }
 NativeIdCardCaptions::NativeIdCardCaptions(LayerScene&labels,IdCardCaptionLeaves leaves,LayerRasterOptions options)
     :labels_(&labels),leaves_(std::move(leaves)),options_(std::move(options)),nextRevision_(labels.contentRevision()){
@@ -50,11 +56,17 @@ bool NativeIdCardCaptions::update(const modules::IdCardBinding&binding){
     need(binding.revision()>0,"Update the ID card binding before painting its captions");const auto captions=binding.captions();
     bool changed{};
     for(std::size_t i=0;i<captions.size();++i){
-        if(paintedValid_[i]&&painted_[i]==captions[i])continue;
+        if(paintedValid_[i]&&painted_[i]==captions[i]&&(i!=1||paintedRedaction_==binding.redaction()))continue;
         const auto content=binding.captionLayer(leaves_.leaves[i],i);
         changed=labels_->updateLocalContent(leaves_.surfaceIDs[i],++nextRevision_,content,options_)||changed;
         painted_[i]=captions[i];paintedValid_[i]=true;++stats_.surfaceUpdates;
+        if(i==1)paintedRedaction_=binding.redaction();
     }
+    // setDesktopProfile re-renders the card on every key change and
+    // updateUIDRedaction re-adds the bar with its entrance: each new card
+    // revision while recording replays the wipe; without a bar the caption
+    // shows whole.
+    if(paintedRedaction_){wipePending_=true;wipeStart_.reset();edge_=paintedRedaction_->x;}else{wipePending_=false;wipeStart_.reset();edge_.reset();}
     seen_=true;seenRevision_=binding.revision();
     if(!changed)++stats_.unchanged;
     return changed;

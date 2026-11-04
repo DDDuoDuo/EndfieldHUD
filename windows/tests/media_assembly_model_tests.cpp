@@ -9,6 +9,7 @@
 #include <limits>
 #include <new>
 #include <sstream>
+#include <stdexcept>
 
 namespace {std::atomic<bool>counting{};std::atomic<std::size_t>allocations{};}
 void*operator new(std::size_t size){if(counting)++allocations;if(auto*p=std::malloc(size?size:1))return p;throw std::bad_alloc();}
@@ -28,7 +29,8 @@ void compare(c::Point p,const J&j){const auto q=point(j);number(p.x,q.x);number(
 void compare(c::Rect p,const J&j){const auto q=rect(j);number(p.x,q.x);number(p.y,q.y);number(p.width,q.width);number(p.height,q.height);}
 void compare(m::MediaAssemblyCrop p,const J&j){compare(c::Rect{p.x,p.y,p.width,p.height},j);}
 void source(const J&fixture){
-    check(fixture["sourceCommit"].string()=="ca04f142185c7de40acd8523bdb563195d90a1d1","Only authoritative Mac fixture accepted");
+    // v1.2.0 viewport (still the Windows layout) with the Mac 1.3.0 catalogue.
+    check(fixture["sourceCommit"].string()=="ca04f142185c7de40acd8523bdb563195d90a1d1"&&fixture["modelCommit"].string()=="4fda15a03ba50675e0b12d69a83efdb6526c19f6","Only authoritative Mac fixture accepted");
     for(const auto&t:fixture["trajectories"].array()){
         m::MediaAssemblyViewport v;const auto size=point(t["size"]);const auto view=rect(t["view"]);
         for(const auto&row:t["rows"].array()){
@@ -46,12 +48,14 @@ void source(const J&fixture){
     for(const auto&t:fixture["clamps"].array())compare(m::MediaAssemblyViewport::sourceCrop(rect(t["rect"]),static_cast<int>(t["turns"].integer()),t["mirrored"].boolean()),t["crop"]);
     for(const auto&t:fixture["rotations"].array())compare(m::MediaAssemblyViewport::unrotate(point(t["point"]),point(t["center"]),t["degrees"].number()),t["result"]);
     const auto stickers=m::mediaAssemblyStickers();check(stickers.size()==fixture["stickers"].array().size(),"Removed promotional stickers stay absent");
-    for(std::size_t i=0;i<stickers.size();++i){const auto&t=fixture["stickers"].array()[i];const auto kind=static_cast<m::MediaAssemblyStickerKind>(i);
-        check(stickers[i].id==t["id"].string(),"Original sticker identity/order");check(m::mediaAssemblyStickerTitle(kind,c::Language::english)==t["english"].string(),"Original English sticker title");check(m::mediaAssemblyStickerTitle(kind,c::Language::simplifiedChinese)==t["chinese"].string(),"Original Chinese sticker title");compare(m::mediaAssemblyStickerPixelSize(kind),t["pixelSize"]);
+    for(std::size_t i=0;i<stickers.size();++i){const auto&t=fixture["stickers"].array()[i];const auto found=m::mediaAssemblySticker(t["id"].string());check(bool(found),"Every source sticker raw id resolves");const auto kind=*found;
+        check(stickers[i].id==t["id"].string()&&m::mediaAssemblyStickerItem(kind).id==t["id"].string(),"Original sticker identity/order");check(m::mediaAssemblyStickerTitle(kind,c::Language::english)==t["english"].string(),"Original English sticker title");check(m::mediaAssemblyStickerTitle(kind,c::Language::simplifiedChinese)==t["chinese"].string(),"Original Chinese sticker title");compare(m::mediaAssemblyStickerPixelSize(kind),t["pixelSize"]);
         m::MediaAssemblySticker s;s.kind=kind;s.x=.17;s.y=.83;s.size=.39;s.rotation=37;compare(m::MediaAssemblyViewport::stickerRect(s,{21,43,625,319}),t["rect"]);
     }
     const auto filters=m::mediaAssemblyFilters();check(filters.size()==fixture["filters"].array().size(),"Original preset count");
-    for(std::size_t i=0;i<filters.size();++i){const auto&t=fixture["filters"].array()[i];check(filters[i].id==t["id"].string(),"Original preset identity/order");check(m::mediaAssemblyFilterTitle(static_cast<m::MediaAssemblyFilter>(i),c::Language::english)==t["english"].string(),"Original English filter title");check(m::mediaAssemblyFilterTitle(static_cast<m::MediaAssemblyFilter>(i),c::Language::simplifiedChinese)==t["chinese"].string(),"Original Chinese filter title");}
+    for(std::size_t i=0;i<filters.size();++i){const auto&t=fixture["filters"].array()[i];const auto filter=m::mediaAssemblyFilter(t["id"].string());check(filter&&filters[i].id==t["id"].string()&&m::mediaAssemblyFilterItem(*filter).id==t["id"].string(),"Original preset identity/order");check(m::mediaAssemblyFilterTitle(*filter,c::Language::english)==t["english"].string(),"Original English filter title");check(m::mediaAssemblyFilterTitle(*filter,c::Language::simplifiedChinese)==t["chinese"].string(),"Original Chinese filter title");}
+    check(!m::mediaAssemblySticker("sticker_giftpack_2")&&!m::mediaAssemblySticker("sticker_23")&&!m::mediaAssemblySticker("")&&!m::mediaAssemblyFilter("sp_filter_8")&&!m::mediaAssemblyFilter("Sp_filter_7"),"Removed promotional stickers and unknown raw ids are rejected");
+    bool rejected{};try{(void)m::mediaAssemblyStickerItem(static_cast<m::MediaAssemblyStickerKind>(99));}catch(const std::invalid_argument&){rejected=true;}check(rejected,"Unknown sticker case has no raw id");
     for(const auto&t:fixture["ranges"].array()){
         m::MediaAssemblyAdjustments a;a.trimStart=t["start"].number();if(!t["end"].isNull())a.trimEnd=t["end"].number();check(a.valid()==t["valid"].boolean(),"Original trim validity");const auto range=a.timeRange(t["duration"].number());check(bool(range)!=t["range"].isNull(),"Original trim availability");
         if(range){const auto&expected=t["range"].array();check(range->startTicks==expected[0].integer()&&range->durationTicks==expected[1].integer()&&range->timescale==expected[2].integer(),"Original Core Media600-timescale rounding");}

@@ -32,7 +32,7 @@ enum class Driver { hardware, warpForTests };
 // likewise keep 8-bit targets; linear groups keep half floats.
 enum class TextureColorSpace { sRGB, linear, encodedSRGB };
 enum class NativeGroupColorSpace { linear, encodedSRGB };
-enum class NativeBlend { sourceOver, screen, weightedAdd };
+enum class NativeBlend { sourceOver, screen };
 enum class TextureFilter { nearest, linear };
 enum class RenderTarget { composition, offscreenForTests };
 struct RendererOptions {
@@ -65,7 +65,15 @@ struct TextureData {
     // identity while rectangles of its texels are replaced. Otherwise the
     // texture is immutable and every revision creates it again.
     bool updatable{};
+    // Every texel's alpha is 255 (the producer guarantees it, e.g. a bitmap
+    // painted over an opaque background): premultiplying keeps an opaque sRGB
+    // or encoded-sRGB texel's bytes, so such a texture is created from these
+    // bytes as they are, without the conversion copy (a linear one converts).
+    bool opaque{};
 };
+// A texture created off the UI thread (Renderer::textureFactory), opaque here.
+class WorkerTexture;
+using TextureFactory = std::function<std::shared_ptr<const WorkerTexture>(const TextureData&)>;
 struct NativeGroupTarget {
     core::Rect localBounds;
     double pixelsPerPoint{1};
@@ -136,12 +144,31 @@ struct DrawObject {
     std::optional<PlaneShutter> shutter;
     std::optional<PlaneAlphaMask> alphaMask; // intersects ordinary masks/shutter
     std::optional<AngularMask> angularMask; // no texture or tessellation
-    // Screen and weightedAdd are supported only inside an encoded native group.
-    // weightedAdd is a bounded crossfade: every child must use it, at most two
-    // regular leaf draws, and their opacity weights sum to <=1. Their associated
-    // encoded RGBA contributions add before one normal output composition.
-    // Root/default linear groups and nested weighted inputs reject it.
+    // Screen is supported only inside an encoded native group (root/default
+    // linear groups reject it).
     NativeBlend blend{NativeBlend::sourceOver};
+};
+// Sources/HUDDesignOverlay.swift HUDCenterOverlay.setContentDimmed (LIB-64,
+// SHELL-29): while a confirm bar or a toast dims the centre, the module
+// content - the root draws [begin, begin + count), the host's current and
+// incoming module entries (LayerComposition::drawRange) - gets Core Image's
+// CIGaussianBlur and CIExposureAdjust. It is drawn into an offscreen linear
+// target covering `bounds` (output pixels; empty = the whole output; content
+// outside it is not drawn) grown by the blur's reach at full strength (3
+// sigma: blurred edges stay soft into transparency), blurred in two
+// separable passes and composited back in its paint order, its linear RGB
+// multiplied by 2^(exposure x amount) (alpha unchanged). `amount` (0..1, the
+// eased dim) scales sigma and EV together, as the Mac eases inputRadius and
+// inputEV with one curve. Nothing else is filtered: the shell, the overlay
+// and the radial dim draw as before. The range is clamped to the published
+// list. Not here: the easing (the overlay drives amount per frame).
+struct ContentFilter {
+    std::size_t begin{},count{};
+    core::Rect bounds;
+    double blurSigma{}; // output pixels at amount 1 (inputRadius is a standard deviation)
+    double exposure{};  // EV at amount 1
+    double amount{1};
+    bool operator==(const ContentFilter&)const=default;
 };
 // Checks retained numeric/identity data with the exact GPU-uniform rules,
 // without querying or allocating device resources. Resource existence remains
@@ -181,6 +208,7 @@ struct RendererStats {
     // CPU seconds inside draw() (Present excluded), setDrawList and setTexture
     // (restoreTexture included).
     double drawSeconds{},drawListSeconds{},textureUploadSeconds{};
+    std::uint64_t preparedTextureInstalls{}; // setWorkerTexture: textures created on a worker
     // parkTexture/restoreTexture: copies held now (textures and their bytes),
     // textures parked, restored, copies dropped (ten-minute release, clear,
     // reset, new device), and the CPU seconds parking and restoring took.
@@ -194,6 +222,10 @@ struct RendererStats {
     std::uint64_t nativePasses{},nativePassesSkipped{};
     // updateTexture(): rectangles replaced in place and their texel bytes.
     std::uint64_t textureRegionUploads{},textureRegionBytes{};
+    // setContentFilter(): root passes drawn through the filter, its two
+    // offscreen targets (created, and their bytes while they exist).
+    std::uint64_t contentFilterPasses{},contentFilterTargetAllocations{};
+    std::size_t contentFilterBytes{};
     // Admissions a message loop took from the frame latency object
     // (presentationAdmitted) instead of a blocking frame-start wait, and
     // presents made without any admission (each one may queue a frame ahead
@@ -358,6 +390,16 @@ public:
     bool sourcePassEnabled()const noexcept;
     bool setMesh(std::string sourceID, std::uint64_t revision, MeshData mesh);
     bool setTexture(std::string sourceID, std::uint64_t revision, TextureData texture);
+    // The device's free-threaded resource creation for a worker: the function
+    // creates a texture (updatable or immutable) from TextureData on any thread (conversion
+    // and the driver's copy happen there; empty while no device exists or it
+    // is suspended). setWorkerTexture installs it like setTexture without
+    // that work on the UI thread, only on the device that created it
+    // (preparedOnDevice; otherwise use setTexture). A prepared texture keeps
+    // its device alive: holders drop it once installed or obsolete.
+    TextureFactory textureFactory() const;
+    bool preparedOnDevice(const WorkerTexture&) const noexcept;
+    bool setWorkerTexture(std::string sourceID, std::uint64_t revision, const std::shared_ptr<const WorkerTexture>&);
     // Replaces the texels of one rectangle of an updatable texture (created
     // by setTexture with TextureData::updatable) in place: same identity,
     // same GPU resource, no draw-list or group rebinding beyond marking the
@@ -409,12 +451,22 @@ public:
     // In-use output cannot be removed. Group-held local resource references
     // likewise prevent direct mesh/texture removal until replaced/cleared.
     bool removeNativeGroup(const std::string& id);
+    // Renders the group's target while no published draw shows it yet (at
+    // most two such groups per draw()), e.g. while a fade-in waits at opacity
+    // 0, so its first visible frame only composites it. Default false: only
+    // groups a visible draw samples render. False when no such group exists.
+    bool setNativeGroupRenderAhead(const std::string& id, bool ahead);
     // Uploads changed object constants only here. Pointer/camera updates never
     // recreate mesh/texture/object buffers or run layout/bitmap generation.
     // Failure while updating existing uniforms resets the renderer; callers
     // recreate from their retained model. Invalid data fails before any upload.
     void setDrawList(std::span<const DrawObject> objects);
     void setCamera(const core::Matrix4 &viewProjection);
+    // Numeric per frame (ContentFilter above); invalid values reject before
+    // mutation. An amount of 0 draws the content directly; nullopt also
+    // releases the filter's targets (no cost while not dimmed). Returns
+    // whether anything changed.
+    bool setContentFilter(std::optional<ContentFilter>);
     // false is a test-only render without presentation, required for readback.
     // offscreenForTests explicitly disables all composition/presentation APIs;
     // it uses the same shader pipeline in noninteractive Windows CI sessions.

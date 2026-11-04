@@ -1,0 +1,470 @@
+// Contract suite of native/hud_design_scene (LIBRARY-DESIGN.md section 14,
+// Native): part reuse by byte-equal JSON, one-surface updates, a structural
+// load with the old part retired after publication, the shared raster budget
+// refused before anything changes, lazy surfaces painted on show and released
+// after their fade, the scroll visibility window, release (textures parked)
+// and park (artwork dropped, repainted by the next sync), the tint bridge, an
+// allocation-free pose and group opacity while a part fades (one composite,
+// no target at rest) and a stretched thumb's unstretched rounded ends. WARP
+// on a hidden window; synthetic layers only.
+#include "native/hud_design_scene.hpp"
+#include "modules/hud_design_scroll.hpp"
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <objbase.h>
+#include <algorithm>
+#include <array>
+#include <atomic>
+#include <cmath>
+#include <cstdlib>
+#include <iostream>
+#include <new>
+#include <string>
+using namespace endfield;
+using namespace native;
+namespace d = modules::design;
+namespace {
+unsigned checks{};
+std::atomic<std::size_t> allocations{};
+bool countAllocations{};
+void check(bool v, const char* s) { ++checks; if (!v) throw std::runtime_error(s); }
+// LIBRARY-DESIGN.md R4: whether LayerPlacement carries the linear tint yet.
+template <class P> constexpr bool placementTint = requires(P p) { p.linearTint; };
+template <class F> void rejects(F f, const char* s) { bool failed{}; try { f(); } catch (const std::exception&) { failed = true; } check(failed, s); }
+struct Window {
+    HWND hwnd{};
+    Window() {
+        WNDCLASSW c{}; c.lpfnWndProc = DefWindowProcW; c.hInstance = GetModuleHandleW(nullptr); c.lpszClassName = L"EndfieldDesignSceneHidden";
+        check(RegisterClassW(&c) != 0, "Register owned fixture");
+        hwnd = CreateWindowExW(WS_EX_NOREDIRECTIONBITMAP, c.lpszClassName, L"Synthetic", WS_POPUP, 0, 0, 590, 510, nullptr, nullptr, c.hInstance, nullptr);
+        check(hwnd && !IsWindowVisible(hwnd), "Synthetic window hidden");
+    }
+    ~Window() { if (hwnd) DestroyWindow(hwnd); UnregisterClassW(L"EndfieldDesignSceneHidden", GetModuleHandleW(nullptr)); }
+};
+// BGRA8 readback -> RGBA within 2.
+std::array<int, 4> rgba(const Readback& frame, unsigned x, unsigned y) {
+    const auto at = std::size_t(y) * frame.rowBytes + x * 4;
+    return {frame.pixels[at + 2], frame.pixels[at + 1], frame.pixels[at], frame.pixels[at + 3]};
+}
+bool similar(int a, int b) { return std::abs(a - b) <= 2; }
+// A canvas-shaped tree: three rows (plate + an animatable notch with a tint
+// + a lazy sheen) and a clipped scroll area of twenty rows.
+struct Tree {
+    d::LayerArena arena{"t"};
+    d::Layer &root, &content;
+    std::vector<d::Layer*> rows, sheens, notches;
+    Tree() : root(arena.make("root")), content(arena.make("content")) {
+        root.setFrame({0, 0, 590, 510});
+        for (int n = 0; n < 3; ++n) {
+            auto& row = arena.make("row" + std::to_string(n));
+            row.setFrame({0, 81 + 56. * n, 590, 50}); row.setPartRoot(true);
+            row.setContent(d::solid("plate", {0, 0, 590, 50}, d::rgb(0x2A2A2A)));
+            auto& notch = arena.make("notch" + std::to_string(n));
+            notch.setFrame({0, 10, 4, 30}); notch.setContent(d::solid("notch", {0, 0, 4, 30}, d::white(1)));
+            notch.setAnimatable(); notch.setTint(d::rgb(0x2A2A2A));
+            auto& sheen = arena.make("sheen" + std::to_string(n));
+            sheen.setFrame({0, 0, 120, 50}); sheen.setContent(d::solid("sheen", {0, 0, 120, 50}, d::white(.3)));
+            sheen.setAnimatable(d::SurfaceRole::lazy); sheen.setValue(d::Channel::opacity, 0);
+            row.add(notch); row.add(sheen); root.add(row);
+            rows.push_back(&row); notches.push_back(&notch); sheens.push_back(&sheen);
+        }
+        auto& clip = arena.make("clip");
+        clip.setFrame({0, 260, 590, 100}); clip.setMasksToBounds(true);
+        content.setFrame({0, 0, 590, 1000}); content.setAnimatable();
+        for (int n = 0; n < 20; ++n) {
+            auto& row = arena.make("scroll" + std::to_string(n));
+            row.setFrame({0, 50. * n, 590, 44}); row.setPartRoot(true);
+            row.setContent(d::solid("cell", {0, 0, 590, 44}, d::rgb(0x161616)));
+            content.add(row);
+        }
+        clip.add(content); root.add(clip);
+    }
+};
+void run(const std::filesystem::path& shader) {
+    Window window;
+    Renderer renderer;
+    renderer.initialize(window.hwnd, 590, 510, {Driver::warpForTests, shader, RenderTarget::offscreenForTests});
+    renderer.setCamera(layerViewportProjection(590, 510));
+    LayerRasterizer raster;
+    LayerRasterOptions options; options.pixelsPerPoint = 1;
+    NativeDesignScene scene(raster, options, "design.test"); scene.keepDeparted(true);
+    LayerComposition composition;
+    d::TextServices text;
+    Tree tree;
+    std::uint64_t revision = 1;
+    double time{};
+    bool detached{};
+    struct Cleanup { Renderer& r; LayerComposition& c; NativeDesignScene& s; bool& done; ~Cleanup() { if (!done) try { c.detach(r); s.releaseResources(r); } catch (...) { r.reset(); } } } cleanup{renderer, composition, scene, detached};
+    const auto publish = [&](double t) {
+        time = t;
+        scene.syncContent(tree.root, text, revision, 1, t);
+        scene.updatePose({core::Matrix4{}, 1, t, {}, {}});
+        scene.uploadAnimations(renderer);
+        composition.setEntries(renderer, scene.entries());
+        composition.present(renderer);
+        renderer.draw(false);
+        check(scene.collectRetired(renderer), "Old parts retire after publication");
+    };
+    // --- first generation ----------------------------------------------------
+    publish(0);
+    const auto first = scene.stats();
+    check(first.generations == 1 && first.parts == 23 && first.partsLoaded == scene.entries().size(), "Every resident part loads once");
+    check(first.partsLoaded == 7, "The three rows and the four scroll rows inside the window plus one viewport of slack");
+    check(first.lazyPaints == 0, "Lazy surfaces keep no artwork while they do not show");
+    // The scroll window: the clip (100 tall) plus one viewport each side.
+    std::size_t resident{};
+    for (const auto& e : scene.entries()) resident += e.scene != nullptr;
+    check(resident < first.parts, "Scroll rows two viewports away are not rasterized");
+    const auto image = renderer.readback();
+    check(std::any_of(image.pixels.begin(), image.pixels.end(), [](auto b) { return b != 0; }), "The parts paint the target");
+    // --- reuse / update / load --------------------------------------------------
+    const auto rasters = raster.stats().rasterizations;
+    check(!scene.syncContent(tree.root, text, revision, 1, .01), "An unchanged revision does nothing");
+    ++revision;
+    publish(.02);
+    check(raster.stats().rasterizations == rasters && scene.stats().partsReused > 0, "Byte-equal parts are reused without a raster");
+    tree.rows[1]->setContent(d::solid("plate", {0, 0, 590, 50}, d::rgb(0x3A3A3A)));
+    ++revision;
+    publish(.03);
+    check(scene.stats().surfacesUpdated == 1 && raster.stats().rasterizations == rasters + 1, "One changed surface repaints alone");
+    auto& extra = tree.arena.make("extra");
+    extra.setFrame({500, 10, 20, 20}); extra.setContent(d::solid("dot", {0, 0, 20, 20}, d::rgb(0xFF0000))); extra.setAnimatable();
+    tree.rows[0]->add(extra);
+    ++revision;
+    const auto loads = scene.stats().partsLoaded;
+    publish(.04);
+    check(scene.stats().partsLoaded == loads + 1 && scene.stats().retiredParts == 0, "A structural change loads the part; the old one is released after publication");
+    // --- lazy surfaces --------------------------------------------------------------
+    tree.sheens[2]->setValue(d::Channel::opacity, 1);
+    publish(.05);
+    check(scene.stats().lazyPaints == 1, "A lazy surface paints when it first shows");
+    tree.sheens[2]->setValue(d::Channel::opacity, 0);
+    publish(.06);
+    check(scene.stats().lazyReleases == 1, "It gives its artwork back once faded");
+    // --- the tint bridge (R4) ---------------------------------------------------------
+    bool tinted{};
+    for (const auto& draw : composition.draws()) tinted |= draw.linearTint[0] < .1f;
+    if constexpr (placementTint<LayerPlacement>) check(tinted, "Tinted surfaces multiply in linear light");
+    else check(!tinted, "Without the placement tint the white artwork shows (recorded fallback)");
+    // --- the scroll window follows the content layer without a content event ---------------
+    const auto beforeScroll = scene.stats().partsLoaded;
+    tree.content.setValue(d::Channel::translateY, -600);
+    check(scene.syncContent(tree.root, text, revision, 1, .07), "A scroll step changes the resident rows");
+    publish(.07);
+    check(scene.stats().partsLoaded > beforeScroll, "Rows entering the window are rasterized");
+    // --- allocation-free pose ------------------------------------------------------------------
+    allocations = 0; countAllocations = true;
+    try {
+        for (unsigned n = 0; n < 100; ++n) scene.updatePose({core::Matrix4::rotation(0, .0001 * n, 0), 1, .08 + n * .001, {}, {}});
+    } catch (...) { countAllocations = false; throw; }
+    countAllocations = false;
+    check(allocations == 0, "Warm poses allocate nothing");
+    time = .2;
+    // --- the shared budget is refused before anything changes ---------------------------------
+    {
+        std::vector<std::string> fillers;
+        const auto json = ehud::data::Json::Object{{"id", "f"}, {"bounds", ehud::data::Json::Array{0, 0, 1, 1}}, {"position", ehud::data::Json::Array{0, 0}},
+            {"anchorPoint", ehud::data::Json::Array{0, 0}}, {"backgroundColor", ehud::data::Json::Object{{"sRGB", ehud::data::Json::Array{1, 1, 1, 1}}}}, {"children", ehud::data::Json::Array{}}};
+        while (raster.stats().entries < LayerRasterizer::maximumEntries) { fillers.push_back("filler." + std::to_string(fillers.size())); (void)raster.rasterize(fillers.back(), 1, json, options); }
+        const auto entries = scene.entries().size();
+        const auto stats = scene.stats();
+        tree.rows[2]->setContent(d::solid("plate", {0, 0, 590, 50}, d::rgb(0x111111)));
+        auto& another = tree.arena.make("another");
+        another.setFrame({500, 10, 20, 20}); another.setContent(d::solid("dot", {0, 0, 20, 20}, d::rgb(0x00FF00))); another.setAnimatable();
+        tree.rows[2]->add(another); // a new surface: the part must load
+        ++revision;
+        rejects([&] { scene.syncContent(tree.root, text, revision, 1, .2); }, "A generation beyond the shared budget is refused");
+        check(scene.entries().size() == entries && scene.stats().partsLoaded == stats.partsLoaded, "The refusal touched nothing");
+        for (const auto& id : fillers) raster.remove(id);
+    }
+    publish(.21);
+    // --- release (switched away) and park (closed elsewhere) -------------------------------------
+    composition.setEntries(renderer, {});
+    composition.present(renderer);
+    check(scene.releaseResources(renderer), "An uncomposed scene releases its resources");
+    publish(.22);
+    composition.setEntries(renderer, {});
+    composition.present(renderer);
+    check(scene.park(renderer) && scene.stats().parks == 1 && scene.entries().empty(), "Park drops every part");
+    check(!scene.park(renderer), "Nothing left to park");
+    const auto parked = scene.stats().partsLoaded;
+    publish(.23);
+    check(scene.stats().partsLoaded > parked && !scene.entries().empty(), "The next sync rebuilds parked artwork");
+    rejects([&] { scene.syncContent(tree.root, text, revision, 1, .1); }, "Time runs forward");
+    rejects([&] { scene.syncContent(tree.root, text, revision, 5, .3); }, "Density stays within 1...4");
+    // --- kept parts: a part that left the tree (a closed pop-over, a row a filter
+    // took away) and shows again unchanged takes its scene back ---------------------
+    {
+        auto& row = *tree.rows[1];
+        row.removeFromParent(); ++revision; publish(.31);
+        check(scene.stats().keptParts == 1, "A part that leaves the tree is kept");
+        const auto loads0 = scene.stats().partsLoaded; const auto rasters0 = raster.stats().rasterizations;
+        tree.root.insert(row, 1); ++revision; publish(.32);
+        check(scene.stats().partsKept == 1 && scene.stats().partsLoaded == loads0 && raster.stats().rasterizations == rasters0 && scene.stats().keptParts == 0,
+            "Showing it again unchanged takes its scene back, without a raster");
+        row.removeFromParent(); ++revision; publish(.33);
+        row.setContent(d::solid("plate", {0, 0, 590, 50}, d::rgb(0x4A4A4A))); tree.root.insert(row, 1); ++revision; publish(.34);
+        check(scene.stats().partsKept == 1 && scene.stats().partsLoaded == loads0 + 1, "A part that changed meanwhile loads");
+        row.removeFromParent(); ++revision; publish(.35);
+        check(scene.stats().keptParts == 1, "Kept again");
+        scene.updatePose({core::Matrix4{}, 1, 9.4, {}, {}});
+        check(scene.stats().keptParts == 0 && scene.collectRetired(renderer), "Kept parts expire after a few seconds and release after publication");
+        tree.root.insert(row, 1); ++revision; publish(9.5);
+        row.removeFromParent(); ++revision; publish(9.6);
+        // An idle HUD presents no frame (no pose): the owner wakes at the expiry.
+        const auto expiry = scene.nextKeptExpiry();
+        check(expiry && *expiry > 9.6 + 7 && !scene.expireKept(9.7, renderer) && scene.stats().keptParts == 1, "A kept part names its expiry and stays until then");
+        check(scene.expireKept(*expiry, renderer) && scene.stats().keptParts == 0 && !scene.nextKeptExpiry() && scene.stats().retiredParts == 0,
+            "At its expiry, without a pose, it is released at once (it was not published)");
+        tree.root.insert(row, 1); ++revision; publish(*expiry + .1);
+        row.removeFromParent(); ++revision; publish(*expiry + .2);
+        composition.setEntries(renderer, {}); composition.present(renderer);
+        check(scene.releaseResources(renderer) && scene.stats().keptParts == 0, "An uncomposed scene keeps no parts");
+        tree.root.insert(row, 1); ++revision; publish(*expiry + .3);
+        // A scene whose owner keeps nothing (every scene but the module pages) retires a part that leaves at once.
+        scene.keepDeparted(false);
+        const auto kept0 = scene.stats().partsKept;
+        row.removeFromParent(); ++revision; publish(*expiry + .4);
+        check(scene.stats().keptParts == 0 && !scene.nextKeptExpiry(), "Without keepDeparted a part that leaves the tree is not kept");
+        const auto loads1 = scene.stats().partsLoaded;
+        tree.root.insert(row, 1); ++revision; publish(*expiry + .5);
+        check(scene.stats().partsKept == kept0 && scene.stats().partsLoaded == loads1 + 1, "Shown again it loads, as before kept parts");
+        scene.keepDeparted(true);
+    }
+    composition.detach(renderer);
+    check(scene.releaseResources(renderer), "Detached scene releases everything");
+    detached = true;
+    // --- group opacity: a label over its plate fades as one image -------------------------------
+    {
+        NativeDesignScene faded(raster, options, "design.group");
+        LayerComposition published;
+        d::LayerArena arena{"g"};
+        auto& root = arena.make("root");
+        root.setFrame({0, 0, 590, 510});
+        auto& card = arena.make("card");
+        card.setFrame({100, 100, 200, 100}); card.setPartRoot(true); card.setAnimatable();
+        card.setContent(d::solid("plate", {0, 0, 200, 100}, d::rgb(0xFF0000)));
+        auto& label = arena.make("label");
+        label.setFrame({50, 25, 100, 50}); label.setContent(d::solid("ink", {0, 0, 100, 50}, d::white(1))); label.setAnimatable();
+        card.add(label);
+        auto& solo = arena.make("solo"); // one surface: a group would change nothing
+        solo.setFrame({400, 100, 50, 50}); solo.setPartRoot(true); solo.setContent(d::solid("dot", {0, 0, 50, 50}, d::rgb(0x00FF00)));
+        // A long menu's row: its text and its highlight plate resting lazily (a clear placeholder).
+        auto& lazyRow = arena.make("lazyRow");
+        lazyRow.setFrame({400, 300, 120, 40}); lazyRow.setPartRoot(true); lazyRow.setAnimatable();
+        lazyRow.setContent(d::solid("text", {0, 0, 120, 40}, d::rgb(0x0000FF)));
+        auto& lazyPlate = arena.make("lazyPlate");
+        lazyPlate.setFrame({0, 0, 120, 40}); lazyPlate.setContent(d::solid("plate", {0, 0, 120, 40}, d::white(1)));
+        lazyPlate.setAnimatable(d::SurfaceRole::lazy); lazyPlate.setValue(d::Channel::opacity, 0);
+        lazyRow.add(lazyPlate);
+        root.add(card); root.add(solo); root.add(lazyRow);
+        const auto frame = [&](double at, float module = 1) {
+            faded.syncContent(root, text, 1, 1, at);
+            faded.updatePose({core::Matrix4{}, module, at, {}, {}});
+            faded.uploadAnimations(renderer);
+            published.setEntries(renderer, faded.entries());
+            published.present(renderer);
+            renderer.draw(false);
+            check(faded.collectRetired(renderer), "Detached group targets go after the publication");
+        };
+        frame(1);
+        check(faded.stats().groups == 0 && renderer.stats().nativeGroups == 0, "At rest every part draws directly and holds no target");
+        card.setValue(d::Channel::opacity, .5);
+        frame(1.1);
+        check(faded.stats().groups == 1 && renderer.stats().nativeGroups == 1 && faded.stats().groupSwitches == 1, "The fading card draws through one pooled group");
+        auto shot = renderer.readback();
+        const auto ink = rgba(shot, 200, 150), plate = rgba(shot, 110, 110);
+        check(plate[0] > 0 && plate[1] == 0 && similar(plate[3], ink[3]), "The plate fades to half");
+        check(similar(ink[0], ink[1]) && similar(ink[1], ink[2]) && similar(ink[0], plate[0]),
+            "Over the plate the label shows alone at half (group composite), not over a half plate (per-surface product)");
+        // Fading frames move numbers only.
+        allocations = 0; countAllocations = true;
+        try {
+            for (unsigned n = 0; n < 20; ++n) {
+                card.setValue(d::Channel::opacity, .5 + .02 * n);
+                faded.updatePose({core::Matrix4{}, 1, 1.2 + n * .01, {}, {}});
+                faded.uploadAnimations(renderer);
+                published.present(renderer);
+            }
+        } catch (...) { countAllocations = false; throw; }
+        countAllocations = false;
+        check(allocations == 0, "Fading group frames allocate nothing");
+        card.setValue(d::Channel::opacity, 1);
+        frame(1.5);
+        check(faded.stats().groups == 0 && renderer.stats().nativeGroups == 0 && faded.stats().groupTargets == 0, "Back at rest the target is gone after the publication");
+        shot = renderer.readback();
+        check(rgba(shot, 200, 150) == std::array<int, 4>{255, 255, 255, 255} && rgba(shot, 110, 110)[0] == 255, "At rest the label and plate draw directly at full opacity");
+        // The module's own fade groups every part of two or more surfaces; the
+        // pooled group is reused (no new allocation of its target at rest).
+        frame(1.6, .5f);
+        check(faded.stats().groups == 1 && renderer.stats().nativeGroups == 1 && faded.stats().groupSwitches == 3, "A module fade groups the card, not the one-surface dot");
+        shot = renderer.readback();
+        check(similar(rgba(shot, 425, 125)[1], rgba(shot, 110, 110)[0]), "The dot fades with the module directly");
+        frame(1.7);
+        // A part with one painting surface and a resting lazy one draws directly
+        // in its fade (one surface: nothing to composite with), as the dot does.
+        lazyRow.setValue(d::Channel::opacity, .5);
+        frame(1.75);
+        check(faded.stats().groups == 0 && renderer.stats().nativeGroups == 0, "A fading part whose other surface is a resting lazy one takes no group");
+        { const auto px = rgba(renderer.readback(), 460, 320); check(px[2] > 0 && px[2] < 250 && px[0] < 10, "It fades directly (blue, no plate)"); }
+        lazyPlate.setValue(d::Channel::opacity, 1);
+        frame(1.76);
+        check(faded.stats().groups == 1 && faded.stats().lazyPaints == 1, "Its lazy surface shown, the fade groups it");
+        lazyPlate.setValue(d::Channel::opacity, 0); lazyRow.setValue(d::Channel::opacity, 1);
+        frame(1.77);
+        check(faded.stats().groups == 0, "At rest again it draws directly");
+        // The opening's delay (prepareFade, the module at opacity 0): a part
+        // merely resting at opacity 0 (a hidden slider bubble) takes no group;
+        // one whose entrance is still pending (a delayed stagger) takes it.
+        const auto prepare = [&](double at) {
+            faded.syncContent(root, text, 1, 1, at);
+            faded.updatePose({core::Matrix4{}, 0.f, at, {}, {}, true});
+            faded.uploadAnimations(renderer);
+            published.setEntries(renderer, faded.entries());
+            published.present(renderer);
+            renderer.draw(false);
+            check(faded.collectRetired(renderer), "Prepared group targets go after the publication");
+        };
+        card.setValue(d::Channel::opacity, 0);
+        prepare(1.8);
+        check(faded.stats().groups == 0 && renderer.stats().nativeGroups == 0, "A part resting at opacity 0 takes no group ahead of the fade");
+        card.setValue(d::Channel::opacity, 1);
+        d::motion::enter(card, {0, 12}, d::motion::Clock{1.85, false, nullptr}, d::duration::entrance, .5);
+        prepare(1.9);
+        check(faded.stats().groups == 1 && renderer.stats().nativeGroups == 1, "A part whose delayed entrance has not begun takes its group ahead of the fade");
+        card.removeAllMotion();
+        frame(3);
+        published.detach(renderer);
+        check(faded.releaseResources(renderer) && renderer.stats().nativeGroups == 0, "The faded scene releases everything");
+    }
+    // --- a long menu: its rows are parts of their own (rasterized near its list's
+    // viewport), its fade one image (Layer::setGroupsParts, CALayer group opacity) ------------
+    {
+        NativeDesignScene menus(raster, options, "design.menu"); menus.keepDeparted(true);
+        LayerComposition published;
+        d::LayerArena arena{"m"};
+        auto& root = arena.make("root");
+        root.setFrame({0, 0, 590, 510});
+        auto& menu = arena.make("menu");
+        menu.setFrame({100, 100, 200, 160}); menu.setPartRoot(true); menu.setAnimatable(); menu.setGroupsParts(true);
+        menu.setContent(d::solid("panel", {0, 0, 200, 160}, d::rgb(0xFF0000)));
+        auto& list = arena.make("list");
+        list.setFrame({0, 10, 200, 100}); list.setMasksToBounds(true);
+        auto& content = arena.make("content");
+        content.setFrame({0, 0, 200, 400}); content.setAnimatable();
+        for (int n = 0; n < 8; ++n) {
+            auto& row = arena.make("row" + std::to_string(n));
+            row.setFrame({10, 50. * n, 180, 40}); row.setPartRoot(true);
+            row.setContent(d::solid("ink", {0, 0, 180, 40}, d::white(1)));
+            content.add(row);
+        }
+        list.add(content); menu.add(list);
+        auto& edge = arena.make("edge"); // after the rows: the menu part's continuation (its ring)
+        edge.setFrame({0, 150, 200, 10}); edge.setContent(d::solid("edge", {0, 0, 200, 10}, d::rgb(0x00FF00)));
+        menu.add(edge); root.add(menu);
+        const auto frame = [&](double at) {
+            menus.syncContent(root, text, 1, 1, at);
+            menus.updatePose({core::Matrix4{}, 1, at, {}, {}});
+            menus.uploadAnimations(renderer);
+            published.setEntries(renderer, menus.entries());
+            published.present(renderer);
+            renderer.draw(false);
+            check(menus.collectRetired(renderer), "Detached menu group targets go after the publication");
+        };
+        frame(1);
+        check(menus.stats().groups == 0 && menus.entries().size() == 6, "At rest the panel, the four resident rows and the ring draw directly");
+        menu.setValue(d::Channel::opacity, .5);
+        frame(1.1);
+        check(menus.stats().groups == 1 && renderer.stats().nativeGroups == 1 && menus.entries().size() == 3,
+            "Fading, one group draws the panel, the rows shown in the list and the ring (the rows outside it stay apart, clipped)");
+        auto shot = renderer.readback();
+        const auto ink = rgba(shot, 200, 130), panel = rgba(shot, 105, 105), ring = rgba(shot, 200, 255);
+        check(panel[0] > 0 && panel[1] == 0 && ring[1] > 0 && ring[0] == 0, "The panel and the ring fade to half");
+        check(similar(ink[0], ink[1]) && similar(ink[1], ink[2]) && similar(ink[0], panel[0]),
+            "Over the panel a row shows alone at half (one composite), not over a half panel (parts composited apart)");
+        // A scroll during the fade changes the rows shown: the group takes them again.
+        const auto switches = menus.stats().groupSwitches;
+        content.setValue(d::Channel::translateY, -100);
+        frame(1.2);
+        check(menus.stats().groups == 1 && menus.stats().groupSwitches == switches + 2, "Scrolled in the fade, the group draws the rows shown now");
+        menu.setValue(d::Channel::opacity, 1);
+        frame(1.5);
+        check(menus.stats().groups == 0 && renderer.stats().nativeGroups == 0 && menus.stats().groupTargets == 0, "Back at rest every part draws directly");
+        shot = renderer.readback();
+        check(rgba(shot, 200, 130) == std::array<int, 4>{255, 255, 255, 255}, "At rest a row draws at full opacity");
+        published.detach(renderer);
+        check(menus.releaseResources(renderer) && renderer.stats().nativeGroups == 0, "The menu scene releases everything");
+    }
+    // --- a stretched thumb keeps crisp, rounded ends (Layer::setClipsPresentedBounds) ----------
+    {
+        NativeDesignScene bars(raster, options, "design.thumb");
+        LayerComposition published;
+        d::LayerArena arena{"c"};
+        auto& root = arena.make("root");
+        root.setFrame({0, 0, 590, 510});
+        auto& thumb = arena.make("thumb"); thumb.setAnimatable(); thumb.setPartRoot(true); root.add(thumb);
+        // 20 wide, radius 10 (half-discs), the 18 px raster stretched to 100.
+        d::placeThumb(thumb, 20, 0, 100, d::white(1), 10);
+        thumb.setPosition({110, 200});
+        const auto frame = [&](double at) {
+            bars.syncContent(root, text, 1, 1, at);
+            bars.updatePose({core::Matrix4{}, 1, at, {}, {}});
+            bars.uploadAnimations(renderer);
+            published.setEntries(renderer, bars.entries());
+            published.present(renderer);
+            renderer.draw(false);
+            check(bars.collectRetired(renderer), "Thumb artwork retires after publication");
+        };
+        frame(2);
+        auto shot = renderer.readback();
+        const auto painted = raster.stats().rasterizations;
+        check(rgba(shot, 110, 205)[3] == 255 && rgba(shot, 101, 250)[3] == 255 && rgba(shot, 110, 296)[3] == 255, "The stretched body and the cap centres draw");
+        check(rgba(shot, 101, 201)[3] == 0 && rgba(shot, 118, 201)[3] == 0 && rgba(shot, 101, 298)[3] == 0 && rgba(shot, 118, 298)[3] == 0,
+            "The four corners stay round at the presented length (not the 18 px raster's)");
+        d::placeThumb(thumb, 20, 0, 200, d::white(1), 10);
+        thumb.setPosition({110, 200});
+        frame(2.1);
+        shot = renderer.readback();
+        check(raster.stats().rasterizations == painted && rgba(shot, 101, 398)[3] == 0 && rgba(shot, 101, 380)[3] == 255 && rgba(shot, 110, 396)[3] == 255,
+            "A longer thumb is a pose: no raster, the bottom cap moves with it unstretched");
+        // Eleven times stretched: the raster's soft texel edge would fade the
+        // last ~5 px; the fill reaches past it and the clip cuts a crisp end.
+        check(rgba(shot, 110, 399)[3] == 255 && rgba(shot, 110, 400)[3] == 0 && rgba(shot, 110, 200)[3] == 255 && rgba(shot, 110, 199)[3] == 0, "Both ends are crisp at the presented length");
+        d::placeThumb(thumb, 20, 0, 200, d::white(1));
+        thumb.setPosition({110, 200});
+        frame(2.2);
+        shot = renderer.readback();
+        check(rgba(shot, 100, 200)[3] == 255 && rgba(shot, 119, 399)[3] == 255 && rgba(shot, 119, 400)[3] == 0, "Without a radius the ends are square and crisp (the Mac scroll thumbs)");
+        published.detach(renderer);
+        check(bars.releaseResources(renderer), "The thumb scene releases everything");
+    }
+    check(!IsWindowVisible(window.hwnd) && renderer.stats().presents == 0, "The fixture never shows a window");
+}
+}
+void* operator new(std::size_t n) { if (countAllocations) ++allocations; if (void* p = std::malloc(n ? n : 1)) return p; throw std::bad_alloc(); }
+void operator delete(void* p) noexcept { std::free(p); }
+void* operator new[](std::size_t n) { return ::operator new(n); }
+void operator delete[](void* p) noexcept { std::free(p); }
+void operator delete(void* p, std::size_t) noexcept { std::free(p); }
+void operator delete[](void* p, std::size_t) noexcept { std::free(p); }
+int wmain(int argc, wchar_t** argv) {
+    const auto com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    try {
+        check(SUCCEEDED(com) && argc == 2, "Pass the shader");
+        run(argv[1]);
+        CoUninitialize();
+        std::cout << "HUD design scene: " << checks << " checks passed\n";
+        return 0;
+    } catch (const std::exception& e) {
+        countAllocations = false;
+        if (SUCCEEDED(com)) CoUninitialize();
+        std::cerr << "HUD design scene after " << checks << ": " << e.what() << '\n';
+        return 1;
+    }
+}
+#else
+int main() { return 0; }
+#endif

@@ -162,6 +162,7 @@ std::string percentDecoded(std::string_view value){
 // seconds (60 times too late); NetEase's own player reads them as
 // [mm:ss.cc]. Only exactly that shape is rewritten.
 std::string neteaseStamps(std::string value){
+    if(value.size()>512*1024)return value; // normalizingNetEaseStamps' input bound (Mac 1.3.0)
     const auto digit=[&](std::size_t k){return k<value.size()&&value[k]>='0'&&value[k]<='9';};
     for(auto at=value.find('[');at!=std::string::npos;at=value.find('[',at+1)){
         if(!digit(at+1)||!digit(at+2)||at+3>=value.size()||value[at+3]!=':'||!digit(at+4)||!digit(at+5)||at+6>=value.size()||value[at+6]!=':'||!digit(at+7)||!digit(at+8))continue;
@@ -458,30 +459,16 @@ std::optional<NowPlayingNetEaseEntry>nowPlayingNetEasePlayingListEntry(std::span
     const auto queue=nowPlayingNetEaseQueue(bytes);
     return queue?nowPlayingNetEaseQueueEntry(*queue,track):std::nullopt;
 }
-std::optional<std::string>nowPlayingCatalogCoverURL(std::string_view raw){
+std::optional<std::string>nowPlayingCatalogCoverURL(std::string_view raw,unsigned pixels){
     if(raw.size()>2048)return {};
     const auto parts=splitURL(raw);if(!parts||(parts->scheme!="http"&&parts->scheme!="https"))return {};
     if(parts->hasUser||parts->hasPort||parts->hasFragment)return {};
     const auto host=hostLower(parts->host);
     if(host!="p1.music.126.net"&&host!="p2.music.126.net"&&host!="p3.music.126.net"&&host!="p4.music.126.net")return {};
-    return "https://"+parts->host+encodedPath(parts->path)+"?param=600y600";
+    const auto size=std::to_string(std::clamp(pixels,nowPlayingMinimumCoverPixels,nowPlayingMaximumCoverPixels));
+    return "https://"+parts->host+encodedPath(parts->path)+"?param="+size+"y"+size;
 }
-std::optional<std::string>nowPlayingCatalogCoverURL(std::string_view raw,unsigned pixels){
-    auto url=nowPlayingCatalogCoverURL(raw);if(!url)return {};
-    const auto size=std::to_string(std::clamp(pixels,64u,nowPlayingMaximumCoverPixels));
-    url->resize(url->size()-std::string_view("600y600").size());
-    *url+=size+"y"+size;
-    return url;
-}
-unsigned nowPlayingCoverDrawnPixels(double pixelsPerPoint)noexcept{
-    const double density=std::isfinite(pixelsPerPoint)&&pixelsPerPoint>0?pixelsPerPoint:1;
-    return static_cast<unsigned>(std::clamp(std::ceil(330*density-1e-6),64.,double(nowPlayingMaximumCoverPixels)));
-}
-unsigned nowPlayingCatalogCoverPixels(double pixelsPerPoint)noexcept{
-    const auto needed=nowPlayingCoverDrawnPixels(pixelsPerPoint);
-    for(const unsigned size:{200u,300u,400u,500u,600u,800u})if(needed<=size)return size;
-    return nowPlayingMaximumCoverPixels;
-}
+unsigned nowPlayingCatalogCoverPixels(unsigned drawn)noexcept{return std::max(nowPlayingCatalogDefaultCoverPixels,std::min(nowPlayingMaximumCoverPixels,drawn));}
 std::optional<NowPlayingLyrics>nowPlayingCatalogDecodeLyrics(std::span<const std::uint8_t>bytes)try{
     const auto root=parse(bytes);if(!root||!answered(*root))return {};
     const auto&lrc=(*root)["lrc"];if(!lrc.isObject())return {};
@@ -579,7 +566,8 @@ struct NowPlayingLyricsLoader::Impl:std::enable_shared_from_this<Impl>{
         // Players may attach or correct timed lyrics after the first event.
         if(track.timedLyrics&&(!embeddedSource||!nowPlayingCanonicalEqual(*track.timedLyrics,*embeddedSource)||!desires(key))){
             embeddedSource=track.timedLyrics;
-            if(auto embedded=NowPlayingLyrics::parse(*track.timedLyrics)){++generation;stop();desired=key;save(shared(std::move(embedded)),key);return;}
+            // A NetEase player's own timed lyrics are normalised like its catalog's (MODS-359).
+            if(auto embedded=NowPlayingLyrics::parse(key.source==NowPlayingSource::netease?neteaseStamps(*track.timedLyrics):*track.timedLyrics)){++generation;stop();desired=key;save(shared(std::move(embedded)),key);return;}
         }
         if(desires(key)){
             // The wanted track's failed lookup starts over once its wait passed.

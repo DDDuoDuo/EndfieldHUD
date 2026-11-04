@@ -35,10 +35,10 @@ public:
     void record(modules::SystemEvent); // UUID and Foundation-epoch timestamp are caller-supplied
     void clear();
     modules::EventLogSnapshot snapshot()const;
-    // Closures borrow a lifetime route. After owner destruction they are inert
-    // and expose no stale events; accepted save requests remain self-contained.
-    modules::EventLogCallbacks callbacks(std::function<std::string(double)> timestamp)const;
-    modules::EventNameCompactor nameCompactor()const;
+    // The Event Log canvas's store (modules/event_log_canvas.hpp). Closures
+    // borrow a lifetime route. After owner destruction they are inert and
+    // expose no stale events; accepted save requests remain self-contained.
+    modules::EventLogCallbacks callbacks()const;
     std::uint64_t revision()const;
     std::optional<double>saveDeadline()const;
     std::optional<ehud::data::EventLogWrite>takeSave(double monotonicTime,bool force=false);

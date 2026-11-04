@@ -46,6 +46,12 @@ public:
     const std::optional<EditRequest>& editing() const noexcept {return editing_;}
     const std::set<std::string,std::less<>>& unsaved() const noexcept {return unsaved_;}
     const std::optional<std::string>& error() const noexcept {return error_;}
+    // Advances whenever NotesWorkspace would set errorMessage from a store
+    // call (report(error) of a failed save, delete or import; nil after a
+    // successful save leaves no unsaved note, :956-966), so the owner shows
+    // error() as the "Could not save: " status (DOCS-126). A successful
+    // import resets error() without advancing it (the Mac keeps the message).
+    std::uint64_t errorRevision() const noexcept {return errorRevision_;}
     std::uint64_t revision() const noexcept {return revision_;}
     std::uint64_t placementRevision() const noexcept {return placementRevision_;}
     bool notesSelected() const noexcept {return notesSelected_;}
@@ -113,7 +119,7 @@ private:
     std::optional<std::string> selected_,pendingDeletion_,error_;
     std::optional<EditRequest> editing_;std::optional<Drag> drag_;
     std::set<std::string,std::less<>> unsaved_;
-    std::uint64_t revision_{1},placementRevision_{1};
+    std::uint64_t revision_{1},placementRevision_{1},errorRevision_{};
     void writable() const;
     Note* find(std::string_view) noexcept;
     void replace(const Note&);

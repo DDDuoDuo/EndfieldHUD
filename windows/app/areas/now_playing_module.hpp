@@ -2,16 +2,21 @@
 // Now Playing module area (app/module_owner.hpp, "Adding a module area";
 // registered by cmake/modules/now_playing.cmake).
 //
-// One ModuleOwner over tools::NowPlayingPreview, which owns the presentation,
-// retained scene, artwork decodes, lyric sources and the playing-app volume
-// bridge. The service, downloads and audio vote are active only while Now
-// Playing is the presented module of a visible HUD; hiding keeps one warm
-// snapshot and the bounded caches. No timer, thread or polling loop: worker
-// and WinRT completions post the area's registered WM_APP message, shared
-// utility completions arrive as HostEvent::utilityCompleted, per-app audio
-// publications as HostEvent::audioChanged, and every deadline (lyric/display
-// cues, the 3 s provider bound, the 10 s download bound, the 2.5 s seek
-// rollback) is folded into the host's single waitable timer.
+// One ModuleOwner over a design owner core (tools/hud_design_owner.hpp) with
+// the redesigned canvas (modules/now_playing_canvas.hpp, Mac 1.3.0
+// NowPlayingCanvas), the controller (tools/now_playing_session.hpp: artwork
+// decodes, lyric sources and the playing-app volume bridge) and the cover
+// carrier (native/now_playing_cover.hpp: the decoded cover drawn between the
+// cover plate and its shade). The service, downloads and audio vote are
+// active only while Now Playing is the presented module of a visible HUD;
+// hiding keeps one warm snapshot and the bounded caches. No timer, thread or
+// polling loop: worker and WinRT completions post the area's registered
+// WM_APP message, shared utility completions arrive as
+// HostEvent::utilityCompleted, per-app audio publications as
+// HostEvent::audioChanged, and every deadline (the canvas's display clock at
+// whole seconds and lyric cues, the 3 s provider bound, the 10 s download
+// bound, the 2.5 s seek rollback, lyric retries) is folded into the host's
+// single waitable timer.
 //
 //   production          GSMTC media sessions beside the window-title
 //                       fallback for Win32 players without one (NetEase

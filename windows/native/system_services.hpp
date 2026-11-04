@@ -59,10 +59,22 @@ struct ClipboardPayload {
     // in order (URL.standardizedFileURL). Oracle: tools/clipboard_matches_reference.sh.
     bool matches(const ClipboardPayload&) const;
 };
+// ClipboardItem.createdAt and the ClipboardDetails only the capture knows
+// (ClipboardStore.swift:146-148, :199-200, :255-277): the capture time, the
+// app that put the record on the clipboard and the total size of up to 64
+// regular files. Session memory only; a repeated copy moved to the front
+// keeps the origin of its first capture.
+struct ClipboardOrigin {
+    double created{};                         // Unix seconds; 0 at ingest: now
+    std::optional<std::u16string> source;
+    std::optional<std::uint64_t> fileBytes;
+    bool operator==(const ClipboardOrigin&) const = default;
+};
 struct ClipboardItem {
     std::uint64_t id{};
     bool pinned{};
     ClipboardPayload payload;
+    ClipboardOrigin origin;
 };
 enum class ClipboardInsertResult { inserted, moved, duplicate, excluded, invalid, full };
 
@@ -85,7 +97,7 @@ public:
     const ClipboardItem* find(std::uint64_t id) const noexcept;
     std::size_t retained_bytes() const noexcept { return retained_bytes_; }
     std::size_t capacity() const noexcept { return capacity_; }
-    ClipboardInsertResult ingest(ClipboardPayload payload, bool excluded = false);
+    ClipboardInsertResult ingest(ClipboardPayload payload, bool excluded = false, ClipboardOrigin origin = {});
     bool erase(std::uint64_t id);
     bool pin(std::uint64_t id, bool pinned);
     bool set_capacity(std::size_t capacity);
@@ -143,6 +155,7 @@ struct ClipboardReadResult {
     ClipboardReadState state{ClipboardReadState::empty};
     std::uint32_t sequence{};
     ClipboardPayload payload;
+    ClipboardOrigin origin;
     unsigned nextImage{};
     std::int32_t nativeError{};
 };
@@ -286,6 +299,10 @@ struct SystemServicesOptions {
     // Synthetic AC/battery readings: replaces GetSystemPowerStatus and skips
     // the OS power-setting registrations (WM_POWERBROADCAST still routes).
     std::function<bool(PowerStatus&)> power;
+    // Reads a new record's origin right after its clipboard lease closed
+    // (owner thread): the source app and file sizes (native/clipboard_provider.hpp
+    // windowsClipboardOrigin). Null: only the capture time.
+    std::function<ClipboardOrigin(const ClipboardPayload&)> clipboardOrigin;
 };
 // CF_HDROP payload (DROPFILES with a wide or ANSI double-NUL list). Returns
 // S_OK, HRESULT_FROM_WIN32(ERROR_TOO_MANY_NAMES) beyond ClipboardHistory's

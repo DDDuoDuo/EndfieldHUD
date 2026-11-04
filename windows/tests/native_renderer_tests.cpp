@@ -13,10 +13,12 @@
 #include <objbase.h>
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <iostream>
 #include <limits>
 #include <string>
+#include <thread>
 
 using namespace endfield::native;
 // Internal implementation seam: exercise the exact bytes supplied to D3D,
@@ -153,6 +155,49 @@ void textureStorage(Renderer& renderer,DrawObject& object){
     check(renderer.configureNativeGroup("storage.linear-group",linearTarget,std::span(&object,1))&&renderer.stats().nativeGroupBytes==groups.nativeGroupBytes+16*16*8,"A linear group keeps its half-float target");
     check(renderer.removeNativeGroup("storage.linear-group"),"The linear group retires");
     check(renderer.removeTexture("storage.encoded")&&renderer.removeTexture("storage.linear")&&!renderer.textureRevision("storage.encoded")&&renderer.stats().resourceBytes==before.resourceBytes,"Retired textures leave no bytes and no revision");
+    // An opaque texture (TextureData::opaque) is created from its own bytes: it
+    // presents exactly as the converted path does, in both 8-bit color spaces.
+    const std::array<std::uint8_t,16> opaqueTexels{200,100,50,255, 200,100,50,255, 200,100,50,255, 200,100,50,255};
+    for(const auto space:{TextureColorSpace::encodedSRGB,TextureColorSpace::sRGB}){
+        check(renderer.setTexture("storage.converted",1,{2,2,opaqueTexels,space,TextureFilter::nearest})&&renderer.setTexture("storage.opaque",1,{2,2,opaqueTexels,space,TextureFilter::nearest,false,true}),"Opaque textures install either way");
+        check(renderer.stats().resourceBytes==before.resourceBytes+2*16,"An opaque texture costs the same four bytes per texel");
+        object.textureID="storage.converted";renderer.setDrawList(std::span(&object,1));renderer.draw(false);const auto converted=renderer.readback().pixels;
+        object.textureID="storage.opaque";renderer.setDrawList(std::span(&object,1));renderer.draw(false);
+        check(renderer.readback().pixels==converted,"An opaque texture created from its bytes presents exactly as the converted one");
+        renderer.clearDrawList();check(renderer.removeTexture("storage.converted")&&renderer.removeTexture("storage.opaque"),"The opaque textures retire");
+    }
+    // A texture created on another thread (textureFactory) installs without
+    // the UI thread's conversion and presents exactly as setTexture's.
+    {const auto factory=renderer.textureFactory();check(bool(factory),"The live device offers a texture factory");
+        std::shared_ptr<const WorkerTexture> prepared;std::thread worker([&]{prepared=factory({2,2,texels,TextureColorSpace::encodedSRGB,TextureFilter::nearest});});worker.join();
+        check(prepared&&renderer.preparedOnDevice(*prepared),"A texture made on a worker belongs to the live device");
+        const auto installs=renderer.stats().preparedTextureInstalls;
+        check(renderer.setTexture("storage.direct",1,{2,2,texels,TextureColorSpace::encodedSRGB,TextureFilter::nearest})&&renderer.setWorkerTexture("storage.prepared",1,prepared)&&
+              !renderer.setWorkerTexture("storage.prepared",1,prepared)&&renderer.stats().preparedTextureInstalls==installs+1,"A prepared texture installs once per revision");
+        check(renderer.stats().resourceBytes==before.resourceBytes+2*16&&renderer.textureRevision("storage.prepared")==std::optional<std::uint64_t>(1),"A prepared texture costs and reports like any other");
+        object.textureID="storage.direct";renderer.setDrawList(std::span(&object,1));renderer.draw(false);const auto direct=renderer.readback().pixels;
+        object.textureID="storage.prepared";renderer.setDrawList(std::span(&object,1));renderer.draw(false);
+        check(renderer.readback().pixels==direct,"A prepared texture presents exactly as setTexture's");
+        // An updatable one (the Map's white host cut) is then painted in place.
+        std::array<std::uint8_t,16> white{};white.fill(255);const std::array<std::uint8_t,4> clear{255,255,255,128};
+        std::shared_ptr<const WorkerTexture> paintable;std::thread painter([&]{paintable=factory({2,2,white,TextureColorSpace::sRGB,TextureFilter::linear,true});});painter.join();
+        check(paintable&&renderer.setWorkerTexture("storage.paintable",1,paintable)&&renderer.updateTexture("storage.paintable",2,0,0,{1,1,clear}),"An updatable texture made on a worker is painted in place");
+        renderer.clearDrawList();check(renderer.removeTexture("storage.direct")&&renderer.removeTexture("storage.prepared")&&renderer.removeTexture("storage.paintable"),"The prepared textures retire");
+        prepared.reset();paintable.reset();}
+    {check(renderer.setTexture("storage.direct",1,{2,2,texels,TextureColorSpace::encodedSRGB,TextureFilter::nearest}),"A texture for the group installs");object.textureID="storage.direct";
+        // A group rendered ahead fills its target while its output is at opacity 0;
+        // the first visible frame then only composites it.
+        check(renderer.configureNativeGroup("storage.ahead",encodedTarget,std::span(&object,1)),"A group to render ahead installs");
+        auto ahead=renderer.nativeGroupOutput("storage.ahead");ahead.opacity=0;renderer.setDrawList(std::span(&ahead,1));
+        const auto renders=renderer.stats().nativeGroupRenders;renderer.draw(false);
+        check(renderer.stats().nativeGroupRenders==renders,"A group no visible draw samples does not render");
+        check(renderer.setNativeGroupRenderAhead("storage.ahead",true)&&!renderer.setNativeGroupRenderAhead("storage.missing",true),"Render-ahead names an existing group");
+        renderer.draw(false);check(renderer.stats().nativeGroupRenders==renders+1,"A group rendered ahead fills its target at opacity 0");
+        ahead.opacity=1;renderer.setDrawList(std::span(&ahead,1));renderer.draw(false);
+        check(renderer.stats().nativeGroupRenders==renders+1,"Its first visible frame only composites the target");
+        pixel(renderer.readback(),16,16,{25,50,100,128},1,"The target rendered ahead carries the same premultiplied bytes");
+        renderer.clearDrawList();check(renderer.removeNativeGroup("storage.ahead")&&renderer.removeTexture("storage.direct"),"The group and its texture retire");}
+    object.textureID.clear();
     // White wherever it covers (alpha masks, white text): one byte per
     // texel, read as premultiplied white (a,a,a,a) in every color space -
     // exactly its alpha, as color, as an alpha mask and in an encoded group.
@@ -527,6 +572,78 @@ void subsectionCoverage(Renderer& renderer,DrawObject& object){
     check(renderer.stats().objectUploads==uploads,"Invalid subsection retains prior GPU constants");renderer.draw(false);check(renderer.readback().pixels==preserved,"Invalid subsection preserves prior target pixels");
     object.shutter.reset();object.masks.clear();renderer.setDrawList(std::span(&object,1));
 }
+// Renderer::setContentFilter (Sources/HUDDesignOverlay.swift confirm dim):
+// pixel checks against a CPU reference of the same truncated, normalized
+// separable Gaussian and the exact 2^EV multiply in linear light; the draws
+// before and after the filtered range stay sharp; amount 0 and no filter draw
+// the content directly; the targets exist only while a filter is set. Then a
+// GPU time sample of the pass at a HUD-sized region (printed, not gated).
+void contentFilterCoverage(HWND window, const std::filesystem::path &shader, bool hardware) {
+    using endfield::core::Matrix4;
+    Renderer renderer;renderer.initialize(window,64,64,{hardware?Driver::hardware:Driver::warpForTests,shader,RenderTarget::offscreenForTests});
+    renderer.setMesh("filter.quad",1,{quad,triangles});
+    // NDC [-1,1] quads: pixel squares [x, x + size) of the 64 x 64 target.
+    const auto square=[](const char*id,double x,double y,double size,std::array<float,4> tint){DrawObject d;d.sourceID=id;d.meshID="filter.quad";d.linearTint=tint;
+        d.world=Matrix4::translation(-1+(x+size/2)/32,1-(y+size/2)/32)*Matrix4::scale(size/64,size/64);return d;};
+    const std::array draws{square("filter.shell",56,56,8,{0,0,1,1}),square("filter.content",24,24,16,{1,1,1,1}),square("filter.overlay",0,0,8,{1,0,0,1})};
+    renderer.setDrawList(draws);renderer.draw(false);const auto plain=renderer.readback();
+    pixel(plain,32,32,{255,255,255,255},0,"Unfiltered content is opaque white");pixel(plain,23,32,{0,0,0,0},0,"Unfiltered content has a hard edge");
+    const auto base=renderer.stats();
+    ContentFilter filter{1,1,{24,24,16,16},2,-2.2,0};
+    check(renderer.setContentFilter(filter)&&!renderer.setContentFilter(filter),"A filter is set once");renderer.draw(false);
+    check(renderer.readback().pixels==plain.pixels&&renderer.stats().contentFilterPasses==base.contentFilterPasses&&renderer.stats().contentFilterBytes==0,"Amount 0 draws the content directly, without targets");
+    filter.amount=1;renderer.setContentFilter(filter);renderer.draw(false);const auto image=renderer.readback();
+    const auto filtered=renderer.stats();check(filtered.contentFilterPasses==base.contentFilterPasses+1&&filtered.contentFilterTargetAllocations==base.contentFilterTargetAllocations+1&&filtered.contentFilterBytes>0,"The dim runs the filter pass on its own targets");
+    // CPU reference: taps to 3 sigma, normalized; the square is a product of two intervals.
+    const double sigma=2;const int taps=6;double total=1;for(int i=1;i<=taps;++i)total+=2*std::exp(-i*i/(2*sigma*sigma));
+    const auto h=[&](int x){double sum=0;for(int i=-taps;i<=taps;++i)if(x+i>=24&&x+i<40)sum+=std::exp(-i*i/(2*sigma*sigma));return sum/total;};
+    const double gain=std::exp2(-2.2),level=encoded(gain);
+    for(const auto [x,y]:std::array<std::pair<int,int>,9>{{{32,32},{24,32},{23,32},{20,32},{18,32},{39,39},{40,24},{43,30},{17,32}}}){
+        const double a=h(x)*h(y);const int alpha=int(std::lround(a*255)),color=int(std::lround(level*a*255));
+        pixel(image,unsigned(x),unsigned(y),{color,color,color,alpha},2,"The blurred, darkened content matches the CPU Gaussian and the exact 2^EV multiply");
+    }
+    pixel(image,32,32,{int(std::lround(level*255)),int(std::lround(level*255)),int(std::lround(level*255)),255},1,"-2.2 EV in linear light is brightness .5 in sRGB");
+    check(level>.49&&level<.51,"The exposure matches the demo's brightness(.5)");
+    pixel(image,20,32,{int(std::lround(level*h(20)*h(32)*255)),int(std::lround(level*h(20)*h(32)*255)),int(std::lround(level*h(20)*h(32)*255)),int(std::lround(h(20)*h(32)*255))},2,"The soft edge reaches past the bounds (grown by the blur)");
+    check(h(20)>.01,"The reference edge is visibly soft four pixels out");
+    pixel(image,4,4,{0,0,255,255},0,"A draw after the range (the overlay) stays sharp");pixel(image,9,4,{0,0,0,0},0,"and keeps its hard edge");
+    pixel(image,60,60,{255,0,0,255},0,"A draw before the range (the shell) stays sharp");pixel(image,55,60,{0,0,0,0},0,"and keeps its hard edge");
+    // Halfway: sigma and EV scale together.
+    filter.amount=.5;renderer.setContentFilter(filter);renderer.draw(false);
+    const double half=encoded(std::exp2(-1.1));pixel(renderer.readback(),32,32,{int(std::lround(half*255)),int(std::lround(half*255)),int(std::lround(half*255)),255},1,"Half the amount is half the EV");
+    check(renderer.stats().contentFilterTargetAllocations==filtered.contentFilterTargetAllocations,"Numeric changes reuse the targets");
+    const auto settled=renderer.stats();renderer.draw(false);check(renderer.stats().nativePassesSkipped==settled.nativePassesSkipped+1&&renderer.stats().contentFilterPasses==settled.contentFilterPasses,"A settled dim is not filtered again");
+    filter.bounds={};filter.count=99;renderer.setContentFilter(filter);renderer.draw(false);
+    {const auto clamped=renderer.readback();const int red=int(std::lround(half*255));
+     pixel(clamped,4,4,{0,0,red,255},1,"A range past the list is clamped to it: the overlay is now dimmed too");pixel(clamped,60,60,{255,0,0,255},0,"while the shell before it stays sharp");}
+    rejects([&]{renderer.setContentFilter(ContentFilter{1,1,{},std::numeric_limits<double>::quiet_NaN(),-2.2,1});},"A non-finite sigma rejects");
+    rejects([&]{renderer.setContentFilter(ContentFilter{1,1,{},2,-2.2,1.5});},"An amount above 1 rejects");
+    check(renderer.setContentFilter(std::nullopt)&&renderer.stats().contentFilterBytes==0,"Clearing the filter releases its targets");
+    renderer.draw(false);check(renderer.readback().pixels==plain.pixels,"Undimmed content is exactly as before");
+    filter.count=1;filter.bounds={24,24,16,16};renderer.setContentFilter(filter);renderer.draw(false);check(renderer.stats().contentFilterBytes>0,"Dimming again creates the targets again");
+    (void)renderer.releaseFrameTargets();check(renderer.stats().contentFilterBytes==0,"Released frame targets include the filter's");
+    renderer.draw(false);pixel(renderer.readback(),32,32,{int(std::lround(half*255)),int(std::lround(half*255)),int(std::lround(half*255)),255},1,"The next frame creates them again");
+    renderer.reset();
+    // GPU time: a HUD-sized content region (a 1280 x 800 output, a 600 x 520 box, sigma 3.3 px as at
+    // 1.5 design units on the laptop's 1707 x 1067 pt at 150 %), the full pass every frame.
+    renderer.initialize(window,1280,800,{hardware?Driver::hardware:Driver::warpForTests,shader,RenderTarget::offscreenForTests});
+    renderer.setMesh("filter.quad",1,{quad,triangles});
+    DrawObject box;box.sourceID="filter.box";box.meshID="filter.quad";box.linearTint={.6f,.6f,.6f,1};box.world=Matrix4::scale(600./1280,520./800);
+    renderer.setDrawList(std::span(&box,1));
+    // 24 frames submitted back to back, one wait at the end (a per-frame wait
+    // is quantized by the 15.6 ms scheduler tick on WARP): mean per frame.
+    const auto time=[&](bool filtered){const auto frame=[&](unsigned i){
+            if(filtered)renderer.setContentFilter(ContentFilter{0,1,{340,140,600,520},3.3,-2.2,i%2?1.:.999});
+            else{box.opacity=i%2?1.f:.999f;renderer.setDrawList(std::span(&box,1));}renderer.draw(false);};
+        frame(0);renderer.waitForGpuIdle();const auto begin=std::chrono::steady_clock::now();
+        for(unsigned i=1;i<=24;++i)frame(i);renderer.waitForGpuIdle();
+        return std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-begin).count()/24;};
+    const double without=time(false);const auto passes=renderer.stats().contentFilterPasses;const double with=time(true);
+    check(renderer.stats().contentFilterPasses==passes+25,"Every timed dim frame ran the filter pass");
+    std::cout<<"content filter GPU frame on "<<renderer.deviceInfo().name<<" at 1280 x 800, 600 x 520 region, sigma 3.3 px: "<<with<<" ms (unfiltered "<<without<<" ms, pass "<<(with-without)<<" ms)\n";
+    check(std::isfinite(with)&&with>0,"The timed filter frames completed");
+    renderer.reset();
+}
 void run(HWND window, const std::filesystem::path &shader, bool composition, bool hardware) {
     Renderer renderer;
     RendererOptions options{hardware ? Driver::hardware : Driver::warpForTests, shader,
@@ -822,6 +939,7 @@ int wmain(int argc, wchar_t **argv) {
         }
         OwnedWindow window;
         run(window.get(), std::filesystem::path(argv[1]), composition, hardware);
+        contentFilterCoverage(window.get(), std::filesystem::path(argv[1]), hardware);
         std::cout << "Passed " << checks << " synthetic native renderer checks; no screen capture or live HUD parity claim\n";
     } catch (const std::exception &error) {
         std::cerr << "Native renderer check failed: " << error.what() << '\n'; result = 1;

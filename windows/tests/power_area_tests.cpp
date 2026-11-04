@@ -171,7 +171,7 @@ void run(const fs::path& shader) {
               "The startup reading reaches the Power page sink");
         check(drain(.1) && page.size() == 2 && page[1].capacity == m::BatteryReading::Capacity{32'760, 52'000, "mWh"} &&
               service->reading() == page[1], "The capacity pair arrives through the shared executor drain");
-        check(service->trayStatus(c::Language::english) == "63% · On battery" &&
+        check(service->trayStatus(c::Language::english) == "63% — On battery" && // SHELL-84: the Mac's " — "
               service->previewMenuTitle(c::Language::system) == m::powerPreviewMenuTitle(c::Language::english), "Tray status and preview title");
         check(!service->telemetryDemand() && !owner->nextWakeTime(.1) && !owner->requiresFrames(.1), "Closed and idle: no wake, frames or telemetry");
 

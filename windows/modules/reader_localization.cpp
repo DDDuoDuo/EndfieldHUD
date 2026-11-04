@@ -11,22 +11,6 @@ std::string readerTranslation(const core::TranslationEntry& e, core::Language la
     }
 }
 
-ReaderStrings readerStrings(core::Language language) {
-    ReaderStrings s;
-    const auto cn = ReaderStrings::simplifiedChinese();
-#define READER_STRING(n) s.n = core::localized(s.n, cn.n, language)
-    READER_STRING(open); READER_STRING(library); READER_STRING(reading); READER_STRING(bookmarks);
-    READER_STRING(title); READER_STRING(empty); READER_STRING(loading);
-    READER_STRING(chooseShelf); READER_STRING(shelfTitle);
-    READER_STRING(font); READER_STRING(fontSize); READER_STRING(lineSpacing); READER_STRING(margin);
-    READER_STRING(horizontal); READER_STRING(vertical);
-#undef READER_STRING
-    s.chooseFile = readerTranslation(readerWindowsChooseFile, language);
-    s.relink = readerTranslation(readerWindowsRelink, language);
-    s.language = language;
-    return s;
-}
-
 // Sources/ReaderZIP.swift ReaderError.errorDescription.
 ReaderErrorText readerErrorText(ReaderErrorCode code) noexcept {
     switch (code) {
@@ -53,6 +37,6 @@ std::string readerImportFailure(std::exception_ptr error, core::Language languag
         return readerErrorMessage(e.code(), language);
     } catch (...) {
     }
-    return readerTranslation(readerWindowsOpenFailed, language);
+    return readerTranslation(core::selectedFilesUnopened, language);
 }
 } // namespace endfield::modules

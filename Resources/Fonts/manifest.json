@@ -9,7 +9,8 @@
       "license": "HarmonyOS Sans Fonts License Agreement",
       "licenseFile": "HarmonyOS-Sans-LICENSE.txt",
       "platforms": [
-        "macos"
+        "macos",
+        "windows"
       ],
       "files": [
         {

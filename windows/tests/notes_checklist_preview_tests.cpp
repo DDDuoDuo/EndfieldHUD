@@ -14,7 +14,7 @@ struct Root {std::filesystem::path path=std::filesystem::absolute(std::filesyste
 struct Fixture {
     HWND window;gpu::Renderer&renderer;gpu::LayerRasterizer raster;Root root;std::unique_ptr<tools::NotesPreview>preview;gpu::LayerComposition composition;
     core::source::DesktopChromeSettings settings;core::Matrix4 design,camera{gpu::layerViewportProjection(1280,800)},world;double time{};
-    Fixture(HWND hwnd,gpu::Renderer&r,const gpu::NativeNotesControlsAssets&assets):window(hwnd),renderer(r){settings.viewport={0,0,1280,800};settings.module=core::Module::notes;settings.sourceShell=true;design=core::source::DesktopChromeLayout::make(settings,{},{}).designToScreen;preview=std::make_unique<tools::NotesPreview>(window,raster,root.path,assets,false);preview->resize({1280,800,96,1,1280,800});frame();}
+    Fixture(HWND hwnd,gpu::Renderer&r,const std::filesystem::path&formats):window(hwnd),renderer(r){settings.viewport={0,0,1280,800};settings.module=core::Module::notes;settings.sourceShell=true;design=core::source::DesktopChromeLayout::make(settings,{},{}).designToScreen;preview=std::make_unique<tools::NotesPreview>(window,raster,root.path,false,formats);preview->resize({1280,800,96,1,1280,800});frame();}
     ~Fixture(){if(!preview)return;try{composition.detach(renderer);preview->release(renderer);}catch(...){renderer.reset();}preview.reset();}
     void frame(){preview->update(world*design,settings,1,time,true);preview->upload(renderer);composition.setEntries(renderer,preview->entries());preview->collected(renderer);composition.present(renderer);renderer.setCamera(camera);}
     void tick(double step=.01){time+=step;frame();}
@@ -27,9 +27,10 @@ struct Fixture {
     core::Point cardPoint(const data::Note&n,core::Point p)const{const auto*card=draw("note/"+n.id+"/card");check(card,"Actual source TODO card is in shared composition");return project(card->world,p);}
     void release(){check(preview->finish(),"Owned TODO editor finishes unlocked");frame();composition.detach(renderer);preview->release(renderer);preview.reset();check(renderer.stats().objects==0&&renderer.stats().resourceBytes==0,"Shared teardown retires checklist/editor/toolbar resources");}
 };
-void run(HWND hwnd,gpu::Renderer&renderer,const gpu::NativeNotesControlsAssets&assets){Fixture f(hwnd,renderer,assets);
-    const auto*tool=f.draw("tool:todo");check(tool&&tool->opacity>0,"Source TODO toolbar plate is rendered");const auto create=f.project(tool->world,{46,15.5});f.click(create);
-    auto note=f.todo();check(note.width==228&&note.height==154&&note.items.size()==1&&f.draw("projected-editor-glyphs"),"Real toolbar creates source-sized TODO and enters first plain row");
+void run(HWND hwnd,gpu::Renderer&renderer,const std::filesystem::path&formats){Fixture f(hwnd,renderer,formats);
+    // The centre add bar (NotesCanvas "tool:todo") creates the desktop TODO.
+    f.tick();check(f.preview->tool("tool:todo",f.time),"The centre TODO tool creates a TODO");f.tick(.22);
+    auto note=f.todo();check(note.width==228&&note.height==154&&note.items.size()==1&&f.draw("projected-editor-glyphs"),"The TODO tool creates a source-sized TODO and enters its first plain row");
     check(f.key(app::KeyKind::unicodeCharacter,0x4e2d)&&f.key(app::KeyKind::unicodeCharacter,0x1f600),"Actual row routes Chinese/non-BMP input");
     check(f.key(app::KeyKind::down,VK_RETURN)&&!f.draw("projected-editor-glyphs"),"Unconsumed Return finishes TODO without adding newline or closing HUD");note=f.todo();check(note.items[0].text=="中😀"&&!note.richText&&f.preview->selected()==core::Module::notes,"Checklist item text persists without rich payload/module change");const auto first=note.items[0].id;
     f.click(f.cardPoint(note,{15,38}));note=f.todo();check(note.items[0].isChecked,"Actual checkbox toggles saved row");
@@ -43,7 +44,6 @@ void run(HWND hwnd,gpu::Renderer&renderer,const gpu::NativeNotesControlsAssets&a
     renderer.draw(false);const auto pixels=renderer.readback();bool visiblePixels{};for(std::size_t at=3;at<pixels.pixels.size();at+=4)visiblePixels|=pixels.pixels[at]!=0;check(visiblePixels,"Owned render target contains actual shared Notes artwork");
     f.release();check(!IsWindowVisible(hwnd),"Fixture never activates or displays a window");
 }
-std::string ascii(const wchar_t*value){std::string out;for(;*value;++value){check(*value<=127,"Explicit pins are ASCII");out.push_back(static_cast<char>(*value));}return out;}
 }
-int wmain(int argc,wchar_t**argv){const auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);if(FAILED(hr))return 1;int result{};try{check(argc==5,"Pass shader, source Notes controls bundle, manifest SHA, source commit");Window window;gpu::NativeNotesControlsAssets assets(std::filesystem::absolute(argv[2]),{ascii(argv[3]),ascii(argv[4])});gpu::Renderer renderer;renderer.initialize(window.value,1280,800,{gpu::Driver::warpForTests,argv[1],gpu::RenderTarget::offscreenForTests});run(window.value,renderer,assets);renderer.reset();std::cout<<checks<<" native TODO owner checks passed\n";}catch(const std::exception&e){std::cerr<<"TODO owner failed after "<<checks<<" checks: "<<e.what()<<'\n';result=1;}CoUninitialize();return result;}
+int wmain(int argc,wchar_t**argv){const auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);if(FAILED(hr))return 1;int result{};try{check(argc==3,"Pass shader and the Notes format resources");Window window;const auto formats=std::filesystem::absolute(argv[2]);gpu::Renderer renderer;renderer.initialize(window.value,1280,800,{gpu::Driver::warpForTests,argv[1],gpu::RenderTarget::offscreenForTests});run(window.value,renderer,formats);renderer.reset();std::cout<<checks<<" native TODO owner checks passed\n";}catch(const std::exception&e){std::cerr<<"TODO owner failed after "<<checks<<" checks: "<<e.what()<<'\n';result=1;}CoUninitialize();return result;}
 #endif

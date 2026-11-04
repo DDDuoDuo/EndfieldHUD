@@ -10,20 +10,20 @@ battery monitor, and reads no power source, user data, clipboard or account."""
 import hashlib, json, pathlib, sys
 
 PINS = {
-    'Sources/ChargeIndicatorView.swift': 'ec9e4e5237c2b3ba9c6a5b4ffb55daef5db682ec575687bbbd2f0efe6852857c',
+    'Sources/ChargeIndicatorView.swift': '11690888dae78a7b12f5fd728291cba61fde3f3ec4ba16254e334c0ccd7f6717',
     'Sources/HUDChargeBadge.swift': '255bf189221a71518e6897878028bd82933cff4de0ca32f4860e22d1b763105f',
-    'Sources/HUDChargeMetric.swift': '258ade1b0ae53eb3ff588b6eec8e52a9d4981122a929c7c20aba31e61ef11083',
-    'Sources/DisplayPolicy.swift': '13145948f98f06a9645fe07667c5b4c4a3ab1094defeafe025091c96d49e5968',
+    'Sources/HUDChargeMetric.swift': 'd109b0d207a3683640b303c086197c547de1c61cf287c6fd652b903d3b1c361b',
+    'Sources/DisplayPolicy.swift': 'aa63099edba5da95dcfd77f31d9b3eef604d3434b609742f7233b32caf7c27eb',
     'Sources/OverlayGeometry.swift': '92061517d4f3c8571966de77f59c4a2fb241b2cd6b367823fec9fea63c404d60',
     'Sources/DeviceBatteryProvider.swift': '0514115fcb7947d8f4bfa32ca905ba260bf2ea9b1876364ec64e691c5c8bbfe4',
     'Sources/SystemEventRecorder.swift': '4d5851f6767c463a5eda7ed1b44d29a6793e05313a7149a45230bc020f77b672',
-    'Sources/AppDelegate.swift': '63714bd1ca2fce863c185cbe72dfb033fc8b510c69a2050d95264dd466eac080',
-    'Sources/Models.swift': '5ce49023ae20e159aa574b7948b09140edf5717276d4d8949d7ce87ddf6d8967',
+    'Sources/AppDelegate.swift': '26f9ac4af413cda86ec879d7d8fc0d19243693121a98b78336346cc45449b0d3',
+    'Sources/Models.swift': '19a91c019c71f30299a2c16d15f86d6a07cdb1c06888958be7bb230c6c14431f',
     'Sources/HUDDeploymentFlicker.swift': 'e70a01035068f06ed4b82baf814e86450d49d8db8073cfef5a03532ac010f0b2',
-    'Sources/BatteryMonitor.swift': 'cda4c34ea3f010e3e45b434c8aa5b81d374ef105a2d6fbbd4f1d81f95f4274e4',
-    'Sources/BatteryCapacity.swift': '491ae8673fa46391788a6c7a0abb01b25fe5b545576a59a5a127381b7e7a166e',
-    'Sources/OverlayController.swift': 'f88a13bf51167c4e5fc199747be8befae15a3e3ba0d1aaf7ae2fae07db684de2',
-    'Sources/SystemHUDView.swift': 'b2ab7090ad0a44c6bc4acbcaf6169b21983b138d868ed6135e4114791725d42f',
+    'Sources/BatteryMonitor.swift': '14780312feeaf1e979234063c26a11f975a03153c922c22206f23a087a06793d',
+    'Sources/BatteryCapacity.swift': 'c3721960e2f2178d94d23f019866a4358f6a7e27a3199c0ce7b2094b030ec9e4',
+    'Sources/OverlayController.swift': '6f4f88257db083c5de7e65ff809c68f80ce67bc7b1789dc9f05608ad9dc5b6c8',
+    'Sources/SystemHUDView.swift': 'ae0529781e46d45c05f62db064abe6d5dff87993d851360b284c882f8067f805',
 }
 
 
@@ -97,7 +97,7 @@ def extract(root, out):
 import QuartzCore
 // Data-only harness around extracted Models.swift, SystemEventRecorder and
 // AppDelegate battery bodies. Everything else is an explicit inert stand-in.
-''' + block(models, 'enum OverlayTheme: String') + '\n' + block(models, 'enum OverlayPlacement: String') + '\n' \
+''' + block(models, 'enum AppLanguage: String, CaseIterable') + '\n' + block(models, 'enum OverlayTheme: String') + '\n' + block(models, 'enum OverlayPlacement: String') + '\n' \
         + block(models, 'struct OverlayPosition: Equatable') + '''
 struct AppConfiguration: Equatable {
     var displayMode: DisplayMode

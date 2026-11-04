@@ -14,6 +14,8 @@
 
 namespace n=endfield::native;namespace m=endfield::modules;namespace t=endfield::tools;using Q=endfield::app::UtilityExecutor;
 namespace {
+// The middle lyric row the display shows at `now` (the v1.2.0 presentation's lyricRows()[1]).
+std::string lyricRow(const endfield::modules::NowPlayingViewInput&i,double now){if(!i.lyrics)return {};return std::string(i.lyrics->window(endfield::modules::nowPlayingElapsed(i,now).value_or(0))[1]);}
 unsigned checks{};
 void check(bool value,const char*what){++checks;if(!value)throw std::runtime_error(what);}
 struct Provider:n::NowPlayingProvider{Changed changed;Ready startReady,commandReady;Read readReady;unsigned reads{},commands{},resyncs{},refreshes{};bool background{};
@@ -43,21 +45,22 @@ n::NowPlayingReadResult media(std::string application,m::NowPlayingTrack track=s
 struct Fixture{
     Q q{[]{}};std::shared_ptr<Provider>p=std::make_shared<Provider>();double now=10;Transport transport;Bridge bridge;std::vector<m::NowPlayingPlaybackEvent>events;unsigned decodes{};
     std::shared_ptr<n::NowPlayingWeb>web;n::NativeNowPlayingService service{q,[this]{return p;},[]{},[this]{return now;}};std::unique_ptr<t::NowPlayingSession>owner;
-    explicit Fixture(bool network=true,bool audio=false,unsigned coverPixels=600,m::NowPlayingBody playlist={}){
-        t::NowPlayingSessionOptions o;o.coverPixels=coverPixels;
+    explicit Fixture(bool network=true,bool audio=false,unsigned drawnPixels=0,m::NowPlayingBody playlist={}){
+        t::NowPlayingSessionOptions o;
         // 0xEE stands for bytes that are not an image.
         o.decode=[this](std::span<const std::uint8_t>b){++decodes;if(b[0]==0xEE)return n::NowPlayingImageResult{{},n::NowPlayingImageFailure::decode};auto f=std::make_shared<n::NotesImageFrame>();f->width=f->height=1;f->straightRGBA={b[0],0,0,255};return n::NowPlayingImageResult{f};};
         if(network){web=std::make_shared<n::NowPlayingWeb>(transport.bind(),[]{},[this]{return now;});o.web=web;}
         if(audio)o.volume=bridge.bind();o.playback=[this](const m::NowPlayingPlaybackEvent&e){events.push_back(e);};
         if(playlist)o.neteasePlayingList=[playlist]()->m::NowPlayingBody{return playlist;};
-        owner=std::make_unique<t::NowPlayingSession>(service,q,m::NowPlayingAppearance{},[]{},std::move(o));
+        owner=std::make_unique<t::NowPlayingSession>(service,q,[]{},std::move(o));
+        if(drawnPixels)owner->setArtworkPixels(drawnPixels);
     }
     void work(){q.waitIdle();q.drain();}
     void flush(){work();owner->utilityCompleted(now);work();owner->utilityCompleted(now);}
     void ready(n::NowPlayingReadResult r){owner->setActive(true,now);flush();p->startReady({});flush();p->readReady(std::move(r));flush();}
     void read(n::NowPlayingReadResult r){service.refresh();flush();p->readReady(std::move(r));flush();}
     void answer(std::size_t index,m::NowPlayingBody b){transport.done.at(index)(std::move(b));flush();}
-    const m::NowPlayingViewInput&input()const{return owner->presentation().input();}
+    const m::NowPlayingViewInput&input()const{return owner->input();}
 };
 const std::string lrclib="https://lrclib.net/api/get?track_name=Synthetic%20Song&artist_name=Example%20Artist&album_name=Fixture%20Album&duration=233";
 const std::string search="https://music.163.com/api/cloudsearch/pc?s=Synthetic%20Song%20Example%20Artist&type=1&limit=10&offset=0";
@@ -68,7 +71,7 @@ void lrclibLyrics(){
     check(f.transport.requests.size()==1&&f.transport.requests[0].url==lrclib&&f.transport.requests[0].kind==n::NowPlayingWeb::Kind::lyrics,"Spotify track without timed lyrics asks LRCLIB once (no NetEase catalog)");
     check(!f.input().lyrics&&f.owner->nextWakeTime(f.now)==20,"Rows stay empty while the request is bounded by its 10 s deadline");
     f.answer(0,body(R"({"syncedLyrics":"[00:05] First\n[00:09] Second\n[00:20] Third"})"));
-    check(f.input().lyrics&&f.input().lyrics->lines().size()==3&&f.owner->presentation().lyricRows()[1]=="Second","LRCLIB timed lyrics reach the source lyric rows");
+    check(f.input().lyrics&&f.input().lyrics->lines().size()==3&&lyricRow(f.input(),f.now)=="Second","LRCLIB timed lyrics reach the source lyric rows");
     auto playing=media("Spotify.exe");playing.value.track->isPlaying=true;f.read(std::move(playing));
     check(f.transport.requests.size()==1,"Playback/timeline events never repeat a lyric request");
     f.read(media("Spotify.exe",song(),{}, 2));check(f.transport.requests.size()==1&&f.input().lyrics,"A new GSMTC session token for the same player and track reuses the cache");
@@ -78,7 +81,7 @@ void netease(){
     check(f.transport.requests.size()==1&&f.transport.requests[0].url==search,"NetEase player uses the public catalog search first");
     f.answer(0,body(catalogSearch));
     check(f.transport.requests.size()==3&&f.transport.requests[1].url=="https://music.163.com/api/song/lyric?id=1901371647&lv=-1&kv=-1&tv=-1","Matched song reads only its own lyric document");
-    check(f.transport.requests[2].kind==n::NowPlayingWeb::Kind::artwork&&f.transport.requests[2].url=="https://p1.music.126.net/AbC==/1099.jpg?param=600y600","Missing GSMTC thumbnail is supplemented by the allow-listed 600x600 catalog cover");
+    check(f.transport.requests[2].kind==n::NowPlayingWeb::Kind::artwork&&f.transport.requests[2].url=="https://p1.music.126.net/AbC==/1099.jpg?param=800y800","Missing GSMTC thumbnail is supplemented by the allow-listed 800x800 catalog cover");
     f.answer(2,pixels(7));check(f.owner->artwork()&&f.owner->artwork()->straightRGBA[0]==7&&f.input().coverAvailable,"Catalog cover is decoded through the existing artwork owner");
     f.answer(1,body(R"({"code":200,"lrc":{"lyric":"[00:01] Catalog\n[00:12] Line"},"tlyric":{"lyric":"[00:01] translated"}})"));
     check(f.input().lyrics&&f.input().lyrics->lines().front().text=="Catalog"&&f.transport.requests.size()==3,"Catalog lyrics win and LRCLIB is never asked");
@@ -100,7 +103,7 @@ void windowPlayerCatalog(){
     Fixture f;f.ready(windowPlayer("Synthetic Song",3));
     check(f.transport.requests.size()==1&&f.transport.requests[0].url==search&&!f.input().track->duration,"A NetEase window title asks the public catalog; no length yet");
     f.answer(0,body(catalogSearch));
-    check(f.input().track&&f.input().track->duration==233.4&&f.input().track->position==3.&&f.owner->presentation().durationText()=="3:53",
+    check(f.input().track&&f.input().track->duration==233.4&&f.input().track->position==3.&&m::nowPlayingTime(f.input().track->duration)=="03:53",
           "The matched recording's catalog length becomes the window-title track's duration");
     check(f.transport.requests.size()==3&&f.transport.requests[2].kind==n::NowPlayingWeb::Kind::artwork,"Its catalog cover is requested");
     f.answer(2,pixels(5));const auto firstCover=f.owner->memory();
@@ -120,30 +123,28 @@ void windowPlayerCatalog(){
           "Returning to a recent track shows its cover at once: no search, download or decode");
     check(f.input().track->duration==233.4,"Its catalog length is cached with the match");
 }
-// Windows requests the catalog cover at least at the size its slot is drawn
-// (the source asks for 600x600 for its 2x Retina slot and shows a 512-pixel
-// thumbnail). The HUD draws the 330-point slot into its group at the raster
-// density, 2 pixels per point: 660 pixels, so it downloads 800x800 and the
-// decoder scales that down to exactly 660 (never up).
+// The cover is decoded at the size the 480 px slot is drawn (Mac 1.3.0 B11,
+// NowPlayingArtworkLoader.pixelSize) and the NetEase download asks for
+// max(800, min(2048, drawn)) (NowPlayingCatalog.coverPixels(forDrawn:)), so
+// the decoder only scales it down.
 void sizedCover(){
-    check(m::nowPlayingCoverDrawnPixels(2)==660&&m::nowPlayingCoverDrawnPixels(1)==330&&m::nowPlayingCoverDrawnPixels(1.74)==575&&
-          m::nowPlayingCoverDrawnPixels(10)==m::nowPlayingMaximumCoverPixels&&m::nowPlayingCoverDrawnPixels(0)==330,"The slot's drawn size is 330 points at the density, at most 1024 pixels");
-    check(m::nowPlayingCatalogCoverPixels(2)==800&&m::nowPlayingCatalogCoverPixels(1.74)==600&&m::nowPlayingCatalogCoverPixels(1)==400&&m::nowPlayingCatalogCoverPixels(.5)==200&&
-          m::nowPlayingCatalogCoverPixels(.9)==300&&m::nowPlayingCatalogCoverPixels(1.5)==500&&m::nowPlayingCatalogCoverPixels(3)==1024&&m::nowPlayingCatalogCoverPixels(0)==400&&
-          m::nowPlayingCatalogCoverPixels(std::numeric_limits<double>::quiet_NaN())==400,"The download is the smallest standard size at least the drawn size (800 for the 660-pixel slot), 1024 at most");
-    for(const double density:{.5,1.,1.5,1.74,2.,2.5,3.})check(m::nowPlayingCatalogCoverPixels(density)>=m::nowPlayingCoverDrawnPixels(density),"The download is never smaller than the drawn size");
-    check(m::nowPlayingCatalogCoverURL("http://p1.music.126.net/AbC==/1099.jpg",800)=="https://p1.music.126.net/AbC==/1099.jpg?param=800y800"&&
+    check(m::nowPlayingCoverPixelSize(480,2)==960&&m::nowPlayingCoverPixelSize(480,1)==480&&m::nowPlayingCoverPixelSize(480,1.5)==720&&m::nowPlayingCoverPixelSize(480,2.75)==1320&&
+          m::nowPlayingCoverPixelSize(480,8)==2048&&m::nowPlayingCoverPixelSize(480,0)==720&&m::nowPlayingCoverPixelSize(480,std::numeric_limits<double>::quiet_NaN())==720&&
+          m::nowPlayingCoverPixelSize(1,1)==64,"The slot's drawn size: 480 points at the render scale, 64...2048, 720 without a scale");
+    check(m::nowPlayingCatalogCoverPixels(100)==800&&m::nowPlayingCatalogCoverPixels(801)==801&&m::nowPlayingCatalogCoverPixels(960)==960&&m::nowPlayingCatalogCoverPixels(4000)==2048,
+          "The download is 800, or the drawn size when larger (2048 at most)");
+    check(m::nowPlayingCatalogCoverURL("http://p1.music.126.net/AbC==/1099.jpg")=="https://p1.music.126.net/AbC==/1099.jpg?param=800y800"&&
           m::nowPlayingCatalogCoverURL("https://p3.music.126.net/x.jpg?param=130y130",20)=="https://p3.music.126.net/x.jpg?param=64y64"&&
-          m::nowPlayingCatalogCoverURL("https://p3.music.126.net/x.jpg",4000)=="https://p3.music.126.net/x.jpg?param=1024y1024"&&
+          m::nowPlayingCatalogCoverURL("https://p3.music.126.net/x.jpg",4000)=="https://p3.music.126.net/x.jpg?param=2048y2048"&&
           !m::nowPlayingCatalogCoverURL("https://evil.example/x.jpg",500)&&m::nowPlayingArtworkURLAllowed(*m::nowPlayingCatalogCoverURL("http://p2.music.126.net/a.jpg",300)),
           "Sized cover URLs keep the source host rules and stay allow-listed");
-    Fixture f(true,false,500);f.ready(media("cloudmusic.exe"));f.answer(0,body(catalogSearch));
-    check(f.transport.requests.size()==3&&f.transport.requests[2].url=="https://p1.music.126.net/AbC==/1099.jpg?param=500y500","The download asks for the slot's size");
-    f.owner->setCoverPixels(300);f.read(windowPlayer("Synthetic Song",0));
+    Fixture f(true,false,960);f.ready(media("cloudmusic.exe"));f.answer(0,body(catalogSearch));
+    check(f.transport.requests.size()==3&&f.transport.requests[2].url=="https://p1.music.126.net/AbC==/1099.jpg?param=960y960","The download asks for the slot's size");
+    f.owner->setArtworkPixels(1320);f.read(windowPlayer("Synthetic Song",0));
     check(f.transport.requests.size()==4&&f.transport.requests[3].url==search,"Another player's track is looked up again");
     f.answer(3,body(catalogSearch));
-    check(f.transport.requests.back().kind==n::NowPlayingWeb::Kind::artwork&&f.transport.requests.back().url=="https://p1.music.126.net/AbC==/1099.jpg?param=300y300",
-          "A new display density applies to the next cover download");
+    check(f.transport.requests.back().kind==n::NowPlayingWeb::Kind::artwork&&f.transport.requests.back().url=="https://p1.music.126.net/AbC==/1099.jpg?param=1320y1320",
+          "A new render scale applies to the next cover download");
 }
 void thumbnailFirst(){
     // Another player's thumbnail always wins (source): nothing is downloaded.
@@ -172,10 +173,10 @@ void neteaseSharpCover(){
         r.value.capabilities.play=r.value.capabilities.toggle=r.value.capabilities.next=r.value.capabilities.previous=true;
         r.value.progress=n::NowPlayingMediaSnapshot::Progress{.5,0};r.value.playerControls=true;r.value.playerTime=true;r.value.metadataRevision=7;r.value.artwork=std::move(art);return r;};
     const auto thumbnail=pixels(3);
-    Fixture f(true,false,m::nowPlayingCatalogCoverPixels(2),body(queue));f.ready(session(thumbnail));
+    Fixture f(true,false,960,body(queue));f.ready(session(thumbnail));
     const auto cover=[&]{for(std::size_t k=0;k<f.transport.requests.size();++k)if(f.transport.requests[k].kind==n::NowPlayingWeb::Kind::artwork)return std::optional(k);return std::optional<std::size_t>();}();
     check(f.owner->artwork()&&f.owner->artwork()->straightRGBA[0]==3&&f.input().coverAvailable,"NetEase's media-session thumbnail shows at once");
-    check(cover&&f.transport.requests[*cover].url=="https://p3.music.126.net/Queue==/2001.jpg?param=800y800",
+    check(cover&&f.transport.requests[*cover].url=="https://p3.music.126.net/Queue==/2001.jpg?param=960y960",
           "The cover is downloaded at the slot's drawn size (800 for 660 pixels) although a thumbnail exists");
     const auto revision=f.input().coverRevision;const auto shown=f.owner->artwork();
     // The download arrives; its decode is queued on the shared worker.
@@ -211,7 +212,7 @@ void playerBar(){
     const std::string own="https://p3.music.126.net/Own==/1.jpg?param=600y600";
     Fixture f(true,false,500);f.ready(barPlayer(.5,10,true,own));
     check(f.transport.requests.size()==2&&f.transport.requests[0].url==search&&f.transport.requests[1].kind==n::NowPlayingWeb::Kind::artwork&&
-          f.transport.requests[1].url=="https://p3.music.126.net/Own==/1.jpg?param=500y500","The player's own cover is requested at once, at the slot's size, beside the catalog search");
+          f.transport.requests[1].url=="https://p3.music.126.net/Own==/1.jpg?param=800y800","The player's own cover is requested at once, at the slot's size, beside the catalog search");
     check(!f.input().track->position&&!f.input().track->duration,"Without a length the fraction has no time yet");
     f.answer(1,pixels(8));check(f.owner->artwork()&&f.owner->artwork()->straightRGBA[0]==8,"The player's cover shows before the catalog answers");
     f.answer(0,body(catalogSearch));
@@ -264,12 +265,12 @@ void neteaseQueue(){
     check(f.input().track->duration==233.4&&std::abs(*f.input().track->position-116.7)<1e-9,"The queue length turns the played half into seconds");
     f.answer(1,body(R"({"code":200,"lrc":{"lyric":"[00:01]One\n[01:50]Two\n[03:00]Three"}})"));
     check(f.input().lyrics&&f.input().lyrics->lines().size()==3,"The track's own lyrics reach the rows");
-    check(f.owner->presentation().lyricRows()[1]=="Two","At 116.7 s the current lyric line (110 s) is centred: the lyric clock follows the bar");
+    check(lyricRow(f.input(),f.now)=="Two","At 116.7 s the current lyric line (110 s) is centred: the lyric clock follows the bar");
     // The bar advances with the same clock: a later reading keeps the running time.
     f.now=12;f.read(barPlayer(.5+2.3/233.4,12));
     check(std::abs(*f.input().track->position-119.)<1e-9,"The bar keeps tracking in seconds against the queue length");
     f.now=130;f.owner->deadline(f.now);f.flush();
-    check(f.owner->presentation().lyricRows()[1]=="Two"||f.owner->presentation().lyricRows()[1]=="Three","The lyric line advances on the shared clock as the song plays");
+    check(lyricRow(f.input(),f.now)=="Two"||lyricRow(f.input(),f.now)=="Three","The lyric line advances on the shared clock as the song plays");
     // A track the queue does not carry still falls back to the fuzzy search.
     f.read(windowPlayer("Unqueued Song",0));
     check(std::any_of(f.transport.requests.begin(),f.transport.requests.end(),[](const auto&r){return r.url.find("/api/cloudsearch/pc?")!=std::string::npos;}),"An unqueued track falls back to the catalog title search");
@@ -295,10 +296,10 @@ void neteaseSmtc(){
     check(f.input().track->duration==233.4&&std::abs(*f.input().track->position-116.7)<1e-9&&f.input().playbackRate==1,
           "The bar's played half of the queue length is the time, and the clock runs (no rate from the empty timeline)");
     f.answer(*lyric,body(R"({"code":200,"lrc":{"lyric":"[00:01]One\n[01:50]Two\n[03:00]Three"}})"));
-    check(f.owner->presentation().lyricRows()[1]=="Two","The lyric line follows the same clock as the bar");
+    check(lyricRow(f.input(),f.now)=="Two","The lyric line follows the same clock as the bar");
     for(std::size_t k=0;k<f.transport.requests.size();++k)if(f.transport.requests[k].kind==n::NowPlayingWeb::Kind::artwork)f.answer(k,pixels(5));
     check(f.owner->artwork()&&f.owner->artwork()->straightRGBA[0]==5,"The queue's catalog cover is shown");
-    check(!f.owner->presentation().sliders(f.now)[0].enabled,"Seeking stays unsupported: NetEase disables and ignores position changes");
+    check(!m::nowPlayingControls(f.input()).seek,"Seeking stays unsupported: NetEase disables and ignores position changes");
     // The bar is read again while it plays, and the time keeps running between readings.
     const auto before=f.p->resyncs;const auto due=f.owner->nextWakeTime(f.now);
     check(due&&*due<=f.now+1,"A display tick is due within a second while it plays");
@@ -362,7 +363,7 @@ void lyricRetry(){
     f.now+=15;f.owner->deadline(f.now);f.flush();
     const auto third=find(lyric,*second+1);check(third.has_value(),"The lyric document is asked a third time");
     f.answer(*third,body(R"({"code":200,"lrc":{"lyric":"[00:01]One\n[01:50]Two\n[03:00]Three"}})"));
-    check(f.input().lyrics&&f.input().lyrics->lines().size()==3&&f.owner->presentation().lyricRows()[1]=="Two"&&!f.owner->nextWakeTime(f.now),
+    check(f.input().lyrics&&f.input().lyrics->lines().size()==3&&lyricRow(f.input(),f.now)=="Two"&&!f.owner->nextWakeTime(f.now),
           "Its answer shows the lyrics at the bar's time and ends the retries");
     // Hidden: no retry. Reopened: a remembered failure is asked again at once.
     Fixture g(true,false,800,body(queue));g.ready(smtcPlayer(.5,10,false));
@@ -431,7 +432,7 @@ void offThread(){
     Fixture f;f.ready(media("Spotify.exe"));const auto accepted=f.q.stats().accepted;
     f.transport.done.at(0)(body(R"({"syncedLyrics":"[00:05] First\n[00:09] Second"})"));f.owner->utilityCompleted(f.now);
     check(f.q.stats().accepted==accepted+1&&!f.input().lyrics,"The downloaded answer is decoded on the shared utility worker, not inside the owner call");
-    f.flush();check(f.input().lyrics&&f.input().lyrics->lines().size()==2&&f.owner->presentation().lyricRows()[1]=="Second","Decoded lyrics reach the rows after the utility drain");
+    f.flush();check(f.input().lyrics&&f.input().lyrics->lines().size()==2&&lyricRow(f.input(),f.now)=="Second","Decoded lyrics reach the rows after the utility drain");
     Fixture g;g.ready(media("Spotify.exe"));const auto discarded=g.q.stats().discarded;
     g.transport.done.at(0)(body(R"({"syncedLyrics":"[00:05] First"})"));g.owner->utilityCompleted(g.now);g.owner->setActive(false,g.now);g.work();
     check(g.q.stats().discarded==discarded+1,"Hide discards the queued decode");
@@ -445,10 +446,9 @@ void volume(){
     f.ready(media("Spotify.exe"));
     check(f.bridge.votes==std::vector<bool>{true}&&f.owner->volumeRoute()=="100:1","Visible owner votes for per-app audio and resolves the single Spotify.exe route");
     check(f.input().volumeAvailable&&f.input().capabilities.volume&&f.input().volume==1.,"Direct route is adjustable and shows 100%");
-    auto&view=f.owner->presentation();view.perform(m::NowPlayingAction::volume,f.now);
-    const auto intent=view.setSlider(m::NowPlayingSliderKind::volume,.4,f.now);check(intent&&intent->kind==m::NowPlayingIntentKind::volume,"Open submenu emits a volume intent");
+    const std::optional<m::NowPlayingIntent>intent=m::NowPlayingIntent{m::NowPlayingIntentKind::volume,f.input().session,.4};
     check(f.owner->dispatch(*intent,f.now)&&f.bridge.gains.size()==1&&f.bridge.gains[0]==std::pair<std::string,double>("100:1",.4),"Volume writes the route gain through the injected bridge");
-    check(f.input().volume==.4&&view.volumeText()=="40%","Accepted gain is presented immediately");
+    check(f.input().volume==.4,"Accepted gain is presented immediately");
     f.bridge.routes[0].state=S::active;f.bridge.routes[0].gain=.4;++f.bridge.revision;check(f.owner->audioChanged(f.now)&&f.input().volume==.4,"Confirmed route gain replaces the optimistic value");
     check(!f.owner->audioChanged(f.now),"Unchanged audio revision does not republish");
     check(f.owner->dispatch({m::NowPlayingIntentKind::volume,1,1},f.now)&&f.bridge.gains.back().second==1,"Active route accepts 100%");
@@ -470,7 +470,7 @@ void volume(){
     worker.bridge.identity={{"11:1","SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify"}};worker.ready(media("SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify"));
     check(worker.owner->volumeRoute()=="10:1"&&worker.bridge.identityCalls==0,"Captured process identities resolve the packaged player without a process query");
     Fixture none(false,true);none.bridge.routes={{"5:1",5,"C:\\x\\chrome.exe",true,S::direct,{}}};none.ready(media("Chrome"));
-    check(none.owner->volumeRoute().empty()&&!none.input().volumeAvailable&&none.owner->presentation().actions()[4].enabled,"Unresolved player keeps the source unavailable submenu");
+    check(none.owner->volumeRoute().empty()&&!none.input().volumeAvailable&&m::nowPlayingControls(none.input()).volume,"Unresolved player keeps the source unavailable submenu");
     Fixture refused(false,true);refused.bridge.routes={{"1:1",1,"Spotify.exe",true,S::direct,{}}};refused.bridge.refuse=true;refused.ready(media("Spotify.exe"));
     check(!refused.owner->dispatch({m::NowPlayingIntentKind::volume,1,.3},refused.now)&&refused.input().volume==1.,"A refused write leaves the actual value");
 }

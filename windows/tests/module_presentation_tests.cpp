@@ -93,5 +93,109 @@ void guardsAndAllocation(){
     p.select(Module::calendar,21);p.select(Module::power,21.01);p.sample(21.3);p.cancel(21.4);
     const auto after=allocations.load();check(before==after,"Selection, steady frames, active samples, queue completion and cancellation allocate no heap storage");
 }
+// Paused Core Animation presentation layers of the Mac HUDMotion groups
+// (macOS 15.7.4): enter = stIn of a 44 px x move with E inside the E group of
+// .38 s; leave = fade 1 -> 0 and move to -0.6 x 44 inside the ease group of .13 s.
+struct CAMotionSample {bool enter;double phase,opacity,x;};
+constexpr CAMotionSample caMotion[]{
+    {true,.0037,.024679255,41.37954665720463},{true,.05,.33706468,13.802465200424194},{true,.1234567,.797485,2.696241855621338},
+    {true,.25,1,.3309149742126465},{true,.54321,1,.008237600326538086},{true,.6,1,.003902435302734375},{true,.87654321,1,1.5735626220703125e-05},
+    {false,.0037,.9984544,-.04080386180430651},{false,.05,.9670485,-.8699187219142913},{false,.1234567,.86591226,-3.539916372299194},
+    {false,.25,.59148943,-10.784679722785949},{false,.54321,.15790963,-22.23118572235107},{false,.6,.114766836,-23.37015552520752},
+    {false,.87654321,.008800149,-26.167676067352293}};
+void within(double value,double expected,double tolerance,const char*message){check(std::isfinite(value)&&std::abs(value-expected)<=tolerance,message);}
+void designMotion(){
+    for(const auto&s:caMotion){
+        const auto v=s.enter?DesignMotion::enterAt(s.phase*DesignMotion::entrance,{44,0}):DesignMotion::leaveAt(s.phase*DesignMotion::leave,{44,0});
+        // CA evaluates its timing in Float: agreement to its precision.
+        within(v.opacity,s.opacity,5e-5,"Design motion opacity matches the Core Animation presentation");within(v.translation.x,s.x,3e-3,"Design motion translation matches the Core Animation presentation");check(v.translation.y==0,"An axis without travel does not move");
+    }
+    const auto rest=DesignMotion::enterAt(.38,{12,-30},.7);check(rest==DesignMotionSample{.7,{0,0}},"Entrance ends at the model value");
+    check(DesignMotion::enterAt(.1,{12,-30},.7,0,true)==rest,"Reduce Motion skips the entrance");
+    const auto before=DesignMotion::enterAt(.05,{12,-30},.7,DesignMotion::staggerDelay(3));check(before.opacity==0&&before.translation.x==12&&before.translation.y==-30,"A staggered row fills backwards until its delay");
+    const auto mid=DesignMotion::enterAt(.2+.1,{0,44},.5,.1);checkNear(mid.opacity,.5*std::min(1.,DesignEasing::standard.value(.2/.38)/.6),"Entrance opacity reaches the layer opacity at 60 % of the eased clock");
+    checkNear(mid.translation.y,44*(1-DesignEasing::standard.value(DesignEasing::standard.value(.2/.38))),"Entrance translation is eased twice (child E inside the group E)");
+    checkNear(DesignMotion::staggerDelay(0),.06,"Stagger base");checkNear(DesignMotion::staggerDelay(5),.06+5*.036,"Stagger step");
+    checkNear(DesignMotion::staggerDelay(14),.06+14*.036,"Stagger cap");checkNear(DesignMotion::staggerDelay(40),DesignMotion::staggerDelay(14),"Index capped at 14");checkNear(DesignMotion::staggerDelay(-2),.06,"Negative index is the first row");
+    const auto held=DesignMotion::leaveAt(5,{44,22},.8);check(held.opacity==0&&held.translation.x==-.6*44&&held.translation.y==-.6*22,"The leave holds its end state until the swap");
+    check(DesignMotion::leaveAt(.05,{44,22},.8,true)==DesignMotionSample{.8,{0,0}},"Reduce Motion leaves the model untouched");
+    // HUDShellPosition.
+    const auto a=ShellPosition::position(Module::system),b=ShellPosition::position(Module::notes);const auto o=ShellPosition::entranceOffset(Module::system,Module::notes);const double length=std::hypot(b.x-a.x,b.y-a.y);
+    checkNear(o.x,(b.x-a.x)/length*44,"Switch vector X is the normalized shell vector x 44");checkNear(o.y,(b.y-a.y)/length*44,"Switch vector Y");
+    const auto first=ShellPosition::entranceOffset(std::nullopt,Module::power),power=ShellPosition::position(Module::power);const auto fl=std::hypot(power.x-975,power.y-575);
+    checkNear(first.x,(power.x-975)/fl*44,"The first module enters from the disc centre");checkNear(first.y,(power.y-575)/fl*44,"The first module enters from the disc centre (Y)");
+    check(ShellPosition::entranceOffset(Module::map,Module::map).x==0&&ShellPosition::entranceOffset(Module::map,Module::map).y==0,"A zero-length vector does not move");
+    check(ShellPosition::subpageOffset(1).x==44&&ShellPosition::subpageOffset(-1).x==-44&&ShellPosition::subpageOffset(0,1).y==44,"Sub-pages enter from the right, left or below");
+    check(ShellPosition::position(Module::activityMonitor).x==1100&&ShellPosition::position(Module::addApp).y==1250&&ShellPosition::position(Module::volume).x==1552,"Spec Appendix A positions");
+    // HUDDesignGeometry.
+    const auto box=DesignBox::rect();const double u=1470./(1920*1.15);
+    checkNear(box.x,500-295*u,"Box left");checkNear(box.y,320-305*u,"Box top");checkNear(box.width,590*u,"Box width");checkNear(box.height,510*u,"Box height");
+    within(box.x,303.60,.01,"Box at x 303.60");within(box.y,116.94,.01,"Box at y 116.94");within(box.width,392.80,.01,"Box 392.80 wide");within(box.height,339.54,.01,"Box 339.54 high");
+    check(box.x>=280&&box.y>=100&&box.x+box.width<=720&&box.y+box.height<=540,"The box lies inside the 440 x 440 viewport");
 }
-int main(){try{lifecycle();pendingCancelSettle();sourceTracks();guardsAndAllocation();std::cout<<"PASS "<<checks<<" module presentation checks\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<" checks: "<<e.what()<<'\n';return 1;}}
+void contentDim(){
+    ContentDimTrack t;const auto E=[](double x){return DesignEasing::standard.value(x);};
+    check(!t.needed(0)&&t.amount(0)==0,"No filter before a confirm");
+    check(t.set(true,0)&&!t.set(true,.1),"Dimming starts once; repeats are ignored");
+    checkNear(t.amount(0),0,"Filters are added at their neutral values");checkNear(t.amount(.125),E(.5),"Eased in with E");checkNear(t.amount(.25),1,"Fully dimmed after .25 s");check(t.needed(5)&&!t.animating(5),"Dimmed: the filter stays");
+    checkNear(ContentDimTrack::blurRadius*t.amount(.125),1.5*E(.5),"The radius eases with the amount");checkNear(ContentDimTrack::exposure,-2.2,"-2.2 EV");
+    t.set(false,1);checkNear(t.amount(1.1),1-E(.4),"Eased out with E");check(t.needed(1.2)&&!t.needed(1.25)&&t.amount(1.25)==0,"The filter goes once the ease-out completes");
+    t.set(true,2);t.set(false,2.1);const double from=E(.4);checkNear(t.amount(2.1),from,"A reversal starts from the presentation value");checkNear(t.amount(2.1+.125),from*(1-E(.5)),"and eases to neutral");
+    t.set(true,3,true);check(t.amount(3)==1&&!t.animating(3),"Reduce Motion jumps");t.reset();check(!t.needed(3)&&t.amount(3)==0,"Reset removes everything at once");
+}
+void directional(){
+    ModulePresentation p(Module::system);p.setDesignScreen(Module::notes,true);p.setDesignScreen(Module::clipboard,true);
+    auto u=p.sample(0);check(u.presentation.current.hostClip&&!u.presentation.current.designScreen&&!u.presentation.directional,"An unported module keeps the v1.2.0 clip");
+    const auto system=u.presentation.current.identity;
+    u=p.select(Module::notes,1,true,false,7);const auto&s=u.presentation;
+    check(u.change==ModulePresentationChange{Module::system,Module::notes,true}&&s.directional&&s.transitioning&&!s.acceptsModuleInput,"A design destination switches directionally");
+    check(s.incoming&&!s.incoming->attached&&s.incoming->opacity==0&&s.incoming->designScreen&&!s.incoming->shutter&&!s.incoming->registration&&!s.incoming->transform.animated,"The incoming screen is prepared, not drawn, and has no shutter");
+    check(!s.current.hostClip&&!s.incoming->hostClip&&!s.current.shutter&&s.current.keepsOwnPlacement,"The host clip is off and the unported screen keeps its own placement");
+    const auto notes=s.incoming->identity;const auto offset=ShellPosition::entranceOffset(Module::system,Module::notes);
+    for(double t:{0.,.013,.065,.1,.129}){u=p.sample(1+t);const auto e=DesignEasing::ease.value(t/.13);
+        checkNear(u.presentation.current.opacity,1-e,"Leave fades the wrapper");checkNear(u.presentation.current.planeOffset.x,-.6*offset.x*DesignBox::baseUnit*e,"Leave moves toward -0.6 x vector in design units");
+        checkNear(u.presentation.current.planeOffset.y,-.6*offset.y*DesignBox::baseUnit*e,"Leave moves in Y");check(!u.presentation.incoming->attached&&!u.completedRequest,"Nothing attaches before the swap");}
+    u=p.sample(1.14);const auto&d=u.presentation;
+    check(d.current.module==Module::notes&&d.current.identity==notes&&d.current.attached&&d.current.opacity==1&&!d.incoming&&!d.transitioning&&d.acceptsModuleInput&&!d.directional,"The swap attaches and finishes in one sample");
+    check(d.current.entrance&&d.current.entrance->start==1.14&&d.current.entrance->elapsed==0&&d.current.entrance->offset.x==offset.x&&d.current.entrance->offset.y==offset.y,"The entrance starts with the swap, from the switch vector");
+    check(u.completedRequest==7&&!d.current.hostClip&&d.current.designScreen&&d.current.planeOffset.x==0,"Completion; a design screen stays unclipped");
+    u=p.sample(1.5);checkNear(u.presentation.current.entrance->elapsed,.36,"The entrance clock runs on the caller clock");check(!p.requiresFrames(),"The host needs no frames for the content's own stagger");
+    // Back to an unported module: the v1.2.0 shutter, unclipped while the design screen leaves.
+    u=p.select(Module::system,2);check(!u.presentation.directional&&u.presentation.current.shutter&&u.presentation.incoming->shutter&&u.presentation.incoming->registration,"An unported destination keeps the shutter");
+    check(!u.presentation.current.hostClip&&u.presentation.current.designScreen&&!u.presentation.incoming->designScreen&&!u.presentation.incoming->keepsOwnPlacement,"The shutter keeps the host state the design screen settled with");
+    check(u.presentation.current.opacity==1&&u.presentation.current.entrance,"The shutter never fades its wrappers");
+    u=p.sample(2.3);check(u.presentation.current.module==Module::system&&u.presentation.current.hostClip&&!u.presentation.current.entrance,"Settled on an unported module the clip returns");
+    (void)system;
+}
+void directionalSupersede(){
+    ModulePresentation p(Module::system);p.setDesignScreen(Module::notes,true);p.setDesignScreen(Module::clipboard,true);
+    auto u=p.select(Module::notes,0,true,false,1);u=p.select(Module::clipboard,.05,true,false,2);check(p.pending()==Module::clipboard&&!u.change,"A module clicked during the leave queues");
+    u=p.sample(.13);const auto&s=u.presentation;
+    check(s.current.module==Module::clipboard&&s.current.attached&&s.current.entrance&&s.current.entrance->start==.13&&!s.transitioning&&u.completedRequest==2,"The superseded destination is skipped and its follower swaps in the same sample");
+    const auto o=ShellPosition::entranceOffset(Module::notes,Module::clipboard);check(s.current.entrance->offset.x==o.x&&s.current.entrance->offset.y==o.y,"The follower enters from the skipped module's vector, as on the Mac");
+    check(u.change==ModulePresentationChange{Module::notes,Module::clipboard,true},"The follower's change is reported");
+    // Superseded by an unported module: the shutter runs over the skipped, undrawn screen.
+    ModulePresentation q(Module::system);q.setDesignScreen(Module::notes,true);q.select(Module::notes,0);q.select(Module::map,.05);u=q.sample(.13);
+    check(u.presentation.current.module==Module::notes&&!u.presentation.current.attached&&u.presentation.current.opacity==0&&u.presentation.incoming->module==Module::map&&u.presentation.incoming->shutter,"A skipped screen is never drawn under the shutter");
+    check(!u.presentation.current.hostClip,"A skipped design screen leaves the host unclipped, as its normalize does");
+    u=q.cancel(.2);check(u.presentation.current.module==Module::notes&&u.presentation.current.attached&&!u.presentation.incoming,"Cancel restores the committed screen attached");
+    // Retargeting back to the leaving module clears the queue and the leave continues.
+    ModulePresentation r(Module::system);r.setDesignScreen(Module::notes,true);r.select(Module::notes,0);r.select(Module::map,.02);u=r.select(Module::notes,.03);
+    check(!r.pending()&&r.isTransitioning()&&u.presentation.directional,"Pressing the destination again clears the pending module");
+    u=r.sample(.13);check(u.presentation.current.module==Module::notes&&u.presentation.current.attached&&u.presentation.current.entrance,"The original destination lands on its deadline");
+    // Cancel during the leave restores the committed screen.
+    ModulePresentation c(Module::display);c.setDesignScreen(Module::notes,true);c.select(Module::notes,0,true,false,3);u=c.cancel(.05);
+    check(u.presentation.current.module==Module::display&&u.presentation.current.opacity==1&&u.presentation.current.planeOffset.x==0&&!u.presentation.incoming&&!u.completedRequest,"Cancel during the leave restores the old screen at rest");
+}
+void directionalEntranceAndReduce(){
+    ModulePresentation p(Module::notes);p.setDesignScreen(Module::notes,true);auto u=p.beginEntrance(0);const auto o=ShellPosition::entranceOffset(std::nullopt,Module::notes);
+    check(u.presentation.current.entrance&&u.presentation.current.entrance->offset.x==o.x&&u.presentation.current.entrance->offset.y==o.y&&!u.presentation.current.hostClip,"The first module enters from the disc centre");
+    ModulePresentation m(Module::notes);m.setDesignScreen(Module::notes,true);check(!m.beginEntrance(0,true).presentation.current.entrance,"No entrance under Reduce Motion");
+    ModulePresentation l(Module::map);check(!l.beginEntrance(0).presentation.current.entrance,"An unported module has no entrance");
+    u=p.select(Module::clipboard,1,true,true,4);check(!u.presentation.transitioning&&!u.presentation.current.entrance&&u.completedRequest==4,"Reduce Motion collapses the switch: no leave and no entrance");
+    p.setDesignScreen(Module::clipboard,true);u=p.select(Module::notes,2,false);check(u.presentation.current.designScreen&&!u.presentation.current.hostClip&&!u.presentation.current.entrance,"A settle installs without an entrance");
+    const auto before=allocations.load();p.select(Module::clipboard,3);for(unsigned i=0;i<60;++i)(void)p.sample(3+i*.004);p.select(Module::notes,4);p.select(Module::map,4.05);p.sample(4.2);p.sample(4.6);
+    check(allocations.load()==before,"Directional switches, leaves, skips and entrances allocate nothing");
+}
+}
+int main(){try{lifecycle();pendingCancelSettle();sourceTracks();guardsAndAllocation();designMotion();contentDim();directional();directionalSupersede();directionalEntranceAndReduce();std::cout<<"PASS "<<checks<<" module presentation checks\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<" checks: "<<e.what()<<'\n';return 1;}}

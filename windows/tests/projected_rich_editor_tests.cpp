@@ -66,7 +66,7 @@ void run(){
     const auto beforeLanguage=editor.layout().painted();const auto contentRevision=document.revision();const auto selected=document.selection();const auto notified=sink->layouts;
     raster.setDefaultFontLanguage(LayerFontLanguage::korean);check(editor.syncContent(),"Default language event rebuilds an active editor through its owner transaction");
     check(editor.layout().painted()!=beforeLanguage&&beforeLanguage->text()==document.text()&&document.revision()==contentRevision&&document.selection()==selected,"Language refresh keeps document/selection and old immutable glyph snapshot intact");
-    const auto&families=scene.report().fontSubstitutions;check(!families.empty()&&std::all_of(families.begin(),families.end(),[](const auto&f){return f.selectedFamily=="Noto Sans KR";})&&sink->layouts>notified,"The same painted Korean layout drives refreshed TSF extents");
+    const auto&families=scene.report().fontSubstitutions;check(!families.empty()&&std::all_of(families.begin(),families.end(),[](const auto&f){return f.cascadeFamily=="Noto Sans KR";})&&sink->layouts>notified,"The same painted Korean layout drives refreshed TSF extents");
     const auto languageRaster=raster.stats();for(unsigned n=0;n<120;++n)editor.syncContent();check(raster.stats().textLayoutsCreated==languageRaster.textLayoutsCreated&&raster.stats().rasterizations==languageRaster.rasterizations,"Steady editor frames do not reshape after a font event");
     raster.setDefaultFontLanguage(LayerFontLanguage::simplifiedChinese);editor.syncContent();
     ok(editor.stop(),"Stop owned rich field");check(!IsWindowVisible(window.value),"Test never shows or activates its HWND");

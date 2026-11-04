@@ -2,7 +2,7 @@
 #include "native/audio_route_journal.hpp"
 #include "native/volume_audio_access.hpp"
 #include "core/data/data_store.hpp"
-#include "native/volume_scene.hpp"
+#include "native/volume_snapshot.hpp"
 #ifdef _WIN32
 #include <windows.h>
 #include <tlhelp32.h>
@@ -370,21 +370,21 @@ void oneWorker(){
 #endif
 void binding(){
     Harness h;auto&s=*h.service;
-    n::VolumeProviderBinding volume(n::volumeProviderAccess(s));auto callbacks=volume.callbacks();n::VolumeController controller(volume.snapshot(),callbacks);
-    volume.setReceiver([&](const auto&v){controller.receiveSnapshot(v);});
+    n::VolumeProviderBinding volume(n::volumeProviderAccess(s));auto callbacks=volume.callbacks();n::VolumeSnapshot delivered=volume.snapshot();
+    volume.setReceiver([&](const auto&v){delivered=v;});
     const auto pump=[&](auto&&p,const char*what){h.until([&](const auto&){return volume.receive(),p();},what);};
     check(!volume.active()&&!s.stats().workerStarted,"Binding construction votes nothing");
-    volume.setVisible(true);controller.setActive(true);check(s.votes()==static_cast<unsigned>(n::AudioVoter::volume),"Visible selected Volume casts exactly the volume vote");
-    pump([&]{return controller.snapshot().canSetVolume&&controller.snapshot().outputs.size()==3;},"Binding receives the worker snapshot");
-    check(controller.snapshot().outputs[0].bluetooth&&controller.snapshot().outputID=="{0.0.0.00000000}.{speaker}"&&!controller.snapshot().canSetDefaultOutput,"Bluetooth reaches the UI; default-device switching stays unavailable (platform gap)");
-    check(controller.setSlider("volume",.25),"UI slider write accepted asynchronously");
-    pump([&]{return controller.snapshot().volume&&std::abs(*controller.snapshot().volume-.25)<1e-6;},"Readback reaches the controller");
-    check(controller.perform("audio:mute",1),"Mute through the source action");
-    pump([&]{return controller.snapshot().muted==true;},"Mute readback");
+    volume.setVisible(true);callbacks.setActive(true);check(s.votes()==static_cast<unsigned>(n::AudioVoter::volume),"Visible selected Volume casts exactly the volume vote");
+    pump([&]{return delivered.canSetVolume&&delivered.outputs.size()==3;},"Binding receives the worker snapshot");
+    check(delivered.outputs[0].bluetooth&&delivered.outputID=="{0.0.0.00000000}.{speaker}"&&!delivered.canSetDefaultOutput,"Bluetooth reaches the UI; default-device switching stays unavailable (platform gap)");
+    check(callbacks.setVolume(delivered.outputID,.25),"A volume write is accepted asynchronously");
+    pump([&]{return delivered.volume&&std::abs(*delivered.volume-.25)<1e-6;},"Readback reaches the Volume snapshot");
+    check(callbacks.setMute(delivered.outputID,true),"Mute reaches the binding");
+    pump([&]{return delivered.muted==true;},"Mute readback");
     const auto appID=std::string("app:4242:100");
-    pump([&]{return controller.snapshot().applicationActivitySupported&&controller.snapshot().applications.size()==2;},"App rows");
-    check(controller.setSlider(appID,.5),"App slider");
-    pump([&]{const auto&a=controller.snapshot().applications;return std::any_of(a.begin(),a.end(),[](const auto&x){return x.state==n::VolumeAppState::active&&x.gain==.5;});},"App route active in UI");
+    pump([&]{return delivered.applicationActivitySupported&&delivered.applications.size()==2;},"App rows");
+    check(callbacks.setAppGain(appID.substr(4),.5),"App slider");
+    pump([&]{const auto&a=delivered.applications;return std::any_of(a.begin(),a.end(),[](const auto&x){return x.state==n::VolumeAppState::active&&x.gain==.5;});},"App route active in UI");
     volume.setVisible(false);check(s.votes()==0,"Concealing releases the vote");
     h.until([](const auto&x){return x.paused&&x.applicationsPaused&&x.topologyActive;},"Owned routes keep only the device listener after conceal");
     {std::lock_guard l(h.world->m);check(h.world->endpointOpen&&h.world->bound.empty()&&!h.world->sessionWake,"Hidden with an owned route: one device listener, no volume control, no session notifications");}

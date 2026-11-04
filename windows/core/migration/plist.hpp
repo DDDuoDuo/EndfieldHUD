@@ -1,4 +1,5 @@
 #pragma once
+#include "core/data/base64.hpp"
 #include "core/data/json.hpp"
 #include <cstdint>
 #include <optional>
@@ -113,7 +114,6 @@ std::string encodeXmlPlist(const PlistValue&, const PlistLimits& = {});
 // {"array":[...]} {"dict":{key:typed}}.
 data::Json plistTypedJson(const PlistValue&);
 PlistValue plistFromTypedJson(const data::Json&);
-std::string base64Encode(std::string_view bytes);
-// strictTail=false accepts non-zero unused bits like Foundation Data(base64Encoded:).
-std::optional<std::string> base64Decode(std::string_view text, bool allowWhitespace = false, bool strictTail = true);
+using data::base64Encode; // core/data/base64.hpp
+using data::base64Decode;
 }

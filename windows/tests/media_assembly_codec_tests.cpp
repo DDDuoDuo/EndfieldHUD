@@ -314,7 +314,7 @@ void colourManaged(const fs::path&root,const fs::path&assets,const fs::path&fixt
         m::MediaAssemblyAdjustments a;
         for(const auto&[key,value]:e["adjustments"].object()){
             if(key=="saturation")a.saturation=value.number();else if(key=="exposure")a.exposure=value.number();
-            else if(key=="filter"){const auto f=m::mediaAssemblyFilters();const auto at=std::find_if(f.begin(),f.end(),[&](const auto&i){return i.id==value.string();});check(at!=f.end(),"Known ICC fixture filter");a.filter=m::MediaAssemblyFilter(at-f.begin());}
+            else if(key=="filter"){const auto f=m::mediaAssemblyFilter(value.string());check(bool(f),"Known ICC fixture filter");a.filter=*f;}
             else check(false,"Unknown ICC fixture adjustment "+key);
         }
         edits.emplace_back(e["name"].string(),a);
@@ -515,7 +515,7 @@ void jpegDecode(const fs::path&root,const fs::path&assets,const fs::path&fixture
 }
 
 int wmain(int argc,wchar_t**argv){
-    COM com;try{check(SUCCEEDED(com.result)&&argc==5,"Pass windows/resources/media-assembly, the ICC, movie colour and JPEG fixtures");Temp temp;colourManaged(temp.path,fs::absolute(argv[1]),fs::absolute(argv[2]));
+    COM com;try{check(SUCCEEDED(com.result)&&argc==5,"Pass Resources/MediaAssembly, the ICC, movie colour and JPEG fixtures");Temp temp;colourManaged(temp.path,fs::absolute(argv[1]),fs::absolute(argv[2]));
         jpegDecode(temp.path,fs::absolute(argv[1]),fs::absolute(argv[4]));stills(temp.path,fs::absolute(argv[1]));movies(temp.path,fs::absolute(argv[1]));
         {MF mf;movieColour(temp.path,fs::absolute(argv[1]),fs::absolute(argv[3]));}
         std::cout<<"PASS "<<checks<<" native Media Assembly codec checks\n";return 0;}

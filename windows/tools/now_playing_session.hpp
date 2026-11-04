@@ -2,12 +2,16 @@
 #include "native/now_playing_service.hpp"
 #include "native/now_playing_image.hpp"
 #include "native/now_playing_web.hpp"
-#include "modules/now_playing_presentation.hpp"
+#include "modules/now_playing_model.hpp"
 #include "modules/now_playing_lyrics_sources.hpp"
 #include "modules/now_playing_volume.hpp"
 namespace endfield::tools {
 struct NowPlayingSessionOptions {
+    // A fixed-size decoder (tests, the acceptance probe), or `decodeAt`, which
+    // decodes at the size the canvas draws the cover (production:
+    // native::decodeNowPlayingCover; setArtworkPixels names the size).
     native::NativeNowPlayingArtwork::Decoder decode{native::decodeNowPlayingImage};
+    native::NativeNowPlayingArtwork::SizedDecoder decodeAt;
     // Public LRCLIB/NetEase lookups and catalog covers. Null mirrors the source's
     // injected backends: no network request and no NetEase catalog at all.
     // The host constructs it with the same owner wake as the service. Their
@@ -24,9 +28,6 @@ struct NowPlayingSessionOptions {
     modules::NowPlayingPlayingListReader neteasePlayingList;
     // Successful transport commands only (Event Log playbackAction).
     std::function<void(const modules::NowPlayingPlaybackEvent&)>playback;
-    // Square size of catalog cover downloads (source: 600; the Windows owner
-    // passes modules::nowPlayingCatalogCoverPixels of its display density).
-    unsigned coverPixels{600};
 };
 // What the owner keeps resident for Now Playing (bytes), for the memory audit.
 struct NowPlayingSessionMemory {
@@ -34,15 +35,20 @@ struct NowPlayingSessionMemory {
     std::size_t coverBytes{};                      // the current cover when not among them
     std::size_t artworkBytes{};                    // decoded thumbnails (current and cache)
 };
-// Non-rendering owner state, executable with injected providers on every host.
-// The caller is the sole service activation/drain owner and supplies time.
+// The Now Playing controller (Mac NowPlayingController): non-rendering owner
+// state, executable with injected providers on every host. It publishes one
+// modules::NowPlayingViewInput per content event for the canvas
+// (modules/now_playing_canvas.hpp) and the decoded cover for the owner's
+// cover carrier. The caller is the sole service activation/drain owner and
+// supplies time. Its own clock (nextWakeTime / deadline) covers the
+// provider's bounds, downloads, lyric retries, the seek rollback and, once
+// per displayed second while playing, the window-title player re-read and
+// the single end-of-track refresh (the canvas runs the display itself).
 class NowPlayingSession final {
 public:
-    NowPlayingSession(native::NativeNowPlayingService&,app::UtilityExecutor&,
-        modules::NowPlayingAppearance,std::function<void()>changed,
+    NowPlayingSession(native::NativeNowPlayingService&,app::UtilityExecutor&,std::function<void()>changed,
         native::NativeNowPlayingArtwork::Decoder=native::decodeNowPlayingImage);
-    NowPlayingSession(native::NativeNowPlayingService&,app::UtilityExecutor&,
-        modules::NowPlayingAppearance,std::function<void()>changed,NowPlayingSessionOptions);
+    NowPlayingSession(native::NativeNowPlayingService&,app::UtilityExecutor&,std::function<void()>changed,NowPlayingSessionOptions);
     ~NowPlayingSession();
     void setActive(bool,double time);bool active()const noexcept;
     // After the shared utility/service owner message: drains the service, the
@@ -53,11 +59,10 @@ public:
     // Source refreshManually(): one read, then retire negative lyric/cover results.
     void refreshManually(double time);
     bool dispatch(modules::NowPlayingIntent,double time);
-    // After a source control changes the borrowed presentation (drag/menu).
-    void presentationChanged(double time);
     std::optional<double>nextWakeTime(double time)const;
-    modules::NowPlayingPresentation&presentation()noexcept;
-    const modules::NowPlayingPresentation&presentation()const noexcept;
+    // The published snapshot and its revision (moves on every change).
+    const modules::NowPlayingViewInput&input()const noexcept;
+    std::uint64_t inputRevision()const noexcept;
     std::shared_ptr<const native::NotesImageFrame>artwork()const noexcept;
     native::NativeNowPlayingArtwork::Stats artworkStats()const;
     bool optimisticSeek()const noexcept;
@@ -65,8 +70,11 @@ public:
     const std::string&volumeRoute()const noexcept;
     const modules::NowPlayingLyricsSources&lyricsSources()const noexcept;
     NowPlayingSessionMemory memory()const;
-    // A new catalog cover size (display density change); the next lookup uses it.
-    void setCoverPixels(unsigned);
+    // controller.artworkPixelSize (MODS-332/353): the cover slot's drawn
+    // pixels. Decodes follow it (the shown cover stays until its re-decode is
+    // ready) and catalog downloads ask for nowPlayingCatalogCoverPixels of it.
+    void setArtworkPixels(unsigned);
+    unsigned artworkPixels()const noexcept;
     // While inactive: keeps only the presented cover (its warm reopen) and
     // drops the other decoded thumbnails and the recent compressed covers
     // (the disk cache answers those). true when something was released.

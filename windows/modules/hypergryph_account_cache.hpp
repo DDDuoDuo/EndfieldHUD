@@ -1,4 +1,5 @@
 #pragma once
+#include "core/data/data_store.hpp"
 #include "modules/hypergryph_account_model.hpp"
 #include <map>
 #include <vector>
@@ -8,6 +9,15 @@
 // enter this file. Decoding follows Swift's synthesized Codable (every
 // non-optional key required, enums by raw value); unknown additive fields of
 // the cache and its region records are preserved on rewrite.
+// 1.3.0 per-field sync (Mac Cache init(from:)/encode(to:),
+// HypergryphAccountController.swift:24-59): unsyncedFields (decodeIfPresent
+// [String]; absent = every field syncs) lists the card fields the sync leaves
+// alone. While it is non-empty and sync is on, the file says
+// "syncProfile": false plus "partialSyncProfile": true, so a v1.2.0 reader sees
+// sync off and cannot overwrite the excluded fields; partialSyncProfile is read
+// only while unsyncedFields is non-empty. Both keys are decoded out of `extra`,
+// so a stale pair a Windows 1.2.0 build preserved is rewritten from the
+// decoded state, never carried.
 namespace endfield::modules::hypergryph {
 inline constexpr std::size_t maximumCacheBytes=1024*1024;
 inline constexpr Time distantPast=-63114076800.0; // Date.distantPast
@@ -26,9 +36,16 @@ struct AccountCache {
     std::string header{"endfield"};
     bool syncProfile{},syncAvatar{};
     std::map<std::string,RegionRecord> records;
+    std::optional<std::vector<std::string>> unsyncedFields; // raw SyncField values; unknown strings kept, ignored for syncing
     Json extra{Json::Object{}};
     bool operator==(const AccountCache&) const=default;
 };
+// Mac syncFields: every field minus the known raw values in unsyncedFields.
+ehud::data::ProfileSyncFields accountSyncFields(const AccountCache&) noexcept;
+// Mac .setSyncField (HypergryphAccountController.swift:240-244): Set(unsynced
+// ?? []), insert the raw value when disabled / remove it when enabled, nil when
+// empty, else sorted. Unknown strings already present stay.
+void setAccountSyncField(AccountCache&,ehud::data::ProfileSyncField,bool enabled);
 Json encodeRole(const Role&);
 std::optional<Role> decodeRole(const Json&);
 Json encodeSnapshot(const Snapshot&);

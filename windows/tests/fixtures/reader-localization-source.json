@@ -1,118 +1,330 @@
 {
- "captions": {
-  "bookmarks": {
-   "english": "Bookmarks",
-   "japanese": "しおり",
-   "korean": "북마크",
-   "simplifiedChinese": "书签",
-   "traditionalChinese": "書籤"
-  },
-  "chooseFile": {
-   "english": "Choose in Finder",
-   "japanese": "Finderから選択",
-   "korean": "Finder에서 선택",
-   "simplifiedChinese": "从 Finder 选择",
-   "traditionalChinese": "從 Finder 選擇"
-  },
-  "chooseShelf": {
-   "english": "Choose from Shelf",
-   "japanese": "一時保管から選択",
-   "korean": "보관함에서 선택",
-   "simplifiedChinese": "从暂存架选择",
-   "traditionalChinese": "從暫存架選擇"
-  },
-  "empty": {
-   "english": "Open a book to begin reading.",
-   "japanese": "書籍を開いて読書を始めます。",
-   "korean": "책을 열어 읽기를 시작하세요.",
-   "simplifiedChinese": "打开书籍开始阅读。",
-   "traditionalChinese": "開啟書籍開始閱讀。"
-  },
-  "font": {
-   "english": "Font",
-   "japanese": "フォント",
-   "korean": "글꼴",
-   "simplifiedChinese": "字体",
-   "traditionalChinese": "字體"
-  },
-  "fontSize": {
-   "english": "Font size",
-   "japanese": "文字サイズ",
-   "korean": "글자 크기",
-   "simplifiedChinese": "字号",
-   "traditionalChinese": "字級"
-  },
-  "horizontal": {
-   "english": "Left to right",
-   "japanese": "左から右",
-   "korean": "왼쪽에서 오른쪽",
-   "simplifiedChinese": "从左到右",
-   "traditionalChinese": "從左到右"
-  },
-  "library": {
-   "english": "Library",
-   "japanese": "ライブラリ",
-   "korean": "서재",
-   "simplifiedChinese": "书库",
-   "traditionalChinese": "書庫"
-  },
-  "lineSpacing": {
-   "english": "Line spacing",
-   "japanese": "行間",
-   "korean": "줄 간격",
-   "simplifiedChinese": "行间距",
-   "traditionalChinese": "行間距"
-  },
-  "loading": {
-   "english": "Loading book…",
-   "japanese": "書籍を読み込み中…",
-   "korean": "책 불러오는 중…",
-   "simplifiedChinese": "正在载入书籍…",
-   "traditionalChinese": "正在載入書籍…"
-  },
-  "margin": {
-   "english": "Margins",
-   "japanese": "余白",
-   "korean": "여백",
-   "simplifiedChinese": "页边距",
-   "traditionalChinese": "頁邊距"
-  },
-  "open": {
+ "captions": [
+  {
    "english": "Open",
    "japanese": "開く",
    "korean": "열기",
    "simplifiedChinese": "打开",
+   "template": "Open",
+   "templateSimplifiedChinese": "打开",
    "traditionalChinese": "開啟"
   },
-  "reading": {
+  {
+   "english": "Library",
+   "japanese": "ライブラリ",
+   "korean": "서재",
+   "simplifiedChinese": "书库",
+   "template": "Library",
+   "templateSimplifiedChinese": "书库",
+   "traditionalChinese": "書庫"
+  },
+  {
    "english": "Reading",
+   "japanese": "読書",
+   "korean": "읽기",
+   "simplifiedChinese": "阅读",
+   "template": "Reading",
+   "templateSimplifiedChinese": "阅读",
+   "traditionalChinese": "閱讀"
+  },
+  {
+   "english": "Marks",
+   "japanese": "しおり",
+   "korean": "북마크",
+   "simplifiedChinese": "书签",
+   "template": "Marks",
+   "templateSimplifiedChinese": "书签",
+   "traditionalChinese": "書籤"
+  },
+  {
+   "english": "Choose file",
+   "japanese": "ファイルを選択",
+   "korean": "파일 선택",
+   "simplifiedChinese": "选择文件",
+   "template": "Choose file",
+   "templateSimplifiedChinese": "选择文件",
+   "traditionalChinese": "選擇檔案"
+  },
+  {
+   "english": "From shelf",
+   "japanese": "シェルフから",
+   "korean": "보관함에서",
+   "simplifiedChinese": "从暂存架",
+   "template": "From shelf",
+   "templateSimplifiedChinese": "从暂存架",
+   "traditionalChinese": "從暫存架"
+  },
+  {
+   "english": "Previous page",
+   "japanese": "前のページ",
+   "korean": "이전 페이지",
+   "simplifiedChinese": "上一页",
+   "template": "Previous page",
+   "templateSimplifiedChinese": "上一页",
+   "traditionalChinese": "上一頁"
+  },
+  {
+   "english": "Next page",
+   "japanese": "次のページ",
+   "korean": "다음 페이지",
+   "simplifiedChinese": "下一页",
+   "template": "Next page",
+   "templateSimplifiedChinese": "下一页",
+   "traditionalChinese": "下一頁"
+  },
+  {
+   "english": "Bookmark",
+   "japanese": "しおり",
+   "korean": "북마크",
+   "simplifiedChinese": "书签",
+   "template": "Bookmark",
+   "templateSimplifiedChinese": "书签",
+   "traditionalChinese": "書籤"
+  },
+  {
+   "english": "Reading settings",
    "japanese": "読書設定",
    "korean": "읽기 설정",
    "simplifiedChinese": "阅读设置",
+   "template": "Reading settings",
+   "templateSimplifiedChinese": "阅读设置",
    "traditionalChinese": "閱讀設定"
   },
-  "shelfTitle": {
-   "english": "Choose from Shelf",
-   "japanese": "一時保管から選択",
-   "korean": "보관함에서 선택",
-   "simplifiedChinese": "从暂存架选择",
-   "traditionalChinese": "從暫存架選擇"
+  {
+   "english": "Page",
+   "japanese": "ページ",
+   "korean": "페이지",
+   "simplifiedChinese": "页码",
+   "template": "Page",
+   "templateSimplifiedChinese": "页码",
+   "traditionalChinese": "頁碼"
   },
-  "title": {
-   "english": "E-Reader",
-   "japanese": "リーダー",
-   "korean": "리더",
-   "simplifiedChinese": "阅读器",
-   "traditionalChinese": "閱讀器"
+  {
+   "english": "Bookmark Q",
+   "japanese": "しおり Q",
+   "korean": "북마크 Q",
+   "simplifiedChinese": "书签 Q",
+   "template": "Bookmark {0}",
+   "templateSimplifiedChinese": "书签 {0}",
+   "traditionalChinese": "書籤 Q"
   },
-  "vertical": {
+  {
+   "english": "Go",
+   "japanese": "移動",
+   "korean": "이동",
+   "simplifiedChinese": "前往",
+   "template": "Go",
+   "templateSimplifiedChinese": "前往",
+   "traditionalChinese": "前往"
+  },
+  {
+   "english": "Remove bookmark",
+   "japanese": "しおりを削除",
+   "korean": "북마크 제거",
+   "simplifiedChinese": "移除书签",
+   "template": "Remove bookmark",
+   "templateSimplifiedChinese": "移除书签",
+   "traditionalChinese": "移除書籤"
+  },
+  {
+   "english": "Relink…",
+   "japanese": "再リンク…",
+   "korean": "다시 연결…",
+   "simplifiedChinese": "重新链接…",
+   "template": "Relink…",
+   "templateSimplifiedChinese": "重新链接…",
+   "traditionalChinese": "重新連結…"
+  },
+  {
+   "english": "Remove from library",
+   "japanese": "ライブラリから削除",
+   "korean": "서재에서 제거",
+   "simplifiedChinese": "从书库移除",
+   "template": "Remove from library",
+   "templateSimplifiedChinese": "从书库移除",
+   "traditionalChinese": "從書庫移除"
+  },
+  {
+   "english": "Remove Q from the library?",
+   "japanese": "Qをライブラリから削除しますか？",
+   "korean": "서재에서 Q을(를) 제거할까요?",
+   "simplifiedChinese": "从书库移除 Q？",
+   "template": "Remove {0} from the library?",
+   "templateSimplifiedChinese": "从书库移除 {0}？",
+   "traditionalChinese": "從書庫移除 Q？"
+  },
+  {
+   "english": "The file itself stays on disk.",
+   "japanese": "ファイル自体はディスクに残ります。",
+   "korean": "파일 자체는 디스크에 남아 있습니다.",
+   "simplifiedChinese": "文件本身仍保留在磁盘上。",
+   "template": "The file itself stays on disk.",
+   "templateSimplifiedChinese": "文件本身仍保留在磁盘上。",
+   "traditionalChinese": "檔案本身仍保留在磁碟上。"
+  },
+  {
+   "english": "Remove",
+   "japanese": "削除",
+   "korean": "제거",
+   "simplifiedChinese": "移除",
+   "template": "Remove",
+   "templateSimplifiedChinese": "移除",
+   "traditionalChinese": "移除"
+  },
+  {
+   "english": "Locate Q",
+   "japanese": "Qの場所を指定",
+   "korean": "Q 찾기",
+   "simplifiedChinese": "查找 Q",
+   "template": "Locate {0}",
+   "templateSimplifiedChinese": "查找 {0}",
+   "traditionalChinese": "尋找 Q"
+  },
+  {
+   "english": "Font size",
+   "japanese": "文字サイズ",
+   "korean": "글자 크기",
+   "simplifiedChinese": "字号",
+   "template": "Font size",
+   "templateSimplifiedChinese": "字号",
+   "traditionalChinese": "字級"
+  },
+  {
+   "english": "Line spacing",
+   "japanese": "行間",
+   "korean": "줄 간격",
+   "simplifiedChinese": "行间距",
+   "template": "Line spacing",
+   "templateSimplifiedChinese": "行间距",
+   "traditionalChinese": "行間距"
+  },
+  {
+   "english": "Page margins",
+   "japanese": "余白",
+   "korean": "여백",
+   "simplifiedChinese": "页边距",
+   "template": "Page margins",
+   "templateSimplifiedChinese": "页边距",
+   "traditionalChinese": "頁邊距"
+  },
+  {
+   "english": "Reading direction",
+   "japanese": "読む方向",
+   "korean": "읽기 방향",
+   "simplifiedChinese": "阅读方向",
+   "template": "Reading direction",
+   "templateSimplifiedChinese": "阅读方向",
+   "traditionalChinese": "閱讀方向"
+  },
+  {
+   "english": "Left to right",
+   "japanese": "左から右",
+   "korean": "왼쪽에서 오른쪽",
+   "simplifiedChinese": "从左到右",
+   "template": "Left to right",
+   "templateSimplifiedChinese": "从左到右",
+   "traditionalChinese": "從左到右"
+  },
+  {
    "english": "Top to bottom",
    "japanese": "上から下",
    "korean": "위에서 아래",
    "simplifiedChinese": "从上到下",
+   "template": "Top to bottom",
+   "templateSimplifiedChinese": "从上到下",
    "traditionalChinese": "從上到下"
+  },
+  {
+   "english": "Font",
+   "japanese": "フォント",
+   "korean": "글꼴",
+   "simplifiedChinese": "字体",
+   "template": "Font",
+   "templateSimplifiedChinese": "字体",
+   "traditionalChinese": "字體"
+  },
+  {
+   "english": "More",
+   "japanese": "その他",
+   "korean": "더 보기",
+   "simplifiedChinese": "更多",
+   "template": "More",
+   "templateSimplifiedChinese": "更多",
+   "traditionalChinese": "更多"
+  },
+  {
+   "english": "Notice",
+   "japanese": "お知らせ",
+   "korean": "알림",
+   "simplifiedChinese": "提示",
+   "template": "Notice",
+   "templateSimplifiedChinese": "提示",
+   "traditionalChinese": "提示"
+  },
+  {
+   "english": "From shelf",
+   "japanese": "シェルフから追加しました",
+   "korean": "보관함에서 추가됨",
+   "simplifiedChinese": "从暂存架添加",
+   "template": "From shelf",
+   "templateSimplifiedChinese": "从暂存架添加",
+   "traditionalChinese": "已從暫存架新增"
+  },
+  {
+   "english": "Book added",
+   "japanese": "ライブラリに追加しました",
+   "korean": "서재에 추가됨",
+   "simplifiedChinese": "已加入书库",
+   "template": "Book added",
+   "templateSimplifiedChinese": "已加入书库",
+   "traditionalChinese": "已加入書庫"
+  },
+  {
+   "english": "Removed",
+   "japanese": "ライブラリから削除しました",
+   "korean": "서재에서 제거됨",
+   "simplifiedChinese": "已从书库移除",
+   "template": "Removed",
+   "templateSimplifiedChinese": "已从书库移除",
+   "traditionalChinese": "已從書庫移除"
+  },
+  {
+   "english": "Bookmarked",
+   "japanese": "しおりを追加しました",
+   "korean": "북마크 추가됨",
+   "simplifiedChinese": "已添加书签",
+   "template": "Bookmarked",
+   "templateSimplifiedChinese": "已添加书签",
+   "traditionalChinese": "已新增書籤"
+  },
+  {
+   "english": "Bookmark removed",
+   "japanese": "しおりを削除しました",
+   "korean": "북마크 제거됨",
+   "simplifiedChinese": "已移除书签",
+   "template": "Bookmark removed",
+   "templateSimplifiedChinese": "已移除书签",
+   "traditionalChinese": "已移除書籤"
+  },
+  {
+   "english": "Book relinked",
+   "japanese": "再リンクしました",
+   "korean": "다시 연결됨",
+   "simplifiedChinese": "已重新链接",
+   "template": "Book relinked",
+   "templateSimplifiedChinese": "已重新链接",
+   "traditionalChinese": "已重新連結"
+  },
+  {
+   "english": "E-Reader",
+   "japanese": "リーダー",
+   "korean": "리더",
+   "simplifiedChinese": "阅读器",
+   "template": "E-Reader",
+   "templateSimplifiedChinese": "阅读器",
+   "traditionalChinese": "閱讀器"
   }
- },
+ ],
  "errors": {
   "changedOnDisk": {
    "english": "The reader library changed on disk. Restart the app before saving.",
@@ -165,16 +377,13 @@
   }
  },
  "source": {
-  "authority": "ca04f142185c7de40acd8523bdb563195d90a1d1",
+  "argument": "Q",
+  "authority": "4fda15a03ba50675e0b12d69a83efdb6526c19f6",
   "files": [
    "Sources/ReaderZIP.swift",
    "Sources/ReaderCanvas.swift",
-   "Sources/ReaderInteraction.swift",
-   "Sources/NotesFormattingControls.swift",
-   "Sources/LocalizationCatalog.swift"
+   "Sources/LocalizationCatalog.swift",
+   "Sources/LocalizationCatalogRedesign.swift"
   ]
- },
- "windowsReplacement": {
-  "chooseFile": "Choose in Finder names a Mac app; Windows shows the File Explorer chooser row"
  }
 }

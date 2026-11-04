@@ -36,10 +36,10 @@ void icons(){
     const auto order=m::shortcutOriginalIconOrder(file,0,m::shortcutOriginalIconCapacity,every);
     check(m::shortcutOriginalIconCapacity>=128&&order.size()==36,"Every App-icon shortcut of a 40-item list loads its icon (the four Globe ones do not)");
     check(order[0]==0&&order[1]==1&&order[2]==2&&order[3]==4&&order.back()==39,"From the top the rows load in stored order, skipping other presets");
-    const auto scrolled=m::shortcutOriginalIconOrder(file,52*20.+10,m::shortcutOriginalIconCapacity,every);
-    check(scrolled.size()==36&&scrolled[0]==20&&scrolled[1]==21&&scrolled[2]==22&&scrolled[3]==24&&scrolled[4]==25&&scrolled[5]==26&&scrolled[6]==0&&scrolled[7]==1,"The seven visible rows load first, then the rest in stored order");
+    const auto scrolled=m::shortcutOriginalIconOrder(file,62*20.+10,m::shortcutOriginalIconCapacity,every);
+    check(scrolled.size()==36&&scrolled[0]==20&&scrolled[1]==21&&scrolled[2]==22&&scrolled[3]==24&&scrolled[4]==25&&scrolled[5]==26&&scrolled[6]==27&&scrolled[7]==0&&scrolled[8]==1,"The eight visible rows load first, then the rest in stored order");
     std::vector<bool>seen(file.items.size());for(const auto n:scrolled){check(!seen[n],"Each shortcut loads once");seen[n]=true;}
-    const auto bounded=m::shortcutOriginalIconOrder(file,52*20.,5,every);check(bounded.size()==5&&bounded[0]==20&&bounded[4]==25,"The memory bound keeps the visible rows first");
+    const auto bounded=m::shortcutOriginalIconOrder(file,62*20.,5,every);check(bounded.size()==5&&bounded[0]==20&&bounded[4]==25,"The memory bound keeps the visible rows first");
     const auto targets=m::shortcutOriginalIconOrder(file,0,m::shortcutOriginalIconCapacity,[](const m::ShortcutRecord&r){return r.name!="App 1";});
     check(targets.size()==35&&targets[0]==0&&targets[1]==2,"A shortcut without a Windows target keeps the grid");
     check(m::shortcutOriginalIconOrder({},0,10,every).empty()&&m::shortcutOriginalIconOrder(file,std::nan(""),3,every)==std::vector<std::size_t>{0,1,2},"An empty list loads nothing; a nonfinite offset starts at the top");

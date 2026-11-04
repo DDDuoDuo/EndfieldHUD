@@ -195,14 +195,18 @@ ITextStoreACP* NativeProjectedEditor::textStore()const noexcept{return impl_->in
 bool NativeProjectedEditor::syncContent(){auto i=impl_;return i->sync();}
 bool NativeProjectedEditor::setStyle(const ProjectedEditorStyle& style){auto i=impl_;i->onThread();auto options=i->options;options.richTextDocument=i->rich!=nullptr||style.naturalParagraphSpacingOne;validate(style,options);need(style.width==i->style.width&&style.height==i->style.height,"Short editor viewport resize requires owner replacement; long-document relayout is separate");if(style==i->style)return false;auto paintedStyle=style;paintedStyle.cornerRadius=i->style.cornerRadius;i->styleDirty|=paintedStyle!=i->style;i->style=style;i->poseReady=false;return true;}
 bool NativeProjectedEditor::setPose(const ProjectedEditorPose& pose){
-    auto i=impl_;i->current();need(i->scene->contentRevision()==i->structureRevision,"Editor scene structure was replaced");need(pose.localToScreen.finite()&&pose.screenToClip.finite()&&pose.pixelWidth>0&&pose.pixelHeight>0&&std::isfinite(pose.opacity)&&pose.opacity>=0&&pose.opacity<=1,"Invalid projected editor pose");
+    auto i=impl_;i->current();need(i->scene->contentRevision()==i->structureRevision,"Editor scene structure was replaced");need(pose.localToScreen.finite()&&pose.screenToClip.finite()&&pose.pixelWidth>0&&pose.pixelHeight>0&&std::isfinite(pose.opacity)&&pose.opacity>=0&&pose.opacity<=1&&std::isfinite(pose.caretOpacity)&&pose.caretOpacity>=0&&pose.caretOpacity<=1,"Invalid projected editor pose");
     const auto inverse=core::source::inverseSourceMatrix(pose.localToScreen);
     const text::Placement placement{core::Projection::viewport(pose.screenToClip*pose.localToScreen,pose.pixelWidth,pose.pixelHeight),{0,0,i->style.width,i->style.height},{i->horizontal,i->scroll},pose.visible,i->style.cornerRadius};
-    if(i->poseReady&&i->pose.localToScreen==pose.localToScreen&&i->pose.screenToClip==pose.screenToClip&&i->pose.pixelWidth==pose.pixelWidth&&i->pose.pixelHeight==pose.pixelHeight&&i->pose.opacity==pose.opacity&&i->pose.visible==pose.visible&&i->pose.ownerFocused==pose.ownerFocused&&i->pose.caretVisible==pose.caretVisible)return false;
+    if(i->poseReady&&i->pose.localToScreen==pose.localToScreen&&i->pose.screenToClip==pose.screenToClip&&i->pose.pixelWidth==pose.pixelWidth&&i->pose.pixelHeight==pose.pixelHeight&&i->pose.opacity==pose.opacity&&i->pose.visible==pose.visible&&i->pose.ownerFocused==pose.ownerFocused&&i->pose.caretVisible==pose.caretVisible){
+        if(i->pose.caretOpacity==pose.caretOpacity)return false;
+        // A blink frame (R8): only the caret surface's opacity changes.
+        auto&caret=i->placements[3];const auto selection=i->document.selection();caret.opacity=(pose.visible&&pose.ownerFocused&&pose.caretVisible&&selection.range.start==selection.range.end)?pose.opacity*pose.caretOpacity:0.f;
+        i->scene->setPlacements(i->placements);i->pose.caretOpacity=pose.caretOpacity;return true;}
     const auto placementResult=i->input->setPlacement(placement);if(!i->alive)return false;checked(placementResult,"Update projected editor candidate plane");
     const auto selection=i->document.selection();const bool selectionVisible=selection.range.start!=selection.range.end;
     for(unsigned k=0;k<4;++k){auto& out=i->placements[k];out.surface=i->surfaces[k];out.world=pose.localToScreen*i->originals[k].world;if(k==3)out.world=out.world*core::Matrix4::translation(i->caretRect.x-i->horizontal,i->caretRect.y-i->scroll);out.opacity=pose.visible?pose.opacity:0;
-        if((k==0&&!selectionVisible)||(k==2&&!i->document.composition())||(k==3&&(!pose.ownerFocused||!pose.caretVisible||selectionVisible)))out.opacity=0;
+        if((k==0&&!selectionVisible)||(k==2&&!i->document.composition())||(k==3&&(!pose.ownerFocused||!pose.caretVisible||selectionVisible)))out.opacity=0;else if(k==3)out.opacity*=pose.caretOpacity;
         for(std::size_t m=0;m<i->maskCounts[k];++m){i->masks[k][m]=i->originals[k].masks[m];i->masks[k][m].cornerRadius=i->style.cornerRadius;i->masks[k][m].worldToLocal=i->masks[k][m].worldToLocal*inverse;}out.masks={i->masks[k].data(),i->maskCounts[k]};}
     i->scene->setPlacements(i->placements);i->placement=placement;i->pose=pose;i->poseReady=i->poseSet=true;return true;
 }

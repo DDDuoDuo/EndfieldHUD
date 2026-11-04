@@ -170,12 +170,13 @@ std::optional<BatteryReading::Capacity> batteryCapacityPercent(std::optional<uns
     return BatteryReading::Capacity{*percentage, 100, "%"};
 }
 
+// AppDelegate.updateMenu (:589-596): "<NN%> — <state>", the no-battery row.
 std::string powerTrayDescription(const BatteryReading& value, core::Language language) {
-    if (!value.present) return tr("No internal battery · Preview available", "无内置电池 · 可预览效果", language);
+    if (!value.present) return tr("No internal battery — preview available", "无内置电池，可预览效果", language);
     const auto percent = value.percentage ? std::to_string(*value.percentage) + "%" : tr("Unknown charge", "电量未知", language);
     const auto state = value.charging ? tr("Charging", "正在充电", language)
                      : value.pluggedIn ? tr("Power connected", "已连接电源", language) : tr("On battery", "使用电池", language);
-    return percent + " · " + state;
+    return percent + " — " + state;
 }
 std::string powerTrayTooltip(const BatteryReading& value, core::Language language) {
     return "EndfieldHUD — " + powerTrayDescription(value, language);

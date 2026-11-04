@@ -1,97 +1,201 @@
 #include "tools/settings_preview.hpp"
 #ifdef _WIN32
-#include <windows.h>
-#include "native/module_scene.hpp"
-#include "native/module_registration.hpp"
-#include "native/settings_safety.hpp"
+#include "core/data/file_io.hpp"
+#include "native/display_center_logo.hpp"
+#include "native/layer_image_source.hpp"
+#include "native/watch_appearance.hpp"
 #include <algorithm>
 #include <cmath>
-namespace endfield::tools {namespace {
-using Matrix=core::Matrix4;using Json=ehud::data::Json;namespace gpu=native;
-constexpr std::array<core::Module,4>modules{core::Module::system,core::Module::display,core::Module::hotkeys,core::Module::about};
-void need(bool v,const char*s){if(!v)throw std::invalid_argument(s);}
-// Bounding rect of a canvas rect's projected corners, in logical client points.
-std::optional<core::Rect>projected(const core::Projection&projection,double scale,core::Rect r){
- if(!std::isfinite(r.x)||!std::isfinite(r.y)||!std::isfinite(r.width)||!std::isfinite(r.height)||r.width<0||r.height<0||!(scale>0))return std::nullopt;
- double x0=INFINITY,y0=INFINITY,x1=-INFINITY,y1=-INFINITY;
- for(const core::Point c:{core::Point{r.x,r.y},core::Point{r.x+r.width,r.y},core::Point{r.x,r.y+r.height},core::Point{r.x+r.width,r.y+r.height}}){
-  const auto q=projection.project(c);if(!q||!std::isfinite(q->x)||!std::isfinite(q->y))return std::nullopt;
-  x0=std::min(x0,q->x);y0=std::min(y0,q->y);x1=std::max(x1,q->x);y1=std::max(y1,q->y);}
- return core::Rect{x0/scale,y0/scale,(x1-x0)/scale,(y1-y0)/scale};}
-Json blank(){return Json::Object{{"bounds",Json::Array{0,0,400,334}},{"position",Json::Array{0,0}},{"anchorPoint",Json::Array{0,0}},{"children",Json::Array{}}};}bool contains(core::Rect r,core::Point p){return p.x>=r.x&&p.y>=r.y&&p.x<r.x+r.width&&p.y<r.y+r.height;}
-}
-struct SettingsPreview::Impl {
- struct Slot {modules::SettingsPresentation state;std::unique_ptr<gpu::NativeSettingsScene>scene;gpu::LayerScene geometry;gpu::NativeModuleSurface surface;gpu::NativeModuleRegistration registration;core::Projection projection;std::optional<gpu::ModuleSurfacePose>pose;bool active{},input{};
- Slot(core::Module m,modules::SettingsController&c,gpu::LayerRasterizer&r,const SettingsPreviewOptions&o):state(m,c,o.icons,o.about,o.viewHooks),geometry(r),surface(prepare(o.raster),m),registration("settings.registration."+std::to_string(static_cast<unsigned>(m))){}
- gpu::LayerScene&prepare(const gpu::LayerRasterOptions&o){geometry.load(blank(),o);return geometry;}
- };
- gpu::LayerRasterizer&raster;SettingsPreviewOptions options;modules::SettingsController controller;modules::SettingsSafety safety;std::unique_ptr<gpu::NativeSettingsSafety>safetyScene;std::array<std::unique_ptr<Slot>,4>slots;app::ClientMetrics metrics;bool overlay{true},reduced{},pressed{};Slot*captured{};std::optional<core::Point>point;double time{};std::vector<gpu::LayerCompositionEntry>composed;std::array<gpu::LayerCompositionEntry,1>modal;std::array<unsigned,2>order{};std::size_t orderCount{};
- Impl(gpu::LayerRasterizer&r,SettingsPreviewOptions o):raster(r),options(std::move(o)),controller(options.initial,options.callbacks,options.language),safety(controller){for(std::size_t n=0;n<slots.size();++n)slots[n]=std::make_unique<Slot>(modules[n],controller,r,options);composed.reserve(44);}
- void clock(double t){need(std::isfinite(t),"Settings needs finite owner time");time=std::max(time,t);}
- std::optional<core::Point>local(const Slot&s,core::Point p)const{return s.input?s.projection.unproject({p.x*metrics.scale,p.y*metrics.scale}):std::nullopt;}
- Slot*input(){for(auto&s:slots)if(s->input)return s.get();return nullptr;}
- void cancel(){if(captured)captured->state.mouseUp(time);captured=nullptr;pressed=false;point.reset();for(auto&s:slots)if(s->scene)s->scene->setFeedback({},false,time);}
-};
-SettingsPreview::SettingsPreview(gpu::LayerRasterizer&r,SettingsPreviewOptions o):impl_(std::make_unique<Impl>(r,std::move(o))){}
-SettingsPreview::~SettingsPreview()=default;
-void SettingsPreview::resize(const app::ClientMetrics&m){need(m.pixelWidth&&m.pixelHeight&&std::isfinite(m.scale)&&m.scale>0,"Invalid Settings viewport");impl_->metrics=m;}
-void SettingsPreview::setAppearance(modules::SettingsAppearance a){auto&i=*impl_;i.options.appearance=a;for(auto&s:i.slots)if(s->scene)s->scene->setAppearance(a);if(i.safetyScene)i.safetyScene->setAppearance(a);}
-void SettingsPreview::setLanguage(core::Language l){impl_->controller.setLanguage(l);}
-void SettingsPreview::setReduceMotion(bool v,double t){auto&i=*impl_;i.clock(t);i.reduced=v;i.safety.setReduceMotion(v,i.time);for(auto&s:i.slots)s->state.setReduceMotion(v,i.time);}
-void SettingsPreview::setOverlayVisible(bool value,double t){auto&i=*impl_;i.clock(t);if(i.overlay==value)return;i.overlay=value;if(!value){i.cancel();for(auto&s:i.slots){s->input=false;if(s->active){s->state.deactivate(i.time);s->active=false;}}i.controller.close();i.safety.hideImmediately(i.time);}}
-void SettingsPreview::wake(double t){auto&i=*impl_;i.clock(t);i.controller.wake(i.time);i.safety.refresh(i.time);}
-std::optional<double>SettingsPreview::nextWakeTime(double t)const{return impl_->controller.nextWakeTime(t);}
-void SettingsPreview::update(const Matrix&center,const core::source::DesktopChromeSettings&settings,const core::ModulePresentationSample&sample,float opacity,double t){auto&i=*impl_;i.clock(t);i.orderCount=0;for(auto&s:i.slots){s->pose.reset();s->input=false;}
- for(std::size_t index=0;index<i.slots.size();++index){auto&s=*i.slots[index];const auto module=modules[index];const auto*shown=sample.current.module==module?&sample.current:sample.incoming&&sample.incoming->module==module?&*sample.incoming:nullptr;const bool active=i.overlay&&shown&&sample.requested==module;if(active!=s.active){s.active=active;if(active)s.state.activate(i.time);else{s.state.deactivate(i.time);if(i.captured==&s){i.captured=nullptr;i.pressed=false;}if(s.scene)s.scene->setFeedback({},false,i.time);}}s.input=active&&sample.acceptsModuleInput;
- if(!shown){s.registration.update({});continue;}s.state.refresh(i.time);if(!s.scene)s.scene=std::make_unique<gpu::NativeSettingsScene>(s.state,i.raster,i.options.raster,i.options.images,i.options.appearance);s.scene->syncContent(i.time);s.surface.update(center,settings,*shown,opacity);s.pose=s.surface.pose();const auto&p=*s.pose;const auto camera=gpu::layerViewportProjection(i.metrics.pixelWidth,i.metrics.pixelHeight)*Matrix::scale(i.metrics.scale,i.metrics.scale);s.projection=core::Projection::viewport(camera*p.contentWorld,i.metrics.pixelWidth,i.metrics.pixelHeight);if(i.point){const auto local=i.local(s,*i.point);s.scene->setFeedback(local?s.state.actionAt(*local):std::nullopt,i.pressed,i.time);}s.scene->updatePose({p.contentWorld,p.opacity,i.time,std::span(&p.hostClip,1),p.shutter});s.registration.update(p.registration);
- }
- // Preserve ModulePresentation's outgoing-then-incoming order, independent of
- // the four semantic page enumeration values.
- for(const auto*shown:{&sample.current,sample.incoming?&*sample.incoming:nullptr})if(shown)for(unsigned n=0;n<i.slots.size();++n)if(i.slots[n]->pose&&modules[n]==shown->module)i.order[i.orderCount++]=n;
- if(i.overlay)i.safety.refresh(i.time);if(i.safety.modal()){if(!i.safetyScene)i.safetyScene=std::make_unique<gpu::NativeSettingsSafety>(i.safety,i.raster,i.options.raster,i.options.appearance);const core::Rect viewport{0,0,i.metrics.width,i.metrics.height};i.safetyScene->syncContent(viewport,i.time);const auto layout=core::source::DesktopChromeLayout::make(settings,center,{});const auto transform=modules::SettingsSafety::centeredSourceTransform(center,layout.designScale);i.safetyScene->updatePose(viewport,transform,i.time);}
+#include <map>
 
+namespace endfield::tools {
+namespace {
+namespace m = modules;
+namespace d = modules::design;
+namespace gpu = native;
+using Json = ehud::data::Json;
+void need(bool v, const char* s) { if (!v) throw std::invalid_argument(s); }
+constexpr std::array<core::Module, 4> presented{core::Module::system, core::Module::display, core::Module::hotkeys, core::Module::about};
+// The memory image side limit (LayerImageSource::maximumDimension).
+constexpr unsigned logoSide = gpu::LayerImageSource::maximumDimension;
+// The right-hand list's glyph trees reference their rasters relative to the
+// watch-appearance folder; the owner's asset root is its parent.
+Json rooted(Json node) {
+    if (std::as_const(node)["contents"].isObject() && std::as_const(node)["contents"]["asset"].isString()) {
+        auto contents = std::as_const(node)["contents"];
+        contents["asset"] = "watch-appearance/" + std::as_const(contents)["asset"].string();
+        node["contents"] = std::move(contents);
+    }
+    if (std::as_const(node)["children"].isArray()) {
+        auto children = std::as_const(node)["children"].array();
+        for (auto& child : children) child = rooted(std::move(child));
+        node["children"] = std::move(children);
+    }
+    return node;
 }
-bool SettingsPreview::requiresFrames(double t)const{const auto&i=*impl_;if(!i.overlay)return false;if(i.safety.requiresFrames(std::max(t,i.time)))return true;for(const auto&s:i.slots)if(s->pose&&s->scene->requiresFrames(std::max(t,i.time)))return true;return false;}
-bool SettingsPreview::covers(core::Point p)const{const auto&i=*impl_;if(i.safety.modal())return true;for(const auto&s:i.slots)if(const auto q=i.local(*s,p);q&&contains(modules::SettingsPresentation::bounds(),*q))return true;return false;}
-bool SettingsPreview::pointer(const app::PointerEvent&e,double t){auto&i=*impl_;i.clock(t);i.point=core::Point{e.x,e.y};if(i.safety.modal()){const auto action=i.safetyScene?i.safetyScene->actionAt(*i.point):std::nullopt;if(e.kind==app::PointerKind::down&&e.button==app::PointerButton::left)i.safety.pointerDown(action,i.time);else if(e.kind==app::PointerKind::up&&e.button==app::PointerButton::left)i.safety.pointerUp(action,i.time);else if(e.kind==app::PointerKind::move)i.safety.pointerMove(action,i.time);else if(e.kind==app::PointerKind::leave||e.kind==app::PointerKind::captureLost){i.safety.pointerUp({},i.time);i.safety.pointerMove({},i.time);}return true;}if(e.kind==app::PointerKind::leave||e.kind==app::PointerKind::captureLost){i.cancel();return false;}auto*s=i.captured?i.captured:i.input();if(!s)return false;const auto q=i.local(*s,*i.point);
- if(e.kind==app::PointerKind::up&&e.button==app::PointerButton::left){const bool owned=i.pressed;s->state.mouseUp(i.time);i.captured=nullptr;i.pressed=false;if(s->scene)s->scene->setFeedback(q?s->state.actionAt(*q):std::nullopt,false,i.time);return owned;}
- if(e.kind==app::PointerKind::move){if(i.captured&&q)s->state.mouseDragged(*q,i.time);s->scene->setFeedback(q?s->state.actionAt(*q):std::nullopt,i.pressed,i.time);return q&&contains(modules::SettingsPresentation::bounds(),*q);}
- if((e.kind==app::PointerKind::down||e.kind==app::PointerKind::doubleClick)&&e.button==app::PointerButton::left&&q&&contains(modules::SettingsPresentation::bounds(),*q)){const auto action=s->state.actionAt(*q);const auto owned=action?std::optional(std::string(*action)):std::nullopt;i.pressed=true;s->scene->setFeedback(owned?std::optional<std::string_view>(*owned):std::nullopt,true,i.time);s->state.mouseDown(*q,i.time);if(s->state.dragging())i.captured=s;return true;}return false;
 }
-bool SettingsPreview::wheel(const app::WheelEvent&e,double t){auto&i=*impl_;i.clock(t);if(i.safety.modal())return true;auto*s=i.input();if(!s)return false;const auto q=i.local(*s,{e.x,e.y});if(!q||!contains(modules::SettingsPresentation::viewport(),*q))return false;if(e.horizontal||!std::isfinite(e.steps)||!e.linesPerStep)return true;return s->state.scroll(*q,-e.steps*(e.linesPerStep==UINT32_MAX?250:12.*e.linesPerStep),i.time);}
-bool SettingsPreview::key(const app::KeyEvent&e,double t){std::uint32_t modifiers{};if(GetKeyState(VK_MENU)<0)modifiers|=1;if(GetKeyState(VK_CONTROL)<0)modifiers|=2;if(GetKeyState(VK_SHIFT)<0)modifiers|=4;if(GetKeyState(VK_LWIN)<0||GetKeyState(VK_RWIN)<0)modifiers|=8;return key(e,modifiers,t);}
-bool SettingsPreview::key(const app::KeyEvent&e,std::uint32_t modifiers,double t){auto&i=*impl_;i.clock(t);if(i.safety.modal()){if(e.kind==app::KeyKind::down)i.safety.key(e.value,e.previouslyDown,i.time);return true;}auto*s=i.input();if(!s||e.kind!=app::KeyKind::down)return false;if(i.controller.capturingShortcut()){if(e.value==VK_SHIFT||e.value==VK_CONTROL||e.value==VK_MENU||e.value==VK_LWIN||e.value==VK_RWIN)return true;return s->state.capture({e.value,modifiers},e.previouslyDown,e.value==VK_ESCAPE,i.time);}if(modifiers)return false;if(e.value==VK_ESCAPE)return s->state.escape(i.time);if(e.value==VK_LEFT||e.value==VK_RIGHT){s->state.nudgeSlider(e.value==VK_LEFT?-1:1,i.time);return true;}if(e.value==VK_NEXT||e.value==VK_PRIOR||e.value==VK_UP||e.value==VK_DOWN)return s->state.scroll({200,100},e.value==VK_NEXT?250:e.value==VK_PRIOR?-250:e.value==VK_UP?-32:32,i.time);return false;}
-void SettingsPreview::cancelInteraction(double t){impl_->clock(t);impl_->cancel();}
-bool SettingsPreview::pointerLocked()const noexcept{return impl_->captured||impl_->controller.capturingShortcut();}
-modules::SettingsController&SettingsPreview::controller()noexcept{return impl_->controller;}
-const modules::SettingsPresentation*SettingsPreview::view(core::Module m)const noexcept{for(const auto&s:impl_->slots)if(s->state.module()==m)return &s->state;return nullptr;}
-// UI Automation (tools/settings_automation.hpp): the page accepting input and
-// its actions, exactly as the pointer routes reach them; nothing while the
-// confirmation card is modal (it takes every click) or the HUD is closed.
-std::optional<core::Module>SettingsPreview::inputModule()const noexcept{const auto&i=*impl_;if(!i.overlay)return std::nullopt;for(const auto&s:i.slots)if(s->input&&s->pose)return s->state.module();return std::nullopt;}
-std::optional<core::Rect>SettingsPreview::clientRect(core::Rect r)const{const auto&i=*impl_;if(!i.overlay)return std::nullopt;for(const auto&s:i.slots)if(s->input&&s->pose)return projected(s->projection,i.metrics.scale,r);return std::nullopt;}
-const app::ClientMetrics&SettingsPreview::clientMetrics()const noexcept{return impl_->metrics;}
-bool SettingsPreview::perform(std::string_view action,double t){auto&i=*impl_;i.clock(t);if(!i.overlay||i.safety.modal())return false;auto*s=i.input();return s&&s->pose&&s->state.perform(action,i.time);}
-bool SettingsPreview::setSlider(std::string_view id,double value,double t){auto&i=*impl_;i.clock(t);if(!i.overlay||i.safety.modal()||!std::isfinite(value))return false;auto*s=i.input();return s&&s->pose&&s->state.setSlider(id,value,i.time);}
-const modules::SettingsSafety&SettingsPreview::safety()const noexcept{return impl_->safety;}
-core::Rect SettingsPreview::safetyViewport()const noexcept{const auto&m=impl_->metrics;return{0,0,m.width,m.height};}
-std::optional<core::Rect>SettingsPreview::safetyClientRect(core::Rect r)const{const auto&i=*impl_;if(!i.overlay||!i.safety.modal()||!i.safetyScene)return std::nullopt;return i.safetyScene->clientRect(r);}
-// The card's click: a press and release on the same button (SettingsSafety
-// pointerDown/pointerUp); true once the press reverted or kept the layout.
-bool SettingsPreview::performSafety(int button,double t){auto&i=*impl_;i.clock(t);if(!i.overlay||!i.safety.modal()||(button!=0&&button!=1)||i.safety.pose(i.time).dismissing)return false;
- (void)i.safety.pointerDown(button,i.time);(void)i.safety.pointerUp(button,i.time);return !i.safety.modal()||i.safety.pose(i.time).dismissing;}
-bool SettingsPreview::focusSafety(int button,double t){auto&i=*impl_;i.clock(t);if(!i.overlay||!i.safety.modal()||(button!=0&&button!=1)||i.safety.pose(i.time).dismissing)return false;
- if(i.safety.focused()!=button)(void)i.safety.key(button?VK_RIGHT:VK_LEFT,false,i.time);return i.safety.focused()==button;}
-void SettingsPreview::setCustomColor(std::array<double,3>color,double t){auto&i=*impl_;i.clock(t);i.slots[1]->state.setCustomColor(color,i.time);}
-void SettingsPreview::setCustomLogo(std::string revision,double t){auto&i=*impl_;i.clock(t);i.slots[1]->state.setCustomLogo(std::move(revision),i.time);}
-void SettingsPreview::showImportError(std::string error,double t){auto&i=*impl_;i.clock(t);i.slots[1]->state.showImportError(std::move(error),i.time);}
-void SettingsPreview::showBatterySettings(double t){auto&i=*impl_;i.clock(t);for(auto&s:i.slots)if(s->state.module()==core::Module::display){s->state.showBatterySettings(i.time);s->state.invalidate();(void)s->state.refresh(i.time);}}
-void SettingsPreview::refreshViews(double t){auto&i=*impl_;i.clock(t);for(auto&s:i.slots){s->state.invalidate();(void)s->state.refresh(i.time);}}
-void SettingsPreview::upload(gpu::Renderer&r){auto&i=*impl_;for(std::size_t n=0;n<i.orderCount;++n){auto&s=*i.slots[i.order[n]];s.registration.uploadGeometry(r);s.scene->uploadAnimations(r);}if(i.safetyScene&&i.safety.modal())i.safetyScene->upload(r);}
-bool SettingsPreview::modalActive()const noexcept{return impl_->safety.modal();}
-std::span<const gpu::LayerCompositionEntry>SettingsPreview::modalEntries(){auto&i=*impl_;if(!i.safetyScene||!i.safety.modal())return {};i.modal[0]=i.safetyScene->entry();return i.modal;}
-std::span<const gpu::LayerCompositionEntry>SettingsPreview::entries(bool includeModal){auto&i=*impl_;i.composed.clear();for(std::size_t n=0;n<i.orderCount;++n){auto&s=*i.slots[i.order[n]];for(const auto&e:s.scene->entries())i.composed.push_back(e);i.composed.push_back({&s.geometry,s.registration.draws()});}if(includeModal)for(const auto&e:modalEntries())i.composed.push_back(e);return i.composed;}
-void SettingsPreview::collected(gpu::Renderer&r){auto&i=*impl_;for(auto&s:i.slots)if(s->scene){need(s->scene->collectRetired(r),"Settings old artwork still published");if(!s->pose){need(s->scene->releaseResources(r),"Settings inactive artwork still published");s->scene.reset();need(s->registration.releaseResources(r),"Settings inactive registration still published");}}if(i.safetyScene&&!i.safety.modal()){need(i.safetyScene->releaseResources(r),"Settings safety still published");i.safetyScene.reset();}}
-void SettingsPreview::release(gpu::Renderer&r){auto&i=*impl_;for(auto&s:i.slots){if(s->scene)need(s->scene->releaseResources(r),"Settings artwork still published at teardown");need(s->registration.releaseResources(r)&&s->geometry.releaseResources(r),"Settings module resources still published");}if(i.safetyScene)need(i.safetyScene->releaseResources(r),"Settings safety still published at teardown");}
+
+struct SettingsPreview::Impl {
+    struct Logo {
+        std::optional<m::CenterLogoArtwork> art;
+        bool pending{}, failed{};
+    };
+    struct Raster {
+        std::shared_ptr<const gpu::LayerMemoryImage> image; // kept alive while the canvas may name it
+        d::Size pixels;
+    };
+    gpu::LayerRasterizer& raster;
+    d::Context& context;
+    SettingsPreviewOptions options;
+    gpu::LayerImageSource images{gpu::LayerImageSourceLimits{24, 48, 8 * 1024 * 1024}};
+    std::unique_ptr<m::SettingsController> controller;
+    std::unique_ptr<DesignOwnerCore> owned;
+    DesignOwnerCore* core{};
+    std::array<m::SettingsCanvas*, 4> canvases{};
+    std::map<std::string, Logo, std::less<>> logos;
+    std::map<std::string, Raster, std::less<>> rasters;
+    std::uint64_t serial{};                              // memory image revisions
+    std::shared_ptr<bool> alive = std::make_shared<bool>(true);
+    Impl(gpu::LayerRasterizer& r, d::Context& c, SettingsPreviewOptions o) : raster(r), context(c), options(std::move(o)) {}
+    m::SettingsCanvas* canvas(core::Module module) const {
+        for (std::size_t n = 0; n < presented.size(); ++n) if (presented[n] == module) return canvases[n];
+        return nullptr;
+    }
+    // HUDSettingsCanvas.logoArtwork: decoded once on the utility executor, then
+    // rasterized per size and render scale (only the current custom revision stays).
+    std::optional<m::SettingsLogoImage> logoArtwork(std::string_view logo, std::string_view revision, d::Size fitting) {
+        const bool custom = logo == "custom";
+        std::optional<std::string> canonical;
+        if (custom) { canonical = m::centerLogoRevision(revision); if (!canonical) return std::nullopt; }
+        const std::string key = custom ? "custom:" + *canonical : std::string(logo);
+        if (custom) {
+            std::erase_if(logos, [&](const auto& e) { return e.first.starts_with("custom:") && e.first != key; });
+            std::erase_if(rasters, [&](const auto& e) { return e.first.starts_with("custom:") && !e.first.starts_with(key + "|"); });
+        }
+        auto& entry = logos[key];
+        const double scale = context.boxScale();
+        const std::string rasterKey = key + "|" + std::to_string(fitting.width) + "x" + std::to_string(fitting.height) + "@" + std::to_string(scale);
+        if (const auto found = rasters.find(rasterKey); found != rasters.end())
+            return m::SettingsLogoImage{{d::ImageSource::Kind::memory, found->second.image->key(), {}, found->second.image->revision()}, found->second.pixels};
+        if (!entry.art) { request(key, logo, canonical.value_or(std::string())); return std::nullopt; }
+        const auto bitmap = m::centerLogoChooserImage(*entry.art, fitting.width, fitting.height, scale, logoSide);
+        auto image = images.publish("settings.logo." + rasterKey, ++serial, bitmap.width, bitmap.height, bitmap.rgba);
+        if (!image) return std::nullopt;
+        const d::Size pixels{double(bitmap.width), double(bitmap.height)};
+        rasters[rasterKey] = {image, pixels};
+        return m::SettingsLogoImage{{d::ImageSource::Kind::memory, image->key(), {}, image->revision()}, pixels};
+    }
+    void request(const std::string& key, std::string_view logo, std::string revision) {
+        auto& entry = logos[key];
+        if (entry.pending || entry.failed || !options.submit) return;
+        const auto choice = m::centerLogoChoice(logo);
+        if (!choice) { entry.failed = true; return; }
+        auto result = std::make_shared<std::optional<m::CenterLogoArtwork>>();
+        const auto presets = options.logoPresets, wordmark = options.endfieldWordmark, store = options.logoStore;
+        const auto which = *choice;
+        const bool accepted = options.submit([which, revision, presets, wordmark, store, result] {
+            std::optional<m::CenterLogoBitmap> bitmap;
+            if (which == m::CenterLogoChoice::custom) bitmap = gpu::decodeCenterLogoRevision(store, revision);
+            else if (which == m::CenterLogoChoice::endfield) bitmap = gpu::decodeCenterLogoWordmark(wordmark);
+            else bitmap = gpu::decodeCenterLogoPreset(presets, which);
+            if (bitmap) *result = m::centerLogoArtwork(*bitmap);
+        }, [this, weak = std::weak_ptr<bool>(alive), key, result](std::exception_ptr error) {
+            if (weak.expired()) return;
+            auto& done = logos[key];
+            done.pending = false;
+            // The presets stay offered even if their artwork is unreadable (an empty tile).
+            if (error || !result->has_value()) { done.failed = true; return; }
+            done.art = std::move(**result);
+            if (auto* display = canvas(core::Module::display)) display->artworkChanged();
+        });
+        entry.pending = accepted; // a full queue retries on the next request
+    }
+};
+
+SettingsPreview::SettingsPreview(gpu::LayerRasterizer& raster, d::Context& context, SettingsPreviewOptions options)
+    : impl_(std::make_unique<Impl>(raster, context, std::move(options))) {
+    auto& i = *impl_;
+    auto& o = i.options;
+    // The offered app icons of the pinned roster (HUDApplicationIcon.pickerCases).
+    if (!o.resources.empty()) {
+        const auto bytes = ehud::data::detail::readFile(o.resources / "application-icons" / "manifest.json", 4 * 1024 * 1024);
+        need(bytes.has_value(), "Settings icon roster is missing");
+        const auto catalog = Json::parse(*bytes);
+        need(catalog["sourceCommit"].string() == "ca04f142185c7de40acd8523bdb563195d90a1d1", "Settings icon source differs");
+        for (const auto& icon : catalog["icons"].array()) if (icon["offered"].boolean())
+            o.hooks.icons.push_back({icon["id"].string(), icon["title"].string(),
+                {d::ImageSource::Kind::asset, "application-icons/" + icon["app"]["file"].string(), icon["app"]["sha256"].string()}});
+        o.owner.raster.assetRoot = o.resources;
+    }
+    // HUDNavigationEntry.glyphLayer's sources: the right list's 32 px glyph of every configurable module.
+    if (o.appearance)
+        for (const auto module : ehud::data::ModuleLayout::configurable)
+            o.hooks.moduleGlyphs.emplace(std::string(module), rooted(o.appearance->icon("module:" + std::string(module), false)));
+    o.hooks.logoArtwork = [&i](std::string_view logo, std::string_view revision, d::Size fitting) { return i.logoArtwork(logo, revision, fitting); };
+    o.owner.raster.memoryImages = &i.images;
+    i.controller = std::make_unique<m::SettingsController>(o.initial, o.callbacks, o.language);
+    // Appearance: the Context already took it (the overlay owner goes first);
+    // the controller's statuses follow the language, the canvases re-check
+    // their structure (a language change re-renders the shown page).
+    auto appearance = std::move(o.owner.appearance);
+    o.owner.appearance = [&i, appearance](const app::ModuleAppearance& a, double t) {
+        if (appearance) appearance(a, t);
+        i.controller->setLanguage(a.language);
+    };
+    auto hostEvent = std::move(o.owner.hostEvent);
+    o.owner.hostEvent = [&i, hostEvent](const app::HostEvent& e, double t) {
+        const bool used = hostEvent && hostEvent(e, t);
+        if (e.kind == app::HostEvent::Kind::displaysChanged) if (auto* system = i.canvas(core::Module::system)) system->displaysChanged();
+        // The closed HUD keeps the small chooser rasters, not the decoded artwork.
+        if (e.kind == app::HostEvent::Kind::overlayConcealed) for (auto& [key, logo] : i.logos) logo.art.reset();
+        return used;
+    };
+    i.owned = std::make_unique<DesignOwnerCore>(raster, context, o.owner);
+    i.core = i.owned.get();
+    for (std::size_t n = 0; n < presented.size(); ++n) {
+        auto canvas = std::make_unique<m::SettingsCanvas>(presented[n], context, *i.controller, o.hooks);
+        i.canvases[n] = canvas.get();
+        i.core->add(std::move(canvas));
+    }
+}
+SettingsPreview::~SettingsPreview() { *impl_->alive = false; }
+std::unique_ptr<DesignModuleOwner> SettingsPreview::takeOwner() {
+    need(impl_->owned != nullptr, "The Settings owner was already taken");
+    return std::make_unique<DesignModuleOwner>(std::move(impl_->owned));
+}
+DesignOwnerCore& SettingsPreview::core() noexcept { return *impl_->core; }
+m::SettingsController& SettingsPreview::controller() noexcept { return *impl_->controller; }
+m::SettingsCanvas& SettingsPreview::canvas(core::Module module) const {
+    auto* c = impl_->canvas(module);
+    need(c != nullptr, "Settings presents System, Display, Hotkeys and About");
+    return *c;
+}
+void SettingsPreview::setCustomColor(std::array<double, 3> color, double time) {
+    auto& c = canvas(core::Module::display);
+    impl_->context.env().now = std::max(impl_->context.env().now, time);
+    c.setCustomColor(color);
+}
+void SettingsPreview::setCustomLogo(std::string revision, double time) {
+    need(m::centerLogoRevision(revision).has_value(), "Invalid explicit logo import revision");
+    impl_->context.env().now = std::max(impl_->context.env().now, time);
+    canvas(core::Module::display).setCustomLogo(std::move(revision));
+}
+void SettingsPreview::showImportError(std::string error, double time) {
+    impl_->context.env().now = std::max(impl_->context.env().now, time);
+    canvas(core::Module::display).showImportError(std::move(error));
+}
+void SettingsPreview::showBatterySettings(double time) {
+    impl_->context.env().now = std::max(impl_->context.env().now, time);
+    canvas(core::Module::display).showBatterySettings();
+}
+void SettingsPreview::refreshViews(double time) {
+    impl_->context.env().now = std::max(impl_->context.env().now, time);
+    auto& system = canvas(core::Module::system);
+    if (system.renderedLanguage()) system.rerender(); // the Windows-only rows read their hooks when built
+}
+std::optional<core::Module> SettingsPreview::inputModule() const noexcept { return impl_->core->inputModule(); }
+std::size_t SettingsPreview::logoArtworks() const noexcept {
+    return std::size_t(std::count_if(impl_->logos.begin(), impl_->logos.end(), [](const auto& e) { return e.second.art.has_value(); }));
+}
 }
 #endif

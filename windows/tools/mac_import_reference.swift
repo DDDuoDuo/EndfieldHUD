@@ -93,7 +93,11 @@ import AppKit
             "lowPowerVisualMode": c.lowPowerVisualMode, "applicationIcon": c.applicationIcon.rawValue,
             "clockFormat": c.clockFormat.rawValue, "clockStyle": c.clockStyle.rawValue, "centerLogo": c.centerLogo.rawValue,
             "centerLogoRevision": c.centerLogoRevision ?? NSNull(), "alertMetric": c.alertMetric.rawValue,
-            "summonShortcut": ["keyCode": Int(c.summonShortcut.keyCode), "modifiers": Int(c.summonShortcut.modifiers.rawValue)]
+            "summonShortcut": ["keyCode": Int(c.summonShortcut.keyCode), "modifiers": Int(c.summonShortcut.modifiers.rawValue)],
+            // 1.3.0 AppConfiguration (Models.swift:82-91) and HUDModuleLayout.
+            "summonHotkeyEnabled": c.summonHotkeyEnabled, "recordingMode": c.recordingMode, "dailyBootLog": c.dailyBootLog,
+            "facilityAlerts": c.facilityAlerts, "moduleOrder": c.moduleLayout.order.map(\.rawValue),
+            "moduleHidden": c.moduleLayout.order.filter { c.moduleLayout.isHidden($0) }.map(\.rawValue)
         ]
     }
 
@@ -113,7 +117,10 @@ import AppKit
         let markerAbsent = defaults.object(forKey: "hudSettingsSchemaVersion") == nil
         let store = ConfigurationStore(defaults: defaults)
         let best = OrbiPomSession(defaults: defaults).bestScore
-        return ["markerAbsent": markerAbsent, "configuration": configuration(store.configuration), "bestScore": best,
+        let pen = ProjectionSettings(defaults: defaults).values
+        let projection: [String: Any] = ["color": Int(pen.color), "themeColor": Int(ProjectionSettings.themeColor), "width": hex(pen.width),
+                                         "erasing": pen.erasing, "background": pen.background]
+        return ["markerAbsent": markerAbsent, "configuration": configuration(store.configuration), "bestScore": best, "projection": projection,
                 "hasLaunched": defaults.bool(forKey: "hasLaunched"), "probes": probes]
     }
 
@@ -206,10 +213,24 @@ import AppKit
         var drawing = NotesDrawing()
         precondition(drawing.append(NotesDrawingStroke(points: [NotesDrawingPoint(x: 0.1, y: 0.2), NotesDrawingPoint(x: 0.9, y: 0.8)], width: 4, color: NotesRGBA(red: 0.2, green: 0.3, blue: 0.4))))
         try notes.upsert(CanvasNote(kind: .drawing, zIndex: 4, createdAt: base.addingTimeInterval(4), drawing: drawing))
+        // 1.3.0 centre TODO list and TEXT note (NotesCentreStore, centre.json).
+        let centre = NotesCentreStore(directory: notesDirectory)
+        let task = NoteChecklistItem(text: "Collect originium"), done = NoteChecklistItem(text: "Report to 博士", isChecked: true)
+        try centre.update { document in
+            document.tasks = [task, done]; document.flagged = [task.id, done.id]; document.tab = .text; document.isFolded = true
+            document.text = "Centre 中央 🚀"
+            document.richText = NotesRichText(version: 1, runs: [NotesTextRun(location: 0, length: 6, style: NotesTextStyle(fontSize: 12)),
+                                                                 NotesTextRun(location: 6, length: 6, style: NotesTextStyle(fontSize: 18, bold: true))])
+        }
 
         // Archive: one journal entry with an external attachment.
-        let archive = ArchiveStore(directory: root.appendingPathComponent("Archive", isDirectory: true))
+        // The in-memory vault keeps the oracle away from the login Keychain.
+        let archive = ArchiveStore(directory: root.appendingPathComponent("Archive", isDirectory: true), vault: ArchiveMemoryPasswordVault())
         try archive.save(ArchiveEntry(template: .journal, title: "Rhodes Island 档案", date: base, body: "Body 🚀", media: [synthetic], modified: base.addingTimeInterval(60)))
+        // 1.3.0: a classified document (user_version 3) and a NEW-badged category.
+        let secret = ArchiveEntry(template: .research, title: "Classified 机密", date: base, body: "Locked, not encrypted", modified: base.addingTimeInterval(61))
+        try archive.save(secret); try archive.classify(secret.id, password: "correct horse")
+        try archive.saveCategory(ArchiveCategory(name: "Category 1", created: base, isNew: true))
 
         // Profile with an original-bytes avatar and a PNG background.
         let profile = try UserProfileStore(directory: root.appendingPathComponent("Profile", isDirectory: true), now: base)
@@ -237,6 +258,7 @@ import AppKit
             let reader = try ReaderStore(directory: readerDirectory)
             try reader.saveProgress(ReaderLocation(section: 1, block: 2, character: 3), progress: 0.4, id: bookID)
             try reader.toggleBookmark(id: bookID)
+            try reader.setReading(true) // 1.3.0 "reading": true
         }
         // Calendar in UTC.
         let calendar = try HUDCalendarStore(directory: root.appendingPathComponent("Calendar", isDirectory: true))
@@ -245,6 +267,7 @@ import AppKit
         // World map (current v4).
         let map = try WorldMapStore(directory: root.appendingPathComponent("WorldMap", isDirectory: true))
         _ = try map.addPin(x: 0.25, y: 0.75)
+        try map.setViewport(WorldMapViewport(zoom: 1.5)) // 1.3.0: viewport 2.1 + wideZoom 1.5
         // App shortcuts: two system apps, one removed after sanitizing so the store re-encodes.
         let shortcutDirectory = root.appendingPathComponent("AppShortcuts", isDirectory: true)
         do {
@@ -265,6 +288,7 @@ import AppKit
         record.snapshots[role.id] = HypergryphProfileSnapshot(role: role, observedAt: base, name: "Doctor#1234", level: 60,
             stamina: HypergryphStamina(current: 120, maximum: 240, fullRecoveryAt: base.addingTimeInterval(50_000), serverObservedAt: base))
         var cache = HypergryphAccountController.Cache(); cache.syncProfile = true; cache.records = ["mainland": record]
+        cache.unsyncedFields = ["levels", "name"] // 1.3.0 partial sync: syncProfile false + partialSyncProfile true on disk
         let cacheURL = root.appendingPathComponent("Account/profile-cache.json")
         try fm.createDirectory(at: cacheURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try JSONEncoder().encode(cache).write(to: cacheURL)
@@ -279,14 +303,20 @@ import AppKit
         var next = configuration.configuration
         next.language = .japanese; next.centerLogo = .custom; next.centerLogoRevision = revision; next.hudScale = 1.25
         next.summonShortcut = SummonShortcut(keyCode: 4, modifiers: [.control, .option]); next.launchAtLogin = false
+        next.summonHotkeyEnabled = false; next.recordingMode = true; next.facilityAlerts = false; next.displayMode = .never; next.alertMetric = .gpu
+        var layout = HUDModuleLayout(); layout.move(.map, to: 0); layout.setHidden(.volume, true); next.moduleLayout = layout
         configuration.update(next)
+        ProjectionSettings(defaults: defaults).update { $0.color = 0x22A6F2; $0.width = 30; $0.erasing = true }
         defaults.set(321, forKey: OrbiPomSession.bestScoreKey); defaults.set(true, forKey: "hasLaunched")
         let domain = defaults.persistentDomain(forName: suite) ?? [:]
         try PropertyListSerialization.data(fromPropertyList: domain, format: .binary, options: 0).write(to: work.appendingPathComponent("domain.plist"))
         expected["foundationDate"] = base.timeIntervalSinceReferenceDate
         expected["settings"] = ["language": "japanese", "centerLogo": "custom", "centerLogoRevision": revision, "hudScale": 1.25,
                                 "orbipom.bestScore.v1": 321, "launchAtLogin": false, "hasLaunched": true,
-                                "summonShortcut": ["keyCode": 4, "modifiers": 3]]
+                                "summonShortcut": ["keyCode": 4, "modifiers": 3], "summonHotkeyEnabled": false, "recordingMode": true,
+                                "facilityAlerts": false, "dailyBootLog": true, "displayMode": "never", "alertMetric": "gpu",
+                                "hudModuleOrder": layout.order.map(\.rawValue), "hudHiddenModules": ["volume"],
+                                "projection.settings.v1": ["color": 0x22A6F2, "width": 30, "erasing": true, "background": true]]
         let data = try JSONSerialization.data(withJSONObject: expected, options: [.sortedKeys])
         try data.write(to: work.appendingPathComponent("expected.json"))
     }

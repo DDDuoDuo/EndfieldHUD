@@ -14,7 +14,7 @@ mkdir -p "$OUTPUT"
 OUTPUT="$(cd "$OUTPUT" && pwd)"
 BUILD="$OUTPUT/.compiler"
 mkdir -p "$BUILD/module-cache"
-SDK="$(bash "$ROOT/scripts/build.sh" --print-sdk)"
+SDK="$(bash "$ROOT/windows/tools/mac_sdk.sh")"
 SOURCES=()
 while IFS= read -r path; do SOURCES+=("$path"); done < <(find "$ROOT/Sources" -maxdepth 1 -name '*.swift' ! -name main.swift | LC_ALL=C sort)
 

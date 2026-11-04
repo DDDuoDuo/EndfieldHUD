@@ -48,6 +48,10 @@ public:
     // Content/scroll events only. These are local card actions; caller adds the
     // card's current projected origin. Partial actions <=1pt are not exposed.
     std::vector<NotesAction> actions(double offset,const NotesChecklistStrings& = {})const;
+    // A row's up / down / remove buttons (card-local, unclipped): their drawn
+    // frames are also their action rects (see the implementation, DOCS-210).
+    struct RowControl {std::string verb;core::Rect frame;};
+    std::array<RowControl,3> rowControls(std::size_t row,double offset)const;
 private:
     std::string noteID_;double width_{},height_{},textWidth_{},contentHeight_{};
     core::Rect viewport_;std::vector<NotesChecklistRow> rows_;

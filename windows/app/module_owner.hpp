@@ -182,7 +182,12 @@ struct ModuleAppearance {
 // The pointer cursor an owner asks for (ModuleOwner::cursorAt).
 enum class ModuleCursor : std::uint8_t {
     source, // the original Endfield cursor (SourceCursor)
-    text    // the system I-beam over an open projected text editor
+    text,   // the system I-beam over an open projected text editor
+    // The redesign's grab cursors (Settings module grip, Map): original drawn
+    // cursors embedded in EndfieldHUD.exe (LIBRARY-DESIGN.md Q6/R9,
+    // app/overlay_host.hpp OverlayCursor); the source cursor where the
+    // process has none (the development harness).
+    openHand, closedHand
 };
 // What an owner keeps resident outside the shared LayerRasterizer cache and
 // the Renderer's own textures (ModuleOwner::residency): decoded images and
@@ -267,6 +272,10 @@ struct ModuleCoverage {
     // notice, but on the coverage clock; true when an owner consumed it. Do not
     // SendMessage to the HWND in coverage: the real route reads the wall clock.
     std::function<bool(std::uint32_t message, std::uintptr_t wParam, std::intptr_t lParam)> message;
+    // A timed action only the area can reach (a first visit inside its own
+    // step): one row of the report's actionTiming, with the host's keys
+    // (module, action, ran, the *Ms timings, pagesBuilt, rasterizations, ...).
+    std::function<void(ehud::data::Json)> timing;
 };
 
 class ModuleOwner {
@@ -355,7 +364,9 @@ public:
     // projected text editor, where HUDProjectedTextView.projectedCursor
     // answers the system I-beam (the editor must be editable or selectable
     // and the logical client point must fall inside its projected field;
-    // the Mac has no resize or other per-control cursors). The host asks
+    // the Mac has no resize or other per-control cursors), and where a
+    // redesigned canvas asks for its grab hands (SystemHUDView.designCursor:
+    // the Settings > Modules grip, the Map; ModuleCursor). The host asks
     // from WM_SETCURSOR (each pointer move over the client area, and once
     // after a handled pointer or key event so an editor opened or closed
     // under a still pointer updates), in the pointer routing order:

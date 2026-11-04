@@ -2,6 +2,7 @@
 #include "core/data/json.hpp"
 #include <cstdint>
 #include <span>
+#include <string>
 #include <vector>
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -31,7 +32,17 @@ private:
 // Effects retain just straight color, never an ID2D brush tied to a discarded
 // WIC target. This permits safe immutable-layout repaint after scrolling.
 HRESULT setDocumentTextColor(IDWriteTextLayout&,DWRITE_TEXT_RANGE,D2D1_COLOR_F)noexcept;
+// The synthetic italic of the shared fonts, which have no italic face: Mac
+// 1.3.0 slants them by a shear of 0.2 (HUDFontResolver oblique), DirectWrite's
+// oblique simulation by about 0.34. Runs of `families` that DirectWrite
+// simulates as oblique are drawn upright and sheared by `shear` about their
+// baseline; other faces (a user's font) keep DirectWrite's own simulation.
+struct ObliqueShear {std::vector<std::wstring> families;float shear{.2f};};
 HRESULT drawDocumentText(ID2D1RenderTarget&,IDWriteTextLayout&,const DocumentTextLines&,
-    D2D1_POINT_2F origin,D2D1_COLOR_F defaultColor)noexcept;
+    D2D1_POINT_2F origin,D2D1_COLOR_F defaultColor,const ObliqueShear* =nullptr)noexcept;
+// ID2D1RenderTarget::DrawTextLayout (drawing effects are brushes) with the
+// oblique shear; `clip` clips to the layout box as D2D1_DRAW_TEXT_OPTIONS_CLIP.
+HRESULT drawShearedText(ID2D1RenderTarget&,IDWriteTextLayout&,D2D1_POINT_2F origin,ID2D1Brush&,
+    const ObliqueShear&,bool clip)noexcept;
 } // namespace endfield::native
 #endif

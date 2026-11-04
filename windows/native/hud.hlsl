@@ -183,3 +183,33 @@ float4 MediaConvertPS(CompositeVertex input) : SV_Target {
         encoded.b <= .04045 ? encoded.b / 12.92 : pow((encoded.b + .055) / 1.055, 2.4));
     return float4(linearRGB * encoded.a, encoded.a);
 }
+// Renderer::setContentFilter: the confirm bar's dim of the module content
+// (Sources/HUDDesignOverlay.swift, CIGaussianBlur + CIExposureAdjust). One
+// separable Gaussian pass per axis over the offscreen linear-premultiplied
+// content: weights exp(-i^2 / (2 sigma^2)) to 3 sigma, normalized over the taps
+// (premultiplied, so transparent texels add nothing and edges soften into
+// transparency). Texels outside the source read as transparent (Load returns
+// 0 out of range). The second pass multiplies RGB by 2^EV (exposure in linear
+// light; alpha unchanged) and is composited over the root target.
+cbuffer Filter : register(b2) {
+    float4 filterStep;   // xy: tap step (1,0) or (0,1); zw: destination pixel of source texel (0,0)
+    float4 filterParams; // x: 1 / (2 sigma^2); y: taps per side; z: linear gain
+};
+float4 blurAt(int2 p) {
+    float4 sum = colorTexture.Load(int3(p, 0));
+    float total = 1;
+    int2 step = int2(filterStep.xy);
+    [loop] for (int i = 1; i <= (int)filterParams.y; ++i) {
+        float weight = exp(-float(i * i) * filterParams.x);
+        sum += weight * (colorTexture.Load(int3(p + step * i, 0)) + colorTexture.Load(int3(p - step * i, 0)));
+        total += 2 * weight;
+    }
+    return sum / total;
+}
+float4 ContentBlurPS(CompositeVertex input) : SV_Target {
+    return blurAt(int2(input.position.xy) - int2(filterStep.zw));
+}
+float4 ContentDimPS(CompositeVertex input) : SV_Target {
+    float4 blurred = blurAt(int2(input.position.xy) - int2(filterStep.zw));
+    return float4(blurred.rgb * filterParams.z, blurred.a);
+}

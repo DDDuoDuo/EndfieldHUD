@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 OUTPUT="$1";CACHE="$2"
 [[ ! -e "$OUTPUT" && ! -L "$OUTPUT" && -d "$CACHE" ]]
 mkdir -p "$OUTPUT";OUTPUT="$(cd "$OUTPUT" && pwd)";CACHE="$(cd "$CACHE" && pwd)"
-SDK="$(bash "$ROOT/scripts/build.sh" --print-sdk)"
+SDK="$(bash "$ROOT/windows/tools/mac_sdk.sh")"
 python3 - "$ROOT" "$OUTPUT" <<'PY'
 import pathlib,hashlib,json,sys
 root,out=map(pathlib.Path,sys.argv[1:]);p=root/'Sources/HUDClock.swift'

@@ -6,6 +6,8 @@
 #include <stdexcept>
 namespace n=endfield::native;namespace m=endfield::modules;namespace t=endfield::tools;using Q=endfield::app::UtilityExecutor;
 namespace {
+// The middle lyric row the display shows at `now` (the v1.2.0 presentation's lyricRows()[1]).
+std::string lyricRow(const endfield::modules::NowPlayingViewInput&i,double now){if(!i.lyrics)return {};return std::string(i.lyrics->window(endfield::modules::nowPlayingElapsed(i,now).value_or(0))[1]);}
 unsigned checks{};
 void check(bool value,const char*what){++checks;if(!value)throw std::runtime_error(what);}
 }
@@ -18,22 +20,22 @@ int main(){
         const auto decoded=n::decodeNowPlayingImage(*cover);check(decoded.image&&decoded.image->width==96&&decoded.image->height==96,"WIC decodes the synthetic cover");
 #endif
         Q q{[]{}};double now=5;n::NativeNowPlayingService service(q,n::nowPlayingFixtureProvider([&]{return now;}),[]{},[&]{return now;});
-        t::NowPlayingSession owner(service,q,{},[]{},[](std::span<const std::uint8_t>b){auto f=std::make_shared<n::NotesImageFrame>();f->width=f->height=1;f->straightRGBA={b[0],0,0,255};return n::NowPlayingImageResult{f};});
+        t::NowPlayingSession owner(service,q,[]{},[](std::span<const std::uint8_t>b){auto f=std::make_shared<n::NotesImageFrame>();f->width=f->height=1;f->straightRGBA={b[0],0,0,255};return n::NowPlayingImageResult{f};});
         const auto flush=[&]{for(int k=0;k<6;++k){q.waitIdle();q.drain();owner.utilityCompleted(now);}};
         owner.setActive(true,now);flush();
-        const auto&input=owner.presentation().input();
+        const auto&input=owner.input();
         check(input.track&&input.track->title=="EndfieldHUD Fixture 1"&&input.track->artist=="Local verification"&&input.track->album=="Now Playing","Source fixture metadata");
         check(input.track->duration==210.&&input.track->position==42.&&!input.track->isPlaying&&!input.failed,"Source fixture timeline starts paused at 42 of 210 seconds");
-        check(input.lyrics&&input.lyrics->lines().size()==3&&owner.presentation().lyricRows()[1]=="Current","Source fixture timed lyrics reach the rows");
+        check(input.lyrics&&input.lyrics->lines().size()==3&&lyricRow(input,now)=="Current","Source fixture timed lyrics reach the rows");
         check(owner.artwork()&&owner.artwork()->straightRGBA[0]=='B'&&input.coverAvailable,"Fixture cover passes through the artwork owner");
         check(owner.dispatch({m::NowPlayingIntentKind::next,input.session},now),"Fixture accepts next");flush();
-        check(owner.presentation().input().track->title=="EndfieldHUD Fixture 2"&&owner.presentation().input().track->position==0.,"Next advances the synthetic track to 0 s");
-        check(owner.dispatch({m::NowPlayingIntentKind::playPause,owner.presentation().input().session},now),"Fixture accepts play");flush();now=15;owner.deadline(now);
-        check(owner.presentation().input().track->isPlaying,"Play toggles the synthetic player");
-        check(owner.dispatch({m::NowPlayingIntentKind::seek,owner.presentation().input().session,300},now),"Fixture accepts seek");flush();
-        check(owner.presentation().input().track->position==210.,"Seek clamps to the fixture duration");
+        check(owner.input().track->title=="EndfieldHUD Fixture 2"&&owner.input().track->position==0.,"Next advances the synthetic track to 0 s");
+        check(owner.dispatch({m::NowPlayingIntentKind::playPause,owner.input().session},now),"Fixture accepts play");flush();now=15;owner.deadline(now);
+        check(owner.input().track->isPlaying,"Play toggles the synthetic player");
+        check(owner.dispatch({m::NowPlayingIntentKind::seek,owner.input().session,300},now),"Fixture accepts seek");flush();
+        check(owner.input().track->position==210.,"Seek clamps to the fixture duration");
         owner.setActive(false,now);now=20;owner.setActive(true,now);flush();
-        check(owner.presentation().input().track->title=="EndfieldHUD Fixture 2","Fixture player state survives conceal/reopen like the controller-owned source fixture");
+        check(owner.input().track->title=="EndfieldHUD Fixture 2","Fixture player state survives conceal/reopen like the controller-owned source fixture");
         owner.setActive(false,now);q.shutdown();
         std::cout<<"Now Playing fixture: "<<checks<<" checks passed (synthetic player only)\n";return 0;
     }catch(const std::exception&e){std::cerr<<"Now Playing fixture failed after "<<checks<<": "<<e.what()<<'\n';return 1;}

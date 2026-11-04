@@ -4,15 +4,18 @@ import QuartzCore
 // Build-only oracle for the Windows Power area. The unchanged ChargeIndicatorView,
 // HUDChargeBadge, HUDChargeMetric, DisplayPolicy, OverlayGeometry,
 // DeviceBatteryProvider, HUDDeploymentFlicker and battery model sources are
-// compiled with the extracted ChargeReferenceFixture.swift. Their Core
+// compiled with the extracted ChargeReferenceFixture.swift, and (Mac 1.3.0)
+// the standard-text sources they use: HUDDesignFonts/Text/Tokens (the
+// registered HarmonyOS Sans faces from Resources/Fonts), HUDResources,
+// HUDStartupTrace and Localization with its catalogs. Their Core
 // Animation clock is frozen (speed 0) inside a never-ordered window, so every
 // presentation sample is deterministic. No HUD, controller, power source,
 // account or user data is touched.
 enum HUDRuntimeAppearance { static var reduceMotion = false }
-enum L10n {
-    static var useChinese = false
-    static func text(_ english: String, _ simplifiedChinese: String) -> String { useChinese ? simplifiedChinese : english }
-}
+// HUDColor.apply (HUDDesignTokens.swift) drops cached artwork; the charge views draw none.
+enum HUDArtwork { static func releaseCachedImages() {} }
+// L10n is the unchanged Sources/Localization.swift (with its catalogs): the
+// samples select English or Simplified Chinese through L10n.language.
 struct SystemActivitySnapshot: Equatable {
     var cpuPercent: Double? = nil
     var memoryUsedBytes: UInt64? = nil
@@ -21,6 +24,7 @@ struct SystemActivitySnapshot: Equatable {
     var downloadBytesPerSecond: Double? = nil
     var diskReadBytesPerSecond: Double? = nil
     var diskWriteBytesPerSecond: Double? = nil
+    var gpuPercent: Double? = nil
 }
 
 let sRGB = CGColorSpace(name: CGColorSpace.sRGB)!
@@ -173,7 +177,7 @@ let telemetries: [(String, SystemActivitySnapshot?)] = [
         func tree(_ name: String, snapshot: BatterySnapshot, dark: Bool, chinese: Bool, metric: HUDChargeMetric,
                   telemetry: (String, SystemActivitySnapshot?), stage: OverlayStage, hovered: Bool, preview: Bool,
                   accentHex: String = "FAD41F") throws {
-            L10n.useChinese = chinese
+            L10n.language = chinese ? .simplifiedChinese : .english
             let view = ChargeIndicatorView(frame: NSRect(origin: .zero, size: ChargeIndicatorView.canvasSize))
             var configuration = AppConfiguration.defaults
             configuration.alertMetric = metric; configuration.accentHex = accentHex
@@ -205,7 +209,7 @@ let telemetries: [(String, SystemActivitySnapshot?)] = [
             try tree("battery19", snapshot: snapshots[2].1, dark: true, chinese: chinese, metric: .battery, telemetry: ("none", nil),
                      stage: .compact, hovered: false, preview: true)
         }
-        L10n.useChinese = false
+        L10n.language = .english
         result["trees"] = trees
         result["unsupported"] = encoder.unsupported
 
@@ -305,7 +309,7 @@ let telemetries: [(String, SystemActivitySnapshot?)] = [
         // C. Pure metric projections, including invalid/partial telemetry.
         var readings: [[String: Any]] = []
         for chinese in [false, true] {
-            L10n.useChinese = chinese
+            L10n.language = chinese ? .simplifiedChinese : .english
             for metric in HUDChargeMetric.allCases { for (name, snapshot) in snapshots { for telemetry in telemetries {
                 if metric == .battery && telemetry.0 != "none" { continue }
                 if metric != .battery && name != "demoCharging" && name != "unavailable" { continue }
@@ -316,7 +320,7 @@ let telemetries: [(String, SystemActivitySnapshot?)] = [
                                  "progress": optional(r.progress), "accessibility": r.accessibilityValue])
             }}}
         }
-        L10n.useChinese = false
+        L10n.language = .english
         result["readings"] = readings
 
         // D. HUDChargeBadge phases with an injected scheduler and frozen renderer clock.
@@ -490,10 +494,10 @@ let telemetries: [(String, SystemActivitySnapshot?)] = [
         delegateRun("editing", [receive(2), ("edit", { $0.overlay.isEditingPosition = true }), receive(1), preview,
                                 ("editDone", { $0.overlay.isEditingPosition = false; $0.presentLatestSnapshot() })])
         for chinese in [false, true] {
-            L10n.useChinese = chinese
+            L10n.language = chinese ? .simplifiedChinese : .english
             delegateRun(chinese ? "menuChinese" : "menuEnglish", snapshots.indices.map { receive($0) })
         }
-        L10n.useChinese = false
+        L10n.language = .english
         result["delegate"] = delegateRuns
 
         // L. Capacity registry pair rules used for Windows mWh/relative values.

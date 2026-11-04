@@ -1,4 +1,5 @@
 #include "modules/archive_model.hpp"
+#include "core/localization.hpp"
 #include <cmath>
 #include <limits>
 #include <stdexcept>
@@ -56,5 +57,18 @@ J encodeArchiveEntry(const ArchiveEntry&e,const ArchiveTextRules&r){validateArch
 }
 ArchiveSummary archiveSummary(const ArchiveEntry&e){return {e.id,e.type,e.title,e.date,e.media.size(),e.categoryID,e.media.empty()?std::nullopt:std::optional(e.media.front())};}
 std::size_t archiveThumbnailCost(const std::optional<J>&j){if(!j)return 0;validateArchiveMedia(*j);std::size_t bookmark{},path{};if((*j)["bookmark"].isString()){bookmark=base64Size((*j)["bookmark"].string());path=(*j)["lastKnownPath"].string().size();}else path=(*j)["windowsPath"].string().size();return bookmark*2+(path+(*j)["displayName"].string().size())*6+512;}
+// The All and Uncategorized filter titles in every AppLanguage, from the
+// shared catalog (LocalizationCatalog.swift:1021,1023), compared by name key.
+bool archiveReservedCategoryName(std::string_view name,const ArchiveTextRules&r){rules(r);const auto key=r.categoryNameKey(name);
+    for(const auto*entry:{core::translationEntry("All","全部"),core::translationEntry("Uncategorized","未分类")}){need(entry!=nullptr,"Archive reserved names need the shared catalog");
+        for(const auto title:{entry->english,entry->simplifiedChinese,entry->traditionalChinese,entry->japanese,entry->korean})if(r.categoryNameKey(title)==key)return true;}
+    return false;}
+std::optional<ArchiveCategoryNameIssue>archiveCategoryNameIssue(std::string_view proposed,std::span<const ArchiveCategory>categories,const ArchiveTextRules&r,const std::optional<std::string>&excluding){rules(r);
+    if(!J::validUtf8(proposed))return ArchiveCategoryNameIssue::invalidCharacters;const auto name=r.trimmed(proposed);if(name.empty())return ArchiveCategoryNameIssue::empty;
+    if(r.characters(name)>archiveMaximumCategoryNameLength||name.size()>1024)return ArchiveCategoryNameIssue::tooLong;
+    const auto text=archiveUTF16(name);for(std::size_t i=0;i<text.size();++i){const auto c=text[i];if(c<0x20||(c>=0x7f&&c<=0x9f)||c==0x2028||c==0x2029)return ArchiveCategoryNameIssue::invalidCharacters;}
+    if(archiveReservedCategoryName(name,r))return ArchiveCategoryNameIssue::reserved;
+    const auto key=r.categoryNameKey(name);for(const auto&c:categories)if((!excluding||c.id!=*excluding)&&r.categoryNameKey(c.name)==key)return ArchiveCategoryNameIssue::duplicate;
+    return {};}
 ArchiveCategory archiveLegacyCategory(ArchiveTemplate t){need(t==ArchiveTemplate::journal||t==ArchiveTemplate::research,"Unknown legacy Archive template");return {t==ArchiveTemplate::journal?"8A67BC44-25D4-4DC1-91EF-000000000001":"8A67BC44-25D4-4DC1-91EF-000000000002",t==ArchiveTemplate::journal?"Journal":"Q&A",-archiveFoundationToUnix,{}};}
 } // namespace endfield::modules

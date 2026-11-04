@@ -27,7 +27,7 @@ struct LayerImageSource::Impl {
     std::vector<std::weak_ptr<const LayerMemoryImage>>live; // bounded revision conflict registry
     LayerImageSourceStats counts;
     explicit Impl(LayerImageSourceLimits value):limits(value){
-        need(limits.cachedImages>0&&limits.liveImages>=limits.cachedImages&&limits.liveBytes>0,"Layer image provider limits must hold its cached images");
+        need(limits.cachedImages>0&&limits.liveImages>=limits.cachedImages&&limits.liveBytes>0&&limits.dimension>0&&limits.dimension<=16384,"Layer image provider limits must hold its cached images");
         cache.reserve(limits.cachedImages);live.reserve(limits.liveImages);}
     void onThread()const{need(owner==std::this_thread::get_id(),"Layer image provider requires its creating thread");}
     void remember(std::shared_ptr<const LayerMemoryImage>image){
@@ -42,7 +42,7 @@ const LayerImageSourceLimits&LayerImageSource::limits()const noexcept{return imp
 LayerImageSource::~LayerImageSource()=default;
 std::shared_ptr<const LayerMemoryImage>LayerImageSource::publish(std::string_view key,std::uint64_t revision,unsigned width,unsigned height,std::span<const std::uint8_t>rgba){
     auto&i=*impl_;i.onThread();need(!key.empty()&&key.size()<=maximumKeyBytes&&ehud::data::Json::validUtf8(key)&&key.find('\0')==std::string_view::npos,"Invalid memory image identity");
-    need(revision!=0,"Memory image revision must be nonzero");need(width>0&&height>0&&width<=maximumDimension&&height<=maximumDimension,"Memory image dimensions exceed explicit bounds");
+    need(revision!=0,"Memory image revision must be nonzero");need(width>0&&height>0&&width<=i.limits.dimension&&height<=i.limits.dimension,"Memory image dimensions exceed explicit bounds");
     const auto bytes=std::size_t(width)*height*4;need(rgba.size()==bytes,"Memory image requires tight complete RGBA8 rows");
     std::shared_ptr<const LayerMemoryImage>same;
     for(const auto&entry:i.live)if(const auto image=entry.lock();image&&image->key()==key){need(revision>=image->revision(),"Stale memory image revision");if(revision==image->revision())same=image;}
