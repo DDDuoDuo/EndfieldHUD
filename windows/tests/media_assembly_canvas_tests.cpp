@@ -91,6 +91,7 @@ struct Editor {
     std::unique_ptr<m::MediaAssemblyCanvas> canvas;
     std::vector<std::string> panels, thumbnails;
     bool thumbnailsReady{true}; // the owner's decodes landed (false: still on the worker)
+    int entered{};              // stickersEntered: the owner may retry failed thumbnails
     int ids{};
     explicit Editor(World& world) : w(world) {
         controller = std::make_unique<m::MediaAssemblyController>(engine, q.submit(),
@@ -115,6 +116,7 @@ struct Editor {
             if (!thumbnailsReady) return std::nullopt;
             thumbnails.push_back(std::string(m::mediaAssemblyStickerItem(k).id));
             return d::ImageSource{d::ImageSource::Kind::memory, "media.assembly.thumbnail." + std::string(m::mediaAssemblyStickerItem(k).id), {}, 1}; };
+        s.stickersEntered = [this] { ++entered; };
         s.stickerImage = [](m::MediaAssemblyStickerKind k) -> std::optional<d::ImageSource> {
             return d::ImageSource{d::ImageSource::Kind::asset, "stickers/" + std::string(m::mediaAssemblyStickerItem(k).id) + ".png", {}, 0}; };
         canvas = std::make_unique<m::MediaAssemblyCanvas>(w.context, *controller, std::move(s));
@@ -250,6 +252,14 @@ void keptParts(d::TextMeasurer& measurer) {
     bool drawn{};
     for (const auto& part : artwork()) drawn = drawn || part.second.find("media.assembly.thumbnail.sticker_bp_1") != std::string::npos;
     check(!c.transitioning() && drawn, "The drawer enters with its thumbnails");
+    // Each entry of the drawer (its tab, or the canvas activated on it) lets the
+    // owner try failed thumbnails again; its own rebuilds and other tabs do not.
+    check(e.entered == 1, "Choosing the Stickers tab is an entry");
+    c.stickerThumbnailsChanged(); w.advance(1);
+    check(c.performAccessibilityAction("mediaTab:0", w.now) && (w.advance(1), e.entered == 1), "A rebuild and another tab are not");
+    check(c.performAccessibilityAction("mediaTab:2", w.now) && e.entered == 2, "Choosing it again is");
+    w.advance(1); c.setActive(false, w.now); c.setActive(true, w.now);
+    check(e.entered == 3, "Activation on the drawer is");
 }
 
 // Animated page swaps and edits (Reduce Motion off): every frame's nodes stay rasterizable.

@@ -26,7 +26,8 @@
 // previous one); the drawer's sticker thumbnails are 96 px memory images
 // decoded on first use (MediaAssemblyAssetCatalog.stickerThumbnail), on the
 // utility worker: the drawer's first build asks for all 30 at once and is
-// built again with them when they land (before its sub-page swap does).
+// built again with them when they land (before its sub-page swap does);
+// with Reduce Motion (no swap) its build decodes them.
 //
 // No thread, timer or window of its own; UI thread only.
 #ifdef _WIN32

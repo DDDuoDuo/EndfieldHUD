@@ -97,6 +97,7 @@ struct MediaAssemblyOwner::Impl:std::enable_shared_from_this<Impl> {
         s.filterThumbnail=[weak](mod::MediaAssemblyFilter f)->std::optional<d::ImageSource>{
             auto i=weak.lock();if(!i||f==mod::MediaAssemblyFilter::none)return std::nullopt;const auto&a=i->assets.filterThumbnail(f);return d::ImageSource{d::ImageSource::Kind::asset,a.path,a.sha256,0};};
         s.stickerThumbnail=[weak](mod::MediaAssemblyStickerKind k){auto i=weak.lock();return i?i->stickerThumbnail(k):std::nullopt;};
+        s.stickersEntered=[weak]{if(auto i=weak.lock())i->thumbnailFailures.clear();};
         s.stickerImage=[weak](mod::MediaAssemblyStickerKind k)->std::optional<d::ImageSource>{auto i=weak.lock();if(!i)return std::nullopt;const auto&a=i->assets.sticker(k);return d::ImageSource{d::ImageSource::Kind::asset,a.path,a.sha256,0};};
         core=std::make_unique<DesignOwnerCore>(raster,context,options.design);
         auto made=std::make_unique<mod::MediaAssemblyCanvas>(context,*controller,std::move(s));canvas=made.get();core->add(std::move(made));
@@ -105,13 +106,16 @@ struct MediaAssemblyOwner::Impl:std::enable_shared_from_this<Impl> {
     // (yet). The first miss queues every missing sticker's read, SHA-256 check
     // and WIC decode on the utility worker (30 PNGs were 25-60 ms on this
     // thread in the tab click's frame); publish() stays here (the cache is
-    // this thread's) and the drawer is built again with them. A full queue
-    // decodes here, as before; a sticker that cannot decode is not retried.
+    // this thread's) and the drawer is built again with them. With Reduce
+    // Motion the drawer enters at once (no sub-page swap to hide the wait),
+    // so they decode here, as the Mac does in the build; so does a full
+    // queue. A sticker that could not decode is retried on the drawer's next
+    // entry, not by the rebuild its failure caused.
     static std::string thumbnailKey(mod::MediaAssemblyStickerKind kind){return "media.assembly.thumbnail."+std::string(mod::mediaAssemblyStickerItem(kind).id);}
     std::optional<d::ImageSource>stickerThumbnail(mod::MediaAssemblyStickerKind kind){
         const auto key=thumbnailKey(kind);
         if(!thumbnails.acquire(key,1)){
-            if(thumbnailsQueued||thumbnailFailures.contains(key)||queueThumbnails())return std::nullopt;
+            if(thumbnailFailures.contains(key)||(!context.env().reduceMotion&&(thumbnailsQueued||queueThumbnails())))return std::nullopt;
             try{const auto image=gpu::mediaAssemblyThumbnail(assets,assets.sticker(kind),thumbnailPixels);
                 if(!thumbnails.publish(key,1,image.width,image.height,image.straightRGBA))return std::nullopt;++statistics.thumbnailDecodes;++statistics.thumbnailDecodesAtOnce;}
             catch(const std::exception&){return std::nullopt;}
@@ -135,6 +139,7 @@ struct MediaAssemblyOwner::Impl:std::enable_shared_from_this<Impl> {
         },[weak,jobs](std::exception_ptr){
             auto i=weak.lock();if(!i||!i->alive)return;i->thumbnailsQueued=false;
             for(auto&job:*jobs){
+                if(i->thumbnails.acquire(job.key,1))continue; // decoded here meanwhile (Reduce Motion)
                 if(job.image&&i->thumbnails.publish(job.key,1,job.image->width,job.image->height,job.image->straightRGBA))++i->statistics.thumbnailDecodes;
                 else i->thumbnailFailures.insert(job.key);
             }
