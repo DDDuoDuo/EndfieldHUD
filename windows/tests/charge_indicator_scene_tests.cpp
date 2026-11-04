@@ -253,6 +253,36 @@ void run(const std::filesystem::path& shader) {
     released = true;
     check(renderer.stats().textures == 0 && renderer.stats().meshes == 0 && !IsWindowVisible(window.h), "No resources remain");
 }
+// LIB-F31: a label's first baseline sits at the standard face's hhea
+// ascender (.928 em, HUDStandardTextLayer), not DirectWrite's default line
+// (HarmonyOS Sans' OS/2 metrics, about .128 em lower). The trailing "75%"
+// value (13 pt) is painted as the scene paints it and with the line metrics
+// removed; the digits' first inked row moves up by about 1.66 pt.
+void labelMetrics() {
+    gpu::LayerRasterizer raster;
+    m::BatteryReading reading;
+    reading.present = true; reading.percentage = 75;
+    const m::ChargeIndicatorAppearance appearance{true, {1, .8, .1, 1}, c::Language::english};
+    const auto content = m::prepareChargeIndicatorContent(appearance, reading, m::ChargeMetric::battery, std::nullopt, false,
+                                                          [](std::string_view, const Json&) { return 10.0; });
+    auto label = content.texts[3];
+    check(label["text"]["string"].string() == "75%" && content.trailingFontSize == 13, "Synthetic trailing value");
+    gpu::LayerRasterOptions options;
+    options.pixelsPerPoint = 4;
+    const auto inkTop = [&](const Json& layer, std::uint64_t revision) {
+        const auto image = raster.rasterize("test.charge.label", revision, layer, options);
+        check(image && image->complete() && !image->straightRGBA.empty(), "The label rasterizes completely");
+        for (unsigned y = 0; y < image->height; ++y)
+            for (unsigned x = 0; x < image->width; ++x)
+                if (image->straightRGBA[(std::size_t(y) * image->width + x) * 4 + 3] > 127) return image->bounds.y + y / options.pixelsPerPoint;
+        throw std::runtime_error("The label paints no ink");
+    };
+    const double standard = inkTop(label, 1);
+    for (const auto key : {"ascender", "descender", "leading"}) label["text"]["font"].object().erase(key);
+    const double plain = inkTop(label, 2);
+    std::cout << "Charge label ink top: " << standard << " pt (standard line), " << plain << " pt (DirectWrite default)\n";
+    check(plain - standard > 1.2 && plain - standard < 2.1, "The value sits on the standard face's hhea ascender, about .128 em above the default line");
+}
 } // namespace
 
 int wmain(int argc, wchar_t** argv) {
@@ -261,6 +291,7 @@ int wmain(int argc, wchar_t** argv) {
         check(SUCCEEDED(result) && (argc == 2 || argc == 3), "Pass HLSL (and optionally a review output directory)");
         if (argc == 3) dumpDirectory = argv[2];
         run(argv[1]);
+        labelMetrics();
         CoUninitialize();
         std::cout << "Charge indicator scene: " << checks << " checks passed\n";
         return 0;

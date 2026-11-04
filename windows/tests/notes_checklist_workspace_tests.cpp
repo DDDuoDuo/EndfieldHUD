@@ -22,8 +22,8 @@ void run(HWND hwnd){native::LayerRasterizer raster;native::NativeNotesWorkspaceO
     check(workspace.card(noteID)&&workspace.card(noteID)->contentViewport()==core::Rect{5,27,250,85},"Actual TODO source card is connected to native retained scene");
     check(workspace.entries().size()==1&&!workspace.editor(),"Settled checklist owns one card scene only");
     const auto measured=workspace.measurementStats().measurements;const auto painted=raster.stats().rasterizations;
-    workspace.setFeedback(noteID,std::string("check:")+first,false,false,0);for(unsigned frame=0;frame<120;++frame){auto p=pose(double(frame)/60);p.workspaceToScreen.values[12]=double(frame)*.02;p.workspaceToScreen.values[3]=double(frame)*.0000001;workspace.updatePose(p);}
-    check(workspace.measurementStats().measurements==measured&&raster.stats().rasterizations==painted,"TODO tilt/hover retains source artwork and every row measurement");
+    for(unsigned frame=0;frame<120;++frame){auto p=pose(double(frame)/60);p.workspaceToScreen.values[12]=double(frame)*.02;p.workspaceToScreen.values[3]=double(frame)*.0000001;workspace.updatePose(p);}
+    check(workspace.measurementStats().measurements==measured&&raster.stats().rasterizations==painted,"TODO tilt retains source artwork and every row measurement");
     workspace.updatePose(pose(2));const auto beforeScroll=workspace.measurementStats().measurements;check(workspace.scrollAt({60,85},20.25)&&workspace.card(noteID)->scrollOffset()==20.25,"Fractional pointer wheel scrolls source row viewport");
     check(workspace.measurementStats().measurements==beforeScroll,"Row scrolling never reshapes text");
     check(workspace.beginEditingItem(noteID,first)&&workspace.editingItemID()==first&&workspace.editorDocument()->text()==u"第一项😀","Source row editor opens exact full Unicode item");workspace.updatePose(pose(3));

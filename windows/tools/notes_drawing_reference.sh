@@ -6,7 +6,7 @@ OUTPUT="$1"
 [[ ! -e "$OUTPUT" && ! -L "$OUTPUT" ]]
 mkdir -p "$OUTPUT";OUTPUT="$(cd "$OUTPUT" && pwd)"
 git -C "$ROOT" diff --quiet ca04f142185c7de40acd8523bdb563195d90a1d1 -- Sources Resources
-SDK="$(bash "$ROOT/scripts/build.sh" --print-sdk)"
+SDK="$(bash "$ROOT/windows/tools/mac_sdk.sh")"
 xcrun swiftc -O -swift-version 5 -parse-as-library -sdk "$SDK" \
  -module-cache-path "$ROOT/build/windows-module-reference/.compiler/module-cache" \
  "$ROOT/Sources/NotesDrawing.swift" "$ROOT/Sources/NotesRichText.swift" \

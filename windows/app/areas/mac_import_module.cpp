@@ -11,7 +11,8 @@
 #include "core/migration/mac_import_work.hpp"
 #include "core/migration/plist.hpp"
 #include "core/source_desktop_chrome.hpp"
-#include "modules/settings_safety.hpp"
+#include "modules/hud_design_page.hpp"
+#include "native/hud_design_scene.hpp"
 #include "native/layer_scene.hpp"
 #include "native/mac_import_automation.hpp"
 #include "native/renderer.hpp"
@@ -49,238 +50,141 @@ using Rect = core::Rect;
 using Entries = std::span<const g::LayerCompositionEntry>;
 
 void need(bool value, const char* why) { if (!value) throw std::runtime_error(std::string("macOS import: ") + why); }
-Json blank() { return Json::Object{{"bounds", Json::Array{0, 0, 0, 0}}, {"children", Json::Array{}}}; }
-bool contains(Rect a, Rect b) { return a.x <= b.x && a.y <= b.y && a.x + a.width >= b.x + b.width && a.y + a.height >= b.y + b.height; }
-Rect intersection(Rect a, Rect b) {
-    const auto x = std::max(a.x, b.x), y = std::max(a.y, b.y);
-    return {x, y, std::max(0., std::min(a.x + a.width, b.x + b.width) - x), std::max(0., std::min(a.y + a.height, b.y + b.height) - y)};
-}
 double systemUnixNow() { return std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count(); }
 std::string utf8(const fs::path& path) { const auto t = path.u8string(); return std::string(reinterpret_cast<const char*>(t.data()), t.size()); }
 fs::path utf8Path(std::string_view text) { return fs::path(std::u8string(reinterpret_cast<const char8_t*>(text.data()), text.size())); }
 
-// Retained projected card + exact-opacity surround: the decomposition of the
-// red power button confirmation (app/quit_confirmation.cpp). One private
-// native group covers the card and its local dim; four disjoint exterior
-// rectangles apply the same root alpha without a fullscreen target. The leaf
-// structure is fixed (mac_import_card.hpp), so a content event re-rasterizes
-// only the leaves whose artwork changed; warm frames only re-pose.
+// The card on the design library (app/areas/mac_import_card.hpp): one
+// NativeDesignScene over the panel's layer tree, placed like the shared
+// centre overlay on the content box of the centre plane (DesktopChromeLayout::
+// boxWorld of the frame, without the module switch motion), so it follows
+// the HUD tilt as the confirm bar does. Content events re-emit only changed
+// surfaces; warm frames only re-pose (progress fill, focus rings and the
+// dismissal fade are pose numbers). A new palette or language rebuilds the
+// panel (Context::apply). Pointer input goes to the panel's buttons through
+// the library router and highlight pass (hover lift, press scale).
 class NativeImportCard final {
 public:
-    NativeImportCard(const MacImportCardState& s, g::LayerRasterizer& r, g::LayerRasterOptions o)
-        : state_(s), options_(std::move(o)), card_(r), carrier_(r) {
-        carrier_.load(blank(), options_);
-        static std::atomic<std::uint64_t> next{};
-        prefix_ = "macImport.card." + std::to_string(next.fetch_add(1));
-        groupID_ = prefix_ + ".group";
-        quadID_ = prefix_ + ".dim";
-        local_.reserve(macImportCardLeaves + 1);
-        for (unsigned n = 0; n < 4; ++n) {
-            published_[n].sourceID = prefix_ + ".surround." + std::to_string(n);
-            published_[n].meshID = quadID_;
-            published_[n].linearTint = {0, 0, 0, 1};
-        }
-    }
-    bool sync(const MacImportCardContent& content, std::uint64_t contentRevision, Rect viewport, double now) {
+    NativeImportCard(m::design::Context& context, g::LayerRasterizer& r, g::LayerRasterOptions o)
+        : context_(context), scene_(r, std::move(o), "macImport.card") { build(); }
+    std::function<void(int)> onActivate;
+    void sync(const MacImportCardContent& content, const MacImportCardState& state, double now) {
         need(std::isfinite(now), "Invalid import card time");
-        if (loaded_ && seenState_ == state_.revision() && seenContent_ == contentRevision && viewport_ == viewport) return updateFeedback(now);
-        auto art = prepareMacImportCardArtwork(content, state_, viewport, state_.appearance(), prefix_, now);
-        if (viewport_ != viewport) cover_ = {};
-        const auto& after = art.layers["children"].array();
-        if (!loaded_) {
-            card_.load(art.layers, options_);
-            need(card_.report().unsupported.empty(), "Unsupported import card artwork");
-            for (std::size_t n = 0; n < art.leaves.size(); ++n) {
-                const auto index = card_.surfaceIndex(art.leaves[n].id);
-                need(index.has_value(), "Missing import card leaf");
-                placements_[n] = {*index, {}, 1, {}};
-            }
-            rasterizations_ += art.leaves.size();
-            contentEpoch_ = card_.contentRevision();
-            loaded_ = true;
-        } else {
-            const auto& before = artwork_.layers["children"].array();
-            need(before.size() == after.size(), "Unexpected import card shape");
-            for (std::size_t n = 0; n < after.size(); ++n) {
-                const bool plate = n == static_cast<std::size_t>(MacImportLeaf::cancelPlate) || n == static_cast<std::size_t>(MacImportLeaf::confirmPlate);
-                const auto& previous = plate ? buttonLeaves_[n - static_cast<std::size_t>(MacImportLeaf::cancelPlate)] : before[n];
-                if (previous != after[n]) { card_.updateLocalContent(art.leaves[n].id, ++contentEpoch_, after[n], options_); ++rasterizations_; }
-            }
-        }
-        for (unsigned n = 0; n < 2; ++n) {
-            buttonLeaves_[n] = after[static_cast<std::size_t>(MacImportLeaf::cancelPlate) + n];
-            painted_[n] = state_.buttonPaint(n, now);
-        }
-        artwork_ = std::move(art);
-        seenState_ = state_.revision(); seenContent_ = contentRevision; viewport_ = viewport;
-        return true;
+        const auto& env = context_.env();
+        if (palette_ != env.palette.generation() || language_ != env.language) build();
+        panel_->setContent(content);
+        if (showings_ != state.showings()) { showings_ = state.showings(); panel_->reveal({now, state.reduceMotion(), &context_.env().deadlines}); }
+        panel_->pose(state, now);
+        const auto revision = panel_->root().arena().revision();
+        if (revision != arenaRevision_) { arenaRevision_ = revision; ++revision_; }
+        const auto before = rasterWork();
+        (void)scene_.syncContent(panel_->root(), env.text, revision_, std::clamp(context_.boxScale(), 1., 4.), now);
+        rasterizations_ += rasterWork() - before;
     }
-    void updatePose(Rect viewport, const Matrix& tilt, double now, float opacityScale) {
-        need(viewport_ == viewport && seenState_ == state_.revision() && tilt.finite(), "Synchronize the import card before placement");
-        const auto geometry = macImportCardGeometry(viewport);
-        const auto phase = state_.pose(now);
-        const double halfWidth = geometry.card.width * .5, halfHeight = macImportCardHeight * .5;
-        Matrix transformed = tilt;
-        transformed.values[13] = phase.travel; // Source CABasicAnimation targets transform.translation.y.
-        cardWorld_ = Matrix::translation(geometry.card.x + halfWidth, geometry.card.y + halfHeight) * transformed * Matrix::translation(-halfWidth, -halfHeight);
-        hit_ = core::Projection{{cardWorld_.values[0], cardWorld_.values[4], cardWorld_.values[12], cardWorld_.values[1], cardWorld_.values[5], cardWorld_.values[13],
-                                 cardWorld_.values[3], cardWorld_.values[7], cardWorld_.values[15]}};
-        std::optional<Rect> bounds;
-        const auto include = [&](core::Point p) {
-            const auto q = hit_.project(p);
-            need(bool(q), "Invalid import card projection");
-            if (!bounds) bounds = Rect{q->x, q->y, 0, 0};
-            else {
-                const auto x = std::min(bounds->x, q->x), y = std::min(bounds->y, q->y);
-                const auto right = std::max(bounds->x + bounds->width, q->x), bottom = std::max(bounds->y + bounds->height, q->y);
-                *bounds = {x, y, right - x, bottom - y};
-            }
-        };
-        for (auto p : std::array<core::Point, 4>{{{-2, -2}, {geometry.card.width + 2, -2}, {geometry.card.width + 2, macImportCardHeight + 2}, {-2, macImportCardHeight + 2}}}) include(p);
-        const auto visible = intersection(*bounds, viewport);
-        need(visible.width > 0 && visible.height > 0, "Import card has no visible coverage");
-        if (!contains(cover_, visible)) {
-            constexpr double grid = 64;
-            const double left = std::floor(visible.x / grid) * grid, top = std::floor(visible.y / grid) * grid;
-            const double right = std::ceil((visible.x + visible.width) / grid) * grid, bottom = std::ceil((visible.y + visible.height) / grid) * grid;
-            cover_ = intersection({left, top, right - left, bottom - top}, viewport);
-        }
-        for (std::size_t n = 0; n < placements_.size(); ++n) {
-            placements_[n].world = cardWorld_ * artwork_.leaves[n].local;
-            placements_[n].opacity = artwork_.leaves[n].opacity;
-        }
-        card_.setPlacements(placements_);
-        const auto& r = cover_;
-        const std::array<Rect, 4> surround{{{viewport.x, viewport.y, viewport.width, r.y - viewport.y},
-                                           {viewport.x, r.y, r.x - viewport.x, r.height},
-                                           {r.x + r.width, r.y, viewport.x + viewport.width - r.x - r.width, r.height},
-                                           {viewport.x, r.y + r.height, viewport.width, viewport.y + viewport.height - r.y - r.height}}};
-        const auto dim = state_.appearance().dark ? .30 : .22;
-        for (unsigned n = 0; n < 4; ++n) {
-            const auto b = surround[n];
-            published_[n].world = Matrix::translation(b.x, b.y) * Matrix::scale(b.width, b.height);
-            published_[n].opacity = float(phase.opacity * dim * opacityScale);
-        }
-        published_[4].opacity = float(phase.opacity * opacityScale);
-        published_[4].world = {};
-        localOpacity_ = float(dim);
+    void updatePose(const Matrix& center, const app::ClientMetrics& metrics, float opacity, double now) {
+        metrics_ = metrics;
+        const auto boxWorld = core::source::designBoxWorld(center);
+        const auto camera = g::layerViewportProjection(metrics.pixelWidth, metrics.pixelHeight) * Matrix::scale(metrics.scale, metrics.scale);
+        projection_ = core::Projection::viewport(camera * boxWorld, metrics.pixelWidth, metrics.pixelHeight);
+        const auto before = rasterWork();
+        scene_.updatePose({boxWorld, opacity, now, {}, {}});
+        rasterizations_ += rasterWork() - before;
         posed_ = true;
     }
-    std::optional<int> actionAt(core::Point p) const {
-        if (!posed_ || !state_.presented()) return {};
-        const auto q = hit_.unproject(p);
-        if (!q) return {};
-        const auto g = macImportCardGeometry(*viewport_);
-        if (g.cancel.contains(*q)) return 0;
-        if (g.confirm.contains(*q)) return 1;
-        return {};
+    bool requiresFrames(double now) const { return posed_ && scene_.requiresFrames(now); }
+    // SystemHUDView.updateControlHighlights + the router, in box px; a press
+    // during the dismissal fade reaches nothing.
+    void pointer(const app::PointerEvent& e, bool inert) {
+        const auto q = local({e.x, e.y});
+        auto& root = panel_->root();
+        auto& router = panel_->router();
+        const bool left = e.button == app::PointerButton::left;
+        switch (e.kind) {
+        case app::PointerKind::down: case app::PointerKind::doubleClick:
+            if (left && q && !inert) pressed_ = router.pointerDown(*q, root);
+            break;
+        case app::PointerKind::move:
+            if (pressed_ && q) router.pointerDragged(*q, root);
+            break;
+        case app::PointerKind::up:
+            if (left && pressed_) { pressed_ = false; router.pointerUp(q.value_or(core::Point{-1e6, -1e6}), root); }
+            break;
+        case app::PointerKind::leave: case app::PointerKind::captureLost:
+            cancel();
+            return;
+        }
+        m::design::updateHighlights(root, q, pressed_);
+    }
+    void cancel() {
+        if (pressed_) { pressed_ = false; panel_->router().cancel(); }
+        m::design::updateHighlights(panel_->root(), std::nullopt, false);
     }
     std::optional<core::Point> actionPoint(int button) const {
-        if (!posed_) return {};
-        const auto g = macImportCardGeometry(*viewport_);
+        const auto g = geometry();
         const auto r = button ? g.confirm : g.cancel;
-        return hit_.project({r.x + r.width * .5, r.y + r.height * .5});
+        return point({r.x + r.width * .5, r.y + r.height * .5});
     }
     std::optional<core::Point> listPoint() const {
-        if (!posed_) return {};
-        const auto g = macImportCardGeometry(*viewport_);
-        return hit_.project({g.list.x + g.list.width * .5, g.list.y + g.list.height * .5});
+        const auto g = geometry();
+        return point({g.list.x + g.list.width * .5, g.list.y + g.list.height * .5});
     }
+    MacImportCardGeometry geometry() const { return panel_->geometry(); }
     bool posed() const noexcept { return posed_; }
-    std::optional<MacImportCardGeometry> geometry() const { if (!posed_ || !viewport_) return {}; return macImportCardGeometry(*viewport_); }
-    // Logical client bounds of a card-local rect through the current pose
+    // Logical client bounds of a panel-local rect through the current pose
     // (the projection pointer input uses); none when it does not project.
     std::optional<Rect> clientRect(Rect r) const {
         if (!posed_) return {};
+        const auto card = geometry().card;
         double left = std::numeric_limits<double>::infinity(), top = left, right = -left, bottom = -left;
         for (const auto corner : std::array<core::Point, 4>{{{r.x, r.y}, {r.x + r.width, r.y}, {r.x, r.y + r.height}, {r.x + r.width, r.y + r.height}}}) {
-            const auto q = hit_.project(corner);
-            if (!q) return {};
+            const auto q = projection_.project({card.x + corner.x, card.y + corner.y});
+            if (!q || !std::isfinite(q->x) || !std::isfinite(q->y)) return {};
             left = std::min(left, q->x); top = std::min(top, q->y);
             right = std::max(right, q->x); bottom = std::max(bottom, q->y);
         }
-        return Rect{left, top, right - left, bottom - top};
+        const double s = metrics_.scale > 0 ? metrics_.scale : 1.0;
+        return Rect{left / s, top / s, (right - left) / s, (bottom - top) / s};
     }
-    void upload(g::Renderer& r) {
-        need(posed_, "Place the import card before uploading");
-        if (!quadUploaded_) {
-            const std::array<g::Vertex, 4> vertices{{{{0, 0, 0}, {0, 0}, {1, 1, 1, 1}}, {{1, 0, 0}, {1, 0}, {1, 1, 1, 1}}, {{1, 1, 0}, {1, 1}, {1, 1, 1, 1}}, {{0, 1, 0}, {0, 1}, {1, 1, 1, 1}}}};
-            constexpr std::array<std::uint32_t, 6> indices{0, 1, 2, 0, 2, 3};
-            r.setMesh(quadID_, 1, {vertices, indices});
-            quadUploaded_ = true;
-        }
-        if (uploadedCardRevision_ != card_.resourceRevision()) { card_.uploadResources(r); uploadedCardRevision_ = card_.resourceRevision(); }
-        const auto draws = card_.prepareDraws();
-        if (local_.empty()) {
-            local_.resize(draws.size() + 1);
-            auto& background = local_[0];
-            background.sourceID = groupID_ + ".localDim"; background.meshID = quadID_; background.linearTint = {0, 0, 0, 1};
-            for (std::size_t n = 0; n < draws.size(); ++n) { local_[n + 1] = draws[n]; local_[n + 1].masks.reserve(8); }
-        }
-        need(local_.size() == draws.size() + 1, "Import card draw count changed");
-        auto& background = local_[0];
-        background.opacity = localOpacity_;
-        background.world = Matrix::translation(cover_.x, cover_.y) * Matrix::scale(cover_.width, cover_.height);
-        for (std::size_t n = 0; n < draws.size(); ++n) {
-            auto& target = local_[n + 1];
-            const auto& source = draws[n];
-            if (target.sourceID != source.sourceID || target.meshID != source.meshID || target.textureID != source.textureID) {
-                // A re-rasterized leaf binds its new texture (content events only).
-                target.sourceID = source.sourceID; target.meshID = source.meshID; target.textureID = source.textureID; rebound_ = true;
-            }
-            target.world = source.world; target.opacity = source.opacity; target.masks.assign(source.masks.begin(), source.masks.end());
-        }
-        if (!uploaded_ || uploadedCoverage_ != cover_ || rebound_) { r.configureNativeGroup(groupID_, {cover_, options_.pixelsPerPoint}, local_); groupOwned_ = true; uploadedCoverage_ = cover_; rebound_ = false; }
-        else r.setNativeGroupDraws(groupID_, local_);
-        const auto& output = r.nativeGroupOutput(groupID_);
-        if (!uploaded_) { published_[4].sourceID = output.sourceID; published_[4].meshID = output.meshID; published_[4].textureID = output.textureID; uploaded_ = true; }
-        card_.collectRetiredResources(r);
-    }
-    g::LayerCompositionEntry entry() { need(uploaded_, "Upload the import card before publishing"); return {&carrier_, published_}; }
-    bool releaseResources(g::Renderer& r) {
-        if (groupOwned_ && !r.removeNativeGroup(groupID_)) return false;
-        uploaded_ = groupOwned_ = false; uploadedCardRevision_ = 0;
-        bool ok = card_.releaseResources(r) && carrier_.releaseResources(r);
-        if (quadUploaded_) { if (r.removeMesh(quadID_)) quadUploaded_ = false; else ok = false; }
-        return ok;
-    }
+    void upload(g::Renderer& r) { need(posed_, "Place the import card before uploading"); (void)scene_.uploadAnimations(r); }
+    Entries entries() const { return scene_.entries(); }
+    bool collectRetired(g::Renderer& r) { return scene_.collectRetired(r); }
+    bool releaseResources(g::Renderer& r) { return scene_.releaseResources(r); }
+    // Surfaces rasterized so far (content events only).
     std::size_t rasterizations() const noexcept { return rasterizations_; }
 private:
-    // Button feedback (.12 s colour/width tracks) repaints only the two plates.
-    bool updateFeedback(double now) {
-        bool changed = false;
-        for (unsigned n = 0; n < 2; ++n) {
-            const auto paint = state_.buttonPaint(n, now);
-            if (paint == painted_[n]) continue;
-            auto next = buttonLeaves_[n];
-            const auto color = [](const m::SettingsSafetyColor& c) { return Json::Object{{"sRGB", Json::Array{c[0], c[1], c[2], c[3]}}}; };
-            next["shape"]["fillColor"] = color(paint.fill); next["shape"]["strokeColor"] = color(paint.stroke); next["shape"]["lineWidth"] = paint.width;
-            const auto leaf = static_cast<std::size_t>(MacImportLeaf::cancelPlate) + n;
-            card_.updateLocalContent(artwork_.leaves[leaf].id, ++contentEpoch_, next, options_);
-            buttonLeaves_[n] = std::move(next); painted_[n] = paint; ++rasterizations_; changed = true;
-        }
-        return changed;
+    void build() {
+        auto& env = context_.env();
+        panel_ = std::make_unique<MacImportPanel>(env);
+        panel_->onActivate = [this](int button) { if (onActivate) onActivate(button); };
+        palette_ = env.palette.generation(); language_ = env.language; pressed_ = false;
+        arenaRevision_ = panel_->root().arena().revision(); ++revision_;
     }
-    const MacImportCardState& state_;
-    g::LayerRasterOptions options_;
-    g::LayerScene card_, carrier_;
-    MacImportArtwork artwork_;
-    std::array<Json, 2> buttonLeaves_;
-    std::array<m::SettingsSafetyButtonPaint, 2> painted_{};
-    std::array<g::LayerPlacement, macImportCardLeaves> placements_{};
-    std::vector<g::DrawObject> local_;
-    std::array<g::DrawObject, 5> published_;
-    std::string prefix_, groupID_, quadID_;
-    std::uint64_t seenState_{~std::uint64_t{0}}, seenContent_{~std::uint64_t{0}}, contentEpoch_{}, uploadedCardRevision_{};
-    std::optional<Rect> viewport_, uploadedCoverage_;
-    Rect cover_{};
-    Matrix cardWorld_;
-    core::Projection hit_;
-    float localOpacity_{.30f};
-    bool loaded_{}, posed_{}, uploaded_{}, groupOwned_{}, quadUploaded_{}, rebound_{};
+    std::size_t rasterWork() const {
+        const auto s = scene_.stats();
+        return std::size_t(s.partsLoaded + s.surfacesUpdated + s.lazyPaints);
+    }
+    std::optional<core::Point> local(core::Point logical) const {
+        if (!posed_) return std::nullopt;
+        return projection_.unproject({logical.x * metrics_.scale, logical.y * metrics_.scale});
+    }
+    std::optional<core::Point> point(core::Point panelLocal) const {
+        if (!posed_) return std::nullopt;
+        const auto card = geometry().card;
+        const auto q = projection_.project({card.x + panelLocal.x, card.y + panelLocal.y});
+        if (!q) return std::nullopt;
+        const double s = metrics_.scale > 0 ? metrics_.scale : 1.0;
+        return core::Point{q->x / s, q->y / s};
+    }
+    m::design::Context& context_;
+    std::unique_ptr<MacImportPanel> panel_;
+    g::NativeDesignScene scene_;
+    app::ClientMetrics metrics_;
+    core::Projection projection_;
+    std::uint64_t palette_{}, arenaRevision_{}, revision_{}, showings_{};
+    core::Language language_{core::Language::english};
     std::size_t rasterizations_{};
+    bool posed_{}, pressed_{};
 };
-
 
 // Hidden-coverage stand-in for this owner's group under the HUD window's UIA
 // root (app/hud_automation.cpp): a stable fragment root that forwards child
@@ -389,7 +293,9 @@ public:
         outcomeRoute_ = utility_.makeRoute();
         const auto& a = host_.appearance();
         language_ = a.language;
-        state_.setAppearance({a.dark, 2, a.accent});
+        // The card is a design-library panel on the HUD's one design Context
+        // (palette, language, text services, render scale); none: no card.
+        context_ = host_.designContext();
         flow_ = makeFlow();
         host_.publish<app::MacImportEntry>(app::macImportEntryService, *this);
         if (coverageMode() && !host_.find<app::DataRootRestart>(app::dataRootRestartService)) {
@@ -435,7 +341,6 @@ public:
         time_ = std::max(time_, time);
         language_ = a.language;
         flow_->setLanguage(a.language);
-        state_.setAppearance({a.dark, 2, a.accent});
         state_.setReduceMotion(a.reduceMotion, time_);
     }
     void setOverlayVisible(bool visible, double time) override {
@@ -449,35 +354,42 @@ public:
     void update(const app::ModuleFrame& f) override {
         time_ = std::max(time_, f.time);
         state_.refresh(time_);
-        if (!state_.presented() || !metrics_.width || !metrics_.height) return;
+        if (!state_.presented() || !metrics_.pixelWidth || !metrics_.pixelHeight || !context_) return;
         if (!card_) {
-            g::LayerRasterOptions options; options.pixelsPerPoint = 2; options.paddingPoints = 1;
-            card_ = std::make_unique<NativeImportCard>(state_, raster_, options);
+            g::LayerRasterOptions options; options.paddingPoints = 1;
+            card_ = std::make_unique<NativeImportCard>(*context_, raster_, options);
+            // A button press: its keyboard focus moves there, then it answers.
+            card_->onActivate = [this](int button) {
+                if (!state_.focus(button, time_)) return;
+                answer(button ? MacImportCardAction::right : MacImportCardAction::left);
+            };
             automationPose_ = AutomationPose::unposed;
         }
-        const Rect viewport{0, 0, metrics_.width, metrics_.height};
-        card_->sync(flow_->content(), flow_->revision(), viewport, time_);
-        const auto layout = core::source::DesktopChromeLayout::make(f.chrome, f.center, {});
-        card_->updatePose(viewport, m::SettingsSafety::centeredSourceTransform(f.center, layout.designScale), time_, f.opacity);
+        card_->sync(flow_->content(), state_, time_);
+        card_->updatePose(f.center, metrics_, f.opacity, time_);
         // The card's UIA parts need its pose: the dialog (and its focused
         // button's focus event) appears on the card's first frame, and its
         // bounds are re-read once the reveal settles. Two content events per
         // presentation; warm frames do nothing here.
         if (automationPose_ != AutomationPose::settled) {
-            const bool settled = !state_.pose(time_).animated;
+            const bool settled = !card_->requiresFrames(time_);
             if (automationPose_ == AutomationPose::unposed || settled) automationActed();
             automationPose_ = settled ? AutomationPose::settled : AutomationPose::revealing;
         }
     }
-    bool requiresFrames(double time) const override { return state_.requiresFrames(std::max(time, time_)); }
-    void upload(g::Renderer& r) override { if (card_ && state_.presented()) card_->upload(r); }
+    bool requiresFrames(double time) const override {
+        const auto t = std::max(time, time_);
+        return state_.requiresFrames(t) || (card_ && state_.presented() && card_->requiresFrames(t));
+    }
+    void upload(g::Renderer& r) override { if (card_ && state_.presented() && card_->posed()) card_->upload(r); }
     Entries modalEntries() override {
-        if (!card_ || !state_.presented()) return {};
-        modal_[0] = card_->entry();
-        return modal_;
+        if (!card_ || !state_.presented() || !card_->posed()) return {};
+        return card_->entries();
     }
     void collected(g::Renderer& r) override {
-        if (card_ && !state_.presented()) { need(card_->releaseResources(r), "Import card still published"); card_.reset(); }
+        if (!card_) return;
+        need(card_->collectRetired(r), "Import card artwork still published");
+        if (!state_.presented()) { need(card_->releaseResources(r), "Import card still published"); card_.reset(); }
     }
     void release(g::Renderer& r) override { if (card_) { need(card_->releaseResources(r), "Import card still published at teardown"); card_.reset(); } }
     bool covers(core::Point) const override { return state_.presented(); }
@@ -488,11 +400,7 @@ public:
     bool pointer(const app::PointerEvent& e, double time) override {
         if (!state_.presented()) return false;
         time_ = std::max(time_, time);
-        const auto action = card_ ? card_->actionAt({e.x, e.y}) : std::nullopt;
-        if (e.kind == app::PointerKind::down && e.button == app::PointerButton::left) answer(state_.pointerDown(action, time_));
-        else if (e.kind == app::PointerKind::up && e.button == app::PointerButton::left) answer(state_.pointerUp(action, time_));
-        else if (e.kind == app::PointerKind::move) state_.pointerMove(action, time_);
-        else if (e.kind == app::PointerKind::leave || e.kind == app::PointerKind::captureLost) { (void)state_.pointerUp({}, time_); state_.pointerMove({}, time_); }
+        if (card_) card_->pointer(e, state_.dismissing());
         host_.requestFrame();
         return true;
     }
@@ -518,9 +426,7 @@ public:
     void focus(bool value, double time) override { if (!value) cancelInteraction(time); }
     void cancelInteraction(double time) override {
         time_ = std::max(time_, time);
-        if (!state_.presented()) return;
-        (void)state_.pointerUp({}, time_);
-        state_.pointerMove({}, time_);
+        if (card_) card_->cancel();
     }
     bool hostEvent(const app::HostEvent& e, double time) override {
         using K = app::HostEvent::Kind;
@@ -755,9 +661,8 @@ private:
         using N = g::MacImportAutomationNode;
         using R = N::Role;
         std::vector<N> out;
-        if (!flow_ || !flow_->presented() || !state_.presented() || state_.dismissing() || !card_) return out;
-        const auto geometry = card_->geometry();
-        if (!geometry) return out;
+        if (!flow_ || !flow_->presented() || !state_.presented() || state_.dismissing() || !card_ || !card_->posed()) return out;
+        const auto geometry = std::optional(card_->geometry());
         const auto& c = flow_->content();
         const auto part = [&](std::string id, R role, std::string name, std::string help, Rect local, std::size_t parent) {
             N n;
@@ -766,7 +671,7 @@ private:
             out.push_back(std::move(n));
             return out.size() - 1;
         };
-        const auto dialog = part("dialog", R::dialog, c.title, c.message, {0, 0, geometry->card.width, macImportCardHeight}, N::topLevel);
+        const auto dialog = part("dialog", R::dialog, c.title, c.message, {0, 0, geometry->card.width, geometry->card.height}, N::topLevel);
         part("title", R::text, c.title, {}, geometry->title, dialog);
         if (!c.message.empty()) part("message", R::text, c.message, {}, geometry->message, dialog);
         if (c.progress) {
@@ -829,8 +734,8 @@ private:
     core::Language language_{core::Language::english};
     MacImportCardState state_;
     std::unique_ptr<MacImportFlow> flow_;
+    m::design::Context* context_{};
     std::unique_ptr<NativeImportCard> card_;
-    std::array<g::LayerCompositionEntry, 1> modal_{};
     std::optional<PendingOutcome> pending_;
     MacImportStep step_{MacImportStep::hidden};
     double time_{}, wheelRemainder_{};

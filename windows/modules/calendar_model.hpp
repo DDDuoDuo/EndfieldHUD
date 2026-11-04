@@ -1,5 +1,7 @@
 #pragma once
 #include "core/data/data_store.hpp"
+#include "core/localization.hpp"
+#include <array>
 #include <compare>
 #include <functional>
 #include <optional>
@@ -58,6 +60,17 @@ struct CalendarTimeZone {
     std::function<CalendarDay(double)>day;
 };
 CalendarTimeZone calendarUTC(); // deterministic fixture/civil UTC, no OS API
+// The Calendar canvas's dates (HUDCalendarCanvas.formatter, :106-121): the
+// Mac's DateFormatter templates in the UI language's locale (en_US, zh_CN,
+// zh_TW, ja_JP, ko_KR) on the Gregorian calendar in the controller's zone,
+// the symbol lists in that locale, and the user's calendar's first weekday
+// (Calendar.autoupdatingCurrent). Native: CalendarCivilContext::formats (ICU).
+struct CalendarFormats {
+    std::function<std::string(CalendarDay,std::string_view skeleton,core::Language)>format; // "yMMMM", "yMMMMd", "EEEE"
+    std::function<std::array<std::string,7>(core::Language)>shortWeekdays;  // shortStandaloneWeekdaySymbols, Sunday first
+    std::function<std::array<std::string,12>(core::Language)>shortMonths;   // shortStandaloneMonthSymbols
+    std::function<unsigned()>firstWeekday;                                  // 1 = Sunday
+};
 struct CalendarReminder {
     std::string identifier,eventID,title;CalendarDay day;double date{};
     bool previousDay{},catchUp{},wasScheduled{};

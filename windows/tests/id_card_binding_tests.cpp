@@ -51,7 +51,17 @@ int main(int argc,char**argv){
         const auto leaf=Json::parse(R"({"id":"desktop.profile.managerName/0","kind":"text","bounds":[0,0,243.11239624023438,36],"text":{"string":"Endministrator","fontSize":22,"font":{"postScriptName":".AppleSystemUIFontMedium","familyName":".AppleSystemUIFont","pointSize":22},"foregroundColor":{"sRGB":[1,1,1,1]},"alignment":"left","truncation":"end","wrapped":false,"runs":[]}})");
         const auto updated=card.captionLayer(leaf,4);
         check(updated["text"]["string"].string()=="满级"||updated["text"]["string"].string()==endfield::core::localized("MAX","满级",Language::japanese),"MAX caption content");
-        check(updated["text"]["alignment"].string()=="right"&&updated["bounds"]==leaf["bounds"]&&updated["text"]["font"]["postScriptName"].string()==".AppleSystemUIFontMedium","Geometry and font family retained");
+        check(updated["text"]["alignment"].string()=="right"&&updated["bounds"]==leaf["bounds"]&&updated["text"]["font"]["familyName"].string()=="HarmonyOS Sans"&&updated["text"]["fontWeight"].integer()==500,"Geometry retained; the label is HarmonyOS Sans medium (SHELL-43)");
+        // Recording mode (SHELL-44): "UID:" and a hatched bar after the measured prefix.
+        {endfield::modules::IdCardBinding redacted(source,[](std::string_view text,double size){return double(text.size())*size*.5;});
+         endfield::modules::IdCardBinding::Input r=input;r.uidRedacted=true;r.language=Language::english;
+         check(redacted.update(r)&&redacted.captions()[1].text=="UID:"&&redacted.redaction().has_value(),"Recording mode hides the UID");
+         const auto&bar=*redacted.redaction();const auto size=redacted.captions()[1].fontSize;
+         check(bar.x==5*size*.5&&bar.height==std::round(size*1.1)&&bar.width==std::max(24.,std::min(source.captions[1].width-bar.x,size*7.5))&&bar.labelled==(bar.width>=70)&&bar.label=="[ REDACTED ]",
+               "The bar follows the UID: prefix, 1.1 em high, at most 7.5 em wide");
+         const auto layer=redacted.captionLayer(leaf,1);check(layer["children"].array().size()==1&&layer["children"].array()[0]["backgroundColor"]["sRGB"].array()[0].number()==0x14/255.,"The caption carries the hatched bar");
+         for(const auto&c:layer["children"].array()[0]["children"].array()[0]["shape"]["path"].array())check(c["points"].array().size()==(c["op"].string()=="close"?0u:1u),"Stripe path commands carry one point each");
+         check(!redacted.update(r),"Redaction is part of the card key");r.uidRedacted=false;check(redacted.update(r)&&!redacted.redaction()&&redacted.captions()[1].text.starts_with("UID: "),"Turning it off restores the UID");}
         std::cout<<"ID card binding: "<<checks<<" checks passed\n";return 0;
     }catch(const std::exception&e){std::cerr<<"ID card binding failed after "<<checks<<": "<<e.what()<<'\n';return 1;}
 }

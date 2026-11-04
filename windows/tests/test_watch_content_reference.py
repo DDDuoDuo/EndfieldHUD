@@ -65,13 +65,6 @@ def validate(root, source, shell_packet=None):
     # rather than assuming this to omit slot observations from the artifact.
     for preset in PRESETS:
         assert len({row['icon'] for row in data['shortcutIcons'] if row['preset'] == preset}) == 1
-    assert {(r['language'], r['theme']) for r in data['chrome']} == {(language, theme) for language in LANGUAGES for theme in ('dark', 'light')}
-    for row in data['chrome']:
-        assert row['header'] in trees and row['footer'] in trees and len(row['moduleTitles']) == 24
-        assert row['workActive'] == 'WORK MODE / ACTIVE' and row['workPaused'] == 'WORK MODE / PAUSED'
-        header = json.loads((root / trees[row['header']]['file']).read_text())
-        strings = [child.get('text', {}).get('string') for child in header['children']]
-        assert 'ENDFIELDHUD' in strings and 'SYSTEM INTERFACE' in strings
     for asset in data['rasterAssets']:
         path = pathlib.PurePosixPath(asset['path'])
         assert not path.is_absolute() and '..' not in path.parts

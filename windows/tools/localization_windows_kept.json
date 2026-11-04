@@ -1,0 +1,10 @@
+{
+ "comment": ["Windows-kept localization pairs: v1.2.0 Mac catalog pairs that Mac 1.3.0 pruned (unused there) while",
+  "Windows modules that are not redesigned yet still call them through core::localized or a module string table.",
+  "tools/build_localization_catalog.py adds them, with the five languages of the Mac catalog at \"base\", to the",
+  "generated core/localization_catalog.inc. Each row: English, Simplified Chinese (the lookup pair), Windows callers.",
+  "Drop a row (or a whole group) in the change that removes its last Windows caller; the generator names rows",
+  "that have none left."],
+ "base": "ca04f142185c7de40acd8523bdb563195d90a1d1",
+ "pairs": {}
+}

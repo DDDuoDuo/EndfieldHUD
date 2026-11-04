@@ -81,7 +81,7 @@ final class ContentReferenceBackingView: NSView { override var isFlipped: Bool {
         try check(slots.count == 24 && right.count == 18 && bindings.count == 24, "Original source desktop pool changed")
         let pack = try Pack(output)
         let languages: [AppLanguage] = [.english, .simplifiedChinese, .traditionalChinese, .japanese, .korean]
-        var variants: [[String: Any]] = [], custom: [[String: Any]] = [], icons: [[String: Any]] = [], chromeRows: [[String: Any]] = []
+        var variants: [[String: Any]] = [], custom: [[String: Any]] = [], icons: [[String: Any]] = []
         let shortcutID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
         for language in languages {
             L10n.language = language; config.language = language; HUDRuntimeAppearance.configuration = config
@@ -98,17 +98,6 @@ final class ContentReferenceBackingView: NSView { override var isFlipped: Bool {
                             "target": entry.target.identifier, "buttonID": id, "caption": try pack.tree(layers.caption), "icon": try pack.tree(layers.icon)])
                     }}
                 }
-                let chrome = ChromeSourceFixture(); chrome.configuration = config; chrome.configuration.theme = dark ? .dark : .light
-                chrome.layout(); chrome.applyAppearance(dark: dark)
-                let backing = ContentReferenceBackingView(frame: view.bounds); backing.wantsLayer = true; backing.layer!.addSublayer(chrome.canvas)
-                chrome.workModeController.snapshot.phase = .running; chrome.updateWorkPresentation(force: true)
-                let active = chrome.workBadge.string as? String ?? ""
-                chrome.workModeController.snapshot.phase = .paused; chrome.updateWorkPresentation(force: true)
-                let paused = chrome.workBadge.string as? String ?? ""
-                chromeRows.append(["language": language.rawValue, "theme": dark ? "dark" : "light",
-                    "header": try pack.tree(chrome.header), "footer": try pack.tree(chrome.footer),
-                    "workActive": active, "workPaused": paused,
-                    "moduleTitles": HUDModule.allCases.map { ["target": $0.rawValue, "title": $0.title, "navigationTitle": $0.navigationTitle] }])
             }
             // Custom apps are never a selected HUD module. Actual titles are
             // bounded explicit fixtures, never installed-app or saved-user data.
@@ -134,14 +123,13 @@ final class ContentReferenceBackingView: NSView { override var isFlipped: Bool {
                   && view.sourceCursorSetCountForVerification == 0, "Exporter escaped detached fixture boundaries")
         let result: [String: Any] = ["schemaVersion": 1, "desktopMode": true, "matrix": allSlots ? "all-right-slots" : "source-navigation-minimal",
             "accentHex": accent, "slots": slots, "initialBindings": bindings, "variants": variants,
-            "customTitles": titles, "customCaptions": custom, "shortcutIcons": icons, "chrome": chromeRows,
+            "customTitles": titles, "customCaptions": custom, "shortcutIcons": icons,
             "contentTrees": pack.trees, "rasterAssets": pack.encoder.rasterAssets, "unsupported": pack.encoder.unsupported,
             "safety": ["systemHUDViewConstructed": false, "windowCreated": false, "liveProviders": false, "cursorSets": 0, "installedAppsRead": false, "userStoresRead": false],
             "limits": ["Custom title coverage is exact only for the explicit fixture strings; arbitrary future titles require source fitting or a separately validated native text fitting implementation",
                        "Original custom-app images are not read; original preset exports the source nil-image vector fallback",
                        "Selected colors are exact for the requested accent; arbitrary accent changes require source color-role evaluation",
-                       "Header and work badge literals remain in the source language; no translations are invented",
-                       "Cross-OS font raster equality is not claimed; no full frame/oracle pixel data is duplicated"]]
+                                              "Cross-OS font raster equality is not claimed; no full frame/oracle pixel data is duplicated"]]
         try write(result, output.appendingPathComponent("watch-content.json"))
         print("Exported \(variants.count) source variants, \(custom.count) explicit custom captions, \(icons.count) preset/slot observations; \(pack.trees.count) unique local trees")
     }

@@ -4,17 +4,26 @@
 // explicit synthetic fixture in a new temporary data root; nothing is shown.
 #include "app/application_impl.hpp"
 #include "app/process_diagnostics.hpp"
+#include "core/source_layout.hpp"
+#include "core/source_native_labels.hpp"
 #include "app/areas/calendar_reminder_module.hpp"
-#include "modules/archive_presentation.hpp"
 #include "native/display_center_logo.hpp"
-#include "native/work_mode_automation.hpp"
+#include "native/module_scene.hpp" // NativeModuleSurface: coverage projection probes
+#include "modules/hud_design_controls.hpp"
+#include "modules/notes_canvas.hpp"
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <functional>
 #include <iostream>
+#include <iterator>
 #include <map>
 #include <set>
+#include <thread>
 #include <tlhelp32.h>
+#include <psapi.h>
 #include <uiautomation.h>
 #include <wrl/client.h>
 
@@ -401,9 +410,236 @@ int Application::Impl::runIdleTrace(){
     return 0;
 }
 
+// watch_session_preview --animation-trace: the production owner with the
+// module coverage inputs, hidden, on the REAL clock through the production
+// frame scheduling (as --idle-trace: offscreen hardware renderer, finite
+// motion paced at idleTraceRefreshRate, the laptop's 165 Hz). Every frame of
+// the openings and closings is recorded: its interval, the main thread's busy
+// time (thread cycles), present()'s stages and owners, and what it uploaded,
+// rasterized or rendered. Openings: the session's first (after the launch
+// prewarm), four warm reopenings, one after the closed HUD's graphics were
+// released (the grace, --idle-trace-grace) and one after that; with
+// --animation-trace-modules also two reopenings on each of the listed modules.
+// Numbers and owner/module names only.
+int Application::Impl::runAnimationTrace(){
+    if(args.animationTrace.empty())throw std::logic_error("Animation trace requires its output");
+    const auto clock=[&]{const double t=hostTime(OverlayHost::clockNow());hiddenClock=std::max(hiddenClock,t);return t;};
+    diagnosticFinished=true;probe.enabled=true;
+    // Main-thread busy time: thread cycles, calibrated against the QPC clock.
+    const auto cycles=[]{ULONG64 c{};QueryThreadCycleTime(GetCurrentThread(),&c);return double(c);};
+    double cyclesPerMS{};{const double s=OverlayHost::clockNow();const double c0=cycles();while(OverlayHost::clockNow()-s<.05){}cyclesPerMS=(cycles()-c0)/((OverlayHost::clockNow()-s)*1000);}
+    const auto pageFaults=[]{PROCESS_MEMORY_COUNTERS m{};m.cb=sizeof m;return GetProcessMemoryInfo(GetCurrentProcess(),&m,sizeof m)?std::int64_t(m.PageFaultCount):std::int64_t{};};
+    const auto snapshot=[&]{return Snapshot{renderer.stats(),renderer.sourceGraphicsStats(),rasterizer.stats(),session->frameStats(),session->stats()};};
+    // RC 139's design density, alongside: measured on every frame's live
+    // centre plane from the launch prewarm's first-pose measurement (the
+    // hysteresis path RC 139 took). The settled HUD must hold exactly it.
+    std::optional<double> rc139Density;
+    const auto density=[&]{return designOverlay?designOverlay->context().boxScale():0.;};
+    const auto pump=[&](double duration,const std::function<bool()>&until,const std::function<void()>&onFrame){
+        const double end=OverlayHost::clockNow()+duration;
+        for(;;){const double left=end-OverlayHost::clockNow();if(left<=0||(until&&until()))return;
+            const auto frames=host.stats().frames;
+            need(host.pumpOnce(static_cast<std::uint32_t>(std::ceil(left*1000))),"The traced host stopped");
+            if(host.stats().frames==frames)continue;
+            if(rc139Density&&chromePlan&&chromePlan->projection().center&&session->phase()!=core::VisibilityPhase::concealed)
+                rc139Density=tools::designDensity(core::source::designBoxWorld(*chromePlan->projection().center),metrics.scale,*rc139Density);
+            if(onFrame)onFrame();}
+    };
+    // Production selects Map at construction and applies the preference
+    // record; the launch prewarm and the post-launch work finish first.
+    double t=clock();
+    if(notes&&notes->selected()!=core::Module::map)notes->select(core::Module::map,t);
+    // With --animation-trace-dpi, the launch order of production: runVisible
+    // derives the density before the preference record exists, then the
+    // record applies a non-default HUD scale and offset.
+    double launchStartDefault{},launchStart{},firstRawDefault{},firstRaw{};
+    const auto firstPoseRaw=[&]{const auto c=chromePlan->clipCenter({0,0,metrics.width,metrics.height},settings.hudOffset,settings.hudScale,contentScale,false,0);
+        return c?core::source::planeScale(core::source::designBoxWorld(*c),{modules::design::metric::boxWidth/2,modules::design::metric::boxHeight/2})*metrics.scale:0.;};
+    if(args.animationTraceDpi){holdDesignDensity();
+        if(chromePlan&&metrics.width>0)if(const auto first=chromePlan->clipCenter({0,0,metrics.width,metrics.height},settings.hudOffset,settings.hudScale,contentScale,false,0))
+            launchStartDefault=tools::designDensity(core::source::designBoxWorld(*first),metrics.scale,2);
+        firstRawDefault=firstPoseRaw();
+        configuration.set("hudScale",1.8);configuration.set("hudOffsetX",.1);configuration.set("hudOffsetY",-.08);}
+    configuration.set("ambientAnimation",true);if(args.animationTraceLaunchOpen==2)configuration.set("reduceMotion",true);configurationPending=true;applyConfiguration(t);
+    // --animation-trace-launch open|open-reduced: the HUD opens at launch, before
+    // any prewarm (first run, --settings, a device-loss reopen).
+    if(!args.animationTraceLaunchOpen)prewarm();
+    if(utility){utility->waitIdle();if(longWork)longWork->waitIdle();utilityCompleted();}
+    launchStart=designDensityStart.value_or(0.);if(args.animationTraceDpi)firstRaw=firstPoseRaw();
+    // RC 139's launch prewarm measured the held first pose from 2 (the overlay's
+    // initial density); without a prewarm its first opening measured live from 2.
+    if(args.animationTraceLaunchOpen)rc139Density=2.;
+    else if(chromePlan&&chromePlan->projection().center)rc139Density=tools::designDensity(core::source::designBoxWorld(*chromePlan->projection().center),metrics.scale,2);
+    need(!args.animationTraceDpi||args.animationTraceLaunchOpen||launchStart==rc139Density.value_or(-1),"The launch start is the prewarm's first-pose measurement under the applied preference record");
+    double replayMS{};{const auto begin=Clock::now();(void)replayDesignDensity(2,false);replayMS=milliseconds(begin);}
+    // clipCenter resolves only the centre's ancestry with only its curves: it
+    // equals the full pose (WatchAnimation::pose) through the full layout.
+    if(chromePlan&&animation&&camera&&chromeBindings&&metrics.width>0){
+        const core::Rect viewport{0,0,metrics.width,metrics.height};const auto pixels=chromePlan->restingPointsPerUnit(viewport);need(pixels.has_value(),"The resting centre is measurable");
+        const double unit=source::desktopBaseDesignScale(viewport)*contentScale / *pixels;const source::SourceLayout layout(animation->scene());const auto centre=layout.nodeIndex(chromeBindings->centerNodeID);need(centre.has_value(),"The centre node exists");
+        const auto frame=camera->desktopFrame({viewport.width,viewport.height},camera->rootRotation(),settings.hudOffset,settings.hudScale);
+        for(const bool exit:{false,true})for(unsigned k=0;k<=12;++k){const double at=(exit?chromePlan->exitSeconds():chromePlan->entranceSeconds())*k/12;
+            const auto pose=exit?animation->pose(animation->entrance().lastKeyTime,{},at,frame.layout.canvasSize):animation->pose(at,{},{},frame.layout.canvasSize);
+            const auto world=frame.worldRoot*layout.resolve({},pose.transforms)[*centre].worldMatrix;std::array<core::Point,4> quad{};bool projected=true;
+            const std::array<source::Vec3,4> local{source::Vec3{-500*unit,320*unit,0},source::Vec3{500*unit,320*unit,0},source::Vec3{500*unit,-320*unit,0},source::Vec3{-500*unit,-320*unit,0}};
+            for(unsigned n=0;n<4;++n){const auto p=source::projectNativePoint(local[n],world,frame.projection*frame.view,viewport);if(!p){projected=false;break;}quad[n]=*p;}
+            const auto fast=chromePlan->clipCenter(viewport,settings.hudOffset,settings.hudScale,contentScale,exit,at);need(projected==fast.has_value(),"clipCenter projects as the full layout does");
+            if(fast){const auto full=source::nativeProjectiveTextTransform(quad,{1000,640});for(unsigned n=0;n<16;++n)need(std::abs(full.values[n]-fast->values[n])<=1e-9*std::max(1.,std::abs(full.values[n])),"clipCenter equals the full pose and layout");}}}
+    pump(2,{},{});
+    const double period=1000./args.idleTraceRefreshRate;
+    constexpr std::array stageIds{LiveProbe::prepare,LiveProbe::backdrop,LiveProbe::sourcePose,LiveProbe::materials,LiveProbe::nativeLabels,LiveProbe::notesPose,LiveProbe::publication,LiveProbe::draw,LiveProbe::message};
+    constexpr std::array stageNames{"prepare","backdrop","sourcePose","materials","nativeLabels","notesPose","publication","draw","message"};
+    const auto quantile=[](std::vector<double> v,double p){if(v.empty())return 0.;std::sort(v.begin(),v.end());return v[std::min(v.size()-1,static_cast<std::size_t>(std::ceil(p*double(v.size()))-1))];};
+    const auto opened=[&]{return lifecycle.phase()==core::SystemOverlayPhase::open;};
+    const auto closed=[&]{return lifecycle.phase()==core::SystemOverlayPhase::closed&&session->phase()==core::VisibilityPhase::concealed;};
+    Json::Array segments;
+    // One opening or closing as the summon hotkey asks for it, recorded until
+    // it completes (and `tail` seconds more, outside the statistics).
+    const auto segment=[&](const std::string&name,bool opening,double tail){
+        auto previous=snapshot();const auto first=previous;auto timings=probe.timings;auto owners=probe.owners;std::size_t ownerCount=probe.ownerCount;
+        const double densityBefore=density();std::int64_t densitySteps{};double densityAt=densityBefore;
+        // Between the summon and the first frame: plane resolutions, rasterizations.
+        const auto resolvesBefore=designDensityResolves;const double resolveMSBefore=designDensityResolveMilliseconds;std::int64_t firstResolves=-1,firstRasterizations=-1;
+        const double start=OverlayHost::clockNow();double at=start,busyAt=cycles();std::int64_t faultsAt=pageFaults();
+        perform(lifecycle.toggle(),clock());if(opening)host.show(false);host.setFrameDemand(demand(clock()));host.invalidate();
+        const double requestMS=(OverlayHost::clockNow()-start)*1000;
+        densityAt=density(); // a summon's display placement may derive it before the first frame, not after
+        double doneAt=-1;Json::Array rows;std::vector<double>intervals,busy,present;
+        const auto finished=[&]{return opening?opened():closed();};
+        pump(10,[&]{return doneAt>=0&&OverlayHost::clockNow()-doneAt>=tail;},[&]{
+            const double now=OverlayHost::clockNow();const double c=cycles();const auto f=pageFaults();const auto next=snapshot();
+            Json::Object stages;for(std::size_t n=0;n<stageIds.size();++n){const double ms=probe.timings[stageIds[n]].total-timings[stageIds[n]].total;if(ms>=.05)stages[stageNames[n]]=ms;}
+            std::vector<std::pair<double,std::string>> spent;
+            for(std::size_t n=0;n<probe.ownerCount;++n){const auto&o=probe.owners[n];double ms=o.update.total+o.upload.total;if(n<ownerCount)ms-=owners[n].update.total+owners[n].upload.total;if(ms>=.1)spent.emplace_back(ms,std::string(o.name));}
+            std::sort(spent.begin(),spent.end(),std::greater<>());Json::Object byOwner;for(std::size_t n=0;n<spent.size()&&n<6;++n)byOwner[spent[n].second]=spent[n].first;
+            const double interval=(now-at)*1000,cpu=(c-busyAt)/cyclesPerMS,presentMS=probe.timings[LiveProbe::frame].total-timings[LiveProbe::frame].total;
+            const bool after=doneAt>=0;
+            if(!after){intervals.push_back(interval);busy.push_back(cpu);present.push_back(presentMS);}
+            const auto&a=previous;const auto&b=next;
+            if(firstResolves<0){firstResolves=std::int64_t(designDensityResolves-resolvesBefore);firstRasterizations=std::int64_t(b.raster.rasterizations-first.raster.rasterizations);}
+            rows.push_back(Json::Object{{"atMS",(now-start)*1000},{"intervalMS",interval},{"busyMS",cpu},{"presentMS",presentMS},{"afterDone",after},{"stages",std::move(stages)},{"owners",std::move(byOwner)},
+                {"textureUploads",std::int64_t(b.renderer.textureUploads-a.renderer.textureUploads)},{"textureUploadMS",(b.renderer.textureUploadSeconds-a.renderer.textureUploadSeconds)*1000},
+                {"meshUploads",std::int64_t(b.renderer.meshUploads-a.renderer.meshUploads)},{"nativeGroupRenders",std::int64_t(b.renderer.nativeGroupRenders-a.renderer.nativeGroupRenders)},
+                {"drawListMS",(b.renderer.drawListSeconds-a.renderer.drawListSeconds)*1000},{"parkedRestores",std::int64_t(b.renderer.parkedRestores-a.renderer.parkedRestores)},
+                {"rasterizations",std::int64_t(b.raster.rasterizations-a.raster.rasterizations)},{"textLayouts",std::int64_t(b.raster.textLayoutsCreated-a.raster.textLayoutsCreated)},
+                {"layoutBuilds",std::int64_t(b.frame.layoutBuilds-a.frame.layoutBuilds)},{"localImageBuilds",std::int64_t(b.frame.localImageBuilds-a.frame.localImageBuilds)},
+                {"sourcePoses",std::int64_t(b.session.fullPoses-a.session.fullPoses)},{"pageFaults",f-faultsAt},
+                {"designDensity",designOverlay?designOverlay->context().boxScale():0.}});
+            // (The concealment may derive the next opening's density: nothing shows then.)
+            if(session->phase()!=core::VisibilityPhase::concealed){densitySteps+=density()!=densityAt;densityAt=density();}
+            at=now;busyAt=c;faultsAt=f;previous=next;timings=probe.timings;owners=probe.owners;ownerCount=probe.ownerCount;
+            if(finished()&&doneAt<0)doneAt=now;
+        });
+        if(!opening)pump(.05,{},{}); // the concealment's own work after the last frame
+        need(finished(),opening?"The traced HUD opened":"The traced HUD closed");
+        // The design density never steps while the HUD opens or closes, and
+        // the settled HUD holds exactly the density RC 139 settled at.
+        need(densitySteps==0,"The design density holds through the opening or closing");
+        if(opening&&rc139Density)need(density()==*rc139Density,"The settled design density is RC 139's");
+        double dropped=0;std::int64_t late{};for(const double i:intervals){dropped+=std::max(0.,std::round(i/period)-1);late+=i>1.5*period;}
+        const auto last=snapshot();
+        std::cout<<"Animation trace "<<name<<": "<<intervals.size()<<" frames, first "<<(intervals.empty()?0.:intervals.front())<<" ms, p95 "<<quantile(intervals,.95)<<" ms, max "<<quantile(intervals,1)<<" ms, late "<<late<<"\n";
+        segments.push_back(Json::Object{{"segment",name},{"requestMS",requestMS},{"frames",std::int64_t(intervals.size())},{"durationMS",(doneAt>0?doneAt-start:0)*1000},
+            {"firstFrameMS",intervals.empty()?0.:intervals.front()},{"intervalP50",quantile(intervals,.5)},{"intervalP95",quantile(intervals,.95)},{"intervalP99",quantile(intervals,.99)},{"intervalMax",quantile(intervals,1)},
+            {"busyP50",quantile(busy,.5)},{"busyP95",quantile(busy,.95)},{"busyMax",quantile(busy,1)},{"presentP95",quantile(present,.95)},
+            {"lateFrames",late},{"droppedRefreshes",dropped},
+            {"textureUploads",std::int64_t(last.renderer.textureUploads-first.renderer.textureUploads)},{"rasterizations",std::int64_t(last.raster.rasterizations-first.raster.rasterizations)},
+            {"deviceResumes",std::int64_t(last.renderer.deviceResumes-first.renderer.deviceResumes)},
+            {"densityBefore",densityBefore},{"density",density()},{"rc139Density",rc139Density.value_or(0.)},{"densitySteps",densitySteps},
+            {"planeResolvesToFirstFrame",firstResolves},{"rasterizationsToFirstFrame",firstRasterizations},{"planeResolveMilliseconds",designDensityResolveMilliseconds-resolveMSBefore},{"rows",std::move(rows)}});
+    };
+    const auto cycle=[&](const std::string&name){segment(name+"-open",true,.25);pump(1,{},{});segment(name+"-close",false,0);};
+    if(args.animationTraceLaunchOpen){
+        need(!designDensityStart,"An opening before any prewarm starts from 2 (no first-pose start is latched)");
+        // With --animation-trace-dpi the launch opening lands on another display (the
+        // summon's placement), so a start measured on the creation display would show.
+        if(args.animationTraceDpi)placementForTest=[&]{host.setTestDpi(args.animationTraceDpi>=144?96:192);};
+        try{segment("launch-open",true,.25);}catch(...){placementForTest={};throw;}placementForTest={};
+        // (Reduce Motion goes off while open so the closing animates in this hidden run.)
+        if(args.animationTraceLaunchOpen==2){configuration.set("reduceMotion",false);configurationPending=true;applyConfiguration(clock());}
+        pump(1,{},{});segment("launch-close",false,0);pump(1.5,{},{});
+        if(args.animationTraceDpi){host.setTestDpi(args.animationTraceDpi);pump(.5,{},{});}}
+    cycle("first");
+    for(unsigned n=0;n<4;++n){pump(1.5,{},{});cycle("warm-"+std::to_string(n));}
+    // A close that cuts the deploy short: the retract starts where RC 139's
+    // measurement had stepped to, and the next opening settles at its density.
+    std::optional<double> cutRecorded,cutLive;std::int64_t cutSteps{};
+    if(args.animationTraceDpi){pump(1.5,{},{});
+        double cutAt=density();
+        const auto step=[&]{if(session->phase()!=core::VisibilityPhase::concealed){cutSteps+=density()!=cutAt;cutAt=density();}};
+        perform(lifecycle.toggle(),clock());host.show(false);host.setFrameDemand(demand(clock()));host.invalidate();cutAt=density();pump(.3,{},step);
+        need(lifecycle.phase()==core::SystemOverlayPhase::opening,"The traced deploy is still running");
+        perform(lifecycle.close(true),clock());step();
+        // close() records where RC 139's live measurement had stepped to (the retract starts there).
+        need(designDensityAtClose.has_value(),"The cut close records the deploy's density");cutRecorded=designDensityAtClose;cutLive=rc139Density;
+        std::cout<<"Animation trace cut: recorded "<<*cutRecorded<<", RC 139 live "<<cutLive.value_or(0)<<"\n";
+        need(!cutLive||*cutRecorded==*cutLive,"The cut close records RC 139's live density");
+        host.setFrameDemand(demand(clock()));host.invalidate();pump(10,closed,step);need(closed(),"The cut deploy closed");
+        need(cutSteps==0,"The design density holds through the cut deploy and its retract");
+        pump(1.5,{},{});cycle("after-cut");}
+    pump(closedGraphicsGrace()+1.5,{},{});need(renderer.deviceSuspended(),"The closed HUD's graphics are released after the grace");
+    cycle("released");pump(1.5,{},{});cycle("after-released");
+    // The display's DPI changes while the HUD is closed (a move to another
+    // display): the next openings deploy at the new settled density, no step.
+    if(args.animationTraceDpi){pump(1,{},{});const unsigned other=args.animationTraceDpi>=144?96:192;const double before=density();host.setTestDpi(other);pump(.5,{},{});
+        std::cout<<"Animation trace: DPI "<<args.animationTraceDpi<<" -> "<<other<<" while closed, density "<<before<<" -> "<<density()<<"\n";
+        cycle("dpi-changed-0");pump(1.5,{},{});cycle("dpi-changed-1");
+        // The summon places the HUD on another display (its DPI changes inside
+        // openPresentation, as targetDisplay's SetWindowPos would): back to a
+        // display whose planes are cached, the summon resolves none.
+        const auto placed=[&](const char*name,unsigned dpi){pump(1.5,{},{});placementForTest=[&,dpi]{host.setTestDpi(dpi);};
+            try{cycle(name);}catch(...){placementForTest={};throw;}placementForTest={};
+            // The opening is the second-to-last segment (its closing follows).
+            const auto&opening=segments[segments.size()-2];std::cout<<"Animation trace "<<name<<": "<<opening["planeResolvesToFirstFrame"].integer()<<" plane resolutions, "
+                <<opening["rasterizationsToFirstFrame"].integer()<<" rasterizations, request "<<opening["requestMS"].number()<<" ms, first frame "<<opening["firstFrameMS"].number()<<" ms\n";
+            return opening["planeResolvesToFirstFrame"].integer();};
+        need(placed("placed-cached",args.animationTraceDpi)==0,"A summon onto a cached display resolves no density planes");
+        // A display never seen: its planes are resolved once on the summon (the cost is reported).
+        (void)placed("placed-new",120);
+        // Settings changed while closed, applied by the opening's first frame
+        // (a forced close during "Keep this UI scale?"): the HUD scale and
+        // offset, then Reduce Motion turned on (that opening collapses; Reduce
+        // Motion goes off again while open so the closing animates).
+        pump(1,{},{});configuration.set("hudScale",1.);configuration.set("hudOffsetX",0.);configuration.set("hudOffsetY",0.);configurationPending=true;cycle("rescaled-while-closed");
+        pump(1,{},{});configuration.set("reduceMotion",true);configurationPending=true;segment("reduced-while-closed-open",true,.25);
+        configuration.set("reduceMotion",false);configurationPending=true;applyConfiguration(clock());pump(1,{},{});segment("reduced-while-closed-close",false,0);
+        // Reduce Motion (no deploy or retract plays): the held density is one step
+        // on the deployed plane (DesktopChromeProjectionPlan::clipCenter at the
+        // entrance's end), where RC 139's first visible frame stepped on the
+        // live settled plane. Both agree from every start on both displays.
+        for(const unsigned dpi:{args.animationTraceDpi,120u}){pump(1,{},{});host.setTestDpi(dpi);pump(.5,{},{});
+            segment("reduce-check-"+std::to_string(dpi)+"-open",true,.25);
+            const auto settled=chromePlan->clipCenter({0,0,metrics.width,metrics.height},settings.hudOffset,settings.hudScale,contentScale,false,chromePlan->entranceSeconds());
+            need(settled&&chromePlan->projection().center,"Both settled planes exist");
+            for(const double start:{1.,1.5,2.,2.5,3.})need(tools::designDensity(core::source::designBoxWorld(*settled),metrics.scale,start)==
+                tools::designDensity(core::source::designBoxWorld(*chromePlan->projection().center),metrics.scale,start),"Reduce Motion's settled step is RC 139's");
+            pump(1,{},{});segment("reduce-check-"+std::to_string(dpi)+"-close",false,0);}}
+    // Each module: opened on Map, switched to it, closed, then two traced reopenings on it.
+    if(args.animationTraceModules)for(const auto module:{core::Module::clipboard,core::Module::eventLog,core::Module::notes,core::Module::volume,core::Module::workMode,core::Module::system,
+            core::Module::archive,core::Module::calendar,core::Module::activityMonitor,core::Module::storage,core::Module::fileShelf,core::Module::power,core::Module::profile,core::Module::nowPlaying}){
+        const std::string id(core::moduleIdentifier(module));
+        const auto toggle=[&](const std::function<bool()>&until){perform(lifecycle.toggle(),clock());host.show(false);host.setFrameDemand(demand(clock()));host.invalidate();pump(10,until,{});};
+        pump(1,{},{});toggle(opened);
+        perform(lifecycle.selectModule(module),clock());host.setFrameDemand(demand(clock()));host.invalidate();pump(1.5,{},{});
+        const bool selected=notes&&notes->selected()==module;
+        toggle(closed);need(closed(),"The traced HUD closed");
+        if(!selected){std::cout<<"Animation trace: "<<id<<" not selectable\n";continue;}
+        for(unsigned n=0;n<2;++n){pump(1.5,{},{});cycle("module-"+id+"-"+std::to_string(n));}
+    }
+    const Json report=Json::Object{{"schema",1},
+        {"scope","EndfieldHUD hidden animation trace: every frame of the openings and closings on the real clock through the production frame scheduling; numbers, owner and module names only"},
+        {"device",renderer.deviceInfo().name},{"refreshHz",args.idleTraceRefreshRate},{"closedGraphicsGraceSeconds",closedGraphicsGrace()},{"cyclesPerMillisecond",cyclesPerMS},
+        {"logicalWidth",metrics.width},{"logicalHeight",metrics.height},{"dpiScale",metrics.scale},{"contentScale",contentScale},{"densityReplayMilliseconds",replayMS},{"launchStartUnderDefaults",launchStartDefault},{"launchStart",launchStart},{"cutRecorded",cutRecorded.value_or(0.)},{"cutLive",cutLive.value_or(0.)},{"cutSteps",cutSteps},{"firstPoseRawUnderDefaults",firstRawDefault},{"firstPoseRaw",firstRaw},{"densityPlaneResolves",std::int64_t(designDensityResolves)},{"densityPlaneResolveMilliseconds",designDensityResolveMilliseconds},{"segments",std::move(segments)}};
+    const std::size_t bound=32*1024*1024;ehud::data::detail::replaceFile(args.animationTrace,std::nullopt,report.encode(bound),bound);
+    std::cout<<"Wrote hidden animation trace\n";
+    shutdownVisible();
+    return 0;
+}
+
 int Application::Impl::runHiddenVerification(){
     if(args.mode!=ApplicationMode::hiddenBenchmark)throw std::logic_error("Hidden verification requires the hidden benchmark mode");
     if(!args.idleTrace.empty())return runIdleTrace();
+    if(!args.animationTrace.empty())return runAnimationTrace();
     if(!args.startupTrace.empty())return runStartupTrace();
     if(!args.contentionTrace.empty())return runContentionTrace();
     if(!args.memoryTrace.empty())return runMemoryTrace();
@@ -452,7 +688,8 @@ int Application::Impl::runHiddenVerification(){
             }
             const auto finish=at(23+static_cast<double>(points.size()));session->pointerMove({},finish);close(finish);present(finish+.7,true);
         }
-        Json::Array moduleResults,areaModuleResults,areaPresentedModules;Json displayAdaptation,scrollArrow;
+        Json::Array moduleResults,areaModuleResults,areaPresentedModules,pageVisibility,areaTimings;Json displayAdaptation,scrollArrow,recordingToggle,actionTiming;
+        double minigameShowFrameMs=-1,minigameShowWorstMs=-1; // the first showing of the minigame (its canvas, page and VM boot)
         // Module areas (app/module_owner.hpp): coverage steps and their checks.
         struct AreaCounts{unsigned steps{},checks{};};std::map<std::string,AreaCounts,std::less<>> areaCounts;
         double areaLatest{};
@@ -462,7 +699,10 @@ int Application::Impl::runHiddenVerification(){
             // Coverage steps run on the one host time (ModuleRegistry::hostTime).
             auto&counts=areaCounts[area.name];double last=hostTime(std::max(begin,areaLatest));
             ModuleCoverage step;step.module=module;step.cycle=cycle;step.time=last;
-            step.present=[&](double at){need(at>=last,"Area coverage presents on a non-decreasing clock");last=at;present(at,true);};
+            // A host frame: the shared design deadlines due by then (sub-page
+            // swaps, toasts; the overlay owner runs the Context's), then the draw.
+            step.present=[&](double at){need(at>=last,"Area coverage presents on a non-decreasing clock");last=at;
+                if(designOverlay)if(const auto wake=designOverlay->nextWakeTime(at);wake&&*wake<=at)(void)designOverlay->deadline(at);present(at,true);};
             step.drain=[&]{drainUtility(last);};
             step.project=[&,module](core::Point local,double width,double height)->std::optional<core::Point>{
                 if(!module||!notes||!chromePlan||!chromePlan->projection().center||!(width>0)||!(height>0))return std::nullopt;
@@ -474,6 +714,7 @@ int Application::Impl::runHiddenVerification(){
             step.message=[&](std::uint32_t id,std::uintptr_t wParam,std::intptr_t lParam){
                 const NativeMessage m{host.hwnd(),id,wParam,lParam};
                 return registry.first(ModuleRegistry::Chain::message,[&](ModuleOwner&o,const ModuleRouting&){return o.message(m,hostTime(last));},"message")!=nullptr;};
+            step.timing=[&](Json row){areaTimings.push_back(std::move(row));};
             ++counts.steps;
             try{area.owner->coverage(step);}catch(const std::exception&e){throw std::runtime_error("Module area "+area.name+" coverage: "+e.what());}
             areaLatest=std::max(areaLatest,last);
@@ -491,10 +732,10 @@ int Application::Impl::runHiddenVerification(){
             prewarm();
             hostCheck(prewarmed&&session->phase()==core::VisibilityPhase::concealed&&!session->currentFrame()&&!host.stats().visible&&!IsWindowVisible(static_cast<HWND>(host.hwnd())),
                 "The launch prewarm poses the first opening offscreen and conceals the HUD again");
-            // The Map adapter forwards the prewarm (MapPreview::prewarm): the first
-            // opening on Map only re-poses its built chrome; nothing is activated.
+            // The Map owner prewarms its canvas page and surface (MapOwner::prewarm):
+            // nothing is activated and no terrain is painted before the opening.
             if(map&&mapModuleOwner&&registry.enabled(*mapModuleOwner)&&notes->selected()==core::Module::map)
-                hostCheck(map->sceneStats().chromeBuilds>=1&&!map->state().active()&&!map->rasterStats().active,"The launch prewarm builds the Map without activating it");
+                hostCheck(map->sceneStats().pinBuilds>=1&&!map->state().active()&&!map->rasterStats().active,"The launch prewarm builds the Map without activating it");
             // An Archive that is not the first opening's module builds nothing at
             // the launch prewarm or in the opening's frames (no rasters attributed
             // to it): its view is built when Archive is first shown.
@@ -569,7 +810,11 @@ int Application::Impl::runHiddenVerification(){
                         if(SUCCEEDED(owner->automationChild(n,&f))&&f&&textProperty(f.Get(),UIA_AutomationIdPropertyId)==id)peer=f;}
                     ComPtr<IInvokeProvider>invoke;
                     hostCheck(peer&&SUCCEEDED(peer.As(&invoke))&&invoke->Invoke()==S_OK&&after(),"A local module's peer "+std::string(id)+" presses like its click");
-                    present(time,true);time+=.5;(void)probe.refresh();}
+                    // A press that swaps the page (Calendar's month) re-lists the peers
+                    // once the swap lands on the shared design deadlines: frames for .5 s.
+                    for(unsigned frame=0;frame<=30;++frame){const double t=time+double(frame)/60;
+                        if(designOverlay)if(const auto wake=designOverlay->nextWakeTime(t);wake&&*wake<=t)(void)designOverlay->deadline(t);present(t,true);}
+                    time+=.5;(void)probe.refresh();}
                 probe.disconnectOwners();hostCheck(owner->automationCount()==0,"Concealing disconnects the local module's peers");probe.shutdown();};
             std::vector modules{core::Module::notes,core::Module::fileShelf,core::Module::clipboard,core::Module::volume,core::Module::eventLog,core::Module::workMode,core::Module::power};if(archive)modules.push_back(core::Module::archive);if(storage)modules.push_back(core::Module::storage);if(activity)modules.push_back(core::Module::activityMonitor);if(reader)modules.push_back(core::Module::reader);if(calendar)modules.push_back(core::Module::calendar);if(map)modules.push_back(core::Module::map);if(!args.orbipomAssets.empty())modules.push_back(core::Module::minigame);if(settingsUI)modules.insert(modules.end(),{core::Module::system,core::Module::display,core::Module::hotkeys,core::Module::about});
             // Every HUD module an area presents joins the same combined cycles.
@@ -580,39 +825,43 @@ int Application::Impl::runHiddenVerification(){
             std::optional<gpu::LayerRasterStats> retainedCycle;
             for(unsigned cycle=0;cycle<3;++cycle)for(const auto module:modules){
                 std::size_t scrollChanges{},peakEntries{},peakBytes{};
-                try{selectModule(module,time);for(unsigned frame=0;frame<40;++frame)present(time+double(frame)/60,true);
+                try{selectModule(module,time);for(unsigned frame=0;frame<40;++frame){const auto f0=Clock::now();present(time+double(frame)/60,true);
+                    if(module==core::Module::minigame&&cycle==0){const double ms=milliseconds(f0);if(frame==0)minigameShowFrameMs=ms;minigameShowWorstMs=std::max(minigameShowWorstMs,ms);}}
                     if(module==core::Module::minigame&&game){
-                        need(gameSession&&game->state().active(),"Minigame shares the selected original module surface");
+                        // OrbiPomHUDVerification (Mac 1.3.0): showing the game starts the
+                        // original session on its clock; only the visible module's tick
+                        // (the owner's deadline) advances it; manual pause stops it.
+                        const auto tick=[&](double t){(void)gameModuleOwner->deadline(t);present(t,true);};
+                        need(gameSession&&game->isActive(),"Minigame shares the selected design module surface");
                         if(cycle==0){
-                            need(!gameSession->hasRuntime(),"Opening original Minigame artwork alone does not start physics");
-                            need(game->perform(endfield::modules::OrbiPomAction::start,time+.71),"Original Start action starts the single lazy runtime");
-                            need(gameSession->hasRuntime()&&gameSession->snapshot().isPlaying()&&!gameSession->error(),"Bundled unchanged game engine starts through the module owner");
+                            // The first game's VM boots off this thread; the canvas starts it on its next tick.
+                            for(unsigned n=0;game->booting()&&!gameSession->prepare()&&n<10000;++n)std::this_thread::sleep_for(std::chrono::milliseconds(1));tick(time+.68);
+                            need(gameSession->hasRuntime()&&gameSession->snapshot().isPlaying()&&!gameSession->error()&&game->hasFrameTimer()&&!gameSession->manuallyPaused(),
+                                 "Showing the minigame starts the bundled unchanged engine on its clock");
                             need(gameSession->bestScore()==71&&gameSession->snapshot().highScore==71,"Original best-score key loads from the isolated shared preferences");
                             const auto began=gameSession->snapshot().simulationTime;
-                            for(unsigned n=0;n<30;++n)present(time+.72+double(n)/60,true);
-                            need(gameSession->snapshot().simulationTime>began,"Only shared presented HUD frames advance original physics");
-                            need(game->perform(endfield::modules::OrbiPomAction::pause,time+1.3),"Original pause control is available");
+                            for(unsigned n=0;n<30;++n)tick(time+.72+double(n)/60);
+                            need(gameSession->snapshot().simulationTime>began,"Only the visible minigame's tick advances original physics");
+                            game->perform("pause");
                             const auto stopped=gameSession->snapshot().simulationTime;
-                            present(time+1.5,true);present(time+1.7,true);
-                            need(gameSession->manuallyPaused()&&gameSession->snapshot().simulationTime==stopped,"Manual pause advances no game steps");
+                            tick(time+1.5);tick(time+1.7);
+                            need(gameSession->manuallyPaused()&&!game->hasFrameTimer()&&gameSession->snapshot().simulationTime==stopped,"Manual pause advances no game steps");
                             settingsUI->controller().restoreDefaults();need(settingsSaves->flush(),"Isolated settings reset saves through the shared executor");
                             const ehud::data::SettingsStore verified(args.dataRoot);
                             need(verified.value().fields["orbipom.bestScore.v1"].integer()==71&&gameSession->bestScore()==71,"Settings reset preserves saved game progress and the live session");
-                        }else need(gameSession->manuallyPaused(),"Returning to Minigame preserves manual pause");
+                        }else need(gameSession->manuallyPaused()&&!game->hasFrameTimer(),"Returning to Minigame preserves manual pause");
                     }
                     if(module==core::Module::map&&map){
-                        const auto drainMap=[&]{for(unsigned n=0;n<24;++n){utility->waitIdle();utility->drain();map->utilityCompleted(mapTime);if(const auto due=map->nextWakeTime()){mapTime=std::max(mapTime,*due)+.000001;map->deadline(mapTime);}present(mapTime,true);if(!utility->stats().running&&!utility->stats().pending&&!utility->stats().completed&&!map->nextWakeTime())break;}};
+                        const auto drainMap=[&]{for(unsigned n=0;n<24;++n){utility->waitIdle();utility->drain();map->utilityCompleted(mapTime);if(const auto due=map->nextWakeTime(mapTime)){mapTime=std::max(mapTime,*due)+.000001;map->deadline(mapTime);}present(mapTime,true);if(!utility->stats().running&&!utility->stats().pending&&!utility->stats().completed&&!map->nextWakeTime(mapTime))break;}};
                         mapTime=time+.7;drainMap();need(map->state().active()&&map->rasterStats().published>0,"Original bundled Map geography renders only after isolated selection");
-                        gpu::LayerScene probeGeometry(rasterizer);probeGeometry.load(Json::Object{{"bounds",Json::Array{0,0,440,440}},{"children",Json::Array{}}},{});gpu::NativeModuleSurface probePlane(probeGeometry,module);
-                        const auto ps=chromeSettings(module);probePlane.update(*chromePlan->projection().center,ps,notes->modulePresentation().current,1);
-                        const auto plane=core::Projection::viewport(gpu::layerViewportProjection(metrics.pixelWidth,metrics.pixelHeight)*core::Matrix4::scale(metrics.scale,metrics.scale)*probePlane.pose().contentWorld,metrics.pixelWidth,metrics.pixelHeight);
-                        const auto point=[&](core::Point p){const auto screen=plane.project(p);need(bool(screen),"Map input projects through the source440-point plane");return core::Point{screen->x/metrics.scale,screen->y/metrics.scale};};
-                        const auto center=point({220,220});const auto initialCount=map->state().pins().size();
+                        // The disc centre (box px) through the Map canvas's design plane.
+                        const auto point=[&](core::Point p){const auto r=map->core().clientRect({p.x,p.y,0,0});need(bool(r),"Map input projects through the design box plane");return core::Point{r->x,r->y};};
+                        const auto center=point(endfield::modules::MapCanvas::mapCenter);const auto initialCount=map->state().pins().size();
                         need(map->pointer({app::PointerKind::down,app::PointerButton::right,center.x,center.y},mapTime),"Original right-click adds a projected Map marker");map->pointer({app::PointerKind::up,app::PointerButton::right,center.x,center.y},mapTime);present(mapTime+.17,true);
                         need(map->state().pins().size()==initialCount+1&&mapStore->value().pins.size()==initialCount+1,"Marker writes only the explicitly isolated Map store");
                         need(map->pointer({app::PointerKind::down,app::PointerButton::right,center.x,center.y},mapTime),"Original marker right-click is consumed");present(mapTime+.17,true);need(map->state().pins().size()==initialCount,"Second right-click removes that marker");
-                        need(map->wheel({center.x,center.y,1,false,0,3},mapTime),"Map wheel reaches the native continuous camera owner");mapTime+=.181;map->deadline(mapTime);drainMap();need(map->state().viewport().zoom>3,"Wheel zoom preserves source sensitivity");
-                        need(map->perform(endfield::modules::MapAction::reset,{},mapTime),"Original reset action is available");drainMap();need(map->state().viewport().zoom==3,"Map reset preserves the authoritative3x default");
+                        need(map->wheel({center.x,center.y,1,false,0,3},mapTime),"Map wheel reaches the native continuous camera owner");mapTime+=.181;map->deadline(mapTime);drainMap();need(map->state().camera().zoom>3,"Wheel zoom preserves source sensitivity");
+                        need(map->perform("map.reset",mapTime),"The reset view action is available");drainMap();need(map->state().camera()==endfield::modules::MapSurfaceGeometry::constrained({}),"Map reset restores the default camera");
                         const auto before=rasterizer.stats();const auto accepted=utility->stats().accepted;const auto uploads=renderer.stats().textureUploads;const auto poseStart=mapTime;
                         for(unsigned n=0;n<12;++n)present(poseStart+.3+double(n)/60,true);
                         need(before.rasterizations==rasterizer.stats().rasterizations&&accepted==utility->stats().accepted&&uploads==renderer.stats().textureUploads,"Settled Map poses reuse geography, text and GPU textures");
@@ -620,52 +869,54 @@ int Application::Impl::runHiddenVerification(){
                     if(module==core::Module::reader&&reader){
                         const auto drainReader=[&]{for(unsigned n=0;n<8;++n){utility->waitIdle();utility->drain();readerOwner->queueCapacityAvailable();}present(readerTime,true);};
                         readerTime=time+.7;drainReader();need(readerOwner->state().active()&&readerOwner->state().loaded(),"Reader loads only its isolated library on selection");
-                        gpu::LayerScene probeGeometry(rasterizer);probeGeometry.load(Json::Object{{"bounds",Json::Array{0,0,400,440}},{"children",Json::Array{}}},{});gpu::NativeModuleSurface probePlane(probeGeometry,module);
-                        const auto ps=chromeSettings(module);probePlane.update(*chromePlan->projection().center,ps,notes->modulePresentation().current,1);
-                        const auto plane=core::Projection::viewport(gpu::layerViewportProjection(metrics.pixelWidth,metrics.pixelHeight)*core::Matrix4::scale(metrics.scale,metrics.scale)*probePlane.pose().contentWorld,metrics.pixelWidth,metrics.pixelHeight);
-                        const auto click=[&](core::Point local,double t){const auto p=plane.project(local);need(p.has_value(),"Reader action projects through source module plane");readerTime=t;need(reader->pointer({app::PointerKind::down,app::PointerButton::left,p->x/metrics.scale,p->y/metrics.scale},t),"Reader consumes its original projected control");reader->pointer({app::PointerKind::up,app::PointerButton::left,p->x/metrics.scale,p->y/metrics.scale},t+.001);present(t+.001,true);};
+                        // Mac 1.3.0 ReaderCanvas controls through the design canvas's own actions (BatchSixHUDVerification).
+                        auto&canvas=reader->canvas();
+                        // Tab and page swaps land on the Context's shared deadlines.
+                        const auto frames=[&](double t0,unsigned count){for(unsigned frame=0;frame<count;++frame){const double t=t0+double(frame)/60;(void)designOverlay->deadline(t);present(t,true);}};
+                        const auto press=[&](std::string_view id,double t){readerTime=t;if(!canvas.performAccessibilityAction(id,t)){std::string shown;for(const auto*c:static_cast<endfield::modules::design::Canvas&>(canvas).page().controls())shown+=" "+c->id();throw std::runtime_error("Reader control "+std::string(id)+" presses like its click (tab "+std::to_string(int(canvas.tab()))+(canvas.transitioning()?", swapping":"")+";"+shown+")");}present(t+.001,true);};
                         if(cycle<2){
                             // The only file opened in this hidden path is generated here.
                             const auto fixture=args.dataRoot/(cycle?"Reader fixture.pdf":"Reader fixture.txt");std::string text;
                             if(cycle)text=ownedReaderPDF();else for(unsigned n=0;n<500;++n)text+="EndfieldHUD 阅读器 · Temporary isolated sample " +std::to_string(n)+".\n";
                             ehud::data::detail::replaceFile(fixture,std::nullopt,text,128*1024);
-                            click({40,20},time+.72);present(time+.93,true);click({30,60},time+.94);auto action=reader->takeImportAction();
-                            need(action&&action->kind==endfield::tools::ReaderImportAction::Kind::chooseLocal,"Reader Open queues the existing native-picker route without opening a dialog in hidden coverage");
+                            press("readerTabs:0",time+.72);frames(time+.73,12);
+                            press("chooseFile",time+.94);auto action=reader->takeImportAction();
+                            need(action&&action->kind==endfield::tools::ReaderImportAction::Kind::chooseLocal,"Reader Choose file queues the existing native-picker route without opening a dialog in hidden coverage");
                             importReaderReference(action->generation,utf8(fixture),{},time+.95);readerTime=time+.96;drainReader();
+                            // The import switches to the Reading tab (handle(.imported)).
+                            frames(time+.97,20);
+                            need(canvas.tab()==modules::ReaderCanvas::Tab::reading,"An import lands on the Reading tab");
                         }
                         need(readerOwner->state().book()&&readerOwner->state().current()&&!readerOwner->state().error(),"Real TXT/PDF rendering publishes only the owned generated document");
                         need(readerOwner->state().current()->illustration==(cycle!=0),"Shared Reader provider replaces TXT with the generated PDF and retains it across module switches");
-                        need(readerOwner->state().library().preferences.fontName=="System","Fresh Reader follows shared SC/KR defaults without overwriting saved explicit fonts");
-                        click({268,20},time+1.02);readerTime=time+1.03;drainReader();
-                        const auto marks=readerOwner->state().book()->bookmarks.size();need(marks==(cycle==2?0u:1u),"Original bookmark control persists through the shared Reader owner");
+                        need(readerOwner->state().library().preferences.fontName=="Georgia","A fresh Reader library keeps the Mac default face (ReaderPreferences)");
+                        if(canvas.tab()!=modules::ReaderCanvas::Tab::reading){press("readerTabs:2",time+1.);frames(time+1.001,20);}
+                        press("bookmark",time+1.02);readerTime=time+1.03;drainReader();
+                        const auto marks=readerOwner->state().book()->bookmarks.size();need(marks==(cycle==2?0u:1u),"The bookmark control persists through the shared Reader owner");
                         present(time+1.5,true);const auto before=rasterizer.stats();const auto accepted=utility->stats().accepted;
-                        for(unsigned frame=0;frame<12;++frame)present(time+1.6+double(frame)/60,true);
+                        frames(time+1.6,12);
                         const auto after=rasterizer.stats();need(before.rasterizations==after.rasterizations&&before.textLayoutsCreated==after.textLayoutsCreated&&utility->stats().accepted==accepted,"Settled Reader frames reuse page pixels and never enqueue provider work");
                     }
-                    if(module==core::Module::activityMonitor&&activity){
+                    if(module==core::Module::activityMonitor&&activity&&activity->canvas()){auto&canvas=*activity->canvas();
                         need(activity->state().appSnapshot().items.size()==18,"Activity coverage retains only its synthetic app catalog");
-                        need(activity->perform("activity:apps",time+.7),"Original Activity Apps action is routed");present(time+1,true);
-                        need(activity->state().showingApps(),"Activity Apps selection keeps the source transition");
-                        need(activity->perform("activity:sort:memory",time+1.01),"Original Activity RAM sort is routed");present(time+1.3,true);
-                        need(activity->state().sortKey()==endfield::modules::ActivitySort::memory,"Activity RAM sort reaches shared state");
-                        const auto retained=activity->stats();for(unsigned frame=0;frame<12;++frame)present(time+1.35+double(frame)/60,true);
-                        const auto after=activity->stats();need(after.builds==retained.builds&&after.graphRasters==retained.graphRasters&&after.maskRasters==retained.maskRasters,"Settled Activity frames retain text, graph and sort resources");
-                        need(activity->perform("activity:overview",time+1.55),"Original overview action is routed");present(time+1.9,true);
+                        need(canvas.perform("activity:apps",time+.7),"The Activity Apps tab is routed");present(time+1,true);
+                        need(canvas.isShowingApps(),"The Apps page follows the tab");
+                        need(canvas.perform("activity:sort:memory",time+1.01),"The Activity RAM sort is routed");present(time+1.3,true);
+                        need(activity->state().sortKey()==endfield::modules::ActivitySort::memory&&canvas.sortKey()==endfield::modules::ActivitySort::memory,"The RAM sort reaches the shared readings");
+                        const auto retained=rasterizer.stats();for(unsigned frame=0;frame<12;++frame)present(time+1.35+double(frame)/60,true);
+                        need(rasterizer.stats().rasterizations==retained.rasterizations,"Settled Activity frames (the rows' re-stagger included) rasterize nothing");
+                        need(canvas.perform("activity:overview",time+1.55),"The Overview tab is routed");present(time+1.9,true);
                     }
-                    if(module==core::Module::storage&&storage){
+                    if(module==core::Module::storage&&storage&&storage->canvas()){auto&canvas=*storage->canvas();
                         need(storageFixture!=nullptr,"Hidden Storage must never retain OS capacity/scanner callbacks");
-                        utility->waitIdle();utility->drain();storage->utilityCompleted(time+.7);present(time+.7,true);
-                        need(storage->state().active()&&storage->state().snapshot().capacity&&storage->state().snapshot().capacity->volumeName=="Synthetic startup volume"&&!storage->state().snapshot().isLoading,"Storage activation publishes only the injected capacity snapshot");
+                        const auto drain=[&]{utility->waitIdle();utilityCompleted();};
+                        drain();present(time+.7,true);
+                        need(storage->controller().active()&&storage->controller().snapshot().capacity&&storage->controller().snapshot().capacity->volumeName=="Synthetic startup volume"&&!storage->controller().snapshot().isLoading,"Storage activation publishes only the injected capacity snapshot");
                         need(storageFixture->detailScans.load()==(cycle?1u:0u),"Storage activation and frames never launch a folder scan");
-                        gpu::LayerScene probeGeometry(rasterizer);probeGeometry.load(Json::Object{{"bounds",Json::Array{0,0,400,334}},{"children",Json::Array{}}},{});gpu::NativeModuleSurface probePlane(probeGeometry,module);
-                        const auto ps=chromeSettings(module);probePlane.update(*chromePlan->projection().center,ps,notes->modulePresentation().current,1);
-                        const auto plane=core::Projection::viewport(gpu::layerViewportProjection(metrics.pixelWidth,metrics.pixelHeight)*core::Matrix4::scale(metrics.scale,metrics.scale)*probePlane.pose().contentWorld,metrics.pixelWidth,metrics.pixelHeight);
-                        const auto click=[&](core::Point local,double t){const auto projected=plane.project(local);need(projected.has_value(),"Storage action projects through its actual shared source plane");const auto x=projected->x/metrics.scale,y=projected->y/metrics.scale;need(storage->pointer({app::PointerKind::down,app::PointerButton::left,x,y},t),"Storage consumes its original projected control");storage->pointer({app::PointerKind::up,app::PointerButton::left,x,y},t);present(t,true);};
-                        const auto settingsBefore=storageFixture->settingsRequests;click({95,266.5},time+.72);need(storageFixture->settingsRequests==settingsBefore&&pendingStorageSettings,"Original Storage Settings action waits for the HUD to close before Windows Settings opens (openStorageAfterClose)");
-                        const auto reads=storageFixture->capacityReads.load();click({370,266.5},time+.74);utility->waitIdle();utility->drain();storage->utilityCompleted(time+.8);present(time+.8,true);need(storageFixture->capacityReads.load()==reads+1,"Manual refresh uses the shared executor once");
-                        if(!cycle){need(storage->requestDetails(false,time+.82),"Explicit isolated model probe can request details without inventing a UI button");utility->waitIdle();utility->drain();storage->utilityCompleted(time+.84);need(storageFixture->detailScans.load()==1&&!storage->state().details().isLoading&&storage->state().details().categories.size()==1,"Explicit details request uses only its synthetic bounded callback");}
-                        need(storage->nextWakeTime().has_value(),"Visible Storage shares the original 60-second deadline");storage->setVisible(false,time+.9);need(!storage->nextWakeTime()&&!storage->state().active(),"Hidden Storage removes its capacity deadline");
-                        const auto hiddenReads=storageFixture->capacityReads.load();storage->deadline(time+.92);need(storageFixture->capacityReads.load()==hiddenReads,"Hidden deadline dispatch never queries a provider");storage->setVisible(true,time+.94);present(time+.94,true);
+                        const auto reads=storageFixture->capacityReads.load();need(canvas.perform("storage:refresh",time+.74),"Refresh is routed");drain();present(time+.8,true);need(storageFixture->capacityReads.load()==reads+1,"Manual refresh uses the shared executor once");
+                        if(!cycle){need(storage->requestDetails(false,time+.82),"Explicit isolated model probe can request details without inventing a UI button");drain();need(storageFixture->detailScans.load()==1&&!storage->controller().details().isLoading&&storage->controller().details().categories.size()==1,"Explicit details request uses only its synthetic bounded callback");}
+                        need(canvas.nextWakeTime(time+.85).has_value(),"Visible Storage shares the original 60-second deadline");storageModuleOwner->setOverlayVisible(false,time+.9);need(!canvas.nextWakeTime(time+.9)&&!storage->controller().active(),"Hidden Storage removes its capacity deadline");
+                        const auto hiddenReads=storageFixture->capacityReads.load();(void)storageModuleOwner->deadline(time+.92);need(storageFixture->capacityReads.load()==hiddenReads,"Hidden deadline dispatch never queries a provider");storageModuleOwner->setOverlayVisible(true,time+.94);present(time+.94,true);
                         const auto cached=storageFixture->capacityReads.load();for(unsigned frame=0;frame<20;++frame)present(time+1+double(frame)/60,true);need(storageFixture->capacityReads.load()==cached,"Warm Storage frames do not poll capacity");
                     }
                     if(module==core::Module::calendar&&calendar){
@@ -675,20 +926,17 @@ int Application::Impl::runHiddenVerification(){
                         need(flushCalendar(),"Calendar initial load settles through the shared executor");present(time+.7,true);
                         need(calendarState->loaded()&&calendarState->active()&&!calendarState->error(),"Calendar activates its isolated lazy repository");
                         if(!cycle){
-                            gpu::LayerScene probeGeometry(rasterizer);probeGeometry.load(Json::Object{{"bounds",Json::Array{0,0,400,440}},{"children",Json::Array{}}},{});gpu::NativeModuleSurface probePlane(probeGeometry,module);
-                            const auto ps=chromeSettings(module);probePlane.update(*chromePlan->projection().center,ps,notes->modulePresentation().current,1);
-                            const auto plane=core::Projection::viewport(gpu::layerViewportProjection(metrics.pixelWidth,metrics.pixelHeight)*core::Matrix4::scale(metrics.scale,metrics.scale)*probePlane.pose().contentWorld,metrics.pixelWidth,metrics.pixelHeight);
-                            const auto click=[&](core::Point local,double t){const auto q=plane.project(local);need(bool(q),"Calendar uses the same drawn source module plane");const auto x=q->x/metrics.scale,y=q->y/metrics.scale;need(calendar->pointer({app::PointerKind::down,app::PointerButton::left,x,y},t),"Calendar consumes its source action");calendar->pointer({app::PointerKind::up,app::PointerButton::left,x,y},t);present(t,true);};
-                            click({373,289},time+.72);present(time+.94,true);need(calendar->editing(),"Calendar opens its three real projected fields");
-                            need(calendar->key({app::KeyKind::unicodeCharacter,'C'},time+.96,endfield::tools::CalendarKeyModifiers{}),"Calendar title receives synthetic Unicode through the shared editor");
-                            click({342,357},time+1.0);need(flushCalendar(),"Calendar durable event and reminder receipts settle on the shared FIFO");present(time+1.22,true);
-                            need(calendarState->events().size()==1&&calendarState->events()[0].title=="C"&&!calendar->editing(),"Calendar saves its generated draft and closes only after persistence success");
+                            // HUDCalendarCanvas.perform("add") with a generated title in its
+                            // shared design field: the draft saves through the app FIFO.
+                            calendar->titleField().setText("C");calendar->perform("add");
+                            need(flushCalendar(),"Calendar durable event and reminder receipts settle on the shared FIFO");present(time+1.22,true);
+                            need(calendarState->events().size()==1&&calendarState->events()[0].title=="C"&&calendar->titleField().text().empty(),"Calendar saves its generated draft and clears the fields only after persistence success");
                             need(fs::is_regular_file(args.dataRoot/"Calendar"/"calendar.json")&&!calendarFixture->pending.empty(),"Calendar writes only the explicit temporary store and synthetic reminder plan");
                         }
                         present(time+1.4,true);const auto beforeRaster=rasterizer.stats();const auto beforeGPU=renderer.stats();const auto accepted=utility->stats().accepted;
                         for(unsigned n=0;n<12;++n)present(time+1.41+double(n)/60,true);
                         need(rasterizer.stats().rasterizations==beforeRaster.rasterizations&&rasterizer.stats().textLayoutsCreated==beforeRaster.textLayoutsCreated&&renderer.stats().textureUploads==beforeGPU.textureUploads&&utility->stats().accepted==accepted,"Settled Calendar frames reuse resources and schedule no reminder or file work");
-                        need(!calendar->requiresFrames(time+1.7),"Calendar's source transitions become idle on the shared frame clock");
+                        need(!calendarModuleOwner->requiresFrames(time+1.7),"Calendar's transitions become idle on the shared frame clock");
                     }
                     if(module==core::Module::archive&&archive){
                         // Hidden-only barrier for the real shared async database.
@@ -696,84 +944,98 @@ int Application::Impl::runHiddenVerification(){
                         utility->waitIdle();utility->drain();archiveService->queueCapacityAvailable();present(time+.7,true);
                         need(archiveService->state().active()&&!archiveService->state().error(),"Archive source activation loads its isolated database");
                         if(!cycle){
-                            gpu::LayerScene probeGeometry(rasterizer);probeGeometry.load(Json::Object{{"bounds",Json::Array{0,0,400,440}},{"children",Json::Array{}}},{});gpu::NativeModuleSurface probePlane(probeGeometry,module);
-                            const auto ps=chromeSettings(module);probePlane.update(*chromePlan->projection().center,ps,notes->modulePresentation().current,1);
-                            const auto plane=core::Projection::viewport(gpu::layerViewportProjection(metrics.pixelWidth,metrics.pixelHeight)*core::Matrix4::scale(metrics.scale,metrics.scale)*probePlane.pose().contentWorld,metrics.pixelWidth,metrics.pixelHeight);
-                            const auto click=[&](core::Point local,double t){const auto projected=plane.project(local);need(projected.has_value(),"Archive source input projects through the shared module plane");const auto x=projected->x/metrics.scale,y=projected->y/metrics.scale;need(archive->pointer({app::PointerKind::down,app::PointerButton::left,x,y},t),"Archive consumes its source action");archive->pointer({app::PointerKind::up,app::PointerButton::left,x,y},t);present(t,true);};
-                            click({29,316},time+.72); // Original '+' → category menu.
-                            const auto origin=endfield::modules::archiveCategoryMenuOrigin(false);click({origin.x+32,origin.y+57},time+.90);
+                            // The redesigned canvas (BatchSix testEditor): New files a
+                            // document at once and opens the editor; the title and the
+                            // body take generated text (UIA SetValue and typed
+                            // characters: no text service in hidden runs); the writes
+                            // drain through the shared utility executor.
+                            auto& canvas=archive->canvas();
+                            need(canvas.displayedPage().kind==modules::ArchiveCanvas::PageKind::list,"Archive opens on its list page");
+                            need(canvas.performAccessibilityAction("new",time+.72),"Archive New is an accessible control");present(time+.73,true);
                             utility->waitIdle();utility->drain();archiveService->queueCapacityAvailable();present(time+1.1,true);
-                            need(archiveService->state().selected().has_value(),"Original category chooser creates an Uncategorized document");
-                            click({50,64},time+1.12);need(archive->activeField()==std::optional<std::string>("title"),"Archive title uses the existing projected editor");
-                            // The generated key states its modifiers: off the HUD window's key
-                            // dispatch the thread's GetKeyState follows the live keyboard of the
-                            // interactive session, so a key held on the machine would make it a
-                            // modified, untyped key (README, App shortcuts item 3).
-                            need(archive->key({app::KeyKind::character,'A'},time+1.14,endfield::tools::ArchiveKeyModifiers{}),"Archive accepts generated plain fixture text");need(archive->finishEditing(time+1.16),"Hidden Archive field commits without a native text manager");need(archiveService->flush(),"Archive fixture writes finish through the shared utility executor");
-                            present(time+1.3,true);need(archiveService->state().selected()->title=="A","Archive persisted state retains generated title text");
+                            need(archiveService->state().selected().has_value()&&canvas.displayedPage().kind==modules::ArchiveCanvas::PageKind::editor,"New creates an Uncategorized document and opens it without a category menu");
+                            // The editor page lands on the Context's shared deadlines (the sub-page swap).
+                            double editorAt=time+1.1;for(unsigned n=0;n<40&&canvas.transitioning();++n){editorAt+=1./60;(void)designOverlay->deadline(editorAt);present(editorAt,true);}
+                            need(!canvas.transitioning(),"The Archive editor page lands");
+                            need(canvas.setAccessibilityText("title","A",editorAt+.02),"The Archive title takes generated text");
+                            need(canvas.performAccessibilityAction("body",editorAt+.03)&&canvas.bodyArea()&&canvas.bodyArea()->isFocused(),"The Archive body takes the focus");
+                            need(archive->key({app::KeyKind::character,'B'},editorAt+.04),"The Archive body accepts generated plain text");
+                            need(archive->finishEditing(editorAt+.06),"Hidden Archive editors commit without a native text manager");need(archiveService->flush(),"Archive fixture writes finish through the shared utility executor");
+                            present(editorAt+.2,true);need(archiveService->state().selected()->title=="A"&&archiveService->state().selected()->body=="B","Archive persisted state retains the generated title and body");
                         }
                     }
-                    if(module==core::Module::clipboard&&clipboard){
-                        need(chromePlan&&chromePlan->projection().center,"Clipboard coverage needs the actual source plane");
-                        gpu::LayerScene probeGeometry(rasterizer);probeGeometry.load(Json::Object{{"bounds",Json::Array{0,0,400,334}},{"children",Json::Array{}}},{});gpu::NativeModuleSurface probePlane(probeGeometry,module);
-                        const auto probeSettings=chromeSettings(module);
-                        probePlane.update(*chromePlan->projection().center,probeSettings,notes->modulePresentation().current,1);
-                        const auto probeCamera=gpu::layerViewportProjection(metrics.pixelWidth,metrics.pixelHeight)*core::Matrix4::scale(metrics.scale,metrics.scale);
-                        const auto target=core::Projection::viewport(probeCamera*probePlane.pose().contentWorld,metrics.pixelWidth,metrics.pixelHeight).project({200,160});need(target.has_value(),"Clipboard scroll target projects");
-                        for(unsigned step=0;step<24;++step){const double atTime=time+.7+double(step)*.04;const auto previous=clipboard->state().scrollOffset();need(clipboard->wheel({target->x/metrics.scale,target->y/metrics.scale,step<12?-1.:1.,false,0,3},atTime),"Clipboard consumes the projected wheel input");present(atTime,true);scrollChanges+=clipboard->state().scrollOffset()!=previous;const auto usage=rasterizer.stats();peakEntries=std::max(peakEntries,usage.entries);peakBytes=std::max(peakBytes,usage.resourceBytes);}
-                        need(scrollChanges>=12&&clipboard->state().scrollOffset()==0,"Clipboard moves through rows and returns to the top");
+                    if(module==core::Module::clipboard&&clipboardCanvas){
+                        // The design owner projects the box; the wheel scrolls the cards (12 px a line).
+                        const auto target=static_cast<tools::DesignModuleOwner&>(*clipboardModuleOwner).core().clientRect({295,300,0,0});need(target.has_value(),"Clipboard scroll target projects");
+                        const auto offset=[&]{const auto areas=clipboardCanvas->page().scrollAreas();return areas.empty()?0.:areas.front()->offset();};
+                        for(unsigned step=0;step<24;++step){const double atTime=time+.7+double(step)*.04;const auto previous=offset();need(clipboardModuleOwner->wheel({target->x,target->y,step<12?-1.:1.,false,0,3},atTime),"Clipboard consumes the projected wheel input");present(atTime,true);scrollChanges+=offset()!=previous;const auto usage=rasterizer.stats();peakEntries=std::max(peakEntries,usage.entries);peakBytes=std::max(peakBytes,usage.resourceBytes);}
+                        need(scrollChanges>=12&&offset()==0,"Clipboard moves through cards and returns to the top");
                     }
                     // Reader peers in the first cycle, with the plain-text book: a
                     // PDF page rendered late in the run leaves Windows.Data.Pdf's
                     // own D3D device to an idle timer, which still runs at process
                     // exit (README checkpoint 124, "Found while integrating").
                     if(module==core::Module::reader&&reader&&cycle==0)
-                        peerProbe(core::Module::reader,readerModuleOwner.get(),{{"settings",[&]{return reader->capturesPointer();}},{"menu:close",[&]{return !reader->capturesPointer();}}});
-                    if(module==core::Module::workMode&&workMode&&cycle==0){
-                        // The cursor over Work Mode's custom duration field: the I-beam
-                        // while it is open (HUDProjectedTextView.projectedCursor), through
-                        // the owner and the host's WM_SETCURSOR route; the source cursor
-                        // beside it and once it closes.
+                        peerProbe(core::Module::reader,readerModuleOwner.get(),{{"settings",[&]{return reader->capturesPointer();}},{"settings",[&]{return !reader->capturesPointer();}}});
+                    if(module==core::Module::workMode&&workMode&&workModeCanvas&&cycle==0){
+                        // The custom duration field (a design text field): the I-beam over
+                        // it while it edits, through the owner and the host's WM_SETCURSOR
+                        // route; the source cursor beside it and once it closes.
                         double workStart=time+.66;present(workStart,true);
-                        need(workMode->perform("work:countdown",workStart)&&workMode->perform("work:custom",workStart+.005)&&workMode->editing(),"Work Mode opens its custom duration field through its accessible controls");
+                        auto&owner=static_cast<tools::DesignModuleOwner&>(*workModeModuleOwner);
+                        // A click on the Custom preset segment through the owner's own pointer route.
+                        const endfield::modules::design::Control*customPreset{};
+                        for(const auto*c:workModeCanvas->page().controls())if(c->id()=="workMode.preset:3")customPreset=c;
+                        const auto preset=customPreset?owner.core().clientRect(customPreset->rect(workModeCanvas->root())):std::nullopt;
+                        need(bool(preset),"Work Mode shows its Custom preset");
+                        const double px=preset->x+preset->width/2,py=preset->y+preset->height/2;
+                        need(workModeModuleOwner->pointer({PointerKind::down,PointerButton::left,px,py},workStart+.002),"The Custom preset takes the press");
+                        (void)workModeModuleOwner->pointer({PointerKind::up,PointerButton::left,px,py},workStart+.004);
                         for(unsigned n=1;n<=6;++n)present(workStart+.005+double(n)/60,true);
-                        const auto field=workMode->clientRect(endfield::modules::WorkModePresentation::durationEditorRect());
-                        const auto beside=workMode->clientRect({40,150,0,0});
+                        auto&custom=workModeCanvas->customField();
+                        need(workModeCanvas->editingCustom()&&custom.editing(),"Work Mode opens its custom duration field");
+                        const auto field=owner.core().clientRect(custom.rect(workModeCanvas->root()));
+                        const auto beside=owner.core().clientRect({20,240,0,0});
                         const core::Point center=field?core::Point{field->x+field->width/2,field->y+field->height/2}:core::Point{};
-                        hostCheck(field&&workModeModuleOwner&&workModeModuleOwner->cursorAt(center)==std::optional(ModuleCursor::text),"Work Mode answers the I-beam over its open duration field");
+                        hostCheck(field&&workModeModuleOwner->cursorAt(center)==std::optional(ModuleCursor::text),"Work Mode answers the I-beam over its open duration field");
                         // A pinned Notes card above the field would rightly keep the source cursor.
                         if(field&&!notes->covers(center))hostCheck(cursorAt(center)==ModuleCursor::text,"The host's cursor route shows the I-beam over the open duration field");
                         hostCheck(beside&&!workModeModuleOwner->cursorAt({beside->x,beside->y})&&cursorAt({beside->x,beside->y})==ModuleCursor::source,"The source cursor stays beside the open field");
-                        // HUDWorkModeInteraction.layoutAccessibility: the open
-                        // HUDWorkDurationField is the focused Edit peer under the HUD
-                        // root; its value is the draft and SetValue replaces it.
+                        custom.endEditing(false);present(workStart+.13,true);
+                        hostCheck(!custom.editing()&&!workModeModuleOwner->cursorAt(center)&&cursorAt(center)==ModuleCursor::source,"Closing the field restores the source cursor");
+                        // Reopened through the Custom segment, the field is an Edit peer under
+                        // the HUD root; SetValue commits it (MODS-734).
+                        // A direct canvas call is no owner entry point: the context's editor host
+                        // follows this owner first (as DesignOwnerCore's UIA invoke does), so the
+                        // rebuilt field registers with Work Mode's editors, not the last owner's.
+                        owner.core().bindEditorHost();
+                        need(workModeCanvas->performAccessibilityAction("workMode.preset:3",workStart+.131)&&workModeCanvas->editingCustom(),"Work Mode reopens its custom duration field through the Custom segment");
+                        present(workStart+.135,true);
                         {HudAutomation uia(host.hwnd(),automationSource());(void)uia.refresh();
                          ComPtr<IRawElementProviderFragment>editor;
                          for(std::size_t n=0;n<workModeModuleOwner->automationCount()&&!editor;++n){ComPtr<IRawElementProviderFragment>f;
-                             if(SUCCEEDED(workModeModuleOwner->automationChild(n,&f))&&f&&textProperty(f.Get(),UIA_AutomationIdPropertyId)==gpu::workModeDurationEditorID)editor=f;}
-                         ComPtr<IRawElementProviderSimple>simple;VARIANT type,focus;VariantInit(&type);VariantInit(&focus);
-                         const bool edit=editor&&SUCCEEDED(editor.As(&simple))&&SUCCEEDED(simple->GetPropertyValue(UIA_ControlTypePropertyId,&type))&&type.vt==VT_I4&&type.lVal==UIA_EditControlTypeId&&
-                             SUCCEEDED(simple->GetPropertyValue(UIA_HasKeyboardFocusPropertyId,&focus))&&focus.vt==VT_BOOL&&focus.boolVal==VARIANT_TRUE;
-                         VariantClear(&type);VariantClear(&focus);
-                         hostCheck(edit,"Work Mode's open duration field is the focused Edit peer under the HUD root");
-                         ComPtr<IUnknown>pattern;ComPtr<IValueProvider>value;BSTR text=nullptr;
-                         const bool read=simple&&SUCCEEDED(simple->GetPatternProvider(UIA_ValuePatternId,&pattern))&&pattern&&SUCCEEDED(pattern.As(&value))&&SUCCEEDED(value->get_Value(&text))&&text&&narrow(text)==workMode->editingText().value_or(std::string{});
-                         if(text)SysFreeString(text);
-                         hostCheck(read,"The duration field's UI Automation value is its draft text");
-                         hostCheck(value&&value->SetValue(L"0:07")==S_OK&&workMode->editingText()==std::optional<std::string>("0:07")&&workMode->editing(),"Setting the duration field's value replaces the draft and keeps it open");
+                             if(SUCCEEDED(workModeModuleOwner->automationChild(n,&f))&&f&&textProperty(f.Get(),UIA_AutomationIdPropertyId)=="workMode.custom")editor=f;}
+                         ComPtr<IRawElementProviderSimple>simple;ComPtr<IUnknown>pattern;ComPtr<IValueProvider>value;VARIANT type;VariantInit(&type);
+                         const bool edit=editor&&SUCCEEDED(editor.As(&simple))&&SUCCEEDED(simple->GetPropertyValue(UIA_ControlTypePropertyId,&type))&&type.vt==VT_I4&&type.lVal==UIA_EditControlTypeId;
+                         VariantClear(&type);
+                         hostCheck(edit&&SUCCEEDED(simple->GetPatternProvider(UIA_ValuePatternId,&pattern))&&pattern&&SUCCEEDED(pattern.As(&value))&&value->SetValue(L"0:07")==S_OK,
+                             "Work Mode's custom duration field is an Edit peer whose value commits");
                          uia.disconnectOwners();uia.shutdown();}
-                        need(workMode->finishEditing(false,workStart+.12)&&!workMode->editing(),"Cancelling closes the duration field");
-                        present(workStart+.13,true);
-                        hostCheck(!workModeModuleOwner->cursorAt(center)&&cursorAt(center)==ModuleCursor::source,"Closing the field restores the source cursor");
-                        workStart+=.14;
+                        present(workStart+.14,true);
+                        need(!workModeCanvas->editingCustom()&&workMode->snapshot(workStart+.14).duration==7,"A committed custom duration sets the countdown (Custom 0:07)");
+                        workStart+=.2;
                         // Drive the host's one Work Mode controller through its accessible
                         // controls so areas observing it (Personal Profile lifetime hours)
                         // receive real checkpoints in hidden coverage.
-                        present(workStart,true);
-                        need(workMode->perform("work:stopwatch",workStart)&&workMode->perform("work:start",workStart+.01),"Work Mode starts a stopwatch through its accessible controls");
-                        for(unsigned n=1;n<=30;++n)present(workStart+.01+double(n)/60,true);
-                        const double stop=workStart+.6;
-                        need(workMode->perform("work:pause",stop)&&workMode->controller().snapshot(stop).phase==endfield::modules::WorkModePhase::paused&&workMode->controller().trackedWorkSeconds(stop)>0,"The stopwatch pauses with tracked time");
+                        // Frames run the shared design deadlines first (the page swap lands on one).
+                        const auto frame=[&](double t){if(const auto wake=designOverlay->nextWakeTime(t);wake&&*wake<=t)onDeadline(t);present(t,true);};
+                        frame(workStart);
+                        need(workModeCanvas->performAccessibilityAction("workMode.kind:1",workStart),"Work Mode switches to the stopwatch through its mode tab");
+                        for(unsigned n=1;n<=24;++n)frame(workStart+double(n)/60);
+                        need(workModeCanvas->performAccessibilityAction("workMode.primary",workStart+.4),"Work Mode starts the stopwatch through its accessible primary button");
+                        for(unsigned n=1;n<=30;++n)frame(workStart+.4+double(n)/60);
+                        const double stop=workStart+1;
+                        need(workModeCanvas->performAccessibilityAction("workMode.primary",stop)&&workMode->snapshot(stop).phase==endfield::modules::WorkModePhase::paused&&workMode->trackedWorkSeconds(stop)>0,"The stopwatch pauses with tracked time");
                         present(stop+.01,true);
                     }
                     if(auto*area=areaFor(registry.presenter(module)))runArea(*area,module,cycle,time+.7);
@@ -785,7 +1047,11 @@ int Application::Impl::runHiddenVerification(){
                 const bool areaModule=std::find(areaModules.begin(),areaModules.end(),module)!=areaModules.end();
                 const auto usage=rasterizer.stats();(areaModule?areaModuleResults:moduleResults).push_back(Json::Object{{"module",std::string(core::moduleIdentifier(module))},{"cycle",int(cycle)},{"rasterEntries",std::int64_t(usage.entries)},{"rasterBytes",std::int64_t(usage.resourceBytes)},{"scrollChanges",std::int64_t(scrollChanges)},{"scrollPeakEntries",std::int64_t(peakEntries)},{"scrollPeakBytes",std::int64_t(peakBytes)}});
                 if(module==modules.back()){
-                    if(retainedCycle)need(usage.entries==retainedCycle->entries&&usage.resourceBytes==retainedCycle->resourceBytes,"Repeated combined module cycles retain no extra raster resources");
+                    if(retainedCycle&&!(usage.entries==retainedCycle->entries&&usage.resourceBytes==retainedCycle->resourceBytes)){
+                        // Name the growth: every module step's usage of the last two cycles.
+                        std::string steps;for(const auto&row:moduleResults)if(row["cycle"].integer()+1>=int(cycle))steps+=" "+row["module"].string()+"@"+std::to_string(row["cycle"].integer())+"="+std::to_string(row["rasterEntries"].integer())+"/"+std::to_string(row["rasterBytes"].integer());
+                        need(false,("Repeated combined module cycles retain no extra raster resources (entries "+std::to_string(retainedCycle->entries)+"->"+std::to_string(usage.entries)+", bytes "+
+                            std::to_string(retainedCycle->resourceBytes)+"->"+std::to_string(usage.resourceBytes)+";"+steps+")").c_str());}
                     // Reader intentionally adds a second (PDF) book on cycle1.
                     // Compare after that fixed input set has been exercised;
                     // the extra book changes library/control text legitimately.
@@ -793,6 +1059,766 @@ int Application::Impl::runHiddenVerification(){
                     // Once per cycle every area also receives a module-less step.
                     for(auto&area:externalModules)runArea(area,std::nullopt,cycle,time+1.9);
                 }time=std::max(time,areaLatest);time+=2;
+            }
+            // RC 140 report (not reproduced): starting a Work Mode countdown or
+            // switching an Event Log tab hid Work Mode, Event Log, Personal ID,
+            // Account binding, the sanity wallet and Power. After both triggers,
+            // through the owners' pointer route, every module still has its
+            // enabled owner and visible draws (at least half of those before the
+            // triggers), and the shell's sanity wallet, red power button, ID card and
+            // clock are hit-tested where they are drawn. Run before and after the
+            // Recording mode switches below.
+            std::map<core::Module,std::size_t> pagesBefore;
+            const auto checkPages=[&](const char*pass){
+                if(!workModeCanvas||!eventLogCanvas||!workModeModuleOwner||!eventLogModuleOwner)return;
+                const auto began=Clock::now();
+                const auto frames=[&](double seconds){const unsigned n=unsigned(std::ceil(seconds*15));for(unsigned f=1;f<=n;++f){const double t=time+double(f)/15;
+                    if(designOverlay)if(const auto wake=designOverlay->nextWakeTime(t);wake&&*wake<=t)(void)designOverlay->deadline(t);present(t,true);}time+=double(n)/15+.001;};
+                // A design control pressed and released through its owner (DesignOwnerCore::pointer).
+                const auto click=[&](const std::unique_ptr<ModuleOwner>&owner,endfield::modules::design::Canvas&canvas,std::string_view id){
+                    const endfield::modules::design::Control*control{};for(const auto*c:canvas.page().controls())if(c->id()==id)control=c;
+                    need(control!=nullptr,("The "+std::string(id)+" control is on its page").c_str());
+                    const auto r=static_cast<tools::DesignModuleOwner&>(*owner).core().clientRect(control->rect(canvas.root()));need(r.has_value(),"The control projects");
+                    const double x=r->x+r->width/2,y=r->y+r->height/2;
+                    need(owner->pointer({PointerKind::down,PointerButton::left,x,y},time+.001),("The "+std::string(id)+" press reaches its owner").c_str());
+                    (void)owner->pointer({PointerKind::up,PointerButton::left,x,y},time+.003);time+=.004;};
+                // Each module's visible draws before the first triggers (the second pass reuses them).
+                const auto visibleDraws=[&](core::Module m){std::size_t n{};if(auto*o=registry.presenter(m))for(const auto&e:o->entries(m))if(e.scene)for(const auto&d:e.scene->draws())n+=d.opacity>.01f;return n;};
+                if(pagesBefore.empty())for(const auto module:modules){selectModule(module,time);frames(.4);pagesBefore[module]=visibleDraws(module);}
+                using Phase=endfield::modules::WorkModePhase;
+                selectModule(core::Module::workMode,time);frames(.5);
+                if(workMode->snapshot(time).phase!=Phase::idle){click(workModeModuleOwner,*workModeCanvas,"workMode.reset");frames(.2);}
+                if(workMode->snapshot(time).kind!=endfield::modules::WorkModeKind::countdown){click(workModeModuleOwner,*workModeCanvas,"workMode.kind:0");frames(.5);}
+                click(workModeModuleOwner,*workModeCanvas,"workMode.preset:1");frames(.2);
+                click(workModeModuleOwner,*workModeCanvas,"workMode.primary");
+                need(workMode->snapshot(time).phase==Phase::running&&workMode->snapshot(time).kind==endfield::modules::WorkModeKind::countdown,"The Work Mode countdown starts through its owner");
+                frames(.3);
+                selectModule(core::Module::eventLog,time);frames(.5);
+                click(eventLogModuleOwner,*eventLogCanvas,"eventLog.filter:1");frames(.5);
+                need(!eventLogCanvas->transitioning()&&eventLogCanvas->filter()==endfield::modules::EventLogFilter(1),"The Event Log tab switch lands");
+                // Event Log lists fewer rows on that tab: its own expectation is the landed page.
+                const auto tabDraws=visibleDraws(core::Module::eventLog);need(tabDraws>0,"The Event Log tab shows its page");
+                std::string parts;std::vector<core::Point>wallet;
+                for(const auto module:modules){
+                    const std::string id(core::moduleIdentifier(module));
+                    selectModule(module,time);frames(.4);
+                    need(registry.presenter(module)!=nullptr,("After a countdown and a tab switch "+id+" keeps its enabled owner").c_str());
+                    const auto draws=visibleDraws(module);
+                    const std::size_t expected=module==core::Module::eventLog?tabDraws:pagesBefore[module];
+                    if(expected>0)need(draws*2>=expected,("After a countdown and a tab switch "+id+" keeps its visible draws ("+std::to_string(expected)+" -> "+std::to_string(draws)+")").c_str());
+                    // The shell parts: what takes a press across a grid (owners, the clock, source buttons), and pixels drawn there.
+                    const auto*sample=session->currentFrame();need(sample&&sample->sourceFrame,"The shell has a source frame");
+                    const auto vp=sample->camera.projection*sample->camera.view;const core::Rect viewport{0,0,metrics.width,metrics.height};
+                    std::map<std::string,std::vector<core::Point>>hits;
+                    for(unsigned gy=0;gy<30;++gy)for(unsigned gx=0;gx<48;++gx){const core::Point p{(gx+.5)*metrics.width/48,(gy+.5)*metrics.height/30};
+                        if(auto*o=registry.first(ModuleRegistry::Chain::pointer,[&](ModuleOwner&owner,const ModuleRouting&){return owner.covers(p);},"page probe")){if(o->name()=="account"&&(module!=core::Module::account||std::find(wallet.begin(),wallet.end(),p)!=wallet.end()))hits["wallet"].push_back(p);continue;}
+                        if(clockPoint(p)){hits["clock"].push_back(p);continue;}
+                        const auto button=sample->sourceFrame->buttonAt(p,vp,viewport);if(!button)continue;
+                        if(quitButtons.contains(*button)){hits["power"].push_back(p);continue;}
+                        const auto action=session->actions().find(*button);if(action==session->actions().end())continue;
+                        for(const auto&entry:contentCatalog->entries())if(entry.action==action->second&&entry.target=="profile")hits["idCard"].push_back(p);}
+                    // On Account the page is the account owner's too: the wallet where it was on the other modules.
+                    if(module!=core::Module::account)wallet=hits["wallet"];
+                    const auto image=renderer.readback();
+                    for(const char*part:{"wallet","power","idCard","clock"}){const auto&points=hits[part];
+                        need(!points.empty(),("After a countdown and a tab switch on "+id+" the shell's "+part+" is hit-tested").c_str());
+                        // Drawn: a bright pixel (any channel >= 96) beside a point that hits it.
+                        bool drawn=false;for(const auto&p:points){const int cx=int(p.x*metrics.scale),cy=int(p.y*metrics.scale);
+                            for(int y=std::max(0,cy-6);y<=std::min(int(image.height)-1,cy+6)&&!drawn;++y)for(int x=std::max(0,cx-6);x<=std::min(int(image.width)-1,cx+6)&&!drawn;++x){
+                                const auto*q=&image.pixels[std::size_t(y)*image.rowBytes+std::size_t(x)*4];drawn=std::max({q[0],q[1],q[2]})>=96;}
+                            if(drawn)break;}
+                        need(drawn,("After a countdown and a tab switch on "+id+" the shell's "+part+" is drawn").c_str());}
+                    parts+=" "+id+"="+std::to_string(draws);
+                }
+                // Back to the state the coverage found: the first tab, Work Mode idle.
+                selectModule(core::Module::eventLog,time);frames(.4);click(eventLogModuleOwner,*eventLogCanvas,"eventLog.filter:0");frames(.5);
+                selectModule(core::Module::workMode,time);frames(.4);click(workModeModuleOwner,*workModeCanvas,"workMode.reset");frames(.2);
+                need(workMode->snapshot(time).phase==Phase::idle,"The countdown resets");
+                pageVisibility.push_back(Json::Object{{"pass",std::string(pass)},{"milliseconds",milliseconds(began)},{"visibleDraws",parts}});
+                time+=1;};
+            checkPages("built");
+            // Recording mode switched from Settings > Display once every module
+            // has been built (rc139: "a freeze when turning on and off recording
+            // mode"). Each switch is timed on this thread from the toggle's press
+            // through the frame that applies it and the frames that follow.
+            if(settingsUI&&designOverlay){
+                selectModule(core::Module::display,time);for(unsigned frame=0;frame<40;++frame)present(time+double(frame)/60,true);time+=1;
+                auto&display=settingsUI->canvas(core::Module::display);Json::Array toggles;
+                for(const char*id:{"recording","recording","recording","recording","bootLog","bootLog"}){
+                    const bool recordingBefore=configuration.recordingMode();
+                    const auto raster0=rasterizer.stats();const auto pages0=designOverlay->context().pagesBuilt();
+                    const auto t0=Clock::now();
+                    const bool pressed=display.performAccessibilityAction(id,time);
+                    const double pressMs=milliseconds(t0);
+                    const auto t1=Clock::now();present(time,true);const double frameMs=milliseconds(t1);
+                    const auto pages1=designOverlay->context().pagesBuilt();const auto raster1=rasterizer.stats();
+                    double settleMax=0;for(unsigned frame=1;frame<=60;++frame){const double t=time+double(frame)/60;if(const auto wake=designOverlay->nextWakeTime(t);wake&&*wake<=t)(void)designOverlay->deadline(t);const auto f0=Clock::now();present(t,true);settleMax=std::max(settleMax,milliseconds(f0));}
+                    need(pressed,"The Display switch presses like its click");
+                    if(std::string_view(id)=="recording"){need(configuration.recordingMode()!=recordingBefore,"The Recording mode switch changes the preference");
+                        // The work bound (rc139 froze ~100-150 ms: every built canvas re-rendered and
+                        // the shown page rasterized whole): one page, its changed surfaces, the toast.
+                        hostCheck(pages1-pages0<=1&&raster1.rasterizations-raster0.rasterizations<=48,"A Recording mode switch builds only the shown page and rasterizes only what changed ("+
+                            std::to_string(pages1-pages0)+" pages, "+std::to_string(raster1.rasterizations-raster0.rasterizations)+" rasterizations)");}
+                    toggles.push_back(Json::Object{{"switch",std::string(id)},{"recording",configuration.recordingMode()},{"pressMs",pressMs},{"frameMs",frameMs},{"settleMaxFrameMs",settleMax},
+                        {"pagesBuilt",std::int64_t(pages1-pages0)},{"rasterizations",std::int64_t(raster1.rasterizations-raster0.rasterizations)},{"textLayouts",std::int64_t(raster1.textLayoutsCreated-raster0.textLayoutsCreated)},
+                        {"settleRasterizations",std::int64_t(rasterizer.stats().rasterizations-raster1.rasterizations)}});
+                    time+=2;
+                }
+                recordingToggle=std::move(toggles);
+            }
+            checkPages("afterRecording");
+            // Action timing (the owner's "slight freeze" on Work Mode start/pause
+            // and Shelf selection, and the other in-place changes of a shown
+            // canvas): with every module built, each action runs through the path
+            // a click takes (the canvas's pointer calls in box px, which the owner
+            // makes after unprojecting), the owner's key route or the accessible
+            // invoke, on this thread. Timed: the action itself and the frame that
+            // applies it (scene sync and rasterization), then the worst frame of
+            // the following second (staged sub-page swaps land at 130 ms). Counted:
+            // pages built (Context::pagesBuilt), rasterizations and text layouts,
+            // for the action's frame and for the whole second.
+            if(designOverlay){
+                namespace dz=modules::design;
+                auto&designContext=designOverlay->context();
+                const auto frameAt=[&](double t){if(const auto wake=designOverlay->nextWakeTime(t);wake&&*wake<=t)onDeadline(t);present(t,true);};
+                const auto canvasOf=[&](core::Module m)->dz::Canvas*{for(auto*c:designContext.canvases())if(c->module()==m)return c;return nullptr;};
+                const auto findIn=[](dz::Canvas&c,std::string_view id)->dz::Control*{
+                    for(auto*x:c.page().controls())if(x->id()==id)return x;
+                    if(c.showsHeader())for(auto*x:c.header().controls())if(x->id()==id)return x;
+                    return nullptr;};
+                // The owner a press reaches binds the Context's editor host first (its text fields).
+                const auto bindOwner=[&](core::Module m,double t){auto*o=registry.presenter(m);if(!o)return;
+                    if(auto*design=dynamic_cast<tools::DesignModuleOwner*>(o)){design->core().bindEditorHost();return;}
+                    (void)o->pointer({PointerKind::move,PointerButton::none,metrics.width/2,metrics.height/2},hostTime(t));};
+                const auto press=[&](core::Module m,std::string_view id,bool toggle,double t)->bool{
+                    auto*c=canvasOf(m);if(!c)return false;auto*x=findIn(*c,id);if(!x||!x->enabled())return false;
+                    const auto r=x->rect(c->root());const dz::Point p{r.x+r.width/2,r.y+r.height/2};
+                    bindOwner(m,t);
+                    // Scrolled out of view or drawn transparent (Clipboard's row actions until
+                    // hovered): the accessible invoke, the call its click makes.
+                    if(!dz::isVisible(x->layer(),c->root())||!dz::isUnclipped(x->layer(),p,c->root()))return c->performAccessibilityAction(id,t);
+                    dz::PointerInput input;input.point=p;input.control=toggle;
+                    c->pointerMoved(p,false,t);const bool down=c->pointerDown(p,input,t);c->pointerMoved(p,true,t);c->pointerUp(p,t);c->pointerMoved(p,false,t);
+                    return down;};
+                const auto keyTo=[&](core::Module m,std::uint32_t virtualKey,bool shift,double t)->bool{
+                    auto*c=canvasOf(m);if(!c)return false;bindOwner(m,t);
+                    if(auto*design=dynamic_cast<tools::DesignModuleOwner*>(registry.presenter(m)))return design->core().key({KeyKind::down,virtualKey},shift?4u:0u,t);
+                    dz::KeyInput k;k.virtualKey=virtualKey;k.shift=shift;return c->keyDown(k,t);};
+                const auto showModule=[&](core::Module m)->dz::Canvas*{auto*o=registry.presenter(m);if(!o||!registry.enabled(*o))return nullptr;
+                    selectModule(m,time);for(unsigned f=0;f<30;++f)frameAt(time+double(f)/45);time+=1;
+                    auto*c=canvasOf(m);return c&&c->isActive()&&!c->transitioning()?c:nullptr;};
+                const auto settleFor=[&](unsigned frames){for(unsigned f=1;f<=frames;++f)frameAt(time+double(f)/30);time+=double(frames)/30+.05;drainUtility(time);frameAt(time);time+=.05;};
+                Json::Array timings;
+                // Work bounds over the action's second (pages built, rasterizations): see
+                // the measurement in the commit that set them. The old code builds the
+                // same pages with new layer ids, so every part rasterizes again: Work
+                // Mode's 47-63 surfaces, the Shelf's 213-259.
+                // Work Mode (rc140: the whole page, 47-63 surfaces, 45-78 ms): the state label
+                // and dot, the primary button, the tab lock, the custom field or the presets,
+                // a lap row and the custom toast rasterize again, at most 16 measured.
+                // The Shelf (rc140: 213-259 surfaces, 230-300 ms): the card (14 surfaces), the
+                // tiles whose selection changed, the drop ring; at most 34 measured.
+                const std::map<std::string,std::pair<std::int64_t,std::int64_t>,std::less<>> bounds{
+                    {"workMode.preset30",{1,24}},{"workMode.start",{1,24}},{"workMode.pause",{1,24}},{"workMode.resume",{1,24}},{"workMode.reset",{1,24}},
+                    {"workMode.customOpen",{1,24}},{"workMode.customCommit",{1,24}},{"workMode.lap",{1,24}},
+                    {"fileShelf.selectOne",{1,48}},{"fileShelf.selectAnother",{1,48}},{"fileShelf.ctrlToggle",{1,48}},{"fileShelf.shiftExtend",{0,48}},
+                    {"fileShelf.selectFromMany",{1,48}},{"fileShelf.deselect",{1,48}},
+                    // Add, remove and Clear lay the tiles out again (the Mac's pages): loose bounds.
+                    {"fileShelf.addOne",{1,200}},{"fileShelf.removeOne",{1,160}},{"fileShelf.removeThree",{1,160}},{"fileShelf.clear",{1,64}},
+                    // Group b4. Calendar (rc140: a selection to or from today loaded the whole month
+                    // part, 191-193 surfaces, 68-80 ms): the two cells and the events column, at most
+                    // 20 measured. Reopened pop-overs and menus, rows back in a list (rc140: the month
+                    // picker 61, How to play 16 large, the Font menu 456, Home 90, All 92): their kept
+                    // scenes, nothing rasterized. The Font menu's first opening: the rows near its
+                    // list only (48 measured). The reveal: the revealed text, the field and the button.
+                    {"calendar.daySelect",{1,24}},{"calendar.daySelectAgain",{1,24}},{"calendar.todayButton",{1,24}},{"calendar.dayOffToday",{1,24}},
+                    {"calendar.arrowRight",{1,24}},{"calendar.plateOpen",{1,32}},{"calendar.plateClose",{1,32}},{"calendar.monthPickerAgain",{0,4}},{"calendar.todayAfterMonths",{1,24}},
+                    {"eventLog.filterAll",{1,40}},{"eventLog.home",{0,8}},{"reader.fontMenu",{0,64}},{"reader.fontMenuAgain",{0,4}},
+                    {"minigame.rulesAgain",{0,4}},{"archive.unlockReveal",{0,40}},
+                    // Group b3. Settings (rc140: every built Settings canvas, 4, rebuilt per
+                    // click, 8 for a language): the shown page only, once; a language once,
+                    // in it. Personal ID: the inline editor joins the card as its own part
+                    // (rc140: the card's 66 surfaces); a commit or the date kind loads the
+                    // card, one part so that it fades as one image (59-73 surfaces), built
+                    // once.
+                    {"display.themeSwatch",{2,48}},{"display.themeSwatchBack",{2,48}},{"display.appIconTile",{1,8}},
+                    {"system.languagePick",{1,512}},{"system.languageBack",{1,512}},{"system.languageResolved",{1,512}},{"system.languageResolvedBack",{1,512}},
+                    {"profile.fieldCommit",{1,96}},{"profile.fieldBegin",{0,8}},{"profile.dateKind",{1,80}},{"profile.dateKindBack",{1,80}}};
+                // The most rasterizations on one frame after the action's (deterministic counts):
+                // later work comes a tile per frame (the other layout's tiles; an add at most 14
+                // measured, a selection 9), or as the page a Clear builds once its tiles faded
+                // (22), never as a burst moved off the click (every tile of a layout at once).
+                const std::map<std::string,std::int64_t,std::less<>> frameBounds{
+                    {"fileShelf.addOne",24},{"fileShelf.selectOne",16},{"fileShelf.selectAnother",16},{"fileShelf.ctrlToggle",16},{"fileShelf.shiftExtend",16},
+                    {"fileShelf.selectFromMany",16},{"fileShelf.deselect",16},{"fileShelf.removeOne",16},{"fileShelf.removeThree",16},{"fileShelf.clear",48}};
+                const bool enforceBounds=true;
+                const auto timeAction=[&](core::Module m,const char*name,const std::function<bool(double)>&act){
+                    drainUtility(time);frameAt(time);time+=.05;
+                    const auto raster0=rasterizer.stats();const auto pages0=designContext.pagesBuilt();
+                    const auto t0=Clock::now();const bool done=act(time);const double actionMs=milliseconds(t0);
+                    const auto t1=Clock::now();frameAt(time);const double frameMs=milliseconds(t1);
+                    const auto pages1=designContext.pagesBuilt();const auto raster1=rasterizer.stats();
+                    double settleMax=0;std::int64_t settleRasterMax=0;
+                    const auto settleFrame=[&](double t){const auto r0=rasterizer.stats().rasterizations;const auto f0=Clock::now();frameAt(t);
+                        settleMax=std::max(settleMax,milliseconds(f0));settleRasterMax=std::max(settleRasterMax,std::int64_t(rasterizer.stats().rasterizations-r0));};
+                    for(unsigned f=1;f<=15;++f)settleFrame(time+double(f)/15);
+                    // Completions of the action's utility work (saves) arrive as the message loop would deliver them.
+                    time+=1;drainUtility(time);settleFrame(time+.01);
+                    const auto pages2=designContext.pagesBuilt();const auto raster2=rasterizer.stats();
+                    // Work Mode, the Shelf and every bounded action carry the regression bounds:
+                    // they must run (a bound over an action that did nothing passes vacuously).
+                    const auto key=std::string(core::moduleIdentifier(m))+"."+name;
+                    if(m==core::Module::workMode||m==core::Module::fileShelf||bounds.contains(key))need(done,("The timed action "+key+" ran").c_str());
+                    timings.push_back(Json::Object{{"module",std::string(core::moduleIdentifier(m))},{"action",std::string(name)},{"ran",done},
+                        {"actionMs",actionMs},{"frameMs",frameMs},{"clickFrameMs",actionMs+frameMs},{"settleMaxFrameMs",settleMax},{"settleMaxFrameRasterizations",settleRasterMax},
+                        {"pagesBuilt",std::int64_t(pages1-pages0)},{"rasterizations",std::int64_t(raster1.rasterizations-raster0.rasterizations)},
+                        {"textLayouts",std::int64_t(raster1.textLayoutsCreated-raster0.textLayoutsCreated)},
+                        {"secondPagesBuilt",std::int64_t(pages2-pages0)},{"secondRasterizations",std::int64_t(raster2.rasterizations-raster0.rasterizations)},
+                        {"secondTextLayouts",std::int64_t(raster2.textLayoutsCreated-raster0.textLayoutsCreated)}});
+                    if(const auto bound=bounds.find(key);bound!=bounds.end()){
+                        // A bound holds only for an action that ran (a renamed control or a broken setup does nothing, within any bound).
+                        hostCheck(done,"The timed action "+key+" ran");
+                        const auto pages=std::int64_t(pages2-pages0),rasters=std::int64_t(raster2.rasterizations-raster0.rasterizations);
+                        const bool within=pages<=bound->second.first&&rasters<=bound->second.second;
+                        timings.back()["withinBound"]=within;
+                        if(enforceBounds)hostCheck(within,"The timed action "+key+" stays within its work bound ("+std::to_string(pages)+" of "+std::to_string(bound->second.first)+
+                            " pages, "+std::to_string(rasters)+" of "+std::to_string(bound->second.second)+" rasterizations)");
+                    }
+                    if(const auto bound=frameBounds.find(key);bound!=frameBounds.end()){
+                        const bool within=settleRasterMax<=bound->second;timings.back()["settleWithinBound"]=within;
+                        if(enforceBounds)hostCheck(within,"The timed action "+key+" spreads its later work over frames ("+std::to_string(settleRasterMax)+" of "+std::to_string(bound->second)+" rasterizations on one frame)");
+                    }
+                    time+=.1;};
+                // Group b2's work bounds (Media Assembly; timed below by timeDetailed and
+                // timeWindow, and by the area): the second after each action (pages
+                // built, rasterizations). Like `bounds`, each holds only for an action
+                // that ran (b2Bound), and a skip of one fails.
+                // rc140 (new page ids on every rebuild): Media Assembly's import start, close
+                // and overwrite each rasterized the whole panel again, twice for close and
+                // more around an overwrite's reload.
+                // Measured with kept ids: 29, 47, 94 and 73 rasterizations, 150 for the first
+                // Stickers visit, at most 2 pages each. 18 of close's and overwrite's are the
+                // confirm bar leaving; the rest is the stage's own picture, export gauge and
+                // empty state and the header, which the Mac redraws too (no panel part changes).
+                const std::map<std::string,std::pair<std::int64_t,std::int64_t>,std::less<>> b2Bounds{
+                    {"mediaAssembly.importShelf",{2,36}},{"mediaAssembly.closeConfirm",{2,56}},{"mediaAssembly.overwriteConfirm",{2,110}},
+                    {"mediaAssembly.overwriteFinish",{2,88}},{"mediaAssembly.stickersFirstVisit",{2,170}}};
+                const auto skip=[&](core::Module m,const char*name,std::string reason={}){timings.push_back(Json::Object{{"module",std::string(core::moduleIdentifier(m))},{"action",std::string(name)},{"skipped",true}});
+                    if(!reason.empty())timings.back()["reason"]=reason;
+                    const auto key=std::string(core::moduleIdentifier(m))+"."+name;hostCheck(!bounds.contains(key)&&!b2Bounds.contains(key),"The timed action "+key+" ran (skipped"+(reason.empty()?std::string():": "+reason)+")");};
+                // Work Mode: the host's one controller, left by the cycles as a paused stopwatch.
+                if(workMode&&workModeCanvas&&showModule(core::Module::workMode)){
+                    const auto M=core::Module::workMode;
+                    if(workMode->snapshot(time).active()||workMode->snapshot(time).phase!=endfield::modules::WorkModePhase::idle){(void)press(M,"workMode.reset",false,time);settleFor(10);}
+                    if(workMode->snapshot(time).kind!=endfield::modules::WorkModeKind::countdown)timeAction(M,"countdownTab",[&](double t){return press(M,"workMode.kind:0",false,t);});
+                    timeAction(M,"preset30",[&](double t){return press(M,"workMode.preset:1",false,t)&&workMode->snapshot(time).duration==30*60;});
+                    timeAction(M,"start",[&](double t){return press(M,"workMode.primary",false,t)&&workMode->snapshot(time).phase==endfield::modules::WorkModePhase::running;});
+                    timeAction(M,"pause",[&](double t){return press(M,"workMode.primary",false,t)&&workMode->snapshot(time).phase==endfield::modules::WorkModePhase::paused;});
+                    timeAction(M,"resume",[&](double t){return press(M,"workMode.primary",false,t)&&workMode->snapshot(time).phase==endfield::modules::WorkModePhase::running;});
+                    timeAction(M,"reset",[&](double t){return press(M,"workMode.reset",false,t)&&workMode->snapshot(time).phase==endfield::modules::WorkModePhase::idle;});
+                    timeAction(M,"customOpen",[&](double t){return press(M,"workMode.preset:3",false,t)&&workModeCanvas->editingCustom();});
+                    timeAction(M,"customCommit",[&](double t){return workModeModuleOwner->key({KeyKind::down,VK_RETURN},hostTime(t))&&!workModeCanvas->editingCustom();});
+                    timeAction(M,"stopwatchTab",[&](double t){return press(M,"workMode.kind:1",false,t);});
+                    (void)press(M,"workMode.primary",false,time);settleFor(10);
+                    timeAction(M,"lap",[&](double t){return press(M,"workMode.lap",false,t)&&!workModeCanvas->lapTexts().empty();});
+                    (void)press(M,"workMode.primary",false,time);settleFor(4);(void)press(M,"workMode.reset",false,time);settleFor(10);
+                    timeAction(M,"countdownTab",[&](double t){return press(M,"workMode.kind:0",false,t);});
+                    need(workMode->snapshot(time).phase==endfield::modules::WorkModePhase::idle,"The timed Work Mode actions leave an idle countdown");
+                }
+                // File Shelf: synthetic files in this run's own data root (never a user file).
+                if(shelf&&shelf->canvas()&&shelfModuleOwner&&registry.enabled(*shelfModuleOwner)&&!args.shelfDataRoot.empty()){
+                    const auto M=core::Module::fileShelf;auto*canvas=shelf->canvas();
+                    const auto folder=args.shelfDataRoot.parent_path()/"freeze-probe-files";std::filesystem::create_directories(folder);
+                    std::vector<std::string> paths;
+                    for(unsigned n=1;n<=24;++n){char name[32];std::snprintf(name,sizeof name,"Synthetic %02u.txt",n);const auto file=folder/name;
+                        {std::ofstream out(file,std::ios::binary);out<<"Synthetic freeze probe file "<<n<<"\n";}
+                        const auto utf8=file.u8string();paths.emplace_back(reinterpret_cast<const char*>(utf8.data()),utf8.size());}
+                    const std::vector<std::string> seed(paths.begin(),paths.end()-1),last(paths.end()-1,paths.end());
+                    // The archive saves an action hands to the utility worker (and makes at once, on this thread).
+                    std::int64_t savesQueued{},savesAtOnce{};
+                    const auto deferred=[&](const std::function<bool()>&act){const auto before=shelf->resources();const bool done=act();const auto after=shelf->resources();
+                        savesQueued=std::int64_t(after.savesQueued-before.savesQueued);savesAtOnce=std::int64_t(after.savesAtOnce-before.savesAtOnce);return done;};
+                    // One save per action, written by the utility worker (rc140: one durable save per
+                    // removed id on this thread, 19-60 ms).
+                    const auto noteSave=[&]{timings.back()["savesQueued"]=savesQueued;timings.back()["savesAtOnce"]=savesAtOnce;
+                        hostCheck(savesQueued==1&&savesAtOnce==0,"A Shelf change saves its archive once, on the utility worker ("+std::to_string(savesQueued)+" queued, "+std::to_string(savesAtOnce)+" at once)");};
+                    if(showModule(M)){
+                        need(shelf->importFiles(seed,hostTime(time)),"The probe's synthetic files are added to the Shelf");settleFor(30);
+                        (void)keyTo(M,dz::key::home,false,time);settleFor(10);
+                        timeAction(M,"addOne",[&](double t){return deferred([&]{return shelf->importFiles(last,hostTime(t));});});noteSave();
+                        (void)keyTo(M,dz::key::home,false,time);settleFor(10);
+                        need(canvas->items().size()>=24,"The Shelf holds the probe's 24 synthetic files");
+                        const auto selected=[&]{return canvas->selectedIDs().size();};
+                        timeAction(M,"selectOne",[&](double t){return press(M,"file:1",false,t)&&selected()==1;});
+                        timeAction(M,"selectAnother",[&](double t){return press(M,"file:2",false,t)&&selected()==1;});
+                        timeAction(M,"ctrlToggle",[&](double t){return press(M,"file:3",true,t)&&selected()==2;});
+                        // Neither platform has Select All: Shift+Down extends the range from the anchor (2 or more stay in place).
+                        timeAction(M,"shiftExtend",[&](double t){return keyTo(M,dz::key::down,true,t)&&selected()>2;});
+                        timeAction(M,"selectFromMany",[&](double t){return press(M,"file:1",false,t)&&selected()==1;});
+                        timeAction(M,"deselect",[&](double t){return press(M,"file:1",false,t)&&selected()==0;});
+                        (void)press(M,"file:1",false,time);settleFor(10);
+                        timeAction(M,"removeOne",[&](double t){const auto before=canvas->items().size();return deferred([&]{return keyTo(M,dz::key::deleteForward,false,t);})&&canvas->items().size()+1==before;});noteSave();
+                        (void)press(M,"file:1",true,time);(void)press(M,"file:2",true,time);(void)press(M,"file:3",true,time);settleFor(10);
+                        timeAction(M,"removeThree",[&](double t){const auto before=canvas->items().size();return selected()==3&&deferred([&]{return keyTo(M,dz::key::deleteForward,false,t);})&&canvas->items().size()+3==before;});noteSave();
+                        (void)press(M,"shelf.clear",false,time);settleFor(10);
+                        timeAction(M,"clear",[&](double t){(void)t;return designContext.overlay().isConfirming()&&designContext.overlay().decide(dz::ConfirmState::Decision::confirm);});
+                        settleFor(10);need(canvas->items().empty(),"The probe's Clear empties the Shelf");
+                    }
+                }
+                // Notes: the TODO list (add, tick), then back to the TEXT tab.
+                if(notesCentreModuleOwner&&registry.enabled(*notesCentreModuleOwner))if(auto*c=showModule(core::Module::notes)){
+                    const auto M=core::Module::notes;
+                    if(findIn(*c,"notes.tabs:1")&&!findIn(*c,"notes.addTask"))timeAction(M,"todoTab",[&](double t){return press(M,"notes.tabs:1",false,t);});
+                    timeAction(M,"todoAdd",[&](double t){auto*n=dynamic_cast<endfield::modules::NotesCanvas*>(canvasOf(M));auto*add=n?n->addField():nullptr;
+                        if(!add)return false;add->setText("Freeze probe task");return press(M,"notes.addTask",false,t);});
+                    timeAction(M,"todoTick",[&](double t){auto*c2=canvasOf(M);std::string toggle;
+                        for(auto*x:c2->page().controls())if(x->id().starts_with("task:")&&x->id().ends_with(":toggle"))toggle=x->id();
+                        return !toggle.empty()&&press(M,toggle,false,t);});
+                    timeAction(M,"textTab",[&](double t){return press(M,"notes.tabs:0",false,t);});
+                }
+                // Clipboard: pin and unpin the first record, a filter tab and back.
+                if(clipboardCanvas&&clipboardModuleOwner&&registry.enabled(*clipboardModuleOwner)&&showModule(core::Module::clipboard)){
+                    const auto M=core::Module::clipboard;
+                    if(findIn(*clipboardCanvas,"clip:0:pin")){
+                        timeAction(M,"pin",[&](double t){return press(M,"clip:0:pin",false,t);});
+                        // The pinned record leads the list: the same button unpins it.
+                        timeAction(M,"unpin",[&](double t){return press(M,"clip:0:pin",false,t);});
+                    }else skip(M,"pin");
+                    timeAction(M,"filterTab",[&](double t){return press(M,"clipboard.filter:1",false,t);});
+                    timeAction(M,"filterAll",[&](double t){return press(M,"clipboard.filter:0",false,t);});
+                }
+                // Calendar: two days of the shown month (cells 10 and 13 are always in it).
+                if(calendar&&calendarModuleOwner&&registry.enabled(*calendarModuleOwner)&&showModule(core::Module::calendar)){
+                    const auto M=core::Module::calendar;
+                    const auto day=[&](std::size_t index){std::vector<std::string> days;
+                        for(auto*x:calendar->page().controls())if(x->id().starts_with("calendar.day:"))days.push_back(x->id());
+                        return index<days.size()?days[index]:std::string();};
+                    timeAction(M,"daySelect",[&](double t){const auto id=day(10);return !id.empty()&&press(M,id,false,t);});
+                    timeAction(M,"daySelectAgain",[&](double t){const auto id=day(13);return !id.empty()&&press(M,id,false,t);});
+                }
+                // Event Log: a filter tab and back.
+                if(eventLogCanvas&&eventLogModuleOwner&&registry.enabled(*eventLogModuleOwner)&&showModule(core::Module::eventLog)){
+                    const auto M=core::Module::eventLog;
+                    timeAction(M,"filterTab",[&](double t){return press(M,"eventLog.filter:1",false,t);});
+                    timeAction(M,"filterAll",[&](double t){return press(M,"eventLog.filter:0",false,t);});
+                }
+                // Settings > Display: a theme swatch and back, then an app-icon tile and back.
+                if(settingsUI&&settingsModuleOwner&&registry.enabled(*settingsModuleOwner))if(auto*display=showModule(core::Module::display)){
+                    const auto M=core::Module::display;
+                    std::string current,other;
+                    for(auto*x:display->page().controls())if(x->id().starts_with("accent:")){
+                        if(auto*s=dynamic_cast<dz::Swatch*>(x);s&&s->selected())current=x->id();else if(other.empty())other=x->id();}
+                    if(!current.empty()&&!other.empty()){
+                        timeAction(M,"themeSwatch",[&](double t){return press(M,other,false,t);});
+                        timeAction(M,"themeSwatchBack",[&](double t){return press(M,current,false,t);});
+                    }else skip(M,"themeSwatch");
+                    if(findIn(*display,"appIcon")){
+                        timeAction(M,"iconsPage",[&](double t){return press(M,"appIcon",false,t);});
+                        std::vector<dz::AccessibilityItem> items;display->accessibilityItems(items);std::string chosen,tile;
+                        for(const auto&item:items)if(item.id.starts_with("appIcon:")){if(item.on)chosen=item.id;else if(tile.empty())tile=item.id;}
+                        if(!tile.empty()){
+                            timeAction(M,"appIconTile",[&](double t){return press(M,tile,false,t);});
+                            if(!chosen.empty()){(void)display->performAccessibilityAction(chosen,time);settleFor(15);}
+                        }else skip(M,"appIconTile");
+                        timeAction(M,"iconsBack",[&](double t){return keyTo(M,dz::key::escape,false,t);});
+                    }else skip(M,"iconsPage");
+                }
+                // Personal Profile: the name's inline editor commits with Return (typed through the owner's key route).
+                if(auto*c=showModule(core::Module::profile)){
+                    const auto M=core::Module::profile;auto*owner=registry.presenter(M);
+                    const auto type=[&](std::string_view text,double t){for(const char ch:text)(void)owner->key({KeyKind::character,std::uint32_t(static_cast<unsigned char>(ch))},hostTime(t));};
+                    bindOwner(M,time);
+                    if(c->performAccessibilityAction("profile:name",time)&&c->editingField()){
+                        const std::string original=c->editingField()->text();
+                        timeAction(M,"fieldCommit",[&](double t){type("Freeze Probe",t);return owner->key({KeyKind::down,VK_RETURN},hostTime(t))&&!c->editingField();});
+                        bindOwner(M,time);
+                        if(!original.empty()&&c->performAccessibilityAction("profile:name",time)&&c->editingField()){type(original,time);(void)owner->key({KeyKind::down,VK_RETURN},hostTime(time));settleFor(15);}
+                    }else skip(M,"fieldCommit");
+                }
+                // App Shortcuts: one application dragged over + Add App and away (the drop-target ring).
+                for(auto&area:externalModules){
+                    if(area.name!="appShortcuts"||!registry.enabled(*area.owner)||!area.owner->presents(core::Module::addApp)||!chromePlan||!chromePlan->projection().center||!notes)continue;
+                    if(!showModule(core::Module::addApp))break;
+                    gpu::LayerScene probeGeometry(rasterizer);probeGeometry.load(Json::Object{{"bounds",Json::Array{0,0,400,334}},{"children",Json::Array{}}},{});gpu::NativeModuleSurface probePlane(probeGeometry,core::Module::addApp);
+                    const auto ps=chromeSettings(core::Module::addApp);probePlane.update(*chromePlan->projection().center,ps,notes->modulePresentation().current,1);
+                    const auto plane=core::Projection::viewport(gpu::layerViewportProjection(metrics.pixelWidth,metrics.pixelHeight)*core::Matrix4::scale(metrics.scale,metrics.scale)*probePlane.pose().contentWorld,metrics.pixelWidth,metrics.pixelHeight);
+                    if(const auto center=plane.project({200,167})){const core::Point p{center->x/metrics.scale,center->y/metrics.scale};
+                        const std::vector<std::string> application{"shell:AppsFolder\\Synthetic.FreezeProbe!App"};
+                        timeAction(core::Module::addApp,"dropTargetOn",[&](double){return dropHover(application,p);});
+                        timeAction(core::Module::addApp,"dropTargetOff",[&](double){return dropHover({},std::nullopt)&&!dropHoverOwner;});
+                    }
+                    break;
+                }
+                // Freeze group b1: the Notes centre's and the Map's saves (centre.json, map.json; rc140
+                // replaced the file durably on this thread for each edit: 8-30 ms of a Notes action,
+                // 12-24 ms of a Map one, 0-4 ms once handed over). savesQueued: edits the action handed to the
+                // utility worker; savesAtOnce: files replaced on this thread from the frame before the click to
+                // the end of its settle second (its completions among them). A saving action hands its edit
+                // over and replaces nothing here.
+                {
+                    const bool enforceSaves=true;
+                    std::int64_t queued{},atOnce{};
+                    using Saves=std::function<std::pair<std::uint64_t,std::uint64_t>()>;
+                    const auto timeSaving=[&](core::Module m,const Saves&saves,const char*name,std::function<bool(double)> act){
+                        const auto before=saves().second;
+                        timeAction(m,name,[&](double t){const auto handed=saves().first;const bool done=act(t);queued=std::int64_t(saves().first-handed);return done;});
+                        atOnce=std::int64_t(saves().second-before);};
+                    const auto noteSaves=[&](bool expected){auto&row=timings.back();row["savesQueued"]=queued;row["savesAtOnce"]=atOnce;
+                        const bool within=row["ran"].boolean()&&(!expected||queued>=1)&&atOnce==0;row["withinBound"]=within&&(!row.contains("withinBound")||row["withinBound"].boolean());
+                        if(enforceSaves)hostCheck(within,"The timed action "+row["module"].string()+"."+row["action"].string()+" runs and saves on the utility worker ("+std::to_string(queued)+" handed, "+std::to_string(atOnce)+" at once)");};
+                    auto*centre=dynamic_cast<tools::NotesCentreOwner*>(notesCentreModuleOwner.get());
+                    if(centre&&registry.enabled(*centre))if(auto*c=showModule(core::Module::notes)){
+                        const auto M=core::Module::notes;auto*n=dynamic_cast<endfield::modules::NotesCanvas*>(c);using Tab=ehud::data::NotesCentreDocument::Tab;
+                        const Saves saves=[centre]{const auto s=centre->saves();return std::pair{s.queued,s.atOnce};};
+                        const auto timeSave=[&](const char*name,std::function<bool(double)> act){timeSaving(M,saves,name,std::move(act));noteSaves(true);};
+                        if(n->document().tab!=Tab::todo)timeSave("saveTodoTab",[&](double t){return press(M,"notes.tabs:1",false,t)&&n->document().tab==Tab::todo;});
+                        settleFor(15);
+                        timeSave("saveTick",[&](double t){std::string toggle;for(auto*x:c->page().controls())if(x->id().starts_with("task:")&&x->id().ends_with(":toggle"))toggle=x->id();
+                            const auto done=n->document().doneCount();return !toggle.empty()&&press(M,toggle,false,t)&&n->document().doneCount()!=done;});
+                        timeSave("saveHide",[&](double t){return press(M,"notes.fold",false,t)&&n->document().isFolded;});
+                        settleFor(15);
+                        timeSave("saveShow",[&](double t){return press(M,"notes.fold",false,t)&&!n->document().isFolded;});
+                        settleFor(15);
+                        timeSave("saveTextTab",[&](double t){return press(M,"notes.tabs:0",false,t)&&n->document().tab==Tab::text;});
+                        settleFor(15);
+                        // The format bar's bold on the whole (unfocused) note, after typing into it.
+                        if(auto*area=n->noteArea();area&&area->replace({0,0},u"Freeze probe note. ")){
+                            const auto before=n->document();endfield::core::notes::FormatChange bold;bold.kind=endfield::core::notes::FormatKind::bold;
+                            timeSaving(M,saves,"saveFormat",[&](double){n->applyFormat(bold);return true;});noteSaves(n->document()!=before);
+                        }else skip(M,"saveFormat");
+                    }
+                    if(map&&mapStore&&mapSaves&&mapModuleOwner&&registry.enabled(*mapModuleOwner))if(auto*c=showModule(core::Module::map)){
+                        const auto M=core::Module::map;const auto&state=map->state();
+                        const Saves saves=[&]{const auto s=mapStore->writes();return std::pair{s.handed,s.atOnce+mapSaves->stats().atOnce};};
+                        const auto timeSave=[&](const char*name,std::function<bool(double)> act){timeSaving(M,saves,name,std::move(act));noteSaves(true);};
+                        timeSave("addPin",[&](double t){const auto pins=state.pins().size();return press(M,"map.addPin",false,t)&&state.pins().size()==pins+1&&state.selection();});
+                        // Its Event Log entry waits for the write (the Mac records it after the commit wrote map.json).
+                        const auto styles=[&]{std::set<std::string> ids;if(eventOwner)for(const auto&e:eventOwner->snapshot().events)if(e.kind==modules::EventKind::mapPinStyleChanged)ids.insert(e.id);return ids;};
+                        const auto added=[&](const std::set<std::string>&before){return std::size_t(std::ranges::count_if(styles(),[&](const auto&id){return !before.contains(id);}));};
+                        const auto stylesBefore=styles();std::size_t atClick{};
+                        timeSave("pinStyle",[&](double t){const auto*pin=state.selectedPin();if(!pin)return false;const auto id=pin->id;const auto style=pin->style;
+                            const bool done=c->performAccessibilityAction("map.pin:"+id,t)&&state.selectedPin()&&state.selectedPin()->style!=style;atClick=added(stylesBefore);return done;});
+                        if(eventOwner){const auto after=added(stylesBefore);hostCheck(atClick==0&&after==1,"The Map's pin-style Event Log entry is recorded once its write finishes ("+std::to_string(atClick)+" at the click, "+std::to_string(after)+" after)");}
+                        timeSave("removePin",[&](double t){const auto pins=state.pins().size();return c->performAccessibilityAction("map.removePin",t)&&state.pins().size()+1==pins;});
+                        // A click on the terrain away from every pin (no selection): the camera moves there.
+                        timeSave("recenter",[&](double t){const auto camera=state.camera();const dz::Point p{modules::MapCanvas::mapCenter.x+70,modules::MapCanvas::mapCenter.y+50};
+                            bindOwner(M,t);dz::PointerInput input;input.point=p;c->pointerMoved(p,false,t);const bool down=c->pointerDown(p,input,t);c->pointerUp(p,t);c->pointerMoved(p,false,t);
+                            return down&&!(state.camera()==camera);});
+                        settleFor(15);
+                        timeSave("zoomIn",[&](double t){const auto zoom=state.camera().zoom;return press(M,"map.zoomIn",false,t)&&state.camera().zoom>zoom;});
+                        settleFor(15);
+                        timeSave("resetView",[&](double t){return press(M,"map.reset",false,t)&&state.camera()==modules::MapSurfaceGeometry::constrained({});});
+                    }
+                }
+                // ---- Group b2: Shelf Open, Media Assembly (freeze sweep 9, 36-39) ----
+                const auto b2Bound=[&](const std::string&key){
+                    const auto bound=b2Bounds.find(key);if(bound==b2Bounds.end())return;auto&row=timings.back();
+                    // As in timeAction: a bound holds only for an action that ran.
+                    hostCheck(row["ran"].boolean(),"The timed action "+key+" ran");
+                    const auto pages=row["secondPagesBuilt"].integer(),rasters=row["secondRasterizations"].integer();
+                    const bool within=pages<=bound->second.first&&rasters<=bound->second.second;row["withinBound"]=within;
+                    hostCheck(within,"The timed action "+key+" stays within its work bound ("+std::to_string(pages)+" of "+std::to_string(bound->second.first)+
+                        " pages, "+std::to_string(rasters)+" of "+std::to_string(bound->second.second)+" rasterizations)");};
+                const auto toast=[&]{const auto&t=designContext.overlay().toastState().current();return t?t->title:std::string();};
+                // The HUD's language (the system's on the laptop).
+                const auto openedTitle=designContext.text("Opened","已打开"),exportedTitle=designContext.text("Exported","已覆盖原文件");
+                // A window of frames after an action that ends later (an export's progress display).
+                const auto timeWindow=[&](core::Module m,const char*name,double seconds,const std::function<bool()>&done){
+                    const auto raster0=rasterizer.stats();const auto pages0=designContext.pagesBuilt();double worst=0;bool finished=false;
+                    double worstAt=0;std::int64_t worstRasters=0;
+                    for(unsigned f=1;f<=unsigned(seconds*30)&&!finished;++f){const double t=time+double(f)/30;drainUtility(t);const auto r0=rasterizer.stats();const auto f0=Clock::now();frameAt(t);const double ms=milliseconds(f0);
+                        if(ms>worst){worst=ms;worstAt=double(f)/30;worstRasters=std::int64_t(rasterizer.stats().rasterizations-r0.rasterizations);}finished=done();}
+                    time+=seconds+.05;const auto raster1=rasterizer.stats();const auto pages1=designContext.pagesBuilt();
+                    timings.push_back(Json::Object{{"module",std::string(core::moduleIdentifier(m))},{"action",std::string(name)},{"ran",finished},
+                        {"actionMs",0.},{"frameMs",0.},{"clickFrameMs",0.},{"settleMaxFrameMs",worst},{"pagesBuilt",std::int64_t(0)},{"rasterizations",std::int64_t(0)},{"textLayouts",std::int64_t(0)},
+                        {"secondPagesBuilt",std::int64_t(pages1-pages0)},{"secondRasterizations",std::int64_t(raster1.rasterizations-raster0.rasterizations)},
+                        {"secondTextLayouts",std::int64_t(raster1.textLayoutsCreated-raster0.textLayoutsCreated)},{"worstFrameAt",worstAt},{"worstFrameRasterizations",worstRasters}});
+                    b2Bound(std::string(core::moduleIdentifier(m))+"."+name);};
+                // timeAction with the worst frame of the second named: when it came
+                // (seconds after the click; 1.01: the frame after the utility drain)
+                // and what it rasterized. `afterClick` runs between the click's frame
+                // and the second's (untimed).
+                const auto timeDetailed=[&](core::Module m,const char*name,const std::function<bool(double)>&act,const std::function<void()>&afterClick={}){
+                    drainUtility(time);frameAt(time);time+=.05;
+                    const auto raster0=rasterizer.stats();const auto pages0=designContext.pagesBuilt();
+                    const auto t0=Clock::now();const bool done=act(time);const double actionMs=milliseconds(t0);
+                    const auto t1=Clock::now();frameAt(time);const double frameMs=milliseconds(t1);
+                    const auto pages1=designContext.pagesBuilt();const auto raster1=rasterizer.stats();
+                    if(afterClick)afterClick();
+                    double settleMax=0,worstAt=0;std::int64_t worstRasters=0;
+                    const auto timed=[&](double t,double at){const auto r0=rasterizer.stats();const auto f0=Clock::now();frameAt(t);const double ms=milliseconds(f0);
+                        if(ms>settleMax){settleMax=ms;worstAt=at;worstRasters=std::int64_t(rasterizer.stats().rasterizations-r0.rasterizations);}};
+                    for(unsigned f=1;f<=15;++f)timed(time+double(f)/15,double(f)/15);
+                    time+=1;drainUtility(time);timed(time+.01,1.01);
+                    const auto pages2=designContext.pagesBuilt();const auto raster2=rasterizer.stats();
+                    timings.push_back(Json::Object{{"module",std::string(core::moduleIdentifier(m))},{"action",std::string(name)},{"ran",done},
+                        {"actionMs",actionMs},{"frameMs",frameMs},{"clickFrameMs",actionMs+frameMs},{"settleMaxFrameMs",settleMax},
+                        {"pagesBuilt",std::int64_t(pages1-pages0)},{"rasterizations",std::int64_t(raster1.rasterizations-raster0.rasterizations)},
+                        {"textLayouts",std::int64_t(raster1.textLayoutsCreated-raster0.textLayoutsCreated)},
+                        {"secondPagesBuilt",std::int64_t(pages2-pages0)},{"secondRasterizations",std::int64_t(raster2.rasterizations-raster0.rasterizations)},
+                        {"secondTextLayouts",std::int64_t(raster2.textLayoutsCreated-raster0.textLayoutsCreated)},{"worstFrameAt",worstAt},{"worstFrameRasterizations",worstRasters}});
+                    b2Bound(std::string(core::moduleIdentifier(m))+"."+name);time+=.1;};
+                // Shelf Open (hidden coverage opens through a synthetic Shell stand-in that takes
+                // 30 ms, never the Shell): the card's Open, then the host's action message.
+                if(shelf&&shelf->canvas()&&shelfModuleOwner&&registry.enabled(*shelfModuleOwner)&&!args.shelfDataRoot.empty()){
+                    const auto M=core::Module::fileShelf;auto*canvas=shelf->canvas();
+                    const auto file=args.shelfDataRoot.parent_path()/"freeze-probe-files"/"Synthetic open.txt";
+                    {std::ofstream out(file,std::ios::binary);out<<"Synthetic freeze probe file to open\n";}
+                    const auto utf8=file.u8string();const std::vector<std::string> one{std::string(reinterpret_cast<const char*>(utf8.data()),utf8.size())};
+                    // A confirm bar left open drops every toast (CenterOverlay::showToast).
+                    if(designContext.overlay().isConfirming())(void)designContext.overlay().decide(dz::ConfirmState::Decision::cancel);
+                    if(showModule(M)&&shelf->importFiles(one,hostTime(time))){settleFor(20);
+                        // The Shelf's notices (an open's result) as the message loop delivers them.
+                        const auto pumpShelf=[&](double t){MSG msg{};while(PeekMessageW(&msg,static_cast<HWND>(host.hwnd()),tools::ShelfService::noticeMessage,tools::ShelfService::noticeMessage,PM_REMOVE))
+                            (void)shelf->message({host.hwnd(),msg.message,msg.wParam,msg.lParam},hostTime(t));};
+                        const auto id=canvas->items().empty()?std::string():canvas->items().front().id;bool sawOpened{};
+                        const auto opens0=shelf->resources();
+                        timeAction(M,"open",[&](double t){if(id.empty()||!canvas->perform("shelf:"+id+":open"))return false;
+                            // The host's action message, handled here as its handler does (not through the wall-clock route).
+                            MSG posted{};(void)PeekMessageW(&posted,static_cast<HWND>(host.hwnd()),tools::ShelfService::actionMessage,tools::ShelfService::actionMessage,PM_REMOVE);
+                            auto action=shelf->takeAction();if(!action||action->kind!=tools::ShelfServiceAction::Kind::open)return false;
+                            shelf->open(action->itemID,hostTime(t));pumpShelf(t);sawOpened=toast()==openedTitle;return true;});
+                        {const auto opens1=shelf->resources();const auto queued=std::int64_t(opens1.opensQueued-opens0.opensQueued),atOnce=std::int64_t(opens1.opensAtOnce-opens0.opensAtOnce);
+                            timings.back()["opensQueued"]=queued;timings.back()["opensAtOnce"]=atOnce;
+                            // rc140: the Shell's ShellExecuteEx on this thread, in the frame after the click.
+                            hostCheck(queued==1&&atOnce==0,"A Shelf Open hands the Shell its own thread ("+std::to_string(queued)+" queued, "+std::to_string(atOnce)+" at once)");}
+                        for(unsigned n=0;n<200&&!sawOpened;++n){Sleep(5);pumpShelf(time);frameAt(time);time+=.005;sawOpened=toast()==openedTitle;}
+                        hostCheck(sawOpened,"A Shelf Open toasts once the Shell took the item (shown: "+toast()+(designContext.overlay().isConfirming()?", confirming":"")+
+                            (canvas->isActive()?"":", inactive")+", "+std::to_string(canvas->items().size())+" items)");
+                        settleFor(60);(void)press(M,"shelf.clear",false,time);settleFor(10);
+                        if(designContext.overlay().isConfirming())(void)designContext.overlay().decide(dz::ConfirmState::Decision::confirm);settleFor(10);
+                    }else skip(M,"open");
+                }
+                // Media Assembly: import from the (synthetic) Shelf, close, import again,
+                // overwrite the original (the shared confirm bar) and its progress display.
+                // A missing or disabled area skips the bounded actions (a failed check, not a silent pass).
+                bool mediaAssemblyTimed{};
+                for(auto&area:externalModules){
+                    if(area.name!="mediaAssembly")continue;
+                    const auto M=core::Module::mediaAssembly;mediaAssemblyTimed=true;
+                    if(!registry.enabled(*area.owner)){skip(M,"importShelf","area disabled");break;}
+                    auto*c=showModule(M);
+                    if(!c){skip(M,"importShelf");break;}
+                    const auto perform=[&](std::string_view id,double t){return c->performAccessibilityAction(id,t);};
+                    const auto confirmIs=[&](std::string_view id){const auto&r=designContext.overlay().confirmState().request();return designContext.overlay().isConfirming()&&r&&r->id==id;};
+                    const auto hasControl=[&](std::string_view id){return findIn(*c,id)!=nullptr;};
+                    const auto exportEnabled=[&]{auto*x=findIn(*c,"export");return x&&x->enabled();};
+                    const auto importShelf=[&](double t){return perform("open",t)&&perform("open:shelf",t)&&perform("shelf:coverage-shelf-1",t);};
+                    if(hasControl("mediaTab:0"))(void)perform("mediaTab:0",time);settleFor(15);
+                    timeDetailed(M,"importShelf",[&](double t){return importShelf(t);});
+                    settleFor(30);need(exportEnabled(),"The probe's Shelf still opens in Media Assembly");
+                    timeDetailed(M,"closeConfirm",[&](double t){return perform("close",t)&&confirmIs("mediaClose")&&designContext.overlay().decide(dz::ConfirmState::Decision::confirm);});
+                    settleFor(30);need(!exportEnabled(),"The probe's close empties Media Assembly");
+                    (void)importShelf(time);settleFor(30);drainUtility(time);settleFor(30);need(exportEnabled(),"The probe's Shelf still opens again");
+                    // The export runs for real on the long-work thread and the second's
+                    // progress polls read how far it got; waiting for it (its completion
+                    // still lands at the closing drain) makes every poll read 1, so the
+                    // second's work no longer depends on the machine's speed.
+                    timeDetailed(M,"overwriteConfirm",[&](double t){return perform("export",t)&&perform("export:overwrite",t)&&confirmIs("mediaOverwrite")&&designContext.overlay().decide(dz::ConfirmState::Decision::confirm);},
+                        [&]{if(longWork)longWork->waitIdle();});
+                    timeWindow(M,"overwriteFinish",4,[&]{return toast()==exportedTitle;});
+                    settleFor(30);(void)perform("close",time);if(confirmIs("mediaClose"))(void)designContext.overlay().decide(dz::ConfirmState::Decision::confirm);settleFor(30);
+                    break;
+                }
+                if(!mediaAssemblyTimed)skip(core::Module::mediaAssembly,"importShelf","no area");
+                // Rows the areas timed inside their own steps (Media Assembly's first Stickers visit).
+                bool stickersTimed{};
+                for(auto&row:areaTimings){timings.push_back(row);const auto key=row["module"].string()+"."+row["action"].string();b2Bound(key);stickersTimed|=key=="mediaAssembly.stickersFirstVisit";}
+                if(!stickersTimed)skip(core::Module::mediaAssembly,"stickersFirstVisit","not timed by the area");
+                // Group b4 (Calendar, Event Log, Classified Archive, E-Reader, OrbiPom): the
+                // freeze sweep's findings 17, 19, 20, 22, 25, 27, 42, 45 and 46.
+                {
+                    // One timed frame of a canvas's own deadline (a timer that lands later, not a press).
+                    const auto timeFrames=[&](core::Module m,const char*name,const std::function<bool()>&done,unsigned frames){
+                        const auto raster0=rasterizer.stats();const auto pages0=designContext.pagesBuilt();double worst=0,hit=0;std::int64_t rasters=0,pages=0;bool ran=false;
+                        for(unsigned f=1;f<=frames&&!ran;++f){const double t=time+double(f)/60;const auto r=rasterizer.stats();const auto p=designContext.pagesBuilt();const auto f0=Clock::now();frameAt(t);const double ms=milliseconds(f0);worst=std::max(worst,ms);
+                            if(done()){ran=true;hit=ms;rasters=std::int64_t(rasterizer.stats().rasterizations-r.rasterizations);pages=std::int64_t(designContext.pagesBuilt()-p);time=t;}}
+                        double settleMax=0;for(unsigned f=1;f<=15;++f){const auto f0=Clock::now();frameAt(time+double(f)/15);settleMax=std::max(settleMax,milliseconds(f0));}time+=1.1;
+                        timings.push_back(Json::Object{{"module",std::string(core::moduleIdentifier(m))},{"action",std::string(name)},{"ran",ran},{"actionMs",0.},{"frameMs",hit},{"clickFrameMs",hit},{"settleMaxFrameMs",settleMax},
+                            {"pagesBuilt",pages},{"rasterizations",rasters},{"textLayouts",std::int64_t(0)},{"secondPagesBuilt",std::int64_t(designContext.pagesBuilt()-pages0)},
+                            {"secondRasterizations",std::int64_t(rasterizer.stats().rasterizations-raster0.rasterizations)},{"secondTextLayouts",std::int64_t(rasterizer.stats().textLayoutsCreated-raster0.textLayoutsCreated)},{"framesBefore",worst}});};
+                    // Calendar: today and back off it (the today cell's ring), an arrow, the
+                    // add / open / save of a probe event and the month picker, twice.
+                    if(calendar&&calendarState&&calendarModuleOwner&&registry.enabled(*calendarModuleOwner)&&showModule(core::Module::calendar)){
+                        const auto M=core::Module::calendar;const auto today="calendar.day:"+calendarState->today().string();
+                        const auto otherDay=[&]{for(auto*x:calendar->page().controls())if(x->id().starts_with("calendar.day:")&&x->id()!=today){const auto d=modules::CalendarDay::parse(x->id().substr(13));
+                            if(d&&d->month==calendar->month().month&&d->year==calendar->month().year&&d->day!=calendarState->today().day&&d->day>3&&d->day<26)return x->id();}return std::string();};
+                        if(calendar->month().month!=calendarState->today().month||calendar->month().year!=calendarState->today().year){(void)press(M,"calendar.today",false,time);settleFor(20);}
+                        if(const auto day=otherDay();!day.empty()){(void)press(M,day,false,time);settleFor(10);}
+                        timeAction(M,"todayButton",[&](double t){return press(M,"calendar.today",false,t);});
+                        timeAction(M,"dayOffToday",[&](double t){const auto day=otherDay();return !day.empty()&&press(M,day,false,t);});
+                        timeAction(M,"arrowRight",[&](double t){return keyTo(M,dz::key::right,false,t);});
+                        const auto probeEvent=[&]{for(const auto&e:calendarState->events())if(e.title.starts_with("Freeze probe"))return e.id;return std::string();};
+                        timeAction(M,"addEvent",[&](double t){calendar->titleField().setText("Freeze probe");return press(M,"calendar.add",false,t);});
+                        // The hidden run pumps no messages: the change notice is delivered as its handler does.
+                        const auto delivered=[&]{const bool flushed=flushCalendar();calendarRefreshQueued=false;updateCalendarWake();calendar->controllerChanged();return flushed;};
+                        timeAction(M,"addSettles",[&](double){return delivered()&&!probeEvent().empty();});
+                        const auto id=probeEvent();
+                        if(!id.empty()){
+                            timeAction(M,"plateOpen",[&](double t){return press(M,"calendar.event:"+id,false,t);});
+                            timeAction(M,"plateClose",[&](double t){return press(M,"calendar.event:"+id,false,t);});
+                            (void)press(M,"calendar.event:"+id,false,time);settleFor(10);
+                            timeAction(M,"saveEvent",[&](double t){calendar->titleField().setText("Freeze probe saved");return press(M,"calendar.save",false,t);});
+                            timeAction(M,"saveSettles",[&](double){return delivered();});
+                            (void)calendarState->remove(id);need(delivered(),"The probe's Calendar event is removed");settleFor(10);
+                        }else skip(M,"plateOpen");
+                        timeAction(M,"monthPicker",[&](double t){return press(M,"calendar.monthPicker",false,t)&&calendar->popoverOpen();});
+                        calendar->closePopover();settleFor(15);
+                        timeAction(M,"monthPickerAgain",[&](double t){return press(M,"calendar.monthPicker",false,t)&&calendar->popoverOpen();});
+                        calendar->closePopover();settleFor(15);
+                        // Back in today's month from another: day 1 selected, today's cell without its ring
+                        // (the month part loaded so). Today then selects it in place (rc140: the whole month).
+                        (void)press(M,"calendar.previousMonth",false,time);settleFor(30);(void)press(M,"calendar.nextMonth",false,time);settleFor(30);
+                        timeAction(M,"todayAfterMonths",[&](double t){const auto today=calendarState->today();
+                            return calendar->month().month==today.month&&calendar->month().year==today.year&&press(M,"calendar.today",false,t)&&calendar->selectedDay()==today;});
+                    }
+                    // Event Log: a view down twice, the end and back to the top.
+                    if(eventLogCanvas&&eventLogModuleOwner&&registry.enabled(*eventLogModuleOwner)&&showModule(core::Module::eventLog)){
+                        const auto M=core::Module::eventLog;
+                        if(eventLogCanvas->listOffsetForTesting()!=0){(void)keyTo(M,dz::key::home,false,time);settleFor(10);}
+                        timeAction(M,"pageDown",[&](double t){return keyTo(M,dz::key::pageDown,false,t);});
+                        timeAction(M,"pageDownAgain",[&](double t){return keyTo(M,dz::key::pageDown,false,t);});
+                        timeAction(M,"end",[&](double t){return keyTo(M,dz::key::end,false,t);});
+                        timeAction(M,"home",[&](double t){return keyTo(M,dz::key::home,false,t);});
+                        timings.back()["listOffsetAfter"]=eventLogCanvas->listOffsetForTesting();
+                    }
+                    // Classified Archive: a probe document is classified, then unlocked with its
+                    // password: the reveal at the verification, then the editor at the wipe's end.
+                    if(archive&&archiveService&&archiveModuleOwner&&registry.enabled(*archiveModuleOwner)&&showModule(core::Module::archive)){
+                        const auto M=core::Module::archive;auto&canvas=archive->canvas();auto&state=archiveService->state();
+                        const auto flushArchive=[&]{for(unsigned n=0;n<16;++n){utility->waitIdle();utility->drain();archiveService->queueCapacityAvailable();}archiveRefreshQueued=false;archive->stateChanged(hostTime(time));};
+                        const auto land=[&]{for(unsigned n=0;n<90&&canvas.transitioning();++n)frameAt(time+=1./60);settleFor(20);};
+                        const std::string password="Freeze-Probe-2468";
+                        if(canvas.performAccessibilityAction("new",time)){flushArchive();land();}
+                        if(state.selected()&&canvas.displayedPage().kind==modules::ArchiveCanvas::PageKind::editor){
+                            auto entry=*state.selected();entry.title="Freeze probe";entry.body.clear();
+                            for(unsigned n=0;n<18;++n)entry.body+="Synthetic classified line "+std::to_string(n)+" of the freeze probe, never shown while locked.\n";
+                            entry.bodyRichText.reset();entry.titleRichText.reset();
+                            (void)state.update(std::move(entry),ehud::data::foundationNow(),time);state.flush();flushArchive();
+                            canvas.endEditing(true);state.classifySelected(password,{});flushArchive();settleFor(10);land();
+                        }
+                        if(state.isSelectedLocked()&&canvas.displayedPage().kind==modules::ArchiveCanvas::PageKind::locked&&canvas.setAccessibilityText("password",password,time)){
+                            timeAction(M,"unlockReveal",[&](double t){const bool pressed=canvas.performAccessibilityAction("unlock",t);utility->waitIdle();utility->drain();archiveService->queueCapacityAvailable();return pressed&&!state.isSelectedLocked();});
+                            timeFrames(M,"openingEnd",[&]{return canvas.displayedPage().kind==modules::ArchiveCanvas::PageKind::editor;},240);
+                            state.declassifySelected({});flushArchive();
+                        }else skip(M,"unlockReveal",!state.selected()?"no document":!state.isSelectedLocked()?"not classified":canvas.displayedPage().kind!=modules::ArchiveCanvas::PageKind::locked?"not on the locked page":"no password field");
+                        if(state.selected()&&state.selected()->title=="Freeze probe"&&!state.isSelectedLocked()){(void)state.deleteSelected();flushArchive();}
+                        land();
+                    }
+                    // E-Reader: the Font dropdown of Reading settings, twice.
+                    if(reader&&readerModuleOwner&&registry.enabled(*readerModuleOwner)&&showModule(core::Module::reader)){
+                        const auto M=core::Module::reader;auto&canvas=reader->canvas();
+                        const auto openSettings=[&]{if(canvas.tab()!=modules::ReaderCanvas::Tab::reading){(void)canvas.performAccessibilityAction("readerTabs:2",time);settleFor(15);}
+                            if(!canvas.popoverOpen()){(void)canvas.performAccessibilityAction("settings",time);settleFor(10);}return canvas.popoverOpen();};
+                        // Group attaches and detaches over the opening's second: the rows of the long menu draw
+                        // one painting surface each (their highlight plate rests lazily), so they take no group.
+                        const auto groupSwitches=[&]{const auto s=reader->core().sceneStats(M);return s?std::int64_t(s->groupSwitches):std::int64_t(0);};
+                        if(openSettings()){
+                            const auto groups0=groupSwitches();
+                            timeAction(M,"fontMenu",[&](double t){return canvas.performAccessibilityAction("font",t)&&canvas.menuOpen();});
+                            {const auto switches=groupSwitches()-groups0;timings.back()["groupSwitches"]=switches;
+                             if(enforceBounds)hostCheck(switches<=12,"The Font menu's opening attaches few groups ("+std::to_string(switches)+" switches of 12)");}
+                            canvas.closeMenu();settleFor(10);
+                            if(openSettings())timeAction(M,"fontMenuAgain",[&](double t){return canvas.performAccessibilityAction("font",t)&&canvas.menuOpen();});
+                            canvas.closePopups();settleFor(10);
+                        }else skip(M,"fontMenu");
+                    }
+                    // OrbiPom: How to play, twice; and the VM boot its first showing made.
+                    if(game&&gameSession&&gameModuleOwner&&registry.enabled(*gameModuleOwner)&&showModule(core::Module::minigame)){
+                        const auto M=core::Module::minigame;
+                        timeAction(M,"rules",[&](double){game->perform("rules");return game->rulesPresented();});
+                        game->closePopover();settleFor(10);
+                        timeAction(M,"rulesAgain",[&](double){game->perform("rules");return game->rulesPresented();});
+                        game->closePopover();settleFor(10);
+                        {modules::OrbiPomRuntime vm(modules::OrbiPomRuntimeOptions{args.orbipomAssets});const auto t0=Clock::now();vm.highScore(0);const double bootMs=milliseconds(t0);
+                            timings.push_back(Json::Object{{"module",std::string(core::moduleIdentifier(M))},{"action","vmBoot"},{"ran",!vm.error()},{"actionMs",bootMs},{"frameMs",0.},{"clickFrameMs",bootMs},{"settleMaxFrameMs",0.},
+                                {"pagesBuilt",std::int64_t(0)},{"rasterizations",std::int64_t(0)},{"textLayouts",std::int64_t(0)},{"secondPagesBuilt",std::int64_t(0)},{"secondRasterizations",std::int64_t(0)},{"secondTextLayouts",std::int64_t(0)}});}
+                        // The first showing (cycle 0): the frame that built the canvas and, before, booted the VM.
+                        std::int64_t ownerBoots=-1;if(const auto*vm=dynamic_cast<const modules::OrbiPomRuntime*>(gameSession->runtime()))ownerBoots=std::int64_t(vm->stats().ownerThreadBoots);
+                        timings.push_back(Json::Object{{"module",std::string(core::moduleIdentifier(M))},{"action","firstShow"},{"ran",minigameShowFrameMs>=0},{"actionMs",0.},{"frameMs",minigameShowFrameMs},{"clickFrameMs",minigameShowFrameMs},{"settleMaxFrameMs",minigameShowWorstMs},
+                            {"pagesBuilt",std::int64_t(0)},{"rasterizations",std::int64_t(0)},{"textLayouts",std::int64_t(0)},{"secondPagesBuilt",std::int64_t(0)},{"secondRasterizations",std::int64_t(0)},{"secondTextLayouts",std::int64_t(0)},{"ownerThreadBoots",ownerBoots}});
+                        timings.back()["withinBound"]=ownerBoots==0;if(enforceBounds)hostCheck(ownerBoots==0,"The minigame's first showing boots its VM off the HUD thread ("+std::to_string(ownerBoots)+" boots on it)");
+                        settleFor(4);
+                    }
+                }
+                // Group b3: Settings, Personal ID, the desktop clock and the first
+                // module switch of an opening.
+                {const auto before=notes?notes->selected():core::Module::map;
+                // Settings > System: a language picked in its menu, then the one it had.
+                if(settingsUI&&settingsModuleOwner&&registry.enabled(*settingsModuleOwner))if(auto*system=showModule(core::Module::system)){
+                    const auto M=core::Module::system;const auto original=settingsUI->controller().committed().string("language");
+                    const auto pick=[&](const std::string&id,double t){if(!press(M,"language",false,t))return false;
+                        std::vector<dz::AccessibilityItem> items;system->accessibilityItems(items);
+                        for(const auto&item:items)if(item.role==dz::AccessibilityRole::menuItem&&item.id.ends_with(":"+id))return system->performAccessibilityAction(item.id,t)&&settingsUI->controller().committed().string("language")==id;
+                        return false;};
+                    // The laptop's system language may be the one picked: one pick the
+                    // resolved language follows (the whole page re-localizes), one it may not.
+                    const std::string other=original=="simplifiedChinese"?"english":"simplifiedChinese";
+                    const std::string resolved=settingsLanguage(configuration)==core::Language::english?"simplifiedChinese":"english";
+                    timeAction(M,"languagePick",[&](double t){return pick(other,t);});
+                    timeAction(M,"languageBack",[&](double t){return pick(original,t);});
+                    timeAction(M,"languageResolved",[&](double t){return pick(resolved,t);});
+                    timings.back()["resolvedChanged"]=watchAppearance.language==core::languageFromSetting(resolved);
+                    timeAction(M,"languageResolvedBack",[&](double t){return pick(original,t);});
+                }else skip(core::Module::system,"languagePick");
+                // Settings > Display: a binder-only change (a toggle) and back.
+                if(settingsUI&&settingsModuleOwner&&registry.enabled(*settingsModuleOwner))if(auto*display=showModule(core::Module::display);display&&findIn(*display,"bootLog")){
+                    const auto M=core::Module::display;
+                    timeAction(M,"bootLogToggle",[&](double t){return press(M,"bootLog",false,t);});
+                    timeAction(M,"bootLogBack",[&](double t){return press(M,"bootLog",false,t);});
+                }else skip(core::Module::display,"bootLogToggle");
+                // Personal ID: the name's editor opening, the date kind and back.
+                if(auto*c=showModule(core::Module::profile)){
+                    const auto M=core::Module::profile;auto*owner=registry.presenter(M);bindOwner(M,time);
+                    timeAction(M,"fieldBegin",[&](double t){return c->performAccessibilityAction("profile:name",t)&&c->editingField();});
+                    if(c->editingField()){bindOwner(M,time);(void)owner->key({KeyKind::down,VK_ESCAPE},hostTime(time));settleFor(15);}
+                    if(findIn(*c,"profile:toggleDateLabel")){
+                        timeAction(M,"dateKind",[&](double t){return press(M,"profile:toggleDateLabel",false,t);});
+                        timeAction(M,"dateKindBack",[&](double t){return press(M,"profile:toggleDateLabel",false,t);});
+                    }else skip(M,"dateKind");
+                }else skip(core::Module::profile,"fieldBegin");
+                // The desktop clock: the next style through its indicator's route, then back.
+                if(chrome&&settingsUI){
+                    constexpr std::array<std::string_view,5> styles{"digital","split","dial","rail","stacked"};
+                    const auto original=configuration.string("clockStyle");unsigned index{};
+                    for(unsigned n=0;n<5;++n)if(original==styles[n])index=n;
+                    const auto timeClock=[&](const char*name,unsigned style){
+                        drainUtility(time);frameAt(time);time+=.05;
+                        const auto raster0=rasterizer.stats();const auto t0=Clock::now();selectClockStyle(style,time);const double actionMs=milliseconds(t0);
+                        const auto t1=Clock::now();frameAt(time);const double frameMs=milliseconds(t1);const auto raster1=rasterizer.stats();const bool pushed=chrome->styleTransitionActive();
+                        double settleMax=0;for(unsigned f=1;f<=15;++f){const auto f0=Clock::now();frameAt(time+double(f)/15);settleMax=std::max(settleMax,milliseconds(f0));}
+                        time+=1.1;const auto raster2=rasterizer.stats();
+                        // The push rasterizes its two pages and the status panel once (rc140: the panel twice);
+                        // the open, interactive HUD pushes unless Reduce Motion is on (clockStyleChanged), and
+                        // without a push the panel rasterizes once, with its page.
+                        const bool ran=settingsUI->controller().committed().string("clockStyle")==styles[style];
+                        const bool pushes=!settings.reduceMotion&&session->inputEnabled()&&session->phase()==core::VisibilityPhase::visible;
+                        const auto rasters=raster1.rasterizations-raster0.rasterizations;
+                        const bool within=ran&&pushed==pushes&&rasters<=(pushed?3u:1u);
+                        if(enforceBounds)hostCheck(within,std::string("The clock style change ")+name+" applies"+(pushes?", pushes its two pages":"")+" and rasterizes the status panel once (applied "+
+                            std::to_string(ran)+", pushed "+std::to_string(pushed)+", "+std::to_string(rasters)+" rasterizations)");
+                        timings.push_back(Json::Object{{"module","clock"},{"action",std::string(name)},{"ran",ran},{"pushed",pushed},
+                            {"actionMs",actionMs},{"frameMs",frameMs},{"clickFrameMs",actionMs+frameMs},{"settleMaxFrameMs",settleMax},{"pagesBuilt",std::int64_t{}},
+                            {"rasterizations",std::int64_t(raster1.rasterizations-raster0.rasterizations)},{"textLayouts",std::int64_t(raster1.textLayoutsCreated-raster0.textLayoutsCreated)},
+                            {"secondPagesBuilt",std::int64_t{}},{"secondRasterizations",std::int64_t(raster2.rasterizations-raster0.rasterizations)},{"secondTextLayouts",std::int64_t(raster2.textLayoutsCreated-raster0.textLayoutsCreated)},{"withinBound",within}});
+                        time+=.1;};
+                    timeClock("styleNext",(index+1)%5);timeClock("styleBack",index);
+                }else timings.push_back(Json::Object{{"module","clock"},{"action","styleNext"},{"skipped",true}});
+                // The first switch of an opening to a module visited in an earlier
+                // one (its artwork was dropped at the close): Calendar, after the HUD
+                // closed on Personal ID and opened again, idle for three seconds. It
+                // rasterizes its page on the switch frame, as in rc140 (Calendar: about
+                // 208 surfaces); recorded only, no bound.
+                if(calendar&&calendarModuleOwner&&registry.enabled(*calendarModuleOwner)&&showModule(core::Module::calendar)&&showModule(core::Module::profile)){
+                    close(time);for(unsigned f=0;f<90&&session->phase()!=core::VisibilityPhase::concealed;++f)present(time+double(f)/60,true);
+                    time+=1.6;concealed(time);time+=.5;
+                    open(time);for(unsigned f=0;f<90;++f)frameAt(time+double(f)/60);time+=1.5;
+                    // Idle after the entrance: the host's deadlines run when due, as its timer would wake them.
+                    for(unsigned f=0;f<30;++f){const double t=time+double(f)/10;onDeadline(t);frameAt(t);}time+=3.1;
+                    timeAction(core::Module::calendar,"firstSwitch",[&](double t){selectModule(core::Module::calendar,t);return notes->selected()==core::Module::calendar;});
+                }else skip(core::Module::calendar,"firstSwitch");
+                if(notes&&notes->selected()!=before)(void)showModule(before);}
+                actionTiming=std::move(timings);
             }
             // Host integration over the same owner: the restart service is
             // production-only, the System row of the macImport area, the UI
@@ -802,9 +1828,9 @@ int Application::Impl::runHiddenVerification(){
                 hostCheck(!restart.restartWith([]{},[]{})&&!restartPending,"A data-root restart cannot be requested outside production");
                 if(settingsUI&&areaHost&&areaHost->find<MacImportEntry>(macImportEntryService)){
                     settingsUI->refreshViews(time);
-                    const auto*system=settingsUI->view(core::Module::system);
-                    if(system&&system->view().page==modules::SettingsPage::main)
-                        hostCheck(std::any_of(system->view().rows.begin(),system->view().rows.end(),[](const auto&r){return r.id=="macImport";}),"System lists Import macOS data from the macImport area");
+                    const auto&system=settingsUI->canvas(core::Module::system);
+                    if(system.renderedLanguage()&&system.section()=="main")
+                        hostCheck(std::any_of(system.page().controls().begin(),system.page().controls().end(),[](const auto*c){return c->id()=="macImport";}),"System lists Import macOS data from the macImport area");
                 }
                 if(volumeModuleOwner&&registry.enabled(*volumeModuleOwner)){
                     selectModule(core::Module::volume,time);for(unsigned frame=0;frame<40;++frame)present(time+double(frame)/60,true);time+=1;
@@ -824,49 +1850,42 @@ int Application::Impl::runHiddenVerification(){
                     if(child&&parent){Microsoft::WRL::ComPtr<IUnknown> a,b;(void)parent.As(&a);(void)group.As(&b);hostCheck(a.Get()==b.Get(),"A fragment's parent is its owner's group");}
                     UiaRect rect{};if(child)(void)child->get_BoundingRectangle(&rect);
                     hostCheck(rect.width>0&&rect.height>0&&SUCCEEDED(uia.root()->ElementProviderFromPoint(rect.left+rect.width/2,rect.top+rect.height/2,&hit))&&hit,"The root's hit test reaches a projected Volume control");
-                    // The user-requested app list (five synthetic apps): three rows
-                    // (95 points), and a wheel step moves the retained rows without
-                    // laying the module out again.
-                    {const auto view=volume->state().applicationViewport();const auto r=volume->clientRect({view.x+20,view.y+view.height*.5,0,0});const auto before=rasterizer.stats();
-                     hostCheck(view.height==95&&r&&volume->wheel({r->x,r->y,-1,false,0,3},time)&&volume->state().applicationScroll()==36,"The Volume app list shows three rows and scrolls by one wheel detent");
-                     for(unsigned frame=0;frame<10;++frame)present(time+double(frame)/60,true);time+=1;
+                    // App volume (five synthetic apps): the tab switch is the shared
+                    // sub-page motion (started at this frame time and its page swap dispatched
+                    // as the host would);
+                    // three 54 px rows (174 px) and a wheel detent
+                    // glides the retained rows without laying the module out again.
+                    {auto&tabs=*volumeCanvas->page().tabs;volumeCanvas->env().now=time;tabs.select(1,true);unsigned frames{};
+                     while(frames<60&&(volumeCanvas->transitioning()||volumeModuleOwner->requiresFrames(time))){time+=1./60;(void)designOverlay->deadline(time);present(time,true);++frames;}
+                     hostCheck(volumeCanvas->tab()==1&&frames>=8&&frames<60,"App volume arrives through the shared sub-page motion (tab "+std::to_string(volumeCanvas->tab())+", "+std::to_string(frames)+" frames)");
+                     const auto areas=volumeCanvas->page().scrollAreas();hostCheck(!areas.empty()&&areas.front()->layer().bounds().height==174,"The Volume app list shows three rows ("+std::to_string(areas.size())+" areas, "+(areas.empty()?std::string("-"):std::to_string(areas.front()->layer().bounds().height))+" px, "+std::to_string(volumeCanvas->visibleApplicationRows())+" rows)");
+                     const auto r=static_cast<tools::DesignModuleOwner&>(*volumeModuleOwner).core().clientRect({295,125+87,0,0});const auto before=rasterizer.stats();
+                     hostCheck(r&&volumeModuleOwner->wheel({r->x,r->y,-1,false,0,3},time)&&volumeCanvas->applicationScrollOffset()==36,"A wheel detent glides the app list 36 px");
+                     for(unsigned frame=0;frame<20;++frame)present(time+double(frame)/60,true);time+=1;
                      hostCheck(rasterizer.stats().textLayoutsCreated-before.textLayoutsCreated<=3,"Scrolling the Volume app list lays out at most the row entering its window");}
-                    // RC 128 user report (the page switch shook): Headphones / Bluetooth and
-                    // back, frame by frame through the production owner.
-                    {const auto s0=volume->sceneStats();
-                     hostCheck(volume->perform("audio:headphones",time)&&volume->state().headphones()&&volume->requiresFrames(time),"Headphones / Bluetooth starts the source page motion");
-                     unsigned frames{};while(frames<40&&volume->requiresFrames(time)){time+=1./60;present(time,true);++frames;}
-                     const auto s1=volume->sceneStats();
-                     hostCheck(frames>=10&&frames<=14&&s1.structureUpdates==s0.structureUpdates&&s1.detailBuilds==s0.detailBuilds+1&&s1.rowParks>s0.rowParks,"The Volume page switch plays the source 0.18 s motion, keeps the header and parks the app rows");
-                     hostCheck(volume->perform("audio:applications",time)&&!volume->state().headphones(),"App volume returns");
-                     frames=0;while(frames<40&&volume->requiresFrames(time)){time+=1./60;present(time,true);++frames;}
-                     const auto s2=volume->sceneStats();
-                     hostCheck(frames>=10&&frames<=14&&s2.rowRevivals>s1.rowRevivals&&s2.rowBuilds==s1.rowBuilds&&s2.structureUpdates==s1.structureUpdates,"Returning to App volume replays the motion and composes the parked rows again unchanged");time+=1;}
                     // App icons (Mac VolumeCanvas.renderAppIcon) through the shared
-                    // utility queue: the retained rows' icons arrive with its
-                    // completion, an executable without an icon resource keeps the
-                    // source nil icon, Volume starts no worker of its own and the
-                    // Shelf's Shell icon worker is not used.
+                    // utility queue: the rows in or next to the view get their
+                    // executables' icons with its completion, an executable without an
+                    // icon resource keeps the source nil icon (the grey square), Volume
+                    // starts no worker of its own and the Shelf's Shell icon worker is
+                    // not used.
                     if(volumeIcons&&utility){
                         const auto shelfIcons=shelf?shelf->resources().iconWorkerStarts:0;const auto workers=utility->stats().workersStarted;
-                        utility->waitIdle();utilityCompleted();for(unsigned frame=0;frame<4;++frame)present(time+double(frame)/60,true);time+=1;
-                        const auto iconRows=volume->visibleIcons();const auto&apps=volume->state().snapshot().applications;
-                        std::size_t withIcon{},without{};bool exact=!iconRows.empty();
-                        for(const auto&row:iconRows){const auto app=std::find_if(apps.begin(),apps.end(),[&](const auto&a){return a.id==row.applicationID;});
-                            if(app==apps.end()||!row.executable){exact=false;continue;}
-                            if(row.executable->identity.objectID[0]!=3){++withIcon;exact=exact&&app->icon&&volumeIcons->images().acquire(app->icon->imageKey,app->icon->revision)!=nullptr;}
-                            else{++without;exact=exact&&!app->icon;}}
-                        hostCheck(exact&&withIcon>=2&&without==1,"Volume's retained app rows show their executables' icons from the shared queue; one without an icon resource keeps the nil icon");
+                        // One job at a time: a request that changed meanwhile goes out when the previous one completes.
+                        for(unsigned round=0;round<8;++round){utility->waitIdle();utilityCompleted();if(!volumeIcons->stats().inFlight)break;}
+                        for(unsigned frame=0;frame<4;++frame)present(time+double(frame)/60,true);time+=1;
+                        const auto&plan=volumeIcons->plan();std::size_t withIcon{},without{};bool exact=!plan.applications().empty();
+                        for(const auto&row:plan.applications()){if(!row.executable){exact=false;continue;}const auto*binding=plan.binding(row.applicationID);
+                            if(row.executable->identity.objectID[0]!=3){++withIcon;exact=exact&&binding&&binding->image&&volumeIcons->images().acquire(binding->imageKey,binding->revision)!=nullptr;}
+                            else{++without;exact=exact&&(!binding||!binding->image||binding->typeFallback);}}
+                        {const bool late=volumeCanvas->iconsChanged();hostCheck(exact&&withIcon>=2&&without==1&&!late,"Volume's app rows show their executables' icons from the shared queue; one without an icon resource keeps the nil icon ("+std::to_string(plan.applications().size())+" rows, "+std::to_string(withIcon)+" with, "+std::to_string(without)+" without, exact "+std::to_string(exact)+", late "+std::to_string(late)+")");}
                         const auto loaded=volumeIcons->stats();
                         hostCheck(loaded.jobs>=1&&loaded.published>=withIcon&&!loaded.inFlight&&utility->stats().workersStarted==workers&&(!shelf||shelf->resources().iconWorkerStarts==shelfIcons),
                             "Volume icons load on the shared utility worker: no thread of their own, and the Shelf's Shell icon worker is untouched");
-                        hostCheck(volume->perform("audio:headphones",time)&&!volumeIcons->plan().active()&&volume->visibleIcons().empty(),"Leaving App volume withdraws its icon requests");
-                        for(unsigned frame=0;frame<20;++frame)present(time+double(frame)/60,true);time+=1;
-                        const bool back=volume->perform("audio:applications",time);const auto&again=volume->state().snapshot().applications;
-                        hostCheck(back&&volumeIcons->plan().active()&&volumeIcons->stats().jobs==loaded.jobs&&!volume->visibleIcons().empty()&&
-                            std::all_of(volume->visibleIcons().begin(),volume->visibleIcons().end(),[&](const auto&row){const auto app=std::find_if(again.begin(),again.end(),[&](const auto&a){return a.id==row.applicationID;});
-                                return app!=again.end()&&(row.executable&&row.executable->identity.objectID[0]==3?!app->icon:app->icon.has_value());}),
-                            "Returning to App volume binds the cached icons at once, without loading them again");
+                        volumeCanvas->env().now=time;volumeCanvas->page().tabs->select(0,true);for(unsigned frame=0;frame<40;++frame){(void)designOverlay->deadline(time+double(frame)/60);present(time+double(frame)/60,true);}time+=1;
+                        hostCheck(volumeCanvas->tab()==0&&!volumeIcons->plan().active(),"Leaving App volume withdraws its icon requests");
+                        volumeCanvas->env().now=time;volumeCanvas->page().tabs->select(1,true);for(unsigned frame=0;frame<40;++frame){(void)designOverlay->deadline(time+double(frame)/60);present(time+double(frame)/60,true);}time+=1;
+                        hostCheck(volumeIcons->plan().active()&&volumeIcons->stats().jobs==loaded.jobs&&!volumeCanvas->iconsChanged(),"Returning to App volume binds the cached icons at once, without loading them again");
                         for(unsigned frame=0;frame<20;++frame)present(time+double(frame)/60,true);time+=1;
                     }
                     uia.disconnectOwners();hostCheck(volumeModuleOwner->automationCount()==0&&uia.groups()==0,"Concealing disconnects every fragment");
@@ -907,7 +1926,8 @@ int Application::Impl::runHiddenVerification(){
                 groupProbe(core::Module::fileShelf,shelfModuleOwner.get(),std::nullopt);
                 groupProbe(core::Module::archive,archiveModuleOwner.get(),std::nullopt);
                 groupProbe(core::Module::mediaAssembly,areaOwner("mediaAssembly"),std::nullopt);
-                groupProbe(core::Module::nowPlaying,areaOwner("nowPlaying"),std::size_t{6});
+                // Now Playing 1.3.0: track, seek, previous, play/pause, next, volume, lyrics.
+                groupProbe(core::Module::nowPlaying,areaOwner("nowPlaying"),std::size_t{7});
                 groupProbe(core::Module::account,areaOwner("account"),std::nullopt);
                 groupProbe(core::Module::profile,areaOwner("profile"),std::nullopt);
                 // The provider modules' Mac accessibility buttons (and the telemetry
@@ -916,7 +1936,7 @@ int Application::Impl::runHiddenVerification(){
                 groupProbe(core::Module::eventLog,eventLogModuleOwner.get(),std::nullopt);
                 groupProbe(core::Module::activityMonitor,activityModuleOwner.get(),std::nullopt);
                 groupProbe(core::Module::storage,storageModuleOwner.get(),std::nullopt);
-                // Settings (tools/settings_automation.hpp): each page's controls in
+                // Settings (the design library's UIA tree): each page's controls in
                 // a group named after the page; a switch toggled through UI
                 // Automation changes its preference exactly like its click and
                 // reports the new state.
@@ -959,20 +1979,21 @@ int Application::Impl::runHiddenVerification(){
                         "Once the switch settles the host lists the System page's controls with no further input; Volume's are gone");
                     const auto refreshes=automation->stats().refreshes;settle(10);
                     hostCheck(automation->stats().refreshes==refreshes,"Settled frames only compare: nothing is listed again");
-                    // The active module's accept-input: the layout confirmation card,
-                    // shown by a frame after the UI scale changed, takes every click, so
-                    // only the card is listed; once it is gone the page is listed again.
+                    // The layout prompt: the UI scale slider's new value raises "Keep
+                    // this UI scale?" on the shared confirm bar, whose pills the overlay
+                    // lists; Revert restores the scale and the page stays listed.
                     selectModule(core::Module::display,time);refreshAutomation();settle(40);
                     const auto scale=child(*settingsModuleOwner,"uiScale");
                     ComPtr<IRawElementProviderSimple>simple;ComPtr<IUnknown>pattern;ComPtr<IRangeValueProvider>range;
                     hostCheck(scale&&SUCCEEDED(scale.As(&simple))&&SUCCEEDED(simple->GetPatternProvider(UIA_RangeValuePatternId,&pattern))&&pattern&&SUCCEEDED(pattern.As(&range))&&
                         range->SetValue(1.5)==S_OK&&settingsUI->controller().scalePending(),"The settled Display page is listed and its UI scale slider previews a new scale");
                     settle(12);
-                    hostCheck(settingsUI->modalActive()&&settingsModuleOwner->automationCount()==1&&child(*settingsModuleOwner,"settings:safety"),
-                        "The confirmation card a frame showed is listed alone, with no further input");
-                    hostCheck(settingsUI->performSafety(0,now()),"Revert on the card restores the UI scale");
+                    auto&overlay=designOverlay->context().overlay();
+                    hostCheck(overlay.isConfirming()&&overlay.confirmState().request()->id=="layout"&&overlay.confirmState().request()->countdown.has_value()&&designOverlay->automationCount()>0,
+                        "The layout prompt shows on the shared confirm bar with its countdown, and its pills are listed");
+                    hostCheck(overlay.decide(modules::design::ConfirmState::Decision::cancel),"Revert on the bar restores the UI scale");
                     settle(40);
-                    hostCheck(!settingsUI->modalActive()&&!settingsUI->controller().scalePending()&&child(*settingsModuleOwner,"uiScale"),"Once the card is gone the Display page is listed again, with no further input");
+                    hostCheck(!overlay.isConfirming()&&!settingsUI->controller().scalePending()&&child(*settingsModuleOwner,"uiScale"),"Once the bar is gone the Display page is listed, with no further input");
                     selectModule(core::Module::volume,time);refreshAutomation();settle(40);
                     hostCheck(volumeModuleOwner->automationCount()>0&&settingsModuleOwner->automationCount()==0,"Switching back lists the Volume controls with no further input");
                     automation->disconnectOwners();automation->shutdown();automation.reset();
@@ -1034,10 +2055,10 @@ int Application::Impl::runHiddenVerification(){
                     uia.disconnectOwners();hostCheck(navigationAutomation->automationCount()==0,"Concealing disconnects the navigation buttons");uia.shutdown();
                 }
                 // Map, Calendar and the minigame (the Reader's ran in cycle 0).
-                const auto month=calendar?calendar->view().month():endfield::modules::CalendarDay{};
-                peerProbe(core::Module::map,mapModuleOwner.get(),{{"map:reset",[&]{return map->state().viewport().zoom==endfield::modules::MapViewport::defaultZoom;}}});
-                peerProbe(core::Module::calendar,calendarModuleOwner.get(),{{"nextMonth",[&]{return calendar->view().month()!=month;}},{"previousMonth",[&]{return calendar->view().month()==month;}}});
-                peerProbe(core::Module::minigame,gameModuleOwner.get(),{{"rules",[&]{return game->state().rulesPresented();}},{"rules:close",[&]{return !game->state().rulesPresented();}}});
+                const auto month=calendar?calendar->month():endfield::modules::CalendarDay{};
+                peerProbe(core::Module::map,mapModuleOwner.get(),{{"map.reset",[&]{return map->state().camera().zoom==endfield::modules::MapViewport::defaultZoom;}}});
+                peerProbe(core::Module::calendar,calendarModuleOwner.get(),{{"calendar.nextMonth",[&]{return calendar->month()!=month;}},{"calendar.previousMonth",[&]{return calendar->month()==month;}}});
+                peerProbe(core::Module::minigame,gameModuleOwner.get(),{{"rules",[&]{return game->rulesPresented();}},{"popover.close",[&]{return !game->rulesPresented();}}});
                 // The Power navigation entry (powerCharge presents no module):
                 // its group is named Power and its help is the live reading.
                 if(auto*power=areaOwner("powerCharge");power&&registry.enabled(*power)&&powerArea()){
@@ -1190,11 +2211,11 @@ int Application::Impl::runHiddenVerification(){
                             present(time+.6,true);time+=1;uia.disconnectOwners();uia.shutdown();}
                     }
                 }
-                // Display adaptation (core/source_desktop_chrome.hpp desktopContentScale):
+                // Display adaptation (core/source_desktop_chrome.hpp DesktopChromeProjectionPlan::contentScale):
                 // on the reference Mac display the centre plane is the exact Mac
                 // layout (factor 1); on larger displays the centre content keeps the
                 // reference proportion to the source's main ring, in the ring's plane.
-                if(chromeBindings&&camera&&animation){
+                if(chromeBindings&&chromePlan&&camera&&animation){
                     source::SourceLayout sourceLayout(*scene);
                     const auto findRing=[&](std::string_view name)->std::optional<std::size_t>{for(const auto&n:scene->nodes())if(n.name==name&&std::string_view(n.path).find("/MiddleDecoNode/")!=std::string_view::npos)return sourceLayout.nodeIndex(n.id);return std::nullopt;};
                     const auto mainRing=findRing("MainRing"),blueRing=findRing("Mid_Blue");
@@ -1216,13 +2237,13 @@ int Application::Impl::runHiddenVerification(){
                                 const auto c=source::projectNativePoint({r.origin[0],r.origin[1]+r.size[1]*.5,0},world,vp,viewport),d=source::projectNativePoint({r.origin[0]+r.size[0],r.origin[1]+r.size[1]*.5,0},world,vp,viewport);
                                 need(c&&d,"A centre ring projects at the probe display");return std::hypot(d->x-c->x,d->y-c->y);};
                             return Measure{std::hypot(b.x-a.x,b.y-a.y),width(*mainRing),width(*blueRing)};};
-                        const auto reference=source::desktopReferenceViewport;const auto referenceFactor=source::desktopContentScale(*camera,reference);
+                        const auto reference=source::desktopReferenceViewport;const auto referenceFactor=chromePlan->contentScale(reference);
                         hostCheck(referenceFactor==1,"The reference Mac display keeps the exact Mac design scale");
-                        hostCheck(contentScale==source::desktopContentScale(*camera,{0,0,metrics.width,metrics.height}),"The host planes use the display adaptation of the HUD window");
+                        hostCheck(contentScale==chromePlan->contentScale({0,0,metrics.width,metrics.height}),"The host planes use the display adaptation of the HUD window");
                         const auto referenceMeasure=measureDisplay(reference,1);const double referenceRatio=referenceMeasure.content/referenceMeasure.mainRing;
                         Json::Array displays;
                         for(const core::Rect v:{core::Rect{0,0,2560./1.5,1600./1.5},core::Rect{0,0,1920,1080},core::Rect{0,0,1536,864},core::Rect{0,0,1920,1200},core::Rect{0,0,2560,1440},core::Rect{0,0,3440,1440},core::Rect{0,0,1280,800}}){
-                            const auto factor=source::desktopContentScale(*camera,v);const auto adapted=measureDisplay(v,factor),mac=measureDisplay(v,1);
+                            const auto factor=chromePlan->contentScale(v);hostCheck(factor>=1&&factor<=3,"The display adaptation stays within the Mac's 1-3 clamp");const auto adapted=measureDisplay(v,factor),mac=measureDisplay(v,1);
                             const bool larger=source::desktopBaseDesignScale(v)*factor>source::desktopBaseDesignScale(v)+1e-9;
                             hostCheck(factor>=1&&(!larger||std::abs(adapted.content/adapted.mainRing/referenceRatio-1)<.01),
                                 "On a "+std::to_string(int(std::lround(v.width)))+" x "+std::to_string(int(std::lround(v.height)))+" point display the centre content keeps the reference Mac proportion to the main ring");
@@ -1268,29 +2289,31 @@ int Application::Impl::runHiddenVerification(){
             // tearDownSystemPresentation: the hand-offs the cycles requested open
             // once the HUD is hidden. Storage Settings reaches only the hidden
             // fixture, exactly once however often the cycles pressed it.
-            {const bool waiting=pendingStorageSettings;const auto launched=storageFixture?storageFixture->settingsRequests:0u;openAfterConcealed(time+.7);
+            {const bool waiting=pendingStorageSettings;const auto launched=storageFixture?storageFixture->settingsRequests:0u;openAfterConcealed();
              if(storageFixture&&waiting)hostCheck(!pendingStorageSettings&&storageFixture->settingsRequests==launched+1,"Storage Settings waited for the close and opens once the HUD is hidden");}
             // The production adapter forwards the HUD visibility and the end of
             // the close: a Volume that is not the shown module keeps no artwork.
-            if(volume&&volumeModuleOwner&&registry.enabled(*volumeModuleOwner)&&notes->selected()!=core::Module::volume)
-                hostCheck(volume->sceneStats().parts==0&&volume->sceneStats().pixelBytes==0&&volume->sceneStats().parks>=1,"Closing the HUD on another module releases every Volume raster");
-            // Work Mode (visited by the module cycles and the UIA probes) releases its
-            // rasters and GPU resources once the HUD closed on another module.
-            if(workMode&&workModeModuleOwner&&registry.enabled(*workModeModuleOwner)&&notes->selected()!=core::Module::workMode)
-                hostCheck(workMode->resources().sceneParts==0&&!workMode->resources().gpuResident&&workMode->resources().parks>=1,"Closing the HUD on another module releases the Work Mode page");
+
             // The provider and Shelf adapters forward the HUD visibility and the
             // end of the close (overlayConcealed) through this production route:
             // the modules visited by the cycles that are not shown at the close
             // keep no raster artwork.
             {const auto hidden=[&](const std::unique_ptr<ModuleOwner>&owner,core::Module module){return owner&&registry.enabled(*owner)&&notes->selected()!=module;};
-             if(clipboard&&hidden(clipboardModuleOwner,core::Module::clipboard))
-                 hostCheck(clipboard->stats().residentPixelBytes==0&&clipboard->stats().parks>=1,"Closing the HUD on another module releases the Clipboard artwork");
-             if(eventLog&&hidden(eventLogModuleOwner,core::Module::eventLog))
-                 hostCheck(eventLog->stats().residentPixelBytes==0&&eventLog->stats().parks>=1,"Closing the HUD on another module releases the Event Log artwork");
-             if(activity&&hidden(activityModuleOwner,core::Module::activityMonitor))
-                 hostCheck(activity->stats().residentPixelBytes==0&&activity->stats().parks>=1,"Closing the HUD on another module releases the Activity Monitor artwork");
-             if(storage&&hidden(storageModuleOwner,core::Module::storage))
-                 hostCheck(storage->resources().pixelBytes==0&&storage->resources().parks>=1,"Closing the HUD on another module releases the Storage artwork");
+             const auto designScene=[](const std::unique_ptr<ModuleOwner>&owner,core::Module module){return static_cast<tools::DesignModuleOwner&>(*owner).core().sceneStats(module);};
+             // Clipboard, Event Log and Volume (design owners: the owner core parks a hidden canvas's scene).
+             for(const auto&[owner,module,name]:{std::tuple{&clipboardModuleOwner,core::Module::clipboard,"Clipboard"},std::tuple{&eventLogModuleOwner,core::Module::eventLog,"Event Log"},
+                     std::tuple{&volumeModuleOwner,core::Module::volume,"Volume"}})
+                 if(hidden(*owner,module)){const auto parked=designScene(*owner,module);
+                     hostCheck(parked&&parked->residentPixelBytes==0&&parked->parks>=1,std::string("Closing the HUD on another module releases the ")+name+" artwork");}
+             if(activity&&hidden(activityModuleOwner,core::Module::activityMonitor)){const auto parked=designScene(activityModuleOwner,core::Module::activityMonitor);
+                 hostCheck(parked&&parked->residentPixelBytes==0&&parked->parks>=1,"Closing the HUD on another module releases the Activity Monitor artwork");}
+             if(storage&&hidden(storageModuleOwner,core::Module::storage)){const auto parked=designScene(storageModuleOwner,core::Module::storage);
+                 hostCheck(parked&&parked->residentPixelBytes==0&&parked->parks>=1,"Closing the HUD on another module releases the Storage artwork");}
+             // Work Mode and Calendar (visited by the module cycles and the UIA probes).
+             if(workMode&&hidden(workModeModuleOwner,core::Module::workMode)){const auto parked=designScene(workModeModuleOwner,core::Module::workMode);
+                 hostCheck(parked&&parked->residentPixelBytes==0&&parked->parks>=1,"Closing the HUD on another module releases the Work Mode artwork");}
+             if(calendar&&hidden(calendarModuleOwner,core::Module::calendar)){const auto parked=designScene(calendarModuleOwner,core::Module::calendar);
+                 hostCheck(parked&&parked->residentPixelBytes==0&&parked->parks>=1,"Closing the HUD on another module releases the Calendar artwork");}
              if(shelf&&hidden(shelfModuleOwner,core::Module::fileShelf))
                  hostCheck(shelf->resources().scenePixelBytes==0&&shelf->resources().sceneParks>=1,"Closing the HUD on another module releases the File Shelf artwork");}
             // Host broadcasts the module areas rely on, through the same routes
@@ -1301,18 +2324,22 @@ int Application::Impl::runHiddenVerification(){
             // Production lifecycle and the red power button over the same owner.
             // Real event routes (onKey/onPointer) read the host time (here the
             // synthetic clock), so this phase continues on it.
-            if(quitConfirmation&&!quitButtons.empty()){
+            if(designOverlay&&!quitButtons.empty()){
                 const auto settle=[&](double t){
                     if(lifecycleOpening&&!closing&&session->phase()==core::VisibilityPhase::visible){const auto token=*lifecycleOpening;lifecycleOpening.reset();perform(lifecycle.didOpen(token),t);}
-                    if(lifecycleClosing&&session->phase()==core::VisibilityPhase::concealed){const auto token=*lifecycleClosing;lifecycleClosing.reset();quitConfirmation->hide(t);concealed(t);perform(lifecycle.didClose(token),t);openAfterConcealed(t);}
+                    if(shelfDragFrame(t,true))return;
+                    if(lifecycleClosing&&session->phase()==core::VisibilityPhase::concealed){const auto token=*lifecycleClosing;lifecycleClosing.reset();concealed(t);perform(lifecycle.didClose(token),t);openAfterConcealed();}
                 };
+                // Frames at 60 Hz; the shared design deadlines (the confirm
+                // bar's 120 ms answer, its collapse) run between frames when
+                // due, as the host's waitable timer would wake them.
                 const auto run=[&](double from,double seconds){double t=from;for(unsigned n=0;n<=unsigned(seconds*60);++n){t=from+double(n)/60;
-                    try{present(t,true);settle(t);}catch(const std::exception&e){const auto&shown=notes->modulePresentation();
+                    try{if(const auto wake=designOverlay->nextWakeTime(t);wake&&*wake<=t)(void)registry.guard(*designOverlay,[&]{(void)designOverlay->deadline(hostTime(t));},"deadline");present(t,true);settle(t);}catch(const std::exception&e){const auto&shown=notes->modulePresentation();
                         throw std::runtime_error("Lifecycle frame at "+std::to_string(t)+" phase="+std::to_string(int(lifecycle.phase()))+" visibility="+std::to_string(int(session->phase()))+
                             " selected="+std::string(core::moduleIdentifier(notes->selected()))+" current="+std::string(core::moduleIdentifier(shown.current.module))+
                             " incoming="+(shown.incoming?std::string(core::moduleIdentifier(shown.incoming->module)):std::string("none"))+": "+e.what());}
                     if(stopping)break;}return t;};
-                const auto key=[&](std::uint32_t value){need(onKey({KeyKind::down,value}),"The modal card consumes the key");(void)onKey({KeyKind::up,value});};
+                const auto key=[&](std::uint32_t value){need(onKey({KeyKind::down,value}),"The confirm bar consumes the key");(void)onKey({KeyKind::up,value});};
                 double t=std::max(now(),time+2);
                 const auto lifecycleCheck=[&](bool value,const char*why){need(value,why);++lifecycleChecks;};
                 lifecycleCheck(lifecycle.phase()==core::SystemOverlayPhase::closed,"Lifecycle starts closed after the direct coverage close");
@@ -1343,10 +2370,10 @@ int Application::Impl::runHiddenVerification(){
                     // The account login's WebView2 runtime download (Windows only) through the area host.
                     if(areaHost)link("The login's runtime download closes the HUD (and the login) before the browser opens",
                         [&]{areaHost->openLinkAfterClose("https://developer.microsoft.com/microsoft-edge/webview2/#download-section");});
-                    if(storage&&storageFixture&&storageModuleOwner&&registry.enabled(*storageModuleOwner)){
+                    if(storage&&storage->canvas()&&storageFixture&&storageModuleOwner&&registry.enabled(*storageModuleOwner)){
                         perform(lifecycle.selectModule(core::Module::storage),t);t=run(t,.8);
                         const auto before=storageFixture->settingsRequests;
-                        handoffCheck(storage->perform("storage:settings",t)&&lifecycle.phase()==P::closing&&closing&&pendingStorageSettings&&storageFixture->settingsRequests==before,
+                        handoffCheck(storage->canvas()->perform("storage:settings",t)&&lifecycle.phase()==P::closing&&closing&&pendingStorageSettings&&storageFixture->settingsRequests==before,
                             "Storage Settings closes the HUD before Windows Settings opens");
                         t=run(t,1.2);handoffCheck(lifecycle.phase()==P::closed&&!pendingStorageSettings&&storageFixture->settingsRequests==before+1,"Windows Storage Settings opens once the HUD is hidden");
                         perform(lifecycle.reopen(),t);t=run(t,1.2);
@@ -1445,6 +2472,67 @@ int Application::Impl::runHiddenVerification(){
                         outsideCheck(lifecycle.phase()==core::SystemOverlayPhase::open&&!closing,"A press and release inside the displayed circle keep the HUD open");
                         if(readerModuleOwner)outsideCheck(registry.enabled(*readerModuleOwner),"A release over the HUD with the Reader hidden keeps the Reader owner working");}
                 }
+                // The Shelf drag-out (OverlayController shelfDragPresentation) through the
+                // host's own drag routine with a stand-in for the OLE loop - no DoDragDrop,
+                // no input: the stand-in presents frames as the loop's nested dispatch does,
+                // asks what the user might during a drag, and returns the drag's result.
+                if(shelf&&shelfModuleOwner&&registry.enabled(*shelfModuleOwner)){
+                    const auto dragCheck=[&](bool value,const char*why){need(value,why);++hostChecks;};
+                    using P=core::ShelfDragPresentationState::Phase;using L=core::SystemOverlayPhase;using V=core::VisibilityPhase;
+                    // The window itself only in a visible run (a hidden run never shows it).
+                    const auto shown=[&]{return !visibleMode()||host.stats().visible;};const auto unshown=[&]{return !visibleMode()||!host.stats().visible;};
+                    const auto onShelf=[&]{if(lifecycle.phase()!=L::open){perform(lifecycle.reopen(),t);t=run(t,1.2);}perform(lifecycle.selectModule(core::Module::fileShelf),t);t=run(t,.8);
+                        need(lifecycle.phase()==L::open&&lifecycle.interactionEnabled()&&notes->selected()==core::Module::fileShelf,"The Shelf is open before its drag");};
+                    const auto cancel=[](DWORD&effect){effect=DROPEFFECT_NONE;return HRESULT(DRAGDROP_S_CANCEL);};
+                    const auto copy=[](DWORD&effect){effect=DROPEFFECT_COPY;return HRESULT(DRAGDROP_S_DROP);};
+                    // Cancelled once hidden: the same presentation comes back with its entrance.
+                    onShelf();bool retracting{},hidden{};
+                    const bool cancelled=shelfDragOut([&](DWORD&effect){
+                        retracting=lifecycle.shelfDrag().phase()==P::retracting&&lifecycle.phase()==L::open&&!lifecycle.interactionEnabled()&&closing&&
+                            session->phase()==V::closing&&shelf->preservesFocusOnLoss()&&lifecycle.shelfDragActive();
+                        t=run(t,1.2);
+                        hidden=lifecycle.shelfDrag().phase()==P::hidden&&lifecycle.phase()==L::open&&session->phase()==V::concealed&&unshown();
+                        return cancel(effect);},t);
+                    dragCheck(retracting,"A drag-out disables the HUD's input and plays its exit without closing it");
+                    dragCheck(hidden,"The retracted HUD hides for the rest of the drag");
+                    dragCheck(!cancelled&&lifecycle.shelfDrag().phase()==P::restoring&&session->phase()==V::opening&&!closing&&shown()&&!shelf->preservesFocusOnLoss(),
+                        "A cancelled drag shows the HUD again with its entrance");
+                    t=run(t,1.2);
+                    dragCheck(!lifecycle.shelfDragActive()&&lifecycle.phase()==L::open&&lifecycle.interactionEnabled()&&session->phase()==V::visible&&
+                        notes->selected()==core::Module::fileShelf&&shelf->core()&&shelf->core()->inputModule()==core::Module::fileShelf,"The restored Shelf takes input again");
+                    // Delivered once hidden: closed without a second animation.
+                    const bool delivered=shelfDragOut([&](DWORD&effect){t=run(t,1.2);return copy(effect);},t);
+                    dragCheck(delivered&&lifecycle.phase()==L::closed&&session->phase()==V::concealed&&!closing&&unshown()&&!lifecycle.shelfDragActive()&&
+                        lifecycle.lastModule()==core::Module::fileShelf,"A delivered copy closes the hidden HUD without a second animation");
+                    t=run(t,.3);dragCheck(lifecycle.phase()==L::closed&&session->phase()==V::concealed,"The delivered drag's HUD stays closed");
+                    // Delivered or cancelled during the exit: the exit finishes first.
+                    onShelf();
+                    const bool fast=shelfDragOut([&](DWORD&effect){t=run(t,.05);return copy(effect);},t);
+                    dragCheck(fast&&lifecycle.phase()==L::open&&lifecycle.shelfDrag().phase()==P::retracting&&session->phase()==V::closing,"A fast delivery still finishes the exit");
+                    t=run(t,1.2);dragCheck(lifecycle.phase()==L::closed&&session->phase()==V::concealed&&!lifecycle.shelfDragActive(),"Then the HUD closes without a second animation");
+                    onShelf();
+                    (void)shelfDragOut([&](DWORD&effect){t=run(t,.05);return cancel(effect);},t);
+                    dragCheck(lifecycle.shelfDrag().phase()==P::retracting&&session->phase()==V::closing,"A fast cancellation still finishes the exit");
+                    t=run(t,2.4);dragCheck(lifecycle.phase()==L::open&&!lifecycle.shelfDragActive()&&session->phase()==V::visible&&lifecycle.interactionEnabled(),
+                        "Then the HUD comes back with its entrance");
+                    // The summon hotkey during the drag waits for it, then closes the hidden HUD.
+                    bool deferred{};
+                    (void)shelfDragOut([&](DWORD&effect){t=run(t,1.2);trayAction(gpu::TrayAction::openOverlay,true,t);
+                        deferred=lifecycle.closeAfterShelfDrag()&&lifecycle.phase()==L::open&&lifecycle.shelfDrag().phase()==P::hidden&&unshown();return cancel(effect);},t);
+                    dragCheck(deferred,"A summon during the drag waits for it");
+                    dragCheck(lifecycle.phase()==L::closed&&session->phase()==V::concealed&&unshown()&&!lifecycle.shelfDragActive(),
+                        "A cancelled drag with a summon pending closes the hidden HUD instead of bringing it back");
+                    // Sleep during the drag conceals at once; the drag's end completes the close.
+                    onShelf();bool held{};
+                    (void)shelfDragOut([&](DWORD&effect){t=run(t,.3);suspend(Suspension::system,t);
+                        held=lifecycle.phase()==L::open&&lifecycle.forceCloseAfterShelfDrag()&&session->phase()==V::concealed&&unshown()&&!closing;
+                        t=run(t,.5);held=held&&lifecycle.phase()==L::open&&session->phase()==V::concealed;resume(Suspension::system,t);return cancel(effect);},t);
+                    dragCheck(held,"A forced close during the drag conceals the HUD at once and holds its presentation until the drag ends");
+                    dragCheck(lifecycle.phase()==L::closed&&session->phase()==V::concealed&&!lifecycle.shelfDragActive()&&!lifecycle.forceCloseAfterShelfDrag(),
+                        "The drag's end completes the forced close without restoring");
+                    perform(lifecycle.reopen(),t);t=run(t,1.2);perform(lifecycle.selectModule(core::Module::notes),t);t=run(t,.8);
+                    dragCheck(lifecycle.phase()==L::open&&notes->selected()==core::Module::notes,"The HUD reopens normally after the drags");
+                }
                 // DataRootRestart through the host's own members (a gate opened
                 // for hidden coverage only): a failed save declines it.
                 const auto restartCheck=[&](bool value,const char*why){need(value,why);++hostChecks;};
@@ -1483,27 +2571,53 @@ int Application::Impl::runHiddenVerification(){
                 }else{
                 const auto quit=*quitButtons.begin();
                 const auto press=[&](double at){const auto activation=session->activate(quit,at);need(activation.has_value()&&activation->action==quitAction,"QuitBtn is a clipped, cooled-down source button");activate(*activation);};
-                press(t+.1);t=run(t+.1,.4);lifecycleCheck(quitConfirmation->presented()&&quitConfirmation->state().focused()==0,"QuitBtn presents the card with Cancel focused");
-                lifecycleCheck(registry.covers({metrics.width*.5,metrics.height*.5})&&registry.covers({1,1}),"The card covers every underlying control");
-                key(VK_ESCAPE);t=run(t,.4);lifecycleCheck(!quitConfirmation->presented()&&lifecycle.phase()==core::SystemOverlayPhase::open&&!quitRequested,"Escape cancels and keeps the HUD open");
-                press(t+1.1);t=run(t+1.1,.4);const auto cancel=quitConfirmation->actionPoint(false);need(cancel.has_value(),"Cancel projects through the tilted card");
-                // A modal card unwinds first: a press outside the circle stays with it.
+                auto&overlay=designOverlay->context().overlay();
+                // A pill's centre in logical client points: box px through the
+                // overlay's placement (DesktopChromeLayout::boxWorld of the centre plane).
+                const auto pill=[&](std::string_view id)->core::Point{
+                    for(const auto*control:overlay.router().controls())if(control->id()==id){
+                        const auto r=control->rect(overlay.layer());
+                        const auto camera=gpu::layerViewportProjection(metrics.pixelWidth,metrics.pixelHeight)*core::Matrix4::scale(metrics.scale,metrics.scale);
+                        const auto plane=core::Projection::viewport(camera*source::designBoxWorld(*chromePlan->projection().center),metrics.pixelWidth,metrics.pixelHeight);
+                        const auto q=plane.project({r.x+r.width*.5,r.y+r.height*.5});need(q.has_value(),"The pill projects through the tilted centre plane");
+                        return {q->x/metrics.scale,q->y/metrics.scale};}
+                    throw std::runtime_error("The confirm bar shows no such pill");};
+                press(t+.1);t=run(t+.1,.4);
+                {const auto&request=overlay.confirmState().request();
+                 const auto state="QuitBtn asks on the shared confirm bar with the Mac's red quit request (prompt="+std::to_string(quitPromptOpen)+" captures="+std::to_string(overlay.capturesInput())+
+                     " phase="+std::to_string(int(lifecycle.phase()))+" switching="+std::to_string(notes->modulePresentation().transitioning)+" quit="+std::to_string(quitRequested)+
+                     " language="+std::string(core::languageSetting(designOverlay->context().env().language))+" id="+(request?request->id:std::string("none"))+" title="+(request?request->title:std::string())+")";
+                 // The Mac pairs in the run's language (the coverage record's).
+                 const auto language=designOverlay->context().env().language;
+                 lifecycleCheck(quitPromptOpen&&overlay.capturesInput()&&request&&request->id=="quit"&&request->danger&&request->icon==modules::design::Icon::power&&
+                     request->title==core::localized("Quit EndfieldHUD?","退出 EndfieldHUD？",language)&&
+                     request->message==core::localized("Notes, shelf files and settings are saved.","便笺、暂存文件与设置均已保存。",language)&&
+                     request->confirmTitle==core::localized("Quit","退出",language)&&request->cancelTitle.empty(),
+                     state.c_str());}
+                lifecycleCheck(registry.covers({metrics.width*.5,metrics.height*.5})&&registry.covers({1,1}),"The bar covers every underlying control");
+                lifecycleCheck(designOverlay->contentFilter(t,0,1).has_value(),"The bar dims the module content");
+                key(VK_ESCAPE);t=run(t,.4);lifecycleCheck(!overlay.capturesInput()&&!quitPromptOpen&&lifecycle.phase()==core::SystemOverlayPhase::open&&!quitRequested,"Escape cancels and keeps the HUD open");
+                lifecycleCheck(!designOverlay->contentFilter(t,0,1).has_value(),"The dim eases out with the bar");
+                press(t+1.1);t=run(t+1.1,.4);
+                // The bar captures everything: a press outside the circle stays with it.
                 (void)onPointer({PointerKind::down,PointerButton::left,2,metrics.height*.5});(void)onPointer({PointerKind::up,PointerButton::left,2,metrics.height*.5});t=run(t,.2);
-                restartCheck(quitConfirmation->presented()&&lifecycle.phase()==core::SystemOverlayPhase::open&&!closing,"A press outside the circle while the quit card is up stays with the card");
-                const auto click=[&](core::Point p){need(onPointer({PointerKind::down,PointerButton::left,p.x,p.y}),"The card consumes the press");need(onPointer({PointerKind::up,PointerButton::left,p.x,p.y}),"The card consumes the release");};
-                click({cancel->x,cancel->y});t=run(t,.4);lifecycleCheck(!quitConfirmation->presented()&&!quitRequested,"Projected Cancel dismisses the card");
-                press(t+1.1);t=run(t+1.1,.4);key(VK_RETURN);t=run(t,.4);lifecycleCheck(!quitConfirmation->presented()&&!quitRequested,"Return activates the initially focused Cancel");
-                press(t+1.1);t=run(t+1.1,.4);key(VK_TAB);lifecycleCheck(quitConfirmation->state().focused()==1,"Tab focuses Quit");
+                restartCheck(overlay.capturesInput()&&lifecycle.phase()==core::SystemOverlayPhase::open&&!closing,"A press outside the circle while the quit bar is up stays with the bar");
+                const auto click=[&](core::Point p){need(onPointer({PointerKind::down,PointerButton::left,p.x,p.y}),"The bar consumes the press");need(onPointer({PointerKind::up,PointerButton::left,p.x,p.y}),"The bar consumes the release");};
+                click(pill("quit:cancel"));t=run(t,.4);lifecycleCheck(!overlay.capturesInput()&&!quitPromptOpen&&!quitRequested,"Projected Cancel dismisses the bar");
                 // A restart pending at the confirmed quit is accepted: its work is handed out once.
                 auto restartRuns=std::make_shared<unsigned>(0);
-                restartCheck(restart.restartWith([restartRuns]{++*restartRuns;},[]{})&&restartPending,"A data-root restart can be requested while the card is up");
-                key(VK_RETURN);
+                press(t+1.1);t=run(t+1.1,.4);
+                restartCheck(restart.restartWith([restartRuns]{++*restartRuns;},[]{})&&restartPending,"A data-root restart can be requested while the bar is up");
+                key(VK_RETURN);key(VK_ESCAPE);
+                lifecycleCheck(!quitRequested&&lifecycle.phase()==core::SystemOverlayPhase::open&&overlay.capturesInput(),"Return answers Quit; the quit waits for the bar's 120 ms press and a second answer is swallowed");
+                t=run(t,.1);lifecycleCheck(!quitRequested,"Nothing quits before 120 ms");
+                t=run(t,.1);
                 lifecycleCheck(quitRequested&&lifecycle.terminating()&&lifecycle.phase()==core::SystemOverlayPhase::closing&&closing,"Confirmed quit plays the closing animation");
                 lifecycleCheck(lifecycle.toggle().empty()&&lifecycle.reopen().empty(),"Quitting ignores summons");
                 t=run(t,1.5);
                 {const auto state="The ordered drain runs after concealment, then the owner stops (stopping="+std::to_string(stopping)+" phase="+std::to_string(int(lifecycle.phase()))+
-                    " card="+std::to_string(quitConfirmation->presented())+" quit="+std::to_string(quitRequested)+")";
-                 lifecycleCheck(stopping&&lifecycle.phase()==core::SystemOverlayPhase::closed&&!quitConfirmation->presented(),state.c_str());}
+                    " bar="+std::to_string(overlay.capturesInput())+" quit="+std::to_string(quitRequested)+")";
+                 lifecycleCheck(stopping&&lifecycle.phase()==core::SystemOverlayPhase::closed&&!overlay.capturesInput(),state.c_str());}
                 {auto work=takeRestartWork();restartCheck(restartAccepted==false&&work&&!takeRestartWork(),"The accepted restart's work is handed out exactly once");
                  work();restartCheck(*restartRuns==1,"The handed-out work is the requested one");}
                 }
@@ -1520,7 +2634,7 @@ int Application::Impl::runHiddenVerification(){
             for(unsigned n=0;n<=static_cast<unsigned>(core::Module::profile);++n)if(area.owner->presents(static_cast<core::Module>(n)))presents.push_back(std::string(core::moduleIdentifier(static_cast<core::Module>(n))));
             areas.push_back(Json::Object{{"area",area.name},{"constructed",true},{"enabled",registry.enabled(*area.owner)},{"presents",std::move(presents)},{"coverageSteps",std::int64_t(counts.steps)},{"coverageChecks",std::int64_t(counts.checks)}});}
         for(const auto&name:absentModules)areas.push_back(Json::Object{{"area",name},{"constructed",false}});
-        report["areaCoverage"]=std::move(areas);report["areaModuleResults"]=std::move(areaModuleResults);report["areaPresentedModules"]=std::move(areaPresentedModules);
+        report["recordingToggle"]=std::move(recordingToggle);report["pageVisibility"]=std::move(pageVisibility);report["actionTiming"]=std::move(actionTiming);report["areaCoverage"]=std::move(areas);report["areaModuleResults"]=std::move(areaModuleResults);report["areaPresentedModules"]=std::move(areaPresentedModules);
         if(args.moduleCoverage)for(const auto&area:externalModules)need(areaCounts[area.name].steps>=3,"Every module area received its hidden coverage steps");
         ehud::data::detail::replaceFile(args.report,std::nullopt,report.encode(),8*1024*1024);std::cout<<"Wrote hidden source-shell benchmark report\n";
     shutdownVisible();

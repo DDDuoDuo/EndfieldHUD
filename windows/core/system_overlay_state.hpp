@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string_view>
 
@@ -37,6 +38,34 @@ private:
     bool closeAfterOpening_{};
 };
 
+// Exact port of Sources/ShelfDragPresentationState.swift (unchanged since
+// 0.4.0). The native drag owns its source until it ends. Its result may
+// arrive before or after the HUD has retracted; neither case may skip that
+// animation.
+class ShelfDragPresentationState final {
+public:
+    enum class Phase { idle, retracting, hidden, restoring };
+    struct Action {
+        enum class Kind { none, retract, hide, restore, close };
+        Kind kind{Kind::none};
+        std::int64_t token{}; // retract and restore only
+        bool operator==(const Action&) const = default;
+    };
+    Action begin() noexcept;
+    Action ended(bool delivered) noexcept;
+    Action didRetract(std::int64_t token) noexcept;
+    bool didRestore(std::int64_t token) noexcept;
+    void reset() noexcept;
+    Phase phase() const noexcept { return phase_; }
+    std::int64_t generation() const noexcept { return generation_; }
+    bool active() const noexcept { return phase_ != Phase::idle; }
+private:
+    Action resolve() noexcept;
+    Phase phase_{Phase::idle};
+    std::int64_t generation_{};
+    std::optional<bool> delivered_;
+};
+
 // Launch arguments understood by AppDelegate.applicationDidFinishLaunching.
 struct SystemOverlayStartup {
     bool login{}, noOnboarding{}, settings{}, power{}, preview{};
@@ -52,7 +81,13 @@ struct SystemOverlayEffect {
         markLaunched,  // persist hasLaunched=true
         quitAccepted,  // onQuitAccepted: stop the summon shortcut
         terminate,     // onQuitAfterSystemClose: run the ordered document drain, then exit
-        restartShortcut // termination cancelled after a save failure
+        restartShortcut, // termination cancelled after a save failure
+        // The Shelf drag-out (OverlayController.performShelfDragAction), all
+        // outside the open/close transitions above:
+        shelfRetract,  // input off, the exit animation of drag `token`; the HUD stays open
+        shelfHide,     // the retracted HUD hides for the rest of the drag, keeping its presentation
+        shelfRestore,  // a cancelled drag: show the HUD again with the entrance of drag `token`
+        shelfClose     // finishConcealedShelfClose: the hidden HUD closes without a second animation
     };
     Kind kind{};
     std::int64_t token{};
@@ -78,7 +113,9 @@ private:
 // Port of the AppDelegate + OverlayController system-overlay policy:
 // toggle/summon guards, the Map-first initial module, last-module retention
 // across reopen, tray Settings/About/Work Mode requests, relaunch activation,
-// first-run onboarding, the confirmed red power button and forced close.
+// first-run onboarding, the confirmed red power button, forced close and the
+// Shelf drag-out presentation (shelfDragPresentation, closeAfterShelfDrag,
+// forceCloseAfterShelfDrag).
 // Pure caller-clock state; it owns no window, timer, shortcut or storage.
 // The caller performs each returned effect in order, reports the end of the
 // opening/closing animation with didOpen/didClose, and dispatches advance()
@@ -104,6 +141,21 @@ public:
     SystemOverlayEffects didClose(std::int64_t token); // finishSystemClosing
     SystemOverlayEffects advance(double now);          // delayed Work Mode selection
     std::optional<double> nextWakeTime() const noexcept;
+    // OverlayController's Shelf drag-out. The drag loop runs from
+    // beginShelfDrag to endShelfDrag (HUDFileShelfInteraction.isDraggingOut;
+    // on Windows DoDragDrop starts and ends synchronously, so the session's
+    // willBegin and its end callback are these two calls). The caller plays
+    // shelfRetract / shelfRestore and reports their ends with
+    // shelfDragRetracted / shelfDragRestored. Meanwhile summons, closes and
+    // quits wait for the drag (closeAfterShelfDrag: a delivered or cancelled
+    // drag then closes the hidden HUD without bringing it back, a close
+    // during the restore closes it with the normal animation once restored),
+    // and a forced close while the loop runs keeps the lifecycle open (the
+    // caller only conceals the HUD) until the drag ends, which closes it.
+    SystemOverlayEffects beginShelfDrag();
+    SystemOverlayEffects endShelfDrag(bool delivered);
+    SystemOverlayEffects shelfDragRetracted(std::int64_t token);
+    SystemOverlayEffects shelfDragRestored(std::int64_t token);
     // Windows tray Quit: request termination, closing the open HUD first with
     // its normal animation. A closed HUD terminates immediately.
     SystemOverlayEffects requestTermination();
@@ -111,6 +163,12 @@ public:
     SystemOverlayEffects cancelTermination();
     void prepareForDocumentTermination() noexcept;
 
+    // Mac 1.3.0 OverlayController: the HUD reopens on
+    // configuration.moduleLayout.restorable(lastSystemModule): a module hidden
+    // in System > Modules is not restored, the first visible one stands in. An
+    // explicit initial module request (tray Settings/About/Work Mode) is not
+    // filtered. Without a rule the last module reopens unchanged.
+    void setModuleRestore(std::function<Module(Module)> rule) { moduleRestore_ = std::move(rule); }
     void setSuspended(bool value) noexcept { suspended_ = value; }
     void setEditingPosition(bool value) noexcept { editingPosition_ = value; }
     void setAppLaunchInFlight(bool value) noexcept { appLaunchInFlight_ = value; }
@@ -130,6 +188,13 @@ public:
     bool hasLaunched() const noexcept { return hasLaunched_; }
     std::size_t pendingSelections() const noexcept { return timerCount_; }
     std::optional<double> pendingSelectionDue(std::size_t index) const noexcept;
+    bool shelfDragging() const noexcept { return shelfDragging_; }
+    // isDraggingShelfItem || shelfDragPresentation.isActive: focus-loss
+    // closes are ignored and the HUD is not idle.
+    bool shelfDragActive() const noexcept { return shelfDragging_ || shelfDrag_.active(); }
+    const ShelfDragPresentationState& shelfDrag() const noexcept { return shelfDrag_; }
+    bool closeAfterShelfDrag() const noexcept { return closeAfterShelfDrag_; }
+    bool forceCloseAfterShelfDrag() const noexcept { return forceCloseAfterShelfDrag_; }
 
 private:
     struct Timer { double due{}; std::uint64_t serial{}; std::int64_t presentation{}; };
@@ -138,9 +203,12 @@ private:
     std::optional<Module> initialModuleRequest_, view_;
     bool interaction_{}, quitRequested_{}, quitAfterSystemClose_{}, editingPosition_{}, appLaunchInFlight_{};
     bool documentTermination_{}, suspended_{}, terminating_{}, hasLaunched_{};
+    ShelfDragPresentationState shelfDrag_;
+    bool shelfDragging_{}, closeAfterShelfDrag_{}, forceCloseAfterShelfDrag_{};
     std::array<Timer, maximumPendingSelections> timers_{};
     std::size_t timerCount_{};
     std::uint64_t timerSerial_{};
+    std::function<Module(Module)> moduleRestore_;
 
     bool appToggle(SystemOverlayEffects&);
     bool overlayToggle(SystemOverlayEffects&);
@@ -149,5 +217,7 @@ private:
     void select(Module, SystemOverlayEffects&);
     void settingsModule(Module, SystemOverlayEffects&);
     void tearDown(SystemOverlayEffects&);
+    void performShelfDrag(ShelfDragPresentationState::Action, SystemOverlayEffects&);
+    void finishConcealedShelfClose(SystemOverlayEffects&);
 };
 } // namespace endfield::core

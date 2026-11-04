@@ -49,11 +49,21 @@
       "texts": ["third_party/zlib/LICENSE"]
     },
     {
+      "name": "HarmonyOS Sans",
+      "version": "1.0 (Light, Regular, Medium, Bold, Black), unmodified files of the official HarmonyOS Sans package",
+      "url": "https://developer.huawei.com/consumer/cn/design/resource/",
+      "license": "HarmonyOS Sans Fonts License Agreement",
+      "use": "EndfieldHUD uses HarmonyOS Sans Fonts: the HUD's text font for every Latin letter and digit, loaded privately (never installed into Windows). The fonts ship unmodified in the fonts folder with their copyright notice and the HarmonyOS Sans Fonts License Agreement (fonts/HarmonyOS-Sans-LICENSE.txt), reproduced below.",
+      "ships": ["fonts/HarmonyOS_Sans_Light.ttf", "fonts/HarmonyOS_Sans_Regular.ttf", "fonts/HarmonyOS_Sans_Medium.ttf", "fonts/HarmonyOS_Sans_Bold.ttf", "fonts/HarmonyOS_Sans_Black.ttf", "fonts/HarmonyOS-Sans-LICENSE.txt"],
+      "paths": ["../Resources/Fonts/HarmonyOS_Sans_Light.ttf", "../Resources/Fonts/HarmonyOS_Sans_Regular.ttf", "../Resources/Fonts/HarmonyOS_Sans_Medium.ttf", "../Resources/Fonts/HarmonyOS_Sans_Bold.ttf", "../Resources/Fonts/HarmonyOS_Sans_Black.ttf", "../Resources/Fonts/HarmonyOS-Sans-LICENSE.txt"],
+      "texts": ["../Resources/Fonts/HarmonyOS-Sans-LICENSE.txt"]
+    },
+    {
       "name": "Noto Sans SC",
       "version": "2.004, variable weight (google/fonts commit a85815a42757630ce188fdad368c2dfc444d4773)",
       "url": "https://github.com/google/fonts/tree/a85815a42757630ce188fdad368c2dfc444d4773/ofl/notosanssc",
       "license": "OFL-1.1",
-      "use": "The HUD's bundled text font, loaded privately (never installed into Windows).",
+      "use": "The HUD's bundled Simplified Chinese text font, loaded privately (never installed into Windows).",
       "ships": ["fonts/NotoSansSC.ttf", "fonts/NotoSansSC-OFL.txt", "fonts/manifest.json"],
       "paths": ["../Resources/Fonts/NotoSansSC.ttf", "../Resources/Fonts/NotoSansSC-OFL.txt", "../Resources/Fonts/manifest.json"],
       "texts": ["../Resources/Fonts/NotoSansSC-OFL.txt"]

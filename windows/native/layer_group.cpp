@@ -9,26 +9,66 @@ namespace {
 void need(bool ok,const char* reason){if(!ok)throw std::invalid_argument(reason);}
 bool valid(const core::Rect& r){return std::isfinite(r.x)&&std::isfinite(r.y)&&std::isfinite(r.width)&&std::isfinite(r.height)&&r.width>0&&r.height>0&&std::isfinite(r.x+r.width)&&std::isfinite(r.y+r.height);}
 bool contains(const core::Rect& a,const core::Rect& b){return a.x<=b.x&&a.y<=b.y&&a.x+a.width>=b.x+b.width&&a.y+a.height>=b.y+b.height;}
+core::Rect unite(const core::Rect& a,const core::Rect& b){const auto x=std::min(a.x,b.x),y=std::min(a.y,b.y);return {x,y,std::max(a.x+a.width,b.x+b.width)-x,std::max(a.y+a.height,b.y+b.height)-y};}
+// Each adapter gets a distinct retained identity so an outgoing and incoming
+// same-kind menu can overlap without replacing each other's targets.
+std::string identity(const std::string& id){static std::atomic<std::uint64_t> sequence{};return "layer:"+std::to_string(sequence.fetch_add(1,std::memory_order_relaxed))+":"+id;}
 }
 NativeLayerGroup::NativeLayerGroup(LayerScene& scene,std::string id,double density,NativeGroupColorSpace colorSpace)
     :local_(&scene),carrier_(*scene.rasterizer_),id_(std::move(id)),density_(density),colorSpace_(colorSpace){
     need(colorSpace_==NativeGroupColorSpace::linear||colorSpace_==NativeGroupColorSpace::encodedSRGB,"Unknown retained native group color space");
     need(!id_.empty()&&id_.size()<=450&&std::isfinite(density_)&&density_>0&&density_<=16,"Invalid retained native group identity/density");
     need(!scene.groupOwner_&&!scene.compositionOwner_&&!scene.resourceOwner_,"Native group needs an unpublished local scene");
-    static std::atomic<std::uint64_t> sequence{};
-    id_="layer:"+std::to_string(sequence.fetch_add(1,std::memory_order_relaxed))+":"+id_;
+    id_=identity(id_);
     output_[0].masks.reserve(8);staged_.masks.reserve(8);scene.groupOwner_=this;carrier_.carrierGroup_=this;
 }
-NativeLayerGroup::~NativeLayerGroup(){
-    if(renderer_)try{(void)releaseResources(*renderer_);}catch(...){}
-    local_->groupOwner_=nullptr;carrier_.carrierGroup_=nullptr;
+NativeLayerGroup::NativeLayerGroup(LayerRasterizer& raster,std::string id,NativeGroupColorSpace colorSpace)
+    :carrier_(raster),id_(std::move(id)),density_(1),colorSpace_(colorSpace){
+    need(colorSpace_==NativeGroupColorSpace::linear||colorSpace_==NativeGroupColorSpace::encodedSRGB,"Unknown retained native group color space");
+    need(!id_.empty()&&id_.size()<=450,"Invalid retained native group identity");
+    id_=identity(id_);borrowed_=true;
+    output_[0].masks.reserve(8);staged_.masks.reserve(8);carrier_.carrierGroup_=this;
 }
+NativeLayerGroup::~NativeLayerGroup(){
+    detach();
+    if(renderer_)try{(void)releaseResources(*renderer_);}catch(...){}
+    if(local_)local_->groupOwner_=nullptr;carrier_.carrierGroup_=nullptr;
+}
+void NativeLayerGroup::attach(Renderer& renderer,LayerScene& scene,double density,std::optional<core::Rect> coverage,std::span<LayerScene* const> more){
+    need(borrowed_&&!local_&&!registered_&&!carrier_.compositionOwner_,"Attach a detached borrowed native group without a target");
+    const auto unowned=[&](const LayerScene& s){return !s.groupOwner_&&!s.carrierGroup_&&(!s.resourceOwner_||s.resourceOwner_==&renderer)&&s.rasterizer_==carrier_.rasterizer_;};
+    need(unowned(scene)&&std::all_of(more.begin(),more.end(),[&](const LayerScene* s){return s&&s!=&scene&&unowned(*s);}),"Native group needs a scene of this renderer in no group");
+    need(std::isfinite(density)&&density>0&&density<=16,"Invalid borrowed native group scene/density");
+    local_=&scene;more_.assign(more.begin(),more.end());moreRevisions_.assign(more_.size(),{});density_=density;
+    scene.groupOwner_=this;for(auto* s:more_)s->groupOwner_=this;
+    try{(void)uploadResources(renderer,coverage);}
+    catch(...){
+        // Refused (limits) or failed: neither the scenes nor this group changed.
+        if(registered_){try{(void)renderer.removeNativeGroup(id_);}catch(...){}registered_=false;}
+        scene.groupOwner_=nullptr;for(auto* s:more_)s->groupOwner_=nullptr;more_.clear();
+        local_=nullptr;renderer_=nullptr;structureRevision_=resourceRevision_=0;throw;
+    }
+}
+void NativeLayerGroup::detach()noexcept{
+    if(!borrowed_||!local_)return;
+    local_->groupOwner_=nullptr;for(auto* s:more_)s->groupOwner_=nullptr;more_.clear();
+    local_=nullptr;structureRevision_=resourceRevision_=0;
+}
+bool NativeLayerGroup::releaseTarget(Renderer& renderer){
+    need(borrowed_&&(!renderer_||renderer_==&renderer),"Release a borrowed native group target through its renderer");
+    if(carrier_.compositionOwner_)return false;
+    if(registered_&&renderer.stats().initialized&&!renderer.removeNativeGroup(id_))return false;
+    registered_=false;if(!local_)renderer_=nullptr;return true;
+}
+bool NativeLayerGroup::published()const noexcept{return carrier_.compositionOwner_!=nullptr;}
+void NativeLayerGroup::setRenderAhead(Renderer& renderer,bool ahead){if(registered_)(void)renderer.setNativeGroupRenderAhead(id_,ahead);}
 core::Rect NativeLayerGroup::localCoverageBounds()const{
+    need(local_!=nullptr,"Native group has no local scene");
     // Called only while content is being installed. Local menu leaves share a
     // 2D plane; perspective belongs to the single output. Preserve actual ink
     // extents instead of trusting the nominal root or each authored bounds.
     std::optional<core::Rect> result;
-    for(const auto& surface:local_->surfaces_){const auto& m=surface.draw.world.values;const auto& b=surface.image->bounds;
+    const auto add=[&](const LayerScene& scene){for(const auto& surface:scene.surfaces_){const auto& m=surface.draw.world.values;const auto& b=surface.image->bounds;
         need(surface.draw.world.finite()&&m[2]==0&&m[3]==0&&m[6]==0&&m[7]==0&&m[8]==0&&m[9]==0&&m[11]==0&&m[14]==0&&m[15]==1,"Native group input must remain in its local 2D plane");
         need(valid(b),"Native group raster has invalid ink bounds");
         for(const auto p:std::array<core::Point,4>{{{b.x,b.y},{b.x+b.width,b.y},{b.x,b.y+b.height},{b.x+b.width,b.y+b.height}}}){
@@ -36,11 +76,22 @@ core::Rect NativeLayerGroup::localCoverageBounds()const{
             need(std::isfinite(x)&&std::isfinite(y),"Native group ink exceeds local numeric bounds");
             if(!result)result=core::Rect{x,y,0,0};else{const auto left=std::min(result->x,x),top=std::min(result->y,y),right=std::max(result->x+result->width,x),bottom=std::max(result->y+result->height,y);*result={left,top,right-left,bottom-top};}
         }
-    }
+    }};
+    add(*local_);for(const auto* s:more_)add(*s);
     need(result&&valid(*result),"Native group has no drawable local coverage");return *result;
 }
 std::span<const DrawObject> NativeLayerGroup::prepareChildren(std::optional<NativeGroupInsertion> insertion,bool installing){
     const auto local=local_->prepareDraws();const auto count=insertion?insertion->draws.size():0;
+    if(!more_.empty()){
+        // Several scenes: their draws in order (frame updates assign into the slots).
+        need(!insertion,"A native group of several scenes takes no insertion");
+        std::size_t total=local.size();for(auto* s:more_)total+=s->prepareDraws().size();
+        if(installing)children_.resize(total);
+        need(children_.size()==total,"Native group local structure changed");
+        std::size_t cursor{};for(const auto& draw:local)children_[cursor++]=draw;
+        for(const auto* s:more_)for(const auto& draw:s->draws())children_[cursor++]=draw;
+        return children_;
+    }
     need(!insertion||(insertion->before<=local.size()&&count>0&&count<=8&&valid(insertion->bounds)),"Invalid bounded native group insertion");
     if(!installing)need(count==insertedCount_&&(!count||insertion->before==insertionIndex_),"Native group insertion structure changed; upload first");
     if(!count)return local;
@@ -60,7 +111,7 @@ bool NativeLayerGroup::uploadResources(Renderer& renderer,std::optional<core::Re
     const auto localDraws=prepareChildren(insertion,true);for(const auto& draw:localDraws)validateDrawObject(draw);
     // Stage resources without publishing. Retained GPU group references keep
     // the old local assets alive if a later candidate fails validation.
-    renderer_=&renderer;local_->uploadResources(renderer);
+    renderer_=&renderer;local_->uploadResources(renderer);for(auto* s:more_)s->uploadResources(renderer);
     const bool changed=renderer.configureNativeGroup(id_,{bounds,density_,colorSpace_},localDraws);
     registered_=true;
     const auto& native=renderer.nativeGroupOutput(id_);
@@ -71,10 +122,16 @@ bool NativeLayerGroup::uploadResources(Renderer& renderer,std::optional<core::Re
         output_[0].sourceID.swap(nextOutput.sourceID);output_[0].meshID.swap(nextOutput.meshID);output_[0].textureID.swap(nextOutput.textureID);
         staged_.sourceID.swap(nextStage.sourceID);staged_.meshID.swap(nextStage.meshID);staged_.textureID.swap(nextStage.textureID);
     }else need(output_[0].sourceID==native.sourceID&&output_[0].meshID==native.meshID&&output_[0].textureID==native.textureID,"Retained native group output identities changed");
-    structureRevision_=local_->revision_;resourceRevision_=local_->resourceRevision_;insertedCount_=insertion?insertion->draws.size():0;insertionIndex_=insertion?insertion->before:0;
+    structureRevision_=local_->revision_;resourceRevision_=local_->resourceRevision_;insertedCount_=insertion?insertion->draws.size():0;insertionIndex_=insertion?insertion->before:0;bounds_=bounds;
+    for(std::size_t k=0;k<more_.size();++k){moreRevisions_[k]={more_[k]->revision_,more_[k]->resourceRevision_};more_[k]->collectRetiredResources(renderer);}
     local_->collectRetiredResources(renderer);retainedCoverage_=coverage;retainedInsertion_=insertion;return changed;
 }
 bool NativeLayerGroup::updateLocal(Renderer& renderer,std::optional<NativeGroupInsertion> insertion){
+    if(borrowed_){need(local_&&renderer_==&renderer&&!insertion,"Attach the borrowed native group before its feedback");
+        const auto ink=localCoverageBounds();
+        bool stale=local_->revision_!=structureRevision_||local_->resourceRevision_!=resourceRevision_||local_->uploadedRevision_!=resourceRevision_||!contains(bounds_,ink);
+        for(std::size_t k=0;k<more_.size()&&!stale;++k){const auto& s=*more_[k];stale=s.revision_!=moreRevisions_[k][0]||s.resourceRevision_!=moreRevisions_[k][1]||s.uploadedRevision_!=moreRevisions_[k][1];}
+        if(stale)return uploadResources(renderer,unite(bounds_,ink));}
     need(renderer_==&renderer&&local_->revision_==structureRevision_&&local_->resourceRevision_==resourceRevision_&&local_->uploadedRevision_==resourceRevision_,"Changed native group content needs upload before feedback");
     const bool changed=renderer.setNativeGroupDraws(id_,prepareChildren(insertion,false));retainedInsertion_=insertion;return changed;
 }
@@ -83,9 +140,14 @@ void NativeLayerGroup::setPose(const core::Matrix4& world,float opacity,std::spa
     staged_.world=world;staged_.opacity=opacity;staged_.masks.assign(masks.begin(),masks.end());staged_.shutter=std::move(shutter);validateDrawObject(staged_);
     auto& out=output_[0];out.world=staged_.world;out.opacity=staged_.opacity;out.masks.assign(staged_.masks.begin(),staged_.masks.end());out.shutter=staged_.shutter;
 }
-bool NativeLayerGroup::refreshTypography(){const bool changed=local_->refreshTypography();if(renderer_&&(changed||local_->resourceRevision_!=resourceRevision_))uploadResources(*renderer_,retainedCoverage_,retainedInsertion_);return changed;}
-LayerCompositionEntry NativeLayerGroup::entry(){need(renderer_&&!output_[0].sourceID.empty(),"Upload native group before borrowing its composition entry");return {&carrier_,output_};}
+bool NativeLayerGroup::refreshTypography(){
+    if(!local_)return false;bool changed=local_->refreshTypography(),resources=local_->resourceRevision_!=resourceRevision_;
+    for(std::size_t k=0;k<more_.size();++k){changed=more_[k]->refreshTypography()||changed;resources=resources||more_[k]->resourceRevision_!=moreRevisions_[k][1];}
+    if(renderer_&&(changed||resources))uploadResources(*renderer_,retainedCoverage_,retainedInsertion_);return changed;
+}
+LayerCompositionEntry NativeLayerGroup::entry(){need(renderer_&&!output_[0].sourceID.empty()&&(!borrowed_||registered_),"Upload native group before borrowing its composition entry");return {&carrier_,output_};}
 bool NativeLayerGroup::releaseResources(Renderer& renderer){
+    if(borrowed_)return releaseTarget(renderer);
     need(!renderer_||renderer_==&renderer,"Release native group through its renderer owner");if(carrier_.compositionOwner_)return false;
     if(registered_&&renderer.stats().initialized&&!renderer.removeNativeGroup(id_))return false;
     registered_=false;

@@ -2,6 +2,7 @@
 #include <charconv>
 #include <cmath>
 #include <limits>
+#include <set>
 
 namespace endfield::modules::hypergryph {
 namespace {
@@ -101,10 +102,28 @@ std::optional<RegionRecord> decodeRecord(const Json& o) {
     return r;
 }
 }
+ehud::data::ProfileSyncFields accountSyncFields(const AccountCache& c) noexcept {
+    auto fields=ehud::data::ProfileSyncFields::all();
+    if(c.unsyncedFields) for(const auto& raw:*c.unsyncedFields) if(const auto field=ehud::data::profileSyncFieldNamed(raw)) fields=fields.without(*field);
+    return fields;
+}
+void setAccountSyncField(AccountCache& c,ehud::data::ProfileSyncField field,bool enabled) {
+    std::set<std::string> unsynced;if(c.unsyncedFields) unsynced.insert(c.unsyncedFields->begin(),c.unsyncedFields->end());
+    const std::string raw(ehud::data::profileSyncFieldName(field));if(enabled) unsynced.erase(raw);else unsynced.insert(raw);
+    // Swift [String].sorted(): code-point order, which UTF-8 byte order matches.
+    if(unsynced.empty()) c.unsyncedFields.reset();else c.unsyncedFields=std::vector<std::string>(unsynced.begin(),unsynced.end());
+}
 Json encodeCache(const AccountCache& c) {
     Json o=c.extra.isObject()?c.extra:Json(Json::Object{});
-    o["version"]=c.version;o["region"]=std::string(regionName(c.region));o["header"]=c.header;o["syncProfile"]=c.syncProfile;o["syncAvatar"]=c.syncAvatar;
+    // encode(to:): partial = syncProfile && excludesFields; syncProfile is
+    // written false while partial; unsyncedFields only when non-nil (encodeIfPresent);
+    // partialSyncProfile only as true.
+    const bool partial=c.syncProfile&&c.unsyncedFields&&!c.unsyncedFields->empty();
+    o.erase("unsyncedFields");o.erase("partialSyncProfile");
+    o["version"]=c.version;o["region"]=std::string(regionName(c.region));o["header"]=c.header;o["syncProfile"]=c.syncProfile&&!partial;o["syncAvatar"]=c.syncAvatar;
     Json::Object records;for(const auto& [k,r]:c.records) records[k]=encodeRecord(r);o["records"]=std::move(records);
+    if(c.unsyncedFields) {Json::Array fields;for(const auto& raw:*c.unsyncedFields) fields.push_back(raw);o["unsyncedFields"]=std::move(fields);}
+    if(partial) o["partialSyncProfile"]=true;
     return o;
 }
 std::optional<AccountCache> decodeCache(const Json& o) {
@@ -115,8 +134,20 @@ std::optional<AccountCache> decodeCache(const Json& o) {
     const auto rg=regionNamed(*region);if(!rg||*version!=1) return std::nullopt;
     AccountCache c;c.version=1;c.region=*rg;c.header=*header;c.syncProfile=*syncProfile;c.syncAvatar=*syncAvatar;
     for(const auto& [k,item]:o["records"].object()) {auto r=decodeRecord(item);if(!r) return std::nullopt;c.records.emplace(k,std::move(*r));}
+    // decodeIfPresent([String]): absent/null = nil; anything but an array of
+    // strings fails the whole cache, as Swift's decoder throws.
+    if(o.contains("unsyncedFields")&&!o["unsyncedFields"].isNull()) {
+        if(!o["unsyncedFields"].isArray()) return std::nullopt;
+        std::vector<std::string> fields;for(const auto& v:o["unsyncedFields"].array()) {if(!v.isString()) return std::nullopt;fields.push_back(v.string());}
+        c.unsyncedFields=std::move(fields);
+    }
+    // `if excludesFields, try decodeIfPresent(Bool) == true`: only consulted
+    // (and type-checked) while fields are excluded.
+    if(c.unsyncedFields&&!c.unsyncedFields->empty()&&o.contains("partialSyncProfile")&&!o["partialSyncProfile"].isNull()) {
+        const auto partial=boolean(o["partialSyncProfile"]);if(!partial) return std::nullopt;if(*partial) c.syncProfile=true;
+    }
     Json extra=Json::Object{};
-    for(const auto& [k,v]:o.object()) if(k!="version"&&k!="region"&&k!="header"&&k!="syncProfile"&&k!="syncAvatar"&&k!="records") extra[k]=v;
+    for(const auto& [k,v]:o.object()) if(k!="version"&&k!="region"&&k!="header"&&k!="syncProfile"&&k!="syncAvatar"&&k!="records"&&k!="unsyncedFields"&&k!="partialSyncProfile") extra[k]=v;
     c.extra=std::move(extra);
     return c;
 }

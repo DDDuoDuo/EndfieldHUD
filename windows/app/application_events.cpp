@@ -8,6 +8,7 @@
 #include <iostream>
 #include <wrl/client.h>
 #include <wtsapi32.h>
+#include <dbt.h>
 
 namespace endfield::app {
 OverlayCallbacks Application::Impl::callbacks(){
@@ -44,7 +45,14 @@ OverlayCursor Application::Impl::onCursor(core::Point p){
     if(!ready||stopping||!session->inputEnabled())return OverlayCursor::source;
     // The Projection workspace shares this window and keeps the source cursor.
     if(projectionShown())return OverlayCursor::source;
-    return cursorAt(p)==ModuleCursor::text?OverlayCursor::text:OverlayCursor::source;
+    switch(cursorAt(p)){
+    case ModuleCursor::text:return OverlayCursor::text;
+    // SystemHUDView.designCursor: the active canvas's grab hands.
+    case ModuleCursor::openHand:return OverlayCursor::openHand;
+    case ModuleCursor::closedHand:return OverlayCursor::closedHand;
+    case ModuleCursor::source:break;
+    }
+    return OverlayCursor::source;
 }
 // The pointer routing order: an exclusive capture (modal card or menu) answers
 // for every point; otherwise the first owner of the pointer chain that answers
@@ -62,7 +70,10 @@ ModuleCursor Application::Impl::cursorAt(core::Point p){
 void Application::Impl::onResize(const ClientMetrics&value){
     if(projectionShown()&&projectionPainting){projectionResizePending=value;return;}
     metrics=value;updateContentScale();registry.forEach([&](ModuleOwner&o){o.resize(value);},"resize");
-    if(!ready||stopping)return;const auto time=now();environment.viewport={value.width,value.height};environment.onScreen=value.pixelWidth>0&&value.pixelHeight>0;session->setEnvironment(environment,time);
+    if(!ready||stopping)return;
+    // A closed HUD's next opening deploys at the new display's settled density, applied now.
+    if(session->phase()==core::VisibilityPhase::concealed&&!placingForOpen)holdDesignDensity();
+    const auto time=now();environment.viewport={value.width,value.height};environment.onScreen=value.pixelWidth>0&&value.pixelHeight>0;session->setEnvironment(environment,time);
     if(environment.onScreen)try{renderer.resize(value.pixelWidth,value.pixelHeight);}catch(const std::exception&e){if(recoverDevice(e,time))return;throw;}
     if(projectionShown())(void)projectionCall("resize",[&]{projection->resize(value,projectionWorkTopPixels/value.scale);});automationChanged();refresh(time);
 }
@@ -97,7 +108,7 @@ bool Application::Impl::onPointer(const PointerEvent&e){
     using C=ModuleRegistry::Chain;
     // SystemHUDView.updateControlHighlights: the desktop clock's hover plate.
     if(e.kind==PointerKind::move||e.kind==PointerKind::leave)clockHover(e);
-    // Exclusive captures (modal Settings/quit card, Minigame rules, Calendar
+    // Exclusive captures (the design confirm bar, the modal Settings card, Minigame rules, Calendar
     // and Reader menus, Map drag, Archive selection) run before floating Notes.
     // A guarded failure inside routePointer leaves the chain to continue.
     if(registry.first(C::pointerCapture,[&](ModuleOwner&o,const ModuleRouting&r){return o.capturesPointer()&&routePointer(o,r.pointerPolicy,e,hostTime(time),p);},"pointer"))return true;
@@ -177,13 +188,15 @@ void Application::Impl::onFocus(bool value){
 
 void Application::Impl::onApplicationActive(bool active){
     if(ready)broadcast(active?HostEvent::Kind::applicationActivated:HostEvent::Kind::applicationDeactivated,now());
-    if(ready&&active&&calendar)isolate(calendarModuleOwner,"system change",[&]{calendar->systemChanged(now());updateCalendarWake();});
+    if(ready&&active&&calendar)isolate(calendarModuleOwner,"system change",[&]{calendarSystemChanged();updateCalendarWake();});
     if(ready&&active)refreshExternalStatus(); // AppDelegate refreshes login status on activation
     if(!ready||!visibleMode()||active||projectionHandoff.active()||closing||session->phase()==core::VisibilityPhase::concealed||!configuration.boolean("closeOnFocusLost"))return;
-    // Source exempts its own file panels and active shelf drag/drop. Moving
-    // keyboard focus between owned windows is not an application switch.
+    // Source exempts its own file panels and active shelf drag/drop (the drag
+    // loop and its retract, hidden and restore presentation: hiding the
+    // window hands the foreground to another one). Moving keyboard focus
+    // between owned windows is not an application switch.
     const auto picker=mediaPicker?mediaPicker->stats():gpu::ShelfPickerStats{};
-    if(picker.queued||picker.presenting||(shelf&&shelf->preservesFocusOnLoss()))return;
+    if(picker.queued||picker.presenting||(shelf&&shelf->preservesFocusOnLoss())||lifecycle.shelfDragActive())return;
     perform(lifecycle.close(),now());
 }
 
@@ -214,7 +227,7 @@ void Application::Impl::onDeadline(double time){
     // so every later hand-off below takes the host time again.
     time=hostTime(time);
     bool artwork=projectionShown()&&projection->dismissalComplete(time);
-    if(calendarNextWake&&*calendarNextWake<=time){isolate(calendarModuleOwner,"midnight",[&]{calendar->systemChanged(hostTime(time));updateCalendarWake();});artwork=true;}
+    if(calendarNextWake&&*calendarNextWake<=time){isolate(calendarModuleOwner,"midnight",[&]{calendarSystemChanged();updateCalendarWake();});artwork=true;}
     if(graphicsIdleAt&&*graphicsIdleAt<=time)releaseIdleGraphics(time);
     // The tray icon was pointed at but no opening came: the device prepared
     // for it goes again (Renderer::discardPreparedDevice).
@@ -223,11 +236,11 @@ void Application::Impl::onDeadline(double time){
     registry.forEach([&](ModuleOwner&o){artwork=o.deadline(hostTime(time))||artwork;if(o.routing().deadlineRefreshesPointerLock){environment.pointerLocked=pointerLocked();session->setEnvironment(environment,hostTime(time));}},"deadline");
     time=hostTime(time);
     if(artwork)automationChanged();
-    if(mediaBroker){const auto wake=mediaBroker->nextWakeTime();const bool due=wake&&*wake<=time;if(session->phase()==core::VisibilityPhase::concealed){mediaBroker->sample(time);if(notes)notes->refreshSharedMedia(hostTime(time));if(archiveMedia)isolate(archiveModuleOwner,"deadline",[&]{archiveMedia->refresh(hostTime(time));});if(projectionShown()){(void)projectionCall("media",[&]{projection->mediaChanged(hostTime(time));});artwork=artwork||due;}}else artwork=artwork||due;}
+    if(mediaBroker){const auto wake=mediaBroker->nextWakeTime();const bool due=wake&&*wake<=time;if(session->phase()==core::VisibilityPhase::concealed){mediaBroker->sample(time);if(notes)notes->refreshSharedMedia(hostTime(time));if(archive)isolate(archiveModuleOwner,"deadline",[&]{(void)archive->refreshMedia(hostTime(time));});if(projectionShown()){(void)projectionCall("media",[&]{projection->mediaChanged(hostTime(time));});artwork=artwork||due;}}else artwork=artwork||due;}
     time=hostTime(time);
     if(headerClock.wake(time)||workMode)artwork=updateClock()||artwork;
     if(workMode&&production())updateTrayMenu();
-    if(eventRecorder&&workMode)eventRecorder->receiveWork(workMode->controller().snapshot(hostTime(time)));
+    if(eventRecorder&&workMode)eventRecorder->receiveWork(workMode->snapshot(hostTime(time)));
     if(eventSaves){const FatalStage save("event log save");eventSaves->capture(hostTime(time));}syncActivityTelemetry(time);if(activityProbe)activityProbe->update(hostTime(time));
     time=hostTime(time);perform(lifecycle.advance(time),time);
     scheduleDeadline();if(artwork)refresh(time);
@@ -266,8 +279,9 @@ void Application::Impl::onFrame(double time){
         if(memoryTrace&&production()&&memoryTrace->openings<8)recordMemory("opened-"+std::to_string(++memoryTrace->openings),false);
         // Entries enabled only once opening completes (the Power navigation entry) re-read their state.
         automationChanged();refreshAutomation();if(stopping)return;}
+    if(shelfDragFrame(time,!active)||stopping)return;
     if(!active&&session->phase()==core::VisibilityPhase::concealed){
-        if(notes)notes->setMediaActive(false,hostTime(time));host.hide();if(quitConfirmation)(void)registry.guard(*quitConfirmation,[&]{quitConfirmation->hide(hostTime(time));},"close");concealed(time);
+        if(notes)notes->setMediaActive(false,hostTime(time));host.hide();concealed(time);
         core::SystemOverlayEffects closed;
         if(lifecycleClosing){const auto token=*lifecycleClosing;lifecycleClosing.reset();closed=lifecycle.didClose(token);}
         if(projectionHandoff.phase()==ProjectionHandoff::Phase::closingHUD){
@@ -275,9 +289,9 @@ void Application::Impl::onFrame(double time){
             if(auto command=projectionHandoff.hudClosed(projectionHandoff.generation(),display.has_value(),display?std::optional(display->handle):std::nullopt))projectionCommand(*command,now());return;
         }
         if(!closed.empty()){perform(closed,time);if(stopping)return;}
-        openAfterConcealed(time);
-        // A development preview quits with its window; the hidden idle trace keeps running closed.
-        if(!production()&&!tray&&!quitRequested&&args.idleTrace.empty())finishQuit(time);else if(!stopping)scheduleDeadline();
+        openAfterConcealed();
+        // A development preview quits with its window; the hidden idle and animation traces keep running closed.
+        if(!production()&&!tray&&!quitRequested&&!realClockTrace())finishQuit(time);else if(!stopping)scheduleDeadline();
     }
 }
 
@@ -285,19 +299,67 @@ void Application::Impl::onFrame(double time){
 // applications wait for the normal close to finish (the panel ordered out;
 // here the window hidden and out of the topmost band), then open in front of
 // the windows the HUD covered; a quit or forced close drops them.
-void Application::Impl::openAfterConcealed(double time){
+// OverlayController.performShelfDragAction on this host. The retract is the
+// presentation's own close (owners' overlayClosing, the source exit, the
+// module fade) without the lifecycle's: the HUD stays open for the drag's
+// end. When it ends the window hides and everything stays presented (no
+// overlayConcealed broadcast, no graphics release: the Mac keeps its view);
+// a cancelled drag opens that presentation again with the deploy entrance on
+// the same display (no new display choice, no opening trace); a delivered
+// one is concealed at once, without a second animation (forceConceal).
+// Frames run inside the OLE drag loop's nested dispatch, so the exit plays
+// and the window hides during the drag; should they not, the state resolves
+// on the frames after the loop returns.
+void Application::Impl::shelfDragEffect(const core::SystemOverlayEffect&e,double time){
+    using K=core::SystemOverlayEffect::Kind;
+    switch(e.kind){
+    case K::shelfRetract:shelfRestoring.reset();shelfRetracting=e.token;close(time);break;
+    case K::shelfHide:host.hide();presentationPriority.restore();break; // stopMotionForConcealment + orderOut
+    case K::shelfRestore:shelfRetracting.reset();shelfRestoring=e.token;prepareGraphics(false);open(time);if(visibleMode())host.show();refresh(time);break;
+    case K::shelfClose:shelfRetracting.reset();shelfRestoring.reset();forceConceal(time);break;
+    default:break;
+    }
+}
+// The retract's exit and the restore's entrance end on the frame the source
+// session settles (settled: nothing else animates). true while the drag
+// holds the HUD: retracting, hidden, restoring, or force-concealed until the
+// loop ends; the normal close's completion (concealed broadcast, hand-offs,
+// the development preview's quit) does not run then.
+bool Application::Impl::shelfDragFrame(double time,bool settled){
+    if(shelfRestoring&&!closing&&session->phase()==core::VisibilityPhase::visible){const auto token=*shelfRestoring;shelfRestoring.reset();
+        perform(lifecycle.shelfDragRestored(token),time);automationChanged();refreshAutomation();if(stopping)return true;}
+    if(shelfRetracting&&settled&&session->phase()==core::VisibilityPhase::concealed){const auto token=*shelfRetracting;shelfRetracting.reset();
+        retractDesignDensity();designDensityRetracted=true; // the restore's deploy (or a delivered drag's concealment) starts from it
+        perform(lifecycle.shelfDragRetracted(token),time);}
+    return lifecycle.shelfDragActive();
+}
+// HUDFileShelfInteraction.beginOutgoingDrag through draggingSession(_:endedAt:):
+// the Shelf's input locks (the press that started the drag ends without a
+// click), the HUD retracts (OverlayController.onShelfDragSessionBegan) and
+// the loop runs: the copy-only OLE DoDragDrop with its Shell drag image, or
+// a hidden test's stand-in. After the loop returned (the source is no longer
+// in use) its end closes the hidden HUD when a destination accepted the copy
+// and otherwise brings it back (onShelfDragSessionEnded). true: delivered.
+bool Application::Impl::shelfDragOut(const std::function<HRESULT(DWORD&)>&loop,double time){
+    isolate(shelfModuleOwner,"drag",[&]{shelf->setNativeDragActive(true);});
+    host.capturePointer(false);environment.pointerLocked=false;session->setEnvironment(environment,time);
+    perform(lifecycle.beginShelfDrag(),time);
+    // Not ported: panel.ignoresMouseEvents during the exit (shelf_owner.hpp).
+    DWORD effect{};HRESULT result{E_FAIL};
+    try{result=loop(effect);}
+    catch(...){isolate(shelfModuleOwner,"drag",[&]{shelf->setNativeDragActive(false);});if(!stopping)perform(lifecycle.endShelfDrag(false),now());throw;}
+    isolate(shelfModuleOwner,"drag",[&]{shelf->setNativeDragActive(false);});
+    const bool delivered=result==DRAGDROP_S_DROP&&(effect&DROPEFFECT_COPY);
+    if(!stopping)perform(lifecycle.endShelfDrag(delivered),now());
+    return delivered;
+}
+
+void Application::Impl::openAfterConcealed(){
     // A Shelf "Reveal" selects the item in File Explorer.
     if(pendingShelfReveal&&visibleMode()&&!quitRequested){
         auto access=std::move(*pendingShelfReveal);pendingShelfReveal.reset();
         if(FAILED(gpu::revealShelfReference(std::move(access)))&&shelf)
-            isolate(shelfModuleOwner,"reveal",[&]{shelf->showError(tools::shelfText(tools::ShelfText::revealFailed,watchAppearance.language),hostTime(time));});
-    }
-    // The properties card's Open: the identity is revalidated, then the
-    // Shell opens the item with its default verb (a cancelled choice is S_FALSE).
-    if(pendingShelfOpen&&visibleMode()&&!quitRequested){
-        auto access=std::move(*pendingShelfOpen);pendingShelfOpen.reset();
-        if(FAILED(gpu::openShelfReference(std::move(access)))&&shelf)
-            isolate(shelfModuleOwner,"open",[&]{shelf->showError(tools::shelfText(tools::ShelfText::openFailed,watchAppearance.language),hostTime(time));});
+            isolate(shelfModuleOwner,"reveal",[&]{shelf->revealFailed();});
     }
     // Storage Settings (openStorageAfterClose).
     if(pendingStorageSettings)openPendingStorageSettings();
@@ -312,11 +374,14 @@ void Application::Impl::utilityCompleted(){
     const FatalStage stage("utility completion");
     if(utility)utility->drain();if(centerLogoRetry)updateCenterLogo();if(longWork)longWork->drain();
     if(activityProbe)activityProbe->submitPending();syncActivityTelemetry(now());if(systemServices)systemServices->clipboard_queue_capacity_available();
-    if(storage)isolate(storageModuleOwner,"utility completion",[&]{storage->utilityCompleted(storageFixture?storageFixture->time.load(std::memory_order_relaxed):now());});
+    // Storage and Activity Monitor take their completions in the broadcast
+    // below (their design owners' hostEvent).
     if(archiveService)isolate(archiveModuleOwner,"utility completion",[&]{archiveService->queueCapacityAvailable();});
     if(readerOwner)isolate(readerModuleOwner,"utility completion",[&]{readerOwner->queueCapacityAvailable();});
     if(calendarState)isolate(calendarModuleOwner,"utility completion",[&]{calendarState->queueCapacityAvailable();calendarNotifications->queueCapacityAvailable();});
     if(map)isolate(mapModuleOwner,"utility completion",[&]{if(notes&&notes->selected()==core::Module::map)requestMapGeography();map->utilityCompleted(visibleMode()?now():mapTime);});
+    if(auto*centre=dynamic_cast<tools::NotesCentreOwner*>(notesCentreModuleOwner.get()))isolate(notesCentreModuleOwner,"utility completion",[&]{centre->queueCapacityAvailable();});
+    if(mapSaves)isolate(mapModuleOwner,"utility completion",[&]{mapSaves->queueCapacityAvailable();});
     if(settingsSaves){settingsSaves->queueCapacityAvailable();if(settingsSaves->status().error&&settingsUI)isolate(settingsModuleOwner,"utility completion",[&]{settingsUI->controller().setStatus(*settingsSaves->status().error);});}
     if(volumeIcons)isolate(volumeModuleOwner,"utility completion",[&]{volumeIcons->queueCapacityAvailable();});
     if(eventSaves)eventSaves->retry();broadcast(HostEvent::Kind::utilityCompleted,now());
@@ -346,7 +411,7 @@ bool Application::Impl::backgroundPressCloses(core::Point client){
     if(!ready||stopping||closing||quitRequested||!notes)return false;
     const auto phase=session->phase();
     if(phase==core::VisibilityPhase::concealed||!(session->inputEnabled()||phase==core::VisibilityPhase::opening))return false;
-    if(quitConfirmation&&quitConfirmation->presented())return false;
+    if(designOverlay&&designOverlay->capturesPointer())return false;
     if(session->sourceControlAt(client,centerLogoMainID))return false;
     // A press over a shown owner control (ModuleOwner::covers, e.g. the header
     // sanity wallet at core design 562,2 168x42, almost entirely outside the
@@ -424,7 +489,7 @@ std::optional<std::intptr_t> Application::Impl::onAppMessage(const NativeMessage
             if(!paths.empty()&&projectionShown()&&projectionHandoff.acceptsInput())(void)projectionCall("drop",[&]{if(const auto token=projection->preview()->prepareImportRequest()){
                 try{std::vector<tools::ProjectionImportFile>files;files.reserve(paths.size());for(auto&path:paths){auto title=utf8(utf8Path(path).filename());files.push_back({std::move(path),std::move(title),{}});}
                     projection->media()->beginImport(*token,files,projectionDrop->point,hostTime(time));
-                }catch(const std::exception&){projection->preview()->receiveImportError(*token,core::localized("Unable to open selected files","无法打开所选文件",watchAppearance.language),hostTime(time));}
+                }catch(const std::exception&){projection->preview()->receiveImportError(*token,std::string(core::translated(core::selectedFilesUnopened,watchAppearance.language)),hostTime(time));}
             }});
             refresh(time);return 0;
         }
@@ -452,13 +517,13 @@ std::optional<std::intptr_t> Application::Impl::onAppMessage(const NativeMessage
                     try{
                         if(action.kind==K::chooseLocal){
                             if(requestMediaPicker()){pickerOwner=PickerOwner::projection;pendingProjectionPicker=action;host.capturePointer(false);}
-                            else view->receiveImportError(action.generation,core::localized("File picker is busy","文件选择器正忙",watchAppearance.language),hostTime(time));
+                            else view->receiveImportError(action.generation,std::string(core::translated(core::filePickerBusy,watchAppearance.language)),hostTime(time));
                         }else if(action.kind==K::useShelf&&shelf){
                             auto lease=std::make_shared<ehud::data::ShelfFileAccess>(shelf->access(action.shelfID));need(lease->open()&&!lease->metadata().isDirectory,"Shelf Projection reference is unavailable");
                             const std::array files{tools::ProjectionImportFile{lease->metadata().windowsPath,lease->metadata().name,lease}};
                             projection->media()->beginImport(action.generation,files,{},hostTime(time));
                         }
-                    }catch(const std::exception&){view->receiveImportError(action.generation,core::localized("Unable to open selected files","无法打开所选文件",watchAppearance.language),hostTime(time));}});
+                    }catch(const std::exception&){view->receiveImportError(action.generation,std::string(core::translated(core::selectedFilesUnopened,watchAppearance.language)),hostTime(time));}});
             }
             if(projectionShown()&&projection->dismissalComplete(time))if(auto command=projectionHandoff.projectionClosed(projectionHandoff.generation()))projectionCommand(*command,time);
             refresh(time);return 0;
@@ -467,22 +532,23 @@ std::optional<std::intptr_t> Application::Impl::onAppMessage(const NativeMessage
             readerActionQueued=false;auto action=std::exchange(pendingReaderAction,{});const auto time=now();
             if(action&&reader)isolate(readerModuleOwner,"import",[&]{if(!reader->importRequestCurrent(action->generation))return;try {
                 if(action->kind==tools::ReaderImportAction::Kind::chooseLocal){
-                    if(pickerOwner!=PickerOwner::none||!mediaPicker)reader->receiveImportError(action->generation,modules::readerTranslation(modules::readerWindowsPickerBusy,watchAppearance.language),hostTime(time));
-                    // The Library's Relink… titles the same single-book picker.
-                    else {const auto strings=readerStrings(watchAppearance.language);const auto&caption=action->relinkBookID.empty()?strings.open:strings.relink;mediaPicker->setLabels({caption,caption,caption,gpu::ShelfPickerMode::singleReaderFile});
+                    if(pickerOwner!=PickerOwner::none||!mediaPicker)reader->receiveImportError(action->generation,modules::readerTranslation(core::filePickerBusy,watchAppearance.language),hostTime(time));
+                    // Choose file, or Relink…'s message (Locate {0}) on the same single-book picker.
+                    else {const auto&caption=action->caption;mediaPicker->setLabels({caption,caption,caption,gpu::ShelfPickerMode::singleReaderFile});
                         if(mediaPicker->request()){pickerOwner=PickerOwner::reader;pendingReaderPicker=*action;host.capturePointer(false);}
-                        else reader->receiveImportError(action->generation,modules::readerTranslation(modules::readerWindowsPickerBusy,watchAppearance.language),hostTime(time));}
+                        else reader->receiveImportError(action->generation,modules::readerTranslation(core::filePickerBusy,watchAppearance.language),hostTime(time));}
                 }else if(shelf){auto lease=std::make_shared<ehud::data::ShelfFileAccess>(shelf->access(action->shelfID));need(lease->open()&&!lease->metadata().isDirectory,"Shelf book reference is unavailable");importReaderReference(action->generation,lease->metadata().windowsPath,lease,time);}
-            }catch(const std::exception&){reader->receiveImportError(action->generation,modules::readerTranslation(modules::readerWindowsOpenFailed,watchAppearance.language),hostTime(time));}});
+            }catch(const std::exception&){reader->receiveImportError(action->generation,modules::readerTranslation(core::selectedFilesUnopened,watchAppearance.language),hostTime(time));}});
             refresh(time);return 0;
         }
-        if(m.message==calendarChangedMessage){calendarRefreshQueued=false;updateCalendarWake();refresh(now());return 0;}
+        if(m.message==calendarChangedMessage){calendarRefreshQueued=false;updateCalendarWake();if(calendar)isolate(calendarModuleOwner,"calendar change",[&]{calendar->controllerChanged();});refresh(now());return 0;}
         if(m.message==mapChangedMessage){mapRefreshQueued=false;refresh(now());return 0;}
         if(m.message==readerChangedMessage){readerRefreshQueued=false;refresh(now());return 0;}
-        if(m.message==clipboardChangedMessage){clipboardRefreshQueued=false;if(clipboardDirty&&session->phase()!=core::VisibilityPhase::concealed&&notes&&notes->selected()==core::Module::clipboard)refresh(now());return 0;}
-        if(m.message==eventChangedMessage){eventRefreshQueued=false;if(eventLog)isolate(eventLogModuleOwner,"event log",[&]{eventLog->refresh();});refresh(now());return 0;}
-        if(m.message==archiveChangedMessage){archiveRefreshQueued=false;refresh(now());return 0;}
-        if(m.message==sharedMediaMessage&&mediaBroker){const FatalStage mediaStage("shared media");const auto time=now();mediaBroker->accept(m.wParam,time);if(notes)notes->refreshSharedMedia(hostTime(time));if(archiveMedia)isolate(archiveModuleOwner,"shared media",[&]{archiveMedia->refresh(hostTime(time));});if(projectionShown())(void)projectionCall("media",[&]{projection->mediaChanged(hostTime(time));});refresh(time);return 0;}
+        if(m.message==clipboardChangedMessage){clipboardRefreshQueued=false;if(clipboardCanvas)isolate(clipboardModuleOwner,"clipboard",[&]{clipboardCanvas->storeChanged();});
+            if(session->phase()!=core::VisibilityPhase::concealed)refresh(now());return 0;}
+        if(m.message==eventChangedMessage){eventRefreshQueued=false;if(eventLogCanvas)isolate(eventLogModuleOwner,"event log",[&]{eventLogCanvas->storeChanged();});refresh(now());return 0;}
+        if(m.message==archiveChangedMessage){archiveRefreshQueued=false;if(archive)isolate(archiveModuleOwner,"archive",[&]{archive->stateChanged(hostTime(now()));});refresh(now());return 0;}
+        if(m.message==sharedMediaMessage&&mediaBroker){const FatalStage mediaStage("shared media");const auto time=now();mediaBroker->accept(m.wParam,time);if(notes)notes->refreshSharedMedia(hostTime(time));if(archive)isolate(archiveModuleOwner,"shared media",[&]{(void)archive->refreshMedia(hostTime(time));});if(projectionShown())(void)projectionCall("media",[&]{projection->mediaChanged(hostTime(time));});refresh(time);return 0;}
         if(m.message==mediaPickerMessage&&mediaPicker){
             host.suspendCursor(true);mediaPicker->handleMessage(m.wParam,m.lParam);host.suspendCursor(false);
             if(auto result=mediaPicker->drain(m.wParam)){
@@ -498,19 +564,21 @@ std::optional<std::intptr_t> Application::Impl::onAppMessage(const NativeMessage
                     finishAreaPicker(std::move(area));
                 }else if(owner==PickerOwner::projection&&projectionAction&&projectionShown()&&projection->preview()->importRequestCurrent(projectionAction->generation)){
                     (void)projectionCall("file dialog",[&]{auto*view=projection->preview();if(result->canceled())view->receiveImportError(projectionAction->generation,{},hostTime(time));
-                    else if(SUCCEEDED(result->result)){try{std::vector<tools::ProjectionImportFile>files;files.reserve(result->paths.size());for(const auto&path:result->paths)files.push_back({path,utf8(utf8Path(path).filename()),{}});projection->media()->beginImport(projectionAction->generation,files,{},hostTime(time));}catch(const std::exception&){view->receiveImportError(projectionAction->generation,core::localized("Unable to open selected files","无法打开所选文件",watchAppearance.language),hostTime(time));}}
-                    else view->receiveImportError(projectionAction->generation,core::localized("Unable to open selected files","无法打开所选文件",watchAppearance.language),hostTime(time));});
+                    else if(SUCCEEDED(result->result)){try{std::vector<tools::ProjectionImportFile>files;files.reserve(result->paths.size());for(const auto&path:result->paths)files.push_back({path,utf8(utf8Path(path).filename()),{}});projection->media()->beginImport(projectionAction->generation,files,{},hostTime(time));}catch(const std::exception&){view->receiveImportError(projectionAction->generation,std::string(core::translated(core::selectedFilesUnopened,watchAppearance.language)),hostTime(time));}}
+                    else view->receiveImportError(projectionAction->generation,std::string(core::translated(core::selectedFilesUnopened,watchAppearance.language)),hostTime(time));});
                 }else if(owner==PickerOwner::reader&&readerAction&&reader){
                     isolate(readerModuleOwner,"file dialog",[&]{if(!reader->importRequestCurrent(readerAction->generation))return;
                     if(result->canceled())reader->receiveImportError(readerAction->generation,{},hostTime(time));
                     else if(SUCCEEDED(result->result)&&result->paths.size()==1)importReaderReference(readerAction->generation,result->paths.front(),{},time);
-                    else reader->receiveImportError(readerAction->generation,modules::readerTranslation(modules::readerWindowsOpenFailed,watchAppearance.language),hostTime(time));});
+                    else reader->receiveImportError(readerAction->generation,modules::readerTranslation(core::selectedFilesUnopened,watchAppearance.language),hostTime(time));});
                 }else if(!result->canceled()&&owner==PickerOwner::notes&&notes&&!closing&&notes->selected()==core::Module::notes){
-                    if(SUCCEEDED(result->result))notes->importMedia(result->paths,mediaInsertionPoint,hostTime(time));else notes->showMediaError(core::localized("Unable to open selected files","无法打开所选文件",watchAppearance.language),hostTime(time));
-                }else if(!result->canceled()&&owner==PickerOwner::archive&&action&&archive&&archiveMedia){
-                    isolate(archiveModuleOwner,"file dialog",[&]{if(!archive->mediaRequestCurrent(action->documentID,action->generation))return;
-                    if(SUCCEEDED(result->result)){try{std::vector<tools::ArchiveMediaImportFile>files;files.reserve(result->paths.size());for(const auto&path:result->paths)files.push_back({path,utf8(utf8Path(path).filename()),{}});archiveMedia->beginImport(*action,files,hostTime(time));}catch(const std::exception&e){archive->receiveMedia(action->documentID,action->generation,{},e.what(),hostTime(time));}}
-                    else archive->receiveMedia(action->documentID,action->generation,{},core::localized("Unable to open selected files","无法打开所选文件",watchAppearance.language),hostTime(time));});
+                    if(SUCCEEDED(result->result))notes->importMedia(result->paths,mediaInsertionPoint,hostTime(time));else notes->showMediaError(std::string(core::translated(core::selectedFilesUnopened,watchAppearance.language)),hostTime(time));
+                }else if(owner==PickerOwner::archive&&action&&archive){
+                    // NSOpenPanel's completion: the files (or nothing, the panel closed) reach the canvas.
+                    isolate(archiveModuleOwner,"file dialog",[&]{
+                    if(result->canceled())archive->importFailed(*action,std::nullopt,hostTime(time));
+                    else if(SUCCEEDED(result->result)){try{std::vector<tools::ArchiveMediaImportFile>files;files.reserve(result->paths.size());for(const auto&path:result->paths)files.push_back({path,utf8(utf8Path(path).filename()),{}});(void)archive->importFiles(*action,files,hostTime(time));}catch(const std::exception&e){archive->importFailed(*action,std::string(e.what()),hostTime(time));}}
+                    else archive->importFailed(*action,std::string(core::translated(core::selectedFilesUnopened,watchAppearance.language)),hostTime(time));});
                 }
             }refresh(now());return 0;
         }
@@ -531,19 +599,25 @@ std::optional<std::intptr_t> Application::Impl::onAppMessage(const NativeMessage
         else if(m.wParam==WTS_SESSION_UNLOCK||m.wParam==WTS_CONSOLE_CONNECT||m.wParam==WTS_REMOTE_CONNECT)resume(Suspension::session,now());
         return 0;
     }
+    // StorageController.volumesDidChange (NSWorkspace didMount / didUnmount):
+    // a volume arrived or was removed; default handling continues.
+    if(ready&&storage&&m.message==WM_DEVICECHANGE&&(m.wParam==DBT_DEVICEARRIVAL||m.wParam==DBT_DEVICEREMOVECOMPLETE)&&m.lParam&&reinterpret_cast<const DEV_BROADCAST_HDR*>(m.lParam)->dbch_devicetype==DBT_DEVTYP_VOLUME){
+        bool changed{};isolate(storageModuleOwner,"volumes",[&]{changed=storage->volumesChanged(now());});if(changed)refresh(now());}
     if(ready&&(m.message==WM_TIMECHANGE||m.message==WM_SETTINGCHANGE||(m.message==WM_POWERBROADCAST&&(m.wParam==PBT_APMRESUMEAUTOMATIC||m.wParam==PBT_APMRESUMESUSPEND)))){systemChange(m.message,now());return 0;}
-    if(ready&&archive&&m.message==WM_APP+221&&m.wParam==archive->mediaRouteGeneration()){
-        isolate(archiveModuleOwner,"media action",[&]{if(auto action=archive->takeMediaAction())try{using K=tools::ArchiveMediaAction::Kind;const auto time=now();
-            if(action->kind==K::chooseLocal){if(!requestMediaPicker())archive->receiveMedia(action->documentID,action->generation,{},core::localized("File picker is busy","文件选择器正忙",watchAppearance.language),time);else{pickerOwner=PickerOwner::archive;pendingArchivePicker=*action;host.capturePointer(false);}}
-            else if(action->kind==K::chooseShelf)archive->presentShelfMedia(shelfChoices(),time);
-            else if(action->kind==K::useShelf&&shelf){auto lease=std::make_shared<ehud::data::ShelfFileAccess>(shelf->access(action->itemID));need(lease->open()&&!lease->metadata().isDirectory,"Shelf media reference is unavailable");const std::array files{tools::ArchiveMediaImportFile{lease->metadata().windowsPath,lease->metadata().name,lease}};archiveMedia->beginImport(*action,files,hostTime(time));}
-            else if(archiveMedia)archiveMedia->action(*action,hostTime(time));
-        }catch(const std::exception&e){if(archiveService&&archiveService->state().selected())archive->setMediaPlayback(archive->mediaIndex(),false,0,e.what(),now());}});
+    // The Archive canvas's media request (openMediaMenu / relink / chooseFiles):
+    // the native picker, or the Shelf item's file through its access lease.
+    if(ready&&archive&&m.message==archiveMediaMessage&&m.wParam==serviceGeneration){
+        isolate(archiveModuleOwner,"media request",[&]{if(auto request=std::exchange(pendingArchiveRequest,std::nullopt))try{using K=modules::ArchiveMediaRequest::Kind;const auto time=now();
+            if(request->kind==K::shelf){need(shelf!=nullptr,"Shelf media reference is unavailable");auto lease=std::make_shared<ehud::data::ShelfFileAccess>(shelf->access(request->shelfItem));need(lease->open()&&!lease->metadata().isDirectory,"Shelf media reference is unavailable");
+                const std::array files{tools::ArchiveMediaImportFile{lease->metadata().windowsPath,lease->metadata().name,lease}};(void)archive->importFiles(*request,files,hostTime(time));}
+            else if(!requestMediaPicker())archive->importFailed(*request,std::string(core::translated(core::filePickerBusy,watchAppearance.language)),hostTime(time));
+            else{pickerOwner=PickerOwner::archive;pendingArchivePicker=*request;host.capturePointer(false);}
+        }catch(const std::exception&e){archive->importFailed(*request,std::string(e.what()),hostTime(now()));}});
         refresh(now());return 0;
     }
     if(ready&&notes&&m.message==tools::NotesPreview::mediaActionMessage){
         if(auto action=notes->takeMediaAction(m.wParam))try{using K=tools::NotesMediaAction::Kind;
-            if(action->kind==K::chooseLocal){mediaInsertionPoint=action->workspacePoint;if(!requestMediaPicker())notes->showMediaError(core::localized("File picker is busy","文件选择器正忙",watchAppearance.language),now());else{pickerOwner=PickerOwner::notes;host.capturePointer(false);}}
+            if(action->kind==K::chooseLocal){mediaInsertionPoint=action->workspacePoint;if(!requestMediaPicker(true))notes->showMediaError(std::string(core::translated(core::filePickerBusy,watchAppearance.language)),now());else{pickerOwner=PickerOwner::notes;host.capturePointer(false);}}
             else if(action->kind==K::chooseShelf){
                 notes->presentShelfMedia(shelfChoices(),action->workspacePoint,now());
             }else if(shelf)notes->importMedia(shelf->access(action->itemID),action->workspacePoint,now());
@@ -559,22 +633,24 @@ std::optional<std::intptr_t> Application::Impl::onAppMessage(const NativeMessage
             refresh(now());return 0;
         }
     }
-    if(ready&&shelf&&m.message==tools::ShelfPreview::actionMessage){
-        bool closeAfter{};
-        isolate(shelfModuleOwner,"action",[&]{if(auto action=shelf->takeAction())try{using K=tools::ShelfPreviewAction::Kind;
+    if(ready&&shelf&&m.message==tools::ShelfService::actionMessage){
+        bool closeAfter{};std::unique_ptr<gpu::ShelfDragTransfer> drag;
+        isolate(shelfModuleOwner,"action",[&]{if(auto action=shelf->takeAction())try{using K=tools::ShelfServiceAction::Kind;
             switch(action->kind){
             case K::choose:host.capturePointer(false);shelf->requestFiles();break;
             // HUDFileShelfInteraction.importPasteboard (virtual-file-only
             // clipboards explain themselves; others are ignored silently).
             case K::paste:shelf->paste(now());break;
             case K::reveal:pendingShelfReveal=shelf->access(action->itemID);closeAfter=true;break;
-            // The properties card's Open (default application) waits for the close like Reveal.
-            case K::open:pendingShelfOpen=shelf->access(action->itemID);closeAfter=true;break;
-            case K::preview:host.capturePointer(false);shelf->requestPreview(action->itemID);break;
-            // The OLE drag loop dispatches nested messages (frames, timers) with later times.
-            case K::drag:{auto transfer=shelf->prepareDrag(action->itemID);shelf->setNativeDragActive(true);host.capturePointer(false);environment.pointerLocked=false;session->setEnvironment(environment,now());DWORD effect{};const auto result=transfer->run(&effect);shelf->setNativeDragActive(false);if(result==DRAGDROP_S_DROP&&(effect&DROPEFFECT_COPY))closeAfter=true;break;}
+            // Open (FileShelfCanvas.open): the Shell's default verb now, outside
+            // the canvas event; the HUD stays open, as on the Mac.
+            case K::open:shelf->open(action->itemID,now());break;
+            // Every reference is resolved first (all or nothing); the loop runs below, outside the Shelf's isolation.
+            case K::drag:drag=shelf->prepareDrag(action->itemID);break;
             }
         }catch(const std::exception&e){shelf->setNativeDragActive(false);shelf->showError(e,now());}});
+        // The OLE drag loop dispatches nested messages (frames, timers) with later times.
+        if(drag)(void)shelfDragOut([&](DWORD&effect){return drag->run(&effect);},now());
         if(closeAfter)perform(lifecycle.close(),now());
         refresh(now());return 0;
     }

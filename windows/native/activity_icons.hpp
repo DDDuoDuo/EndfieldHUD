@@ -1,23 +1,22 @@
 #pragma once
-// Activity Monitor app icons (ActivityMonitorCanvas.requestVisibleIcons):
-// requested only for the visible app rows of the Apps tab, at most eight
-// pending, loaded off the UI thread on the shared UtilityExecutor and kept in
-// a cache pruned to the running apps of the latest sample. A completed load
-// only advances revision(); the owner rebinds the rows on its next content
-// event. Missing artwork uses the generic Windows application icon, as
-// NSWorkspace.icon(forFile:) falls back to a generic one on the Mac.
+// Activity Monitor app icons on Windows: the pixel loader (an executable's
+// icon resource, a packaged app's AppsFolder icon, else the stock application
+// icon, as NSWorkspace.icon(forFile:) falls back to a generic one) and
+// ActivityIconLoads, the worker side of the portable cache
+// modules::ActivityAppIcons (modules/activity_canvas.hpp: the Mac's rules,
+// 20 px x the render scale, 256 entries cleared on overflow, 4 per batch).
+// A batch loads on the shared UtilityExecutor and is published into this
+// object's LayerImageSource under fresh keys; the canvas's rows draw them as
+// memory images (DesignOwnerOptions::raster.memoryImages). An image the cache
+// drops (overflow, scale change, destruction) is retired here.
 #include "app/utility_executor.hpp"
-#include "modules/activity_state.hpp"
-#include "native/activity_scene.hpp"
+#include "modules/activity_canvas.hpp"
 #include "native/layer_image_source.hpp"
 #include <cstdint>
 #include <functional>
-#include <map>
 #include <memory>
 #include <optional>
-#include <span>
 #include <string>
-#include <string_view>
 #include <vector>
 
 namespace endfield::native {
@@ -31,28 +30,22 @@ using ActivityIconLoader=std::function<std::optional<ActivityIconPixels>(const s
 // a packaged app's AppsFolder icon, else the stock application icon.
 ActivityIconLoader windowsActivityIconLoader();
 #endif
-struct ActivityIconStats {std::uint64_t requests{},jobs{},loaded{},unavailable{},publications{},backpressure{};std::size_t cached{},pending{};bool inFlight{};};
+struct ActivityIconStats {std::uint64_t batches{},loaded{},unavailable{},backpressure{},retired{};std::size_t images{};bool inFlight{};};
 
-class ActivityIconProvider final {
+class ActivityIconLoads final {
 public:
-    static constexpr std::size_t maximumPending=8,maximumCached=64,maximumVisible=8;
-    // Executor outlives this owner-thread object (the provider invalidates its
-    // route on destruction; completions never run afterwards).
-    ActivityIconProvider(app::UtilityExecutor&,ActivityIconLoader);
-    ~ActivityIconProvider();
-    ActivityIconProvider(const ActivityIconProvider&)=delete;
-    ActivityIconProvider&operator=(const ActivityIconProvider&)=delete;
-    // Content event: the visible rows' icon keys (at most eight). Publishes the
-    // cached ones into images() (most recently used, so they stay resident for
-    // the raster that follows) and returns exactly their bindings; requests
-    // the missing ones. Square `pixels` (18 pt at the row's render scale).
-    ActivityIcons bind(std::span<const std::string_view> visible,unsigned pixels);
-    // Keeps cached icons only for these running apps (iconCache filter).
-    void retain(std::span<const modules::ActivityApp> live);
-    // Advances when a load completes, so the owner knows to rebind.
-    std::uint64_t revision()const noexcept;
-    // Executor backpressure left a request unsent: rebind on the next event.
-    bool retryPending()const noexcept;
+    // The cache's capacity of published images (ActivityAppIcons::capacity).
+    static LayerImageSourceLimits limits() noexcept;
+    // Executor outlives this owner-thread object (its route is invalidated on
+    // destruction; completions never run afterwards).
+    ActivityIconLoads(app::UtilityExecutor&,ActivityIconLoader);
+    ~ActivityIconLoads();
+    ActivityIconLoads(const ActivityIconLoads&)=delete;
+    ActivityIconLoads&operator=(const ActivityIconLoads&)=delete;
+    // The two callbacks of modules::ActivityAppIcons::Loader, bound to this
+    // object (it must outlive every cache using them). One batch at a time;
+    // a full executor answers false (the cache retries on its next lookup).
+    modules::ActivityAppIcons::Loader loader();
     LayerImageSource&images()noexcept;
     ActivityIconStats stats()const;
 private:struct Impl;std::shared_ptr<Impl>impl_;

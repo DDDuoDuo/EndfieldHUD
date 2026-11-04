@@ -74,6 +74,8 @@ struct NativeSanityGaugeScene::Impl {
     // shut; tipResident: its numeral textures are on the GPU.
     bool popoverLoaded{},tipResident{};
     std::array<std::string,4> tipText;std::array<bool,4> tipNumerals{};core::Language language{core::Language::english};
+    // HUDAccountGauge.Layout of the shown menu (gauge-local frame, popover-local cells).
+    h::GaugePopoverLayout layout;bool sourceLabels{true};
     Track hover,refreshHover,popoverAlpha,popoverLift;std::optional<double> lastTime;Renderer* owner{};
     NativeSanityGaugeStats stats;
     Impl(std::shared_ptr<const h::GaugeAssets> a,LayerRasterizer& r,LayerRasterOptions o):assets(std::move(a)),raster(&r),options(std::move(o)),wallet(r),popover(r) {
@@ -94,7 +96,7 @@ struct NativeSanityGaugeScene::Impl {
         if(popoverUploaded) popoverGroup->setPose(gaugeWorld*Matrix::translation(0,popoverLiftValue),static_cast<float>(popoverOpacity));
     }
     NativeGroupInsertion insertion() const {
-        return {popover.draws().size(),tipDraws,{g::popover.x,g::popover.y,g::popover.width,g::popover.height}};
+        const auto& b=layout.frame;return {popover.draws().size(),tipDraws,{b.x,b.y,b.width,b.height}};
     }
     // Gauge-local placements (hover tint, tooltip numerals, popover refresh
     // feedback). Unchanged values do not dirty the retained group targets.
@@ -106,8 +108,8 @@ struct NativeSanityGaugeScene::Impl {
         place(walletDraws[0],g::artwork,1,walletLocalDirty);
         place(walletDraws[1],g::number,value.empty()?0:1,walletLocalDirty);
         place(walletDraws[2],g::bar,sample(hover,t),walletLocalDirty);
-        const Rect frames[4]{g::nextLabel,g::fullLabel,g::nextValue,g::fullValue};
-        for(std::size_t n=0;n<4;++n) place(tipDraws[n],{g::popover.x+frames[n].x,g::popover.y+frames[n].y,frames[n].width,frames[n].height},tipNumerals[n]?1:0,popoverLocalDirty);
+        const auto& box=layout.frame;
+        for(unsigned n=0;n<4;++n) {const auto f=layout.cell(n);place(tipDraws[n],{box.x+f.x,box.y+f.y,f.width,f.height},tipNumerals[n]?1:0,popoverLocalDirty);}
         bool changed=false;
         for(std::size_t n=0;n<popoverPlacements.size();++n) {
             auto& p=popoverPlacements[n];const auto& f=popoverFrames[n];const auto world=Matrix::translation(f.x,f.y);
@@ -132,27 +134,32 @@ struct NativeSanityGaugeScene::Impl {
     void loadPopover() {
         Json::Array leaves;popoverFrames.clear();popoverIDs.clear();
         const auto add=[&](std::string id,Json node,Rect frame){popoverIDs.push_back(id);popoverFrames.push_back(frame);leaves.push_back(leaf(std::move(id),std::move(node),frame));};
-        const Rect box=g::popover;
-        add("gauge/popover/background",Json::Object{{"kind","layer"},{"bounds",Json::Array{0,0,224,65}},{"cornerRadius",g::popoverCornerRadius},
+        const Rect box=layout.frame,refresh=layout.refresh();
+        add("gauge/popover/background",Json::Object{{"kind","layer"},{"bounds",Json::Array{0,0,box.width,box.height}},{"cornerRadius",g::popoverCornerRadius},
             {"backgroundColor",Json::Object{{"sRGB",Json::Array{0.06499998271465302,0.06499998271465302,0.06499998271465302,0.98}}}}},box);
-        for(std::size_t i=0;i<4;++i) if(!tipNumerals[i]&&!tipText[i].empty()) {
-            const Rect frames[4]{g::nextLabel,g::fullLabel,g::nextValue,g::fullValue};const auto f=frames[i];
-            // Native locale fallback (HUDAccountGauge.localizedText): system medium 14.4, white .92.
-            add("gauge/popover/text/"+std::to_string(i),Json::Object{{"kind","text"},{"bounds",Json::Array{0,0,f.width,f.height-3}},{"text",Json::Object{{"string",tipText[i]},{"fontSize",14.4},
-                {"font",Json::Object{{"familyName",".AppleSystemUIFont"},{"postScriptName",".AppleSystemUIFontMedium"},{"pointSize",14.4}}},
-                {"foregroundColor",Json::Object{{"sRGB",Json::Array{.92,.92,.92,1}}}},{"alignment","left"},{"wrapped",false},{"truncation","end"},{"runs",Json::Array{}}}}},
-                {box.x+f.x,box.y+f.y+3,f.width,f.height-3});
+        for(unsigned i=0;i<4;++i) if(!tipNumerals[i]&&!tipText[i].empty()) {
+            const auto f=layout.cell(i);
+            // HUDAccountGauge.Layout.renderLabel: one line in the standard faces
+            // (HarmonyOS Sans, the UI region's Noto), 14.4 medium white .92,
+            // shrunk to fit down to .6 (never truncated). The Mac centres it on
+            // its ink; this line box centres it on the face's strut (within
+            // about half a point for CJK glyphs).
+            add("gauge/popover/text/"+std::to_string(i),Json::Object{{"kind","text"},{"bounds",Json::Array{0,0,f.width,f.height}},{"text",Json::Object{{"string",tipText[i]},{"fontSize",h::GaugePopoverLayout::textSize},
+                {"fontWeight",500},{"lineHeight",f.height/h::GaugePopoverLayout::textSize},{"maximumLines",1},{"minimumScale",.6},{"truncation","none"},
+                {"language",std::string(core::regionTag(core::regionFor(language,core::TextRegion::simplifiedChinese)))},
+                {"foregroundColor",Json::Object{{"sRGB",Json::Array{.92,.92,.92,1}}}},{"alignment","left"},{"runs",Json::Array{}}}}},
+                {box.x+f.x,box.y+f.y,f.width,f.height});
         }
         add("gauge/popover/arrow",Json::Object{{"kind","shape"},{"bounds",Json::Array{0,0,22,22}},{"shape",Json::Object{{"path",arrowPath()},
             {"fillColor",Json::Object{{"sRGB",Json::Array{0.9000000357627869,0.9000000357627869,0.9000000357627869,1}}}},{"strokeColor",Json{}},{"lineWidth",1},{"lineCap","butt"},{"lineJoin","miter"},{"fillRule","non-zero"}}}},
-            {box.x+g::refresh.x+.5,box.y+g::refresh.y+1.5,22,22});
+            {box.x+refresh.x+.5,box.y+refresh.y+1.5,22,22});
         add("gauge/popover/tint",Json::Object{{"kind","shape"},{"bounds",Json::Array{0,0,23,25}},{"shape",Json::Object{{"path",roundedHighlight()},
             {"fillColor",Json::Object{{"sRGB",Json::Array{.75,.75,.75,.3}}}},{"strokeColor",Json{}},{"lineWidth",1},{"lineCap","butt"},{"lineJoin","miter"},{"fillRule","non-zero"}}}},
-            {box.x+g::refresh.x,box.y+g::refresh.y,23,25});
+            {box.x+refresh.x,box.y+refresh.y,23,25});
         add("gauge/popover/rim",Json::Object{{"kind","shape"},{"bounds",Json::Array{0,0,23,25}},{"shape",Json::Object{{"path",roundedHighlight()},
             {"fillColor",Json{}},{"strokeColor",Json::Object{{"sRGB",Json::Array{.75,.75,.75,1}}}},{"lineWidth",.9},{"lineCap","butt"},{"lineJoin","miter"},{"fillRule","non-zero"}}}},
-            {box.x+g::refresh.x,box.y+g::refresh.y,23,25});
-        popover.load(Json::Object{{"bounds",Json::Array{0,0,224,65}},{"position",Json::Array{0,0}},{"anchorPoint",Json::Array{0,0}},{"children",std::move(leaves)}},options);
+            {box.x+refresh.x,box.y+refresh.y,23,25});
+        popover.load(Json::Object{{"bounds",Json::Array{0,0,box.width,box.height}},{"position",Json::Array{0,0}},{"anchorPoint",Json::Array{0,0}},{"children",std::move(leaves)}},options);
         need(popover.report().unsupported.empty(),"Gauge popover contains unsupported raster state");
         popoverPlacements.assign(popoverIDs.size(),{});for(std::size_t i=0;i<popoverPlacements.size();++i) popoverPlacements[i].surface=i;
         popoverDirty=false;popoverForce=true;popoverLoaded=true;++stats.popoverLoads;
@@ -185,11 +192,16 @@ bool NativeSanityGaugeScene::sync(const h::SanityGaugeModel& model,core::Languag
         changed=true;
     }
     if(model.popoverOpen()) {
-        const auto& tip=model.tooltip();const Rect frames[4]{g::nextLabel,g::fullLabel,g::nextValue,g::fullValue};bool structure=false;
-        for(std::size_t n=0;n<4;++n) if(tip.text[n]!=i.tipText[n]) {
-            i.tipText[n]=tip.text[n];const bool numerals=i.assets->numerals.covers(tip.text[n]);
-            if(numerals!=i.tipNumerals[n]) structure=true;i.tipNumerals[n]=numerals;
-            if(numerals) i.tipImages[n]=*i.assets->numerals.render(tip.text[n],frames[n].width,frames[n].height,i.scale,14.4,false);
+        const auto& tip=model.tooltip();bool structure=false;
+        // A new menu width moves every cell and the refresh button (Layout).
+        const bool relayout=tip.layout!=i.layout||tip.sourceLabels!=i.sourceLabels;
+        if(relayout) {i.layout=tip.layout;i.sourceLabels=tip.sourceLabels;structure=true;}
+        for(unsigned n=0;n<4;++n) if(relayout||tip.text[n]!=i.tipText[n]) {
+            i.tipText[n]=tip.text[n];
+            // Values always use the source numerals; labels only in English.
+            const bool numerals=(n>=2||tip.sourceLabels)&&i.assets->numerals.covers(tip.text[n]);
+            if(numerals!=i.tipNumerals[n]) structure=true;i.tipNumerals[n]=numerals;const auto f=i.layout.cell(n);
+            if(numerals) i.tipImages[n]=*i.assets->numerals.render(tip.text[n],f.width,f.height,i.scale,h::GaugePopoverLayout::textSize,false);
             else {i.tipImages[n]={1,1,{0,0,0,0}};structure=true;}
             i.tipDirty[n]=true;++i.stats.tooltipRasters;changed=true;
         }
@@ -239,7 +251,7 @@ void NativeSanityGaugeScene::upload(Renderer& r) {
     } else if(walletTextures||i.walletLocalDirty) {r.setNativeGroupDraws(walletGroupID,i.walletDraws);i.walletLocalDirty=false;++i.stats.groupRedraws;}
     const bool content=i.popoverLoaded&&(!i.popoverUploaded||i.popoverStructure!=i.popover.contentRevision()||i.popoverResources!=i.popover.resourceRevision());
     if(content) {
-        const auto ink=i.popoverGroup->localCoverageBounds();const Rect& b=g::popover;
+        const auto ink=i.popoverGroup->localCoverageBounds();const Rect& b=i.layout.frame;
         const double x=std::min(ink.x,b.x),y=std::min(ink.y,b.y);
         i.popoverGroup->uploadResources(r,Rect{x,y,std::max(ink.x+ink.width,b.x+b.width)-x,std::max(ink.y+ink.height,b.y+b.height)-y},i.insertion());
         i.popoverUploaded=true;i.popoverStructure=i.popover.contentRevision();i.popoverResources=i.popover.resourceRevision();i.popoverLocalDirty=false;++i.stats.groupUploads;
@@ -279,7 +291,7 @@ bool NativeSanityGaugeScene::park(Renderer* r) {
         if(i.tipResident) {for(const auto& id:tipIDs) (void)r->removeTexture(id);i.tipResident=false;}
     }
     // An empty load drops the card's leaf rasters (and their rasterizer entries).
-    i.popover.load(Json::Object{{"bounds",Json::Array{0,0,224,65}},{"position",Json::Array{0,0}},{"anchorPoint",Json::Array{0,0}},{"children",Json::Array{}}},i.options);
+    i.popover.load(Json::Object{{"bounds",Json::Array{0,0,i.layout.frame.width,i.layout.frame.height}},{"position",Json::Array{0,0}},{"anchorPoint",Json::Array{0,0}},{"children",Json::Array{}}},i.options);
     i.popoverPlacements.clear();i.popoverFrames.clear();i.popoverIDs.clear();
     i.popoverLoaded=false;i.popoverDirty=true;i.popoverForce=true;i.popoverLocalDirty=false;i.popoverStructure=i.popoverResources=0;
     for(auto& image:i.tipImages) image={1,1,{0,0,0,0}};

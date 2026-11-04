@@ -93,9 +93,6 @@ import QuartzCore
         defaults.setVolatileDomain([:], forName: suite)
         defer { defaults.removePersistentDomain(forName: suite); defaults.removeVolatileDomain(forName: suite) }
         let configStore = ConfigurationStore(defaults: defaults); configStore.update(config)
-        let controller = HUDSettingsController(store: configStore, clock: { 0 }, scheduleTimer: { _, _ in
-            preconditionFailure("Reference fixture must not schedule settings timers")
-        })
         let date = Date(timeIntervalSince1970: 1_700_000_000)
         var profile = UserProfile(awakeningDate: date, uid: "1000000000")
         profile.name = "Endministrator"; profile.tag = "0000"; profile.introduction = "Neutral reference profile"
@@ -104,29 +101,24 @@ import QuartzCore
         try FileManager.default.createDirectory(at: profileDirectory, withIntermediateDirectories: true)
         try JSONEncoder().encode(ProfileArchive(version: 1, profile: profile)).write(to: profileDirectory.appendingPathComponent("profile.json"))
         let profileStore = try UserProfileStore(directory: profileDirectory, now: date)
-        let personal = PersonalProfileCanvas(store: profileStore, workSeconds: { 3600 }, reduceMotion: { true })
-        defer { personal.deactivate() }
-        let notesStore = try NotesStore(directory: dataRoot.appendingPathComponent("Notes"))
-        try notesStore.upsert(CanvasNote(id: UUID(uuidString: "00000000-0000-4000-8000-000000000001")!, kind: .text,
-            text: "Neutral note\nSource-derived desktop workspace", x: 60, y: 90, width: 260, height: 140, zIndex: 1, createdAt: date))
-        try notesStore.upsert(CanvasNote(id: UUID(uuidString: "00000000-0000-4000-8000-000000000002")!, kind: .todo,
-            text: "Reference tasks", items: [NoteChecklistItem(id: UUID(uuidString: "00000000-0000-4000-8000-000000000003")!, text: "Compare geometry", isChecked: true),
-                NoteChecklistItem(id: UUID(uuidString: "00000000-0000-4000-8000-000000000004")!, text: "Compare actions", isChecked: false)],
-            x: 340, y: 90, width: 260, height: 160, zIndex: 2, createdAt: date, isPinned: true))
-        let notes = NotesCanvas(store: notesStore, notesSelected: true, reduceMotion: { true })
-        notes.setWorkspaceBounds(CGRect(x: 0, y: 0, width: 1920, height: 1080))
-        defer { notes.setVisible(false); notes.cancelInteraction(); notes.cancelAnimations() }
-        let display = HUDDisplayDescriptor(uuid: "00000000-0000-4000-8000-000000000010", name: "Reference Display", displayID: 1,
-            frame: CGRect(x: 0, y: 0, width: 1920, height: 1080))
-        let settingsModules: [HUDModule] = [.system, .display, .hotkeys, .about]
-        let settings = settingsModules.map { HUDSettingsCanvas(module: $0, controller: controller, reduceMotion: { true }, displayProvider: { [display] }) }
-        defer { settings.forEach { $0.deactivate() } }
-        let host = HUDModuleContent(powerLayer: CALayer(), reduceMotion: { true })
+        // Personal ID on the 1.3.0 design canvas (PersonalProfileCanvas(context:store:error:workSeconds:minigameBest:));
+        // its scenes are exported in full by tools/profile_canvas_reference.* (C11).
+        let designContext = HUDDesignContext(env: HUDDesignEnvironment(renderScale: 2, reduceMotion: { true }))
+        let personal = PersonalProfileCanvas(context: designContext, store: profileStore, workSeconds: { 3600 })
+        defer { personal.setActive(false) }
+        // Notes is exported on the 1.3.0 design canvas by tools/notes_reference.* (C4).
+        // Settings (System, Display, Hotkeys, About) is exported by tools/settings_reference.* on the 1.3.0 design canvas.
+        let host = HUDModuleContent(initialModule: .profile, reduceMotion: { true })
         defer { host.cancel() }
-        host.register(notes, for: .notes); host.register(personal, for: .profile)
-        for canvas in settings { host.register(canvas, for: canvas.module) }
+        host.register(personal, for: .profile)
         host.update(dark: true, accent: config.accentColor, contentsScale: 2)
         let encoder = try ModuleReferenceLayerEncoder(output: output)
+        // HUDTextLayer draws itself: record its runs as the text row this checker reads.
+        encoder.layerHook = { layer, _, row in
+            guard let text = layer as? HUDTextLayer else { return false }
+            row["kind"] = "text"; row["text"] = ["string": text.runs.map(\.text).joined()]
+            return true
+        }
         try serializerFixture(encoder, output: output)
         var entries: [[String: Any]] = []
         func emit(_ module: HUDModule, state: String, actions: [[String: Any]], sliders: [[String: Any]] = [], extra: [[String: Any]] = []) throws {
@@ -141,26 +133,14 @@ import QuartzCore
             try json(row, output.appendingPathComponent(name))
             entries.append(["module": module.rawValue, "state": state, "file": name, "actionCount": actions.count, "sliderCount": sliders.count])
         }
-        host.select(module: .notes, animated: false)
-        try emit(.notes, state: "default", actions: notes.accessibleActions.map {
-            action($0.id, $0.label, $0.rect, space: $0.space == .workspace ? "workspace-local" : "module-local")
-        }, extra: [["space": "workspace-local", "layer": try encoder.encode(notes.workspaceLayer, id: "notes/default/workspace")]])
         host.select(module: .profile, animated: false)
-        try emit(.profile, state: "default", actions: personal.accessibleActions.map { action($0.id, $0.label, $0.rect) },
-            sliders: personal.accessibleSliders.map { slider($0.field.rawValue, $0.label, $0.rect, $0.value, $0.minimum, $0.maximum, $0.valueDescription) },
-            extra: [["space": "profile-background-local", "layer": try encoder.encode(personal.backgroundLayer, id: "profile/default/background")]])
-        for canvas in settings {
-            host.select(module: canvas.module, animated: false)
-            for state in ["top", "bottom"] {
-                if state == "bottom" { _ = canvas.scroll(at: CGPoint(x: 200, y: 100), delta: 100_000) }
-                try emit(canvas.module, state: state, actions: canvas.accessibleActions.map { action($0.id, $0.label, $0.rect, enabled: $0.enabled) },
-                    sliders: canvas.accessibleSliders.map { slider($0.id, $0.label, $0.rect, $0.value, $0.minimum, $0.maximum, $0.valueDescription) })
-            }
-        }
+        // The canvas's routed controls (the page is not activated: no timers, no toast); content-box rects.
+        try emit(.profile, state: "default", actions: personal.page.controls.flatMap { $0.accessibilityItems(in: personal.root) }
+            .map { action($0.id, $0.label, $0.rect, space: "content-box", enabled: $0.enabled) })
         let projections = try [CGSize(width: 1280, height: 800), CGSize(width: 1920, height: 1080)].map { try projection(profile: profile, size: $0) }
         let attachment = try JSONSerialization.jsonObject(with: Data(contentsOf: output.appendingPathComponent("attachment.json")))
         try require(NSApp.windows.isEmpty, "Fixture unexpectedly created a window")
-        try json(["schemaVersion": 1, "scope": "actual macOS NotesCanvas, PersonalProfileCanvas, HUDSettingsCanvas and HUDModuleContent model layers",
+        try json(["schemaVersion": 1, "scope": "actual macOS PersonalProfileCanvas and HUDModuleContent model layers",
             "sourceBaseline": "ca04f14", "entries": entries, "rasterAssets": encoder.rasterAssets, "unsupported": encoder.unsupported,
             "desktopCenterProjections": projections, "sourceDerivedAttachment": attachment,
             "coordinates": ["matrices": "column-major columns, column vectors; translation is column 3",
@@ -169,17 +149,16 @@ import QuartzCore
                 "design-host": "1000x640 source design space before SystemHUDView reportScale/reportCenterY",
                 "module-local": "add module contentFrame origin, then source report transform and desktopCenterProjection",
                 "workspace-local": "1920x1080 stored overlay screen units; convert by inverse designOrigin/designScale, then actual desktopCenterProjection; no reportScale/reportCenterY",
-                "profile-background-local": "separate native background; full SystemHUDView background attachment remains unverified",
+                "content-box": "590x510 design content box px (HUDDesignGeometry; the canvas root), top-left origin",
                 "frame": "diagnostic CA derived bounding box; do not apply frame in addition to position/bounds/anchor/transform",
                 "text": "UTF-16 attributed ranges; native font names/metrics; cross-platform raster equality not verified"],
             "fixture": ["language": "english", "theme": "dark", "scale": 2, "ambientMotion": false, "reduceMotion": true,
-                "profileUID": profile.uid, "profileName": profile.name, "profileTag": profile.tag, "noteCount": 2,
-                "displayName": display.name, "displayFrame": ModuleReferenceLayerEncoder.rect(display.frame)] as [String: Any],
+                "profileUID": profile.uid, "profileName": profile.name, "profileTag": profile.tag] as [String: Any],
             "isolation": ["windowCreated": false, "systemHUDViewCreated": false, "temporaryStoresOnly": true,
                 "isolatedPreferencesSuite": true, "liveProvidersCreated": false, "clipboardAccessed": false,
-                "nativeCursorSetCount": 0, "profileActivated": false, "settingsTimersScheduled": 0],
+                "nativeCursorSetCount": 0, "profileActivated": false],
             "notVerified": ["full SystemHUDView scene attachment and material compositing", "transition/presentation layer pixels",
-                "native edit controls and settings subpages", "live providers", "Windows rendering", "cross-OS font raster equality",
+                "native edit controls", "live providers", "Windows rendering", "cross-OS font raster equality",
                 "custom layer/material features listed in unsupported", "About version metadata comes from unbundled fixture executable"]],
             output.appendingPathComponent("modules.json"))
         print("Exported \(entries.count) source module states, \(encoder.rasterAssets.count) intrinsic raster assets; \(encoder.unsupported.count) explicit unsupported/metadata entries")

@@ -5,9 +5,11 @@
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
+#include <windows.h>
 #include <objbase.h>
 #endif
 #include <atomic>
+#include <filesystem>
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
@@ -98,6 +100,62 @@ void transitions(LayerRasterizer&raster,const LayerRasterOptions&options){
     rejects([&]{surface.update(center,config,invalid);},"Invalid late shutter polygon fails before child placement mutation");layers.prepareDraws();
     equalMatrix(layers.draws()[0].world,previous,"Rejected mask leaves every retained child world unchanged");
 }
+// Sources/HUDModuleContent.swift place/normalize/beginDirectional: a design
+// screen's box px sit at boxWorld without the report scale or the host clip;
+// the directional leave moves the wrapper on the plane before any placement.
+void designScreens(LayerRasterizer&raster,const LayerRasterOptions&options){
+    LayerScene notesLayers(raster);notesLayers.load(root(),options);NativeModuleSurface notes(notesLayers,Module::notes);
+    LayerScene systemLayers(raster);systemLayers.load(root(),options);NativeModuleSurface system(systemLayers,Module::system);
+    const auto center=Matrix4::translation(30,20)*Matrix4::scale(1.2,1.1);const auto original=notesLayers.draws()[0];
+    ModulePresentation state(Module::notes);state.setDesignScreen(Module::notes,true);auto s=state.sample(0).presentation.current;
+    check(notes.update(center,settings(Module::notes),s),"A design screen publishes its pose");notesLayers.prepareDraws();
+    equalMatrix(notes.pose().contentWorld,designBoxWorld(center),"A settled design screen is placed at boxWorld");
+    equalMatrix(notes.pose().hostWorld,center*Matrix4::translation(280,100),"The Mac 1.3 host is the viewport at the disc, identity");
+    check(!notes.pose().hostClipped&&notes.pose().hostMasks().empty(),"A design screen opts out of the host clip");
+    check(notesLayers.draws()[0].masks.size()==1,"Only the content's own clip stays on its draws");
+    equalMatrix(notesLayers.draws()[0].world,designBoxWorld(center)*original.world,"Box px children are composed once");
+    // System (unported) -> Notes (design): the leave keeps System's own placement and the swap lands on boxWorld.
+    ModulePresentation p(Module::system);p.setDesignScreen(Module::notes,true);p.select(Module::notes,0);auto u=p.sample(.065).presentation;
+    system.update(center,settings(Module::notes),u.current);systemLayers.prepareDraws();
+    const auto own=DesktopChromeLayout::make(settings(Module::system),center,{});const auto offset=u.current.planeOffset;
+    check(offset.x!=0&&u.current.keepsOwnPlacement,"The leave moves and keeps its own placement");
+    equalMatrix(system.pose().contentWorld,center*Matrix4::translation(offset.x,offset.y)*Matrix4::translation(500,own.reportCenterY)*Matrix4::scale(own.reportScale,own.reportScale)*Matrix4::translation(-200,-168),"The leaving unported screen slides on the plane from its own placement");
+    checkNear(system.pose().opacity,static_cast<float>(u.current.opacity),"The leave fades the wrapper");check(!system.pose().hostClipped&&systemLayers.draws()[0].masks.size()==1,"No host clip during a directional switch");
+    check(system.pose().hostClip.bounds==Rect{0,0,440,440},"The viewport rectangle stays available for unported owners");
+    notes.update(center,settings(Module::notes),*u.incoming);check(!notes.pose().attached&&notes.pose().opacity==0,"The prepared incoming screen is not drawn");
+    u=p.sample(.13).presentation;notes.update(center,settings(Module::notes),u.current);equalMatrix(notes.pose().contentWorld,designBoxWorld(center),"The swap lands the box at rest");
+    check(notes.pose().attached&&notes.pose().opacity==1&&u.current.entrance,"The attached screen is drawn and starts its entrance");
+    // Notes (design) -> System (unported): the shutter; the outgoing box follows the wrapper transform inside the viewport.
+    u=p.select(Module::system,1).presentation;u=p.sample(1.1).presentation;notes.update(center,settings(Module::system),u.current);
+    const auto box=DesignBox::rect();
+    equalMatrix(notes.pose().contentWorld,center*Matrix4::translation(500,320)*sampleModuleTransform(u.current.transform)*Matrix4::translation(box.x-500,box.y-320)*Matrix4::scale(DesignBox::baseUnit,DesignBox::baseUnit),"An outgoing box rides the shutter wrapper");
+    check(notes.pose().shutter.has_value()&&!notes.pose().hostClipped,"The shutter masks a leaving design screen; the host stays as it settled");
+    system.update(center,settings(Module::system),*u.incoming);check(system.pose().shutter&&system.pose().registration,"The unported destination keeps its shutter and seams");
+    u=p.sample(1.3).presentation;system.update(center,settings(Module::system),u.current);systemLayers.prepareDraws();check(system.pose().hostClipped&&systemLayers.draws()[0].masks.size()==2,"Settled on an unported module the host clip returns");
+}
+#ifdef _WIN32
+// WARP: a design screen's art past the 440 x 440 viewport (Now Playing's
+// cover, Work Mode's ring) is drawn; with the host clip it is cut at the edge.
+void hostClipPixels(LayerRasterizer&raster,const LayerRasterOptions&options,const std::filesystem::path&shader){
+    WNDCLASSW type{};type.lpfnWndProc=DefWindowProcW;type.hInstance=GetModuleHandleW(nullptr);type.lpszClassName=L"EndfieldModuleSceneClipFixture";
+    const auto atom=RegisterClassW(&type);check(atom!=0,"Register the hidden fixture window");
+    const auto window=CreateWindowExW(WS_EX_NOREDIRECTIONBITMAP|WS_EX_TOOLWINDOW,type.lpszClassName,L"Module clip fixture",WS_POPUP,0,0,200,128,nullptr,nullptr,type.hInstance,nullptr);check(window!=nullptr,"Create the hidden fixture window");
+    struct Cleanup{HWND w;ATOM a;~Cleanup(){DestroyWindow(w);UnregisterClassW(reinterpret_cast<LPCWSTR>(static_cast<ULONG_PTR>(a)),GetModuleHandleW(nullptr));}}cleanup{window,atom};
+    Renderer renderer;renderer.initialize(window,200,128,{Driver::warpForTests,shader,RenderTarget::offscreenForTests});renderer.setCamera(layerViewportProjection(200,128));
+    // Box px (-60, 200) to (-20, 240): left of the box and of the viewport (design x 263.7-290.3, viewport from 280).
+    const Json art=Json::Object{{"id","art"},{"kind","layer"},{"class","CALayer"},{"bounds",Json::Array{0,0,40,40}},{"position",Json::Array{-60,200}},{"anchorPoint",Json::Array{0,0}},
+        {"backgroundColor",Json::Object{{"sRGB",Json::Array{1,1,1,1}}}}};
+    LayerScene layers(raster);layers.load(Json::Object{{"bounds",Json::Array{0,0,590,510}},{"children",Json::Array{art}}},options);NativeModuleSurface surface(layers,Module::workMode);
+    ModulePresentation state(Module::workMode);state.setDesignScreen(Module::workMode,true);auto s=state.sample(0).presentation.current;
+    const auto center=Matrix4::scale(.2,.2);DesktopChromeSettings config;config.viewport={0,0,200,128};config.module=Module::workMode;
+    const auto at=[&](double x,double y){const auto&image=renderer.readback();return image.pixels.at(std::size_t(y)*image.rowBytes+std::size_t(x)*4+3);};
+    surface.update(center,config,s);layers.upload(renderer);layers.present(renderer);renderer.draw(false);
+    check(at(54,52)==255&&at(57,52)==255,"Unclipped: the design screen's overflow is drawn past the viewport edge (x 56)");
+    s.hostClip=true;surface.update(center,config,s);layers.present(renderer);renderer.draw(false);
+    check(at(54,52)==0&&at(57,52)==255,"With the host clip the same art is cut at the viewport edge");
+    layers.detach(renderer);renderer.reset();
+}
+#endif
 void lateRollback(LayerRasterizer&raster,const LayerRasterOptions&options){
     LayerScene layers(raster);layers.load(root(1e38),options);NativeModuleSurface surface(layers,Module::power);
     auto s=stable(Module::power);const auto config=settings();surface.update({},config,s);layers.prepareDraws();
@@ -108,11 +166,15 @@ void lateRollback(LayerRasterizer&raster,const LayerRasterOptions&options){
     surface.update(Matrix4::translation(1,0),config,s);layers.prepareDraws();checkNear(layers.draws()[0].world.values[12],previous[0].values[12]+1,"Valid retry recomputes complete staged placement after failure");
 }
 }
-int main(){
+int main(int argc,char**argv){
 #ifdef _WIN32
     const auto com=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);if(FAILED(com)){std::cerr<<"COM initialization failed\n";return 1;}
 #endif
-    int result=0;try{LayerRasterizer raster;LayerRasterOptions options;options.pixelsPerPoint=1;geometry(raster,options);transitions(raster,options);lateRollback(raster,options);
+    int result=0;try{LayerRasterizer raster;LayerRasterOptions options;options.pixelsPerPoint=1;geometry(raster,options);transitions(raster,options);designScreens(raster,options);lateRollback(raster,options);
+#ifdef _WIN32
+        if(argc==2)hostClipPixels(raster,options,argv[1]);
+#endif
+        (void)argc;(void)argv;
         check(raster.stats().entries==0,"Borrowed scene destruction releases only its own local raster cache");std::cout<<"PASS "<<checks<<" module surface checks; no window, GPU, providers or capture\n";
     }catch(const std::exception&e){counting=false;std::cerr<<"FAIL after "<<checks<<" checks: "<<e.what()<<'\n';result=1;}
 #ifdef _WIN32

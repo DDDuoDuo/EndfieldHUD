@@ -26,13 +26,23 @@ struct MediaAssemblyAssetStats {
     std::uint64_t cubeReads{},cubeHits{};
 };
 // Installed, allow-listed original assets only; never reads user media. The
-// shared utility owner calls cube(); its two-entry LRU is cleared on hide.
+// root is the shared Mac Resources/MediaAssembly folder (staged verbatim as
+// resources/media-assembly): its provenance.json is pinned by SHA-256 and must
+// list exactly the LUT and icon of every source filter but None and the PNG
+// of every sticker case, with their bytes and hashes. Assets resolve by the
+// source raw id as MediaAssemblyAssetCatalog does ("luts/<id>.rgb8",
+// "filter-icons/<id>.png", "stickers/<id>.png"), never by catalog position, so
+// cases inserted mid-list keep every other preset on its own file; a listed
+// file outside the model (a removed promotional sticker) refuses the folder.
+// The shared utility owner calls cube(); its two-entry LRU is cleared on hide.
 // PNG descriptors go through the existing LayerRasterizer image cache, so this
 // class creates no duplicate image decoder, image cache, thread or timer.
 class NativeMediaAssemblyAssets final {
 public:
     explicit NativeMediaAssemblyAssets(std::filesystem::path);
-    static constexpr std::string_view catalogSHA256="b7c8762957386abb3d19e3dd5d8ac678fd7a2d58f5354236a2ef76d7fcd314ac";
+    // Resources/MediaAssembly/provenance.json of the ported Mac source (1.3.0).
+    static constexpr std::string_view provenanceSHA256="cf2b3034d571ce4c8cec1bfd9f09c3ddbcbb1cfc87b695d72285838f396f23f1";
+    static constexpr std::size_t maximumProvenanceBytes=64*1024,maximumAssetBytes=1024*1024;
     const std::filesystem::path&root()const noexcept{return root_;}
     const MediaAssemblyAsset&filterThumbnail(modules::MediaAssemblyFilter)const;
     const MediaAssemblyAsset&sticker(modules::MediaAssemblyStickerKind)const;
@@ -42,7 +52,12 @@ public:
     void clear()noexcept;
     MediaAssemblyAssetStats stats()const noexcept;
 private:
-    std::filesystem::path root_;std::array<MediaAssemblyAsset,52>assets_;
+    struct FilterAssets {modules::MediaAssemblyFilter kind{};MediaAssemblyAsset lut,icon;};
+    struct StickerAsset {modules::MediaAssemblyStickerKind kind{};MediaAssemblyAsset image;};
+    const FilterAssets&filter(modules::MediaAssemblyFilter)const;
+    std::filesystem::path root_;
+    std::array<FilterAssets,modules::mediaAssemblyFilterCount-1>filters_;
+    std::array<StickerAsset,modules::mediaAssemblyStickerCount>stickers_;
     struct Cached {modules::MediaAssemblyFilter kind{};std::shared_ptr<const MediaAssemblyCube>cube;};
     std::array<Cached,2>cubes_;std::uint64_t reads_{},hits_{};
 };

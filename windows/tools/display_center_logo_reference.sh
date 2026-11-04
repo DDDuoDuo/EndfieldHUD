@@ -7,7 +7,7 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 OUTPUT="$1";CACHE="$2"
 [[ ! -e "$OUTPUT" && ! -L "$OUTPUT" && -d "$CACHE" ]]
 mkdir -p "$OUTPUT";OUTPUT="$(cd "$OUTPUT" && pwd)";CACHE="$(cd "$CACHE" && pwd)"
-SDK="$(bash "$ROOT/scripts/build.sh" --print-sdk)"
+SDK="$(bash "$ROOT/windows/tools/mac_sdk.sh")"
 xcrun swiftc -O -swift-version 5 -parse-as-library -sdk "$SDK" -module-cache-path "$CACHE" \
  "$ROOT/Sources/HUDCenterLogoPresentation.swift" "$ROOT/Sources/HUDSourceProfileArtwork.swift" \
  "$ROOT/windows/tools/display_center_logo_reference.swift" -o "$OUTPUT/reference" >"$OUTPUT/compile.log" 2>&1

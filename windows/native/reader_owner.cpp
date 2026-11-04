@@ -36,14 +36,13 @@ struct ReaderOwner::Impl:std::enable_shared_from_this<Impl> {
         :executor(e),fonts(std::move(f)),imported(std::move(completion)),changed(std::move(notify)){
         if(!fonts)throw std::invalid_argument("Reader needs retained shared font resources");
         appRoot=directory.parent_path();
-        // A fresh library keeps the automatic "System" sentinel: the bundled
-        // Noto Sans SC/KR family of the HUD language, the default font used
-        // everywhere on Windows by the user's decision (the Mac model default
-        // is Georgia). A saved explicit family is never replaced, and an
-        // imported Mac library keeps its stored fontName too: the Mac default
-        // "Georgia" cannot be told apart from a chosen face and Georgia ships
-        // with Windows, so imported books read in the face they had.
-        repository=std::make_shared<modules::ReaderJSONRepository>(std::move(directory),modules::ReaderPreferences::defaults("System"));
+        // A fresh library takes the Mac 1.3.0 default face, Georgia (shipped
+        // with Windows; the font menu lists the installed families and the
+        // dropdown shows the saved name, as ReaderCanvas does). A library a
+        // Windows 1.2.0 created keeps its saved "System" sentinel, which
+        // renders the standard face with the region cascade (the Mac's
+        // NSFont(name:) ?? systemFont for a name it has no face for).
+        repository=std::make_shared<modules::ReaderJSONRepository>(std::move(directory),modules::ReaderPreferences::defaults());
         document=std::make_shared<NativeReaderDocument>(fonts);route=executor.makeRoute();
     }
     void onOwner()const{if(owner!=std::this_thread::get_id())throw std::logic_error("Reader owner belongs to its creating thread");}

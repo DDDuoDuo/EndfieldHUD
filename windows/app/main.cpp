@@ -35,6 +35,7 @@
 #include "core/migration/mac_import_work.hpp"
 #include "core/localization.hpp"
 #include "core/resource_locator.hpp"
+#include "native/font_resources.hpp"
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -74,40 +75,48 @@ std::wstring wide(std::string_view value) {
     MultiByteToWideChar(CP_UTF8, 0, value.data(), static_cast<int>(value.size()), out.data(), count);
     return out;
 }
-core::Language interfaceLanguage() {
-    wchar_t name[LOCALE_NAME_MAX_LENGTH]{};
-    if (!GetUserDefaultLocaleName(name, LOCALE_NAME_MAX_LENGTH)) return core::Language::english;
-    const auto text = narrow(name);
-    const std::array<std::string_view, 1> preferred{text};
-    return core::resolveLanguage(preferred);
-}
-void report(std::string_view english, std::string_view chinese, UINT icon = MB_ICONERROR) {
-    const auto language = interfaceLanguage();
-    MessageBoxW(nullptr, wide(core::localized(english, chinese, language)).c_str(), L"EndfieldHUD", MB_OK | icon | MB_SETFOREGROUND);
-}
+// The System UI language (the preferred UI-language list, the one reader
+// native::preferredSystemLanguage): no settings are open yet.
+core::Language interfaceLanguage() { return endfield::native::preferredSystemLanguage(); }
+// Startup and fatal dialogs name Windows parts (data folder, packaged
+// resources, launch arguments) and have no Mac source: Windows-only text in
+// the five source languages, in the catalog's terms.
+using Text = core::TranslationEntry;
+constexpr Text newerData{"This EndfieldHUD data was created by a newer version. It was left unchanged; install the newer EndfieldHUD to use it.",
+    "此 EndfieldHUD 数据由更新版本创建，已保持原样。请安装更新版本的 EndfieldHUD 后使用。",
+    "此 EndfieldHUD 資料由較新版本建立，已保持原樣。請安裝較新版本的 EndfieldHUD 後使用。",
+    "この EndfieldHUD のデータは新しいバージョンで作成されたため、変更せずに残しました。使用するには新しいバージョンの EndfieldHUD をインストールしてください。",
+    "이 EndfieldHUD 데이터는 최신 버전에서 만들어져 변경하지 않고 그대로 두었습니다. 사용하려면 최신 버전의 EndfieldHUD를 설치하세요."};
+constexpr Text dataFolderFailed{"EndfieldHUD could not open its data folder. Nothing was changed.",
+    "EndfieldHUD 无法打开数据文件夹，未作任何更改。", "EndfieldHUD 無法開啟資料所在的資料夾，未作任何變更。",
+    "EndfieldHUD のデータフォルダーを開けませんでした。何も変更されていません。", "EndfieldHUD 데이터 폴더를 열 수 없습니다. 변경된 내용은 없습니다."};
+constexpr Text invalidArguments{"EndfieldHUD received invalid launch arguments.", "EndfieldHUD 收到了无效的启动参数。", "EndfieldHUD 收到了無效的啟動參數。",
+    "EndfieldHUD に無効な起動引数が渡されました。", "EndfieldHUD에 잘못된 실행 인수가 전달되었습니다."};
+constexpr Text displayResourcesDamaged{"The EndfieldHUD display resources are missing or damaged. Reinstall EndfieldHUD; your data was not changed.",
+    "EndfieldHUD 显示资源缺失或已损坏。请重新安装 EndfieldHUD；数据未被更改。", "EndfieldHUD 顯示資源遺失或已損毀。請重新安裝 EndfieldHUD；資料未被變更。",
+    "EndfieldHUD の表示リソースが見つからないか、破損しています。EndfieldHUD を再インストールしてください。データは変更されていません。",
+    "EndfieldHUD 표시 리소스가 없거나 손상되었습니다. EndfieldHUD를 다시 설치하세요. 데이터는 변경되지 않았습니다."};
+constexpr Text modulesDisabled{"Some EndfieldHUD resources are missing or damaged, so these modules are disabled:",
+    "部分 EndfieldHUD 资源缺失或已损坏，以下模块已停用：", "部分 EndfieldHUD 資源遺失或已損毀，以下模組已停用：",
+    "EndfieldHUD の一部のリソースが見つからないか破損しているため、次のモジュールを無効にしました：",
+    "일부 EndfieldHUD 리소스가 없거나 손상되어 다음 모듈이 비활성화되었습니다:"};
+constexpr Text reinstallModules{"Reinstall EndfieldHUD to restore them.", "请重新安装 EndfieldHUD 以恢复。", "請重新安裝 EndfieldHUD 以還原。",
+    "復元するには EndfieldHUD を再インストールしてください。", "복원하려면 EndfieldHUD를 다시 설치하세요."};
+constexpr Text displayFailed{"EndfieldHUD could not start its display. Your data was not changed.", "EndfieldHUD 无法启动显示界面，数据未被更改。",
+    "EndfieldHUD 無法啟動顯示介面，資料未被變更。", "EndfieldHUD の表示を開始できませんでした。データは変更されていません。",
+    "EndfieldHUD 화면을 시작할 수 없습니다. 데이터는 변경되지 않았습니다."};
+constexpr Text stoppedByError{"EndfieldHUD stopped because of an error. Your saved data was not changed.", "EndfieldHUD 因错误而停止，已保存的数据未被更改。",
+    "EndfieldHUD 因錯誤而停止，已儲存的資料未被變更。", "エラーのため EndfieldHUD が停止しました。保存されたデータは変更されていません。",
+    "오류로 인해 EndfieldHUD가 중지되었습니다. 저장된 데이터는 변경되지 않았습니다."};
 // Windows has no host backdrop before Windows 11 (build 22000), and the HUD's
-// blurred background needs it. Windows-only text in the five source languages
-// (the Mac catalog has no entry).
-void reportWindows11Required() {
-    std::string_view text;
-    switch (interfaceLanguage()) {
-    case core::Language::simplifiedChinese:
-        text = "EndfieldHUD 需要 Windows 11（内部版本 22000 或更高版本）：此版本的 Windows 无法绘制 HUD 的模糊背景。数据未被更改。";
-        break;
-    case core::Language::traditionalChinese:
-        text = "EndfieldHUD 需要 Windows 11（組建 22000 或更新版本）：此版本的 Windows 無法繪製 HUD 的模糊背景。資料未被變更。";
-        break;
-    case core::Language::japanese:
-        text = "EndfieldHUD には Windows 11（ビルド 22000 以降）が必要です。このバージョンの Windows では HUD のぼかし背景を描画できません。データは変更されていません。";
-        break;
-    case core::Language::korean:
-        text = "EndfieldHUD를 사용하려면 Windows 11(빌드 22000 이상)이 필요합니다. 이 버전의 Windows에서는 HUD의 흐림 배경을 그릴 수 없습니다. 데이터는 변경되지 않았습니다.";
-        break;
-    default:
-        text = "EndfieldHUD requires Windows 11 (build 22000 or later): this version of Windows cannot draw the HUD's blurred background. Your data was not changed.";
-        break;
-    }
-    MessageBoxW(nullptr, wide(text).c_str(), L"EndfieldHUD", MB_OK | MB_ICONERROR | MB_SETFOREGROUND);
+// blurred background needs it.
+constexpr Text windows11Required{"EndfieldHUD requires Windows 11 (build 22000 or later): this version of Windows cannot draw the HUD's blurred background. Your data was not changed.",
+    "EndfieldHUD 需要 Windows 11（内部版本 22000 或更高版本）：此版本的 Windows 无法绘制 HUD 的模糊背景。数据未被更改。",
+    "EndfieldHUD 需要 Windows 11（組建 22000 或更新版本）：此版本的 Windows 無法繪製 HUD 的模糊背景。資料未被變更。",
+    "EndfieldHUD には Windows 11（ビルド 22000 以降）が必要です。このバージョンの Windows では HUD のぼかし背景を描画できません。データは変更されていません。",
+    "EndfieldHUD를 사용하려면 Windows 11(빌드 22000 이상)이 필요합니다. 이 버전의 Windows에서는 HUD의 흐림 배경을 그릴 수 없습니다. 데이터는 변경되지 않았습니다."};
+void report(const Text& text) {
+    MessageBoxW(nullptr, wide(core::translated(text, interfaceLanguage())).c_str(), L"EndfieldHUD", MB_OK | MB_ICONERROR | MB_SETFOREGROUND);
 }
 fs::path executableDirectory() {
     std::wstring buffer(32768, L'\0');
@@ -123,18 +132,16 @@ app::ApplicationOptions productionOptions(const app::PackagedResources& package,
     a.runtimeInput = true;
     a.packet = package.packet; a.cache = package.cache; a.cachePin = package.cachePin;
     a.shader = package.shader; a.watchBlur = package.watchBlur; a.cursor = package.cursor;
-    a.notesAssets = package.notesAssets; a.notesAssetsSHA = package.notesAssetsSHA; a.notesFormatAssets = package.notesFormatAssets;
-    a.shelfAssets = package.shelfAssets; a.shelfMask = package.shelfMask; a.clipboardAssets = package.clipboardAssets;
-    a.residentIcons = package.residentIcons; a.settingsAssets = package.settingsAssets; a.archiveAssets = package.archiveAssets;
-    a.storageAssets = package.storageAssets; a.activityAssets = package.activityAssets;
+    a.notesFormatAssets = package.notesFormatAssets;
+    a.residentIcons = package.residentIcons; a.settingsAssets = package.settingsAssets;
     a.mapGeography = package.mapGeography; a.mapPlayerAssets = package.mapPlayerAssets; a.orbipomAssets = package.orbipomAssets;
     a.dataRoot = a.shelfDataRoot = data;
     // Notes hosts module selection and the shared text services; without it
     // only the source shell (and the tray with Quit) can run.
     const bool modules = package.modules;
     a.reader = a.calendar = a.projection = modules;
-    a.nativeClipboard = modules && !a.clipboardAssets.empty();
-    a.nativeActivity = modules && !a.activityAssets.empty();
+    a.nativeClipboard = a.fileShelf = a.archive = modules;
+    a.nativeActivity = a.nativeStorage = modules;
     a.nativeVolume = a.nativeBattery = a.nativeEventLog = modules;
     a.startup = arguments.startup;
     a.isolateModuleFailures = true;
@@ -152,9 +159,7 @@ void reportDisabled(const app::PackagedResources& package) {
         if (!names.empty()) names += core::isCJK(language) ? "\u3001" : ", ";
         names += app::moduleCaption(id, language, id);
     }
-    const auto text = core::localized("Some EndfieldHUD resources are missing or damaged, so these modules are disabled:",
-                                      "部分 EndfieldHUD 资源缺失或已损坏，以下模块已停用：", language) + "\n" + names + "\n\n" +
-                      core::localized("Reinstall EndfieldHUD to restore them.", "请重新安装 EndfieldHUD 以恢复。", language);
+    const auto text = std::string(core::translated(modulesDisabled, language)) + "\n" + names + "\n\n" + std::string(core::translated(reinstallModules, language));
     MessageBoxW(nullptr, wide(text).c_str(), L"EndfieldHUD", MB_OK | MB_ICONWARNING | MB_SETFOREGROUND);
 }
 
@@ -234,9 +239,8 @@ std::optional<ehud::data::ApplicationRoot> openRoot(const fs::path& base) {
     try { return ehud::data::openApplicationRoot(base); }
     catch (const ehud::data::StoreError& e) {
         if (e.code() == ehud::data::StoreErrorCode::newerVersion)
-            report("This EndfieldHUD data was created by a newer version. It was left unchanged; install the newer EndfieldHUD to use it.",
-                   "此 EndfieldHUD 数据由更新版本创建，已保持原样。请安装更新版本的 EndfieldHUD 后使用。");
-        else report("EndfieldHUD could not open its data folder. Nothing was changed.", "EndfieldHUD 无法打开数据文件夹，未作任何更改。");
+            report(newerData);
+        else report(dataFolderFailed);
         return std::nullopt;
     }
 }
@@ -247,14 +251,14 @@ int run(const std::vector<std::string>& values) {
     const app::FatalStage launch("launch");
     core::ApplicationArguments arguments;
     try { arguments = core::parseApplicationArguments(views); }
-    catch (const std::exception&) { report("EndfieldHUD received invalid launch arguments.", "EndfieldHUD 收到了无效的启动参数。"); return 1; }
+    catch (const std::exception&) { report(invalidArguments); return 1; }
 
     // --data-root (section 9 gate): an explicit absolute isolated root with
     // its own single instance; never the user's root, running copy or restart.
     fs::path isolated;
     if (!arguments.dataRoot.empty()) {
         isolated = fs::path(std::u8string(reinterpret_cast<const char8_t*>(arguments.dataRoot.data()), arguments.dataRoot.size())).lexically_normal();
-        if (!isolated.is_absolute()) { report("EndfieldHUD received invalid launch arguments.", "EndfieldHUD 收到了无效的启动参数。"); return 1; }
+        if (!isolated.is_absolute()) { report(invalidArguments); return 1; }
     }
     app::SingleInstanceGuard instance(isolated.empty() ? app::productionSingleInstanceNames() : app::isolatedSingleInstanceNames(isolated));
     if (!instance.primary()) {
@@ -270,8 +274,7 @@ int run(const std::vector<std::string>& values) {
     auto locator = core::ResourceLocator::open(executableDirectory() / "resources");
     const auto package = app::resolvePackagedResources(locator);
     if (!package.shell) {
-        report("The EndfieldHUD display resources are missing or damaged. Reinstall EndfieldHUD; your data was not changed.",
-               "EndfieldHUD 显示资源缺失或已损坏。请重新安装 EndfieldHUD；数据未被更改。");
+        report(displayResourcesDamaged);
         return 1;
     }
     reportDisabled(package);
@@ -311,7 +314,7 @@ int run(const std::vector<std::string>& values) {
                 wchar_t* end{};
                 const double seconds = length < 32 ? std::wcstod(text, &end) : 0.0;
                 if (length >= 32 || end != text + length || !std::isfinite(seconds) || seconds < 1 || seconds > 3600) {
-                    report("EndfieldHUD received invalid launch arguments.", "EndfieldHUD 收到了无效的启动参数。");
+                    report(invalidArguments);
                     return 1;
                 }
                 options.closedGraphicsGrace = seconds;
@@ -365,7 +368,7 @@ int run(const std::vector<std::string>& values) {
             std::erase_if(recoveries, [&](const auto& at) { return now - at > std::chrono::minutes(1); });
             recoveries.push_back(now);
             if (recoveries.size() > 3) {
-                report("EndfieldHUD could not start its display. Your data was not changed.", "EndfieldHUD 无法启动显示界面，数据未被更改。");
+                report(displayFailed);
                 return 1;
             }
             startup = {}; startup.login = true; reopen = *recovered;
@@ -386,18 +389,18 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     catch (const app::SystemBackdropUnavailable& e) {
         std::fprintf(stderr, "EndfieldHUD failed: %s (HRESULT %08x)\n", e.what(), static_cast<unsigned>(e.result()));
         writeFatal("SystemBackdropUnavailable", e.what(), static_cast<std::uint32_t>(e.result()));
-        reportWindows11Required();
+        report(windows11Required);
         return 1;
     } catch (const winrt::hresult_error& e) {
         std::fprintf(stderr, "EndfieldHUD failed: HRESULT %08x\n", static_cast<unsigned>(e.code().value));
         writeFatal("winrt::hresult_error", narrow(e.message()), static_cast<std::uint32_t>(e.code().value));
-        report("EndfieldHUD could not start its display. Your data was not changed.", "EndfieldHUD 无法启动显示界面，数据未被更改。");
+        report(displayFailed);
         return 1;
     } catch (const std::exception& e) {
         std::fprintf(stderr, "EndfieldHUD failed: %s\n", e.what());
         // RendererError and std::system_error carry their HRESULT/Win32 code in the message.
         writeFatal(typeid(e).name(), e.what(), std::nullopt);
-        report("EndfieldHUD stopped because of an error. Your saved data was not changed.", "EndfieldHUD 因错误而停止，已保存的数据未被更改。");
+        report(stoppedByError);
         return 1;
     }
 }

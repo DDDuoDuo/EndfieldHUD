@@ -47,7 +47,9 @@ void run(const std::filesystem::path&fixture,const std::filesystem::path&resourc
         check(std::abs(actual["fontSize"].number()-expected["fontSize"].number())<1e-9,"Exported fitted size "+name);
         check(actual["alignment"].string()==expected["alignment"].string(),"Exported alignment "+name);
         for(std::size_t c=0;c<4;++c)check(std::abs(actual["foregroundColor"]["sRGB"].array()[c].number()-expected["foregroundColor"]["sRGB"].array()[c].number())<1e-9,"Exported caption colour "+name);
-        for(const char*metric:{"ascender","descender","pointSize"})check(std::abs(actual["font"][metric].number()-expected["font"][metric].number())<1e-9,"Exported medium font metrics "+name);
+        // Mac 1.3.0: HUDStandardTextLayer medium, HarmonyOS Sans' own line metrics.
+        check(std::abs(actual["font"]["pointSize"].number()-expected["fontSize"].number())<1e-9&&std::abs(actual["font"]["ascender"].number()-expected["fontSize"].number()*.928)<1e-9&&
+              actual["fontWeight"].integer()==500,"HarmonyOS Sans medium caption "+name);
     }
     // 2. Native writer: first content event repaints all five surfaces.
     gpu::NativeIdCardCaptions captions(labels,leaves,options);
@@ -80,12 +82,25 @@ void run(const std::filesystem::path&fixture,const std::filesystem::path&resourc
     check(fitted==10||measure(profile.name,fitted)<=source.captions[0].width,"Fitted name fits the authored width");
     check(fitted==22||measure(profile.name,fitted+.5)>source.captions[0].width,"The largest fitting size is chosen");
     const auto shrunk=binding.captionLayer(leaves.leaves[0],0)["text"]["font"];
-    check(std::abs(shrunk["ascender"].number()-fitted*.966796875)<1e-9&&std::abs(shrunk["descender"].number()+fitted*.2109375)<1e-9,"Line metrics follow the fitted size");
+    check(std::abs(shrunk["ascender"].number()-fitted*.928)<1e-9&&std::abs(shrunk["descender"].number()+fitted*.244)<1e-9,"Line metrics follow the fitted size");
     check(painted(labels,leaves.surfaceIDs[0])==u"WWWWWWWWWWWWWWWWWWWW","Painted fitted name");
     // 8. Card theme tints MAX only.
     const auto beforeTheme=captions.stats().surfaceUpdates;profile.themeColorHex="6EDFE8";binding.update(input);captions.update(binding);
     check(captions.stats().surfaceUpdates==beforeTheme+1&&binding.captions()[4].color[0]==0x6E/255.,"Theme colour repaints MAX in the card accent");
     check(labels.report().unsupported.empty(),"Runtime caption content stays fully supported");
+    // 9. Recording mode (SHELL-44): "UID:" with the hatched bar, wiped in from
+    // the left over .35 s (HUDRedaction.playEntrance), Reduce Motion at once.
+    // (A surface with two text layouts, the caption and the bar's label, keeps no single painted layout to read back.)
+    const auto beforeBar=captions.stats().surfaceUpdates;
+    input.uidRedacted=true;check(binding.update(input)&&captions.update(binding)&&binding.captions()[1].text=="UID:"&&captions.stats().surfaceUpdates>beforeBar,"The UID caption reads UID: while recording");
+    check(labels.report().unsupported.empty(),"The redaction bar (fill, border, stripes, label) is supported raster content");
+    const auto bar=*binding.redaction();check(captions.wiping()&&captions.revealEdge()==bar.x,"The bar starts hidden behind its wipe until the next frame");
+    check(captions.advance(5,false)&&captions.revealEdge()==bar.x,"The wipe starts on the frame after the content event");
+    check(captions.advance(5+.35/2,false)&&*captions.revealEdge()>bar.x+bar.width/2&&*captions.revealEdge()<bar.x+bar.width,"The mask grows from the bar's left edge on the standard curve");
+    check(!captions.advance(5.36,false)&&!captions.revealEdge()&&!captions.wiping(),"After .35 s the caption shows whole and nothing wakes");
+    profile.name="Recorder";binding.update(input);captions.update(binding);
+    check(captions.wiping()&&!captions.advance(6,true)&&!captions.revealEdge(),"A repaint replays the wipe; Reduce Motion shows the bar at once");
+    input.uidRedacted=false;check(binding.update(input)&&captions.update(binding)&&!captions.revealEdge()&&!captions.wiping()&&painted(labels,leaves.surfaceIDs[1]).starts_with(u"UID: "),"Off: the UID returns without a wipe");
 }
 }
 int wmain(int argc,wchar_t**argv){

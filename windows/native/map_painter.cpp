@@ -85,7 +85,9 @@ struct Surface {
         // The source paints an opaque full bitmap background. Converting in
         // place avoids an additional9MiB swizzle buffer. Retain generic alpha
         // handling so any native precision edge remains correctly associated.
-        for(std::size_t n=0;n<result->straightRGBA.size();n+=4){auto*p=result->straightRGBA.data()+n;std::swap(p[0],p[2]);if(p[3]!=255){const unsigned alpha=p[3];for(unsigned c=0;c<3;++c)p[c]=alpha?std::uint8_t(std::min(255u,(unsigned(p[c])*255+alpha/2)/alpha)):0;}}return result;
+        bool opaque=true;
+        for(std::size_t n=0;n<result->straightRGBA.size();n+=4){auto*p=result->straightRGBA.data()+n;std::swap(p[0],p[2]);if(p[3]!=255){opaque=false;const unsigned alpha=p[3];for(unsigned c=0;c<3;++c)p[c]=alpha?std::uint8_t(std::min(255u,(unsigned(p[c])*255+alpha/2)/alpha)):0;}}
+        result->opaque=opaque;return result;
     }
 };
 void appendTransformed(Path&target,Path source,double factor,Point origin){for(auto&ring:source){for(auto&p:ring.points){p.x=origin.x+p.x*factor;p.y=origin.y+p.y*factor;}target.push_back(std::move(ring));}}

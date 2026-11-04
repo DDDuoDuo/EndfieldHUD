@@ -7,13 +7,14 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 OUTPUT="$1"; CACHE="$2"
 [[ ! -e "$OUTPUT" && ! -L "$OUTPUT" && -d "$CACHE" ]]
 mkdir -p "$OUTPUT"; OUTPUT="$(cd "$OUTPUT" && pwd)"; CACHE="$(cd "$CACHE" && pwd)"
-SDK="$(bash "$ROOT/scripts/build.sh" --print-sdk | tail -1)"
+SDK="$(bash "$ROOT/windows/tools/mac_sdk.sh")"
 python3 -I "$ROOT/windows/tools/charge_indicator_reference.py" "$ROOT" "$OUTPUT"
 xcrun swiftc -swift-version 5 -O -parse-as-library -sdk "$SDK" -module-cache-path "$CACHE" \
  -framework AppKit -framework QuartzCore -framework IOKit -framework CryptoKit \
  "$ROOT/Sources/BatteryMonitor.swift" "$ROOT/Sources/BatteryCapacity.swift" "$ROOT/Sources/HUDChargeMetric.swift" \
  "$ROOT/Sources/ChargeIndicatorView.swift" "$ROOT/Sources/HUDChargeBadge.swift" "$ROOT/Sources/HUDDeploymentFlicker.swift" \
- "$ROOT/Sources/DisplayPolicy.swift" "$ROOT/Sources/OverlayGeometry.swift" "$ROOT/Sources/DeviceBatteryProvider.swift" \
+ "$ROOT/Sources/HUDDesignFonts.swift" "$ROOT/Sources/HUDDesignText.swift" "$ROOT/Sources/HUDDesignTokens.swift" "$ROOT/Sources/HUDResources.swift" "$ROOT/Sources/HUDStartupTrace.swift" \
+ "$ROOT/Sources/Localization.swift" "$ROOT/Sources/LocalizationCatalog.swift" "$ROOT/Sources/LocalizationCatalogRedesign.swift" "$ROOT/Sources/DisplayPolicy.swift" "$ROOT/Sources/OverlayGeometry.swift" "$ROOT/Sources/DeviceBatteryProvider.swift" \
  "$OUTPUT/ChargeReferenceFixture.swift" "$ROOT/windows/tools/module_reference_layers.swift" \
  "$ROOT/windows/tools/charge_indicator_reference.swift" -o "$OUTPUT/charge-reference" >"$OUTPUT/compile.log" 2>&1 \
  || { cat "$OUTPUT/compile.log" >&2; exit 1; }

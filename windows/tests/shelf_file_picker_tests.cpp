@@ -99,6 +99,12 @@ void readerMode(){
     dialog->onShow={};picker.request();dispatch(picker,window.next());dispatch(picker,window.next());result=picker.drain(51);
     check(result&&SUCCEEDED(result->result)&&dialog->labels.mode==n::ShelfPickerMode::mixedReferences,"The next Shelf request restores its original directory/reference behavior");
     check(!IsWindowVisible(window.value),"Reader picker tests never show a real dialog or read a user book");
+    // The media panels (Archive, Projection untitled; Notes titled): empty labels keep the dialog's own.
+    picker.setLabels({{},{},{},n::ShelfPickerMode::media});dialog->paths={"C:\\owned\\a.png","C:\\owned\\b.mp4"};picker.request();dispatch(picker,window.next());dispatch(picker,window.next());result=picker.drain(51);
+    check(result&&SUCCEEDED(result->result)&&result->paths==dialog->paths&&dialog->labels.mode==n::ShelfPickerMode::media&&dialog->labels.title.empty()&&dialog->labels.addReferences.empty(),"An untitled media request keeps the dialog's own title and button");
+    picker.setLabels({"Add image/video notes","Add media",{},n::ShelfPickerMode::media});picker.request();dispatch(picker,window.next());dispatch(picker,window.next());result=picker.drain(51);
+    check(result&&SUCCEEDED(result->result)&&dialog->labels.title=="Add image/video notes"&&dialog->labels.addReferences=="Add media","The Notes media request carries its title and button");
+    rejects([&]{picker.setLabels({{},"Add",{},n::ShelfPickerMode::mixedReferences});},"Only the media mode may leave its labels to the dialog");
 }
 d::ShelfFileAccess lease(unsigned identity,unsigned&released){d::ShelfFileMetadata metadata;metadata.windowsPath="C:\\explicit-synthetic\\owned.txt";metadata.name="owned.txt";metadata.identity.volumeSerial=1;metadata.identity.objectID[0]=static_cast<std::uint8_t>(identity);return {std::move(metadata),[&]{++released;}};}
 void revealIdentity(){

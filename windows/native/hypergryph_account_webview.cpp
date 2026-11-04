@@ -8,8 +8,10 @@
 #include <array>
 #include <cmath>
 #include <filesystem>
+#include <mutex>
 #include <optional>
 #include <random>
+#include <set>
 #include <stdexcept>
 #include <vector>
 
@@ -20,6 +22,28 @@
 namespace endfield::native {
 namespace {
 namespace h=modules::hypergryph;namespace p=modules::hypergryph::login_policy;
+// Mac 1.3.0 HypergryphAccountLogin (MODS-875, checklist C15-17): the window's
+// own texts follow the HUD font standard (HUDFontResolver.nsFont: HarmonyOS
+// Sans; bold auth buttons; the site no longer monospaced); the official page
+// itself is never restyled. The login's Win32 controls draw with GDI, which
+// cannot take the DirectWrite cascade the HUD renders with (HarmonyOS Sans +
+// the region's Noto): the bundled HarmonyOS Sans faces (fonts/ beside the
+// executable, the rasterizer's directory) are registered for this process only
+// (AddFontResourceExW FR_PRIVATE, once, never installed) and named, and GDI
+// font linking supplies glyphs HarmonyOS Sans lacks. Without the files (a
+// damaged install, the stub-built tests) Segoe UI stands in.
+const wchar_t* loginFamily() {
+    static const bool registered=[]{
+        std::array<wchar_t,32768> path{};
+        const auto length=GetModuleFileNameW(nullptr,path.data(),static_cast<DWORD>(path.size()));
+        if(!length||length>=path.size()) return false;
+        const auto fonts=std::filesystem::path(std::wstring(path.data(),length)).parent_path()/L"fonts";
+        bool any=false;
+        for(const wchar_t* face:{L"HarmonyOS_Sans_Regular.ttf",L"HarmonyOS_Sans_Bold.ttf"}) any|=AddFontResourceExW((fonts/face).c_str(),FR_PRIVATE,nullptr)>0;
+        return any;
+    }();
+    return registered?L"HarmonyOS Sans":L"Segoe UI";
+}
 using Microsoft::WRL::Callback;using Microsoft::WRL::ComPtr;
 std::wstring wide(std::string_view text) {
     if(text.empty()) return {};const int n=MultiByteToWideChar(CP_UTF8,0,text.data(),int(text.size()),nullptr,0);
@@ -42,18 +66,31 @@ std::filesystem::path temporaryBase(const std::filesystem::path& root) {
     if(!root.empty()) return root;
     wchar_t base[MAX_PATH+1]{};const DWORD n=GetTempPathW(MAX_PATH,base);if(!n||n>MAX_PATH) throw std::runtime_error("No temporary directory");return base;
 }
+// The profiles this process made and has not deleted yet. A sweep queued on
+// the utility worker may run late, after a later sign-in made its folder and
+// started its browser there: it never touches one of these. A folder is
+// listed before it exists and leaves the list once its delete ran.
+struct LiveProfiles {std::mutex lock;std::set<std::filesystem::path> folders;};
+LiveProfiles& liveProfiles() {static LiveProfiles live;return live;}
+bool liveProfile(const std::filesystem::path& folder) {auto& l=liveProfiles();std::lock_guard guard(l.lock);return l.folders.contains(folder);}
+void removeProfile(const std::filesystem::path& folder) {
+    std::error_code e;std::filesystem::remove_all(folder,e);
+    auto& l=liveProfiles();std::lock_guard guard(l.lock);l.folders.erase(folder);
+}
 // Private, temporary browser profile (Mac: WKWebsiteDataStore.nonPersistent()).
 std::filesystem::path privateProfileFolder(const std::filesystem::path& root) {
     std::random_device r;auto folder=temporaryBase(root)/(std::wstring(profilePrefix)+std::to_wstring(r())+std::to_wstring(r()));
-    std::filesystem::create_directories(folder);return folder;
+    {auto& l=liveProfiles();std::lock_guard guard(l.lock);l.folders.insert(folder);}
+    try {std::filesystem::create_directories(folder);} catch(...) {auto& l=liveProfiles();std::lock_guard guard(l.lock);l.folders.erase(folder);throw;}
+    return folder;
 }
 // Best-effort removal of profiles left by an earlier run that ended before its
 // browser process exited. Only this presenter's own prefix is touched.
-void sweepStaleProfiles(const std::filesystem::path& root,const std::filesystem::path& keep) {
+void sweepStaleProfiles(const std::filesystem::path& root) {
     std::error_code e;
     for(const auto& entry:std::filesystem::directory_iterator(temporaryBase(root),e)) {
         const auto name=entry.path().filename().wstring();
-        if(name.rfind(profilePrefix,0)==0&&entry.path()!=keep&&entry.is_directory(e)) std::filesystem::remove_all(entry.path(),e);
+        if(name.rfind(profilePrefix,0)==0&&!liveProfile(entry.path())&&entry.is_directory(e)) std::filesystem::remove_all(entry.path(),e);
     }
 }
 double dpiScale(HWND hwnd) {const UINT dpi=hwnd?GetDpiForWindow(hwnd):0;return dpi?dpi/96.0:1.0;}
@@ -128,7 +165,7 @@ struct WebViewLoginPresenter::Impl:std::enable_shared_from_this<Impl> {
     struct Popup {HWND window{};ComPtr<ICoreWebView2Controller> controller;ComPtr<ICoreWebView2> view;};
     WebViewLoginOptions options;std::optional<h::LoginSession> session;std::size_t reported{};
     std::function<void(std::optional<h::LoginResult>,h::LoginFailure)> completion;
-    HWND window{},title{},detail{},site{},continueButton{},cancelButton{},status{},retry{},toolbarCancel{},download{},check{},note{};HFONT titleFont{},bodyFont{},monoFont{};
+    HWND window{},title{},detail{},site{},continueButton{},cancelButton{},status{},retry{},toolbarCancel{},download{},check{},note{};HFONT titleFont{},bodyFont{},siteFont{};
     // Physical pixels per point of the login window: the HUD's monitor at
     // creation, then each WM_DPICHANGED (fonts and layout follow it).
     double scale{1};
@@ -240,21 +277,24 @@ struct WebViewLoginPresenter::Impl:std::enable_shared_from_this<Impl> {
         return hwnd;
     }
     void makeFonts() {
-        for(HFONT* font:{&titleFont,&bodyFont,&monoFont,&buttonFont}) if(*font) {DeleteObject(*font);*font=nullptr;}
+        for(HFONT* font:{&titleFont,&bodyFont,&siteFont,&buttonFont}) if(*font) {DeleteObject(*font);*font=nullptr;}
         const auto px=[&](double v){return -int(std::lround(v*scale));};
-        titleFont=CreateFontW(px(20),0,0,0,FW_SEMIBOLD,0,0,0,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,L"Segoe UI");
-        bodyFont=CreateFontW(px(13),0,0,0,FW_NORMAL,0,0,0,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,L"Segoe UI");
-        monoFont=CreateFontW(px(13),0,0,0,FW_NORMAL,0,0,0,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,FIXED_PITCH,L"Consolas");
-        buttonFont=CreateFontW(px(13),0,0,0,FW_BOLD,0,0,0,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,L"Segoe UI");
+        // nsFont(20, .semibold) (semibold renders bold, HUDFontWeight), nsFont(13),
+        // the site in nsFont(13) too (no longer monospaced), nsFont(13, .bold).
+        const wchar_t* family=loginFamily();
+        titleFont=CreateFontW(px(20),0,0,0,FW_BOLD,0,0,0,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,family);
+        bodyFont=CreateFontW(px(13),0,0,0,FW_NORMAL,0,0,0,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,family);
+        siteFont=CreateFontW(px(13),0,0,0,FW_NORMAL,0,0,0,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,family);
+        buttonFont=CreateFontW(px(13),0,0,0,FW_BOLD,0,0,0,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,family);
     }
     // WM_DPICHANGED: the same point sizes at the new scale on every page control.
     void rescale(double next) {
         if(!window||!(next>0)||next==scale) return;
-        const HFONT previous[]{titleFont,bodyFont,monoFont,buttonFont};titleFont=bodyFont=monoFont=buttonFont=nullptr;
+        const HFONT previous[]{titleFont,bodyFont,siteFont,buttonFont};titleFont=bodyFont=siteFont=buttonFont=nullptr;
         scale=next;makeFonts();
         for(HWND child=GetWindow(window,GW_CHILD);child;child=GetWindow(child,GW_HWNDNEXT)) {
             const auto font=reinterpret_cast<HFONT>(SendMessageW(child,WM_GETFONT,0,0));
-            const HFONT replacement=font==previous[0]?titleFont:font==previous[2]?monoFont:font==previous[1]?bodyFont:font==previous[3]?buttonFont:nullptr;
+            const HFONT replacement=font==previous[0]?titleFont:font==previous[2]?siteFont:font==previous[1]?bodyFont:font==previous[3]?buttonFont:nullptr;
             if(replacement) SendMessageW(child,WM_SETFONT,reinterpret_cast<WPARAM>(replacement),TRUE);
         }
         for(HFONT font:previous) if(font) DeleteObject(font);
@@ -412,7 +452,7 @@ struct WebViewLoginPresenter::Impl:std::enable_shared_from_this<Impl> {
         const auto strings=h::LoginSession::strings(session->region(),options.language);
         title=control(L"STATIC",wide(strings.consentTitle),SS_CENTER,titleID,titleFont);
         detail=control(L"STATIC",wide(strings.consentDetail),SS_CENTER,detailID,bodyFont);
-        site=control(L"STATIC",wide(strings.site),SS_CENTER,siteID,monoFont);
+        site=control(L"STATIC",wide(strings.site),SS_CENTER,siteID,siteFont);
         continueButton=authButton(wide(strings.continueLabel),continueID);
         cancelButton=authButton(wide(strings.cancelLabel),cancelID);
     }
@@ -431,7 +471,7 @@ struct WebViewLoginPresenter::Impl:std::enable_shared_from_this<Impl> {
         const auto strings=h::LoginSession::strings(region,options.language);
         title=control(L"STATIC",wide(text.title),SS_CENTER,titleID,titleFont);
         detail=control(L"STATIC",wide(text.detail),SS_CENTER,detailID,bodyFont);
-        site=control(L"EDIT",wide(text.site),ES_CENTER|ES_READONLY|ES_AUTOHSCROLL|WS_TABSTOP,siteID,monoFont);
+        site=control(L"EDIT",wide(text.site),ES_CENTER|ES_READONLY|ES_AUTOHSCROLL|WS_TABSTOP,siteID,siteFont);
         download=authButton(wide(text.downloadLabel),downloadID);
         check=authButton(wide(text.checkLabel),checkID);
         cancelButton=authButton(wide(strings.cancelLabel),cancelID);
@@ -519,7 +559,8 @@ struct WebViewLoginPresenter::Impl:std::enable_shared_from_this<Impl> {
         retry=authButton(wide(strings.retryLabel),retryID);
         toolbarCancel=authButton(wide(strings.cancelLabel),toolbarCancelID);
         layout();diag();setStatus();
-        userData=privateProfileFolder(options.profileRoot);sweepStaleProfiles(options.profileRoot,userData);
+        userData=privateProfileFolder(options.profileRoot);
+        offThread([root=options.profileRoot]{sweepStaleProfiles(root);});
         std::weak_ptr<Impl> weak=shared_from_this();const auto token=generation;
         const HRESULT hr=CreateCoreWebView2EnvironmentWithOptions(nullptr,userData.c_str(),nullptr,Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(
             [weak,token](HRESULT result,ICoreWebView2Environment* env)->HRESULT {
@@ -672,8 +713,11 @@ struct WebViewLoginPresenter::Impl:std::enable_shared_from_this<Impl> {
             std::weak_ptr<Impl> weak=shared_from_this();Retired entry{env,folder,{}};
             const auto key=env.Get();
             if(SUCCEEDED(env5->add_BrowserProcessExited(Callback<ICoreWebView2BrowserProcessExitedEventHandler>([weak,key,folder](ICoreWebView2Environment*,ICoreWebView2BrowserProcessExitedEventArgs*)->HRESULT {
-                std::error_code e;std::filesystem::remove_all(folder,e);
-                if(auto self=weak.lock()) {
+                const auto removeFolder=[folder]{removeProfile(folder);};
+                auto self=weak.lock();
+                if(!self) removeFolder();
+                else {
+                    self->offThread(removeFolder);
                     auto& list=self->retired;
                     for(auto it=list.begin();it!=list.end();++it) if(it->environment.Get()==key) {
                         ComPtr<ICoreWebView2Environment5> registered;if(SUCCEEDED(it->environment.As(&registered))) registered->remove_BrowserProcessExited(it->token);
@@ -682,7 +726,12 @@ struct WebViewLoginPresenter::Impl:std::enable_shared_from_this<Impl> {
                 }
                 return S_OK;}).Get(),&entry.token))) {retired.push_back(std::move(entry));return;}
         }
-        std::error_code e;std::filesystem::remove_all(folder,e); // no browser was started, or best effort
+        offThread([folder]{removeProfile(folder);}); // no browser was started, or best effort
+    }
+    // Profile file work (the sweep, the deletes) on options.fileWork, else here.
+    void offThread(std::function<void()> work) {
+        if(options.fileWork) try {if(options.fileWork(work)) return;} catch(...) {}
+        work();
     }
     void requestFinish(std::optional<h::LoginResult> result,h::LoginFailure failure) {
         if(finishing||!session||!session->presenting()) return;
@@ -692,7 +741,7 @@ struct WebViewLoginPresenter::Impl:std::enable_shared_from_this<Impl> {
     void destroyWindow() {
         if(window) {DestroyWindow(window);window=nullptr;}
         status=retry=toolbarCancel=title=detail=site=continueButton=cancelButton=download=check=note=nullptr;lastFocus=nullptr;pageFocused=false;
-        for(HFONT* font:{&titleFont,&bodyFont,&monoFont,&buttonFont}) if(*font) {DeleteObject(*font);*font=nullptr;}
+        for(HFONT* font:{&titleFont,&bodyFont,&siteFont,&buttonFont}) if(*font) {DeleteObject(*font);*font=nullptr;}
         hovered=nullptr;
     }
     void finish(std::optional<h::LoginResult> result,h::LoginFailure failure) {
@@ -728,7 +777,7 @@ WebViewLoginPresenter::WebViewLoginPresenter(WebViewLoginOptions o):impl_(std::m
 WebViewLoginPresenter::~WebViewLoginPresenter() {
     auto& i=*impl_;i.completion={};i.finish(std::nullopt,h::LoginFailure::cancelled);
     // App exit: retired environments are released; leftovers are swept next time.
-    for(auto& entry:i.retired) {std::error_code e;std::filesystem::remove_all(entry.folder,e);}
+    for(auto& entry:i.retired) removeProfile(entry.folder);
     i.retired.clear();
 }
 std::optional<std::wstring> WebViewLoginPresenter::runtimeVersion() {

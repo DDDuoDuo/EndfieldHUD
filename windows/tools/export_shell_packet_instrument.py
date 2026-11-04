@@ -5,7 +5,10 @@ import json
 import pathlib
 import sys
 
-EXPECTED_RENDERER_SHA256 = 'b6cb9fdff4d546e480f5bda515ba6c8f4b18d5e02b70a66c8635bb81a1f9fa32'
+# Mac 1.3.0 (origin/main 4fda15a). Reviewed against v1.2.0 (ca04f14, b6cb9fdf...): the only change is the
+# development-only `PreviewCapture` switch in `copyDrawableImage` (default `.blackMatte`, as before). The raw
+# readback the export hook reads (`drawableReadbackBGRA`) is stored before that switch, and no anchor moved.
+EXPECTED_RENDERER_SHA256 = 'ddda052f5ac6878ae75e862da2f091ac96b445ea42d2f507dcdcfc5111a94056'
 
 
 def instrument(source: str, hooks: str) -> str:

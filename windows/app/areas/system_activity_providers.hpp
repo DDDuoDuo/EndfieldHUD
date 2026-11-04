@@ -18,20 +18,18 @@
 //     the front (ClipboardPayload.matches); a WM_POWERBROADCAST storm posts
 //     one notice;
 //   - EventLogCanvas timestamps from the current Windows time zone;
-//   - Activity app-row icons loaded on the shared executor (synthetic loader),
-//     delivered by the coverage drain, bound by key and kept across cycles;
+//   - Activity app-row icons (modules::ActivityAppIcons over
+//     native::ActivityIconLoads) loaded on the shared executor (synthetic
+//     loader), delivered by the coverage drain and kept by app across cycles;
 //   - the charge-metric telemetry link over a sampling plan;
-//   - Storage's volume title fallback and Clipboard status messages;
-//   - the authored Clipboard rows reveal and Activity sort shutters only ever
-//     growing (the user-reported glitch of the measured Core Animation morph),
-//     the GPU total load per app and overall from engine running times with
-//     the first Activity overview row (GPU first, the user's Windows layout)
-//     and its Total Load caption, and the Storage volume menu (Windows
-//     additions);
-//   - when the host publishes its built-in Clipboard, Event Log, Activity
-//     Monitor and Storage owners (their previews' serviceKey), each one that
-//     is not shown keeps no raster artwork once the HUD has closed
-//     (conceal(), HostEvent::overlayConcealed);
+//   - Storage's disk name fallback and Clipboard status messages;
+//   - the authored Clipboard rows reveal only ever growing (the user-reported
+//     glitch of the measured Core Animation morph), the GPU total load per app
+//     and overall from engine running times and its Total Load caption, and
+//     the Storage disk order (startup first, the chosen disk kept in the menu);
+//   - when the host publishes its built-in Clipboard and Event Log owners
+//     (their previews' serviceKey), each one that is not shown keeps no raster
+//     artwork once the HUD has closed (conceal(), HostEvent::overlayConcealed);
 //   - when the host publishes its Event Log (native::eventLogOwnerServiceKey),
 //     every record of the host-wired action hooks (Notes, Reader, Archive,
 //     Projection, File Shelf, Clipboard) carries exactly the Mac

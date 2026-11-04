@@ -83,11 +83,10 @@ std::vector<Case>cases(){
     add("everything",[](auto&a){a.exposure=.21;a.brightness=.04;a.contrast=1.1;a.saturation=1.2;a.temperature=5600;a.tint=-12;a.highlights=.8;a.shadows=.25;a.curve={.02,.27,.52,.76,.97};a.levelsBlack=.03;a.levelsWhite=.96;a.levelsGamma=1.15;a.filter=m::MediaAssemblyFilter::special2;a.crop={.05,.1,.9,.8};a.rotationQuarterTurns=2;});
     return out;
 }
-const std::array<std::string_view,15>filterIDs{"none","sp_filter_1","sp_filter_2","sp_filter_3","sp_filter_4","sp_filter_5","sp_filter_6","filter_1","filter_2","filter_3","filter_4","filter_5","filter_6","filter_7","filter_8"};
 
 void run(const fs::path&assets){
     Device d;std::map<m::MediaAssemblyFilter,std::vector<std::uint8_t>>cubes;
-    const auto cube=[&](m::MediaAssemblyFilter f)->std::span<const std::uint8_t>{if(f==m::MediaAssemblyFilter::none)return {};auto&v=cubes[f];if(v.empty())v=readFile(assets/"luts"/(std::string(filterIDs[std::size_t(f)])+".rgb8"));return v;};
+    const auto cube=[&](m::MediaAssemblyFilter f)->std::span<const std::uint8_t>{if(f==m::MediaAssemblyFilter::none)return {};auto&v=cubes[f];if(v.empty())v=readFile(assets/"luts"/(std::string(m::mediaAssemblyFilterItem(f).id)+".rgb8"));return v;};
     std::cout<<"GPU programs "<<(n::mediaAssemblyGpuShadersEmbedded()?"embedded at build time (fxc)":"compiled at run time (no fxc in this build)")<<'\n';
     check(n::mediaAssemblyGpuShadersEmbedded()==n::mediaAssemblyGpuShadersReady(),"Build-time programs are ready before any processor exists; run-time ones only after a compile");
     const auto compileStart=std::chrono::steady_clock::now();n::NativeMediaAssemblyGpuProcessor gpu(d.shared());
@@ -300,7 +299,7 @@ void run(const fs::path&assets){
 }
 int wmain(int argc,wchar_t**argv){
     try{
-        check(argc==2,"usage: media_assembly_gpu_tests <resources/media-assembly>");run(fs::absolute(argv[1]));
+        check(argc==2,"usage: media_assembly_gpu_tests <Resources/MediaAssembly>");run(fs::absolute(argv[1]));
         std::cout<<"media_assembly_gpu_tests: "<<checks<<" checks passed (WARP, synthetic frames only)\n";return 0;
     }catch(const std::exception&e){counting=false;std::cerr<<"media_assembly_gpu_tests failed after "<<checks<<": "<<e.what()<<'\n';return 1;}
 }

@@ -79,15 +79,31 @@ void ShelfFileAccess::close()noexcept{auto cleanup=std::exchange(cleanup_,{});if
 FileShelfStore::FileShelfStore(const std::filesystem::path& root,Platform platform):FileShelfStore(root,std::move(platform),Creation{}){}
 FileShelfStore::FileShelfStore(const std::filesystem::path& root,Platform platform,Creation creation):platform_(std::move(platform)),creation_(std::move(creation)){
     require(bool(platform_.acquireImport)&&bool(platform_.resolve)&&bool(creation_.id)&&bool(creation_.timestamp),"Incomplete shelf platform/creation adapter");
-    detail::validateRoot(root);path_=root/"FileShelf"/"shelf.json";persisted_=detail::readFile(path_,maximumArchiveBytes);
-    if(!persisted_)return;
+    detail::validateRoot(root);path_=root/"FileShelf"/"shelf.json";
+    const auto bytes=detail::readFile(path_,maximumArchiveBytes);load(bytes);persisted_=bytes;confirmed_=bytes;
+}
+// The records and envelope of an archive (none: an empty shelf).
+void FileShelfStore::load(const std::optional<std::string>& bytes){
+    if(!bytes){items_.clear();envelope_=Json::Object{};return;}
     try{
-        auto envelope=Json::parse(*persisted_,maximumArchiveBytes);require(envelope.isObject()&&envelope["version"].isNumber(),"Missing shelf version");
+        auto envelope=Json::parse(*bytes,maximumArchiveBytes);require(envelope.isObject()&&envelope["version"].isNumber(),"Missing shelf version");
         const auto version=envelope["version"].integer();if(version>1)throw StoreError(StoreErrorCode::newerVersion,"Shelf was saved by a newer version; original data preserved");
         require(version==1&&envelope["items"].isArray(),"Invalid shelf archive");std::vector<ShelfRecord> items;std::set<std::string,std::less<>> ids;
         items.reserve(envelope["items"].array().size());for(const auto& value:envelope["items"].array()){auto next=decoded(value);require(ids.insert(next.id).second,"Duplicate shelf UUID");items.push_back(std::move(next));}
         items_=std::move(items);envelope_=std::move(envelope);
     }catch(const StoreError&){throw;}catch(const std::exception&){throw StoreError(StoreErrorCode::invalid,"Shelf archive is invalid; original data preserved");}
+}
+void FileShelfStore::write(const Save& save){detail::replaceFile(save.path,save.expected,save.bytes,maximumArchiveBytes);}
+bool FileShelfStore::saveFinished(const Save& save,bool succeeded){
+    Operation operation(busy_);
+    // Queued before a failure: it expected bytes that never reached the disk.
+    if(save.serial<=abandoned_)return false;
+    if(succeeded){if(save.serial>confirmedSerial_){confirmed_=save.bytes;confirmedSerial_=save.serial;}return false;}
+    abandoned_=serial_;
+    // The archive known on disk was written (or read) by this store: it decodes.
+    try{load(confirmed_);}catch(const std::exception&){items_.clear();envelope_=Json::Object{};}
+    persisted_=confirmed_;
+    return true;
 }
 void FileShelfStore::commit(std::vector<ShelfRecord> next){
     auto envelope=envelope_;envelope["version"]=1;Json::Array rows;rows.reserve(next.size());std::set<std::string,std::less<>> ids;
@@ -96,7 +112,10 @@ void FileShelfStore::commit(std::vector<ShelfRecord> next){
     // only moves/swaps, so a later allocation cannot split disk and memory state.
     std::optional<std::string> bytes;
     try{bytes=envelope.encode(maximumArchiveBytes);}catch(const std::exception&){throw StoreError(StoreErrorCode::tooLarge,"Shelf metadata exceeds the explicit archive byte bound");}
-    detail::replaceFile(path_,persisted_,*bytes,maximumArchiveBytes);
+    // Deferred: the writer queued it. At once: without a writer, or when it
+    // could not queue one (every earlier save has finished by then).
+    if(writer_&&writer_(Save{path_,persisted_,*bytes,serial_+1}))++serial_;
+    else{detail::replaceFile(path_,persisted_,*bytes,maximumArchiveBytes);confirmed_=*bytes;confirmedSerial_=++serial_;}
     items_.swap(next);envelope_=std::move(envelope);persisted_.swap(bytes);
 }
 std::size_t FileShelfStore::add(std::span<const std::string> tokens){
@@ -111,6 +130,10 @@ std::size_t FileShelfStore::add(std::span<const std::string> tokens){
 }
 bool FileShelfStore::remove(std::string_view id){Operation operation(busy_);const auto found=std::find_if(items_.begin(),items_.end(),[&](const auto& row){return equalUUID(row.id,id);});if(found==items_.end())return false;
     auto next=items_;next.erase(next.begin()+std::distance(items_.begin(),found));commit(std::move(next));return true;
+}
+std::size_t FileShelfStore::remove(std::span<const std::string> ids){Operation operation(busy_);auto next=items_;
+    const auto before=next.size();std::erase_if(next,[&](const auto& row){return std::any_of(ids.begin(),ids.end(),[&](const std::string& id){return equalUUID(row.id,id);});});
+    const auto removed=before-next.size();if(removed)commit(std::move(next));return removed;
 }
 bool FileShelfStore::clear(){Operation operation(busy_);if(items_.empty())return false;commit({});return true;}
 ShelfFileAccess FileShelfStore::resolve(const ShelfRecord& record){auto lease=platform_.resolve(record);require(lease.open(),"Native resolver returned a closed shelf lease");metadata(lease.metadata());

@@ -89,17 +89,18 @@ struct ApplicationOptions {
     std::string cachePin;
     bool runtimeInput{}, warp{};
     // Module asset roots (empty: module not installed).
-    std::filesystem::path notesAssets, notesFormatAssets, shelfAssets, shelfMask, clipboardAssets,
-        residentIcons, settingsAssets, archiveAssets, storageAssets, activityAssets,
+    std::filesystem::path notesFormatAssets,
+        residentIcons, settingsAssets,
         mapGeography, mapPlayerAssets, orbipomAssets;
-    std::string notesAssetsSHA;
     // Data: every store's explicit appRoot. Shelf may use a separate root.
     std::filesystem::path dataRoot, shelfDataRoot;
     // Optional modules and providers.
     bool reader{}, calendar{}, projection{};
     bool nativeClipboard{}, nativeActivity{};            // OS readers (visible only)
-    bool volumeFixture{}, eventLogFixture{}, workModeFixture{}, batteryFixture{}; // synthetic previews
+    bool clipboardFixture{}, volumeFixture{}, eventLogFixture{}, workModeFixture{}, batteryFixture{}, storageFixture{}, activityFixture{}; // synthetic previews
     bool nativeVolume{}, nativeBattery{}, nativeEventLog{}, nativeStorage{}; // production providers
+    bool fileShelf{}; // the File Shelf on shelfDataRoot (production: the module set; previews: --shelf-data)
+    bool archive{};   // Archive on dataRoot (production: the module set; previews: --archive)
     // Hidden verification only.
     bool moduleCoverage{}, coverage{}, readerScrollTrace{}, sessionEndCoverage{};
     std::filesystem::path report, snapshots, liveDiagnostics;
@@ -163,6 +164,18 @@ struct ApplicationOptions {
     // laptop's 165 Hz display), which the hidden session lacks.
     std::filesystem::path idleTrace;
     double idleTraceSeconds{30}, idleTraceRefreshRate{165};
+    // Hidden animation trace (watch_session_preview --animation-trace): the
+    // same owner and scheduling as the idle trace, recording every frame of
+    // the openings and closings (first, warm, after the graphics release and,
+    // with animationTraceModules, on each design module). Numbers and owner/
+    // module names only.
+    std::filesystem::path animationTrace;
+    bool animationTraceModules{};
+    // Its window's DPI (OverlayOptions::testDpi; 0: the session's), changed
+    // once while the HUD is closed before its last openings.
+    unsigned animationTraceDpi{};
+    // 1 or 2 (with Reduce Motion): the HUD opens at launch before any prewarm.
+    unsigned animationTraceLaunchOpen{};
     // How long the idle trace keeps the HUD closed before each closed window
     // and before its first opening (unset: just past the grace, so they
     // measure the released device; shorter: a closed HUD that still keeps it).

@@ -79,13 +79,13 @@ enum class Encoding : std::uint8_t { identity, lzms };
 std::string_view encodingName(Encoding) noexcept;
 std::optional<Encoding> encodingFromName(std::string_view) noexcept;
 
-// Release version from windows/source-authority.json ("v1.2.0", build 18).
+// Release version from windows/source-authority.json ("v1.3.0", build 19).
 struct ProductVersion {
     int major{}, minor{}, patch{}, build{};
     auto operator<=>(const ProductVersion&) const = default;
-    std::string release() const;  // "1.2.0"
-    std::string display() const;   // "1.2.0 (18)"
-    std::string dotted() const;    // "1.2.0.18" (uninstall entry DisplayVersion)
+    std::string release() const;  // "1.3.0"
+    std::string display() const;   // "1.3.0 (19)"
+    std::string dotted() const;    // "1.3.0.19" (uninstall entry DisplayVersion)
 };
 std::optional<ProductVersion> parseProductVersion(std::string_view release, std::int64_t build) noexcept;
 std::optional<ProductVersion> parseDottedVersion(std::string_view dotted) noexcept;
@@ -179,5 +179,5 @@ InstallManifest decodeInstallManifest(std::string_view json);
 
 // Release artifact names: extra assets on the shared "v<release>" GitHub
 // release, next to the Mac files (packaging/update_check.hpp).
-std::string releaseArtifactStem(const ProductVersion&); // EndfieldHUD-1.2.0-build18-windows-x64
+std::string releaseArtifactStem(const ProductVersion&); // EndfieldHUD-1.3.0-build19-windows-x64
 } // namespace endfield::packaging

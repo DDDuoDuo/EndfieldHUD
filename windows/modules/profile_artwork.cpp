@@ -93,7 +93,11 @@ ProfileImage idCardHoverArtwork(const ProfileImage&source,std::array<double,3>ac
     const std::array<unsigned,3>sc{static_cast<unsigned>(std::lround(accent[0]*.38*255)),static_cast<unsigned>(std::lround(accent[1]*.38*255)),static_cast<unsigned>(std::lround(accent[2]*.38*255))};
     const double keep=std::lround(.05/.38*255)/255.;
     for(unsigned y=0;y<out.height;++y)for(unsigned x=0;x<out.width;++x){
-        auto*p=&out.rgba[(std::size_t(y)*out.width+x)*4];const unsigned da=p[3];
+        auto*p=&out.rgba[(std::size_t(y)*out.width+x)*4];
+        // HUDSourceProfileArtwork.hoverCoverageThreshold (Mac 1.3.0): the
+        // sprite's near-transparent padding (alpha 1-8, a band left of the
+        // card) is cleared first, so the accent never lights it outside the card.
+        const unsigned da=p[3]<hoverCoverageThreshold?0:p[3];
         // sourceIn: accent .38 wherever the artwork has alpha.
         for(unsigned c=0;c<3;++c)p[c]=static_cast<std::uint8_t>(mul(sc[c],da));p[3]=static_cast<std::uint8_t>(mul(sa,da));
         // destinationIn by .05/.38 inside the antialiased rounded panel.
@@ -210,6 +214,20 @@ ProfileImage resample(const ProfileImage&source,int orientation,core::Rect regio
     }
     return out;
 }
+}
+ProfilePanningImage profilePanningImage(const ProfileImage&source,int orientation,double side,double zoom,double contentsScale){
+    bounded(source.width,source.height);need(source.rgba.size()==std::size_t(source.width)*source.height*4,"Profile portrait size");
+    need(std::isfinite(side)&&side>0,"Profile panning well");
+    if(orientation<1||orientation>8)orientation=1;
+    const bool swap=orientation>=5;
+    const double width=swap?source.height:source.width,height=swap?source.width:source.height;
+    const double fillWidth=std::max(1.,width/height),fillHeight=std::max(1.,height/width);
+    const double scale=std::isfinite(contentsScale)?std::clamp(contentsScale,1.,8.):2;
+    const double magnification=std::isfinite(zoom)?std::clamp(zoom,1.,20.):1;
+    const double longSide=std::min(2048.,side*std::max(fillWidth,fillHeight)*magnification*scale*1.35);
+    const double factor=std::min(1.,longSide/std::max(width,height));
+    const unsigned w=std::max(1u,static_cast<unsigned>(std::lround(width*factor))),h=std::max(1u,static_cast<unsigned>(std::lround(height*factor)));
+    return {resample(source,orientation,{0,0,width,height},w,h),fillWidth,fillHeight};
 }
 ProfileImage profileResampled(const ProfileImage&image,unsigned width,unsigned height){
     bounded(image.width,image.height);bounded(width,height);need(image.rgba.size()==std::size_t(image.width)*image.height*4,"Profile image size");

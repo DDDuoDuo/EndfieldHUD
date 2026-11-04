@@ -20,10 +20,9 @@ void Application::Impl::cleanup(){if(cleaned)return;cleaned=true;ready=false;sto
     // GPU release in reverse registration order: Archive/Calendar/Work Mode
     // fields borrow Notes' activated TSF manager, so Notes releases last.
     if(renderer.stats().initialized)registry.releaseAll(renderer);
-    if(archiveMedia){try{archiveMedia->releaseResources(now());}catch(...){}}
+    if(moduleContrast&&renderer.stats().initialized){try{(void)moduleContrast->scene.releaseResources(renderer);}catch(...){}}moduleContrast.reset();
     // Owners are destroyed in the established order after every GPU release.
     const auto drop=[&](std::unique_ptr<ModuleOwner>&adapter){unregisterModule(adapter);};
-    if(quitConfirmation){registry.remove(*quitConfirmation);quitConfirmation.reset();}
     if(clockAutomation){registry.remove(*clockAutomation);clockAutomation.reset();}
     if(navigationAutomation){registry.remove(*navigationAutomation);navigationAutomation.reset();}
     // Added module owners may borrow Notes' TSF manager: destroy them first,
@@ -32,16 +31,19 @@ void Application::Impl::cleanup(){if(cleaned)return;cleaned=true;ready=false;sto
     // connected to the profile area's feed: disconnect before the area goes.
     if(idCard){idCard->disconnect();idCard.reset();}
     areaPicker={};if(areaHost)areaHost->clearServices();
+    facilityOwner=nullptr;
     for(auto it=externalModules.rbegin();it!=externalModules.rend();++it){registry.remove(*it->owner);it->owner.reset();}externalModules.clear();
     // Area exports finished or were cancelled with their owners; the second
     // executor joins before the shared one (its completions post the same notice).
     if(longWork){longWork->waitIdle();longWork->drain();longWork.reset();}
-    drop(archiveModuleOwner);archiveMedia.reset();archive.reset();
-    drop(calendarModuleOwner);calendar.reset();calendarState.reset();calendarNotifications.reset();if(utility&&calendarRoute)utility->invalidate(calendarRoute,false);calendarRepository.reset();calendarCivil.reset();calendarFixture.reset();
-    drop(settingsModuleOwner);settingsUI.reset();drop(batteryModuleOwner);battery.reset();drop(workModeModuleOwner);workMode.reset();drop(notesModuleOwner);notes.reset();
+    archive=nullptr;drop(archiveModuleOwner);
+    calendar=nullptr;drop(calendarModuleOwner);calendarState.reset();calendarNotifications.reset();if(utility&&calendarRoute)utility->invalidate(calendarRoute,false);calendarRepository.reset();calendarCivil.reset();calendarFixture.reset();
+    drop(settingsModuleOwner);settingsUI.reset();drop(batteryModuleOwner);battery=nullptr;workModeCanvas=nullptr;drop(workModeModuleOwner);workMode.reset();drop(notesCentreModuleOwner);drop(notesModuleOwner);notes.reset();
     activityTelemetry.reset();activityPlan.stop();activityProbe.reset();
-    drop(shelfModuleOwner);shelf.reset();drop(clipboardModuleOwner);clipboard.reset();drop(volumeModuleOwner);volume.reset();if(utility&&volumeIconRoute)utility->invalidate(volumeIconRoute);volumeIcons.reset();drop(eventLogModuleOwner);eventLog.reset();drop(storageModuleOwner);storage.reset();drop(activityModuleOwner);activity.reset();
-    drop(readerModuleOwner);reader.reset();readerOwner.reset();drop(gameModuleOwner);game.reset();gameSession.reset();drop(mapModuleOwner);map.reset();mapStore.reset();if(utility&&mapLoadRoute)utility->invalidate(mapLoadRoute);
+    drop(shelfModuleOwner);shelf.reset();clipboardCanvas=nullptr;drop(clipboardModuleOwner);volumeCanvas=nullptr;drop(volumeModuleOwner);if(utility&&volumeIconRoute)utility->invalidate(volumeIconRoute);volumeIcons.reset();eventLogCanvas=nullptr;drop(eventLogModuleOwner);drop(storageModuleOwner);storage.reset();drop(activityModuleOwner);activity.reset();
+    reader=nullptr;drop(readerModuleOwner);readerOwner.reset();game=nullptr;drop(gameModuleOwner);gameSession.reset();map=nullptr;drop(mapModuleOwner);mapSaves.reset();mapStore.reset();if(utility&&mapLoadRoute)utility->invalidate(mapLoadRoute);
+    // The shared design Context outlives every design owner (they borrow it).
+    if(designOverlay){registry.remove(*designOverlay);designOverlay.reset();}designClipboard.reset();
     // Retire state routes before the shared file executor; accepted immutable
     // writes finish on its existing shutdown barrier, with callbacks dead.
     // The audio worker restores owned per-app levels and joins before the HWND
@@ -52,10 +54,12 @@ void Application::Impl::cleanup(){if(cleaned)return;cleaned=true;ready=false;sto
     archiveService.reset();settingsSaves.reset();eventSaves.reset();utility.reset();activityCatalog.reset();activityDisk.reset();
     if(mediaBroker){try{mediaBroker->collectRetired();if(archiveMediaClient)mediaBroker->detachClient(archiveMediaClient);if(notesMediaClient)mediaBroker->detachClient(notesMediaClient);}catch(...){}mediaBroker.reset();}
     mediaVideos.reset();mediaImages.reset();if(mediaDecoder)mediaDecoder->stop();mediaDecoder.reset();
-    archiveDates.reset();backdrop.reset();renderer.reset();try{host.setCursor(nullptr);host.destroy();}catch(...){}
+    backdrop.reset();renderer.reset();try{host.setCursor(nullptr);host.destroy();}catch(...){}
 }
 
 int Application::Impl::runVisible(){
+    // The design density for the first opening, derived before its clock starts.
+    holdDesignDensity();
     // Initialization must not consume the opening timeline while the HWND is
     // still hidden. Hotkey openings already use their actual event timestamp.
     const auto openingTime=now();
@@ -104,13 +108,13 @@ void Application::Impl::shutdownVisible(){
     ready=false;stopping=true;tray.reset();if(workMode)isolate(workModeModuleOwner,"shutdown",[&]{workMode->shutdown(now());});host.requestStop();if(mediaPicker)mediaPicker->cancel();
     if(!sessionEnded){
         if(archive){bool finished=true;isolate(archiveModuleOwner,"shutdown",[&]{finished=archive->finishEditing(now());});need(finished,"Archive text transaction is still active at shutdown");need(archiveService->flush(),"Archive changes could not be saved; draft retained until explicit shutdown failure");}
-        if(calendar){bool dismissed=true;isolate(calendarModuleOwner,"shutdown",[&]{dismissed=calendar->dismissMenu(false,now());});need(dismissed,"Calendar text transaction is still active at shutdown");}need(flushCalendar(),"Calendar changes could not be saved");
+        if(calendar){bool dismissed=true;isolate(calendarModuleOwner,"shutdown",[&]{dismissed=calendarModuleOwner->finishEditing(now());});need(dismissed,"Calendar text transaction is still active at shutdown");}need(flushCalendar(),"Calendar changes could not be saved");
         if(readerOwner)need(readerOwner->flush(),"Reader changes could not be saved");
         if(settingsSaves)need(settingsSaves->flush(),"Settings changes could not be saved");if(eventSaves)eventSaves->flush(now());
     }
     projectionHandoff.cancel();projectionDropRoute(false,now());releaseProjection();backdrop.reset();
     if(visibleMode())need(backdrop.stats().hostAttributeRestored,"Source preview could not restore its original host-backdrop flag");
-    if(readerTrace)readerTrace->save(args.dataRoot/"reader-scroll-trace.json");cleanup();if(backdropQueue)backdropQueue->finish();pendingShelfReveal.reset();pendingShelfOpen.reset();pendingStorageSettings=false;pendingLink.reset(); // A hand-off still pending at quit is dropped (OverlayController).
+    if(readerTrace)readerTrace->save(args.dataRoot/"reader-scroll-trace.json");cleanup();if(backdropQueue)backdropQueue->finish();pendingShelfReveal.reset();pendingStorageSettings=false;pendingLink.reset(); // A hand-off still pending at quit is dropped (OverlayController).
 }
 
 Application::Application(ApplicationOptions options):impl_(std::make_unique<Impl>(std::move(options))){}

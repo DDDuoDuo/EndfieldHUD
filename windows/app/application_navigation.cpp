@@ -114,6 +114,37 @@ void Application::Impl::navigationPeers(std::vector<HudButtonPeer>& out) {
     }
 }
 
+// HUDDesktopWatchNavigation.entries(shortcuts:layout:) (Mac 1.3.0): the
+// right-hand list is `layout.visible` (hidden modules get no entry: no row,
+// pointer, accessibility element or recycled source button), then the
+// actions that are not configurable modules (Add App) in their source order;
+// saved apps join before Add App afterwards (AppShortcutNavigation::plan).
+// Content event (applied configuration).
+std::vector<std::uint64_t> Application::Impl::layoutRightActions(std::span<const std::uint64_t> right) const {
+    std::span<const gpu::WatchContentEntry> catalog;
+    if (contentCatalog) catalog = contentCatalog->entries();
+    const auto target = [&](std::uint64_t action) -> std::string_view {
+        for (const auto& e : catalog) if (e.action == action) return e.target;
+        return {};
+    };
+    const auto configurable = [](std::string_view name) {
+        return std::find(ehud::data::ModuleLayout::configurable.begin(), ehud::data::ModuleLayout::configurable.end(), name) != ehud::data::ModuleLayout::configurable.end();
+    };
+    std::vector<std::uint64_t> out;
+    out.reserve(right.size());
+    for (const auto& module : moduleLayout.visible())
+        for (const auto action : right) if (target(action) == module) { out.push_back(action); break; }
+    for (const auto action : right) if (!configurable(target(action))) out.push_back(action);
+    return out;
+}
+// OverlayController: the HUD reopens on moduleLayout.restorable(lastSystemModule).
+core::Module Application::Impl::restorableModule(core::Module last) const {
+    const auto name = moduleLayout.restorable(core::moduleIdentifier(last));
+    for (unsigned i = 0; i <= static_cast<unsigned>(core::Module::profile); ++i)
+        if (core::moduleIdentifier(static_cast<core::Module>(i)) == name) return static_cast<core::Module>(i);
+    return last;
+}
+
 // Read when a client asks (no allocation): the current frame's geometry.
 std::optional<core::Rect> Application::Impl::navigationFrame(const HudButtonPeer& peer) const {
     if (!session || peer.slot >= navigationSlots.size()) return std::nullopt;

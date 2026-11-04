@@ -25,17 +25,64 @@ execute_process(COMMAND "${PREVIEW}" "${INPUTS}/runtime-compiled-animation" "${I
   --runtime-input --module-coverage --reader --calendar
   --map-geography "${MAP}" --map-player-assets "${resources}/map-player" --orbipom-assets "${ORBIPOM}"
   --benchmark "${WORK}/module-coverage.json" --compiled-sha 64852432949d3354e50c43ebb983cfa5afcf5dae29a4512879aca974902a9ba8
-  --notes-assets "${INPUTS}/notes-controls-assets" --notes-assets-sha 9d2fcf0eead9eeeab1be4fdbb0e940a0e1e3eedf840ab9e4c63499e40ae70c00
   --notes-data "${WORK}/notes-data" --notes-format-assets "${resources}/notes-format"
-  --shelf-assets "${resources}/shelf" --shelf-data "${WORK}/shelf-data" --shelf-mask "${resources}/shelf/reveal-mask.bin"
-  --clipboard-assets "${resources}/clipboard" --work-mode-fixture --volume-fixture --event-log-fixture --battery-fixture
-  --settings-assets "${resources}" --archive-assets "${resources}" --storage-assets "${resources}" --activity-assets "${resources}/activity"
+  --shelf-data "${WORK}/shelf-data"
+  --clipboard-fixture --work-mode-fixture --volume-fixture --event-log-fixture --battery-fixture --storage-fixture --activity-fixture
+  --settings-assets "${resources}" --archive
   ${EXTRA} ${package_arguments}
   RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE errors TIMEOUT 500)
 if(NOT result EQUAL 0)
   message(FATAL_ERROR "Owner module coverage failed (${result}):\n${output}\n${errors}")
 endif()
 file(READ "${WORK}/module-coverage.json" report)
+string(JSON recording_toggles ERROR_VARIABLE recording_missing GET "${report}" recordingToggle)
+if(NOT recording_missing)
+  message(STATUS "Recording mode switches: ${recording_toggles}")
+endif()
+# Action timing: each in-place action on a shown canvas, the frame that
+# applies it and the worst frame of the following second.
+string(JSON action_count ERROR_VARIABLE action_missing LENGTH "${report}" actionTiming)
+if(NOT action_missing AND action_count GREATER 0)
+  math(EXPR action_last "${action_count} - 1")
+  foreach(index RANGE ${action_last})
+    string(JSON action_module GET "${report}" actionTiming ${index} module)
+    string(JSON action_name GET "${report}" actionTiming ${index} action)
+    string(JSON action_skipped ERROR_VARIABLE action_ran GET "${report}" actionTiming ${index} skipped)
+    if(NOT action_ran)
+      string(JSON action_reason ERROR_VARIABLE reason_missing GET "${report}" actionTiming ${index} reason)
+      if(reason_missing)
+        set(action_reason "")
+      endif()
+      message(STATUS "Action ${action_module} ${action_name}: skipped ${action_reason}")
+      continue()
+    endif()
+    set(row "")
+    foreach(key ran clickFrameMs actionMs frameMs settleMaxFrameMs pagesBuilt rasterizations textLayouts secondPagesBuilt secondRasterizations secondTextLayouts)
+      string(JSON value GET "${report}" actionTiming ${index} ${key})
+      if(key MATCHES "Ms$")
+        # A tiny (1e-05) or whole value has no first decimal for the rounding below.
+        if(value MATCHES "e-")
+          set(value "0.0")
+        elseif(value MATCHES "^[0-9]+$")
+          set(value "${value}.0")
+        endif()
+        if(value MATCHES "^[0-9]+$")
+          string(APPEND value ".0")
+        endif()
+        string(REGEX REPLACE "^([0-9]+)(\\.([0-9])[0-9]*)?.*$" "\\1.\\3" value "${value}")
+        string(REGEX REPLACE "\\.$" ".0" value "${value}")
+      endif()
+      string(APPEND row " ${key}=${value}")
+    endforeach()
+    foreach(key settleMaxFrameRasterizations savesQueued savesAtOnce opensQueued opensAtOnce thumbnailDecodesAtOnce worstFrameAt worstFrameRasterizations pushed resolvedChanged withinBound settleWithinBound ownerThreadBoots groupSwitches)
+      string(JSON value ERROR_VARIABLE value_missing GET "${report}" actionTiming ${index} ${key})
+      if(NOT value_missing)
+        string(APPEND row " ${key}=${value}")
+      endif()
+    endforeach()
+    message(STATUS "Action ${action_module} ${action_name}:${row}")
+  endforeach()
+endif()
 string(JSON modules LENGTH "${report}" moduleResults)
 string(JSON lifecycle GET "${report}" productionLifecycleChecks)
 # Every module cycle and every production lifecycle/quit assertion ran.

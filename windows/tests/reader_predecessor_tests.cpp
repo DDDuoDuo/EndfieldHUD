@@ -31,7 +31,7 @@ struct Fixture {
 const ReaderPage*find(const std::vector<ReaderPage>&pages,const ReaderLocation&at){const auto row=std::find_if(pages.begin(),pages.end(),[&](const auto&p){return p.location==at;});return row==pages.end()?nullptr:&*row;}
 void walk(const LayerFontResources&fonts){Fixture fixture;NativeReaderDocument provider(fonts);provider.open(fixture.book(),{});
     const auto prefs=ReaderPreferences::defaults("Noto Sans SC");const endfield::core::Point size{376,334};
-    auto pages=provider.render({}, {},prefs,size,true,{});check(pages.size()==2&&pages.front().next,"Initial source text returns current and forward neighbor");
+    auto pages=provider.render({}, {},prefs,size,true,1,{});check(pages.size()==2&&pages.front().next,"Initial source text returns current and forward neighbor");
     unsigned wrongAnchors{},replacedOutgoing{},extraLayouts{},wrongNextPrevious{};const auto initial=provider.stats();
     if(initial.textLayouts!=2)++extraLayouts;
     const auto*firstNext=find(pages,*pages.front().next);check(firstNext!=nullptr,"First forward neighbor is prepared");
@@ -39,7 +39,7 @@ void walk(const LayerFontResources&fonts){Fixture fixture;NativeReaderDocument p
     std::uint64_t maximumStepLayouts{};
     for(unsigned step=0;step<24;++step){const auto outgoing=pages.front();check(outgoing.next.has_value(),"Long synthetic paragraph retains a forward page");
         const auto*residentNext=find(pages,*outgoing.next);check(residentNext&&residentNext->pixels,"Next page was already resident");const auto residentPixels=residentNext->pixels;
-        const auto before=provider.stats();auto advanced=provider.render(outgoing.next,{},prefs,size,true,{});const auto after=provider.stats();
+        const auto before=provider.stats();auto advanced=provider.render(outgoing.next,{},prefs,size,true,1,{});const auto after=provider.stats();
         check(!advanced.empty()&&advanced.front().location==*outgoing.next,"Forward render starts at the exact saved UTF16 anchor");
         check(advanced.front().pixels==residentPixels,"Forward render retains the preloaded current bitmap identity");
         if(advanced.front().previous!=std::optional<ReaderLocation>(outgoing.location))++wrongAnchors;
@@ -59,7 +59,7 @@ void walk(const LayerFontResources&fonts){Fixture fixture;NativeReaderDocument p
     // Returning within the resident cache needs no raster or shape work.
     const auto previous=pages.front().previous;check(previous.has_value(),"Resident reverse neighbor remains known");
     const auto*residentPrevious=find(pages,*previous);check(residentPrevious!=nullptr,"Reverse neighbor is already resident");
-    const auto expected=residentPrevious->pixels;const auto reverse=provider.render(previous,{},prefs,size,true,{});
+    const auto expected=residentPrevious->pixels;const auto reverse=provider.render(previous,{},prefs,size,true,1,{});
     check(reverse.front().pixels==expected,"Reverse request preserves resident page pixels");
     provider.release();check(provider.stats().cachedPages==0,"Release clears all three page references");
 }

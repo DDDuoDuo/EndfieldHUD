@@ -55,7 +55,7 @@ UINT_PTR CALLBACK colorHook(HWND dialog,UINT message,WPARAM w,LPARAM l){
 ProfileImagePickerText profileImagePickerText(modules::ProfileImageKind kind,core::Language language){
     const bool avatar=kind==modules::ProfileImageKind::avatar;
     return {wide(avatar?core::localized("Choose profile picture","选择头像",language):core::localized("Choose profile background","选择名片背景",language)),
-        wide(core::localized("Choose","选择",language)),wide(core::localized("Images","图片",language))};
+        wide(core::localized("Choose","选择",language)),wide(core::translated(core::imageFilesFilter,language))};
 }
 std::wstring profileImageFilterSpec(){
     ComPtr<IWICImagingFactory>factory;checked(CoCreateInstance(CLSID_WICImagingFactory,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&factory)),"Create WIC factory");

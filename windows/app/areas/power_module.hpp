@@ -33,7 +33,7 @@
 // observes the provider, alerts, draws the badge and follows the HUD.
 #include "app/application.hpp"
 #include "core/localization.hpp"
-#include "modules/battery_presentation.hpp"
+#include "modules/battery_reading.hpp"
 #include "modules/charge_indicator.hpp"
 #include <functional>
 #include <memory>

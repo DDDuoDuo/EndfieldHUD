@@ -27,7 +27,11 @@ unsigned checks{};
 void check(bool value,const char* why){++checks;if(!value)throw std::runtime_error(why);}
 void ok(HRESULT hr,const char* why){check(SUCCEEDED(hr),why);}
 template<class F>void rejects(F&& f,const char* why){bool failed{};try{f();}catch(const std::exception&){failed=true;}check(failed,why);}
-bool nearly(double a,double b,double eps=1e-4){return std::abs(a-b)<=eps;}
+// DirectWrite reports float32 coordinates: one long layout rounds a caret at
+// y 2062.464 to its float32 neighbour (half an ulp, up to 1.2e-4 above 2048)
+// while a chunk adds its exact top to a small local value. Uniform lines whose
+// baseline is fractional (the hhea strut) differ by that rounding only.
+bool nearly(double a,double b,double eps=1e-4){return std::abs(a-b)<=eps+std::max(std::abs(a),std::abs(b))*std::ldexp(1.,-23);}
 bool nearRect(core::Rect a,core::Rect b,double eps=1e-4){return nearly(a.x,b.x,eps)&&nearly(a.y,b.y,eps)&&nearly(a.width,b.width,eps)&&nearly(a.height,b.height,eps);}
 struct Apartment{Apartment(){ok(CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED),"Initialize isolated COM apartment");}~Apartment(){CoUninitialize();}};
 struct Window{

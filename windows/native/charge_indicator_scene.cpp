@@ -238,8 +238,10 @@ struct ChargeIndicatorScene::Impl {
         for (const auto& run : descriptor["runs"].array()) {
             const auto& range = run["utf16Range"].array();
             const auto& font = run["attributes"]["NSFont"];
-            const Json single = Json::Object{{"string", sliceUtf16(text, static_cast<std::size_t>(range[0].number()), static_cast<std::size_t>(range[1].number()))},
-                                             {"fontSize", font["pointSize"]}, {"font", font}, {"wrapped", false}};
+            Json single = Json::Object{{"string", sliceUtf16(text, static_cast<std::size_t>(range[0].number()), static_cast<std::size_t>(range[1].number()))},
+                                       {"fontSize", font["pointSize"]}, {"font", font}, {"wrapped", false}};
+            // The fitting loops measure with the run's tabular figures, as NSString.size does with the tnum font.
+            if (!run["attributes"]["tabularFigures"].isNull()) single["tabularFigures"] = run["attributes"]["tabularFigures"];
             total += raster->measureSourceText(prefix + "/measure", single, 1e6, options).width;
         }
         return total;

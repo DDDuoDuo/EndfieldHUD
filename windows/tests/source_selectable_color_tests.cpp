@@ -73,7 +73,7 @@ void synthetic(){
     check(hover.profileHighlightNodeID()=="target","Profile highlight uses the root selectable target identity");
     SelectableTints tints{{"target",{1,1,1,1}},{"quitTarget",{1,1,1,1}}};const auto& opacity=hover.opacities(tints);
     check(opacity.size()==2&&!opacity.contains("zero")&&opacity.at("line")==1.f+(.62f-.2f)/.2f&&opacity.at("background")==1.25f,"Profile and quit decoration gains match authored alpha rules");
-    tints["target"][3]=nan;tints.erase("quitTarget");check(hover.opacities(tints).at("line")==1&&hover.opacities(tints).at("background")==1,"Missing or nonfinite sampled tint produces neutral decoration opacity");
+    tints["target"][3]=static_cast<float>(nan);tints.erase("quitTarget");check(hover.opacities(tints).at("line")==1&&hover.opacities(tints).at("background")==1,"Missing or nonfinite sampled tint produces neutral decoration opacity");
     const auto* output=&sampler.colors(4);const auto* targetValue=&output->at("target");const auto* opacities=&hover.opacities(*output);
     allocations=0;countAllocations=true;
     for(unsigned i=0;i<1000;++i){const auto time=5+i*.013;sampler.setState(i%2?SelectableState::normal:SelectableState::highlighted,"profile",time);

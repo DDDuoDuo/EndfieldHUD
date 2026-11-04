@@ -71,6 +71,7 @@ modules::ActivityAppsRaw ActivityCatalogSampler::sample(double stamp,double now)
             if(current->identity.startID!=old.startID||current->identity.imageKey!=old.imageKey||current->identity.applicationID!=old.applicationID){members.push_back(pid);continue;}
             members.push_back(pid);if(current->usage){const auto&v=*current->usage;need(v.pid==pid&&v.startID==old.startID&&std::isfinite(v.startUptime)&&v.startUptime>=0,"Activity identity/usage mismatch");out.processes.emplace(pid,v);}
         }}
+    if(readers_.threads){const auto counts=readers_.threads();for(auto&[pid,process]:out.processes)if(const auto found=counts.find(pid);found!=counts.end())process.threads=found->second;}
     if(readers_.gpu){std::vector<std::uint32_t>pids;for(const auto&[id,members]:out.members)pids.insert(pids.end(),members.begin(),members.end());std::sort(pids.begin(),pids.end());pids.erase(std::unique(pids.begin(),pids.end()),pids.end());if(!pids.empty())out.gpu=readers_.gpu(pids);}
     if(!out.inventoryComplete)out.statusNotes.push_back("App helper inventory unavailable");out.statusNotes.push_back("Per-app disk and network accounting unavailable");
     // The Apps demand changed while this sample ran (invalidate() could not
@@ -166,8 +167,10 @@ std::string windowsActivityPackagedName(const std::wstring&aumid){
     if(value==aumid)return {};
     return utf8(value);
 }
-ActivityCatalogSampler::Readers windowsActivityCatalogReaders(){auto state=std::make_shared<NativeCatalog>();return {[state]{return state->inventory();},[state](auto pid){return state->read(pid,0,false,true);},[](std::span<const std::uint32_t>pids){return readWindowsActivityGPU(pids);}};}
+std::map<std::uint32_t,std::uint32_t>readWindowsActivityThreads(){std::map<std::uint32_t,std::uint32_t>out;Handle snapshot{CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS,0)};if(snapshot.value==INVALID_HANDLE_VALUE)return out;
+    PROCESSENTRY32W entry{};entry.dwSize=sizeof(entry);if(!Process32FirstW(snapshot.value,&entry))return out;unsigned count{};do{if(++count>8192)break;if(entry.th32ProcessID)out.emplace(entry.th32ProcessID,entry.cntThreads);}while(Process32NextW(snapshot.value,&entry));return out;}
+ActivityCatalogSampler::Readers windowsActivityCatalogReaders(){auto state=std::make_shared<NativeCatalog>();return {[state]{return state->inventory();},[state](auto pid){return state->read(pid,0,false,true);},[](std::span<const std::uint32_t>pids){return readWindowsActivityGPU(pids);},[]{return readWindowsActivityThreads();}};}
 }
 #else
-namespace endfield::native {ActivityCatalogSampler::Readers windowsActivityCatalogReaders(){return {[]{return ActivityCatalogInventory{{},false,{}};},[](auto)->std::optional<ActivityCatalogReading>{return {};},{}};}}
+namespace endfield::native {ActivityCatalogSampler::Readers windowsActivityCatalogReaders(){return {[]{return ActivityCatalogInventory{{},false,{}};},[](auto)->std::optional<ActivityCatalogReading>{return {};},{},{}};}}
 #endif

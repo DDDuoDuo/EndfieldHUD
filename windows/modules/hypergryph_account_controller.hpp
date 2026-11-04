@@ -24,6 +24,9 @@ struct AccountPresentation {
     std::optional<std::string> selectedRoleID;
     HeaderMode headerMode{HeaderMode::workMode};
     bool syncProfile{},syncAvatar{};
+    ehud::data::ProfileSyncFields syncFields{ehud::data::ProfileSyncFields::all()}; // Mac result.syncFields (field chips)
+    bool needsReconnect{};                                                     // linked && requiresReconnect
+    std::optional<Snapshot> snapshot;                                          // the selected role's latest card (Mac presentation.snapshot)
     std::string lastSync;
     bool isLinked{};
     bool busy() const noexcept {return status==Status::connecting||status==Status::refreshing;}
@@ -35,10 +38,13 @@ std::string headerModeTitle(AccountPresentation::HeaderMode,core::Language);
 std::string_view regionChoiceName(AccountPresentation::RegionChoice) noexcept;
 std::string regionChoiceTitle(AccountPresentation::RegionChoice,core::Language);
 std::string_view statusName(AccountPresentation::Status) noexcept;
+// HUDAccountPresentation.SyncField.title (the Account field chips).
+std::string syncFieldTitle(ehud::data::ProfileSyncField,core::Language);
 
 struct AccountAction {
-    enum class Kind {connect,refresh,disconnect,selectRegion,selectRole,selectHeaderMode,setSyncProfile,setSyncAvatar};
+    enum class Kind {connect,refresh,disconnect,selectRegion,selectRole,selectHeaderMode,setSyncProfile,setSyncField,setSyncAvatar};
     Kind kind{Kind::refresh};
+    ehud::data::ProfileSyncField syncField{}; // setSyncField (with enabled)
     AccountPresentation::RegionChoice region{};
     AccountPresentation::HeaderMode headerMode{};
     std::string roleID;
@@ -79,8 +85,10 @@ public:
     virtual void write(const std::string& bytes)=0;  // atomic, owner-only; throws on failure
 };
 // Mac UserProfileStore.update { ... } for the selected Endfield snapshot.
+// Only the sync's fields are filled (Mac applyProfile, 1.3.0): an absent
+// gamePlayerID leaves the UID and its override alone, and so on per field.
 struct GameProfileUpdate {
-    std::string gamePlayerID;
+    std::optional<std::string> gamePlayerID; // uid: set, and the override is cleared
     std::optional<std::string> name,tag;
     std::optional<Time> awakeningDate;
     std::optional<std::int64_t> permissionLevel,explorationLevel,operatorsCount,weaponsCount,archivesCount;
@@ -90,7 +98,7 @@ class AccountProfileSink {
 public:
     virtual ~AccountProfileSink()=default;
     virtual void applyGameProfile(const GameProfileUpdate&)=0;            // throws: "personal profile could not be saved"
-    virtual void setProfileSyncLocked(bool)=0;                             // mirrors gameSyncActive
+    virtual void setProfileSyncLocked(ehud::data::ProfileSyncFields)=0;    // mirrors gameSyncedFields (none while sync is off)
     // Imports the downsampled PNG as the avatar and returns the new managed
     // avatar filename (so the change is not mistaken for a manual edit).
     virtual std::optional<std::string> importGameAvatar(const std::vector<std::uint8_t>& png)=0; // throws
@@ -165,6 +173,10 @@ public:
     const RegionRecord& record() const;
     AccountPresentation::HeaderMode headerMode() const noexcept;
     bool gameSyncActive() const;
+    // Mac syncFields / gameSyncedFields: the card fields an enabled Endfield
+    // sync writes, and those it owns right now (the card editor locks them).
+    ehud::data::ProfileSyncFields syncFields() const noexcept;
+    ehud::data::ProfileSyncFields gameSyncedFields() const;
     bool hasActiveRequest() const;
     bool isPresentingLogin() const;
     bool isPresentingAccountPanel() const;

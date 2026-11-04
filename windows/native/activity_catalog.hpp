@@ -39,6 +39,10 @@ public:
         // PIDs), Windows: native::readWindowsActivityGPU (sharing the system
         // reading's collection of the same sampling job).
         std::function<std::optional<modules::ActivityGPUSample>(std::span<const std::uint32_t>)>gpu;
+        // Optional current thread counts by PID (AppActivityProcessReading.
+        // threads; Windows: one process snapshot's cntThreads per sample,
+        // readWindowsActivityThreads), read only while Apps is shown.
+        std::function<std::map<std::uint32_t,std::uint32_t>()>threads;
     };
     explicit ActivityCatalogSampler(Readers);
     // Worker-only, serial calls from the existing ActivityProbe. Five-second
@@ -64,6 +68,11 @@ private:Readers readers_;ActivityCatalogResult catalog_;std::optional<double>inv
 // identity and five-second inventory, on the sampling worker; the name cache
 // holds only identities seen in the latest inventory (at most 512).
 ActivityCatalogSampler::Readers windowsActivityCatalogReaders();
+#ifdef _WIN32
+// Every process's thread count from one TH32CS_SNAPPROCESS snapshot (at most
+// 8192 entries); empty when the snapshot fails. Worker only.
+std::map<std::uint32_t,std::uint32_t>readWindowsActivityThreads();
+#endif
 
 // Display-name hygiene shared by every platform reader: control characters
 // and surrounding/duplicate whitespace removed, at most 160 UTF-8 bytes on a

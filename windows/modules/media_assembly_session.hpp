@@ -1,8 +1,30 @@
 #pragma once
-#include "modules/media_assembly_presentation.hpp"
+#include "modules/media_assembly_model.hpp"
 #include <memory>
 
 namespace endfield::modules {
+struct MediaAssemblyDocumentInfo {
+    std::string id;bool video{};core::Point pixels;double duration{};
+    // Source MediaAssemblyDocument: reference kind/frame count, resolved source
+    // path (UTF-8), display name, container ("png","jpeg","tiff","heif","gif",
+    // "video", ...) and identity read at open. Pixels are orientation-applied.
+    MediaAssemblyKind kind{MediaAssemblyKind::image};unsigned frameCount{1};
+    std::string path,name,container;MediaAssemblyFileIdentity identity;
+    // Movie frames coded BT.709 (tagged or untagged): every path reads them
+    // as Core Image's CoreMedia 709 (mediaAssemblyVideoColour).
+    bool bt709{};
+    bool animated()const noexcept{return kind==MediaAssemblyKind::gif&&frameCount>1;}
+    // "<stem>-edited.png" for pictures; Windows writes MP4 for movies because
+    // Media Foundation has no QuickTime (.mov) sink (documented platform gap).
+    std::string suggestedFilename()const;
+};
+// A borrowed controller snapshot (no source media copies, workers or clocks).
+struct MediaAssemblyView {
+    const MediaAssemblyDocumentInfo*document{};
+    const MediaAssemblyAdjustments*adjustments{};
+    core::Point previewPixels;
+    bool busy{},exporting{},playing{};double currentTime{};
+};
 // Session-only edit state. The app's existing utility/media owners execute
 // requests; this class owns no file, timer, decoder, thread, renderer or store.
 // One running decode and one replaceable pending preview are the entire queue.

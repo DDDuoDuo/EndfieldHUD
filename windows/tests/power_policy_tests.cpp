@@ -41,6 +41,15 @@ BatteryReading battery(const Json& d) {
                                               static_cast<unsigned>(d["capacity"]["maximum"].number()), d["capacity"]["unit"].string()};
     return r;
 }
+// The delegate rows pin Mac v1.2.0's AppDelegate.updateMenu; 1.3.0 changed
+// only its texts (SHELL-84, AppDelegate.swift:589-596): " · " -> " — " and the
+// no-battery row. Applied to the expected strings, nothing else differs.
+std::string macMenu130(std::string text) {
+    for (const auto& [from, to] : {std::pair<std::string_view, std::string_view>{"No internal battery · Preview available", "No internal battery — preview available"},
+                                   {"无内置电池 · 可预览效果", "无内置电池，可预览效果"}, {" · ", " — "}})
+        for (std::size_t at = text.find(from); at != std::string::npos; at = text.find(from, at + to.size())) text.replace(at, from.size(), to);
+    return text;
+}
 std::string describe(const BatteryReading& s) {
     return "p=" + (s.percentage ? std::to_string(*s.percentage) : std::string("nil")) + ",b=" + (s.present ? "1" : "0") +
            ",a=" + (s.pluggedIn ? "1" : "0") + ",c=" + (s.charging ? "1" : "0") + ",f=" + (s.fullyCharged ? "1" : "0");
@@ -69,12 +78,14 @@ void policy(const Fixture& f) {
     for (const auto& row : f.root["policy"].array()) {
         std::optional<BatteryReading> previous;
         if (row["previous"].string() != "nil") previous = f.snapshot(row["previous"].string());
-        const auto action = chargeDisplayAction(f.snapshot(row["snapshot"].string()), previous, row["mode"].string() == "always");
+        // Mac 1.3.0 DisplayMode.never hides every case; Windows' presenter hides before the policy (neverMode).
+        const auto action = row["mode"].string() == "never" ? ChargeDisplayAction::hide
+            : chargeDisplayAction(f.snapshot(row["snapshot"].string()), previous, row["mode"].string() == "always");
         check(chargeDisplayActionKey(action) == row["action"].string(),
               "DisplayPolicy " + row["mode"].string() + " " + row["previous"].string() + " -> " + row["snapshot"].string());
         ++compared;
     }
-    check(compared == 2 * 7 * 8, "All source display-policy cases compared");
+    check(compared == 3 * 7 * 8, "All source display-policy cases compared (always, power changes, never)");
 }
 
 // The fixture is in source bottom-left desktop points. y' = -y maps it to the
@@ -324,8 +335,8 @@ void delegate(const Fixture& f) {
             const auto preview = coordinator.previewSnapshot() ? describe(*coordinator.previewSnapshot()) : std::string("nil");
             check(preview == row["preview"].string(), name + " " + step + " preview ownership");
             const auto menu = coordinator.snapshot() ? powerTrayDescription(*coordinator.snapshot(), language) : std::string();
-            check(menu == row["menu"].string(), name + " " + step + " tray status: " + menu);
-            check(row["tooltip"].string() == (menu.empty() ? std::string() : powerTrayTooltip(*coordinator.snapshot(), language)),
+            check(menu == macMenu130(row["menu"].string()), name + " " + step + " tray status: " + menu);
+            check(macMenu130(row["tooltip"].string()) == (menu.empty() ? std::string() : powerTrayTooltip(*coordinator.snapshot(), language)),
                   name + " " + step + " tray tooltip");
             ++rows;
         }
@@ -356,7 +367,7 @@ void tray() {
     BatteryReading charging; charging.present = charging.pluggedIn = charging.charging = true; charging.percentage = 63;
     for (auto language : {core::Language::english, core::Language::simplifiedChinese, core::Language::traditionalChinese,
                           core::Language::japanese, core::Language::korean}) {
-        check(powerTrayDescription(charging, language).starts_with("63% · ") && !powerPreviewMenuTitle(language).empty(),
+        check(powerTrayDescription(charging, language).starts_with("63% — ") && !powerPreviewMenuTitle(language).empty(),
               "Localized tray status and preview item");
     }
     // Every user-visible Power string has its own catalog translation.

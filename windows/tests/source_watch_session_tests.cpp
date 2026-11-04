@@ -113,6 +113,23 @@ std::array<std::string,2> scrollIndicatorIDs(const SceneDefinition&scene){
 // dimmed). The exporter's builder settings froze one list position's tints
 // into every oracle frame, so those two batches are checked against the
 // session's own state with the oracle's untinted alpha.
+// The entrance's eased clock (VisibilityClock::clipTime) and the alpha curve's
+// Hermite segment can round the inherited alpha one step past 1 in the last
+// microseconds of the deploy: every such frame still places the native labels
+// (it aborted the HUD, about 1 opening in 10,000).
+void entranceEnd(){
+    Synthetic data;SourceWatchSession session(data.scene,data.doc,data.library,data.camera,data.resources,{},emptyTransitions());
+    session.setEnvironment(environment(),0);WatchSessionSettings settings;settings.ambientEnabled=false;session.setSettings(settings,0);
+    WatchSessionNavigation navigation;navigation.fixedActions["button"]=7;navigation.managedButtons.insert("button");session.setNavigation(navigation,0);
+    NativeLabelPlan plan(data.scene,{{"caption.surface","button","button",NativeLabelKind::caption,false,false}});
+    const NativeLabelButtonState button{true,true,false,{}};const Rect viewport{0,0,1280,800};
+    session.open(10,1);std::size_t above{},samples{};
+    for(int k=20000;k>=1;--k){const auto*f=session.sample(10+.75-k*1e-9);check(f&&f->sourceFrame,"The deploy's last microseconds sample a frame");++samples;const auto&frame=*f->sourceFrame;
+        for(std::size_t i=0;i<frame.resolved.size();++i)if(frame.resolved[i].node->id=="button"&&frame.inheritedAlpha[i]>1)++above;
+        plan.update(frame.resolved,frame.inheritedAlpha,std::span(&button,1),f->camera,viewport);
+        check(plan.placements()[0].opacity>=0&&plan.placements()[0].opacity<=1,"A label's opacity stays within 0...1");}
+    check(samples==20000&&above>0,"The sweep reaches inherited alphas rounded past 1");
+}
 void compare(const WatchSessionFrame&frame,const packet::FrameData&oracle,const SourceWatchSession&session,const SourceDesktopFrameSettings&desktop,const std::array<std::string,2>&indicators){
     const auto&value=oracle.metadata;const auto&actual=*frame.sourceFrame;check(actual.batches.size()==value["batches"].array().size(),"Session matches original snapshot batch count");
     for(std::size_t i=0;i<actual.batches.size();++i){const auto&a=actual.batches[i];const auto&b=value["batches"].array()[i];check(a.sourceNodeID==b["sourceNodeID"].string()&&a.sourceMesh==b["sourceMesh"].string()&&a.material==b["material"].string(),"Session keeps original source batch order/material binding");
@@ -222,4 +239,4 @@ void actual(const std::filesystem::path&path,const std::filesystem::path&runtime
     std::cout<<frames<<" original macOS session checkpoints compared\n";
 }
 }
-int main(int argc,char**argv){try{synthetic();check(argc<=3,"Pass original packet and optional compact runtime input");if(argc>=2)actual(argv[1],argc==3?std::filesystem::path(argv[2]):std::filesystem::path{});std::cout<<"PASS "<<checks<<" source Watch session checks\n";return 0;}catch(const std::exception&error){countAllocations=false;std::cerr<<"FAIL after "<<checks<<" checks: "<<error.what()<<'\n';return 1;}}
+int main(int argc,char**argv){try{synthetic();entranceEnd();check(argc<=3,"Pass original packet and optional compact runtime input");if(argc>=2)actual(argv[1],argc==3?std::filesystem::path(argv[2]):std::filesystem::path{});std::cout<<"PASS "<<checks<<" source Watch session checks\n";return 0;}catch(const std::exception&error){countAllocations=false;std::cerr<<"FAIL after "<<checks<<" checks: "<<error.what()<<'\n';return 1;}}

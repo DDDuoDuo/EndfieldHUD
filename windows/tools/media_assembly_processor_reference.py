@@ -2,7 +2,7 @@
 """Unchanged original MediaAssemblyEngine.apply on small, owned synthetic pixels.
 
 Builds a detached oracle from the pinned macOS sources: Engine.apply, the asset
-catalog (original LUTs and sticker PNGs from windows/resources/media-assembly)
+catalog (original LUTs and sticker PNGs from the shared Resources/MediaAssembly)
 and the same explicit sRGB-working CIContext as the original preview/export.
 No user media, decoder, window, app or account is used. Only rendered outputs
 of the public Core Image API are recorded; no framework internals are read.
@@ -25,7 +25,7 @@ import base64, hashlib, json, subprocess, sys, tempfile
 root = Path(__file__).resolve().parents[2]
 commit = 'ca04f142185c7de40acd8523bdb563195d90a1d1'
 names = ['MediaAssemblyEngine.swift', 'MediaAssemblyModel.swift', 'MediaAssemblyAssetCatalog.swift']
-assets = root / 'windows/resources/media-assembly'
+assets = root / 'Resources/MediaAssembly'
 
 
 def pinned_sources():

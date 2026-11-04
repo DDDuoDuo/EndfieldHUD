@@ -395,7 +395,7 @@ void cefPage() {
     if (!reading || !reading->fraction)
         std::cout << "fraction: reading=" << bool(reading) << " details=" << reader.stats().details << " walks=" << reader.stats().walks << '\n';
     check(reading && reading->fraction && std::abs(*reading->fraction - 80. / 2561.) < 1e-9, "The played fraction is the track part's width over the bar's");
-    check(reading && reading->artwork == "https://p3.music.126.net/Test==/1.jpg?param=600y600", "The cover is the catalog address its image source embeds");
+    check(reading && reading->artwork == "https://p3.music.126.net/Test==/1.jpg?param=800y800", "The cover is the catalog address its image source embeds");
     check(reading && reading->title == "Synthetic Song - Artist A" && !reader.awaiting(), "The bar shows the window title's track");
     check(reading && !reading->visible, "A hidden window is flagged (its bar may stop updating)");
 
@@ -432,7 +432,7 @@ void cefPage() {
     shapes.track.place({0, 1476, 0, 1481});
     check(reader.treeChanged(pid) && pump([&] { return notified.load() >= 5; }), "The page's next event reads it again");
     reading = reader.reading(handle, pid, false);
-    check(reading && reading->title == "Next Song - Artist A" && reading->artwork == "https://p4.music.126.net/Next==/2.jpg?param=600y600" && reading->fraction == 0. &&
+    check(reading && reading->title == "Next Song - Artist A" && reading->artwork == "https://p4.music.126.net/Next==/2.jpg?param=800y800" && reading->fraction == 0. &&
               !reader.awaiting(), "Then the bar confirms the new track, its cover and its start");
 
     // A confirmed bar is re-read through its progress bounds and play control
@@ -447,7 +447,7 @@ void cefPage() {
             check(pump([&] { return notified.load() > count; }), "A re-read of the confirmed bar completes");
             reading = reader.reading(handle, pid, false);
             check(reading && reading->fraction && std::abs(*reading->fraction - (10. + k) / 2561.) < 1e-9 && reading->title == "Next Song - Artist A" &&
-                      reading->artwork == "https://p4.music.126.net/Next==/2.jpg?param=600y600" && reading->playPause && reading->previous && reading->next &&
+                      reading->artwork == "https://p4.music.126.net/Next==/2.jpg?param=800y800" && reading->playPause && reading->previous && reading->next &&
                       reading->playing == true, "Each re-read states the bar's fraction and play state under the confirmed title, with its cover and controls");
         }
         const auto after = reader.stats();

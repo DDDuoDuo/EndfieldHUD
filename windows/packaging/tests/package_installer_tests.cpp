@@ -259,7 +259,7 @@ public:
         sources.push_back({"uninstall.exe", uninstaller_});
         p::PackOptions options;
         options.version = *p::parseProductVersion(release, build);
-        options.commit = "ca04f142185c7de40acd8523bdb563195d90a1d1";
+        options.commit = "81b6f66c61a1d252a3db503ff85ba8bb5565b65d";
         options.complete = complete;
         fs::create_directories(root_ / L"setups");
         Payload out;

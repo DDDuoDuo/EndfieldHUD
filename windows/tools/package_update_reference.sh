@@ -11,7 +11,7 @@ OUT="$1"
 [[ ! -e "$OUT" && ! -L "$OUT" ]]
 mkdir -p "$OUT";OUT="$(cd "$OUT" && pwd)"
 git -C "$ROOT" diff --quiet ca04f142185c7de40acd8523bdb563195d90a1d1 -- Sources/HUDGitHubRelease.swift
-SDK="$(bash "$ROOT/scripts/build.sh" --print-sdk)"
+SDK="$(bash "$ROOT/windows/tools/mac_sdk.sh")"
 mkdir -p "$OUT/module-cache"
 xcrun swiftc -O -swift-version 5 -parse-as-library -sdk "$SDK" -module-cache-path "$OUT/module-cache" \
  "$ROOT/Sources/HUDGitHubRelease.swift" "$ROOT/windows/tools/package_update_reference.swift" -o "$OUT/reference"

@@ -73,7 +73,7 @@ void run(HWND hwnd,gpu::Renderer&renderer){
     card.syncContent();card.updatePose({},1,0);gpu::LayerScene editorScene(raster);
     text::Buffer document(u"First line\n终末地 日本語 한국어 😀\nLast line",65536);
     gpu::LayerComposition composition;const std::array settledOrder{&card.scene()};composition.setScenes(renderer,settledOrder);composition.present(renderer);renderer.setCamera(gpu::layerViewportProjection(640,360));renderer.draw(false);
-    check(!card.externalEditorSlot()&&card.externalEditorAfterDraws().empty()&&card.scene().draws().size()==6,"Settled source card uses original scene with no editor references");
+    check(!card.externalEditorSlot()&&card.externalEditorAfterDraws().empty()&&card.scene().draws().size()==2,"Settled source card uses its card raster and grip with no editor references");
     state.beginEditing(id);presentation.updateContent(state,input);card.syncContent();card.updatePose({},1,1);const auto slot=*card.externalEditorSlot();
     gpu::ProjectedEditorStyle style;style.width=slot.localRect.width;style.height=slot.localRect.height;style.fontSize=12;
     style.lineHeight=measured->font.lineHeight;style.baseline=measured->font.ascent;style.fontFamily=measured->font.selectedFamily;style.fontFace="";
@@ -83,8 +83,8 @@ void run(HWND hwnd,gpu::Renderer&renderer){
     editor->setPose(pose);const std::array editingOrder{gpu::LayerCompositionEntry{&card.scene(),{}},gpu::LayerCompositionEntry{&editorScene,card.externalEditorAfterDraws()}};
     composition.setEntries(renderer,editingOrder);composition.present(renderer);renderer.draw(false);
     check(editor->layout().painted()==editorScene.paintedTextLayout("projected-editor-glyphs")&&editor->layout().painted()->text()==document.text(),"Actual Notes editor binds the exact DWrite object painting caller document");
-    check(editor->placement().cornerRadius==3,"Source editor rounded clip is shared with input placement");
-    for(const auto&draw:editorScene.draws())check(!draw.masks.empty()&&draw.masks.back().cornerRadius==3,"Selection, glyphs, underline and caret share exact source-radius ancestor clip");
+    check(editor->placement().cornerRadius==0,"The square editor clip (Mac 1.3.0 layoutEditor) is shared with input placement");
+    for(const auto&draw:editorScene.draws())check(!draw.masks.empty()&&draw.masks.back().cornerRadius==0,"Selection, glyphs, underline and caret share the editor's square ancestor clip");
     const auto first=editor->layout().bounds({0,0});
     check(first&&std::isfinite(first->bounds.height)&&first->bounds.height>0,"Editing caret retains finite native hit geometry");
     // Test-only read of the SAME retained painted COM object; no second layout.
@@ -101,9 +101,15 @@ void run(HWND hwnd,gpu::Renderer&renderer){
     for(const auto acp:{0u,11u,27u}){
         FLOAT x{},y{};DWRITE_HIT_TEST_METRICS hit{};ok(paintedLayout->HitTestTextPosition(acp,FALSE,&x,&y,&hit),"Read exact painted Notes caret hit");
         const auto actual=editor->layout().bounds({acp,acp});const double height=std::max(1.,double(hit.height));
-        const double left=std::max(0.,double(x)),top=std::max(0.,double(y));
-        const double right=std::min(style.width,double(x)+1),bottom=std::min(style.height,double(y)+height);
-        check(actual&&right>left&&bottom>top&&std::abs(actual->bounds.x-left)<1e-5&&std::abs(actual->bounds.y-top)<1e-5&&std::abs(actual->bounds.width-(right-left))<1e-5&&std::abs(actual->bounds.height-(bottom-top))<1e-5,"Workspace caret geometry is the clipped hit region of the same painted layout");
+        // A document layout reports document coordinates, never clipped to
+        // the viewport (the editor placement clips): the caret of the first
+        // line starts above the document top when the face's OS/2 hit ascent
+        // exceeds the hhea baseline of the uniform Notes line (HarmonyOS Sans
+        // 1.056 vs .928 em). Other layouts clip to their viewport.
+        const bool document=editor->layout().painted()->isDocumentLayout();
+        const double left=document?double(x):std::max(0.,double(x)),top=document?double(y):std::max(0.,double(y));
+        const double right=document?double(x)+1:std::min(style.width,double(x)+1),bottom=document?double(y)+height:std::min(style.height,double(y)+height);
+        check(actual&&right>left&&bottom>top&&std::abs(actual->bounds.x-left)<1e-5&&std::abs(actual->bounds.y-top)<1e-5&&std::abs(actual->bounds.width-(right-left))<1e-5&&std::abs(actual->bounds.height-(bottom-top))<1e-5,"Workspace caret geometry is the hit region of the same painted layout");
     }
     // Diagnostic only: equivalent isolated settled leaf descriptors currently
     // omit font ascender/descender metadata. This records whether a fallback
@@ -122,7 +128,7 @@ void run(HWND hwnd,gpu::Renderer&renderer){
         raster.remove(probeID);++diagnosticLine;
     }
     check(card.scene().draws().back().opacity==0&&composition.draws().back().sourceID==card.externalEditorAfterDraws()[0].sourceID,"One final editor border paints after actual selection/glyph/caret, with no lower duplicate frame");
-    const auto corner=editor->placement().projection.project({.1,.1});check(corner&&!editor->pointerDown(*corner).handled,"Source rounded corner rejects invisible editor hit");
+    // (The 1.3.0 editor is square: its corner is a visible part of it, no rounded-corner hit rule.)
     const auto word=editor->layout().selectionRectangles({0,1}).front();const auto click=editor->placement().projection.project({word.x+word.width*.2,word.y+word.height*.5});check(click&&editor->pointerDown(*click).handled&&document.selection().range==text::Range{0,0},"Notes workspace glyph selects through the same projected plane");editor->pointerUp();editor->syncContent();editor->setPose(pose);composition.upload(renderer);composition.present(renderer);
     Microsoft::WRL::ComPtr<Sink>sink;sink.Attach(new Sink);auto*textStore=editor->textStore();ok(textStore->AdviseSink(__uuidof(ITextStoreACPSink),sink.Get(),TS_AS_LAYOUT_CHANGE),"Fake sink owns isolated text extent query");
     sink->onLock=[&](DWORD){RECT result{};BOOL clipped{};ok(textStore->GetTextExt(gpu::ProjectedTextInput::viewCookie,0,0,&result,&clipped),"TSF caret extent queries actual Notes painted layout");
@@ -144,7 +150,7 @@ void run(HWND hwnd,gpu::Renderer&renderer){
     ok(textStore->UnadviseSink(sink.Get()),"Fake sink detaches before field lifetime ends");ok(editor->stop(),"Editor stops without activating a real IME");
     check(state.finishEditing(changed)&&!state.editing()&&state.unsaved().empty(),"Owner commits plain draft through original NotesState persistence callback");
     measured=measurer.measure(id,2,changed,192);input.measured=measured->presentationText(measured);presentation.updateContent(state,input);card.syncContent();card.updatePose({},1,5);
-    composition.setScenes(renderer,settledOrder);composition.present(renderer);editor.reset();check(!card.externalEditorSlot()&&card.externalEditorAfterDraws().empty()&&renderer.stats().textures==6,"Leaving edit removes live field/frame only after one safe combined publication");
+    composition.setScenes(renderer,settledOrder);composition.present(renderer);editor.reset();check(!card.externalEditorSlot()&&card.externalEditorAfterDraws().empty()&&renderer.stats().textures==2,"Leaving edit removes live field/frame only after one safe combined publication");
     {data::NotesStore reopened(root.path);check(reopened.notes().size()==1&&reopened.notes()[0].text==changed&&reopened.notes()[0].createdAt==123,"Fresh injected SQLite reopen preserves edited bytes and original Foundation timestamp");}
     check(saves==1,"Only the explicit changed edit writes through injected persistence");
     state.setPresentation(false);presentation.updateContent(state,input);card.syncContent();composition.upload(renderer);core::Matrix4 outgoing;outgoing.values[3]=.0001;outgoing.values[12]=7;

@@ -29,7 +29,7 @@ private:
 // any credential-like key is removed defensively and reported.
 struct MacAccountImport {
     std::string bytes;                       // Windows Account/profile-cache.json
-    bool profileSyncLocked{};                // syncProfile && linked && selected Endfield role
+    bool profileSyncLocked{};                // sync on (incl. partialSyncProfile) && linked && selected Endfield role
     std::vector<std::string> disconnectedRegions; // linked regions marked requiresReconnect
     std::vector<std::string> strippedKeys;   // JSON paths of removed credential-like keys
     std::size_t roles{}, snapshots{};

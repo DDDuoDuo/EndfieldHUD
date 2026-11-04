@@ -21,7 +21,11 @@ namespace endfield::native {
 // .exe/.lnk through the caller's filter, or a packaged application chosen
 // in AppsFolder (where the dialog starts), returned as
 // "shell:AppsFolder\<AppUserModelID>"; links are not dereferenced.
-enum class ShelfPickerMode {mixedReferences,singleReaderFile,singleFile,applications};
+// media: several existing files, no folders and no extra action (the Mac
+// NSOpenPanel of Archive, Projection and Notes media); an empty title or
+// accept label keeps the dialog's own ("Open"), as a panel the Mac leaves
+// untitled (Archive, Projection); addSelection is unused.
+enum class ShelfPickerMode {mixedReferences,singleReaderFile,singleFile,applications,media};
 struct ShelfPickerLabels {
     std::string title{"Add to Temporary File Shelf"};
     std::string addReferences{"Add references"};
@@ -75,7 +79,7 @@ public:
     ~NativeShelfFilePicker(); // creating-thread lifetime; cancels its own dialog
     NativeShelfFilePicker(const NativeShelfFilePicker&)=delete;
     NativeShelfFilePicker&operator=(const NativeShelfFilePicker&)=delete;
-    // Safe inside FileShelfState's synchronous choose callback: queues only.
+    // Safe inside a canvas or store callback: queues only.
     // The owner calls handleMessage on the private showRequested notification,
     // after the state/store callback has returned, to enter the native modal UI.
     bool request();
@@ -105,6 +109,7 @@ HRESULT revealShelfReference(ehud::data::ShelfFileAccess,
 // verb (ShellExecuteEx on its ID list; a folder opens in File Explorer, an
 // unassociated type shows the Shell's own "open with" choice). A choice the
 // user cancels is S_FALSE. Explicit user action only; nothing is copied.
+// Any STA thread (the Shelf calls it on a short-lived one of its own).
 HRESULT openShelfReference(ehud::data::ShelfFileAccess,
     ShelfRevealResolver={},ShelfRevealOperation={})noexcept;
 #endif

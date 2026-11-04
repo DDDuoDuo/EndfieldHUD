@@ -6,7 +6,9 @@
 
 namespace endfield::modules {struct MapGeography;}
 namespace endfield::native {
-struct MapPaintImage {unsigned width{},height{};std::vector<std::uint8_t>straightRGBA;};
+// opaque: every alpha byte is 255 (found by the painter's worker pass), so the
+// UI thread uploads it without a conversion copy (TextureData::opaque).
+struct MapPaintImage {unsigned width{},height{};std::vector<std::uint8_t>straightRGBA;bool opaque{};};
 struct MapPaintRequest {
     // Geography comes from the bounded source archive decoders. Accent is
     // already converted to sRGB, matching WorldMapRasterPainter.components.

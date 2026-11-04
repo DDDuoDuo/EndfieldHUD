@@ -40,6 +40,10 @@ public:
     // is on and the user has not turned the entry off.
     std::optional<std::string> ensureEnabled(core::Language) const;
     static std::string statusDescription(const LoginItemStatus&, core::Language);
+    // AppDelegate's loginStatusProvider (SHELL-83): only what needs the
+    // user's attention (the entry turned off in Startup apps, the Mac's
+    // "requires approval"); empty while the switch tells it all.
+    static std::string attentionDescription(const LoginItemStatus&, core::Language);
     const LoginItemLocation& location() const noexcept { return location_; }
 private:
     LoginItemLocation location_;

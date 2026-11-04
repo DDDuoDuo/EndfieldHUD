@@ -26,6 +26,9 @@ inline constexpr std::size_t centerLogoMaximumManagedBytes = 4u * 1024u * 1024u;
 enum class CenterLogoChoice : std::uint8_t { endfield, rhodesIsland, babel, rhineLab, custom };
 std::optional<CenterLogoChoice> centerLogoChoice(std::string_view) noexcept;
 std::string_view centerLogoIdentifier(CenterLogoChoice) noexcept;
+// HUDCenterLogo.title (Sources/HUDCenterLogo.swift:9-16): the preset's
+// HUDApplicationIcon title ("Endfield" in every language) or Custom / 自定.
+std::string centerLogoTitle(CenterLogoChoice, core::Language);
 // The bundled preset wordmark (AppIconSources/CenterLogos/<id>.png), empty for
 // endfield (the packet artwork) and custom (the managed store).
 std::string_view centerLogoPresetFile(CenterLogoChoice) noexcept;
@@ -61,6 +64,18 @@ struct CenterLogoArtwork {
     double displayWidth{}, displayHeight{};
 };
 std::optional<CenterLogoArtwork> centerLogoArtwork(const CenterLogoBitmap&);
+// Settings > Display > Center logo chooser (HUDSettingsCanvas.logoArtwork):
+// HUDMenu.Icon.raster of the presented artwork, i.e. the logo as the centre
+// shows it aspect-fit into `width` x `height` box px at max(1, min(8,
+// ceil(scale))) pixels per box px, straight sRGB RGBA8 with top-left rows.
+// `maximumSide` bounds the longer pixel side (the memory image limit; the
+// raster is then a little softer than the Mac's). Resampled with a box filter
+// on premultiplied pixels (the Mac's high-quality CGContext draw).
+CenterLogoBitmap centerLogoChooserImage(const CenterLogoArtwork&, double width, double height, double scale, unsigned maximumSide);
+// HUDSettingsCanvas.endfieldWordmark: the default ENDFIELD INDUSTRIES
+// lettering is the band y 142...225 (in a 430-unit-wide source, rounded
+// outward) of Resources/EndfieldIndustriesSource.png.
+CenterLogoBitmap centerLogoWordmark(const CenterLogoBitmap& source);
 // HUDCenterLogoError.errorDescription.
 enum class CenterLogoError : std::uint8_t { invalidImage, imageTooLarge, imageDimensionsTooLarge, persistence };
 std::string centerLogoErrorText(CenterLogoError, core::Language, std::string_view persistenceDetail = {});

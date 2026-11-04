@@ -1,5 +1,7 @@
 #include "native/audio_runtime.hpp"
 #include "native/volume_strings.hpp"
+#include "modules/volume_canvas.hpp"
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
@@ -124,21 +126,21 @@ void devices(){
 void volume(){
     Harness h;
     {std::lock_guard l(h.world->m);h.world->outputs={{speaker,L"Speakers",L"HDAUDIO",1u},{usb,L"USB Headset",L"USB",5u}};h.world->inputs={{mic,L"Microphone",L"HDAUDIO",4u}};h.world->defaultOutput=speaker;h.world->defaultInput=mic;}
-    unsigned received{};n::VolumeController controller(h.runtime->volume().snapshot(),h.runtime->volume().callbacks(),n::volumeStrings(c::Language::english));
-    h.runtime->volume().setReceiver([&](const n::VolumeSnapshot&s){++received;controller.receiveSnapshot(s);});
-    h.runtime->volume().setVisible(true);controller.setActive(true);
-    h.until([&]{return controller.snapshot().canSetVolume&&controller.snapshot().outputs.size()==2;},"Volume content arrives through the binding");
+    unsigned received{};n::VolumeSnapshot delivered=h.runtime->volume().snapshot();const auto callbacks=h.runtime->volume().callbacks();
+    h.runtime->volume().setReceiver([&](const n::VolumeSnapshot&s){++received;delivered=s;});
+    h.runtime->volume().setVisible(true);callbacks.setActive(true);
+    h.until([&]{return delivered.canSetVolume&&delivered.outputs.size()==2;},"Volume content arrives through the binding");
     check(h.seen.volume&&received>0,"drain() reports and delivers Volume content");
-    check(controller.snapshot().outputs[1].headphones&&!controller.snapshot().canSetDefaultOutput&&!controller.snapshot().canSetDefaultInput,"Headset traits reach the UI; default-device switching stays unavailable");
-    check(controller.setSlider("volume",.25),"Slider write accepted");
-    h.until([&]{return controller.snapshot().volume&&std::abs(*controller.snapshot().volume-.25)<1e-6;},"Readback reaches the controller");
+    check(delivered.outputs[1].headphones&&!delivered.canSetDefaultOutput&&!delivered.canSetDefaultInput,"Headset traits reach the UI; default-device switching stays unavailable");
+    check(callbacks.setVolume(delivered.outputID,.25),"Slider write accepted");
+    h.until([&]{return delivered.volume&&std::abs(*delivered.volume-.25)<1e-6;},"Readback reaches the Volume snapshot");
     {std::lock_guard l(h.world->m);h.world->defaultOutput=usb;}
     h.wake(&World::topologyWake);
-    h.until([&]{return controller.snapshot().outputID=="{0.0.0.00000000}.{usb}";},"Default output change reaches the Volume UI without polling");
+    h.until([&]{return delivered.outputID=="{0.0.0.00000000}.{usb}";},"Default output change reaches the Volume UI without polling");
     // Localized failure text follows the language without a new provider.
     check(h.runtime->setLanguage(c::Language::simplifiedChinese)&&!h.runtime->setLanguage(c::Language::simplifiedChinese),"Language changes once");
     check(!h.runtime->volume().callbacks().setVolume("{0.0.0.00000000}.{speaker}",.4),"A gesture bound to the previous output is refused");
-    check(controller.snapshot().status=="音频设备已更改，请重试。","The refusal shows the source localized device-changed message");
+    check(delivered.status=="音频设备已更改，请重试。","The refusal shows the source localized device-changed message");
     {std::lock_guard l(h.world->m);check(std::abs(h.world->master-.25f)<1e-6f,"The refused gesture never reached a device");}
     check(h.runtime->language()==c::Language::simplifiedChinese,"Language is retained");
     bool threw{};try{h.runtime->setLanguage(c::Language::system);}catch(const std::invalid_argument&){threw=true;}check(threw,"System must be resolved by the caller");
@@ -146,6 +148,95 @@ void volume(){
     h.until([&]{return h.runtime->snapshot().paused;},"Concealing releases the endpoint controls");
     h.runtime->stop();h.runtime->stop();
     check(h.runtime->drain()==n::AudioRuntimeChanges{}&&!h.runtime->setApplicationGain("x",.5)&&!h.runtime->powerSuspend(),"A stopped runtime accepts nothing and stays idempotent");
+}
+// Leaving Volume and coming back, or closing and reopening the HUD on it (the
+// Mac's AudioDeviceController.stop()/start() keeps its snapshot; only the
+// setters check isRunning): the page's content stays as it was while the vote
+// is released and until the worker has read again, and an unchanged read
+// publishes nothing. A snapshot that dropped applicationActivitySupported
+// (VolumeCanvas's page structure) made the canvas rebuild its page as it left
+// and again under the entrance of every switch back to Volume.
+void volumeRevisit(){
+    Harness h;
+    {std::lock_guard l(h.world->m);h.world->outputs={{speaker,L"Speakers",L"HDAUDIO",1u}};h.world->inputs={{mic,L"Microphone",L"HDAUDIO",4u}};h.world->defaultOutput=speaker;h.world->defaultInput=mic;
+        h.world->sessions={{"{player}","4242:100",L"Player",4242,true,true,.8f,0}};}
+    auto&binding=h.runtime->volume();const auto callbacks=binding.callbacks();
+    std::vector<n::VolumeSnapshot>deliveries;n::VolumeSnapshot delivered=binding.snapshot();
+    binding.setReceiver([&](const n::VolumeSnapshot&s){deliveries.push_back(s);delivered=s;});
+    binding.setVisible(true);callbacks.setActive(true);
+    h.until([&]{return delivered.canSetVolume&&delivered.applicationActivitySupported&&delivered.applications.size()==1;},"Volume shows the devices and the audio app");
+    const auto shown=delivered;
+    for(const bool conceal:{false,true}){
+        deliveries.clear();
+        if(conceal)binding.setVisible(false);else callbacks.setActive(false);
+        check(deliveries.empty()&&binding.snapshot()==shown,"Releasing the vote keeps the shown snapshot (nothing is delivered to the leaving page)");
+        h.until([&]{return h.runtime->snapshot().paused;},"The worker releases the endpoint controls");
+        check(deliveries.empty()&&binding.snapshot()==shown,"The paused publication changes nothing Volume shows");
+        check(!callbacks.setVolume(shown.outputID,.3),"Writes stay refused while Volume is away");
+        if(conceal)binding.setVisible(true);else callbacks.setActive(true);
+        check(deliveries.empty()&&binding.snapshot()==shown,"Coming back shows the retained content before the worker read");
+        h.until([&]{return !h.runtime->snapshot().paused;},"The worker reads again");
+        check(deliveries.empty()&&binding.snapshot()==shown,"An unchanged read publishes nothing: the page is not rebuilt under its entrance");
+    }
+    // A change made while Volume was away arrives as one ordinary update.
+    deliveries.clear();callbacks.setActive(false);
+    h.until([&]{return h.runtime->snapshot().paused;},"Paused again");
+    {std::lock_guard l(h.world->m);h.world->master=.3f;}
+    callbacks.setActive(true);
+    h.until([&]{return delivered.volume&&std::abs(*delivered.volume-.3)<1e-6;},"The new level arrives with the first read");
+    check(deliveries.size()==1&&deliveries[0].applicationActivitySupported&&deliveries[0].canSetVolume,"The read updates the values in place; the page structure stays");
+    h.runtime->stop();
+}
+// The same through the Volume canvas, as DesignOwnerCore drives a module
+// switch (show, setActive, playEntrance; prepareToLeave, setActive(false)):
+// the page Volume shows when it enters keeps its staggered entrance through
+// the worker's first read, and the leaving page is not rebuilt, from the
+// first switch after launch on.
+void volumePage(){
+    namespace d=endfield::modules::design;
+    Harness h;
+    {std::lock_guard l(h.world->m);h.world->outputs={{speaker,L"Speakers",L"HDAUDIO",1u}};h.world->inputs={{mic,L"Microphone",L"HDAUDIO",4u}};h.world->defaultOutput=speaker;h.world->defaultInput=mic;
+        h.world->sessions={{"{player}","4242:100",L"Player",4242,true,true,.8f,0}};}
+    // Deterministic text widths (.55 em per byte; the layout is not under test).
+    struct Measurer final:d::TextMeasurer {
+        double width(std::span<const d::TextRun>runs,d::TextRegion)override{double w{};for(const auto&r:runs)w+=double(r.text.size())*r.style.size*.55;return w;}
+        d::LineMetrics metrics(const d::TextStyle&s,d::TextRegion,double)override{return {s.size*s.lineHeight,s.size*.8,s.size*.2};}
+    }measurer;
+    d::Context context(measurer,d::asciiUppercase);double now=100;
+    context.update(d::geometry::baseUnit,2/d::geometry::baseUnit,now);
+    d::Context::Appearance appearance;appearance.reduceMotion=false;context.apply(appearance,now);
+    auto&binding=h.runtime->volume();binding.setVisible(true);
+    endfield::modules::VolumeCanvas canvas(context,binding.snapshot(),binding.callbacks());
+    unsigned rebuilt{};const d::Page*page{};
+    binding.setReceiver([&](const n::VolumeSnapshot&s){canvas.receive(s);if(page&&&canvas.page()!=page)++rebuilt;page=&canvas.page();});
+    const auto enter=[&]{now+=1;canvas.show(now);canvas.setActive(true,now);canvas.playEntrance({0,24},now);page=&canvas.page();};
+    const auto leave=[&]{now+=1;canvas.prepareToLeave(now);canvas.setActive(false,now);};
+    // The first switch after launch: the page is built before anything was
+    // read (no devices, no level, no per-app support); the worker's first read
+    // fills it in place, so the page keeps its entrance.
+    rebuilt=0;enter();
+    {
+        const std::vector<d::Layer*>rows(canvas.page().staggered().begin(),canvas.page().staggered().end());
+        check(!binding.snapshot().applicationActivitySupported&&!binding.snapshot().canSetVolume&&canvas.header().counterText()=="00","The first page is built before the first read");
+        h.until([&]{return binding.snapshot().applicationActivitySupported&&binding.snapshot().canSetVolume;},"The first visit reads the devices");
+        check(rebuilt==0&&&canvas.page()==page&&rows.size()==5,"The first switch to Volume after launch keeps the page it entered with");
+        check(std::all_of(rows.begin(),rows.end(),[&](const d::Layer*row){return row->animating(now+.02);}),"Its tab bar and rows keep their staggered entrance");
+        check(canvas.header().counterText()=="50"&&canvas.snapshot().outputs.size()==1,"The read fills the level and the devices in place");
+    }
+    leave();h.until([&]{return h.runtime->snapshot().paused;},"Volume left");
+    for(unsigned visit=0;visit<3;++visit){
+        rebuilt=0;
+        enter();
+        const std::vector<d::Layer*>rows(canvas.page().staggered().begin(),canvas.page().staggered().end());
+        h.until([&]{return !h.runtime->snapshot().paused;},"The worker reads again");
+        check(rebuilt==0&&&canvas.page()==page&&rows.size()==5,"Switching back to Volume keeps the page it entered with");
+        check(std::all_of(rows.begin(),rows.end(),[&](const d::Layer*row){return row->animating(now+.02);}),"Its tab bar and rows keep their staggered entrance");
+        leave();
+        check(rebuilt==0&&&canvas.page()==page,"The leaving page is not rebuilt");
+        h.until([&]{return h.runtime->snapshot().paused;},"Volume left again");
+        check(rebuilt==0,"The worker's pause leaves the page alone");
+    }
+    h.runtime->stop();
 }
 void nowPlaying(){
     Harness h;
@@ -175,6 +266,6 @@ void nowPlaying(){
 }
 }
 int main(){
-    try{construction();coalescing();devices();volume();nowPlaying();std::cout<<"PASS "<<checks<<" injected audio runtime checks (no native audio accessed)\n";return 0;}
+    try{construction();coalescing();devices();volume();volumeRevisit();volumePage();nowPlaying();std::cout<<"PASS "<<checks<<" injected audio runtime checks (no native audio accessed)\n";return 0;}
     catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}
 }

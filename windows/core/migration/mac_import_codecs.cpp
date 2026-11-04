@@ -133,8 +133,18 @@ MacAccountImport importMacAccountCache(std::string_view bytes) {
     const auto region = text(required(document, "region", "cache"), "cache.region");
     need(region == "mainland" || region == "global", "Account cache region is unknown");
     (void)text(required(document, "header", "cache"), "cache.header");
-    const bool syncProfile = flag(required(document, "syncProfile", "cache"), "cache.syncProfile");
+    bool syncProfile = flag(required(document, "syncProfile", "cache"), "cache.syncProfile");
     (void)flag(required(document, "syncAvatar", "cache"), "cache.syncAvatar");
+    // 1.3.0 Cache init(from:): unsyncedFields is decodeIfPresent [String]; while
+    // it is non-empty, partialSyncProfile == true means sync is on (the file
+    // says syncProfile false so v1.2.0 leaves the excluded fields alone). Both
+    // keys stay in the imported bytes for the Windows cache codec.
+    if (present(document, "unsyncedFields")) {
+        const auto& fields = document["unsyncedFields"];
+        need(fields.isArray(), "cache.unsyncedFields must be an array");
+        for (const auto& field : fields.array()) need(field.isString(), "cache.unsyncedFields must hold strings");
+        if (!fields.array().empty() && present(document, "partialSyncProfile") && flag(document["partialSyncProfile"], "cache.partialSyncProfile")) syncProfile = true;
+    }
     const auto& records = required(document, "records", "cache");
     need(records.isObject(), "Account records must be an object");
     MacAccountImport out;
@@ -154,7 +164,8 @@ MacAccountImport importMacAccountCache(std::string_view bytes) {
         out.snapshots += snapshots.object().size();
         if (present(record, "bindingsAt")) (void)date(record["bindingsAt"], where + ".bindingsAt");
     }
-    // HypergryphAccountController.gameSyncActive for the selected region.
+    // HypergryphAccountController.gameSyncActive for the selected region
+    // (true for a partial sync too: some card fields are then still unlocked).
     if (records.contains(region)) {
         const auto& record = records[region];
         if (syncProfile && record["linked"].boolean() && present(record, "selectedRoleID")) {

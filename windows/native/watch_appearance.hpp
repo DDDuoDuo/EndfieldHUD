@@ -12,7 +12,9 @@ public:
  const core::source::Json&captionTemplate()const noexcept{return caption_;}
  const core::source::Json&icon(std::string_view key,bool reportSlot)const;
  core::source::Json localIcon(std::string_view key,bool reportSlot,std::string_view surfaceID)const;
- core::source::Json localOriginalIcon(std::string_view memoryKey,std::uint64_t revision,std::string_view surfaceID)const;
+ // `glyph`: the image layer's frame in the 32-point box (an application icon
+ // trimmed to its pixels, HUDSourceDesktopIconLayout.glyphFrame); none keeps the template's.
+ core::source::Json localOriginalIcon(std::string_view memoryKey,std::uint64_t revision,std::string_view surfaceID,std::optional<core::Rect> glyph={})const;
  std::size_t iconCount()const noexcept{return icons_.size();}
 private:
  struct Icon{core::source::Json tree;bool reportOnly{};};
@@ -57,6 +59,11 @@ public:
  // on equal action/appearance/bounds frames. Failure requires retry before draw.
  bool update(const WatchContentCatalog::Actions&,const WatchAppearance&,
   std::span<const core::source::NativeLabelPlacement>);
+ // Each icon surface painted reports its visible glyph in the 32-point box
+ // (the template's image frame: HUDSourceDesktopIconLayout.glyphFrame of the
+ // trimmed artwork, or the vector glyph's bounds), for the left icons'
+ // placement (NativeLabelPlan::setIconGlyph). Content events only.
+ void setIconGlyphObserver(std::function<void(std::string_view surfaceID,core::Rect glyph)>);
  WatchAppearanceStats stats()const noexcept;
 private:struct Impl;std::unique_ptr<Impl>impl_;
 };

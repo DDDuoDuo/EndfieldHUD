@@ -77,18 +77,18 @@ template<class F>void segments(std::span<const TextRun>runs,text::Range range,F 
 bool trait(const TextStyle&s,FormatKind kind){switch(kind){case FormatKind::bold:return s.bold;case FormatKind::italic:return s.italic;case FormatKind::underline:return s.underline;case FormatKind::strikethrough:return s.strikethrough;default:return false;}}
 void validate(const FormatChange&change){
     switch(change.kind){
-    case FormatKind::font:need(!change.fontName.empty()&&change.fontName.size()<=256&&Json::validUtf8(change.fontName),"Invalid formatting font name");break;
+    case FormatKind::font:need(change.clears||(!change.fontName.empty()&&change.fontName.size()<=256&&Json::validUtf8(change.fontName)),"Invalid formatting font name");break;
     case FormatKind::size:need(std::isfinite(change.fontSize),"Invalid formatting size");break;
-    case FormatKind::color:need(change.color.valid(),"Invalid formatting color");break;
+    case FormatKind::color:need(change.clears||change.color.valid(),"Invalid formatting color");break;
     case FormatKind::bold:case FormatKind::italic:case FormatKind::underline:case FormatKind::strikethrough:break;
     default:need(false,"Unknown Notes formatting command");
     }
 }
 TextStyle changed(TextStyle style,const FormatChange&change,bool enable){
     switch(change.kind){
-    case FormatKind::font:style.fontName=change.fontName;break;
+    case FormatKind::font:if(change.clears)style.fontName.reset();else style.fontName=change.fontName;break;
     case FormatKind::size:style.fontSize=std::clamp(change.fontSize,6.,144.);break;
-    case FormatKind::color:style.color=change.color;break;
+    case FormatKind::color:if(change.clears)style.color.reset();else style.color=change.color;break;
     case FormatKind::bold:style.bold=enable;break;case FormatKind::italic:style.italic=enable;break;
     case FormatKind::underline:style.underline=enable;break;case FormatKind::strikethrough:style.strikethrough=enable;break;
     }
@@ -258,6 +258,12 @@ std::optional<RichText>RichDocument::richText()const{
     const auto&i=*impl_;RichText rich;rich.extra=i.rootExtra;rich.runs.reserve(i.styled.size());
     for(auto r:i.styled){if(r.style.fontName&&r.style.fontName->starts_with('.'))r.style.fontName.reset();append(rich.runs,std::move(r));}
     if(!i.initiallyRich&&rich.runs.empty())return {};need(rich.validFor(i.value),"Captured Notes formatting is invalid; input is not truncated");return rich;
+}
+RichText RichDocument::coveringRichText()const{
+    const auto&i=*impl_;RichText rich;rich.extra=i.rootExtra;rich.runs.reserve(i.styled.size()*2+1);
+    segments(i.styled,{0,static_cast<std::uint32_t>(i.value.size())},[&](auto start,auto length,const auto&style,const auto&extra){TextRun run{start,length,style,extra};if(run.style.fontName&&run.style.fontName->starts_with('.'))run.style.fontName.reset();
+        if(!rich.runs.empty()&&rich.runs.back().style==run.style&&rich.runs.back().extra==run.extra)rich.runs.back().length+=length;else rich.runs.push_back(std::move(run));});
+    need(rich.validFor(i.value),"Captured Notes formatting is invalid; input is not truncated");return rich;
 }
 RichDocumentStats RichDocument::stats()const noexcept{const auto&i=*impl_;std::size_t changes{};for(const auto&g:i.pending)changes+=g.changes.size();for(const auto&g:i.composing)changes+=g.changes.size();return {i.undo.size(),i.redo.size(),i.historyBytes,changes,i.snapshot.has_value()||i.preparedSnapshot.has_value()};}
 } // namespace endfield::core::notes

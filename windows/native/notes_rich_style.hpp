@@ -1,17 +1,11 @@
 #pragma once
 #include "core/notes_rich_text.hpp"
-#include "core/notes_font_names.hpp"
 #include <array>
 namespace endfield::native {
 // One descriptor mapping for settled Notes shaping/paint. Public names remain
 // explicit; source-private system fonts use the configured native fallback.
 inline bool notesHasExplicitFont(const core::notes::TextStyle&s)noexcept{
     return s.fontName&&!s.fontName->starts_with(".");
-}
-// The family the font menu shows as selected: a stored Mac PostScript name
-// shows its Windows counterpart (core/notes_font_names.hpp).
-inline std::string_view notesSelectedFontFamily(const core::notes::TextStyle&s,std::string_view fallback)noexcept{
-    if(!notesHasExplicitFont(s))return fallback;if(const auto mapped=core::notes::notesWindowsFontFamily(*s.fontName))return *mapped;return std::string_view(*s.fontName);
 }
 inline ehud::data::Json notesRunFont(const core::notes::TextStyle&s){
     using J=ehud::data::Json;const bool named=notesHasExplicitFont(s);

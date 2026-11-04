@@ -19,11 +19,12 @@ private:
     std::string encoded_,path_,name_;NotesMediaKind kind_{};unsigned width_{},height_{},frames_{};std::optional<double>duration_;std::shared_ptr<void>lease_;
 };
 struct ProjectionMediaItem {std::uint64_t id{};std::shared_ptr<const ProjectionMediaReference>reference;core::Rect frame;};
+// Mac 1.3.0 ProjectionMediaNode (ProjectionWorkspaceView.swift:669-704): the
+// title and time are the line frames of their text layers; the hit rects are unchanged.
 struct ProjectionMediaGeometry {core::Rect header,close,title,content,play,seek,time,rail,resize;bool moving{},video{};};
 ProjectionMediaGeometry projectionMediaGeometry(core::Point size,NotesMediaKind);
-struct ProjectionWorkspaceGeometry {core::Rect bounds,toolbar,message;};
-ProjectionWorkspaceGeometry projectionWorkspaceGeometry(core::Point size,double safeAreaTop=0,double visibleTop=0);
-core::Rect projectionMenuFrame(const ProjectionWorkspaceGeometry&,core::Point menuSize);
+// (The toolbar, its menus and the status line are the workspace chrome's,
+// modules/projection_toolbar.hpp: Mac 1.3.0 sizes the toolbar by its content.)
 // Mirrors ProjectionModel.swift; it deliberately keeps drawings/preferences
 // across hide/show. Caller owns returned opaque IDs and playback/provider routes.
 class ProjectionModel final {

@@ -1,5 +1,6 @@
 #include "modules/charge_indicator.hpp"
 #include "core/motion.hpp"
+#include "core/source_desktop_chrome.hpp"
 #include "modules/activity_state.hpp"
 #include <algorithm>
 #include <cmath>
@@ -80,19 +81,29 @@ Json::Array ellipse(core::Rect r) {
             command("cubic", {{r.x, cy - ry * k}, {cx - rx * k, r.y}, {cx, r.y}}),
             command("cubic", {{cx + rx * k, r.y}, {r.x + r.width, cy - ry * k}, {r.x + r.width, cy}}), command("close")};
 }
+// HUDFontResolver.nsFont (Mac 1.3.0): the standard face, HarmonyOS Sans;
+// .semibold resolves to its Bold file (bold trait), .medium to Medium.
 Json font(const char* postScript, double size, unsigned traits) {
-    return Json::Object{{"postScriptName", postScript}, {"familyName", ".AppleSystemUIFont"}, {"pointSize", size},
+    return Json::Object{{"postScriptName", postScript}, {"familyName", "HarmonyOS Sans"}, {"pointSize", size},
                         {"symbolicTraits", static_cast<double>(traits)}};
 }
-struct Run { std::string text; Json font; ChargeColor color; std::optional<double> kern; };
+// `tabular`: HUDFontResolver.nsFont(..., tabular: true), OpenType tnum
+// (ChargeIndicatorView.swift :368,372,387,390; LIB-F20).
+struct Run { std::string text; Json font; ChargeColor color; std::optional<double> kern; bool tabular{}; };
 // Source attributed CATextLayer: default Helvetica 36 layer font, white layer
-// foreground, explicit runs carrying the real fonts/colors.
+// foreground, explicit runs carrying the real fonts/colors. The labels are
+// HUDStandardTextLayers (ChargeIndicatorView.swift:21-26): every line sits
+// on the standard face's own line metrics (HarmonyOS Sans hhea, the largest
+// run's ascender and descender, HUDStandardTextLayer.metrics(of:in:)), which
+// the layer font carries (LIB-F31), not on DirectWrite's default spacing.
 Json textLayer(std::string id, double width, double height, const std::vector<Run>& runs, const char* alignment) {
     auto node = layer(std::move(id), "text", "CATextLayer", {0, 0, width, height}, {0, 0}, {0, 0});
     std::string string;
     Json::Array attributed;
     std::size_t offset = 0;
+    double lineSize = 0;
     for (const auto& run : runs) {
+        lineSize = std::max(lineSize, run.font["pointSize"].number());
         std::size_t units = 0;
         for (std::size_t i = 0; i < run.text.size();) {
             const auto byte = static_cast<unsigned char>(run.text[i]);
@@ -102,6 +113,7 @@ Json textLayer(std::string id, double width, double height, const std::vector<Ru
         }
         Json::Object attributes{{"NSFont", run.font}, {"NSColor", color(run.color)}};
         if (run.kern) attributes.emplace("NSKern", *run.kern);
+        if (run.tabular) attributes.emplace("tabularFigures", true);
         if (units) attributed.push_back(Json::Object{{"utf16Range", Json::Array{static_cast<double>(offset), static_cast<double>(units)}},
                                                      {"attributes", std::move(attributes)}});
         offset += units;
@@ -112,7 +124,10 @@ Json textLayer(std::string id, double width, double height, const std::vector<Ru
                                 // layer default keeps only its family and size (the
                                 // source's UI-optimized trait bit is not a style).
                                 {"font", Json::Object{{"postScriptName", "Helvetica"}, {"familyName", "Helvetica"},
-                                                      {"pointSize", 36}, {"symbolicTraits", 0}}},
+                                                      {"pointSize", 36}, {"symbolicTraits", 0},
+                                                      {"ascender", core::source::StandardFaceMetrics::ascender * lineSize},
+                                                      {"descender", core::source::StandardFaceMetrics::descender * lineSize},
+                                                      {"leading", core::source::StandardFaceMetrics::leading * lineSize}}},
                                 {"foregroundColor", color({1, 1, 1, 1})}, {"alignment", alignment}, {"wrapped", false},
                                 {"truncation", "none"}, {"runs", std::move(attributed)}};
     return node;
@@ -173,7 +188,7 @@ ChargeTelemetry chargeTelemetry(const ActivitySnapshot& sample) {
 }
 std::optional<BatteryLevelTone> batteryLevelTone(std::optional<unsigned> percentage) noexcept {
     if (!percentage || *percentage > 100) return std::nullopt;
-    if (*percentage > 50) return BatteryLevelTone::green;
+    if (*percentage > 70) return BatteryLevelTone::green;
     if (*percentage >= 20) return BatteryLevelTone::yellow;
     return BatteryLevelTone::red;
 }
@@ -535,10 +550,10 @@ ChargeIndicatorContent prepareChargeIndicatorContent(const ChargeIndicatorAppear
     const auto foreground = appearance.dark ? white(0.95) : white(0.10);
     const auto& frames = ChargeIndicatorMetrics::textFrames;
     content.texts[0] = textLayer("charge/4", frames[0][3], frames[0][4],
-                                 {{"// " + chargeModeEnglish(battery), font(".AppleSystemUIFontMedium", 7.5, 0), alpha(foreground, 0.55), 0.2}}, "left");
+                                 {{"// " + chargeModeEnglish(battery), font("HarmonyOS_Sans_Medium", 7.5, 0), alpha(foreground, 0.55), 0.2}}, "left");
     const auto title = chargeModeTitle(battery, appearance.language);
     auto titleLayer = [&](double size) {
-        return textLayer("charge/5", frames[1][3], frames[1][4], {{title, font(".AppleSystemUIFontDemi", size, 2), foreground, {}}}, "left");
+        return textLayer("charge/5", frames[1][3], frames[1][4], {{title, font("HarmonyOS_Sans_Bold", size, 2), foreground, {}}}, "left");
     };
     // Keep the bilingual styling and capsule geometry while fitting longer
     // English and Japanese titles without clipping.
@@ -551,9 +566,9 @@ ChargeIndicatorContent prepareChargeIndicatorContent(const ChargeIndicatorAppear
     content.titleFontSize = titleSize;
     const auto muted = alpha(foreground, 0.47);
     auto metricLine = [&](double scale) {
-        std::vector<Run> runs{{content.reading.primary, font(".SFNS-Semibold", 12.5 * scale, 2), foreground, {}},
-                              {content.reading.secondary, font(".SFNS-Medium", 9.5 * scale, 0), muted, {}}};
-        if (!content.reading.unit.empty()) runs.push_back({" " + content.reading.unit, font(".AppleSystemUIFontMedium", 7.5 * scale, 0), muted, {}});
+        std::vector<Run> runs{{content.reading.primary, font("HarmonyOS_Sans_Bold", 12.5 * scale, 2), foreground, {}, true},
+                              {content.reading.secondary, font("HarmonyOS_Sans_Medium", 9.5 * scale, 0), muted, {}, true}};
+        if (!content.reading.unit.empty()) runs.push_back({" " + content.reading.unit, font("HarmonyOS_Sans_Medium", 7.5 * scale, 0), muted, {}});
         return textLayer("charge/6", frames[2][3], frames[2][4], runs, "left");
     };
     double scale = 1;
@@ -564,7 +579,7 @@ ChargeIndicatorContent prepareChargeIndicatorContent(const ChargeIndicatorAppear
     }
     content.lineScale = scale;
     auto trailingLayer = [&](double size) {
-        return textLayer("charge/7", frames[3][3], frames[3][4], {{content.reading.trailing, font(".SFNS-Semibold", size, 2), foreground, {}}}, "right");
+        return textLayer("charge/7", frames[3][3], frames[3][4], {{content.reading.trailing, font("HarmonyOS_Sans_Bold", size, 2), foreground, {}, true}}, "right");
     };
     double trailingSize = 13;
     content.texts[3] = trailingLayer(trailingSize);

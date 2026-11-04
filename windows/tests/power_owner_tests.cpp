@@ -62,8 +62,8 @@ void run(const std::filesystem::path& shader) {
         drain();
         check(reads == 1 && readings.size() == 2 && readings[1].capacity == m::BatteryReading::Capacity{41'500, 52'000, "mWh"} &&
               !owner.panel().state().visible(), "Capacity pair arrives without an alert");
-        check(owner.trayStatus(c::Language::english) == "19% · On battery" &&
-              owner.trayTooltip(c::Language::simplifiedChinese) == "EndfieldHUD — 19% · 使用电池", "Tray status line");
+        check(owner.trayStatus(c::Language::english) == "19% — On battery" && // SHELL-84: the Mac's " — "
+              owner.trayTooltip(c::Language::simplifiedChinese) == "EndfieldHUD — 19% — 使用电池", "Tray status line");
         // Plug in: CHARGE MODE immediately, connection events recorded.
         owner.receive(snapshot(19, true, false), 2);
         check(events.size() == 2 && events[0].first == m::EventKind::powerConnected && events[0].second.at("state") == "connected" &&

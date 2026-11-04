@@ -2,6 +2,7 @@
 #include "core/data/event_log_store.hpp"
 #include "core/data/file_io.hpp"
 #include "core/data/map_store.hpp"
+#include "core/data/notes_centre_store.hpp"
 #include "core/migration/mac_import_files.hpp"
 #include "core/migration/mac_import_sha256.hpp"
 #include "core/migration/mac_import_work.hpp"
@@ -68,15 +69,20 @@ const StoreLayout& layout(MacImportStore store) {
 // keeps original avatar bytes up to 128 MiB (NotesStore/UserProfileStore/
 // HUDCenterLogoStore), so these bounds never reject what the Mac produced.
 constexpr std::uint64_t notesImageLimit = 16 * MiB, avatarLimit = 128 * MiB, backgroundLimit = 64 * MiB, logoLimit = 4 * MiB;
+constexpr std::string_view notesCentre = "EndfieldCharge/Notes/centre.json"; // 1.3.0, optional (Notes data set)
 constexpr std::string_view notesImages = "EndfieldCharge/Notes/Images/", profileImages = "EndfieldCharge/Profile/Images/", logoImages = "EndfieldCharge/CenterLogo/";
 // Settings keys ConfigurationStore owns; everything else in an existing
-// Windows record is a Windows-only choice (display, hotkey, best score).
+// Windows record is a Windows-only choice (display, hotkey, best score) or a
+// separate Mac key that the export may lack (projection.settings.v1 keeps the
+// Mac value when exported, dailyBootLogLastDay never transfers).
 const std::set<std::string, std::less<>>& macSettingKeys() {
     static const std::set<std::string, std::less<>> keys{"displayMode", "displayDuration", "accentHex", "theme", "scale", "placement",
         "customScreenID", "customPositionX", "customPositionY", "language", "hudScale", "hudOffsetX", "hudOffsetY", "parallaxIntensity",
         "perspectiveIntensity", "backgroundDarkness", "blurAmount", "reduceMotion", "ambientAnimation", "closeOnFocusLost",
         "openOnActiveDisplay", "hudDisplayUUID", "hudDisplayName", "launchAtLogin", "batteryAlertsEnabled", "devicePopupEnabled",
-        "lowPowerVisualMode", "applicationIcon", "clockFormat", "clockStyle", "centerLogo", "centerLogoRevision", "alertMetric", "summonShortcut"};
+        "lowPowerVisualMode", "applicationIcon", "clockFormat", "clockStyle", "centerLogo", "centerLogoRevision", "alertMetric", "summonShortcut",
+        // 1.3.0 AppConfiguration (Models.swift:82-91); absent layout keys mean the Mac default.
+        "summonHotkeyEnabled", "recordingMode", "dailyBootLog", "facilityAlerts", "hudModuleOrder", "hudHiddenModules"};
     return keys;
 }
 std::int64_t versionOf(std::string_view bytes, std::size_t limit, std::int64_t newest = 1) {
@@ -278,6 +284,7 @@ struct MacImportSession::Impl {
     std::optional<std::uint64_t> importLimit(const std::string& path) const {
         if (manifest.preferences && path == *manifest.preferences) return layout(MacImportStore::settings).limit;
         for (const auto& entry : layouts) if (entry.file && path == entry.file) return entry.limit;
+        if (path == notesCentre) return data::notesCentreMaximumBytes;
         if (path.starts_with(notesImages)) return notesImageLimit;
         if (path.starts_with(profileImages)) return avatarLimit;
         if (path.starts_with(logoImages)) return logoLimit;
@@ -485,9 +492,31 @@ struct MacImportSession::Impl {
         applySettings(r);
         files::writeNewFile(stage / "Migration" / "mac-preferences.plist", preferencesBytes);
     }
+    // Notes/centre.json (Mac 1.3.0 NotesCentreStore, DOCS-143): optional; a
+    // file that does not decode or validate is reported and not imported
+    // (the Windows centre then starts from the default document).
+    void notesCentreStep(MacImportStoreReport& r) {
+        const auto* file = manifest.find(std::string(notesCentre));
+        if (!file) return;
+        if (file->bytes > data::notesCentreMaximumBytes) { warn(r, "The centre notes are too large; they were not imported"); return; }
+        const auto copied = ingested(*file, data::notesCentreMaximumBytes);
+        written.insert("Notes");
+        try {
+            (void)data::validatedNotesCentre(files::readFile(copied, data::notesCentreMaximumBytes));
+            files::moveFile(copied, stage / "Notes" / "centre.json");
+            ++r.records;
+        } catch (const data::StoreError&) {
+            files::removeTree(copied);
+            warn(r, "The centre notes (TODO list and text note) could not be read; they were not imported");
+        }
+    }
     void notesStep(MacImportStoreReport& r) {
         const auto* database = manifest.find(layout(MacImportStore::notes).file);
-        if (!database) { r.status = MacImportStatus::notInExport; return; }
+        if (!database) {
+            if (manifest.find(std::string(notesCentre))) notesCentreStep(r);
+            else r.status = MacImportStatus::notInExport;
+            return;
+        }
         rejectJournals(database->path);
         const auto copied = ingested(*database, layout(MacImportStore::notes).limit);
         const auto target = stage / "Notes" / "notes.sqlite3";
@@ -498,6 +527,7 @@ struct MacImportSession::Impl {
         std::vector<data::Note> notes;
         { data::NotesStore store(stage); notes = store.notes(); } // migrates v0/v1 inside the stage only
         r.records = notes.size();
+        notesCentreStep(r);
         std::set<std::string> referenced;
         std::vector<MacRelinkItem> relink;
         for (const auto& note : notes) {
@@ -547,11 +577,20 @@ struct MacImportSession::Impl {
         written.insert("Archive");
         files::moveFile(copied, target);
         const auto it = manifest.sqliteUserVersions.find(database->path);
-        verifyDatabase(target, 2, it == manifest.sqliteUserVersions.end() ? std::nullopt : std::optional(it->second));
+        // Version 3 = some document is classified (Mac 1.3.0 ArchiveStore).
+        verifyDatabase(target, 3, it == manifest.sqliteUserVersions.end() ? std::nullopt : std::optional(it->second));
         if (!platform.archive) fail(MacImportErrorCode::invalid, "Archive validation needs the installed Unicode rules");
         auto relink = platform.archive(stage / "Archive");
         for (auto& item : relink) if (item.id.empty()) item.id = platform.makeUUID();
         r.records = 1;
+        // Keychain verifiers never transfer: imported classified documents stay
+        // classified and locked with "password missing" (the Mac's own path)
+        // until the owner sets a new password or declassifies them on Windows.
+        {
+            Database archiveCopy(target);
+            if (const auto classified = std::stoll(archiveCopy.text("SELECT count(*) FROM entries WHERE classification IS NOT NULL")))
+                warn(r, std::to_string(classified) + " classified document(s) keep their protection; set a new password on this PC to open them");
+        }
         if (!relink.empty()) warn(r, std::to_string(relink.size()) + " Archive attachment(s) need relinking");
         addRelink(r, std::move(relink));
     }

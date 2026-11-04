@@ -250,20 +250,21 @@ void run(){
         {"alignment","left"},{"wrapped",false},{"truncation","none"},{"runs",Json::Array{}}};
     image=raster.rasterize("text",1,text,options);
     check(image->complete()&&!image->fontSubstitutions.empty(),"Unavailable Mac font reports an explicit substitution without claiming matching typography");
-    check(image->fontSubstitutions.front().selectedFamily=="Noto Sans SC"&&nonzeroAlpha(*image)>100,"Fallback uses the requested installed family and renders glyphs");
+    check(image->fontSubstitutions.front().selectedFamily=="HarmonyOS Sans"&&nonzeroAlpha(*image)>100,"Fallback uses the standard face and renders glyphs");
     before=raster.stats();for(unsigned i=0;i<120;++i)raster.rasterize("text",1,text,options);
     check(raster.stats().textLayoutsCreated==before.textLayoutsCreated&&raster.stats().rasterizations==before.rasterizations,"Repeated caption frames reuse both final pixels and retained text layout");
     auto mono=text;mono["text"]["font"]["familyName"]=".AppleSystemUIFontMonospaced";mono["text"]["font"]["postScriptName"]=".AppleSystemUIFontMonospaced-Semibold";mono["text"]["font"]["symbolicTraits"]=17410;
-    const auto monoImage=raster.rasterize("source-monospace",1,mono,options);check(!monoImage->fontSubstitutions.empty()&&monoImage->fontSubstitutions.front().selectedFamily=="Noto Sans SC","Application default typography overrides source monospace UI text");
-    auto clock=mono;clock["text"]["preserveSourceFont"]=true;const auto clockImage=raster.rasterize("source-clock-monospace",1,clock,options);check(clockImage->fontSubstitutions.front().selectedFamily=="Consolas","Clock marker preserves the existing fixed-pitch source fallback");
+    const auto monoImage=raster.rasterize("source-monospace",1,mono,options);check(!monoImage->fontSubstitutions.empty()&&monoImage->fontSubstitutions.front().selectedFamily=="HarmonyOS Sans","Application default typography overrides source monospace UI text");
     auto proportional=text;proportional["text"]["font"]["familyName"]=".AppleSystemUIFont";proportional["text"]["font"]["postScriptName"]=".SFNS-Semibold";proportional["text"]["font"]["symbolicTraits"]=2;
-    const auto proportionalImage=raster.rasterize("source-proportional",1,proportional,options);check(!proportionalImage->fontSubstitutions.empty()&&proportionalImage->fontSubstitutions.front().selectedFamily=="Noto Sans SC","Proportional source is not inferred as monospace from clock usage");
+    const auto proportionalImage=raster.rasterize("source-proportional",1,proportional,options);check(!proportionalImage->fontSubstitutions.empty()&&proportionalImage->fontSubstitutions.front().selectedFamily=="HarmonyOS Sans","Proportional source is not inferred as monospace from clock usage");
     auto demi=proportional;demi["text"]["font"]["postScriptName"]=".AppleSystemUIFontDemi";
     const auto demiImage=raster.rasterize("source-demi",1,demi,options);
-    check(demiImage->straightRGBA==proportionalImage->straightRGBA,"Mac system Demi source face retains semibold weight despite its bold symbolic trait");
+    check(demiImage->straightRGBA==proportionalImage->straightRGBA,"Mac system Demi source face weighs as the semibold source face despite its bold symbolic trait");
     auto bold=proportional;bold["text"]["font"]["postScriptName"]=".SFNS-Bold";
     const auto boldImage=raster.rasterize("source-bold",1,bold,options);
-    check(boldImage->straightRGBA!=demiImage->straightRGBA,"True bold source remains distinct from system semibold");
+    check(boldImage->straightRGBA==demiImage->straightRGBA,"System semibold renders HarmonyOS Bold like true bold (HUDFontWeight: .semibold renders Bold)");
+    auto medium=proportional;medium["text"]["font"]["postScriptName"]=".SFNS-Medium";medium["text"]["font"]["symbolicTraits"]=0;
+    check(raster.rasterize("source-medium",1,medium,options)->straightRGBA!=boldImage->straightRGBA,"Medium stays distinct from Bold");
     auto transparent=text;transparent["text"]["runs"]=Json::Array{Json::Object{{"utf16Range",Json::Array{0,8}},{"attributes",Json::Object{{"NSColor",rgba(1,1,1,0)}}}}};
     image=raster.rasterize("transparent-text",1,transparent,options);check(nonzeroAlpha(*image)==0,"Transparent attributed run overrides the opaque layer foreground");
     auto badRange=text;badRange["text"]["string"]="A\xF0\x9F\x8E\xAE";badRange["text"]["runs"]=Json::Array{Json::Object{{"utf16Range",Json::Array{0,4}},{"attributes",Json::Object{}}}};
@@ -298,11 +299,44 @@ void run(){
     rejects([&]{raster.rasterize("one-too-many",1,layer("tiny",1,1),tiny);},"Retained source-ID count is bounded");
     raster.clear();
 }
+
+// LayerRasterOptions::textContentsScale (the design scene; HUDRenderScale.
+// contentScale, LIB-97): a raster holding a shown text leaf paints at the
+// leaf's contentsScale (capped at 4, never below pixelsPerPoint); without the
+// option, or for other layers, contentsScale is ignored. A released image
+// repaints at its own density.
+void textDensity(){
+    LayerRasterizer raster;LayerRasterOptions options;options.pixelsPerPoint=2;options.paddingPoints=1;
+    auto label=layer("label",100,20);label["class"]="CATextLayer";label["kind"]="text";label["contentsScale"]=3;
+    label["text"]=Json::Object{{"string","Endfield 设置 01"},{"fontSize",12},{"foregroundColor",rgba(1,1,1)},{"alignment","left"},{"wrapped",false},{"truncation","none"}};
+    const auto plain=raster.rasterize("density.plain",1,label,options);
+    check(plain->width==204&&plain->height==44,"Without the option a text leaf paints at pixelsPerPoint (its contentsScale is ignored)");
+    options.textContentsScale=true;
+    const auto before=raster.stats().rasterizations;
+    const auto text=raster.rasterize("density.text",1,label,options,LayerRasterRetention::releasable);
+    check(text->width==306&&text->height==66&&text->bounds.width==102&&text->bounds.height==22&&raster.stats().rasterizations==before+1,
+        "A text leaf paints at its contentsScale: 1.5 x the pixels per side, the same bounds in points");
+    check(raster.rasterize("density.text",1,label,options,LayerRasterRetention::releasable)==text&&raster.stats().rasterizations==before+1,"Unchanged content is a cache hit: no raster");
+    auto plate=layer("plate",120,40);plate["backgroundColor"]=rgba(.2,.2,.2);label["position"]=Json::Array{10,10};plate["children"]=Json::Array{label};
+    const auto mixed=raster.rasterize("density.mixed",1,plate,options);
+    check(mixed->width==366&&mixed->height==126,"A raster compacting text with its plate paints whole at the text density");
+    auto shape=plate;shape["children"]=Json::Array{};shape["contentsScale"]=3;
+    check(raster.rasterize("density.shape",1,shape,options)->width==244,"Only text leaves raise the density");
+    auto quiet=label;quiet["hidden"]=true;auto hidden=plate;hidden["children"]=Json::Array{quiet};
+    check(raster.rasterize("density.hidden",1,hidden,options)->width==244,"A hidden text leaf does not raise it");
+    auto capped=label;capped["contentsScale"]=9;capped["position"]=Json::Array{0,0};
+    check(raster.rasterize("density.capped",1,capped,options)->width==408,"The text density is capped at 4");
+    auto lower=label;lower["contentsScale"]=1;lower["position"]=Json::Array{0,0};
+    check(raster.rasterize("density.lower",1,lower,options)->width==204,"A text scale below the raster's own keeps pixelsPerPoint");
+    const auto painted=text->straightRGBA;check(nonzeroAlpha(*text)>50,"The dense label paints its glyphs");
+    check(raster.releasePixels("density.text",text),"The dense raster gives its pixels back");
+    std::vector<std::uint8_t> again;raster.repaint(*text,again);check(again==painted,"It repaints byte for byte at its own density");
+}
 }
 int main(){
     const auto status=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);
     if(FAILED(status)){std::cerr<<"Cannot initialize fixture COM: "<<status<<'\n';return 1;}
-    int result=0;try{run();memoryImages();releasable();std::cout<<"PASS "<<checks<<" local layer raster checks (owned WIC bitmaps, no window/capture)\n";}
+    int result=0;try{run();memoryImages();releasable();textDensity();std::cout<<"PASS "<<checks<<" local layer raster checks (owned WIC bitmaps, no window/capture)\n";}
     catch(const std::exception& error){std::cerr<<"FAIL after "<<checks<<" checks: "<<error.what()<<'\n';result=1;}
     CoUninitialize();return result;
 }

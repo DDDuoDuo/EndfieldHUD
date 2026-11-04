@@ -42,6 +42,11 @@ void workspace(HWND window){
     owner.beginEditing(id);owner.updatePose(pose(1));check(owner.editor()->richLayoutEnabled()&&owner.editorDocument()->text()==u"A😀中\nsmall\nthird\nfourth\nfifth\nsixth","Typed rich draft preserves full source Unicode before editing");
     check(owner.finishEditing().finished&&state.note(id)->richText==note.richText&&committed.richText==note.richText,"Unchanged entry/finish preserves raw formatting bytes including additive fields");
     owner.beginEditing(id);owner.updatePose(pose(2));owner.editor()->command(native::ProjectedEditorCommand::documentStart);owner.syncEditor();owner.editor()->command(native::ProjectedEditorCommand::right,true);owner.syncEditor();
+    // DOCS-206: the chip is the editor's typing colour (textViewDidChangeSelection): the run's colour, else the editor text colour, never primary.
+    const auto chip=[&]{const auto controls=owner.card(id)->controls();const auto c=std::find_if(controls.begin(),controls.end(),[](const mod::NotesControl&v){return v.id.ends_with(":formatColor");});check(c!=controls.end(),"The editing colour chip exists");return c->chip;};
+    check(chip()==mod::NotesColor{1,0,0,1},"The chip shows the selected run's colour");
+    owner.editor()->command(native::ProjectedEditorCommand::documentEnd);owner.syncEditor();check(chip()==style().editorTextColor&&chip()!=style().palette.primary,"Text with no colour shows the editor text colour #FFFFFF, not primary");
+    owner.editor()->command(native::ProjectedEditorCommand::documentStart);owner.syncEditor();owner.editor()->command(native::ProjectedEditorCommand::right,true);owner.syncEditor();
     core::notes::FormatChange size;size.kind=core::notes::FormatKind::size;size.fontSize=42;check(owner.applyFormat(size).changed&&owner.selectionStyle()->fontSize==42,"Workspace formatting reaches selected rich draft and menu selection style");
     check(state.note(id)->richText==note.richText,"Formatting does not persist the draft before finish");
     check(owner.undo().changed&&owner.selectionStyle()->fontSize==30,"Workspace undo restores selected character style");check(owner.redo().changed&&owner.selectionStyle()->fontSize==42,"Workspace redo restores selected formatting");

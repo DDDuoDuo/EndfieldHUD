@@ -21,9 +21,15 @@ bool approvedOff(HKEY root, const std::wstring& key, const std::wstring& name) {
     if (RegGetValueW(root, key.c_str(), name.c_str(), RRF_RT_REG_BINARY, &type, data, &bytes) != ERROR_SUCCESS || bytes == 0) return false;
     return (data[0] & 1) != 0; // 02/06 enabled, 03/07 turned off by the user
 }
-std::string failure(core::Language language) {
-    return core::localized("Startup registration could not be changed", "无法更改登录时启动设置", language);
-}
+// Windows-only text (the Run key and Windows Settings' Startup page have no
+// Mac source) in the five source languages, in the catalog's "Launch at
+// login" terms.
+constexpr core::TranslationEntry registrationFailed{"Startup registration could not be changed", "无法更改登录时启动设置", "無法變更登入時啟動設定",
+    "ログイン時に起動の設定を変更できませんでした", "로그인 시 실행 설정을 변경할 수 없습니다"};
+constexpr core::TranslationEntry turnedOffInSettings{"Turned off in Windows Settings → Apps → Startup.", "已在 Windows 设置 → 应用 → 启动 中关闭。",
+    "已在 Windows 設定 → 應用程式 → 啟動 中關閉。", "Windows の設定 → アプリ → スタートアップ でオフになっています。",
+    "Windows 설정 → 앱 → 시작 프로그램에서 꺼져 있습니다."};
+std::string failure(core::Language language) { return std::string(core::translated(registrationFailed, language)); }
 }
 
 LoginItemLocation LoginItemLocation::production(const std::filesystem::path& executable) {
@@ -53,7 +59,7 @@ std::optional<std::string> LoginItemRegistration::setEnabled(bool enabled, core:
         return {};
     }
     if (status.disabledByUser)
-        return core::localized("Turned off in Windows Settings → Apps → Startup.", "已在 Windows 设置 → 应用 → 启动 中关闭。", language);
+        return std::string(core::translated(turnedOffInSettings, language));
     if (status.registered) return {};
     HKEY key{};
     if (RegCreateKeyExW(location_.root, location_.runKey.c_str(), 0, nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr) != ERROR_SUCCESS)
@@ -70,8 +76,11 @@ std::optional<std::string> LoginItemRegistration::ensureEnabled(core::Language l
 }
 std::string LoginItemRegistration::statusDescription(const LoginItemStatus& status, core::Language language) {
     if (status.disabledByUser && (status.registered || status.stale))
-        return core::localized("Turned off in Windows Settings → Apps → Startup.", "已在 Windows 设置 → 应用 → 启动 中关闭。", language);
+        return std::string(core::translated(turnedOffInSettings, language));
     return status.enabled() ? core::localized("Enabled", "已启用", language) : core::localized("Disabled", "已停用", language);
+}
+std::string LoginItemRegistration::attentionDescription(const LoginItemStatus& status, core::Language language) {
+    return status.disabledByUser && (status.registered || status.stale) ? statusDescription(status, language) : std::string();
 }
 } // namespace endfield::app
 #endif

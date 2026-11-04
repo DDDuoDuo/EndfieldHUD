@@ -2,7 +2,7 @@
 #include "core/data/json.hpp"
 #include "core/localization.hpp"
 #include "core/scene.hpp"
-#include "modules/battery_presentation.hpp"
+#include "modules/battery_reading.hpp"
 #include <array>
 #include <cstdint>
 #include <functional>
@@ -30,7 +30,10 @@ std::string_view chargeMetricKey(ChargeMetric) noexcept; // saved preference ide
 std::optional<ChargeMetric> chargeMetricFromKey(std::string_view) noexcept;
 bool chargeMetricRequiresTelemetry(ChargeMetric) noexcept;
 std::string chargeMetricTitle(ChargeMetric, core::Language);
-// BatteryLevelTone.forPercentage: >50 green, >=20 yellow, otherwise red.
+// BatteryLevelTone.forPercentage (Sources/BatteryCapacity.swift:92-104), the
+// ONE battery level rule of the whole HUD: >70 green, 20...70 yellow, below 20
+// red (the alert ring, the charge badge, the Battery page, the shell ring and
+// the boot log's power line all read it; v1.2.0 turned green above 50).
 std::optional<BatteryLevelTone> batteryLevelTone(std::optional<unsigned> percentage) noexcept;
 // BatterySnapshot.isChargeMode: external power on a battery machine, including
 // charger negotiation, optimized-charging pauses and full charge.

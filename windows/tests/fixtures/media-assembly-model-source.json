@@ -710,6 +710,11 @@
       "id" : "sp_filter_6"
     },
     {
+      "chinese" : "武陵印象",
+      "english" : "Wuling Impression",
+      "id" : "sp_filter_7"
+    },
+    {
       "chinese" : "明亮",
       "english" : "Bright",
       "id" : "filter_1"
@@ -750,6 +755,7 @@
       "id" : "filter_8"
     }
   ],
+  "modelCommit" : "4fda15a03ba50675e0b12d69a83efdb6526c19f6",
   "ranges" : [
     {
       "duration" : 0,
@@ -2363,6 +2369,21 @@
       ]
     },
     {
+      "chinese" : "线形墨魉",
+      "english" : "Line Aggelos",
+      "id" : "sticker_bp_7",
+      "pixelSize" : [
+        640,
+        640
+      ],
+      "rect" : [
+        65.045000000000016,
+        245.56499999999997,
+        124.41000000000001,
+        124.41000000000001
+      ]
+    },
+    {
       "chinese" : "终末地",
       "english" : "Endfield",
       "id" : "sticker_1",
@@ -2603,6 +2624,36 @@
       ]
     },
     {
+      "chinese" : "除危记号",
+      "english" : "Hazard Cleared",
+      "id" : "sticker_activity_5",
+      "pixelSize" : [
+        640,
+        640
+      ],
+      "rect" : [
+        65.045000000000016,
+        245.56499999999997,
+        124.41000000000001,
+        124.41000000000001
+      ]
+    },
+    {
+      "chinese" : "长城",
+      "english" : "Great Wall",
+      "id" : "sticker_channel_v1d6_1",
+      "pixelSize" : [
+        640,
+        640
+      ],
+      "rect" : [
+        65.045000000000016,
+        245.56499999999997,
+        124.41000000000001,
+        124.41000000000001
+      ]
+    },
+    {
       "chinese" : "第一年的生日",
       "english" : "First Birthday",
       "id" : "sticker_birthday_2026",
@@ -2624,6 +2675,51 @@
       "pixelSize" : [
         320,
         320
+      ],
+      "rect" : [
+        65.045000000000016,
+        245.56499999999997,
+        124.41000000000001,
+        124.41000000000001
+      ]
+    },
+    {
+      "chinese" : "左右看看",
+      "english" : "Look Around",
+      "id" : "sticker_giftpack_3",
+      "pixelSize" : [
+        640,
+        640
+      ],
+      "rect" : [
+        65.045000000000016,
+        245.56499999999997,
+        124.41000000000001,
+        124.41000000000001
+      ]
+    },
+    {
+      "chinese" : "严肃凝视",
+      "english" : "Serious Stare",
+      "id" : "sticker_giftpack_4",
+      "pixelSize" : [
+        640,
+        640
+      ],
+      "rect" : [
+        65.045000000000016,
+        245.56499999999997,
+        124.41000000000001,
+        124.41000000000001
+      ]
+    },
+    {
+      "chinese" : "哦吼……",
+      "english" : "Uh-Oh…",
+      "id" : "sticker_giftpack_5",
+      "pixelSize" : [
+        640,
+        640
       ],
       "rect" : [
         65.045000000000016,

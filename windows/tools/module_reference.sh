@@ -42,7 +42,7 @@ attachment = {
     'sourcePath': 'Sources/SystemHUDView.swift', 'sourceSHA256': hashlib.sha256(source.read_bytes()).hexdigest(),
     'sourceExcerpts': {'reportScale': scale, 'reportCenterY': center, 'reportRect': rect, 'projectNotesRect': notes_project,
                        'notesLayout': 'self.designScale = max(0.1, min(' + notes_layout},
-    'exportedModules': ['notes','profile','system','display','hotkeys','about'],
+    'exportedModules': ['profile'],
     'desktopMode': True, 'reportScale': 0.86, 'reportCenter': [500,285], 'designCenter': [500,320],
     'moduleLocalToDesign': 'add contentFrame origin',
     'designToReport': 'x=500+(x-500)*0.86; y=285+(y-320)*0.86',
@@ -64,7 +64,7 @@ provenance = {'baselineRequested':'ca04f14', 'gitHead':subprocess.check_output([
               'compiler':subprocess.check_output(['xcrun','swiftc','--version'],text=True).strip()}
 (output/'provenance.json').write_text(json.dumps(provenance, indent=2, sort_keys=True)+'\n')
 PY
-SDK="$(bash "$ROOT/scripts/build.sh" --print-sdk)"
+SDK="$(bash "$ROOT/windows/tools/mac_sdk.sh")"
 SOURCES=()
 while IFS= read -r path; do SOURCES+=("$ROOT/$path"); done < <(rg --files Sources -g '*.swift' | sed '/\/main.swift$/d' | LC_ALL=C sort)
 if ! xcrun swiftc -swift-version 5 -Onone -whole-module-optimization -parse-as-library \
