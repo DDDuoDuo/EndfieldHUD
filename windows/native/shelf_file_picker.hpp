@@ -109,6 +109,7 @@ HRESULT revealShelfReference(ehud::data::ShelfFileAccess,
 // verb (ShellExecuteEx on its ID list; a folder opens in File Explorer, an
 // unassociated type shows the Shell's own "open with" choice). A choice the
 // user cancels is S_FALSE. Explicit user action only; nothing is copied.
+// Any STA thread (the Shelf calls it on a short-lived one of its own).
 HRESULT openShelfReference(ehud::data::ShelfFileAccess,
     ShelfRevealResolver={},ShelfRevealOperation={})noexcept;
 #endif

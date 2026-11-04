@@ -8,8 +8,10 @@
 #include <array>
 #include <cmath>
 #include <filesystem>
+#include <mutex>
 #include <optional>
 #include <random>
+#include <set>
 #include <stdexcept>
 #include <vector>
 
@@ -64,18 +66,31 @@ std::filesystem::path temporaryBase(const std::filesystem::path& root) {
     if(!root.empty()) return root;
     wchar_t base[MAX_PATH+1]{};const DWORD n=GetTempPathW(MAX_PATH,base);if(!n||n>MAX_PATH) throw std::runtime_error("No temporary directory");return base;
 }
+// The profiles this process made and has not deleted yet. A sweep queued on
+// the utility worker may run late, after a later sign-in made its folder and
+// started its browser there: it never touches one of these. A folder is
+// listed before it exists and leaves the list once its delete ran.
+struct LiveProfiles {std::mutex lock;std::set<std::filesystem::path> folders;};
+LiveProfiles& liveProfiles() {static LiveProfiles live;return live;}
+bool liveProfile(const std::filesystem::path& folder) {auto& l=liveProfiles();std::lock_guard guard(l.lock);return l.folders.contains(folder);}
+void removeProfile(const std::filesystem::path& folder) {
+    std::error_code e;std::filesystem::remove_all(folder,e);
+    auto& l=liveProfiles();std::lock_guard guard(l.lock);l.folders.erase(folder);
+}
 // Private, temporary browser profile (Mac: WKWebsiteDataStore.nonPersistent()).
 std::filesystem::path privateProfileFolder(const std::filesystem::path& root) {
     std::random_device r;auto folder=temporaryBase(root)/(std::wstring(profilePrefix)+std::to_wstring(r())+std::to_wstring(r()));
-    std::filesystem::create_directories(folder);return folder;
+    {auto& l=liveProfiles();std::lock_guard guard(l.lock);l.folders.insert(folder);}
+    try {std::filesystem::create_directories(folder);} catch(...) {auto& l=liveProfiles();std::lock_guard guard(l.lock);l.folders.erase(folder);throw;}
+    return folder;
 }
 // Best-effort removal of profiles left by an earlier run that ended before its
 // browser process exited. Only this presenter's own prefix is touched.
-void sweepStaleProfiles(const std::filesystem::path& root,const std::filesystem::path& keep) {
+void sweepStaleProfiles(const std::filesystem::path& root) {
     std::error_code e;
     for(const auto& entry:std::filesystem::directory_iterator(temporaryBase(root),e)) {
         const auto name=entry.path().filename().wstring();
-        if(name.rfind(profilePrefix,0)==0&&entry.path()!=keep&&entry.is_directory(e)) std::filesystem::remove_all(entry.path(),e);
+        if(name.rfind(profilePrefix,0)==0&&!liveProfile(entry.path())&&entry.is_directory(e)) std::filesystem::remove_all(entry.path(),e);
     }
 }
 double dpiScale(HWND hwnd) {const UINT dpi=hwnd?GetDpiForWindow(hwnd):0;return dpi?dpi/96.0:1.0;}
@@ -544,7 +559,8 @@ struct WebViewLoginPresenter::Impl:std::enable_shared_from_this<Impl> {
         retry=authButton(wide(strings.retryLabel),retryID);
         toolbarCancel=authButton(wide(strings.cancelLabel),toolbarCancelID);
         layout();diag();setStatus();
-        userData=privateProfileFolder(options.profileRoot);sweepStaleProfiles(options.profileRoot,userData);
+        userData=privateProfileFolder(options.profileRoot);
+        offThread([root=options.profileRoot]{sweepStaleProfiles(root);});
         std::weak_ptr<Impl> weak=shared_from_this();const auto token=generation;
         const HRESULT hr=CreateCoreWebView2EnvironmentWithOptions(nullptr,userData.c_str(),nullptr,Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(
             [weak,token](HRESULT result,ICoreWebView2Environment* env)->HRESULT {
@@ -697,8 +713,11 @@ struct WebViewLoginPresenter::Impl:std::enable_shared_from_this<Impl> {
             std::weak_ptr<Impl> weak=shared_from_this();Retired entry{env,folder,{}};
             const auto key=env.Get();
             if(SUCCEEDED(env5->add_BrowserProcessExited(Callback<ICoreWebView2BrowserProcessExitedEventHandler>([weak,key,folder](ICoreWebView2Environment*,ICoreWebView2BrowserProcessExitedEventArgs*)->HRESULT {
-                std::error_code e;std::filesystem::remove_all(folder,e);
-                if(auto self=weak.lock()) {
+                const auto removeFolder=[folder]{removeProfile(folder);};
+                auto self=weak.lock();
+                if(!self) removeFolder();
+                else {
+                    self->offThread(removeFolder);
                     auto& list=self->retired;
                     for(auto it=list.begin();it!=list.end();++it) if(it->environment.Get()==key) {
                         ComPtr<ICoreWebView2Environment5> registered;if(SUCCEEDED(it->environment.As(&registered))) registered->remove_BrowserProcessExited(it->token);
@@ -707,7 +726,12 @@ struct WebViewLoginPresenter::Impl:std::enable_shared_from_this<Impl> {
                 }
                 return S_OK;}).Get(),&entry.token))) {retired.push_back(std::move(entry));return;}
         }
-        std::error_code e;std::filesystem::remove_all(folder,e); // no browser was started, or best effort
+        offThread([folder]{removeProfile(folder);}); // no browser was started, or best effort
+    }
+    // Profile file work (the sweep, the deletes) on options.fileWork, else here.
+    void offThread(std::function<void()> work) {
+        if(options.fileWork) try {if(options.fileWork(work)) return;} catch(...) {}
+        work();
     }
     void requestFinish(std::optional<h::LoginResult> result,h::LoginFailure failure) {
         if(finishing||!session||!session->presenting()) return;
@@ -753,7 +777,7 @@ WebViewLoginPresenter::WebViewLoginPresenter(WebViewLoginOptions o):impl_(std::m
 WebViewLoginPresenter::~WebViewLoginPresenter() {
     auto& i=*impl_;i.completion={};i.finish(std::nullopt,h::LoginFailure::cancelled);
     // App exit: retired environments are released; leftovers are swept next time.
-    for(auto& entry:i.retired) {std::error_code e;std::filesystem::remove_all(entry.folder,e);}
+    for(auto& entry:i.retired) removeProfile(entry.folder);
     i.retired.clear();
 }
 std::optional<std::wstring> WebViewLoginPresenter::runtimeVersion() {

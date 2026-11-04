@@ -26,7 +26,9 @@
 #include <chrono>
 #include <cstring>
 #include <fstream>
+#include <functional>
 #include <iostream>
+#include <mutex>
 #include <optional>
 
 namespace gpu = endfield::native;
@@ -202,9 +204,16 @@ void text() {
 // Reveal / drag, removal and clearing: the private utility executor.
 void services(HWND hwnd, gpu::Renderer& renderer) {
     Temp temp; std::vector<Recorded> events; std::vector<std::string> opened;
+    // The Shell stand-in runs on Open's own thread: what it saw, its thread, and a gate that holds it.
+    struct Shell { std::mutex mutex; DWORD thread{}; HRESULT result{S_OK}; HANDLE gate{}; } shell;
     tools::ShelfServiceOptions options{temp.root / "metadata", false, true};
     options.recordEvent = [&](mod::EventKind kind, mod::EventMetadata metadata) { events.push_back({kind, std::move(metadata)}); };
-    options.openOperation = [&](const data::ShelfFileAccess& lease) { opened.push_back(lease.metadata().windowsPath); return S_OK; };
+    options.openOperation = [&](const data::ShelfFileAccess& lease) {
+        HANDLE gate{}; HRESULT result{};
+        { std::lock_guard lock(shell.mutex); opened.push_back(lease.metadata().windowsPath); shell.thread = GetCurrentThreadId(); gate = shell.gate; result = shell.result; }
+        if (gate) (void)WaitForSingleObject(gate, 10000);
+        return result;
+    };
     options.homeFolder = utf8(temp.root);
     Hud hud(hwnd, renderer, std::move(options));
     auto& shelf = *hud.shelf;
@@ -293,8 +302,58 @@ void services(HWND hwnd, gpu::Renderer& renderer) {
     check(shelf.perform("shelf:" + reportID + ":open", hud.time), "Open is accepted");
     auto action = shelf.takeAction();
     check(action && action->kind == tools::ShelfServiceAction::Kind::open && action->itemID == reportID && opened.empty(), "Open waits for the host's action message");
-    shelf.open(action->itemID, hud.time);
+    // The Shell runs on Open's own STA thread; its result comes back as a notice, then the toast.
+    const auto settleOpen = [&] { for (unsigned n = 0; n < 2000 && shelf.opening(); ++n) { Sleep(1); hud.pump(); } check(!shelf.opening(), "An Open's result comes back"); };
+    const auto held = [&] { std::lock_guard lock(shell.mutex); return opened.size(); };
+    const auto toasts = [&] { return hud.overlay->context().overlay().toastState().generation(); };
+    {
+        const auto shown = toasts();
+        const auto gate = CreateEventW(nullptr, TRUE, FALSE, nullptr); check(gate != nullptr, "Gate");
+        { std::lock_guard lock(shell.mutex); shell.gate = gate; }
+        const auto before = std::chrono::steady_clock::now();
+        shelf.open(action->itemID, hud.time);
+        const double returned = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - before).count();
+        for (unsigned n = 0; n < 2000 && !held(); ++n) Sleep(1);
+        check(held() == 1 && shelf.opening() && toasts() == shown && returned < 1000, "Open returns while the Shell still holds the item (the HUD thread never waits for it)");
+        hud.pump(); check(shelf.opening() && toasts() == shown, "No toast before the Shell returns");
+        { std::lock_guard lock(shell.mutex); shell.gate = nullptr; } SetEvent(gate);
+        settleOpen(); CloseHandle(gate);
+    }
     check(opened == std::vector<std::string>{utf8(renamed)} && hud.toast() == "Opened|Renamed report.txt", "The Shell opens the revalidated item; Opened toasts its name");
+    check(shell.thread != GetCurrentThreadId() && shelf.resources().opensQueued == 1 && shelf.resources().opensAtOnce == 0, "The Shell is called on Open's own thread, not the HUD's");
+    // A failure is the canvas's notice; a choice the user cancelled (S_FALSE) shows nothing.
+    { std::lock_guard lock(shell.mutex); shell.result = E_ACCESSDENIED; }
+    shelf.open(reportID, hud.time); settleOpen();
+    check(hud.toast() == "Notice|This item could not be opened.", "A failed Open shows the notice");
+    { std::lock_guard lock(shell.mutex); shell.result = S_FALSE; }
+    {   const auto shown = toasts();
+        shelf.open(reportID, hud.time); settleOpen();
+        check(toasts() == shown && opened.size() == 3, "A cancelled Shell choice shows nothing"); }
+    { std::lock_guard lock(shell.mutex); shell.result = S_OK; }
+    // The Mac toasts in the click's turn: an Open whose Shell outlasts a module
+    // switch still toasts; one whose HUD closed meanwhile does not.
+    const auto gated = [&](const std::function<void()>& meanwhile) {
+        const auto gate = CreateEventW(nullptr, TRUE, FALSE, nullptr); check(gate != nullptr, "Gate");
+        const auto before = held();
+        { std::lock_guard lock(shell.mutex); shell.gate = gate; }
+        shelf.open(reportID, hud.time);
+        for (unsigned n = 0; n < 2000 && held() == before; ++n) Sleep(1);
+        check(held() == before + 1 && shelf.opening(), "The Shell holds the item");
+        meanwhile();
+        { std::lock_guard lock(shell.mutex); shell.gate = nullptr; } SetEvent(gate);
+        settleOpen(); CloseHandle(gate);
+    };
+    // (A module switch clears the shown toast: count from after it.)
+    {   std::uint64_t shown{};
+        gated([&] { hud.frame(core::Module::fileShelf, core::Module::clipboard); hud.frame(core::Module::clipboard); check(!hud.canvas().isActive(), "The HUD switched to another module"); shown = toasts(); });
+        check(toasts() == shown + 1 && hud.toast() == "Opened|Renamed report.txt", "An Open that outlasts a module switch still toasts");
+        for (int k = 0; k < 3; ++k) hud.frame();
+        check(hud.canvas().isActive(), "Back on the Shelf"); }
+    {   std::uint64_t shown{};
+        gated([&] { hud.owner->overlayClosing(hud.time); hud.owner->setOverlayVisible(false, hud.time); shown = toasts(); });
+        check(toasts() == shown, "An Open whose HUD closed before the Shell returned shows no toast");
+        hud.owner->setOverlayVisible(true, hud.time); for (int k = 0; k < 3; ++k) hud.frame();
+        check(hud.canvas().isActive(), "The HUD shown again on the Shelf"); }
     // Reveal: the lease is taken now and handed to the host, which closes the HUD first.
     check(shelf.perform("shelf:" + reportID + ":reveal", hud.time) && hud.toast() == "Revealed in File Explorer|~", "Reveal toasts the location");
     action = shelf.takeAction();
@@ -516,6 +575,30 @@ void resident(HWND hwnd, gpu::Renderer& renderer) {
     std::cout << "resident: icons cached " << shelf.resources().cachedIcons << " (" << shelf.resources().cachedIconBytes << " bytes), worker starts " << shelf.resources().iconWorkerStarts
               << ", scene parts " << shelf.resources().sceneParts << ", raster bytes " << shelf.resources().scenePixelBytes << '\n';
 }
+// An Open still with the Shell when the HUD shuts down: its thread finishes
+// on its own, and no result reaches the gone service or its window.
+void openAfterShutdown(HWND hwnd, gpu::Renderer& renderer) {
+    Temp temp;
+    const auto gate = CreateEventW(nullptr, TRUE, FALSE, nullptr), returned = CreateEventW(nullptr, TRUE, FALSE, nullptr), entered = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    check(gate && returned && entered, "Events");
+    tools::ShelfServiceOptions options{temp.root / "metadata", false, false};
+    options.openOperation = [gate, returned, entered](const data::ShelfFileAccess&) { SetEvent(entered); (void)WaitForSingleObject(gate, 10000); SetEvent(returned); return S_OK; };
+    options.homeFolder = utf8(temp.root);
+    {
+        Hud hud(hwnd, renderer, std::move(options));
+        const auto file = temp.root / "Late.txt"; write(file, "late");
+        check(hud.shelf->importFiles(std::vector<std::string>{utf8(file)}, hud.time), "A synthetic file is added"); hud.frame();
+        const auto id = hud.item("Late.txt")->id;
+        hud.shelf->open(id, hud.time);
+        check(WaitForSingleObject(entered, 10000) == WAIT_OBJECT_0 && hud.shelf->opening(), "The Shell holds the item");
+        hud.pump(); hud.release(); hud.shelf.reset();
+    }
+    SetEvent(gate);
+    check(WaitForSingleObject(returned, 10000) == WAIT_OBJECT_0, "The Shell returns after the shutdown");
+    Sleep(50);
+    MSG m{}; check(!PeekMessageW(&m, hwnd, tools::ShelfService::noticeMessage, tools::ShelfService::noticeMessage, PM_REMOVE), "No result is posted for a service that is gone");
+    for (const auto h : {gate, returned, entered}) CloseHandle(h);
+}
 } // namespace
 
 int wmain(int argc, wchar_t** argv) {
@@ -527,6 +610,7 @@ int wmain(int argc, wchar_t** argv) {
         services(window.hwnd, renderer);
         relink(window.hwnd, renderer);
         deferredSaves(window.hwnd, renderer);
+        openAfterShutdown(window.hwnd, renderer);
         resident(window.hwnd, renderer);
         std::cout << "File Shelf services: " << checks << " checks passed\n";
         return 0;

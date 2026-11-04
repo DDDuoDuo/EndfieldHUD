@@ -55,6 +55,9 @@ struct MediaAssemblyCanvasServices {
     // thumbnails (96 px) and sticker images (pixelSize). nullopt: none drawn.
     std::function<std::optional<design::ImageSource>(MediaAssemblyFilter)> filterThumbnail;
     std::function<std::optional<design::ImageSource>(MediaAssemblyStickerKind)> stickerThumbnail, stickerImage;
+    // The Stickers drawer is entered (its tab chosen, or the canvas shown or
+    // activated on it), before it is built: thumbnails that failed are tried again.
+    std::function<void()> stickersEntered;
 };
 
 class MediaAssemblyCanvas final : public design::Canvas {
@@ -78,6 +81,8 @@ public:
     bool perform(std::string_view id, double now);
     // The owner released the hidden editor's preview.
     void releasePreview() noexcept;
+    // The drawer's sticker thumbnails landed after the drawer was built without them.
+    void stickerThumbnailsChanged();
 
     // --- State (tests, owner) ---
     MediaAssemblyController& controller() const noexcept { return *controller_; }
@@ -188,6 +193,7 @@ private:
     void buildFilters(design::Page&, design::Layer& panel, bool enabled);
     void buildStickers(design::Page&, design::Layer& panel, bool enabled);
     void selectTab(Tab, double direction);
+    void enteringStickers();   // services_.stickersEntered while the Stickers tab is chosen
     void toolTile(std::string_view name);
     void openTool(MediaAssemblyTool);
     void closeTool();

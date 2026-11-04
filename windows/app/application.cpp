@@ -1003,6 +1003,9 @@ void Application::Impl::constructShelf(){
     // shelfCleared {count}. eventOwner is checked when the record is made.
     shelfOptions.recordEvent=[this](modules::EventKind kind,modules::EventMetadata metadata){if(eventOwner&&!stopping)eventOwner->record({ehud::data::makeUUID(),kind,ehud::data::foundationNow(),std::move(metadata)});};
     if(production())persistentShelfRoot(shelfOptions);
+    // Hidden coverage never hands a file to the Shell: a stand-in takes the
+    // 30 ms of a warm ShellExecuteEx (the owner coverage's timed Open).
+    else if(args.moduleCoverage)shelfOptions.openOperation=[](const ehud::data::ShelfFileAccess&){Sleep(30);return S_OK;};
     shelf=std::make_unique<tools::ShelfService>(static_cast<HWND>(host.hwnd()),std::move(shelfOptions));
     shelfModuleOwner=shelf->makeOwner(rasterizer,designOverlay->context(),designOwnerOptions("fileShelf",tools::ShelfService::routing()));registerModule(shelfModuleOwner);
     startup.mark("isolated-shelf-owner");

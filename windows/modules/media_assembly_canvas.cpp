@@ -45,6 +45,7 @@ void MediaAssemblyCanvas::setPresented(bool value) {
 }
 void MediaAssemblyCanvas::show(double now) {
     env().now = now;
+    enteringStickers();
     setPresented(true);
     Canvas::show(now);
 }
@@ -53,6 +54,7 @@ void MediaAssemblyCanvas::didActivate() {
     // The design owner keeps a canvas shown across a HUD close (no second
     // makeContent): activation after willLeave presents it again, so the
     // session reactivates and renders one fresh preview.
+    enteringStickers();
     setPresented(true);
     const auto& session = controller_->session();
     if (session.exporting() && !exportShown_) exportShown_ = session.progress();
@@ -383,12 +385,23 @@ void MediaAssemblyCanvas::buildStickers(d::Page& page, d::Layer& panel, bool ena
     page.restoreOffset(scroll);
 }
 
+// The cells show them once they exist (the Mac decodes them in the build);
+// a drawer still behind its sub-page swap is rebuilt before it enters.
+void MediaAssemblyCanvas::stickerThumbnailsChanged() {
+    if (tab_ != Tab::stickers || !renderedLanguage()) return;
+    if (isShown()) rerender(); else deferRerender();
+}
+
 // MARK: Panel actions (:413-521)
 void MediaAssemblyCanvas::selectTab(Tab next, double direction) {
     if (next == tab_) return;
     quietly([&] { leaveTool(); });
     tab_ = next;
+    enteringStickers();
     navigate(direction);
+}
+void MediaAssemblyCanvas::enteringStickers() {
+    if (tab_ == Tab::stickers && services_.stickersEntered) services_.stickersEntered();
 }
 void MediaAssemblyCanvas::toolTile(std::string_view name) {
     if (!isEditable()) return;

@@ -5,8 +5,10 @@
 #include "native/media_assembly_gpu.hpp"
 #include <algorithm>
 #include <cmath>
+#include <set>
 #include <stdexcept>
 #include <utility>
+#include <objbase.h>
 
 namespace endfield::tools {
 namespace {
@@ -95,19 +97,56 @@ struct MediaAssemblyOwner::Impl:std::enable_shared_from_this<Impl> {
         s.filterThumbnail=[weak](mod::MediaAssemblyFilter f)->std::optional<d::ImageSource>{
             auto i=weak.lock();if(!i||f==mod::MediaAssemblyFilter::none)return std::nullopt;const auto&a=i->assets.filterThumbnail(f);return d::ImageSource{d::ImageSource::Kind::asset,a.path,a.sha256,0};};
         s.stickerThumbnail=[weak](mod::MediaAssemblyStickerKind k){auto i=weak.lock();return i?i->stickerThumbnail(k):std::nullopt;};
+        s.stickersEntered=[weak]{if(auto i=weak.lock())i->thumbnailFailures.clear();};
         s.stickerImage=[weak](mod::MediaAssemblyStickerKind k)->std::optional<d::ImageSource>{auto i=weak.lock();if(!i)return std::nullopt;const auto&a=i->assets.sticker(k);return d::ImageSource{d::ImageSource::Kind::asset,a.path,a.sha256,0};};
         core=std::make_unique<DesignOwnerCore>(raster,context,options.design);
         auto made=std::make_unique<mod::MediaAssemblyCanvas>(context,*controller,std::move(s));canvas=made.get();core->add(std::move(made));
     }
-    // A 96 px memory image decoded on first use; nullopt: no thumbnail drawn.
+    // A 96 px memory image decoded on first use; nullopt: no thumbnail drawn
+    // (yet). The first miss queues every missing sticker's read, SHA-256 check
+    // and WIC decode on the utility worker (30 PNGs were 25-60 ms on this
+    // thread in the tab click's frame); publish() stays here (the cache is
+    // this thread's) and the drawer is built again with them. With Reduce
+    // Motion the drawer enters at once (no sub-page swap to hide the wait),
+    // so they decode here, as the Mac does in the build; so does a full
+    // queue. A sticker that could not decode is retried on the drawer's next
+    // entry, not by the rebuild its failure caused.
+    static std::string thumbnailKey(mod::MediaAssemblyStickerKind kind){return "media.assembly.thumbnail."+std::string(mod::mediaAssemblyStickerItem(kind).id);}
     std::optional<d::ImageSource>stickerThumbnail(mod::MediaAssemblyStickerKind kind){
-        const auto key="media.assembly.thumbnail."+std::string(mod::mediaAssemblyStickerItem(kind).id);
+        const auto key=thumbnailKey(kind);
         if(!thumbnails.acquire(key,1)){
+            if(thumbnailFailures.contains(key)||(!context.env().reduceMotion&&(thumbnailsQueued||queueThumbnails())))return std::nullopt;
             try{const auto image=gpu::mediaAssemblyThumbnail(assets,assets.sticker(kind),thumbnailPixels);
-                if(!thumbnails.publish(key,1,image.width,image.height,image.straightRGBA))return std::nullopt;++statistics.thumbnailDecodes;}
+                if(!thumbnails.publish(key,1,image.width,image.height,image.straightRGBA))return std::nullopt;++statistics.thumbnailDecodes;++statistics.thumbnailDecodesAtOnce;}
             catch(const std::exception&){return std::nullopt;}
         }
         return d::ImageSource{d::ImageSource::Kind::memory,key,{},1};
+    }
+    bool thumbnailsQueued{};std::set<std::string,std::less<>>thumbnailFailures;std::shared_ptr<const gpu::NativeMediaAssemblyAssets>workerAssets;
+    bool queueThumbnails(){
+        struct Job {std::string key;gpu::MediaAssemblyAsset asset;std::optional<gpu::MediaAssemblyBitmap>image;};
+        auto jobs=std::make_shared<std::vector<Job>>();
+        for(const auto&item:mod::mediaAssemblyStickers()){const auto kind=*mod::mediaAssemblySticker(item.id);auto key=thumbnailKey(kind);
+            if(!thumbnails.acquire(key,1)&&!thumbnailFailures.contains(key))jobs->push_back({std::move(key),assets.sticker(kind),std::nullopt});}
+        if(jobs->empty())return false;
+        // The worker reads the files from a copy of the catalog (paths and pins only).
+        if(!workerAssets)workerAssets=std::make_shared<const gpu::NativeMediaAssemblyAssets>(assets);
+        const std::weak_ptr<Impl>weak=weak_from_this();
+        thumbnailsQueued=executor.submit(route,[jobs,catalog=workerAssets]{
+            const HRESULT com=CoInitializeEx(nullptr,COINIT_MULTITHREADED);
+            for(auto&job:*jobs)try{job.image=gpu::mediaAssemblyThumbnail(*catalog,job.asset,thumbnailPixels);}catch(const std::exception&){}
+            if(SUCCEEDED(com))CoUninitialize();
+        },[weak,jobs](std::exception_ptr){
+            auto i=weak.lock();if(!i||!i->alive)return;i->thumbnailsQueued=false;
+            for(auto&job:*jobs){
+                if(i->thumbnails.acquire(job.key,1))continue; // decoded here meanwhile (Reduce Motion)
+                if(job.image&&i->thumbnails.publish(job.key,1,job.image->width,job.image->height,job.image->straightRGBA))++i->statistics.thumbnailDecodes;
+                else i->thumbnailFailures.insert(job.key);
+            }
+            if(i->canvas)i->canvas->stickerThumbnailsChanged();
+            i->frame();
+        });
+        return thumbnailsQueued;
     }
     bool requestDialog(gpu::MediaAssemblyDialogRequest r){
         if(!options.window||!options.dialog)return false;

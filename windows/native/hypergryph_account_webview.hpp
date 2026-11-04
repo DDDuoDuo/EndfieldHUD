@@ -50,6 +50,11 @@ struct WebViewLoginOptions {
     // Parent of the temporary private browser profiles (empty: %TEMP%). Only
     // folders named EndfieldHUD-Login-* below it are created or swept.
     std::filesystem::path profileRoot;
+    // Runs the profile folders' sweep and deletes elsewhere (the app's utility
+    // worker): enumerating %TEMP% and deleting a WebView2 user-data folder of
+    // many files is slow file work. Each task needs only its paths. Null, or
+    // false (not accepted): the task runs here at once.
+    std::function<bool(std::function<void()>)> fileWork;
     bool showWindows{true};                    // false only for hidden verification
     // Opens Microsoft's official WebView2 download page in the user's default
     // browser (default: ShellExecuteW "open"). The app passes its close-first

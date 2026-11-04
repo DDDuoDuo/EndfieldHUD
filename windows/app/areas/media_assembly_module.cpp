@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <deque>
 #include <filesystem>
@@ -439,14 +440,43 @@ private:
             step.check(run.perform("zoomReset") && canvas.viewport().zoom() == 1, "The zoom value returns to the fitted preview"); }
         run.present();
         // Stickers: add, Shift+Right nudge, Alt+Right turn, Backspace delete.
-        step.check(run.perform("mediaTab:2") && canvas.tab() == mod::MediaAssemblyCanvas::Tab::stickers, "Stickers tab");
+        // The first Stickers visit of the run (its 30 thumbnails), timed as the
+        // host times a click: the tab's press, the frame after it and the worst
+        // frame of the following second (the sub-page swap lands at 130 ms).
+        const bool timed = cycle == 0 && bool(step.timing); bool tabbed{};
+        if (timed) {
+            using Clock = std::chrono::steady_clock;
+            const auto ms = [](Clock::time_point since) { return std::chrono::duration<double, std::milli>(Clock::now() - since).count(); };
+            const auto raster0 = host_.rasterizer().stats(); const auto pages0 = context_.pagesBuilt(); const auto decodes0 = stats().thumbnailDecodesAtOnce;
+            const auto t0 = Clock::now(); const bool done = canvas.performAccessibilityAction("mediaTab:2", run.t); const double actionMs = ms(t0);
+            const auto t1 = Clock::now(); run.present(); const double frameMs = ms(t1);
+            const auto raster1 = host_.rasterizer().stats(); const auto pages1 = context_.pagesBuilt(); const auto decodes1 = stats().thumbnailDecodesAtOnce;
+            double settle = 0, worstAt = 0; std::int64_t worstRasters = 0;
+            for (unsigned f = 1; f <= 15; ++f) {
+                if (f == 1) step.drain();
+                const auto r0 = host_.rasterizer().stats(); const auto f0 = Clock::now(); run.present(1. / 15); const double frame = ms(f0);
+                if (frame > settle) { settle = frame; worstAt = f / 15.; worstRasters = std::int64_t(host_.rasterizer().stats().rasterizations - r0.rasterizations); }
+            }
+            const auto raster2 = host_.rasterizer().stats(); const auto pages2 = context_.pagesBuilt();
+            step.timing(ehud::data::Json::Object{{"module", std::string("mediaAssembly")}, {"action", std::string("stickersFirstVisit")}, {"ran", done}, {"actionMs", actionMs}, {"frameMs", frameMs},
+                {"clickFrameMs", actionMs + frameMs}, {"settleMaxFrameMs", settle}, {"pagesBuilt", std::int64_t(pages1 - pages0)},
+                {"rasterizations", std::int64_t(raster1.rasterizations - raster0.rasterizations)}, {"textLayouts", std::int64_t(raster1.textLayoutsCreated - raster0.textLayoutsCreated)},
+                {"secondPagesBuilt", std::int64_t(pages2 - pages0)}, {"secondRasterizations", std::int64_t(raster2.rasterizations - raster0.rasterizations)},
+                {"secondTextLayouts", std::int64_t(raster2.textLayoutsCreated - raster0.textLayoutsCreated)}, {"thumbnailDecodesAtOnce", std::int64_t(decodes1 - decodes0)},
+                {"worstFrameAt", worstAt}, {"worstFrameRasterizations", worstRasters}});
+            tabbed = done;
+            // rc140: all 30 read, hashed and decoded in the click's frame. With Reduce
+            // Motion the drawer enters at once, so they decode in its build (the Mac's).
+            step.check(context_.env().reduceMotion || decodes1 == decodes0, "The first Stickers visit decodes no thumbnail on the HUD thread (" + std::to_string(decodes1 - decodes0) + " at once)");
+        }
+        step.check((timed ? tabbed : run.perform("mediaTab:2")) && canvas.tab() == mod::MediaAssemblyCanvas::Tab::stickers, "Stickers tab");
         step.check(run.perform("sticker:sticker_bp_1") && session.adjustments().stickers.size() == 1 && !canvas.selectedSticker().empty() &&
                    canvas.tab() == mod::MediaAssemblyCanvas::Tab::stickers && std::abs(session.adjustments().stickers[0].size - .25) < 1e-12,
                    "A placed sticker gets a new identity at .25, is selected and the Stickers tab stays open");
         {   const auto x = session.adjustments().stickers[0].x;
             step.check(run.key(VK_RIGHT, 4) && std::abs(session.adjustments().stickers[0].x - x - .05) < 1e-9, "Shift+Right nudges the selected sticker by 0.05");
             step.check(run.key(VK_RIGHT, 1) && session.adjustments().stickers[0].rotation == 3, "Alt+Right turns it 3 degrees"); }
-        run.present();
+        step.drain(); run.present();
         step.check(stats().thumbnailBytes > 0 && stats().thumbnailBytes <= 30u * 96 * 96 * 4, "The drawer's sticker thumbnails are bounded 96 px decodes");
         step.check(run.key(VK_BACK) && session.adjustments().stickers.empty(), "Backspace deletes the selected sticker");
         run.settle();

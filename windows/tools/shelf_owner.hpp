@@ -54,7 +54,8 @@ struct ShelfServiceOptions {
     // shelfRemoved {filename}, shelfCleared {count}. Null records nothing.
     std::function<void(modules::EventKind, modules::EventMetadata)> recordEvent;
     // Synthetic tests: the Shell handoffs of Open and Reveal (no application
-    // or File Explorer starts). Null: the Shell's own.
+    // or File Explorer starts). Null: the Shell's own. Open's runs on its own
+    // short-lived thread (thread-safe).
     native::ShelfRevealOperation openOperation;
     // WHERE's "~": the user profile folder (default %USERPROFILE%).
     std::optional<std::string> homeFolder;
@@ -84,6 +85,9 @@ struct ShelfResourceStats {
     // Archive saves handed to the utility worker, and saved at once on this
     // thread (a full queue), since the service started.
     std::uint64_t savesQueued{}, savesAtOnce{};
+    // Opens handed to their own Shell thread, and opened at once on this
+    // thread (no thread could start).
+    std::uint64_t opensQueued{}, opensAtOnce{};
 };
 // Store / native failure text in the HUD language (Mac FileShelfStoreError
 // errorDescription, with Windows' own situations from modules::shelfText).
@@ -121,6 +125,7 @@ public:
     void requestFiles();                                  // choose: shows the picker
     bool paste(double time);                              // HUDFileShelfInteraction.importPasteboard
     void open(std::string_view id, double time);          // the Shell's default verb, then the toast
+    bool opening() const noexcept;                        // an Open's result is still to come
     ehud::data::ShelfFileAccess access(std::string_view); // throws when unavailable
     std::unique_ptr<native::ShelfDragTransfer> prepareDrag(std::string_view primary);
     void setNativeDragActive(bool);
@@ -152,6 +157,7 @@ public:
     ShelfPanelState panels() const;
     ShelfResourceStats resources() const;
 private:
+    void opened(std::string_view id, HRESULT result, std::uint64_t closings); // an Open's result: the toast or the notice
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };

@@ -11,8 +11,10 @@
 // chips, confirm requests and toasts. Synthetic data only: no file is read.
 #include "modules/media_assembly_canvas.hpp"
 #include "tests/hud_design_oracle.hpp"
+#include <algorithm>
 #include <deque>
 #include <iostream>
+#include <set>
 #include <stdexcept>
 
 namespace d = endfield::modules::design;
@@ -88,6 +90,8 @@ struct Editor {
     std::unique_ptr<m::MediaAssemblyController> controller;
     std::unique_ptr<m::MediaAssemblyCanvas> canvas;
     std::vector<std::string> panels, thumbnails;
+    bool thumbnailsReady{true}; // the owner's decodes landed (false: still on the worker)
+    int entered{};              // stickersEntered: the owner may retry failed thumbnails
     int ids{};
     explicit Editor(World& world) : w(world) {
         controller = std::make_unique<m::MediaAssemblyController>(engine, q.submit(),
@@ -109,8 +113,10 @@ struct Editor {
             thumbnails.push_back(std::string(m::mediaAssemblyFilterItem(f).id));
             return d::ImageSource{d::ImageSource::Kind::asset, "filter-icons/" + std::string(m::mediaAssemblyFilterItem(f).id) + ".png", {}, 0}; };
         s.stickerThumbnail = [this](m::MediaAssemblyStickerKind k) -> std::optional<d::ImageSource> {
+            if (!thumbnailsReady) return std::nullopt;
             thumbnails.push_back(std::string(m::mediaAssemblyStickerItem(k).id));
             return d::ImageSource{d::ImageSource::Kind::memory, "media.assembly.thumbnail." + std::string(m::mediaAssemblyStickerItem(k).id), {}, 1}; };
+        s.stickersEntered = [this] { ++entered; };
         s.stickerImage = [](m::MediaAssemblyStickerKind k) -> std::optional<d::ImageSource> {
             return d::ImageSource{d::ImageSource::Kind::asset, "stickers/" + std::string(m::mediaAssemblyStickerItem(k).id) + ".png", {}, 0}; };
         canvas = std::make_unique<m::MediaAssemblyCanvas>(w.context, *controller, std::move(s));
@@ -194,6 +200,66 @@ void rules(d::TextMeasurer& measurer) {
     check(e.perform("close"), "Close again");
     w.context.overlay().decide(d::ConfirmState::Decision::confirm); e.spin();
     check(!e.controller->session().document() && c.counterText() == "EMPTY", "Confirm closes it");
+}
+
+// In-place rebuilds keep the page's layer ids (rc140 rasterized the whole
+// panel again on each): an import's busy state, close and an overwrite's
+// export re-emit only what they change. The drawer's thumbnails landing
+// during its sub-page swap rebuild it before it enters, with them.
+void keptParts(d::TextMeasurer& measurer) {
+    World w(measurer); w.appearance(Language::english, false, false);
+    Editor e(w); e.show();
+    auto& c = *e.canvas;
+    const d::TextServices& text = w.context.env().text;
+    const auto artwork = [&] {
+        std::vector<std::pair<std::string, std::string>> parts;
+        for (auto& part : d::emit(c.root(), {&text, "test."}).parts) parts.emplace_back(part.id, part.layers.encode());
+        return parts;
+    };
+    const auto kept = [](const auto& before, const auto& after) { std::size_t n{}; for (const auto& part : before) n += std::count(after.begin(), after.end(), part); return n; };
+    const auto ids = [](const auto& parts) { std::set<std::string> out; for (const auto& part : parts) out.insert(part.first); return out; };
+    e.import("C:\\oracle\\fixture.png"); w.advance(1);
+    // Close: the closing rebuild (only button states change), then the empty page.
+    auto before = artwork();
+    check(e.perform("close"), "Close asks");
+    w.context.overlay().decide(d::ConfirmState::Decision::confirm); w.advance(.13);
+    auto after = artwork();
+    check(before.size() >= 3 && ids(after) == ids(before) && kept(before, after) + 2 >= before.size(),
+        "Closing rebuilds the page under its ids (" + std::to_string(kept(before, after)) + " of " + std::to_string(before.size()) + " parts unchanged)");
+    e.spin(); w.advance(1);
+    check(!e.controller->session().document() && ids(artwork()) == ids(before), "The empty page after the close keeps the ids too");
+    // Import: the busy rebuild keeps them while the decode runs on the worker.
+    before = artwork();
+    { const std::string paths[]{"C:\\oracle\\fixture.png"}; c.importFiles(paths, w.now); }
+    check(e.controller->session().busy() && ids(artwork()) == ids(before), "An import's busy rebuild keeps the page's ids");
+    e.spin(); w.advance(1);
+    // Export: its rebuild keeps them.
+    before = artwork();
+    check(e.perform("export") && e.perform("export:overwrite") && w.context.overlay().isConfirming(), "Overwrite asks");
+    w.context.overlay().decide(d::ConfirmState::Decision::confirm); w.advance(.13);
+    after = artwork();
+    check(c.isExporting() && ids(after) == ids(before) && kept(before, after) + 3 >= before.size(),
+        "The export's rebuild keeps the page's ids (" + std::to_string(kept(before, after)) + " of " + std::to_string(before.size()) + " parts unchanged)");
+    e.spin(); w.advance(3); e.spin();
+    // Thumbnails still on the worker: the drawer is built without them, then again before its swap lands.
+    e.thumbnailsReady = false; e.thumbnails.clear();
+    const auto pages = w.context.pagesBuilt();
+    check(c.performAccessibilityAction("mediaTab:2", w.now) && c.transitioning() && e.thumbnails.empty(), "The drawer's first build has no thumbnails yet");
+    e.thumbnailsReady = true; c.stickerThumbnailsChanged();
+    check(c.transitioning() && w.context.pagesBuilt() == pages + 2 && std::count(e.thumbnails.begin(), e.thumbnails.end(), "sticker_bp_1") == 1,
+        "Their arrival rebuilds the pending drawer, which has not entered yet");
+    w.advance(1);
+    bool drawn{};
+    for (const auto& part : artwork()) drawn = drawn || part.second.find("media.assembly.thumbnail.sticker_bp_1") != std::string::npos;
+    check(!c.transitioning() && drawn, "The drawer enters with its thumbnails");
+    // Each entry of the drawer (its tab, or the canvas activated on it) lets the
+    // owner try failed thumbnails again; its own rebuilds and other tabs do not.
+    check(e.entered == 1, "Choosing the Stickers tab is an entry");
+    c.stickerThumbnailsChanged(); w.advance(1);
+    check(c.performAccessibilityAction("mediaTab:0", w.now) && (w.advance(1), e.entered == 1), "A rebuild and another tab are not");
+    check(c.performAccessibilityAction("mediaTab:2", w.now) && e.entered == 2, "Choosing it again is");
+    w.advance(1); c.setActive(false, w.now); c.setActive(true, w.now);
+    check(e.entered == 3, "Activation on the drawer is");
 }
 
 // Animated page swaps and edits (Reduce Motion off): every frame's nodes stay rasterizable.
@@ -505,6 +571,7 @@ int main(int argc, char** argv) {
     try {
         FakeMeasurer fake;
         rules(fake);
+        keptParts(fake);
         motion(fake);
         if (const auto data = loadOracle(argc > 1 ? argv[1] : nullptr, {"canvas"}, {"text", "viewport"})) {
             Oracle oracle(*data);

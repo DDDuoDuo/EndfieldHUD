@@ -154,7 +154,11 @@ void run(n::Renderer&r,HWND hwnd,const fs::path&assets){
     check(!f.key(VK_ESCAPE),"Escape with nothing to unwind reaches the HUD");
     {const auto z=f.canvas().viewport().zoom();check(f.key(VK_OEM_PLUS)&&f.canvas().viewport().zoom()>z,"Plus zooms in");check(f.perform("zoomReset"),"Reset zoom");}
     // Stickers: add, nudge with arrows, turn with Alt, delete with Backspace.
-    check(f.perform("mediaTab:2")&&f.perform("sticker:sticker_1"),"Sticker");f.frame();check(f.session().adjustments().stickers.size()==1&&!f.canvas().selectedSticker().empty(),"Sticker added with an owner identity");
+    // The drawer's first build queues its 30 thumbnails on the utility worker and is built again with them.
+    {check(f.perform("mediaTab:2")&&owner.stats().thumbnailDecodes==0&&owner.stats().thumbnailBytes==0,"The drawer's first build decodes no sticker thumbnail on the HUD thread");
+    const auto pages=f.overlay->context().pagesBuilt();f.settle();
+    check(owner.stats().thumbnailDecodes==m::mediaAssemblyStickerCount&&owner.stats().thumbnailDecodesAtOnce==0&&f.overlay->context().pagesBuilt()>pages,"The utility worker decodes them; the drawer is built again with them");}
+    check(f.perform("sticker:sticker_1"),"Sticker");f.frame();check(f.session().adjustments().stickers.size()==1&&!f.canvas().selectedSticker().empty(),"Sticker added with an owner identity");
     const auto sx=f.session().adjustments().stickers[0].x;check(f.key(VK_RIGHT,4)&&std::abs(f.session().adjustments().stickers[0].x-sx-.05)<1e-9,"Shift+Right nudges 0.05");
     check(f.key(VK_RIGHT,1)&&f.session().adjustments().stickers[0].rotation==3,"Alt+Right turns 3 degrees");
     check(f.key(VK_RIGHT,5)&&f.session().adjustments().stickers[0].rotation==18,"Alt+Shift+Right turns 15 degrees");
@@ -276,6 +280,46 @@ void residency(n::Renderer&r,HWND hwnd,const fs::path&assets){
           "Closed on Media Assembly, the renderer's device can be released and is destroyed");
     check(r.resumeDevice(),"The device comes back for the rest of the fixture");
     f.finish();check(r.stats().textures==0&&r.stats().nativeGroups==0,"Residency owner releases every texture and group");
+}
+// The drawer's sticker thumbnails beyond the first visit: one whose decode
+// failed is tried again when the drawer is next entered, never by the
+// rebuild its failure caused (a copy of the pinned assets, one moved aside).
+void thumbnailRetry(n::Renderer&r,HWND hwnd,const fs::path&assets){
+    Temp temp;const auto copy=(temp.path/L"MediaAssembly").lexically_normal();fs::copy(assets,copy,fs::copy_options::recursive);
+    const auto id=std::string(m::mediaAssemblyStickers()[0].id);const auto sticker=copy/"stickers"/(id+".png"),aside=temp.path/"aside.png";
+    unsigned ids{};t::MediaAssemblyOwnerOptions options;options.uuid=[&]{return "thumb-"+std::to_string(++ids);};
+    Fixture f(r,hwnd,copy,std::move(options));auto&owner=f.o();const auto count=std::uint64_t(m::mediaAssemblyStickerCount);
+    const auto settle=[&]{f.settle();f.frames(.3);f.settle();};
+    const auto photo=temp.path/L"thumbs.png";writePNG(photo,64,48);
+    f.modules.select(c::Module::mediaAssembly,f.now);for(int k=0;k<40;++k)f.frame();settle();
+    const std::array<std::string,1>drop{n::mediaAssemblyUTF8(photo)};check(owner.drop(drop,f.stageCentre(),f.now),"Import");settle();
+    fs::rename(sticker,aside);
+    check(f.perform("mediaTab:2")&&owner.stats().thumbnailDecodes==0,"The drawer's first build queues its thumbnails");settle();
+    const auto accepted=f.utility.stats().accepted;
+    check(f.canvas().tab()==m::MediaAssemblyCanvas::Tab::stickers&&owner.stats().thumbnailDecodes==count-1,"The worker decodes all but the sticker that cannot be read ("+std::to_string(owner.stats().thumbnailDecodes)+" decoded, "+std::to_string(owner.stats().thumbnailDecodesAtOnce)+" at once, "+std::to_string(accepted)+" accepted)");
+    settle();check(f.utility.stats().accepted==accepted&&owner.stats().thumbnailDecodes==count-1,"The rebuild its failure caused does not queue it again");
+    fs::rename(aside,sticker);
+    check(f.perform("mediaTab:0"),"Adjust");settle();check(f.utility.stats().accepted==accepted,"Leaving the drawer queues nothing");
+    check(f.perform("mediaTab:2"),"Stickers again");settle();
+    check(owner.stats().thumbnailDecodes==count&&owner.stats().thumbnailDecodesAtOnce==0&&f.utility.stats().accepted==accepted+1,
+          "The drawer's next entry tries the failed thumbnail again on the worker (the Mac decodes on every build)");
+    f.finish();
+}
+// With Reduce Motion the drawer enters at once (no sub-page swap hides the
+// worker): its first build decodes the thumbnails, as the Mac's build does.
+void thumbnailsReduceMotion(n::Renderer&r,HWND hwnd,const fs::path&assets){
+    unsigned ids{};t::MediaAssemblyOwnerOptions options;options.uuid=[&]{return "still-"+std::to_string(++ids);};
+    Fixture f(r,hwnd,assets,std::move(options));auto&owner=f.o();const auto count=std::uint64_t(m::mediaAssemblyStickerCount);
+    a::ModuleAppearance appearance;appearance.accentSRGB={250./255,212./255,31./255};appearance.reduceMotion=true;
+    f.overlay->setAppearance(appearance,f.now);owner.setAppearance(appearance,f.now);
+    Temp temp;const auto photo=temp.path/L"still.png";writePNG(photo,64,48);
+    f.modules.select(c::Module::mediaAssembly,f.now);for(int k=0;k<40;++k)f.frame();f.settle();
+    const std::array<std::string,1>drop{n::mediaAssemblyUTF8(photo)};check(owner.drop(drop,f.stageCentre(),f.now),"Import");f.settle();f.frames(.6);f.settle();
+    check(f.perform("mediaTab:2")&&f.canvas().tab()==m::MediaAssemblyCanvas::Tab::stickers&&!f.canvas().transitioning()&&
+          owner.stats().thumbnailDecodes==count&&owner.stats().thumbnailDecodesAtOnce==count,"With Reduce Motion the drawer enters with its thumbnails, decoded in its build");
+    const auto accepted=f.utility.stats().accepted;f.settle();
+    check(owner.stats().thumbnailDecodes==count&&f.utility.stats().accepted==accepted,"Nothing is decoded twice");
+    f.finish();
 }
 // Fake IMFMediaEngine for the shared broker (no codec, audio device or file).
 struct Probe {n::NativeNotesVideoPlayback::Notify notify;double position{};bool playing{},fresh{true},stopped{};unsigned opens{},seeks{},frames{};std::string path;ComPtr<IDXGISurface>surface;};
@@ -404,6 +448,8 @@ int wmain(int argc,wchar_t**argv){Apartment apartment;try{frameFilterHook();chec
         {n::Renderer renderer;renderer.initialize(window.hwnd,1280,800,{n::Driver::warpForTests,argv[1],n::RenderTarget::offscreenForTests,true});run(renderer,window.hwnd,fs::absolute(argv[2]));renderer.reset();}
         {n::Renderer same;same.initialize(window.hwnd,1280,800,{n::Driver::warpForTests,argv[1],n::RenderTarget::offscreenForTests,true});parity(same,window.hwnd,fs::absolute(argv[2]));same.reset();}
         {n::Renderer audit;audit.initialize(window.hwnd,1280,800,{n::Driver::warpForTests,argv[1],n::RenderTarget::offscreenForTests,true});residency(audit,window.hwnd,fs::absolute(argv[2]));audit.reset();}
+        {n::Renderer retry;retry.initialize(window.hwnd,1280,800,{n::Driver::warpForTests,argv[1],n::RenderTarget::offscreenForTests,true});thumbnailRetry(retry,window.hwnd,fs::absolute(argv[2]));retry.reset();}
+        {n::Renderer still;still.initialize(window.hwnd,1280,800,{n::Driver::warpForTests,argv[1],n::RenderTarget::offscreenForTests,true});thumbnailsReduceMotion(still,window.hwnd,fs::absolute(argv[2]));still.reset();}
         n::Renderer media;media.initialize(window.hwnd,1280,800,{n::Driver::warpForTests,argv[1],n::RenderTarget::offscreenForTests,true});playback(media,window.hwnd,fs::absolute(argv[2]),fs::absolute(argv[3]));media.reset();std::cout<<"Media Assembly owner: "<<checks<<" checks passed (synthetic media only)\n";return 0;}catch(const std::exception&e){counting=false;std::cerr<<"Media Assembly owner failed after "<<checks<<": "<<e.what()<<'\n';return 1;}}
 #else
 #include <iostream>
