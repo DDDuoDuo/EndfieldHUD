@@ -1045,7 +1045,16 @@ int Application::Impl::runHiddenVerification(){
                     {"workMode.preset30",{1,24}},{"workMode.start",{1,24}},{"workMode.pause",{1,24}},{"workMode.resume",{1,24}},{"workMode.reset",{1,24}},
                     {"workMode.customOpen",{1,24}},{"workMode.customCommit",{1,24}},{"workMode.lap",{1,24}},
                     {"fileShelf.selectOne",{1,48}},{"fileShelf.selectAnother",{1,48}},{"fileShelf.ctrlToggle",{1,48}},{"fileShelf.shiftExtend",{0,48}},
-                    {"fileShelf.selectFromMany",{1,48}},{"fileShelf.deselect",{1,48}}};
+                    {"fileShelf.selectFromMany",{1,48}},{"fileShelf.deselect",{1,48}},
+                    // Group b3. Settings (rc140: every built Settings canvas, 4, rebuilt per
+                    // click, 8 for a language): the shown page only, once; a language once,
+                    // in it. Personal ID (rc140: the card, 59-73 surfaces): the elements the
+                    // change touches. The first switch of an opening (rc140: Calendar's 208
+                    // surfaces on the switch frame): warmed while the HUD idled.
+                    {"display.themeSwatch",{2,48}},{"display.themeSwatchBack",{2,48}},{"display.appIconTile",{1,8}},
+                    {"system.languagePick",{1,512}},{"system.languageBack",{1,512}},{"system.languageResolved",{1,512}},{"system.languageResolvedBack",{1,512}},
+                    {"profile.fieldCommit",{1,24}},{"profile.fieldBegin",{0,8}},{"profile.dateKind",{1,16}},{"profile.dateKindBack",{1,16}},
+                    {"calendar.firstSwitch",{1,24}}};
                 const bool enforceBounds=true;
                 const auto timeAction=[&](core::Module m,const char*name,const std::function<bool(double)>&act){
                     drainUtility(time);frameAt(time);time+=.05;
@@ -1219,6 +1228,79 @@ int Application::Impl::runHiddenVerification(){
                     }
                     break;
                 }
+                // Group b3: Settings, Personal ID, the desktop clock and the first
+                // module switch of an opening.
+                {const auto before=notes?notes->selected():core::Module::map;
+                // Settings > System: a language picked in its menu, then the one it had.
+                if(settingsUI&&settingsModuleOwner&&registry.enabled(*settingsModuleOwner))if(auto*system=showModule(core::Module::system)){
+                    const auto M=core::Module::system;const auto original=settingsUI->controller().committed().string("language");
+                    const auto pick=[&](const std::string&id,double t){if(!press(M,"language",false,t))return false;
+                        std::vector<dz::AccessibilityItem> items;system->accessibilityItems(items);
+                        for(const auto&item:items)if(item.role==dz::AccessibilityRole::menuItem&&item.id.ends_with(":"+id))return system->performAccessibilityAction(item.id,t)&&settingsUI->controller().committed().string("language")==id;
+                        return false;};
+                    // The laptop's system language may be the one picked: one pick the
+                    // resolved language follows (the whole page re-localizes), one it may not.
+                    const std::string other=original=="simplifiedChinese"?"english":"simplifiedChinese";
+                    const std::string resolved=settingsLanguage(configuration)==core::Language::english?"simplifiedChinese":"english";
+                    timeAction(M,"languagePick",[&](double t){return pick(other,t);});
+                    timeAction(M,"languageBack",[&](double t){return pick(original,t);});
+                    timeAction(M,"languageResolved",[&](double t){return pick(resolved,t);});
+                    timings.back()["resolvedChanged"]=watchAppearance.language==core::languageFromSetting(resolved);
+                    timeAction(M,"languageResolvedBack",[&](double t){return pick(original,t);});
+                }
+                // Settings > Display: a binder-only change (a toggle) and back.
+                if(settingsUI&&settingsModuleOwner&&registry.enabled(*settingsModuleOwner))if(auto*display=showModule(core::Module::display);display&&findIn(*display,"bootLog")){
+                    const auto M=core::Module::display;
+                    timeAction(M,"bootLogToggle",[&](double t){return press(M,"bootLog",false,t);});
+                    timeAction(M,"bootLogBack",[&](double t){return press(M,"bootLog",false,t);});
+                }
+                // Personal ID: the name's editor opening, the date kind and back.
+                if(auto*c=showModule(core::Module::profile)){
+                    const auto M=core::Module::profile;auto*owner=registry.presenter(M);bindOwner(M,time);
+                    timeAction(M,"fieldBegin",[&](double t){return c->performAccessibilityAction("profile:name",t)&&c->editingField();});
+                    if(c->editingField()){bindOwner(M,time);(void)owner->key({KeyKind::down,VK_ESCAPE},hostTime(time));settleFor(15);}
+                    if(findIn(*c,"profile:toggleDateLabel")){
+                        timeAction(M,"dateKind",[&](double t){return press(M,"profile:toggleDateLabel",false,t);});
+                        timeAction(M,"dateKindBack",[&](double t){return press(M,"profile:toggleDateLabel",false,t);});
+                    }
+                }
+                // The desktop clock: the next style through its indicator's route, then back.
+                if(chrome&&settingsUI){
+                    constexpr std::array<std::string_view,5> styles{"digital","split","dial","rail","stacked"};
+                    const auto original=configuration.string("clockStyle");unsigned index{};
+                    for(unsigned n=0;n<5;++n)if(original==styles[n])index=n;
+                    const auto timeClock=[&](const char*name,unsigned style){
+                        drainUtility(time);frameAt(time);time+=.05;
+                        const auto raster0=rasterizer.stats();const auto t0=Clock::now();selectClockStyle(style,time);const double actionMs=milliseconds(t0);
+                        const auto t1=Clock::now();frameAt(time);const double frameMs=milliseconds(t1);const auto raster1=rasterizer.stats();const bool pushed=chrome->styleTransitionActive();
+                        double settleMax=0;for(unsigned f=1;f<=15;++f){const auto f0=Clock::now();frameAt(time+double(f)/15);settleMax=std::max(settleMax,milliseconds(f0));}
+                        time+=1.1;const auto raster2=rasterizer.stats();
+                        // The push rasterizes its two pages and the status panel once (rc140: the panel twice).
+                        const bool within=!pushed||raster1.rasterizations-raster0.rasterizations<=3;
+                        if(enforceBounds)hostCheck(within,std::string("The clock style change ")+name+" rasterizes its two pages and the status panel once ("+std::to_string(raster1.rasterizations-raster0.rasterizations)+")");
+                        timings.push_back(Json::Object{{"module","clock"},{"action",std::string(name)},{"ran",settingsUI->controller().committed().string("clockStyle")==styles[style]},{"pushed",pushed},
+                            {"actionMs",actionMs},{"frameMs",frameMs},{"clickFrameMs",actionMs+frameMs},{"settleMaxFrameMs",settleMax},{"pagesBuilt",std::int64_t{}},
+                            {"rasterizations",std::int64_t(raster1.rasterizations-raster0.rasterizations)},{"textLayouts",std::int64_t(raster1.textLayoutsCreated-raster0.textLayoutsCreated)},
+                            {"secondPagesBuilt",std::int64_t{}},{"secondRasterizations",std::int64_t(raster2.rasterizations-raster0.rasterizations)},{"secondTextLayouts",std::int64_t(raster2.textLayoutsCreated-raster0.textLayoutsCreated)},{"withinBound",within}});
+                        time+=.1;};
+                    timeClock("styleNext",(index+1)%5);timeClock("styleBack",index);
+                }
+                // The first switch of an opening to a module visited in an earlier
+                // one (its artwork was dropped at the close): Calendar, after the HUD
+                // closed on Personal ID and opened again, idle for three seconds.
+                if(calendar&&calendarModuleOwner&&registry.enabled(*calendarModuleOwner)&&showModule(core::Module::calendar)&&showModule(core::Module::profile)){
+                    close(time);for(unsigned f=0;f<90&&session->phase()!=core::VisibilityPhase::concealed;++f)present(time+double(f)/60,true);
+                    time+=1.6;concealed(time);time+=.5;
+                    open(time);for(unsigned f=0;f<90;++f)frameAt(time+double(f)/60);time+=1.5;
+                    // Idle after the entrance: the host's deadlines run when due, as its timer would wake them.
+                    const auto memory0=rasterizer.stats();
+                    double idleMax{};for(unsigned f=0;f<30;++f){const double t=time+double(f)/10;const auto d0=Clock::now();onDeadline(t);idleMax=std::max(idleMax,milliseconds(d0));frameAt(t);}time+=3.1;
+                    const auto memory1=rasterizer.stats();
+                    timeAction(core::Module::calendar,"firstSwitch",[&](double t){selectModule(core::Module::calendar,t);return true;});
+                    timings.back()["idleMaxDeadlineMs"]=idleMax;timings.back()["idleRasterizations"]=std::int64_t(memory1.rasterizations-memory0.rasterizations);
+                    timings.back()["idleResourceBytes"]=std::int64_t(memory1.resourceBytes)-std::int64_t(memory0.resourceBytes);
+                }
+                if(notes&&notes->selected()!=before)(void)showModule(before);}
                 actionTiming=std::move(timings);
             }
             // Host integration over the same owner: the restart service is
