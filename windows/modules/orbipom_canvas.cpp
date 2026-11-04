@@ -313,6 +313,7 @@ void OrbiPomCanvas::didDeactivate() {
 void OrbiPomCanvas::willLeave() { pointerPressed_ = false; stopClock(); session_->pause(true); }
 void OrbiPomCanvas::resetSession() {
     if (isActive()) return;
+    session_->discardPrepared();   // the HUD closed before a game started (the close, not a click, waits for its boot)
     keyboardPoint_ = {115, 120}; lastSkill_.reset();
     Canvas::resetSession();
 }

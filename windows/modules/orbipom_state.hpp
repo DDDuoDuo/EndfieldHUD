@@ -76,6 +76,12 @@ public:
     // The first game's runtime, made and booted ahead of start (off the owner
     // thread): true once start would not wait for that boot. Start uses it.
     bool prepare();
+    // A runtime prepared for a game that never started (the canvas was shown
+    // ahead of an activation that did not come) goes when the HUD closed: the
+    // VM lives on only once a game started. Destroying a booting one waits for
+    // its boot, so never on a click.
+    void discardPrepared()noexcept{if(!runtime_)prepared_.reset();}
+    bool hasPrepared()const noexcept{return bool(prepared_);}
     bool start(std::optional<std::uint32_t> seed={});void advance(double seconds);
     void setManuallyPaused(bool);void pause(bool);void saveBest();
     void move(core::Point);void pointerUp(core::Point);bool drop();bool activate(OrbiPomSkill);void cancelSkill();
