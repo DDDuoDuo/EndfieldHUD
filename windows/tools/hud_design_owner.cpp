@@ -251,11 +251,13 @@ DesignOwnerCore::Warm DesignOwnerCore::warm(core::Module module, double t, std::
     auto* s = i.slot(module);
     if (!s || !i.overlay || s->shown || s->active || s->canvas->isShown()) return Warm::refused;
     i.bind();
-    s->canvas->show(i.time);
+    // Not shown: Calendar's show presents its controller (reminders
+    // rescheduled, the file saved), the File Shelf's resolves every file,
+    // OrbiPom's leave pauses its session; a switch runs them as on the Mac.
+    s->canvas->prepareContent(i.time);
     s->scene->setLoadBudget(surfaces);
-    try { i.sync(*s); } catch (...) { s->scene->setLoadBudget(std::nullopt); s->canvas->prepareToLeave(i.time); throw; }
+    try { i.sync(*s); } catch (...) { s->scene->setLoadBudget(std::nullopt); throw; }
     s->scene->setLoadBudget(std::nullopt);
-    s->canvas->prepareToLeave(i.time);
     return s->scene->loadsPending() ? Warm::partial : Warm::done;
 }
 bool DesignOwnerCore::requiresFrames(double t) const {

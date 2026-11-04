@@ -102,9 +102,10 @@ public:
     void prewarm(const app::ModuleFrame&);
     // One step of the open HUD's idle warm-up of a module that is not shown
     // (the host's warmModules): its page is built when stale and about
-    // `surfaces` more surfaces of it rasterized, then it leaves at once;
-    // nothing is activated, posed or drawn, and the scene keeps its parts for
-    // the switch (parked by collected, dropped at the close). Refused while it
+    // `surfaces` more surfaces of it rasterized (Canvas::prepareContent: the
+    // module's show and leave never run); nothing is shown, activated, posed
+    // or drawn, and the scene keeps its parts for the switch (parked by
+    // collected, dropped at the close). Refused while it
     // is shown or the HUD is closed; partial while parts wait for a later step.
     enum class Warm { refused, partial, done };
     Warm warm(core::Module, double, std::size_t surfaces);

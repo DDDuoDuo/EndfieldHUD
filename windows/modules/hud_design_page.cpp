@@ -568,6 +568,11 @@ void Canvas::show(double now) {
     revealSettledPage();
     rerenderIfStale();
 }
+void Canvas::prepareContent(double now) {
+    begin(now);
+    revealSettledPage();
+    rerenderIfStale();
+}
 void Canvas::setActive(bool active, double now) {
     begin(now);
     if (active == active_) return;

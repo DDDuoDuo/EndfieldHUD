@@ -43,7 +43,7 @@ struct Press final : d::Control {
 };
 struct FakeCanvas final : d::Canvas {
     FakeCanvas(d::Context& c, core::Module m) : Canvas(m, c) {}
-    unsigned pressed{}, builds{}, leaves{}, keys{}, scrolls{};
+    unsigned pressed{}, builds{}, leaves{}, keys{}, scrolls{}, shows{};
     d::ScrollArea* rows{};
     void buildPage(d::Page& page) override {
         ++builds;
@@ -59,6 +59,7 @@ struct FakeCanvas final : d::Canvas {
         page.layer().add(press.layer());
         page.add(press);
     }
+    void show(double now) override { ++shows; Canvas::show(now); }
     void willLeave() override { ++leaves; }
     bool handleKey(const d::KeyInput& k) override { if (k.virtualKey == 'K') { ++keys; return true; } return false; }
     bool handleScroll(d::Point, d::Point delta) override { scrolls += delta.y > 0; return true; }
@@ -267,7 +268,9 @@ void run(const std::filesystem::path& shader) {
     }
     // The open HUD's idle warm-up (Application::warmModules): a module not
     // shown whose artwork went at the close builds and rasterizes its page,
-    // leaves at once, and its switch then rasterizes nothing again.
+    // never shown: no module show or leave runs (Calendar's presents its
+    // controller and saves, OrbiPom's pauses), and its switch then
+    // rasterizes nothing again.
     {
         frame(sample(core::Module::clipboard), 3.5);
         owner.setOverlayVisible(false, 3.6); overlay.setOverlayVisible(false, 3.6);
@@ -276,7 +279,7 @@ void run(const std::filesystem::path& shader) {
         frame(sample(core::Module::clipboard), 3.75);
         check(owner.core().sceneStats(core::Module::volume)->rasterEntries == 0, "The close dropped the hidden canvas's artwork");
         check(owner.core().warm(core::Module::clipboard, 3.8, 64) == tools::DesignOwnerCore::Warm::refused, "The shown canvas is not warmed");
-        const unsigned leaves = skipped->leaves;
+        const unsigned leaves = skipped->leaves, shows = skipped->shows;
         // One surface per step: the page rasterizes over several steps (at least one part each).
         unsigned steps{};
         for (auto step = owner.core().warm(core::Module::volume, 3.8, 1); ++steps < 64 && step == tools::DesignOwnerCore::Warm::partial;) {
@@ -285,7 +288,8 @@ void run(const std::filesystem::path& shader) {
         }
         check(steps > 1 && steps < 64, "A hidden canvas warms over its steps");
         const auto warmed = *owner.core().sceneStats(core::Module::volume);
-        check(warmed.rasterEntries > 0 && !skipped->isShown() && !skipped->isActive() && skipped->leaves == leaves + steps, "It rasterizes its page and leaves after each step, never activated");
+        check(warmed.rasterEntries > 0 && !skipped->isShown() && !skipped->isActive() && skipped->shows == shows && skipped->leaves == leaves,
+            "It rasterizes its page over the steps, never shown, left or activated");
         frame(sample(core::Module::clipboard), 3.85);
         const auto rasters = raster.stats().rasterizations;
         frame(sample(core::Module::volume), 3.9);
